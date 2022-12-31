@@ -7,6 +7,7 @@ set(SOURCES
 	src/shmain.cpp
     src/register_types.cpp
 )
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
 
 if (SANITIZE)
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address,undefined")
