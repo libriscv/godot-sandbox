@@ -198,19 +198,19 @@ Viewport *RiscvEmulator::return_something_const() const
     return nullptr;
 }
 
-Variant RiscvEmulator::varargs_func(const Variant **args, GDNativeInt arg_count, GDNativeCallError &error)
+Variant RiscvEmulator::varargs_func(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error)
 {
     UtilityFunctions::print("  Varargs (Variant return) called with ", String::num((double)arg_count), " arguments");
     return arg_count;
 }
 
-int RiscvEmulator::varargs_func_nv(const Variant **args, GDNativeInt arg_count, GDNativeCallError &error)
+int RiscvEmulator::varargs_func_nv(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error)
 {
     UtilityFunctions::print("  Varargs (int return) called with ", String::num((double)arg_count), " arguments");
     return 42;
 }
 
-void RiscvEmulator::varargs_func_void(const Variant **args, GDNativeInt arg_count, GDNativeCallError &error)
+void RiscvEmulator::varargs_func_void(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error)
 {
     UtilityFunctions::print("  Varargs (no return) called with ", String::num((double)arg_count), " arguments");
 }

@@ -13,6 +13,10 @@ if (SANITIZE)
 endif()
 
 add_subdirectory(godot-cpp)
+target_compile_definitions(godot-cpp PUBLIC
+	-D__has_trivial_destructor=__is_trivially_destructible
+	-D__has_trivial_constructor=__is_trivially_constructible
+)
 
 add_subdirectory(libriscv/lib libriscv)
 
