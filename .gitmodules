@@ -1,0 +1,6 @@
+[submodule "libriscv"]
+	path = libriscv
+	url = https://github.com/fwsGonzo/libriscv.git
+[submodule "godot-cpp"]
+	path = godot-cpp
+	url = https://github.com/godotengine/godot-cpp.git
