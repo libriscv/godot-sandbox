@@ -8,6 +8,9 @@
 #include <libriscv/machine.hpp>
 
 using namespace godot;
+#define RISCV_ARCH riscv::RISCV64
+using gaddr_t = riscv::address_type<RISCV_ARCH>;
+using machine_t = riscv::Machine<RISCV_ARCH>;
 
 class RiscvEmulator : public Control
 {
@@ -19,34 +22,33 @@ protected:
 	String _to_string() const;
 
 public:
-	static constexpr int MARCH = 4;
 	static constexpr uint64_t MAX_INSTRUCTIONS = 16'000'000'000ULL;
-	using gaddr_t = riscv::address_type<MARCH>;
-	using machine_t = riscv::Machine<MARCH>;
 
-private:
-	machine_t* m_machine = nullptr;
-	std::vector<uint8_t> m_binary;
-
-public:
 	RiscvEmulator();
 	~RiscvEmulator();
 
-	auto& machine() {
-		if (m_machine != nullptr)
-			return *m_machine;
-		else
-			throw riscv::MachineException(riscv::INVALID_PROGRAM, "Machine not initialized");
-	}
-	const auto& machine() const {
-		if (m_machine != nullptr)
-			return *m_machine;
-		else
-			throw riscv::MachineException(riscv::INVALID_PROGRAM, "Machine not initialized");
-	}
+	auto& machine() { return *m_machine; }
+	const auto& machine() const { return *m_machine; }
+
+	const String& name();
 
 	// Functions.
 	void load(const PackedByteArray& buffer, const TypedArray<String>& arguments);
 	void exec();
 	void fork_exec();
+	GDExtensionInt call(String function);
+
+	void print(std::string_view text);
+	gaddr_t address_of(std::string_view name) const;
+
+private:
+	void handle_exception(gaddr_t);
+	void handle_timeout(gaddr_t);
+
+	machine_t* m_machine = nullptr;
+	std::vector<uint8_t> m_binary;
+
+	bool m_last_newline = false;
+	unsigned m_budget_overruns = 0;
+	String m_name;
 };
