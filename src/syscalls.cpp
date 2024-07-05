@@ -23,8 +23,8 @@ void RiscvEmulator::initialize_syscalls()
 {
 	using namespace riscv;
 
-	// Initialize the Newlib system calls.
-	machine().setup_minimal_syscalls();
+	// Initialize the Linux system calls.
+	machine().setup_linux_syscalls(false, false);
 
 	// Add the Godot system calls.
 	machine_t::install_syscall_handlers({

@@ -53,15 +53,21 @@ void RiscvEmulator::load(const PackedByteArray& buffer, const TypedArray<String>
 
 	m_binary = std::vector<uint8_t> {buffer.ptr(), buffer.ptr() + buffer.size()};
 
-	delete this->m_machine;
-	this->m_machine = new machine_t { this->m_binary };
-	machine_t& m = machine();
+	try {
+		delete this->m_machine;
+		this->m_machine = new machine_t { this->m_binary };
+		machine_t& m = machine();
 
-	m.set_userdata(this);
+		m.set_userdata(this);
 
-	this->initialize_syscalls();
+		this->initialize_syscalls();
 
-	m.setup_argv({"program"});
+		m.setup_linux({"program"});
+
+		m.simulate(MAX_INSTRUCTIONS);
+	} catch (const std::exception& e) {
+		UtilityFunctions::print("Exception: ", e.what());
+	}
 }
 
 Variant RiscvEmulator::vmcall(String function, const Array& args)
