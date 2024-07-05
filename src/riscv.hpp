@@ -34,16 +34,17 @@ public:
 
 	// Functions.
 	void load(const PackedByteArray& buffer, const TypedArray<String>& arguments);
-	void exec();
-	void fork_exec();
-	GDExtensionInt call(String function);
+	Variant vmcall(String function,
+		const Array& args = Array());
 
 	void print(std::string_view text);
 	gaddr_t address_of(std::string_view name) const;
 
 private:
+	void execute();
 	void handle_exception(gaddr_t);
 	void handle_timeout(gaddr_t);
+	void initialize_syscalls();
 
 	machine_t* m_machine = nullptr;
 	std::vector<uint8_t> m_binary;
