@@ -117,7 +117,19 @@ Variant RiscvEmulator::vmcall(String function, const Array& args)
 
 	try
 	{
-		address = machine().address_of(sview);
+		// lookup function address
+		gaddr_t address = 0x0;
+		auto res = m_lookup.find_key(function);
+		if (res.get_type() == Variant::Type::NIL)
+		{
+			address = machine().address_of(sview);
+			m_lookup[function] = address;
+		}
+		else
+		{
+			address = res.operator int64_t();
+		}
+
 		// execute guest function
 		m_machine->simulate_with<true>(MAX_INSTRUCTIONS, 0u, address);
 

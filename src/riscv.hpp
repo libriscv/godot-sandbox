@@ -49,6 +49,8 @@ private:
 	machine_t* m_machine = nullptr;
 	std::vector<uint8_t> m_binary;
 
+	Dictionary m_lookup;
+
 	bool m_last_newline = false;
 	unsigned m_budget_overruns = 0;
 	String m_name;
