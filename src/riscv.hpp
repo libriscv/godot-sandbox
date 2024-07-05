@@ -30,8 +30,6 @@ public:
 	auto& machine() { return *m_machine; }
 	const auto& machine() const { return *m_machine; }
 
-	const String& name();
-
 	// Functions.
 	void load(const PackedByteArray& buffer, const TypedArray<String>& arguments);
 	Variant vmcall(String function,
@@ -53,5 +51,4 @@ private:
 
 	bool m_last_newline = false;
 	unsigned m_budget_overruns = 0;
-	String m_name;
 };

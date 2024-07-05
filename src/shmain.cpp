@@ -31,7 +31,7 @@ RiscvEmulator::RiscvEmulator()
 	// In order to reduce checks we guarantee that this
 	// class is well-formed at all times.
 	this->m_machine = new machine_t { };
-	this->m_name = "(name)";
+	set_name("(name)");
 	UtilityFunctions::print("Constructor.");
 }
 
@@ -42,11 +42,6 @@ RiscvEmulator::~RiscvEmulator()
 }
 
 // Methods.
-const String& RiscvEmulator::name()
-{
-	return this->m_name;
-}
-
 void RiscvEmulator::load(const PackedByteArray& buffer, const TypedArray<String>& arguments)
 {
 	UtilityFunctions::print("Loading file from buffer");
@@ -156,7 +151,7 @@ void RiscvEmulator::handle_exception(gaddr_t address)
 {
 	auto callsite = machine().memory.lookup(address);
 	UtilityFunctions::print(
-		"[", name(), "] Exception when calling:\n  ", callsite.name.c_str(), " (0x",
+		"[", get_name(), "] Exception when calling:\n  ", callsite.name.c_str(), " (0x",
 		String("%x").format(callsite.address), ")\n", "Backtrace:\n");
 	//this->print_backtrace(address);
 
@@ -205,7 +200,7 @@ void RiscvEmulator::print(std::string_view text)
 {
 	String str(static_cast<std::string> (text).c_str());
 	if (this->m_last_newline) {
-		UtilityFunctions::print("[", name(), "] says: ", str);
+		UtilityFunctions::print("[", get_name(), "] says: ", str);
 	}
 	else {
 		UtilityFunctions::print(str);
