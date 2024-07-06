@@ -5,6 +5,7 @@ on:
     paths-ignore:
       - ".gitignore"
       - "*.md"
+  pull_request:
 
 jobs:
   build:
@@ -15,7 +16,6 @@ jobs:
         config:
         #   - { name: "🍏 macOS Clang", os: macos-latest }
           - { name: "🐧 Linux GCC", os: ubuntu-latest }
-          - { name: "🪟 Windows MSVC", os: windows-latest }
 
     name: 🛠 Build / ${{ matrix.config.name }} (${{ matrix.build_type }})
     runs-on: ${{ matrix.config.os }}
