@@ -25,6 +25,8 @@ void RiscvEmulator::initialize_syscalls()
 
 	// Initialize the Linux system calls.
 	machine().setup_linux_syscalls(false, false);
+	// TODO:
+	//machine().setup_posix_threads();
 
 	// Add the Godot system calls.
 	machine_t::install_syscall_handlers({

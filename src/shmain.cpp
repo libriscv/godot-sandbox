@@ -5,6 +5,7 @@
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/label.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#include <thread> // TODO: Use Godot's threading API.
 
 using namespace godot;
 
@@ -50,7 +51,20 @@ void RiscvEmulator::load(const PackedByteArray& buffer, const TypedArray<String>
 
 	try {
 		delete this->m_machine;
-		this->m_machine = new machine_t { this->m_binary };
+
+		const riscv::MachineOptions<RISCV_ARCH> options {
+			.verbose_loader = true,
+			.default_exit_function = "fast_exit",
+			.translate_background_callback =
+			[] (auto& compilation_step) {
+				// TODO: Use Godot's threading API.
+				std::thread([compilation_step = std::move(compilation_step)] {
+					compilation_step();
+				}).detach();
+			}
+		};
+
+		this->m_machine = new machine_t { this->m_binary, options };
 		machine_t& m = machine();
 
 		m.set_userdata(this);

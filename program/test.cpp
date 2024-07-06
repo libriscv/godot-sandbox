@@ -5,26 +5,13 @@
 
 /// --> Fucking ugly side <-- ///
 
-__attribute__((noreturn)) void halt()
+extern "C" __attribute__((used, retain, noreturn)) void fast_exit()
 {
 	asm (".insn i SYSTEM, 0, x0, x0, 0x7ff");
 	__builtin_unreachable();
 }
 
-#define STRINGIFY_HELPER(x) #x
-#define STRINGIFY(x) STRINGIFY_HELPER(x)
-
-static inline void print(const char* text, size_t len)
-{
-	register const char* a0 asm("a0") = text;
-	register size_t a1 asm("a1") = len;
-	register int    a7 asm("a7") = ECALL_PRINT;
-
-	asm volatile("ecall"
-		:
-		: "r"(a0), "m"(*a0), "r"(a1), "r"(a7)
-		: "memory");
-}
+MAKE_SYSCALL(ECALL_PRINT, void, sys_print, const char*, size_t);
 
 /// --> Nice side <-- ///
 
@@ -32,7 +19,7 @@ struct UtilityFunctions
 {
 	static void print(std::string_view text)
 	{
-		::print(text.data(), text.size());
+		sys_print(text.data(), text.size());
 	}
 };
 
@@ -42,7 +29,7 @@ int main()
 
 	// do shit here...
 
-	halt();
+	fast_exit();
 }
 
 extern "C"
