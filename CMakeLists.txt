@@ -18,6 +18,7 @@ endif()
 add_subdirectory(godot-cpp)
 
 # Add sandboxing library
+option(RISCV_BINARY_TRANSLATION "" ON)
 add_subdirectory(libriscv/lib libriscv)
 target_compile_definitions(riscv PUBLIC
 	RISCV_SYSCALLS_MAX=600

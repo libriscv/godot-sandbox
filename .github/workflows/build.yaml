@@ -36,15 +36,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ccache ninja-build
 
-      - name: Install Dependencies (Windows)
-        if: matrix.config.os == 'windows-latest'
-        run: |
-          choco upgrade ccache ninja
-
-      - name: Setup MSVC (Windows)
-        if: matrix.config.os == 'windows-latest'
-        uses: ilammy/msvc-dev-cmd@v1
-
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
@@ -52,34 +43,37 @@ jobs:
           key: ${{ matrix.config.os }}-${{ matrix.build_type }}
 
       - name: Configure
-        run: >
-          mkdir GDExtension-build
-
-          cmake
-          -B GDExtension-build
-          -G "Ninja"
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-          --install-prefix ${{ github.workspace }}/install-${{ matrix.build_type }}
-          .
+        run: |
+          mkdir -p GDExtension-build
+          cmake -B GDExtension-build -G "Ninja" -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} .
 
       - name: Build
         run: cmake --build GDExtension-build
 
-      - name: Install
-        run: cmake --install GDExtension-build
-
-      - name: Upload artifact (Debug)
-        if: matrix.build_type == 'Debug'
+      - name: Upload artifact (Debug - Linux)
+        if: matrix.config.os == 'ubuntu-latest' && matrix.build_type == 'Debug'
         uses: actions/upload-artifact@v3
         with:
-          name: ${{ github.event.repository.name }}-Debug
-          path: |
-            ${{ github.workspace }}/install-${{ matrix.build_type }}/*
+          name: ${{ github.event.repository.name }}-Debug-Linux
+          path: ${{ github.workspace }}/GDExtension-build/libgodot-riscv.so
 
-      - name: Upload artifact (Release)
-        if: matrix.build_type == 'Release'
+      - name: Upload artifact (Debug - macOS)
+        if: matrix.config.os == 'macos-latest' && matrix.build_type == 'Debug'
         uses: actions/upload-artifact@v3
         with:
-          name: ${{ github.event.repository.name }}-Release
-          path: |
-            ${{ github.workspace }}/install-${{ matrix.build_type }}/*
+          name: ${{ github.event.repository.name }}-Debug-macOS
+          path: ${{ github.workspace }}/GDExtension-build/libgodot-riscv.dylib
+
+      - name: Upload artifact (Release - Linux)
+        if: matrix.config.os == 'ubuntu-latest' && matrix.build_type == 'Release'
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ github.event.repository.name }}-Release-Linux
+          path: ${{ github.workspace }}/GDExtension-build/libgodot-riscv.so
+
+      - name: Upload artifact (Release - macOS)
+        if: matrix.config.os == 'macos-latest' && matrix.build_type == 'Release'
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ github.event.repository.name }}-Release-macOS
+          path: ${{ github.workspace }}/GDExtension-build/libgodot-riscv.dylib
