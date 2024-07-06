@@ -1,6 +1,8 @@
 #include "riscv.hpp"
 #include "syscalls.h"
 
+#include <godot_cpp/variant/utility_functions.hpp>
+
 namespace riscv
 {
 	inline RiscvEmulator& emu(machine_t& m)
@@ -12,9 +14,13 @@ namespace riscv
 
 	APICALL(api_print)
 	{
-		auto [view] = machine.sysargs<std::string_view>();
+		auto [view] = machine.sysargs<std::span<GuestVariant>>();
 
-		emu(machine).print(view);
+		// We really want print_internal to be a public function.
+		for (const auto& var : view)
+		{
+			UtilityFunctions::print(var.toVariant(machine));
+		}
 	}
 
 }

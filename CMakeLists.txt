@@ -4,6 +4,7 @@ project(riscv CXX)
 option(SANITIZE    "Enable sanitizers" OFF)
 
 set(SOURCES
+	src/gvar.cpp
 	src/shmain.cpp
     src/register_types.cpp
 	src/syscalls.cpp
