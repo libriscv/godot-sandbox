@@ -141,6 +141,23 @@ struct Variant
 	operator float() const;
 	operator std::string() const;
 
+	void callp(const std::string &method, const Variant **args, int argcount, Variant &r_ret, int &r_error);
+
+	template <typename... Args>
+	Variant call(const std::string &method, Args... args) {
+		std::array<Variant, sizeof...(args)> vargs = { args... };
+		std::array<const Variant *, sizeof...(args)> argptrs;
+		for (size_t i = 0; i < vargs.size(); i++) {
+			argptrs[i] = &vargs[i];
+		}
+		Variant result;
+		int error;
+		callp(method, argptrs.data(), argptrs.size(), result, error);
+		return result;
+	}
+
+	static void evaluate(const Operator &op, const Variant &a, const Variant &b, Variant &r_ret, bool &r_valid);
+
 	Variant &operator=(const Variant &other);
 	Variant &operator=(Variant &&other);
 	bool operator==(const Variant &other) const;
@@ -258,7 +275,6 @@ inline Variant &Variant::operator=(const Variant &other) {
 
 	return *this;
 }
-
 inline Variant &Variant::operator=(Variant &&other) {
 	m_type = other.m_type;
 	if (m_type == STRING)
@@ -268,4 +284,32 @@ inline Variant &Variant::operator=(Variant &&other) {
 
 	other.m_type = NIL;
 	return *this;
+}
+
+inline bool Variant::operator==(const Variant &other) const {
+	if (get_type() != other.get_type()) {
+		return false;
+	}
+	bool valid = false;
+	Variant result;
+	evaluate(OP_EQUAL, *this, other, result, valid);
+	return result.operator bool();
+}
+inline bool Variant::operator!=(const Variant &other) const {
+	if (get_type() != other.get_type()) {
+		return true;
+	}
+	bool valid = false;
+	Variant result;
+	evaluate(OP_NOT_EQUAL, *this, other, result, valid);
+	return result.operator bool();
+}
+inline bool Variant::operator<(const Variant &other) const {
+	if (get_type() != other.get_type()) {
+		return get_type() < other.get_type();
+	}
+	bool valid = false;
+	Variant result;
+	evaluate(OP_LESS, *this, other, result, valid);
+	return result.operator bool();
 }

@@ -3,7 +3,9 @@
 
 // System calls written in assembly
 #define ECALL_PRINT          (GAME_API_BASE+0)
-#define ECALL_LAST           (GAME_API_BASE+1)
+#define ECALL_VCALL          (GAME_API_BASE+1)
+#define ECALL_VEVAL          (GAME_API_BASE+2)
+#define ECALL_LAST           (GAME_API_BASE+3)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
