@@ -52,3 +52,9 @@ void my_function()
 {
 	UtilityFunctions::print("Hello, ", 124.5, " world!\n");
 }
+
+extern "C"
+void function3(int x, double y, const char* text)
+{
+	UtilityFunctions::print("x = ", x, " y = ", y, " text = ", text);
+}

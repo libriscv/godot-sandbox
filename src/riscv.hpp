@@ -11,6 +11,7 @@ using namespace godot;
 #define RISCV_ARCH riscv::RISCV64
 using gaddr_t = riscv::address_type<RISCV_ARCH>;
 using machine_t = riscv::Machine<RISCV_ARCH>;
+#include "vmcallable.hpp"
 
 class RiscvEmulator : public Control
 {
@@ -32,15 +33,20 @@ public:
 
 	// Functions.
 	void load(const PackedByteArray& buffer, const TypedArray<String>& arguments);
-	Variant vmcall(String function,
-		const Array& args = Array());
+	// Make a function call to a function in the guest by its name.
+	Variant vmcall(String function, const Array& args = Array());
+	Variant vmcall_address(gaddr_t address, const Array& args = Array());
+	// Make a callable object that will call a function in the guest by its name.
+	Variant vmcallable(String function);
 
 	void print(std::string_view text);
 	gaddr_t address_of(std::string_view name) const;
+	gaddr_t cached_address_of(String name) const;
 
 	static Variant GetVariant(const machine_t& machine, gaddr_t address);
 	static void SetVariant(machine_t& machine, gaddr_t address, Variant value);
 
+	Variant vmcall_internal(gaddr_t address, const Variant** args, int argc);
 private:
 	void execute();
 	void handle_exception(gaddr_t);
@@ -50,7 +56,7 @@ private:
 	machine_t* m_machine = nullptr;
 	std::vector<uint8_t> m_binary;
 
-	Dictionary m_lookup;
+	mutable Dictionary m_lookup;
 
 	bool m_last_newline = false;
 	unsigned m_budget_overruns = 0;
