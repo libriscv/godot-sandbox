@@ -6,6 +6,7 @@
 
 #include <godot_cpp/core/binder_common.hpp>
 #include <libriscv/machine.hpp>
+#include <libriscv/native_heap.hpp>
 
 using namespace godot;
 #define RISCV_ARCH riscv::RISCV64
@@ -86,6 +87,45 @@ struct GuestStdString
 	String to_godot_string(const machine_t& machine, std::size_t max_len = 16UL << 20) const
 	{
 		return String(to_string(machine, max_len).c_str());
+	}
+
+	void set_string(machine_t& machine, gaddr_t self, const char* str, std::size_t len)
+	{
+		if (len <= SSO)
+		{
+			this->ptr = self + offsetof(GuestStdString, data);
+			std::memcpy(this->data, str, len);
+			this->data[len] = '\0';
+			this->size = len;
+		}
+		else
+		{
+			// Allocate memory for the string
+			this->ptr = machine.arena().malloc(len + 1);
+			this->size = len;
+			// Copy the string to guest memory
+			auto view = machine.memory.rvspan<char>(ptr, len);
+			std::memcpy(view.data(), data, len);
+			view[len] = '\0';
+			this->capacity = len;
+		}
+	}
+};
+
+struct GuestStdVector
+{
+	gaddr_t ptr;
+	std::size_t size;
+	std::size_t capacity;
+
+	template <typename T>
+	std::vector<T> to_vector(const machine_t& machine) const
+	{
+		if (size > capacity)
+			throw std::runtime_error("Guest std::vector has size > capacity");
+		// Copy the vector from guest memory
+		const auto view = machine.memory.rvspan<T>(ptr, size);
+		return std::vector<T>(view.begin(), view.end());
 	}
 };
 

@@ -3,6 +3,7 @@
 #include <string_view>
 #include <cstdio>
 #include "variant.hpp"
+#include <span>
 
 template <typename T>
 using remove_cvref = std::remove_cv_t<std::remove_reference_t<T>>;
@@ -54,7 +55,8 @@ void my_function()
 }
 
 extern "C"
-void function3(int x, double y, const char* text)
+void function3(std::span<Variant> args)
 {
-	UtilityFunctions::print("x = ", x, " y = ", y, " text = ", text);
+	UtilityFunctions::print("x = ", args[0], " y = ", args[1], " text = ", args[2]);
+	//UtilityFunctions::print("x = ", args[0], " y = ", args[1]);
 }

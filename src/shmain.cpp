@@ -15,6 +15,11 @@ using namespace godot;
 // 2. The Game-specific API, eg. whatever bullshit you need for your game to be fucking awesome.
 //    (will be implemented later)
 
+static constexpr size_t MAX_HEAP = 16ull << 20;
+static const int HEAP_SYSCALLS_BASE	  = 570;
+static const int MEMORY_SYSCALLS_BASE = 575;
+static const int THREADS_SYSCALL_BASE = 590;
+
 String RiscvEmulator::_to_string() const
 {
 	return "[ GDExtension::RiscvEmulator <--> Instance ID:" + uitos(get_instance_id()) + " ]";
@@ -72,6 +77,13 @@ void RiscvEmulator::load(const PackedByteArray& buffer, const TypedArray<String>
 
 		this->initialize_syscalls();
 
+		const auto heap_area = machine().memory.mmap_allocate(MAX_HEAP);
+
+		// Add native system call interfaces
+		machine().setup_native_heap(HEAP_SYSCALLS_BASE, heap_area, MAX_HEAP);
+		machine().setup_native_memory(MEMORY_SYSCALLS_BASE);
+		machine().setup_native_threads(THREADS_SYSCALL_BASE);
+
 		m.setup_linux({"program"});
 
 		m.simulate(MAX_INSTRUCTIONS);
@@ -97,47 +109,23 @@ Variant RiscvEmulator::vmcall_internal(gaddr_t address, const Variant** args, in
 	// setup calling convention
 	m_machine->setup_call();
 
-	int iarg = 0;
-	int farg = 0;
+	// Stack pointer
+	auto& sp  = m_machine->cpu.reg(2);
+	sp -= sizeof(GuestVariant) * argc;
 
 	for (size_t i = 0; i < argc; i++)
 	{
 		auto& arg = (*args)[i];
-		if (arg.get_type() == Variant::Type::STRING)
-		{
-			const auto ascii = arg.operator String().ascii();
-			const std::string_view sview {ascii.get_data(), (size_t)ascii.length()};
-			// XXX: We need to zero-terminate this string
-			auto addr = machine().stack_push(sview.data(), sview.size());
 
-			m_machine->cpu.reg(10 + iarg) = addr;
-			iarg++;
-			m_machine->cpu.reg(10 + iarg) = sview.size();
-			iarg++;
-		}
-		else if (arg.get_type() == Variant::Type::INT)
-		{
-			m_machine->cpu.reg(10 + iarg) = arg.operator int64_t();
-			iarg++;
-		}
-		else if (arg.get_type() == Variant::Type::FLOAT)
-		{
-			m_machine->cpu.registers().getfl(10 + farg).set_double(arg.operator double());
-			farg++;
-		}
-		else if (arg.get_type() == Variant::Type::NIL)
-		{
-			// do nothing
-		}
-		else if (arg.get_type() == Variant::Type::OBJECT)
-		{
-			// do nothing
-		}
-		else
-		{
-			UtilityFunctions::print("Unsupported argument type: ", arg.get_type());
-		}
+		const auto addr = sp + i * sizeof(GuestVariant);
+		SetVariant(*m_machine, addr, arg);
 	}
+	const auto spanDataPtr = sp;
+	sp &= ~gaddr_t(0xF); // align stack pointer
+
+	// Set up a std::span of GuestVariant
+	m_machine->cpu.reg(10) = spanDataPtr;
+	m_machine->cpu.reg(11) = argc;
 
 	try
 	{

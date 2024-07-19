@@ -45,6 +45,18 @@ void RiscvEmulator::SetVariant(machine_t& machine, gaddr_t address, Variant valu
 		v[0].type = Variant::FLOAT;
 		v[0].v.f = value;
 		break;
+	case Variant::STRING: {
+		v[0].type = Variant::STRING;
+		auto s = value.operator String();
+		auto str = s.utf8();
+		// Allocate memory for the GuestStdString (which is a std::string)
+		// TODO: Improve this by allocating string + contents + null terminator in one go
+		auto ptr = machine.arena().malloc(sizeof(GuestStdString));
+		auto gstr = machine.memory.rvspan<GuestStdString>(ptr, 1);
+		gstr[0].set_string(machine, ptr, str.get_data(), str.length());
+		v[0].v.s = ptr;
+		break;
+	}
 	default:
 		UtilityFunctions::print("SetVariant(): Unsupported type: ", value.get_type());
 		break;
