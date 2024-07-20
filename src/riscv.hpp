@@ -131,6 +131,7 @@ struct GuestStdVector
 
 struct GuestVariant {
 	Variant toVariant(const machine_t& machine) const;
+	void set(machine_t& machine, const Variant& value);
 
 	Variant::Type type;
 	union {

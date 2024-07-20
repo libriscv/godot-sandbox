@@ -22,6 +22,39 @@ Variant GuestVariant::toVariant(const machine_t& machine) const
 
 }
 
+void GuestVariant::set(machine_t& machine, const Variant& value)
+{
+	switch (value.get_type()) {
+	case Variant::BOOL:
+		this->type = Variant::BOOL;
+		this->v.b = value;
+		break;
+	case Variant::INT:
+		this->type = Variant::INT;
+		this->v.i = value;
+		break;
+	case Variant::FLOAT:
+		this->type = Variant::FLOAT;
+		this->v.f = value;
+		break;
+	case Variant::STRING: {
+		this->type = Variant::STRING;
+		auto s = value.operator String();
+		auto str = s.utf8();
+		// Allocate memory for the GuestStdString (which is a std::string)
+		// TODO: Improve this by allocating string + contents + null terminator in one go
+		auto ptr = machine.arena().malloc(sizeof(GuestStdString));
+		auto gstr = machine.memory.rvspan<GuestStdString>(ptr, 1);
+		gstr[0].set_string(machine, ptr, str.get_data(), str.length());
+		this->v.s = ptr;
+		break;
+	}
+	default:
+		UtilityFunctions::print("SetVariant(): Unsupported type: ", value.get_type());
+		break;
+	}
+}
+
 Variant RiscvEmulator::GetVariant(const machine_t& machine, gaddr_t address)
 {
 	auto v = machine.memory.rvspan<GuestVariant>(address, 1);
@@ -32,33 +65,5 @@ void RiscvEmulator::SetVariant(machine_t& machine, gaddr_t address, Variant valu
 {
 	auto v = machine.memory.rvspan<GuestVariant>(address, 1);
 
-	switch (value.get_type()) {
-	case Variant::BOOL:
-		v[0].type = Variant::BOOL;
-		v[0].v.b = value;
-		break;
-	case Variant::INT:
-		v[0].type = Variant::INT;
-		v[0].v.i = value;
-		break;
-	case Variant::FLOAT:
-		v[0].type = Variant::FLOAT;
-		v[0].v.f = value;
-		break;
-	case Variant::STRING: {
-		v[0].type = Variant::STRING;
-		auto s = value.operator String();
-		auto str = s.utf8();
-		// Allocate memory for the GuestStdString (which is a std::string)
-		// TODO: Improve this by allocating string + contents + null terminator in one go
-		auto ptr = machine.arena().malloc(sizeof(GuestStdString));
-		auto gstr = machine.memory.rvspan<GuestStdString>(ptr, 1);
-		gstr[0].set_string(machine, ptr, str.get_data(), str.length());
-		v[0].v.s = ptr;
-		break;
-	}
-	default:
-		UtilityFunctions::print("SetVariant(): Unsupported type: ", value.get_type());
-		break;
-	}
+	v[0].set(machine, value);
 }

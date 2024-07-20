@@ -112,20 +112,20 @@ Variant RiscvEmulator::vmcall_internal(gaddr_t address, const Variant** args, in
 	// Stack pointer
 	auto& sp  = m_machine->cpu.reg(2);
 	sp -= sizeof(GuestVariant) * argc;
+	const auto spanDataPtr = sp;
+	const auto spanElements = argc;
+
+	auto v = m_machine->memory.rvspan<GuestVariant>(spanDataPtr, spanElements);
 
 	for (size_t i = 0; i < argc; i++)
 	{
-		auto& arg = (*args)[i];
-
-		const auto addr = sp + i * sizeof(GuestVariant);
-		SetVariant(*m_machine, addr, arg);
+		v[i].set(*m_machine, (*args)[i]);
 	}
-	const auto spanDataPtr = sp;
 	sp &= ~gaddr_t(0xF); // align stack pointer
 
 	// Set up a std::span of GuestVariant
 	m_machine->cpu.reg(10) = spanDataPtr;
-	m_machine->cpu.reg(11) = argc;
+	m_machine->cpu.reg(11) = spanElements;
 
 	try
 	{
