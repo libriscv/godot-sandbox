@@ -5,6 +5,8 @@
 Variant GuestVariant::toVariant(const machine_t& machine) const
 {
 	switch (type) {
+	case Variant::NIL:
+		return Variant();
 	case Variant::BOOL:
 		return v.b;
 	case Variant::INT:
@@ -15,23 +17,31 @@ Variant GuestVariant::toVariant(const machine_t& machine) const
 		auto s = machine.memory.rvspan<GuestStdString>(v.s, 1);
 		return s[0].to_godot_string(machine);
 	}
-	case Variant::CALLABLE: {
-		// XXX: Here we obviously need to verify that the variant
-		// is exactly as passed into the VM, and not something else.
-		printf("GuestVariant::toVariant(): CALLABLE\n");
-		Variant* hostv = (Variant*)v.opaque;
-		return *hostv;
-	}
+	case Variant::CALLABLE:
+		return Variant{*(Variant*)&v.opaque[0]};
 	default:
 		UtilityFunctions::print("GuestVariant::toVariant(): Unsupported type: ", type);
 		return Variant();
 	}
+}
 
+Variant* GuestVariant::toVariantPtr(const machine_t& machine) const
+{
+	switch (type) {
+	case Variant::CALLABLE: {
+		return (Variant*)&v.opaque[0];
+	}
+	default:
+		throw std::runtime_error("Don't use toVariantPtr() on unsupported type: " + std::to_string(type));
+	}
 }
 
 void GuestVariant::set(machine_t& machine, const Variant& value)
 {
 	switch (value.get_type()) {
+	case Variant::NIL:
+		this->type = Variant::NIL;
+		break;
 	case Variant::BOOL:
 		this->type = Variant::BOOL;
 		this->v.b = value;
@@ -58,7 +68,7 @@ void GuestVariant::set(machine_t& machine, const Variant& value)
 	}
 	case Variant::CALLABLE: {
 		this->type = Variant::CALLABLE;
-		std::memcpy(this->v.opaque, &value, sizeof(GuestVariant::GODOT_VARIANT_SIZE));
+		std::memcpy(this->v.opaque, &value, sizeof(Variant));
 		break;
 	}
 	default:

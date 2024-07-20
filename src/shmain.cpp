@@ -39,7 +39,8 @@ RiscvEmulator::RiscvEmulator()
 	// class is well-formed at all times.
 	this->m_machine = new machine_t { };
 	set_name("(name)");
-	UtilityFunctions::print("Constructor.");
+	UtilityFunctions::print("Constructor, sizeof(Variant) == ", sizeof(Variant));
+	UtilityFunctions::print("Constructor, alignof(Variant) == ", alignof(Variant));
 }
 
 RiscvEmulator::~RiscvEmulator()
@@ -92,23 +93,27 @@ void RiscvEmulator::load(const PackedByteArray& buffer, const TypedArray<String>
 	}
 }
 
-Variant RiscvEmulator::vmcall(String function, const Array& args)
-{
-	const Variant* vargs = &args[0];
-	return this->vmcall_internal(cached_address_of(function), &vargs, args.size());
-}
 Variant RiscvEmulator::vmcall_address(gaddr_t address, const Array& args)
 {
-	const Variant* vargs = &args[0];
-	return this->vmcall_internal(address, &vargs, args.size());
-}
-Variant RiscvEmulator::vmcall_internal(gaddr_t address, const Variant** args, int argc)
-{
-	// reset the stack pointer to an initial location (deliberately)
-	m_machine->cpu.reset_stack_pointer();
-	// setup calling convention
-	m_machine->setup_call();
+	std::array<const Variant*, 64> vargs;
+	if (args.size() >= vargs.size())
+	{
+		UtilityFunctions::print("Too many arguments.");
+		return -1;
+	}
 
+	for (size_t i = 0; i < args.size(); i++)
+	{
+		vargs[i] = &args[i];
+	}
+	return this->vmcall_internal(address, vargs.data(), args.size());
+}
+Variant RiscvEmulator::vmcall(String function, const Array& args)
+{
+	return this->vmcall_address(cached_address_of(function), args);
+}
+void RiscvEmulator::setup_arguments(const Variant** args, int argc)
+{
 	// Stack pointer
 	auto& sp  = m_machine->cpu.reg(2);
 	sp -= sizeof(GuestVariant) * argc;
@@ -119,6 +124,7 @@ Variant RiscvEmulator::vmcall_internal(gaddr_t address, const Variant** args, in
 
 	for (size_t i = 0; i < argc; i++)
 	{
+		//printf("args[%zu] = type %d\n", i, int(args[i]->get_type()));
 		v[i].set(*m_machine, (*args)[i]);
 	}
 	sp &= ~gaddr_t(0xF); // align stack pointer
@@ -126,16 +132,48 @@ Variant RiscvEmulator::vmcall_internal(gaddr_t address, const Variant** args, in
 	// Set up a std::span of GuestVariant
 	m_machine->cpu.reg(10) = spanDataPtr;
 	m_machine->cpu.reg(11) = spanElements;
-
+}
+Variant RiscvEmulator::vmcall_internal(gaddr_t address, const Variant** args, int argc)
+{
 	try
 	{
+		m_level ++;
 		// execute guest function
-		m_machine->simulate_with<true>(MAX_INSTRUCTIONS, 0u, address);
+		if (m_level == 1)
+		{
+			// reset the stack pointer to an initial location (deliberately)
+			m_machine->cpu.reset_stack_pointer();
+			// setup calling convention
+			m_machine->setup_call();
+			// set up each argument
+			this->setup_arguments(args, argc);
+			// execute!
+			m_machine->simulate_with(MAX_INSTRUCTIONS, 0u, address);
+		}
+		else if (m_level > 1 && m_level < MAX_LEVEL)
+		{
+			riscv::Registers<RISCV_ARCH> regs;
+			regs = m_machine->cpu.registers();
+			// we need to make some stack room
+			m_machine->cpu.reg(riscv::REG_SP) -= 16u;
+			// setup calling convention
+			m_machine->setup_call();
+			// set up each argument
+			this->setup_arguments(args, argc);
+			// execute!
+			return m_machine->cpu.preempt_internal(regs, true, address, MAX_INSTRUCTIONS);
+		}
+		else
+		{
+			throw std::runtime_error("Recursion level exceeded");
+		}
 
+		m_level --;
 		return m_machine->return_value<int64_t>();
 	}
 	catch (const std::exception& e)
 	{
+		m_level --;
 		this->handle_exception(address);
 	}
 	return -1;

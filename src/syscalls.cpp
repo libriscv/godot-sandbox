@@ -29,7 +29,6 @@ namespace riscv
 		(void)mlen;
 
 		auto& emu = riscv::emu(machine);
-
 		emu.print("Calling method: " + std::string(method));
 
 		std::array<Variant, 64> vargs;
@@ -39,20 +38,18 @@ namespace riscv
 			emu.print("Too many arguments.");
 			return;
 		}
-		printf("args.size() = %zu\n", args.size());
 
 		for (size_t i = 0; i < args.size(); i++)
 		{
-			printf("args[%zu] = %p\n", i, &args[i]);
 			vargs[i] = args[i].toVariant(machine);
 			argptrs[i] = &vargs[i];
 		}
 
-		auto vcall = vp->toVariant(machine);
-		Variant ret;
 		GDExtensionCallError error;
-		vcall.callp(method.c_str(), argptrs.data(), args.size(), ret, error);
 
+		auto* vcall = vp->toVariantPtr(machine);
+		Variant ret;
+		vcall->callp("call", argptrs.data(), args.size(), ret, error);
 		vret->set(machine, ret);
 	}
 

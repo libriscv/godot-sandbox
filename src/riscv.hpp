@@ -25,6 +25,7 @@ protected:
 
 public:
 	static constexpr uint64_t MAX_INSTRUCTIONS = 16'000'000'000ULL;
+	static constexpr unsigned MAX_LEVEL = 8;
 
 	RiscvEmulator();
 	~RiscvEmulator();
@@ -53,6 +54,7 @@ private:
 	void handle_exception(gaddr_t);
 	void handle_timeout(gaddr_t);
 	void initialize_syscalls();
+	void setup_arguments(const Variant** args, int argc);
 
 	machine_t* m_machine = nullptr;
 	std::vector<uint8_t> m_binary;
@@ -60,6 +62,7 @@ private:
 	mutable Dictionary m_lookup;
 
 	bool m_last_newline = false;
+	uint8_t  m_level = 0;
 	unsigned m_budget_overruns = 0;
 };
 
@@ -131,15 +134,16 @@ struct GuestStdVector
 
 struct GuestVariant {
 	Variant toVariant(const machine_t& machine) const;
+	Variant* toVariantPtr(const machine_t& machine) const;
 	void set(machine_t& machine, const Variant& value);
 
-	static constexpr unsigned GODOT_VARIANT_SIZE = 24;
+	static constexpr unsigned GODOT_VARIANT_SIZE = sizeof(Variant);
 	Variant::Type type;
 	union {
+		uint8_t opaque[GODOT_VARIANT_SIZE];
 		bool    b;
 		int64_t i;
 		double  f;
 		gaddr_t s;
-		uint8_t opaque[GODOT_VARIANT_SIZE];
 	} v;
 };

@@ -70,6 +70,6 @@ extern "C"
 void trampoline_function(std::span<Variant> args)
 {
 	UtilityFunctions::print("Trampoline is calling first argument...\n");
-	args[0].call("Hello World!");
-	UtilityFunctions::print("First argument called!\n");
+	args[0].call(1, 2, 3);
+	UtilityFunctions::print("After call...\n");
 }

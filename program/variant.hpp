@@ -173,8 +173,8 @@ struct Variant
 
 	Type get_type() const noexcept { return m_type; }
 
-private:
 	static constexpr unsigned GODOT_VARIANT_SIZE = 24;
+private:
 	Type m_type = NIL;
 	union {
 		uint8_t opaque[GODOT_VARIANT_SIZE] { 0 };
