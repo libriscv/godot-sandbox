@@ -39,8 +39,8 @@ RiscvEmulator::RiscvEmulator()
 	// class is well-formed at all times.
 	this->m_machine = new machine_t { };
 	set_name("(name)");
-	UtilityFunctions::print("Constructor, sizeof(Variant) == ", sizeof(Variant));
-	UtilityFunctions::print("Constructor, alignof(Variant) == ", alignof(Variant));
+    UtilityFunctions::print("Constructor, sizeof(Variant) == ", static_cast<int32_t>(sizeof(Variant)));
+    UtilityFunctions::print("Constructor, alignof(Variant) == ", static_cast<int32_t>(alignof(Variant)));
 }
 
 RiscvEmulator::~RiscvEmulator()
