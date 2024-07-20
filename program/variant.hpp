@@ -102,6 +102,8 @@ struct Variant
 	};
 
 	Variant() = default;
+	Variant(const Variant &other);
+	Variant(Variant &&other);
 	~Variant();
 
 	// Constructor for integers and floats
@@ -141,18 +143,23 @@ struct Variant
 	operator float() const;
 	operator std::string() const;
 
-	void callp(const std::string &method, const Variant **args, int argcount, Variant &r_ret, int &r_error);
+	void callp(const std::string &method, const Variant *args, int argcount, Variant &r_ret, int &r_error);
 
 	template <typename... Args>
-	Variant call(const std::string &method, Args... args) {
+	Variant method_call(const std::string &method, Args... args) {
 		std::array<Variant, sizeof...(args)> vargs = { args... };
-		std::array<const Variant *, sizeof...(args)> argptrs;
-		for (size_t i = 0; i < vargs.size(); i++) {
-			argptrs[i] = &vargs[i];
-		}
 		Variant result;
 		int error;
-		callp(method, argptrs.data(), argptrs.size(), result, error);
+		callp(method, vargs.data(), vargs.size(), result, error);
+		return result;
+	}
+
+	template <typename... Args>
+	Variant call(Args... args) {
+		std::array<Variant, sizeof...(args)> vargs = { args... };
+		Variant result;
+		int error;
+		callp("call", vargs.data(), vargs.size(), result, error);
 		return result;
 	}
 
@@ -167,8 +174,10 @@ struct Variant
 	Type get_type() const noexcept { return m_type; }
 
 private:
+	static constexpr unsigned GODOT_VARIANT_SIZE = 24;
 	Type m_type = NIL;
 	union {
+		uint8_t opaque[GODOT_VARIANT_SIZE] { 0 };
 		bool    b;
 		int64_t i;
 		double  f;
@@ -260,6 +269,24 @@ inline Variant::operator std::string() const
 	throw std::bad_cast();
 }
 
+inline Variant::Variant(const Variant &other)
+{
+	m_type = other.m_type;
+	if (m_type == STRING)
+		v.s = new std::string(*other.v.s);
+	else
+		v = other.v;
+}
+inline Variant::Variant(Variant &&other)
+{
+	m_type = other.m_type;
+	if (m_type == STRING)
+		v.s = other.v.s;
+	else
+		v = other.v;
+
+	other.m_type = NIL;
+}
 inline Variant::~Variant()
 {
 	if (m_type == STRING)

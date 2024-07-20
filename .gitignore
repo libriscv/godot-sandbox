@@ -1,4 +1,5 @@
 build/
 .build/
+.mingw/
 .vscode/
 program/test

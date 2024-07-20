@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.9.4)
 project(riscv CXX)
 
 option(SANITIZE    "Enable sanitizers" OFF)
+option(STATIC_BUILD "Build statically" OFF)
 
 set(SOURCES
 	src/gvar.cpp
@@ -10,6 +11,9 @@ set(SOURCES
 	src/syscalls.cpp
 )
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
+
+# Check if MinGW
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20")
 
 if (SANITIZE)
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address,undefined")
@@ -29,3 +33,7 @@ target_compile_definitions(riscv PUBLIC
 
 add_library(godot-riscv SHARED ${SOURCES})
 target_link_libraries(godot-riscv PUBLIC riscv godot-cpp)
+
+if (STATIC_BUILD)
+	target_link_libraries(godot-riscv PUBLIC -static)
+endif()

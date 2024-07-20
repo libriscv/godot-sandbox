@@ -49,7 +49,7 @@ int main()
 }
 
 extern "C"
-void my_function()
+void my_function(std::span<Variant> args)
 {
 	UtilityFunctions::print("Hello, ", 124.5, " world!\n");
 }
@@ -59,4 +59,17 @@ void function3(std::span<Variant> args)
 {
 	UtilityFunctions::print("x = ", args[0], " y = ", args[1], " text = ", args[2]);
 	//UtilityFunctions::print("x = ", args[0], " y = ", args[1]);
+}
+
+extern "C"
+void final_function(std::span<Variant> args)
+{
+	UtilityFunctions::print("The function was called!!\n");
+}
+extern "C"
+void trampoline_function(std::span<Variant> args)
+{
+	UtilityFunctions::print("Trampoline is calling first argument...\n");
+	args[0].call("Hello World!");
+	UtilityFunctions::print("First argument called!\n");
 }

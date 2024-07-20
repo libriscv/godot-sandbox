@@ -133,11 +133,13 @@ struct GuestVariant {
 	Variant toVariant(const machine_t& machine) const;
 	void set(machine_t& machine, const Variant& value);
 
+	static constexpr unsigned GODOT_VARIANT_SIZE = 24;
 	Variant::Type type;
 	union {
 		bool    b;
 		int64_t i;
 		double  f;
 		gaddr_t s;
+		uint8_t opaque[GODOT_VARIANT_SIZE];
 	} v;
 };

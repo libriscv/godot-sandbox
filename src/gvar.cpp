@@ -15,6 +15,13 @@ Variant GuestVariant::toVariant(const machine_t& machine) const
 		auto s = machine.memory.rvspan<GuestStdString>(v.s, 1);
 		return s[0].to_godot_string(machine);
 	}
+	case Variant::CALLABLE: {
+		// XXX: Here we obviously need to verify that the variant
+		// is exactly as passed into the VM, and not something else.
+		printf("GuestVariant::toVariant(): CALLABLE\n");
+		Variant* hostv = (Variant*)v.opaque;
+		return *hostv;
+	}
 	default:
 		UtilityFunctions::print("GuestVariant::toVariant(): Unsupported type: ", type);
 		return Variant();
@@ -47,6 +54,11 @@ void GuestVariant::set(machine_t& machine, const Variant& value)
 		auto gstr = machine.memory.rvspan<GuestStdString>(ptr, 1);
 		gstr[0].set_string(machine, ptr, str.get_data(), str.length());
 		this->v.s = ptr;
+		break;
+	}
+	case Variant::CALLABLE: {
+		this->type = Variant::CALLABLE;
+		std::memcpy(this->v.opaque, &value, sizeof(GuestVariant::GODOT_VARIANT_SIZE));
 		break;
 	}
 	default:

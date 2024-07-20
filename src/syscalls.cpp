@@ -25,11 +25,12 @@ namespace riscv
 
 	APICALL(api_vcall)
 	{
-		auto [vp, method, args, vret] = machine.sysargs<GuestVariant*, GuestStdString, std::span<GuestVariant>, GuestVariant*>();
+		auto [vp, method, mlen, args, vret] = machine.sysargs<GuestVariant*, std::string, unsigned, std::span<GuestVariant>, GuestVariant*>();
+		(void)mlen;
 
 		auto& emu = riscv::emu(machine);
 
-		emu.print("Calling method: " + method.to_string(machine));
+		emu.print("Calling method: " + std::string(method));
 
 		std::array<Variant, 64> vargs;
 		std::array<const Variant*, 64> argptrs;
@@ -38,9 +39,11 @@ namespace riscv
 			emu.print("Too many arguments.");
 			return;
 		}
+		printf("args.size() = %zu\n", args.size());
 
 		for (size_t i = 0; i < args.size(); i++)
 		{
+			printf("args[%zu] = %p\n", i, &args[i]);
 			vargs[i] = args[i].toVariant(machine);
 			argptrs[i] = &vargs[i];
 		}
@@ -48,10 +51,9 @@ namespace riscv
 		auto vcall = vp->toVariant(machine);
 		Variant ret;
 		GDExtensionCallError error;
-		vcall.callp(method.to_godot_string(machine), argptrs.data(), args.size(), ret, error);
+		vcall.callp(method.c_str(), argptrs.data(), args.size(), ret, error);
 
-		// XXX: Set vret to ret.
-		//*vret = GuestVariant::fromVariant(machine, ret);
+		vret->set(machine, ret);
 	}
 
 	APICALL(api_veval)
@@ -67,7 +69,7 @@ namespace riscv
 		Variant::evaluate(static_cast<Variant::Operator>(op), ap->toVariant(machine), bp->toVariant(machine), ret, valid);
 
 		machine.set_result(valid);
-		// XXX: Set retp to ret.
+		retp->set(machine, ret);
 	}
 
 }
