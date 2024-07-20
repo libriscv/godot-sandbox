@@ -58,7 +58,6 @@ extern "C"
 void function3(std::span<Variant> args)
 {
 	UtilityFunctions::print("x = ", args[0], " y = ", args[1], " text = ", args[2]);
-	//UtilityFunctions::print("x = ", args[0], " y = ", args[1]);
 }
 
 extern "C"
