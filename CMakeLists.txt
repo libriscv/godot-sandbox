@@ -3,6 +3,7 @@ project(riscv CXX)
 
 option(SANITIZE    "Enable sanitizers" OFF)
 option(STATIC_BUILD "Build statically" OFF)
+set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries")
 
 set(SOURCES
 	src/gvar.cpp
