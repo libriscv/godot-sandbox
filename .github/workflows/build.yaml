@@ -16,6 +16,7 @@ jobs:
         config:
           - { name: "🍏 macOS Clang", os: macos-latest }
           - { name: "🐧 Linux GCC", os: ubuntu-latest }
+          - { name: "🪟 Windows MinGW", os: windows-latest }
 
     name: 🛠 Build / ${{ matrix.config.name }} (${{ matrix.build_type }})
     runs-on: ${{ matrix.config.os }}
@@ -35,6 +36,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ccache ninja-build
+
+      - name: Install Dependencies (Windows)
+        if: matrix.config.os == 'windows-latest'
+        run: |
+          choco install mingw
+          choco install ninja
+          choco install ccache
 
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -64,6 +72,13 @@ jobs:
           name: ${{ github.event.repository.name }}-Debug-macOS
           path: ${{ github.workspace }}/GDExtension-build/libgodot-riscv.dylib
 
+      - name: Upload artifact (Debug - Windows)
+        if: matrix.config.os == 'windows-latest' && matrix.build_type == 'Debug'
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ github.event.repository.name }}-Debug-Windows
+          path: ${{ github.workspace }}/GDExtension-build/libgodot-riscv.dll
+
       - name: Upload artifact (Release - Linux)
         if: matrix.config.os == 'ubuntu-latest' && matrix.build_type == 'Release'
         uses: actions/upload-artifact@v3
@@ -77,3 +92,10 @@ jobs:
         with:
           name: ${{ github.event.repository.name }}-Release-macOS
           path: ${{ github.workspace }}/GDExtension-build/libgodot-riscv.dylib
+
+      - name: Upload artifact (Release - Windows)
+        if: matrix.config.os == 'windows-latest' && matrix.build_type == 'Release'
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ github.event.repository.name }}-Release-Windows
+          path: ${{ github.workspace }}/GDExtension-build/libgodot-riscv.dll
