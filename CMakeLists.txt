@@ -3,7 +3,6 @@ project(riscv CXX)
 
 option(SANITIZE    "Enable sanitizers" OFF)
 option(STATIC_BUILD "Build statically" OFF)
-set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries")
 
 set(SOURCES
     src/gvar.cpp
@@ -12,7 +11,6 @@ set(SOURCES
 	src/syscalls.cpp
 )
 
-set(BUILD_SHARED_LIBS  OFF)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
 
 if (MINGW)    
@@ -34,7 +32,9 @@ target_compile_definitions(riscv PUBLIC
 	RISCV_SYSCALLS_MAX=600
 	RISCV_BRK_MEMORY_SIZE=0x100000  # 1MB (we don't need much)
 )
-
+if (RISCV_LIBTCC)
+	target_compile_options(libtcc PRIVATE -fPIC)
+endif()
 
 add_library(godot-riscv SHARED ${SOURCES})
 target_link_libraries(godot-riscv PUBLIC riscv godot-cpp)
