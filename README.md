@@ -1,6 +1,6 @@
 ## Sandboxing for Godot
 
-This GDExtension implements safe, low-latency sandboxing for Godot. It is not a convenience layer for other languages, unlike other ports/bindings. This extension exists to allow Godot creators to implement safe modding support, such that they can pass around programs built by other players, knowing that these programs cannot harm other players.
+This GDExtension implements safe, low-latency sandboxing for Godot. It is not a convenience layer for other languages, unlike language ports/bindings. This extension exists to allow Godot creators to implement safe modding support, such that they can pass around programs built by other players, knowing that these programs cannot harm other players.
 
 ```gdscript
 	var f = FileAccess.open("res://riscv/test", FileAccess.READ);
@@ -10,7 +10,7 @@ This GDExtension implements safe, low-latency sandboxing for Godot. It is not a 
 	v.load(f.get_buffer(f.get_length()), []);
 
 	# Make a function call into the sandbox
-	v.vmcall("my_function", []);
+	v.vmcall("my_function", Vector4(1, 2, 3, 4));
 
 	# Create a callable Variant, and then call it later
 	var callable = v.vmcallable("function3");
@@ -18,7 +18,7 @@ This GDExtension implements safe, low-latency sandboxing for Godot. It is not a 
 
 	# Pass a function to the sandbox as a callable Variant, and let it call it
 	var ff : Callable = v.vmcallable("final_function");
-	v.vmcall("trampoline_function", [ff]);
+	v.vmcall("trampoline_function", ff);
 ```
 
 The API towards the sandbox uses Variants, and the API inside the sandbox uses (translated) Variants.
@@ -31,13 +31,12 @@ void function3(std::span<Variant> args)
 }
 ```
 
-Example C++ function in the sandbox.
+Above: An example of a sandboxed C++ function.
 
 ### What can I do?
 
 - You can implement a modding API for your game, to be used inside the sandbox. This API can then be used by other players to extend your game, in a safe manner. That is, they can send their mod to other people, including you, and they (and you) can assume that it is safe to try out the mod. The mod is *not supposed* to be able to do any harm. That is the whole point of this extension.
 - You can implement support for your favorite language inside the sandbox. The sandbox receives Variants from Godot or GDScript, and can respond back with Variants. This means the communication is fully dynamic, and supports normal Godot usage. 
-- 
 
 Languages that are known to work inside _libriscv_:
 1. QuickJS

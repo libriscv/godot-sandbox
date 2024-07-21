@@ -34,8 +34,8 @@ public:
 	// Functions.
 	void load(const PackedByteArray& buffer, const TypedArray<String>& arguments);
 	// Make a function call to a function in the guest by its name.
-	Variant vmcall(String function, const Array& args = Array());
-	Variant vmcall_address(gaddr_t address, const Array& args = Array());
+	Variant vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
+	Variant vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
 	// Make a callable object that will call a function in the guest by its name.
 	Variant vmcallable(String function);
 

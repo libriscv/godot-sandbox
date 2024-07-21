@@ -29,7 +29,13 @@ void RiscvEmulator::_bind_methods()
 {
 	// Methods.
 	ClassDB::bind_method(D_METHOD("load"), &RiscvEmulator::load);
-	ClassDB::bind_method(D_METHOD("vmcall"), &RiscvEmulator::vmcall);
+	{
+		MethodInfo mi;
+		mi.arguments.push_back(PropertyInfo(Variant::STRING, "function"));
+		mi.name = "vmcall";
+		mi.return_val = PropertyInfo(Variant::OBJECT, "result");
+		ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "vmcall", &RiscvEmulator::vmcall, mi);
+	}
 	ClassDB::bind_method(D_METHOD("vmcallable"), &RiscvEmulator::vmcallable);
 }
 
@@ -93,24 +99,22 @@ void RiscvEmulator::load(const PackedByteArray& buffer, const TypedArray<String>
 	}
 }
 
-Variant RiscvEmulator::vmcall_address(gaddr_t address, const Array& args)
+Variant RiscvEmulator::vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error)
 {
-	std::array<const Variant*, 64> vargs;
-	if (args.size() >= vargs.size())
-	{
-		UtilityFunctions::print("Too many arguments.");
-		return -1;
-	}
-
-	for (size_t i = 0; i < args.size(); i++)
-	{
-		vargs[i] = &args[i];
-	}
-	return this->vmcall_internal(address, vargs.data(), args.size());
+	error.error = GDEXTENSION_CALL_OK;
+	return this->vmcall_internal(address, args, arg_count);
 }
-Variant RiscvEmulator::vmcall(String function, const Array& args)
+Variant RiscvEmulator::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error)
 {
-	return this->vmcall_address(cached_address_of(function), args);
+	if (arg_count < 1)
+	{
+		error.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+		return Variant();
+	}
+	auto function = args[0]->operator String();
+	args      += 1;
+	arg_count -= 1;
+	return this->vmcall_address(cached_address_of(function), args, arg_count, error);
 }
 void RiscvEmulator::setup_arguments(const Variant** args, int argc)
 {
