@@ -1,8 +1,6 @@
 #pragma once
 
 #include <godot_cpp/classes/control.hpp>
-#include <godot_cpp/classes/global_constants.hpp>
-#include <godot_cpp/classes/viewport.hpp>
 
 #include <godot_cpp/core/binder_common.hpp>
 #include <libriscv/machine.hpp>
@@ -145,5 +143,11 @@ struct GuestVariant {
 		int64_t i;
 		double  f;
 		gaddr_t s;
+		std::array<float, 2> v2f;
+		std::array<float, 3> v3f;
+		std::array<float, 4> v4f;
+		std::array<int32_t, 2> v2i;
+		std::array<int32_t, 3> v3i;
+		std::array<int32_t, 4> v4i;
 	} v;
 };

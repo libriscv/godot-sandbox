@@ -52,6 +52,8 @@ extern "C"
 void my_function(std::span<Variant> args)
 {
 	UtilityFunctions::print("Hello, ", 124.5, " world!\n");
+	for (size_t i = 0; i < args.size(); i++)
+		UtilityFunctions::print("Arg ", i, ": ", args[i]);
 }
 
 extern "C"

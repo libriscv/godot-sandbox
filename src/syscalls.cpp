@@ -87,6 +87,4 @@ void RiscvEmulator::initialize_syscalls()
 		{ECALL_VEVAL, api_veval},
 	});
 
-
-
 }
