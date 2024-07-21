@@ -6,15 +6,19 @@ option(STATIC_BUILD "Build statically" OFF)
 set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries")
 
 set(SOURCES
-	src/gvar.cpp
-	src/shmain.cpp
+    src/gvar.cpp
+    src/shmain.cpp
     src/register_types.cpp
 	src/syscalls.cpp
 )
+
+set(BUILD_SHARED_LIBS  OFF)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
 
-# Check if MinGW
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20")
+if (MINGW)    
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libgcc -static-libstdc++ -static")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20")
+endif()
 
 if (SANITIZE)
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address,undefined")
@@ -36,5 +40,5 @@ add_library(godot-riscv SHARED ${SOURCES})
 target_link_libraries(godot-riscv PUBLIC riscv godot-cpp)
 
 if (STATIC_BUILD)
-	target_link_libraries(godot-riscv PUBLIC -static)
+    target_link_libraries(godot-riscv PUBLIC -static)
 endif()
