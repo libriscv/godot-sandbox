@@ -67,10 +67,20 @@ void final_function(std::span<Variant> args)
 {
 	UtilityFunctions::print("The function was called!!\n");
 }
+
+static Variant copy;
+
 extern "C"
 void trampoline_function(std::span<Variant> args)
 {
 	UtilityFunctions::print("Trampoline is calling first argument...\n");
 	args[0].call(1, 2, 3);
+	copy = args[0];
 	UtilityFunctions::print("After call...\n");
+}
+
+extern "C"
+void failing_function()
+{
+	copy.call(1, 2, 3);
 }

@@ -15,11 +15,12 @@ namespace riscv
 	APICALL(api_print)
 	{
 		auto [view] = machine.sysargs<std::span<GuestVariant>>();
+		auto& emu = riscv::emu(machine);
 
 		// We really want print_internal to be a public function.
 		for (const auto& var : view)
 		{
-			UtilityFunctions::print(var.toVariant(machine));
+			UtilityFunctions::print(var.toVariant(emu));
 		}
 	}
 
@@ -41,16 +42,16 @@ namespace riscv
 
 		for (size_t i = 0; i < args.size(); i++)
 		{
-			vargs[i] = args[i].toVariant(machine);
+			vargs[i] = args[i].toVariant(emu);
 			argptrs[i] = &vargs[i];
 		}
 
 		GDExtensionCallError error;
 
-		auto* vcall = vp->toVariantPtr(machine);
+		auto* vcall = vp->toVariantPtr(emu);
 		Variant ret;
 		vcall->callp("call", argptrs.data(), args.size(), ret, error);
-		vret->set(machine, ret);
+		vret->set(emu, ret);
 	}
 
 	APICALL(api_veval)
@@ -58,15 +59,15 @@ namespace riscv
 		auto [op, ap, bp, retp] = machine.sysargs<int, GuestVariant*, GuestVariant*, GuestVariant*>();
 
 		auto& emu = riscv::emu(machine);
-		auto ret = retp->toVariant(machine);
+		auto ret = retp->toVariant(emu);
 
 		emu.print("Evaluating operator: " + std::to_string(op));
 
 		auto valid = false;
-		Variant::evaluate(static_cast<Variant::Operator>(op), ap->toVariant(machine), bp->toVariant(machine), ret, valid);
+		Variant::evaluate(static_cast<Variant::Operator>(op), ap->toVariant(emu), bp->toVariant(emu), ret, valid);
 
 		machine.set_result(valid);
-		retp->set(machine, ret);
+		retp->set(emu, ret);
 	}
 
 }

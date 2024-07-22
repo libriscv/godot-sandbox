@@ -3,7 +3,6 @@
 #include <godot_cpp/core/class_db.hpp>
 
 #include <godot_cpp/classes/global_constants.hpp>
-#include <godot_cpp/classes/label.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <thread> // TODO: Use Godot's threading API.
 
@@ -129,7 +128,7 @@ void RiscvEmulator::setup_arguments(const Variant** args, int argc)
 	for (size_t i = 0; i < argc; i++)
 	{
 		//printf("args[%zu] = type %d\n", i, int(args[i]->get_type()));
-		v[i].set(*m_machine, (*args)[i]);
+		v[i].set(*this, (*args)[i]);
 	}
 	sp &= ~gaddr_t(0xF); // align stack pointer
 
@@ -173,11 +172,13 @@ Variant RiscvEmulator::vmcall_internal(gaddr_t address, const Variant** args, in
 		}
 
 		m_level --;
+		m_scoped_variants.clear();
 		return m_machine->return_value<int64_t>();
 	}
 	catch (const std::exception& e)
 	{
 		m_level --;
+		m_scoped_variants.clear();
 		this->handle_exception(address);
 	}
 	return -1;

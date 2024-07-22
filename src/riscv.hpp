@@ -5,6 +5,7 @@
 #include <godot_cpp/core/binder_common.hpp>
 #include <libriscv/machine.hpp>
 #include <libriscv/native_heap.hpp>
+#include <unordered_set>
 
 using namespace godot;
 #define RISCV_ARCH riscv::RISCV64
@@ -24,6 +25,7 @@ protected:
 public:
 	static constexpr uint64_t MAX_INSTRUCTIONS = 16'000'000'000ULL;
 	static constexpr unsigned MAX_LEVEL = 8;
+	static constexpr unsigned GODOT_VARIANT_SIZE = sizeof(Variant);
 
 	RiscvEmulator();
 	~RiscvEmulator();
@@ -43,10 +45,10 @@ public:
 	gaddr_t address_of(std::string_view name) const;
 	gaddr_t cached_address_of(String name) const;
 
-	static Variant GetVariant(const machine_t& machine, gaddr_t address);
-	static void SetVariant(machine_t& machine, gaddr_t address, Variant value);
-
 	Variant vmcall_internal(gaddr_t address, const Variant** args, int argc);
+
+	void add_scoped_variant(uint32_t hash) { m_scoped_variants.insert(hash); }
+	bool is_scoped_variant(uint32_t hash) const noexcept { return m_scoped_variants.count(hash) > 0; }
 private:
 	void execute();
 	void handle_exception(gaddr_t);
@@ -62,6 +64,8 @@ private:
 	bool m_last_newline = false;
 	uint8_t  m_level = 0;
 	unsigned m_budget_overruns = 0;
+
+	std::unordered_set<uint32_t> m_scoped_variants;
 };
 
 struct GuestStdString
@@ -131,9 +135,11 @@ struct GuestStdVector
 };
 
 struct GuestVariant {
-	Variant toVariant(const machine_t& machine) const;
-	Variant* toVariantPtr(const machine_t& machine) const;
-	void set(machine_t& machine, const Variant& value);
+	Variant toVariant(const RiscvEmulator& emu) const;
+	Variant* toVariantPtr(const RiscvEmulator& emu) const;
+	void set(RiscvEmulator& emu, const Variant& value);
+
+	inline uint32_t hash() const noexcept;
 
 	static constexpr unsigned GODOT_VARIANT_SIZE = sizeof(Variant);
 	Variant::Type type;
