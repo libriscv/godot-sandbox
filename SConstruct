@@ -5,17 +5,21 @@ import sys
 env = SConscript("godot-cpp/SConstruct")
 
 
-env.Prepend(CPPPATH=["thirdparty", "include"])
+env.Prepend(CPPPATH=["libriscv/lib", "libriscv/lib/posix"])
 env.Append(CPPPATH=["src/"])
-#env.Append(CPPDEFINES=['WHISPER_SHARED', 'GGML_SHARED'])
 
 sources = [Glob("src/*.cpp")]
 
 sources.extend([
-    #Glob("thirdparty/libsamplerate/src/*.c"),
-    #Glob("thirdparty/whisper.cpp/*.c"),
-    #Glob("thirdparty/whisper.cpp/whisper.cpp"),
+    Glob("libriscv/lib/libriscv/*.c"),
 ])
+
+if env["platform"] == "windows":
+	env.Prepend(CPPPATH=["libriscv/lib/win32"])
+elif env["platform"] == "macos":
+    env.Prepend(CPPPATH=["libriscv/lib/macos"])
+elif env["platform"] == "linux" or env["platform"] == "android":
+    env.Prepend(CPPPATH=["libriscv/lib/linux"])
 
 if env["platform"] == "macos" or env["platform"] == "ios":
 	library = env.SharedLibrary(
