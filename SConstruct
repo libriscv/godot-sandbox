@@ -5,7 +5,7 @@ import sys
 env = SConscript("godot-cpp/SConstruct")
 
 
-env.Prepend(CPPPATH=["libriscv/lib/libriscv/lib"])
+env.Prepend(CPPPATH=["libriscv/lib"])
 env.Append(CPPPATH=["src/", "."])
 
 
