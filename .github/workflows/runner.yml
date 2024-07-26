@@ -35,7 +35,7 @@ jobs:
   build_web:
     needs: [lint]
     uses: ./.github/workflows/build_web.yml
-  godot_build:
+  build_godot:
     uses: ./.github/workflows/build_godot.yml
 
   merge:
