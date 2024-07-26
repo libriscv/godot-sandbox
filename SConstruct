@@ -37,9 +37,9 @@ librisc_sources = [
      # switch-case:
 "libriscv/bytecode_dispatch.cpp"
 # threaded:
-"libriscv/threaded_dispatch.cpp"
+#"libriscv/threaded_dispatch.cpp"
 # ignore this file:
-"libriscv/tailcall_dispatch.cpp"
+#"libriscv/tailcall_dispatch.cpp"
 
 "libriscv/bytecode_impl.cpp"
 "libriscv/cpu.cpp"
