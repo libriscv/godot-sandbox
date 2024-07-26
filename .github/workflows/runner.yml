@@ -1,0 +1,56 @@
+name: Builds
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - "main"
+
+jobs:
+  lint:
+    uses: ./.github/workflows/lint.yml
+  build_android:
+    needs: [lint]
+    uses: ./.github/workflows/build_android.yml
+  build_ios:
+    needs: [lint]
+    uses: ./.github/workflows/build_ios.yml
+  build_linux:
+    needs: [lint]
+    uses: ./.github/workflows/build_linux.yml
+  build_macos:
+    needs: [lint]
+    uses: ./.github/workflows/build_macos.yml
+    secrets:
+      APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
+      APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+      APPLE_DEV_PASSWORD: ${{ secrets.APPLE_DEV_PASSWORD }}
+      APPLE_DEV_ID: ${{ secrets.APPLE_DEV_ID }}
+      APPLE_DEV_TEAM_ID: ${{ secrets.APPLE_DEV_TEAM_ID }}
+      APPLE_DEV_APP_ID: ${{ secrets.APPLE_DEV_APP_ID }}
+  build_windows:
+    needs: [lint]
+    uses: ./.github/workflows/build_windows.yml
+  build_web:
+    needs: [lint]
+    uses: ./.github/workflows/build_web.yml
+  godot_build:
+    uses: ./.github/workflows/build_godot.yml
+
+  merge:
+    runs-on: ubuntu-latest
+    name: Merge
+    needs: [build_android, build_ios, build_linux, build_macos, build_windows, build_web, build_godot]
+    steps:
+      - uses: actions/upload-artifact/merge@v4
+        with:
+          name: godot-riscv
+          pattern: godot-riscv-*
+
+  release:
+    name: Create Release
+    permissions:
+      contents: write
+    needs: [merge]
+    uses: ./.github/workflows/release.yml

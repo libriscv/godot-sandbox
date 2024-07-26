@@ -1,0 +1,36 @@
+name: Build Windows
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_32
+          - arch: x86_64
+          - arch: arm64
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: 🔗 GDExtension Build
+        uses: godotengine/godot-cpp-template/.github/actions/build@main
+        with:
+          platform: windows
+          arch: ${{ matrix.arch }}
+          build-target-type: template_release
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-riscv-windows-${{ matrix.arch }}
+          path: |
+            ${{ github.workspace }}/bin/**/*.dll
+          if-no-files-found: error

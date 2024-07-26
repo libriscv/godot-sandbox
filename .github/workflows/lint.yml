@@ -1,0 +1,20 @@
+name: Lint
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+      - name: Setup clang-format
+        shell: bash
+        run: |
+          python -m pip install clang-format
+      - name: Run clang-format
+        shell: bash
+        run: |
+          clang-format --style=file:.clang-format src/** --dry-run --Werror

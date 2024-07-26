@@ -1,0 +1,37 @@
+name: Release
+on:
+  workflow_call:
+
+jobs:
+  release:
+    runs-on: ubuntu-20.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: godot-riscv-*
+          merge-multiple: true
+          path: godot-riscv
+          name: godot-riscv
+      - name: Delete draft release(s)
+        uses: hugo19941994/delete-draft-releases@v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Archive
+        shell: sh
+        run: |
+          ls
+          zip -r "godot-riscv.zip" godot-riscv
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Godot Riscv Nightly
+          files: |
+            godot-riscv.zip
+          generate_release_notes: true
+          draft: true
+          prerelease: true
+          fail_on_unmatched_files: true

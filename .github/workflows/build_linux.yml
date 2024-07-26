@@ -1,0 +1,35 @@
+name: Build Linux
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+  
+      - name: 🔗 GDExtension Build
+        uses: godotengine/godot-cpp-template/.github/actions/build@main
+        with:
+          platform: linux
+          arch: ${{ matrix.arch }}
+          build-target-type: template_release
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: godot-riscv-linux-${{ matrix.arch }}
+          path: |
+            ${{ github.workspace }}/bin/**/*.so
+          if-no-files-found: error  
