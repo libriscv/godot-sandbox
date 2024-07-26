@@ -4,7 +4,9 @@
 
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#ifdef RISCV_BINARY_TRANSLATION
 #include <thread> // TODO: Use Godot's threading API.
+#endif
 
 using namespace godot;
 
@@ -67,6 +69,7 @@ void RiscvEmulator::load(const PackedByteArray& buffer, const TypedArray<String>
 		const riscv::MachineOptions<RISCV_ARCH> options {
 			//.verbose_loader = true,
 			.default_exit_function = "fast_exit",
+#ifdef RISCV_BINARY_TRANSLATION
 			.translate_background_callback =
 			[] (auto& compilation_step) {
 				// TODO: Use Godot's threading API.
@@ -74,6 +77,7 @@ void RiscvEmulator::load(const PackedByteArray& buffer, const TypedArray<String>
 					compilation_step();
 				}).detach();
 			}
+#endif
 		};
 
 		this->m_machine = new machine_t { this->m_binary, options };
