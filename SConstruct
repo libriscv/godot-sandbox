@@ -8,28 +8,6 @@ env = SConscript("godot-cpp/SConstruct")
 env.Prepend(CPPPATH=["libriscv/lib"])
 env.Append(CPPPATH=["src/", "."])
 
-env.Append(
-    CPPDEFINES=[
-        "_DARWIN_C_SOURCE",
-        # "RISCV_DEBUG",
-        "RISCV_EXT_A",
-        "RISCV_EXT_C",
-        "RISCV_EXT_V",
-        "RISCV_32I",
-        "RISCV_64I",
-        # "RISCV_128I",
-        "RISCV_FCSR",
-        # "RISCV_EXPERIMENTAL",
-        "RISCV_MEMORY_TRAPS",
-        "RISCV_MULTIPROCESS",
-        # "RISCV_BINARY_TRANSLATION",
-        "RISCV_FLAT_RW_ARENA",
-        # "RISCV_ENCOMPASSING_ARENA",
-        "RISCV_THREADED",
-        # "RISCV_TAILCALL_DISPATCH",
-        # "RISCV_LIBTCC",
-    ]
-)
 
 sources = [Glob("src/*.cpp")]
 
