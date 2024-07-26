@@ -63,20 +63,20 @@ librisc_sources = [
 "libriscv/rvc_instr.cpp"
 "libriscv/rvf_instr.cpp"
 "libriscv/rvi_instr.cpp"
-"#libriscv/rvv_instr.cpp"
+#"libriscv/rvv_instr.cpp"
 "libriscv/serialize.cpp"
 "libriscv/threaded_rewriter.cpp"
 
 # Binary translator
-"libriscv/tr_api.cpp"
-"libriscv/tr_emit.cpp"
-"libriscv/tr_emit_rvc.cpp"
-"libriscv/tr_translate.cpp"
+#"libriscv/tr_api.cpp"
+#"libriscv/tr_emit.cpp"
+#"libriscv/tr_emit_rvc.cpp"
+#"libriscv/tr_translate.cpp"
 
 # Binary translator - TCC
-"libriscv/tr_tcc.cpp"
+#"libriscv/tr_tcc.cpp"
 # Binary translator - System compiler
-"libriscv/tr_compiler.cpp"
+#"libriscv/tr_compiler.cpp"
     ]
 
 if env["platform"] == "windows":    
