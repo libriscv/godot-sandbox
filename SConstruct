@@ -22,8 +22,8 @@ librisc_sources = [
 
 "libriscv/lib/libriscv/bytecode_impl.cpp",
 "libriscv/lib/libriscv/cpu.cpp",
-"libriscv/lib/libriscv/cpu_dispatch.cpp",
-"libriscv/lib/libriscv/cpu_inaccurate_dispatch.cpp",
+#"libriscv/lib/libriscv/cpu_dispatch.cpp",
+#"libriscv/lib/libriscv/cpu_inaccurate_dispatch.cpp",
 "libriscv/lib/libriscv/debug.cpp",
 "libriscv/lib/libriscv/decode_bytecodes.cpp",
 "libriscv/lib/libriscv/decoder_cache.cpp",
