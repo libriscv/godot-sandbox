@@ -4,10 +4,10 @@ import sys
 
 env = SConscript("godot-cpp/SConstruct")
 
+ARGUMENTS["disable_exceptions"] = 0
 
 env.Prepend(CPPPATH=["libriscv/lib"])
 env.Append(CPPPATH=["src/", "."])
-
 
 sources = [Glob("src/*.cpp")]
 
