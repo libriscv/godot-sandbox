@@ -80,9 +80,9 @@ if env["platform"] == "windows":
 elif env["platform"] == "linux": 
     librisc_sources += [
         #"libriscv/lib/libriscv/linux/syscalls_epoll.cpp",
-        "libriscv/lib/libriscv/linux/syscalls_mman.cpp",
-        "libriscv/lib/libriscv/linux/syscalls_poll.cpp",
-        "libriscv/lib/libriscv/linux/syscalls_select.cpp",
+        #"libriscv/lib/libriscv/linux/syscalls_mman.cpp",
+        #"libriscv/lib/libriscv/linux/syscalls_poll.cpp",
+        #"libriscv/lib/libriscv/linux/syscalls_select.cpp",
         "libriscv/lib/libriscv/linux/system_calls.cpp",
     ]
     
