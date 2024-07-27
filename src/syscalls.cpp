@@ -5,9 +5,9 @@
 
 namespace riscv
 {
-	inline RiscvEmulator& emu(machine_t& m)
+	inline Sandbox& emu(machine_t& m)
 	{
-		return *m.get_userdata<RiscvEmulator>();
+		return *m.get_userdata<Sandbox>();
 	}
 
 	#define APICALL(func) static void func(machine_t& machine [[maybe_unused]])
@@ -72,7 +72,7 @@ namespace riscv
 
 }
 
-void RiscvEmulator::initialize_syscalls()
+void Sandbox::initialize_syscalls()
 {
 	using namespace riscv;
 

@@ -21,26 +21,26 @@ static const int HEAP_SYSCALLS_BASE	  = 570;
 static const int MEMORY_SYSCALLS_BASE = 575;
 static const int THREADS_SYSCALL_BASE = 590;
 
-String RiscvEmulator::_to_string() const
+String Sandbox::_to_string() const
 {
-	return "[ GDExtension::RiscvEmulator <--> Instance ID:" + uitos(get_instance_id()) + " ]";
+	return "[ GDExtension::Sandbox <--> Instance ID:" + uitos(get_instance_id()) + " ]";
 }
 
-void RiscvEmulator::_bind_methods()
+void Sandbox::_bind_methods()
 {
 	// Methods.
-	ClassDB::bind_method(D_METHOD("load"), &RiscvEmulator::load);
+	ClassDB::bind_method(D_METHOD("load"), &Sandbox::load);
 	{
 		MethodInfo mi;
 		mi.arguments.push_back(PropertyInfo(Variant::STRING, "function"));
 		mi.name = "vmcall";
 		mi.return_val = PropertyInfo(Variant::OBJECT, "result");
-		ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "vmcall", &RiscvEmulator::vmcall, mi);
+		ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "vmcall", &Sandbox::vmcall, mi);
 	}
-	ClassDB::bind_method(D_METHOD("vmcallable"), &RiscvEmulator::vmcallable);
+	ClassDB::bind_method(D_METHOD("vmcallable"), &Sandbox::vmcallable);
 }
 
-RiscvEmulator::RiscvEmulator()
+Sandbox::Sandbox()
 {
 	// In order to reduce checks we guarantee that this
 	// class is well-formed at all times.
@@ -50,14 +50,14 @@ RiscvEmulator::RiscvEmulator()
     UtilityFunctions::print("Constructor, alignof(Variant) == ", static_cast<int32_t>(alignof(Variant)));
 }
 
-RiscvEmulator::~RiscvEmulator()
+Sandbox::~Sandbox()
 {
 	UtilityFunctions::print("Destructor.");
 	delete this->m_machine;
 }
 
 // Methods.
-void RiscvEmulator::load(const PackedByteArray& buffer, const TypedArray<String>& arguments)
+void Sandbox::load(const PackedByteArray& buffer, const TypedArray<String>& arguments)
 {
 	UtilityFunctions::print("Loading file from buffer");
 
@@ -102,12 +102,12 @@ void RiscvEmulator::load(const PackedByteArray& buffer, const TypedArray<String>
 	}
 }
 
-Variant RiscvEmulator::vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error)
+Variant Sandbox::vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error)
 {
 	error.error = GDEXTENSION_CALL_OK;
 	return this->vmcall_internal(address, args, arg_count);
 }
-Variant RiscvEmulator::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error)
+Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error)
 {
 	if (arg_count < 1)
 	{
@@ -119,7 +119,7 @@ Variant RiscvEmulator::vmcall(const Variant **args, GDExtensionInt arg_count, GD
 	arg_count -= 1;
 	return this->vmcall_address(cached_address_of(function), args, arg_count, error);
 }
-void RiscvEmulator::setup_arguments(const Variant** args, int argc)
+void Sandbox::setup_arguments(const Variant** args, int argc)
 {
 	// Stack pointer
 	auto& sp  = m_machine->cpu.reg(2);
@@ -140,7 +140,7 @@ void RiscvEmulator::setup_arguments(const Variant** args, int argc)
 	m_machine->cpu.reg(10) = spanDataPtr;
 	m_machine->cpu.reg(11) = spanElements;
 }
-Variant RiscvEmulator::vmcall_internal(gaddr_t address, const Variant** args, int argc)
+Variant Sandbox::vmcall_internal(gaddr_t address, const Variant** args, int argc)
 {
 	try
 	{
@@ -187,7 +187,7 @@ Variant RiscvEmulator::vmcall_internal(gaddr_t address, const Variant** args, in
 	}
 	return -1;
 }
-Variant RiscvEmulator::vmcallable(String function)
+Variant Sandbox::vmcallable(String function)
 {
 	const auto address = cached_address_of(function);
 
@@ -202,7 +202,7 @@ void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r
 	r_call_error.error = GDEXTENSION_CALL_OK;
 }
 
-void RiscvEmulator::execute()
+void Sandbox::execute()
 {
 	machine_t& m = machine();
 
@@ -212,7 +212,7 @@ void RiscvEmulator::execute()
 		" result: ", m.return_value<int64_t>());
 }
 
-void RiscvEmulator::handle_exception(gaddr_t address)
+void Sandbox::handle_exception(gaddr_t address)
 {
 	auto callsite = machine().memory.lookup(address);
 	UtilityFunctions::print(
@@ -252,16 +252,16 @@ void RiscvEmulator::handle_exception(gaddr_t address)
 		"\n");
 }
 
-void RiscvEmulator::handle_timeout(gaddr_t address)
+void Sandbox::handle_timeout(gaddr_t address)
 {
 	this->m_budget_overruns++;
 	auto callsite = machine().memory.lookup(address);
 	UtilityFunctions::print(
-		"RiscvEmulator: Timeout for '", callsite.name.c_str(),
+		"Sandbox: Timeout for '", callsite.name.c_str(),
 		"' (Timeouts: ", m_budget_overruns, "\n");
 }
 
-void RiscvEmulator::print(std::string_view text)
+void Sandbox::print(std::string_view text)
 {
 	String str(static_cast<std::string> (text).c_str());
 	if (this->m_last_newline) {
@@ -273,7 +273,7 @@ void RiscvEmulator::print(std::string_view text)
 	this->m_last_newline = (text.back() == '\n');
 }
 
-gaddr_t RiscvEmulator::cached_address_of(String function) const
+gaddr_t Sandbox::cached_address_of(String function) const
 {
 	const auto ascii = function.ascii();
 	const std::string_view sview {ascii.get_data(), (size_t)ascii.length()};
@@ -294,7 +294,7 @@ gaddr_t RiscvEmulator::cached_address_of(String function) const
 	return address;
 }
 
-gaddr_t RiscvEmulator::address_of(std::string_view name) const
+gaddr_t Sandbox::address_of(std::string_view name) const
 {
 	return machine().address_of(name);
 }

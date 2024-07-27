@@ -6,7 +6,7 @@ This GDExtension implements safe, low-latency sandboxing for Godot. It is not a 
 	var f = FileAccess.open("res://riscv/test", FileAccess.READ);
 
 	# Create a sandbox by loading a static RISC-V program
-	var v = RiscvEmulator.new();
+	var v = Sandbox.new();
 	v.load(f.get_buffer(f.get_length()), []);
 
 	# Make a function call into the sandbox

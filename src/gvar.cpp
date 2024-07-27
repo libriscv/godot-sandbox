@@ -7,7 +7,7 @@ inline uint32_t GuestVariant::hash() const noexcept {
 	return riscv::crc32c(v.opaque, sizeof(Variant));
 }
 
-Variant GuestVariant::toVariant(const RiscvEmulator& emu) const
+Variant GuestVariant::toVariant(const Sandbox& emu) const
 {
 	switch (type) {
 	case Variant::NIL:
@@ -53,7 +53,7 @@ Variant GuestVariant::toVariant(const RiscvEmulator& emu) const
 	}
 }
 
-Variant* GuestVariant::toVariantPtr(const RiscvEmulator& emu) const
+Variant* GuestVariant::toVariantPtr(const Sandbox& emu) const
 {
 	switch (type) {
 	case Variant::CALLABLE: {
@@ -67,7 +67,7 @@ Variant* GuestVariant::toVariantPtr(const RiscvEmulator& emu) const
 	}
 }
 
-void GuestVariant::set(RiscvEmulator& emu, const Variant& value)
+void GuestVariant::set(Sandbox& emu, const Variant& value)
 {
 	this->type = value.get_type();
 
