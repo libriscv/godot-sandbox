@@ -17,5 +17,4 @@ jobs:
       - name: Run clang-format
         shell: bash
         run: |
-          # TODO lint code
-          # clang-format --style=file:.clang-format src/** --dry-run --Werror
+          clang-format --style=file:.clang-format src/** --dry-run --Werror
