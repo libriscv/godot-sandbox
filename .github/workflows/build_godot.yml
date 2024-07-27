@@ -15,6 +15,11 @@ jobs:
           name: godot-riscv-gdextension
           path: |
             bin
+            !bin${{ matrix.dimensions }}/.godot
+            !bin${{ matrix.dimensions }}/.gitattributes
+            !bin${{ matrix.dimensions }}/.gitignore
+            !bin${{ matrix.dimensions }}/icon.svg
+            !bin${{ matrix.dimensions }}/icon.svg.import
             !bin${{ matrix.dimensions }}/export_presets.cfg
             !bin${{ matrix.dimensions }}/project.godot
             !bin${{ matrix.dimensions }}/test.gd
