@@ -60,9 +60,9 @@ librisc_sources = [
 
 if env["platform"] == "windows":    
     librisc_sources += [
-        "libriscv/lib/libriscv/windows/dlfcn.cpp",
-        "libriscv/lib/libriscv/windows/system_calls.cpp",
-        "libriscv/lib/libriscv/windows/tr_msvc.cpp",
+        "libriscv/lib/libriscv/win32/dlfcn.cpp",
+        "libriscv/lib/libriscv/win32/system_calls.cpp",
+        "libriscv/lib/libriscv/win32/tr_msvc.cpp",
     ]
 elif env["platform"] == "linux": 
     librisc_sources += [
