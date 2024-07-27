@@ -3,7 +3,7 @@ import os
 import sys
 
 ARGUMENTS["disable_exceptions"] = "0"
-
+ARGUMENTS["use_mingw"] = "yes"
 env = SConscript("godot-cpp/SConstruct")
 
 
