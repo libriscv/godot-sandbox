@@ -20,7 +20,7 @@ void initialize_riscv_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 
-	ClassDB::register_class<RiscvEmulator>();
+	ClassDB::register_class<Sandbox>();
 }
 
 void uninitialize_riscv_module(ModuleInitializationLevel p_level) {

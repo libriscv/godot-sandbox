@@ -13,9 +13,9 @@ using gaddr_t = riscv::address_type<RISCV_ARCH>;
 using machine_t = riscv::Machine<RISCV_ARCH>;
 #include "vmcallable.hpp"
 
-class RiscvEmulator : public Control
+class Sandbox : public Node
 {
-	GDCLASS(RiscvEmulator, Control);
+	GDCLASS(Sandbox, Node);
 
 protected:
 	static void _bind_methods();
@@ -27,8 +27,8 @@ public:
 	static constexpr unsigned MAX_LEVEL = 8;
 	static constexpr unsigned GODOT_VARIANT_SIZE = sizeof(Variant);
 
-	RiscvEmulator();
-	~RiscvEmulator();
+	Sandbox();
+	~Sandbox();
 
 	auto& machine() { return *m_machine; }
 	const auto& machine() const { return *m_machine; }
@@ -135,9 +135,9 @@ struct GuestStdVector
 };
 
 struct GuestVariant {
-	Variant toVariant(const RiscvEmulator& emu) const;
-	Variant* toVariantPtr(const RiscvEmulator& emu) const;
-	void set(RiscvEmulator& emu, const Variant& value);
+	Variant toVariant(const Sandbox& emu) const;
+	Variant* toVariantPtr(const Sandbox& emu) const;
+	void set(Sandbox& emu, const Variant& value);
 
 	inline uint32_t hash() const noexcept;
 

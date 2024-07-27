@@ -2,7 +2,7 @@
 #include <godot_cpp/variant/variant.hpp>
 using namespace godot;
 
-class RiscvEmulator;
+class Sandbox;
 
 class RiscvCallable : public CallableCustom {
 public:
@@ -40,12 +40,12 @@ public:
 
 	virtual void call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const;
 
-	void init(RiscvEmulator* self, gaddr_t address) {
+	void init(Sandbox* self, gaddr_t address) {
 		this->self = self;
 		this->address = address;
 	}
 
 private:
-	RiscvEmulator* self = nullptr;
+	Sandbox* self = nullptr;
 	gaddr_t address     = 0x0;
 };

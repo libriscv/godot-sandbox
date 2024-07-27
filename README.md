@@ -1,4 +1,4 @@
-## Sandboxing for Godot
+# Sandboxing for Godot
 
 This GDExtension implements safe, low-latency sandboxing for Godot. It is not a convenience layer for other languages, unlike language ports/bindings. This extension exists to allow Godot creators to implement safe modding support, such that they can pass around programs built by other players, knowing that these programs cannot harm other players.
 
@@ -6,7 +6,7 @@ This GDExtension implements safe, low-latency sandboxing for Godot. It is not a 
 	var f = FileAccess.open("res://riscv/test", FileAccess.READ);
 
 	# Create a sandbox by loading a static RISC-V program
-	var v = RiscvEmulator.new();
+	var v = Sandbox.new();
 	v.load(f.get_buffer(f.get_length()), []);
 
 	# Make a function call into the sandbox
@@ -33,7 +33,7 @@ void function3(std::span<Variant> args)
 
 Above: An example of a sandboxed C++ function.
 
-### What can I do?
+## What can I do?
 
 - You can implement a modding API for your game, to be used inside the sandbox. This API can then be used by other players to extend your game, in a safe manner. That is, they can send their mod to other people, including you, and they (and you) can assume that it is safe to try out the mod. The mod is *not supposed* to be able to do any harm. That is the whole point of this extension.
 - You can implement support for your favorite language inside the sandbox. The sandbox receives Variants from Godot or GDScript, and can respond back with Variants. This means the communication is fully dynamic, and supports normal Godot usage. 
@@ -51,7 +51,7 @@ Languages that are known to work inside _libriscv_:
 10. Lua, Luau
 11. Any other language that can produce RISC-V programs
 
-### Performance
+## Performance
 
 The sandbox is implemented using _libriscv_ which primarily focuses on being lower latency than everyone else. This means that calling small functions in the sandbox is extremely fast, unlike all other sandboxing solutions, and most if not all other emulators.
 
@@ -60,3 +60,30 @@ There are high-performance modes for _libriscv_ available for development and fi
 Please see the [documentation for libriscv](https://github.com/fwsGonzo/libriscv) for more information.
 
 As a final note, the default interpreter mode in _libriscv_ is no slouch. And will for most games, and in most scenarios be both the slimmest in terms of memory and the fastest in terms of iteration. Certain variant operations will call out to Godot in order to get native performance.
+
+# Contributing
+
+Requirements:
+- [SCons](https://www.scons.org)
+- [python3](https://www.python.org)
+
+If you want to contribute to this repo, here are steps on how to build locally:
+
+```sh
+scons
+```
+
+Linting:
+
+```sh
+./scripts/clang-tidy.sh
+```
+
+# How to compile cpp code locally
+
+This project provides a dockerfile for compiling cpp code locally. For usage example, go to:
+
+```
+cd program
+docker run -v .:/usr/src -d ghcr.io/fwsgonzo/compiler build.sh
+```
