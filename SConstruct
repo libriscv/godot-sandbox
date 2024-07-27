@@ -7,7 +7,7 @@ ARGUMENTS["use_mingw"] = "yes"
 
 env = SConscript("godot-cpp/SConstruct")
 
-
+env.Append(CPPDEFINES = ['RISCV_SYSCALLS_MAX=600', 'RISCV_BRK_MEMORY_SIZE=0x100000'])
 env.Prepend(CPPPATH=["libriscv/lib"])
 env.Append(CPPPATH=["src/", "."])
 
