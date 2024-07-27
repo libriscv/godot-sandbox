@@ -98,7 +98,7 @@ void Sandbox::load(const PackedByteArray& buffer, const TypedArray<String>& argu
 
 		m.simulate(MAX_INSTRUCTIONS);
 	} catch (const std::exception& e) {
-		UtilityFunctions::print("Exception: ", e.what());
+		ERR_PRINT(("Exception: " +  std::string(e.what())).c_str());
 	}
 }
 
