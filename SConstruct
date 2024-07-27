@@ -20,7 +20,7 @@ librisc_sources = [
 # ignore this file:
 #"libriscv/lib/libriscv/tailcall_dispatch.cpp",
 
-"libriscv/lib/libriscv/bytecode_impl.cpp",
+#"libriscv/lib/libriscv/bytecode_impl.cpp",
 "libriscv/lib/libriscv/cpu.cpp",
 #"libriscv/lib/libriscv/cpu_dispatch.cpp",
 #"libriscv/lib/libriscv/cpu_inaccurate_dispatch.cpp",
@@ -38,10 +38,10 @@ librisc_sources = [
 "libriscv/lib/libriscv/native_threads.cpp",
 "libriscv/lib/libriscv/rv32i.cpp",
 "libriscv/lib/libriscv/rv64i.cpp",
-"libriscv/lib/libriscv/rva_instr.cpp",
-"libriscv/lib/libriscv/rvc_instr.cpp",
-"libriscv/lib/libriscv/rvf_instr.cpp",
-"libriscv/lib/libriscv/rvi_instr.cpp",
+#"libriscv/lib/libriscv/rva_instr.cpp",
+#"libriscv/lib/libriscv/rvc_instr.cpp",
+#"libriscv/lib/libriscv/rvf_instr.cpp",
+#"libriscv/lib/libriscv/rvi_instr.cpp",
 #"libriscv/lib/libriscv/rvv_instr.cpp",
 "libriscv/lib/libriscv/serialize.cpp",
 "libriscv/lib/libriscv/threaded_rewriter.cpp",
