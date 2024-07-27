@@ -10,12 +10,12 @@ on:
 jobs:
   lint:
     uses: ./.github/workflows/lint.yml
-  build_android:
-    needs: [lint]
-    uses: ./.github/workflows/build_android.yml
-  build_ios:
-    needs: [lint]
-    uses: ./.github/workflows/build_ios.yml
+  #build_android:
+  #  needs: [lint]
+  #  uses: ./.github/workflows/build_android.yml
+  #build_ios:
+  #  needs: [lint]
+  #  uses: ./.github/workflows/build_ios.yml
   build_linux:
     needs: [lint]
     uses: ./.github/workflows/build_linux.yml
@@ -41,7 +41,8 @@ jobs:
   merge:
     runs-on: ubuntu-latest
     name: Merge
-    needs: [build_android, build_ios, build_linux, build_macos, build_windows, build_web, build_godot]
+    #needs: [build_android, build_ios, build_linux, build_macos, build_windows, build_web, build_godot]
+    needs: [build_linux, build_macos, build_windows, build_web, build_godot]
     steps:
       - uses: actions/upload-artifact/merge@v4
         with:
