@@ -67,7 +67,8 @@ librisc_sources = [
 
      
 
-if env["platform"] == "windows":    
+if env["platform"] == "windows":
+    env.Append(LINKFLAGS=["-lws2_32"])
     librisc_sources += [
         "libriscv/lib/libriscv/win32/dlfcn.cpp",
         "libriscv/lib/libriscv/win32/system_calls.cpp",
@@ -83,7 +84,6 @@ elif env["platform"] == "linux":
     ]
     
 if env["platform"] != "windows":  
-    env.Append(LINKFLAGS=["-lws2_32"])
     librisc_sources += [
         "libriscv/lib/libriscv/linux/system_calls.cpp",
     ]
