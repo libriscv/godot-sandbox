@@ -85,5 +85,5 @@ This project provides a dockerfile for compiling cpp code locally. For usage exa
 
 ```
 cd program
-docker run -d ghcr.io/fwsgonzo/compiler -v .:/usr/src riscv64-linux-gnu build.sh
+docker run -v .:/usr/src -d ghcr.io/fwsgonzo/compiler build.sh
 ```
