@@ -56,7 +56,19 @@ librisc_sources = [
 #"libriscv/lib/libriscv/tr_tcc.cpp"
 # Binary translator - System compiler
 #"libriscv/lib/libriscv/tr_compiler.cpp"
+# POSIX
+"libriscv/lib/libriscv/posix/socket_calls.cpp",
+"libriscv/lib/libriscv/posix/minimal.cpp",
+"libriscv/lib/libriscv/posix/signals.cpp",
+"libriscv/lib/libriscv/posix/threads.cpp",
     ]
+
+
+if env["platform"] == "macos":
+    librisc_sources += [
+        "libriscv/lib/libriscv/util/crc32c.cpp",
+    ]
+     
 
 if env["platform"] == "windows":    
     librisc_sources += [
