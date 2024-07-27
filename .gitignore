@@ -5,5 +5,5 @@ build/
 program/test
 .sconsign.dblite
 .DS_Store
-.os
+*.os
 bin/addons/godot-riscv/bin
