@@ -17,4 +17,4 @@ jobs:
       - name: Run clang-format
         shell: bash
         run: |
-          clang-format --style=file:.clang-format src/** --dry-run --Werror
+          ./scripts/clang-format.sh
