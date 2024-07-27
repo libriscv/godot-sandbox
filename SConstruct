@@ -83,7 +83,7 @@ elif env["platform"] == "linux":
         #"libriscv/lib/libriscv/linux/syscalls_mman.cpp",
         #"libriscv/lib/libriscv/linux/syscalls_poll.cpp",
         #"libriscv/lib/libriscv/linux/syscalls_select.cpp",
-        "libriscv/lib/libriscv/linux/system_calls.cpp",
+        #"libriscv/lib/libriscv/linux/system_calls.cpp",
     ]
     
 if env["platform"] != "windows":  
