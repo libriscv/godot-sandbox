@@ -14,37 +14,37 @@ sources = [Glob("src/*.cpp")]
 
 librisc_sources = [
      # switch-case:
-"libriscv/lib/libriscv/bytecode_dispatch.cpp"
+"libriscv/lib/libriscv/bytecode_dispatch.cpp",
 # threaded:
-#"libriscv/lib/libriscv/threaded_dispatch.cpp"
+#"libriscv/lib/libriscv/threaded_dispatch.cpp",
 # ignore this file:
-#"libriscv/lib/libriscv/tailcall_dispatch.cpp"
+#"libriscv/lib/libriscv/tailcall_dispatch.cpp",
 
-"libriscv/lib/libriscv/bytecode_impl.cpp"
-"libriscv/lib/libriscv/cpu.cpp"
-"libriscv/lib/libriscv/cpu_dispatch.cpp"
-"libriscv/lib/libriscv/cpu_inaccurate_dispatch.cpp"
-"libriscv/lib/libriscv/debug.cpp"
-"libriscv/lib/libriscv/decode_bytecodes.cpp"
-"libriscv/lib/libriscv/decoder_cache.cpp"
-"libriscv/lib/libriscv/machine.cpp"
-"libriscv/lib/libriscv/machine_defaults.cpp"
-"libriscv/lib/libriscv/memory.cpp"
-"libriscv/lib/libriscv/memory_elf.cpp"
-"libriscv/lib/libriscv/memory_mmap.cpp"
-"libriscv/lib/libriscv/memory_rw.cpp"
-"libriscv/lib/libriscv/multiprocessing.cpp"
-"libriscv/lib/libriscv/native_libc.cpp"
-"libriscv/lib/libriscv/native_threads.cpp"
-"libriscv/lib/libriscv/rv32i.cpp"
-"libriscv/lib/libriscv/rv64i.cpp"
-"libriscv/lib/libriscv/rva_instr.cpp"
-"libriscv/lib/libriscv/rvc_instr.cpp"
-"libriscv/lib/libriscv/rvf_instr.cpp"
-"libriscv/lib/libriscv/rvi_instr.cpp"
-#"libriscv/lib/libriscv/rvv_instr.cpp"
-"libriscv/lib/libriscv/serialize.cpp"
-"libriscv/lib/libriscv/threaded_rewriter.cpp"
+"libriscv/lib/libriscv/bytecode_impl.cpp",
+"libriscv/lib/libriscv/cpu.cpp",
+"libriscv/lib/libriscv/cpu_dispatch.cpp",
+"libriscv/lib/libriscv/cpu_inaccurate_dispatch.cpp",
+"libriscv/lib/libriscv/debug.cpp",
+"libriscv/lib/libriscv/decode_bytecodes.cpp",
+"libriscv/lib/libriscv/decoder_cache.cpp",
+"libriscv/lib/libriscv/machine.cpp",
+"libriscv/lib/libriscv/machine_defaults.cpp",
+"libriscv/lib/libriscv/memory.cpp",
+"libriscv/lib/libriscv/memory_elf.cpp",
+"libriscv/lib/libriscv/memory_mmap.cpp",
+"libriscv/lib/libriscv/memory_rw.cpp",
+"libriscv/lib/libriscv/multiprocessing.cpp",
+"libriscv/lib/libriscv/native_libc.cpp",
+"libriscv/lib/libriscv/native_threads.cpp",
+"libriscv/lib/libriscv/rv32i.cpp",
+"libriscv/lib/libriscv/rv64i.cpp",
+"libriscv/lib/libriscv/rva_instr.cpp",
+"libriscv/lib/libriscv/rvc_instr.cpp",
+"libriscv/lib/libriscv/rvf_instr.cpp",
+"libriscv/lib/libriscv/rvi_instr.cpp",
+#"libriscv/lib/libriscv/rvv_instr.cpp",
+"libriscv/lib/libriscv/serialize.cpp",
+"libriscv/lib/libriscv/threaded_rewriter.cpp",
 
 # Binary translator
 #"libriscv/lib/libriscv/tr_api.cpp"
