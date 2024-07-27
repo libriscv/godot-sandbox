@@ -19,6 +19,7 @@ jobs:
             !bin${{ matrix.dimensions }}/.gitattributes
             !bin${{ matrix.dimensions }}/.gitignore
             !bin${{ matrix.dimensions }}/icon.svg
+            !bin${{ matrix.dimensions }}/test.elf
             !bin${{ matrix.dimensions }}/icon.svg.import
             !bin${{ matrix.dimensions }}/export_presets.cfg
             !bin${{ matrix.dimensions }}/project.godot
