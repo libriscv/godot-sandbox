@@ -62,13 +62,9 @@ librisc_sources = [
 "libriscv/lib/libriscv/posix/minimal.cpp",
 "libriscv/lib/libriscv/posix/signals.cpp",
 "libriscv/lib/libriscv/posix/threads.cpp",
+"libriscv/lib/libriscv/util/crc32c.cpp",
     ]
 
-
-if env["platform"] == "macos":
-    librisc_sources += [
-        "libriscv/lib/libriscv/util/crc32c.cpp",
-    ]
      
 
 if env["platform"] == "windows":    
