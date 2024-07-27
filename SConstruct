@@ -56,22 +56,12 @@ librisc_sources = [
 ]
 
 if env["platform"] == "windows":
-    env.Append(LIBFLAGS=['-lws2_32']) # for socket calls
     librisc_sources += [
         "libriscv/lib/libriscv/win32/dlfcn.cpp",
         "libriscv/lib/libriscv/win32/system_calls.cpp",
         "libriscv/lib/libriscv/win32/tr_msvc.cpp",
     ]
-elif env["platform"] == "linux": 
-    librisc_sources += [
-        #"libriscv/lib/libriscv/linux/syscalls_epoll.cpp",
-        #"libriscv/lib/libriscv/linux/syscalls_mman.cpp",
-        #"libriscv/lib/libriscv/linux/syscalls_poll.cpp",
-        #"libriscv/lib/libriscv/linux/syscalls_select.cpp",
-        #"libriscv/lib/libriscv/linux/system_calls.cpp",
-    ]
-
-if env["platform"] != "windows":  
+else:
     librisc_sources += [
         "libriscv/lib/libriscv/linux/system_calls.cpp",
     ]
@@ -85,6 +75,7 @@ sources.extend(librisc_sources)
 
 if env["platform"] == "windows":
 	env.Prepend(CPPPATH=["libriscv/lib/libriscv/lib/win32"])
+	env.Prepend(LIBS=['ws2_32']) # for socket calls
 elif env["platform"] == "macos":
     env.Prepend(CPPPATH=["libriscv/lib/libriscv/lib/macos"])
 elif env["platform"] == "linux" or env["platform"] == "android":
