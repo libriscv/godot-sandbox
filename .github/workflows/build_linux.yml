@@ -10,9 +10,6 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-          - arch: x86_32
-          - arch: arm64
-          - arch: arm32
 
     runs-on: ubuntu-latest
     steps:
