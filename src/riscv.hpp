@@ -59,7 +59,7 @@ private:
 	machine_t* m_machine = nullptr;
 	std::vector<uint8_t> m_binary;
 
-	mutable Dictionary m_lookup;
+	mutable std::unordered_map<std::string, gaddr_t> m_lookup;
 
 	bool m_last_newline = false;
 	uint8_t  m_level = 0;

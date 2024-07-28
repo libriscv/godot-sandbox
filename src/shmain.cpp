@@ -93,7 +93,7 @@ void Sandbox::load(const PackedByteArray &buffer, const TypedArray<String> &argu
 
 		m.simulate(MAX_INSTRUCTIONS);
 	} catch (const std::exception &e) {
-		ERR_PRINT(("Exception: " + std::string(e.what())).c_str());
+		this->handle_exception(machine().cpu.pc());
 	}
 }
 
@@ -106,10 +106,11 @@ Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtens
 		error.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
 		return Variant();
 	}
-	auto function = args[0]->operator String();
+	auto &function = *args[0];
 	args += 1;
 	arg_count -= 1;
-	return this->vmcall_address(cached_address_of(function), args, arg_count, error);
+	error.error = GDEXTENSION_CALL_OK;
+	return this->vmcall_internal(cached_address_of(String(function)), args, arg_count);
 }
 void Sandbox::setup_arguments(const Variant **args, int argc) {
 	// Stack pointer
@@ -214,6 +215,7 @@ void Sandbox::handle_exception(gaddr_t address) {
 				"] ", regs, "\n");
 	} catch (const std::exception &e) {
 		UtilityFunctions::print("\nMessage: ", e.what(), "\n\n");
+		ERR_PRINT(("Exception: " + std::string(e.what())).c_str());
 	}
 	UtilityFunctions::print(
 			"Program page: ", machine().memory.get_page_info(machine().cpu.pc()).c_str(),
@@ -243,16 +245,16 @@ void Sandbox::print(std::string_view text) {
 
 gaddr_t Sandbox::cached_address_of(String function) const {
 	const auto ascii = function.ascii();
-	const std::string_view sview{ ascii.get_data(), (size_t)ascii.length() };
+	const std::string str{ ascii.get_data(), (size_t)ascii.length() };
 
 	// lookup function address
 	gaddr_t address = 0x0;
-	auto res = m_lookup.find_key(function);
-	if (res.get_type() == Variant::Type::NIL) {
-		address = machine().address_of(sview);
-		m_lookup[function] = address;
+	auto it = m_lookup.find(str);
+	if (it == m_lookup.end()) {
+		address = address_of(str);
+		m_lookup.insert_or_assign(str, address);
 	} else {
-		address = res.operator int64_t();
+		address = it->second;
 	}
 
 	return address;
