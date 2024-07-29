@@ -11,17 +11,20 @@ inline Sandbox &emu(machine_t &m) {
 #define APICALL(func) static void func(machine_t &machine [[maybe_unused]])
 
 APICALL(api_print) {
-	auto [view] = machine.sysargs<std::span<GuestVariant>>();
+	auto [array, len] = machine.sysargs<gaddr_t, gaddr_t>();
 	auto &emu = riscv::emu(machine);
 
+	const GuestVariant *array_ptr = emu.machine().memory.memarray<GuestVariant>(array, len);
+
 	// We really want print_internal to be a public function.
-	for (const auto &var : view) {
+	for (gaddr_t i = 0; i < len; i++) {
+		auto &var = array_ptr[i];
 		UtilityFunctions::print(var.toVariant(emu));
 	}
 }
 
 APICALL(api_vcall) {
-	auto [vp, method, mlen, args, vret] = machine.sysargs<GuestVariant *, std::string, unsigned, std::span<GuestVariant>, GuestVariant *>();
+	auto [vp, method, mlen, args_ptr, args_size, vret] = machine.sysargs<GuestVariant *, std::string, unsigned, gaddr_t, gaddr_t, GuestVariant *>();
 	(void)mlen;
 
 	auto &emu = riscv::emu(machine);
@@ -29,12 +32,14 @@ APICALL(api_vcall) {
 
 	std::array<Variant, 64> vargs;
 	std::array<const Variant *, 64> argptrs;
-	if (args.size() > vargs.size()) {
+	if (args_size > vargs.size()) {
 		emu.print("Too many arguments.");
 		return;
 	}
 
-	for (size_t i = 0; i < args.size(); i++) {
+	const GuestVariant *args = emu.machine().memory.memarray<GuestVariant>(args_ptr, args_size);
+
+	for (size_t i = 0; i < args_size; i++) {
 		vargs[i] = args[i].toVariant(emu);
 		argptrs[i] = &vargs[i];
 	}
@@ -43,7 +48,7 @@ APICALL(api_vcall) {
 
 	auto *vcall = vp->toVariantPtr(emu);
 	Variant ret;
-	vcall->callp("call", argptrs.data(), args.size(), ret, error);
+	vcall->callp("call", argptrs.data(), args_size, ret, error);
 	vret->set(emu, ret);
 }
 

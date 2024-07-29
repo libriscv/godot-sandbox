@@ -86,7 +86,7 @@ struct GuestStdString
 		else if (size > max_len)
 			throw std::runtime_error("Guest std::string too large (size > 16MB)");
 		// Copy the string from guest memory
-		const auto view = machine.memory.rvspan<char> (ptr, size);
+		const auto view = machine.memory.rvview(ptr, size);
 		return std::string(view.data(), view.size());
 	}
 	String to_godot_string(const machine_t& machine, std::size_t max_len = 16UL << 20) const
@@ -109,9 +109,9 @@ struct GuestStdString
 			this->ptr = machine.arena().malloc(len + 1);
 			this->size = len;
 			// Copy the string to guest memory
-			auto view = machine.memory.rvspan<char>(ptr, len);
-			std::memcpy(view.data(), data, len);
-			view[len] = '\0';
+			char *guest_ptr = machine.memory.memarray<char>(this->ptr, len + 1);
+			std::memcpy(guest_ptr, data, len);
+			guest_ptr[len] = '\0';
 			this->capacity = len;
 		}
 	}
@@ -129,8 +129,8 @@ struct GuestStdVector
 		if (size > capacity)
 			throw std::runtime_error("Guest std::vector has size > capacity");
 		// Copy the vector from guest memory
-		const auto view = machine.memory.rvspan<T>(ptr, size);
-		return std::vector<T>(view.begin(), view.end());
+		const T* array = machine.memory.memarray<T>(ptr, size);
+		return std::vector<T>(array, size);
 	}
 };
 

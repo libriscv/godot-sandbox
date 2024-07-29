@@ -116,10 +116,10 @@ void Sandbox::setup_arguments(const Variant **args, int argc) {
 	// Stack pointer
 	auto &sp = m_machine->cpu.reg(2);
 	sp -= sizeof(GuestVariant) * argc;
-	const auto spanDataPtr = sp;
-	const auto spanElements = argc;
+	const auto arrayDataPtr = sp;
+	const auto arrayElements = argc;
 
-	auto v = m_machine->memory.rvspan<GuestVariant>(spanDataPtr, spanElements);
+	GuestVariant *v = m_machine->memory.memarray<GuestVariant>(arrayDataPtr, arrayElements);
 
 	for (size_t i = 0; i < argc; i++) {
 		//printf("args[%zu] = type %d\n", i, int(args[i]->get_type()));
@@ -128,8 +128,8 @@ void Sandbox::setup_arguments(const Variant **args, int argc) {
 	sp &= ~gaddr_t(0xF); // align stack pointer
 
 	// Set up a std::span of GuestVariant
-	m_machine->cpu.reg(10) = spanDataPtr;
-	m_machine->cpu.reg(11) = spanElements;
+	m_machine->cpu.reg(10) = arrayDataPtr;
+	m_machine->cpu.reg(11) = arrayElements;
 }
 Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc) {
 	try {

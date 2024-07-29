@@ -18,8 +18,8 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 		case Variant::FLOAT:
 			return v.f;
 		case Variant::STRING: {
-			auto s = emu.machine().memory.rvspan<GuestStdString>(v.s, 1);
-			return s[0].to_godot_string(emu.machine());
+			auto *s = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
+			return (*s)[0].to_godot_string(emu.machine());
 		}
 
 		case Variant::VECTOR2:
@@ -87,8 +87,8 @@ void GuestVariant::set(Sandbox &emu, const Variant &value) {
 			// TODO: Improve this by allocating string + contents + null terminator in one go
 			auto &machine = emu.machine();
 			auto ptr = machine.arena().malloc(sizeof(GuestStdString));
-			auto gstr = machine.memory.rvspan<GuestStdString>(ptr, 1);
-			gstr[0].set_string(machine, ptr, str.get_data(), str.length());
+			auto gstr = machine.memory.memarray<GuestStdString, 1>(ptr);
+			(*gstr)[0].set_string(machine, ptr, str.get_data(), str.length());
 			this->v.s = ptr;
 			break;
 		}
