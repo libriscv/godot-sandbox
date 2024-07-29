@@ -93,10 +93,12 @@ void GuestVariant::set(Sandbox &emu, const Variant &value) {
 			break;
 		}
 		case Variant::VECTOR2:
-			this->v.v2f = std::to_array(value.operator godot::Vector2().coord);
+			this->v.v2f[0] = value.operator godot::Vector2().x;
+			this->v.v2f[1] = value.operator godot::Vector2().y;
 			break;
 		case Variant::VECTOR2I:
-			this->v.v2i = std::to_array(value.operator godot::Vector2i().coord);
+			this->v.v2i[0] = value.operator godot::Vector2i().x;
+			this->v.v2i[1] = value.operator godot::Vector2i().y;
 			break;
 		case Variant::RECT2: {
 			auto rect = value.operator godot::Rect2();
@@ -115,16 +117,26 @@ void GuestVariant::set(Sandbox &emu, const Variant &value) {
 			break;
 		}
 		case Variant::VECTOR3:
-			this->v.v3f = std::to_array(value.operator godot::Vector3().coord);
+			this->v.v3f[0] = value.operator godot::Vector3().x;
+			this->v.v3f[1] = value.operator godot::Vector3().y;
+			this->v.v3f[2] = value.operator godot::Vector3().z;
 			break;
 		case Variant::VECTOR3I:
-			this->v.v3i = std::to_array(value.operator godot::Vector3i().coord);
+			this->v.v3i[0] = value.operator godot::Vector3i().x;
+			this->v.v3i[1] = value.operator godot::Vector3i().y;
+			this->v.v3i[2] = value.operator godot::Vector3i().z;
 			break;
 		case Variant::VECTOR4:
-			this->v.v4f = std::to_array(value.operator godot::Vector4().components);
+			this->v.v4f[0] = value.operator godot::Vector4().x;
+			this->v.v4f[1] = value.operator godot::Vector4().y;
+			this->v.v4f[2] = value.operator godot::Vector4().z;
+			this->v.v4f[3] = value.operator godot::Vector4().w;
 			break;
 		case Variant::VECTOR4I:
-			this->v.v4i = std::to_array(value.operator godot::Vector4i().coord);
+			this->v.v4i[0] = value.operator godot::Vector4i().x;
+			this->v.v4i[1] = value.operator godot::Vector4i().y;
+			this->v.v4i[2] = value.operator godot::Vector4i().z;
+			this->v.v4i[3] = value.operator godot::Vector4i().w;
 			break;
 
 		case Variant::DICTIONARY:
