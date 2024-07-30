@@ -1,4 +1,7 @@
-# Sandbox for Godot
+<p align="center">
+<img src="https://github.com/ughuuu/godot-sandbox/sandbox.png/blob/main/logo.jpg?raw=true"/>
+</p>
+<p align="center">
 
 <p align="center">
         <img src="https://github.com/libriscv/godot-sandbox/actions/workflows/runner.yml/badge.svg?branch=main"
