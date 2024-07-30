@@ -1,5 +1,5 @@
 <p align="center">
-<img src="https://raw.githubusercontent.com/Ughuuu/godot-riscv/re-enable-ios-and-android/sandbox.png" width="256px"/>
+<img src="https://raw.githubusercontent.com/Ughuuu/godot-riscv/re-enable-ios-and-android/banner.png" width="256px"/>
 </p>
 <p align="center">
 
