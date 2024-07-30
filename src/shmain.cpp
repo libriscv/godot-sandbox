@@ -2,6 +2,7 @@
 
 #include <godot_cpp/core/class_db.hpp>
 
+#include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #ifdef RISCV_BINARY_TRANSLATION
@@ -27,7 +28,9 @@ String Sandbox::_to_string() const {
 
 void Sandbox::_bind_methods() {
 	// Methods.
-	ClassDB::bind_method(D_METHOD("load"), &Sandbox::load);
+	ClassDB::bind_method(D_METHOD("get_program"), &Sandbox::get_program);
+	ClassDB::bind_method(D_METHOD("set_program", "program"), &Sandbox::set_program);
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "program", PROPERTY_HINT_RESOURCE_TYPE, "ELFResource"), "set_program", "get_program");
 	{
 		MethodInfo mi;
 		mi.arguments.push_back(PropertyInfo(Variant::STRING, "function"));
@@ -42,7 +45,6 @@ Sandbox::Sandbox() {
 	// In order to reduce checks we guarantee that this
 	// class is well-formed at all times.
 	this->m_machine = new machine_t{};
-	set_name("(name)");
 	UtilityFunctions::print("Constructor, sizeof(Variant) == ", static_cast<int32_t>(sizeof(Variant)));
 	UtilityFunctions::print("Constructor, alignof(Variant) == ", static_cast<int32_t>(alignof(Variant)));
 }
@@ -53,6 +55,21 @@ Sandbox::~Sandbox() {
 }
 
 // Methods.
+
+void Sandbox::set_program(Ref<ELFResource> program) {
+	m_program_data = program;
+	if (program.is_null()) {
+		// TODO unload program
+		return;
+	}
+	PackedByteArray data = m_program_data->get_content();
+	if (Engine::get_singleton()->is_editor_hint())
+		return;
+	load(data, m_program_arguments);
+}
+Ref<ELFResource> Sandbox::get_program() {
+	return m_program_data;
+}
 void Sandbox::load(Variant vbuf, const TypedArray<String> &arguments) {
 	auto buffer = vbuf.operator godot::PackedByteArray();
 	if (buffer.is_empty()) {
