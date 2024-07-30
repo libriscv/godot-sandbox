@@ -1,5 +1,5 @@
 <p align="center">
-<img src="https://github.com/ughuuu/godot-sandbox/sandbox.png/blob/main/logo.jpg?raw=true"/>
+<img src="https://github.com/ughuuu/godot-riscv/sandbox.png/blob/main/logo.jpg?raw=true"/>
 </p>
 <p align="center">
 
