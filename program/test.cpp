@@ -75,3 +75,14 @@ extern "C" void trampoline_function(std::span<Variant> args) {
 extern "C" void failing_function() {
 	copy.call(1, 2, 3);
 }
+
+extern "C" void test_buffer(std::span<Variant> args) {
+	auto data = args[0].operator std::string_view();
+
+	char buffer[256];
+	for (size_t i = 0; i < 32; i++)
+		snprintf(buffer + i * 3, 4, "%02x ", data[i]);
+	buffer[192] = '\n';
+
+	UtilityFunctions::print(buffer);
+}

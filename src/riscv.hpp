@@ -92,6 +92,20 @@ struct GuestStdString
 	{
 		return String(to_string(machine, max_len).c_str());
 	}
+	size_t copy_unterminated_to(const machine_t& machine, void* dst, size_t maxlen)
+	{
+		if (size <= SSO && size <= maxlen) {
+			std::memcpy(dst, data, size);
+			return size;
+		}
+		else if (size >= maxlen) {
+			// Copy the string from guest memory
+			machine.copy_from_guest(dst, ptr, size);
+			return size;
+		}
+
+		return 0; // Failed to copy
+	}
 
 	void set_string(machine_t& machine, gaddr_t self, const char* str, std::size_t len)
 	{
@@ -109,7 +123,7 @@ struct GuestStdString
 			this->size = len;
 			// Copy the string to guest memory
 			char *guest_ptr = machine.memory.memarray<char>(this->ptr, len + 1);
-			std::memcpy(guest_ptr, data, len);
+			std::memcpy(guest_ptr, str, len);
 			guest_ptr[len] = '\0';
 			this->capacity = len;
 		}

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <type_traits>
 #include <stdexcept>
+#include <span>
 
 template<typename T>
 struct is_string
@@ -142,6 +143,8 @@ struct Variant
 	operator double() const;
 	operator float() const;
 	operator std::string() const;
+	operator std::string_view() const; // View for STRING and PACKED_BYTE_ARRAY
+	operator std::span<uint8_t>() const; // Modifiable span for PACKED_BYTE_ARRAY
 
 	void callp(const std::string &method, const Variant *args, int argcount, Variant &r_ret, int &r_error);
 
@@ -264,15 +267,29 @@ inline Variant::operator float() const
 
 inline Variant::operator std::string() const
 {
-	if (m_type == STRING)
+	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
 		return *v.s;
+	throw std::bad_cast();
+}
+
+inline Variant::operator std::string_view() const
+{
+	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
+		return std::string_view(*v.s);
+	throw std::bad_cast();
+}
+
+inline Variant::operator std::span<uint8_t>() const
+{
+	if (m_type == PACKED_BYTE_ARRAY)
+		return std::span<uint8_t>(reinterpret_cast<uint8_t *>(v.s->data()), v.s->size());
 	throw std::bad_cast();
 }
 
 inline Variant::Variant(const Variant &other)
 {
 	m_type = other.m_type;
-	if (m_type == STRING)
+	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
 		v.s = new std::string(*other.v.s);
 	else
 		v = other.v;
@@ -280,22 +297,19 @@ inline Variant::Variant(const Variant &other)
 inline Variant::Variant(Variant &&other)
 {
 	m_type = other.m_type;
-	if (m_type == STRING)
-		v.s = other.v.s;
-	else
-		v = other.v;
+	v = other.v;
 
 	other.m_type = NIL;
 }
 inline Variant::~Variant()
 {
-	if (m_type == STRING)
+	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
 		delete v.s;
 }
 
 inline Variant &Variant::operator=(const Variant &other) {
 	m_type = other.m_type;
-	if (m_type == STRING)
+	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
 		v.s = new std::string(*other.v.s);
 	else
 		v = other.v;
@@ -304,10 +318,7 @@ inline Variant &Variant::operator=(const Variant &other) {
 }
 inline Variant &Variant::operator=(Variant &&other) {
 	m_type = other.m_type;
-	if (m_type == STRING)
-		v.s = other.v.s;
-	else
-		v = other.v;
+	v = other.v;
 
 	other.m_type = NIL;
 	return *this;
