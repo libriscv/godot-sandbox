@@ -83,14 +83,14 @@ elif env["platform"] == "linux" or env["platform"] == "android":
 
 if env["platform"] == "macos" or env["platform"] == "ios":
 	library = env.SharedLibrary(
-		"bin/addons/godot_riscv/bin/libgodot_riscv{}.framework/libgodot_riscv{}".format(
+		"bin/addons/godot_sandbox/bin/libgodot_riscv{}.framework/libgodot_riscv{}".format(
 			env["suffix"], env["suffix"]
 		),
 		source=sources,
 	)
 else:
 	library = env.SharedLibrary(
-		"bin/addons/godot_riscv/bin/libgodot_riscv{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+		"bin/addons/godot_sandbox/bin/libgodot_riscv{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
 		source=sources,
 	)
 Default(library)
