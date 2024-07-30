@@ -12,7 +12,7 @@
 #include <godot_cpp/godot.hpp>
 
 #include "resource_loader_elf.h"
-#include "riscv.hpp"
+#include "sandbox.hpp"
 
 using namespace godot;
 

@@ -6,7 +6,7 @@ option(STATIC_BUILD "Build statically" OFF)
 
 set(SOURCES
     src/gvar.cpp
-    src/shmain.cpp
+    src/sandbox.cpp
     src/register_types.cpp
 	src/syscalls.cpp
 )
