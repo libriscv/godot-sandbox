@@ -24,6 +24,15 @@
 
 This extension exists to allow Godot creators to implement safe modding support, such that they can pass around programs built by other players, knowing that these programs cannot harm other players.
 
+
+## Installation
+
+- Automatic (Recommended): Download the plugin from the official [Godot Asset Store](.) using the **AssetLib** tab in Godot by searching for **Godot Sandbox**. TODO
+
+- Manual: Download the [latest github release](https://github.com/libriscv/godot-sandbox/releases/latest) and move only the **addons** folder into your project **addons** folder.
+
+## Usage
+
 ```gdscript
 	var f = FileAccess.open("res://riscv/test", FileAccess.READ);
 
@@ -55,7 +64,7 @@ void function3(std::span<Variant> args)
 
 Above: An example of a sandboxed C++ function.
 
-## What can I do?
+### What can I do?
 
 - You can implement a modding API for your game, to be used inside the sandbox. This API can then be used by other players to extend your game, in a safe manner. That is, they can send their mod to other people, including you, and they (and you) can assume that it is safe to try out the mod. The mod is *not supposed* to be able to do any harm. That is the whole point of this extension.
 - You can implement support for your favorite language inside the sandbox. The sandbox receives Variants from Godot or GDScript, and can respond back with Variants. This means the communication is fully dynamic, and supports normal Godot usage. 
@@ -83,7 +92,7 @@ Please see the [documentation for libriscv](https://github.com/fwsGonzo/libriscv
 
 As a final note, the default interpreter mode in _libriscv_ is no slouch. And will for most games, and in most scenarios be both the slimmest in terms of memory and the fastest in terms of iteration. Certain variant operations will call out to Godot in order to get native performance.
 
-# Contributing
+## Contributing
 
 Requirements:
 - [SCons](https://www.scons.org)
@@ -101,7 +110,7 @@ Linting:
 ./scripts/clang-tidy.sh
 ```
 
-# How to compile cpp code locally
+### How to compile cpp code locally
 
 This project provides a dockerfile for compiling cpp code locally. For usage example, go to:
 
