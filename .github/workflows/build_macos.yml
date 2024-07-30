@@ -49,6 +49,10 @@ jobs:
           APPLE_DEV_ID: ${{ secrets.APPLE_DEV_ID }}
           APPLE_DEV_TEAM_ID: ${{ secrets.APPLE_DEV_TEAM_ID }}
           APPLE_DEV_APP_ID: ${{ secrets.APPLE_DEV_APP_ID }}
+        env: 
+            APPLE_DEV_ID: ${{ secrets.APPLE_DEV_ID }}
+        # Only run this on main branch where secret is set
+        if: ${{ env.APPLE_DEV_ID != '' }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
