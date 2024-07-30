@@ -28,7 +28,7 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          name: Godot Riscv Nightly
+          name: Godot Sandbox Nightly
           files: |
             godot-sandbox.zip
           generate_release_notes: true
