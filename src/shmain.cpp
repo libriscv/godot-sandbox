@@ -53,8 +53,12 @@ Sandbox::~Sandbox() {
 }
 
 // Methods.
-void Sandbox::load(const PackedByteArray &buffer, const TypedArray<String> &arguments) {
-	UtilityFunctions::print("Loading file from buffer");
+void Sandbox::load(Variant vbuf, const TypedArray<String> &arguments) {
+	auto buffer = vbuf.operator godot::PackedByteArray();
+	if (buffer.is_empty()) {
+		UtilityFunctions::print("Empty binary, cannot load program.");
+		return;
+	}
 
 	m_binary = std::vector<uint8_t>{ buffer.ptr(), buffer.ptr() + buffer.size() };
 
@@ -181,15 +185,6 @@ void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r
 
 	r_return_value = result;
 	r_call_error.error = GDEXTENSION_CALL_OK;
-}
-
-void Sandbox::execute() {
-	machine_t &m = machine();
-
-	UtilityFunctions::print("Simulating...");
-	m.simulate(MAX_INSTRUCTIONS);
-	UtilityFunctions::print("Done, instructions: ", m.instruction_counter(),
-			" result: ", m.return_value<int64_t>());
 }
 
 void Sandbox::handle_exception(gaddr_t address) {

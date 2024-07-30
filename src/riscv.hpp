@@ -34,7 +34,7 @@ public:
 	const auto& machine() const { return *m_machine; }
 
 	// Functions.
-	void load(const PackedByteArray& buffer, const TypedArray<String>& arguments);
+	void load(Variant vbuf, const TypedArray<String>& arguments);
 	// Make a function call to a function in the guest by its name.
 	Variant vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
 	Variant vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
@@ -50,7 +50,6 @@ public:
 	void add_scoped_variant(uint32_t hash) { m_scoped_variants.insert(hash); }
 	bool is_scoped_variant(uint32_t hash) const noexcept { return m_scoped_variants.count(hash) > 0; }
 private:
-	void execute();
 	void handle_exception(gaddr_t);
 	void handle_timeout(gaddr_t);
 	void initialize_syscalls();
