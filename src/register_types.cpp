@@ -11,9 +11,12 @@
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
 
+#include "resource_loader_elf.h"
 #include "riscv.hpp"
 
 using namespace godot;
+
+static Ref<ResourceFormatLoaderELF> elf_loader;
 
 void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
@@ -21,6 +24,10 @@ void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	}
 
 	ClassDB::register_class<Sandbox>();
+	GDREGISTER_CLASS(ELFResource);
+	GDREGISTER_CLASS(ResourceFormatLoaderELF);
+	elf_loader.instantiate();
+	ResourceLoader::get_singleton()->add_resource_format_loader(elf_loader);
 }
 
 void uninitialize_riscv_module(ModuleInitializationLevel p_level) {

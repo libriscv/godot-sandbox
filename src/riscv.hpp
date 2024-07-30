@@ -12,6 +12,7 @@ using namespace godot;
 using gaddr_t = riscv::address_type<RISCV_ARCH>;
 using machine_t = riscv::Machine<RISCV_ARCH>;
 #include "vmcallable.hpp"
+#include "resource_elf.h"
 
 class Sandbox : public Node
 {
@@ -35,6 +36,8 @@ public:
 
 	// Functions.
 	void load(Variant vbuf, const TypedArray<String>& arguments);
+	void set_program(Ref<ELFResource> program);
+	Ref<ELFResource> get_program();
 	// Make a function call to a function in the guest by its name.
 	Variant vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
 	Variant vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
@@ -55,6 +58,8 @@ private:
 	void initialize_syscalls();
 	void setup_arguments(const Variant** args, int argc);
 
+	Ref<ELFResource> m_program_data;
+	TypedArray<String> m_program_arguments;
 	machine_t* m_machine = nullptr;
 	std::vector<uint8_t> m_binary;
 
