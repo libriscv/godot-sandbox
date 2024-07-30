@@ -1,6 +1,28 @@
-# Sandboxing for Godot
+# Sandbox for Godot
 
-This GDExtension implements safe, low-latency sandboxing for Godot. It is not a convenience layer for other languages, unlike language ports/bindings. This extension exists to allow Godot creators to implement safe modding support, such that they can pass around programs built by other players, knowing that these programs cannot harm other players.
+<p align="center">
+        <img src="https://github.com/libriscv/godot-sandbox/actions/workflows/runner.yml/badge.svg?branch=main"
+            alt="Godot Sandbox Build"></a>
+        <img src="https://img.shields.io/badge/Godot-4.2-%23478cbf?logo=godot-engine&logoColor=white" />
+</p>
+
+<p align = "center">
+    <strong>
+        <a href="https://libriscv.no">Website</a> | <a href="https://github.com/libriscv/godot-sandbox/blob/main/CHANGELOG.md">Changelog</a> | <a href="https://discord.gg/n4GcXr66X5">Discord</a>
+    </strong>
+</p>
+
+
+-----
+
+<p align = "center">
+<b>Safe, low-latency and fast sandbox</b>
+<i>for the Godot game engine.</i>
+</p>
+
+-----
+
+This extension exists to allow Godot creators to implement safe modding support, such that they can pass around programs built by other players, knowing that these programs cannot harm other players.
 
 ```gdscript
 	var f = FileAccess.open("res://riscv/test", FileAccess.READ);
