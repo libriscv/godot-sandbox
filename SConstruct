@@ -14,10 +14,8 @@ env.Append(CPPPATH=["src/", "."])
 sources = [Glob("src/*.cpp")]
 
 librisc_sources = [
-	# switch-case:
-	"libriscv/lib/libriscv/bytecode_dispatch.cpp",
-	# threaded:
-	#"libriscv/lib/libriscv/threaded_dispatch.cpp",
+	# threaded fast-path:
+	"libriscv/lib/libriscv/threaded_dispatch.cpp",
 
 	"libriscv/lib/libriscv/cpu.cpp",
 	"libriscv/lib/libriscv/debug.cpp",
