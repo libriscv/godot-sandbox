@@ -46,8 +46,20 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 				return *(Variant *)&v.opaque[0];
 			else
 				throw std::runtime_error("GuestVariant::toVariant(): Dictionary/Array/Callable is not known/scoped");
+		case Variant::PACKED_BYTE_ARRAY: {
+			auto *s = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
+			auto &str = (*s)[0];
+			godot::PackedByteArray array;
+			array.resize(str.size);
+			const size_t res = str.copy_unterminated_to(emu.machine(), array.ptrw(), str.size);
+			if (res != str.size) {
+				ERR_PRINT("GuestVariant::toVariant(): PackedByteArray copy failed");
+				return Variant();
+			}
+			return Variant{ std::move(array) };
+		}
 		default:
-			UtilityFunctions::print("GuestVariant::toVariant(): Unsupported type: ", type);
+			ERR_PRINT(("GuestVariant::toVariant(): Unsupported type: " + std::to_string(type)).c_str());
 			return Variant();
 	}
 }
@@ -87,7 +99,7 @@ void GuestVariant::set(Sandbox &emu, const Variant &value) {
 			// TODO: Improve this by allocating string + contents + null terminator in one go
 			auto &machine = emu.machine();
 			auto ptr = machine.arena().malloc(sizeof(GuestStdString));
-			auto gstr = machine.memory.memarray<GuestStdString, 1>(ptr);
+			auto *gstr = machine.memory.memarray<GuestStdString, 1>(ptr);
 			(*gstr)[0].set_string(machine, ptr, str.get_data(), str.length());
 			this->v.s = ptr;
 			break;
@@ -146,7 +158,18 @@ void GuestVariant::set(Sandbox &emu, const Variant &value) {
 			emu.add_scoped_variant(this->hash());
 			break;
 		}
+		case Variant::PACKED_BYTE_ARRAY: {
+			// Uses std::string in the guest Variant
+			auto arr = value.operator godot::PackedByteArray();
+			const auto *data = (const char *)arr.ptr();
+			const auto len = arr.size();
+			auto ptr = emu.machine().arena().malloc(sizeof(GuestStdString));
+			auto *gstr = emu.machine().memory.memarray<GuestStdString>(ptr, 1);
+			gstr->set_string(emu.machine(), ptr, data, len);
+			this->v.s = ptr;
+			break;
+		}
 		default:
-			UtilityFunctions::print("SetVariant(): Unsupported type: ", value.get_type());
+			ERR_PRINT(("SetVariant(): Unsupported type: " + std::to_string(value.get_type())).c_str());
 	}
 }
