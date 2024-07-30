@@ -1,10 +1,10 @@
-#include "resource_loader_whisper.h"
-#include "resource_whisper.h"
+#include "resource_loader_elf.h"
+#include "resource_elf.h"
 
 Variant ResourceFormatLoaderELF::_load(const String &p_path, const String &original_path, bool use_sub_threads, int32_t cache_mode) const {
-	Ref<ELFResource> whisper_model = memnew(ELFResource);
-	whisper_model->set_file(p_path);
-	return whisper_model;
+	Ref<ELFResource> elf_model = memnew(ELFResource);
+	elf_model->set_file(p_path);
+	return elf_model;
 }
 PackedStringArray ResourceFormatLoaderELF::_get_recognized_extensions() const {
 	PackedStringArray array;
