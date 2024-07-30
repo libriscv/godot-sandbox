@@ -12,10 +12,10 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: godot-riscv-*
+          pattern: godot-sandbox-*
           merge-multiple: true
-          path: godot-riscv
-          name: godot-riscv
+          path: godot-sandbox
+          name: godot-sandbox
       - name: Delete draft release(s)
         uses: hugo19941994/delete-draft-releases@v1.0.0
         env:
@@ -24,13 +24,13 @@ jobs:
         shell: sh
         run: |
           ls
-          zip -r "godot-riscv.zip" godot-riscv
+          zip -r "godot-sandbox.zip" godot-sandbox
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           name: Godot Riscv Nightly
           files: |
-            godot-riscv.zip
+            godot-sandbox.zip
           generate_release_notes: true
           draft: true
           prerelease: true

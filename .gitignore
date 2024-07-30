@@ -7,4 +7,4 @@ program/test
 .DS_Store
 *.o
 *.os
-bin/addons/godot_riscv/bin/*
+bin/addons/godot_sandbox/bin/*

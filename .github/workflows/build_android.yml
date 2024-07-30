@@ -36,7 +36,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-riscv-android-${{ matrix.arch }}
+          name: godot-sandbox-android-${{ matrix.arch }}
           path: |
             ${{ github.workspace }}/bin/**/*.so
           if-no-files-found: error
