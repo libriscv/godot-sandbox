@@ -28,7 +28,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-riscv-web-${{ matrix.arch }}
+          name: godot-sandbox-web-${{ matrix.arch }}
           path: |
             ${{ github.workspace }}/bin/**/*.wasm
           if-no-files-found: error

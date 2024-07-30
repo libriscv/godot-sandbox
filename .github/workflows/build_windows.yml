@@ -30,7 +30,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-riscv-windows-${{ matrix.arch }}
+          name: godot-sandbox-windows-${{ matrix.arch }}
           path: |
             ${{ github.workspace }}/bin/**/*.dll
           if-no-files-found: error

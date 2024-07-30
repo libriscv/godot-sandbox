@@ -38,22 +38,26 @@ jobs:
           arch: ${{ matrix.arch }}
           build-target-type: template_release
 
-      #- name: Mac Sign
-      #  uses: godotengine/godot-cpp-template/.github/actions/sign@main
-      #  with:
-      #    FRAMEWORK_PATH: bin/addons/godot_riscv/bin/libgodot_riscv.macos.template_release${{ matrix.mac_precision_extension }}.universal.framework
-      #    SIGN_FLAGS: "--deep"
-      #    APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
-      #    APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
-      #    APPLE_DEV_PASSWORD: ${{ secrets.APPLE_DEV_PASSWORD }}
-      #    APPLE_DEV_ID: ${{ secrets.APPLE_DEV_ID }}
-      #    APPLE_DEV_TEAM_ID: ${{ secrets.APPLE_DEV_TEAM_ID }}
-      #    APPLE_DEV_APP_ID: ${{ secrets.APPLE_DEV_APP_ID }}
+      - name: Mac Sign
+        uses: godotengine/godot-cpp-template/.github/actions/sign@main
+        with:
+          FRAMEWORK_PATH: bin/addons/godot_sandbox/bin/libgodot_riscv.macos.template_release.universal.framework
+          SIGN_FLAGS: "--deep"
+          APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_DEV_PASSWORD: ${{ secrets.APPLE_DEV_PASSWORD }}
+          APPLE_DEV_ID: ${{ secrets.APPLE_DEV_ID }}
+          APPLE_DEV_TEAM_ID: ${{ secrets.APPLE_DEV_TEAM_ID }}
+          APPLE_DEV_APP_ID: ${{ secrets.APPLE_DEV_APP_ID }}
+        env: 
+            APPLE_DEV_ID: ${{ secrets.APPLE_DEV_ID }}
+        # Only run this on main branch where secret is set
+        if: ${{ env.APPLE_DEV_ID != '' }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-riscv-macos-${{ matrix.arch }}
+          name: godot-sandbox-macos-${{ matrix.arch }}
           path: |
-            ${{ github.workspace }}/bin/**/libgodot_riscv.macos.template_release${{ matrix.mac_precision_extension }}.universal.framework/**
+            ${{ github.workspace }}/bin/**/libgodot_riscv.macos.template_release.universal.framework/**
           if-no-files-found: error

@@ -28,7 +28,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-riscv-ios-${{ matrix.arch }}
+          name: godot-sandbox-ios-${{ matrix.arch }}
           path: |
             ${{ github.workspace }}/bin/**/libgodot_riscv.ios.template_release${{ matrix.ios_precision_extension }}.arm64.framework/**
           if-no-files-found: error

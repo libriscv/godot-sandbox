@@ -34,9 +34,9 @@ jobs:
           build-target-type: template_release
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: godot-riscv-linux-${{ matrix.arch }}
+          name: godot-sandbox-linux-${{ matrix.arch }}
           path: |
             ${{ github.workspace }}/bin/**/*.so
           if-no-files-found: error  
