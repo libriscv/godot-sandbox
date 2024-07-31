@@ -30,7 +30,7 @@ librisc_sources = [
 	"libriscv/lib/libriscv/multiprocessing.cpp",
 	"libriscv/lib/libriscv/native_libc.cpp",
 	"libriscv/lib/libriscv/native_threads.cpp",
-	"libriscv/lib/libriscv/rv32i.cpp",
+	#"libriscv/lib/libriscv/rv32i.cpp",
 	"libriscv/lib/libriscv/rv64i.cpp",
 	"libriscv/lib/libriscv/serialize.cpp",
 
