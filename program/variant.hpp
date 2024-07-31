@@ -4,6 +4,7 @@
 #include <type_traits>
 #include <stdexcept>
 #include <span>
+#include <vector>
 
 template<typename T>
 struct is_string
@@ -146,6 +147,9 @@ struct Variant
 	operator std::string_view() const; // View for STRING and PACKED_BYTE_ARRAY
 	operator std::span<uint8_t>() const; // Modifiable span for PACKED_BYTE_ARRAY
 
+	std::vector<float>& f32array() const; // Modifiable vector for PACKED_FLOAT32_ARRAY
+	std::vector<double>& f64array() const; // Modifiable vector for PACKED_FLOAT64_ARRAY
+
 	void callp(const std::string &method, const Variant *args, int argcount, Variant &r_ret, int &r_error);
 
 	template <typename... Args>
@@ -185,6 +189,8 @@ private:
 		int64_t i;
 		double  f;
 		std::string *s;
+		std::vector<float> *f32array;
+		std::vector<double> *f64array;
 	} v;
 };
 
@@ -286,11 +292,29 @@ inline Variant::operator std::span<uint8_t>() const
 	throw std::bad_cast();
 }
 
+inline std::vector<float>& Variant::f32array() const
+{
+	if (m_type == PACKED_FLOAT32_ARRAY)
+		return *v.f32array;
+	throw std::bad_cast();
+}
+
+inline std::vector<double>& Variant::f64array() const
+{
+	if (m_type == PACKED_FLOAT64_ARRAY)
+		return *v.f64array;
+	throw std::bad_cast();
+}
+
 inline Variant::Variant(const Variant &other)
 {
 	m_type = other.m_type;
 	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
 		v.s = new std::string(*other.v.s);
+	else if (m_type == PACKED_FLOAT32_ARRAY)
+		v.f32array = new std::vector<float>(*other.v.f32array);
+	else if (m_type == PACKED_FLOAT64_ARRAY)
+		v.f64array = new std::vector<double>(*other.v.f64array);
 	else
 		v = other.v;
 }
@@ -305,12 +329,20 @@ inline Variant::~Variant()
 {
 	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
 		delete v.s;
+	else if (m_type == PACKED_FLOAT32_ARRAY)
+		delete v.f32array;
+	else if (m_type == PACKED_FLOAT64_ARRAY)
+		delete v.f64array;
 }
 
 inline Variant &Variant::operator=(const Variant &other) {
 	m_type = other.m_type;
 	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
 		v.s = new std::string(*other.v.s);
+	else if (m_type == PACKED_FLOAT32_ARRAY)
+		v.f32array = new std::vector<float>(*other.v.f32array);
+	else if (m_type == PACKED_FLOAT64_ARRAY)
+		v.f64array = new std::vector<double>(*other.v.f64array);
 	else
 		v = other.v;
 

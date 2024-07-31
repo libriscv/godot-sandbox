@@ -58,6 +58,16 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 			}
 			return Variant{ std::move(array) };
 		}
+		case Variant::PACKED_FLOAT32_ARRAY: {
+			auto *gvec = emu.machine().memory.memarray<GuestStdVector, 1>(v.vf32);
+			auto &vec = (*gvec)[0];
+			return Variant{ vec.to_f32array(emu.machine()) };
+		}
+		case Variant::PACKED_FLOAT64_ARRAY: {
+			auto *gvec = emu.machine().memory.memarray<GuestStdVector, 1>(v.vf64);
+			auto &vec = (*gvec)[0];
+			return Variant{ vec.to_f64array(emu.machine()) };
+		}
 		default:
 			ERR_PRINT(("GuestVariant::toVariant(): Unsupported type: " + std::to_string(type)).c_str());
 			return Variant();
@@ -167,6 +177,28 @@ void GuestVariant::set(Sandbox &emu, const Variant &value) {
 			auto *gstr = emu.machine().memory.memarray<GuestStdString>(ptr, 1);
 			gstr->set_string(emu.machine(), ptr, data, len);
 			this->v.s = ptr;
+			break;
+		}
+		case Variant::PACKED_FLOAT32_ARRAY: {
+			auto arr = value.operator godot::PackedFloat32Array();
+			auto ptr = emu.machine().arena().malloc(sizeof(GuestStdVector));
+			auto *gvec = emu.machine().memory.memarray<GuestStdVector>(ptr, 1);
+			gvec->ptr = emu.machine().arena().malloc(arr.size() * sizeof(float));
+			gvec->size = arr.size();
+			gvec->capacity = arr.size();
+			std::memcpy(emu.machine().memory.memarray<float>(gvec->ptr, arr.size()), arr.ptr(), arr.size() * sizeof(float));
+			this->v.vf32 = ptr;
+			break;
+		}
+		case Variant::PACKED_FLOAT64_ARRAY: {
+			auto arr = value.operator godot::PackedFloat64Array();
+			auto ptr = emu.machine().arena().malloc(sizeof(GuestStdVector));
+			auto *gvec = emu.machine().memory.memarray<GuestStdVector>(ptr, 1);
+			gvec->ptr = emu.machine().arena().malloc(arr.size() * sizeof(double));
+			gvec->size = arr.size();
+			gvec->capacity = arr.size();
+			std::memcpy(emu.machine().memory.memarray<double>(gvec->ptr, arr.size()), arr.ptr(), arr.size() * sizeof(double));
+			this->v.vf64 = ptr;
 			break;
 		}
 		default:
