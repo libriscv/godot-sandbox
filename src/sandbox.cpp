@@ -110,11 +110,20 @@ void Sandbox::load(Variant vbuf, const TypedArray<String> &arguments) {
 		machine().setup_native_memory(MEMORY_SYSCALLS_BASE);
 		machine().setup_native_threads(THREADS_SYSCALL_BASE);
 
-		m.setup_linux({ "program" });
+		std::vector<std::string> args;
+		for (size_t i = 0; i < arguments.size(); i++) {
+			args.push_back(arguments[i].operator String().utf8().get_data());
+		}
+		if (args.empty()) {
+			// Create at least one argument (as required by main)
+			args.push_back("program");
+		}
+		m.setup_linux(args);
 
 		m.simulate(MAX_INSTRUCTIONS);
 	} catch (const std::exception &e) {
 		this->handle_exception(machine().cpu.pc());
+		// TODO: Program failed to load.
 	}
 }
 
