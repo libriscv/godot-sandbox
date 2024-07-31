@@ -65,19 +65,18 @@ void Sandbox::set_program(Ref<ELFResource> program) {
 	PackedByteArray data = m_program_data->get_content();
 	if (Engine::get_singleton()->is_editor_hint())
 		return;
-	load(data, m_program_arguments);
+	this->load(std::move(data), m_program_arguments);
 }
 Ref<ELFResource> Sandbox::get_program() {
 	return m_program_data;
 }
-void Sandbox::load(Variant vbuf, const TypedArray<String> &arguments) {
-	auto buffer = vbuf.operator godot::PackedByteArray();
+void Sandbox::load(PackedByteArray &&buffer, const TypedArray<String> &arguments) {
 	if (buffer.is_empty()) {
 		UtilityFunctions::print("Empty binary, cannot load program.");
 		return;
 	}
-
-	m_binary = std::vector<uint8_t>{ buffer.ptr(), buffer.ptr() + buffer.size() };
+	this->m_binary = std::move(buffer);
+	const auto binary_view = std::string_view{ (const char *)this->m_binary.ptr(), static_cast<size_t>(this->m_binary.size()) };
 
 	try {
 		delete this->m_machine;
@@ -96,7 +95,7 @@ void Sandbox::load(Variant vbuf, const TypedArray<String> &arguments) {
 #endif
 		};
 
-		this->m_machine = new machine_t{ this->m_binary, options };
+		this->m_machine = new machine_t{ binary_view, options };
 		machine_t &m = machine();
 
 		m.set_userdata(this);

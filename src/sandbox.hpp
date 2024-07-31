@@ -35,7 +35,6 @@ public:
 	const auto& machine() const { return *m_machine; }
 
 	// Functions.
-	void load(Variant vbuf, const TypedArray<String>& arguments);
 	void set_program(Ref<ELFResource> program);
 	Ref<ELFResource> get_program();
 	// Make a function call to a function in the guest by its name.
@@ -53,6 +52,7 @@ public:
 	void add_scoped_variant(uint32_t hash) { m_scoped_variants.insert(hash); }
 	bool is_scoped_variant(uint32_t hash) const noexcept { return m_scoped_variants.count(hash) > 0; }
 private:
+	void load(PackedByteArray&& vbuf, const TypedArray<String>& arguments);
 	void handle_exception(gaddr_t);
 	void handle_timeout(gaddr_t);
 	void initialize_syscalls();
@@ -61,7 +61,7 @@ private:
 	Ref<ELFResource> m_program_data;
 	TypedArray<String> m_program_arguments;
 	machine_t* m_machine = nullptr;
-	std::vector<uint8_t> m_binary;
+	PackedByteArray m_binary;
 
 	mutable std::unordered_map<std::string, gaddr_t> m_lookup;
 
