@@ -10,6 +10,7 @@ set(SOURCES
     src/resource_elf.cpp
     src/resource_loader_elf.cpp
     src/sandbox.cpp
+    src/sandbox_functions.cpp
 	src/syscalls.cpp
 )
 
