@@ -36,23 +36,44 @@ This extension exists to allow Godot creators to implement safe modding support,
 
 ## Usage
 
+Create a new `Sandbox` and assign a RISC-V ELF program resource to it.
+
 ```gdscript
-	var f = FileAccess.open("res://riscv/test", FileAccess.READ);
+extends Sandbox
 
-	# Create a sandbox by loading a static RISC-V program
-	var v = Sandbox.new();
-	v.load(f.get_buffer(f.get_length()), []);
-
+func _ready():
 	# Make a function call into the sandbox
-	v.vmcall("my_function", Vector4(1, 2, 3, 4));
+	vmcall("my_function", Vector4(1, 2, 3, 4));
+
+	print("\nMeasuring call overhead...");
+	vmcall("empty_function");
+
+	var t0 = Time.get_ticks_usec()
+	vmcall("empty_function");
+	var t1 = Time.get_ticks_usec()
+	print("Execution time: ", (t1 - t0), "us")
+
+	var d = Dictionary();
+	d["test"] = 123;
+	vmcall("my_function", d);
 
 	# Create a callable Variant, and then call it later
-	var callable = v.vmcallable("function3");
+	var callable = vmcallable("function3");
 	callable.call(123, 456.0, "Test");
 
 	# Pass a function to the sandbox as a callable Variant, and let it call it
-	var ff : Callable = v.vmcallable("final_function");
-	v.vmcall("trampoline_function", ff);
+	var ff : Callable = vmcallable("final_function");
+	vmcall("trampoline_function", ff);
+
+	# Pass a packed byte array
+	var testbuf = PackedByteArray();
+	testbuf.resize(32);
+	testbuf.fill(0xFF);
+	vmcall("test_buffer", testbuf);
+
+	#vmcall("failing_function");
+
+	pass # Replace with function body.
 ```
 
 The API towards the sandbox uses Variants, and the API inside the sandbox uses (translated) Variants.

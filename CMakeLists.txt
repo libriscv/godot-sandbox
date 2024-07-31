@@ -6,8 +6,10 @@ option(STATIC_BUILD "Build statically" OFF)
 
 set(SOURCES
     src/gvar.cpp
-    src/sandbox.cpp
     src/register_types.cpp
+    src/resource_elf.cpp
+    src/resource_loader_elf.cpp
+    src/sandbox.cpp
 	src/syscalls.cpp
 )
 
