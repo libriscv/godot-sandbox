@@ -36,6 +36,7 @@ public:
 
 	// Functions.
 	void load(Variant vbuf, const TypedArray<String>& arguments);
+	PackedStringArray get_functions();
 	void set_program(Ref<ELFResource> program);
 	Ref<ELFResource> get_program();
 	// Make a function call to a function in the guest by its name.
