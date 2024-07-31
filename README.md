@@ -45,14 +45,16 @@ func _ready():
 	# Make a function call into the sandbox
 	vmcall("my_function", Vector4(1, 2, 3, 4));
 
+	# Measure the time it takes to cold-call one function
 	print("\nMeasuring call overhead...");
-	vmcall("empty_function");
+	var emptyfunc = vmcallable("empty_function");
 
 	var t0 = Time.get_ticks_usec()
-	vmcall("empty_function");
+	emptyfunc.call();
 	var t1 = Time.get_ticks_usec()
 	print("Execution time: ", (t1 - t0), "us")
 
+	# Pass a complex Variant to the sandbox
 	var d = Dictionary();
 	d["test"] = 123;
 	vmcall("my_function", d);
