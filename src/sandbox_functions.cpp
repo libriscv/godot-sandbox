@@ -8,10 +8,10 @@ static const std::unordered_set<std::string> exclude_functions{ "btree_node_upda
 PackedStringArray Sandbox::get_functions() const {
 	PackedStringArray array;
 	// Get all unmangled public functions from the guest program.
-	for (auto &f : machine().memory.all_unmangled_function_symbols()) {
+	for (auto &functions : machine().memory.all_unmangled_function_symbols()) {
 		// Exclude functions that belong to the C/C++ runtime, as well as compiler-generated functions.
-		if (exclude_functions.count(f) == 0) {
-			array.append(String(std::string(f).c_str()));
+		if (exclude_functions.count(std::string(functions)) == 0) {
+			array.append(String(std::string(functions).c_str()));
 		}
 	}
 	return array;
