@@ -8,7 +8,7 @@
 #define RISCV_EXT_A
 #define RISCV_EXT_C
 /* #undef RISCV_EXT_V */
-#define RISCV_32I
+/* #undef RISCV_32I */
 #define RISCV_64I
 /* #undef RISCV_128I */
 /* #undef RISCV_FCSR */
