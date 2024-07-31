@@ -151,6 +151,23 @@ struct GuestStdVector
 		const T* array = machine.memory.memarray<T>(ptr, size);
 		return std::vector<T>(array, size);
 	}
+
+	PackedFloat32Array to_f32array(const machine_t& machine) const
+	{
+		PackedFloat32Array array;
+		array.resize(this->size);
+		const float *fptr = machine.memory.memarray<float>(this->ptr, this->size);
+		std::memcpy(array.ptrw(), fptr, this->size * sizeof(float));
+		return array;
+	}
+	PackedFloat64Array to_f64array(const machine_t& machine) const
+	{
+		PackedFloat64Array array;
+		array.resize(this->size);
+		const double *fptr = machine.memory.memarray<double>(this->ptr, this->size);
+		std::memcpy(array.ptrw(), fptr, this->size * sizeof(double));
+		return array;
+	}
 };
 
 struct GuestVariant {
@@ -167,7 +184,9 @@ struct GuestVariant {
 		bool    b;
 		int64_t i;
 		double  f;
-		gaddr_t s;
+		gaddr_t s;    // String & PackedByteArray -> GuestStdString
+		gaddr_t vf32; // PackedFloat32Array -> GuestStdVector<float>
+		gaddr_t vf64; // PackedFloat64Array -> GuestStdVector<double>
 		std::array<float, 2> v2f;
 		std::array<float, 3> v3f;
 		std::array<float, 4> v4f;
