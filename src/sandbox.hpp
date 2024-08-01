@@ -12,7 +12,7 @@ using namespace godot;
 using gaddr_t = riscv::address_type<RISCV_ARCH>;
 using machine_t = riscv::Machine<RISCV_ARCH>;
 #include "vmcallable.hpp"
-#include "resource_elf.h"
+#include "elf/script_elf.h"
 
 class Sandbox : public Node
 {
@@ -35,8 +35,8 @@ public:
 	const auto& machine() const { return *m_machine; }
 
 	// Functions.
-	void set_program(Ref<ELFResource> program);
-	Ref<ELFResource> get_program();
+	void set_program(Ref<ELFScript> program);
+	Ref<ELFScript> get_program();
 	PackedStringArray get_functions() const;
 	static PackedStringArray get_functions_from_binary(const PackedByteArray& binary);
 	// Make a function call to a function in the guest by its name.
@@ -60,7 +60,7 @@ private:
 	void initialize_syscalls();
 	void setup_arguments(const Variant** args, int argc);
 
-	Ref<ELFResource> m_program_data;
+	Ref<ELFScript> m_program_data;
 	TypedArray<String> m_program_arguments;
 	machine_t* m_machine = nullptr;
 	PackedByteArray m_binary;

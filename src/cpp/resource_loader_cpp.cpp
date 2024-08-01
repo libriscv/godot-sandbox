@@ -1,8 +1,8 @@
 #include "resource_loader_cpp.h"
-#include "resource_cpp.h"
+#include "script_cpp.h"
 
 Variant ResourceFormatLoaderCPP::_load(const String &p_path, const String &original_path, bool use_sub_threads, int32_t cache_mode) const {
-	Ref<CPPResource> cpp_model = memnew(CPPResource);
+	Ref<CPPScript> cpp_model = memnew(CPPScript);
 	cpp_model->set_file(p_path);
 	return cpp_model;
 }

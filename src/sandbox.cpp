@@ -31,7 +31,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_program"), &Sandbox::get_program);
 	ClassDB::bind_method(D_METHOD("set_program", "program"), &Sandbox::set_program);
 	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
-	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "program", PROPERTY_HINT_RESOURCE_TYPE, "ELFResource"), "set_program", "get_program");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "program", PROPERTY_HINT_RESOURCE_TYPE, "ELFScript"), "set_program", "get_program");
 	{
 		MethodInfo mi;
 		mi.arguments.push_back(PropertyInfo(Variant::STRING, "function"));
@@ -57,7 +57,7 @@ Sandbox::~Sandbox() {
 
 // Methods.
 
-void Sandbox::set_program(Ref<ELFResource> program) {
+void Sandbox::set_program(Ref<ELFScript> program) {
 	m_program_data = program;
 	if (m_program_data.is_null()) {
 		// TODO unload program
@@ -68,7 +68,7 @@ void Sandbox::set_program(Ref<ELFResource> program) {
 		return;
 	this->load(std::move(data), m_program_arguments);
 }
-Ref<ELFResource> Sandbox::get_program() {
+Ref<ELFScript> Sandbox::get_program() {
 	return m_program_data;
 }
 void Sandbox::load(PackedByteArray &&buffer, const TypedArray<String> &arguments) {

@@ -11,16 +11,19 @@
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
 
-#include "resource_cpp.h"
-#include "resource_elf.h"
-#include "resource_loader_cpp.h"
-#include "resource_loader_elf.h"
+#include "cpp/script_cpp.h"
+#include "cpp/script_language_cpp.h"
+#include "cpp/resource_loader_cpp.h"
+#include "cpp/resource_saver_cpp.h"
+#include "elf/script_elf.h"
+#include "elf/resource_loader_elf.h"
 #include "sandbox.hpp"
 
 using namespace godot;
 
 static Ref<ResourceFormatLoaderELF> elf_loader;
 static Ref<ResourceFormatLoaderCPP> cpp_loader;
+static Ref<ResourceFormatSaverCPP> cpp_saver;
 
 void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
@@ -28,14 +31,18 @@ void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	}
 
 	ClassDB::register_class<Sandbox>();
-	GDREGISTER_CLASS(ELFResource);
-	GDREGISTER_CLASS(CPPResource);
+	GDREGISTER_CLASS(ELFScript);
+	GDREGISTER_CLASS(CPPScript);
+	GDREGISTER_CLASS(CPPScriptLanguage);
 	GDREGISTER_CLASS(ResourceFormatLoaderELF);
 	GDREGISTER_CLASS(ResourceFormatLoaderCPP);
+	GDREGISTER_CLASS(ResourceFormatSaverCPP);
 	elf_loader.instantiate();
 	cpp_loader.instantiate();
+	cpp_saver.instantiate();
 	ResourceLoader::get_singleton()->add_resource_format_loader(elf_loader);
 	ResourceLoader::get_singleton()->add_resource_format_loader(cpp_loader);
+	ResourceSaver::get_singleton()->add_resource_format_saver(cpp_saver);
 }
 
 void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
