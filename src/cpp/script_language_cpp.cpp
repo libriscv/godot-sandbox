@@ -1,4 +1,7 @@
 #include "script_language_cpp.h"
+#include <unordered_set>
+#include <string>
+#include "script_cpp.h"
 
 String CPPScriptLanguage::_get_name() const {
     return "C++";
@@ -12,18 +15,45 @@ String CPPScriptLanguage::_get_extension() const  {
 }
 void CPPScriptLanguage::_finish() {}
 PackedStringArray CPPScriptLanguage::_get_reserved_words() const  {
-    return PackedStringArray();
+    const std::string reserved_words[] = {
+        "alignas", "alignof", "and", "and_eq", "asm", "atomic_cancel", "atomic_commit", "atomic_noexcept",
+        "auto", "bitand", "bitor", "bool", "break", "case", "catch", "char", "char8_t", "char16_t", "char32_t",
+        "class", "compl", "concept", "const", "consteval", "constexpr", "const_cast", "continue", "co_await", 
+        "co_return", "co_yield", "decltype", "default", "delete", "do", "double", "dynamic_cast", "else",
+        "enum", "explicit", "export", "extern", "false", "float", "for", "friend", "goto", "if", "inline",
+        "int", "long", "mutable", "namespace", "new", "noexcept", "not", "not_eq", "nullptr", "operator", "or",
+        "or_eq", "private", "protected", "public", "reflexpr", "register", "reinterpret_cast", "requires",
+        "return", "short", "signed", "sizeof", "static", "static_assert", "static_cast", "struct", "switch",
+        "synchronized", "template", "this", "thread_local", "throw", "true", "try", "typedef", "typeid",
+        "typename", "union", "unsigned", "using", "virtual", "void", "volatile", "wchar_t", "while", "xor", "xor_eq"
+    };
+    PackedStringArray reserved_words_packed;
+    for (auto &word : reserved_words) {
+        reserved_words_packed.push_back(String(word.c_str()));
+    }
+    return reserved_words_packed;
 }
 bool CPPScriptLanguage::_is_control_flow_keyword(const String &p_keyword) const  {
-    return false;
+    const std::unordered_set<std::string> control_flow_keywords {
+        "if", "else", "switch", "case", "default", "while", "do", "for", "break", "continue", "return", "goto", "try", "catch", "throw", "co_await", "co_return", "co_yield"
+    };
+    return control_flow_keywords.find(p_keyword.ascii().get_data()) != control_flow_keywords.end();
 }
 PackedStringArray CPPScriptLanguage::_get_comment_delimiters() const  {
-    return PackedStringArray();
+    PackedStringArray comment_delimiters;
+    comment_delimiters.push_back("/* */");
+    comment_delimiters.push_back("//");
+    return comment_delimiters;
 }
 PackedStringArray CPPScriptLanguage::_get_doc_comment_delimiters() const  {
-    return PackedStringArray();
+    PackedStringArray doc_comment_delimiters;
+    doc_comment_delimiters.push_back("///");
+    return doc_comment_delimiters;
 }
 PackedStringArray CPPScriptLanguage::_get_string_delimiters() const  {
+    PackedStringArray string_delimiters;
+	string_delimiters.push_back("\" \"");
+	string_delimiters.push_back("' '");
     return PackedStringArray();
 }
 Ref<Script> CPPScriptLanguage::_make_template(const String &p_template, const String &p_class_name, const String &p_base_class_name) const  {
@@ -42,7 +72,8 @@ String CPPScriptLanguage::_validate_path(const String &p_path) const {
     return String();
 }
 Object *CPPScriptLanguage::_create_script() const {
-    return nullptr;
+    CPPScript *script = memnew(CPPScript);
+    return script;
 }
 bool CPPScriptLanguage::_has_named_classes() const {
     return false;
@@ -109,7 +140,7 @@ Dictionary CPPScriptLanguage::_debug_get_stack_level_locals(int32_t p_level, int
 Dictionary CPPScriptLanguage::_debug_get_stack_level_members(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) {
     return Dictionary();
 }
-void *_debug_get_stack_level_instance(int32_t p_level) {
+void *CPPScriptLanguage::_debug_get_stack_level_instance(int32_t p_level) {
     return nullptr;
 }
 Dictionary CPPScriptLanguage::_debug_get_globals(int32_t p_max_subitems, int32_t p_max_depth) {
