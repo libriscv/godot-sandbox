@@ -1,9 +1,10 @@
 #include "resource_loader_cpp.h"
-#include "resource_cpp.h"
+#include "script_cpp.h"
+#include <godot_cpp/classes/file_access.hpp>
 
 Variant ResourceFormatLoaderCPP::_load(const String &p_path, const String &original_path, bool use_sub_threads, int32_t cache_mode) const {
-	Ref<CPPResource> cpp_model = memnew(CPPResource);
-	cpp_model->set_file(p_path);
+	Ref<CPPScript> cpp_model = memnew(CPPScript);
+	cpp_model->_set_source_code(FileAccess::get_file_as_string(p_path));
 	return cpp_model;
 }
 PackedStringArray ResourceFormatLoaderCPP::_get_recognized_extensions() const {
@@ -16,12 +17,13 @@ PackedStringArray ResourceFormatLoaderCPP::_get_recognized_extensions() const {
 	return array;
 }
 bool ResourceFormatLoaderCPP::_handles_type(const StringName &type) const {
-	return ClassDB::is_parent_class(type, "CPPSourceCode");
+	String type_str = type;
+	return type_str == "CPPScript" || type_str == "Script" || type_str == "Resource";
 }
 String ResourceFormatLoaderCPP::_get_resource_type(const String &p_path) const {
 	String el = p_path.get_extension().to_lower();
 	if (el == "hpp" || el == "cpp" || el == "h" || el == "cc" || el == "hh") {
-		return "CPPSourceCode";
+		return "CPPScript";
 	}
 	return "";
 }

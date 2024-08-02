@@ -3,6 +3,7 @@ extends Sandbox
 
 # Called when the node enters the scene tree for the first time.
 func _ready() -> void:
+	print(get_functions())
 	# Make a function call into the sandbox
 	print(vmcall("my_function", Vector4(1, 2, 3, 4)))
 	
