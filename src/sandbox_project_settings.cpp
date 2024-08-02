@@ -45,13 +45,12 @@ void register_setting_plain(
 	register_setting(p_name, p_value, p_needs_restart, PROPERTY_HINT_NONE, {});
 }
 
-
 void SandboxProjectSettings::register_settings() {
-    #ifdef WIN32
-    register_setting_plain(DOCKER_PATH, "C:\\Program Files\\Docker\\Docker\\bin\\", true);
-	#else
-    register_setting_plain(DOCKER_PATH, "");
-    #endif
+#ifdef WIN32
+	register_setting_plain(DOCKER_PATH, "C:\\Program Files\\Docker\\Docker\\bin\\", true);
+#else
+	register_setting_plain(DOCKER_PATH, "");
+#endif
 }
 
 template <typename TType>
