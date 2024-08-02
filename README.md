@@ -82,9 +82,8 @@ The API towards the sandbox uses Variants, and the API inside the sandbox uses (
 
 ```C++
 extern "C"
-void function3(std::span<Variant> args)
-{
-	UtilityFunctions::print("x = ", args[0], " y = ", args[1], " text = ", args[2]);
+void function3(Variant x, Variant y, Variant text) {
+	UtilityFunctions::print("x = ", x, " y = ", y, " text = ", text);
 }
 ```
 
@@ -110,13 +109,13 @@ Languages that are known to work inside _libriscv_:
 
 ## Performance
 
-The sandbox is implemented using _libriscv_ which primarily focuses on being lower latency than everyone else. This means that calling small functions in the sandbox is extremely fast, unlike all other sandboxing solutions, and most if not all other emulators.
+The sandbox is implemented using _libriscv_ which primarily focuses on being low-latency. This means that calling small functions in the sandbox is extremely fast, unlike all other sandboxing solutions.
 
-There are high-performance modes for _libriscv_ available for development and final builds. When developing on Linux, libtcc-jit is available (which is in theory portable to both Windows and MacOS). And for final builds one can produce a high-performance binary translation that can be embedded in the project (either Godot itself, or the GDExtension). This high-performance binary translation works on all platforms, such as Nintendo Switch, Mobile Phones, and other locked-down systems. It is especially made for such systems, but is inconvenient to produce.
+There are high-performance modes for _libriscv_ available for both development and final builds. When developing on Linux, libtcc-jit is available (which is in theory portable to both Windows and MacOS). And for final builds one can produce a high-performance binary translation, with up to 92% native performance, that can be embedded in the project (either Godot itself, or the GDExtension). This high-performance binary translation works on all platforms, such as Nintendo Switch, Mobile Phones, and other locked-down systems. It is especially made for such systems, but is inconvenient to produce.
 
-Please see the [documentation for libriscv](https://github.com/fwsGonzo/libriscv) for more information.
+Please see the [documentation for libriscv](https://github.com/libriscv/libriscv) for more information.
 
-As a final note, the default interpreter mode in _libriscv_ is no slouch. And will for most games, and in most scenarios be both the slimmest in terms of memory and the fastest in terms of iteration. Certain variant operations will call out to Godot in order to get native performance.
+As a final note, the default interpreter mode in _libriscv_ is no slouch, being among the fastest interpreters. And will for most games, and in most scenarios be both the slimmest in terms of memory and the fastest in terms of iteration. Certain variant operations will call out to Godot in order to get native performance.
 
 ## Contributing
 
