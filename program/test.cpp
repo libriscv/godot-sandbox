@@ -45,30 +45,28 @@ int main() {
 	fast_exit();
 }
 
-extern "C" void empty_function(std::span<Variant> args) {
-	(void)args;
+extern "C" void empty_function() {
 }
 
-extern "C" void my_function(std::span<Variant> args) {
+extern "C" void my_function(Variant varg) {
 	UtilityFunctions::print("Hello, ", 124.5, " world!\n");
-	for (size_t i = 0; i < args.size(); i++)
-		UtilityFunctions::print("Arg ", i, ": ", args[i]);
+	UtilityFunctions::print("Arg: ", varg);
 }
 
-extern "C" void function3(std::span<Variant> args) {
-	UtilityFunctions::print("x = ", args[0], " y = ", args[1], " text = ", args[2]);
+extern "C" void function3(Variant x, Variant y, Variant text) {
+	UtilityFunctions::print("x = ", x, " y = ", y, " text = ", text);
 }
 
-extern "C" void final_function(std::span<Variant> args) {
+extern "C" void final_function() {
 	UtilityFunctions::print("The function was called!!\n");
 }
 
 static Variant copy;
 
-extern "C" void trampoline_function(std::span<Variant> args) {
+extern "C" void trampoline_function(Variant callback) {
 	UtilityFunctions::print("Trampoline is calling first argument...\n");
-	args[0].call(1, 2, 3);
-	copy = args[0];
+	callback.call(1, 2, 3);
+	copy = callback;
 	UtilityFunctions::print("After call...\n");
 }
 
@@ -76,8 +74,8 @@ extern "C" void failing_function() {
 	copy.call(1, 2, 3);
 }
 
-extern "C" void test_buffer(std::span<Variant> args) {
-	auto data = args[0].operator std::string_view();
+extern "C" void test_buffer(Variant var) {
+	auto data = var.operator std::string_view();
 
 	char buffer[256];
 	for (size_t i = 0; i < 32; i++)

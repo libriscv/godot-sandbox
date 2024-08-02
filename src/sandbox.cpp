@@ -150,16 +150,15 @@ void Sandbox::setup_arguments(const Variant **args, int argc) {
 	const auto arrayElements = argc;
 
 	GuestVariant *v = m_machine->memory.memarray<GuestVariant>(arrayDataPtr, arrayElements);
+	if (argc > 8)
+		argc = 8; // Limit to argument registers (a0-a7)
 
 	for (size_t i = 0; i < argc; i++) {
 		//printf("args[%zu] = type %d\n", i, int(args[i]->get_type()));
 		v[i].set(*this, (*args)[i]);
+		m_machine->cpu.reg(10 + i) = arrayDataPtr + i * sizeof(GuestVariant);
 	}
 	sp &= ~gaddr_t(0xF); // align stack pointer
-
-	// Set up a std::span of GuestVariant
-	m_machine->cpu.reg(10) = arrayDataPtr;
-	m_machine->cpu.reg(11) = arrayElements;
 }
 Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc) {
 	try {
