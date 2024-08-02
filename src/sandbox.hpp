@@ -38,6 +38,7 @@ public:
 	void set_program(Ref<ELFResource> program);
 	Ref<ELFResource> get_program();
 	PackedStringArray get_functions() const;
+	static PackedStringArray get_functions_from_binary(const PackedByteArray& binary);
 	// Make a function call to a function in the guest by its name.
 	Variant vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
 	Variant vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
