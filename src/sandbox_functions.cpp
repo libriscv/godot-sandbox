@@ -18,21 +18,26 @@ PackedStringArray Sandbox::get_functions() const {
 }
 
 PackedStringArray Sandbox::get_functions_from_binary(const PackedByteArray &binary) {
-	const auto binary_view = std::string_view{ (const char *)binary.ptr(), static_cast<size_t>(binary.size()) };
 	PackedStringArray array;
-	array.push_back("main");
-	/*
-	// Instantiate Machine without loading the ELF
-	machine_t machine{ binary_view, riscv::MachineOptions<RISCV_ARCH>{
-											.load_program = false, // Do not load the ELF program.
-									} };
+	if (binary.is_empty()) {
+		return array;
+	}
 
-	// Get all unmangled public functions from the guest program.
-	for (auto &functions : machine.memory.all_unmangled_function_symbols()) {
-		// Exclude functions that belong to the C/C++ runtime, as well as compiler-generated functions.
-		if (exclude_functions.count(functions) == 0) {
-			array.append(String(std::string(functions).c_str()));
+	const auto binary_view = std::string_view{ (const char *)binary.ptr(), static_cast<size_t>(binary.size()) };
+	try {
+		// Instantiate Machine without loading the ELF
+		machine_t machine{ binary_view, riscv::MachineOptions<RISCV_ARCH>{
+												.load_program = false, // Do not load the ELF program.
+										} };
+		// Get all unmangled public functions from the guest program.
+		for (auto &functions : machine.memory.all_unmangled_function_symbols()) {
+			// Exclude functions that belong to the C/C++ runtime, as well as compiler-generated functions.
+			if (exclude_functions.count(functions) == 0) {
+				array.append(String(std::string(functions).c_str()));
+			}
 		}
-	}*/
+	} catch (const std::exception &e) {
+		ERR_PRINT("Failed to get functions from binary.");
+	}
 	return array;
 }
