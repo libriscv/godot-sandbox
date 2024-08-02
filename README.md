@@ -141,5 +141,5 @@ This project provides a dockerfile for compiling cpp code locally. For usage exa
 
 ```
 cd program
-docker run -v .:/usr/src -d ghcr.io/fwsgonzo/compiler build.sh
+docker run --rm -v .:/usr/src -d ghcr.io/fwsgonzo/compiler myoutputfile.elf
 ```

@@ -5,14 +5,19 @@ option(SANITIZE    "Enable sanitizers" OFF)
 option(STATIC_BUILD "Build statically" OFF)
 
 set(SOURCES
-    src/gvar.cpp
+	src/cpp/resource_loader_cpp.cpp
+	src/cpp/resource_saver_cpp.cpp
+	src/cpp/script_cpp.cpp
+	src/cpp/script_language_cpp.cpp
+	src/elf/resource_loader_elf.cpp
+	src/elf/resource_saver_elf.cpp
+	src/elf/script_elf.cpp
+	src/elf/script_language_elf.cpp
+	src/gvar.cpp
     src/register_types.cpp
-    src/resource_cpp.cpp
-    src/resource_loader_cpp.cpp
-    src/resource_elf.cpp
-    src/resource_loader_elf.cpp
     src/sandbox.cpp
     src/sandbox_functions.cpp
+	src/sandbox_project_settings.cpp
 	src/syscalls.cpp
 )
 
