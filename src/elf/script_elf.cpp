@@ -41,7 +41,7 @@ String ELFScript::_get_source_code() const {
 		return String();
 	}
 	String functions;
-	for (String function: Sandbox::get_functions_from_binary(source_code.to_ascii_buffer())) {
+	for (String function : Sandbox::get_functions_from_binary(source_code.to_ascii_buffer())) {
 		functions += function;
 		functions += "\n";
 	}
