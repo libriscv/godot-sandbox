@@ -10,19 +10,9 @@ class CPPScript : public ScriptExtension {
 
 protected:
 	static void _bind_methods() {}
-	String file;
+	String source_code;
 
 public:
-	void set_file(const String &p_file) {
-		file = p_file;
-		emit_changed();
-	}
-
-	String get_file() {
-		return file;
-	}
-
-
 	virtual bool _editor_can_reload_from_file() override;
 	virtual void _placeholder_erased(void *p_placeholder) override;
 	virtual bool _can_instantiate() const override;

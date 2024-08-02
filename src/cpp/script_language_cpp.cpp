@@ -155,7 +155,13 @@ TypedArray<Dictionary> CPPScriptLanguage::_debug_get_current_stack_info() {
 void CPPScriptLanguage::_reload_all_scripts() {}
 void CPPScriptLanguage::_reload_tool_script(const Ref<Script> &p_script, bool p_soft_reload) {}
 PackedStringArray CPPScriptLanguage::_get_recognized_extensions() const {
-    return PackedStringArray();
+	PackedStringArray array;
+	array.push_back("cpp");
+	array.push_back("cc");
+	array.push_back("hh");
+	array.push_back("h");
+	array.push_back("hpp");
+	return array;
 }
 TypedArray<Dictionary> CPPScriptLanguage::_get_public_functions() const {
     return TypedArray<Dictionary>();

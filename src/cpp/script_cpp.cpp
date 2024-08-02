@@ -3,12 +3,6 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include "../register_types.h"
 
-PackedByteArray CPPScript::get_content() {
-	String p_path = get_file();
-	return FileAccess::get_file_as_bytes(p_path);
-}
-
-
 bool CPPScript::_editor_can_reload_from_file() {
 	return false;
 }
@@ -38,10 +32,10 @@ bool CPPScript::_instance_has(Object *p_object) const {
 	return false;
 }
 bool CPPScript::_has_source_code() const {
-	return false;
+	return true;
 }
 String CPPScript::_get_source_code() const {
-	return String();
+	return source_code;
 }
 void CPPScript::_set_source_code(const String &p_code) {}
 Error CPPScript::_reload(bool p_keep_state) {

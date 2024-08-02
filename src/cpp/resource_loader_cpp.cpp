@@ -3,7 +3,7 @@
 
 Variant ResourceFormatLoaderCPP::_load(const String &p_path, const String &original_path, bool use_sub_threads, int32_t cache_mode) const {
 	Ref<CPPScript> cpp_model = memnew(CPPScript);
-	cpp_model->set_file(p_path);
+	cpp_model->_set_source_code(p_path);
 	return cpp_model;
 }
 PackedStringArray ResourceFormatLoaderCPP::_get_recognized_extensions() const {
