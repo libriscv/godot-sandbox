@@ -10,7 +10,7 @@ class ELFScript : public ScriptExtension {
 
 protected:
 	static void _bind_methods() {}
-	String source_code;
+	PackedByteArray source_code;
 	String path;
 
 public:

@@ -16,13 +16,13 @@ Ref<Script> ELFScript::_get_base_script() const {
 	return Ref<Script>();
 }
 StringName ELFScript::_get_global_name() const {
-	return "elf123";
+	return "ELFScriptGlobal";
 }
 bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
 }
 StringName ELFScript::_get_instance_base_type() const {
-	return StringName();
+	return StringName("ELFScript");
 }
 void *ELFScript::_instance_create(Object *p_for_object) const {
 	return nullptr;
@@ -41,7 +41,10 @@ String ELFScript::_get_source_code() const {
 		return String();
 	}
 	String functions;
-	for (String function : Sandbox::get_functions_from_binary(source_code.to_ascii_buffer())) {
+	PackedStringArray functions_array = Sandbox::get_functions_from_binary(source_code);
+	functions_array.sort();
+	for (String function : functions_array) {
+		functions += "function: ";
 		functions += function;
 		functions += "\n";
 	}
@@ -68,6 +71,7 @@ Variant ELFScript::_get_script_method_argument_count(const StringName &p_method)
 	return Variant();
 }
 Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
+	ERR_PRINT(p_method);
 	return Dictionary();
 }
 bool ELFScript::_is_tool() const {
@@ -77,7 +81,7 @@ bool ELFScript::_is_valid() const {
 	return true;
 }
 bool ELFScript::_is_abstract() const {
-	return true;
+	return false;
 }
 ScriptLanguage *ELFScript::_get_language() const {
 	return get_elf_language();
@@ -96,7 +100,10 @@ Variant ELFScript::_get_property_default_value(const StringName &p_property) con
 }
 void ELFScript::_update_exports() {}
 TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
-	return TypedArray<Dictionary>();
+	ERR_PRINT("get methods");
+	TypedArray<StringName> members;
+	members.push_back("ELFScriptGlobalMethods");
+	return members;
 }
 TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
 	return TypedArray<Dictionary>();
@@ -108,7 +115,10 @@ Dictionary ELFScript::_get_constants() const {
 	return Dictionary();
 }
 TypedArray<StringName> ELFScript::_get_members() const {
-	return TypedArray<StringName>();
+	ERR_PRINT("get members");
+	TypedArray<StringName> members;
+	members.push_back("ELFScriptGlobal");
+	return members;
 }
 bool ELFScript::_is_placeholder_fallback_enabled() const {
 	return false;
@@ -118,10 +128,11 @@ Variant ELFScript::_get_rpc_config() const {
 }
 
 PackedByteArray ELFScript::get_content() {
-	return source_code.to_ascii_buffer();
+	return source_code;
 }
 
 void ELFScript::set_file(const String &p_path) {
-	path = "MyFile123";
-	source_code = FileAccess::get_file_as_string(path);
+	path = p_path;
+
+	source_code = FileAccess::get_file_as_bytes(path);
 }

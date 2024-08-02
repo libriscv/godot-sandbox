@@ -37,7 +37,7 @@ PackedStringArray Sandbox::get_functions_from_binary(const PackedByteArray &bina
 			}
 		}
 	} catch (const std::exception &e) {
-		ERR_PRINT("Failed to get functions from binary.");
+		ERR_PRINT("Failed to get functions from binary. " + String(e.what()));
 	}
 	return array;
 }

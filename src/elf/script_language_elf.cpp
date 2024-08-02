@@ -1,6 +1,7 @@
 #include "script_language_elf.h"
 #include "script_elf.h"
 #include <string>
+#include <godot_cpp/classes/resource_loader.hpp>
 #include <unordered_set>
 
 String ELFScriptLanguage::_get_name() const {
@@ -58,10 +59,10 @@ Object *ELFScriptLanguage::_create_script() const {
 	return script;
 }
 bool ELFScriptLanguage::_has_named_classes() const {
-	return false;
+	return true;
 }
 bool ELFScriptLanguage::_supports_builtin_mode() const {
-	return false;
+	return true;
 }
 bool ELFScriptLanguage::_supports_documentation() const {
 	return false;
@@ -142,23 +143,7 @@ PackedStringArray ELFScriptLanguage::_get_recognized_extensions() const {
 	return array;
 }
 TypedArray<Dictionary> ELFScriptLanguage::_get_public_functions() const {
-	TypedArray<Dictionary> functions;
-	Dictionary method;
-	method["name"] = "elf";
-	method["args"] = Array();
-	method["default_args"] = Array();
-	method["return"] = "elf";
-	Dictionary type;
-	type["name"] = "type";
-	type["type"] = Variant::Type::BOOL;
-	type["class_name"] = "class";
-	type["hint"] = PropertyHint::PROPERTY_HINT_NONE;
-	type["hint_string"] = String();
-	type["usage"] = PROPERTY_USAGE_DEFAULT;
-	method["return"] = type;
-	method["flags"] = METHOD_FLAGS_DEFAULT;
-	functions.push_back(method);
-	return functions;
+	return TypedArray<Dictionary>();
 }
 Dictionary ELFScriptLanguage::_get_public_constants() const {
 	return Dictionary();
@@ -177,12 +162,17 @@ int32_t ELFScriptLanguage::_profiling_get_frame_data(ScriptLanguageExtensionProf
 }
 void ELFScriptLanguage::_frame() {}
 bool ELFScriptLanguage::_handles_global_class_type(const String &p_type) const {
-	return false;
+	return p_type == "ELFScript";
 }
 Dictionary ELFScriptLanguage::_get_global_class_name(const String &p_path) const {
+	Ref<Resource> resource = ResourceLoader::get_singleton()->load(p_path);
+	Ref<ELFScript> elf_model = Object::cast_to<ELFScript>(resource.ptr());
 	Dictionary dict;
-	dict["name"] = "elf123";
-	dict["base_type"] = "ELFScript";
-	dict["icon_path"] = String("res://addons/godot_sandbox/ELFScript.svg");
-	return Dictionary();
+	if (elf_model.is_valid()) {
+		ERR_PRINT(p_path);
+		dict["name"] = "ELFScriptGlobal";
+		dict["base_type"] = "ELFScript";
+		dict["icon_path"] = String("res://addons/godot_sandbox/ELFScript.svg");
+	}
+	return dict;
 }
