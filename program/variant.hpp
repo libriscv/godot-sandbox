@@ -143,7 +143,8 @@ struct Variant
 	operator uint8_t() const;
 	operator double() const;
 	operator float() const;
-	operator std::string() const;
+	operator const std::string&() const; // String for STRING and PACKED_BYTE_ARRAY
+	operator std::string&();
 	operator std::string_view() const; // View for STRING and PACKED_BYTE_ARRAY
 	operator std::span<uint8_t>() const; // Modifiable span for PACKED_BYTE_ARRAY
 
@@ -271,7 +272,13 @@ inline Variant::operator float() const
 	throw std::bad_cast();
 }
 
-inline Variant::operator std::string() const
+inline Variant::operator const std::string&() const
+{
+	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
+		return *v.s;
+	throw std::bad_cast();
+}
+inline Variant::operator std::string&()
 {
 	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
 		return *v.s;
