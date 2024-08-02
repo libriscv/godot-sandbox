@@ -169,9 +169,9 @@ Dictionary ELFScriptLanguage::_get_global_class_name(const String &p_path) const
 	Ref<ELFScript> elf_model = Object::cast_to<ELFScript>(resource.ptr());
 	Dictionary dict;
 	if (elf_model.is_valid()) {
-		ERR_PRINT(p_path);
-		dict["name"] = "ELFScriptGlobal";
+		dict["name"] = elf_model->get_global_name();
 		dict["base_type"] = "ELFScript";
+		dict["base"] = "ELFScript";
 		dict["icon_path"] = String("res://addons/godot_sandbox/ELFScript.svg");
 	}
 	return dict;

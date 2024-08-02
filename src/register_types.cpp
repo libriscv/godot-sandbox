@@ -21,6 +21,7 @@
 #include "elf/script_elf.h"
 #include "elf/script_language_elf.h"
 #include "sandbox.hpp"
+#include "sandbox_project_settings.h"
 
 using namespace godot;
 
@@ -65,16 +66,22 @@ void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ResourceLoader::get_singleton()->add_resource_format_loader(cpp_loader);
 	ResourceSaver::get_singleton()->add_resource_format_saver(elf_saver);
 	ResourceSaver::get_singleton()->add_resource_format_saver(cpp_saver);
+	SandboxProjectSettings::register_settings();
+	ERR_PRINT(SandboxProjectSettings::get_docker_path());
 }
 
 void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
+	//Engine::get_singleton()->unregister_script_language(cpp_language);
+	//Engine::get_singleton()->unregister_script_language(elf_language);
 	ResourceLoader::get_singleton()->remove_resource_format_loader(elf_loader);
 	ResourceSaver::get_singleton()->remove_resource_format_saver(elf_saver);
 	ResourceLoader::get_singleton()->remove_resource_format_loader(cpp_loader);
 	ResourceSaver::get_singleton()->remove_resource_format_saver(cpp_saver);
+	//delete cpp_language;
+	//delete elf_language;
 	elf_loader.unref();
 	elf_saver.unref();
 	cpp_loader.unref();

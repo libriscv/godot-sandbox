@@ -16,7 +16,8 @@ Ref<Script> ELFScript::_get_base_script() const {
 	return Ref<Script>();
 }
 StringName ELFScript::_get_global_name() const {
-	return "ELFScriptGlobal";
+	// register it globally
+	return path;
 }
 bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
@@ -62,7 +63,7 @@ String ELFScript::_get_class_icon_path() const {
 	return String("res://addons/godot_sandbox/ELFScript.svg");
 }
 bool ELFScript::_has_method(const StringName &p_method) const {
-	return false;
+	return true;
 }
 bool ELFScript::_has_static_method(const StringName &p_method) const {
 	return false;
@@ -81,7 +82,7 @@ bool ELFScript::_is_valid() const {
 	return true;
 }
 bool ELFScript::_is_abstract() const {
-	return false;
+	return true;
 }
 ScriptLanguage *ELFScript::_get_language() const {
 	return get_elf_language();
@@ -101,9 +102,27 @@ Variant ELFScript::_get_property_default_value(const StringName &p_property) con
 void ELFScript::_update_exports() {}
 TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
 	ERR_PRINT("get methods");
-	TypedArray<StringName> members;
-	members.push_back("ELFScriptGlobalMethods");
-	return members;
+	TypedArray<Dictionary> functions;
+	PackedStringArray functions_array = Sandbox::get_functions_from_binary(source_code);
+	functions_array.sort();
+	for (String function : functions_array) {
+		Dictionary method;
+		method["name"] = function;
+		method["args"] = Array();
+		method["default_args"] = Array();
+		method["return"] = "elf";
+		Dictionary type;
+		type["name"] = "type";
+		type["type"] = Variant::Type::BOOL;
+		type["class_name"] = "class";
+		type["hint"] = PropertyHint::PROPERTY_HINT_NONE;
+		type["hint_string"] = String();
+		type["usage"] = PROPERTY_USAGE_DEFAULT;
+		method["return"] = type;
+		method["flags"] = METHOD_FLAGS_DEFAULT;
+		functions.push_back(method);
+	}
+	return functions;
 }
 TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
 	return TypedArray<Dictionary>();
@@ -115,10 +134,7 @@ Dictionary ELFScript::_get_constants() const {
 	return Dictionary();
 }
 TypedArray<StringName> ELFScript::_get_members() const {
-	ERR_PRINT("get members");
-	TypedArray<StringName> members;
-	members.push_back("ELFScriptGlobal");
-	return members;
+	return TypedArray<StringName>();
 }
 bool ELFScript::_is_placeholder_fallback_enabled() const {
 	return false;
@@ -132,7 +148,6 @@ PackedByteArray ELFScript::get_content() {
 }
 
 void ELFScript::set_file(const String &p_path) {
-	path = p_path;
-
-	source_code = FileAccess::get_file_as_bytes(path);
+	source_code = FileAccess::get_file_as_bytes(p_path);
+	path = "ELF_" + p_path.get_basename().replace("res://", "").replace("/", "_");
 }
