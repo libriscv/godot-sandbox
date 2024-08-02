@@ -41,20 +41,21 @@ bool CPPScriptLanguage::_is_control_flow_keyword(const String &p_keyword) const 
 }
 PackedStringArray CPPScriptLanguage::_get_comment_delimiters() const  {
     PackedStringArray comment_delimiters;
-    comment_delimiters.push_back("/* */");
+    //comment_delimiters.push_back("/* */");
     comment_delimiters.push_back("//");
     return comment_delimiters;
 }
 PackedStringArray CPPScriptLanguage::_get_doc_comment_delimiters() const  {
     PackedStringArray doc_comment_delimiters;
     doc_comment_delimiters.push_back("///");
+	doc_comment_delimiters.push_back("/** */");
     return doc_comment_delimiters;
 }
 PackedStringArray CPPScriptLanguage::_get_string_delimiters() const  {
     PackedStringArray string_delimiters;
-	string_delimiters.push_back("\" \"");
 	string_delimiters.push_back("' '");
-    return PackedStringArray();
+	string_delimiters.push_back("\" \"");
+    return string_delimiters;
 }
 Ref<Script> CPPScriptLanguage::_make_template(const String &p_template, const String &p_class_name, const String &p_base_class_name) const  {
     return Ref<Script>();
