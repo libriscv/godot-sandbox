@@ -5,7 +5,7 @@
 #include <godot_cpp/classes/resource_loader.hpp>
 
 bool ELFScript::_editor_can_reload_from_file() {
-	return true;
+	return false;
 }
 void ELFScript::_placeholder_erased(void *p_placeholder) {}
 bool ELFScript::_can_instantiate() const {
@@ -33,7 +33,7 @@ bool ELFScript::_instance_has(Object *p_object) const {
 	return false;
 }
 bool ELFScript::_has_source_code() const {
-	return true;
+	return false;
 }
 String ELFScript::_get_source_code() const {
 	return "Function list here somehow";
@@ -63,10 +63,10 @@ Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
 	return Dictionary();
 }
 bool ELFScript::_is_tool() const {
-	return true;
+	return false;
 }
 bool ELFScript::_is_valid() const {
-	return true;
+	return false;
 }
 bool ELFScript::_is_abstract() const {
 	return true;
