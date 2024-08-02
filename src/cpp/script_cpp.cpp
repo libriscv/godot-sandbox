@@ -1,7 +1,7 @@
 #include "script_cpp.h"
 
-#include <godot_cpp/classes/file_access.hpp>
 #include "../register_types.h"
+#include <godot_cpp/classes/file_access.hpp>
 
 bool CPPScript::_editor_can_reload_from_file() {
 	return false;
@@ -37,7 +37,9 @@ bool CPPScript::_has_source_code() const {
 String CPPScript::_get_source_code() const {
 	return source_code;
 }
-void CPPScript::_set_source_code(const String &p_code) {}
+void CPPScript::_set_source_code(const String &p_code) {
+	source_code = p_code;
+}
 Error CPPScript::_reload(bool p_keep_state) {
 	return Error::OK;
 }

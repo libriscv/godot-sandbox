@@ -59,7 +59,7 @@ public:
 	virtual TypedArray<StringName> _get_members() const override;
 	virtual bool _is_placeholder_fallback_enabled() const override;
 	virtual Variant _get_rpc_config() const override;
-	
+
 	ELFScript() {}
 	~ELFScript() {}
 };

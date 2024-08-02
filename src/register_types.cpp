@@ -12,12 +12,12 @@
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
 
-#include "cpp/script_cpp.h"
-#include "cpp/script_language_cpp.h"
 #include "cpp/resource_loader_cpp.h"
 #include "cpp/resource_saver_cpp.h"
-#include "elf/script_elf.h"
+#include "cpp/script_cpp.h"
+#include "cpp/script_language_cpp.h"
 #include "elf/resource_loader_elf.h"
+#include "elf/script_elf.h"
 #include "sandbox.hpp"
 
 using namespace godot;
@@ -28,7 +28,7 @@ static Ref<ResourceFormatLoaderCPP> cpp_loader;
 static Ref<ResourceFormatSaverCPP> cpp_saver;
 static CPPScriptLanguage *cpp_language;
 
-ScriptLanguage * get_cpp_language() {
+ScriptLanguage *get_cpp_language() {
 	return cpp_language;
 }
 
@@ -36,14 +36,13 @@ void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
-
 	ClassDB::register_class<Sandbox>();
-	GDREGISTER_CLASS(ELFScript);
-	GDREGISTER_CLASS(CPPScript);
-	GDREGISTER_CLASS(CPPScriptLanguage);
-	GDREGISTER_CLASS(ResourceFormatLoaderELF);
-	GDREGISTER_CLASS(ResourceFormatLoaderCPP);
-	GDREGISTER_CLASS(ResourceFormatSaverCPP);
+	ClassDB::register_class<ELFScript>();
+	ClassDB::register_class<ResourceFormatLoaderELF>();
+	ClassDB::register_class<CPPScript>();
+	ClassDB::register_class<ResourceFormatLoaderCPP>();
+	ClassDB::register_class<ResourceFormatSaverCPP>();
+	ClassDB::register_class<CPPScriptLanguage>();
 	elf_loader.instantiate();
 	cpp_loader.instantiate();
 	cpp_saver.instantiate();
@@ -58,10 +57,13 @@ void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
+	// TODO this seems to crash
+	ResourceLoader::get_singleton()->remove_resource_format_loader(elf_loader);
+	ResourceLoader::get_singleton()->remove_resource_format_loader(cpp_loader);
+	ResourceSaver::get_singleton()->remove_resource_format_saver(cpp_saver);
 	elf_loader.unref();
 	cpp_loader.unref();
 	cpp_saver.unref();
-	delete cpp_language;
 }
 
 extern "C" {

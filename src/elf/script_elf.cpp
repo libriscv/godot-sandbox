@@ -49,7 +49,7 @@ TypedArray<Dictionary> ELFScript::_get_documentation() const {
 	return TypedArray<Dictionary>();
 }
 String ELFScript::_get_class_icon_path() const {
-	return String();
+	return String("res://addons/godot_sandbox/CPlusPlusScript.svg");
 }
 bool ELFScript::_has_method(const StringName &p_method) const {
 	return false;
@@ -73,7 +73,7 @@ bool ELFScript::_is_abstract() const {
 	return false;
 }
 //ScriptLanguage *ELFScript::_get_language() const {
-	//return (ScriptLanguage *) nullptr;
+//return (ScriptLanguage *) nullptr;
 //}
 bool ELFScript::_has_script_signal(const StringName &p_signal) const {
 	return false;
@@ -109,4 +109,3 @@ bool ELFScript::_is_placeholder_fallback_enabled() const {
 Variant ELFScript::_get_rpc_config() const {
 	return Variant();
 }
-	
