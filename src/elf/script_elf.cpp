@@ -16,7 +16,7 @@ Ref<Script> ELFScript::_get_base_script() const {
 	return Ref<Script>();
 }
 StringName ELFScript::_get_global_name() const {
-	return path;
+	return "elf123";
 }
 bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;

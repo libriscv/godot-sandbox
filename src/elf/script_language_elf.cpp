@@ -180,5 +180,9 @@ bool ELFScriptLanguage::_handles_global_class_type(const String &p_type) const {
 	return false;
 }
 Dictionary ELFScriptLanguage::_get_global_class_name(const String &p_path) const {
+	Dictionary dict;
+	dict["name"] = "elf123";
+	dict["base_type"] = "ELFScript";
+	dict["icon_path"] = String("res://addons/godot_sandbox/ELFScript.svg");
 	return Dictionary();
 }
