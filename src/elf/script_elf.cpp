@@ -16,13 +16,14 @@ Ref<Script> ELFScript::_get_base_script() const {
 	return Ref<Script>();
 }
 StringName ELFScript::_get_global_name() const {
-	return "elf123";
+	// register it globally
+	return path;
 }
 bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
 }
 StringName ELFScript::_get_instance_base_type() const {
-	return StringName();
+	return StringName("ELFScript");
 }
 void *ELFScript::_instance_create(Object *p_for_object) const {
 	return nullptr;
@@ -41,7 +42,10 @@ String ELFScript::_get_source_code() const {
 		return String();
 	}
 	String functions;
-	for (String function : Sandbox::get_functions_from_binary(source_code.to_ascii_buffer())) {
+	PackedStringArray functions_array = Sandbox::get_functions_from_binary(source_code);
+	functions_array.sort();
+	for (String function : functions_array) {
+		functions += "function: ";
 		functions += function;
 		functions += "\n";
 	}
@@ -59,7 +63,7 @@ String ELFScript::_get_class_icon_path() const {
 	return String("res://addons/godot_sandbox/ELFScript.svg");
 }
 bool ELFScript::_has_method(const StringName &p_method) const {
-	return false;
+	return true;
 }
 bool ELFScript::_has_static_method(const StringName &p_method) const {
 	return false;
@@ -68,6 +72,7 @@ Variant ELFScript::_get_script_method_argument_count(const StringName &p_method)
 	return Variant();
 }
 Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
+	ERR_PRINT(p_method);
 	return Dictionary();
 }
 bool ELFScript::_is_tool() const {
@@ -96,7 +101,28 @@ Variant ELFScript::_get_property_default_value(const StringName &p_property) con
 }
 void ELFScript::_update_exports() {}
 TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
-	return TypedArray<Dictionary>();
+	ERR_PRINT("get methods");
+	TypedArray<Dictionary> functions;
+	PackedStringArray functions_array = Sandbox::get_functions_from_binary(source_code);
+	functions_array.sort();
+	for (String function : functions_array) {
+		Dictionary method;
+		method["name"] = function;
+		method["args"] = Array();
+		method["default_args"] = Array();
+		method["return"] = "elf";
+		Dictionary type;
+		type["name"] = "type";
+		type["type"] = Variant::Type::BOOL;
+		type["class_name"] = "class";
+		type["hint"] = PropertyHint::PROPERTY_HINT_NONE;
+		type["hint_string"] = String();
+		type["usage"] = PROPERTY_USAGE_DEFAULT;
+		method["return"] = type;
+		method["flags"] = METHOD_FLAGS_DEFAULT;
+		functions.push_back(method);
+	}
+	return functions;
 }
 TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
 	return TypedArray<Dictionary>();
@@ -118,10 +144,10 @@ Variant ELFScript::_get_rpc_config() const {
 }
 
 PackedByteArray ELFScript::get_content() {
-	return source_code.to_ascii_buffer();
+	return source_code;
 }
 
 void ELFScript::set_file(const String &p_path) {
-	path = "MyFile123";
-	source_code = FileAccess::get_file_as_string(path);
+	source_code = FileAccess::get_file_as_bytes(p_path);
+	path = "ELF_" + p_path.get_basename().replace("res://", "").replace("/", "_");
 }
