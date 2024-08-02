@@ -1,6 +1,7 @@
 #include "script_cpp.h"
 
 #include <godot_cpp/classes/file_access.hpp>
+#include "../register_types.h"
 
 PackedByteArray CPPScript::get_content() {
 	String p_path = get_file();
@@ -73,9 +74,9 @@ bool CPPScript::_is_valid() const {
 bool CPPScript::_is_abstract() const {
 	return false;
 }
-//ScriptLanguage *CPPScript::_get_language() const {
-	//return (ScriptLanguage *) nullptr;
-//}
+ScriptLanguage *CPPScript::_get_language() const {
+	return get_cpp_language();
+}
 bool CPPScript::_has_script_signal(const StringName &p_signal) const {
 	return false;
 }

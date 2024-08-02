@@ -7,6 +7,7 @@
 
 #include <gdextension_interface.h>
 
+#include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
@@ -22,8 +23,14 @@
 using namespace godot;
 
 static Ref<ResourceFormatLoaderELF> elf_loader;
+
 static Ref<ResourceFormatLoaderCPP> cpp_loader;
 static Ref<ResourceFormatSaverCPP> cpp_saver;
+static CPPScriptLanguage *cpp_language;
+
+ScriptLanguage * get_cpp_language() {
+	return cpp_language;
+}
 
 void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
@@ -40,6 +47,8 @@ void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	elf_loader.instantiate();
 	cpp_loader.instantiate();
 	cpp_saver.instantiate();
+	cpp_language = memnew(CPPScriptLanguage);
+	Engine::get_singleton()->register_script_language(cpp_language);
 	ResourceLoader::get_singleton()->add_resource_format_loader(elf_loader);
 	ResourceLoader::get_singleton()->add_resource_format_loader(cpp_loader);
 	ResourceSaver::get_singleton()->add_resource_format_saver(cpp_saver);
@@ -49,6 +58,10 @@ void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
+	elf_loader.unref();
+	cpp_loader.unref();
+	cpp_saver.unref();
+	delete cpp_language;
 }
 
 extern "C" {

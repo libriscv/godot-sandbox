@@ -1,6 +1,7 @@
 #pragma once
 
 #include <godot_cpp/classes/script_extension.hpp>
+#include <godot_cpp/classes/script_language.hpp>
 
 using namespace godot;
 
@@ -45,7 +46,7 @@ public:
 	virtual bool _is_tool() const override;
 	virtual bool _is_valid() const override;
 	virtual bool _is_abstract() const override;
-	//virtual ScriptLanguage *_get_language() const override;
+	virtual ScriptLanguage *_get_language() const override;
 	virtual bool _has_script_signal(const StringName &p_signal) const override;
 	virtual TypedArray<Dictionary> _get_script_signal_list() const override;
 	virtual bool _has_property_default_value(const StringName &p_property) const override;
