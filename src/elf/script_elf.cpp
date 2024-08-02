@@ -1,14 +1,11 @@
 #include "script_elf.h"
 
+#include "../register_types.h"
 #include <godot_cpp/classes/file_access.hpp>
-
-PackedByteArray ELFScript::get_content() {
-	String p_path = get_file();
-	return FileAccess::get_file_as_bytes(p_path);
-}
+#include <godot_cpp/classes/resource_loader.hpp>
 
 bool ELFScript::_editor_can_reload_from_file() {
-	return false;
+	return true;
 }
 void ELFScript::_placeholder_erased(void *p_placeholder) {}
 bool ELFScript::_can_instantiate() const {
@@ -36,12 +33,14 @@ bool ELFScript::_instance_has(Object *p_object) const {
 	return false;
 }
 bool ELFScript::_has_source_code() const {
-	return false;
+	return true;
 }
 String ELFScript::_get_source_code() const {
-	return String();
+	return "Function list here somehow";
 }
-void ELFScript::_set_source_code(const String &p_code) {}
+void ELFScript::_set_source_code(const String &p_code) {
+	source_code = p_code;
+}
 Error ELFScript::_reload(bool p_keep_state) {
 	return Error::OK;
 }
@@ -49,7 +48,7 @@ TypedArray<Dictionary> ELFScript::_get_documentation() const {
 	return TypedArray<Dictionary>();
 }
 String ELFScript::_get_class_icon_path() const {
-	return String("res://addons/godot_sandbox/CPlusPlusScript.svg");
+	return String("res://addons/godot_sandbox/ELFScript.svg");
 }
 bool ELFScript::_has_method(const StringName &p_method) const {
 	return false;
@@ -64,17 +63,17 @@ Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
 	return Dictionary();
 }
 bool ELFScript::_is_tool() const {
-	return false;
+	return true;
 }
 bool ELFScript::_is_valid() const {
-	return false;
+	return true;
 }
 bool ELFScript::_is_abstract() const {
-	return false;
+	return true;
 }
-//ScriptLanguage *ELFScript::_get_language() const {
-//return (ScriptLanguage *) nullptr;
-//}
+ScriptLanguage *ELFScript::_get_language() const {
+	return get_elf_language();
+}
 bool ELFScript::_has_script_signal(const StringName &p_signal) const {
 	return false;
 }
@@ -108,4 +107,8 @@ bool ELFScript::_is_placeholder_fallback_enabled() const {
 }
 Variant ELFScript::_get_rpc_config() const {
 	return Variant();
+}
+
+PackedByteArray ELFScript::get_content() {
+	return source_code.to_utf8_buffer();
 }

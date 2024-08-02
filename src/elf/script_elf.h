@@ -1,6 +1,7 @@
 #pragma once
 
 #include <godot_cpp/classes/script_extension.hpp>
+#include <godot_cpp/classes/script_language.hpp>
 
 using namespace godot;
 
@@ -9,20 +10,9 @@ class ELFScript : public ScriptExtension {
 
 protected:
 	static void _bind_methods() {}
-	String file;
+	String source_code;
 
 public:
-	void set_file(const String &p_file) {
-		file = p_file;
-		emit_changed();
-	}
-
-	String get_file() {
-		return file;
-	}
-
-	PackedByteArray get_content();
-
 	virtual bool _editor_can_reload_from_file() override;
 	virtual void _placeholder_erased(void *p_placeholder) override;
 	virtual bool _can_instantiate() const override;
@@ -46,7 +36,7 @@ public:
 	virtual bool _is_tool() const override;
 	virtual bool _is_valid() const override;
 	virtual bool _is_abstract() const override;
-	//virtual ScriptLanguage *_get_language() const override;
+	virtual ScriptLanguage *_get_language() const override;
 	virtual bool _has_script_signal(const StringName &p_signal) const override;
 	virtual TypedArray<Dictionary> _get_script_signal_list() const override;
 	virtual bool _has_property_default_value(const StringName &p_property) const override;
@@ -60,6 +50,7 @@ public:
 	virtual bool _is_placeholder_fallback_enabled() const override;
 	virtual Variant _get_rpc_config() const override;
 
+	PackedByteArray get_content();
 	ELFScript() {}
 	~ELFScript() {}
 };

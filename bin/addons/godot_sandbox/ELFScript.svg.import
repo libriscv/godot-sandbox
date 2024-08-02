@@ -2,8 +2,8 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bpfjfnnxpap0a"
-path="res://.godot/imported/CPlusPlusScript.svg-91b174d66e2ef5acb721a31e60e93bdb.ctex"
+uid="uid://c1hyk3aurfy38"
+path="res://.godot/imported/ELFScript.svg-17bdc324794d9b10d64000e9fdd221e6.ctex"
 metadata={
 "has_editor_variant": true,
 "vram_texture": false
@@ -11,8 +11,8 @@ metadata={
 
 [deps]
 
-source_file="res://addons/godot_sandbox/CPlusPlusScript.svg"
-dest_files=["res://.godot/imported/CPlusPlusScript.svg-91b174d66e2ef5acb721a31e60e93bdb.ctex"]
+source_file="res://addons/godot_sandbox/ELFScript.svg"
+dest_files=["res://.godot/imported/ELFScript.svg-17bdc324794d9b10d64000e9fdd221e6.ctex"]
 
 [params]
 

@@ -50,7 +50,6 @@ public:
 	virtual bool _is_placeholder_fallback_enabled() const override;
 	virtual Variant _get_rpc_config() const override;
 
-	PackedByteArray get_content();
 	CPPScript() {}
 	~CPPScript() {}
 };

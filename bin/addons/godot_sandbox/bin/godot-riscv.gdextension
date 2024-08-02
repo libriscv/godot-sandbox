@@ -25,3 +25,9 @@ ios.debug = "res://addons/godot_sandbox/bin/libgodot_riscv.ios.template_release.
 ios.release = "res://addons/godot_sandbox/bin/libgodot_riscv.ios.template_release.arm64.framework"
 web.debug.wasm32 = "res://addons/godot_sandbox/bin/libgodot_riscv.web.template_release.wasm32.wasm"
 web.release.wasm32 = "res://addons/godot_sandbox/bin/libgodot_riscv.web.template_release.wasm32.wasm"
+
+[icons]
+
+CPPScript = "res://addons/godot_sandbox/CPPScript.svg"
+ELFScript = "res://addons/godot_sandbox/ELFScript.svg"
+Sandbox = "res://addons/godot_sandbox/Sandbox.svg"

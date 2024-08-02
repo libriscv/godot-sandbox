@@ -2,9 +2,10 @@
 
 #include "../register_types.h"
 #include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
 
 bool CPPScript::_editor_can_reload_from_file() {
-	return false;
+	return true;
 }
 void CPPScript::_placeholder_erased(void *p_placeholder) {}
 bool CPPScript::_can_instantiate() const {
@@ -47,7 +48,7 @@ TypedArray<Dictionary> CPPScript::_get_documentation() const {
 	return TypedArray<Dictionary>();
 }
 String CPPScript::_get_class_icon_path() const {
-	return String();
+	return String("res://addons/godot_sandbox/CPPScript.svg");
 }
 bool CPPScript::_has_method(const StringName &p_method) const {
 	return false;
@@ -62,13 +63,13 @@ Dictionary CPPScript::_get_method_info(const StringName &p_method) const {
 	return Dictionary();
 }
 bool CPPScript::_is_tool() const {
-	return false;
+	return true;
 }
 bool CPPScript::_is_valid() const {
-	return false;
+	return true;
 }
 bool CPPScript::_is_abstract() const {
-	return false;
+	return true;
 }
 ScriptLanguage *CPPScript::_get_language() const {
 	return get_cpp_language();

@@ -46,12 +46,9 @@ Sandbox::Sandbox() {
 	// In order to reduce checks we guarantee that this
 	// class is well-formed at all times.
 	this->m_machine = new machine_t{};
-	UtilityFunctions::print("Constructor, sizeof(Variant) == ", static_cast<int32_t>(sizeof(Variant)));
-	UtilityFunctions::print("Constructor, alignof(Variant) == ", static_cast<int32_t>(alignof(Variant)));
 }
 
 Sandbox::~Sandbox() {
-	UtilityFunctions::print("Destructor.");
 	delete this->m_machine;
 }
 
@@ -73,7 +70,7 @@ Ref<ELFScript> Sandbox::get_program() {
 }
 void Sandbox::load(PackedByteArray &&buffer, const TypedArray<String> &arguments) {
 	if (buffer.is_empty()) {
-		UtilityFunctions::print("Empty binary, cannot load program.");
+		ERR_PRINT("Empty binary, cannot load program.");
 		return;
 	}
 	this->m_binary = std::move(buffer);

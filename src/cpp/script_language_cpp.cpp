@@ -37,7 +37,7 @@ bool CPPScriptLanguage::_is_control_flow_keyword(const String &p_keyword) const 
 	const std::unordered_set<std::string> control_flow_keywords{
 		"if", "else", "switch", "case", "default", "while", "do", "for", "break", "continue", "return", "goto", "try", "catch", "throw", "co_await", "co_return", "co_yield"
 	};
-	return control_flow_keywords.find(p_keyword.ascii().get_data()) != control_flow_keywords.end();
+	return control_flow_keywords.find(p_keyword.utf8().get_data()) != control_flow_keywords.end();
 }
 PackedStringArray CPPScriptLanguage::_get_comment_delimiters() const {
 	PackedStringArray comment_delimiters;

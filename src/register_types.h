@@ -7,3 +7,4 @@ using namespace godot;
 void initialize_riscv_module(ModuleInitializationLevel p_level);
 void uninitialize_riscv_module(ModuleInitializationLevel p_level);
 ScriptLanguage *get_cpp_language();
+ScriptLanguage *get_elf_language();
