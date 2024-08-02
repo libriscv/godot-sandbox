@@ -142,7 +142,23 @@ PackedStringArray ELFScriptLanguage::_get_recognized_extensions() const {
 	return array;
 }
 TypedArray<Dictionary> ELFScriptLanguage::_get_public_functions() const {
-	return TypedArray<Dictionary>();
+	TypedArray<Dictionary> functions;
+	Dictionary method;
+	method["name"] = "elf";
+	method["args"] = Array();
+	method["default_args"] = Array();
+	method["return"] = "elf";
+	Dictionary type;
+	type["name"] = "type";
+	type["type"] = Variant::Type::BOOL;
+	type["class_name"] = "class";
+	type["hint"] = PropertyHint::PROPERTY_HINT_NONE;
+	type["hint_string"] = String();
+	type["usage"] = PROPERTY_USAGE_DEFAULT;
+	method["return"] = type;
+	method["flags"] = METHOD_FLAGS_DEFAULT;
+	functions.push_back(method);
+	return functions;
 }
 Dictionary ELFScriptLanguage::_get_public_constants() const {
 	return Dictionary();

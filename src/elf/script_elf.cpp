@@ -1,11 +1,12 @@
 #include "script_elf.h"
 
 #include "../register_types.h"
+#include "../sandbox.hpp"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 
 bool ELFScript::_editor_can_reload_from_file() {
-	return false;
+	return true;
 }
 void ELFScript::_placeholder_erased(void *p_placeholder) {}
 bool ELFScript::_can_instantiate() const {
@@ -15,7 +16,7 @@ Ref<Script> ELFScript::_get_base_script() const {
 	return Ref<Script>();
 }
 StringName ELFScript::_get_global_name() const {
-	return StringName();
+	return path;
 }
 bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
@@ -33,13 +34,20 @@ bool ELFScript::_instance_has(Object *p_object) const {
 	return false;
 }
 bool ELFScript::_has_source_code() const {
-	return false;
+	return true;
 }
 String ELFScript::_get_source_code() const {
-	return "Function list here somehow";
+	if (source_code.is_empty()) {
+		return String();
+	}
+	String functions;
+	for (String function: Sandbox::get_functions_from_binary(source_code.to_ascii_buffer())) {
+		functions += function;
+		functions += "\n";
+	}
+	return functions;
 }
 void ELFScript::_set_source_code(const String &p_code) {
-	source_code = p_code;
 }
 Error ELFScript::_reload(bool p_keep_state) {
 	return Error::OK;
@@ -63,10 +71,10 @@ Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
 	return Dictionary();
 }
 bool ELFScript::_is_tool() const {
-	return false;
+	return true;
 }
 bool ELFScript::_is_valid() const {
-	return false;
+	return true;
 }
 bool ELFScript::_is_abstract() const {
 	return true;
@@ -110,5 +118,10 @@ Variant ELFScript::_get_rpc_config() const {
 }
 
 PackedByteArray ELFScript::get_content() {
-	return source_code.to_utf8_buffer();
+	return source_code.to_ascii_buffer();
+}
+
+void ELFScript::set_file(const String &p_path) {
+	path = "MyFile123";
+	source_code = FileAccess::get_file_as_string(path);
 }

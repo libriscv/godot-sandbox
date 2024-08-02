@@ -4,7 +4,7 @@
 
 Variant ResourceFormatLoaderELF::_load(const String &p_path, const String &original_path, bool use_sub_threads, int32_t cache_mode) const {
 	Ref<ELFScript> elf_model = memnew(ELFScript);
-	elf_model->_set_source_code(FileAccess::get_file_as_string(p_path));
+	elf_model->set_file(p_path);
 	return elf_model;
 }
 PackedStringArray ResourceFormatLoaderELF::_get_recognized_extensions() const {

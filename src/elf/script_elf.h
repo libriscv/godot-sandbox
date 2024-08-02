@@ -11,6 +11,7 @@ class ELFScript : public ScriptExtension {
 protected:
 	static void _bind_methods() {}
 	String source_code;
+	String path;
 
 public:
 	virtual bool _editor_can_reload_from_file() override;
@@ -50,7 +51,9 @@ public:
 	virtual bool _is_placeholder_fallback_enabled() const override;
 	virtual Variant _get_rpc_config() const override;
 
+    
 	PackedByteArray get_content();
+	void set_file(const String &path);
 	ELFScript() {}
 	~ELFScript() {}
 };
