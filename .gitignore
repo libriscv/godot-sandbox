@@ -7,4 +7,5 @@ program/test
 .DS_Store
 *.o
 *.os
+*.elf
 bin/addons/godot_sandbox/bin/*
