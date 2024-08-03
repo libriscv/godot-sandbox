@@ -19,6 +19,7 @@ MAKE_SYSCALL(ECALL_PRINT, void, sys_print, const Variant *, size_t);
 
 /// --> Nice side <-- ///
 
+
 struct UtilityFunctions {
 	template <typename... Args>
 	static void print(Args &&...vars) {
@@ -46,6 +47,7 @@ int main() {
 }
 
 extern "C" void empty_function() {
+	
 }
 
 extern "C" void my_function1(Variant varg) {
