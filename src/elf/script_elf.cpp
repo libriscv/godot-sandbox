@@ -17,8 +17,7 @@ Ref<Script> ELFScript::_get_base_script() const {
 	return Ref<Script>();
 }
 StringName ELFScript::_get_global_name() const {
-	// register it globally
-	return path;
+	return global_name;
 }
 bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
@@ -54,6 +53,7 @@ String ELFScript::_get_source_code() const {
 void ELFScript::_set_source_code(const String &p_code) {
 }
 Error ELFScript::_reload(bool p_keep_state) {
+	set_file(path);
 	return Error::OK;
 }
 TypedArray<Dictionary> ELFScript::_get_documentation() const {
@@ -149,8 +149,9 @@ PackedByteArray ELFScript::get_content() {
 }
 
 void ELFScript::set_file(const String &p_path) {
-	source_code = FileAccess::get_file_as_bytes(p_path);
-	path = "ELF_" + p_path.get_basename().replace("res://", "").replace("/", "_");
+	path = p_path;
+	source_code = FileAccess::get_file_as_bytes(path);
+	global_name = "ELF_" + path.get_basename().replace("res://", "").replace("/", "_");
 	PackedStringArray functions_array = Sandbox::get_functions_from_binary(source_code);
 	functions_array.sort();
 	functions = functions_array;

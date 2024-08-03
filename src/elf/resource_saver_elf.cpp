@@ -11,7 +11,7 @@ Error ResourceFormatSaverELF::_save(const Ref<Resource> &p_resource, const Strin
 		return Error::OK;
 	}
 	elf_model->set_file(p_path);
-	elf_model->reload(false);
+	elf_model->reload(true);
 	return Error::OK;
 }
 Error ResourceFormatSaverELF::_set_uid(const String &p_path, int64_t p_uid) {

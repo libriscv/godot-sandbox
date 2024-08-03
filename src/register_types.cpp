@@ -67,7 +67,6 @@ void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ResourceSaver::get_singleton()->add_resource_format_saver(elf_saver);
 	ResourceSaver::get_singleton()->add_resource_format_saver(cpp_saver);
 	SandboxProjectSettings::register_settings();
-	ERR_PRINT(SandboxProjectSettings::get_docker_path());
 }
 
 void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
