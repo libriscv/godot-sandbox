@@ -3,6 +3,7 @@
 #include "../register_types.h"
 #include "../sandbox.hpp"
 #include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 
 bool ELFScript::_editor_can_reload_from_file() {
@@ -16,8 +17,7 @@ Ref<Script> ELFScript::_get_base_script() const {
 	return Ref<Script>();
 }
 StringName ELFScript::_get_global_name() const {
-	// register it globally
-	return path;
+	return global_name;
 }
 bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
@@ -41,19 +41,19 @@ String ELFScript::_get_source_code() const {
 	if (source_code.is_empty()) {
 		return String();
 	}
-	String functions;
-	PackedStringArray functions_array = Sandbox::get_functions_from_binary(source_code);
-	functions_array.sort();
-	for (String function : functions_array) {
-		functions += "function: ";
-		functions += function;
-		functions += "\n";
+	Array functions_array;
+	for (String function : functions) {
+		Dictionary function_dictionary;
+		function_dictionary["name"] = function;
+		function_dictionary["args"] = Array();
+		functions_array.push_back(function_dictionary);
 	}
-	return functions;
+	return JSON::stringify(functions_array, "  ");
 }
 void ELFScript::_set_source_code(const String &p_code) {
 }
 Error ELFScript::_reload(bool p_keep_state) {
+	set_file(path);
 	return Error::OK;
 }
 TypedArray<Dictionary> ELFScript::_get_documentation() const {
@@ -72,7 +72,6 @@ Variant ELFScript::_get_script_method_argument_count(const StringName &p_method)
 	return Variant();
 }
 Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
-	ERR_PRINT(p_method);
 	return Dictionary();
 }
 bool ELFScript::_is_tool() const {
@@ -101,16 +100,12 @@ Variant ELFScript::_get_property_default_value(const StringName &p_property) con
 }
 void ELFScript::_update_exports() {}
 TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
-	ERR_PRINT("get methods");
-	TypedArray<Dictionary> functions;
-	PackedStringArray functions_array = Sandbox::get_functions_from_binary(source_code);
-	functions_array.sort();
-	for (String function : functions_array) {
+	TypedArray<Dictionary> functions_array;
+	for (String function : functions) {
 		Dictionary method;
 		method["name"] = function;
 		method["args"] = Array();
 		method["default_args"] = Array();
-		method["return"] = "elf";
 		Dictionary type;
 		type["name"] = "type";
 		type["type"] = Variant::Type::BOOL;
@@ -120,14 +115,20 @@ TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
 		type["usage"] = PROPERTY_USAGE_DEFAULT;
 		method["return"] = type;
 		method["flags"] = METHOD_FLAGS_DEFAULT;
-		functions.push_back(method);
+		functions_array.push_back(method);
 	}
-	return functions;
+	return functions_array;
 }
 TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
 	return TypedArray<Dictionary>();
 }
 int32_t ELFScript::_get_member_line(const StringName &p_member) const {
+	PackedStringArray formatted_functions = _get_source_code().split("\n");
+	for (int i = 0; i < formatted_functions.size(); i++) {
+		if (formatted_functions[i].find(p_member) != -1) {
+			return i + 1;
+		}
+	}
 	return 0;
 }
 Dictionary ELFScript::_get_constants() const {
@@ -148,6 +149,10 @@ PackedByteArray ELFScript::get_content() {
 }
 
 void ELFScript::set_file(const String &p_path) {
-	source_code = FileAccess::get_file_as_bytes(p_path);
-	path = "ELF_" + p_path.get_basename().replace("res://", "").replace("/", "_");
+	path = p_path;
+	source_code = FileAccess::get_file_as_bytes(path);
+	global_name = "ELF_" + path.get_basename().replace("res://", "").replace("/", "_");
+	PackedStringArray functions_array = Sandbox::get_functions_from_binary(source_code);
+	functions_array.sort();
+	functions = functions_array;
 }

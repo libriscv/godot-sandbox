@@ -1,10 +1,10 @@
 [gd_scene load_steps=3 format=3 uid="uid://cvdqbqcr3b6cy"]
 
-[ext_resource type="Script" path="res://test.elf" id="1_0q03s"]
 [ext_resource type="Script" path="res://test.gd" id="1_ac6ii"]
+[ext_resource type="Script" path="res://src/main.elf" id="1_t71kr"]
 
 [node name="Node" type="Node"]
 
 [node name="Sandbox" type="Sandbox" parent="."]
-program = ExtResource("1_0q03s")
+program = ExtResource("1_t71kr")
 script = ExtResource("1_ac6ii")

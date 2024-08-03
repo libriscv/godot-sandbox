@@ -5,6 +5,7 @@
 Variant ResourceFormatLoaderELF::_load(const String &p_path, const String &original_path, bool use_sub_threads, int32_t cache_mode) const {
 	Ref<ELFScript> elf_model = memnew(ELFScript);
 	elf_model->set_file(p_path);
+	elf_model->reload(true);
 	return elf_model;
 }
 PackedStringArray ResourceFormatLoaderELF::_get_recognized_extensions() const {
@@ -14,7 +15,7 @@ PackedStringArray ResourceFormatLoaderELF::_get_recognized_extensions() const {
 }
 bool ResourceFormatLoaderELF::_handles_type(const StringName &type) const {
 	String type_str = type;
-	return type_str == "ELFScript" || type_str == "Script" || type_str == "Resource";
+	return type_str == "ELFScript" || type_str == "Script";
 }
 String ResourceFormatLoaderELF::_get_resource_type(const String &p_path) const {
 	String el = p_path.get_extension().to_lower();

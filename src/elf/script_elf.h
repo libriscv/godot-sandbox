@@ -11,6 +11,8 @@ class ELFScript : public ScriptExtension {
 protected:
 	static void _bind_methods() {}
 	PackedByteArray source_code;
+	PackedStringArray functions;
+	String global_name;
 	String path;
 
 public:

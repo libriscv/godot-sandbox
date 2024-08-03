@@ -1,4 +1,5 @@
 #include "resource_saver_cpp.h"
+#include "../sandbox_project_settings.h"
 #include "script_cpp.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/os.hpp>
@@ -17,8 +18,11 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 			// Invoke docker to compile the file
 			godot::OS *OS = godot::OS::get_singleton();
 			PackedStringArray arguments = { "run", "--rm", "-v", path + String(":/usr/src"), "ghcr.io/libriscv/compiler", fname };
-			Array outp;
-			OS->execute("docker", arguments, outp);
+			Array output;
+			OS->execute(SandboxProjectSettings::get_docker_path(), arguments, output, true);
+			for (int i = 0; i < output.size(); i++) {
+				UtilityFunctions::print(output[i]);
+			}
 			// TODO: What now?
 			return Error::OK;
 		} else {

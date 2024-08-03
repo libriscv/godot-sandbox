@@ -49,7 +49,7 @@ void SandboxProjectSettings::register_settings() {
 #ifdef WIN32
 	register_setting_plain(DOCKER_PATH, "C:\\Program Files\\Docker\\Docker\\bin\\", true);
 #else
-	register_setting_plain(DOCKER_PATH, "");
+	register_setting_plain(DOCKER_PATH, "docker");
 #endif
 }
 
