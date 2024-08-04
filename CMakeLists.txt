@@ -13,6 +13,7 @@ set(SOURCES
 	src/elf/resource_saver_elf.cpp
 	src/elf/script_elf.cpp
 	src/elf/script_language_elf.cpp
+	src/docker.cpp
 	src/gvar.cpp
     src/register_types.cpp
     src/sandbox.cpp
