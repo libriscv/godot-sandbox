@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../docker.h"
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/script_language.hpp>
 
@@ -50,6 +51,27 @@ public:
 	virtual bool _is_placeholder_fallback_enabled() const override;
 	virtual Variant _get_rpc_config() const override;
 
+	static void DockerContainerStart() {
+		if (!docker_container_started) {
+			Docker::ContainerStart(docker_container_name, docker_image_name);
+			docker_container_started = true;
+		}
+	}
+	static void DockerContainerStop() {
+		if (docker_container_started) {
+			Docker::ContainerStop(docker_container_name);
+			docker_container_started = false;
+		}
+	}
+	static bool DockerContainerExecute(const PackedStringArray &p_arguments, Array &output) {
+		return Docker::ContainerExecute(docker_container_name, p_arguments, output);
+	}
+
 	CPPScript() {}
 	~CPPScript() {}
+
+private:
+	static inline bool docker_container_started = false;
+	static inline const char *docker_container_name = "godot-cpp-compiler";
+	static inline const char *docker_image_name = "ghcr.io/libriscv/compiler";
 };
