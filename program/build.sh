@@ -9,7 +9,7 @@ usage() {
 while [[ "$#" -gt 0 ]]; do
 	case $1 in
 		--api) cp -r /usr/api $1; exit ;;
-		-o) shift; output=$1; shift ;;
+		-o) shift; output=$1; shift; break ;;
 		--) shift; break ;;
 		*) usage ;;
 	esac
