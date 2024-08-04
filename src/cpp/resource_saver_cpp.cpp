@@ -7,8 +7,8 @@
 
 // New Game Project$ docker run --name godot-cpp-compiler -dv .:/usr/src ghcr.io/libriscv/compiler
 static bool docker_container_started = false;
-static const String docker_container_name = "godot-cpp-compiler";
-static const String docker_image_name = "ghcr.io/libriscv/compiler";
+static const char *docker_container_name = "godot-cpp-compiler";
+static const char *docker_image_name = "ghcr.io/libriscv/compiler";
 
 static void start_docker_container() {
 	// Start the docker container
@@ -40,7 +40,7 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 			auto builder = [inpname = std::move(inpname), outname = std::move(outname)] {
 				// Invoke docker to compile the file
 				godot::OS *OS = godot::OS::get_singleton();
-				PackedStringArray arguments = { "exec", "-t", docker_container_name, "bash", "/usr/api/build.sh", outname, inpname };
+				PackedStringArray arguments = { "exec", "-t", docker_container_name, "bash", "/usr/api/build.sh", "-o", outname, "--", inpname };
 				//UtilityFunctions::print("docker", arguments);
 				Array output;
 				OS->execute(SandboxProjectSettings::get_docker_path(), arguments, output);
