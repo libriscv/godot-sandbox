@@ -1,8 +1,6 @@
 #include "script_language_elf.h"
 #include "script_elf.h"
 #include <godot_cpp/classes/resource_loader.hpp>
-#include <string>
-#include <unordered_set>
 
 String ELFScriptLanguage::_get_name() const {
 	return "ELFScript";
