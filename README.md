@@ -137,9 +137,11 @@ Linting:
 
 ### How to compile cpp code locally
 
-This project provides a dockerfile for compiling cpp code locally. For usage example, go to:
+This project provides a dockerfile for compiling cpp code locally. Use it like this:
 
+```sh
+cd my_godot_project
+docker run --name godot-cpp-compiler -dv .:/usr/src ghcr.io/libriscv/compiler
 ```
-cd program
-docker run --rm -v .:/usr/src -d ghcr.io/fwsgonzo/compiler myoutputfile.elf
-```
+
+This will make the C++ compiler available to Godot.

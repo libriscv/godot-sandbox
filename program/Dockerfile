@@ -15,8 +15,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /usr/mold
 RUN git clone https://github.com/rui314/mold.git /usr/mold
 RUN mkdir -p /usr/mold/build && cd /usr/mold/build && cmake .. && make -j8
-RUN cd /usr/mold/build && make install
-RUN rm -rf /usr/mold
+RUN cd /usr/mold/build && make install && rm -rf /usr/mold
 
 # Enter the shared directory
 WORKDIR /usr/src
@@ -24,4 +23,5 @@ WORKDIR /usr/src
 RUN mkdir -p /usr/api
 COPY build.sh api/* /usr/api/
 # Set the entrypoint to the build script
-ENTRYPOINT "/usr/api/build.sh" "$0" "$@"
+#ENTRYPOINT "/usr/api/build.sh" "$0" "$@"
+CMD ["/bin/bash", "-c", "tail -f /dev/null"]

@@ -5,6 +5,8 @@
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
+// New Game Project$ docker run --name godot-cpp-compiler -dv .:/usr/src ghcr.io/libriscv/compiler
+
 Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags) {
 	CPPScript *script = Object::cast_to<CPPScript>(p_resource.ptr());
 	if (script != nullptr) {
@@ -12,18 +14,22 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 		if (handle.is_valid()) {
 			handle->store_string(script->_get_source_code());
 			// Get the absolute path without the file name
-			String path = handle->get_path_absolute().get_base_dir();
-			String fname = handle->get_path_absolute().get_file().get_basename() + String(".elf");
+			String path = handle->get_path().get_base_dir().replace("res://", "") + "/";
+			String inpname = path + "*.cpp";
+			String outname = path + handle->get_path().get_file().get_basename() + String(".elf");
 
-			// Invoke docker to compile the file
-			godot::OS *OS = godot::OS::get_singleton();
-			PackedStringArray arguments = { "run", "--rm", "-v", path + String(":/usr/src"), "ghcr.io/libriscv/compiler", fname };
-			Array output;
-			OS->execute(SandboxProjectSettings::get_docker_path(), arguments, output, true);
-			for (int i = 0; i < output.size(); i++) {
-				UtilityFunctions::print(output[i]);
-			}
-			// TODO: What now?
+			auto builder = [inpname = std::move(inpname), outname = std::move(outname)] {
+				// Invoke docker to compile the file
+				godot::OS *OS = godot::OS::get_singleton();
+				PackedStringArray arguments = { "exec", "-t", "godot-cpp-compiler", "bash", "/usr/api/build.sh", outname, inpname };
+				//UtilityFunctions::print("docker", arguments);
+				Array output;
+				OS->execute(SandboxProjectSettings::get_docker_path(), arguments, output);
+				for (int i = 0; i < output.size(); i++) {
+					UtilityFunctions::print(output[i]);
+				}
+			};
+			builder();
 			return Error::OK;
 		} else {
 			return Error::ERR_FILE_CANT_OPEN;
