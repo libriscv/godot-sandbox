@@ -105,7 +105,7 @@ Languages that are known to work inside _libriscv_:
 8. v8 JavaScript w/JIT
 9. Go (not recommended)
 10. Lua, Luau
-11. Any other language that can produce RISC-V programs
+11. Any language that transpiles to C or emits RISC-V programs
 
 ## Performance
 
