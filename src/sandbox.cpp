@@ -18,9 +18,8 @@ using namespace godot;
 //    (will be implemented later)
 
 static constexpr size_t MAX_HEAP = 16ull << 20;
-static const int HEAP_SYSCALLS_BASE = 570;
-static const int MEMORY_SYSCALLS_BASE = 575;
-static const int THREADS_SYSCALL_BASE = 590;
+static const int HEAP_SYSCALLS_BASE = 480;
+static const int MEMORY_SYSCALLS_BASE = 485;
 
 String Sandbox::_to_string() const {
 	return "[ GDExtension::Sandbox <--> Instance ID:" + uitos(get_instance_id()) + " ]";
@@ -45,14 +44,20 @@ void Sandbox::_bind_methods() {
 Sandbox::Sandbox() {
 	// In order to reduce checks we guarantee that this
 	// class is well-formed at all times.
-	this->m_machine = new machine_t{};
+	try {
+		this->m_machine = new machine_t{};
+	} catch (const std::exception &e) {
+		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
+	}
 }
 
 Sandbox::~Sandbox() {
-	delete this->m_machine;
+	try {
+		delete this->m_machine;
+	} catch (const std::exception &e) {
+		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
+	}
 }
-
-// Methods.
 
 void Sandbox::set_program(Ref<ELFScript> program) {
 	m_program_data = program;
@@ -105,7 +110,6 @@ void Sandbox::load(PackedByteArray &&buffer, const TypedArray<String> &arguments
 		// Add native system call interfaces
 		machine().setup_native_heap(HEAP_SYSCALLS_BASE, heap_area, MAX_HEAP);
 		machine().setup_native_memory(MEMORY_SYSCALLS_BASE);
-		machine().setup_native_threads(THREADS_SYSCALL_BASE);
 
 		std::vector<std::string> args;
 		for (size_t i = 0; i < arguments.size(); i++) {
@@ -119,6 +123,7 @@ void Sandbox::load(PackedByteArray &&buffer, const TypedArray<String> &arguments
 
 		m.simulate(MAX_INSTRUCTIONS);
 	} catch (const std::exception &e) {
+		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
 		this->handle_exception(machine().cpu.pc());
 		// TODO: Program failed to load.
 	}
