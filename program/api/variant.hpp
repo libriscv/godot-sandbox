@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <type_traits>
 #include <stdexcept>
+#include <string_view>
 #include <span>
 #include <vector>
 

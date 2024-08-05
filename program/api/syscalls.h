@@ -20,3 +20,6 @@
 										   "   ret\n"              \
 										   ".popsection .text\n"); \
 	extern "C" rval name(__VA_ARGS__);
+
+#define EXTERN_SYSCALL(number, rval, name, ...) \
+	extern "C" rval name(__VA_ARGS__);
