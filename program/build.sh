@@ -19,4 +19,9 @@ if [ -z "$output" ]; then
 	usage
 fi
 
-riscv64-linux-gnu-g++-14 -static -O2 -std=gnu++23 -I/usr/api -fuse-ld=mold -Wl,--execute-only /usr/api/*.cpp -o $output $@
+MEMOPS=-Wl,--wrap=memcpy,--wrap=memset,--wrap=memcmp,--wrap=memmove
+STROPS=-Wl,--wrap=strlen,--wrap=strcmp,--wrap=strncmp
+HEAPOPS=-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free
+LINKEROPS="-fuse-ld=mold -Wl,--execute-only $MEMOPS $STROPS $HEAPOPS"
+
+riscv64-linux-gnu-g++-14 -static -O2 -std=gnu++23 -I/usr/api $LINKEROPS /usr/api/*.cpp -o $output $@
