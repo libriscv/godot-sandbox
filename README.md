@@ -144,4 +144,4 @@ cd my_godot_project
 docker run --name godot-cpp-compiler -dv .:/usr/src ghcr.io/libriscv/compiler
 ```
 
-This will make the C++ compiler available to Godot.
+This will make the C++ compiler available to Godot. If you are on an ARM64 (or other system), please build the Docker container for your architecture. If the container runs emulated, it will take 7 seconds to compile something instead of 0.8 seconds.

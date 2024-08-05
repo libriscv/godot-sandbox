@@ -60,9 +60,9 @@ void Sandbox::set_program(Ref<ELFScript> program) {
 		// TODO unload program
 		return;
 	}
-	PackedByteArray data = m_program_data->get_content();
 	if (Engine::get_singleton()->is_editor_hint())
 		return;
+	PackedByteArray data = m_program_data->get_content();
 	this->load(std::move(data), m_program_arguments);
 }
 Ref<ELFScript> Sandbox::get_program() {

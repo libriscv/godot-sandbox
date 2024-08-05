@@ -13,6 +13,7 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 		Ref<FileAccess> handle = FileAccess::open(p_path, FileAccess::ModeFlags::WRITE);
 		if (handle.is_valid()) {
 			handle->store_string(script->_get_source_code());
+			handle->close();
 			// Get the absolute path without the file name
 			String path = handle->get_path().get_base_dir().replace("res://", "") + "/";
 			String inpname = path + "*.cpp";
