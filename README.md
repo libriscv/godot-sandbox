@@ -135,13 +135,29 @@ Linting:
 ./scripts/clang-tidy.sh
 ```
 
-### How to compile cpp code locally
+### How to compile C++ code manually
 
-This project provides a dockerfile for compiling cpp code locally. Use it like this:
+This project implements editor support in Godot, meaning you can write C++ directly in the Godot editor, save it, and then run the game to see the change immediately. This is because on save we compile the C++ code automatically using Docker.
+
+However, if you need to compile C++ code locally because you want to use eg. VScode, you can compile like so:
 
 ```sh
 cd my_godot_project
 docker run --name godot-cpp-compiler -dv .:/usr/src ghcr.io/libriscv/compiler
 ```
 
-This will make the C++ compiler available to Godot. If you are on an ARM64 (or other system), please build the Docker container for your architecture. If the container runs emulated, it will take 7 seconds to compile something instead of 0.8 seconds.
+With this the compiler is now available for use as `godot-cpp-compiler`. Compile your C++ code relative to the Godot project:
+
+```sh
+docker exec -t godot-cpp-compiler bash /usr/api/build.sh -o path/test.elf path/*.cpp
+```
+
+This will build a `test.elf` binary that can be used by the Sandbox. If you need the sandbox API, you can make the container write it out for you using --api:
+
+```sh
+docker exec -t godot-cpp-compiler bash /usr/api/build.sh --api
+```
+
+With these commands, you can automate the compiling process for most editors.
+
+Note that if you are on an ARM64 platform (or other platforms), please build the Docker container for your architecture. If the container runs emulated, it will take 7 seconds to compile something instead of 0.8 seconds.
