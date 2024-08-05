@@ -67,7 +67,7 @@ public:
 		return Docker::ContainerExecute(docker_container_name, p_arguments, output);
 	}
 
-	CPPScript() {}
+	CPPScript();
 	~CPPScript() {}
 
 private:

@@ -108,3 +108,19 @@ bool CPPScript::_is_placeholder_fallback_enabled() const {
 Variant CPPScript::_get_rpc_config() const {
 	return Variant();
 }
+
+CPPScript::CPPScript() {
+	source_code = R"C0D3(#include "api.hpp"
+
+int main() {
+	UtilityFunctions::print("Hello, ", 123, " world!\n");
+
+	// do shit here...
+
+	halt(); // Prevent stdout,stderr closing etc.
+}
+
+extern "C" void public_function(Variant arg) {
+}
+)C0D3";
+}
