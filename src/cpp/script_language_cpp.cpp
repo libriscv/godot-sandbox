@@ -58,7 +58,8 @@ PackedStringArray CPPScriptLanguage::_get_string_delimiters() const {
 	return string_delimiters;
 }
 Ref<Script> CPPScriptLanguage::_make_template(const String &p_template, const String &p_class_name, const String &p_base_class_name) const {
-	return Ref<Script>();
+	CPPScript *script = memnew(CPPScript);
+	return Ref<Script>(script);
 }
 TypedArray<Dictionary> CPPScriptLanguage::_get_built_in_templates(const StringName &p_object) const {
 	return TypedArray<Dictionary>();
