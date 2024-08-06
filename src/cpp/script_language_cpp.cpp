@@ -1,7 +1,14 @@
 #include "script_language_cpp.h"
 #include "script_cpp.h"
+#include <godot_cpp/classes/editor_interface.hpp>
+#include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/texture2d.hpp>
+#include <godot_cpp/classes/theme.hpp>
 #include <string>
 #include <unordered_set>
+static constexpr const char *icon_path = "res://addons/godot_sandbox/CPPScript.svg";
 
 String CPPScriptLanguage::_get_name() const {
 	return "CPPScript";
@@ -183,7 +190,21 @@ int32_t CPPScriptLanguage::_profiling_get_accumulated_data(ScriptLanguageExtensi
 int32_t CPPScriptLanguage::_profiling_get_frame_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) {
 	return 0;
 }
-void CPPScriptLanguage::_frame() {}
+void CPPScriptLanguage::_frame() {
+	static bool icon_registered = false;
+	if (!icon_registered) {
+		icon_registered = true;
+		// Manually register CPPScript icon
+		if (Engine::get_singleton()->is_editor_hint() && FileAccess::file_exists(icon_path)) {
+			auto *editor_interface = EditorInterface::get_singleton();
+			Ref<Theme> editor_theme = editor_interface->get_editor_theme();
+			auto *resource_loader = ResourceLoader::get_singleton();
+			Ref<Texture2D> tex = resource_loader->load(icon_path);
+
+			editor_theme->set_icon("CPPScript", "EditorIcons", tex);
+		}
+	}
+}
 bool CPPScriptLanguage::_handles_global_class_type(const String &p_type) const {
 	return false;
 }

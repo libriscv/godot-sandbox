@@ -1,6 +1,12 @@
 #include "script_language_elf.h"
 #include "script_elf.h"
+#include <godot_cpp/classes/editor_interface.hpp>
+#include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/texture2d.hpp>
+#include <godot_cpp/classes/theme.hpp>
+static constexpr const char *icon_path = "res://addons/godot_sandbox/ELFScript.svg";
 
 String ELFScriptLanguage::_get_name() const {
 	return "ELFScript";
@@ -158,7 +164,21 @@ int32_t ELFScriptLanguage::_profiling_get_accumulated_data(ScriptLanguageExtensi
 int32_t ELFScriptLanguage::_profiling_get_frame_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) {
 	return 0;
 }
-void ELFScriptLanguage::_frame() {}
+void ELFScriptLanguage::_frame() {
+	static bool icon_registered = false;
+	if (!icon_registered) {
+		icon_registered = true;
+		// Manually register ELFScript icon
+		if (Engine::get_singleton()->is_editor_hint() && FileAccess::file_exists(icon_path)) {
+			auto *editor_interface = EditorInterface::get_singleton();
+			Ref<Theme> editor_theme = editor_interface->get_editor_theme();
+			auto *resource_loader = ResourceLoader::get_singleton();
+			Ref<Texture2D> tex = resource_loader->load(icon_path);
+
+			editor_theme->set_icon("ELFScript", "EditorIcons", tex);
+		}
+	}
+}
 bool ELFScriptLanguage::_handles_global_class_type(const String &p_type) const {
 	return p_type == "ELFScript";
 }
