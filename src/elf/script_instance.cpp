@@ -234,7 +234,7 @@ ScriptLanguage *ELFScriptInstance::get_language() const {
 	return get_elf_language();
 }
 
-ELFScriptInstance::ELFScriptInstance(const Ref<ELFScript> &p_script, Object *p_owner) :
+ELFScriptInstance::ELFScriptInstance(const Ref<ELFScript> p_script, Object *p_owner) :
 		script(p_script), owner(p_owner) {
 	// this usually occurs in _instance_create, but that is marked const for ScriptExtension
 	{

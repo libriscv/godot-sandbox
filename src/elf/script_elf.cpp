@@ -2,16 +2,10 @@
 
 #include "../register_types.h"
 #include "../sandbox.hpp"
+#include "script_instance.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
-
-class ScriptInstance {
-public:
-	Object *object;
-	ScriptInstance() {}
-	~ScriptInstance() {}
-};
 
 String ELFScript::_to_string() const {
 	return "ELFScript::" + global_name;
@@ -36,7 +30,9 @@ StringName ELFScript::_get_instance_base_type() const {
 	return StringName("Node");
 }
 void *ELFScript::_instance_create(Object *p_for_object) const {
-	return nullptr;
+	Ref<ELFScript> script_ref(this);
+	ELFScriptInstance * script = new ELFScriptInstance(script_ref, p_for_object);
+	return script;
 }
 void *ELFScript::_placeholder_instance_create(Object *p_for_object) const {
 	return nullptr;

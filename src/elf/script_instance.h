@@ -78,6 +78,6 @@ public:
 	Ref<ELFScript> get_script() const { return script; };
 	ScriptLanguage *get_language() const;
 
-	ELFScriptInstance(const Ref<ELFScript> &p_script, Object *p_owner);
+	ELFScriptInstance(const Ref<ELFScript> p_script, Object *p_owner);
 	~ELFScriptInstance();
 };
