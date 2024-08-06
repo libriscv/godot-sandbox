@@ -44,7 +44,8 @@ PackedStringArray ELFScriptLanguage::_get_string_delimiters() const {
 	return string_delimiters;
 }
 Ref<Script> ELFScriptLanguage::_make_template(const String &p_template, const String &p_class_name, const String &p_base_class_name) const {
-	return Ref<Script>();
+	auto *elf_script = memnew(ELFScript);
+	return Ref<Script>(elf_script);
 }
 TypedArray<Dictionary> ELFScriptLanguage::_get_built_in_templates(const StringName &p_object) const {
 	return TypedArray<Dictionary>();
