@@ -11,7 +11,7 @@ node = NodePath("Sandbox")
 [node name="Sandbox" type="Sandbox" parent="." node_paths=PackedStringArray("program_elf")]
 program = ExtResource("1_7ixak")
 script = ExtResource("1_ac6ii")
-program_elf = NodePath("../Node")
+program_elf = NodePath("../ELF_src_src")
 
-[node name="Node" type="Node" parent="."]
+[node name="ELF_src_src" type="Node" parent="."]
 script = ExtResource("1_7ixak")

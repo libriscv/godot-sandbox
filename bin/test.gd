@@ -1,12 +1,11 @@
 class_name Test123
 extends Sandbox
 
-@export var program_elf: Node
+@export var program_elf: ELF_src_src
 
 # Called when the node enters the scene tree for the first time.
 func _ready() -> void:
-	var program_elf_2= program_elf as ELF_src_src
-	print(program_elf_2)
+	print(program_elf)
 	#print(program_elf_2)
 	#var program_elf :ELF_src_src= load("res://src/src.elf")
 	#print(program_elf)
