@@ -6,6 +6,7 @@
 #include "script_cpp.h"
 #include <godot_cpp/classes/editor_file_system.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
+#include <godot_cpp/classes/editor_settings.hpp>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/script.hpp>
@@ -40,6 +41,7 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 				}
 			};
 			builder();
+			// EditorInterface::get_singleton()->get_editor_settings()->set("text_editor/behavior/files/auto_reload_scripts_on_external_change", true);
 			EditorInterface::get_singleton()->get_resource_filesystem()->scan();
 			auto open_scripts = EditorInterface::get_singleton()->get_script_editor()->get_open_scripts();
 			for (int i = 0; i < open_scripts.size(); i++) {
