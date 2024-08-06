@@ -53,8 +53,13 @@ public:
 
 	static void DockerContainerStart() {
 		if (!docker_container_started) {
-			Docker::ContainerStart(docker_container_name, docker_image_name);
-			docker_container_started = true;
+			Array output;
+			if (Docker::ContainerStart(docker_container_name, docker_image_name, output))
+				docker_container_started = true;
+			else {
+				UtilityFunctions::print(output);
+				ERR_PRINT("Failed to start Docker container");
+			}
 		}
 	}
 	static void DockerContainerStop() {

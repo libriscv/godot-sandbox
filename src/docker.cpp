@@ -2,18 +2,17 @@
 
 #include "sandbox_project_settings.h"
 #include <godot_cpp/classes/os.hpp>
-static constexpr bool VERBOSE_CMD = false;
+static constexpr bool VERBOSE_CMD = true;
 using namespace godot;
 
-Array Docker::ContainerStart(String container_name, String image_name) {
+bool Docker::ContainerStart(String container_name, String image_name, Array &output) {
 	godot::OS *OS = godot::OS::get_singleton();
 	PackedStringArray arguments = { "run", "--name", container_name, "-dv", ".:/usr/src", image_name };
 	if constexpr (VERBOSE_CMD) {
 		UtilityFunctions::print(SandboxProjectSettings::get_docker_path(), arguments);
 	}
-	Array output;
-	OS->execute(SandboxProjectSettings::get_docker_path(), arguments, output);
-	return output;
+	const int res = OS->execute(SandboxProjectSettings::get_docker_path(), arguments, output);
+	return res == 0;
 }
 
 Array Docker::ContainerStop(String container_name) {

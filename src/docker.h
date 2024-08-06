@@ -8,7 +8,7 @@ struct Docker {
 	using PackedStringArray = godot::PackedStringArray;
 	using String = godot::String;
 
-	static Array ContainerStart(String container_name, String image_name);
+	static bool ContainerStart(String container_name, String image_name, Array &output);
 	static Array ContainerStop(String container_name);
 	static bool ContainerExecute(String container_name, const PackedStringArray &args, Array &output);
 };
