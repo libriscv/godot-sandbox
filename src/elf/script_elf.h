@@ -10,6 +10,7 @@ class ELFScript : public ScriptExtension {
 
 protected:
 	static void _bind_methods() {}
+	String _to_string() const;
 	PackedByteArray source_code;
 	PackedStringArray functions;
 	String global_name;

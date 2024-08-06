@@ -6,12 +6,22 @@
 #include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 
+class ScriptInstance {
+public:
+	Object *object;
+	ScriptInstance() {}
+	~ScriptInstance() {}
+};
+
+String ELFScript::_to_string() const {
+	return "ELFScript::" + global_name;
+}
 bool ELFScript::_editor_can_reload_from_file() {
 	return true;
 }
 void ELFScript::_placeholder_erased(void *p_placeholder) {}
 bool ELFScript::_can_instantiate() const {
-	return false;
+	return true;
 }
 Ref<Script> ELFScript::_get_base_script() const {
 	return Ref<Script>();
@@ -23,7 +33,7 @@ bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
 }
 StringName ELFScript::_get_instance_base_type() const {
-	return StringName("ELFScript");
+	return StringName("Node");
 }
 void *ELFScript::_instance_create(Object *p_for_object) const {
 	return nullptr;
@@ -32,7 +42,7 @@ void *ELFScript::_placeholder_instance_create(Object *p_for_object) const {
 	return nullptr;
 }
 bool ELFScript::_instance_has(Object *p_object) const {
-	return false;
+	return true;
 }
 bool ELFScript::_has_source_code() const {
 	return true;
@@ -81,7 +91,7 @@ bool ELFScript::_is_valid() const {
 	return true;
 }
 bool ELFScript::_is_abstract() const {
-	return true;
+	return false;
 }
 ScriptLanguage *ELFScript::_get_language() const {
 	return get_elf_language();

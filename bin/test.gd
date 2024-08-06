@@ -1,13 +1,17 @@
 class_name Test123
 extends Sandbox
 
+@export var program_elf: Node
 
 # Called when the node enters the scene tree for the first time.
 func _ready() -> void:
-	#var program_elf = program as ELF_test
+	var program_elf_2= program_elf as ELF_src_src
+	print(program_elf_2)
+	#print(program_elf_2)
+	#var program_elf :ELF_src_src= load("res://src/src.elf")
 	#print(program_elf)
+	#program_elf.my_function5()
 	#program_elf.failing_function()
-	print(program.get_global_name())
 	print(get_functions())
 	# Make a function call into the sandbox
 	print(vmcall("my_function1", Vector4(1, 2, 3, 4)))
