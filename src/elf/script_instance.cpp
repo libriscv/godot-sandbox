@@ -1,18 +1,40 @@
-#define COMMON_SELF ((ScriptInstance *)p_self)
+#include "script_instance.h"
 
-void ScriptInstance::init_script_instance_info_common(GDExtensionScriptInstanceInfo2 &p_info) {
+#include "../register_types.h"
+#include "script_elf.h"
+#include "script_instance_helper.h"
+#include <godot_cpp/templates/local_vector.hpp>
+
+#define COMMON_SELF ((ELFScriptInstance *)p_self)
+
+void ELFScriptInstance::init_script_instance_info_common(GDExtensionScriptInstanceInfo2 &p_info) {
 	// Must initialize potentially unused struct fields to nullptr
 	// (if not, causes segfault on MSVC).
+
+	p_info.call_func = [](void *p_self, GDExtensionConstStringNamePtr p_method, const GDExtensionConstVariantPtr *p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError *r_error) {
+		return COMMON_SELF->call(*((StringName *)p_method), (const Variant **)p_args, p_argument_count, (Variant *)r_return, r_error);
+	};
+
+	p_info.notification_func = [](void *p_self, int32_t p_what, GDExtensionBool p_reversed) {
+		COMMON_SELF->notification(p_what);
+	};
+
+	p_info.to_string_func = [](void *p_self, GDExtensionBool *r_is_valid, GDExtensionStringPtr r_out) {
+		COMMON_SELF->to_string(r_is_valid, (String *)r_out);
+	};
+
+	p_info.free_func = [](void *p_self) {
+		memdelete(COMMON_SELF);
+	};
+
 	p_info.property_can_revert_func = nullptr;
 	p_info.property_get_revert_func = nullptr;
 
-	p_info.call_func = nullptr;
-	p_info.notification_func = nullptr;
-
-	p_info.to_string_func = nullptr;
-
 	p_info.refcount_incremented_func = nullptr;
-	p_info.refcount_decremented_func = nullptr;
+	p_info.refcount_decremented_func = [](void *) -> GDExtensionBool {
+		// If false (default), object cannot die
+		return true;
+	};
 
 	p_info.is_placeholder_func = nullptr;
 
@@ -72,45 +94,34 @@ void ScriptInstance::init_script_instance_info_common(GDExtensionScriptInstanceI
 	};
 }
 
-static String *string_alloc(const String &p_str) {
-	String *ptr = memnew(String);
-	*ptr = p_str;
-
-	return ptr;
+bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value, PropertySetGetError *r_err) {
+	// we don't set properties on ELF script
+	return false;
 }
 
-static StringName *stringname_alloc(const String &p_str) {
-	StringName *ptr = memnew(StringName);
-	*ptr = p_str;
-
-	return ptr;
+bool ELFScriptInstance::get(const StringName &p_name, Variant &r_ret, PropertySetGetError *r_err) {
+	// we don't get properties on ELF script
+	return false;
 }
 
-int ScriptInstance::get_len_from_ptr(const void *p_ptr) {
-	return *((int *)p_ptr - 1);
+void ELFScriptInstance::call(
+		const StringName &p_method,
+		const Variant *const *p_args, const GDExtensionInt p_argument_count,
+		Variant *r_return, GDExtensionCallError *r_error) {
+	const ELFScript *s = script.ptr();
+	ERR_PRINT("method called " + p_method);
 }
 
-void ScriptInstance::free_with_len(void *p_ptr) {
-	memfree((int *)p_ptr - 1);
+void ELFScriptInstance::to_string(GDExtensionBool *r_is_valid, String *r_out) {
+	const ELFScript *s = script.ptr();
+	*r_is_valid = true;
+	*r_out = s->_get_global_name();
 }
 
-void ScriptInstance::copy_prop(const GDProperty &p_src, GDExtensionPropertyInfo &p_dst) {
-	p_dst.type = p_src.type;
-	p_dst.name = stringname_alloc(p_src.name);
-	p_dst.class_name = stringname_alloc(p_src.class_name);
-	p_dst.hint = p_src.hint;
-	p_dst.hint_string = string_alloc(p_src.hint_string);
-	p_dst.usage = p_src.usage;
+void ELFScriptInstance::notification(int32_t p_what) {
 }
 
-void ScriptInstance::free_prop(const GDExtensionPropertyInfo &p_prop) {
-	// smelly
-	memdelete((StringName *)p_prop.name);
-	memdelete((StringName *)p_prop.class_name);
-	memdelete((String *)p_prop.hint_string);
-}
-
-void ScriptInstance::get_property_state(GDExtensionScriptInstancePropertyStateAdd p_add_func, void *p_userdata) {
+void ELFScriptInstance::get_property_state(GDExtensionScriptInstancePropertyStateAdd p_add_func, void *p_userdata) {
 	// ! refer to script_language.cpp get_property_state
 	// the default implementation is not carried over to GDExtension
 
@@ -124,94 +135,62 @@ void ScriptInstance::get_property_state(GDExtensionScriptInstancePropertyStateAd
 			Variant value;
 			bool is_valid = get(*name, value);
 
-			if (is_valid)
+			if (is_valid) {
 				p_add_func(name, &value, p_userdata);
+			}
 		}
 	}
 
 	free_property_list(props);
 }
 
-static void add_to_state(GDExtensionConstStringNamePtr p_name, GDExtensionConstVariantPtr p_value, void *p_userdata) {
-	List<Pair<StringName, Variant>> *list = reinterpret_cast<List<Pair<StringName, Variant>> *>(p_userdata);
-	list->push_back({ *(const StringName *)p_name, *(const Variant *)p_value });
-}
-
-void ScriptInstance::get_property_state(List<Pair<StringName, Variant>> &p_list) {
+void ELFScriptInstance::get_property_state(List<Pair<StringName, Variant>> &p_list) {
 	get_property_state(add_to_state, &p_list);
 }
 
-void ScriptInstance::free_property_list(const GDExtensionPropertyInfo *p_list) const {
+void ELFScriptInstance::free_property_list(const GDExtensionPropertyInfo *p_list) const {
 	if (!p_list)
 		return;
 
 	// don't ask.
 	int size = get_len_from_ptr(p_list);
 
-	for (int i = 0; i < size; i++)
+	for (int i = 0; i < size; i++) {
 		free_prop(p_list[i]);
+	}
 
 	free_with_len((GDExtensionPropertyInfo *)p_list);
 }
 
-GDExtensionMethodInfo *ScriptInstance::get_method_list(uint32_t *r_count) const {
-	LocalVector<GDExtensionMethodInfo> methods;
-	HashSet<StringName> defined;
-
-	const ELFScript *s = get_script().ptr();
-
-	while (s) {
-		for (const KeyValue<StringName, GDMethod> &pair : s->get_definition().methods) {
-			if (defined.has(pair.key))
-				continue;
-
-			defined.insert(pair.key);
-
-			const GDMethod &src = pair.value;
-
-			GDExtensionMethodInfo dst;
-
-			dst.name = stringname_alloc(src.name);
-			copy_prop(src.return_val, dst.return_value);
-			dst.flags = src.flags;
-			dst.argument_count = src.arguments.size();
-
-			if (dst.argument_count > 0) {
-				GDExtensionPropertyInfo *arg_list = memnew_arr(GDExtensionPropertyInfo, dst.argument_count);
-
-				for (int j = 0; j < dst.argument_count; j++)
-					copy_prop(src.arguments[j], arg_list[j]);
-
-				dst.arguments = arg_list;
-			}
-
-			dst.default_argument_count = src.default_arguments.size();
-
-			if (dst.default_argument_count > 0) {
-				Variant *defargs = memnew_arr(Variant, dst.default_argument_count);
-
-				for (int j = 0; j < dst.default_argument_count; j++)
-					defargs[j] = src.default_arguments[j];
-
-				dst.default_arguments = (GDExtensionVariantPtr *)defargs;
-			}
-
-			methods.push_back(dst);
-		}
-
-		s = s->get_base().ptr();
-	}
-
-	int size = methods.size();
-	*r_count = size;
-
+GDExtensionMethodInfo *ELFScriptInstance::get_method_list(uint32_t *r_count) const {
+	const ELFScript *script = get_script().ptr();
+	auto method_list = script->get_method_list();
+	int size = method_list.size();
 	GDExtensionMethodInfo *list = alloc_with_len<GDExtensionMethodInfo>(size);
-	memcpy(list, methods.ptr(), sizeof(GDExtensionMethodInfo) * size);
+	for (int i = 0; i < size; i++) {
+		Dictionary dictionary = method_list[i];
+		String method_name = dictionary["name"];
+		list[i] = GDExtensionMethodInfo{
+			name : stringname_alloc(method_name),
+			return_value : create_property_type(dictionary["return"]),
+			flags : GDEXTENSION_METHOD_FLAG_NORMAL,
+			// TODO check what this is.
+			id : 0,
+			/* Arguments: `default_arguments` is an array of size `argument_count`. */
+			argument_count : 0,
+			arguments : nullptr,
+			// TODO not all languages support default args.
+			/* Default arguments: `default_arguments` is an array of size `default_argument_count`. */
+			default_argument_count : 0,
+			default_arguments : nullptr,
+		};
+	}
+	*r_count = method_list.size();
 
 	return list;
 }
 
-void ScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list) const {
+void ELFScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list) const {
 	if (!p_list)
 		return;
 
@@ -239,10 +218,34 @@ void ScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list) const
 	free_with_len((GDExtensionMethodInfo *)p_list);
 }
 
-ScriptLanguage *ScriptInstance::get_language() const {
-	return LuauLanguage::get_singleton();
+Variant::Type ELFScriptInstance::get_property_type(const StringName &p_name, bool *r_is_valid) const {
+	*r_is_valid = false;
+	return Variant::NIL;
 }
 
-/////////////////////
-// SCRIPT INSTANCE //
-/////////////////////
+bool ELFScriptInstance::has_method(const StringName &p_name) const {
+	const ELFScript *s = script.ptr();
+
+	// TODO
+	return true;
+}
+
+ScriptLanguage *ELFScriptInstance::get_language() const {
+	return get_elf_language();
+}
+
+ELFScriptInstance::ELFScriptInstance(const Ref<ELFScript> &p_script, Object *p_owner) :
+		script(p_script), owner(p_owner) {
+	// this usually occurs in _instance_create, but that is marked const for ScriptExtension
+	{
+		//MutexLock lock(*LuauLanguage::singleton->lock.ptr());
+		// p_script->instances.insert(p_owner->get_instance_id(), this);
+	}
+}
+
+ELFScriptInstance::~ELFScriptInstance() {
+	if (script.is_valid() && owner) {
+		//MutexLock lock(*LuauLanguage::singleton->lock.ptr());
+		//script->instances.erase(owner->get_instance_id());
+	}
+}

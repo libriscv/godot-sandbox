@@ -15,6 +15,8 @@ protected:
 	PackedStringArray functions;
 	String global_name;
 	String path;
+	// TODO
+	HashSet<Object *> instances;
 
 public:
 	virtual bool _editor_can_reload_from_file() override;
