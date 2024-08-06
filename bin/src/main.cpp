@@ -12,5 +12,4 @@ int main() {
 extern "C" void my_function3(Variant varg, Variant varg2) {
 	UtilityFunctions::print("Hello, ", 124.5, " world!\n");
 	UtilityFunctions::print("Arg: ", varg);
-	
 }
