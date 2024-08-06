@@ -100,7 +100,9 @@ extern "C" int __wrap_memcmp(const void *m1, const void *m2, size_t size) {
 	register long syscall_id __asm__("a7") = SYSCALL_MEMCMP;
 	register int a0_out __asm__("a0");
 
-	asm volatile("ecall" : "=r"(a0_out) : "r"(a0), "m"(*(const char(*)[size])a0),
+	asm volatile("ecall"
+				 : "=r"(a0_out)
+				 : "r"(a0), "m"(*(const char(*)[size])a0),
 				 "r"(a1), "m"(*(const char(*)[size])a1),
 				 "r"(a2), "r"(syscall_id));
 	return a0_out;
@@ -110,7 +112,9 @@ extern "C" size_t __wrap_strlen(const char *str) {
 	register size_t a0_out __asm__("a0");
 	register long syscall_id __asm__("a7") = SYSCALL_STRLEN;
 
-	asm volatile("ecall" : "=r"(a0_out) : "r"(a0), "m"(*(const char(*)[4096])a0), "r"(syscall_id));
+	asm volatile("ecall"
+				 : "=r"(a0_out)
+				 : "r"(a0), "m"(*(const char(*)[4096])a0), "r"(syscall_id));
 	return a0_out;
 }
 extern "C" int __wrap_strcmp(const char *str1, const char *str2) {
@@ -120,7 +124,9 @@ extern "C" int __wrap_strcmp(const char *str1, const char *str2) {
 	register size_t a0_out __asm__("a0");
 	register long syscall_id __asm__("a7") = SYSCALL_STRCMP;
 
-	asm volatile("ecall" : "=r"(a0_out) : "r"(a0), "m"(*(const char(*)[4096])a0),
+	asm volatile("ecall"
+				 : "=r"(a0_out)
+				 : "r"(a0), "m"(*(const char(*)[4096])a0),
 				 "r"(a1), "m"(*(const char(*)[4096])a1),
 				 "r"(a2), "r"(syscall_id));
 	return a0_out;
@@ -132,7 +138,9 @@ extern "C" int __wrap_strncmp(const char *str1, const char *str2, size_t maxlen)
 	register size_t a0_out __asm__("a0");
 	register long syscall_id __asm__("a7") = SYSCALL_STRCMP;
 
-	asm volatile("ecall" : "=r"(a0_out) : "r"(a0), "m"(*(const char(*)[maxlen])a0),
+	asm volatile("ecall"
+				 : "=r"(a0_out)
+				 : "r"(a0), "m"(*(const char(*)[maxlen])a0),
 				 "r"(a1), "m"(*(const char(*)[maxlen])a1),
 				 "r"(a2), "r"(syscall_id));
 	return a0_out;

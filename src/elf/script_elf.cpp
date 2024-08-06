@@ -31,7 +31,7 @@ StringName ELFScript::_get_instance_base_type() const {
 }
 void *ELFScript::_instance_create(Object *p_for_object) const {
 	Ref<ELFScript> script_ref(this);
-	ELFScriptInstance * script = new ELFScriptInstance(script_ref, p_for_object);
+	ELFScriptInstance *script = new ELFScriptInstance(script_ref, p_for_object);
 	return script;
 }
 void *ELFScript::_placeholder_instance_create(Object *p_for_object) const {
