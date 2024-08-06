@@ -139,7 +139,7 @@ Linting:
 
 This project implements editor support in Godot, meaning you can write C++ directly in the Godot editor, save it, and then run the game to see the change immediately. This is because on save we compile the C++ code automatically using Docker.
 
-However, if you need to compile C++ code locally because you want to use eg. VScode, you can compile like so:
+However, if you need to (or want to) compile C++ code locally because you want to use eg. VSCode, you can compile like so:
 
 ```sh
 cd my_godot_project

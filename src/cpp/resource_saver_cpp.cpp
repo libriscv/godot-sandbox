@@ -17,7 +17,8 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 			// Get the absolute path without the file name
 			String path = handle->get_path().get_base_dir().replace("res://", "") + "/";
 			String inpname = path + "*.cpp";
-			String outname = path + handle->get_path().get_file().get_basename() + String(".elf");
+			String foldername = handle->get_path().get_base_dir().replace("res://", "");
+			String outname = path + foldername + String(".elf");
 
 			// Lazily start the docker container
 			CPPScript::DockerContainerStart();
