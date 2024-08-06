@@ -1,8 +1,3 @@
-
-////////////////////////////
-// SCRIPT INSTANCE COMMON //
-////////////////////////////
-
 #define COMMON_SELF ((ScriptInstance *)p_self)
 
 void ScriptInstance::init_script_instance_info_common(GDExtensionScriptInstanceInfo2 &p_info) {
