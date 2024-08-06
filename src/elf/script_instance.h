@@ -54,38 +54,3 @@ public:
 	virtual Ref<ELFScript> get_script() const = 0;
 	ScriptLanguage *get_language() const;
 };
-
-
-class PlaceHolderScriptInstance final : public ScriptInstance {
-	Object *owner = nullptr;
-	Ref<ELFScript> script;
-
-	List<GDProperty> properties;
-	HashMap<StringName, Variant> values;
-	HashMap<StringName, Variant> constants;
-
-public:
-	static const GDExtensionScriptInstanceInfo2 INSTANCE_INFO;
-
-	bool set(const StringName &p_name, const Variant &p_value, PropertySetGetError *r_err = nullptr) override;
-	bool get(const StringName &p_name, Variant &r_ret, PropertySetGetError *r_err = nullptr) override;
-
-	GDExtensionPropertyInfo *get_property_list(uint32_t *r_count) override;
-
-	Variant::Type get_property_type(const StringName &p_name, bool *r_is_valid) const override;
-
-	GDExtensionMethodInfo *get_method_list(uint32_t *r_count) const override;
-
-	bool has_method(const StringName &p_name) const override;
-
-	bool property_set_fallback(const StringName &p_name, const Variant &p_value);
-	bool property_get_fallback(const StringName &p_name, Variant &r_ret);
-
-	void update(const List<GDProperty> &p_properties, const HashMap<StringName, Variant> &p_values);
-
-	Object *get_owner() const override { return owner; }
-	Ref<ELFScript> get_script() const override { return script; }
-
-	PlaceHolderScriptInstance(const Ref<ELFScript> &p_script, Object *p_owner);
-	~PlaceHolderScriptInstance();
-};
