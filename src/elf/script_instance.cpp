@@ -121,6 +121,20 @@ void ELFScriptInstance::to_string(GDExtensionBool *r_is_valid, String *r_out) {
 void ELFScriptInstance::notification(int32_t p_what) {
 }
 
+GDExtensionPropertyInfo *ELFScriptInstance::get_property_list(uint32_t *r_count) {
+	const ELFScript *script = get_script().ptr();
+	auto property_list = script->_get_script_property_list();
+	int size = property_list.size();
+	GDExtensionPropertyInfo *list = alloc_with_len<GDExtensionPropertyInfo>(size);
+	for (int i = 0; i < size; i++) {
+		Dictionary dictionary = property_list[i];
+		list[i] = create_property_type(dictionary);
+	}
+	*r_count = property_list.size();
+
+	return list;
+}
+
 void ELFScriptInstance::get_property_state(GDExtensionScriptInstancePropertyStateAdd p_add_func, void *p_userdata) {
 	// ! refer to script_language.cpp get_property_state
 	// the default implementation is not carried over to GDExtension
