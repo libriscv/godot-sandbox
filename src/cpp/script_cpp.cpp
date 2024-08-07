@@ -56,9 +56,6 @@ bool CPPScript::_has_method(const StringName &p_method) const {
 bool CPPScript::_has_static_method(const StringName &p_method) const {
 	return false;
 }
-Variant CPPScript::_get_script_method_argument_count(const StringName &p_method) const {
-	return Variant();
-}
 Dictionary CPPScript::_get_method_info(const StringName &p_method) const {
 	return Dictionary();
 }

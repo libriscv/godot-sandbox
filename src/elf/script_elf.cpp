@@ -30,9 +30,8 @@ StringName ELFScript::_get_instance_base_type() const {
 	return StringName("Node");
 }
 void *ELFScript::_instance_create(Object *p_for_object) const {
-	Ref<ELFScript> script_ref(this);
-	ELFScriptInstance *script = new ELFScriptInstance(script_ref, p_for_object);
-	return script;
+	ELFScriptInstance *instance = memnew(ELFScriptInstance(p_for_object, Ref<ELFScript>(this)));
+	return ScriptInstanceExtension::create_native_instance(instance);
 }
 void *ELFScript::_placeholder_instance_create(Object *p_for_object) const {
 	return nullptr;
@@ -69,13 +68,11 @@ String ELFScript::_get_class_icon_path() const {
 	return String("res://addons/godot_sandbox/ELFScript.svg");
 }
 bool ELFScript::_has_method(const StringName &p_method) const {
-	return true;
+	printf("ELFScript::_has_method: method %s\n", p_method.to_ascii_buffer().ptr());
+	return false;
 }
 bool ELFScript::_has_static_method(const StringName &p_method) const {
 	return false;
-}
-Variant ELFScript::_get_script_method_argument_count(const StringName &p_method) const {
-	return Variant();
 }
 Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
 	return Dictionary();

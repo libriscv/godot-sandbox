@@ -22,62 +22,42 @@
 #include <godot_cpp/variant/typed_array.hpp>
 #include <godot_cpp/variant/variant.hpp>
 
+#include "../godot/script_instance.h"
 using namespace godot;
 
 class ELFScript;
 
-class ELFScriptInstance {
-	Ref<ELFScript> script;
+class ELFScriptInstance : public ScriptInstanceExtension {
 	Object *owner;
-	// allocates list with an int at the front saying how long it is
-	template <typename T>
-	static T *alloc_with_len(int p_size) {
-		uint64_t list_size = sizeof(T) * p_size;
-		void *ptr = memalloc(list_size + sizeof(int));
+	Ref<ELFScript> script;
 
-		*((int *)ptr) = p_size;
-
-		return (T *)((int *)ptr + 1);
-	}
+	static void convert_prop(const PropertyInfo &p_src, GDExtensionPropertyInfo &p_dst);
 
 public:
-	static void init_script_instance_info_common(GDExtensionScriptInstanceInfo2 &p_info);
+	bool set(const StringName &p_name, const Variant &p_value) override;
+	bool get(const StringName &p_name, Variant &r_ret) const override;
+	const GDExtensionPropertyInfo *get_property_list(uint32_t *r_count) const override;
+	void free_property_list(const GDExtensionPropertyInfo *p_list) const override;
+	Variant::Type get_property_type(const StringName &p_name, bool *r_is_valid) const override;
+	bool validate_property(GDExtensionPropertyInfo &p_property) const override;
+	bool property_can_revert(const StringName &p_name) const override;
+	bool property_get_revert(const StringName &p_name, Variant &r_ret) const override;
+	Object *get_owner() override;
+	void get_property_state(GDExtensionScriptInstancePropertyStateAdd p_add_func, void *p_userdata) override;
+	const GDExtensionMethodInfo *get_method_list(uint32_t *r_count) const override;
+	void free_method_list(const GDExtensionMethodInfo *p_list) const override;
+	bool has_method(const StringName &p_method) const override;
+	Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) override;
+	void notification(int p_notification, bool p_reversed) override;
+	String to_string(bool *r_valid) override;
+	void refcount_incremented() override;
+	bool refcount_decremented() override;
+	Ref<Script> get_script() const override;
+	bool is_placeholder() const override;
+	void property_set_fallback(const StringName &p_name, const Variant &p_value, bool *r_valid) override;
+	Variant property_get_fallback(const StringName &p_name, bool *r_valid) override;
+	ScriptLanguage *get_language() override;
 
-	enum PropertySetGetError {
-		PROP_OK,
-		PROP_NOT_FOUND,
-		PROP_WRONG_TYPE,
-		PROP_READ_ONLY,
-		PROP_WRITE_ONLY,
-		PROP_GET_FAILED,
-		PROP_SET_FAILED
-	};
-
-	void call(const StringName &p_method, const Variant *const *p_args, const GDExtensionInt p_argument_count, Variant *r_return, GDExtensionCallError *r_error);
-
-	void notification(int32_t p_what);
-	void to_string(GDExtensionBool *r_is_valid, String *r_out);
-	bool set(const StringName &p_name, const Variant &p_value, PropertySetGetError *r_err = nullptr);
-	bool get(const StringName &p_name, Variant &r_ret, PropertySetGetError *r_err = nullptr);
-
-	void get_property_state(GDExtensionScriptInstancePropertyStateAdd p_add_func, void *p_userdata);
-	void get_property_state(List<Pair<StringName, Variant>> &p_list);
-
-	GDExtensionPropertyInfo *get_property_list(uint32_t *r_count);
-	void free_property_list(const GDExtensionPropertyInfo *p_list) const;
-	bool validate_property(GDExtensionPropertyInfo *p_property) const { return false; }
-
-	Variant::Type get_property_type(const StringName &p_name, bool *r_is_valid) const;
-
-	GDExtensionMethodInfo *get_method_list(uint32_t *r_count) const;
-	void free_method_list(const GDExtensionMethodInfo *p_list) const;
-
-	bool has_method(const StringName &p_name) const;
-
-	Object *get_owner() const { return owner; };
-	Ref<ELFScript> get_script() const { return script; };
-	ScriptLanguage *get_language() const;
-
-	ELFScriptInstance(const Ref<ELFScript> p_script, Object *p_owner);
+	ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_script);
 	~ELFScriptInstance();
 };

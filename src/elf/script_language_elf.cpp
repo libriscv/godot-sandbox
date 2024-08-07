@@ -81,17 +81,11 @@ int32_t ELFScriptLanguage::_find_function(const String &p_function, const String
 String ELFScriptLanguage::_make_function(const String &p_class_name, const String &p_function_name, const PackedStringArray &p_function_args) const {
 	return String();
 }
-bool ELFScriptLanguage::_can_make_function() const {
-	return false;
-}
 Error ELFScriptLanguage::_open_in_external_editor(const Ref<Script> &p_script, int32_t p_line, int32_t p_column) {
 	return Error::OK;
 }
 bool ELFScriptLanguage::_overrides_external_editor() {
 	return false;
-}
-ScriptLanguage::ScriptNameCasing ELFScriptLanguage::_preferred_file_name_casing() const {
-	return ScriptNameCasing::SCRIPT_NAME_CASING_AUTO;
 }
 Dictionary ELFScriptLanguage::_complete_code(const String &p_code, const String &p_path, Object *p_owner) const {
 	return Dictionary();
@@ -117,9 +111,6 @@ int32_t ELFScriptLanguage::_debug_get_stack_level_line(int32_t p_level) const {
 	return 0;
 }
 String ELFScriptLanguage::_debug_get_stack_level_function(int32_t p_level) const {
-	return String();
-}
-String ELFScriptLanguage::_debug_get_stack_level_source(int32_t p_level) const {
 	return String();
 }
 Dictionary ELFScriptLanguage::_debug_get_stack_level_locals(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) {
@@ -158,7 +149,6 @@ TypedArray<Dictionary> ELFScriptLanguage::_get_public_annotations() const {
 }
 void ELFScriptLanguage::_profiling_start() {}
 void ELFScriptLanguage::_profiling_stop() {}
-void ELFScriptLanguage::_profiling_set_save_native_calls(bool p_enable) {}
 int32_t ELFScriptLanguage::_profiling_get_accumulated_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) {
 	return 0;
 }
@@ -188,7 +178,7 @@ Dictionary ELFScriptLanguage::_get_global_class_name(const String &p_path) const
 	Ref<ELFScript> elf_model = Object::cast_to<ELFScript>(resource.ptr());
 	Dictionary dict;
 	if (elf_model.is_valid()) {
-		dict["name"] = elf_model->get_global_name();
+		dict["name"] = elf_model->_get_global_name();
 		dict["base_type"] = "Node";
 		dict["icon_path"] = String("res://addons/godot_sandbox/ELFScript.svg");
 	}
