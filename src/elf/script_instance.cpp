@@ -5,23 +5,10 @@
 #include <godot_cpp/templates/local_vector.hpp>
 
 bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
-	if (p_name == StringName("script")) {
-		script = p_value;
-		return true;
-	}
-
-	// we don't set properties on ELF script
 	return false;
 }
 
 bool ELFScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
-	if (p_name == StringName("script")) {
-		r_ret = script;
-		return true;
-	}
-
-	// we don't get properties on ELF script
-	r_ret = Variant();
 	return false;
 }
 
@@ -41,9 +28,21 @@ Variant ELFScriptInstance::callp(
 		return Variant();
 	}
 
+	if (p_method == StringName("set_owner")) {
+		printf("set_owner called %p -> %p\n", this->owner, p_args[0]->operator Object *());
+		this->owner = p_args[0]->operator Object *();
+		r_error.error = GDEXTENSION_CALL_OK;
+		return true;
+	} else if (p_method == StringName("_get_editor_name")) {
+		r_error.error = GDEXTENSION_CALL_OK;
+		return Variant("ELFScriptInstance");
+	} else if (p_method == StringName("_hide_script_from_inspector")) {
+		return false;
+	}
+
 	ERR_PRINT("method called " + p_method);
 	//return s->callv(p_method, p_args, p_argument_count);
-	r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
+	r_error.error = GDEXTENSION_CALL_OK;
 	return Variant();
 }
 
@@ -81,9 +80,11 @@ bool ELFScriptInstance::validate_property(GDExtensionPropertyInfo &p_property) c
 }
 
 bool ELFScriptInstance::has_method(const StringName &p_name) const {
-	const ELFScript *s = script.ptr();
+	if (p_name == StringName("_get_editor_name")) {
+		return true;
+	}
 
-	//fprintf(stderr, "method called %s\n", p_name.to_ascii_buffer().ptr());
+	fprintf(stderr, "has_method called: %s\n", p_name.to_ascii_buffer().ptr());
 
 	// TODO
 	return false;
@@ -137,7 +138,7 @@ ScriptLanguage *ELFScriptInstance::get_language() {
 }
 
 ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_script) :
-		script(p_script), owner(p_owner) {
+		owner(p_owner), script(p_script) {
 }
 
 ELFScriptInstance::~ELFScriptInstance() {
