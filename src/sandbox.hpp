@@ -49,7 +49,7 @@ public:
 	gaddr_t address_of(std::string_view name) const;
 	gaddr_t cached_address_of(String name) const;
 
-	Variant vmcall_internal(gaddr_t address, const Variant** args, int argc);
+	Variant vmcall_internal(gaddr_t address, const Variant** args, int argc, GDExtensionCallError &error);
 
 	void add_scoped_variant(uint32_t hash) { m_scoped_variants.insert(hash); }
 	bool is_scoped_variant(uint32_t hash) const noexcept { return m_scoped_variants.count(hash) > 0; }
@@ -59,7 +59,7 @@ private:
 	void handle_timeout(gaddr_t);
 	void print_backtrace(gaddr_t);
 	void initialize_syscalls();
-	GuestVariant *setup_arguments(const Variant** args, int argc);
+	GuestVariant *setup_arguments(gaddr_t &sp, const Variant** args, int argc);
 
 	Ref<ELFScript> m_program_data;
 	TypedArray<String> m_program_arguments;

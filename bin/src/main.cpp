@@ -6,10 +6,12 @@ int main() {
 	halt();
 }
 
-extern "C" void my_function(Variant variant) {
+extern "C" Variant my_function(Variant variant) {
 	UtilityFunctions::print("Arg: ", variant);
+	return 123;
 }
 
-extern "C" void my_function2(Variant variant) {
-	UtilityFunctions::print("Arg: ", variant);
+extern "C" Variant my_function2(Variant var1, Variant var2) {
+	UtilityFunctions::print("Args: ", var1, var2);
+	return 456;
 }

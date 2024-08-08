@@ -131,8 +131,7 @@ void Sandbox::load(PackedByteArray &&buffer, const TypedArray<String> &arguments
 }
 
 Variant Sandbox::vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
-	error.error = GDEXTENSION_CALL_OK;
-	return this->vmcall_internal(address, args, arg_count);
+	return this->vmcall_internal(address, args, arg_count, error);
 }
 Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
 	if (arg_count < 1) {
@@ -142,13 +141,11 @@ Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtens
 	auto &function = *args[0];
 	args += 1;
 	arg_count -= 1;
-	error.error = GDEXTENSION_CALL_OK;
-	return this->vmcall_internal(cached_address_of(String(function)), args, arg_count);
+	return this->vmcall_internal(cached_address_of(String(function)), args, arg_count, error);
 }
-GuestVariant *Sandbox::setup_arguments(const Variant **args, int argc) {
-	// Stack pointer
-	auto &sp = m_machine->cpu.reg(2);
+GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int argc) {
 	sp -= sizeof(GuestVariant) * (argc + 1);
+	sp &= ~gaddr_t(0xF); // re-align stack pointer
 	const auto arrayDataPtr = sp;
 	const auto arrayElements = argc + 1;
 
@@ -165,35 +162,35 @@ GuestVariant *Sandbox::setup_arguments(const Variant **args, int argc) {
 		v[i + 1].set(*this, *args[i]);
 		m_machine->cpu.reg(11 + i) = arrayDataPtr + (i + 1) * sizeof(GuestVariant);
 	}
-	sp &= ~gaddr_t(0xF); // re-align stack pointer
 	// A0 is the return value (Variant) of the function
 	return &v[0];
 }
-Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc) {
+Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc, GDExtensionCallError &error) {
 	try {
 		GuestVariant *retvar = nullptr;
+		auto &cpu = m_machine->cpu;
+		auto &sp = cpu.reg(riscv::REG_SP);
 		m_level++;
 		// execute guest function
 		if (m_level == 1) {
-			// reset the stack pointer to an initial location (deliberately)
-			m_machine->cpu.reset_stack_pointer();
-			// setup calling convention
-			m_machine->setup_call();
+			cpu.reg(riscv::REG_RA) = m_machine->memory.exit_address();
+			// reset the stack pointer to its initial location
+			sp = m_machine->memory.stack_initial();
 			// set up each argument, and return value
-			retvar = this->setup_arguments(args, argc);
+			retvar = this->setup_arguments(sp, args, argc);
 			// execute!
 			m_machine->simulate_with(MAX_INSTRUCTIONS, 0u, address);
 		} else if (m_level > 1 && m_level < MAX_LEVEL) {
 			riscv::Registers<RISCV_ARCH> regs;
-			regs = m_machine->cpu.registers();
+			regs = cpu.registers();
+			// we are in a recursive call, so wait before setting exit address
+			cpu.reg(riscv::REG_RA) = m_machine->memory.exit_address();
 			// we need to make some stack room
-			m_machine->cpu.reg(riscv::REG_SP) -= 16u;
-			// setup calling convention
-			m_machine->setup_call();
+			sp -= 16u;
 			// set up each argument, and return value
-			retvar = this->setup_arguments(args, argc);
+			retvar = this->setup_arguments(sp, args, argc);
 			// execute!
-			m_machine->cpu.preempt_internal(regs, true, address, MAX_INSTRUCTIONS);
+			cpu.preempt_internal(regs, true, address, MAX_INSTRUCTIONS);
 		} else {
 			throw std::runtime_error("Recursion level exceeded");
 		}
@@ -203,6 +200,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 
 		m_level--;
 		m_scoped_variants.clear();
+		error.error = GDEXTENSION_CALL_OK;
 
 		return result;
 
@@ -211,7 +209,9 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 		m_scoped_variants.clear();
 		this->handle_exception(address);
 	}
-	return -1;
+
+	error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+	return Variant();
 }
 Variant Sandbox::vmcallable(String function) {
 	const auto address = cached_address_of(function);
@@ -221,8 +221,7 @@ Variant Sandbox::vmcallable(String function) {
 	return Callable(call);
 }
 void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const {
-	r_return_value = self->vmcall_internal(address, p_arguments, p_argcount);
-	r_call_error.error = GDEXTENSION_CALL_OK;
+	r_return_value = self->vmcall_internal(address, p_arguments, p_argcount, r_call_error);
 }
 
 void Sandbox::handle_exception(gaddr_t address) {
