@@ -34,10 +34,10 @@ void *ELFScript::_instance_create(Object *p_for_object) const {
 	return ScriptInstanceExtension::create_native_instance(instance);
 }
 void *ELFScript::_placeholder_instance_create(Object *p_for_object) const {
-	return nullptr;
+	return _instance_create(p_for_object);
 }
 bool ELFScript::_instance_has(Object *p_object) const {
-	return true;
+	return false;
 }
 bool ELFScript::_has_source_code() const {
 	return true;
@@ -68,8 +68,14 @@ String ELFScript::_get_class_icon_path() const {
 	return String("res://addons/godot_sandbox/ELFScript.svg");
 }
 bool ELFScript::_has_method(const StringName &p_method) const {
-	printf("ELFScript::_has_method: method %s\n", p_method.to_ascii_buffer().ptr());
-	return false;
+	bool result = functions.find(p_method) != -1;
+	if (!result) {
+		if (p_method == StringName("_init"))
+			result = true;
+	}
+	printf("ELFScript::_has_method: method %s => %d\n", p_method.to_ascii_buffer().ptr(), result);
+
+	return result;
 }
 bool ELFScript::_has_static_method(const StringName &p_method) const {
 	return false;

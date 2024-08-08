@@ -37,12 +37,16 @@ Variant ELFScriptInstance::callp(
 		r_error.error = GDEXTENSION_CALL_OK;
 		return Variant("ELFScriptInstance");
 	} else if (p_method == StringName("_hide_script_from_inspector")) {
+		r_error.error = GDEXTENSION_CALL_OK;
+		return false;
+	} else if (p_method == StringName("_is_read_only")) {
+		r_error.error = GDEXTENSION_CALL_OK;
 		return false;
 	}
 
 	ERR_PRINT("method called " + p_method);
 	//return s->callv(p_method, p_args, p_argument_count);
-	r_error.error = GDEXTENSION_CALL_OK;
+	r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 	return Variant();
 }
 
@@ -80,14 +84,13 @@ bool ELFScriptInstance::validate_property(GDExtensionPropertyInfo &p_property) c
 }
 
 bool ELFScriptInstance::has_method(const StringName &p_name) const {
-	if (p_name == StringName("_get_editor_name")) {
-		return true;
+	bool result = false;
+	if (p_name == StringName("set_owner") || p_name == StringName("_get_editor_name") || p_name == StringName("_hide_script_from_inspector") || p_name == StringName("_is_read_only")) {
+		result = true;
 	}
 
-	fprintf(stderr, "has_method called: %s\n", p_name.to_ascii_buffer().ptr());
-
-	// TODO
-	return false;
+	fprintf(stderr, "ELFScriptInstance::has_method %s => %d\n", p_name.to_ascii_buffer().ptr(), result);
+	return result;
 }
 
 void ELFScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list) const {
