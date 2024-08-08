@@ -185,7 +185,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			// set up each argument
 			this->setup_arguments(args, argc);
 			// execute!
-			return m_machine->cpu.preempt_internal(regs, true, address, MAX_INSTRUCTIONS);
+			m_machine->cpu.preempt_internal(regs, true, address, MAX_INSTRUCTIONS);
 		} else {
 			throw std::runtime_error("Recursion level exceeded");
 		}
