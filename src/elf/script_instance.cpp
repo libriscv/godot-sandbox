@@ -3,6 +3,7 @@
 #include "script_elf.h"
 #include "script_instance_helper.h"
 #include <godot_cpp/templates/local_vector.hpp>
+static constexpr bool VERBOSE_METHODS = false;
 
 bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 	return false;
@@ -29,7 +30,9 @@ Variant ELFScriptInstance::callp(
 	}
 
 	if (p_method == StringName("set_owner")) {
-		printf("set_owner called %p -> %p\n", this->owner, p_args[0]->operator Object *());
+		if constexpr (VERBOSE_METHODS) {
+			printf("set_owner called %p -> %p\n", this->owner, p_args[0]->operator Object *());
+		}
 		this->owner = p_args[0]->operator Object *();
 		r_error.error = GDEXTENSION_CALL_OK;
 		return true;
@@ -44,7 +47,9 @@ Variant ELFScriptInstance::callp(
 		return false;
 	}
 
-	ERR_PRINT("method called " + p_method);
+	if constexpr (VERBOSE_METHODS) {
+		ERR_PRINT("method called " + p_method);
+	}
 	//return s->callv(p_method, p_args, p_argument_count);
 	r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 	return Variant();
@@ -89,7 +94,9 @@ bool ELFScriptInstance::has_method(const StringName &p_name) const {
 		result = true;
 	}
 
-	fprintf(stderr, "ELFScriptInstance::has_method %s => %d\n", p_name.to_ascii_buffer().ptr(), result);
+	if constexpr (VERBOSE_METHODS) {
+		fprintf(stderr, "ELFScriptInstance::has_method %s => %d\n", p_name.to_ascii_buffer().ptr(), result);
+	}
 	return result;
 }
 

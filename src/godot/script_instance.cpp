@@ -60,7 +60,6 @@ static GDExtensionBool gdextension_script_instance_get_class_category(GDExtensio
 static GDExtensionVariantType gdextension_script_instance_get_property_type(GDExtensionScriptInstanceDataPtr p_instance, GDExtensionConstStringNamePtr p_name, GDExtensionBool *r_is_valid) {
 	ScriptInstanceExtension *instance = reinterpret_cast<ScriptInstanceExtension *>(p_instance);
 	const StringName *name = reinterpret_cast<const StringName *>(p_name);
-	printf("gdextension_script_instance_get_property_type name: %s\n", name->to_ascii_buffer().ptr());
 
 	bool is_valid;
 	GDExtensionVariantType ret = (GDExtensionVariantType)instance->get_property_type(*name, &is_valid);
@@ -71,7 +70,6 @@ static GDExtensionVariantType gdextension_script_instance_get_property_type(GDEx
 
 static GDExtensionBool gdextension_script_instance_validate_property(GDExtensionScriptInstanceDataPtr p_instance, GDExtensionPropertyInfo *p_property) {
 	ScriptInstanceExtension *instance = reinterpret_cast<ScriptInstanceExtension *>(p_instance);
-	printf("gdextension_script_instance_validate_property\n");
 	return instance->validate_property(*p_property);
 }
 

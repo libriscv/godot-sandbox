@@ -27,7 +27,7 @@ bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
 }
 StringName ELFScript::_get_instance_base_type() const {
-	return StringName("Node");
+	return StringName("Sandbox");
 }
 void *ELFScript::_instance_create(Object *p_for_object) const {
 	ELFScriptInstance *instance = memnew(ELFScriptInstance(p_for_object, Ref<ELFScript>(this)));
