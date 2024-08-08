@@ -20,6 +20,37 @@
 
 #define SYSCALL_BACKTRACE (NATIVE_SYSCALLS_BASE + 19)
 
+#define STR1(x) #x
+#define STR(x) STR1(x)
+
+#define WRAP_FUNC(name, syscall_id)                 \
+	__asm__(".pushsection .text\n"                  \
+			".global __wrap_" #name "\n"            \
+			".type __wrap_" #name ", @function\n"   \
+			"__wrap_" #name ":\n"                   \
+			"	li a7, " STR(syscall_id) "\n"       \
+										 "	ecall\n" \
+										 "	ret\n"   \
+										 ".popsection .text\n")
+
+WRAP_FUNC(calloc, SYSCALL_CALLOC);
+WRAP_FUNC(realloc, SYSCALL_REALLOC);
+
+#define WRAP_FANCY 1
+
+#if !WRAP_FANCY
+WRAP_FUNC(malloc, SYSCALL_MALLOC);
+WRAP_FUNC(free, SYSCALL_FREE);
+WRAP_FUNC(memset, SYSCALL_MEMSET);
+WRAP_FUNC(memcpy, SYSCALL_MEMCPY);
+WRAP_FUNC(memmove, SYSCALL_MEMMOVE);
+WRAP_FUNC(memcmp, SYSCALL_MEMCMP);
+WRAP_FUNC(strlen, SYSCALL_STRLEN);
+WRAP_FUNC(strcmp, SYSCALL_STRCMP);
+WRAP_FUNC(strncmp, SYSCALL_STRCMP);
+
+#else // WRAP_FANCY
+
 extern "C" void *__wrap_malloc(size_t size) {
 	register void *ret __asm__("a0");
 	register size_t a0 __asm__("a0") = size;
@@ -38,24 +69,6 @@ extern "C" void __wrap_free(void *ptr) {
 				 :
 				 : "r"(a0), "r"(syscall_id));
 }
-
-#define STR1(x) #x
-#define STR(x) STR1(x)
-
-__asm__(".pushsection .text\n"
-		".global __wrap_calloc\n"
-		".type __wrap_calloc, @function\n"
-		"__wrap_calloc:\n"
-		"	li a7, " STR(SYSCALL_CALLOC) "\n"
-										 "	ecall\n"
-										 "	ret\n"
-										 ".global __wrap_realloc\n"
-										 ".type __wrap_realloc, @function\n"
-										 "__wrap_realloc:\n"
-										 "	li a7, " STR(SYSCALL_REALLOC) "\n"
-																		  "	ecall\n"
-																		  "	ret\n"
-																		  ".popsection .text\n");
 
 extern "C" void *__wrap_memset(void *vdest, const int ch, size_t size) {
 	register char *a0 __asm__("a0") = (char *)vdest;
@@ -145,3 +158,5 @@ extern "C" int __wrap_strncmp(const char *str1, const char *str2, size_t maxlen)
 				 "r"(a2), "r"(syscall_id));
 	return a0_out;
 }
+
+#endif // WRAP_FANCY
