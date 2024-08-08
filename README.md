@@ -82,8 +82,9 @@ The API towards the sandbox uses Variants, and the API inside the sandbox uses (
 
 ```C++
 extern "C"
-void function3(Variant x, Variant y, Variant text) {
+Variant function3(Variant x, Variant y, Variant text) {
 	UtilityFunctions::print("x = ", x, " y = ", y, " text = ", text);
+	return 1234;
 }
 ```
 

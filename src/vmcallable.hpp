@@ -3,6 +3,7 @@
 using namespace godot;
 
 class Sandbox;
+struct GuestVariant;
 
 class RiscvCallable : public CallableCustom {
 public:

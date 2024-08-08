@@ -1,6 +1,5 @@
 #include "api.hpp"
 #include <cstdio>
-#include <string_view>
 
 int main() {
 	UtilityFunctions::print("Hello, ", 55, " world!\n");
@@ -10,42 +9,48 @@ int main() {
 	halt(); // Prevent stdout,stderr closing etc.
 }
 
-extern "C" void empty_function() {
+extern "C" Variant empty_function() {
+	return Variant();
 }
 
-extern "C" void my_function(Variant varg) {
+extern "C" Variant my_function(Variant varg) {
 	UtilityFunctions::print("Hello, ", 124.5, " world!\n");
 	UtilityFunctions::print("Arg: ", varg);
+	return 1234; //
 }
 
-extern "C" void function3(Variant x, Variant y, Variant text) {
+extern "C" Variant function3(Variant x, Variant y, Variant text) {
 	UtilityFunctions::print("x = ", x, " y = ", y, " text = ", text);
+	return float(int(x) + float(y));
 }
 
-extern "C" void final_function() {
+extern "C" Variant final_function() {
 	UtilityFunctions::print("The function was called!!\n");
+	return Variant();
 }
 
 static Variant copy;
 
-extern "C" void trampoline_function(Variant callback) {
+extern "C" Variant trampoline_function(Variant callback) {
 	UtilityFunctions::print("Trampoline is calling first argument...\n");
 	callback.call(1, 2, 3);
 	copy = callback;
 	UtilityFunctions::print("After call...\n");
+	return Variant();
 }
 
-extern "C" void failing_function() {
+extern "C" Variant failing_function() {
 	copy.call(1, 2, 3);
+	return Variant();
 }
 
-extern "C" void test_buffer(Variant var) {
+extern "C" Variant test_buffer(Variant var) {
 	auto data = var.operator std::string_view();
 
 	char buffer[256];
-	for (size_t i = 0; i < data.size(); i++)
-		snprintf(buffer + i * 3, 4, "%02x ", data[i]);
-	buffer[192] = '\n';
+	snprintf(buffer, sizeof(buffer),
+			"The buffer is not here! Or is it? T12345\n");
 
 	UtilityFunctions::print(buffer);
+	return Variant();
 }

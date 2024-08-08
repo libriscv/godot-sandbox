@@ -145,26 +145,33 @@ Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtens
 	error.error = GDEXTENSION_CALL_OK;
 	return this->vmcall_internal(cached_address_of(String(function)), args, arg_count);
 }
-void Sandbox::setup_arguments(const Variant **args, int argc) {
+GuestVariant *Sandbox::setup_arguments(const Variant **args, int argc) {
 	// Stack pointer
 	auto &sp = m_machine->cpu.reg(2);
-	sp -= sizeof(GuestVariant) * argc;
+	sp -= sizeof(GuestVariant) * (argc + 1);
 	const auto arrayDataPtr = sp;
-	const auto arrayElements = argc;
+	const auto arrayElements = argc + 1;
 
 	GuestVariant *v = m_machine->memory.memarray<GuestVariant>(arrayDataPtr, arrayElements);
-	if (argc > 8)
-		argc = 8; // Limit to argument registers (a0-a7)
+	if (argc > 7)
+		argc = 7; // Limit to argument registers (a0-a7)
+
+	// Set up first argument (return value, also a Variant)
+	m_machine->cpu.reg(10) = arrayDataPtr;
+	v[0].type = Variant::Type::NIL;
 
 	for (size_t i = 0; i < argc; i++) {
 		//printf("args[%zu] = type %d\n", i, int(args[i]->get_type()));
-		v[i].set(*this, (*args)[i]);
-		m_machine->cpu.reg(10 + i) = arrayDataPtr + i * sizeof(GuestVariant);
+		v[i + 1].set(*this, *args[i]);
+		m_machine->cpu.reg(11 + i) = arrayDataPtr + (i + 1) * sizeof(GuestVariant);
 	}
-	sp &= ~gaddr_t(0xF); // align stack pointer
+	sp &= ~gaddr_t(0xF); // re-align stack pointer
+	// A0 is the return value (Variant) of the function
+	return &v[0];
 }
 Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc) {
 	try {
+		GuestVariant *retvar = nullptr;
 		m_level++;
 		// execute guest function
 		if (m_level == 1) {
@@ -172,8 +179,8 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			m_machine->cpu.reset_stack_pointer();
 			// setup calling convention
 			m_machine->setup_call();
-			// set up each argument
-			this->setup_arguments(args, argc);
+			// set up each argument, and return value
+			retvar = this->setup_arguments(args, argc);
 			// execute!
 			m_machine->simulate_with(MAX_INSTRUCTIONS, 0u, address);
 		} else if (m_level > 1 && m_level < MAX_LEVEL) {
@@ -183,17 +190,22 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			m_machine->cpu.reg(riscv::REG_SP) -= 16u;
 			// setup calling convention
 			m_machine->setup_call();
-			// set up each argument
-			this->setup_arguments(args, argc);
+			// set up each argument, and return value
+			retvar = this->setup_arguments(args, argc);
 			// execute!
 			m_machine->cpu.preempt_internal(regs, true, address, MAX_INSTRUCTIONS);
 		} else {
 			throw std::runtime_error("Recursion level exceeded");
 		}
 
+		// Treat return value as pointer to Variant
+		auto result = retvar->toVariant(*this);
+
 		m_level--;
 		m_scoped_variants.clear();
-		return m_machine->return_value<int64_t>();
+
+		return result;
+
 	} catch (const std::exception &e) {
 		m_level--;
 		m_scoped_variants.clear();
@@ -209,9 +221,7 @@ Variant Sandbox::vmcallable(String function) {
 	return Callable(call);
 }
 void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const {
-	auto result = self->vmcall_internal(address, p_arguments, p_argcount);
-
-	r_return_value = result;
+	r_return_value = self->vmcall_internal(address, p_arguments, p_argcount);
 	r_call_error.error = GDEXTENSION_CALL_OK;
 }
 

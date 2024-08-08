@@ -59,7 +59,7 @@ private:
 	void handle_timeout(gaddr_t);
 	void print_backtrace(gaddr_t);
 	void initialize_syscalls();
-	void setup_arguments(const Variant** args, int argc);
+	GuestVariant *setup_arguments(const Variant** args, int argc);
 
 	Ref<ELFScript> m_program_data;
 	TypedArray<String> m_program_arguments;
