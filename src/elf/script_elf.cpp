@@ -2,16 +2,20 @@
 
 #include "../register_types.h"
 #include "../sandbox.hpp"
+#include "script_instance.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 
+String ELFScript::_to_string() const {
+	return "ELFScript::" + global_name;
+}
 bool ELFScript::_editor_can_reload_from_file() {
 	return true;
 }
 void ELFScript::_placeholder_erased(void *p_placeholder) {}
 bool ELFScript::_can_instantiate() const {
-	return false;
+	return true;
 }
 Ref<Script> ELFScript::_get_base_script() const {
 	return Ref<Script>();
@@ -23,13 +27,14 @@ bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
 }
 StringName ELFScript::_get_instance_base_type() const {
-	return StringName("ELFScript");
+	return StringName("Sandbox");
 }
 void *ELFScript::_instance_create(Object *p_for_object) const {
-	return nullptr;
+	ELFScriptInstance *instance = memnew(ELFScriptInstance(p_for_object, Ref<ELFScript>(this)));
+	return ScriptInstanceExtension::create_native_instance(instance);
 }
 void *ELFScript::_placeholder_instance_create(Object *p_for_object) const {
-	return nullptr;
+	return _instance_create(p_for_object);
 }
 bool ELFScript::_instance_has(Object *p_object) const {
 	return false;
@@ -63,13 +68,17 @@ String ELFScript::_get_class_icon_path() const {
 	return String("res://addons/godot_sandbox/ELFScript.svg");
 }
 bool ELFScript::_has_method(const StringName &p_method) const {
-	return true;
+	bool result = functions.find(p_method) != -1;
+	if (!result) {
+		if (p_method == StringName("_init"))
+			result = true;
+	}
+	printf("ELFScript::_has_method: method %s => %d\n", p_method.to_ascii_buffer().ptr(), result);
+
+	return result;
 }
 bool ELFScript::_has_static_method(const StringName &p_method) const {
 	return false;
-}
-Variant ELFScript::_get_script_method_argument_count(const StringName &p_method) const {
-	return Variant();
 }
 Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
 	return Dictionary();
@@ -81,7 +90,7 @@ bool ELFScript::_is_valid() const {
 	return true;
 }
 bool ELFScript::_is_abstract() const {
-	return true;
+	return false;
 }
 ScriptLanguage *ELFScript::_get_language() const {
 	return get_elf_language();

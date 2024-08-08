@@ -102,17 +102,11 @@ int32_t CPPScriptLanguage::_find_function(const String &p_function, const String
 String CPPScriptLanguage::_make_function(const String &p_class_name, const String &p_function_name, const PackedStringArray &p_function_args) const {
 	return String();
 }
-bool CPPScriptLanguage::_can_make_function() const {
-	return false;
-}
 Error CPPScriptLanguage::_open_in_external_editor(const Ref<Script> &p_script, int32_t p_line, int32_t p_column) {
 	return Error::OK;
 }
 bool CPPScriptLanguage::_overrides_external_editor() {
 	return false;
-}
-ScriptLanguage::ScriptNameCasing CPPScriptLanguage::_preferred_file_name_casing() const {
-	return ScriptNameCasing::SCRIPT_NAME_CASING_AUTO;
 }
 Dictionary CPPScriptLanguage::_complete_code(const String &p_code, const String &p_path, Object *p_owner) const {
 	return Dictionary();
@@ -138,9 +132,6 @@ int32_t CPPScriptLanguage::_debug_get_stack_level_line(int32_t p_level) const {
 	return 0;
 }
 String CPPScriptLanguage::_debug_get_stack_level_function(int32_t p_level) const {
-	return String();
-}
-String CPPScriptLanguage::_debug_get_stack_level_source(int32_t p_level) const {
 	return String();
 }
 Dictionary CPPScriptLanguage::_debug_get_stack_level_locals(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) {
@@ -183,7 +174,6 @@ TypedArray<Dictionary> CPPScriptLanguage::_get_public_annotations() const {
 }
 void CPPScriptLanguage::_profiling_start() {}
 void CPPScriptLanguage::_profiling_stop() {}
-void CPPScriptLanguage::_profiling_set_save_native_calls(bool p_enable) {}
 int32_t CPPScriptLanguage::_profiling_get_accumulated_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) {
 	return 0;
 }

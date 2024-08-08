@@ -35,10 +35,8 @@ public:
 	virtual bool _can_inherit_from_file() const override;
 	virtual int32_t _find_function(const String &p_function, const String &p_code) const override;
 	virtual String _make_function(const String &p_class_name, const String &p_function_name, const PackedStringArray &p_function_args) const override;
-	virtual bool _can_make_function() const override;
 	virtual Error _open_in_external_editor(const Ref<Script> &p_script, int32_t p_line, int32_t p_column) override;
 	virtual bool _overrides_external_editor() override;
-	virtual ScriptLanguage::ScriptNameCasing _preferred_file_name_casing() const override;
 	virtual Dictionary _complete_code(const String &p_code, const String &p_path, Object *p_owner) const override;
 	virtual Dictionary _lookup_code(const String &p_code, const String &p_symbol, const String &p_path, Object *p_owner) const override;
 	virtual String _auto_indent_code(const String &p_code, int32_t p_from_line, int32_t p_to_line) const override;
@@ -51,7 +49,6 @@ public:
 	virtual int32_t _debug_get_stack_level_count() const override;
 	virtual int32_t _debug_get_stack_level_line(int32_t p_level) const override;
 	virtual String _debug_get_stack_level_function(int32_t p_level) const override;
-	virtual String _debug_get_stack_level_source(int32_t p_level) const override;
 	virtual Dictionary _debug_get_stack_level_locals(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) override;
 	virtual Dictionary _debug_get_stack_level_members(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) override;
 	virtual void *_debug_get_stack_level_instance(int32_t p_level) override;
@@ -66,7 +63,6 @@ public:
 	virtual TypedArray<Dictionary> _get_public_annotations() const override;
 	virtual void _profiling_start() override;
 	virtual void _profiling_stop() override;
-	virtual void _profiling_set_save_native_calls(bool p_enable) override;
 	virtual int32_t _profiling_get_accumulated_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) override;
 	virtual int32_t _profiling_get_frame_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) override;
 	virtual void _frame() override;

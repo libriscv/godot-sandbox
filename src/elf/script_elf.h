@@ -10,10 +10,13 @@ class ELFScript : public ScriptExtension {
 
 protected:
 	static void _bind_methods() {}
+	String _to_string() const;
 	PackedByteArray source_code;
 	PackedStringArray functions;
 	String global_name;
 	String path;
+	// TODO
+	//HashSet<Object *> instances;
 
 public:
 	virtual bool _editor_can_reload_from_file() override;
@@ -34,7 +37,6 @@ public:
 	virtual String _get_class_icon_path() const override;
 	virtual bool _has_method(const StringName &p_method) const override;
 	virtual bool _has_static_method(const StringName &p_method) const override;
-	virtual Variant _get_script_method_argument_count(const StringName &p_method) const override;
 	virtual Dictionary _get_method_info(const StringName &p_method) const override;
 	virtual bool _is_tool() const override;
 	virtual bool _is_valid() const override;

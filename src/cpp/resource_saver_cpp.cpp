@@ -1,8 +1,17 @@
 #include "resource_saver_cpp.h"
+#include "../elf/script_elf.h"
+#include "../elf/script_language_elf.h"
+#include "../register_types.h"
 #include "../sandbox_project_settings.h"
 #include "script_cpp.h"
+#include <godot_cpp/classes/editor_file_system.hpp>
+#include <godot_cpp/classes/editor_interface.hpp>
+#include <godot_cpp/classes/editor_settings.hpp>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/os.hpp>
+#include <godot_cpp/classes/script.hpp>
+#include <godot_cpp/classes/script_editor.hpp>
+#include <godot_cpp/classes/script_editor_base.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
 // New Game Project$ docker run --name godot-cpp-compiler -dv .:/usr/src ghcr.io/libriscv/compiler
@@ -32,6 +41,16 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 				}
 			};
 			builder();
+			// EditorInterface::get_singleton()->get_editor_settings()->set("text_editor/behavior/files/auto_reload_scripts_on_external_change", true);
+			EditorInterface::get_singleton()->get_resource_filesystem()->scan();
+			auto open_scripts = EditorInterface::get_singleton()->get_script_editor()->get_open_scripts();
+			for (int i = 0; i < open_scripts.size(); i++) {
+				auto elf_script = Object::cast_to<ELFScript>(open_scripts[i]);
+				if (elf_script) {
+					elf_script->reload(false);
+					elf_script->emit_changed();
+				}
+			}
 			return Error::OK;
 		} else {
 			return Error::ERR_FILE_CANT_OPEN;

@@ -245,6 +245,10 @@ void Sandbox::handle_exception(gaddr_t address) {
 	UtilityFunctions::print(
 			"Stack page: ", machine().memory.get_page_info(machine().cpu.reg(2)).c_str(),
 			"\n");
+
+	if (m_machine->memory.binary().empty()) {
+		ERR_PRINT("No binary loaded. Remember to assign a program to the Sandbox!");
+	}
 }
 
 void Sandbox::handle_timeout(gaddr_t address) {

@@ -1,10 +1,14 @@
 [gd_scene load_steps=3 format=3 uid="uid://cvdqbqcr3b6cy"]
 
+[ext_resource type="Script" path="res://src/src.elf" id="1_7ixak"]
 [ext_resource type="Script" path="res://test.gd" id="1_ac6ii"]
-[ext_resource type="Script" path="res://src/main.elf" id="1_t71kr"]
 
 [node name="Node" type="Node"]
 
-[node name="Sandbox" type="Sandbox" parent="."]
-program = ExtResource("1_t71kr")
+[node name="Sandbox" type="Sandbox" parent="." node_paths=PackedStringArray("program_elf")]
+program = ExtResource("1_7ixak")
 script = ExtResource("1_ac6ii")
+program_elf = NodePath("../ELF_src_src")
+
+[node name="ELF_src_src" type="Node" parent="."]
+script = ExtResource("1_7ixak")
