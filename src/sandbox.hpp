@@ -57,6 +57,7 @@ private:
 	void load(PackedByteArray&& vbuf, const TypedArray<String>& arguments);
 	void handle_exception(gaddr_t);
 	void handle_timeout(gaddr_t);
+	void print_backtrace(gaddr_t);
 	void initialize_syscalls();
 	void setup_arguments(const Variant** args, int argc);
 

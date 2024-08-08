@@ -2,6 +2,7 @@
 
 #include <godot_cpp/core/class_db.hpp>
 
+#include <charconv>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -11,15 +12,15 @@
 
 using namespace godot;
 
-// There are two APIs:
-// 1. The API that always makes sense, eg. Timers, Nodes, etc.
-//    This will be using system calls. Assign a fixed-number.
-// 2. The Game-specific API, eg. whatever bullshit you need for your game to be fucking awesome.
-//    (will be implemented later)
-
 static constexpr size_t MAX_HEAP = 16ull << 20;
 static const int HEAP_SYSCALLS_BASE = 480;
 static const int MEMORY_SYSCALLS_BASE = 485;
+
+static inline String to_hex(gaddr_t value) {
+	char str[20] = { 0 };
+	std::to_chars(std::begin(str), std::end(str), value, 16);
+	return String{ str };
+}
 
 String Sandbox::_to_string() const {
 	return "[ GDExtension::Sandbox <--> Instance ID:" + uitos(get_instance_id()) + " ]";
@@ -218,8 +219,8 @@ void Sandbox::handle_exception(gaddr_t address) {
 	auto callsite = machine().memory.lookup(address);
 	UtilityFunctions::print(
 			"[", get_name(), "] Exception when calling:\n  ", callsite.name.c_str(), " (0x",
-			String("%x").format(callsite.address), ")\n", "Backtrace:\n");
-	//this->print_backtrace(address);
+			to_hex(callsite.address), ")\n", "Backtrace:");
+	this->print_backtrace(address);
 
 	try {
 		throw; // re-throw
@@ -231,20 +232,18 @@ void Sandbox::handle_exception(gaddr_t address) {
 		const String regs(machine().cpu.registers().to_string().c_str());
 
 		UtilityFunctions::print(
-				"\nException: ", e.what(), "  (data: ", String("%x").format(e.data()), ")\n",
+				"\nException: ", e.what(), "  (data: ", to_hex(e.data()), ")\n",
 				">>> ", instr, "\n",
-				">>> Machine registers:\n[PC\t", String("%x").format(machine().cpu.pc()),
+				">>> Machine registers:\n[PC\t", to_hex(machine().cpu.pc()),
 				"] ", regs, "\n");
 	} catch (const std::exception &e) {
 		UtilityFunctions::print("\nMessage: ", e.what(), "\n\n");
 		ERR_PRINT(("Exception: " + std::string(e.what())).c_str());
 	}
 	UtilityFunctions::print(
-			"Program page: ", machine().memory.get_page_info(machine().cpu.pc()).c_str(),
-			"\n");
+			"Program page: ", machine().memory.get_page_info(machine().cpu.pc()).c_str());
 	UtilityFunctions::print(
-			"Stack page: ", machine().memory.get_page_info(machine().cpu.reg(2)).c_str(),
-			"\n");
+			"Stack page: ", machine().memory.get_page_info(machine().cpu.reg(2)).c_str());
 
 	if (m_machine->memory.binary().empty()) {
 		ERR_PRINT("No binary loaded. Remember to assign a program to the Sandbox!");
@@ -267,6 +266,19 @@ void Sandbox::print(std::string_view text) {
 		UtilityFunctions::print(str);
 	}
 	this->m_last_newline = (text.back() == '\n');
+}
+
+void Sandbox::print_backtrace(const gaddr_t addr) {
+	machine().memory.print_backtrace(
+			[](std::string_view line) {
+				String line_str(static_cast<std::string>(line).c_str());
+				UtilityFunctions::print("-> ", line_str);
+			});
+	auto origin = machine().memory.lookup(addr);
+	String name(origin.name.c_str());
+	UtilityFunctions::print(
+			"-> [-] 0x", to_hex(origin.address), " + 0x", to_hex(origin.offset),
+			": ", name);
 }
 
 gaddr_t Sandbox::cached_address_of(String function) const {
