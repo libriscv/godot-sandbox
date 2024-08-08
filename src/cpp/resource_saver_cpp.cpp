@@ -36,8 +36,34 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 				// Invoke docker to compile the file
 				Array output;
 				CPPScript::DockerContainerExecute({ "-o", outname, inpname }, output);
-				for (int i = 0; i < output.size(); i++) {
-					UtilityFunctions::print(output[i]);
+				if (!output.is_empty() && !output[0].operator String().is_empty()) {
+					for (int i = 0; i < output.size(); i++) {
+						String line = output[i].operator String();
+						ERR_PRINT(line);
+					}
+					for (int i = 0; i < output.size(); i++) {
+						String line = output[i].operator String();
+						// Remove (most) console color codes
+						line = line.replace("\033[0;31m", "");
+						line = line.replace("\033[0;32m", "");
+						line = line.replace("\033[0;33m", "");
+						line = line.replace("\033[0;34m", "");
+						line = line.replace("\033[0;35m", "");
+						line = line.replace("\033[0;36m", "");
+						line = line.replace("\033[0;37m", "");
+						line = line.replace("\033[01;31m", "");
+						line = line.replace("\033[01;32m", "");
+						line = line.replace("\033[01;33m", "");
+						line = line.replace("\033[01;34m", "");
+						line = line.replace("\033[01;35m", "");
+						line = line.replace("\033[01;36m", "");
+						line = line.replace("\033[01;37m", "");
+						line = line.replace("\033[m", "");
+						line = line.replace("\033[0m", "");
+						line = line.replace("\033[01m", "");
+						line = line.replace("[K", "");
+						WARN_PRINT(line);
+					}
 				}
 			};
 			builder();
