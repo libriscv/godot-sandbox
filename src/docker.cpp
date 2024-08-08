@@ -5,7 +5,25 @@
 static constexpr bool VERBOSE_CMD = true;
 using namespace godot;
 
+static bool ContainerIsAlreadyRunning(String container_name) {
+	godot::OS *OS = godot::OS::get_singleton();
+	PackedStringArray arguments = { "container", "inspect", "-f", "{{.State.Running}}", container_name };
+	Array output;
+	if constexpr (VERBOSE_CMD) {
+		UtilityFunctions::print(SandboxProjectSettings::get_docker_path(), arguments);
+	}
+	const int res = OS->execute(SandboxProjectSettings::get_docker_path(), arguments, output);
+	if (res != 0) {
+		return false;
+	}
+	const String running = output[0];
+	return running.contains("true");
+}
+
 bool Docker::ContainerStart(String container_name, String image_name, Array &output) {
+	if (ContainerIsAlreadyRunning(container_name)) {
+		return true;
+	}
 	godot::OS *OS = godot::OS::get_singleton();
 	PackedStringArray arguments = { "run", "--name", container_name, "-dv", ".:/usr/src", image_name };
 	if constexpr (VERBOSE_CMD) {
