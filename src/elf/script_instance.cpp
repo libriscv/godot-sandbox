@@ -6,10 +6,15 @@
 static constexpr bool VERBOSE_METHODS = false;
 
 bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
+	ERR_PRINT("ELFScriptInstance::set " + p_name);
 	return false;
 }
 
 bool ELFScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
+	if (p_name == StringName("script")) {
+		r_ret = script;
+		return true;
+	}
 	return false;
 }
 
