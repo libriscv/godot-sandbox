@@ -5,7 +5,7 @@
 #include "../sandbox.h"
 #include <godot_cpp/templates/local_vector.hpp>
 #include <godot_cpp/core/object.hpp>
-static constexpr bool VERBOSE_METHODS = true;
+static constexpr bool VERBOSE_METHODS = false;
 
 static std::vector<std::string> godot_functions = {
 	"set_owner",
@@ -20,7 +20,6 @@ bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 }
 
 bool ELFScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
-	//ERR_PRINT("ELFScriptInstance::get " + p_name);
 	if (p_name == StringName("script")) {
 		r_ret = script;
 		return true;
@@ -43,6 +42,9 @@ Variant ELFScriptInstance::callp(
 		const Variant **p_args, const int p_argument_count,
 		GDExtensionCallError &r_error) {
 	if (script.is_null()) {
+		if constexpr (VERBOSE_METHODS) {
+			ERR_PRINT("callp: script is null");
+		}
 		r_error.error = GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;
 		return Variant();
 	}
@@ -53,7 +55,6 @@ Variant ELFScriptInstance::callp(
 		this->owner = p_args[0]->operator Object *();
 		Sandbox* sandbox = Object::cast_to<Sandbox>(this->owner);
 		if (sandbox) {
-			printf("set_owner: owner is now a Sandbox\n");
 			sandbox->set_program(script);
 		} else {
 			ERR_PRINT("set_owner: owner is not a Sandbox");
@@ -68,7 +69,15 @@ Variant ELFScriptInstance::callp(
 		return false;
 	} else if (p_method == StringName("_is_read_only")) {
 		r_error.error = GDEXTENSION_CALL_OK;
-		return true;
+		return false;
+	} else if (p_method == StringName("_ready")) {
+		Sandbox* sandbox = Object::cast_to<Sandbox>(this->owner);
+		if (sandbox) {
+			printf("ready: owner is a Sandbox\n");
+			sandbox->set_program(script);
+		} else {
+			ERR_PRINT("ready: owner was not a Sandbox");
+		}
 	} else if (p_method.begins_with("_")) {
 		if constexpr (VERBOSE_METHODS) {
 			ERR_PRINT("Unhandled internal method called: " + p_method);
@@ -80,17 +89,16 @@ Variant ELFScriptInstance::callp(
 		ERR_PRINT("method called " + p_method);
 	}
 
-	Sandbox* sandbox = Object::cast_to<Sandbox>(this->owner);
-	if (sandbox) {
-		r_error.error = GDEXTENSION_CALL_OK;
-		printf("calling %s\n", String(p_method).utf8().get_data());
-		return sandbox->vmcall_fn(p_method, p_args, p_argument_count);
-	} else {
-		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-		printf("owner is a %s\n", this->owner->get_class().utf8().get_data());
-		ERR_PRINT("callp: owner is not a Sandbox");
-		return Variant();
+	if (script->functions.has(p_method)) {
+		Sandbox* sandbox = Object::cast_to<Sandbox>(this->owner);
+		if (sandbox) {
+			r_error.error = GDEXTENSION_CALL_OK;
+			return sandbox->vmcall_fn(p_method, p_args, p_argument_count);
+		}
 	}
+
+	r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+	return Variant();
 }
 
 GDExtensionMethodInfo create_method_info(const MethodInfo &method_info) {

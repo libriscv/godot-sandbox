@@ -103,7 +103,7 @@ TypedArray<Dictionary> ELFScript::_get_documentation() const {
 	return TypedArray<Dictionary>();
 }
 String ELFScript::_get_class_icon_path() const {
-	return String("res://addons/godot_sandbox/ELFScript.svg");
+	return String("res://addons/godot_sandbox/Sandbox.svg");
 }
 bool ELFScript::_has_method(const StringName &p_method) const {
 	bool result = functions.find(p_method) != -1;
@@ -221,5 +221,5 @@ void ELFScript::set_file(const String &p_path) {
 	global_name = "ELF_" + path.get_basename().replace("res://", "").replace("/", "_");
 	PackedStringArray functions_array = Sandbox::get_functions_from_binary(source_code);
 	functions_array.sort();
-	functions = functions_array;
+	this->functions = std::move(functions_array);
 }
