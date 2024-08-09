@@ -1,7 +1,7 @@
-#include "resource_saver_elf.h"
-#include "../register_types.h"
-#include "script_elf.h"
-#include "script_language_elf.h"
+#include "resource_saver_elf.hpp"
+#include "../register_types.hpp"
+#include "script_elf.hpp"
+#include "script_language_elf.hpp"
 #include <godot_cpp/classes/file_access.hpp>
 
 Error ResourceFormatSaverELF::_save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags) {

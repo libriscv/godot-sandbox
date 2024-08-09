@@ -1,5 +1,5 @@
-#include "script_language_elf.h"
-#include "script_elf.h"
+#include "script_language_elf.hpp"
+#include "script_elf.hpp"
 #include <godot_cpp/classes/editor_interface.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>

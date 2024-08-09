@@ -21,7 +21,7 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
 /*************************************************************************/
 
-#include "script_instance.h"
+#include "script_instance.hpp"
 
 #include <godot_cpp/templates/local_vector.hpp>
 

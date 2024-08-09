@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../docker.h"
+#include "../docker.hpp"
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/script_language.hpp>
 

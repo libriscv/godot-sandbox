@@ -1,8 +1,8 @@
-#include "script_elf.h"
+#include "script_elf.hpp"
 
-#include "../register_types.h"
+#include "../register_types.hpp"
 #include "../sandbox.hpp"
-#include "script_instance.h"
+#include "script_instance.hpp"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>

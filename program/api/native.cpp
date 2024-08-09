@@ -1,4 +1,4 @@
-#include "syscalls.h"
+#include "syscalls.hpp"
 #include <cstddef>
 
 #define NATIVE_MEM_FUNCATTR /* */

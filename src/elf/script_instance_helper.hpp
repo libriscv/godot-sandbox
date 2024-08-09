@@ -1,4 +1,4 @@
-#include "../register_types.h"
+#include "../register_types.hpp"
 #include <godot_cpp/templates/local_vector.hpp>
 #include <godot_cpp/templates/pair.hpp>
 
