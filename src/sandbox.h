@@ -41,6 +41,7 @@ public:
 	static PackedStringArray get_functions_from_binary(const PackedByteArray& binary);
 	// Make a function call to a function in the guest by its name.
 	Variant vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
+	Variant vmcall_fn(const String& function, const Variant **args, GDExtensionInt arg_count);
 	Variant vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
 	// Make a callable object that will call a function in the guest by its name.
 	Variant vmcallable(String function);

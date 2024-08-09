@@ -140,6 +140,10 @@ Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtens
 	arg_count -= 1;
 	return this->vmcall_internal(cached_address_of(String(function)), args, arg_count, error);
 }
+Variant Sandbox::vmcall_fn(const String& function, const Variant **args, GDExtensionInt arg_count) {
+	GDExtensionCallError error;
+	return this->vmcall_internal(cached_address_of(function), args, arg_count, error);
+}
 GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int argc) {
 	sp -= sizeof(GuestVariant) * (argc + 1);
 	sp &= ~gaddr_t(0xF); // re-align stack pointer

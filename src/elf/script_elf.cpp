@@ -7,6 +7,44 @@
 #include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 
+static Dictionary prop_to_dict(const PropertyInfo &p_prop) {
+	Dictionary d;
+	d["name"] = p_prop.name;
+	d["type"] = p_prop.type;
+	d["class_name"] = p_prop.class_name;
+	d["hint"] = p_prop.hint;
+	d["hint_string"] = p_prop.hint_string;
+	d["usage"] = p_prop.usage;
+	return d;
+}
+
+static Dictionary method_to_dict(const MethodInfo &p_method) {
+	Dictionary d;
+
+	d["name"] = p_method.name;
+	d["flags"] = p_method.flags;
+
+	if (p_method.arguments.size() > 0) {
+		Array args;
+		for (const PropertyInfo &arg : p_method.arguments) {
+			args.push_back(prop_to_dict(arg));
+		}
+		d["args"] = args;
+	}
+
+	if (p_method.default_arguments.size() > 0) {
+		Array defaults;
+		for (const Variant &value : p_method.default_arguments) {
+			defaults.push_back(value);
+		}
+		d["default_args"] = defaults;
+	}
+
+	d["return"] = prop_to_dict(p_method.return_val);
+
+	return d;
+}
+
 String ELFScript::_to_string() const {
 	return "ELFScript::" + global_name;
 }
@@ -81,6 +119,26 @@ bool ELFScript::_has_static_method(const StringName &p_method) const {
 	return false;
 }
 Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
+	TypedArray<Dictionary> functions_array;
+	for (String function : functions) {
+		if (function == p_method) {
+			printf("ELFScript::_get_method_info: method %s\n", p_method.to_ascii_buffer().ptr());
+			Dictionary method;
+			method["name"] = function;
+			method["args"] = Array();
+			method["default_args"] = Array();
+			Dictionary type;
+			type["name"] = "type";
+			type["type"] = Variant::Type::OBJECT;
+			type["class_name"] = "Object";
+			type["hint"] = PropertyHint::PROPERTY_HINT_NONE;
+			type["hint_string"] = String("Return value");
+			type["usage"] = PROPERTY_USAGE_DEFAULT;
+			method["return"] = type;
+			method["flags"] = METHOD_FLAGS_DEFAULT;
+			return method;
+		}
+	}
 	return Dictionary();
 }
 bool ELFScript::_is_tool() const {

@@ -70,9 +70,16 @@ Variant ELFScriptInstance::callp(
 	if constexpr (VERBOSE_METHODS) {
 		ERR_PRINT("method called " + p_method);
 	}
-	//return s->callv(p_method, p_args, p_argument_count);
-	r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-	return Variant();
+
+	Sandbox* sandbox = Object::cast_to<Sandbox>(this->owner);
+	if (sandbox) {
+		r_error.error = GDEXTENSION_CALL_OK;
+		return sandbox->vmcall_fn(p_method, p_args, p_argument_count);
+	} else {
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+		ERR_PRINT("callp: owner is not a Sandbox");
+		return Variant();
+	}
 }
 
 GDExtensionMethodInfo create_method_info(const MethodInfo &method_info) {
@@ -101,7 +108,7 @@ const GDExtensionMethodInfo *ELFScriptInstance::get_method_list(uint32_t *r_coun
 		*r_count = 0;
 		return nullptr;
 	}
-	
+
 	const int size = godot_functions.size();
 	GDExtensionMethodInfo *list = memnew_arr(GDExtensionMethodInfo, size);
 	int i = 0;
