@@ -222,7 +222,7 @@ PackedByteArray ELFScript::get_content() {
 void ELFScript::set_file(const String &p_path) {
 	path = p_path;
 	source_code = FileAccess::get_file_as_bytes(path);
-	global_name = "ELF_" + path.get_basename().replace("res://", "").replace("/", "_");
+	global_name = "Sandbox_" + path.get_basename().replace("res://", "").replace("/", "_").capitalize().replace(" ", "");
 	PackedStringArray functions_array = Sandbox::get_functions_from_binary(source_code);
 	functions_array.sort();
 	this->functions = std::move(functions_array);
