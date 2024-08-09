@@ -28,10 +28,7 @@ String Sandbox::_to_string() const {
 
 void Sandbox::_bind_methods() {
 	// Methods.
-	ClassDB::bind_method(D_METHOD("get_program"), &Sandbox::get_program);
-	ClassDB::bind_method(D_METHOD("set_program", "program"), &Sandbox::set_program);
 	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
-	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "program", PROPERTY_HINT_RESOURCE_TYPE, "ELFScript"), "set_program", "get_program");
 	{
 		MethodInfo mi;
 		mi.arguments.push_back(PropertyInfo(Variant::STRING, "function"));

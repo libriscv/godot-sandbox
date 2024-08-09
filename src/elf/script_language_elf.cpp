@@ -171,7 +171,7 @@ void ELFScriptLanguage::_frame() {
 	}
 }
 bool ELFScriptLanguage::_handles_global_class_type(const String &p_type) const {
-	return p_type == "ELFScript" || p_type == "Node";
+	return p_type == "ELFScript" || p_type == "Sandbox";
 }
 Dictionary ELFScriptLanguage::_get_global_class_name(const String &p_path) const {
 	Ref<Resource> resource = ResourceLoader::get_singleton()->load(p_path);
@@ -179,7 +179,7 @@ Dictionary ELFScriptLanguage::_get_global_class_name(const String &p_path) const
 	Dictionary dict;
 	if (elf_model.is_valid()) {
 		dict["name"] = elf_model->_get_global_name();
-		dict["base_type"] = "Node";
+		dict["base_type"] = "Sandbox";
 		dict["icon_path"] = String("res://addons/godot_sandbox/ELFScript.svg");
 	}
 	return dict;

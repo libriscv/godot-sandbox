@@ -34,6 +34,7 @@ Variant ELFScriptInstance::callp(
 			printf("set_owner called %p -> %p\n", this->owner, p_args[0]->operator Object *());
 		}
 		this->owner = p_args[0]->operator Object *();
+		// todo call on the Sandbox * owner the set_function()
 		r_error.error = GDEXTENSION_CALL_OK;
 		return true;
 	} else if (p_method == StringName("_get_editor_name")) {
