@@ -91,9 +91,9 @@ GDExtensionMethodInfo create_method_info(const MethodInfo &method_info) {
 			// what to put here?
 			type : GDEXTENSION_VARIANT_TYPE_STRING,
 			name : stringname_alloc(method_info.return_val.name),
+			class_name : stringname_alloc(method_info.return_val.class_name),
 			hint : method_info.return_val.hint,
 			hint_string : stringname_alloc(method_info.return_val.hint_string),
-			class_name : stringname_alloc(method_info.return_val.class_name),
 			usage : method_info.return_val.usage
 		},
 		flags : method_info.flags,
