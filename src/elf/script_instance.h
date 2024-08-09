@@ -30,6 +30,7 @@ class ELFScript;
 class ELFScriptInstance : public ScriptInstanceExtension {
 	Object *owner;
 	Ref<ELFScript> script;
+	List<MethodInfo> methods_info;
 
 	static void convert_prop(const PropertyInfo &p_src, GDExtensionPropertyInfo &p_dst);
 

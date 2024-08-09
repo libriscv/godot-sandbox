@@ -112,8 +112,7 @@ const GDExtensionMethodInfo *ELFScriptInstance::get_method_list(uint32_t *r_coun
 	const int size = godot_functions.size();
 	GDExtensionMethodInfo *list = memnew_arr(GDExtensionMethodInfo, size);
 	int i = 0;
-	for (auto godot_function : godot_functions) {
-		MethodInfo method_info = MethodInfo(StringName(godot_function.c_str()));
+	for (auto method_info : methods_info) {
 		list[i] = create_method_info(method_info);
 		i++;
 	}
@@ -207,6 +206,11 @@ ScriptLanguage *ELFScriptInstance::get_language() {
 
 ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_script) :
 		owner(p_owner), script(p_script) {
+	for (auto godot_function : godot_functions) {
+		methods_info.push_back(MethodInfo(
+			Variant::NIL,
+			StringName(godot_function.c_str())));
+	}
 }
 
 ELFScriptInstance::~ELFScriptInstance() {

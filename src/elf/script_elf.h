@@ -17,7 +17,6 @@ protected:
 	String path;
 	// TODO
 	//HashSet<Object *> instances;
-	HashMap<StringName, MethodInfo> methods;
 
 public:
 	virtual bool _editor_can_reload_from_file() override;
