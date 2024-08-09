@@ -11,7 +11,7 @@ using namespace godot;
 #define RISCV_ARCH riscv::RISCV64
 using gaddr_t = riscv::address_type<RISCV_ARCH>;
 using machine_t = riscv::Machine<RISCV_ARCH>;
-#include "vmcallable.hpp"
+#include "vmcallable.h"
 #include "elf/script_elf.h"
 
 class Sandbox : public Node
