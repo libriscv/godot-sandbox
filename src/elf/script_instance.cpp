@@ -2,8 +2,17 @@
 
 #include "script_elf.h"
 #include "script_instance_helper.h"
+#include "../sandbox.h"
 #include <godot_cpp/templates/local_vector.hpp>
+#include <godot_cpp/core/object.hpp>
 static constexpr bool VERBOSE_METHODS = false;
+
+static std::vector<std::string> godot_functions = {
+	"set_owner",
+	"_get_editor_name",
+	"_hide_script_from_inspector",
+	"_is_read_only",
+};
 
 bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 	ERR_PRINT("ELFScriptInstance::set " + p_name);
@@ -33,13 +42,18 @@ Variant ELFScriptInstance::callp(
 		r_error.error = GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;
 		return Variant();
 	}
-
+	ERR_PRINT("ELFScriptInstance::callp " + p_method);
 	if (p_method == StringName("set_owner")) {
 		if constexpr (VERBOSE_METHODS) {
 			printf("set_owner called %p -> %p\n", this->owner, p_args[0]->operator Object *());
 		}
 		this->owner = p_args[0]->operator Object *();
-		// todo call on the Sandbox * owner the set_function()
+		Sandbox* sandbox = Object::cast_to<Sandbox>(this->owner);
+		if (sandbox) {
+			sandbox->set_program(script);
+		} else {
+			ERR_PRINT("set_owner: owner is not a Sandbox");
+		}
 		r_error.error = GDEXTENSION_CALL_OK;
 		return true;
 	} else if (p_method == StringName("_get_editor_name")) {
@@ -50,7 +64,7 @@ Variant ELFScriptInstance::callp(
 		return false;
 	} else if (p_method == StringName("_is_read_only")) {
 		r_error.error = GDEXTENSION_CALL_OK;
-		return false;
+		return true;
 	}
 
 	if constexpr (VERBOSE_METHODS) {
@@ -61,16 +75,43 @@ Variant ELFScriptInstance::callp(
 	return Variant();
 }
 
+GDExtensionMethodInfo create_method_info(const MethodInfo &method_info) {
+	return GDExtensionMethodInfo{
+		name: method_info.name._native_ptr(),
+		return_value: GDExtensionPropertyInfo {
+			// what to put here?
+			type: GDEXTENSION_VARIANT_TYPE_STRING,
+			name: method_info.return_val.name._native_ptr(),
+			hint: method_info.return_val.hint,
+			hint_string: method_info.return_val.hint_string._native_ptr(),
+			class_name: method_info.return_val.class_name._native_ptr(),
+			usage: method_info.return_val.usage
+		},
+		flags: method_info.flags,
+		id: method_info.id,
+		argument_count: 0,// TODO (uint32_t)method_info.arguments.size(),
+		arguments: nullptr,
+		default_argument_count: 0,
+		default_arguments: nullptr,
+	};
+}
+
 const GDExtensionMethodInfo *ELFScriptInstance::get_method_list(uint32_t *r_count) const {
 	if (script.is_null()) {
 		*r_count = 0;
 		return nullptr;
 	}
-
-	int size = 0;
+	
+	const int size = godot_functions.size();
+	GDExtensionMethodInfo *list = memnew_arr(GDExtensionMethodInfo, size);
+	int i = 0;
+	for (auto godot_function : godot_functions) {
+		MethodInfo method_info = MethodInfo(StringName(godot_function.c_str()));
+		list[i] = create_method_info(method_info);
+		i++;
+	}
 
 	*r_count = size;
-	GDExtensionMethodInfo *list = memnew_arr(GDExtensionMethodInfo, size);
 
 	return list;
 }
@@ -108,6 +149,10 @@ bool ELFScriptInstance::has_method(const StringName &p_name) const {
 
 void ELFScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list) const {
 	// @todo We really need to know the size of the list... Unless we can store the info elsewhere and just use pointers?
+	// what godot does in their free_method list:
+
+	//   /* TODO `GDExtensionClassFreePropertyList` is ill-defined, we need a non-const pointer to free this. */                                                                    \
+	// ::godot::internal::free_c_property_list(const_cast<GDExtensionPropertyInfo *>(p_list));                                                                               
 	if (p_list) {
 		//memfree((void *)p_list);
 	}

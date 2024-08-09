@@ -4,6 +4,5 @@
 
 [node name="Node" type="Node"]
 
-[node name="Sandbox" type="Sandbox" parent="." node_paths=PackedStringArray("program_elf")]
+[node name="Sandbox" type="Sandbox" parent="."]
 script = ExtResource("1_ac6ii")
-program_elf = NodePath("")
