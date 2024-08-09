@@ -84,14 +84,14 @@ Variant ELFScriptInstance::callp(
 
 GDExtensionMethodInfo create_method_info(const MethodInfo &method_info) {
 	return GDExtensionMethodInfo{
-		name: method_info.name._native_ptr(),
+		name: stringname_alloc(method_info.name),
 		return_value: GDExtensionPropertyInfo {
 			// what to put here?
 			type: GDEXTENSION_VARIANT_TYPE_STRING,
-			name: method_info.return_val.name._native_ptr(),
+			name: stringname_alloc(method_info.return_val.name),
 			hint: method_info.return_val.hint,
-			hint_string: method_info.return_val.hint_string._native_ptr(),
-			class_name: method_info.return_val.class_name._native_ptr(),
+			hint_string: stringname_alloc(method_info.return_val.hint_string),
+			class_name: stringname_alloc(method_info.return_val.class_name),
 			usage: method_info.return_val.usage
 		},
 		flags: method_info.flags,
@@ -112,7 +112,7 @@ const GDExtensionMethodInfo *ELFScriptInstance::get_method_list(uint32_t *r_coun
 	const int size = godot_functions.size();
 	GDExtensionMethodInfo *list = memnew_arr(GDExtensionMethodInfo, size);
 	int i = 0;
-	for (auto method_info : methods_info) {
+	for (auto& method_info : methods_info) {
 		list[i] = create_method_info(method_info);
 		i++;
 	}
