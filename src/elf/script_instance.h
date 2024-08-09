@@ -57,7 +57,7 @@ public:
 	bool is_placeholder() const override;
 	void property_set_fallback(const StringName &p_name, const Variant &p_value, bool *r_valid) override;
 	Variant property_get_fallback(const StringName &p_name, bool *r_valid) override;
-	ScriptLanguage *get_language() override;
+	ScriptLanguage *_get_language() override;
 
 	ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_script);
 	~ELFScriptInstance();

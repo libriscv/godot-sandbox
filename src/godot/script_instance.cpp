@@ -182,7 +182,7 @@ static GDExtensionBool gdextension_script_instance_get_fallback(GDExtensionScrip
 
 static GDExtensionScriptLanguagePtr gdextension_script_instance_get_language(GDExtensionScriptInstanceDataPtr p_instance) {
 	ScriptInstanceExtension *instance = reinterpret_cast<ScriptInstanceExtension *>(p_instance);
-	return instance->get_language()->_owner;
+	return instance->_get_language()->_owner;
 }
 
 static void gdextension_script_instance_free(GDExtensionScriptInstanceDataPtr p_instance) {

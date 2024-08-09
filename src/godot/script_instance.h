@@ -66,7 +66,7 @@ public:
 	virtual bool is_placeholder() const = 0;
 	virtual void property_set_fallback(const StringName &p_name, const Variant &p_value, bool *r_valid) = 0;
 	virtual Variant property_get_fallback(const StringName &p_name, bool *r_valid) = 0;
-	virtual ScriptLanguage *get_language() = 0;
+	virtual ScriptLanguage *_get_language() = 0;
 
 	virtual ~ScriptInstanceExtension() {};
 };
