@@ -38,21 +38,12 @@ This extension exists to allow Godot creators to implement safe modding support,
 
 Create a new `Sandbox` and assign a RISC-V ELF program resource to it.
 
-```gdscript
+```go
 extends Sandbox
 
 func _ready():
 	# Make a function call into the sandbox
 	vmcall("my_function", Vector4(1, 2, 3, 4));
-
-	# Measure the time it takes to cold-call one function
-	print("\nMeasuring call overhead...");
-	var emptyfunc = vmcallable("empty_function");
-
-	var t0 = Time.get_ticks_usec()
-	emptyfunc.call();
-	var t1 = Time.get_ticks_usec()
-	print("Execution time: ", (t1 - t0), "us")
 
 	# Pass a complex Variant to the sandbox
 	var d = Dictionary();
@@ -64,16 +55,10 @@ func _ready():
 	callable.call(123, 456.0, "Test");
 
 	# Pass a function to the sandbox as a callable Variant, and let it call it
-	var ff : Callable = vmcallable("final_function");
-	vmcall("trampoline_function", ff);
-
-	# Pass a packed byte array
-	var testbuf = PackedByteArray();
-	testbuf.resize(32);
-	testbuf.fill(0xFF);
-	vmcall("test_buffer", testbuf);
-
-	#vmcall("failing_function");
+	var ff : Callable = vmcallable("function3");
+	# Should return "The function was called!!"
+	var tres = vmcall("trampoline_function", ff, "The function was called!!");
+	print("Function with callable as argument returned: ", tres);
 
 	pass # Replace with function body.
 ```
@@ -81,10 +66,32 @@ func _ready():
 The API towards the sandbox uses Variants, and the API inside the sandbox uses (translated) Variants.
 
 ```C++
-extern "C"
-Variant function3(Variant x, Variant y, Variant text) {
+#include "api.hpp"
+#include <cstdio>
+
+int main() {
+	UtilityFunctions::print("Hello, ", 55, " world!\n");
+
+	halt(); // Prevent stdout,stderr closing etc.
+}
+
+extern "C" Variant empty_function() {
+	return Variant();
+}
+
+extern "C" Variant my_function(Variant varg) {
+	UtilityFunctions::print("Hello, ", 124.5, " world!\n");
+	UtilityFunctions::print("Arg: ", varg);
+	return varg;
+}
+
+extern "C" Variant function3(Variant x, Variant y, Variant text) {
 	UtilityFunctions::print("x = ", x, " y = ", y, " text = ", text);
 	return 1234;
+}
+
+extern "C" Variant trampoline_function(Variant callback, Variant text) {
+	return callback.call(1, 2, text);
 }
 ```
 

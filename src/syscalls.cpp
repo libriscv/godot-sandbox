@@ -28,7 +28,6 @@ APICALL(api_vcall) {
 	(void)mlen;
 
 	auto &emu = riscv::emu(machine);
-	emu.print("Calling method: " + std::string(method));
 
 	std::array<Variant, 64> vargs;
 	std::array<const Variant *, 64> argptrs;

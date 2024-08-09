@@ -200,18 +200,18 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 
 		m_level--;
 		m_scoped_variants.clear();
-		error.error = GDEXTENSION_CALL_OK;
 
+		error.error = GDEXTENSION_CALL_OK;
 		return result;
 
 	} catch (const std::exception &e) {
 		m_level--;
 		m_scoped_variants.clear();
 		this->handle_exception(address);
-	}
 
-	error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-	return Variant();
+		error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
+		return Variant();
+	}
 }
 Variant Sandbox::vmcallable(String function) {
 	const auto address = cached_address_of(function);
