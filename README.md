@@ -25,18 +25,18 @@
 
 -----
 
-This extension exists to allow Godot creators to implement safe modding support, such that they can pass around programs built by other players, knowing that these programs cannot harm other players.
+This extension exists to allow Godot creators to implement safe modding support, such that they can pass around programs built by other players, knowing that these programs cannot harm other players. All Godot platforms are supported.
 
 
 ## Installation
 
-- Automatic (Recommended): Download the plugin from the official [Godot Asset Store](.) using the **AssetLib** tab in Godot by searching for **Godot Sandbox**. TODO
+- Automatic (Recommended): Download the plugin from the official [Godot Asset Store](.) using the **AssetLib** tab in Godot by searching for **Godot Sandbox**.
 
 - Manual: Download the [latest github release](https://github.com/libriscv/godot-sandbox/releases/latest) and move only the **addons** folder into your project **addons** folder.
 
 ## Usage
 
-Create a new `Sandbox` and assign a RISC-V ELF program resource to it.
+Create a new `Sandbox` and assign an ELF script resource to it.
 
 ```go
 extends Sandbox
@@ -75,10 +75,6 @@ int main() {
 	halt(); // Prevent stdout,stderr closing etc.
 }
 
-extern "C" Variant empty_function() {
-	return Variant();
-}
-
 extern "C" Variant my_function(Variant varg) {
 	UtilityFunctions::print("Hello, ", 124.5, " world!\n");
 	UtilityFunctions::print("Arg: ", varg);
@@ -95,14 +91,16 @@ extern "C" Variant trampoline_function(Variant callback, Variant text) {
 }
 ```
 
-Above: An example of a sandboxed C++ function.
+Above: An example of sandboxed C++ functions.
+
 
 ### What can I do?
 
 - You can implement a modding API for your game, to be used inside the sandbox. This API can then be used by other players to extend your game, in a safe manner. That is, they can send their mod to other people, including you, and they (and you) can assume that it is safe to try out the mod. The mod is *not supposed* to be able to do any harm. That is the whole point of this extension.
 - You can implement support for your favorite language inside the sandbox. The sandbox receives Variants from Godot or GDScript, and can respond back with Variants. This means the communication is fully dynamic, and supports normal Godot usage. 
+- You can distribute programs from a server to clients. The programs will behave the same way on all platforms, including 32-bit platforms.
 
-Languages that are known to work inside _libriscv_:
+Languages that are known to work inside the sandbox:
 1. QuickJS
 2. C
 3. C++
@@ -115,15 +113,26 @@ Languages that are known to work inside _libriscv_:
 10. Lua, Luau
 11. Any language that transpiles to C or emits RISC-V programs
 
+More languages will be supported out-of-the-box over time.
+
+## Tips
+
+- Not all Variant types are implemented inside the Sandbox, however they may still be freely passed into and out of the sandbox. This means you can still use all the things you usually do, however at some point any unsupported Variant needs to be passed back out again, so that you can use it.
+- Complex variants may only be passed out of the sandbox if they have been seen (bit-exact) on the way in. This means, the only way to pass a Dictionary or Callable out of the sandbox, is to first pass it in. Passing a complex Variant into the sandbox is implicitly seen as allow-listing that specific Variant. Once the VM function call ends, all temporary allowances are cleared (for security reasons) and forgotten.
+- More Variant types will be supported inside the sandbox over time. For security reasons, each type must receive proper scrutiny and will receive at most a conservative implementation.
+- The performance of complex Variant calls and many common operations in the sandbox will have native performance (on a case-by-case basis). Do not be afraid of copying data or using temporary strings, as memory-, heap- and string- operations have native performance on all supported languages.
+
+
 ## Performance
 
-The sandbox is implemented using _libriscv_ which primarily focuses on being low-latency. This means that calling small functions in the sandbox is extremely fast, unlike all other sandboxing solutions.
+The sandbox is implemented using _libriscv_ which primarily focuses on being low-latency. This means that calling small functions in the sandbox is extremely fast, unlike other sandboxing solutions. _libriscv_ is a specialty emulator designed for low-latency sandboxing.
 
 There are high-performance modes for _libriscv_ available for both development and final builds. When developing on Linux, libtcc-jit is available (which is in theory portable to both Windows and MacOS). And for final builds one can produce a high-performance binary translation, with up to 92% native performance, that can be embedded in the project (either Godot itself, or the GDExtension). This high-performance binary translation works on all platforms, such as Nintendo Switch, Mobile Phones, and other locked-down systems. It is especially made for such systems, but is inconvenient to produce.
 
-Please see the [documentation for libriscv](https://github.com/libriscv/libriscv) for more information.
+Please see the [documentation for the emulator](https://github.com/libriscv/libriscv) for more information.
 
 As a final note, the default interpreter mode in _libriscv_ is no slouch, being among the fastest interpreters. And will for most games, and in most scenarios be both the slimmest in terms of memory and the fastest in terms of iteration. Certain variant operations will call out to Godot in order to get native performance.
+
 
 ## Contributing
 
