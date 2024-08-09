@@ -12,7 +12,7 @@ using namespace godot;
 using gaddr_t = riscv::address_type<RISCV_ARCH>;
 using machine_t = riscv::Machine<RISCV_ARCH>;
 #include "vmcallable.hpp"
-#include "elf/script_elf.hpp"
+#include "elf/script_elf.h"
 
 class Sandbox : public Node
 {

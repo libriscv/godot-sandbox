@@ -3,7 +3,7 @@
  * This is free and unencumbered software released into the public domain.
  */
 
-#include "register_types.hpp"
+#include "register_types.h"
 
 #include <gdextension_interface.h>
 
@@ -12,16 +12,16 @@
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
 
-#include "cpp/resource_loader_cpp.hpp"
-#include "cpp/resource_saver_cpp.hpp"
-#include "cpp/script_cpp.hpp"
-#include "cpp/script_language_cpp.hpp"
-#include "elf/resource_loader_elf.hpp"
-#include "elf/resource_saver_elf.hpp"
-#include "elf/script_elf.hpp"
-#include "elf/script_language_elf.hpp"
+#include "cpp/resource_loader_cpp.h"
+#include "cpp/resource_saver_cpp.h"
+#include "cpp/script_cpp.h"
+#include "cpp/script_language_cpp.h"
+#include "elf/resource_loader_elf.h"
+#include "elf/resource_saver_elf.h"
+#include "elf/script_elf.h"
+#include "elf/script_language_elf.h"
 #include "sandbox.hpp"
-#include "sandbox_project_settings.hpp"
+#include "sandbox_project_settings.h"
 
 using namespace godot;
 

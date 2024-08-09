@@ -22,7 +22,7 @@
 #include <godot_cpp/variant/typed_array.hpp>
 #include <godot_cpp/variant/variant.hpp>
 
-#include "../godot/script_instance.hpp"
+#include "../godot/script_instance.h"
 using namespace godot;
 
 class ELFScript;

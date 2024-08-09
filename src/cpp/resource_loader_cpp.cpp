@@ -1,5 +1,5 @@
-#include "resource_loader_cpp.hpp"
-#include "script_cpp.hpp"
+#include "resource_loader_cpp.h"
+#include "script_cpp.h"
 #include <godot_cpp/classes/file_access.hpp>
 
 Variant ResourceFormatLoaderCPP::_load(const String &p_path, const String &original_path, bool use_sub_threads, int32_t cache_mode) const {

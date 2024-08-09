@@ -1,9 +1,9 @@
-#include "resource_saver_cpp.hpp"
-#include "../elf/script_elf.hpp"
-#include "../elf/script_language_elf.hpp"
-#include "../register_types.hpp"
-#include "../sandbox_project_settings.hpp"
-#include "script_cpp.hpp"
+#include "resource_saver_cpp.h"
+#include "../elf/script_elf.h"
+#include "../elf/script_language_elf.h"
+#include "../register_types.h"
+#include "../sandbox_project_settings.h"
+#include "script_cpp.h"
 #include <godot_cpp/classes/editor_file_system.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
 #include <godot_cpp/classes/editor_settings.hpp>

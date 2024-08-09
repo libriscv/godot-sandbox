@@ -1,5 +1,5 @@
 
-#include "sandbox_project_settings.hpp"
+#include "sandbox_project_settings.h"
 
 #include <godot_cpp/classes/project_settings.hpp>
 

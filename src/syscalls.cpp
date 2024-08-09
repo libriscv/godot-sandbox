@@ -1,4 +1,4 @@
-#include "syscalls.hpp"
+#include "syscalls.h"
 #include "sandbox.hpp"
 
 #include <godot_cpp/variant/utility_functions.hpp>

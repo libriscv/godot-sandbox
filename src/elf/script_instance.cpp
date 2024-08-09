@@ -1,7 +1,7 @@
-#include "script_instance.hpp"
+#include "script_instance.h"
 
-#include "script_elf.hpp"
-#include "script_instance_helper.hpp"
+#include "script_elf.h"
+#include "script_instance_helper.h"
 #include <godot_cpp/templates/local_vector.hpp>
 static constexpr bool VERBOSE_METHODS = false;
 

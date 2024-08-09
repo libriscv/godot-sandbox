@@ -1,6 +1,6 @@
 #include "api.hpp"
 
-#include "syscalls.hpp"
+#include "syscalls.h"
 
 /* void sys_print(const Variant *, size_t) */
 MAKE_SYSCALL(ECALL_PRINT, void, sys_print, const Variant *, size_t);

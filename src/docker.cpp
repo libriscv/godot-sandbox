@@ -1,6 +1,6 @@
-#include "docker.hpp"
+#include "docker.h"
 
-#include "sandbox_project_settings.hpp"
+#include "sandbox_project_settings.h"
 #include <godot_cpp/classes/os.hpp>
 static constexpr bool VERBOSE_CMD = true;
 using namespace godot;
