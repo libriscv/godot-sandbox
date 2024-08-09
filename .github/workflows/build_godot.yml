@@ -15,14 +15,17 @@ jobs:
           name: godot-sandbox-gdextension
           path: |
             bin
-            !bin${{ matrix.dimensions }}/.godot
-            !bin${{ matrix.dimensions }}/.gitattributes
-            !bin${{ matrix.dimensions }}/.gitignore
-            !bin${{ matrix.dimensions }}/icon.svg
-            !bin${{ matrix.dimensions }}/test.elf
-            !bin${{ matrix.dimensions }}/icon.svg.import
-            !bin${{ matrix.dimensions }}/export_presets.cfg
-            !bin${{ matrix.dimensions }}/project.godot
-            !bin${{ matrix.dimensions }}/test.gd
-            !bin${{ matrix.dimensions }}/test.tscn
+            !bin/.godot
+            !bin/.gitattributes
+            !bin/.gitignore
+            !bin/icon.svg
+            !bin/test.elf
+            !bin/icon.svg.import
+            !bin/export_presets.cfg
+            !bin/project.godot
+            !bin/test.gd
+            !bin/test.tscn
+            !bin/src/main.cpp
+            !bin/icon.png
+            !bin/icon.png.import
           if-no-files-found: error
