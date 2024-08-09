@@ -7,6 +7,8 @@
 #include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 
+static constexpr bool VERBOSE_ELFSCRIPT = false;
+
 static Dictionary prop_to_dict(const PropertyInfo &p_prop) {
 	Dictionary d;
 	d["name"] = p_prop.name;
@@ -111,7 +113,9 @@ bool ELFScript::_has_method(const StringName &p_method) const {
 		if (p_method == StringName("_init"))
 			result = true;
 	}
-	printf("ELFScript::_has_method: method %s => %d\n", p_method.to_ascii_buffer().ptr(), result);
+	if constexpr (VERBOSE_ELFSCRIPT) {
+		printf("ELFScript::_has_method: method %s => %d\n", p_method.to_ascii_buffer().ptr(), result);
+	}
 
 	return result;
 }

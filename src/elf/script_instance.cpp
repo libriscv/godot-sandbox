@@ -1,13 +1,13 @@
 #include "script_instance.h"
 
+#include "../sandbox.h"
 #include "script_elf.h"
 #include "script_instance_helper.h"
-#include "../sandbox.h"
-#include <godot_cpp/templates/local_vector.hpp>
 #include <godot_cpp/core/object.hpp>
-static constexpr bool VERBOSE_METHODS = false;
+#include <godot_cpp/templates/local_vector.hpp>
+static constexpr bool VERBOSE_LOGGING = false;
 
-static std::vector<std::string> godot_functions = {
+static const std::vector<std::string> godot_functions = {
 	"set_owner",
 	"_get_editor_name",
 	"_hide_script_from_inspector",
@@ -15,7 +15,9 @@ static std::vector<std::string> godot_functions = {
 };
 
 bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
-	ERR_PRINT("ELFScriptInstance::set " + p_name);
+	if constexpr (VERBOSE_LOGGING) {
+		ERR_PRINT("ELFScriptInstance::set " + p_name);
+	}
 	return false;
 }
 
@@ -42,23 +44,17 @@ Variant ELFScriptInstance::callp(
 		const Variant **p_args, const int p_argument_count,
 		GDExtensionCallError &r_error) {
 	if (script.is_null()) {
-		if constexpr (VERBOSE_METHODS) {
+		if constexpr (VERBOSE_LOGGING) {
 			ERR_PRINT("callp: script is null");
 		}
 		r_error.error = GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;
 		return Variant();
 	}
 	if (p_method == StringName("set_owner")) {
-		if constexpr (VERBOSE_METHODS) {
+		if constexpr (VERBOSE_LOGGING) {
 			printf("set_owner called %p -> %p\n", this->owner, p_args[0]->operator Object *());
 		}
 		this->owner = p_args[0]->operator Object *();
-		Sandbox* sandbox = Object::cast_to<Sandbox>(this->owner);
-		if (sandbox) {
-			sandbox->set_program(script);
-		} else {
-			ERR_PRINT("set_owner: owner is not a Sandbox");
-		}
 		r_error.error = GDEXTENSION_CALL_OK;
 		return true;
 	} else if (p_method == StringName("_get_editor_name")) {
@@ -71,26 +67,25 @@ Variant ELFScriptInstance::callp(
 		r_error.error = GDEXTENSION_CALL_OK;
 		return false;
 	} else if (p_method == StringName("_ready")) {
-		Sandbox* sandbox = Object::cast_to<Sandbox>(this->owner);
+		Sandbox *sandbox = Object::cast_to<Sandbox>(this->owner);
 		if (sandbox) {
-			printf("ready: owner is a Sandbox\n");
 			sandbox->set_program(script);
 		} else {
 			ERR_PRINT("ready: owner was not a Sandbox");
 		}
 	} else if (p_method.begins_with("_")) {
-		if constexpr (VERBOSE_METHODS) {
+		if constexpr (VERBOSE_LOGGING) {
 			ERR_PRINT("Unhandled internal method called: " + p_method);
 		}
 		return false;
 	}
 
-	if constexpr (VERBOSE_METHODS) {
+	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("method called " + p_method);
 	}
 
 	if (script->functions.has(p_method)) {
-		Sandbox* sandbox = Object::cast_to<Sandbox>(this->owner);
+		Sandbox *sandbox = Object::cast_to<Sandbox>(this->owner);
 		if (sandbox) {
 			r_error.error = GDEXTENSION_CALL_OK;
 			return sandbox->vmcall_fn(p_method, p_args, p_argument_count);
@@ -103,22 +98,22 @@ Variant ELFScriptInstance::callp(
 
 GDExtensionMethodInfo create_method_info(const MethodInfo &method_info) {
 	return GDExtensionMethodInfo{
-		name: stringname_alloc(method_info.name),
-		return_value: GDExtensionPropertyInfo {
+		name : stringname_alloc(method_info.name),
+		return_value : GDExtensionPropertyInfo{
 			// what to put here?
-			type: GDEXTENSION_VARIANT_TYPE_STRING,
-			name: stringname_alloc(method_info.return_val.name),
-			hint: method_info.return_val.hint,
-			hint_string: stringname_alloc(method_info.return_val.hint_string),
-			class_name: stringname_alloc(method_info.return_val.class_name),
-			usage: method_info.return_val.usage
+			type : GDEXTENSION_VARIANT_TYPE_STRING,
+			name : stringname_alloc(method_info.return_val.name),
+			hint : method_info.return_val.hint,
+			hint_string : stringname_alloc(method_info.return_val.hint_string),
+			class_name : stringname_alloc(method_info.return_val.class_name),
+			usage : method_info.return_val.usage
 		},
-		flags: method_info.flags,
-		id: method_info.id,
-		argument_count: 0,// TODO (uint32_t)method_info.arguments.size(),
-		arguments: nullptr,
-		default_argument_count: 0,
-		default_arguments: nullptr,
+		flags : method_info.flags,
+		id : method_info.id,
+		argument_count : 0, // TODO (uint32_t)method_info.arguments.size(),
+		arguments : nullptr,
+		default_argument_count : 0,
+		default_arguments : nullptr,
 	};
 }
 
@@ -131,7 +126,7 @@ const GDExtensionMethodInfo *ELFScriptInstance::get_method_list(uint32_t *r_coun
 	const int size = methods_info.size();
 	GDExtensionMethodInfo *list = memnew_arr(GDExtensionMethodInfo, size);
 	int i = 0;
-	for (auto& method_info : methods_info) {
+	for (auto &method_info : methods_info) {
 		list[i] = create_method_info(method_info);
 		i++;
 	}
@@ -166,7 +161,7 @@ bool ELFScriptInstance::has_method(const StringName &p_name) const {
 		result = true;
 	}
 
-	if constexpr (VERBOSE_METHODS) {
+	if constexpr (VERBOSE_LOGGING) {
 		fprintf(stderr, "ELFScriptInstance::has_method %s => %d\n", p_name.to_ascii_buffer().ptr(), result);
 	}
 	return result;
@@ -177,7 +172,7 @@ void ELFScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list) co
 	// what godot does in their free_method list:
 
 	//   /* TODO `GDExtensionClassFreePropertyList` is ill-defined, we need a non-const pointer to free this. */                                                                    \
-	// ::godot::internal::free_c_property_list(const_cast<GDExtensionPropertyInfo *>(p_list));                                                                               
+	// ::godot::internal::free_c_property_list(const_cast<GDExtensionPropertyInfo *>(p_list));
 	if (p_list) {
 		//memfree((void *)p_list);
 	}
@@ -225,21 +220,19 @@ ScriptLanguage *ELFScriptInstance::_get_language() {
 
 ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_script) :
 		owner(p_owner), script(p_script) {
-	if (Object::cast_to<Sandbox>(p_owner)) {
-		printf("ELFScriptInstance: owner is a Sandbox\n");
-	} else {
+	if (!Object::cast_to<Sandbox>(p_owner)) {
 		ERR_PRINT("ELFScriptInstance: owner is not a Sandbox");
-		fprintf(stderr, "ELFScriptInstance: owner is a %s\n", p_owner->get_class().utf8().get_data());
+		fprintf(stderr, "ELFScriptInstance: owner is instead a '%s'!\n", p_owner->get_class().utf8().get_data());
 	}
 	for (auto godot_function : godot_functions) {
 		MethodInfo method_info = MethodInfo(
-			Variant::NIL,
-			StringName(godot_function.c_str()));
+				Variant::NIL,
+				StringName(godot_function.c_str()));
 		methods_info.push_back(method_info);
 	}
 	methods_info.push_back(MethodInfo(
-		Variant::NIL,
-		StringName("set_owner")));
+			Variant::NIL,
+			StringName("set_owner")));
 }
 
 ELFScriptInstance::~ELFScriptInstance() {

@@ -140,7 +140,7 @@ Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtens
 	arg_count -= 1;
 	return this->vmcall_internal(cached_address_of(String(function)), args, arg_count, error);
 }
-Variant Sandbox::vmcall_fn(const String& function, const Variant **args, GDExtensionInt arg_count) {
+Variant Sandbox::vmcall_fn(const String &function, const Variant **args, GDExtensionInt arg_count) {
 	GDExtensionCallError error;
 	return this->vmcall_internal(cached_address_of(function), args, arg_count, error);
 }

@@ -11,11 +11,10 @@ using namespace godot;
 #define RISCV_ARCH riscv::RISCV64
 using gaddr_t = riscv::address_type<RISCV_ARCH>;
 using machine_t = riscv::Machine<RISCV_ARCH>;
-#include "vmcallable.h"
 #include "elf/script_elf.h"
+#include "vmcallable.h"
 
-class Sandbox : public Node
-{
+class Sandbox : public Node {
 	GDCLASS(Sandbox, Node);
 
 protected:
@@ -31,17 +30,17 @@ public:
 	Sandbox();
 	~Sandbox();
 
-	auto& machine() { return *m_machine; }
-	const auto& machine() const { return *m_machine; }
+	auto &machine() { return *m_machine; }
+	const auto &machine() const { return *m_machine; }
 
 	// Functions.
 	void set_program(Ref<ELFScript> program);
 	Ref<ELFScript> get_program();
 	PackedStringArray get_functions() const;
-	static PackedStringArray get_functions_from_binary(const PackedByteArray& binary);
+	static PackedStringArray get_functions_from_binary(const PackedByteArray &binary);
 	// Make a function call to a function in the guest by its name.
 	Variant vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
-	Variant vmcall_fn(const String& function, const Variant **args, GDExtensionInt arg_count);
+	Variant vmcall_fn(const String &function, const Variant **args, GDExtensionInt arg_count);
 	Variant vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
 	// Make a callable object that will call a function in the guest by its name.
 	Variant vmcallable(String function);
@@ -50,45 +49,44 @@ public:
 	gaddr_t address_of(std::string_view name) const;
 	gaddr_t cached_address_of(String name) const;
 
-	Variant vmcall_internal(gaddr_t address, const Variant** args, int argc, GDExtensionCallError &error);
+	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc, GDExtensionCallError &error);
 
 	void add_scoped_variant(uint32_t hash) { m_scoped_variants.insert(hash); }
 	bool is_scoped_variant(uint32_t hash) const noexcept { return m_scoped_variants.count(hash) > 0; }
+
 private:
-	void load(PackedByteArray&& vbuf, const TypedArray<String>& arguments);
+	void load(PackedByteArray &&vbuf, const TypedArray<String> &arguments);
 	void handle_exception(gaddr_t);
 	void handle_timeout(gaddr_t);
 	void print_backtrace(gaddr_t);
 	void initialize_syscalls();
-	GuestVariant *setup_arguments(gaddr_t &sp, const Variant** args, int argc);
+	GuestVariant *setup_arguments(gaddr_t &sp, const Variant **args, int argc);
 
 	Ref<ELFScript> m_program_data;
 	TypedArray<String> m_program_arguments;
-	machine_t* m_machine = nullptr;
+	machine_t *m_machine = nullptr;
 	PackedByteArray m_binary;
 
 	mutable std::unordered_map<std::string, gaddr_t> m_lookup;
 
 	bool m_last_newline = false;
-	uint8_t  m_level = 0;
+	uint8_t m_level = 0;
 	unsigned m_budget_overruns = 0;
 
 	std::unordered_set<uint32_t> m_scoped_variants;
 };
 
-struct GuestStdString
-{
+struct GuestStdString {
 	static constexpr std::size_t SSO = 15;
 
-	gaddr_t     ptr;
+	gaddr_t ptr;
 	std::size_t size;
 	union {
-		char    data[SSO + 1];
+		char data[SSO + 1];
 		gaddr_t capacity;
 	};
 
-	std::string to_string(const machine_t& machine, std::size_t max_len = 16UL << 20) const
-	{
+	std::string to_string(const machine_t &machine, std::size_t max_len = 16UL << 20) const {
 		if (size <= SSO)
 			return std::string(data, size);
 		else if (size > max_len)
@@ -97,17 +95,14 @@ struct GuestStdString
 		const auto view = machine.memory.rvview(ptr, size);
 		return std::string(view.data(), view.size());
 	}
-	String to_godot_string(const machine_t& machine, std::size_t max_len = 16UL << 20) const
-	{
+	String to_godot_string(const machine_t &machine, std::size_t max_len = 16UL << 20) const {
 		return String(to_string(machine, max_len).c_str());
 	}
-	size_t copy_unterminated_to(const machine_t& machine, void* dst, size_t maxlen)
-	{
+	size_t copy_unterminated_to(const machine_t &machine, void *dst, size_t maxlen) {
 		if (size <= SSO && size <= maxlen) {
 			std::memcpy(dst, data, size);
 			return size;
-		}
-		else if (size >= maxlen) {
+		} else if (size >= maxlen) {
 			// Copy the string from guest memory
 			machine.copy_from_guest(dst, ptr, size);
 			return size;
@@ -116,17 +111,13 @@ struct GuestStdString
 		return 0; // Failed to copy
 	}
 
-	void set_string(machine_t& machine, gaddr_t self, const char* str, std::size_t len)
-	{
-		if (len <= SSO)
-		{
+	void set_string(machine_t &machine, gaddr_t self, const char *str, std::size_t len) {
+		if (len <= SSO) {
 			this->ptr = self + offsetof(GuestStdString, data);
 			std::memcpy(this->data, str, len);
 			this->data[len] = '\0';
 			this->size = len;
-		}
-		else
-		{
+		} else {
 			// Allocate memory for the string
 			this->ptr = machine.arena().malloc(len + 1);
 			this->size = len;
@@ -139,32 +130,28 @@ struct GuestStdString
 	}
 };
 
-struct GuestStdVector
-{
+struct GuestStdVector {
 	gaddr_t ptr;
 	std::size_t size;
 	std::size_t capacity;
 
 	template <typename T>
-	std::vector<T> to_vector(const machine_t& machine) const
-	{
+	std::vector<T> to_vector(const machine_t &machine) const {
 		if (size > capacity)
 			throw std::runtime_error("Guest std::vector has size > capacity");
 		// Copy the vector from guest memory
-		const T* array = machine.memory.memarray<T>(ptr, size);
+		const T *array = machine.memory.memarray<T>(ptr, size);
 		return std::vector<T>(array, size);
 	}
 
-	PackedFloat32Array to_f32array(const machine_t& machine) const
-	{
+	PackedFloat32Array to_f32array(const machine_t &machine) const {
 		PackedFloat32Array array;
 		array.resize(this->size);
 		const float *fptr = machine.memory.memarray<float>(this->ptr, this->size);
 		std::memcpy(array.ptrw(), fptr, this->size * sizeof(float));
 		return array;
 	}
-	PackedFloat64Array to_f64array(const machine_t& machine) const
-	{
+	PackedFloat64Array to_f64array(const machine_t &machine) const {
 		PackedFloat64Array array;
 		array.resize(this->size);
 		const double *fptr = machine.memory.memarray<double>(this->ptr, this->size);
@@ -174,9 +161,9 @@ struct GuestStdVector
 };
 
 struct GuestVariant {
-	Variant toVariant(const Sandbox& emu) const;
-	Variant* toVariantPtr(const Sandbox& emu) const;
-	void set(Sandbox& emu, const Variant& value);
+	Variant toVariant(const Sandbox &emu) const;
+	Variant *toVariantPtr(const Sandbox &emu) const;
+	void set(Sandbox &emu, const Variant &value);
 
 	inline uint32_t hash() const noexcept;
 
@@ -184,10 +171,10 @@ struct GuestVariant {
 	Variant::Type type;
 	union {
 		uint8_t opaque[GODOT_VARIANT_SIZE];
-		bool    b;
+		bool b;
 		int64_t i;
-		double  f;
-		gaddr_t s;    // String & PackedByteArray -> GuestStdString
+		double f;
+		gaddr_t s; // String & PackedByteArray -> GuestStdString
 		gaddr_t vf32; // PackedFloat32Array -> GuestStdVector<float>
 		gaddr_t vf64; // PackedFloat64Array -> GuestStdVector<double>
 		std::array<float, 2> v2f;
