@@ -68,7 +68,7 @@ public:
 	virtual Variant property_get_fallback(const StringName &p_name, bool *r_valid) = 0;
 	virtual ScriptLanguage *_get_language() = 0;
 
-	virtual ~ScriptInstanceExtension() {};
+	virtual ~ScriptInstanceExtension(){};
 };
 
 }; // namespace godot
