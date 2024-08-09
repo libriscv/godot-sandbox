@@ -135,7 +135,7 @@ Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
 			type["hint_string"] = String("Return value");
 			type["usage"] = PROPERTY_USAGE_DEFAULT;
 			method["return"] = type;
-			method["flags"] = METHOD_FLAGS_DEFAULT;
+			method["flags"] = METHOD_FLAG_VARARG;
 			return method;
 		}
 	}
@@ -181,7 +181,7 @@ TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
 		type["hint_string"] = String();
 		type["usage"] = PROPERTY_USAGE_DEFAULT;
 		method["return"] = type;
-		method["flags"] = METHOD_FLAGS_DEFAULT;
+		method["flags"] = METHOD_FLAG_VARARG;
 		functions_array.push_back(method);
 	}
 	return functions_array;

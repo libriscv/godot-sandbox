@@ -232,9 +232,10 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 		fprintf(stderr, "ELFScriptInstance: owner is a %s\n", p_owner->get_class().utf8().get_data());
 	}
 	for (auto godot_function : godot_functions) {
-		methods_info.push_back(MethodInfo(
+		MethodInfo method_info = MethodInfo(
 			Variant::NIL,
-			StringName(godot_function.c_str())));
+			StringName(godot_function.c_str()));
+		methods_info.push_back(method_info);
 	}
 	methods_info.push_back(MethodInfo(
 		Variant::NIL,

@@ -6,7 +6,7 @@
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/classes/theme.hpp>
-static constexpr const char *icon_path = "res://addons/godot_sandbox/ELFScript.svg";
+static constexpr const char *icon_path = "res://addons/godot_sandbox/Sandbox.svg";
 
 String ELFScriptLanguage::_get_name() const {
 	return "ELFScript";
@@ -180,7 +180,7 @@ Dictionary ELFScriptLanguage::_get_global_class_name(const String &p_path) const
 	if (elf_model.is_valid()) {
 		dict["name"] = elf_model->_get_global_name();
 		dict["base_type"] = "Sandbox";
-		dict["icon_path"] = String("res://addons/godot_sandbox/ELFScript.svg");
+		dict["icon_path"] = String("res://addons/godot_sandbox/Sandbox.svg");
 	}
 	return dict;
 }
