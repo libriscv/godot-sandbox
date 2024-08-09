@@ -8,7 +8,6 @@
 static constexpr bool VERBOSE_LOGGING = false;
 
 static const std::vector<std::string> godot_functions = {
-	"set_owner",
 	"_get_editor_name",
 	"_hide_script_from_inspector",
 	"_is_read_only",
@@ -24,9 +23,6 @@ bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 bool ELFScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 	if (p_name == StringName("script")) {
 		r_ret = script;
-		return true;
-	} else if (p_name == StringName("editor_description")) {
-		r_ret = "Bla bla bla";
 		return true;
 	}
 	return false;
@@ -49,14 +45,6 @@ Variant ELFScriptInstance::callp(
 		}
 		r_error.error = GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;
 		return Variant();
-	}
-	if (p_method == StringName("set_owner")) {
-		if constexpr (VERBOSE_LOGGING) {
-			printf("set_owner called %p -> %p\n", this->owner, p_args[0]->operator Object *());
-		}
-		this->owner = p_args[0]->operator Object *();
-		r_error.error = GDEXTENSION_CALL_OK;
-		return true;
 	} else if (p_method == StringName("_get_editor_name")) {
 		r_error.error = GDEXTENSION_CALL_OK;
 		return Variant("ELFScriptInstance");
@@ -66,7 +54,7 @@ Variant ELFScriptInstance::callp(
 	} else if (p_method == StringName("_is_read_only")) {
 		r_error.error = GDEXTENSION_CALL_OK;
 		return false;
-	} else if (p_method == StringName("_ready")) {
+	} else if (p_method == StringName("_enter_tree")) {
 		Sandbox *sandbox = Object::cast_to<Sandbox>(this->owner);
 		if (sandbox) {
 			sandbox->set_program(script);
@@ -157,7 +145,7 @@ bool ELFScriptInstance::validate_property(GDExtensionPropertyInfo &p_property) c
 
 bool ELFScriptInstance::has_method(const StringName &p_name) const {
 	bool result = false;
-	if (p_name == StringName("set_owner") || p_name == StringName("_get_editor_name") || p_name == StringName("_hide_script_from_inspector") || p_name == StringName("_is_read_only")) {
+	if (p_name == StringName("_get_editor_name") || p_name == StringName("_hide_script_from_inspector") || p_name == StringName("_is_read_only")) {
 		result = true;
 	}
 
@@ -230,9 +218,6 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 				StringName(godot_function.c_str()));
 		methods_info.push_back(method_info);
 	}
-	methods_info.push_back(MethodInfo(
-			Variant::NIL,
-			StringName("set_owner")));
 }
 
 ELFScriptInstance::~ELFScriptInstance() {
