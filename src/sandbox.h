@@ -40,14 +40,15 @@ public:
 	static PackedStringArray get_functions_from_binary(const PackedByteArray &binary);
 	// Make a function call to a function in the guest by its name.
 	Variant vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
-	Variant vmcall_fn(const String &function, const Variant **args, GDExtensionInt arg_count);
+	Variant vmcall_fn(const StringName &function, const Variant **args, GDExtensionInt arg_count);
 	Variant vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
 	// Make a callable object that will call a function in the guest by its name.
-	Variant vmcallable(String function);
+	Variant vmcallable(const String &function);
 
 	void print(std::string_view text);
 	gaddr_t address_of(std::string_view name) const;
-	gaddr_t cached_address_of(String name) const;
+	gaddr_t cached_address_of(int64_t hash) const;
+	gaddr_t cached_address_of(int64_t hash, const String &name) const;
 
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc, GDExtensionCallError &error);
 
@@ -67,7 +68,7 @@ private:
 	machine_t *m_machine = nullptr;
 	PackedByteArray m_binary;
 
-	mutable std::unordered_map<std::string, gaddr_t> m_lookup;
+	mutable std::unordered_map<int64_t, gaddr_t> m_lookup;
 
 	bool m_last_newline = false;
 	uint8_t m_level = 0;

@@ -125,6 +125,12 @@ void Sandbox::load(PackedByteArray &&buffer, const TypedArray<String> &arguments
 		this->handle_exception(machine().cpu.pc());
 		// TODO: Program failed to load.
 	}
+
+	// Pre-cache some functions
+	auto functions = this->get_functions();
+	for (int i = 0; i < functions.size(); i++) {
+		this->cached_address_of(functions[i].hash(), functions[i]);
+	}
 }
 
 Variant Sandbox::vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
@@ -139,11 +145,12 @@ Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtens
 	auto &function = *args[0];
 	args += 1;
 	arg_count -= 1;
-	return this->vmcall_internal(cached_address_of(String(function)), args, arg_count, error);
+	const String function_name = function.operator String();
+	return this->vmcall_internal(cached_address_of(function_name.hash(), function_name), args, arg_count, error);
 }
-Variant Sandbox::vmcall_fn(const String &function, const Variant **args, GDExtensionInt arg_count) {
+Variant Sandbox::vmcall_fn(const StringName &function, const Variant **args, GDExtensionInt arg_count) {
 	GDExtensionCallError error;
-	return this->vmcall_internal(cached_address_of(function), args, arg_count, error);
+	return this->vmcall_internal(cached_address_of(function.hash()), args, arg_count, error);
 }
 GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int argc) {
 	sp -= sizeof(GuestVariant) * (argc + 1);
@@ -216,8 +223,8 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 		return Variant();
 	}
 }
-Variant Sandbox::vmcallable(String function) {
-	const auto address = cached_address_of(function);
+Variant Sandbox::vmcallable(const String &function) {
+	const auto address = cached_address_of(function.hash(), function);
 
 	auto *call = memnew(RiscvCallable);
 	call->init(this, address);
@@ -293,21 +300,27 @@ void Sandbox::print_backtrace(const gaddr_t addr) {
 			": ", name);
 }
 
-gaddr_t Sandbox::cached_address_of(String function) const {
-	const auto ascii = function.ascii();
-	const std::string str{ ascii.get_data(), (size_t)ascii.length() };
-
-	// lookup function address
+gaddr_t Sandbox::cached_address_of(int64_t hash, const String &function) const {
 	gaddr_t address = 0x0;
-	auto it = m_lookup.find(str);
+	auto it = m_lookup.find(hash);
 	if (it == m_lookup.end()) {
+		const auto ascii = function.ascii();
+		const std::string_view str{ ascii.get_data(), (size_t)ascii.length() };
 		address = address_of(str);
-		m_lookup.insert_or_assign(str, address);
+		m_lookup.insert_or_assign(hash, address);
 	} else {
 		address = it->second;
 	}
 
 	return address;
+}
+
+gaddr_t Sandbox::cached_address_of(int64_t hash) const {
+	auto it = m_lookup.find(hash);
+	if (it != m_lookup.end()) {
+		return it->second;
+	}
+	return 0;
 }
 
 gaddr_t Sandbox::address_of(std::string_view name) const {
