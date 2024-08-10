@@ -12,6 +12,8 @@ protected:
 	static void _bind_methods() {}
 
 public:
+	static void init();
+	static void deinit();
 	virtual Variant _load(const String &path, const String &original_path, bool use_sub_threads, int32_t cache_mode) const override;
 	virtual PackedStringArray _get_recognized_extensions() const override;
 	virtual bool _handles_type(const StringName &type) const override;

@@ -14,7 +14,19 @@
 #include <godot_cpp/classes/script_editor_base.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
-// New Game Project$ docker run --name godot-cpp-compiler -dv .:/usr/src ghcr.io/libriscv/compiler
+static Ref<ResourceFormatSaverCPP> cpp_saver;
+
+void ResourceFormatSaverCPP::init() {
+	cpp_saver.instantiate();
+	// Register the CPPScript resource saver
+	ResourceSaver::get_singleton()->add_resource_format_saver(cpp_saver);
+}
+
+void ResourceFormatSaverCPP::deinit() {
+	// Unregister the CPPScript resource saver
+	ResourceSaver::get_singleton()->remove_resource_format_saver(cpp_saver);
+	cpp_saver.unref();
+}
 
 Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags) {
 	CPPScript *script = Object::cast_to<CPPScript>(p_resource.ptr());

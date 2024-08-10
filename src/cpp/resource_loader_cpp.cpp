@@ -2,6 +2,18 @@
 #include "script_cpp.h"
 #include <godot_cpp/classes/file_access.hpp>
 
+static Ref<ResourceFormatLoaderCPP> cpp_loader;
+
+void ResourceFormatLoaderCPP::init() {
+	cpp_loader.instantiate();
+	ResourceLoader::get_singleton()->add_resource_format_loader(cpp_loader);
+}
+
+void ResourceFormatLoaderCPP::deinit() {
+	ResourceLoader::get_singleton()->remove_resource_format_loader(cpp_loader);
+	cpp_loader.unref();
+}
+
 Variant ResourceFormatLoaderCPP::_load(const String &p_path, const String &original_path, bool use_sub_threads, int32_t cache_mode) const {
 	Ref<CPPScript> cpp_model = memnew(CPPScript);
 	cpp_model->_set_source_code(FileAccess::get_file_as_string(p_path));

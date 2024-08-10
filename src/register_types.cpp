@@ -28,8 +28,6 @@ using namespace godot;
 static Ref<ResourceFormatLoaderELF> elf_loader;
 static Ref<ResourceFormatSaverELF> elf_saver;
 
-static Ref<ResourceFormatLoaderCPP> cpp_loader;
-static Ref<ResourceFormatSaverCPP> cpp_saver;
 static CPPScriptLanguage *cpp_language;
 static ELFScriptLanguage *elf_language;
 
@@ -57,15 +55,13 @@ void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	elf_loader.instantiate();
 	elf_saver.instantiate();
 	elf_language = memnew(ELFScriptLanguage);
-	cpp_loader.instantiate();
-	cpp_saver.instantiate();
 	cpp_language = memnew(CPPScriptLanguage);
 	Engine::get_singleton()->register_script_language(cpp_language);
 	Engine::get_singleton()->register_script_language(elf_language);
 	ResourceLoader::get_singleton()->add_resource_format_loader(elf_loader);
-	ResourceLoader::get_singleton()->add_resource_format_loader(cpp_loader);
 	ResourceSaver::get_singleton()->add_resource_format_saver(elf_saver);
-	ResourceSaver::get_singleton()->add_resource_format_saver(cpp_saver);
+	ResourceFormatLoaderCPP::init();
+	ResourceFormatSaverCPP::init();
 	SandboxProjectSettings::register_settings();
 }
 
@@ -77,14 +73,12 @@ void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	//Engine::get_singleton()->unregister_script_language(elf_language);
 	ResourceLoader::get_singleton()->remove_resource_format_loader(elf_loader);
 	ResourceSaver::get_singleton()->remove_resource_format_saver(elf_saver);
-	ResourceLoader::get_singleton()->remove_resource_format_loader(cpp_loader);
-	ResourceSaver::get_singleton()->remove_resource_format_saver(cpp_saver);
 	//delete cpp_language;
 	//delete elf_language;
 	elf_loader.unref();
 	elf_saver.unref();
-	cpp_loader.unref();
-	cpp_saver.unref();
+	ResourceFormatLoaderCPP::deinit();
+	ResourceFormatSaverCPP::deinit();
 }
 
 extern "C" {
