@@ -225,6 +225,10 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 }
 Variant Sandbox::vmcallable(const String &function) {
 	const auto address = cached_address_of(function.hash(), function);
+	if (address == 0x0) {
+		ERR_PRINT("Function not found in the guest: " + function);
+		return Variant();
+	}
 
 	auto *call = memnew(RiscvCallable);
 	call->init(this, address);
