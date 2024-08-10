@@ -1,4 +1,4 @@
-#include "sandbox.hpp"
+#include "sandbox.h"
 
 #include <godot_cpp/core/class_db.hpp>
 
@@ -28,10 +28,7 @@ String Sandbox::_to_string() const {
 
 void Sandbox::_bind_methods() {
 	// Methods.
-	ClassDB::bind_method(D_METHOD("get_program"), &Sandbox::get_program);
-	ClassDB::bind_method(D_METHOD("set_program", "program"), &Sandbox::set_program);
 	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
-	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "program", PROPERTY_HINT_RESOURCE_TYPE, "ELFScript"), "set_program", "get_program");
 	{
 		MethodInfo mi;
 		mi.arguments.push_back(PropertyInfo(Variant::STRING, "function"));
@@ -142,6 +139,10 @@ Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtens
 	args += 1;
 	arg_count -= 1;
 	return this->vmcall_internal(cached_address_of(String(function)), args, arg_count, error);
+}
+Variant Sandbox::vmcall_fn(const String &function, const Variant **args, GDExtensionInt arg_count) {
+	GDExtensionCallError error;
+	return this->vmcall_internal(cached_address_of(function), args, arg_count, error);
 }
 GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int argc) {
 	sp -= sizeof(GuestVariant) * (argc + 1);

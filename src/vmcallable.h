@@ -41,12 +41,12 @@ public:
 
 	virtual void call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const;
 
-	void init(Sandbox* self, gaddr_t address) {
+	void init(Sandbox *self, gaddr_t address) {
 		this->self = self;
 		this->address = address;
 	}
 
 private:
-	Sandbox* self = nullptr;
-	gaddr_t address     = 0x0;
+	Sandbox *self = nullptr;
+	gaddr_t address = 0x0;
 };

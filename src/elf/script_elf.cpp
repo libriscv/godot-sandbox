@@ -1,11 +1,51 @@
 #include "script_elf.h"
 
 #include "../register_types.h"
-#include "../sandbox.hpp"
+#include "../sandbox.h"
 #include "script_instance.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
+
+static constexpr bool VERBOSE_ELFSCRIPT = false;
+
+static Dictionary prop_to_dict(const PropertyInfo &p_prop) {
+	Dictionary d;
+	d["name"] = p_prop.name;
+	d["type"] = p_prop.type;
+	d["class_name"] = p_prop.class_name;
+	d["hint"] = p_prop.hint;
+	d["hint_string"] = p_prop.hint_string;
+	d["usage"] = p_prop.usage;
+	return d;
+}
+
+static Dictionary method_to_dict(const MethodInfo &p_method) {
+	Dictionary d;
+
+	d["name"] = p_method.name;
+	d["flags"] = p_method.flags;
+
+	if (p_method.arguments.size() > 0) {
+		Array args;
+		for (const PropertyInfo &arg : p_method.arguments) {
+			args.push_back(prop_to_dict(arg));
+		}
+		d["args"] = args;
+	}
+
+	if (p_method.default_arguments.size() > 0) {
+		Array defaults;
+		for (const Variant &value : p_method.default_arguments) {
+			defaults.push_back(value);
+		}
+		d["default_args"] = defaults;
+	}
+
+	d["return"] = prop_to_dict(p_method.return_val);
+
+	return d;
+}
 
 String ELFScript::_to_string() const {
 	return "ELFScript::" + global_name;
@@ -65,7 +105,7 @@ TypedArray<Dictionary> ELFScript::_get_documentation() const {
 	return TypedArray<Dictionary>();
 }
 String ELFScript::_get_class_icon_path() const {
-	return String("res://addons/godot_sandbox/ELFScript.svg");
+	return String("res://addons/godot_sandbox/Sandbox.svg");
 }
 bool ELFScript::_has_method(const StringName &p_method) const {
 	bool result = functions.find(p_method) != -1;
@@ -73,7 +113,9 @@ bool ELFScript::_has_method(const StringName &p_method) const {
 		if (p_method == StringName("_init"))
 			result = true;
 	}
-	printf("ELFScript::_has_method: method %s => %d\n", p_method.to_ascii_buffer().ptr(), result);
+	if constexpr (VERBOSE_ELFSCRIPT) {
+		printf("ELFScript::_has_method: method %s => %d\n", p_method.to_ascii_buffer().ptr(), result);
+	}
 
 	return result;
 }
@@ -81,6 +123,26 @@ bool ELFScript::_has_static_method(const StringName &p_method) const {
 	return false;
 }
 Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
+	TypedArray<Dictionary> functions_array;
+	for (String function : functions) {
+		if (function == p_method) {
+			printf("ELFScript::_get_method_info: method %s\n", p_method.to_ascii_buffer().ptr());
+			Dictionary method;
+			method["name"] = function;
+			method["args"] = Array();
+			method["default_args"] = Array();
+			Dictionary type;
+			type["name"] = "type";
+			type["type"] = Variant::Type::OBJECT;
+			type["class_name"] = "Object";
+			type["hint"] = PropertyHint::PROPERTY_HINT_NONE;
+			type["hint_string"] = String("Return value");
+			type["usage"] = PROPERTY_USAGE_DEFAULT;
+			method["return"] = type;
+			method["flags"] = METHOD_FLAG_VARARG;
+			return method;
+		}
+	}
 	return Dictionary();
 }
 bool ELFScript::_is_tool() const {
@@ -123,7 +185,7 @@ TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
 		type["hint_string"] = String();
 		type["usage"] = PROPERTY_USAGE_DEFAULT;
 		method["return"] = type;
-		method["flags"] = METHOD_FLAGS_DEFAULT;
+		method["flags"] = METHOD_FLAG_VARARG;
 		functions_array.push_back(method);
 	}
 	return functions_array;
@@ -160,8 +222,8 @@ PackedByteArray ELFScript::get_content() {
 void ELFScript::set_file(const String &p_path) {
 	path = p_path;
 	source_code = FileAccess::get_file_as_bytes(path);
-	global_name = "ELF_" + path.get_basename().replace("res://", "").replace("/", "_");
+	global_name = "Sandbox_" + path.get_basename().replace("res://", "").replace("/", "_").capitalize().replace(" ", "");
 	PackedStringArray functions_array = Sandbox::get_functions_from_binary(source_code);
 	functions_array.sort();
-	functions = functions_array;
+	this->functions = std::move(functions_array);
 }

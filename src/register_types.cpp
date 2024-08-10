@@ -20,7 +20,7 @@
 #include "elf/resource_saver_elf.h"
 #include "elf/script_elf.h"
 #include "elf/script_language_elf.h"
-#include "sandbox.hpp"
+#include "sandbox.h"
 #include "sandbox_project_settings.h"
 
 using namespace godot;

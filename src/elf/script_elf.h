@@ -12,13 +12,14 @@ protected:
 	static void _bind_methods() {}
 	String _to_string() const;
 	PackedByteArray source_code;
-	PackedStringArray functions;
 	String global_name;
 	String path;
 	// TODO
 	//HashSet<Object *> instances;
 
 public:
+	PackedStringArray functions;
+
 	virtual bool _editor_can_reload_from_file() override;
 	virtual void _placeholder_erased(void *p_placeholder) override;
 	virtual bool _can_instantiate() const override;
