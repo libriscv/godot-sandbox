@@ -77,5 +77,5 @@ public:
 private:
 	static inline bool docker_container_started = false;
 	static inline const char *docker_container_name = "godot-cpp-compiler";
-	static inline const char *docker_image_name = "ghcr.io/libriscv/compiler";
+	static inline const char *docker_image_name = "ghcr.io/libriscv/cpp_compiler";
 };
