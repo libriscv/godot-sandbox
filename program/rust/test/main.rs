@@ -1,7 +1,6 @@
 mod sysalloc;
 mod api;
 use std::alloc;
-use std::thread;
 use api::*;
 
 pub fn main()
@@ -33,7 +32,7 @@ pub fn main()
 #[no_mangle]
 pub fn public_function()
 {
-	print!("Hello from Rust!\n");
-	print!("Hello from Rust!\n");
-	print!("Hello from Rust!\n");
+	gprint(&Variant::new_string("Hello from Rust!"));
+	gprint(&Variant::new_string("Hello from Rust!"));
+	gprint(&Variant::new_string("Hello from Rust!"));
 }

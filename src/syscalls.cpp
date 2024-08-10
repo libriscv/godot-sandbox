@@ -71,10 +71,16 @@ APICALL(api_veval) {
 void Sandbox::initialize_syscalls() {
 	using namespace riscv;
 
-	// Initialize the Linux system calls.
+	// Initialize common Linux system calls
 	machine().setup_linux_syscalls(false, false);
-	// TODO:
-	//machine().setup_posix_threads();
+	// Initialize POSIX threads
+	machine().setup_posix_threads();
+
+	machine().on_unhandled_syscall = [](machine_t &machine, size_t syscall) {
+		auto &emu = riscv::emu(machine);
+		emu.print("Unhandled system call: " + std::to_string(syscall));
+		machine.penalize(100'000); // Add to the instruction counter due to I/O.
+	};
 
 	// Add the Godot system calls.
 	machine_t::install_syscall_handlers({
