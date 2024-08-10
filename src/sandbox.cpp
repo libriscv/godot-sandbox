@@ -133,6 +133,7 @@ Variant Sandbox::vmcall_address(gaddr_t address, const Variant **args, GDExtensi
 Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
 	if (arg_count < 1) {
 		error.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+		error.argument = -1;
 		return Variant();
 	}
 	auto &function = *args[0];
@@ -211,6 +212,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 		this->handle_exception(address);
 
 		error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
+		error.argument = -1;
 		return Variant();
 	}
 }
