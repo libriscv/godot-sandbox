@@ -13,6 +13,9 @@ protected:
 	String file;
 
 public:
+	static void init();
+	static CPPScriptLanguage *get_singleton();
+
 	virtual String _get_name() const override;
 	virtual void _init() override;
 	virtual String _get_type() const override;

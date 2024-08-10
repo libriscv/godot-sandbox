@@ -1,6 +1,7 @@
 #include "script_cpp.h"
 
 #include "../register_types.h"
+#include "script_language_cpp.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 
@@ -69,7 +70,7 @@ bool CPPScript::_is_abstract() const {
 	return true;
 }
 ScriptLanguage *CPPScript::_get_language() const {
-	return get_cpp_language();
+	return CPPScriptLanguage::get_singleton();
 }
 bool CPPScript::_has_script_signal(const StringName &p_signal) const {
 	return false;

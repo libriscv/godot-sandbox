@@ -126,7 +126,9 @@ Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
 	TypedArray<Dictionary> functions_array;
 	for (String function : functions) {
 		if (function == p_method) {
-			printf("ELFScript::_get_method_info: method %s\n", p_method.to_ascii_buffer().ptr());
+			if constexpr (VERBOSE_ELFSCRIPT) {
+				printf("ELFScript::_get_method_info: method %s\n", p_method.to_ascii_buffer().ptr());
+			}
 			Dictionary method;
 			method["name"] = function;
 			method["args"] = Array();
