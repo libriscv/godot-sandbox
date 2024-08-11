@@ -17,6 +17,8 @@ struct is_string
 template<class T>
 struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
 
+#include "vector.hpp"
+
 struct Variant
 {
 	enum Type {
@@ -129,6 +131,38 @@ struct Variant
 			m_type = STRING;
 			v.s = new std::string(value);
 		}
+		else if constexpr (std::is_same_v<T, Vector2>) {
+			m_type = VECTOR2;
+			v.v2 = value;
+		}
+		else if constexpr (std::is_same_v<T, Vector2i>) {
+			m_type = VECTOR2I;
+			v.v2i = value;
+		}
+		else if constexpr (std::is_same_v<T, Vector3>) {
+			m_type = VECTOR3;
+			v.v3 = value;
+		}
+		else if constexpr (std::is_same_v<T, Vector3i>) {
+			m_type = VECTOR3I;
+			v.v3i = value;
+		}
+		else if constexpr (std::is_same_v<T, Vector4>) {
+			m_type = VECTOR4;
+			v.v4 = value;
+		}
+		else if constexpr (std::is_same_v<T, Vector4i>) {
+			m_type = VECTOR4I;
+			v.v4i = value;
+		}
+		else if constexpr (std::is_same_v<T, Rect2>) {
+			m_type = RECT2;
+			v.r2 = value;
+		}
+		else if constexpr (std::is_same_v<T, Rect2i>) {
+			m_type = RECT2I;
+			v.r2i = value;
+		}
 		else
 			static_assert(!std::is_same_v<T, T>, "Unsupported type");
 	}
@@ -148,6 +182,23 @@ struct Variant
 	operator std::string&();
 	operator std::string_view() const; // View for STRING and PACKED_BYTE_ARRAY
 	operator std::span<uint8_t>() const; // Modifiable span for PACKED_BYTE_ARRAY
+
+	const Vector2& v2() const;
+	Vector2& v2();
+	const Vector2i& v2i() const;
+	Vector2i& v2i();
+	const Vector3& v3() const;
+	Vector3& v3();
+	const Vector3i& v3i() const;
+	Vector3i& v3i();
+	const Vector4& v4() const;
+	Vector4& v4();
+	const Vector4i& v4i() const;
+	Vector4i& v4i();
+	const Rect2& r2() const;
+	Rect2& r2();
+	const Rect2i& r2i() const;
+	Rect2i& r2i();
 
 	std::vector<float>& f32array() const; // Modifiable vector for PACKED_FLOAT32_ARRAY
 	std::vector<double>& f64array() const; // Modifiable vector for PACKED_FLOAT64_ARRAY
@@ -190,6 +241,14 @@ private:
 		bool    b;
 		int64_t i;
 		double  f;
+		Vector2  v2;
+		Vector2i v2i;
+		Vector3  v3;
+		Vector3i v3i;
+		Vector4  v4;
+		Vector4i v4i;
+		Rect2    r2;
+		Rect2i   r2i;
 		std::string *s;
 		std::vector<float> *f32array;
 		std::vector<double> *f64array;
@@ -297,6 +356,118 @@ inline Variant::operator std::span<uint8_t>() const
 {
 	if (m_type == PACKED_BYTE_ARRAY)
 		return std::span<uint8_t>(reinterpret_cast<uint8_t *>(v.s->data()), v.s->size());
+	throw std::bad_cast();
+}
+
+inline const Vector2& Variant::v2() const
+{
+	if (m_type == VECTOR2)
+		return v.v2;
+	throw std::bad_cast();
+}
+
+inline Vector2& Variant::v2()
+{
+	if (m_type == VECTOR2)
+		return v.v2;
+	throw std::bad_cast();
+}
+
+inline const Vector2i& Variant::v2i() const
+{
+	if (m_type == VECTOR2I)
+		return v.v2i;
+	throw std::bad_cast();
+}
+
+inline Vector2i& Variant::v2i()
+{
+	if (m_type == VECTOR2I)
+		return v.v2i;
+	throw std::bad_cast();
+}
+
+inline const Vector3& Variant::v3() const
+{
+	if (m_type == VECTOR3)
+		return v.v3;
+	throw std::bad_cast();
+}
+
+inline Vector3& Variant::v3()
+{
+	if (m_type == VECTOR3)
+		return v.v3;
+	throw std::bad_cast();
+}
+
+inline const Vector3i& Variant::v3i() const
+{
+	if (m_type == VECTOR3I)
+		return v.v3i;
+	throw std::bad_cast();
+}
+
+inline Vector3i& Variant::v3i()
+{
+	if (m_type == VECTOR3I)
+		return v.v3i;
+	throw std::bad_cast();
+}
+
+inline const Vector4& Variant::v4() const
+{
+	if (m_type == VECTOR4)
+		return v.v4;
+	throw std::bad_cast();
+}
+
+inline Vector4& Variant::v4()
+{
+	if (m_type == VECTOR4)
+		return v.v4;
+	throw std::bad_cast();
+}
+
+inline const Vector4i& Variant::v4i() const
+{
+	if (m_type == VECTOR4I)
+		return v.v4i;
+	throw std::bad_cast();
+}
+
+inline Vector4i& Variant::v4i()
+{
+	if (m_type == VECTOR4I)
+		return v.v4i;
+	throw std::bad_cast();
+}
+
+inline const Rect2& Variant::r2() const
+{
+	if (m_type == RECT2)
+		return v.r2;
+	throw std::bad_cast();
+}
+
+inline Rect2& Variant::r2()
+{
+	if (m_type == RECT2)
+		return v.r2;
+	throw std::bad_cast();
+}
+
+inline const Rect2i& Variant::r2i() const
+{
+	if (m_type == RECT2I)
+		return v.r2i;
+	throw std::bad_cast();
+}
+
+inline Rect2i& Variant::r2i()
+{
+	if (m_type == RECT2I)
+		return v.r2i;
 	throw std::bad_cast();
 }
 
