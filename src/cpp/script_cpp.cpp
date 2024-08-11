@@ -1,6 +1,5 @@
 #include "script_cpp.h"
 
-#include "../register_types.h"
 #include "script_language_cpp.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
