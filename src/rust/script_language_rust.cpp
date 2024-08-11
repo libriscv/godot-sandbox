@@ -8,7 +8,7 @@
 #include <godot_cpp/classes/theme.hpp>
 #include <string>
 #include <unordered_set>
-static constexpr const char *icon_path = "res://addons/godot_sandbox/CPPScript.svg";
+static constexpr const char *icon_path = "res://addons/godot_sandbox/RustScript.svg";
 
 static RustScriptLanguage *rust_language;
 

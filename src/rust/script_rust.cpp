@@ -48,7 +48,7 @@ TypedArray<Dictionary> RustScript::_get_documentation() const {
 	return TypedArray<Dictionary>();
 }
 String RustScript::_get_class_icon_path() const {
-	return String("res://addons/godot_sandbox/CPPScript.svg");
+	return String("res://addons/godot_sandbox/RustScript.svg");
 }
 bool RustScript::_has_method(const StringName &p_method) const {
 	return false;
