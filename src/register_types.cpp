@@ -1,8 +1,3 @@
-/* godot-cpp integration testing project.
- *
- * This is free and unencumbered software released into the public domain.
- */
-
 #include "register_types.h"
 
 #include <gdextension_interface.h>
@@ -20,6 +15,10 @@
 #include "elf/resource_saver_elf.h"
 #include "elf/script_elf.h"
 #include "elf/script_language_elf.h"
+#include "rust/resource_loader_rust.h"
+#include "rust/resource_saver_rust.h"
+#include "rust/script_language_rust.h"
+#include "rust/script_rust.h"
 #include "sandbox.h"
 #include "sandbox_project_settings.h"
 
@@ -47,6 +46,10 @@ void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ClassDB::register_class<ResourceFormatLoaderCPP>();
 	ClassDB::register_class<ResourceFormatSaverCPP>();
 	ClassDB::register_class<CPPScriptLanguage>();
+	ClassDB::register_class<RustScript>();
+	ClassDB::register_class<ResourceFormatLoaderRust>();
+	ClassDB::register_class<ResourceFormatSaverRust>();
+	ClassDB::register_class<RustScriptLanguage>();
 	elf_loader.instantiate();
 	elf_saver.instantiate();
 	elf_language = memnew(ELFScriptLanguage);
@@ -56,6 +59,9 @@ void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	CPPScriptLanguage::init();
 	ResourceFormatLoaderCPP::init();
 	ResourceFormatSaverCPP::init();
+	RustScriptLanguage::init();
+	ResourceFormatLoaderRust::init();
+	ResourceFormatSaverRust::init();
 	SandboxProjectSettings::register_settings();
 }
 
@@ -72,6 +78,8 @@ void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	elf_saver.unref();
 	ResourceFormatLoaderCPP::deinit();
 	ResourceFormatSaverCPP::deinit();
+	ResourceFormatLoaderRust::deinit();
+	ResourceFormatSaverRust::deinit();
 }
 
 extern "C" {

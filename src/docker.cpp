@@ -46,7 +46,7 @@ Array Docker::ContainerStop(String container_name) {
 
 bool Docker::ContainerExecute(String container_name, const PackedStringArray &p_arguments, Array &output) {
 	godot::OS *OS = godot::OS::get_singleton();
-	PackedStringArray arguments = { "exec", "-t", container_name, "bash", "/usr/api/build.sh" };
+	PackedStringArray arguments = { "exec", "-t", container_name, "bash" };
 	for (int i = 0; i < p_arguments.size(); i++) {
 		arguments.push_back(p_arguments[i]);
 	}

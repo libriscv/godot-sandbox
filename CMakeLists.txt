@@ -14,6 +14,10 @@ set(SOURCES
 	src/elf/script_elf.cpp
 	src/elf/script_instance.cpp
 	src/elf/script_language_elf.cpp
+	src/rust/resource_loader_rust.cpp
+	src/rust/resource_saver_rust.cpp
+	src/rust/script_rust.cpp
+	src/rust/script_language_rust.cpp
 	src/docker.cpp
 	src/godot/script_instance.cpp
 	src/gvar.cpp

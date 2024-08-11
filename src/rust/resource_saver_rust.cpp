@@ -1,9 +1,9 @@
-#include "resource_saver_cpp.h"
+#include "resource_saver_rust.h"
 #include "../elf/script_elf.h"
 #include "../elf/script_language_elf.h"
 #include "../register_types.h"
 #include "../sandbox_project_settings.h"
-#include "script_cpp.h"
+#include "script_rust.h"
 #include <godot_cpp/classes/editor_file_system.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
 #include <godot_cpp/classes/editor_settings.hpp>
@@ -14,22 +14,20 @@
 #include <godot_cpp/classes/script_editor_base.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
-static Ref<ResourceFormatSaverCPP> cpp_saver;
+static Ref<ResourceFormatSaverRust> rust_saver;
 
-void ResourceFormatSaverCPP::init() {
-	cpp_saver.instantiate();
-	// Register the CPPScript resource saver
-	ResourceSaver::get_singleton()->add_resource_format_saver(cpp_saver);
+void ResourceFormatSaverRust::init() {
+	rust_saver.instantiate();
+	ResourceSaver::get_singleton()->add_resource_format_saver(rust_saver);
 }
 
-void ResourceFormatSaverCPP::deinit() {
-	// Unregister the CPPScript resource saver
-	ResourceSaver::get_singleton()->remove_resource_format_saver(cpp_saver);
-	cpp_saver.unref();
+void ResourceFormatSaverRust::deinit() {
+	ResourceSaver::get_singleton()->remove_resource_format_saver(rust_saver);
+	rust_saver.unref();
 }
 
-Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags) {
-	CPPScript *script = Object::cast_to<CPPScript>(p_resource.ptr());
+Error ResourceFormatSaverRust::_save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags) {
+	RustScript *script = Object::cast_to<RustScript>(p_resource.ptr());
 	if (script != nullptr) {
 		Ref<FileAccess> handle = FileAccess::open(p_path, FileAccess::ModeFlags::WRITE);
 		if (handle.is_valid()) {
@@ -37,17 +35,17 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 			handle->close();
 			// Get the absolute path without the file name
 			String path = handle->get_path().get_base_dir().replace("res://", "") + "/";
-			String inpname = path + "*.cpp";
+			String inpname = path + "*.rs";
 			String foldername = handle->get_path().get_base_dir().replace("res://", "");
 			String outname = path + foldername + String(".elf");
 
 			// Lazily start the docker container
-			CPPScript::DockerContainerStart();
+			RustScript::DockerContainerStart();
 
 			auto builder = [inpname = std::move(inpname), outname = std::move(outname)] {
 				// Invoke docker to compile the file
 				Array output;
-				CPPScript::DockerContainerExecute({ "/usr/api/build.sh", "-o", outname, inpname }, output);
+				RustScript::DockerContainerExecute({ "/usr/project/build.sh", "-o", outname, inpname }, output);
 				if (!output.is_empty() && !output[0].operator String().is_empty()) {
 					for (int i = 0; i < output.size(); i++) {
 						String line = output[i].operator String();
@@ -96,21 +94,17 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 	}
 	return Error::ERR_SCRIPT_FAILED;
 }
-Error ResourceFormatSaverCPP::_set_uid(const String &p_path, int64_t p_uid) {
+Error ResourceFormatSaverRust::_set_uid(const String &p_path, int64_t p_uid) {
 	return Error::OK;
 }
-bool ResourceFormatSaverCPP::_recognize(const Ref<Resource> &p_resource) const {
-	return Object::cast_to<CPPScript>(p_resource.ptr()) != nullptr;
+bool ResourceFormatSaverRust::_recognize(const Ref<Resource> &p_resource) const {
+	return Object::cast_to<RustScript>(p_resource.ptr()) != nullptr;
 }
-PackedStringArray ResourceFormatSaverCPP::_get_recognized_extensions(const Ref<Resource> &p_resource) const {
+PackedStringArray ResourceFormatSaverRust::_get_recognized_extensions(const Ref<Resource> &p_resource) const {
 	PackedStringArray array;
-	array.push_back("cpp");
-	array.push_back("cc");
-	array.push_back("hh");
-	array.push_back("h");
-	array.push_back("hpp");
+	array.push_back("rs");
 	return array;
 }
-bool ResourceFormatSaverCPP::_recognize_path(const Ref<Resource> &p_resource, const String &p_path) const {
-	return Object::cast_to<CPPScript>(p_resource.ptr()) != nullptr;
+bool ResourceFormatSaverRust::_recognize_path(const Ref<Resource> &p_resource, const String &p_path) const {
+	return Object::cast_to<RustScript>(p_resource.ptr()) != nullptr;
 }

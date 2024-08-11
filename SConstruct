@@ -11,7 +11,7 @@ env.Append(CPPDEFINES = ['RISCV_SYSCALLS_MAX=600', 'RISCV_BRK_MEMORY_SIZE=0x1000
 env.Prepend(CPPPATH=["libriscv/lib"])
 env.Append(CPPPATH=["src/", "."])
 
-sources = [Glob("src/*.cpp"), Glob("src/cpp/*.cpp"), Glob("src/elf/*.cpp"), Glob("src/godot/*.cpp")]
+sources = [Glob("src/*.cpp"), Glob("src/cpp/*.cpp"), Glob("src/rust/*.cpp"), Glob("src/elf/*.cpp"), Glob("src/godot/*.cpp")]
 
 librisc_sources = [
 	# threaded fast-path:
