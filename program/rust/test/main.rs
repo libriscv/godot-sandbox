@@ -1,6 +1,5 @@
 mod sysalloc;
 mod api;
-use std::alloc;
 use api::*;
 
 pub fn main()
@@ -30,9 +29,12 @@ pub fn main()
 }
 
 #[no_mangle]
-pub fn public_function()
+pub fn public_function(v: &Variant) -> Variant
 {
+	gprint(v);
 	gprint(&Variant::new_string("Hello from Rust!"));
 	gprint(&Variant::new_string("Hello from Rust!"));
-	gprint(&Variant::new_string("Hello from Rust!"));
+
+	let v = Variant::new_float(3.14);
+	v
 }

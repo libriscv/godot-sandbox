@@ -11,7 +11,7 @@ pub enum VariantType {
 }
 
 #[repr(C)]
-union CapacityOrSSO {
+pub(self) union CapacityOrSSO {
 	pub cap: usize,
 	pub sso: [u8; 16],
 }
@@ -21,14 +21,14 @@ pub struct VariantStdString {
 	// 64-bit pointer + 64-bit length + 64-bit capacity OR 16-byte SSO data
 	pub ptr: *const char,
 	pub len: usize,
-	pub cap_or_sso: CapacityOrSSO,
+	pub(self) cap_or_sso: CapacityOrSSO,
 }
 
 #[repr(C)]
 pub union VariantUnion {
 	pub b: bool,
 	pub i: i32,
-	pub f: f32,
+	pub f: f64,
 	pub s: *const VariantStdString,
 	// 24 bytes total
 	pub a: [u8; VARIANT_SIZE],
@@ -59,7 +59,7 @@ impl Variant
 		let v = Variant { t: VariantType::Integer, u: VariantUnion { i: i } };
 		v
 	}
-	pub fn new_float(f: f32) -> Variant
+	pub fn new_float(f: f64) -> Variant
 	{
 		let v = Variant { t: VariantType::Float, u: VariantUnion { f: f } };
 		v
@@ -68,6 +68,30 @@ impl Variant
 	{
 		let v = Variant { t: VariantType::String, u: VariantUnion { s: Box::into_raw(Box::new(VariantStdString::new(s))) } };
 		v
+	}
+
+	pub fn to_string(&self) -> String
+	{
+		match self.t {
+			VariantType::Nil => return "nil".to_string(),
+			VariantType::Bool => {
+				let b = unsafe { self.u.b };
+				return b.to_string()
+			},
+			VariantType::Integer => {
+				let i = unsafe { self.u.i };
+				return i.to_string()
+			},
+			VariantType::Float => {
+				let f = unsafe { self.u.f };
+				return f.to_string()
+			},
+			VariantType::String => {
+				let s = unsafe { &*self.u.s };
+				let slice = unsafe { std::slice::from_raw_parts(s.ptr as *const u8, s.len) };
+				return String::from_utf8(slice.to_vec()).unwrap();
+			},
+		}
 	}
 }
 
