@@ -41,6 +41,11 @@ jobs:
   docker_build:
     uses: ./.github/workflows/docker_build.yml
     if: github.ref == 'refs/heads/main'
+    permissions:
+      packages: write
+      contents: read
+      attestations: write
+      id-token: write
 
   merge:
     runs-on: ubuntu-latest
