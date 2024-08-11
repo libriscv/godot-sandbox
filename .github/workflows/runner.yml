@@ -37,6 +37,10 @@ jobs:
     uses: ./.github/workflows/build_web.yml
   build_godot:
     uses: ./.github/workflows/build_godot.yml
+  
+  docker_build:
+    uses: ./.github/workflows/docker_build.yml
+    if: github.ref == 'refs/heads/main'
 
   merge:
     runs-on: ubuntu-latest
