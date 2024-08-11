@@ -35,6 +35,7 @@ jobs:
         id: push
         uses: docker/build-push-action@v6
         with:
+          registry: ${{ env.REGISTRY }}
           context: program/${{ matrix.compiler }}
           push: true
-          tags: libriscv/${{ matrix.compiler }}_compiler:latest
+          tags: ghcr.io/libriscv/${{ matrix.compiler }}_compiler:latest
