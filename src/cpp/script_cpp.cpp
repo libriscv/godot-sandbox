@@ -110,12 +110,12 @@ CPPScript::CPPScript() {
 	source_code = R"C0D3(#include "api.hpp"
 
 int main() {
-    UtilityFunctions::print("Hello world!");
+    print("Hello world!");
     halt(); // Prevent closing pipes, calling global destructors etc.
 }
 
 extern "C" Variant public_function(Variant arg) {
-    UtilityFunctions::print("Arguments: ", arg);
+    print("Arguments: ", arg);
     return "Hello from the other side";
 }
 )C0D3";

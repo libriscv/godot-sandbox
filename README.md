@@ -70,19 +70,19 @@ The API towards the sandbox uses Variants, and the API inside the sandbox uses (
 #include <cstdio>
 
 int main() {
-	UtilityFunctions::print("Hello, ", 55, " world!\n");
+	print("Hello, ", 55, " world!\n");
 
 	halt(); // Prevent stdout,stderr closing etc.
 }
 
 extern "C" Variant my_function(Variant varg) {
-	UtilityFunctions::print("Hello, ", 124.5, " world!\n");
-	UtilityFunctions::print("Arg: ", varg);
+	print("Hello, ", 124.5, " world!\n");
+	print("Arg: ", varg);
 	return varg;
 }
 
 extern "C" Variant function3(Variant x, Variant y, Variant text) {
-	UtilityFunctions::print("x = ", x, " y = ", y, " text = ", text);
+	print("x = ", x, " y = ", y, " text = ", text);
 	return 1234;
 }
 
@@ -113,7 +113,7 @@ Languages that are known to work inside the sandbox:
 10. Lua, Luau
 11. Any language that transpiles to C or emits RISC-V programs
 
-More languages will be supported out-of-the-box over time.
+More languages will be supported out-of-the-box over time. *Currently C++ and Rust are supported.*
 
 ## Tips
 
@@ -160,7 +160,7 @@ However, if you need to (or want to) compile C++ code locally because you want t
 
 ```sh
 cd my_godot_project
-docker run --name godot-cpp-compiler -dv .:/usr/src ghcr.io/libriscv/compiler
+docker run --name godot-cpp-compiler -dv .:/usr/src ghcr.io/libriscv/cpp_compiler
 ```
 
 With this the compiler is now available for use as `godot-cpp-compiler`. Compile your C++ code relative to the Godot project:
