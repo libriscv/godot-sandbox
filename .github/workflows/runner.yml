@@ -40,7 +40,7 @@ jobs:
   
   docker_build:
     uses: ./.github/workflows/build_docker.yml
-    if: github.ref == 'refs/heads/main'
+    #if: github.ref == 'refs/heads/main'
     permissions:
       packages: write
       contents: read
