@@ -35,6 +35,6 @@ jobs:
         id: push
         uses: docker/build-push-action@v6
         with:
-          context: program/${{ matrix.compiler }}_compiler
+          context: program/${{ matrix.compiler }}
           push: true
           tags: libriscv/${{ matrix.compiler }}_compiler:latest
