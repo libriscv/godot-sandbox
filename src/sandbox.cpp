@@ -13,6 +13,7 @@
 using namespace godot;
 
 static constexpr size_t MAX_HEAP = 16ull << 20;
+static constexpr size_t MAX_VMEM = 16ull << 20;
 static const int HEAP_SYSCALLS_BASE = 480;
 static const int MEMORY_SYSCALLS_BASE = 485;
 
@@ -71,6 +72,9 @@ void Sandbox::set_program(Ref<ELFScript> program) {
 Ref<ELFScript> Sandbox::get_program() {
 	return m_program_data;
 }
+bool Sandbox::has_program_loaded() const {
+	return !this->machine().memory.binary().empty();
+}
 void Sandbox::load(PackedByteArray &&buffer, const TypedArray<String> &arguments) {
 	if (buffer.is_empty()) {
 		ERR_PRINT("Empty binary, cannot load program.");
@@ -83,6 +87,7 @@ void Sandbox::load(PackedByteArray &&buffer, const TypedArray<String> &arguments
 		delete this->m_machine;
 
 		const riscv::MachineOptions<RISCV_ARCH> options{
+			.memory_max = MAX_VMEM,
 			//.verbose_loader = true,
 			.default_exit_function = "fast_exit",
 #ifdef RISCV_BINARY_TRANSLATION
@@ -209,6 +214,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 
 		m_level--;
 		m_scoped_variants.clear();
+		m_scoped_objects.clear();
 
 		error.error = GDEXTENSION_CALL_OK;
 		return result;
@@ -216,6 +222,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 	} catch (const std::exception &e) {
 		m_level--;
 		m_scoped_variants.clear();
+		m_scoped_objects.clear();
 		this->handle_exception(address);
 
 		error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
@@ -294,7 +301,7 @@ void Sandbox::print(std::string_view text) {
 void Sandbox::print_backtrace(const gaddr_t addr) {
 	machine().memory.print_backtrace(
 			[](std::string_view line) {
-				String line_str(static_cast<std::string>(line).c_str());
+				String line_str(std::string(line).c_str());
 				UtilityFunctions::print("-> ", line_str);
 			});
 	auto origin = machine().memory.lookup(addr);

@@ -23,16 +23,22 @@
 #include <godot_cpp/variant/variant.hpp>
 
 #include "../godot/script_instance.h"
+#include "../sandbox.h"
 using namespace godot;
 
 class ELFScript;
 
 class ELFScriptInstance : public ScriptInstanceExtension {
 	Object *owner;
+	Sandbox *sandbox = nullptr;
 	Ref<ELFScript> script;
-	List<MethodInfo> methods_info;
+	mutable List<MethodInfo> methods_info;
+	mutable bool has_updated_methods = false;
+	void update_methods() const;
 
 	static void convert_prop(const PropertyInfo &p_src, GDExtensionPropertyInfo &p_dst);
+
+	Sandbox *get_sandbox() const;
 
 public:
 	bool set(const StringName &p_name, const Variant &p_value) override;

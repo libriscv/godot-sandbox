@@ -17,6 +17,7 @@ struct is_string
 template<class T>
 struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
 
+struct Node2D;
 #include "vector.hpp"
 
 struct Variant
@@ -182,6 +183,8 @@ struct Variant
 	operator std::string&();
 	operator std::string_view() const; // View for STRING and PACKED_BYTE_ARRAY
 	operator std::span<uint8_t>() const; // Modifiable span for PACKED_BYTE_ARRAY
+
+	Node2D as_node2d() const;
 
 	const Vector2& v2() const;
 	Vector2& v2();
@@ -488,7 +491,7 @@ inline std::vector<double>& Variant::f64array() const
 inline Variant::Variant(const Variant &other)
 {
 	m_type = other.m_type;
-	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
+	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY || m_type == NODE_PATH)
 		v.s = new std::string(*other.v.s);
 	else if (m_type == PACKED_FLOAT32_ARRAY)
 		v.f32array = new std::vector<float>(*other.v.f32array);
@@ -506,7 +509,7 @@ inline Variant::Variant(Variant &&other)
 }
 inline Variant::~Variant()
 {
-	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
+	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY || m_type == NODE_PATH)
 		delete v.s;
 	else if (m_type == PACKED_FLOAT32_ARRAY)
 		delete v.f32array;
@@ -516,7 +519,7 @@ inline Variant::~Variant()
 
 inline Variant &Variant::operator=(const Variant &other) {
 	m_type = other.m_type;
-	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
+	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY || m_type == NODE_PATH)
 		v.s = new std::string(*other.v.s);
 	else if (m_type == PACKED_FLOAT32_ARRAY)
 		v.f32array = new std::vector<float>(*other.v.f32array);
