@@ -34,6 +34,7 @@ public:
 	const auto &machine() const { return *m_machine; }
 
 	// Functions.
+	bool has_program_loaded() const;
 	void set_program(Ref<ELFScript> program);
 	Ref<ELFScript> get_program();
 	PackedStringArray get_functions() const;
@@ -52,8 +53,15 @@ public:
 
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc, GDExtensionCallError &error);
 
+	void set_tree_base(godot::Node *tree_base) { m_tree_base = tree_base; }
+	godot::Node *get_tree_base() const { return m_tree_base; }
+
 	void add_scoped_variant(uint32_t hash) { m_scoped_variants.insert(hash); }
 	bool is_scoped_variant(uint32_t hash) const noexcept { return m_scoped_variants.count(hash) > 0; }
+
+	void add_scoped_object(const void *ptr) { m_scoped_objects.insert(reinterpret_cast<uintptr_t>(ptr)); }
+	void rem_scoped_object(const void *ptr) { m_scoped_objects.erase(reinterpret_cast<uintptr_t>(ptr)); }
+	bool is_scoped_object(const void *ptr) const noexcept { return m_scoped_objects.count(reinterpret_cast<uintptr_t>(ptr)) > 0; }
 
 private:
 	void load(PackedByteArray &&vbuf, const TypedArray<String> &arguments);
@@ -66,6 +74,7 @@ private:
 	Ref<ELFScript> m_program_data;
 	TypedArray<String> m_program_arguments;
 	machine_t *m_machine = nullptr;
+	godot::Node *m_tree_base;
 	PackedByteArray m_binary;
 
 	mutable std::unordered_map<int64_t, gaddr_t> m_lookup;
@@ -75,6 +84,7 @@ private:
 	unsigned m_budget_overruns = 0;
 
 	std::unordered_set<uint32_t> m_scoped_variants;
+	std::unordered_set<uintptr_t> m_scoped_objects;
 };
 
 struct GuestStdString {
@@ -175,7 +185,7 @@ struct GuestVariant {
 		bool b;
 		int64_t i;
 		double f;
-		gaddr_t s; // String & PackedByteArray -> GuestStdString
+		gaddr_t s; // String & PackedByteArray & Node2D -> GuestStdString
 		gaddr_t vf32; // PackedFloat32Array -> GuestStdVector<float>
 		gaddr_t vf64; // PackedFloat64Array -> GuestStdVector<double>
 		std::array<float, 2> v2f;

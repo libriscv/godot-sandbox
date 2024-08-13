@@ -161,6 +161,29 @@ void GuestVariant::set(Sandbox &emu, const Variant &value) {
 			this->v.v4i[3] = value.operator godot::Vector4i().w;
 			break;
 
+		case Variant::OBJECT: { // Objects are represented as uintptr_t
+			godot::Object *obj = value.operator godot::Object *();
+			// XXX: Information leak, we are exposing the object address to the guest
+			// TODO: Use a hash table to map object addresses to guest object IDs
+			godot::Node *node = godot::Object::cast_to<godot::Node>(obj);
+			if (!node) {
+				ERR_PRINT("SetVariant(): Object is not a Node (unsupported!)");
+				this->v.i = 0;
+				break;
+			}
+			emu.add_scoped_object(node);
+			this->v.i = (uintptr_t)node;
+			break;
+		}
+		case Variant::NODE_PATH: { // Node paths are represented as strings
+			auto path = value.operator godot::NodePath();
+			auto str = String(path).ascii();
+			auto ptr = emu.machine().arena().malloc(sizeof(GuestStdString));
+			auto *gstr = emu.machine().memory.memarray<GuestStdString>(ptr, 1);
+			gstr->set_string(emu.machine(), ptr, str.ptr(), str.length());
+			this->v.s = ptr;
+			break;
+		}
 		case Variant::DICTIONARY:
 		case Variant::ARRAY:
 		case Variant::CALLABLE: {

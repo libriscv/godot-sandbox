@@ -5,9 +5,11 @@
 #define ECALL_PRINT  (GAME_API_BASE + 0)
 #define ECALL_VCALL  (GAME_API_BASE + 1)
 #define ECALL_VEVAL  (GAME_API_BASE + 2)
-#define ECALL_NODE2D (GAME_API_BASE + 3) // All the node2d functions
+#define ECALL_GET_NODE (GAME_API_BASE + 3) // Get a node by path
+#define ECALL_NODE   (GAME_API_BASE + 4) // All the Node functions
+#define ECALL_NODE2D (GAME_API_BASE + 5) // All the Node2D functions
 
-#define ECALL_LAST  (GAME_API_BASE + 4)
+#define ECALL_LAST  (GAME_API_BASE + 6)
 
 
 #define STRINGIFY_HELPER(x) #x
@@ -26,6 +28,15 @@
 
 #define EXTERN_SYSCALL(number, rval, name, ...) \
 	extern "C" rval name(__VA_ARGS__);
+
+enum class Node_Op {
+	QUEUE_FREE,
+	DUPLICATE,
+	ADD_CHILD,
+	GET_NAME,
+	GET_PATH,
+	GET_PARENT,
+};
 
 enum class Node2D_Op {
 	GET_POSITION = 0,
