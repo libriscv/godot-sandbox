@@ -172,7 +172,24 @@ bool ELFScriptInstance::validate_property(GDExtensionPropertyInfo &p_property) c
 }
 
 bool ELFScriptInstance::has_method(const StringName &p_name) const {
-	const bool result = true;
+	if (script.is_null()) {
+		return true;
+	}
+	bool result = false;
+	for (auto &function : godot_functions) {
+		if (p_name == StringName(function.c_str())) {
+			result = true;
+			break;
+		}
+	}
+	if (!result) {
+		for (auto &function : script->functions) {
+			if (p_name == StringName(function)) {
+				result = true;
+				break;
+			}
+		}
+	}
 
 	if constexpr (VERBOSE_LOGGING) {
 		fprintf(stderr, "ELFScriptInstance::has_method %s => %d\n", p_name.to_ascii_buffer().ptr(), result);
