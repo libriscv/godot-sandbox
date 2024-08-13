@@ -1,11 +1,11 @@
 #include "syscalls.h"
 #include "sandbox.h"
 
-#include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/node2d.hpp>
+#include <godot_cpp/classes/scene_tree.hpp>
+#include <godot_cpp/classes/window.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/variant.hpp>
-#include <godot_cpp/classes/window.hpp>
 
 namespace riscv {
 inline Sandbox &emu(machine_t &m) {
@@ -113,48 +113,43 @@ APICALL(api_node) {
 			node->queue_free();
 			break;
 		case Node_Op::DUPLICATE: {
-				auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
-				auto *new_node = node->duplicate();
-				emu.add_scoped_object(new_node);
-				var->set(emu, new_node);
-			}
-			break;
+			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			auto *new_node = node->duplicate();
+			emu.add_scoped_object(new_node);
+			var->set(emu, new_node);
+		} break;
 		case Node_Op::ADD_CHILD: {
-				auto *child = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
-				auto *child_node = (godot::Node *)uintptr_t(child->v.i);
-				if (child_node == nullptr) {
-					ERR_PRINT("Child Node object is not a Node");
-					throw std::runtime_error("Child Node object is not a Node");
-				}
-				if (!emu.is_scoped_object(child_node)) {
-					ERR_PRINT("Child Node object is not scoped");
-					throw std::runtime_error("Child Node object is not scoped");
-				}
-				node->add_child(child_node);
+			auto *child = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			auto *child_node = (godot::Node *)uintptr_t(child->v.i);
+			if (child_node == nullptr) {
+				ERR_PRINT("Child Node object is not a Node");
+				throw std::runtime_error("Child Node object is not a Node");
 			}
-			break;
+			if (!emu.is_scoped_object(child_node)) {
+				ERR_PRINT("Child Node object is not scoped");
+				throw std::runtime_error("Child Node object is not scoped");
+			}
+			node->add_child(child_node);
+		} break;
 		case Node_Op::GET_NAME: {
-				auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
-				var->set(emu, String(node->get_name()));
-			}
-			break;
+			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			var->set(emu, String(node->get_name()));
+		} break;
 		case Node_Op::GET_PATH: {
-				auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
-				var->set(emu, String(node->get_path()));
-			}
-			break;
+			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			var->set(emu, String(node->get_path()));
+		} break;
 		case Node_Op::GET_PARENT: {
-				auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
-				if (node->get_parent() == nullptr) {
-					var->set(emu, Variant());
-				} else {
-					var->set(emu, node->get_parent());
-				}
+			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			if (node->get_parent() == nullptr) {
+				var->set(emu, Variant());
+			} else {
+				var->set(emu, node->get_parent());
 			}
-			break;
+		} break;
 		default:
 			throw std::runtime_error("Invalid Node operation");
-		}
+	}
 }
 
 APICALL(api_node2d) {
@@ -232,7 +227,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_VCALL, api_vcall },
 			{ ECALL_VEVAL, api_veval },
 			{ ECALL_GET_NODE, api_get_node },
-			{ ECALL_NODE,     api_node },
-			{ ECALL_NODE2D,   api_node2d },
+			{ ECALL_NODE, api_node },
+			{ ECALL_NODE2D, api_node2d },
 	});
 }

@@ -155,7 +155,8 @@ Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtens
 }
 Variant Sandbox::vmcall_fn(const StringName &function, const Variant **args, GDExtensionInt arg_count) {
 	GDExtensionCallError error;
-	return this->vmcall_internal(cached_address_of(function.hash()), args, arg_count, error);
+	auto result = this->vmcall_internal(cached_address_of(function.hash()), args, arg_count, error);
+	return result;
 }
 GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int argc) {
 	sp -= sizeof(GuestVariant) * (argc + 1);
@@ -180,6 +181,11 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 	return &v[0];
 }
 Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc, GDExtensionCallError &error) {
+	CurrentState state;
+	state.tree_base = this->get_tree_base();
+	auto *old_state = this->m_current_state;
+	this->m_current_state = &state;
+
 	try {
 		GuestVariant *retvar = nullptr;
 		auto &cpu = m_machine->cpu;
@@ -213,18 +219,15 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 		auto result = retvar->toVariant(*this);
 
 		m_level--;
-		m_scoped_variants.clear();
-		m_scoped_objects.clear();
-
+		this->m_current_state = old_state;
 		error.error = GDEXTENSION_CALL_OK;
 		return result;
 
 	} catch (const std::exception &e) {
 		m_level--;
-		m_scoped_variants.clear();
-		m_scoped_objects.clear();
 		this->handle_exception(address);
 
+		this->m_current_state = old_state;
 		error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
 		error.argument = -1;
 		return Variant();

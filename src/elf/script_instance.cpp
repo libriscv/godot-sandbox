@@ -59,17 +59,9 @@ Variant ELFScriptInstance::callp(
 	// When the script instance must have a sandbox as owner,
 	// use _enter_tree to get the sandbox instance.
 	// Also, avoid calling internal methods.
-	if (this->sandbox == nullptr) {
+	if (!this->auto_created_sandbox) {
 		if (p_method == StringName("_enter_tree")) {
-			// Get the Sandbox from the owner node
-			Sandbox *sandbox_ptr = Object::cast_to<Sandbox>(this->owner);
-			if (sandbox_ptr) {
-				sandbox_ptr->set_program(script);
-				// XXX: Is this kind of Sandbox its own relative tree base?
-				sandbox_ptr->set_tree_base(sandbox_ptr);
-			} else {
-				ERR_PRINT("enter_tree: owner was not a Sandbox");
-			}
+			current_sandbox->set_program(script);
 		}
 	}
 
@@ -79,19 +71,20 @@ Variant ELFScriptInstance::callp(
 
 retry_callp:
 	if (script->functions.has(p_method)) {
-		Sandbox *sandbox_ptr = this->get_sandbox();
-		if (sandbox_ptr && sandbox_ptr->has_program_loaded()) {
+		if (current_sandbox && current_sandbox->has_program_loaded()) {
+			// Set the Sandbox instance tree base to the owner node
+			current_sandbox->set_tree_base(godot::Object::cast_to<Node>(this->owner));
+			// Perform the vmcall
 			r_error.error = GDEXTENSION_CALL_OK;
-			return sandbox_ptr->vmcall_fn(p_method, p_args, p_argument_count);
+			return current_sandbox->vmcall_fn(p_method, p_args, p_argument_count);
 		}
 	}
 
 	// If the program has been loaded, but the method list has not been updated, update it and retry the vmcall
 	if (!this->has_updated_methods) {
-		auto *sandbox_ptr = this->get_sandbox();
-		if (sandbox_ptr) {
+		if (current_sandbox) {
 			// Only update methods if the program is already loaded
-			if (sandbox_ptr->has_program_loaded()) {
+			if (current_sandbox->has_program_loaded()) {
 				this->update_methods();
 				goto retry_callp;
 			}
@@ -240,18 +233,15 @@ ScriptLanguage *ELFScriptInstance::_get_language() {
 
 ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_script) :
 		owner(p_owner), script(p_script) {
-	if (!Object::cast_to<Sandbox>(p_owner)) {
-		this->sandbox = memnew(Sandbox);
-		auto *node = godot::Object::cast_to<godot::Node>(p_owner);
-		if (node == nullptr) {
-			ERR_PRINT("ELFScriptInstance: owner is not a Node");
-			return;
-		}
-		this->sandbox->set_tree_base(node);
-		this->sandbox->set_program(p_script);
+	this->current_sandbox = Object::cast_to<Sandbox>(p_owner);
+	this->auto_created_sandbox = (this->current_sandbox == nullptr);
+	if (auto_created_sandbox) {
+		this->current_sandbox = create_sandbox(p_script);
 		//ERR_PRINT("ELFScriptInstance: owner is not a Sandbox");
 		//fprintf(stderr, "ELFScriptInstance: owner is instead a '%s'!\n", p_owner->get_class().utf8().get_data());
 	}
+	this->current_sandbox->set_tree_base(godot::Object::cast_to<godot::Node>(owner));
+
 	for (auto godot_function : godot_functions) {
 		MethodInfo method_info = MethodInfo(
 				Variant::NIL,
@@ -261,21 +251,41 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 }
 
 ELFScriptInstance::~ELFScriptInstance() {
-	if (this->sandbox != nullptr) {
-		memdelete(this->sandbox);
-	}
 }
 
-Sandbox *ELFScriptInstance::get_sandbox() const {
-	if (this->sandbox != nullptr) {
-		return this->sandbox;
+// When a Sandbox needs to be automatically created, we instead share it
+// across all instances of the same script. This is done to save an
+// enormous amount of memory, as each Node using an ELFScriptInstance would
+// otherwise have its own Sandbox instance.
+static std::unordered_map<ELFScript *, Sandbox *> sandbox_instances;
+
+std::tuple<Sandbox *, bool> ELFScriptInstance::get_sandbox() const {
+	auto it = sandbox_instances.find(this->script.ptr());
+	if (it != sandbox_instances.end()) {
+		return { it->second, true };
 	}
 
 	Sandbox *sandbox_ptr = Object::cast_to<Sandbox>(this->owner);
 	if (sandbox_ptr == nullptr) {
 		ERR_PRINT("ELFScriptInstance: owner is not a Sandbox");
 		fprintf(stderr, "ELFScriptInstance: owner is instead a '%s'!\n", this->owner->get_class().utf8().get_data());
-		return nullptr;
+		return { nullptr, false };
+	}
+
+	return { sandbox_ptr, false };
+}
+
+Sandbox *ELFScriptInstance::create_sandbox(const Ref<ELFScript> &p_script) {
+	auto it = sandbox_instances.find(p_script.ptr());
+	if (it != sandbox_instances.end()) {
+		return it->second;
+	}
+
+	Sandbox *sandbox_ptr = memnew(Sandbox);
+	sandbox_ptr->set_program(p_script);
+	sandbox_instances.insert_or_assign(p_script.ptr(), sandbox_ptr);
+	if constexpr (VERBOSE_LOGGING) {
+		ERR_PRINT("ELFScriptInstance: created sandbox for " + Object::cast_to<Node>(owner)->get_name());
 	}
 
 	return sandbox_ptr;

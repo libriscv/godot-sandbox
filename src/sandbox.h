@@ -53,15 +53,18 @@ public:
 
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc, GDExtensionCallError &error);
 
-	void set_tree_base(godot::Node *tree_base) { m_tree_base = tree_base; }
-	godot::Node *get_tree_base() const { return m_tree_base; }
+	auto &state() const { return *m_current_state; }
+	auto &state() { return *m_current_state; }
 
-	void add_scoped_variant(uint32_t hash) { m_scoped_variants.insert(hash); }
-	bool is_scoped_variant(uint32_t hash) const noexcept { return m_scoped_variants.count(hash) > 0; }
+	void set_tree_base(godot::Node *tree_base) { this->m_tree_base = tree_base; }
+	godot::Node *get_tree_base() const { return this->m_tree_base; }
 
-	void add_scoped_object(const void *ptr) { m_scoped_objects.insert(reinterpret_cast<uintptr_t>(ptr)); }
-	void rem_scoped_object(const void *ptr) { m_scoped_objects.erase(reinterpret_cast<uintptr_t>(ptr)); }
-	bool is_scoped_object(const void *ptr) const noexcept { return m_scoped_objects.count(reinterpret_cast<uintptr_t>(ptr)) > 0; }
+	void add_scoped_variant(uint32_t hash) { state().scoped_variants.insert(hash); }
+	bool is_scoped_variant(uint32_t hash) const noexcept { return state().scoped_variants.count(hash) > 0; }
+
+	void add_scoped_object(const void *ptr) { state().scoped_objects.insert(reinterpret_cast<uintptr_t>(ptr)); }
+	void rem_scoped_object(const void *ptr) { state().scoped_objects.erase(reinterpret_cast<uintptr_t>(ptr)); }
+	bool is_scoped_object(const void *ptr) const noexcept { return state().scoped_objects.count(reinterpret_cast<uintptr_t>(ptr)) > 0; }
 
 private:
 	void load(PackedByteArray &&vbuf, const TypedArray<String> &arguments);
@@ -83,8 +86,12 @@ private:
 	uint8_t m_level = 0;
 	unsigned m_budget_overruns = 0;
 
-	std::unordered_set<uint32_t> m_scoped_variants;
-	std::unordered_set<uintptr_t> m_scoped_objects;
+	struct CurrentState {
+		godot::Node *tree_base;
+		std::unordered_set<uint32_t> scoped_variants;
+		std::unordered_set<uintptr_t> scoped_objects;
+	};
+	CurrentState *m_current_state = nullptr;
 };
 
 struct GuestStdString {

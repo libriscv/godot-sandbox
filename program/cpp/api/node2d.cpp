@@ -5,14 +5,14 @@
 // API call to get/set Node2D properties.
 // void sys_node2d(Node2D_Op, const char *name, size_t name_size, Variant *v)
 MAKE_SYSCALL(ECALL_GET_NODE, uint64_t, sys_get_node, const char *, size_t);
-MAKE_SYSCALL(ECALL_NODE,   void, sys_node, Node_Op, uint64_t, Variant *);
+MAKE_SYSCALL(ECALL_NODE, void, sys_node, Node_Op, uint64_t, Variant *);
 MAKE_SYSCALL(ECALL_NODE2D, void, sys_node2d, Node2D_Op, uint64_t, Variant *);
 
 static inline void node2d(Node2D_Op op, uint64_t address, const Variant &value) {
 	sys_node2d(op, address, const_cast<Variant *>(&value));
 }
 
-Node2D::Node2D(const std::string& name) {
+Node2D::Node2D(const std::string &name) {
 	this->m_address = sys_get_node(name.c_str(), name.size());
 }
 

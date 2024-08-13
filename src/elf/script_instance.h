@@ -30,15 +30,18 @@ class ELFScript;
 
 class ELFScriptInstance : public ScriptInstanceExtension {
 	Object *owner;
-	Sandbox *sandbox = nullptr;
 	Ref<ELFScript> script;
+	Sandbox *current_sandbox = nullptr;
 	mutable List<MethodInfo> methods_info;
 	mutable bool has_updated_methods = false;
-	void update_methods() const;
+	bool auto_created_sandbox = false;
 
+	void update_methods() const;
 	static void convert_prop(const PropertyInfo &p_src, GDExtensionPropertyInfo &p_dst);
 
-	Sandbox *get_sandbox() const;
+	// Retrieve the sandbox and whether it was created automatically or not
+	std::tuple<Sandbox *, bool> get_sandbox() const;
+	Sandbox *create_sandbox(const Ref<ELFScript> &p_script);
 
 public:
 	bool set(const StringName &p_name, const Variant &p_value) override;
