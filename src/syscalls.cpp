@@ -118,6 +118,7 @@ APICALL(api_node) {
 			emu.add_scoped_object(new_node);
 			var->set(emu, new_node);
 		} break;
+		case Node_Op::ADD_CHILD_DEFERRED:
 		case Node_Op::ADD_CHILD: {
 			auto *child = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
 			auto *child_node = (godot::Node *)uintptr_t(child->v.i);
@@ -129,7 +130,10 @@ APICALL(api_node) {
 				ERR_PRINT("Child Node object is not scoped");
 				throw std::runtime_error("Child Node object is not scoped");
 			}
-			node->add_child(child_node);
+			if (Node_Op(op) == Node_Op::ADD_CHILD_DEFERRED)
+				node->call_deferred("add_child", child_node);
+			else
+				node->add_child(child_node);
 		} break;
 		case Node_Op::GET_NAME: {
 			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);

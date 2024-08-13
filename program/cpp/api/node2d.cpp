@@ -67,9 +67,9 @@ Node2D Node2D::duplicate() const {
 	return result.as_node2d();
 }
 
-void Node2D::add_child(const Node2D &child, bool legible_unique_name) {
+void Node2D::add_child(const Node2D &child, bool deferred) {
 	Variant v(int64_t(child.address()));
-	sys_node(Node_Op::ADD_CHILD, this->address(), &v);
+	sys_node(deferred ? Node_Op::ADD_CHILD_DEFERRED : Node_Op::ADD_CHILD, this->address(), &v);
 }
 
 std::string Node2D::get_name() const {

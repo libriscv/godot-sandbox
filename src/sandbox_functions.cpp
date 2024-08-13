@@ -4,6 +4,13 @@
 
 using namespace godot;
 static const std::unordered_set<std::string_view> exclude_functions{
+	"sys_veval",
+	"sys_vcall",
+	"sys_print",
+	"sys_get_node",
+	"sys_node",
+	"sys_node2d",
+
 	"main",
 	"_Exit",
 	"_GLOBAL__sub_I_eh_alloc.cc",
@@ -653,7 +660,6 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"wcslen",
 	"memmem",
 	"wmempcpy",
-	"sys_veval",
 	"getpid",
 	"getpagesize",
 	"arc4random",
@@ -663,7 +669,6 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"memcpy",
 	"strtoll_l",
 	"rewinddir",
-	"sys_vcall",
 	"malloc",
 	"isatty",
 	"openat64",
@@ -686,7 +691,6 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"strtol_l",
 	"dlclose",
 	"abort",
-	"sys_print",
 	"fstat64",
 	"tdelete",
 	"strtoq",
@@ -1118,6 +1122,10 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"wctrans",
 	"wmemset",
 	"writev",
+	"sincosf",
+	"sincosf32",
+	"with_errnof",
+	"xflowf",
 };
 
 PackedStringArray Sandbox::get_functions() const {

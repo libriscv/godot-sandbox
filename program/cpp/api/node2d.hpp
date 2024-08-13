@@ -22,7 +22,10 @@ struct Node2D {
 
 	Node2D duplicate() const;
 
-	void add_child(const Node2D &child, bool legible_unique_name = true);
+	/// @brief Add a child to the node.
+	/// @param child The child node to add.
+	/// @param deferred If true, the child will be added later (but before next frame).
+	void add_child(const Node2D &child, bool deferred = false);
 
 	std::string get_name() const;
 
