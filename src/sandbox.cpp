@@ -12,10 +12,9 @@
 
 using namespace godot;
 
-static constexpr size_t MAX_HEAP = 16ull << 20;
-static constexpr size_t MAX_VMEM = 16ull << 20;
 static const int HEAP_SYSCALLS_BASE = 480;
 static const int MEMORY_SYSCALLS_BASE = 485;
+static const std::vector<std::string> program_arguments = { "program" };
 
 static inline String to_hex(gaddr_t value) {
 	char str[20] = { 0 };
@@ -40,6 +39,15 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("vmcallable"), &Sandbox::vmcallable);
 	// Internal testing.
 	ClassDB::bind_method(D_METHOD("assault", "test", "iterations"), &Sandbox::assault);
+
+	// Properties.
+	ClassDB::bind_method(D_METHOD("set_memory_max", "max"), &Sandbox::set_memory_max);
+	ClassDB::bind_method(D_METHOD("get_memory_max"), &Sandbox::get_memory_max);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "memory_max", PROPERTY_HINT_NONE, "Maximum memory (in MiB) used by the sandboxed program"), "set_memory_max", "get_memory_max");
+
+	ClassDB::bind_method(D_METHOD("set_instructions_max", "max"), &Sandbox::set_instructions_max);
+	ClassDB::bind_method(D_METHOD("get_instructions_max"), &Sandbox::get_instructions_max);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE, "Maximum billions of instructions executed before cancelling execution"), "set_instructions_max", "get_instructions_max");
 }
 
 Sandbox::Sandbox() {
@@ -69,7 +77,7 @@ void Sandbox::set_program(Ref<ELFScript> program) {
 	if (Engine::get_singleton()->is_editor_hint())
 		return;
 	PackedByteArray data = m_program_data->get_content();
-	this->load(std::move(data), m_program_arguments);
+	this->load(std::move(data));
 }
 Ref<ELFScript> Sandbox::get_program() {
 	return m_program_data;
@@ -77,7 +85,7 @@ Ref<ELFScript> Sandbox::get_program() {
 bool Sandbox::has_program_loaded() const {
 	return !this->machine().memory.binary().empty();
 }
-void Sandbox::load(PackedByteArray &&buffer, const TypedArray<String> &arguments) {
+void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *argv_ptr) {
 	if (buffer.is_empty()) {
 		ERR_PRINT("Empty binary, cannot load program.");
 		return;
@@ -89,7 +97,7 @@ void Sandbox::load(PackedByteArray &&buffer, const TypedArray<String> &arguments
 		delete this->m_machine;
 
 		const riscv::MachineOptions<RISCV_ARCH> options{
-			.memory_max = MAX_VMEM,
+			.memory_max = uint64_t(get_memory_max()) << 20, // in MiB
 			//.verbose_loader = true,
 			.default_exit_function = "fast_exit",
 #ifdef RISCV_BINARY_TRANSLATION
@@ -110,23 +118,17 @@ void Sandbox::load(PackedByteArray &&buffer, const TypedArray<String> &arguments
 
 		this->initialize_syscalls();
 
-		const auto heap_area = machine().memory.mmap_allocate(MAX_HEAP);
+		const uint64_t heap_size = MAX_HEAP << 20; // in MiB
+		const auto heap_area = machine().memory.mmap_allocate(heap_size);
 
 		// Add native system call interfaces
-		machine().setup_native_heap(HEAP_SYSCALLS_BASE, heap_area, MAX_HEAP);
+		machine().setup_native_heap(HEAP_SYSCALLS_BASE, heap_area, heap_size);
 		machine().setup_native_memory(MEMORY_SYSCALLS_BASE);
 
-		std::vector<std::string> args;
-		for (size_t i = 0; i < arguments.size(); i++) {
-			args.push_back(arguments[i].operator String().utf8().get_data());
-		}
-		if (args.empty()) {
-			// Create at least one argument (as required by main)
-			args.push_back("program");
-		}
-		m.setup_linux(args);
+		const auto *argv = argv_ptr ? argv_ptr : &program_arguments;
+		m.setup_linux(*argv);
 
-		m.simulate(MAX_INSTRUCTIONS);
+		m.simulate(get_instructions_max() << 30);
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
 		this->handle_exception(machine().cpu.pc());
@@ -201,7 +203,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			// set up each argument, and return value
 			retvar = this->setup_arguments(sp, args, argc);
 			// execute!
-			m_machine->simulate_with(MAX_INSTRUCTIONS, 0u, address);
+			m_machine->simulate_with(get_instructions_max() << 30, 0u, address);
 		} else if (m_level > 1 && m_level < MAX_LEVEL) {
 			riscv::Registers<RISCV_ARCH> regs;
 			regs = cpu.registers();
@@ -212,7 +214,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			// set up each argument, and return value
 			retvar = this->setup_arguments(sp, args, argc);
 			// execute!
-			cpu.preempt_internal(regs, true, address, MAX_INSTRUCTIONS);
+			cpu.preempt_internal(regs, true, address, get_instructions_max() << 30);
 		} else {
 			throw std::runtime_error("Recursion level exceeded");
 		}

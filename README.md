@@ -67,7 +67,6 @@ The API towards the sandbox uses Variants, and the API inside the sandbox uses (
 
 ```C++
 #include "api.hpp"
-#include <cstdio>
 
 int main() {
 	print("Hello, ", 55, " world!\n");
@@ -97,8 +96,8 @@ Above: An example of sandboxed C++ functions.
 ### What can I do?
 
 - You can implement a modding API for your game, to be used inside the sandbox. This API can then be used by other players to extend your game, in a safe manner. That is, they can send their mod to other people, including you, and they (and you) can assume that it is safe to try out the mod. The mod is *not supposed* to be able to do any harm. That is the whole point of this extension.
-- You can implement support for your favorite language inside the sandbox. The sandbox receives Variants from Godot or GDScript, and can respond back with Variants. This means the communication is fully dynamic, and supports normal Godot usage. 
-- You can distribute programs from a server to clients. The programs will behave the same way on all platforms, including 32-bit platforms.
+- You can implement support for your favorite language inside the sandbox. The sandbox receives Variants from Godot or GDScript, and can respond back with Variants. This means the communication is fully dynamic, and supports normal Godot usage.
+- You can distribute programs from a server to clients on login. The programs will behave the same way on all platforms, including 32-bit platforms. You can use this to live-distribute changes, like bugfixes, to the game without having to redeploy the game itself.
 
 Languages that are known to work inside the sandbox:
 1. QuickJS
@@ -131,7 +130,7 @@ There are high-performance modes for _libriscv_ available for both development a
 
 Please see the [documentation for the emulator](https://github.com/libriscv/libriscv) for more information.
 
-As a final note, the default interpreter mode in _libriscv_ is no slouch, being among the fastest interpreters. And will for most games, and in most scenarios be both the slimmest in terms of memory and the fastest in terms of iteration. Certain variant operations will call out to Godot in order to get native performance.
+As a final note, the default interpreter mode in _libriscv_ is no slouch, being among the fastest interpreters. And will for most games, and in most scenarios be both the slimmest in terms of memory and the fastest in terms of iteration. Certain common operations will call out to Godot in order to get native performance.
 
 
 ## Contributing

@@ -165,12 +165,20 @@ bool ELFScript::_has_script_signal(const StringName &p_signal) const {
 TypedArray<Dictionary> ELFScript::_get_script_signal_list() const {
 	return TypedArray<Dictionary>();
 }
+
 bool ELFScript::_has_property_default_value(const StringName &p_property) const {
 	return false;
 }
 Variant ELFScript::_get_property_default_value(const StringName &p_property) const {
 	return Variant();
 }
+TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
+	auto max_mem = prop_to_dict(PropertyInfo(Variant::Type::INT, "max_memory", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Maximum memory used by the sandboxed program", PROPERTY_USAGE_DEFAULT));
+	TypedArray<Dictionary> properties;
+	properties.push_back(std::move(max_mem));
+	return properties;
+}
+
 void ELFScript::_update_exports() {}
 TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
 	TypedArray<Dictionary> functions_array;
@@ -191,9 +199,6 @@ TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
 		functions_array.push_back(method);
 	}
 	return functions_array;
-}
-TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
-	return TypedArray<Dictionary>();
 }
 int32_t ELFScript::_get_member_line(const StringName &p_member) const {
 	PackedStringArray formatted_functions = _get_source_code().split("\n");

@@ -23,7 +23,9 @@ protected:
 	String _to_string() const;
 
 public:
-	static constexpr uint64_t MAX_INSTRUCTIONS = 16'000'000'000ULL;
+	static constexpr unsigned MAX_INSTRUCTIONS = 16;
+	static constexpr unsigned MAX_HEAP = 16ul;
+	static constexpr unsigned MAX_VMEM = 16ul;
 	static constexpr unsigned MAX_LEVEL = 8;
 	static constexpr unsigned GODOT_VARIANT_SIZE = sizeof(Variant);
 
@@ -45,6 +47,12 @@ public:
 	Variant vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
 	// Make a callable object that will call a function in the guest by its name.
 	Variant vmcallable(const String &function);
+
+	// Properties.
+	void set_memory_max(int64_t max) { m_memory_max = max; }
+	int64_t get_memory_max() const { return m_memory_max; }
+	void set_instructions_max(int64_t max) { m_insn_max = max; }
+	int64_t get_instructions_max() const { return m_insn_max; }
 
 	void print(std::string_view text);
 	gaddr_t address_of(std::string_view name) const;
@@ -70,7 +78,7 @@ public:
 	bool is_scoped_object(const void *ptr) const noexcept { return state().scoped_objects.count(reinterpret_cast<uintptr_t>(ptr)) > 0; }
 
 private:
-	void load(PackedByteArray &&vbuf, const TypedArray<String> &arguments);
+	void load(PackedByteArray &&vbuf, const std::vector<std::string> *argv = nullptr);
 	void handle_exception(gaddr_t);
 	void handle_timeout(gaddr_t);
 	void print_backtrace(gaddr_t);
@@ -78,10 +86,11 @@ private:
 	GuestVariant *setup_arguments(gaddr_t &sp, const Variant **args, int argc);
 
 	Ref<ELFScript> m_program_data;
-	TypedArray<String> m_program_arguments;
 	machine_t *m_machine = nullptr;
-	godot::Node *m_tree_base;
+	godot::Node *m_tree_base = nullptr;
 	PackedByteArray m_binary;
+	int64_t m_memory_max = MAX_VMEM;
+	int64_t m_insn_max = MAX_INSTRUCTIONS;
 
 	mutable std::unordered_map<int64_t, gaddr_t> m_lookup;
 
