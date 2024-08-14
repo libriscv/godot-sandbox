@@ -21,6 +21,10 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 			auto *s = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
 			return (*s)[0].to_godot_string(emu.machine());
 		}
+		case Variant::NODE_PATH: {
+			auto *s = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
+			return godot::NodePath((*s)[0].to_godot_string(emu.machine()));
+		}
 
 		case Variant::VECTOR2:
 			return Variant{ godot::Vector2(v.v2f[0], v.v2f[1]) };
@@ -49,14 +53,7 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 		case Variant::PACKED_BYTE_ARRAY: {
 			auto *s = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
 			auto &str = (*s)[0];
-			godot::PackedByteArray array;
-			array.resize(str.size);
-			const size_t res = str.copy_unterminated_to(emu.machine(), array.ptrw(), str.size);
-			if (res != str.size) {
-				ERR_PRINT("GuestVariant::toVariant(): PackedByteArray copy failed");
-				return Variant();
-			}
-			return Variant{ std::move(array) };
+			return Variant{ str.to_packed_byte_array(emu.machine()) };
 		}
 		case Variant::PACKED_FLOAT32_ARRAY: {
 			auto *gvec = emu.machine().memory.memarray<GuestStdVector, 1>(v.vf32);

@@ -53,6 +53,9 @@ public:
 
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc, GDExtensionCallError &error);
 
+	// Testing
+	void assault(const String &test, int64_t iterations);
+
 	auto &state() const { return *m_current_state; }
 	auto &state() { return *m_current_state; }
 
@@ -104,29 +107,43 @@ struct GuestStdString {
 		gaddr_t capacity;
 	};
 
-	std::string to_string(const machine_t &machine, std::size_t max_len = 16UL << 20) const {
+	std::string_view to_view(const machine_t &machine, std::size_t max_len = 4UL << 20) const {
 		if (size <= SSO)
-			return std::string(data, size);
+			return std::string_view(data, size);
 		else if (size > max_len)
-			throw std::runtime_error("Guest std::string too large (size > 16MB)");
-		// Copy the string from guest memory
-		const auto view = machine.memory.rvview(ptr, size);
-		return std::string(view.data(), view.size());
+			throw std::runtime_error("Guest std::string too large (size > 4MB)");
+		// View the string from guest memory
+		return machine.memory.rvview(ptr, size);
 	}
-	String to_godot_string(const machine_t &machine, std::size_t max_len = 16UL << 20) const {
-		return String(to_string(machine, max_len).c_str());
+	String to_godot_string(const machine_t &machine, std::size_t max_len = 4UL << 20) const {
+		if (size <= SSO)
+			return String::utf8(data, size);
+		else if (size > max_len)
+			throw std::runtime_error("Guest std::string too large (size > 4MB)");
+		// View the string from guest memory, but include the null terminator
+		auto view = machine.memory.rvview(ptr, size);
+		return String::utf8(view.data(), view.size());
 	}
-	size_t copy_unterminated_to(const machine_t &machine, void *dst, size_t maxlen) {
-		if (size <= SSO && size <= maxlen) {
+	size_t copy_unterminated_to(const machine_t &machine, void *dst, std::size_t max_len) const {
+		if (size <= SSO && size <= max_len) {
 			std::memcpy(dst, data, size);
 			return size;
-		} else if (size >= maxlen) {
+		} else if (size >= max_len) {
 			// Copy the string from guest memory
 			machine.copy_from_guest(dst, ptr, size);
 			return size;
 		}
-
 		return 0; // Failed to copy
+	}
+	PackedByteArray to_packed_byte_array(const machine_t &machine, std::size_t max_len = 4UL << 20) const {
+		PackedByteArray arr;
+		arr.resize(size);
+		const size_t res = copy_unterminated_to(machine, arr.ptrw(), max_len);
+		if (res != size) {
+			ERR_PRINT("GuestVariant::toVariant(): PackedByteArray copy failed");
+			return Variant();
+		}
+		return arr;
 	}
 
 	void set_string(machine_t &machine, gaddr_t self, const char *str, std::size_t len) {
