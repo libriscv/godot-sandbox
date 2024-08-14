@@ -26,6 +26,8 @@ set(SOURCES
     src/sandbox_functions.cpp
 	src/sandbox_project_settings.cpp
 	src/syscalls.cpp
+
+	src/tests/assault.cpp
 )
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")

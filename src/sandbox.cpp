@@ -38,6 +38,8 @@ void Sandbox::_bind_methods() {
 		ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "vmcall", &Sandbox::vmcall, mi, DEFVAL(std::vector<Variant>{}));
 	}
 	ClassDB::bind_method(D_METHOD("vmcallable"), &Sandbox::vmcallable);
+	// Internal testing.
+	ClassDB::bind_method(D_METHOD("assault", "test", "iterations"), &Sandbox::assault);
 }
 
 Sandbox::Sandbox() {
