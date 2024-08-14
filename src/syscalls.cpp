@@ -33,8 +33,8 @@ APICALL(api_vcall) {
 
 	auto &emu = riscv::emu(machine);
 
-	std::array<Variant, 64> vargs;
-	std::array<const Variant *, 64> argptrs;
+	std::array<Variant, 16> vargs;
+	std::array<const Variant *, 16> argptrs;
 	if (args_size > vargs.size()) {
 		emu.print("Too many arguments.");
 		return;
@@ -68,6 +68,31 @@ APICALL(api_veval) {
 
 	machine.set_result(valid);
 	retp->set(emu, ret);
+}
+
+APICALL(api_obj_callp) {
+	auto [addr, method, vret, g_args_ptr, args_size] = machine.sysargs<uint64_t, std::string_view, GuestVariant *, gaddr_t, unsigned>();
+
+	auto &emu = riscv::emu(machine);
+	auto *obj = reinterpret_cast<godot::Object *>(uintptr_t(addr));
+	if (!emu.is_scoped_object(obj)) {
+		ERR_PRINT("Object is not scoped");
+		throw std::runtime_error("Object is not scoped");
+	}
+	if (args_size > 16) {
+		ERR_PRINT("Too many arguments.");
+		throw std::runtime_error("Too many arguments.");
+	}
+
+	Variant *args = emu.machine().memory.memarray<Variant>(g_args_ptr, args_size);
+	Array vargs;
+	vargs.resize(args_size);
+	for (unsigned i = 0; i < args_size; i++) {
+		vargs[i] = &args[i];
+	}
+
+	Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
+	vret->set(emu, ret);
 }
 
 APICALL(api_get_node) {
@@ -230,6 +255,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_PRINT, api_print },
 			{ ECALL_VCALL, api_vcall },
 			{ ECALL_VEVAL, api_veval },
+			{ ECALL_OBJ_CALLP, api_obj_callp },
 			{ ECALL_GET_NODE, api_get_node },
 			{ ECALL_NODE, api_node },
 			{ ECALL_NODE2D, api_node2d },

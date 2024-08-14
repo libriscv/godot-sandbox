@@ -33,8 +33,21 @@ struct Node2D {
 
 	Node2D get_parent() const;
 
+	// Call a method on the node.
+	// @param method The method to call.
+	// @param args The arguments to pass to the method.
+	// @return The return value of the method.
+	Variant callv(const std::string &method, const Variant *argv, unsigned argc);
+
+	template <typename... Args>
+	Variant call(const std::string &method, Args... args) {
+		Variant argv[] = {args...};
+		return callv(method, argv, sizeof...(Args));
+	}
+
 	// Get the Node2D object identifier.
 	uint64_t address() const { return m_address; }
+
 
 private:
 	// Node2D object identifier.

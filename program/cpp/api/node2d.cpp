@@ -6,6 +6,7 @@
 // void sys_node2d(Node2D_Op, const char *name, size_t name_size, Variant *v)
 MAKE_SYSCALL(ECALL_GET_NODE, uint64_t, sys_get_node, const char *, size_t);
 MAKE_SYSCALL(ECALL_NODE, void, sys_node, Node_Op, uint64_t, Variant *);
+MAKE_SYSCALL(ECALL_OBJ_CALLP, void, sys_obj_callp, uint64_t, const char *, size_t, Variant *, const Variant *, unsigned);
 MAKE_SYSCALL(ECALL_NODE2D, void, sys_node2d, Node2D_Op, uint64_t, Variant *);
 
 static inline void node2d(Node2D_Op op, uint64_t address, const Variant &value) {
@@ -88,4 +89,10 @@ Node2D Node2D::get_parent() const {
 	Variant var;
 	sys_node(Node_Op::GET_PARENT, address(), &var);
 	return var.as_node2d();
+}
+
+Variant Node2D::callv(const std::string &method, const Variant *argv, unsigned argc) {
+	Variant var;
+	sys_obj_callp(address(), method.c_str(), method.size(), &var, argv, argc);
+	return var;
 }
