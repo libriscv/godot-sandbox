@@ -23,3 +23,10 @@ inline void print(Args &&...vars) {
 inline void halt() {
 	fast_exit();
 }
+
+#include <unordered_map>
+#define PER_OBJECT(State) \
+	static State &Get ## State(Node2D &node) { \
+		static std::unordered_map<uint64_t, State> state; \
+		return state[node.address()]; \
+	}

@@ -24,7 +24,7 @@ struct Node2D {
 
 	/// @brief Add a child to the node.
 	/// @param child The child node to add.
-	/// @param deferred If true, the child will be added later (but before next frame).
+	/// @param deferred If true, the child will be added next frame.
 	void add_child(const Node2D &child, bool deferred = false);
 
 	std::string get_name() const;
@@ -35,14 +35,21 @@ struct Node2D {
 
 	// Call a method on the node.
 	// @param method The method to call.
+	// @param deferred If true, the method will be called next frame.
 	// @param args The arguments to pass to the method.
 	// @return The return value of the method.
-	Variant callv(const std::string &method, const Variant *argv, unsigned argc);
+	Variant callv(const std::string &method, bool deferred, const Variant *argv, unsigned argc);
 
 	template <typename... Args>
 	Variant call(const std::string &method, Args... args) {
 		Variant argv[] = {args...};
-		return callv(method, argv, sizeof...(Args));
+		return callv(method, false, argv, sizeof...(Args));
+	}
+
+	template <typename... Args>
+	Variant call_deferred(const std::string &method, Args... args) {
+		Variant argv[] = {args...};
+		return callv(method, true, argv, sizeof...(Args));
 	}
 
 	// Get the Node2D object identifier.

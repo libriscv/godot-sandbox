@@ -71,7 +71,7 @@ APICALL(api_veval) {
 }
 
 APICALL(api_obj_callp) {
-	auto [addr, method, vret, g_args_ptr, args_size] = machine.sysargs<uint64_t, std::string_view, GuestVariant *, gaddr_t, unsigned>();
+	auto [addr, method, deferred, vret, args_addr, args_size] = machine.sysargs<uint64_t, std::string_view, bool, GuestVariant *, gaddr_t, unsigned>();
 
 	auto &emu = riscv::emu(machine);
 	auto *obj = reinterpret_cast<godot::Object *>(uintptr_t(addr));
@@ -83,16 +83,41 @@ APICALL(api_obj_callp) {
 		ERR_PRINT("Too many arguments.");
 		throw std::runtime_error("Too many arguments.");
 	}
+	const GuestVariant *g_args = emu.machine().memory.memarray<GuestVariant>(args_addr, args_size);
 
-	Variant *args = emu.machine().memory.memarray<Variant>(g_args_ptr, args_size);
-	Array vargs;
-	vargs.resize(args_size);
-	for (unsigned i = 0; i < args_size; i++) {
-		vargs[i] = &args[i];
+	if (!deferred) {
+		Array vargs;
+		vargs.resize(args_size);
+		for (unsigned i = 0; i < args_size; i++) {
+			vargs[i] = g_args[i].toVariant(emu);
+		}
+		Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
+		vret->set(emu, ret);
+	} else {
+		// Call deferred unfortunately takes a parameter pack, so we have to manually
+		// check the number of arguments, and call the correct function.
+		if (args_size == 0) {
+			obj->call_deferred(String::utf8(method.data(), method.size()));
+		} else if (args_size == 1) {
+			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu));
+		} else if (args_size == 2) {
+			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu));
+		} else if (args_size == 3) {
+			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu));
+		} else if (args_size == 4) {
+			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu));
+		} else if (args_size == 5) {
+			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu));
+		} else if (args_size == 6) {
+			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu));
+		} else if (args_size == 7) {
+			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu), g_args[6].toVariant(emu));
+		} else if (args_size == 8) {
+			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu), g_args[6].toVariant(emu), g_args[7].toVariant(emu));
+		} else if (args_size == 9) {
+			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu), g_args[6].toVariant(emu), g_args[7].toVariant(emu), g_args[8].toVariant(emu));
+		}
 	}
-
-	Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
-	vret->set(emu, ret);
 }
 
 APICALL(api_get_node) {
