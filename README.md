@@ -11,7 +11,7 @@
 
 <p align = "center">
     <strong>
-        <a href="https://libriscv.no">Website</a> | <a href="https://github.com/libriscv/godot-sandbox/blob/main/CHANGELOG.md">Changelog</a> | <a href="https://discord.gg/n4GcXr66X5">Discord</a>
+        <a href="https://libriscv.no">Website</a> | <a href="https://github.com/libriscv/godot-sandbox/blob/main/CHANGELOG.md">Changelog</a> | <a href="https://discord.gg/n4GcXr66X5">Discord</a> | <a href="https://gonzerelli.itch.io/demo">Web Demo</a>
     </strong>
 </p>
 
@@ -70,7 +70,6 @@ The API towards the sandbox uses Variants, and the API inside the sandbox uses (
 
 int main() {
 	print("Hello, ", 55, " world!\n");
-
 	halt(); // Prevent stdout,stderr closing etc.
 }
 
@@ -90,8 +89,33 @@ extern "C" Variant trampoline_function(Variant callback, Variant text) {
 }
 ```
 
-Above: An example of sandboxed C++ functions.
+Above: An example of sandboxed C++ functions and ways to call them.
 
+------
+
+Alternatively, create a .cpp file in a folder in your project, and save it to produce an .elf file that can be used as a script directly on *any node*. For example, when the player touches a coin, we can attach the signal `body_entered` to our C++ function `_on_body_entered`:
+
+```C++
+static void add_coin(const Node2D& player) {
+	static int coins = 0;
+	coins ++;
+	auto coinlabel = player.get_parent().get("Texts/CoinLabel");
+	coinlabel("set_text", "You have collected "
+		+ std::to_string(coins) + ((coins == 1) ? " coin" : " coins"));
+}
+
+extern "C" Variant _on_body_entered(Variant arg) {
+	Node2D player_node = arg.as_node2d();
+	if (player_node.get_name() != "Player")
+		return {};
+
+	Node2D(".").queue_free(); // Remove the current coin!
+	add_coin(player_node);
+	return {};
+}
+```
+
+Above: The entire script of a simple Coin pickup. And a counter that updates a label in the current scene of the player. This script can be attached to the Coin just like GDScript.
 
 ### What can I do?
 
@@ -116,7 +140,7 @@ More languages will be supported out-of-the-box over time. *Currently C++ and Ru
 
 ## Tips
 
-- Not all Variant types are implemented inside the Sandbox, however they may still be freely passed into and out of the sandbox. This means you can still use all the things you usually do, however at some point any unsupported Variant needs to be passed back out again, so that you can use it.
+- Not all Variant types are implemented inside the Sandbox.
 - Complex variants may only be passed out of the sandbox if they have been seen (bit-exact) on the way in. This means, the only way to pass a Dictionary or Callable out of the sandbox, is to first pass it in. Passing a complex Variant into the sandbox is implicitly seen as allow-listing that specific Variant. Once the VM function call ends, all temporary allowances are cleared (for security reasons) and forgotten.
 - More Variant types will be supported inside the sandbox over time. For security reasons, each type must receive proper scrutiny and will receive at most a conservative implementation.
 - The performance of complex Variant calls and many common operations in the sandbox will have native performance (on a case-by-case basis). Do not be afraid of copying data or using temporary strings, as memory-, heap- and string- operations have native performance on all supported languages.
