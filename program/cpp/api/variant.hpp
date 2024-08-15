@@ -17,7 +17,7 @@ struct is_string
 template<class T>
 struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
 
-struct Node2D;
+struct Node; struct Node2D; struct Node3D;
 #include "vector.hpp"
 
 struct Variant
@@ -184,7 +184,9 @@ struct Variant
 	operator std::string_view() const; // View for STRING and PACKED_BYTE_ARRAY
 	operator std::span<uint8_t>() const; // Modifiable span for PACKED_BYTE_ARRAY
 
+	Node as_node() const;
 	Node2D as_node2d() const;
+	Node3D as_node3d() const;
 
 	const Vector2& v2() const;
 	Vector2& v2();

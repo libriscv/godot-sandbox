@@ -1,0 +1,47 @@
+#include "node3d.hpp"
+
+#include "syscalls.h"
+
+// API call to get/set Node3D properties.
+MAKE_SYSCALL(ECALL_NODE3D, void, sys_node3d, Node3D_Op, uint64_t, Variant *);
+EXTERN_SYSCALL(ECALL_NODE, void, sys_node, Node_Op, uint64_t, Variant *);
+
+static inline void node3d(Node3D_Op op, uint64_t address, const Variant &value) {
+	sys_node3d(op, address, const_cast<Variant *>(&value));
+}
+
+Vector3 Node3D::get_position() const {
+	Variant var;
+	node3d(Node3D_Op::GET_POSITION, address(), var);
+	return var.v3();
+}
+
+void Node3D::set_position(const Variant &value) {
+	node3d(Node3D_Op::SET_POSITION, address(), value);
+}
+
+Vector3 Node3D::get_rotation() const {
+	Variant var;
+	node3d(Node3D_Op::GET_ROTATION, address(), var);
+	return var.v3();
+}
+
+void Node3D::set_rotation(const Variant &value) {
+	node3d(Node3D_Op::SET_ROTATION, address(), value);
+}
+
+Vector3 Node3D::get_scale() const {
+	Variant var;
+	node3d(Node3D_Op::GET_SCALE, address(), var);
+	return var.v3();
+}
+
+void Node3D::set_scale(const Variant &value) {
+	node3d(Node3D_Op::SET_SCALE, address(), value);
+}
+
+Node3D Node3D::duplicate() const {
+	Variant result;
+	sys_node(Node_Op::DUPLICATE, address(), &result);
+	return result.as_node3d();
+}

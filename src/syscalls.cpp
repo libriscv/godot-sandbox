@@ -2,6 +2,7 @@
 #include "sandbox.h"
 
 #include <godot_cpp/classes/node2d.hpp>
+#include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/window.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -259,6 +260,53 @@ APICALL(api_node2d) {
 	}
 }
 
+APICALL(api_node3d) {
+	// Node3D operation, Node3D address, and the variant to get/set the value.
+	auto [op, addr, gvar] = machine.sysargs<int, uint64_t, gaddr_t>();
+	machine.penalize(100'000); // Costly Node3D operations.
+
+	auto &emu = riscv::emu(machine);
+	// Get the Node3D object by its name from the current scene.
+	godot::Node *node = (godot::Node *)uintptr_t(addr);
+	if (!emu.is_scoped_object(node)) {
+		ERR_PRINT("Node3D object is not scoped");
+		throw std::runtime_error("Node3D object is not scoped");
+	}
+
+	// Cast the Node3D object to a Node3D object.
+	auto *node3d = godot::Object::cast_to<godot::Node3D>(node);
+	if (node3d == nullptr) {
+		ERR_PRINT("Node3D object is not a Node3D");
+		throw std::runtime_error("Node3D object is not a Node3D");
+	}
+
+	// View the variant from the guest memory.
+	auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+	switch (Node3D_Op(op)) {
+		case Node3D_Op::GET_POSITION:
+			var->set(emu, node3d->get_position());
+			break;
+		case Node3D_Op::SET_POSITION:
+			node3d->set_position(var->toVariant(emu));
+			break;
+		case Node3D_Op::GET_ROTATION:
+			var->set(emu, node3d->get_rotation());
+			break;
+		case Node3D_Op::SET_ROTATION:
+			node3d->set_rotation(var->toVariant(emu));
+			break;
+		case Node3D_Op::GET_SCALE:
+			var->set(emu, node3d->get_scale());
+			break;
+		case Node3D_Op::SET_SCALE:
+			node3d->set_scale(var->toVariant(emu));
+			break;
+		default:
+			ERR_PRINT("Invalid Node3D operation");
+			throw std::runtime_error("Invalid Node3D operation");
+	}
+}
+
 } //namespace riscv
 
 void Sandbox::initialize_syscalls() {
@@ -284,5 +332,6 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_GET_NODE, api_get_node },
 			{ ECALL_NODE, api_node },
 			{ ECALL_NODE2D, api_node2d },
+			{ ECALL_NODE3D, api_node3d },
 	});
 }

@@ -9,8 +9,9 @@
 #define ECALL_GET_NODE (GAME_API_BASE + 4) // Get a node by path
 #define ECALL_NODE (GAME_API_BASE + 5) // All the Node functions
 #define ECALL_NODE2D (GAME_API_BASE + 6) // All the Node2D functions
+#define ECALL_NODE3D (GAME_API_BASE + 7) // All the Node3D functions
 
-#define ECALL_LAST (GAME_API_BASE + 7)
+#define ECALL_LAST (GAME_API_BASE + 8)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
@@ -48,4 +49,19 @@ enum class Node2D_Op {
 	SET_SCALE,
 	GET_SKEW,
 	SET_SKEW,
+	GET_TRANSFORM,
+	SET_TRANSFORM,
+};
+
+enum class Node3D_Op {
+	GET_POSITION = 0,
+	SET_POSITION,
+	GET_ROTATION,
+	SET_ROTATION,
+	GET_SCALE,
+	SET_SCALE,
+	GET_TRANSFORM,
+	SET_TRANSFORM,
+	GET_QUATERNION,
+	SET_QUATERNION,
 };
