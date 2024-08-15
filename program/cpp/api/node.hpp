@@ -5,6 +5,8 @@ struct Node {
 	Node(uint64_t addr) : m_address{addr} {}
 	Node(const std::string& name);
 
+	Node get(const std::string &name) const;
+
 	std::string get_name() const;
 
 	std::string get_path() const;
@@ -42,6 +44,9 @@ struct Node {
 
 	// Get the object identifier.
 	uint64_t address() const { return m_address; }
+
+	// Check if the node is valid.
+	bool is_valid() const { return m_address != 0; }
 
 protected:
 	// Node object identifier.

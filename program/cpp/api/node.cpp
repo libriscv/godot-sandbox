@@ -2,12 +2,16 @@
 
 #include "syscalls.h"
 
-MAKE_SYSCALL(ECALL_GET_NODE, uint64_t, sys_get_node, const char *, size_t);
+MAKE_SYSCALL(ECALL_GET_NODE, uint64_t, sys_get_node, uint64_t, const char *, size_t);
 MAKE_SYSCALL(ECALL_NODE, void, sys_node, Node_Op, uint64_t, Variant *);
 MAKE_SYSCALL(ECALL_OBJ_CALLP, void, sys_obj_callp, uint64_t, const char *, size_t, bool, Variant *, const Variant *, unsigned);
 
 Node::Node(const std::string &name) {
-	this->m_address = sys_get_node(name.c_str(), name.size());
+	this->m_address = sys_get_node(0, name.c_str(), name.size());
+}
+
+Node Node::get(const std::string &name) const {
+	return Node(sys_get_node(address(), name.c_str(), name.size()));
 }
 
 std::string Node::get_name() const {
