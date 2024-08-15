@@ -109,11 +109,6 @@ Variant CPPScript::_get_rpc_config() const {
 CPPScript::CPPScript() {
 	source_code = R"C0D3(#include "api.hpp"
 
-int main() {
-    print("Hello world!");
-    halt(); // Prevent closing pipes, calling global destructors etc.
-}
-
 extern "C" Variant public_function(Variant arg) {
     print("Arguments: ", arg);
     return "Hello from the other side";
