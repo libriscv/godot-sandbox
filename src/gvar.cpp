@@ -25,6 +25,10 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 			auto *s = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
 			return godot::NodePath((*s)[0].to_godot_string(emu.machine()));
 		}
+		case Variant::STRING_NAME: {
+			auto *s = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
+			return godot::StringName((*s)[0].to_godot_string(emu.machine()));
+		}
 
 		case Variant::VECTOR2:
 			return Variant{ godot::Vector2(v.v2f[0], v.v2f[1]) };
@@ -99,6 +103,7 @@ void GuestVariant::set(Sandbox &emu, const Variant &value) {
 		case Variant::FLOAT:
 			this->v.f = value;
 			break;
+		case Variant::STRING_NAME:
 		case Variant::STRING: {
 			auto s = value.operator String();
 			auto str = s.utf8();
@@ -226,6 +231,7 @@ void GuestVariant::free(Sandbox &emu) {
 	switch (type) {
 		case Variant::NODE_PATH:
 		case Variant::PACKED_BYTE_ARRAY:
+		case Variant::STRING_NAME:
 		case Variant::STRING: {
 			auto *gstr = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
 			(*gstr)[0].free(emu.machine());

@@ -167,6 +167,7 @@ struct Variant
 		else
 			static_assert(!std::is_same_v<T, T>, "Unsupported type");
 	}
+	static Variant string_name(const std::string &name);
 
 	operator bool() const;
 	operator int64_t() const;
@@ -260,6 +261,13 @@ private:
 	} v;
 };
 
+inline Variant Variant::string_name(const std::string &name) {
+	Variant v;
+	v.m_type = STRING_NAME;
+	v.v.s = new std::string(name);
+	return v;
+}
+
 inline Variant::operator bool() const
 {
 	if (m_type == BOOL)
@@ -339,20 +347,20 @@ inline Variant::operator float() const
 
 inline Variant::operator const std::string&() const
 {
-	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
+	if (m_type == STRING || m_type == STRING_NAME || m_type == PACKED_BYTE_ARRAY)
 		return *v.s;
 	throw std::bad_cast();
 }
 inline Variant::operator std::string&()
 {
-	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
+	if (m_type == STRING || m_type == STRING_NAME || m_type == PACKED_BYTE_ARRAY)
 		return *v.s;
 	throw std::bad_cast();
 }
 
 inline Variant::operator std::string_view() const
 {
-	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY)
+	if (m_type == STRING || m_type == STRING_NAME || m_type == PACKED_BYTE_ARRAY)
 		return std::string_view(*v.s);
 	throw std::bad_cast();
 }
@@ -493,7 +501,7 @@ inline std::vector<double>& Variant::f64array() const
 inline Variant::Variant(const Variant &other)
 {
 	m_type = other.m_type;
-	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY || m_type == NODE_PATH)
+	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY || m_type == NODE_PATH || m_type == STRING_NAME)
 		v.s = new std::string(*other.v.s);
 	else if (m_type == PACKED_FLOAT32_ARRAY)
 		v.f32array = new std::vector<float>(*other.v.f32array);
@@ -512,7 +520,7 @@ inline Variant::Variant(Variant &&other)
 
 inline Variant &Variant::operator=(const Variant &other) {
 	m_type = other.m_type;
-	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY || m_type == NODE_PATH)
+	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY || m_type == NODE_PATH || m_type == STRING_NAME)
 		v.s = new std::string(*other.v.s);
 	else if (m_type == PACKED_FLOAT32_ARRAY)
 		v.f32array = new std::vector<float>(*other.v.f32array);
