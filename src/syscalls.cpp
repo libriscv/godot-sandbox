@@ -34,26 +34,44 @@ APICALL(api_vcall) {
 
 	auto &emu = riscv::emu(machine);
 
-	std::array<Variant, 16> vargs;
-	std::array<const Variant *, 16> argptrs;
-	if (args_size > vargs.size()) {
+	if (args_size > 8) {
 		emu.print("Too many arguments.");
 		return;
 	}
 
 	const GuestVariant *args = emu.machine().memory.memarray<GuestVariant>(args_ptr, args_size);
 
-	for (size_t i = 0; i < args_size; i++) {
-		vargs[i] = args[i].toVariant(emu);
-		argptrs[i] = &vargs[i];
-	}
-
 	GDExtensionCallError error;
 
-	auto *vcall = vp->toVariantPtr(emu);
-	Variant ret;
-	vcall->callp("call", argptrs.data(), args_size, ret, error);
-	vret->set(emu, ret);
+	if (vp->type == Variant::CALLABLE) {
+		std::array<Variant, 8> vargs;
+		std::array<const Variant *, 8> argptrs;
+		for (size_t i = 0; i < args_size; i++) {
+			vargs[i] = args[i].toVariant(emu);
+			argptrs[i] = &vargs[i];
+		}
+
+		auto *vcall = vp->toVariantPtr(emu);
+		Variant ret;
+		vcall->callp(String::utf8(method.data(), method.size()), argptrs.data(), args_size, ret, error);
+		vret->set(emu, ret);
+	} else if (vp->type == Variant::OBJECT) {
+		auto *obj = reinterpret_cast<godot::Object *>(uintptr_t(vp->v.i));
+		if (!emu.is_scoped_object(obj)) {
+			ERR_PRINT("Object is not scoped");
+			throw std::runtime_error("Object is not scoped");
+		}
+
+		Array vargs;
+		vargs.resize(args_size);
+		for (unsigned i = 0; i < args_size; i++) {
+			vargs[i] = args[i].toVariant(emu);
+		}
+		Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
+		vret->set(emu, ret);
+	} else {
+		ERR_PRINT("Invalid Variant type for Object::call");
+	}
 }
 
 APICALL(api_veval) {
