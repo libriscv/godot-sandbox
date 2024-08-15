@@ -36,64 +36,14 @@ This extension exists to allow Godot creators to implement safe modding support,
 
 ## Usage
 
-Create a new `Sandbox` and assign an ELF script resource to it.
-
-```go
-extends Sandbox
-
-func _ready():
-	# Make a function call into the sandbox
-	vmcall("my_function", Vector4(1, 2, 3, 4));
-
-	# Pass a complex Variant to the sandbox
-	var d = Dictionary();
-	d["test"] = 123;
-	vmcall("my_function", d);
-
-	# Create a callable Variant, and then call it later
-	var callable = vmcallable("function3");
-	callable.call(123, 456.0, "Test");
-
-	# Pass a function to the sandbox as a callable Variant, and let it call it
-	var ff : Callable = vmcallable("function3");
-	# Should return "The function was called!!"
-	var tres = vmcall("trampoline_function", ff, "The function was called!!");
-	print("Function with callable as argument returned: ", tres);
-
-	pass # Replace with function body.
-```
-
-The API towards the sandbox uses Variants, and the API inside the sandbox uses (translated) Variants.
-
-```C++
-#include "api.hpp"
-
-int main() {
-	print("Hello, ", 55, " world!\n");
-	halt(); // Prevent stdout,stderr closing etc.
-}
-
-extern "C" Variant my_function(Variant varg) {
-	print("Hello, ", 124.5, " world!\n");
-	print("Arg: ", varg);
-	return varg;
-}
-
-extern "C" Variant function3(Variant x, Variant y, Variant text) {
-	print("x = ", x, " y = ", y, " text = ", text);
-	return 1234;
-}
-
-extern "C" Variant trampoline_function(Variant callback, Variant text) {
-	return callback.call(1, 2, text);
-}
-```
-
-Above: An example of sandboxed C++ functions and ways to call them.
-
-------
-
-Alternatively, create a .cpp file in a folder in your project, and save it to produce an .elf file that can be used as a script directly on *any node*. For example, when the player touches a coin, we can attach the signal `body_entered` to our C++ function `_on_body_entered`:
+- Create a new `Sandbox` and [assign an ELF script resource to it](https://libriscv.no/docs/godot/sandbox/#create-a-sandbox)
+	- Access to the underlying Sandbox
+	- Control of lifetime
+	- Auto-completion from other GDScripts
+- [Directly assign an ELF script resource to a node](https://libriscv.no/docs/godot/sandbox/#using-programs-directly-as-scripts)
+	- Shared sandbox among all instances with that script
+	- Maximum scalability
+	- Call functions and attach signals like GDScript
 
 ```C++
 static void add_coin(const Node2D& player) {
@@ -115,7 +65,7 @@ extern "C" Variant _on_body_entered(Variant arg) {
 }
 ```
 
-Above: The entire script of a simple Coin pickup. And a counter that updates a label in the current scene of the player. This script can be attached to the Coin just like GDScript.
+Script of a simple Coin pickup, with a counter that updates a label in the tree of the player. This script can be attached to the Coin just like GDScript.
 
 ### What can I do?
 
@@ -174,30 +124,3 @@ Linting:
 ```sh
 ./scripts/clang-tidy.sh
 ```
-
-### How to compile C++ code manually
-
-This project implements editor support in Godot, meaning you can write C++ directly in the Godot editor, save it, and then run the game to see the change immediately. This is because on save we compile the C++ code automatically using Docker.
-
-However, if you need to (or want to) compile C++ code locally because you want to use eg. VSCode, you can compile like so:
-
-```sh
-cd my_godot_project
-docker run --name godot-cpp-compiler -dv .:/usr/src ghcr.io/libriscv/cpp_compiler
-```
-
-With this the compiler is now available for use as `godot-cpp-compiler`. Compile your C++ code relative to the Godot project:
-
-```sh
-docker exec -t godot-cpp-compiler bash /usr/api/build.sh -o path/test.elf path/*.cpp
-```
-
-This will build a `test.elf` binary that can be used by the Sandbox. If you need the sandbox API, you can make the container write it out for you using --api:
-
-```sh
-docker exec -t godot-cpp-compiler bash /usr/api/build.sh --api
-```
-
-With these commands, you can automate the compiling process for most editors.
-
-Note that if you are on an ARM64 platform (or other platforms), please build the Docker container for your architecture. If the container runs emulated, it will take 7 seconds to compile something instead of 0.8 seconds.
