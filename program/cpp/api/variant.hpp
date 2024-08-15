@@ -168,6 +168,9 @@ struct Variant
 	template <typename... Args>
 	Variant call(Args... args);
 
+	template <typename... Args>
+	Variant operator ()(const std::string &method, Args... args);
+
 	static void evaluate(const Operator &op, const Variant &a, const Variant &b, Variant &r_ret, bool &r_valid);
 
 	Variant &operator=(const Variant &other);
@@ -577,4 +580,9 @@ inline Variant Variant::call(Args... args) {
 	int error;
 	callp("call", vargs.data(), vargs.size(), result, error);
 	return result;
+}
+
+template <typename... Args>
+inline Variant Variant::operator ()(const std::string &method, Args... args) {
+	return method_call(method, args...);
 }
