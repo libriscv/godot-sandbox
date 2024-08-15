@@ -32,16 +32,13 @@ struct Node {
 	Variant callv(const std::string &method, bool deferred, const Variant *argv, unsigned argc);
 
 	template <typename... Args>
-	Variant call(const std::string &method, Args... args) {
-		Variant argv[] = {args...};
-		return callv(method, false, argv, sizeof...(Args));
-	}
+	Variant call(const std::string &method, Args... args);
 
 	template <typename... Args>
-	Variant call_deferred(const std::string &method, Args... args) {
-		Variant argv[] = {args...};
-		return callv(method, true, argv, sizeof...(Args));
-	}
+	Variant operator () (const std::string &method, Args... args);
+
+	template <typename... Args>
+	Variant call_deferred(const std::string &method, Args... args);
 
 	// Get the object identifier.
 	uint64_t address() const { return m_address; }
@@ -58,4 +55,21 @@ inline Node Variant::as_node() const {
 		return Node{*v.s};
 
 	throw std::bad_cast();
+}
+
+template <typename... Args>
+inline Variant Node::call(const std::string &method, Args... args) {
+	Variant argv[] = {args...};
+	return callv(method, false, argv, sizeof...(Args));
+}
+
+template <typename... Args>
+inline Variant Node::operator () (const std::string &method, Args... args) {
+	return call(method, args...);
+}
+
+template <typename... Args>
+inline Variant Node::call_deferred(const std::string &method, Args... args) {
+	Variant argv[] = {args...};
+	return callv(method, true, argv, sizeof...(Args));
 }
