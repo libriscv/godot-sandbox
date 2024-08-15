@@ -112,63 +112,14 @@ struct Variant
 	Variant(Variant &&other);
 	~Variant();
 
-	// Constructor for integers and floats
+	// Constructor for common types
 	template <typename T>
-	Variant(T value)
-	{
-		if constexpr (std::is_same_v<T, bool>) {
-			m_type = BOOL;
-			v.b = value;
-		}
-		else if constexpr (std::is_integral_v<T>) {
-			m_type = INT;
-			v.i = value;
-		}
-		else if constexpr (std::is_floating_point_v<T>) {
-			m_type = FLOAT;
-			v.f = value;
-		}
-		else if constexpr (is_string<T>::value || is_stdstring<T>::value) {
-			m_type = STRING;
-			v.s = new std::string(value);
-		}
-		else if constexpr (std::is_same_v<T, Vector2>) {
-			m_type = VECTOR2;
-			v.v2 = value;
-		}
-		else if constexpr (std::is_same_v<T, Vector2i>) {
-			m_type = VECTOR2I;
-			v.v2i = value;
-		}
-		else if constexpr (std::is_same_v<T, Vector3>) {
-			m_type = VECTOR3;
-			v.v3 = value;
-		}
-		else if constexpr (std::is_same_v<T, Vector3i>) {
-			m_type = VECTOR3I;
-			v.v3i = value;
-		}
-		else if constexpr (std::is_same_v<T, Vector4>) {
-			m_type = VECTOR4;
-			v.v4 = value;
-		}
-		else if constexpr (std::is_same_v<T, Vector4i>) {
-			m_type = VECTOR4I;
-			v.v4i = value;
-		}
-		else if constexpr (std::is_same_v<T, Rect2>) {
-			m_type = RECT2;
-			v.r2 = value;
-		}
-		else if constexpr (std::is_same_v<T, Rect2i>) {
-			m_type = RECT2I;
-			v.r2i = value;
-		}
-		else
-			static_assert(!std::is_same_v<T, T>, "Unsupported type");
-	}
+	Variant(T value);
+
+	// Constructor specifically the STRING_NAME type
 	static Variant string_name(const std::string &name);
 
+	// Conversion operators
 	operator bool() const;
 	operator int64_t() const;
 	operator int32_t() const;
@@ -212,22 +163,10 @@ struct Variant
 	void callp(const std::string &method, const Variant *args, int argcount, Variant &r_ret, int &r_error);
 
 	template <typename... Args>
-	Variant method_call(const std::string &method, Args... args) {
-		std::array<Variant, sizeof...(args)> vargs = { args... };
-		Variant result;
-		int error;
-		callp(method, vargs.data(), vargs.size(), result, error);
-		return result;
-	}
+	Variant method_call(const std::string &method, Args... args);
 
 	template <typename... Args>
-	Variant call(Args... args) {
-		std::array<Variant, sizeof...(args)> vargs = { args... };
-		Variant result;
-		int error;
-		callp("call", vargs.data(), vargs.size(), result, error);
-		return result;
-	}
+	Variant call(Args... args);
 
 	static void evaluate(const Operator &op, const Variant &a, const Variant &b, Variant &r_ret, bool &r_valid);
 
@@ -260,6 +199,61 @@ private:
 		std::vector<double> *f64array;
 	} v;
 };
+
+template <typename T>
+inline Variant::Variant(T value)
+{
+	if constexpr (std::is_same_v<T, bool>) {
+		m_type = BOOL;
+		v.b = value;
+	}
+	else if constexpr (std::is_integral_v<T>) {
+		m_type = INT;
+		v.i = value;
+	}
+	else if constexpr (std::is_floating_point_v<T>) {
+		m_type = FLOAT;
+		v.f = value;
+	}
+	else if constexpr (is_string<T>::value || is_stdstring<T>::value) {
+		m_type = STRING;
+		v.s = new std::string(value);
+	}
+	else if constexpr (std::is_same_v<T, Vector2>) {
+		m_type = VECTOR2;
+		v.v2 = value;
+	}
+	else if constexpr (std::is_same_v<T, Vector2i>) {
+		m_type = VECTOR2I;
+		v.v2i = value;
+	}
+	else if constexpr (std::is_same_v<T, Vector3>) {
+		m_type = VECTOR3;
+		v.v3 = value;
+	}
+	else if constexpr (std::is_same_v<T, Vector3i>) {
+		m_type = VECTOR3I;
+		v.v3i = value;
+	}
+	else if constexpr (std::is_same_v<T, Vector4>) {
+		m_type = VECTOR4;
+		v.v4 = value;
+	}
+	else if constexpr (std::is_same_v<T, Vector4i>) {
+		m_type = VECTOR4I;
+		v.v4i = value;
+	}
+	else if constexpr (std::is_same_v<T, Rect2>) {
+		m_type = RECT2;
+		v.r2 = value;
+	}
+	else if constexpr (std::is_same_v<T, Rect2i>) {
+		m_type = RECT2I;
+		v.r2i = value;
+	}
+	else
+		static_assert(!std::is_same_v<T, T>, "Unsupported type");
+}
 
 inline Variant Variant::string_name(const std::string &name) {
 	Variant v;
@@ -565,4 +559,22 @@ inline bool Variant::operator<(const Variant &other) const {
 	Variant result;
 	evaluate(OP_LESS, *this, other, result, valid);
 	return result.operator bool();
+}
+
+template <typename... Args>
+inline Variant Variant::method_call(const std::string &method, Args... args) {
+	std::array<Variant, sizeof...(args)> vargs = { args... };
+	Variant result;
+	int error;
+	callp(method, vargs.data(), vargs.size(), result, error);
+	return result;
+}
+
+template <typename... Args>
+inline Variant Variant::call(Args... args) {
+	std::array<Variant, sizeof...(args)> vargs = { args... };
+	Variant result;
+	int error;
+	callp("call", vargs.data(), vargs.size(), result, error);
+	return result;
 }

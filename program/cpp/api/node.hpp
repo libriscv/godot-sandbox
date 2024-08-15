@@ -2,15 +2,29 @@
 #include "variant.hpp"
 
 struct Node {
+	/// @brief Construct a Node object from an existing in-scope Node object.
+	/// @param addr The address of the Node object.
 	Node(uint64_t addr) : m_address{addr} {}
-	Node(const std::string& name);
 
-	Node get(const std::string &name) const;
+	/// @brief Construct a Node object from a path.
+	/// @param path The path to the Node object.
+	Node(const std::string& path);
 
+	/// @brief Construct a Node object from a path relative to this node.
+	/// @param path The path to the Node object.
+	/// @return The Node object.
+	Node get(const std::string &path) const;
+
+	/// @brief Get the name of the node.
+	/// @return The name of the node.
 	std::string get_name() const;
 
+	/// @brief Get the path of the node, relative to the root node.
+	/// @return The path of the node.
 	std::string get_path() const;
 
+	/// @brief Get the parent of the node.
+	/// @return The parent node.
 	Node get_parent() const;
 
 	/// @brief Add a child to the node.
@@ -18,12 +32,20 @@ struct Node {
 	/// @param deferred If true, the child will be added next frame.
 	void add_child(const Node &child, bool deferred = false);
 
+	/// @brief Get a list of children of the node.
+	/// @return A list of children nodes.
 	std::vector<Node> get_children() const;
 
+	/// @brief Remove this node from its parent, freeing it.
+	/// @note This is a potentially deferred operation.
 	void queue_free();
 
+	/// @brief  Duplicate the node.
+	/// @return A new Node object with the same properties and children.
 	Node duplicate() const;
 
+	/// @brief Get a list of methods available on the node.
+	/// @return A list of method names.
 	std::vector<std::string> get_method_list() const;
 
 	// Call a method on the node.
