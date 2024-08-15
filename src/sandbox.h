@@ -110,7 +110,7 @@ struct GuestStdString {
 	static constexpr std::size_t SSO = 15;
 
 	gaddr_t ptr;
-	std::size_t size;
+	gaddr_t size;
 	union {
 		char data[SSO + 1];
 		gaddr_t capacity;
