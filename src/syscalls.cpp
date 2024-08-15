@@ -71,6 +71,14 @@ APICALL(api_veval) {
 	retp->set(emu, ret);
 }
 
+APICALL(api_vfree) {
+	auto [vp] = machine.sysargs<GuestVariant *>();
+	auto &emu = riscv::emu(machine);
+
+	// Free the Variant object depending on its type.
+	vp->free(emu);
+}
+
 APICALL(api_obj_callp) {
 	auto [addr, method, deferred, vret, args_addr, args_size] = machine.sysargs<uint64_t, std::string_view, bool, GuestVariant *, gaddr_t, unsigned>();
 
@@ -202,6 +210,39 @@ APICALL(api_node) {
 				var->set(emu, node->get_parent());
 			}
 		} break;
+		case Node_Op::GET_CHILDREN: {
+			// Get a GuestStdVector from guest to store the children.
+			auto *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
+			// Get the children of the node.
+			auto children = node->get_children();
+			// Allocate memory for the children in the guest vector.
+			auto *cptr = vec->alloc<uint64_t>(emu.machine(), children.size());
+			// Copy the children to the guest vector, and add them to the scoped objects.
+			for (int i = 0; i < children.size(); i++) {
+				auto *child = godot::Object::cast_to<godot::Node>(children[i]);
+				if (child) {
+					emu.add_scoped_object(child);
+					cptr[i] = uint64_t(uintptr_t(child));
+				} else {
+					cptr[i] = 0;
+				}
+			}
+			// No return value is needed.
+		} break;
+		case Node_Op::GET_METHOD_LIST: {
+			// Get a GuestStdVector from guest to store the method list.
+			auto *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
+			// Get the method list of the node.
+			auto methods = node->get_method_list();
+			// Allocate GuestStdStrings for the methods in the guest vector.
+			auto *sptr = vec->alloc<GuestStdString>(emu.machine(), methods.size());
+			// Copy the methods to the guest vector.
+			for (size_t i = 0; i < methods.size(); i++) {
+				Dictionary dict = methods[i].operator godot::Dictionary();
+				auto name = String(dict["name"]).utf8();
+				sptr[i].set_string(emu.machine(), sptr[i].ptr, name.ptr(), name.length());
+			}
+		} break;
 		default:
 			throw std::runtime_error("Invalid Node operation");
 	}
@@ -328,6 +369,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_PRINT, api_print },
 			{ ECALL_VCALL, api_vcall },
 			{ ECALL_VEVAL, api_veval },
+			{ ECALL_VFREE, api_vfree },
 			{ ECALL_OBJ_CALLP, api_obj_callp },
 			{ ECALL_GET_NODE, api_get_node },
 			{ ECALL_NODE, api_node },

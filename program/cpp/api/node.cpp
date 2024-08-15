@@ -10,22 +10,6 @@ Node::Node(const std::string &name) {
 	this->m_address = sys_get_node(name.c_str(), name.size());
 }
 
-void Node::queue_free() {
-	sys_node(Node_Op::QUEUE_FREE, address(), nullptr);
-	//this->m_address = 0;
-}
-
-Node Node::duplicate() const {
-	Variant result;
-	sys_node(Node_Op::DUPLICATE, this->address(), &result);
-	return result.as_node();
-}
-
-void Node::add_child(const Node &child, bool deferred) {
-	Variant v(int64_t(child.address()));
-	sys_node(deferred ? Node_Op::ADD_CHILD_DEFERRED : Node_Op::ADD_CHILD, this->address(), &v);
-}
-
 std::string Node::get_name() const {
 	Variant var;
 	sys_node(Node_Op::GET_NAME, address(), &var);
@@ -42,6 +26,34 @@ Node Node::get_parent() const {
 	Variant var;
 	sys_node(Node_Op::GET_PARENT, address(), &var);
 	return var.as_node();
+}
+
+void Node::queue_free() {
+	sys_node(Node_Op::QUEUE_FREE, address(), nullptr);
+	//this->m_address = 0;
+}
+
+Node Node::duplicate() const {
+	Variant result;
+	sys_node(Node_Op::DUPLICATE, this->address(), &result);
+	return result.as_node();
+}
+
+void Node::add_child(const Node &child, bool deferred) {
+	Variant v(int64_t(child.address()));
+	sys_node(deferred ? Node_Op::ADD_CHILD_DEFERRED : Node_Op::ADD_CHILD, this->address(), &v);
+}
+
+std::vector<Node> Node::get_children() const {
+	std::vector<Node> children;
+	sys_node(Node_Op::GET_CHILDREN, address(), (Variant *)&children);
+	return children;
+}
+
+std::vector<std::string> Node::get_method_list() const {
+	std::vector<std::string> methods;
+	sys_node(Node_Op::GET_METHOD_LIST, address(), (Variant *)&methods);
+	return methods;
 }
 
 Variant Node::callv(const std::string &method, bool deferred, const Variant *argv, unsigned argc) {

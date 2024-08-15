@@ -203,10 +203,8 @@ void GuestVariant::set(Sandbox &emu, const Variant &value) {
 			auto arr = value.operator godot::PackedFloat32Array();
 			auto ptr = emu.machine().arena().malloc(sizeof(GuestStdVector));
 			auto *gvec = emu.machine().memory.memarray<GuestStdVector>(ptr, 1);
-			gvec->ptr = emu.machine().arena().malloc(arr.size() * sizeof(float));
-			gvec->size = arr.size();
-			gvec->capacity = arr.size();
-			std::memcpy(emu.machine().memory.memarray<float>(gvec->ptr, arr.size()), arr.ptr(), arr.size() * sizeof(float));
+			auto *fdata = gvec->alloc<float>(emu.machine(), arr.size());
+			std::memcpy(fdata, arr.ptr(), arr.size() * sizeof(float));
 			this->v.vf32 = ptr;
 			break;
 		}
@@ -214,14 +212,33 @@ void GuestVariant::set(Sandbox &emu, const Variant &value) {
 			auto arr = value.operator godot::PackedFloat64Array();
 			auto ptr = emu.machine().arena().malloc(sizeof(GuestStdVector));
 			auto *gvec = emu.machine().memory.memarray<GuestStdVector>(ptr, 1);
-			gvec->ptr = emu.machine().arena().malloc(arr.size() * sizeof(double));
-			gvec->size = arr.size();
-			gvec->capacity = arr.size();
-			std::memcpy(emu.machine().memory.memarray<double>(gvec->ptr, arr.size()), arr.ptr(), arr.size() * sizeof(double));
+			auto *fdata = gvec->alloc<double>(emu.machine(), arr.size());
+			std::memcpy(fdata, arr.ptr(), arr.size() * sizeof(double));
 			this->v.vf64 = ptr;
 			break;
 		}
 		default:
 			ERR_PRINT(("SetVariant(): Unsupported type: " + std::to_string(value.get_type())).c_str());
+	}
+}
+
+void GuestVariant::free(Sandbox &emu) {
+	switch (type) {
+		case Variant::NODE_PATH:
+		case Variant::PACKED_BYTE_ARRAY:
+		case Variant::STRING: {
+			auto *gstr = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
+			(*gstr)[0].free(emu.machine());
+			break;
+		}
+		case Variant::PACKED_FLOAT32_ARRAY:
+		case Variant::PACKED_FLOAT64_ARRAY: {
+			// We can free both f32 and f64 arrays with the same free function
+			auto *gvec = emu.machine().memory.memarray<GuestStdVector, 1>(v.vf32);
+			(*gvec)[0].free(emu.machine());
+			break;
+		}
+		default:
+			break;
 	}
 }

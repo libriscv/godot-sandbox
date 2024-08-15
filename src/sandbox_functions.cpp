@@ -6,10 +6,13 @@ using namespace godot;
 static const std::unordered_set<std::string_view> exclude_functions{
 	"sys_veval",
 	"sys_vcall",
+	"sys_vfree",
 	"sys_print",
+	"sys_obj_callp",
 	"sys_get_node",
 	"sys_node",
 	"sys_node2d",
+	"sys_node3d",
 
 	"main",
 	"_Exit",

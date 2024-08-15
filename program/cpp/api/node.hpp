@@ -16,9 +16,13 @@ struct Node {
 	/// @param deferred If true, the child will be added next frame.
 	void add_child(const Node &child, bool deferred = false);
 
+	std::vector<Node> get_children() const;
+
 	void queue_free();
 
 	Node duplicate() const;
+
+	std::vector<std::string> get_method_list() const;
 
 	// Call a method on the node.
 	// @param method The method to call.

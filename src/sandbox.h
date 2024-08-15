@@ -172,35 +172,56 @@ struct GuestStdString {
 			this->capacity = len;
 		}
 	}
+
+	void free(machine_t &machine) {
+		if (size > SSO)
+			machine.arena().free(ptr);
+	}
 };
 
 struct GuestStdVector {
-	gaddr_t ptr;
-	std::size_t size;
-	std::size_t capacity;
+	gaddr_t ptr_begin;
+	gaddr_t ptr_end;
+	gaddr_t ptr_capacity;
+
+	gaddr_t data() const noexcept { return ptr_begin; }
+	std::size_t size() const noexcept { return ptr_end - ptr_begin; }
+	std::size_t capacity() const noexcept { return ptr_capacity - ptr_begin; }
 
 	template <typename T>
 	std::vector<T> to_vector(const machine_t &machine) const {
-		if (size > capacity)
+		if (size() > capacity())
 			throw std::runtime_error("Guest std::vector has size > capacity");
 		// Copy the vector from guest memory
-		const T *array = machine.memory.memarray<T>(ptr, size);
-		return std::vector<T>(array, size);
+		const T *array = machine.memory.memarray<T>(data(), size());
+		return std::vector<T>(array, size());
 	}
 
 	PackedFloat32Array to_f32array(const machine_t &machine) const {
 		PackedFloat32Array array;
-		array.resize(this->size);
-		const float *fptr = machine.memory.memarray<float>(this->ptr, this->size);
-		std::memcpy(array.ptrw(), fptr, this->size * sizeof(float));
+		array.resize(this->size());
+		const float *fptr = machine.memory.memarray<float>(this->data(), this->size());
+		std::memcpy(array.ptrw(), fptr, this->size() * sizeof(float));
 		return array;
 	}
 	PackedFloat64Array to_f64array(const machine_t &machine) const {
 		PackedFloat64Array array;
-		array.resize(this->size);
-		const double *fptr = machine.memory.memarray<double>(this->ptr, this->size);
-		std::memcpy(array.ptrw(), fptr, this->size * sizeof(double));
+		array.resize(this->size());
+		const double *fptr = machine.memory.memarray<double>(this->data(), this->size());
+		std::memcpy(array.ptrw(), fptr, this->size() * sizeof(double));
 		return array;
+	}
+
+	template <typename T>
+	inline T *alloc(machine_t &machine, std::size_t new_size) {
+		this->ptr_begin = machine.arena().malloc(new_size * sizeof(T));
+		this->ptr_end = this->ptr_begin + new_size * sizeof(T);
+		this->ptr_capacity = this->ptr_end;
+		return machine.memory.memarray<T>(this->data(), this->size());
+	}
+
+	void free(machine_t &machine) {
+		machine.arena().free(this->data());
 	}
 };
 
@@ -228,4 +249,6 @@ struct GuestVariant {
 		std::array<int32_t, 3> v3i;
 		std::array<int32_t, 4> v4i;
 	} v;
+
+	void free(Sandbox &emu);
 };

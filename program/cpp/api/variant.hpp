@@ -509,15 +509,6 @@ inline Variant::Variant(Variant &&other)
 
 	other.m_type = NIL;
 }
-inline Variant::~Variant()
-{
-	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY || m_type == NODE_PATH)
-		delete v.s;
-	else if (m_type == PACKED_FLOAT32_ARRAY)
-		delete v.f32array;
-	else if (m_type == PACKED_FLOAT64_ARRAY)
-		delete v.f64array;
-}
 
 inline Variant &Variant::operator=(const Variant &other) {
 	m_type = other.m_type;
