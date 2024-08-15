@@ -111,19 +111,14 @@ RustScript::RustScript() {
 mod api;
 use api::*;
 
-pub fn main()
-{
+pub fn main() {
 }
 
 #[no_mangle]
-pub fn public_function(v: &Variant) -> Variant
-{
-	gprint(v);
-	gprint(&Variant::new_string("Hello from Rust!"));
+pub fn public_function() -> Variant {
 	gprint(&Variant::new_string("Hello from Rust!"));
 
-	let v = Variant::new_float(3.14);
-	v
+	return Variant::new_float(3.14);
 }
 )C0D3";
 }
