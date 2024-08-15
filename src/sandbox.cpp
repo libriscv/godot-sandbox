@@ -185,8 +185,10 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 	return &v[0];
 }
 Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc, GDExtensionCallError &error) {
-	CurrentState state;
+	auto &state = this->m_states[m_level];
 	state.tree_base = this->get_tree_base();
+	state.scoped_objects.clear();
+	state.scoped_variants.clear();
 	auto *old_state = this->m_current_state;
 	this->m_current_state = &state;
 

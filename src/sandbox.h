@@ -5,7 +5,6 @@
 #include <godot_cpp/core/binder_common.hpp>
 #include <libriscv/machine.hpp>
 #include <libriscv/native_heap.hpp>
-#include <unordered_set>
 
 using namespace godot;
 #define RISCV_ARCH riscv::RISCV64
@@ -70,12 +69,12 @@ public:
 	void set_tree_base(godot::Node *tree_base) { this->m_tree_base = tree_base; }
 	godot::Node *get_tree_base() const { return this->m_tree_base; }
 
-	void add_scoped_variant(uint32_t hash) { state().scoped_variants.insert(hash); }
-	bool is_scoped_variant(uint32_t hash) const noexcept { return state().scoped_variants.count(hash) > 0; }
+	void add_scoped_variant(uint32_t hash) { state().scoped_variants.push_back(hash); }
+	bool is_scoped_variant(uint32_t hash) const noexcept { return state().scoped_variants.end() != std::find(state().scoped_variants.begin(), state().scoped_variants.end(), hash); }
 
-	void add_scoped_object(const void *ptr) { state().scoped_objects.insert(reinterpret_cast<uintptr_t>(ptr)); }
-	void rem_scoped_object(const void *ptr) { state().scoped_objects.erase(reinterpret_cast<uintptr_t>(ptr)); }
-	bool is_scoped_object(const void *ptr) const noexcept { return state().scoped_objects.count(reinterpret_cast<uintptr_t>(ptr)) > 0; }
+	void add_scoped_object(const void *ptr) { state().scoped_objects.push_back(reinterpret_cast<uintptr_t>(ptr)); }
+	void rem_scoped_object(const void *ptr) { state().scoped_objects.erase(std::remove(state().scoped_objects.begin(), state().scoped_objects.end(), reinterpret_cast<uintptr_t>(ptr)), state().scoped_objects.end()); }
+	bool is_scoped_object(const void *ptr) const noexcept { return state().scoped_objects.end() != std::find(state().scoped_objects.begin(), state().scoped_objects.end(), reinterpret_cast<uintptr_t>(ptr)); }
 
 private:
 	void load(PackedByteArray &&vbuf, const std::vector<std::string> *argv = nullptr);
@@ -100,10 +99,11 @@ private:
 
 	struct CurrentState {
 		godot::Node *tree_base;
-		std::unordered_set<uint32_t> scoped_variants;
-		std::unordered_set<uintptr_t> scoped_objects;
+		std::vector<uint32_t> scoped_variants;
+		std::vector<uintptr_t> scoped_objects;
 	};
 	CurrentState *m_current_state = nullptr;
+	std::array<CurrentState, MAX_LEVEL> m_states;
 };
 
 struct GuestStdString {
