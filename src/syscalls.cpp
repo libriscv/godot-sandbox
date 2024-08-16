@@ -6,15 +6,16 @@
 #include <godot_cpp/classes/node2d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
+#include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/window.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/variant.hpp>
 
 namespace riscv {
-static const std::unordered_set<std::string> allowed_objects = {
-	"Engine",
-	"Input",
-	"SceneTree",
+static const std::unordered_map<std::string, std::function<uint64_t()>> allowed_objects = {
+	{"Engine", [] { return uint64_t(uintptr_t(godot::Engine::get_singleton())); }},
+	{"Input", [] { return uint64_t(uintptr_t(godot::Input::get_singleton())); }},
+	{"Time", [] { return uint64_t(uintptr_t(godot::Time::get_singleton())); }},
 };
 
 inline Sandbox &emu(machine_t &m) {
@@ -111,18 +112,16 @@ APICALL(api_get_obj) {
 	auto &emu = riscv::emu(machine);
 	machine.penalize(150'000);
 
-	if (allowed_objects.find(name) == allowed_objects.end()) {
-		ERR_PRINT(("Unknown or inaccessible object: " + name).c_str());
-		machine.set_result(0);
+	// Find allowed object by name and get its address from a lambda.
+	auto it = allowed_objects.find(name);
+	if (it != allowed_objects.end()) {
+		auto obj = it->second();
+		emu.add_scoped_object(reinterpret_cast<godot::Object *>(obj));
+		machine.set_result(obj);
 		return;
 	}
-
-	if (name == "Input") {
-		// Get the Input singleton.
-		auto *input = godot::Input::get_singleton();
-		emu.add_scoped_object(input);
-		machine.set_result(uint64_t(uintptr_t(input)));
-	} else if (name == "SceneTree") {
+	// Special case for SceneTree.
+	if (name == "SceneTree") {
 		// Get the current SceneTree.
 		auto *owner_node = emu.get_tree_base();
 		if (owner_node == nullptr) {
@@ -133,11 +132,6 @@ APICALL(api_get_obj) {
 		auto *tree = owner_node->get_tree();
 		emu.add_scoped_object(tree);
 		machine.set_result(uint64_t(uintptr_t(tree)));
-	} else if (name == "Engine") {
-		// Get the Engine singleton.
-		auto *engine = godot::Engine::get_singleton();
-		emu.add_scoped_object(engine);
-		machine.set_result(uint64_t(uintptr_t(engine)));
 	} else {
 		ERR_PRINT(("Unknown or inaccessible object: " + name).c_str());
 		machine.set_result(0);
