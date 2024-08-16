@@ -49,6 +49,12 @@ protected:
 	uint64_t m_address;
 };
 
+inline Object Variant::as_object() const {
+	if (get_type() == Variant::OBJECT)
+		return Object{uintptr_t(v.i)};
+	throw std::bad_cast();
+}
+
 template <typename... Args>
 inline Variant Object::call(const std::string &method, Args... args) {
 	Variant argv[] = {args...};

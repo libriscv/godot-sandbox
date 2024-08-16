@@ -46,7 +46,7 @@ This extension exists to allow Godot creators to implement safe modding support,
 	- Call functions and attach signals like GDScript
 
 ```C++
-static void add_coin(const Node2D& player) {
+static void add_coin(const Node& player) {
 	static int coins = 0;
 	coins ++;
 	auto coinlabel = player.get_parent().get_node("Texts/CoinLabel");
@@ -55,17 +55,19 @@ static void add_coin(const Node2D& player) {
 }
 
 extern "C" Variant _on_body_entered(Variant arg) {
-	Node2D player_node = arg.as_node2d();
+	Node player_node = arg.as_node();
 	if (player_node.get_name() != "Player")
 		return {};
 
-	Node2D(".").queue_free(); // Remove the current coin!
+	Node(".").queue_free(); // Remove the current coin!
 	add_coin(player_node);
 	return {};
 }
 ```
 
 Script of a simple Coin pickup, with a counter that updates a label in the tree of the player. This script can be attached to the Coin just like GDScript.
+
+You may also have a look at our [demo repository](https://github.com/libriscv/godot-sandbox-demo) for the Godot Sandbox. It's a tiny platformer that uses C++ and Rust.
 
 ### What can I do?
 
