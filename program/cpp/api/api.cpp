@@ -6,9 +6,8 @@
 MAKE_SYSCALL(ECALL_PRINT, void, sys_print, const Variant *, size_t);
 
 /* Default main: Do nothing */
-__attribute__((weak))
-int main() {
-    halt(); // Prevent closing pipes, calling global destructors etc.
+__attribute__((weak)) int main() {
+	halt(); // Prevent closing pipes, calling global destructors etc.
 }
 
 /* fast_exit */

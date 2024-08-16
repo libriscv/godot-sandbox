@@ -106,7 +106,7 @@ APICALL(api_obj_callp) {
 		ERR_PRINT("Object is not scoped");
 		throw std::runtime_error("Object is not scoped");
 	}
-	if (args_size > 16) {
+	if (args_size > 8) {
 		ERR_PRINT("Too many arguments.");
 		throw std::runtime_error("Too many arguments.");
 	}
@@ -141,8 +141,6 @@ APICALL(api_obj_callp) {
 			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu), g_args[6].toVariant(emu));
 		} else if (args_size == 8) {
 			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu), g_args[6].toVariant(emu), g_args[7].toVariant(emu));
-		} else if (args_size == 9) {
-			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu), g_args[6].toVariant(emu), g_args[7].toVariant(emu), g_args[8].toVariant(emu));
 		}
 	}
 }

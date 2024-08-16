@@ -33,7 +33,7 @@ String RustScriptLanguage::_get_extension() const {
 }
 void RustScriptLanguage::_finish() {}
 PackedStringArray RustScriptLanguage::_get_reserved_words() const {
-	const std::string reserved_words[] = {
+	static const PackedStringArray reserved_words{
 		"as",
 		"use",
 		"extern crate",
@@ -93,14 +93,10 @@ PackedStringArray RustScriptLanguage::_get_reserved_words() const {
 		"virtual",
 		"yield"
 	};
-	PackedStringArray reserved_words_packed;
-	for (auto &word : reserved_words) {
-		reserved_words_packed.push_back(String(word.c_str()));
-	}
-	return reserved_words_packed;
+	return reserved_words;
 }
 bool RustScriptLanguage::_is_control_flow_keyword(const String &p_keyword) const {
-	const std::unordered_set<std::string> control_flow_keywords{
+	static const std::unordered_set<std::string> control_flow_keywords{
 		"if", "else", "switch", "case", "default", "while", "loop", "for", "break", "continue", "return", "goto"
 	};
 	return control_flow_keywords.find(p_keyword.utf8().get_data()) != control_flow_keywords.end();

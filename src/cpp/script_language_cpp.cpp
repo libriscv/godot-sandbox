@@ -33,7 +33,7 @@ String CPPScriptLanguage::_get_extension() const {
 }
 void CPPScriptLanguage::_finish() {}
 PackedStringArray CPPScriptLanguage::_get_reserved_words() const {
-	const std::string reserved_words[] = {
+	static const PackedStringArray reserved_words{
 		"alignas", "alignof", "and", "and_eq", "asm", "atomic_cancel", "atomic_commit", "atomic_noexcept",
 		"auto", "bitand", "bitor", "bool", "break", "case", "catch", "char", "char8_t", "char16_t", "char32_t",
 		"class", "compl", "concept", "const", "consteval", "constexpr", "const_cast", "continue", "co_await",
@@ -45,14 +45,10 @@ PackedStringArray CPPScriptLanguage::_get_reserved_words() const {
 		"synchronized", "template", "this", "thread_local", "throw", "true", "try", "typedef", "typeid",
 		"typename", "union", "unsigned", "using", "virtual", "void", "volatile", "wchar_t", "while", "xor", "xor_eq"
 	};
-	PackedStringArray reserved_words_packed;
-	for (auto &word : reserved_words) {
-		reserved_words_packed.push_back(String(word.c_str()));
-	}
-	return reserved_words_packed;
+	return reserved_words;
 }
 bool CPPScriptLanguage::_is_control_flow_keyword(const String &p_keyword) const {
-	const std::unordered_set<std::string> control_flow_keywords{
+	static const std::unordered_set<std::string> control_flow_keywords{
 		"if", "else", "switch", "case", "default", "while", "do", "for", "break", "continue", "return", "goto", "try", "catch", "throw", "co_await", "co_return", "co_yield"
 	};
 	return control_flow_keywords.find(p_keyword.utf8().get_data()) != control_flow_keywords.end();

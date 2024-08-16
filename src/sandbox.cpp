@@ -14,12 +14,11 @@ using namespace godot;
 
 static const int HEAP_SYSCALLS_BASE = 480;
 static const int MEMORY_SYSCALLS_BASE = 485;
-static const std::vector<std::string> program_arguments = { "program" };
 
 static inline String to_hex(gaddr_t value) {
 	char str[20] = { 0 };
-	std::to_chars(std::begin(str), std::end(str), value, 16);
-	return String{ str };
+	char *end = std::to_chars(std::begin(str), std::end(str), value, 16).ptr;
+	return String::utf8(str, int64_t(end - str));
 }
 
 String Sandbox::_to_string() const {
@@ -125,6 +124,7 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 		machine().setup_native_heap(HEAP_SYSCALLS_BASE, heap_area, heap_size);
 		machine().setup_native_memory(MEMORY_SYSCALLS_BASE);
 
+		static const std::vector<std::string> program_arguments = { "program" };
 		const auto *argv = argv_ptr ? argv_ptr : &program_arguments;
 		m.setup_linux(*argv);
 

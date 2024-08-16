@@ -29,5 +29,6 @@ web.release.wasm32 = "res://addons/godot_sandbox/bin/libgodot_riscv.web.template
 [icons]
 
 CPPScript = "res://addons/godot_sandbox/CPPScript.svg"
+RustScript = "res://addons/godot_sandbox/RustScript.svg"
 ELFScript = "res://addons/godot_sandbox/ELFScript.svg"
 Sandbox = "res://addons/godot_sandbox/Sandbox.svg"

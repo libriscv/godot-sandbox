@@ -33,7 +33,7 @@ ScriptLanguage *get_elf_language() {
 	return elf_language;
 }
 
-void initialize_riscv_module(ModuleInitializationLevel p_level) {
+static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
@@ -65,7 +65,7 @@ void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	SandboxProjectSettings::register_settings();
 }
 
-void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
+static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
