@@ -49,8 +49,8 @@ This extension exists to allow Godot creators to implement safe modding support,
 static void add_coin(const Node2D& player) {
 	static int coins = 0;
 	coins ++;
-	auto coinlabel = player.get_parent().get("Texts/CoinLabel");
-	coinlabel("set_text", "You have collected "
+	auto coinlabel = player.get_parent().get_node("Texts/CoinLabel");
+	coinlabel.set("text", "You have collected "
 		+ std::to_string(coins) + ((coins == 1) ? " coin" : " coins"));
 }
 

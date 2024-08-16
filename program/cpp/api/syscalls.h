@@ -41,6 +41,8 @@ enum class Node_Op {
 	ADD_CHILD_DEFERRED,
 	GET_CHILDREN,
 	GET_METHOD_LIST,
+	GET,
+	SET,
 };
 
 enum class Node2D_Op {

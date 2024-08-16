@@ -272,6 +272,16 @@ APICALL(api_node) {
 				sptr[i].set_string(emu.machine(), sptr[i].ptr, name.ptr(), name.length());
 			}
 		} break;
+		case Node_Op::GET: {
+			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
+			auto name = var[0].toVariant(emu).operator String();
+			var[1].set(emu, node->get(name));
+		} break;
+		case Node_Op::SET: {
+			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
+			auto name = var->toVariant(emu).operator String();
+			node->set(name, var[1].toVariant(emu));
+		} break;
 		default:
 			throw std::runtime_error("Invalid Node operation");
 	}

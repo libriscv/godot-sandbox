@@ -10,11 +10,6 @@ struct Node {
 	/// @param path The path to the Node object.
 	Node(const std::string& path);
 
-	/// @brief Construct a Node object from a path relative to this node.
-	/// @param path The path to the Node object.
-	/// @return The Node object.
-	Node get(const std::string &path) const;
-
 	/// @brief Get the name of the node.
 	/// @return The name of the node.
 	std::string get_name() const;
@@ -35,6 +30,11 @@ struct Node {
 	/// @brief Get a list of children of the node.
 	/// @return A list of children nodes.
 	std::vector<Node> get_children() const;
+
+	/// @brief Get the Node object at the given path, relative to this node.
+	/// @param path The path to the Node object.
+	/// @return The Node object.
+	Node get_node(const std::string &path) const;
 
 	/// @brief Remove this node from its parent, freeing it.
 	/// @note This is a potentially deferred operation.
@@ -63,6 +63,16 @@ struct Node {
 
 	template <typename... Args>
 	Variant call_deferred(const std::string &method, Args... args);
+
+	// Get a property of the node.
+	// @param name The name of the property.
+	// @return The value of the property.
+	Variant get(const std::string &name) const;
+
+	// Set a property of the node.
+	// @param name The name of the property.
+	// @param value The value to set the property to.
+	void set(const std::string &name, const Variant &value);
 
 	// Get the object identifier.
 	uint64_t address() const { return m_address; }
