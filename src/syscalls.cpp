@@ -1,6 +1,7 @@
 #include "syscalls.h"
 #include "sandbox.h"
 
+#include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/input.hpp>
 #include <godot_cpp/classes/node2d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
@@ -10,6 +11,12 @@
 #include <godot_cpp/variant/variant.hpp>
 
 namespace riscv {
+static const std::unordered_set<std::string> allowed_objects = {
+	"Engine",
+	"Input",
+	"SceneTree",
+};
+
 inline Sandbox &emu(machine_t &m) {
 	return *m.get_userdata<Sandbox>();
 }
@@ -104,11 +111,33 @@ APICALL(api_get_obj) {
 	auto &emu = riscv::emu(machine);
 	machine.penalize(150'000);
 
+	if (allowed_objects.find(name) == allowed_objects.end()) {
+		ERR_PRINT(("Unknown or inaccessible object: " + name).c_str());
+		machine.set_result(0);
+		return;
+	}
+
 	if (name == "Input") {
 		// Get the Input singleton.
 		auto *input = godot::Input::get_singleton();
 		emu.add_scoped_object(input);
 		machine.set_result(uint64_t(uintptr_t(input)));
+	} else if (name == "SceneTree") {
+		// Get the current SceneTree.
+		auto *owner_node = emu.get_tree_base();
+		if (owner_node == nullptr) {
+			ERR_PRINT("Sandbox has no parent Node");
+			machine.set_result(0);
+			return;
+		}
+		auto *tree = owner_node->get_tree();
+		emu.add_scoped_object(tree);
+		machine.set_result(uint64_t(uintptr_t(tree)));
+	} else if (name == "Engine") {
+		// Get the Engine singleton.
+		auto *engine = godot::Engine::get_singleton();
+		emu.add_scoped_object(engine);
+		machine.set_result(uint64_t(uintptr_t(engine)));
 	} else {
 		ERR_PRINT(("Unknown or inaccessible object: " + name).c_str());
 		machine.set_result(0);

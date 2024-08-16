@@ -23,11 +23,10 @@ inline void print(Args &&...vars) {
 	sys_print(vptrs.data(), vptrs.size());
 }
 
-/// @brief Stop execution of the program.
-/// @note This function may return if the program is resumed. However, no such
-/// functionality is currently implemented.
-inline void halt() {
-	fast_exit();
+/// @brief Get the current scene tree.
+/// @return The root node of the scene tree.
+inline Object get_tree() {
+	return Object("SceneTree");
 }
 
 #include <unordered_map>
@@ -42,3 +41,10 @@ inline void halt() {
 		static std::unordered_map<uint64_t, State> state; \
 		return state[node.address()]; \
 	}
+
+/// @brief Stop execution of the program.
+/// @note This function may return if the program is resumed. However, no such
+/// functionality is currently implemented.
+inline void halt() {
+	fast_exit();
+}
