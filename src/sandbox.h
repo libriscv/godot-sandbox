@@ -173,11 +173,13 @@ struct GuestStdString {
 		}
 	}
 
-	void free(machine_t &machine) {
-		if (size > SSO)
+	void free(machine_t &machine, gaddr_t self) {
+		// Free the string if it was allocated on the guest heap
+		if (ptr != self + offsetof(GuestStdString, data))
 			machine.arena().free(ptr);
 	}
 };
+static_assert(sizeof(GuestStdString) == 32, "GuestStdString size mismatch");
 
 struct GuestStdVector {
 	gaddr_t ptr_begin;
@@ -221,7 +223,8 @@ struct GuestStdVector {
 	}
 
 	void free(machine_t &machine) {
-		machine.arena().free(this->data());
+		if (capacity() > 0)
+			machine.arena().free(this->data());
 	}
 };
 

@@ -6,13 +6,15 @@
 #define ECALL_VCALL (GAME_API_BASE + 1)
 #define ECALL_VEVAL (GAME_API_BASE + 2)
 #define ECALL_VFREE (GAME_API_BASE + 3)
-#define ECALL_OBJ_CALLP (GAME_API_BASE + 4)
-#define ECALL_GET_NODE (GAME_API_BASE + 5) // Get a node by path
-#define ECALL_NODE (GAME_API_BASE + 6) // All the Node functions
-#define ECALL_NODE2D (GAME_API_BASE + 7) // All the Node2D functions
-#define ECALL_NODE3D (GAME_API_BASE + 8) // All the Node3D functions
+#define ECALL_GET_OBJ (GAME_API_BASE + 4) // Get an object by name
+#define ECALL_OBJ (GAME_API_BASE + 5) // All the Object functions
+#define ECALL_OBJ_CALLP (GAME_API_BASE + 6) // Call a method on an object
+#define ECALL_GET_NODE (GAME_API_BASE + 7) // Get a node by path
+#define ECALL_NODE (GAME_API_BASE + 8) // All the Node functions
+#define ECALL_NODE2D (GAME_API_BASE + 9) // All the Node2D functions
+#define ECALL_NODE3D (GAME_API_BASE + 10) // All the Node3D functions
 
-#define ECALL_LAST (GAME_API_BASE + 9)
+#define ECALL_LAST (GAME_API_BASE + 11)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
@@ -31,18 +33,21 @@
 #define EXTERN_SYSCALL(number, rval, name, ...) \
 	extern "C" rval name(__VA_ARGS__);
 
+enum class Object_Op {
+	GET_METHOD_LIST,
+	GET,
+	SET,
+};
+
 enum class Node_Op {
-	QUEUE_FREE,
-	GET_NAME,
+	GET_NAME = 0,
 	GET_PATH,
 	GET_PARENT,
+	QUEUE_FREE,
 	DUPLICATE,
 	ADD_CHILD,
 	ADD_CHILD_DEFERRED,
 	GET_CHILDREN,
-	GET_METHOD_LIST,
-	GET,
-	SET,
 };
 
 enum class Node2D_Op {

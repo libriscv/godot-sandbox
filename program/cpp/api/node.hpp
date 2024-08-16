@@ -1,10 +1,10 @@
 #pragma once
-#include "variant.hpp"
+#include "object.hpp"
 
-struct Node {
+struct Node : public Object {
 	/// @brief Construct a Node object from an existing in-scope Node object.
 	/// @param addr The address of the Node object.
-	Node(uint64_t addr) : m_address{addr} {}
+	Node(uint64_t addr) : Object{addr} {}
 
 	/// @brief Construct a Node object from a path.
 	/// @param path The path to the Node object.
@@ -43,46 +43,6 @@ struct Node {
 	/// @brief  Duplicate the node.
 	/// @return A new Node object with the same properties and children.
 	Node duplicate() const;
-
-	/// @brief Get a list of methods available on the node.
-	/// @return A list of method names.
-	std::vector<std::string> get_method_list() const;
-
-	// Call a method on the node.
-	// @param method The method to call.
-	// @param deferred If true, the method will be called next frame.
-	// @param args The arguments to pass to the method.
-	// @return The return value of the method.
-	Variant callv(const std::string &method, bool deferred, const Variant *argv, unsigned argc);
-
-	template <typename... Args>
-	Variant call(const std::string &method, Args... args);
-
-	template <typename... Args>
-	Variant operator () (const std::string &method, Args... args);
-
-	template <typename... Args>
-	Variant call_deferred(const std::string &method, Args... args);
-
-	// Get a property of the node.
-	// @param name The name of the property.
-	// @return The value of the property.
-	Variant get(const std::string &name) const;
-
-	// Set a property of the node.
-	// @param name The name of the property.
-	// @param value The value to set the property to.
-	void set(const std::string &name, const Variant &value);
-
-	// Get the object identifier.
-	uint64_t address() const { return m_address; }
-
-	// Check if the node is valid.
-	bool is_valid() const { return m_address != 0; }
-
-protected:
-	// Node object identifier.
-	uint64_t m_address;
 };
 
 inline Node Variant::as_node() const {
@@ -92,21 +52,4 @@ inline Node Variant::as_node() const {
 		return Node{*v.s};
 
 	throw std::bad_cast();
-}
-
-template <typename... Args>
-inline Variant Node::call(const std::string &method, Args... args) {
-	Variant argv[] = {args...};
-	return callv(method, false, argv, sizeof...(Args));
-}
-
-template <typename... Args>
-inline Variant Node::operator () (const std::string &method, Args... args) {
-	return call(method, args...);
-}
-
-template <typename... Args>
-inline Variant Node::call_deferred(const std::string &method, Args... args) {
-	Variant argv[] = {args...};
-	return callv(method, true, argv, sizeof...(Args));
 }

@@ -1,6 +1,7 @@
 #include "syscalls.h"
 #include "sandbox.h"
 
+#include <godot_cpp/classes/input.hpp>
 #include <godot_cpp/classes/node2d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
@@ -92,15 +93,70 @@ APICALL(api_veval) {
 APICALL(api_vfree) {
 	auto [vp] = machine.sysargs<GuestVariant *>();
 	auto &emu = riscv::emu(machine);
+	machine.penalize(10'000);
 
 	// Free the Variant object depending on its type.
 	vp->free(emu);
 }
 
+APICALL(api_get_obj) {
+	auto [name] = machine.sysargs<std::string>();
+	auto &emu = riscv::emu(machine);
+	machine.penalize(150'000);
+
+	if (name == "Input") {
+		// Get the Input singleton.
+		auto *input = godot::Input::get_singleton();
+		emu.add_scoped_object(input);
+		machine.set_result(uint64_t(uintptr_t(input)));
+	} else {
+		ERR_PRINT(("Unknown or inaccessible object: " + name).c_str());
+		machine.set_result(0);
+	}
+}
+
+APICALL(api_obj) {
+	auto [op, addr, gvar] = machine.sysargs<int, uint64_t, gaddr_t>();
+	auto &emu = riscv::emu(machine);
+	machine.penalize(250'000); // Costly Object operations.
+
+	auto *obj = reinterpret_cast<godot::Object *>(uintptr_t(addr));
+	if (!emu.is_scoped_object(obj)) {
+		ERR_PRINT("Object is not scoped");
+		throw std::runtime_error("Object is not scoped");
+	}
+
+	switch (Object_Op(op)) {
+		case Object_Op::GET_METHOD_LIST: {
+			auto *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
+			auto methods = obj->get_method_list();
+			auto *sptr = vec->alloc<GuestStdString>(emu.machine(), methods.size());
+			for (size_t i = 0; i < methods.size(); i++) {
+				Dictionary dict = methods[i].operator godot::Dictionary();
+				auto name = String(dict["name"]).utf8();
+				sptr[i].set_string(emu.machine(), sptr[i].ptr, name.ptr(), name.length());
+			}
+		} break;
+		case Object_Op::GET: { // Get a property of the object.
+			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
+			auto name = var[0].toVariant(emu).operator String();
+			var[1].set(emu, obj->get(name));
+		} break;
+		case Object_Op::SET: { // Set a property of the object.
+			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
+			auto name = var[0].toVariant(emu).operator String();
+			obj->set(name, var[1].toVariant(emu));
+		} break;
+		default:
+			throw std::runtime_error("Invalid Object operation");
+	}
+}
+
 APICALL(api_obj_callp) {
 	auto [addr, method, deferred, vret, args_addr, args_size] = machine.sysargs<uint64_t, std::string_view, bool, GuestVariant *, gaddr_t, unsigned>();
-
 	auto &emu = riscv::emu(machine);
+	machine.penalize(250'000); // Costly Object call operation.
+
 	auto *obj = reinterpret_cast<godot::Object *>(uintptr_t(addr));
 	if (!emu.is_scoped_object(obj)) {
 		ERR_PRINT("Object is not scoped");
@@ -148,6 +204,7 @@ APICALL(api_obj_callp) {
 APICALL(api_get_node) {
 	auto [addr, name] = machine.sysargs<uint64_t, std::string>();
 	auto &emu = riscv::emu(machine);
+	machine.penalize(150'000);
 	Node *node = nullptr;
 
 	if (addr == 0) {
@@ -255,30 +312,6 @@ APICALL(api_node) {
 				}
 			}
 			// No return value is needed.
-		} break;
-		case Node_Op::GET_METHOD_LIST: {
-			// Get a GuestStdVector from guest to store the method list.
-			auto *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
-			// Get the method list of the node.
-			auto methods = node->get_method_list();
-			// Allocate GuestStdStrings for the methods in the guest vector.
-			auto *sptr = vec->alloc<GuestStdString>(emu.machine(), methods.size());
-			// Copy the methods to the guest vector.
-			for (size_t i = 0; i < methods.size(); i++) {
-				Dictionary dict = methods[i].operator godot::Dictionary();
-				auto name = String(dict["name"]).utf8();
-				sptr[i].set_string(emu.machine(), sptr[i].ptr, name.ptr(), name.length());
-			}
-		} break;
-		case Node_Op::GET: {
-			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
-			auto name = var[0].toVariant(emu).operator String();
-			var[1].set(emu, node->get(name));
-		} break;
-		case Node_Op::SET: {
-			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
-			auto name = var->toVariant(emu).operator String();
-			node->set(name, var[1].toVariant(emu));
 		} break;
 		default:
 			throw std::runtime_error("Invalid Node operation");
@@ -407,6 +440,8 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_VCALL, api_vcall },
 			{ ECALL_VEVAL, api_veval },
 			{ ECALL_VFREE, api_vfree },
+			{ ECALL_GET_OBJ, api_get_obj },
+			{ ECALL_OBJ, api_obj },
 			{ ECALL_OBJ_CALLP, api_obj_callp },
 			{ ECALL_GET_NODE, api_get_node },
 			{ ECALL_NODE, api_node },

@@ -226,7 +226,9 @@ void GuestVariant::free(Sandbox &emu) {
 		case Variant::STRING_NAME:
 		case Variant::STRING: {
 			auto *gstr = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
-			(*gstr)[0].free(emu.machine());
+			(*gstr)[0].free(emu.machine(), v.s);
+			// Free the GuestStdString too
+			emu.machine().arena().free(v.s);
 			break;
 		}
 		case Variant::PACKED_FLOAT32_ARRAY:
@@ -234,6 +236,8 @@ void GuestVariant::free(Sandbox &emu) {
 			// We can free both f32 and f64 arrays with the same free function
 			auto *gvec = emu.machine().memory.memarray<GuestStdVector, 1>(v.vf32);
 			(*gvec)[0].free(emu.machine());
+			// Free the GuestStdVector too
+			emu.machine().arena().free(v.vf32);
 			break;
 		}
 		default:

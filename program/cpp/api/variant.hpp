@@ -267,77 +267,77 @@ inline Variant Variant::string_name(const std::string &name) {
 
 inline Variant::operator bool() const
 {
-	if (m_type == BOOL)
+	if (m_type == BOOL || m_type == INT)
 		return v.b;
 	throw std::bad_cast();
 }
 
 inline Variant::operator int64_t() const
 {
-	if (m_type == INT)
+	if (m_type == INT || m_type == FLOAT)
 		return v.i;
 	throw std::bad_cast();
 }
 
 inline Variant::operator int32_t() const
 {
-	if (m_type == INT)
+	if (m_type == INT || m_type == FLOAT)
 		return static_cast<int32_t>(v.i);
 	throw std::bad_cast();
 }
 
 inline Variant::operator int16_t() const
 {
-	if (m_type == INT)
+	if (m_type == INT || m_type == FLOAT)
 		return static_cast<int16_t>(v.i);
 	throw std::bad_cast();
 }
 
 inline Variant::operator int8_t() const
 {
-	if (m_type == INT)
+	if (m_type == INT || m_type == FLOAT)
 		return static_cast<int8_t>(v.i);
 	throw std::bad_cast();
 }
 
 inline Variant::operator uint64_t() const
 {
-	if (m_type == INT)
+	if (m_type == INT || m_type == FLOAT)
 		return static_cast<uint64_t>(v.i);
 	throw std::bad_cast();
 }
 
 inline Variant::operator uint32_t() const
 {
-	if (m_type == INT)
+	if (m_type == INT || m_type == FLOAT)
 		return static_cast<uint32_t>(v.i);
 	throw std::bad_cast();
 }
 
 inline Variant::operator uint16_t() const
 {
-	if (m_type == INT)
+	if (m_type == INT || m_type == FLOAT)
 		return static_cast<uint16_t>(v.i);
 	throw std::bad_cast();
 }
 
 inline Variant::operator uint8_t() const
 {
-	if (m_type == INT)
+	if (m_type == INT || m_type == FLOAT)
 		return static_cast<uint8_t>(v.i);
 	throw std::bad_cast();
 }
 
 inline Variant::operator double() const
 {
-	if (m_type == FLOAT)
+	if (m_type == FLOAT || m_type == INT)
 		return v.f;
 	throw std::bad_cast();
 }
 
 inline Variant::operator float() const
 {
-	if (m_type == FLOAT)
+	if (m_type == FLOAT || m_type == INT)
 		return static_cast<float>(v.f);
 	throw std::bad_cast();
 }
