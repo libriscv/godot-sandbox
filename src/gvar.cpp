@@ -200,7 +200,7 @@ void GuestVariant::set(Sandbox &emu, const Variant &value) {
 			auto arr = value.operator godot::PackedFloat32Array();
 			auto ptr = emu.machine().arena().malloc(sizeof(GuestStdVector));
 			auto *gvec = emu.machine().memory.memarray<GuestStdVector>(ptr, 1);
-			auto *fdata = gvec->alloc<float>(emu.machine(), arr.size());
+			auto [fdata, _] = gvec->alloc<float>(emu.machine(), arr.size());
 			std::memcpy(fdata, arr.ptr(), arr.size() * sizeof(float));
 			this->v.vf32 = ptr;
 			break;
@@ -209,7 +209,7 @@ void GuestVariant::set(Sandbox &emu, const Variant &value) {
 			auto arr = value.operator godot::PackedFloat64Array();
 			auto ptr = emu.machine().arena().malloc(sizeof(GuestStdVector));
 			auto *gvec = emu.machine().memory.memarray<GuestStdVector>(ptr, 1);
-			auto *fdata = gvec->alloc<double>(emu.machine(), arr.size());
+			auto [fdata, _] = gvec->alloc<double>(emu.machine(), arr.size());
 			std::memcpy(fdata, arr.ptr(), arr.size() * sizeof(double));
 			this->v.vf64 = ptr;
 			break;

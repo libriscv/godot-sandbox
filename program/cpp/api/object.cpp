@@ -7,6 +7,9 @@ MAKE_SYSCALL(ECALL_GET_OBJ, uint64_t, sys_get_obj, const char *, size_t);
 MAKE_SYSCALL(ECALL_OBJ, void, sys_obj, Object_Op, uint64_t, Variant *);
 MAKE_SYSCALL(ECALL_OBJ_CALLP, void, sys_obj_callp, uint64_t, const char *, size_t, bool, Variant *, const Variant *, unsigned);
 
+static_assert(sizeof(std::vector<std::string>) == 24, "std::vector<std::string> is not 24 bytes");
+static_assert(sizeof(std::string) == 32, "std::string is not 32 bytes");
+
 Object::Object(const std::string &name) :
 		m_address{ sys_get_obj(name.c_str(), name.size()) } {
 }

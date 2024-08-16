@@ -187,39 +187,42 @@ struct GuestStdVector {
 	gaddr_t ptr_capacity;
 
 	gaddr_t data() const noexcept { return ptr_begin; }
-	std::size_t size() const noexcept { return ptr_end - ptr_begin; }
+	std::size_t size_bytes() const noexcept { return ptr_end - ptr_begin; }
 	std::size_t capacity() const noexcept { return ptr_capacity - ptr_begin; }
 
 	template <typename T>
 	std::vector<T> to_vector(const machine_t &machine) const {
-		if (size() > capacity())
+		if (size_bytes() > capacity())
 			throw std::runtime_error("Guest std::vector has size > capacity");
 		// Copy the vector from guest memory
-		const T *array = machine.memory.memarray<T>(data(), size());
-		return std::vector<T>(array, size());
+		const size_t elements = size_bytes() / sizeof(T);
+		const T *array = machine.memory.memarray<T>(data(), elements);
+		return std::vector<T>(&array[0], &array[elements]);
 	}
 
 	PackedFloat32Array to_f32array(const machine_t &machine) const {
 		PackedFloat32Array array;
-		array.resize(this->size());
-		const float *fptr = machine.memory.memarray<float>(this->data(), this->size());
-		std::memcpy(array.ptrw(), fptr, this->size() * sizeof(float));
+		const size_t elements = this->size_bytes() / sizeof(float);
+		array.resize(elements);
+		const float *fptr = machine.memory.memarray<float>(this->data(), elements);
+		std::memcpy(array.ptrw(), fptr, elements * sizeof(float));
 		return array;
 	}
 	PackedFloat64Array to_f64array(const machine_t &machine) const {
 		PackedFloat64Array array;
-		array.resize(this->size());
-		const double *fptr = machine.memory.memarray<double>(this->data(), this->size());
-		std::memcpy(array.ptrw(), fptr, this->size() * sizeof(double));
+		const size_t elements = this->size_bytes() / sizeof(double);
+		array.resize(elements);
+		const double *fptr = machine.memory.memarray<double>(this->data(), elements);
+		std::memcpy(array.ptrw(), fptr, elements * sizeof(double));
 		return array;
 	}
 
 	template <typename T>
-	inline T *alloc(machine_t &machine, std::size_t new_size) {
-		this->ptr_begin = machine.arena().malloc(new_size * sizeof(T));
-		this->ptr_end = this->ptr_begin + new_size * sizeof(T);
+	inline std::tuple<T *, gaddr_t> alloc(machine_t &machine, std::size_t elements) {
+		this->ptr_begin = machine.arena().malloc(elements * sizeof(T));
+		this->ptr_end = this->ptr_begin + elements * sizeof(T);
 		this->ptr_capacity = this->ptr_end;
-		return machine.memory.memarray<T>(this->data(), this->size());
+		return { machine.memory.memarray<T>(this->data(), elements), this->data() };
 	}
 
 	void free(machine_t &machine) {

@@ -129,12 +129,14 @@ APICALL(api_obj) {
 	switch (Object_Op(op)) {
 		case Object_Op::GET_METHOD_LIST: {
 			auto *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
+			// XXX: vec->free(emu.machine());
 			auto methods = obj->get_method_list();
-			auto *sptr = vec->alloc<GuestStdString>(emu.machine(), methods.size());
+			auto [sptr, saddr] = vec->alloc<GuestStdString>(emu.machine(), methods.size());
 			for (size_t i = 0; i < methods.size(); i++) {
 				Dictionary dict = methods[i].operator godot::Dictionary();
 				auto name = String(dict["name"]).utf8();
-				sptr[i].set_string(emu.machine(), sptr[i].ptr, name.ptr(), name.length());
+				const auto self = saddr + sizeof(GuestStdString) * i;
+				sptr[i].set_string(emu.machine(), self, name.ptr(), name.length());
 			}
 		} break;
 		case Object_Op::GET: { // Get a property of the object.
@@ -300,7 +302,7 @@ APICALL(api_node) {
 			// Get the children of the node.
 			auto children = node->get_children();
 			// Allocate memory for the children in the guest vector.
-			auto *cptr = vec->alloc<uint64_t>(emu.machine(), children.size());
+			auto [cptr, _] = vec->alloc<uint64_t>(emu.machine(), children.size());
 			// Copy the children to the guest vector, and add them to the scoped objects.
 			for (int i = 0; i < children.size(); i++) {
 				auto *child = godot::Object::cast_to<godot::Node>(children[i]);
