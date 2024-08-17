@@ -55,5 +55,5 @@ inline Node2D Variant::as_node2d() const {
 	else if (get_type() == Variant::NODE_PATH)
 		return Node2D{*v.s};
 
-	throw std::bad_cast();
+	api_throw("std::bad_cast", "Variant is not a Node2D or NodePath", this);
 }

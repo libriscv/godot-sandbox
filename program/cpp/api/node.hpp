@@ -51,5 +51,5 @@ inline Node Variant::as_node() const {
 	else if (get_type() == Variant::NODE_PATH)
 		return Node{*v.s};
 
-	throw std::bad_cast();
+	api_throw("std::bad_cast", "Variant is not a Node or NodePath", this);
 }

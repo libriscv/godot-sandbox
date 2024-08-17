@@ -14,7 +14,9 @@
 #define ECALL_NODE2D (GAME_API_BASE + 9) // All the Node2D functions
 #define ECALL_NODE3D (GAME_API_BASE + 10) // All the Node3D functions
 
-#define ECALL_LAST (GAME_API_BASE + 11)
+#define ECALL_THROW (GAME_API_BASE + 11)
+
+#define ECALL_LAST (GAME_API_BASE + 12)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
