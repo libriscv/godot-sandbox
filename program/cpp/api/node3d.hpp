@@ -50,5 +50,5 @@ inline Node3D Variant::as_node3d() const {
 	else if (get_type() == Variant::NODE_PATH)
 		return Node3D{*v.s};
 
-	throw std::bad_cast();
+	api_throw("std::bad_cast", "Variant is not a Node3D or NodePath", this);
 }

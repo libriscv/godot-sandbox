@@ -443,6 +443,13 @@ APICALL(api_node3d) {
 	}
 }
 
+APICALL(api_throw) {
+	auto [type, msg, vaddr] = machine.sysargs<std::string_view, std::string_view, gaddr_t>();
+
+	auto &emu = riscv::emu(machine);
+	throw std::runtime_error("Sandbox exception of type " + std::string(type) + ": " + std::string(msg));
+}
+
 } //namespace riscv
 
 void Sandbox::initialize_syscalls() {
@@ -472,5 +479,6 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_NODE, api_node },
 			{ ECALL_NODE2D, api_node2d },
 			{ ECALL_NODE3D, api_node3d },
+			{ ECALL_THROW, api_throw },
 	});
 }

@@ -52,7 +52,7 @@ protected:
 inline Object Variant::as_object() const {
 	if (get_type() == Variant::OBJECT)
 		return Object{uintptr_t(v.i)};
-	throw std::bad_cast();
+	api_throw("std::bad_cast", "Variant is not an Object", this);
 }
 
 template <typename... Args>
