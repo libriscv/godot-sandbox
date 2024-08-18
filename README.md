@@ -36,11 +36,14 @@ This extension exists to allow Godot creators to implement safe modding support,
 
 ## Usage
 
-- Create a new `Sandbox` and [assign an ELF script resource to it](https://libriscv.no/docs/godot/sandbox/#create-a-sandbox)
+- Write C++ or Rust in the Godot editor. An accompanying ELF resource is created.
+
+- Create a new `Sandbox` and [assign the ELF resource to it](https://libriscv.no/docs/godot/sandbox/#create-a-sandbox)
 	- Access to the underlying Sandbox
-	- Control of lifetime
-	- Auto-completion from other GDScripts
-- [Directly assign an ELF script resource to a node](https://libriscv.no/docs/godot/sandbox/#using-programs-directly-as-scripts)
+	- Lifetime as any other node
+	- Auto-completion from other GDScripts using @export
+
+- Or, [directly assign an ELF script resource to a node](https://libriscv.no/docs/godot/sandbox/#using-programs-directly-as-scripts)
 	- Shared sandbox among all instances with that script
 	- Maximum scalability
 	- Call functions and attach signals like GDScript
