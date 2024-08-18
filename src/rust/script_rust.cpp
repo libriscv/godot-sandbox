@@ -107,18 +107,20 @@ Variant RustScript::_get_rpc_config() const {
 }
 
 RustScript::RustScript() {
-	source_code = R"C0D3(mod sysalloc;
-mod api;
-use api::*;
+	source_code = R"C0D3(mod godot;
+use godot::variant::*;
 
 pub fn main() {
 }
 
 #[no_mangle]
 pub fn public_function() -> Variant {
-	gprint(&Variant::new_string("Hello from Rust!"));
+	let v1 = Variant::new_integer(42);
+	let v2 = Variant::new_float(3.14);
+	let v3 = Variant::new_string("Hello from Rust!");
+	print(&[v1, v2, v3]);
 
-	return Variant::new_float(3.14);
+	return Variant::new_string("Rust in Godot");
 }
 )C0D3";
 }

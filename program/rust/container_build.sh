@@ -1,2 +1,1 @@
-docker build -t rust-riscv64 .
-
+docker build -t riscv64-rust .

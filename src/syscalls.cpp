@@ -227,10 +227,11 @@ APICALL(api_obj_callp) {
 }
 
 APICALL(api_get_node) {
-	auto [addr, name] = machine.sysargs<uint64_t, std::string>();
+	auto [addr, name] = machine.sysargs<uint64_t, std::string_view>();
 	auto &emu = riscv::emu(machine);
 	machine.penalize(150'000);
 	Node *node = nullptr;
+	const std::string c_name(name);
 
 	if (addr == 0) {
 		auto *owner_node = emu.get_tree_base();
@@ -239,7 +240,7 @@ APICALL(api_get_node) {
 			machine.set_result(0);
 			return;
 		}
-		node = owner_node->get_node<Node>(NodePath(name.c_str()));
+		node = owner_node->get_node<Node>(NodePath(c_name.c_str()));
 	} else {
 		Node *base_node = reinterpret_cast<Node *>(uintptr_t(addr));
 		if (!emu.is_scoped_object(base_node)) {
@@ -247,10 +248,10 @@ APICALL(api_get_node) {
 			machine.set_result(0);
 			return;
 		}
-		node = base_node->get_node<Node>(NodePath(name.c_str()));
+		node = base_node->get_node<Node>(NodePath(c_name.c_str()));
 	}
 	if (node == nullptr) {
-		ERR_PRINT(("Node not found: " + name).c_str());
+		ERR_PRINT(("Node not found: " + c_name).c_str());
 		machine.set_result(0);
 		return;
 	}

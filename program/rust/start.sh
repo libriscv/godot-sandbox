@@ -1,1 +1,1 @@
-docker run --name godot-rust-compiler -dv .:/usr/src rust-riscv64
+docker run --name godot-rust-compiler -dv .:/usr/src riscv64-rust
