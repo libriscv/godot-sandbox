@@ -104,3 +104,13 @@ pub fn __wrap_memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32
 	}
 	return result;
 }
+
+#[no_mangle]
+pub fn fast_exit() -> ! {
+	unsafe {
+		asm!("ecall",
+			in("a7") 93,
+			options(noreturn)
+		);
+	}
+}

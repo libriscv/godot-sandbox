@@ -107,9 +107,8 @@ Variant RustScript::_get_rpc_config() const {
 }
 
 RustScript::RustScript() {
-	source_code = R"C0D3(mod sysalloc;
-mod api;
-use api::*;
+	source_code = R"C0D3(mod godot;
+use godot::variant::*;
 
 pub fn main() {
 }

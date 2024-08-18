@@ -73,7 +73,9 @@ Error ResourceFormatSaverRust::_save(const Ref<Resource> &p_resource, const Stri
 						line = line.replace("\033[01m", "");
 						line = line.replace("[K", "");
 						line = line.replace("[1m", "");
+						line = line.replace("[38;5;14m", "");
 						line = line.replace("[38;5;12m", "");
+						line = line.replace("[38;5;10m", "");
 						line = line.replace("[38;5;9m", "");
 						line = line.replace("[32m", "");
 						line = line.replace("[33m", "");
