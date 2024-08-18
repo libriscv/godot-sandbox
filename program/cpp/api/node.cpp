@@ -27,9 +27,36 @@ Node Node::get_parent() const {
 	return var.as_node();
 }
 
+unsigned Node::get_child_count() const {
+	Variant var;
+	sys_node(Node_Op::GET_CHILD_COUNT, address(), &var);
+	return int64_t(var);
+}
+
+Node Node::get_child(unsigned index) const {
+	Variant var;
+	sys_node(Node_Op::GET_CHILD, address(), &var);
+	return var.as_node();
+}
+
 void Node::add_child(const Node &child, bool deferred) {
 	Variant v(int64_t(child.address()));
 	sys_node(deferred ? Node_Op::ADD_CHILD_DEFERRED : Node_Op::ADD_CHILD, this->address(), &v);
+}
+
+void Node::add_sibling(const Node &sibling, bool deferred) {
+	Variant v(int64_t(sibling.address()));
+	sys_node(deferred ? Node_Op::ADD_SIBLING_DEFERRED : Node_Op::ADD_SIBLING, this->address(), &v);
+}
+
+void Node::move_child(const Node &child, unsigned index) {
+	Variant v(int64_t(child.address()));
+	sys_node(Node_Op::MOVE_CHILD, this->address(), &v);
+}
+
+void Node::remove_child(const Node &child, bool deferred) {
+	Variant v(int64_t(child.address()));
+	sys_node(deferred ? Node_Op::REMOVE_CHILD_DEFERRED : Node_Op::REMOVE_CHILD, this->address(), &v);
 }
 
 std::vector<Node> Node::get_children() const {

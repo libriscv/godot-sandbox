@@ -1,8 +1,8 @@
 #include "api.hpp"
 
 #include "syscalls.h"
-#include <exception>
 #include <cstring>
+#include <exception>
 
 /* void sys_print(const Variant *, size_t) */
 MAKE_SYSCALL(ECALL_PRINT, void, sys_print, const Variant *, size_t);

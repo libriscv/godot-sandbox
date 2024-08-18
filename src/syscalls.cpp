@@ -13,13 +13,25 @@
 
 namespace riscv {
 static const std::unordered_map<std::string, std::function<uint64_t()>> allowed_objects = {
-	{"Engine", [] { return uint64_t(uintptr_t(godot::Engine::get_singleton())); }},
-	{"Input", [] { return uint64_t(uintptr_t(godot::Input::get_singleton())); }},
-	{"Time", [] { return uint64_t(uintptr_t(godot::Time::get_singleton())); }},
+	{ "Engine", [] { return uint64_t(uintptr_t(godot::Engine::get_singleton())); } },
+	{ "Input", [] { return uint64_t(uintptr_t(godot::Input::get_singleton())); } },
+	{ "Time", [] { return uint64_t(uintptr_t(godot::Time::get_singleton())); } },
 };
 
 inline Sandbox &emu(machine_t &m) {
 	return *m.get_userdata<Sandbox>();
+}
+
+inline godot::Node *get_node_from_address(Sandbox &emu, uint64_t addr) {
+	auto *node = (godot::Node *)uintptr_t(addr);
+	if (node == nullptr) {
+		ERR_PRINT("Node object is Null");
+		throw std::runtime_error("Node object is Null");
+	} else if (!emu.is_scoped_object(node)) {
+		ERR_PRINT("Node object is not scoped");
+		throw std::runtime_error("Node object is not scoped");
+	}
+	return node;
 }
 
 #define APICALL(func) static void func(machine_t &machine [[maybe_unused]])
@@ -273,37 +285,6 @@ APICALL(api_node) {
 	}
 
 	switch (Node_Op(op)) {
-		case Node_Op::QUEUE_FREE:
-			if (node == &emu) {
-				ERR_PRINT("Cannot queue free the sandbox");
-				throw std::runtime_error("Cannot queue free the sandbox");
-			}
-			//emu.rem_scoped_object(node);
-			node->queue_free();
-			break;
-		case Node_Op::DUPLICATE: {
-			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
-			auto *new_node = node->duplicate();
-			emu.add_scoped_object(new_node);
-			var->set(emu, new_node);
-		} break;
-		case Node_Op::ADD_CHILD_DEFERRED:
-		case Node_Op::ADD_CHILD: {
-			auto *child = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
-			auto *child_node = (godot::Node *)uintptr_t(child->v.i);
-			if (child_node == nullptr) {
-				ERR_PRINT("Child Node object is not a Node");
-				throw std::runtime_error("Child Node object is not a Node");
-			}
-			if (!emu.is_scoped_object(child_node)) {
-				ERR_PRINT("Child Node object is not scoped");
-				throw std::runtime_error("Child Node object is not scoped");
-			}
-			if (Node_Op(op) == Node_Op::ADD_CHILD_DEFERRED)
-				node->call_deferred("add_child", child_node);
-			else
-				node->add_child(child_node);
-		} break;
 		case Node_Op::GET_NAME: {
 			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
 			var->set(emu, String(node->get_name()));
@@ -319,6 +300,67 @@ APICALL(api_node) {
 			} else {
 				var->set(emu, node->get_parent());
 			}
+		} break;
+		case Node_Op::QUEUE_FREE:
+			if (node == &emu) {
+				ERR_PRINT("Cannot queue free the sandbox");
+				throw std::runtime_error("Cannot queue free the sandbox");
+			}
+			//emu.rem_scoped_object(node);
+			node->queue_free();
+			break;
+		case Node_Op::DUPLICATE: {
+			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			auto *new_node = node->duplicate();
+			emu.add_scoped_object(new_node);
+			var->set(emu, new_node);
+		} break;
+		case Node_Op::GET_CHILD_COUNT: {
+			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			var->set(emu, node->get_child_count());
+		} break;
+		case Node_Op::GET_CHILD: {
+			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			auto *child_node = node->get_child(var[0].v.i);
+			if (child_node == nullptr) {
+				var[0].set(emu, Variant());
+			} else {
+				emu.add_scoped_object(child_node);
+				var[0].set(emu, int64_t(uintptr_t(child_node)));
+			}
+		} break;
+		case Node_Op::ADD_CHILD_DEFERRED:
+		case Node_Op::ADD_CHILD: {
+			auto *child = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			auto *child_node = get_node_from_address(emu, child->v.i);
+			if (Node_Op(op) == Node_Op::ADD_CHILD_DEFERRED)
+				node->call_deferred("add_child", child_node);
+			else
+				node->add_child(child_node);
+		} break;
+		case Node_Op::ADD_SIBLING_DEFERRED:
+		case Node_Op::ADD_SIBLING: {
+			auto *sibling = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			auto *sibling_node = get_node_from_address(emu, sibling->v.i);
+			if (Node_Op(op) == Node_Op::ADD_SIBLING_DEFERRED)
+				node->call_deferred("add_sibling", sibling_node);
+			else
+				node->add_sibling(sibling_node);
+		} break;
+		case Node_Op::MOVE_CHILD: {
+			auto *vars = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
+			auto *child_node = get_node_from_address(emu, vars[0].v.i);
+			// TODO: Check if the child is actually a child of the node? Verify index?
+			node->move_child(child_node, vars[1].v.i);
+		} break;
+		case Node_Op::REMOVE_CHILD_DEFERRED:
+		case Node_Op::REMOVE_CHILD: {
+			auto *child = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			auto *child_node = get_node_from_address(emu, child->v.i);
+			if (Node_Op(op) == Node_Op::REMOVE_CHILD_DEFERRED)
+				node->call_deferred("remove_child", child_node);
+			else
+				node->remove_child(child_node);
 		} break;
 		case Node_Op::GET_CHILDREN: {
 			// Get a GuestStdVector from guest to store the children.
