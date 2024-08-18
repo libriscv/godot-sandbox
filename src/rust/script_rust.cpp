@@ -116,9 +116,12 @@ pub fn main() {
 
 #[no_mangle]
 pub fn public_function() -> Variant {
-	gprint(&Variant::new_string("Hello from Rust!"));
+	let v1 = Variant::new_integer(42);
+	let v2 = Variant::new_float(3.14);
+	let v3 = Variant::new_string("Hello from Rust!");
+	print(&[v1, v2, v3]);
 
-	return Variant::new_float(3.14);
+	return Variant::new_string("Rust in Godot");
 }
 )C0D3";
 }
