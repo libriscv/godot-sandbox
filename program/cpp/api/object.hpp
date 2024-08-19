@@ -1,6 +1,6 @@
 #pragma once
 #include "variant.hpp"
-#include <functional>
+#include "syscalls_fwd.hpp"
 
 struct Object {
 	/// @brief Construct an Object object from an allowed global object.
@@ -100,4 +100,28 @@ inline void Object::connect(const std::string &signal, const std::string &method
 }
 inline void Object::disconnect(const std::string &signal, const std::string &method) {
 	this->disconnect(*this, signal, method);
+}
+
+EXTERN_SYSCALL(ECALL_OBJ_CALLP, void, sys_obj_callp, uint64_t, const char *, size_t, bool, Variant *, const Variant *, unsigned);
+
+// This is one of the most heavily used functions in the API, so it's worth optimizing.
+inline Variant Object::callv(const std::string &method, bool deferred, const Variant *argv, unsigned argc) {
+	static constexpr int ECALL_OBJ_CALLP = 506; // Call a method on an object
+	Variant var;
+	// We will attempt to call the method using inline assembly.
+	register uint64_t object asm("a0") = address();
+	register const char *method_ptr asm("a1") = method.c_str();
+	register size_t method_size asm("a2") = method.size();
+	register bool deferred_flag asm("a3") = deferred;
+	register Variant *var_ptr asm("a4") = &var;
+	register const Variant *argv_ptr asm("a5") = argv;
+	register unsigned argc_reg asm("a6") = argc;
+	register int syscall_number asm("a7") = ECALL_OBJ_CALLP;
+
+	asm volatile(
+		"ecall"
+		: "=m"(*var_ptr)
+		: "r"(object), "r"(method_ptr), "r"(method_size), "r"(deferred_flag), "r"(var_ptr), "r"(argv_ptr), "m"(*argv_ptr), "r"(argc_reg), "r"(syscall_number)
+	);
+	return var;
 }

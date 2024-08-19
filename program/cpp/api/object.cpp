@@ -20,12 +20,6 @@ std::vector<std::string> Object::get_method_list() const {
 	return methods;
 }
 
-Variant Object::callv(const std::string &method, bool deferred, const Variant *argv, unsigned argc) {
-	Variant var;
-	sys_obj_callp(address(), method.c_str(), method.size(), deferred, &var, argv, argc);
-	return var;
-}
-
 Variant Object::get(const std::string &name) const {
 	Variant vars[2];
 	vars[0] = name;
