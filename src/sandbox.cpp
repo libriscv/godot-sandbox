@@ -40,6 +40,10 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("assault", "test", "iterations"), &Sandbox::assault);
 
 	// Properties.
+	ClassDB::bind_method(D_METHOD("set_max_refs", "max"), &Sandbox::set_max_refs);
+	ClassDB::bind_method(D_METHOD("get_max_refs"), &Sandbox::get_max_refs);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_references", PROPERTY_HINT_NONE, "Maximum objects and variants referenced by a sandbox call"), "set_max_refs", "get_max_refs");
+
 	ClassDB::bind_method(D_METHOD("set_memory_max", "max"), &Sandbox::set_memory_max);
 	ClassDB::bind_method(D_METHOD("get_memory_max"), &Sandbox::get_memory_max);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "memory_max", PROPERTY_HINT_NONE, "Maximum memory (in MiB) used by the sandboxed program"), "set_memory_max", "get_memory_max");
@@ -345,4 +349,20 @@ gaddr_t Sandbox::cached_address_of(int64_t hash) const {
 
 gaddr_t Sandbox::address_of(std::string_view name) const {
 	return machine().address_of(name);
+}
+
+void Sandbox::add_scoped_variant(uint32_t hash) {
+	if (state().scoped_variants.size() >= this->m_max_refs) {
+		ERR_PRINT("Maximum number of scoped variants reached.");
+		throw std::runtime_error("Maximum number of scoped variants reached.");
+	}
+	state().scoped_variants.push_back(hash);
+}
+
+void Sandbox::add_scoped_object(const void *ptr) {
+	if (state().scoped_objects.size() >= this->m_max_refs) {
+		ERR_PRINT("Maximum number of scoped objects reached.");
+		throw std::runtime_error("Maximum number of scoped objects reached.");
+	}
+	state().scoped_objects.push_back(reinterpret_cast<uintptr_t>(ptr));
 }

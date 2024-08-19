@@ -48,8 +48,10 @@ public:
 	Variant vmcallable(const String &function);
 
 	// Properties.
-	void set_memory_max(int64_t max) { m_memory_max = max; }
-	int64_t get_memory_max() const { return m_memory_max; }
+	uint32_t get_max_refs() const { return m_max_refs; }
+	void set_max_refs(uint32_t max) { m_max_refs = max; }
+	void set_memory_max(uint32_t max) { m_memory_max = max; }
+	uint32_t get_memory_max() const { return m_memory_max; }
 	void set_instructions_max(int64_t max) { m_insn_max = max; }
 	int64_t get_instructions_max() const { return m_insn_max; }
 
@@ -69,10 +71,10 @@ public:
 	void set_tree_base(godot::Node *tree_base) { this->m_tree_base = tree_base; }
 	godot::Node *get_tree_base() const { return this->m_tree_base; }
 
-	void add_scoped_variant(uint32_t hash) { state().scoped_variants.push_back(hash); }
+	void add_scoped_variant(uint32_t hash);
 	bool is_scoped_variant(uint32_t hash) const noexcept { return state().scoped_variants.end() != std::find(state().scoped_variants.begin(), state().scoped_variants.end(), hash); }
 
-	void add_scoped_object(const void *ptr) { state().scoped_objects.push_back(reinterpret_cast<uintptr_t>(ptr)); }
+	void add_scoped_object(const void *ptr);
 	void rem_scoped_object(const void *ptr) { state().scoped_objects.erase(std::remove(state().scoped_objects.begin(), state().scoped_objects.end(), reinterpret_cast<uintptr_t>(ptr)), state().scoped_objects.end()); }
 	bool is_scoped_object(const void *ptr) const noexcept { return state().scoped_objects.end() != std::find(state().scoped_objects.begin(), state().scoped_objects.end(), reinterpret_cast<uintptr_t>(ptr)); }
 
@@ -88,7 +90,8 @@ private:
 	machine_t *m_machine = nullptr;
 	godot::Node *m_tree_base = nullptr;
 	PackedByteArray m_binary;
-	int64_t m_memory_max = MAX_VMEM;
+	uint32_t m_max_refs = 100;
+	uint32_t m_memory_max = MAX_VMEM;
 	int64_t m_insn_max = MAX_INSTRUCTIONS;
 
 	mutable std::unordered_map<int64_t, gaddr_t> m_lookup;
