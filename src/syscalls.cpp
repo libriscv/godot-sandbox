@@ -22,6 +22,17 @@ inline Sandbox &emu(machine_t &m) {
 	return *m.get_userdata<Sandbox>();
 }
 
+inline godot::Object *get_object_from_address(Sandbox &emu, uint64_t addr) {
+	auto *obj = (godot::Object *)uintptr_t(addr);
+	if (obj == nullptr) {
+		ERR_PRINT("Object is Null");
+		throw std::runtime_error("Object is Null");
+	} else if (!emu.is_scoped_object(obj)) {
+		ERR_PRINT("Object is not scoped");
+		throw std::runtime_error("Object is not scoped");
+	}
+	return obj;
+}
 inline godot::Node *get_node_from_address(Sandbox &emu, uint64_t addr) {
 	auto *node = (godot::Node *)uintptr_t(addr);
 	if (node == nullptr) {
@@ -183,6 +194,42 @@ APICALL(api_obj) {
 			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
 			auto name = var[0].toVariant(emu).operator String();
 			obj->set(name, var[1].toVariant(emu));
+		} break;
+		case Object_Op::GET_PROPERTY_LIST: {
+			auto *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
+			// XXX: vec->free(emu.machine());
+			auto properties = obj->get_property_list();
+			auto [sptr, saddr] = vec->alloc<GuestStdString>(emu.machine(), properties.size());
+			for (size_t i = 0; i < properties.size(); i++) {
+				Dictionary dict = properties[i].operator godot::Dictionary();
+				auto name = String(dict["name"]).utf8();
+				const auto self = saddr + sizeof(GuestStdString) * i;
+				sptr[i].set_string(emu.machine(), self, name.ptr(), name.length());
+			}
+		} break;
+		case Object_Op::CONNECT: {
+			auto *vars = emu.machine().memory.memarray<GuestVariant>(gvar, 3);
+			auto *target = get_object_from_address(emu, vars[0].v.i);
+			auto callable = Callable(target, vars[2].toVariant(emu).operator String());
+			obj->connect(vars[1].toVariant(emu).operator String(), callable);
+		} break;
+		case Object_Op::DISCONNECT: {
+			auto *vars = emu.machine().memory.memarray<GuestVariant>(gvar, 3);
+			auto *target = get_object_from_address(emu, vars[0].v.i);
+			auto callable = Callable(target, vars[2].toVariant(emu).operator String());
+			obj->disconnect(vars[1].toVariant(emu).operator String(), callable);
+		} break;
+		case Object_Op::GET_SIGNAL_LIST: {
+			auto *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
+			// XXX: vec->free(emu.machine());
+			auto signals = obj->get_signal_list();
+			auto [sptr, saddr] = vec->alloc<GuestStdString>(emu.machine(), signals.size());
+			for (size_t i = 0; i < signals.size(); i++) {
+				Dictionary dict = signals[i].operator godot::Dictionary();
+				auto name = String(dict["name"]).utf8();
+				const auto self = saddr + sizeof(GuestStdString) * i;
+				sptr[i].set_string(emu.machine(), self, name.ptr(), name.length());
+			}
 		} break;
 		default:
 			throw std::runtime_error("Invalid Object operation");

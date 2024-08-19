@@ -39,6 +39,10 @@ enum class Object_Op {
 	GET_METHOD_LIST,
 	GET,
 	SET,
+	GET_PROPERTY_LIST,
+	CONNECT,
+	DISCONNECT,
+	GET_SIGNAL_LIST,
 };
 
 enum class Node_Op {

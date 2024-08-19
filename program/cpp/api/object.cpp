@@ -39,3 +39,31 @@ void Object::set(const std::string &name, const Variant &value) {
 	vars[1] = value;
 	sys_obj(Object_Op::SET, address(), vars);
 }
+
+std::vector<std::string> Object::get_property_list() const {
+	std::vector<std::string> properties;
+	sys_obj(Object_Op::GET_PROPERTY_LIST, address(), (Variant *)&properties);
+	return properties;
+}
+
+void Object::connect(Object target, const std::string &signal, const std::string &method) {
+	Variant vars[3];
+	vars[0] = target.address();
+	vars[1] = signal;
+	vars[2] = method;
+	sys_obj(Object_Op::CONNECT, address(), vars);
+}
+
+void Object::disconnect(Object target, const std::string &signal, const std::string &method) {
+	Variant vars[3];
+	vars[0] = target.address();
+	vars[1] = signal;
+	vars[2] = method;
+	sys_obj(Object_Op::DISCONNECT, address(), vars);
+}
+
+std::vector<std::string> Object::get_signal_list() const {
+	std::vector<std::string> signals;
+	sys_obj(Object_Op::GET_SIGNAL_LIST, address(), (Variant *)&signals);
+	return signals;
+}

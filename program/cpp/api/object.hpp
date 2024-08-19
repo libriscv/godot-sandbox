@@ -1,5 +1,6 @@
 #pragma once
 #include "variant.hpp"
+#include <functional>
 
 struct Object {
 	/// @brief Construct an Object object from an allowed global object.
@@ -8,10 +9,6 @@ struct Object {
 	/// @brief Construct an Object object from an existing in-scope Object object.
 	/// @param addr The address of the Object object.
 	Object(uint64_t addr) : m_address{addr} {}
-
-	/// @brief Get a list of methods available on the object.
-	/// @return A list of method names.
-	std::vector<std::string> get_method_list() const;
 
 	// Call a method on the node.
 	// @param method The method to call.
@@ -29,6 +26,10 @@ struct Object {
 	template <typename... Args>
 	Variant call_deferred(const std::string &method, Args... args);
 
+	/// @brief Get a list of methods available on the object.
+	/// @return A list of method names.
+	std::vector<std::string> get_method_list() const;
+
 	// Get a property of the node.
 	// @param name The name of the property.
 	// @return The value of the property.
@@ -38,6 +39,28 @@ struct Object {
 	// @param name The name of the property.
 	// @param value The value to set the property to.
 	void set(const std::string &name, const Variant &value);
+
+	// Get a list of properties available on the object.
+	// @return A list of property names.
+	std::vector<std::string> get_property_list() const;
+
+	// Connect a signal to a method on another object.
+	// @param signal The signal to connect.
+	// @param target The object to connect to.
+	// @param method The method to call when the signal is emitted.
+	void connect(Object target, const std::string &signal, const std::string &method);
+	void connect(const std::string &signal, const std::string &method);
+
+	// Disconnect a signal from a method on another object.
+	// @param signal The signal to disconnect.
+	// @param target The object to disconnect from.
+	// @param method The method to disconnect.
+	void disconnect(Object target, const std::string &signal, const std::string &method);
+	void disconnect(const std::string &signal, const std::string &method);
+
+	// Get a list of signals available on the object.
+	// @return A list of signal names.
+	std::vector<std::string> get_signal_list() const;
 
 	// Get the object identifier.
 	uint64_t address() const { return m_address; }
@@ -70,4 +93,11 @@ template <typename... Args>
 inline Variant Object::call_deferred(const std::string &method, Args... args) {
 	Variant argv[] = {args...};
 	return callv(method, true, argv, sizeof...(Args));
+}
+
+inline void Object::connect(const std::string &signal, const std::string &method) {
+	this->connect(*this, signal, method);
+}
+inline void Object::disconnect(const std::string &signal, const std::string &method) {
+	this->disconnect(*this, signal, method);
 }
