@@ -15,16 +15,16 @@ struct Object {
 	// @param deferred If true, the method will be called next frame.
 	// @param args The arguments to pass to the method.
 	// @return The return value of the method.
-	Variant callv(const std::string &method, bool deferred, const Variant *argv, unsigned argc);
+	Variant callv(std::string_view method, bool deferred, const Variant *argv, unsigned argc);
 
 	template <typename... Args>
-	Variant call(const std::string &method, Args... args);
+	Variant call(std::string_view method, Args... args);
 
 	template <typename... Args>
-	Variant operator () (const std::string &method, Args... args);
+	Variant operator () (std::string_view method, Args... args);
 
 	template <typename... Args>
-	Variant call_deferred(const std::string &method, Args... args);
+	Variant call_deferred(std::string_view method, Args... args);
 
 	/// @brief Get a list of methods available on the object.
 	/// @return A list of method names.
@@ -48,15 +48,15 @@ struct Object {
 	// @param signal The signal to connect.
 	// @param target The object to connect to.
 	// @param method The method to call when the signal is emitted.
-	void connect(Object target, const std::string &signal, const std::string &method);
-	void connect(const std::string &signal, const std::string &method);
+	void connect(Object target, const std::string &signal, std::string_view method);
+	void connect(const std::string &signal, std::string_view method);
 
 	// Disconnect a signal from a method on another object.
 	// @param signal The signal to disconnect.
 	// @param target The object to disconnect from.
 	// @param method The method to disconnect.
-	void disconnect(Object target, const std::string &signal, const std::string &method);
-	void disconnect(const std::string &signal, const std::string &method);
+	void disconnect(Object target, const std::string &signal, std::string_view method);
+	void disconnect(const std::string &signal, std::string_view method);
 
 	// Get a list of signals available on the object.
 	// @return A list of signal names.
@@ -79,36 +79,36 @@ inline Object Variant::as_object() const {
 }
 
 template <typename... Args>
-inline Variant Object::call(const std::string &method, Args... args) {
+inline Variant Object::call(std::string_view method, Args... args) {
 	Variant argv[] = {args...};
 	return callv(method, false, argv, sizeof...(Args));
 }
 
 template <typename... Args>
-inline Variant Object::operator () (const std::string &method, Args... args) {
+inline Variant Object::operator () (std::string_view method, Args... args) {
 	return call(method, args...);
 }
 
 template <typename... Args>
-inline Variant Object::call_deferred(const std::string &method, Args... args) {
+inline Variant Object::call_deferred(std::string_view method, Args... args) {
 	Variant argv[] = {args...};
 	return callv(method, true, argv, sizeof...(Args));
 }
 
-inline void Object::connect(const std::string &signal, const std::string &method) {
+inline void Object::connect(const std::string &signal, std::string_view method) {
 	this->connect(*this, signal, method);
 }
-inline void Object::disconnect(const std::string &signal, const std::string &method) {
+inline void Object::disconnect(const std::string &signal, std::string_view method) {
 	this->disconnect(*this, signal, method);
 }
 
 // This is one of the most heavily used functions in the API, so it's worth optimizing.
-inline Variant Object::callv(const std::string &method, bool deferred, const Variant *argv, unsigned argc) {
+inline Variant Object::callv(std::string_view method, bool deferred, const Variant *argv, unsigned argc) {
 	static constexpr int ECALL_OBJ_CALLP = 506; // Call a method on an object
 	Variant var;
 	// We will attempt to call the method using inline assembly.
 	register uint64_t object asm("a0") = address();
-	register const char *method_ptr asm("a1") = method.c_str();
+	register const char *method_ptr asm("a1") = method.begin();
 	register size_t method_size asm("a2") = method.size();
 	register bool deferred_flag asm("a3") = deferred;
 	register Variant *var_ptr asm("a4") = &var;

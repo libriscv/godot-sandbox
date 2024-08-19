@@ -40,19 +40,19 @@ std::vector<std::string> Object::get_property_list() const {
 	return properties;
 }
 
-void Object::connect(Object target, const std::string &signal, const std::string &method) {
+void Object::connect(Object target, const std::string &signal, std::string_view method) {
 	Variant vars[3];
 	vars[0] = target.address();
 	vars[1] = signal;
-	vars[2] = method;
+	vars[2] = std::string(method);
 	sys_obj(Object_Op::CONNECT, address(), vars);
 }
 
-void Object::disconnect(Object target, const std::string &signal, const std::string &method) {
+void Object::disconnect(Object target, const std::string &signal, std::string_view method) {
 	Variant vars[3];
 	vars[0] = target.address();
 	vars[1] = signal;
-	vars[2] = method;
+	vars[2] = std::string(method);
 	sys_obj(Object_Op::DISCONNECT, address(), vars);
 }
 
