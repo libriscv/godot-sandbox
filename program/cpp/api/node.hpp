@@ -51,7 +51,7 @@ struct Node : public Object {
 	/// @param index The new index of the child.
 	void move_child(const Node &child, unsigned index);
 
-	/// @brief Remove a child from the node.
+	/// @brief Remove a child from the node. The child is *not* freed.
 	/// @param child The child node to remove.
 	/// @param deferred If true, the child will be removed next frame.
 	void remove_child(const Node &child, bool deferred = false);

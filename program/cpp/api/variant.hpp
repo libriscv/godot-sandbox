@@ -162,16 +162,16 @@ struct Variant
 	std::vector<float>& f32array() const; // Modifiable vector for PACKED_FLOAT32_ARRAY
 	std::vector<double>& f64array() const; // Modifiable vector for PACKED_FLOAT64_ARRAY
 
-	void callp(const std::string &method, const Variant *args, int argcount, Variant &r_ret, int &r_error);
+	void callp(std::string_view method, const Variant *args, int argcount, Variant &r_ret, int &r_error);
 
 	template <typename... Args>
-	Variant method_call(const std::string &method, Args... args);
+	Variant method_call(std::string_view method, Args... args);
 
 	template <typename... Args>
 	Variant call(Args... args);
 
 	template <typename... Args>
-	Variant operator ()(const std::string &method, Args... args);
+	Variant operator ()(std::string_view method, Args... args);
 
 	static void evaluate(const Operator &op, const Variant &a, const Variant &b, Variant &r_ret, bool &r_valid);
 
@@ -567,7 +567,7 @@ inline bool Variant::operator<(const Variant &other) const {
 }
 
 template <typename... Args>
-inline Variant Variant::method_call(const std::string &method, Args... args) {
+inline Variant Variant::method_call(std::string_view method, Args... args) {
 	std::array<Variant, sizeof...(args)> vargs = { args... };
 	Variant result;
 	int error;
@@ -585,6 +585,25 @@ inline Variant Variant::call(Args... args) {
 }
 
 template <typename... Args>
-inline Variant Variant::operator ()(const std::string &method, Args... args) {
+inline Variant Variant::operator ()(std::string_view method, Args... args) {
 	return method_call(method, args...);
+}
+
+/* Variant::callp() requires maximum performance, so implement using inline assembly */
+inline void Variant::callp(std::string_view method, const Variant *args, int argcount, Variant &r_ret, int &r_error) {
+	//sys_vcall(this, method.begin(), method.size(), args, argcount, r_ret);
+	static constexpr int ECALL_VCALL = 501; // Call a method on a Variant
+	register Variant *object asm("a0") = this;
+	register const char *method_ptr asm("a1") = method.begin();
+	register size_t method_size asm("a2") = method.size();
+	register const Variant *args_ptr asm("a3") = args;
+	register size_t argcount_reg asm("a4") = argcount;
+	register Variant *ret_ptr asm("a5") = &r_ret;
+	register int syscall_number asm("a7") = ECALL_VCALL;
+
+	asm volatile(
+		"ecall"
+		: "=m"(*ret_ptr)
+		: "r"(object), "m"(*object), "r"(method_ptr), "r"(method_size), "m"(*method_ptr), "r"(args_ptr), "r"(argcount_reg), "r"(ret_ptr), "m"(*args_ptr), "r"(syscall_number)
+	);
 }

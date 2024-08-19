@@ -67,8 +67,8 @@ APICALL(api_vcall) {
 	auto &emu = riscv::emu(machine);
 
 	if (args_size > 8) {
-		emu.print("Too many arguments.");
-		return;
+		ERR_PRINT("Variant::call(): Too many arguments");
+		throw std::runtime_error("Variant::call(): Too many arguments");
 	}
 
 	const GuestVariant *args = emu.machine().memory.memarray<GuestVariant>(args_ptr, args_size);
@@ -85,14 +85,10 @@ APICALL(api_vcall) {
 
 		auto *vcall = vp->toVariantPtr(emu);
 		Variant ret;
-		vcall->callp(String::utf8(method.data(), method.size()), argptrs.data(), args_size, ret, error);
+		vcall->callp(StringName(method.data()), argptrs.data(), args_size, ret, error);
 		vret->set(emu, ret);
 	} else if (vp->type == Variant::OBJECT) {
-		auto *obj = reinterpret_cast<godot::Object *>(uintptr_t(vp->v.i));
-		if (!emu.is_scoped_object(obj)) {
-			ERR_PRINT("Object is not scoped");
-			throw std::runtime_error("Object is not scoped");
-		}
+		auto *obj = get_object_from_address(emu, vp->v.i);
 
 		Array vargs;
 		vargs.resize(args_size);
@@ -102,7 +98,8 @@ APICALL(api_vcall) {
 		Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
 		vret->set(emu, ret);
 	} else {
-		ERR_PRINT("Invalid Variant type for Object::call");
+		ERR_PRINT("Invalid Variant type for Variant::call()");
+		throw std::runtime_error("Invalid Variant type for Variant::call()");
 	}
 }
 

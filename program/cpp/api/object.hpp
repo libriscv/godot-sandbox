@@ -102,8 +102,6 @@ inline void Object::disconnect(const std::string &signal, const std::string &met
 	this->disconnect(*this, signal, method);
 }
 
-EXTERN_SYSCALL(ECALL_OBJ_CALLP, void, sys_obj_callp, uint64_t, const char *, size_t, bool, Variant *, const Variant *, unsigned);
-
 // This is one of the most heavily used functions in the API, so it's worth optimizing.
 inline Variant Object::callv(const std::string &method, bool deferred, const Variant *argv, unsigned argc) {
 	static constexpr int ECALL_OBJ_CALLP = 506; // Call a method on an object

@@ -6,15 +6,6 @@ MAKE_SYSCALL(ECALL_VCALL, void, sys_vcall, Variant *, const char *, size_t, cons
 MAKE_SYSCALL(ECALL_VEVAL, bool, sys_veval, int, const Variant *, const Variant *, Variant *);
 MAKE_SYSCALL(ECALL_VFREE, void, sys_vfree, Variant *);
 
-void Variant::callp(const std::string &method, const Variant *args, int argcount, Variant &r_ret, int &r_error) {
-	if (m_type != OBJECT && m_type != CALLABLE) {
-		r_error = 1;
-		return;
-	}
-
-	sys_vcall(this, method.c_str(), method.size(), args, argcount, r_ret);
-}
-
 void Variant::evaluate(const Operator &op, const Variant &a, const Variant &b, Variant &r_ret, bool &r_valid) {
 	r_valid = sys_veval(op, &a, &b, &r_ret);
 }

@@ -36,8 +36,15 @@ inline Object get_tree() {
 /// @param State The type of the state object.
 /// @note There is currently no way to clear the state objects, so be careful
 /// with memory usage.
+/// @example
+/// struct SlimeState {
+/// 	int direction = 1;
+/// };
+/// PER_OBJECT(SlimeState);
+/// // Then use it like this:
+/// auto& state = GetSlimeState(slime);
 #define PER_OBJECT(State) \
-	static State &Get ## State(Node &node) { \
+	static State &Get ## State(const Node &node) { \
 		static std::unordered_map<uint64_t, State> state; \
 		return state[node.address()]; \
 	}
