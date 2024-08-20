@@ -1,5 +1,6 @@
 #include "sandbox.h"
 
+#include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/core/class_db.hpp>
 
 #include <charconv>
@@ -51,6 +52,9 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_instructions_max", "max"), &Sandbox::set_instructions_max);
 	ClassDB::bind_method(D_METHOD("get_instructions_max"), &Sandbox::get_instructions_max);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE, "Maximum billions of instructions executed before cancelling execution"), "set_instructions_max", "get_instructions_max");
+
+	// Group for sandboxed properties.
+	ADD_GROUP("Sandboxed Properties", "custom_");
 }
 
 Sandbox::Sandbox() {
@@ -77,8 +81,6 @@ void Sandbox::set_program(Ref<ELFScript> program) {
 		// TODO unload program
 		return;
 	}
-	if (Engine::get_singleton()->is_editor_hint())
-		return;
 	PackedByteArray data = m_program_data->get_content();
 	this->load(std::move(data));
 }
@@ -138,6 +140,8 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 		this->handle_exception(machine().cpu.pc());
 		// TODO: Program failed to load.
 	}
+
+	this->read_program_properties(true);
 
 	// Pre-cache some functions
 	auto functions = this->get_functions();
@@ -351,6 +355,8 @@ gaddr_t Sandbox::address_of(std::string_view name) const {
 	return machine().address_of(name);
 }
 
+//-- Scoped objects and variants --//
+
 void Sandbox::add_scoped_variant(uint32_t hash) {
 	if (state().scoped_variants.size() >= this->m_max_refs) {
 		ERR_PRINT("Maximum number of scoped variants reached.");
@@ -365,4 +371,115 @@ void Sandbox::add_scoped_object(const void *ptr) {
 		throw std::runtime_error("Maximum number of scoped objects reached.");
 	}
 	state().scoped_objects.push_back(reinterpret_cast<uintptr_t>(ptr));
+}
+
+//-- Properties --//
+
+void Sandbox::read_program_properties(bool editor) const {
+	try {
+		// Properties start with prop0, prop1, prop2, ...
+		for (int i = 0; i < MAX_PROPERTIES; i++) {
+			const std::string prop_sym = "prop" + std::to_string(i);
+			auto prop_addr = machine().address_of(prop_sym);
+			if (prop_addr == 0x0)
+				break;
+
+			struct GuestProperty {
+				gaddr_t g_name;
+				unsigned size;
+				Variant::Type type;
+				gaddr_t getter;
+				gaddr_t setter;
+				GuestVariant def_val;
+			};
+			auto *prop = machine().memory.memarray<GuestProperty>(prop_addr, 1);
+			// Check if the property is valid by checking its size
+			if (prop->size != sizeof(GuestProperty)) {
+				ERR_PRINT("Sandbox: Invalid property size");
+				continue;
+			}
+			const auto c_name = machine().memory.memstring(prop->g_name);
+			Variant def_val = prop->def_val.toVariant(*this);
+
+			this->add_property(String::utf8(c_name.c_str(), c_name.size()), prop->type, prop->setter, prop->getter, def_val);
+		}
+	} catch (const std::exception &e) {
+		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
+	}
+}
+
+void Sandbox::add_property(const String &name, Variant::Type vtype, uint64_t setter, uint64_t getter, const Variant &def) const {
+	if (setter == 0 || getter == 0) {
+		ERR_PRINT("Sandbox: Setter and getter not found for property: " + name);
+		return;
+	} else if (m_properties.size() >= MAX_PROPERTIES) {
+		ERR_PRINT("Sandbox: Maximum number of properties reached");
+		return;
+	}
+	for (const auto &prop : m_properties) {
+		if (prop.name() == name) {
+			// TODO: Allow overriding properties?
+			//ERR_PRINT("Sandbox: Property already exists: " + name);
+			return;
+		}
+	}
+	m_properties.push_back(SandboxProperty(name, vtype, setter, getter, def));
+}
+
+bool Sandbox::set_property(const StringName &name, const Variant &value) {
+	if (m_properties.empty()) {
+		this->read_program_properties(false);
+	}
+	for (auto &prop : m_properties) {
+		if (prop.name() == name) {
+			prop.set(*this, value);
+			//ERR_PRINT("Sandbox: SetProperty *found*: " + name);
+			return true;
+		}
+	}
+	//ERR_PRINT("Sandbox: Property not found: " + name);
+	return false;
+}
+
+bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
+	if (m_properties.empty()) {
+		this->read_program_properties(false);
+	}
+	for (const auto &prop : m_properties) {
+		if (prop.name() == name) {
+			r_ret = prop.get(*this);
+			//ERR_PRINT("Sandbox: GetProperty *found*: " + name);
+			return true;
+		}
+	}
+	//ERR_PRINT("Sandbox: Property not found: " + name);
+	return false;
+}
+
+SandboxProperty *Sandbox::find_property_or_null(const StringName &name) const {
+	for (auto &prop : m_properties) {
+		if (prop.name() == name) {
+			return &prop;
+		}
+	}
+	return nullptr;
+}
+
+void SandboxProperty::set(Sandbox &sandbox, const Variant &value) {
+	if (m_setter_address == 0) {
+		ERR_PRINT("Sandbox: Setter not found for property: " + m_name);
+		return;
+	}
+	const Variant *args[] = { &value };
+	GDExtensionCallError error;
+	sandbox.vmcall_internal(m_setter_address, args, 1, error);
+}
+
+Variant SandboxProperty::get(const Sandbox &sandbox) const {
+	if (m_getter_address == 0) {
+		ERR_PRINT("Sandbox: Getter not found for property: " + m_name);
+		return Variant();
+	}
+	GDExtensionCallError error;
+	return const_cast<Sandbox &>(sandbox).vmcall_internal(m_getter_address, nullptr, 0, error);
 }

@@ -8,11 +8,14 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"sys_vcall",
 	"sys_vfree",
 	"sys_print",
+	"sys_get_obj",
 	"sys_obj_callp",
+	"sys_obj",
 	"sys_get_node",
 	"sys_node",
 	"sys_node2d",
 	"sys_node3d",
+	"sys_throw",
 
 	"main",
 	"_Exit",
@@ -1135,6 +1138,9 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"sincosf32",
 	"with_errnof",
 	"xflowf",
+	"floor",
+	"floorf32x",
+	"floorf64",
 };
 
 PackedStringArray Sandbox::get_functions() const {

@@ -12,6 +12,7 @@ using gaddr_t = riscv::address_type<RISCV_ARCH>;
 using machine_t = riscv::Machine<RISCV_ARCH>;
 #include "elf/script_elf.h"
 #include "vmcallable.h"
+#include "vmproperty.h"
 
 class Sandbox : public Node {
 	GDCLASS(Sandbox, Node);
@@ -27,6 +28,7 @@ public:
 	static constexpr unsigned MAX_VMEM = 16ul;
 	static constexpr unsigned MAX_LEVEL = 8;
 	static constexpr unsigned GODOT_VARIANT_SIZE = sizeof(Variant);
+	static constexpr unsigned MAX_PROPERTIES = 16;
 
 	Sandbox();
 	~Sandbox();
@@ -78,8 +80,17 @@ public:
 	void rem_scoped_object(const void *ptr) { state().scoped_objects.erase(std::remove(state().scoped_objects.begin(), state().scoped_objects.end(), reinterpret_cast<uintptr_t>(ptr)), state().scoped_objects.end()); }
 	bool is_scoped_object(const void *ptr) const noexcept { return state().scoped_objects.end() != std::find(state().scoped_objects.begin(), state().scoped_objects.end(), reinterpret_cast<uintptr_t>(ptr)); }
 
+	// Properties
+	void add_property(const String &name, Variant::Type vtype, uint64_t setter, uint64_t getter, const Variant &def = "") const;
+	bool set_property(const StringName &name, const Variant &value);
+	bool get_property(const StringName &name, Variant &r_ret);
+	SandboxProperty *find_property_or_null(const StringName &name) const;
+	std::vector<SandboxProperty> &get_properties() { return m_properties; }
+	const std::vector<SandboxProperty> &get_properties() const { return m_properties; }
+
 private:
 	void load(PackedByteArray &&vbuf, const std::vector<std::string> *argv = nullptr);
+	void read_program_properties(bool editor) const;
 	void handle_exception(gaddr_t);
 	void handle_timeout(gaddr_t);
 	void print_backtrace(gaddr_t);
@@ -107,6 +118,9 @@ private:
 	};
 	CurrentState *m_current_state = nullptr;
 	std::array<CurrentState, MAX_LEVEL> m_states;
+
+	// Properties
+	mutable std::vector<SandboxProperty> m_properties;
 };
 
 struct GuestStdString {

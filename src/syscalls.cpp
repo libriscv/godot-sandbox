@@ -534,7 +534,10 @@ APICALL(api_throw) {
 	auto [type, msg, vaddr] = machine.sysargs<std::string_view, std::string_view, gaddr_t>();
 
 	auto &emu = riscv::emu(machine);
-	throw std::runtime_error("Sandbox exception of type " + std::string(type) + ": " + std::string(msg));
+	auto *var = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
+	String error_string = "Sandbox exception of type " + String::utf8(type.data(), type.size()) + ": " + String::utf8(msg.data(), msg.size()) + " for Variant of type " + itos(var->type);
+	ERR_PRINT(error_string);
+	throw std::runtime_error("Sandbox exception of type " + std::string(type) + ": " + std::string(msg) + " for Variant of type " + std::to_string(var->type));
 }
 
 } //namespace riscv
@@ -567,5 +570,8 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_NODE2D, api_node2d },
 			{ ECALL_NODE3D, api_node3d },
 			{ ECALL_THROW, api_throw },
+			{ ECALL_IS_EDITOR, [](machine_t &machine) {
+				 machine.set_result(godot::Engine::get_singleton()->is_editor_hint());
+			 } },
 	});
 }

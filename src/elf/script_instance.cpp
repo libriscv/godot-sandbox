@@ -17,6 +17,12 @@ bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("ELFScriptInstance::set " + p_name);
 	}
+
+	auto [sandbox, created] = get_sandbox();
+	if (sandbox) {
+		return sandbox->set_property(p_name, p_value);
+	}
+
 	return false;
 }
 
@@ -25,6 +31,15 @@ bool ELFScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 		r_ret = script;
 		return true;
 	}
+	if constexpr (VERBOSE_LOGGING) {
+		ERR_PRINT("ELFScriptInstance::get " + p_name);
+	}
+
+	auto [sandbox, created] = get_sandbox();
+	if (sandbox) {
+		return sandbox->get_property(p_name, r_ret);
+	}
+
 	return false;
 }
 
@@ -153,13 +168,49 @@ const GDExtensionMethodInfo *ELFScriptInstance::get_method_list(uint32_t *r_coun
 }
 
 const GDExtensionPropertyInfo *ELFScriptInstance::get_property_list(uint32_t *r_count) const {
-	*r_count = 0;
-	return nullptr;
+	auto [sandbox, created] = get_sandbox();
+	if (!sandbox) {
+		if constexpr (VERBOSE_LOGGING) {
+			printf("ELFScriptInstance::get_property_list: no sandbox\n");
+		}
+		*r_count = 0;
+		return nullptr;
+	}
+
+	auto &properties = sandbox->get_properties();
+	*r_count = properties.size();
+	GDExtensionPropertyInfo *list = memnew_arr(GDExtensionPropertyInfo, properties.size());
+	const GDExtensionPropertyInfo *list_ptr = list;
+
+	for (auto &property : properties) {
+		if constexpr (VERBOSE_LOGGING) {
+			printf("ELFScriptInstance::get_property_list %s\n", property.name().utf8().ptr());
+		}
+		list->name = stringname_alloc(property.name());
+		list->class_name = stringname_alloc("Variant");
+		list->type = (GDExtensionVariantType)property.type();
+		list->hint = 0;
+		list->hint_string = string_alloc("");
+		list->usage = PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE;
+		list++;
+	}
+
+	return list_ptr;
 }
 void ELFScriptInstance::free_property_list(const GDExtensionPropertyInfo *p_list) const {
+	if (p_list) {
+		memdelete_arr(p_list);
+	}
 }
 
 Variant::Type ELFScriptInstance::get_property_type(const StringName &p_name, bool *r_is_valid) const {
+	auto [sandbox, created] = get_sandbox();
+	if (sandbox) {
+		if (auto *prop = sandbox->find_property_or_null(p_name)) {
+			*r_is_valid = true;
+			return prop->type();
+		}
+	}
 	*r_is_valid = false;
 	return Variant::NIL;
 }
@@ -168,6 +219,24 @@ void ELFScriptInstance::get_property_state(GDExtensionScriptInstancePropertyStat
 }
 
 bool ELFScriptInstance::validate_property(GDExtensionPropertyInfo &p_property) const {
+	auto [sandbox, created] = get_sandbox();
+	if (!sandbox) {
+		if constexpr (VERBOSE_LOGGING) {
+			printf("ELFScriptInstance::validate_property: no sandbox\n");
+		}
+		return false;
+	}
+	for (auto &property : sandbox->get_properties()) {
+		if (*(StringName *)p_property.name == StringName(property.name())) {
+			if constexpr (VERBOSE_LOGGING) {
+				printf("ELFScriptInstance::validate_property %s => true\n", property.name().utf8().ptr());
+			}
+			return true;
+		}
+	}
+	if constexpr (VERBOSE_LOGGING) {
+		printf("ELFScriptInstance::validate_property %s => false\n", String(*(StringName *)p_property.name).utf8().ptr());
+	}
 	return false;
 }
 
@@ -209,10 +278,25 @@ void ELFScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list) co
 }
 
 bool ELFScriptInstance::property_can_revert(const StringName &p_name) const {
+	auto [sandbox, created] = get_sandbox();
+	if (!sandbox) {
+		return false;
+	}
+	if (auto *prop = sandbox->find_property_or_null(p_name)) {
+		return true;
+	}
 	return false;
 }
 
 bool ELFScriptInstance::property_get_revert(const StringName &p_name, Variant &r_ret) const {
+	auto [sandbox, created] = get_sandbox();
+	if (!sandbox) {
+		return false;
+	}
+	if (auto *prop = sandbox->find_property_or_null(p_name)) {
+		r_ret = prop->default_value();
+		return true;
+	}
 	return false;
 }
 
@@ -285,7 +369,9 @@ std::tuple<Sandbox *, bool> ELFScriptInstance::get_sandbox() const {
 	Sandbox *sandbox_ptr = Object::cast_to<Sandbox>(this->owner);
 	if (sandbox_ptr == nullptr) {
 		ERR_PRINT("ELFScriptInstance: owner is not a Sandbox");
-		fprintf(stderr, "ELFScriptInstance: owner is instead a '%s'!\n", this->owner->get_class().utf8().get_data());
+		if constexpr (VERBOSE_LOGGING) {
+			fprintf(stderr, "ELFScriptInstance: owner is instead a '%s'!\n", this->owner->get_class().utf8().get_data());
+		}
 		return { nullptr, false };
 	}
 
