@@ -454,7 +454,26 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 			return true;
 		}
 	}
-	//ERR_PRINT("Sandbox: Property not found: " + name);
+	// Not the most efficient way to do this, but it's (currently) a small list
+	if (name == StringName("max_references")) {
+		set_max_refs(value);
+		return true;
+	} else if (name == StringName("memory_max")) {
+		set_memory_max(value);
+		return true;
+	} else if (name == StringName("execution_timeout")) {
+		set_instructions_max(value);
+		return true;
+	} else if (name == StringName("monitor_heap_usage")) {
+		set_heap_usage(value);
+		return true;
+	} else if (name == StringName("monitor_execution_timeouts")) {
+		set_budget_overruns(value);
+		return true;
+	} else if (name == StringName("monitor_calls_made")) {
+		set_calls_made(value);
+		return true;
+	}
 	return false;
 }
 
@@ -469,7 +488,26 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 			return true;
 		}
 	}
-	//ERR_PRINT("Sandbox: Property not found: " + name);
+	// Not the most efficient way to do this, but it's (currently) a small list
+	if (name == StringName("max_references")) {
+		r_ret = get_max_refs();
+		return true;
+	} else if (name == StringName("memory_max")) {
+		r_ret = get_memory_max();
+		return true;
+	} else if (name == StringName("execution_timeout")) {
+		r_ret = get_instructions_max();
+		return true;
+	} else if (name == StringName("monitor_heap_usage")) {
+		r_ret = get_heap_usage();
+		return true;
+	} else if (name == StringName("monitor_execution_timeouts")) {
+		r_ret = get_budget_overruns();
+		return true;
+	} else if (name == StringName("monitor_calls_made")) {
+		r_ret = get_calls_made();
+		return true;
+	}
 	return false;
 }
 
