@@ -377,26 +377,30 @@ void Sandbox::add_scoped_object(const void *ptr) {
 
 void Sandbox::read_program_properties(bool editor) const {
 	try {
-		// Properties start with prop0, prop1, prop2, ...
-		for (int i = 0; i < MAX_PROPERTIES; i++) {
-			const std::string prop_sym = "prop" + std::to_string(i);
-			auto prop_addr = machine().address_of(prop_sym);
-			if (prop_addr == 0x0)
-				break;
+		// Properties is an array named properties, that ends with an invalid property
+		auto prop_addr = machine().address_of("properties");
+		if (prop_addr == 0x0)
+			return;
 
-			struct GuestProperty {
-				gaddr_t g_name;
-				unsigned size;
-				Variant::Type type;
-				gaddr_t getter;
-				gaddr_t setter;
-				GuestVariant def_val;
-			};
-			auto *prop = machine().memory.memarray<GuestProperty>(prop_addr, 1);
+		struct GuestProperty {
+			gaddr_t g_name;
+			unsigned size;
+			Variant::Type type;
+			gaddr_t getter;
+			gaddr_t setter;
+			GuestVariant def_val;
+		};
+		auto *props = machine().memory.memarray<GuestProperty>(prop_addr, MAX_PROPERTIES);
+
+		for (int i = 0; i < MAX_PROPERTIES; i++) {
+			const GuestProperty *prop = &props[i];
+			// Invalid property: stop reading
+			if (prop->g_name == 0)
+				break;
 			// Check if the property is valid by checking its size
 			if (prop->size != sizeof(GuestProperty)) {
 				ERR_PRINT("Sandbox: Invalid property size");
-				continue;
+				break;
 			}
 			const auto c_name = machine().memory.memstring(prop->g_name);
 			Variant def_val = prop->def_val.toVariant(*this);

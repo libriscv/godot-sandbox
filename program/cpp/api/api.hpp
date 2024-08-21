@@ -51,26 +51,28 @@ inline Object get_tree() {
 
 /// @brief A property struct that must be instantiated in the global scope.
 /// @note This is used to define custom properties for the Sandbox class.
-/// The properties must have exact names, starting with "prop" and a number.
-/// On program load, the properties are automatically added to the Sandbox class.
+/// On program load, the properties are automatically exposed on the script instance.
 /// @example
-/// struct Property prop0 {
-/// 	"my_property",
-/// 	Variant::Type::INT,
-/// 	[]() -> Variant { return 42; },
-/// 	[](Variant value) { print("Set to: ", value); }
-/// };
+/// SANDBOXED_PROPERTIES(1, {
+/// 	.name = "my_property",
+/// 	.type = Variant::Type::INT,
+/// 	.getter = []() -> Variant { return 42; },
+/// 	.setter = [](Variant value) { print("Set to: ", value); },
+/// 	.default_value = Variant{42},
+/// });
 struct Property {
 	using getter_t = Variant (*)();
 	using setter_t = Variant (*)(Variant);
 
-	const char * const name;
+	const char * const name = 0;
 	const unsigned size = sizeof(Property);
 	const Variant::Type type;
 	const getter_t getter;
 	const setter_t setter;
 	const Variant default_value;
 };
+#define SANDBOXED_PROPERTIES(num, ...) \
+	extern "C" const Property properties[num+1] { __VA_ARGS__, {0} };
 
 /// @brief Stop execution of the program.
 /// @note This function may return if the program is resumed. However, no such
