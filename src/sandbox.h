@@ -56,6 +56,12 @@ public:
 	uint32_t get_memory_max() const { return m_memory_max; }
 	void set_instructions_max(int64_t max) { m_insn_max = max; }
 	int64_t get_instructions_max() const { return m_insn_max; }
+	void set_heap_usage(int64_t) {} // Do nothing (it's a read-only property)
+	int64_t get_heap_usage() const;
+	void set_budget_overruns(unsigned budget) {} // Do nothing (it's a read-only property)
+	unsigned get_budget_overruns() const { return m_budget_overruns; }
+	void set_calls_made(unsigned calls) {} // Do nothing (it's a read-only property)
+	unsigned get_calls_made() const { return m_calls_made; }
 
 	void print(std::string_view text);
 	gaddr_t address_of(std::string_view name) const;
@@ -110,6 +116,7 @@ private:
 	bool m_last_newline = false;
 	uint8_t m_level = 0;
 	unsigned m_budget_overruns = 0;
+	unsigned m_calls_made = 0;
 
 	struct CurrentState {
 		godot::Node *tree_base;

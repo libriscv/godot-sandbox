@@ -50,6 +50,21 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_instructions_max"), &Sandbox::get_instructions_max);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE, "Maximum billions of instructions executed before cancelling execution"), "set_instructions_max", "get_instructions_max");
 
+	// Group for monitored Sandbox health.
+	ADD_GROUP("Sandbox Monitoring", "monitor_");
+
+	ClassDB::bind_method(D_METHOD("set_heap_usage", "usage"), &Sandbox::set_heap_usage);
+	ClassDB::bind_method(D_METHOD("get_heap_usage"), &Sandbox::get_heap_usage);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_heap_usage", PROPERTY_HINT_NONE, "Current arena usage"), "set_heap_usage", "get_heap_usage");
+
+	ClassDB::bind_method(D_METHOD("set_budget_overruns", "overruns"), &Sandbox::set_budget_overruns);
+	ClassDB::bind_method(D_METHOD("get_budget_overruns"), &Sandbox::get_budget_overruns);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_execution_timeouts", PROPERTY_HINT_NONE, "Number of execution timeouts"), "set_budget_overruns", "get_budget_overruns");
+
+	ClassDB::bind_method(D_METHOD("set_calls_made", "calls"), &Sandbox::set_calls_made);
+	ClassDB::bind_method(D_METHOD("get_calls_made"), &Sandbox::get_calls_made);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_calls_made", PROPERTY_HINT_NONE, "Number of calls made"), "set_calls_made", "get_calls_made");
+
 	// Group for sandboxed properties.
 	ADD_GROUP("Sandboxed Properties", "custom_");
 }
@@ -187,6 +202,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 	state.scoped_variants.clear();
 	auto *old_state = this->m_current_state;
 	this->m_current_state = &state;
+	this->m_calls_made++;
 
 	try {
 		GuestVariant *retvar = nullptr;
@@ -219,6 +235,8 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 
 		// Treat return value as pointer to Variant
 		auto result = retvar->toVariant(*this);
+		// Potentially free the return value
+		retvar->free(*this);
 
 		m_level--;
 		this->m_current_state = old_state;
@@ -341,6 +359,13 @@ gaddr_t Sandbox::cached_address_of(int64_t hash) const {
 
 gaddr_t Sandbox::address_of(std::string_view name) const {
 	return machine().address_of(name);
+}
+
+int64_t Sandbox::get_heap_usage() const {
+	if (machine().has_arena()) {
+		return machine().arena().bytes_used();
+	}
+	return 0;
 }
 
 //-- Scoped objects and variants --//
