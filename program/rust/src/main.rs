@@ -1,5 +1,4 @@
-mod sysalloc;
-mod api;
+use sysalloc::*;
 use api::*;
 
 pub fn main()
