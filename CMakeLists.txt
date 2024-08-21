@@ -32,13 +32,9 @@ set(SOURCES
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
 
-if (MINGW)    
+if (MINGW)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libgcc -static-libstdc++ -static")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20")
-endif()
-
-if (SANITIZE)
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address,undefined")
 endif()
 
 # Add godot-cpp library
@@ -60,4 +56,10 @@ target_link_libraries(godot-riscv PUBLIC riscv godot-cpp)
 
 if (STATIC_BUILD)
     target_link_libraries(godot-riscv PUBLIC -static)
+endif()
+if (SANITIZE)
+	#target_compile_options(godot-riscv PUBLIC -fsanitize=scudo,undefined)
+	#target_link_libraries(godot-riscv PUBLIC -fsanitize=scudo,undefined -L/usr/lib/llvm-18/lib/clang/18/lib/linux -l:libclang_rt.ubsan_standalone-x86_64.so -l:libclang_rt.scudo_standalone-x86_64.so -Wl,-rpath=/usr/lib/llvm-18/lib/clang/18/lib/linux)
+	target_compile_options(godot-riscv PUBLIC -fsanitize=undefined -fno-sanitize=vptr)
+	target_link_libraries(godot-riscv PUBLIC -fsanitize=undefined -L/usr/lib/llvm-18/lib/clang/18/lib/linux -l:libclang_rt.ubsan_standalone-x86_64.a)
 endif()
