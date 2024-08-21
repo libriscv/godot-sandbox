@@ -7,9 +7,6 @@
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
-#ifdef RISCV_BINARY_TRANSLATION
-#include <thread> // TODO: Use Godot's threading API.
-#endif
 
 using namespace godot;
 
@@ -105,15 +102,6 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 			.memory_max = uint64_t(get_memory_max()) << 20, // in MiB
 			//.verbose_loader = true,
 			.default_exit_function = "fast_exit",
-#ifdef RISCV_BINARY_TRANSLATION
-			.translate_background_callback =
-					[](auto &compilation_step) {
-						// TODO: Use Godot's threading API.
-						std::thread([compilation_step = std::move(compilation_step)] {
-							compilation_step();
-						}).detach();
-					}
-#endif
 		};
 
 		this->m_machine = new machine_t{ binary_view, options };

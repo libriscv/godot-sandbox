@@ -163,7 +163,6 @@ const GDExtensionMethodInfo *ELFScriptInstance::get_method_list(uint32_t *r_coun
 	}
 
 	*r_count = size;
-
 	return list;
 }
 
@@ -273,7 +272,7 @@ void ELFScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list) co
 	//   /* TODO `GDExtensionClassFreePropertyList` is ill-defined, we need a non-const pointer to free this. */                                                                    \
 	// ::godot::internal::free_c_property_list(const_cast<GDExtensionPropertyInfo *>(p_list));
 	if (p_list) {
-		//memfree((void *)p_list);
+		memdelete_arr(p_list);
 	}
 }
 
