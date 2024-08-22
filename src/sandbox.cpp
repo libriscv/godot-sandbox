@@ -53,17 +53,21 @@ void Sandbox::_bind_methods() {
 	// Group for monitored Sandbox health.
 	ADD_GROUP("Sandbox Monitoring", "monitor_");
 
-	ClassDB::bind_method(D_METHOD("set_heap_usage", "usage"), &Sandbox::set_heap_usage);
 	ClassDB::bind_method(D_METHOD("get_heap_usage"), &Sandbox::get_heap_usage);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_heap_usage", PROPERTY_HINT_NONE, "Current arena usage"), "set_heap_usage", "get_heap_usage");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_heap_usage", PROPERTY_HINT_NONE, "Current arena usage"), "", "get_heap_usage");
 
-	ClassDB::bind_method(D_METHOD("set_budget_overruns", "overruns"), &Sandbox::set_budget_overruns);
 	ClassDB::bind_method(D_METHOD("get_budget_overruns"), &Sandbox::get_budget_overruns);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_execution_timeouts", PROPERTY_HINT_NONE, "Number of execution timeouts"), "set_budget_overruns", "get_budget_overruns");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_execution_timeouts", PROPERTY_HINT_NONE, "Number of execution timeouts"), "", "get_budget_overruns");
 
-	ClassDB::bind_method(D_METHOD("set_calls_made", "calls"), &Sandbox::set_calls_made);
 	ClassDB::bind_method(D_METHOD("get_calls_made"), &Sandbox::get_calls_made);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_calls_made", PROPERTY_HINT_NONE, "Number of calls made"), "set_calls_made", "get_calls_made");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_calls_made", PROPERTY_HINT_NONE, "Number of calls made"), "", "get_calls_made");
+
+	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_calls_made"), &Sandbox::get_global_calls_made);
+	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_exceptions"), &Sandbox::get_global_exceptions);
+	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_budget_overruns"), &Sandbox::get_global_budget_overruns);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_calls_made", PROPERTY_HINT_NONE, "Number of calls made"), "", "get_global_calls_made");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_exceptions", PROPERTY_HINT_NONE, "Number of exceptions thrown"), "", "get_global_exceptions");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_execution_timeouts", PROPERTY_HINT_NONE, "Number of execution timeouts"), "", "get_global_budget_overruns");
 
 	// Group for sandboxed properties.
 	ADD_GROUP("Sandboxed Properties", "custom_");
@@ -203,6 +207,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 	auto *old_state = this->m_current_state;
 	this->m_current_state = &state;
 	this->m_calls_made++;
+	Sandbox::m_global_calls_made++;
 
 	try {
 		GuestVariant *retvar = nullptr;
@@ -298,6 +303,9 @@ void Sandbox::handle_exception(gaddr_t address) {
 	UtilityFunctions::print(
 			"Stack page: ", machine().memory.get_page_info(machine().cpu.reg(2)).c_str());
 
+	this->m_exceptions++;
+	Sandbox::m_global_exceptions++;
+
 	if (m_machine->memory.binary().empty()) {
 		ERR_PRINT("No binary loaded. Remember to assign a program to the Sandbox!");
 	}
@@ -305,6 +313,7 @@ void Sandbox::handle_exception(gaddr_t address) {
 
 void Sandbox::handle_timeout(gaddr_t address) {
 	this->m_budget_overruns++;
+	Sandbox::m_global_budget_overruns++;
 	auto callsite = machine().memory.lookup(address);
 	UtilityFunctions::print(
 			"Sandbox: Timeout for '", callsite.name.c_str(),
@@ -464,15 +473,6 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	} else if (name == StringName("execution_timeout")) {
 		set_instructions_max(value);
 		return true;
-	} else if (name == StringName("monitor_heap_usage")) {
-		set_heap_usage(value);
-		return true;
-	} else if (name == StringName("monitor_execution_timeouts")) {
-		set_budget_overruns(value);
-		return true;
-	} else if (name == StringName("monitor_calls_made")) {
-		set_calls_made(value);
-		return true;
 	}
 	return false;
 }
@@ -506,6 +506,15 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 		return true;
 	} else if (name == StringName("monitor_calls_made")) {
 		r_ret = get_calls_made();
+		return true;
+	} else if (name == StringName("global_calls_made")) {
+		r_ret = get_global_calls_made();
+		return true;
+	} else if (name == StringName("global_exceptions")) {
+		r_ret = get_global_exceptions();
+		return true;
+	} else if (name == StringName("global_budget_overruns")) {
+		r_ret = get_global_budget_overruns();
 		return true;
 	}
 	return false;

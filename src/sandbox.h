@@ -63,6 +63,10 @@ public:
 	void set_calls_made(unsigned calls) {} // Do nothing (it's a read-only property)
 	unsigned get_calls_made() const { return m_calls_made; }
 
+	static uint64_t get_global_budget_overruns() { return m_global_budget_overruns; }
+	static uint64_t get_global_exceptions() { return m_global_exceptions; }
+	static uint64_t get_global_calls_made() { return m_global_calls_made; }
+
 	void print(std::string_view text);
 	gaddr_t address_of(std::string_view name) const;
 	gaddr_t cached_address_of(int64_t hash) const;
@@ -115,7 +119,10 @@ private:
 
 	bool m_last_newline = false;
 	uint8_t m_level = 0;
+
+	// Stats
 	unsigned m_budget_overruns = 0;
+	unsigned m_exceptions = 0;
 	unsigned m_calls_made = 0;
 
 	struct CurrentState {
@@ -128,6 +135,11 @@ private:
 
 	// Properties
 	mutable std::vector<SandboxProperty> m_properties;
+
+	// Global statistics
+	static inline uint64_t m_global_budget_overruns = 0;
+	static inline uint64_t m_global_exceptions = 0;
+	static inline uint64_t m_global_calls_made = 0;
 };
 
 struct GuestStdString {
