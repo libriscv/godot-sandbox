@@ -27,6 +27,7 @@ public:
 	static constexpr unsigned MAX_HEAP = 16ul;
 	static constexpr unsigned MAX_VMEM = 16ul;
 	static constexpr unsigned MAX_LEVEL = 8;
+	static constexpr unsigned EDITOR_THROTTLE = 8;
 	static constexpr unsigned GODOT_VARIANT_SIZE = sizeof(Variant);
 	static constexpr unsigned MAX_PROPERTIES = 16;
 
@@ -118,6 +119,7 @@ private:
 	mutable std::unordered_map<int64_t, gaddr_t> m_lookup;
 
 	bool m_last_newline = false;
+	uint8_t m_throttled = 0;
 	uint8_t m_level = 0;
 
 	// Stats

@@ -12,6 +12,7 @@ using namespace godot;
 
 static const int HEAP_SYSCALLS_BASE = 480;
 static const int MEMORY_SYSCALLS_BASE = 485;
+static constexpr bool VERBOSE_EXCEPTIONS = false;
 
 static inline String to_hex(gaddr_t value) {
 	char str[20] = { 0 };
@@ -173,6 +174,10 @@ Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtens
 	return this->vmcall_internal(cached_address_of(function_name.hash(), function_name), args, arg_count, error);
 }
 Variant Sandbox::vmcall_fn(const StringName &function, const Variant **args, GDExtensionInt arg_count) {
+	if (this->m_throttled > 0) {
+		this->m_throttled--;
+		return Variant();
+	}
 	GDExtensionCallError error;
 	auto result = this->vmcall_internal(cached_address_of(function.hash()), args, arg_count, error);
 	return result;
@@ -243,13 +248,17 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 		// Potentially free the return value
 		retvar->free(*this);
 
-		m_level--;
+		this->m_level--;
 		this->m_current_state = old_state;
 		error.error = GDEXTENSION_CALL_OK;
 		return result;
 
 	} catch (const std::exception &e) {
-		m_level--;
+		this->m_level--;
+		if (Engine::get_singleton()->is_editor_hint()) {
+			// Throttle exceptions in the sandbox when calling from the editor
+			this->m_throttled += EDITOR_THROTTLE;
+		}
 		this->handle_exception(address);
 
 		this->m_current_state = old_state;
@@ -298,10 +307,12 @@ void Sandbox::handle_exception(gaddr_t address) {
 		UtilityFunctions::print("\nMessage: ", e.what(), "\n\n");
 		ERR_PRINT(("Exception: " + std::string(e.what())).c_str());
 	}
-	UtilityFunctions::print(
-			"Program page: ", machine().memory.get_page_info(machine().cpu.pc()).c_str());
-	UtilityFunctions::print(
-			"Stack page: ", machine().memory.get_page_info(machine().cpu.reg(2)).c_str());
+	if constexpr (VERBOSE_EXCEPTIONS) {
+		UtilityFunctions::print(
+				"Program page: ", machine().memory.get_page_info(machine().cpu.pc()).c_str());
+		UtilityFunctions::print(
+				"Stack page: ", machine().memory.get_page_info(machine().cpu.reg(2)).c_str());
+	}
 
 	this->m_exceptions++;
 	Sandbox::m_global_exceptions++;
