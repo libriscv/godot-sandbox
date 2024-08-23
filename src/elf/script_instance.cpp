@@ -60,7 +60,21 @@ Variant ELFScriptInstance::callp(
 		}
 		r_error.error = GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;
 		return Variant();
-	} else if (p_method == StringName("_get_editor_name")) {
+	}
+
+retry_callp:
+	if (script->functions.has(p_method)) {
+		if (current_sandbox && current_sandbox->has_program_loaded()) {
+			// Set the Sandbox instance tree base to the owner node
+			current_sandbox->set_tree_base(godot::Object::cast_to<Node>(this->owner));
+			// Perform the vmcall
+			r_error.error = GDEXTENSION_CALL_OK;
+			return current_sandbox->vmcall_fn(p_method, p_args, p_argument_count);
+		}
+	}
+
+	// Handle internal methods
+	if (p_method == StringName("_get_editor_name")) {
 		r_error.error = GDEXTENSION_CALL_OK;
 		return Variant("ELFScriptInstance");
 	} else if (p_method == StringName("_hide_script_from_inspector")) {
@@ -82,17 +96,6 @@ Variant ELFScriptInstance::callp(
 
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("method called " + p_method);
-	}
-
-retry_callp:
-	if (script->functions.has(p_method)) {
-		if (current_sandbox && current_sandbox->has_program_loaded()) {
-			// Set the Sandbox instance tree base to the owner node
-			current_sandbox->set_tree_base(godot::Object::cast_to<Node>(this->owner));
-			// Perform the vmcall
-			r_error.error = GDEXTENSION_CALL_OK;
-			return current_sandbox->vmcall_fn(p_method, p_args, p_argument_count);
-		}
 	}
 
 	// If the program has been loaded, but the method list has not been updated, update it and retry the vmcall
