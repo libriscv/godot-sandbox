@@ -45,7 +45,7 @@ for file in $@ $API/*.cpp; do
 	if [ "$locally" = true ]; then
 		riscv64-unknown-elf-g++ -O2 -std=gnu++23 -I$API -c $file -o $file.o &
 	else
-		riscv64-linux-gnu-g++-14 -O2 -std=gnu++23 -I$API -c $file -o $file.o &
+		riscv64-linux-gnu-g++-14 -O2 -std=gnu++23 -march=rv64gc_zba_zbb_zbs_zbc -mabi=lp64d -I$API -c $file -o $file.o &
 	fi
 done
 
@@ -57,5 +57,5 @@ if [ "$locally" = true ]; then
 	riscv64-unknown-elf-g++ -static -std=gnu++23 $LINKEROPS $@.o $API/*.cpp.o -o $output
 else
 	LINKEROPS="$LINKEROPS -fuse-ld=mold -Wl,--execute-only"
-	riscv64-linux-gnu-g++-14 -static -std=gnu++23 $LINKEROPS $@.o $API/*.cpp.o -o $output
+	riscv64-linux-gnu-g++-14 -static -std=gnu++23 -march=rv64gc_zba_zbb_zbs_zbc -mabi=lp64d $LINKEROPS $@.o $API/*.cpp.o -o $output
 fi
