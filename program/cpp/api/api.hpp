@@ -96,3 +96,10 @@ struct Engine {
 		return is_editor();
 	}
 };
+
+/// @brief Check if the given Node is a part of the current scene tree. Not an instance of another scene.
+/// @param node The Node to check.
+/// @return True if the Node is a part of the current scene tree, false otherwise.
+inline bool is_part_of_tree(Node node) {
+	return get_tree()("get_edited_scene_root") == node("get_owner");
+}

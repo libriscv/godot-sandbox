@@ -10,7 +10,7 @@ struct Node2D : public Node {
 
 	/// @brief Construct a Node2D object from a path.
 	/// @param path The path to the Node2D object.
-	Node2D(const std::string& path) : Node(path) {}
+	Node2D(std::string_view path) : Node(path) {}
 
 	/// @brief Get the position of the node.
 	/// @return The position of the node.

@@ -10,7 +10,7 @@ struct Node3D : public Node {
 
 	/// @brief Construct a Node3D object from a path.
 	/// @param path The path to the Node3D object.
-	Node3D(const std::string& path) : Node(path) {}
+	Node3D(std::string_view path) : Node(path) {}
 
 	/// @brief Get the position of the node.
 	/// @return The position of the node.

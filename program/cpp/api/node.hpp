@@ -8,7 +8,7 @@ struct Node : public Object {
 
 	/// @brief Construct a Node object from a path.
 	/// @param path The path to the Node object.
-	Node(const std::string& path);
+	Node(std::string_view path);
 
 	/// @brief Get the name of the node.
 	/// @return The name of the node.

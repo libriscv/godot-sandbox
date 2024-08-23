@@ -5,8 +5,8 @@
 MAKE_SYSCALL(ECALL_GET_NODE, uint64_t, sys_get_node, uint64_t, const char *, size_t);
 MAKE_SYSCALL(ECALL_NODE, void, sys_node, Node_Op, uint64_t, Variant *);
 
-Node::Node(const std::string &path) :
-		Object(sys_get_node(0, path.c_str(), path.size())) {
+Node::Node(std::string_view path) :
+		Object(sys_get_node(0, path.begin(), path.size())) {
 }
 
 std::string Node::get_name() const {

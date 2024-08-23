@@ -1,6 +1,7 @@
 #include "syscalls.h"
 #include "sandbox.h"
 
+#include <cmath>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/input.hpp>
 #include <godot_cpp/classes/node2d.hpp>
@@ -105,13 +106,29 @@ APICALL(api_vcall) {
 
 APICALL(api_veval) {
 	auto [op, ap, bp, retp] = machine.sysargs<int, GuestVariant *, GuestVariant *, GuestVariant *>();
-
 	auto &emu = riscv::emu(machine);
-	auto ret = retp->toVariant(emu);
 
-	emu.print("Evaluating operator: " + std::to_string(op));
+	// Special case for comparing objects.
+	if (ap->type == Variant::OBJECT && bp->type == Variant::OBJECT) {
+		// Special case for equality, allowing invalid objects to be compared.
+		if (op == static_cast<int>(Variant::Operator::OP_EQUAL)) {
+			machine.set_result(true);
+			retp->set(emu, Variant(ap->v.i == bp->v.i));
+			return;
+		}
+		auto *a = get_object_from_address(emu, ap->v.i);
+		auto *b = get_object_from_address(emu, bp->v.i);
+		auto valid = false;
+		Variant ret;
+		Variant::evaluate(static_cast<Variant::Operator>(op), a, b, ret, valid);
+
+		machine.set_result(valid);
+		retp->set(emu, ret);
+		return;
+	}
 
 	auto valid = false;
+	Variant ret;
 	Variant::evaluate(static_cast<Variant::Operator>(op), ap->toVariant(emu), bp->toVariant(emu), ret, valid);
 
 	machine.set_result(valid);
@@ -321,12 +338,8 @@ APICALL(api_node) {
 	machine.penalize(250'000); // Costly Node operations.
 
 	auto &emu = riscv::emu(machine);
-	// Get the Node object by its name from the current scene.
-	godot::Node *node = (godot::Node *)uintptr_t(addr);
-	if (!emu.is_scoped_object(node)) {
-		ERR_PRINT("Node object is not scoped");
-		throw std::runtime_error("Node object is not scoped");
-	}
+	// Get the Node object by its address.
+	godot::Node *node = get_node_from_address(emu, addr);
 
 	switch (Node_Op(op)) {
 		case Node_Op::GET_NAME: {
@@ -436,12 +449,8 @@ APICALL(api_node2d) {
 	machine.penalize(100'000); // Costly Node2D operations.
 
 	auto &emu = riscv::emu(machine);
-	// Get the Node2D object by its name from the current scene.
-	godot::Node *node = (godot::Node *)uintptr_t(addr);
-	if (!emu.is_scoped_object(node)) {
-		ERR_PRINT("Node2D object is not scoped");
-		throw std::runtime_error("Node2D object is not scoped");
-	}
+	// Get the Node2D object by its address.
+	godot::Node *node = get_node_from_address(emu, addr);
 
 	// Cast the Node2D object to a Node2D object.
 	auto *node2d = godot::Object::cast_to<godot::Node2D>(node);
@@ -489,12 +498,8 @@ APICALL(api_node3d) {
 	machine.penalize(100'000); // Costly Node3D operations.
 
 	auto &emu = riscv::emu(machine);
-	// Get the Node3D object by its name from the current scene.
-	godot::Node *node = (godot::Node *)uintptr_t(addr);
-	if (!emu.is_scoped_object(node)) {
-		ERR_PRINT("Node3D object is not scoped");
-		throw std::runtime_error("Node3D object is not scoped");
-	}
+	// Get the Node3D object by its address
+	godot::Node *node = get_node_from_address(emu, addr);
 
 	// Cast the Node3D object to a Node3D object.
 	auto *node3d = godot::Object::cast_to<godot::Node3D>(node);
@@ -540,6 +545,30 @@ APICALL(api_throw) {
 	throw std::runtime_error("Sandbox exception of type " + std::string(type) + ": " + std::string(msg) + " for Variant of type " + std::to_string(var->type));
 }
 
+APICALL(api_vector2_length) {
+	auto [dx, dy] = machine.sysargs<float, float>();
+	const float length = std::sqrt(dx * dx + dy * dy);
+	machine.set_result(length);
+}
+
+APICALL(api_vector2_normalize) {
+	auto [dx, dy] = machine.sysargs<float, float>();
+	const float length = std::sqrt(dx * dx + dy * dy);
+	if (length > 0.0001f) // FLT_EPSILON?
+	{
+		dx /= length;
+		dy /= length;
+	}
+	machine.set_result(dx, dy);
+}
+
+APICALL(api_vector2_rotated) {
+	auto [dx, dy, angle] = machine.sysargs<float, float, float>();
+	const float x = std::cos(angle) * dx - std::sin(angle) * dy;
+	const float y = std::sin(angle) * dx + std::cos(angle) * dy;
+	machine.set_result(x, y);
+}
+
 } //namespace riscv
 
 void Sandbox::initialize_syscalls() {
@@ -573,5 +602,12 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_IS_EDITOR, [](machine_t &machine) {
 				 machine.set_result(godot::Engine::get_singleton()->is_editor_hint());
 			 } },
+			{ ECALL_SINCOS, [](machine_t &machine) {
+				 auto [angle] = machine.sysargs<float>();
+				 machine.set_result(std::cos(angle), std::sin(angle));
+			 } },
+			{ ECALL_VEC2_LENGTH, api_vector2_length },
+			{ ECALL_VEC2_NORMALIZED, api_vector2_normalize },
+			{ ECALL_VEC2_ROTATED, api_vector2_rotated },
 	});
 }
