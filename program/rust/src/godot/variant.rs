@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 use std::arch::asm;
-const VARIANT_SIZE: usize = 24;
 
 #[repr(C)]
 pub enum VariantType {
@@ -85,7 +84,7 @@ pub struct Vector4i {
 pub union VariantUnion {
 	pub b: bool,
 	pub i: i64,
-	pub f: f64,
+	pub f: f32,
 	pub v2: Vector2,
 	pub v2i: Vector2i,
 	pub v3: Vector3,
@@ -95,8 +94,6 @@ pub union VariantUnion {
 	pub v4: Vector4,
 	pub v4i: Vector4i,
 	pub s: *const VariantStdString,
-	// 24 bytes total
-	pub a: [u8; VARIANT_SIZE],
 }
 
 #[repr(C)]
@@ -124,7 +121,7 @@ impl Variant
 		let v = Variant { t: VariantType::Integer, u: VariantUnion { i: i } };
 		return v;
 	}
-	pub fn new_float(f: f64) -> Variant
+	pub fn new_float(f: f32) -> Variant
 	{
 		let v = Variant { t: VariantType::Float, u: VariantUnion { f: f } };
 		return v;
@@ -197,7 +194,7 @@ impl Variant
 		}
 	}
 
-	pub fn to_float(&self) -> f64
+	pub fn to_float(&self) -> f32
 	{
 		match self.t {
 			VariantType::Float => {

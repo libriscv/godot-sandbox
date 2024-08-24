@@ -84,7 +84,7 @@ APICALL(api_vcall) {
 			argptrs[i] = &vargs[i];
 		}
 
-		auto *vcall = vp->toVariantPtr(emu);
+		auto *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
 		Variant ret;
 		vcall->callp(StringName(method.data()), argptrs.data(), args_size, ret, error);
 		vret->set(emu, ret);
@@ -97,7 +97,7 @@ APICALL(api_vcall) {
 			vargs[i] = args[i].toVariant(emu);
 		}
 		Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
-		vret->set(emu, ret);
+		vret->set(emu, ret, true); // Implicit trust, as we are returning engine-provided result.
 	} else {
 		ERR_PRINT("Invalid Variant type for Variant::call()");
 		throw std::runtime_error("Invalid Variant type for Variant::call()");
@@ -123,7 +123,7 @@ APICALL(api_veval) {
 		Variant::evaluate(static_cast<Variant::Operator>(op), a, b, ret, valid);
 
 		machine.set_result(valid);
-		retp->set(emu, ret);
+		retp->set(emu, ret, true); // Implicit trust, as we are returning engine-provided result.
 		return;
 	}
 
@@ -202,7 +202,7 @@ APICALL(api_obj) {
 		case Object_Op::GET: { // Get a property of the object.
 			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
 			auto name = var[0].toVariant(emu).operator String();
-			var[1].set(emu, obj->get(name));
+			var[1].set(emu, obj->get(name), true); // Implicit trust, as we are returning engine-provided result.
 		} break;
 		case Object_Op::SET: { // Set a property of the object.
 			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
@@ -273,7 +273,7 @@ APICALL(api_obj_callp) {
 			vargs[i] = g_args[i].toVariant(emu);
 		}
 		Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
-		vret->set(emu, ret);
+		vret->set(emu, ret, true); // Implicit trust, as we are returning engine-provided result.
 	} else {
 		// Call deferred unfortunately takes a parameter pack, so we have to manually
 		// check the number of arguments, and call the correct function.
@@ -355,7 +355,8 @@ APICALL(api_node) {
 			if (node->get_parent() == nullptr) {
 				var->set(emu, Variant());
 			} else {
-				var->set(emu, node->get_parent());
+				// TODO: Parent nodes allow access higher up the tree, which could be a security issue.
+				var->set(emu, node->get_parent(), true); // Implicit trust, as we are returning engine-provided result.
 			}
 		} break;
 		case Node_Op::QUEUE_FREE:
@@ -370,7 +371,7 @@ APICALL(api_node) {
 			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
 			auto *new_node = node->duplicate();
 			emu.add_scoped_object(new_node);
-			var->set(emu, new_node);
+			var->set(emu, new_node, true); // Implicit trust, as we are returning our own object.
 		} break;
 		case Node_Op::GET_CHILD_COUNT: {
 			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);

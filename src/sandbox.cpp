@@ -197,8 +197,9 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 	v[0].type = Variant::Type::NIL;
 
 	for (size_t i = 0; i < argc; i++) {
-		//printf("args[%zu] = type %d\n", i, int(args[i]->get_type()));
-		v[i + 1].set(*this, *args[i]);
+		// Incoming arguments are implicitly trusted, as they are provided by the host
+		// They also have have the guaranteed lifetime of the function call
+		v[i + 1].set(*this, *args[i], true);
 		m_machine->cpu.reg(11 + i) = arrayDataPtr + (i + 1) * sizeof(GuestVariant);
 	}
 	// A0 is the return value (Variant) of the function
@@ -390,12 +391,20 @@ int64_t Sandbox::get_heap_usage() const {
 
 //-- Scoped objects and variants --//
 
-void Sandbox::add_scoped_variant(uint32_t hash) {
+unsigned Sandbox::add_scoped_variant(const Variant *value) const {
 	if (state().scoped_variants.size() >= this->m_max_refs) {
 		ERR_PRINT("Maximum number of scoped variants reached.");
 		throw std::runtime_error("Maximum number of scoped variants reached.");
 	}
-	state().scoped_variants.push_back(hash);
+	state().scoped_variants.push_back(value);
+	return state().scoped_variants.size() - 1 + 1; // 1-based index
+}
+std::optional<const Variant *> Sandbox::get_scoped_variant(unsigned index) const noexcept {
+	if (index == 0 || index > state().scoped_variants.size()) {
+		ERR_PRINT("Invalid scoped variant index.");
+		return std::nullopt;
+	}
+	return state().scoped_variants[index - 1];
 }
 
 void Sandbox::add_scoped_object(const void *ptr) {
