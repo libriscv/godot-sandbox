@@ -5,6 +5,7 @@
 #include <godot_cpp/core/binder_common.hpp>
 #include <libriscv/machine.hpp>
 #include <libriscv/native_heap.hpp>
+#include <optional>
 
 using namespace godot;
 #define RISCV_ARCH riscv::RISCV64
@@ -84,8 +85,8 @@ public:
 	void set_tree_base(godot::Node *tree_base) { this->m_tree_base = tree_base; }
 	godot::Node *get_tree_base() const { return this->m_tree_base; }
 
-	void add_scoped_variant(uint32_t hash);
-	bool is_scoped_variant(uint32_t hash) const noexcept { return state().scoped_variants.end() != std::find(state().scoped_variants.begin(), state().scoped_variants.end(), hash); }
+	unsigned add_scoped_variant(const Variant *var) const;
+	std::optional<const Variant *> get_scoped_variant(unsigned idx) const noexcept;
 
 	void add_scoped_object(const void *ptr);
 	void rem_scoped_object(const void *ptr) { state().scoped_objects.erase(std::remove(state().scoped_objects.begin(), state().scoped_objects.end(), reinterpret_cast<uintptr_t>(ptr)), state().scoped_objects.end()); }
@@ -129,7 +130,7 @@ private:
 
 	struct CurrentState {
 		godot::Node *tree_base;
-		std::vector<uint32_t> scoped_variants;
+		std::vector<const Variant *> scoped_variants;
 		std::vector<uintptr_t> scoped_objects;
 	};
 	CurrentState *m_current_state = nullptr;
@@ -271,18 +272,14 @@ struct GuestStdVector {
 
 struct GuestVariant {
 	Variant toVariant(const Sandbox &emu) const;
-	Variant *toVariantPtr(const Sandbox &emu) const;
-	void set(Sandbox &emu, const Variant &value);
+	const Variant *toVariantPtr(const Sandbox &emu) const;
+	void set(Sandbox &emu, const Variant &value, bool implicit_trust = false);
 
-	inline uint32_t hash() const noexcept;
-
-	static constexpr unsigned GODOT_VARIANT_SIZE = sizeof(Variant);
-	Variant::Type type;
-	union {
-		uint8_t opaque[GODOT_VARIANT_SIZE];
+	Variant::Type type = Variant::NIL;
+	union alignas(8) {
+		int64_t i = 0;
 		bool b;
-		int64_t i;
-		double f;
+		float f;
 		gaddr_t s; // String & PackedByteArray & Node2D -> GuestStdString
 		gaddr_t vf32; // PackedFloat32Array -> GuestStdVector<float>
 		gaddr_t vf64; // PackedFloat64Array -> GuestStdVector<double>
@@ -296,3 +293,5 @@ struct GuestVariant {
 
 	void free(Sandbox &emu);
 };
+
+static_assert(sizeof(GuestVariant) == 24, "GuestVariant size mismatch");

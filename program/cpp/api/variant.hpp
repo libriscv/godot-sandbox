@@ -183,14 +183,12 @@ struct Variant
 
 	Type get_type() const noexcept { return m_type; }
 
-	static constexpr unsigned GODOT_VARIANT_SIZE = 24;
 private:
 	Type m_type = NIL;
 	union {
-		uint8_t opaque[GODOT_VARIANT_SIZE] { 0 };
+		int64_t i = 0;
 		bool    b;
-		int64_t i;
-		double  f;
+		float   f;
 		Vector2  v2;
 		Vector2i v2i;
 		Vector3  v3;
@@ -204,6 +202,7 @@ private:
 		std::vector<double> *f64array;
 	} v;
 };
+static_assert(sizeof(Variant) == 24, "Variant size mismatch");
 
 template <typename T>
 inline Variant::Variant(T value)
@@ -332,15 +331,19 @@ inline Variant::operator uint8_t() const
 
 inline Variant::operator double() const
 {
-	if (m_type == FLOAT || m_type == INT)
-		return v.f;
+	if (m_type == FLOAT)
+		return static_cast<double>(v.f);
+	if (m_type == INT)
+		return static_cast<double>(v.i);
 	api_throw("std::bad_cast", "Failed to cast Variant to double", this);
 }
 
 inline Variant::operator float() const
 {
-	if (m_type == FLOAT || m_type == INT)
-		return static_cast<float>(v.f);
+	if (m_type == FLOAT)
+		return v.f;
+	if (m_type == INT)
+		return static_cast<float>(v.i);
 	api_throw("std::bad_cast", "Failed to cast Variant to float", this);
 }
 

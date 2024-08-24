@@ -3,10 +3,6 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <libriscv/util/crc32.hpp>
 
-inline uint32_t GuestVariant::hash() const noexcept {
-	return riscv::crc32c(v.opaque, sizeof(Variant));
-}
-
 Variant GuestVariant::toVariant(const Sandbox &emu) const {
 	switch (type) {
 		case Variant::NIL:
@@ -50,8 +46,8 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 		case Variant::DICTIONARY:
 		case Variant::ARRAY:
 		case Variant::CALLABLE:
-			if (emu.is_scoped_variant(this->hash()))
-				return *(Variant *)&v.opaque[0];
+			if (auto v = emu.get_scoped_variant(this->v.i))
+				return *v;
 			else
 				throw std::runtime_error("GuestVariant::toVariant(): Dictionary/Array/Callable is not known/scoped");
 		case Variant::PACKED_BYTE_ARRAY: {
@@ -75,11 +71,11 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 	}
 }
 
-Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
+const Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
 	switch (type) {
 		case Variant::CALLABLE: {
-			if (emu.is_scoped_variant(this->hash()))
-				return (Variant *)&v.opaque[0];
+			if (auto v = emu.get_scoped_variant(this->v.i))
+				return v.value();
 			else
 				throw std::runtime_error("GuestVariant::toVariantPtr(): Callable is not known/scoped");
 		}
@@ -88,7 +84,7 @@ Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
 	}
 }
 
-void GuestVariant::set(Sandbox &emu, const Variant &value) {
+void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) {
 	this->type = value.get_type();
 
 	switch (this->type) {
@@ -164,6 +160,8 @@ void GuestVariant::set(Sandbox &emu, const Variant &value) {
 			break;
 
 		case Variant::OBJECT: { // Objects are represented as uintptr_t
+			if (!implicit_trust)
+				throw std::runtime_error("GuestVariant::set(): Cannot set OBJECT type without implicit trust");
 			godot::Object *obj = value.operator godot::Object *();
 			emu.add_scoped_object(obj);
 			this->v.i = (uintptr_t)obj;
@@ -181,8 +179,9 @@ void GuestVariant::set(Sandbox &emu, const Variant &value) {
 		case Variant::DICTIONARY:
 		case Variant::ARRAY:
 		case Variant::CALLABLE: {
-			std::memcpy(this->v.opaque, &value, sizeof(Variant));
-			emu.add_scoped_variant(this->hash());
+			if (!implicit_trust)
+				throw std::runtime_error("GuestVariant::set(): Cannot set complex type without implicit trust");
+			this->v.i = emu.add_scoped_variant(&value);
 			break;
 		}
 		case Variant::PACKED_BYTE_ARRAY: {
