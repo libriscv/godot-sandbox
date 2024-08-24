@@ -92,6 +92,8 @@ inline bool is_editor() {
 }
 
 struct Engine {
+	/// @brief Check if the program is running in the Godot editor.
+	/// @return True if running in the editor, false otherwise.
 	static bool is_editor_hint() {
 		return is_editor();
 	}
