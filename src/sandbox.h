@@ -279,7 +279,7 @@ struct GuestVariant {
 	union alignas(8) {
 		int64_t i = 0;
 		bool b;
-		float f;
+		double f;
 		gaddr_t s; // String & PackedByteArray & Node2D -> GuestStdString
 		gaddr_t vf32; // PackedFloat32Array -> GuestStdVector<float>
 		gaddr_t vf64; // PackedFloat64Array -> GuestStdVector<double>

@@ -186,9 +186,9 @@ struct Variant
 private:
 	Type m_type = NIL;
 	union {
-		int64_t i = 0;
-		bool    b;
-		float   f;
+		int64_t  i = 0;
+		bool     b;
+		double   f;
 		Vector2  v2;
 		Vector2i v2i;
 		Vector3  v3;
@@ -332,7 +332,7 @@ inline Variant::operator uint8_t() const
 inline Variant::operator double() const
 {
 	if (m_type == FLOAT)
-		return static_cast<double>(v.f);
+		return v.f;
 	if (m_type == INT)
 		return static_cast<double>(v.i);
 	api_throw("std::bad_cast", "Failed to cast Variant to double", this);
@@ -341,7 +341,7 @@ inline Variant::operator double() const
 inline Variant::operator float() const
 {
 	if (m_type == FLOAT)
-		return v.f;
+		return static_cast<float>(v.f);
 	if (m_type == INT)
 		return static_cast<float>(v.i);
 	api_throw("std::bad_cast", "Failed to cast Variant to float", this);

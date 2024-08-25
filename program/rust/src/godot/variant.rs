@@ -84,7 +84,7 @@ pub struct Vector4i {
 pub union VariantUnion {
 	pub b: bool,
 	pub i: i64,
-	pub f: f32,
+	pub f: f64,
 	pub v2: Vector2,
 	pub v2i: Vector2i,
 	pub v3: Vector3,
@@ -121,7 +121,7 @@ impl Variant
 		let v = Variant { t: VariantType::Integer, u: VariantUnion { i: i } };
 		return v;
 	}
-	pub fn new_float(f: f32) -> Variant
+	pub fn new_float(f: f64) -> Variant
 	{
 		let v = Variant { t: VariantType::Float, u: VariantUnion { f: f } };
 		return v;
@@ -194,7 +194,7 @@ impl Variant
 		}
 	}
 
-	pub fn to_float(&self) -> f32
+	pub fn to_float(&self) -> f64
 	{
 		match self.t {
 			VariantType::Float => {
