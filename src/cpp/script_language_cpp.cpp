@@ -203,7 +203,7 @@ void CPPScriptLanguage::_frame() {
 	}
 }
 bool CPPScriptLanguage::_handles_global_class_type(const String &p_type) const {
-	return false;
+	return p_type == "CPPScript";
 }
 Dictionary CPPScriptLanguage::_get_global_class_name(const String &p_path) const {
 	return Dictionary();

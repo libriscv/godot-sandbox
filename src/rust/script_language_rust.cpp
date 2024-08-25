@@ -247,7 +247,7 @@ void RustScriptLanguage::_frame() {
 	}
 }
 bool RustScriptLanguage::_handles_global_class_type(const String &p_type) const {
-	return false;
+	return p_type == "RustScript";
 }
 Dictionary RustScriptLanguage::_get_global_class_name(const String &p_path) const {
 	return Dictionary();
