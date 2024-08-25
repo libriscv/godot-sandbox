@@ -11,5 +11,11 @@ void Variant::evaluate(const Operator &op, const Variant &a, const Variant &b, V
 }
 
 Variant::~Variant() {
-	sys_vfree(this);
+	register Variant *v asm("a0") = this;
+	register int syscall asm("a7") = ECALL_VFREE;
+
+	asm volatile(
+			"ecall"
+			:
+			: "r"(v), "m"(*v), "r"(syscall));
 }

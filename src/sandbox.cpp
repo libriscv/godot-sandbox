@@ -190,7 +190,7 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 
 	GuestVariant *v = m_machine->memory.memarray<GuestVariant>(arrayDataPtr, arrayElements);
 	if (argc > 7)
-		argc = 7; // Limit to argument registers (a0-a7)
+		throw std::runtime_error("Sandbox: Too many arguments for VM function call");
 
 	// Set up first argument (return value, also a Variant)
 	m_machine->cpu.reg(10) = arrayDataPtr;
@@ -246,8 +246,10 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 
 		// Treat return value as pointer to Variant
 		auto result = retvar->toVariant(*this);
-		// Potentially free the return value
-		retvar->free(*this);
+		// Potentially free the function arguments and return value
+		for (int i = 0; i < argc + 1; i++) {
+			retvar[i].free(*this);
+		}
 
 		this->m_level--;
 		this->m_current_state = old_state;
@@ -261,6 +263,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			this->m_throttled += EDITOR_THROTTLE;
 		}
 		this->handle_exception(address);
+		// TODO: Free the function arguments and return value? Will help keep guest memory clean
 
 		this->m_current_state = old_state;
 		error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;

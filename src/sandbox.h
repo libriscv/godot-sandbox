@@ -194,7 +194,7 @@ struct GuestStdString {
 		return arr;
 	}
 
-	void set_string(machine_t &machine, gaddr_t self, const char *str, std::size_t len) {
+	void set_string(machine_t &machine, gaddr_t self, const void *str, std::size_t len) {
 		if (len <= SSO) {
 			this->ptr = self + offsetof(GuestStdString, data);
 			std::memcpy(this->data, str, len);

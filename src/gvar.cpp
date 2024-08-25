@@ -99,10 +99,20 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 		case Variant::FLOAT:
 			this->v.f = value;
 			break;
-		case Variant::STRING_NAME:
+		case Variant::STRING_NAME: {
+			auto s = value.operator StringName();
+			auto buffer = s.to_utf8_buffer();
+			// Allocate memory for the GuestStdString (which is a std::string)
+			// TODO: Improve this by allocating string + contents + null terminator in one go
+			auto &machine = emu.machine();
+			auto ptr = machine.arena().malloc(sizeof(GuestStdString));
+			auto *gstr = machine.memory.memarray<GuestStdString, 1>(ptr);
+			(*gstr)[0].set_string(machine, ptr, buffer.ptr(), buffer.size());
+			this->v.s = ptr;
+			break;
+		}
 		case Variant::STRING: {
-			auto s = value.operator String();
-			auto str = s.utf8();
+			auto str = value.operator String().utf8();
 			// Allocate memory for the GuestStdString (which is a std::string)
 			// TODO: Improve this by allocating string + contents + null terminator in one go
 			auto &machine = emu.machine();
@@ -224,6 +234,8 @@ void GuestVariant::free(Sandbox &emu) {
 		case Variant::PACKED_BYTE_ARRAY:
 		case Variant::STRING_NAME:
 		case Variant::STRING: {
+			if (v.s == 0)
+				break;
 			auto *gstr = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
 			(*gstr)[0].free(emu.machine(), v.s);
 			// Free the GuestStdString too
@@ -232,6 +244,8 @@ void GuestVariant::free(Sandbox &emu) {
 		}
 		case Variant::PACKED_FLOAT32_ARRAY:
 		case Variant::PACKED_FLOAT64_ARRAY: {
+			if (v.vf32 == 0)
+				break;
 			// We can free both f32 and f64 arrays with the same free function
 			auto *gvec = emu.machine().memory.memarray<GuestStdVector, 1>(v.vf32);
 			(*gvec)[0].free(emu.machine());
