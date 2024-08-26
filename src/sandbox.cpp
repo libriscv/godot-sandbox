@@ -365,6 +365,11 @@ gaddr_t Sandbox::cached_address_of(int64_t hash, const String &function) const {
 		const auto ascii = function.ascii();
 		const std::string_view str{ ascii.get_data(), (size_t)ascii.length() };
 		address = address_of(str);
+		if (address != 0x0) {
+			// Cheating a bit here, as we are in a const function
+			// But this does not functionally change the Machine, it only boosts performance a bit
+			const_cast<machine_t *>(m_machine)->cpu.create_fast_path_function(address);
+		}
 		m_lookup.insert_or_assign(hash, address);
 	} else {
 		address = it->second;
