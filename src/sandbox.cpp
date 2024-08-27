@@ -207,11 +207,13 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 }
 Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc, GDExtensionCallError &error) {
 	auto &state = this->m_states[m_level];
+	// Scoped objects and owning tree node
 	state.tree_base = this->get_tree_base();
 	state.scoped_objects.clear();
 	state.scoped_variants.clear();
 	auto *old_state = this->m_current_state;
 	this->m_current_state = &state;
+	// Call statistics
 	this->m_calls_made++;
 	Sandbox::m_global_calls_made++;
 
