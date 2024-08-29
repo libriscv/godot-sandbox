@@ -197,9 +197,29 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 	v[0].type = Variant::Type::NIL;
 
 	for (size_t i = 0; i < argc; i++) {
+		auto &arg = *args[i];
+		auto &g_arg = v[i + 1];
 		// Incoming arguments are implicitly trusted, as they are provided by the host
 		// They also have have the guaranteed lifetime of the function call
-		v[i + 1].set(*this, *args[i], true);
+		switch (arg.get_type()) {
+			case Variant::Type::NIL:
+				g_arg.type = Variant::Type::NIL;
+				break;
+			case Variant::Type::BOOL:
+				g_arg.type = Variant::Type::BOOL;
+				g_arg.v.b = arg;
+				break;
+			case Variant::Type::INT:
+				g_arg.type = Variant::Type::INT;
+				g_arg.v.i = arg;
+				break;
+			case Variant::Type::FLOAT:
+				g_arg.type = Variant::Type::FLOAT;
+				g_arg.v.f = arg;
+				break;
+			default:
+				g_arg.set(*this, *args[i], true);
+		}
 		m_machine->cpu.reg(11 + i) = arrayDataPtr + (i + 1) * sizeof(GuestVariant);
 	}
 	// A0 is the return value (Variant) of the function
