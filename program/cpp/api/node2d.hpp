@@ -7,6 +7,8 @@ struct Node2D : public Node {
 	/// @brief Construct a Node2D object from an existing in-scope Node object.
 	/// @param addr The address of the Node2D object.
 	Node2D(uint64_t addr) : Node(addr) {}
+	Node2D(Object obj) : Node(obj) {}
+	Node2D(Node node) : Node(node) {}
 
 	/// @brief Construct a Node2D object from a path.
 	/// @param path The path to the Node2D object.
@@ -53,7 +55,11 @@ inline Node2D Variant::as_node2d() const {
 	if (get_type() == Variant::OBJECT)
 		return Node2D{uintptr_t(v.i)};
 	else if (get_type() == Variant::NODE_PATH)
-		return Node2D{*v.s};
+		return Node2D{std::string_view(*v.s)};
 
 	api_throw("std::bad_cast", "Variant is not a Node2D or NodePath", this);
+}
+
+inline Node2D Object::as_node2d() const {
+	return Node2D{address()};
 }

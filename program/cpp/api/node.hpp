@@ -5,6 +5,7 @@ struct Node : public Object {
 	/// @brief Construct a Node object from an existing in-scope Node object.
 	/// @param addr The address of the Node object.
 	Node(uint64_t addr) : Object{addr} {}
+	Node(Object obj) : Object{obj.address()} {}
 
 	/// @brief Construct a Node object from a path.
 	/// @param path The path to the Node object.
@@ -73,7 +74,18 @@ inline Node Variant::as_node() const {
 	if (get_type() == Variant::OBJECT)
 		return Node{uintptr_t(v.i)};
 	else if (get_type() == Variant::NODE_PATH)
-		return Node{*v.s};
+		return Node{std::string_view(*v.s)};
 
 	api_throw("std::bad_cast", "Variant is not a Node or NodePath", this);
+}
+
+inline Node Object::as_node() const {
+	return Node{address()};
+}
+
+template <typename T>
+static inline T cast_to(const Variant &var) {
+	if (var.get_type() == Variant::OBJECT)
+		return T{uintptr_t(var)};
+	api_throw("std::bad_cast", "Variant is not an Object", &var);
 }
