@@ -62,6 +62,11 @@ struct Object {
 	// @return A list of signal names.
 	std::vector<std::string> get_signal_list() const;
 
+	// Various casts.
+	Node as_node() const;
+	Node2D as_node2d() const;
+	Node3D as_node3d() const;
+
 	// Get the object identifier.
 	uint64_t address() const { return m_address; }
 
@@ -76,6 +81,11 @@ inline Object Variant::as_object() const {
 	if (get_type() == Variant::OBJECT)
 		return Object{uintptr_t(v.i)};
 	api_throw("std::bad_cast", "Variant is not an Object", this);
+}
+
+template <typename T>
+static inline T cast_to(const Object &obj) {
+	return T{obj.address()};
 }
 
 template <typename... Args>

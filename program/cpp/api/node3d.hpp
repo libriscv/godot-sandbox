@@ -48,7 +48,11 @@ inline Node3D Variant::as_node3d() const {
 	if (get_type() == Variant::OBJECT)
 		return Node3D{uintptr_t(v.i)};
 	else if (get_type() == Variant::NODE_PATH)
-		return Node3D{*v.s};
+		return Node3D{std::string_view(*v.s)};
 
 	api_throw("std::bad_cast", "Variant is not a Node3D or NodePath", this);
+}
+
+inline Node3D Object::as_node3d() const {
+	return Node3D{address()};
 }

@@ -7,46 +7,52 @@ struct GuestVariant;
 
 class RiscvCallable : public CallableCustom {
 public:
-	virtual uint32_t hash() const {
+	uint32_t hash() const override {
 		return address;
 	}
 
-	virtual String get_as_text() const {
+	String get_as_text() const override {
 		return "<RiscvCallable>";
 	}
 
-	static bool compare_equal_func(const CallableCustom *p_a, const CallableCustom *p_b) {
-		return p_a == p_b;
+	CompareEqualFunc get_compare_equal_func() const override {
+		return [](const CallableCustom *p_a, const CallableCustom *p_b) {
+			return p_a == p_b;
+		};
 	}
 
-	virtual CompareEqualFunc get_compare_equal_func() const {
-		return &RiscvCallable::compare_equal_func;
+	CompareLessFunc get_compare_less_func() const override {
+		return [](const CallableCustom *p_a, const CallableCustom *p_b) {
+			return p_a < p_b;
+		};
 	}
 
-	static bool compare_less_func(const CallableCustom *p_a, const CallableCustom *p_b) {
-		return (void *)p_a < (void *)p_b;
-	}
-
-	virtual CompareLessFunc get_compare_less_func() const {
-		return &RiscvCallable::compare_less_func;
-	}
-
-	bool is_valid() const {
+	bool is_valid() const override {
 		return self != nullptr;
 	}
 
-	virtual ObjectID get_object() const {
+	ObjectID get_object() const override {
 		return ObjectID();
 	}
 
-	virtual void call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const;
+	void call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const override;
 
-	void init(Sandbox *self, gaddr_t address) {
+	void init(Sandbox *self, gaddr_t address, Array args) {
 		this->self = self;
 		this->address = address;
+
+		for (int i = 0; i < args.size(); i++) {
+			m_varargs[i] = args[i];
+			m_varargs_ptrs[i] = &m_varargs[i];
+		}
+		this->m_varargs_base_count = args.size();
 	}
 
 private:
 	Sandbox *self = nullptr;
 	gaddr_t address = 0x0;
+
+	std::array<Variant, 8> m_varargs;
+	mutable std::array<const Variant *, 8> m_varargs_ptrs;
+	int m_varargs_base_count = 0;
 };

@@ -15,6 +15,7 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 
 static Ref<ResourceFormatSaverCPP> cpp_saver;
+static constexpr bool VERBOSE_CMD = false;
 
 void ResourceFormatSaverCPP::init() {
 	cpp_saver.instantiate();
@@ -51,10 +52,8 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 				if (!output.is_empty() && !output[0].operator String().is_empty()) {
 					for (int i = 0; i < output.size(); i++) {
 						String line = output[i].operator String();
-						ERR_PRINT(line);
-					}
-					for (int i = 0; i < output.size(); i++) {
-						String line = output[i].operator String();
+						if constexpr (VERBOSE_CMD)
+							ERR_PRINT(line);
 						// Remove (most) console color codes
 						line = line.replace("\033[0;31m", "");
 						line = line.replace("\033[0;32m", "");

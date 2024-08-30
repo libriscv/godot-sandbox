@@ -34,7 +34,8 @@ void Sandbox::_bind_methods() {
 		mi.return_val = PropertyInfo(Variant::OBJECT, "result");
 		ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "vmcall", &Sandbox::vmcall, mi, DEFVAL(std::vector<Variant>{}));
 	}
-	ClassDB::bind_method(D_METHOD("vmcallable"), &Sandbox::vmcallable);
+	ClassDB::bind_method(D_METHOD("vmcallable", "function", "args"), &Sandbox::vmcallable, DEFVAL(Array{}));
+
 	// Internal testing.
 	ClassDB::bind_method(D_METHOD("assault", "test", "iterations"), &Sandbox::assault);
 
@@ -197,9 +198,29 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 	v[0].type = Variant::Type::NIL;
 
 	for (size_t i = 0; i < argc; i++) {
+		auto &arg = *args[i];
+		auto &g_arg = v[i + 1];
 		// Incoming arguments are implicitly trusted, as they are provided by the host
 		// They also have have the guaranteed lifetime of the function call
-		v[i + 1].set(*this, *args[i], true);
+		switch (arg.get_type()) {
+			case Variant::Type::NIL:
+				g_arg.type = Variant::Type::NIL;
+				break;
+			case Variant::Type::BOOL:
+				g_arg.type = Variant::Type::BOOL;
+				g_arg.v.b = arg;
+				break;
+			case Variant::Type::INT:
+				g_arg.type = Variant::Type::INT;
+				g_arg.v.i = arg;
+				break;
+			case Variant::Type::FLOAT:
+				g_arg.type = Variant::Type::FLOAT;
+				g_arg.v.f = arg;
+				break;
+			default:
+				g_arg.set(*this, *args[i], true);
+		}
 		m_machine->cpu.reg(11 + i) = arrayDataPtr + (i + 1) * sizeof(GuestVariant);
 	}
 	// A0 is the return value (Variant) of the function
@@ -273,7 +294,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 		return Variant();
 	}
 }
-Variant Sandbox::vmcallable(const String &function) {
+Variant Sandbox::vmcallable(String function, Array args) {
 	const auto address = cached_address_of(function.hash(), function);
 	if (address == 0x0) {
 		ERR_PRINT("Function not found in the guest: " + function);
@@ -281,11 +302,27 @@ Variant Sandbox::vmcallable(const String &function) {
 	}
 
 	auto *call = memnew(RiscvCallable);
-	call->init(this, address);
+	call->init(this, address, args);
 	return Callable(call);
 }
 void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const {
-	r_return_value = self->vmcall_internal(address, p_arguments, p_argcount, r_call_error);
+	if (m_varargs_base_count > 0) {
+		// We may be receiving extra arguments, so we will fill at the end of m_varargs_ptrs array
+		const int total_args = m_varargs_base_count + p_argcount;
+		if (size_t(total_args) > m_varargs_ptrs.size()) {
+			ERR_PRINT("Too many arguments for VM function call");
+			r_call_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
+			r_call_error.argument = p_argcount;
+			return;
+		}
+
+		for (int i = 0; i < p_argcount; i++) {
+			m_varargs_ptrs[m_varargs_base_count + i] = p_arguments[i];
+		}
+		r_return_value = self->vmcall_internal(address, m_varargs_ptrs.data(), total_args, r_call_error);
+	} else {
+		r_return_value = self->vmcall_internal(address, p_arguments, p_argcount, r_call_error);
+	}
 }
 
 void Sandbox::handle_exception(gaddr_t address) {
