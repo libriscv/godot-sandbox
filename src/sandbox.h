@@ -49,7 +49,7 @@ public:
 	Variant vmcall_fn(const StringName &function, const Variant **args, GDExtensionInt arg_count);
 	Variant vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
 	// Make a callable object that will call a function in the guest by its name.
-	Variant vmcallable(const String &function);
+	Variant vmcallable(String function, Array args);
 
 	// Properties.
 	uint32_t get_max_refs() const { return m_max_refs; }
