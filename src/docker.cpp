@@ -56,3 +56,12 @@ bool Docker::ContainerExecute(String container_name, const PackedStringArray &p_
 	const int res = OS->execute(SandboxProjectSettings::get_docker_path(), arguments, output);
 	return res == 0;
 }
+
+int Docker::ContainerVersion(String container_name, const PackedStringArray &p_arguments) {
+	Array output;
+	if (ContainerExecute(container_name, p_arguments, output)) {
+		// Docker container responds with a number, eg "1" (ASCII)
+		return output[0].operator String().to_int();
+	}
+	return -1;
+}

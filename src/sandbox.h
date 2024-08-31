@@ -38,12 +38,19 @@ public:
 	auto &machine() { return *m_machine; }
 	const auto &machine() const { return *m_machine; }
 
-	// Functions.
+	// Program & Language functions.
 	bool has_program_loaded() const;
 	void set_program(Ref<ELFScript> program);
 	Ref<ELFScript> get_program();
+	struct BinaryInfo {
+		String language;
+		PackedStringArray functions;
+		int version = 0;
+	};
 	PackedStringArray get_functions() const;
-	static PackedStringArray get_functions_from_binary(const PackedByteArray &binary);
+	static BinaryInfo get_program_info_from_binary(const PackedByteArray &binary);
+
+	// VM function calls.
 	// Make a function call to a function in the guest by its name.
 	Variant vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
 	Variant vmcall_fn(const StringName &function, const Variant **args, GDExtensionInt arg_count);

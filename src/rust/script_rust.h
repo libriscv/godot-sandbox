@@ -67,6 +67,9 @@ public:
 			docker_container_started = false;
 		}
 	}
+	static int DockerContainerVersion() {
+		return Docker::ContainerVersion(docker_container_name, { "/usr/project/build.sh", "--version" });
+	}
 	static bool DockerContainerExecute(const PackedStringArray &p_arguments, Array &output) {
 		return Docker::ContainerExecute(docker_container_name, p_arguments, output);
 	}

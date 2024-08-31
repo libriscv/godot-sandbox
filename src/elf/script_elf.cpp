@@ -226,11 +226,17 @@ PackedByteArray ELFScript::get_content() {
 	return source_code;
 }
 
+String ELFScript::get_elf_programming_language() const {
+	return elf_programming_language;
+}
+
 void ELFScript::set_file(const String &p_path) {
 	path = p_path;
 	source_code = FileAccess::get_file_as_bytes(path);
 	global_name = "Sandbox_" + path.get_basename().replace("res://", "").replace("/", "_").capitalize().replace(" ", "");
-	PackedStringArray functions_array = Sandbox::get_functions_from_binary(source_code);
-	functions_array.sort();
-	this->functions = std::move(functions_array);
+	Sandbox::BinaryInfo info = Sandbox::get_program_info_from_binary(source_code);
+	info.functions.sort();
+	this->functions = std::move(info.functions);
+	this->elf_programming_language = info.language;
+	this->elf_api_version = info.version;
 }
