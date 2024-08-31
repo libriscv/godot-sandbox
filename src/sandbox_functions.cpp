@@ -1144,7 +1144,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 };
 
 PackedStringArray Sandbox::get_functions() const {
-	PackedStringArray array;
+	PackedStringArray result;
 	// Get all unmangled public functions from the guest program.
 	// Exclude functions that belong to the C/C++ runtime, as well as compiler-generated functions.
 	for (auto &function : machine().memory.all_unmangled_function_symbols()) {
@@ -1153,16 +1153,16 @@ PackedStringArray Sandbox::get_functions() const {
 			continue;
 		}
 		if (exclude_functions.count(function) == 0) {
-			array.append(String(std::string(function).c_str()));
+			result.append(String(std::string(function).c_str()));
 		}
 	}
-	return array;
+	return result;
 }
 
-PackedStringArray Sandbox::get_functions_from_binary(const PackedByteArray &binary) {
-	PackedStringArray array;
+Sandbox::BinaryInfo Sandbox::get_program_info_from_binary(const PackedByteArray &binary) {
+	BinaryInfo result;
 	if (binary.is_empty()) {
-		return array;
+		return result;
 	}
 
 	const auto binary_view = std::string_view{ (const char *)binary.ptr(), static_cast<size_t>(binary.size()) };
@@ -1171,6 +1171,31 @@ PackedStringArray Sandbox::get_functions_from_binary(const PackedByteArray &bina
 		machine_t machine{ binary_view, riscv::MachineOptions<RISCV_ARCH>{
 												.load_program = false, // Do not load the ELF program.
 										} };
+		std::vector<std::string_view> comments = machine.memory.elf_comments();
+		// Detect language: C++, Rust, etc.
+		result.language = "Unknown";
+		result.version = 0;
+		for (const auto &comment : comments) {
+			if (comment.find("Godot Rust") != std::string::npos) {
+				// Rust: "Godot Rust API v1"
+				result.language = "Rust";
+				auto version = comment.find("API v");
+				if (version != std::string::npos) {
+					result.version = std::stoi(std::string(comment.substr(version + 5)));
+				}
+				break;
+			} else if (comment.find("Godot C++") != std::string::npos) {
+				// C++: "Godot C++ API v1"
+				result.language = "C++";
+				auto version = comment.find("API v");
+				if (version != std::string::npos) {
+					result.version = std::stoi(std::string(comment.substr(version + 5)));
+				}
+				break;
+			}
+		}
+		//printf("Detected language: %s, version: %d\n", result.language.utf8().ptr(), result.version);
+
 		// Get all unmangled public functions from the guest program.
 		// Exclude functions that belong to the C/C++ runtime, as well as compiler-generated functions.
 		for (auto &function : machine.memory.all_unmangled_function_symbols()) {
@@ -1179,11 +1204,11 @@ PackedStringArray Sandbox::get_functions_from_binary(const PackedByteArray &bina
 				continue;
 			}
 			if (exclude_functions.count(function) == 0) {
-				array.append(String(std::string(function).c_str()));
+				result.functions.append(String(std::string(function).c_str()));
 			}
 		}
 	} catch (const std::exception &e) {
 		ERR_PRINT("Failed to get functions from binary. " + String(e.what()));
 	}
-	return array;
+	return result;
 }

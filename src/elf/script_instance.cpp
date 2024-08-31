@@ -1,5 +1,6 @@
 #include "script_instance.h"
 
+#include "../cpp/script_cpp.h"
 #include "../sandbox.h"
 #include "script_elf.h"
 #include "script_instance_helper.h"
@@ -83,6 +84,29 @@ retry_callp:
 	} else if (p_method == StringName("_is_read_only")) {
 		r_error.error = GDEXTENSION_CALL_OK;
 		return false;
+	} else if (p_method == StringName("_get_configuration_warnings")) {
+		// Returns an array of strings with warnings about the script configuration
+		Array warnings;
+		if (script->functions.is_empty()) {
+			warnings.push_back("No public functions found");
+		}
+		if (script->get_elf_programming_language() == "Unknown") {
+			warnings.push_back("Unknown programming language");
+		}
+		if (script->get_elf_programming_language() == "C++") {
+			// Compare C++ version against Docker version
+			const int docker_version = CPPScript::DockerContainerVersion();
+			if (docker_version < 0) {
+				warnings.push_back("C++ Docker container not found");
+			} else {
+				const int script_version = script->get_elf_api_version();
+				if (script_version < docker_version) {
+					warnings.push_back("C++ API version is newer, please rebuild the program");
+				}
+			}
+		}
+		r_error.error = GDEXTENSION_CALL_OK;
+		return warnings;
 	}
 
 	// When the script instance must have a sandbox as owner,

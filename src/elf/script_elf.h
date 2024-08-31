@@ -14,11 +14,15 @@ protected:
 	PackedByteArray source_code;
 	String global_name;
 	String path;
+	int elf_api_version;
+	String elf_programming_language;
 	// TODO
 	//HashSet<Object *> instances;
 
 public:
 	PackedStringArray functions;
+	String get_elf_programming_language() const;
+	int get_elf_api_version() const { return elf_api_version; }
 
 	virtual bool _editor_can_reload_from_file() override;
 	virtual void _placeholder_erased(void *p_placeholder) override;
