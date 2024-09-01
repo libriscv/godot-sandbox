@@ -42,9 +42,6 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 			String foldername = Docker::GetFolderName(handle->get_path().get_base_dir());
 			String outname = path + foldername + String(".elf");
 
-			// Lazily start the docker container
-			CPPScript::DockerContainerStart();
-
 			auto builder = [inpname = std::move(inpname), outname = std::move(outname)] {
 				// Invoke docker to compile the file
 				Array output;

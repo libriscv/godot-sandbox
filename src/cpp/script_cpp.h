@@ -57,7 +57,7 @@ public:
 				docker_container_started = true;
 			else {
 				UtilityFunctions::print(output);
-				ERR_PRINT("Failed to start Docker container");
+				ERR_PRINT("Failed to start Docker container: " + String(docker_container_name));
 			}
 		}
 	}
@@ -68,9 +68,11 @@ public:
 		}
 	}
 	static int DockerContainerVersion() {
+		DockerContainerStart();
 		return Docker::ContainerVersion(docker_container_name, { "/usr/api/build.sh", "--version" });
 	}
 	static bool DockerContainerExecute(const PackedStringArray &p_arguments, Array &output) {
+		DockerContainerStart();
 		return Docker::ContainerExecute(docker_container_name, p_arguments, output);
 	}
 
