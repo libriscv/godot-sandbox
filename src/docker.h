@@ -12,6 +12,8 @@ struct Docker {
 	static Array ContainerStop(String container_name);
 	static bool ContainerExecute(String container_name, const PackedStringArray &args, Array &output);
 	static int ContainerVersion(String container_name, const PackedStringArray &args);
+	static bool ContainerPullLatest(String image_name, Array &output);
+	static bool ContainerDelete(String container_name, Array &output);
 
 	static String GetFolderName(const String &path) {
 		String foldername = path.replace("res://", "");
