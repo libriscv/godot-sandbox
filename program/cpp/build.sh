@@ -10,7 +10,7 @@ usage() {
 
 locally=false
 verbose=false
-current_version=1
+current_version=2
 CPPFLAGS="-O2 -std=gnu++23 -DVERSION=$current_version"
 
 while [[ "$#" -gt 0 ]]; do

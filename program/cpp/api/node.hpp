@@ -74,7 +74,7 @@ inline Node Variant::as_node() const {
 	if (get_type() == Variant::OBJECT)
 		return Node{uintptr_t(v.i)};
 	else if (get_type() == Variant::NODE_PATH)
-		return Node{std::string_view(*v.s)};
+		return Node{this->internal_fetch_string()};
 
 	api_throw("std::bad_cast", "Variant is not a Node or NodePath", this);
 }

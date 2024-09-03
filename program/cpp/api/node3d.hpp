@@ -7,6 +7,8 @@ struct Node3D : public Node {
 	/// @brief Construct a Node3D object from an existing in-scope Node object.
 	/// @param addr The address of the Node3D object.
 	Node3D(uint64_t addr) : Node(addr) {}
+	Node3D(Object obj) : Node(obj) {}
+	Node3D(Node node) : Node(node) {}
 
 	/// @brief Construct a Node3D object from a path.
 	/// @param path The path to the Node3D object.
@@ -48,7 +50,7 @@ inline Node3D Variant::as_node3d() const {
 	if (get_type() == Variant::OBJECT)
 		return Node3D{uintptr_t(v.i)};
 	else if (get_type() == Variant::NODE_PATH)
-		return Node3D{std::string_view(*v.s)};
+		return Node3D{this->internal_fetch_string()};
 
 	api_throw("std::bad_cast", "Variant is not a Node3D or NodePath", this);
 }

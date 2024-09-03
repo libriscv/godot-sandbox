@@ -129,6 +129,7 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 		machine_t &m = machine();
 
 		m.set_userdata(this);
+		this->m_current_state = &this->m_states.at(MAX_LEVEL);
 
 		this->initialize_syscalls();
 
@@ -230,8 +231,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 	auto &state = this->m_states[m_level];
 	// Scoped objects and owning tree node
 	state.tree_base = this->get_tree_base();
-	state.scoped_objects.clear();
-	state.scoped_variants.clear();
+	state.reset();
 	auto *old_state = this->m_current_state;
 	this->m_current_state = &state;
 	// Call statistics
@@ -444,6 +444,15 @@ unsigned Sandbox::add_scoped_variant(const Variant *value) const {
 		throw std::runtime_error("Maximum number of scoped variants reached.");
 	}
 	state().scoped_variants.push_back(value);
+	return state().scoped_variants.size() - 1 + 1; // 1-based index
+}
+unsigned Sandbox::create_scoped_variant(Variant &&value) const {
+	if (state().scoped_variants.size() >= this->m_max_refs) {
+		ERR_PRINT("Maximum number of scoped variants reached.");
+		throw std::runtime_error("Maximum number of scoped variants reached.");
+	}
+	state().variants.emplace_back(std::move(value));
+	state().scoped_variants.push_back(&state().variants.back());
 	return state().scoped_variants.size() - 1 + 1; // 1-based index
 }
 std::optional<const Variant *> Sandbox::get_scoped_variant(unsigned index) const noexcept {

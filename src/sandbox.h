@@ -2,6 +2,7 @@
 
 #include <godot_cpp/classes/control.hpp>
 
+#include <deque>
 #include <godot_cpp/core/binder_common.hpp>
 #include <libriscv/machine.hpp>
 #include <libriscv/native_heap.hpp>
@@ -93,6 +94,7 @@ public:
 	godot::Node *get_tree_base() const { return this->m_tree_base; }
 
 	unsigned add_scoped_variant(const Variant *var) const;
+	unsigned create_scoped_variant(Variant &&var) const;
 	std::optional<const Variant *> get_scoped_variant(unsigned idx) const noexcept;
 
 	void add_scoped_object(const void *ptr);
@@ -137,11 +139,19 @@ private:
 
 	struct CurrentState {
 		godot::Node *tree_base;
+		std::deque<Variant> variants;
 		std::vector<const Variant *> scoped_variants;
 		std::vector<uintptr_t> scoped_objects;
+
+		void reset() {
+			variants.clear();
+			scoped_variants.clear();
+			scoped_objects.clear();
+		}
 	};
 	CurrentState *m_current_state = nullptr;
-	std::array<CurrentState, MAX_LEVEL> m_states;
+	// State stack, with the permanent (initial) state at the end.
+	std::array<CurrentState, MAX_LEVEL + 1> m_states;
 
 	// Properties
 	mutable std::vector<SandboxProperty> m_properties;
@@ -281,13 +291,13 @@ struct GuestVariant {
 	Variant toVariant(const Sandbox &emu) const;
 	const Variant *toVariantPtr(const Sandbox &emu) const;
 	void set(Sandbox &emu, const Variant &value, bool implicit_trust = false);
+	void create(Sandbox &emu, Variant &&value);
 
 	Variant::Type type = Variant::NIL;
 	union alignas(8) {
 		int64_t i = 0;
 		bool b;
 		double f;
-		gaddr_t s; // String & PackedByteArray & Node2D -> GuestStdString
 		gaddr_t vf32; // PackedFloat32Array -> GuestStdVector<float>
 		gaddr_t vf64; // PackedFloat64Array -> GuestStdVector<double>
 		std::array<float, 2> v2f;
