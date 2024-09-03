@@ -69,7 +69,10 @@ public:
 	}
 	static int DockerContainerVersion() {
 		DockerContainerStart();
-		return Docker::ContainerVersion(docker_container_name, { "/usr/api/build.sh", "--version" });
+		if (docker_container_version == 0)
+			docker_container_version =
+					Docker::ContainerVersion(docker_container_name, { "/usr/api/build.sh", "--version" });
+		return docker_container_version;
 	}
 	static bool DockerContainerExecute(const PackedStringArray &p_arguments, Array &output) {
 		DockerContainerStart();
@@ -81,6 +84,7 @@ public:
 
 private:
 	static inline bool docker_container_started = false;
+	static inline int docker_container_version = 0;
 	static inline const char *docker_container_name = "godot-cpp-compiler";
 	static inline const char *docker_image_name = "ghcr.io/libriscv/cpp_compiler";
 };
