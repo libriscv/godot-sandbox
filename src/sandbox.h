@@ -5,7 +5,6 @@
 #include <deque>
 #include <godot_cpp/core/binder_common.hpp>
 #include <libriscv/machine.hpp>
-#include <libriscv/native_heap.hpp>
 #include <optional>
 
 using namespace godot;
@@ -16,6 +15,20 @@ using machine_t = riscv::Machine<RISCV_ARCH>;
 #include "vmcallable.h"
 #include "vmproperty.h"
 
+/**
+ * @brief The Sandbox class is a Godot node that provides a safe environment for running untrusted code.
+ *
+ * The sandbox is constructed with a program, which is a 64-bit RISC-V ELF executable file that contains functions and code to be executed.
+ * Programs are loaded into the sandbox using the `set_program` method.
+ * Upon setting a program, the sandbox will load the program into memory and initialize the RISC-V machine in several steps:
+ * 1. Remove old machine instance, if any.
+ * 2. Create a new machine instance with the given program.
+ * 3. Set up system calls, native heap and native memory syscalls.
+ * 4. Set up the Linux environment for the program.
+ * 5. Run the program through to its main() function.
+ * 6. Read the program's properties. These will be visible to the Godot editor.
+ * 7. Pre-cache some public functions. These will be available to call from GDScript.
+ **/
 class Sandbox : public Node {
 	GDCLASS(Sandbox, Node);
 
@@ -25,41 +38,49 @@ protected:
 	String _to_string() const;
 
 public:
-	static constexpr unsigned MAX_INSTRUCTIONS = 16;
-	static constexpr unsigned MAX_HEAP = 16ul;
-	static constexpr unsigned MAX_VMEM = 16ul;
-	static constexpr unsigned MAX_LEVEL = 8;
-	static constexpr unsigned EDITOR_THROTTLE = 8;
-	static constexpr unsigned GODOT_VARIANT_SIZE = sizeof(Variant);
-	static constexpr unsigned MAX_PROPERTIES = 16;
+	static constexpr unsigned MAX_INSTRUCTIONS = 16; // Billions
+	static constexpr unsigned MAX_HEAP = 16ul; // MBs
+	static constexpr unsigned MAX_VMEM = 16ul; // MBs
+	static constexpr unsigned MAX_LEVEL = 8; // Maximum call recursion depth
+	static constexpr unsigned EDITOR_THROTTLE = 8; // Throttle VM calls from the editor
+	static constexpr unsigned MAX_PROPERTIES = 16; // Maximum number of sandboxed properties
 
 	Sandbox();
 	~Sandbox();
 
-	auto &machine() { return *m_machine; }
-	const auto &machine() const { return *m_machine; }
+	// -= VM function calls =-
 
-	// Program & Language functions.
-	bool has_program_loaded() const;
-	void set_program(Ref<ELFScript> program);
-	Ref<ELFScript> get_program();
-	struct BinaryInfo {
-		String language;
-		PackedStringArray functions;
-		int version = 0;
-	};
-	PackedStringArray get_functions() const;
-	static BinaryInfo get_program_info_from_binary(const PackedByteArray &binary);
-
-	// VM function calls.
-	// Make a function call to a function in the guest by its name.
+	/// @brief Make a function call to a function in the guest by its name.
+	/// @param args The arguments to pass to the function, where the first argument is the name of the function.
+	/// @param arg_count The number of arguments.
+	/// @param error The error code, if any.
+	/// @return The return value of the function call.
 	Variant vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
+	/// @brief Make a function call to a function in the guest by its name.
+	/// @param function The name of the function to call.
+	/// @param args The arguments to pass to the function.
+	/// @param arg_count The number of arguments.
+	/// @return The return value of the function call.
 	Variant vmcall_fn(const StringName &function, const Variant **args, GDExtensionInt arg_count);
+	/// @brief Make a function call to a function in the guest by its guest address.
+	/// @param address The address of the function to call.
+	/// @param args The arguments to pass to the function.
+	/// @param arg_count The number of arguments.
+	/// @param error The error code, if any.
+	/// @return The return value of the function call.
 	Variant vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
-	// Make a callable object that will call a function in the guest by its name.
+
+	/// @brief Make a function call to a function in the guest by its name.
+	/// @param function The name of the function to call.
+	/// @param args The arguments to pass to the function.
+	/// @return The return value of the function call.
+	/// @note The extra arguments are saved in the callable object, and will be passed to the function when it is called
+	/// in front of the arguments passed to the call() method. So, as an example, if you have a function that takes 3 arguments,
+	/// and you call it with 2 arguments, you can later call the callable object with one argument, which turns into the 3rd argument.
 	Variant vmcallable(String function, Array args);
 
-	// Properties.
+	// -= Sandbox Properties =-
+
 	uint32_t get_max_refs() const { return m_max_refs; }
 	void set_max_refs(uint32_t max) { m_max_refs = max; }
 	void set_memory_max(uint32_t max) { m_memory_max = max; }
@@ -77,37 +98,120 @@ public:
 	static uint64_t get_global_exceptions() { return m_global_exceptions; }
 	static uint64_t get_global_calls_made() { return m_global_calls_made; }
 
-	void print(std::string_view text);
+	// -= Address Lookup =-
+
 	gaddr_t address_of(std::string_view name) const;
 	gaddr_t cached_address_of(int64_t hash) const;
 	gaddr_t cached_address_of(int64_t hash, const String &name) const;
 
-	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc, GDExtensionCallError &error);
+	// -= Call State Management =-
 
-	// Testing
-	void assault(const String &test, int64_t iterations);
-
+	/// @brief Get the current call state.
+	/// @return The current call state.
+	/// @note The call state is a stack of states, with the current state stored in m_current_state.
 	auto &state() const { return *m_current_state; }
 	auto &state() { return *m_current_state; }
 
+	/// @brief Set the current tree base, which is the node that the sandbox will use for accessing the node tree.
+	/// @param tree_base The tree base node.
+	/// @note The tree base is the owner node that the sandbox will use to access the node tree. When scripts
+	/// try to access the node path ".", they will be accessing this node, and navigating relative to it.
 	void set_tree_base(godot::Node *tree_base) { this->m_tree_base = tree_base; }
 	godot::Node *get_tree_base() const { return this->m_tree_base; }
 
+	// -= Scoped objects and variants =-
+
+	/// @brief Add a scoped variant to the current state.
+	/// @param var The variant to add.
+	/// @return The index of the added variant, passed to and used by the guest.
 	unsigned add_scoped_variant(const Variant *var) const;
+
+	/// @brief Create a new scoped variant, storing it in the current state.
+	/// @param var The variant to add.
+	/// @return The index of the added variant, passed to and used by the guest.
 	unsigned create_scoped_variant(Variant &&var) const;
+
+	/// @brief Get a scoped variant by its index.
+	/// @param idx The index of the variant to get.
+	/// @return The variant, or an empty optional if the index is invalid.
 	std::optional<const Variant *> get_scoped_variant(unsigned idx) const noexcept;
 
+	/// @brief Add a scoped object to the current state.
+	/// @param ptr The pointer to the object to add.
 	void add_scoped_object(const void *ptr);
+
+	/// @brief Remove a scoped object from the current state.
+	/// @param ptr The pointer to the object to remove.
 	void rem_scoped_object(const void *ptr) { state().scoped_objects.erase(std::remove(state().scoped_objects.begin(), state().scoped_objects.end(), reinterpret_cast<uintptr_t>(ptr)), state().scoped_objects.end()); }
+
+	/// @brief Check if an object is scoped in the current state.
+	/// @param ptr The pointer to the object to check.
+	/// @return True if the object is scoped, false otherwise.
 	bool is_scoped_object(const void *ptr) const noexcept { return state().scoped_objects.end() != std::find(state().scoped_objects.begin(), state().scoped_objects.end(), reinterpret_cast<uintptr_t>(ptr)); }
 
-	// Properties
+	// -= Sandboxed Properties =-
+	// These are properties that are exposed to the Godot editor, provided by the guest program.
+
+	/// @brief Add a property to the sandbox.
+	/// @param name The name of the property.
+	/// @param vtype The type of the property.
+	/// @param setter The guest address of the setter function.
+	/// @param getter The guest address of the getter function.
+	/// @param def The default value of the property.
 	void add_property(const String &name, Variant::Type vtype, uint64_t setter, uint64_t getter, const Variant &def = "") const;
+
+	/// @brief Set a property in the sandbox.
+	/// @param name The name of the property.
+	/// @param value The new value to set.
 	bool set_property(const StringName &name, const Variant &value);
+
+	/// @brief Get a property from the sandbox.
+	/// @param name The name of the property.
+	/// @param r_ret The current value of the property.
 	bool get_property(const StringName &name, Variant &r_ret);
-	SandboxProperty *find_property_or_null(const StringName &name) const;
+
+	/// @brief Find a property in the sandbox, or return null if it does not exist.
+	/// @param name The name of the property.
+	/// @return The property, or null if it does not exist.
+	const SandboxProperty *find_property_or_null(const StringName &name) const;
+
+	/// @brief Get all sandboxed properties.
+	/// @return The array of sandboxed properties.
 	std::vector<SandboxProperty> &get_properties() { return m_properties; }
 	const std::vector<SandboxProperty> &get_properties() const { return m_properties; }
+
+	// -= Program management & public functions =-
+
+	/// @brief Check if a program has been loaded into the sandbox.
+	/// @return True if a program has been loaded, false otherwise.
+	bool has_program_loaded() const;
+	/// @brief Set the program to run in the sandbox.
+	/// @param program The program to load and run.
+	void set_program(Ref<ELFScript> program);
+	/// @brief Get the program loaded into the sandbox.
+	/// @return The program loaded into the sandbox.
+	Ref<ELFScript> get_program();
+
+	/// @brief Get the public functions available to call in the guest program.
+	/// @return Array of public callable functions.
+	PackedStringArray get_functions() const;
+	struct BinaryInfo {
+		String language;
+		PackedStringArray functions;
+		int version = 0;
+	};
+	/// @brief Get information about the program from the binary.
+	/// @param binary The binary data.
+	/// @return An array of public callable functions and programming language.
+	static BinaryInfo get_program_info_from_binary(const PackedByteArray &binary);
+
+	// -= Self-testing and internal functions =-
+
+	void assault(const String &test, int64_t iterations);
+	void print(std::string_view text);
+	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc, GDExtensionCallError &error);
+	auto &machine() { return *m_machine; }
+	const auto &machine() const { return *m_machine; }
 
 private:
 	void load(PackedByteArray &&vbuf, const std::vector<std::string> *argv = nullptr);
@@ -161,154 +265,3 @@ private:
 	static inline uint64_t m_global_exceptions = 0;
 	static inline uint64_t m_global_calls_made = 0;
 };
-
-struct GuestStdString {
-	static constexpr std::size_t SSO = 15;
-
-	gaddr_t ptr;
-	gaddr_t size;
-	union {
-		char data[SSO + 1];
-		gaddr_t capacity;
-	};
-
-	std::string_view to_view(const machine_t &machine, std::size_t max_len = 4UL << 20) const {
-		if (size <= SSO)
-			return std::string_view(data, size);
-		else if (size > max_len)
-			throw std::runtime_error("Guest std::string too large (size > 4MB)");
-		// View the string from guest memory
-		return machine.memory.rvview(ptr, size);
-	}
-	String to_godot_string(const machine_t &machine, std::size_t max_len = 4UL << 20) const {
-		if (size <= SSO)
-			return String::utf8(data, size);
-		else if (size > max_len)
-			throw std::runtime_error("Guest std::string too large (size > 4MB)");
-		// View the string from guest memory, but include the null terminator
-		auto view = machine.memory.rvview(ptr, size);
-		return String::utf8(view.data(), view.size());
-	}
-	size_t copy_unterminated_to(const machine_t &machine, void *dst, std::size_t max_len) const {
-		if (size <= SSO && size <= max_len) {
-			std::memcpy(dst, data, size);
-			return size;
-		} else if (size >= max_len) {
-			// Copy the string from guest memory
-			machine.copy_from_guest(dst, ptr, size);
-			return size;
-		}
-		return 0; // Failed to copy
-	}
-	PackedByteArray to_packed_byte_array(const machine_t &machine, std::size_t max_len = 4UL << 20) const {
-		PackedByteArray arr;
-		arr.resize(size);
-		const size_t res = copy_unterminated_to(machine, arr.ptrw(), max_len);
-		if (res != size) {
-			ERR_PRINT("GuestVariant::toVariant(): PackedByteArray copy failed");
-			return Variant();
-		}
-		return arr;
-	}
-
-	void set_string(machine_t &machine, gaddr_t self, const void *str, std::size_t len) {
-		if (len <= SSO) {
-			this->ptr = self + offsetof(GuestStdString, data);
-			std::memcpy(this->data, str, len);
-			this->data[len] = '\0';
-			this->size = len;
-		} else {
-			// Allocate memory for the string
-			this->ptr = machine.arena().malloc(len + 1);
-			this->size = len;
-			// Copy the string to guest memory
-			char *guest_ptr = machine.memory.memarray<char>(this->ptr, len + 1);
-			std::memcpy(guest_ptr, str, len);
-			guest_ptr[len] = '\0';
-			this->capacity = len;
-		}
-	}
-
-	void free(machine_t &machine, gaddr_t self) {
-		// Free the string if it was allocated on the guest heap
-		if (ptr != self + offsetof(GuestStdString, data))
-			machine.arena().free(ptr);
-	}
-};
-static_assert(sizeof(GuestStdString) == 32, "GuestStdString size mismatch");
-
-struct GuestStdVector {
-	gaddr_t ptr_begin;
-	gaddr_t ptr_end;
-	gaddr_t ptr_capacity;
-
-	gaddr_t data() const noexcept { return ptr_begin; }
-	std::size_t size_bytes() const noexcept { return ptr_end - ptr_begin; }
-	std::size_t capacity() const noexcept { return ptr_capacity - ptr_begin; }
-
-	template <typename T>
-	std::vector<T> to_vector(const machine_t &machine) const {
-		if (size_bytes() > capacity())
-			throw std::runtime_error("Guest std::vector has size > capacity");
-		// Copy the vector from guest memory
-		const size_t elements = size_bytes() / sizeof(T);
-		const T *array = machine.memory.memarray<T>(data(), elements);
-		return std::vector<T>(&array[0], &array[elements]);
-	}
-
-	PackedFloat32Array to_f32array(const machine_t &machine) const {
-		PackedFloat32Array array;
-		const size_t elements = this->size_bytes() / sizeof(float);
-		array.resize(elements);
-		const float *fptr = machine.memory.memarray<float>(this->data(), elements);
-		std::memcpy(array.ptrw(), fptr, elements * sizeof(float));
-		return array;
-	}
-	PackedFloat64Array to_f64array(const machine_t &machine) const {
-		PackedFloat64Array array;
-		const size_t elements = this->size_bytes() / sizeof(double);
-		array.resize(elements);
-		const double *fptr = machine.memory.memarray<double>(this->data(), elements);
-		std::memcpy(array.ptrw(), fptr, elements * sizeof(double));
-		return array;
-	}
-
-	template <typename T>
-	inline std::tuple<T *, gaddr_t> alloc(machine_t &machine, std::size_t elements) {
-		this->ptr_begin = machine.arena().malloc(elements * sizeof(T));
-		this->ptr_end = this->ptr_begin + elements * sizeof(T);
-		this->ptr_capacity = this->ptr_end;
-		return { machine.memory.memarray<T>(this->data(), elements), this->data() };
-	}
-
-	void free(machine_t &machine) {
-		if (capacity() > 0)
-			machine.arena().free(this->data());
-	}
-};
-
-struct GuestVariant {
-	Variant toVariant(const Sandbox &emu) const;
-	const Variant *toVariantPtr(const Sandbox &emu) const;
-	void set(Sandbox &emu, const Variant &value, bool implicit_trust = false);
-	void create(Sandbox &emu, Variant &&value);
-
-	Variant::Type type = Variant::NIL;
-	union alignas(8) {
-		int64_t i = 0;
-		bool b;
-		double f;
-		gaddr_t vf32; // PackedFloat32Array -> GuestStdVector<float>
-		gaddr_t vf64; // PackedFloat64Array -> GuestStdVector<double>
-		std::array<float, 2> v2f;
-		std::array<float, 3> v3f;
-		std::array<float, 4> v4f;
-		std::array<int32_t, 2> v2i;
-		std::array<int32_t, 3> v3i;
-		std::array<int32_t, 4> v4i;
-	} v;
-
-	void free(Sandbox &emu);
-};
-
-static_assert(sizeof(GuestVariant) == 24, "GuestVariant size mismatch");

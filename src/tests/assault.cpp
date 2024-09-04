@@ -1,13 +1,14 @@
-#include "../sandbox.h"
+#include "../guest_datatypes.h"
 
 #include <random>
 
+/**
+ * @brief Assault the sandbox with random GuestVariants.
+ *
+ * @param test An unused string. TBD.
+ * @param iterations The number of GuestVariants to create.
+ */
 void Sandbox::assault(const String &test, int64_t iterations) {
-	// This is a test function that will run a test function in the guest
-	// for a number of iterations in order to verify that the guest is
-	// functioning correctly.
-	// A passing test is one that doesn't cause a crash.
-
 	Sandbox sandbox;
 	Sandbox::CurrentState state;
 	sandbox.m_current_state = &state;

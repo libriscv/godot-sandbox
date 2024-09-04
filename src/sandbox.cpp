@@ -1,11 +1,10 @@
 #include "sandbox.h"
 
-#include <godot_cpp/classes/file_access.hpp>
-#include <godot_cpp/core/class_db.hpp>
-
+#include "guest_datatypes.h"
 #include <charconv>
 #include <godot_cpp/classes/engine.hpp>
-#include <godot_cpp/classes/global_constants.hpp>
+#include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
 using namespace godot;
@@ -596,7 +595,7 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	return false;
 }
 
-SandboxProperty *Sandbox::find_property_or_null(const StringName &name) const {
+const SandboxProperty *Sandbox::find_property_or_null(const StringName &name) const {
 	for (auto &prop : m_properties) {
 		if (prop.name() == name) {
 			return &prop;

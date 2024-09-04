@@ -1,5 +1,5 @@
 #include "syscalls.h"
-#include "sandbox.h"
+#include "guest_datatypes.h"
 
 #include <cmath>
 #include <godot_cpp/classes/engine.hpp>
