@@ -2,6 +2,7 @@
 #include <cstddef>
 #include "node2d.hpp"
 #include "node3d.hpp"
+#include "array.hpp"
 #include "syscalls_fwd.hpp"
 
 template <typename T>

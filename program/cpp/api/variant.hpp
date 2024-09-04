@@ -18,7 +18,7 @@ struct is_string
 template<class T>
 struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
 
-struct Object; struct Node; struct Node2D; struct Node3D;
+struct Object; struct Node; struct Node2D; struct Node3D; struct Array;
 #include "vector.hpp"
 
 struct Variant
@@ -117,16 +117,18 @@ struct Variant
 	template <typename T>
 	Variant(T value);
 
+	Variant(const Array&);
+
 	// Constructor specifically the STRING_NAME type
 	static Variant string_name(const std::string &name);
 
 	// Create a new empty Array
-	static Variant array();
+	static Variant new_array();
 	// Create a new Array from a vector of Variants
-	static Variant array(const std::vector<Variant> &array);
+	static Variant from_array(const std::vector<Variant> &array);
 
 	// Empty Dictionary constructor
-	static Variant dictionary();
+	static Variant new_dictionary();
 
 	// Conversion operators
 	operator bool() const;
@@ -146,6 +148,7 @@ struct Variant
 	Node as_node() const;
 	Node2D as_node2d() const;
 	Node3D as_node3d() const;
+	Array as_array() const;
 
 	const Vector2& v2() const;
 	Vector2& v2();
@@ -196,6 +199,7 @@ struct Variant
 	bool operator<(const Variant &other) const;
 
 	Type get_type() const noexcept { return m_type; }
+	unsigned get_internal_index() const noexcept { return v.i; }
 
 private:
 	Type m_type = NIL;

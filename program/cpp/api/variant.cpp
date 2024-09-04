@@ -11,19 +11,19 @@ MAKE_SYSCALL(ECALL_VFETCH, void, sys_vfetch, const Variant *, std::string *);
 MAKE_SYSCALL(ECALL_VCLONE, void, sys_vclone, const Variant *, Variant *);
 MAKE_SYSCALL(ECALL_VSTORE, void, sys_vstore, Variant *, const std::string *);
 
-Variant Variant::array() {
+Variant Variant::new_array() {
 	Variant v;
 	sys_vcreate(&v, ARRAY, nullptr);
 	return v;
 }
 
-Variant Variant::array(const std::vector<Variant> &values) {
+Variant Variant::from_array(const std::vector<Variant> &values) {
 	Variant v;
 	sys_vcreate(&v, ARRAY, &values);
 	return v;
 }
 
-Variant Variant::dictionary() {
+Variant Variant::new_dictionary() {
 	Variant v;
 	sys_vcreate(&v, DICTIONARY, nullptr);
 	return v;
