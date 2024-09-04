@@ -686,6 +686,96 @@ APICALL(api_vector2_rotated) {
 	machine.set_result(x, y);
 }
 
+APICALL(api_array_ops) {
+	auto [op, arr_idx, idx, vaddr] = machine.sysargs<Array_Op, unsigned, int, gaddr_t>();
+	auto &emu = riscv::emu(machine);
+
+	auto opt_array = emu.get_scoped_variant(arr_idx);
+	if (!opt_array.has_value() || opt_array.value()->get_type() != Variant::ARRAY) {
+		ERR_PRINT("Invalid Array object");
+		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx));
+	}
+	godot::Array array = opt_array.value()->operator Array();
+
+	switch (op) {
+		case Array_Op::CREATE: {
+			Array a;
+			a.resize(arr_idx); // Resize the array to the given size.
+			const unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
+			auto *vp = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
+			vp->type = Variant::ARRAY;
+			vp->v.i = idx;
+			break;
+		}
+		case Array_Op::PUSH_BACK:
+			array.push_back(emu.machine().memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
+			break;
+		case Array_Op::PUSH_FRONT:
+			array.push_front(emu.machine().memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
+			break;
+		case Array_Op::POP_AT:
+			array.pop_at(idx);
+			break;
+		case Array_Op::POP_BACK:
+			array.pop_back();
+			break;
+		case Array_Op::POP_FRONT:
+			array.pop_front();
+			break;
+		case Array_Op::INSERT:
+			array.insert(idx, emu.machine().memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
+			break;
+		case Array_Op::ERASE:
+			array.erase(idx);
+			break;
+		case Array_Op::RESIZE:
+			array.resize(idx);
+			break;
+		case Array_Op::CLEAR:
+			array.clear();
+			break;
+		case Array_Op::SORT:
+			array.sort();
+			break;
+		default:
+			ERR_PRINT("Invalid Array operation");
+			throw std::runtime_error("Invalid Array operation");
+	}
+}
+
+APICALL(api_array_at) {
+	auto [arr_idx, idx, vret] = machine.sysargs<unsigned, int, GuestVariant *>();
+	auto &emu = riscv::emu(machine);
+
+	auto opt_array = emu.get_scoped_variant(arr_idx);
+	if (!opt_array.has_value() || opt_array.value()->get_type() != Variant::ARRAY) {
+		ERR_PRINT("Invalid Array object");
+		throw std::runtime_error("Invalid Array object");
+	}
+
+	godot::Array array = opt_array.value()->operator Array();
+	if (idx < 0 || idx >= array.size()) {
+		ERR_PRINT("Array index out of bounds");
+		throw std::runtime_error("Array index out of bounds");
+	}
+
+	vret->set(emu, array[idx]);
+}
+
+APICALL(api_array_size) {
+	auto [arr_idx] = machine.sysargs<unsigned>();
+	auto &emu = riscv::emu(machine);
+
+	auto opt_array = emu.get_scoped_variant(arr_idx);
+	if (!opt_array.has_value() || opt_array.value()->get_type() != Variant::ARRAY) {
+		ERR_PRINT("Invalid Array object");
+		throw std::runtime_error("Invalid Array object");
+	}
+
+	godot::Array array = opt_array.value()->operator Array();
+	machine.set_result(array.size());
+}
+
 } //namespace riscv
 
 void Sandbox::initialize_syscalls() {
@@ -731,5 +821,9 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_VFETCH, api_vfetch },
 			{ ECALL_VCLONE, api_vclone },
 			{ ECALL_VSTORE, api_vstore },
+
+			{ ECALL_ARRAY_OPS, api_array_ops },
+			{ ECALL_ARRAY_AT, api_array_at },
+			{ ECALL_ARRAY_SIZE, api_array_size },
 	});
 }
