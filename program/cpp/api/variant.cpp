@@ -6,10 +6,28 @@ MAKE_SYSCALL(ECALL_VCALL, void, sys_vcall, Variant *, const char *, size_t, cons
 MAKE_SYSCALL(ECALL_VEVAL, bool, sys_veval, int, const Variant *, const Variant *, Variant *);
 MAKE_SYSCALL(ECALL_VFREE, void, sys_vfree, Variant *);
 
-MAKE_SYSCALL(ECALL_VCREATE, void, sys_vcreate, Variant *, int, const std::string *);
+MAKE_SYSCALL(ECALL_VCREATE, void, sys_vcreate, Variant *, int, const void *);
 MAKE_SYSCALL(ECALL_VFETCH, void, sys_vfetch, const Variant *, std::string *);
 MAKE_SYSCALL(ECALL_VCLONE, void, sys_vclone, const Variant *, Variant *);
 MAKE_SYSCALL(ECALL_VSTORE, void, sys_vstore, Variant *, const std::string *);
+
+Variant Variant::array() {
+	Variant v;
+	sys_vcreate(&v, ARRAY, nullptr);
+	return v;
+}
+
+Variant Variant::array(const std::vector<Variant> &values) {
+	Variant v;
+	sys_vcreate(&v, ARRAY, &values);
+	return v;
+}
+
+Variant Variant::dictionary() {
+	Variant v;
+	sys_vcreate(&v, DICTIONARY, nullptr);
+	return v;
+}
 
 void Variant::evaluate(const Operator &op, const Variant &a, const Variant &b, Variant &r_ret, bool &r_valid) {
 	r_valid = sys_veval(op, &a, &b, &r_ret);

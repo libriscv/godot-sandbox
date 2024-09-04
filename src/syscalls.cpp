@@ -151,6 +151,27 @@ APICALL(api_vcreate) {
 			vp->type = type;
 			vp->v.i = idx;
 		} break;
+		case Variant::ARRAY: {
+			// Create a new empty? array, assign to vp.
+			Array a;
+			if (gdata != 0x0) {
+				// Copy std::vector<Variant> from guest memory.
+				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto vec = gvec->to_vector<GuestVariant>(emu.machine());
+				for (const auto &v : vec) {
+					a.push_back(std::move(v.toVariant(emu)));
+				}
+			}
+			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
+			vp->type = type;
+			vp->v.i = idx;
+		} break;
+		case Variant::DICTIONARY: {
+			// Create a new empty? dictionary, assign to vp.
+			unsigned idx = emu.create_scoped_variant(Variant(Dictionary()));
+			vp->type = type;
+			vp->v.i = idx;
+		} break;
 		default:
 			ERR_PRINT("Unsupported Variant type for Variant::create()");
 			throw std::runtime_error("Unsupported Variant type for Variant::create()");

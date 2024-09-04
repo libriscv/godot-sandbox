@@ -36,7 +36,7 @@ bool Docker::ContainerStart(String container_name, String image_name, Array &out
 	}
 	// The container is not running. Try to pull the latest image.
 	Array dont_care; // We don't care about the output of the image pull (for now).
-	if (false && ContainerPullLatest(image_name, dont_care)) {
+	if (ContainerPullLatest(image_name, dont_care)) {
 		// Delete the container if it exists. It's not running, but it might be stopped.
 		ContainerDelete(container_name, dont_care);
 	} else {

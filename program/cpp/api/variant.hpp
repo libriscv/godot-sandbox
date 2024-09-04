@@ -120,6 +120,14 @@ struct Variant
 	// Constructor specifically the STRING_NAME type
 	static Variant string_name(const std::string &name);
 
+	// Create a new empty Array
+	static Variant array();
+	// Create a new Array from a vector of Variants
+	static Variant array(const std::vector<Variant> &array);
+
+	// Empty Dictionary constructor
+	static Variant dictionary();
+
 	// Conversion operators
 	operator bool() const;
 	operator int64_t() const;
@@ -155,6 +163,15 @@ struct Variant
 	Rect2& r2();
 	const Rect2i& r2i() const;
 	Rect2i& r2i();
+
+	operator Vector2() const { return v2(); }
+	operator Vector2i() const { return v2i(); }
+	operator Vector3() const { return v3(); }
+	operator Vector3i() const { return v3i(); }
+	operator Vector4() const { return v4(); }
+	operator Vector4i() const { return v4i(); }
+	operator Rect2() const { return r2(); }
+	operator Rect2i() const { return r2i(); }
 
 	std::vector<float>& f32array() const; // Modifiable vector for PACKED_FLOAT32_ARRAY
 	std::vector<double>& f64array() const; // Modifiable vector for PACKED_FLOAT64_ARRAY
