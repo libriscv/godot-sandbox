@@ -31,7 +31,9 @@
 #define ECALL_ARRAY_AT (GAME_API_BASE + 22)
 #define ECALL_ARRAY_SIZE (GAME_API_BASE + 23)
 
-#define ECALL_LAST (GAME_API_BASE + 24)
+#define ECALL_DICTIONARY_OPS (GAME_API_BASE + 24)
+
+#define ECALL_LAST (GAME_API_BASE + 25)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
@@ -116,4 +118,16 @@ enum class Array_Op {
 	RESIZE,
 	CLEAR,
 	SORT,
+};
+
+enum class Dictionary_Op {
+	GET = 0,
+	SET,
+	ERASE,
+	HAS,
+	GET_KEYS,
+	GET_VALUES,
+	GET_SIZE,
+	CLEAR,
+	MERGE,
 };
