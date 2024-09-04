@@ -1,4 +1,4 @@
-#include "sandbox.h"
+#include "guest_datatypes.h"
 
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <libriscv/util/crc32.hpp>
@@ -13,18 +13,6 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 			return v.i;
 		case Variant::FLOAT:
 			return v.f;
-		case Variant::STRING: {
-			auto *s = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
-			return (*s)[0].to_godot_string(emu.machine());
-		}
-		case Variant::NODE_PATH: {
-			auto *s = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
-			return godot::NodePath((*s)[0].to_godot_string(emu.machine()));
-		}
-		case Variant::STRING_NAME: {
-			auto *s = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
-			return godot::StringName((*s)[0].to_godot_string(emu.machine()));
-		}
 
 		case Variant::VECTOR2:
 			return Variant{ godot::Vector2(v.v2f[0], v.v2f[1]) };
@@ -46,14 +34,14 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 		case Variant::DICTIONARY:
 		case Variant::ARRAY:
 		case Variant::CALLABLE:
-			if (auto v = emu.get_scoped_variant(this->v.i))
-				return *v;
-			else
-				throw std::runtime_error("GuestVariant::toVariant(): Dictionary/Array/Callable is not known/scoped");
+		case Variant::STRING:
+		case Variant::STRING_NAME:
+		case Variant::NODE_PATH:
 		case Variant::PACKED_BYTE_ARRAY: {
-			auto *s = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
-			auto &str = (*s)[0];
-			return Variant{ str.to_packed_byte_array(emu.machine()) };
+			if (auto v = emu.get_scoped_variant(this->v.i)) {
+				return *v.value();
+			} else
+				throw std::runtime_error("GuestVariant::toVariant(): Dictionary/Array/Callable is not known/scoped");
 		}
 		case Variant::PACKED_FLOAT32_ARRAY: {
 			auto *gvec = emu.machine().memory.memarray<GuestStdVector, 1>(v.vf32);
@@ -73,7 +61,13 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 
 const Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
 	switch (type) {
-		case Variant::CALLABLE: {
+		case Variant::DICTIONARY:
+		case Variant::ARRAY:
+		case Variant::CALLABLE:
+		case Variant::STRING:
+		case Variant::STRING_NAME:
+		case Variant::NODE_PATH:
+		case Variant::PACKED_BYTE_ARRAY: {
 			if (auto v = emu.get_scoped_variant(this->v.i))
 				return v.value();
 			else
@@ -99,29 +93,7 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 		case Variant::FLOAT:
 			this->v.f = value;
 			break;
-		case Variant::STRING_NAME: {
-			auto s = value.operator StringName();
-			auto buffer = s.to_utf8_buffer();
-			// Allocate memory for the GuestStdString (which is a std::string)
-			// TODO: Improve this by allocating string + contents + null terminator in one go
-			auto &machine = emu.machine();
-			auto ptr = machine.arena().malloc(sizeof(GuestStdString));
-			auto *gstr = machine.memory.memarray<GuestStdString, 1>(ptr);
-			(*gstr)[0].set_string(machine, ptr, buffer.ptr(), buffer.size());
-			this->v.s = ptr;
-			break;
-		}
-		case Variant::STRING: {
-			auto str = value.operator String().utf8();
-			// Allocate memory for the GuestStdString (which is a std::string)
-			// TODO: Improve this by allocating string + contents + null terminator in one go
-			auto &machine = emu.machine();
-			auto ptr = machine.arena().malloc(sizeof(GuestStdString));
-			auto *gstr = machine.memory.memarray<GuestStdString, 1>(ptr);
-			(*gstr)[0].set_string(machine, ptr, str.get_data(), str.length());
-			this->v.s = ptr;
-			break;
-		}
+
 		case Variant::VECTOR2:
 			this->v.v2f[0] = value.operator godot::Vector2().x;
 			this->v.v2f[1] = value.operator godot::Vector2().y;
@@ -177,34 +149,20 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 			this->v.i = (uintptr_t)obj;
 			break;
 		}
-		case Variant::NODE_PATH: { // Node paths are represented as strings
-			auto path = value.operator godot::NodePath();
-			auto str = String(path).ascii();
-			auto ptr = emu.machine().arena().malloc(sizeof(GuestStdString));
-			auto *gstr = emu.machine().memory.memarray<GuestStdString>(ptr, 1);
-			gstr->set_string(emu.machine(), ptr, str.ptr(), str.length());
-			this->v.s = ptr;
-			break;
-		}
+
 		case Variant::DICTIONARY:
 		case Variant::ARRAY:
-		case Variant::CALLABLE: {
+		case Variant::CALLABLE:
+		case Variant::STRING:
+		case Variant::STRING_NAME:
+		case Variant::NODE_PATH:
+		case Variant::PACKED_BYTE_ARRAY: {
 			if (!implicit_trust)
 				throw std::runtime_error("GuestVariant::set(): Cannot set complex type without implicit trust");
 			this->v.i = emu.add_scoped_variant(&value);
 			break;
 		}
-		case Variant::PACKED_BYTE_ARRAY: {
-			// Uses std::string in the guest Variant
-			auto arr = value.operator godot::PackedByteArray();
-			const auto *data = (const char *)arr.ptr();
-			const auto len = arr.size();
-			auto ptr = emu.machine().arena().malloc(sizeof(GuestStdString));
-			auto *gstr = emu.machine().memory.memarray<GuestStdString>(ptr, 1);
-			gstr->set_string(emu.machine(), ptr, data, len);
-			this->v.s = ptr;
-			break;
-		}
+
 		case Variant::PACKED_FLOAT32_ARRAY: {
 			auto arr = value.operator godot::PackedFloat32Array();
 			auto ptr = emu.machine().arena().malloc(sizeof(GuestStdVector));
@@ -228,20 +186,58 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 	}
 }
 
-void GuestVariant::free(Sandbox &emu) {
-	switch (type) {
-		case Variant::NODE_PATH:
-		case Variant::PACKED_BYTE_ARRAY:
-		case Variant::STRING_NAME:
-		case Variant::STRING: {
-			if (v.s == 0)
-				break;
-			auto *gstr = emu.machine().memory.memarray<GuestStdString, 1>(v.s);
-			(*gstr)[0].free(emu.machine(), v.s);
-			// Free the GuestStdString too
-			emu.machine().arena().free(v.s);
+void GuestVariant::create(Sandbox &emu, Variant &&value) {
+	this->type = value.get_type();
+
+	switch (this->type) {
+		case Variant::NIL:
+		case Variant::BOOL:
+		case Variant::INT:
+		case Variant::FLOAT:
+
+		case Variant::VECTOR2:
+		case Variant::VECTOR2I:
+		case Variant::RECT2:
+		case Variant::RECT2I:
+		case Variant::VECTOR3:
+		case Variant::VECTOR3I:
+		case Variant::VECTOR4:
+		case Variant::VECTOR4I:
+			this->set(emu, value, true); // Trust the value
+			break;
+
+		case Variant::OBJECT: {
+			godot::Object *obj = value.operator godot::Object *();
+			emu.add_scoped_object(obj);
+			this->v.i = (uintptr_t)obj;
 			break;
 		}
+
+		case Variant::DICTIONARY:
+		case Variant::ARRAY:
+		case Variant::CALLABLE:
+		case Variant::STRING:
+		case Variant::STRING_NAME:
+		case Variant::NODE_PATH:
+		case Variant::PACKED_BYTE_ARRAY: {
+			// Store the variant in the current state
+			auto idx = emu.create_scoped_variant(std::move(value));
+			this->v.i = idx;
+			break;
+		}
+
+		case Variant::PACKED_FLOAT32_ARRAY:
+		case Variant::PACKED_FLOAT64_ARRAY:
+			this->set(emu, value, true); // Trust the value
+			break;
+
+		default:
+			ERR_PRINT(("CreateVariant(): Unsupported type: " + std::to_string(value.get_type())).c_str());
+	}
+}
+
+void GuestVariant::free(Sandbox &emu) {
+	switch (type) {
 		case Variant::PACKED_FLOAT32_ARRAY:
 		case Variant::PACKED_FLOAT64_ARRAY: {
 			if (v.vf32 == 0)

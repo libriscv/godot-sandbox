@@ -1,5 +1,5 @@
 #include "syscalls.h"
-#include "sandbox.h"
+#include "guest_datatypes.h"
 
 #include <cmath>
 #include <godot_cpp/classes/engine.hpp>
@@ -133,6 +133,122 @@ APICALL(api_veval) {
 
 	machine.set_result(valid);
 	retp->set(emu, ret);
+}
+
+APICALL(api_vcreate) {
+	auto [vp, type, gdata] = machine.sysargs<GuestVariant *, Variant::Type, gaddr_t>();
+	auto &emu = riscv::emu(machine);
+	machine.penalize(10'000);
+
+	switch (type) {
+		case Variant::STRING:
+		case Variant::STRING_NAME:
+		case Variant::NODE_PATH: {
+			auto *str = emu.machine().memory.memarray<GuestStdString>(gdata, 1);
+			auto godot_str = str->to_godot_string(emu.machine());
+			// Create a new Variant with the string, modify vp.
+			unsigned idx = emu.create_scoped_variant(Variant(std::move(godot_str)));
+			vp->type = type;
+			vp->v.i = idx;
+		} break;
+		case Variant::ARRAY: {
+			// Create a new empty? array, assign to vp.
+			Array a;
+			if (gdata != 0x0) {
+				// Copy std::vector<Variant> from guest memory.
+				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto vec = gvec->to_vector<GuestVariant>(emu.machine());
+				for (const auto &v : vec) {
+					a.push_back(std::move(v.toVariant(emu)));
+				}
+			}
+			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
+			vp->type = type;
+			vp->v.i = idx;
+		} break;
+		case Variant::DICTIONARY: {
+			// Create a new empty? dictionary, assign to vp.
+			unsigned idx = emu.create_scoped_variant(Variant(Dictionary()));
+			vp->type = type;
+			vp->v.i = idx;
+		} break;
+		default:
+			ERR_PRINT("Unsupported Variant type for Variant::create()");
+			throw std::runtime_error("Unsupported Variant type for Variant::create()");
+	}
+}
+
+APICALL(api_vfetch) {
+	auto [vp, gdata] = machine.sysargs<GuestVariant *, gaddr_t>();
+	auto &emu = riscv::emu(machine);
+	machine.penalize(10'000);
+
+	// Find scoped Variant and copy data into gdata.
+	auto opt = emu.get_scoped_variant(vp->v.i);
+	if (opt.has_value()) {
+		auto &var = *opt.value();
+		switch (var.get_type()) {
+			case Variant::STRING:
+			case Variant::STRING_NAME:
+			case Variant::NODE_PATH: {
+				auto u8str = var.operator String().utf8();
+				auto *gstr = emu.machine().memory.memarray<GuestStdString>(gdata, 1);
+				gstr->set_string(emu.machine(), gdata, u8str.ptr(), u8str.length());
+				break;
+			}
+			default:
+				ERR_PRINT("vfetch: Cannot fetch value into guest for Variant type");
+				throw std::runtime_error("vfetch: Cannot fetch value into guest for Variant type");
+		}
+	} else {
+		ERR_PRINT("vfetch: Variant is not scoped");
+		throw std::runtime_error("vfetch: Variant is not scoped");
+	}
+}
+
+APICALL(api_vclone) {
+	auto [vp, vret] = machine.sysargs<GuestVariant *, GuestVariant *>();
+	auto &emu = riscv::emu(machine);
+	machine.penalize(10'000);
+
+	// Find scoped Variant and clone it.
+	auto var = emu.get_scoped_variant(vp->v.i);
+	if (var.has_value()) {
+		const auto index = emu.create_scoped_variant(var.value()->duplicate());
+		vret->type = var.value()->get_type();
+		vret->v.i = index;
+	} else {
+		ERR_PRINT("vclone: Variant is not scoped");
+		throw std::runtime_error("vclone: Variant is not scoped");
+	}
+}
+
+APICALL(api_vstore) {
+	auto [vp, gdata] = machine.sysargs<GuestVariant *, gaddr_t>();
+	auto &emu = riscv::emu(machine);
+	machine.penalize(10'000);
+
+	// Find scoped Variant and store its data into gdata (which could be a, eg., a std::string).
+	auto opt = emu.get_scoped_variant(vp->v.i);
+	if (opt.has_value()) {
+		auto &var = *opt.value();
+		switch (var.get_type()) {
+			case Variant::STRING:
+			case Variant::STRING_NAME:
+			case Variant::NODE_PATH: {
+				auto *gstr = emu.machine().memory.memarray<GuestStdString>(gdata, 1);
+				auto u8str = var.operator String().utf8();
+				gstr->set_string(emu.machine(), gdata, u8str.ptr(), u8str.length());
+				break;
+			}
+			default:
+				ERR_PRINT("vstore: Cannot store value into guest for Variant type");
+				throw std::runtime_error("vstore: Cannot store value into guest for Variant type");
+		}
+	} else {
+		ERR_PRINT("vstore: Variant is not scoped");
+		throw std::runtime_error("vstore: Variant is not scoped");
+	}
 }
 
 APICALL(api_vfree) {
@@ -270,7 +386,7 @@ APICALL(api_obj_callp) {
 		Array vargs;
 		vargs.resize(args_size);
 		for (unsigned i = 0; i < args_size; i++) {
-			vargs[i] = g_args[i].toVariant(emu);
+			vargs[i] = std::move(g_args[i].toVariant(emu));
 		}
 		Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
 		vret->set(emu, ret, true); // Implicit trust, as we are returning engine-provided result.
@@ -344,11 +460,11 @@ APICALL(api_node) {
 	switch (Node_Op(op)) {
 		case Node_Op::GET_NAME: {
 			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
-			var->set(emu, String(node->get_name()));
+			var->create(emu, String(node->get_name()));
 		} break;
 		case Node_Op::GET_PATH: {
 			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
-			var->set(emu, String(node->get_path()));
+			var->create(emu, String(node->get_path()));
 		} break;
 		case Node_Op::GET_PARENT: {
 			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
@@ -610,5 +726,10 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_VEC2_LENGTH, api_vector2_length },
 			{ ECALL_VEC2_NORMALIZED, api_vector2_normalize },
 			{ ECALL_VEC2_ROTATED, api_vector2_rotated },
+
+			{ ECALL_VCREATE, api_vcreate },
+			{ ECALL_VFETCH, api_vfetch },
+			{ ECALL_VCLONE, api_vclone },
+			{ ECALL_VSTORE, api_vstore },
 	});
 }

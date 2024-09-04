@@ -120,6 +120,14 @@ struct Variant
 	// Constructor specifically the STRING_NAME type
 	static Variant string_name(const std::string &name);
 
+	// Create a new empty Array
+	static Variant array();
+	// Create a new Array from a vector of Variants
+	static Variant array(const std::vector<Variant> &array);
+
+	// Empty Dictionary constructor
+	static Variant dictionary();
+
 	// Conversion operators
 	operator bool() const;
 	operator int64_t() const;
@@ -132,10 +140,7 @@ struct Variant
 	operator uint8_t() const;
 	operator double() const;
 	operator float() const;
-	operator const std::string&() const; // String for STRING and PACKED_BYTE_ARRAY
-	operator std::string&();
-	operator std::string_view() const; // View for STRING and PACKED_BYTE_ARRAY
-	operator std::span<uint8_t>() const; // Modifiable span for PACKED_BYTE_ARRAY
+	operator std::string() const; // String for STRING and PACKED_BYTE_ARRAY
 
 	Object as_object() const;
 	Node as_node() const;
@@ -158,6 +163,15 @@ struct Variant
 	Rect2& r2();
 	const Rect2i& r2i() const;
 	Rect2i& r2i();
+
+	operator Vector2() const { return v2(); }
+	operator Vector2i() const { return v2i(); }
+	operator Vector3() const { return v3(); }
+	operator Vector3i() const { return v3i(); }
+	operator Vector4() const { return v4(); }
+	operator Vector4i() const { return v4i(); }
+	operator Rect2() const { return r2(); }
+	operator Rect2i() const { return r2i(); }
 
 	std::vector<float>& f32array() const; // Modifiable vector for PACKED_FLOAT32_ARRAY
 	std::vector<double>& f64array() const; // Modifiable vector for PACKED_FLOAT64_ARRAY
@@ -197,10 +211,13 @@ private:
 		Vector4i v4i;
 		Rect2    r2;
 		Rect2i   r2i;
-		std::string *s;
 		std::vector<float> *f32array;
 		std::vector<double> *f64array;
 	} v;
+
+	void internal_create_string(Type type, const std::string &value);
+	void internal_clone(const Variant &other);
+	std::string internal_fetch_string() const;
 };
 static_assert(sizeof(Variant) == 24, "Variant size mismatch");
 
@@ -220,8 +237,7 @@ inline Variant::Variant(T value)
 		v.f = value;
 	}
 	else if constexpr (is_string<T>::value || is_stdstring<T>::value) {
-		m_type = STRING;
-		v.s = new std::string(value);
+		internal_create_string(STRING, value);
 	}
 	else if constexpr (std::is_same_v<T, Vector2>) {
 		m_type = VECTOR2;
@@ -261,8 +277,7 @@ inline Variant::Variant(T value)
 
 inline Variant Variant::string_name(const std::string &name) {
 	Variant v;
-	v.m_type = STRING_NAME;
-	v.v.s = new std::string(name);
+	v.internal_create_string(STRING_NAME, name);
 	return v;
 }
 
@@ -303,7 +318,7 @@ inline Variant::operator int8_t() const
 
 inline Variant::operator uint64_t() const
 {
-	if (m_type == INT || m_type == FLOAT)
+	if (m_type == INT || m_type == FLOAT || m_type == OBJECT)
 		return static_cast<uint64_t>(v.i);
 	api_throw("std::bad_cast", "Failed to cast Variant to uint64", this);
 }
@@ -347,31 +362,11 @@ inline Variant::operator float() const
 	api_throw("std::bad_cast", "Failed to cast Variant to float", this);
 }
 
-inline Variant::operator const std::string&() const
+inline Variant::operator std::string() const
 {
-	if (m_type == STRING || m_type == STRING_NAME || m_type == PACKED_BYTE_ARRAY)
-		return *v.s;
+	if (m_type == STRING || m_type == STRING_NAME || m_type == NODE_PATH || m_type == PACKED_BYTE_ARRAY)
+		return internal_fetch_string();
 	api_throw("std::bad_cast", "Failed to cast Variant to const std::string&", this);
-}
-inline Variant::operator std::string&()
-{
-	if (m_type == STRING || m_type == STRING_NAME || m_type == PACKED_BYTE_ARRAY)
-		return *v.s;
-	api_throw("std::bad_cast", "Failed to cast Variant to std::string&", this);
-}
-
-inline Variant::operator std::string_view() const
-{
-	if (m_type == STRING || m_type == STRING_NAME || m_type == PACKED_BYTE_ARRAY)
-		return std::string_view(*v.s);
-	api_throw("std::bad_cast", "Failed to cast Variant to std::string_view", this);
-}
-
-inline Variant::operator std::span<uint8_t>() const
-{
-	if (m_type == PACKED_BYTE_ARRAY)
-		return std::span<uint8_t>(reinterpret_cast<uint8_t *>(v.s->data()), v.s->size());
-	api_throw("std::bad_cast", "Failed to cast Variant to std::span<uint8>", this);
 }
 
 inline const Vector2& Variant::v2() const
@@ -504,7 +499,7 @@ inline Variant::Variant(const Variant &other)
 {
 	m_type = other.m_type;
 	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY || m_type == NODE_PATH || m_type == STRING_NAME)
-		v.s = new std::string(*other.v.s);
+		this->internal_clone(other);
 	else if (m_type == PACKED_FLOAT32_ARRAY)
 		v.f32array = new std::vector<float>(*other.v.f32array);
 	else if (m_type == PACKED_FLOAT64_ARRAY)
@@ -523,7 +518,7 @@ inline Variant::Variant(Variant &&other)
 inline Variant &Variant::operator=(const Variant &other) {
 	m_type = other.m_type;
 	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY || m_type == NODE_PATH || m_type == STRING_NAME)
-		v.s = new std::string(*other.v.s);
+		this->internal_clone(other);
 	else if (m_type == PACKED_FLOAT32_ARRAY)
 		v.f32array = new std::vector<float>(*other.v.f32array);
 	else if (m_type == PACKED_FLOAT64_ARRAY)

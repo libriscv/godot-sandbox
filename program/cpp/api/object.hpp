@@ -4,7 +4,7 @@
 
 struct Object {
 	/// @brief Construct an Object object from an allowed global object.
-	Object(const std::string &name);
+	explicit Object(const std::string &name);
 
 	/// @brief Construct an Object object from an existing in-scope Object object.
 	/// @param addr The address of the Object object.

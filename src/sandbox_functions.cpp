@@ -6,6 +6,10 @@ using namespace godot;
 static const std::unordered_set<std::string_view> exclude_functions{
 	"sys_veval",
 	"sys_vcall",
+	"sys_vcreate",
+	"sys_vfetch",
+	"sys_vclone",
+	"sys_vstore",
 	"sys_vfree",
 	"sys_print",
 	"sys_get_obj",
@@ -21,6 +25,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"_Exit",
 	"_GLOBAL__sub_I_eh_alloc.cc",
 	"_GLOBAL__sub_I_main",
+	"_GLOBAL__sub_I_properties",
 	"_GLOBAL__sub_I_system_error.cc",
 	"_IO_adjust_column",
 	"_IO_adjust_wcolumn",
