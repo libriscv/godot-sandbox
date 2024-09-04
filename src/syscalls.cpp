@@ -776,6 +776,58 @@ APICALL(api_array_size) {
 	machine.set_result(array.size());
 }
 
+APICALL(api_dict_ops) {
+	auto [op, dict_idx, vkey, vaddr] = machine.sysargs<Dictionary_Op, unsigned, gaddr_t, gaddr_t>();
+	auto &emu = riscv::emu(machine);
+
+	auto opt_dict = emu.get_scoped_variant(dict_idx);
+	if (!opt_dict.has_value() || opt_dict.value()->get_type() != Variant::DICTIONARY) {
+		ERR_PRINT("Invalid Dictionary object");
+		throw std::runtime_error("Invalid Dictionary object");
+	}
+	godot::Dictionary dict = opt_dict.value()->operator Dictionary();
+
+	switch (op) {
+		case Dictionary_Op::GET: {
+			auto *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
+			auto *vp = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
+			// TODO: Check if the value is already scoped?
+			vp->set(emu, dict.find_key(key->toVariant(emu)), true); // Implicit trust, as we are returning engine-provided result.
+			break;
+		}
+		case Dictionary_Op::SET: {
+			auto *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
+			auto *value = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
+			dict[key->toVariant(emu)] = value->toVariant(emu);
+			break;
+		}
+		case Dictionary_Op::ERASE: {
+			auto *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
+			dict.erase(key->toVariant(emu));
+			break;
+		}
+		case Dictionary_Op::HAS: {
+			auto *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
+			machine.set_result(dict.has(key->toVariant(emu)));
+			break;
+		}
+		case Dictionary_Op::GET_SIZE:
+			machine.set_result(dict.size());
+			break;
+		case Dictionary_Op::CLEAR:
+			dict.clear();
+			break;
+		case Dictionary_Op::MERGE: {
+			auto *other_dict = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
+			dict.merge(other_dict->toVariant(emu).operator Dictionary());
+			break;
+		}
+		default:
+			ERR_PRINT("Invalid Dictionary operation");
+			throw std::runtime_error("Invalid Dictionary operation");
+	}
+}
+
 } //namespace riscv
 
 void Sandbox::initialize_syscalls() {
@@ -825,5 +877,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_ARRAY_OPS, api_array_ops },
 			{ ECALL_ARRAY_AT, api_array_at },
 			{ ECALL_ARRAY_SIZE, api_array_size },
+
+			{ ECALL_DICTIONARY_OPS, api_dict_ops },
 	});
 }
