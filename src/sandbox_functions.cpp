@@ -20,6 +20,10 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"sys_node2d",
 	"sys_node3d",
 	"sys_throw",
+	"sys_array_at",
+	"sys_array_ops",
+	"sys_array_size",
+	"sys_dict_ops",
 
 	"main",
 	"_Exit",
