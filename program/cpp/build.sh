@@ -1,6 +1,7 @@
 usage() {
 	echo "Usage: $0 [--api] [-o output] -- [input...]"
 	echo "  --api        Instead of compiling, copy the API files to the output."
+	echo "  --line addr  Convert an address to a line number."
 	echo "   -o output   Compile sources into an output ELF file, including API and inputs."
 	echo "  --local      Compile as if locally (outside Docker), using the local API files."
 	echo "   -v          Verbose output."
@@ -11,11 +12,12 @@ usage() {
 locally=false
 verbose=false
 current_version=2
-CPPFLAGS="-O2 -std=gnu++23 -DVERSION=$current_version"
+CPPFLAGS="-g -O2 -std=gnu++23 -DVERSION=$current_version"
 
 while [[ "$#" -gt 0 ]]; do
 	case $1 in
 		--api) cp -r /usr/api $1; exit ;;
+		--line) shift; addr="$1"; shift; output="$1"; shift; addr2line -e $output $addr; exit ;;
 		-o) shift; output="$1"; shift; break ;;
 		--local) locally=true; shift ;;
 		--version) shift; echo "$current_version"; exit ;;

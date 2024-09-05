@@ -18,7 +18,7 @@ struct is_string
 template<class T>
 struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
 
-struct Object; struct Node; struct Node2D; struct Node3D; struct Array; struct Dictionary;
+struct Object; struct Node; struct Node2D; struct Node3D; struct Array; struct Dictionary; struct String;
 #include "vector.hpp"
 
 struct Variant
@@ -119,6 +119,7 @@ struct Variant
 
 	Variant(const Array&);
 	Variant(const Dictionary&);
+	Variant(const String&);
 	Variant(const Object&);
 	Variant(const Node&);
 	Variant(const Node2D&);
@@ -148,6 +149,7 @@ struct Variant
 	operator double() const;
 	operator float() const;
 	operator std::string() const; // String for STRING and PACKED_BYTE_ARRAY
+	operator String() const;
 
 	Object as_object() const;
 	Node as_node() const;
@@ -155,6 +157,7 @@ struct Variant
 	Node3D as_node3d() const;
 	Array as_array() const;
 	Dictionary as_dictionary() const;
+	String as_string() const;
 
 	const Vector2& v2() const;
 	Vector2& v2();
