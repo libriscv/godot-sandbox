@@ -1,6 +1,7 @@
 #include "script_instance.h"
 
 #include "../cpp/script_cpp.h"
+#include "../rust/script_rust.h"
 #include "../sandbox.h"
 #include "script_elf.h"
 #include "script_instance_helper.h"
@@ -13,6 +14,35 @@ static const std::vector<std::string> godot_functions = {
 	"_hide_script_from_inspector",
 	"_is_read_only",
 };
+
+static void handle_language_warnings(Array &warnings, const Ref<ELFScript> &script) {
+	const String language = script->get_elf_programming_language();
+	if (language == "C++") {
+		// Compare C++ version against Docker version
+		const int docker_version = CPPScript::DockerContainerVersion();
+		if (docker_version < 0) {
+			warnings.push_back("C++ Docker container not found");
+		} else {
+			const int script_version = script->get_elf_api_version();
+			if (script_version < docker_version) {
+				String w = "C++ API version is newer (" + String::num_int64(script_version) + " vs " + String::num_int64(docker_version) + "), please rebuild the program";
+				warnings.push_back(std::move(w));
+			}
+		}
+	} else if (language == "Rust") {
+		// Compare Rust version against Docker version
+		const int docker_version = RustScript::DockerContainerVersion();
+		if (docker_version < 0) {
+			warnings.push_back("Rust Docker container not found");
+		} else {
+			const int script_version = script->get_elf_api_version();
+			if (script_version < docker_version) {
+				String w = "Rust API version is newer (" + String::num_int64(script_version) + " vs " + String::num_int64(docker_version) + "), please rebuild the program";
+				warnings.push_back(std::move(w));
+			}
+		}
+	}
+}
 
 bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 	if constexpr (VERBOSE_LOGGING) {
@@ -93,18 +123,7 @@ retry_callp:
 		if (script->get_elf_programming_language() == "Unknown") {
 			warnings.push_back("Unknown programming language");
 		}
-		if (script->get_elf_programming_language() == "C++") {
-			// Compare C++ version against Docker version
-			const int docker_version = CPPScript::DockerContainerVersion();
-			if (docker_version < 0) {
-				warnings.push_back("C++ Docker container not found");
-			} else {
-				const int script_version = script->get_elf_api_version();
-				if (script_version < docker_version) {
-					warnings.push_back("C++ API version is newer, please rebuild the program");
-				}
-			}
-		}
+		handle_language_warnings(warnings, script);
 		r_error.error = GDEXTENSION_CALL_OK;
 		return warnings;
 	}

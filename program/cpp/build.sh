@@ -4,6 +4,7 @@ usage() {
 	echo "  --line addr  Convert an address to a line number."
 	echo "   -o output   Compile sources into an output ELF file, including API and inputs."
 	echo "  --local      Compile as if locally (outside Docker), using the local API files."
+	echo "  --version    Print the current version of the API."
 	echo "   -v          Verbose output."
 	echo "  --           Separate options from input files."
 	exit 1
@@ -11,7 +12,7 @@ usage() {
 
 locally=false
 verbose=false
-current_version=2
+current_version=3
 CPPFLAGS="-g -O2 -std=gnu++23 -DVERSION=$current_version"
 
 while [[ "$#" -gt 0 ]]; do

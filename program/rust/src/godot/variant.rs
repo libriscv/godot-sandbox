@@ -26,7 +26,7 @@ pub(self) union CapacityOrSSO {
 }
 
 #[repr(C)]
-pub struct VariantStdString {
+pub struct GuestStdString {
 	// 64-bit pointer + 64-bit length + 64-bit capacity OR 16-byte SSO data
 	pub ptr: *const char,
 	pub len: usize,
@@ -93,7 +93,6 @@ pub union VariantUnion {
 	pub r2i: Rect2i,
 	pub v4: Vector4,
 	pub v4i: Vector4i,
-	pub s: *const VariantStdString,
 }
 
 #[repr(C)]
@@ -168,7 +167,7 @@ impl Variant
 	}
 	pub fn new_string(s: &str) -> Variant
 	{
-		let v = Variant { t: VariantType::String, u: VariantUnion { s: Box::into_raw(Box::new(VariantStdString::new(s))) } };
+		let v = Variant::internal_create_string(VariantType::String, s);
 		return v;
 	}
 
@@ -292,6 +291,26 @@ impl Variant
 			_ => panic!("Variant is not a Vector4i"),
 		}
 	}
+
+	pub fn internal_create_string(t: VariantType, s: &str) -> Variant
+	{
+		const SYSCALL_VCREATE: i64 = 517;
+		let mut v = Variant::new_nil();
+		// Arg0: pointer to this
+		// Arg1: variant type
+		// Arg2: pointer to GuestStdString
+		// TODO: Add a new syscall for creating a string more efficiently (avoiding the need for a GuestStdString)
+		let s = GuestStdString::new(s);
+		unsafe {
+			asm!("ecall",
+				inout("a0") &mut v => _, // Ensure the host can write to the Variant
+				in("a1") t as i64,
+				in("a2") &s,
+				in("a7") SYSCALL_VCREATE,
+				options(nostack));
+		}
+		return v;
+	}
 }
 
 impl Vector2
@@ -358,20 +377,20 @@ impl Vector4i
 	}
 }
 
-impl VariantStdString
+impl GuestStdString
 {
-	pub fn new(s: &str) -> VariantStdString
+	pub fn new(s: &str) -> GuestStdString
 	{
 		if s.len() <= 16 {
 			let mut sso = [0; 16];
 			for i in 0..s.len() {
 				sso[i] = s.as_bytes()[i];
 			}
-			let v = VariantStdString { ptr: s.as_ptr() as *const char, len: s.len(), cap_or_sso: CapacityOrSSO { sso: sso } };
+			let v = GuestStdString { ptr: s.as_ptr() as *const char, len: s.len(), cap_or_sso: CapacityOrSSO { sso: sso } };
 			return v;
 		}
 
-		let v = VariantStdString { ptr: s.as_ptr() as *const char, len: s.len(), cap_or_sso: CapacityOrSSO { cap: s.len() } };
+		let v = GuestStdString { ptr: s.as_ptr() as *const char, len: s.len(), cap_or_sso: CapacityOrSSO { cap: s.len() } };
 		v
 	}
 }
