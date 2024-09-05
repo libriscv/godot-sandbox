@@ -88,6 +88,11 @@ static inline T cast_to(const Object &obj) {
 	return T{obj.address()};
 }
 
+inline Variant::Variant(const Object &obj) {
+	m_type = OBJECT;
+	v.i = obj.address();
+}
+
 template <typename... Args>
 inline Variant Object::call(std::string_view method, Args... args) {
 	Variant argv[] = {args...};

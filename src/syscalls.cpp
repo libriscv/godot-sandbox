@@ -100,7 +100,7 @@ APICALL(api_vcall) {
 		vret->set(emu, ret, true); // Implicit trust, as we are returning engine-provided result.
 	} else {
 		ERR_PRINT("Invalid Variant type for Variant::call()");
-		throw std::runtime_error("Invalid Variant type for Variant::call()");
+		throw std::runtime_error("Invalid Variant type for Variant::call(): " + std::to_string(vp->type));
 	}
 }
 
@@ -792,7 +792,8 @@ APICALL(api_dict_ops) {
 			auto *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
 			auto *vp = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
 			// TODO: Check if the value is already scoped?
-			vp->set(emu, dict.find_key(key->toVariant(emu)), true); // Implicit trust, as we are returning engine-provided result.
+			auto v = dict[key->toVariant(emu)];
+			vp->set(emu, v, true); // Implicit trust, as we are returning engine-provided result.
 			break;
 		}
 		case Dictionary_Op::SET: {

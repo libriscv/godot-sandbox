@@ -31,6 +31,14 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 		case Variant::VECTOR4I:
 			return Variant{ godot::Vector4i(v.v4i[0], v.v4i[1], v.v4i[2], v.v4i[3]) };
 
+		case Variant::OBJECT: {
+			auto *obj = (godot::Object *)uintptr_t(v.i);
+			if (emu.is_scoped_object(obj))
+				return Variant{ obj };
+			else
+				throw std::runtime_error("GuestVariant::toVariant(): Object is not known/scoped");
+		}
+
 		case Variant::DICTIONARY:
 		case Variant::ARRAY:
 		case Variant::CALLABLE:
@@ -144,6 +152,7 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 		case Variant::OBJECT: { // Objects are represented as uintptr_t
 			if (!implicit_trust)
 				throw std::runtime_error("GuestVariant::set(): Cannot set OBJECT type without implicit trust");
+			// TODO: Check if the object is already scoped?
 			godot::Object *obj = value.operator godot::Object *();
 			emu.add_scoped_object(obj);
 			this->v.i = (uintptr_t)obj;

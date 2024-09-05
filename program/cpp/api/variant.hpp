@@ -119,6 +119,10 @@ struct Variant
 
 	Variant(const Array&);
 	Variant(const Dictionary&);
+	Variant(const Object&);
+	Variant(const Node&);
+	Variant(const Node2D&);
+	Variant(const Node3D&);
 
 	// Constructor specifically the STRING_NAME type
 	static Variant string_name(const std::string &name);

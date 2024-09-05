@@ -89,3 +89,8 @@ static inline T cast_to(const Variant &var) {
 		return T{uintptr_t(var)};
 	api_throw("std::bad_cast", "Variant is not an Object", &var);
 }
+
+inline Variant::Variant(const Node &node) {
+	m_type = OBJECT;
+	v.i = node.address();
+}

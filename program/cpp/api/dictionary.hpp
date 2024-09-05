@@ -53,9 +53,15 @@ struct DictAccessor {
 	DictAccessor(const Dictionary &dict, const Variant &key) : m_dict(dict), m_key(key) {}
 
 	operator Variant() const { return m_dict.get(m_key); }
-	Variant operator ->() const { return m_dict.get(m_key); }
+	Variant operator *() const { return m_dict.get(m_key); }
+	Variant value() const { return m_dict.get(m_key); }
 
 	void operator=(const Variant &value) { m_dict.set(m_key, value); }
+
+	template <typename... Args>
+	Variant operator ()(Args &&...args) {
+		return value()(std::forward<Args>(args)...);
+	}
 
 private:
 	Dictionary m_dict;

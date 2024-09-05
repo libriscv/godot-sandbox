@@ -63,3 +63,8 @@ inline Node2D Variant::as_node2d() const {
 inline Node2D Object::as_node2d() const {
 	return Node2D{address()};
 }
+
+inline Variant::Variant(const Node2D &node) {
+	m_type = OBJECT;
+	v.i = node.address();
+}

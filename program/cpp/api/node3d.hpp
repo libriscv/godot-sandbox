@@ -58,3 +58,8 @@ inline Node3D Variant::as_node3d() const {
 inline Node3D Object::as_node3d() const {
 	return Node3D{address()};
 }
+
+inline Variant::Variant(const Node3D &node) {
+	m_type = OBJECT;
+	v.i = node.address();
+}
