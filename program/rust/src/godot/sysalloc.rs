@@ -2,6 +2,7 @@ extern crate alloc;
 use alloc::alloc::Layout;
 use alloc::alloc::GlobalAlloc;
 use std::arch::asm;
+use std::arch::global_asm;
 const NATIVE_SYSCALLS_BASE: i32 = 480;
 
 struct SysAllocator;
@@ -114,3 +115,10 @@ pub fn fast_exit() -> ! {
 		);
 	}
 }
+
+// Godot Rust API version embedded in the binary
+global_asm!(
+	".pushsection .comment",
+	".string \"Godot Rust API v3\"",
+	".popsection",
+);
