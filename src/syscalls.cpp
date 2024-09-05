@@ -829,6 +829,87 @@ APICALL(api_dict_ops) {
 	}
 }
 
+APICALL(api_string_create) {
+	auto [strview] = machine.sysargs<std::string_view>();
+	auto &emu = riscv::emu(machine);
+	machine.penalize(10'000);
+
+	auto str = String::utf8(strview.data(), strview.size());
+	const unsigned idx = emu.create_scoped_variant(Variant(std::move(str)));
+	machine.set_result(idx);
+}
+
+APICALL(api_string_ops) {
+	auto [op, str_idx, index, vaddr] = machine.sysargs<String_Op, unsigned, int, gaddr_t>();
+	auto &emu = riscv::emu(machine);
+
+	auto opt_str = emu.get_scoped_variant(str_idx);
+	if (!opt_str.has_value() || opt_str.value()->get_type() != Variant::STRING) {
+		ERR_PRINT("Invalid String object");
+		throw std::runtime_error("Invalid String object");
+	}
+	godot::String str = opt_str.value()->operator String();
+
+	switch (op) {
+		case String_Op::APPEND: {
+			auto *gvar = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
+			str += gvar->toVariant(emu).operator String();
+			break;
+		}
+		case String_Op::GET_LENGTH:
+			machine.set_result(str.length());
+			break;
+		default:
+			ERR_PRINT("Invalid String operation");
+			throw std::runtime_error("Invalid String operation");
+	}
+}
+
+APICALL(api_string_at) {
+	auto [str_idx, index] = machine.sysargs<unsigned, int>();
+	auto &emu = riscv::emu(machine);
+
+	auto opt_str = emu.get_scoped_variant(str_idx);
+	if (!opt_str.has_value() || opt_str.value()->get_type() != Variant::STRING) {
+		ERR_PRINT("Invalid String object");
+		throw std::runtime_error("Invalid String object");
+	}
+	godot::String str = opt_str.value()->operator String();
+
+	if (index < 0 || index >= str.length()) {
+		ERR_PRINT("String index out of bounds");
+		throw std::runtime_error("String index out of bounds");
+	}
+
+	auto new_string = str[index];
+	auto new_varidx = emu.create_scoped_variant(Variant(std::move(new_string)));
+	machine.set_result(new_varidx);
+}
+
+APICALL(api_string_size) {
+	auto [str_idx] = machine.sysargs<unsigned>();
+	auto &emu = riscv::emu(machine);
+
+	auto opt_str = emu.get_scoped_variant(str_idx);
+	if (!opt_str.has_value() || opt_str.value()->get_type() != Variant::STRING) {
+		ERR_PRINT("Invalid String object");
+		throw std::runtime_error("Invalid String object");
+	}
+	godot::String str = opt_str.value()->operator String();
+	machine.set_result(str.length());
+}
+
+APICALL(api_string_append) {
+	auto [str_idx, strview] = machine.sysargs<unsigned, std::string_view>();
+	auto &emu = riscv::emu(machine);
+
+	auto &var = emu.get_mutable_scoped_variant(str_idx);
+
+	godot::String str = var.operator String();
+	str += String::utf8(strview.data(), strview.size());
+	var = Variant(std::move(str));
+}
+
 } //namespace riscv
 
 void Sandbox::initialize_syscalls() {
@@ -880,5 +961,11 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_ARRAY_SIZE, api_array_size },
 
 			{ ECALL_DICTIONARY_OPS, api_dict_ops },
+
+			{ ECALL_STRING_CREATE, api_string_create },
+			{ ECALL_STRING_OPS, api_string_ops },
+			{ ECALL_STRING_AT, api_string_at },
+			{ ECALL_STRING_SIZE, api_string_size },
+			{ ECALL_STRING_APPEND, api_string_append },
 	});
 }

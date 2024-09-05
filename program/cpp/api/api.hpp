@@ -4,6 +4,7 @@
 #include "node3d.hpp"
 #include "array.hpp"
 #include "dictionary.hpp"
+#include "string.hpp"
 #include "syscalls_fwd.hpp"
 
 template <typename T>

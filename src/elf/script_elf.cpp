@@ -1,5 +1,6 @@
 #include "script_elf.h"
 
+#include "../docker.h"
 #include "../register_types.h"
 #include "../sandbox.h"
 #include "script_instance.h"
@@ -239,4 +240,13 @@ void ELFScript::set_file(const String &p_path) {
 	this->functions = std::move(info.functions);
 	this->elf_programming_language = info.language;
 	this->elf_api_version = info.version;
+}
+
+String ELFScript::get_dockerized_program_path() const {
+	// Get the absolute path without the file name
+	String path = get_path().get_base_dir().replace("res://", "") + "/";
+	String foldername = Docker::GetFolderName(get_path().get_base_dir());
+	// Return the path to the folder with the name of the folder + .elf
+	// Eg. res://foldername becomes foldername/foldername.elf
+	return path + foldername + String(".elf");
 }

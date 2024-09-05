@@ -4,6 +4,7 @@
 #include <charconv>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
@@ -349,6 +350,16 @@ void Sandbox::handle_exception(gaddr_t address) {
 		UtilityFunctions::print("\nMessage: ", e.what(), "\n\n");
 		ERR_PRINT(("Exception: " + std::string(e.what())).c_str());
 	}
+
+	// Attempt to print the source code line using addr2line
+	String elfpath = get_program()->get_dockerized_program_path();
+	Array line_out;
+	OS::get_singleton()->execute("riscv64-linux-gnu-addr2line", { "-p", "-f", "-e", elfpath, to_hex(address) }, line_out);
+	if (line_out.size() > 0) {
+		const String line = String(line_out[0]).replace("\n", "").replace("/usr/src/", "res://");
+		UtilityFunctions::printerr("Location: ", line);
+	}
+
 	if constexpr (VERBOSE_EXCEPTIONS) {
 		UtilityFunctions::print(
 				"Program page: ", machine().memory.get_page_info(machine().cpu.pc()).c_str());
@@ -460,6 +471,27 @@ std::optional<const Variant *> Sandbox::get_scoped_variant(unsigned index) const
 		return std::nullopt;
 	}
 	return state().scoped_variants[index - 1];
+}
+Variant &Sandbox::get_mutable_scoped_variant(unsigned index) {
+	if (index == 0 || index > state().scoped_variants.size()) {
+		ERR_PRINT("Invalid scoped variant index.");
+		throw std::runtime_error("Invalid scoped variant index.");
+	}
+	auto *var = state().scoped_variants[index - 1];
+	// Find the variant in the variants list
+	auto it = std::find_if(state().variants.begin(), state().variants.end(), [var](const Variant &v) {
+		return &v == var;
+	});
+	if (it == state().variants.end()) {
+		// Create a new variant in the list using the existing one, and return it
+		if (state().variants.size() >= this->m_max_refs) {
+			ERR_PRINT("Maximum number of scoped variants reached.");
+			throw std::runtime_error("Maximum number of scoped variants reached.");
+		}
+		state().variants.emplace_back(*var);
+		return state().variants.back();
+	}
+	return *it;
 }
 
 void Sandbox::add_scoped_object(const void *ptr) {
