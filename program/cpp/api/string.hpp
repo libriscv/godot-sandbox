@@ -32,6 +32,8 @@ struct String {
 	String operator[](int idx) const;
 	String at(int idx) const { return (*this)[idx]; }
 
+	operator std::string() const;
+
 	// String size
 	int size() const;
 
@@ -48,10 +50,16 @@ inline Variant::Variant(const String &s) {
 }
 
 inline Variant::operator String() const {
+	if (m_type != STRING) {
+		api_throw("std::bad_cast", "Failed to cast Variant to String", this);
+	}
 	return String::from_variant_index(v.i);
 }
 
 inline String Variant::as_string() const {
+	if (m_type != STRING) {
+		api_throw("std::bad_cast", "Failed to cast Variant to String", this);
+	}
 	return String::from_variant_index(v.i);
 }
 

@@ -146,4 +146,5 @@ enum class String_Op {
 	INSERT,
 	FIND,
 	ERASE,
+	TO_STD_STRING,
 };

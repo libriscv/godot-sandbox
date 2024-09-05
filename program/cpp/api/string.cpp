@@ -59,3 +59,9 @@ String &String::operator=(String &&other) {
 	m_idx = other.m_idx;
 	return *this;
 }
+
+String::operator std::string() const {
+	std::string str;
+	sys_string_ops(String_Op::TO_STD_STRING, m_idx, 0, (Variant *)&str);
+	return str;
+}

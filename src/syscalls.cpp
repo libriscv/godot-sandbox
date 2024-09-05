@@ -52,11 +52,16 @@ APICALL(api_print) {
 	auto [array, len] = machine.sysargs<gaddr_t, gaddr_t>();
 	auto &emu = riscv::emu(machine);
 
+	if (len >= 64) {
+		ERR_PRINT("print(): Too many Variants to print");
+		throw std::runtime_error("print(): Too many Variants to print");
+	}
 	const GuestVariant *array_ptr = emu.machine().memory.memarray<GuestVariant>(array, len);
 
 	// We really want print_internal to be a public function.
 	for (gaddr_t i = 0; i < len; i++) {
 		auto &var = array_ptr[i];
+		//printf("Variant[%lu]: type=%d\n", i, var.type);
 		UtilityFunctions::print(var.toVariant(emu));
 	}
 }
@@ -793,7 +798,7 @@ APICALL(api_dict_ops) {
 			auto *vp = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
 			// TODO: Check if the value is already scoped?
 			auto v = dict[key->toVariant(emu)];
-			vp->set(emu, v, true); // Implicit trust, as we are returning engine-provided result.
+			vp->create(emu, std::move(v));
 			break;
 		}
 		case Dictionary_Op::SET: {
@@ -859,6 +864,13 @@ APICALL(api_string_ops) {
 		case String_Op::GET_LENGTH:
 			machine.set_result(str.length());
 			break;
+		case String_Op::TO_STD_STRING: {
+			// Get the string as a std::string.
+			auto utf8 = str.utf8();
+			auto *gstr = emu.machine().memory.memarray<GuestStdString>(vaddr, 1);
+			gstr->set_string(emu.machine(), vaddr, utf8.ptr(), utf8.length());
+			break;
+		}
 		default:
 			ERR_PRINT("Invalid String operation");
 			throw std::runtime_error("Invalid String operation");
