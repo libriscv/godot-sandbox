@@ -158,6 +158,7 @@ struct Variant
 	Array as_array() const;
 	Dictionary as_dictionary() const;
 	String as_string() const;
+	std::string as_std_string() const;
 	std::vector<uint8_t> as_byte_array() const;
 
 	const Vector2& v2() const;
@@ -381,6 +382,10 @@ inline Variant::operator std::string() const
 	if (m_type == STRING || m_type == STRING_NAME || m_type == NODE_PATH || m_type == PACKED_BYTE_ARRAY)
 		return internal_fetch_string();
 	api_throw("std::bad_cast", "Failed to cast Variant to const std::string&", this);
+}
+
+inline std::string Variant::as_std_string() const {
+	return static_cast<std::string>(*this);
 }
 
 inline const Vector2& Variant::v2() const
