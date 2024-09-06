@@ -175,8 +175,6 @@ struct GuestVariant {
 		int64_t i = 0;
 		bool b;
 		double f;
-		gaddr_t vf32; // PackedFloat32Array -> GuestStdVector<float>
-		gaddr_t vf64; // PackedFloat64Array -> GuestStdVector<double>
 		std::array<float, 2> v2f;
 		std::array<float, 3> v3f;
 		std::array<float, 4> v4f;

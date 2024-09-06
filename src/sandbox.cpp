@@ -231,7 +231,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 	auto &state = this->m_states[m_level];
 	// Scoped objects and owning tree node
 	state.tree_base = this->get_tree_base();
-	state.reset();
+	state.reset(this->m_max_refs);
 	auto *old_state = this->m_current_state;
 	this->m_current_state = &state;
 	// Call statistics
@@ -269,11 +269,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 
 		// Treat return value as pointer to Variant
 		auto result = retvar->toVariant(*this);
-		// Potentially free the function arguments and return value
-		for (int i = 0; i < argc + 1; i++) {
-			retvar[i].free(*this);
-		}
-
+		// Restore the previous state
 		this->m_level--;
 		this->m_current_state = old_state;
 		error.error = GDEXTENSION_CALL_OK;

@@ -111,7 +111,7 @@ struct Variant
 	Variant() = default;
 	Variant(const Variant &other);
 	Variant(Variant &&other);
-	~Variant();
+	~Variant() {}
 
 	// Constructor for common types
 	template <typename T>
@@ -160,6 +160,12 @@ struct Variant
 	String as_string() const;
 	std::string as_std_string() const;
 	std::vector<uint8_t> as_byte_array() const;
+	std::vector<float> as_float32_array() const;
+	std::vector<double> as_float64_array() const;
+	std::vector<int32_t> as_int32_array() const;
+	std::vector<int64_t> as_int64_array() const;
+	std::vector<Vector2> as_vector2_array() const;
+	std::vector<Vector3> as_vector3_array() const;
 
 	const Vector2& v2() const;
 	Vector2& v2();
@@ -186,9 +192,6 @@ struct Variant
 	operator Vector4i() const { return v4i(); }
 	operator Rect2() const { return r2(); }
 	operator Rect2i() const { return r2i(); }
-
-	std::vector<float>& f32array() const; // Modifiable vector for PACKED_FLOAT32_ARRAY
-	std::vector<double>& f64array() const; // Modifiable vector for PACKED_FLOAT64_ARRAY
 
 	void callp(std::string_view method, const Variant *args, int argcount, Variant &r_ret, int &r_error);
 
@@ -226,8 +229,6 @@ private:
 		Vector4i v4i;
 		Rect2    r2;
 		Rect2i   r2i;
-		std::vector<float> *f32array;
-		std::vector<double> *f64array;
 	} v;
 
 	void internal_create_string(Type type, const std::string &value);
@@ -500,29 +501,11 @@ inline Rect2i& Variant::r2i()
 	api_throw("std::bad_cast", "Failed to cast Variant to Rect2i", this);
 }
 
-inline std::vector<float>& Variant::f32array() const
-{
-	if (m_type == PACKED_FLOAT32_ARRAY)
-		return *v.f32array;
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedFloat32Array", this);
-}
-
-inline std::vector<double>& Variant::f64array() const
-{
-	if (m_type == PACKED_FLOAT64_ARRAY)
-		return *v.f64array;
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedFloat64Array", this);
-}
-
 inline Variant::Variant(const Variant &other)
 {
 	m_type = other.m_type;
 	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY || m_type == NODE_PATH || m_type == STRING_NAME)
 		this->internal_clone(other);
-	else if (m_type == PACKED_FLOAT32_ARRAY)
-		v.f32array = new std::vector<float>(*other.v.f32array);
-	else if (m_type == PACKED_FLOAT64_ARRAY)
-		v.f64array = new std::vector<double>(*other.v.f64array);
 	else
 		v = other.v;
 }
@@ -538,10 +521,6 @@ inline Variant &Variant::operator=(const Variant &other) {
 	m_type = other.m_type;
 	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY || m_type == NODE_PATH || m_type == STRING_NAME)
 		this->internal_clone(other);
-	else if (m_type == PACKED_FLOAT32_ARRAY)
-		v.f32array = new std::vector<float>(*other.v.f32array);
-	else if (m_type == PACKED_FLOAT64_ARRAY)
-		v.f64array = new std::vector<double>(*other.v.f64array);
 	else
 		v = other.v;
 

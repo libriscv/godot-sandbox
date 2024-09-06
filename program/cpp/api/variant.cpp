@@ -42,6 +42,60 @@ std::vector<uint8_t> Variant::as_byte_array() const {
 	api_throw("std::bad_cast", "Failed to cast Variant to PackedByteArray", this);
 }
 
+std::vector<float> Variant::as_float32_array() const {
+	if (m_type == PACKED_FLOAT32_ARRAY) {
+		std::vector<float> result;
+		sys_vfetch(this, &result);
+		return result;
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedFloat32Array", this);
+}
+
+std::vector<double> Variant::as_float64_array() const {
+	if (m_type == PACKED_FLOAT64_ARRAY) {
+		std::vector<double> result;
+		sys_vfetch(this, &result);
+		return result;
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedFloat64Array", this);
+}
+
+std::vector<int32_t> Variant::as_int32_array() const {
+	if (m_type == PACKED_INT32_ARRAY) {
+		std::vector<int32_t> result;
+		sys_vfetch(this, &result);
+		return result;
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedInt32Array", this);
+}
+
+std::vector<int64_t> Variant::as_int64_array() const {
+	if (m_type == PACKED_INT64_ARRAY) {
+		std::vector<int64_t> result;
+		sys_vfetch(this, &result);
+		return result;
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedInt64Array", this);
+}
+
+std::vector<Vector2> Variant::as_vector2_array() const {
+	if (m_type == PACKED_VECTOR2_ARRAY) {
+		std::vector<Vector2> result;
+		sys_vfetch(this, &result);
+		return result;
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedVector2Array", this);
+}
+
+std::vector<Vector3> Variant::as_vector3_array() const {
+	if (m_type == PACKED_VECTOR3_ARRAY) {
+		std::vector<Vector3> result;
+		sys_vfetch(this, &result);
+		return result;
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedVector3Array", this);
+}
+
 void Variant::internal_create_string(Type type, const std::string &value) {
 	sys_vcreate(this, type, &value);
 }
@@ -54,14 +108,4 @@ std::string Variant::internal_fetch_string() const {
 
 void Variant::internal_clone(const Variant &other) {
 	sys_vclone(&other, this);
-}
-
-Variant::~Variant() {
-	register Variant *v asm("a0") = this;
-	register int syscall asm("a7") = ECALL_VFREE;
-
-	asm volatile(
-			"ecall"
-			:
-			: "r"(v), "m"(*v), "r"(syscall));
 }

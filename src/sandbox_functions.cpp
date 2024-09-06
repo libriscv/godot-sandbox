@@ -24,6 +24,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"sys_array_ops",
 	"sys_array_size",
 	"sys_dict_ops",
+	"sys_string_append",
 	"sys_string_at",
 	"sys_string_create",
 	"sys_string_ops",
