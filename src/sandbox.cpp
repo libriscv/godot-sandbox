@@ -302,7 +302,12 @@ Variant Sandbox::vmcallable(String function, Array args) {
 	}
 
 	auto *call = memnew(RiscvCallable);
-	call->init(this, address, args);
+	call->init(this, address, std::move(args));
+	return Callable(call);
+}
+Variant Sandbox::vmcallable_address(gaddr_t address, Array args) {
+	auto *call = memnew(RiscvCallable);
+	call->init(this, address, std::move(args));
 	return Callable(call);
 }
 void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const {

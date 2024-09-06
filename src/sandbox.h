@@ -78,6 +78,7 @@ public:
 	/// in front of the arguments passed to the call() method. So, as an example, if you have a function that takes 3 arguments,
 	/// and you call it with 2 arguments, you can later call the callable object with one argument, which turns into the 3rd argument.
 	Variant vmcallable(String function, Array args);
+	Variant vmcallable_address(uint64_t address, Array args);
 
 	// -= Sandbox Properties =-
 

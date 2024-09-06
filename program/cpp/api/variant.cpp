@@ -7,7 +7,7 @@ MAKE_SYSCALL(ECALL_VEVAL, bool, sys_veval, int, const Variant *, const Variant *
 MAKE_SYSCALL(ECALL_VFREE, void, sys_vfree, Variant *);
 
 MAKE_SYSCALL(ECALL_VCREATE, void, sys_vcreate, Variant *, int, const void *);
-MAKE_SYSCALL(ECALL_VFETCH, void, sys_vfetch, const Variant *, std::string *);
+MAKE_SYSCALL(ECALL_VFETCH, void, sys_vfetch, const Variant *, void *);
 MAKE_SYSCALL(ECALL_VCLONE, void, sys_vclone, const Variant *, Variant *);
 MAKE_SYSCALL(ECALL_VSTORE, void, sys_vstore, Variant *, const std::string *);
 
@@ -31,6 +31,15 @@ Variant Variant::new_dictionary() {
 
 void Variant::evaluate(const Operator &op, const Variant &a, const Variant &b, Variant &r_ret, bool &r_valid) {
 	r_valid = sys_veval(op, &a, &b, &r_ret);
+}
+
+std::vector<uint8_t> Variant::as_byte_array() const {
+	if (m_type == PACKED_BYTE_ARRAY) {
+		std::vector<uint8_t> result;
+		sys_vfetch(this, &result);
+		return result;
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedByteArray", this);
 }
 
 void Variant::internal_create_string(Type type, const std::string &value) {

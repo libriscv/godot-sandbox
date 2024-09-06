@@ -158,6 +158,7 @@ struct Variant
 	Array as_array() const;
 	Dictionary as_dictionary() const;
 	String as_string() const;
+	std::vector<uint8_t> as_byte_array() const;
 
 	const Vector2& v2() const;
 	Vector2& v2();
