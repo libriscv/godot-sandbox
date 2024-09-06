@@ -209,6 +209,48 @@ APICALL(api_vfetch) {
 				std::memcpy(sptr, arr.ptr(), arr.size());
 				break;
 			}
+			case Variant::PACKED_FLOAT32_ARRAY: {
+				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto arr = var.operator PackedFloat32Array();
+				auto [sptr, saddr] = gvec->alloc<float>(emu.machine(), arr.size());
+				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(float));
+				break;
+			}
+			case Variant::PACKED_FLOAT64_ARRAY: {
+				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto arr = var.operator PackedFloat64Array();
+				auto [sptr, saddr] = gvec->alloc<double>(emu.machine(), arr.size());
+				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(double));
+				break;
+			}
+			case Variant::PACKED_INT32_ARRAY: {
+				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto arr = var.operator PackedInt32Array();
+				auto [sptr, saddr] = gvec->alloc<int32_t>(emu.machine(), arr.size());
+				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(int32_t));
+				break;
+			}
+			case Variant::PACKED_INT64_ARRAY: {
+				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto arr = var.operator PackedInt64Array();
+				auto [sptr, saddr] = gvec->alloc<int64_t>(emu.machine(), arr.size());
+				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(int64_t));
+				break;
+			}
+			case Variant::PACKED_VECTOR2_ARRAY: {
+				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto arr = var.operator PackedVector2Array();
+				auto [sptr, saddr] = gvec->alloc<Vector2>(emu.machine(), arr.size());
+				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(Vector2));
+				break;
+			}
+			case Variant::PACKED_VECTOR3_ARRAY: {
+				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto arr = var.operator PackedVector3Array();
+				auto [sptr, saddr] = gvec->alloc<Vector3>(emu.machine(), arr.size());
+				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(Vector3));
+				break;
+			}
 			default:
 				ERR_PRINT("vfetch: Cannot fetch value into guest for Variant type");
 				throw std::runtime_error("vfetch: Cannot fetch value into guest for Variant type");
@@ -269,8 +311,7 @@ APICALL(api_vfree) {
 	auto &emu = riscv::emu(machine);
 	machine.penalize(10'000);
 
-	// Free the Variant object depending on its type.
-	vp->free(emu);
+	// XXX: No longer needed, as we are abstracting the Variant object.
 }
 
 APICALL(api_get_obj) {

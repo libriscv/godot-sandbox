@@ -249,11 +249,12 @@ private:
 
 	struct CurrentState {
 		godot::Node *tree_base;
-		std::deque<Variant> variants;
+		std::vector<Variant> variants;
 		std::vector<const Variant *> scoped_variants;
 		std::vector<uintptr_t> scoped_objects;
 
-		void reset() {
+		void reset(unsigned max_refs) {
+			variants.reserve(max_refs);
 			variants.clear();
 			scoped_variants.clear();
 			scoped_objects.clear();

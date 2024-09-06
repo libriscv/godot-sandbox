@@ -45,21 +45,17 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 		case Variant::STRING:
 		case Variant::STRING_NAME:
 		case Variant::NODE_PATH:
-		case Variant::PACKED_BYTE_ARRAY: {
+		case Variant::PACKED_BYTE_ARRAY:
+		case Variant::PACKED_FLOAT32_ARRAY:
+		case Variant::PACKED_FLOAT64_ARRAY:
+		case Variant::PACKED_INT32_ARRAY:
+		case Variant::PACKED_INT64_ARRAY:
+		case Variant::PACKED_VECTOR2_ARRAY:
+		case Variant::PACKED_VECTOR3_ARRAY: {
 			if (auto v = emu.get_scoped_variant(this->v.i)) {
 				return *v.value();
 			} else
 				throw std::runtime_error("GuestVariant::toVariant(): Dictionary/Array/Callable is not known/scoped");
-		}
-		case Variant::PACKED_FLOAT32_ARRAY: {
-			auto *gvec = emu.machine().memory.memarray<GuestStdVector, 1>(v.vf32);
-			auto &vec = (*gvec)[0];
-			return Variant{ vec.to_f32array(emu.machine()) };
-		}
-		case Variant::PACKED_FLOAT64_ARRAY: {
-			auto *gvec = emu.machine().memory.memarray<GuestStdVector, 1>(v.vf64);
-			auto &vec = (*gvec)[0];
-			return Variant{ vec.to_f64array(emu.machine()) };
 		}
 		default:
 			ERR_PRINT(("GuestVariant::toVariant(): Unsupported type: " + std::to_string(type)).c_str());
@@ -75,7 +71,13 @@ const Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
 		case Variant::STRING:
 		case Variant::STRING_NAME:
 		case Variant::NODE_PATH:
-		case Variant::PACKED_BYTE_ARRAY: {
+		case Variant::PACKED_BYTE_ARRAY:
+		case Variant::PACKED_FLOAT32_ARRAY:
+		case Variant::PACKED_FLOAT64_ARRAY:
+		case Variant::PACKED_INT32_ARRAY:
+		case Variant::PACKED_INT64_ARRAY:
+		case Variant::PACKED_VECTOR2_ARRAY:
+		case Variant::PACKED_VECTOR3_ARRAY: {
 			if (auto v = emu.get_scoped_variant(this->v.i))
 				return v.value();
 			else
@@ -165,29 +167,16 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 		case Variant::STRING:
 		case Variant::STRING_NAME:
 		case Variant::NODE_PATH:
-		case Variant::PACKED_BYTE_ARRAY: {
+		case Variant::PACKED_BYTE_ARRAY:
+		case Variant::PACKED_FLOAT32_ARRAY:
+		case Variant::PACKED_FLOAT64_ARRAY:
+		case Variant::PACKED_INT32_ARRAY:
+		case Variant::PACKED_INT64_ARRAY:
+		case Variant::PACKED_VECTOR2_ARRAY:
+		case Variant::PACKED_VECTOR3_ARRAY: {
 			if (!implicit_trust)
 				throw std::runtime_error("GuestVariant::set(): Cannot set complex type without implicit trust");
 			this->v.i = emu.add_scoped_variant(&value);
-			break;
-		}
-
-		case Variant::PACKED_FLOAT32_ARRAY: {
-			auto arr = value.operator godot::PackedFloat32Array();
-			auto ptr = emu.machine().arena().malloc(sizeof(GuestStdVector));
-			auto *gvec = emu.machine().memory.memarray<GuestStdVector>(ptr, 1);
-			auto [fdata, _] = gvec->alloc<float>(emu.machine(), arr.size());
-			std::memcpy(fdata, arr.ptr(), arr.size() * sizeof(float));
-			this->v.vf32 = ptr;
-			break;
-		}
-		case Variant::PACKED_FLOAT64_ARRAY: {
-			auto arr = value.operator godot::PackedFloat64Array();
-			auto ptr = emu.machine().arena().malloc(sizeof(GuestStdVector));
-			auto *gvec = emu.machine().memory.memarray<GuestStdVector>(ptr, 1);
-			auto [fdata, _] = gvec->alloc<double>(emu.machine(), arr.size());
-			std::memcpy(fdata, arr.ptr(), arr.size() * sizeof(double));
-			this->v.vf64 = ptr;
 			break;
 		}
 		default:
@@ -228,37 +217,23 @@ void GuestVariant::create(Sandbox &emu, Variant &&value) {
 		case Variant::STRING:
 		case Variant::STRING_NAME:
 		case Variant::NODE_PATH:
-		case Variant::PACKED_BYTE_ARRAY: {
+		case Variant::PACKED_BYTE_ARRAY:
+		case Variant::PACKED_FLOAT32_ARRAY:
+		case Variant::PACKED_FLOAT64_ARRAY:
+		case Variant::PACKED_INT32_ARRAY:
+		case Variant::PACKED_INT64_ARRAY:
+		case Variant::PACKED_VECTOR2_ARRAY:
+		case Variant::PACKED_VECTOR3_ARRAY: {
 			// Store the variant in the current state
 			auto idx = emu.create_scoped_variant(std::move(value));
 			this->v.i = idx;
 			break;
 		}
-
-		case Variant::PACKED_FLOAT32_ARRAY:
-		case Variant::PACKED_FLOAT64_ARRAY:
-			this->set(emu, value, true); // Trust the value
-			break;
-
 		default:
 			ERR_PRINT(("CreateVariant(): Unsupported type: " + std::to_string(value.get_type())).c_str());
 	}
 }
 
 void GuestVariant::free(Sandbox &emu) {
-	switch (type) {
-		case Variant::PACKED_FLOAT32_ARRAY:
-		case Variant::PACKED_FLOAT64_ARRAY: {
-			if (v.vf32 == 0)
-				break;
-			// We can free both f32 and f64 arrays with the same free function
-			auto *gvec = emu.machine().memory.memarray<GuestStdVector, 1>(v.vf32);
-			(*gvec)[0].free(emu.machine());
-			// Free the GuestStdVector too
-			emu.machine().arena().free(v.vf32);
-			break;
-		}
-		default:
-			break;
-	}
+	throw std::runtime_error("GuestVariant::free(): Not implemented");
 }
