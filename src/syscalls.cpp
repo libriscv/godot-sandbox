@@ -8,6 +8,7 @@
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/time.hpp>
+#include <godot_cpp/classes/timer.hpp>
 #include <godot_cpp/classes/window.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/variant.hpp>
@@ -199,6 +200,13 @@ APICALL(api_vfetch) {
 				auto u8str = var.operator String().utf8();
 				auto *gstr = emu.machine().memory.memarray<GuestStdString>(gdata, 1);
 				gstr->set_string(emu.machine(), gdata, u8str.ptr(), u8str.length());
+				break;
+			}
+			case Variant::PACKED_BYTE_ARRAY: {
+				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto arr = var.operator PackedByteArray();
+				auto [sptr, saddr] = gvec->alloc<uint8_t>(emu.machine(), arr.size());
+				std::memcpy(sptr, arr.ptr(), arr.size());
 				break;
 			}
 			default:
@@ -922,6 +930,35 @@ APICALL(api_string_append) {
 	var = Variant(std::move(str));
 }
 
+APICALL(api_timer_periodic) {
+	auto [interval, oneshot, callback, capture, vret] = machine.sysargs<double, bool, gaddr_t, std::array<uint8_t, 32> *, GuestVariant *>();
+	auto &emu = riscv::emu(machine);
+	machine.penalize(100'000); // Costly Timer node creation.
+
+	Timer *timer = memnew(Timer);
+	timer->set_wait_time(interval);
+	timer->set_one_shot(oneshot);
+	Node *topnode = emu.get_tree_base();
+	topnode->add_child(timer);
+	timer->set_owner(topnode);
+	timer->start();
+	// Copy the callback capture storage to the timer timeout callback.
+	PackedByteArray capture_data;
+	capture_data.resize(capture->size());
+	memcpy(capture_data.ptrw(), capture->data(), capture->size());
+	// Connect the timer to the guest callback function.
+	Array args;
+	args.push_back(Variant(timer));
+	args.push_back(Variant(std::move(capture_data)));
+	timer->connect("timeout", emu.vmcallable_address(callback, std::move(args)));
+	// Return the timer object to the guest.
+	vret->set(emu, timer, true); // Implicit trust, as we are returning our own object.
+}
+
+APICALL(api_timer_stop) {
+	throw std::runtime_error("timer_stop: Not implemented");
+}
+
 } //namespace riscv
 
 void Sandbox::initialize_syscalls() {
@@ -979,5 +1016,8 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_STRING_AT, api_string_at },
 			{ ECALL_STRING_SIZE, api_string_size },
 			{ ECALL_STRING_APPEND, api_string_append },
+
+			{ ECALL_TIMER_PERIODIC, api_timer_periodic },
+			{ ECALL_TIMER_STOP, api_timer_stop },
 	});
 }
