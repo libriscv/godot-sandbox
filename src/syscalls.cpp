@@ -93,7 +93,7 @@ APICALL(api_vcall) {
 		auto *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
 		Variant ret;
 		vcall->callp(StringName(method.data()), argptrs.data(), args_size, ret, error);
-		vret->set(emu, ret);
+		vret->create(emu, std::move(ret));
 	} else if (vp->type == Variant::OBJECT) {
 		auto *obj = get_object_from_address(emu, vp->v.i);
 
@@ -103,7 +103,7 @@ APICALL(api_vcall) {
 			vargs[i] = args[i].toVariant(emu);
 		}
 		Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
-		vret->set(emu, ret, true); // Implicit trust, as we are returning engine-provided result.
+		vret->create(emu, std::move(ret));
 	} else {
 		ERR_PRINT("Invalid Variant type for Variant::call()");
 		throw std::runtime_error("Invalid Variant type for Variant::call(): " + std::to_string(vp->type));
@@ -142,16 +142,25 @@ APICALL(api_veval) {
 }
 
 APICALL(api_vcreate) {
-	auto [vp, type, gdata] = machine.sysargs<GuestVariant *, Variant::Type, gaddr_t>();
+	auto [vp, type, method, gdata] = machine.sysargs<GuestVariant *, Variant::Type, int, gaddr_t>();
 	auto &emu = riscv::emu(machine);
 	machine.penalize(10'000);
 
 	switch (type) {
 		case Variant::STRING:
 		case Variant::STRING_NAME:
-		case Variant::NODE_PATH: {
-			auto *str = emu.machine().memory.memarray<GuestStdString>(gdata, 1);
-			auto godot_str = str->to_godot_string(emu.machine());
+		case Variant::NODE_PATH: { // From std::string
+			String godot_str;
+			if (method == 0) {
+				auto *str = emu.machine().memory.memarray<GuestStdString>(gdata, 1);
+				godot_str = str->to_godot_string(emu.machine());
+			} else if (method == 2) { // From std::u32string
+				auto *str = emu.machine().memory.memarray<GuestStdU32String>(gdata, 1);
+				godot_str = str->to_godot_string(emu.machine());
+			} else {
+				ERR_PRINT("vcreate: Unsupported method for Variant::STRING");
+				throw std::runtime_error("vcreate: Unsupported method for Variant::STRING: " + std::to_string(method));
+			}
 			// Create a new Variant with the string, modify vp.
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(godot_str)));
 			vp->type = type;
@@ -185,7 +194,7 @@ APICALL(api_vcreate) {
 }
 
 APICALL(api_vfetch) {
-	auto [vp, gdata] = machine.sysargs<GuestVariant *, gaddr_t>();
+	auto [vp, gdata, method] = machine.sysargs<GuestVariant *, gaddr_t, int>();
 	auto &emu = riscv::emu(machine);
 	machine.penalize(10'000);
 
@@ -197,9 +206,18 @@ APICALL(api_vfetch) {
 			case Variant::STRING:
 			case Variant::STRING_NAME:
 			case Variant::NODE_PATH: {
-				auto u8str = var.operator String().utf8();
-				auto *gstr = emu.machine().memory.memarray<GuestStdString>(gdata, 1);
-				gstr->set_string(emu.machine(), gdata, u8str.ptr(), u8str.length());
+				if (method == 0) { // std::string
+					auto u8str = var.operator String().utf8();
+					auto *gstr = emu.machine().memory.memarray<GuestStdString>(gdata, 1);
+					gstr->set_string(emu.machine(), gdata, u8str.ptr(), u8str.length());
+				} else if (method == 2) { // std::u32string
+					auto u32str = var.operator String();
+					auto *gstr = emu.machine().memory.memarray<GuestStdU32String>(gdata, 1);
+					gstr->set_string(emu.machine(), gdata, u32str.ptr(), u32str.length());
+				} else {
+					ERR_PRINT("vfetch: Unsupported method for Variant::STRING");
+					throw std::runtime_error("vfetch: Unsupported method for Variant::STRING");
+				}
 				break;
 			}
 			case Variant::PACKED_BYTE_ARRAY: {
@@ -372,7 +390,7 @@ APICALL(api_obj) {
 		case Object_Op::GET: { // Get a property of the object.
 			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
 			auto name = var[0].toVariant(emu).operator String();
-			var[1].set(emu, obj->get(name), true); // Implicit trust, as we are returning engine-provided result.
+			var[1].create(emu, obj->get(name));
 		} break;
 		case Object_Op::SET: { // Set a property of the object.
 			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
@@ -443,7 +461,7 @@ APICALL(api_obj_callp) {
 			vargs[i] = std::move(g_args[i].toVariant(emu));
 		}
 		Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
-		vret->set(emu, ret, true); // Implicit trust, as we are returning engine-provided result.
+		vret->create(emu, std::move(ret));
 	} else {
 		// Call deferred unfortunately takes a parameter pack, so we have to manually
 		// check the number of arguments, and call the correct function.
@@ -914,10 +932,17 @@ APICALL(api_string_ops) {
 			machine.set_result(str.length());
 			break;
 		case String_Op::TO_STD_STRING: {
-			// Get the string as a std::string.
-			auto utf8 = str.utf8();
-			auto *gstr = emu.machine().memory.memarray<GuestStdString>(vaddr, 1);
-			gstr->set_string(emu.machine(), vaddr, utf8.ptr(), utf8.length());
+			if (index == 0) { // Get the string as a std::string.
+				auto utf8 = str.utf8();
+				auto *gstr = emu.machine().memory.memarray<GuestStdString>(vaddr, 1);
+				gstr->set_string(emu.machine(), vaddr, utf8.ptr(), utf8.length());
+			} else if (index == 2) { // Get the string as a std::u32string.
+				auto *gstr = emu.machine().memory.memarray<GuestStdU32String>(vaddr, 1);
+				gstr->set_string(emu.machine(), vaddr, str.ptr(), str.length());
+			} else {
+				ERR_PRINT("Invalid String conversion");
+				throw std::runtime_error("Invalid String conversion");
+			}
 			break;
 		}
 		default:
