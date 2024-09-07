@@ -93,7 +93,7 @@ APICALL(api_vcall) {
 		auto *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
 		Variant ret;
 		vcall->callp(StringName(method.data()), argptrs.data(), args_size, ret, error);
-		vret->set(emu, ret);
+		vret->create(emu, std::move(ret));
 	} else if (vp->type == Variant::OBJECT) {
 		auto *obj = get_object_from_address(emu, vp->v.i);
 
@@ -103,7 +103,7 @@ APICALL(api_vcall) {
 			vargs[i] = args[i].toVariant(emu);
 		}
 		Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
-		vret->set(emu, ret, true); // Implicit trust, as we are returning engine-provided result.
+		vret->create(emu, std::move(ret));
 	} else {
 		ERR_PRINT("Invalid Variant type for Variant::call()");
 		throw std::runtime_error("Invalid Variant type for Variant::call(): " + std::to_string(vp->type));
@@ -461,7 +461,7 @@ APICALL(api_obj_callp) {
 			vargs[i] = std::move(g_args[i].toVariant(emu));
 		}
 		Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
-		vret->set(emu, ret, true); // Implicit trust, as we are returning engine-provided result.
+		vret->create(emu, std::move(ret));
 	} else {
 		// Call deferred unfortunately takes a parameter pack, so we have to manually
 		// check the number of arguments, and call the correct function.
