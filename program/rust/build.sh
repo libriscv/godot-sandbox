@@ -14,7 +14,7 @@ usage() {
 
 locally=false
 verbose=false
-current_version=3
+current_version=4
 
 while [[ "$#" -gt 0 ]]; do
 	case $1 in

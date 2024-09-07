@@ -305,7 +305,8 @@ impl Variant
 			asm!("ecall",
 				inout("a0") &mut v => _, // Ensure the host can write to the Variant
 				in("a1") t as i64,
-				in("a2") &s,
+				in("a2") 0, // std::string
+				in("a3") &s,
 				in("a7") SYSCALL_VCREATE,
 				options(nostack));
 		}
