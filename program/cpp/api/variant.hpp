@@ -15,6 +15,13 @@ struct is_string
 		std::is_same<const char *, typename std::decay<T>::type>
 > {};
 
+template<typename T>
+struct is_u32string
+	: public std::disjunction<
+		std::is_same<char32_t *, typename std::decay<T>::type>,
+		std::is_same<const char32_t *, typename std::decay<T>::type>
+> {};
+
 template<class T>
 struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
 
@@ -149,6 +156,7 @@ struct Variant
 	operator double() const;
 	operator float() const;
 	operator std::string() const; // String for STRING and PACKED_BYTE_ARRAY
+	operator std::u32string() const; // u32string for STRING, STRING_NAME
 	operator String() const;
 
 	Object as_object() const;
@@ -159,6 +167,7 @@ struct Variant
 	Dictionary as_dictionary() const;
 	String as_string() const;
 	std::string as_std_string() const;
+	std::u32string as_std_u32string() const;
 	std::vector<uint8_t> as_byte_array() const;
 	std::vector<float> as_float32_array() const;
 	std::vector<double> as_float64_array() const;
@@ -206,6 +215,8 @@ struct Variant
 
 	static void evaluate(const Operator &op, const Variant &a, const Variant &b, Variant &r_ret, bool &r_valid);
 
+	Variant duplicate() const;
+
 	Variant &operator=(const Variant &other);
 	Variant &operator=(Variant &&other);
 	bool operator==(const Variant &other) const;
@@ -232,8 +243,10 @@ private:
 	} v;
 
 	void internal_create_string(Type type, const std::string &value);
+	void internal_create_u32string(Type type, const std::u32string &value);
 	void internal_clone(const Variant &other);
 	std::string internal_fetch_string() const;
+	std::u32string internal_fetch_u32string() const;
 };
 static_assert(sizeof(Variant) == 24, "Variant size mismatch");
 
@@ -251,9 +264,6 @@ inline Variant::Variant(T value)
 	else if constexpr (std::is_floating_point_v<T>) {
 		m_type = FLOAT;
 		v.f = value;
-	}
-	else if constexpr (is_string<T>::value || is_stdstring<T>::value) {
-		internal_create_string(STRING, value);
 	}
 	else if constexpr (std::is_same_v<T, Vector2>) {
 		m_type = VECTOR2;
@@ -286,6 +296,12 @@ inline Variant::Variant(T value)
 	else if constexpr (std::is_same_v<T, Rect2i>) {
 		m_type = RECT2I;
 		v.r2i = value;
+	}
+	else if constexpr (is_u32string<T>::value || std::is_same_v<T, std::u32string>) {
+		internal_create_u32string(STRING, value);
+	}
+	else if constexpr (is_string<T>::value || is_stdstring<T>::value || std::is_same_v<T, std::string>) {
+		internal_create_string(STRING, value);
 	}
 	else
 		static_assert(!std::is_same_v<T, T>, "Unsupported type");
@@ -385,8 +401,19 @@ inline Variant::operator std::string() const
 	api_throw("std::bad_cast", "Failed to cast Variant to const std::string&", this);
 }
 
+inline Variant::operator std::u32string() const
+{
+	if (m_type == STRING || m_type == STRING_NAME)
+		return internal_fetch_u32string();
+	api_throw("std::bad_cast", "Failed to cast Variant to const std::u32string&", this);
+}
+
 inline std::string Variant::as_std_string() const {
 	return static_cast<std::string>(*this);
+}
+
+inline std::u32string Variant::as_std_u32string() const {
+	return static_cast<std::u32string>(*this);
 }
 
 inline const Vector2& Variant::v2() const
@@ -535,27 +562,18 @@ inline Variant &Variant::operator=(Variant &&other) {
 }
 
 inline bool Variant::operator==(const Variant &other) const {
-	if (get_type() != other.get_type()) {
-		return false;
-	}
 	bool valid = false;
 	Variant result;
 	evaluate(OP_EQUAL, *this, other, result, valid);
 	return result.operator bool();
 }
 inline bool Variant::operator!=(const Variant &other) const {
-	if (get_type() != other.get_type()) {
-		return true;
-	}
 	bool valid = false;
 	Variant result;
 	evaluate(OP_NOT_EQUAL, *this, other, result, valid);
 	return result.operator bool();
 }
 inline bool Variant::operator<(const Variant &other) const {
-	if (get_type() != other.get_type()) {
-		return get_type() < other.get_type();
-	}
 	bool valid = false;
 	Variant result;
 	evaluate(OP_LESS, *this, other, result, valid);

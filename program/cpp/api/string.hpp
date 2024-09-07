@@ -33,6 +33,7 @@ struct String {
 	String at(int idx) const { return (*this)[idx]; }
 
 	operator std::string() const;
+	std::u32string utf32() const;
 
 	// String size
 	int size() const;

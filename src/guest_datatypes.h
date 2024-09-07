@@ -77,6 +77,49 @@ struct GuestStdString {
 };
 static_assert(sizeof(GuestStdString) == 32, "GuestStdString size mismatch");
 
+struct GuestStdU32String {
+	gaddr_t ptr;
+	gaddr_t size;
+	gaddr_t capacity;
+
+	char32_t *to_array(const machine_t &machine) const {
+		return machine.memory.memarray<char32_t>(ptr, size);
+	}
+	std::u32string to_u32string(const machine_t &machine, std::size_t max_len = 4UL << 20) const {
+		if (size > max_len)
+			throw std::runtime_error("Guest std::u32string too large (size > 4MB)");
+		// Copy the string from guest memory
+		const std::u32string_view view{ to_array(machine), size_t(size) };
+		return std::u32string(view.begin(), view.end());
+	}
+
+	String to_godot_string(const machine_t &machine, std::size_t max_len = 1UL << 20) const {
+		if (size > max_len)
+			throw std::runtime_error("Guest std::u32string too large (size > 4MB)");
+		// Get a view of the string from guest memory, including the null terminator
+		const std::u32string_view view{ to_array(machine), size_t(size + 1) };
+		if (view.back() != U'\0')
+			throw std::runtime_error("Guest std::u32string is not null-terminated");
+		// Convert the string to a godot String
+		return String(view.data());
+	}
+
+	void set_string(machine_t &machine, gaddr_t self, const char32_t *str, std::size_t len) {
+		// Allocate memory for the string
+		this->ptr = machine.arena().malloc(len * sizeof(char32_t));
+		this->size = len;
+		this->capacity = len;
+		// Copy the string to guest memory
+		char32_t *guest_ptr = machine.memory.memarray<char32_t>(this->ptr, len);
+		std::memcpy(guest_ptr, str, len * sizeof(char32_t));
+	}
+
+	void free(machine_t &machine) {
+		if (ptr != 0x0)
+			machine.arena().free(ptr);
+	}
+};
+
 struct GuestStdVector {
 	gaddr_t ptr_begin;
 	gaddr_t ptr_end;

@@ -2,7 +2,7 @@
 
 #include "syscalls.h"
 
-EXTERN_SYSCALL(ECALL_VCREATE, void, sys_vcreate, Variant *, int, const void *);
+EXTERN_SYSCALL(ECALL_VCREATE, void, sys_vcreate, Variant *, int, int, const void *);
 MAKE_SYSCALL(ECALL_DICTIONARY_OPS, int, sys_dict_ops, Dictionary_Op, unsigned, const Variant *, Variant *);
 
 void Dictionary::clear() {
@@ -37,7 +37,7 @@ void Dictionary::merge(const Dictionary &other) {
 
 Dictionary::Dictionary() {
 	Variant v;
-	sys_vcreate(&v, Variant::DICTIONARY, nullptr);
+	sys_vcreate(&v, Variant::DICTIONARY, 0, nullptr);
 	this->m_idx = v.get_internal_index();
 }
 

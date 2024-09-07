@@ -65,3 +65,9 @@ String::operator std::string() const {
 	sys_string_ops(String_Op::TO_STD_STRING, m_idx, 0, (Variant *)&str);
 	return str;
 }
+
+std::u32string String::utf32() const {
+	std::u32string str;
+	sys_string_ops(String_Op::TO_STD_STRING, m_idx, 2, (Variant *)&str);
+	return str;
+}
