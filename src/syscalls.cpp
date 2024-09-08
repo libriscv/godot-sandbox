@@ -439,7 +439,7 @@ APICALL(api_obj) {
 }
 
 APICALL(api_obj_callp) {
-	auto [addr, method, deferred, vret, args_addr, args_size] = machine.sysargs<uint64_t, std::string_view, bool, GuestVariant *, gaddr_t, unsigned>();
+	auto [addr, method, deferred, vret_ptr, args_addr, args_size] = machine.sysargs<uint64_t, std::string_view, bool, gaddr_t, gaddr_t, unsigned>();
 	auto &emu = riscv::emu(machine);
 	machine.penalize(250'000); // Costly Object call operation.
 
@@ -461,7 +461,10 @@ APICALL(api_obj_callp) {
 			vargs[i] = std::move(g_args[i].toVariant(emu));
 		}
 		Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
-		vret->create(emu, std::move(ret));
+		if (vret_ptr != 0) {
+			auto *vret = emu.machine().memory.memarray<GuestVariant>(vret_ptr, 1);
+			vret->create(emu, std::move(ret));
+		}
 	} else {
 		// Call deferred unfortunately takes a parameter pack, so we have to manually
 		// check the number of arguments, and call the correct function.
