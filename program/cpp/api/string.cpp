@@ -60,7 +60,7 @@ String &String::operator=(String &&other) {
 	return *this;
 }
 
-String::operator std::string() const {
+std::string String::utf8() const {
 	std::string str;
 	sys_string_ops(String_Op::TO_STD_STRING, m_idx, 0, (Variant *)&str);
 	return str;
