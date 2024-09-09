@@ -68,7 +68,11 @@ public:
 		}
 	}
 	static int DockerContainerVersion() {
-		return Docker::ContainerVersion(docker_container_name, { "/usr/project/build.sh", "--version" });
+		DockerContainerStart();
+		if (docker_container_version == 0)
+			docker_container_version =
+				Docker::ContainerVersion(docker_container_name, { "/usr/project/build.sh", "--version" });
+		return docker_container_version;
 	}
 	static bool DockerContainerExecute(const PackedStringArray &p_arguments, Array &output) {
 		return Docker::ContainerExecute(docker_container_name, p_arguments, output);
@@ -79,6 +83,7 @@ public:
 
 private:
 	static inline bool docker_container_started = false;
+	static inline int docker_container_version = 0;
 	static inline const char *docker_container_name = "godot-rust-compiler";
 	static inline const char *docker_image_name = "ghcr.io/libriscv/rust_compiler";
 };
