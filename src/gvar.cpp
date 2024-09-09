@@ -32,7 +32,7 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 			return Variant{ godot::Vector4i(v.v4i[0], v.v4i[1], v.v4i[2], v.v4i[3]) };
 
 		case Variant::OBJECT: {
-			auto *obj = (godot::Object *)uintptr_t(v.i);
+			godot::Object *obj = (godot::Object *)uintptr_t(v.i);
 			if (emu.is_scoped_object(obj))
 				return Variant{ obj };
 			else
@@ -52,7 +52,7 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 		case Variant::PACKED_INT64_ARRAY:
 		case Variant::PACKED_VECTOR2_ARRAY:
 		case Variant::PACKED_VECTOR3_ARRAY: {
-			if (auto v = emu.get_scoped_variant(this->v.i)) {
+			if (std::optional<const Variant *> v = emu.get_scoped_variant(this->v.i)) {
 				return *v.value();
 			} else
 				throw std::runtime_error("GuestVariant::toVariant(): Dictionary/Array/Callable is not known/scoped");
@@ -78,7 +78,7 @@ const Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
 		case Variant::PACKED_INT64_ARRAY:
 		case Variant::PACKED_VECTOR2_ARRAY:
 		case Variant::PACKED_VECTOR3_ARRAY: {
-			if (auto v = emu.get_scoped_variant(this->v.i))
+			if (std::optional<const Variant *> v = emu.get_scoped_variant(this->v.i))
 				return v.value();
 			else
 				throw std::runtime_error("GuestVariant::toVariantPtr(): Callable is not known/scoped");
@@ -113,7 +113,7 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 			this->v.v2i[1] = value.operator godot::Vector2i().y;
 			break;
 		case Variant::RECT2: {
-			auto rect = value.operator godot::Rect2();
+			Rect2 rect = value.operator godot::Rect2();
 			this->v.v4f[0] = rect.position[0];
 			this->v.v4f[1] = rect.position[1];
 			this->v.v4f[2] = rect.size[0];
@@ -121,7 +121,7 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 			break;
 		}
 		case Variant::RECT2I: {
-			auto rect = value.operator godot::Rect2i();
+			Rect2i rect = value.operator godot::Rect2i();
 			this->v.v4i[0] = rect.position[0];
 			this->v.v4i[1] = rect.position[1];
 			this->v.v4i[2] = rect.size[0];
@@ -225,7 +225,7 @@ void GuestVariant::create(Sandbox &emu, Variant &&value) {
 		case Variant::PACKED_VECTOR2_ARRAY:
 		case Variant::PACKED_VECTOR3_ARRAY: {
 			// Store the variant in the current state
-			auto idx = emu.create_scoped_variant(std::move(value));
+			unsigned int idx = emu.create_scoped_variant(std::move(value));
 			this->v.i = idx;
 			break;
 		}

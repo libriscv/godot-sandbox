@@ -25,7 +25,7 @@ inline Sandbox &emu(machine_t &m) {
 }
 
 inline godot::Object *get_object_from_address(Sandbox &emu, uint64_t addr) {
-	auto *obj = (godot::Object *)uintptr_t(addr);
+	godot::Object *obj = (godot::Object *)uintptr_t(addr);
 	if (obj == nullptr) {
 		ERR_PRINT("Object is Null");
 		throw std::runtime_error("Object is Null");
@@ -36,7 +36,7 @@ inline godot::Object *get_object_from_address(Sandbox &emu, uint64_t addr) {
 	return obj;
 }
 inline godot::Node *get_node_from_address(Sandbox &emu, uint64_t addr) {
-	auto *node = (godot::Node *)uintptr_t(addr);
+	godot::Node *node = (godot::Node *)uintptr_t(addr);
 	if (node == nullptr) {
 		ERR_PRINT("Node object is Null");
 		throw std::runtime_error("Node object is Null");
@@ -51,7 +51,7 @@ inline godot::Node *get_node_from_address(Sandbox &emu, uint64_t addr) {
 
 APICALL(api_print) {
 	auto [array, len] = machine.sysargs<gaddr_t, gaddr_t>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 
 	if (len >= 64) {
 		ERR_PRINT("print(): Too many Variants to print");
@@ -61,7 +61,7 @@ APICALL(api_print) {
 
 	// We really want print_internal to be a public function.
 	for (gaddr_t i = 0; i < len; i++) {
-		auto &var = array_ptr[i];
+		const GuestVariant &var = array_ptr[i];
 		//printf("Variant[%lu]: type=%d\n", i, var.type);
 		UtilityFunctions::print(var.toVariant(emu));
 	}
@@ -71,7 +71,7 @@ APICALL(api_vcall) {
 	auto [vp, method, mlen, args_ptr, args_size, vret] = machine.sysargs<GuestVariant *, std::string, unsigned, gaddr_t, gaddr_t, GuestVariant *>();
 	(void)mlen;
 
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 
 	if (args_size > 8) {
 		ERR_PRINT("Variant::call(): Too many arguments");
@@ -90,12 +90,12 @@ APICALL(api_vcall) {
 			argptrs[i] = &vargs[i];
 		}
 
-		auto *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
+		Variant *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
 		Variant ret;
 		vcall->callp(StringName(method.data()), argptrs.data(), args_size, ret, error);
 		vret->create(emu, std::move(ret));
 	} else if (vp->type == Variant::OBJECT) {
-		auto *obj = get_object_from_address(emu, vp->v.i);
+		godot::Object *obj = get_object_from_address(emu, vp->v.i);
 
 		Array vargs;
 		vargs.resize(args_size);
@@ -122,9 +122,9 @@ APICALL(api_veval) {
 			retp->set(emu, Variant(ap->v.i == bp->v.i));
 			return;
 		}
-		auto *a = get_object_from_address(emu, ap->v.i);
-		auto *b = get_object_from_address(emu, bp->v.i);
-		auto valid = false;
+		godot::Object *a = get_object_from_address(emu, ap->v.i);
+		godot::Object *b = get_object_from_address(emu, bp->v.i);
+		bool valid = false;
 		Variant ret;
 		Variant::evaluate(static_cast<Variant::Operator>(op), a, b, ret, valid);
 
@@ -133,7 +133,7 @@ APICALL(api_veval) {
 		return;
 	}
 
-	auto valid = false;
+	bool valid = false;
 	Variant ret;
 	Variant::evaluate(static_cast<Variant::Operator>(op), ap->toVariant(emu), bp->toVariant(emu), ret, valid);
 
@@ -143,7 +143,7 @@ APICALL(api_veval) {
 
 APICALL(api_vcreate) {
 	auto [vp, type, method, gdata] = machine.sysargs<GuestVariant *, Variant::Type, int, gaddr_t>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(10'000);
 
 	switch (type) {
@@ -152,10 +152,10 @@ APICALL(api_vcreate) {
 		case Variant::NODE_PATH: { // From std::string
 			String godot_str;
 			if (method == 0) {
-				auto *str = emu.machine().memory.memarray<GuestStdString>(gdata, 1);
+				GuestStdString *str = emu.machine().memory.memarray<GuestStdString>(gdata, 1);
 				godot_str = str->to_godot_string(emu.machine());
 			} else if (method == 2) { // From std::u32string
-				auto *str = emu.machine().memory.memarray<GuestStdU32String>(gdata, 1);
+				GuestStdU32String *str = emu.machine().memory.memarray<GuestStdU32String>(gdata, 1);
 				godot_str = str->to_godot_string(emu.machine());
 			} else {
 				ERR_PRINT("vcreate: Unsupported method for Variant::STRING");
@@ -171,9 +171,9 @@ APICALL(api_vcreate) {
 			Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<Variant> from guest memory.
-				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
-				auto vec = gvec->to_vector<GuestVariant>(emu.machine());
-				for (const auto &v : vec) {
+				GuestStdVector *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				std::vector<GuestVariant> vec = gvec->to_vector<GuestVariant>(emu.machine());
+				for (const GuestVariant &v : vec) {
 					a.push_back(std::move(v.toVariant(emu)));
 				}
 			}
@@ -195,13 +195,13 @@ APICALL(api_vcreate) {
 
 APICALL(api_vfetch) {
 	auto [vp, gdata, method] = machine.sysargs<GuestVariant *, gaddr_t, int>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(10'000);
 
 	// Find scoped Variant and copy data into gdata.
-	auto opt = emu.get_scoped_variant(vp->v.i);
+	std::optional<const Variant *> opt = emu.get_scoped_variant(vp->v.i);
 	if (opt.has_value()) {
-		auto &var = *opt.value();
+		const godot::Variant &var = *opt.value();
 		switch (var.get_type()) {
 			case Variant::STRING:
 			case Variant::STRING_NAME:
@@ -281,11 +281,11 @@ APICALL(api_vfetch) {
 
 APICALL(api_vclone) {
 	auto [vp, vret] = machine.sysargs<GuestVariant *, GuestVariant *>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(10'000);
 
 	// Find scoped Variant and clone it.
-	auto var = emu.get_scoped_variant(vp->v.i);
+	std::optional<const Variant *> var = emu.get_scoped_variant(vp->v.i);
 	if (var.has_value()) {
 		const auto index = emu.create_scoped_variant(var.value()->duplicate());
 		vret->type = var.value()->get_type();
@@ -302,15 +302,15 @@ APICALL(api_vstore) {
 	machine.penalize(10'000);
 
 	// Find scoped Variant and store its data into gdata (which could be a, eg., a std::string).
-	auto opt = emu.get_scoped_variant(vp->v.i);
+	std::optional<const Variant *> opt = emu.get_scoped_variant(vp->v.i);
 	if (opt.has_value()) {
-		auto &var = *opt.value();
+		const godot::Variant &var = *opt.value();
 		switch (var.get_type()) {
 			case Variant::STRING:
 			case Variant::STRING_NAME:
 			case Variant::NODE_PATH: {
-				auto *gstr = emu.machine().memory.memarray<GuestStdString>(gdata, 1);
-				auto u8str = var.operator String().utf8();
+				GuestStdString *gstr = emu.machine().memory.memarray<GuestStdString>(gdata, 1);
+				CharString u8str = var.operator String().utf8();
 				gstr->set_string(emu.machine(), gdata, u8str.ptr(), u8str.length());
 				break;
 			}
@@ -354,7 +354,7 @@ APICALL(api_get_obj) {
 			machine.set_result(0);
 			return;
 		}
-		auto *tree = owner_node->get_tree();
+		SceneTree *tree = owner_node->get_tree();
 		emu.add_scoped_object(tree);
 		machine.set_result(uint64_t(uintptr_t(tree)));
 	} else {
@@ -365,10 +365,10 @@ APICALL(api_get_obj) {
 
 APICALL(api_obj) {
 	auto [op, addr, gvar] = machine.sysargs<int, uint64_t, gaddr_t>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(250'000); // Costly Object operations.
 
-	auto *obj = reinterpret_cast<godot::Object *>(uintptr_t(addr));
+	godot::Object *obj = reinterpret_cast<godot::Object *>(uintptr_t(addr));
 	if (!emu.is_scoped_object(obj)) {
 		ERR_PRINT("Object is not scoped");
 		throw std::runtime_error("Object is not scoped");
@@ -388,19 +388,19 @@ APICALL(api_obj) {
 			}
 		} break;
 		case Object_Op::GET: { // Get a property of the object.
-			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
-			auto name = var[0].toVariant(emu).operator String();
+			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
+			String name = var[0].toVariant(emu).operator String();
 			var[1].create(emu, obj->get(name));
 		} break;
 		case Object_Op::SET: { // Set a property of the object.
-			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
-			auto name = var[0].toVariant(emu).operator String();
+			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
+			String name = var[0].toVariant(emu).operator String();
 			obj->set(name, var[1].toVariant(emu));
 		} break;
 		case Object_Op::GET_PROPERTY_LIST: {
-			auto *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
+			GuestStdVector *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
 			// XXX: vec->free(emu.machine());
-			auto properties = obj->get_property_list();
+			TypedArray<Dictionary> properties = obj->get_property_list();
 			auto [sptr, saddr] = vec->alloc<GuestStdString>(emu.machine(), properties.size());
 			for (size_t i = 0; i < properties.size(); i++) {
 				Dictionary dict = properties[i].operator godot::Dictionary();
@@ -410,21 +410,21 @@ APICALL(api_obj) {
 			}
 		} break;
 		case Object_Op::CONNECT: {
-			auto *vars = emu.machine().memory.memarray<GuestVariant>(gvar, 3);
-			auto *target = get_object_from_address(emu, vars[0].v.i);
-			auto callable = Callable(target, vars[2].toVariant(emu).operator String());
+			GuestVariant *vars = emu.machine().memory.memarray<GuestVariant>(gvar, 3);
+			godot::Object *target = get_object_from_address(emu, vars[0].v.i);
+			Callable callable = Callable(target, vars[2].toVariant(emu).operator String());
 			obj->connect(vars[1].toVariant(emu).operator String(), callable);
 		} break;
 		case Object_Op::DISCONNECT: {
-			auto *vars = emu.machine().memory.memarray<GuestVariant>(gvar, 3);
-			auto *target = get_object_from_address(emu, vars[0].v.i);
+			GuestVariant *vars = emu.machine().memory.memarray<GuestVariant>(gvar, 3);
+			godot::Object *target = get_object_from_address(emu, vars[0].v.i);
 			auto callable = Callable(target, vars[2].toVariant(emu).operator String());
 			obj->disconnect(vars[1].toVariant(emu).operator String(), callable);
 		} break;
 		case Object_Op::GET_SIGNAL_LIST: {
-			auto *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
+			GuestStdVector *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
 			// XXX: vec->free(emu.machine());
-			auto signals = obj->get_signal_list();
+			TypedArray<Dictionary> signals = obj->get_signal_list();
 			auto [sptr, saddr] = vec->alloc<GuestStdString>(emu.machine(), signals.size());
 			for (size_t i = 0; i < signals.size(); i++) {
 				Dictionary dict = signals[i].operator godot::Dictionary();
@@ -442,7 +442,6 @@ APICALL(api_obj_callp) {
 	auto [addr, method, deferred, vret_ptr, args_addr, args_size] = machine.sysargs<uint64_t, std::string_view, bool, gaddr_t, gaddr_t, unsigned>();
 	auto &emu = riscv::emu(machine);
 	machine.penalize(250'000); // Costly Object call operation.
-
 	auto *obj = reinterpret_cast<godot::Object *>(uintptr_t(addr));
 	if (!emu.is_scoped_object(obj)) {
 		ERR_PRINT("Object is not scoped");
@@ -492,7 +491,7 @@ APICALL(api_obj_callp) {
 
 APICALL(api_get_node) {
 	auto [addr, name] = machine.sysargs<uint64_t, std::string_view>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(150'000);
 	Node *node = nullptr;
 	const std::string c_name(name);
@@ -528,21 +527,21 @@ APICALL(api_node) {
 	auto [op, addr, gvar] = machine.sysargs<int, uint64_t, gaddr_t>();
 	machine.penalize(250'000); // Costly Node operations.
 
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 	// Get the Node object by its address.
 	godot::Node *node = get_node_from_address(emu, addr);
 
 	switch (Node_Op(op)) {
 		case Node_Op::GET_NAME: {
-			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
 			var->create(emu, String(node->get_name()));
 		} break;
 		case Node_Op::GET_PATH: {
-			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
 			var->create(emu, String(node->get_path()));
 		} break;
 		case Node_Op::GET_PARENT: {
-			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
 			if (node->get_parent() == nullptr) {
 				var->set(emu, Variant());
 			} else {
@@ -565,12 +564,12 @@ APICALL(api_node) {
 			var->set(emu, new_node, true); // Implicit trust, as we are returning our own object.
 		} break;
 		case Node_Op::GET_CHILD_COUNT: {
-			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
 			var->set(emu, node->get_child_count());
 		} break;
 		case Node_Op::GET_CHILD: {
-			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
-			auto *child_node = node->get_child(var[0].v.i);
+			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			Node *child_node = node->get_child(var[0].v.i);
 			if (child_node == nullptr) {
 				var[0].set(emu, Variant());
 			} else {
@@ -580,8 +579,8 @@ APICALL(api_node) {
 		} break;
 		case Node_Op::ADD_CHILD_DEFERRED:
 		case Node_Op::ADD_CHILD: {
-			auto *child = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
-			auto *child_node = get_node_from_address(emu, child->v.i);
+			GuestVariant *child = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			godot::Node *child_node = get_node_from_address(emu, child->v.i);
 			if (Node_Op(op) == Node_Op::ADD_CHILD_DEFERRED)
 				node->call_deferred("add_child", child_node);
 			else
@@ -589,23 +588,23 @@ APICALL(api_node) {
 		} break;
 		case Node_Op::ADD_SIBLING_DEFERRED:
 		case Node_Op::ADD_SIBLING: {
-			auto *sibling = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
-			auto *sibling_node = get_node_from_address(emu, sibling->v.i);
+			GuestVariant *sibling = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			godot::Node *sibling_node = get_node_from_address(emu, sibling->v.i);
 			if (Node_Op(op) == Node_Op::ADD_SIBLING_DEFERRED)
 				node->call_deferred("add_sibling", sibling_node);
 			else
 				node->add_sibling(sibling_node);
 		} break;
 		case Node_Op::MOVE_CHILD: {
-			auto *vars = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
-			auto *child_node = get_node_from_address(emu, vars[0].v.i);
+			GuestVariant *vars = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
+			godot::Node *child_node = get_node_from_address(emu, vars[0].v.i);
 			// TODO: Check if the child is actually a child of the node? Verify index?
 			node->move_child(child_node, vars[1].v.i);
 		} break;
 		case Node_Op::REMOVE_CHILD_DEFERRED:
 		case Node_Op::REMOVE_CHILD: {
-			auto *child = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
-			auto *child_node = get_node_from_address(emu, child->v.i);
+			GuestVariant *child = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			godot::Node *child_node = get_node_from_address(emu, child->v.i);
 			if (Node_Op(op) == Node_Op::REMOVE_CHILD_DEFERRED)
 				node->call_deferred("remove_child", child_node);
 			else
@@ -613,14 +612,14 @@ APICALL(api_node) {
 		} break;
 		case Node_Op::GET_CHILDREN: {
 			// Get a GuestStdVector from guest to store the children.
-			auto *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
+			GuestStdVector *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
 			// Get the children of the node.
-			auto children = node->get_children();
+			TypedArray<Node> children = node->get_children();
 			// Allocate memory for the children in the guest vector.
 			auto [cptr, _] = vec->alloc<uint64_t>(emu.machine(), children.size());
 			// Copy the children to the guest vector, and add them to the scoped objects.
 			for (int i = 0; i < children.size(); i++) {
-				auto *child = godot::Object::cast_to<godot::Node>(children[i]);
+				godot::Node *child = godot::Object::cast_to<godot::Node>(children[i]);
 				if (child) {
 					emu.add_scoped_object(child);
 					cptr[i] = uint64_t(uintptr_t(child));
@@ -640,19 +639,19 @@ APICALL(api_node2d) {
 	auto [op, addr, gvar] = machine.sysargs<int, uint64_t, gaddr_t>();
 	machine.penalize(100'000); // Costly Node2D operations.
 
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 	// Get the Node2D object by its address.
 	godot::Node *node = get_node_from_address(emu, addr);
 
 	// Cast the Node2D object to a Node2D object.
-	auto *node2d = godot::Object::cast_to<godot::Node2D>(node);
+	godot::Node2D *node2d = godot::Object::cast_to<godot::Node2D>(node);
 	if (node2d == nullptr) {
 		ERR_PRINT("Node2D object is not a Node2D");
 		throw std::runtime_error("Node2D object is not a Node2D");
 	}
 
 	// View the variant from the guest memory.
-	auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+	GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
 	switch (Node2D_Op(op)) {
 		case Node2D_Op::GET_POSITION:
 			var->set(emu, node2d->get_position());
@@ -689,19 +688,19 @@ APICALL(api_node3d) {
 	auto [op, addr, gvar] = machine.sysargs<int, uint64_t, gaddr_t>();
 	machine.penalize(100'000); // Costly Node3D operations.
 
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 	// Get the Node3D object by its address
 	godot::Node *node = get_node_from_address(emu, addr);
 
 	// Cast the Node3D object to a Node3D object.
-	auto *node3d = godot::Object::cast_to<godot::Node3D>(node);
+	godot::Node3D *node3d = godot::Object::cast_to<godot::Node3D>(node);
 	if (node3d == nullptr) {
 		ERR_PRINT("Node3D object is not a Node3D");
 		throw std::runtime_error("Node3D object is not a Node3D");
 	}
 
 	// View the variant from the guest memory.
-	auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+	GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
 	switch (Node3D_Op(op)) {
 		case Node3D_Op::GET_POSITION:
 			var->set(emu, node3d->get_position());
@@ -730,8 +729,8 @@ APICALL(api_node3d) {
 APICALL(api_throw) {
 	auto [type, msg, vaddr] = machine.sysargs<std::string_view, std::string_view, gaddr_t>();
 
-	auto &emu = riscv::emu(machine);
-	auto *var = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
+	Sandbox &emu = riscv::emu(machine);
+	GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
 	String error_string = "Sandbox exception of type " + String::utf8(type.data(), type.size()) + ": " + String::utf8(msg.data(), msg.size()) + " for Variant of type " + itos(var->type);
 	ERR_PRINT(error_string);
 	throw std::runtime_error("Sandbox exception of type " + std::string(type) + ": " + std::string(msg) + " for Variant of type " + std::to_string(var->type));
@@ -763,7 +762,7 @@ APICALL(api_vector2_rotated) {
 
 APICALL(api_array_ops) {
 	auto [op, arr_idx, idx, vaddr] = machine.sysargs<Array_Op, unsigned, int, gaddr_t>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 
 	auto opt_array = emu.get_scoped_variant(arr_idx);
 	if (!opt_array.has_value() || opt_array.value()->get_type() != Variant::ARRAY) {
@@ -777,7 +776,7 @@ APICALL(api_array_ops) {
 			Array a;
 			a.resize(arr_idx); // Resize the array to the given size.
 			const unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
-			auto *vp = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
+			GuestVariant *vp = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
 			vp->type = Variant::ARRAY;
 			vp->v.i = idx;
 			break;
@@ -820,9 +819,9 @@ APICALL(api_array_ops) {
 
 APICALL(api_array_at) {
 	auto [arr_idx, idx, vret] = machine.sysargs<unsigned, int, GuestVariant *>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 
-	auto opt_array = emu.get_scoped_variant(arr_idx);
+	std::optional<const Variant *> opt_array = emu.get_scoped_variant(arr_idx);
 	if (!opt_array.has_value() || opt_array.value()->get_type() != Variant::ARRAY) {
 		ERR_PRINT("Invalid Array object");
 		throw std::runtime_error("Invalid Array object");
@@ -839,9 +838,9 @@ APICALL(api_array_at) {
 
 APICALL(api_array_size) {
 	auto [arr_idx] = machine.sysargs<unsigned>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 
-	auto opt_array = emu.get_scoped_variant(arr_idx);
+	std::optional<const Variant *> opt_array = emu.get_scoped_variant(arr_idx);
 	if (!opt_array.has_value() || opt_array.value()->get_type() != Variant::ARRAY) {
 		ERR_PRINT("Invalid Array object");
 		throw std::runtime_error("Invalid Array object");
@@ -853,9 +852,9 @@ APICALL(api_array_size) {
 
 APICALL(api_dict_ops) {
 	auto [op, dict_idx, vkey, vaddr] = machine.sysargs<Dictionary_Op, unsigned, gaddr_t, gaddr_t>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 
-	auto opt_dict = emu.get_scoped_variant(dict_idx);
+	std::optional<const Variant *> opt_dict = emu.get_scoped_variant(dict_idx);
 	if (!opt_dict.has_value() || opt_dict.value()->get_type() != Variant::DICTIONARY) {
 		ERR_PRINT("Invalid Dictionary object");
 		throw std::runtime_error("Invalid Dictionary object");
@@ -864,26 +863,26 @@ APICALL(api_dict_ops) {
 
 	switch (op) {
 		case Dictionary_Op::GET: {
-			auto *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
-			auto *vp = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
+			GuestVariant *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
+			GuestVariant *vp = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
 			// TODO: Check if the value is already scoped?
-			auto v = dict[key->toVariant(emu)];
+			Variant v = dict[key->toVariant(emu)];
 			vp->create(emu, std::move(v));
 			break;
 		}
 		case Dictionary_Op::SET: {
-			auto *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
-			auto *value = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
+			GuestVariant *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
+			GuestVariant *value = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
 			dict[key->toVariant(emu)] = value->toVariant(emu);
 			break;
 		}
 		case Dictionary_Op::ERASE: {
-			auto *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
+			GuestVariant *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
 			dict.erase(key->toVariant(emu));
 			break;
 		}
 		case Dictionary_Op::HAS: {
-			auto *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
+			GuestVariant *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
 			machine.set_result(dict.has(key->toVariant(emu)));
 			break;
 		}
@@ -894,7 +893,7 @@ APICALL(api_dict_ops) {
 			dict.clear();
 			break;
 		case Dictionary_Op::MERGE: {
-			auto *other_dict = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
+			GuestVariant *other_dict = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
 			dict.merge(other_dict->toVariant(emu).operator Dictionary());
 			break;
 		}
@@ -906,19 +905,19 @@ APICALL(api_dict_ops) {
 
 APICALL(api_string_create) {
 	auto [strview] = machine.sysargs<std::string_view>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(10'000);
 
-	auto str = String::utf8(strview.data(), strview.size());
+	String str = String::utf8(strview.data(), strview.size());
 	const unsigned idx = emu.create_scoped_variant(Variant(std::move(str)));
 	machine.set_result(idx);
 }
 
 APICALL(api_string_ops) {
 	auto [op, str_idx, index, vaddr] = machine.sysargs<String_Op, unsigned, int, gaddr_t>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 
-	auto opt_str = emu.get_scoped_variant(str_idx);
+	std::optional<const Variant *> opt_str = emu.get_scoped_variant(str_idx);
 	if (!opt_str.has_value() || opt_str.value()->get_type() != Variant::STRING) {
 		ERR_PRINT("Invalid String object");
 		throw std::runtime_error("Invalid String object");
@@ -927,7 +926,7 @@ APICALL(api_string_ops) {
 
 	switch (op) {
 		case String_Op::APPEND: {
-			auto *gvar = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
+			GuestVariant *gvar = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
 			str += gvar->toVariant(emu).operator String();
 			break;
 		}
@@ -936,11 +935,11 @@ APICALL(api_string_ops) {
 			break;
 		case String_Op::TO_STD_STRING: {
 			if (index == 0) { // Get the string as a std::string.
-				auto utf8 = str.utf8();
-				auto *gstr = emu.machine().memory.memarray<GuestStdString>(vaddr, 1);
+				CharString utf8 = str.utf8();
+				GuestStdString *gstr = emu.machine().memory.memarray<GuestStdString>(vaddr, 1);
 				gstr->set_string(emu.machine(), vaddr, utf8.ptr(), utf8.length());
 			} else if (index == 2) { // Get the string as a std::u32string.
-				auto *gstr = emu.machine().memory.memarray<GuestStdU32String>(vaddr, 1);
+				GuestStdU32String *gstr = emu.machine().memory.memarray<GuestStdU32String>(vaddr, 1);
 				gstr->set_string(emu.machine(), vaddr, str.ptr(), str.length());
 			} else {
 				ERR_PRINT("Invalid String conversion");
@@ -956,9 +955,9 @@ APICALL(api_string_ops) {
 
 APICALL(api_string_at) {
 	auto [str_idx, index] = machine.sysargs<unsigned, int>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 
-	auto opt_str = emu.get_scoped_variant(str_idx);
+	std::optional<const Variant *> opt_str = emu.get_scoped_variant(str_idx);
 	if (!opt_str.has_value() || opt_str.value()->get_type() != Variant::STRING) {
 		ERR_PRINT("Invalid String object");
 		throw std::runtime_error("Invalid String object");
@@ -970,16 +969,16 @@ APICALL(api_string_at) {
 		throw std::runtime_error("String index out of bounds");
 	}
 
-	auto new_string = str[index];
-	auto new_varidx = emu.create_scoped_variant(Variant(std::move(new_string)));
+	char32_t new_string = str[index];
+	unsigned int new_varidx = emu.create_scoped_variant(Variant(std::move(new_string)));
 	machine.set_result(new_varidx);
 }
 
 APICALL(api_string_size) {
 	auto [str_idx] = machine.sysargs<unsigned>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 
-	auto opt_str = emu.get_scoped_variant(str_idx);
+	std::optional<const Variant *> opt_str = emu.get_scoped_variant(str_idx);
 	if (!opt_str.has_value() || opt_str.value()->get_type() != Variant::STRING) {
 		ERR_PRINT("Invalid String object");
 		throw std::runtime_error("Invalid String object");
@@ -990,9 +989,9 @@ APICALL(api_string_size) {
 
 APICALL(api_string_append) {
 	auto [str_idx, strview] = machine.sysargs<unsigned, std::string_view>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 
-	auto &var = emu.get_mutable_scoped_variant(str_idx);
+	Variant &var = emu.get_mutable_scoped_variant(str_idx);
 
 	godot::String str = var.operator String();
 	str += String::utf8(strview.data(), strview.size());
@@ -1001,7 +1000,7 @@ APICALL(api_string_append) {
 
 APICALL(api_timer_periodic) {
 	auto [interval, oneshot, callback, capture, vret] = machine.sysargs<double, bool, gaddr_t, std::array<uint8_t, 32> *, GuestVariant *>();
-	auto &emu = riscv::emu(machine);
+	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(100'000); // Costly Timer node creation.
 
 	Timer *timer = memnew(Timer);
@@ -1039,7 +1038,7 @@ void Sandbox::initialize_syscalls() {
 	machine().setup_posix_threads();
 
 	machine().on_unhandled_syscall = [](machine_t &machine, size_t syscall) {
-		auto &emu = riscv::emu(machine);
+		Sandbox &emu = riscv::emu(machine);
 		emu.print("Unhandled system call: " + std::to_string(syscall));
 		machine.penalize(100'000); // Add to the instruction counter due to I/O.
 	};

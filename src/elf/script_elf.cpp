@@ -174,7 +174,7 @@ Variant ELFScript::_get_property_default_value(const StringName &p_property) con
 	return Variant();
 }
 TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
-	auto max_mem = prop_to_dict(PropertyInfo(Variant::Type::INT, "max_memory", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Maximum memory used by the sandboxed program", PROPERTY_USAGE_DEFAULT));
+	Dictionary max_mem = prop_to_dict(PropertyInfo(Variant::Type::INT, "max_memory", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Maximum memory used by the sandboxed program", PROPERTY_USAGE_DEFAULT));
 	TypedArray<Dictionary> properties;
 	properties.push_back(std::move(max_mem));
 	return properties;

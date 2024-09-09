@@ -114,7 +114,7 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 		return;
 	}
 	this->m_binary = std::move(buffer);
-	const auto binary_view = std::string_view{ (const char *)this->m_binary.ptr(), static_cast<size_t>(this->m_binary.size()) };
+	const std::string_view binary_view = std::string_view{ (const char *)this->m_binary.ptr(), static_cast<size_t>(this->m_binary.size()) };
 
 	try {
 		delete this->m_machine;
@@ -141,7 +141,7 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 		machine().setup_native_memory(MEMORY_SYSCALLS_BASE);
 
 		static const std::vector<std::string> program_arguments = { "program" };
-		const auto *argv = argv_ptr ? argv_ptr : &program_arguments;
+		const std::vector<std::string> *argv = argv_ptr ? argv_ptr : &program_arguments;
 		m.setup_linux(*argv);
 
 		m.simulate(get_instructions_max() << 30);
@@ -154,7 +154,7 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 	this->read_program_properties(true);
 
 	// Pre-cache some functions
-	auto functions = this->get_functions();
+	PackedStringArray functions = this->get_functions();
 	for (int i = 0; i < functions.size(); i++) {
 		this->cached_address_of(functions[i].hash(), functions[i]);
 	}
@@ -169,7 +169,7 @@ Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtens
 		error.argument = -1;
 		return Variant();
 	}
-	auto &function = *args[0];
+	const Variant &function = *args[0];
 	args += 1;
 	arg_count -= 1;
 	const String function_name = function.operator String();
@@ -181,14 +181,14 @@ Variant Sandbox::vmcall_fn(const StringName &function, const Variant **args, GDE
 		return Variant();
 	}
 	GDExtensionCallError error;
-	auto result = this->vmcall_internal(cached_address_of(function.hash()), args, arg_count, error);
+	Variant result = this->vmcall_internal(cached_address_of(function.hash()), args, arg_count, error);
 	return result;
 }
 GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int argc) {
 	sp -= sizeof(GuestVariant) * (argc + 1);
 	sp &= ~gaddr_t(0xF); // re-align stack pointer
-	const auto arrayDataPtr = sp;
-	const auto arrayElements = argc + 1;
+	const gaddr_t arrayDataPtr = sp;
+	const int arrayElements = argc + 1;
 
 	GuestVariant *v = m_machine->memory.memarray<GuestVariant>(arrayDataPtr, arrayElements);
 	if (argc > 7)
@@ -199,8 +199,8 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 	v[0].type = Variant::Type::NIL;
 
 	for (size_t i = 0; i < argc; i++) {
-		auto &arg = *args[i];
-		auto &g_arg = v[i + 1];
+		const Variant &arg = *args[i];
+		GuestVariant &g_arg = v[i + 1];
 		// Incoming arguments are implicitly trusted, as they are provided by the host
 		// They also have have the guaranteed lifetime of the function call
 		switch (arg.get_type()) {
@@ -232,7 +232,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 	// Scoped objects and owning tree node
 	state.tree_base = this->get_tree_base();
 	state.reset(this->m_max_refs);
-	auto *old_state = this->m_current_state;
+	CurrentState *old_state = this->m_current_state;
 	this->m_current_state = &state;
 	// Call statistics
 	this->m_calls_made++;
@@ -240,7 +240,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 
 	try {
 		GuestVariant *retvar = nullptr;
-		auto &cpu = m_machine->cpu;
+		riscv::CPU<8> &cpu = m_machine->cpu;
 		auto &sp = cpu.reg(riscv::REG_SP);
 		m_level++;
 		// execute guest function
@@ -268,7 +268,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 		}
 
 		// Treat return value as pointer to Variant
-		auto result = retvar->toVariant(*this);
+		Variant result = retvar->toVariant(*this);
 		// Restore the previous state
 		this->m_level--;
 		this->m_current_state = old_state;
@@ -291,18 +291,18 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 	}
 }
 Variant Sandbox::vmcallable(String function, Array args) {
-	const auto address = cached_address_of(function.hash(), function);
+	const gaddr_t address = cached_address_of(function.hash(), function);
 	if (address == 0x0) {
 		ERR_PRINT("Function not found in the guest: " + function);
 		return Variant();
 	}
 
-	auto *call = memnew(RiscvCallable);
+	RiscvCallable *call = memnew(RiscvCallable);
 	call->init(this, address, std::move(args));
 	return Callable(call);
 }
 Variant Sandbox::vmcallable_address(gaddr_t address, Array args) {
-	auto *call = memnew(RiscvCallable);
+	RiscvCallable *call = memnew(RiscvCallable);
 	call->init(this, address, std::move(args));
 	return Callable(call);
 }
@@ -412,7 +412,7 @@ gaddr_t Sandbox::cached_address_of(int64_t hash, const String &function) const {
 	gaddr_t address = 0x0;
 	auto it = m_lookup.find(hash);
 	if (it == m_lookup.end()) {
-		const auto ascii = function.ascii();
+		const CharString ascii = function.ascii();
 		const std::string_view str{ ascii.get_data(), (size_t)ascii.length() };
 		address = address_of(str);
 		if (address != 0x0) {
@@ -478,7 +478,7 @@ Variant &Sandbox::get_mutable_scoped_variant(unsigned index) {
 		ERR_PRINT("Invalid scoped variant index.");
 		throw std::runtime_error("Invalid scoped variant index.");
 	}
-	auto *var = state().scoped_variants[index - 1];
+	const godot::Variant *var = state().scoped_variants[index - 1];
 	// Find the variant in the variants list
 	auto it = std::find_if(state().variants.begin(), state().variants.end(), [var](const Variant &v) {
 		return &v == var;
@@ -532,7 +532,7 @@ void Sandbox::read_program_properties(bool editor) const {
 				ERR_PRINT("Sandbox: Invalid property size");
 				break;
 			}
-			const auto c_name = machine().memory.memstring(prop->g_name);
+			const std::string c_name = machine().memory.memstring(prop->g_name);
 			Variant def_val = prop->def_val.toVariant(*this);
 
 			this->add_property(String::utf8(c_name.c_str(), c_name.size()), prop->type, prop->setter, prop->getter, def_val);
@@ -550,7 +550,7 @@ void Sandbox::add_property(const String &name, Variant::Type vtype, uint64_t set
 		ERR_PRINT("Sandbox: Maximum number of properties reached");
 		return;
 	}
-	for (const auto &prop : m_properties) {
+	for (const SandboxProperty &prop : m_properties) {
 		if (prop.name() == name) {
 			// TODO: Allow overriding properties?
 			//ERR_PRINT("Sandbox: Property already exists: " + name);
@@ -564,7 +564,7 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	if (m_properties.empty()) {
 		this->read_program_properties(false);
 	}
-	for (auto &prop : m_properties) {
+	for (SandboxProperty &prop : m_properties) {
 		if (prop.name() == name) {
 			prop.set(*this, value);
 			//ERR_PRINT("Sandbox: SetProperty *found*: " + name);
@@ -589,7 +589,7 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	if (m_properties.empty()) {
 		this->read_program_properties(false);
 	}
-	for (const auto &prop : m_properties) {
+	for (const SandboxProperty &prop : m_properties) {
 		if (prop.name() == name) {
 			r_ret = prop.get(*this);
 			//ERR_PRINT("Sandbox: GetProperty *found*: " + name);
@@ -629,7 +629,7 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 }
 
 const SandboxProperty *Sandbox::find_property_or_null(const StringName &name) const {
-	for (auto &prop : m_properties) {
+	for (const SandboxProperty &prop : m_properties) {
 		if (prop.name() == name) {
 			return &prop;
 		}

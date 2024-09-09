@@ -44,7 +44,7 @@ PackedStringArray ELFScriptLanguage::_get_string_delimiters() const {
 	return string_delimiters;
 }
 Ref<Script> ELFScriptLanguage::_make_template(const String &p_template, const String &p_class_name, const String &p_base_class_name) const {
-	auto *elf_script = memnew(ELFScript);
+	ELFScript *elf_script = memnew(ELFScript);
 	return Ref<Script>(elf_script);
 }
 TypedArray<Dictionary> ELFScriptLanguage::_get_built_in_templates(const StringName &p_object) const {
@@ -161,9 +161,9 @@ void ELFScriptLanguage::_frame() {
 		icon_registered = true;
 		// Manually register ELFScript icon
 		if (Engine::get_singleton()->is_editor_hint() && FileAccess::file_exists(icon_path)) {
-			auto *editor_interface = EditorInterface::get_singleton();
+			EditorInterface *editor_interface = EditorInterface::get_singleton();
 			Ref<Theme> editor_theme = editor_interface->get_editor_theme();
-			auto *resource_loader = ResourceLoader::get_singleton();
+			ResourceLoader *resource_loader = ResourceLoader::get_singleton();
 			Ref<Texture2D> tex = resource_loader->load(icon_path);
 
 			editor_theme->set_icon("ELFScript", "EditorIcons", tex);
