@@ -8,3 +8,4 @@ program/test
 *.o
 *.os
 *.elf
+bin/addons/godot_sandbox/bin/*
