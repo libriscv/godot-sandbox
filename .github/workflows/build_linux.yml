@@ -9,7 +9,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: x86_64
+          - {arch: x86_64, precision: single}
+          - {arch: x86_64, precision: double}
 
     runs-on: ubuntu-latest
     steps:
@@ -25,18 +26,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-multilib g++-multilib
 
-
-      - name: 🔗 GDExtension Build
+      - name: 🔗 GDExtension Build Single
         uses: godotengine/godot-cpp-template/.github/actions/build@main
         with:
           platform: linux
           arch: ${{ matrix.arch }}
           build-target-type: template_release
+          float-precision: ${{ matrix.precision }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-sandbox-linux-${{ matrix.arch }}
+          name: godot-sandbox-linux-${{ matrix.arch }}-${{ matrix.precision }}
           path: |
             ${{ github.workspace }}/bin/**/*.so
           if-no-files-found: error  

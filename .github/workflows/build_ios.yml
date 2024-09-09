@@ -9,7 +9,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: arm64
+          - {arch: arm64, precision: single, extension: ""}
+          - {arch: arm64, precision: double, extension: ".double"}
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -18,17 +19,18 @@ jobs:
           submodules: true
           fetch-depth: 0
 
-      - name: 🔗 GDExtension Build
+      - name: 🔗 GDExtension Build Single
         uses: godotengine/godot-cpp-template/.github/actions/build@main
         with:
           platform: ios
           arch: ${{ matrix.arch }}
           build-target-type: template_release
+          float-precision: ${{ matrix.precision }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-sandbox-ios-${{ matrix.arch }}
+          name: godot-sandbox-ios-${{ matrix.arch }}-${{ matrix.precision }}
           path: |
-            ${{ github.workspace }}/bin/**/libgodot_riscv.ios.template_release.arm64.framework/**
+            ${{ github.workspace }}/bin/**/libgodot_riscv.ios.template_release${{ matrix.extension }}.arm64.framework/**
           if-no-files-found: error

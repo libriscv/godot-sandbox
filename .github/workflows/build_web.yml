@@ -9,7 +9,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: wasm32
+          - {arch: wasm32, precision: single}
+          - {arch: wasm32, precision: double}
+
     runs-on: ubuntu-20.04
     steps:
       - name: Checkout
@@ -24,11 +26,12 @@ jobs:
           platform: web
           arch: ${{ matrix.arch }}
           build-target-type: template_release
+          float-precision: ${{ matrix.precision }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-sandbox-web-${{ matrix.arch }}
+          name: godot-sandbox-web-${{ matrix.arch }}-${{ matrix.precision }}
           path: |
             ${{ github.workspace }}/bin/**/*.wasm
           if-no-files-found: error

@@ -22,7 +22,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: universal
+          - {arch: universal, precision: single, extension: ""}
+          - {arch: universal, precision: double, extension: ".double"}
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -37,6 +38,7 @@ jobs:
           platform: macos
           arch: ${{ matrix.arch }}
           build-target-type: template_release
+          float-precision: ${{ matrix.precision }}
 
       - name: Mac Sign
         uses: godotengine/godot-cpp-template/.github/actions/sign@main
@@ -57,7 +59,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-sandbox-macos-${{ matrix.arch }}
+          name: godot-sandbox-macos-${{ matrix.arch }}-${{ matrix.precision }}
           path: |
-            ${{ github.workspace }}/bin/**/libgodot_riscv.macos.template_release.universal.framework/**
+            ${{ github.workspace }}/bin/**/libgodot_riscv.macos.template_release${{ matrix.extension }}.universal.framework/**
           if-no-files-found: error
