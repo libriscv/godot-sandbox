@@ -31,7 +31,7 @@ jobs:
           submodules: true
           fetch-depth: 0
 
-      - name: 🔗 GDExtension Build
+      - name: 🔗 GDExtension Build Single
         uses: godotengine/godot-cpp-template/.github/actions/build@main
         with:
           platform: macos
@@ -39,7 +39,7 @@ jobs:
           build-target-type: template_release
           float-precision: single
 
-      - name: 🔗 GDExtension Build
+      - name: 🔗 GDExtension Build Double
         uses: godotengine/godot-cpp-template/.github/actions/build@main
         with:
           platform: macos
@@ -47,10 +47,26 @@ jobs:
           build-target-type: template_release
           float-precision: double
 
-      - name: Mac Sign
+      - name: Mac Sign Single
         uses: godotengine/godot-cpp-template/.github/actions/sign@main
         with:
           FRAMEWORK_PATH: bin/addons/godot_sandbox/bin/libgodot_riscv.macos.template_release.universal.framework
+          SIGN_FLAGS: "--deep"
+          APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_DEV_PASSWORD: ${{ secrets.APPLE_DEV_PASSWORD }}
+          APPLE_DEV_ID: ${{ secrets.APPLE_DEV_ID }}
+          APPLE_DEV_TEAM_ID: ${{ secrets.APPLE_DEV_TEAM_ID }}
+          APPLE_DEV_APP_ID: ${{ secrets.APPLE_DEV_APP_ID }}
+        env: 
+            APPLE_DEV_ID: ${{ secrets.APPLE_DEV_ID }}
+        # Only run this on main branch where secret is set
+        if: ${{ env.APPLE_DEV_ID != '' }}
+
+      - name: Mac Sign Double
+        uses: godotengine/godot-cpp-template/.github/actions/sign@main
+        with:
+          FRAMEWORK_PATH: bin/addons/godot_sandbox/bin/libgodot_riscv.macos.template_release.double.universal.framework
           SIGN_FLAGS: "--deep"
           APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
           APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
@@ -69,4 +85,5 @@ jobs:
           name: godot-sandbox-macos-${{ matrix.arch }}
           path: |
             ${{ github.workspace }}/bin/**/libgodot_riscv.macos.template_release.universal.framework/**
+            ${{ github.workspace }}/bin/**/libgodot_riscv.macos.template_release.double.universal.framework/**
           if-no-files-found: error

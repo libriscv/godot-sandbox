@@ -18,7 +18,7 @@ jobs:
           submodules: true
           fetch-depth: 0
 
-      - name: 🔗 GDExtension Build
+      - name: 🔗 GDExtension Build Single
         uses: godotengine/godot-cpp-template/.github/actions/build@main
         with:
           platform: ios
@@ -26,7 +26,7 @@ jobs:
           build-target-type: template_release
           float-precision: single
 
-      - name: 🔗 GDExtension Build
+      - name: 🔗 GDExtension Build Double
         uses: godotengine/godot-cpp-template/.github/actions/build@main
         with:
           platform: ios
@@ -40,4 +40,5 @@ jobs:
           name: godot-sandbox-ios-${{ matrix.arch }}
           path: |
             ${{ github.workspace }}/bin/**/libgodot_riscv.ios.template_release.arm64.framework/**
+            ${{ github.workspace }}/bin/**/libgodot_riscv.ios.template_release.double.arm64.framework/**
           if-no-files-found: error

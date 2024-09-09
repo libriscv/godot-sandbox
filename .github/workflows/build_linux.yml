@@ -25,7 +25,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-multilib g++-multilib
 
-      - name: 🔗 GDExtension Build
+      - name: 🔗 GDExtension Build Single
         uses: godotengine/godot-cpp-template/.github/actions/build@main
         with:
           platform: linux
@@ -33,7 +33,7 @@ jobs:
           build-target-type: template_release
           float-precision: single
 
-      - name: 🔗 GDExtension Build
+      - name: 🔗 GDExtension Build Double
         uses: godotengine/godot-cpp-template/.github/actions/build@main
         with:
           platform: linux
