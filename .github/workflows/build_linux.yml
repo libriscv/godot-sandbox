@@ -25,6 +25,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-multilib g++-multilib
 
+      - name: 🔗 GDExtension Build
+        uses: godotengine/godot-cpp-template/.github/actions/build@main
+        with:
+          platform: linux
+          arch: ${{ matrix.arch }}
+          build-target-type: template_release
+          float-precision: single
 
       - name: 🔗 GDExtension Build
         uses: godotengine/godot-cpp-template/.github/actions/build@main
@@ -32,6 +39,7 @@ jobs:
           platform: linux
           arch: ${{ matrix.arch }}
           build-target-type: template_release
+          float-precision: double
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

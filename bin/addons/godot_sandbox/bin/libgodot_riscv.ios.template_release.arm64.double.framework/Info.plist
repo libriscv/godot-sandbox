@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>libgodot_riscv.ios.dylib</string>
+	<string>libgodot_riscv.ios.template_release.double.arm64</string>
 	<key>CFBundleName</key>
 	<string>Godot Riscv</string>
 	<key>CFBundleDisplayName</key>
