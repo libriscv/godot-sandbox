@@ -9,7 +9,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: wasm32
+          - {arch: wasm32, precision: single}
+          - {arch: wasm32, precision: double}
+
     runs-on: ubuntu-20.04
     steps:
       - name: Checkout
@@ -18,26 +20,18 @@ jobs:
           submodules: true
           fetch-depth: 0
 
-      - name: 🔗 GDExtension Build Single
+      - name: 🔗 GDExtension Build
         uses: godotengine/godot-cpp-template/.github/actions/build@main
         with:
           platform: web
           arch: ${{ matrix.arch }}
           build-target-type: template_release
-          float-precision: single
-
-      - name: 🔗 GDExtension Build Double
-        uses: godotengine/godot-cpp-template/.github/actions/build@main
-        with:
-          platform: web
-          arch: ${{ matrix.arch }}
-          build-target-type: template_release
-          float-precision: double
+          float-precision: ${{ matrix.precision }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-sandbox-web-${{ matrix.arch }}
+          name: godot-sandbox-web-${{ matrix.arch }}-${{ matrix.precision }}
           path: |
             ${{ github.workspace }}/bin/**/*.wasm
           if-no-files-found: error

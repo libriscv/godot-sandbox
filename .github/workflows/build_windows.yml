@@ -9,9 +9,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: x86_32
-          - arch: x86_64
-          - arch: arm64
+          - {arch: x86_32, precision: single}
+          - {arch: x86_32, precision: double}
+          - {arch: x86_64, precision: single}
+          - {arch: x86_64, precision: double}
+          - {arch: arm64, precision: single}
+          - {arch: arm64, precision: double}
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -20,26 +23,18 @@ jobs:
           submodules: true
           fetch-depth: 0
 
-      - name: 🔗 GDExtension Build Single
+      - name: 🔗 GDExtension Build
         uses: godotengine/godot-cpp-template/.github/actions/build@main
         with:
           platform: windows
           arch: ${{ matrix.arch }}
           build-target-type: template_release
-          float-precision: single
-
-      - name: 🔗 GDExtension Build Double
-        uses: godotengine/godot-cpp-template/.github/actions/build@main
-        with:
-          platform: windows
-          arch: ${{ matrix.arch }}
-          build-target-type: template_release
-          float-precision: double
+          float-precision: ${{ matrix.precision }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-sandbox-windows-${{ matrix.arch }}
+          name: godot-sandbox-windows-${{ matrix.arch }}-${{ matrix.precision }}
           path: |
             ${{ github.workspace }}/bin/**/*.dll
           if-no-files-found: error

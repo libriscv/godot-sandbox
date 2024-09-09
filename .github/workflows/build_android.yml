@@ -9,10 +9,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: arm64
-          - arch: arm32
-          - arch: x86_64
-          - arch: x86_32
+          - {arch: arm64, precision: single}
+          - {arch: arm64, precision: double}
+          - {arch: arm32, precision: single}
+          - {arch: arm32, precision: double}
+          - {arch: x86_64, precision: single}
+          - {arch: x86_64, precision: double}
+          - {arch: x86_32, precision: single}
+          - {arch: x86_32, precision: double}
     runs-on: ubuntu-20.04
     steps:
       - name: Checkout
@@ -26,26 +30,18 @@ jobs:
           chmod +x ./llvm.sh
           sudo ./llvm.sh 17
 
-      - name: 🔗 GDExtension Build Single
+      - name: 🔗 GDExtension Build
         uses: godotengine/godot-cpp-template/.github/actions/build@main
         with:
           platform: android
           arch: ${{ matrix.arch }}
           build-target-type: template_release
-          float-precision: single
-
-      - name: 🔗 GDExtension Build Double
-        uses: godotengine/godot-cpp-template/.github/actions/build@main
-        with:
-          platform: android
-          arch: ${{ matrix.arch }}
-          build-target-type: template_release
-          float-precision: double
+          float-precision: ${{ matrix.precision }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-sandbox-android-${{ matrix.arch }}
+          name: godot-sandbox-android-${{ matrix.arch }}-${{ matrix.precision }}
           path: |
             ${{ github.workspace }}/bin/**/*.so
           if-no-files-found: error
