@@ -13,22 +13,22 @@ struct Vector2 {
 	float dot(const Vector2& other) const noexcept;
 	static Vector2 from_angle(float angle) noexcept;
 
-	auto& operator += (const Vector2& other) {
+	Vector2& operator += (const Vector2& other) {
 		x += other.x;
 		y += other.y;
 		return *this;
 	}
-	auto& operator -= (const Vector2& other) {
+	Vector2& operator -= (const Vector2& other) {
 		x -= other.x;
 		y -= other.y;
 		return *this;
 	}
-	auto& operator *= (const Vector2& other) {
+	Vector2& operator *= (const Vector2& other) {
 		x *= other.x;
 		y *= other.y;
 		return *this;
 	}
-	auto& operator /= (const Vector2& other) {
+	Vector2& operator /= (const Vector2& other) {
 		x /= other.x;
 		y /= other.y;
 		return *this;
@@ -38,22 +38,22 @@ struct Vector2i {
 	int x;
 	int y;
 
-	auto& operator += (const Vector2i& other) {
+	Vector2i& operator += (const Vector2i& other) {
 		x += other.x;
 		y += other.y;
 		return *this;
 	}
-	auto& operator -= (const Vector2i& other) {
+	Vector2i& operator -= (const Vector2i& other) {
 		x -= other.x;
 		y -= other.y;
 		return *this;
 	}
-	auto& operator *= (const Vector2i& other) {
+	Vector2i& operator *= (const Vector2i& other) {
 		x *= other.x;
 		y *= other.y;
 		return *this;
 	}
-	auto& operator /= (const Vector2i& other) {
+	Vector2i& operator /= (const Vector2i& other) {
 		x /= other.x;
 		y /= other.y;
 		return *this;
@@ -65,28 +65,28 @@ struct Rect2 {
 	float w;
 	float h;
 
-	auto& operator += (const Rect2& other) {
+	Rect2& operator += (const Rect2& other) {
 		x += other.x;
 		y += other.y;
 		w += other.w;
 		h += other.h;
 		return *this;
 	}
-	auto& operator -= (const Rect2& other) {
+	Rect2& operator -= (const Rect2& other) {
 		x -= other.x;
 		y -= other.y;
 		w -= other.w;
 		h -= other.h;
 		return *this;
 	}
-	auto& operator *= (const Rect2& other) {
+	Rect2& operator *= (const Rect2& other) {
 		x *= other.x;
 		y *= other.y;
 		w *= other.w;
 		h *= other.h;
 		return *this;
 	}
-	auto& operator /= (const Rect2& other) {
+	Rect2& operator /= (const Rect2& other) {
 		x /= other.x;
 		y /= other.y;
 		w /= other.w;
@@ -100,28 +100,28 @@ struct Rect2i {
 	int w;
 	int h;
 
-	auto& operator += (const Rect2i& other) {
+	Rect2i& operator += (const Rect2i& other) {
 		x += other.x;
 		y += other.y;
 		w += other.w;
 		h += other.h;
 		return *this;
 	}
-	auto& operator -= (const Rect2i& other) {
+	Rect2i& operator -= (const Rect2i& other) {
 		x -= other.x;
 		y -= other.y;
 		w -= other.w;
 		h -= other.h;
 		return *this;
 	}
-	auto& operator *= (const Rect2i& other) {
+	Rect2i& operator *= (const Rect2i& other) {
 		x *= other.x;
 		y *= other.y;
 		w *= other.w;
 		h *= other.h;
 		return *this;
 	}
-	auto& operator /= (const Rect2i& other) {
+	Rect2i& operator /= (const Rect2i& other) {
 		x /= other.x;
 		y /= other.y;
 		w /= other.w;
@@ -134,25 +134,25 @@ struct Vector3 {
 	float y;
 	float z;
 
-	auto& operator += (const Vector3& other) {
+	Vector3& operator += (const Vector3& other) {
 		x += other.x;
 		y += other.y;
 		z += other.z;
 		return *this;
 	}
-	auto& operator -= (const Vector3& other) {
+	Vector3& operator -= (const Vector3& other) {
 		x -= other.x;
 		y -= other.y;
 		z -= other.z;
 		return *this;
 	}
-	auto& operator *= (const Vector3& other) {
+	Vector3& operator *= (const Vector3& other) {
 		x *= other.x;
 		y *= other.y;
 		z *= other.z;
 		return *this;
 	}
-	auto& operator /= (const Vector3& other) {
+	Vector3& operator /= (const Vector3& other) {
 		x /= other.x;
 		y /= other.y;
 		z /= other.z;
@@ -164,25 +164,25 @@ struct Vector3i {
 	int y;
 	int z;
 
-	auto& operator += (const Vector3i& other) {
+	Vector3i& operator += (const Vector3i& other) {
 		x += other.x;
 		y += other.y;
 		z += other.z;
 		return *this;
 	}
-	auto& operator -= (const Vector3i& other) {
+	Vector3i& operator -= (const Vector3i& other) {
 		x -= other.x;
 		y -= other.y;
 		z -= other.z;
 		return *this;
 	}
-	auto& operator *= (const Vector3i& other) {
+	Vector3i& operator *= (const Vector3i& other) {
 		x *= other.x;
 		y *= other.y;
 		z *= other.z;
 		return *this;
 	}
-	auto& operator /= (const Vector3i& other) {
+	Vector3i& operator /= (const Vector3i& other) {
 		x /= other.x;
 		y /= other.y;
 		z /= other.z;
@@ -195,28 +195,28 @@ struct Vector4 {
 	float z;
 	float w;
 
-	auto& operator += (const Vector4& other) {
+	Vector4& operator += (const Vector4& other) {
 		x += other.x;
 		y += other.y;
 		z += other.z;
 		w += other.w;
 		return *this;
 	}
-	auto& operator -= (const Vector4& other) {
+	Vector4& operator -= (const Vector4& other) {
 		x -= other.x;
 		y -= other.y;
 		z -= other.z;
 		w -= other.w;
 		return *this;
 	}
-	auto& operator *= (const Vector4& other) {
+	Vector4& operator *= (const Vector4& other) {
 		x *= other.x;
 		y *= other.y;
 		z *= other.z;
 		w *= other.w;
 		return *this;
 	}
-	auto& operator /= (const Vector4& other) {
+	Vector4& operator /= (const Vector4& other) {
 		x /= other.x;
 		y /= other.y;
 		z /= other.z;
@@ -230,28 +230,28 @@ struct Vector4i {
 	int z;
 	int w;
 
-	auto& operator += (const Vector4i& other) {
+	Vector4i& operator += (const Vector4i& other) {
 		x += other.x;
 		y += other.y;
 		z += other.z;
 		w += other.w;
 		return *this;
 	}
-	auto& operator -= (const Vector4i& other) {
+	Vector4i& operator -= (const Vector4i& other) {
 		x -= other.x;
 		y -= other.y;
 		z -= other.z;
 		w -= other.w;
 		return *this;
 	}
-	auto& operator *= (const Vector4i& other) {
+	Vector4i& operator *= (const Vector4i& other) {
 		x *= other.x;
 		y *= other.y;
 		z *= other.z;
 		w *= other.w;
 		return *this;
 	}
-	auto& operator /= (const Vector4i& other) {
+	Vector4i& operator /= (const Vector4i& other) {
 		x /= other.x;
 		y /= other.y;
 		z /= other.z;
