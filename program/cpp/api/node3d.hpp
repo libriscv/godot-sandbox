@@ -44,6 +44,11 @@ struct Node3D : public Node {
 	/// @brief  Duplicate the node.
 	/// @return A new Node3D object with the same properties and children.
 	Node3D duplicate() const;
+
+	/// @brief Create a new Node3D object.
+	/// @param path The path to the Node3D object.
+	/// @return The Node3D object.
+	static Node3D create(std::string_view path);
 };
 
 inline Node3D Variant::as_node3d() const {

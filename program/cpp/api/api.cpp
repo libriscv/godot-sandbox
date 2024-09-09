@@ -7,6 +7,7 @@
 /* void sys_print(const Variant *, size_t) */
 MAKE_SYSCALL(ECALL_PRINT, void, sys_print, const Variant *, size_t);
 MAKE_SYSCALL(ECALL_THROW, void, sys_throw, const char *, size_t, const char *, size_t, const Variant *);
+EXTERN_SYSCALL(ECALL_NODE_CREATE, uint64_t, sys_node_create, Node_Create_Shortlist, const char *, size_t, const char *, size_t);
 
 /* Default main: Do nothing */
 __attribute__((weak)) int main() {
@@ -17,6 +18,11 @@ __attribute__((weak)) int main() {
 extern "C" __attribute__((used, retain, noreturn)) void fast_exit() {
 	asm(".insn i SYSTEM, 0, x0, x0, 0x7ff");
 	__builtin_unreachable();
+}
+
+// ClassDB::instantiate
+Object ClassDB::instantiate(std::string_view class_name, std::string_view name) {
+	return Object(sys_node_create(Node_Create_Shortlist::CREATE_CLASSDB, class_name.data(), class_name.size(), name.data(), name.size()));
 }
 
 /* Handle uncaught C++ exceptions */

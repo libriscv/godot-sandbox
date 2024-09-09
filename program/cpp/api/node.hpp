@@ -68,6 +68,11 @@ struct Node : public Object {
 	/// @brief  Duplicate the node.
 	/// @return A new Node object with the same properties and children.
 	Node duplicate() const;
+
+	/// @brief Create a new Node object.
+	/// @param path The path to the Node object.
+	/// @return The Node object.
+	static Node create(std::string_view path);
 };
 
 inline Node Variant::as_node() const {

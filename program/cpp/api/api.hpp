@@ -109,3 +109,8 @@ struct Engine {
 inline bool is_part_of_tree(Node node) {
 	return get_tree()("get_edited_scene_root") == node("get_owner");
 }
+
+
+struct ClassDB {
+	static Object instantiate(std::string_view class_name, std::string_view name = "");
+};

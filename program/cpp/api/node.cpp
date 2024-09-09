@@ -4,6 +4,7 @@
 
 MAKE_SYSCALL(ECALL_GET_NODE, uint64_t, sys_get_node, uint64_t, const char *, size_t);
 MAKE_SYSCALL(ECALL_NODE, void, sys_node, Node_Op, uint64_t, Variant *);
+MAKE_SYSCALL(ECALL_NODE_CREATE, uint64_t, sys_node_create, Node_Create_Shortlist, const char *, size_t, const char *, size_t);
 
 Node::Node(std::string_view path) :
 		Object(sys_get_node(0, path.begin(), path.size())) {
@@ -78,4 +79,8 @@ Node Node::duplicate() const {
 	Variant result;
 	sys_node(Node_Op::DUPLICATE, this->address(), &result);
 	return result.as_node();
+}
+
+Node Node::create(std::string_view path) {
+	return Node(sys_node_create(Node_Create_Shortlist::CREATE_NODE, nullptr, 0, path.data(), path.size()));
 }
