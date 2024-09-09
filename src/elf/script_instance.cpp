@@ -182,7 +182,7 @@ void ELFScriptInstance::update_methods() const {
 	}
 	this->has_updated_methods = true;
 
-	for (auto &function : script->functions) {
+	for (String &function : script->functions) {
 		MethodInfo method_info = MethodInfo(
 				Variant::NIL,
 				StringName(function));
@@ -203,7 +203,7 @@ const GDExtensionMethodInfo *ELFScriptInstance::get_method_list(uint32_t *r_coun
 	const int size = methods_info.size();
 	GDExtensionMethodInfo *list = memnew_arr(GDExtensionMethodInfo, size);
 	int i = 0;
-	for (auto &method_info : methods_info) {
+	for (godot::MethodInfo &method_info : methods_info) {
 		list[i] = create_method_info(method_info);
 		i++;
 	}
@@ -222,12 +222,12 @@ const GDExtensionPropertyInfo *ELFScriptInstance::get_property_list(uint32_t *r_
 		return nullptr;
 	}
 
-	auto &properties = sandbox->get_properties();
+	std::vector<SandboxProperty> &properties = sandbox->get_properties();
 	*r_count = properties.size();
 	GDExtensionPropertyInfo *list = memnew_arr(GDExtensionPropertyInfo, properties.size());
 	const GDExtensionPropertyInfo *list_ptr = list;
 
-	for (auto &property : properties) {
+	for (SandboxProperty &property : properties) {
 		if constexpr (VERBOSE_LOGGING) {
 			printf("ELFScriptInstance::get_property_list %s\n", property.name().utf8().ptr());
 		}
@@ -251,7 +251,7 @@ void ELFScriptInstance::free_property_list(const GDExtensionPropertyInfo *p_list
 Variant::Type ELFScriptInstance::get_property_type(const StringName &p_name, bool *r_is_valid) const {
 	auto [sandbox, created] = get_sandbox();
 	if (sandbox) {
-		if (auto *prop = sandbox->find_property_or_null(p_name)) {
+		if (const SandboxProperty *prop = sandbox->find_property_or_null(p_name)) {
 			*r_is_valid = true;
 			return prop->type();
 		}
@@ -271,7 +271,7 @@ bool ELFScriptInstance::validate_property(GDExtensionPropertyInfo &p_property) c
 		}
 		return false;
 	}
-	for (auto &property : sandbox->get_properties()) {
+	for (SandboxProperty &property : sandbox->get_properties()) {
 		if (*(StringName *)p_property.name == StringName(property.name())) {
 			if constexpr (VERBOSE_LOGGING) {
 				printf("ELFScriptInstance::validate_property %s => true\n", property.name().utf8().ptr());
@@ -290,14 +290,14 @@ bool ELFScriptInstance::has_method(const StringName &p_name) const {
 		return true;
 	}
 	bool result = false;
-	for (auto &function : godot_functions) {
+	for (const std::string &function : godot_functions) {
 		if (p_name == StringName(function.c_str())) {
 			result = true;
 			break;
 		}
 	}
 	if (!result) {
-		for (auto &function : script->functions) {
+		for (String &function : script->functions) {
 			if (p_name == StringName(function)) {
 				result = true;
 				break;
@@ -327,7 +327,7 @@ bool ELFScriptInstance::property_can_revert(const StringName &p_name) const {
 	if (!sandbox) {
 		return false;
 	}
-	if (auto *prop = sandbox->find_property_or_null(p_name)) {
+	if (const SandboxProperty *prop = sandbox->find_property_or_null(p_name)) {
 		return true;
 	}
 	return false;
@@ -338,7 +338,7 @@ bool ELFScriptInstance::property_get_revert(const StringName &p_name, Variant &r
 	if (!sandbox) {
 		return false;
 	}
-	if (auto *prop = sandbox->find_property_or_null(p_name)) {
+	if (const SandboxProperty *prop = sandbox->find_property_or_null(p_name)) {
 		r_ret = prop->default_value();
 		return true;
 	}
@@ -388,7 +388,7 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 	}
 	this->current_sandbox->set_tree_base(godot::Object::cast_to<godot::Node>(owner));
 
-	for (auto godot_function : godot_functions) {
+	for (std::string godot_function : godot_functions) {
 		MethodInfo method_info = MethodInfo(
 				Variant::NIL,
 				StringName(godot_function.c_str()));

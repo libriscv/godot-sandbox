@@ -216,8 +216,8 @@ public:
 	void assault(const String &test, int64_t iterations);
 	void print(std::string_view text);
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc, GDExtensionCallError &error);
-	auto &machine() { return *m_machine; }
-	const auto &machine() const { return *m_machine; }
+	machine_t &machine() { return *m_machine; }
+	const machine_t &machine() const { return *m_machine; }
 
 private:
 	void load(PackedByteArray &&vbuf, const std::vector<std::string> *argv = nullptr);

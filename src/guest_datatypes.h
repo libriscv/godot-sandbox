@@ -26,7 +26,7 @@ struct GuestStdString {
 		else if (size > max_len)
 			throw std::runtime_error("Guest std::string too large (size > 4MB)");
 		// View the string from guest memory, but include the null terminator
-		auto view = machine.memory.rvview(ptr, size);
+		std::string_view view = machine.memory.rvview(ptr, size);
 		return String::utf8(view.data(), view.size());
 	}
 	size_t copy_unterminated_to(const machine_t &machine, void *dst, std::size_t max_len) const {

@@ -193,9 +193,9 @@ void CPPScriptLanguage::_frame() {
 		icon_registered = true;
 		// Manually register CPPScript icon
 		if (Engine::get_singleton()->is_editor_hint() && FileAccess::file_exists(icon_path)) {
-			auto *editor_interface = EditorInterface::get_singleton();
+			EditorInterface *editor_interface = EditorInterface::get_singleton();
 			Ref<Theme> editor_theme = editor_interface->get_editor_theme();
-			auto *resource_loader = ResourceLoader::get_singleton();
+			ResourceLoader *resource_loader = ResourceLoader::get_singleton();
 			Ref<Texture2D> tex = resource_loader->load(icon_path);
 
 			editor_theme->set_icon("CPPScript", "EditorIcons", tex);
