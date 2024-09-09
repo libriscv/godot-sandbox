@@ -1163,7 +1163,7 @@ PackedStringArray Sandbox::get_functions() const {
 	PackedStringArray result;
 	// Get all unmangled public functions from the guest program.
 	// Exclude functions that belong to the C/C++ runtime, as well as compiler-generated functions.
-	for (std::string_view &function : machine().memory.all_unmangled_function_symbols()) {
+	for (std::string_view function : machine().memory.all_unmangled_function_symbols()) {
 		// Double underscore functions are compiler-generated functions.
 		if (function.size() >= 2 && function[0] == '_' && function[1] == '_') {
 			continue;
@@ -1191,7 +1191,7 @@ Sandbox::BinaryInfo Sandbox::get_program_info_from_binary(const PackedByteArray 
 		// Detect language: C++, Rust, etc.
 		result.language = "Unknown";
 		result.version = 0;
-		for (const std::string_view &comment : comments) {
+		for (std::string_view comment : comments) {
 			if (comment.find("Godot Rust") != std::string::npos) {
 				// Rust: "Godot Rust API v1"
 				result.language = "Rust";
@@ -1214,7 +1214,7 @@ Sandbox::BinaryInfo Sandbox::get_program_info_from_binary(const PackedByteArray 
 
 		// Get all unmangled public functions from the guest program.
 		// Exclude functions that belong to the C/C++ runtime, as well as compiler-generated functions.
-		for (std::string_view &function : machine.memory.all_unmangled_function_symbols()) {
+		for (std::string_view function : machine.memory.all_unmangled_function_symbols()) {
 			// Double underscore functions are compiler-generated functions.
 			if (function.size() >= 2 && function[0] == '_' && function[1] == '_') {
 				continue;

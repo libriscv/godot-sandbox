@@ -287,7 +287,7 @@ APICALL(api_vclone) {
 	// Find scoped Variant and clone it.
 	std::optional<const Variant *> var = emu.get_scoped_variant(vp->v.i);
 	if (var.has_value()) {
-		const auto index = emu.create_scoped_variant(var.value()->duplicate());
+		const unsigned index = emu.create_scoped_variant(var.value()->duplicate());
 		vret->type = var.value()->get_type();
 		vret->v.i = index;
 	} else {
@@ -383,7 +383,7 @@ APICALL(api_obj) {
 			for (size_t i = 0; i < methods.size(); i++) {
 				Dictionary dict = methods[i].operator godot::Dictionary();
 				auto name = String(dict["name"]).utf8();
-				const auto self = saddr + sizeof(GuestStdString) * i;
+				const gaddr_t self = saddr + sizeof(GuestStdString) * i;
 				sptr[i].set_string(emu.machine(), self, name.ptr(), name.length());
 			}
 		} break;
@@ -405,7 +405,7 @@ APICALL(api_obj) {
 			for (size_t i = 0; i < properties.size(); i++) {
 				Dictionary dict = properties[i].operator godot::Dictionary();
 				auto name = String(dict["name"]).utf8();
-				const auto self = saddr + sizeof(GuestStdString) * i;
+				const gaddr_t self = saddr + sizeof(GuestStdString) * i;
 				sptr[i].set_string(emu.machine(), self, name.ptr(), name.length());
 			}
 		} break;
@@ -429,7 +429,7 @@ APICALL(api_obj) {
 			for (size_t i = 0; i < signals.size(); i++) {
 				Dictionary dict = signals[i].operator godot::Dictionary();
 				auto name = String(dict["name"]).utf8();
-				const auto self = saddr + sizeof(GuestStdString) * i;
+				const gaddr_t self = saddr + sizeof(GuestStdString) * i;
 				sptr[i].set_string(emu.machine(), self, name.ptr(), name.length());
 			}
 		} break;

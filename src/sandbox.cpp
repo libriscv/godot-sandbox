@@ -133,8 +133,8 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 
 		this->initialize_syscalls();
 
-		const uint64_t heap_size = MAX_HEAP << 20; // in MiB
-		const auto heap_area = machine().memory.mmap_allocate(heap_size);
+		const gaddr_t heap_size = MAX_HEAP << 20; // in MiB
+		const gaddr_t heap_area = machine().memory.mmap_allocate(heap_size);
 
 		// Add native system call interfaces
 		machine().setup_native_heap(HEAP_SYSCALLS_BASE, heap_area, heap_size);
