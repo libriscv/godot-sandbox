@@ -96,6 +96,7 @@ enum class Node_Op {
 	REMOVE_CHILD,
 	REMOVE_CHILD_DEFERRED,
 	GET_CHILDREN,
+	SET_NAME,
 };
 
 enum class Node2D_Op {

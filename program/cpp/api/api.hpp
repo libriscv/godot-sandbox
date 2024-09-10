@@ -33,6 +33,20 @@ inline Object get_tree() {
 	return Object("SceneTree");
 }
 
+/// @brief Check if the given Node is a part of the current scene tree. Not an instance of another scene.
+/// @param node The Node to check.
+/// @return True if the Node is a part of the current scene tree, false otherwise.
+inline bool is_part_of_tree(Node node) {
+	return get_tree()("get_edited_scene_root") == node("get_owner");
+}
+
+/// @brief Get a node by its path.
+/// @param path The path to the node.
+/// @return The node at the given path.
+inline Node get_node(std::string_view path) {
+	return Node(path);
+}
+
 #include <unordered_map>
 /// @brief A macro to define a static function that returns a custom state object
 /// tied to a Node object. For shared sandbox instances, this is the simplest way
@@ -101,16 +115,19 @@ struct Engine {
 	static bool is_editor_hint() {
 		return is_editor();
 	}
+
+	/// @brief Get the singleton instance of the Engine.
+	/// @return The Engine singleton.
+	static Object get_singleton() {
+		return Object("Engine");
+	}
 };
 
-/// @brief Check if the given Node is a part of the current scene tree. Not an instance of another scene.
-/// @param node The Node to check.
-/// @return True if the Node is a part of the current scene tree, false otherwise.
-inline bool is_part_of_tree(Node node) {
-	return get_tree()("get_edited_scene_root") == node("get_owner");
-}
-
-
+/// @brief The class database for instantiating Godot objects.
 struct ClassDB {
+	/// @brief Instantiate a new object of the given class.
+	/// @param class_name The name of the class to instantiate.
+	/// @param name The name of the object, if it's a Node. Otherwise, this is ignored.
+	/// @return The new object.
 	static Object instantiate(std::string_view class_name, std::string_view name = "");
 };

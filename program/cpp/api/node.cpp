@@ -16,6 +16,10 @@ std::string Node::get_name() const {
 	return std::string(var);
 }
 
+void Node::set_name(Variant name) {
+	sys_node(Node_Op::SET_NAME, address(), &name);
+}
+
 std::string Node::get_path() const {
 	Variant var;
 	sys_node(Node_Op::GET_PATH, address(), &var);

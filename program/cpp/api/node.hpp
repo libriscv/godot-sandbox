@@ -15,6 +15,10 @@ struct Node : public Object {
 	/// @return The name of the node.
 	std::string get_name() const;
 
+	/// @brief Set the name of the node.
+	/// @param name The new name of the node.
+	void set_name(Variant name);
+
 	/// @brief Get the path of the node, relative to the root node.
 	/// @return The path of the node.
 	std::string get_path() const;

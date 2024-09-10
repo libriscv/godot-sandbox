@@ -571,7 +571,7 @@ APICALL(api_node_create) {
 		throw std::runtime_error("Failed to create Node");
 	}
 	if (!c_name.empty()) {
-		node->set_name(c_name.c_str());
+		node->set_name(String::utf8(c_name.c_str(), c_name.size()));
 	}
 	emu.add_scoped_object(node);
 	machine.set_result(reinterpret_cast<uint64_t>(node));
@@ -589,6 +589,10 @@ APICALL(api_node) {
 		case Node_Op::GET_NAME: {
 			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
 			var->create(emu, String(node->get_name()));
+		} break;
+		case Node_Op::SET_NAME: {
+			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			node->set_name(var->toVariant(emu).operator String());
 		} break;
 		case Node_Op::GET_PATH: {
 			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
