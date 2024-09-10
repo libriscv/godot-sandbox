@@ -40,10 +40,10 @@ inline bool is_part_of_tree(Node node) {
 	return get_tree()("get_edited_scene_root") == node("get_owner");
 }
 
-/// @brief Get a node by its path.
+/// @brief Get a node by its path. By default, this returns the current node.
 /// @param path The path to the node.
 /// @return The node at the given path.
-inline Node get_node(std::string_view path) {
+inline Node get_node(std::string_view path = ".") {
 	return Node(path);
 }
 
