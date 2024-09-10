@@ -5,6 +5,7 @@
 // API call to get/set Node2D properties.
 MAKE_SYSCALL(ECALL_NODE2D, void, sys_node2d, Node2D_Op, uint64_t, Variant *);
 EXTERN_SYSCALL(ECALL_NODE, void, sys_node, Node_Op, uint64_t, Variant *);
+EXTERN_SYSCALL(ECALL_NODE_CREATE, uint64_t, sys_node_create, Node_Create_Shortlist, const char *, size_t, const char *, size_t);
 
 static inline void node2d(Node2D_Op op, uint64_t address, const Variant &value) {
 	sys_node2d(op, address, const_cast<Variant *>(&value));
@@ -54,4 +55,8 @@ Node2D Node2D::duplicate() const {
 	Variant result;
 	sys_node(Node_Op::DUPLICATE, address(), &result);
 	return result.as_node2d();
+}
+
+Node2D Node2D::create(std::string_view path) {
+	return Node2D(sys_node_create(Node_Create_Shortlist::CREATE_NODE2D, nullptr, 0, path.data(), path.size()));
 }

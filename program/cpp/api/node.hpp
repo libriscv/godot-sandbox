@@ -15,6 +15,10 @@ struct Node : public Object {
 	/// @return The name of the node.
 	std::string get_name() const;
 
+	/// @brief Set the name of the node.
+	/// @param name The new name of the node.
+	void set_name(Variant name);
+
 	/// @brief Get the path of the node, relative to the root node.
 	/// @return The path of the node.
 	std::string get_path() const;
@@ -68,6 +72,11 @@ struct Node : public Object {
 	/// @brief  Duplicate the node.
 	/// @return A new Node object with the same properties and children.
 	Node duplicate() const;
+
+	/// @brief Create a new Node object.
+	/// @param path The path to the Node object.
+	/// @return The Node object.
+	static Node create(std::string_view path);
 };
 
 inline Node Variant::as_node() const {

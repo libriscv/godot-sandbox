@@ -523,6 +523,60 @@ APICALL(api_get_node) {
 	machine.set_result(reinterpret_cast<uint64_t>(node));
 }
 
+APICALL(api_node_create) {
+	auto [type, g_class_name, g_class_len, name] = machine.sysargs<Node_Create_Shortlist, gaddr_t, unsigned, std::string_view>();
+	Sandbox &emu = riscv::emu(machine);
+	machine.penalize(150'000);
+
+	Node *node = nullptr;
+	const std::string c_name(name);
+
+	switch (type) {
+		case Node_Create_Shortlist::CREATE_CLASSDB: {
+			// Get the class name from guest memory, including null terminator.
+			std::string_view class_name = machine.memory.memview(g_class_name, g_class_len + 1);
+			// Verify the class name is null-terminated.
+			if (class_name[g_class_len] != '\0') {
+				ERR_PRINT("Class name is not null-terminated");
+				throw std::runtime_error("Class name is not null-terminated");
+			}
+			// Now that it's null-terminated, we can use it for StringName.
+			Object *obj = ClassDB::instantiate(class_name.data());
+			node = Object::cast_to<Node>(obj);
+			// If it's not a Node, just return the Object.
+			if (node == nullptr) {
+				emu.add_scoped_object(obj);
+				machine.set_result(reinterpret_cast<uint64_t>(obj));
+				return;
+			}
+			// It's a Node, so continue to set the name.
+			break;
+		}
+		case Node_Create_Shortlist::CREATE_NODE: // Node
+			node = memnew(Node);
+			break;
+		case Node_Create_Shortlist::CREATE_NODE2D: // Node2D
+			node = memnew(Node2D);
+			break;
+		case Node_Create_Shortlist::CREATE_NODE3D: // Node3D
+			node = memnew(Node3D);
+			break;
+		default:
+			ERR_PRINT("Unknown Node type");
+			throw std::runtime_error("Unknown Node type");
+	}
+
+	if (node == nullptr) {
+		ERR_PRINT("Failed to create Node");
+		throw std::runtime_error("Failed to create Node");
+	}
+	if (!c_name.empty()) {
+		node->set_name(String::utf8(c_name.c_str(), c_name.size()));
+	}
+	emu.add_scoped_object(node);
+	machine.set_result(reinterpret_cast<uint64_t>(node));
+}
+
 APICALL(api_node) {
 	auto [op, addr, gvar] = machine.sysargs<int, uint64_t, gaddr_t>();
 	machine.penalize(250'000); // Costly Node operations.
@@ -535,6 +589,10 @@ APICALL(api_node) {
 		case Node_Op::GET_NAME: {
 			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
 			var->create(emu, String(node->get_name()));
+		} break;
+		case Node_Op::SET_NAME: {
+			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			node->set_name(var->toVariant(emu).operator String());
 		} break;
 		case Node_Op::GET_PATH: {
 			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
@@ -1087,5 +1145,7 @@ void Sandbox::initialize_syscalls() {
 
 			{ ECALL_TIMER_PERIODIC, api_timer_periodic },
 			{ ECALL_TIMER_STOP, api_timer_stop },
+
+			{ ECALL_NODE_CREATE, api_node_create },
 	});
 }

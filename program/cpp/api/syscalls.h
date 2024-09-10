@@ -42,7 +42,9 @@
 #define ECALL_TIMER_PERIODIC (GAME_API_BASE + 30)
 #define ECALL_TIMER_STOP (GAME_API_BASE + 31)
 
-#define ECALL_LAST (GAME_API_BASE + 32)
+#define ECALL_NODE_CREATE (GAME_API_BASE + 32)
+
+#define ECALL_LAST (GAME_API_BASE + 33)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
@@ -71,6 +73,13 @@ enum class Object_Op {
 	GET_SIGNAL_LIST,
 };
 
+enum class Node_Create_Shortlist {
+	CREATE_CLASSDB = 0,
+	CREATE_NODE,
+	CREATE_NODE2D,
+	CREATE_NODE3D,
+};
+
 enum class Node_Op {
 	GET_NAME = 0,
 	GET_PATH,
@@ -87,6 +96,7 @@ enum class Node_Op {
 	REMOVE_CHILD,
 	REMOVE_CHILD_DEFERRED,
 	GET_CHILDREN,
+	SET_NAME,
 };
 
 enum class Node2D_Op {
