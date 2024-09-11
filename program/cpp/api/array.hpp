@@ -64,6 +64,10 @@ inline Variant::Variant(const Array& a) {
 	v.i = a.get_variant_index();
 }
 
+inline Variant::operator Array() const {
+	return as_array();
+}
+
 class ArrayIterator {
 public:
 	ArrayIterator(const Array &array, unsigned idx) : m_array(array), m_idx(idx) {}

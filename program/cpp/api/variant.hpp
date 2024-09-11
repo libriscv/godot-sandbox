@@ -158,6 +158,8 @@ struct Variant
 	operator std::string() const; // String for STRING and PACKED_BYTE_ARRAY
 	operator std::u32string() const; // u32string for STRING, STRING_NAME
 	operator String() const;
+	operator Array() const;
+	operator Dictionary() const;
 
 	Object as_object() const;
 	Node as_node() const;
