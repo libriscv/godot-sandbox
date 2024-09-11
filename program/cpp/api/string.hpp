@@ -53,10 +53,7 @@ inline Variant::Variant(const String &s) {
 }
 
 inline Variant::operator String() const {
-	if (m_type != STRING) {
-		api_throw("std::bad_cast", "Failed to cast Variant to String", this);
-	}
-	return String::from_variant_index(v.i);
+	return as_string();
 }
 
 inline String Variant::as_string() const {

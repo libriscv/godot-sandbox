@@ -49,6 +49,10 @@ inline Variant::Variant(const Dictionary &d) {
 	v.i = d.get_variant_index();
 }
 
+inline Variant::operator Dictionary() const {
+	return as_dictionary();
+}
+
 struct DictAccessor {
 	DictAccessor(const Dictionary &dict, const Variant &key) : m_dict(dict), m_key(key) {}
 
