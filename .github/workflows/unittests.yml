@@ -1,0 +1,44 @@
+name: Unit Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{github.workspace}}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y gcc-12-riscv64-linux-gnu g++-12-riscv64-linux-gnu cmake
+        git submodule update --depth 1 --init ${{github.workspace}}/godot-cpp
+        git submodule update --init ${{github.workspace}}/libriscv
+        git submodule update --init ${{github.workspace}}/ext/Gut
+
+    - name: Configure
+      run: cmake -B ${{github.workspace}}/.build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build the unittests
+      run: cmake --build ${{github.workspace}}/.build --parallel 6
+
+    - name: Download and extract Godot
+      working-directory: ${{github.workspace}}/tests
+      run: |
+        wget -q https://downloads.tuxfamily.org/godotengine/4.3/Godot_v4.3-stable_linux.x86_64.zip
+        unzip -q Godot_v4.3-stable_linux.x86_64.zip
+
+    - name: Run Gut tests
+      working-directory: ${{github.workspace}}/tests
+      run: |
+        ./Godot_v4.3-stable_linux.x86_64 --path "$PWD" --headless --import
+        ./Godot_v4.3-stable_linux.x86_64 --path "$PWD" --headless --import
+        ./Godot_v4.3-stable_linux.x86_64 --path "$PWD" --headless -d -s addons/gut/gut_cmdln.gd
