@@ -74,9 +74,9 @@ public:
 					Docker::ContainerVersion(docker_container_name, { "/usr/api/build.sh", "--version" });
 		return docker_container_version;
 	}
-	static bool DockerContainerExecute(const PackedStringArray &p_arguments, Array &output) {
+	static bool DockerContainerExecute(const PackedStringArray &p_arguments, Array &output, bool verbose = true) {
 		DockerContainerStart();
-		return Docker::ContainerExecute(docker_container_name, p_arguments, output);
+		return Docker::ContainerExecute(docker_container_name, p_arguments, output, verbose);
 	}
 
 	CPPScript();

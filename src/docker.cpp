@@ -63,13 +63,13 @@ Array Docker::ContainerStop(String container_name) {
 	return output;
 }
 
-bool Docker::ContainerExecute(String container_name, const PackedStringArray &p_arguments, Array &output) {
+bool Docker::ContainerExecute(String container_name, const PackedStringArray &p_arguments, Array &output, bool verbose) {
 	godot::OS *OS = godot::OS::get_singleton();
 	PackedStringArray arguments = { "exec", "-t", container_name, "bash" };
 	for (int i = 0; i < p_arguments.size(); i++) {
 		arguments.push_back(p_arguments[i]);
 	}
-	if constexpr (VERBOSE_CMD) {
+	if (VERBOSE_CMD && verbose) {
 		UtilityFunctions::print(SandboxProjectSettings::get_docker_path(), arguments);
 	}
 	const int res = OS->execute(SandboxProjectSettings::get_docker_path(), arguments, output);
