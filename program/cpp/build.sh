@@ -18,7 +18,7 @@ CPPFLAGS="-g -O2 -std=gnu++23 -DVERSION=$current_version"
 while [[ "$#" -gt 0 ]]; do
 	case $1 in
 		--api) cp -r /usr/api $1; exit ;;
-		--line) shift; addr="$1"; shift; output="$1"; shift; addr2line -e $output $addr; exit ;;
+		--line) shift; addr="$1"; shift; binary="$1"; shift; addr2line -C -f -e $binary $addr; exit ;;
 		-o) shift; output="$1"; shift; break ;;
 		--local) locally=true; shift ;;
 		--version) shift; echo "$current_version"; exit ;;
