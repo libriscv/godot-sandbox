@@ -19,6 +19,7 @@ String Sandbox::_to_string() const {
 void Sandbox::_bind_methods() {
 	// Methods.
 	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
+	ClassDB::bind_method(D_METHOD("set_program", "program"), &Sandbox::set_program);
 	{
 		MethodInfo mi;
 		mi.arguments.push_back(PropertyInfo(Variant::STRING, "function"));
