@@ -6,7 +6,7 @@
 struct Node3D : public Node {
 	/// @brief Construct a Node3D object from an existing in-scope Node object.
 	/// @param addr The address of the Node3D object.
-	Node3D(uint64_t addr) : Node(addr) {}
+	constexpr Node3D(uint64_t addr) : Node(addr) {}
 	Node3D(Object obj) : Node(obj) {}
 	Node3D(Node node) : Node(node) {}
 

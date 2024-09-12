@@ -4,7 +4,7 @@
 
 MAKE_SYSCALL(ECALL_ARRAY_OPS, void, sys_array_ops, Array_Op, unsigned, int, Variant *);
 MAKE_SYSCALL(ECALL_ARRAY_AT, void, sys_array_at, unsigned, int, Variant *);
-MAKE_SYSCALL(ECALL_ARRAY_SIZE, void, sys_array_size, unsigned);
+MAKE_SYSCALL(ECALL_ARRAY_SIZE, int, sys_array_size, unsigned);
 
 void Array::push_back(const Variant &value) {
 	sys_array_ops(Array_Op::PUSH_BACK, m_idx, 0, (Variant *)&value);
@@ -53,8 +53,7 @@ Variant Array::operator[](int idx) const {
 }
 
 int Array::size() const {
-	sys_array_size(m_idx);
-	return 0;
+	return sys_array_size(m_idx);
 }
 
 Array::Array(unsigned size) {
@@ -66,27 +65,4 @@ Array::Array(unsigned size) {
 Array::Array(const std::vector<Variant> &values) {
 	Variant v = Variant::from_array(values);
 	this->m_idx = v.get_internal_index();
-}
-
-Array::Array(const Array &other) {
-	m_idx = other.m_idx;
-}
-
-Array::Array(Array &&other) {
-	m_idx = other.m_idx;
-	// Invalidate the other array?
-}
-
-Array::~Array() {
-	// Do nothing, as we don't own the array?
-}
-
-Array &Array::operator=(const Array &other) {
-	m_idx = other.m_idx;
-	return *this;
-}
-
-Array &Array::operator=(Array &&other) {
-	m_idx = other.m_idx;
-	return *this;
 }

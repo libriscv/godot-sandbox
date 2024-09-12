@@ -7,14 +7,10 @@
  * @brief String wrapper for Godot String.
  * Implemented by referencing and mutating a host-side String Variant.
  */
-struct String {
-	String(std::string_view value = "");
-	String(const String &other);
-	String(String &&other);
-	~String() = default;
-
-	String &operator=(const String &other);
-	String &operator=(String &&other);
+union String {
+	constexpr String() {} // DON'T TOUCH
+	String(std::string_view value)
+		: m_idx(Create(value.data(), value.size())) {}
 
 	// String operations
 	void append(const String &value);
@@ -40,8 +36,9 @@ struct String {
 	// String size
 	int size() const;
 
-	static String from_variant_index(unsigned idx) { String a; a.m_idx = idx; return a; }
+	static String from_variant_index(unsigned idx) { String a {}; a.m_idx = idx; return a; }
 	unsigned get_variant_index() const noexcept { return m_idx; }
+	static unsigned Create(const char *data, size_t size);
 
 private:
 	unsigned m_idx = -1;
@@ -61,16 +58,4 @@ inline String Variant::as_string() const {
 		api_throw("std::bad_cast", "Failed to cast Variant to String", this);
 	}
 	return String::from_variant_index(v.i);
-}
-
-inline String operator +(const String &lhs, const String &rhs) {
-	String s = lhs;
-	s.append(rhs);
-	return s;
-}
-
-inline String operator +(const String &lhs, std::string_view rhs) {
-	String s = lhs;
-	s.append(rhs);
-	return s;
 }

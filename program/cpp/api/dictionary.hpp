@@ -4,13 +4,8 @@
 struct DictAccessor;
 
 struct Dictionary {
-	Dictionary();
-	Dictionary(const Dictionary &other);
-	Dictionary(Dictionary &&other);
-	~Dictionary();
-
-	Dictionary &operator=(const Dictionary &other);
-	Dictionary &operator=(Dictionary &&other);
+	constexpr Dictionary() {} // DON'T TOUCH
+	static Dictionary Create();
 
 	operator Variant() const;
 

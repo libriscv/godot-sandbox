@@ -6,6 +6,7 @@
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#include "sandbox_project_settings.h"
 
 using namespace godot;
 
@@ -69,6 +70,7 @@ void Sandbox::_bind_methods() {
 }
 
 Sandbox::Sandbox() {
+	this->m_use_native_args = SandboxProjectSettings::use_native_types();
 	// In order to reduce checks we guarantee that this
 	// class is well-formed at all times.
 	try {
@@ -177,6 +179,65 @@ Variant Sandbox::vmcall_fn(const StringName &function, const Variant **args, GDE
 	Variant result = this->vmcall_internal(cached_address_of(function.hash()), args, arg_count, error);
 	return result;
 }
+void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, const Variant **args, int argc) {
+	// In this mode we will try to use registers when possible
+	// The stack is already set up from setup_arguments(), so we just need to set up the registers
+	auto& machine = this->machine();
+	int index = 11;
+	int flindex = 10;
+
+	for (size_t i = 0; i < argc; i++) {
+		const Variant &arg = *args[i];
+		// Incoming arguments are implicitly trusted, as they are provided by the host
+		// They also have have the guaranteed lifetime of the function call
+		switch (arg.get_type()) {
+			case Variant::Type::NIL:
+				machine.cpu.reg(index++) = 0;
+				break;
+			case Variant::Type::BOOL:
+				machine.cpu.reg(index++) = bool(arg);
+				break;
+			case Variant::Type::INT:
+				machine.cpu.reg(index++) = int64_t(arg);
+				break;
+			case Variant::Type::FLOAT: // Variant floats are always 64-bit
+				machine.cpu.registers().getfl(flindex++).set_double(double(arg));
+				break;
+			case Variant::VECTOR2: { // 8- or 16-byte structs can be passed in registers
+				godot::Vector2 vec = arg.operator godot::Vector2();
+				machine.cpu.registers().getfl(flindex++).set_float(vec.x);
+				machine.cpu.registers().getfl(flindex++).set_float(vec.y);
+				break;
+			}
+			case Variant::VECTOR2I: { // 8- or 16-byte structs can be passed in registers
+				godot::Vector2i ivec = arg.operator godot::Vector2i();
+				machine.cpu.reg(index++) = ivec.x;
+				machine.cpu.reg(index++) = ivec.y;
+				break;
+			}
+			case Variant::OBJECT: { // Objects are represented as uintptr_t
+				godot::Object *obj = arg.operator godot::Object *();
+				this->add_scoped_object(obj);
+				machine.cpu.reg(index++) = uintptr_t(obj); // Fits in a single register
+				break;
+			}
+			case Variant::ARRAY:
+			case Variant::DICTIONARY:
+			case Variant::STRING:
+			case Variant::STRING_NAME:
+			case Variant::NODE_PATH: { // Uses Variant index to reference the object
+				unsigned idx = this->add_scoped_variant(&arg);
+				machine.cpu.reg(index++) = idx;
+				break;
+			}
+			default: { // Complex types are passed byref, pushed onto the stack as GuestVariant
+				GuestVariant &g_arg = v[i + 1];
+				g_arg.set(*this, arg, true);
+				machine.cpu.reg(index++) = arrayDataPtr + (i + 1) * sizeof(GuestVariant);
+			}
+		}
+	}
+}
 GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int argc) {
 	sp -= sizeof(GuestVariant) * (argc + 1);
 	sp &= ~gaddr_t(0xF); // re-align stack pointer
@@ -189,7 +250,13 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 
 	// Set up first argument (return value, also a Variant)
 	m_machine->cpu.reg(10) = arrayDataPtr;
-	v[0].type = Variant::Type::NIL;
+	//v[0].type = Variant::Type::NIL;
+
+	if (this->m_use_native_args) {
+		setup_arguments_native(arrayDataPtr, v, args, argc);
+		// A0 is the return value (Variant) of the function
+		return &v[0];
+	}
 
 	for (size_t i = 0; i < argc; i++) {
 		const Variant &arg = *args[i];
@@ -565,7 +632,10 @@ void SandboxProperty::set(Sandbox &sandbox, const Variant &value) {
 	}
 	const Variant *args[] = { &value };
 	GDExtensionCallError error;
+	auto old_use_native_args = sandbox.get_use_native_args();
+	sandbox.set_use_native_args(false); // Always use Variant for properties
 	sandbox.vmcall_internal(m_setter_address, args, 1, error);
+	sandbox.set_use_native_args(old_use_native_args);
 }
 
 Variant SandboxProperty::get(const Sandbox &sandbox) const {

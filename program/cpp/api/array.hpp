@@ -5,14 +5,10 @@
 class ArrayIterator;
 
 struct Array {
-	Array(unsigned size = 0);
+	constexpr Array() {} // DON'T TOUCH
+	Array(unsigned size);
 	Array(const std::vector<Variant> &values);
-	Array(const Array &other);
-	Array(Array &&other);
-	~Array();
-
-	Array &operator=(const Array &other);
-	Array &operator=(Array &&other);
+	static Array Create(unsigned size = 0) { return Array(size); }
 
 	operator Variant() const;
 

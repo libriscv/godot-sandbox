@@ -6,7 +6,7 @@
 struct Node2D : public Node {
 	/// @brief Construct a Node2D object from an existing in-scope Node object.
 	/// @param addr The address of the Node2D object.
-	Node2D(uint64_t addr) : Node(addr) {}
+	constexpr Node2D(uint64_t addr) : Node(addr) {}
 	Node2D(Object obj) : Node(obj) {}
 	Node2D(Node node) : Node(node) {}
 

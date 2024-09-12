@@ -35,31 +35,10 @@ void Dictionary::merge(const Dictionary &other) {
 	(void)sys_dict_ops(Dictionary_Op::MERGE, m_idx, &v, nullptr);
 }
 
-Dictionary::Dictionary() {
+Dictionary Dictionary::Create() {
 	Variant v;
 	sys_vcreate(&v, Variant::DICTIONARY, 0, nullptr);
-	this->m_idx = v.get_internal_index();
-}
-
-Dictionary::Dictionary(const Dictionary &other) {
-	m_idx = other.m_idx;
-}
-
-Dictionary::Dictionary(Dictionary &&other) {
-	m_idx = other.m_idx;
-	// Invalidate the other dictionary?
-}
-
-Dictionary::~Dictionary() {
-	// Do nothing, as we don't own the dictionary?
-}
-
-Dictionary &Dictionary::operator=(const Dictionary &other) {
-	m_idx = other.m_idx;
-	return *this;
-}
-
-Dictionary &Dictionary::operator=(Dictionary &&other) {
-	m_idx = other.m_idx;
-	return *this;
+	Dictionary d;
+	d.m_idx = v.get_internal_index();
+	return d;
 }

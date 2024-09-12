@@ -8,7 +8,7 @@ struct Object {
 
 	/// @brief Construct an Object object from an existing in-scope Object object.
 	/// @param addr The address of the Object object.
-	Object(uint64_t addr) : m_address{addr} {}
+	constexpr Object(uint64_t addr) : m_address{addr} {}
 
 	/// Call a method on the node.
 	/// @param method The method to call.

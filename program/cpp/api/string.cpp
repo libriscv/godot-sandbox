@@ -37,27 +37,8 @@ int String::size() const {
 	return sys_string_size(m_idx);
 }
 
-String::String(std::string_view value) {
-	this->m_idx = sys_string_create(value.data(), value.size());
-}
-
-String::String(const String &other) {
-	m_idx = other.m_idx;
-}
-
-String::String(String &&other) {
-	m_idx = other.m_idx;
-	// Invalidate the other string?
-}
-
-String &String::operator=(const String &other) {
-	m_idx = other.m_idx;
-	return *this;
-}
-
-String &String::operator=(String &&other) {
-	m_idx = other.m_idx;
-	return *this;
+unsigned String::Create(const char *data, size_t size) {
+	return sys_string_create(data, size);
 }
 
 std::string String::utf8() const {
