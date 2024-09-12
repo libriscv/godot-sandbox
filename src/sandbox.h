@@ -257,7 +257,6 @@ private:
 	unsigned m_calls_made = 0;
 
 	struct CurrentState {
-		godot::Node *tree_base;
 		std::vector<Variant> variants;
 		std::vector<const Variant *> scoped_variants;
 		std::vector<uintptr_t> scoped_objects;

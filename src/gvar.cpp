@@ -30,6 +30,8 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 			return Variant{ godot::Vector4(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]) };
 		case Variant::VECTOR4I:
 			return Variant{ godot::Vector4i(v.v4i[0], v.v4i[1], v.v4i[2], v.v4i[3]) };
+		case Variant::COLOR:
+			return Variant{ godot::Color(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]) };
 
 		case Variant::OBJECT: {
 			godot::Object *obj = (godot::Object *)uintptr_t(v.i);
@@ -104,14 +106,18 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 			this->v.f = value;
 			break;
 
-		case Variant::VECTOR2:
-			this->v.v2f[0] = value.operator godot::Vector2().x;
-			this->v.v2f[1] = value.operator godot::Vector2().y;
+		case Variant::VECTOR2: {
+			godot::Vector2 vec = value.operator godot::Vector2();
+			this->v.v2f[0] = vec.x;
+			this->v.v2f[1] = vec.y;
 			break;
-		case Variant::VECTOR2I:
-			this->v.v2i[0] = value.operator godot::Vector2i().x;
-			this->v.v2i[1] = value.operator godot::Vector2i().y;
+		}
+		case Variant::VECTOR2I: {
+			godot::Vector2i vec = value.operator godot::Vector2i();
+			this->v.v2i[0] = vec.x;
+			this->v.v2i[1] = vec.y;
 			break;
+		}
 		case Variant::RECT2: {
 			Rect2 rect = value.operator godot::Rect2();
 			this->v.v4f[0] = rect.position[0];
@@ -128,28 +134,44 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 			this->v.v4i[3] = rect.size[1];
 			break;
 		}
-		case Variant::VECTOR3:
-			this->v.v3f[0] = value.operator godot::Vector3().x;
-			this->v.v3f[1] = value.operator godot::Vector3().y;
-			this->v.v3f[2] = value.operator godot::Vector3().z;
+		case Variant::VECTOR3: {
+			godot::Vector3 vec = value.operator godot::Vector3();
+			this->v.v3f[0] = vec.x;
+			this->v.v3f[1] = vec.y;
+			this->v.v3f[2] = vec.z;
 			break;
-		case Variant::VECTOR3I:
-			this->v.v3i[0] = value.operator godot::Vector3i().x;
-			this->v.v3i[1] = value.operator godot::Vector3i().y;
-			this->v.v3i[2] = value.operator godot::Vector3i().z;
+		}
+		case Variant::VECTOR3I: {
+			godot::Vector3i vec = value.operator godot::Vector3i();
+			this->v.v3i[0] = vec.x;
+			this->v.v3i[1] = vec.y;
+			this->v.v3i[2] = vec.z;
 			break;
-		case Variant::VECTOR4:
-			this->v.v4f[0] = value.operator godot::Vector4().x;
-			this->v.v4f[1] = value.operator godot::Vector4().y;
-			this->v.v4f[2] = value.operator godot::Vector4().z;
-			this->v.v4f[3] = value.operator godot::Vector4().w;
+		}
+		case Variant::VECTOR4: {
+			godot::Vector4 vec = value.operator godot::Vector4();
+			this->v.v4f[0] = vec.x;
+			this->v.v4f[1] = vec.y;
+			this->v.v4f[2] = vec.z;
+			this->v.v4f[3] = vec.w;
 			break;
-		case Variant::VECTOR4I:
-			this->v.v4i[0] = value.operator godot::Vector4i().x;
-			this->v.v4i[1] = value.operator godot::Vector4i().y;
-			this->v.v4i[2] = value.operator godot::Vector4i().z;
-			this->v.v4i[3] = value.operator godot::Vector4i().w;
+		}
+		case Variant::VECTOR4I: {
+			godot::Vector4i vec = value.operator godot::Vector4i();
+			this->v.v4i[0] = vec.x;
+			this->v.v4i[1] = vec.y;
+			this->v.v4i[2] = vec.z;
+			this->v.v4i[3] = vec.w;
 			break;
+		}
+		case Variant::COLOR: {
+			godot::Color color = value.operator godot::Color();
+			this->v.v4f[0] = color.r;
+			this->v.v4f[1] = color.g;
+			this->v.v4f[2] = color.b;
+			this->v.v4f[3] = color.a;
+			break;
+		}
 
 		case Variant::OBJECT: { // Objects are represented as uintptr_t
 			if (!implicit_trust)
