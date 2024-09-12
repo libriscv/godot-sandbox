@@ -9,4 +9,6 @@ public:
 	static void register_settings();
 
 	static String get_docker_path();
+
+	static bool use_native_types();
 };

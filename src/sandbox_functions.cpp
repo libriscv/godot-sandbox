@@ -16,6 +16,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"sys_obj_callp",
 	"sys_obj",
 	"sys_get_node",
+	"sys_node_create",
 	"sys_node",
 	"sys_node2d",
 	"sys_node3d",
@@ -30,6 +31,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"sys_string_ops",
 	"sys_string_size",
 	"sys_timer_periodic",
+	"sys_timer_periodic_native",
 	"sys_timer_stop",
 
 	"main",

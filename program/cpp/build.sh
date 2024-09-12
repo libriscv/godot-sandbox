@@ -13,7 +13,7 @@ usage() {
 locally=false
 verbose=false
 current_version=5
-CPPFLAGS="-g -O2 -std=gnu++23 -DVERSION=$current_version"
+CPPFLAGS="-g -O2 -std=gnu++23 -DVERSION=$current_version -fno-stack-protector -fno-threadsafe-statics"
 
 while [[ "$#" -gt 0 ]]; do
 	case $1 in

@@ -5,9 +5,12 @@
 
 using namespace godot;
 
-constexpr char DOCKER_PATH[] = "editor/script/docker";
+static constexpr char DOCKER_PATH[] = "editor/script/docker";
+static constexpr char DOCKER_PATH_HINT[] = "Path to the Docker executable";
+static constexpr char NATIVE_TYPES[] = "editor/script/native_types";
+static constexpr char NATIVE_TYPES_HINT[] = "Use native types when calling VM functions where possible";
 
-void register_setting(
+static void register_setting(
 		const String &p_name,
 		const Variant &p_value,
 		bool p_needs_restart,
@@ -41,20 +44,22 @@ void register_setting(
 void register_setting_plain(
 		const String &p_name,
 		const Variant &p_value,
+		const String &p_hint_string = "",
 		bool p_needs_restart = false) {
-	register_setting(p_name, p_value, p_needs_restart, PROPERTY_HINT_NONE, {});
+	register_setting(p_name, p_value, p_needs_restart, PROPERTY_HINT_NONE, p_hint_string);
 }
 
 void SandboxProjectSettings::register_settings() {
 #ifdef WIN32
-	register_setting_plain(DOCKER_PATH, "C:\\Program Files\\Docker\\Docker\\bin\\", true);
+	register_setting_plain(DOCKER_PATH, "C:\\Program Files\\Docker\\Docker\\bin\\", DOCKER_PATH_HINT, true);
 #else
-	register_setting_plain(DOCKER_PATH, "docker");
+	register_setting_plain(DOCKER_PATH, "docker", DOCKER_PATH_HINT, true);
 #endif
+	register_setting_plain(NATIVE_TYPES, false, NATIVE_TYPES_HINT, false);
 }
 
 template <typename TType>
-TType get_setting(const char *p_setting) {
+static TType get_setting(const char *p_setting) {
 	const ProjectSettings *project_settings = ProjectSettings::get_singleton();
 	const Variant setting_value = project_settings->get_setting_with_override(p_setting);
 	const Variant::Type setting_type = setting_value.get_type();
@@ -67,4 +72,8 @@ TType get_setting(const char *p_setting) {
 
 String SandboxProjectSettings::get_docker_path() {
 	return get_setting<String>(DOCKER_PATH);
+}
+
+bool SandboxProjectSettings::use_native_types() {
+	return get_setting<bool>(NATIVE_TYPES);
 }

@@ -25,7 +25,7 @@ struct is_u32string
 template<class T>
 struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
 
-struct Object; struct Node; struct Node2D; struct Node3D; struct Array; struct Dictionary; struct String;
+struct Object; struct Node; struct Node2D; struct Node3D; struct Array; struct Dictionary; union String;
 #include "vector.hpp"
 
 struct Variant
@@ -115,7 +115,7 @@ struct Variant
 		OP_MAX
 	};
 
-	Variant() = default;
+	Variant() { m_type = NIL; }
 	Variant(const Variant &other);
 	Variant(Variant &&other);
 	~Variant() {}
@@ -231,7 +231,7 @@ struct Variant
 private:
 	Type m_type = NIL;
 	union {
-		int64_t  i = 0;
+		int64_t  i;
 		bool     b;
 		double   f;
 		Vector2  v2;
