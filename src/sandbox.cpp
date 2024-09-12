@@ -188,31 +188,31 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 
 	for (size_t i = 0; i < argc; i++) {
 		const Variant &arg = *args[i];
+		const GDNativeVariant *inner = (const GDNativeVariant *)arg._native_ptr();
+
 		// Incoming arguments are implicitly trusted, as they are provided by the host
 		// They also have have the guaranteed lifetime of the function call
 		switch (arg.get_type()) {
-			case Variant::Type::NIL:
-				machine.cpu.reg(index++) = 0;
-				break;
 			case Variant::Type::BOOL:
-				machine.cpu.reg(index++) = bool(arg);
+				machine.cpu.reg(index++) = inner->value;
 				break;
 			case Variant::Type::INT:
-				machine.cpu.reg(index++) = int64_t(arg);
+				//printf("Type: %u Value: %ld\n", inner->type, inner->value);
+				machine.cpu.reg(index++) = inner->value;
 				break;
 			case Variant::Type::FLOAT: // Variant floats are always 64-bit
-				machine.cpu.registers().getfl(flindex++).set_double(double(arg));
+				//printf("Type: %u Value: %f\n", inner->type, inner->flt);
+				machine.cpu.registers().getfl(flindex++).set_double(inner->flt);
 				break;
 			case Variant::VECTOR2: { // 8- or 16-byte structs can be passed in registers
 				godot::Vector2 vec = arg.operator godot::Vector2();
-				machine.cpu.registers().getfl(flindex++).set_float(vec.x);
-				machine.cpu.registers().getfl(flindex++).set_float(vec.y);
+				machine.cpu.registers().getfl(flindex++).set_float(inner->vec2_flt[0]);
+				machine.cpu.registers().getfl(flindex++).set_float(inner->vec2_flt[1]);
 				break;
 			}
 			case Variant::VECTOR2I: { // 8- or 16-byte structs can be passed in registers
-				godot::Vector2i ivec = arg.operator godot::Vector2i();
-				machine.cpu.reg(index++) = ivec.x;
-				machine.cpu.reg(index++) = ivec.y;
+				machine.cpu.reg(index++) = inner->ivec2_int[0];
+				machine.cpu.reg(index++) = inner->ivec2_int[1];
 				break;
 			}
 			case Variant::OBJECT: { // Objects are represented as uintptr_t
@@ -261,6 +261,8 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 	for (size_t i = 0; i < argc; i++) {
 		const Variant &arg = *args[i];
 		GuestVariant &g_arg = v[i + 1];
+		// Fast-path for simple types
+		GDNativeVariant *inner = (GDNativeVariant *)arg._native_ptr();
 		// Incoming arguments are implicitly trusted, as they are provided by the host
 		// They also have have the guaranteed lifetime of the function call
 		switch (arg.get_type()) {
@@ -269,15 +271,15 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 				break;
 			case Variant::Type::BOOL:
 				g_arg.type = Variant::Type::BOOL;
-				g_arg.v.b = arg;
+				g_arg.v.b = inner->value;
 				break;
 			case Variant::Type::INT:
 				g_arg.type = Variant::Type::INT;
-				g_arg.v.i = arg;
+				g_arg.v.i = inner->value;
 				break;
 			case Variant::Type::FLOAT:
 				g_arg.type = Variant::Type::FLOAT;
-				g_arg.v.f = arg;
+				g_arg.v.f = inner->flt;
 				break;
 			default:
 				g_arg.set(*this, *args[i], true);
@@ -288,9 +290,11 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 	return &v[0];
 }
 Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc, GDExtensionCallError &error) {
-	auto &state = this->m_states[m_level];
+	//error.error = GDEXTENSION_CALL_OK;
+	//return Variant();
+
+	CurrentState &state = this->m_states[m_level];
 	// Scoped objects and owning tree node
-	state.tree_base = this->get_tree_base();
 	state.reset(this->m_max_refs);
 	CurrentState *old_state = this->m_current_state;
 	this->m_current_state = &state;
@@ -300,7 +304,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 
 	try {
 		GuestVariant *retvar = nullptr;
-		riscv::CPU<8> &cpu = m_machine->cpu;
+		riscv::CPU<RISCV_ARCH> &cpu = m_machine->cpu;
 		auto &sp = cpu.reg(riscv::REG_SP);
 		m_level++;
 		// execute guest function

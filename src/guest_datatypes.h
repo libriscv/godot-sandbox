@@ -2,6 +2,31 @@
 
 #include <libriscv/native_heap.hpp>
 
+// -= Fast-path Variant Arguments =-
+
+struct GDNativeVariant {
+	uint8_t type;
+	uint8_t padding[7];
+	union {
+		struct {
+			double    flt;
+			uint64_t  flt_padding1;
+		};
+		struct {
+			uint64_t  value;
+			uint64_t  i64_padding;
+		};
+		struct {
+			real_t    vec2_flt[2];
+		};
+		struct {
+			int32_t   ivec2_int[2];
+		};
+	};
+} __attribute__((packed));
+
+// -= Guest Data Types =-
+
 struct GuestStdString {
 	static constexpr std::size_t SSO = 15;
 
