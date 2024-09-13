@@ -9,8 +9,11 @@
  */
 union String {
 	constexpr String() {} // DON'T TOUCH
-	String(std::string_view value)
-		: m_idx(Create(value.data(), value.size())) {}
+	String(std::string_view value);
+	template <size_t N>
+	String(const char (&value)[N]);
+
+	String &operator =(std::string_view value);
 
 	// String operations
 	void append(const String &value);
@@ -43,6 +46,7 @@ union String {
 private:
 	unsigned m_idx = -1;
 };
+using NodePath = String; // NodePath is compatible with String
 
 inline Variant::Variant(const String &s) {
 	m_type = Variant::STRING;
@@ -59,3 +63,13 @@ inline String Variant::as_string() const {
 	}
 	return String::from_variant_index(v.i);
 }
+
+inline String::String(std::string_view value)
+	: m_idx(Create(value.data(), value.size())) {}
+inline String &String::operator =(std::string_view value) {
+	m_idx = Create(value.data(), value.size());
+	return *this;
+}
+template <size_t N>
+inline String::String(const char (&value)[N])
+	: m_idx(Create(value, N - 1)) {}
