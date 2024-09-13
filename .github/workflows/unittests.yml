@@ -20,8 +20,8 @@ jobs:
       run: |
         sudo apt update
         sudo apt install -y gcc-12-riscv64-linux-gnu g++-12-riscv64-linux-gnu cmake
-        git submodule update --depth 1 --init ${{github.workspace}}/godot-cpp
-        git submodule update --init ${{github.workspace}}/libriscv
+        git submodule update --depth 1 --init ${{github.workspace}}/ext/godot-cpp
+        git submodule update --init ${{github.workspace}}/ext/libriscv
         git submodule update --init ${{github.workspace}}/ext/Gut
 
     - name: Configure
