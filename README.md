@@ -63,12 +63,12 @@ static void add_coin(const Node& player) {
 		+ std::to_string(coins) + ((coins == 1) ? " coin" : " coins"));
 }
 
-extern "C" Variant _on_body_entered(Node player) {
-	if (player.get_name() != "Player") {
+extern "C" Variant _on_body_entered(Node2D node) {
+	if (node.get_name() != "Player")
 		return {};
-	}
+
 	get_node().queue_free(); // Remove the current coin!
-	add_coin(player);
+	add_coin(node);
 	return {};
 }
 ```
