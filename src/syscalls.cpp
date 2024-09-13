@@ -1065,9 +1065,14 @@ APICALL(api_timer_periodic) {
 	timer->set_wait_time(interval);
 	timer->set_one_shot(oneshot);
 	Node *topnode = emu.get_tree_base();
-	topnode->add_child(timer);
-	timer->set_owner(topnode);
-	timer->start();
+	// Add the timer to the top node, as long as the Sandbox is in a tree.
+	if (topnode != nullptr) {
+		topnode->add_child(timer);
+		timer->set_owner(topnode);
+		timer->start();
+	} else {
+		timer->set_autostart(true);
+	}
 	// Copy the callback capture storage to the timer timeout callback.
 	PackedByteArray capture_data;
 	capture_data.resize(capture->size());

@@ -56,6 +56,12 @@ public:
 	/// @param error The error code, if any.
 	/// @return The return value of the function call.
 	Variant vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
+	/// @brief Make a function call to a function in the guest by its name. Always use Variant values for arguments.
+	/// @param args The arguments to pass to the function, where the first argument is the name of the function.
+	/// @param arg_count The number of arguments.
+	/// @param error The error code, if any.
+	/// @return The return value of the function call.
+	Variant vmcallv(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
 	/// @brief Make a function call to a function in the guest by its name.
 	/// @param function The name of the function to call.
 	/// @param args The arguments to pass to the function.
@@ -111,6 +117,11 @@ public:
 	gaddr_t address_of(std::string_view name) const;
 	gaddr_t cached_address_of(int64_t hash) const;
 	gaddr_t cached_address_of(int64_t hash, const String &name) const;
+
+	/// @brief Check if a function exists in the guest program.
+	/// @param p_function The name of the function to check.
+	/// @return True if the function exists, false otherwise.
+	bool has_function(const StringName &p_function) const;
 
 	// -= Call State Management =-
 
@@ -222,7 +233,7 @@ public:
 
 	void assault(const String &test, int64_t iterations);
 	void print(std::string_view text);
-	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc, GDExtensionCallError &error);
+	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc);
 	machine_t &machine() { return *m_machine; }
 	const machine_t &machine() const { return *m_machine; }
 
@@ -248,7 +259,7 @@ private:
 
 	bool m_last_newline = false;
 	uint8_t m_throttled = 0;
-	uint8_t m_level = 0;
+	uint8_t m_level = 1; // Current call level (0 is for initialization)
 	bool m_use_native_args = false;
 
 	// Stats
@@ -269,8 +280,10 @@ private:
 		}
 	};
 	CurrentState *m_current_state = nullptr;
-	// State stack, with the permanent (initial) state at the end.
-	std::array<CurrentState, MAX_LEVEL + 1> m_states;
+	// State stack, with the permanent (initial) state at index 0.
+	// That means eg. static Variant values are held stored in the state at index 0,
+	// so that they can be accessed by future VM calls, and not lost when a call ends.
+	std::array<CurrentState, MAX_LEVEL+1> m_states;
 
 	// Properties
 	mutable std::vector<SandboxProperty> m_properties;

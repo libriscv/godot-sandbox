@@ -55,7 +55,7 @@ void SandboxProjectSettings::register_settings() {
 #else
 	register_setting_plain(DOCKER_PATH, "docker", DOCKER_PATH_HINT, true);
 #endif
-	register_setting_plain(NATIVE_TYPES, false, NATIVE_TYPES_HINT, false);
+	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
 }
 
 template <typename TType>

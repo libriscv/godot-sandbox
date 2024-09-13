@@ -22,7 +22,18 @@ struct GDNativeVariant {
 		struct {
 			int32_t   ivec2_int[2];
 		};
+		struct {
+			uint64_t     object_id;
+			GodotObject *object_ptr;
+		};
 	};
+
+	godot::Object *to_object() const {
+		if (object_ptr == nullptr)
+			return nullptr;
+		return internal::get_object_instance_binding(object_ptr);
+	}
+
 } __attribute__((packed));
 
 // -= Guest Data Types =-

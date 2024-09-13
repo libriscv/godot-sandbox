@@ -27,11 +27,13 @@ void Sandbox::_bind_methods() {
 		mi.name = "vmcall";
 		mi.return_val = PropertyInfo(Variant::OBJECT, "result");
 		ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "vmcall", &Sandbox::vmcall, mi, DEFVAL(std::vector<Variant>{}));
+		ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "vmcallv", &Sandbox::vmcallv, mi, DEFVAL(std::vector<Variant>{}));
 	}
 	ClassDB::bind_method(D_METHOD("vmcallable", "function", "args"), &Sandbox::vmcallable, DEFVAL(Array{}));
 
 	// Internal testing.
 	ClassDB::bind_method(D_METHOD("assault", "test", "iterations"), &Sandbox::assault);
+	ClassDB::bind_method(D_METHOD("has_function", "function"), &Sandbox::has_function);
 
 	// Properties.
 	ClassDB::bind_method(D_METHOD("set_max_refs", "max"), &Sandbox::set_max_refs);
@@ -124,7 +126,7 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 		machine_t &m = machine();
 
 		m.set_userdata(this);
-		this->m_current_state = &this->m_states.at(MAX_LEVEL);
+		this->m_current_state = &this->m_states[0]; // Set the current state to the first state
 
 		this->initialize_syscalls();
 
@@ -156,7 +158,8 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 }
 
 Variant Sandbox::vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
-	return this->vmcall_internal(address, args, arg_count, error);
+	error.error = GDEXTENSION_CALL_OK;
+	return this->vmcall_internal(address, args, arg_count);
 }
 Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
 	if (arg_count < 1) {
@@ -164,19 +167,40 @@ Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtens
 		error.argument = -1;
 		return Variant();
 	}
+	error.error = GDEXTENSION_CALL_OK;
+
 	const Variant &function = *args[0];
 	args += 1;
 	arg_count -= 1;
 	const String function_name = function.operator String();
-	return this->vmcall_internal(cached_address_of(function_name.hash(), function_name), args, arg_count, error);
+	return this->vmcall_internal(cached_address_of(function_name.hash(), function_name), args, arg_count);
+}
+Variant Sandbox::vmcallv(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
+	if (arg_count < 1) {
+		error.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+		error.argument = -1;
+		return Variant();
+	}
+	error.error = GDEXTENSION_CALL_OK;
+
+	const Variant &function = *args[0];
+	args += 1;
+	arg_count -= 1;
+	const String function_name = function.operator String();
+	// Store use_native_args state and restore it after the call
+	Variant result;
+	auto old_use_native_args = this->m_use_native_args;
+	this->m_use_native_args = false;
+	result = this->vmcall_internal(cached_address_of(function_name.hash(), function_name), args, arg_count);
+	this->m_use_native_args = old_use_native_args;
+	return result;
 }
 Variant Sandbox::vmcall_fn(const StringName &function, const Variant **args, GDExtensionInt arg_count) {
 	if (this->m_throttled > 0) {
 		this->m_throttled--;
 		return Variant();
 	}
-	GDExtensionCallError error;
-	Variant result = this->vmcall_internal(cached_address_of(function.hash()), args, arg_count, error);
+	Variant result = this->vmcall_internal(cached_address_of(function.hash()), args, arg_count);
 	return result;
 }
 void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, const Variant **args, int argc) {
@@ -211,12 +235,11 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 				break;
 			}
 			case Variant::VECTOR2I: { // 8- or 16-byte structs can be passed in registers
-				machine.cpu.reg(index++) = inner->ivec2_int[0];
-				machine.cpu.reg(index++) = inner->ivec2_int[1];
+				machine.cpu.reg(index++) = inner->value; // 64-bit packed integers
 				break;
 			}
 			case Variant::OBJECT: { // Objects are represented as uintptr_t
-				godot::Object *obj = arg.operator godot::Object *();
+				godot::Object *obj = inner->to_object();
 				this->add_scoped_object(obj);
 				machine.cpu.reg(index++) = uintptr_t(obj); // Fits in a single register
 				break;
@@ -289,11 +312,14 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 	// A0 is the return value (Variant) of the function
 	return &v[0];
 }
-Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc, GDExtensionCallError &error) {
+Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc) {
 	//error.error = GDEXTENSION_CALL_OK;
 	//return Variant();
 
 	CurrentState &state = this->m_states[m_level];
+	const bool is_reentrant_call = m_level > 1;
+	m_level++;
+
 	// Scoped objects and owning tree node
 	state.reset(this->m_max_refs);
 	CurrentState *old_state = this->m_current_state;
@@ -306,9 +332,8 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 		GuestVariant *retvar = nullptr;
 		riscv::CPU<RISCV_ARCH> &cpu = m_machine->cpu;
 		auto &sp = cpu.reg(riscv::REG_SP);
-		m_level++;
 		// execute guest function
-		if (m_level == 1) {
+		if (!is_reentrant_call) {
 			cpu.reg(riscv::REG_RA) = m_machine->memory.exit_address();
 			// reset the stack pointer to its initial location
 			sp = m_machine->memory.stack_initial();
@@ -316,7 +341,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			retvar = this->setup_arguments(sp, args, argc);
 			// execute!
 			m_machine->simulate_with(get_instructions_max() << 30, 0u, address);
-		} else if (m_level > 1 && m_level < MAX_LEVEL) {
+		} else if (m_level < MAX_LEVEL) {
 			riscv::Registers<RISCV_ARCH> regs;
 			regs = cpu.registers();
 			// we are in a recursive call, so wait before setting exit address
@@ -336,7 +361,6 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 		// Restore the previous state
 		this->m_level--;
 		this->m_current_state = old_state;
-		error.error = GDEXTENSION_CALL_OK;
 		return result;
 
 	} catch (const std::exception &e) {
@@ -349,8 +373,6 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 		// TODO: Free the function arguments and return value? Will help keep guest memory clean
 
 		this->m_current_state = old_state;
-		error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
-		error.argument = -1;
 		return Variant();
 	}
 }
@@ -384,10 +406,11 @@ void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r
 		for (int i = 0; i < p_argcount; i++) {
 			m_varargs_ptrs[m_varargs_base_count + i] = p_arguments[i];
 		}
-		r_return_value = self->vmcall_internal(address, m_varargs_ptrs.data(), total_args, r_call_error);
+		r_return_value = self->vmcall_internal(address, m_varargs_ptrs.data(), total_args);
 	} else {
-		r_return_value = self->vmcall_internal(address, p_arguments, p_argcount, r_call_error);
+		r_return_value = self->vmcall_internal(address, p_arguments, p_argcount);
 	}
+	r_call_error.error = GDEXTENSION_CALL_OK;
 }
 
 void Sandbox::print(std::string_view text) {
@@ -432,6 +455,11 @@ gaddr_t Sandbox::address_of(std::string_view name) const {
 	return machine().address_of(name);
 }
 
+bool Sandbox::has_function(const StringName &p_function) const {
+	const gaddr_t address = cached_address_of(p_function.hash(), p_function);
+	return address != 0x0;
+}
+
 int64_t Sandbox::get_heap_usage() const {
 	if (machine().has_arena()) {
 		return machine().arena().bytes_used();
@@ -466,11 +494,12 @@ std::optional<const Variant *> Sandbox::get_scoped_variant(unsigned index) const
 	return state().scoped_variants[index - 1];
 }
 Variant &Sandbox::get_mutable_scoped_variant(unsigned index) {
-	if (index == 0 || index > state().scoped_variants.size()) {
+	std::optional<const Variant *> var_opt = get_scoped_variant(index);
+	if (!var_opt.has_value()) {
 		ERR_PRINT("Invalid scoped variant index.");
 		throw std::runtime_error("Invalid scoped variant index.");
 	}
-	const godot::Variant *var = state().scoped_variants[index - 1];
+	const Variant *var = var_opt.value();
 	// Find the variant in the variants list
 	auto it = std::find_if(state().variants.begin(), state().variants.end(), [var](const Variant &v) {
 		return &v == var;
@@ -631,22 +660,20 @@ const SandboxProperty *Sandbox::find_property_or_null(const StringName &name) co
 
 void SandboxProperty::set(Sandbox &sandbox, const Variant &value) {
 	if (m_setter_address == 0) {
-		ERR_PRINT("Sandbox: Setter not found for property: " + m_name);
+		ERR_PRINT("Sandbox: Setter was invalid for property: " + m_name);
 		return;
 	}
 	const Variant *args[] = { &value };
-	GDExtensionCallError error;
 	auto old_use_native_args = sandbox.get_use_native_args();
 	sandbox.set_use_native_args(false); // Always use Variant for properties
-	sandbox.vmcall_internal(m_setter_address, args, 1, error);
+	sandbox.vmcall_internal(m_setter_address, args, 1);
 	sandbox.set_use_native_args(old_use_native_args);
 }
 
 Variant SandboxProperty::get(const Sandbox &sandbox) const {
 	if (m_getter_address == 0) {
-		ERR_PRINT("Sandbox: Getter not found for property: " + m_name);
+		ERR_PRINT("Sandbox: Getter was invalid for property: " + m_name);
 		return Variant();
 	}
-	GDExtensionCallError error;
-	return const_cast<Sandbox &>(sandbox).vmcall_internal(m_getter_address, nullptr, 0, error);
+	return const_cast<Sandbox &>(sandbox).vmcall_internal(m_getter_address, nullptr, 0);
 }
