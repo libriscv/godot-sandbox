@@ -10,9 +10,10 @@
 union String {
 	constexpr String() {} // DON'T TOUCH
 	String(std::string_view value);
-	String &operator =(std::string_view value);
 	template <size_t N>
 	String(const char (&value)[N]);
+
+	String &operator =(std::string_view value);
 
 	// String operations
 	void append(const String &value);
