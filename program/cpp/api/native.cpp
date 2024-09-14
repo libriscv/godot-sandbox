@@ -23,15 +23,17 @@
 #define STR1(x) #x
 #define STR(x) STR1(x)
 
+// clang-format off
 #define WRAP_FUNC(name, syscall_id)                 \
 	__asm__(".pushsection .text\n"                  \
 			".global __wrap_" #name "\n"            \
 			".type __wrap_" #name ", @function\n"   \
 			"__wrap_" #name ":\n"                   \
 			"	li a7, " STR(syscall_id) "\n"       \
-										 "	ecall\n" \
-										 "	ret\n"   \
-										 ".popsection .text\n")
+			"	ecall\n" \
+			"	ret\n"   \
+			".popsection .text\n")
+// clang-format on
 
 WRAP_FUNC(calloc, SYSCALL_CALLOC);
 WRAP_FUNC(realloc, SYSCALL_REALLOC);

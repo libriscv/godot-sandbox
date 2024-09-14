@@ -51,8 +51,10 @@ __attribute__((constructor)) void handle_unhandled_exceptions() {
 	});
 }
 
+// clang-format off
 #define STR2(x) #x
 #define STR(x) STR2(x)
 __asm__(".pushsection .comment\n\t"
 		".string \"Godot C++ API v" STR(VERSION) "\"\n\t"
-												 ".popsection");
+		".popsection");
+// clang-format on
