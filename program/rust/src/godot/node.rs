@@ -78,3 +78,15 @@ fn godot_method_call(address: usize, method: *const c_char, msize: usize, args: 
 		return result;
 	}
 }
+
+/* Get the current node (owner of the Sandbox) */
+pub fn get_node() -> Node
+{
+	Node::new_from_path(".")
+}
+
+/* Get a node relative to the current node (owner of the Sandbox) */
+pub fn get_node_from_path(path: &str) -> Node
+{
+	Node::new_from_path(path)
+}

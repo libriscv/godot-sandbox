@@ -1159,6 +1159,10 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"floor",
 	"floorf32x",
 	"floorf64",
+
+	"OUTLINED_FUNCTION_0",
+	"OUTLINED_FUNCTION_1",
+	"OUTLINED_FUNCTION_2",
 };
 
 PackedStringArray Sandbox::get_functions() const {

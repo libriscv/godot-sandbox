@@ -54,6 +54,8 @@ This extension exists to allow Godot creators to implement safe modding support,
 	- Maximum scalability
 	- Call functions and attach signals like GDScript
 
+## Examples
+
 ```C++
 static void add_coin(const Node& player) {
 	static int coins = 0;
@@ -65,15 +67,47 @@ static void add_coin(const Node& player) {
 
 extern "C" Variant _on_body_entered(Node2D node) {
 	if (node.get_name() != "Player")
-		return {};
+		return Nil;
 
 	get_node().queue_free(); // Remove the current coin!
 	add_coin(node);
-	return {};
+	return Nil;
 }
 ```
 
 Script of a simple Coin pickup, with a counter that updates a label in the tree of the player. This script can be attached to the Coin just like GDScript.
+
+```Rust
+#[no_mangle]
+pub fn _physics_process(delta: f64) -> Variant {
+	if Engine::is_editor_hint() {
+		return Variant::new_nil();
+	}
+
+	let slime = get_node();
+	let sprite = get_node_from_path("AnimatedSprite2D");
+
+	let flip_h = sprite.call("is_flipped_h", &[]);
+	let direction: f32 = (flip_h.to_bool() as i32 as f32 - 0.5) * -2.0;
+
+	let mut pos = slime.call("get_position", &[]).to_vec2();
+	pos.x += direction * SPEED * delta as f32;
+
+	slime.call("set_position", &[Variant::new_vec2(pos)]);
+
+	let ray_right = get_node_from_path("raycast_right");
+	let ray_left  = get_node_from_path("raycast_left");
+	if direction > 0.0 && ray_right.call("is_colliding", &[]).to_bool() {
+		sprite.call("set_flip_h", &[Variant::new_bool(true)]);
+	}
+	else if direction < 0.0 && ray_left.call("is_colliding", &[]).to_bool() {
+		sprite.call("set_flip_h", &[Variant::new_bool(false)]);
+	}
+
+	Variant::new_nil()
+}
+```
+The Rust API is still under development, but simple scripts are possible.
 
 You may also have a look at our [demo repository](https://github.com/libriscv/godot-sandbox-demo) for the Godot Sandbox. It's a tiny platformer that uses C++ and Rust.
 

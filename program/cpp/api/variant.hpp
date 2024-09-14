@@ -309,6 +309,8 @@ inline Variant::Variant(T value)
 		static_assert(!std::is_same_v<T, T>, "Unsupported type");
 }
 
+#define Nil Variant()
+
 inline Variant Variant::string_name(const std::string &name) {
 	Variant v;
 	v.internal_create_string(STRING_NAME, name);
