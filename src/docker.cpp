@@ -2,8 +2,14 @@
 
 #include "sandbox_project_settings.h"
 #include <godot_cpp/classes/os.hpp>
+//#define ENABLE_TIMINGS 1
+#ifdef ENABLE_TIMINGS
+#include <time.h>
+#endif
+
 static constexpr bool VERBOSE_CMD = true;
 using namespace godot;
+
 
 static bool ContainerIsAlreadyRunning(String container_name) {
 	godot::OS *OS = godot::OS::get_singleton();
@@ -64,6 +70,11 @@ Array Docker::ContainerStop(String container_name) {
 }
 
 bool Docker::ContainerExecute(String container_name, const PackedStringArray &p_arguments, Array &output, bool verbose) {
+#ifdef ENABLE_TIMINGS
+	timespec start;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+#endif
+
 	godot::OS *OS = godot::OS::get_singleton();
 	PackedStringArray arguments = { "exec", "-t", container_name, "bash" };
 	for (int i = 0; i < p_arguments.size(); i++) {
@@ -73,6 +84,14 @@ bool Docker::ContainerExecute(String container_name, const PackedStringArray &p_
 		UtilityFunctions::print(SandboxProjectSettings::get_docker_path(), arguments);
 	}
 	const int res = OS->execute(SandboxProjectSettings::get_docker_path(), arguments, output);
+
+#ifdef ENABLE_TIMINGS
+	timespec end;
+	clock_gettime(CLOCK_MONOTONIC, &end);
+	const double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+	fprintf(stderr, "Docker::ContainerExecute: %f seconds\n", elapsed);
+#endif
+
 	return res == 0;
 }
 

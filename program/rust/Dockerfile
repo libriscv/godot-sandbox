@@ -2,16 +2,9 @@ FROM ubuntu:24.04
 
 RUN apt-get -qq update && \
 	apt-get install -y -q \
-	build-essential \
 	curl \
 	g++-14-riscv64-linux-gnu \
-	g++ git cmake
-
-# Clone and build mold
-WORKDIR /usr/mold
-RUN git clone https://github.com/rui314/mold.git /usr/mold
-RUN mkdir -p /usr/mold/build && cd /usr/mold/build && cmake .. && make -j8
-RUN cd /usr/mold/build && make install && rm -rf /usr/mold
+	git cmake mold
 
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"

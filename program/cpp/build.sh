@@ -62,6 +62,6 @@ wait
 if [ "$locally" = true ]; then
 	riscv64-unknown-elf-g++ -static $CPPFLAGS $LINKEROPS $@.o $API/*.cpp.o -o $output
 else
-	LINKEROPS="$LINKEROPS -fuse-ld=mold -Wl,--execute-only"
+	LINKEROPS="$LINKEROPS -fuse-ld=mold"
 	riscv64-linux-gnu-g++-14 -static $CPPFLAGS -march=rv64gc_zba_zbb_zbs_zbc -mabi=lp64d $LINKEROPS $@.o $API/*.cpp.o -o $output
 fi
