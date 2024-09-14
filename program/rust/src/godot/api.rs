@@ -24,6 +24,6 @@ impl Engine
 // Godot Rust API version embedded in the binary
 global_asm!(
 	".pushsection .comment",
-	".string \"Godot Rust API v4\"",
+	".string \"Godot Rust API v5\"",
 	".popsection",
 );
