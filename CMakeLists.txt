@@ -20,13 +20,13 @@ set(SOURCES
 	src/rust/script_language_rust.cpp
 	src/docker.cpp
 	src/godot/script_instance.cpp
-	src/gvar.cpp
-    src/register_types.cpp
-    src/sandbox.cpp
-    src/sandbox_exception.cpp
-    src/sandbox_functions.cpp
+	src/guest_variant.cpp
+	src/register_types.cpp
+	src/sandbox.cpp
+	src/sandbox_exception.cpp
+	src/sandbox_functions.cpp
 	src/sandbox_project_settings.cpp
-	src/syscalls.cpp
+	src/sandbox_syscalls.cpp
 
 	src/tests/assault.cpp
 )
@@ -34,8 +34,8 @@ set(SOURCES
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
 
 if (MINGW)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libgcc -static-libstdc++ -static")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20")
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libgcc -static-libstdc++ -static")
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20")
 endif()
 
 add_subdirectory(ext)
@@ -44,7 +44,7 @@ add_library(godot-riscv SHARED ${SOURCES})
 target_link_libraries(godot-riscv PUBLIC riscv godot-cpp)
 
 if (STATIC_BUILD)
-    target_link_libraries(godot-riscv PUBLIC -static)
+	target_link_libraries(godot-riscv PUBLIC -static)
 endif()
 if (SANITIZE)
 	#target_compile_options(godot-riscv PUBLIC -fsanitize=scudo,undefined)
