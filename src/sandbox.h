@@ -283,7 +283,7 @@ private:
 	// State stack, with the permanent (initial) state at index 0.
 	// That means eg. static Variant values are held stored in the state at index 0,
 	// so that they can be accessed by future VM calls, and not lost when a call ends.
-	std::array<CurrentState, MAX_LEVEL+1> m_states;
+	std::array<CurrentState, MAX_LEVEL + 1> m_states;
 
 	// Properties
 	mutable std::vector<SandboxProperty> m_properties;

@@ -1,12 +1,12 @@
 #include "sandbox.h"
 
 #include "guest_datatypes.h"
+#include "sandbox_project_settings.h"
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
-#include "sandbox_project_settings.h"
 
 using namespace godot;
 
@@ -206,7 +206,7 @@ Variant Sandbox::vmcall_fn(const StringName &function, const Variant **args, GDE
 void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, const Variant **args, int argc) {
 	// In this mode we will try to use registers when possible
 	// The stack is already set up from setup_arguments(), so we just need to set up the registers
-	auto& machine = this->machine();
+	machine_t &machine = this->machine();
 	int index = 11;
 	int flindex = 10;
 

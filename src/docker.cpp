@@ -10,7 +10,6 @@
 static constexpr bool VERBOSE_CMD = true;
 using namespace godot;
 
-
 static bool ContainerIsAlreadyRunning(String container_name) {
 	godot::OS *OS = godot::OS::get_singleton();
 	PackedStringArray arguments = { "container", "inspect", "-f", "{{.State.Running}}", container_name };

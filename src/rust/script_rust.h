@@ -71,7 +71,7 @@ public:
 		DockerContainerStart();
 		if (docker_container_version == 0)
 			docker_container_version =
-				Docker::ContainerVersion(docker_container_name, { "/usr/project/build.sh", "--version" });
+					Docker::ContainerVersion(docker_container_name, { "/usr/project/build.sh", "--version" });
 		return docker_container_version;
 	}
 	static bool DockerContainerExecute(const PackedStringArray &p_arguments, Array &output) {

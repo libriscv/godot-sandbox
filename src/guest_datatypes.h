@@ -9,21 +9,21 @@ struct GDNativeVariant {
 	uint8_t padding[7];
 	union {
 		struct {
-			double    flt;
-			uint64_t  flt_padding1;
+			double flt;
+			uint64_t flt_padding1;
 		};
 		struct {
-			uint64_t  value;
-			uint64_t  i64_padding;
+			uint64_t value;
+			uint64_t i64_padding;
 		};
 		struct {
-			real_t    vec2_flt[2];
+			real_t vec2_flt[2];
 		};
 		struct {
-			int32_t   ivec2_int[2];
+			int32_t ivec2_int[2];
 		};
 		struct {
-			uint64_t     object_id;
+			uint64_t object_id;
 			GodotObject *object_ptr;
 		};
 	};

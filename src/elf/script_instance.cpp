@@ -160,13 +160,12 @@ GDExtensionMethodInfo create_method_info(const MethodInfo &method_info) {
 	return GDExtensionMethodInfo{
 		.name = stringname_alloc(method_info.name),
 		.return_value = GDExtensionPropertyInfo{
-			.type = GDEXTENSION_VARIANT_TYPE_OBJECT,
-			.name = stringname_alloc(method_info.return_val.name),
-			.class_name = stringname_alloc(method_info.return_val.class_name),
-			.hint = method_info.return_val.hint,
-			.hint_string = stringname_alloc(method_info.return_val.hint_string),
-			.usage = method_info.return_val.usage
-		},
+				.type = GDEXTENSION_VARIANT_TYPE_OBJECT,
+				.name = stringname_alloc(method_info.return_val.name),
+				.class_name = stringname_alloc(method_info.return_val.class_name),
+				.hint = method_info.return_val.hint,
+				.hint_string = stringname_alloc(method_info.return_val.hint_string),
+				.usage = method_info.return_val.usage },
 		.flags = method_info.flags,
 		.id = method_info.id,
 		.argument_count = (uint32_t)method_info.arguments.size(),

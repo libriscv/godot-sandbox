@@ -48,7 +48,6 @@ extern "C" Variant test_sub_dictionary(Dictionary dict) {
 	return Dictionary(dict)["1"];
 }
 
-
 extern "C" Variant test_object(Object arg) {
 	return arg;
 }
@@ -62,7 +61,7 @@ static bool timer_got_called = false;
 extern "C" Variant test_timers() {
 	long val1 = 11;
 	float val2 = 22.0f;
-	return Timer::native_periodic(0.01, [=] (Node timer) -> Variant {
+	return Timer::native_periodic(0.01, [=](Node timer) -> Variant {
 		print("Timer with values: ", val1, val2);
 		timer.queue_free();
 		timer_got_called = true;
