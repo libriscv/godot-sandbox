@@ -87,11 +87,11 @@ public:
 	Variant vmcallable_address(uint64_t address, Array args);
 
 	/// @brief Set whether to prefer register values for VM function calls.
-	/// @param use_native_args True to prefer register values, false to prefer Variant values.
-	void set_use_native_args(bool use_native_args) { m_use_native_args = use_native_args; }
+	/// @param use_unboxed_arguments True to prefer register values, false to prefer Variant values.
+	void set_use_unboxed_arguments(bool use_unboxed_arguments) { m_use_unboxed_arguments = use_unboxed_arguments; }
 	/// @brief Get whether to prefer register values for VM function calls.
 	/// @return True if register values are preferred, false if Variant values are preferred.
-	bool get_use_native_args() const { return m_use_native_args; }
+	bool get_use_unboxed_arguments() const { return m_use_unboxed_arguments; }
 
 	// -= Sandbox Properties =-
 
@@ -260,7 +260,7 @@ private:
 	bool m_last_newline = false;
 	uint8_t m_throttled = 0;
 	uint8_t m_level = 1; // Current call level (0 is for initialization)
-	bool m_use_native_args = false;
+	bool m_use_unboxed_arguments = false;
 
 	// Stats
 	unsigned m_budget_overruns = 0;

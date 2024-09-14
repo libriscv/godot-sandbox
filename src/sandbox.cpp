@@ -48,6 +48,10 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_instructions_max"), &Sandbox::get_instructions_max);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE, "Maximum billions of instructions executed before cancelling execution"), "set_instructions_max", "get_instructions_max");
 
+	ClassDB::bind_method(D_METHOD("set_use_unboxed_arguments", "use_unboxed_arguments"), &Sandbox::set_use_unboxed_arguments);
+	ClassDB::bind_method(D_METHOD("get_use_unboxed_arguments"), &Sandbox::get_use_unboxed_arguments);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PROPERTY_HINT_NONE, "Use unboxed arguments for VM function calls"), "set_use_unboxed_arguments", "get_use_unboxed_arguments");
+
 	// Group for monitored Sandbox health.
 	ADD_GROUP("Sandbox Monitoring", "monitor_");
 
@@ -72,7 +76,7 @@ void Sandbox::_bind_methods() {
 }
 
 Sandbox::Sandbox() {
-	this->m_use_native_args = SandboxProjectSettings::use_native_types();
+	this->m_use_unboxed_arguments = SandboxProjectSettings::use_native_types();
 	// In order to reduce checks we guarantee that this
 	// class is well-formed at all times.
 	try {
@@ -187,12 +191,12 @@ Variant Sandbox::vmcallv(const Variant **args, GDExtensionInt arg_count, GDExten
 	args += 1;
 	arg_count -= 1;
 	const String function_name = function.operator String();
-	// Store use_native_args state and restore it after the call
+	// Store use_unboxed_arguments state and restore it after the call
 	Variant result;
-	auto old_use_native_args = this->m_use_native_args;
-	this->m_use_native_args = false;
+	auto old_use_unboxed_arguments = this->m_use_unboxed_arguments;
+	this->m_use_unboxed_arguments = false;
 	result = this->vmcall_internal(cached_address_of(function_name.hash(), function_name), args, arg_count);
-	this->m_use_native_args = old_use_native_args;
+	this->m_use_unboxed_arguments = old_use_unboxed_arguments;
 	return result;
 }
 Variant Sandbox::vmcall_fn(const StringName &function, const Variant **args, GDExtensionInt arg_count) {
@@ -275,7 +279,7 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 	m_machine->cpu.reg(10) = arrayDataPtr;
 	//v[0].type = Variant::Type::NIL;
 
-	if (this->m_use_native_args) {
+	if (this->m_use_unboxed_arguments) {
 		setup_arguments_native(arrayDataPtr, v, args, argc);
 		// A0 is the return value (Variant) of the function
 		return &v[0];
@@ -602,6 +606,9 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	} else if (name == StringName("execution_timeout")) {
 		set_instructions_max(value);
 		return true;
+	} else if (name == StringName("use_unboxed_arguments")) {
+		set_use_unboxed_arguments(value);
+		return true;
 	}
 	return false;
 }
@@ -626,6 +633,9 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 		return true;
 	} else if (name == StringName("execution_timeout")) {
 		r_ret = get_instructions_max();
+		return true;
+	} else if (name == StringName("use_unboxed_arguments")) {
+		r_ret = get_use_unboxed_arguments();
 		return true;
 	} else if (name == StringName("monitor_heap_usage")) {
 		r_ret = get_heap_usage();
@@ -664,10 +674,10 @@ void SandboxProperty::set(Sandbox &sandbox, const Variant &value) {
 		return;
 	}
 	const Variant *args[] = { &value };
-	auto old_use_native_args = sandbox.get_use_native_args();
-	sandbox.set_use_native_args(false); // Always use Variant for properties
+	auto old_use_unboxed_arguments = sandbox.get_use_unboxed_arguments();
+	sandbox.set_use_unboxed_arguments(false); // Always use Variant for properties
 	sandbox.vmcall_internal(m_setter_address, args, 1);
-	sandbox.set_use_native_args(old_use_native_args);
+	sandbox.set_use_unboxed_arguments(old_use_unboxed_arguments);
 }
 
 Variant SandboxProperty::get(const Sandbox &sandbox) const {
