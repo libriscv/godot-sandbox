@@ -16,6 +16,15 @@ void Sandbox::handle_exception(gaddr_t address) {
 	UtilityFunctions::print(
 			"[", get_name(), "] Exception when calling:\n  ", callsite.name.c_str(), " (0x",
 			to_hex(callsite.address), ")\n", "Backtrace:");
+
+	this->m_exceptions++;
+	Sandbox::m_global_exceptions++;
+
+	if (m_machine->memory.binary().empty()) {
+		ERR_PRINT("No binary loaded. Remember to assign a program to the Sandbox!");
+		return;
+	}
+
 	this->print_backtrace(address);
 
 	try {
@@ -52,13 +61,6 @@ void Sandbox::handle_exception(gaddr_t address) {
 				"Program page: ", machine().memory.get_page_info(machine().cpu.pc()).c_str());
 		UtilityFunctions::print(
 				"Stack page: ", machine().memory.get_page_info(machine().cpu.reg(2)).c_str());
-	}
-
-	this->m_exceptions++;
-	Sandbox::m_global_exceptions++;
-
-	if (m_machine->memory.binary().empty()) {
-		ERR_PRINT("No binary loaded. Remember to assign a program to the Sandbox!");
 	}
 }
 

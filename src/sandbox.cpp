@@ -117,6 +117,7 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 	this->m_binary = std::move(buffer);
 	const std::string_view binary_view = std::string_view{ (const char *)this->m_binary.ptr(), static_cast<size_t>(this->m_binary.size()) };
 
+	/** We can't handle exceptions until the Machine is fully constructed. Two steps.  */
 	try {
 		delete this->m_machine;
 
@@ -127,6 +128,14 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 		};
 
 		this->m_machine = new machine_t{ binary_view, options };
+	} catch (const std::exception &e) {
+		ERR_PRINT(("Sandbox construction exception: " + std::string(e.what())).c_str());
+		this->m_machine = new machine_t{};
+		return;
+	}
+
+	/** Now we can process symbols, backtraces etc. */
+	try {
 		machine_t &m = machine();
 
 		m.set_userdata(this);
@@ -149,7 +158,6 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
 		this->handle_exception(machine().cpu.pc());
-		// TODO: Program failed to load.
 	}
 
 	this->read_program_properties(true);
