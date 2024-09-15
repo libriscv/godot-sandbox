@@ -26,6 +26,15 @@
         "research",
         "test"
       ]
+    },
+    {
+      "login": "Ughuuu",
+      "name": "Dragos Daian",
+      "avatar_url": "https://avatars.githubusercontent.com/u/2369380?v=4",
+      "profile": "https://appsinacup.com",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "contributorsPerLine": 7,
