@@ -21,6 +21,10 @@
 #include "rust/script_rust.h"
 #include "sandbox.h"
 #include "sandbox_project_settings.h"
+#include "zig/resource_loader_zig.h"
+#include "zig/resource_saver_zig.h"
+#include "zig/script_language_zig.h"
+#include "zig/script_zig.h"
 
 using namespace godot;
 
@@ -50,6 +54,10 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ClassDB::register_class<ResourceFormatLoaderRust>();
 	ClassDB::register_class<ResourceFormatSaverRust>();
 	ClassDB::register_class<RustScriptLanguage>();
+	ClassDB::register_class<ZigScript>();
+	ClassDB::register_class<ResourceFormatLoaderZig>();
+	ClassDB::register_class<ResourceFormatSaverZig>();
+	ClassDB::register_class<ZigScriptLanguage>();
 	elf_loader.instantiate();
 	elf_saver.instantiate();
 	elf_language = memnew(ELFScriptLanguage);
@@ -62,6 +70,9 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	RustScriptLanguage::init();
 	ResourceFormatLoaderRust::init();
 	ResourceFormatSaverRust::init();
+	ZigScriptLanguage::init();
+	ResourceFormatLoaderZig::init();
+	ResourceFormatSaverZig::init();
 	SandboxProjectSettings::register_settings();
 }
 
@@ -80,6 +91,8 @@ static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	ResourceFormatSaverCPP::deinit();
 	ResourceFormatLoaderRust::deinit();
 	ResourceFormatSaverRust::deinit();
+	ResourceFormatLoaderZig::deinit();
+	ResourceFormatSaverZig::deinit();
 }
 
 extern "C" {

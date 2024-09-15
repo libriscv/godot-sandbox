@@ -1214,6 +1214,14 @@ Sandbox::BinaryInfo Sandbox::get_program_info_from_binary(const PackedByteArray 
 					result.version = std::stoi(std::string(comment.substr(version + 5)));
 				}
 				break;
+			} else if (comment.find("Godot Zig") != std::string::npos) {
+				// Zig: "Godot Zig API v1"
+				result.language = "Zig";
+				auto version = comment.find("API v");
+				if (version != std::string::npos) {
+					result.version = std::stoi(std::string(comment.substr(version + 5)));
+				}
+				break;
 			}
 		}
 		//printf("Detected language: %s, version: %d\n", result.language.utf8().ptr(), result.version);
