@@ -15,6 +15,17 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "fire",
+      "name": "K. S. Ernest (iFire) Lee",
+      "avatar_url": "https://avatars.githubusercontent.com/u/32321?v=4",
+      "profile": "https://chibifire.com",
+      "contributions": [
+        "code",
+        "research",
+        "test"
+      ]
     }
   ],
   "contributorsPerLine": 7,
