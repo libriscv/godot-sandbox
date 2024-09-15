@@ -2,6 +2,7 @@
 
 #include "../cpp/script_cpp.h"
 #include "../rust/script_rust.h"
+#include "../zig/script_zig.h"
 #include "../sandbox.h"
 #include "script_elf.h"
 #include "script_instance_helper.h"
@@ -38,6 +39,18 @@ static void handle_language_warnings(Array &warnings, const Ref<ELFScript> &scri
 			const int script_version = script->get_elf_api_version();
 			if (script_version < docker_version) {
 				String w = "Rust API version is newer (" + String::num_int64(script_version) + " vs " + String::num_int64(docker_version) + "), please rebuild the program";
+				warnings.push_back(std::move(w));
+			}
+		}
+	} else if (language == "Zig") {
+		// Compare Zig version against Docker version
+		const int docker_version = ZigScript::DockerContainerVersion();
+		if (docker_version < 0) {
+			warnings.push_back("Zig Docker container not found");
+		} else {
+			const int script_version = script->get_elf_api_version();
+			if (script_version < docker_version) {
+				String w = "Zig API version is newer (" + String::num_int64(script_version) + " vs " + String::num_int64(docker_version) + "), please rebuild the program";
 				warnings.push_back(std::move(w));
 			}
 		}

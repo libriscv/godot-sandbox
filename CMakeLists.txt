@@ -18,6 +18,10 @@ set(SOURCES
 	src/rust/resource_saver_rust.cpp
 	src/rust/script_rust.cpp
 	src/rust/script_language_rust.cpp
+	src/zig/resource_loader_zig.cpp
+	src/zig/resource_saver_zig.cpp
+	src/zig/script_zig.cpp
+	src/zig/script_language_zig.cpp
 	src/docker.cpp
 	src/godot/script_instance.cpp
 	src/guest_variant.cpp
