@@ -17,6 +17,7 @@ jobs:
         include:
           - compiler: cpp
           - compiler: rust
+          - compiler: zig
     steps:
       - uses: actions/checkout@v4
       - name: Set up QEMU
