@@ -260,7 +260,12 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 			case Variant::DICTIONARY:
 			case Variant::STRING:
 			case Variant::STRING_NAME:
-			case Variant::NODE_PATH: { // Uses Variant index to reference the object
+			case Variant::NODE_PATH:
+			case Variant::PACKED_BYTE_ARRAY:
+			case Variant::PACKED_FLOAT32_ARRAY:
+			case Variant::PACKED_FLOAT64_ARRAY:
+			case Variant::PACKED_INT32_ARRAY:
+			case Variant::PACKED_INT64_ARRAY: { // Uses Variant index to reference the object
 				unsigned idx = this->add_scoped_variant(&arg);
 				machine.cpu.reg(index++) = idx;
 				break;
@@ -325,15 +330,12 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 	return &v[0];
 }
 Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc) {
-	//error.error = GDEXTENSION_CALL_OK;
-	//return Variant();
-
 	CurrentState &state = this->m_states[m_level];
 	const bool is_reentrant_call = m_level > 1;
+	state.reset(this->m_level, this->m_max_refs);
 	m_level++;
 
 	// Scoped objects and owning tree node
-	state.reset(this->m_max_refs);
 	CurrentState *old_state = this->m_current_state;
 	this->m_current_state = &state;
 	// Call statistics

@@ -7,9 +7,9 @@ MAKE_SYSCALL(ECALL_VEVAL, bool, sys_veval, int, const Variant *, const Variant *
 MAKE_SYSCALL(ECALL_VFREE, void, sys_vfree, Variant *);
 
 MAKE_SYSCALL(ECALL_VCREATE, void, sys_vcreate, Variant *, int, int, const void *);
-MAKE_SYSCALL(ECALL_VFETCH, void, sys_vfetch, const Variant *, void *, int);
+MAKE_SYSCALL(ECALL_VFETCH, void, sys_vfetch, unsigned, void *, int);
 MAKE_SYSCALL(ECALL_VCLONE, void, sys_vclone, const Variant *, Variant *);
-MAKE_SYSCALL(ECALL_VSTORE, void, sys_vstore, Variant *, const std::string *);
+MAKE_SYSCALL(ECALL_VSTORE, void, sys_vstore, Variant *, const void *, size_t);
 
 Variant Variant::new_array() {
 	Variant v;
@@ -33,69 +33,6 @@ void Variant::evaluate(const Operator &op, const Variant &a, const Variant &b, V
 	r_valid = sys_veval(op, &a, &b, &r_ret);
 }
 
-std::vector<uint8_t> Variant::as_byte_array() const {
-	if (m_type == PACKED_BYTE_ARRAY) {
-		std::vector<uint8_t> result;
-		sys_vfetch(this, &result, 0);
-		return result;
-	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedByteArray", this);
-}
-
-std::vector<float> Variant::as_float32_array() const {
-	if (m_type == PACKED_FLOAT32_ARRAY) {
-		std::vector<float> result;
-		sys_vfetch(this, &result, 0);
-		return result;
-	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedFloat32Array", this);
-}
-
-std::vector<double> Variant::as_float64_array() const {
-	if (m_type == PACKED_FLOAT64_ARRAY) {
-		std::vector<double> result;
-		sys_vfetch(this, &result, 0);
-		return result;
-	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedFloat64Array", this);
-}
-
-std::vector<int32_t> Variant::as_int32_array() const {
-	if (m_type == PACKED_INT32_ARRAY) {
-		std::vector<int32_t> result;
-		sys_vfetch(this, &result, 0);
-		return result;
-	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedInt32Array", this);
-}
-
-std::vector<int64_t> Variant::as_int64_array() const {
-	if (m_type == PACKED_INT64_ARRAY) {
-		std::vector<int64_t> result;
-		sys_vfetch(this, &result, 0);
-		return result;
-	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedInt64Array", this);
-}
-
-std::vector<Vector2> Variant::as_vector2_array() const {
-	if (m_type == PACKED_VECTOR2_ARRAY) {
-		std::vector<Vector2> result;
-		sys_vfetch(this, &result, 0);
-		return result;
-	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedVector2Array", this);
-}
-
-std::vector<Vector3> Variant::as_vector3_array() const {
-	if (m_type == PACKED_VECTOR3_ARRAY) {
-		std::vector<Vector3> result;
-		sys_vfetch(this, &result, 0);
-		return result;
-	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedVector3Array", this);
-}
-
 void Variant::internal_create_string(Type type, const std::string &value) {
 	sys_vcreate(this, type, 0, &value);
 }
@@ -106,13 +43,13 @@ void Variant::internal_create_u32string(Type type, const std::u32string &value) 
 
 std::string Variant::internal_fetch_string() const {
 	std::string result;
-	sys_vfetch(this, &result, 0); // Fetch as std::string
+	sys_vfetch(this->v.i, &result, 0); // Fetch as std::string
 	return result;
 }
 
 std::u32string Variant::internal_fetch_u32string() const {
 	std::u32string result;
-	sys_vfetch(this, &result, 2); // Fetch as u32string
+	sys_vfetch(this->v.i, &result, 2); // Fetch as u32string
 	return result;
 }
 

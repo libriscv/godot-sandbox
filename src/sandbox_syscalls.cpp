@@ -187,6 +187,72 @@ APICALL(api_vcreate) {
 			vp->type = type;
 			vp->v.i = idx;
 		} break;
+		case Variant::PACKED_BYTE_ARRAY: {
+			PackedByteArray a;
+			if (gdata != 0x0) {
+				// Copy std::vector<uint8_t> from guest memory.
+				GuestStdVector *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				// TODO: Improve this by directly copying the data into the PackedByteArray.
+				std::vector<uint8_t> vec = gvec->to_vector<uint8_t>(emu.machine());
+				a.resize(vec.size());
+				std::memcpy(a.ptrw(), vec.data(), vec.size());
+			}
+			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
+			vp->type = type;
+			vp->v.i = idx;
+		} break;
+		case Variant::PACKED_FLOAT32_ARRAY: {
+			PackedFloat32Array a;
+			if (gdata != 0x0) {
+				// Copy std::vector<float> from guest memory.
+				GuestStdVector *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				std::vector<float> vec = gvec->to_vector<float>(emu.machine());
+				a.resize(vec.size());
+				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(float));
+			}
+			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
+			vp->type = type;
+			vp->v.i = idx;
+		} break;
+		case Variant::PACKED_FLOAT64_ARRAY: {
+			PackedFloat64Array a;
+			if (gdata != 0x0) {
+				// Copy std::vector<double> from guest memory.
+				GuestStdVector *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				std::vector<double> vec = gvec->to_vector<double>(emu.machine());
+				a.resize(vec.size());
+				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(double));
+			}
+			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
+			vp->type = type;
+			vp->v.i = idx;
+		} break;
+		case Variant::PACKED_INT32_ARRAY: {
+			PackedInt32Array a;
+			if (gdata != 0x0) {
+				// Copy std::vector<int32_t> from guest memory.
+				GuestStdVector *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				std::vector<int32_t> vec = gvec->to_vector<int32_t>(emu.machine());
+				a.resize(vec.size());
+				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(int32_t));
+			}
+			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
+			vp->type = type;
+			vp->v.i = idx;
+		} break;
+		case Variant::PACKED_INT64_ARRAY: {
+			PackedInt64Array a;
+			if (gdata != 0x0) {
+				// Copy std::vector<int64_t> from guest memory.
+				GuestStdVector *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				std::vector<int64_t> vec = gvec->to_vector<int64_t>(emu.machine());
+				a.resize(vec.size());
+				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(int64_t));
+			}
+			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
+			vp->type = type;
+			vp->v.i = idx;
+		} break;
 		default:
 			ERR_PRINT("Unsupported Variant type for Variant::create()");
 			throw std::runtime_error("Unsupported Variant type for Variant::create()");
@@ -194,12 +260,12 @@ APICALL(api_vcreate) {
 }
 
 APICALL(api_vfetch) {
-	auto [vp, gdata, method] = machine.sysargs<GuestVariant *, gaddr_t, int>();
+	auto [index, gdata, method] = machine.sysargs<unsigned, gaddr_t, int>();
 	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(10'000);
 
 	// Find scoped Variant and copy data into gdata.
-	std::optional<const Variant *> opt = emu.get_scoped_variant(vp->v.i);
+	std::optional<const Variant *> opt = emu.get_scoped_variant(index);
 	if (opt.has_value()) {
 		const godot::Variant &var = *opt.value();
 		switch (var.get_type()) {
@@ -230,6 +296,7 @@ APICALL(api_vfetch) {
 			case Variant::PACKED_FLOAT32_ARRAY: {
 				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
 				auto arr = var.operator PackedFloat32Array();
+				// Allocate and copy the array into the guest memory.
 				auto [sptr, saddr] = gvec->alloc<float>(emu.machine(), arr.size());
 				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(float));
 				break;
@@ -297,21 +364,37 @@ APICALL(api_vclone) {
 }
 
 APICALL(api_vstore) {
-	auto [vp, gdata] = machine.sysargs<GuestVariant *, gaddr_t>();
+	auto [index, gdata, gsize] = machine.sysargs<unsigned, gaddr_t, gaddr_t>();
 	auto &emu = riscv::emu(machine);
 	machine.penalize(10'000);
 
-	// Find scoped Variant and store its data into gdata (which could be a, eg., a std::string).
-	std::optional<const Variant *> opt = emu.get_scoped_variant(vp->v.i);
+	// Find scoped Variant and store data from guest memory.
+	std::optional<const Variant *> opt = emu.get_scoped_variant(index);
 	if (opt.has_value()) {
 		const godot::Variant &var = *opt.value();
 		switch (var.get_type()) {
-			case Variant::STRING:
-			case Variant::STRING_NAME:
-			case Variant::NODE_PATH: {
-				GuestStdString *gstr = emu.machine().memory.memarray<GuestStdString>(gdata, 1);
-				CharString u8str = var.operator String().utf8();
-				gstr->set_string(emu.machine(), gdata, u8str.ptr(), u8str.length());
+			case Variant::PACKED_BYTE_ARRAY: {
+				auto arr = var.operator PackedByteArray();
+				// Copy the array from guest memory into the Variant.
+				auto *data = emu.machine().memory.memarray<uint8_t>(gdata, gsize);
+				arr.resize(gsize);
+				std::memcpy(arr.ptrw(), data, gsize);
+				break;
+			}
+			case Variant::PACKED_FLOAT32_ARRAY: {
+				auto arr = var.operator PackedFloat32Array();
+				// Copy the array from guest memory into the Variant.
+				auto *data = emu.machine().memory.memarray<float>(gdata, gsize);
+				arr.resize(gsize);
+				std::memcpy(arr.ptrw(), data, gsize * sizeof(float));
+				break;
+			}
+			case Variant::PACKED_FLOAT64_ARRAY: {
+				auto arr = var.operator PackedFloat64Array();
+				// Copy the array from guest memory into the Variant.
+				auto *data = emu.machine().memory.memarray<double>(gdata, gsize);
+				arr.resize(gsize);
+				std::memcpy(arr.ptrw(), data, gsize * sizeof(double));
 				break;
 			}
 			default:

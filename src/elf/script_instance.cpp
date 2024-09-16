@@ -2,8 +2,8 @@
 
 #include "../cpp/script_cpp.h"
 #include "../rust/script_rust.h"
-#include "../zig/script_zig.h"
 #include "../sandbox.h"
+#include "../zig/script_zig.h"
 #include "script_elf.h"
 #include "script_instance_helper.h"
 #include <godot_cpp/core/object.hpp>

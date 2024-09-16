@@ -26,6 +26,7 @@ template<class T>
 struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
 
 struct Object; struct Node; struct Node2D; struct Node3D; struct Array; struct Dictionary; union String;
+#include "packed_array.hpp"
 #include "vector.hpp"
 
 struct Variant
@@ -131,6 +132,11 @@ struct Variant
 	Variant(const Node&);
 	Variant(const Node2D&);
 	Variant(const Node3D&);
+	Variant(const PackedArray<uint8_t>&);
+	Variant(const PackedArray<float>&);
+	Variant(const PackedArray<double>&);
+	Variant(const PackedArray<int32_t>&);
+	Variant(const PackedArray<int64_t>&);
 
 	// Constructor specifically the STRING_NAME type
 	static Variant string_name(const std::string &name);
@@ -170,13 +176,13 @@ struct Variant
 	String as_string() const;
 	std::string as_std_string() const;
 	std::u32string as_std_u32string() const;
-	std::vector<uint8_t> as_byte_array() const;
-	std::vector<float> as_float32_array() const;
-	std::vector<double> as_float64_array() const;
-	std::vector<int32_t> as_int32_array() const;
-	std::vector<int64_t> as_int64_array() const;
-	std::vector<Vector2> as_vector2_array() const;
-	std::vector<Vector3> as_vector3_array() const;
+	PackedArray<uint8_t> as_byte_array() const;
+	PackedArray<float> as_float32_array() const;
+	PackedArray<double> as_float64_array() const;
+	PackedArray<int32_t> as_int32_array() const;
+	PackedArray<int64_t> as_int64_array() const;
+	PackedArray<Vector2> as_vector2_array() const;
+	PackedArray<Vector3> as_vector3_array() const;
 
 	const Vector2& v2() const;
 	Vector2& v2();
@@ -310,6 +316,32 @@ inline Variant::Variant(T value)
 }
 
 #define Nil Variant()
+
+inline Variant::Variant(const PackedArray<uint8_t> &array)
+{
+	m_type = PACKED_BYTE_ARRAY;
+	v.i = array.get_variant_index();
+}
+inline Variant::Variant(const PackedArray<float> &array)
+{
+	m_type = PACKED_FLOAT32_ARRAY;
+	v.i = array.get_variant_index();
+}
+inline Variant::Variant(const PackedArray<double> &array)
+{
+	m_type = PACKED_FLOAT64_ARRAY;
+	v.i = array.get_variant_index();
+}
+inline Variant::Variant(const PackedArray<int32_t> &array)
+{
+	m_type = PACKED_INT32_ARRAY;
+	v.i = array.get_variant_index();
+}
+inline Variant::Variant(const PackedArray<int64_t> &array)
+{
+	m_type = PACKED_INT64_ARRAY;
+	v.i = array.get_variant_index();
+}
 
 inline Variant Variant::string_name(const std::string &name) {
 	Variant v;
@@ -530,6 +562,41 @@ inline Rect2i& Variant::r2i()
 	if (m_type == RECT2I)
 		return v.r2i;
 	api_throw("std::bad_cast", "Failed to cast Variant to Rect2i", this);
+}
+
+inline PackedArray<uint8_t> Variant::as_byte_array() const {
+	if (m_type == PACKED_BYTE_ARRAY) {
+		return PackedArray<uint8_t>::from_index(v.i);
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedByteArray", this);
+}
+
+inline PackedArray<float> Variant::as_float32_array() const {
+	if (m_type == PACKED_FLOAT32_ARRAY) {
+		return PackedArray<float>::from_index(v.i);
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedFloat32Array", this);
+}
+
+inline PackedArray<double> Variant::as_float64_array() const {
+	if (m_type == PACKED_FLOAT64_ARRAY) {
+		return PackedArray<double>::from_index(v.i);
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedFloat64Array", this);
+}
+
+inline PackedArray<int32_t> Variant::as_int32_array() const {
+	if (m_type == PACKED_INT32_ARRAY) {
+		return PackedArray<int32_t>::from_index(v.i);
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedInt32Array", this);
+}
+
+inline PackedArray<int64_t> Variant::as_int64_array() const {
+	if (m_type == PACKED_INT64_ARRAY) {
+		return PackedArray<int64_t>::from_index(v.i);
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedInt64Array", this);
 }
 
 inline Variant::Variant(const Variant &other)
