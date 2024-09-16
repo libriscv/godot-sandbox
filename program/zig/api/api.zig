@@ -12,3 +12,15 @@ pub const Variant = struct {
         self.v.i = int;
     }
 };
+
+comptime {
+    asm (
+        \\.global fast_exit;
+        \\.type fast_exit, @function;
+        \\fast_exit:
+        \\  .insn i SYSTEM, 0, x0, x0, 0x7ff
+        \\.pushsection .comment
+        \\.string "Godot Zig API v1"
+        \\.popsection
+    );
+}
