@@ -45,6 +45,14 @@ public:
 	static constexpr unsigned EDITOR_THROTTLE = 8; // Throttle VM calls from the editor
 	static constexpr unsigned MAX_PROPERTIES = 16; // Maximum number of sandboxed properties
 
+	struct CurrentState {
+		std::vector<Variant> variants;
+		std::vector<const Variant *> scoped_variants;
+		std::vector<uintptr_t> scoped_objects;
+
+		inline void reset(unsigned index, unsigned max_refs);
+	};
+
 	Sandbox();
 	~Sandbox();
 
@@ -267,18 +275,6 @@ private:
 	unsigned m_exceptions = 0;
 	unsigned m_calls_made = 0;
 
-	struct CurrentState {
-		std::vector<Variant> variants;
-		std::vector<const Variant *> scoped_variants;
-		std::vector<uintptr_t> scoped_objects;
-
-		void reset(unsigned max_refs) {
-			variants.reserve(max_refs);
-			variants.clear();
-			scoped_variants.clear();
-			scoped_objects.clear();
-		}
-	};
 	CurrentState *m_current_state = nullptr;
 	// State stack, with the permanent (initial) state at index 0.
 	// That means eg. static Variant values are held stored in the state at index 0,
@@ -293,3 +289,10 @@ private:
 	static inline uint64_t m_global_exceptions = 0;
 	static inline uint64_t m_global_calls_made = 0;
 };
+
+inline void Sandbox::CurrentState::reset(unsigned index, unsigned max_refs) {
+	variants.reserve(max_refs);
+	variants.clear();
+	scoped_variants.clear();
+	scoped_objects.clear();
+}

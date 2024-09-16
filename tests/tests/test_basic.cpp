@@ -52,6 +52,29 @@ extern "C" Variant test_object(Object arg) {
 	return arg;
 }
 
+extern "C" Variant test_pa_u8(PackedArray<uint8_t> arr) {
+	return arr;
+}
+extern "C" Variant test_pa_f32(PackedArray<float> arr) {
+	return arr;
+}
+extern "C" Variant test_pa_f64(PackedArray<double> arr) {
+	return arr;
+}
+
+extern "C" Variant test_create_pa_u8() {
+	PackedArray<uint8_t> arr({ 1, 2, 3, 4 });
+	return arr;
+}
+extern "C" Variant test_create_pa_f32() {
+	PackedArray<float> arr({ 1, 2, 3, 4 });
+	return arr;
+}
+extern "C" Variant test_create_pa_f64() {
+	PackedArray<double> arr({ 1, 2, 3, 4 });
+	return arr;
+}
+
 extern "C" Variant test_exception() {
 	asm("unimp");
 	__builtin_unreachable();

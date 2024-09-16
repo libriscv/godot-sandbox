@@ -63,11 +63,15 @@ func test_types():
 	assert_eq(s_pp, "12345")
 	# Packed arrays
 	var pba_pp : PackedByteArray = [1, 2, 3, 4]
-	assert_same(s.vmcall("test_ping_pong", pba_pp), pba_pp)
+	assert_same(s.vmcall("test_pa_u8", pba_pp), pba_pp)
 	var pfa32_pp : PackedFloat32Array = [1.0, 2.0, 3.0, 4.0]
-	assert_same(s.vmcall("test_ping_pong", pfa32_pp), pfa32_pp)
+	assert_same(s.vmcall("test_pa_f32", pfa32_pp), pfa32_pp)
 	var pfa64_pp : PackedFloat64Array = [1.0, 2.0, 3.0, 4.0]
-	assert_same(s.vmcall("test_ping_pong", pfa64_pp), pfa64_pp)
+	assert_same(s.vmcall("test_pa_f64", pfa64_pp), pfa64_pp)
+	# Packed arrays created in the guest
+	assert_eq(s.vmcall("test_create_pa_u8"), PackedByteArray([1, 2, 3, 4]))
+	assert_eq(s.vmcall("test_create_pa_f32"), PackedFloat32Array([1, 2, 3, 4]))
+	assert_eq(s.vmcall("test_create_pa_f64"), PackedFloat64Array([1, 2, 3, 4]))
 
 	# Callables
 	var cb : Callable = Callable(callable_function)
@@ -110,6 +114,14 @@ func test_vmcallv():
 	assert_same(s.vmcallv("test_ping_pong", Vector4i(1, 2, 3, 4)), Vector4i(1, 2, 3, 4))
 	assert_same(s.vmcallv("test_ping_pong", Color(1, 2, 3, 4)), Color(1, 2, 3, 4))
 	#assert_same(s.vmcallv("test_ping_pong", Rect2(Vector2(1, 2), Vector2(3, 4))), Rect2(Vector2(1, 2), Vector2(3, 4)))
+
+	# Packed arrays
+	var pba_pp : PackedByteArray = [1, 2, 3, 4]
+	assert_same(s.vmcallv("test_ping_pong", pba_pp), pba_pp)
+	var pfa32_pp : PackedFloat32Array = [1.0, 2.0, 3.0, 4.0]
+	assert_same(s.vmcallv("test_ping_pong", pfa32_pp), pfa32_pp)
+	var pfa64_pp : PackedFloat64Array = [1.0, 2.0, 3.0, 4.0]
+	assert_same(s.vmcallv("test_ping_pong", pfa64_pp), pfa64_pp)
 
 
 func test_objects():

@@ -200,6 +200,13 @@ struct GuestStdVector {
 		return { machine.memory.memarray<T>(this->data(), elements), this->data() };
 	}
 
+	template <typename T>
+	inline void assign_shared(machine_t &machine, gaddr_t shared_addr, std::size_t elements) {
+		this->ptr_begin = shared_addr;
+		this->ptr_end = shared_addr + elements * sizeof(T);
+		this->ptr_capacity = this->ptr_end;
+	}
+
 	void free(machine_t &machine) {
 		if (capacity() > 0)
 			machine.arena().free(this->data());

@@ -13,7 +13,7 @@ MAKE_SYSCALL(ECALL_TIMER_STOP, void, sys_timer_stop, unsigned);
 Variant Timer::create(period_t period, bool oneshot, TimerCallback callback) {
 	Variant timer;
 	sys_timer_periodic(period, oneshot, [](Variant timer, Variant storage) -> Variant {
-		std::vector<uint8_t> callback = storage.as_byte_array();
+		std::vector<uint8_t> callback = storage.as_byte_array().fetch();
 		Timer::TimerCallback *timerfunc = (Timer::TimerCallback *)callback.data();
 		return (*timerfunc)(timer);
 	}, &callback, &timer);
@@ -23,7 +23,7 @@ Variant Timer::create(period_t period, bool oneshot, TimerCallback callback) {
 Variant Timer::create_native(period_t period, bool oneshot, TimerNativeCallback callback) {
 	Variant timer;
 	sys_timer_periodic_native(period, oneshot, [](Object timer, Variant storage) -> Variant {
-		std::vector<uint8_t> callback = storage.as_byte_array();
+		std::vector<uint8_t> callback = storage.as_byte_array().fetch();
 		Timer::TimerNativeCallback *timerfunc = (Timer::TimerNativeCallback *)callback.data();
 		return (*timerfunc)(timer);
 	}, &callback, &timer);
