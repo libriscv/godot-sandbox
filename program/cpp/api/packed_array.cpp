@@ -88,3 +88,24 @@ template <>
 void PackedArray<double>::store(const std::vector<double> &data) {
 	sys_vstore(m_idx, data.data(), data.size());
 }
+
+template <>
+void PackedArray<uint8_t>::store(const uint8_t *data, size_t size) {
+	sys_vstore(m_idx, data, size);
+}
+template <>
+void PackedArray<int32_t>::store(const int32_t *data, size_t size) {
+	sys_vstore(m_idx, data, size);
+}
+template <>
+void PackedArray<int64_t>::store(const int64_t *data, size_t size) {
+	sys_vstore(m_idx, data, size);
+}
+template <>
+void PackedArray<float>::store(const float *data, size_t size) {
+	sys_vstore(m_idx, data, size);
+}
+template <>
+void PackedArray<double>::store(const double *data, size_t size) {
+	sys_vstore(m_idx, data, size);
+}

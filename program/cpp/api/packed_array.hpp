@@ -29,6 +29,10 @@ struct PackedArray {
 	/// @param data The data to store.
 	void store(const std::vector<T> &data);
 
+	/// @brief Store an array of data into the host-side array.
+	/// @param data The data to store.
+	void store(const T *data, size_t size);
+
 	/// @brief Create a PackedArray from a host-side Variant index.
 	/// @param idx The host-side Variant index.
 	/// @return PackedArray<T> The PackedArray.
