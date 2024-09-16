@@ -34,6 +34,19 @@ fi
 
 DIR="$(dirname "${output}")"
 FILE="$(basename "${output}")"
-time /usr/zig/zig build-exe -O ReleaseSmall -fno-strip -flld -target riscv64-linux $@ --name $FILE
-mv $FILE $output
-rm -f $FILE.o
+
+cleanup() {
+	rm -rf /usr/project
+}
+
+trap cleanup EXIT
+
+mkdir -p /usr/project/api
+cp $@ /usr/project
+# Copy the API files to the project directory
+cp /usr/api/*.zig /usr/project/api
+
+cd /usr/project
+/usr/zig/zig build-exe -O ReleaseSmall -fno-strip -flld -target riscv64-linux *.zig --name $FILE
+# Move the output file to the correct location
+mv $FILE /usr/src/$output
