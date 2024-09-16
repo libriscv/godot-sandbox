@@ -48,7 +48,7 @@ TypedArray<Dictionary> ZigScript::_get_documentation() const {
 	return TypedArray<Dictionary>();
 }
 String ZigScript::_get_class_icon_path() const {
-	return String("res://addons/godot_sandbox/ZigScript.svg");
+	return String("res://addons/godot_sandbox/ZIGScript.svg");
 }
 bool ZigScript::_has_method(const StringName &p_method) const {
 	return false;

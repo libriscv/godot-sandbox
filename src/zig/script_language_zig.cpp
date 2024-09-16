@@ -8,7 +8,7 @@
 #include <godot_cpp/classes/theme.hpp>
 #include <string>
 #include <unordered_set>
-static constexpr const char *icon_path = "res://addons/godot_sandbox/ZigScript.svg";
+static constexpr const char *icon_path = "res://addons/godot_sandbox/ZIGScript.svg";
 
 static ZigScriptLanguage *zig_language;
 
