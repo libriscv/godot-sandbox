@@ -132,6 +132,10 @@ Linting:
 ./scripts/clang-tidy.sh
 ```
 
+## Icons
+
+The script icon is built from the Godot icons. It's using the same font as the Godot Logo, which is Lilita One. The icons are then imported into Godot once in order to check the box `Scale With Editor` in the import panel.
+
 ## Contributors ✨
 
 Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
