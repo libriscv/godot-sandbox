@@ -120,6 +120,10 @@ public:
 	static uint64_t get_global_exceptions() { return m_global_exceptions; }
 	static uint64_t get_global_calls_made() { return m_global_calls_made; }
 
+	/// @brief Get the global instance count of all sandbox instances.
+	/// @return The global instance count.
+	static uint64_t get_global_instance_count() { return m_global_instance_count; }
+
 	/// @brief Get the globally accumulated startup time of all sandbox instantiations.
 	/// @return The accumulated startup time.
 	static double get_accumulated_startup_time() { return m_accumulated_startup_time; }
@@ -292,6 +296,7 @@ private:
 	static inline uint64_t m_global_budget_overruns = 0;
 	static inline uint64_t m_global_exceptions = 0;
 	static inline uint64_t m_global_calls_made = 0;
+	static inline uint32_t m_global_instance_count = 0;
 	static inline double m_accumulated_startup_time = 0.0;
 };
 

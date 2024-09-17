@@ -72,7 +72,9 @@ void Sandbox::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_exceptions", PROPERTY_HINT_NONE, "Number of exceptions thrown"), "", "get_global_exceptions");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_execution_timeouts", PROPERTY_HINT_NONE, "Number of execution timeouts"), "", "get_global_budget_overruns");
 
+	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_instance_count"), &Sandbox::get_global_instance_count);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("get_accumulated_startup_time"), &Sandbox::get_accumulated_startup_time);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_instance_count", PROPERTY_HINT_NONE, "Number of active sandbox instances"), "", "get_global_instance_count");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "monitor_accumulated_startup_time", PROPERTY_HINT_NONE, "Accumulated startup time of all sandbox instantiations"), "", "get_accumulated_startup_time");
 
 	// Group for sandboxed properties.
@@ -81,6 +83,7 @@ void Sandbox::_bind_methods() {
 
 Sandbox::Sandbox() {
 	this->m_use_unboxed_arguments = SandboxProjectSettings::use_native_types();
+	this->m_global_instance_count += 1;
 	// In order to reduce checks we guarantee that this
 	// class is well-formed at all times.
 	try {
@@ -91,6 +94,7 @@ Sandbox::Sandbox() {
 }
 
 Sandbox::~Sandbox() {
+	this->m_global_instance_count -= 1;
 	try {
 		delete this->m_machine;
 	} catch (const std::exception &e) {
@@ -685,6 +689,9 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 		return true;
 	} else if (name == StringName("monitor_accumulated_startup_time")) {
 		r_ret = get_accumulated_startup_time();
+		return true;
+	} else if (name == StringName("monitor_global_instance_count")) {
+		r_ret = get_global_instance_count();
 		return true;
 	}
 	return false;
