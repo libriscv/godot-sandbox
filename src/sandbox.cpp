@@ -5,6 +5,7 @@
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/os.hpp>
+#include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
@@ -71,6 +72,9 @@ void Sandbox::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_exceptions", PROPERTY_HINT_NONE, "Number of exceptions thrown"), "", "get_global_exceptions");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_execution_timeouts", PROPERTY_HINT_NONE, "Number of execution timeouts"), "", "get_global_budget_overruns");
 
+	ClassDB::bind_static_method("Sandbox", D_METHOD("get_accumulated_startup_time"), &Sandbox::get_accumulated_startup_time);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "monitor_accumulated_startup_time", PROPERTY_HINT_NONE, "Accumulated startup time of all sandbox instantiations"), "", "get_accumulated_startup_time");
+
 	// Group for sandboxed properties.
 	ADD_GROUP("Sandboxed Properties", "custom_");
 }
@@ -114,8 +118,18 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 		ERR_PRINT("Empty binary, cannot load program.");
 		return;
 	}
+	// If the binary sizes match, let's see if the binary is the exact same
+	if (buffer.size() == this->m_machine->memory.binary().size()) {
+		if (std::memcmp(buffer.ptr(), this->m_machine->memory.binary().data(), buffer.size()) == 0) {
+			// Binary is the same, no need to reload
+			return;
+		}
+	}
 	this->m_binary = std::move(buffer);
 	const std::string_view binary_view = std::string_view{ (const char *)this->m_binary.ptr(), static_cast<size_t>(this->m_binary.size()) };
+
+	// Get t0 for the startup time
+	double startup_t0 = Time::get_singleton()->get_ticks_usec();
 
 	/** We can't handle exceptions until the Machine is fully constructed. Two steps.  */
 	try {
@@ -167,6 +181,10 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 	for (int i = 0; i < functions.size(); i++) {
 		this->cached_address_of(functions[i].hash(), functions[i]);
 	}
+
+	// Accumulate startup time
+	double startup_t1 = Time::get_singleton()->get_ticks_usec();
+	m_accumulated_startup_time += (startup_t1 - startup_t0) / 1e6;
 }
 
 Variant Sandbox::vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
@@ -665,6 +683,9 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	} else if (name == StringName("global_budget_overruns")) {
 		r_ret = get_global_budget_overruns();
 		return true;
+	} else if (name == StringName("monitor_accumulated_startup_time")) {
+		r_ret = get_accumulated_startup_time();
+		return true;
 	}
 	return false;
 }
@@ -684,8 +705,10 @@ void SandboxProperty::set(Sandbox &sandbox, const Variant &value) {
 		return;
 	}
 	const Variant *args[] = { &value };
+	// Store use_unboxed_arguments state and restore it after the call
+	// It's much more convenient to use Variant arguments for properties
 	auto old_use_unboxed_arguments = sandbox.get_use_unboxed_arguments();
-	sandbox.set_use_unboxed_arguments(false); // Always use Variant for properties
+	sandbox.set_use_unboxed_arguments(false);
 	sandbox.vmcall_internal(m_setter_address, args, 1);
 	sandbox.set_use_unboxed_arguments(old_use_unboxed_arguments);
 }
