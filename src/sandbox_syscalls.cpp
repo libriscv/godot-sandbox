@@ -1189,6 +1189,12 @@ void Sandbox::initialize_syscalls() {
 		machine.penalize(100'000); // Add to the instruction counter due to I/O.
 	};
 
+	static bool initialized_before = false;
+	if (initialized_before) {
+		return;
+	}
+	initialized_before = true;
+
 	// Add the Godot system calls.
 	machine_t::install_syscall_handlers({
 			{ ECALL_PRINT, api_print },

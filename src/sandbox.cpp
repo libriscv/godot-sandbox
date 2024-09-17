@@ -13,6 +13,7 @@ using namespace godot;
 
 static const int HEAP_SYSCALLS_BASE = 480;
 static const int MEMORY_SYSCALLS_BASE = 485;
+static const std::vector<std::string> program_arguments = { "program" };
 
 String Sandbox::_to_string() const {
 	return "[ GDExtension::Sandbox <--> Instance ID:" + uitos(get_instance_id()) + " ]";
@@ -133,7 +134,7 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 	const std::string_view binary_view = std::string_view{ (const char *)this->m_binary.ptr(), static_cast<size_t>(this->m_binary.size()) };
 
 	// Get t0 for the startup time
-	double startup_t0 = Time::get_singleton()->get_ticks_usec();
+	const uint64_t startup_t0 = Time::get_singleton()->get_ticks_usec();
 
 	/** We can't handle exceptions until the Machine is fully constructed. Two steps.  */
 	try {
@@ -149,6 +150,7 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox construction exception: " + std::string(e.what())).c_str());
 		this->m_machine = new machine_t{};
+		this->m_binary = PackedByteArray();
 		return;
 	}
 
@@ -168,16 +170,18 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 		machine().setup_native_heap(HEAP_SYSCALLS_BASE, heap_area, heap_size);
 		machine().setup_native_memory(MEMORY_SYSCALLS_BASE);
 
-		static const std::vector<std::string> program_arguments = { "program" };
+		// Set up a Linux environment for the program
 		const std::vector<std::string> *argv = argv_ptr ? argv_ptr : &program_arguments;
 		m.setup_linux(*argv);
 
+		// Run the program through to its main() function
 		m.simulate(get_instructions_max() << 30);
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
 		this->handle_exception(machine().cpu.pc());
 	}
 
+	// Read the program's custom properties, if any
 	this->read_program_properties(true);
 
 	// Pre-cache some functions
@@ -187,7 +191,7 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 	}
 
 	// Accumulate startup time
-	double startup_t1 = Time::get_singleton()->get_ticks_usec();
+	const uint64_t startup_t1 = Time::get_singleton()->get_ticks_usec();
 	m_accumulated_startup_time += (startup_t1 - startup_t0) / 1e6;
 }
 
