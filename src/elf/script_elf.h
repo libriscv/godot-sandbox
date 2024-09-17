@@ -61,7 +61,7 @@ public:
 	virtual bool _is_placeholder_fallback_enabled() const override;
 	virtual Variant _get_rpc_config() const override;
 
-	PackedByteArray get_content();
+	const PackedByteArray &get_content();
 	void set_file(const String &path);
 	ELFScript() {}
 	~ELFScript() {}

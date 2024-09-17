@@ -254,7 +254,7 @@ public:
 	const machine_t &machine() const { return *m_machine; }
 
 private:
-	void load(PackedByteArray &&vbuf, const std::vector<std::string> *argv = nullptr);
+	void load(const PackedByteArray *vbuf, const std::vector<std::string> *argv = nullptr);
 	void read_program_properties(bool editor) const;
 	void handle_exception(gaddr_t);
 	void handle_timeout(gaddr_t);
@@ -266,7 +266,7 @@ private:
 	Ref<ELFScript> m_program_data;
 	machine_t *m_machine = nullptr;
 	godot::Node *m_tree_base = nullptr;
-	PackedByteArray m_binary;
+	const PackedByteArray *m_binary = nullptr;
 	uint32_t m_max_refs = 100;
 	uint32_t m_memory_max = MAX_VMEM;
 	int64_t m_insn_max = MAX_INSTRUCTIONS;

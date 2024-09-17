@@ -223,7 +223,7 @@ Variant ELFScript::_get_rpc_config() const {
 	return Variant();
 }
 
-PackedByteArray ELFScript::get_content() {
+const PackedByteArray &ELFScript::get_content() {
 	return source_code;
 }
 

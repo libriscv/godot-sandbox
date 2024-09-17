@@ -109,29 +109,28 @@ void Sandbox::set_program(Ref<ELFScript> program) {
 		// TODO unload program
 		return;
 	}
-	PackedByteArray data = m_program_data->get_content();
-	this->load(std::move(data));
+	this->load(&m_program_data->get_content());
 }
 Ref<ELFScript> Sandbox::get_program() {
 	return m_program_data;
 }
 bool Sandbox::has_program_loaded() const {
-	return !this->machine().memory.binary().empty();
+	return this->m_binary != nullptr;
 }
-void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *argv_ptr) {
-	if (buffer.is_empty()) {
+void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string> *argv_ptr) {
+	if (buffer == nullptr || buffer->is_empty()) {
 		ERR_PRINT("Empty binary, cannot load program.");
 		return;
 	}
 	// If the binary sizes match, let's see if the binary is the exact same
-	if (buffer.size() == this->m_machine->memory.binary().size()) {
-		if (std::memcmp(buffer.ptr(), this->m_machine->memory.binary().data(), buffer.size()) == 0) {
+	if (buffer->size() == this->m_machine->memory.binary().size()) {
+		if (std::memcmp(buffer->ptr(), this->m_machine->memory.binary().data(), buffer->size()) == 0) {
 			// Binary is the same, no need to reload
 			return;
 		}
 	}
-	this->m_binary = std::move(buffer);
-	const std::string_view binary_view = std::string_view{ (const char *)this->m_binary.ptr(), static_cast<size_t>(this->m_binary.size()) };
+	this->m_binary = buffer;
+	const std::string_view binary_view = std::string_view{ (const char *)buffer->ptr(), static_cast<size_t>(buffer->size()) };
 
 	// Get t0 for the startup time
 	const uint64_t startup_t0 = Time::get_singleton()->get_ticks_usec();
@@ -150,7 +149,7 @@ void Sandbox::load(PackedByteArray &&buffer, const std::vector<std::string> *arg
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox construction exception: " + std::string(e.what())).c_str());
 		this->m_machine = new machine_t{};
-		this->m_binary = PackedByteArray();
+		this->m_binary = nullptr;
 		return;
 	}
 
