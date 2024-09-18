@@ -25,6 +25,11 @@ extern "C" Variant test_math_pow(double x, double y) {
 	return Math::pow(x, y);
 }
 
+// NOTE: We can only call with 64-bit floats from GDScript
+extern "C" Variant test_math_sinf(double val) {
+	return Math::sinf(val);
+}
+
 extern "C" Variant test_math_lerp(double a, double b, double t) {
 	return Math::lerp(a, b, t);
 }
