@@ -118,13 +118,13 @@ struct Engine {
 
 	/// @brief Get the current time scale.
 	/// @return The current time scale.
-	static float get_time_scale() {
+	static double get_time_scale() {
 		return get_singleton().call("get_time_scale");
 	}
 
 	/// @brief Set a new time scale.
 	/// @param scale The new time scale.
-	static void set_time_scale(float scale) {
+	static void set_time_scale(double scale) {
 		get_singleton().call("set_time_scale", scale);
 	}
 
@@ -194,3 +194,41 @@ struct ClassDB {
 	/// @return The new object.
 	static Object instantiate(std::string_view class_name, std::string_view name = "");
 };
+
+/// @brief Math and interpolation operations.
+struct Math {
+	static double sin(double x);
+	static double cos(double x);
+	static double tan(double x);
+	static double asin(double x);
+	static double acos(double x);
+	static double atan(double x);
+	static double atan2(double y, double x);
+	static double pow(double x, double y);
+
+	/// @brief Linearly interpolate between two values.
+	/// @param a The start value.
+	/// @param b The end value.
+	/// @param t The interpolation factor (between 0 and 1).
+	static double lerp(double a, double b, double t);
+
+	/// @brief Smoothly interpolate between two values.
+	/// @param from The start value.
+	/// @param to The end value.
+	/// @param t The interpolation factor (between 0 and 1).
+	static double smoothstep(double from, double to, double t);
+
+	/// @brief Clamp a value between two bounds.
+	/// @param x The value to clamp.
+	/// @param min The minimum value.
+	/// @param max The maximum value.
+	static double clamp(double x, double min, double max);
+
+	/// @brief Spherical linear interpolation between two values.
+	/// @param a The start value in radians.
+	/// @param b The end value in radians.
+	/// @param t The interpolation factor (between 0 and 1).
+	static double slerp(double a, double b, double t);
+};
+
+#include "api_inline.hpp"
