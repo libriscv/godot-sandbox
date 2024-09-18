@@ -44,7 +44,12 @@
 
 #define ECALL_NODE_CREATE (GAME_API_BASE + 32)
 
-#define ECALL_LAST (GAME_API_BASE + 33)
+#define ECALL_MATH_OP32 (GAME_API_BASE + 33)
+#define ECALL_MATH_OP64 (GAME_API_BASE + 34)
+#define ECALL_LERP_OP32 (GAME_API_BASE + 35)
+#define ECALL_LERP_OP64 (GAME_API_BASE + 36)
+
+#define ECALL_LAST (GAME_API_BASE + 37)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
@@ -160,4 +165,22 @@ enum class String_Op {
 	FIND,
 	ERASE,
 	TO_STD_STRING,
+};
+
+enum class Math_Op {
+	SIN = 0,
+	COS,
+	TAN,
+	ASIN,
+	ACOS,
+	ATAN,
+	ATAN2,
+	POW,
+};
+
+enum class Lerp_Op {
+	LERP = 0,
+	SMOOTHSTEP,
+	CLAMP,
+	SLERP,
 };

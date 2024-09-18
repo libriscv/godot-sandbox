@@ -1173,6 +1173,86 @@ APICALL(api_timer_stop) {
 	throw std::runtime_error("timer_stop: Not implemented");
 }
 
+APICALL(api_math_op64) {
+	auto [op, arg1] = machine.sysargs<Math_Op, double>();
+
+	switch (op) {
+		case Math_Op::SIN:
+			machine.set_result(std::sin(arg1));
+			break;
+		case Math_Op::COS:
+			machine.set_result(std::cos(arg1));
+			break;
+		case Math_Op::TAN:
+			machine.set_result(std::tan(arg1));
+			break;
+		case Math_Op::ASIN:
+			machine.set_result(std::asin(arg1));
+			break;
+		case Math_Op::ACOS:
+			machine.set_result(std::acos(arg1));
+			break;
+		case Math_Op::ATAN:
+			machine.set_result(std::atan(arg1));
+			break;
+		case Math_Op::ATAN2: {
+			double arg2 = machine.cpu.registers().getfl(11).f64; // fa1
+			machine.set_result(std::atan2(arg1, arg2));
+			break;
+		}
+		case Math_Op::POW: {
+			double arg2 = machine.cpu.registers().getfl(11).f64; // fa1
+			machine.set_result(std::pow(arg1, arg2));
+			break;
+		}
+		default:
+			ERR_PRINT("Invalid Math operation");
+			throw std::runtime_error("Invalid Math operation");
+	}
+}
+
+inline double CLAMP(double x, double a, double b) {
+	return x < a ? a : (x > b ? b : x);
+}
+
+APICALL(api_lerp_op64) {
+	auto [op, arg1, arg2, arg3] = machine.sysargs<Lerp_Op, double, double, double>();
+	switch (op) {
+		case Lerp_Op::LERP: {
+			const double t = arg3; // t is the interpolation factor.
+			machine.set_result(arg1 * (1.0 - t) + arg2 * t);
+			break;
+		}
+		case Lerp_Op::SMOOTHSTEP: {
+			const double a = arg1; // a is the start value.
+			const double b = arg2; // b is the end value.
+			const double t = CLAMP((arg3 - a) / (b - a), 0.0, 1.0);
+			machine.set_result(t * t * (3.0 - 2.0 * t));
+			break;
+		}
+		case Lerp_Op::CLAMP:
+			machine.set_result(CLAMP(arg1, arg2, arg3));
+			break;
+		case Lerp_Op::SLERP: { // Spherical linear interpolation
+			const double a = arg1; // a is the start value.
+			const double b = arg2; // b is the end value.
+			const double t = arg3; // t is the interpolation factor.
+			const double dot = a * b + 1.0;
+			if (dot > 0.9995f) {
+				machine.set_result(a);
+			} else {
+				const double theta = std::acos(CLAMP(dot, -1.0, 1.0));
+				const double sin_theta = std::sin(theta);
+				machine.set_result((a * std::sin((1.0 - t) * theta) + b * std::sin(t * theta)) / sin_theta);
+			}
+			break;
+		}
+		default:
+			ERR_PRINT("Invalid Lerp operation");
+			throw std::runtime_error("Invalid Lerp operation");
+	}
+}
+
 } //namespace riscv
 
 void Sandbox::initialize_syscalls() {
@@ -1241,5 +1321,10 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_TIMER_STOP, api_timer_stop },
 
 			{ ECALL_NODE_CREATE, api_node_create },
+
+			{ ECALL_MATH_OP32, [] (auto&) { throw std::runtime_error("32-bit math operations are not implemented yet"); } },
+			{ ECALL_MATH_OP64, api_math_op64 },
+			{ ECALL_LERP_OP32, [] (auto&) { throw std::runtime_error("32-bit lerp operations are not implemented yet"); } },
+			{ ECALL_LERP_OP64, api_lerp_op64 },
 	});
 }
