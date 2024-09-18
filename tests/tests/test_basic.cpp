@@ -36,6 +36,10 @@ extern "C" Variant test_vec2i(Vector2i arg) {
 	return arg;
 }
 
+extern "C" Variant test_color(Color arg) {
+	return arg;
+}
+
 extern "C" Variant test_array(Array arg) {
 	return arg;
 }

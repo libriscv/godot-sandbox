@@ -44,7 +44,7 @@ func test_types():
 	assert_eq(s.vmcall("test_ping_pong", Vector3i(1, 2, 3)), Vector3i(1, 2, 3)) # Vector3i
 	assert_eq(s.vmcall("test_ping_pong", Vector4(1, 2, 3, 4)), Vector4(1, 2, 3, 4)) # Vector4
 	assert_eq(s.vmcall("test_ping_pong", Vector4i(1, 2, 3, 4)), Vector4i(1, 2, 3, 4)) # Vector4i
-	assert_eq(s.vmcall("test_ping_pong", Color(1, 2, 3, 4)), Color(1, 2, 3, 4)) # Color
+	assert_eq(s.vmcall("test_color", Color(1, 2, 3, 4)), Color(1, 2, 3, 4)) # Color
 	assert_eq(s.vmcall("test_ping_pong", Rect2(Vector2(1, 2), Vector2(3, 4))), Rect2(Vector2(1, 2), Vector2(3, 4))) # Rect2
 	#assert_eq(s.vmcall("test_ping_pong", Transform2D(Vector2(1, 2), Vector2(3, 4), Vector2(5, 6))), Transform2D(Vector2(1, 2), Vector2(3, 4), Vector2(5, 6))) # Transform2D
 	#assert_eq(s.vmcall("test_ping_pong", AABB(Vector3(1, 2, 3), Vector3(4, 5, 6))), AABB(Vector3(1, 2, 3), Vector3(4, 5, 6))) # AABB
