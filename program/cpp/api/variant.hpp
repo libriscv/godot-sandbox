@@ -26,6 +26,7 @@ template<class T>
 struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
 
 struct Object; struct Node; struct Node2D; struct Node3D; struct Array; struct Dictionary; union String;
+#include "color.hpp"
 #include "packed_array.hpp"
 #include "vector.hpp"
 
@@ -184,22 +185,24 @@ struct Variant
 	PackedArray<Vector2> as_vector2_array() const;
 	PackedArray<Vector3> as_vector3_array() const;
 
-	const Vector2& v2() const;
-	Vector2& v2();
-	const Vector2i& v2i() const;
-	Vector2i& v2i();
-	const Vector3& v3() const;
-	Vector3& v3();
-	const Vector3i& v3i() const;
-	Vector3i& v3i();
-	const Vector4& v4() const;
-	Vector4& v4();
-	const Vector4i& v4i() const;
-	Vector4i& v4i();
-	const Rect2& r2() const;
-	Rect2& r2();
-	const Rect2i& r2i() const;
-	Rect2i& r2i();
+	const Vector2 &v2() const;
+	Vector2 &v2();
+	const Vector2i &v2i() const;
+	Vector2i &v2i();
+	const Vector3 &v3() const;
+	Vector3 &v3();
+	const Vector3i &v3i() const;
+	Vector3i &v3i();
+	const Vector4 &v4() const;
+	Vector4 &v4();
+	const Vector4i &v4i() const;
+	Vector4i &v4i();
+	const Rect2 &r2() const;
+	Rect2 &r2();
+	const Rect2i &r2i() const;
+	Rect2i &r2i();
+	const Color &color() const;
+	Color &color();
 
 	operator Vector2() const { return v2(); }
 	operator Vector2i() const { return v2i(); }
@@ -209,6 +212,7 @@ struct Variant
 	operator Vector4i() const { return v4i(); }
 	operator Rect2() const { return r2(); }
 	operator Rect2i() const { return r2i(); }
+	operator Color() const { return color(); }
 
 	void callp(std::string_view method, const Variant *args, int argcount, Variant &r_ret, int &r_error);
 
@@ -248,6 +252,7 @@ private:
 		Vector4i v4i;
 		Rect2    r2;
 		Rect2i   r2i;
+		Color    color;
 	} v;
 
 	void internal_create_string(Type type, const std::string &value);
@@ -304,6 +309,10 @@ inline Variant::Variant(T value)
 	else if constexpr (std::is_same_v<T, Rect2i>) {
 		m_type = RECT2I;
 		v.r2i = value;
+	}
+	else if constexpr (std::is_same_v<T, Color>) {
+		m_type = COLOR;
+		v.color = value;
 	}
 	else if constexpr (is_u32string<T>::value || std::is_same_v<T, std::u32string>) {
 		internal_create_u32string(STRING, value);
@@ -452,84 +461,84 @@ inline std::u32string Variant::as_std_u32string() const {
 	return static_cast<std::u32string>(*this);
 }
 
-inline const Vector2& Variant::v2() const
+inline const Vector2 &Variant::v2() const
 {
 	if (m_type == VECTOR2)
 		return v.v2;
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector2", this);
 }
 
-inline Vector2& Variant::v2()
+inline Vector2 &Variant::v2()
 {
 	if (m_type == VECTOR2)
 		return v.v2;
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector2", this);
 }
 
-inline const Vector2i& Variant::v2i() const
+inline const Vector2i &Variant::v2i() const
 {
 	if (m_type == VECTOR2I)
 		return v.v2i;
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector2i", this);
 }
 
-inline Vector2i& Variant::v2i()
+inline Vector2i &Variant::v2i()
 {
 	if (m_type == VECTOR2I)
 		return v.v2i;
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector2o", this);
 }
 
-inline const Vector3& Variant::v3() const
+inline const Vector3 &Variant::v3() const
 {
 	if (m_type == VECTOR3)
 		return v.v3;
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector3", this);
 }
 
-inline Vector3& Variant::v3()
+inline Vector3 &Variant::v3()
 {
 	if (m_type == VECTOR3)
 		return v.v3;
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector3", this);
 }
 
-inline const Vector3i& Variant::v3i() const
+inline const Vector3i &Variant::v3i() const
 {
 	if (m_type == VECTOR3I)
 		return v.v3i;
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector3i", this);
 }
 
-inline Vector3i& Variant::v3i()
+inline Vector3i &Variant::v3i()
 {
 	if (m_type == VECTOR3I)
 		return v.v3i;
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector3i", this);
 }
 
-inline const Vector4& Variant::v4() const
+inline const Vector4 &Variant::v4() const
 {
 	if (m_type == VECTOR4)
 		return v.v4;
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector4", this);
 }
 
-inline Vector4& Variant::v4()
+inline Vector4 &Variant::v4()
 {
 	if (m_type == VECTOR4)
 		return v.v4;
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector4", this);
 }
 
-inline const Vector4i& Variant::v4i() const
+inline const Vector4i &Variant::v4i() const
 {
 	if (m_type == VECTOR4I)
 		return v.v4i;
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector4i", this);
 }
 
-inline Vector4i& Variant::v4i()
+inline Vector4i &Variant::v4i()
 {
 	if (m_type == VECTOR4I)
 		return v.v4i;
@@ -543,25 +552,39 @@ inline const Rect2& Variant::r2() const
 	api_throw("std::bad_cast", "Failed to cast Variant to Rect2", this);
 }
 
-inline Rect2& Variant::r2()
+inline Rect2 &Variant::r2()
 {
 	if (m_type == RECT2)
 		return v.r2;
 	api_throw("std::bad_cast", "Failed to cast Variant to Rect2", this);
 }
 
-inline const Rect2i& Variant::r2i() const
+inline const Rect2i &Variant::r2i() const
 {
 	if (m_type == RECT2I)
 		return v.r2i;
 	api_throw("std::bad_cast", "Failed to cast Variant to Rect2i", this);
 }
 
-inline Rect2i& Variant::r2i()
+inline Rect2i &Variant::r2i()
 {
 	if (m_type == RECT2I)
 		return v.r2i;
 	api_throw("std::bad_cast", "Failed to cast Variant to Rect2i", this);
+}
+
+inline const Color &Variant::color() const
+{
+	if (m_type == COLOR)
+		return v.color;
+	api_throw("std::bad_cast", "Failed to cast Variant to Color", this);
+}
+
+inline Color &Variant::color()
+{
+	if (m_type == COLOR)
+		return v.color;
+	api_throw("std::bad_cast", "Failed to cast Variant to Color", this);
 }
 
 inline PackedArray<uint8_t> Variant::as_byte_array() const {

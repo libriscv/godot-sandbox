@@ -23,6 +23,9 @@ struct GDNativeVariant {
 			int32_t ivec2_int[2];
 		};
 		struct {
+			float color_flt[4];
+		};
+		struct {
 			uint64_t object_id;
 			GodotObject *object_ptr;
 		};

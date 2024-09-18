@@ -266,13 +266,19 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 				machine.cpu.registers().getfl(flindex++).set_double(inner->flt);
 				break;
 			case Variant::VECTOR2: { // 8- or 16-byte structs can be passed in registers
-				godot::Vector2 vec = arg.operator godot::Vector2();
 				machine.cpu.registers().getfl(flindex++).set_float(inner->vec2_flt[0]);
 				machine.cpu.registers().getfl(flindex++).set_float(inner->vec2_flt[1]);
 				break;
 			}
 			case Variant::VECTOR2I: { // 8- or 16-byte structs can be passed in registers
 				machine.cpu.reg(index++) = inner->value; // 64-bit packed integers
+				break;
+			}
+			case Variant::COLOR: { // 16-byte struct (must use integer registers)
+				// RVG calling convention:
+				// Unions and arrays containing floats are passed in integer registers
+				machine.cpu.reg(index++) = *(gaddr_t *)&inner->color_flt[0];
+				machine.cpu.reg(index++) = *(gaddr_t *)&inner->color_flt[2];
 				break;
 			}
 			case Variant::OBJECT: { // Objects are represented as uintptr_t
