@@ -197,6 +197,7 @@ struct ClassDB {
 
 /// @brief Math and interpolation operations.
 struct Math {
+	/// @brief The available 64-bit FP math operations.
 	static double sin(double x);
 	static double cos(double x);
 	static double tan(double x);
@@ -206,29 +207,43 @@ struct Math {
 	static double atan2(double y, double x);
 	static double pow(double x, double y);
 
+	/// @brief The available 32-bit FP math operations.
+	static float sinf(float x);
+	static float cosf(float x);
+	static float tanf(float x);
+	static float asinf(float x);
+	static float acosf(float x);
+	static float atanf(float x);
+	static float atan2f(float y, float x);
+	static float powf(float x, float y);
+
 	/// @brief Linearly interpolate between two values.
 	/// @param a The start value.
 	/// @param b The end value.
 	/// @param t The interpolation factor (between 0 and 1).
 	static double lerp(double a, double b, double t);
+	static float lerpf(float a, float b, float t);
 
 	/// @brief Smoothly interpolate between two values.
 	/// @param from The start value.
 	/// @param to The end value.
 	/// @param t The interpolation factor (between 0 and 1).
 	static double smoothstep(double from, double to, double t);
+	static float smoothstepf(float from, float to, float t);
 
 	/// @brief Clamp a value between two bounds.
 	/// @param x The value to clamp.
 	/// @param min The minimum value.
 	/// @param max The maximum value.
 	static double clamp(double x, double min, double max);
+	static float clampf(float x, float min, float max);
 
 	/// @brief Spherical linear interpolation between two values.
 	/// @param a The start value in radians.
 	/// @param b The end value in radians.
 	/// @param t The interpolation factor (between 0 and 1).
 	static double slerp(double a, double b, double t);
+	static float slerpf(float a, float b, float t);
 };
 
 #include "api_inline.hpp"

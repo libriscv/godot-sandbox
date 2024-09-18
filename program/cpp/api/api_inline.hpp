@@ -40,6 +40,8 @@ static inline double perform_lerp_op(Lerp_Op lerp_op, Float x, Float y, Float t)
 }
 // clang-format on
 
+// 64-bit FP math operations.
+
 inline double Math::sin(double x) {
 	return perform_math_op<double>(Math_Op::SIN, x);
 }
@@ -72,6 +74,42 @@ inline double Math::pow(double x, double y) {
 	return perform_math_op2<double>(Math_Op::POW, x, y);
 }
 
+// 32-bit FP math operations.
+
+inline float Math::sinf(float x) {
+	return perform_math_op<float>(Math_Op::SIN, x);
+}
+
+inline float Math::cosf(float x) {
+	return perform_math_op<float>(Math_Op::COS, x);
+}
+
+inline float Math::tanf(float x) {
+	return perform_math_op<float>(Math_Op::TAN, x);
+}
+
+inline float Math::asinf(float x) {
+	return perform_math_op<float>(Math_Op::ASIN, x);
+}
+
+inline float Math::acosf(float x) {
+	return perform_math_op<float>(Math_Op::ACOS, x);
+}
+
+inline float Math::atanf(float x) {
+	return perform_math_op<float>(Math_Op::ATAN, x);
+}
+
+inline float Math::atan2f(float y, float x) {
+	return perform_math_op2<float>(Math_Op::ATAN2, y, x);
+}
+
+inline float Math::powf(float x, float y) {
+	return perform_math_op2<float>(Math_Op::POW, x, y);
+}
+
+// 64-bit FP interpolation operations.
+
 inline double Math::lerp(double x, double y, double t) {
 	return perform_lerp_op<double>(Lerp_Op::LERP, x, y, t);
 }
@@ -86,4 +124,22 @@ inline double Math::clamp(double x, double a, double b) {
 
 inline double Math::slerp(double a, double b, double t) {
 	return perform_lerp_op<double>(Lerp_Op::SLERP, a, b, t);
+}
+
+// 32-bit FP interpolation operations.
+
+inline float Math::lerpf(float x, float y, float t) {
+	return perform_lerp_op<float>(Lerp_Op::LERP, x, y, t);
+}
+
+inline float Math::smoothstepf(float from, float to, float t) {
+	return perform_lerp_op<float>(Lerp_Op::SMOOTHSTEP, from, to, t);
+}
+
+inline float Math::clampf(float x, float a, float b) {
+	return perform_lerp_op<float>(Lerp_Op::CLAMP, x, a, b);
+}
+
+inline float Math::slerpf(float a, float b, float t) {
+	return perform_lerp_op<float>(Lerp_Op::SLERP, a, b, t);
 }
