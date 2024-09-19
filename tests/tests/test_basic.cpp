@@ -1,7 +1,8 @@
 #include "api.hpp"
 
 extern "C" Variant test_infinite_loop() {
-	while (true);
+	while (true)
+		;
 }
 
 extern "C" Variant test_recursive_calls(Node sandbox) {

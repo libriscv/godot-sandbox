@@ -60,18 +60,21 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_heap_usage"), &Sandbox::get_heap_usage);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_heap_usage", PROPERTY_HINT_NONE, "Current arena usage"), "", "get_heap_usage");
 
-	ClassDB::bind_method(D_METHOD("get_budget_overruns"), &Sandbox::get_budget_overruns);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_execution_timeouts", PROPERTY_HINT_NONE, "Number of execution timeouts"), "", "get_budget_overruns");
+	ClassDB::bind_method(D_METHOD("get_exceptions"), &Sandbox::get_exceptions);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_exceptions", PROPERTY_HINT_NONE, "Number of exceptions thrown"), "", "get_exceptions");
+
+	ClassDB::bind_method(D_METHOD("get_timeouts"), &Sandbox::get_timeouts);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_execution_timeouts", PROPERTY_HINT_NONE, "Number of execution timeouts"), "", "get_timeouts");
 
 	ClassDB::bind_method(D_METHOD("get_calls_made"), &Sandbox::get_calls_made);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_calls_made", PROPERTY_HINT_NONE, "Number of calls made"), "", "get_calls_made");
 
 	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_calls_made"), &Sandbox::get_global_calls_made);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_exceptions"), &Sandbox::get_global_exceptions);
-	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_budget_overruns"), &Sandbox::get_global_budget_overruns);
+	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_timeouts"), &Sandbox::get_global_timeouts);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_calls_made", PROPERTY_HINT_NONE, "Number of calls made"), "", "get_global_calls_made");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_exceptions", PROPERTY_HINT_NONE, "Number of exceptions thrown"), "", "get_global_exceptions");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_execution_timeouts", PROPERTY_HINT_NONE, "Number of execution timeouts"), "", "get_global_budget_overruns");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_execution_timeouts", PROPERTY_HINT_NONE, "Number of execution timeouts"), "", "get_global_timeouts");
 
 	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_instance_count"), &Sandbox::get_global_instance_count);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("get_accumulated_startup_time"), &Sandbox::get_accumulated_startup_time);
@@ -684,8 +687,11 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	} else if (name == StringName("monitor_heap_usage")) {
 		r_ret = get_heap_usage();
 		return true;
+	} else if (name == StringName("monitor_exceptions")) {
+		r_ret = get_exceptions();
+		return true;
 	} else if (name == StringName("monitor_execution_timeouts")) {
-		r_ret = get_budget_overruns();
+		r_ret = get_timeouts();
 		return true;
 	} else if (name == StringName("monitor_calls_made")) {
 		r_ret = get_calls_made();
@@ -696,8 +702,8 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	} else if (name == StringName("global_exceptions")) {
 		r_ret = get_global_exceptions();
 		return true;
-	} else if (name == StringName("global_budget_overruns")) {
-		r_ret = get_global_budget_overruns();
+	} else if (name == StringName("global_timeouts")) {
+		r_ret = get_global_timeouts();
 		return true;
 	} else if (name == StringName("monitor_accumulated_startup_time")) {
 		r_ret = get_accumulated_startup_time();

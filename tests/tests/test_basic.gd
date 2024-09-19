@@ -8,14 +8,16 @@ func test_instantiation():
 
 	# Verify some basic stats
 	assert_eq(s.get_calls_made(), 0)
-	assert_eq(s.get_budget_overruns(), 0)
+	assert_eq(s.get_exceptions(), 0)
+	assert_eq(s.get_timeouts(), 0)
 
 	# Verify execution timeout
 	s.set_instructions_max(10)
 	s.vmcall("test_infinite_loop")
 
-	# Verify that the budget overruns counter is increased
-	assert_eq(s.get_budget_overruns(), 1)
+	# Verify that the execution timeout counter is increased
+	assert_eq(s.get_timeouts(), 1)
+	assert_eq(s.get_exceptions(), 1)
 
 	# Verify that the sandbox can be reset
 	s.free()
@@ -23,10 +25,14 @@ func test_instantiation():
 	s.set_program(Sandbox_TestsTests)
 
 	# Verify that the budget overruns counter is reset
-	assert_eq(s.get_budget_overruns(), 0)
+	assert_eq(s.get_timeouts(), 0)
+	assert_eq(s.get_exceptions(), 0)
 
 	# Verify that too many VM call recursion levels are prevented
 	s.vmcall("test_recursive_calls", s)
+
+	assert_eq(s.get_timeouts(), 0)
+	assert_eq(s.get_exceptions(), 1)
 
 
 func test_types():
@@ -190,8 +196,12 @@ func test_exceptions():
 
 	# Verify that an exception is thrown
 	assert_eq(s.has_function("test_exception"), true)
+	assert_eq(s.get_timeouts(), 0)
+	assert_eq(s.get_exceptions(), 0)
 	assert_eq(s.get_global_exceptions(), current_exceptions)
 	s.vmcall("test_exception")
+	assert_eq(s.get_timeouts(), 0)
+	assert_eq(s.get_exceptions(), 1)
 	assert_eq(s.get_global_exceptions(), current_exceptions + 1)
 
 func test_math():

@@ -41,7 +41,7 @@ public:
 	static constexpr unsigned MAX_HEAP = 16ul; // MBs
 	static constexpr unsigned MAX_VMEM = 16ul; // MBs
 	static constexpr unsigned MAX_LEVEL = 4; // Maximum call recursion depth
-	static constexpr unsigned MAX_REFS  = 100; // Default maximum number of references
+	static constexpr unsigned MAX_REFS = 100; // Default maximum number of references
 	static constexpr unsigned EDITOR_THROTTLE = 8; // Throttle VM calls from the editor
 	static constexpr unsigned MAX_PROPERTIES = 16; // Maximum number of sandboxed properties
 
@@ -113,12 +113,14 @@ public:
 	int64_t get_instructions_max() const { return m_insn_max; }
 	void set_heap_usage(int64_t) {} // Do nothing (it's a read-only property)
 	int64_t get_heap_usage() const;
-	void set_budget_overruns(unsigned budget) {} // Do nothing (it's a read-only property)
-	unsigned get_budget_overruns() const { return m_budget_overruns; }
+	void set_exceptions(unsigned exceptions) {} // Do nothing (it's a read-only property)
+	unsigned get_exceptions() const { return m_exceptions; }
+	void set_timeouts(unsigned budget) {} // Do nothing (it's a read-only property)
+	unsigned get_timeouts() const { return m_timeouts; }
 	void set_calls_made(unsigned calls) {} // Do nothing (it's a read-only property)
 	unsigned get_calls_made() const { return m_calls_made; }
 
-	static uint64_t get_global_budget_overruns() { return m_global_budget_overruns; }
+	static uint64_t get_global_timeouts() { return m_global_timeouts; }
 	static uint64_t get_global_exceptions() { return m_global_exceptions; }
 	static uint64_t get_global_calls_made() { return m_global_calls_made; }
 
@@ -281,7 +283,7 @@ private:
 	bool m_use_unboxed_arguments = false;
 
 	// Stats
-	unsigned m_budget_overruns = 0;
+	unsigned m_timeouts = 0;
 	unsigned m_exceptions = 0;
 	unsigned m_calls_made = 0;
 
@@ -295,7 +297,7 @@ private:
 	mutable std::vector<SandboxProperty> m_properties;
 
 	// Global statistics
-	static inline uint64_t m_global_budget_overruns = 0;
+	static inline uint64_t m_global_timeouts = 0;
 	static inline uint64_t m_global_exceptions = 0;
 	static inline uint64_t m_global_calls_made = 0;
 	static inline uint32_t m_global_instance_count = 0;
