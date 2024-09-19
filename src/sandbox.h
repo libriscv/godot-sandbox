@@ -2,7 +2,6 @@
 
 #include <godot_cpp/classes/control.hpp>
 
-#include <deque>
 #include <godot_cpp/core/binder_common.hpp>
 #include <libriscv/machine.hpp>
 #include <optional>
@@ -38,10 +37,11 @@ protected:
 	String _to_string() const;
 
 public:
-	static constexpr unsigned MAX_INSTRUCTIONS = 16; // Billions
+	static constexpr unsigned MAX_INSTRUCTIONS = 8000; // Millions
 	static constexpr unsigned MAX_HEAP = 16ul; // MBs
 	static constexpr unsigned MAX_VMEM = 16ul; // MBs
-	static constexpr unsigned MAX_LEVEL = 8; // Maximum call recursion depth
+	static constexpr unsigned MAX_LEVEL = 4; // Maximum call recursion depth
+	static constexpr unsigned MAX_REFS  = 100; // Default maximum number of references
 	static constexpr unsigned EDITOR_THROTTLE = 8; // Throttle VM calls from the editor
 	static constexpr unsigned MAX_PROPERTIES = 16; // Maximum number of sandboxed properties
 
@@ -50,7 +50,9 @@ public:
 		std::vector<const Variant *> scoped_variants;
 		std::vector<uintptr_t> scoped_objects;
 
-		inline void reset(unsigned index, unsigned max_refs);
+		void append(Variant &&value);
+		void initialize(unsigned max_refs);
+		void reset(unsigned index);
 	};
 
 	Sandbox();
@@ -104,7 +106,7 @@ public:
 	// -= Sandbox Properties =-
 
 	uint32_t get_max_refs() const { return m_max_refs; }
-	void set_max_refs(uint32_t max) { m_max_refs = max; }
+	void set_max_refs(uint32_t max);
 	void set_memory_max(uint32_t max) { m_memory_max = max; }
 	uint32_t get_memory_max() const { return m_memory_max; }
 	void set_instructions_max(int64_t max) { m_insn_max = max; }
@@ -267,7 +269,7 @@ private:
 	machine_t *m_machine = nullptr;
 	godot::Node *m_tree_base = nullptr;
 	const PackedByteArray *m_binary = nullptr;
-	uint32_t m_max_refs = 100;
+	uint32_t m_max_refs = MAX_REFS;
 	uint32_t m_memory_max = MAX_VMEM;
 	int64_t m_insn_max = MAX_INSTRUCTIONS;
 
@@ -300,8 +302,12 @@ private:
 	static inline double m_accumulated_startup_time = 0.0;
 };
 
-inline void Sandbox::CurrentState::reset(unsigned index, unsigned max_refs) {
-	variants.reserve(max_refs);
+inline void Sandbox::CurrentState::append(Variant &&value) {
+	variants.push_back(std::move(value));
+	scoped_variants.push_back(&variants.back());
+}
+
+inline void Sandbox::CurrentState::reset(unsigned index) {
 	variants.clear();
 	scoped_variants.clear();
 	scoped_objects.clear();

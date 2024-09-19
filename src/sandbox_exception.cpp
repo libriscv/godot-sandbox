@@ -70,7 +70,7 @@ void Sandbox::handle_timeout(gaddr_t address) {
 	auto callsite = machine().memory.lookup(address);
 	UtilityFunctions::print(
 			"Sandbox: Timeout for '", callsite.name.c_str(),
-			"' (Timeouts: ", m_budget_overruns, "\n");
+			"' (Timeouts: ", m_budget_overruns, ")\n");
 }
 
 void Sandbox::print_backtrace(const gaddr_t addr) {
