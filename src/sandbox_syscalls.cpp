@@ -47,6 +47,31 @@ inline godot::Node *get_node_from_address(Sandbox &emu, uint64_t addr) {
 	return node;
 }
 
+static inline Variant object_callp(godot::Object *obj, const Variant **args, int argc) {
+	static GDExtensionMethodBindPtr mtd = internal::gdextension_interface_classdb_get_method_bind(Object::get_class_static()._native_ptr(), StringName("call")._native_ptr(), 3400424181);
+	CHECK_METHOD_BIND_RET(mtd, Variant());
+	GDExtensionCallError error;
+	Variant ret;
+	internal::gdextension_interface_object_method_bind_call(mtd, obj->_owner, reinterpret_cast<GDExtensionConstVariantPtr *>(args), argc, &ret, &error);
+	return ret;
+}
+
+static inline Variant object_call(Sandbox &emu, godot::Object *obj, std::string_view method, const GuestVariant *args, int argc) {
+	std::array<Variant, 8> vstorage;
+	std::array<const Variant *, 9> vargs; // 8 is the maximum number of arguments we will accept.
+	Variant vmethod = String::utf8(method.data(), method.size());
+	vargs[0] = &vmethod;
+	for (int i = 0; i < argc; i++) {
+		if (args[i].is_scoped_variant()) {
+			vargs[i + 1] = args[i].toVariantPtr(emu);
+		} else {
+			vstorage[i] = args[i].toVariant(emu);
+			vargs[i + 1] = &vstorage[i];
+		}
+	}
+	return object_callp(obj, vargs.data(), argc + 1);
+}
+
 #define APICALL(func) static void func(machine_t &machine [[maybe_unused]])
 
 APICALL(api_print) {
@@ -103,12 +128,7 @@ APICALL(api_vcall) {
 	} else if (vp->type == Variant::OBJECT) {
 		godot::Object *obj = get_object_from_address(emu, vp->v.i);
 
-		Array vargs;
-		vargs.resize(args_size);
-		for (unsigned i = 0; i < args_size; i++) {
-			vargs[i] = args[i].toVariant(emu);
-		}
-		Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
+		Variant ret = object_call(emu, obj, method.data(), args, args_size);
 		vret->create(emu, std::move(ret));
 	} else {
 		ERR_PRINT("Invalid Variant type for Variant::call()");
@@ -543,12 +563,7 @@ APICALL(api_obj_callp) {
 	const GuestVariant *g_args = machine.memory.memarray<GuestVariant>(args_addr, args_size);
 
 	if (!deferred) {
-		Array vargs;
-		vargs.resize(args_size);
-		for (unsigned i = 0; i < args_size; i++) {
-			vargs[i] = std::move(g_args[i].toVariant(emu));
-		}
-		Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
+		Variant ret = object_call(emu, obj, method, g_args, args_size);
 		if (vret_ptr != 0) {
 			auto *vret = machine.memory.memarray<GuestVariant>(vret_ptr, 1);
 			vret->create(emu, std::move(ret));
@@ -631,6 +646,10 @@ APICALL(api_node_create) {
 			}
 			// Now that it's null-terminated, we can use it for StringName.
 			Object *obj = ClassDB::instantiate(class_name.data());
+			if (obj == nullptr) {
+				ERR_PRINT("Failed to create object from class name");
+				throw std::runtime_error("Failed to create object from class name");
+			}
 			node = Object::cast_to<Node>(obj);
 			// If it's not a Node, just return the Object.
 			if (node == nullptr) {
