@@ -1,5 +1,15 @@
 #include "api.hpp"
 
+extern "C" Variant test_infinite_loop() {
+	while (true)
+		;
+}
+
+extern "C" Variant test_recursive_calls(Node sandbox) {
+	sandbox("vmcall", "test_recursive_calls", sandbox);
+	return {};
+}
+
 extern "C" Variant public_function() {
 	return "Hello from the other side";
 }
@@ -54,6 +64,10 @@ extern "C" Variant test_sub_dictionary(Dictionary dict) {
 
 extern "C" Variant test_object(Object arg) {
 	return arg;
+}
+
+extern "C" Variant test_callable(Variant callable) {
+	return callable.call(1, 2, "3");
 }
 
 extern "C" Variant test_pa_u8(PackedArray<uint8_t> arr) {

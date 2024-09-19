@@ -1,5 +1,7 @@
 extends GutTest
 
+var callable_was_called = false
+
 func test_instantiation():
 	# Create a new sandbox
 	var s = Sandbox.new()
@@ -8,7 +10,32 @@ func test_instantiation():
 
 	# Verify some basic stats
 	assert_eq(s.get_calls_made(), 0)
-	assert_eq(s.get_budget_overruns(), 0)
+	assert_eq(s.get_exceptions(), 0)
+	assert_eq(s.get_timeouts(), 0)
+
+	# Verify execution timeout
+	s.set_instructions_max(10)
+	s.vmcall("test_infinite_loop")
+
+	# Verify that the execution timeout counter is increased
+	assert_eq(s.get_timeouts(), 1)
+	assert_eq(s.get_exceptions(), 1)
+
+	# Verify that the sandbox can be reset
+	s.free()
+	s = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	# Verify that the budget overruns counter is reset
+	assert_eq(s.get_timeouts(), 0)
+	assert_eq(s.get_exceptions(), 0)
+
+	# Verify that too many VM call recursion levels are prevented
+	s.vmcall("test_recursive_calls", s)
+
+	assert_eq(s.get_timeouts(), 0)
+	assert_eq(s.get_exceptions(), 1)
+
 
 func test_types():
 	# Create a new sandbox
@@ -75,7 +102,9 @@ func test_types():
 
 	# Callables
 	var cb : Callable = Callable(callable_function)
-	assert_same(s.vmcall("test_ping_pong", cb), cb)
+	assert_same(s.vmcall("test_ping_pong", cb), cb, "Returned Callable was same")
+	s.vmcall("test_callable", Callable(callable_callee))
+	assert_eq(callable_was_called, true, "Callable was called")
 
 	# Verify that a basic function that returns a String works
 	assert_eq(s.has_function("public_function"), true)
@@ -148,6 +177,7 @@ func test_objects():
 func test_timers():
 	# Create a new sandbox
 	var s = Sandbox.new()
+	var current_exceptions = s.get_global_exceptions()
 	# Set the test program
 	s.set_program(Sandbox_TestsTests)
 	assert_eq(s.has_function("test_timers"), true)
@@ -157,21 +187,26 @@ func test_timers():
 	var timer = s.vmcall("test_timers")
 	assert_typeof(timer, TYPE_OBJECT)
 	await get_tree().create_timer(0.25).timeout
-	assert_eq(s.get_global_exceptions(), 0)
+	assert_eq(s.get_global_exceptions(), current_exceptions)
 	#assert_true(s.vmcall("verify_timers"), "Timers did not work")
 
 
 func test_exceptions():
 	# Create a new sandbox
 	var s = Sandbox.new()
+	var current_exceptions = s.get_global_exceptions()
 	# Set the test program
 	s.set_program(Sandbox_TestsTests)
 
 	# Verify that an exception is thrown
 	assert_eq(s.has_function("test_exception"), true)
-	assert_eq(s.get_global_exceptions(), 0)
+	assert_eq(s.get_timeouts(), 0)
+	assert_eq(s.get_exceptions(), 0)
+	assert_eq(s.get_global_exceptions(), current_exceptions)
 	s.vmcall("test_exception")
-	assert_eq(s.get_global_exceptions(), 1)
+	assert_eq(s.get_timeouts(), 0)
+	assert_eq(s.get_exceptions(), 1)
+	assert_eq(s.get_global_exceptions(), current_exceptions + 1)
 
 func test_math():
 	# Create a new sandbox
@@ -200,3 +235,9 @@ func test_math():
 
 func callable_function():
 	return
+
+func callable_callee(a1, a2, a3):
+	assert(a1 == 1)
+	assert(a2 == 2)
+	assert(a3 == "3")
+	callable_was_called = true

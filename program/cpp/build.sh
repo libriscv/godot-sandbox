@@ -51,7 +51,8 @@ for file in $@ $API/*.cpp; do
 	if [ "$locally" = true ]; then
 		riscv64-unknown-elf-g++ $CPPFLAGS -I$API -c $file -o $file.o &
 	else
-		riscv64-linux-gnu-g++-14 $CPPFLAGS -march=rv64gc_zba_zbb_zbs_zbc -mabi=lp64d -I$API -c $file -o $file.o &
+		export CXX="riscv64-linux-gnu-g++-14"
+		ccache $CXX $CPPFLAGS -march=rv64gc_zba_zbb_zbs_zbc -mabi=lp64d -I$API -c $file -o $file.o &
 	fi
 done
 
@@ -62,6 +63,7 @@ wait
 if [ "$locally" = true ]; then
 	riscv64-unknown-elf-g++ -static $CPPFLAGS $LINKEROPS $@.o $API/*.cpp.o -o $output
 else
+	export CXX="riscv64-linux-gnu-g++-14"
 	LINKEROPS="$LINKEROPS -fuse-ld=mold"
-	riscv64-linux-gnu-g++-14 -static $CPPFLAGS -march=rv64gc_zba_zbb_zbs_zbc -mabi=lp64d $LINKEROPS $@.o $API/*.cpp.o -o $output
+	ccache $CXX -static $CPPFLAGS -march=rv64gc_zba_zbb_zbs_zbc -mabi=lp64d $LINKEROPS $@.o $API/*.cpp.o -o $output
 fi

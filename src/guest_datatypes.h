@@ -259,6 +259,13 @@ struct GuestVariant {
 	 **/
 	void create(Sandbox &emu, Variant &&value);
 
+	/**
+	 * @brief Check if the GuestVariant is implemented using an index to a scoped Variant.
+	 *
+	 * @return true If the type of the GuestVariant is implemented using an index to a scoped Variant.
+	 */
+	bool is_scoped_variant() const noexcept;
+
 	Variant::Type type = Variant::NIL;
 	union alignas(8) {
 		int64_t i = 0;
@@ -274,5 +281,29 @@ struct GuestVariant {
 
 	void free(Sandbox &emu);
 };
+
+inline bool GuestVariant::is_scoped_variant() const noexcept {
+	switch (type) {
+		case Variant::STRING:
+		case Variant::DICTIONARY:
+		case Variant::ARRAY:
+		case Variant::CALLABLE:
+		case Variant::STRING_NAME:
+		case Variant::NODE_PATH:
+		case Variant::PACKED_BYTE_ARRAY:
+		case Variant::PACKED_FLOAT32_ARRAY:
+		case Variant::PACKED_FLOAT64_ARRAY:
+		case Variant::PACKED_INT32_ARRAY:
+		case Variant::PACKED_INT64_ARRAY:
+		case Variant::PACKED_VECTOR2_ARRAY:
+		case Variant::PACKED_VECTOR3_ARRAY:
+		case Variant::PACKED_COLOR_ARRAY: {
+			return true;
+		}
+		case Variant::OBJECT: // Objects are raw pointers.
+		default:
+			return false;
+	}
+}
 
 static_assert(sizeof(GuestVariant) == 24, "GuestVariant size mismatch");

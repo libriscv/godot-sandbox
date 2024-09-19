@@ -50,20 +50,22 @@ inline godot::Node *get_node_from_address(Sandbox &emu, uint64_t addr) {
 #define APICALL(func) static void func(machine_t &machine [[maybe_unused]])
 
 APICALL(api_print) {
-	auto [array, len] = machine.sysargs<gaddr_t, gaddr_t>();
+	auto [array, len] = machine.sysargs<gaddr_t, unsigned>();
 	Sandbox &emu = riscv::emu(machine);
 
 	if (len >= 64) {
 		ERR_PRINT("print(): Too many Variants to print");
 		throw std::runtime_error("print(): Too many Variants to print");
 	}
-	const GuestVariant *array_ptr = emu.machine().memory.memarray<GuestVariant>(array, len);
+	const GuestVariant *array_ptr = machine.memory.memarray<GuestVariant>(array, len);
 
 	// We really want print_internal to be a public function.
-	for (gaddr_t i = 0; i < len; i++) {
+	for (unsigned i = 0; i < len; i++) {
 		const GuestVariant &var = array_ptr[i];
-		//printf("Variant[%lu]: type=%d\n", i, var.type);
-		UtilityFunctions::print(var.toVariant(emu));
+		if (var.is_scoped_variant())
+			UtilityFunctions::print(*var.toVariantPtr(emu));
+		else
+			UtilityFunctions::print(var.toVariant(emu));
 	}
 }
 
@@ -78,7 +80,7 @@ APICALL(api_vcall) {
 		throw std::runtime_error("Variant::call(): Too many arguments");
 	}
 
-	const GuestVariant *args = emu.machine().memory.memarray<GuestVariant>(args_ptr, args_size);
+	const GuestVariant *args = machine.memory.memarray<GuestVariant>(args_ptr, args_size);
 
 	GDExtensionCallError error;
 
@@ -86,8 +88,12 @@ APICALL(api_vcall) {
 		std::array<Variant, 8> vargs;
 		std::array<const Variant *, 8> argptrs;
 		for (size_t i = 0; i < args_size; i++) {
-			vargs[i] = args[i].toVariant(emu);
-			argptrs[i] = &vargs[i];
+			if (args[i].is_scoped_variant()) {
+				argptrs[i] = args[i].toVariantPtr(emu);
+			} else {
+				vargs[i] = args[i].toVariant(emu);
+				argptrs[i] = &vargs[i];
+			}
 		}
 
 		Variant *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
@@ -152,11 +158,11 @@ APICALL(api_vcreate) {
 		case Variant::NODE_PATH: { // From std::string
 			String godot_str;
 			if (method == 0) {
-				GuestStdString *str = emu.machine().memory.memarray<GuestStdString>(gdata, 1);
-				godot_str = str->to_godot_string(emu.machine());
+				GuestStdString *str = machine.memory.memarray<GuestStdString>(gdata, 1);
+				godot_str = str->to_godot_string(machine);
 			} else if (method == 2) { // From std::u32string
-				GuestStdU32String *str = emu.machine().memory.memarray<GuestStdU32String>(gdata, 1);
-				godot_str = str->to_godot_string(emu.machine());
+				GuestStdU32String *str = machine.memory.memarray<GuestStdU32String>(gdata, 1);
+				godot_str = str->to_godot_string(machine);
 			} else {
 				ERR_PRINT("vcreate: Unsupported method for Variant::STRING");
 				throw std::runtime_error("vcreate: Unsupported method for Variant::STRING: " + std::to_string(method));
@@ -171,8 +177,8 @@ APICALL(api_vcreate) {
 			Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<Variant> from guest memory.
-				GuestStdVector *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
-				std::vector<GuestVariant> vec = gvec->to_vector<GuestVariant>(emu.machine());
+				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				std::vector<GuestVariant> vec = gvec->to_vector<GuestVariant>(machine);
 				for (const GuestVariant &v : vec) {
 					a.push_back(std::move(v.toVariant(emu)));
 				}
@@ -191,9 +197,9 @@ APICALL(api_vcreate) {
 			PackedByteArray a;
 			if (gdata != 0x0) {
 				// Copy std::vector<uint8_t> from guest memory.
-				GuestStdVector *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
 				// TODO: Improve this by directly copying the data into the PackedByteArray.
-				std::vector<uint8_t> vec = gvec->to_vector<uint8_t>(emu.machine());
+				std::vector<uint8_t> vec = gvec->to_vector<uint8_t>(machine);
 				a.resize(vec.size());
 				std::memcpy(a.ptrw(), vec.data(), vec.size());
 			}
@@ -205,8 +211,8 @@ APICALL(api_vcreate) {
 			PackedFloat32Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<float> from guest memory.
-				GuestStdVector *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
-				std::vector<float> vec = gvec->to_vector<float>(emu.machine());
+				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				std::vector<float> vec = gvec->to_vector<float>(machine);
 				a.resize(vec.size());
 				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(float));
 			}
@@ -218,8 +224,8 @@ APICALL(api_vcreate) {
 			PackedFloat64Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<double> from guest memory.
-				GuestStdVector *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
-				std::vector<double> vec = gvec->to_vector<double>(emu.machine());
+				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				std::vector<double> vec = gvec->to_vector<double>(machine);
 				a.resize(vec.size());
 				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(double));
 			}
@@ -231,8 +237,8 @@ APICALL(api_vcreate) {
 			PackedInt32Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<int32_t> from guest memory.
-				GuestStdVector *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
-				std::vector<int32_t> vec = gvec->to_vector<int32_t>(emu.machine());
+				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				std::vector<int32_t> vec = gvec->to_vector<int32_t>(machine);
 				a.resize(vec.size());
 				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(int32_t));
 			}
@@ -244,8 +250,8 @@ APICALL(api_vcreate) {
 			PackedInt64Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<int64_t> from guest memory.
-				GuestStdVector *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
-				std::vector<int64_t> vec = gvec->to_vector<int64_t>(emu.machine());
+				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				std::vector<int64_t> vec = gvec->to_vector<int64_t>(machine);
 				a.resize(vec.size());
 				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(int64_t));
 			}
@@ -274,12 +280,12 @@ APICALL(api_vfetch) {
 			case Variant::NODE_PATH: {
 				if (method == 0) { // std::string
 					auto u8str = var.operator String().utf8();
-					auto *gstr = emu.machine().memory.memarray<GuestStdString>(gdata, 1);
-					gstr->set_string(emu.machine(), gdata, u8str.ptr(), u8str.length());
+					auto *gstr = machine.memory.memarray<GuestStdString>(gdata, 1);
+					gstr->set_string(machine, gdata, u8str.ptr(), u8str.length());
 				} else if (method == 2) { // std::u32string
 					auto u32str = var.operator String();
-					auto *gstr = emu.machine().memory.memarray<GuestStdU32String>(gdata, 1);
-					gstr->set_string(emu.machine(), gdata, u32str.ptr(), u32str.length());
+					auto *gstr = machine.memory.memarray<GuestStdU32String>(gdata, 1);
+					gstr->set_string(machine, gdata, u32str.ptr(), u32str.length());
 				} else {
 					ERR_PRINT("vfetch: Unsupported method for Variant::STRING");
 					throw std::runtime_error("vfetch: Unsupported method for Variant::STRING");
@@ -287,52 +293,52 @@ APICALL(api_vfetch) {
 				break;
 			}
 			case Variant::PACKED_BYTE_ARRAY: {
-				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
 				auto arr = var.operator PackedByteArray();
-				auto [sptr, saddr] = gvec->alloc<uint8_t>(emu.machine(), arr.size());
+				auto [sptr, saddr] = gvec->alloc<uint8_t>(machine, arr.size());
 				std::memcpy(sptr, arr.ptr(), arr.size());
 				break;
 			}
 			case Variant::PACKED_FLOAT32_ARRAY: {
-				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
 				auto arr = var.operator PackedFloat32Array();
 				// Allocate and copy the array into the guest memory.
-				auto [sptr, saddr] = gvec->alloc<float>(emu.machine(), arr.size());
+				auto [sptr, saddr] = gvec->alloc<float>(machine, arr.size());
 				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(float));
 				break;
 			}
 			case Variant::PACKED_FLOAT64_ARRAY: {
-				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
 				auto arr = var.operator PackedFloat64Array();
-				auto [sptr, saddr] = gvec->alloc<double>(emu.machine(), arr.size());
+				auto [sptr, saddr] = gvec->alloc<double>(machine, arr.size());
 				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(double));
 				break;
 			}
 			case Variant::PACKED_INT32_ARRAY: {
-				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
 				auto arr = var.operator PackedInt32Array();
-				auto [sptr, saddr] = gvec->alloc<int32_t>(emu.machine(), arr.size());
+				auto [sptr, saddr] = gvec->alloc<int32_t>(machine, arr.size());
 				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(int32_t));
 				break;
 			}
 			case Variant::PACKED_INT64_ARRAY: {
-				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
 				auto arr = var.operator PackedInt64Array();
-				auto [sptr, saddr] = gvec->alloc<int64_t>(emu.machine(), arr.size());
+				auto [sptr, saddr] = gvec->alloc<int64_t>(machine, arr.size());
 				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(int64_t));
 				break;
 			}
 			case Variant::PACKED_VECTOR2_ARRAY: {
-				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
 				auto arr = var.operator PackedVector2Array();
-				auto [sptr, saddr] = gvec->alloc<Vector2>(emu.machine(), arr.size());
+				auto [sptr, saddr] = gvec->alloc<Vector2>(machine, arr.size());
 				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(Vector2));
 				break;
 			}
 			case Variant::PACKED_VECTOR3_ARRAY: {
-				auto *gvec = emu.machine().memory.memarray<GuestStdVector>(gdata, 1);
+				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
 				auto arr = var.operator PackedVector3Array();
-				auto [sptr, saddr] = gvec->alloc<Vector3>(emu.machine(), arr.size());
+				auto [sptr, saddr] = gvec->alloc<Vector3>(machine, arr.size());
 				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(Vector3));
 				break;
 			}
@@ -376,7 +382,7 @@ APICALL(api_vstore) {
 			case Variant::PACKED_BYTE_ARRAY: {
 				auto arr = var.operator PackedByteArray();
 				// Copy the array from guest memory into the Variant.
-				auto *data = emu.machine().memory.memarray<uint8_t>(gdata, gsize);
+				auto *data = machine.memory.memarray<uint8_t>(gdata, gsize);
 				arr.resize(gsize);
 				std::memcpy(arr.ptrw(), data, gsize);
 				break;
@@ -384,7 +390,7 @@ APICALL(api_vstore) {
 			case Variant::PACKED_FLOAT32_ARRAY: {
 				auto arr = var.operator PackedFloat32Array();
 				// Copy the array from guest memory into the Variant.
-				auto *data = emu.machine().memory.memarray<float>(gdata, gsize);
+				auto *data = machine.memory.memarray<float>(gdata, gsize);
 				arr.resize(gsize);
 				std::memcpy(arr.ptrw(), data, gsize * sizeof(float));
 				break;
@@ -392,7 +398,7 @@ APICALL(api_vstore) {
 			case Variant::PACKED_FLOAT64_ARRAY: {
 				auto arr = var.operator PackedFloat64Array();
 				// Copy the array from guest memory into the Variant.
-				auto *data = emu.machine().memory.memarray<double>(gdata, gsize);
+				auto *data = machine.memory.memarray<double>(gdata, gsize);
 				arr.resize(gsize);
 				std::memcpy(arr.ptrw(), data, gsize * sizeof(double));
 				break;
@@ -459,61 +465,61 @@ APICALL(api_obj) {
 
 	switch (Object_Op(op)) {
 		case Object_Op::GET_METHOD_LIST: {
-			auto *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
-			// XXX: vec->free(emu.machine());
+			auto *vec = machine.memory.memarray<GuestStdVector>(gvar, 1);
+			// XXX: vec->free(machine);
 			auto methods = obj->get_method_list();
-			auto [sptr, saddr] = vec->alloc<GuestStdString>(emu.machine(), methods.size());
+			auto [sptr, saddr] = vec->alloc<GuestStdString>(machine, methods.size());
 			for (size_t i = 0; i < methods.size(); i++) {
 				Dictionary dict = methods[i].operator godot::Dictionary();
 				auto name = String(dict["name"]).utf8();
 				const gaddr_t self = saddr + sizeof(GuestStdString) * i;
-				sptr[i].set_string(emu.machine(), self, name.ptr(), name.length());
+				sptr[i].set_string(machine, self, name.ptr(), name.length());
 			}
 		} break;
 		case Object_Op::GET: { // Get a property of the object.
-			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
+			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 2);
 			String name = var[0].toVariant(emu).operator String();
 			var[1].create(emu, obj->get(name));
 		} break;
 		case Object_Op::SET: { // Set a property of the object.
-			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
+			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 2);
 			String name = var[0].toVariant(emu).operator String();
 			obj->set(name, var[1].toVariant(emu));
 		} break;
 		case Object_Op::GET_PROPERTY_LIST: {
-			GuestStdVector *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
-			// XXX: vec->free(emu.machine());
+			GuestStdVector *vec = machine.memory.memarray<GuestStdVector>(gvar, 1);
+			// XXX: vec->free(machine);
 			TypedArray<Dictionary> properties = obj->get_property_list();
-			auto [sptr, saddr] = vec->alloc<GuestStdString>(emu.machine(), properties.size());
+			auto [sptr, saddr] = vec->alloc<GuestStdString>(machine, properties.size());
 			for (size_t i = 0; i < properties.size(); i++) {
 				Dictionary dict = properties[i].operator godot::Dictionary();
 				auto name = String(dict["name"]).utf8();
 				const gaddr_t self = saddr + sizeof(GuestStdString) * i;
-				sptr[i].set_string(emu.machine(), self, name.ptr(), name.length());
+				sptr[i].set_string(machine, self, name.ptr(), name.length());
 			}
 		} break;
 		case Object_Op::CONNECT: {
-			GuestVariant *vars = emu.machine().memory.memarray<GuestVariant>(gvar, 3);
+			GuestVariant *vars = machine.memory.memarray<GuestVariant>(gvar, 3);
 			godot::Object *target = get_object_from_address(emu, vars[0].v.i);
 			Callable callable = Callable(target, vars[2].toVariant(emu).operator String());
 			obj->connect(vars[1].toVariant(emu).operator String(), callable);
 		} break;
 		case Object_Op::DISCONNECT: {
-			GuestVariant *vars = emu.machine().memory.memarray<GuestVariant>(gvar, 3);
+			GuestVariant *vars = machine.memory.memarray<GuestVariant>(gvar, 3);
 			godot::Object *target = get_object_from_address(emu, vars[0].v.i);
 			auto callable = Callable(target, vars[2].toVariant(emu).operator String());
 			obj->disconnect(vars[1].toVariant(emu).operator String(), callable);
 		} break;
 		case Object_Op::GET_SIGNAL_LIST: {
-			GuestStdVector *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
-			// XXX: vec->free(emu.machine());
+			GuestStdVector *vec = machine.memory.memarray<GuestStdVector>(gvar, 1);
+			// XXX: vec->free(machine);
 			TypedArray<Dictionary> signals = obj->get_signal_list();
-			auto [sptr, saddr] = vec->alloc<GuestStdString>(emu.machine(), signals.size());
+			auto [sptr, saddr] = vec->alloc<GuestStdString>(machine, signals.size());
 			for (size_t i = 0; i < signals.size(); i++) {
 				Dictionary dict = signals[i].operator godot::Dictionary();
 				auto name = String(dict["name"]).utf8();
 				const gaddr_t self = saddr + sizeof(GuestStdString) * i;
-				sptr[i].set_string(emu.machine(), self, name.ptr(), name.length());
+				sptr[i].set_string(machine, self, name.ptr(), name.length());
 			}
 		} break;
 		default:
@@ -534,7 +540,7 @@ APICALL(api_obj_callp) {
 		ERR_PRINT("Too many arguments.");
 		throw std::runtime_error("Too many arguments.");
 	}
-	const GuestVariant *g_args = emu.machine().memory.memarray<GuestVariant>(args_addr, args_size);
+	const GuestVariant *g_args = machine.memory.memarray<GuestVariant>(args_addr, args_size);
 
 	if (!deferred) {
 		Array vargs;
@@ -544,7 +550,7 @@ APICALL(api_obj_callp) {
 		}
 		Variant ret = obj->callv(String::utf8(method.data(), method.size()), vargs);
 		if (vret_ptr != 0) {
-			auto *vret = emu.machine().memory.memarray<GuestVariant>(vret_ptr, 1);
+			auto *vret = machine.memory.memarray<GuestVariant>(vret_ptr, 1);
 			vret->create(emu, std::move(ret));
 		}
 	} else {
@@ -670,19 +676,19 @@ APICALL(api_node) {
 
 	switch (Node_Op(op)) {
 		case Node_Op::GET_NAME: {
-			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 			var->create(emu, String(node->get_name()));
 		} break;
 		case Node_Op::SET_NAME: {
-			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 			node->set_name(var->toVariant(emu).operator String());
 		} break;
 		case Node_Op::GET_PATH: {
-			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 			var->create(emu, String(node->get_path()));
 		} break;
 		case Node_Op::GET_PARENT: {
-			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 			if (node->get_parent() == nullptr) {
 				var->set(emu, Variant());
 			} else {
@@ -699,17 +705,17 @@ APICALL(api_node) {
 			node->queue_free();
 			break;
 		case Node_Op::DUPLICATE: {
-			auto *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			auto *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 			auto *new_node = node->duplicate();
 			emu.add_scoped_object(new_node);
 			var->set(emu, new_node, true); // Implicit trust, as we are returning our own object.
 		} break;
 		case Node_Op::GET_CHILD_COUNT: {
-			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 			var->set(emu, node->get_child_count());
 		} break;
 		case Node_Op::GET_CHILD: {
-			GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 			Node *child_node = node->get_child(var[0].v.i);
 			if (child_node == nullptr) {
 				var[0].set(emu, Variant());
@@ -720,7 +726,7 @@ APICALL(api_node) {
 		} break;
 		case Node_Op::ADD_CHILD_DEFERRED:
 		case Node_Op::ADD_CHILD: {
-			GuestVariant *child = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			GuestVariant *child = machine.memory.memarray<GuestVariant>(gvar, 1);
 			godot::Node *child_node = get_node_from_address(emu, child->v.i);
 			if (Node_Op(op) == Node_Op::ADD_CHILD_DEFERRED)
 				node->call_deferred("add_child", child_node);
@@ -729,7 +735,7 @@ APICALL(api_node) {
 		} break;
 		case Node_Op::ADD_SIBLING_DEFERRED:
 		case Node_Op::ADD_SIBLING: {
-			GuestVariant *sibling = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			GuestVariant *sibling = machine.memory.memarray<GuestVariant>(gvar, 1);
 			godot::Node *sibling_node = get_node_from_address(emu, sibling->v.i);
 			if (Node_Op(op) == Node_Op::ADD_SIBLING_DEFERRED)
 				node->call_deferred("add_sibling", sibling_node);
@@ -737,14 +743,14 @@ APICALL(api_node) {
 				node->add_sibling(sibling_node);
 		} break;
 		case Node_Op::MOVE_CHILD: {
-			GuestVariant *vars = emu.machine().memory.memarray<GuestVariant>(gvar, 2);
+			GuestVariant *vars = machine.memory.memarray<GuestVariant>(gvar, 2);
 			godot::Node *child_node = get_node_from_address(emu, vars[0].v.i);
 			// TODO: Check if the child is actually a child of the node? Verify index?
 			node->move_child(child_node, vars[1].v.i);
 		} break;
 		case Node_Op::REMOVE_CHILD_DEFERRED:
 		case Node_Op::REMOVE_CHILD: {
-			GuestVariant *child = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+			GuestVariant *child = machine.memory.memarray<GuestVariant>(gvar, 1);
 			godot::Node *child_node = get_node_from_address(emu, child->v.i);
 			if (Node_Op(op) == Node_Op::REMOVE_CHILD_DEFERRED)
 				node->call_deferred("remove_child", child_node);
@@ -753,11 +759,11 @@ APICALL(api_node) {
 		} break;
 		case Node_Op::GET_CHILDREN: {
 			// Get a GuestStdVector from guest to store the children.
-			GuestStdVector *vec = emu.machine().memory.memarray<GuestStdVector>(gvar, 1);
+			GuestStdVector *vec = machine.memory.memarray<GuestStdVector>(gvar, 1);
 			// Get the children of the node.
 			TypedArray<Node> children = node->get_children();
 			// Allocate memory for the children in the guest vector.
-			auto [cptr, _] = vec->alloc<uint64_t>(emu.machine(), children.size());
+			auto [cptr, _] = vec->alloc<uint64_t>(machine, children.size());
 			// Copy the children to the guest vector, and add them to the scoped objects.
 			for (int i = 0; i < children.size(); i++) {
 				godot::Node *child = godot::Object::cast_to<godot::Node>(children[i]);
@@ -792,7 +798,7 @@ APICALL(api_node2d) {
 	}
 
 	// View the variant from the guest memory.
-	GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+	GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 	switch (Node2D_Op(op)) {
 		case Node2D_Op::GET_POSITION:
 			var->set(emu, node2d->get_position());
@@ -841,7 +847,7 @@ APICALL(api_node3d) {
 	}
 
 	// View the variant from the guest memory.
-	GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(gvar, 1);
+	GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 	switch (Node3D_Op(op)) {
 		case Node3D_Op::GET_POSITION:
 			var->set(emu, node3d->get_position());
@@ -871,7 +877,7 @@ APICALL(api_throw) {
 	auto [type, msg, vaddr] = machine.sysargs<std::string_view, std::string_view, gaddr_t>();
 
 	Sandbox &emu = riscv::emu(machine);
-	GuestVariant *var = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
+	GuestVariant *var = machine.memory.memarray<GuestVariant>(vaddr, 1);
 	String error_string = "Sandbox exception of type " + String::utf8(type.data(), type.size()) + ": " + String::utf8(msg.data(), msg.size()) + " for Variant of type " + itos(var->type);
 	ERR_PRINT(error_string);
 	throw std::runtime_error("Sandbox exception of type " + std::string(type) + ": " + std::string(msg) + " for Variant of type " + std::to_string(var->type));
@@ -917,16 +923,16 @@ APICALL(api_array_ops) {
 			Array a;
 			a.resize(arr_idx); // Resize the array to the given size.
 			const unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
-			GuestVariant *vp = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
+			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vaddr, 1);
 			vp->type = Variant::ARRAY;
 			vp->v.i = idx;
 			break;
 		}
 		case Array_Op::PUSH_BACK:
-			array.push_back(emu.machine().memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
+			array.push_back(machine.memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
 			break;
 		case Array_Op::PUSH_FRONT:
-			array.push_front(emu.machine().memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
+			array.push_front(machine.memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
 			break;
 		case Array_Op::POP_AT:
 			array.pop_at(idx);
@@ -938,7 +944,7 @@ APICALL(api_array_ops) {
 			array.pop_front();
 			break;
 		case Array_Op::INSERT:
-			array.insert(idx, emu.machine().memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
+			array.insert(idx, machine.memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
 			break;
 		case Array_Op::ERASE:
 			array.erase(idx);
@@ -1004,26 +1010,26 @@ APICALL(api_dict_ops) {
 
 	switch (op) {
 		case Dictionary_Op::GET: {
-			GuestVariant *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
-			GuestVariant *vp = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
+			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
+			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vaddr, 1);
 			// TODO: Check if the value is already scoped?
 			Variant v = dict[key->toVariant(emu)];
 			vp->create(emu, std::move(v));
 			break;
 		}
 		case Dictionary_Op::SET: {
-			GuestVariant *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
-			GuestVariant *value = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
+			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
+			GuestVariant *value = machine.memory.memarray<GuestVariant>(vaddr, 1);
 			dict[key->toVariant(emu)] = value->toVariant(emu);
 			break;
 		}
 		case Dictionary_Op::ERASE: {
-			GuestVariant *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
+			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
 			dict.erase(key->toVariant(emu));
 			break;
 		}
 		case Dictionary_Op::HAS: {
-			GuestVariant *key = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
+			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
 			machine.set_result(dict.has(key->toVariant(emu)));
 			break;
 		}
@@ -1034,7 +1040,7 @@ APICALL(api_dict_ops) {
 			dict.clear();
 			break;
 		case Dictionary_Op::MERGE: {
-			GuestVariant *other_dict = emu.machine().memory.memarray<GuestVariant>(vkey, 1);
+			GuestVariant *other_dict = machine.memory.memarray<GuestVariant>(vkey, 1);
 			dict.merge(other_dict->toVariant(emu).operator Dictionary());
 			break;
 		}
@@ -1067,7 +1073,7 @@ APICALL(api_string_ops) {
 
 	switch (op) {
 		case String_Op::APPEND: {
-			GuestVariant *gvar = emu.machine().memory.memarray<GuestVariant>(vaddr, 1);
+			GuestVariant *gvar = machine.memory.memarray<GuestVariant>(vaddr, 1);
 			str += gvar->toVariant(emu).operator String();
 			break;
 		}
@@ -1077,11 +1083,11 @@ APICALL(api_string_ops) {
 		case String_Op::TO_STD_STRING: {
 			if (index == 0) { // Get the string as a std::string.
 				CharString utf8 = str.utf8();
-				GuestStdString *gstr = emu.machine().memory.memarray<GuestStdString>(vaddr, 1);
-				gstr->set_string(emu.machine(), vaddr, utf8.ptr(), utf8.length());
+				GuestStdString *gstr = machine.memory.memarray<GuestStdString>(vaddr, 1);
+				gstr->set_string(machine, vaddr, utf8.ptr(), utf8.length());
 			} else if (index == 2) { // Get the string as a std::u32string.
-				GuestStdU32String *gstr = emu.machine().memory.memarray<GuestStdU32String>(vaddr, 1);
-				gstr->set_string(emu.machine(), vaddr, str.ptr(), str.length());
+				GuestStdU32String *gstr = machine.memory.memarray<GuestStdU32String>(vaddr, 1);
+				gstr->set_string(machine, vaddr, str.ptr(), str.length());
 			} else {
 				ERR_PRINT("Invalid String conversion");
 				throw std::runtime_error("Invalid String conversion");

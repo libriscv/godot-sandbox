@@ -65,12 +65,12 @@ void Sandbox::handle_exception(gaddr_t address) {
 }
 
 void Sandbox::handle_timeout(gaddr_t address) {
-	this->m_budget_overruns++;
-	Sandbox::m_global_budget_overruns++;
+	this->m_timeouts++;
+	Sandbox::m_global_timeouts++;
 	auto callsite = machine().memory.lookup(address);
 	UtilityFunctions::print(
 			"Sandbox: Timeout for '", callsite.name.c_str(),
-			"' (Timeouts: ", m_budget_overruns, "\n");
+			"' (Timeouts: ", m_timeouts, ")\n");
 }
 
 void Sandbox::print_backtrace(const gaddr_t addr) {

@@ -67,10 +67,10 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 
 const Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
 	switch (type) {
+		case Variant::STRING:
 		case Variant::DICTIONARY:
 		case Variant::ARRAY:
 		case Variant::CALLABLE:
-		case Variant::STRING:
 		case Variant::STRING_NAME:
 		case Variant::NODE_PATH:
 		case Variant::PACKED_BYTE_ARRAY:
@@ -79,7 +79,8 @@ const Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
 		case Variant::PACKED_INT32_ARRAY:
 		case Variant::PACKED_INT64_ARRAY:
 		case Variant::PACKED_VECTOR2_ARRAY:
-		case Variant::PACKED_VECTOR3_ARRAY: {
+		case Variant::PACKED_VECTOR3_ARRAY:
+		case Variant::PACKED_COLOR_ARRAY: {
 			if (std::optional<const Variant *> v = emu.get_scoped_variant(this->v.i))
 				return v.value();
 			else

@@ -38,17 +38,17 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_function", "function"), &Sandbox::has_function);
 
 	// Properties.
-	ClassDB::bind_method(D_METHOD("set_max_refs", "max"), &Sandbox::set_max_refs);
+	ClassDB::bind_method(D_METHOD("set_max_refs", "max"), &Sandbox::set_max_refs, DEFVAL(MAX_REFS));
 	ClassDB::bind_method(D_METHOD("get_max_refs"), &Sandbox::get_max_refs);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_references", PROPERTY_HINT_NONE, "Maximum objects and variants referenced by a sandbox call"), "set_max_refs", "get_max_refs");
 
-	ClassDB::bind_method(D_METHOD("set_memory_max", "max"), &Sandbox::set_memory_max);
+	ClassDB::bind_method(D_METHOD("set_memory_max", "max"), &Sandbox::set_memory_max, DEFVAL(MAX_VMEM));
 	ClassDB::bind_method(D_METHOD("get_memory_max"), &Sandbox::get_memory_max);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "memory_max", PROPERTY_HINT_NONE, "Maximum memory (in MiB) used by the sandboxed program"), "set_memory_max", "get_memory_max");
 
-	ClassDB::bind_method(D_METHOD("set_instructions_max", "max"), &Sandbox::set_instructions_max);
+	ClassDB::bind_method(D_METHOD("set_instructions_max", "max"), &Sandbox::set_instructions_max, DEFVAL(MAX_INSTRUCTIONS));
 	ClassDB::bind_method(D_METHOD("get_instructions_max"), &Sandbox::get_instructions_max);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE, "Maximum billions of instructions executed before cancelling execution"), "set_instructions_max", "get_instructions_max");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE, "Maximum millions of instructions executed before cancelling execution"), "set_instructions_max", "get_instructions_max");
 
 	ClassDB::bind_method(D_METHOD("set_use_unboxed_arguments", "use_unboxed_arguments"), &Sandbox::set_use_unboxed_arguments);
 	ClassDB::bind_method(D_METHOD("get_use_unboxed_arguments"), &Sandbox::get_use_unboxed_arguments);
@@ -60,18 +60,21 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_heap_usage"), &Sandbox::get_heap_usage);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_heap_usage", PROPERTY_HINT_NONE, "Current arena usage"), "", "get_heap_usage");
 
-	ClassDB::bind_method(D_METHOD("get_budget_overruns"), &Sandbox::get_budget_overruns);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_execution_timeouts", PROPERTY_HINT_NONE, "Number of execution timeouts"), "", "get_budget_overruns");
+	ClassDB::bind_method(D_METHOD("get_exceptions"), &Sandbox::get_exceptions);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_exceptions", PROPERTY_HINT_NONE, "Number of exceptions thrown"), "", "get_exceptions");
+
+	ClassDB::bind_method(D_METHOD("get_timeouts"), &Sandbox::get_timeouts);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_execution_timeouts", PROPERTY_HINT_NONE, "Number of execution timeouts"), "", "get_timeouts");
 
 	ClassDB::bind_method(D_METHOD("get_calls_made"), &Sandbox::get_calls_made);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_calls_made", PROPERTY_HINT_NONE, "Number of calls made"), "", "get_calls_made");
 
 	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_calls_made"), &Sandbox::get_global_calls_made);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_exceptions"), &Sandbox::get_global_exceptions);
-	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_budget_overruns"), &Sandbox::get_global_budget_overruns);
+	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_timeouts"), &Sandbox::get_global_timeouts);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_calls_made", PROPERTY_HINT_NONE, "Number of calls made"), "", "get_global_calls_made");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_exceptions", PROPERTY_HINT_NONE, "Number of exceptions thrown"), "", "get_global_exceptions");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_execution_timeouts", PROPERTY_HINT_NONE, "Number of execution timeouts"), "", "get_global_budget_overruns");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_global_execution_timeouts", PROPERTY_HINT_NONE, "Number of execution timeouts"), "", "get_global_timeouts");
 
 	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_instance_count"), &Sandbox::get_global_instance_count);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("get_accumulated_startup_time"), &Sandbox::get_accumulated_startup_time);
@@ -85,6 +88,10 @@ void Sandbox::_bind_methods() {
 Sandbox::Sandbox() {
 	this->m_use_unboxed_arguments = SandboxProjectSettings::use_native_types();
 	this->m_global_instance_count += 1;
+	// For each call state, reset the state
+	for (CurrentState &state : this->m_states) {
+		state.initialize(this->m_max_refs);
+	}
 	// In order to reduce checks we guarantee that this
 	// class is well-formed at all times.
 	try {
@@ -363,7 +370,7 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc) {
 	CurrentState &state = this->m_states[m_level];
 	const bool is_reentrant_call = m_level > 1;
-	state.reset(this->m_level, this->m_max_refs);
+	state.reset(this->m_level);
 	m_level++;
 
 	// Scoped objects and owning tree node
@@ -385,7 +392,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			// set up each argument, and return value
 			retvar = this->setup_arguments(sp, args, argc);
 			// execute!
-			m_machine->simulate_with(get_instructions_max() << 30, 0u, address);
+			m_machine->simulate_with(get_instructions_max() << 20, 0u, address);
 		} else if (m_level < MAX_LEVEL) {
 			riscv::Registers<RISCV_ARCH> regs;
 			regs = cpu.registers();
@@ -396,7 +403,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			// set up each argument, and return value
 			retvar = this->setup_arguments(sp, args, argc);
 			// execute!
-			cpu.preempt_internal(regs, true, address, get_instructions_max() << 30);
+			cpu.preempt_internal(regs, true, address, get_instructions_max() << 20);
 		} else {
 			throw std::runtime_error("Recursion level exceeded");
 		}
@@ -515,7 +522,7 @@ int64_t Sandbox::get_heap_usage() const {
 //-- Scoped objects and variants --//
 
 unsigned Sandbox::add_scoped_variant(const Variant *value) const {
-	if (state().scoped_variants.size() >= this->m_max_refs) {
+	if (state().scoped_variants.size() >= state().variants.capacity()) {
 		ERR_PRINT("Maximum number of scoped variants reached.");
 		throw std::runtime_error("Maximum number of scoped variants reached.");
 	}
@@ -523,12 +530,11 @@ unsigned Sandbox::add_scoped_variant(const Variant *value) const {
 	return state().scoped_variants.size() - 1 + 1; // 1-based index
 }
 unsigned Sandbox::create_scoped_variant(Variant &&value) const {
-	if (state().scoped_variants.size() >= this->m_max_refs) {
+	if (state().scoped_variants.size() >= state().variants.capacity()) {
 		ERR_PRINT("Maximum number of scoped variants reached.");
 		throw std::runtime_error("Maximum number of scoped variants reached.");
 	}
-	state().variants.emplace_back(std::move(value));
-	state().scoped_variants.push_back(&state().variants.back());
+	state().append(std::move(value));
 	return state().scoped_variants.size() - 1 + 1; // 1-based index
 }
 std::optional<const Variant *> Sandbox::get_scoped_variant(unsigned index) const noexcept {
@@ -551,11 +557,11 @@ Variant &Sandbox::get_mutable_scoped_variant(unsigned index) {
 	});
 	if (it == state().variants.end()) {
 		// Create a new variant in the list using the existing one, and return it
-		if (state().variants.size() >= this->m_max_refs) {
+		if (state().variants.size() >= state().variants.capacity()) {
 			ERR_PRINT("Maximum number of scoped variants reached.");
 			throw std::runtime_error("Maximum number of scoped variants reached.");
 		}
-		state().variants.emplace_back(*var);
+		state().append(Variant(*var));
 		return state().variants.back();
 	}
 	return *it;
@@ -681,8 +687,11 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	} else if (name == StringName("monitor_heap_usage")) {
 		r_ret = get_heap_usage();
 		return true;
+	} else if (name == StringName("monitor_exceptions")) {
+		r_ret = get_exceptions();
+		return true;
 	} else if (name == StringName("monitor_execution_timeouts")) {
-		r_ret = get_budget_overruns();
+		r_ret = get_timeouts();
 		return true;
 	} else if (name == StringName("monitor_calls_made")) {
 		r_ret = get_calls_made();
@@ -693,8 +702,8 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	} else if (name == StringName("global_exceptions")) {
 		r_ret = get_global_exceptions();
 		return true;
-	} else if (name == StringName("global_budget_overruns")) {
-		r_ret = get_global_budget_overruns();
+	} else if (name == StringName("global_timeouts")) {
+		r_ret = get_global_timeouts();
 		return true;
 	} else if (name == StringName("monitor_accumulated_startup_time")) {
 		r_ret = get_accumulated_startup_time();
@@ -735,4 +744,20 @@ Variant SandboxProperty::get(const Sandbox &sandbox) const {
 		return Variant();
 	}
 	return const_cast<Sandbox &>(sandbox).vmcall_internal(m_getter_address, nullptr, 0);
+}
+
+void Sandbox::CurrentState::initialize(unsigned max_refs) {
+	this->variants.reserve(max_refs);
+}
+
+void Sandbox::set_max_refs(uint32_t max) {
+	this->m_max_refs = max;
+	// If we are not in a call, reset the states
+	if (this->m_level == 1) {
+		for (CurrentState &state : this->m_states) {
+			state.initialize(max);
+		}
+	} else {
+		ERR_PRINT("Sandbox: Cannot change max references during a Sandbox call.");
+	}
 }
