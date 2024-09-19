@@ -9,7 +9,7 @@ FROM ubuntu:24.04
 # Install dependencies
 RUN apt-get update && apt-get install -y \
 	g++-14-riscv64-linux-gnu \
-	git cmake mold
+	git cmake mold ccache
 
 # Enter the shared directory
 WORKDIR /usr/src
