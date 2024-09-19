@@ -631,9 +631,7 @@ APICALL(api_node_create) {
 	auto [type, g_class_name, g_class_len, name] = machine.sysargs<Node_Create_Shortlist, gaddr_t, unsigned, std::string_view>();
 	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(150'000);
-
 	Node *node = nullptr;
-	const std::string c_name(name);
 
 	switch (type) {
 		case Node_Create_Shortlist::CREATE_CLASSDB: {
@@ -645,16 +643,20 @@ APICALL(api_node_create) {
 				throw std::runtime_error("Class name is not null-terminated");
 			}
 			// Now that it's null-terminated, we can use it for StringName.
-			Object *obj = ClassDB::instantiate(class_name.data());
-			if (obj == nullptr) {
+			Variant result = ClassDBSingleton::get_singleton()->instantiate(class_name.data());
+			if (result.get_type() != Variant::OBJECT) {
 				ERR_PRINT("Failed to create object from class name");
 				throw std::runtime_error("Failed to create object from class name");
 			}
+			Object *obj = result.operator Object *();
+			// Make sure the object held through the Variant has lifetime managed by the sandbox.
+			emu.create_scoped_variant(std::move(result));
+
 			node = Object::cast_to<Node>(obj);
 			// If it's not a Node, just return the Object.
 			if (node == nullptr) {
 				emu.add_scoped_object(obj);
-				machine.set_result(reinterpret_cast<uint64_t>(obj));
+				machine.set_result(uint64_t(uintptr_t(obj)));
 				return;
 			}
 			// It's a Node, so continue to set the name.
@@ -678,11 +680,12 @@ APICALL(api_node_create) {
 		ERR_PRINT("Failed to create Node");
 		throw std::runtime_error("Failed to create Node");
 	}
+	const std::string c_name(name);
 	if (!c_name.empty()) {
 		node->set_name(String::utf8(c_name.c_str(), c_name.size()));
 	}
 	emu.add_scoped_object(node);
-	machine.set_result(reinterpret_cast<uint64_t>(node));
+	machine.set_result(uint64_t(uintptr_t(node)));
 }
 
 APICALL(api_node) {
