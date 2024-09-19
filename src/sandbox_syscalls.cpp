@@ -62,7 +62,10 @@ APICALL(api_print) {
 	// We really want print_internal to be a public function.
 	for (unsigned i = 0; i < len; i++) {
 		const GuestVariant &var = array_ptr[i];
-		UtilityFunctions::print(var.toVariant(emu));
+		if (var.is_scoped_variant())
+			UtilityFunctions::print(*var.toVariantPtr(emu));
+		else
+			UtilityFunctions::print(var.toVariant(emu));
 	}
 }
 
@@ -85,8 +88,12 @@ APICALL(api_vcall) {
 		std::array<Variant, 8> vargs;
 		std::array<const Variant *, 8> argptrs;
 		for (size_t i = 0; i < args_size; i++) {
-			vargs[i] = args[i].toVariant(emu);
-			argptrs[i] = &vargs[i];
+			if (args[i].is_scoped_variant()) {
+				argptrs[i] = args[i].toVariantPtr(emu);
+			} else {
+				vargs[i] = args[i].toVariant(emu);
+				argptrs[i] = &vargs[i];
+			}
 		}
 
 		Variant *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));

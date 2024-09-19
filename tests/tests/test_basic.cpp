@@ -66,6 +66,10 @@ extern "C" Variant test_object(Object arg) {
 	return arg;
 }
 
+extern "C" Variant test_callable(Variant callable) {
+	return callable.call(1, 2, "3");
+}
+
 extern "C" Variant test_pa_u8(PackedArray<uint8_t> arr) {
 	return arr;
 }

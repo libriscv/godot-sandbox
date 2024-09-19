@@ -1,5 +1,7 @@
 extends GutTest
 
+var callable_was_called = false
+
 func test_instantiation():
 	# Create a new sandbox
 	var s = Sandbox.new()
@@ -100,7 +102,9 @@ func test_types():
 
 	# Callables
 	var cb : Callable = Callable(callable_function)
-	assert_same(s.vmcall("test_ping_pong", cb), cb)
+	assert_same(s.vmcall("test_ping_pong", cb), cb, "Returned Callable was same")
+	s.vmcall("test_callable", Callable(callable_callee))
+	assert_eq(callable_was_called, true, "Callable was called")
 
 	# Verify that a basic function that returns a String works
 	assert_eq(s.has_function("public_function"), true)
@@ -231,3 +235,9 @@ func test_math():
 
 func callable_function():
 	return
+
+func callable_callee(a1, a2, a3):
+	assert(a1 == 1)
+	assert(a2 == 2)
+	assert(a3 == "3")
+	callable_was_called = true
