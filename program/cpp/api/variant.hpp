@@ -138,6 +138,9 @@ struct Variant
 	Variant(const PackedArray<double>&);
 	Variant(const PackedArray<int32_t>&);
 	Variant(const PackedArray<int64_t>&);
+	Variant(const PackedArray<Vector2>&);
+	Variant(const PackedArray<Vector3>&);
+	Variant(const PackedArray<Color>&);
 
 	// Constructor specifically the STRING_NAME type
 	static Variant string_name(const std::string &name);
@@ -349,6 +352,21 @@ inline Variant::Variant(const PackedArray<int32_t> &array)
 inline Variant::Variant(const PackedArray<int64_t> &array)
 {
 	m_type = PACKED_INT64_ARRAY;
+	v.i = array.get_variant_index();
+}
+inline Variant::Variant(const PackedArray<Vector2> &array)
+{
+	m_type = PACKED_VECTOR2_ARRAY;
+	v.i = array.get_variant_index();
+}
+inline Variant::Variant(const PackedArray<Vector3> &array)
+{
+	m_type = PACKED_VECTOR3_ARRAY;
+	v.i = array.get_variant_index();
+}
+inline Variant::Variant(const PackedArray<Color> &array)
+{
+	m_type = PACKED_COLOR_ARRAY;
 	v.i = array.get_variant_index();
 }
 

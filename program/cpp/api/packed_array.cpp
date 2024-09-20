@@ -36,6 +36,24 @@ PackedArray<double>::PackedArray(const std::vector<double> &data) {
 	sys_vcreate(&v, Variant::PACKED_FLOAT64_ARRAY, 0, &data);
 	this->m_idx = v.get_internal_index();
 }
+template <>
+PackedArray<Vector2>::PackedArray(const std::vector<Vector2> &data) {
+	Variant v;
+	sys_vcreate(&v, Variant::PACKED_VECTOR2_ARRAY, 0, &data);
+	this->m_idx = v.get_internal_index();
+}
+template <>
+PackedArray<Vector3>::PackedArray(const std::vector<Vector3> &data) {
+	Variant v;
+	sys_vcreate(&v, Variant::PACKED_VECTOR3_ARRAY, 0, &data);
+	this->m_idx = v.get_internal_index();
+}
+template <>
+PackedArray<Color>::PackedArray(const std::vector<Color> &data) {
+	Variant v;
+	sys_vcreate(&v, Variant::PACKED_COLOR_ARRAY, 0, &data);
+	this->m_idx = v.get_internal_index();
+}
 
 template <>
 std::vector<uint8_t> PackedArray<uint8_t>::fetch() const {
@@ -67,6 +85,24 @@ std::vector<double> PackedArray<double>::fetch() const {
 	sys_vfetch(m_idx, &result, 0);
 	return result;
 }
+template <>
+std::vector<Vector2> PackedArray<Vector2>::fetch() const {
+	std::vector<Vector2> result;
+	sys_vfetch(m_idx, &result, 0);
+	return result;
+}
+template <>
+std::vector<Vector3> PackedArray<Vector3>::fetch() const {
+	std::vector<Vector3> result;
+	sys_vfetch(m_idx, &result, 0);
+	return result;
+}
+template <>
+std::vector<Color> PackedArray<Color>::fetch() const {
+	std::vector<Color> result;
+	sys_vfetch(m_idx, &result, 0);
+	return result;
+}
 
 template <>
 void PackedArray<uint8_t>::store(const std::vector<uint8_t> &data) {
@@ -88,6 +124,18 @@ template <>
 void PackedArray<double>::store(const std::vector<double> &data) {
 	sys_vstore(m_idx, data.data(), data.size());
 }
+template <>
+void PackedArray<Vector2>::store(const std::vector<Vector2> &data) {
+	sys_vstore(m_idx, data.data(), data.size());
+}
+template <>
+void PackedArray<Vector3>::store(const std::vector<Vector3> &data) {
+	sys_vstore(m_idx, data.data(), data.size());
+}
+template <>
+void PackedArray<Color>::store(const std::vector<Color> &data) {
+	sys_vstore(m_idx, data.data(), data.size());
+}
 
 template <>
 void PackedArray<uint8_t>::store(const uint8_t *data, size_t size) {
@@ -107,5 +155,17 @@ void PackedArray<float>::store(const float *data, size_t size) {
 }
 template <>
 void PackedArray<double>::store(const double *data, size_t size) {
+	sys_vstore(m_idx, data, size);
+}
+template <>
+void PackedArray<Vector2>::store(const Vector2 *data, size_t size) {
+	sys_vstore(m_idx, data, size);
+}
+template <>
+void PackedArray<Vector3>::store(const Vector3 *data, size_t size) {
+	sys_vstore(m_idx, data, size);
+}
+template <>
+void PackedArray<Color>::store(const Color *data, size_t size) {
 	sys_vstore(m_idx, data, size);
 }

@@ -23,6 +23,18 @@ struct GDNativeVariant {
 			int32_t ivec2_int[2];
 		};
 		struct {
+			real_t vec3_flt[3];
+		};
+		struct {
+			int32_t ivec3_int[3];
+		};
+		struct {
+			real_t vec4_flt[4];
+		};
+		struct {
+			int32_t ivec4_int[4];
+		};
+		struct {
 			float color_flt[4];
 		};
 		struct {

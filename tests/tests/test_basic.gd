@@ -67,10 +67,10 @@ func test_types():
 	assert_eq(s.vmcall("test_nodepath", NodePath("Node")), NodePath("Node")) # NodePath
 	assert_eq(s.vmcall("test_vec2", Vector2(1, 2)), Vector2(1, 2)) # Vector2
 	assert_eq(s.vmcall("test_vec2i", Vector2i(1, 2)), Vector2i(1, 2)) # Vector2i
-	assert_eq(s.vmcall("test_ping_pong", Vector3(1, 2, 3)), Vector3(1, 2, 3)) # Vector3
-	assert_eq(s.vmcall("test_ping_pong", Vector3i(1, 2, 3)), Vector3i(1, 2, 3)) # Vector3i
-	assert_eq(s.vmcall("test_ping_pong", Vector4(1, 2, 3, 4)), Vector4(1, 2, 3, 4)) # Vector4
-	assert_eq(s.vmcall("test_ping_pong", Vector4i(1, 2, 3, 4)), Vector4i(1, 2, 3, 4)) # Vector4i
+	assert_eq(s.vmcall("test_vec3", Vector3(1, 2, 3)), Vector3(1, 2, 3)) # Vector3
+	assert_eq(s.vmcall("test_vec3i", Vector3i(1, 2, 3)), Vector3i(1, 2, 3)) # Vector3i
+	assert_eq(s.vmcall("test_vec4", Vector4(1, 2, 3, 4)), Vector4(1, 2, 3, 4)) # Vector4
+	assert_eq(s.vmcall("test_vec4i", Vector4i(1, 2, 3, 4)), Vector4i(1, 2, 3, 4)) # Vector4i
 	assert_eq(s.vmcall("test_color", Color(1, 2, 3, 4)), Color(1, 2, 3, 4)) # Color
 	assert_eq(s.vmcall("test_ping_pong", Rect2(Vector2(1, 2), Vector2(3, 4))), Rect2(Vector2(1, 2), Vector2(3, 4))) # Rect2
 	#assert_eq(s.vmcall("test_ping_pong", Transform2D(Vector2(1, 2), Vector2(3, 4), Vector2(5, 6))), Transform2D(Vector2(1, 2), Vector2(3, 4), Vector2(5, 6))) # Transform2D
@@ -95,10 +95,25 @@ func test_types():
 	assert_same(s.vmcall("test_pa_f32", pfa32_pp), pfa32_pp)
 	var pfa64_pp : PackedFloat64Array = [1.0, 2.0, 3.0, 4.0]
 	assert_same(s.vmcall("test_pa_f64", pfa64_pp), pfa64_pp)
+	var pia32_pp : PackedInt32Array = [1, 2, 3, 4]
+	assert_same(s.vmcall("test_pa_i32", pia32_pp), pia32_pp)
+	var pia64_pp : PackedInt64Array = [1, 2, 3, 4]
+	assert_same(s.vmcall("test_pa_i64", pia64_pp), pia64_pp)
+	var pa_vec2_pp : PackedVector2Array = [Vector2(1, 1), Vector2(2, 2), Vector2(3, 3)]
+	assert_same(s.vmcall("test_pa_vec2", pa_vec2_pp), pa_vec2_pp)
+	var pa_vec3_pp : PackedVector3Array = [Vector3(1, 1, 1), Vector3(2, 2, 2), Vector3(3, 3, 3)]
+	assert_same(s.vmcall("test_pa_vec3", pa_vec3_pp), pa_vec3_pp)
+	var pa_color_pp : PackedColorArray = [Color(0, 0, 0, 0), Color(1, 1, 1, 1)]
+	assert_same(s.vmcall("test_pa_color", pa_color_pp), pa_color_pp)
 	# Packed arrays created in the guest
 	assert_eq(s.vmcall("test_create_pa_u8"), PackedByteArray([1, 2, 3, 4]))
 	assert_eq(s.vmcall("test_create_pa_f32"), PackedFloat32Array([1, 2, 3, 4]))
 	assert_eq(s.vmcall("test_create_pa_f64"), PackedFloat64Array([1, 2, 3, 4]))
+	assert_eq(s.vmcall("test_create_pa_i32"), PackedInt32Array([1, 2, 3, 4]))
+	assert_eq(s.vmcall("test_create_pa_i64"), PackedInt64Array([1, 2, 3, 4]))
+	assert_eq(s.vmcall("test_create_pa_vec2"), PackedVector2Array([Vector2(1, 1), Vector2(2, 2), Vector2(3, 3)]))
+	assert_eq(s.vmcall("test_create_pa_vec3"), PackedVector3Array([Vector3(1, 1, 1), Vector3(2, 2, 2), Vector3(3, 3, 3)]))
+	assert_eq(s.vmcall("test_create_pa_color"), PackedColorArray([Color(0, 0, 0, 0), Color(1, 1, 1, 1)]))
 
 	# Callables
 	var cb : Callable = Callable(callable_function)
@@ -151,6 +166,16 @@ func test_vmcallv():
 	assert_same(s.vmcallv("test_ping_pong", pfa32_pp), pfa32_pp)
 	var pfa64_pp : PackedFloat64Array = [1.0, 2.0, 3.0, 4.0]
 	assert_same(s.vmcallv("test_ping_pong", pfa64_pp), pfa64_pp)
+	var pia32_pp : PackedInt32Array = [1, 2, 3, 4]
+	assert_same(s.vmcallv("test_ping_pong", pia32_pp), pia32_pp)
+	var pia64_pp : PackedInt64Array = [1, 2, 3, 4]
+	assert_same(s.vmcallv("test_ping_pong", pia64_pp), pia64_pp)
+	var pa_vec2_pp : PackedVector2Array = [Vector2(0, 0), Vector2(1, 1), Vector2(2, 2)]
+	assert_same(s.vmcallv("test_ping_pong", pa_vec2_pp), pa_vec2_pp)
+	var pa_vec3_pp : PackedVector3Array = [Vector3(0, 0, 0), Vector3(1, 1, 1), Vector3(2, 2, 2)]
+	assert_same(s.vmcallv("test_ping_pong", pa_vec3_pp), pa_vec3_pp)
+	var pca_pp : PackedColorArray = [Color(0, 0, 0, 0), Color(1, 1, 1, 1)]
+	assert_same(s.vmcallv("test_ping_pong", pca_pp), pca_pp)
 
 
 func test_objects():

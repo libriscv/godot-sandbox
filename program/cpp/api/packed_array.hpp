@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdint>
 #include <vector>
+#include "color.hpp"
+#include "vector.hpp"
 
 /**
  * @brief A reference to a host-side Packed Array.
@@ -10,8 +12,11 @@
  * - PackedInt64Array
  * - PackedFloat32Array
  * - PackedFloat64Array
+ * - PackedVector2Array
+ * - PackedVector3Array
+ * - PackedColorArray
  * 
- * @tparam T uint8_t, int32_t, int64_t, float, or double.
+ * @tparam T uint8_t, int32_t, int64_t, float, double, Vector2, Vector3 or Color.
  */
 template <typename T>
 struct PackedArray {
@@ -42,5 +47,7 @@ struct PackedArray {
 private:
 	unsigned m_idx = -1; // Host-side Variant index.
 
-	static_assert(std::is_same_v<T, uint8_t> || std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t> || std::is_same_v<T, float> || std::is_same_v<T, double>, "PackedArray type must be uint8_t, int32_t, int64_t, float, or double.");
+	static_assert(std::is_same_v<T, uint8_t> || std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t> || std::is_same_v<T, float> || std::is_same_v<T, double>
+		|| std::is_same_v<T, Vector2> || std::is_same_v<T, Vector3> || std::is_same_v<T, Color>,
+		"PackedArray type must be uint8_t, int32_t, int64_t, float, double, Vector2, Vector3 or Color.");
 };
