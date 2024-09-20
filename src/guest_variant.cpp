@@ -53,7 +53,8 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 		case Variant::PACKED_INT32_ARRAY:
 		case Variant::PACKED_INT64_ARRAY:
 		case Variant::PACKED_VECTOR2_ARRAY:
-		case Variant::PACKED_VECTOR3_ARRAY: {
+		case Variant::PACKED_VECTOR3_ARRAY:
+		case Variant::PACKED_COLOR_ARRAY: {
 			if (std::optional<const Variant *> v = emu.get_scoped_variant(this->v.i)) {
 				return *v.value();
 			} else
@@ -196,7 +197,8 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 		case Variant::PACKED_INT32_ARRAY:
 		case Variant::PACKED_INT64_ARRAY:
 		case Variant::PACKED_VECTOR2_ARRAY:
-		case Variant::PACKED_VECTOR3_ARRAY: {
+		case Variant::PACKED_VECTOR3_ARRAY:
+		case Variant::PACKED_COLOR_ARRAY: {
 			if (!implicit_trust)
 				throw std::runtime_error("GuestVariant::set(): Cannot set complex type without implicit trust");
 			this->v.i = emu.add_scoped_variant(&value);
@@ -246,7 +248,8 @@ void GuestVariant::create(Sandbox &emu, Variant &&value) {
 		case Variant::PACKED_INT32_ARRAY:
 		case Variant::PACKED_INT64_ARRAY:
 		case Variant::PACKED_VECTOR2_ARRAY:
-		case Variant::PACKED_VECTOR3_ARRAY: {
+		case Variant::PACKED_VECTOR3_ARRAY:
+		case Variant::PACKED_COLOR_ARRAY: {
 			// Store the variant in the current state
 			unsigned int idx = emu.create_scoped_variant(std::move(value));
 			this->v.i = idx;

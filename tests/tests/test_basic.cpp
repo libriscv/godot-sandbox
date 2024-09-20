@@ -79,6 +79,21 @@ extern "C" Variant test_pa_f32(PackedArray<float> arr) {
 extern "C" Variant test_pa_f64(PackedArray<double> arr) {
 	return arr;
 }
+extern "C" Variant test_pa_i32(PackedArray<int32_t> arr) {
+	return arr;
+}
+extern "C" Variant test_pa_i64(PackedArray<int64_t> arr) {
+	return arr;
+}
+extern "C" Variant test_pa_vec2(PackedArray<Vector2> arr) {
+	return arr;
+}
+extern "C" Variant test_pa_vec3(PackedArray<Vector3> arr) {
+	return arr;
+}
+extern "C" Variant test_pa_color(PackedArray<Color> arr) {
+	return arr;
+}
 
 extern "C" Variant test_create_pa_u8() {
 	PackedArray<uint8_t> arr({ 1, 2, 3, 4 });
@@ -90,6 +105,26 @@ extern "C" Variant test_create_pa_f32() {
 }
 extern "C" Variant test_create_pa_f64() {
 	PackedArray<double> arr({ 1, 2, 3, 4 });
+	return arr;
+}
+extern "C" Variant test_create_pa_i32() {
+	PackedArray<int32_t> arr({ 1, 2, 3, 4 });
+	return arr;
+}
+extern "C" Variant test_create_pa_i64() {
+	PackedArray<int64_t> arr({ 1, 2, 3, 4 });
+	return arr;
+}
+extern "C" Variant test_create_pa_vec2() {
+	PackedArray<Vector2> arr({ { 1, 1 }, { 2, 2 }, { 3, 3 } });
+	return arr;
+}
+extern "C" Variant test_create_pa_vec3() {
+	PackedArray<Vector3> arr({ { 1, 1, 1 }, { 2, 2, 2 }, { 3, 3, 3 } });
+	return arr;
+}
+extern "C" Variant test_create_pa_color() {
+	PackedArray<Color> arr({ { 0, 0, 0, 0 }, { 1, 1, 1, 1 } });
 	return arr;
 }
 

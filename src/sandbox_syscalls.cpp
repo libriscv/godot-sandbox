@@ -279,6 +279,45 @@ APICALL(api_vcreate) {
 			vp->type = type;
 			vp->v.i = idx;
 		} break;
+		case Variant::PACKED_VECTOR2_ARRAY: {
+			PackedVector2Array a;
+			if (gdata != 0x0) {
+				// Copy std::vector<Vector2> from guest memory.
+				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				std::vector<Vector2> vec = gvec->to_vector<Vector2>(machine);
+				a.resize(vec.size());
+				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(Vector2));
+			}
+			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
+			vp->type = type;
+			vp->v.i = idx;
+		} break;
+		case Variant::PACKED_VECTOR3_ARRAY: {
+			PackedVector3Array a;
+			if (gdata != 0x0) {
+				// Copy std::vector<Vector3> from guest memory.
+				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				std::vector<Vector3> vec = gvec->to_vector<Vector3>(machine);
+				a.resize(vec.size());
+				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(Vector3));
+			}
+			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
+			vp->type = type;
+			vp->v.i = idx;
+		} break;
+		case Variant::PACKED_COLOR_ARRAY: {
+			PackedColorArray a;
+			if (gdata != 0x0) {
+				// Copy std::vector<Color> from guest memory.
+				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				std::vector<Color> vec = gvec->to_vector<Color>(machine);
+				a.resize(vec.size());
+				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(Color));
+			}
+			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
+			vp->type = type;
+			vp->v.i = idx;
+		} break;
 		default:
 			ERR_PRINT("Unsupported Variant type for Variant::create()");
 			throw std::runtime_error("Unsupported Variant type for Variant::create()");
@@ -362,6 +401,13 @@ APICALL(api_vfetch) {
 				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(Vector3));
 				break;
 			}
+			case Variant::PACKED_COLOR_ARRAY: {
+				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				auto arr = var.operator PackedColorArray();
+				auto [sptr, saddr] = gvec->alloc<Color>(machine, arr.size());
+				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(Color));
+				break;
+			}
 			default:
 				ERR_PRINT("vfetch: Cannot fetch value into guest for Variant type");
 				throw std::runtime_error("vfetch: Cannot fetch value into guest for Variant type");
@@ -421,6 +467,46 @@ APICALL(api_vstore) {
 				auto *data = machine.memory.memarray<double>(gdata, gsize);
 				arr.resize(gsize);
 				std::memcpy(arr.ptrw(), data, gsize * sizeof(double));
+				break;
+			}
+			case Variant::PACKED_INT32_ARRAY: {
+				auto arr = var.operator PackedInt32Array();
+				// Copy the array from guest memory into the Variant.
+				auto *data = machine.memory.memarray<int32_t>(gdata, gsize);
+				arr.resize(gsize);
+				std::memcpy(arr.ptrw(), data, gsize * sizeof(int32_t));
+				break;
+			}
+			case Variant::PACKED_INT64_ARRAY: {
+				auto arr = var.operator PackedInt64Array();
+				// Copy the array from guest memory into the Variant.
+				auto *data = machine.memory.memarray<int64_t>(gdata, gsize);
+				arr.resize(gsize);
+				std::memcpy(arr.ptrw(), data, gsize * sizeof(int64_t));
+				break;
+			}
+			case Variant::PACKED_VECTOR2_ARRAY: {
+				auto arr = var.operator PackedVector2Array();
+				// Copy the array from guest memory into the Variant.
+				auto *data = machine.memory.memarray<Vector2>(gdata, gsize);
+				arr.resize(gsize);
+				std::memcpy(arr.ptrw(), data, gsize * sizeof(Vector2));
+				break;
+			}
+			case Variant::PACKED_VECTOR3_ARRAY: {
+				auto arr = var.operator PackedVector3Array();
+				// Copy the array from guest memory into the Variant.
+				auto *data = machine.memory.memarray<Vector3>(gdata, gsize);
+				arr.resize(gsize);
+				std::memcpy(arr.ptrw(), data, gsize * sizeof(Vector3));
+				break;
+			}
+			case Variant::PACKED_COLOR_ARRAY: {
+				auto arr = var.operator PackedColorArray();
+				// Copy the array from guest memory into the Variant.
+				auto *data = machine.memory.memarray<Color>(gdata, gsize);
+				arr.resize(gsize);
+				std::memcpy(arr.ptrw(), data, gsize * sizeof(Color));
 				break;
 			}
 			default:
