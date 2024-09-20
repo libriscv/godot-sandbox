@@ -41,6 +41,14 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 				throw std::runtime_error("GuestVariant::toVariant(): Object is not known/scoped");
 		}
 
+		case Variant::TRANSFORM2D:
+		case Variant::PLANE:
+		case Variant::QUATERNION:
+		case Variant::AABB:
+		case Variant::BASIS:
+		case Variant::TRANSFORM3D:
+		case Variant::PROJECTION:
+
 		case Variant::DICTIONARY:
 		case Variant::ARRAY:
 		case Variant::CALLABLE:
@@ -69,6 +77,13 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 const Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
 	switch (type) {
 		case Variant::STRING:
+		case Variant::TRANSFORM2D:
+		case Variant::PLANE:
+		case Variant::QUATERNION:
+		case Variant::AABB:
+		case Variant::BASIS:
+		case Variant::TRANSFORM3D:
+		case Variant::PROJECTION:
 		case Variant::DICTIONARY:
 		case Variant::ARRAY:
 		case Variant::CALLABLE:
@@ -185,10 +200,17 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 			break;
 		}
 
+		case Variant::STRING:
+		case Variant::TRANSFORM2D:
+		case Variant::PLANE:
+		case Variant::QUATERNION:
+		case Variant::AABB:
+		case Variant::BASIS:
+		case Variant::TRANSFORM3D:
+		case Variant::PROJECTION:
 		case Variant::DICTIONARY:
 		case Variant::ARRAY:
 		case Variant::CALLABLE:
-		case Variant::STRING:
 		case Variant::STRING_NAME:
 		case Variant::NODE_PATH:
 		case Variant::PACKED_BYTE_ARRAY:
@@ -236,10 +258,17 @@ void GuestVariant::create(Sandbox &emu, Variant &&value) {
 			break;
 		}
 
+		case Variant::STRING:
+		case Variant::TRANSFORM2D:
+		case Variant::PLANE:
+		case Variant::QUATERNION:
+		case Variant::AABB:
+		case Variant::BASIS:
+		case Variant::TRANSFORM3D:
+		case Variant::PROJECTION:
 		case Variant::DICTIONARY:
 		case Variant::ARRAY:
 		case Variant::CALLABLE:
-		case Variant::STRING:
 		case Variant::STRING_NAME:
 		case Variant::NODE_PATH:
 		case Variant::PACKED_BYTE_ARRAY:
