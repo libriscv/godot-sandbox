@@ -281,6 +281,26 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 				machine.cpu.reg(index++) = inner->value; // 64-bit packed integers
 				break;
 			}
+			case Variant::VECTOR3: {
+				machine.cpu.reg(index++) = *(gaddr_t *)&inner->vec3_flt[0];
+				machine.cpu.reg(index++) = *(gaddr_t *)&inner->vec3_flt[2];
+				break;
+			}
+			case Variant::VECTOR3I: {
+				machine.cpu.reg(index++) = *(gaddr_t *)&inner->ivec3_int[0];
+				machine.cpu.reg(index++) = inner->ivec3_int[2];
+				break;
+			}
+			case Variant::VECTOR4: {
+				machine.cpu.reg(index++) = *(gaddr_t *)&inner->vec4_flt[0];
+				machine.cpu.reg(index++) = *(gaddr_t *)&inner->vec4_flt[2];
+				break;
+			}
+			case Variant::VECTOR4I: {
+				machine.cpu.reg(index++) = *(gaddr_t *)&inner->ivec4_int[0];
+				machine.cpu.reg(index++) = *(gaddr_t *)&inner->ivec4_int[2];
+				break;
+			}
 			case Variant::COLOR: { // 16-byte struct (must use integer registers)
 				// RVG calling convention:
 				// Unions and arrays containing floats are passed in integer registers

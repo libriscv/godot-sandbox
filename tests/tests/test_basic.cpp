@@ -41,8 +41,21 @@ extern "C" Variant test_nodepath(NodePath arg) {
 extern "C" Variant test_vec2(Vector2 arg) {
 	return arg;
 }
-
 extern "C" Variant test_vec2i(Vector2i arg) {
+	return arg;
+}
+
+extern "C" Variant test_vec3(Vector3 arg) {
+	return arg;
+}
+extern "C" Variant test_vec3i(Vector3i arg) {
+	return arg;
+}
+
+extern "C" Variant test_vec4(Vector4 arg) {
+	return arg;
+}
+extern "C" Variant test_vec4i(Vector4i arg) {
 	return arg;
 }
 
