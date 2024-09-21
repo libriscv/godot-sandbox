@@ -49,7 +49,9 @@
 #define ECALL_LERP_OP32 (GAME_API_BASE + 35)
 #define ECALL_LERP_OP64 (GAME_API_BASE + 36)
 
-#define ECALL_LAST (GAME_API_BASE + 37)
+#define ECALL_VEC3_OPS (GAME_API_BASE + 37)
+
+#define ECALL_LAST (GAME_API_BASE + 38)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
@@ -154,6 +156,7 @@ enum class Dictionary_Op {
 	GET_SIZE,
 	CLEAR,
 	MERGE,
+	GET_OR_ADD,
 };
 
 enum class String_Op {
@@ -183,4 +186,16 @@ enum class Lerp_Op {
 	SMOOTHSTEP,
 	CLAMP,
 	SLERP,
+};
+
+enum class Vec3_Op {
+	HASH = 0,
+	LENGTH,
+	NORMALIZE,
+	DOT,
+	CROSS,
+	ANGLE_TO,
+	PROJECT,
+	REFLECT,
+	ROTATED,
 };

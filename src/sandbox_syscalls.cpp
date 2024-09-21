@@ -1151,6 +1151,18 @@ APICALL(api_dict_ops) {
 			dict.merge(other_dict->toVariant(emu).operator Dictionary());
 			break;
 		}
+		case Dictionary_Op::GET_OR_ADD: {
+			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
+			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vaddr, 1);
+			Variant &v = dict[key->toVariant(emu)];
+			if (v.get_type() == Variant::NIL) {
+				const gaddr_t vdefaddr = machine.cpu.reg(14); // A4
+				const GuestVariant *vdef = machine.memory.memarray<GuestVariant>(vdefaddr, 1);
+				v = std::move(vdef->toVariant(emu));
+			}
+			vp->set(emu, v, true); // Implicit trust, as we are returning our own object.
+			break;
+		}
 		default:
 			ERR_PRINT("Invalid Dictionary operation");
 			throw std::runtime_error("Invalid Dictionary operation");
@@ -1369,6 +1381,47 @@ static void api_lerp_op(machine_t &machine) {
 	}
 } // api_lerp_op
 
+APICALL(api_vec3_ops) {
+	struct Vec3 {
+		float x, y, z;
+	};
+	auto [op, v] = machine.sysargs<Vec3_Op, Vec3 *>();
+
+	switch (op) {
+		case Vec3_Op::HASH: {
+			gaddr_t seed = 0;
+			hash_combine(seed, std::hash<float>{}(v->x));
+			hash_combine(seed, std::hash<float>{}(v->y));
+			hash_combine(seed, std::hash<float>{}(v->z));
+			machine.set_result(seed);
+			break;
+		}
+		case Vec3_Op::LENGTH: {
+			machine.set_result(std::sqrt(v->x * v->x + v->y * v->y + v->z * v->z));
+			break;
+		}
+		case Vec3_Op::NORMALIZE: {
+			const float length = std::sqrt(v->x * v->x + v->y * v->y + v->z * v->z);
+			if (length > 0.0001f) // FLT_EPSILON?
+			{
+				v->x /= length;
+				v->y /= length;
+				v->z /= length;
+			}
+			break;
+		}
+		case Vec3_Op::CROSS: {
+			const gaddr_t v2addr = machine.cpu.reg(12); // a2
+			Vec3 *v2 = machine.memory.memarray<Vec3>(v2addr, 1);
+			machine.set_result(v->y * v2->z - v->z * v2->y, v->z * v2->x - v->x * v2->z, v->x * v2->y - v->y * v2->x);
+			break;
+		}
+		default:
+			ERR_PRINT("Invalid Vec3 operation");
+			throw std::runtime_error("Invalid Vec3 operation");
+	}
+}
+
 } //namespace riscv
 
 void Sandbox::initialize_syscalls() {
@@ -1442,5 +1495,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_MATH_OP64, api_math_op<double> },
 			{ ECALL_LERP_OP32, api_lerp_op<float> },
 			{ ECALL_LERP_OP64, api_lerp_op<double> },
+
+			{ ECALL_VEC3_OPS, api_vec3_ops },
 	});
 }

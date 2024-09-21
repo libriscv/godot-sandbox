@@ -4,6 +4,7 @@
 
 EXTERN_SYSCALL(ECALL_VCREATE, void, sys_vcreate, Variant *, int, int, const void *);
 MAKE_SYSCALL(ECALL_DICTIONARY_OPS, int, sys_dict_ops, Dictionary_Op, unsigned, const Variant *, Variant *);
+MAKE_SYSCALL(ECALL_DICTIONARY_OPS, int, sys_dict_ops2, Dictionary_Op, unsigned, const Variant *, Variant *, const Variant *);
 
 void Dictionary::clear() {
 	(void)sys_dict_ops(Dictionary_Op::CLEAR, m_idx, nullptr, nullptr);
@@ -28,6 +29,11 @@ Variant Dictionary::get(const Variant &key) const {
 }
 void Dictionary::set(const Variant &key, const Variant &value) {
 	(void)sys_dict_ops(Dictionary_Op::SET, m_idx, &key, (Variant *)&value);
+}
+Variant Dictionary::get_or_add(const Variant &key, const Variant &default_value) {
+	Variant v;
+	(void)sys_dict_ops2(Dictionary_Op::GET_OR_ADD, m_idx, &key, &v, &default_value);
+	return v;
 }
 
 void Dictionary::merge(const Dictionary &other) {

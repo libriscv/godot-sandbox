@@ -319,3 +319,8 @@ inline bool GuestVariant::is_scoped_variant() const noexcept {
 }
 
 static_assert(sizeof(GuestVariant) == 24, "GuestVariant size mismatch");
+
+static inline void hash_combine(gaddr_t &seed, gaddr_t hash) {
+	hash += 0x9e3779b9 + (seed << 6) + (seed >> 2);
+	seed ^= hash;
+}
