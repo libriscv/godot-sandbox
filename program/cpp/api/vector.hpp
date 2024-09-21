@@ -33,6 +33,10 @@ struct Vector2 {
 		y /= other.y;
 		return *this;
 	}
+
+	bool operator == (const Vector2& other) const {
+		return x == other.x && y == other.y;
+	}
 };
 struct Vector2i {
 	int x;
@@ -57,6 +61,10 @@ struct Vector2i {
 		x /= other.x;
 		y /= other.y;
 		return *this;
+	}
+
+	bool operator == (const Vector2i& other) const {
+		return x == other.x && y == other.y;
 	}
 };
 struct Rect2 {
@@ -93,6 +101,10 @@ struct Rect2 {
 		h /= other.h;
 		return *this;
 	}
+
+	bool operator == (const Rect2& other) const {
+		return __builtin_memcmp(this, &other, sizeof(Rect2)) == 0;
+	}
 };
 struct Rect2i {
 	int x;
@@ -128,11 +140,22 @@ struct Rect2i {
 		h /= other.h;
 		return *this;
 	}
+
+	bool operator == (const Rect2i& other) const {
+		return __builtin_memcmp(this, &other, sizeof(Rect2i)) == 0;
+	}
 };
 struct Vector3 {
 	float x;
 	float y;
 	float z;
+
+	float length() const noexcept;
+	Vector3 normalized() const noexcept;
+	Vector3 cross(const Vector3& other) const noexcept;
+	float distance_to(const Vector3& other) const noexcept;
+	Vector3 direction_to(const Vector3& other) const noexcept;
+	float dot(const Vector3& other) const noexcept;
 
 	Vector3& operator += (const Vector3& other) {
 		x += other.x;
@@ -157,6 +180,10 @@ struct Vector3 {
 		y /= other.y;
 		z /= other.z;
 		return *this;
+	}
+
+	bool operator == (const Vector3& other) const {
+		return __builtin_memcmp(this, &other, sizeof(Vector3)) == 0;
 	}
 };
 struct Vector3i {
@@ -187,6 +214,10 @@ struct Vector3i {
 		y /= other.y;
 		z /= other.z;
 		return *this;
+	}
+
+	bool operator == (const Vector3i& other) const {
+		return __builtin_memcmp(this, &other, sizeof(Vector3i)) == 0;
 	}
 };
 struct Vector4 {
@@ -223,6 +254,10 @@ struct Vector4 {
 		w /= other.w;
 		return *this;
 	}
+
+	bool operator == (const Vector4& other) const {
+		return __builtin_memcmp(this, &other, sizeof(Vector4)) == 0;
+	}
 };
 struct Vector4i {
 	int x;
@@ -257,6 +292,10 @@ struct Vector4i {
 		z /= other.z;
 		w /= other.w;
 		return *this;
+	}
+
+	bool operator == (const Vector4i& other) const {
+		return __builtin_memcmp(this, &other, sizeof(Vector4i)) == 0;
 	}
 };
 
@@ -512,13 +551,130 @@ inline float Vector2::dot(const Vector2& other) const noexcept {
 	return x * other.x + y * other.y;
 }
 inline Vector2 Vector2::from_angle(float angle) noexcept {
-	register float a asm("fa0") = angle;
-	register float x asm("fa0");
+	register float x asm("fa0") = angle;
 	register float y asm("fa1");
 	register int syscall asm("a7") = 513; // ECALL_SINCOS
 
 	__asm__ volatile("ecall"
-					 : "=f"(x), "=f"(y)
-					 : "f"(a), "r"(syscall));
+					 : "+f"(x), "=f"(y)
+					 : "r"(syscall));
 	return {x, y};
+}
+
+namespace std
+{
+	inline void hash_combine(std::size_t &seed, std::size_t hash)
+	{
+		hash += 0x9e3779b9 + (seed << 6) + (seed >> 2);
+		seed ^= hash;
+	}
+
+	template <>
+	struct hash<Vector2>
+	{
+		std::size_t operator()(const Vector2 &v) const
+		{
+			std::size_t seed = 0;
+			hash_combine(seed, std::hash<float>{}(v.x));
+			hash_combine(seed, std::hash<float>{}(v.y));
+			return seed;
+		}
+	};
+
+	template <>
+	struct hash<Vector2i>
+	{
+		std::size_t operator()(const Vector2i &v) const
+		{
+			std::size_t seed = 0;
+			hash_combine(seed, std::hash<int>{}(v.x));
+			hash_combine(seed, std::hash<int>{}(v.y));
+			return seed;
+		}
+	};
+
+	template <>
+	struct hash<Rect2>
+	{
+		std::size_t operator()(const Rect2 &r) const
+		{
+			std::size_t seed = 0;
+			hash_combine(seed, std::hash<float>{}(r.x));
+			hash_combine(seed, std::hash<float>{}(r.y));
+			hash_combine(seed, std::hash<float>{}(r.w));
+			hash_combine(seed, std::hash<float>{}(r.h));
+			return seed;
+		}
+	};
+
+	template <>
+	struct hash<Rect2i>
+	{
+		std::size_t operator()(const Rect2i &r) const
+		{
+			std::size_t seed = 0;
+			hash_combine(seed, std::hash<int>{}(r.x));
+			hash_combine(seed, std::hash<int>{}(r.y));
+			hash_combine(seed, std::hash<int>{}(r.w));
+			hash_combine(seed, std::hash<int>{}(r.h));
+			return seed;
+		}
+	};
+
+	template <>
+	struct hash<Vector3>
+	{
+		inline std::size_t operator()(const Vector3 &v) const {
+			register int op asm("a0") = 0; // Vec3_Op::HASH
+			register const Vector3 *vptr asm("a1") = &v;
+			register std::size_t hash asm("a0");
+			register int syscall asm("a7") = 537; // ECALL_VEC3_OPS
+
+			__asm__ volatile("ecall"
+							: "=r"(hash)
+							: "r"(op), "r"(vptr), "m"(*vptr), "r"(syscall));
+			return hash;
+		}
+	};
+
+	template <>
+	struct hash<Vector3i>
+	{
+		std::size_t operator()(const Vector3i &v) const
+		{
+			std::size_t seed = 0;
+			hash_combine(seed, std::hash<int>{}(v.x));
+			hash_combine(seed, std::hash<int>{}(v.y));
+			hash_combine(seed, std::hash<int>{}(v.z));
+			return seed;
+		}
+	};
+
+	template <>
+	struct hash<Vector4>
+	{
+		std::size_t operator()(const Vector4 &v) const
+		{
+			std::size_t seed = 0;
+			hash_combine(seed, std::hash<float>{}(v.x));
+			hash_combine(seed, std::hash<float>{}(v.y));
+			hash_combine(seed, std::hash<float>{}(v.z));
+			hash_combine(seed, std::hash<float>{}(v.w));
+			return seed;
+		}
+	};
+
+	template <>
+	struct hash<Vector4i>
+	{
+		std::size_t operator()(const Vector4i &v) const
+		{
+			std::size_t seed = 0;
+			hash_combine(seed, std::hash<int>{}(v.x));
+			hash_combine(seed, std::hash<int>{}(v.y));
+			hash_combine(seed, std::hash<int>{}(v.z));
+			hash_combine(seed, std::hash<int>{}(v.w));
+			return seed;
+		}
+	};
 }

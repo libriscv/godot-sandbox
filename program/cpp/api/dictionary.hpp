@@ -18,6 +18,7 @@ struct Dictionary {
 
 	Variant get(const Variant &key) const;
 	void set(const Variant &key, const Variant &value);
+	Variant get_or_add(const Variant &key, const Variant &default_value = Variant());
 
 	DictAccessor operator[](const Variant &key);
 
