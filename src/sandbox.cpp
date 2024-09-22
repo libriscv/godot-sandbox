@@ -150,6 +150,12 @@ void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 			.memory_max = uint64_t(get_memory_max()) << 20, // in MiB
 			//.verbose_loader = true,
 			.default_exit_function = "fast_exit",
+#ifdef RISCV_BINARY_TRANSLATION
+			// We don't care about the instruction limit when full binary translation is enabled
+			// Specifically, for the Machines where full binary translation is *available*, so
+			// technically we need a way to check if a Machine has it available before setting this.
+			.translate_ignore_instruction_limit = true,
+#endif
 		};
 
 		this->m_machine = new machine_t{ binary_view, options };
