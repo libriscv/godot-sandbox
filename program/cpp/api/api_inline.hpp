@@ -6,12 +6,11 @@ template <typename Float>
 static inline Float perform_math_op(Math_Op math_op, Float x) {
 	register Float fa0 asm("fa0") = x;
 	register int   iop asm("a0") = static_cast<int>(math_op);
-	register long snum asm("a7") = ECALL_MATH_OP64;
-	Float result = fa0;
+	register long snum asm("a7") = (sizeof(Float) == 4) ? ECALL_MATH_OP32 : ECALL_MATH_OP64;
 
 	asm volatile ("ecall"
-		: "+f"(result) : "r"(iop), "r"(snum));
-	return result;
+		: "+f"(fa0) : "r"(iop), "r"(snum));
+	return Float(fa0);
 }
 
 template <typename Float>
@@ -19,7 +18,7 @@ static inline Float perform_math_op2(Math_Op math_op, Float x, Float y) {
 	register Float fa0 asm("fa0") = x;
 	register Float fa1 asm("fa1") = y;
 	register int   iop asm("a0") = static_cast<int>(math_op);
-	register long snum asm("a7") = ECALL_MATH_OP64;
+	register long snum asm("a7") = (sizeof(Float) == 4) ? ECALL_MATH_OP32 : ECALL_MATH_OP64;
 
 	asm volatile ("ecall"
 		: "+f"(fa0) : "f"(fa1), "r"(iop), "r"(snum));
@@ -27,12 +26,12 @@ static inline Float perform_math_op2(Math_Op math_op, Float x, Float y) {
 }
 
 template <typename Float>
-static inline double perform_lerp_op(Lerp_Op lerp_op, Float x, Float y, Float t) {
+static inline Float perform_lerp_op(Lerp_Op lerp_op, Float x, Float y, Float t) {
 	register Float fa0 asm("fa0") = x;
 	register Float fa1 asm("fa1") = y;
 	register Float fa2 asm("fa2") = t;
 	register int   iop asm("a0") = static_cast<int>(lerp_op);
-	register long snum asm("a7") = ECALL_LERP_OP64;
+	register long snum asm("a7") = (sizeof(Float) == 4) ? ECALL_LERP_OP32 : ECALL_LERP_OP64;
 
 	asm volatile ("ecall"
 		: "+f"(fa0) : "f"(fa1), "f"(fa2), "r"(iop), "r"(snum));
