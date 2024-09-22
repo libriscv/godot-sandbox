@@ -152,10 +152,11 @@ struct Vector3 {
 
 	float length() const noexcept;
 	Vector3 normalized() const noexcept;
+	float dot(const Vector3& other) const noexcept;
 	Vector3 cross(const Vector3& other) const noexcept;
 	float distance_to(const Vector3& other) const noexcept;
+	float distance_squared_to(const Vector3& other) const noexcept;
 	Vector3 direction_to(const Vector3& other) const noexcept;
-	float dot(const Vector3& other) const noexcept;
 
 	Vector3& operator += (const Vector3& other) {
 		x += other.x;
@@ -625,9 +626,9 @@ namespace std
 	struct hash<Vector3>
 	{
 		inline std::size_t operator()(const Vector3 &v) const {
-			register int op asm("a0") = 0; // Vec3_Op::HASH
-			register const Vector3 *vptr asm("a1") = &v;
+			register const Vector3 *vptr asm("a0") = &v;
 			register std::size_t hash asm("a0");
+			register int op asm("a2") = 0; // Vec3_Op::HASH
 			register int syscall asm("a7") = 537; // ECALL_VEC3_OPS
 
 			__asm__ volatile("ecall"

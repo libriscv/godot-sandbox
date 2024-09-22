@@ -1304,31 +1304,31 @@ static void api_math_op(machine_t &machine) {
 
 	switch (op) {
 		case Math_Op::SIN:
-			machine.set_result(std::sin(arg1));
+			machine.set_result(Float(std::sin(arg1)));
 			break;
 		case Math_Op::COS:
-			machine.set_result(std::cos(arg1));
+			machine.set_result(Float(std::cos(arg1)));
 			break;
 		case Math_Op::TAN:
-			machine.set_result(std::tan(arg1));
+			machine.set_result(Float(std::tan(arg1)));
 			break;
 		case Math_Op::ASIN:
-			machine.set_result(std::asin(arg1));
+			machine.set_result(Float(std::asin(arg1)));
 			break;
 		case Math_Op::ACOS:
-			machine.set_result(std::acos(arg1));
+			machine.set_result(Float(std::acos(arg1)));
 			break;
 		case Math_Op::ATAN:
-			machine.set_result(std::atan(arg1));
+			machine.set_result(Float(std::atan(arg1)));
 			break;
 		case Math_Op::ATAN2: {
 			Float arg2 = machine.cpu.registers().getfl(11).get<Float>(); // fa1
-			machine.set_result(std::atan2(arg1, arg2));
+			machine.set_result(Float(std::atan2(arg1, arg2)));
 			break;
 		}
 		case Math_Op::POW: {
 			Float arg2 = machine.cpu.registers().getfl(11).get<Float>(); // fa1
-			machine.set_result(std::pow(arg1, arg2));
+			machine.set_result(Float(std::pow(arg1, arg2)));
 			break;
 		}
 		default:
@@ -1385,7 +1385,7 @@ APICALL(api_vec3_ops) {
 	struct Vec3 {
 		float x, y, z;
 	};
-	auto [op, v] = machine.sysargs<Vec3_Op, Vec3 *>();
+	auto [v, v2addr, op] = machine.sysargs<Vec3 *, gaddr_t, Vec3_Op>();
 
 	switch (op) {
 		case Vec3_Op::HASH: {
@@ -1411,9 +1411,36 @@ APICALL(api_vec3_ops) {
 			break;
 		}
 		case Vec3_Op::CROSS: {
-			const gaddr_t v2addr = machine.cpu.reg(12); // a2
 			Vec3 *v2 = machine.memory.memarray<Vec3>(v2addr, 1);
-			machine.set_result(v->y * v2->z - v->z * v2->y, v->z * v2->x - v->x * v2->z, v->x * v2->y - v->y * v2->x);
+			const gaddr_t resaddr = machine.cpu.reg(13); // a3
+			Vec3 *res = machine.memory.memarray<Vec3>(resaddr, 1);
+			res->x = v->y * v2->z - v->z * v2->y;
+			res->y = v->z * v2->x - v->x * v2->z;
+			res->z = v->x * v2->y - v->y * v2->x;
+			break;
+		}
+		case Vec3_Op::DOT: {
+			Vec3 *v2 = machine.memory.memarray<Vec3>(v2addr, 1);
+			machine.set_result(v->x * v2->x + v->y * v2->y + v->z * v2->z);
+			break;
+		}
+		case Vec3_Op::DISTANCE_TO: {
+			Vec3 *v2 = machine.memory.memarray<Vec3>(v2addr, 1);
+			const float dx = v->x - v2->x;
+			const float dy = v->y - v2->y;
+			const float dz = v->z - v2->z;
+			machine.set_result(std::sqrt(dx * dx + dy * dy + dz * dz));
+			break;
+		}
+		case Vec3_Op::DISTANCE_SQ_TO: {
+			Vec3 *v2 = machine.memory.memarray<Vec3>(v2addr, 1);
+			//printf("v0: %f, %f, %f\n", v->x, v->y, v->z);
+			//printf("v1: %f, %f, %f\n", v2->x, v2->y, v2->z);
+			const float dx = v->x - v2->x;
+			const float dy = v->y - v2->y;
+			const float dz = v->z - v2->z;
+			machine.set_result(float(dx * dx + dy * dy + dz * dz));
+			//printf("Distance squared: %f\n", float(dx * dx + dy * dy + dz * dz));
 			break;
 		}
 		default:
