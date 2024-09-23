@@ -40,8 +40,9 @@ This extension exists to allow Godot creators to implement safe modding support,
 ### What can I do?
 
 - You can implement a modding API for your game, to be used inside the sandbox. This API can then be used by other players to extend your game, in a safe manner. That is, they can send their mod to other people, including you, and they (and you) can assume that it is safe to try out the mod. The mod is *not supposed* to be able to do any harm. That is the whole point of this extension.
-- You can implement support for your favorite language inside the sandbox. The sandbox receives Variants from Godot or GDScript, and can respond back with Variants. This means the communication is fully dynamic, and supports normal Godot usage.
+- You can publish your game for all mobile and console platforms, without paying a performance penalty. It's not going to be a laggy mess, which is always a risk with other solutions that eg. rely on JIT too much.
 - You can distribute programs from a server to clients on login. The programs will behave the same way on all platforms, including 32-bit platforms. You can use this to live-distribute changes, like bugfixes, to the game without having to redeploy the game itself.
+- You can implement support for your favorite language inside the sandbox. The sandbox receives Variants from Godot or GDScript, and can respond back with Variants. This means the communication is fully dynamic, and supports normal Godot usage.
 
 ## Usage
 

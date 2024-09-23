@@ -33,7 +33,7 @@ jobs:
     - name: Download and extract Godot
       working-directory: ${{github.workspace}}/tests
       run: |
-        wget -q https://downloads.tuxfamily.org/godotengine/4.3/Godot_v4.3-stable_linux.x86_64.zip
+        wget -q https://github.com/godotengine/godot-builds/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
         unzip -q Godot_v4.3-stable_linux.x86_64.zip
 
     - name: Run Gut tests
