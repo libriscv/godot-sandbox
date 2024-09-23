@@ -248,6 +248,7 @@ void GuestVariant::create(Sandbox &emu, Variant &&value) {
 		case Variant::VECTOR3I:
 		case Variant::VECTOR4:
 		case Variant::VECTOR4I:
+		case Variant::COLOR:
 			this->set(emu, value, true); // Trust the value
 			break;
 
