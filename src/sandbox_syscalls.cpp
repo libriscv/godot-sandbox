@@ -1,7 +1,7 @@
 #include "guest_datatypes.h"
 #include "syscalls.h"
 
-#include <cmath>
+#include <godot_cpp/core/math.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/input.hpp>
 #include <godot_cpp/classes/node2d.hpp>
@@ -9,7 +9,6 @@
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/timer.hpp>
-#include <godot_cpp/classes/window.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/variant.hpp>
 
@@ -1009,8 +1008,8 @@ APICALL(api_vector2_normalize) {
 
 APICALL(api_vector2_rotated) {
 	auto [dx, dy, angle] = machine.sysargs<float, float, float>();
-	const float x = std::cos(angle) * dx - std::sin(angle) * dy;
-	const float y = std::sin(angle) * dx + std::cos(angle) * dy;
+	const float x = cos(angle) * dx - sin(angle) * dy;
+	const float y = sin(angle) * dx + cos(angle) * dy;
 	machine.set_result(x, y);
 }
 
@@ -1304,42 +1303,37 @@ static void api_math_op(machine_t &machine) {
 
 	switch (op) {
 		case Math_Op::SIN:
-			machine.set_result(Float(std::sin(arg1)));
+			machine.set_result(Float(sin(arg1)));
 			break;
 		case Math_Op::COS:
-			machine.set_result(Float(std::cos(arg1)));
+			machine.set_result(Float(cos(arg1)));
 			break;
 		case Math_Op::TAN:
-			machine.set_result(Float(std::tan(arg1)));
+			machine.set_result(Float(tan(arg1)));
 			break;
 		case Math_Op::ASIN:
-			machine.set_result(Float(std::asin(arg1)));
+			machine.set_result(Float(asin(arg1)));
 			break;
 		case Math_Op::ACOS:
-			machine.set_result(Float(std::acos(arg1)));
+			machine.set_result(Float(acos(arg1)));
 			break;
 		case Math_Op::ATAN:
-			machine.set_result(Float(std::atan(arg1)));
+			machine.set_result(Float(atan(arg1)));
 			break;
 		case Math_Op::ATAN2: {
 			Float arg2 = machine.cpu.registers().getfl(11).get<Float>(); // fa1
-			machine.set_result(Float(std::atan2(arg1, arg2)));
+			machine.set_result(Float(atan2(arg1, arg2)));
 			break;
 		}
 		case Math_Op::POW: {
 			Float arg2 = machine.cpu.registers().getfl(11).get<Float>(); // fa1
-			machine.set_result(Float(std::pow(arg1, arg2)));
+			machine.set_result(Float(pow(arg1, arg2)));
 			break;
 		}
 		default:
 			ERR_PRINT("Invalid Math operation");
 			throw std::runtime_error("Invalid Math operation");
 	}
-}
-
-template <typename Float>
-inline Float CLAMP(Float x, Float a, Float b) {
-	return x < a ? a : (x > b ? b : x);
 }
 
 template <typename Float>
@@ -1369,9 +1363,9 @@ static void api_lerp_op(machine_t &machine) {
 			if (dot > Float(0.9995)) {
 				machine.set_result(a);
 			} else {
-				const Float theta = std::acos(CLAMP<Float>(dot, Float(-1.0), Float(1.0)));
-				const Float sin_theta = std::sin(theta);
-				machine.set_result((a * std::sin((Float(1.0) - t) * theta) + b * std::sin(t * theta)) / sin_theta);
+				const Float theta = acos(CLAMP<Float>(dot, Float(-1.0), Float(1.0)));
+				const Float sin_theta = sin(theta);
+				machine.set_result((a * sin((Float(1.0) - t) * theta) + b * sin(t * theta)) / sin_theta);
 			}
 			break;
 		}
@@ -1397,11 +1391,11 @@ APICALL(api_vec3_ops) {
 			break;
 		}
 		case Vec3_Op::LENGTH: {
-			machine.set_result(std::sqrt(v->x * v->x + v->y * v->y + v->z * v->z));
+			machine.set_result(sqrt(v->x * v->x + v->y * v->y + v->z * v->z));
 			break;
 		}
 		case Vec3_Op::NORMALIZE: {
-			const float length = std::sqrt(v->x * v->x + v->y * v->y + v->z * v->z);
+			const float length = sqrt(v->x * v->x + v->y * v->y + v->z * v->z);
 			if (length > 0.0001f) // FLT_EPSILON?
 			{
 				v->x /= length;
@@ -1429,7 +1423,7 @@ APICALL(api_vec3_ops) {
 			const float dx = v->x - v2->x;
 			const float dy = v->y - v2->y;
 			const float dz = v->z - v2->z;
-			machine.set_result(std::sqrt(dx * dx + dy * dy + dz * dz));
+			machine.set_result(sqrt(dx * dx + dy * dy + dz * dz));
 			break;
 		}
 		case Vec3_Op::DISTANCE_SQ_TO: {
@@ -1490,7 +1484,7 @@ void Sandbox::initialize_syscalls() {
 			 } },
 			{ ECALL_SINCOS, [](machine_t &machine) {
 				 auto [angle] = machine.sysargs<float>();
-				 machine.set_result(std::cos(angle), std::sin(angle));
+				 machine.set_result(cos(angle), sin(angle));
 			 } },
 			{ ECALL_VEC2_LENGTH, api_vector2_length },
 			{ ECALL_VEC2_NORMALIZED, api_vector2_normalize },
