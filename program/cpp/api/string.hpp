@@ -24,6 +24,10 @@ union String {
 	bool contains(std::string_view value) const { return find(value) != -1; }
 	bool empty() const { return size() == 0; }
 
+	// Call methods on the String
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
+
 	String &operator +=(const String &value) { append(value); return *this; }
 	String &operator +=(std::string_view value) { append(value); return *this; }
 
@@ -73,3 +77,8 @@ inline String &String::operator =(std::string_view value) {
 template <size_t N>
 inline String::String(const char (&value)[N])
 	: m_idx(Create(value, N - 1)) {}
+
+template <typename... Args>
+inline Variant String::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
+}

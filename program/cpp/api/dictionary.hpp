@@ -22,6 +22,10 @@ struct Dictionary {
 
 	DictAccessor operator[](const Variant &key);
 
+	// Call methods on the Dictionary
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
+
 	static Dictionary from_variant_index(unsigned idx) { Dictionary d; d.m_idx = idx; return d; }
 	unsigned get_variant_index() const noexcept { return m_idx; }
 
@@ -70,4 +74,9 @@ private:
 
 inline DictAccessor Dictionary::operator[](const Variant &key) {
 	return DictAccessor(*this, key);
+}
+
+template <typename... Args>
+inline Variant Dictionary::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
 }

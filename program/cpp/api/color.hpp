@@ -6,6 +6,9 @@ struct Color {
 	float b;
 	float a;
 
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
+
 	Color& operator += (const Color& other) {
 		r += other.r;
 		g += other.g;

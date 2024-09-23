@@ -217,10 +217,10 @@ struct Variant
 	operator Rect2i() const { return r2i(); }
 	operator Color() const { return color(); }
 
-	void callp(std::string_view method, const Variant *args, int argcount, Variant &r_ret, int &r_error);
+	void callp(std::string_view method, const Variant *args, int argcount, Variant &r_ret);
 
 	template <typename... Args>
-	Variant method_call(std::string_view method, Args... args);
+	Variant method_call(std::string_view method, Args&&... args);
 
 	template <typename... Args>
 	Variant call(Args... args);
@@ -693,11 +693,10 @@ inline bool Variant::operator<(const Variant &other) const {
 }
 
 template <typename... Args>
-inline Variant Variant::method_call(std::string_view method, Args... args) {
+inline Variant Variant::method_call(std::string_view method, Args&&... args) {
 	std::array<Variant, sizeof...(args)> vargs = { args... };
 	Variant result;
-	int error;
-	callp(method, vargs.data(), vargs.size(), result, error);
+	callp(method, vargs.data(), vargs.size(), result);
 	return result;
 }
 
@@ -705,8 +704,7 @@ template <typename... Args>
 inline Variant Variant::call(Args... args) {
 	std::array<Variant, sizeof...(args)> vargs = { args... };
 	Variant result;
-	int error;
-	callp("call", vargs.data(), vargs.size(), result, error);
+	callp("call", vargs.data(), vargs.size(), result);
 	return result;
 }
 
@@ -716,10 +714,10 @@ inline Variant Variant::operator ()(std::string_view method, Args... args) {
 }
 
 /* Variant::callp() requires maximum performance, so implement using inline assembly */
-inline void Variant::callp(std::string_view method, const Variant *args, int argcount, Variant &r_ret, int &r_error) {
+inline void Variant::callp(std::string_view method, const Variant *args, int argcount, Variant &r_ret) {
 	//sys_vcall(this, method.begin(), method.size(), args, argcount, r_ret);
 	static constexpr int ECALL_VCALL = 501; // Call a method on a Variant
-	register Variant *object asm("a0") = this;
+	register const Variant *object asm("a0") = this;
 	register const char *method_ptr asm("a1") = method.begin();
 	register size_t method_size asm("a2") = method.size();
 	register const Variant *args_ptr asm("a3") = args;
@@ -732,4 +730,59 @@ inline void Variant::callp(std::string_view method, const Variant *args, int arg
 		: "=m"(*ret_ptr)
 		: "r"(object), "m"(*object), "r"(method_ptr), "r"(method_size), "m"(*method_ptr), "r"(args_ptr), "r"(argcount_reg), "r"(ret_ptr), "m"(*args_ptr), "r"(syscall_number)
 	);
+}
+
+/* Call operators on simple wrapper objects */
+
+template <typename... Args>
+inline Variant Vector2::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline Variant Vector2i::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline Variant Vector3::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline Variant Vector3i::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline Variant Vector4::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline Variant Vector4i::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline Variant Rect2::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline Variant Rect2i::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline Variant Color::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
+}
+
+/* Call operators on packed arrays */
+
+template <typename T>
+template <typename... Args>
+inline Variant PackedArray<T>::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
 }

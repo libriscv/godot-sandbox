@@ -1,5 +1,7 @@
 #pragma once
 #include <cmath>
+#include <string_view>
+struct Variant;
 
 struct Vector2 {
 	float x;
@@ -12,6 +14,9 @@ struct Vector2 {
 	Vector2 direction_to(const Vector2& other) const noexcept;
 	float dot(const Vector2& other) const noexcept;
 	static Vector2 from_angle(float angle) noexcept;
+
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
 
 	Vector2& operator += (const Vector2& other) {
 		x += other.x;
@@ -41,6 +46,9 @@ struct Vector2 {
 struct Vector2i {
 	int x;
 	int y;
+
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
 
 	Vector2i& operator += (const Vector2i& other) {
 		x += other.x;
@@ -72,6 +80,9 @@ struct Rect2 {
 	float y;
 	float w;
 	float h;
+
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
 
 	Rect2& operator += (const Rect2& other) {
 		x += other.x;
@@ -111,6 +122,9 @@ struct Rect2i {
 	int y;
 	int w;
 	int h;
+
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
 
 	Rect2i& operator += (const Rect2i& other) {
 		x += other.x;
@@ -158,6 +172,9 @@ struct Vector3 {
 	float distance_squared_to(const Vector3& other) const noexcept;
 	Vector3 direction_to(const Vector3& other) const noexcept;
 
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
+
 	Vector3& operator += (const Vector3& other) {
 		x += other.x;
 		y += other.y;
@@ -191,6 +208,9 @@ struct Vector3i {
 	int x;
 	int y;
 	int z;
+
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
 
 	Vector3i& operator += (const Vector3i& other) {
 		x += other.x;
@@ -226,6 +246,9 @@ struct Vector4 {
 	float y;
 	float z;
 	float w;
+
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
 
 	Vector4& operator += (const Vector4& other) {
 		x += other.x;
@@ -265,6 +288,9 @@ struct Vector4i {
 	int y;
 	int z;
 	int w;
+
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
 
 	Vector4i& operator += (const Vector4i& other) {
 		x += other.x;

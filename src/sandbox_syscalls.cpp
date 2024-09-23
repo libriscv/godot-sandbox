@@ -108,7 +108,12 @@ APICALL(api_vcall) {
 
 	GDExtensionCallError error;
 
-	if (vp->type == Variant::CALLABLE) {
+	if (vp->type == Variant::OBJECT) {
+		godot::Object *obj = get_object_from_address(emu, vp->v.i);
+
+		Variant ret = object_call(emu, obj, method.data(), args, args_size);
+		vret->create(emu, std::move(ret));
+	} else {
 		std::array<Variant, 8> vargs;
 		std::array<const Variant *, 8> argptrs;
 		for (size_t i = 0; i < args_size; i++) {
@@ -120,18 +125,18 @@ APICALL(api_vcall) {
 			}
 		}
 
-		Variant *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
+		Variant helper;
+		Variant *vcall;
+		if (vp->is_scoped_variant()) {
+			vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
+		} else {
+			helper = vp->toVariant(emu);
+			vcall = &helper;
+		}
 		Variant ret;
 		vcall->callp(StringName(method.data()), argptrs.data(), args_size, ret, error);
+		// Create a new Variant with the result, if any.
 		vret->create(emu, std::move(ret));
-	} else if (vp->type == Variant::OBJECT) {
-		godot::Object *obj = get_object_from_address(emu, vp->v.i);
-
-		Variant ret = object_call(emu, obj, method.data(), args, args_size);
-		vret->create(emu, std::move(ret));
-	} else {
-		ERR_PRINT("Invalid Variant type for Variant::call()");
-		throw std::runtime_error("Invalid Variant type for Variant::call(): " + std::to_string(vp->type));
 	}
 }
 
