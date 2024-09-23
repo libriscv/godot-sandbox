@@ -3,7 +3,7 @@
 #include "syscalls.h"
 #include "vector.hpp"
 
-MAKE_SYSCALL(ECALL_VEC3_OPS, void, ecall_vec3_ops, Vector3 *v, Vector3 *other, Vec3_Op op); // NOLINT
+MAKE_SYSCALL(ECALL_VEC3_OPS, void, sys_vec3_ops, Vector3 *v, Vector3 *other, Vec3_Op op); // NOLINT
 
 float Vector3::length() const noexcept {
 	register const Vector3 *vptr asm("a0") = this;

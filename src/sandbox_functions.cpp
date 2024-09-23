@@ -25,6 +25,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"sys_array_ops",
 	"sys_array_size",
 	"sys_dict_ops",
+	"sys_dict_ops2",
 	"sys_string_append",
 	"sys_string_at",
 	"sys_string_create",
@@ -33,6 +34,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"sys_timer_periodic",
 	"sys_timer_periodic_native",
 	"sys_timer_stop",
+	"sys_vec3_ops",
 
 	"main",
 	"_Exit",

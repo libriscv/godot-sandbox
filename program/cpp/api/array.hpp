@@ -31,6 +31,10 @@ struct Array {
 	// Array size
 	int size() const;
 
+	// Call methods on the Array
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
+
 	inline auto begin();
 	inline auto end();
 	inline auto rbegin();
@@ -88,4 +92,9 @@ inline auto Array::rbegin() {
 }
 inline auto Array::rend() {
 	return ArrayIterator(*this, -1);
+}
+
+template <typename... Args>
+inline Variant Array::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
 }

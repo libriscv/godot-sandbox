@@ -38,6 +38,11 @@ struct PackedArray {
 	/// @param data The data to store.
 	void store(const T *data, size_t size);
 
+	/// @brief Call a method on the packed array.
+	/// @tparam Args The method arguments.
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
+
 	/// @brief Create a PackedArray from a host-side Variant index.
 	/// @param idx The host-side Variant index.
 	/// @return PackedArray<T> The PackedArray.
