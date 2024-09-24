@@ -48,18 +48,16 @@ inline godot::Node *get_node_from_address(Sandbox &emu, uint64_t addr) {
 
 static inline Variant object_callp(godot::Object *obj, const Variant **args, int argc) {
 	static GDExtensionMethodBindPtr mtd = internal::gdextension_interface_classdb_get_method_bind(Object::get_class_static()._native_ptr(), StringName("call")._native_ptr(), 3400424181);
-	CHECK_METHOD_BIND_RET(mtd, Variant());
 	GDExtensionCallError error;
 	Variant ret;
 	internal::gdextension_interface_object_method_bind_call(mtd, obj->_owner, reinterpret_cast<GDExtensionConstVariantPtr *>(args), argc, &ret, &error);
 	return ret;
 }
 
-static inline Variant object_call(Sandbox &emu, godot::Object *obj, std::string_view method, const GuestVariant *args, int argc) {
+static inline Variant object_call(Sandbox &emu, godot::Object *obj, const Variant &method, const GuestVariant *args, int argc) {
 	std::array<Variant, 8> vstorage;
 	std::array<const Variant *, 9> vargs; // 8 is the maximum number of arguments we will accept.
-	Variant vmethod = String::utf8(method.data(), method.size());
-	vargs[0] = &vmethod;
+	vargs[0] = &method;
 	for (int i = 0; i < argc; i++) {
 		if (args[i].is_scoped_variant()) {
 			vargs[i + 1] = args[i].toVariantPtr(emu);
@@ -106,12 +104,11 @@ APICALL(api_vcall) {
 
 	const GuestVariant *args = machine.memory.memarray<GuestVariant>(args_ptr, args_size);
 
-	GDExtensionCallError error;
-
 	if (vp->type == Variant::OBJECT) {
 		godot::Object *obj = get_object_from_address(emu, vp->v.i);
 
-		Variant ret = object_call(emu, obj, method.data(), args, args_size);
+		Variant vmethod = StringName(method.data());
+		Variant ret = object_call(emu, obj, vmethod, args, args_size);
 		vret->create(emu, std::move(ret));
 	} else {
 		std::array<Variant, 8> vargs;
@@ -133,8 +130,10 @@ APICALL(api_vcall) {
 			helper = vp->toVariant(emu);
 			vcall = &helper;
 		}
+		StringName method_name = StringName(method.data());
+		GDExtensionCallError error;
 		Variant ret;
-		vcall->callp(StringName(method.data()), argptrs.data(), args_size, ret, error);
+		vcall->callp(method_name, argptrs.data(), args_size, ret, error);
 		// Create a new Variant with the result, if any.
 		vret->create(emu, std::move(ret));
 	}
@@ -638,7 +637,7 @@ APICALL(api_obj) {
 }
 
 APICALL(api_obj_callp) {
-	auto [addr, method, deferred, vret_ptr, args_addr, args_size] = machine.sysargs<uint64_t, std::string_view, bool, gaddr_t, gaddr_t, unsigned>();
+	auto [addr, g_method, g_method_len, deferred, vret_ptr, args_addr, args_size] = machine.sysargs<uint64_t, gaddr_t, unsigned, bool, gaddr_t, gaddr_t, unsigned>();
 	auto &emu = riscv::emu(machine);
 	machine.penalize(250'000); // Costly Object call operation.
 	auto *obj = reinterpret_cast<godot::Object *>(uintptr_t(addr));
@@ -652,33 +651,42 @@ APICALL(api_obj_callp) {
 	}
 	const GuestVariant *g_args = machine.memory.memarray<GuestVariant>(args_addr, args_size);
 
+	Variant method;
+	std::string_view method_view = machine.memory.memview(g_method, g_method_len + 1);
+	// Check if the method is null-terminated.
+	if (method_view.back() == '\0') {
+		method = StringName(method_view.data(), false);
+	} else {
+		method = String::utf8(method_view.data(), method_view.size()-1);
+	}
+
 	if (!deferred) {
 		Variant ret = object_call(emu, obj, method, g_args, args_size);
 		if (vret_ptr != 0) {
-			auto *vret = machine.memory.memarray<GuestVariant>(vret_ptr, 1);
+			GuestVariant *vret = machine.memory.memarray<GuestVariant>(vret_ptr, 1);
 			vret->create(emu, std::move(ret));
 		}
 	} else {
 		// Call deferred unfortunately takes a parameter pack, so we have to manually
 		// check the number of arguments, and call the correct function.
 		if (args_size == 0) {
-			obj->call_deferred(String::utf8(method.data(), method.size()));
+			obj->call_deferred(method);
 		} else if (args_size == 1) {
-			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu));
+			obj->call_deferred(method, g_args[0].toVariant(emu));
 		} else if (args_size == 2) {
-			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu));
+			obj->call_deferred(method, g_args[0].toVariant(emu), g_args[1].toVariant(emu));
 		} else if (args_size == 3) {
-			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu));
+			obj->call_deferred(method, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu));
 		} else if (args_size == 4) {
-			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu));
+			obj->call_deferred(method, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu));
 		} else if (args_size == 5) {
-			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu));
+			obj->call_deferred(method, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu));
 		} else if (args_size == 6) {
-			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu));
+			obj->call_deferred(method, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu));
 		} else if (args_size == 7) {
-			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu), g_args[6].toVariant(emu));
+			obj->call_deferred(method, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu), g_args[6].toVariant(emu));
 		} else if (args_size == 8) {
-			obj->call_deferred(String::utf8(method.data(), method.size()), g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu), g_args[6].toVariant(emu), g_args[7].toVariant(emu));
+			obj->call_deferred(method, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu), g_args[6].toVariant(emu), g_args[7].toVariant(emu));
 		}
 	}
 }
