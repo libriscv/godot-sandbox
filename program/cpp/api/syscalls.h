@@ -67,7 +67,7 @@
 										   ".popsection .text\n"); \
 	extern "C" rval name(__VA_ARGS__);
 
-#define EXTERN_SYSCALL(number, rval, name, ...) \
+#define EXTERN_SYSCALL(rval, name, ...) \
 	extern "C" rval name(__VA_ARGS__);
 
 enum class Object_Op {

@@ -2,7 +2,7 @@
 
 #include "syscalls.h"
 
-EXTERN_SYSCALL(ECALL_VCREATE, void, sys_vcreate, Variant *, int, int, const void *);
+EXTERN_SYSCALL(void, sys_vcreate, Variant *, int, int, const void *);
 MAKE_SYSCALL(ECALL_DICTIONARY_OPS, int, sys_dict_ops, Dictionary_Op, unsigned, const Variant *, Variant *);
 MAKE_SYSCALL(ECALL_DICTIONARY_OPS, int, sys_dict_ops2, Dictionary_Op, unsigned, const Variant *, Variant *, const Variant *);
 

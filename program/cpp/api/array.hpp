@@ -13,6 +13,7 @@ struct Array {
 	operator Variant() const;
 
 	// Array operations
+	void append(const Variant &value) { push_back(value); }
 	void push_back(const Variant &value);
 	void push_front(const Variant &value);
 	void pop_at(int idx);
@@ -30,6 +31,11 @@ struct Array {
 
 	// Array size
 	int size() const;
+
+	CREATE_METHOD(append_array);
+	CREATE_METHOD(assign);
+	CREATE_METHOD(duplicate);
+	CREATE_METHOD(find);
 
 	// Call methods on the Array
 	template <typename... Args>
