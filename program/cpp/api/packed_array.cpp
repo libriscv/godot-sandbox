@@ -1,10 +1,10 @@
 #include "variant.hpp"
 
-#include "syscalls.h"
+#include "syscalls_fwd.hpp"
 
-EXTERN_SYSCALL(ECALL_VCREATE, void, sys_vcreate, Variant *, int, int, const void *);
-EXTERN_SYSCALL(ECALL_VSTORE, void, sys_vstore, unsigned, const void *, size_t);
-EXTERN_SYSCALL(ECALL_VFETCH, void, sys_vfetch, unsigned, void *, int);
+EXTERN_SYSCALL(void, sys_vcreate, Variant *, int, int, const void *);
+EXTERN_SYSCALL(void, sys_vstore, unsigned, const void *, size_t);
+EXTERN_SYSCALL(void, sys_vfetch, unsigned, void *, int);
 
 template <>
 PackedArray<uint8_t>::PackedArray(const std::vector<uint8_t> &data) {

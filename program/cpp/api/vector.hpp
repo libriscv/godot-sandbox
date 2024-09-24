@@ -1,6 +1,7 @@
 #pragma once
 #include <cmath>
 #include <string_view>
+#include "syscalls_fwd.hpp"
 struct Variant;
 
 struct Vector2 {
