@@ -144,6 +144,7 @@ enum class Array_Op {
 	RESIZE,
 	CLEAR,
 	SORT,
+	FETCH_TO_VECTOR,
 };
 
 enum class Dictionary_Op {

@@ -62,7 +62,8 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 		case Variant::PACKED_INT64_ARRAY:
 		case Variant::PACKED_VECTOR2_ARRAY:
 		case Variant::PACKED_VECTOR3_ARRAY:
-		case Variant::PACKED_COLOR_ARRAY: {
+		case Variant::PACKED_COLOR_ARRAY:
+		case Variant::PACKED_STRING_ARRAY: {
 			if (std::optional<const Variant *> v = emu.get_scoped_variant(this->v.i)) {
 				return *v.value();
 			} else
@@ -279,7 +280,8 @@ void GuestVariant::create(Sandbox &emu, Variant &&value) {
 		case Variant::PACKED_INT64_ARRAY:
 		case Variant::PACKED_VECTOR2_ARRAY:
 		case Variant::PACKED_VECTOR3_ARRAY:
-		case Variant::PACKED_COLOR_ARRAY: {
+		case Variant::PACKED_COLOR_ARRAY:
+		case Variant::PACKED_STRING_ARRAY: {
 			// Store the variant in the current state
 			unsigned int idx = emu.create_scoped_variant(std::move(value));
 			this->v.i = idx;

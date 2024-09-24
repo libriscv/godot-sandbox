@@ -26,7 +26,7 @@ func test_instantiation():
 	s = Sandbox.new()
 	s.set_program(Sandbox_TestsTests)
 
-	# Verify that the budget overruns counter is reset
+	# Verify that the counters are reset
 	assert_eq(s.get_timeouts(), 0)
 	assert_eq(s.get_exceptions(), 0)
 
@@ -35,6 +35,10 @@ func test_instantiation():
 
 	assert_eq(s.get_timeouts(), 0)
 	assert_eq(s.get_exceptions(), 1)
+
+	# Verify that the sandbox program can be set to another program
+	s.set_program(Sandbox_TestsTests)
+	assert_eq(s.has_function("test_ping_pong"), true)
 
 
 func test_types():
@@ -256,6 +260,22 @@ func test_math():
 
 	assert_eq(s.vmcall("test_math_lerp",       0.0, 1.0, 0.5), 0.5)
 	assert_eq(s.vmcall("test_math_smoothstep", 0.0, 1.0, 0.5), 0.5)
+
+func test_indirect_methods():
+	# Create a new sandbox
+	var s = Sandbox.new()
+	# Set the test program
+	s.set_program(Sandbox_TestsTests)
+
+	# It's possible to call a method on any Variant, which is an easy
+	# way to expand the API without having to add custom system functions
+	# call_method() takes a Variant, a method name, and an array of arguments
+	assert_eq(s.has_function("call_method"), true)
+
+	# Call a method on a String
+	var str : String = "Hello from the other side"
+	var expected : PackedStringArray = ["Hello", "from", "the", "other", "side"]
+	assert_eq(s.vmcallv("call_method", str, "split", [" "]), expected)
 
 
 func callable_function():

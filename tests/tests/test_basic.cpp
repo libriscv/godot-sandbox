@@ -160,3 +160,12 @@ extern "C" Variant test_timers() {
 extern "C" Variant verify_timers() {
 	return timer_got_called;
 }
+
+extern "C" Variant call_method(Variant v, Variant vmethod, Variant vargs) {
+	std::string method = vmethod.as_std_string();
+	Array args_array = vargs.as_array();
+	std::vector<Variant> args = args_array.to_vector();
+	Variant ret;
+	v.callp(method, args.data(), args.size(), ret);
+	return ret;
+}

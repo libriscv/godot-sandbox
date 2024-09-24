@@ -1,7 +1,6 @@
 #include "guest_datatypes.h"
 #include "syscalls.h"
 
-#include <godot_cpp/core/math.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/input.hpp>
 #include <godot_cpp/classes/node2d.hpp>
@@ -9,6 +8,7 @@
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/timer.hpp>
+#include <godot_cpp/core/math.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/variant.hpp>
 
@@ -1069,6 +1069,16 @@ APICALL(api_array_ops) {
 		case Array_Op::SORT:
 			array.sort();
 			break;
+		case Array_Op::FETCH_TO_VECTOR: {
+			auto *vec = machine.memory.memarray<GuestStdVector>(vaddr, 1);
+			// XXX: vec->free(machine);
+			auto [sptr, saddr] = vec->alloc<GuestVariant>(machine, array.size());
+			for (int i = 0; i < array.size(); i++) {
+				const gaddr_t self = saddr + sizeof(GuestVariant) * i;
+				sptr[i].create(emu, array[i].duplicate(false));
+			}
+			break;
+		}
 		default:
 			ERR_PRINT("Invalid Array operation");
 			throw std::runtime_error("Invalid Array operation");
@@ -1091,7 +1101,7 @@ APICALL(api_array_at) {
 		throw std::runtime_error("Array index out of bounds");
 	}
 
-	vret->set(emu, array[idx]);
+	vret->create(emu, array[idx].duplicate(false));
 }
 
 APICALL(api_array_size) {
