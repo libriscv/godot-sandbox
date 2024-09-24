@@ -40,6 +40,8 @@ func test_instantiation():
 	s.set_program(Sandbox_TestsTests)
 	assert_eq(s.has_function("test_ping_pong"), true)
 
+	s.queue_free()
+
 
 func test_types():
 	# Create a new sandbox
@@ -137,6 +139,8 @@ func test_types():
 	assert_eq(s.has_function("test_sub_dictionary"), true)
 	assert_eq(s.vmcall("test_sub_dictionary", d), d["1"])
 
+	s.queue_free()
+
 func test_vmcallv():
 	# Create a new sandbox
 	var s = Sandbox.new()
@@ -181,6 +185,8 @@ func test_vmcallv():
 	var pca_pp : PackedColorArray = [Color(0, 0, 0, 0), Color(1, 1, 1, 1)]
 	assert_same(s.vmcallv("test_ping_pong", pca_pp), pca_pp)
 
+	s.queue_free()
+
 
 func test_objects():
 	# Create a new sandbox
@@ -201,6 +207,7 @@ func test_objects():
 	var n3d = Node3D.new()
 	n3d.name = "Node3D"
 	assert_same(s.vmcall("test_object", n3d), n3d)
+	s.queue_free()
 
 
 func test_timers():
@@ -218,6 +225,7 @@ func test_timers():
 	await get_tree().create_timer(0.25).timeout
 	assert_eq(s.get_global_exceptions(), current_exceptions)
 	#assert_true(s.vmcall("verify_timers"), "Timers did not work")
+	s.queue_free()
 
 
 func test_exceptions():
@@ -236,6 +244,7 @@ func test_exceptions():
 	assert_eq(s.get_timeouts(), 0)
 	assert_eq(s.get_exceptions(), 1)
 	assert_eq(s.get_global_exceptions(), current_exceptions + 1)
+	s.queue_free()
 
 func test_math():
 	# Create a new sandbox
@@ -260,6 +269,7 @@ func test_math():
 
 	assert_eq(s.vmcall("test_math_lerp",       0.0, 1.0, 0.5), 0.5)
 	assert_eq(s.vmcall("test_math_smoothstep", 0.0, 1.0, 0.5), 0.5)
+	s.queue_free()
 
 func test_indirect_methods():
 	# Create a new sandbox
@@ -276,6 +286,7 @@ func test_indirect_methods():
 	var str : String = "Hello from the other side"
 	var expected : PackedStringArray = ["Hello", "from", "the", "other", "side"]
 	assert_eq(s.vmcallv("call_method", str, "split", [" "]), expected)
+	s.queue_free()
 
 
 func callable_function():
