@@ -29,6 +29,8 @@ struct Array {
 	Variant operator[](int idx) const;
 	Variant at(int idx) const { return (*this)[idx]; }
 
+	std::vector<Variant> to_vector() const;
+
 	// Array size
 	int size() const;
 

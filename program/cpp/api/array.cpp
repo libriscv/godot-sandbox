@@ -66,3 +66,9 @@ Array::Array(const std::vector<Variant> &values) {
 	Variant v = Variant::from_array(values);
 	this->m_idx = v.get_internal_index();
 }
+
+std::vector<Variant> Array::to_vector() const {
+	std::vector<Variant> result;
+	sys_array_ops(Array_Op::FETCH_TO_VECTOR, m_idx, 0, (Variant *)&result);
+	return result;
+}
