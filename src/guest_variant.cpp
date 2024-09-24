@@ -97,7 +97,8 @@ const Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
 		case Variant::PACKED_INT64_ARRAY:
 		case Variant::PACKED_VECTOR2_ARRAY:
 		case Variant::PACKED_VECTOR3_ARRAY:
-		case Variant::PACKED_COLOR_ARRAY: {
+		case Variant::PACKED_COLOR_ARRAY:
+		case Variant::PACKED_STRING_ARRAY: {
 			if (std::optional<const Variant *> v = emu.get_scoped_variant(this->v.i))
 				return v.value();
 			else
