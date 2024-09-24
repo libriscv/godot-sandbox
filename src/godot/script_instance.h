@@ -39,7 +39,7 @@ class ScriptInstanceExtension {
 
 public:
 	static GDExtensionScriptInstancePtr create_native_instance(ScriptInstanceExtension *p_instance) {
-		return internal::gdextension_interface_script_instance_create2(&script_instance_info, p_instance);
+		return internal::gdextension_interface_script_instance_create3(&script_instance_info, p_instance);
 	}
 
 	virtual bool set(const StringName &p_name, const Variant &p_value) = 0;
