@@ -167,7 +167,7 @@ APICALL(api_veval) {
 	Variant::evaluate(static_cast<Variant::Operator>(op), ap->toVariant(emu), bp->toVariant(emu), ret, valid);
 
 	machine.set_result(valid);
-	retp->set(emu, ret);
+	retp->create(emu, std::move(ret));
 }
 
 APICALL(api_vcreate) {
@@ -796,15 +796,15 @@ APICALL(api_node) {
 	switch (Node_Op(op)) {
 		case Node_Op::GET_NAME: {
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
-			var->create(emu, String(node->get_name()));
+			var->create(emu, node->get_name());
 		} break;
 		case Node_Op::SET_NAME: {
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
-			node->set_name(var->toVariant(emu).operator String());
+			node->set_name(var->toVariant(emu));
 		} break;
 		case Node_Op::GET_PATH: {
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
-			var->create(emu, String(node->get_path()));
+			var->create(emu, node->get_path());
 		} break;
 		case Node_Op::GET_PARENT: {
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);

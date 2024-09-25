@@ -10,20 +10,20 @@ Node::Node(std::string_view path) :
 		Object(sys_get_node(0, path.begin(), path.size())) {
 }
 
-std::string Node::get_name() const {
+Variant Node::get_name() const {
 	Variant var;
 	sys_node(Node_Op::GET_NAME, address(), &var);
-	return std::string(var);
+	return var;
 }
 
 void Node::set_name(Variant name) {
 	sys_node(Node_Op::SET_NAME, address(), &name);
 }
 
-std::string Node::get_path() const {
+Variant Node::get_path() const {
 	Variant var;
 	sys_node(Node_Op::GET_PATH, address(), &var);
-	return std::string(var);
+	return var;
 }
 
 Node Node::get_parent() const {

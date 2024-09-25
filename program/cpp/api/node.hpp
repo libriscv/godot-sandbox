@@ -13,7 +13,7 @@ struct Node : public Object {
 
 	/// @brief Get the name of the node.
 	/// @return The name of the node.
-	std::string get_name() const;
+	Variant get_name() const;
 
 	/// @brief Set the name of the node.
 	/// @param name The new name of the node.
@@ -21,7 +21,7 @@ struct Node : public Object {
 
 	/// @brief Get the path of the node, relative to the root node.
 	/// @return The path of the node.
-	std::string get_path() const;
+	Variant get_path() const;
 
 	/// @brief Get the parent of the node.
 	/// @return The parent node.
