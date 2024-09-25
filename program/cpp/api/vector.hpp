@@ -14,6 +14,7 @@ struct Vector2 {
 	float distance_to(const Vector2& other) const noexcept;
 	Vector2 direction_to(const Vector2& other) const noexcept;
 	float dot(const Vector2& other) const noexcept;
+	static Vector2 sincos(float angle) noexcept;
 	static Vector2 from_angle(float angle) noexcept;
 
 	template <typename... Args>
@@ -578,15 +579,19 @@ inline Vector2 Vector2::direction_to(const Vector2& other) const noexcept {
 inline float Vector2::dot(const Vector2& other) const noexcept {
 	return x * other.x + y * other.y;
 }
-inline Vector2 Vector2::from_angle(float angle) noexcept {
-	register float x asm("fa0") = angle;
-	register float y asm("fa1");
+inline Vector2 Vector2::sincos(float angle) noexcept {
+	register float s asm("fa0") = angle;
+	register float c asm("fa1");
 	register int syscall asm("a7") = 513; // ECALL_SINCOS
 
 	__asm__ volatile("ecall"
-					 : "+f"(x), "=f"(y)
+					 : "+f"(s), "=f"(c)
 					 : "r"(syscall));
-	return {x, y};
+	return {s, c}; // (sine, cosine)
+}
+inline Vector2 Vector2::from_angle(float angle) noexcept {
+	Vector2 v = sincos(angle);
+	return {v.y, v.x}; // (cos(angle), sin(angle))
 }
 
 namespace std

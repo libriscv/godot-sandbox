@@ -169,3 +169,13 @@ extern "C" Variant call_method(Variant v, Variant vmethod, Variant vargs) {
 	v.callp(method, args.data(), args.size(), ret);
 	return ret;
 }
+
+extern "C" Variant access_a_parent(Node n) {
+	Node p = n.get_parent();
+	return Nil;
+}
+
+extern "C" Variant creates_a_node() {
+	Node n = Node::create("test");
+	return Nil;
+}
