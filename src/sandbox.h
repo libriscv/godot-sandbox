@@ -3,6 +3,7 @@
 #include <godot_cpp/classes/control.hpp>
 
 #include <godot_cpp/core/binder_common.hpp>
+#include <godot_cpp/templates/hash_set.hpp>
 #include <libriscv/machine.hpp>
 #include <optional>
 
@@ -193,6 +194,31 @@ public:
 	/// @return True if the object is scoped, false otherwise.
 	bool is_scoped_object(const void *ptr) const noexcept { return state().scoped_objects.end() != std::find(state().scoped_objects.begin(), state().scoped_objects.end(), reinterpret_cast<uintptr_t>(ptr)); }
 
+	// -= Sandbox Restrictions =-
+
+	/// @brief Add an object to the list of allowed objects.
+	/// @param obj The object to add.
+	void allow_object(godot::Object *obj) { m_allowed_objects.insert(obj); }
+
+	/// @brief Remove an object from the list of allowed objects.
+	/// @param obj The object to remove.
+	/// @note If the list becomes empty, all objects are allowed.
+	void remove_allowed_object(godot::Object *obj) { m_allowed_objects.erase(obj); }
+
+	/// @brief Check if an object is allowed in the sandbox.
+	bool is_allowed(godot::Object *obj) const;
+
+	/// @brief Add a class name to the list of allowed classes.
+	/// @param name The name of the class to add.
+	void allow_class(const String &name) { m_allowed_classes.insert(name); }
+
+	/// @brief Remove a class name from the list of allowed classes.
+	/// @param name The name of the class to remove.
+	void remove_allowed_class(const String &name) { m_allowed_classes.erase(name); }
+
+	/// @brief Check if a class name is allowed in the sandbox.
+	bool is_allowed_class(const String &name) const;
+
 	// -= Sandboxed Properties =-
 	// These are properties that are exposed to the Godot editor, provided by the guest program.
 
@@ -275,6 +301,8 @@ private:
 	uint32_t m_memory_max = MAX_VMEM;
 	int64_t m_insn_max = MAX_INSTRUCTIONS;
 
+	std::unordered_set<godot::Object*> m_allowed_objects;
+	godot::HashSet<String> m_allowed_classes;
 	mutable std::unordered_map<int64_t, gaddr_t> m_lookup;
 
 	bool m_last_newline = false;
@@ -313,4 +341,20 @@ inline void Sandbox::CurrentState::reset(unsigned index) {
 	variants.clear();
 	scoped_variants.clear();
 	scoped_objects.clear();
+}
+
+inline bool Sandbox::is_allowed(godot::Object *obj) const {
+	// If the list is empty, all objects are allowed
+	if (m_allowed_objects.empty())
+		return true;
+	// Otherwise, check if the object is in the allowed list
+	return m_allowed_objects.find(obj) != m_allowed_objects.end();
+}
+
+inline bool Sandbox::is_allowed_class(const String &name) const {
+	// If the list is empty, all classes are allowed
+	if (m_allowed_classes.is_empty())
+		return true;
+	// Otherwise, check if the class is in the allowed list
+	return m_allowed_classes.find(name) != m_allowed_classes.end();
 }

@@ -147,7 +147,7 @@ APICALL(api_veval) {
 	if (ap->type == Variant::OBJECT && bp->type == Variant::OBJECT) {
 		// Special case for equality, allowing invalid objects to be compared.
 		if (op == static_cast<int>(Variant::Operator::OP_EQUAL)) {
-			machine.set_result(true);
+			machine.set_result(false);
 			retp->set(emu, Variant(ap->v.i == bp->v.i));
 			return;
 		}
@@ -158,7 +158,7 @@ APICALL(api_veval) {
 		Variant::evaluate(static_cast<Variant::Operator>(op), a, b, ret, valid);
 
 		machine.set_result(valid);
-		retp->set(emu, ret, true); // Implicit trust, as we are returning engine-provided result.
+		retp->set(emu, ret, false);
 		return;
 	}
 
@@ -740,8 +740,13 @@ APICALL(api_node_create) {
 				ERR_PRINT("Class name is not null-terminated");
 				throw std::runtime_error("Class name is not null-terminated");
 			}
+			StringName class_name_sn(class_name.data());
+			if (!emu.is_allowed_class(class_name_sn)) {
+				ERR_PRINT("Class name is not allowed");
+				throw std::runtime_error("Class name is not allowed");
+			}
 			// Now that it's null-terminated, we can use it for StringName.
-			Variant result = ClassDBSingleton::get_singleton()->instantiate(class_name.data());
+			Variant result = ClassDBSingleton::get_singleton()->instantiate(class_name_sn);
 			if (result.get_type() != Variant::OBJECT) {
 				ERR_PRINT("Failed to create object from class name");
 				throw std::runtime_error("Failed to create object from class name");
@@ -761,12 +766,24 @@ APICALL(api_node_create) {
 			break;
 		}
 		case Node_Create_Shortlist::CREATE_NODE: // Node
+			if (!emu.is_allowed_class("Node")) {
+				ERR_PRINT("Class name is not allowed");
+				throw std::runtime_error("Class name is not allowed");
+			}
 			node = memnew(Node);
 			break;
 		case Node_Create_Shortlist::CREATE_NODE2D: // Node2D
+			if (!emu.is_allowed_class("Node2D")) {
+				ERR_PRINT("Class name is not allowed");
+				throw std::runtime_error("Class name is not allowed");
+			}
 			node = memnew(Node2D);
 			break;
 		case Node_Create_Shortlist::CREATE_NODE3D: // Node3D
+			if (!emu.is_allowed_class("Node3D")) {
+				ERR_PRINT("Class name is not allowed");
+				throw std::runtime_error("Class name is not allowed");
+			}
 			node = memnew(Node3D);
 			break;
 		default:
@@ -808,11 +825,12 @@ APICALL(api_node) {
 		} break;
 		case Node_Op::GET_PARENT: {
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
-			if (node->get_parent() == nullptr) {
+			godot::Object *parent = node->get_parent();
+			if (parent == nullptr) {
 				var->set(emu, Variant());
 			} else {
 				// TODO: Parent nodes allow access higher up the tree, which could be a security issue.
-				var->set(emu, node->get_parent(), true); // Implicit trust, as we are returning engine-provided result.
+				var->set(emu, parent, true); // Implicit trust, as we are returning engine-provided result.
 			}
 		} break;
 		case Node_Op::QUEUE_FREE:
@@ -1313,7 +1331,7 @@ APICALL(api_timer_periodic) {
 	args.push_back(Variant(std::move(capture_data)));
 	timer->connect("timeout", emu.vmcallable_address(callback, std::move(args)));
 	// Return the timer object to the guest.
-	vret->set(emu, timer, true); // Implicit trust, as we are returning our own object.
+	vret->set_object(emu, timer);
 }
 
 APICALL(api_timer_stop) {
@@ -1506,8 +1524,8 @@ void Sandbox::initialize_syscalls() {
 				 machine.set_result(godot::Engine::get_singleton()->is_editor_hint());
 			 } },
 			{ ECALL_SINCOS, [](machine_t &machine) {
-				 auto [angle] = machine.sysargs<float>();
-				 machine.set_result(cos(angle), sin(angle));
+				 float angle = machine.cpu.registers().getfl(10).get<float>(); // fa0
+				 machine.set_result(sin(angle), cos(angle));
 			 } },
 			{ ECALL_VEC2_LENGTH, api_vector2_length },
 			{ ECALL_VEC2_NORMALIZED, api_vector2_normalize },

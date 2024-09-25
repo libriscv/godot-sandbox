@@ -260,6 +260,16 @@ struct GuestVariant {
 	void set(Sandbox &emu, const Variant &value, bool implicit_trust = false);
 
 	/**
+	 * @brief Sets the value of the GuestVariant to a godot Object. The object is added to the
+	 * scoped objects list and the GuestVariant stores the untranslated address to the object.
+	 * @warning The object is implicitly trusted, treated as allowed.
+	 *
+	 * @param emu The sandbox that the GuestVariant comes from.
+	 * @param obj The godot Object.
+	 **/
+	void set_object(Sandbox &emu, godot::Object *obj);
+
+	/**
 	 * @brief Creates a new GuestVariant from a godot Variant. Trust is implicit for complex types.
 	 * The variant is constructed directly into the call state, and the GuestVariant is an index
 	 * to it. For objects, the object is added to the scoped objects list and the GuestVariant

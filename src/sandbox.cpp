@@ -33,6 +33,12 @@ void Sandbox::_bind_methods() {
 	}
 	ClassDB::bind_method(D_METHOD("vmcallable", "function", "args"), &Sandbox::vmcallable, DEFVAL(Array{}));
 
+	// Sandbox restrictions.
+	ClassDB::bind_method(D_METHOD("allow_object", "instance"), &Sandbox::allow_object);
+	ClassDB::bind_method(D_METHOD("remove_allowed_object", "instance"), &Sandbox::remove_allowed_object);
+	ClassDB::bind_method(D_METHOD("allow_class", "instance"), &Sandbox::allow_class);
+	ClassDB::bind_method(D_METHOD("remove_allowed_class", "instance"), &Sandbox::remove_allowed_class);
+
 	// Internal testing.
 	ClassDB::bind_method(D_METHOD("assault", "test", "iterations"), &Sandbox::assault);
 	ClassDB::bind_method(D_METHOD("has_function", "function"), &Sandbox::has_function);
@@ -388,6 +394,12 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 				g_arg.type = Variant::Type::FLOAT;
 				g_arg.v.f = inner->flt;
 				break;
+			case Variant::OBJECT: {
+				godot::Object *obj = inner->to_object();
+				// Objects passed directly as arguments are implicitly trusted/allowed
+				g_arg.set_object(*this, obj);
+				break;
+			}
 			default:
 				g_arg.set(*this, *args[i], true);
 		}
