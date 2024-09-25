@@ -2,6 +2,7 @@
 
 #include "sandbox_project_settings.h"
 #include <godot_cpp/classes/os.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
 //#define ENABLE_TIMINGS 1
 #ifdef ENABLE_TIMINGS
 #include <time.h>
@@ -35,13 +36,36 @@ bool Docker::ContainerPullLatest(String image_name, Array &output) {
 	return res == 0;
 }
 
+String Docker::ContainerGetMountPath(String container_name) {
+	godot::OS *OS = godot::OS::get_singleton();
+	PackedStringArray arguments = { "inspect", "-f", "{{ (index .Mounts 0).Source }}", container_name };
+	Array output;
+	if constexpr (VERBOSE_CMD) {
+		UtilityFunctions::print(SandboxProjectSettings::get_docker_path(), arguments);
+	}
+	const int res = OS->execute(SandboxProjectSettings::get_docker_path(), arguments, output);
+	if (res != 0) {
+		return "";
+	}
+	return String(output[0]).replace("\n", "");
+}
+
 bool Docker::ContainerStart(String container_name, String image_name, Array &output) {
 	if (ContainerIsAlreadyRunning(container_name)) {
-		// We cannot currently prove which project folder is currently mounted on the
-		// running container, so we stop it and start a new one with the current directory mounted.
-		// XXX: This makes it annoying to work on the API, as the container will revert to the
-		// uploaded version of the API on editor restarts.
-		Docker::ContainerStop(container_name);
+		ProjectSettings *project_settings = ProjectSettings::get_singleton();
+		// If the container mount path does not match the current project path, stop the container.
+		String path = ContainerGetMountPath(container_name);
+		String project_path = project_settings->globalize_path("res://");
+		//printf("Container mount path: %s\n", path.utf8().get_data());
+		//printf("Current project path: %s\n", project_path.utf8().get_data());
+		if (!path.is_empty() && !project_path.begins_with(path)) {
+			UtilityFunctions::print("Container mount path (", path, ") does not match the current project path (", project_path, "). Stopping the container.");
+			Docker::ContainerStop(container_name);
+		} else {
+			// The container is already running and the mount path matches the current project path.
+			UtilityFunctions::print("Container ", container_name, " was already running.");
+			return true;
+		}
 	}
 	// The container is not running. Try to pull the latest image.
 	Array dont_care; // We don't care about the output of the image pull (for now).

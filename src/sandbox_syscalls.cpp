@@ -657,7 +657,7 @@ APICALL(api_obj_callp) {
 	if (method_view.back() == '\0') {
 		method = StringName(method_view.data(), false);
 	} else {
-		method = String::utf8(method_view.data(), method_view.size()-1);
+		method = String::utf8(method_view.data(), method_view.size() - 1);
 	}
 
 	if (!deferred) {

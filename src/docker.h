@@ -12,6 +12,7 @@ struct Docker {
 	static Array ContainerStop(String container_name);
 	static bool ContainerExecute(String container_name, const PackedStringArray &args, Array &output, bool verbose = true);
 	static int ContainerVersion(String container_name, const PackedStringArray &args);
+	static String ContainerGetMountPath(String container_name);
 	static bool ContainerPullLatest(String image_name, Array &output);
 	static bool ContainerDelete(String container_name, Array &output);
 
