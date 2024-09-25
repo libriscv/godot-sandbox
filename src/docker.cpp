@@ -37,7 +37,11 @@ bool Docker::ContainerPullLatest(String image_name, Array &output) {
 
 bool Docker::ContainerStart(String container_name, String image_name, Array &output) {
 	if (ContainerIsAlreadyRunning(container_name)) {
-		return true;
+		// We cannot currently prove which project folder is currently mounted on the
+		// running container, so we stop it and start a new one with the current directory mounted.
+		// XXX: This makes it annoying to work on the API, as the container will revert to the
+		// uploaded version of the API on editor restarts.
+		Docker::ContainerStop(container_name);
 	}
 	// The container is not running. Try to pull the latest image.
 	Array dont_care; // We don't care about the output of the image pull (for now).
@@ -59,7 +63,7 @@ bool Docker::ContainerStart(String container_name, String image_name, Array &out
 
 Array Docker::ContainerStop(String container_name) {
 	godot::OS *OS = godot::OS::get_singleton();
-	PackedStringArray arguments = { "stop", container_name, "--time", "1" };
+	PackedStringArray arguments = { "stop", container_name, "--time", "0" };
 	if constexpr (VERBOSE_CMD) {
 		UtilityFunctions::print(SandboxProjectSettings::get_docker_path(), arguments);
 	}
