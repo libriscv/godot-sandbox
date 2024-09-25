@@ -22,3 +22,6 @@ extern "C" __attribute__((noreturn)) void fast_exit();
 	inline Variant name(Args&&... args) { \
 		return operator() (#name, std::forward<Args>(args)...); \
 	}
+
+// Alias for CREATE_METHOD
+#define METHOD(name) CREATE_METHOD(name)
