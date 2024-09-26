@@ -92,7 +92,7 @@ APICALL(api_print) {
 }
 
 APICALL(api_vcall) {
-	auto [vp, method, mlen, args_ptr, args_size, vret] = machine.sysargs<GuestVariant *, std::string, unsigned, gaddr_t, gaddr_t, GuestVariant *>();
+	auto [vp, method, mlen, args_ptr, args_size, vret] = machine.sysargs<GuestVariant *, gaddr_t, unsigned, gaddr_t, gaddr_t, GuestVariant *>();
 	(void)mlen;
 
 	Sandbox &emu = riscv::emu(machine);
@@ -103,13 +103,20 @@ APICALL(api_vcall) {
 	}
 
 	const GuestVariant *args = machine.memory.memarray<GuestVariant>(args_ptr, args_size);
+	Variant vmethod;
+	std::string_view method_sv = machine.memory.rvview(method, mlen + 1); // Include null terminator.
+	if (method_sv.back() == '\0') {
+		vmethod = Variant(StringName(method_sv.data()));
+	} else {
+		vmethod = Variant(String::utf8(method_sv.data(), mlen));
+	}
+
+	Variant ret;
 
 	if (vp->type == Variant::OBJECT) {
 		godot::Object *obj = get_object_from_address(emu, vp->v.i);
 
-		Variant vmethod = StringName(method.data());
-		Variant ret = object_call(emu, obj, vmethod, args, args_size);
-		vret->create(emu, std::move(ret));
+		ret = object_call(emu, obj, vmethod, args, args_size);
 	} else {
 		std::array<Variant, 8> vargs;
 		std::array<const Variant *, 8> argptrs;
@@ -130,13 +137,11 @@ APICALL(api_vcall) {
 			helper = vp->toVariant(emu);
 			vcall = &helper;
 		}
-		StringName method_name = StringName(method.data());
 		GDExtensionCallError error;
-		Variant ret;
-		vcall->callp(method_name, argptrs.data(), args_size, ret, error);
-		// Create a new Variant with the result, if any.
-		vret->create(emu, std::move(ret));
+		vcall->callp(vmethod, argptrs.data(), args_size, ret, error);
 	}
+	// Create a new Variant with the result, if any.
+	vret->create(emu, std::move(ret));
 }
 
 APICALL(api_veval) {
