@@ -354,6 +354,21 @@ func test_restrictions():
 
 	s.queue_free()
 
+func test_static_storage():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	# Test that static storage works
+	assert_eq(s.has_function("test_static_storage"), true)
+
+	# Call the function that uses static storage
+	# It takes a key and a value, stores it in a
+	# static Dictionary, and returns the dictionary
+	assert_eq(s.vmcallv("test_static_storage", "key", "value"), {"key": "value"})
+	assert_eq(s.vmcallv("test_static_storage", "key2", "value2"), {"key": "value", "key2": "value2"})
+
+	s.queue_free()
+
 func callable_function():
 	return
 

@@ -104,8 +104,8 @@ Sandbox::Sandbox() {
 	this->m_use_unboxed_arguments = SandboxProjectSettings::use_native_types();
 	this->m_global_instance_count += 1;
 	// For each call state, reset the state
-	for (CurrentState &state : this->m_states) {
-		state.initialize(this->m_max_refs);
+	for (size_t i = 0; i < this->m_states.size(); i++) {
+		this->m_states[i].initialize(i, this->m_max_refs);
 	}
 	// In order to reduce checks we guarantee that this
 	// class is well-formed at all times.
@@ -572,29 +572,44 @@ int64_t Sandbox::get_heap_usage() const {
 //-- Scoped objects and variants --//
 
 unsigned Sandbox::add_scoped_variant(const Variant *value) const {
-	if (state().scoped_variants.size() >= state().variants.capacity()) {
+	CurrentState &st = this->state();
+	if (st.scoped_variants.size() >= st.variants.capacity()) {
 		ERR_PRINT("Maximum number of scoped variants reached.");
 		throw std::runtime_error("Maximum number of scoped variants reached.");
 	}
-	state().scoped_variants.push_back(value);
-	return state().scoped_variants.size() - 1 + 1; // 1-based index
+	st.scoped_variants.push_back(value);
+	if (st.m_current_level >= 1)
+		return int32_t(st.scoped_variants.size()) - 1;
+	else
+		return -int32_t(st.scoped_variants.size());
 }
 unsigned Sandbox::create_scoped_variant(Variant &&value) const {
-	if (state().scoped_variants.size() >= state().variants.capacity()) {
+	CurrentState &st = this->state();
+	if (st.scoped_variants.size() >= st.variants.capacity()) {
 		ERR_PRINT("Maximum number of scoped variants reached.");
 		throw std::runtime_error("Maximum number of scoped variants reached.");
 	}
-	state().append(std::move(value));
-	return state().scoped_variants.size() - 1 + 1; // 1-based index
+	st.append(std::move(value));
+	if (st.m_current_level >= 1)
+		return int32_t(st.scoped_variants.size()) - 1;
+	else
+		return -int32_t(st.scoped_variants.size());
 }
-std::optional<const Variant *> Sandbox::get_scoped_variant(unsigned index) const noexcept {
-	if (index == 0 || index > state().scoped_variants.size()) {
-		ERR_PRINT("Invalid scoped variant index.");
-		return std::nullopt;
+std::optional<const Variant *> Sandbox::get_scoped_variant(int32_t index) const noexcept {
+	if (index >= 0 && index < state().scoped_variants.size()) {
+		return state().scoped_variants[index];
+	} else if (index < 0) {
+		// Negative index is access into initialization state
+		index = -index - 1;
+		auto &init_state = this->m_states[0];
+		if (index < init_state.scoped_variants.size()) {
+			return init_state.scoped_variants[index];
+		}
 	}
-	return state().scoped_variants[index - 1];
+	ERR_PRINT("Invalid scoped variant index.");
+	return std::nullopt;
 }
-Variant &Sandbox::get_mutable_scoped_variant(unsigned index) {
+Variant &Sandbox::get_mutable_scoped_variant(int32_t index) {
 	std::optional<const Variant *> var_opt = get_scoped_variant(index);
 	if (!var_opt.has_value()) {
 		ERR_PRINT("Invalid scoped variant index.");
@@ -796,7 +811,8 @@ Variant SandboxProperty::get(const Sandbox &sandbox) const {
 	return const_cast<Sandbox &>(sandbox).vmcall_internal(m_getter_address, nullptr, 0);
 }
 
-void Sandbox::CurrentState::initialize(unsigned max_refs) {
+void Sandbox::CurrentState::initialize(unsigned level, unsigned max_refs) {
+	this->m_current_level = level;
 	this->variants.reserve(max_refs);
 }
 
@@ -804,8 +820,8 @@ void Sandbox::set_max_refs(uint32_t max) {
 	this->m_max_refs = max;
 	// If we are not in a call, reset the states
 	if (this->m_level == 1) {
-		for (CurrentState &state : this->m_states) {
-			state.initialize(max);
+		for (size_t i = 0; i < this->m_states.size(); i++) {
+			this->m_states[i].initialize(i, max);
 		}
 	} else {
 		ERR_PRINT("Sandbox: Cannot change max references during a Sandbox call.");

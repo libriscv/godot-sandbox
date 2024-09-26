@@ -50,9 +50,10 @@ public:
 		std::vector<Variant> variants;
 		std::vector<const Variant *> scoped_variants;
 		std::vector<uintptr_t> scoped_objects;
+		unsigned m_current_level = 0;
 
 		void append(Variant &&value);
-		void initialize(unsigned max_refs);
+		void initialize(unsigned level, unsigned max_refs);
 		void reset(unsigned index);
 	};
 
@@ -174,12 +175,12 @@ public:
 	/// @brief Get a scoped variant by its index.
 	/// @param idx The index of the variant to get.
 	/// @return The variant, or an empty optional if the index is invalid.
-	std::optional<const Variant *> get_scoped_variant(unsigned idx) const noexcept;
+	std::optional<const Variant *> get_scoped_variant(int32_t idx) const noexcept;
 
 	/// @brief Get a mutable scoped variant by its index.
 	/// @param idx The index of the variant to get.
 	/// @return The variant.
-	Variant &get_mutable_scoped_variant(unsigned idx);
+	Variant &get_mutable_scoped_variant(int32_t idx);
 
 	/// @brief Add a scoped object to the current state.
 	/// @param ptr The pointer to the object to add.
