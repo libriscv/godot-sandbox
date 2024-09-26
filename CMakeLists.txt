@@ -27,6 +27,7 @@ set(SOURCES
 	src/guest_variant.cpp
 	src/register_types.cpp
 	src/sandbox.cpp
+	src/sandbox_debug.cpp
 	src/sandbox_exception.cpp
 	src/sandbox_functions.cpp
 	src/sandbox_project_settings.cpp

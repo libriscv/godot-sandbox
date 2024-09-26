@@ -23,6 +23,7 @@ void Sandbox::_bind_methods() {
 	// Methods.
 	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
 	ClassDB::bind_method(D_METHOD("set_program", "program"), &Sandbox::set_program);
+	ClassDB::bind_method(D_METHOD("get_program"), &Sandbox::get_program);
 	{
 		MethodInfo mi;
 		mi.arguments.push_back(PropertyInfo(Variant::STRING, "function"));
@@ -41,7 +42,13 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("allow_class", "instance"), &Sandbox::allow_class);
 	ClassDB::bind_method(D_METHOD("remove_allowed_class", "instance"), &Sandbox::remove_allowed_class);
 
-	// Internal testing.
+	// Internal testing, debugging and introspection.
+	ClassDB::bind_method(D_METHOD("get_general_registers"), &Sandbox::get_general_registers);
+	ClassDB::bind_method(D_METHOD("get_floating_point_registers"), &Sandbox::get_floating_point_registers);
+	ClassDB::bind_method(D_METHOD("set_argument_registers", "args"), &Sandbox::set_argument_registers);
+	ClassDB::bind_method(D_METHOD("get_current_instruction"), &Sandbox::get_current_instruction);
+	ClassDB::bind_method(D_METHOD("resume"), &Sandbox::resume);
+
 	ClassDB::bind_method(D_METHOD("assault", "test", "iterations"), &Sandbox::assault);
 	ClassDB::bind_method(D_METHOD("has_function", "function"), &Sandbox::has_function);
 

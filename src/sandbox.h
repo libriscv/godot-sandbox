@@ -284,7 +284,26 @@ public:
 	/// @return An array of public callable functions and programming language.
 	static BinaryInfo get_program_info_from_binary(const PackedByteArray &binary);
 
-	// -= Self-testing and internal functions =-
+	// -= Self-testing, inspection and internal functions =-
+
+	/// @brief Get the 32 integer registers of the RISC-V machine.
+	/// @return An array of 32 registers.
+	Array get_general_registers() const;
+
+	/// @brief Get the 32 floating-point registers of the RISC-V machine.
+	/// @return An array of 32 registers.
+	Array get_floating_point_registers() const;
+
+	/// @brief Set the 8 argument registers of the RISC-V machine, A0-A7.
+	/// @param args The arguments to set.
+	void set_argument_registers(Array args);
+
+	/// @brief Get the current instruction being executed, as a string.
+	/// @return The current instruction.
+	String get_current_instruction() const;
+
+	/// @brief Resume execution of the program. Loses the current call state.
+	void resume(uint64_t max_instructions);
 
 	void assault(const String &test, int64_t iterations);
 	void print(std::string_view text);
