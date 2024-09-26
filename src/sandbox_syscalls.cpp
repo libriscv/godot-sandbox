@@ -540,6 +540,15 @@ APICALL(api_get_obj) {
 	auto &emu = riscv::emu(machine);
 	machine.penalize(150'000);
 
+	// Objects retrieved by name are named globals, eg. "Engine", "Input", "Time",
+	// which are also their class names. As such, we can restrict access using
+	// the allowed_classes list in the Sandbox.
+	if (!emu.is_allowed_class(String::utf8(name.c_str(), name.size()))) {
+		ERR_PRINT("Class is not allowed");
+		machine.set_result(0);
+		return;
+	}
+
 	// Find allowed object by name and get its address from a lambda.
 	auto it = allowed_objects.find(name);
 	if (it != allowed_objects.end()) {
