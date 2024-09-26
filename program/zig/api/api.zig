@@ -32,8 +32,10 @@ pub const Variant = struct {
         self.v.obj = obj;
     }
 
-    pub fn call(self: *Variant, method: []const u8, args: []Variant, result: *Variant) void {
-        sys_vcall(self, method.ptr, method.len, args.ptr, args.len, result);
+    pub fn call(self: *Variant, method: []const u8, args: []Variant) Variant {
+        var result: Variant = undefined;
+        sys_vcall(self, method.ptr, method.len, args.ptr, args.len, &result);
+        return result;
     }
 };
 
@@ -44,6 +46,7 @@ comptime {
         \\sys_vcall:
         \\  li a7, 501
         \\  ecall
+        \\  ret
         \\.global fast_exit;
         \\.type fast_exit, @function;
         \\fast_exit:
