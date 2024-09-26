@@ -30,6 +30,7 @@ set(SOURCES
 	src/sandbox_exception.cpp
 	src/sandbox_functions.cpp
 	src/sandbox_project_settings.cpp
+	src/sandbox_restrictions.cpp
 	src/sandbox_syscalls.cpp
 
 	src/tests/assault.cpp

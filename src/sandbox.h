@@ -196,25 +196,34 @@ public:
 
 	// -= Sandbox Restrictions =-
 
+	/// @brief Enable restrictions on the sandbox, by allowing dummy values.
+	/// @note This will allow only dummy values to be used in the sandbox, effectively disabling
+	/// all external access that wasn't provided through function arguments.
+	void enable_restrictions();
+
+	/// @brief Disable all restrictions on the sandbox.
+	/// @note This will clear out the list of allowed objects and classes, allowing all objects and classes.
+	void disable_all_restrictions();
+
 	/// @brief Add an object to the list of allowed objects.
 	/// @param obj The object to add.
-	void allow_object(godot::Object *obj) { m_allowed_objects.insert(obj); }
+	void allow_object(godot::Object *obj);
 
 	/// @brief Remove an object from the list of allowed objects.
 	/// @param obj The object to remove.
 	/// @note If the list becomes empty, all objects are allowed.
-	void remove_allowed_object(godot::Object *obj) { m_allowed_objects.erase(obj); }
+	void remove_allowed_object(godot::Object *obj);
 
 	/// @brief Check if an object is allowed in the sandbox.
 	bool is_allowed(godot::Object *obj) const;
 
 	/// @brief Add a class name to the list of allowed classes.
 	/// @param name The name of the class to add.
-	void allow_class(const String &name) { m_allowed_classes.insert(name); }
+	void allow_class(const String &name);
 
 	/// @brief Remove a class name from the list of allowed classes.
 	/// @param name The name of the class to remove.
-	void remove_allowed_class(const String &name) { m_allowed_classes.erase(name); }
+	void remove_allowed_class(const String &name);
 
 	/// @brief Check if a class name is allowed in the sandbox.
 	bool is_allowed_class(const String &name) const;
@@ -301,7 +310,7 @@ private:
 	uint32_t m_memory_max = MAX_VMEM;
 	int64_t m_insn_max = MAX_INSTRUCTIONS;
 
-	std::unordered_set<godot::Object*> m_allowed_objects;
+	std::unordered_set<godot::Object *> m_allowed_objects;
 	godot::HashSet<String> m_allowed_classes;
 	mutable std::unordered_map<int64_t, gaddr_t> m_lookup;
 

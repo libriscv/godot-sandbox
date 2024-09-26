@@ -115,7 +115,6 @@ void GuestVariant::set_object(Sandbox &emu, godot::Object *obj) {
 	this->v.i = (uintptr_t)obj;
 }
 
-
 void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) {
 	this->type = value.get_type();
 

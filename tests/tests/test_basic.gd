@@ -337,6 +337,22 @@ func test_restrictions():
 	# The function should have thrown an exception, as we only allowed the Node2D class
 	assert_eq(s.get_exceptions(), exceptions + 1)
 
+	# Disable all restrictions
+	s.disable_all_restrictions()
+	# Now restrictions are disabled
+	exceptions = s.get_exceptions()
+	s.vmcall("creates_a_node")
+	# The function should *NOT* have thrown an exception, as we disabled all restrictions
+
+	# Enable restrictions (by adding dummy values to allowed_classes and allowed_objects)
+	s.enable_restrictions()
+	# Now restrictions are enabled
+	exceptions = s.get_exceptions()
+	s.vmcall("creates_a_node")
+	# The function should have thrown an exception, as we enabled restrictions
+	assert_eq(s.get_exceptions(), exceptions + 1)
+
+	s.queue_free()
 
 func callable_function():
 	return

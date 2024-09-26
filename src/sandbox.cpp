@@ -34,6 +34,8 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("vmcallable", "function", "args"), &Sandbox::vmcallable, DEFVAL(Array{}));
 
 	// Sandbox restrictions.
+	ClassDB::bind_method(D_METHOD("enable_restrictions"), &Sandbox::enable_restrictions);
+	ClassDB::bind_method(D_METHOD("disable_all_restrictions"), &Sandbox::disable_all_restrictions);
 	ClassDB::bind_method(D_METHOD("allow_object", "instance"), &Sandbox::allow_object);
 	ClassDB::bind_method(D_METHOD("remove_allowed_object", "instance"), &Sandbox::remove_allowed_object);
 	ClassDB::bind_method(D_METHOD("allow_class", "instance"), &Sandbox::allow_class);
