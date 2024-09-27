@@ -1,0 +1,39 @@
+name: CMake Example
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{github.workspace}}/program/cpp/cmake/example
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y gcc-12-riscv64-linux-gnu g++-12-riscv64-linux-gnu cmake
+
+    - name: Configure
+      env:
+        CC: riscv64-linux-gnu-gcc-12
+        CXX: riscv64-linux-gnu-g++-12
+      run: cmake -B ${{github.workspace}}/.build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake
+
+    - name: Build the project
+      run: cmake --build ${{github.workspace}}/.build --parallel 6
+
+    - name: Verify the example program exists
+      working-directory: ${{github.workspace}}/.build
+      run: |
+        if [ ! -f example ]; then
+          echo "example program not found"
+          exit 1
+        fi
