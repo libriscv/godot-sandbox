@@ -364,8 +364,26 @@ func test_static_storage():
 	# Call the function that uses static storage
 	# It takes a key and a value, stores it in a
 	# static Dictionary, and returns the dictionary
-	assert_eq(s.vmcallv("test_static_storage", "key", "value"), {"key": "value"})
-	assert_eq(s.vmcallv("test_static_storage", "key2", "value2"), {"key": "value", "key2": "value2"})
+	assert_eq_deep(s.vmcallv("test_static_storage", "key", "value"), {"key": "value"})
+	assert_eq_deep(s.vmcallv("test_static_storage", "key2", "value2"), {"key": "value", "key2": "value2"})
+
+	# This function tries to create a Dictionary after initialization
+	assert_eq(s.has_function("test_failing_static_storage"), true)
+	# The first time it will initialize the Dictionary on first-use
+	# So, no exception should be thrown
+	var exceptions = s.get_exceptions()
+	var result = s.vmcallv("test_failing_static_storage", "key", "value")
+	assert_eq_deep(result, {"key": "value"})
+	assert_eq(s.get_exceptions(), exceptions)
+
+	# The second time it will not initialize the Dictionary
+	# as it's stored in a static variable, which was not created
+	# during the initialization of the sandbox
+	# So, an exception should be thrown
+	exceptions = s.get_exceptions()
+	result = s.vmcallv("test_failing_static_storage", "key2", "value2")
+	assert_eq(s.get_exceptions(), exceptions + 1)
+	assert_eq(result, null)
 
 	s.queue_free()
 

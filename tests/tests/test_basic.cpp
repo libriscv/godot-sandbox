@@ -1,10 +1,17 @@
 #include "api.hpp"
 
+// This works: it's being created during initialization
 static Dictionary d = Dictionary::Create();
 
 extern "C" Variant test_static_storage(Variant key, Variant val) {
 	d[key] = val;
 	return d;
+}
+extern "C" Variant test_failing_static_storage(Variant key, Variant val) {
+	// This won't work: it's being created after initialization
+	static Dictionary fd = Dictionary::Create();
+	fd[key] = val;
+	return fd;
 }
 
 extern "C" Variant test_infinite_loop() {
