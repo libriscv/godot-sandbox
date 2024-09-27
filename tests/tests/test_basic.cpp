@@ -1,5 +1,12 @@
 #include "api.hpp"
 
+static Dictionary d = Dictionary::Create();
+
+extern "C" Variant test_static_storage(Variant key, Variant val) {
+	d[key] = val;
+	return d;
+}
+
 extern "C" Variant test_infinite_loop() {
 	while (true)
 		;
