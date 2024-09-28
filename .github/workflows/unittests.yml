@@ -14,31 +14,31 @@ jobs:
         working-directory: ${{github.workspace}}
 
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
 
-    - name: Install dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y gcc-12-riscv64-linux-gnu g++-12-riscv64-linux-gnu cmake
-        git submodule update --depth 1 --init ${{github.workspace}}/ext/godot-cpp
-        git submodule update --init ${{github.workspace}}/ext/libriscv
-        git submodule update --init ${{github.workspace}}/ext/Gut
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y gcc-12-riscv64-linux-gnu g++-12-riscv64-linux-gnu cmake
 
-    - name: Configure
-      run: cmake -B ${{github.workspace}}/.build -DCMAKE_BUILD_TYPE=Release
+      - name: Configure
+        run: cmake -B ${{github.workspace}}/.build -DCMAKE_BUILD_TYPE=Release
 
-    - name: Build the unittests
-      run: cmake --build ${{github.workspace}}/.build --parallel 6
+      - name: Build the unittests
+        run: cmake --build ${{github.workspace}}/.build --parallel 6
 
-    - name: Download and extract Godot
-      working-directory: ${{github.workspace}}/tests
-      run: |
-        wget -q https://github.com/godotengine/godot-builds/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
-        unzip -q Godot_v4.3-stable_linux.x86_64.zip
+      - name: Download and extract Godot
+        working-directory: ${{github.workspace}}/tests
+        run: |
+          wget -q https://github.com/godotengine/godot-builds/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
+          unzip -q Godot_v4.3-stable_linux.x86_64.zip
 
-    - name: Run Gut tests
-      working-directory: ${{github.workspace}}/tests
-      run: |
-        ./Godot_v4.3-stable_linux.x86_64 --path "$PWD" --headless --import
-        ./Godot_v4.3-stable_linux.x86_64 --path "$PWD" --headless --import
-        ./Godot_v4.3-stable_linux.x86_64 --path "$PWD" --headless -d -s addons/gut/gut_cmdln.gd
+      - name: Run Gut tests
+        working-directory: ${{github.workspace}}/tests
+        run: |
+          # Run the tests
+          CI=1 GODOT=./Godot_v4.3-stable_linux.x86_64 ./run_unittests.sh
