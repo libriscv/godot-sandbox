@@ -11,7 +11,7 @@ Array Sandbox::get_general_registers() const {
 Array Sandbox::get_floating_point_registers() const {
 	Array ret;
 	for (int i = 0; i < 32; i++) {
-		auto& freg = m_machine->cpu.registers().getfl(i);
+		auto &freg = m_machine->cpu.registers().getfl(i);
 		// We suspect that it's a 32-bit float if the upper 32 bits are zero
 		if (freg.i32[1] == 0) {
 			ret.push_back(freg.f32[0]);
