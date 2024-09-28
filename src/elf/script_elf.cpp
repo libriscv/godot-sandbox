@@ -174,9 +174,19 @@ Variant ELFScript::_get_property_default_value(const StringName &p_property) con
 	return Variant();
 }
 TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
-	Dictionary max_mem = prop_to_dict(PropertyInfo(Variant::Type::INT, "max_memory", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Maximum memory used by the sandboxed program", PROPERTY_USAGE_DEFAULT));
 	TypedArray<Dictionary> properties;
-	properties.push_back(std::move(max_mem));
+	properties.push_back(
+		prop_to_dict(PropertyInfo(Variant::INT, "memory_max", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Maximum memory used by the sandboxed program", PROPERTY_USAGE_DEFAULT))
+	);
+	properties.push_back(
+		prop_to_dict(PropertyInfo(Variant::INT, "execution_timeout", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Maximum instructions executed by the sandboxed program", PROPERTY_USAGE_DEFAULT))
+	);
+	properties.push_back(
+		prop_to_dict(PropertyInfo(Variant::INT, "references_max", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Maximum references allowed by the sandboxed program", PROPERTY_USAGE_DEFAULT))
+	);
+	properties.push_back(
+		prop_to_dict(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Use unboxed arguments for Sandbox function calls", PROPERTY_USAGE_DEFAULT))
+	);
 	return properties;
 }
 

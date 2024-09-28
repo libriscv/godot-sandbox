@@ -55,7 +55,7 @@ void Sandbox::_bind_methods() {
 	// Properties.
 	ClassDB::bind_method(D_METHOD("set_max_refs", "max"), &Sandbox::set_max_refs, DEFVAL(MAX_REFS));
 	ClassDB::bind_method(D_METHOD("get_max_refs"), &Sandbox::get_max_refs);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_references", PROPERTY_HINT_NONE, "Maximum objects and variants referenced by a sandbox call"), "set_max_refs", "get_max_refs");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "references_max", PROPERTY_HINT_NONE, "Maximum objects and variants referenced by a sandbox call"), "set_max_refs", "get_max_refs");
 
 	ClassDB::bind_method(D_METHOD("set_memory_max", "max"), &Sandbox::set_memory_max, DEFVAL(MAX_VMEM));
 	ClassDB::bind_method(D_METHOD("get_memory_max"), &Sandbox::get_memory_max);
@@ -709,7 +709,7 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 		}
 	}
 	// Not the most efficient way to do this, but it's (currently) a small list
-	if (name == StringName("max_references")) {
+	if (name == StringName("references_max")) {
 		set_max_refs(value);
 		return true;
 	} else if (name == StringName("memory_max")) {
@@ -737,7 +737,7 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 		}
 	}
 	// Not the most efficient way to do this, but it's (currently) a small list
-	if (name == StringName("max_references")) {
+	if (name == StringName("references_max")) {
 		r_ret = get_max_refs();
 		return true;
 	} else if (name == StringName("memory_max")) {
