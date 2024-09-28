@@ -533,9 +533,21 @@ gaddr_t Sandbox::cached_address_of(int64_t hash, const String &function) const {
 		const std::string_view str{ ascii.get_data(), (size_t)ascii.length() };
 		address = address_of(str);
 		if (address != 0x0) {
-			// Cheating a bit here, as we are in a const function
-			// But this does not functionally change the Machine, it only boosts performance a bit
-			const_cast<machine_t *>(m_machine)->cpu.create_fast_path_function(address);
+			// We tolerate exceptions here, as we are just trying to improve performance
+			// If that fails, the function will still work, just a tiny bit slower
+			// Some broken linker scripts put a few late functions outside of .text, so we will
+			// just have to catch the exception and move on
+			try {
+				// Cheating a bit here, as we are in a const function
+				// But this does not functionally change the Machine, it only boosts performance a bit
+				const_cast<machine_t *>(m_machine)->cpu.create_fast_path_function(address);
+			} catch (const riscv::MachineException &me) {
+				String error = "Sandbox exception: " + String(me.what());
+				char buffer[32];
+				snprintf(buffer, sizeof(buffer), " (Address 0x%lX)", long(address));
+				error += buffer;
+				ERR_PRINT(error);
+			}
 		}
 		m_lookup.insert_or_assign(hash, address);
 	} else {

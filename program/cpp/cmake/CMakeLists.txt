@@ -58,16 +58,14 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 	endif()
 endif()
 
-function (add_sandbox_program name outpath)
+function (add_sandbox_program name)
 	add_executable(${name} ${ARGN})
 	target_link_libraries(${name} PRIVATE
 		-Wl,--whole-archive sandbox_api -Wl,--no-whole-archive
+		-static -static-libgcc -static-libstdc++
 	)
 	target_include_directories(${name} PRIVATE
 		${CMAKE_CURRENT_SOURCE_DIR}
-	)
-	set_target_properties(${name} PROPERTIES
-		RUNTIME_OUTPUT_DIRECTORY ${outpath}
 	)
 endfunction()
 
@@ -79,5 +77,5 @@ function (add_sandbox_library name)
 endfunction()
 
 # Example:
-# add_sandbox_program(<name> <output_path> <source_files>)
+# add_sandbox_program(<name> <source_files>)
 # add_sandbox_library(<name> <source_files>)
