@@ -34,10 +34,10 @@ struct Array {
 	// Array size
 	int size() const;
 
-	CREATE_METHOD(append_array);
-	CREATE_METHOD(assign);
-	CREATE_METHOD(duplicate);
-	CREATE_METHOD(find);
+	METHOD(append_array);
+	METHOD(assign);
+	METHOD(duplicate);
+	METHOD(find);
 
 	// Call methods on the Array
 	template <typename... Args>

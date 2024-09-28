@@ -8,7 +8,7 @@ using namespace godot;
 static constexpr char DOCKER_PATH[] = "editor/script/docker";
 static constexpr char DOCKER_PATH_HINT[] = "Path to the Docker executable";
 static constexpr char NATIVE_TYPES[] = "editor/script/unboxed_types_for_sandbox_arguments";
-static constexpr char NATIVE_TYPES_HINT[] = "Use native types and classes instead of Variants when calling VM functions where possible";
+static constexpr char NATIVE_TYPES_HINT[] = "Use native types and classes instead of Variants in Sandbox functions where possible";
 
 static void register_setting(
 		const String &p_name,
