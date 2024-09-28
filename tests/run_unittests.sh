@@ -22,7 +22,7 @@ make -j4
 popd
 
 # Create a symbolic link to the unit test ELF file
-ln -fs $PWD/.build/unittests tests/tests.elf
+ln -fs ../.build/unittests tests/tests.elf
 
 # Import again for CI
 if [ -n "$CI" ]; then
