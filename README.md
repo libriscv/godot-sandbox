@@ -42,10 +42,18 @@ This extension exists to allow Godot creators to implement safe modding support,
 
 ### What can I do?
 
-- You can implement a modding API for your game, to be used inside the sandbox. This API can then be used by other players to extend your game, in a safe manner. That is, they can send their mod to other people, including you, and they (and you) can assume that it is safe to try out the mod. The mod is *not supposed* to be able to do any harm. That is the whole point of this extension.
-- You can publish your game for all mobile and console platforms, without paying a performance penalty. It's not going to be a laggy mess, which is always a risk with other solutions that eg. rely on JIT too much.
-- You can distribute programs from a server to clients on login. The programs will behave the same way on all platforms, including 32-bit platforms. You can use this to live-distribute changes, like bugfixes, to the game without having to redeploy the game itself.
-- You can implement support for your favorite language inside the sandbox. The sandbox receives Variants from Godot or GDScript, and can respond back with Variants. This means the communication is fully dynamic, and supports normal Godot usage.
+- Modding API
+	- You can implement a modding API for your game. This API can then be used by other players to extend your game, in a safe manner.
+- Build once, run everywhere
+	- You can publish your game for all mobile and console platforms, without paying a performance penalty. It's not going to be a laggy mess, which is always a risk with other solutions that eg. rely on JIT too much.
+	- Programs will behave the same way on all platforms, including 32-bit platforms.
+- High-performance
+	- You can use this extension as a way to write higher performance code than GDScript permits, without having to resort to writing and maintaining a GDExtension for all platforms.
+	- When shipping, enable binary translation to increase performance even more. Also works on all platforms, but has to be embedded in the project.
+- Publish and then make updates without re-publishing
+	- You can distribute programs from a server to clients as part of the login sequence. You can use this to live-distribute changes like bugfixes or even new features to the game without having to re-publish the game itself. I do this in my game.
+- Supports many programming languages
+	- Although we mostly work on C++ and there is growing support for Rust and Zig, any number of languages can be supported directly in the editor.
 
 ## Usage
 
