@@ -4,12 +4,15 @@ FROM ubuntu:24.04
 # docker build -t riscv64-linux-gnu .
 #
 # To run the container:
-# docker run -it -v .:/usr/src riscv64-linux-gnu <my.elf>
+# docker run --name godot-cpp-compiler -dv .:/usr/src riscv64-linux-gnu
 #
 # Install dependencies
 RUN apt-get update && apt-get install -y \
 	g++-14-riscv64-linux-gnu \
-	git cmake mold ccache
+	mold ccache \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& apt-get clean
+
 
 # Enter the shared directory
 WORKDIR /usr/src
