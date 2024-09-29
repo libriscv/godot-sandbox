@@ -1509,8 +1509,7 @@ void Sandbox::initialize_syscalls() {
 	machine().setup_posix_threads();
 
 	machine().on_unhandled_syscall = [](machine_t &machine, size_t syscall) {
-		Sandbox &emu = riscv::emu(machine);
-		emu.print("Unhandled system call: " + std::to_string(syscall));
+		WARN_PRINT(("Unhandled system call: " + std::to_string(syscall)).c_str());
 		machine.penalize(100'000); // Add to the instruction counter due to I/O.
 	};
 

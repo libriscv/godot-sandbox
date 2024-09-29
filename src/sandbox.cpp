@@ -137,7 +137,7 @@ Ref<ELFScript> Sandbox::get_program() {
 	return m_program_data;
 }
 bool Sandbox::has_program_loaded() const {
-	return this->m_binary != nullptr;
+	return !machine().memory.binary().empty();
 }
 void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string> *argv_ptr) {
 	if (buffer == nullptr || buffer->is_empty()) {
@@ -151,7 +151,6 @@ void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 			return;
 		}
 	}
-	this->m_binary = buffer;
 	const std::string_view binary_view = std::string_view{ (const char *)buffer->ptr(), static_cast<size_t>(buffer->size()) };
 
 	// Get t0 for the startup time
@@ -177,7 +176,6 @@ void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox construction exception: " + std::string(e.what())).c_str());
 		this->m_machine = new machine_t{};
-		this->m_binary = nullptr;
 		return;
 	}
 
@@ -513,16 +511,6 @@ void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r
 		r_return_value = self->vmcall_internal(address, p_arguments, p_argcount);
 	}
 	r_call_error.error = GDEXTENSION_CALL_OK;
-}
-
-void Sandbox::print(std::string_view text) {
-	String str(static_cast<std::string>(text).c_str());
-	if (this->m_last_newline) {
-		UtilityFunctions::print("[", get_name(), "] says: ", str);
-	} else {
-		UtilityFunctions::print(str);
-	}
-	this->m_last_newline = (text.back() == '\n');
 }
 
 gaddr_t Sandbox::cached_address_of(int64_t hash, const String &function) const {

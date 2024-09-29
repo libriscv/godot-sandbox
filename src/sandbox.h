@@ -307,7 +307,6 @@ public:
 	void resume(uint64_t max_instructions);
 
 	void assault(const String &test, int64_t iterations);
-	void print(std::string_view text);
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc);
 	machine_t &machine() { return *m_machine; }
 	const machine_t &machine() const { return *m_machine; }
@@ -322,27 +321,15 @@ private:
 	GuestVariant *setup_arguments(gaddr_t &sp, const Variant **args, int argc);
 	void setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, const Variant **args, int argc);
 
-	Ref<ELFScript> m_program_data;
 	machine_t *m_machine = nullptr;
 	godot::Node *m_tree_base = nullptr;
-	const PackedByteArray *m_binary = nullptr;
 	uint32_t m_max_refs = MAX_REFS;
 	uint32_t m_memory_max = MAX_VMEM;
 	int64_t m_insn_max = MAX_INSTRUCTIONS;
 
-	std::unordered_set<godot::Object *> m_allowed_objects;
-	godot::HashSet<String> m_allowed_classes;
-	mutable std::unordered_map<int64_t, gaddr_t> m_lookup;
-
-	bool m_last_newline = false;
-	uint8_t m_throttled = 0;
 	uint8_t m_level = 1; // Current call level (0 is for initialization)
+	uint8_t m_throttled = 0;
 	bool m_use_unboxed_arguments = false;
-
-	// Stats
-	unsigned m_timeouts = 0;
-	unsigned m_exceptions = 0;
-	unsigned m_calls_made = 0;
 
 	CurrentState *m_current_state = nullptr;
 	// State stack, with the permanent (initial) state at index 0.
@@ -352,6 +339,18 @@ private:
 
 	// Properties
 	mutable std::vector<SandboxProperty> m_properties;
+	mutable std::unordered_map<int64_t, gaddr_t> m_lookup;
+
+	// Restrictions
+	std::unordered_set<godot::Object *> m_allowed_objects;
+	godot::HashSet<String> m_allowed_classes;
+
+	Ref<ELFScript> m_program_data;
+
+	// Stats
+	unsigned m_timeouts = 0;
+	unsigned m_exceptions = 0;
+	unsigned m_calls_made = 0;
 
 	// Global statistics
 	static inline uint64_t m_global_timeouts = 0;
