@@ -260,6 +260,11 @@ public:
 	std::vector<SandboxProperty> &get_properties() { return m_properties; }
 	const std::vector<SandboxProperty> &get_properties() const { return m_properties; }
 
+	/// @brief Get the list of sandbox properties as a dictionary.
+	/// @note These are unrelated to SandboxProperty objects. It's all the properties that are exposed to the Godot editor.
+	/// @return The dictionary of sandbox properties.
+	std::vector<PropertyInfo> create_sandbox_property_list() const;
+
 	// -= Program management & public functions =-
 
 	/// @brief Check if a program has been loaded into the sandbox.
@@ -344,6 +349,12 @@ private:
 	// Restrictions
 	std::unordered_set<godot::Object *> m_allowed_objects;
 	godot::HashSet<String> m_allowed_classes;
+	// If an object is not in the allowed list, and a callable is set for the
+	// just-in-time allowed objects, it will be called to check if the object is allowed.
+	Callable m_just_in_time_allowed_objects;
+	// If a class is not in the allowed list, and a callable is set for the
+	// just-in-time allowed classes, it will be called to check if the class is allowed.
+	Callable m_just_in_time_allowed_classes;
 
 	Ref<ELFScript> m_program_data;
 

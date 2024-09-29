@@ -37,7 +37,6 @@ class ELFScriptInstance : public ScriptInstanceExtension {
 	bool auto_created_sandbox = false;
 
 	void update_methods() const;
-	static void convert_prop(const PropertyInfo &p_src, GDExtensionPropertyInfo &p_dst);
 
 	// Retrieve the sandbox and whether it was created automatically or not
 	std::tuple<Sandbox *, bool> get_sandbox() const;

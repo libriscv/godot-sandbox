@@ -225,7 +225,7 @@ const GDExtensionMethodInfo *ELFScriptInstance::get_method_list(uint32_t *r_coun
 }
 
 const GDExtensionPropertyInfo *ELFScriptInstance::get_property_list(uint32_t *r_count) const {
-	auto [sandbox, created] = get_sandbox();
+	auto [sandbox, auto_created] = get_sandbox();
 	if (!sandbox) {
 		if constexpr (VERBOSE_LOGGING) {
 			printf("ELFScriptInstance::get_property_list: no sandbox\n");
@@ -234,20 +234,44 @@ const GDExtensionPropertyInfo *ELFScriptInstance::get_property_list(uint32_t *r_
 		return nullptr;
 	}
 
+	std::vector<PropertyInfo> prop_list;
+	if (auto_created) {
+		// This is a shared Sandbox instance that won't be able to show any properties
+		// in the editor, unless we expose them here.
+		prop_list = sandbox->create_sandbox_property_list();
+	}
+
+	// Sandboxed properties
 	const std::vector<SandboxProperty> &properties = sandbox->get_properties();
-	*r_count = properties.size();
-	GDExtensionPropertyInfo *list = memnew_arr(GDExtensionPropertyInfo, properties.size());
+
+	*r_count = properties.size() + prop_list.size();
+	GDExtensionPropertyInfo *list = memnew_arr(GDExtensionPropertyInfo, *r_count);
 	const GDExtensionPropertyInfo *list_ptr = list;
 
 	for (const SandboxProperty &property : properties) {
 		if constexpr (VERBOSE_LOGGING) {
 			printf("ELFScriptInstance::get_property_list %s\n", property.name().utf8().ptr());
+			fflush(stdout);
 		}
 		list->name = stringname_alloc(property.name());
 		list->class_name = stringname_alloc("Variant");
 		list->type = (GDExtensionVariantType)property.type();
 		list->hint = 0;
 		list->hint_string = string_alloc("");
+		list->usage = PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_SCRIPT_VARIABLE;
+		list++;
+	}
+	for (int i = 0; i < prop_list.size(); i++) {
+		const PropertyInfo &prop = prop_list[i];
+		if constexpr (VERBOSE_LOGGING) {
+			printf("ELFScriptInstance::get_property_list %s\n", String(prop.name).utf8().ptr());
+			fflush(stdout);
+		}
+		list->name = stringname_alloc(prop.name);
+		list->class_name = stringname_alloc(prop.class_name);
+		list->type = (GDExtensionVariantType) int(prop.type);
+		list->hint = prop.hint;
+		list->hint_string = string_alloc(prop.hint_string);
 		list->usage = PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_SCRIPT_VARIABLE;
 		list++;
 	}
