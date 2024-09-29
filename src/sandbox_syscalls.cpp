@@ -326,6 +326,20 @@ APICALL(api_vcreate) {
 			vp->type = type;
 			vp->v.i = idx;
 		} break;
+		case Variant::PACKED_STRING_ARRAY: {
+			PackedStringArray a;
+			if (gdata != 0x0) {
+				// Copy std::vector<String> from guest memory.
+				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				GuestStdString *str_array = gvec->view_as<GuestStdString>(machine);
+				for (size_t i = 0; i < gvec->size_bytes() / sizeof(GuestStdString); i++) {
+					a.push_back(str_array[i].to_godot_string(machine));
+				}
+			}
+			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
+			vp->type = type;
+			vp->v.i = idx;
+		} break;
 		default:
 			ERR_PRINT("Unsupported Variant type for Variant::create()");
 			throw std::runtime_error("Unsupported Variant type for Variant::create()");
@@ -414,6 +428,16 @@ APICALL(api_vfetch) {
 				auto arr = var.operator PackedColorArray();
 				auto [sptr, saddr] = gvec->alloc<Color>(machine, arr.size());
 				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(Color));
+				break;
+			}
+			case Variant::PACKED_STRING_ARRAY: {
+				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				auto arr = var.operator PackedStringArray();
+				auto [sptr, saddr] = gvec->alloc<GuestStdString>(machine, arr.size());
+				for (unsigned i = 0; i < arr.size(); i++) {
+					auto u8str = arr[i].utf8();
+					sptr[i].set_string(machine, saddr + i * sizeof(GuestStdString), u8str.ptr(), u8str.length());
+				}
 				break;
 			}
 			default:
@@ -515,6 +539,16 @@ APICALL(api_vstore) {
 				auto *data = machine.memory.memarray<Color>(gdata, gsize);
 				arr.resize(gsize);
 				std::memcpy(arr.ptrw(), data, gsize * sizeof(Color));
+				break;
+			}
+			case Variant::PACKED_STRING_ARRAY: {
+				auto arr = var.operator PackedStringArray();
+				// Copy the array from guest memory into the Variant.
+				auto *data = machine.memory.memarray<GuestStdString>(gdata, gsize);
+				arr.resize(gsize);
+				for (unsigned i = 0; i < gsize; i++) {
+					arr.set(i, data[i].to_godot_string(machine));
+				}
 				break;
 			}
 			default:

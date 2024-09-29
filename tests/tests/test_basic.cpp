@@ -121,6 +121,9 @@ extern "C" Variant test_pa_vec3(PackedArray<Vector3> arr) {
 extern "C" Variant test_pa_color(PackedArray<Color> arr) {
 	return arr;
 }
+extern "C" Variant test_pa_string(PackedArray<std::string> arr) {
+	return arr;
+}
 
 extern "C" Variant test_create_pa_u8() {
 	PackedArray<uint8_t> arr({ 1, 2, 3, 4 });
@@ -152,6 +155,10 @@ extern "C" Variant test_create_pa_vec3() {
 }
 extern "C" Variant test_create_pa_color() {
 	PackedArray<Color> arr({ { 0, 0, 0, 0 }, { 1, 1, 1, 1 } });
+	return arr;
+}
+extern "C" Variant test_create_pa_string() {
+	PackedArray<std::string> arr({ "Hello", "from", "the", "other", "side" });
 	return arr;
 }
 
