@@ -35,7 +35,7 @@ static StringName *stringname_alloc(const String &p_str) {
 
 static GDExtensionPropertyInfo create_property_type(const Dictionary &p_src) {
 	GDExtensionPropertyInfo p_dst;
-	//p_dst.type = p_src["type"];
+	p_dst.type = (GDExtensionVariantType) int(p_src["type"]);
 	p_dst.name = stringname_alloc(p_src["name"]);
 	p_dst.class_name = stringname_alloc(p_src["class_name"]);
 	p_dst.hint = p_src["hint"];
