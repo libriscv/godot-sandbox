@@ -106,16 +106,18 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 	// This is used to expose the properties to the editor.
 
 	// Group for sandbox restrictions.
-	list.push_back(PropertyInfo(Variant::INT, "references_max", PROPERTY_HINT_NONE, "Maximum objects and variants referenced by a sandbox call"));
-	list.push_back(PropertyInfo(Variant::INT, "memory_max", PROPERTY_HINT_NONE, "Maximum memory (in MiB) used by the sandboxed program"));
-	list.push_back(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE, "Maximum millions of instructions executed before cancelling execution"));
-	list.push_back(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PROPERTY_HINT_NONE, "Use unboxed arguments for VM function calls"));
+	list.push_back(PropertyInfo(Variant::INT, "references_max", PROPERTY_HINT_NONE));
+	list.push_back(PropertyInfo(Variant::INT, "memory_max", PROPERTY_HINT_NONE));
+	list.push_back(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE));
+	list.push_back(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PROPERTY_HINT_NONE));
 
 	// Group for monitored Sandbox health.
-	list.push_back(PropertyInfo(Variant::INT, "monitor_heap_usage", PROPERTY_HINT_NONE, "Current arena usage"));
-	list.push_back(PropertyInfo(Variant::INT, "monitor_exceptions", PROPERTY_HINT_NONE, "Number of exceptions thrown"));
-	list.push_back(PropertyInfo(Variant::INT, "monitor_execution_timeouts", PROPERTY_HINT_NONE, "Number of execution timeouts"));
-	list.push_back(PropertyInfo(Variant::INT, "monitor_calls_made", PROPERTY_HINT_NONE, "Number of calls made"));
+	// Add the group name to the property name to group them in the editor.
+	list.push_back(PropertyInfo(Variant::NIL, "Monitoring", PROPERTY_HINT_NONE, "monitor_", PROPERTY_USAGE_GROUP | PROPERTY_USAGE_SCRIPT_VARIABLE));
+	list.push_back(PropertyInfo(Variant::INT, "monitor_heap_usage", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY | PROPERTY_USAGE_SCRIPT_VARIABLE));
+	list.push_back(PropertyInfo(Variant::INT, "monitor_exceptions", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY | PROPERTY_USAGE_SCRIPT_VARIABLE));
+	list.push_back(PropertyInfo(Variant::INT, "monitor_execution_timeouts", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY | PROPERTY_USAGE_SCRIPT_VARIABLE));
+	list.push_back(PropertyInfo(Variant::INT, "monitor_calls_made", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY | PROPERTY_USAGE_SCRIPT_VARIABLE));
 
 	return list;
 }

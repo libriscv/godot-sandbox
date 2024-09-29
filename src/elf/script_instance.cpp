@@ -272,7 +272,7 @@ const GDExtensionPropertyInfo *ELFScriptInstance::get_property_list(uint32_t *r_
 		list->type = (GDExtensionVariantType) int(prop.type);
 		list->hint = prop.hint;
 		list->hint_string = string_alloc(prop.hint_string);
-		list->usage = PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_SCRIPT_VARIABLE;
+		list->usage = prop.usage;
 		list++;
 	}
 
