@@ -234,12 +234,12 @@ const GDExtensionPropertyInfo *ELFScriptInstance::get_property_list(uint32_t *r_
 		return nullptr;
 	}
 
-	std::vector<SandboxProperty> &properties = sandbox->get_properties();
+	const std::vector<SandboxProperty> &properties = sandbox->get_properties();
 	*r_count = properties.size();
 	GDExtensionPropertyInfo *list = memnew_arr(GDExtensionPropertyInfo, properties.size());
 	const GDExtensionPropertyInfo *list_ptr = list;
 
-	for (SandboxProperty &property : properties) {
+	for (const SandboxProperty &property : properties) {
 		if constexpr (VERBOSE_LOGGING) {
 			printf("ELFScriptInstance::get_property_list %s\n", property.name().utf8().ptr());
 		}
