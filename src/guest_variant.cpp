@@ -41,72 +41,19 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 				throw std::runtime_error("GuestVariant::toVariant(): Object is not known/scoped");
 		}
 
-		case Variant::TRANSFORM2D:
-		case Variant::PLANE:
-		case Variant::QUATERNION:
-		case Variant::AABB:
-		case Variant::BASIS:
-		case Variant::TRANSFORM3D:
-		case Variant::PROJECTION:
-
-		case Variant::DICTIONARY:
-		case Variant::ARRAY:
-		case Variant::CALLABLE:
-		case Variant::STRING:
-		case Variant::STRING_NAME:
-		case Variant::NODE_PATH:
-		case Variant::PACKED_BYTE_ARRAY:
-		case Variant::PACKED_FLOAT32_ARRAY:
-		case Variant::PACKED_FLOAT64_ARRAY:
-		case Variant::PACKED_INT32_ARRAY:
-		case Variant::PACKED_INT64_ARRAY:
-		case Variant::PACKED_VECTOR2_ARRAY:
-		case Variant::PACKED_VECTOR3_ARRAY:
-		case Variant::PACKED_COLOR_ARRAY:
-		case Variant::PACKED_STRING_ARRAY: {
+		default:
 			if (std::optional<const Variant *> v = emu.get_scoped_variant(this->v.i)) {
 				return *v.value();
 			} else
 				throw std::runtime_error("GuestVariant::toVariant(): " + std::to_string(type) + " is not known/scoped");
-		}
-		default:
-			ERR_PRINT(("GuestVariant::toVariant(): Unsupported type: " + std::to_string(type)).c_str());
-			return Variant();
 	}
 }
 
 const Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
-	switch (type) {
-		case Variant::STRING:
-		case Variant::TRANSFORM2D:
-		case Variant::PLANE:
-		case Variant::QUATERNION:
-		case Variant::AABB:
-		case Variant::BASIS:
-		case Variant::TRANSFORM3D:
-		case Variant::PROJECTION:
-		case Variant::DICTIONARY:
-		case Variant::ARRAY:
-		case Variant::CALLABLE:
-		case Variant::STRING_NAME:
-		case Variant::NODE_PATH:
-		case Variant::PACKED_BYTE_ARRAY:
-		case Variant::PACKED_FLOAT32_ARRAY:
-		case Variant::PACKED_FLOAT64_ARRAY:
-		case Variant::PACKED_INT32_ARRAY:
-		case Variant::PACKED_INT64_ARRAY:
-		case Variant::PACKED_VECTOR2_ARRAY:
-		case Variant::PACKED_VECTOR3_ARRAY:
-		case Variant::PACKED_COLOR_ARRAY:
-		case Variant::PACKED_STRING_ARRAY: {
-			if (std::optional<const Variant *> v = emu.get_scoped_variant(this->v.i))
-				return v.value();
-			else
-				throw std::runtime_error("GuestVariant::toVariantPtr(): Callable is not known/scoped");
-		}
-		default:
-			throw std::runtime_error("Don't use toVariantPtr() on unsupported type: " + std::to_string(type));
-	}
+	if (std::optional<const Variant *> v = emu.get_scoped_variant(this->v.i))
+		return v.value();
+	else
+		throw std::runtime_error("GuestVariant::toVariantPtr(): Not known/scoped");
 }
 
 void GuestVariant::set_object(Sandbox &emu, godot::Object *obj) {
@@ -210,35 +157,11 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 			break;
 		}
 
-		case Variant::STRING:
-		case Variant::TRANSFORM2D:
-		case Variant::PLANE:
-		case Variant::QUATERNION:
-		case Variant::AABB:
-		case Variant::BASIS:
-		case Variant::TRANSFORM3D:
-		case Variant::PROJECTION:
-		case Variant::DICTIONARY:
-		case Variant::ARRAY:
-		case Variant::CALLABLE:
-		case Variant::STRING_NAME:
-		case Variant::NODE_PATH:
-		case Variant::PACKED_BYTE_ARRAY:
-		case Variant::PACKED_FLOAT32_ARRAY:
-		case Variant::PACKED_FLOAT64_ARRAY:
-		case Variant::PACKED_INT32_ARRAY:
-		case Variant::PACKED_INT64_ARRAY:
-		case Variant::PACKED_VECTOR2_ARRAY:
-		case Variant::PACKED_VECTOR3_ARRAY:
-		case Variant::PACKED_COLOR_ARRAY:
-		case Variant::PACKED_STRING_ARRAY: {
+		default: {
 			if (!implicit_trust)
 				throw std::runtime_error("GuestVariant::set(): Cannot set complex type without implicit trust");
 			this->v.i = emu.add_scoped_variant(&value);
-			break;
 		}
-		default:
-			ERR_PRINT(("SetVariant(): Unsupported type: " + std::to_string(value.get_type())).c_str());
 	}
 }
 
@@ -272,35 +195,11 @@ void GuestVariant::create(Sandbox &emu, Variant &&value) {
 			break;
 		}
 
-		case Variant::STRING:
-		case Variant::TRANSFORM2D:
-		case Variant::PLANE:
-		case Variant::QUATERNION:
-		case Variant::AABB:
-		case Variant::BASIS:
-		case Variant::TRANSFORM3D:
-		case Variant::PROJECTION:
-		case Variant::DICTIONARY:
-		case Variant::ARRAY:
-		case Variant::CALLABLE:
-		case Variant::STRING_NAME:
-		case Variant::NODE_PATH:
-		case Variant::PACKED_BYTE_ARRAY:
-		case Variant::PACKED_FLOAT32_ARRAY:
-		case Variant::PACKED_FLOAT64_ARRAY:
-		case Variant::PACKED_INT32_ARRAY:
-		case Variant::PACKED_INT64_ARRAY:
-		case Variant::PACKED_VECTOR2_ARRAY:
-		case Variant::PACKED_VECTOR3_ARRAY:
-		case Variant::PACKED_COLOR_ARRAY:
-		case Variant::PACKED_STRING_ARRAY: {
+		default: {
 			// Store the variant in the current state
 			unsigned int idx = emu.create_scoped_variant(std::move(value));
 			this->v.i = idx;
-			break;
 		}
-		default:
-			ERR_PRINT(("CreateVariant(): Unsupported type: " + std::to_string(value.get_type())).c_str());
 	}
 }
 

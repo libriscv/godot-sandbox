@@ -312,6 +312,13 @@ struct GuestVariant {
 inline bool GuestVariant::is_scoped_variant() const noexcept {
 	switch (type) {
 		case Variant::STRING:
+		case Variant::TRANSFORM2D:
+		case Variant::PLANE:
+		case Variant::QUATERNION:
+		case Variant::AABB:
+		case Variant::BASIS:
+		case Variant::TRANSFORM3D:
+		case Variant::PROJECTION:
 		case Variant::DICTIONARY:
 		case Variant::ARRAY:
 		case Variant::CALLABLE:
@@ -324,7 +331,8 @@ inline bool GuestVariant::is_scoped_variant() const noexcept {
 		case Variant::PACKED_INT64_ARRAY:
 		case Variant::PACKED_VECTOR2_ARRAY:
 		case Variant::PACKED_VECTOR3_ARRAY:
-		case Variant::PACKED_COLOR_ARRAY: {
+		case Variant::PACKED_COLOR_ARRAY:
+		case Variant::PACKED_STRING_ARRAY: {
 			return true;
 		}
 		case Variant::OBJECT: // Objects are raw pointers.
