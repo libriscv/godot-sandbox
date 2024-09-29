@@ -111,6 +111,8 @@ func test_types():
 	assert_same(s.vmcall("test_pa_vec3", pa_vec3_pp), pa_vec3_pp)
 	var pa_color_pp : PackedColorArray = [Color(0, 0, 0, 0), Color(1, 1, 1, 1)]
 	assert_same(s.vmcall("test_pa_color", pa_color_pp), pa_color_pp)
+	var pa_string_pp : PackedStringArray = ["Hello", "from", "the", "other", "side"]
+	assert_same(s.vmcall("test_pa_string", pa_string_pp), pa_string_pp)
 	# Packed arrays created in the guest
 	assert_eq(s.vmcall("test_create_pa_u8"), PackedByteArray([1, 2, 3, 4]))
 	assert_eq(s.vmcall("test_create_pa_f32"), PackedFloat32Array([1, 2, 3, 4]))
@@ -120,6 +122,7 @@ func test_types():
 	assert_eq(s.vmcall("test_create_pa_vec2"), PackedVector2Array([Vector2(1, 1), Vector2(2, 2), Vector2(3, 3)]))
 	assert_eq(s.vmcall("test_create_pa_vec3"), PackedVector3Array([Vector3(1, 1, 1), Vector3(2, 2, 2), Vector3(3, 3, 3)]))
 	assert_eq(s.vmcall("test_create_pa_color"), PackedColorArray([Color(0, 0, 0, 0), Color(1, 1, 1, 1)]))
+	assert_eq(s.vmcall("test_create_pa_string"), PackedStringArray(["Hello", "from", "the", "other", "side"]))
 
 	# Callables
 	var cb : Callable = Callable(callable_function)
@@ -184,6 +187,8 @@ func test_vmcallv():
 	assert_same(s.vmcallv("test_ping_pong", pa_vec3_pp), pa_vec3_pp)
 	var pca_pp : PackedColorArray = [Color(0, 0, 0, 0), Color(1, 1, 1, 1)]
 	assert_same(s.vmcallv("test_ping_pong", pca_pp), pca_pp)
+	var pa_string_pp : PackedStringArray = ["Hello", "from", "the", "other", "side"]
+	assert_same(s.vmcallv("test_ping_pong", pa_string_pp), pa_string_pp)
 
 	s.queue_free()
 

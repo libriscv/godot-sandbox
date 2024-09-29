@@ -54,6 +54,12 @@ PackedArray<Color>::PackedArray(const std::vector<Color> &data) {
 	sys_vcreate(&v, Variant::PACKED_COLOR_ARRAY, 0, &data);
 	this->m_idx = v.get_internal_index();
 }
+template <>
+PackedArray<std::string>::PackedArray(const std::vector<std::string> &data) {
+	Variant v;
+	sys_vcreate(&v, Variant::PACKED_STRING_ARRAY, 0, &data);
+	this->m_idx = v.get_internal_index();
+}
 
 template <>
 std::vector<uint8_t> PackedArray<uint8_t>::fetch() const {
@@ -103,6 +109,12 @@ std::vector<Color> PackedArray<Color>::fetch() const {
 	sys_vfetch(m_idx, &result, 0);
 	return result;
 }
+template <>
+std::vector<std::string> PackedArray<std::string>::fetch() const {
+	std::vector<std::string> result;
+	sys_vfetch(m_idx, &result, 0);
+	return result;
+}
 
 template <>
 void PackedArray<uint8_t>::store(const std::vector<uint8_t> &data) {
@@ -136,6 +148,10 @@ template <>
 void PackedArray<Color>::store(const std::vector<Color> &data) {
 	sys_vstore(m_idx, data.data(), data.size());
 }
+template <>
+void PackedArray<std::string>::store(const std::vector<std::string> &data) {
+	sys_vstore(m_idx, data.data(), data.size());
+}
 
 template <>
 void PackedArray<uint8_t>::store(const uint8_t *data, size_t size) {
@@ -167,5 +183,9 @@ void PackedArray<Vector3>::store(const Vector3 *data, size_t size) {
 }
 template <>
 void PackedArray<Color>::store(const Color *data, size_t size) {
+	sys_vstore(m_idx, data, size);
+}
+template <>
+void PackedArray<std::string>::store(const std::string *data, size_t size) {
 	sys_vstore(m_idx, data, size);
 }

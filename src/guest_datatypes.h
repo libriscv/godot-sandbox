@@ -181,6 +181,11 @@ struct GuestStdVector {
 	std::size_t capacity() const noexcept { return ptr_capacity - ptr_begin; }
 
 	template <typename T>
+	T *view_as(const machine_t &machine) const {
+		return machine.memory.memarray<T>(data(), size_bytes() / sizeof(T));
+	}
+
+	template <typename T>
 	std::vector<T> to_vector(const machine_t &machine) const {
 		if (size_bytes() > capacity())
 			throw std::runtime_error("Guest std::vector has size > capacity");

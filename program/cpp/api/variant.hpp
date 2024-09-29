@@ -141,6 +141,7 @@ struct Variant
 	Variant(const PackedArray<Vector2>&);
 	Variant(const PackedArray<Vector3>&);
 	Variant(const PackedArray<Color>&);
+	Variant(const PackedArray<std::string>&);
 
 	// Constructor specifically the STRING_NAME type
 	static Variant string_name(const std::string &name);
@@ -187,6 +188,8 @@ struct Variant
 	PackedArray<int64_t> as_int64_array() const;
 	PackedArray<Vector2> as_vector2_array() const;
 	PackedArray<Vector3> as_vector3_array() const;
+	PackedArray<Color> as_color_array() const;
+	PackedArray<std::string> as_string_array() const;
 
 	const Vector2 &v2() const;
 	Vector2 &v2();
@@ -367,6 +370,11 @@ inline Variant::Variant(const PackedArray<Vector3> &array)
 inline Variant::Variant(const PackedArray<Color> &array)
 {
 	m_type = PACKED_COLOR_ARRAY;
+	v.i = array.get_variant_index();
+}
+inline Variant::Variant(const PackedArray<std::string> &array)
+{
+	m_type = PACKED_STRING_ARRAY;
 	v.i = array.get_variant_index();
 }
 
@@ -638,6 +646,34 @@ inline PackedArray<int64_t> Variant::as_int64_array() const {
 		return PackedArray<int64_t>::from_index(v.i);
 	}
 	api_throw("std::bad_cast", "Failed to cast Variant to PackedInt64Array", this);
+}
+
+inline PackedArray<Vector2> Variant::as_vector2_array() const {
+	if (m_type == PACKED_VECTOR2_ARRAY) {
+		return PackedArray<Vector2>::from_index(v.i);
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedVector2Array", this);
+}
+
+inline PackedArray<Vector3> Variant::as_vector3_array() const {
+	if (m_type == PACKED_VECTOR3_ARRAY) {
+		return PackedArray<Vector3>::from_index(v.i);
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedVector3Array", this);
+}
+
+inline PackedArray<Color> Variant::as_color_array() const {
+	if (m_type == PACKED_COLOR_ARRAY) {
+		return PackedArray<Color>::from_index(v.i);
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedColorArray", this);
+}
+
+inline PackedArray<std::string> Variant::as_string_array() const {
+	if (m_type == PACKED_STRING_ARRAY) {
+		return PackedArray<std::string>::from_index(v.i);
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedStringArray", this);
 }
 
 inline Variant::Variant(const Variant &other)

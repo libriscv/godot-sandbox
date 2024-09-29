@@ -67,7 +67,7 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 			if (std::optional<const Variant *> v = emu.get_scoped_variant(this->v.i)) {
 				return *v.value();
 			} else
-				throw std::runtime_error("GuestVariant::toVariant(): Dictionary/Array/Callable is not known/scoped");
+				throw std::runtime_error("GuestVariant::toVariant(): " + std::to_string(type) + " is not known/scoped");
 		}
 		default:
 			ERR_PRINT(("GuestVariant::toVariant(): Unsupported type: " + std::to_string(type)).c_str());
@@ -230,7 +230,8 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 		case Variant::PACKED_INT64_ARRAY:
 		case Variant::PACKED_VECTOR2_ARRAY:
 		case Variant::PACKED_VECTOR3_ARRAY:
-		case Variant::PACKED_COLOR_ARRAY: {
+		case Variant::PACKED_COLOR_ARRAY:
+		case Variant::PACKED_STRING_ARRAY: {
 			if (!implicit_trust)
 				throw std::runtime_error("GuestVariant::set(): Cannot set complex type without implicit trust");
 			this->v.i = emu.add_scoped_variant(&value);
