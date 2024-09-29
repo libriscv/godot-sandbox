@@ -23,6 +23,12 @@
 <i>for the Godot game engine.</i>
 </p>
 
+<p align = "center">
+	<strong>
+		<a href="https://github.com/user-attachments/files/17091630/Introducing.the.New.Godot.Sandbox.odp">GodotCon 2024 Presentation</a>
+	</strong>
+</p>
+
 -----
 
 This extension exists to allow Godot creators to implement safe modding support, such that they can pass around programs built by other players, knowing that these programs cannot harm other players. All Godot platforms are supported.
