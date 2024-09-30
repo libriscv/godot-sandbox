@@ -1532,6 +1532,26 @@ APICALL(api_vec3_ops) {
 	}
 }
 
+APICALL(api_callable_create) {
+	auto [address, vargs] = machine.sysargs<gaddr_t, GuestVariant *>();
+	Sandbox &emu = riscv::emu(machine);
+
+	// Create a new callable object, using emu.vmcallable_address() to get the callable function.
+	Array arguments;
+	if (vargs->type == Variant::ARRAY) {
+		// The argument idx is a Variant of type Array.
+		arguments = vargs->toVariant(emu).operator Array();
+	} else if (vargs->type != Variant::NIL) {
+		// The argument idx is a Variant of another type.
+		arguments.push_back(vargs->toVariant(emu));
+	}
+	Callable callable = emu.vmcallable_address(address, std::move(arguments));
+
+	// Return the callable object to the guest.
+	auto idx = emu.create_scoped_variant(Variant(std::move(callable)));
+	machine.set_result(idx);
+}
+
 } //namespace riscv
 
 void Sandbox::initialize_syscalls() {
@@ -1606,5 +1626,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_LERP_OP64, api_lerp_op<double> },
 
 			{ ECALL_VEC3_OPS, api_vec3_ops },
+
+			{ ECALL_CALLABLE_CREATE, api_callable_create },
 	});
 }

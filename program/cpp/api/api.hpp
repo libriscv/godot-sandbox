@@ -3,6 +3,7 @@
 #include "node2d.hpp"
 #include "node3d.hpp"
 #include "array.hpp"
+#include "callable.hpp"
 #include "dictionary.hpp"
 #include "string.hpp"
 #include "syscalls_fwd.hpp"
