@@ -48,12 +48,15 @@ void Sandbox::handle_exception(gaddr_t address) {
 
 	// Attempt to print the source code line using addr2line from the C++ Docker container
 	// It's not unthinkable that this works for every ELF, regardless of the language
-	Array line_out;
-	String elfpath = get_program()->get_dockerized_program_path();
-	CPPScript::DockerContainerExecute({ "/usr/api/build.sh", "--line", to_hex(address), elfpath }, line_out, false);
-	if (line_out.size() > 0) {
-		const String line = String(line_out[0]).replace("\n", "").replace("/usr/src/", "res://");
-		UtilityFunctions::printerr("Exception in Sandbox function: ", line);
+	Ref<ELFScript> script = this->get_program();
+	if (!script.is_null()) {
+		Array line_out;
+		String elfpath = get_program()->get_dockerized_program_path();
+		CPPScript::DockerContainerExecute({ "/usr/api/build.sh", "--line", to_hex(address), elfpath }, line_out, false);
+		if (line_out.size() > 0) {
+			const String line = String(line_out[0]).replace("\n", "").replace("/usr/src/", "res://");
+			UtilityFunctions::printerr("Exception in Sandbox function: ", line);
+		}
 	}
 
 	if constexpr (VERBOSE_EXCEPTIONS) {

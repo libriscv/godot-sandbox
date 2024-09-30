@@ -24,6 +24,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
 	ClassDB::bind_method(D_METHOD("set_program", "program"), &Sandbox::set_program);
 	ClassDB::bind_method(D_METHOD("get_program"), &Sandbox::get_program);
+	ClassDB::bind_method(D_METHOD("load_buffer", "buffer"), &Sandbox::load_buffer);
 	{
 		MethodInfo mi;
 		mi.arguments.push_back(PropertyInfo(Variant::STRING, "function"));
@@ -123,6 +124,7 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 }
 
 Sandbox::Sandbox() {
+	this->m_tree_base = this;
 	this->m_use_unboxed_arguments = SandboxProjectSettings::use_native_types();
 	this->m_global_instance_count += 1;
 	// For each call state, reset the state
@@ -157,6 +159,10 @@ void Sandbox::set_program(Ref<ELFScript> program) {
 }
 Ref<ELFScript> Sandbox::get_program() {
 	return m_program_data;
+}
+void Sandbox::load_buffer(const PackedByteArray &buffer) {
+	this->m_program_data.unref();
+	this->load(&buffer);
 }
 bool Sandbox::has_program_loaded() const {
 	return !machine().memory.binary().empty();

@@ -277,6 +277,10 @@ public:
 	/// @return The program loaded into the sandbox.
 	Ref<ELFScript> get_program();
 
+	/// @brief Load a program from a buffer into the sandbox.
+	/// @param buffer The buffer containing the program.
+	void load_buffer(const PackedByteArray &buffer);
+
 	/// @brief Get the public functions available to call in the guest program.
 	/// @return Array of public callable functions.
 	PackedStringArray get_functions() const;
