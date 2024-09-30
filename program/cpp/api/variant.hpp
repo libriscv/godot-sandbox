@@ -25,7 +25,7 @@ struct is_u32string
 template<class T>
 struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
 
-struct Object; struct Node; struct Node2D; struct Node3D; struct Array; struct Dictionary; union String;
+struct Object; struct Node; struct Node2D; struct Node3D; struct Array; struct Dictionary; union String; struct Callable;
 #include "color.hpp"
 #include "packed_array.hpp"
 #include "vector.hpp"
@@ -129,6 +129,7 @@ struct Variant
 	Variant(const Array&);
 	Variant(const Dictionary&);
 	Variant(const String&);
+	Variant(const Callable&);
 	Variant(const Object&);
 	Variant(const Node&);
 	Variant(const Node2D&);
@@ -171,6 +172,7 @@ struct Variant
 	operator String() const;
 	operator Array() const;
 	operator Dictionary() const;
+	operator Callable() const;
 
 	Object as_object() const;
 	Node as_node() const;
@@ -179,6 +181,7 @@ struct Variant
 	Array as_array() const;
 	Dictionary as_dictionary() const;
 	String as_string() const;
+	Callable as_callable() const;
 	std::string as_std_string() const;
 	std::u32string as_std_u32string() const;
 	PackedArray<uint8_t> as_byte_array() const;

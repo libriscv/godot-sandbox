@@ -93,8 +93,18 @@ extern "C" Variant test_object(Object arg) {
 	return arg;
 }
 
-extern "C" Variant test_callable(Variant callable) {
+extern "C" Variant test_callable(Callable callable) {
 	return callable.call(1, 2, "3");
+}
+
+extern "C" Variant test_create_callable() {
+	Array array;
+	array.push_back(1);
+	array.push_back(2);
+	array.push_back("3");
+	return Callable::Create<Variant(Array, int, int, String)>([](Array array, int a, int b, String c) -> Variant {
+		return a + b + std::stoi(c.utf8()) + int(array[0]) + int(array[1]) + std::stoi(array[2].as_string().utf8());
+	}, array);
 }
 
 extern "C" Variant test_pa_u8(PackedArray<uint8_t> arr) {

@@ -8,6 +8,7 @@ struct Variant;
 
 EXTERN_SYSCALL(void, sys_print, const Variant *, size_t);
 EXTERN_SYSCALL(void, sys_throw, const char *, size_t, const char *, size_t, const Variant *);
+EXTERN_SYSCALL(unsigned, sys_callable_create, void (*)(), const Variant *, const void *, size_t);
 
 inline __attribute__((noreturn)) void api_throw(std::string_view type, std::string_view msg, const Variant *srcVar = nullptr) {
 	sys_throw(type.data(), type.size(), msg.data(), msg.size(), srcVar);

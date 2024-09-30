@@ -127,9 +127,10 @@ func test_types():
 
 	# Callables
 	var cb : Callable = Callable(callable_function)
-	assert_same(s.vmcall("test_ping_pong", cb), cb, "Returned Callable was same")
 	s.vmcall("test_callable", Callable(callable_callee))
 	assert_eq(callable_was_called, true, "Callable was called")
+	cb = s.vmcall("test_create_callable")
+	assert_eq(cb.call(1, 2, "3"), 6, "Returned Callable was same")
 
 	# Verify that a basic function that returns a String works
 	assert_eq(s.has_function("public_function"), true)
@@ -177,6 +178,8 @@ func test_vmcallv():
 	assert_same(s.vmcallv("test_ping_pong", Quaternion(1, 2, 3, 4)), Quaternion(1, 2, 3, 4)) # Quat
 	assert_same(s.vmcallv("test_ping_pong", Basis(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9))), Basis(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9))) # Basis
 	assert_same(s.vmcallv("test_ping_pong", RID()), RID()) # RID
+	var cb : Callable = Callable(callable_function)
+	assert_same(s.vmcallv("test_ping_pong", cb), cb, "Returned Callable was same")
 
 	# Packed arrays
 	var pba_pp : PackedByteArray = [1, 2, 3, 4]

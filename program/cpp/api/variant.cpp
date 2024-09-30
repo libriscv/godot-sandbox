@@ -1,6 +1,7 @@
 #include "variant.hpp"
 
 #include "syscalls.h"
+#include "callable.hpp"
 
 MAKE_SYSCALL(ECALL_VCALL, void, sys_vcall, Variant *, const char *, size_t, const Variant *, size_t, Variant &);
 MAKE_SYSCALL(ECALL_VEVAL, bool, sys_veval, int, const Variant *, const Variant *, Variant *);
@@ -10,6 +11,8 @@ MAKE_SYSCALL(ECALL_VCREATE, void, sys_vcreate, Variant *, int, int, const void *
 MAKE_SYSCALL(ECALL_VFETCH, void, sys_vfetch, unsigned, void *, int);
 MAKE_SYSCALL(ECALL_VCLONE, void, sys_vclone, const Variant *, Variant *);
 MAKE_SYSCALL(ECALL_VSTORE, void, sys_vstore, Variant *, const void *, size_t);
+
+MAKE_SYSCALL(ECALL_CALLABLE_CREATE, unsigned, sys_callable_create, void (*)(), const Variant *, const void *, size_t);
 
 Variant Variant::new_array() {
 	Variant v;
