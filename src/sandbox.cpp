@@ -206,6 +206,9 @@ void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		machine_t &m = machine();
 
 		m.set_userdata(this);
+		m.set_printer([](const machine_t &m, const char *str, size_t len) {
+			UtilityFunctions::print(String::utf8(str, len));
+		});
 		this->m_current_state = &this->m_states[0]; // Set the current state to the first state
 
 		this->initialize_syscalls();
