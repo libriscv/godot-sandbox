@@ -733,6 +733,11 @@ inline bool Variant::operator<(const Variant &other) const {
 
 template <typename... Args>
 inline Variant Variant::method_call(std::string_view method, Args&&... args) {
+	if constexpr (sizeof...(args) == 0) {
+		Variant result;
+		callp(method, nullptr, 0, result);
+		return result;
+	}
 	std::array<Variant, sizeof...(args)> vargs = { args... };
 	Variant result;
 	callp(method, vargs.data(), vargs.size(), result);
