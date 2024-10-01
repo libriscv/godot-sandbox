@@ -15,11 +15,12 @@ locally=false
 verbose=false
 current_version=7
 CPPFLAGS="-O2 -std=gnu++23 -DVERSION=$current_version -fno-stack-protector -fno-threadsafe-statics"
+ADDR2LINE="riscv64-linux-gnu-addr2line"
 
 while [[ "$#" -gt 0 ]]; do
 	case $1 in
 		--api) cp -r /usr/api $1; exit ;;
-		--line) shift; addr="$1"; shift; binary="$1"; shift; addr2line -C -f -e $binary $addr; exit ;;
+		--line) shift; addr="$1"; shift; binary="$1"; shift; $ADDR2LINE -C -f -e $binary $addr; exit ;;
 		-o) shift; output="$1"; shift; break ;;
 		--debug) CPPFLAGS="$CPPFLAGS -g"; shift ;;
 		--local) locally=true; shift ;;
