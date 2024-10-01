@@ -1524,6 +1524,10 @@ APICALL(api_vec3_ops) {
 			//printf("Distance squared: %f\n", float(dx * dx + dy * dy + dz * dz));
 			break;
 		}
+		case Vec3_Op::FLOOR: {
+			machine.set_result(floorf(v->x), floorf(v->y), floorf(v->z));
+			break;
+		}
 		default:
 			ERR_PRINT("Invalid Vec3 operation");
 			throw std::runtime_error("Invalid Vec3 operation");

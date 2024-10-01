@@ -203,4 +203,5 @@ enum class Vec3_Op {
 	PROJECT,
 	REFLECT,
 	ROTATED,
+	FLOOR,
 };
