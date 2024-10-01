@@ -4,6 +4,8 @@
 
 struct Callable {
 	constexpr Callable() {}
+	template <typename F>
+	Callable(F *f, const Variant &args = Nil);
 
 	/// @brief Create a callable from a function pointer, which always returns a Variant.
 	/// @tparam F The function type.
@@ -62,4 +64,9 @@ inline Callable Callable::Create(F *f, const Variant &args) {
 	unsigned idx = sys_callable_create((void (*)())f, &args, nullptr, 0);
 
 	return Callable::from_variant_index(idx);
+}
+
+template <typename F>
+inline Callable::Callable(F *f, const Variant &args)
+	: m_idx(sys_callable_create((void (*)())f, &args, nullptr, 0)) {
 }

@@ -13,6 +13,12 @@ PackedArray<uint8_t>::PackedArray(const std::vector<uint8_t> &data) {
 	this->m_idx = v.get_internal_index();
 }
 template <>
+PackedArray<uint8_t>::PackedArray(const uint8_t *data, size_t size) {
+	Variant v;
+	sys_vcreate(&v, Variant::PACKED_BYTE_ARRAY, size, data);
+	this->m_idx = v.get_internal_index();
+}
+template <>
 PackedArray<int32_t>::PackedArray(const std::vector<int32_t> &data) {
 	Variant v;
 	sys_vcreate(&v, Variant::PACKED_INT32_ARRAY, 0, &data);

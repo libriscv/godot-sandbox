@@ -27,6 +27,11 @@ struct PackedArray {
 	/// @param data The initial data.
 	PackedArray(const std::vector<T> &data);
 
+	/// @brief Create a PackedArray from an array of data.
+	/// @param data The initial data.
+	/// @param size The size of the data in elements.
+	PackedArray(const T *data, size_t size);
+
 	/// @brief Retrieve the host-side array data.
 	/// @return std::vector<T> The host-side array data.
 	std::vector<T> fetch() const;
