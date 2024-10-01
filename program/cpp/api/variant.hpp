@@ -224,9 +224,13 @@ struct Variant
 	operator Color() const { return color(); }
 
 	void callp(std::string_view method, const Variant *args, int argcount, Variant &r_ret);
+	void voidcallp(std::string_view method, const Variant *args, int argcount);
 
 	template <typename... Args>
 	Variant method_call(std::string_view method, Args&&... args);
+
+	template <typename... Args>
+	void void_method(std::string_view method, Args&&... args);
 
 	template <typename... Args>
 	Variant call(Args... args);
@@ -745,6 +749,16 @@ inline Variant Variant::method_call(std::string_view method, Args&&... args) {
 }
 
 template <typename... Args>
+inline void Variant::void_method(std::string_view method, Args&&... args) {
+	if constexpr (sizeof...(args) == 0) {
+		voidcallp(method, nullptr, 0);
+		return;
+	}
+	std::array<Variant, sizeof...(args)> vargs = { args... };
+	voidcallp(method, vargs.data(), vargs.size());
+}
+
+template <typename... Args>
 inline Variant Variant::call(Args... args) {
 	std::array<Variant, sizeof...(args)> vargs = { args... };
 	Variant result;
@@ -772,6 +786,23 @@ inline void Variant::callp(std::string_view method, const Variant *args, int arg
 	asm volatile(
 		"ecall"
 		: "=m"(*ret_ptr)
+		: "r"(object), "m"(*object), "r"(method_ptr), "r"(method_size), "m"(*method_ptr), "r"(args_ptr), "r"(argcount_reg), "r"(ret_ptr), "m"(*args_ptr), "r"(syscall_number)
+	);
+}
+
+inline void Variant::voidcallp(std::string_view method, const Variant *args, int argcount) {
+	static constexpr int ECALL_VCALL = 501; // Call a method on a Variant
+	register const Variant *object asm("a0") = this;
+	register const char *method_ptr asm("a1") = method.begin();
+	register size_t method_size asm("a2") = method.size();
+	register const Variant *args_ptr asm("a3") = args;
+	register size_t argcount_reg asm("a4") = argcount;
+	register Variant *ret_ptr asm("a5") = nullptr;
+	register int syscall_number asm("a7") = ECALL_VCALL;
+
+	asm volatile(
+		"ecall"
+		: /* no outputs */
 		: "r"(object), "m"(*object), "r"(method_ptr), "r"(method_size), "m"(*method_ptr), "r"(args_ptr), "r"(argcount_reg), "r"(ret_ptr), "m"(*args_ptr), "r"(syscall_number)
 	);
 }

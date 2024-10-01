@@ -203,6 +203,14 @@ extern "C" Variant call_method(Variant v, Variant vmethod, Variant vargs) {
 	return ret;
 }
 
+extern "C" Variant voidcall_method(Variant v, Variant vmethod, Variant vargs) {
+	std::string method = vmethod.as_std_string();
+	Array args_array = vargs.as_array();
+	std::vector<Variant> args = args_array.to_vector();
+	v.voidcallp(method, args.data(), args.size());
+	return Nil;
+}
+
 extern "C" Variant access_a_parent(Node n) {
 	Node p = n.get_parent();
 	return Nil;

@@ -92,7 +92,7 @@ APICALL(api_print) {
 }
 
 APICALL(api_vcall) {
-	auto [vp, method, mlen, args_ptr, args_size, vret] = machine.sysargs<GuestVariant *, gaddr_t, unsigned, gaddr_t, gaddr_t, GuestVariant *>();
+	auto [vp, method, mlen, args_ptr, args_size, vret_addr] = machine.sysargs<GuestVariant *, gaddr_t, unsigned, gaddr_t, gaddr_t, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
 
 	if (args_size > 8) {
@@ -139,7 +139,10 @@ APICALL(api_vcall) {
 		}
 	}
 	// Create a new Variant with the result, if any.
-	vret->create(emu, std::move(ret));
+	if (vret_addr != 0) {
+		GuestVariant *vret = machine.memory.memarray<GuestVariant>(vret_addr, 1);
+		vret->create(emu, std::move(ret));
+	}
 }
 
 APICALL(api_veval) {

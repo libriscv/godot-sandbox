@@ -302,6 +302,17 @@ func test_indirect_methods():
 	var str : String = "Hello from the other side"
 	var expected : PackedStringArray = ["Hello", "from", "the", "other", "side"]
 	assert_eq(s.vmcallv("call_method", str, "split", [" "]), expected)
+
+	# Calls that don't return a value
+	var d : Dictionary
+	d["1"] = "1"
+	d["2"] = "2"
+	d["3"] = "3"
+	var d_expected : Dictionary
+	# Clear the dictionary using voidcall "clear" on the dictionary
+	s.vmcallv("voidcall_method", d, "clear", [])
+	assert_eq_deep(d, d_expected)
+
 	s.queue_free()
 
 
