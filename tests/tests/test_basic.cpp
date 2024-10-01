@@ -97,6 +97,7 @@ extern "C" Variant test_callable(Callable callable) {
 	return callable.call(1, 2, "3");
 }
 
+// clang-format off
 extern "C" Variant test_create_callable() {
 	Array array;
 	array.push_back(1);
@@ -106,6 +107,7 @@ extern "C" Variant test_create_callable() {
 		return a + b + std::stoi(c.utf8()) + int(array[0]) + int(array[1]) + std::stoi(array[2].as_string().utf8());
 	}, array);
 }
+// clang-format on
 
 extern "C" Variant test_pa_u8(PackedArray<uint8_t> arr) {
 	return arr;

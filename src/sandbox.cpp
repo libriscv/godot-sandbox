@@ -104,7 +104,7 @@ void Sandbox::_bind_methods() {
 std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 	std::vector<PropertyInfo> list;
 	// Create a list of properties for the Sandbox class only.
-	// This is used to expose the properties to the editor.
+	// This is used to expose the basic properties to the editor.
 
 	// Group for sandbox restrictions.
 	list.push_back(PropertyInfo(Variant::INT, "references_max", PROPERTY_HINT_NONE));
@@ -150,8 +150,9 @@ Sandbox::~Sandbox() {
 }
 
 void Sandbox::set_program(Ref<ELFScript> program) {
-	m_program_data = program;
-	if (m_program_data.is_null()) {
+	this->m_program_data = program;
+	this->m_program_bytes = {};
+	if (this->m_program_data.is_null()) {
 		// TODO unload program
 		return;
 	}
@@ -162,7 +163,8 @@ Ref<ELFScript> Sandbox::get_program() {
 }
 void Sandbox::load_buffer(const PackedByteArray &buffer) {
 	this->m_program_data.unref();
-	this->load(&buffer);
+	this->m_program_bytes = buffer;
+	this->load(&this->m_program_bytes);
 }
 bool Sandbox::has_program_loaded() const {
 	return !machine().memory.binary().empty();
