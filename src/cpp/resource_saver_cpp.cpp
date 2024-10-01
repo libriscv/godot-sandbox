@@ -45,7 +45,15 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 			auto builder = [inpname = std::move(inpname), outname = std::move(outname)] {
 				// Invoke docker to compile the file
 				Array output;
-				CPPScript::DockerContainerExecute({ "/usr/api/build.sh", "-o", outname, inpname }, output);
+				PackedStringArray arguments;
+				arguments.push_back("/usr/api/build.sh");
+				if (SandboxProjectSettings::debug_info())
+					arguments.push_back("--debug");
+				arguments.push_back("-o");
+				arguments.push_back(outname);
+				arguments.push_back(inpname);
+				// CPPScript::DockerContainerExecute({ "/usr/api/build.sh", "-o", outname, inpname }, output);
+				CPPScript::DockerContainerExecute(arguments, output);
 				if (!output.is_empty() && !output[0].operator String().is_empty()) {
 					for (int i = 0; i < output.size(); i++) {
 						String line = output[i].operator String();

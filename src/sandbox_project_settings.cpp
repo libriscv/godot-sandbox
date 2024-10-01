@@ -9,6 +9,8 @@ static constexpr char DOCKER_PATH[] = "editor/script/docker";
 static constexpr char DOCKER_PATH_HINT[] = "Path to the Docker executable";
 static constexpr char NATIVE_TYPES[] = "editor/script/unboxed_types_for_sandbox_arguments";
 static constexpr char NATIVE_TYPES_HINT[] = "Use native types and classes instead of Variants in Sandbox functions where possible";
+static constexpr char DEBUG_INFO[] = "editor/script/debug_info";
+static constexpr char DEBUG_INFO_HINT[] = "Enable debug information when building ELF files";
 
 static void register_setting(
 		const String &p_name,
@@ -56,6 +58,7 @@ void SandboxProjectSettings::register_settings() {
 	register_setting_plain(DOCKER_PATH, "docker", DOCKER_PATH_HINT, true);
 #endif
 	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
+	register_setting_plain(DEBUG_INFO, false, DEBUG_INFO_HINT, false);
 }
 
 template <typename TType>
@@ -76,4 +79,8 @@ String SandboxProjectSettings::get_docker_path() {
 
 bool SandboxProjectSettings::use_native_types() {
 	return get_setting<bool>(NATIVE_TYPES);
+}
+
+bool SandboxProjectSettings::debug_info() {
+	return get_setting<bool>(DEBUG_INFO);
 }
