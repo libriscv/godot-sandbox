@@ -10,7 +10,7 @@ struct Callable {
 	/// @param f The function pointer.
 	/// @param args The arguments to pass to the function.
 	template <typename F>
-	static Callable Create(const F *f, const Variant &args = Nil);
+	static Callable Create(F *f, const Variant &args = Nil);
 
 	/// @brief Call the function with the given arguments.
 	/// @tparam Args The argument types.
@@ -58,7 +58,7 @@ inline Variant Callable::call(Args&&... args) {
 }
 
 template <typename F>
-inline Callable Callable::Create(const F *f, const Variant &args) {
+inline Callable Callable::Create(F *f, const Variant &args) {
 	unsigned idx = sys_callable_create((void (*)())f, &args, nullptr, 0);
 
 	return Callable::from_variant_index(idx);
