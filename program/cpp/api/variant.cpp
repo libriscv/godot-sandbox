@@ -1,7 +1,7 @@
 #include "variant.hpp"
 
-#include "syscalls.h"
 #include "callable.hpp"
+#include "syscalls.h"
 
 MAKE_SYSCALL(ECALL_VCALL, void, sys_vcall, Variant *, const char *, size_t, const Variant *, size_t, Variant &);
 MAKE_SYSCALL(ECALL_VEVAL, bool, sys_veval, int, const Variant *, const Variant *, Variant *);

@@ -361,6 +361,7 @@ private:
 	Callable m_just_in_time_allowed_classes;
 
 	Ref<ELFScript> m_program_data;
+	PackedByteArray m_program_bytes;
 
 	// Stats
 	unsigned m_timeouts = 0;
