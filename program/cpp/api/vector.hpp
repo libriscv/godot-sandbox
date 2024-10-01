@@ -173,6 +173,7 @@ struct Vector3 {
 	float distance_to(const Vector3& other) const noexcept;
 	float distance_squared_to(const Vector3& other) const noexcept;
 	Vector3 direction_to(const Vector3& other) const noexcept;
+	Vector3 floor() const noexcept;
 
 	template <typename... Args>
 	Variant operator () (std::string_view method, Args&&... args);
@@ -592,6 +593,19 @@ inline Vector2 Vector2::sincos(float angle) noexcept {
 inline Vector2 Vector2::from_angle(float angle) noexcept {
 	Vector2 v = sincos(angle);
 	return {v.y, v.x}; // (cos(angle), sin(angle))
+}
+inline Vector3 Vector3::floor() const noexcept {
+	register const Vector3 *vptr asm("a0") = this;
+	register float resultX asm("fa0");
+	register float resultY asm("fa1");
+	register float resultZ asm("fa2");
+	register int op asm("a2") = 11; // Vec3_Op::FLOOR
+	register int syscall asm("a7") = 537; // ECALL_VEC3_OPS
+
+	__asm__ volatile("ecall"
+					 : "=f"(resultX), "=f"(resultY), "=f"(resultZ)
+					 : "r"(op), "r"(vptr), "m"(*vptr), "r"(syscall));
+	return {resultX, resultY, resultZ};
 }
 
 namespace std

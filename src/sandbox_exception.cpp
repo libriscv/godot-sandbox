@@ -46,6 +46,7 @@ void Sandbox::handle_exception(gaddr_t address) {
 		ERR_PRINT(("Exception: " + std::string(e.what())).c_str());
 	}
 
+#ifdef __linux__
 	// Attempt to print the source code line using addr2line from the C++ Docker container
 	// It's not unthinkable that this works for every ELF, regardless of the language
 	Ref<ELFScript> script = this->get_program();
@@ -58,6 +59,7 @@ void Sandbox::handle_exception(gaddr_t address) {
 			UtilityFunctions::printerr("Exception in Sandbox function: ", line);
 		}
 	}
+#endif
 
 	if constexpr (VERBOSE_EXCEPTIONS) {
 		UtilityFunctions::print(
