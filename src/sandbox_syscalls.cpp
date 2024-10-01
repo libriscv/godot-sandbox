@@ -93,8 +93,6 @@ APICALL(api_print) {
 
 APICALL(api_vcall) {
 	auto [vp, method, mlen, args_ptr, args_size, vret] = machine.sysargs<GuestVariant *, gaddr_t, unsigned, gaddr_t, gaddr_t, GuestVariant *>();
-	(void)mlen;
-
 	Sandbox &emu = riscv::emu(machine);
 
 	if (args_size > 8) {
@@ -103,12 +101,12 @@ APICALL(api_vcall) {
 	}
 
 	const GuestVariant *args = machine.memory.memarray<GuestVariant>(args_ptr, args_size);
-	Variant vmethod;
+	StringName method_sn;
 	std::string_view method_sv = machine.memory.rvview(method, mlen + 1); // Include null terminator.
 	if (method_sv.back() == '\0') {
-		vmethod = Variant(StringName(method_sv.data()));
+		method_sn = StringName(method_sv.data());
 	} else {
-		vmethod = Variant(String::utf8(method_sv.data(), mlen));
+		method_sn = String::utf8(method_sv.data(), mlen);
 	}
 
 	Variant ret;
@@ -116,7 +114,7 @@ APICALL(api_vcall) {
 	if (vp->type == Variant::OBJECT) {
 		godot::Object *obj = get_object_from_address(emu, vp->v.i);
 
-		ret = object_call(emu, obj, vmethod, args, args_size);
+		ret = object_call(emu, obj, method_sn, args, args_size);
 	} else {
 		std::array<Variant, 8> vargs;
 		std::array<const Variant *, 8> argptrs;
@@ -129,16 +127,16 @@ APICALL(api_vcall) {
 			}
 		}
 
-		Variant helper;
-		Variant *vcall;
-		if (vp->is_scoped_variant()) {
-			vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
-		} else {
-			helper = vp->toVariant(emu);
-			vcall = &helper;
-		}
 		GDExtensionCallError error;
-		vcall->callp(vmethod, argptrs.data(), args_size, ret, error);
+		if (vp->is_scoped_variant()) {
+			Variant *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
+			//internal::gdextension_interface_variant_call(vcall, &method_sn, reinterpret_cast<GDExtensionConstVariantPtr *>(&argptrs[0]), args_size, &ret, &error);
+			vcall->callp(method_sn, argptrs.data(), args_size, ret, error);
+		} else {
+			Variant vcall = vp->toVariant(emu);
+			//internal::gdextension_interface_variant_call(&vcall, &method_sn, reinterpret_cast<GDExtensionConstVariantPtr *>(&argptrs[0]), args_size, &ret, &error);
+			vcall.callp(method_sn, argptrs.data(), args_size, ret, error);
+		}
 	}
 	// Create a new Variant with the result, if any.
 	vret->create(emu, std::move(ret));
