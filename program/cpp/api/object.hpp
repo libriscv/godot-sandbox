@@ -1,5 +1,6 @@
 #pragma once
 #include "variant.hpp"
+#include "callable.hpp"
 #include "syscalls_fwd.hpp"
 
 struct Object {
@@ -59,6 +60,7 @@ struct Object {
 	// @param method The method to call when the signal is emitted.
 	void connect(Object target, const std::string &signal, std::string_view method);
 	void connect(const std::string &signal, std::string_view method);
+	void connect(const std::string &signal, Callable method);
 
 	// Disconnect a signal from a method on another object.
 	// @param signal The signal to disconnect.
@@ -172,4 +174,8 @@ inline void Object::voidcallv(std::string_view method, bool deferred, const Vari
 		: /* no outputs */
 		: "r"(object), "r"(method_ptr), "r"(method_size), "r"(deferred_flag), "r"(var_ptr), "r"(argv_ptr), "m"(*argv_ptr), "r"(argc_reg), "r"(syscall_number)
 	);
+}
+
+inline void Object::connect(const std::string &signal, Callable method) {
+	this->call("connect", signal, method);
 }
