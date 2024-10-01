@@ -678,12 +678,16 @@ void Sandbox::add_scoped_object(const void *ptr) {
 //-- Properties --//
 
 void Sandbox::read_program_properties(bool editor) const {
+	gaddr_t prop_addr = 0x0;
 	try {
 		// Properties is an array named properties, that ends with an invalid property
-		auto prop_addr = machine().address_of("properties");
+		prop_addr = machine().address_of("properties");
 		if (prop_addr == 0x0)
 			return;
-
+	} catch (...) {
+		return;
+	}
+	try {
 		struct GuestProperty {
 			gaddr_t g_name;
 			unsigned size;
@@ -710,7 +714,7 @@ void Sandbox::read_program_properties(bool editor) const {
 			this->add_property(String::utf8(c_name.c_str(), c_name.size()), prop->type, prop->setter, prop->getter, def_val);
 		}
 	} catch (const std::exception &e) {
-		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
+		ERR_PRINT("Sandbox exception in " + get_name() + " while reading properties: " + String(e.what()));
 	}
 }
 

@@ -1005,19 +1005,23 @@ static bool is_excluded_function(const std::string_view function) {
 
 PackedStringArray Sandbox::get_functions() const {
 	PackedStringArray result;
-	// Get all unmangled public functions from the guest program.
-	// Exclude functions that belong to the C/C++ runtime, as well as compiler-generated functions.
-	for (std::string_view function : machine().memory.all_unmangled_function_symbols()) {
-		// Double underscore functions are compiler-generated functions.
-		if (function.size() >= 2 && function[0] == '_' && function[1] == '_') {
-			continue;
+	try {
+		// Get all unmangled public functions from the guest program.
+		// Exclude functions that belong to the C/C++ runtime, as well as compiler-generated functions.
+		for (std::string_view function : machine().memory.all_unmangled_function_symbols()) {
+			// Double underscore functions are compiler-generated functions.
+			if (function.size() >= 2 && function[0] == '_' && function[1] == '_') {
+				continue;
+			}
+			if (is_excluded_function(function)) {
+				continue;
+			}
+			if (exclude_functions.count(function) == 0) {
+				result.append(String(std::string(function).c_str()));
+			}
 		}
-		if (is_excluded_function(function)) {
-			continue;
-		}
-		if (exclude_functions.count(function) == 0) {
-			result.append(String(std::string(function).c_str()));
-		}
+	} catch (const std::exception &e) {
+		ERR_PRINT("Sandbox: Failed to get functions: " + String(e.what()));
 	}
 	return result;
 }
