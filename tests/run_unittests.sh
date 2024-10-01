@@ -13,6 +13,7 @@ else
 fi
 
 export CXX="riscv64-linux-gnu-g++-12"
+#export CXX="riscv64-unknown-elf-g++"
 
 # Build the unit test ELF file
 mkdir -p .build
