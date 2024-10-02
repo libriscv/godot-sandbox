@@ -5,6 +5,8 @@
 #include <godot_cpp/classes/input.hpp>
 #include <godot_cpp/classes/node2d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
+#include <godot_cpp/classes/packed_scene.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/timer.hpp>
@@ -1565,6 +1567,27 @@ APICALL(api_callable_create) {
 	machine.set_result(idx);
 }
 
+APICALL(api_load) {
+	auto [path, g_result] = machine.sysargs<std::string_view, GuestVariant *>();
+	Sandbox &emu = riscv::emu(machine);
+
+	// Preload the resource from the given path.
+	ResourceLoader *loader = ResourceLoader::get_singleton();
+	Ref<Resource> resource = loader->load(String::utf8(path.data(), path.size()));
+	if (resource.is_null()) {
+		ERR_PRINT("Failed to preload resource");
+		// TODO: Return a null object instead?
+		throw std::runtime_error("Failed to preload resource");
+	}
+
+	Variant result(std::move(resource));
+	godot::Object *obj = result.operator Object *();
+
+	// Return the result to the guest.
+	emu.create_scoped_variant(std::move(result));
+	g_result->set_object(emu, obj);
+}
+
 } //namespace riscv
 
 void Sandbox::initialize_syscalls() {
@@ -1641,5 +1664,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_VEC3_OPS, api_vec3_ops },
 
 			{ ECALL_CALLABLE_CREATE, api_callable_create },
+
+			{ ECALL_LOAD, api_load },
 	});
 }

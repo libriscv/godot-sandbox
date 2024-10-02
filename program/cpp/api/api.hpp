@@ -110,6 +110,11 @@ inline bool is_editor() {
 	return a0;
 }
 
+/// @brief Load a resource (at run-time) from the given path.
+/// @param path The path to the resource.
+/// @return The loaded resource.
+extern Variant load(std::string_view path);
+
 struct Engine {
 	/// @brief Check if the program is running in the Godot editor.
 	/// @return True if running in the editor, false otherwise.

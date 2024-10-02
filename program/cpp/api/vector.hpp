@@ -8,6 +8,13 @@ struct Vector2 {
 	float x;
 	float y;
 
+	static Vector2 From(float x) noexcept {
+		return {x, x};
+	}
+	static Vector2 From(float x, float y) noexcept {
+		return {x, y};
+	}
+
 	float length() const noexcept;
 	Vector2 normalized() const noexcept;
 	Vector2 rotated(float angle) const noexcept;

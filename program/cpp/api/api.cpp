@@ -8,6 +8,7 @@
 MAKE_SYSCALL(ECALL_PRINT, void, sys_print, const Variant *, size_t);
 MAKE_SYSCALL(ECALL_THROW, void, sys_throw, const char *, size_t, const char *, size_t, const Variant *);
 EXTERN_SYSCALL(uint64_t, sys_node_create, Node_Create_Shortlist, const char *, size_t, const char *, size_t);
+MAKE_SYSCALL(ECALL_LOAD, void, sys_load, const char *, size_t, Variant *);
 
 /* Default main: Do nothing */
 __attribute__((weak)) int main() {
@@ -36,6 +37,13 @@ Object Time::get_singleton() {
 // ClassDB::instantiate
 Object ClassDB::instantiate(std::string_view class_name, std::string_view name) {
 	return Object(sys_node_create(Node_Create_Shortlist::CREATE_CLASSDB, class_name.data(), class_name.size(), name.data(), name.size()));
+}
+
+// Resource loader
+Variant load(std::string_view path) {
+	Variant result;
+	sys_load(path.data(), path.size(), &result);
+	return result;
 }
 
 /* Handle uncaught C++ exceptions */
