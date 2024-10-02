@@ -48,6 +48,12 @@ inline Node get_node(std::string_view path = ".") {
 	return Node(path);
 }
 
+/// @brief Get the parent of the current node.
+/// @return The parent node.
+inline Node get_parent() {
+	return Node("..");
+}
+
 #include <unordered_map>
 /// @brief A macro to define a static function that returns a custom state object
 /// tied to a Node object. For shared sandbox instances, this is the simplest way
@@ -251,5 +257,22 @@ struct Math {
 	static double slerp(double a, double b, double t);
 	static float slerpf(float a, float b, float t);
 };
+
+/* Embed binary data into executable. This data has no guaranteed alignment. */
+#define EMBED_BINARY(name, filename) \
+	asm(".pushsection .rodata\n" \
+	"	.global " #name "\n" \
+	#name ":\n" \
+	"	.incbin " #filename "\n" \
+	#name "_end:\n" \
+	"	.int  0\n" \
+	"	.global " #name "_size\n" \
+	"	.type   " #name "_size, @object\n" \
+	"	.align 4\n" \
+	#name "_size:\n" \
+	"	.int  " #name "_end - " #name "\n" \
+	".popsection"); \
+	extern char name[]; \
+	extern unsigned name ##_size;
 
 #include "api_inline.hpp"
