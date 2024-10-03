@@ -42,6 +42,16 @@ func test_instantiation():
 
 	s.queue_free()
 
+	# Create a new sandbox from a buffer
+	var buffer : PackedByteArray
+	for i in 10:
+		var s2 = Sandbox.FromBuffer(buffer)
+		assert_false(s2.has_program_loaded(), "Program loaded")
+		s2.free()
+	for i in 10:
+		var s2 = Sandbox.FromProgram(Sandbox_TestsTests)
+		s2.free()
+
 
 func test_types():
 	# Create a new sandbox

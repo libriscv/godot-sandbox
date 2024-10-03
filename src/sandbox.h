@@ -58,7 +58,12 @@ public:
 	};
 
 	Sandbox();
+	Sandbox(const PackedByteArray &buffer);
+	Sandbox(Ref<ELFScript> program);
 	~Sandbox();
+
+	static Sandbox *FromBuffer(const PackedByteArray &buffer) { return memnew(Sandbox(buffer)); }
+	static Sandbox *FromProgram(Ref<ELFScript> program) { return memnew(Sandbox(std::move(program))); }
 
 	// -= VM function calls =-
 
@@ -321,6 +326,8 @@ public:
 	const machine_t &machine() const { return *m_machine; }
 
 private:
+	void constructor_initialize();
+	void reset_machine();
 	void load(const PackedByteArray *vbuf, const std::vector<std::string> *argv = nullptr);
 	void read_program_properties(bool editor) const;
 	void handle_exception(gaddr_t);

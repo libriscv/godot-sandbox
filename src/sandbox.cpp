@@ -20,10 +20,14 @@ String Sandbox::_to_string() const {
 }
 
 void Sandbox::_bind_methods() {
+	// Constructors.
+	ClassDB::bind_static_method("Sandbox", D_METHOD("FromBuffer", "buffer"), &Sandbox::FromBuffer);
+	ClassDB::bind_static_method("Sandbox", D_METHOD("FromProgram", "program"), &Sandbox::FromProgram);
 	// Methods.
 	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
 	ClassDB::bind_method(D_METHOD("set_program", "program"), &Sandbox::set_program);
 	ClassDB::bind_method(D_METHOD("get_program"), &Sandbox::get_program);
+	ClassDB::bind_method(D_METHOD("has_program_loaded"), &Sandbox::has_program_loaded);
 	ClassDB::bind_method(D_METHOD("load_buffer", "buffer"), &Sandbox::load_buffer);
 	{
 		MethodInfo mi;
@@ -123,7 +127,7 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 	return list;
 }
 
-Sandbox::Sandbox() {
+void Sandbox::constructor_initialize() {
 	this->m_tree_base = this;
 	this->m_use_unboxed_arguments = SandboxProjectSettings::use_native_types();
 	this->m_global_instance_count += 1;
@@ -131,13 +135,28 @@ Sandbox::Sandbox() {
 	for (size_t i = 0; i < this->m_states.size(); i++) {
 		this->m_states[i].initialize(i, this->m_max_refs);
 	}
-	// In order to reduce checks we guarantee that this
-	// class is well-formed at all times.
+}
+void Sandbox::reset_machine() {
 	try {
+		delete this->m_machine;
 		this->m_machine = new machine_t{};
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
 	}
+}
+Sandbox::Sandbox() {
+	this->constructor_initialize();
+	// In order to reduce checks we guarantee that this
+	// class is well-formed at all times.
+	this->reset_machine();
+}
+Sandbox::Sandbox(const PackedByteArray &buffer) {
+	this->constructor_initialize();
+	this->load_buffer(buffer);
+}
+Sandbox::Sandbox(Ref<ELFScript> program) {
+	this->constructor_initialize();
+	this->set_program(std::move(program));
 }
 
 Sandbox::~Sandbox() {
@@ -150,10 +169,11 @@ Sandbox::~Sandbox() {
 }
 
 void Sandbox::set_program(Ref<ELFScript> program) {
-	this->m_program_data = program;
+	this->m_program_data = std::move(program);
 	this->m_program_bytes = {};
 	if (this->m_program_data.is_null()) {
-		// TODO unload program
+		// Unload program and reset the machine
+		this->reset_machine();
 		return;
 	}
 	this->load(&m_program_data->get_content());
@@ -172,10 +192,11 @@ bool Sandbox::has_program_loaded() const {
 void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string> *argv_ptr) {
 	if (buffer == nullptr || buffer->is_empty()) {
 		ERR_PRINT("Empty binary, cannot load program.");
+		this->reset_machine();
 		return;
 	}
 	// If the binary sizes match, let's see if the binary is the exact same
-	if (buffer->size() == this->m_machine->memory.binary().size()) {
+	if (this->m_machine != nullptr && buffer->size() == this->m_machine->memory.binary().size()) {
 		if (std::memcmp(buffer->ptr(), this->m_machine->memory.binary().data(), buffer->size()) == 0) {
 			// Binary is the same, no need to reload
 			return;
