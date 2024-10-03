@@ -13,4 +13,6 @@ public:
 	static bool use_native_types();
 
 	static bool debug_info();
+
+	static Array get_global_defines();
 };

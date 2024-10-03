@@ -49,6 +49,11 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 				arguments.push_back("/usr/api/build.sh");
 				if (SandboxProjectSettings::debug_info())
 					arguments.push_back("--debug");
+				Array global_defines = SandboxProjectSettings::get_global_defines();
+				for (int i = 0; i < global_defines.size(); i++) {
+					arguments.push_back("-D");
+					arguments.push_back(global_defines[i]);
+				}
 				arguments.push_back("-o");
 				arguments.push_back(outname);
 				arguments.push_back(inpname);

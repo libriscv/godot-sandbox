@@ -4,6 +4,7 @@ usage() {
 	echo "  --line addr  Convert an address to a line number."
 	echo "   -o output   Compile sources into an output ELF file, including API and inputs."
 	echo "  --debug      Compile with debug information."
+	echo "  -D macro     Define a macro."
 	echo "  --local      Compile as if locally (outside Docker), using the local API files."
 	echo "  --version    Print the current version of the API."
 	echo "   -v          Verbose output."
@@ -23,6 +24,7 @@ while [[ "$#" -gt 0 ]]; do
 		--line) shift; addr="$1"; shift; binary="$1"; shift; $ADDR2LINE -C -f -e $binary $addr; exit ;;
 		-o) shift; output="$1"; shift; break ;;
 		--debug) CPPFLAGS="$CPPFLAGS -g"; shift ;;
+		-D) shift; CPPFLAGS="$CPPFLAGS -D$1"; shift ;;
 		--local) locally=true; shift ;;
 		--version) shift; echo "$current_version"; exit ;;
 		-v) verbose=true; shift ;;

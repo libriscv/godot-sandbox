@@ -11,6 +11,8 @@ static constexpr char NATIVE_TYPES[] = "editor/script/unboxed_types_for_sandbox_
 static constexpr char NATIVE_TYPES_HINT[] = "Use native types and classes instead of Variants in Sandbox functions where possible";
 static constexpr char DEBUG_INFO[] = "editor/script/debug_info";
 static constexpr char DEBUG_INFO_HINT[] = "Enable debug information when building ELF files";
+static constexpr char GLOBAL_DEFINES[] = "editor/script/global_defines";
+static constexpr char GLOBAL_DEFINES_HINT[] = "Global defines used when compiling Sandbox programs";
 
 static void register_setting(
 		const String &p_name,
@@ -59,6 +61,7 @@ void SandboxProjectSettings::register_settings() {
 #endif
 	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
 	register_setting_plain(DEBUG_INFO, false, DEBUG_INFO_HINT, false);
+	register_setting_plain(GLOBAL_DEFINES, Array(), GLOBAL_DEFINES_HINT, false);
 }
 
 template <typename TType>
@@ -83,4 +86,8 @@ bool SandboxProjectSettings::use_native_types() {
 
 bool SandboxProjectSettings::debug_info() {
 	return get_setting<bool>(DEBUG_INFO);
+}
+
+Array SandboxProjectSettings::get_global_defines() {
+	return get_setting<Array>(GLOBAL_DEFINES);
 }
