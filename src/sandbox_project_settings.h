@@ -10,6 +10,8 @@ public:
 
 	static String get_docker_path();
 
+	static bool async_compilation();
+
 	static bool use_native_types();
 
 	static bool debug_info();

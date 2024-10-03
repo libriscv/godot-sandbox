@@ -7,6 +7,8 @@ using namespace godot;
 
 static constexpr char DOCKER_PATH[] = "editor/script/docker";
 static constexpr char DOCKER_PATH_HINT[] = "Path to the Docker executable";
+static constexpr char ASYNC_COMPILATION[] = "editor/script/async_compilation";
+static constexpr char ASYNC_COMPILATION_HINT[] = "Compile scripts asynchronously";
 static constexpr char NATIVE_TYPES[] = "editor/script/unboxed_types_for_sandbox_arguments";
 static constexpr char NATIVE_TYPES_HINT[] = "Use native types and classes instead of Variants in Sandbox functions where possible";
 static constexpr char DEBUG_INFO[] = "editor/script/debug_info";
@@ -59,6 +61,7 @@ void SandboxProjectSettings::register_settings() {
 #else
 	register_setting_plain(DOCKER_PATH, "docker", DOCKER_PATH_HINT, true);
 #endif
+	register_setting_plain(ASYNC_COMPILATION, true, ASYNC_COMPILATION_HINT, false);
 	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
 	register_setting_plain(DEBUG_INFO, false, DEBUG_INFO_HINT, false);
 	register_setting_plain(GLOBAL_DEFINES, Array(), GLOBAL_DEFINES_HINT, false);
@@ -78,6 +81,10 @@ static TType get_setting(const char *p_setting) {
 
 String SandboxProjectSettings::get_docker_path() {
 	return get_setting<String>(DOCKER_PATH);
+}
+
+bool SandboxProjectSettings::async_compilation() {
+	return get_setting<bool>(ASYNC_COMPILATION);
 }
 
 bool SandboxProjectSettings::use_native_types() {

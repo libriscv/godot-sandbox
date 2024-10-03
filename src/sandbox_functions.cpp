@@ -867,7 +867,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"sprintf",
 	"sqrtf",
 	"uw_update_context",
-	"vfiprintf,",
+	"vfiprintf",
 
 	/* Zig standard library */
 	"OUTLINED_FUNCTION_0",

@@ -13,8 +13,10 @@
 #include <godot_cpp/classes/script_editor.hpp>
 #include <godot_cpp/classes/script_editor_base.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#include <libriscv/util/threadpool.h>
 
 static Ref<ResourceFormatSaverCPP> cpp_saver;
+static riscv::ThreadPool thread_pool(1); // Maximum 1 compiler job at a time
 static constexpr bool VERBOSE_CMD = false;
 
 void ResourceFormatSaverCPP::init() {
@@ -87,15 +89,22 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 					}
 				}
 			};
-			builder();
-			// EditorInterface::get_singleton()->get_editor_settings()->set("text_editor/behavior/files/auto_reload_scripts_on_external_change", true);
-			EditorInterface::get_singleton()->get_resource_filesystem()->scan();
-			TypedArray<Script> open_scripts = EditorInterface::get_singleton()->get_script_editor()->get_open_scripts();
-			for (int i = 0; i < open_scripts.size(); i++) {
-				ELFScript *elf_script = Object::cast_to<ELFScript>(open_scripts[i]);
-				if (elf_script) {
-					elf_script->reload(false);
-					elf_script->emit_changed();
+
+			// If async compilation is enabled, enqueue the builder to the thread pool
+			if (SandboxProjectSettings::async_compilation())
+				thread_pool.enqueue(builder);
+			else {
+				builder();
+
+				// EditorInterface::get_singleton()->get_editor_settings()->set("text_editor/behavior/files/auto_reload_scripts_on_external_change", true);
+				EditorInterface::get_singleton()->get_resource_filesystem()->scan();
+				TypedArray<Script> open_scripts = EditorInterface::get_singleton()->get_script_editor()->get_open_scripts();
+				for (int i = 0; i < open_scripts.size(); i++) {
+					ELFScript *elf_script = Object::cast_to<ELFScript>(open_scripts[i]);
+					if (elf_script) {
+						elf_script->reload(false);
+						elf_script->emit_changed();
+					}
 				}
 			}
 			return Error::OK;
