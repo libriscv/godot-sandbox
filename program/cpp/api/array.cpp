@@ -48,7 +48,7 @@ void Array::sort() {
 
 Variant Array::operator[](int idx) const {
 	Variant v;
-	sys_array_at(m_idx, idx, &v);
+	sys_array_at(this->m_idx, idx, &v);
 	return v;
 }
 

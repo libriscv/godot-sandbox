@@ -1107,7 +1107,18 @@ APICALL(api_array_ops) {
 	auto [op, arr_idx, idx, vaddr] = machine.sysargs<Array_Op, unsigned, int, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
 
-	auto opt_array = emu.get_scoped_variant(arr_idx);
+	if (op == Array_Op::CREATE) {
+		// There is no scoped array, so we need to create one.
+		Array a;
+		a.resize(arr_idx); // Resize the array to the given size.
+		const unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
+		GuestVariant *vp = machine.memory.memarray<GuestVariant>(vaddr, 1);
+		vp->type = Variant::ARRAY;
+		vp->v.i = idx;
+		return;
+	}
+
+	std::optional<const Variant *> opt_array = emu.get_scoped_variant(arr_idx);
 	if (!opt_array.has_value() || opt_array.value()->get_type() != Variant::ARRAY) {
 		ERR_PRINT("Invalid Array object");
 		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx));
@@ -1115,15 +1126,6 @@ APICALL(api_array_ops) {
 	godot::Array array = opt_array.value()->operator Array();
 
 	switch (op) {
-		case Array_Op::CREATE: {
-			Array a;
-			a.resize(arr_idx); // Resize the array to the given size.
-			const unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
-			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vaddr, 1);
-			vp->type = Variant::ARRAY;
-			vp->v.i = idx;
-			break;
-		}
 		case Array_Op::PUSH_BACK:
 			array.push_back(machine.memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
 			break;
@@ -1177,7 +1179,7 @@ APICALL(api_array_at) {
 	std::optional<const Variant *> opt_array = emu.get_scoped_variant(arr_idx);
 	if (!opt_array.has_value() || opt_array.value()->get_type() != Variant::ARRAY) {
 		ERR_PRINT("Invalid Array object");
-		throw std::runtime_error("Invalid Array object");
+		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx));
 	}
 
 	godot::Array array = opt_array.value()->operator Array();
@@ -1186,7 +1188,8 @@ APICALL(api_array_at) {
 		throw std::runtime_error("Array index out of bounds");
 	}
 
-	vret->create(emu, array[idx].duplicate(false));
+	Variant ref = array[idx];
+	vret->create(emu, std::move(ref));
 }
 
 APICALL(api_array_size) {
@@ -1553,10 +1556,7 @@ APICALL(api_callable_create) {
 
 	// Create a new callable object, using emu.vmcallable_address() to get the callable function.
 	Array arguments;
-	if (vargs->type == Variant::ARRAY) {
-		// The argument idx is a Variant of type Array.
-		arguments = vargs->toVariant(emu).operator Array();
-	} else if (vargs->type != Variant::NIL) {
+	if (vargs->type != Variant::NIL) {
 		// The argument idx is a Variant of another type.
 		arguments.push_back(vargs->toVariant(emu));
 	}

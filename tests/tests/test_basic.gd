@@ -140,7 +140,8 @@ func test_types():
 	s.vmcall("test_callable", Callable(callable_callee))
 	assert_eq(callable_was_called, true, "Callable was called")
 	cb = s.vmcall("test_create_callable")
-	assert_eq(cb.call(1, 2, "3"), 6, "Returned Callable was same")
+	# 1 + 2 + stoi("3") + 1 + 2 + stoi("3") = 12
+	assert_eq(cb.call(1, 2, "3"), 12, "Callable() invocation evaluates correctly")
 
 	# Verify that a basic function that returns a String works
 	assert_eq(s.has_function("public_function"), true)

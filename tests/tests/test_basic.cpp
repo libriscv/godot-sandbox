@@ -99,7 +99,7 @@ extern "C" Variant test_callable(Callable callable) {
 
 // clang-format off
 extern "C" Variant test_create_callable() {
-	Array array;
+	Array array = Array::Create();
 	array.push_back(1);
 	array.push_back(2);
 	array.push_back("3");
