@@ -19,7 +19,7 @@ endif()
 set(RISCV_ARCH "-march=rv64gc_zba_zbb_zbs_zbc")
 set(RISCV_ABI "-mabi=lp64d")
 
-set(API_DIR ${CMAKE_CURRENT_LIST_DIR}/../api)
+set(API_DIR ${CMAKE_CURRENT_LIST_DIR}/api)
 
 set(API_SOURCES
 	"${API_DIR}/api.cpp"
