@@ -1,26 +1,25 @@
 #include <api.hpp>
 #include <cstring>
 extern "C" {
+#include <luajit-2.1/lauxlib.h>
 #include <luajit-2.1/lua.h>
 #include <luajit-2.1/lualib.h>
-#include <luajit-2.1/lauxlib.h>
 }
 extern "C" Variant click();
 
-static int api_print(lua_State* L)
-{
-    const char* text = luaL_checkstring(L, 1);
-    get_node("../TextAnswer")("set_text", text);
-    return 0;
+static int api_print(lua_State *L) {
+	const char *text = luaL_checkstring(L, 1);
+	get_node("../TextAnswer")("set_text", text);
+	return 0;
 }
 
-lua_State* L;
+lua_State *L;
 int main() {
 	// Activate this mod
 	get_parent().call("set_visible", true);
 	get_node("../Button").connect("pressed", Callable(click));
 
-	Timer::native_periodic(0.0125, [] (Node timer) -> Variant {
+	Timer::native_periodic(0.0125, [](Node timer) -> Variant {
 		Node2D mod = get_parent(); // From the Timers POV
 		static Vector2 origin = mod.get_position();
 		static constexpr float period = 2.0f;
