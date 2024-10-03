@@ -1,1 +1,1 @@
-../program/cpp/cmake/example/toolchain.cmake
+../program/cpp/cmake/toolchain.cmake

@@ -25,7 +25,7 @@ jobs:
       env:
         CC: riscv64-linux-gnu-gcc-12
         CXX: riscv64-linux-gnu-g++-12
-      run: cmake -B ${{github.workspace}}/.build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake
+      run: cmake -B ${{github.workspace}}/.build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=../toolchain.cmake
 
     - name: Build the project
       run: cmake --build ${{github.workspace}}/.build --parallel 6
