@@ -42,15 +42,9 @@ librisc_sources = [
 	"ext/libriscv/lib/libriscv/util/crc32c.cpp",
 
 	# Binary translator
-	#"ext/libriscv/lib/libriscv/tr_api.cpp"
-	#"ext/libriscv/lib/libriscv/tr_emit.cpp"
-	#"ext/libriscv/lib/libriscv/tr_emit_rvc.cpp"
-	#"ext/libriscv/lib/libriscv/tr_translate.cpp"
-
-	# Binary translator - TCC
-	#"ext/libriscv/lib/libriscv/tr_tcc.cpp"
-	# Binary translator - System compiler
-	#"ext/libriscv/lib/libriscv/tr_compiler.cpp"
+	"ext/libriscv/lib/libriscv/tr_api.cpp",
+	"ext/libriscv/lib/libriscv/tr_emit.cpp",
+	"ext/libriscv/lib/libriscv/tr_translate.cpp",
 ]
 
 if env["platform"] == "windows":
@@ -62,6 +56,11 @@ if env["platform"] == "windows":
 else:
     librisc_sources += [
         "ext/libriscv/lib/libriscv/linux/system_calls.cpp",
+
+		# Binary translator - TCC
+		#"ext/libriscv/lib/libriscv/tr_tcc.cpp"
+		# Binary translator - System compiler
+		"ext/libriscv/lib/libriscv/tr_compiler.cpp",
     ]
 
 if env["platform"] != "windows" or env["use_mingw"]:
