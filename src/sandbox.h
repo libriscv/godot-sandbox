@@ -320,6 +320,9 @@ public:
 	/// @brief Resume execution of the program. Loses the current call state.
 	void resume(uint64_t max_instructions);
 
+	/// @brief Binary translate the program and produce embeddable code
+	String emit_binary_translation(bool ignore_instruction_limit = true) const;
+
 	void assault(const String &test, int64_t iterations);
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc);
 	machine_t &machine() { return *m_machine; }

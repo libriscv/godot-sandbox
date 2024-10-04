@@ -23,6 +23,7 @@ void Sandbox::_bind_methods() {
 	// Constructors.
 	ClassDB::bind_static_method("Sandbox", D_METHOD("FromBuffer", "buffer"), &Sandbox::FromBuffer);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("FromProgram", "program"), &Sandbox::FromProgram);
+	ClassDB::bind_method(D_METHOD("emit_binary_translation", "ignore_instruction_limit"), &Sandbox::emit_binary_translation, DEFVAL(true));
 	// Methods.
 	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
 	ClassDB::bind_method(D_METHOD("set_program", "program"), &Sandbox::set_program);
@@ -211,19 +212,24 @@ void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 	try {
 		delete this->m_machine;
 
-		const riscv::MachineOptions<RISCV_ARCH> options{
+		auto options = std::make_shared<riscv::MachineOptions<RISCV_ARCH>>(riscv::MachineOptions<RISCV_ARCH>{
 			.memory_max = uint64_t(get_memory_max()) << 20, // in MiB
 			//.verbose_loader = true,
 			.default_exit_function = "fast_exit",
 #ifdef RISCV_BINARY_TRANSLATION
+			.translate_enabled = false,
+			.translate_future_segments = false,
+			.translate_invoke_compiler = false,
 			// We don't care about the instruction limit when full binary translation is enabled
 			// Specifically, for the Machines where full binary translation is *available*, so
 			// technically we need a way to check if a Machine has it available before setting this.
 			.translate_ignore_instruction_limit = true,
+			
 #endif
-		};
+		});
 
-		this->m_machine = new machine_t{ binary_view, options };
+		this->m_machine = new machine_t{ binary_view, *options };
+		this->m_machine->set_options(std::move(options));
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox construction exception: " + std::string(e.what())).c_str());
 		this->m_machine = new machine_t{};
@@ -886,4 +892,41 @@ void Sandbox::set_max_refs(uint32_t max) {
 	} else {
 		ERR_PRINT("Sandbox: Cannot change max references during a Sandbox call.");
 	}
+}
+
+String Sandbox::emit_binary_translation(bool ignore_instruction_limit) const {
+	const std::string_view &binary = machine().memory.binary();
+	if (binary.empty()) {
+		ERR_PRINT("Sandbox: No binary loaded.");
+		return String();
+	}
+#ifdef RISCV_BINARY_TRANSLATION
+	// 1. Re-create the same options
+	auto options = std::make_shared<riscv::MachineOptions<RISCV_ARCH>>(machine().options());
+	options->use_shared_execute_segments = false;
+	options->translate_enabled = false;
+	options->translate_enable_embedded = true;
+	options->translate_invoke_compiler = false;
+	options->translate_ignore_instruction_limit = ignore_instruction_limit;
+
+	// 2. Enable binary translation output to a string
+	std::string code_output;
+	options->cross_compile.push_back(riscv::MachineTranslationEmbeddableCodeOptions{
+		.result_c99 = &code_output,
+	});
+
+	// 3. Emit the binary translation by constructing a new machine
+	machine_t m{ binary, *options };
+
+	// 4. Verify that the translation was successful
+	if (code_output.empty()) {
+		ERR_PRINT("Sandbox: Binary translation failed.");
+		return String();
+	}
+	// 5. Return the translated code
+	return String::utf8(code_output.c_str(), code_output.size());
+#else
+	ERR_PRINT("Sandbox: Binary translation is not enabled.");
+	return String();
+#endif
 }
