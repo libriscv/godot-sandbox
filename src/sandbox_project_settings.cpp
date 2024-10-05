@@ -5,8 +5,12 @@
 
 using namespace godot;
 
+
+static constexpr char DOCKER_ENABLED[] = "editor/script/docker_enabled";
+static constexpr char DOCKER_ENABLED_HINT[] = "Enable Docker for compilation";
 static constexpr char DOCKER_PATH[] = "editor/script/docker";
 static constexpr char DOCKER_PATH_HINT[] = "Path to the Docker executable";
+
 static constexpr char ASYNC_COMPILATION[] = "editor/script/async_compilation";
 static constexpr char ASYNC_COMPILATION_HINT[] = "Compile scripts asynchronously";
 static constexpr char NATIVE_TYPES[] = "editor/script/unboxed_types_for_sandbox_arguments";
@@ -56,6 +60,7 @@ void register_setting_plain(
 }
 
 void SandboxProjectSettings::register_settings() {
+	register_setting_plain(DOCKER_ENABLED, true, DOCKER_ENABLED_HINT, true);
 #ifdef WIN32
 	register_setting_plain(DOCKER_PATH, "C:\\Program Files\\Docker\\Docker\\bin\\", DOCKER_PATH_HINT, true);
 #else
@@ -77,6 +82,10 @@ static TType get_setting(const char *p_setting) {
 	ERR_FAIL_COND_V(setting_type != expected_type, Variant());
 
 	return setting_value;
+}
+
+bool SandboxProjectSettings::get_docker_enabled() {
+	return get_setting<bool>(DOCKER_ENABLED);
 }
 
 String SandboxProjectSettings::get_docker_path() {

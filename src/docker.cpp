@@ -51,6 +51,9 @@ String Docker::ContainerGetMountPath(String container_name) {
 }
 
 bool Docker::ContainerStart(String container_name, String image_name, Array &output) {
+	if (!SandboxProjectSettings::get_docker_enabled()) {
+		return true;
+	}
 	if (ContainerIsAlreadyRunning(container_name)) {
 		ProjectSettings *project_settings = ProjectSettings::get_singleton();
 		// If the container mount path does not match the current project path, stop the container.
@@ -86,6 +89,9 @@ bool Docker::ContainerStart(String container_name, String image_name, Array &out
 }
 
 Array Docker::ContainerStop(String container_name) {
+	if (!SandboxProjectSettings::get_docker_enabled()) {
+		return Array();
+	}
 	godot::OS *OS = godot::OS::get_singleton();
 	PackedStringArray arguments = { "stop", container_name, "--time", "0" };
 	if constexpr (VERBOSE_CMD) {
@@ -97,6 +103,9 @@ Array Docker::ContainerStop(String container_name) {
 }
 
 bool Docker::ContainerExecute(String container_name, const PackedStringArray &p_arguments, Array &output, bool verbose) {
+	if (!SandboxProjectSettings::get_docker_enabled()) {
+		return false;
+	}
 #ifdef ENABLE_TIMINGS
 	timespec start;
 	clock_gettime(CLOCK_MONOTONIC, &start);

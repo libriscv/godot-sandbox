@@ -3,6 +3,7 @@
 #include "../cpp/script_cpp.h"
 #include "../rust/script_rust.h"
 #include "../sandbox.h"
+#include "../sandbox_project_settings.h"
 #include "../zig/script_zig.h"
 #include "script_elf.h"
 #include "script_instance_helper.h"
@@ -17,6 +18,9 @@ static const std::vector<std::string> godot_functions = {
 };
 
 static void handle_language_warnings(Array &warnings, const Ref<ELFScript> &script) {
+	if (!SandboxProjectSettings::get_docker_enabled()) {
+		return;
+	}
 	const String language = script->get_elf_programming_language();
 	if (language == "C++") {
 		// Compare C++ version against Docker version
