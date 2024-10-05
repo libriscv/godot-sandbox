@@ -58,7 +58,11 @@ target_link_libraries(sandbox_api PUBLIC
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 	# If the GCC version is 14.0 or higher, we can use the -fuse-ld=mold flag
 	if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14.0)
-		target_link_libraries(sandbox_api PUBLIC -fuse-ld=mold)
+		find_program(MOLD_LINKER "mold")
+		if (MOLD_LINKER)
+			message(STATUS "Using MOLD linker")
+			target_link_libraries(sandbox_api PUBLIC -fuse-ld=mold)
+		endif()
 	endif()
 endif()
 

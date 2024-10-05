@@ -11,5 +11,7 @@ FetchContent_Declare(libfmt
   )
 FetchContent_MakeAvailable(libfmt)
 
-add_executable(example example.cpp)
-target_link_libraries(example PRIVATE sandbox_api fmt::fmt)
+add_sandbox_program(example
+  "example.cpp"
+)
+target_link_libraries(example PRIVATE fmt::fmt)
