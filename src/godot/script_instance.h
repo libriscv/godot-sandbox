@@ -35,17 +35,17 @@ using namespace godot;
 namespace godot {
 
 class ScriptInstanceExtension {
-	static GDExtensionScriptInstanceInfo2 script_instance_info;
+	static GDExtensionScriptInstanceInfo3 script_instance_info;
 
 public:
 	static GDExtensionScriptInstancePtr create_native_instance(ScriptInstanceExtension *p_instance) {
-		return internal::gdextension_interface_script_instance_create2(&script_instance_info, p_instance);
+		return internal::gdextension_interface_script_instance_create3(&script_instance_info, p_instance);
 	}
 
 	virtual bool set(const StringName &p_name, const Variant &p_value) = 0;
 	virtual bool get(const StringName &p_name, Variant &r_ret) const = 0;
 	virtual const GDExtensionPropertyInfo *get_property_list(uint32_t *r_count) const = 0;
-	virtual void free_property_list(const GDExtensionPropertyInfo *p_list) const = 0;
+	virtual void free_property_list(const GDExtensionPropertyInfo *p_list, uint32_t p_count) const = 0;
 	virtual Variant::Type get_property_type(const StringName &p_name, bool *r_is_valid) const = 0;
 	virtual bool validate_property(GDExtensionPropertyInfo &p_property) const = 0;
 	virtual bool get_class_category(GDExtensionPropertyInfo &r_class_category) const;
@@ -54,8 +54,9 @@ public:
 	virtual Object *get_owner() = 0;
 	virtual void get_property_state(GDExtensionScriptInstancePropertyStateAdd p_add_func, void *p_userdata) = 0;
 	virtual const GDExtensionMethodInfo *get_method_list(uint32_t *r_count) const = 0;
-	virtual void free_method_list(const GDExtensionMethodInfo *p_list) const = 0;
+	virtual void free_method_list(const GDExtensionMethodInfo *p_list, uint32_t p_count) const = 0;
 	virtual bool has_method(const StringName &p_method) const = 0;
+	virtual GDExtensionInt get_method_argument_count(const StringName &p_method, bool &r_valid) const = 0;
 	// @todo Should godot-cpp have a Callable::CallError?
 	virtual Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) = 0;
 	virtual void notification(int p_notification, bool p_reversed) = 0;
