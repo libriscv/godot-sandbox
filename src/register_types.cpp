@@ -60,10 +60,10 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ClassDB::register_class<ZigScriptLanguage>();
 	elf_loader.instantiate();
 	elf_saver.instantiate();
-	elf_language = memnew(ELFScriptLanguage);
-	Engine::get_singleton()->register_script_language(elf_language);
 	ResourceLoader::get_singleton()->add_resource_format_loader(elf_loader);
 	ResourceSaver::get_singleton()->add_resource_format_saver(elf_saver);
+	elf_language = memnew(ELFScriptLanguage);
+	Engine::get_singleton()->register_script_language(elf_language);
 	CPPScriptLanguage::init();
 	ResourceFormatLoaderCPP::init();
 	ResourceFormatSaverCPP::init();

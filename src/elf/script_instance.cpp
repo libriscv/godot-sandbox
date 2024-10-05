@@ -282,7 +282,7 @@ const GDExtensionPropertyInfo *ELFScriptInstance::get_property_list(uint32_t *r_
 
 	return list_ptr;
 }
-void ELFScriptInstance::free_property_list(const GDExtensionPropertyInfo *p_list) const {
+void ELFScriptInstance::free_property_list(const GDExtensionPropertyInfo *p_list, uint32_t p_count) const {
 	if (p_list) {
 		memdelete_arr(p_list);
 	}
@@ -325,6 +325,11 @@ bool ELFScriptInstance::validate_property(GDExtensionPropertyInfo &p_property) c
 	return false;
 }
 
+GDExtensionInt ELFScriptInstance::get_method_argument_count(const StringName &p_method, bool &r_valid) const {
+	r_valid = false;
+	return 0;
+}
+
 bool ELFScriptInstance::has_method(const StringName &p_name) const {
 	if (script.is_null()) {
 		return true;
@@ -351,12 +356,7 @@ bool ELFScriptInstance::has_method(const StringName &p_name) const {
 	return result;
 }
 
-void ELFScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list) const {
-	// @todo We really need to know the size of the list... Unless we can store the info elsewhere and just use pointers?
-	// what godot does in their free_method list:
-
-	//   /* TODO `GDExtensionClassFreePropertyList` is ill-defined, we need a non-const pointer to free this. */                                                                    \
-	// ::godot::internal::free_c_property_list(const_cast<GDExtensionPropertyInfo *>(p_list));
+void ELFScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list, uint32_t p_count) const {
 	if (p_list) {
 		memdelete_arr(p_list);
 	}

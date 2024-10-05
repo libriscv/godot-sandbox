@@ -47,9 +47,9 @@ static const GDExtensionPropertyInfo *gdextension_script_instance_get_property_l
 	return instance->get_property_list(r_count);
 }
 
-static void gdextension_script_instance_free_property_list(GDExtensionScriptInstanceDataPtr p_instance, const GDExtensionPropertyInfo *p_list) {
+static void gdextension_script_instance_free_property_list(GDExtensionScriptInstanceDataPtr p_instance, const GDExtensionPropertyInfo *p_list, uint32_t p_count) {
 	ScriptInstanceExtension *instance = reinterpret_cast<ScriptInstanceExtension *>(p_instance);
-	instance->free_property_list(p_list);
+	instance->free_property_list(p_list, p_count);
 }
 
 static GDExtensionBool gdextension_script_instance_get_class_category(GDExtensionScriptInstanceDataPtr p_instance, GDExtensionPropertyInfo *r_class_category) {
@@ -105,9 +105,9 @@ static const GDExtensionMethodInfo *gdextension_script_instance_get_method_list(
 	return instance->get_method_list(r_count);
 }
 
-static void gdextension_script_instance_free_method_list(GDExtensionScriptInstanceDataPtr p_instance, const GDExtensionMethodInfo *p_list) {
+static void gdextension_script_instance_free_method_list(GDExtensionScriptInstanceDataPtr p_instance, const GDExtensionMethodInfo *p_list, uint32_t p_count) {
 	ScriptInstanceExtension *instance = reinterpret_cast<ScriptInstanceExtension *>(p_instance);
-	return instance->free_method_list(p_list);
+	return instance->free_method_list(p_list, p_count);
 }
 
 static GDExtensionBool gdextension_script_instance_has_method(GDExtensionScriptInstanceDataPtr p_instance, GDExtensionConstStringNamePtr p_name) {
@@ -115,6 +115,14 @@ static GDExtensionBool gdextension_script_instance_has_method(GDExtensionScriptI
 	const StringName *name = reinterpret_cast<const StringName *>(p_name);
 
 	return instance->has_method(*name);
+}
+
+static GDExtensionInt gdextension_script_instance_get_method_argument_count(GDExtensionScriptInstanceDataPtr p_instance, GDExtensionConstStringNamePtr p_name, GDExtensionBool *r_is_valid) {
+	ScriptInstanceExtension *instance = reinterpret_cast<ScriptInstanceExtension *>(p_instance);
+	const StringName *name = reinterpret_cast<const StringName *>(p_name);
+	bool *is_valid = reinterpret_cast<bool *>(r_is_valid);
+
+	return instance->get_method_argument_count(*name, *is_valid);
 }
 
 static void gdextension_script_instance_call(GDExtensionScriptInstanceDataPtr p_instance, GDExtensionConstStringNamePtr p_method, const GDExtensionConstVariantPtr *p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError *r_error) {
@@ -192,12 +200,12 @@ static void gdextension_script_instance_free(GDExtensionScriptInstanceDataPtr p_
 	}
 }
 
-GDExtensionScriptInstanceInfo2 ScriptInstanceExtension::script_instance_info = {
+GDExtensionScriptInstanceInfo3 ScriptInstanceExtension::script_instance_info = {
 	&gdextension_script_instance_set,
 	&gdextension_script_instance_get,
 	&gdextension_script_instance_get_property_list,
 	&gdextension_script_instance_free_property_list,
-	&gdextension_script_instance_get_class_category,
+	nullptr, //&gdextension_script_instance_get_class_category,
 	&gdextension_script_instance_property_can_revert,
 	&gdextension_script_instance_property_get_revert,
 	&gdextension_script_instance_get_owner,
@@ -207,6 +215,7 @@ GDExtensionScriptInstanceInfo2 ScriptInstanceExtension::script_instance_info = {
 	&gdextension_script_instance_get_property_type,
 	&gdextension_script_instance_validate_property,
 	&gdextension_script_instance_has_method,
+	&gdextension_script_instance_get_method_argument_count,
 	&gdextension_script_instance_call,
 	&gdextension_script_instance_notification,
 	&gdextension_script_instance_to_string,
