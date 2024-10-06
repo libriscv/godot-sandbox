@@ -275,15 +275,6 @@ void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 	// Read the program's custom properties, if any
 	this->read_program_properties(true);
 
-	// Pre-cache some functions when using ELFScript (in the editor)
-	// NOTE: This is not strictly necessary, but it can speed up the first call
-	if (!this->m_program_data.is_null()) {
-		PackedStringArray functions = this->get_functions();
-		for (int i = 0; i < functions.size(); i++) {
-			this->cached_address_of(functions[i].hash(), functions[i]);
-		}
-	}
-
 	// Accumulate startup time
 	const uint64_t startup_t1 = Time::get_singleton()->get_ticks_usec();
 	double startup_time = (startup_t1 - startup_t0) / 1e6;
@@ -334,7 +325,7 @@ Variant Sandbox::vmcall_fn(const StringName &function, const Variant **args, GDE
 		this->m_throttled--;
 		return Variant();
 	}
-	Variant result = this->vmcall_internal(cached_address_of(function.hash()), args, arg_count);
+	Variant result = this->vmcall_internal(cached_address_of(function.hash(), function), args, arg_count);
 	return result;
 }
 void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, const Variant **args, int argc) {
@@ -616,14 +607,6 @@ gaddr_t Sandbox::cached_address_of(int64_t hash, const String &function) const {
 	}
 
 	return address;
-}
-
-gaddr_t Sandbox::cached_address_of(int64_t hash) const {
-	auto it = m_lookup.find(hash);
-	if (it != m_lookup.end()) {
-		return it->second;
-	}
-	return 0;
 }
 
 gaddr_t Sandbox::address_of(std::string_view name) const {

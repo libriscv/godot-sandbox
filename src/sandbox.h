@@ -142,7 +142,6 @@ public:
 	// -= Address Lookup =-
 
 	gaddr_t address_of(std::string_view name) const;
-	gaddr_t cached_address_of(int64_t hash) const;
 	gaddr_t cached_address_of(int64_t hash, const String &name) const;
 
 	/// @brief Check if a function exists in the guest program.
