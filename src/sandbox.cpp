@@ -23,7 +23,6 @@ void Sandbox::_bind_methods() {
 	// Constructors.
 	ClassDB::bind_static_method("Sandbox", D_METHOD("FromBuffer", "buffer"), &Sandbox::FromBuffer);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("FromProgram", "program"), &Sandbox::FromProgram);
-	ClassDB::bind_method(D_METHOD("emit_binary_translation", "ignore_instruction_limit"), &Sandbox::emit_binary_translation, DEFVAL(true));
 	// Methods.
 	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
 	ClassDB::bind_method(D_METHOD("set_program", "program"), &Sandbox::set_program);
@@ -57,6 +56,10 @@ void Sandbox::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("assault", "test", "iterations"), &Sandbox::assault);
 	ClassDB::bind_method(D_METHOD("has_function", "function"), &Sandbox::has_function);
+
+	// Binary translation.
+	ClassDB::bind_method(D_METHOD("emit_binary_translation", "ignore_instruction_limit"), &Sandbox::emit_binary_translation, DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("is_binary_translated"), &Sandbox::is_binary_translated);
 
 	// Properties.
 	ClassDB::bind_method(D_METHOD("set_max_refs", "max"), &Sandbox::set_max_refs, DEFVAL(MAX_REFS));
@@ -220,11 +223,12 @@ void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 			.translate_enabled = false,
 			.translate_future_segments = false,
 			.translate_invoke_compiler = false,
+			//.translate_trace = true,
+			//.translate_timing = true,
 			// We don't care about the instruction limit when full binary translation is enabled
 			// Specifically, for the Machines where full binary translation is *available*, so
 			// technically we need a way to check if a Machine has it available before setting this.
 			.translate_ignore_instruction_limit = true,
-			
 #endif
 		});
 
@@ -929,4 +933,8 @@ String Sandbox::emit_binary_translation(bool ignore_instruction_limit) const {
 	ERR_PRINT("Sandbox: Binary translation is not enabled.");
 	return String();
 #endif
+}
+
+bool Sandbox::is_binary_translated() const {
+	return this->m_machine->is_binary_translation_enabled();
 }

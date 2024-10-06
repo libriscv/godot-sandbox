@@ -323,6 +323,10 @@ public:
 	/// @brief Binary translate the program and produce embeddable code
 	String emit_binary_translation(bool ignore_instruction_limit = true) const;
 
+	/// @brief  Check if the program has found and loaded binary translation.
+	/// @return True if binary translation is loaded, false otherwise.
+	bool is_binary_translated() const;
+
 	void assault(const String &test, int64_t iterations);
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc);
 	machine_t &machine() { return *m_machine; }

@@ -37,6 +37,10 @@ set(SOURCES
 	src/tests/assault.cpp
 )
 
+# Add bintr sources
+file(GLOB BINTR_FILES src/bintr/*.cpp)
+list(APPEND SOURCES ${BINTR_FILES})
+
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
 
 if (MINGW)
