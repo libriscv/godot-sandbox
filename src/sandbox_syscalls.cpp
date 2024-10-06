@@ -13,6 +13,7 @@
 #include <godot_cpp/core/math.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/variant.hpp>
+//#define ENABLE_SYSCALL_TRACE 1
 
 namespace riscv {
 static const std::unordered_map<std::string, std::function<uint64_t()>> allowed_objects = {
@@ -21,11 +22,116 @@ static const std::unordered_map<std::string, std::function<uint64_t()>> allowed_
 	{ "Time", [] { return uint64_t(uintptr_t(godot::Time::get_singleton())); } },
 };
 
+static const char *variant_type_names[] = {
+	"Nil",
+
+	"Bool", // 1
+	"Int",
+	"Float",
+	"String",
+
+	"Vector2", // 5
+	"Vector2i",
+	"Rect2",
+	"Rect2i",
+	"Vector3",
+	"Vector3i",
+	"Transform2D",
+	"Vector4",
+	"Vector4i",
+	"Plane",
+	"Quaternion",
+	"AABB",
+	"Basis",
+	"Transform3D",
+	"Projection",
+
+	"Color", // 20
+	"StringName",
+	"NodePath",
+	"RID",
+	"Object",
+	"Callable",
+	"Signal",
+	"Dictionary",
+	"Array",
+
+	"PackedByteArray", // 29
+	"PackedInt32Array",
+	"PackedInt64Array",
+	"PackedFloat32Array",
+	"PackedFloat64Array",
+	"PackedStringArray",
+	"PackedVector2Array",
+	"PackedVector3Array",
+	"PackedColorArray",
+
+	"Max",
+};
+static const char *variant_type_name(Variant::Type type) {
+	if (type < 0 || type >= Variant::Type::VARIANT_MAX) {
+		return "Unknown";
+	}
+	return variant_type_names[type];
+}
+
+template <typename Result, typename... Args>
+static inline void sys_trace(const String &name, Result result, Args &&...args) {
+	char buffer[512];
+	char *ptr = buffer;
+	ptr += snprintf(ptr, sizeof(buffer), "[TRACE] %s (", name.utf8().ptr());
+	([&] {
+		if constexpr (std::is_same_v<Args, const char *>) {
+			ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "%s", args);
+		} else if constexpr (std::is_same_v<Args, String>) {
+			ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "%s", args.utf8().ptr());
+		} else if constexpr (std::is_same_v<Args, StringName>) {
+			ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "%s", String(args).utf8().ptr());
+		} else if constexpr (std::is_same_v<Args, GuestVariant *>) {
+			ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "Variant(type=%d %s)", args->type, variant_type_name(args->type));
+		} else if constexpr (std::is_pointer_v<Args>) {
+			ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "%p", args);
+		} else if constexpr (std::is_floating_point_v<Args>) {
+			ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "%f", args);
+		} else if constexpr (std::is_same_v<Args, gaddr_t>) {
+			ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "0x%lX", long(args));
+		} else {
+			ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "%ld", long(args));
+		}
+	}(), ...);
+	ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), ") -> ");
+	if constexpr (std::is_pointer_v<Result>) {
+		ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "%p", result);
+	} else if constexpr (std::is_same_v<Result, String>) {
+		ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "%s", result.utf8().ptr());
+	} else if constexpr (std::is_same_v<Result, Variant>) {
+		ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "Variant(type=%d %s)", result.get_type(), variant_type_name(result.get_type()));
+	} else if constexpr (std::is_floating_point_v<Result>) {
+		ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "%f", result);
+	} else if constexpr (std::is_same_v<Result, gaddr_t>) {
+		ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "0x%lX", long(result));
+	} else {
+		ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "%ld", long(result));
+	}
+	ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "\n");
+	if (ptr >= buffer + sizeof(buffer)) {
+		ptr = buffer + sizeof(buffer) - 1;
+	}
+	fwrite(buffer, 1, ptr - buffer, stderr);
+	fflush(stderr);
+}
+#ifdef ENABLE_SYSCALL_TRACE
+#define SYS_TRACE(name, result, ...) sys_trace(name, result, ##__VA_ARGS__)
+#else
+#define SYS_TRACE(name, result, ...)
+#endif
+
 inline Sandbox &emu(machine_t &m) {
 	return *m.get_userdata<Sandbox>();
 }
 
 inline godot::Object *get_object_from_address(Sandbox &emu, uint64_t addr) {
+	SYS_TRACE("get_object_from_address", addr);
 	godot::Object *obj = (godot::Object *)uintptr_t(addr);
 	if (obj == nullptr) {
 		ERR_PRINT("Object is Null");
@@ -37,6 +143,7 @@ inline godot::Object *get_object_from_address(Sandbox &emu, uint64_t addr) {
 	return obj;
 }
 inline godot::Node *get_node_from_address(Sandbox &emu, uint64_t addr) {
+	SYS_TRACE("get_node_from_address", addr);
 	godot::Node *node = (godot::Node *)uintptr_t(addr);
 	if (node == nullptr) {
 		ERR_PRINT("Node object is Null");
@@ -57,6 +164,7 @@ static inline Variant object_callp(godot::Object *obj, const Variant **args, int
 }
 
 static inline Variant object_call(Sandbox &emu, godot::Object *obj, const Variant &method, const GuestVariant *args, int argc) {
+	SYS_TRACE("object_call", method, argc);
 	std::array<Variant, 8> vstorage;
 	std::array<const Variant *, 9> vargs; // 8 is the maximum number of arguments we will accept.
 	vargs[0] = &method;
@@ -96,6 +204,7 @@ APICALL(api_print) {
 APICALL(api_vcall) {
 	auto [vp, method, mlen, args_ptr, args_size, vret_addr] = machine.sysargs<GuestVariant *, gaddr_t, unsigned, gaddr_t, gaddr_t, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("vcall", method, mlen, args_ptr, args_size, vret_addr);
 
 	if (args_size > 8) {
 		ERR_PRINT("Variant::call(): Too many arguments");
@@ -150,6 +259,7 @@ APICALL(api_vcall) {
 APICALL(api_veval) {
 	auto [op, ap, bp, retp] = machine.sysargs<int, GuestVariant *, GuestVariant *, GuestVariant *>();
 	auto &emu = riscv::emu(machine);
+	SYS_TRACE("veval", op, ap, bp, retp);
 
 	// Special case for comparing objects.
 	if (ap->type == Variant::OBJECT && bp->type == Variant::OBJECT) {
@@ -182,6 +292,7 @@ APICALL(api_vcreate) {
 	auto [vp, type, method, gdata] = machine.sysargs<GuestVariant *, Variant::Type, int, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(10'000);
+	SYS_TRACE("vcreate", vp, type, method, gdata);
 
 	switch (type) {
 		case Variant::STRING:
@@ -361,6 +472,7 @@ APICALL(api_vfetch) {
 	auto [index, gdata, method] = machine.sysargs<unsigned, gaddr_t, int>();
 	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(10'000);
+	SYS_TRACE("vfetch", index, gdata, method);
 
 	// Find scoped Variant and copy data into gdata.
 	std::optional<const Variant *> opt = emu.get_scoped_variant(index);
@@ -465,6 +577,7 @@ APICALL(api_vclone) {
 	auto [vp, vret] = machine.sysargs<GuestVariant *, GuestVariant *>();
 	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(10'000);
+	SYS_TRACE("vclone", vp, vret);
 
 	// Find scoped Variant and clone it.
 	std::optional<const Variant *> var = emu.get_scoped_variant(vp->v.i);
@@ -482,6 +595,7 @@ APICALL(api_vstore) {
 	auto [index, gdata, gsize] = machine.sysargs<unsigned, gaddr_t, gaddr_t>();
 	auto &emu = riscv::emu(machine);
 	machine.penalize(10'000);
+	SYS_TRACE("vstore", index, gdata, gsize);
 
 	// Find scoped Variant and store data from guest memory.
 	std::optional<const Variant *> opt = emu.get_scoped_variant(index);
@@ -575,7 +689,7 @@ APICALL(api_vstore) {
 APICALL(api_vfree) {
 	auto [vp] = machine.sysargs<GuestVariant *>();
 	auto &emu = riscv::emu(machine);
-	machine.penalize(10'000);
+	SYS_TRACE("vfree", vp);
 
 	// XXX: No longer needed, as we are abstracting the Variant object.
 }
@@ -584,6 +698,7 @@ APICALL(api_get_obj) {
 	auto [name] = machine.sysargs<std::string>();
 	auto &emu = riscv::emu(machine);
 	machine.penalize(150'000);
+	SYS_TRACE("get_obj", String::utf8(name.c_str(), name.size()));
 
 	// Objects retrieved by name are named globals, eg. "Engine", "Input", "Time",
 	// which are also their class names. As such, we can restrict access using
@@ -624,6 +739,7 @@ APICALL(api_obj) {
 	auto [op, addr, gvar] = machine.sysargs<int, uint64_t, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(250'000); // Costly Object operations.
+	SYS_TRACE("obj_op", op, addr, gvar);
 
 	godot::Object *obj = reinterpret_cast<godot::Object *>(uintptr_t(addr));
 	if (!emu.is_scoped_object(obj)) {
@@ -699,6 +815,8 @@ APICALL(api_obj_callp) {
 	auto [addr, g_method, g_method_len, deferred, vret_ptr, args_addr, args_size] = machine.sysargs<uint64_t, gaddr_t, unsigned, bool, gaddr_t, gaddr_t, unsigned>();
 	auto &emu = riscv::emu(machine);
 	machine.penalize(250'000); // Costly Object call operation.
+	SYS_TRACE("obj_callp", addr, g_method, g_method_len, deferred, vret_ptr, args_addr, args_size);
+
 	auto *obj = reinterpret_cast<godot::Object *>(uintptr_t(addr));
 	if (!emu.is_scoped_object(obj)) {
 		ERR_PRINT("Object is not scoped");
@@ -754,6 +872,8 @@ APICALL(api_get_node) {
 	auto [addr, name] = machine.sysargs<uint64_t, std::string_view>();
 	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(150'000);
+	SYS_TRACE("get_node", addr, String::utf8(name.data(), name.size()));
+
 	Node *node = nullptr;
 	const std::string c_name(name);
 
@@ -864,8 +984,9 @@ APICALL(api_node_create) {
 APICALL(api_node) {
 	auto [op, addr, gvar] = machine.sysargs<int, uint64_t, gaddr_t>();
 	machine.penalize(250'000); // Costly Node operations.
-
 	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("node_op", op, addr, gvar);
+
 	// Get the Node object by its address.
 	godot::Node *node = get_node_from_address(emu, addr);
 
@@ -981,8 +1102,9 @@ APICALL(api_node2d) {
 	// Node2D operation, Node2D address, and the variant to get/set the value.
 	auto [op, addr, gvar] = machine.sysargs<int, uint64_t, gaddr_t>();
 	machine.penalize(100'000); // Costly Node2D operations.
-
 	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("node2d_op", op, addr, gvar);
+
 	// Get the Node2D object by its address.
 	godot::Node *node = get_node_from_address(emu, addr);
 
@@ -1030,8 +1152,9 @@ APICALL(api_node3d) {
 	// Node3D operation, Node3D address, and the variant to get/set the value.
 	auto [op, addr, gvar] = machine.sysargs<int, uint64_t, gaddr_t>();
 	machine.penalize(100'000); // Costly Node3D operations.
-
 	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("node3d_op", op, addr, gvar);
+
 	// Get the Node3D object by its address
 	godot::Node *node = get_node_from_address(emu, addr);
 
@@ -1071,8 +1194,9 @@ APICALL(api_node3d) {
 
 APICALL(api_throw) {
 	auto [type, msg, vaddr] = machine.sysargs<std::string_view, std::string_view, gaddr_t>();
-
 	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("throw", String::utf8(type.data(), type.size()), String::utf8(msg.data(), msg.size()), vaddr);
+
 	GuestVariant *var = machine.memory.memarray<GuestVariant>(vaddr, 1);
 	String error_string = "Sandbox exception of type " + String::utf8(type.data(), type.size()) + ": " + String::utf8(msg.data(), msg.size()) + " for Variant of type " + itos(var->type);
 	ERR_PRINT(error_string);
@@ -1106,6 +1230,8 @@ APICALL(api_vector2_rotated) {
 APICALL(api_array_ops) {
 	auto [op, arr_idx, idx, vaddr] = machine.sysargs<Array_Op, unsigned, int, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
+	machine.penalize(50'000); // Costly Array operations.
+	SYS_TRACE("array_ops", int(op), arr_idx, idx, vaddr);
 
 	if (op == Array_Op::CREATE) {
 		// There is no scoped array, so we need to create one.
@@ -1175,6 +1301,8 @@ APICALL(api_array_ops) {
 APICALL(api_array_at) {
 	auto [arr_idx, idx, vret] = machine.sysargs<unsigned, int, GuestVariant *>();
 	Sandbox &emu = riscv::emu(machine);
+	machine.penalize(10'000); // Costly Array operations.
+	SYS_TRACE("array_at", arr_idx, idx, vret);
 
 	std::optional<const Variant *> opt_array = emu.get_scoped_variant(arr_idx);
 	if (!opt_array.has_value() || opt_array.value()->get_type() != Variant::ARRAY) {
@@ -1209,6 +1337,8 @@ APICALL(api_array_size) {
 APICALL(api_dict_ops) {
 	auto [op, dict_idx, vkey, vaddr] = machine.sysargs<Dictionary_Op, unsigned, gaddr_t, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
+	machine.penalize(50'000); // Costly Dictionary operations.
+	SYS_TRACE("dict_ops", int(op), dict_idx, vkey, vaddr);
 
 	std::optional<const Variant *> opt_dict = emu.get_scoped_variant(dict_idx);
 	if (!opt_dict.has_value() || opt_dict.value()->get_type() != Variant::DICTIONARY) {
@@ -1275,6 +1405,7 @@ APICALL(api_string_create) {
 	auto [strview] = machine.sysargs<std::string_view>();
 	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(10'000);
+	SYS_TRACE("string_create", String::utf8(strview.data(), strview.size()));
 
 	String str = String::utf8(strview.data(), strview.size());
 	const unsigned idx = emu.create_scoped_variant(Variant(std::move(str)));
@@ -1284,6 +1415,8 @@ APICALL(api_string_create) {
 APICALL(api_string_ops) {
 	auto [op, str_idx, index, vaddr] = machine.sysargs<String_Op, unsigned, int, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
+	machine.penalize(10'000); // Costly String operations.
+	SYS_TRACE("string_ops", int(op), str_idx, index, vaddr);
 
 	std::optional<const Variant *> opt_str = emu.get_scoped_variant(str_idx);
 	if (!opt_str.has_value() || opt_str.value()->get_type() != Variant::STRING) {
@@ -1324,6 +1457,7 @@ APICALL(api_string_ops) {
 APICALL(api_string_at) {
 	auto [str_idx, index] = machine.sysargs<unsigned, int>();
 	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("string_at", str_idx, index);
 
 	std::optional<const Variant *> opt_str = emu.get_scoped_variant(str_idx);
 	if (!opt_str.has_value() || opt_str.value()->get_type() != Variant::STRING) {
@@ -1345,6 +1479,7 @@ APICALL(api_string_at) {
 APICALL(api_string_size) {
 	auto [str_idx] = machine.sysargs<unsigned>();
 	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("string_size", str_idx);
 
 	std::optional<const Variant *> opt_str = emu.get_scoped_variant(str_idx);
 	if (!opt_str.has_value() || opt_str.value()->get_type() != Variant::STRING) {
@@ -1358,6 +1493,8 @@ APICALL(api_string_size) {
 APICALL(api_string_append) {
 	auto [str_idx, strview] = machine.sysargs<unsigned, std::string_view>();
 	Sandbox &emu = riscv::emu(machine);
+	machine.penalize(10'000);
+	SYS_TRACE("string_append", str_idx, String::utf8(strview.data(), strview.size()));
 
 	Variant &var = emu.get_mutable_scoped_variant(str_idx);
 
@@ -1370,6 +1507,7 @@ APICALL(api_timer_periodic) {
 	auto [interval, oneshot, callback, capture, vret] = machine.sysargs<double, bool, gaddr_t, std::array<uint8_t, 32> *, GuestVariant *>();
 	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(100'000); // Costly Timer node creation.
+	SYS_TRACE("timer_periodic", interval, oneshot, callback, capture, vret);
 
 	Timer *timer = memnew(Timer);
 	timer->set_wait_time(interval);
@@ -1403,6 +1541,7 @@ APICALL(api_timer_stop) {
 template <typename Float>
 static void api_math_op(machine_t &machine) {
 	auto [op, arg1] = machine.sysargs<Math_Op, Float>();
+	SYS_TRACE("math_op", int(op), arg1);
 
 	switch (op) {
 		case Math_Op::SIN:
@@ -1442,6 +1581,8 @@ static void api_math_op(machine_t &machine) {
 template <typename Float>
 static void api_lerp_op(machine_t &machine) {
 	auto [op, arg1, arg2, arg3] = machine.sysargs<Lerp_Op, Float, Float, Float>();
+	SYS_TRACE("lerp_op", int(op), arg1, arg2, arg3);
+
 	switch (op) {
 		case Lerp_Op::LERP: {
 			const Float t = arg3; // t is the interpolation factor.
@@ -1483,6 +1624,7 @@ APICALL(api_vec3_ops) {
 		float x, y, z;
 	};
 	auto [v, v2addr, op] = machine.sysargs<Vec3 *, gaddr_t, Vec3_Op>();
+	SYS_TRACE("vec3_ops", v, v2addr, int(op));
 
 	switch (op) {
 		case Vec3_Op::HASH: {
@@ -1553,6 +1695,7 @@ APICALL(api_vec3_ops) {
 APICALL(api_callable_create) {
 	auto [address, vargs] = machine.sysargs<gaddr_t, GuestVariant *>();
 	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("callable_create", address, vargs);
 
 	// Create a new callable object, using emu.vmcallable_address() to get the callable function.
 	Array arguments;
@@ -1570,6 +1713,7 @@ APICALL(api_callable_create) {
 APICALL(api_load) {
 	auto [path, g_result] = machine.sysargs<std::string_view, GuestVariant *>();
 	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("load", String::utf8(path.data(), path.size()), g_result);
 
 	// Preload the resource from the given path.
 	ResourceLoader *loader = ResourceLoader::get_singleton();
@@ -1601,6 +1745,7 @@ void Sandbox::initialize_syscalls() {
 	machine().on_unhandled_syscall = [](machine_t &machine, size_t syscall) {
 		WARN_PRINT(("Unhandled system call: " + std::to_string(syscall)).c_str());
 		machine.penalize(100'000); // Add to the instruction counter due to I/O.
+		machine.set_result(-ENOSYS);
 	};
 
 	static bool initialized_before = false;

@@ -223,6 +223,7 @@ void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 			.translate_enabled = false,
 			.translate_future_segments = false,
 			.translate_invoke_compiler = false,
+			//.translate_trace = true,
 			//.translate_timing = true,
 			// We don't care about the instruction limit when full binary translation is enabled
 			// Specifically, for the Machines where full binary translation is *available*, so
