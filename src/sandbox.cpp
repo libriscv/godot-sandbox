@@ -52,6 +52,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_floating_point_registers"), &Sandbox::get_floating_point_registers);
 	ClassDB::bind_method(D_METHOD("set_argument_registers", "args"), &Sandbox::set_argument_registers);
 	ClassDB::bind_method(D_METHOD("get_current_instruction"), &Sandbox::get_current_instruction);
+	ClassDB::bind_method(D_METHOD("make_resumable"), &Sandbox::make_resumable);
 	ClassDB::bind_method(D_METHOD("resume"), &Sandbox::resume);
 
 	ClassDB::bind_method(D_METHOD("assault", "test", "iterations"), &Sandbox::assault);
@@ -264,7 +265,8 @@ void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		m.setup_linux(*argv);
 
 		// Run the program through to its main() function
-		m.simulate(get_instructions_max() << 30);
+		if (!this->m_resumable_mode)
+			m.simulate(get_instructions_max() << 30);
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
 		this->handle_exception(machine().cpu.pc());
@@ -273,15 +275,20 @@ void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 	// Read the program's custom properties, if any
 	this->read_program_properties(true);
 
-	// Pre-cache some functions
-	PackedStringArray functions = this->get_functions();
-	for (int i = 0; i < functions.size(); i++) {
-		this->cached_address_of(functions[i].hash(), functions[i]);
+	// Pre-cache some functions when using ELFScript (in the editor)
+	// NOTE: This is not strictly necessary, but it can speed up the first call
+	if (!this->m_program_data.is_null()) {
+		PackedStringArray functions = this->get_functions();
+		for (int i = 0; i < functions.size(); i++) {
+			this->cached_address_of(functions[i].hash(), functions[i]);
+		}
 	}
 
 	// Accumulate startup time
 	const uint64_t startup_t1 = Time::get_singleton()->get_ticks_usec();
-	m_accumulated_startup_time += (startup_t1 - startup_t0) / 1e6;
+	double startup_time = (startup_t1 - startup_t0) / 1e6;
+	m_accumulated_startup_time += startup_time;
+	//fprintf(stderr, "Sandbox startup time: %.3f seconds\n", startup_time);
 }
 
 Variant Sandbox::vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {

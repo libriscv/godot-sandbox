@@ -317,8 +317,12 @@ public:
 	/// @return The current instruction.
 	String get_current_instruction() const;
 
+	/// @brief Enable resuming the program execution after a timeout.
+	/// @note Must be called before the program is run. Not available for VM calls.
+	void make_resumable();
+
 	/// @brief Resume execution of the program. Loses the current call state.
-	void resume(uint64_t max_instructions);
+	bool resume(uint64_t max_instructions);
 
 	/// @brief Binary translate the program and produce embeddable code
 	String emit_binary_translation(bool ignore_instruction_limit = true) const;
@@ -353,6 +357,7 @@ private:
 	uint8_t m_level = 1; // Current call level (0 is for initialization)
 	uint8_t m_throttled = 0;
 	bool m_use_unboxed_arguments = false;
+	bool m_resumable_mode = false; // If enabled, allow running startup in small increments
 
 	CurrentState *m_current_state = nullptr;
 	// State stack, with the permanent (initial) state at index 0.

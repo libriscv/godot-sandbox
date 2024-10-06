@@ -1,5 +1,7 @@
 #include "sandbox.h"
 
+#include <godot_cpp/variant/utility_functions.hpp>
+
 Array Sandbox::get_general_registers() const {
 	Array ret;
 	for (int i = 0; i < 32; i++) {
@@ -37,39 +39,39 @@ String Sandbox::get_current_instruction() const {
 	return String(instr.c_str());
 }
 
-void Sandbox::resume(uint64_t max_instructions) {
-	CurrentState &state = this->m_states[m_level];
-	const bool is_reentrant_call = m_level > 1;
-	state.reset(this->m_level);
-	m_level++;
+void Sandbox::make_resumable() {
+	if (!m_machine->memory.binary().empty()) {
+		ERR_PRINT("Sandbox: Cannot make resumable after initialization.");
+		return;
+	}
+	this->m_resumable_mode = true;
+}
 
-	// Scoped objects and owning tree node
-	CurrentState *old_state = this->m_current_state;
-	this->m_current_state = &state;
-	// Call statistics
-	this->m_calls_made++;
-	Sandbox::m_global_calls_made++;
+bool Sandbox::resume(uint64_t max_instructions) {
+	if (!this->m_resumable_mode) {
+		ERR_PRINT("Sandbox: Cannot resume after initialization.");
+		return false;
+	}
+	if (this->m_current_state != &this->m_states[0]) {
+		ERR_PRINT("Sandbox: Cannot resume while in a call.");
+		this->m_resumable_mode = false; // Disable resumable mode
+		return false;
+	}
 
 	const gaddr_t address = m_machine->cpu.pc();
 	try {
-		// execute guest function
-		if (!is_reentrant_call) {
-			// execute!
-			m_machine->resume(max_instructions);
-		} else if (m_level < MAX_LEVEL) {
-			riscv::Registers<RISCV_ARCH> regs;
-			regs = m_machine->cpu.registers();
-			// execute!
-			m_machine->cpu.preempt_internal(regs, true, address, max_instructions);
-		} else {
-			throw std::runtime_error("Recursion level exceeded");
+		const bool stopped = m_machine->resume(max_instructions);
+
+		if (stopped) {
+			// If the machine stopped, we are leaving resumable mode
+			// It's not available for VM calls, only during startup
+			this->m_resumable_mode = false;
 		}
+		return stopped;
 
 	} catch (const std::exception &e) {
+		this->m_resumable_mode = false;
 		this->handle_exception(address);
+		return true; // Can't (shouldn't) be resumed anymore
 	}
-
-	// Restore the previous state
-	this->m_level--;
-	this->m_current_state = old_state;
 }
