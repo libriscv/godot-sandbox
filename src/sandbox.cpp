@@ -736,7 +736,7 @@ void Sandbox::read_program_properties(bool editor) const {
 				break;
 			// Check if the property is valid by checking its size
 			if (prop->size != sizeof(GuestProperty)) {
-				ERR_PRINT("Sandbox: Invalid property size");
+				//ERR_PRINT("Sandbox: Invalid property size");
 				break;
 			}
 			const std::string c_name = machine().memory.memstring(prop->g_name);
