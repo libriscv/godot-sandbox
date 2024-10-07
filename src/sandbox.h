@@ -324,7 +324,12 @@ public:
 	bool resume(uint64_t max_instructions);
 
 	/// @brief Binary translate the program and produce embeddable code
-	String emit_binary_translation(bool ignore_instruction_limit = true) const;
+	/// @param ignore_instruction_limit If true, ignore the instruction limit. Infinite loops are possible.
+	/// @param automatic_nbit_as If true, use and-masking on all memory accesses based on the rounded-down Po2 arena size.
+	/// @return The binary translation code.
+	/// @note This is only available if the RISCV_BINARY_TRANSLATION flag is set.
+	/// @warning Do *NOT* enable automatic_nbit_as unless you are sure the program is compatible with it.
+	String emit_binary_translation(bool ignore_instruction_limit = true, bool automatic_nbit_as = false) const;
 
 	/// @brief  Check if the program has found and loaded binary translation.
 	/// @return True if binary translation is loaded, false otherwise.

@@ -59,7 +59,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_function", "function"), &Sandbox::has_function);
 
 	// Binary translation.
-	ClassDB::bind_method(D_METHOD("emit_binary_translation", "ignore_instruction_limit"), &Sandbox::emit_binary_translation, DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("emit_binary_translation", "ignore_instruction_limit", "automatic_nbit_address_space"), &Sandbox::emit_binary_translation, DEFVAL(true), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("is_binary_translated"), &Sandbox::is_binary_translated);
 
 	// Properties.
@@ -888,7 +888,7 @@ void Sandbox::set_max_refs(uint32_t max) {
 	}
 }
 
-String Sandbox::emit_binary_translation(bool ignore_instruction_limit) const {
+String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool automatic_nbit_as) const {
 	const std::string_view &binary = machine().memory.binary();
 	if (binary.empty()) {
 		ERR_PRINT("Sandbox: No binary loaded.");
@@ -902,6 +902,7 @@ String Sandbox::emit_binary_translation(bool ignore_instruction_limit) const {
 	options->translate_enable_embedded = true;
 	options->translate_invoke_compiler = false;
 	options->translate_ignore_instruction_limit = ignore_instruction_limit;
+	options->translate_automatic_nbit_address_space = automatic_nbit_as;
 
 	// 2. Enable binary translation output to a string
 	std::string code_output;
