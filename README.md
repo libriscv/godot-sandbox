@@ -49,7 +49,8 @@ This extension exists to allow Godot creators to implement safe modding support,
 	- Programs will behave the same way on all platforms, including 32-bit platforms.
 - High-performance
 	- You can use this extension as a way to write higher performance code than GDScript permits, without having to resort to writing and maintaining a GDExtension for all platforms.
-	- When shipping, enable binary translation to increase performance even more. Also works on all platforms, but has to be embedded in the project.
+	- Enable binary translation to increase performance drastically. Also works on all platforms, but has to be embedded in the project.
+	- Yields 2.5-4x performance boost by default, 5-30x with binary translation
 - Publish and then make updates without re-publishing
 	- You can distribute programs from a server to clients as part of the login sequence. You can use this to live-distribute changes like bugfixes or even new features to the game without having to re-publish the game itself. I do this in my game.
 - Supports many programming languages
