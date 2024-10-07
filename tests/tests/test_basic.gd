@@ -435,6 +435,19 @@ func test_static_storage():
 	assert_eq(s.get_exceptions(), exceptions + 1)
 	assert_eq(result, null)
 
+	# This function creates a Dictionary after initialization but makes it permanent
+	assert_eq(s.has_function("test_permanent_storage"), true)
+	exceptions = s.get_exceptions()
+
+	result = s.vmcallv("test_permanent_storage", "key", "value")
+	assert_eq_deep(result, {"key": "value"})
+	assert_eq(s.get_exceptions(), exceptions)
+	# And again, the second time it will not create a new Dictionary
+	# but since the old one was made permanent, it will return the stored value nevertheless
+	result = s.vmcallv("test_permanent_storage", "key", "value")
+	assert_eq_deep(result, {"key": "value"})
+	assert_eq(s.get_exceptions(), exceptions)
+
 	s.queue_free()
 
 func callable_function():

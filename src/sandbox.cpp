@@ -687,6 +687,40 @@ Variant &Sandbox::get_mutable_scoped_variant(int32_t index) {
 	}
 	return *it;
 }
+unsigned Sandbox::create_permanent_variant(unsigned idx) {
+	if (int32_t(idx) < 0) {
+		// It's already a permanent variant
+		return idx;
+	}
+	std::optional<const Variant *> var_opt = get_scoped_variant(idx);
+	if (!var_opt.has_value()) {
+		ERR_PRINT("Invalid scoped variant index.");
+		throw std::runtime_error("Invalid scoped variant index.");
+	}
+	const Variant *var = var_opt.value();
+	// Find the variant in the variants list
+	auto it = std::find_if(state().variants.begin(), state().variants.end(), [var](const Variant &v) {
+		return &v == var;
+	});
+
+	CurrentState &perm_state = this->m_states[0];
+	if (perm_state.variants.size() >= perm_state.variants.capacity()) {
+		ERR_PRINT("Maximum number of scoped variants in permanent state reached.");
+		// Just return the old scoped variant
+		return idx;
+	}
+
+	if (it == state().variants.end()) {
+		// Create a new variant in the permanent list
+		perm_state.append(var->duplicate());
+	} else {
+		// Move the variant to the permanent list, leave the old one in the scoped list
+		perm_state.append(std::move(*it));
+	}
+	unsigned perm_idx = perm_state.variants.size() - 1;
+	// Return the index of the new permanent variant converted to negative
+	return -int32_t(perm_idx) - 1;
+}
 
 void Sandbox::add_scoped_object(const void *ptr) {
 	if (state().scoped_objects.size() >= this->m_max_refs) {

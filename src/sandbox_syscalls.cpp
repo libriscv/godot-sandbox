@@ -574,20 +574,30 @@ APICALL(api_vfetch) {
 }
 
 APICALL(api_vclone) {
-	auto [vp, vret] = machine.sysargs<GuestVariant *, GuestVariant *>();
+	auto [vp, vret_addr] = machine.sysargs<GuestVariant *, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
 	machine.penalize(10'000);
 	SYS_TRACE("vclone", vp, vret);
 
-	// Find scoped Variant and clone it.
-	std::optional<const Variant *> var = emu.get_scoped_variant(vp->v.i);
-	if (var.has_value()) {
-		const unsigned index = emu.create_scoped_variant(var.value()->duplicate());
-		vret->type = var.value()->get_type();
-		vret->v.i = index;
+	if (vret_addr != 0) {
+		// Find scoped Variant and clone it.
+		std::optional<const Variant *> var = emu.get_scoped_variant(vp->v.i);
+		if (var.has_value()) {
+			const unsigned index = emu.create_scoped_variant(var.value()->duplicate());
+			// Duplicate the Variant and store the index in the guest memory.
+			GuestVariant *vret = machine.memory.memarray<GuestVariant>(vret_addr, 1);
+			vret->type = var.value()->get_type();
+			vret->v.i = index;
+		} else {
+			ERR_PRINT("vclone: Variant is not scoped");
+			throw std::runtime_error("vclone: Variant is not scoped");
+		}
 	} else {
-		ERR_PRINT("vclone: Variant is not scoped");
-		throw std::runtime_error("vclone: Variant is not scoped");
+		// Duplicate or move the Variant into permanent storage (m_level[0]).
+		const unsigned idx = vp->v.i;
+		unsigned new_idx = emu.create_permanent_variant(idx);
+		// Update the Variant with the new index.
+		vp->v.i = new_idx;
 	}
 }
 

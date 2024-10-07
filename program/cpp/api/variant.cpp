@@ -65,3 +65,8 @@ Variant Variant::duplicate() const {
 	sys_vclone(this, &v);
 	return v;
 }
+
+Variant &Variant::make_permanent() {
+	sys_vclone(this, nullptr);
+	return *this;
+}

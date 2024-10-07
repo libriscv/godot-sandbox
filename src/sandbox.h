@@ -186,6 +186,11 @@ public:
 	/// @return The variant.
 	Variant &get_mutable_scoped_variant(int32_t idx);
 
+	/// @brief Create a new permanent variant, storing it in the current state.
+	/// @param idx The index of the variant to duplicate or move.
+	/// @return The index of the new permanent variant, passed to and used by the guest.
+	unsigned create_permanent_variant(unsigned idx);
+
 	/// @brief Add a scoped object to the current state.
 	/// @param ptr The pointer to the object to add.
 	void add_scoped_object(const void *ptr);

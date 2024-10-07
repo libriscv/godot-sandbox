@@ -8,9 +8,15 @@ extern "C" Variant test_static_storage(Variant key, Variant val) {
 	return d;
 }
 extern "C" Variant test_failing_static_storage(Variant key, Variant val) {
-	// This won't work: it's being created after initialization
+	// This works only once: it's being created after initialization
 	static Dictionary fd = Dictionary::Create();
 	fd[key] = val;
+	return fd;
+}
+extern "C" Variant test_permanent_storage(Variant key, Variant val) {
+	static Dictionary fd = Dictionary::Create();
+	fd[key] = val;
+	fd = Variant(fd).make_permanent();
 	return fd;
 }
 

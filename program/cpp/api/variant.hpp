@@ -242,6 +242,10 @@ struct Variant
 
 	Variant duplicate() const;
 
+	/// @brief Make the Variant permanent, by moving it to permanent storage.
+	/// @return Updates the Variant to the new permanent Variant and returns it.
+	Variant &make_permanent();
+
 	Variant &operator=(const Variant &other);
 	Variant &operator=(Variant &&other);
 	bool operator==(const Variant &other) const;
