@@ -24,6 +24,7 @@ set(API_DIR ${CMAKE_CURRENT_LIST_DIR}/api)
 set(API_SOURCES
 	"${API_DIR}/api.cpp"
 	"${API_DIR}/array.cpp"
+	"${API_DIR}/basis.cpp"
 	"${API_DIR}/dictionary.cpp"
 	"${API_DIR}/native.cpp"
 	"${API_DIR}/node.cpp"
@@ -33,6 +34,8 @@ set(API_SOURCES
 	"${API_DIR}/packed_array.cpp"
 	"${API_DIR}/string.cpp"
 	"${API_DIR}/timer.cpp"
+	"${API_DIR}/transform2d.cpp"
+	"${API_DIR}/transform3d.cpp"
 	"${API_DIR}/variant.cpp"
 	"${API_DIR}/vector.cpp"
 )

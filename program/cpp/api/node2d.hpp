@@ -1,5 +1,6 @@
 #pragma once
 #include "node.hpp"
+struct Transform2D;
 
 // Node2D: Contains 2D transformations.
 // Such as: position, rotation, scale, and skew.
@@ -42,9 +43,13 @@ struct Node2D : public Node {
 	/// @param value The new skew of the node.
 	void set_skew(const Variant &value);
 
-	// TODO:
-	// void set_transform(const Transform2D &value);
-	// Transform2D get_transform() const;
+	/// @brief Set the 2D transform of the node.
+	/// @param value The new 2D transform of the node.
+	void set_transform(const Transform2D &value);
+
+	/// @brief Get the 2D transform of the node.
+	/// @return The 2D transform of the node.
+	Transform2D get_transform() const;
 
 	/// @brief  Duplicate the node.
 	/// @return A new Node2D object with the same properties and children.

@@ -1,5 +1,6 @@
 #pragma once
 #include "node.hpp"
+struct Transform3D;
 
 // Node3D: Contains 3D tranformations.
 // Such as: position, rotation, scale, and skew.
@@ -35,9 +36,15 @@ struct Node3D : public Node {
 	/// @param value The new scale of the node.
 	void set_scale(const Variant &value);
 
+	/// @brief Set the 3D transform of the node.
+	/// @param value The new 3D transform of the node.
+	void set_transform(const Transform3D &value);
+
+	/// @brief Get the 3D transform of the node.
+	/// @return The 3D transform of the node.
+	Transform3D get_transform() const;
+
 	// TODO:
-	// void set_transform(const Transform3D &value);
-	// Transform3D get_transform() const;
 	// void set_quaternion(const Quaternion &value);
 	// Quaternion get_quaternion() const;
 

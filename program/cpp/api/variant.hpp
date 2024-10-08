@@ -25,7 +25,7 @@ struct is_u32string
 template<class T>
 struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
 
-struct Object; struct Node; struct Node2D; struct Node3D; struct Array; struct Dictionary; union String; struct Callable;
+struct Object; struct Node; struct Node2D; struct Node3D; struct Array; struct Dictionary; union String; struct Callable; struct Basis; struct Transform2D; struct Transform3D;
 #include "color.hpp"
 #include "packed_array.hpp"
 #include "vector.hpp"
@@ -134,6 +134,9 @@ struct Variant
 	Variant(const Node&);
 	Variant(const Node2D&);
 	Variant(const Node3D&);
+	Variant(const Basis&);
+	Variant(const Transform2D&);
+	Variant(const Transform3D&);
 	Variant(const PackedArray<uint8_t>&);
 	Variant(const PackedArray<float>&);
 	Variant(const PackedArray<double>&);
@@ -167,6 +170,9 @@ struct Variant
 	operator uint8_t() const;
 	operator double() const;
 	operator float() const;
+	operator Basis() const;
+	operator Transform2D() const;
+	operator Transform3D() const;
 	operator std::string() const; // String for STRING and PACKED_BYTE_ARRAY
 	operator std::u32string() const; // u32string for STRING, STRING_NAME
 	operator String() const;
@@ -174,6 +180,9 @@ struct Variant
 	operator Dictionary() const;
 	operator Callable() const;
 
+	Basis as_basis() const;
+	Transform2D as_transform2d() const;
+	Transform3D as_transform3d() const;
 	Object as_object() const;
 	Node as_node() const;
 	Node2D as_node2d() const;
