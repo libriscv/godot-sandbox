@@ -4,6 +4,7 @@
 #include "../register_types.h"
 #include "../sandbox_project_settings.h"
 #include "script_cpp.h"
+#include <libriscv/util/threadpool.h>
 #include <godot_cpp/classes/editor_file_system.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
 #include <godot_cpp/classes/editor_settings.hpp>
@@ -13,7 +14,6 @@
 #include <godot_cpp/classes/script_editor.hpp>
 #include <godot_cpp/classes/script_editor_base.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
-#include <libriscv/util/threadpool.h>
 
 static Ref<ResourceFormatSaverCPP> cpp_saver;
 static riscv::ThreadPool thread_pool(1); // Maximum 1 compiler job at a time

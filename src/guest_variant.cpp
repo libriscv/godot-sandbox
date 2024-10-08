@@ -3,6 +3,11 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <libriscv/util/crc32.hpp>
 
+namespace riscv {
+extern const char *variant_type_name(Variant::Type type);
+extern godot::Object *get_object_from_address(const Sandbox &emu, uint64_t addr);
+} //namespace riscv
+
 Variant GuestVariant::toVariant(const Sandbox &emu) const {
 	switch (type) {
 		case Variant::NIL:
@@ -34,26 +39,30 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 			return Variant{ godot::Color(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]) };
 
 		case Variant::OBJECT: {
-			godot::Object *obj = (godot::Object *)uintptr_t(v.i);
-			if (emu.is_scoped_object(obj))
-				return Variant{ obj };
-			else
-				throw std::runtime_error("GuestVariant::toVariant(): Object is not known/scoped");
+			godot::Object *obj = riscv::get_object_from_address(emu, v.i);
+			return Variant{ obj };
 		}
 
 		default:
 			if (std::optional<const Variant *> v = emu.get_scoped_variant(this->v.i)) {
 				return *v.value();
-			} else
-				throw std::runtime_error("GuestVariant::toVariant(): " + std::to_string(type) + " is not known/scoped");
+			} else {
+				char buffer[128];
+				snprintf(buffer, sizeof(buffer), "GuestVariant::toVariant(): %u (%s) is not known/scoped",
+						type, riscv::variant_type_name(type));
+				throw std::runtime_error(buffer);
+			}
 	}
 }
 
 const Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
 	if (std::optional<const Variant *> v = emu.get_scoped_variant(this->v.i))
 		return v.value();
-	else
-		throw std::runtime_error("GuestVariant::toVariantPtr(): Not known/scoped");
+
+	char buffer[128];
+	snprintf(buffer, sizeof(buffer), "GuestVariant::toVariantPtr(): %u (%s) is not known/scoped",
+			type, riscv::variant_type_name(type));
+	throw std::runtime_error(buffer);
 }
 
 void GuestVariant::set_object(Sandbox &emu, godot::Object *obj) {

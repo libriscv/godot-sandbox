@@ -46,7 +46,7 @@ void Sandbox::handle_exception(gaddr_t address) {
 		ERR_PRINT(("Exception: " + std::string(e.what())).c_str());
 	}
 
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
 	// Attempt to print the source code line using addr2line from the C++ Docker container
 	// It's not unthinkable that this works for every ELF, regardless of the language
 	Ref<ELFScript> script = this->get_program();
@@ -56,7 +56,15 @@ void Sandbox::handle_exception(gaddr_t address) {
 		CPPScript::DockerContainerExecute({ "/usr/api/build.sh", "--line", to_hex(address), elfpath }, line_out, false);
 		if (line_out.size() > 0) {
 			const String line = String(line_out[0]).replace("\n", "").replace("/usr/src/", "res://");
-			UtilityFunctions::printerr("Exception in Sandbox function: ", line);
+			UtilityFunctions::printerr("Exception in Sandbox calling function: ", line);
+		}
+		// Additional line for the current PC, if it's not the same as the call address
+		if (machine().cpu.pc() != address) {
+			CPPScript::DockerContainerExecute({ "/usr/api/build.sh", "--line", to_hex(machine().cpu.pc()), elfpath }, line_out, false);
+			if (line_out.size() > 0) {
+				const String line = String(line_out[0]).replace("\n", "").replace("/usr/src/", "res://");
+				UtilityFunctions::printerr("Exception in Sandbox at PC: ", line);
+			}
 		}
 	}
 #endif

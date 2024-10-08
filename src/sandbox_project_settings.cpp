@@ -5,7 +5,6 @@
 
 using namespace godot;
 
-
 static constexpr char DOCKER_ENABLED[] = "editor/script/docker_enabled";
 static constexpr char DOCKER_ENABLED_HINT[] = "Enable Docker for compilation";
 static constexpr char DOCKER_PATH[] = "editor/script/docker";

@@ -68,13 +68,14 @@ static const char *variant_type_names[] = {
 
 	"Max",
 };
-static const char *variant_type_name(Variant::Type type) {
+const char *variant_type_name(Variant::Type type) {
 	if (type < 0 || type >= Variant::Type::VARIANT_MAX) {
 		return "Unknown";
 	}
 	return variant_type_names[type];
 }
 
+// clang-format off
 template <typename Result, typename... Args>
 static inline void sys_trace(const String &name, Result result, Args &&...args) {
 	char buffer[512];
@@ -120,6 +121,8 @@ static inline void sys_trace(const String &name, Result result, Args &&...args) 
 	fwrite(buffer, 1, ptr - buffer, stderr);
 	fflush(stderr);
 }
+// clang-format on
+
 #ifdef ENABLE_SYSCALL_TRACE
 #define SYS_TRACE(name, result, ...) sys_trace(name, result, ##__VA_ARGS__)
 #else
@@ -130,7 +133,7 @@ inline Sandbox &emu(machine_t &m) {
 	return *m.get_userdata<Sandbox>();
 }
 
-inline godot::Object *get_object_from_address(Sandbox &emu, uint64_t addr) {
+godot::Object *get_object_from_address(const Sandbox &emu, uint64_t addr) {
 	SYS_TRACE("get_object_from_address", addr);
 	godot::Object *obj = (godot::Object *)uintptr_t(addr);
 	if (UNLIKELY(obj == nullptr)) {
@@ -150,7 +153,7 @@ inline godot::Object *get_object_from_address(Sandbox &emu, uint64_t addr) {
 	}
 	return obj;
 }
-inline godot::Node *get_node_from_address(Sandbox &emu, uint64_t addr) {
+inline godot::Node *get_node_from_address(const Sandbox &emu, uint64_t addr) {
 	SYS_TRACE("get_node_from_address", addr);
 	godot::Object *obj = get_object_from_address(emu, addr);
 	godot::Node *node = godot::Object::cast_to<godot::Node>(obj);
@@ -470,7 +473,7 @@ APICALL(api_vcreate) {
 		} break;
 		default:
 			ERR_PRINT("Unsupported Variant type for Variant::create()");
-			throw std::runtime_error("Unsupported Variant type for Variant::create()");
+			throw std::runtime_error("Unsupported Variant type for Variant::create(): " + std::string(variant_type_name(type)));
 	}
 }
 
@@ -819,7 +822,7 @@ APICALL(api_obj) {
 			}
 		} break;
 		default:
-			throw std::runtime_error("Invalid Object operation");
+			throw std::runtime_error("Invalid Object operation: " + std::to_string(op));
 	}
 }
 
@@ -831,8 +834,8 @@ APICALL(api_obj_callp) {
 
 	auto *obj = get_object_from_address(emu, addr);
 	if (args_size > 8) {
-		ERR_PRINT("Too many arguments.");
-		throw std::runtime_error("Too many arguments.");
+		ERR_PRINT("Too many arguments to obj_callp");
+		throw std::runtime_error("Too many arguments to obj_callp");
 	}
 	const GuestVariant *g_args = machine.memory.memarray<GuestVariant>(args_addr, args_size);
 

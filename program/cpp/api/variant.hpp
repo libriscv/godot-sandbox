@@ -238,6 +238,10 @@ struct Variant
 	template <typename... Args>
 	Variant operator ()(std::string_view method, Args... args);
 
+	/// @brief Check if the Variant is nil.
+	/// @return true if the Variant is nil, false otherwise.
+	bool is_nil() const noexcept { return m_type == NIL; }
+
 	static void evaluate(const Operator &op, const Variant &a, const Variant &b, Variant &r_ret, bool &r_valid);
 
 	Variant duplicate() const;
