@@ -133,24 +133,30 @@ inline Sandbox &emu(machine_t &m) {
 inline godot::Object *get_object_from_address(Sandbox &emu, uint64_t addr) {
 	SYS_TRACE("get_object_from_address", addr);
 	godot::Object *obj = (godot::Object *)uintptr_t(addr);
-	if (obj == nullptr) {
+	if (UNLIKELY(obj == nullptr)) {
 		ERR_PRINT("Object is Null");
 		throw std::runtime_error("Object is Null");
-	} else if (!emu.is_scoped_object(obj)) {
-		ERR_PRINT("Object is not scoped");
-		throw std::runtime_error("Object is not scoped");
+	} else if (UNLIKELY(!emu.is_scoped_object(obj))) {
+		char buffer[256];
+		const uintptr_t obj_uint = reinterpret_cast<uintptr_t>(obj);
+		if (obj_uint < 0x1000) {
+			snprintf(buffer, sizeof(buffer), "Object is not found, but likely a Variant with index: %lu", long(obj_uint));
+			ERR_PRINT(buffer);
+			throw std::runtime_error(buffer);
+		}
+		snprintf(buffer, sizeof(buffer), "Object is not scoped: %p", obj);
+		ERR_PRINT(buffer);
+		throw std::runtime_error(buffer);
 	}
 	return obj;
 }
 inline godot::Node *get_node_from_address(Sandbox &emu, uint64_t addr) {
 	SYS_TRACE("get_node_from_address", addr);
-	godot::Node *node = (godot::Node *)uintptr_t(addr);
-	if (node == nullptr) {
-		ERR_PRINT("Node object is Null");
-		throw std::runtime_error("Node object is Null");
-	} else if (!emu.is_scoped_object(node)) {
-		ERR_PRINT("Node object is not scoped");
-		throw std::runtime_error("Node object is not scoped");
+	godot::Object *obj = get_object_from_address(emu, addr);
+	godot::Node *node = godot::Object::cast_to<godot::Node>(obj);
+	if (UNLIKELY(node == nullptr)) {
+		ERR_PRINT("Object is not a Node: " + obj->get_class());
+		throw std::runtime_error("Object was not a Node");
 	}
 	return node;
 }
@@ -751,11 +757,7 @@ APICALL(api_obj) {
 	machine.penalize(250'000); // Costly Object operations.
 	SYS_TRACE("obj_op", op, addr, gvar);
 
-	godot::Object *obj = reinterpret_cast<godot::Object *>(uintptr_t(addr));
-	if (!emu.is_scoped_object(obj)) {
-		ERR_PRINT("Object is not scoped");
-		throw std::runtime_error("Object is not scoped");
-	}
+	godot::Object *obj = get_object_from_address(emu, addr);
 
 	switch (Object_Op(op)) {
 		case Object_Op::GET_METHOD_LIST: {
@@ -827,11 +829,7 @@ APICALL(api_obj_callp) {
 	machine.penalize(250'000); // Costly Object call operation.
 	SYS_TRACE("obj_callp", addr, g_method, g_method_len, deferred, vret_ptr, args_addr, args_size);
 
-	auto *obj = reinterpret_cast<godot::Object *>(uintptr_t(addr));
-	if (!emu.is_scoped_object(obj)) {
-		ERR_PRINT("Object is not scoped");
-		throw std::runtime_error("Object is not scoped");
-	}
+	auto *obj = get_object_from_address(emu, addr);
 	if (args_size > 8) {
 		ERR_PRINT("Too many arguments.");
 		throw std::runtime_error("Too many arguments.");
@@ -896,12 +894,7 @@ APICALL(api_get_node) {
 		}
 		node = owner_node->get_node<Node>(NodePath(c_name.c_str()));
 	} else {
-		Node *base_node = reinterpret_cast<Node *>(uintptr_t(addr));
-		if (!emu.is_scoped_object(base_node)) {
-			ERR_PRINT("Node object is not scoped");
-			machine.set_result(0);
-			return;
-		}
+		Node *base_node = get_node_from_address(emu, addr);
 		node = base_node->get_node<Node>(NodePath(c_name.c_str()));
 	}
 	if (node == nullptr) {
