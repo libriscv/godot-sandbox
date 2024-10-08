@@ -77,9 +77,14 @@ func test_types():
 	assert_eq(s.has_function("test_int"), true)
 	assert_eq(s.has_function("test_float"), true)
 	assert_eq(s.has_function("test_string"), true)
+	assert_eq(s.has_function("test_object"), true)
 	assert_eq(s.has_function("test_nodepath"), true)
 	assert_eq(s.has_function("test_vec2"), true)
 	assert_eq(s.has_function("test_vec2i"), true)
+	assert_eq(s.has_function("test_vec3"), true)
+	assert_eq(s.has_function("test_vec3i"), true)
+	assert_eq(s.has_function("test_vec4"), true)
+	assert_eq(s.has_function("test_vec4i"), true)
 	assert_eq(s.has_function("test_array"), true)
 	assert_eq(s.has_function("test_dict"), true)
 
@@ -103,11 +108,28 @@ func test_types():
 	assert_eq(s.vmcall("test_ping_pong", Rect2(Vector2(1, 2), Vector2(3, 4))), Rect2(Vector2(1, 2), Vector2(3, 4))) # Rect2
 	assert_eq(s.vmcall("test_ping_pong", Rect2i(Vector2i(1, 2), Vector2i(3, 4))), Rect2i(Vector2i(1, 2), Vector2i(3, 4))) # Rect2i
 	assert_eq(s.vmcall("test_ping_pong", Transform2D(Vector2(1, 2), Vector2(3, 4), Vector2(5, 6))), Transform2D(Vector2(1, 2), Vector2(3, 4), Vector2(5, 6))) # Transform2D
+	assert_eq(s.vmcall("test_ping_pong", Transform3D(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9), Vector3(10, 11, 12))), Transform3D(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9), Vector3(10, 11, 12))) # Transform3D
 	assert_eq(s.vmcall("test_ping_pong", AABB(Vector3(1, 2, 3), Vector3(4, 5, 6))), AABB(Vector3(1, 2, 3), Vector3(4, 5, 6))) # AABB
 	assert_eq(s.vmcall("test_ping_pong", Plane(Vector3(1, 2, 3), 4)), Plane(Vector3(1, 2, 3), 4)) # Plane
 	assert_eq(s.vmcall("test_ping_pong", Quaternion(1, 2, 3, 4)), Quaternion(1, 2, 3, 4)) # Quat
 	assert_eq(s.vmcall("test_ping_pong", Basis(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9))), Basis(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9))) # Basis
 	assert_eq(s.vmcall("test_ping_pong", RID()), RID()) # RID
+
+	# Nodes
+	var n : Node = Node.new()
+	n.name = "Node"
+	assert_eq(s.vmcall("test_object", n), n)
+	n.queue_free()
+
+	var n2d : Node2D = Node2D.new()
+	n2d.name = "Node2D"
+	assert_eq(s.vmcall("test_object", n2d), n2d)
+	n2d.queue_free()
+
+	var n3d : Node3D = Node3D.new()
+	n3d.name = "Node3D"
+	assert_eq(s.vmcall("test_object", n3d), n3d)
+	n3d.queue_free()
 
 	# Array, Dictionary and String as references
 	var a_pp : Array
@@ -203,6 +225,22 @@ func test_vmcallv():
 	assert_same(s.vmcallv("test_ping_pong", RID()), RID()) # RID
 	var cb : Callable = Callable(callable_function)
 	assert_same(s.vmcallv("test_ping_pong", cb), cb, "Returned Callable was same")
+
+	# Nodes
+	var n : Node = Node.new()
+	n.name = "Node"
+	assert_same(s.vmcallv("test_ping_pong", n), n)
+	n.queue_free()
+
+	var n2d : Node2D = Node2D.new()
+	n2d.name = "Node2D"
+	assert_same(s.vmcallv("test_ping_pong", n2d), n2d)
+	n2d.queue_free()
+
+	var n3d : Node3D = Node3D.new()
+	n3d.name = "Node3D"
+	assert_same(s.vmcallv("test_ping_pong", n3d), n3d)
+	n3d.queue_free()
 
 	# Packed arrays
 	var pba_pp : PackedByteArray = [1, 2, 3, 4]
