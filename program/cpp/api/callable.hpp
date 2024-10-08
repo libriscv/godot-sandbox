@@ -30,7 +30,7 @@ struct Callable {
 	unsigned get_variant_index() const noexcept { return m_idx; }
 
 private:
-	unsigned m_idx = -1;
+	unsigned m_idx = INT32_MIN;
 };
 
 inline Variant::Variant(const Callable &callable) {

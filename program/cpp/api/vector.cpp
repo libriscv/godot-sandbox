@@ -85,5 +85,18 @@ float Vector3::distance_squared_to(const Vector3 &other) const noexcept {
 	return float(distance);
 }
 
+float Vector3::angle_to(const Vector3 &other) const noexcept {
+	register const Vector3 *vptr asm("a0") = this;
+	register const Vector3 *otherptr asm("a1") = &other;
+	register int op asm("a2") = int(Vec3_Op::ANGLE_TO);
+	register float angle asm("fa0");
+	register int syscall asm("a7") = ECALL_VEC3_OPS;
+
+	__asm__ volatile("ecall"
+					 : "=f"(angle)
+					 : "r"(op), "r"(vptr), "m"(*vptr), "r"(otherptr), "m"(*otherptr), "r"(syscall));
+	return angle;
+}
+
 static_assert(sizeof(Vector3) == 12, "Vector3 size mismatch");
 static_assert(alignof(Vector3) == 4, "Vector3 alignment mismatch");

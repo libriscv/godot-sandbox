@@ -48,7 +48,7 @@ union String {
 	static unsigned Create(const char *data, size_t size);
 
 private:
-	unsigned m_idx = -1;
+	unsigned m_idx = INT32_MIN;
 };
 using NodePath = String; // NodePath is compatible with String
 

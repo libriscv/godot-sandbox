@@ -401,6 +401,9 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 			case Variant::STRING_NAME:
 			case Variant::NODE_PATH:
 			case Variant::CALLABLE:
+			case Variant::TRANSFORM2D:
+			case Variant::BASIS:
+			case Variant::TRANSFORM3D:
 			case Variant::PACKED_BYTE_ARRAY:
 			case Variant::PACKED_FLOAT32_ARRAY:
 			case Variant::PACKED_FLOAT64_ARRAY:
@@ -634,7 +637,7 @@ unsigned Sandbox::add_scoped_variant(const Variant *value) const {
 		throw std::runtime_error("Maximum number of scoped variants reached.");
 	}
 	st.scoped_variants.push_back(value);
-	if (st.m_current_level >= 1)
+	if (&st != &this->m_states[0])
 		return int32_t(st.scoped_variants.size()) - 1;
 	else
 		return -int32_t(st.scoped_variants.size());
@@ -646,7 +649,7 @@ unsigned Sandbox::create_scoped_variant(Variant &&value) const {
 		throw std::runtime_error("Maximum number of scoped variants reached.");
 	}
 	st.append(std::move(value));
-	if (st.m_current_level >= 1)
+	if (&st != &this->m_states[0])
 		return int32_t(st.scoped_variants.size()) - 1;
 	else
 		return -int32_t(st.scoped_variants.size());
@@ -695,7 +698,7 @@ unsigned Sandbox::create_permanent_variant(unsigned idx) {
 	std::optional<const Variant *> var_opt = get_scoped_variant(idx);
 	if (!var_opt.has_value()) {
 		ERR_PRINT("Invalid scoped variant index.");
-		throw std::runtime_error("Invalid scoped variant index.");
+		throw std::runtime_error("Invalid scoped variant index: " + std::to_string(idx));
 	}
 	const Variant *var = var_opt.value();
 	// Find the variant in the variants list

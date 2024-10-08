@@ -56,14 +56,14 @@ void Sandbox::handle_exception(gaddr_t address) {
 		CPPScript::DockerContainerExecute({ "/usr/api/build.sh", "--line", to_hex(address), elfpath }, line_out, false);
 		if (line_out.size() > 0) {
 			const String line = String(line_out[0]).replace("\n", "").replace("/usr/src/", "res://");
-			UtilityFunctions::printerr("Exception in Sandbox calling function: ", line);
+			UtilityFunctions::print("Exception in Sandbox calling function: ", line);
 		}
 		// Additional line for the current PC, if it's not the same as the call address
 		if (machine().cpu.pc() != address) {
 			CPPScript::DockerContainerExecute({ "/usr/api/build.sh", "--line", to_hex(machine().cpu.pc()), elfpath }, line_out, false);
 			if (line_out.size() > 0) {
 				const String line = String(line_out[0]).replace("\n", "").replace("/usr/src/", "res://");
-				UtilityFunctions::printerr("Exception in Sandbox at PC: ", line);
+				UtilityFunctions::print("Exception in Sandbox at PC: ", line);
 			}
 		}
 	}

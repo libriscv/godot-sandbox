@@ -1,6 +1,7 @@
 #include "node2d.hpp"
 
 #include "syscalls.h"
+#include "transform2d.hpp"
 
 // API call to get/set Node2D properties.
 MAKE_SYSCALL(ECALL_NODE2D, void, sys_node2d, Node2D_Op, uint64_t, Variant *);
@@ -49,6 +50,17 @@ float Node2D::get_skew() const {
 
 void Node2D::set_skew(const Variant &value) {
 	node2d(Node2D_Op::SET_SKEW, address(), value);
+}
+
+void Node2D::set_transform(const Transform2D &value) {
+	Variant var(value);
+	node2d(Node2D_Op::SET_TRANSFORM, address(), var);
+}
+
+Transform2D Node2D::get_transform() const {
+	Variant var;
+	node2d(Node2D_Op::GET_TRANSFORM, address(), var);
+	return var.as_transform2d();
 }
 
 Node2D Node2D::duplicate() const {

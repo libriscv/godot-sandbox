@@ -99,6 +99,18 @@ extern "C" Variant test_object(Object arg) {
 	return arg;
 }
 
+extern "C" Variant test_basis(Basis basis) {
+	return basis;
+}
+
+extern "C" Variant test_transform2d(Transform2D transform2d) {
+	return transform2d;
+}
+
+extern "C" Variant test_transform3d(Transform3D transform3d) {
+	return transform3d;
+}
+
 extern "C" Variant test_callable(Callable callable) {
 	return callable.call(1, 2, "3");
 }

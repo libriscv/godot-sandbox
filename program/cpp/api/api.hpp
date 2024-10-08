@@ -6,6 +6,9 @@
 #include "callable.hpp"
 #include "dictionary.hpp"
 #include "string.hpp"
+#include "basis.hpp"
+#include "transform2d.hpp"
+#include "transform3d.hpp"
 #include "syscalls_fwd.hpp"
 #include "timer.hpp"
 

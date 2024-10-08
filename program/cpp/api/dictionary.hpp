@@ -30,7 +30,7 @@ struct Dictionary {
 	unsigned get_variant_index() const noexcept { return m_idx; }
 
 private:
-	unsigned m_idx = -1;
+	unsigned m_idx = INT32_MIN;
 };
 
 inline Dictionary::operator Variant() const {

@@ -1,6 +1,7 @@
 #include "node3d.hpp"
 
 #include "syscalls.h"
+#include "transform3d.hpp"
 
 // API call to get/set Node3D properties.
 MAKE_SYSCALL(ECALL_NODE3D, void, sys_node3d, Node3D_Op, uint64_t, Variant *);
@@ -49,4 +50,15 @@ Node3D Node3D::duplicate() const {
 
 Node3D Node3D::create(std::string_view path) {
 	return Node3D(sys_node_create(Node_Create_Shortlist::CREATE_NODE3D, nullptr, 0, path.data(), path.size()));
+}
+
+Transform3D Node3D::get_transform() const {
+	Variant var;
+	sys_node3d(Node3D_Op::GET_TRANSFORM, address(), &var);
+	return var.as_transform3d();
+}
+
+void Node3D::set_transform(const Transform3D &value) {
+	Variant var(value);
+	sys_node3d(Node3D_Op::SET_TRANSFORM, address(), &var);
 }

@@ -11,6 +11,9 @@
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/timer.hpp>
 #include <godot_cpp/core/math.hpp>
+#include <godot_cpp/variant/basis.hpp>
+#include <godot_cpp/variant/transform2d.hpp>
+#include <godot_cpp/variant/transform3d.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/variant.hpp>
 //#define ENABLE_SYSCALL_TRACE 1
@@ -1148,6 +1151,12 @@ APICALL(api_node2d) {
 		case Node2D_Op::SET_SKEW:
 			node2d->set_skew(var->toVariant(emu));
 			break;
+		case Node2D_Op::GET_TRANSFORM:
+			var->create(emu, node2d->get_transform());
+			break;
+		case Node2D_Op::SET_TRANSFORM:
+			node2d->set_transform(var->toVariant(emu));
+			break;
 		default:
 			ERR_PRINT("Invalid Node2D operation");
 			throw std::runtime_error("Invalid Node2D operation");
@@ -1191,6 +1200,12 @@ APICALL(api_node3d) {
 			break;
 		case Node3D_Op::SET_SCALE:
 			node3d->set_scale(var->toVariant(emu));
+			break;
+		case Node3D_Op::GET_TRANSFORM:
+			var->create(emu, node3d->get_transform());
+			break;
+		case Node3D_Op::SET_TRANSFORM:
+			node3d->set_transform(var->toVariant(emu));
 			break;
 		default:
 			ERR_PRINT("Invalid Node3D operation");
@@ -1626,10 +1641,7 @@ static void api_lerp_op(machine_t &machine) {
 } // api_lerp_op
 
 APICALL(api_vec3_ops) {
-	struct Vec3 {
-		float x, y, z;
-	};
-	auto [v, v2addr, op] = machine.sysargs<Vec3 *, gaddr_t, Vec3_Op>();
+	auto [v, v2addr, op] = machine.sysargs<Vector3 *, gaddr_t, Vec3_Op>();
 	SYS_TRACE("vec3_ops", v, v2addr, int(op));
 
 	switch (op) {
@@ -1656,21 +1668,26 @@ APICALL(api_vec3_ops) {
 			break;
 		}
 		case Vec3_Op::CROSS: {
-			Vec3 *v2 = machine.memory.memarray<Vec3>(v2addr, 1);
+			Vector3 *v2 = machine.memory.memarray<Vector3>(v2addr, 1);
 			const gaddr_t resaddr = machine.cpu.reg(13); // a3
-			Vec3 *res = machine.memory.memarray<Vec3>(resaddr, 1);
+			Vector3 *res = machine.memory.memarray<Vector3>(resaddr, 1);
 			res->x = v->y * v2->z - v->z * v2->y;
 			res->y = v->z * v2->x - v->x * v2->z;
 			res->z = v->x * v2->y - v->y * v2->x;
 			break;
 		}
 		case Vec3_Op::DOT: {
-			Vec3 *v2 = machine.memory.memarray<Vec3>(v2addr, 1);
+			Vector3 *v2 = machine.memory.memarray<Vector3>(v2addr, 1);
 			machine.set_result(v->x * v2->x + v->y * v2->y + v->z * v2->z);
 			break;
 		}
+		case Vec3_Op::ANGLE_TO: {
+			Vector3 *v2 = machine.memory.memarray<Vector3>(v2addr, 1);
+			machine.set_result(v->angle_to(*v2));
+			break;
+		}
 		case Vec3_Op::DISTANCE_TO: {
-			Vec3 *v2 = machine.memory.memarray<Vec3>(v2addr, 1);
+			Vector3 *v2 = machine.memory.memarray<Vector3>(v2addr, 1);
 			const float dx = v->x - v2->x;
 			const float dy = v->y - v2->y;
 			const float dz = v->z - v2->z;
@@ -1678,14 +1695,11 @@ APICALL(api_vec3_ops) {
 			break;
 		}
 		case Vec3_Op::DISTANCE_SQ_TO: {
-			Vec3 *v2 = machine.memory.memarray<Vec3>(v2addr, 1);
-			//printf("v0: %f, %f, %f\n", v->x, v->y, v->z);
-			//printf("v1: %f, %f, %f\n", v2->x, v2->y, v2->z);
+			Vector3 *v2 = machine.memory.memarray<Vector3>(v2addr, 1);
 			const float dx = v->x - v2->x;
 			const float dy = v->y - v2->y;
 			const float dz = v->z - v2->z;
 			machine.set_result(float(dx * dx + dy * dy + dz * dz));
-			//printf("Distance squared: %f\n", float(dx * dx + dy * dy + dz * dz));
 			break;
 		}
 		case Vec3_Op::FLOOR: {
@@ -1736,6 +1750,379 @@ APICALL(api_load) {
 	// Return the result to the guest.
 	emu.create_scoped_variant(std::move(result));
 	g_result->set_object(emu, obj);
+}
+
+APICALL(api_transform2d_ops) {
+	auto [idx, op] = machine.sysargs<unsigned, Transform2D_Op>();
+	SYS_TRACE("transform2d_ops", idx, int(op), vres);
+	Sandbox &emu = riscv::emu(machine);
+
+	if (op == Transform2D_Op::IDENTITY) {
+		const gaddr_t vaddr = machine.cpu.reg(12); // A2
+		GuestVariant *vres = machine.memory.memarray<GuestVariant>(vaddr, 1);
+		vres->create(emu, Transform2D());
+		return;
+	}
+
+	std::optional<const Variant *> opt_t = emu.get_scoped_variant(idx);
+	if (!opt_t.has_value() || opt_t.value()->get_type() != Variant::TRANSFORM2D) {
+		ERR_PRINT("Invalid Transform2D object");
+		throw std::runtime_error("Invalid Transform2D object");
+	}
+	godot::Transform2D t = opt_t.value()->operator Transform2D();
+
+	// Additional integers start at A2 (12), and floats start at FA0 (10).
+	switch (op) {
+		case Transform2D_Op::COLUMN_AT: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			Vector2 *v = machine.memory.memarray<Vector2>(vaddr, 1);
+			const int column = machine.cpu.reg(13); // A3
+			if (column < 0 || column >= 3) {
+				ERR_PRINT("Invalid Transform2D column");
+				throw std::runtime_error("Invalid Transform2D column");
+			}
+
+			*v = t.columns[column];
+			break;
+		}
+		case Transform2D_Op::ROTATED: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vres = machine.memory.memarray<unsigned>(vaddr, 1);
+			const double angle = machine.cpu.registers().getfl(10).get<double>(); // fa0
+
+			// Rotate the transform by the given angle, return a new transform.
+			*vres = emu.create_scoped_variant(Variant(t.rotated(angle)));
+			break;
+		}
+		case Transform2D_Op::SCALED: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vres = machine.memory.memarray<unsigned>(vaddr, 1);
+			const gaddr_t v2addr = machine.cpu.reg(13); // A3
+			const Vector2 *scale = machine.memory.memarray<Vector2>(v2addr, 1);
+
+			*vres = emu.create_scoped_variant(Variant(t.scaled(*scale)));
+			break;
+		}
+		case Transform2D_Op::TRANSLATED: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vres = machine.memory.memarray<unsigned>(vaddr, 1);
+			const gaddr_t v2addr = machine.cpu.reg(13); // A3
+			const Vector2 *offset = machine.memory.memarray<Vector2>(v2addr, 1);
+
+			*vres = emu.create_scoped_variant(Variant(t.translated(*offset)));
+			break;
+		}
+		case Transform2D_Op::INVERTED: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vres = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			*vres = emu.create_scoped_variant(Variant(t.inverse()));
+			break;
+		}
+		case Transform2D_Op::AFFINE_INVERTED: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vres = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			*vres = emu.create_scoped_variant(Variant(t.affine_inverse()));
+			break;
+		}
+		case Transform2D_Op::ORTHONORMALIZED: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vres = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			*vres = emu.create_scoped_variant(Variant(t.orthonormalized()));
+			break;
+		}
+		default:
+			ERR_PRINT("Invalid Transform2D operation");
+			throw std::runtime_error("Invalid Transform2D operation");
+	}
+}
+
+APICALL(api_transform3d_ops) {
+	auto [idx, op] = machine.sysargs<unsigned, Transform3D_Op>();
+	SYS_TRACE("transform3d_ops", idx, int(op));
+	Sandbox &emu = riscv::emu(machine);
+
+	if (op == Transform3D_Op::CREATE) {
+		const gaddr_t vaddr = machine.cpu.reg(12); // A2 (Result index)
+		unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+		const Vector3 *v3 = machine.memory.memarray<Vector3>(machine.cpu.reg(13), 1); // A3
+		unsigned b_idx = machine.cpu.reg(14); // A4 (Basis index)
+
+		// Get the basis from the given index.
+		const Basis basis = emu.get_scoped_variant(b_idx).value()->operator Basis();
+
+		// Create a new scoped Variant with the transform.
+		*vidx = emu.create_scoped_variant(Variant(Transform3D(basis, *v3)));
+		return;
+	} else if (op == Transform3D_Op::IDENTITY) {
+		const gaddr_t vaddr = machine.cpu.reg(12); // A2
+		unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+		// Create a new scoped Variant with the identity transform.
+		*vidx = emu.create_scoped_variant(Variant(Transform3D()));
+		return;
+	}
+
+	std::optional<const Variant *> opt_t = emu.get_scoped_variant(idx);
+	if (!opt_t.has_value() || opt_t.value()->get_type() != Variant::TRANSFORM3D) {
+		ERR_PRINT("Invalid Transform3D object");
+		throw std::runtime_error("Invalid Transform3D object");
+	}
+	godot::Transform3D t = opt_t.value()->operator Transform3D();
+
+	// Additional integers start at A2 (12), and floats start at FA0 (10).
+	switch (op) {
+		case Transform3D_Op::GET_BASIS: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+			const Basis &basis = t.basis;
+
+			// Create a new scoped Variant with the basis.
+			*vidx = emu.create_scoped_variant(Variant(basis));
+			break;
+		}
+		case Transform3D_Op::SET_BASIS: {
+			const unsigned b_idx = machine.cpu.reg(12); // A2
+			const Basis basis = emu.get_scoped_variant(b_idx).value()->operator Basis();
+
+			// Set the basis of the current transform.
+			t.basis = basis;
+			break;
+		}
+		case Transform3D_Op::GET_ORIGIN: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			Vector3 *vres = machine.memory.memarray<Vector3>(vaddr, 1);
+
+			*vres = t.origin;
+			break;
+		}
+		case Transform3D_Op::SET_ORIGIN: {
+			const gaddr_t v3addr = machine.cpu.reg(12); // A2
+			const Vector3 *origin = machine.memory.memarray<Vector3>(v3addr, 1);
+
+			// Set the origin of the current transform.
+			t.origin = *origin;
+			break;
+		}
+		case Transform3D_Op::ROTATED: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			const gaddr_t v3addr = machine.cpu.reg(13); // A3
+			const Vector3 *axis = machine.memory.memarray<Vector3>(v3addr, 1);
+			const double angle = machine.cpu.registers().getfl(10).get<double>(); // fa0
+
+			// Rotate the transform by the given axis and angle, return a new transform.
+			*vidx = emu.create_scoped_variant(Variant(t.rotated(*axis, angle)));
+			break;
+		}
+		case Transform3D_Op::SCALED: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			const gaddr_t v3addr = machine.cpu.reg(13); // A3
+			const Vector3 *scale = machine.memory.memarray<Vector3>(v3addr, 1);
+
+			// Scale the transform by the given scale, return a new transform.
+			*vidx = emu.create_scoped_variant(Variant(t.scaled(*scale)));
+			break;
+		}
+		case Transform3D_Op::TRANSLATED: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			const gaddr_t v3addr = machine.cpu.reg(13); // A3
+			const Vector3 *offset = machine.memory.memarray<Vector3>(v3addr, 1);
+
+			// Translate the transform by the given offset, return a new transform.
+			*vidx = emu.create_scoped_variant(Variant(t.translated(*offset)));
+			break;
+		}
+		case Transform3D_Op::INVERTED: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			// Return the inverse of the current transform.
+			*vidx = emu.create_scoped_variant(Variant(t.inverse()));
+			break;
+		}
+		case Transform3D_Op::ORTHONORMALIZED: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			// Return the orthonormalized version of the current transform.
+			*vidx = emu.create_scoped_variant(Variant(t.orthonormalized()));
+			break;
+		}
+		case Transform3D_Op::LOOKING_AT: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+			const Vector3 *target = machine.memory.memarray<Vector3>(machine.cpu.reg(13), 1); // A3
+			const Vector3 *up = machine.memory.memarray<Vector3>(machine.cpu.reg(14), 1); // A4
+
+			// Return the transform looking at the target with the given up vector.
+			*vidx = emu.create_scoped_variant(Variant(t.looking_at(*target, *up)));
+			break;
+		}
+		case Transform3D_Op::INTERPOLATE_WITH: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			const unsigned t2_idx = machine.cpu.reg(13); // A3
+			const Transform3D to = emu.get_scoped_variant(t2_idx).value()->operator Transform3D();
+			const double weight = machine.cpu.registers().getfl(10).get<double>(); // fa0
+
+			// Return the interpolated transform between the current and the given transform.
+			*vidx = emu.create_scoped_variant(Variant(t.interpolate_with(to, weight)));
+			break;
+		}
+		default:
+			ERR_PRINT("Invalid Transform3D operation");
+			throw std::runtime_error("Invalid Transform3D operation");
+	}
+}
+
+APICALL(api_basis_ops) {
+	auto [idx, op] = machine.sysargs<unsigned, Basis_Op>();
+	SYS_TRACE("basis_ops", idx, int(op));
+	Sandbox &emu = riscv::emu(machine);
+
+	if (op == Basis_Op::IDENTITY) {
+		const gaddr_t vaddr = machine.cpu.reg(12); // A2
+		GuestVariant *vres = machine.memory.memarray<GuestVariant>(vaddr, 1);
+
+		vres->create(emu, Basis());
+		return;
+	}
+
+	std::optional<const Variant *> opt_b = emu.get_scoped_variant(idx);
+	if (!opt_b.has_value() || opt_b.value()->get_type() != Variant::BASIS) {
+		ERR_PRINT("Invalid Basis object");
+		throw std::runtime_error("Invalid Basis object");
+	}
+	godot::Basis b = opt_b.value()->operator Basis();
+
+	// Additional integers start at A2 (12), and floats start at FA0 (10).
+	switch (op) {
+		case Basis_Op::GET_ROW: {
+			const unsigned row = machine.cpu.reg(12); // A2
+			if (row < 0 || row >= 3) {
+				ERR_PRINT("Invalid Basis row");
+				throw std::runtime_error("Invalid Basis row " + std::to_string(row));
+			}
+			Vector3 *vres = machine.memory.memarray<Vector3>(machine.cpu.reg(14), 1);
+
+			const Vector3 &v = b[row];
+			*vres = v;
+			break;
+		}
+		case Basis_Op::SET_ROW: {
+			const unsigned row = machine.cpu.reg(12); // A2
+			if (row < 0 || row >= 3) {
+				ERR_PRINT("Invalid Basis row");
+				throw std::runtime_error("Invalid Basis row " + std::to_string(row));
+			}
+
+			const gaddr_t v3addr = machine.cpu.reg(13); // A3
+			const Vector3 *v = machine.memory.memarray<Vector3>(v3addr, 1);
+
+			// Set the row of the current basis.
+			b[row] = *v;
+			break;
+		}
+		case Basis_Op::GET_COLUMN: {
+			const unsigned column = machine.cpu.reg(12); // A2
+			if (column < 0 || column >= 3) {
+				ERR_PRINT("Invalid Basis column");
+				throw std::runtime_error("Invalid Basis column " + std::to_string(column));
+			}
+			Vector3 *vres = machine.memory.memarray<Vector3>(machine.cpu.reg(13), 1); // A3
+
+			*vres = b.get_column(column);
+			break;
+		}
+		case Basis_Op::SET_COLUMN: {
+			const unsigned column = machine.cpu.reg(12); // A2
+			if (column < 0 || column >= 3) {
+				ERR_PRINT("Invalid Basis column");
+				throw std::runtime_error("Invalid Basis column " + std::to_string(column));
+			}
+
+			const gaddr_t v3addr = machine.cpu.reg(13); // A3
+			const Vector3 *v = machine.memory.memarray<Vector3>(v3addr, 1);
+
+			// Set the column of the current basis.
+			b.set_column(column, *v);
+			break;
+		}
+		case Basis_Op::TRANSPOSED: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			// Return the transposed version of the current basis.
+			*vidx = emu.create_scoped_variant(Variant(b.transposed()));
+			break;
+		}
+		case Basis_Op::INVERTED: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			// Return the inverse of the current basis.
+			*vidx = emu.create_scoped_variant(Variant(b.inverse()));
+			break;
+		}
+		case Basis_Op::DETERMINANT: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			double *res = machine.memory.memarray<double>(vaddr, 1);
+
+			// Return the determinant of the current basis.
+			*res = b.determinant();
+			break;
+		}
+		case Basis_Op::ROTATED: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			const gaddr_t v3addr = machine.cpu.reg(13); // A3
+			const Vector3 *axis = machine.memory.memarray<Vector3>(v3addr, 1);
+			const double angle = machine.cpu.registers().getfl(10).get<double>(); // fa0
+
+			// Rotate the basis by the given axis and angle, return a new basis.
+			*vidx = emu.create_scoped_variant(Variant(b.rotated(*axis, angle)));
+			break;
+		}
+		case Basis_Op::LERP: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			// Get the second basis (from scoped Variant index) to interpolate with.
+			const unsigned b_idx = machine.cpu.reg(13); // A3
+			const Basis b2 = emu.get_scoped_variant(b_idx).value()->operator Basis();
+			const double t = machine.cpu.registers().getfl(10).get<double>(); // fa0
+
+			// Linearly interpolate between the two bases, return a new basis.
+			*vidx = emu.create_scoped_variant(Variant(b.lerp(b2, t)));
+			break;
+		}
+		case Basis_Op::SLERP: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			// Get the second basis (from scoped Variant index) to interpolate with.
+			const unsigned b_idx = machine.cpu.reg(13); // A3
+			const Basis b2 = emu.get_scoped_variant(b_idx).value()->operator Basis();
+			const double t = machine.cpu.registers().getfl(10).get<double>(); // fa0
+
+			// Spherically interpolate between the two bases, return a new basis.
+			*vidx = emu.create_scoped_variant(Variant(b.slerp(b2, t)));
+			break;
+		}
+		default:
+			ERR_PRINT("Invalid Basis operation");
+			throw std::runtime_error("Invalid Basis operation: " + std::to_string(int(op)));
+	}
 }
 
 } //namespace riscv
@@ -1817,5 +2204,9 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_CALLABLE_CREATE, api_callable_create },
 
 			{ ECALL_LOAD, api_load },
+
+			{ ECALL_TRANSFORM_2D_OPS, api_transform2d_ops },
+			{ ECALL_TRANSFORM_3D_OPS, api_transform3d_ops },
+			{ ECALL_BASIS_OPS, api_basis_ops },
 	});
 }

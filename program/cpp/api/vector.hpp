@@ -179,6 +179,7 @@ struct Vector3 {
 	Vector3 cross(const Vector3& other) const noexcept;
 	float distance_to(const Vector3& other) const noexcept;
 	float distance_squared_to(const Vector3& other) const noexcept;
+	float angle_to(const Vector3& other) const noexcept;
 	Vector3 direction_to(const Vector3& other) const noexcept;
 	Vector3 floor() const noexcept;
 
