@@ -5,12 +5,11 @@
 
 struct Transform3D {
 	constexpr Transform3D() {}
-	Transform3D(const Transform3D &transform) = default;
-	Transform3D(Transform3D &&transform) = default;
 
 	/// @brief Create a new identity transform.
 	/// @return The identity transform.
 	static Transform3D identity();
+
 	/// @brief Create a new transform from a basis and origin.
 	/// @param origin The origin of the transform.
 	/// @param basis The basis of the transform.

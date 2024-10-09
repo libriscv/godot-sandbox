@@ -9,7 +9,14 @@
 struct Basis {
 	constexpr Basis() {} // DON'T TOUCH
 
+	/// @brief Create a new identity basis.
+	/// @return The identity basis.
 	static Basis identity();
+
+	/// @brief Create a new basis from three axes.
+	/// @param x  The x-axis of the basis.
+	/// @param y  The y-axis of the basis.
+	/// @param z  The z-axis of the basis.
 	Basis(const Vector3 &x, const Vector3 &y, const Vector3 &z);
 
 	Basis &operator =(const Basis &basis);

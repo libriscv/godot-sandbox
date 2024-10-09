@@ -9,7 +9,14 @@
 struct Transform2D {
 	constexpr Transform2D() {} // DON'T TOUCH
 
+	/// @brief Create a new identity transform.
+	/// @return The identity transform.
 	static Transform2D identity();
+
+	/// @brief Create a new transform from two axes and an origin.
+	/// @param x  The x-axis of the transform.
+	/// @param y  The y-axis of the transform.
+	/// @param origin The origin of the transform.
 	Transform2D(const Vector2 &x, const Vector2 &y, const Vector2 &origin);
 
 	Transform2D &operator =(const Transform2D &transform);
