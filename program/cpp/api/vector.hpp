@@ -16,6 +16,8 @@ struct Vector2 {
 	}
 
 	float length() const noexcept;
+	Vector2 limit_length(double length) const noexcept;
+
 	Vector2 normalized() const noexcept;
 	Vector2 rotated(float angle) const noexcept;
 	float distance_to(const Vector2& other) const noexcept;
@@ -23,6 +25,16 @@ struct Vector2 {
 	float dot(const Vector2& other) const noexcept;
 	static Vector2 sincos(float angle) noexcept;
 	static Vector2 from_angle(float angle) noexcept;
+
+	Vector2 lerp(const Vector2& to, double weight) const noexcept;
+	Vector2 cubic_interpolate(const Vector2& b, const Vector2& pre_a, const Vector2& post_b, double weight) const noexcept;
+	Vector2 slerp(const Vector2& to, double weight) const noexcept;
+
+	Vector2 slide(const Vector2& normal) const noexcept;
+	Vector2 bounce(const Vector2& normal) const noexcept;
+	Vector2 reflect(const Vector2& normal) const noexcept;
+
+	Vector2 rotated(const Vector2& by) const noexcept;
 
 	template <typename... Args>
 	Variant operator () (std::string_view method, Args&&... args);

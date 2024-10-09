@@ -1248,6 +1248,108 @@ APICALL(api_vector2_rotated) {
 	machine.set_result(x, y);
 }
 
+APICALL(api_vec2_ops) {
+	auto [op, vec2] = machine.sysargs<Vec2_Op, Vector2 *>();
+	Sandbox &emu = riscv::emu(machine);
+
+	// Integer arguments start from A2, and float arguments start from FA0.
+	switch (op) {
+		case Vec2_Op::NORMALIZE:
+			vec2->normalize();
+			break;
+		case Vec2_Op::LENGTH: {
+			double *result = machine.memory.memarray<double>(machine.cpu.reg(12), 1); // A2
+			*result = vec2->length();
+			break;
+		}
+		case Vec2_Op::LENGTH_SQ: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			double *result = machine.memory.memarray<double>(vaddr, 1);
+			*result = vec2->length_squared();
+			break;
+		}
+		case Vec2_Op::ANGLE: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			double *result = machine.memory.memarray<double>(vaddr, 1);
+			*result = vec2->angle();
+			break;
+		}
+		case Vec2_Op::ANGLE_TO: {
+			const double angle = machine.cpu.registers().getfl(10).get<double>(); // FA0
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			double *result = machine.memory.memarray<double>(vaddr, 1);
+			*result = vec2->angle_to(Vector2(cos(angle), sin(angle)));
+			break;
+		}
+		case Vec2_Op::ANGLE_TO_POINT: {
+			const double x = machine.cpu.registers().getfl(10).get<double>(); // FA0
+			const double y = machine.cpu.registers().getfl(11).get<double>(); // FA1
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			double *result = machine.memory.memarray<double>(vaddr, 1);
+			*result = vec2->angle_to(Vector2(x, y));
+			break;
+		}
+		case Vec2_Op::PROJECT: {
+			Vector2 *vec = machine.memory.memarray<Vector2>(machine.cpu.reg(12), 1); // A2
+			*vec2 = vec2->project(*vec);
+			break;
+		}
+		case Vec2_Op::DIRECTION_TO: {
+			Vector2 *vec = machine.memory.memarray<Vector2>(machine.cpu.reg(12), 1); // A2
+			*vec2 = vec2->direction_to(*vec);
+			break;
+		}
+		case Vec2_Op::SLIDE: {
+			Vector2 *vec = machine.memory.memarray<Vector2>(machine.cpu.reg(12), 1); // A2
+			*vec2 = vec2->slide(*vec);
+			break;
+		}
+		case Vec2_Op::BOUNCE: {
+			Vector2 *vec = machine.memory.memarray<Vector2>(machine.cpu.reg(12), 1); // A2
+			*vec2 = vec2->bounce(*vec);
+			break;
+		}
+		case Vec2_Op::REFLECT: {
+			Vector2 *vec = machine.memory.memarray<Vector2>(machine.cpu.reg(12), 1); // A2
+			*vec2 = vec2->reflect(*vec);
+			break;
+		}
+		case Vec2_Op::LIMIT_LENGTH: {
+			const double length = machine.cpu.registers().getfl(10).get<double>(); // FA0
+			*vec2 = vec2->limit_length(length);
+			break;
+		}
+		case Vec2_Op::LERP: {
+			const double weight = machine.cpu.registers().getfl(10).get<double>(); // FA0
+			Vector2 *vec = machine.memory.memarray<Vector2>(machine.cpu.reg(12), 1); // A2
+			*vec2 = vec2->lerp(*vec, weight);
+			break;
+		}
+		case Vec2_Op::CUBIC_INTERPOLATE: {
+			Vector2 *v_b = machine.memory.memarray<Vector2>(machine.cpu.reg(12), 1); // A2
+			Vector2 *vpre_a = machine.memory.memarray<Vector2>(machine.cpu.reg(13), 1); // A3
+			Vector2 *vpost_b = machine.memory.memarray<Vector2>(machine.cpu.reg(14), 1); // A4
+			const double weight = machine.cpu.registers().getfl(10).get<double>(); // FA0
+			*vec2 = vec2->cubic_interpolate(*v_b, *vpre_a, *vpost_b, weight);
+			break;
+		}
+		case Vec2_Op::MOVE_TOWARD: {
+			Vector2 *vec = machine.memory.memarray<Vector2>(machine.cpu.reg(12), 1); // A2
+			const double delta = machine.cpu.registers().getfl(10).get<double>(); // FA0
+			*vec2 = vec2->move_toward(*vec, delta);
+			break;
+		}
+		case Vec2_Op::ROTATED: {
+			const double by = machine.cpu.registers().getfl(10).get<double>(); // FA0
+			*vec2 = vec2->rotated(by);
+			break;
+		}
+		default:
+			ERR_PRINT("Invalid Vector2 operation");
+			throw std::runtime_error("Invalid Vector2 operation");
+	}
+}
+
 APICALL(api_array_ops) {
 	auto [op, arr_idx, idx, vaddr] = machine.sysargs<Array_Op, unsigned, int, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
@@ -2269,5 +2371,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_TRANSFORM_2D_OPS, api_transform2d_ops },
 			{ ECALL_TRANSFORM_3D_OPS, api_transform3d_ops },
 			{ ECALL_BASIS_OPS, api_basis_ops },
+
+			{ ECALL_VEC2_OPS, api_vec2_ops },
 	});
 }
