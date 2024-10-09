@@ -3,54 +3,54 @@
 #include "syscalls.h"
 #include "vector.hpp"
 
-MAKE_SYSCALL(ECALL_VEC2_OPS, void, sys_vec2_ops, Vector2 *v, Vec2_Op op, ...); // NOLINT
+MAKE_SYSCALL(ECALL_VEC2_OPS, void, sys_vec2_ops, Vec2_Op op, Vector2 *v, ...); // NOLINT
 MAKE_SYSCALL(ECALL_VEC3_OPS, void, sys_vec3_ops, Vector3 *v, Vector3 *other, Vec3_Op op); // NOLINT
 
 Vector2 Vector2::limit_length(double length) const noexcept {
 	Vector2 result = *this;
-	sys_vec2_ops(&result, Vec2_Op::LIMIT_LENGTH, length);
+	sys_vec2_ops(Vec2_Op::LIMIT_LENGTH, &result, length);
 	return result;
 }
 
 Vector2 Vector2::lerp(const Vector2& to, double weight) const noexcept {
 	Vector2 result = *this;
-	sys_vec2_ops(&result, Vec2_Op::LERP, &to, weight);
+	sys_vec2_ops(Vec2_Op::LERP, &result, &to, weight);
 	return result;
 }
 
 Vector2 Vector2::slerp(const Vector2& to, double weight) const noexcept {
 	Vector2 result = *this;
-	sys_vec2_ops(&result, Vec2_Op::SLERP, &to, weight);
+	sys_vec2_ops(Vec2_Op::SLERP, &result, &to, weight);
 	return result;
 }
 
 Vector2 Vector2::cubic_interpolate(const Vector2& b, const Vector2& pre_a, const Vector2& post_b, double weight) const noexcept {
 	Vector2 result = *this;
-	sys_vec2_ops(&result, Vec2_Op::CUBIC_INTERPOLATE, &b, &pre_a, &post_b, weight);
+	sys_vec2_ops(Vec2_Op::CUBIC_INTERPOLATE, &result, &b, &pre_a, &post_b, weight);
 	return result;
 }
 
 Vector2 Vector2::slide(const Vector2& normal) const noexcept {
 	Vector2 result = *this;
-	sys_vec2_ops(&result, Vec2_Op::SLIDE, &normal);
+	sys_vec2_ops(Vec2_Op::SLIDE, &result, &normal);
 	return result;
 }
 
 Vector2 Vector2::bounce(const Vector2& normal) const noexcept {
 	Vector2 result = *this;
-	sys_vec2_ops(&result, Vec2_Op::BOUNCE, &normal);
+	sys_vec2_ops(Vec2_Op::BOUNCE, &result, &normal);
 	return result;
 }
 
 Vector2 Vector2::reflect(const Vector2& normal) const noexcept {
 	Vector2 result = *this;
-	sys_vec2_ops(&result, Vec2_Op::REFLECT, &normal);
+	sys_vec2_ops(Vec2_Op::REFLECT, &result, &normal);
 	return result;
 }
 
 Vector2 Vector2::rotated(const Vector2& by) const noexcept {
 	Vector2 result = *this;
-	sys_vec2_ops(&result, Vec2_Op::ROTATED, &by);
+	sys_vec2_ops(Vec2_Op::ROTATED, &result, &by);
 	return result;
 }
 
