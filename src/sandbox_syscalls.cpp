@@ -1785,7 +1785,7 @@ APICALL(api_vec3_ops) {
 		}
 		case Vec3_Op::ANGLE_TO: {
 			Vector3 *v2 = machine.memory.memarray<Vector3>(v2addr, 1);
-			machine.set_result(v->angle_to(*v2));
+			machine.set_result(float(v->angle_to(*v2)));
 			break;
 		}
 		case Vec3_Op::DISTANCE_TO: {
@@ -2172,7 +2172,7 @@ APICALL(api_basis_ops) {
 				ERR_PRINT("Invalid Basis row");
 				throw std::runtime_error("Invalid Basis row " + std::to_string(row));
 			}
-			Vector3 *vres = machine.memory.memarray<Vector3>(machine.cpu.reg(14), 1);
+			Vector3 *vres = machine.memory.memarray<Vector3>(machine.cpu.reg(13), 1); // A3
 
 			*vres = b[row];
 			break;

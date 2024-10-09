@@ -20,7 +20,7 @@ void Basis::assign(const Basis &basis) {
 
 Vector3 Basis::get_row(int idx) const {
 	Vector3 v;
-	sys_basis_ops(0, Basis_Op::GET_ROW, idx, &v);
+	sys_basis_ops(this->m_idx, Basis_Op::GET_ROW, idx, &v);
 	return v;
 }
 
