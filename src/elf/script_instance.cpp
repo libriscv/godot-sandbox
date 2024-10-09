@@ -197,6 +197,7 @@ void ELFScriptInstance::update_methods() const {
 		return;
 	}
 	this->has_updated_methods = true;
+	this->methods_info.clear();
 
 	for (String &function : script->functions) {
 		MethodInfo method_info = MethodInfo(
@@ -311,7 +312,7 @@ bool ELFScriptInstance::validate_property(GDExtensionPropertyInfo &p_property) c
 		}
 		return false;
 	}
-	for (SandboxProperty &property : sandbox->get_properties()) {
+	for (const SandboxProperty &property : sandbox->get_properties()) {
 		if (*(StringName *)p_property.name == StringName(property.name())) {
 			if constexpr (VERBOSE_LOGGING) {
 				printf("ELFScriptInstance::validate_property %s => true\n", property.name().utf8().ptr());
@@ -428,7 +429,7 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 	}
 	this->current_sandbox->set_tree_base(godot::Object::cast_to<godot::Node>(owner));
 
-	for (std::string godot_function : godot_functions) {
+	for (const std::string &godot_function : godot_functions) {
 		MethodInfo method_info = MethodInfo(
 				Variant::NIL,
 				StringName(godot_function.c_str()));
@@ -437,6 +438,9 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 }
 
 ELFScriptInstance::~ELFScriptInstance() {
+	if (this->script.is_valid()) {
+		script->instances.erase(this);
+	}
 }
 
 // When a Sandbox needs to be automatically created, we instead share it
@@ -452,15 +456,15 @@ std::tuple<Sandbox *, bool> ELFScriptInstance::get_sandbox() const {
 	}
 
 	Sandbox *sandbox_ptr = Object::cast_to<Sandbox>(this->owner);
-	if (sandbox_ptr == nullptr) {
-		ERR_PRINT("ELFScriptInstance: owner is not a Sandbox");
-		if constexpr (VERBOSE_LOGGING) {
-			fprintf(stderr, "ELFScriptInstance: owner is instead a '%s'!\n", this->owner->get_class().utf8().get_data());
-		}
-		return { nullptr, false };
+	if (sandbox_ptr != nullptr) {
+		return { sandbox_ptr, false };
 	}
 
-	return { sandbox_ptr, false };
+	ERR_PRINT("ELFScriptInstance: owner is not a Sandbox");
+	if constexpr (VERBOSE_LOGGING) {
+		fprintf(stderr, "ELFScriptInstance: owner is instead a '%s'!\n", this->owner->get_class().utf8().get_data());
+	}
+	return { nullptr, false };
 }
 
 Sandbox *ELFScriptInstance::create_sandbox(const Ref<ELFScript> &p_script) {
@@ -477,4 +481,45 @@ Sandbox *ELFScriptInstance::create_sandbox(const Ref<ELFScript> &p_script) {
 	}
 
 	return sandbox_ptr;
+}
+
+void ELFScriptInstance::reload(ELFScript *p_script) {
+	auto old_script = std::move(this->script);
+	this->script = Ref<ELFScript>(p_script);
+	this->update_methods();
+	bool updated_program = false;
+
+	auto it = sandbox_instances.find(old_script.ptr());
+	if (it != sandbox_instances.end()) {
+		Sandbox *sandbox_ptr = it->second;
+		// Set the new program
+		sandbox_ptr->set_program(this->script);
+		// Remove the old script instance and insert the new one
+		sandbox_instances.erase(it);
+		sandbox_instances.insert_or_assign(p_script, sandbox_ptr);
+		updated_program = true;
+	}
+
+	if (!updated_program) {
+		Sandbox *sandbox_ptr = Object::cast_to<Sandbox>(this->owner);
+		if (sandbox_ptr != nullptr) {
+			sandbox_ptr->set_program(this->script);
+			updated_program = true;
+		}
+	}
+
+	if (!updated_program) {
+		ERR_PRINT("ELFScriptInstance: Did not reload a Sandbox instance");
+		if constexpr (VERBOSE_LOGGING) {
+			fprintf(stderr, "ELFScriptInstance: owner is instead a '%s'!\n", this->owner->get_class().utf8().get_data());
+		}
+	} else {
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("ELFScriptInstance: reloaded " + Object::cast_to<Node>(owner)->get_name());
+		}
+		// Update editor properties
+		if (this->owner != nullptr) {
+			this->owner->notify_property_list_changed();
+		}
+	}
 }

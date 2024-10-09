@@ -2,8 +2,10 @@
 
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/script_language.hpp>
+#include <godot_cpp/templates/hash_set.hpp>
 
 using namespace godot;
+class ELFScriptInstance;
 
 class ELFScript : public ScriptExtension {
 	GDCLASS(ELFScript, ScriptExtension);
@@ -16,8 +18,9 @@ protected:
 	String path;
 	int elf_api_version;
 	String elf_programming_language;
-	// TODO
-	//HashSet<Object *> instances;
+
+	mutable HashSet<ELFScriptInstance *> instances;
+	friend class ELFScriptInstance;
 
 public:
 	PackedStringArray functions;

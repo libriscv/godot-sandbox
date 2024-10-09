@@ -72,6 +72,7 @@ StringName ELFScript::_get_instance_base_type() const {
 }
 void *ELFScript::_instance_create(Object *p_for_object) const {
 	ELFScriptInstance *instance = memnew(ELFScriptInstance(p_for_object, Ref<ELFScript>(this)));
+	instances.insert(instance);
 	return ScriptInstanceExtension::create_native_instance(instance);
 }
 void *ELFScript::_placeholder_instance_create(Object *p_for_object) const {
@@ -99,7 +100,7 @@ String ELFScript::_get_source_code() const {
 void ELFScript::_set_source_code(const String &p_code) {
 }
 Error ELFScript::_reload(bool p_keep_state) {
-	set_file(path);
+	this->set_file(path);
 	return Error::OK;
 }
 TypedArray<Dictionary> ELFScript::_get_documentation() const {
@@ -246,6 +247,10 @@ void ELFScript::set_file(const String &p_path) {
 	this->functions = std::move(info.functions);
 	this->elf_programming_language = info.language;
 	this->elf_api_version = info.version;
+
+	for (ELFScriptInstance *instance : instances) {
+		instance->reload(this);
+	}
 }
 
 String ELFScript::get_dockerized_program_path() const {
