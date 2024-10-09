@@ -4,10 +4,18 @@
 
 MAKE_SYSCALL(ECALL_BASIS_OPS, void, sys_basis_ops, unsigned idx, Basis_Op, ...);
 
+Basis::Basis(const Vector3 &x, const Vector3 &y, const Vector3 &z) {
+	sys_basis_ops(0, Basis_Op::CREATE, this, &x, &y, &z);
+}
+
 Basis Basis::identity() {
 	Basis b;
 	sys_basis_ops(0, Basis_Op::IDENTITY, &b);
 	return b;
+}
+
+void Basis::assign(const Basis &basis) {
+	sys_basis_ops(this->m_idx, Basis_Op::ASSIGN, this, basis.get_variant_index());
 }
 
 Vector3 Basis::get_row(int idx) const {
@@ -17,7 +25,7 @@ Vector3 Basis::get_row(int idx) const {
 }
 
 void Basis::set_row(int idx, const Vector3 &axis) {
-	sys_basis_ops(this->m_idx, Basis_Op::SET_ROW, idx, &axis);
+	sys_basis_ops(this->m_idx, Basis_Op::SET_ROW, this, idx, &axis);
 }
 
 Vector3 Basis::get_column(int idx) const {
@@ -27,7 +35,7 @@ Vector3 Basis::get_column(int idx) const {
 }
 
 void Basis::set_column(int idx, const Vector3 &axis) {
-	sys_basis_ops(this->m_idx, Basis_Op::SET_COLUMN, idx, &axis);
+	sys_basis_ops(this->m_idx, Basis_Op::SET_COLUMN, this, idx, &axis);
 }
 
 Basis Basis::inverse() const {

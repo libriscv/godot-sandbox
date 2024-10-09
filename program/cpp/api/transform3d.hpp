@@ -17,6 +17,7 @@ struct Transform3D {
 	Transform3D(const Vector3 &origin, const Basis &basis);
 
 	Transform3D &operator =(const Transform3D &transform);
+	void assign(const Transform3D &transform);
 
 	// Transform3D operations
 	void invert();
@@ -36,6 +37,10 @@ struct Transform3D {
 	void set_origin(const Vector3 &origin);
 	Basis get_basis() const;
 	void set_basis(const Basis &basis);
+
+	// Call operator
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
 
 	static Transform3D from_variant_index(unsigned idx) { Transform3D a {}; a.m_idx = idx; return a; }
 	unsigned get_variant_index() const noexcept { return m_idx; }
@@ -61,14 +66,14 @@ inline Transform3D Variant::as_transform3d() const {
 
 inline Transform3D &Transform3D::operator =(const Transform3D &transform) {
 	if (this->m_idx != INT32_MIN) {
-		// Oh, we have a Transform3D, but we are assigning from another one.
-		// Let's just copy the data.
-		set_origin(transform.get_origin());
-		set_basis(transform.get_basis());
+		this->assign(transform);
 	} else {
-		// We are assigning to a Transform3D, but we don't have one.
-		// Let's just copy the index/handle.
 		this->m_idx = transform.m_idx;
 	}
 	return *this;
+}
+
+template <typename... Args>
+Variant Transform3D::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
 }
