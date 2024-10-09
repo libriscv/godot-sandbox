@@ -55,6 +55,7 @@ public:
 		void append(Variant &&value);
 		void initialize(unsigned level, unsigned max_refs);
 		void reset(unsigned index);
+		bool is_mutable_variant(const Variant &var) const;
 	};
 
 	Sandbox();
@@ -190,6 +191,25 @@ public:
 	/// @param idx The index of the variant to duplicate or move.
 	/// @return The index of the new permanent variant, passed to and used by the guest.
 	unsigned create_permanent_variant(unsigned idx);
+
+	/// @brief Check if a variant index is a permanent variant.
+	/// @param idx The index of the variant to check.
+	/// @return True if the variant is permanent, false otherwise.
+	static bool is_permanent_variant(int32_t idx) noexcept { return idx < 0 && idx != INT32_MIN; }
+
+	/// @brief Assign a permanent variant index with a new variant.
+	/// @param idx The index of the permanent variant to assign.
+	/// @param var The new variant to move-assign.
+	void assign_permanent_variant(int32_t idx, Variant &&var);
+
+	/// @brief Try to reuse a variant index for a new variant.
+	/// If the index is permanent, assign the new variant directly to it.
+	/// If the index is scoped, check if it is mutable (local to the current state) and assign the new variant to it.
+	/// If the index immutable, unknown or invalid, create a new scoped variant.
+	/// @param idx The index of the variant to assign.
+	/// @param var The new variant to move-assign.
+	/// @return The index of the assigned variant, passed to and used by the guest.
+	unsigned try_reuse_assign_variant(int32_t src_idx, const Variant &src_var, int32_t assign_to_idx, const Variant &var);
 
 	/// @brief Add a scoped object to the current state.
 	/// @param ptr The pointer to the object to add.

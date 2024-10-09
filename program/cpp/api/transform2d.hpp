@@ -13,19 +13,31 @@ struct Transform2D {
 	Transform2D(const Vector2 &x, const Vector2 &y, const Vector2 &origin);
 
 	Transform2D &operator =(const Transform2D &transform);
+	void assign(const Transform2D &transform);
 
 	// Transform2D operations
 	void invert();
 	void affine_invert();
+	void rotate(const double angle);
+	void scale(const Vector2 &scale);
+	void translate(const Vector2 &offset);
+	void interpolate_with(const Transform2D &transform, double weight);
+
 	Transform2D inverse() const;
 	Transform2D orthonormalized() const;
-	Transform2D rotated(const double p_angle) const;
+	Transform2D rotated(double angle) const;
 	Transform2D scaled(const Vector2 &scale) const;
 	Transform2D translated(const Vector2 &offset) const;
+	Transform2D interpolate_with(const Transform2D &p_transform, double weight) const;
 
 	// Transform2D access
 	Vector2 get_column(int idx) const;
 	void set_column(int idx, const Vector2 &axis);
+	Vector2 operator[](int idx) const { return get_column(idx); }
+
+	// Call operator
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
 
 	static Transform2D from_variant_index(unsigned idx) { Transform2D a {}; a.m_idx = idx; return a; }
 	unsigned get_variant_index() const noexcept { return m_idx; }
@@ -50,6 +62,15 @@ inline Transform2D Variant::as_transform2d() const {
 }
 
 inline Transform2D &Transform2D::operator =(const Transform2D &transform) {
-	this->m_idx = transform.m_idx;
+	if (this->m_idx != INT32_MIN) {
+		this->assign(transform);
+	} else {
+		this->m_idx = transform.m_idx;
+	}
 	return *this;
+}
+
+template <typename... Args>
+inline Variant Transform2D::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
 }

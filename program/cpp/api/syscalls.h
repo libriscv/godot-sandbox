@@ -213,8 +213,11 @@ enum class Vec3_Op {
 };
 
 enum class Transform2D_Op {
-	COLUMN_AT = 0,
-	IDENTITY,
+	IDENTITY = 0,
+	CREATE,
+	ASSIGN,
+	GET_COLUMN,
+	SET_COLUMN,
 	ROTATED,
 	SCALED,
 	TRANSLATED,
@@ -230,6 +233,7 @@ enum class Transform2D_Op {
 enum class Transform3D_Op {
 	IDENTITY = 0,
 	CREATE,
+	ASSIGN,
 	GET_BASIS,
 	SET_BASIS,
 	GET_ORIGIN,
@@ -247,11 +251,13 @@ enum class Transform3D_Op {
 };
 
 enum class Basis_Op {
-	GET_ROW = 0,
+	IDENTITY = 0,
+	CREATE,
+	ASSIGN,
+	GET_ROW,
 	SET_ROW,
 	GET_COLUMN,
 	SET_COLUMN,
-	IDENTITY,
 	INVERTED,
 	TRANSPOSED,
 	DETERMINANT,

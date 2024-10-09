@@ -14,6 +14,10 @@ Transform3D::Transform3D(const Vector3 &origin, const Basis &basis) {
 	sys_transform3d_ops(0, Transform3D_Op::CREATE, this, &origin, basis.get_variant_index());
 }
 
+void Transform3D::assign(const Transform3D &transform) {
+	sys_transform3d_ops(this->m_idx, Transform3D_Op::ASSIGN, this, transform.get_variant_index());
+}
+
 Transform3D Transform3D::inverse() const {
 	Transform3D t;
 	sys_transform3d_ops(this->m_idx, Transform3D_Op::INVERTED, &t);
@@ -63,7 +67,7 @@ Vector3 Transform3D::get_origin() const {
 }
 
 void Transform3D::set_origin(const Vector3 &origin) {
-	sys_transform3d_ops(this->m_idx, Transform3D_Op::SET_ORIGIN, &origin);
+	sys_transform3d_ops(this->m_idx, Transform3D_Op::SET_ORIGIN, this, &origin);
 }
 
 Basis Transform3D::get_basis() const {
@@ -73,7 +77,7 @@ Basis Transform3D::get_basis() const {
 }
 
 void Transform3D::set_basis(const Basis &basis) {
-	sys_transform3d_ops(this->m_idx, Transform3D_Op::SET_BASIS, basis.get_variant_index());
+	sys_transform3d_ops(this->m_idx, Transform3D_Op::SET_BASIS, this, basis.get_variant_index());
 }
 
 Transform3D Transform3D::looking_at(const Vector3 &target, const Vector3 &up) const {

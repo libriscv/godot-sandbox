@@ -118,6 +118,9 @@ inline bool is_editor() {
 	asm volatile("ecall" : "=r"(a0) : "r"(a7));
 	return a0;
 }
+inline bool is_editor_hint() {
+	return is_editor(); // Alias
+}
 
 /// @brief Load a resource (at run-time) from the given path.
 /// @param path The path to the resource.

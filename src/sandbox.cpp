@@ -724,6 +724,34 @@ unsigned Sandbox::create_permanent_variant(unsigned idx) {
 	// Return the index of the new permanent variant converted to negative
 	return -int32_t(perm_idx) - 1;
 }
+void Sandbox::assign_permanent_variant(int32_t idx, Variant &&val) {
+	if (idx < 0) {
+		// It's a permanent variant, verify the index
+		idx = -idx - 1;
+		if (idx < this->m_states[0].variants.size()) {
+			this->m_states[0].variants[idx] = std::move(val);
+			return;
+		}
+	}
+	// It's either a scoped (temporary) variant, or invalid
+	ERR_PRINT("Invalid permanent variant index.");
+	throw std::runtime_error("Invalid permanent variant index: " + std::to_string(idx));
+}
+unsigned Sandbox::try_reuse_assign_variant(int32_t src_idx, const Variant &src_var, int32_t assign_to_idx, const Variant &new_value) {
+	if (this->is_permanent_variant(assign_to_idx)) {
+		// The Variant is permanent, so we need to assign it directly.
+		// Permanent Variants are scarce and should not be duplicated.
+		this->assign_permanent_variant(assign_to_idx, Variant(new_value));
+		return assign_to_idx;
+	} else if (assign_to_idx == src_idx && this->state().is_mutable_variant(src_var)) {
+		// They are the same, and the Variant belongs to the current state, so we can modify it directly.
+		const_cast<Variant &>(src_var) = new_value;
+		return assign_to_idx;
+	} else {
+		// The Variant is either temporary or invalid, so we can replace it directly.
+		return this->create_scoped_variant(Variant(new_value));
+	}
+}
 
 void Sandbox::add_scoped_object(const void *ptr) {
 	if (state().scoped_objects.size() >= this->m_max_refs) {
@@ -911,6 +939,11 @@ Variant SandboxProperty::get(const Sandbox &sandbox) const {
 void Sandbox::CurrentState::initialize(unsigned level, unsigned max_refs) {
 	this->m_current_level = level;
 	this->variants.reserve(max_refs);
+}
+bool Sandbox::CurrentState::is_mutable_variant(const Variant &var) const {
+	// Check if the address of the variant is within the range of the current state std::vector
+	const Variant *ptr = &var;
+	return ptr >= &variants[0] && ptr < &variants[0] + variants.size();
 }
 
 void Sandbox::set_max_refs(uint32_t max) {

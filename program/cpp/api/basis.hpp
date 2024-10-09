@@ -13,6 +13,7 @@ struct Basis {
 	Basis(const Vector3 &x, const Vector3 &y, const Vector3 &z);
 
 	Basis &operator =(const Basis &basis);
+	void assign(const Basis &basis);
 
 	// Basis operations
 	void invert();
@@ -35,6 +36,10 @@ struct Basis {
 
 	// Basis size
 	static constexpr int size() { return 3; }
+
+	// Call operator
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args);
 
 	static Basis from_variant_index(unsigned idx) { Basis a {}; a.m_idx = idx; return a; }
 	unsigned get_variant_index() const noexcept { return m_idx; }
@@ -59,6 +64,15 @@ inline Basis Variant::as_basis() const {
 }
 
 inline Basis &Basis::operator =(const Basis &basis) {
-	this->m_idx = basis.m_idx;
+	if (this->m_idx != INT32_MIN) {
+		this->assign(basis);
+	} else {
+		this->m_idx = basis.m_idx;
+	}
 	return *this;
+}
+
+template <typename... Args>
+inline Variant Basis::operator () (std::string_view method, Args&&... args) {
+	return Variant::method_call(method, std::forward<Args>(args)...);
 }
