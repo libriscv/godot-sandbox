@@ -38,10 +38,18 @@ void Transform3D::affine_invert() {
 	sys_transform3d_ops(this->m_idx, Transform3D_Op::AFFINE_INVERTED, this);
 }
 
+void Transform3D::rotate(const Vector3 &axis, double angle) {
+	sys_transform3d_ops(this->m_idx, Transform3D_Op::ROTATED, this, axis, angle);
+}
+
 Transform3D Transform3D::rotated(const Vector3 &axis, double angle) const {
 	Transform3D t;
 	sys_transform3d_ops(this->m_idx, Transform3D_Op::ROTATED, &t, axis, angle);
 	return t;
+}
+
+void Transform3D::scale(const Vector3 &scale) {
+	sys_transform3d_ops(this->m_idx, Transform3D_Op::SCALED, this, &scale);
 }
 
 Transform3D Transform3D::scaled(const Vector3 &scale) const {

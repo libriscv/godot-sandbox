@@ -22,6 +22,8 @@ struct Transform3D {
 	void invert();
 	void affine_invert();
 	void translate(const Vector3 &offset);
+	void rotate(const Vector3 &axis, double angle);
+	void scale(const Vector3 &scale);
 
 	Transform3D inverse() const;
 	Transform3D orthonormalized() const;
