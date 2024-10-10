@@ -193,8 +193,19 @@ Sandbox::~Sandbox() {
 }
 
 void Sandbox::set_program(Ref<ELFScript> program) {
+	// Try to retain Sandboxed properties
+	std::vector<SandboxProperty> properties = std::move(this->m_properties);
+	std::vector<Variant> property_values;
+	property_values.reserve(properties.size());
+	for (const SandboxProperty &prop : properties) {
+		Variant value;
+		this->get_property(prop.name(), value);
+		property_values.push_back(value);
+	}
+
 	this->m_program_data = std::move(program);
 	this->m_program_bytes = {};
+
 	if (this->m_program_data.is_null()) {
 		// Unload program and reset the machine
 		this->full_reset();
@@ -203,7 +214,24 @@ void Sandbox::set_program(Ref<ELFScript> program) {
 		// There is already a program, full reset
 		this->full_reset();
 	}
+
 	this->load(&m_program_data->get_content());
+
+	// Restore Sandboxed properties by comparing the new program's properties
+	// with the old ones, then comparing the type. If the property is found,
+	// try to set the property with the old value.
+	for (const SandboxProperty &old_prop : properties) {
+		const Variant *value = nullptr;
+		for (const SandboxProperty &new_prop : this->m_properties) {
+			if (new_prop.name() == old_prop.name() && new_prop.type() == old_prop.type()) {
+				value = &property_values[&old_prop - &properties[0]];
+				break;
+			}
+		}
+		if (value) {
+			this->set_property(old_prop.name(), *value);
+		}
+	}
 }
 Ref<ELFScript> Sandbox::get_program() {
 	return m_program_data;

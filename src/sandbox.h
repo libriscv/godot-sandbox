@@ -44,7 +44,7 @@ public:
 	static constexpr unsigned MAX_LEVEL = 4; // Maximum call recursion depth
 	static constexpr unsigned MAX_REFS = 100; // Default maximum number of references
 	static constexpr unsigned EDITOR_THROTTLE = 8; // Throttle VM calls from the editor
-	static constexpr unsigned MAX_PROPERTIES = 16; // Maximum number of sandboxed properties
+	static constexpr unsigned MAX_PROPERTIES = 32; // Maximum number of sandboxed properties
 
 	struct CurrentState {
 		std::vector<Variant> variants;
