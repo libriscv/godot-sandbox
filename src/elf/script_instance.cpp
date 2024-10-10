@@ -68,6 +68,7 @@ bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 
 	auto [sandbox, created] = get_sandbox();
 	if (sandbox) {
+		sandbox->set_tree_base(godot::Object::cast_to<Node>(this->owner));
 		return sandbox->set_property(p_name, p_value);
 	}
 
@@ -85,6 +86,7 @@ bool ELFScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 
 	auto [sandbox, created] = get_sandbox();
 	if (sandbox) {
+		sandbox->set_tree_base(godot::Object::cast_to<Node>(this->owner));
 		return sandbox->get_property(p_name, r_ret);
 	}
 
@@ -311,7 +313,7 @@ bool ELFScriptInstance::validate_property(GDExtensionPropertyInfo &p_property) c
 		}
 		return false;
 	}
-	for (SandboxProperty &property : sandbox->get_properties()) {
+	for (const SandboxProperty &property : sandbox->get_properties()) {
 		if (*(StringName *)p_property.name == StringName(property.name())) {
 			if constexpr (VERBOSE_LOGGING) {
 				printf("ELFScriptInstance::validate_property %s => true\n", property.name().utf8().ptr());
