@@ -494,17 +494,19 @@ void ELFScriptInstance::reload(ELFScript *p_script) {
 	auto it = sandbox_instances.find(old_script.ptr());
 	if (it != sandbox_instances.end()) {
 		Sandbox *sandbox_ptr = it->second;
-		// Set the new program
-		sandbox_ptr->set_program(this->script);
+		this->current_sandbox = sandbox_ptr;
 		// Remove the old script instance and insert the new one
 		sandbox_instances.erase(it);
 		sandbox_instances.insert_or_assign(p_script, sandbox_ptr);
+		// Set the new program
+		sandbox_ptr->set_program(this->script);
 		updated_program = true;
 	}
 
 	if (!updated_program) {
 		Sandbox *sandbox_ptr = Object::cast_to<Sandbox>(this->owner);
 		if (sandbox_ptr != nullptr) {
+			this->current_sandbox = sandbox_ptr;
 			sandbox_ptr->set_program(this->script);
 			updated_program = true;
 		}

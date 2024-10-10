@@ -374,6 +374,7 @@ public:
 
 private:
 	void constructor_initialize();
+	void full_reset();
 	void reset_machine();
 	void load(const PackedByteArray *vbuf, const std::vector<std::string> *argv = nullptr);
 	void read_program_properties(bool editor) const;

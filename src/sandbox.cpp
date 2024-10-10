@@ -154,6 +154,20 @@ void Sandbox::reset_machine() {
 		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
 	}
 }
+void Sandbox::full_reset() {
+	this->reset_machine();
+	const bool use_unboxed_arguments = this->get_use_unboxed_arguments();
+	this->constructor_initialize();
+	this->set_use_unboxed_arguments(use_unboxed_arguments);
+
+	this->m_properties.clear();
+	this->m_lookup.clear();
+	this->m_allowed_objects.clear();
+	this->m_allowed_classes.clear();
+	//this->m_just_in_time_allowed_objects = Callable();
+	//this->m_just_in_time_allowed_classes = Callable();
+
+}
 Sandbox::Sandbox() {
 	this->constructor_initialize();
 	// In order to reduce checks we guarantee that this
@@ -183,8 +197,11 @@ void Sandbox::set_program(Ref<ELFScript> program) {
 	this->m_program_bytes = {};
 	if (this->m_program_data.is_null()) {
 		// Unload program and reset the machine
-		this->reset_machine();
+		this->full_reset();
 		return;
+	} else if (this->m_machine != nullptr) {
+		// There is already a program, full reset
+		this->full_reset();
 	}
 	this->load(&m_program_data->get_content());
 }
