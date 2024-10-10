@@ -876,6 +876,9 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	} else if (name == StringName("use_unboxed_arguments")) {
 		set_use_unboxed_arguments(value);
 		return true;
+	} else if (name == StringName("use_precise_simulation")) {
+		set_use_precise_simulation(value);
+		return true;
 	}
 	return false;
 }
@@ -903,6 +906,9 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 		return true;
 	} else if (name == StringName("use_unboxed_arguments")) {
 		r_ret = get_use_unboxed_arguments();
+		return true;
+	} else if (name == StringName("use_precise_simulation")) {
+		r_ret = get_use_precise_simulation();
 		return true;
 	} else if (name == StringName("monitor_heap_usage")) {
 		r_ret = get_heap_usage();
