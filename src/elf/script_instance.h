@@ -36,11 +36,13 @@ class ELFScriptInstance : public ScriptInstanceExtension {
 	mutable bool has_updated_methods = false;
 	bool auto_created_sandbox = false;
 
+	void reload(ELFScript *p_script);
 	void update_methods() const;
 
 	// Retrieve the sandbox and whether it was created automatically or not
 	std::tuple<Sandbox *, bool> get_sandbox() const;
 	Sandbox *create_sandbox(const Ref<ELFScript> &p_script);
+	friend class ELFScript;
 
 public:
 	bool set(const StringName &p_name, const Variant &p_value) override;

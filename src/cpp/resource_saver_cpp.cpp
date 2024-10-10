@@ -95,17 +95,6 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 				thread_pool.enqueue(builder);
 			else {
 				builder();
-
-				// EditorInterface::get_singleton()->get_editor_settings()->set("text_editor/behavior/files/auto_reload_scripts_on_external_change", true);
-				EditorInterface::get_singleton()->get_resource_filesystem()->scan();
-				TypedArray<Script> open_scripts = EditorInterface::get_singleton()->get_script_editor()->get_open_scripts();
-				for (int i = 0; i < open_scripts.size(); i++) {
-					ELFScript *elf_script = Object::cast_to<ELFScript>(open_scripts[i]);
-					if (elf_script) {
-						elf_script->reload(false);
-						elf_script->emit_changed();
-					}
-				}
 			}
 			return Error::OK;
 		} else {
