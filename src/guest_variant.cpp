@@ -45,7 +45,8 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 
 		default:
 			if (std::optional<const Variant *> v = emu.get_scoped_variant(this->v.i)) {
-				return *v.value();
+				const Variant *var = *v;
+				return *var;
 			} else {
 				char buffer[128];
 				snprintf(buffer, sizeof(buffer), "GuestVariant::toVariant(): %u (%s) is not known/scoped",
