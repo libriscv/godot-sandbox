@@ -48,6 +48,12 @@ Transform3D Transform3D::rotated(const Vector3 &axis, double angle) const {
 	return t;
 }
 
+Transform3D Transform3D::rotated_local(const Vector3 &axis, double angle) const {
+	Transform3D t;
+	sys_transform3d_ops(this->m_idx, Transform3D_Op::ROTATED_LOCAL, &t, axis, angle);
+	return t;
+}
+
 void Transform3D::scale(const Vector3 &scale) {
 	sys_transform3d_ops(this->m_idx, Transform3D_Op::SCALED, this, &scale);
 }
@@ -58,6 +64,12 @@ Transform3D Transform3D::scaled(const Vector3 &scale) const {
 	return t;
 }
 
+Transform3D Transform3D::scaled_local(const Vector3 &scale) const {
+	Transform3D t;
+	sys_transform3d_ops(this->m_idx, Transform3D_Op::SCALED_LOCAL, &t, &scale);
+	return t;
+}
+
 void Transform3D::translate(const Vector3 &offset) {
 	sys_transform3d_ops(this->m_idx, Transform3D_Op::TRANSLATED, this, &offset);
 }
@@ -65,6 +77,12 @@ void Transform3D::translate(const Vector3 &offset) {
 Transform3D Transform3D::translated(const Vector3 &offset) const {
 	Transform3D t;
 	sys_transform3d_ops(this->m_idx, Transform3D_Op::TRANSLATED, &t, &offset);
+	return t;
+}
+
+Transform3D Transform3D::translated_local(const Vector3 &offset) const {
+	Transform3D t;
+	sys_transform3d_ops(this->m_idx, Transform3D_Op::TRANSLATED_LOCAL, &t, &offset);
 	return t;
 }
 

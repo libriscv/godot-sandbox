@@ -1152,7 +1152,7 @@ APICALL(api_node2d) {
 			var->create(emu, node2d->get_transform());
 			break;
 		case Node2D_Op::SET_TRANSFORM:
-			node2d->set_transform(var->toVariant(emu));
+			node2d->set_transform(*var->toVariantPtr(emu));
 			break;
 		default:
 			ERR_PRINT("Invalid Node2D operation");
@@ -1202,7 +1202,7 @@ APICALL(api_node3d) {
 			var->create(emu, node3d->get_transform());
 			break;
 		case Node3D_Op::SET_TRANSFORM:
-			node3d->set_transform(var->toVariant(emu));
+			node3d->set_transform(*var->toVariantPtr(emu));
 			break;
 		default:
 			ERR_PRINT("Invalid Node3D operation");
@@ -1989,7 +1989,7 @@ APICALL(api_transform3d_ops) {
 	}
 
 	std::optional<const Variant *> opt_t = emu.get_scoped_variant(idx);
-	if (!opt_t.has_value() || opt_t.value()->get_type() != Variant::TRANSFORM3D) {
+	if (!opt_t.has_value() || (*opt_t)->get_type() != Variant::TRANSFORM3D) {
 		ERR_PRINT("Invalid Transform3D object");
 		throw std::runtime_error("Invalid Transform3D object");
 	}
@@ -2001,10 +2001,10 @@ APICALL(api_transform3d_ops) {
 		case Transform3D_Op::ASSIGN: {
 			unsigned *new_idx = machine.memory.memarray<unsigned>(machine.cpu.reg(12), 1); // A2
 			const unsigned t2_idx = machine.cpu.reg(13); // A3
-			const Transform3D t2 = emu.get_scoped_variant(t2_idx).value()->operator Transform3D();
+			const Variant *t2 = emu.get_scoped_variant(t2_idx).value();
 
 			// Smart-assign the given transform to the current Variant.
-			*new_idx = emu.try_reuse_assign_variant(idx, *t_variant, *new_idx, Variant(t2));
+			*new_idx = emu.try_reuse_assign_variant(idx, *t_variant, *new_idx, *t2);
 			break;
 		}
 		case Transform3D_Op::GET_BASIS: {
@@ -2055,6 +2055,18 @@ APICALL(api_transform3d_ops) {
 			*vidx = emu.try_reuse_assign_variant(idx, *t_variant, *vidx, Variant(t.rotated(*axis, angle)));
 			break;
 		}
+		case Transform3D_Op::ROTATED_LOCAL: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			const gaddr_t v3addr = machine.cpu.reg(13); // A3
+			const Vector3 *axis = machine.memory.memarray<Vector3>(v3addr, 1);
+			const double angle = machine.cpu.registers().getfl(10).get<double>(); // fa0
+
+			// Rotate the transform by the given axis and angle, return a new transform.
+			*vidx = emu.try_reuse_assign_variant(idx, *t_variant, *vidx, Variant(t.rotated_local(*axis, angle)));
+			break;
+		}
 		case Transform3D_Op::SCALED: {
 			const gaddr_t vaddr = machine.cpu.reg(12); // A2
 			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
@@ -2066,6 +2078,17 @@ APICALL(api_transform3d_ops) {
 			*vidx = emu.try_reuse_assign_variant(idx, *t_variant, *vidx, Variant(t.scaled(*scale)));
 			break;
 		}
+		case Transform3D_Op::SCALED_LOCAL: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			const gaddr_t v3addr = machine.cpu.reg(13); // A3
+			const Vector3 *scale = machine.memory.memarray<Vector3>(v3addr, 1);
+
+			// Scale the transform by the given scale in local space, return a new transform.
+			*vidx = emu.try_reuse_assign_variant(idx, *t_variant, *vidx, Variant(t.scaled_local(*scale)));
+			break;
+		}
 		case Transform3D_Op::TRANSLATED: {
 			const gaddr_t vaddr = machine.cpu.reg(12); // A2
 			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
@@ -2075,6 +2098,17 @@ APICALL(api_transform3d_ops) {
 
 			// Translate the transform by the given offset, return a new transform.
 			*vidx = emu.try_reuse_assign_variant(idx, *t_variant, *vidx, Variant(t.translated(*offset)));
+			break;
+		}
+		case Transform3D_Op::TRANSLATED_LOCAL: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			const gaddr_t v3addr = machine.cpu.reg(13); // A3
+			const Vector3 *offset = machine.memory.memarray<Vector3>(v3addr, 1);
+
+			// Translate the transform by the given offset in local space, return a new transform.
+			*vidx = emu.try_reuse_assign_variant(idx, *t_variant, *vidx, Variant(t.translated_local(*offset)));
 			break;
 		}
 		case Transform3D_Op::INVERTED: {
@@ -2111,8 +2145,9 @@ APICALL(api_transform3d_ops) {
 			const Transform3D to = emu.get_scoped_variant(t2_idx).value()->operator Transform3D();
 			const double weight = machine.cpu.registers().getfl(10).get<double>(); // fa0
 
+			t = t.interpolate_with(to, weight);
 			// Return the interpolated transform between the current and the given transform.
-			*vidx = emu.try_reuse_assign_variant(idx, *t_variant, *vidx, Variant(t.interpolate_with(to, weight)));
+			*vidx = emu.try_reuse_assign_variant(idx, *t_variant, *vidx, Variant(t));
 			break;
 		}
 		default:

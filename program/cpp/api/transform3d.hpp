@@ -28,8 +28,11 @@ struct Transform3D {
 	Transform3D inverse() const;
 	Transform3D orthonormalized() const;
 	Transform3D rotated(const Vector3 &axis, double angle) const;
+	Transform3D rotated_local(const Vector3 &axis, double angle) const;
 	Transform3D scaled(const Vector3 &scale) const;
+	Transform3D scaled_local(const Vector3 &scale) const;
 	Transform3D translated(const Vector3 &offset) const;
+	Transform3D translated_local(const Vector3 &offset) const;
 	Transform3D looking_at(const Vector3 &target, const Vector3 &up) const;
 	Transform3D interpolate_with(const Transform3D &to, double weight) const;
 
