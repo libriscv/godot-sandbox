@@ -181,8 +181,15 @@ struct GuestStdVector {
 	std::size_t capacity() const noexcept { return ptr_capacity - ptr_begin; }
 
 	template <typename T>
-	T *view_as(const machine_t &machine) const {
-		return machine.memory.memarray<T>(data(), size_bytes() / sizeof(T));
+	std::size_t size(std::size_t max_bytes = 16UL << 20) const {
+		if (size_bytes() > max_bytes)
+			throw std::runtime_error("Guest std::vector too large (size > 16MB)");
+		return size_bytes() / sizeof(T);
+	}
+
+	template <typename T>
+	T *view_as(const machine_t &machine, std::size_t max_bytes = 16UL << 20) const {
+		return machine.memory.memarray<T>(data(), size<T>(max_bytes));
 	}
 
 	template <typename T>

@@ -353,10 +353,8 @@ APICALL(api_vcreate) {
 				if (method == 0) {
 					// Copy std::vector<uint8_t> from guest memory.
 					GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
-					// TODO: Improve this by directly copying the data into the PackedByteArray.
-					std::vector<uint8_t> vec = gvec->to_vector<uint8_t>(machine);
-					a.resize(vec.size());
-					std::memcpy(a.ptrw(), vec.data(), vec.size());
+					a.resize(gvec->size<uint8_t>());
+					std::memcpy(a.ptrw(), gvec->view_as<uint8_t>(machine), gvec->size_bytes());
 				} else {
 					// Method is the buffer length.
 					a.resize(method);
@@ -374,9 +372,8 @@ APICALL(api_vcreate) {
 			if (gdata != 0x0) {
 				// Copy std::vector<float> from guest memory.
 				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
-				std::vector<float> vec = gvec->to_vector<float>(machine);
-				a.resize(vec.size());
-				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(float));
+				a.resize(gvec->size<float>());
+				std::memcpy(a.ptrw(), gvec->view_as<float>(machine), gvec->size_bytes());
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
