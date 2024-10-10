@@ -111,6 +111,14 @@ public:
 	/// @return True if register values are preferred, false if Variant values are preferred.
 	bool get_use_unboxed_arguments() const { return m_use_unboxed_arguments; }
 
+	/// @brief Set whether to use precise simulation for VM execution.
+	/// @param use_precise_simulation True to use precise simulation, false to use fast simulation.
+	void set_use_precise_simulation(bool use_precise_simulation) { m_precise_simulation = use_precise_simulation; }
+
+	/// @brief Get whether to use precise simulation for VM execution.
+	/// @return True if precise simulation is used, false otherwise.
+	bool get_use_precise_simulation() const { return m_precise_simulation; }
+
 	// -= Sandbox Properties =-
 
 	uint32_t get_max_refs() const { return m_max_refs; }
@@ -286,7 +294,6 @@ public:
 
 	/// @brief Get all sandboxed properties.
 	/// @return The array of sandboxed properties.
-	std::vector<SandboxProperty> &get_properties() { return m_properties; }
 	const std::vector<SandboxProperty> &get_properties() const { return m_properties; }
 
 	/// @brief Get the list of sandbox properties as a dictionary.
@@ -387,6 +394,7 @@ private:
 	uint8_t m_throttled = 0;
 	bool m_use_unboxed_arguments = false;
 	bool m_resumable_mode = false; // If enabled, allow running startup in small increments
+	bool m_precise_simulation = false; // Run simulation in the slower, precise mode
 
 	CurrentState *m_current_state = nullptr;
 	// State stack, with the permanent (initial) state at index 0.

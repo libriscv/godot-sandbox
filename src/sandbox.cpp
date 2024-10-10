@@ -79,6 +79,10 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_use_unboxed_arguments"), &Sandbox::get_use_unboxed_arguments);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PROPERTY_HINT_NONE, "Use unboxed arguments for VM function calls"), "set_use_unboxed_arguments", "get_use_unboxed_arguments");
 
+	ClassDB::bind_method(D_METHOD("set_use_precise_simulation", "use_precise_simulation"), &Sandbox::set_use_precise_simulation);
+	ClassDB::bind_method(D_METHOD("get_use_precise_simulation"), &Sandbox::get_use_precise_simulation);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE, "Use precise simulation for VM execution"), "set_use_precise_simulation", "get_use_precise_simulation");
+
 	// Group for monitored Sandbox health.
 	ADD_GROUP("Sandbox Monitoring", "monitor_");
 
@@ -120,6 +124,7 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 	list.push_back(PropertyInfo(Variant::INT, "memory_max", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PROPERTY_HINT_NONE));
+	list.push_back(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE));
 
 	// Group for monitored Sandbox health.
 	// Add the group name to the property name to group them in the editor.
@@ -265,8 +270,16 @@ void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		m.setup_linux(*argv);
 
 		// Run the program through to its main() function
-		if (!this->m_resumable_mode)
-			m.simulate(get_instructions_max() << 30);
+		if (!this->m_resumable_mode) {
+			if (!this->get_use_precise_simulation()) {
+				m.simulate(get_instructions_max() << 30);
+			} else {
+				// Precise simulation can help discover bugs in the program,
+				// as the exact PC address will be known when an exception occurs.
+				m.set_max_instructions(get_instructions_max() << 30);
+				m.cpu.simulate_precise();
+			}
+		}
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
 		this->handle_exception(machine().cpu.pc());
