@@ -16,8 +16,8 @@ config/icon="res://icon.svg"
 
 [editor]
 
-script/docker_enabled=false
 script/native_types=true
+script/docker_enabled=false
 
 [editor_plugins]
 
