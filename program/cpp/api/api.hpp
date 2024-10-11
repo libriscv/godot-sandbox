@@ -9,6 +9,7 @@
 #include "basis.hpp"
 #include "transform2d.hpp"
 #include "transform3d.hpp"
+#include "quaternion.hpp"
 #include "syscalls_fwd.hpp"
 #include "timer.hpp"
 

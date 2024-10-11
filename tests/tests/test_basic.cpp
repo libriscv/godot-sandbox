@@ -100,15 +100,23 @@ extern "C" Variant test_object(Object arg) {
 }
 
 extern "C" Variant test_basis(Basis basis) {
-	return basis;
+	Basis b = basis;
+	return b;
 }
 
 extern "C" Variant test_transform2d(Transform2D transform2d) {
-	return transform2d;
+	Transform2D t2d = transform2d;
+	return t2d;
 }
 
 extern "C" Variant test_transform3d(Transform3D transform3d) {
-	return transform3d;
+	Transform3D t3d = transform3d;
+	return t3d;
+}
+
+extern "C" Variant test_quaternion(Quaternion quaternion) {
+	Quaternion q2 = quaternion;
+	return q2;
 }
 
 extern "C" Variant test_callable(Callable callable) {

@@ -12,6 +12,7 @@ static PlayerState &get_player_state() {
 	return GetPlayerState(get_node());
 }
 
+// clang-format off
 SANDBOXED_PROPERTIES(3, {
 	.name = "player_speed",
 	.type = Variant::FLOAT,
@@ -31,3 +32,4 @@ SANDBOXED_PROPERTIES(3, {
 	.setter = [](Variant value) -> Variant { return get_player_state().player_name = value.as_std_string(); },
 	.default_value = Variant{"Slide Knight"},
 });
+// clang-format on

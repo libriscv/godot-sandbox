@@ -89,6 +89,7 @@ func test_types():
 	assert_eq(s.has_function("test_basis"), true)
 	assert_eq(s.has_function("test_transform2d"), true)
 	assert_eq(s.has_function("test_transform3d"), true)
+	assert_eq(s.has_function("test_quaternion"), true)
 	assert_eq(s.has_function("test_array"), true)
 	assert_eq(s.has_function("test_dict"), true)
 
@@ -101,7 +102,7 @@ func test_types():
 	assert_eq(s.vmcall("test_int", -1234), -1234) # Int
 	assert_eq(s.vmcall("test_float", 9876.0), 9876.0) # Float
 	assert_same(s.vmcall("test_string", "9876.0"), "9876.0") # String
-	assert_eq(s.vmcall("test_nodepath", NodePath("Node")), NodePath("Node")) # NodePath
+	assert_same(s.vmcall("test_nodepath", NodePath("Node")), NodePath("Node")) # NodePath
 	assert_eq(s.vmcall("test_vec2", Vector2(1, 2)), Vector2(1, 2)) # Vector2
 	assert_eq(s.vmcall("test_vec2i", Vector2i(1, 2)), Vector2i(1, 2)) # Vector2i
 	assert_eq(s.vmcall("test_vec3", Vector3(1, 2, 3)), Vector3(1, 2, 3)) # Vector3
@@ -115,7 +116,7 @@ func test_types():
 	assert_eq(s.vmcall("test_transform3d", Transform3D(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9), Vector3(10, 11, 12))), Transform3D(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9), Vector3(10, 11, 12))) # Transform3D
 	assert_eq(s.vmcall("test_ping_pong", AABB(Vector3(1, 2, 3), Vector3(4, 5, 6))), AABB(Vector3(1, 2, 3), Vector3(4, 5, 6))) # AABB
 	assert_eq(s.vmcall("test_ping_pong", Plane(Vector3(1, 2, 3), 4)), Plane(Vector3(1, 2, 3), 4)) # Plane
-	assert_eq(s.vmcall("test_ping_pong", Quaternion(1, 2, 3, 4)), Quaternion(1, 2, 3, 4)) # Quat
+	assert_eq(s.vmcall("test_quaternion", Quaternion(1, 2, 3, 4)), Quaternion(1, 2, 3, 4)) # Quaternion
 	assert_eq(s.vmcall("test_basis", Basis(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9))), Basis(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9))) # Basis
 	assert_eq(s.vmcall("test_ping_pong", RID()), RID()) # RID
 

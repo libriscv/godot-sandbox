@@ -2318,6 +2318,77 @@ APICALL(api_basis_ops) {
 	}
 }
 
+APICALL(api_quat_ops) {
+	auto [idx, op] = machine.sysargs<unsigned, Quaternion_Op>();
+	SYS_TRACE("quat_ops", idx, int(op));
+	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("quat_ops", idx, int(op));
+	printf("Quaternion operation %d %d\n", idx, int(op));
+
+	if (op == Quaternion_Op::CREATE) {
+		switch (idx) {
+			case 0: { // IDENTITY
+				const gaddr_t vaddr = machine.cpu.reg(12); // A2
+				GuestVariant *vres = machine.memory.memarray<GuestVariant>(vaddr, 1);
+
+				vres->create(emu, Quaternion());
+				return;
+			}
+			case 1: { // FROM_AXIS_ANGLE
+				const gaddr_t vaddr = machine.cpu.reg(12); // A2
+				unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+				const Vector3 *axis = machine.memory.memarray<Vector3>(machine.cpu.reg(13), 1); // A3
+				const double angle = machine.cpu.registers().getfl(10).get<double>(); // fa0
+
+				// Create a new scoped Variant with the given axis and angle.
+				*vidx = emu.create_scoped_variant(Variant(Quaternion(*axis, angle)));
+				return;
+			}
+			default:
+				ERR_PRINT("Invalid Quaternion constructor");
+				throw std::runtime_error("Invalid Quaternion constructor: " + std::to_string(idx));
+		}
+		__builtin_unreachable();
+	}
+
+	// Outside of CREATE (constructor) operations, idx is the scoped Variant index for the Quaternion.
+	std::optional<const Variant *> opt_q = emu.get_scoped_variant(idx);
+	if (!opt_q.has_value() || opt_q.value()->get_type() != Variant::QUATERNION) {
+		ERR_PRINT("Invalid Quaternion object");
+		throw std::runtime_error("Invalid Quaternion object");
+	}
+	const Variant *q_variant = *opt_q;
+	godot::Quaternion q = q_variant->operator Quaternion();
+
+	// Additional integers start at A2 (12), and floats start at FA0 (10).
+	switch (op) {
+		case Quaternion_Op::ASSIGN: {
+			unsigned *new_idx = machine.memory.memarray<unsigned>(machine.cpu.reg(12), 1); // A2
+			const unsigned q_idx = machine.cpu.reg(13); // A3
+			const Variant *new_value = emu.get_scoped_variant(q_idx).value();
+			printf("Quaternion assign %d %d\n", idx, q_idx);
+
+			// Smart-assign the given quaternion to the current Variant.
+			*new_idx = emu.try_reuse_assign_variant(idx, *q_variant, *new_idx, *new_value);
+			return;
+		}
+		case Quaternion_Op::AT: {
+			const unsigned idx = machine.cpu.reg(12); // A2
+			if (idx < 0 || idx >= 4) {
+				ERR_PRINT("Invalid Quaternion index");
+				throw std::runtime_error("Invalid Quaternion index: " + std::to_string(idx));
+			}
+			double *res = machine.memory.memarray<double>(machine.cpu.reg(13), 1); // A3
+
+			*res = q[idx];
+			return;
+		}
+		default:
+			ERR_PRINT("Invalid Quaternion operation");
+			throw std::runtime_error("Invalid Quaternion operation: " + std::to_string(int(op)));
+	}
+}
+
 } //namespace riscv
 
 void Sandbox::initialize_syscalls() {
@@ -2403,7 +2474,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_TRANSFORM_2D_OPS, api_transform2d_ops },
 			{ ECALL_TRANSFORM_3D_OPS, api_transform3d_ops },
 			{ ECALL_BASIS_OPS, api_basis_ops },
-
 			{ ECALL_VEC2_OPS, api_vec2_ops },
+			{ ECALL_QUAT_OPS, api_quat_ops },
 	});
 }
