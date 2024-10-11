@@ -9,6 +9,8 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_EXTENSIONS ON)
 set(VERSION 7)
 
+option(SANDBOX_RISCV_EXT_C "Enable RISC-V C extension" ON)
+
 set(CXXFLAGS -O2 -std=gnu++23 -fno-stack-protector -fno-threadsafe-statics)
 set(CFLAGS   -O2 -std=gnu11 -fno-stack-protector -fno-threadsafe-statics)
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -16,7 +18,11 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 	set(CFLAGS   ${CFLAGS} -O0 -g)
 endif()
 
-set(RISCV_ARCH "-march=rv64gc_zba_zbb_zbs_zbc")
+if (SANDBOX_RISCV_EXT_C)
+	set(RISCV_ARCH "-march=rv64gc_zba_zbb_zbs_zbc")
+else()
+	set(RISCV_ARCH "-march=rv64g_zba_zbb_zbs_zbc")
+endif()
 set(RISCV_ABI "-mabi=lp64d")
 
 set(API_DIR ${CMAKE_CURRENT_LIST_DIR}/api)
