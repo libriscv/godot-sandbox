@@ -166,7 +166,6 @@ void Sandbox::full_reset() {
 	this->m_allowed_classes.clear();
 	//this->m_just_in_time_allowed_objects = Callable();
 	//this->m_just_in_time_allowed_classes = Callable();
-
 }
 Sandbox::Sandbox() {
 	this->constructor_initialize();
@@ -462,6 +461,7 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 			case Variant::TRANSFORM2D:
 			case Variant::BASIS:
 			case Variant::TRANSFORM3D:
+			case Variant::QUATERNION:
 			case Variant::PACKED_BYTE_ARRAY:
 			case Variant::PACKED_FLOAT32_ARRAY:
 			case Variant::PACKED_FLOAT64_ARRAY:
