@@ -6,7 +6,9 @@ MAKE_SYSCALL(ECALL_QUAT_OPS, void, sys_quat_ops, unsigned idx, Quaternion_Op, ..
 
 Quaternion Quaternion::identity() {
 	// CREATE uses idx for the constructor type
-	sys_quat_ops(0, Quaternion_Op::CREATE);
+	Quaternion q;
+	sys_quat_ops(0, Quaternion_Op::CREATE, &q);
+	return q;
 }
 
 Quaternion::Quaternion(double p_x, double p_y, double p_z, double p_w) {
