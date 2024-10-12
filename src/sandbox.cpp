@@ -311,7 +311,7 @@ void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 
 		// Set up a Linux environment for the program
 		const std::vector<std::string> *argv = argv_ptr ? argv_ptr : &program_arguments;
-		m.setup_linux(*argv);
+		m.setup_linux(*argv, {"LC_CTYPE=C", "LC_ALL=C"});
 
 		// Run the program through to its main() function
 		if (!this->m_resumable_mode) {
