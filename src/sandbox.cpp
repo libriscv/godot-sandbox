@@ -1003,6 +1003,9 @@ Variant SandboxProperty::get(const Sandbox &sandbox) const {
 void Sandbox::CurrentState::initialize(unsigned level, unsigned max_refs) {
 	this->m_current_level = level;
 	this->variants.reserve(max_refs);
+	this->variants.clear();
+	this->scoped_objects.clear();
+	this->scoped_variants.clear();
 }
 bool Sandbox::CurrentState::is_mutable_variant(const Variant &var) const {
 	// Check if the address of the variant is within the range of the current state std::vector
