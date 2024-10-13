@@ -47,7 +47,7 @@ double Quaternion::length() const {
 }
 
 void Quaternion::normalize() {
-	sys_quat_ops(this->m_idx, Quaternion_Op::NORMALIZE);
+	sys_quat_ops(this->m_idx, Quaternion_Op::NORMALIZE, this);
 }
 
 Quaternion Quaternion::normalized() const {
@@ -58,8 +58,8 @@ Quaternion Quaternion::normalized() const {
 
 bool Quaternion::is_normalized() const {
 	double d;
-	sys_quat_ops(this->m_idx, Quaternion_Op::LENGTH, &d);
-	return d > 0.99999 && d < 1.00001;
+	sys_quat_ops(this->m_idx, Quaternion_Op::LENGTH_SQUARED, &d);
+	return d > 0.999999f && d < 1.000001f;
 }
 
 Quaternion Quaternion::inverse() const {

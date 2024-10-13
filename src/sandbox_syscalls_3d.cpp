@@ -491,6 +491,57 @@ APICALL(api_quat_ops) {
 			*new_idx = emu.try_reuse_assign_variant(idx, *q_variant, *new_idx, *new_value);
 			return;
 		}
+		case Quaternion_Op::DOT: {
+			const unsigned q2_idx = machine.cpu.reg(12); // A2
+			const Quaternion q2 = emu.get_scoped_variant(q2_idx).value()->operator Quaternion();
+			double *res = machine.memory.memarray<double>(machine.cpu.reg(13), 1); // A3
+
+			// Return the dot product of the two quaternions.
+			*res = q.dot(q2);
+			return;
+		}
+		case Quaternion_Op::LENGTH_SQUARED: {
+			double *res = machine.memory.memarray<double>(machine.cpu.reg(12), 1); // A2
+
+			// Return the squared length of the quaternion.
+			*res = q.length_squared();
+			return;
+		}
+		case Quaternion_Op::LENGTH: {
+			double *res = machine.memory.memarray<double>(machine.cpu.reg(12), 1); // A2
+
+			// Return the length of the quaternion.
+			*res = q.length();
+			return;
+		}
+		case Quaternion_Op::NORMALIZE: {
+			unsigned *vidx = machine.memory.memarray<unsigned>(machine.cpu.reg(12), 1); // A2
+
+			// Create a new normalized quaternion and store it in the destination Variant.
+			*vidx = emu.try_reuse_assign_variant(idx, *q_variant, *vidx, Variant(q.normalized()));
+			return;
+		}
+		case Quaternion_Op::INVERSE: {
+			unsigned *vidx = machine.memory.memarray<unsigned>(machine.cpu.reg(12), 1); // A2
+
+			// Create a new inverse quaternion and store it in the destination Variant.
+			*vidx = emu.try_reuse_assign_variant(idx, *q_variant, *vidx, Variant(q.inverse()));
+			return;
+		}
+		case Quaternion_Op::LOG: {
+			unsigned *vidx = machine.memory.memarray<unsigned>(machine.cpu.reg(12), 1); // A2
+
+			// Create a new logarithmic quaternion and store it in the destination Variant.
+			*vidx = emu.try_reuse_assign_variant(idx, *q_variant, *vidx, Variant(q.log()));
+			return;
+		}
+		case Quaternion_Op::EXP: {
+			unsigned *vidx = machine.memory.memarray<unsigned>(machine.cpu.reg(12), 1); // A2
+
+			// Create a new exponential quaternion and store it in the destination Variant.
+			*vidx = emu.try_reuse_assign_variant(idx, *q_variant, *vidx, Variant(q.exp()));
+			return;
+		}
 		case Quaternion_Op::AT: {
 			const unsigned idx = machine.cpu.reg(12); // A2
 			if (idx < 0 || idx >= 4) {
@@ -500,6 +551,19 @@ APICALL(api_quat_ops) {
 			double *res = machine.memory.memarray<double>(machine.cpu.reg(13), 1); // A3
 
 			*res = q[idx];
+			return;
+		}
+		case Quaternion_Op::GET_AXIS: {
+			Vector3 *vres = machine.memory.memarray<Vector3>(machine.cpu.reg(12), 1); // A2
+
+			*vres = q.get_axis();
+			return;
+		}
+		case Quaternion_Op::GET_ANGLE: {
+			double *res = machine.memory.memarray<double>(machine.cpu.reg(12), 1); // A2
+
+			// Return the angle of the quaternion.
+			*res = q.get_angle();
 			return;
 		}
 		case Quaternion_Op::MUL: {

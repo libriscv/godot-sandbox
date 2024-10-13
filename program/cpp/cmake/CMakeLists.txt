@@ -38,6 +38,7 @@ set(API_SOURCES
 	"${API_DIR}/node3d.cpp"
 	"${API_DIR}/object.cpp"
 	"${API_DIR}/packed_array.cpp"
+	"${API_DIR}/quaternion.cpp"
 	"${API_DIR}/string.cpp"
 	"${API_DIR}/timer.cpp"
 	"${API_DIR}/transform2d.cpp"
