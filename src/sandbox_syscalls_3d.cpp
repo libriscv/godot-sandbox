@@ -502,6 +502,42 @@ APICALL(api_quat_ops) {
 			*res = q[idx];
 			return;
 		}
+		case Quaternion_Op::MUL: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+			const unsigned q2_idx = machine.cpu.reg(13); // A3
+			const Quaternion q2 = emu.get_scoped_variant(q2_idx).value()->operator Quaternion();
+
+			// Multiply the two quaternions, return a new quaternion.
+			*vidx = emu.try_reuse_assign_variant(idx, *q_variant, *vidx, Variant(q * q2));
+			return;
+		}
+		case Quaternion_Op::SLERP: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			// Get the second quaternion (from scoped Variant index) to interpolate with.
+			const unsigned q2_idx = machine.cpu.reg(13); // A3
+			const Quaternion q2 = emu.get_scoped_variant(q2_idx).value()->operator Quaternion();
+			const double weight = machine.cpu.registers().getfl(10).get<double>(); // fa0
+
+			// Spherically interpolate between the two quaternions, return a new quaternion.
+			*vidx = emu.try_reuse_assign_variant(idx, *q_variant, *vidx, Variant(q.slerp(q2, weight)));
+			return;
+		}
+		case Quaternion_Op::SLERPNI: {
+			const gaddr_t vaddr = machine.cpu.reg(12); // A2
+			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
+
+			// Get the second quaternion (from scoped Variant index) to interpolate with.
+			const unsigned q2_idx = machine.cpu.reg(13); // A3
+			const Quaternion q2 = emu.get_scoped_variant(q2_idx).value()->operator Quaternion();
+			const double weight = machine.cpu.registers().getfl(10).get<double>(); // fa0
+
+			// Spherically interpolate between the two quaternions, return a new quaternion.
+			*vidx = emu.try_reuse_assign_variant(idx, *q_variant, *vidx, Variant(q.slerpni(q2, weight)));
+			return;
+		}
 		default:
 			ERR_PRINT("Invalid Quaternion operation");
 			throw std::runtime_error("Invalid Quaternion operation: " + std::to_string(int(op)));
