@@ -4,7 +4,7 @@
 #include <godot_cpp/variant/basis.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
 #include <godot_cpp/variant/variant.hpp>
-#define ENABLE_SYSCALL_TRACE 1
+//#define ENABLE_SYSCALL_TRACE 1
 #include "syscalls_helpers.hpp"
 
 namespace riscv {
