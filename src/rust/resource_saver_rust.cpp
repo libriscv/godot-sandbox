@@ -108,6 +108,8 @@ bool ResourceFormatSaverRust::_recognize(const Ref<Resource> &p_resource) const 
 }
 PackedStringArray ResourceFormatSaverRust::_get_recognized_extensions(const Ref<Resource> &p_resource) const {
 	PackedStringArray array;
+	if (Object::cast_to<RustScript>(p_resource.ptr()) == nullptr)
+		return array;
 	array.push_back("rs");
 	return array;
 }

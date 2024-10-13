@@ -22,6 +22,8 @@ bool ResourceFormatSaverELF::_recognize(const Ref<Resource> &p_resource) const {
 }
 PackedStringArray ResourceFormatSaverELF::_get_recognized_extensions(const Ref<Resource> &p_resource) const {
 	PackedStringArray array;
+	if (Object::cast_to<ELFScript>(p_resource.ptr()) == nullptr)
+		return array;
 	array.push_back("elf");
 	return array;
 }

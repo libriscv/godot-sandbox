@@ -111,6 +111,8 @@ bool ResourceFormatSaverCPP::_recognize(const Ref<Resource> &p_resource) const {
 }
 PackedStringArray ResourceFormatSaverCPP::_get_recognized_extensions(const Ref<Resource> &p_resource) const {
 	PackedStringArray array;
+	if (Object::cast_to<CPPScript>(p_resource.ptr()) == nullptr)
+		return array;
 	array.push_back("cpp");
 	array.push_back("cc");
 	array.push_back("hh");
