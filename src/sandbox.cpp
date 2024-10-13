@@ -1001,11 +1001,11 @@ Variant SandboxProperty::get(const Sandbox &sandbox) const {
 }
 
 void Sandbox::CurrentState::initialize(unsigned level, unsigned max_refs) {
-	this->m_current_level = level;
+	(void)level;
 	this->variants.reserve(max_refs);
 }
 void Sandbox::CurrentState::reinitialize(unsigned level, unsigned max_refs) {
-	this->m_current_level = level;
+	(void)level;
 	this->variants.reserve(max_refs);
 	this->variants.clear();
 	this->scoped_objects.clear();

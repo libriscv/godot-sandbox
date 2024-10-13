@@ -50,7 +50,6 @@ public:
 		std::vector<Variant> variants;
 		std::vector<const Variant *> scoped_variants;
 		std::vector<uintptr_t> scoped_objects;
-		unsigned m_current_level = 0;
 
 		void append(Variant &&value);
 		void initialize(unsigned level, unsigned max_refs);
