@@ -261,6 +261,7 @@ struct Variant
 	/// @brief Make the Variant permanent, by moving it to permanent storage.
 	/// @return Updates the Variant to the new permanent Variant and returns it.
 	Variant &make_permanent();
+	bool is_permanent() const noexcept;
 
 	Variant &operator=(const Variant &other);
 	Variant &operator=(Variant &&other);

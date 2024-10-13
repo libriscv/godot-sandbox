@@ -70,3 +70,7 @@ Variant &Variant::make_permanent() {
 	sys_vclone(this, nullptr);
 	return *this;
 }
+
+bool Variant::is_permanent() const noexcept {
+	return int32_t(this->v.i) < 0;
+}
