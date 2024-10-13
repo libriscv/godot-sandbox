@@ -11,6 +11,21 @@
 #include <godot_cpp/templates/local_vector.hpp>
 static constexpr bool VERBOSE_LOGGING = false;
 
+struct ScopedTreeBase {
+	Sandbox *sandbox = nullptr;
+	Node *old_tree_base = nullptr;
+
+	ScopedTreeBase(Sandbox *sandbox, Node *old_tree_base) :
+			sandbox(sandbox),
+			old_tree_base(sandbox->get_tree_base()) {
+		sandbox->set_tree_base(old_tree_base);
+	}
+
+	~ScopedTreeBase() {
+		sandbox->set_tree_base(old_tree_base);
+	}
+};
+
 static const std::vector<std::string> godot_functions = {
 	"_get_editor_name",
 	"_hide_script_from_inspector",
@@ -68,7 +83,7 @@ bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 
 	auto [sandbox, created] = get_sandbox();
 	if (sandbox) {
-		sandbox->set_tree_base(godot::Object::cast_to<Node>(this->owner));
+		ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
 		return sandbox->set_property(p_name, p_value);
 	}
 
@@ -86,7 +101,7 @@ bool ELFScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 
 	auto [sandbox, created] = get_sandbox();
 	if (sandbox) {
-		sandbox->set_tree_base(godot::Object::cast_to<Node>(this->owner));
+		ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
 		return sandbox->get_property(p_name, r_ret);
 	}
 
@@ -116,7 +131,7 @@ retry_callp:
 	if (script->functions.has(p_method)) {
 		if (current_sandbox && current_sandbox->has_program_loaded()) {
 			// Set the Sandbox instance tree base to the owner node
-			current_sandbox->set_tree_base(godot::Object::cast_to<Node>(this->owner));
+			ScopedTreeBase stb(current_sandbox, godot::Object::cast_to<Node>(this->owner));
 			// Perform the vmcall
 			r_error.error = GDEXTENSION_CALL_OK;
 			return current_sandbox->vmcall_fn(p_method, p_args, p_argument_count);
