@@ -16,16 +16,19 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 
 static Ref<ResourceFormatSaverCPP> cpp_saver;
-static riscv::ThreadPool thread_pool(1); // Maximum 1 compiler job at a time
+static std::unique_ptr<riscv::ThreadPool> thread_pool;
 static constexpr bool VERBOSE_CMD = false;
 
 void ResourceFormatSaverCPP::init() {
+	thread_pool = std::make_unique<riscv::ThreadPool>(1); // Maximum 1 compiler job at a time
 	cpp_saver.instantiate();
 	// Register the CPPScript resource saver
 	ResourceSaver::get_singleton()->add_resource_format_saver(cpp_saver);
 }
 
 void ResourceFormatSaverCPP::deinit() {
+	// Stop the thread pool
+	thread_pool.reset();
 	// Unregister the CPPScript resource saver
 	ResourceSaver::get_singleton()->remove_resource_format_saver(cpp_saver);
 	cpp_saver.unref();
@@ -92,7 +95,7 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 
 			// If async compilation is enabled, enqueue the builder to the thread pool
 			if (SandboxProjectSettings::async_compilation())
-				thread_pool.enqueue(builder);
+				thread_pool->enqueue(builder);
 			else {
 				builder();
 			}
