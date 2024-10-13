@@ -54,6 +54,7 @@ public:
 
 		void append(Variant &&value);
 		void initialize(unsigned level, unsigned max_refs);
+		void reinitialize(unsigned level, unsigned max_refs);
 		void reset(unsigned index);
 		bool is_mutable_variant(const Variant &var) const;
 	};
@@ -382,6 +383,8 @@ private:
 	void handle_timeout(gaddr_t);
 	void print_backtrace(gaddr_t);
 	void initialize_syscalls();
+	void initialize_syscalls_2d();
+	void initialize_syscalls_3d();
 	GuestVariant *setup_arguments(gaddr_t &sp, const Variant **args, int argc);
 	void setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, const Variant **args, int argc);
 

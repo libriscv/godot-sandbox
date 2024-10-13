@@ -143,7 +143,7 @@ void Sandbox::constructor_initialize() {
 	this->m_global_instance_count += 1;
 	// For each call state, reset the state
 	for (size_t i = 0; i < this->m_states.size(); i++) {
-		this->m_states[i].initialize(i, this->m_max_refs);
+		this->m_states[i].reinitialize(i, this->m_max_refs);
 	}
 }
 void Sandbox::reset_machine() {
@@ -1001,6 +1001,10 @@ Variant SandboxProperty::get(const Sandbox &sandbox) const {
 }
 
 void Sandbox::CurrentState::initialize(unsigned level, unsigned max_refs) {
+	this->m_current_level = level;
+	this->variants.reserve(max_refs);
+}
+void Sandbox::CurrentState::reinitialize(unsigned level, unsigned max_refs) {
 	this->m_current_level = level;
 	this->variants.reserve(max_refs);
 	this->variants.clear();
