@@ -5,28 +5,6 @@
 EXTERN_SYSCALL(void, sys_vstore, unsigned, const void *, size_t);
 EXTERN_SYSCALL(void, sys_vfetch, unsigned, void *, int);
 
-typedef void *TCCReallocFunc(void *ptr, unsigned long size);
-extern "C" void tcc_set_realloc(TCCReallocFunc *realloc);
-
-int main() {
-	// Work-around for a realloc bug, by yours truly.
-	tcc_set_realloc([](void *ptr, unsigned long size) -> void * {
-		void *ptr1;
-		if (size == 0) {
-			free(ptr);
-			ptr1 = NULL;
-		} else {
-			ptr1 = malloc(size);
-			if (ptr && ptr1)
-				memcpy(ptr1, ptr, size);
-			free(ptr);
-		}
-		return ptr1;
-	});
-
-	halt();
-}
-
 #define VERBOSE_COMPILE 0
 
 static TCCState *ctx;
