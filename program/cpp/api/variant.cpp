@@ -10,7 +10,7 @@ MAKE_SYSCALL(ECALL_VFREE, void, sys_vfree, Variant *);
 MAKE_SYSCALL(ECALL_VCREATE, void, sys_vcreate, Variant *, int, int, const void *);
 MAKE_SYSCALL(ECALL_VFETCH, void, sys_vfetch, unsigned, void *, int);
 MAKE_SYSCALL(ECALL_VCLONE, void, sys_vclone, const Variant *, Variant *);
-MAKE_SYSCALL(ECALL_VSTORE, void, sys_vstore, Variant *, const void *, size_t);
+MAKE_SYSCALL(ECALL_VSTORE, void, sys_vstore, unsigned *, const void *, size_t);
 
 MAKE_SYSCALL(ECALL_CALLABLE_CREATE, unsigned, sys_callable_create, void (*)(), const Variant *, const void *, size_t);
 

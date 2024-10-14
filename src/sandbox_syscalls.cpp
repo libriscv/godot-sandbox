@@ -548,97 +548,99 @@ APICALL(api_vclone) {
 }
 
 APICALL(api_vstore) {
-	auto [index, gdata, gsize] = machine.sysargs<unsigned, gaddr_t, gaddr_t>();
+	auto [vidx, type, gdata, gsize] = machine.sysargs<unsigned*, Variant::Type, gaddr_t, gaddr_t>();
 	auto &emu = riscv::emu(machine);
 	machine.penalize(10'000);
-	SYS_TRACE("vstore", index, gdata, gsize);
+	SYS_TRACE("vstore", vidx, type, gdata, gsize);
 
 	// Find scoped Variant and store data from guest memory.
-	std::optional<const Variant *> opt = emu.get_scoped_variant(index);
-	if (opt.has_value()) {
-		const godot::Variant &var = *opt.value();
-		switch (var.get_type()) {
-			case Variant::PACKED_BYTE_ARRAY: {
-				auto arr = var.operator PackedByteArray();
-				// Copy the array from guest memory into the Variant.
-				auto *data = machine.memory.memarray<uint8_t>(gdata, gsize);
-				arr.resize(gsize);
-				std::memcpy(arr.ptrw(), data, gsize);
-				break;
-			}
-			case Variant::PACKED_FLOAT32_ARRAY: {
-				auto arr = var.operator PackedFloat32Array();
-				// Copy the array from guest memory into the Variant.
-				auto *data = machine.memory.memarray<float>(gdata, gsize);
-				arr.resize(gsize);
-				std::memcpy(arr.ptrw(), data, gsize * sizeof(float));
-				break;
-			}
-			case Variant::PACKED_FLOAT64_ARRAY: {
-				auto arr = var.operator PackedFloat64Array();
-				// Copy the array from guest memory into the Variant.
-				auto *data = machine.memory.memarray<double>(gdata, gsize);
-				arr.resize(gsize);
-				std::memcpy(arr.ptrw(), data, gsize * sizeof(double));
-				break;
-			}
-			case Variant::PACKED_INT32_ARRAY: {
-				auto arr = var.operator PackedInt32Array();
-				// Copy the array from guest memory into the Variant.
-				auto *data = machine.memory.memarray<int32_t>(gdata, gsize);
-				arr.resize(gsize);
-				std::memcpy(arr.ptrw(), data, gsize * sizeof(int32_t));
-				break;
-			}
-			case Variant::PACKED_INT64_ARRAY: {
-				auto arr = var.operator PackedInt64Array();
-				// Copy the array from guest memory into the Variant.
-				auto *data = machine.memory.memarray<int64_t>(gdata, gsize);
-				arr.resize(gsize);
-				std::memcpy(arr.ptrw(), data, gsize * sizeof(int64_t));
-				break;
-			}
-			case Variant::PACKED_VECTOR2_ARRAY: {
-				auto arr = var.operator PackedVector2Array();
-				// Copy the array from guest memory into the Variant.
-				auto *data = machine.memory.memarray<Vector2>(gdata, gsize);
-				arr.resize(gsize);
-				std::memcpy(arr.ptrw(), data, gsize * sizeof(Vector2));
-				break;
-			}
-			case Variant::PACKED_VECTOR3_ARRAY: {
-				auto arr = var.operator PackedVector3Array();
-				// Copy the array from guest memory into the Variant.
-				auto *data = machine.memory.memarray<Vector3>(gdata, gsize);
-				arr.resize(gsize);
-				std::memcpy(arr.ptrw(), data, gsize * sizeof(Vector3));
-				break;
-			}
-			case Variant::PACKED_COLOR_ARRAY: {
-				auto arr = var.operator PackedColorArray();
-				// Copy the array from guest memory into the Variant.
-				auto *data = machine.memory.memarray<Color>(gdata, gsize);
-				arr.resize(gsize);
-				std::memcpy(arr.ptrw(), data, gsize * sizeof(Color));
-				break;
-			}
-			case Variant::PACKED_STRING_ARRAY: {
-				auto arr = var.operator PackedStringArray();
-				// Copy the array from guest memory into the Variant.
-				auto *data = machine.memory.memarray<GuestStdString>(gdata, gsize);
-				arr.resize(gsize);
-				for (unsigned i = 0; i < gsize; i++) {
-					arr.set(i, data[i].to_godot_string(machine));
-				}
-				break;
-			}
-			default:
-				ERR_PRINT("vstore: Cannot store value into guest for Variant type");
-				throw std::runtime_error("vstore: Cannot store value into guest for Variant type");
+	switch (type) {
+		case Variant::PACKED_BYTE_ARRAY: {
+			PackedByteArray arr;
+			// Copy the array from guest memory into the Variant.
+			uint8_t *data = machine.memory.memarray<uint8_t>(gdata, gsize);
+			arr.resize(gsize);
+			std::memcpy(arr.ptrw(), data, gsize);
+			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			break;
 		}
-	} else {
-		ERR_PRINT("vstore: Variant is not scoped");
-		throw std::runtime_error("vstore: Variant is not scoped");
+		case Variant::PACKED_FLOAT32_ARRAY: {
+			PackedFloat32Array arr;
+			// Copy the array from guest memory into the Variant.
+			float *data = machine.memory.memarray<float>(gdata, gsize);
+			arr.resize(gsize);
+			std::memcpy(arr.ptrw(), data, gsize * sizeof(float));
+			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			break;
+		}
+		case Variant::PACKED_FLOAT64_ARRAY: {
+			PackedFloat64Array arr;
+			// Copy the array from guest memory into the Variant.
+			double *data = machine.memory.memarray<double>(gdata, gsize);
+			arr.resize(gsize);
+			std::memcpy(arr.ptrw(), data, gsize * sizeof(double));
+			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			break;
+		}
+		case Variant::PACKED_INT32_ARRAY: {
+			PackedInt32Array arr;
+			// Copy the array from guest memory into the Variant.
+			int32_t *data = machine.memory.memarray<int32_t>(gdata, gsize);
+			arr.resize(gsize);
+			std::memcpy(arr.ptrw(), data, gsize * sizeof(int32_t));
+			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			break;
+		}
+		case Variant::PACKED_INT64_ARRAY: {
+			PackedInt64Array arr;
+			// Copy the array from guest memory into the Variant.
+			int64_t *data = machine.memory.memarray<int64_t>(gdata, gsize);
+			arr.resize(gsize);
+			std::memcpy(arr.ptrw(), data, gsize * sizeof(int64_t));
+			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			break;
+		}
+		case Variant::PACKED_VECTOR2_ARRAY: {
+			PackedVector2Array arr;
+			// Copy the array from guest memory into the Variant.
+			auto *data = machine.memory.memarray<Vector2>(gdata, gsize);
+			arr.resize(gsize);
+			std::memcpy(arr.ptrw(), data, gsize * sizeof(Vector2));
+			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			break;
+		}
+		case Variant::PACKED_VECTOR3_ARRAY: {
+			PackedVector3Array arr;
+			// Copy the array from guest memory into the Variant.
+			auto *data = machine.memory.memarray<Vector3>(gdata, gsize);
+			arr.resize(gsize);
+			std::memcpy(arr.ptrw(), data, gsize * sizeof(Vector3));
+			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			break;
+		}
+		case Variant::PACKED_COLOR_ARRAY: {
+			PackedColorArray arr;
+			// Copy the array from guest memory into the Variant.
+			auto *data = machine.memory.memarray<Color>(gdata, gsize);
+			arr.resize(gsize);
+			std::memcpy(arr.ptrw(), data, gsize * sizeof(Color));
+			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			break;
+		}
+		case Variant::PACKED_STRING_ARRAY: {
+			PackedStringArray arr;
+			// Copy the array from guest memory into the Variant.
+			auto *data = machine.memory.memarray<GuestStdString>(gdata, gsize);
+			arr.resize(gsize);
+			for (unsigned i = 0; i < gsize; i++) {
+				arr.set(i, data[i].to_godot_string(machine));
+			}
+			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			break;
+		}
+		default:
+			ERR_PRINT("vstore: Cannot store value for Variant type");
+			throw std::runtime_error("vstore: Cannot store value for Variant type " + std::to_string(type));
 	}
 }
 
