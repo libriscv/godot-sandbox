@@ -565,7 +565,14 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			// set up each argument, and return value
 			retvar = this->setup_arguments(sp, args, argc);
 			// execute!
-			m_machine->simulate_with(get_instructions_max() << 20, 0u, address);
+			if (UNLIKELY(this->m_precise_simulation)) {
+				m_machine->set_instruction_counter(0);
+				m_machine->set_max_instructions(get_instructions_max() << 20);
+				m_machine->cpu.jump(address);
+				m_machine->cpu.simulate_precise();
+			} else {
+				m_machine->simulate_with(get_instructions_max() << 20, 0u, address);
+			}
 		} else if (m_level < MAX_LEVEL) {
 			riscv::Registers<RISCV_ARCH> regs;
 			regs = cpu.registers();
@@ -575,7 +582,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			sp -= 16u;
 			// set up each argument, and return value
 			retvar = this->setup_arguments(sp, args, argc);
-			// execute!
+			// execute preemption! (precise simulation not supported)
 			cpu.preempt_internal(regs, true, address, get_instructions_max() << 20);
 		} else {
 			throw std::runtime_error("Recursion level exceeded");
