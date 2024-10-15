@@ -14,9 +14,7 @@ FetchContent_Declare(tinycc
 )
 FetchContent_MakeAvailable(tinycc)
 
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/_deps/tinycc-src/config.h"
-	"#define TCC_TARGET_RISCV64 1\n#define TARGETOS_Linux 1\n#define TCC_VERSION \"0.9.27\"\n#define CONFIG_TCC_PREDEFS 1\n"
-	)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/_deps/tinycc-src/config.h)
 
 add_library(libtcc STATIC
 	${tinycc_SOURCE_DIR}/libtcc.c
