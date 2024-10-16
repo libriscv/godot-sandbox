@@ -44,11 +44,15 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("disable_all_restrictions"), &Sandbox::disable_all_restrictions);
 	ClassDB::bind_method(D_METHOD("allow_object", "instance"), &Sandbox::allow_object);
 	ClassDB::bind_method(D_METHOD("remove_allowed_object", "instance"), &Sandbox::remove_allowed_object);
-	ClassDB::bind_method(D_METHOD("set_object_allowed_callback", "instance"), &Sandbox::set_object_allowed_callback);
 	ClassDB::bind_method(D_METHOD("set_class_allowed_callback", "instance"), &Sandbox::set_class_allowed_callback);
+	ClassDB::bind_method(D_METHOD("set_object_allowed_callback", "instance"), &Sandbox::set_object_allowed_callback);
+	ClassDB::bind_method(D_METHOD("set_method_allowed_callback", "instance"), &Sandbox::set_method_allowed_callback);
+	ClassDB::bind_method(D_METHOD("set_property_allowed_callback", "instance"), &Sandbox::set_property_allowed_callback);
 	ClassDB::bind_method(D_METHOD("set_resource_allowed_callback", "instance"), &Sandbox::set_resource_allowed_callback);
 	ClassDB::bind_method(D_METHOD("is_allowed_class", "name"), &Sandbox::is_allowed_class);
 	ClassDB::bind_method(D_METHOD("is_allowed_object", "name"), &Sandbox::is_allowed_object);
+	ClassDB::bind_method(D_METHOD("is_allowed_method", "instance", "method"), &Sandbox::is_allowed_method);
+	ClassDB::bind_method(D_METHOD("is_allowed_property", "property"), &Sandbox::is_allowed_property);
 	ClassDB::bind_method(D_METHOD("is_allowed_resource", "res"), &Sandbox::is_allowed_resource);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("restrictive_callback_function"), &Sandbox::restrictive_callback_function);
 
@@ -313,7 +317,7 @@ void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 
 		// Set up a Linux environment for the program
 		const std::vector<std::string> *argv = argv_ptr ? argv_ptr : &program_arguments;
-		m.setup_linux(*argv, {"LC_CTYPE=C", "LC_ALL=C", "TZ=UTC", "LD_LIBRARY_PATH="});
+		m.setup_linux(*argv, { "LC_CTYPE=C", "LC_ALL=C", "TZ=UTC", "LD_LIBRARY_PATH=" });
 
 		// Run the program through to its main() function
 		if (!this->m_resumable_mode) {

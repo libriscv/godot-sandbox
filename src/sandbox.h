@@ -277,6 +277,25 @@ public:
 	/// @return Always returns false.
 	static bool restrictive_callback_function(Variant) { return false; }
 
+	/// @brief Check if accessing a method on an object is allowed in the sandbox.
+	/// @param method The name of the method to check.
+	/// @return True if the method is allowed, false otherwise.
+	bool is_allowed_method(godot::Object *obj, const Variant &method) const;
+
+	/// @brief Set a callback to check if a method is allowed in the sandbox.
+	/// @param callback The callable to check if a method is allowed.
+	void set_method_allowed_callback(const Callable &callback);
+
+	/// @brief Check if accessing a property on an object is allowed in the sandbox.
+	/// @param obj The object to check.
+	/// @param property The name of the property to check.
+	/// @return True if the property is allowed, false otherwise.
+	bool is_allowed_property(godot::Object *obj, const Variant &property) const;
+
+	/// @brief Set a callback to check if a property is allowed in the sandbox.
+	/// @param callback The callable to check if a property is allowed.
+	void set_property_allowed_callback(const Callable &callback);
+
 	// -= Sandboxed Properties =-
 	// These are properties that are exposed to the Godot editor, provided by the guest program.
 
@@ -428,9 +447,15 @@ private:
 	// If a class is not in the allowed list, and a callable is set for the
 	// just-in-time allowed classes, it will be called to check if the class is allowed.
 	Callable m_just_in_time_allowed_classes;
-	// If a a callable is set for the just-in-time allowed resources,
+	// If a callable is set for the just-in-time allowed resources,
 	// it will be called to check if access to a resource is allowed.
 	Callable m_just_in_time_allowed_resources;
+	// If a callable is set for allowed methods, it will be called when an object method
+	// call is attemped, to check if the method is allowed.
+	Callable m_just_in_time_allowed_methods;
+	// If a callable is set for allowed properties, it will be called when an object property
+	// access is attemped, to check if the property is allowed.
+	Callable m_just_in_time_allowed_properties;
 
 	Ref<ELFScript> m_program_data;
 	PackedByteArray m_program_bytes;

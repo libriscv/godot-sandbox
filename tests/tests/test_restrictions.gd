@@ -75,3 +75,21 @@ func test_restrictions():
 	assert_eq(s.get_exceptions(), exceptions + 1, "Should have thrown an exception")
 
 	s.queue_free()
+
+func test_insanity():
+	var s = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	assert_eq(s.has_function("access_an_invalid_child_node"), true)
+
+	s.enable_restrictions()
+	s.set_class_allowed_callback(func(sandbox, name): return name == "Node")
+	#s.set_object_allowed_callback(func(sandbox, obj): return obj.get_name() == "Node")
+	#s.set_method_allowed_callback(func(sandbox, obj, method): return method == "get_name")
+
+	var exceptions = s.get_exceptions()
+	s.vmcall("access_an_invalid_child_node")
+
+	assert_eq(s.get_exceptions(), exceptions + 1)
+
+	s.queue_free()

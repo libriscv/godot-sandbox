@@ -608,7 +608,6 @@ APICALL(api_quat_ops) {
 	}
 }
 
-
 } // namespace riscv
 
 void Sandbox::initialize_syscalls_3d() {

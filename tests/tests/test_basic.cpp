@@ -243,6 +243,19 @@ extern "C" Variant access_a_parent(Node n) {
 }
 
 extern "C" Variant creates_a_node() {
-	Node n = Node::create("test");
+	return Node::create("test");
+}
+
+extern "C" Variant free_self() {
+	get_node()("free");
 	return Nil;
+}
+
+extern "C" Variant access_an_invalid_child_node() {
+	Node n = Node::create("test");
+	Node c = Node::create("child");
+	n.add_child(c);
+	c("free");
+	c.set_name("child2");
+	return c;
 }

@@ -174,6 +174,12 @@ APICALL(api_vcall) {
 	if (vp->type == Variant::OBJECT) {
 		godot::Object *obj = get_object_from_address(emu, vp->v.i);
 
+		// Check if the method is allowed.
+		if (!emu.is_allowed_method(obj, method_sn)) {
+			ERR_PRINT("Variant::call(): Method not allowed");
+			throw std::runtime_error("Variant::call(): Method not allowed");
+		}
+
 		ret = object_call(emu, obj, method_sn, args, args_size);
 	} else {
 		std::array<Variant, 8> vargs;
@@ -548,7 +554,7 @@ APICALL(api_vclone) {
 }
 
 APICALL(api_vstore) {
-	auto [vidx, type, gdata, gsize] = machine.sysargs<unsigned*, Variant::Type, gaddr_t, gaddr_t>();
+	auto [vidx, type, gdata, gsize] = machine.sysargs<unsigned *, Variant::Type, gaddr_t, gaddr_t>();
 	auto &emu = riscv::emu(machine);
 	machine.penalize(10'000);
 	SYS_TRACE("vstore", vidx, type, gdata, gsize);
@@ -717,11 +723,19 @@ APICALL(api_obj) {
 		case Object_Op::GET: { // Get a property of the object.
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 2);
 			String name = var[0].toVariant(emu).operator String();
+			if (UNLIKELY(!emu.is_allowed_property(obj, name))) {
+				ERR_PRINT("Banned property accessed: " + name);
+				throw std::runtime_error("Banned property accessed");
+			}
 			var[1].create(emu, obj->get(name));
 		} break;
 		case Object_Op::SET: { // Set a property of the object.
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 2);
 			String name = var[0].toVariant(emu).operator String();
+			if (UNLIKELY(!emu.is_allowed_property(obj, name))) {
+				ERR_PRINT("Banned property set: " + name);
+				throw std::runtime_error("Banned property set");
+			}
 			obj->set(name, var[1].toVariant(emu));
 		} break;
 		case Object_Op::GET_PROPERTY_LIST: {
@@ -772,7 +786,7 @@ APICALL(api_obj_callp) {
 	SYS_TRACE("obj_callp", addr, g_method, g_method_len, deferred, vret_ptr, args_addr, args_size);
 
 	auto *obj = get_object_from_address(emu, addr);
-	if (args_size > 8) {
+	if (UNLIKELY(args_size > 8)) {
 		ERR_PRINT("Too many arguments to obj_callp");
 		throw std::runtime_error("Too many arguments to obj_callp");
 	}
@@ -780,11 +794,18 @@ APICALL(api_obj_callp) {
 
 	Variant method;
 	std::string_view method_view = machine.memory.memview(g_method, g_method_len + 1);
+
 	// Check if the method is null-terminated.
 	if (method_view.back() == '\0') {
 		method = StringName(method_view.data(), false);
 	} else {
 		method = String::utf8(method_view.data(), method_view.size() - 1);
+	}
+
+	// Check for banned methods.
+	if (UNLIKELY(!emu.is_allowed_method(obj, method))) {
+		ERR_PRINT("Banned method called: " + method.operator String());
+		throw std::runtime_error("Banned method called: " + std::string(method_view));
 	}
 
 	if (!deferred) {
