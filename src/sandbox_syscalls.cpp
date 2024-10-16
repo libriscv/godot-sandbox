@@ -1225,7 +1225,8 @@ APICALL(api_array_ops) {
 			array.insert(idx, machine.memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
 			break;
 		case Array_Op::ERASE:
-			array.erase(idx);
+			// TODO: Check if we can use pointer to Variant to avoid copying.
+			array.erase(machine.memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
 			break;
 		case Array_Op::RESIZE:
 			array.resize(idx);
@@ -1244,6 +1245,12 @@ APICALL(api_array_ops) {
 				const gaddr_t self = saddr + sizeof(GuestVariant) * i;
 				sptr[i].create(emu, array[i].duplicate(false));
 			}
+			break;
+		}
+		case Array_Op::HAS: {
+			auto *vp = machine.memory.memarray<GuestVariant>(vaddr, 1);
+			const bool result = array.has(vp->toVariant(emu));
+			vp->set(emu, result);
 			break;
 		}
 		default:

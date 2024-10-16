@@ -30,8 +30,8 @@ void Array::insert(int idx, const Variant &value) {
 	sys_array_ops(Array_Op::INSERT, m_idx, idx, (Variant *)&value);
 }
 
-void Array::erase(int idx) {
-	sys_array_ops(Array_Op::ERASE, m_idx, idx, nullptr);
+void Array::erase(const Variant &value) {
+	sys_array_ops(Array_Op::ERASE, m_idx, 0, (Variant *)&value);
 }
 
 void Array::resize(int size) {
@@ -54,6 +54,12 @@ Variant Array::operator[](int idx) const {
 
 int Array::size() const {
 	return sys_array_size(m_idx);
+}
+
+bool Array::has(const Variant &value) const {
+	Variant v = value;
+	sys_array_ops(Array_Op::HAS, m_idx, 0, &v);
+	return v;
 }
 
 Array::Array(unsigned size) {

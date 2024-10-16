@@ -20,7 +20,7 @@ struct Array {
 	void pop_back();
 	void pop_front();
 	void insert(int idx, const Variant &value);
-	void erase(int idx);
+	void erase(const Variant &value);
 	void resize(int size);
 	void clear();
 	void sort();
@@ -28,16 +28,44 @@ struct Array {
 	// Array access
 	Variant operator[](int idx) const;
 	Variant at(int idx) const { return (*this)[idx]; }
+	Variant front() const { return (*this)[0]; }
+	Variant back() const { return (*this)[size() - 1]; }
+	bool has(const Variant &value) const;
 
 	std::vector<Variant> to_vector() const;
 
 	// Array size
 	int size() const;
+	bool is_empty() const { return size() == 0; }
 
+	METHOD(all);
+	METHOD(any);
 	METHOD(append_array);
 	METHOD(assign);
+	METHOD(bsearch_custom);
+	METHOD(bsearch);
+	METHOD(count);
 	METHOD(duplicate);
+	METHOD(fill);
+	METHOD(filter);
 	METHOD(find);
+	METHOD(hash);
+	METHOD(is_read_only);
+	METHOD(is_same_typed);
+	METHOD(is_typed);
+	METHOD(make_read_only);
+	METHOD(map);
+	METHOD(max);
+	METHOD(min);
+	METHOD(pick_random);
+	METHOD(reduce);
+	METHOD(remove_at);
+	METHOD(reverse);
+	METHOD(rfind);
+	METHOD(shuffle);
+	METHOD(slice_array);
+	METHOD(slice);
+	METHOD(sort_custom);
 
 	// Call methods on the Array
 	template <typename... Args>
@@ -47,6 +75,11 @@ struct Array {
 	inline auto end();
 	inline auto rbegin();
 	inline auto rend();
+
+	template <typename... Args>
+	static Array make(Args... p_args) {
+		return Array(std::vector<Variant>{Variant(p_args)...});
+	}
 
 	static Array from_variant_index(unsigned idx) { Array a; a.m_idx = idx; return a; }
 	unsigned get_variant_index() const noexcept { return m_idx; }

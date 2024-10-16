@@ -157,6 +157,7 @@ enum class Array_Op {
 	CLEAR,
 	SORT,
 	FETCH_TO_VECTOR,
+	HAS,
 };
 
 enum class Dictionary_Op {
