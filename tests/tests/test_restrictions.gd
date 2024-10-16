@@ -13,7 +13,7 @@ func test_restrictions():
 	# Set the sandbox as the parent of the node, so it can be accessed
 	s.add_child(n)
 	# Add an allowed object
-	s.allow_object(n)
+	s.add_allowed_object(n)
 	# Now restrictions are in place
 	var exceptions = s.get_exceptions()
 	s.vmcall("access_a_parent", n)
@@ -21,7 +21,7 @@ func test_restrictions():
 	assert_eq(s.get_exceptions(), exceptions + 1)
 
 	# Allow the parent object
-	s.allow_object(n.get_parent())
+	s.add_allowed_object(n.get_parent())
 	# Now restrictions are in place
 	exceptions = s.get_exceptions()
 	s.vmcall("access_a_parent", n)
@@ -60,14 +60,14 @@ func test_restrictions():
 	assert_eq(s.get_exceptions(), exceptions + 1)
 
 	# Disable all restrictions
-	s.disable_all_restrictions()
+	s.restrictions = false
 	# Now restrictions are disabled
 	exceptions = s.get_exceptions()
 	s.vmcall("creates_a_node")
 	# The function should *NOT* have thrown an exception, as we disabled all restrictions
 
 	# Enable restrictions (by adding dummy values to allowed_classes and allowed_objects)
-	s.enable_restrictions()
+	s.restrictions = true
 	# Now restrictions are enabled
 	exceptions = s.get_exceptions()
 	s.vmcall("creates_a_node")
@@ -82,7 +82,7 @@ func test_insanity():
 
 	assert_eq(s.has_function("access_an_invalid_child_node"), true)
 
-	s.enable_restrictions()
+	s.restrictions = true
 	s.set_class_allowed_callback(func(sandbox, name): return name == "Node")
 	#s.set_object_allowed_callback(func(sandbox, obj): return obj.get_name() == "Node")
 	#s.set_method_allowed_callback(func(sandbox, obj, method): return method == "get_name")

@@ -40,10 +40,11 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("vmcallable", "function", "args"), &Sandbox::vmcallable, DEFVAL(Array{}));
 
 	// Sandbox restrictions.
-	ClassDB::bind_method(D_METHOD("enable_restrictions"), &Sandbox::enable_restrictions);
-	ClassDB::bind_method(D_METHOD("disable_all_restrictions"), &Sandbox::disable_all_restrictions);
-	ClassDB::bind_method(D_METHOD("allow_object", "instance"), &Sandbox::allow_object);
+	ClassDB::bind_method(D_METHOD("set_restrictions"), &Sandbox::set_restrictions);
+	ClassDB::bind_method(D_METHOD("get_restrictions"), &Sandbox::get_restrictions);
+	ClassDB::bind_method(D_METHOD("add_allowed_object", "instance"), &Sandbox::add_allowed_object);
 	ClassDB::bind_method(D_METHOD("remove_allowed_object", "instance"), &Sandbox::remove_allowed_object);
+	ClassDB::bind_method(D_METHOD("clear_allowed_objects"), &Sandbox::clear_allowed_objects);
 	ClassDB::bind_method(D_METHOD("set_class_allowed_callback", "instance"), &Sandbox::set_class_allowed_callback);
 	ClassDB::bind_method(D_METHOD("set_object_allowed_callback", "instance"), &Sandbox::set_object_allowed_callback);
 	ClassDB::bind_method(D_METHOD("set_method_allowed_callback", "instance"), &Sandbox::set_method_allowed_callback);
@@ -92,6 +93,8 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_use_precise_simulation"), &Sandbox::get_use_precise_simulation);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE, "Use precise simulation for VM execution"), "set_use_precise_simulation", "get_use_precise_simulation");
 
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "restrictions", PROPERTY_HINT_NONE, "Enable sandbox restrictions"), "set_restrictions", "get_restrictions");
+
 	// Group for monitored Sandbox health.
 	ADD_GROUP("Sandbox Monitoring", "monitor_");
 
@@ -134,6 +137,7 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 	list.push_back(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE));
+	list.push_back(PropertyInfo(Variant::BOOL, "restrictions", PROPERTY_HINT_NONE));
 
 	// Group for monitored Sandbox health.
 	// Add the group name to the property name to group them in the editor.
@@ -920,6 +924,9 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	} else if (name == StringName("use_precise_simulation")) {
 		set_use_precise_simulation(value);
 		return true;
+	} else if (name == StringName("restrictions")) {
+		set_restrictions(value);
+		return true;
 	}
 	return false;
 }
@@ -950,6 +957,9 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 		return true;
 	} else if (name == StringName("use_precise_simulation")) {
 		r_ret = get_use_precise_simulation();
+		return true;
+	} else if (name == StringName("restrictions")) {
+		r_ret = get_restrictions();
 		return true;
 	} else if (name == StringName("monitor_heap_usage")) {
 		r_ret = get_heap_usage();

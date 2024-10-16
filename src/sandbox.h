@@ -234,23 +234,26 @@ public:
 
 	// -= Sandbox Restrictions =-
 
-	/// @brief Enable restrictions on the sandbox, by allowing dummy values.
-	/// @note This will allow only dummy values to be used in the sandbox, effectively disabling
-	/// all external access that wasn't provided through function arguments.
-	void enable_restrictions();
+	/// @brief Enable *all* restrictions on the sandbox, restricting access to
+	/// external classes, objects, object methods, object properties, and resources.
+	/// In effect, all external access is disabled.
+	void set_restrictions(bool enabled);
 
-	/// @brief Disable all restrictions on the sandbox.
-	/// @note This will clear out the list of allowed objects and classes, allowing all objects and classes.
-	void disable_all_restrictions();
+	/// @brief Check if restrictions are enabled on the sandbox.
+	/// @return True if *all* restrictions are enabled, false otherwise.
+	bool get_restrictions() const;
 
 	/// @brief Add an object to the list of allowed objects.
 	/// @param obj The object to add.
-	void allow_object(godot::Object *obj);
+	void add_allowed_object(godot::Object *obj);
 
 	/// @brief Remove an object from the list of allowed objects.
 	/// @param obj The object to remove.
 	/// @note If the list becomes empty, all objects are allowed.
 	void remove_allowed_object(godot::Object *obj);
+
+	/// @brief Clear the list of allowed objects.
+	void clear_allowed_objects();
 
 	/// @brief Check if an object is allowed in the sandbox.
 	bool is_allowed_object(godot::Object *obj) const;
@@ -259,23 +262,19 @@ public:
 	/// @param callback The callable to check if an object is allowed.
 	void set_object_allowed_callback(const Callable &callback);
 
+	/// @brief Check if a class name is allowed in the sandbox.
+	bool is_allowed_class(const String &name) const;
+
 	/// @brief Set a callback to check if a class is allowed in the sandbox.
 	/// @param callback The callable to check if a class is allowed.
 	void set_class_allowed_callback(const Callable &callback);
 
-	/// @brief Set a callback to check if a resource is allowed in the sandbox.
-	/// @param callback The callable to check if a resource is allowed.
-	void set_resource_allowed_callback(const Callable &callback);
-
-	/// @brief Check if a class name is allowed in the sandbox.
-	bool is_allowed_class(const String &name) const;
-
 	/// @brief Check if a resource is allowed in the sandbox.
 	bool is_allowed_resource(const String &path) const;
 
-	/// @brief A falsy function used when restrictions are enabled.
-	/// @return Always returns false.
-	static bool restrictive_callback_function(Variant) { return false; }
+	/// @brief Set a callback to check if a resource is allowed in the sandbox.
+	/// @param callback The callable to check if a resource is allowed.
+	void set_resource_allowed_callback(const Callable &callback);
 
 	/// @brief Check if accessing a method on an object is allowed in the sandbox.
 	/// @param method The name of the method to check.
@@ -295,6 +294,10 @@ public:
 	/// @brief Set a callback to check if a property is allowed in the sandbox.
 	/// @param callback The callable to check if a property is allowed.
 	void set_property_allowed_callback(const Callable &callback);
+
+	/// @brief A falsy function used when restrictions are enabled.
+	/// @return Always returns false.
+	static bool restrictive_callback_function(Variant) { return false; }
 
 	// -= Sandboxed Properties =-
 	// These are properties that are exposed to the Godot editor, provided by the guest program.
@@ -485,14 +488,14 @@ inline void Sandbox::CurrentState::reset(unsigned index) {
 }
 
 inline bool Sandbox::is_allowed_object(godot::Object *obj) const {
-	// If the list is empty, all objects are allowed
-	if (m_allowed_objects.empty())
+	// If the allowed list is empty, and the allowed-object callback is not set, all objects are allowed
+	if (m_allowed_objects.empty() && !m_just_in_time_allowed_objects.is_valid())
 		return true;
 	// Otherwise, check if the object is in the allowed list
 	if (m_allowed_objects.find(obj) != m_allowed_objects.end())
 		return true;
 
-	// If the object is not in the allowed list, and a callable is set, call it
+	// If the object-allowed callable is set, call it
 	if (m_just_in_time_allowed_objects.is_valid())
 		return m_just_in_time_allowed_objects.call(this, obj);
 	return false;

@@ -1,29 +1,49 @@
 #include "sandbox.h"
 
-void Sandbox::enable_restrictions() {
-	m_allowed_objects.insert(nullptr);
-	m_just_in_time_allowed_classes = Callable(this, "restrictive_callback_function");
-	m_just_in_time_allowed_objects = Callable(this, "restrictive_callback_function");
-	m_just_in_time_allowed_methods = Callable(this, "restrictive_callback_function");
-	m_just_in_time_allowed_properties = Callable(this, "restrictive_callback_function");
-	m_just_in_time_allowed_resources = Callable(this, "restrictive_callback_function");
+void Sandbox::set_restrictions(bool enable) {
+	if (enable) {
+		if (!m_just_in_time_allowed_classes.is_valid()) {
+			m_just_in_time_allowed_classes = Callable(this, "restrictive_callback_function");
+		}
+		if (!m_just_in_time_allowed_objects.is_valid()) {
+			m_just_in_time_allowed_objects = Callable(this, "restrictive_callback_function");
+		}
+		if (!m_just_in_time_allowed_methods.is_valid()) {
+			m_just_in_time_allowed_methods = Callable(this, "restrictive_callback_function");
+		}
+		if (!m_just_in_time_allowed_properties.is_valid()) {
+			m_just_in_time_allowed_properties = Callable(this, "restrictive_callback_function");
+		}
+		if (!m_just_in_time_allowed_resources.is_valid()) {
+			m_just_in_time_allowed_resources = Callable(this, "restrictive_callback_function");
+		}
+	} else {
+		m_just_in_time_allowed_classes = Callable();
+		m_just_in_time_allowed_objects = Callable();
+		m_just_in_time_allowed_methods = Callable();
+		m_just_in_time_allowed_properties = Callable();
+		m_just_in_time_allowed_resources = Callable();
+	}
 }
 
-void Sandbox::disable_all_restrictions() {
-	m_allowed_objects.clear();
-	m_just_in_time_allowed_classes = Callable();
-	m_just_in_time_allowed_objects = Callable();
-	m_just_in_time_allowed_methods = Callable();
-	m_just_in_time_allowed_properties = Callable();
-	m_just_in_time_allowed_resources = Callable();
+bool Sandbox::get_restrictions() const {
+	return m_just_in_time_allowed_classes.is_valid()
+		&& m_just_in_time_allowed_objects.is_valid()
+		&& m_just_in_time_allowed_methods.is_valid()
+		&& m_just_in_time_allowed_properties.is_valid()
+		&& m_just_in_time_allowed_resources.is_valid();
 }
 
-void Sandbox::allow_object(godot::Object *obj) {
+void Sandbox::add_allowed_object(godot::Object *obj) {
 	m_allowed_objects.insert(obj);
 }
 
 void Sandbox::remove_allowed_object(godot::Object *obj) {
 	m_allowed_objects.erase(obj);
+}
+
+void Sandbox::clear_allowed_objects() {
+	m_allowed_objects.clear();
 }
 
 void Sandbox::set_object_allowed_callback(const Callable &callback) {

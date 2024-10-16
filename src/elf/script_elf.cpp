@@ -186,6 +186,8 @@ TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
 			prop_to_dict(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Use unboxed arguments for Sandbox function calls", PROPERTY_USAGE_DEFAULT)));
 	properties.push_back(
 			prop_to_dict(PropertyInfo(Variant::BOOL, "use_precise_simulation", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Use precise simulation for VM execution", PROPERTY_USAGE_DEFAULT)));
+	properties.push_back(
+			prop_to_dict(PropertyInfo(Variant::BOOL, "restrictions", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Enable restrictions for the sandboxed program", PROPERTY_USAGE_DEFAULT)));
 	return properties;
 }
 
