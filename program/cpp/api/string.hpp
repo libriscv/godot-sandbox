@@ -42,6 +42,7 @@ union String {
 
 	// String size
 	int size() const;
+	bool is_empty() const { return size() == 0; }
 
 	METHOD(begins_with);
 	METHOD(bigrams);
@@ -73,7 +74,6 @@ union String {
 	METHOD(humanize_size);
 	METHOD(indent);
 	METHOD(is_absolute_path);
-	METHOD(is_empty);
 	METHOD(is_relative_path);
 	METHOD(is_subsequence_of);
 	METHOD(is_subsequence_ofn);
