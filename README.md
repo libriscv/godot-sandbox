@@ -44,6 +44,7 @@ This extension exists to allow Godot creators to implement safe modding support,
 
 - Modding API
 	- You can implement a modding API for your game. This API can then be used by other players to extend your game, in a safe manner.
+	- Put restrictions on resources, classes and objects to say what is accessible inside the sandbox.
 - Build once, run everywhere
 	- You can publish your game for all mobile and console platforms, without paying a performance penalty. It's not going to be a laggy mess, which is always a risk with other solutions that eg. rely on JIT too much.
 	- Programs will behave the same way on all platforms, including 32-bit platforms.

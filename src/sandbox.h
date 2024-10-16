@@ -253,18 +253,29 @@ public:
 	void remove_allowed_object(godot::Object *obj);
 
 	/// @brief Check if an object is allowed in the sandbox.
-	bool is_allowed(godot::Object *obj) const;
+	bool is_allowed_object(godot::Object *obj) const;
 
-	/// @brief Add a class name to the list of allowed classes.
-	/// @param name The name of the class to add.
-	void allow_class(const String &name);
+	/// @brief Set a callback to check if an object is allowed in the sandbox.
+	/// @param callback The callable to check if an object is allowed.
+	void set_object_allowed_callback(const Callable &callback);
 
-	/// @brief Remove a class name from the list of allowed classes.
-	/// @param name The name of the class to remove.
-	void remove_allowed_class(const String &name);
+	/// @brief Set a callback to check if a class is allowed in the sandbox.
+	/// @param callback The callable to check if a class is allowed.
+	void set_class_allowed_callback(const Callable &callback);
+
+	/// @brief Set a callback to check if a resource is allowed in the sandbox.
+	/// @param callback The callable to check if a resource is allowed.
+	void set_resource_allowed_callback(const Callable &callback);
 
 	/// @brief Check if a class name is allowed in the sandbox.
 	bool is_allowed_class(const String &name) const;
+
+	/// @brief Check if a resource is allowed in the sandbox.
+	bool is_allowed_resource(const String &path) const;
+
+	/// @brief A falsy function used when restrictions are enabled.
+	/// @return Always returns false.
+	static bool restrictive_callback_function(Variant) { return false; }
 
 	// -= Sandboxed Properties =-
 	// These are properties that are exposed to the Godot editor, provided by the guest program.
@@ -411,13 +422,15 @@ private:
 
 	// Restrictions
 	std::unordered_set<godot::Object *> m_allowed_objects;
-	godot::HashSet<String> m_allowed_classes;
 	// If an object is not in the allowed list, and a callable is set for the
 	// just-in-time allowed objects, it will be called to check if the object is allowed.
 	Callable m_just_in_time_allowed_objects;
 	// If a class is not in the allowed list, and a callable is set for the
 	// just-in-time allowed classes, it will be called to check if the class is allowed.
 	Callable m_just_in_time_allowed_classes;
+	// If a a callable is set for the just-in-time allowed resources,
+	// it will be called to check if access to a resource is allowed.
+	Callable m_just_in_time_allowed_resources;
 
 	Ref<ELFScript> m_program_data;
 	PackedByteArray m_program_bytes;
@@ -446,18 +459,16 @@ inline void Sandbox::CurrentState::reset(unsigned index) {
 	scoped_objects.clear();
 }
 
-inline bool Sandbox::is_allowed(godot::Object *obj) const {
+inline bool Sandbox::is_allowed_object(godot::Object *obj) const {
 	// If the list is empty, all objects are allowed
 	if (m_allowed_objects.empty())
 		return true;
 	// Otherwise, check if the object is in the allowed list
-	return m_allowed_objects.find(obj) != m_allowed_objects.end();
-}
-
-inline bool Sandbox::is_allowed_class(const String &name) const {
-	// If the list is empty, all classes are allowed
-	if (m_allowed_classes.is_empty())
+	if (m_allowed_objects.find(obj) != m_allowed_objects.end())
 		return true;
-	// Otherwise, check if the class is in the allowed list
-	return m_allowed_classes.find(name) != m_allowed_classes.end();
+
+	// If the object is not in the allowed list, and a callable is set, call it
+	if (m_just_in_time_allowed_objects.is_valid())
+		return m_just_in_time_allowed_objects.call(this, obj);
+	return false;
 }

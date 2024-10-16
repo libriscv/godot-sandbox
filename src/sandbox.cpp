@@ -44,8 +44,13 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("disable_all_restrictions"), &Sandbox::disable_all_restrictions);
 	ClassDB::bind_method(D_METHOD("allow_object", "instance"), &Sandbox::allow_object);
 	ClassDB::bind_method(D_METHOD("remove_allowed_object", "instance"), &Sandbox::remove_allowed_object);
-	ClassDB::bind_method(D_METHOD("allow_class", "instance"), &Sandbox::allow_class);
-	ClassDB::bind_method(D_METHOD("remove_allowed_class", "instance"), &Sandbox::remove_allowed_class);
+	ClassDB::bind_method(D_METHOD("set_object_allowed_callback", "instance"), &Sandbox::set_object_allowed_callback);
+	ClassDB::bind_method(D_METHOD("set_class_allowed_callback", "instance"), &Sandbox::set_class_allowed_callback);
+	ClassDB::bind_method(D_METHOD("set_resource_allowed_callback", "instance"), &Sandbox::set_resource_allowed_callback);
+	ClassDB::bind_method(D_METHOD("is_allowed_class", "name"), &Sandbox::is_allowed_class);
+	ClassDB::bind_method(D_METHOD("is_allowed_object", "name"), &Sandbox::is_allowed_object);
+	ClassDB::bind_method(D_METHOD("is_allowed_resource", "res"), &Sandbox::is_allowed_resource);
+	ClassDB::bind_static_method("Sandbox", D_METHOD("restrictive_callback_function"), &Sandbox::restrictive_callback_function);
 
 	// Internal testing, debugging and introspection.
 	ClassDB::bind_method(D_METHOD("get_general_registers"), &Sandbox::get_general_registers);
@@ -163,9 +168,6 @@ void Sandbox::full_reset() {
 	this->m_properties.clear();
 	this->m_lookup.clear();
 	this->m_allowed_objects.clear();
-	this->m_allowed_classes.clear();
-	//this->m_just_in_time_allowed_objects = Callable();
-	//this->m_just_in_time_allowed_classes = Callable();
 }
 Sandbox::Sandbox() {
 	this->constructor_initialize();

@@ -160,7 +160,7 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 				throw std::runtime_error("GuestVariant::set(): Cannot set OBJECT type without implicit trust");
 			// TODO: Check if the object is already scoped?
 			godot::Object *obj = value.operator godot::Object *();
-			if (!emu.is_allowed(obj))
+			if (!emu.is_allowed_object(obj))
 				throw std::runtime_error("GuestVariant::set(): Object is not allowed");
 			emu.add_scoped_object(obj);
 			this->v.i = (uintptr_t)obj;
@@ -198,7 +198,7 @@ void GuestVariant::create(Sandbox &emu, Variant &&value) {
 
 		case Variant::OBJECT: {
 			godot::Object *obj = value.operator godot::Object *();
-			if (!emu.is_allowed(obj))
+			if (!emu.is_allowed_object(obj))
 				throw std::runtime_error("GuestVariant::create(): Object is not allowed");
 			emu.add_scoped_object(obj);
 			this->v.i = (uintptr_t)obj;

@@ -1492,11 +1492,18 @@ APICALL(api_callable_create) {
 APICALL(api_load) {
 	auto [path, g_result] = machine.sysargs<std::string_view, GuestVariant *>();
 	Sandbox &emu = riscv::emu(machine);
-	SYS_TRACE("load", String::utf8(path.data(), path.size()), g_result);
+	const String godot_path = String::utf8(path.data(), path.size());
+	SYS_TRACE("load", godot_path, g_result);
+
+	// Check if the path is allowed.
+	if (!emu.is_allowed_resource(godot_path)) {
+		ERR_PRINT("Resource path is not allowed: " + godot_path);
+		throw std::runtime_error("Resource path is not allowed: " + std::string(path));
+	}
 
 	// Preload the resource from the given path.
 	ResourceLoader *loader = ResourceLoader::get_singleton();
-	Ref<Resource> resource = loader->load(String::utf8(path.data(), path.size()));
+	Ref<Resource> resource = loader->load(godot_path);
 	if (resource.is_null()) {
 		ERR_PRINT("Failed to preload resource");
 		// TODO: Return a null object instead?

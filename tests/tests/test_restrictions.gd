@@ -28,21 +28,32 @@ func test_restrictions():
 	# The function should *NOT* have thrown an exception, as we allowed the parent object
 	assert_eq(s.get_exceptions(), exceptions)
 
-	# Adding an allowed class changes ClassDB instantiation from unrestricted to restricted
+	# Allow the parent object using a callback
+	s.remove_allowed_object(n.get_parent())
+	s.set_object_allowed_callback(func(sandbox, obj): return obj == n.get_parent())
+	# Now restrictions are in place
+	exceptions = s.get_exceptions()
+	s.vmcall("access_a_parent", n)
+	# The function should *NOT* have thrown an exception, as we allowed the parent object
+	assert_eq(s.get_exceptions(), exceptions)
+
+	# Setting a callback for allowed classes changes ClassDB instantiation from unrestricted to restricted
 	# creates_a_node
 	assert_eq(s.has_function("creates_a_node"), true)
-	# Add an allowed class
-	s.allow_class("Node")
+	# Add an allowed class (Node)
+	s.set_class_allowed_callback(func(sandbox, name): return name == "Node")
 	# Now restrictions are in place
+	assert_true(s.is_allowed_class("Node"), "Node should be allowed")
 	exceptions = s.get_exceptions()
 	s.vmcall("creates_a_node")
 	# The function should *NOT* have thrown an exception, as we allowed the Node class
 	assert_eq(s.get_exceptions(), exceptions)
 
-	# Remove the allowed class Node, but allow the class Node2D
-	s.remove_allowed_class("Node")
-	s.allow_class("Node2D")
+	# Now only allow the class Node2D
+	s.set_class_allowed_callback(func(sandbox, name): return name == "Node2D")
 	# Now restrictions are in place
+	assert_true(s.is_allowed_class("Node2D"), "Node2D should be allowed")
+	assert_false(s.is_allowed_class("Node"), "Node should not be allowed")
 	exceptions = s.get_exceptions()
 	s.vmcall("creates_a_node")
 	# The function should have thrown an exception, as we only allowed the Node2D class
@@ -61,6 +72,6 @@ func test_restrictions():
 	exceptions = s.get_exceptions()
 	s.vmcall("creates_a_node")
 	# The function should have thrown an exception, as we enabled restrictions
-	assert_eq(s.get_exceptions(), exceptions + 1)
+	assert_eq(s.get_exceptions(), exceptions + 1, "Should have thrown an exception")
 
 	s.queue_free()
