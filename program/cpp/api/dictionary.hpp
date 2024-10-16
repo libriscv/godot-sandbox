@@ -22,9 +22,45 @@ struct Dictionary {
 
 	DictAccessor operator[](const Variant &key);
 
+	Dictionary duplicate(bool deep = false) const {
+		return this->operator()("duplicate", deep);
+	}
+	Variant find_key(const Variant &key) const {
+		return this->operator()("find_key", key);
+	}
+	bool has_all(const Array &keys) const {
+		return this->operator()("has_all", Variant(keys));
+	}
+	int hash() const {
+		return this->operator()("hash");
+	}
+	bool is_read_only() const {
+		return this->operator()("is_read_only");
+	}
+	Variant keys() const {
+		return this->operator()("keys");
+	}
+	void make_read_only() {
+		this->operator()("make_read_only");
+	}
+	void merge(const Dictionary &dictionary, bool overwrite = false) {
+		this->operator()("merge", Variant(dictionary), overwrite);
+	}
+	Dictionary merged(const Dictionary &dictionary, bool overwrite = false) const {
+		return this->operator()("merged", Variant(dictionary), overwrite);
+	}
+	bool recursive_equal(const Dictionary &dictionary, int recursion_count) const {
+		return this->operator()("recursive_equal", Variant(dictionary), recursion_count);
+	}
+	Variant values() const {
+		return this->operator()("values");
+	}
+
 	// Call methods on the Dictionary
 	template <typename... Args>
 	Variant operator () (std::string_view method, Args&&... args);
+	template <typename... Args>
+	Variant operator () (std::string_view method, Args&&... args) const;
 
 	static Dictionary from_variant_index(unsigned idx) { Dictionary d; d.m_idx = idx; return d; }
 	unsigned get_variant_index() const noexcept { return m_idx; }
@@ -78,5 +114,10 @@ inline DictAccessor Dictionary::operator[](const Variant &key) {
 
 template <typename... Args>
 inline Variant Dictionary::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline Variant Dictionary::operator () (std::string_view method, Args&&... args) const {
 	return Variant(*this).method_call(method, std::forward<Args>(args)...);
 }
