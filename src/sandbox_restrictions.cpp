@@ -26,6 +26,7 @@ void Sandbox::set_restrictions(bool enable) {
 	}
 }
 
+// clang-format off
 bool Sandbox::get_restrictions() const {
 	return m_just_in_time_allowed_classes.is_valid()
 		&& m_just_in_time_allowed_objects.is_valid()
@@ -33,6 +34,7 @@ bool Sandbox::get_restrictions() const {
 		&& m_just_in_time_allowed_properties.is_valid()
 		&& m_just_in_time_allowed_resources.is_valid();
 }
+// clang-format on
 
 void Sandbox::add_allowed_object(godot::Object *obj) {
 	m_allowed_objects.insert(obj);

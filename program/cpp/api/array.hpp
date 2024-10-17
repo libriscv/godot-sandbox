@@ -10,6 +10,9 @@ struct Array {
 	Array(const std::vector<Variant> &values);
 	static Array Create(unsigned size = 0) { return Array(size); }
 
+	Array &operator =(const std::vector<Variant> &values);
+	Array &operator =(const Array &other);
+
 	operator Variant() const;
 
 	// Array operations
@@ -83,6 +86,7 @@ struct Array {
 
 	static Array from_variant_index(unsigned idx) { Array a; a.m_idx = idx; return a; }
 	unsigned get_variant_index() const noexcept { return m_idx; }
+	bool is_permanent() const { return Variant::is_permanent_index(m_idx); }
 
 private:
 	unsigned m_idx = INT32_MIN;

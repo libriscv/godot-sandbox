@@ -5,6 +5,18 @@
 MAKE_SYSCALL(ECALL_ARRAY_OPS, void, sys_array_ops, Array_Op, unsigned, int, Variant *);
 MAKE_SYSCALL(ECALL_ARRAY_AT, void, sys_array_at, unsigned, int, Variant *);
 MAKE_SYSCALL(ECALL_ARRAY_SIZE, int, sys_array_size, unsigned);
+EXTERN_SYSCALL(unsigned, sys_vassign, unsigned, unsigned);
+
+Array &Array::operator=(const std::vector<Variant> &values) {
+	Variant v = Variant::from_array(values);
+	this->m_idx = sys_vassign(m_idx, v.get_internal_index());
+	return *this;
+}
+
+Array &Array::operator=(const Array &other) {
+	this->m_idx = sys_vassign(this->m_idx, other.m_idx);
+	return *this;
+}
 
 void Array::push_back(const Variant &value) {
 	sys_array_ops(Array_Op::PUSH_BACK, m_idx, 0, (Variant *)&value);

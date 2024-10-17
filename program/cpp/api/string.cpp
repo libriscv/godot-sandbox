@@ -7,6 +7,12 @@ MAKE_SYSCALL(ECALL_STRING_OPS, int, sys_string_ops, String_Op, unsigned, int, Va
 MAKE_SYSCALL(ECALL_STRING_AT, unsigned, sys_string_at, unsigned, int);
 MAKE_SYSCALL(ECALL_STRING_SIZE, int, sys_string_size, unsigned);
 MAKE_SYSCALL(ECALL_STRING_APPEND, void, sys_string_append, unsigned, const char *, size_t);
+EXTERN_SYSCALL(unsigned, sys_vassign, unsigned, unsigned);
+
+String &String::operator=(const String &value) {
+	this->m_idx = sys_vassign(m_idx, value.m_idx);
+	return *this;
+}
 
 void String::append(const String &value) {
 	(void)sys_string_ops(String_Op::APPEND, m_idx, 0, (Variant *)&value);
@@ -51,4 +57,12 @@ std::u32string String::utf32() const {
 	std::u32string str;
 	sys_string_ops(String_Op::TO_STD_STRING, m_idx, 2, (Variant *)&str);
 	return str;
+}
+
+bool String::operator==(const String &other) const {
+	return sys_string_ops(String_Op::COMPARE, m_idx, 0, (Variant *)&other);
+}
+
+bool String::operator==(const char *other) const {
+	return sys_string_ops(String_Op::COMPARE_CSTR, m_idx, 0, (Variant *)other);
 }

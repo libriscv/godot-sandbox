@@ -650,12 +650,36 @@ APICALL(api_vstore) {
 	}
 }
 
-APICALL(api_vfree) {
-	auto [vp] = machine.sysargs<GuestVariant *>();
+APICALL(api_vassign) {
+	auto [a_idx, b_idx] = machine.sysargs<unsigned, unsigned>();
 	auto &emu = riscv::emu(machine);
-	SYS_TRACE("vfree", vp);
+	machine.penalize(150'000);
+	SYS_TRACE("vassign", a_idx, b_idx);
 
-	// XXX: No longer needed, as we are abstracting the Variant object.
+	if (int32_t(a_idx) == INT32_MIN) {
+		machine.set_result(b_idx); // Assign b to a directly when a is "empty".
+		return;
+	}
+
+	// Find scoped Variants and assign the value of b to a.
+	std::optional<const Variant *> a_opt = emu.get_scoped_variant(a_idx);
+	std::optional<const Variant *> b_opt = emu.get_scoped_variant(b_idx);
+	if (a_opt.has_value() && b_opt.has_value()) {
+		const Variant *va = *a_opt;
+		const Variant *vb = *b_opt;
+		// XXX: This might be too strict. Assigning arbitrarily between different types is allowed in GDScript.
+		if (va->get_type() != Variant::NIL && va->get_type() != vb->get_type()) {
+			ERR_PRINT("vassign: Variant types do not match");
+			throw std::runtime_error("vassign: Variant types do not match: " + std::to_string(va->get_type()) + " != " + std::to_string(vb->get_type()));
+		}
+
+		// Try assigning the value of b to a.
+		unsigned res_idx = emu.try_reuse_assign_variant(b_idx, *va, a_idx, *vb);
+		machine.set_result(res_idx);
+	} else {
+		ERR_PRINT("vassign: Variants were not scoped");
+		throw std::runtime_error("vassign: Variants were not scoped");
+	}
 }
 
 APICALL(api_get_obj) {
@@ -1409,6 +1433,17 @@ APICALL(api_string_ops) {
 			}
 			break;
 		}
+		case String_Op::COMPARE: {
+			unsigned *vother = machine.memory.memarray<unsigned>(vaddr, 1);
+			const Variant *other = emu.get_scoped_variant(*vother).value();
+			machine.set_result(str == other->operator String());
+			break;
+		}
+		case String_Op::COMPARE_CSTR: {
+			const std::string vother = machine.memory.memstring(vaddr);
+			machine.set_result(str == String::utf8(vother.c_str(), vother.size()));
+			break;
+		}
 		default:
 			ERR_PRINT("Invalid String operation");
 			throw std::runtime_error("Invalid String operation");
@@ -1575,7 +1610,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_PRINT, api_print },
 			{ ECALL_VCALL, api_vcall },
 			{ ECALL_VEVAL, api_veval },
-			{ ECALL_VFREE, api_vfree },
+			{ ECALL_VASSIGN, api_vassign },
 			{ ECALL_GET_OBJ, api_get_obj },
 			{ ECALL_OBJ, api_obj },
 			{ ECALL_OBJ_CALLP, api_obj_callp },

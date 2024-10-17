@@ -5,7 +5,7 @@
 #define ECALL_PRINT (GAME_API_BASE + 0)
 #define ECALL_VCALL (GAME_API_BASE + 1)
 #define ECALL_VEVAL (GAME_API_BASE + 2)
-#define ECALL_VFREE (GAME_API_BASE + 3)
+#define ECALL_VASSIGN (GAME_API_BASE + 3)
 #define ECALL_GET_OBJ (GAME_API_BASE + 4) // Get an object by name
 #define ECALL_OBJ (GAME_API_BASE + 5) // All the Object functions
 #define ECALL_OBJ_CALLP (GAME_API_BASE + 6) // Call a method on an object
@@ -182,6 +182,8 @@ enum class String_Op {
 	FIND,
 	ERASE,
 	TO_STD_STRING,
+	COMPARE,
+	COMPARE_CSTR,
 };
 
 enum class Math_Op {

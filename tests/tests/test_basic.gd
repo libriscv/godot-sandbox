@@ -389,17 +389,29 @@ func test_static_storage():
 	assert_eq(result, null)
 
 	# This function creates a Dictionary after initialization but makes it permanent
-	assert_eq(s.has_function("test_permanent_storage"), true)
+	assert_true(s.has_function("test_permanent_storage"), "Function test_permanent_storage found")
 	exceptions = s.get_exceptions()
 
 	result = s.vmcallv("test_permanent_storage", "key", "value")
 	assert_eq_deep(result, {"key": "value"})
-	assert_eq(s.get_exceptions(), exceptions)
+	assert_eq(s.get_exceptions(), exceptions, "No exceptions thrown")
 	# And again, the second time it will not create a new Dictionary
 	# but since the old one was made permanent, it will return the stored value nevertheless
 	result = s.vmcallv("test_permanent_storage", "key", "value")
 	assert_eq_deep(result, {"key": "value"})
-	assert_eq(s.get_exceptions(), exceptions)
+	assert_eq(s.get_exceptions(), exceptions, "No exceptions thrown")
+
+	var ps : String = s.vmcall("test_permanent_string", "Hello")
+	assert_eq(ps, "Hello", "Permanent string returned")
+	assert_true(s.vmcall("test_check_if_permanent", "string"), "Permanent string is permanent")
+
+	var pa : Array = s.vmcall("test_permanent_array", [1, 2, 3])
+	assert_eq_deep(pa, [1, 2, 3])
+	assert_true(s.vmcall("test_check_if_permanent", "array"), "Permanent array is permanent")
+
+	var pd : Dictionary = s.vmcall("test_permanent_dict", {"key": "value"})
+	assert_eq_deep(pd, {"key": "value"})
+	assert_true(s.vmcall("test_check_if_permanent", "dict"), "Permanent dictionary is permanent")
 
 	s.queue_free()
 

@@ -5,6 +5,12 @@
 EXTERN_SYSCALL(void, sys_vcreate, Variant *, int, int, const void *);
 MAKE_SYSCALL(ECALL_DICTIONARY_OPS, int, sys_dict_ops, Dictionary_Op, unsigned, const Variant *, Variant *);
 MAKE_SYSCALL(ECALL_DICTIONARY_OPS, int, sys_dict_ops2, Dictionary_Op, unsigned, const Variant *, Variant *, const Variant *);
+EXTERN_SYSCALL(unsigned, sys_vassign, unsigned, unsigned);
+
+Dictionary &Dictionary::operator=(const Dictionary &other) {
+	this->m_idx = sys_vassign(this->m_idx, other.m_idx);
+	return *this;
+}
 
 void Dictionary::clear() {
 	(void)sys_dict_ops(Dictionary_Op::CLEAR, m_idx, nullptr, nullptr);

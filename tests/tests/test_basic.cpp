@@ -13,11 +13,43 @@ extern "C" Variant test_failing_static_storage(Variant key, Variant val) {
 	fd[key] = val;
 	return fd;
 }
+static Dictionary fd = Dictionary::Create();
 extern "C" Variant test_permanent_storage(Variant key, Variant val) {
-	static Dictionary fd = Dictionary::Create();
 	fd[key] = val;
 	fd = Variant(fd).make_permanent();
 	return fd;
+}
+
+static String ps = "Hello this is a permanent string";
+extern "C" Variant test_permanent_string(String input) {
+	ps = input;
+	return ps;
+}
+
+static Array pa = Array::Create();
+extern "C" Variant test_permanent_array(Array input) {
+	pa = input;
+	return pa;
+}
+
+static Dictionary pd = Dictionary::Create();
+extern "C" Variant test_permanent_dict(Dictionary input) {
+	pd = input;
+	return pd;
+}
+
+extern "C" Variant test_check_if_permanent(String test) {
+	if (test == "string") {
+		printf("Checking if string %d is permanent\n", ps.get_variant_index());
+		return ps.is_permanent();
+	} else if (test == "array") {
+		printf("Checking if array %d is permanent\n", pa.get_variant_index());
+		return pa.is_permanent();
+	} else if (test == "dict") {
+		printf("Checking if dictionary %d is permanent\n", pd.get_variant_index());
+		return pd.is_permanent();
+	}
+	return false;
 }
 
 extern "C" Variant test_infinite_loop() {

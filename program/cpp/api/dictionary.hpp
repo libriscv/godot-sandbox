@@ -7,6 +7,8 @@ struct Dictionary {
 	constexpr Dictionary() {} // DON'T TOUCH
 	static Dictionary Create();
 
+	Dictionary &operator =(const Dictionary &other);
+
 	operator Variant() const;
 
 	DictAccessor operator[](const Variant &key);
@@ -41,6 +43,7 @@ struct Dictionary {
 
 	static Dictionary from_variant_index(unsigned idx) { Dictionary d; d.m_idx = idx; return d; }
 	unsigned get_variant_index() const noexcept { return m_idx; }
+	bool is_permanent() const { return Variant::is_permanent_index(m_idx); }
 
 private:
 	unsigned m_idx = INT32_MIN;
@@ -67,21 +70,23 @@ inline Variant::operator Dictionary() const {
 }
 
 struct DictAccessor {
-	DictAccessor(const Dictionary &dict, const Variant &key) : m_dict(dict), m_key(key) {}
+	DictAccessor(const Dictionary &dict, const Variant &key) : m_dict_idx(dict.get_variant_index()), m_key(key) {}
 
-	operator Variant() const { return m_dict.get(m_key); }
-	Variant operator *() const { return m_dict.get(m_key); }
-	Variant value() const { return m_dict.get(m_key); }
+	operator Variant() const { return dict().get(m_key); }
+	Variant operator *() const { return dict().get(m_key); }
+	Variant value() const { return dict().get(m_key); }
 
-	void operator=(const Variant &value) { m_dict.set(m_key, value); }
+	void operator=(const Variant &value) { dict().set(m_key, value); }
 
 	template <typename... Args>
 	Variant operator ()(Args &&...args) {
 		return value()(std::forward<Args>(args)...);
 	}
 
+	Dictionary dict() const { return Dictionary::from_variant_index(m_dict_idx); }
+
 private:
-	Dictionary m_dict;
+	unsigned m_dict_idx;
 	Variant m_key;
 };
 

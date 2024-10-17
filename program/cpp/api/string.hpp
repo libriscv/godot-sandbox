@@ -14,6 +14,7 @@ union String {
 	String(const char (&value)[N]);
 
 	String &operator =(std::string_view value);
+	String &operator =(const String &value);
 
 	// String operations
 	void append(const String &value);
@@ -39,6 +40,9 @@ union String {
 	operator std::u32string() const { return utf32(); }
 	std::string utf8() const;
 	std::u32string utf32() const;
+
+	bool operator ==(const String &other) const;
+	bool operator ==(const char *other) const;
 
 	// String size
 	int size() const;
@@ -149,6 +153,7 @@ union String {
 
 	static String from_variant_index(unsigned idx) { String a {}; a.m_idx = idx; return a; }
 	unsigned get_variant_index() const noexcept { return m_idx; }
+	bool is_permanent() const { return Variant::is_permanent_index(m_idx); }
 	static unsigned Create(const char *data, size_t size);
 
 private:

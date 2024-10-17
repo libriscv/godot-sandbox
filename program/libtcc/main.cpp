@@ -1,7 +1,7 @@
-#include <api.hpp>
-#include <cstring>
 #include <libtcc.h>
+#include <api.hpp>
 #include <cstdarg>
+#include <cstring>
 EXTERN_SYSCALL(void, sys_vstore, unsigned, const void *, size_t);
 EXTERN_SYSCALL(void, sys_vfetch, unsigned, void *, int);
 
@@ -38,6 +38,7 @@ static Variant do_compile(const std::string &source_code, const std::string &ent
 	tcc_add_symbol(ctx, "sys_vfetch", (void *)sys_vfetch);
 
 	// Debugging API
+	// clang-format off
 	tcc_add_symbol(ctx, "print_int", (void *)(void(*)(int))[](int i) {
 		printf("Int: %d", i);
 		fflush(stdout);
@@ -54,6 +55,7 @@ static Variant do_compile(const std::string &source_code, const std::string &ent
 		printf("Pointer: %p", p);
 		fflush(stdout);
 	});
+	// clang-format on
 
 	// Add our own API
 	std::string code = R"(

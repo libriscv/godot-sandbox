@@ -5,7 +5,7 @@
 
 MAKE_SYSCALL(ECALL_VCALL, void, sys_vcall, Variant *, const char *, size_t, const Variant *, size_t, Variant &);
 MAKE_SYSCALL(ECALL_VEVAL, bool, sys_veval, int, const Variant *, const Variant *, Variant *);
-MAKE_SYSCALL(ECALL_VFREE, void, sys_vfree, Variant *);
+MAKE_SYSCALL(ECALL_VASSIGN, unsigned, sys_vassign, unsigned, Variant *);
 
 MAKE_SYSCALL(ECALL_VCREATE, void, sys_vcreate, Variant *, int, int, const void *);
 MAKE_SYSCALL(ECALL_VFETCH, void, sys_vfetch, unsigned, void *, int);
@@ -72,5 +72,5 @@ Variant &Variant::make_permanent() {
 }
 
 bool Variant::is_permanent() const noexcept {
-	return int32_t(this->v.i) < 0;
+	return int32_t(uint32_t(this->v.i)) < 0;
 }

@@ -271,6 +271,7 @@ struct Variant
 
 	Type get_type() const noexcept { return m_type; }
 	unsigned get_internal_index() const noexcept { return v.i; }
+	static bool is_permanent_index(unsigned idx) noexcept { return int32_t(idx) < 0; }
 
 private:
 	Type m_type = NIL;
