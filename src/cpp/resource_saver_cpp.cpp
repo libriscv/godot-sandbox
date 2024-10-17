@@ -34,6 +34,54 @@ void ResourceFormatSaverCPP::deinit() {
 	cpp_saver.unref();
 }
 
+static Array invoke_cmake(const String &path) {
+	// Invoke cmake to build the project
+	PackedStringArray arguments;
+	arguments.push_back("--build");
+	arguments.push_back(String(path) + "/.build"); // Build directory
+	arguments.push_back("-j");
+	arguments.push_back(itos(OS::get_singleton()->get_processor_count()));
+
+	OS *os = OS::get_singleton();
+	UtilityFunctions::print("Invoking cmake: ", arguments);
+	Array output;
+	int32_t result = os->execute("cmake", arguments, output, true);
+
+	if (result != 0) {
+		if (!output.is_empty()) {
+			output = output[0].operator String().split("\n");
+			for (int i = 0; i < output.size(); i++) {
+				String line = output[i].operator String();
+				UtilityFunctions::printerr(line);
+			}
+		}
+		ERR_PRINT("Failed to invoke cmake: " + itos(result));
+	}
+	return output;
+}
+
+static bool detect_and_build_cmake_project_instead() {
+	// If the project root contains a CMakeLists.txt file, or a cmake/CMakeLists.txt,
+	// build the project using CMake
+	// Get the project root using res://
+	String project_root = "res://";
+
+	// Check for CMakeLists.txt in the project root
+	const bool cmake_root = FileAccess::file_exists(project_root + "CMakeLists.txt");
+	if (cmake_root) {
+		(void)invoke_cmake(".");
+		// Always return true, as this indicates that the project is built using CMake
+		return true;
+	}
+	const bool cmake_dir = FileAccess::file_exists(project_root + "cmake/CMakeLists.txt");
+	if (cmake_dir) {
+		(void)invoke_cmake("./cmake");
+		// Always return true, as this indicates that the project is built using CMake
+		return true;
+	}
+	return false;
+}
+
 Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags) {
 	CPPScript *script = Object::cast_to<CPPScript>(p_resource.ptr());
 	if (script != nullptr) {
@@ -41,6 +89,11 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 		if (handle.is_valid()) {
 			handle->store_string(script->_get_source_code());
 			handle->close();
+
+			// Check if the project is a CMake project
+			if (detect_and_build_cmake_project_instead())
+				return Error::OK;
+
 			// Get the absolute path without the file name
 			String path = handle->get_path().get_base_dir().replace("res://", "") + "/";
 			String inpname = path + "*.cpp";
