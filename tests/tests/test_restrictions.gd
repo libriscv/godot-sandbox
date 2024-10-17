@@ -76,6 +76,34 @@ func test_restrictions():
 
 	s.queue_free()
 
+func test_restriction_callbacks():
+	var s = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	s.set_object_allowed_callback(func(sandbox, obj): return obj.get_name() == "Test")
+	var n = Node.new()
+	n.name = "Test"
+	assert_true(s.is_allowed_object(n), "Test node should be allowed")
+
+	s.set_method_allowed_callback(func(sandbox, obj, method): return method != "free")
+	assert_true(s.is_allowed_method(n, "queue_free"), "Node.queue_free() should be allowed")
+	assert_false(s.is_allowed_method(n, "free"), "Node.free() should *NOT* be allowed")
+
+	s.set_property_allowed_callback(func(sandbox, obj, property): return property != "owner")
+	assert_true(s.is_allowed_property(n, "name"), "Node.get/set_name should be allowed")
+	assert_false(s.is_allowed_property(n, "owner"), "Node.get/set_owner should *NOT* be allowed")
+
+	s.set_class_allowed_callback(func(sandbox, name): return name == "Node")
+	assert_true(s.is_allowed_class("Node"), "Node creation should be allowed")
+	assert_false(s.is_allowed_class("Node2D"), "Node2D creation should *NOT* be allowed")
+
+	s.set_resource_allowed_callback(func(sandbox, name): return name == "res://test.tscn")
+	assert_true(s.is_allowed_resource("res://test.tscn"), "Resource should be allowed")
+	assert_false(s.is_allowed_resource("res://other.tscn"), "Resource should *NOT* be allowed")
+
+	s.queue_free()
+
+
 func test_insanity():
 	var s = Sandbox.new()
 	s.set_program(Sandbox_TestsTests)
@@ -84,6 +112,8 @@ func test_insanity():
 
 	s.restrictions = true
 	s.set_class_allowed_callback(func(sandbox, name): return name == "Node")
+	assert_true(s.is_allowed_class("Node"), "Node should be allowed")
+
 	#s.set_object_allowed_callback(func(sandbox, obj): return obj.get_name() == "Node")
 	#s.set_method_allowed_callback(func(sandbox, obj, method): return method == "get_name")
 
