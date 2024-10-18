@@ -66,6 +66,11 @@ Variant Variant::duplicate() const {
 	return v;
 }
 
+void Variant::clear() {
+	// TODO: If the Variant is a reference, we should clear the reference.
+	this->m_type = NIL;
+}
+
 Variant &Variant::make_permanent() {
 	sys_vclone(this, nullptr);
 	return *this;

@@ -75,6 +75,18 @@ extern "C" Variant test_ping_move_pong(Variant arg) {
 	return v;
 }
 
+extern "C" Variant test_variant_eq(Variant arg1, Variant arg2) {
+	return arg1 == arg2;
+}
+
+extern "C" Variant test_variant_neq(Variant arg1, Variant arg2) {
+	return (arg1 != arg2) == false;
+}
+
+extern "C" Variant test_variant_lt(Variant arg1, Variant arg2) {
+	return arg1 < arg2;
+}
+
 extern "C" Variant test_bool(bool arg) {
 	return arg;
 }

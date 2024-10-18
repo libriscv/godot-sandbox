@@ -257,6 +257,7 @@ struct Variant
 	static void evaluate(const Operator &op, const Variant &a, const Variant &b, Variant &r_ret, bool &r_valid);
 
 	Variant duplicate() const;
+	void clear();
 
 	/// @brief Make the Variant permanent, by moving it to permanent storage.
 	/// @return Updates the Variant to the new permanent Variant and returns it.

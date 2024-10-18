@@ -275,6 +275,93 @@ func test_vmcallv():
 
 	s.queue_free()
 
+func execute_vmcallv_comparison(s : Sandbox, vmfunc : String):
+	# Verify that the vmcallv function works
+	# vmcallv always uses Variants for both arguments and the return value
+	assert_true(s.vmcallv(vmfunc, null, null), "null == null")
+	assert_true(s.vmcallv(vmfunc, true, true), "true == true")
+	assert_true(s.vmcallv(vmfunc, false, false), "false == false")
+	assert_true(s.vmcallv(vmfunc, 1234, 1234), "1234 == 1234")
+	assert_true(s.vmcallv(vmfunc, -1234, -1234), "-1234 == -1234")
+	assert_true(s.vmcallv(vmfunc, 9876.0, 9876.0), "9876.0 == 9876.0")
+	assert_true(s.vmcallv(vmfunc, "9876.0", "9876.0"), "9876.0 == 9876.0")
+	assert_true(s.vmcallv(vmfunc, NodePath("Node"), NodePath("Node")), "NodePath == NodePath")
+	assert_true(s.vmcallv(vmfunc, Vector2(1, 2), Vector2(1, 2)), "Vector2 == Vector2")
+	assert_true(s.vmcallv(vmfunc, Vector2i(1, 2), Vector2i(1, 2)), "Vector2i == Vector2i")
+	assert_true(s.vmcallv(vmfunc, Vector3(1, 2, 3), Vector3(1, 2, 3)), "Vector3 == Vector3")
+	assert_true(s.vmcallv(vmfunc, Vector3i(1, 2, 3), Vector3i(1, 2, 3)), "Vector3i == Vector3i")
+	assert_true(s.vmcallv(vmfunc, Vector4(1, 2, 3, 4), Vector4(1, 2, 3, 4)), "Vector4 == Vector4")
+	assert_true(s.vmcallv(vmfunc, Vector4i(1, 2, 3, 4), Vector4i(1, 2, 3, 4)), "Vector4i == Vector4i")
+	assert_true(s.vmcallv(vmfunc, Color(1, 2, 3, 4), Color(1, 2, 3, 4)), "Color == Color")
+	assert_true(s.vmcallv(vmfunc, Rect2(Vector2(1, 2), Vector2(3, 4)), Rect2(Vector2(1, 2), Vector2(3, 4))), "Rect2 == Rect2")
+	assert_true(s.vmcallv(vmfunc, Rect2i(Vector2i(1, 2), Vector2i(3, 4)), Rect2i(Vector2i(1, 2), Vector2i(3, 4))), "Rect2i == Rect2i")
+	assert_true(s.vmcallv(vmfunc, Transform2D(Vector2(1, 2), Vector2(3, 4), Vector2(5, 6)), Transform2D(Vector2(1, 2), Vector2(3, 4), Vector2(5, 6))), "Transform2D == Transform2D")
+	assert_true(s.vmcallv(vmfunc, AABB(Vector3(1, 2, 3), Vector3(4, 5, 6)), AABB(Vector3(1, 2, 3), Vector3(4, 5, 6))), "AABB == AABB")
+	assert_true(s.vmcallv(vmfunc, Plane(Vector3(1, 2, 3), 4), Plane(Vector3(1, 2, 3), 4)), "Plane == Plane")
+	assert_true(s.vmcallv(vmfunc, Quaternion(1, 2, 3, 4), Quaternion(1, 2, 3, 4)), "Quat == Quat")
+	assert_true(s.vmcallv(vmfunc, Basis(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9)), Basis(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9))), "Basis == Basis")
+	assert_true(s.vmcallv(vmfunc, RID(), RID()), "RID == RID")
+	var cb : Callable = Callable(callable_function)
+	assert_true(s.vmcallv(vmfunc, cb, cb), "Callable == Callable")
+
+	# Nodes
+	var n : Node = Node.new()
+	n.name = "Node"
+	assert_true(s.vmcallv(vmfunc, n, n), "Node == Node")
+	n.queue_free()
+
+	var n2d : Node2D = Node2D.new()
+	n2d.name = "Node2D"
+	assert_true(s.vmcallv(vmfunc, n2d, n2d), "Node2D == Node2D")
+	n2d.queue_free()
+
+	var n3d : Node3D = Node3D.new()
+	n3d.name = "Node3D"
+	assert_true(s.vmcallv(vmfunc, n3d, n3d), "Node3D == Node3D")
+	n3d.queue_free()
+
+	# Packed arrays
+	var pba_pp : PackedByteArray = [1, 2, 3, 4]
+	assert_true(s.vmcallv(vmfunc, pba_pp, pba_pp), "PackedByteArray == PackedByteArray")
+	var pfa32_pp : PackedFloat32Array = [1.0, 2.0, 3.0, 4.0]
+	assert_true(s.vmcallv(vmfunc, pfa32_pp, pfa32_pp), "PackedFloat32Array == PackedFloat32Array")
+	var pfa64_pp : PackedFloat64Array = [1.0, 2.0, 3.0, 4.0]
+	assert_true(s.vmcallv(vmfunc, pfa64_pp, pfa64_pp), "PackedFloat64Array == PackedFloat64Array")
+	var pia32_pp : PackedInt32Array = [1, 2, 3, 4]
+	assert_true(s.vmcallv(vmfunc, pia32_pp, pia32_pp), "PackedInt32Array == PackedInt32Array")
+	var pia64_pp : PackedInt64Array = [1, 2, 3, 4]
+	assert_true(s.vmcallv(vmfunc, pia64_pp, pia64_pp), "PackedInt64Array == PackedInt64Array")
+	var pa_vec2_pp : PackedVector2Array = [Vector2(0, 0), Vector2(1, 1), Vector2(2, 2)]
+	assert_true(s.vmcallv(vmfunc, pa_vec2_pp, pa_vec2_pp), "PackedVector2Array == PackedVector2Array")
+	var pa_vec3_pp : PackedVector3Array = [Vector3(0, 0, 0), Vector3(1, 1, 1), Vector3(2, 2, 2)]
+	assert_true(s.vmcallv(vmfunc, pa_vec3_pp, pa_vec3_pp), "PackedVector3Array == PackedVector3Array")
+	var pca_pp : PackedColorArray = [Color(0, 0, 0, 0), Color(1, 1, 1, 1)]
+	assert_true(s.vmcallv(vmfunc, pca_pp, pca_pp), "PackedColorArray == PackedColorArray")
+	var pa_string_pp : PackedStringArray = ["Hello", "from", "the", "other", "side"]
+	assert_true(s.vmcallv(vmfunc, pa_string_pp, pa_string_pp), "PackedStringArray == PackedStringArray")
+
+func test_variant_comparisons():
+	# Create a new sandbox
+	var s = Sandbox.new()
+	# Set the test program
+	s.set_program(Sandbox_TestsTests)
+
+	assert_eq(s.has_function("test_variant_eq"), true)
+	execute_vmcallv_comparison(s, "test_variant_eq")
+
+	assert_eq(s.has_function("test_variant_neq"), true)
+	execute_vmcallv_comparison(s, "test_variant_neq")
+
+	assert_eq(s.has_function("test_variant_lt"), true)
+	assert_true(s.vmcallv("test_variant_lt", 1, 2), "1 < 2")
+	assert_false(s.vmcallv("test_variant_lt", 2, 1), "2 < 1")
+	assert_false(s.vmcallv("test_variant_lt", 2, 2), "2 < 2")
+	assert_true(s.vmcallv("test_variant_lt", 1.0, 2.0), "1.0 < 2.0")
+	assert_false(s.vmcallv("test_variant_lt", 2.0, 1.0), "2.0 < 1.0")
+	assert_false(s.vmcallv("test_variant_lt", 2.0, 2.0), "2.0 < 2.0")
+
+	s.queue_free()
+
 
 func test_objects():
 	# Create a new sandbox
