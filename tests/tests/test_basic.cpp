@@ -308,3 +308,8 @@ extern "C" Variant access_an_invalid_child_node() {
 	c.set_name("child2");
 	return c;
 }
+
+extern "C" Variant access_an_invalid_child_resource(String path) {
+	Variant resource = load(path.utf8());
+	return resource.method_call("instantiate");
+}

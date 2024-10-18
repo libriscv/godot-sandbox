@@ -176,8 +176,8 @@ APICALL(api_vcall) {
 
 		// Check if the method is allowed.
 		if (!emu.is_allowed_method(obj, method_sn)) {
-			ERR_PRINT("Variant::call(): Method not allowed");
-			throw std::runtime_error("Variant::call(): Method not allowed");
+			ERR_PRINT("Variant::call(): Method not allowed: " + method_sn);
+			throw std::runtime_error("Variant::call(): Method not allowed: " + std::string(method_sv));
 		}
 
 		ret = object_call(emu, obj, method_sn, args, args_size);

@@ -108,7 +108,7 @@ func test_insanity():
 	var s = Sandbox.new()
 	s.set_program(Sandbox_TestsTests)
 
-	assert_eq(s.has_function("access_an_invalid_child_node"), true)
+	assert_true(s.has_function("access_an_invalid_child_node"), "access_an_invalid_child_node should exist")
 
 	s.restrictions = true
 	s.set_class_allowed_callback(func(sandbox, name): return name == "Node")
@@ -121,5 +121,26 @@ func test_insanity():
 	s.vmcall("access_an_invalid_child_node")
 
 	assert_eq(s.get_exceptions(), exceptions + 1)
+
+
+	# access_an_invalid_child_resource
+	assert_true(s.has_function("access_an_invalid_child_resource"), "access_an_invalid_child_resource should exist")
+	# allow instantiate method
+	s.set_method_allowed_callback(func(sandbox, obj, method): return method == "instantiate")
+
+	# allow a resource that can be loaded and instantiated
+	s.set_resource_allowed_callback(func(sandbox, name): return name == "res://tests/test.elf")
+	assert_true(s.is_allowed_resource("res://tests/test.elf"), "Resource should be allowed")
+
+	exceptions = s.get_exceptions()
+	var inst = s.vmcall("access_an_invalid_child_resource", "res://tests/test.elf")
+	# The function should *NOT* have thrown an exception, as we allowed the resource
+	assert_eq(s.get_exceptions(), exceptions)
+
+	s.vmcall("access_an_invalid_child_resource", "res://other.tscn")
+	# The function should have thrown an exception, as we didn't allow the resource
+	assert_eq(s.get_exceptions(), exceptions + 1)
+
+	inst.queue_free()
 
 	s.queue_free()
