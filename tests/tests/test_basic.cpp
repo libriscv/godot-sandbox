@@ -70,6 +70,11 @@ extern "C" Variant test_ping_pong(Variant arg) {
 	return arg;
 }
 
+extern "C" Variant test_ping_move_pong(Variant arg) {
+	Variant v = std::move(arg);
+	return v;
+}
+
 extern "C" Variant test_bool(bool arg) {
 	return arg;
 }

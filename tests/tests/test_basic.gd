@@ -196,76 +196,82 @@ func test_types():
 
 	s.queue_free()
 
+func execute_vmcallv_with(s : Sandbox, vmfunc : String):
+	# Verify that the vmcallv function works
+	# vmcallv always uses Variants for both arguments and the return value
+	assert_same(s.vmcallv(vmfunc, null), null)
+	assert_same(s.vmcallv(vmfunc, true), true)
+	assert_same(s.vmcallv(vmfunc, false), false)
+	assert_same(s.vmcallv(vmfunc, 1234), 1234)
+	assert_same(s.vmcallv(vmfunc, -1234), -1234)
+	assert_same(s.vmcallv(vmfunc, 9876.0), 9876.0)
+	assert_same(s.vmcallv(vmfunc, "9876.0"), "9876.0")
+	assert_eq(s.vmcallv(vmfunc, NodePath("Node")), NodePath("Node"))
+	assert_same(s.vmcallv(vmfunc, Vector2(1, 2)), Vector2(1, 2))
+	assert_same(s.vmcallv(vmfunc, Vector2i(1, 2)), Vector2i(1, 2))
+	assert_same(s.vmcallv(vmfunc, Vector3(1, 2, 3)), Vector3(1, 2, 3))
+	assert_same(s.vmcallv(vmfunc, Vector3i(1, 2, 3)), Vector3i(1, 2, 3))
+	assert_same(s.vmcallv(vmfunc, Vector4(1, 2, 3, 4)), Vector4(1, 2, 3, 4))
+	assert_same(s.vmcallv(vmfunc, Vector4i(1, 2, 3, 4)), Vector4i(1, 2, 3, 4))
+	assert_same(s.vmcallv(vmfunc, Color(1, 2, 3, 4)), Color(1, 2, 3, 4))
+	assert_same(s.vmcallv(vmfunc, Rect2(Vector2(1, 2), Vector2(3, 4))), Rect2(Vector2(1, 2), Vector2(3, 4))) # Rect2
+	assert_same(s.vmcallv(vmfunc, Rect2i(Vector2i(1, 2), Vector2i(3, 4))), Rect2i(Vector2i(1, 2), Vector2i(3, 4))) # Rect2i
+	assert_same(s.vmcallv(vmfunc, Transform2D(Vector2(1, 2), Vector2(3, 4), Vector2(5, 6))), Transform2D(Vector2(1, 2), Vector2(3, 4), Vector2(5, 6))) # Transform2D
+	assert_same(s.vmcallv(vmfunc, AABB(Vector3(1, 2, 3), Vector3(4, 5, 6))), AABB(Vector3(1, 2, 3), Vector3(4, 5, 6))) # AABB
+	assert_same(s.vmcallv(vmfunc, Plane(Vector3(1, 2, 3), 4)), Plane(Vector3(1, 2, 3), 4)) # Plane
+	assert_same(s.vmcallv(vmfunc, Quaternion(1, 2, 3, 4)), Quaternion(1, 2, 3, 4)) # Quat
+	assert_same(s.vmcallv(vmfunc, Basis(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9))), Basis(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9))) # Basis
+	assert_same(s.vmcallv(vmfunc, RID()), RID()) # RID
+	var cb : Callable = Callable(callable_function)
+	assert_same(s.vmcallv(vmfunc, cb), cb, "Returned Callable was same")
+
+	# Nodes
+	var n : Node = Node.new()
+	n.name = "Node"
+	assert_same(s.vmcallv(vmfunc, n), n)
+	n.queue_free()
+
+	var n2d : Node2D = Node2D.new()
+	n2d.name = "Node2D"
+	assert_same(s.vmcallv(vmfunc, n2d), n2d)
+	n2d.queue_free()
+
+	var n3d : Node3D = Node3D.new()
+	n3d.name = "Node3D"
+	assert_same(s.vmcallv(vmfunc, n3d), n3d)
+	n3d.queue_free()
+
+	# Packed arrays
+	var pba_pp : PackedByteArray = [1, 2, 3, 4]
+	assert_same(s.vmcallv(vmfunc, pba_pp), pba_pp)
+	var pfa32_pp : PackedFloat32Array = [1.0, 2.0, 3.0, 4.0]
+	assert_same(s.vmcallv(vmfunc, pfa32_pp), pfa32_pp)
+	var pfa64_pp : PackedFloat64Array = [1.0, 2.0, 3.0, 4.0]
+	assert_same(s.vmcallv(vmfunc, pfa64_pp), pfa64_pp)
+	var pia32_pp : PackedInt32Array = [1, 2, 3, 4]
+	assert_same(s.vmcallv(vmfunc, pia32_pp), pia32_pp)
+	var pia64_pp : PackedInt64Array = [1, 2, 3, 4]
+	assert_same(s.vmcallv(vmfunc, pia64_pp), pia64_pp)
+	var pa_vec2_pp : PackedVector2Array = [Vector2(0, 0), Vector2(1, 1), Vector2(2, 2)]
+	assert_same(s.vmcallv(vmfunc, pa_vec2_pp), pa_vec2_pp)
+	var pa_vec3_pp : PackedVector3Array = [Vector3(0, 0, 0), Vector3(1, 1, 1), Vector3(2, 2, 2)]
+	assert_same(s.vmcallv(vmfunc, pa_vec3_pp), pa_vec3_pp)
+	var pca_pp : PackedColorArray = [Color(0, 0, 0, 0), Color(1, 1, 1, 1)]
+	assert_same(s.vmcallv(vmfunc, pca_pp), pca_pp)
+	var pa_string_pp : PackedStringArray = ["Hello", "from", "the", "other", "side"]
+	assert_same(s.vmcallv(vmfunc, pa_string_pp), pa_string_pp)
+
 func test_vmcallv():
 	# Create a new sandbox
 	var s = Sandbox.new()
 	# Set the test program
 	s.set_program(Sandbox_TestsTests)
+
 	assert_eq(s.has_function("test_ping_pong"), true)
+	execute_vmcallv_with(s, "test_ping_pong")
 
-	# Verify that the vmcallv function works
-	# vmcallv always uses Variants for both arguments and the return value
-	assert_same(s.vmcallv("test_ping_pong", null), null)
-	assert_same(s.vmcallv("test_ping_pong", true), true)
-	assert_same(s.vmcallv("test_ping_pong", false), false)
-	assert_same(s.vmcallv("test_ping_pong", 1234), 1234)
-	assert_same(s.vmcallv("test_ping_pong", -1234), -1234)
-	assert_same(s.vmcallv("test_ping_pong", 9876.0), 9876.0)
-	assert_same(s.vmcallv("test_ping_pong", "9876.0"), "9876.0")
-	assert_eq(s.vmcallv("test_ping_pong", NodePath("Node")), NodePath("Node"))
-	assert_same(s.vmcallv("test_ping_pong", Vector2(1, 2)), Vector2(1, 2))
-	assert_same(s.vmcallv("test_ping_pong", Vector2i(1, 2)), Vector2i(1, 2))
-	assert_same(s.vmcallv("test_ping_pong", Vector3(1, 2, 3)), Vector3(1, 2, 3))
-	assert_same(s.vmcallv("test_ping_pong", Vector3i(1, 2, 3)), Vector3i(1, 2, 3))
-	assert_same(s.vmcallv("test_ping_pong", Vector4(1, 2, 3, 4)), Vector4(1, 2, 3, 4))
-	assert_same(s.vmcallv("test_ping_pong", Vector4i(1, 2, 3, 4)), Vector4i(1, 2, 3, 4))
-	assert_same(s.vmcallv("test_ping_pong", Color(1, 2, 3, 4)), Color(1, 2, 3, 4))
-	assert_same(s.vmcallv("test_ping_pong", Rect2(Vector2(1, 2), Vector2(3, 4))), Rect2(Vector2(1, 2), Vector2(3, 4))) # Rect2
-	assert_same(s.vmcallv("test_ping_pong", Rect2i(Vector2i(1, 2), Vector2i(3, 4))), Rect2i(Vector2i(1, 2), Vector2i(3, 4))) # Rect2i
-	assert_same(s.vmcallv("test_ping_pong", Transform2D(Vector2(1, 2), Vector2(3, 4), Vector2(5, 6))), Transform2D(Vector2(1, 2), Vector2(3, 4), Vector2(5, 6))) # Transform2D
-	assert_same(s.vmcallv("test_ping_pong", AABB(Vector3(1, 2, 3), Vector3(4, 5, 6))), AABB(Vector3(1, 2, 3), Vector3(4, 5, 6))) # AABB
-	assert_same(s.vmcallv("test_ping_pong", Plane(Vector3(1, 2, 3), 4)), Plane(Vector3(1, 2, 3), 4)) # Plane
-	assert_same(s.vmcallv("test_ping_pong", Quaternion(1, 2, 3, 4)), Quaternion(1, 2, 3, 4)) # Quat
-	assert_same(s.vmcallv("test_ping_pong", Basis(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9))), Basis(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9))) # Basis
-	assert_same(s.vmcallv("test_ping_pong", RID()), RID()) # RID
-	var cb : Callable = Callable(callable_function)
-	assert_same(s.vmcallv("test_ping_pong", cb), cb, "Returned Callable was same")
-
-	# Nodes
-	var n : Node = Node.new()
-	n.name = "Node"
-	assert_same(s.vmcallv("test_ping_pong", n), n)
-	n.queue_free()
-
-	var n2d : Node2D = Node2D.new()
-	n2d.name = "Node2D"
-	assert_same(s.vmcallv("test_ping_pong", n2d), n2d)
-	n2d.queue_free()
-
-	var n3d : Node3D = Node3D.new()
-	n3d.name = "Node3D"
-	assert_same(s.vmcallv("test_ping_pong", n3d), n3d)
-	n3d.queue_free()
-
-	# Packed arrays
-	var pba_pp : PackedByteArray = [1, 2, 3, 4]
-	assert_same(s.vmcallv("test_ping_pong", pba_pp), pba_pp)
-	var pfa32_pp : PackedFloat32Array = [1.0, 2.0, 3.0, 4.0]
-	assert_same(s.vmcallv("test_ping_pong", pfa32_pp), pfa32_pp)
-	var pfa64_pp : PackedFloat64Array = [1.0, 2.0, 3.0, 4.0]
-	assert_same(s.vmcallv("test_ping_pong", pfa64_pp), pfa64_pp)
-	var pia32_pp : PackedInt32Array = [1, 2, 3, 4]
-	assert_same(s.vmcallv("test_ping_pong", pia32_pp), pia32_pp)
-	var pia64_pp : PackedInt64Array = [1, 2, 3, 4]
-	assert_same(s.vmcallv("test_ping_pong", pia64_pp), pia64_pp)
-	var pa_vec2_pp : PackedVector2Array = [Vector2(0, 0), Vector2(1, 1), Vector2(2, 2)]
-	assert_same(s.vmcallv("test_ping_pong", pa_vec2_pp), pa_vec2_pp)
-	var pa_vec3_pp : PackedVector3Array = [Vector3(0, 0, 0), Vector3(1, 1, 1), Vector3(2, 2, 2)]
-	assert_same(s.vmcallv("test_ping_pong", pa_vec3_pp), pa_vec3_pp)
-	var pca_pp : PackedColorArray = [Color(0, 0, 0, 0), Color(1, 1, 1, 1)]
-	assert_same(s.vmcallv("test_ping_pong", pca_pp), pca_pp)
-	var pa_string_pp : PackedStringArray = ["Hello", "from", "the", "other", "side"]
-	assert_same(s.vmcallv("test_ping_pong", pa_string_pp), pa_string_pp)
+	assert_eq(s.has_function("test_ping_move_pong"), true)
+	execute_vmcallv_with(s, "test_ping_move_pong")
 
 	s.queue_free()
 
