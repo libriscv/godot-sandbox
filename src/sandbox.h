@@ -320,6 +320,20 @@ public:
 	/// @param r_ret The current value of the property.
 	bool get_property(const StringName &name, Variant &r_ret);
 
+	/// @brief Get a property from the sandbox.
+	/// @param name The name of the property.
+	/// @return The current value of the property.
+	Variant get(const StringName &name);
+
+	/// @brief Set a property in the sandbox.
+	/// @param name The name of the property.
+	/// @param value The new value to set.
+	void set(const StringName &name, const Variant &value);
+
+	/// @brief Get a list of properties.
+	/// @return The list of properties.
+	Array get_property_list() const;
+
 	/// @brief Find a property in the sandbox, or return null if it does not exist.
 	/// @param name The name of the property.
 	/// @return The property, or null if it does not exist.
@@ -362,6 +376,12 @@ public:
 	/// @param binary The binary data.
 	/// @return An array of public callable functions and programming language.
 	static BinaryInfo get_program_info_from_binary(const PackedByteArray &binary);
+
+	/// @brief Get a list of Sandbox methods, including VM exported functions, Sandbox
+	/// methods, and Godot methods.
+	/// @return The list of Sandbox methods.
+	/// TODO: Implement this
+	//Array get_method_list() const;
 
 	// -= Self-testing, inspection and internal functions =-
 

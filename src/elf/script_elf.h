@@ -6,15 +6,17 @@
 
 using namespace godot;
 class ELFScriptInstance;
+class Sandbox;
+namespace godot {
+	class ScriptInstanceExtension;
+}
 
 class ELFScript : public ScriptExtension {
 	GDCLASS(ELFScript, ScriptExtension);
 
 protected:
-	static void _bind_methods() {}
-	String _to_string() const;
+	static void _bind_methods();
 	PackedByteArray source_code;
-	String global_name;
 	String path;
 	int elf_api_version;
 	String elf_programming_language;
@@ -27,6 +29,15 @@ public:
 	String get_elf_programming_language() const;
 	int get_elf_api_version() const { return elf_api_version; }
 	String get_dockerized_program_path() const;
+
+	/// @brief Retrieve a Sandbox instance based on a given owner object.
+	/// @param p_for_object The owner object.
+	/// @return The Sandbox instance, or nullptr if not found.
+	Sandbox *get_sandbox_for(Object *p_for_object) const;
+
+	/// @brief Retrieve all Sandbox instances using this ELF resource.
+	/// @return An array of Sandbox instances.
+	Array get_sandboxes() const;
 
 	virtual bool _editor_can_reload_from_file() override;
 	virtual void _placeholder_erased(void *p_placeholder) override;

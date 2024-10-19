@@ -1,6 +1,7 @@
 extends GutTest
 
 var callable_was_called = false
+var Sandbox_TestsTests = load("res://tests/tests.elf")
 
 func test_instantiation():
 	# Create a new sandbox

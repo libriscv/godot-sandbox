@@ -9,7 +9,7 @@
 static constexpr const char *icon_path = "res://addons/godot_sandbox/Sandbox.svg";
 
 String ELFScriptLanguage::_get_name() const {
-	return "ELFScript";
+	return "ELF";
 }
 void ELFScriptLanguage::_init() {}
 String ELFScriptLanguage::_get_type() const {

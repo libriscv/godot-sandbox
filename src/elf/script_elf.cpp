@@ -10,6 +10,30 @@
 
 static constexpr bool VERBOSE_ELFSCRIPT = false;
 
+void ELFScript::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("get_sandbox_for", "for_object"), &ELFScript::get_sandbox_for);
+	ClassDB::bind_method(D_METHOD("get_sandboxes"), &ELFScript::get_sandboxes);
+}
+
+Sandbox *ELFScript::get_sandbox_for(Object *p_for_object) const {
+	for (ELFScriptInstance *instance : instances) {
+		if (instance->get_owner() == p_for_object) {
+			auto [sandbox, auto_created] = instance->get_sandbox();
+			return sandbox;
+		}
+	}
+	ERR_PRINT("ELFScript::get_sandbox_for: Sandbox not found for object " + p_for_object->get_class());
+	return nullptr;
+}
+
+Array ELFScript::get_sandboxes() const {
+	Array result;
+	for (ELFScriptInstance *instance : instances) {
+		result.push_back(instance->get_owner());
+	}
+	return result;
+}
+
 static Dictionary prop_to_dict(const PropertyInfo &p_prop) {
 	Dictionary d;
 	d["name"] = p_prop.name;
@@ -48,9 +72,6 @@ static Dictionary method_to_dict(const MethodInfo &p_method) {
 	return d;
 }
 
-String ELFScript::_to_string() const {
-	return "ELFScript::" + global_name;
-}
 bool ELFScript::_editor_can_reload_from_file() {
 	return true;
 }
@@ -62,7 +83,7 @@ Ref<Script> ELFScript::_get_base_script() const {
 	return Ref<Script>();
 }
 StringName ELFScript::_get_global_name() const {
-	return global_name;
+	return "ELFScript"; //global_name;
 }
 bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
@@ -245,7 +266,6 @@ String ELFScript::get_elf_programming_language() const {
 void ELFScript::set_file(const String &p_path) {
 	path = p_path;
 	source_code = FileAccess::get_file_as_bytes(path);
-	global_name = "Sandbox_" + path.get_basename().replace("res://", "").replace("/", "_").replace("-", "_").capitalize().replace(" ", "");
 	Sandbox::BinaryInfo info = Sandbox::get_program_info_from_binary(source_code);
 	info.functions.sort();
 	this->functions = std::move(info.functions);

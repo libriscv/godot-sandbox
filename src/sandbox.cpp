@@ -73,6 +73,10 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_binary_translated"), &Sandbox::is_binary_translated);
 
 	// Properties.
+	ClassDB::bind_method(D_METHOD("set", "name", "value"), &Sandbox::set);
+	ClassDB::bind_method(D_METHOD("get", "name"), &Sandbox::get);
+	ClassDB::bind_method(D_METHOD("get_property_list"), &Sandbox::get_property_list);
+
 	ClassDB::bind_method(D_METHOD("set_max_refs", "max"), &Sandbox::set_max_refs, DEFVAL(MAX_REFS));
 	ClassDB::bind_method(D_METHOD("get_max_refs"), &Sandbox::get_max_refs);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "references_max", PROPERTY_HINT_NONE, "Maximum objects and variants referenced by a sandbox call"), "set_max_refs", "get_max_refs");
@@ -999,6 +1003,45 @@ const SandboxProperty *Sandbox::find_property_or_null(const StringName &name) co
 		}
 	}
 	return nullptr;
+}
+
+Variant Sandbox::get(const StringName &name) {
+	Variant result;
+	if (get_property(name, result)) {
+		return result;
+	}
+	// Get as if it's on the underlying Node object
+	return Node::get(name);
+}
+
+void Sandbox::set(const StringName &name, const Variant &value) {
+	if (!set_property(name, value)) {
+		// Set as if it's on the underlying Node object
+		Node::set(name, value);
+	}
+}
+
+Array Sandbox::get_property_list() const {
+	Array arr;
+	// Sandboxed properties
+	for (const SandboxProperty &prop : m_properties) {
+		Dictionary d;
+		d["name"] = prop.name();
+		d["type"] = prop.type();
+		d["usage"] = PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_SCRIPT_VARIABLE;
+		arr.push_back(d);
+	}
+	// Our properties
+	for (const PropertyInfo &prop : this->create_sandbox_property_list()) {
+		Dictionary d;
+		d["name"] = prop.name;
+		d["type"] = prop.type;
+		d["usage"] = PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_SCRIPT_VARIABLE;;
+		arr.push_back(d);
+	}
+	// Node properties
+	arr.append_array(Node::get_property_list());
+	return arr;
 }
 
 void SandboxProperty::set(Sandbox &sandbox, const Variant &value) {
