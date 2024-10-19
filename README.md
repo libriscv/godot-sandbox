@@ -176,4 +176,4 @@ This project follows the [all-contributors](https://github.com/all-contributors/
 
 ## Other Projects
 
-The [Jenova Framework](https://github.com/Jenova-Framework/Jenova) has a built-in C++ compiler, and supports writing C++ in the Godot editor with hot-reloading support.
+The [Jenova Framework](https://github.com/Jenova-Framework/) has a built-in C++ compiler, and supports writing C++ in the Godot editor with hot-reloading support.
