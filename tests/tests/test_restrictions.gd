@@ -1,5 +1,7 @@
 extends GutTest
 
+var Sandbox_TestsTests = load("res://tests/tests.elf")
+
 func test_restrictions():
 	var s = Sandbox.new()
 	s.set_program(Sandbox_TestsTests)

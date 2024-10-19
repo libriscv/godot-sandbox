@@ -3,12 +3,37 @@
 #include "../docker.h"
 #include "../register_types.h"
 #include "../sandbox.h"
+#include "../sandbox_project_settings.h"
 #include "script_instance.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 
 static constexpr bool VERBOSE_ELFSCRIPT = false;
+
+void ELFScript::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("get_sandbox_for", "for_object"), &ELFScript::get_sandbox_for);
+	ClassDB::bind_method(D_METHOD("get_sandboxes"), &ELFScript::get_sandboxes);
+}
+
+Sandbox *ELFScript::get_sandbox_for(Object *p_for_object) const {
+	for (ELFScriptInstance *instance : instances) {
+		if (instance->get_owner() == p_for_object) {
+			auto [sandbox, auto_created] = instance->get_sandbox();
+			return sandbox;
+		}
+	}
+	ERR_PRINT("ELFScript::get_sandbox_for: Sandbox not found for object " + p_for_object->get_class());
+	return nullptr;
+}
+
+Array ELFScript::get_sandboxes() const {
+	Array result;
+	for (ELFScriptInstance *instance : instances) {
+		result.push_back(instance->get_owner());
+	}
+	return result;
+}
 
 static Dictionary prop_to_dict(const PropertyInfo &p_prop) {
 	Dictionary d;
@@ -48,9 +73,6 @@ static Dictionary method_to_dict(const MethodInfo &p_method) {
 	return d;
 }
 
-String ELFScript::_to_string() const {
-	return "ELFScript::" + global_name;
-}
 bool ELFScript::_editor_can_reload_from_file() {
 	return true;
 }
@@ -62,7 +84,10 @@ Ref<Script> ELFScript::_get_base_script() const {
 	return Ref<Script>();
 }
 StringName ELFScript::_get_global_name() const {
-	return global_name;
+	if (SandboxProjectSettings::use_global_sandbox_names()) {
+		return global_name;
+	}
+	return "ELFScript";
 }
 bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;

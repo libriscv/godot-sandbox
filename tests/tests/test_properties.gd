@@ -1,5 +1,7 @@
 extends GutTest
 
+var Sandbox_TestsTests = load("res://tests/tests.elf")
+
 func validate_property(prop_list, name):
 	for p in prop_list:
 		if p.name == name:
@@ -34,9 +36,8 @@ func test_script_properties():
 	n.queue_free()
 
 func test_elfscript_properties():
-	var s = Sandbox.new()
-	s.set_script(Sandbox_TestsTests)
-	var n = s
+	var n = Sandbox.new()
+	n.set_program(Sandbox_TestsTests)
 
 	# Verify properties exist
 	var prop_list = n.get_property_list()

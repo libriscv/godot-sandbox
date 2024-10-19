@@ -43,24 +43,24 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	}
 	ClassDB::register_class<Sandbox>();
 	ClassDB::register_class<ELFScript>();
+	ClassDB::register_class<ELFScriptLanguage>();
 	ClassDB::register_class<ResourceFormatLoaderELF>();
 	ClassDB::register_class<ResourceFormatSaverELF>();
-	ClassDB::register_class<ELFScriptLanguage>();
 	ClassDB::register_class<CPPScript>();
+	ClassDB::register_class<CPPScriptLanguage>();
 	ClassDB::register_class<ResourceFormatLoaderCPP>();
 	ClassDB::register_class<ResourceFormatSaverCPP>();
-	ClassDB::register_class<CPPScriptLanguage>();
 	ClassDB::register_class<RustScript>();
+	ClassDB::register_class<RustScriptLanguage>();
 	ClassDB::register_class<ResourceFormatLoaderRust>();
 	ClassDB::register_class<ResourceFormatSaverRust>();
-	ClassDB::register_class<RustScriptLanguage>();
 	ClassDB::register_class<ZigScript>();
+	ClassDB::register_class<ZigScriptLanguage>();
 	ClassDB::register_class<ResourceFormatLoaderZig>();
 	ClassDB::register_class<ResourceFormatSaverZig>();
-	ClassDB::register_class<ZigScriptLanguage>();
 	elf_loader.instantiate();
 	elf_saver.instantiate();
-	ResourceLoader::get_singleton()->add_resource_format_loader(elf_loader);
+	ResourceLoader::get_singleton()->add_resource_format_loader(elf_loader, true);
 	ResourceSaver::get_singleton()->add_resource_format_saver(elf_saver);
 	elf_language = memnew(ELFScriptLanguage);
 	Engine::get_singleton()->register_script_language(elf_language);
@@ -80,11 +80,18 @@ static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
-	//Engine::get_singleton()->unregister_script_language(cpp_language);
-	//Engine::get_singleton()->unregister_script_language(elf_language);
+	Engine *engine = Engine::get_singleton();
+	engine->unregister_script_language(CPPScriptLanguage::get_singleton());
+	engine->unregister_script_language(RustScriptLanguage::get_singleton());
+	engine->unregister_script_language(ZigScriptLanguage::get_singleton());
+	if (elf_language) {
+		engine->unregister_script_language(elf_language);
+		memdelete(elf_language);
+		elf_language = nullptr;
+	}
+
 	ResourceLoader::get_singleton()->remove_resource_format_loader(elf_loader);
 	ResourceSaver::get_singleton()->remove_resource_format_saver(elf_saver);
-	//delete elf_language;
 	elf_loader.unref();
 	elf_saver.unref();
 	ResourceFormatLoaderCPP::deinit();

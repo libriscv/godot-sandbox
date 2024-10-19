@@ -13,6 +13,13 @@ PackedStringArray ResourceFormatLoaderELF::_get_recognized_extensions() const {
 	array.push_back("elf");
 	return array;
 }
+bool ResourceFormatLoaderELF::_recognize_path(const godot::String &path, const godot::StringName &type) const {
+	String el = path.get_extension().to_lower();
+	if (el == "elf") {
+		return true;
+	}
+	return false;
+}
 bool ResourceFormatLoaderELF::_handles_type(const StringName &type) const {
 	String type_str = type;
 	return type_str == "ELFScript" || type_str == "Script";

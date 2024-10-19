@@ -1,4 +1,5 @@
 set -e
+GODOT_VERSION=4.3
 
 # Check if unit tests are run from Github Actions
 if [ -n "$CI" ]; then
@@ -31,4 +32,4 @@ if [ -n "$CI" ]; then
 fi
 
 # Run the unit tests using the GUT addon
-$GODOT --path "$PWD" --headless -s addons/gut/gut_cmdln.gd
+$GODOT --path "$PWD" --headless -s addons/gut/gut_cmdln.gd $@
