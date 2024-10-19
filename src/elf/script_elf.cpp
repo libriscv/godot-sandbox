@@ -3,6 +3,7 @@
 #include "../docker.h"
 #include "../register_types.h"
 #include "../sandbox.h"
+#include "../sandbox_project_settings.h"
 #include "script_instance.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/json.hpp>
@@ -83,7 +84,10 @@ Ref<Script> ELFScript::_get_base_script() const {
 	return Ref<Script>();
 }
 StringName ELFScript::_get_global_name() const {
-	return "ELFScript"; //global_name;
+	if (SandboxProjectSettings::use_global_sandbox_names()) {
+		return global_name;
+	}
+	return "ELFScript";
 }
 bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
@@ -266,6 +270,7 @@ String ELFScript::get_elf_programming_language() const {
 void ELFScript::set_file(const String &p_path) {
 	path = p_path;
 	source_code = FileAccess::get_file_as_bytes(path);
+	global_name = "Sandbox_" + path.get_basename().replace("res://", "").replace("/", "_").replace("-", "_").capitalize().replace(" ", "");
 	Sandbox::BinaryInfo info = Sandbox::get_program_info_from_binary(source_code);
 	info.functions.sort();
 	this->functions = std::move(info.functions);

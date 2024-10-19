@@ -5,6 +5,9 @@
 
 using namespace godot;
 
+static constexpr char USE_GLOBAL_NAMES[] = "editor/script/use_global_sandbox_names";
+static constexpr char USE_GLOBAL_NAMES_HINT[] = "Use customized global names for Sandbox programs";
+
 static constexpr char DOCKER_ENABLED[] = "editor/script/docker_enabled";
 static constexpr char DOCKER_ENABLED_HINT[] = "Enable Docker for compilation";
 static constexpr char DOCKER_PATH[] = "editor/script/docker";
@@ -59,6 +62,7 @@ void register_setting_plain(
 }
 
 void SandboxProjectSettings::register_settings() {
+	register_setting_plain(USE_GLOBAL_NAMES, true, USE_GLOBAL_NAMES_HINT, true);
 	register_setting_plain(DOCKER_ENABLED, true, DOCKER_ENABLED_HINT, true);
 #ifdef WIN32
 	register_setting_plain(DOCKER_PATH, "C:\\Program Files\\Docker\\Docker\\bin\\", DOCKER_PATH_HINT, true);
@@ -81,6 +85,10 @@ static TType get_setting(const char *p_setting) {
 	ERR_FAIL_COND_V(setting_type != expected_type, Variant());
 
 	return setting_value;
+}
+
+bool SandboxProjectSettings::use_global_sandbox_names() {
+	return get_setting<bool>(USE_GLOBAL_NAMES);
 }
 
 bool SandboxProjectSettings::get_docker_enabled() {

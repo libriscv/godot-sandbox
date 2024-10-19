@@ -17,6 +17,7 @@ class ELFScript : public ScriptExtension {
 protected:
 	static void _bind_methods();
 	PackedByteArray source_code;
+	String global_name;
 	String path;
 	int elf_api_version;
 	String elf_programming_language;
