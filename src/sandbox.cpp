@@ -24,7 +24,6 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_static_method("Sandbox", D_METHOD("FromBuffer", "buffer"), &Sandbox::FromBuffer);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("FromProgram", "program"), &Sandbox::FromProgram);
 	// Methods.
-	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
 	ClassDB::bind_method(D_METHOD("set_program", "program"), &Sandbox::set_program);
 	ClassDB::bind_method(D_METHOD("get_program"), &Sandbox::get_program);
 	ClassDB::bind_method(D_METHOD("has_program_loaded"), &Sandbox::has_program_loaded);
@@ -38,6 +37,7 @@ void Sandbox::_bind_methods() {
 		ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "vmcallv", &Sandbox::vmcallv, mi, DEFVAL(std::vector<Variant>{}));
 	}
 	ClassDB::bind_method(D_METHOD("vmcallable", "function", "args"), &Sandbox::vmcallable, DEFVAL(Array{}));
+	ClassDB::bind_method(D_METHOD("vmcallable_address", "address", "args"), &Sandbox::vmcallable_address, DEFVAL(Array{}));
 
 	// Sandbox restrictions.
 	ClassDB::bind_method(D_METHOD("set_restrictions"), &Sandbox::set_restrictions);
@@ -67,6 +67,7 @@ void Sandbox::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("assault", "test", "iterations"), &Sandbox::assault);
 	ClassDB::bind_method(D_METHOD("has_function", "function"), &Sandbox::has_function);
+	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
 
 	// Binary translation.
 	ClassDB::bind_method(D_METHOD("emit_binary_translation", "ignore_instruction_limit", "automatic_nbit_address_space"), &Sandbox::emit_binary_translation, DEFVAL(true), DEFVAL(false));
