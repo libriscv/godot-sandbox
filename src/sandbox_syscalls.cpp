@@ -140,23 +140,13 @@ APICALL(api_print) {
 	}
 	const GuestVariant *array_ptr = machine.memory.memarray<GuestVariant>(array, len);
 
-	const Callable &stdout_redir = emu.get_redirect_stdout();
-
 	// We really want print_internal to be a public function.
 	for (unsigned i = 0; i < len; i++) {
 		const GuestVariant &var = array_ptr[i];
-		if (var.is_scoped_variant()) {
-			const Variant *v = var.toVariantPtr(emu);
-			if (stdout_redir.is_valid())
-				stdout_redir.call(*v);
-			else
-				UtilityFunctions::print(*v);
-		} else {
-			if (stdout_redir.is_valid())
-				stdout_redir.call(var.toVariant(emu));
-			else
-				UtilityFunctions::print(var.toVariant(emu));
-		}
+		if (var.is_scoped_variant())
+			emu.print(*var.toVariantPtr(emu));
+		else
+			emu.print(var.toVariant(emu));
 	}
 }
 

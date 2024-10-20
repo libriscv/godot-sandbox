@@ -318,18 +318,8 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 
 		m.set_userdata(this);
 		m.set_printer([](const machine_t &m, const char *str, size_t len) {
-			static bool already_been_here = false;
-			if (already_been_here) {
-				ERR_PRINT("Recursive call to print() detected, ignoring.");
-				return;
-			}
-			already_been_here = true;
 			Sandbox *sandbox = m.get_userdata<Sandbox>();
-			if (sandbox->m_redirect_stdout.is_valid()) {
-				sandbox->m_redirect_stdout.call(String::utf8(str, len));
-			} else {
-				UtilityFunctions::print(String::utf8(str, len));
-			}
+			sandbox->print(String::utf8(str, len));
 		});
 		this->m_current_state = &this->m_states[0]; // Set the current state to the first state
 
@@ -1155,4 +1145,23 @@ String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool auto
 
 bool Sandbox::is_binary_translated() const {
 	return this->m_machine->is_binary_translation_enabled();
+}
+
+void Sandbox::print(const Variant &v) {
+	static bool already_been_here = false;
+	if (already_been_here) {
+		ERR_PRINT("Recursive call to Sandbox::print() detected, ignoring.");
+		return;
+	}
+	already_been_here = true;
+
+	if (this->m_redirect_stdout.is_valid()) {
+		// Redirect to a GDScript callback function
+		this->m_redirect_stdout.call(v);
+	} else {
+		// Print to the console
+		UtilityFunctions::print(v);
+	}
+
+	already_been_here = false;
 }

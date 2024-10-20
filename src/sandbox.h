@@ -432,6 +432,7 @@ public:
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc);
 	machine_t &machine() { return *m_machine; }
 	const machine_t &machine() const { return *m_machine; }
+	void print(const Variant &v);
 
 private:
 	void constructor_initialize();
