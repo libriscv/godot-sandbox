@@ -157,7 +157,6 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 void Sandbox::constructor_initialize() {
 	this->m_tree_base = this;
 	this->m_use_unboxed_arguments = SandboxProjectSettings::use_native_types();
-	this->m_global_instance_count += 1;
 	// For each call state, reset the state
 	for (size_t i = 0; i < this->m_states.size(); i++) {
 		this->m_states[i].reinitialize(i, this->m_max_refs);
@@ -183,16 +182,19 @@ void Sandbox::full_reset() {
 }
 Sandbox::Sandbox() {
 	this->constructor_initialize();
+	this->m_global_instance_count += 1;
 	// In order to reduce checks we guarantee that this
 	// class is well-formed at all times.
 	this->reset_machine();
 }
 Sandbox::Sandbox(const PackedByteArray &buffer) {
 	this->constructor_initialize();
+	this->m_global_instance_count += 1;
 	this->load_buffer(buffer);
 }
 Sandbox::Sandbox(Ref<ELFScript> program) {
 	this->constructor_initialize();
+	this->m_global_instance_count += 1;
 	this->set_program(std::move(program));
 }
 
