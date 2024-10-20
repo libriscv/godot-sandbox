@@ -3,7 +3,7 @@
 	url = https://github.com/fwsGonzo/libriscv.git
 [submodule "godot-cpp"]
 	path = ext/godot-cpp
-	url = https://github.com/godotengine/godot-cpp.git
+	url = https://github.com/ughuuu/godot-cpp.git
 [submodule "ext/Gut"]
 	path = ext/Gut
 	url = https://github.com/bitwes/Gut.git

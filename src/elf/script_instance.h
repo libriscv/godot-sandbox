@@ -24,7 +24,7 @@
 
 #include "../godot/script_instance.h"
 #include "../sandbox.h"
-using namespace godot;
+GODOT_NAMESPACE
 
 class ELFScript;
 

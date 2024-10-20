@@ -32,13 +32,20 @@ jobs:
           submodules: true
           fetch-depth: 0
 
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot
+          ref: 4.3
+          path: godot
       - name: 🔗 GDExtension Build
-        uses: godotengine/godot-cpp-template/.github/actions/build@main
+        uses: ughuuu/godot-cpp-template/.github/actions/build@add-godot-repo-new-option
         with:
           platform: macos
           arch: ${{ matrix.arch }}
           build-target-type: template_release
           float-precision: ${{ matrix.precision }}
+          godot-repo: godot
 
       - name: Mac Sign
         uses: godotengine/godot-cpp-template/.github/actions/sign@main

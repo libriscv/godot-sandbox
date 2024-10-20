@@ -4,7 +4,7 @@
 #include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/templates/hash_set.hpp>
 
-using namespace godot;
+GODOT_NAMESPACE
 class ELFScriptInstance;
 class Sandbox;
 namespace godot {

@@ -1,6 +1,6 @@
 #pragma once
 #include <godot_cpp/variant/variant.hpp>
-using namespace godot;
+GODOT_NAMESPACE
 
 class Sandbox;
 

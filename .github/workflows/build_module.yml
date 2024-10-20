@@ -1,0 +1,36 @@
+name: Build Module (Linux only)
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+  
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot
+          ref: 4.3
+          path: godot
+      - name: Compiler Fix
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib
+
+      - name: Generate Bindings
+        shell: bash
+        run: |
+          scons generate_bindings=true build_library=no godot_repo=godot
+
+      - name: Build it
+        run: |
+          cd godot
+          scons custom_modules=.. modules_enabled_by_default=no disable_3d=yes disable_advanced_gui=yes deprecated=no minizip=no target=template_debug module_sandbox_enabled=True
