@@ -208,6 +208,15 @@ Sandbox::~Sandbox() {
 }
 
 void Sandbox::set_program(Ref<ELFScript> program) {
+	// Avoid reloading the same program
+	if (program.is_valid() && this->m_program_data == program) {
+		if (this->m_source_version == program->get_source_version()) {
+			return;
+		}
+	} else {
+		this->m_source_version = -1;
+	}
+
 	// Try to retain Sandboxed properties
 	std::vector<SandboxProperty> properties = std::move(this->m_properties);
 	std::vector<Variant> property_values;
@@ -230,7 +239,9 @@ void Sandbox::set_program(Ref<ELFScript> program) {
 		this->full_reset();
 	}
 
-	this->load(&m_program_data->get_content());
+	if (this->load(&m_program_data->get_content())) {
+		this->m_source_version = this->m_program_data->get_source_version();
+	}
 
 	// Restore Sandboxed properties by comparing the new program's properties
 	// with the old ones, then comparing the type. If the property is found,
@@ -259,18 +270,11 @@ void Sandbox::load_buffer(const PackedByteArray &buffer) {
 bool Sandbox::has_program_loaded() const {
 	return !machine().memory.binary().empty();
 }
-void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string> *argv_ptr) {
+bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string> *argv_ptr) {
 	if (buffer == nullptr || buffer->is_empty()) {
 		ERR_PRINT("Empty binary, cannot load program.");
 		this->reset_machine();
-		return;
-	}
-	// If the binary sizes match, let's see if the binary is the exact same
-	if (this->m_machine != nullptr && buffer->size() == this->m_machine->memory.binary().size()) {
-		if (std::memcmp(buffer->ptr(), this->m_machine->memory.binary().data(), buffer->size()) == 0) {
-			// Binary is the same, no need to reload
-			return;
-		}
+		return false;
 	}
 	const std::string_view binary_view = std::string_view{ (const char *)buffer->ptr(), static_cast<size_t>(buffer->size()) };
 
@@ -303,7 +307,7 @@ void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox construction exception: " + std::string(e.what())).c_str());
 		this->m_machine = new machine_t{};
-		return;
+		return false;
 	}
 
 	/** Now we can process symbols, backtraces etc. */
@@ -353,6 +357,7 @@ void Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 	double startup_time = (startup_t1 - startup_t0) / 1e6;
 	m_accumulated_startup_time += startup_time;
 	//fprintf(stderr, "Sandbox startup time: %.3f seconds\n", startup_time);
+	return true;
 }
 
 Variant Sandbox::vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {

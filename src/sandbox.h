@@ -429,7 +429,7 @@ private:
 	void constructor_initialize();
 	void full_reset();
 	void reset_machine();
-	void load(const PackedByteArray *vbuf, const std::vector<std::string> *argv = nullptr);
+	bool load(const PackedByteArray *vbuf, const std::vector<std::string> *argv = nullptr);
 	void read_program_properties(bool editor) const;
 	void handle_exception(gaddr_t);
 	void handle_timeout(gaddr_t);
@@ -482,6 +482,7 @@ private:
 
 	Ref<ELFScript> m_program_data;
 	PackedByteArray m_program_bytes;
+	int m_source_version = -1;
 
 	// Stats
 	unsigned m_timeouts = 0;

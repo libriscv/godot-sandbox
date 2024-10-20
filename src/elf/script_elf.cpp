@@ -17,7 +17,7 @@ void ELFScript::_bind_methods() {
 }
 
 Sandbox *ELFScript::get_sandbox_for(Object *p_for_object) const {
-	for (ELFScriptInstance *instance : instances) {
+	for (ELFScriptInstance *instance : this->instances) {
 		if (instance->get_owner() == p_for_object) {
 			auto [sandbox, auto_created] = instance->get_sandbox();
 			return sandbox;
@@ -29,7 +29,7 @@ Sandbox *ELFScript::get_sandbox_for(Object *p_for_object) const {
 
 Array ELFScript::get_sandboxes() const {
 	Array result;
-	for (ELFScriptInstance *instance : instances) {
+	for (ELFScriptInstance *instance : this->instances) {
 		result.push_back(instance->get_owner());
 	}
 	return result;
@@ -125,7 +125,8 @@ String ELFScript::_get_source_code() const {
 void ELFScript::_set_source_code(const String &p_code) {
 }
 Error ELFScript::_reload(bool p_keep_state) {
-	this->set_file(path);
+	this->source_version++;
+	this->set_file(this->path);
 	return Error::OK;
 }
 TypedArray<Dictionary> ELFScript::_get_documentation() const {

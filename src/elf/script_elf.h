@@ -19,6 +19,7 @@ protected:
 	PackedByteArray source_code;
 	String global_name;
 	String path;
+	int source_version = 0;
 	int elf_api_version;
 	String elf_programming_language;
 
@@ -28,8 +29,10 @@ protected:
 public:
 	PackedStringArray functions;
 	String get_elf_programming_language() const;
-	int get_elf_api_version() const { return elf_api_version; }
+	int get_elf_api_version() const noexcept { return elf_api_version; }
+	int get_source_version() const noexcept { return source_version; }
 	String get_dockerized_program_path() const;
+	const String &get_path() const noexcept { return path; }
 
 	/// @brief Retrieve a Sandbox instance based on a given owner object.
 	/// @param p_for_object The owner object.
