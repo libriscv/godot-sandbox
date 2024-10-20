@@ -1,11 +1,11 @@
 #include "script_language_elf.h"
 #include "script_elf.h"
-#include <godot_cpp/classes/editor_interface.hpp>
-#include <godot_cpp/classes/engine.hpp>
-#include <godot_cpp/classes/file_access.hpp>
-#include <godot_cpp/classes/resource_loader.hpp>
-#include <godot_cpp/classes/texture2d.hpp>
-#include <godot_cpp/classes/theme.hpp>
+#include <godot_compat/classes/editor_interface.hpp>
+#include <godot_compat/classes/engine.hpp>
+#include <godot_compat/classes/file_access.hpp>
+#include <godot_compat/classes/resource_loader.hpp>
+#include <godot_compat/classes/texture2d.hpp>
+#include <godot_compat/classes/theme.hpp>
 static constexpr const char *icon_path = "res://addons/godot_sandbox/Sandbox.svg";
 
 String ELFScriptLanguage::_get_name() const {

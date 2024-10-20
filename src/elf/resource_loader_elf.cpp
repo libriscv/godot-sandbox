@@ -1,6 +1,6 @@
 #include "resource_loader_elf.h"
 #include "script_elf.h"
-#include <godot_cpp/classes/file_access.hpp>
+#include <godot_compat/classes/file_access.hpp>
 
 Variant ResourceFormatLoaderELF::_load(const String &p_path, const String &original_path, bool use_sub_threads, int32_t cache_mode) const {
 	Ref<ELFScript> elf_model = memnew(ELFScript);

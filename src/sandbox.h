@@ -1,9 +1,9 @@
 #pragma once
 
-#include <godot_cpp/classes/control.hpp>
+#include <godot_compat/classes/control.hpp>
 
-#include <godot_cpp/core/binder_common.hpp>
-#include <godot_cpp/templates/hash_set.hpp>
+#include <godot_compat/core/binder_common.hpp>
+#include <godot_compat/templates/hash_set.hpp>
 #include <libriscv/machine.hpp>
 #include <optional>
 

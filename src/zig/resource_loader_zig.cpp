@@ -1,6 +1,6 @@
 #include "resource_loader_zig.h"
 #include "script_zig.h"
-#include <godot_cpp/classes/file_access.hpp>
+#include <godot_compat/classes/file_access.hpp>
 
 static Ref<ResourceFormatLoaderZig> zig_loader;
 

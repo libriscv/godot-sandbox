@@ -1,7 +1,7 @@
 #pragma once
 
-#include <godot_cpp/classes/script.hpp>
-#include <godot_cpp/classes/script_language_extension.hpp>
+#include <godot_compat/classes/script.hpp>
+#include <godot_compat/classes/script_language_extension.hpp>
 
 using namespace godot;
 

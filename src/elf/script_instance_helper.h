@@ -1,6 +1,6 @@
 #include "../register_types.h"
-#include <godot_cpp/templates/local_vector.hpp>
-#include <godot_cpp/templates/pair.hpp>
+#include <godot_compat/templates/local_vector.hpp>
+#include <godot_compat/templates/pair.hpp>
 
 using namespace godot;
 

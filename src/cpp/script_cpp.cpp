@@ -1,8 +1,8 @@
 #include "script_cpp.h"
 
 #include "script_language_cpp.h"
-#include <godot_cpp/classes/file_access.hpp>
-#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_compat/classes/file_access.hpp>
+#include <godot_compat/classes/resource_loader.hpp>
 
 bool CPPScript::_editor_can_reload_from_file() {
 	return true;

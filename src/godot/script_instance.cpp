@@ -23,7 +23,7 @@
 
 #include "script_instance.h"
 
-#include <godot_cpp/templates/local_vector.hpp>
+#include <godot_compat/templates/local_vector.hpp>
 
 static GDExtensionBool gdextension_script_instance_set(GDExtensionScriptInstanceDataPtr p_instance, GDExtensionConstStringNamePtr p_name, GDExtensionConstVariantPtr p_value) {
 	ScriptInstanceExtension *instance = reinterpret_cast<ScriptInstanceExtension *>(p_instance);

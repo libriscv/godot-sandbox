@@ -1,6 +1,6 @@
 #include "resource_loader_cpp.h"
 #include "script_cpp.h"
-#include <godot_cpp/classes/file_access.hpp>
+#include <godot_compat/classes/file_access.hpp>
 
 static Ref<ResourceFormatLoaderCPP> cpp_loader;
 

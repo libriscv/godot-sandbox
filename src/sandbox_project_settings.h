@@ -1,6 +1,6 @@
 #pragma once
 
-#include <godot_cpp/variant/string.hpp>
+#include <godot_compat/variant/string.hpp>
 
 using namespace godot;
 

@@ -1,8 +1,8 @@
 #include "docker.h"
 
 #include "sandbox_project_settings.h"
-#include <godot_cpp/classes/os.hpp>
-#include <godot_cpp/classes/project_settings.hpp>
+#include <godot_compat/classes/os.hpp>
+#include <godot_compat/classes/project_settings.hpp>
 //#define ENABLE_TIMINGS 1
 #ifdef ENABLE_TIMINGS
 #include <time.h>

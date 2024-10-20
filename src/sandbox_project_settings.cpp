@@ -1,7 +1,7 @@
 
 #include "sandbox_project_settings.h"
 
-#include <godot_cpp/classes/project_settings.hpp>
+#include <godot_compat/classes/project_settings.hpp>
 
 using namespace godot;
 

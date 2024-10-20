@@ -4,15 +4,15 @@
 #include "../register_types.h"
 #include "../sandbox_project_settings.h"
 #include "script_zig.h"
-#include <godot_cpp/classes/editor_file_system.hpp>
-#include <godot_cpp/classes/editor_interface.hpp>
-#include <godot_cpp/classes/editor_settings.hpp>
-#include <godot_cpp/classes/file_access.hpp>
-#include <godot_cpp/classes/os.hpp>
-#include <godot_cpp/classes/script.hpp>
-#include <godot_cpp/classes/script_editor.hpp>
-#include <godot_cpp/classes/script_editor_base.hpp>
-#include <godot_cpp/variant/utility_functions.hpp>
+#include <godot_compat/classes/editor_file_system.hpp>
+#include <godot_compat/classes/editor_interface.hpp>
+#include <godot_compat/classes/editor_settings.hpp>
+#include <godot_compat/classes/file_access.hpp>
+#include <godot_compat/classes/os.hpp>
+#include <godot_compat/classes/script.hpp>
+#include <godot_compat/classes/script_editor.hpp>
+#include <godot_compat/classes/script_editor_base.hpp>
+#include <godot_compat/variant/utility_functions.hpp>
 
 static Ref<ResourceFormatSaverZig> zig_saver;
 static constexpr bool VERBOSE_CMD = false;

@@ -1,6 +1,6 @@
 #include "resource_loader_rust.h"
 #include "script_rust.h"
-#include <godot_cpp/classes/file_access.hpp>
+#include <godot_compat/classes/file_access.hpp>
 
 static Ref<ResourceFormatLoaderRust> rust_loader;
 

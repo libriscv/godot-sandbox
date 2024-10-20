@@ -2,10 +2,10 @@
 
 #include <gdextension_interface.h>
 
-#include <godot_cpp/classes/engine.hpp>
-#include <godot_cpp/core/class_db.hpp>
-#include <godot_cpp/core/defs.hpp>
-#include <godot_cpp/godot.hpp>
+#include <godot_compat/classes/engine.hpp>
+#include <godot_compat/core/class_db.hpp>
+#include <godot_compat/core/defs.hpp>
+#include <godot_compat/godot.hpp>
 
 #include "cpp/resource_loader_cpp.h"
 #include "cpp/resource_saver_cpp.h"

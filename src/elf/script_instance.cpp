@@ -7,8 +7,8 @@
 #include "../zig/script_zig.h"
 #include "script_elf.h"
 #include "script_instance_helper.h"
-#include <godot_cpp/core/object.hpp>
-#include <godot_cpp/templates/local_vector.hpp>
+#include <godot_compat/core/object.hpp>
+#include <godot_compat/templates/local_vector.hpp>
 static constexpr bool VERBOSE_LOGGING = false;
 
 struct ScopedTreeBase {

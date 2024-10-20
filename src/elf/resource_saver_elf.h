@@ -1,7 +1,7 @@
 #pragma once
 
-#include <godot_cpp/classes/resource_format_saver.hpp>
-#include <godot_cpp/classes/resource_saver.hpp>
+#include <godot_compat/classes/resource_format_saver.hpp>
+#include <godot_compat/classes/resource_saver.hpp>
 
 using namespace godot;
 

@@ -1,6 +1,6 @@
 #include "guest_datatypes.h"
 
-#include <godot_cpp/variant/utility_functions.hpp>
+#include <godot_compat/variant/utility_functions.hpp>
 #include <libriscv/util/crc32.hpp>
 
 namespace riscv {
