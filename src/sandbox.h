@@ -385,6 +385,10 @@ public:
 
 	// -= Self-testing, inspection and internal functions =-
 
+	/// @brief Set a Callable to redirect stdout from the guest program to.
+	/// @param callback The callable to redirect stdout.
+	void set_redirect_stdout(const Callable &callback) { m_redirect_stdout = callback; }
+
 	/// @brief Get the 32 integer registers of the RISC-V machine.
 	/// @return An array of 32 registers.
 	Array get_general_registers() const;
@@ -479,6 +483,10 @@ private:
 	// If a callable is set for allowed properties, it will be called when an object property
 	// access is attemped, to check if the property is allowed.
 	Callable m_just_in_time_allowed_properties;
+
+	// Redirections
+	Callable m_redirect_stdout;
+
 
 	Ref<ELFScript> m_program_data;
 	PackedByteArray m_program_bytes;

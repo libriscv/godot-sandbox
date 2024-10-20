@@ -58,6 +58,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_static_method("Sandbox", D_METHOD("restrictive_callback_function"), &Sandbox::restrictive_callback_function);
 
 	// Internal testing, debugging and introspection.
+	ClassDB::bind_method(D_METHOD("set_redirect_stdout", "callback"), &Sandbox::set_redirect_stdout);
 	ClassDB::bind_method(D_METHOD("get_general_registers"), &Sandbox::get_general_registers);
 	ClassDB::bind_method(D_METHOD("get_floating_point_registers"), &Sandbox::get_floating_point_registers);
 	ClassDB::bind_method(D_METHOD("set_argument_registers", "args"), &Sandbox::set_argument_registers);
@@ -317,7 +318,18 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 
 		m.set_userdata(this);
 		m.set_printer([](const machine_t &m, const char *str, size_t len) {
-			UtilityFunctions::print(String::utf8(str, len));
+			static bool already_been_here = false;
+			if (already_been_here) {
+				ERR_PRINT("Recursive call to print() detected, ignoring.");
+				return;
+			}
+			already_been_here = true;
+			Sandbox *sandbox = m.get_userdata<Sandbox>();
+			if (sandbox->m_redirect_stdout.is_valid()) {
+				sandbox->m_redirect_stdout.call(String::utf8(str, len));
+			} else {
+				UtilityFunctions::print(String::utf8(str, len));
+			}
 		});
 		this->m_current_state = &this->m_states[0]; // Set the current state to the first state
 
