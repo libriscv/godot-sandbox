@@ -385,6 +385,10 @@ public:
 
 	// -= Self-testing, inspection and internal functions =-
 
+	/// @brief Get the current Callable set for redirecting stdout.
+	/// @return The current Callable set for redirecting stdout.
+	const Callable &get_redirect_stdout() const { return m_redirect_stdout; }
+
 	/// @brief Set a Callable to redirect stdout from the guest program to.
 	/// @param callback The callable to redirect stdout.
 	void set_redirect_stdout(const Callable &callback) { m_redirect_stdout = callback; }
