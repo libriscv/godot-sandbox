@@ -13,7 +13,7 @@ PackedStringArray ResourceFormatLoaderELF::_get_recognized_extensions() const {
 	array.push_back("elf");
 	return array;
 }
-bool ResourceFormatLoaderELF::_recognize_path(const godot::String &path, const godot::StringName &type) const {
+bool ResourceFormatLoaderELF::_recognize_path(const String &path, const StringName &type) const {
 	String el = path.get_extension().to_lower();
 	if (el == "elf") {
 		return true;

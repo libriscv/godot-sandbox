@@ -4,7 +4,7 @@
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/script_language.hpp>
 
-using namespace godot;
+GODOT_NAMESPACE
 
 class CPPScript : public ScriptExtension {
 	GDCLASS(CPPScript, ScriptExtension);

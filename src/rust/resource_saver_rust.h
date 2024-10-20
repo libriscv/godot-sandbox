@@ -3,7 +3,7 @@
 #include <godot_cpp/classes/resource_format_saver.hpp>
 #include <godot_cpp/classes/resource_saver.hpp>
 
-using namespace godot;
+GODOT_NAMESPACE
 
 class ResourceFormatSaverRust : public ResourceFormatSaver {
 	GDCLASS(ResourceFormatSaverRust, ResourceFormatSaver);

@@ -3,7 +3,7 @@
 #include <godot_cpp/classes/resource_format_loader.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 
-using namespace godot;
+GODOT_NAMESPACE
 
 class ResourceFormatLoaderZig : public ResourceFormatLoader {
 	GDCLASS(ResourceFormatLoaderZig, ResourceFormatLoader);

@@ -3,7 +3,7 @@
 #include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/classes/script_language_extension.hpp>
 
-using namespace godot;
+GODOT_NAMESPACE
 
 class ZigScriptLanguage : public ScriptLanguageExtension {
 	GDCLASS(ZigScriptLanguage, ScriptLanguageExtension);

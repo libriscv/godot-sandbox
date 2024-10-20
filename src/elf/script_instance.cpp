@@ -83,7 +83,7 @@ bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 
 	auto [sandbox, created] = get_sandbox();
 	if (sandbox) {
-		ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
+		ScopedTreeBase stb(sandbox, Object::cast_to<Node>(this->owner));
 		return sandbox->set_property(p_name, p_value);
 	}
 
@@ -101,14 +101,14 @@ bool ELFScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 
 	auto [sandbox, created] = get_sandbox();
 	if (sandbox) {
-		ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
+		ScopedTreeBase stb(sandbox, Object::cast_to<Node>(this->owner));
 		return sandbox->get_property(p_name, r_ret);
 	}
 
 	return false;
 }
 
-godot::String ELFScriptInstance::to_string(bool *r_is_valid) {
+String ELFScriptInstance::to_string(bool *r_is_valid) {
 	return "<ELFScript>";
 }
 
@@ -131,7 +131,7 @@ retry_callp:
 	if (script->functions.has(p_method)) {
 		if (current_sandbox && current_sandbox->has_program_loaded()) {
 			// Set the Sandbox instance tree base to the owner node
-			ScopedTreeBase stb(current_sandbox, godot::Object::cast_to<Node>(this->owner));
+			ScopedTreeBase stb(current_sandbox, Object::cast_to<Node>(this->owner));
 			// Perform the vmcall
 			r_error.error = GDEXTENSION_CALL_OK;
 			return current_sandbox->vmcall_fn(p_method, p_args, p_argument_count);
@@ -237,7 +237,7 @@ const GDExtensionMethodInfo *ELFScriptInstance::get_method_list(uint32_t *r_coun
 	const int size = methods_info.size();
 	GDExtensionMethodInfo *list = memnew_arr(GDExtensionMethodInfo, size);
 	int i = 0;
-	for (godot::MethodInfo &method_info : methods_info) {
+	for (MethodInfo &method_info : methods_info) {
 		list[i] = create_method_info(method_info);
 		i++;
 	}
@@ -444,7 +444,7 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 		//ERR_PRINT("ELFScriptInstance: owner is not a Sandbox");
 		//fprintf(stderr, "ELFScriptInstance: owner is instead a '%s'!\n", p_owner->get_class().utf8().get_data());
 	}
-	this->current_sandbox->set_tree_base(godot::Object::cast_to<godot::Node>(owner));
+	this->current_sandbox->set_tree_base(Object::cast_to<Node>(owner));
 
 	for (const std::string &godot_function : godot_functions) {
 		MethodInfo method_info = MethodInfo(
