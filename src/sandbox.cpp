@@ -31,7 +31,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("load_buffer", "buffer"), &Sandbox::load_buffer);
 	{
 		MethodInfo mi;
-		mi.arguments.push_back(PropertyInfo(Variant::STRING, "function"));
+		//mi.arguments.push_back(PropertyInfo(Variant::STRING, "function"));
 		mi.name = "vmcall";
 		mi.return_val = PropertyInfo(Variant::OBJECT, "result");
 		ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "vmcall", &Sandbox::vmcall, mi, DEFVAL(std::vector<Variant>{}));
