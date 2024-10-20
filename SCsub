@@ -1,0 +1,18 @@
+#!/usr/bin/env python
+from misc.utility.scons_hints import *
+from build_utils import add_compilation_flags, get_sources
+
+Import("env")
+Import("env_modules")
+
+env_modules.Append(CPPDEFINES = ['GODOT_MODULE_COMPAT'])
+env_modules.Append(CPPDEFINES = ['GODOT_NAMESPACE'])
+
+env_godot_sandbox = env_modules.Clone()
+env_godot_sandbox["disable_exceptions"] = "0"
+env_godot_sandbox.Prepend(CPPPATH=["ext/godot-cpp/include", "ext/godot-cpp/gen/include"])
+
+add_compilation_flags(env_godot_sandbox)
+
+sources = get_sources(env)
+env_godot_sandbox.add_source_files(env.modules_sources, sources)
