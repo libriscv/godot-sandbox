@@ -124,11 +124,6 @@ APICALL(api_vec2_ops) {
 			*vec2 = vec2->move_toward(*vec, delta);
 			break;
 		}
-		case Vec2_Op::ROTATED: {
-			const double by = machine.cpu.registers().getfl(10).get<double>(); // FA0
-			*vec2 = vec2->rotated(by);
-			break;
-		}
 		default:
 			ERR_PRINT("Invalid Vector2 operation");
 			throw std::runtime_error("Invalid Vector2 operation");

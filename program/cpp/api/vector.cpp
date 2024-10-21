@@ -48,9 +48,9 @@ Vector2 Vector2::reflect(const Vector2 &normal) const noexcept {
 	return result;
 }
 
-Vector2 Vector2::rotated(const Vector2 &by) const noexcept {
+Vector2 Vector2::project(const Vector2 &by) const noexcept {
 	Vector2 result = *this;
-	sys_vec2_ops(Vec2_Op::ROTATED, &result, &by);
+	sys_vec2_ops(Vec2_Op::PROJECT, &result, &by);
 	return result;
 }
 

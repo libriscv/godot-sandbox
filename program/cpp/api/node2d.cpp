@@ -18,7 +18,8 @@ Vector2 Node2D::get_position() const {
 	return var.v2();
 }
 
-void Node2D::set_position(const Variant &value) {
+void Node2D::set_position(const Vector2 &position) {
+	Variant value(position);
 	node2d(Node2D_Op::SET_POSITION, address(), value);
 }
 
@@ -28,7 +29,8 @@ float Node2D::get_rotation() const {
 	return var.operator float();
 }
 
-void Node2D::set_rotation(const Variant &value) {
+void Node2D::set_rotation(real_t angle) {
+	Variant value(angle);
 	node2d(Node2D_Op::SET_ROTATION, address(), value);
 }
 
@@ -38,7 +40,8 @@ Vector2 Node2D::get_scale() const {
 	return var.v2();
 }
 
-void Node2D::set_scale(const Variant &value) {
+void Node2D::set_scale(const Vector2 &scale) {
+	Variant value(scale);
 	node2d(Node2D_Op::SET_SCALE, address(), value);
 }
 

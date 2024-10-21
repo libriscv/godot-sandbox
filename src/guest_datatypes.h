@@ -320,7 +320,6 @@ inline bool GuestVariant::is_scoped_variant() const noexcept {
 	switch (type) {
 		case Variant::STRING:
 		case Variant::TRANSFORM2D:
-		case Variant::PLANE:
 		case Variant::QUATERNION:
 		case Variant::AABB:
 		case Variant::BASIS:

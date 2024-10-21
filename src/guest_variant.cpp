@@ -37,6 +37,8 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 			return Variant{ godot::Vector4i(v.v4i[0], v.v4i[1], v.v4i[2], v.v4i[3]) };
 		case Variant::COLOR:
 			return Variant{ godot::Color(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]) };
+		case Variant::PLANE:
+			return Variant{ godot::Plane(godot::Vector3(v.v4f[0], v.v4f[1], v.v4f[2]), v.v4f[3]) };
 
 		case Variant::OBJECT: {
 			godot::Object *obj = riscv::get_object_from_address(emu, v.i);
@@ -154,6 +156,14 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 			this->v.v4f[3] = color.a;
 			break;
 		}
+		case Variant::PLANE: {
+			godot::Plane plane = value.operator godot::Plane();
+			this->v.v4f[0] = plane.normal.x;
+			this->v.v4f[1] = plane.normal.y;
+			this->v.v4f[2] = plane.normal.z;
+			this->v.v4f[3] = plane.d;
+			break;
+		}
 
 		case Variant::OBJECT: { // Objects are represented as uintptr_t
 			if (!implicit_trust)
@@ -193,6 +203,7 @@ void GuestVariant::create(Sandbox &emu, Variant &&value) {
 		case Variant::VECTOR4:
 		case Variant::VECTOR4I:
 		case Variant::COLOR:
+		case Variant::PLANE:
 			this->set(emu, value, true); // Trust the value
 			break;
 

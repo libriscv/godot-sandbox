@@ -470,6 +470,11 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 				machine.cpu.reg(index++) = *(gaddr_t *)&inner->color_flt[2];
 				break;
 			}
+			case Variant::PLANE: {
+				machine.cpu.reg(index++) = *(gaddr_t *)&inner->vec4_flt[0];
+				machine.cpu.reg(index++) = *(gaddr_t *)&inner->vec4_flt[2];
+				break;
+			}
 			case Variant::OBJECT: { // Objects are represented as uintptr_t
 				godot::Object *obj = inner->to_object();
 				this->add_scoped_object(obj);

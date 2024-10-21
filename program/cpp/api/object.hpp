@@ -1,6 +1,6 @@
 #pragma once
-#include "variant.hpp"
 #include "callable.hpp"
+#include "string.hpp"
 #include "syscalls_fwd.hpp"
 
 struct Object {
@@ -28,6 +28,9 @@ struct Object {
 	Variant call(std::string_view method, Args... args);
 
 	template <typename... Args>
+	Variant call(std::string_view method, Args... args) const;
+
+	template <typename... Args>
 	void voidcall(std::string_view method, Args... args);
 
 	template <typename... Args>
@@ -40,15 +43,22 @@ struct Object {
 	/// @return A list of method names.
 	std::vector<std::string> get_method_list() const;
 
-	// Get a property of the node.
-	// @param name The name of the property.
-	// @return The value of the property.
+	/// @brief Get a property of the object.
+	/// @param name The name of the property.
+	/// @return The value of the property.
 	Variant get(const std::string &name) const;
 
-	// Set a property of the node.
-	// @param name The name of the property.
-	// @param value The value to set the property to.
+	/// @brief Set a property of the object.
+	/// @param name The name of the property.
+	/// @param value The value to set the property to.
 	void set(const std::string &name, const Variant &value);
+
+	/// @brief Assign a value to a property of the object, at the end of the frame.
+	/// @param property The name of the property.
+	/// @param value The value to set the property to.
+	void set_deferred(const String &property, const Variant &value) {
+		voidcall("set_deferred", property, value);
+	}
 
 	// Get a list of properties available on the object.
 	// @return A list of property names.
@@ -77,6 +87,26 @@ struct Object {
 	Node as_node() const;
 	Node2D as_node2d() const;
 	Node3D as_node3d() const;
+
+	// Other member functions
+	String get_class() const {
+		return this->call("get_class");
+	}
+	bool is_class(const String &name) const {
+		return this->call("is_class", name);
+	}
+	String to_string() const {
+		return this->call("to_string");
+	}
+	METHOD(get_meta_list);
+	METHOD(has_meta);
+	METHOD(set_meta);
+	METHOD(remove_meta);
+	METHOD(set_script);
+	METHOD(get_script);
+	METHOD(has_method);
+	METHOD(has_signal);
+	METHOD(has_user_signal);
 
 	// Get the object identifier.
 	uint64_t address() const { return m_address; }
@@ -108,6 +138,12 @@ template <typename... Args>
 inline Variant Object::call(std::string_view method, Args... args) {
 	Variant argv[] = {args...};
 	return callv(method, false, argv, sizeof...(Args));
+}
+
+template <typename... Args>
+inline Variant Object::call(std::string_view method, Args... args) const {
+	Variant argv[] = {args...};
+	return const_cast<Object *>(this)->callv(method, false, argv, sizeof...(Args));
 }
 
 template <typename... Args>
