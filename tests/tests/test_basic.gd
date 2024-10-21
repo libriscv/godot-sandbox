@@ -140,6 +140,7 @@ func test_types():
 	# Array, Dictionary and String as references
 	var a_pp : Array
 	assert_same(s.vmcall("test_array", a_pp), a_pp)
+	assert_eq_deep(a_pp, [1, "2", 3.0])
 	var d_pp : Dictionary
 	assert_same(s.vmcall("test_dict", d_pp), d_pp)
 	var s_pp : String = "12345"

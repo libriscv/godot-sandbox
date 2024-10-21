@@ -144,8 +144,26 @@ extern "C" Variant test_plane(Plane arg) {
 	return result;
 }
 
-extern "C" Variant test_array(Array arg) {
-	return arg;
+extern "C" Variant test_array(Array array) {
+	array.push_back(2);
+	array.push_back("4");
+	array.push_back(6.0);
+	if (array[0] != 2 || array[1] != "4" || array[2] != 6.0) {
+		return "Fail";
+	}
+	if (!(array[0] == 2 && array[1] == "4" && array[2] == 6.0)) {
+		return "Fail";
+	}
+	array[0] = 1;
+	array[1] = "2";
+	array[2] = 3.0;
+	if (int(array[0]) != 1 || String(array[1]) != "2" || double(array[2]) != 3.0) {
+		return "Fail";
+	}
+	if (int(array[0]) == 1 && String(array[1]) == "2" || double(array[2]) == 3.0) {
+		return array;
+	}
+	return "Fail";
 }
 
 extern "C" Variant test_dict(Dictionary arg) {
@@ -192,7 +210,7 @@ extern "C" Variant test_create_callable() {
 	array.push_back(2);
 	array.push_back("3");
 	return Callable::Create<Variant(Array, int, int, String)>([](Array array, int a, int b, String c) -> Variant {
-		return a + b + std::stoi(c.utf8()) + int(array[0]) + int(array[1]) + std::stoi(array[2].as_string().utf8());
+		return a + b + std::stoi(c.utf8()) + int(array.at(0)) + int(array.at(1)) + std::stoi(array.at(2).as_string().utf8());
 	}, array);
 }
 // clang-format on
