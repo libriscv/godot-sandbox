@@ -2,12 +2,12 @@
 
 #include "guest_datatypes.h"
 #include "sandbox_project_settings.h"
-#include <godot_cpp/classes/engine.hpp>
-#include <godot_cpp/classes/file_access.hpp>
-#include <godot_cpp/classes/os.hpp>
-#include <godot_cpp/classes/time.hpp>
-#include <godot_cpp/core/class_db.hpp>
-#include <godot_cpp/variant/utility_functions.hpp>
+#include <godot_compat/classes/engine.hpp>
+#include <godot_compat/classes/file_access.hpp>
+#include <godot_compat/classes/os.hpp>
+#include <godot_compat/classes/time.hpp>
+#include <godot_compat/core/class_db.hpp>
+#include <godot_compat/variant/utility_functions.hpp>
 
 using namespace godot;
 

@@ -1,8 +1,8 @@
 #pragma once
 
-#include <godot_cpp/classes/script_extension.hpp>
-#include <godot_cpp/classes/script_language.hpp>
-#include <godot_cpp/templates/hash_set.hpp>
+#include <godot_compat/classes/script_extension.hpp>
+#include <godot_compat/classes/script_language.hpp>
+#include <godot_compat/templates/hash_set.hpp>
 
 using namespace godot;
 class ELFScriptInstance;

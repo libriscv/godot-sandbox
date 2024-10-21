@@ -1,4 +1,4 @@
 #pragma once
-#include <godot_cpp/classes/script_language.hpp>
+#include <godot_compat/classes/script_language.hpp>
 
 godot::ScriptLanguage *get_elf_language();

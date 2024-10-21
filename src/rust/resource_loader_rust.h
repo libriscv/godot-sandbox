@@ -1,7 +1,7 @@
 #pragma once
 
-#include <godot_cpp/classes/resource_format_loader.hpp>
-#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_compat/classes/resource_format_loader.hpp>
+#include <godot_compat/classes/resource_loader.hpp>
 
 using namespace godot;
 

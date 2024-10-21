@@ -1,5 +1,5 @@
 #pragma once
-#include <godot_cpp/variant/variant.hpp>
+#include <godot_compat/variant/variant.hpp>
 using namespace godot;
 
 class Sandbox;

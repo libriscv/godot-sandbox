@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../docker.h"
-#include <godot_cpp/classes/script_extension.hpp>
-#include <godot_cpp/classes/script_language.hpp>
+#include <godot_compat/classes/script_extension.hpp>
+#include <godot_compat/classes/script_language.hpp>
 
 using namespace godot;
 

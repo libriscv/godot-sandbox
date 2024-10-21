@@ -1,17 +1,17 @@
 #include "guest_datatypes.h"
 #include "syscalls.h"
 
-#include <godot_cpp/classes/engine.hpp>
-#include <godot_cpp/classes/input.hpp>
-#include <godot_cpp/classes/node2d.hpp>
-#include <godot_cpp/classes/node3d.hpp>
-#include <godot_cpp/classes/packed_scene.hpp>
-#include <godot_cpp/classes/resource_loader.hpp>
-#include <godot_cpp/classes/scene_tree.hpp>
-#include <godot_cpp/classes/time.hpp>
-#include <godot_cpp/classes/timer.hpp>
-#include <godot_cpp/variant/utility_functions.hpp>
-#include <godot_cpp/variant/variant.hpp>
+#include <godot_compat/classes/engine.hpp>
+#include <godot_compat/classes/input.hpp>
+#include <godot_compat/classes/node2d.hpp>
+#include <godot_compat/classes/node3d.hpp>
+#include <godot_compat/classes/packed_scene.hpp>
+#include <godot_compat/classes/resource_loader.hpp>
+#include <godot_compat/classes/scene_tree.hpp>
+#include <godot_compat/classes/time.hpp>
+#include <godot_compat/classes/timer.hpp>
+#include <godot_compat/variant/utility_functions.hpp>
+#include <godot_compat/variant/variant.hpp>
 //#define ENABLE_SYSCALL_TRACE 1
 #include "syscalls_helpers.hpp"
 

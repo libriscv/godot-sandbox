@@ -1,9 +1,9 @@
 #include "guest_datatypes.h"
 #include "syscalls.h"
 
-#include <godot_cpp/variant/basis.hpp>
-#include <godot_cpp/variant/transform3d.hpp>
-#include <godot_cpp/variant/variant.hpp>
+#include <godot_compat/variant/basis.hpp>
+#include <godot_compat/variant/transform3d.hpp>
+#include <godot_compat/variant/variant.hpp>
 //#define ENABLE_SYSCALL_TRACE 1
 #include "syscalls_helpers.hpp"
 

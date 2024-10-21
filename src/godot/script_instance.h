@@ -23,12 +23,12 @@
 
 #pragma once
 
-#include <godot_cpp/classes/script.hpp>
-#include <godot_cpp/classes/script_language.hpp>
-#include <godot_cpp/templates/list.hpp>
-#include <godot_cpp/templates/pair.hpp>
-#include <godot_cpp/variant/string_name.hpp>
-#include <godot_cpp/variant/variant.hpp>
+#include <godot_compat/classes/script.hpp>
+#include <godot_compat/classes/script_language.hpp>
+#include <godot_compat/templates/list.hpp>
+#include <godot_compat/templates/pair.hpp>
+#include <godot_compat/variant/string_name.hpp>
+#include <godot_compat/variant/variant.hpp>
 
 using namespace godot;
 
