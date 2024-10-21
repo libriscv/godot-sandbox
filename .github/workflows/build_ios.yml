@@ -22,7 +22,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          repo: godotengine/godot
+          repository: godotengine/godot
           ref: 4.3
       - name: 🔗 GDExtension Build Single
         uses: ughuuu/godot-cpp-template/.github/actions/build@add-godot-repo-new-option

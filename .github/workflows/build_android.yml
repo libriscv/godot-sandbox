@@ -27,7 +27,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          repo: godotengine/godot
+          repository: godotengine/godot
           ref: 4.3
       - name: Install newer Clang
         run: |
