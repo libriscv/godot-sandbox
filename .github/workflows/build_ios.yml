@@ -19,8 +19,13 @@ jobs:
           submodules: true
           fetch-depth: 0
 
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repo: godotengine/godot
+          ref: 4.3
       - name: 🔗 GDExtension Build Single
-        uses: godotengine/godot-cpp-template/.github/actions/build@main
+        uses: ughuuu/godot-cpp-template/.github/actions/build@add-godot-repo-new-option
         with:
           platform: ios
           arch: ${{ matrix.arch }}

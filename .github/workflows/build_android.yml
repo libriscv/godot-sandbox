@@ -24,6 +24,11 @@ jobs:
         with:
           submodules: true
           fetch-depth: 0
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repo: godotengine/godot
+          ref: 4.3
       - name: Install newer Clang
         run: |
           wget https://apt.llvm.org/llvm.sh
@@ -31,12 +36,13 @@ jobs:
           sudo ./llvm.sh 17
 
       - name: 🔗 GDExtension Build
-        uses: godotengine/godot-cpp-template/.github/actions/build@main
+        uses: ughuuu/godot-cpp-template/.github/actions/build@add-godot-repo-new-option
         with:
           platform: android
           arch: ${{ matrix.arch }}
           build-target-type: template_release
           float-precision: ${{ matrix.precision }}
+          godot-repo: godot
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
