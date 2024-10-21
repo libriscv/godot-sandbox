@@ -17,7 +17,7 @@
  * - PackedColorArray
  * - PackedStringArray
  * 
- * @tparam T uint8_t, int32_t, int64_t, float, double, Vector2, Vector3, Color or String.
+ * @tparam T uint8_t, int32_t, int64_t, float, double, Vector2, Vector3, Color or std::string.
  */
 template <typename T>
 struct PackedArray {

@@ -20,21 +20,21 @@ struct Node2D : public Node {
 	Vector2 get_position() const;
 	/// @brief Set the position of the node.
 	/// @param value The new position of the node.
-	void set_position(const Variant &value);
+	void set_position(const Vector2 &value);
 
 	/// @brief Get the rotation of the node.
 	/// @return The rotation of the node.
-	float get_rotation() const;
+	real_t get_rotation() const;
 	/// @brief Set the rotation of the node.
 	/// @param value The new rotation of the node.
-	void set_rotation(const Variant &value);
+	void set_rotation(real_t value);
 
 	/// @brief Get the scale of the node.
 	/// @return The scale of the node.
 	Vector2 get_scale() const;
 	/// @brief Set the scale of the node.
 	/// @param value The new scale of the node.
-	void set_scale(const Variant &value);
+	void set_scale(const Vector2 &value);
 
 	/// @brief Get the skew of the node.
 	/// @return The skew of the node.

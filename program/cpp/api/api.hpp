@@ -1,11 +1,11 @@
 #pragma once
 #include <cstddef>
+#include "string.hpp"
 #include "node2d.hpp"
 #include "node3d.hpp"
 #include "array.hpp"
 #include "callable.hpp"
 #include "dictionary.hpp"
-#include "string.hpp"
 #include "basis.hpp"
 #include "transform2d.hpp"
 #include "transform3d.hpp"

@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 struct Variant;
+using real_t = float;
 
 #define EXTERN_SYSCALL(rval, name, ...) \
 	extern "C" rval name(__VA_ARGS__);

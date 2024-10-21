@@ -3,23 +3,21 @@
 #include <string_view>
 #include "syscalls_fwd.hpp"
 struct Variant;
+enum ClockDirection {
+	CLOCKWISE = 0,
+	COUNTERCLOCKWISE = 1,
+};
 
 struct Vector2 {
-	float x;
-	float y;
-
-	static Vector2 From(float x) noexcept {
-		return {x, x};
-	}
-	static Vector2 From(float x, float y) noexcept {
-		return {x, y};
-	}
+	real_t x;
+	real_t y;
 
 	float length() const noexcept;
+	float length_squared() const noexcept { return x * x + y * y; }
 	Vector2 limit_length(double length) const noexcept;
 
+	void normalize() { *this = normalized(); }
 	Vector2 normalized() const noexcept;
-	Vector2 rotated(float angle) const noexcept;
 	float distance_to(const Vector2& other) const noexcept;
 	Vector2 direction_to(const Vector2& other) const noexcept;
 	float dot(const Vector2& other) const noexcept;
@@ -34,7 +32,19 @@ struct Vector2 {
 	Vector2 bounce(const Vector2& normal) const noexcept;
 	Vector2 reflect(const Vector2& normal) const noexcept;
 
-	Vector2 rotated(const Vector2& by) const noexcept;
+	void rotate(real_t angle) noexcept { *this = rotated(angle); }
+	Vector2 rotated(real_t angle) const noexcept;
+
+	Vector2 project(const Vector2& vec) const noexcept;
+	Vector2 orthogonal() const noexcept { return {y, -x}; }
+	float aspect() const noexcept { return x / y; }
+
+	real_t operator [] (int index) const {
+		return index == 0 ? x : y;
+	}
+	real_t& operator [] (int index) {
+		return index == 0 ? x : y;
+	}
 
 	template <typename... Args>
 	Variant operator () (std::string_view method, Args&&... args);
@@ -63,6 +73,10 @@ struct Vector2 {
 	bool operator == (const Vector2& other) const {
 		return x == other.x && y == other.y;
 	}
+
+	constexpr Vector2() : x(0), y(0) {}
+	constexpr Vector2(real_t val) : x(val), y(val) {}
+	constexpr Vector2(real_t x, real_t y) : x(x), y(y) {}
 };
 struct Vector2i {
 	int x;
@@ -97,95 +111,41 @@ struct Vector2i {
 	}
 };
 struct Rect2 {
-	float x;
-	float y;
-	float w;
-	float h;
+	Vector2 position;
+	Vector2 size;
 
 	template <typename... Args>
 	Variant operator () (std::string_view method, Args&&... args);
-
-	Rect2& operator += (const Rect2& other) {
-		x += other.x;
-		y += other.y;
-		w += other.w;
-		h += other.h;
-		return *this;
-	}
-	Rect2& operator -= (const Rect2& other) {
-		x -= other.x;
-		y -= other.y;
-		w -= other.w;
-		h -= other.h;
-		return *this;
-	}
-	Rect2& operator *= (const Rect2& other) {
-		x *= other.x;
-		y *= other.y;
-		w *= other.w;
-		h *= other.h;
-		return *this;
-	}
-	Rect2& operator /= (const Rect2& other) {
-		x /= other.x;
-		y /= other.y;
-		w /= other.w;
-		h /= other.h;
-		return *this;
-	}
 
 	bool operator == (const Rect2& other) const {
 		return __builtin_memcmp(this, &other, sizeof(Rect2)) == 0;
 	}
+
+	constexpr Rect2() : position(), size() {}
+	constexpr Rect2(Vector2 position, Vector2 size) : position(position), size(size) {}
 };
 struct Rect2i {
-	int x;
-	int y;
-	int w;
-	int h;
+	Vector2i position;
+	Vector2i size;
 
 	template <typename... Args>
 	Variant operator () (std::string_view method, Args&&... args);
 
-	Rect2i& operator += (const Rect2i& other) {
-		x += other.x;
-		y += other.y;
-		w += other.w;
-		h += other.h;
-		return *this;
-	}
-	Rect2i& operator -= (const Rect2i& other) {
-		x -= other.x;
-		y -= other.y;
-		w -= other.w;
-		h -= other.h;
-		return *this;
-	}
-	Rect2i& operator *= (const Rect2i& other) {
-		x *= other.x;
-		y *= other.y;
-		w *= other.w;
-		h *= other.h;
-		return *this;
-	}
-	Rect2i& operator /= (const Rect2i& other) {
-		x /= other.x;
-		y /= other.y;
-		w /= other.w;
-		h /= other.h;
-		return *this;
-	}
-
 	bool operator == (const Rect2i& other) const {
 		return __builtin_memcmp(this, &other, sizeof(Rect2i)) == 0;
 	}
+
+	constexpr Rect2i() : position(), size() {}
+	constexpr Rect2i(Vector2i position, Vector2i size) : position(position), size(size) {}
 };
 struct Vector3 {
-	float x;
-	float y;
-	float z;
+	real_t x;
+	real_t y;
+	real_t z;
 
 	float length() const noexcept;
+	float length_squared() const noexcept { return this->dot(*this); }
+	void normalize() { *this = normalized(); }
 	Vector3 normalized() const noexcept;
 	float dot(const Vector3& other) const noexcept;
 	Vector3 cross(const Vector3& other) const noexcept;
@@ -226,6 +186,10 @@ struct Vector3 {
 	bool operator == (const Vector3& other) const {
 		return __builtin_memcmp(this, &other, sizeof(Vector3)) == 0;
 	}
+
+	constexpr Vector3() : x(0), y(0), z(0) {}
+	constexpr Vector3(real_t val) : x(val), y(val), z(val) {}
+	constexpr Vector3(real_t x, real_t y, real_t z) : x(x), y(y), z(z) {}
 };
 struct Vector3i {
 	int x;
@@ -263,12 +227,16 @@ struct Vector3i {
 	bool operator == (const Vector3i& other) const {
 		return __builtin_memcmp(this, &other, sizeof(Vector3i)) == 0;
 	}
+
+	constexpr Vector3i() : x(0), y(0), z(0) {}
+	constexpr Vector3i(int val) : x(val), y(val), z(val) {}
+	constexpr Vector3i(int x, int y, int z) : x(x), y(y), z(z) {}
 };
 struct Vector4 {
-	float x;
-	float y;
-	float z;
-	float w;
+	real_t x;
+	real_t y;
+	real_t z;
+	real_t w;
 
 	template <typename... Args>
 	Variant operator () (std::string_view method, Args&&... args);
@@ -305,6 +273,11 @@ struct Vector4 {
 	bool operator == (const Vector4& other) const {
 		return __builtin_memcmp(this, &other, sizeof(Vector4)) == 0;
 	}
+
+	constexpr Vector4() : x(0), y(0), z(0), w(0) {}
+	constexpr Vector4(real_t val) : x(val), y(val), z(val), w(val) {}
+	constexpr Vector4(real_t x, real_t y, real_t z, real_t w) : x(x), y(y), z(z), w(w) {}
+	constexpr Vector4(Vector3 v, real_t w) : x(v.x), y(v.y), z(v.z), w(w) {}
 };
 struct Vector4i {
 	int x;
@@ -375,32 +348,6 @@ inline auto operator / (const Vector2i& a, const Vector2i& b) noexcept {
 	return Vector2i{a.x / b.x, a.y / b.y};
 }
 
-inline auto operator + (const Rect2& a, const Rect2& b) noexcept {
-	return Rect2{a.x + b.x, a.y + b.y, a.w + b.w, a.h + b.h};
-}
-inline auto operator - (const Rect2& a, const Rect2& b) noexcept {
-	return Rect2{a.x - b.x, a.y - b.y, a.w - b.w, a.h - b.h};
-}
-inline auto operator * (const Rect2& a, const Rect2& b) noexcept {
-	return Rect2{a.x * b.x, a.y * b.y, a.w * b.w, a.h * b.h};
-}
-inline auto operator / (const Rect2& a, const Rect2& b) noexcept {
-	return Rect2{a.x / b.x, a.y / b.y, a.w / b.w, a.h / b.h};
-}
-
-inline auto operator + (const Rect2i& a, const Rect2i& b) noexcept {
-	return Rect2i{a.x + b.x, a.y + b.y, a.w + b.w, a.h + b.h};
-}
-inline auto operator - (const Rect2i& a, const Rect2i& b) noexcept {
-	return Rect2i{a.x - b.x, a.y - b.y, a.w - b.w, a.h - b.h};
-}
-inline auto operator * (const Rect2i& a, const Rect2i& b) noexcept {
-	return Rect2i{a.x * b.x, a.y * b.y, a.w * b.w, a.h * b.h};
-}
-inline auto operator / (const Rect2i& a, const Rect2i& b) noexcept {
-	return Rect2i{a.x / b.x, a.y / b.y, a.w / b.w, a.h / b.h};
-}
-
 inline auto operator + (const Vector3& a, const Vector3& b) noexcept {
 	return Vector3{a.x + b.x, a.y + b.y, a.z + b.z};
 }
@@ -453,16 +400,16 @@ inline auto operator / (const Vector4i& a, const Vector4i& b) noexcept {
 	return Vector4i{a.x / b.x, a.y / b.y, a.z / b.z, a.w / b.w};
 }
 
-inline auto operator + (const Vector2& a, float b) noexcept {
+inline auto operator + (const Vector2& a, real_t b) noexcept {
 	return Vector2{a.x + b, a.y + b};
 }
-inline auto operator - (const Vector2& a, float b) noexcept {
+inline auto operator - (const Vector2& a, real_t b) noexcept {
 	return Vector2{a.x - b, a.y - b};
 }
-inline auto operator * (const Vector2& a, float b) noexcept {
+inline auto operator * (const Vector2& a, real_t b) noexcept {
 	return Vector2{a.x * b, a.y * b};
 }
-inline auto operator / (const Vector2& a, float b) noexcept {
+inline auto operator / (const Vector2& a, real_t b) noexcept {
 	return Vector2{a.x / b, a.y / b};
 }
 
@@ -479,42 +426,16 @@ inline auto operator / (const Vector2i& a, int b) noexcept {
 	return Vector2i{a.x / b, a.y / b};
 }
 
-inline auto operator + (const Rect2& a, float b) noexcept {
-	return Rect2{a.x + b, a.y + b, a.w + b, a.h + b};
-}
-inline auto operator - (const Rect2& a, float b) noexcept {
-	return Rect2{a.x - b, a.y - b, a.w - b, a.h - b};
-}
-inline auto operator * (const Rect2& a, float b) noexcept {
-	return Rect2{a.x * b, a.y * b, a.w * b, a.h * b};
-}
-inline auto operator / (const Rect2& a, float b) noexcept {
-	return Rect2{a.x / b, a.y / b, a.w / b, a.h / b};
-}
-
-inline auto operator + (const Rect2i& a, int b) noexcept {
-	return Rect2i{a.x + b, a.y + b, a.w + b, a.h + b};
-}
-inline auto operator - (const Rect2i& a, int b) noexcept {
-	return Rect2i{a.x - b, a.y - b, a.w - b, a.h - b};
-}
-inline auto operator * (const Rect2i& a, int b) noexcept {
-	return Rect2i{a.x * b, a.y * b, a.w * b, a.h * b};
-}
-inline auto operator / (const Rect2i& a, int b) noexcept {
-	return Rect2i{a.x / b, a.y / b, a.w / b, a.h / b};
-}
-
-inline auto operator + (const Vector3& a, float b) noexcept {
+inline auto operator + (const Vector3& a, real_t b) noexcept {
 	return Vector3{a.x + b, a.y + b, a.z + b};
 }
-inline auto operator - (const Vector3& a, float b) noexcept {
+inline auto operator - (const Vector3& a, real_t b) noexcept {
 	return Vector3{a.x - b, a.y - b, a.z - b};
 }
-inline auto operator * (const Vector3& a, float b) noexcept {
+inline auto operator * (const Vector3& a, real_t b) noexcept {
 	return Vector3{a.x * b, a.y * b, a.z * b};
 }
-inline auto operator / (const Vector3& a, float b) noexcept {
+inline auto operator / (const Vector3& a, real_t b) noexcept {
 	return Vector3{a.x / b, a.y / b, a.z / b};
 }
 
@@ -531,16 +452,16 @@ inline auto operator / (const Vector3i& a, int b) noexcept {
 	return Vector3i{a.x / b, a.y / b, a.z / b};
 }
 
-inline auto operator + (const Vector4& a, float b) noexcept {
+inline auto operator + (const Vector4& a, real_t b) noexcept {
 	return Vector4{a.x + b, a.y + b, a.z + b, a.w + b};
 }
-inline auto operator - (const Vector4& a, float b) noexcept {
+inline auto operator - (const Vector4& a, real_t b) noexcept {
 	return Vector4{a.x - b, a.y - b, a.z - b, a.w - b};
 }
-inline auto operator * (const Vector4& a, float b) noexcept {
+inline auto operator * (const Vector4& a, real_t b) noexcept {
 	return Vector4{a.x * b, a.y * b, a.z * b, a.w * b};
 }
-inline auto operator / (const Vector4& a, float b) noexcept {
+inline auto operator / (const Vector4& a, real_t b) noexcept {
 	return Vector4{a.x / b, a.y / b, a.z / b, a.w / b};
 }
 
@@ -642,8 +563,8 @@ namespace std
 		std::size_t operator()(const Vector2 &v) const
 		{
 			std::size_t seed = 0;
-			hash_combine(seed, std::hash<float>{}(v.x));
-			hash_combine(seed, std::hash<float>{}(v.y));
+			hash_combine(seed, std::hash<real_t>{}(v.x));
+			hash_combine(seed, std::hash<real_t>{}(v.y));
 			return seed;
 		}
 	};
@@ -666,10 +587,10 @@ namespace std
 		std::size_t operator()(const Rect2 &r) const
 		{
 			std::size_t seed = 0;
-			hash_combine(seed, std::hash<float>{}(r.x));
-			hash_combine(seed, std::hash<float>{}(r.y));
-			hash_combine(seed, std::hash<float>{}(r.w));
-			hash_combine(seed, std::hash<float>{}(r.h));
+			hash_combine(seed, std::hash<real_t>{}(r.position.x));
+			hash_combine(seed, std::hash<real_t>{}(r.position.y));
+			hash_combine(seed, std::hash<real_t>{}(r.size.x));
+			hash_combine(seed, std::hash<real_t>{}(r.size.y));
 			return seed;
 		}
 	};
@@ -680,10 +601,10 @@ namespace std
 		std::size_t operator()(const Rect2i &r) const
 		{
 			std::size_t seed = 0;
-			hash_combine(seed, std::hash<int>{}(r.x));
-			hash_combine(seed, std::hash<int>{}(r.y));
-			hash_combine(seed, std::hash<int>{}(r.w));
-			hash_combine(seed, std::hash<int>{}(r.h));
+			hash_combine(seed, std::hash<int>{}(r.position.x));
+			hash_combine(seed, std::hash<int>{}(r.position.y));
+			hash_combine(seed, std::hash<int>{}(r.size.x));
+			hash_combine(seed, std::hash<int>{}(r.size.y));
 			return seed;
 		}
 	};
@@ -723,10 +644,10 @@ namespace std
 		std::size_t operator()(const Vector4 &v) const
 		{
 			std::size_t seed = 0;
-			hash_combine(seed, std::hash<float>{}(v.x));
-			hash_combine(seed, std::hash<float>{}(v.y));
-			hash_combine(seed, std::hash<float>{}(v.z));
-			hash_combine(seed, std::hash<float>{}(v.w));
+			hash_combine(seed, std::hash<real_t>{}(v.x));
+			hash_combine(seed, std::hash<real_t>{}(v.y));
+			hash_combine(seed, std::hash<real_t>{}(v.z));
+			hash_combine(seed, std::hash<real_t>{}(v.w));
 			return seed;
 		}
 	};

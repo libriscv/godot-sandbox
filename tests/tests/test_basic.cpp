@@ -108,28 +108,40 @@ extern "C" Variant test_nodepath(NodePath arg) {
 }
 
 extern "C" Variant test_vec2(Vector2 arg) {
-	return arg;
+	Vector2 result = arg;
+	return result;
 }
 extern "C" Variant test_vec2i(Vector2i arg) {
-	return arg;
+	Vector2i result = arg;
+	return result;
 }
 
 extern "C" Variant test_vec3(Vector3 arg) {
-	return arg;
+	Vector3 result = arg;
+	return result;
 }
 extern "C" Variant test_vec3i(Vector3i arg) {
-	return arg;
+	Vector3i result = arg;
+	return result;
 }
 
 extern "C" Variant test_vec4(Vector4 arg) {
-	return arg;
+	Vector4 result = arg;
+	return result;
 }
 extern "C" Variant test_vec4i(Vector4i arg) {
-	return arg;
+	Vector4i result = arg;
+	return result;
 }
 
 extern "C" Variant test_color(Color arg) {
-	return arg;
+	Color result = arg;
+	return result;
+}
+
+extern "C" Variant test_plane(Plane arg) {
+	Plane result = arg;
+	return result;
 }
 
 extern "C" Variant test_array(Array arg) {
@@ -145,7 +157,8 @@ extern "C" Variant test_sub_dictionary(Dictionary dict) {
 }
 
 extern "C" Variant test_object(Object arg) {
-	return arg;
+	Object result = arg;
+	return result;
 }
 
 extern "C" Variant test_basis(Basis basis) {

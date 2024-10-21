@@ -27,6 +27,7 @@ struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
 
 struct Object; struct Node; struct Node2D; struct Node3D; struct Array; struct Dictionary; union String; struct Callable; struct Basis; struct Transform2D; struct Transform3D; struct Quaternion;
 #include "color.hpp"
+#include "plane.hpp"
 #include "packed_array.hpp"
 #include "vector.hpp"
 
@@ -224,6 +225,8 @@ struct Variant
 	Rect2i &r2i();
 	const Color &color() const;
 	Color &color();
+	const Plane &plane() const;
+	Plane &plane();
 
 	operator Vector2() const { return v2(); }
 	operator Vector2i() const { return v2i(); }
@@ -234,6 +237,7 @@ struct Variant
 	operator Rect2() const { return r2(); }
 	operator Rect2i() const { return r2i(); }
 	operator Color() const { return color(); }
+	operator Plane() const { return plane(); }
 
 	void callp(std::string_view method, const Variant *args, int argcount, Variant &r_ret);
 	void voidcallp(std::string_view method, const Variant *args, int argcount);
@@ -280,15 +284,8 @@ private:
 		int64_t  i;
 		bool     b;
 		double   f;
-		Vector2  v2;
-		Vector2i v2i;
-		Vector3  v3;
-		Vector3i v3i;
-		Vector4  v4;
-		Vector4i v4i;
-		Rect2    r2;
-		Rect2i   r2i;
-		Color    color;
+		real_t   v4[4];
+		int32_t  v4i[4];
 	} v;
 
 	void internal_create_string(Type type, const std::string &value);
@@ -316,39 +313,67 @@ inline Variant::Variant(T value)
 	}
 	else if constexpr (std::is_same_v<T, Vector2>) {
 		m_type = VECTOR2;
-		v.v2 = value;
+		v.v4[0] = value.x;
+		v.v4[1] = value.y;
 	}
 	else if constexpr (std::is_same_v<T, Vector2i>) {
 		m_type = VECTOR2I;
-		v.v2i = value;
+		v.v4i[0] = value.x;
+		v.v4i[1] = value.y;
 	}
 	else if constexpr (std::is_same_v<T, Vector3>) {
 		m_type = VECTOR3;
-		v.v3 = value;
+		v.v4[0] = value.x;
+		v.v4[1] = value.y;
+		v.v4[2] = value.z;
 	}
 	else if constexpr (std::is_same_v<T, Vector3i>) {
 		m_type = VECTOR3I;
-		v.v3i = value;
+		v.v4i[0] = value.x;
+		v.v4i[1] = value.y;
+		v.v4i[2] = value.z;
 	}
 	else if constexpr (std::is_same_v<T, Vector4>) {
 		m_type = VECTOR4;
-		v.v4 = value;
+		v.v4[0] = value.x;
+		v.v4[1] = value.y;
+		v.v4[2] = value.z;
+		v.v4[3] = value.w;
 	}
 	else if constexpr (std::is_same_v<T, Vector4i>) {
 		m_type = VECTOR4I;
-		v.v4i = value;
+		v.v4i[0] = value.x;
+		v.v4i[1] = value.y;
+		v.v4i[2] = value.z;
+		v.v4i[3] = value.w;
 	}
 	else if constexpr (std::is_same_v<T, Rect2>) {
 		m_type = RECT2;
-		v.r2 = value;
+		v.v4[0] = value.position.x;
+		v.v4[1] = value.position.y;
+		v.v4[2] = value.size.x;
+		v.v4[3] = value.size.y;
 	}
 	else if constexpr (std::is_same_v<T, Rect2i>) {
 		m_type = RECT2I;
-		v.r2i = value;
+		v.v4i[0] = value.position.x;
+		v.v4i[1] = value.position.y;
+		v.v4i[2] = value.size.x;
+		v.v4i[3] = value.size.y;
 	}
 	else if constexpr (std::is_same_v<T, Color>) {
 		m_type = COLOR;
-		v.color = value;
+		v.v4[0] = value.r;
+		v.v4[1] = value.g;
+		v.v4[2] = value.b;
+		v.v4[3] = value.a;
+	}
+	else if constexpr (std::is_same_v<T, Plane>) {
+		m_type = PLANE;
+		v.v4[0] = value.normal.x;
+		v.v4[1] = value.normal.y;
+		v.v4[2] = value.normal.z;
+		v.v4[3] = value.d;
 	}
 	else if constexpr (is_u32string<T>::value || std::is_same_v<T, std::u32string>) {
 		internal_create_u32string(STRING, value);
@@ -520,127 +545,141 @@ inline std::u32string Variant::as_std_u32string() const {
 inline const Vector2 &Variant::v2() const
 {
 	if (m_type == VECTOR2)
-		return v.v2;
+		return *reinterpret_cast<const Vector2 *>(v.v4);
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector2", this);
 }
 
 inline Vector2 &Variant::v2()
 {
 	if (m_type == VECTOR2)
-		return v.v2;
+		return *reinterpret_cast<Vector2 *>(v.v4);
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector2", this);
 }
 
 inline const Vector2i &Variant::v2i() const
 {
 	if (m_type == VECTOR2I)
-		return v.v2i;
+		return *reinterpret_cast<const Vector2i *>(v.v4i);
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector2i", this);
 }
 
 inline Vector2i &Variant::v2i()
 {
 	if (m_type == VECTOR2I)
-		return v.v2i;
+		return *reinterpret_cast<Vector2i *>(v.v4i);
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector2o", this);
 }
 
 inline const Vector3 &Variant::v3() const
 {
 	if (m_type == VECTOR3)
-		return v.v3;
+		return *reinterpret_cast<const Vector3 *>(v.v4);
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector3", this);
 }
 
 inline Vector3 &Variant::v3()
 {
 	if (m_type == VECTOR3)
-		return v.v3;
+		return *reinterpret_cast<Vector3 *>(v.v4);
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector3", this);
 }
 
 inline const Vector3i &Variant::v3i() const
 {
 	if (m_type == VECTOR3I)
-		return v.v3i;
+		return *reinterpret_cast<const Vector3i *>(v.v4i);
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector3i", this);
 }
 
 inline Vector3i &Variant::v3i()
 {
 	if (m_type == VECTOR3I)
-		return v.v3i;
+		return *reinterpret_cast<Vector3i *>(v.v4i);
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector3i", this);
 }
 
 inline const Vector4 &Variant::v4() const
 {
 	if (m_type == VECTOR4)
-		return v.v4;
+		return *reinterpret_cast<const Vector4 *>(v.v4);
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector4", this);
 }
 
 inline Vector4 &Variant::v4()
 {
 	if (m_type == VECTOR4)
-		return v.v4;
+		return *reinterpret_cast<Vector4 *>(v.v4);
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector4", this);
 }
 
 inline const Vector4i &Variant::v4i() const
 {
 	if (m_type == VECTOR4I)
-		return v.v4i;
+		return *reinterpret_cast<const Vector4i *>(v.v4i);
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector4i", this);
 }
 
 inline Vector4i &Variant::v4i()
 {
 	if (m_type == VECTOR4I)
-		return v.v4i;
+		return *reinterpret_cast<Vector4i *>(v.v4i);
 	api_throw("std::bad_cast", "Failed to cast Variant to Vector4i", this);
 }
 
 inline const Rect2& Variant::r2() const
 {
 	if (m_type == RECT2)
-		return v.r2;
+		return *reinterpret_cast<const Rect2 *>(v.v4);
 	api_throw("std::bad_cast", "Failed to cast Variant to Rect2", this);
 }
 
 inline Rect2 &Variant::r2()
 {
 	if (m_type == RECT2)
-		return v.r2;
+		return *reinterpret_cast<Rect2 *>(v.v4);
 	api_throw("std::bad_cast", "Failed to cast Variant to Rect2", this);
 }
 
 inline const Rect2i &Variant::r2i() const
 {
 	if (m_type == RECT2I)
-		return v.r2i;
+		return *reinterpret_cast<const Rect2i *>(v.v4i);
 	api_throw("std::bad_cast", "Failed to cast Variant to Rect2i", this);
 }
 
 inline Rect2i &Variant::r2i()
 {
 	if (m_type == RECT2I)
-		return v.r2i;
+		return *reinterpret_cast<Rect2i *>(v.v4i);
 	api_throw("std::bad_cast", "Failed to cast Variant to Rect2i", this);
 }
 
 inline const Color &Variant::color() const
 {
 	if (m_type == COLOR)
-		return v.color;
+		return *reinterpret_cast<const Color *>(v.v4);
 	api_throw("std::bad_cast", "Failed to cast Variant to Color", this);
 }
 
 inline Color &Variant::color()
 {
 	if (m_type == COLOR)
-		return v.color;
+		return *reinterpret_cast<Color *>(v.v4);
 	api_throw("std::bad_cast", "Failed to cast Variant to Color", this);
+}
+
+inline const Plane &Variant::plane() const
+{
+	if (m_type == PLANE)
+		return reinterpret_cast<const Plane &>(v.v4);
+	api_throw("std::bad_cast", "Failed to cast Variant to Plane", this);
+}
+
+inline Plane &Variant::plane()
+{
+	if (m_type == PLANE)
+		return reinterpret_cast<Plane &>(v.v4);
+	api_throw("std::bad_cast", "Failed to cast Variant to Plane", this);
 }
 
 inline PackedArray<uint8_t> Variant::as_byte_array() const {
@@ -874,6 +913,11 @@ inline Variant Rect2i::operator () (std::string_view method, Args&&... args) {
 
 template <typename... Args>
 inline Variant Color::operator () (std::string_view method, Args&&... args) {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+inline Variant Plane::operator () (std::string_view method, Args&&... args) {
 	return Variant(*this).method_call(method, std::forward<Args>(args)...);
 }
 
