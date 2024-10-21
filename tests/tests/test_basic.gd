@@ -517,3 +517,13 @@ func callable_callee(a1, a2, a3):
 	assert(a2 == 2)
 	assert(a3 == "3")
 	callable_was_called = true
+
+func test_object_properties():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	# Test PropertyProxy
+	assert_eq(s.has_function("test_property_proxy"), true)
+	assert_eq(s.vmcall("test_property_proxy"), "TestOK", "PropertyProxy works")
+
+	s.queue_free()

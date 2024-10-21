@@ -305,7 +305,7 @@ extern "C" Variant access_a_parent(Node n) {
 }
 
 extern "C" Variant creates_a_node() {
-	return Node::create("test");
+	return Node::Create("test");
 }
 
 extern "C" Variant free_self() {
@@ -314,8 +314,8 @@ extern "C" Variant free_self() {
 }
 
 extern "C" Variant access_an_invalid_child_node() {
-	Node n = Node::create("test");
-	Node c = Node::create("child");
+	Node n = Node::Create("test");
+	Node c = Node::Create("child");
 	n.add_child(c);
 	c("free");
 	c.set_name("child2");
@@ -325,4 +325,20 @@ extern "C" Variant access_an_invalid_child_node() {
 extern "C" Variant access_an_invalid_child_resource(String path) {
 	Variant resource = load(path.utf8());
 	return resource.method_call("instantiate");
+}
+
+extern "C" Variant test_property_proxy() {
+	Node node = Node::Create("Fail 1");
+	node.name() = "Fail 1.5";
+	node.set_name("Fail 2");
+	if (node.get_name() == "Fail 2") {
+		node.set("name", "Fail 3");
+		if (node.get("name") == "Fail 3") {
+			node.name() = "TestOK";
+			if (node.name() != "TestOK") {
+				return "Fail 4";
+			}
+		}
+	}
+	return node.get_name();
 }

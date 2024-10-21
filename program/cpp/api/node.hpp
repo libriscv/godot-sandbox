@@ -76,7 +76,17 @@ struct Node : public Object {
 	/// @brief Create a new Node object.
 	/// @param path The path to the Node object.
 	/// @return The Node object.
-	static Node create(std::string_view path);
+	static Node Create(std::string_view path);
+
+	//- Properties -//
+	PROPERTY(name);
+	PROPERTY(owner);
+	PROPERTY(unique_name_in_owner);
+	PROPERTY(editor_description);
+	PROPERTY(physics_interpolation_mode);
+	PROPERTY(process_mode);
+	PROPERTY(process_priority);
+
 };
 
 inline Node Variant::as_node() const {

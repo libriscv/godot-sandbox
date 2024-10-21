@@ -85,6 +85,6 @@ Node Node::duplicate() const {
 	return result.as_node();
 }
 
-Node Node::create(std::string_view path) {
+Node Node::Create(std::string_view path) {
 	return Node(sys_node_create(Node_Create_Shortlist::CREATE_NODE, nullptr, 0, path.data(), path.size()));
 }
