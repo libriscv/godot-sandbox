@@ -174,6 +174,10 @@ extern "C" Variant test_sub_dictionary(Dictionary dict) {
 	return Dictionary(dict)["1"];
 }
 
+extern "C" Variant test_rid(RID rid) {
+	return rid;
+}
+
 extern "C" Variant test_object(Object arg) {
 	Object result = arg;
 	return result;

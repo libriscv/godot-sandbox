@@ -119,7 +119,9 @@ func test_types():
 	assert_eq(s.vmcall("test_plane", Plane(Vector3(1, 2, 3), 4)), Plane(Vector3(1, 2, 3), 4)) # Plane
 	assert_eq(s.vmcall("test_quaternion", Quaternion(1, 2, 3, 4)), Quaternion(1, 2, 3, 4)) # Quaternion
 	assert_eq(s.vmcall("test_basis", Basis(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9))), Basis(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9))) # Basis
-	assert_eq(s.vmcall("test_ping_pong", RID()), RID()) # RID
+	# RID - gets converted to an integer
+	var rid : RID = Sandbox_TestsTests.get_rid()
+	assert_same(s.vmcall("test_rid", rid), rid) # RID
 
 	# Nodes
 	var n : Node = Node.new()

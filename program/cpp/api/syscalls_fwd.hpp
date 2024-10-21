@@ -6,6 +6,10 @@ struct Object;
 struct Variant;
 using real_t = float;
 
+struct RID {
+	int64_t index;
+};
+
 #define EXTERN_SYSCALL(rval, name, ...) \
 	extern "C" rval name(__VA_ARGS__);
 

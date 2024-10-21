@@ -486,6 +486,7 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 			case Variant::STRING:
 			case Variant::STRING_NAME:
 			case Variant::NODE_PATH:
+			case Variant::RID:
 			case Variant::CALLABLE:
 			case Variant::TRANSFORM2D:
 			case Variant::BASIS:

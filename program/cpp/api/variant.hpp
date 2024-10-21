@@ -131,6 +131,7 @@ struct Variant
 	Variant(const Dictionary&);
 	Variant(const String&);
 	Variant(const Callable&);
+	Variant(const ::RID&);
 	Variant(const Object&);
 	Variant(const Node&);
 	Variant(const Node2D&);
@@ -389,6 +390,11 @@ inline Variant::Variant(T value)
 }
 
 #define Nil Variant()
+
+inline Variant::Variant(const ::RID& rid) {
+	m_type = RID;
+	v.i = rid.index;
+}
 
 inline Variant::Variant(const PackedArray<uint8_t> &array)
 {

@@ -330,6 +330,7 @@ inline bool GuestVariant::is_scoped_variant() const noexcept {
 		case Variant::CALLABLE:
 		case Variant::STRING_NAME:
 		case Variant::NODE_PATH:
+		case Variant::RID:
 		case Variant::PACKED_BYTE_ARRAY:
 		case Variant::PACKED_FLOAT32_ARRAY:
 		case Variant::PACKED_FLOAT64_ARRAY:
