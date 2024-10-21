@@ -144,8 +144,26 @@ extern "C" Variant test_plane(Plane arg) {
 	return result;
 }
 
-extern "C" Variant test_array(Array arg) {
-	return arg;
+extern "C" Variant test_array(Array array) {
+	array.push_back(2);
+	array.push_back("4");
+	array.push_back(6.0);
+	if (array[0] != 2 || array[1] != "4" || array[2] != 6.0) {
+		return "Fail";
+	}
+	if (!(array[0] == 2 && array[1] == "4" && array[2] == 6.0)) {
+		return "Fail";
+	}
+	array[0] = 1;
+	array[1] = "2";
+	array[2] = 3.0;
+	if (int(array[0]) != 1 || String(array[1]) != "2" || double(array[2]) != 3.0) {
+		return "Fail";
+	}
+	if (int(array[0]) == 1 && String(array[1]) == "2" || double(array[2]) == 3.0) {
+		return array;
+	}
+	return "Fail";
 }
 
 extern "C" Variant test_dict(Dictionary arg) {
@@ -192,7 +210,7 @@ extern "C" Variant test_create_callable() {
 	array.push_back(2);
 	array.push_back("3");
 	return Callable::Create<Variant(Array, int, int, String)>([](Array array, int a, int b, String c) -> Variant {
-		return a + b + std::stoi(c.utf8()) + int(array[0]) + int(array[1]) + std::stoi(array[2].as_string().utf8());
+		return a + b + std::stoi(c.utf8()) + int(array.at(0)) + int(array.at(1)) + std::stoi(array.at(2).as_string().utf8());
 	}, array);
 }
 // clang-format on
@@ -305,7 +323,7 @@ extern "C" Variant access_a_parent(Node n) {
 }
 
 extern "C" Variant creates_a_node() {
-	return Node::create("test");
+	return Node::Create("test");
 }
 
 extern "C" Variant free_self() {
@@ -314,8 +332,8 @@ extern "C" Variant free_self() {
 }
 
 extern "C" Variant access_an_invalid_child_node() {
-	Node n = Node::create("test");
-	Node c = Node::create("child");
+	Node n = Node::Create("test");
+	Node c = Node::Create("child");
 	n.add_child(c);
 	c("free");
 	c.set_name("child2");
@@ -325,4 +343,20 @@ extern "C" Variant access_an_invalid_child_node() {
 extern "C" Variant access_an_invalid_child_resource(String path) {
 	Variant resource = load(path.utf8());
 	return resource.method_call("instantiate");
+}
+
+extern "C" Variant test_property_proxy() {
+	Node node = Node::Create("Fail 1");
+	node.name() = "Fail 1.5";
+	node.set_name("Fail 2");
+	if (node.get_name() == "Fail 2") {
+		node.set("name", "Fail 3");
+		if (node.get("name") == "Fail 3") {
+			node.name() = "TestOK";
+			if (node.name() != "TestOK") {
+				return "Fail 4";
+			}
+		}
+	}
+	return node.get_name();
 }

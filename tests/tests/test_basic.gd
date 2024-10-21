@@ -140,6 +140,7 @@ func test_types():
 	# Array, Dictionary and String as references
 	var a_pp : Array
 	assert_same(s.vmcall("test_array", a_pp), a_pp)
+	assert_eq_deep(a_pp, [1, "2", 3.0])
 	var d_pp : Dictionary
 	assert_same(s.vmcall("test_dict", d_pp), d_pp)
 	var s_pp : String = "12345"
@@ -517,3 +518,13 @@ func callable_callee(a1, a2, a3):
 	assert(a2 == 2)
 	assert(a3 == "3")
 	callable_was_called = true
+
+func test_object_properties():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	# Test PropertyProxy
+	assert_eq(s.has_function("test_property_proxy"), true)
+	assert_eq(s.vmcall("test_property_proxy"), "TestOK", "PropertyProxy works")
+
+	s.queue_free()

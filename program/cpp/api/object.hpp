@@ -46,12 +46,12 @@ struct Object {
 	/// @brief Get a property of the object.
 	/// @param name The name of the property.
 	/// @return The value of the property.
-	Variant get(const std::string &name) const;
+	Variant get(std::string_view name) const;
 
 	/// @brief Set a property of the object.
 	/// @param name The name of the property.
 	/// @param value The value to set the property to.
-	void set(const std::string &name, const Variant &value);
+	void set(std::string_view name, const Variant &value);
 
 	/// @brief Assign a value to a property of the object, at the end of the frame.
 	/// @param property The name of the property.
@@ -215,3 +215,26 @@ inline void Object::voidcallv(std::string_view method, bool deferred, const Vari
 inline void Object::connect(const std::string &signal, Callable method) {
 	this->call("connect", signal, method);
 }
+
+struct PropertyProxy {
+	Object obj;
+	const std::string_view property;
+
+	constexpr PropertyProxy(Object obj, std::string_view property)
+			: obj(obj), property(property) {}
+
+	PropertyProxy &operator=(const Variant &v) {
+		obj.set(property, v);
+		return *this;
+	}
+
+	bool operator== (const Variant &v) const { return obj.get(property) == v; }
+	bool operator!=(const Variant &v) const { return obj.get(property) != v; }
+
+	operator Variant() {
+		return obj.get(property);
+	}
+};
+#define PROPERTY(name)                                  \
+	auto name() { return PropertyProxy(*this, #name); } \
+	auto name() const { return PropertyProxy(*this, #name); }
