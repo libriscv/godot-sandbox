@@ -29,6 +29,7 @@ jobs:
         with:
           repository: godotengine/godot
           ref: 4.3
+          path: godot
       - name: Install newer Clang
         run: |
           wget https://apt.llvm.org/llvm.sh

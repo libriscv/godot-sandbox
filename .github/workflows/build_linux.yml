@@ -25,6 +25,7 @@ jobs:
         with:
           repository: godotengine/godot
           ref: 4.3
+          path: godot
       - name: Compiler Fix
         shell: bash
         run: |
