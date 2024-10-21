@@ -3,6 +3,7 @@
 #include "variant.hpp"
 
 class ArrayIterator;
+class ArrayProxy;
 
 struct Array {
 	constexpr Array() {} // DON'T TOUCH
@@ -29,10 +30,10 @@ struct Array {
 	void sort();
 
 	// Array access
-	Variant operator[](int idx) const;
-	Variant at(int idx) const { return (*this)[idx]; }
-	Variant front() const { return (*this)[0]; }
-	Variant back() const { return (*this)[size() - 1]; }
+	ArrayProxy operator[](int idx) const;
+	Variant at(int idx) const;
+	Variant front() const;
+	Variant back() const;
 	bool has(const Variant &value) const;
 
 	std::vector<Variant> to_vector() const;
@@ -112,6 +113,48 @@ inline Variant::Variant(const Array& a) {
 inline Variant::operator Array() const {
 	return as_array();
 }
+
+
+struct ArrayProxy {
+	ArrayProxy(const Array &array, int idx)
+		: m_array(Array::from_variant_index(array.get_variant_index())), m_idx(idx) {}
+
+	ArrayProxy &operator =(const Variant &value);
+
+	template <typename T>
+	ArrayProxy &operator =(const T &value) {
+		return operator =(Variant(value));
+	}
+
+	template <typename T>
+	operator T() const { return get(); }
+
+	operator Variant() const { return get(); }
+
+	bool operator ==(const Variant &value) const { return get() == value; }
+	bool operator !=(const Variant &value) const { return get() != value; }
+	bool operator <(const Variant &value) const { return get() < value; }
+
+	Variant get() const;
+
+private:
+	Array m_array;
+	int m_idx;
+};
+
+inline ArrayProxy Array::operator[](int idx) const {
+	return ArrayProxy(*this, idx);
+}
+inline Variant Array::at(int idx) const {
+	return ArrayProxy(*this, idx).get();
+}
+inline Variant Array::front() const {
+	return ArrayProxy(*this, 0).get();
+}
+inline Variant Array::back() const {
+	return ArrayProxy(*this, size() - 1).get();
+}
+
 
 class ArrayIterator {
 public:

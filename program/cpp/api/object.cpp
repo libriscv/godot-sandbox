@@ -20,16 +20,16 @@ std::vector<std::string> Object::get_method_list() const {
 	return methods;
 }
 
-Variant Object::get(const std::string &name) const {
+Variant Object::get(std::string_view name) const {
 	Variant vars[2];
-	vars[0] = name;
+	vars[0] = String(name);
 	sys_obj(Object_Op::GET, address(), vars);
 	return std::move(vars[1]);
 }
 
-void Object::set(const std::string &name, const Variant &value) {
+void Object::set(std::string_view name, const Variant &value) {
 	Variant vars[2];
-	vars[0] = name;
+	vars[0] = String(name);
 	vars[1] = value;
 	sys_obj(Object_Op::SET, address(), vars);
 }

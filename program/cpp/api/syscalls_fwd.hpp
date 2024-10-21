@@ -1,6 +1,8 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
+struct Object;
 struct Variant;
 using real_t = float;
 

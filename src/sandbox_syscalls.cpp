@@ -1296,13 +1296,21 @@ APICALL(api_array_at) {
 	}
 
 	godot::Array array = opt_array.value()->operator Array();
-	if (idx < 0 || idx >= array.size()) {
-		ERR_PRINT("Array index out of bounds");
-		throw std::runtime_error("Array index out of bounds");
+	const bool set_mode = idx < 0;
+	if (set_mode) {
+		idx = -idx - 1;
+	}
+	if (idx >= array.size()) {
+		ERR_PRINT("Array index out of bounds: " + itos(idx));
+		throw std::runtime_error("Array index out of bounds: " + std::to_string(idx));
 	}
 
-	Variant ref = array[idx];
-	vret->create(emu, std::move(ref));
+	if (set_mode) {
+		array[idx] = vret->toVariant(emu);
+	} else {
+		Variant ref = array[idx];
+		vret->create(emu, std::move(ref));
+	}
 }
 
 APICALL(api_array_size) {

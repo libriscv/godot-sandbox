@@ -381,6 +381,9 @@ inline Variant::Variant(T value)
 	else if constexpr (is_string<T>::value || is_stdstring<T>::value || std::is_same_v<T, std::string>) {
 		internal_create_string(STRING, value);
 	}
+	else if constexpr (std::is_same_v<T, std::string_view>) {
+		internal_create_string(STRING, std::string(value));
+	}
 	else
 		static_assert(!std::is_same_v<T, T>, "Unsupported type");
 }

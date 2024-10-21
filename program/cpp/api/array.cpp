@@ -58,12 +58,6 @@ void Array::sort() {
 	sys_array_ops(Array_Op::SORT, m_idx, 0, nullptr);
 }
 
-Variant Array::operator[](int idx) const {
-	Variant v;
-	sys_array_at(this->m_idx, idx, &v);
-	return v;
-}
-
 int Array::size() const {
 	return sys_array_size(m_idx);
 }
@@ -89,4 +83,17 @@ std::vector<Variant> Array::to_vector() const {
 	std::vector<Variant> result;
 	sys_array_ops(Array_Op::FETCH_TO_VECTOR, m_idx, 0, (Variant *)&result);
 	return result;
+}
+
+
+ArrayProxy &ArrayProxy::operator =(const Variant &value) { // set
+	const int set_idx = -this->m_idx - 1;
+	sys_array_at(this->m_array.get_variant_index(), set_idx, (Variant *)&value);
+	return *this;
+}
+
+Variant ArrayProxy::get() const { // get
+	Variant v;
+	sys_array_at(this->m_array.get_variant_index(), this->m_idx, &v);
+	return v;
 }
