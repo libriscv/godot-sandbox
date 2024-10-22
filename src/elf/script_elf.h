@@ -43,6 +43,10 @@ public:
 	/// @return An array of Sandbox instances.
 	Array get_sandboxes() const;
 
+	/// @brief Retrieve the content of the ELF resource as a byte array.
+	/// @return An ELF program as a byte array.
+	const PackedByteArray &get_content();
+
 	virtual bool _editor_can_reload_from_file() override;
 	virtual void _placeholder_erased(void *p_placeholder) override;
 	virtual bool _can_instantiate() const override;
@@ -79,7 +83,6 @@ public:
 	virtual bool _is_placeholder_fallback_enabled() const override;
 	virtual Variant _get_rpc_config() const override;
 
-	const PackedByteArray &get_content();
 	void set_file(const String &path);
 	ELFScript() {}
 	~ELFScript() {}
