@@ -6,8 +6,24 @@ MAKE_SYSCALL(ECALL_GET_NODE, uint64_t, sys_get_node, uint64_t, const char *, siz
 MAKE_SYSCALL(ECALL_NODE, void, sys_node, Node_Op, uint64_t, Variant *);
 MAKE_SYSCALL(ECALL_NODE_CREATE, uint64_t, sys_node_create, Node_Create_Shortlist, const char *, size_t, const char *, size_t);
 
+static uint64_t sys_fast_get_node(uint64_t parent, const char *path, size_t path_len) {
+	// uses sys_get_node
+	register uint64_t addr asm("a0") = parent;
+	register const char *path_ptr asm("a1") = path;
+	register size_t path_size asm("a2") = path_len;
+	register int syscall_number asm("a7") = ECALL_GET_NODE;
+
+	asm volatile(
+		"ecall"
+		: "+r"(addr)
+		: "r"(path_ptr), "m"(*path_ptr), "r"(path_size), "r"(syscall_number)
+	);
+
+	return addr;
+}
+
 Node::Node(std::string_view path) :
-		Object(sys_get_node(0, path.begin(), path.size())) {
+		Object(sys_fast_get_node(0, path.begin(), path.size())) {
 }
 
 Variant Node::get_name() const {
@@ -71,7 +87,7 @@ std::vector<Node> Node::get_children() const {
 }
 
 Node Node::get_node(const std::string &name) const {
-	return Node(sys_get_node(address(), name.c_str(), name.size()));
+	return Node(sys_fast_get_node(address(), name.c_str(), name.size()));
 }
 
 void Node::queue_free() {
