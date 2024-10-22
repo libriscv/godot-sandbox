@@ -6,6 +6,8 @@
 MAKE_SYSCALL(ECALL_GET_OBJ, uint64_t, sys_get_obj, const char *, size_t);
 MAKE_SYSCALL(ECALL_OBJ, void, sys_obj, Object_Op, uint64_t, Variant *);
 MAKE_SYSCALL(ECALL_OBJ_CALLP, void, sys_obj_callp, uint64_t, const char *, size_t, bool, Variant *, const Variant *, unsigned);
+MAKE_SYSCALL(ECALL_OBJ_PROP_GET, void, sys_obj_property_get, uint64_t, const char *, size_t, Variant *);
+MAKE_SYSCALL(ECALL_OBJ_PROP_SET, void, sys_obj_property_set, uint64_t, const char *, size_t, const Variant *);
 
 static_assert(sizeof(std::vector<std::string>) == 24, "std::vector<std::string> is not 24 bytes");
 static_assert(sizeof(std::string) == 32, "std::string is not 32 bytes");
@@ -21,17 +23,13 @@ std::vector<std::string> Object::get_method_list() const {
 }
 
 Variant Object::get(std::string_view name) const {
-	Variant vars[2];
-	vars[0] = String(name);
-	sys_obj(Object_Op::GET, address(), vars);
-	return std::move(vars[1]);
+	Variant var;
+	sys_obj_property_get(address(), name.data(), name.size(), &var);
+	return var;
 }
 
 void Object::set(std::string_view name, const Variant &value) {
-	Variant vars[2];
-	vars[0] = String(name);
-	vars[1] = value;
-	sys_obj(Object_Op::SET, address(), vars);
+	sys_obj_property_set(address(), name.data(), name.size(), &value);
 }
 
 std::vector<std::string> Object::get_property_list() const {

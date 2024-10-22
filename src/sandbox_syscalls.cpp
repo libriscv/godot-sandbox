@@ -803,6 +803,40 @@ APICALL(api_obj) {
 	}
 }
 
+APICALL(api_obj_property_get) {
+	auto [addr, method, vret] = machine.sysargs<uint64_t, std::string_view, GuestVariant *>();
+	auto &emu = riscv::emu(machine);
+	machine.penalize(150'000);
+	SYS_TRACE("obj_property_get", addr, method, vret);
+
+	godot::Object *obj = get_object_from_address(emu, addr);
+	String prop_name = String::utf8(method.data(), method.size());
+
+	if (UNLIKELY(!emu.is_allowed_property(obj, prop_name))) {
+		ERR_PRINT("Banned property accessed: " + prop_name);
+		throw std::runtime_error("Banned property accessed: " + std::string(prop_name.utf8()));
+	}
+
+	vret->create(emu, obj->get(prop_name));
+}
+
+APICALL(api_obj_property_set) {
+	auto [addr, method, g_value] = machine.sysargs<uint64_t, std::string_view, const GuestVariant *>();
+	auto &emu = riscv::emu(machine);
+	machine.penalize(150'000);
+	SYS_TRACE("obj_property_set", addr, method, value);
+
+	godot::Object *obj = get_object_from_address(emu, addr);
+	String prop_name = String::utf8(method.data(), method.size());
+
+	if (UNLIKELY(!emu.is_allowed_property(obj, prop_name))) {
+		ERR_PRINT("Banned property set: " + prop_name);
+		throw std::runtime_error("Banned property set: " + std::string(prop_name.utf8()));
+	}
+
+	obj->set(prop_name, g_value->toVariant(emu));
+}
+
 APICALL(api_obj_callp) {
 	auto [addr, g_method, g_method_len, deferred, vret_ptr, args_addr, args_size] = machine.sysargs<uint64_t, gaddr_t, unsigned, bool, gaddr_t, gaddr_t, unsigned>();
 	auto &emu = riscv::emu(machine);
@@ -1656,6 +1690,9 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_CALLABLE_CREATE, api_callable_create },
 
 			{ ECALL_LOAD, api_load },
+
+			{ ECALL_OBJ_PROP_GET, api_obj_property_get },
+			{ ECALL_OBJ_PROP_SET, api_obj_property_set },
 	});
 
 	// Add system calls from other modules.
