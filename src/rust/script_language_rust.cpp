@@ -244,6 +244,10 @@ void RustScriptLanguage::_frame() {
 }
 void RustScriptLanguage::load_icon()
 {
+	static bool reenter = false;
+	if (reenter)
+		return;
+	reenter = true;
 	if (Engine::get_singleton()->is_editor_hint() && FileAccess::file_exists(icon_path)) {
 		Ref<Theme> editor_theme = EditorInterface::get_singleton()->get_editor_theme();
 		if (editor_theme.is_valid() && !editor_theme->has_icon("RustScript", "EditorIcons"))
@@ -253,6 +257,7 @@ void RustScriptLanguage::load_icon()
 			editor_theme->set_icon("RustScript", "EditorIcons", tex);
 		}
 	}
+	reenter = false;
 }
 bool RustScriptLanguage::_handles_global_class_type(const String &p_type) const {
 	return p_type == "RustScript";
