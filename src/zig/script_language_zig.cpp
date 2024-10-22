@@ -6,6 +6,7 @@
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/classes/theme.hpp>
+#include <godot_cpp/classes/control.hpp>
 #include <string>
 #include <unordered_set>
 static constexpr const char *icon_path = "res://addons/godot_sandbox/ZIGScript.svg";

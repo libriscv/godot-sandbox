@@ -6,6 +6,7 @@
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/classes/theme.hpp>
+#include <godot_cpp/classes/control.hpp>
 static constexpr const char *icon_path = "res://addons/godot_sandbox/Sandbox.svg";
 
 String ELFScriptLanguage::_get_name() const {
