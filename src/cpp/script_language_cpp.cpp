@@ -291,7 +291,7 @@ int32_t CPPScriptLanguage::_profiling_get_frame_data(ScriptLanguageExtensionProf
 }
 void CPPScriptLanguage::_frame() {
 	static bool icon_registered = false;
-	if (!icon_registered) {
+	if (!icon_registered && Engine::get_singleton()->is_editor_hint()) {
 		icon_registered = true;
 		// Manually register CPPScript icon
 		load_icon();

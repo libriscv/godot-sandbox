@@ -234,7 +234,7 @@ int32_t RustScriptLanguage::_profiling_get_frame_data(ScriptLanguageExtensionPro
 }
 void RustScriptLanguage::_frame() {
 	static bool icon_registered = false;
-	if (!icon_registered) {
+	if (!icon_registered && Engine::get_singleton()->is_editor_hint()) {
 		icon_registered = true;
 		// Manually register language icon
 		load_icon();
