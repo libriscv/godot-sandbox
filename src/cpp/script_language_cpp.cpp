@@ -293,12 +293,19 @@ void CPPScriptLanguage::_frame() {
 	if (!icon_registered) {
 		icon_registered = true;
 		// Manually register CPPScript icon
-		if (Engine::get_singleton()->is_editor_hint() && FileAccess::file_exists(icon_path)) {
-			EditorInterface *editor_interface = EditorInterface::get_singleton();
-			Ref<Theme> editor_theme = editor_interface->get_editor_theme();
+		load_icon();
+		// Register theme callback
+		EditorInterface::get_singleton()->get_base_control()->connect("theme_changed", callable_mp(this, &CPPScriptLanguage::load_icon));
+	}
+}
+void CPPScriptLanguage::load_icon()
+{
+	if (Engine::get_singleton()->is_editor_hint() && FileAccess::file_exists(icon_path)) {
+		Ref<Theme> editor_theme = EditorInterface::get_singleton()->get_editor_theme();
+		if (editor_theme.is_valid() && !editor_theme->has_icon("CPPScript", "EditorIcons"))
+		{
 			ResourceLoader *resource_loader = ResourceLoader::get_singleton();
 			Ref<Texture2D> tex = resource_loader->load(icon_path);
-
 			editor_theme->set_icon("CPPScript", "EditorIcons", tex);
 		}
 	}
