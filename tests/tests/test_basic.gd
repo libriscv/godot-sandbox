@@ -36,6 +36,7 @@ func test_instantiation():
 
 	assert_eq(s.get_timeouts(), 0)
 	assert_eq(s.get_exceptions(), 1)
+	assert_eq(s.get_global_exceptions(), 2)
 
 	# Verify that the sandbox program can be set to another program
 	s.set_program(Sandbox_TestsTests)

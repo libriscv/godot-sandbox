@@ -14,6 +14,7 @@ using namespace godot;
 static const int HEAP_SYSCALLS_BASE = 480;
 static const int MEMORY_SYSCALLS_BASE = 485;
 static const std::vector<std::string> program_arguments = { "program" };
+static riscv::Machine<RISCV_ARCH> *dummy_machine;
 
 String Sandbox::_to_string() const {
 	return "[ GDExtension::Sandbox <--> Instance ID:" + uitos(get_instance_id()) + " ]";
@@ -157,6 +158,7 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 }
 
 void Sandbox::constructor_initialize() {
+	this->m_current_state = &this->m_states[0];
 	this->m_tree_base = this;
 	this->m_use_unboxed_arguments = SandboxProjectSettings::use_native_types();
 	// For each call state, reset the state
@@ -166,8 +168,10 @@ void Sandbox::constructor_initialize() {
 }
 void Sandbox::reset_machine() {
 	try {
-		delete this->m_machine;
-		this->m_machine = new machine_t{};
+		if (this->m_machine != dummy_machine) {
+			delete this->m_machine;
+			this->m_machine = dummy_machine;
+		}
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
 	}
@@ -183,6 +187,9 @@ void Sandbox::full_reset() {
 	this->m_allowed_objects.clear();
 }
 Sandbox::Sandbox() {
+	if (dummy_machine == nullptr) {
+		dummy_machine = new machine_t{};
+	}
 	this->constructor_initialize();
 	this->m_global_instance_count += 1;
 	// In order to reduce checks we guarantee that this
@@ -201,15 +208,26 @@ Sandbox::Sandbox(Ref<ELFScript> program) {
 }
 
 Sandbox::~Sandbox() {
+	if (this->is_in_vmcall()) {
+		ERR_PRINT("Sandbox instance destroyed while a VM call is in progress.");
+	}
 	this->m_global_instance_count -= 1;
 	try {
-		delete this->m_machine;
+		if (this->m_machine != dummy_machine)
+			delete this->m_machine;
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
 	}
 }
 
 void Sandbox::set_program(Ref<ELFScript> program) {
+	// Check if a call is being made from the VM already,
+	// which could spell trouble when we now reset the machine.
+	if (this->is_in_vmcall()) {
+		ERR_PRINT("Cannot load a new program while a VM call is in progress.");
+		return;
+	}
+
 	// Avoid reloading the same program
 	if (program.is_valid() && this->m_program_data == program) {
 		if (this->m_source_version == program->get_source_version()) {
@@ -232,17 +250,14 @@ void Sandbox::set_program(Ref<ELFScript> program) {
 	this->m_program_data = std::move(program);
 	this->m_program_bytes = {};
 
-	if (this->m_program_data.is_null()) {
-		// Unload program and reset the machine
-		this->full_reset();
+	// Unload program and reset the machine
+	this->full_reset();
+
+	if (this->m_program_data.is_null())
 		return;
-	} else if (this->m_machine != nullptr) {
-		// There is already a program, full reset
-		this->full_reset();
-	}
 
 	if (this->load(&m_program_data->get_content())) {
-		this->m_source_version = this->m_program_data->get_source_version();
+		this->m_source_version = m_program_data->get_source_version();
 	}
 
 	// Restore Sandboxed properties by comparing the new program's properties
@@ -265,6 +280,13 @@ Ref<ELFScript> Sandbox::get_program() {
 	return m_program_data;
 }
 void Sandbox::load_buffer(const PackedByteArray &buffer) {
+	// Check if a call is being made from the VM already,
+	// which could spell trouble when we now reset the machine.
+	if (this->is_in_vmcall()) {
+		ERR_PRINT("Cannot load a new program while a VM call is in progress.");
+		return;
+	}
+
 	this->m_program_data.unref();
 	this->m_program_bytes = buffer;
 	this->load(&this->m_program_bytes);
@@ -278,12 +300,6 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		this->reset_machine();
 		return false;
 	}
-	// Check if a call is being made from the VM already,
-	// which could spell trouble when we now reset the machine.
-	if (this->m_current_state != nullptr) {
-		ERR_PRINT("Cannot load a new program while a VM call is in progress.");
-		return false;
-	}
 	const std::string_view binary_view = std::string_view{ (const char *)buffer->ptr(), static_cast<size_t>(buffer->size()) };
 
 	// Get t0 for the startup time
@@ -291,7 +307,8 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 
 	/** We can't handle exceptions until the Machine is fully constructed. Two steps.  */
 	try {
-		delete this->m_machine;
+		if (this->m_machine != dummy_machine)
+			delete this->m_machine;
 
 		auto options = std::make_shared<riscv::MachineOptions<RISCV_ARCH>>(riscv::MachineOptions<RISCV_ARCH>{
 				.memory_max = uint64_t(get_memory_max()) << 20, // in MiB
@@ -315,7 +332,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		this->m_machine->set_options(std::move(options));
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox construction exception: " + std::string(e.what())).c_str());
-		this->m_machine = new machine_t{};
+		this->m_machine = dummy_machine;
 		return false;
 	}
 
@@ -328,7 +345,6 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 			Sandbox *sandbox = m.get_userdata<Sandbox>();
 			sandbox->print(String::utf8(str, len));
 		});
-		this->m_current_state = &this->m_states[0]; // Set the current state to the first state
 
 		this->initialize_syscalls();
 
@@ -358,8 +374,6 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
 		this->handle_exception(machine().cpu.pc());
 	}
-
-	this->m_current_state = nullptr;
 
 	// Read the program's custom properties, if any
 	this->read_program_properties(true);
@@ -580,14 +594,19 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 	return &v[0];
 }
 Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc) {
-	CurrentState &state = this->m_states[m_level];
-	const bool is_reentrant_call = m_level > 1;
-	state.reset(this->m_level);
-	m_level++;
+	this->m_current_state += 1;
+	if (this->m_current_state >= this->m_states.end()) {
+		ERR_PRINT("Too many VM calls in progress");
+		this->m_exceptions ++;
+		this->m_global_exceptions ++;
+		this->m_current_state -= 1;
+		return Variant();
+	}
 
-	// Scoped objects and owning tree node
-	CurrentState *old_state = this->m_current_state;
-	this->m_current_state = &state;
+	CurrentState &state = *this->m_current_state;
+	const bool is_reentrant_call = (this->m_current_state - this->m_states.begin()) > 1;
+	state.reset();
+
 	// Call statistics
 	this->m_calls_made++;
 	Sandbox::m_global_calls_made++;
@@ -612,7 +631,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			} else {
 				m_machine->simulate_with(get_instructions_max() << 20, 0u, address);
 			}
-		} else if (m_level < MAX_LEVEL) {
+		} else {
 			riscv::Registers<RISCV_ARCH> regs;
 			regs = cpu.registers();
 			// we are in a recursive call, so wait before setting exit address
@@ -623,19 +642,15 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			retvar = this->setup_arguments(sp, args, argc);
 			// execute preemption! (precise simulation not supported)
 			cpu.preempt_internal(regs, true, address, get_instructions_max() << 20);
-		} else {
-			throw std::runtime_error("Recursion level exceeded");
 		}
 
 		// Treat return value as pointer to Variant
 		Variant result = retvar->toVariant(*this);
 		// Restore the previous state
-		this->m_level--;
-		this->m_current_state = old_state;
+		this->m_current_state -= 1;
 		return result;
 
 	} catch (const std::exception &e) {
-		this->m_level--;
 		if (Engine::get_singleton()->is_editor_hint()) {
 			// Throttle exceptions in the sandbox when calling from the editor
 			this->m_throttled += EDITOR_THROTTLE;
@@ -643,7 +658,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 		this->handle_exception(address);
 		// TODO: Free the function arguments and return value? Will help keep guest memory clean
 
-		this->m_current_state = old_state;
+		this->m_current_state -= 1;
 		return Variant();
 	}
 }
@@ -1111,7 +1126,7 @@ bool Sandbox::CurrentState::is_mutable_variant(const Variant &var) const {
 void Sandbox::set_max_refs(uint32_t max) {
 	this->m_max_refs = max;
 	// If we are not in a call, reset the states
-	if (this->m_level == 1) {
+	if (!this->is_in_vmcall()) {
 		for (size_t i = 0; i < this->m_states.size(); i++) {
 			this->m_states[i].initialize(i, max);
 		}

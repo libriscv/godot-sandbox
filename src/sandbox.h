@@ -54,7 +54,7 @@ public:
 		void append(Variant &&value);
 		void initialize(unsigned level, unsigned max_refs);
 		void reinitialize(unsigned level, unsigned max_refs);
-		void reset(unsigned index);
+		void reset();
 		bool is_mutable_variant(const Variant &var) const;
 	};
 
@@ -435,6 +435,7 @@ public:
 	void print(const Variant &v);
 
 private:
+	bool is_in_vmcall() const noexcept { return m_current_state != &m_states[0]; }
 	void constructor_initialize();
 	void full_reset();
 	void reset_machine();
@@ -455,7 +456,6 @@ private:
 	uint32_t m_memory_max = MAX_VMEM;
 	int64_t m_insn_max = MAX_INSTRUCTIONS;
 
-	uint8_t m_level = 1; // Current call level (0 is for initialization)
 	uint8_t m_throttled = 0;
 	bool m_use_unboxed_arguments = false;
 	bool m_resumable_mode = false; // If enabled, allow running startup in small increments
@@ -515,7 +515,7 @@ inline void Sandbox::CurrentState::append(Variant &&value) {
 	scoped_variants.push_back(&variants.back());
 }
 
-inline void Sandbox::CurrentState::reset(unsigned index) {
+inline void Sandbox::CurrentState::reset() {
 	variants.clear();
 	scoped_variants.clear();
 	scoped_objects.clear();
