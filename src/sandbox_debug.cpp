@@ -52,11 +52,13 @@ bool Sandbox::resume(uint64_t max_instructions) {
 		ERR_PRINT("Sandbox: Cannot resume after initialization.");
 		return false;
 	}
-	if (this->m_current_state != &this->m_states[0]) {
+	if (this->m_current_state != nullptr) {
 		ERR_PRINT("Sandbox: Cannot resume while in a call.");
 		this->m_resumable_mode = false; // Disable resumable mode
 		return false;
 	}
+
+	this->m_current_state = &this->m_states[0];
 
 	const gaddr_t address = m_machine->cpu.pc();
 	try {
@@ -67,11 +69,14 @@ bool Sandbox::resume(uint64_t max_instructions) {
 			// It's not available for VM calls, only during startup
 			this->m_resumable_mode = false;
 		}
+
+		this->m_current_state = nullptr;
 		return stopped;
 
 	} catch (const std::exception &e) {
 		this->m_resumable_mode = false;
 		this->handle_exception(address);
+		this->m_current_state = nullptr;
 		return true; // Can't (shouldn't) be resumed anymore
 	}
 }

@@ -278,6 +278,12 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		this->reset_machine();
 		return false;
 	}
+	// Check if a call is being made from the VM already,
+	// which could spell trouble when we now reset the machine.
+	if (this->m_current_state != nullptr) {
+		ERR_PRINT("Cannot load a new program while a VM call is in progress.");
+		return false;
+	}
 	const std::string_view binary_view = std::string_view{ (const char *)buffer->ptr(), static_cast<size_t>(buffer->size()) };
 
 	// Get t0 for the startup time
@@ -293,6 +299,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				.default_exit_function = "fast_exit",
 #ifdef RISCV_BINARY_TRANSLATION
 				.translate_enabled = false,
+				.translate_enable_embedded = true,
 				.translate_future_segments = false,
 				.translate_invoke_compiler = false,
 				//.translate_trace = true,
@@ -351,6 +358,8 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
 		this->handle_exception(machine().cpu.pc());
 	}
+
+	this->m_current_state = nullptr;
 
 	// Read the program's custom properties, if any
 	this->read_program_properties(true);
