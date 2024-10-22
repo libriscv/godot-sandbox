@@ -240,6 +240,7 @@ void RustScriptLanguage::_frame() {
 		load_icon();
 		// Register theme callback
 		EditorInterface::get_singleton()->get_base_control()->connect("theme_changed", callable_mp(this, &RustScriptLanguage::load_icon));
+	}
 }
 void RustScriptLanguage::load_icon()
 {
