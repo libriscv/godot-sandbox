@@ -504,7 +504,7 @@ void ELFScriptInstance::reload(ELFScript *p_script) {
 	auto old_script = std::move(this->script);
 	this->script = Ref<ELFScript>(p_script);
 	this->update_methods();
-	bool updated_program = false;
+	bool update_program = false;
 
 	auto it = sandbox_instances.find(old_script.ptr());
 	if (it != sandbox_instances.end()) {
@@ -513,26 +513,27 @@ void ELFScriptInstance::reload(ELFScript *p_script) {
 		// Remove the old script instance and insert the new one
 		sandbox_instances.erase(it);
 		sandbox_instances.insert_or_assign(p_script, sandbox_ptr);
-		// Set the new program
-		sandbox_ptr->set_program(this->script);
-		updated_program = true;
+		update_program = true;
 	}
 
-	if (!updated_program) {
+	if (!update_program) {
 		Sandbox *sandbox_ptr = Object::cast_to<Sandbox>(this->owner);
 		if (sandbox_ptr != nullptr) {
 			this->current_sandbox = sandbox_ptr;
-			sandbox_ptr->set_program(this->script);
-			updated_program = true;
+			update_program = true;
 		}
 	}
 
-	if (!updated_program) {
+	if (!update_program) {
 		ERR_PRINT("ELFScriptInstance: Did not reload a Sandbox instance");
 		if constexpr (VERBOSE_LOGGING) {
 			fprintf(stderr, "ELFScriptInstance: owner is instead a '%s'!\n", this->owner->get_class().utf8().get_data());
 		}
 	} else {
+		// Set the new program, with potentially new parent Node
+		current_sandbox->set_tree_base(godot::Object::cast_to<godot::Node>(this->owner));
+		current_sandbox->set_program(this->script);
+
 		if constexpr (VERBOSE_LOGGING) {
 			ERR_PRINT("ELFScriptInstance: reloaded " + Object::cast_to<Node>(owner)->get_name());
 		}

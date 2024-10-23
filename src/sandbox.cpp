@@ -159,7 +159,6 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 
 void Sandbox::constructor_initialize() {
 	this->m_current_state = &this->m_states[0];
-	this->m_tree_base = this;
 	this->m_use_unboxed_arguments = SandboxProjectSettings::use_native_types();
 	// For each call state, reset the state
 	for (size_t i = 0; i < this->m_states.size(); i++) {
@@ -191,20 +190,17 @@ Sandbox::Sandbox() {
 		dummy_machine = new machine_t{};
 	}
 	this->constructor_initialize();
+	this->m_tree_base = this;
 	this->m_global_instance_count += 1;
 	// In order to reduce checks we guarantee that this
 	// class is well-formed at all times.
 	this->reset_machine();
 }
-Sandbox::Sandbox(const PackedByteArray &buffer) {
-	this->constructor_initialize();
-	this->m_global_instance_count += 1;
+Sandbox::Sandbox(const PackedByteArray &buffer) : Sandbox() {
 	this->load_buffer(buffer);
 }
-Sandbox::Sandbox(Ref<ELFScript> program) {
-	this->constructor_initialize();
-	this->m_global_instance_count += 1;
-	this->set_program(std::move(program));
+Sandbox::Sandbox(Ref<ELFScript> program) : Sandbox() {
+	this->set_program(program);
 }
 
 Sandbox::~Sandbox() {
@@ -247,7 +243,7 @@ void Sandbox::set_program(Ref<ELFScript> program) {
 		property_values.push_back(value);
 	}
 
-	this->m_program_data = std::move(program);
+	this->m_program_data = program;
 	this->m_program_bytes = {};
 
 	// Unload program and reset the machine
@@ -595,7 +591,7 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 }
 Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc) {
 	this->m_current_state += 1;
-	if (this->m_current_state >= this->m_states.end()) {
+	if (UNLIKELY(this->m_current_state >= this->m_states.end())) {
 		ERR_PRINT("Too many VM calls in progress");
 		this->m_exceptions ++;
 		this->m_global_exceptions ++;
