@@ -52,13 +52,13 @@ struct Node2D : public Node {
 	Transform2D get_transform() const;
 
 	/// @brief  Duplicate the node.
-	/// @return A new Node2D object with the same properties and children.
+	/// @return A new Node2D with the same properties and children.
 	Node2D duplicate() const;
 
-	/// @brief Create a new Node2D object.
-	/// @param path The path to the Node2D object.
-	/// @return The Node2D object.
-	static Node2D create(std::string_view path);
+	/// @brief Create a new Node2D node.
+	/// @param path The path to the Node2D node.
+	/// @return The Node2D node.
+	static Node2D Create(std::string_view path);
 };
 
 inline Node2D Variant::as_node2d() const {

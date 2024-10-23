@@ -48,7 +48,7 @@ Node3D Node3D::duplicate() const {
 	return result.as_node3d();
 }
 
-Node3D Node3D::create(std::string_view path) {
+Node3D Node3D::Create(std::string_view path) {
 	return Node3D(sys_node_create(Node_Create_Shortlist::CREATE_NODE3D, nullptr, 0, path.data(), path.size()));
 }
 

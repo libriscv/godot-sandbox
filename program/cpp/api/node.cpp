@@ -86,8 +86,8 @@ std::vector<Node> Node::get_children() const {
 	return children;
 }
 
-Node Node::get_node(const std::string &name) const {
-	return Node(sys_fast_get_node(address(), name.c_str(), name.size()));
+Node Node::get_node(std::string_view name) const {
+	return Node(sys_fast_get_node(address(), name.begin(), name.size()));
 }
 
 void Node::queue_free() {

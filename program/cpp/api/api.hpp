@@ -123,7 +123,7 @@ inline bool is_editor_hint() {
 	return is_editor(); // Alias
 }
 
-/// @brief Load a resource (at run-time) from the given path.
+/// @brief Load a resource (at run-time) from the given path. Can be denied.
 /// @param path The path to the resource.
 /// @return The loaded resource.
 extern Variant load(std::string_view path);

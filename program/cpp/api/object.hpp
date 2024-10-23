@@ -235,6 +235,12 @@ struct PropertyProxy {
 		return obj.get(property);
 	}
 };
-#define PROPERTY(name)                                  \
+#define PROPERTY1(name)                                 \
 	auto name() { return PropertyProxy(*this, #name); } \
 	auto name() const { return PropertyProxy(*this, #name); }
+
+#define PROPERTY(name)                                  \
+	auto name() { return PropertyProxy(*this, #name); } \
+	auto name() const { return PropertyProxy(*this, #name); } \
+	auto set_ ##name(const Variant &v) { set(#name, v); } \
+	auto get_ ##name() const { return get(#name); }

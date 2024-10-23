@@ -30,7 +30,7 @@ struct Node : public Object {
 	/// @brief Get the Node object at the given path, relative to this node.
 	/// @param path The path to the Node object.
 	/// @return The Node object.
-	Node get_node(const std::string &path) const;
+	Node get_node(std::string_view path) const;
 
 	/// @brief Get the number of children of the node.
 	/// @return The number of children.
@@ -79,7 +79,7 @@ struct Node : public Object {
 	static Node Create(std::string_view path);
 
 	//- Properties -//
-	PROPERTY(name);
+	PROPERTY1(name);
 	PROPERTY(owner);
 	PROPERTY(unique_name_in_owner);
 	PROPERTY(editor_description);

@@ -72,6 +72,6 @@ Node2D Node2D::duplicate() const {
 	return result.as_node2d();
 }
 
-Node2D Node2D::create(std::string_view path) {
+Node2D Node2D::Create(std::string_view path) {
 	return Node2D(sys_node_create(Node_Create_Shortlist::CREATE_NODE2D, nullptr, 0, path.data(), path.size()));
 }
