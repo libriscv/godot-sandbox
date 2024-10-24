@@ -242,5 +242,11 @@ struct PropertyProxy {
 #define PROPERTY(name)                                  \
 	auto name() { return PropertyProxy(*this, #name); } \
 	auto name() const { return PropertyProxy(*this, #name); } \
-	auto set_ ##name(const Variant &v) { set(#name, v); } \
+	void set_ ##name(const Variant &v) { set(#name, v); } \
 	auto get_ ##name() const { return get(#name); }
+
+#define TYPED_PROPERTY(name, Type, getter, setter)      \
+	auto name() { return PropertyProxy(*this, #name); } \
+	auto name() const { return PropertyProxy(*this, #name); } \
+	void setter(const Type &v) { set(#name, v); } \
+	Type getter() const { return get(#name); }
