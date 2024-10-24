@@ -1,7 +1,7 @@
 #include "resource_saver_zig.h"
 #include "../elf/script_elf.h"
 #include "../elf/script_language_elf.h"
-#include "../register_types.h"
+#include "../../register_types.h"
 #include "../sandbox_project_settings.h"
 #include "script_zig.h"
 #include <godot_cpp/classes/editor_file_system.hpp>

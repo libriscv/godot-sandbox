@@ -1,5 +1,5 @@
 #include "resource_saver_elf.h"
-#include "../register_types.h"
+#include "../../register_types.h"
 #include "script_elf.h"
 #include "script_language_elf.h"
 #include <godot_cpp/classes/file_access.hpp>

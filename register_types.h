@@ -1,5 +1,10 @@
 #pragma once
-#include "modules/register_module_types.h"
+#include <gdextension_interface.h>
+#include <godot_cpp/classes/script_language.hpp>
 
-void initialize_sandbox_module(ModuleInitializationLevel p_level);
-void uninitialize_sandbox_module(ModuleInitializationLevel p_level);
+GODOT_NAMESPACE
+
+ScriptLanguage *get_elf_language();
+
+static void initialize_sandbox_module(ModuleInitializationLevel p_level);
+static void uninitialize_sandbox_module(ModuleInitializationLevel p_level);

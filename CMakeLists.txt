@@ -25,7 +25,7 @@ set(SOURCES
 	src/docker.cpp
 	src/godot/script_instance.cpp
 	src/guest_variant.cpp
-	src/register_types.cpp
+	register_types.cpp
 	src/sandbox.cpp
 	src/sandbox_debug.cpp
 	src/sandbox_exception.cpp
@@ -56,6 +56,8 @@ add_subdirectory(ext)
 
 add_library(godot-riscv SHARED ${SOURCES})
 target_link_libraries(godot-riscv PUBLIC riscv godot-cpp)
+
+target_compile_definitions(godot-riscv PRIVATE GODOT_NAMESPACE="using namespace godot;")
 
 if (STATIC_BUILD)
 	target_link_libraries(godot-riscv PUBLIC -static)
