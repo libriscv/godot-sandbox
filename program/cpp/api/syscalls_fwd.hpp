@@ -30,8 +30,19 @@ extern "C" __attribute__((noreturn)) void fast_exit();
 #define VOID_METHOD(name) \
 	template <typename... Args> \
 	inline void name(Args&&... args) { \
-		Variant(*this).void_method_call(#name, std::forward<Args>(args)...); \
+		Variant(*this).void_method(#name, std::forward<Args>(args)...); \
 	}
 
 // Alias for CREATE_METHOD
 #define METHOD(name) CREATE_METHOD(name)
+
+
+#define TYPED_METHOD(Type, name, ...) \
+	template <typename... Args> \
+	inline Type name(Args&&... args) { \
+		if constexpr (std::is_same_v<Type, void>) { \
+			Variant(*this).void_method(#name, std::forward<Args>(args)...); \
+		} else { \
+			return operator() (#name, std::forward<Args>(args)...); \
+		} \
+	}

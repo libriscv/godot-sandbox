@@ -153,39 +153,9 @@ struct Engine {
 	static Object get_singleton();
 };
 
-struct Input {
-	/// @brief Check if an action is currently pressed.
-	/// @param action The name of the action.
-	/// @return True if the action is pressed, false otherwise.
-	static bool is_action_pressed(const std::string &action) {
-		return get_singleton().call("is_action_pressed", action);
-	}
-
-	/// @brief Check if an action is released.
-	/// @param action The name of the action.
-	/// @return True if the action is released, false otherwise.
-	static bool is_action_released(const std::string &action) {
-		return get_singleton().call("is_action_released", action);
-	}
-
-	/// @brief Check if an action is just pressed.
-	/// @param action The name of the action.
-	/// @return True if the action is just pressed, false otherwise.
-	static bool is_action_just_pressed(const std::string &action) {
-		return get_singleton().call("is_action_just_pressed", action);
-	}
-
-	/// @brief Check if an action is just released.
-	/// @param action The name of the action.
-	/// @return True if the action is just released, false otherwise.
-	static bool is_action_just_released(const std::string &action) {
-		return get_singleton().call("is_action_just_released", action);
-	}
-
-	/// @brief Get the singleton instance of the Input class.
-	/// @return The Input singleton.
-	static Object get_singleton();
-};
+/// @brief Get the singleton instance of the Input class.
+/// @return The Input singleton.
+extern Object input();
 
 struct Time {
 	/// @brief Get the current time in milliseconds.

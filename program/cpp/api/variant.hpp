@@ -398,6 +398,11 @@ inline Variant::Variant(T value)
 	else if constexpr (std::is_same_v<T, std::string_view>) {
 		internal_create_string(STRING, std::string(value));
 	}
+	// Derives from Object
+	else if constexpr (std::is_base_of_v<Object, T>) {
+		m_type = OBJECT;
+		v.i = value.address();
+	}
 	else
 		static_assert(!std::is_same_v<T, T>, "Unsupported type");
 }

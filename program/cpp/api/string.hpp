@@ -171,7 +171,7 @@ inline Variant::operator String() const {
 }
 
 inline String Variant::as_string() const {
-	if (m_type != STRING) {
+	if (m_type != STRING && m_type != STRING_NAME && m_type != NODE_PATH) {
 		api_throw("std::bad_cast", "Failed to cast Variant to String", this);
 	}
 	return String::from_variant_index(v.i);

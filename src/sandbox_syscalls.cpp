@@ -1393,9 +1393,14 @@ APICALL(api_string_ops) {
 	SYS_TRACE("string_ops", int(op), str_idx, index, vaddr);
 
 	std::optional<const Variant *> opt_str = emu.get_scoped_variant(str_idx);
-	if (!opt_str.has_value() || opt_str.value()->get_type() != Variant::STRING) {
+	if (!opt_str.has_value()) {
 		ERR_PRINT("Invalid String object");
 		throw std::runtime_error("Invalid String object");
+	}
+	const Variant::Type type = opt_str.value()->get_type();
+	if (type != Variant::STRING && type != Variant::STRING_NAME && type != Variant::NODE_PATH) {
+		ERR_PRINT("Invalid String object type: " + itos(type));
+		throw std::runtime_error("Invalid String object type: " + std::to_string(type));
 	}
 	godot::String str = opt_str.value()->operator String();
 

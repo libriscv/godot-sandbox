@@ -220,7 +220,7 @@ inline void Object::connect(const std::string &signal, Callable method) {
 	this->call("connect", signal, method);
 }
 
-template <typename T>
+template <typename T, typename P = Variant>
 struct PropertyProxy {
 	const T &obj;
 	const std::string_view property;
@@ -228,15 +228,15 @@ struct PropertyProxy {
 	constexpr PropertyProxy(const T &obj, std::string_view property)
 			: obj(obj), property(property) {}
 
-	PropertyProxy &operator=(const Variant &v) {
+	PropertyProxy &operator=(const P &v) {
 		const_cast<T&>(obj).set(property, v);
 		return *this;
 	}
 
-	bool operator== (const Variant &v) const { return obj.get(property) == v; }
-	bool operator!=(const Variant &v) const { return obj.get(property) != v; }
+	bool operator== (const P &v) const { return P(obj.get(property)) == v; }
+	bool operator!=(const P &v) const { return P(obj.get(property)) != v; }
 
-	operator Variant() {
+	operator P() {
 		return obj.get(property);
 	}
 };
@@ -251,8 +251,8 @@ struct PropertyProxy {
 	auto get_ ##name() const { return Object::get(#name); }
 
 #define TYPED_PROPERTY(name, Type)      \
-	auto name() { return PropertyProxy(*this, #name); } \
-	auto name() const { return PropertyProxy(*this, #name); } \
+	auto name() { return PropertyProxy<decltype(*this), Type>(*this, #name); } \
+	auto name() const { return PropertyProxy<decltype(*this), Type>(*this, #name); } \
 	void set_ ##name(const Type &v) { Object::set(#name, Variant(v)); } \
 	Type get_ ##name() const { return Object::get(#name).operator Type(); }
 

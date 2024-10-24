@@ -26,7 +26,7 @@ Object Engine::get_singleton() {
 	return Object("Engine");
 }
 
-Object Input::get_singleton() {
+Object input() {
 	return Object("Input");
 }
 

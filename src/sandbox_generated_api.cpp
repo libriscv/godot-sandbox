@@ -12,7 +12,7 @@ static String *current_generated_api = nullptr;
 static const char *cpp_compatible_variant_type(int type) {
 	switch (type) {
 		case Variant::NIL:
-			throw std::runtime_error("Variant::NIL is not a valid type.");
+			return "void";
 		case Variant::BOOL:
 			return "bool";
 		case Variant::INT:
@@ -120,6 +120,7 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 	api += "    using " + parent_name + "::" + parent_name + ";\n";
 	// We just need the names of the properties and methods.
 	TypedArray<Dictionary> properties = class_db->class_get_property_list(class_name, true);
+	Vector<String> property_names;
 	for (int j = 0; j < properties.size(); j++) {
 		Dictionary property = properties[j];
 		String property_name = property["name"];
@@ -147,21 +148,35 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 		} else {
 			api += String("    TYPED_PROPERTY(") + property_name + ", " + property_type + ");\n";
 		}
+		property_names.push_back(property_name);
 	}
 	TypedArray<Dictionary> methods = class_db->class_get_method_list(class_name, true);
 	for (int j = 0; j < methods.size(); j++) {
 		Dictionary method = methods[j];
 		String method_name = method["name"];
-		// Skip methods that are set/get/is property-methods, or empty.
-		if (method_name.is_empty() || method_name.begins_with("set_") || method_name.begins_with("get_") || method_name.begins_with("is_")) {
+		Dictionary return_value = method["return"];
+		const int type = int(return_value["type"]);
+		// Skip methods that are empty.
+		if (method_name.is_empty()) {
 			continue;
+		}
+		// Skip methods that are set/get property-methods, or empty.
+		if (method_name.begins_with("set_") || method_name.begins_with("get_")) {
+			// But only if we know it's a property.
+			if (property_names.has(method_name.substr(4)))
+				continue;
+		}
+		if (method_name.begins_with("is_")) {
+			// But only if we know it's a property.
+			if (property_names.has(method_name.substr(3)))
+				continue;
 		}
 		// If matching C++ keywords, capitalize the first letter.
 		if (cpp_keywords.has(method_name.to_lower())) {
 			method_name = method_name.capitalize();
 		}
 
-		api += String("    METHOD(") + method_name + ");\n";
+		api += String("    TYPED_METHOD(") + cpp_compatible_variant_type(type) + ", " + method_name + ");\n";
 	}
 
 	api += "};\n";
@@ -179,7 +194,7 @@ void Sandbox::generate_runtime_cpp_api() {
 	if (current_generated_api != nullptr) {
 		delete current_generated_api;
 	}
-	current_generated_api = new String("#pragma once\n\n#include <api.hpp>\n\n");
+	current_generated_api = new String("#pragma once\n\n#include <api.hpp>\n#define GENERATED_API 1\n\n");
 
 	HashSet<String> cpp_keywords;
 	cpp_keywords.insert("class");
@@ -212,7 +227,6 @@ void Sandbox::generate_runtime_cpp_api() {
 	// Also skip some classes we simply don't want to expose.
 	emitted_classes.insert("ClassDB");
 	emitted_classes.insert("Engine");
-	emitted_classes.insert("Input");
 	emitted_classes.insert("Time");
 
 	// 3. Get all methods and properties for each class.
