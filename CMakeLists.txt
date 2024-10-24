@@ -25,7 +25,7 @@ set(SOURCES
 	src/docker.cpp
 	src/godot/script_instance.cpp
 	src/guest_variant.cpp
-	src/register_types.cpp
+	register_types.cpp
 	src/sandbox.cpp
 	src/sandbox_debug.cpp
 	src/sandbox_exception.cpp
