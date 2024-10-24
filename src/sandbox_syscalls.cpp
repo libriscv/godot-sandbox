@@ -2,13 +2,11 @@
 #include "syscalls.h"
 
 #include <godot_cpp/classes/engine.hpp>
-#include <godot_cpp/classes/input.hpp>
 #include <godot_cpp/classes/node2d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/packed_scene.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
-#include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/timer.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/variant.hpp>
@@ -16,11 +14,7 @@
 #include "syscalls_helpers.hpp"
 
 namespace riscv {
-static const std::unordered_map<std::string, std::function<uint64_t()>> allowed_objects = {
-	{ "Engine", [] { return uint64_t(uintptr_t(godot::Engine::get_singleton())); } },
-	{ "Input", [] { return uint64_t(uintptr_t(godot::Input::get_singleton())); } },
-	{ "Time", [] { return uint64_t(uintptr_t(godot::Time::get_singleton())); } },
-};
+extern std::unordered_map<std::string, std::function<uint64_t()>> global_singleton_list;
 
 godot::Object *get_object_from_address(const Sandbox &emu, uint64_t addr) {
 	SYS_TRACE("get_object_from_address", addr);
@@ -645,8 +639,8 @@ APICALL(api_get_obj) {
 	}
 
 	// Find allowed object by name and get its address from a lambda.
-	auto it = allowed_objects.find(name);
-	if (it != allowed_objects.end()) {
+	auto it = global_singleton_list.find(name);
+	if (it != global_singleton_list.end()) {
 		auto obj = it->second();
 		emu.add_scoped_object(reinterpret_cast<godot::Object *>(obj));
 		machine.set_result(obj);

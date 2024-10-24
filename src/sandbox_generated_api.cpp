@@ -5,6 +5,9 @@
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+namespace riscv {
+extern std::unordered_map<std::string, std::function<uint64_t()>> allowed_globals;
+}
 
 static constexpr bool VERBOSE = false;
 static String *current_generated_api = nullptr;
@@ -230,11 +233,13 @@ void Sandbox::generate_runtime_cpp_api() {
 	emitted_classes.insert("Node3D");
 	// Also skip some classes we simply don't want to expose.
 	emitted_classes.insert("ClassDB");
+
 	// Finally, add singleton getters to certain classes.
 	HashSet<String> singletons;
-	singletons.insert("Engine");
-	singletons.insert("Time");
-	singletons.insert("Input");
+	PackedStringArray singleton_list = Engine::get_singleton()->get_singleton_list();
+	for (int i = 0; i < singleton_list.size(); i++) {
+		singletons.insert(singleton_list[i]);
+	}
 
 	// 3. Get all methods and properties for each class.
 	for (int i = 0; i < classes.size(); i++) {
