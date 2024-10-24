@@ -36,9 +36,9 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 		case Variant::VECTOR4I:
 			return Variant{ Vector4i(v.v4i[0], v.v4i[1], v.v4i[2], v.v4i[3]) };
 		case Variant::COLOR:
-			return Variant{ godot::Color(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]) };
+			return Variant{ Color(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]) };
 		case Variant::PLANE:
-			return Variant{ godot::Plane(godot::Vector3(v.v4f[0], v.v4f[1], v.v4f[2]), v.v4f[3]) };
+			return Variant{ Plane(Vector3(v.v4f[0], v.v4f[1], v.v4f[2]), v.v4f[3]) };
 
 		case Variant::OBJECT: {
 			Object *obj = riscv::get_object_from_address(emu, v.i);

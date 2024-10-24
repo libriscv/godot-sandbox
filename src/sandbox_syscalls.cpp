@@ -20,6 +20,9 @@ static const std::unordered_map<std::string, std::function<uint64_t()>> allowed_
 	{ "Engine", [] { return uint64_t(uintptr_t(Engine::get_singleton())); } },
 	{ "Input", [] { return uint64_t(uintptr_t(Input::get_singleton())); } },
 	{ "Time", [] { return uint64_t(uintptr_t(Time::get_singleton())); } },
+	{ "Engine", [] { return uint64_t(uintptr_t(Engine::get_singleton())); } },
+	{ "Input", [] { return uint64_t(uintptr_t(Input::get_singleton())); } },
+	{ "Time", [] { return uint64_t(uintptr_t(Time::get_singleton())); } },
 };
 
 static const char *variant_type_names[] = {
@@ -76,7 +79,9 @@ const char *variant_type_name(Variant::Type type) {
 }
 
 Object *get_object_from_address(const Sandbox &emu, uint64_t addr) {
+Object *get_object_from_address(const Sandbox &emu, uint64_t addr) {
 	SYS_TRACE("get_object_from_address", addr);
+	Object *obj = (Object *)uintptr_t(addr);
 	Object *obj = (Object *)uintptr_t(addr);
 	if (UNLIKELY(obj == nullptr)) {
 		ERR_PRINT("Object is Null");
@@ -96,7 +101,10 @@ Object *get_object_from_address(const Sandbox &emu, uint64_t addr) {
 	return obj;
 }
 inline Node *get_node_from_address(const Sandbox &emu, uint64_t addr) {
+inline Node *get_node_from_address(const Sandbox &emu, uint64_t addr) {
 	SYS_TRACE("get_node_from_address", addr);
+	Object *obj = get_object_from_address(emu, addr);
+	Node *node = Object::cast_to<Node>(obj);
 	Object *obj = get_object_from_address(emu, addr);
 	Node *node = Object::cast_to<Node>(obj);
 	if (UNLIKELY(node == nullptr)) {
@@ -107,6 +115,7 @@ inline Node *get_node_from_address(const Sandbox &emu, uint64_t addr) {
 }
 
 static inline Variant object_callp(Object *obj, const Variant **args, int argc) {
+static inline Variant object_callp(Object *obj, const Variant **args, int argc) {
 	static GDExtensionMethodBindPtr mtd = internal::gdextension_interface_classdb_get_method_bind(Object::get_class_static()._native_ptr(), StringName("call")._native_ptr(), 3400424181);
 	GDExtensionCallError error;
 	Variant ret;
@@ -114,6 +123,7 @@ static inline Variant object_callp(Object *obj, const Variant **args, int argc) 
 	return ret;
 }
 
+static inline Variant object_call(Sandbox &emu, Object *obj, const Variant &method, const GuestVariant *args, int argc) {
 static inline Variant object_call(Sandbox &emu, Object *obj, const Variant &method, const GuestVariant *args, int argc) {
 	SYS_TRACE("object_call", method, argc);
 	std::array<Variant, 8> vstorage;
@@ -173,6 +183,7 @@ APICALL(api_vcall) {
 
 	if (vp->type == Variant::OBJECT) {
 		Object *obj = get_object_from_address(emu, vp->v.i);
+		Object *obj = get_object_from_address(emu, vp->v.i);
 
 		// Check if the method is allowed.
 		if (!emu.is_allowed_method(obj, method_sn)) {
@@ -224,6 +235,8 @@ APICALL(api_veval) {
 			retp->set(emu, Variant(ap->v.i == bp->v.i));
 			return;
 		}
+		Object *a = get_object_from_address(emu, ap->v.i);
+		Object *b = get_object_from_address(emu, bp->v.i);
 		Object *a = get_object_from_address(emu, ap->v.i);
 		Object *b = get_object_from_address(emu, bp->v.i);
 		bool valid = false;
@@ -429,6 +442,7 @@ APICALL(api_vfetch) {
 	// Find scoped Variant and copy data into gdata.
 	std::optional<const Variant *> opt = emu.get_scoped_variant(index);
 	if (opt.has_value()) {
+		const Variant &var = *opt.value();
 		const Variant &var = *opt.value();
 		switch (var.get_type()) {
 			case Variant::STRING:
@@ -702,6 +716,7 @@ APICALL(api_get_obj) {
 	if (it != allowed_objects.end()) {
 		auto obj = it->second();
 		emu.add_scoped_object(reinterpret_cast<Object *>(obj));
+		emu.add_scoped_object(reinterpret_cast<Object *>(obj));
 		machine.set_result(obj);
 		return;
 	}
@@ -730,6 +745,7 @@ APICALL(api_obj) {
 	SYS_TRACE("obj_op", op, addr, gvar);
 
 	Object *obj = get_object_from_address(emu, addr);
+	Object *obj = get_object_from_address(emu, addr);
 
 	switch (Object_Op(op)) {
 		case Object_Op::GET_METHOD_LIST: {
@@ -738,6 +754,7 @@ APICALL(api_obj) {
 			auto methods = obj->get_method_list();
 			auto [sptr, saddr] = vec->alloc<GuestStdString>(machine, methods.size());
 			for (size_t i = 0; i < methods.size(); i++) {
+				Dictionary dict = methods[i].operator Dictionary();
 				Dictionary dict = methods[i].operator Dictionary();
 				auto name = String(dict["name"]).utf8();
 				const gaddr_t self = saddr + sizeof(GuestStdString) * i;
@@ -769,6 +786,7 @@ APICALL(api_obj) {
 			auto [sptr, saddr] = vec->alloc<GuestStdString>(machine, properties.size());
 			for (size_t i = 0; i < properties.size(); i++) {
 				Dictionary dict = properties[i].operator Dictionary();
+				Dictionary dict = properties[i].operator Dictionary();
 				auto name = String(dict["name"]).utf8();
 				const gaddr_t self = saddr + sizeof(GuestStdString) * i;
 				sptr[i].set_string(machine, self, name.ptr(), name.length());
@@ -777,11 +795,13 @@ APICALL(api_obj) {
 		case Object_Op::CONNECT: {
 			GuestVariant *vars = machine.memory.memarray<GuestVariant>(gvar, 3);
 			Object *target = get_object_from_address(emu, vars[0].v.i);
+			Object *target = get_object_from_address(emu, vars[0].v.i);
 			Callable callable = Callable(target, vars[2].toVariant(emu).operator String());
 			obj->connect(vars[1].toVariant(emu).operator String(), callable);
 		} break;
 		case Object_Op::DISCONNECT: {
 			GuestVariant *vars = machine.memory.memarray<GuestVariant>(gvar, 3);
+			Object *target = get_object_from_address(emu, vars[0].v.i);
 			Object *target = get_object_from_address(emu, vars[0].v.i);
 			auto callable = Callable(target, vars[2].toVariant(emu).operator String());
 			obj->disconnect(vars[1].toVariant(emu).operator String(), callable);
@@ -792,6 +812,7 @@ APICALL(api_obj) {
 			TypedArray<Dictionary> signals = obj->get_signal_list();
 			auto [sptr, saddr] = vec->alloc<GuestStdString>(machine, signals.size());
 			for (size_t i = 0; i < signals.size(); i++) {
+				Dictionary dict = signals[i].operator Dictionary();
 				Dictionary dict = signals[i].operator Dictionary();
 				auto name = String(dict["name"]).utf8();
 				const gaddr_t self = saddr + sizeof(GuestStdString) * i;
@@ -1013,6 +1034,7 @@ APICALL(api_node) {
 
 	// Get the Node object by its address.
 	Node *node = get_node_from_address(emu, addr);
+	Node *node = get_node_from_address(emu, addr);
 
 	switch (Node_Op(op)) {
 		case Node_Op::GET_NAME: {
@@ -1029,6 +1051,7 @@ APICALL(api_node) {
 		} break;
 		case Node_Op::GET_PARENT: {
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
+			Object *parent = node->get_parent();
 			Object *parent = node->get_parent();
 			if (parent == nullptr) {
 				var->set(emu, Variant());
@@ -1069,6 +1092,7 @@ APICALL(api_node) {
 		case Node_Op::ADD_CHILD: {
 			GuestVariant *child = machine.memory.memarray<GuestVariant>(gvar, 1);
 			Node *child_node = get_node_from_address(emu, child->v.i);
+			Node *child_node = get_node_from_address(emu, child->v.i);
 			if (Node_Op(op) == Node_Op::ADD_CHILD_DEFERRED)
 				node->call_deferred("add_child", child_node);
 			else
@@ -1078,6 +1102,7 @@ APICALL(api_node) {
 		case Node_Op::ADD_SIBLING: {
 			GuestVariant *sibling = machine.memory.memarray<GuestVariant>(gvar, 1);
 			Node *sibling_node = get_node_from_address(emu, sibling->v.i);
+			Node *sibling_node = get_node_from_address(emu, sibling->v.i);
 			if (Node_Op(op) == Node_Op::ADD_SIBLING_DEFERRED)
 				node->call_deferred("add_sibling", sibling_node);
 			else
@@ -1086,12 +1111,14 @@ APICALL(api_node) {
 		case Node_Op::MOVE_CHILD: {
 			GuestVariant *vars = machine.memory.memarray<GuestVariant>(gvar, 2);
 			Node *child_node = get_node_from_address(emu, vars[0].v.i);
+			Node *child_node = get_node_from_address(emu, vars[0].v.i);
 			// TODO: Check if the child is actually a child of the node? Verify index?
 			node->move_child(child_node, vars[1].v.i);
 		} break;
 		case Node_Op::REMOVE_CHILD_DEFERRED:
 		case Node_Op::REMOVE_CHILD: {
 			GuestVariant *child = machine.memory.memarray<GuestVariant>(gvar, 1);
+			Node *child_node = get_node_from_address(emu, child->v.i);
 			Node *child_node = get_node_from_address(emu, child->v.i);
 			if (Node_Op(op) == Node_Op::REMOVE_CHILD_DEFERRED)
 				node->call_deferred("remove_child", child_node);
@@ -1107,6 +1134,7 @@ APICALL(api_node) {
 			auto [cptr, _] = vec->alloc<uint64_t>(machine, children.size());
 			// Copy the children to the guest vector, and add them to the scoped objects.
 			for (int i = 0; i < children.size(); i++) {
+				Node *child = Object::cast_to<Node>(children[i]);
 				Node *child = Object::cast_to<Node>(children[i]);
 				if (child) {
 					emu.add_scoped_object(child);
@@ -1131,8 +1159,10 @@ APICALL(api_node2d) {
 
 	// Get the Node2D object by its address.
 	Node *node = get_node_from_address(emu, addr);
+	Node *node = get_node_from_address(emu, addr);
 
 	// Cast the Node2D object to a Node2D object.
+	Node2D *node2d = Object::cast_to<Node2D>(node);
 	Node2D *node2d = Object::cast_to<Node2D>(node);
 	if (node2d == nullptr) {
 		ERR_PRINT("Node2D object is not a Node2D");
@@ -1187,8 +1217,10 @@ APICALL(api_node3d) {
 
 	// Get the Node3D object by its address
 	Node *node = get_node_from_address(emu, addr);
+	Node *node = get_node_from_address(emu, addr);
 
 	// Cast the Node3D object to a Node3D object.
+	Node3D *node3d = Object::cast_to<Node3D>(node);
 	Node3D *node3d = Object::cast_to<Node3D>(node);
 	if (node3d == nullptr) {
 		ERR_PRINT("Node3D object is not a Node3D");
@@ -1261,6 +1293,7 @@ APICALL(api_array_ops) {
 		ERR_PRINT("Invalid Array object");
 		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx));
 	}
+	Array array = opt_array.value()->operator Array();
 	Array array = opt_array.value()->operator Array();
 
 	switch (op) {
@@ -1358,6 +1391,7 @@ APICALL(api_array_size) {
 	}
 
 	Array array = opt_array.value()->operator Array();
+	Array array = opt_array.value()->operator Array();
 	machine.set_result(array.size());
 }
 
@@ -1372,6 +1406,7 @@ APICALL(api_dict_ops) {
 		ERR_PRINT("Invalid Dictionary object");
 		throw std::runtime_error("Invalid Dictionary object");
 	}
+	Dictionary dict = opt_dict.value()->operator Dictionary();
 	Dictionary dict = opt_dict.value()->operator Dictionary();
 
 	switch (op) {
@@ -1451,6 +1486,7 @@ APICALL(api_string_ops) {
 		throw std::runtime_error("Invalid String object");
 	}
 	String str = opt_str.value()->operator String();
+	String str = opt_str.value()->operator String();
 
 	switch (op) {
 		case String_Op::APPEND: {
@@ -1503,6 +1539,7 @@ APICALL(api_string_at) {
 		throw std::runtime_error("Invalid String object");
 	}
 	String str = opt_str.value()->operator String();
+	String str = opt_str.value()->operator String();
 
 	if (index < 0 || index >= str.length()) {
 		ERR_PRINT("String index out of bounds");
@@ -1525,6 +1562,7 @@ APICALL(api_string_size) {
 		throw std::runtime_error("Invalid String object");
 	}
 	String str = opt_str.value()->operator String();
+	String str = opt_str.value()->operator String();
 	machine.set_result(str.length());
 }
 
@@ -1536,6 +1574,7 @@ APICALL(api_string_append) {
 
 	Variant &var = emu.get_mutable_scoped_variant(str_idx);
 
+	String str = var.operator String();
 	String str = var.operator String();
 	str += String::utf8(strview.data(), strview.size());
 	var = Variant(std::move(str));
@@ -1617,6 +1656,7 @@ APICALL(api_load) {
 
 	Variant result(std::move(resource));
 	Object *obj = result.operator Object *();
+	Object *obj = result.operator Object *();
 
 	// Return the result to the guest.
 	emu.create_scoped_variant(std::move(result));
@@ -1662,6 +1702,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_NODE3D, api_node3d },
 			{ ECALL_THROW, api_throw },
 			{ ECALL_IS_EDITOR, [](machine_t &machine) {
+				 machine.set_result(Engine::get_singleton()->is_editor_hint());
 				 machine.set_result(Engine::get_singleton()->is_editor_hint());
 			 } },
 
