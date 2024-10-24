@@ -35,7 +35,22 @@ void ResourceFormatSaverCPP::deinit() {
 	cpp_saver.unref();
 }
 
+static void auto_generate_cpp_api(const String &path) {
+	static bool api_written_to_project_root = false;
+	if (!api_written_to_project_root) {
+		// Write the API to the project root
+		Ref<FileAccess> api_handle = FileAccess::open(path, FileAccess::ModeFlags::WRITE);
+		if (api_handle.is_valid()) {
+			api_handle->store_string(Sandbox::generate_api("cpp"));
+			api_handle->close();
+		}
+		api_written_to_project_root = true;
+	}
+}
+
 static Array invoke_cmake(const String &path) {
+	// Generate the C++ run-time API in the CMakelists.txt directory
+	auto_generate_cpp_api("res://" + path + "/generated_api.hpp");
 	// Invoke cmake to build the project
 	PackedStringArray arguments;
 	arguments.push_back("--build");
@@ -95,16 +110,8 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 			if (detect_and_build_cmake_project_instead())
 				return Error::OK;
 
-			static bool api_written_to_project_root = false;
-			if (!api_written_to_project_root) {
-				// Write the API to the project root
-				Ref<FileAccess> api_handle = FileAccess::open("res://generated_api.hpp", FileAccess::ModeFlags::WRITE);
-				if (api_handle.is_valid()) {
-					api_handle->store_string(Sandbox::generate_api("cpp"));
-					api_handle->close();
-				}
-				api_written_to_project_root = true;
-			}
+			// Generate the C++ run-time API in the project root
+			auto_generate_cpp_api("res://generated_api.hpp");
 
 			// Get the absolute path without the file name
 			String path = handle->get_path().get_base_dir().replace("res://", "") + "/";
