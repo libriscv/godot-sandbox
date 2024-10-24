@@ -156,8 +156,8 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 		String method_name = method["name"];
 		Dictionary return_value = method["return"];
 		const int type = int(return_value["type"]);
-		// Skip methods that are empty.
-		if (method_name.is_empty()) {
+		// Skip methods that are empty, and methods with '/' and '-' in the name.
+		if (method_name.is_empty() || method_name.contains("/") || method_name.contains("-")) {
 			continue;
 		}
 		// Skip methods that are set/get property-methods, or empty.

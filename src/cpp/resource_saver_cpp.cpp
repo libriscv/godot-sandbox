@@ -2,6 +2,7 @@
 #include "../elf/script_elf.h"
 #include "../elf/script_language_elf.h"
 #include "../register_types.h"
+#include "../sandbox.h"
 #include "../sandbox_project_settings.h"
 #include "script_cpp.h"
 #include <libriscv/util/threadpool.h>
@@ -94,6 +95,17 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 			if (detect_and_build_cmake_project_instead())
 				return Error::OK;
 
+			static bool api_written_to_project_root = false;
+			if (!api_written_to_project_root) {
+				// Write the API to the project root
+				Ref<FileAccess> api_handle = FileAccess::open("res://generated_api.hpp", FileAccess::ModeFlags::WRITE);
+				if (api_handle.is_valid()) {
+					api_handle->store_string(Sandbox::generate_api("cpp"));
+					api_handle->close();
+				}
+				api_written_to_project_root = true;
+			}
+
 			// Get the absolute path without the file name
 			String path = handle->get_path().get_base_dir().replace("res://", "") + "/";
 			String inpname = path + "*.cpp";
@@ -140,6 +152,7 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 						line = line.replace("\033[m", "");
 						line = line.replace("\033[0m", "");
 						line = line.replace("\033[01m", "");
+						line = line.replace("\033[32m", "");
 						line = line.replace("[K", "");
 						WARN_PRINT(line);
 					}
