@@ -129,53 +129,6 @@ inline bool is_editor_hint() {
 /// @return The loaded resource.
 extern Variant load(std::string_view path);
 
-struct Engine {
-	/// @brief Check if the program is running in the Godot editor.
-	/// @return True if running in the editor, false otherwise.
-	static bool is_editor_hint() {
-		return is_editor(); // Fast-path for the hint.
-	}
-
-	/// @brief Get the current time scale.
-	/// @return The current time scale.
-	static double get_time_scale() {
-		return get_singleton().call("get_time_scale");
-	}
-
-	/// @brief Set a new time scale.
-	/// @param scale The new time scale.
-	static void set_time_scale(double scale) {
-		get_singleton().call("set_time_scale", scale);
-	}
-
-	/// @brief Get the singleton instance of the Engine.
-	/// @return The Engine singleton.
-	static Object get_singleton();
-};
-
-/// @brief Get the singleton instance of the Input class.
-/// @return The Input singleton.
-extern Object input();
-
-struct Time {
-	/// @brief Get the current time in milliseconds.
-	/// @return The current time in milliseconds.
-	static int64_t get_ticks_msec() {
-		return get_singleton().call("get_ticks_msec");
-	}
-
-	/// @brief Get the current time in microseconds.
-	/// @return The current time in microseconds.
-	static int64_t get_ticks_usec() {
-		return get_singleton().call("get_ticks_usec");
-	}
-
-	/// @brief Get the singleton instance of the Time class.
-	/// @return The Time singleton.
-	static Object get_singleton();
-};
-
-
 /// @brief The class database for instantiating Godot objects.
 struct ClassDB {
 	/// @brief Instantiate a new object of the given class.

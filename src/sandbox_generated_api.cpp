@@ -105,7 +105,7 @@ String Sandbox::generate_api(String language, String header) {
 	return header + *current_generated_api;
 }
 
-static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_keywords, const String &class_name) {
+static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_keywords, const HashSet<String> &singletons, const String &class_name) {
 	// Generate a simple API for each class using METHOD() and PROPERTY() macros to a string.
 	if constexpr (VERBOSE) {
 		UtilityFunctions::print("* Currently generating: " + class_name);
@@ -179,6 +179,10 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 		api += String("    TYPED_METHOD(") + cpp_compatible_variant_type(type) + ", " + method_name + ");\n";
 	}
 
+	if (singletons.has(class_name)) {
+		api += "    static " + class_name + " get_singleton() { return " + class_name + "(Object(\"" + class_name + "\").address()); }\n";
+	}
+
 	api += "};\n";
 	return api;
 }
@@ -226,8 +230,11 @@ void Sandbox::generate_runtime_cpp_api() {
 	emitted_classes.insert("Node3D");
 	// Also skip some classes we simply don't want to expose.
 	emitted_classes.insert("ClassDB");
-	emitted_classes.insert("Engine");
-	emitted_classes.insert("Time");
+	// Finally, add singleton getters to certain classes.
+	HashSet<String> singletons;
+	singletons.insert("Engine");
+	singletons.insert("Time");
+	singletons.insert("Input");
 
 	// 3. Get all methods and properties for each class.
 	for (int i = 0; i < classes.size(); i++) {
@@ -251,7 +258,7 @@ void Sandbox::generate_runtime_cpp_api() {
 			continue;
 		}
 		// Emit the class.
-		*current_generated_api += emit_class(class_db, cpp_keywords, class_name);
+		*current_generated_api += emit_class(class_db, cpp_keywords, singletons, class_name);
 		emitted_classes.insert(class_name);
 	}
 
@@ -265,7 +272,7 @@ void Sandbox::generate_runtime_cpp_api() {
 				const TypedArray<String> &waiting = it->value;
 				for (int i = 0; i < waiting.size(); i++) {
 					String class_name = waiting[i];
-					*current_generated_api += emit_class(class_db, cpp_keywords, class_name);
+					*current_generated_api += emit_class(class_db, cpp_keywords, singletons, class_name);
 					emitted_classes.insert(class_name);
 				}
 				waiting_classes.erase(parent_name);
