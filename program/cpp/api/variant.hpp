@@ -25,7 +25,7 @@ struct is_u32string
 template<class T>
 struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
 
-struct Object; struct Node; struct Node2D; struct Node3D; struct Array; struct Dictionary; union String; struct Callable; struct Basis; struct Transform2D; struct Transform3D; struct Quaternion;
+struct Object; struct Node; struct Node2D; struct Node3D; struct Array; struct Dictionary; union String; struct Callable; struct Basis; struct Transform2D; struct Transform3D; struct Quaternion; struct RID;
 #include "color.hpp"
 #include "plane.hpp"
 #include "packed_array.hpp"
@@ -162,6 +162,21 @@ struct Variant
 	static Variant new_dictionary();
 
 	// Conversion operators
+	Basis as_basis() const;
+	Transform2D as_transform2d() const;
+	Transform3D as_transform3d() const;
+	Quaternion as_quaternion() const;
+	Object as_object() const;
+	Node as_node() const;
+	Node2D as_node2d() const;
+	Node3D as_node3d() const;
+	Array as_array() const;
+	Dictionary as_dictionary() const;
+	String as_string() const;
+	Callable as_callable() const;
+	std::string as_std_string() const;
+	std::u32string as_std_u32string() const;
+
 	operator bool() const;
 	operator int64_t() const;
 	operator int32_t() const;
@@ -177,36 +192,14 @@ struct Variant
 	operator Transform2D() const;
 	operator Transform3D() const;
 	operator Quaternion() const;
-	operator std::string() const; // String for STRING and PACKED_BYTE_ARRAY
-	operator std::u32string() const; // u32string for STRING, STRING_NAME
+	operator std::string() const;
+	operator std::u32string() const;
 	operator String() const;
 	operator Array() const;
 	operator Dictionary() const;
+	operator Object() const;
+	operator ::RID() const;
 	operator Callable() const;
-
-	Basis as_basis() const;
-	Transform2D as_transform2d() const;
-	Transform3D as_transform3d() const;
-	Quaternion as_quaternion() const;
-	Object as_object() const;
-	Node as_node() const;
-	Node2D as_node2d() const;
-	Node3D as_node3d() const;
-	Array as_array() const;
-	Dictionary as_dictionary() const;
-	String as_string() const;
-	Callable as_callable() const;
-	std::string as_std_string() const;
-	std::u32string as_std_u32string() const;
-	PackedArray<uint8_t> as_byte_array() const;
-	PackedArray<float> as_float32_array() const;
-	PackedArray<double> as_float64_array() const;
-	PackedArray<int32_t> as_int32_array() const;
-	PackedArray<int64_t> as_int64_array() const;
-	PackedArray<Vector2> as_vector2_array() const;
-	PackedArray<Vector3> as_vector3_array() const;
-	PackedArray<Color> as_color_array() const;
-	PackedArray<std::string> as_string_array() const;
 
 	const Vector2 &v2() const;
 	Vector2 &v2();
@@ -239,6 +232,26 @@ struct Variant
 	operator Rect2i() const { return r2i(); }
 	operator Color() const { return color(); }
 	operator Plane() const { return plane(); }
+
+	PackedArray<uint8_t> as_byte_array() const;
+	PackedArray<float> as_float32_array() const;
+	PackedArray<double> as_float64_array() const;
+	PackedArray<int32_t> as_int32_array() const;
+	PackedArray<int64_t> as_int64_array() const;
+	PackedArray<Vector2> as_vector2_array() const;
+	PackedArray<Vector3> as_vector3_array() const;
+	PackedArray<Color> as_color_array() const;
+	PackedArray<std::string> as_string_array() const;
+
+	operator PackedArray<uint8_t>() const { return as_byte_array(); }
+	operator PackedArray<float>() const { return as_float32_array(); }
+	operator PackedArray<double>() const { return as_float64_array(); }
+	operator PackedArray<int32_t>() const { return as_int32_array(); }
+	operator PackedArray<int64_t>() const { return as_int64_array(); }
+	operator PackedArray<Vector2>() const { return as_vector2_array(); }
+	operator PackedArray<Vector3>() const { return as_vector3_array(); }
+	operator PackedArray<Color>() const { return as_color_array(); }
+	operator PackedArray<std::string>() const { return as_string_array(); }
 
 	void callp(std::string_view method, const Variant *args, int argcount, Variant &r_ret);
 	void voidcallp(std::string_view method, const Variant *args, int argcount);
@@ -385,16 +398,16 @@ inline Variant::Variant(T value)
 	else if constexpr (std::is_same_v<T, std::string_view>) {
 		internal_create_string(STRING, std::string(value));
 	}
+	// Derives from Object
+	else if constexpr (std::is_base_of_v<Object, T>) {
+		m_type = OBJECT;
+		v.i = value.address();
+	}
 	else
 		static_assert(!std::is_same_v<T, T>, "Unsupported type");
 }
 
 #define Nil Variant()
-
-inline Variant::Variant(const ::RID& rid) {
-	m_type = RID;
-	v.i = rid.index;
-}
 
 inline Variant::Variant(const PackedArray<uint8_t> &array)
 {

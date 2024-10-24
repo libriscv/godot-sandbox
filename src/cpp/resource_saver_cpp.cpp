@@ -2,6 +2,7 @@
 #include "../elf/script_elf.h"
 #include "../elf/script_language_elf.h"
 #include "../register_types.h"
+#include "../sandbox.h"
 #include "../sandbox_project_settings.h"
 #include "script_cpp.h"
 #include <libriscv/util/threadpool.h>
@@ -34,7 +35,22 @@ void ResourceFormatSaverCPP::deinit() {
 	cpp_saver.unref();
 }
 
+static void auto_generate_cpp_api(const String &path) {
+	static bool api_written_to_project_root = false;
+	if (!api_written_to_project_root) {
+		// Write the API to the project root
+		Ref<FileAccess> api_handle = FileAccess::open(path, FileAccess::ModeFlags::WRITE);
+		if (api_handle.is_valid()) {
+			api_handle->store_string(Sandbox::generate_api("cpp"));
+			api_handle->close();
+		}
+		api_written_to_project_root = true;
+	}
+}
+
 static Array invoke_cmake(const String &path) {
+	// Generate the C++ run-time API in the CMakelists.txt directory
+	auto_generate_cpp_api("res://" + path + "/generated_api.hpp");
 	// Invoke cmake to build the project
 	PackedStringArray arguments;
 	arguments.push_back("--build");
@@ -94,6 +110,9 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 			if (detect_and_build_cmake_project_instead())
 				return Error::OK;
 
+			// Generate the C++ run-time API in the project root
+			auto_generate_cpp_api("res://generated_api.hpp");
+
 			// Get the absolute path without the file name
 			String path = handle->get_path().get_base_dir().replace("res://", "") + "/";
 			String inpname = path + "*.cpp";
@@ -140,6 +159,7 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 						line = line.replace("\033[m", "");
 						line = line.replace("\033[0m", "");
 						line = line.replace("\033[01m", "");
+						line = line.replace("\033[32m", "");
 						line = line.replace("[K", "");
 						WARN_PRINT(line);
 					}

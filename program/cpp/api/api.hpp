@@ -10,6 +10,7 @@
 #include "transform2d.hpp"
 #include "transform3d.hpp"
 #include "quaternion.hpp"
+#include "rid.hpp"
 #include "syscalls_fwd.hpp"
 #include "timer.hpp"
 
@@ -128,83 +129,6 @@ inline bool is_editor_hint() {
 /// @return The loaded resource.
 extern Variant load(std::string_view path);
 
-struct Engine {
-	/// @brief Check if the program is running in the Godot editor.
-	/// @return True if running in the editor, false otherwise.
-	static bool is_editor_hint() {
-		return is_editor(); // Fast-path for the hint.
-	}
-
-	/// @brief Get the current time scale.
-	/// @return The current time scale.
-	static double get_time_scale() {
-		return get_singleton().call("get_time_scale");
-	}
-
-	/// @brief Set a new time scale.
-	/// @param scale The new time scale.
-	static void set_time_scale(double scale) {
-		get_singleton().call("set_time_scale", scale);
-	}
-
-	/// @brief Get the singleton instance of the Engine.
-	/// @return The Engine singleton.
-	static Object get_singleton();
-};
-
-struct Input {
-	/// @brief Check if an action is currently pressed.
-	/// @param action The name of the action.
-	/// @return True if the action is pressed, false otherwise.
-	static bool is_action_pressed(const std::string &action) {
-		return get_singleton().call("is_action_pressed", action);
-	}
-
-	/// @brief Check if an action is released.
-	/// @param action The name of the action.
-	/// @return True if the action is released, false otherwise.
-	static bool is_action_released(const std::string &action) {
-		return get_singleton().call("is_action_released", action);
-	}
-
-	/// @brief Check if an action is just pressed.
-	/// @param action The name of the action.
-	/// @return True if the action is just pressed, false otherwise.
-	static bool is_action_just_pressed(const std::string &action) {
-		return get_singleton().call("is_action_just_pressed", action);
-	}
-
-	/// @brief Check if an action is just released.
-	/// @param action The name of the action.
-	/// @return True if the action is just released, false otherwise.
-	static bool is_action_just_released(const std::string &action) {
-		return get_singleton().call("is_action_just_released", action);
-	}
-
-	/// @brief Get the singleton instance of the Input class.
-	/// @return The Input singleton.
-	static Object get_singleton();
-};
-
-struct Time {
-	/// @brief Get the current time in milliseconds.
-	/// @return The current time in milliseconds.
-	static int64_t get_ticks_msec() {
-		return get_singleton().call("get_ticks_msec");
-	}
-
-	/// @brief Get the current time in microseconds.
-	/// @return The current time in microseconds.
-	static int64_t get_ticks_usec() {
-		return get_singleton().call("get_ticks_usec");
-	}
-
-	/// @brief Get the singleton instance of the Time class.
-	/// @return The Time singleton.
-	static Object get_singleton();
-};
-
-
 /// @brief The class database for instantiating Godot objects.
 struct ClassDB {
 	/// @brief Instantiate a new object of the given class.
@@ -283,3 +207,7 @@ struct Math {
 	extern unsigned name ##_size;
 
 #include "api_inline.hpp"
+
+#if __has_include(<generated_api.hpp>)
+#include <generated_api.hpp>
+#endif

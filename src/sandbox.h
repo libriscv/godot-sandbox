@@ -433,8 +433,10 @@ public:
 	machine_t &machine() { return *m_machine; }
 	const machine_t &machine() const { return *m_machine; }
 	void print(const Variant &v);
+	static String generate_api(String language = "cpp", String header_extra = "");
 
 private:
+	static void generate_runtime_cpp_api();
 	bool is_in_vmcall() const noexcept { return m_current_state != &m_states[0]; }
 	void constructor_initialize();
 	void full_reset();

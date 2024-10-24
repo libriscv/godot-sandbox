@@ -57,7 +57,7 @@ for file in $@ $API/*.cpp; do
 		riscv64-unknown-elf-g++ $CPPFLAGS -I$API -c $file -o $file.o &
 	else
 		export CXX="riscv64-linux-gnu-g++-14"
-		ccache $CXX $CPPFLAGS -march=rv64gc_zba_zbb_zbs_zbc -mabi=lp64d -I$API -c $file -o $file.o &
+		ccache $CXX $CPPFLAGS -march=rv64gc_zba_zbb_zbs_zbc -mabi=lp64d -I$API -I. -c $file -o $file.o &
 	fi
 done
 

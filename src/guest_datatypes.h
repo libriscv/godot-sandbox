@@ -314,6 +314,9 @@ struct GuestVariant {
 	} v;
 
 	void free(Sandbox &emu);
+
+	static const char *type_name(int type);
+	static const char *type_name(Variant::Type type) { return type_name(type); }
 };
 
 inline bool GuestVariant::is_scoped_variant() const noexcept {

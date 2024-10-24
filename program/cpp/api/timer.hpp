@@ -4,7 +4,7 @@
 #include "variant.hpp"
 struct Object;
 
-struct Timer {
+struct CallbackTimer {
 	using period_t = double;
 	using TimerCallback = Function<Variant(Variant)>;
 	using TimerNativeCallback = Function<Variant(Object)>;
@@ -24,18 +24,18 @@ private:
 	static Variant create_native(period_t p, bool oneshot, TimerNativeCallback callback);
 };
 
-inline Variant Timer::oneshot(period_t secs, TimerCallback callback) {
+inline Variant CallbackTimer::oneshot(period_t secs, TimerCallback callback) {
 	return create(secs, true, callback);
 }
 
-inline Variant Timer::periodic(period_t period, TimerCallback callback) {
+inline Variant CallbackTimer::periodic(period_t period, TimerCallback callback) {
 	return create(period, false, callback);
 }
 
-inline Variant Timer::native_oneshot(period_t secs, TimerNativeCallback callback) {
+inline Variant CallbackTimer::native_oneshot(period_t secs, TimerNativeCallback callback) {
 	return create_native(secs, true, callback);
 }
 
-inline Variant Timer::native_periodic(period_t period, TimerNativeCallback callback) {
+inline Variant CallbackTimer::native_periodic(period_t period, TimerNativeCallback callback) {
 	return create_native(period, false, callback);
 }

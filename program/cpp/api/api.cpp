@@ -21,19 +21,6 @@ extern "C" __attribute__((used, retain, noreturn)) void fast_exit() {
 	__builtin_unreachable();
 }
 
-// Various singletons
-Object Engine::get_singleton() {
-	return Object("Engine");
-}
-
-Object Input::get_singleton() {
-	return Object("Input");
-}
-
-Object Time::get_singleton() {
-	return Object("Time");
-}
-
 // ClassDB::instantiate
 Object ClassDB::instantiate(std::string_view class_name, std::string_view name) {
 	return Object(sys_node_create(Node_Create_Shortlist::CREATE_CLASSDB, class_name.data(), class_name.size(), name.data(), name.size()));
