@@ -19,7 +19,7 @@ def add_compilation_flags(env):
 	return env
 
 def get_sources(env):
-    sources = [Glob("src/*.cpp"), Glob("src/cpp/*.cpp"), Glob("src/rust/*.cpp"), Glob("src/zig/*.cpp"), Glob("src/elf/*.cpp"), Glob("src/godot/*.cpp"), ["src/tests/dummy_assault.cpp"], Glob("src/bintr/*.cpp")]
+    sources = [Glob("*.cpp"), Glob("src/*.cpp"), Glob("src/cpp/*.cpp"), Glob("src/rust/*.cpp"), Glob("src/zig/*.cpp"), Glob("src/elf/*.cpp"), Glob("src/godot/*.cpp"), ["src/tests/dummy_assault.cpp"], Glob("src/bintr/*.cpp")]
 
     librisc_sources = [
         # threaded fast-path:

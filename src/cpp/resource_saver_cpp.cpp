@@ -1,7 +1,7 @@
 #include "resource_saver_cpp.h"
 #include "../elf/script_elf.h"
 #include "../elf/script_language_elf.h"
-#include "../register_types.h"
+#include "../../register_types.h"
 #include "../sandbox_project_settings.h"
 #include "script_cpp.h"
 #include <libriscv/util/threadpool.h>

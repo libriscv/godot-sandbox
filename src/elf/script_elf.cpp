@@ -1,7 +1,7 @@
 #include "script_elf.h"
 
 #include "../docker.h"
-#include "../register_types.h"
+#include "../../register_types.h"
 #include "../sandbox.h"
 #include "../sandbox_project_settings.h"
 #include "script_instance.h"
