@@ -10,6 +10,7 @@
 #include "transform2d.hpp"
 #include "transform3d.hpp"
 #include "quaternion.hpp"
+#include "rid.hpp"
 #include "syscalls_fwd.hpp"
 #include "timer.hpp"
 
@@ -283,3 +284,7 @@ struct Math {
 	extern unsigned name ##_size;
 
 #include "api_inline.hpp"
+
+#if __has_include(<generated_api.hpp>)
+#include <generated_api.hpp>
+#endif

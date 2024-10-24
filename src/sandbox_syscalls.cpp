@@ -22,59 +22,6 @@ static const std::unordered_map<std::string, std::function<uint64_t()>> allowed_
 	{ "Time", [] { return uint64_t(uintptr_t(godot::Time::get_singleton())); } },
 };
 
-static const char *variant_type_names[] = {
-	"Nil",
-
-	"Bool", // 1
-	"Int",
-	"Float",
-	"String",
-
-	"Vector2", // 5
-	"Vector2i",
-	"Rect2",
-	"Rect2i",
-	"Vector3",
-	"Vector3i",
-	"Transform2D",
-	"Vector4",
-	"Vector4i",
-	"Plane",
-	"Quaternion",
-	"AABB",
-	"Basis",
-	"Transform3D",
-	"Projection",
-
-	"Color", // 20
-	"StringName",
-	"NodePath",
-	"RID",
-	"Object",
-	"Callable",
-	"Signal",
-	"Dictionary",
-	"Array",
-
-	"PackedByteArray", // 29
-	"PackedInt32Array",
-	"PackedInt64Array",
-	"PackedFloat32Array",
-	"PackedFloat64Array",
-	"PackedStringArray",
-	"PackedVector2Array",
-	"PackedVector3Array",
-	"PackedColorArray",
-
-	"Max",
-};
-const char *variant_type_name(Variant::Type type) {
-	if (type < 0 || type >= Variant::Type::VARIANT_MAX) {
-		return "Unknown";
-	}
-	return variant_type_names[type];
-}
-
 godot::Object *get_object_from_address(const Sandbox &emu, uint64_t addr) {
 	SYS_TRACE("get_object_from_address", addr);
 	godot::Object *obj = (godot::Object *)uintptr_t(addr);
@@ -416,7 +363,7 @@ APICALL(api_vcreate) {
 		} break;
 		default:
 			ERR_PRINT("Unsupported Variant type for Variant::create()");
-			throw std::runtime_error("Unsupported Variant type for Variant::create(): " + std::string(variant_type_name(type)));
+			throw std::runtime_error("Unsupported Variant type for Variant::create(): " + std::string(GuestVariant::type_name(type)));
 	}
 }
 

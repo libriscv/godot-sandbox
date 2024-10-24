@@ -124,6 +124,10 @@ inline Object Variant::as_object() const {
 	api_throw("std::bad_cast", "Variant is not an Object", this);
 }
 
+inline Variant::operator Object() const {
+	return as_object();
+}
+
 template <typename T>
 static inline T cast_to(const Object &obj) {
 	return T{obj.address()};
@@ -216,15 +220,16 @@ inline void Object::connect(const std::string &signal, Callable method) {
 	this->call("connect", signal, method);
 }
 
+template <typename T>
 struct PropertyProxy {
-	Object obj;
+	const T &obj;
 	const std::string_view property;
 
-	constexpr PropertyProxy(Object obj, std::string_view property)
+	constexpr PropertyProxy(const T &obj, std::string_view property)
 			: obj(obj), property(property) {}
 
 	PropertyProxy &operator=(const Variant &v) {
-		obj.set(property, v);
+		const_cast<T&>(obj).set(property, v);
 		return *this;
 	}
 
@@ -242,11 +247,17 @@ struct PropertyProxy {
 #define PROPERTY(name)                                  \
 	auto name() { return PropertyProxy(*this, #name); } \
 	auto name() const { return PropertyProxy(*this, #name); } \
-	void set_ ##name(const Variant &v) { set(#name, v); } \
-	auto get_ ##name() const { return get(#name); }
+	void set_ ##name(const Variant &v) { Object::set(#name, v); } \
+	auto get_ ##name() const { return Object::get(#name); }
 
-#define TYPED_PROPERTY(name, Type, getter, setter)      \
+#define TYPED_PROPERTY(name, Type)      \
 	auto name() { return PropertyProxy(*this, #name); } \
 	auto name() const { return PropertyProxy(*this, #name); } \
-	void setter(const Type &v) { set(#name, v); } \
-	Type getter() const { return get(#name); }
+	void set_ ##name(const Type &v) { Object::set(#name, Variant(v)); } \
+	Type get_ ##name() const { return Object::get(#name).operator Type(); }
+
+#define CUSTOM_PROPERTY(name, Type, getter, setter)      \
+	auto name() { return PropertyProxy(*this, #name); } \
+	auto name() const { return PropertyProxy(*this, #name); } \
+	void setter(const Type &v) { Object::set(#name, v); } \
+	Type getter() const { return Object::get(#name); }

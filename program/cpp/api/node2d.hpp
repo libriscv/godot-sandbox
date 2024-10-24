@@ -1,19 +1,19 @@
 #pragma once
-#include "node.hpp"
+#include "canvas_item.hpp"
 struct Transform2D;
 
 // Node2D: Contains 2D transformations.
 // Such as: position, rotation, scale, and skew.
-struct Node2D : public Node {
+struct Node2D : public CanvasItem {
 	/// @brief Construct a Node2D object from an existing in-scope Node object.
 	/// @param addr The address of the Node2D object.
-	constexpr Node2D(uint64_t addr) : Node(addr) {}
-	Node2D(Object obj) : Node(obj) {}
-	Node2D(Node node) : Node(node) {}
+	constexpr Node2D(uint64_t addr) : CanvasItem(addr) {}
+	Node2D(Object obj) : CanvasItem(obj) {}
+	Node2D(Node node) : CanvasItem(node) {}
 
 	/// @brief Construct a Node2D object from a path.
 	/// @param path The path to the Node2D object.
-	Node2D(std::string_view path) : Node(path) {}
+	Node2D(std::string_view path) : CanvasItem(path) {}
 
 	/// @brief Get the position of the node.
 	/// @return The position of the node.

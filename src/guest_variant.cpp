@@ -4,7 +4,6 @@
 #include <libriscv/util/crc32.hpp>
 
 namespace riscv {
-extern const char *variant_type_name(Variant::Type type);
 extern godot::Object *get_object_from_address(const Sandbox &emu, uint64_t addr);
 } //namespace riscv
 
@@ -52,7 +51,7 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 			} else {
 				char buffer[128];
 				snprintf(buffer, sizeof(buffer), "GuestVariant::toVariant(): %u (%s) is not known/scoped",
-						type, riscv::variant_type_name(type));
+						type, GuestVariant::type_name(type));
 				throw std::runtime_error(buffer);
 			}
 	}
@@ -64,7 +63,7 @@ const Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
 
 	char buffer[128];
 	snprintf(buffer, sizeof(buffer), "GuestVariant::toVariantPtr(): %u (%s) is not known/scoped",
-			type, riscv::variant_type_name(type));
+			type, GuestVariant::type_name(type));
 	throw std::runtime_error(buffer);
 }
 
@@ -226,4 +225,58 @@ void GuestVariant::create(Sandbox &emu, Variant &&value) {
 
 void GuestVariant::free(Sandbox &emu) {
 	throw std::runtime_error("GuestVariant::free(): Not implemented");
+}
+
+static const char *variant_type_names[] = {
+	"Nil",
+
+	"Bool", // 1
+	"Int",
+	"Float",
+	"String",
+
+	"Vector2", // 5
+	"Vector2i",
+	"Rect2",
+	"Rect2i",
+	"Vector3",
+	"Vector3i",
+	"Transform2D",
+	"Vector4",
+	"Vector4i",
+	"Plane",
+	"Quaternion",
+	"AABB",
+	"Basis",
+	"Transform3D",
+	"Projection",
+
+	"Color", // 20
+	"StringName",
+	"NodePath",
+	"RID",
+	"Object",
+	"Callable",
+	"Signal",
+	"Dictionary",
+	"Array",
+
+	"PackedByteArray", // 29
+	"PackedInt32Array",
+	"PackedInt64Array",
+	"PackedFloat32Array",
+	"PackedFloat64Array",
+	"PackedStringArray",
+	"PackedVector2Array",
+	"PackedVector3Array",
+	"PackedColorArray",
+
+	"Max",
+};
+
+const char *GuestVariant::type_name(int type) {
+	if (type < 0 || type >= Variant::Type::VARIANT_MAX) {
+		return "Unknown";
+	}
+	return variant_type_names[type];
 }

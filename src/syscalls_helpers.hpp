@@ -28,7 +28,7 @@ static inline void sys_trace(const String &name, Result result, Args &&...args) 
 		} else if constexpr (std::is_same_v<Args, StringName>) {
 			ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "%s", String(args).utf8().ptr());
 		} else if constexpr (std::is_same_v<Args, GuestVariant *>) {
-			ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "Variant(type=%d %s)", args->type, variant_type_name(args->type));
+			ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "Variant(type=%d %s)", args->type, GuestVariant::type_name(args->type));
 		} else if constexpr (std::is_pointer_v<Args>) {
 			ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "%p", args);
 		} else if constexpr (std::is_floating_point_v<Args>) {
@@ -45,7 +45,7 @@ static inline void sys_trace(const String &name, Result result, Args &&...args) 
 	} else if constexpr (std::is_same_v<Result, String>) {
 		ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "%s", result.utf8().ptr());
 	} else if constexpr (std::is_same_v<Result, Variant>) {
-		ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "Variant(type=%d %s)", result.get_type(), variant_type_name(result.get_type()));
+		ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "Variant(type=%d %s)", result.get_type(), GuestVariant::type_name(result.get_type()));
 	} else if constexpr (std::is_floating_point_v<Result>) {
 		ptr += snprintf(ptr, sizeof(buffer) - (ptr - buffer), "%f", result);
 	} else if constexpr (std::is_same_v<Result, gaddr_t>) {
