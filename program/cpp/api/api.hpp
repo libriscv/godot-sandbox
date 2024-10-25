@@ -136,6 +136,11 @@ struct ClassDB {
 	/// @param name The name of the object, if it's a Node. Otherwise, this is ignored.
 	/// @return The new object.
 	static Object instantiate(std::string_view class_name, std::string_view name = "");
+
+	template <typename T>
+	static T instantiate(std::string_view class_name, std::string_view name = "") {
+		return T(instantiate(class_name, name).address());
+	}
 };
 
 /// @brief Math and interpolation operations.
