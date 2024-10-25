@@ -167,9 +167,15 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 		}
 
 		const int flags = int(method["flags"]);
-		if (false && (flags & METHOD_FLAG_STATIC)) {
-			// TODO: Implement static calls.
-			continue;
+		if (flags & METHOD_FLAG_STATIC) {
+			// Static class methods.
+			if (type == 0) {
+				// Variant return type.
+				api += String("    SVMETHOD(") + method_name + ");\n";
+			} else {
+				// Typed return type.
+				api += String("    SMETHOD(") + cpp_compatible_variant_type(type) + ", " + method_name + ");\n";
+			}
 		} else {
 			// Variant::NIL is a special case, as it's a void return type.
 			// Sometimes it's a Variant return type, other times it's a void return type.
