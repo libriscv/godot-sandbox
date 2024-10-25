@@ -191,6 +191,18 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 		}
 	}
 
+	// Add integer constants.
+	PackedStringArray integer_constants = class_db->class_get_integer_constant_list(class_name, true);
+	for (int j = 0; j < integer_constants.size(); j++) {
+		String constant_name = integer_constants[j];
+		// If matching C++ keywords, capitalize the first letter.
+		if (cpp_keywords.has(constant_name.to_lower())) {
+			constant_name = constant_name.capitalize();
+		}
+		api += String("    static constexpr int64_t ") + constant_name + " = " + itos(class_db->class_get_integer_constant(class_name, constant_name)) + ";\n";
+	}
+
+	// Add singleton getter if the class is a singleton.
 	if (singletons.has(class_name)) {
 		api += "    static " + class_name + " get_singleton() { return " + class_name + "(Object(\"" + class_name + "\").address()); }\n";
 	}
