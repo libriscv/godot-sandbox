@@ -345,7 +345,7 @@ extern "C" Variant access_an_invalid_child_node() {
 }
 
 extern "C" Variant access_an_invalid_child_resource(String path) {
-	Variant resource = load(path.utf8());
+	Variant resource = loadv(path.utf8());
 	return resource.method_call("instantiate");
 }
 
