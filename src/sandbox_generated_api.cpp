@@ -179,7 +179,16 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 			method_name = method_name.capitalize();
 		}
 
-		api += String("    TYPED_METHOD(") + cpp_compatible_variant_type(type) + ", " + method_name + ");\n";
+		// Variant::NIL is a special case, as it's a void return type.
+		// Sometimes it's a Variant return type, other times it's a void return type.
+		// We speculate that if the method name doesn't start with "set_", it's a Variant return type.
+		if (type == 0 && !method_name.begins_with("set_")) {
+			// Variant return type.
+			api += String("    METHOD(") + method_name + ");\n";
+		} else {
+			// Typed return type.
+			api += String("    TYPED_METHOD(") + cpp_compatible_variant_type(type) + ", " + method_name + ");\n";
+		}
 	}
 
 	if (singletons.has(class_name)) {
