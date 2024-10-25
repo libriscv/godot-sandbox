@@ -98,16 +98,16 @@ struct Object {
 	String to_string() const {
 		return this->call("to_string");
 	}
-	METHOD(get_meta_list);
-	TYPED_METHOD(bool, has_meta);
-	TYPED_METHOD(Variant, get_meta);
-	TYPED_METHOD(void, set_meta);
-	TYPED_METHOD(void, remove_meta);
-	TYPED_METHOD(void, set_script);
-	METHOD(get_script);
-	TYPED_METHOD(bool, has_method);
-	TYPED_METHOD(bool, has_signal);
-	TYPED_METHOD(bool, has_user_signal);
+	VMETHOD(get_meta_list);
+	METHOD(bool, has_meta);
+	METHOD(Variant, get_meta);
+	METHOD(void, set_meta);
+	METHOD(void, remove_meta);
+	METHOD(void, set_script);
+	VMETHOD(get_script);
+	METHOD(bool, has_method);
+	METHOD(bool, has_signal);
+	METHOD(bool, has_user_signal);
 
 	// Get the object identifier.
 	uint64_t address() const { return m_address; }

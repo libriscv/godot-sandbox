@@ -88,19 +88,19 @@ struct Node : public Object {
 	PROPERTY(process_priority, int64_t);
 
 	//- Methods -//
-	TYPED_METHOD(void, set_physics_process);
-	TYPED_METHOD(void, set_physics_process_internal);
-	TYPED_METHOD(void, set_process);
-	TYPED_METHOD(void, set_process_input);
-	TYPED_METHOD(void, set_process_internal);
-	TYPED_METHOD(void, set_process_unhandled_input);
-	TYPED_METHOD(void, set_process_unhandled_key_input);
-	TYPED_METHOD(void, set_process_shortcut_input);
-	TYPED_METHOD(void, set_thread_safe);
-	TYPED_METHOD(void, set_owner);
-	TYPED_METHOD(Node, get_owner);
-	TYPED_METHOD(void, set_scene_file_path);
-	TYPED_METHOD(String, get_scene_file_path);
+	METHOD(void, set_physics_process);
+	METHOD(void, set_physics_process_internal);
+	METHOD(void, set_process);
+	METHOD(void, set_process_input);
+	METHOD(void, set_process_internal);
+	METHOD(void, set_process_unhandled_input);
+	METHOD(void, set_process_unhandled_key_input);
+	METHOD(void, set_process_shortcut_input);
+	METHOD(void, set_thread_safe);
+	METHOD(void, set_owner);
+	METHOD(Node, get_owner);
+	METHOD(void, set_scene_file_path);
+	METHOD(String, get_scene_file_path);
 };
 
 inline Node Variant::as_node() const {

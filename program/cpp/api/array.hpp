@@ -42,34 +42,33 @@ struct Array {
 	int size() const;
 	bool is_empty() const { return size() == 0; }
 
-	METHOD(all);
-	METHOD(any);
-	METHOD(append_array);
-	METHOD(assign);
-	METHOD(bsearch_custom);
-	METHOD(bsearch);
-	METHOD(count);
-	METHOD(duplicate);
-	METHOD(fill);
-	METHOD(filter);
-	METHOD(find);
-	METHOD(hash);
-	METHOD(is_read_only);
-	METHOD(is_same_typed);
-	METHOD(is_typed);
-	METHOD(make_read_only);
-	METHOD(map);
-	METHOD(max);
-	METHOD(min);
-	METHOD(pick_random);
-	METHOD(reduce);
-	METHOD(remove_at);
-	METHOD(reverse);
-	METHOD(rfind);
-	METHOD(shuffle);
-	METHOD(slice_array);
-	METHOD(slice);
-	METHOD(sort_custom);
+	METHOD(bool, all);
+	METHOD(bool, any);
+	VMETHOD(append_array);
+	VMETHOD(assign);
+	METHOD(int64_t, bsearch);
+	METHOD(int64_t, bsearch_custom);
+	METHOD(int64_t, count);
+	METHOD(Array, duplicate);
+	VMETHOD(fill);
+	METHOD(Array, filter);
+	METHOD(int64_t, find);
+	METHOD(int64_t, hash);
+	METHOD(bool, is_read_only);
+	METHOD(bool, is_same_typed);
+	METHOD(bool, is_typed);
+	VMETHOD(make_read_only);
+	METHOD(Array, map);
+	METHOD(Variant, max);
+	METHOD(Variant, min);
+	METHOD(Variant, pick_random);
+	METHOD(Variant, reduce);
+	VMETHOD(remove_at);
+	METHOD(int64_t, reverse);
+	METHOD(int64_t, rfind);
+	VMETHOD(shuffle);
+	METHOD(Array, slice);
+	VMETHOD(sort_custom);
 
 	// Call methods on the Array
 	template <typename... Args>

@@ -260,7 +260,7 @@ struct Variant
 	Variant method_call(std::string_view method, Args&&... args);
 
 	template <typename... Args>
-	void void_method(std::string_view method, Args&&... args);
+	void voidcall(std::string_view method, Args&&... args);
 
 	template <typename... Args>
 	Variant call(Args... args);
@@ -833,7 +833,7 @@ inline Variant Variant::method_call(std::string_view method, Args&&... args) {
 }
 
 template <typename... Args>
-inline void Variant::void_method(std::string_view method, Args&&... args) {
+inline void Variant::voidcall(std::string_view method, Args&&... args) {
 	if constexpr (sizeof...(args) == 0) {
 		voidcallp(method, nullptr, 0);
 		return;

@@ -21,27 +21,17 @@ inline __attribute__((noreturn)) void api_throw(std::string_view type, std::stri
 extern "C" __attribute__((noreturn)) void fast_exit();
 
 // Helper method to call a method on any type that can be wrapped in a Variant
-#define CREATE_METHOD(name) \
+#define VMETHOD(name) \
 	template <typename... Args> \
 	inline Variant name(Args&&... args) { \
 		return operator() (#name, std::forward<Args>(args)...); \
 	}
 
-#define VOID_METHOD(name) \
-	template <typename... Args> \
-	inline void name(Args&&... args) { \
-		Variant(*this).void_method(#name, std::forward<Args>(args)...); \
-	}
-
-// Alias for CREATE_METHOD
-#define METHOD(name) CREATE_METHOD(name)
-
-
-#define TYPED_METHOD(Type, name, ...) \
+#define METHOD(Type, name, ...) \
 	template <typename... Args> \
 	inline Type name(Args&&... args) { \
 		if constexpr (std::is_same_v<Type, void>) { \
-			Variant(*this).void_method(#name, std::forward<Args>(args)...); \
+			voidcall(#name, std::forward<Args>(args)...); \
 		} else { \
 			return operator() (#name, std::forward<Args>(args)...); \
 		} \

@@ -123,7 +123,6 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 	api += "    using " + parent_name + "::" + parent_name + ";\n";
 	// We just need the names of the properties and methods.
 	TypedArray<Dictionary> properties = class_db->class_get_property_list(class_name, true);
-	Vector<String> property_names;
 	for (int j = 0; j < properties.size(); j++) {
 		Dictionary property = properties[j];
 		String property_name = property["name"];
@@ -151,7 +150,6 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 		} else {
 			api += String("    PROPERTY(") + property_name + ", " + property_type + ");\n";
 		}
-		property_names.push_back(property_name);
 	}
 	TypedArray<Dictionary> methods = class_db->class_get_method_list(class_name, true);
 	for (int j = 0; j < methods.size(); j++) {
@@ -168,15 +166,21 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 			method_name = method_name.capitalize();
 		}
 
-		// Variant::NIL is a special case, as it's a void return type.
-		// Sometimes it's a Variant return type, other times it's a void return type.
-		// We speculate that if the method name doesn't start with "set_", it's a Variant return type.
-		if (type == 0 && !method_name.begins_with("set_")) {
-			// Variant return type.
-			api += String("    METHOD(") + method_name + ");\n";
+		const int flags = int(method["flags"]);
+		if (false && (flags & METHOD_FLAG_STATIC)) {
+			// TODO: Implement static calls.
+			continue;
 		} else {
-			// Typed return type.
-			api += String("    TYPED_METHOD(") + cpp_compatible_variant_type(type) + ", " + method_name + ");\n";
+			// Variant::NIL is a special case, as it's a void return type.
+			// Sometimes it's a Variant return type, other times it's a void return type.
+			// We speculate that if the method name doesn't start with "set_", it's a Variant return type.
+			if (type == 0 && !method_name.begins_with("set_")) {
+				// Variant return type.
+				api += String("    VMETHOD(") + method_name + ");\n";
+			} else {
+				// Typed return type.
+				api += String("    METHOD(") + cpp_compatible_variant_type(type) + ", " + method_name + ");\n";
+			}
 		}
 	}
 
