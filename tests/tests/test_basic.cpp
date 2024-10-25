@@ -349,6 +349,11 @@ extern "C" Variant access_an_invalid_child_resource(String path) {
 	return resource.method_call("instantiate");
 }
 
+extern "C" Variant disable_restrictions() {
+	get_node().call("disable_restrictions");
+	return Nil;
+}
+
 extern "C" Variant test_property_proxy() {
 	Node node = Node::Create("Fail 1");
 	node.name() = "Fail 1.5";

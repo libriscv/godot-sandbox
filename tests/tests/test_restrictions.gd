@@ -143,6 +143,16 @@ func test_insanity():
 	# The function should have thrown an exception, as we didn't allow the resource
 	assert_eq(s.get_exceptions(), exceptions + 1)
 
-	inst.queue_free()
+	if inst is Node:
+		inst.queue_free()
+
+	# disable_restrictions
+	assert_true(s.has_function("disable_restrictions"), "disable_restrictions should exist")
+
+	s.restrictions = true
+	s.vmcall("disable_restrictions")
+	# The function should have denied disabling restrictions, as it is forbidden
+	# to disable restrictions from within the sandbox
+	assert_eq(s.restrictions, true)
 
 	s.queue_free()
