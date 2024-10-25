@@ -12,6 +12,7 @@ union String {
 	String(std::string_view value);
 	template <size_t N>
 	String(const char (&value)[N]);
+	String(const std::string &value);
 
 	String &operator =(std::string_view value);
 	String &operator =(const String &value);
@@ -186,6 +187,9 @@ inline String &String::operator =(std::string_view value) {
 template <size_t N>
 inline String::String(const char (&value)[N])
 	: m_idx(Create(value, N - 1)) {}
+
+inline String::String(const std::string &value)
+	: m_idx(Create(value.data(), value.size())) {}
 
 template <typename... Args>
 inline Variant String::operator () (std::string_view method, Args&&... args) {
