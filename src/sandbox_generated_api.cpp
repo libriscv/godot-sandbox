@@ -147,9 +147,9 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 
 		String property_type = cpp_compatible_variant_type(type);
 		if (property_type == "Variant") {
-			api += String("    PROPERTY(") + property_name + ");\n";
+			api += String("    PROPERTY(") + property_name + ", Variant);\n";
 		} else {
-			api += String("    TYPED_PROPERTY(") + property_name + ", " + property_type + ");\n";
+			api += String("    PROPERTY(") + property_name + ", " + property_type + ");\n";
 		}
 		property_names.push_back(property_name);
 	}

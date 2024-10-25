@@ -79,13 +79,13 @@ struct Node : public Object {
 	static Node Create(std::string_view path);
 
 	//- Properties -//
-	PROPERTY1(name);
-	PROPERTY(owner);
-	PROPERTY(unique_name_in_owner);
-	PROPERTY(editor_description);
-	PROPERTY(physics_interpolation_mode);
-	PROPERTY(process_mode);
-	PROPERTY(process_priority);
+	PROPERTY(name, String);
+	PROPERTY(owner, Node);
+	PROPERTY(unique_name_in_owner, bool);
+	PROPERTY(editor_description, String);
+	PROPERTY(physics_interpolation_mode, int64_t);
+	PROPERTY(process_mode, int64_t);
+	PROPERTY(process_priority, int64_t);
 
 	//- Methods -//
 	TYPED_METHOD(void, set_physics_process);
@@ -97,6 +97,10 @@ struct Node : public Object {
 	TYPED_METHOD(void, set_process_unhandled_key_input);
 	TYPED_METHOD(void, set_process_shortcut_input);
 	TYPED_METHOD(void, set_thread_safe);
+	TYPED_METHOD(void, set_owner);
+	TYPED_METHOD(Node, get_owner);
+	TYPED_METHOD(void, set_scene_file_path);
+	TYPED_METHOD(String, get_scene_file_path);
 };
 
 inline Node Variant::as_node() const {

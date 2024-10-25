@@ -241,19 +241,13 @@ struct PropertyProxy {
 		return obj.get(property);
 	}
 };
-#define PROPERTY1(name)                                 \
-	auto name() { return PropertyProxy(*this, #name); } \
-	auto name() const { return PropertyProxy(*this, #name); }
-
-#define PROPERTY(name)                                  \
-	auto name() { return PropertyProxy(*this, #name); } \
-	auto name() const { return PropertyProxy(*this, #name); } \
-	void set_ ##name(const Variant &v) { Object::set(#name, v); } \
-	auto get_ ##name() const { return Object::get(#name); }
 
 #define TYPED_PROPERTY(name, Type)      \
 	auto name() { return PropertyProxy<decltype(*this), Type>(*this, #name); } \
-	auto name() const { return PropertyProxy<decltype(*this), Type>(*this, #name); } \
+	auto name() const { return PropertyProxy<decltype(*this), Type>(*this, #name); }
+
+#define PROPERTY(name, Type) TYPED_PROPERTY(name, Type)
+
 
 #define CUSTOM_PROPERTY(name, Type, getter, setter)      \
 	auto name() { return PropertyProxy(*this, #name); } \

@@ -1,8 +1,7 @@
 #pragma once
 #include <cstddef>
+// Variant types
 #include "string.hpp"
-#include "node2d.hpp"
-#include "node3d.hpp"
 #include "array.hpp"
 #include "callable.hpp"
 #include "dictionary.hpp"
@@ -11,6 +10,9 @@
 #include "transform3d.hpp"
 #include "quaternion.hpp"
 #include "rid.hpp"
+// Objects and nodes
+#include "node2d.hpp"
+#include "node3d.hpp"
 #include "syscalls_fwd.hpp"
 #include "timer.hpp"
 
