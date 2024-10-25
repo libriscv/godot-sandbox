@@ -121,6 +121,8 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 	// eg. if it's a Node, we need to inherit from Node.
 	// If it's a Node2D, we need to inherit from Node2D. etc.
 	api += "    using " + parent_name + "::" + parent_name + ";\n";
+	// Add a constructor from Object
+	api += "    constexpr " + class_name + "(const Object &obj) : " + parent_name + "(obj.address()) {}\n";
 	// We just need the names of the properties and methods.
 	TypedArray<Dictionary> properties = class_db->class_get_property_list(class_name, true);
 	for (int j = 0; j < properties.size(); j++) {
@@ -167,9 +169,15 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 		}
 
 		const int flags = int(method["flags"]);
-		if (false && (flags & METHOD_FLAG_STATIC)) {
-			// TODO: Implement static calls.
-			continue;
+		if (flags & METHOD_FLAG_STATIC) {
+			// Static class methods.
+			if (type == 0) {
+				// Variant return type.
+				api += String("    SVMETHOD(") + method_name + ");\n";
+			} else {
+				// Typed return type.
+				api += String("    SMETHOD(") + cpp_compatible_variant_type(type) + ", " + method_name + ");\n";
+			}
 		} else {
 			// Variant::NIL is a special case, as it's a void return type.
 			// Sometimes it's a Variant return type, other times it's a void return type.

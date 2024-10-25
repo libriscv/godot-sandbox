@@ -27,7 +27,7 @@ extern "C" __attribute__((noreturn)) void fast_exit();
 		return operator() (#name, std::forward<Args>(args)...); \
 	}
 
-#define METHOD(Type, name, ...) \
+#define METHOD(Type, name) \
 	template <typename... Args> \
 	inline Type name(Args&&... args) { \
 		if constexpr (std::is_same_v<Type, void>) { \
@@ -36,3 +36,7 @@ extern "C" __attribute__((noreturn)) void fast_exit();
 			return operator() (#name, std::forward<Args>(args)...); \
 		} \
 	}
+
+// Helpers for static method calls
+#define SMETHOD(Type, name) METHOD(Type, name)
+#define SVMETHOD(name) VMETHOD(name)
