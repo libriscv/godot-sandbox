@@ -254,8 +254,6 @@ struct PropertyProxy {
 #define TYPED_PROPERTY(name, Type)      \
 	auto name() { return PropertyProxy<decltype(*this), Type>(*this, #name); } \
 	auto name() const { return PropertyProxy<decltype(*this), Type>(*this, #name); } \
-	void set_ ##name(const Type &v) { Object::set(#name, Variant(v)); } \
-	Type get_ ##name() const { return Object::get(#name).operator Type(); }
 
 #define CUSTOM_PROPERTY(name, Type, getter, setter)      \
 	auto name() { return PropertyProxy(*this, #name); } \

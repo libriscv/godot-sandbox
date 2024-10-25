@@ -163,17 +163,6 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 		if (method_name.is_empty() || method_name.contains("/") || method_name.contains("-")) {
 			continue;
 		}
-		// Skip methods that are set/get property-methods, or empty.
-		if (method_name.begins_with("set_") || method_name.begins_with("get_")) {
-			// But only if we know it's a property.
-			if (property_names.has(method_name.substr(4)))
-				continue;
-		}
-		if (method_name.begins_with("is_")) {
-			// But only if we know it's a property.
-			if (property_names.has(method_name.substr(3)))
-				continue;
-		}
 		// If matching C++ keywords, capitalize the first letter.
 		if (cpp_keywords.has(method_name.to_lower())) {
 			method_name = method_name.capitalize();
