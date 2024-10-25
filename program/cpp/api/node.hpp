@@ -87,6 +87,16 @@ struct Node : public Object {
 	PROPERTY(process_mode);
 	PROPERTY(process_priority);
 
+	//- Methods -//
+	TYPED_METHOD(void, set_physics_process);
+	TYPED_METHOD(void, set_physics_process_internal);
+	TYPED_METHOD(void, set_process);
+	TYPED_METHOD(void, set_process_input);
+	TYPED_METHOD(void, set_process_internal);
+	TYPED_METHOD(void, set_process_unhandled_input);
+	TYPED_METHOD(void, set_process_unhandled_key_input);
+	TYPED_METHOD(void, set_process_shortcut_input);
+	TYPED_METHOD(void, set_thread_safe);
 };
 
 inline Node Variant::as_node() const {

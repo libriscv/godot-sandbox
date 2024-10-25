@@ -99,14 +99,15 @@ struct Object {
 		return this->call("to_string");
 	}
 	METHOD(get_meta_list);
-	METHOD(has_meta);
-	METHOD(set_meta);
-	METHOD(remove_meta);
-	METHOD(set_script);
+	TYPED_METHOD(bool, has_meta);
+	TYPED_METHOD(Variant, get_meta);
+	TYPED_METHOD(void, set_meta);
+	TYPED_METHOD(void, remove_meta);
+	TYPED_METHOD(void, set_script);
 	METHOD(get_script);
-	METHOD(has_method);
-	METHOD(has_signal);
-	METHOD(has_user_signal);
+	TYPED_METHOD(bool, has_method);
+	TYPED_METHOD(bool, has_signal);
+	TYPED_METHOD(bool, has_user_signal);
 
 	// Get the object identifier.
 	uint64_t address() const { return m_address; }

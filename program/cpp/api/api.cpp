@@ -27,7 +27,7 @@ Object ClassDB::instantiate(std::string_view class_name, std::string_view name) 
 }
 
 // Resource loader
-Variant load(std::string_view path) {
+Variant loadv(std::string_view path) {
 	Variant result;
 	sys_load(path.data(), path.size(), &result);
 	return result;

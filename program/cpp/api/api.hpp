@@ -127,7 +127,7 @@ inline bool is_editor_hint() {
 /// @brief Load a resource (at run-time) from the given path. Can be denied.
 /// @param path The path to the resource.
 /// @return The loaded resource.
-extern Variant load(std::string_view path);
+extern Variant loadv(std::string_view path);
 
 /// @brief The class database for instantiating Godot objects.
 struct ClassDB {
@@ -215,4 +215,9 @@ struct Math {
 
 #if __has_include(<generated_api.hpp>)
 #include <generated_api.hpp>
+
+template <typename T = Resource>
+inline T load(std::string_view path) {
+	return Object(loadv(path)).address();
+}
 #endif
