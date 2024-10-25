@@ -121,6 +121,8 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 	// eg. if it's a Node, we need to inherit from Node.
 	// If it's a Node2D, we need to inherit from Node2D. etc.
 	api += "    using " + parent_name + "::" + parent_name + ";\n";
+	// Add a constructor from Object
+	api += "    constexpr " + class_name + "(const Object &obj) : " + parent_name + "(obj.address()) {}\n";
 	// We just need the names of the properties and methods.
 	TypedArray<Dictionary> properties = class_db->class_get_property_list(class_name, true);
 	for (int j = 0; j < properties.size(); j++) {
