@@ -5,7 +5,7 @@ struct Node : public Object {
 	/// @brief Construct a Node object from an existing in-scope Node object.
 	/// @param addr The address of the Node object.
 	constexpr Node(uint64_t addr) : Object{addr} {}
-	Node(Object obj) : Object{obj.address()} {}
+	constexpr Node(Object obj) : Object{obj.address()} {}
 
 	/// @brief Construct a Node object from a path.
 	/// @param path The path to the Node object.

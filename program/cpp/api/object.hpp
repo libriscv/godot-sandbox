@@ -110,10 +110,10 @@ struct Object {
 	METHOD(bool, has_user_signal);
 
 	// Get the object identifier.
-	uint64_t address() const { return m_address; }
+	constexpr uint64_t address() const { return m_address; }
 
 	// Check if the node is valid.
-	bool is_valid() const { return m_address != 0; }
+	constexpr bool is_valid() const { return m_address != 0; }
 
 protected:
 	uint64_t m_address;

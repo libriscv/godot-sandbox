@@ -8,8 +8,8 @@ struct Node2D : public CanvasItem {
 	/// @brief Construct a Node2D object from an existing in-scope Node object.
 	/// @param addr The address of the Node2D object.
 	constexpr Node2D(uint64_t addr) : CanvasItem(addr) {}
-	Node2D(Object obj) : CanvasItem(obj) {}
-	Node2D(Node node) : CanvasItem(node) {}
+	constexpr Node2D(Object obj) : CanvasItem(obj) {}
+	constexpr Node2D(Node node) : CanvasItem(node) {}
 
 	/// @brief Construct a Node2D object from a path.
 	/// @param path The path to the Node2D object.
