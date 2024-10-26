@@ -252,12 +252,9 @@ struct PropertyProxy {
 	}
 };
 
-#define TYPED_PROPERTY(name, Type)      \
+#define PROPERTY(name, Type)      \
 	auto name() { return PropertyProxy<decltype(*this), Type>(*this, #name); } \
 	auto name() const { return PropertyProxy<decltype(*this), Type>(*this, #name); }
-
-#define PROPERTY(name, Type) TYPED_PROPERTY(name, Type)
-
 
 #define CUSTOM_PROPERTY(name, Type, getter, setter)      \
 	auto name() { return PropertyProxy(*this, #name); } \

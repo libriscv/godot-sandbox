@@ -109,6 +109,10 @@ struct Vector2i {
 	bool operator == (const Vector2i& other) const {
 		return x == other.x && y == other.y;
 	}
+
+	constexpr Vector2i() : x(0), y(0) {}
+	constexpr Vector2i(int val) : x(val), y(val) {}
+	constexpr Vector2i(int x, int y) : x(x), y(y) {}
 };
 struct Rect2 {
 	Vector2 position;
@@ -123,6 +127,7 @@ struct Rect2 {
 
 	constexpr Rect2() : position(), size() {}
 	constexpr Rect2(Vector2 position, Vector2 size) : position(position), size(size) {}
+	constexpr Rect2(real_t x, real_t y, real_t width, real_t height) : position(x, y), size(width, height) {}
 };
 struct Rect2i {
 	Vector2i position;
@@ -137,6 +142,7 @@ struct Rect2i {
 
 	constexpr Rect2i() : position(), size() {}
 	constexpr Rect2i(Vector2i position, Vector2i size) : position(position), size(size) {}
+	constexpr Rect2i(int x, int y, int width, int height) : position(x, y), size(width, height) {}
 };
 struct Vector3 {
 	real_t x;
