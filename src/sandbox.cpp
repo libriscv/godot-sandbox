@@ -70,7 +70,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("assault", "test", "iterations"), &Sandbox::assault);
 	ClassDB::bind_method(D_METHOD("has_function", "function"), &Sandbox::has_function);
 	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
-	ClassDB::bind_static_method("Sandbox", D_METHOD("generate_api", "language", "header_extra"), &Sandbox::generate_api, DEFVAL("cpp"), DEFVAL(""));
+	ClassDB::bind_static_method("Sandbox", D_METHOD("generate_api", "language", "header_extra", "use_argument_names"), &Sandbox::generate_api, DEFVAL("cpp"), DEFVAL(""), DEFVAL(false));
 
 	// Binary translation.
 	ClassDB::bind_method(D_METHOD("emit_binary_translation", "ignore_instruction_limit", "automatic_nbit_address_space"), &Sandbox::emit_binary_translation, DEFVAL(true), DEFVAL(false));
