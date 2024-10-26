@@ -209,6 +209,7 @@ Sandbox::~Sandbox() {
 		ERR_PRINT("Sandbox instance destroyed while a VM call is in progress.");
 	}
 	this->m_global_instance_count -= 1;
+	this->set_program_data_internal(nullptr);
 	try {
 		if (this->m_machine != dummy_machine)
 			delete this->m_machine;
@@ -244,7 +245,7 @@ void Sandbox::set_program(Ref<ELFScript> program) {
 		property_values.push_back(value);
 	}
 
-	this->m_program_data = program;
+	this->set_program_data_internal(program);
 	this->m_program_bytes = {};
 
 	// Unload program and reset the machine
@@ -273,6 +274,17 @@ void Sandbox::set_program(Ref<ELFScript> program) {
 		}
 	}
 }
+void Sandbox::set_program_data_internal(Ref<ELFScript> program) {
+	if (this->m_program_data.is_valid()) {
+		//printf("Sandbox %p: Program *unset* from %s\n", this, this->m_program_data->get_path().utf8().ptr());
+		this->m_program_data->unregister_instance(this);
+	}
+	this->m_program_data = program;
+	if (this->m_program_data.is_valid()) {
+		//printf("Sandbox %p: Program set to %s\n", this, this->m_program_data->get_path().utf8().ptr());
+		this->m_program_data->register_instance(this);
+	}
+}
 Ref<ELFScript> Sandbox::get_program() {
 	return m_program_data;
 }
@@ -284,7 +296,7 @@ void Sandbox::load_buffer(const PackedByteArray &buffer) {
 		return;
 	}
 
-	this->m_program_data.unref();
+	this->set_program_data_internal(nullptr);
 	this->m_program_bytes = buffer;
 	this->load(&this->m_program_bytes);
 }

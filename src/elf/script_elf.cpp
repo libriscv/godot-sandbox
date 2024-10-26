@@ -271,7 +271,15 @@ String ELFScript::get_elf_programming_language() const {
 
 void ELFScript::set_file(const String &p_path) {
 	path = p_path;
-	source_code = FileAccess::get_file_as_bytes(path);
+	PackedByteArray new_source_code = FileAccess::get_file_as_bytes(path);
+	if (new_source_code == source_code) {
+		if constexpr (VERBOSE_ELFSCRIPT) {
+			printf("ELFScript::set_file: No changes in %s\n", path.utf8().ptr());
+		}
+		return;
+	}
+	source_code = std::move(new_source_code);
+
 	global_name = "Sandbox_" + path.get_basename().replace("res://", "").replace("/", "_").replace("-", "_").capitalize().replace(" ", "");
 	Sandbox::BinaryInfo info = Sandbox::get_program_info_from_binary(source_code);
 	info.functions.sort();
@@ -279,8 +287,11 @@ void ELFScript::set_file(const String &p_path) {
 	this->elf_programming_language = info.language;
 	this->elf_api_version = info.version;
 
-	for (ELFScriptInstance *instance : instances) {
-		instance->reload(this);
+	if constexpr (VERBOSE_ELFSCRIPT) {
+		printf("ELFScript::set_file: %s Sandbox instances: %d\n", path.utf8().ptr(), sandbox_map[path].size());
+	}
+	for (Sandbox *sandbox : sandbox_map[path]) {
+		sandbox->set_program(Ref<ELFScript>(this));
 	}
 }
 

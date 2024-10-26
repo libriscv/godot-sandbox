@@ -441,6 +441,7 @@ private:
 	void constructor_initialize();
 	void full_reset();
 	void reset_machine();
+	void set_program_data_internal(Ref<ELFScript> program);
 	bool load(const PackedByteArray *vbuf, const std::vector<std::string> *argv = nullptr);
 	void read_program_properties(bool editor) const;
 	void handle_exception(gaddr_t);

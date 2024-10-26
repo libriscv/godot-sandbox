@@ -26,6 +26,8 @@ protected:
 	mutable HashSet<ELFScriptInstance *> instances;
 	friend class ELFScriptInstance;
 
+	static inline HashMap<String, HashSet<Sandbox *>> sandbox_map;
+
 public:
 	PackedStringArray functions;
 	String get_elf_programming_language() const;
@@ -46,6 +48,9 @@ public:
 	/// @brief Retrieve the content of the ELF resource as a byte array.
 	/// @return An ELF program as a byte array.
 	const PackedByteArray &get_content();
+
+	void register_instance(Sandbox *p_sandbox) { sandbox_map[path].insert(p_sandbox); }
+	void unregister_instance(Sandbox *p_sandbox) { sandbox_map[path].erase(p_sandbox); }
 
 	virtual bool _editor_can_reload_from_file() override;
 	virtual void _placeholder_erased(void *p_placeholder) override;
