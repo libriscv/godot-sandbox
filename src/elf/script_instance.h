@@ -36,7 +36,6 @@ class ELFScriptInstance : public ScriptInstanceExtension {
 	mutable bool has_updated_methods = false;
 	bool auto_created_sandbox = false;
 
-	void reload(ELFScript *p_script);
 	void update_methods() const;
 
 	// Retrieve the sandbox and whether it was created automatically or not
