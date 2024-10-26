@@ -198,6 +198,7 @@ struct Variant
 	operator Array() const;
 	operator Dictionary() const;
 	operator Object() const;
+	operator Node() const;
 	operator ::RID() const;
 	operator Callable() const;
 

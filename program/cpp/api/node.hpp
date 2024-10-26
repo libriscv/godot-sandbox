@@ -127,3 +127,7 @@ inline Variant::Variant(const Node &node) {
 	m_type = OBJECT;
 	v.i = node.address();
 }
+
+inline Variant::operator Node() const {
+	return as_node();
+}
