@@ -88,6 +88,16 @@ struct Object {
 	Node2D as_node2d() const;
 	Node3D as_node3d() const;
 
+	bool operator== (const Object &other) const {
+		return address() == other.address();
+	}
+	bool operator!= (const Object &other) const {
+		return address() != other.address();
+	}
+	bool operator< (const Object &other) const {
+		return address() < other.address();
+	}
+
 	// Other member functions
 	String get_class() const {
 		return this->call("get_class");
