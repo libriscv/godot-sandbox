@@ -41,7 +41,8 @@ static void auto_generate_cpp_api(const String &path) {
 		// Write the API to the project root
 		Ref<FileAccess> api_handle = FileAccess::open(path, FileAccess::ModeFlags::WRITE);
 		if (api_handle.is_valid()) {
-			api_handle->store_string(Sandbox::generate_api("cpp"));
+			const bool use_argument_names = SandboxProjectSettings::generate_method_arguments();
+			api_handle->store_string(Sandbox::generate_api("cpp", "", use_argument_names));
 			api_handle->close();
 		}
 		api_written_to_project_root = true;

@@ -21,4 +21,6 @@ public:
 	static bool debug_info();
 
 	static Array get_global_defines();
+
+	static bool generate_method_arguments();
 };

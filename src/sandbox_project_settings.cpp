@@ -22,6 +22,9 @@ static constexpr char DEBUG_INFO_HINT[] = "Enable debug information when buildin
 static constexpr char GLOBAL_DEFINES[] = "editor/script/global_defines";
 static constexpr char GLOBAL_DEFINES_HINT[] = "Global defines used when compiling Sandbox programs";
 
+static constexpr char METHOD_ARGUMENTS[] = "editor/script/runtime_api_method_arguments";
+static constexpr char METHOD_ARGUMENTS_HINT[] = "Generate method arguments for the run-time API";
+
 static void register_setting(
 		const String &p_name,
 		const Variant &p_value,
@@ -73,6 +76,7 @@ void SandboxProjectSettings::register_settings() {
 	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
 	register_setting_plain(DEBUG_INFO, false, DEBUG_INFO_HINT, false);
 	register_setting_plain(GLOBAL_DEFINES, Array(), GLOBAL_DEFINES_HINT, false);
+	register_setting_plain(METHOD_ARGUMENTS, false, METHOD_ARGUMENTS_HINT, false);
 }
 
 template <typename TType>
@@ -113,4 +117,8 @@ bool SandboxProjectSettings::debug_info() {
 
 Array SandboxProjectSettings::get_global_defines() {
 	return get_setting<Array>(GLOBAL_DEFINES);
+}
+
+bool SandboxProjectSettings::generate_method_arguments() {
+	return get_setting<bool>(METHOD_ARGUMENTS);
 }
