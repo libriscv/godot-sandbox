@@ -35,19 +35,6 @@ inline void print(Args &&...vars) {
 	sys_print(vptrs.data(), vptrs.size());
 }
 
-/// @brief Get the current scene tree.
-/// @return The root node of the scene tree.
-inline Object get_tree() {
-	return Object("SceneTree");
-}
-
-/// @brief Check if the given Node is a part of the current scene tree. Not an instance of another scene.
-/// @param node The Node to check.
-/// @return True if the Node is a part of the current scene tree, false otherwise.
-inline bool is_part_of_tree(Node node) {
-	return get_tree()("get_edited_scene_root") == node("get_owner");
-}
-
 /// @brief Get a node by its path. By default, this returns the current node.
 /// @param path The path to the node.
 /// @return The node at the given path.
@@ -221,5 +208,18 @@ struct Math {
 template <typename T = Resource>
 inline T load(std::string_view path) {
 	return Object(loadv(path)).address();
+}
+
+/// @brief Get the current scene tree.
+/// @return The root node of the scene tree.
+inline SceneTree get_tree() {
+	return Object("SceneTree").address();
+}
+
+/// @brief Check if the given Node is a part of the current scene tree. Not an instance of another scene.
+/// @param node The Node to check.
+/// @return True if the Node is a part of the current scene tree, false otherwise.
+inline bool is_part_of_tree(Node node) {
+	return get_tree().get_edited_scene_root() == node("get_owner");
 }
 #endif
