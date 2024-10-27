@@ -38,14 +38,16 @@ inline void print(Args &&...vars) {
 /// @brief Get a node by its path. By default, this returns the current node.
 /// @param path The path to the node.
 /// @return The node at the given path.
-inline Node get_node(std::string_view path = ".") {
-	return Node(path);
+template <typename T = Node>
+inline T get_node(std::string_view path = ".") {
+	return T(path);
 }
 
 /// @brief Get the parent of the current node.
 /// @return The parent node.
-inline Node get_parent() {
-	return Node("..");
+template <typename T>
+inline T get_parent() {
+	return T("..");
 }
 
 #include <unordered_map>

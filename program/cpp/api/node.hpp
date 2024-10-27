@@ -32,6 +32,11 @@ struct Node : public Object {
 	/// @return The Node object.
 	Node get_node(std::string_view path) const;
 
+	template <typename T>
+	T get_node(std::string_view path) const {
+		return T(get_node(path));
+	}
+
 	/// @brief Get the number of children of the node.
 	/// @return The number of children.
 	unsigned get_child_count() const;
