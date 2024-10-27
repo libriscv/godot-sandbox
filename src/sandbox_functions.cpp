@@ -954,7 +954,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"ssignal",
 	"start_thread",
 	"start.noopSigHandler",
-	"start.posixCallMainAndExit"
+	"start.posixCallMainAndExit",
 	"stat",
 	"stat64",
 	"stpcpy",
@@ -1197,7 +1197,7 @@ Sandbox::BinaryInfo Sandbox::get_program_info_from_binary(const PackedByteArray 
 				continue;
 			}
 			if (exclude_functions.count(function) == 0) {
-				result.functions.append(String(std::string(function).c_str()));
+				result.functions.append(String::utf8(function.begin(), function.size()));
 			}
 		}
 	} catch (const std::exception &e) {
