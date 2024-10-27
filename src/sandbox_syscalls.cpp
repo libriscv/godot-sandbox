@@ -1058,6 +1058,34 @@ APICALL(api_node) {
 			}
 			// No return value is needed.
 		} break;
+		case Node_Op::ADD_TO_GROUP: {
+			// Reg 12: Group string pointer, Reg 13: Group string length.
+			std::string_view group = machine.memory.memview(gvar, machine.cpu.reg(13));
+			node->add_to_group(String::utf8(group.data(), group.size()));
+		} break;
+		case Node_Op::REMOVE_FROM_GROUP: {
+			// Reg 12: Group string pointer, Reg 13: Group string length.
+			std::string_view group = machine.memory.memview(gvar, machine.cpu.reg(13));
+			node->remove_from_group(String::utf8(group.data(), group.size()));
+		} break;
+		case Node_Op::IS_IN_GROUP: {
+			// Reg 12: Group string pointer, Reg 13: Group string length, Reg 14: Result bool pointer.
+			std::string_view group = machine.memory.memview(gvar, machine.cpu.reg(13));
+			bool *result = machine.memory.memarray<bool>(machine.cpu.reg(14), 1);
+			*result = node->is_in_group(String::utf8(group.data(), group.size()));
+		} break;
+		case Node_Op::REPLACE_BY: {
+			// Reg 12: Node address to replace with, Reg 13: Keep groups bool.
+			godot::Node *replace_node = get_node_from_address(emu, gvar);
+			bool keep_groups = machine.cpu.reg(13);
+			node->replace_by(replace_node, keep_groups);
+		} break;
+		case Node_Op::REPARENT: {
+			// Reg 12: New parent node address, Reg 13: Keep transform bool.
+			godot::Node *new_parent = get_node_from_address(emu, gvar);
+			bool keep_transform = machine.cpu.reg(13);
+			node->reparent(new_parent, keep_transform);
+		} break;
 		default:
 			throw std::runtime_error("Invalid Node operation");
 	}

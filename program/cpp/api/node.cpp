@@ -3,7 +3,7 @@
 #include "syscalls.h"
 
 MAKE_SYSCALL(ECALL_GET_NODE, uint64_t, sys_get_node, uint64_t, const char *, size_t);
-MAKE_SYSCALL(ECALL_NODE, void, sys_node, Node_Op, uint64_t, Variant *);
+MAKE_SYSCALL(ECALL_NODE, void, sys_node, Node_Op, uint64_t, ...);
 MAKE_SYSCALL(ECALL_NODE_CREATE, uint64_t, sys_node_create, Node_Create_Shortlist, const char *, size_t, const char *, size_t);
 
 static uint64_t sys_fast_get_node(uint64_t parent, const char *path, size_t path_len) {
@@ -103,4 +103,26 @@ Node Node::duplicate() const {
 
 Node Node::Create(std::string_view path) {
 	return Node(sys_node_create(Node_Create_Shortlist::CREATE_NODE, nullptr, 0, path.data(), path.size()));
+}
+
+void Node::reparent(const Node &new_parent, bool keep_global_transform) {
+	sys_node(Node_Op::REPARENT, this->address(), new_parent.address(), keep_global_transform);
+}
+
+void Node::replace_by(const Node &node, bool keep_groups) {
+	sys_node(Node_Op::REPLACE_BY, this->address(), node.address(), keep_groups);
+}
+
+void Node::add_to_group(std::string_view group) {
+	sys_node(Node_Op::ADD_TO_GROUP, this->address(), group.data(), group.size());
+}
+
+void Node::remove_from_group(std::string_view group) {
+	sys_node(Node_Op::REMOVE_FROM_GROUP, this->address(), group.data(), group.size());
+}
+
+bool Node::is_in_group(std::string_view group) const {
+	bool result;
+	sys_node(Node_Op::IS_IN_GROUP, this->address(), group.data(), group.size(), &result);
+	return result;
 }

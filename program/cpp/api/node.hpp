@@ -70,6 +70,32 @@ struct Node : public Object {
 	/// @return A list of children nodes.
 	std::vector<Node> get_children() const;
 
+	/// @brief Add the node to a group.
+	/// @param group The group to add the node to.
+	void add_to_group(std::string_view group);
+
+	/// @brief Remove the node from a group.
+	/// @param group The group to remove the node from.
+	void remove_from_group(std::string_view group);
+
+	/// @brief Check if the node is in a group.
+	/// @param group The group to check.
+	/// @return True if the node is in the group, false otherwise.
+	bool is_in_group(std::string_view group) const;
+
+	/// @brief Replace the node with another node.
+	/// @param node The node to replace this node with.
+	void replace_by(const Node &node, bool keep_groups = false);
+
+	/// @brief Changes the parent of this Node to the new_parent.
+	/// The node needs to already have a parent.
+	/// The node's owner is preserved if its owner is still reachable
+	/// from the new location (i.e., the node is still a descendant
+	/// of the new parent after the operation).
+	/// @param new_parent The new parent node.
+	/// @param keep_global_transform If true, the node's global transform is preserved.
+	void reparent(const Node &new_parent, bool keep_global_transform = true);
+
 	/// @brief Remove this node from its parent, freeing it.
 	/// @note This is a potentially deferred operation.
 	void queue_free();
@@ -94,18 +120,30 @@ struct Node : public Object {
 
 	//- Methods -//
 	METHOD(void, set_physics_process);
+	METHOD(bool, is_physics_processing);
 	METHOD(void, set_physics_process_internal);
+	METHOD(bool, is_physics_processing_internal);
 	METHOD(void, set_process);
+	METHOD(bool, is_processing);
 	METHOD(void, set_process_input);
+	METHOD(bool, is_processing_input);
 	METHOD(void, set_process_internal);
+	METHOD(bool, is_processing_internal);
 	METHOD(void, set_process_unhandled_input);
+	METHOD(bool, is_processing_unhandled_input);
 	METHOD(void, set_process_unhandled_key_input);
+	METHOD(bool, is_processing_unhandled_key_input);
 	METHOD(void, set_process_shortcut_input);
+	METHOD(bool, is_processing_shortcut_input);
 	METHOD(void, set_thread_safe);
 	METHOD(void, set_owner);
 	METHOD(Node, get_owner);
 	METHOD(void, set_scene_file_path);
 	METHOD(String, get_scene_file_path);
+	METHOD(void, print_tree);
+	METHOD(void, print_tree_pretty);
+	METHOD(void, print_orphan_nodes);
+	METHOD(void, propagate_call);
 };
 
 inline Node Variant::as_node() const {
