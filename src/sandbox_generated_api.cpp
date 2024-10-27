@@ -450,6 +450,8 @@ void Sandbox::generate_runtime_cpp_api(bool use_argument_names) {
 
 	HashSet<String> emitted_classes;
 	HashMap<String, TypedArray<String>> waiting_classes;
+	Array skipped_class_words = SandboxProjectSettings::generated_api_skipped_classes();
+	int total_skipped_classes = 0;
 
 	// 2. Insert all pre-existing classes into the emitted_classes set.
 	emitted_classes.insert("Object");
@@ -474,6 +476,21 @@ void Sandbox::generate_runtime_cpp_api(bool use_argument_names) {
 		// 4. Emit classes
 		// Check if the class is already emitted.
 		if (emitted_classes.has(class_name)) {
+			continue;
+		}
+
+		bool is_skipped = false;
+		for (int j = 0; j < skipped_class_words.size(); j++) {
+			if (class_name.contains(skipped_class_words[j])) {
+				if constexpr (VERBOSE) {
+					UtilityFunctions::print("* Skipping class: " + class_name);
+				}
+				total_skipped_classes++;
+				is_skipped = true;
+				break;
+			}
+		}
+		if (is_skipped) {
 			continue;
 		}
 
@@ -513,16 +530,23 @@ void Sandbox::generate_runtime_cpp_api(bool use_argument_names) {
 
 		const int remaining_waiting_classes = waiting_classes.size();
 		if (remaining_waiting_classes == initial_waiting_classes) {
-			// We have a circular dependency.
-			// This is a bug in the engine, and should be reported.
-			// We can't continue, so we'll just break out of the loop.
-			ERR_PRINT("Circular dependency detected in class inheritance");
-			for (auto it = waiting_classes.begin(); it != waiting_classes.end(); ++it) {
-				const String &parent_name = it->key;
-				const TypedArray<String> &waiting = it->value;
-				for (int i = 0; i < waiting.size(); i++) {
-					ERR_PRINT("* Waiting class " + String(waiting[i]) + " with parent " + parent_name);
+			if (skipped_class_words.is_empty()) {
+				// We have a circular dependency.
+				// This is a bug in the engine, and should be reported.
+				// We can't continue, so we'll just break out of the loop.
+				ERR_PRINT("Circular dependency detected in class inheritance");
+				for (auto it = waiting_classes.begin(); it != waiting_classes.end(); ++it) {
+					const String &parent_name = it->key;
+					const TypedArray<String> &waiting = it->value;
+					for (int i = 0; i < waiting.size(); i++) {
+						ERR_PRINT("* Waiting class " + String(waiting[i]) + " with parent " + parent_name);
+					}
 				}
+			} else {
+				// When we have skipped classes, we can't emit them, so we'll just skip them.
+				total_skipped_classes += remaining_waiting_classes;
+				WARN_PRINT("Skipped classes left in class inheritance: "
+					+ itos(remaining_waiting_classes) + ", total skipped classes: " + itos(total_skipped_classes));
 			}
 			break;
 		}

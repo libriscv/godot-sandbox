@@ -24,6 +24,8 @@ static constexpr char GLOBAL_DEFINES_HINT[] = "Global defines used when compilin
 
 static constexpr char METHOD_ARGUMENTS[] = "editor/script/runtime_api_method_arguments";
 static constexpr char METHOD_ARGUMENTS_HINT[] = "Generate method arguments for the run-time API";
+static constexpr char GENAPI_SKIPPED_CLASSES[] = "editor/script/generated_api_skipped_classes";
+static constexpr char GENAPI_SKIPPED_CLASSES_HINT[] = "Matching classes to skip when generating the run-time API";
 
 static void register_setting(
 		const String &p_name,
@@ -77,6 +79,15 @@ void SandboxProjectSettings::register_settings() {
 	register_setting_plain(DEBUG_INFO, false, DEBUG_INFO_HINT, false);
 	register_setting_plain(GLOBAL_DEFINES, Array(), GLOBAL_DEFINES_HINT, false);
 	register_setting_plain(METHOD_ARGUMENTS, false, METHOD_ARGUMENTS_HINT, false);
+	Array skipped_classes;
+	skipped_classes.push_back("Editor");
+	skipped_classes.push_back("Multiplayer");
+	skipped_classes.push_back("Packet");
+	skipped_classes.push_back("Peer");
+	skipped_classes.push_back("Loader");
+	skipped_classes.push_back("Saver");
+	skipped_classes.push_back("OS");
+	register_setting_plain(GENAPI_SKIPPED_CLASSES, skipped_classes, GENAPI_SKIPPED_CLASSES_HINT, false);
 }
 
 template <typename TType>
@@ -121,4 +132,8 @@ Array SandboxProjectSettings::get_global_defines() {
 
 bool SandboxProjectSettings::generate_method_arguments() {
 	return get_setting<bool>(METHOD_ARGUMENTS);
+}
+
+Array SandboxProjectSettings::generated_api_skipped_classes() {
+	return get_setting<Array>(GENAPI_SKIPPED_CLASSES);
 }
