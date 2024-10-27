@@ -483,6 +483,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"fs.File.read",
 	"fs.File.write",
 	"fs.path.join",
+	"fseek",
 	"fseeko",
 	"fseeko64",
 	"fsetpos",
@@ -506,6 +507,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"gaih_getanswer_slice.isra.0",
 	"gaih_inet_serv",
 	"gconv_parse_code",
+	"gen_negf",
 	"get_avphys_pages",
 	"get_cie_encoding",
 	"get_fde_encoding",
@@ -617,6 +619,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"linkat",
 	"listen",
 	"localeconv",
+	"localtime",
 	"locked_vfxprintf",
 	"longjmp",
 	"lseek",
@@ -678,6 +681,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"memrchr",
 	"memset",
 	"mkdir",
+	"mktime",
 	"mmap_remap_check",
 	"mmap",
 	"mmap64",
@@ -816,6 +820,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"ptmalloc_init.part.0",
 	"ptrlist_add__",
 	"putc",
+	"putchar",
 	"pvalloc",
 	"pwrite",
 	"pwrite64",
@@ -962,6 +967,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"strcpy",
 	"strcspn",
 	"strdup",
+	"strerror",
 	"strerror_r",
 	"strip_whitespace",
 	"strlen",
@@ -1126,7 +1132,7 @@ PackedStringArray Sandbox::get_functions() const {
 				continue;
 			}
 			if (exclude_functions.count(function) == 0) {
-				result.append(String(std::string(function).c_str()));
+				result.append(String::utf8(function.begin(), function.size()));
 			}
 		}
 	} catch (const std::exception &e) {
