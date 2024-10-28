@@ -969,13 +969,16 @@ APICALL(api_node) {
 			var->create(emu, node->get_path());
 		} break;
 		case Node_Op::GET_PARENT: {
-			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
+			uint64_t *result = machine.memory.memarray<uint64_t>(gvar, 1);
 			godot::Object *parent = node->get_parent();
 			if (parent == nullptr) {
-				var->set(emu, Variant());
+				*result = 0;
 			} else {
 				// TODO: Parent nodes allow access higher up the tree, which could be a security issue.
-				var->set(emu, parent, true); // Implicit trust, as we are returning engine-provided result.
+				if (!emu.is_allowed_object(parent))
+					throw std::runtime_error("Node::get_parent(): Parent is not allowed");
+				emu.add_scoped_object(parent);
+				*result = uint64_t(uintptr_t(parent));
 			}
 		} break;
 		case Node_Op::QUEUE_FREE:
@@ -987,14 +990,18 @@ APICALL(api_node) {
 			node->queue_free();
 			break;
 		case Node_Op::DUPLICATE: {
-			auto *var = machine.memory.memarray<GuestVariant>(gvar, 1);
-			auto *new_node = node->duplicate();
+			if (!emu.is_allowed_class(node->get_class())) {
+				throw std::runtime_error("Node::duplicate(): Creating a new node of this type is not allowed");
+			}
+			uint64_t *result = machine.memory.memarray<uint64_t>(gvar, 1);
+			int flags = machine.cpu.reg(13); // Flags are passed in reg 13.
+			auto *new_node = node->duplicate(flags);
 			emu.add_scoped_object(new_node);
-			var->set(emu, new_node, true); // Implicit trust, as we are returning our own object.
+			*result = uint64_t(uintptr_t(new_node));
 		} break;
 		case Node_Op::GET_CHILD_COUNT: {
-			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
-			var->set(emu, node->get_child_count());
+			int64_t *result = machine.memory.memarray<int64_t>(gvar, 1);
+			*result = node->get_child_count();
 		} break;
 		case Node_Op::GET_CHILD: {
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
@@ -1085,6 +1092,11 @@ APICALL(api_node) {
 			godot::Node *new_parent = get_node_from_address(emu, gvar);
 			bool keep_transform = machine.cpu.reg(13);
 			node->reparent(new_parent, keep_transform);
+		} break;
+		case Node_Op::IS_INSIDE_TREE: {
+			// Reg 12: Result bool pointer.
+			bool *result = machine.memory.memarray<bool>(gvar, 1);
+			*result = node->is_inside_tree();
 		} break;
 		default:
 			throw std::runtime_error("Invalid Node operation");

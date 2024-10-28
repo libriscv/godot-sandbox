@@ -124,6 +124,7 @@ enum class Node_Op {
 	ADD_TO_GROUP,
 	REMOVE_FROM_GROUP,
 	IS_IN_GROUP,
+	IS_INSIDE_TREE,
 };
 
 enum class Node2D_Op {

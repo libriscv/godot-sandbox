@@ -83,6 +83,10 @@ struct Node : public Object {
 	/// @return True if the node is in the group, false otherwise.
 	bool is_in_group(std::string_view group) const;
 
+	/// @brief Check if the node is inside the scene tree.
+	/// @return True if the node is inside the scene tree, false otherwise.
+	bool is_inside_tree() const;
+
 	/// @brief Replace the node with another node.
 	/// @param node The node to replace this node with.
 	void replace_by(const Node &node, bool keep_groups = false);
@@ -102,7 +106,7 @@ struct Node : public Object {
 
 	/// @brief  Duplicate the node.
 	/// @return A new Node object with the same properties and children.
-	Node duplicate() const;
+	Node duplicate(int flags) const;
 
 	/// @brief Create a new Node object.
 	/// @param path The path to the Node object.
@@ -119,6 +123,15 @@ struct Node : public Object {
 	PROPERTY(process_priority, int64_t);
 
 	//- Methods -//
+	METHOD(Object, create_tween);
+	METHOD(Node, find_child);
+	METHOD(Variant, find_children);
+	METHOD(Node, find_parent);
+	METHOD(Node, get_viewport);
+	METHOD(Node, get_window);
+	METHOD(bool, has_node);
+	METHOD(bool, has_node_and_resource);
+	METHOD(bool, is_ancestor_of);
 	METHOD(void, set_physics_process);
 	METHOD(bool, is_physics_processing);
 	METHOD(void, set_physics_process_internal);
@@ -135,6 +148,7 @@ struct Node : public Object {
 	METHOD(bool, is_processing_unhandled_key_input);
 	METHOD(void, set_process_shortcut_input);
 	METHOD(bool, is_processing_shortcut_input);
+	METHOD(bool, is_node_ready);
 	METHOD(void, set_thread_safe);
 	METHOD(void, set_owner);
 	METHOD(Node, get_owner);
@@ -144,6 +158,25 @@ struct Node : public Object {
 	METHOD(void, print_tree_pretty);
 	METHOD(void, print_orphan_nodes);
 	METHOD(void, propagate_call);
+
+
+	//- Signals -//
+
+	//- Constants -//
+	static constexpr int PROCESS_MODE_INHERIT = 0;
+	static constexpr int PROCESS_MODE_PAUSABLE = 1;
+	static constexpr int PROCESS_MODE_WHEN_PAUSED = 2;
+	static constexpr int PROCESS_MODE_ALWAYS = 3;
+	static constexpr int PROCESS_MODE_DISABLED = 4;
+
+	static constexpr int PHYSICS_INTERPOLATION_MODE_INHERIT = 0;
+	static constexpr int PHYSICS_INTERPOLATION_MODE_ON = 1;
+	static constexpr int PHYSICS_INTERPOLATION_MODE_OFF = 2;
+
+	static constexpr int DUPLICATE_SIGNALS = 1;
+	static constexpr int DUPLICATE_GROUPS = 2;
+	static constexpr int DUPLICATE_SCRIPTS = 4;
+	static constexpr int DUPLICATE_USE_INSTANTIATION = 8;
 };
 
 inline Node Variant::as_node() const {

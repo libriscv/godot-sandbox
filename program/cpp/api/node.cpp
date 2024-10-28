@@ -43,15 +43,15 @@ Variant Node::get_path() const {
 }
 
 Node Node::get_parent() const {
-	Variant var;
-	sys_node(Node_Op::GET_PARENT, address(), &var);
-	return var.as_node();
+	uint64_t addr;
+	sys_node(Node_Op::GET_PARENT, address(), &addr);
+	return Node(addr);
 }
 
 unsigned Node::get_child_count() const {
-	Variant var;
-	sys_node(Node_Op::GET_CHILD_COUNT, address(), &var);
-	return int64_t(var);
+	int64_t result;
+	sys_node(Node_Op::GET_CHILD_COUNT, address(), &result);
+	return result;
 }
 
 Node Node::get_child(unsigned index) const {
@@ -82,7 +82,7 @@ void Node::remove_child(const Node &child, bool deferred) {
 
 std::vector<Node> Node::get_children() const {
 	std::vector<Node> children;
-	sys_node(Node_Op::GET_CHILDREN, address(), (Variant *)&children);
+	sys_node(Node_Op::GET_CHILDREN, address(), &children);
 	return children;
 }
 
@@ -95,10 +95,10 @@ void Node::queue_free() {
 	//this->m_address = 0;
 }
 
-Node Node::duplicate() const {
-	Variant result;
-	sys_node(Node_Op::DUPLICATE, this->address(), &result);
-	return result.as_node();
+Node Node::duplicate(int flags) const {
+	uint64_t result;
+	sys_node(Node_Op::DUPLICATE, this->address(), &result, flags);
+	return Node(result);
 }
 
 Node Node::Create(std::string_view path) {
@@ -124,5 +124,11 @@ void Node::remove_from_group(std::string_view group) {
 bool Node::is_in_group(std::string_view group) const {
 	bool result;
 	sys_node(Node_Op::IS_IN_GROUP, this->address(), group.data(), group.size(), &result);
+	return result;
+}
+
+bool Node::is_inside_tree() const {
+	bool result;
+	sys_node(Node_Op::IS_INSIDE_TREE, this->address(), &result);
 	return result;
 }
