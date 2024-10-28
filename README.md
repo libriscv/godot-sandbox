@@ -36,7 +36,7 @@ This extension exists to allow Godot creators to implement safe modding support,
 
 ## Installation
 
-- Automatic (Recommended): Download the plugin from the official [Godot Asset Store](.) using the **AssetLib** tab in Godot by searching for **Godot Sandbox**.
+- Automatic (Recommended): Download the plugin from the official [Godot Asset Store](https://godotengine.org/asset-library/asset/3192) using the **AssetLib** tab in Godot by searching for **Godot Sandbox**.
 
 - Manual: Download the [latest github release](https://github.com/libriscv/godot-sandbox/releases/latest) and move only the **addons** folder into your project **addons** folder.
 
@@ -46,7 +46,7 @@ This extension exists to allow Godot creators to implement safe modding support,
 	- You can implement a modding API for your game. This API can then be used by other players to extend your game, in a safe manner.
 	- Put restrictions on resources, classes and objects to say what is accessible inside the sandbox.
 - Build once, run everywhere
-	- You can publish your game for all mobile and console platforms, without paying a performance penalty. It's not going to be a laggy mess, which is always a risk with other solutions that eg. rely on JIT too much.
+	- You can publish your game for all mobile and console platforms, without paying a performance penalty. It's not going to be a laggy mess, which is a risk with solutions that are only fast when JIT is available.
 	- Programs will behave the same way on all platforms, including 32-bit platforms.
 - High-performance
 	- You can use this extension as a way to write higher performance code than GDScript permits, without having to resort to writing and maintaining a GDExtension for all platforms.
@@ -54,15 +54,12 @@ This extension exists to allow Godot creators to implement safe modding support,
 	- Yields 2.5-7.5x performance boost by default, 5-30x with binary translation
 - Publish and then make updates without re-publishing
 	- You can distribute programs from a server to clients as part of the login sequence. You can use this to live-distribute changes like bugfixes or even new features to the game without having to re-publish the game itself. I do this in my game.
-- Supports many programming languages
-	- Although we mostly work on C++ and there is growing support for Rust and Zig, any number of languages can be supported directly in the editor.
 
 ## Usage
 
-- Write C++ or Rust in the Godot editor. An accompanying ELF resource is created.
+- Write C++ or Rust in the Godot editor. An accompanying ELF resource is created. This resource can be loaded into any Sandbox instance on every platform without recompiling.
 
 - Create a new `Sandbox` and [assign the ELF resource to it](https://libriscv.no/docs/godot/sandbox/#create-a-sandbox)
-	- Access to the underlying Sandbox
 	- Lifetime as any other node
 	- Auto-completion from other GDScripts using @export
 
@@ -84,7 +81,7 @@ extern "C" Variant reset_game() {
 
 static void add_coin(const Node& player) {
 	coins ++;
-	Label coinlabel = player.get_node("../Texts/CoinLabel");
+	Label coinlabel = player.get_node<Label>("../Texts/CoinLabel");
 	coinlabel.set_text("You have collected "
 		+ std::to_string(coins) + ((coins == 1) ? " coin" : " coins"));
 }
@@ -99,7 +96,7 @@ extern "C" Variant _on_body_entered(CharacterBody2D body) {
 }
 ```
 
-Script of a simple Coin pickup, with a counter that updates a label in the tree of the player. This script can be attached to the Coin in the editor just like GDScript.
+Script of a simple Coin pickup, with a counter that updates a label in the outer tree. This script can be attached to the Coin in the editor just like GDScript.
 
 You may also have a look at our [demo repository](https://github.com/libriscv/godot-sandbox-demo) for the Godot Sandbox. It's a tiny platformer that uses C++ and Rust.
 
