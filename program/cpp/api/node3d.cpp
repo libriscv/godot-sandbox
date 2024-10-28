@@ -1,6 +1,7 @@
 #include "node3d.hpp"
 
 #include "syscalls.h"
+#include "quaternion.hpp"
 #include "transform3d.hpp"
 
 // API call to get/set Node3D properties.
@@ -59,4 +60,15 @@ Transform3D Node3D::get_transform() const {
 void Node3D::set_transform(const Transform3D &value) {
 	Variant var(value);
 	sys_node3d(Node3D_Op::SET_TRANSFORM, address(), &var);
+}
+
+Quaternion Node3D::get_quaternion() const {
+	Variant var;
+	sys_node3d(Node3D_Op::GET_QUATERNION, address(), &var);
+	return var;
+}
+
+void Node3D::set_quaternion(const Quaternion &value) {
+	Variant var(value);
+	sys_node3d(Node3D_Op::SET_QUATERNION, address(), &var);
 }

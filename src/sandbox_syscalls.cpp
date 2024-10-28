@@ -1203,6 +1203,12 @@ APICALL(api_node3d) {
 		case Node3D_Op::SET_TRANSFORM:
 			node3d->set_transform(*var->toVariantPtr(emu));
 			break;
+		case Node3D_Op::GET_QUATERNION:
+			var->set(emu, node3d->get_quaternion());
+			break;
+		case Node3D_Op::SET_QUATERNION:
+			node3d->set_quaternion(var->toVariant(emu));
+			break;
 		default:
 			ERR_PRINT("Invalid Node3D operation");
 			throw std::runtime_error("Invalid Node3D operation");

@@ -1,6 +1,7 @@
 #pragma once
 #include "node.hpp"
 struct Transform3D;
+struct Quaternion;
 
 // Node3D: Contains 3D tranformations.
 // Such as: position, rotation, scale, and skew.
@@ -44,9 +45,13 @@ struct Node3D : public Node {
 	/// @return The 3D transform of the node.
 	Transform3D get_transform() const;
 
-	// TODO:
-	// void set_quaternion(const Quaternion &value);
-	// Quaternion get_quaternion() const;
+	/// @brief Access to the node rotation as a Quaternion. This property is ideal for tweening complex rotations.
+	/// @param value The new quaternion of the node.
+	void set_quaternion(const Quaternion &value);
+
+	/// @brief Get the rotation of the node as a Quaternion.
+	/// @return The rotation of the node as a Quaternion.
+	Quaternion get_quaternion() const;
 
 	/// @brief  Duplicate the node.
 	/// @return A new Node3D object with the same properties and children.

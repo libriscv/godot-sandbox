@@ -123,6 +123,7 @@ struct Node : public Object {
 	PROPERTY(process_priority, int64_t);
 
 	//- Methods -//
+	METHOD(bool, can_process);
 	METHOD(Object, create_tween);
 	METHOD(Node, find_child);
 	METHOD(Variant, find_children);
