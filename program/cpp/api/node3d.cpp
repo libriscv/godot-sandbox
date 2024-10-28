@@ -42,10 +42,8 @@ void Node3D::set_scale(const Variant &value) {
 	node3d(Node3D_Op::SET_SCALE, address(), value);
 }
 
-Node3D Node3D::duplicate() const {
-	Variant result;
-	sys_node(Node_Op::DUPLICATE, address(), &result);
-	return result.as_node3d();
+Node3D Node3D::duplicate(int flags) const {
+	return Node::duplicate(flags);
 }
 
 Node3D Node3D::Create(std::string_view path) {

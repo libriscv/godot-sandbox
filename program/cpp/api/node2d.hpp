@@ -53,7 +53,7 @@ struct Node2D : public CanvasItem {
 
 	/// @brief  Duplicate the node.
 	/// @return A new Node2D with the same properties and children.
-	Node2D duplicate() const;
+	Node2D duplicate(int flags = 15) const;
 
 	/// @brief Create a new Node2D node.
 	/// @param path The path to the Node2D node.

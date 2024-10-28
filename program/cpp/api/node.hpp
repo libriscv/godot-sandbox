@@ -106,7 +106,7 @@ struct Node : public Object {
 
 	/// @brief  Duplicate the node.
 	/// @return A new Node object with the same properties and children.
-	Node duplicate(int flags) const;
+	Node duplicate(int flags = 15) const;
 
 	/// @brief Create a new Node object.
 	/// @param path The path to the Node object.

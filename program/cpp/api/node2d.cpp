@@ -66,10 +66,8 @@ Transform2D Node2D::get_transform() const {
 	return var.as_transform2d();
 }
 
-Node2D Node2D::duplicate() const {
-	Variant result;
-	sys_node(Node_Op::DUPLICATE, address(), &result);
-	return result.as_node2d();
+Node2D Node2D::duplicate(int flags) const {
+	return Node::duplicate(flags);
 }
 
 Node2D Node2D::Create(std::string_view path) {

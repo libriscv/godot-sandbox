@@ -50,7 +50,7 @@ struct Node3D : public Node {
 
 	/// @brief  Duplicate the node.
 	/// @return A new Node3D object with the same properties and children.
-	Node3D duplicate() const;
+	Node3D duplicate(int flags = 15) const;
 
 	/// @brief Create a new Node3D node.
 	/// @param path The path to the Node3D node.
