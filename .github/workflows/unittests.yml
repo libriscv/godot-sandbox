@@ -20,13 +20,6 @@ jobs:
           submodules: true
           fetch-depth: 0
 
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          repository: godotengine/godot
-          ref: 4.3
-          path: godot
-
       - name: Install dependencies
         run: |
           sudo apt update
