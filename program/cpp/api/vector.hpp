@@ -46,6 +46,33 @@ struct Vector2 {
 		return index == 0 ? x : y;
 	}
 
+	METHOD(Vector2, abs);
+	METHOD(Vector2, bezier_derivative);
+	METHOD(Vector2, bezier_interpolate);
+	METHOD(Vector2, ceil);
+	METHOD(Vector2, clamp);
+	METHOD(Vector2, clampf);
+	METHOD(real_t,  cross);
+	METHOD(Vector2, cubic_interpolate_in_time);
+	METHOD(Vector2, floor);
+	METHOD(bool,    is_equal_approx);
+	METHOD(bool,    is_finite);
+	METHOD(bool,    is_normalized);
+	METHOD(bool,    is_zero_approx);
+	METHOD(Vector2, max);
+	METHOD(Vector2, maxf);
+	METHOD(int,     max_axis_index);
+	METHOD(Vector2, min);
+	METHOD(Vector2, minf);
+	METHOD(int,     min_axis_index);
+	METHOD(Vector2, move_toward);
+	METHOD(Vector2, posmod);
+	METHOD(Vector2, posmodv);
+	METHOD(Vector2, round);
+	METHOD(Vector2, sign);
+	METHOD(Vector2, snapped);
+	METHOD(Vector2, snappedf);
+
 	template <typename... Args>
 	Variant operator () (std::string_view method, Args&&... args);
 
@@ -77,7 +104,21 @@ struct Vector2 {
 	constexpr Vector2() : x(0), y(0) {}
 	constexpr Vector2(real_t val) : x(val), y(val) {}
 	constexpr Vector2(real_t x, real_t y) : x(x), y(y) {}
+
+	static Vector2 const ZERO;
+	static Vector2 const ONE;
+	static Vector2 const LEFT;
+	static Vector2 const RIGHT;
+	static Vector2 const UP;
+	static Vector2 const DOWN;
 };
+inline constexpr Vector2 const Vector2::ZERO = Vector2(0, 0);
+inline constexpr Vector2 const Vector2::ONE = Vector2(1, 1);
+inline constexpr Vector2 const Vector2::LEFT = Vector2(-1, 0);
+inline constexpr Vector2 const Vector2::RIGHT = Vector2(1, 0);
+inline constexpr Vector2 const Vector2::UP = Vector2(0, -1);
+inline constexpr Vector2 const Vector2::DOWN = Vector2(0, 1);
+
 struct Vector2i {
 	int x;
 	int y;
