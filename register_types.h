@@ -1,5 +1,5 @@
 #pragma once
-#include <gdextension_interface.h>
+#include <godot_cpp/godot.hpp>
 #include <godot_cpp/classes/script_language.hpp>
 
 GODOT_NAMESPACE
