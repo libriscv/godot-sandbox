@@ -27,7 +27,7 @@ void ResourceFormatSaverZig::deinit() {
 	zig_saver.unref();
 }
 
-Error ResourceFormatSaverZig::_save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags) {
+Error ResourceFormatSaverZig::GODOT_CPP_FUNC (save)(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags) {
 	ZigScript *script = Object::cast_to<ZigScript>(p_resource.ptr());
 	if (script != nullptr) {
 		Ref<FileAccess> handle = FileAccess::open(p_path, FileAccess::ModeFlags::WRITE);
@@ -74,19 +74,19 @@ Error ResourceFormatSaverZig::_save(const Ref<Resource> &p_resource, const Strin
 	}
 	return Error::ERR_SCRIPT_FAILED;
 }
-Error ResourceFormatSaverZig::_set_uid(const String &p_path, int64_t p_uid) {
+Error ResourceFormatSaverZig::GODOT_CPP_FUNC (set_uid)(const String &p_path, int64_t p_uid) {
 	return Error::OK;
 }
-bool ResourceFormatSaverZig::_recognize(const Ref<Resource> &p_resource) const {
+bool ResourceFormatSaverZig::GODOT_CPP_FUNC (recognize)(const Ref<Resource> &p_resource) const {
 	return Object::cast_to<ZigScript>(p_resource.ptr()) != nullptr;
 }
-PackedStringArray ResourceFormatSaverZig::_get_recognized_extensions(const Ref<Resource> &p_resource) const {
+PackedStringArray ResourceFormatSaverZig::GODOT_CPP_FUNC (get_recognized_extensions)(const Ref<Resource> &p_resource) const {
 	PackedStringArray array;
 	if (Object::cast_to<ZigScript>(p_resource.ptr()) == nullptr)
 		return array;
 	array.push_back("zig");
 	return array;
 }
-bool ResourceFormatSaverZig::_recognize_path(const Ref<Resource> &p_resource, const String &p_path) const {
+bool ResourceFormatSaverZig::GODOT_CPP_FUNC (recognize_path)(const Ref<Resource> &p_resource, const String &p_path) const {
 	return Object::cast_to<ZigScript>(p_resource.ptr()) != nullptr;
 }

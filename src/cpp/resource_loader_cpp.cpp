@@ -14,12 +14,12 @@ void ResourceFormatLoaderCPP::deinit() {
 	cpp_loader.unref();
 }
 
-Variant ResourceFormatLoaderCPP::_load(const String &p_path, const String &original_path, bool use_sub_threads, int32_t cache_mode) const {
+Variant ResourceFormatLoaderCPP:: GODOT_CPP_FUNC (load)(const String &p_path, const String &original_path, bool use_sub_threads, int32_t cache_mode) const {
 	Ref<CPPScript> cpp_model = memnew(CPPScript);
 	cpp_model->_set_source_code(FileAccess::get_file_as_string(p_path));
 	return cpp_model;
 }
-PackedStringArray ResourceFormatLoaderCPP::_get_recognized_extensions() const {
+PackedStringArray ResourceFormatLoaderCPP:: GODOT_CPP_FUNC (get_recognized_extensions)() const {
 	PackedStringArray array;
 	array.push_back("cpp");
 	array.push_back("cc");
@@ -28,11 +28,11 @@ PackedStringArray ResourceFormatLoaderCPP::_get_recognized_extensions() const {
 	array.push_back("hpp");
 	return array;
 }
-bool ResourceFormatLoaderCPP::_handles_type(const StringName &type) const {
+bool ResourceFormatLoaderCPP:: GODOT_CPP_FUNC (handles_type)(const StringName &type) const {
 	String type_str = type;
 	return type_str == "CPPScript" || type_str == "Script";
 }
-String ResourceFormatLoaderCPP::_get_resource_type(const String &p_path) const {
+String ResourceFormatLoaderCPP:: GODOT_CPP_FUNC (get_resource_type)(const String &p_path) const {
 	String el = p_path.get_extension().to_lower();
 	if (el == "hpp" || el == "cpp" || el == "h" || el == "cc" || el == "hh") {
 		return "CPPScript";
