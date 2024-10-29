@@ -6,7 +6,7 @@ Import("env")
 Import("env_modules")
 
 env_modules.Append(CPPDEFINES = ['GODOT_NAMESPACE'])
-env_modules.Append(CPPDEFINES=['GODOT_CPP_FUNC(name)=name'])
+env.Append(CPPDEFINES=['"GODOT_CPP_FUNC(name)=name"'])
 
 env_godot_sandbox = env_modules.Clone()
 env_godot_sandbox["disable_exceptions"] = "0"
