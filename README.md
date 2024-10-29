@@ -118,6 +118,15 @@ Linting:
 ./scripts/clang-tidy.sh
 ```
 
+Build as module:
+
+```sh
+git clone https://github.com/godotengine/godot.git
+scons generate_bindings=true build_library=no godot_repo=godot
+cd godot
+scons custom_modules=.. modules_enabled_by_default=no disable_3d=yes disable_advanced_gui=yes deprecated=no minizip=no target=template_debug module_sandbox_enabled=True
+```
+
 ## Icons
 
 The script icon is built from the Godot icons. It's using the same font as the Godot Logo, which is Lilita One. The icons are then imported into Godot once in order to check the box `Scale With Editor` in the import panel.
