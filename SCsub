@@ -5,7 +5,7 @@ from build_utils import add_compilation_flags, get_sources
 Import("env")
 Import("env_modules")
 
-env_modules.Append(CPPDEFINES = ['GODOT_NAMESPACE'])
+env_modules.Append(CPPDEFINES = ['GODOT_NAMESPACE='])
 env.Append(CPPDEFINES=['"GODOT_CPP_FUNC(name)=name"'])
 
 env_godot_sandbox = env_modules.Clone()
