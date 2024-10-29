@@ -289,7 +289,7 @@ public:
 	/// @param obj The object to check.
 	/// @param property The name of the property to check.
 	/// @return True if the property is allowed, false otherwise.
-	bool is_allowed_property(godot::Object *obj, const Variant &property) const;
+	bool is_allowed_property(godot::Object *obj, const Variant &property, bool is_set) const;
 
 	/// @brief Set a callback to check if a property is allowed in the sandbox.
 	/// @param callback The callable to check if a property is allowed.

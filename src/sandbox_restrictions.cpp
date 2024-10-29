@@ -124,10 +124,10 @@ void Sandbox::set_method_allowed_callback(const Callable &callback) {
 	m_just_in_time_allowed_methods = callback;
 }
 
-bool Sandbox::is_allowed_property(godot::Object *obj, const Variant &property) const {
+bool Sandbox::is_allowed_property(godot::Object *obj, const Variant &property, bool is_set) const {
 	// If the callable is valid, call it to allow the user to decide
 	if (m_just_in_time_allowed_properties.is_valid()) {
-		return m_just_in_time_allowed_properties.call(this, obj, property);
+		return m_just_in_time_allowed_properties.call(this, obj, property, is_set);
 	}
 	// If the callable is not valid, allow all properties
 	return true;

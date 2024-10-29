@@ -91,7 +91,7 @@ func test_restriction_callbacks():
 	assert_true(s.is_allowed_method(n, "queue_free"), "Node.queue_free() should be allowed")
 	assert_false(s.is_allowed_method(n, "free"), "Node.free() should *NOT* be allowed")
 
-	s.set_property_allowed_callback(func(sandbox, obj, property): return property != "owner")
+	s.set_property_allowed_callback(func(sandbox, obj, property, is_set): return property != "owner")
 	assert_true(s.is_allowed_property(n, "name"), "Node.get/set_name should be allowed")
 	assert_false(s.is_allowed_property(n, "owner"), "Node.get/set_owner should *NOT* be allowed")
 

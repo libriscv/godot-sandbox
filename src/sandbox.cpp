@@ -52,9 +52,9 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_property_allowed_callback", "instance"), &Sandbox::set_property_allowed_callback);
 	ClassDB::bind_method(D_METHOD("set_resource_allowed_callback", "instance"), &Sandbox::set_resource_allowed_callback);
 	ClassDB::bind_method(D_METHOD("is_allowed_class", "name"), &Sandbox::is_allowed_class);
-	ClassDB::bind_method(D_METHOD("is_allowed_object", "name"), &Sandbox::is_allowed_object);
+	ClassDB::bind_method(D_METHOD("is_allowed_object", "instance"), &Sandbox::is_allowed_object);
 	ClassDB::bind_method(D_METHOD("is_allowed_method", "instance", "method"), &Sandbox::is_allowed_method);
-	ClassDB::bind_method(D_METHOD("is_allowed_property", "property"), &Sandbox::is_allowed_property);
+	ClassDB::bind_method(D_METHOD("is_allowed_property", "instance", "property", "is_set"), &Sandbox::is_allowed_property, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("is_allowed_resource", "res"), &Sandbox::is_allowed_resource);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("restrictive_callback_function"), &Sandbox::restrictive_callback_function);
 

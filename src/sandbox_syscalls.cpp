@@ -688,7 +688,7 @@ APICALL(api_obj) {
 		case Object_Op::GET: { // Get a property of the object.
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 2);
 			String name = var[0].toVariant(emu).operator String();
-			if (UNLIKELY(!emu.is_allowed_property(obj, name))) {
+			if (UNLIKELY(!emu.is_allowed_property(obj, name, false))) {
 				ERR_PRINT("Banned property accessed: " + name);
 				throw std::runtime_error("Banned property accessed");
 			}
@@ -697,7 +697,7 @@ APICALL(api_obj) {
 		case Object_Op::SET: { // Set a property of the object.
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 2);
 			String name = var[0].toVariant(emu).operator String();
-			if (UNLIKELY(!emu.is_allowed_property(obj, name))) {
+			if (UNLIKELY(!emu.is_allowed_property(obj, name, true))) {
 				ERR_PRINT("Banned property set: " + name);
 				throw std::runtime_error("Banned property set");
 			}
@@ -753,7 +753,7 @@ APICALL(api_obj_property_get) {
 	godot::Object *obj = get_object_from_address(emu, addr);
 	String prop_name = String::utf8(method.data(), method.size());
 
-	if (UNLIKELY(!emu.is_allowed_property(obj, prop_name))) {
+	if (UNLIKELY(!emu.is_allowed_property(obj, prop_name, false))) {
 		ERR_PRINT("Banned property accessed: " + prop_name);
 		throw std::runtime_error("Banned property accessed: " + std::string(prop_name.utf8()));
 	}
@@ -770,7 +770,7 @@ APICALL(api_obj_property_set) {
 	godot::Object *obj = get_object_from_address(emu, addr);
 	String prop_name = String::utf8(method.data(), method.size());
 
-	if (UNLIKELY(!emu.is_allowed_property(obj, prop_name))) {
+	if (UNLIKELY(!emu.is_allowed_property(obj, prop_name, true))) {
 		ERR_PRINT("Banned property set: " + prop_name);
 		throw std::runtime_error("Banned property set: " + std::string(prop_name.utf8()));
 	}
@@ -957,21 +957,41 @@ APICALL(api_node) {
 
 	switch (Node_Op(op)) {
 		case Node_Op::GET_NAME: {
+			// Check if getting the name is allowed.
+			if (UNLIKELY(!emu.is_allowed_property(node, "name", false))) {
+				ERR_PRINT("Banned property accessed: name");
+				throw std::runtime_error("Banned property accessed: name");
+			}
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 			var->create(emu, node->get_name());
 		} break;
 		case Node_Op::SET_NAME: {
+			// Check if setting the name is allowed.
+			if (UNLIKELY(!emu.is_allowed_property(node, "name", true))) {
+				ERR_PRINT("Banned property set: name");
+				throw std::runtime_error("Banned property set: name");
+			}
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 			node->set_name(var->toVariant(emu));
 		} break;
 		case Node_Op::GET_PATH: {
+			// Check if getting the path is allowed.
+			if (UNLIKELY(!emu.is_allowed_method(node, "path"))) {
+				ERR_PRINT("Banned method accessed: path");
+				throw std::runtime_error("Banned method accessed: path");
+			}
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 			var->create(emu, node->get_path());
 		} break;
 		case Node_Op::GET_PARENT: {
+			// Check if getting the parent is allowed.
+			if (UNLIKELY(!emu.is_allowed_method(node, "get_parent"))) {
+				ERR_PRINT("Banned method accessed: get_parent");
+				throw std::runtime_error("Banned method accessed: get_parent");
+			}
 			uint64_t *result = machine.memory.memarray<uint64_t>(gvar, 1);
 			godot::Object *parent = node->get_parent();
-			if (parent == nullptr) {
+			if (UNLIKELY(parent == nullptr)) {
 				*result = 0;
 			} else {
 				// TODO: Parent nodes allow access higher up the tree, which could be a security issue.
@@ -982,16 +1002,27 @@ APICALL(api_node) {
 			}
 		} break;
 		case Node_Op::QUEUE_FREE:
-			if (node == &emu) {
+			if (UNLIKELY(node == &emu)) {
 				ERR_PRINT("Cannot queue free the sandbox");
 				throw std::runtime_error("Cannot queue free the sandbox");
+			}
+			// Check if queue_free is an allowed method.
+			if (UNLIKELY(!emu.is_allowed_method(node, "queue_free"))) {
+				ERR_PRINT("Banned method called: queue_free");
+				throw std::runtime_error("Banned method called: queue_free");
 			}
 			//emu.rem_scoped_object(node);
 			node->queue_free();
 			break;
 		case Node_Op::DUPLICATE: {
-			if (!emu.is_allowed_class(node->get_class())) {
+			// Check if creating a new node of this type is allowed.
+			if (UNLIKELY(!emu.is_allowed_class(node->get_class()))) {
 				throw std::runtime_error("Node::duplicate(): Creating a new node of this type is not allowed");
+			}
+			// Check if duplicate is an allowed method.
+			if (UNLIKELY(!emu.is_allowed_method(node, "duplicate"))) {
+				ERR_PRINT("Banned method called: duplicate");
+				throw std::runtime_error("Banned method called: duplicate");
 			}
 			uint64_t *result = machine.memory.memarray<uint64_t>(gvar, 1);
 			int flags = machine.cpu.reg(13); // Flags are passed in reg 13.
@@ -1006,7 +1037,7 @@ APICALL(api_node) {
 		case Node_Op::GET_CHILD: {
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 			Node *child_node = node->get_child(var[0].v.i);
-			if (child_node == nullptr) {
+			if (UNLIKELY(child_node == nullptr)) {
 				var[0].set(emu, Variant());
 			} else {
 				emu.add_scoped_object(child_node);
@@ -1015,6 +1046,11 @@ APICALL(api_node) {
 		} break;
 		case Node_Op::ADD_CHILD_DEFERRED:
 		case Node_Op::ADD_CHILD: {
+			// Check for banned methods.
+			if (UNLIKELY(!emu.is_allowed_method(node, "add_child"))) {
+				ERR_PRINT("Banned method called: add_child");
+				throw std::runtime_error("Banned method called: add_child");
+			}
 			GuestVariant *child = machine.memory.memarray<GuestVariant>(gvar, 1);
 			godot::Node *child_node = get_node_from_address(emu, child->v.i);
 			if (Node_Op(op) == Node_Op::ADD_CHILD_DEFERRED)
@@ -1024,6 +1060,11 @@ APICALL(api_node) {
 		} break;
 		case Node_Op::ADD_SIBLING_DEFERRED:
 		case Node_Op::ADD_SIBLING: {
+			// Check for banned methods.
+			if (UNLIKELY(!emu.is_allowed_method(node, "add_sibling"))) {
+				ERR_PRINT("Banned method called: add_sibling");
+				throw std::runtime_error("Banned method called: add_sibling");
+			}
 			GuestVariant *sibling = machine.memory.memarray<GuestVariant>(gvar, 1);
 			godot::Node *sibling_node = get_node_from_address(emu, sibling->v.i);
 			if (Node_Op(op) == Node_Op::ADD_SIBLING_DEFERRED)
@@ -1032,6 +1073,11 @@ APICALL(api_node) {
 				node->add_sibling(sibling_node);
 		} break;
 		case Node_Op::MOVE_CHILD: {
+			// Check for banned methods.
+			if (UNLIKELY(!emu.is_allowed_method(node, "move_child"))) {
+				ERR_PRINT("Banned method called: move_child");
+				throw std::runtime_error("Banned method called: move_child");
+			}
 			GuestVariant *vars = machine.memory.memarray<GuestVariant>(gvar, 2);
 			godot::Node *child_node = get_node_from_address(emu, vars[0].v.i);
 			// TODO: Check if the child is actually a child of the node? Verify index?
@@ -1039,6 +1085,11 @@ APICALL(api_node) {
 		} break;
 		case Node_Op::REMOVE_CHILD_DEFERRED:
 		case Node_Op::REMOVE_CHILD: {
+			// Check for banned methods.
+			if (UNLIKELY(!emu.is_allowed_method(node, "remove_child"))) {
+				ERR_PRINT("Banned method called: remove_child");
+				throw std::runtime_error("Banned method called: remove_child");
+			}
 			GuestVariant *child = machine.memory.memarray<GuestVariant>(gvar, 1);
 			godot::Node *child_node = get_node_from_address(emu, child->v.i);
 			if (Node_Op(op) == Node_Op::REMOVE_CHILD_DEFERRED)
@@ -1047,6 +1098,11 @@ APICALL(api_node) {
 				node->remove_child(child_node);
 		} break;
 		case Node_Op::GET_CHILDREN: {
+			// Check if getting the children is allowed.
+			if (UNLIKELY(!emu.is_allowed_method(node, "get_children"))) {
+				ERR_PRINT("Banned method accessed: get_children");
+				throw std::runtime_error("Banned method accessed: get_children");
+			}
 			// Get a GuestStdVector from guest to store the children.
 			GuestStdVector *vec = machine.memory.memarray<GuestStdVector>(gvar, 1);
 			// Get the children of the node.
@@ -1082,12 +1138,22 @@ APICALL(api_node) {
 			*result = node->is_in_group(String::utf8(group.data(), group.size()));
 		} break;
 		case Node_Op::REPLACE_BY: {
+			// Check for banned methods.
+			if (UNLIKELY(!emu.is_allowed_method(node, "replace_by"))) {
+				ERR_PRINT("Banned method called: replace_by");
+				throw std::runtime_error("Banned method called: replace_by");
+			}
 			// Reg 12: Node address to replace with, Reg 13: Keep groups bool.
 			godot::Node *replace_node = get_node_from_address(emu, gvar);
 			bool keep_groups = machine.cpu.reg(13);
 			node->replace_by(replace_node, keep_groups);
 		} break;
 		case Node_Op::REPARENT: {
+			// Check for banned methods.
+			if (UNLIKELY(!emu.is_allowed_method(node, "reparent"))) {
+				ERR_PRINT("Banned method called: reparent");
+				throw std::runtime_error("Banned method called: reparent");
+			}
 			// Reg 12: New parent node address, Reg 13: Keep transform bool.
 			godot::Node *new_parent = get_node_from_address(emu, gvar);
 			bool keep_transform = machine.cpu.reg(13);
