@@ -293,6 +293,9 @@ void ELFScript::set_file(const String &p_path) {
 	for (Sandbox *sandbox : sandbox_map[path]) {
 		sandbox->set_program(Ref<ELFScript>(this));
 	}
+	for (ELFScriptInstance *instance : this->instances) {
+		instance->update_methods();
+	}
 }
 
 String ELFScript::get_dockerized_program_path() const {
