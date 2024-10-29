@@ -1,6 +1,6 @@
 #include "register_types.h"
 
-#include <gdextension_interface.h>
+//#include <gdextension_interface.h>
 
 #include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/classes/engine.hpp>

@@ -5,14 +5,20 @@ from build_utils import add_compilation_flags, get_sources
 Import("env")
 Import("env_modules")
 
-env_modules.Append(CPPDEFINES = ['GODOT_NAMESPACE='])
+
+env_sandbox = env_modules.Clone()
+
+env.Append(CPPDEFINES = ['GODOT_NAMESPACE='])
+env_sandbox["disable_exceptions"] = "0"
+env.Append(CPPDEFINES = ['GODOT_MODULE'])
+env.Prepend(CPPPATH=["#modules/sandbox/ext/godot-cpp/include",
+                     "#modules/sandbox/ext/godot-cpp/gen/include"])
+
+env_sandbox.Append(CPPDEFINES = ['GODOT_MODULE'])
 env.Append(CPPDEFINES=['"GODOT_CPP_FUNC(name)=name"'])
 
-env_godot_sandbox = env_modules.Clone()
-env_godot_sandbox["disable_exceptions"] = "0"
-env_godot_sandbox.Prepend(CPPPATH=["ext/godot-cpp/include", "ext/godot-cpp/gen/include"])
+add_compilation_flags(env, "#modules/sandbox/")
 
-add_compilation_flags(env_godot_sandbox)
-
-sources = get_sources(env)
-env_godot_sandbox.add_source_files(env.modules_sources, sources)
+sources = get_sources(env, "#modules/sandbox/")
+print(sources)
+env.add_source_files(env.modules_sources, sources)

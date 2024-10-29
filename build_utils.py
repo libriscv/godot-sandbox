@@ -1,8 +1,8 @@
 from SCons.Script import Glob
 
-def add_compilation_flags(env):
+def add_compilation_flags(env, thirdparty=""):
 	env.Append(CPPDEFINES = ['RISCV_SYSCALLS_MAX=600', 'RISCV_BRK_MEMORY_SIZE=0x100000'])
-	env.Prepend(CPPPATH=["ext/libriscv/lib"])
+	env.Prepend(CPPPATH=[thirdparty + "ext/libriscv/lib"])
 	env.Append(CPPPATH=["src/", "."])
 	if env["platform"] != "windows" or env["use_mingw"]:
 		env.Append(CXXFLAGS=["-std=c++20"])
@@ -10,15 +10,15 @@ def add_compilation_flags(env):
 		env.Append(CXXFLAGS=["/std:c++20"])
 
 	if env["platform"] == "windows":
-		env.Prepend(CPPPATH=["ext/libriscv/lib/libriscv/lib/win32"])
+		env.Prepend(CPPPATH=[thirdparty + "ext/libriscv/lib/libriscv/lib/win32"])
 		env.Prepend(LIBS=['ws2_32']) # for socket calls
 	elif env["platform"] == "macos":
-		env.Prepend(CPPPATH=["ext/libriscv/lib/libriscv/lib/macos"])
+		env.Prepend(CPPPATH=[thirdparty + "ext/libriscv/lib/libriscv/lib/macos"])
 	elif env["platform"] == "linux" or env["platform"] == "android":
-		env.Prepend(CPPPATH=["ext/libriscv/lib/libriscv/lib/linux"])
+		env.Prepend(CPPPATH=[thirdparty + "ext/libriscv/lib/libriscv/lib/linux"])
 	return env
 
-def get_sources(env):
+def get_sources(env, thirdparty=""):
     sources = [Glob("*.cpp"), Glob("src/*.cpp"), Glob("src/cpp/*.cpp"), Glob("src/rust/*.cpp"), Glob("src/zig/*.cpp"), Glob("src/elf/*.cpp"), Glob("src/godot/*.cpp"), ["src/tests/dummy_assault.cpp"], Glob("src/bintr/*.cpp")]
 
     librisc_sources = [
@@ -70,6 +70,9 @@ def get_sources(env):
             # Binary translator - System compiler
             "ext/libriscv/lib/libriscv/tr_compiler.cpp",
         ]
-
+    
+	# add to the librisc_sources in front of each string the thirdparty string
+    for i in range(len(librisc_sources)):
+        librisc_sources[i] = thirdparty + librisc_sources[i]
     sources.extend(librisc_sources)
     return sources
