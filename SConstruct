@@ -8,6 +8,7 @@ ARGUMENTS["use_mingw"] = "yes"
 
 env = SConscript("ext/godot-cpp/SConstruct")
 env.Append(CPPDEFINES = [('GODOT_NAMESPACE','using namespace godot;')])
+env.Append(CPPDEFINES=['"GODOT_CPP_FUNC(name)=_##name"'])
 
 env = add_compilation_flags(env)
 sources = get_sources(env)
