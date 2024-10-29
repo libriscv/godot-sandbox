@@ -19,6 +19,13 @@ jobs:
           repository: godotengine/godot
           ref: 4.3
           path: godot
+      - name: 🔗 GDExtension Setup
+        uses: ughuuu/godot-cpp-template/.github/actions/setup@add-godot-repo-new-option
+        with:
+          platform: linux
+          arch: x86_64
+          build-target-type: template_release
+
       - name: Compiler Fix
         shell: bash
         run: |
