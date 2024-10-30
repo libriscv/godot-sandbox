@@ -32,7 +32,7 @@ jobs:
           submodules: true
           fetch-depth: 0
       - name: 🔗 GDExtension Build
-        uses: ughuuu/godot-cpp-template/.github/actions/build@add-godot-repo-new-option
+        uses: godotengine/godot-cpp-template/.github/actions/build@main
         with:
           platform: macos
           arch: ${{ matrix.arch }}

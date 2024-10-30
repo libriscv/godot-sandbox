@@ -31,7 +31,7 @@ jobs:
           sudo ./llvm.sh 17
 
       - name: 🔗 GDExtension Build
-        uses: ughuuu/godot-cpp-template/.github/actions/build@add-godot-repo-new-option
+        uses: godotengine/godot-cpp-template/.github/actions/build@main
         with:
           platform: android
           arch: ${{ matrix.arch }}

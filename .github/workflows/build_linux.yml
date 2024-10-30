@@ -26,7 +26,7 @@ jobs:
           sudo apt-get install -y gcc-multilib g++-multilib
 
       - name: 🔗 GDExtension Build Single
-        uses: ughuuu/godot-cpp-template/.github/actions/build@add-godot-repo-new-option
+        uses: godotengine/godot-cpp-template/.github/actions/build@main
         with:
           platform: linux
           arch: ${{ matrix.arch }}
