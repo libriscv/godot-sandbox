@@ -42,9 +42,24 @@ struct Transform2D {
 	void set_column(int idx, const Vector2 &axis);
 	Vector2 operator[](int idx) const { return get_column(idx); }
 
-	// Call operator
 	template <typename... Args>
 	Variant operator () (std::string_view method, Args&&... args);
+
+	METHOD(Transform2D, affine_inverse);
+	METHOD(Vector2, basis_xform);
+	METHOD(Vector2, basis_xform_inv);
+	METHOD(real_t,  determinant);
+	METHOD(Vector2, get_origin);
+	METHOD(real_t,  get_rotation);
+	METHOD(Vector2, get_scale);
+	METHOD(real_t,  get_skew);
+	METHOD(bool,    is_conformal);
+	METHOD(bool,    is_equal_approx);
+	METHOD(bool,    is_finite);
+	METHOD(Transform2D, looking_at);
+	METHOD(Transform2D, rotated_local);
+	METHOD(Transform2D, scaled_local);
+	METHOD(Transform2D, translated_local);
 
 	static Transform2D from_variant_index(unsigned idx) { Transform2D a {}; a.m_idx = idx; return a; }
 	unsigned get_variant_index() const noexcept { return m_idx; }

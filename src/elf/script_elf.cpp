@@ -213,6 +213,8 @@ TypedArray<Dictionary> ELFScript::GODOT_CPP_FUNC (get_script_property_list)() co
 	properties.push_back(
 			prop_to_dict(PropertyInfo(Variant::BOOL, "use_precise_simulation", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Use precise simulation for VM execution", PROPERTY_USAGE_DEFAULT)));
 	properties.push_back(
+			prop_to_dict(PropertyInfo(Variant::BOOL, "profiling", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Enable profiling for the sandboxed program", PROPERTY_USAGE_DEFAULT)));
+	properties.push_back(
 			prop_to_dict(PropertyInfo(Variant::BOOL, "restrictions", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Enable restrictions for the sandboxed program", PROPERTY_USAGE_DEFAULT)));
 	return properties;
 }
@@ -291,6 +293,9 @@ void ELFScript::set_file(const String &p_path) {
 	}
 	for (Sandbox *sandbox : sandbox_map[path]) {
 		sandbox->set_program(Ref<ELFScript>(this));
+	}
+	for (ELFScriptInstance *instance : this->instances) {
+		instance->update_methods();
 	}
 }
 

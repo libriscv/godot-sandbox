@@ -119,6 +119,14 @@ public:
 	/// @return True if precise simulation is used, false otherwise.
 	bool get_use_precise_simulation() const { return m_precise_simulation; }
 
+	/// @brief Set whether or not to enable profiling of the guest program.
+	/// @param enable True to enable profiling, false to disable it.
+	void set_profiling(bool enable);
+
+	/// @brief Get whether profiling of the guest program is enabled.
+	/// @return True if profiling is enabled, false otherwise.
+	bool get_profiling() const { return m_profiling_data != nullptr; }
+
 	// -= Sandbox Properties =-
 
 	uint32_t get_max_refs() const { return m_max_refs; }
@@ -434,6 +442,9 @@ public:
 	const machine_t &machine() const { return *m_machine; }
 	void print(const Variant &v);
 	static String generate_api(String language = "cpp", String header_extra = "", bool use_argument_names = false);
+	void enable_profiling(bool enable, uint32_t interval = 20000);
+	String get_hotspots(const String &elf, int total = 10) const;
+	void clear_hotspots() const;
 
 private:
 	static void generate_runtime_cpp_api(bool use_argument_names = false);
@@ -504,6 +515,13 @@ private:
 	unsigned m_timeouts = 0;
 	unsigned m_exceptions = 0;
 	unsigned m_calls_made = 0;
+
+	struct ProfilingData {
+		std::unordered_map<gaddr_t, int> visited;
+		uint32_t profiling_interval = 2000;
+		uint32_t profiler_icounter_accumulator = 0;
+	};
+	mutable std::unique_ptr<ProfilingData> m_profiling_data = nullptr;
 
 	// Global statistics
 	static inline uint64_t m_global_timeouts = 0;

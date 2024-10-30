@@ -44,9 +44,23 @@ struct Basis {
 	// Basis size
 	static constexpr int size() { return 3; }
 
-	// Call operator
 	template <typename... Args>
 	Variant operator () (std::string_view method, Args&&... args);
+
+	METHOD(Basis,  from_euler);
+	METHOD(Basis,  from_scale);
+	METHOD(Vector3, get_euler);
+	VMETHOD(get_rotation_quaternion);
+	METHOD(Vector3, get_scale);
+	METHOD(bool,   is_conformal);
+	METHOD(bool,   is_equal_approx);
+	METHOD(bool,   is_finite);
+	METHOD(Basis,  looking_at);
+	METHOD(Basis,  orthonormalized);
+	METHOD(Basis,  scaled);
+	METHOD(real_t, tdotx);
+	METHOD(real_t, tdoty);
+	METHOD(real_t, tdotz);
 
 	static Basis from_variant_index(unsigned idx) { Basis a {}; a.m_idx = idx; return a; }
 	unsigned get_variant_index() const noexcept { return m_idx; }

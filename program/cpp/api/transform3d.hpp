@@ -42,9 +42,12 @@ struct Transform3D {
 	Basis get_basis() const;
 	void set_basis(const Basis &basis);
 
-	// Call operator
 	template <typename... Args>
 	Variant operator () (std::string_view method, Args&&... args);
+
+	METHOD(Transform3D, affine_inverse);
+	METHOD(bool, is_equal_approx);
+	METHOD(bool, is_finite);
 
 	static Transform3D from_variant_index(unsigned idx) { Transform3D a {}; a.m_idx = idx; return a; }
 	unsigned get_variant_index() const noexcept { return m_idx; }

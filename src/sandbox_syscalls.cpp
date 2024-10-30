@@ -13,6 +13,11 @@
 //#define ENABLE_SYSCALL_TRACE 1
 #include "syscalls_helpers.hpp"
 
+#define PENALIZE(x) \
+	if (!emu.get_profiling()) { \
+		machine.penalize(x); \
+	}
+
 namespace riscv {
 extern std::unordered_map<std::string, std::function<uint64_t()>> global_singleton_list;
 
@@ -187,7 +192,7 @@ APICALL(api_veval) {
 APICALL(api_vcreate) {
 	auto [vp, type, method, gdata] = machine.sysargs<GuestVariant *, Variant::Type, int, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
-	machine.penalize(10'000);
+	PENALIZE(10'000);
 	SYS_TRACE("vcreate", vp, type, method, gdata);
 
 	switch (type) {
@@ -364,7 +369,7 @@ APICALL(api_vcreate) {
 APICALL(api_vfetch) {
 	auto [index, gdata, method] = machine.sysargs<unsigned, gaddr_t, int>();
 	Sandbox &emu = riscv::emu(machine);
-	machine.penalize(10'000);
+	PENALIZE(10'000);
 	SYS_TRACE("vfetch", index, gdata, method);
 
 	// Find scoped Variant and copy data into gdata.
@@ -469,7 +474,7 @@ APICALL(api_vfetch) {
 APICALL(api_vclone) {
 	auto [vp, vret_addr] = machine.sysargs<GuestVariant *, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
-	machine.penalize(10'000);
+	PENALIZE(10'000);
 	SYS_TRACE("vclone", vp, vret);
 
 	if (vret_addr != 0) {
@@ -497,7 +502,7 @@ APICALL(api_vclone) {
 APICALL(api_vstore) {
 	auto [vidx, type, gdata, gsize] = machine.sysargs<unsigned *, Variant::Type, gaddr_t, gaddr_t>();
 	auto &emu = riscv::emu(machine);
-	machine.penalize(10'000);
+	PENALIZE(10'000);
 	SYS_TRACE("vstore", vidx, type, gdata, gsize);
 
 	// Find scoped Variant and store data from guest memory.
@@ -594,7 +599,7 @@ APICALL(api_vstore) {
 APICALL(api_vassign) {
 	auto [a_idx, b_idx] = machine.sysargs<unsigned, unsigned>();
 	auto &emu = riscv::emu(machine);
-	machine.penalize(150'000);
+	PENALIZE(150'000);
 	SYS_TRACE("vassign", a_idx, b_idx);
 
 	if (int32_t(a_idx) == INT32_MIN) {
@@ -626,7 +631,7 @@ APICALL(api_vassign) {
 APICALL(api_get_obj) {
 	auto [name] = machine.sysargs<std::string>();
 	auto &emu = riscv::emu(machine);
-	machine.penalize(150'000);
+	PENALIZE(150'000);
 	SYS_TRACE("get_obj", String::utf8(name.c_str(), name.size()));
 
 	// Objects retrieved by name are named globals, eg. "Engine", "Input", "Time",
@@ -667,7 +672,7 @@ APICALL(api_get_obj) {
 APICALL(api_obj) {
 	auto [op, addr, gvar] = machine.sysargs<int, uint64_t, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
-	machine.penalize(250'000); // Costly Object operations.
+	PENALIZE(250'000); // Costly Object operations.
 	SYS_TRACE("obj_op", op, addr, gvar);
 
 	Object *obj = get_object_from_address(emu, addr);
@@ -747,7 +752,7 @@ APICALL(api_obj) {
 APICALL(api_obj_property_get) {
 	auto [addr, method, vret] = machine.sysargs<uint64_t, std::string_view, GuestVariant *>();
 	auto &emu = riscv::emu(machine);
-	machine.penalize(150'000);
+	PENALIZE(150'000);
 	SYS_TRACE("obj_property_get", addr, method, vret);
 
 	Object *obj = get_object_from_address(emu, addr);
@@ -764,7 +769,7 @@ APICALL(api_obj_property_get) {
 APICALL(api_obj_property_set) {
 	auto [addr, method, g_value] = machine.sysargs<uint64_t, std::string_view, const GuestVariant *>();
 	auto &emu = riscv::emu(machine);
-	machine.penalize(150'000);
+	PENALIZE(150'000);
 	SYS_TRACE("obj_property_set", addr, method, value);
 
 	Object *obj = get_object_from_address(emu, addr);
@@ -781,7 +786,7 @@ APICALL(api_obj_property_set) {
 APICALL(api_obj_callp) {
 	auto [addr, g_method, g_method_len, deferred, vret_ptr, args_addr, args_size] = machine.sysargs<uint64_t, gaddr_t, unsigned, bool, gaddr_t, gaddr_t, unsigned>();
 	auto &emu = riscv::emu(machine);
-	machine.penalize(250'000); // Costly Object call operation.
+	PENALIZE(250'000); // Costly Object call operation.
 	SYS_TRACE("obj_callp", addr, g_method, g_method_len, deferred, vret_ptr, args_addr, args_size);
 
 	auto *obj = get_object_from_address(emu, addr);
@@ -841,7 +846,7 @@ APICALL(api_obj_callp) {
 APICALL(api_get_node) {
 	auto [addr, name] = machine.sysargs<uint64_t, std::string_view>();
 	Sandbox &emu = riscv::emu(machine);
-	machine.penalize(150'000);
+	PENALIZE(150'000);
 	SYS_TRACE("get_node", addr, String::utf8(name.data(), name.size()));
 
 	Node *node = nullptr;
@@ -872,7 +877,7 @@ APICALL(api_get_node) {
 APICALL(api_node_create) {
 	auto [type, g_class_name, g_class_len, name] = machine.sysargs<Node_Create_Shortlist, gaddr_t, unsigned, std::string_view>();
 	Sandbox &emu = riscv::emu(machine);
-	machine.penalize(150'000);
+	PENALIZE(150'000);
 	Node *node = nullptr;
 
 	switch (type) {
@@ -948,8 +953,8 @@ APICALL(api_node_create) {
 
 APICALL(api_node) {
 	auto [op, addr, gvar] = machine.sysargs<int, uint64_t, gaddr_t>();
-	machine.penalize(250'000); // Costly Node operations.
 	Sandbox &emu = riscv::emu(machine);
+	PENALIZE(250'000); // Costly Node operations.
 	SYS_TRACE("node_op", op, addr, gvar);
 
 	// Get the Node object by its address.
@@ -1172,8 +1177,8 @@ APICALL(api_node) {
 APICALL(api_node2d) {
 	// Node2D operation, Node2D address, and the variant to get/set the value.
 	auto [op, addr, gvar] = machine.sysargs<int, uint64_t, gaddr_t>();
-	machine.penalize(100'000); // Costly Node2D operations.
 	Sandbox &emu = riscv::emu(machine);
+	PENALIZE(100'000); // Costly Node2D operations.
 	SYS_TRACE("node2d_op", op, addr, gvar);
 
 	// Get the Node2D object by its address.
@@ -1228,8 +1233,8 @@ APICALL(api_node2d) {
 APICALL(api_node3d) {
 	// Node3D operation, Node3D address, and the variant to get/set the value.
 	auto [op, addr, gvar] = machine.sysargs<int, uint64_t, gaddr_t>();
-	machine.penalize(100'000); // Costly Node3D operations.
 	Sandbox &emu = riscv::emu(machine);
+	PENALIZE(100'000); // Costly Node3D operations.
 	SYS_TRACE("node3d_op", op, addr, gvar);
 
 	// Get the Node3D object by its address
@@ -1295,7 +1300,7 @@ APICALL(api_throw) {
 APICALL(api_array_ops) {
 	auto [op, arr_idx, idx, vaddr] = machine.sysargs<Array_Op, unsigned, int, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
-	machine.penalize(50'000); // Costly Array operations.
+	PENALIZE(50'000); // Costly Array operations.
 	SYS_TRACE("array_ops", int(op), arr_idx, idx, vaddr);
 
 	if (op == Array_Op::CREATE) {
@@ -1373,7 +1378,7 @@ APICALL(api_array_ops) {
 APICALL(api_array_at) {
 	auto [arr_idx, idx, vret] = machine.sysargs<unsigned, int, GuestVariant *>();
 	Sandbox &emu = riscv::emu(machine);
-	machine.penalize(10'000); // Costly Array operations.
+	PENALIZE(10'000); // Costly Array operations.
 	SYS_TRACE("array_at", arr_idx, idx, vret);
 
 	std::optional<const Variant *> opt_array = emu.get_scoped_variant(arr_idx);
@@ -1417,7 +1422,7 @@ APICALL(api_array_size) {
 APICALL(api_dict_ops) {
 	auto [op, dict_idx, vkey, vaddr] = machine.sysargs<Dictionary_Op, unsigned, gaddr_t, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
-	machine.penalize(50'000); // Costly Dictionary operations.
+	PENALIZE(50'000); // Costly Dictionary operations.
 	SYS_TRACE("dict_ops", int(op), dict_idx, vkey, vaddr);
 
 	std::optional<const Variant *> opt_dict = emu.get_scoped_variant(dict_idx);
@@ -1484,7 +1489,7 @@ APICALL(api_dict_ops) {
 APICALL(api_string_create) {
 	auto [strview] = machine.sysargs<std::string_view>();
 	Sandbox &emu = riscv::emu(machine);
-	machine.penalize(10'000);
+	PENALIZE(10'000);
 	SYS_TRACE("string_create", String::utf8(strview.data(), strview.size()));
 
 	String str = String::utf8(strview.data(), strview.size());
@@ -1495,7 +1500,7 @@ APICALL(api_string_create) {
 APICALL(api_string_ops) {
 	auto [op, str_idx, index, vaddr] = machine.sysargs<String_Op, unsigned, int, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
-	machine.penalize(10'000); // Costly String operations.
+	PENALIZE(10'000); // Costly String operations.
 	SYS_TRACE("string_ops", int(op), str_idx, index, vaddr);
 
 	std::optional<const Variant *> opt_str = emu.get_scoped_variant(str_idx);
@@ -1589,7 +1594,7 @@ APICALL(api_string_size) {
 APICALL(api_string_append) {
 	auto [str_idx, strview] = machine.sysargs<unsigned, std::string_view>();
 	Sandbox &emu = riscv::emu(machine);
-	machine.penalize(10'000);
+	PENALIZE(10'000);
 	SYS_TRACE("string_append", str_idx, String::utf8(strview.data(), strview.size()));
 
 	Variant &var = emu.get_mutable_scoped_variant(str_idx);
@@ -1602,7 +1607,7 @@ APICALL(api_string_append) {
 APICALL(api_timer_periodic) {
 	auto [interval, oneshot, callback, capture, vret] = machine.sysargs<double, bool, gaddr_t, std::array<uint8_t, 32> *, GuestVariant *>();
 	Sandbox &emu = riscv::emu(machine);
-	machine.penalize(100'000); // Costly Timer node creation.
+	PENALIZE(100'000); // Costly Timer node creation.
 	SYS_TRACE("timer_periodic", interval, oneshot, callback, capture, vret);
 
 	Timer *timer = memnew(Timer);
@@ -1694,7 +1699,8 @@ void Sandbox::initialize_syscalls() {
 	machine().on_unhandled_syscall = [](machine_t &machine, size_t syscall) {
 #if defined(__linux__) // We only want to print these kinds of warnings on Linux.
 		WARN_PRINT(("Unhandled system call: " + std::to_string(syscall)).c_str());
-		machine.penalize(100'000); // Add to the instruction counter due to I/O.
+		auto &emu = riscv::emu(machine);
+		PENALIZE(100'000); // Add to the instruction counter due to I/O.
 #endif
 		machine.set_result(-ENOSYS);
 	};

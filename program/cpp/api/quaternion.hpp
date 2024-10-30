@@ -44,9 +44,15 @@ struct Quaternion {
 	static constexpr int size() { return 4; }
 	double operator[](int idx) const;
 
-	// Call operator
 	template <typename... Args>
 	Variant operator () (std::string_view method, Args&&... args);
+
+	METHOD(Quaternion, from_euler);
+	METHOD(Vector3,    get_euler);
+	METHOD(bool,       is_equal_approx);
+	METHOD(bool,       is_finite);
+	METHOD(Quaternion, spherical_cubic_interpolate);
+	METHOD(Quaternion, spherical_cubic_interpolate_in_time);
 
 	static Quaternion from_variant_index(unsigned idx) { Quaternion a {}; a.m_idx = idx; return a; }
 	unsigned get_variant_index() const noexcept { return m_idx; }

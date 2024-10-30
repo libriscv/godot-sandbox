@@ -108,16 +108,49 @@ struct Object {
 	String to_string() const {
 		return this->call("to_string");
 	}
-	VMETHOD(get_meta_list);
-	METHOD(bool, has_meta);
+
+	METHOD(Variant, _get);
+	METHOD(Variant, _get_property_list);
+	METHOD(void, _init);
+	METHOD(void, _notification);
+	METHOD(bool, _property_can_revert);
+	METHOD(Variant, _property_get_revert);
+	METHOD(bool, _set);
+	METHOD(String, _to_string);
+	METHOD(void, _validate_property);
+	METHOD(void, add_user_signal);
+	METHOD(bool, can_translate_messages);
+	METHOD(void, cancel_free);
+	METHOD(Variant, emit_signal);
+	METHOD(void, free);
+	METHOD(Variant, get_incoming_connections);
+	METHOD(Variant, get_indexed);
+	METHOD(int, get_instance_id);
 	METHOD(Variant, get_meta);
-	METHOD(void, set_meta);
-	METHOD(void, remove_meta);
-	METHOD(void, set_script);
-	VMETHOD(get_script);
+	METHOD(Variant, get_meta_list);
+	METHOD(int, get_method_argument_count);
+	METHOD(Variant, get_script);
+	METHOD(Variant, get_signal_connection_list);
+	METHOD(bool, has_meta);
 	METHOD(bool, has_method);
 	METHOD(bool, has_signal);
 	METHOD(bool, has_user_signal);
+	METHOD(bool, is_blocking_signals);
+	METHOD(bool, is_connected);
+	METHOD(bool, is_queued_for_deletion);
+	METHOD(void, notification);
+	METHOD(void, notify_property_list_changed);
+	METHOD(bool, property_can_revert);
+	METHOD(Variant, property_get_revert);
+	METHOD(void, remove_meta);
+	METHOD(void, remove_user_signal);
+	METHOD(void, set_block_signals);
+	METHOD(void, set_indexed);
+	METHOD(void, set_message_translation);
+	METHOD(void, set_meta);
+	METHOD(void, set_script);
+	METHOD(String, tr);
+	METHOD(String, tr_n);
 
 	// Get the object identifier.
 	constexpr uint64_t address() const { return m_address; }
