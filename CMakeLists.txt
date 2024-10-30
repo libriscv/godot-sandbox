@@ -57,8 +57,7 @@ add_subdirectory(ext)
 add_library(godot-riscv SHARED ${SOURCES})
 target_link_libraries(godot-riscv PUBLIC riscv godot-cpp)
 
-target_compile_definitions(godot-riscv PRIVATE GODOT_NAMESPACE=\"using\ namespace\ godot;\")
-#target_compile_definitions(godot-riscv PRIVATE GODOT_NAMESPACE="using namespace godot;")
+target_compile_definitions(godot-riscv PRIVATE GODOT_NAMESPACE='using namespace godot;')
 
 if (STATIC_BUILD)
 	target_link_libraries(godot-riscv PUBLIC -static)
