@@ -72,6 +72,10 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("generate_api", "language", "header_extra", "use_argument_names"), &Sandbox::generate_api, DEFVAL("cpp"), DEFVAL(""), DEFVAL(false));
 
+	// Profiling.
+	ClassDB::bind_method(D_METHOD("get_hotspots", "elf", "total"), &Sandbox::get_hotspots, DEFVAL(10));
+	ClassDB::bind_method(D_METHOD("clear_hotspots"), &Sandbox::clear_hotspots);
+
 	// Binary translation.
 	ClassDB::bind_method(D_METHOD("emit_binary_translation", "ignore_instruction_limit", "automatic_nbit_address_space"), &Sandbox::emit_binary_translation, DEFVAL(true), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("is_binary_translated"), &Sandbox::is_binary_translated);
@@ -100,6 +104,10 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_use_precise_simulation", "use_precise_simulation"), &Sandbox::set_use_precise_simulation);
 	ClassDB::bind_method(D_METHOD("get_use_precise_simulation"), &Sandbox::get_use_precise_simulation);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE, "Use precise simulation for VM execution"), "set_use_precise_simulation", "get_use_precise_simulation");
+
+	ClassDB::bind_method(D_METHOD("set_profiling", "enable"), &Sandbox::set_profiling, DEFVAL(false));
+	ClassDB::bind_method(D_METHOD("get_profiling"), &Sandbox::get_profiling);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "profiling", PROPERTY_HINT_NONE, "Enable profiling of VM calls"), "set_profiling", "get_profiling");
 
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "restrictions", PROPERTY_HINT_NONE, "Enable sandbox restrictions"), "set_restrictions", "get_restrictions");
 
@@ -145,6 +153,7 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 	list.push_back(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE));
+	list.push_back(PropertyInfo(Variant::BOOL, "profiling", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "restrictions", PROPERTY_HINT_NONE));
 
 	// Group for monitored Sandbox health.
@@ -637,6 +646,19 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 				m_machine->set_max_instructions(get_instructions_max() << 20);
 				m_machine->cpu.jump(address);
 				m_machine->cpu.simulate_precise();
+			} else if (UNLIKELY(this->m_profiling_data != nullptr)) {
+				m_machine->cpu.jump(address);
+				ProfilingData &profdata = *this->m_profiling_data;
+				do {
+					const int32_t next = std::max(int32_t(0), int32_t(profdata.profiling_interval) - int32_t(profdata.profiler_icounter_accumulator));
+					m_machine->simulate<false>(next, 0u);
+					if (m_machine->instruction_limit_reached()) {
+						profdata.profiler_icounter_accumulator = 0;
+						profdata.visited[m_machine->cpu.pc()]++;
+					}
+				} while (m_machine->instruction_limit_reached());
+				// update the accumulator with the remaining instructions
+				profdata.profiler_icounter_accumulator += m_machine->instruction_counter();
 			} else {
 				m_machine->simulate_with(get_instructions_max() << 20, 0u, address);
 			}
@@ -977,6 +999,9 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	} else if (name == StringName("use_precise_simulation")) {
 		set_use_precise_simulation(value);
 		return true;
+	} else if (name == StringName("profiling")) {
+		set_profiling(value);
+		return true;
 	} else if (name == StringName("restrictions")) {
 		set_restrictions(value);
 		return true;
@@ -1010,6 +1035,9 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 		return true;
 	} else if (name == StringName("use_precise_simulation")) {
 		r_ret = get_use_precise_simulation();
+		return true;
+	} else if (name == StringName("profiling")) {
+		r_ret = get_profiling();
 		return true;
 	} else if (name == StringName("restrictions")) {
 		r_ret = get_restrictions();
