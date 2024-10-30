@@ -121,10 +121,15 @@ Linting:
 Build as module:
 
 ```sh
-git clone https://github.com/godotengine/godot.git
+# Build bindings in sandbox
 scons generate_bindings=true build_library=no godot_repo=godot
-cd godot
-scons custom_modules=.. modules_enabled_by_default=no disable_3d=yes disable_advanced_gui=yes deprecated=no minizip=no target=template_debug module_sandbox_enabled=True
+# Clone godot
+git clone https://github.com/godotengine/godot.git
+# Make a symbolic link
+cd ../godot/modules
+ln -s /path/to/your/sandbox sandbox
+# Build godot editor
+scons verbose=True target=editor enable_sandbox_module=True disable_exceptions=False
 ```
 
 ## Icons
