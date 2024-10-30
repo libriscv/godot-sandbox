@@ -1,15 +1,14 @@
 #include "script_elf.h"
 
 #include "../docker.h"
-#include "../../register_types.h"
 #include "../sandbox.h"
 #include "../sandbox_project_settings.h"
 #include "script_instance.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
-
 static constexpr bool VERBOSE_ELFSCRIPT = false;
+extern ScriptLanguage *get_elf_language();
 
 void ELFScript::GODOT_CPP_FUNC (bind_methods)() {
 	ClassDB::bind_method(D_METHOD("get_sandbox_for", "for_object"), &ELFScript::get_sandbox_for);

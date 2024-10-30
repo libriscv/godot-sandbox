@@ -10,6 +10,7 @@
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/templates/local_vector.hpp>
 static constexpr bool VERBOSE_LOGGING = false;
+extern ScriptLanguage *get_elf_language();
 
 struct ScopedTreeBase {
 	Sandbox *sandbox = nullptr;

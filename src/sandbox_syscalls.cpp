@@ -16,9 +16,9 @@
 namespace riscv {
 extern std::unordered_map<std::string, std::function<uint64_t()>> global_singleton_list;
 
-godot::Object *get_object_from_address(const Sandbox &emu, uint64_t addr) {
+Object *get_object_from_address(const Sandbox &emu, uint64_t addr) {
 	SYS_TRACE("get_object_from_address", addr);
-	godot::Object *obj = (godot::Object *)uintptr_t(addr);
+	Object *obj = (Object *)uintptr_t(addr);
 	if (UNLIKELY(obj == nullptr)) {
 		ERR_PRINT("Object is Null");
 		throw std::runtime_error("Object is Null");
@@ -36,10 +36,10 @@ godot::Object *get_object_from_address(const Sandbox &emu, uint64_t addr) {
 	}
 	return obj;
 }
-inline godot::Node *get_node_from_address(const Sandbox &emu, uint64_t addr) {
+inline Node *get_node_from_address(const Sandbox &emu, uint64_t addr) {
 	SYS_TRACE("get_node_from_address", addr);
-	godot::Object *obj = get_object_from_address(emu, addr);
-	godot::Node *node = godot::Object::cast_to<godot::Node>(obj);
+	Object *obj = get_object_from_address(emu, addr);
+	Node *node = Object::cast_to<Node>(obj);
 	if (UNLIKELY(node == nullptr)) {
 		ERR_PRINT("Object is not a Node: " + obj->get_class());
 		throw std::runtime_error("Object was not a Node");
@@ -47,7 +47,7 @@ inline godot::Node *get_node_from_address(const Sandbox &emu, uint64_t addr) {
 	return node;
 }
 
-static inline Variant object_callp(godot::Object *obj, const Variant **args, int argc) {
+static inline Variant object_callp(Object *obj, const Variant **args, int argc) {
 	static GDExtensionMethodBindPtr mtd = internal::gdextension_interface_classdb_get_method_bind(Object::get_class_static()._native_ptr(), StringName("call")._native_ptr(), 3400424181);
 	GDExtensionCallError error;
 	Variant ret;
@@ -55,7 +55,7 @@ static inline Variant object_callp(godot::Object *obj, const Variant **args, int
 	return ret;
 }
 
-static inline Variant object_call(Sandbox &emu, godot::Object *obj, const Variant &method, const GuestVariant *args, int argc) {
+static inline Variant object_call(Sandbox &emu, Object *obj, const Variant &method, const GuestVariant *args, int argc) {
 	SYS_TRACE("object_call", method, argc);
 	std::array<Variant, 8> vstorage;
 	std::array<const Variant *, 9> vargs; // 8 is the maximum number of arguments we will accept.
@@ -113,7 +113,7 @@ APICALL(api_vcall) {
 	Variant ret;
 
 	if (vp->type == Variant::OBJECT) {
-		godot::Object *obj = get_object_from_address(emu, vp->v.i);
+		Object *obj = get_object_from_address(emu, vp->v.i);
 
 		// Check if the method is allowed.
 		if (!emu.is_allowed_method(obj, method_sn)) {
@@ -165,8 +165,8 @@ APICALL(api_veval) {
 			retp->set(emu, Variant(ap->v.i == bp->v.i));
 			return;
 		}
-		godot::Object *a = get_object_from_address(emu, ap->v.i);
-		godot::Object *b = get_object_from_address(emu, bp->v.i);
+		Object *a = get_object_from_address(emu, ap->v.i);
+		Object *b = get_object_from_address(emu, bp->v.i);
 		bool valid = false;
 		Variant ret;
 		Variant::evaluate(static_cast<Variant::Operator>(op), a, b, ret, valid);
@@ -370,7 +370,7 @@ APICALL(api_vfetch) {
 	// Find scoped Variant and copy data into gdata.
 	std::optional<const Variant *> opt = emu.get_scoped_variant(index);
 	if (opt.has_value()) {
-		const godot::Variant &var = *opt.value();
+		const Variant &var = *opt.value();
 		switch (var.get_type()) {
 			case Variant::STRING:
 			case Variant::STRING_NAME:
@@ -642,7 +642,7 @@ APICALL(api_get_obj) {
 	auto it = global_singleton_list.find(name);
 	if (it != global_singleton_list.end()) {
 		auto obj = it->second();
-		emu.add_scoped_object(reinterpret_cast<godot::Object *>(obj));
+		emu.add_scoped_object(reinterpret_cast<Object *>(obj));
 		machine.set_result(obj);
 		return;
 	}
@@ -670,7 +670,7 @@ APICALL(api_obj) {
 	machine.penalize(250'000); // Costly Object operations.
 	SYS_TRACE("obj_op", op, addr, gvar);
 
-	godot::Object *obj = get_object_from_address(emu, addr);
+	Object *obj = get_object_from_address(emu, addr);
 
 	switch (Object_Op(op)) {
 		case Object_Op::GET_METHOD_LIST: {
@@ -679,7 +679,7 @@ APICALL(api_obj) {
 			auto methods = obj->get_method_list();
 			auto [sptr, saddr] = vec->alloc<GuestStdString>(machine, methods.size());
 			for (size_t i = 0; i < methods.size(); i++) {
-				Dictionary dict = methods[i].operator godot::Dictionary();
+				Dictionary dict = methods[i].operator Dictionary();
 				auto name = String(dict["name"]).utf8();
 				const gaddr_t self = saddr + sizeof(GuestStdString) * i;
 				sptr[i].set_string(machine, self, name.ptr(), name.length());
@@ -709,7 +709,7 @@ APICALL(api_obj) {
 			TypedArray<Dictionary> properties = obj->get_property_list();
 			auto [sptr, saddr] = vec->alloc<GuestStdString>(machine, properties.size());
 			for (size_t i = 0; i < properties.size(); i++) {
-				Dictionary dict = properties[i].operator godot::Dictionary();
+				Dictionary dict = properties[i].operator Dictionary();
 				auto name = String(dict["name"]).utf8();
 				const gaddr_t self = saddr + sizeof(GuestStdString) * i;
 				sptr[i].set_string(machine, self, name.ptr(), name.length());
@@ -717,13 +717,13 @@ APICALL(api_obj) {
 		} break;
 		case Object_Op::CONNECT: {
 			GuestVariant *vars = machine.memory.memarray<GuestVariant>(gvar, 3);
-			godot::Object *target = get_object_from_address(emu, vars[0].v.i);
+			Object *target = get_object_from_address(emu, vars[0].v.i);
 			Callable callable = Callable(target, vars[2].toVariant(emu).operator String());
 			obj->connect(vars[1].toVariant(emu).operator String(), callable);
 		} break;
 		case Object_Op::DISCONNECT: {
 			GuestVariant *vars = machine.memory.memarray<GuestVariant>(gvar, 3);
-			godot::Object *target = get_object_from_address(emu, vars[0].v.i);
+			Object *target = get_object_from_address(emu, vars[0].v.i);
 			auto callable = Callable(target, vars[2].toVariant(emu).operator String());
 			obj->disconnect(vars[1].toVariant(emu).operator String(), callable);
 		} break;
@@ -733,7 +733,7 @@ APICALL(api_obj) {
 			TypedArray<Dictionary> signals = obj->get_signal_list();
 			auto [sptr, saddr] = vec->alloc<GuestStdString>(machine, signals.size());
 			for (size_t i = 0; i < signals.size(); i++) {
-				Dictionary dict = signals[i].operator godot::Dictionary();
+				Dictionary dict = signals[i].operator Dictionary();
 				auto name = String(dict["name"]).utf8();
 				const gaddr_t self = saddr + sizeof(GuestStdString) * i;
 				sptr[i].set_string(machine, self, name.ptr(), name.length());
@@ -750,7 +750,7 @@ APICALL(api_obj_property_get) {
 	machine.penalize(150'000);
 	SYS_TRACE("obj_property_get", addr, method, vret);
 
-	godot::Object *obj = get_object_from_address(emu, addr);
+	Object *obj = get_object_from_address(emu, addr);
 	String prop_name = String::utf8(method.data(), method.size());
 
 	if (UNLIKELY(!emu.is_allowed_property(obj, prop_name, false))) {
@@ -767,7 +767,7 @@ APICALL(api_obj_property_set) {
 	machine.penalize(150'000);
 	SYS_TRACE("obj_property_set", addr, method, value);
 
-	godot::Object *obj = get_object_from_address(emu, addr);
+	Object *obj = get_object_from_address(emu, addr);
 	String prop_name = String::utf8(method.data(), method.size());
 
 	if (UNLIKELY(!emu.is_allowed_property(obj, prop_name, true))) {
@@ -953,7 +953,7 @@ APICALL(api_node) {
 	SYS_TRACE("node_op", op, addr, gvar);
 
 	// Get the Node object by its address.
-	godot::Node *node = get_node_from_address(emu, addr);
+	Node *node = get_node_from_address(emu, addr);
 
 	switch (Node_Op(op)) {
 		case Node_Op::GET_NAME: {
@@ -990,7 +990,7 @@ APICALL(api_node) {
 				throw std::runtime_error("Banned method accessed: get_parent");
 			}
 			uint64_t *result = machine.memory.memarray<uint64_t>(gvar, 1);
-			godot::Object *parent = node->get_parent();
+			Object *parent = node->get_parent();
 			if (UNLIKELY(parent == nullptr)) {
 				*result = 0;
 			} else {
@@ -1052,7 +1052,7 @@ APICALL(api_node) {
 				throw std::runtime_error("Banned method called: add_child");
 			}
 			GuestVariant *child = machine.memory.memarray<GuestVariant>(gvar, 1);
-			godot::Node *child_node = get_node_from_address(emu, child->v.i);
+			Node *child_node = get_node_from_address(emu, child->v.i);
 			if (Node_Op(op) == Node_Op::ADD_CHILD_DEFERRED)
 				node->call_deferred("add_child", child_node);
 			else
@@ -1066,7 +1066,7 @@ APICALL(api_node) {
 				throw std::runtime_error("Banned method called: add_sibling");
 			}
 			GuestVariant *sibling = machine.memory.memarray<GuestVariant>(gvar, 1);
-			godot::Node *sibling_node = get_node_from_address(emu, sibling->v.i);
+			Node *sibling_node = get_node_from_address(emu, sibling->v.i);
 			if (Node_Op(op) == Node_Op::ADD_SIBLING_DEFERRED)
 				node->call_deferred("add_sibling", sibling_node);
 			else
@@ -1079,7 +1079,7 @@ APICALL(api_node) {
 				throw std::runtime_error("Banned method called: move_child");
 			}
 			GuestVariant *vars = machine.memory.memarray<GuestVariant>(gvar, 2);
-			godot::Node *child_node = get_node_from_address(emu, vars[0].v.i);
+			Node *child_node = get_node_from_address(emu, vars[0].v.i);
 			// TODO: Check if the child is actually a child of the node? Verify index?
 			node->move_child(child_node, vars[1].v.i);
 		} break;
@@ -1091,7 +1091,7 @@ APICALL(api_node) {
 				throw std::runtime_error("Banned method called: remove_child");
 			}
 			GuestVariant *child = machine.memory.memarray<GuestVariant>(gvar, 1);
-			godot::Node *child_node = get_node_from_address(emu, child->v.i);
+			Node *child_node = get_node_from_address(emu, child->v.i);
 			if (Node_Op(op) == Node_Op::REMOVE_CHILD_DEFERRED)
 				node->call_deferred("remove_child", child_node);
 			else
@@ -1111,7 +1111,7 @@ APICALL(api_node) {
 			auto [cptr, _] = vec->alloc<uint64_t>(machine, children.size());
 			// Copy the children to the guest vector, and add them to the scoped objects.
 			for (int i = 0; i < children.size(); i++) {
-				godot::Node *child = godot::Object::cast_to<godot::Node>(children[i]);
+				Node *child = Object::cast_to<Node>(children[i]);
 				if (child) {
 					emu.add_scoped_object(child);
 					cptr[i] = uint64_t(uintptr_t(child));
@@ -1144,7 +1144,7 @@ APICALL(api_node) {
 				throw std::runtime_error("Banned method called: replace_by");
 			}
 			// Reg 12: Node address to replace with, Reg 13: Keep groups bool.
-			godot::Node *replace_node = get_node_from_address(emu, gvar);
+			Node *replace_node = get_node_from_address(emu, gvar);
 			bool keep_groups = machine.cpu.reg(13);
 			node->replace_by(replace_node, keep_groups);
 		} break;
@@ -1155,7 +1155,7 @@ APICALL(api_node) {
 				throw std::runtime_error("Banned method called: reparent");
 			}
 			// Reg 12: New parent node address, Reg 13: Keep transform bool.
-			godot::Node *new_parent = get_node_from_address(emu, gvar);
+			Node *new_parent = get_node_from_address(emu, gvar);
 			bool keep_transform = machine.cpu.reg(13);
 			node->reparent(new_parent, keep_transform);
 		} break;
@@ -1177,10 +1177,10 @@ APICALL(api_node2d) {
 	SYS_TRACE("node2d_op", op, addr, gvar);
 
 	// Get the Node2D object by its address.
-	godot::Node *node = get_node_from_address(emu, addr);
+	Node *node = get_node_from_address(emu, addr);
 
 	// Cast the Node2D object to a Node2D object.
-	godot::Node2D *node2d = godot::Object::cast_to<godot::Node2D>(node);
+	Node2D *node2d = Object::cast_to<Node2D>(node);
 	if (node2d == nullptr) {
 		ERR_PRINT("Node2D object is not a Node2D");
 		throw std::runtime_error("Node2D object is not a Node2D");
@@ -1233,10 +1233,10 @@ APICALL(api_node3d) {
 	SYS_TRACE("node3d_op", op, addr, gvar);
 
 	// Get the Node3D object by its address
-	godot::Node *node = get_node_from_address(emu, addr);
+	Node *node = get_node_from_address(emu, addr);
 
 	// Cast the Node3D object to a Node3D object.
-	godot::Node3D *node3d = godot::Object::cast_to<godot::Node3D>(node);
+	Node3D *node3d = Object::cast_to<Node3D>(node);
 	if (node3d == nullptr) {
 		ERR_PRINT("Node3D object is not a Node3D");
 		throw std::runtime_error("Node3D object is not a Node3D");
@@ -1314,7 +1314,7 @@ APICALL(api_array_ops) {
 		ERR_PRINT("Invalid Array object");
 		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx));
 	}
-	godot::Array array = opt_array.value()->operator Array();
+	Array array = opt_array.value()->operator Array();
 
 	switch (op) {
 		case Array_Op::PUSH_BACK:
@@ -1382,7 +1382,7 @@ APICALL(api_array_at) {
 		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx));
 	}
 
-	godot::Array array = opt_array.value()->operator Array();
+	Array array = opt_array.value()->operator Array();
 	const bool set_mode = idx < 0;
 	if (set_mode) {
 		idx = -idx - 1;
@@ -1410,7 +1410,7 @@ APICALL(api_array_size) {
 		throw std::runtime_error("Invalid Array object");
 	}
 
-	godot::Array array = opt_array.value()->operator Array();
+	Array array = opt_array.value()->operator Array();
 	machine.set_result(array.size());
 }
 
@@ -1425,7 +1425,7 @@ APICALL(api_dict_ops) {
 		ERR_PRINT("Invalid Dictionary object");
 		throw std::runtime_error("Invalid Dictionary object");
 	}
-	godot::Dictionary dict = opt_dict.value()->operator Dictionary();
+	Dictionary dict = opt_dict.value()->operator Dictionary();
 
 	switch (op) {
 		case Dictionary_Op::GET: {
@@ -1508,7 +1508,7 @@ APICALL(api_string_ops) {
 		ERR_PRINT("Invalid String object type: " + itos(type));
 		throw std::runtime_error("Invalid String object type: " + std::to_string(type));
 	}
-	godot::String str = opt_str.value()->operator String();
+	String str = opt_str.value()->operator String();
 
 	switch (op) {
 		case String_Op::APPEND: {
@@ -1560,7 +1560,7 @@ APICALL(api_string_at) {
 		ERR_PRINT("Invalid String object");
 		throw std::runtime_error("Invalid String object");
 	}
-	godot::String str = opt_str.value()->operator String();
+	String str = opt_str.value()->operator String();
 
 	if (index < 0 || index >= str.length()) {
 		ERR_PRINT("String index out of bounds");
@@ -1582,7 +1582,7 @@ APICALL(api_string_size) {
 		ERR_PRINT("Invalid String object");
 		throw std::runtime_error("Invalid String object");
 	}
-	godot::String str = opt_str.value()->operator String();
+	String str = opt_str.value()->operator String();
 	machine.set_result(str.length());
 }
 
@@ -1594,7 +1594,7 @@ APICALL(api_string_append) {
 
 	Variant &var = emu.get_mutable_scoped_variant(str_idx);
 
-	godot::String str = var.operator String();
+	String str = var.operator String();
 	str += String::utf8(strview.data(), strview.size());
 	var = Variant(std::move(str));
 }
@@ -1674,7 +1674,7 @@ APICALL(api_load) {
 	}
 
 	Variant result(std::move(resource));
-	godot::Object *obj = result.operator Object *();
+	Object *obj = result.operator Object *();
 
 	// Return the result to the guest.
 	emu.create_scoped_variant(std::move(result));
@@ -1720,7 +1720,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_NODE3D, api_node3d },
 			{ ECALL_THROW, api_throw },
 			{ ECALL_IS_EDITOR, [](machine_t &machine) {
-				 machine.set_result(godot::Engine::get_singleton()->is_editor_hint());
+				 machine.set_result(Engine::get_singleton()->is_editor_hint());
 			 } },
 
 			{ ECALL_VCREATE, api_vcreate },
