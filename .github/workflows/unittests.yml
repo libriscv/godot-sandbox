@@ -29,7 +29,7 @@ jobs:
         run: cmake --trace -B ${{github.workspace}}/.build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build the unittests
-        run: cmake --trace --build ${{github.workspace}}/.build --parallel 6
+        run: cmake --build ${{github.workspace}}/.build --parallel 6 --trace
 
       - name: Download and extract Godot
         working-directory: ${{github.workspace}}/tests
