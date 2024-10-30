@@ -1,8 +1,8 @@
 #pragma once
 
+#include "../config.h"
 #include <godot_cpp/classes/resource_format_saver.hpp>
 #include <godot_cpp/classes/resource_saver.hpp>
-
 GODOT_NAMESPACE
 
 class ResourceFormatSaverCPP : public ResourceFormatSaver {

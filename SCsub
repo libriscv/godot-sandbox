@@ -8,15 +8,12 @@ Import("env_modules")
 
 env_sandbox = env_modules.Clone()
 
-env.Append(CPPDEFINES = ['GODOT_NAMESPACE='])
 env_sandbox["disable_exceptions"] = "0"
 env.Append(CPPDEFINES = ['GODOT_MODULE'])
 env.Prepend(CPPPATH=["#modules/sandbox/ext/godot-cpp/include",
                      "#modules/sandbox/ext/godot-cpp/gen/include"])
 
 env_sandbox.Append(CPPDEFINES = ['GODOT_MODULE'])
-env.Append(CPPDEFINES=['"GODOT_CPP_FUNC(name)=name"'])
-
 add_compilation_flags(env, "#modules/sandbox/")
 
 sources = get_sources(env, "#modules/sandbox/")

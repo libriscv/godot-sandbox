@@ -1,8 +1,8 @@
 #pragma once
 
+#include "config.h"
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/variant.hpp>
-
 GODOT_NAMESPACE
 
 struct Docker {

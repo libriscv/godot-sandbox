@@ -1,32 +1,29 @@
 #include "register_types.h"
 
-//#include <gdextension_interface.h>
-
 #include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
 
-#include "cpp/resource_loader_cpp.h"
-#include "cpp/resource_saver_cpp.h"
-#include "cpp/script_cpp.h"
-#include "cpp/script_language_cpp.h"
-#include "elf/resource_loader_elf.h"
-#include "elf/resource_saver_elf.h"
-#include "elf/script_elf.h"
-#include "elf/script_language_elf.h"
-#include "rust/resource_loader_rust.h"
-#include "rust/resource_saver_rust.h"
-#include "rust/script_language_rust.h"
-#include "rust/script_rust.h"
-#include "sandbox.h"
-#include "sandbox_project_settings.h"
-#include "zig/resource_loader_zig.h"
-#include "zig/resource_saver_zig.h"
-#include "zig/script_language_zig.h"
-#include "zig/script_zig.h"
-
+#include "src/cpp/resource_loader_cpp.h"
+#include "src/cpp/resource_saver_cpp.h"
+#include "src/cpp/script_cpp.h"
+#include "src/cpp/script_language_cpp.h"
+#include "src/elf/resource_loader_elf.h"
+#include "src/elf/resource_saver_elf.h"
+#include "src/elf/script_elf.h"
+#include "src/elf/script_language_elf.h"
+#include "src/rust/resource_loader_rust.h"
+#include "src/rust/resource_saver_rust.h"
+#include "src/rust/script_language_rust.h"
+#include "src/rust/script_rust.h"
+#include "src/sandbox.h"
+#include "src/sandbox_project_settings.h"
+#include "src/zig/resource_loader_zig.h"
+#include "src/zig/resource_saver_zig.h"
+#include "src/zig/script_language_zig.h"
+#include "src/zig/script_zig.h"
 GODOT_NAMESPACE
 
 static Ref<ResourceFormatLoaderELF> elf_loader;

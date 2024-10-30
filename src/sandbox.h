@@ -1,13 +1,13 @@
 #pragma once
 
+#include "config.h"
 #include <godot_cpp/classes/control.hpp>
-
 #include <godot_cpp/core/binder_common.hpp>
 #include <godot_cpp/templates/hash_set.hpp>
 #include <libriscv/machine.hpp>
 #include <optional>
 
-using namespace godot;
+GODOT_NAMESPACE
 #define RISCV_ARCH riscv::RISCV64
 using gaddr_t = riscv::address_type<RISCV_ARCH>;
 using machine_t = riscv::Machine<RISCV_ARCH>;

@@ -1,10 +1,12 @@
 #pragma once
 
+#include "../config.h"
+#include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/templates/hash_set.hpp>
-
 GODOT_NAMESPACE
+
 class ELFScriptInstance;
 class Sandbox;
 namespace godot {
@@ -27,7 +29,7 @@ protected:
 	friend class ELFScriptInstance;
 
 	static inline HashMap<String, HashSet<Sandbox *>> sandbox_map;
-	
+
 public:
 	PackedStringArray functions;
 	String get_elf_programming_language() const;

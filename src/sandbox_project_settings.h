@@ -1,7 +1,7 @@
 #pragma once
 
+#include "config.h"
 #include <godot_cpp/variant/string.hpp>
-
 GODOT_NAMESPACE
 
 class SandboxProjectSettings {

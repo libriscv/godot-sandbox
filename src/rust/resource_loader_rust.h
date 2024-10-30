@@ -1,8 +1,8 @@
 #pragma once
 
+#include "../config.h"
 #include <godot_cpp/classes/resource_format_loader.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
-
 GODOT_NAMESPACE
 
 class ResourceFormatLoaderRust : public ResourceFormatLoader {
