@@ -27,7 +27,7 @@ protected:
 	friend class ELFScriptInstance;
 
 	static inline HashMap<String, HashSet<Sandbox *>> sandbox_map;
-
+	
 public:
 	PackedStringArray functions;
 	String get_elf_programming_language() const;
