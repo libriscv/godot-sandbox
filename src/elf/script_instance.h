@@ -1,8 +1,7 @@
 
 #pragma once
 
-#include <gdextension_interface.h>
-
+#include "../config.h"
 #include <gdextension_interface.h>
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/mutex.hpp>
@@ -24,7 +23,7 @@
 
 #include "../godot/script_instance.h"
 #include "../sandbox.h"
-using namespace godot;
+GODOT_NAMESPACE
 
 class ELFScript;
 

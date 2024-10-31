@@ -148,7 +148,7 @@ APICALL(api_transform2d_ops) {
 		throw std::runtime_error("Invalid Transform2D object");
 	}
 	const Variant *t_variant = *opt_t;
-	godot::Transform2D t = t_variant->operator Transform2D();
+	Transform2D t = t_variant->operator Transform2D();
 
 	// Additional integers start at A2 (12), and floats start at FA0 (10).
 	switch (op) {

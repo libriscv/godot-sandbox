@@ -1,8 +1,8 @@
-#include "../register_types.h"
+#include "../../register_types.h"
 #include <godot_cpp/templates/local_vector.hpp>
 #include <godot_cpp/templates/pair.hpp>
 
-using namespace godot;
+GODOT_NAMESPACE
 
 static int get_len_from_ptr(const void *p_ptr) {
 	return *((int *)p_ptr - 1);

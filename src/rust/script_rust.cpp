@@ -4,111 +4,111 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 
-bool RustScript::_editor_can_reload_from_file() {
+bool RustScript:: GODOT_CPP_FUNC (editor_can_reload_from_file)() {
 	return true;
 }
-void RustScript::_placeholder_erased(void *p_placeholder) {}
-bool RustScript::_can_instantiate() const {
+void RustScript:: GODOT_CPP_FUNC (placeholder_erased)(void *p_placeholder) {}
+bool RustScript:: GODOT_CPP_FUNC (can_instantiate)() const {
 	return false;
 }
-Ref<Script> RustScript::_get_base_script() const {
+Ref<Script> RustScript:: GODOT_CPP_FUNC (get_base_script)() const {
 	return Ref<Script>();
 }
-StringName RustScript::_get_global_name() const {
+StringName RustScript:: GODOT_CPP_FUNC (get_global_name)() const {
 	return StringName();
 }
-bool RustScript::_inherits_script(const Ref<Script> &p_script) const {
+bool RustScript:: GODOT_CPP_FUNC (inherits_script)(const Ref<Script> &p_script) const {
 	return false;
 }
-StringName RustScript::_get_instance_base_type() const {
+StringName RustScript:: GODOT_CPP_FUNC (get_instance_base_type)() const {
 	return StringName();
 }
-void *RustScript::_instance_create(Object *p_for_object) const {
+void *RustScript:: GODOT_CPP_FUNC (instance_create)(Object *p_for_object) const {
 	return nullptr;
 }
-void *RustScript::_placeholder_instance_create(Object *p_for_object) const {
+void *RustScript:: GODOT_CPP_FUNC (placeholder_instance_create)(Object *p_for_object) const {
 	return nullptr;
 }
-bool RustScript::_instance_has(Object *p_object) const {
+bool RustScript:: GODOT_CPP_FUNC (instance_has)(Object *p_object) const {
 	return false;
 }
-bool RustScript::_has_source_code() const {
+bool RustScript:: GODOT_CPP_FUNC (has_source_code)() const {
 	return true;
 }
-String RustScript::_get_source_code() const {
+String RustScript:: GODOT_CPP_FUNC (get_source_code)() const {
 	return source_code;
 }
-void RustScript::_set_source_code(const String &p_code) {
+void RustScript:: GODOT_CPP_FUNC (set_source_code)(const String &p_code) {
 	source_code = p_code;
 }
-Error RustScript::_reload(bool p_keep_state) {
+Error RustScript:: GODOT_CPP_FUNC (reload)(bool p_keep_state) {
 	return Error::OK;
 }
-TypedArray<Dictionary> RustScript::_get_documentation() const {
+TypedArray<Dictionary> RustScript:: GODOT_CPP_FUNC (get_documentation)() const {
 	return TypedArray<Dictionary>();
 }
-String RustScript::_get_class_icon_path() const {
+String RustScript:: GODOT_CPP_FUNC (get_class_icon_path)() const {
 	return String("res://addons/godot_sandbox/RustScript.svg");
 }
-bool RustScript::_has_method(const StringName &p_method) const {
+bool RustScript:: GODOT_CPP_FUNC (has_method)(const StringName &p_method) const {
 	return false;
 }
-bool RustScript::_has_static_method(const StringName &p_method) const {
+bool RustScript:: GODOT_CPP_FUNC (has_static_method)(const StringName &p_method) const {
 	return false;
 }
-Dictionary RustScript::_get_method_info(const StringName &p_method) const {
+Dictionary RustScript:: GODOT_CPP_FUNC (get_method_info)(const StringName &p_method) const {
 	return Dictionary();
 }
-bool RustScript::_is_tool() const {
+bool RustScript:: GODOT_CPP_FUNC (is_tool)() const {
 	return true;
 }
-bool RustScript::_is_valid() const {
+bool RustScript:: GODOT_CPP_FUNC (is_valid)() const {
 	return true;
 }
-bool RustScript::_is_abstract() const {
+bool RustScript:: GODOT_CPP_FUNC (is_abstract)() const {
 	return true;
 }
-ScriptLanguage *RustScript::_get_language() const {
+ScriptLanguage *RustScript:: GODOT_CPP_FUNC (get_language)() const {
 	return RustScriptLanguage::get_singleton();
 }
-bool RustScript::_has_script_signal(const StringName &p_signal) const {
+bool RustScript:: GODOT_CPP_FUNC (has_script_signal)(const StringName &p_signal) const {
 	return false;
 }
-TypedArray<Dictionary> RustScript::_get_script_signal_list() const {
+TypedArray<Dictionary> RustScript:: GODOT_CPP_FUNC (get_script_signal_list)() const {
 	return TypedArray<Dictionary>();
 }
-bool RustScript::_has_property_default_value(const StringName &p_property) const {
+bool RustScript:: GODOT_CPP_FUNC (has_property_default_value)(const StringName &p_property) const {
 	return false;
 }
-Variant RustScript::_get_property_default_value(const StringName &p_property) const {
+Variant RustScript:: GODOT_CPP_FUNC (get_property_default_value)(const StringName &p_property) const {
 	return Variant();
 }
-void RustScript::_update_exports() {}
-TypedArray<Dictionary> RustScript::_get_script_method_list() const {
+void RustScript:: GODOT_CPP_FUNC (update_exports)() {}
+TypedArray<Dictionary> RustScript:: GODOT_CPP_FUNC (get_script_method_list)() const {
 	return TypedArray<Dictionary>();
 }
-TypedArray<Dictionary> RustScript::_get_script_property_list() const {
+TypedArray<Dictionary> RustScript:: GODOT_CPP_FUNC (get_script_property_list)() const {
 	return TypedArray<Dictionary>();
 }
-int32_t RustScript::_get_member_line(const StringName &p_member) const {
+int32_t RustScript:: GODOT_CPP_FUNC (get_member_line)(const StringName &p_member) const {
 	return 0;
 }
-Dictionary RustScript::_get_constants() const {
+Dictionary RustScript:: GODOT_CPP_FUNC (get_constants)() const {
 	return Dictionary();
 }
-TypedArray<StringName> RustScript::_get_members() const {
+TypedArray<StringName> RustScript:: GODOT_CPP_FUNC (get_members)() const {
 	return TypedArray<StringName>();
 }
-bool RustScript::_is_placeholder_fallback_enabled() const {
+bool RustScript:: GODOT_CPP_FUNC (is_placeholder_fallback_enabled)() const {
 	return false;
 }
-Variant RustScript::_get_rpc_config() const {
+Variant RustScript:: GODOT_CPP_FUNC (get_rpc_config)() const {
 	return Variant();
 }
 
 RustScript::RustScript() {
 	source_code = R"C0D3(mod godot;
-use godot::variant::*;
+use variant::*;
 
 pub fn main() {
 }

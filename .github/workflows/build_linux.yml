@@ -19,7 +19,7 @@ jobs:
         with:
           submodules: true
           fetch-depth: 0
-  
+
       - name: Compiler Fix
         shell: bash
         run: |

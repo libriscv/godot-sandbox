@@ -1,17 +1,16 @@
 #include "script_elf.h"
 
 #include "../docker.h"
-#include "../register_types.h"
 #include "../sandbox.h"
 #include "../sandbox_project_settings.h"
 #include "script_instance.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
-
 static constexpr bool VERBOSE_ELFSCRIPT = false;
+extern ScriptLanguage *get_elf_language();
 
-void ELFScript::_bind_methods() {
+void ELFScript::GODOT_CPP_FUNC (bind_methods)() {
 	ClassDB::bind_method(D_METHOD("get_sandbox_for", "for_object"), &ELFScript::get_sandbox_for);
 	ClassDB::bind_method(D_METHOD("get_sandboxes"), &ELFScript::get_sandboxes);
 	ClassDB::bind_method(D_METHOD("get_content"), &ELFScript::get_content);
@@ -74,43 +73,43 @@ static Dictionary method_to_dict(const MethodInfo &p_method) {
 	return d;
 }
 
-bool ELFScript::_editor_can_reload_from_file() {
+bool ELFScript::GODOT_CPP_FUNC (editor_can_reload_from_file)() {
 	return true;
 }
-void ELFScript::_placeholder_erased(void *p_placeholder) {}
-bool ELFScript::_can_instantiate() const {
+void ELFScript::GODOT_CPP_FUNC (placeholder_erased)(void *p_placeholder) {}
+bool ELFScript::GODOT_CPP_FUNC (can_instantiate)() const {
 	return true;
 }
-Ref<Script> ELFScript::_get_base_script() const {
+Ref<Script> ELFScript::GODOT_CPP_FUNC (get_base_script)() const {
 	return Ref<Script>();
 }
-StringName ELFScript::_get_global_name() const {
+StringName ELFScript::GODOT_CPP_FUNC (get_global_name)() const {
 	if (SandboxProjectSettings::use_global_sandbox_names()) {
 		return global_name;
 	}
 	return "ELFScript";
 }
-bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
+bool ELFScript::GODOT_CPP_FUNC (inherits_script)(const Ref<Script> &p_script) const {
 	return false;
 }
-StringName ELFScript::_get_instance_base_type() const {
+StringName ELFScript::GODOT_CPP_FUNC (get_instance_base_type)() const {
 	return StringName("Sandbox");
 }
-void *ELFScript::_instance_create(Object *p_for_object) const {
+void *ELFScript::GODOT_CPP_FUNC (instance_create)(Object *p_for_object) const {
 	ELFScriptInstance *instance = memnew(ELFScriptInstance(p_for_object, Ref<ELFScript>(this)));
 	instances.insert(instance);
 	return ScriptInstanceExtension::create_native_instance(instance);
 }
-void *ELFScript::_placeholder_instance_create(Object *p_for_object) const {
+void *ELFScript::GODOT_CPP_FUNC (placeholder_instance_create)(Object *p_for_object) const {
 	return _instance_create(p_for_object);
 }
-bool ELFScript::_instance_has(Object *p_object) const {
+bool ELFScript::GODOT_CPP_FUNC (instance_has)(Object *p_object) const {
 	return false;
 }
-bool ELFScript::_has_source_code() const {
+bool ELFScript::GODOT_CPP_FUNC (has_source_code)() const {
 	return true;
 }
-String ELFScript::_get_source_code() const {
+String ELFScript::GODOT_CPP_FUNC (get_source_code)() const {
 	if (source_code.is_empty()) {
 		return String();
 	}
@@ -123,40 +122,40 @@ String ELFScript::_get_source_code() const {
 	}
 	return JSON::stringify(functions_array, "  ");
 }
-void ELFScript::_set_source_code(const String &p_code) {
+void ELFScript::GODOT_CPP_FUNC (set_source_code)(const String &p_code) {
 }
-Error ELFScript::_reload(bool p_keep_state) {
+Error ELFScript::GODOT_CPP_FUNC (reload)(bool p_keep_state) {
 	this->source_version++;
 	this->set_file(this->path);
 	return Error::OK;
 }
-TypedArray<Dictionary> ELFScript::_get_documentation() const {
+TypedArray<Dictionary> ELFScript::GODOT_CPP_FUNC (get_documentation)() const {
 	return TypedArray<Dictionary>();
 }
-String ELFScript::_get_class_icon_path() const {
+String ELFScript::GODOT_CPP_FUNC (get_class_icon_path)() const {
 	return String("res://addons/godot_sandbox/Sandbox.svg");
 }
-bool ELFScript::_has_method(const StringName &p_method) const {
+bool ELFScript::GODOT_CPP_FUNC (has_method)(const StringName &p_method) const {
 	bool result = functions.find(p_method) != -1;
 	if (!result) {
 		if (p_method == StringName("_init"))
 			result = true;
 	}
 	if constexpr (VERBOSE_ELFSCRIPT) {
-		printf("ELFScript::_has_method: method %s => %d\n", p_method.to_ascii_buffer().ptr(), result);
+		printf("ELFScript::GODOT_CPP_FUNC (has_method): method %s => %d\n", p_method.to_ascii_buffer().ptr(), result);
 	}
 
 	return result;
 }
-bool ELFScript::_has_static_method(const StringName &p_method) const {
+bool ELFScript::GODOT_CPP_FUNC (has_static_method)(const StringName &p_method) const {
 	return false;
 }
-Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
+Dictionary ELFScript::GODOT_CPP_FUNC (get_method_info)(const StringName &p_method) const {
 	TypedArray<Dictionary> functions_array;
 	for (String function : functions) {
 		if (function == p_method) {
 			if constexpr (VERBOSE_ELFSCRIPT) {
-				printf("ELFScript::_get_method_info: method %s\n", p_method.to_ascii_buffer().ptr());
+				printf("ELFScript::GODOT_CPP_FUNC (get_method_info): method %s\n", p_method.to_ascii_buffer().ptr());
 			}
 			Dictionary method;
 			method["name"] = function;
@@ -176,32 +175,32 @@ Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
 	}
 	return Dictionary();
 }
-bool ELFScript::_is_tool() const {
+bool ELFScript::GODOT_CPP_FUNC (is_tool)() const {
 	return true;
 }
-bool ELFScript::_is_valid() const {
+bool ELFScript::GODOT_CPP_FUNC (is_valid)() const {
 	return true;
 }
-bool ELFScript::_is_abstract() const {
+bool ELFScript::GODOT_CPP_FUNC (is_abstract)() const {
 	return false;
 }
-ScriptLanguage *ELFScript::_get_language() const {
+ScriptLanguage *ELFScript::GODOT_CPP_FUNC (get_language)() const {
 	return get_elf_language();
 }
-bool ELFScript::_has_script_signal(const StringName &p_signal) const {
+bool ELFScript::GODOT_CPP_FUNC (has_script_signal)(const StringName &p_signal) const {
 	return false;
 }
-TypedArray<Dictionary> ELFScript::_get_script_signal_list() const {
+TypedArray<Dictionary> ELFScript::GODOT_CPP_FUNC (get_script_signal_list)() const {
 	return TypedArray<Dictionary>();
 }
 
-bool ELFScript::_has_property_default_value(const StringName &p_property) const {
+bool ELFScript::GODOT_CPP_FUNC (has_property_default_value)(const StringName &p_property) const {
 	return false;
 }
-Variant ELFScript::_get_property_default_value(const StringName &p_property) const {
+Variant ELFScript::GODOT_CPP_FUNC (get_property_default_value)(const StringName &p_property) const {
 	return Variant();
 }
-TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
+TypedArray<Dictionary> ELFScript::GODOT_CPP_FUNC (get_script_property_list)() const {
 	TypedArray<Dictionary> properties;
 	properties.push_back(
 			prop_to_dict(PropertyInfo(Variant::INT, "memory_max", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Maximum memory used by the sandboxed program", PROPERTY_USAGE_DEFAULT)));
@@ -220,8 +219,8 @@ TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
 	return properties;
 }
 
-void ELFScript::_update_exports() {}
-TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
+void ELFScript::GODOT_CPP_FUNC (update_exports)() {}
+TypedArray<Dictionary> ELFScript::GODOT_CPP_FUNC (get_script_method_list)() const {
 	TypedArray<Dictionary> functions_array;
 	for (String function : functions) {
 		Dictionary method;
@@ -241,7 +240,7 @@ TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
 	}
 	return functions_array;
 }
-int32_t ELFScript::_get_member_line(const StringName &p_member) const {
+int32_t ELFScript::GODOT_CPP_FUNC (get_member_line)(const StringName &p_member) const {
 	PackedStringArray formatted_functions = _get_source_code().split("\n");
 	for (int i = 0; i < formatted_functions.size(); i++) {
 		if (formatted_functions[i].find(p_member) != -1) {
@@ -250,16 +249,16 @@ int32_t ELFScript::_get_member_line(const StringName &p_member) const {
 	}
 	return 0;
 }
-Dictionary ELFScript::_get_constants() const {
+Dictionary ELFScript::GODOT_CPP_FUNC (get_constants)() const {
 	return Dictionary();
 }
-TypedArray<StringName> ELFScript::_get_members() const {
+TypedArray<StringName> ELFScript::GODOT_CPP_FUNC (get_members)() const {
 	return TypedArray<StringName>();
 }
-bool ELFScript::_is_placeholder_fallback_enabled() const {
+bool ELFScript::GODOT_CPP_FUNC (is_placeholder_fallback_enabled)() const {
 	return false;
 }
-Variant ELFScript::_get_rpc_config() const {
+Variant ELFScript::GODOT_CPP_FUNC (get_rpc_config)() const {
 	return Variant();
 }
 

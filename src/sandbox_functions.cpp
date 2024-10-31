@@ -2,7 +2,7 @@
 
 #include <unordered_set>
 
-using namespace godot;
+GODOT_NAMESPACE
 static const std::unordered_set<std::string_view> exclude_functions{
 	"_Balloc",
 	"_Bfree",

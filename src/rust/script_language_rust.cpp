@@ -22,18 +22,18 @@ RustScriptLanguage *RustScriptLanguage::get_singleton() {
 	return rust_language;
 }
 
-String RustScriptLanguage::_get_name() const {
+String RustScriptLanguage::GODOT_CPP_FUNC (get_name)() const {
 	return "RustScript";
 }
-void RustScriptLanguage::_init() {}
-String RustScriptLanguage::_get_type() const {
+void RustScriptLanguage::GODOT_CPP_FUNC (init)() {}
+String RustScriptLanguage::GODOT_CPP_FUNC (get_type)() const {
 	return "RustScript";
 }
-String RustScriptLanguage::_get_extension() const {
+String RustScriptLanguage::GODOT_CPP_FUNC (get_extension)() const {
 	return "rs";
 }
-void RustScriptLanguage::_finish() {}
-PackedStringArray RustScriptLanguage::_get_reserved_words() const {
+void RustScriptLanguage::GODOT_CPP_FUNC (finish)() {}
+PackedStringArray RustScriptLanguage::GODOT_CPP_FUNC (get_reserved_words)() const {
 	static const PackedStringArray reserved_words{
 		"as",
 		"use",
@@ -96,143 +96,143 @@ PackedStringArray RustScriptLanguage::_get_reserved_words() const {
 	};
 	return reserved_words;
 }
-bool RustScriptLanguage::_is_control_flow_keyword(const String &p_keyword) const {
+bool RustScriptLanguage::GODOT_CPP_FUNC (is_control_flow_keyword)(const String &p_keyword) const {
 	static const std::unordered_set<std::string> control_flow_keywords{
 		"if", "else", "switch", "case", "default", "while", "loop", "for", "break", "continue", "return", "goto"
 	};
 	return control_flow_keywords.find(p_keyword.utf8().get_data()) != control_flow_keywords.end();
 }
-PackedStringArray RustScriptLanguage::_get_comment_delimiters() const {
+PackedStringArray RustScriptLanguage::GODOT_CPP_FUNC (get_comment_delimiters)() const {
 	PackedStringArray comment_delimiters;
 	comment_delimiters.push_back("/* */");
 	comment_delimiters.push_back("//");
 	return comment_delimiters;
 }
-PackedStringArray RustScriptLanguage::_get_doc_comment_delimiters() const {
+PackedStringArray RustScriptLanguage::GODOT_CPP_FUNC (get_doc_comment_delimiters)() const {
 	PackedStringArray doc_comment_delimiters;
 	doc_comment_delimiters.push_back("///");
 	doc_comment_delimiters.push_back("/** */");
 	return doc_comment_delimiters;
 }
-PackedStringArray RustScriptLanguage::_get_string_delimiters() const {
+PackedStringArray RustScriptLanguage::GODOT_CPP_FUNC (get_string_delimiters)() const {
 	PackedStringArray string_delimiters;
 	string_delimiters.push_back("' '");
 	string_delimiters.push_back("\" \"");
 	return string_delimiters;
 }
-Ref<Script> RustScriptLanguage::_make_template(const String &p_template, const String &p_class_name, const String &p_base_class_name) const {
+Ref<Script> RustScriptLanguage::GODOT_CPP_FUNC (make_template)(const String &p_template, const String &p_class_name, const String &p_base_class_name) const {
 	RustScript *script = memnew(RustScript);
 	return Ref<Script>(script);
 }
-TypedArray<Dictionary> RustScriptLanguage::_get_built_in_templates(const StringName &p_object) const {
+TypedArray<Dictionary> RustScriptLanguage::GODOT_CPP_FUNC (get_built_in_templates)(const StringName &p_object) const {
 	return TypedArray<Dictionary>();
 }
-bool RustScriptLanguage::_is_using_templates() {
+bool RustScriptLanguage::GODOT_CPP_FUNC (is_using_templates)() {
 	return false;
 }
-Dictionary RustScriptLanguage::_validate(const String &p_script, const String &p_path, bool p_validate_functions, bool p_validate_errors, bool p_validate_warnings, bool p_validate_safe_lines) const {
+Dictionary RustScriptLanguage::GODOT_CPP_FUNC (validate)(const String &p_script, const String &p_path, bool p_validate_functions, bool p_validate_errors, bool p_validate_warnings, bool p_validate_safe_lines) const {
 	return Dictionary();
 }
-String RustScriptLanguage::_validate_path(const String &p_path) const {
+String RustScriptLanguage::GODOT_CPP_FUNC (validate_path)(const String &p_path) const {
 	return String();
 }
-Object *RustScriptLanguage::_create_script() const {
+Object *RustScriptLanguage::GODOT_CPP_FUNC (create_script)() const {
 	RustScript *script = memnew(RustScript);
 	return script;
 }
-bool RustScriptLanguage::_has_named_classes() const {
+bool RustScriptLanguage::GODOT_CPP_FUNC (has_named_classes)() const {
 	return false;
 }
-bool RustScriptLanguage::_supports_builtin_mode() const {
+bool RustScriptLanguage::GODOT_CPP_FUNC (supports_builtin_mode)() const {
 	return false;
 }
-bool RustScriptLanguage::_supports_documentation() const {
+bool RustScriptLanguage::GODOT_CPP_FUNC (supports_documentation)() const {
 	return false;
 }
-bool RustScriptLanguage::_can_inherit_from_file() const {
+bool RustScriptLanguage::GODOT_CPP_FUNC (can_inherit_from_file)() const {
 	return false;
 }
-int32_t RustScriptLanguage::_find_function(const String &p_function, const String &p_code) const {
+int32_t RustScriptLanguage::GODOT_CPP_FUNC (find_function)(const String &p_function, const String &p_code) const {
 	return -1;
 }
-String RustScriptLanguage::_make_function(const String &p_class_name, const String &p_function_name, const PackedStringArray &p_function_args) const {
+String RustScriptLanguage::GODOT_CPP_FUNC (make_function)(const String &p_class_name, const String &p_function_name, const PackedStringArray &p_function_args) const {
 	return String();
 }
-Error RustScriptLanguage::_open_in_external_editor(const Ref<Script> &p_script, int32_t p_line, int32_t p_column) {
+Error RustScriptLanguage::GODOT_CPP_FUNC (open_in_external_editor)(const Ref<Script> &p_script, int32_t p_line, int32_t p_column) {
 	return Error::OK;
 }
-bool RustScriptLanguage::_overrides_external_editor() {
+bool RustScriptLanguage::GODOT_CPP_FUNC (overrides_external_editor)() {
 	return false;
 }
-Dictionary RustScriptLanguage::_complete_code(const String &p_code, const String &p_path, Object *p_owner) const {
+Dictionary RustScriptLanguage::GODOT_CPP_FUNC (complete_code)(const String &p_code, const String &p_path, Object *p_owner) const {
 	return Dictionary();
 }
-Dictionary RustScriptLanguage::_lookup_code(const String &p_code, const String &p_symbol, const String &p_path, Object *p_owner) const {
+Dictionary RustScriptLanguage::GODOT_CPP_FUNC (lookup_code)(const String &p_code, const String &p_symbol, const String &p_path, Object *p_owner) const {
 	return Dictionary();
 }
-String RustScriptLanguage::_auto_indent_code(const String &p_code, int32_t p_from_line, int32_t p_to_line) const {
+String RustScriptLanguage::GODOT_CPP_FUNC (auto_indent_code)(const String &p_code, int32_t p_from_line, int32_t p_to_line) const {
 	return String();
 }
-void RustScriptLanguage::_add_global_constant(const StringName &p_name, const Variant &p_value) {}
-void RustScriptLanguage::_add_named_global_constant(const StringName &p_name, const Variant &p_value) {}
-void RustScriptLanguage::_remove_named_global_constant(const StringName &p_name) {}
-void RustScriptLanguage::_thread_enter() {}
-void RustScriptLanguage::_thread_exit() {}
-String RustScriptLanguage::_debug_get_error() const {
+void RustScriptLanguage::GODOT_CPP_FUNC (add_global_constant)(const StringName &p_name, const Variant &p_value) {}
+void RustScriptLanguage::GODOT_CPP_FUNC (add_named_global_constant)(const StringName &p_name, const Variant &p_value) {}
+void RustScriptLanguage::GODOT_CPP_FUNC (remove_named_global_constant)(const StringName &p_name) {}
+void RustScriptLanguage::GODOT_CPP_FUNC (thread_enter)() {}
+void RustScriptLanguage::GODOT_CPP_FUNC (thread_exit)() {}
+String RustScriptLanguage::GODOT_CPP_FUNC (debug_get_error)() const {
 	return String();
 }
-int32_t RustScriptLanguage::_debug_get_stack_level_count() const {
+int32_t RustScriptLanguage::GODOT_CPP_FUNC (debug_get_stack_level_count)() const {
 	return 0;
 }
-int32_t RustScriptLanguage::_debug_get_stack_level_line(int32_t p_level) const {
+int32_t RustScriptLanguage::GODOT_CPP_FUNC (debug_get_stack_level_line)(int32_t p_level) const {
 	return 0;
 }
-String RustScriptLanguage::_debug_get_stack_level_function(int32_t p_level) const {
+String RustScriptLanguage::GODOT_CPP_FUNC (debug_get_stack_level_function)(int32_t p_level) const {
 	return String();
 }
-Dictionary RustScriptLanguage::_debug_get_stack_level_locals(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) {
+Dictionary RustScriptLanguage::GODOT_CPP_FUNC (debug_get_stack_level_locals)(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) {
 	return Dictionary();
 }
-Dictionary RustScriptLanguage::_debug_get_stack_level_members(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) {
+Dictionary RustScriptLanguage::GODOT_CPP_FUNC (debug_get_stack_level_members)(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) {
 	return Dictionary();
 }
-void *RustScriptLanguage::_debug_get_stack_level_instance(int32_t p_level) {
+void *RustScriptLanguage::GODOT_CPP_FUNC (debug_get_stack_level_instance)(int32_t p_level) {
 	return nullptr;
 }
-Dictionary RustScriptLanguage::_debug_get_globals(int32_t p_max_subitems, int32_t p_max_depth) {
+Dictionary RustScriptLanguage::GODOT_CPP_FUNC (debug_get_globals)(int32_t p_max_subitems, int32_t p_max_depth) {
 	return Dictionary();
 }
-String RustScriptLanguage::_debug_parse_stack_level_expression(int32_t p_level, const String &p_expression, int32_t p_max_subitems, int32_t p_max_depth) {
+String RustScriptLanguage::GODOT_CPP_FUNC (debug_parse_stack_level_expression)(int32_t p_level, const String &p_expression, int32_t p_max_subitems, int32_t p_max_depth) {
 	return String();
 }
-TypedArray<Dictionary> RustScriptLanguage::_debug_get_current_stack_info() {
+TypedArray<Dictionary> RustScriptLanguage::GODOT_CPP_FUNC (debug_get_current_stack_info)() {
 	return TypedArray<Dictionary>();
 }
-void RustScriptLanguage::_reload_all_scripts() {}
-void RustScriptLanguage::_reload_tool_script(const Ref<Script> &p_script, bool p_soft_reload) {}
-PackedStringArray RustScriptLanguage::_get_recognized_extensions() const {
+void RustScriptLanguage::GODOT_CPP_FUNC (reload_all_scripts)() {}
+void RustScriptLanguage::GODOT_CPP_FUNC (reload_tool_script)(const Ref<Script> &p_script, bool p_soft_reload) {}
+PackedStringArray RustScriptLanguage::GODOT_CPP_FUNC (get_recognized_extensions)() const {
 	PackedStringArray array;
 	array.push_back("rs");
 	return array;
 }
-TypedArray<Dictionary> RustScriptLanguage::_get_public_functions() const {
+TypedArray<Dictionary> RustScriptLanguage::GODOT_CPP_FUNC (get_public_functions)() const {
 	return TypedArray<Dictionary>();
 }
-Dictionary RustScriptLanguage::_get_public_constants() const {
+Dictionary RustScriptLanguage::GODOT_CPP_FUNC (get_public_constants)() const {
 	return Dictionary();
 }
-TypedArray<Dictionary> RustScriptLanguage::_get_public_annotations() const {
+TypedArray<Dictionary> RustScriptLanguage::GODOT_CPP_FUNC (get_public_annotations)() const {
 	return TypedArray<Dictionary>();
 }
-void RustScriptLanguage::_profiling_start() {}
-void RustScriptLanguage::_profiling_stop() {}
-int32_t RustScriptLanguage::_profiling_get_accumulated_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) {
+void RustScriptLanguage::GODOT_CPP_FUNC (profiling_start)() {}
+void RustScriptLanguage::GODOT_CPP_FUNC (profiling_stop)() {}
+int32_t RustScriptLanguage::GODOT_CPP_FUNC (profiling_get_accumulated_data)(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) {
 	return 0;
 }
-int32_t RustScriptLanguage::_profiling_get_frame_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) {
+int32_t RustScriptLanguage::GODOT_CPP_FUNC (profiling_get_frame_data)(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) {
 	return 0;
 }
-void RustScriptLanguage::_frame() {
+void RustScriptLanguage::GODOT_CPP_FUNC (frame)() {
 	static bool icon_registered = false;
 	if (!icon_registered && Engine::get_singleton()->is_editor_hint()) {
 		icon_registered = true;
@@ -259,9 +259,9 @@ void RustScriptLanguage::load_icon()
 	}
 	reenter = false;
 }
-bool RustScriptLanguage::_handles_global_class_type(const String &p_type) const {
+bool RustScriptLanguage::GODOT_CPP_FUNC (handles_global_class_type)(const String &p_type) const {
 	return p_type == "RustScript";
 }
-Dictionary RustScriptLanguage::_get_global_class_name(const String &p_path) const {
+Dictionary RustScriptLanguage::GODOT_CPP_FUNC (get_global_class_name)(const String &p_path) const {
 	return Dictionary();
 }
