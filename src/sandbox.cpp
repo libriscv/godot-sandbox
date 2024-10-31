@@ -646,19 +646,37 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 				m_machine->set_max_instructions(get_instructions_max() << 20);
 				m_machine->cpu.jump(address);
 				m_machine->cpu.simulate_precise();
-			} else if (UNLIKELY(this->m_profiling_data != nullptr)) {
+			} else if (UNLIKELY(this->m_local_profiling_data != nullptr)) {
 				m_machine->cpu.jump(address);
-				ProfilingData &profdata = *this->m_profiling_data;
+				LocalProfilingData &profdata = *this->m_local_profiling_data;
 				do {
 					const int32_t next = std::max(int32_t(0), int32_t(profdata.profiling_interval) - int32_t(profdata.profiler_icounter_accumulator));
 					m_machine->simulate<false>(next, 0u);
 					if (m_machine->instruction_limit_reached()) {
 						profdata.profiler_icounter_accumulator = 0;
-						profdata.visited[m_machine->cpu.pc()]++;
+						profdata.visited.push_back(m_machine->cpu.pc());
 					}
 				} while (m_machine->instruction_limit_reached());
 				// update the accumulator with the remaining instructions
 				profdata.profiler_icounter_accumulator += m_machine->instruction_counter();
+				// update the global profiler
+				{
+					std::scoped_lock lock(profiling_mutex);
+					if (this->m_profiling_data != nullptr) {
+						ProfilingData &gprofdata = *this->m_profiling_data;
+						// Determine ELF path
+						std::string_view path = "";
+						if (this->m_program_data.is_valid()) {
+							path = this->m_program_data->get_std_path();
+						}
+
+						// Update the global profiler
+						for (const auto &address : profdata.visited) {
+							gprofdata.visited[path][address] ++;
+						}
+						profdata.visited.clear();
+					}
+				}
 			} else {
 				m_machine->simulate_with(get_instructions_max() << 20, 0u, address);
 			}

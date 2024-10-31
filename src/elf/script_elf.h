@@ -21,6 +21,7 @@ protected:
 	PackedByteArray source_code;
 	String global_name;
 	String path;
+	std::string std_path;
 	int source_version = 0;
 	int elf_api_version;
 	String elf_programming_language;
@@ -37,6 +38,7 @@ public:
 	int get_source_version() const noexcept { return source_version; }
 	String get_dockerized_program_path() const;
 	const String &get_path() const noexcept { return path; }
+	const std::string &get_std_path() const noexcept { return std_path; }
 
 	/// @brief Retrieve a Sandbox instance based on a given owner object.
 	/// @param p_for_object The owner object.

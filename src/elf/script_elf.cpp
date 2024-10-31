@@ -271,7 +271,11 @@ String ELFScript::get_elf_programming_language() const {
 }
 
 void ELFScript::set_file(const String &p_path) {
+	// res://path/to/file.elf
 	path = p_path;
+	// path/to/file.elf as a C++ string
+	std_path = std::string(path.replace("res://", "").utf8().ptr());
+
 	PackedByteArray new_source_code = FileAccess::get_file_as_bytes(path);
 	if (new_source_code == source_code) {
 		if constexpr (VERBOSE_ELFSCRIPT) {

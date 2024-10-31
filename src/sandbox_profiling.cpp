@@ -9,6 +9,11 @@ void Sandbox::set_profiling(bool enable) {
 
 void Sandbox::enable_profiling(bool enable, uint32_t interval) {
 	if (enable) {
+		if (!m_local_profiling_data) {
+			m_local_profiling_data = std::make_unique<LocalProfilingData>();
+		}
+
+		std::scoped_lock lock(profiling_mutex);
 		if (!m_profiling_data) {
 			m_profiling_data = std::make_unique<ProfilingData>();
 		}
@@ -18,19 +23,22 @@ void Sandbox::enable_profiling(bool enable, uint32_t interval) {
 			ERR_PRINT("Cannot disable profiling while a VM call is in progress.");
 			return;
 		}
-		m_profiling_data.reset();
+		m_local_profiling_data.reset();
 	}
 }
 
-Array Sandbox::get_hotspots(const String &elf, int total) const {
+Array Sandbox::get_hotspots(const String &elf_hint, int total) const {
+	std::scoped_lock lock(profiling_mutex);
 	if (!m_profiling_data) {
 		ERR_PRINT("Profiling is not currently enabled.");
 		return Array();
 	}
 	ProfilingData &profdata = *m_profiling_data;
+	std::string std_elf_hint = std::string(elf_hint.utf8().ptr());
 
 	// Gather information about the hotspots
 	struct Result {
+		std::string elf;
 		gaddr_t pc = 0;
 		int count = 0;
 		int line = 0;
@@ -39,63 +47,72 @@ Array Sandbox::get_hotspots(const String &elf, int total) const {
 	};
 	std::vector<Result> results;
 
-	for (const auto &entry : profdata.visited) {
-		Result res;
-		res.pc = entry.first;
-		res.count = entry.second;
-
-		// execute riscv64-linux-gnu-addr2line -e <binary> -f -C 0x<address>
-		// using popen() and fgets() to read the output
-		const std::string binary = elf.utf8().ptr();
-		char buffer[4096];
-		snprintf(buffer, sizeof(buffer),
-			"riscv64-linux-gnu-addr2line -e %s -f -C 0x%lX", binary.c_str(), long(res.pc));
-
-		FILE * f = popen(buffer, "r");
-		if (f) {
-			String output;
-			while (fgets(buffer, sizeof(buffer), f) != nullptr) {
-				output += String::utf8(buffer, strlen(buffer));
-			}
-			pclose(f);
-
-			// Parse the output. addr2line returns two lines:
-			// 1. The function name
-			// _physics_process
-			// 2. The path to the source file and line number
-			// /home/gonzo/github/thp/scenes/objects/trees/trees.cpp:29
-			PackedStringArray lines = output.split("\n");
-			if (lines.size() >= 2) {
-				res.function = lines[0];
-				const String &line2 = lines[1];
-
-				// Parse the function name and file/line number
-				int idx = line2.rfind(":");
-				if (idx != -1) {
-					res.file = line2.substr(0, idx);
-					res.line = line2.substr(idx + 1).to_int();
-				}
-			} else {
-				res.function = output;
-			}
-			//printf("Hotspot %zu: %.*s\n", results.size(), int(output.utf8().size()), output.utf8().ptr());
-		} else {
-			ERR_PRINT("Failed to run riscv64-linux-gnu-addr2line.");
+	for (const auto &path : profdata.visited) {
+		std::string_view elf_path = path.first;
+		if (elf_path.empty()) {
+			elf_path = std_elf_hint;
 		}
+		const auto &visited = path.second;
 
-		results.push_back(res);
+		for (const auto &entry : visited) {
+			Result res;
+			res.elf = elf_path;
+			res.pc = entry.first;
+			res.count = entry.second;
+
+			// execute riscv64-linux-gnu-addr2line -e <binary> -f -C 0x<address>
+			// using popen() and fgets() to read the output
+			char buffer[4096];
+			snprintf(buffer, sizeof(buffer),
+				"riscv64-linux-gnu-addr2line -e %s -f -C 0x%lX", res.elf.c_str(), long(res.pc));
+
+			FILE * f = popen(buffer, "r");
+			if (f) {
+				String output;
+				while (fgets(buffer, sizeof(buffer), f) != nullptr) {
+					output += String::utf8(buffer, strlen(buffer));
+				}
+				pclose(f);
+
+				// Parse the output. addr2line returns two lines:
+				// 1. The function name
+				// _physics_process
+				// 2. The path to the source file and line number
+				// /home/gonzo/github/thp/scenes/objects/trees/trees.cpp:29
+				PackedStringArray lines = output.split("\n");
+				if (lines.size() >= 2) {
+					res.function = lines[0];
+					const String &line2 = lines[1];
+
+					// Parse the function name and file/line number
+					int idx = line2.rfind(":");
+					if (idx != -1) {
+						res.file = line2.substr(0, idx);
+						res.line = line2.substr(idx + 1).to_int();
+					}
+				} else {
+					res.function = output;
+				}
+				//printf("Hotspot %zu: %.*s\n", results.size(), int(output.utf8().size()), output.utf8().ptr());
+			} else {
+				ERR_PRINT("Failed to run riscv64-linux-gnu-addr2line.");
+			}
+
+			results.push_back(res);
+		}
 	}
 
 	// Deduplicate the results, now that we have function names
 	HashMap<String, unsigned> dedup;
 	for (auto &res : results) {
-		if (dedup.has(res.function)) {
-			const size_t index = dedup[res.function];
+		const String key = res.function + res.file;
+		if (dedup.has(key)) {
+			const size_t index = dedup[key];
 			results[index].count += res.count;
 			res.count = 0;
 			continue;
 		} else {
-			dedup.insert(res.function, &res - results.data());
+			dedup.insert(key, &res - results.data());
 		}
 	}
 
@@ -127,6 +144,7 @@ Array Sandbox::get_hotspots(const String &elf, int total) const {
 }
 
 void Sandbox::clear_hotspots() const {
+	std::scoped_lock lock(profiling_mutex);
 	if (!m_profiling_data) {
 		ERR_PRINT("Profiling is not currently enabled.");
 		return;

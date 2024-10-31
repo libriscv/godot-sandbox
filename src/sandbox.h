@@ -531,11 +531,19 @@ private:
 	unsigned m_calls_made = 0;
 
 	struct ProfilingData {
-		std::unordered_map<gaddr_t, int> visited;
+		// ELF path -> Address -> Count
+		// Anonymous sandboxes are stored as ""
+		std::unordered_map<std::string_view, std::unordered_map<gaddr_t, int>> visited;
+		uint32_t profiling_interval = 2000;
+	};
+	static inline std::unique_ptr<ProfilingData> m_profiling_data = nullptr;
+	struct LocalProfilingData {
+		std::vector<gaddr_t> visited;
 		uint32_t profiling_interval = 2000;
 		uint32_t profiler_icounter_accumulator = 0;
 	};
-	mutable std::unique_ptr<ProfilingData> m_profiling_data = nullptr;
+	std::unique_ptr<LocalProfilingData> m_local_profiling_data = nullptr;
+	static inline std::mutex profiling_mutex;
 
 	// Global statistics
 	static inline uint64_t m_global_timeouts = 0;
