@@ -391,6 +391,23 @@ public:
 	/// TODO: Implement this
 	//Array get_method_list() const;
 
+	// -= Profiling & Hotspots =-
+
+	/// @brief Get the top hotspots in the program. Profiling must be enabled.
+	/// @param elf The name of the ELF program.
+	/// @param total The number of hotspots to get.
+	/// @return The top hotspots in the program.
+	Array get_hotspots(const String &elf, int total = 10) const;
+
+	/// @brief Clear the hotspots list.
+	void clear_hotspots() const;
+
+	/// @brief Enable or disable profiling of the guest program.
+	/// @param enable True to enable profiling, false to disable it.
+	/// @param interval The interval in instructions between each profiling update. This interval
+	/// is accumulated so that even if a function returns early, the interval is still counted.
+	void enable_profiling(bool enable, uint32_t interval = 20000);
+
 	// -= Self-testing, inspection and internal functions =-
 
 	/// @brief Get the current Callable set for redirecting stdout.
@@ -442,9 +459,6 @@ public:
 	const machine_t &machine() const { return *m_machine; }
 	void print(const Variant &v);
 	static String generate_api(String language = "cpp", String header_extra = "", bool use_argument_names = false);
-	void enable_profiling(bool enable, uint32_t interval = 20000);
-	String get_hotspots(const String &elf, int total = 10) const;
-	void clear_hotspots() const;
 
 private:
 	static void generate_runtime_cpp_api(bool use_argument_names = false);
