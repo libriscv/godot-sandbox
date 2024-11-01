@@ -45,7 +45,7 @@ inline T get_node(std::string_view path = ".") {
 
 /// @brief Get the parent of the current node.
 /// @return The parent node.
-template <typename T>
+template <typename T = Node>
 inline T get_parent() {
 	return T("..");
 }
