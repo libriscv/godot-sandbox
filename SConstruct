@@ -11,14 +11,14 @@ env = add_compilation_flags(env)
 sources = get_sources(env)
 
 if env["platform"] == "macos" or env["platform"] == "ios":
-	library = env.SharedLibrary(
+	library = env.StaticLibrary(
 		"bin/addons/godot_sandbox/bin/libgodot_riscv{}.framework/libgodot_riscv{}".format(
 			env["suffix"], env["suffix"]
 		),
 		source=sources,
 	)
 else:
-	library = env.SharedLibrary(
+	library = env.StaticLibrary(
 		"bin/addons/godot_sandbox/bin/libgodot_riscv{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
 		source=sources,
 	)

@@ -35,6 +35,7 @@ ScriptLanguage *get_elf_language() {
 	return elf_language;
 }
 
+extern "C" {
 static void initialize_sandbox_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
@@ -99,8 +100,6 @@ static void uninitialize_sandbox_module(ModuleInitializationLevel p_level) {
 	ResourceFormatLoaderZig::deinit();
 	ResourceFormatSaverZig::deinit();
 }
-
-extern "C" {
 // Initialization.
 GDExtensionBool GDE_EXPORT riscv_library_init(GDExtensionInterfaceGetProcAddress p_get_proc_address, GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization) {
 	godot::GDExtensionBinding::InitObject init_obj(p_get_proc_address, p_library, r_initialization);
