@@ -125,7 +125,7 @@ public:
 
 	/// @brief Get whether profiling of the guest program is enabled.
 	/// @return True if profiling is enabled, false otherwise.
-	bool get_profiling() const { return m_profiling_data != nullptr; }
+	bool get_profiling() const { return m_local_profiling_data != nullptr; }
 
 	// -= Sandbox Properties =-
 
@@ -158,8 +158,11 @@ public:
 
 	// -= Address Lookup =-
 
-	gaddr_t address_of(std::string_view name) const;
+	gaddr_t address_of(const String &symbol) const;
+
 	gaddr_t cached_address_of(int64_t hash, const String &name) const;
+
+	String lookup_address(gaddr_t address) const;
 
 	/// @brief Check if a function exists in the guest program.
 	/// @param p_function The name of the function to check.
@@ -393,20 +396,21 @@ public:
 
 	// -= Profiling & Hotspots =-
 
-	/// @brief Get the top hotspots in the program. Profiling must be enabled.
-	/// @param elf The name of the ELF program.
-	/// @param total The number of hotspots to get.
-	/// @return The top hotspots in the program.
-	Array get_hotspots(const String &elf, int total = 10) const;
+	/// @brief Generate the top N hotspots from profiling recorded so far.
+	/// @param elf_hint A hint used when the path to the ELF file is not available. It can be passed to the callback.
+	/// @param lookup A callback that must resolve an address of an unknown program, given elf_hint and an address as arguments.
+	/// @param total The maximum number of hotspots to generate.
+	/// @return The top hotspots recorded globally so far, sorted by the number of hits.
+	static Array get_hotspots(const String &elf_hint, const Callable &lookup, int total = 10);
 
-	/// @brief Clear the hotspots list.
-	void clear_hotspots() const;
+	/// @brief Clear all recorded hotspots.
+	static void clear_hotspots();
 
 	/// @brief Enable or disable profiling of the guest program.
 	/// @param enable True to enable profiling, false to disable it.
 	/// @param interval The interval in instructions between each profiling update. This interval
 	/// is accumulated so that even if a function returns early, the interval is still counted.
-	void enable_profiling(bool enable, uint32_t interval = 20000);
+	void enable_profiling(bool enable, uint32_t interval = 500);
 
 	// -= Self-testing, inspection and internal functions =-
 
@@ -447,7 +451,7 @@ public:
 	/// @return The binary translation code.
 	/// @note This is only available if the RISCV_BINARY_TRANSLATION flag is set.
 	/// @warning Do *NOT* enable automatic_nbit_as unless you are sure the program is compatible with it.
-	String emit_binary_translation(bool ignore_instruction_limit = true, bool automatic_nbit_as = false) const;
+	String emit_binary_translation(bool ignore_instruction_limit = false, bool automatic_nbit_as = false) const;
 
 	/// @brief  Check if the program has found and loaded binary translation.
 	/// @return True if binary translation is loaded, false otherwise.
@@ -534,16 +538,16 @@ private:
 		// ELF path -> Address -> Count
 		// Anonymous sandboxes are stored as ""
 		std::unordered_map<std::string_view, std::unordered_map<gaddr_t, int>> visited;
-		uint32_t profiling_interval = 2000;
 	};
 	static inline std::unique_ptr<ProfilingData> m_profiling_data = nullptr;
 	struct LocalProfilingData {
 		std::vector<gaddr_t> visited;
-		uint32_t profiling_interval = 2000;
+		uint32_t profiling_interval = 500;
 		uint32_t profiler_icounter_accumulator = 0;
 	};
 	std::unique_ptr<LocalProfilingData> m_local_profiling_data = nullptr;
 	static inline std::mutex profiling_mutex;
+	static inline std::mutex generate_hotspots_mutex;
 
 	// Global statistics
 	static inline uint64_t m_global_timeouts = 0;
