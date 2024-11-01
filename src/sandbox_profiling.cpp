@@ -154,6 +154,7 @@ Array Sandbox::get_hotspots(const String &elf_hint, const Callable &callable, in
 	}
 
 	Array result;
+	unsigned measured = 0;
 	for (const Result &res : results) {
 		Dictionary hotspot;
 		hotspot["function"] = res.function;
@@ -161,10 +162,12 @@ Array Sandbox::get_hotspots(const String &elf_hint, const Callable &callable, in
 		hotspot["line"] = res.line;
 		hotspot["count"] = res.count;
 		result.push_back(hotspot);
+		measured += res.count;
 	}
 	Dictionary stats;
 	stats["functions"] = dedup.size();
-	stats["measurements"] = total_measurements;
+	stats["shown_measured"] = unsigned(results.size());
+	stats["total_measured"] = total_measurements;
 	result.push_back(stats);
 	return result;
 }
