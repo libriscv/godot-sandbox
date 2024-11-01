@@ -19,7 +19,7 @@ int main() {
 	get_parent().call("set_visible", true);
 	get_node("../Button").connect("pressed", Callable(click));
 
-	Timer::native_periodic(0.0125, [](Node timer) -> Variant {
+	CallbackTimer::native_periodic(0.0125, [](Node timer) -> Variant {
 		Node2D mod = get_parent(); // From the Timers POV
 		static Vector2 origin = mod.get_position();
 		static constexpr float period = 2.0f;
@@ -30,7 +30,7 @@ int main() {
 		}
 
 		const float anim = (Math::sin(x * period + x) * 2.0f - 1.0f) * 0.1f * progress;
-		const Vector2 scale = Vector2::From(1.0f + anim);
+		const Vector2 scale(1.0f + anim);
 		mod.set_position(origin - scale * 55.0f);
 		mod.set_scale(scale);
 		x += 0.1f;
