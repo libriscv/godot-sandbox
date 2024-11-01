@@ -220,31 +220,31 @@ extern "C" Variant test_create_callable() {
 // clang-format on
 
 extern "C" Variant test_pa_u8(PackedArray<uint8_t> arr) {
-	return arr;
+	return PackedArray<uint8_t> (arr.fetch());
 }
 extern "C" Variant test_pa_f32(PackedArray<float> arr) {
-	return arr;
+	return PackedArray<float> (arr.fetch());
 }
 extern "C" Variant test_pa_f64(PackedArray<double> arr) {
-	return arr;
+	return PackedArray<double> (arr.fetch());
 }
 extern "C" Variant test_pa_i32(PackedArray<int32_t> arr) {
-	return arr;
+	return PackedArray<int32_t> (arr.fetch());
 }
 extern "C" Variant test_pa_i64(PackedArray<int64_t> arr) {
-	return arr;
+	return PackedArray<int64_t> (arr.fetch());
 }
 extern "C" Variant test_pa_vec2(PackedArray<Vector2> arr) {
-	return arr;
+	return PackedArray<Vector2> (arr.fetch());
 }
 extern "C" Variant test_pa_vec3(PackedArray<Vector3> arr) {
-	return arr;
+	return PackedArray<Vector3> (arr.fetch());
 }
 extern "C" Variant test_pa_color(PackedArray<Color> arr) {
-	return arr;
+	return PackedArray<Color> (arr.fetch());
 }
 extern "C" Variant test_pa_string(PackedArray<std::string> arr) {
-	return arr;
+	return PackedArray<std::string> (arr.fetch());
 }
 
 extern "C" Variant test_create_pa_u8() {
