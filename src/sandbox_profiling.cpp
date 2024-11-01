@@ -1,7 +1,16 @@
 #include "sandbox.h"
 
 #include <algorithm>
+#include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+static constexpr bool USE_ADDR2LINE = false;
+
+struct ProfilingMachine {
+	std::unique_ptr<riscv::Machine<RISCV_ARCH>> machine = nullptr;
+	std::vector<uint8_t> binary;
+};
+static std::unordered_map<std::string, ProfilingMachine> lookup_machines;
+
 
 void Sandbox::set_profiling(bool enable) {
 	enable_profiling(enable);
@@ -36,9 +45,29 @@ struct Result {
 	String file;
 };
 
+static ProfilingMachine *requisition(const std::string &elf) {
+	auto it = lookup_machines.find(elf);
+	if (it == lookup_machines.end()) {
+		ProfilingMachine pm;
+		PackedByteArray array = FileAccess::get_file_as_bytes(elf.c_str());
+		pm.binary = std::vector<uint8_t>(array.ptr(), array.ptr() + array.size());
+		if (pm.binary.empty()) {
+			ERR_PRINT("Failed to load ELF file for profiling: " + String::utf8(elf.c_str(), elf.size()));
+			return nullptr;
+		}
+		pm.machine = std::make_unique<riscv::Machine<RISCV_ARCH>>(pm.binary, riscv::MachineOptions<RISCV_ARCH>{
+			.load_program = false,
+			.use_memory_arena = false,
+		});
+		lookup_machines[elf] = std::move(pm);
+		return &lookup_machines[elf];
+	}
+	return &it->second;
+}
+
 static void resolve(Result &res, std::string_view fallback_filename, const Callable &callback) {
 #ifdef __linux__
-	if (!res.elf.empty()) {
+	if (USE_ADDR2LINE && !res.elf.empty()) {
 		// execute riscv64-linux-gnu-addr2line -e <binary> -f -C 0x<address>
 		// using popen() and fgets() to read the output
 		char buffer[4096];
@@ -85,10 +114,22 @@ static void resolve(Result &res, std::string_view fallback_filename, const Calla
 #endif
 	// Fallback to the callback
 	res.file = String::utf8(fallback_filename.data(), fallback_filename.size());
-	res.function = callback.call(res.file, res.pc);
+	// If no callback is set, instantiate a Machine that doesn't load the ELF file
+	if (callback.is_null()) {
+		res.function = "??";
+		if (!res.elf.empty()) {
+			ProfilingMachine *pm = requisition(res.elf);
+			if (pm) {
+				riscv::Memory<RISCV_ARCH>::Callsite callsite = pm->machine->memory.lookup(res.pc);
+				res.function = String::utf8(callsite.name.c_str(), callsite.name.size());
+			}
+		}
+	} else {
+		res.function = callback.call(res.file, res.pc);
+	}
 }
 
-Array Sandbox::get_hotspots(const String &elf_hint, const Callable &callable, int total) {
+Array Sandbox::get_hotspots(const String &elf_hint, const Callable &callable, unsigned total) {
 	std::unordered_map<std::string_view, std::unordered_map<gaddr_t, int>> visited;
 	{
 		std::scoped_lock lock(profiling_mutex);
@@ -138,7 +179,7 @@ Array Sandbox::get_hotspots(const String &elf_hint, const Callable &callable, in
 			dedup.insert(key, &res - results.data());
 		}
 	}
-	total = std::min(total, static_cast<int>(results.size()));
+	total = std::min(total, static_cast<unsigned>(results.size()));
 
 	// Partial sort to find the top N hotspots
 	std::partial_sort(results.begin(), results.begin() + total, results.end(), [](const Result &a, const Result &b) {
@@ -179,4 +220,5 @@ void Sandbox::clear_hotspots() {
 		return;
 	}
 	m_profiling_data->visited.clear();
+	lookup_machines.clear();
 }

@@ -401,7 +401,7 @@ public:
 	/// @param lookup A callback that must resolve an address of an unknown program, given elf_hint and an address as arguments.
 	/// @param total The maximum number of hotspots to generate.
 	/// @return The top hotspots recorded globally so far, sorted by the number of hits.
-	static Array get_hotspots(const String &elf_hint, const Callable &lookup, int total = 10);
+	static Array get_hotspots(const String &elf_hint, const Callable &lookup, unsigned total = 10);
 
 	/// @brief Clear all recorded hotspots.
 	static void clear_hotspots();

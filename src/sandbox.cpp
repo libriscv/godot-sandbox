@@ -75,7 +75,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_static_method("Sandbox", D_METHOD("generate_api", "language", "header_extra", "use_argument_names"), &Sandbox::generate_api, DEFVAL("cpp"), DEFVAL(""), DEFVAL(false));
 
 	// Profiling.
-	ClassDB::bind_static_method("Sandbox", D_METHOD("get_hotspots", "elf_hint", "total"), &Sandbox::get_hotspots, DEFVAL(""), DEFVAL(10));
+	ClassDB::bind_static_method("Sandbox", D_METHOD("get_hotspots", "elf_hint", "callable", "total"), &Sandbox::get_hotspots, DEFVAL(""), DEFVAL(Callable()), DEFVAL(6));
 	ClassDB::bind_static_method("Sandbox", D_METHOD("clear_hotspots"), &Sandbox::clear_hotspots);
 
 	// Binary translation.
