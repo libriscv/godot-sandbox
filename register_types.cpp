@@ -5,6 +5,7 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
+#include <godot_cpp/core/error_macros.hpp>
 
 #include "src/cpp/resource_loader_cpp.h"
 #include "src/cpp/resource_saver_cpp.h"
@@ -35,7 +36,6 @@ ScriptLanguage *get_elf_language() {
 	return elf_language;
 }
 
-extern "C" {
 static void initialize_sandbox_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
@@ -99,6 +99,11 @@ static void uninitialize_sandbox_module(ModuleInitializationLevel p_level) {
 	ResourceFormatSaverRust::deinit();
 	ResourceFormatLoaderZig::deinit();
 	ResourceFormatSaverZig::deinit();
+}
+
+extern "C" {
+void riscv_test() {
+	ERR_PRINT("test123");
 }
 // Initialization.
 GDExtensionBool GDE_EXPORT riscv_library_init(GDExtensionInterfaceGetProcAddress p_get_proc_address, GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization) {

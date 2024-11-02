@@ -12,14 +12,14 @@ sources = get_sources(env)
 
 if env["platform"] == "macos" or env["platform"] == "ios":
 	library = env.StaticLibrary(
-		"bin/addons/godot_sandbox/bin/libgodot_riscv{}.framework/libgodot_riscv{}".format(
-			env["suffix"], env["suffix"]
+		"bin/addons/godot_sandbox/bin/libgodot_riscv{}.framework/libgodot_riscv{}{}".format(
+			env["suffix"], env["suffix"], env["LIBSUFFIX"]
 		),
 		source=sources,
 	)
 else:
 	library = env.StaticLibrary(
-		"bin/addons/godot_sandbox/bin/libgodot_riscv{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+		"bin/addons/godot_sandbox/bin/libgodot_riscv{}{}".format(env["suffix"], env["LIBSUFFIX"]),
 		source=sources,
 	)
 Default(library)

@@ -47,10 +47,6 @@ jobs:
       attestations: write
       id-token: write
 
-  #build_module:
-  #  needs: [lint]
-  #  uses: ./.github/workflows/build_module.yml
-
   merge:
     runs-on: ubuntu-latest
     name: Merge
