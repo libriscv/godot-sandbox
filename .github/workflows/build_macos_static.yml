@@ -1,0 +1,39 @@
+name: Build MacOS Static
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: arm64, precision: single, extension: ""}
+          - {arch: arm64, precision: double, extension: ".double"}
+          - {arch: x86_64, precision: single, extension: ""}
+          - {arch: x86_64, precision: double, extension: ".double"}
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: 🔗 GDExtension Build
+        uses: godotengine/godot-cpp-template/.github/actions/build@main
+        with:
+          platform: macos
+          arch: ${{ matrix.arch }}
+          build-target-type: template_release
+          float-precision: ${{ matrix.precision }}
+
+      - name: Upload Artifact Static
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-sandbox-macos-${{ matrix.arch }}-${{ matrix.precision }}
+          path: |
+            ${{ github.workspace }}/bin/**/*.a
+            ${{ github.workspace }}/ext/godot-cpp/**/*.a
+          if-no-files-found: error
