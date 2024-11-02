@@ -49,7 +49,7 @@ static ProfilingMachine *requisition(const std::string &elf) {
 	auto it = lookup_machines.find(elf);
 	if (it == lookup_machines.end()) {
 		ProfilingMachine pm;
-		PackedByteArray array = FileAccess::get_file_as_bytes(elf.c_str());
+		PackedByteArray array = FileAccess::get_file_as_bytes("res://" + String::utf8(elf.c_str(), elf.size()));
 		pm.binary = std::vector<uint8_t>(array.ptr(), array.ptr() + array.size());
 		if (pm.binary.empty()) {
 			ERR_PRINT("Failed to load ELF file for profiling: " + String::utf8(elf.c_str(), elf.size()));
@@ -123,6 +123,7 @@ static void resolve(Result &res, std::string_view fallback_filename, const Calla
 				riscv::Memory<RISCV_ARCH>::Callsite callsite = pm->machine->memory.lookup(res.pc);
 				res.function = String::utf8(callsite.name.c_str(), callsite.name.size());
 			}
+			res.file = String::utf8(res.elf.c_str(), res.elf.size());
 		}
 	} else {
 		res.function = callback.call(res.file, res.pc);
