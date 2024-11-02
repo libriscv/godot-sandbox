@@ -13,7 +13,7 @@ extern "C" {
     );
 }
 
-void initialize_gdextension_module(ModuleInitializationLevel p_level) {
+void initialize_sandbox_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SERVERS) {
 		return;
 	}
@@ -22,4 +22,7 @@ void initialize_gdextension_module(ModuleInitializationLevel p_level) {
 	loader.instantiate();
 	loader->set_entry_funcptr((void*)&riscv_library_init);
 	GDExtensionManager::get_singleton()->load_extension_with_loader("sandbox", loader);
+}
+
+void uninitialize_sandbox_module(ModuleInitializationLevel p_level) {
 }
