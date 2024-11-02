@@ -35,3 +35,12 @@ jobs:
           path: |
             ${{ github.workspace }}/bin/**/*.wasm
           if-no-files-found: error
+
+      - name: Upload Artifact Static
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-sandbox-web-${{ matrix.arch }}-${{ matrix.precision }}
+          path: |
+            ${{ github.workspace }}/bin/**/*.a
+            ${{ github.workspace }}/ext/godot-cpp/**/*.a
+          if-no-files-found: error

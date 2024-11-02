@@ -47,10 +47,6 @@ jobs:
       attestations: write
       id-token: write
 
-  #build_module:
-  #  needs: [lint]
-  #  uses: ./.github/workflows/build_module.yml
-
   merge:
     runs-on: ubuntu-latest
     name: Merge
@@ -60,6 +56,10 @@ jobs:
         with:
           name: godot-sandbox
           pattern: godot-sandbox-*
+      - uses: actions/upload-artifact/merge@v4
+        with:
+          name: static-sandbox
+          pattern: static-sandbox-*
 
   release:
     name: Create Release

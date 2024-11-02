@@ -45,3 +45,12 @@ jobs:
           path: |
             ${{ github.workspace }}/bin/**/*.so
           if-no-files-found: error
+
+      - name: Upload Static Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-sandbox-android-${{ matrix.arch }}-${{ matrix.precision }}
+          path: |
+            ${{ github.workspace }}/bin/**/*.a
+            ${{ github.workspace }}/ext/godot-cpp/**/*.a
+          if-no-files-found: error

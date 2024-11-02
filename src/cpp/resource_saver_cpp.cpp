@@ -1,6 +1,7 @@
 #include "resource_saver_cpp.h"
 #include "../elf/script_elf.h"
 #include "../elf/script_language_elf.h"
+#include "../register_types.h"
 #include "../sandbox.h"
 #include "../sandbox_project_settings.h"
 #include "script_cpp.h"
@@ -98,7 +99,7 @@ static bool detect_and_build_cmake_project_instead() {
 	return false;
 }
 
-Error ResourceFormatSaverCPP::GODOT_CPP_FUNC (save)(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags) {
+Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags) {
 	CPPScript *script = Object::cast_to<CPPScript>(p_resource.ptr());
 	if (script != nullptr) {
 		Ref<FileAccess> handle = FileAccess::open(p_path, FileAccess::ModeFlags::WRITE);
@@ -179,13 +180,13 @@ Error ResourceFormatSaverCPP::GODOT_CPP_FUNC (save)(const Ref<Resource> &p_resou
 	}
 	return Error::ERR_SCRIPT_FAILED;
 }
-Error ResourceFormatSaverCPP::GODOT_CPP_FUNC (set_uid)(const String &p_path, int64_t p_uid) {
+Error ResourceFormatSaverCPP::_set_uid(const String &p_path, int64_t p_uid) {
 	return Error::OK;
 }
-bool ResourceFormatSaverCPP::GODOT_CPP_FUNC (recognize)(const Ref<Resource> &p_resource) const {
+bool ResourceFormatSaverCPP::_recognize(const Ref<Resource> &p_resource) const {
 	return Object::cast_to<CPPScript>(p_resource.ptr()) != nullptr;
 }
-PackedStringArray ResourceFormatSaverCPP::GODOT_CPP_FUNC(get_recognized_extensions)(const Ref<Resource> &p_resource) const {
+PackedStringArray ResourceFormatSaverCPP::_get_recognized_extensions(const Ref<Resource> &p_resource) const {
 	PackedStringArray array;
 	if (Object::cast_to<CPPScript>(p_resource.ptr()) == nullptr)
 		return array;
@@ -196,6 +197,6 @@ PackedStringArray ResourceFormatSaverCPP::GODOT_CPP_FUNC(get_recognized_extensio
 	array.push_back("hpp");
 	return array;
 }
-bool ResourceFormatSaverCPP::GODOT_CPP_FUNC (recognize_path)(const Ref<Resource> &p_resource, const String &p_path) const {
+bool ResourceFormatSaverCPP::_recognize_path(const Ref<Resource> &p_resource, const String &p_path) const {
 	return Object::cast_to<CPPScript>(p_resource.ptr()) != nullptr;
 }

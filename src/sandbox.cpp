@@ -9,7 +9,7 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
-GODOT_NAMESPACE
+using namespace godot;
 
 static const int HEAP_SYSCALLS_BASE = 480;
 static const int MEMORY_SYSCALLS_BASE = 485;
@@ -519,7 +519,7 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 				break;
 			}
 			case Variant::OBJECT: { // Objects are represented as uintptr_t
-				Object *obj = inner->to_object();
+				godot::Object *obj = inner->to_object();
 				this->add_scoped_object(obj);
 				machine.cpu.reg(index++) = uintptr_t(obj); // Fits in a single register
 				break;
@@ -600,7 +600,7 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 				g_arg.v.f = inner->flt;
 				break;
 			case Variant::OBJECT: {
-				Object *obj = inner->to_object();
+				godot::Object *obj = inner->to_object();
 				// Objects passed directly as arguments are implicitly trusted/allowed
 				g_arg.set_object(*this, obj);
 				break;

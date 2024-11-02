@@ -2,8 +2,6 @@
 
 #include <libriscv/native_heap.hpp>
 
-GODOT_NAMESPACE
-
 // -= Fast-path Variant Arguments =-
 
 struct GDNativeVariant {
@@ -45,7 +43,7 @@ struct GDNativeVariant {
 		};
 	};
 
-	Object *to_object() const {
+	godot::Object *to_object() const {
 		if (object_ptr == nullptr)
 			return nullptr;
 		return internal::get_object_instance_binding(object_ptr);
@@ -281,7 +279,7 @@ struct GuestVariant {
 	 * @param emu The sandbox that the GuestVariant comes from.
 	 * @param obj The godot Object.
 	 **/
-	void set_object(Sandbox &emu, Object *obj);
+	void set_object(Sandbox &emu, godot::Object *obj);
 
 	/**
 	 * @brief Creates a new GuestVariant from a godot Variant. Trust is implicit for complex types.

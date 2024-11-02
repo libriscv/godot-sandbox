@@ -1,8 +1,8 @@
 #pragma once
 
-#include "config.h"
 #include <godot_cpp/variant/string.hpp>
-GODOT_NAMESPACE
+
+using namespace godot;
 
 class SandboxProjectSettings {
 public:

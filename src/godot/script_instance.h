@@ -23,14 +23,14 @@
 
 #pragma once
 
-#include "../config.h"
 #include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/templates/list.hpp>
 #include <godot_cpp/templates/pair.hpp>
 #include <godot_cpp/variant/string_name.hpp>
 #include <godot_cpp/variant/variant.hpp>
-GODOT_NAMESPACE
+
+using namespace godot;
 
 namespace godot {
 

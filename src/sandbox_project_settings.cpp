@@ -3,7 +3,7 @@
 
 #include <godot_cpp/classes/project_settings.hpp>
 
-GODOT_NAMESPACE
+using namespace godot;
 
 static constexpr char USE_GLOBAL_NAMES[] = "editor/script/use_global_sandbox_names";
 static constexpr char USE_GLOBAL_NAMES_HINT[] = "Use customized global names for Sandbox programs";
