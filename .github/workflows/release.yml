@@ -16,6 +16,13 @@ jobs:
           merge-multiple: true
           path: godot-sandbox
           name: godot-sandbox
+      - name: Download artifacts static
+        uses: actions/download-artifact@v4
+        with:
+          pattern: static-sandbox-*
+          merge-multiple: true
+          path: static-sandbox
+          name: static-sandbox
       - name: Delete draft release(s)
         uses: hugo19941994/delete-draft-releases@v1.0.0
         env:
@@ -25,12 +32,14 @@ jobs:
         run: |
           ls
           zip -r "godot-sandbox.zip" godot-sandbox
+          zip -r "static-sandbox.zip" static-sandbox
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           name: Godot Sandbox Nightly
           files: |
             godot-sandbox.zip
+            static-sandbox.zip
           generate_release_notes: true
           draft: true
           prerelease: true

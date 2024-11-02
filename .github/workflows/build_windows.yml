@@ -38,3 +38,11 @@ jobs:
           path: |
             ${{ github.workspace }}/bin/**/*.dll
           if-no-files-found: error
+
+      - name: Upload Artifact Static
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-sandbox-windows-${{ matrix.arch }}-${{ matrix.precision }}
+          path: |
+            ${{ github.workspace }}/bin/**/*.lib
+          if-no-files-found: error

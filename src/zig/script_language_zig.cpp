@@ -9,7 +9,7 @@
 #include <godot_cpp/classes/control.hpp>
 #include <string>
 #include <unordered_set>
-static constexpr const char *icon_path = "res://addons/godot_sandbox/ZIGScript.svg";
+static constexpr const char *icon_path = "res://addons/godot_sandbox/ZigScript.svg";
 
 static ZigScriptLanguage *zig_language;
 

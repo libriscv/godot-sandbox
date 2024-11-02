@@ -32,5 +32,13 @@ jobs:
         with:
           name: godot-sandbox-ios-${{ matrix.arch }}-${{ matrix.precision }}
           path: |
-            ${{ github.workspace }}/bin/**/libgodot_riscv.ios.template_release${{ matrix.extension }}.arm64.framework/**
+            ${{ github.workspace }}/bin/**/libgodot_riscv.ios.template_release${{ matrix.extension }}.arm64.framework/**/.dylib
+          if-no-files-found: error
+
+      - name: Upload Artifact Static
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-sandbox-ios-${{ matrix.arch }}-${{ matrix.precision }}
+          path: |
+            ${{ github.workspace }}/bin/**/libgodot_riscv.ios.template_release${{ matrix.extension }}.arm64.framework/**/.a
           if-no-files-found: error
