@@ -56,6 +56,10 @@ jobs:
         with:
           name: godot-sandbox
           pattern: godot-sandbox-*
+      - uses: actions/upload-artifact/merge@v4
+        with:
+          name: static-sandbox
+          pattern: static-sandbox-*
 
   release:
     name: Create Release
