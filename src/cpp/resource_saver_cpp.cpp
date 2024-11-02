@@ -38,6 +38,11 @@ void ResourceFormatSaverCPP::deinit() {
 static void auto_generate_cpp_api(const String &path) {
 	static bool api_written_to_project_root = false;
 	if (!api_written_to_project_root) {
+		// Check if the run-time API should be generated
+		if (!SandboxProjectSettings::generate_runtime_api()) {
+			api_written_to_project_root = true;
+			return;
+		}
 		// Write the API to the project root
 		Ref<FileAccess> api_handle = FileAccess::open(path, FileAccess::ModeFlags::WRITE);
 		if (api_handle.is_valid()) {

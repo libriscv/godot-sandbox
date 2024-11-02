@@ -1,4 +1,3 @@
-
 #include "sandbox_project_settings.h"
 
 #include <godot_cpp/classes/project_settings.hpp>
@@ -22,6 +21,8 @@ static constexpr char DEBUG_INFO_HINT[] = "Enable debug information when buildin
 static constexpr char GLOBAL_DEFINES[] = "editor/script/global_defines";
 static constexpr char GLOBAL_DEFINES_HINT[] = "Global defines used when compiling Sandbox programs";
 
+static constexpr char GENERATE_RUNTIME_API[] = "editor/script/generate_runtime_api";
+static constexpr char GENERATE_RUNTIME_API_HINT[] = "Generate the run-time API for the Sandbox";
 static constexpr char METHOD_ARGUMENTS[] = "editor/script/runtime_api_method_arguments";
 static constexpr char METHOD_ARGUMENTS_HINT[] = "Generate method arguments for the run-time API";
 static constexpr char GENAPI_SKIPPED_CLASSES[] = "editor/script/generated_api_skipped_classes";
@@ -78,6 +79,7 @@ void SandboxProjectSettings::register_settings() {
 	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
 	register_setting_plain(DEBUG_INFO, false, DEBUG_INFO_HINT, false);
 	register_setting_plain(GLOBAL_DEFINES, Array(), GLOBAL_DEFINES_HINT, false);
+	register_setting_plain(GENERATE_RUNTIME_API, false, GENERATE_RUNTIME_API_HINT, false);
 	register_setting_plain(METHOD_ARGUMENTS, false, METHOD_ARGUMENTS_HINT, false);
 	Array skipped_classes;
 	skipped_classes.push_back("Editor");
@@ -130,10 +132,12 @@ Array SandboxProjectSettings::get_global_defines() {
 	return get_setting<Array>(GLOBAL_DEFINES);
 }
 
+bool SandboxProjectSettings::generate_runtime_api() {
+	return get_setting<bool>(GENERATE_RUNTIME_API);
+}
 bool SandboxProjectSettings::generate_method_arguments() {
 	return get_setting<bool>(METHOD_ARGUMENTS);
 }
-
 Array SandboxProjectSettings::generated_api_skipped_classes() {
 	return get_setting<Array>(GENAPI_SKIPPED_CLASSES);
 }
