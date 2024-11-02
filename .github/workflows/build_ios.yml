@@ -32,7 +32,7 @@ jobs:
         with:
           name: godot-sandbox-ios-${{ matrix.arch }}-${{ matrix.precision }}
           path: |
-            ${{ github.workspace }}/bin/**/libgodot_riscv.ios.template_release${{ matrix.extension }}.arm64.framework/**/.arm64
+            ${{ github.workspace }}/bin/**/*.arm64
           if-no-files-found: error
 
       - name: Upload Artifact Static
@@ -40,6 +40,6 @@ jobs:
         with:
           name: static-sandbox-ios-${{ matrix.arch }}-${{ matrix.precision }}
           path: |
-            ${{ github.workspace }}/bin/**/libgodot_riscv.ios.template_release${{ matrix.extension }}.arm64.framework/**/.a
-            ${{ github.workspace }}/ext/godot-cpp/**/libgodot_riscv.ios.template_release${{ matrix.extension }}.arm64.framework/**/.a
+            ${{ github.workspace }}/bin/**/*.a
+            ${{ github.workspace }}/ext/godot-cpp/**/*.a
           if-no-files-found: error
