@@ -41,4 +41,5 @@ jobs:
           name: static-sandbox-ios-${{ matrix.arch }}-${{ matrix.precision }}
           path: |
             ${{ github.workspace }}/bin/**/libgodot_riscv.ios.template_release${{ matrix.extension }}.arm64.framework/**/.a
+            ${{ github.workspace }}/ext/godot-cpp/**/libgodot_riscv.ios.template_release${{ matrix.extension }}.arm64.framework/**/.a
           if-no-files-found: error

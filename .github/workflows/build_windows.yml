@@ -45,4 +45,5 @@ jobs:
           name: static-sandbox-windows-${{ matrix.arch }}-${{ matrix.precision }}
           path: |
             ${{ github.workspace }}/bin/**/*.lib
+            ${{ github.workspace }}/ext/godot-cpp/**/*.lib
           if-no-files-found: error
