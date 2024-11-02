@@ -4,7 +4,7 @@
 #include <libriscv/util/crc32.hpp>
 
 namespace riscv {
-extern Object *get_object_from_address(const Sandbox &emu, uint64_t addr);
+extern godot::Object *get_object_from_address(const Sandbox &emu, uint64_t addr);
 } //namespace riscv
 
 Variant GuestVariant::toVariant(const Sandbox &emu) const {
@@ -19,28 +19,28 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 			return v.f;
 
 		case Variant::VECTOR2:
-			return Variant{ Vector2(v.v2f[0], v.v2f[1]) };
+			return Variant{ godot::Vector2(v.v2f[0], v.v2f[1]) };
 		case Variant::VECTOR2I:
-			return Variant{ Vector2i(v.v2i[0], v.v2i[1]) };
+			return Variant{ godot::Vector2i(v.v2i[0], v.v2i[1]) };
 		case Variant::RECT2:
-			return Variant{ Rect2(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]) };
+			return Variant{ godot::Rect2(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]) };
 		case Variant::RECT2I:
-			return Variant{ Rect2i(v.v4i[0], v.v4i[1], v.v4i[2], v.v4i[3]) };
+			return Variant{ godot::Rect2i(v.v4i[0], v.v4i[1], v.v4i[2], v.v4i[3]) };
 		case Variant::VECTOR3:
-			return Variant{ Vector3(v.v3f[0], v.v3f[1], v.v3f[2]) };
+			return Variant{ godot::Vector3(v.v3f[0], v.v3f[1], v.v3f[2]) };
 		case Variant::VECTOR3I:
-			return Variant{ Vector3i(v.v3i[0], v.v3i[1], v.v3i[2]) };
+			return Variant{ godot::Vector3i(v.v3i[0], v.v3i[1], v.v3i[2]) };
 		case Variant::VECTOR4:
-			return Variant{ Vector4(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]) };
+			return Variant{ godot::Vector4(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]) };
 		case Variant::VECTOR4I:
-			return Variant{ Vector4i(v.v4i[0], v.v4i[1], v.v4i[2], v.v4i[3]) };
+			return Variant{ godot::Vector4i(v.v4i[0], v.v4i[1], v.v4i[2], v.v4i[3]) };
 		case Variant::COLOR:
-			return Variant{ Color(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]) };
+			return Variant{ godot::Color(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]) };
 		case Variant::PLANE:
-			return Variant{ Plane(Vector3(v.v4f[0], v.v4f[1], v.v4f[2]), v.v4f[3]) };
+			return Variant{ godot::Plane(godot::Vector3(v.v4f[0], v.v4f[1], v.v4f[2]), v.v4f[3]) };
 
 		case Variant::OBJECT: {
-			Object *obj = riscv::get_object_from_address(emu, v.i);
+			godot::Object *obj = riscv::get_object_from_address(emu, v.i);
 			return Variant{ obj };
 		}
 
@@ -67,7 +67,7 @@ const Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
 	throw std::runtime_error(buffer);
 }
 
-void GuestVariant::set_object(Sandbox &emu, Object *obj) {
+void GuestVariant::set_object(Sandbox &emu, godot::Object *obj) {
 	emu.add_scoped_object(obj);
 	this->type = Variant::OBJECT;
 	this->v.i = (uintptr_t)obj;
@@ -90,19 +90,19 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 			break;
 
 		case Variant::VECTOR2: {
-			Vector2 vec = value.operator Vector2();
+			godot::Vector2 vec = value.operator godot::Vector2();
 			this->v.v2f[0] = vec.x;
 			this->v.v2f[1] = vec.y;
 			break;
 		}
 		case Variant::VECTOR2I: {
-			Vector2i vec = value.operator Vector2i();
+			godot::Vector2i vec = value.operator godot::Vector2i();
 			this->v.v2i[0] = vec.x;
 			this->v.v2i[1] = vec.y;
 			break;
 		}
 		case Variant::RECT2: {
-			Rect2 rect = value.operator Rect2();
+			Rect2 rect = value.operator godot::Rect2();
 			this->v.v4f[0] = rect.position[0];
 			this->v.v4f[1] = rect.position[1];
 			this->v.v4f[2] = rect.size[0];
@@ -110,7 +110,7 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 			break;
 		}
 		case Variant::RECT2I: {
-			Rect2i rect = value.operator Rect2i();
+			Rect2i rect = value.operator godot::Rect2i();
 			this->v.v4i[0] = rect.position[0];
 			this->v.v4i[1] = rect.position[1];
 			this->v.v4i[2] = rect.size[0];
@@ -118,21 +118,21 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 			break;
 		}
 		case Variant::VECTOR3: {
-			Vector3 vec = value.operator Vector3();
+			godot::Vector3 vec = value.operator godot::Vector3();
 			this->v.v3f[0] = vec.x;
 			this->v.v3f[1] = vec.y;
 			this->v.v3f[2] = vec.z;
 			break;
 		}
 		case Variant::VECTOR3I: {
-			Vector3i vec = value.operator Vector3i();
+			godot::Vector3i vec = value.operator godot::Vector3i();
 			this->v.v3i[0] = vec.x;
 			this->v.v3i[1] = vec.y;
 			this->v.v3i[2] = vec.z;
 			break;
 		}
 		case Variant::VECTOR4: {
-			Vector4 vec = value.operator Vector4();
+			godot::Vector4 vec = value.operator godot::Vector4();
 			this->v.v4f[0] = vec.x;
 			this->v.v4f[1] = vec.y;
 			this->v.v4f[2] = vec.z;
@@ -140,7 +140,7 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 			break;
 		}
 		case Variant::VECTOR4I: {
-			Vector4i vec = value.operator Vector4i();
+			godot::Vector4i vec = value.operator godot::Vector4i();
 			this->v.v4i[0] = vec.x;
 			this->v.v4i[1] = vec.y;
 			this->v.v4i[2] = vec.z;
@@ -148,7 +148,7 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 			break;
 		}
 		case Variant::COLOR: {
-			Color color = value.operator Color();
+			godot::Color color = value.operator godot::Color();
 			this->v.v4f[0] = color.r;
 			this->v.v4f[1] = color.g;
 			this->v.v4f[2] = color.b;
@@ -156,7 +156,7 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 			break;
 		}
 		case Variant::PLANE: {
-			Plane plane = value.operator Plane();
+			godot::Plane plane = value.operator godot::Plane();
 			this->v.v4f[0] = plane.normal.x;
 			this->v.v4f[1] = plane.normal.y;
 			this->v.v4f[2] = plane.normal.z;
@@ -168,7 +168,7 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 			if (!implicit_trust)
 				throw std::runtime_error("GuestVariant::set(): Cannot set OBJECT type without implicit trust");
 			// TODO: Check if the object is already scoped?
-			Object *obj = value.operator Object *();
+			godot::Object *obj = value.operator godot::Object *();
 			if (!emu.is_allowed_object(obj))
 				throw std::runtime_error("GuestVariant::set(): Object is not allowed");
 			emu.add_scoped_object(obj);
@@ -207,7 +207,7 @@ void GuestVariant::create(Sandbox &emu, Variant &&value) {
 			break;
 
 		case Variant::OBJECT: {
-			Object *obj = value.operator Object *();
+			godot::Object *obj = value.operator godot::Object *();
 			if (!emu.is_allowed_object(obj))
 				throw std::runtime_error("GuestVariant::create(): Object is not allowed");
 			emu.add_scoped_object(obj);
