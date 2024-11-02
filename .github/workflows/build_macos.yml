@@ -61,7 +61,7 @@ jobs:
         with:
           name: godot-sandbox-macos-${{ matrix.arch }}-${{ matrix.precision }}
           path: |
-            ${{ github.workspace }}/bin/**/libgodot_riscv.macos.template_release${{ matrix.extension }}.universal.framework/**/*.dylib
+            ${{ github.workspace }}/bin/**/libgodot_riscv.macos.template_release${{ matrix.extension }}.universal.framework/**/*.universal
           if-no-files-found: error
 
       - name: Upload Artifact Static
