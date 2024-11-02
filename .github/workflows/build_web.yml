@@ -39,7 +39,7 @@ jobs:
       - name: Upload Artifact Static
         uses: actions/upload-artifact@v4
         with:
-          name: godot-sandbox-web-${{ matrix.arch }}-${{ matrix.precision }}
+          name: static-sandbox-web-${{ matrix.arch }}-${{ matrix.precision }}
           path: |
             ${{ github.workspace }}/bin/**/*.a
             ${{ github.workspace }}/ext/godot-cpp/**/*.a
