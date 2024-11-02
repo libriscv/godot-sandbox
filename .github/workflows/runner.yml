@@ -19,6 +19,9 @@ jobs:
   build_linux:
     needs: [lint]
     uses: ./.github/workflows/build_linux.yml
+  build_macos_static:
+    needs: [lint]
+    uses: ./.github/workflows/build_macos_static.yml
   build_macos:
     needs: [lint]
     uses: ./.github/workflows/build_macos.yml
@@ -37,6 +40,8 @@ jobs:
     uses: ./.github/workflows/build_web.yml
   build_godot:
     uses: ./.github/workflows/build_godot.yml
+  build_module:
+    uses: ./.github/workflows/build_module.yml
   
   docker_build:
     uses: ./.github/workflows/build_docker.yml
@@ -50,7 +55,7 @@ jobs:
   merge:
     runs-on: ubuntu-latest
     name: Merge
-    needs: [build_android, build_ios, build_linux, build_macos, build_windows, build_web, build_godot]
+    needs: [build_android, build_ios, build_linux, build_macos, build_macos_static, build_windows, build_web, build_godot, build_module]
     steps:
       - uses: actions/upload-artifact/merge@v4
         with:

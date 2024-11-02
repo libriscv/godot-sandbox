@@ -1,0 +1,22 @@
+name: Module Builds
+on:
+  workflow_call:
+
+jobs:
+  godot:
+    runs-on: "ubuntu-latest"
+    name: Copy module files
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy icons
+        run: |
+          rm -rf ./bin/addons/godot_sandbox/bin
+          mv ./bin/addons/godot_sandbox/ icons
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-sandbox-gdextension
+          path: |
+            module
+          if-no-files-found: error
