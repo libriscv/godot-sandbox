@@ -114,18 +114,17 @@ static void resolve(Result &res, std::string_view fallback_filename, const Calla
 #endif
 	// Fallback to the callback
 	res.file = String::utf8(fallback_filename.data(), fallback_filename.size());
-	// If no callback is set, instantiate a Machine that doesn't load the ELF file
-	if (callback.is_null()) {
-		res.function = "??";
-		if (!res.elf.empty()) {
-			ProfilingMachine *pm = requisition(res.elf);
-			if (pm) {
-				riscv::Memory<RISCV_ARCH>::Callsite callsite = pm->machine->memory.lookup(res.pc);
-				res.function = String::utf8(callsite.name.c_str(), callsite.name.size());
-			}
-			res.file = String::utf8(res.elf.c_str(), res.elf.size());
+	res.function = "??";
+	if (!res.elf.empty()) {
+		ProfilingMachine *pm = requisition(res.elf);
+		if (pm) {
+			riscv::Memory<RISCV_ARCH>::Callsite callsite = pm->machine->memory.lookup(res.pc);
+			res.function = String::utf8(callsite.name.c_str(), callsite.name.size());
 		}
-	} else {
+		res.file = String::utf8(res.elf.c_str(), res.elf.size());
+	}
+	// If a callback is set, use it to resolve the address
+	else if (callback.is_null()) {
 		res.function = callback.call(res.file, res.pc);
 	}
 }
@@ -200,16 +199,18 @@ Array Sandbox::get_hotspots(const String &elf_hint, const Callable &callable, un
 	for (const Result &res : results) {
 		Dictionary hotspot;
 		hotspot["function"] = res.function;
+		hotspot["address"] = String::num_int64(res.pc, 16);
 		hotspot["file"] = res.file;
 		hotspot["line"] = res.line;
-		hotspot["count"] = res.count;
+		hotspot["samples"] = res.count;
 		result.push_back(hotspot);
 		measured += res.count;
 	}
 	Dictionary stats;
-	stats["functions"] = dedup.size();
-	stats["shown_measured"] = unsigned(results.size());
-	stats["total_measured"] = total_measurements;
+	stats["results"] = unsigned(results.size());
+	stats["samples_shown"] = measured;
+	stats["samples_total"] = total_measurements;
+	stats["unique_functions"] = dedup.size();
 	result.push_back(stats);
 	return result;
 }
