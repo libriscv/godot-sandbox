@@ -6,6 +6,7 @@ Import("env_modules")
 
 def get_sufix():
     suffix = ".{}.{}".format(env["platform"], env["target"])
+    suffix.replace("linuxbsd", "linux")
     if env.dev_build:
         suffix += ".dev"
     if env["precision"] == "double":
