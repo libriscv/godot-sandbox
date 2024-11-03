@@ -11,7 +11,7 @@
 
 <p align = "center">
     <strong>
-        <a href="https://libriscv.no">Website</a> | <a href="https://libriscv.no/docs/godot/cppexamples">Code Examples</a> | <a href="https://discord.gg/n4GcXr66X5">Discord</a> | <a href="https://gonzerelli.itch.io/demo">Web Demo</a>
+        <a href="https://libriscv.no">Website</a> | <a href="https://libriscv.no/docs/godot_docs/cppexamples">Code Examples</a> | <a href="https://discord.gg/n4GcXr66X5">Discord</a> | <a href="https://gonzerelli.itch.io/demo">Web Demo</a>
     </strong>
 </p>
 
