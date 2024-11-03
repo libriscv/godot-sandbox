@@ -65,7 +65,7 @@ static ProfilingMachine *requisition(const std::string &elf) {
 	return &it->second;
 }
 
-static void resolve(Result &res, std::string_view fallback_filename, const Callable &callback) {
+static void resolve(Result &res, const Callable &callback) {
 #ifdef __linux__
 	if (USE_ADDR2LINE && !res.elf.empty()) {
 		// execute riscv64-linux-gnu-addr2line -e <binary> -f -C 0x<address>
@@ -113,7 +113,7 @@ static void resolve(Result &res, std::string_view fallback_filename, const Calla
 	}
 #endif
 	// Fallback to the callback
-	res.file = String::utf8(fallback_filename.data(), fallback_filename.size());
+	res.file = "(unknown)";
 	res.function = "??";
 	if (!res.elf.empty()) {
 		ProfilingMachine *pm = requisition(res.elf);
@@ -129,7 +129,7 @@ static void resolve(Result &res, std::string_view fallback_filename, const Calla
 	}
 }
 
-Array Sandbox::get_hotspots(const String &elf_hint, const Callable &callable, unsigned total) {
+Array Sandbox::get_hotspots(unsigned total, const Callable &callable) {
 	std::unordered_map<std::string_view, std::unordered_map<gaddr_t, int>> visited;
 	{
 		std::scoped_lock lock(profiling_mutex);
@@ -146,7 +146,6 @@ Array Sandbox::get_hotspots(const String &elf_hint, const Callable &callable, un
 
 	// Gather information about the hotspots
 	std::vector<Result> results;
-	std::string std_elf_hint = std::string(elf_hint.utf8().ptr());
 	unsigned total_measurements = 0;
 
 	for (const auto &path : visited) {
@@ -160,7 +159,7 @@ Array Sandbox::get_hotspots(const String &elf_hint, const Callable &callable, un
 			res.count = entry.second;
 			total_measurements += res.count;
 
-			resolve(res, std_elf_hint, callable);
+			resolve(res, callable);
 
 			results.push_back(std::move(res));
 		}

@@ -397,11 +397,10 @@ public:
 	// -= Profiling & Hotspots =-
 
 	/// @brief Generate the top N hotspots from profiling recorded so far.
-	/// @param elf_hint A hint used when the path to the ELF file is not available. It can be passed to the callback.
-	/// @param lookup A callback that must resolve an address of an unknown program, given elf_hint and an address as arguments.
 	/// @param total The maximum number of hotspots to generate.
+	/// @param callable A callback that must resolve an address of an unknown program, given elf_hint and an address as arguments.
 	/// @return The top hotspots recorded globally so far, sorted by the number of hits.
-	static Array get_hotspots(const String &elf_hint, const Callable &lookup, unsigned total = 10);
+	static Array get_hotspots(unsigned total = 10, const Callable &callable = {});
 
 	/// @brief Clear all recorded hotspots.
 	static void clear_hotspots();
