@@ -6,6 +6,11 @@ Import("env_modules")
 
 def get_sufix():
     suffix = ".{}.{}".format(env["platform"], env["target"])
+    # In godot it's "linuxbsd"
+    suffix = suffix.replace("linuxbsd", "linux")
+    # Only take release
+    suffix = suffix.replace("editor", "template_release")
+    suffix = suffix.replace("template_debug", "template_release")
     if env.dev_build:
         suffix += ".dev"
     if env["precision"] == "double":
@@ -13,7 +18,7 @@ def get_sufix():
     suffix += "." + env["arch"]
     if not env["threads"]:
         suffix += ".nothreads"
-    return suffix.replace("editor", "template_release")
+    return suffix
 
 # Libraries
 if env["platform"] == "macos" or env["platform"] == "ios":
