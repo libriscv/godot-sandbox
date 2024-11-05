@@ -23,21 +23,47 @@ jobs:
           submodules: true
           fetch-depth: 0
 
-      - name: 🔗 GDExtension Build
-        uses: godotengine/godot-cpp-template/.github/actions/build@main
+      - name: Cache .scons_cache
+        uses: actions/cache@v4
         with:
-          platform: windows
-          arch: ${{ matrix.arch }}
-          build-target-type: template_release
-          float-precision: ${{ matrix.precision }}
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: godot-sandbox-windows-${{ matrix.arch }}-${{ matrix.precision }}
           path: |
-            ${{ github.workspace }}/bin/**/*.dll
-          if-no-files-found: error
+            .scons-cache/
+            godot-cpp/.scons-cache/
+          key: windows_${{ matrix.arch }}_${{ matrix.precision }}_template_release_cache      
+          
+      - uses: MinoruSekine/setup-scoop@v4.0.1
+
+      - run: |
+          scoop bucket add dorado https://github.com/chawyehsu/dorado
+          scoop install dorado/llvm-mingw
+
+      - name: Build godot-cpp Debug Build
+        shell: sh
+        env:
+          SCONS_CACHE: godot-cpp/.scons-cache/
+        run: |
+          scons target=template_release platform=windows arch=${{ matrix.arch }} generate_bindings=yes precision=${{ matrix.precision }} use_mingw=no
+        working-directory: godot-cpp/
+      
+      - name: Build GDExtension Debug Build
+        shell: sh
+        env:
+          SCONS_CACHE: .scons-cache/
+        run: |
+          scons target=template_release platform=windows arch=${{ matrix.arch }} precision=${{ matrix.precision }} use_mingw=no
+        working-directory: godot-cpp/
+
+      - name: Cache .scons_cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.scons-cache/
+            ${{ github.workspace }}/godot-cpp/.scons-cache/
+          key: windows_${{ matrix.arch }}_${{ matrix.precision }}_template_release_cache
+
+      - run: |
+          scoop bucket add dorado https://github.com/chawyehsu/dorado
+          install dorado/llvm-mingw
 
       - name: Upload Artifact Static
         uses: actions/upload-artifact@v4
