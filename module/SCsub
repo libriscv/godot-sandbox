@@ -4,6 +4,9 @@ from misc.utility.scons_hints import *
 Import("env")
 Import("env_modules")
 
+if env["platform"] == "windows":
+	env.Prepend(LIBS=['ws2_32']) # for socket calls
+
 def get_sufix():
     suffix = ".{}.{}".format(env["platform"], env["target"])
     # In godot it's "linuxbsd"
