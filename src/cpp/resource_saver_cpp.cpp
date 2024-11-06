@@ -112,7 +112,7 @@ static Array invoke_scons(const String &path) {
 	OS *os = OS::get_singleton();
 	UtilityFunctions::print("Invoking scons: ", arguments);
 	Array output;
-	int32_t result = os->execute("scons", arguments, output, true);
+	int32_t result = os->execute(SandboxProjectSettings::get_scons_path(), arguments, output, true);
 
 	if (result != 0) {
 		if (!output.is_empty()) {

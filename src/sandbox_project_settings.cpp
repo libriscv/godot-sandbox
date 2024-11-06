@@ -12,6 +12,9 @@ static constexpr char DOCKER_ENABLED_HINT[] = "Enable Docker for compilation";
 static constexpr char DOCKER_PATH[] = "editor/script/docker";
 static constexpr char DOCKER_PATH_HINT[] = "Path to the Docker executable";
 
+static constexpr char SCONS_PATH[] = "editor/script/sconstruct";
+static constexpr char SCONS_PATH_HINT[] = "Path to the SConstruct executable";
+
 static constexpr char ASYNC_COMPILATION[] = "editor/script/async_compilation";
 static constexpr char ASYNC_COMPILATION_HINT[] = "Compile scripts asynchronously";
 static constexpr char NATIVE_TYPES[] = "editor/script/unboxed_types_for_sandbox_arguments";
@@ -75,6 +78,7 @@ void SandboxProjectSettings::register_settings() {
 #else
 	register_setting_plain(DOCKER_PATH, "docker", DOCKER_PATH_HINT, true);
 #endif
+	register_setting_plain(SCONS_PATH, "scons", SCONS_PATH_HINT, true);
 	register_setting_plain(ASYNC_COMPILATION, true, ASYNC_COMPILATION_HINT, false);
 	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
 	register_setting_plain(DEBUG_INFO, false, DEBUG_INFO_HINT, false);
@@ -114,6 +118,10 @@ bool SandboxProjectSettings::get_docker_enabled() {
 
 String SandboxProjectSettings::get_docker_path() {
 	return get_setting<String>(DOCKER_PATH);
+}
+
+String SandboxProjectSettings::get_scons_path() {
+	return get_setting<String>(SCONS_PATH);
 }
 
 bool SandboxProjectSettings::async_compilation() {
