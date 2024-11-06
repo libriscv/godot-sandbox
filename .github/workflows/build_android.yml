@@ -29,8 +29,6 @@ jobs:
           wget https://apt.llvm.org/llvm.sh
           chmod +x ./llvm.sh
           sudo ./llvm.sh 17
-          ls
-          ls ext
 
       - name: 🔗 GDExtension Build
         uses: godotengine/godot-cpp-template/.github/actions/build@main
@@ -39,6 +37,7 @@ jobs:
           arch: ${{ matrix.arch }}
           build-target-type: template_release
           float-precision: ${{ matrix.precision }}
+          godot-cpp-directory: ext/godot-cpp
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

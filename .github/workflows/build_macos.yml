@@ -39,6 +39,7 @@ jobs:
           arch: ${{ matrix.arch }}
           build-target-type: template_release
           float-precision: ${{ matrix.precision }}
+          godot-cpp-directory: ext/godot-cpp
 
       - name: Mac Sign
         uses: godotengine/godot-cpp-template/.github/actions/sign@main
