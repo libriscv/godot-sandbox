@@ -104,6 +104,45 @@ static bool detect_and_build_cmake_project_instead() {
 	return false;
 }
 
+static Array invoke_scons(const String &path) {
+	// Invoke scons to build the project
+	PackedStringArray arguments;
+	// TODO get arguments from project settings
+
+	OS *os = OS::get_singleton();
+	UtilityFunctions::print("Invoking scons: ", arguments);
+	Array output;
+	int32_t result = os->execute(SandboxProjectSettings::get_scons_path(), arguments, output, true);
+
+	if (result != 0) {
+		if (!output.is_empty()) {
+			output = output[0].operator String().split("\n");
+			for (int i = 0; i < output.size(); i++) {
+				String line = output[i].operator String();
+				UtilityFunctions::printerr(line);
+			}
+		}
+		ERR_PRINT("Failed to invoke scons: " + itos(result));
+	}
+	return output;
+}
+
+static bool detect_and_build_scons_project_instead() {
+	// If the project root contains a SConstruct file,
+	// build the project using SConstruct
+	// Get the project root using res://
+	String project_root = "res://";
+
+	// Check for SConstruct in the project root
+	const bool scons_root = FileAccess::file_exists(project_root + "SConstruct");
+	if (scons_root) {
+		(void)invoke_scons(".");
+		// Always return true, as this indicates that the project is built using SConstruct
+		return true;
+	}
+	return false;
+}
+
 Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags) {
 	CPPScript *script = Object::cast_to<CPPScript>(p_resource.ptr());
 	if (script != nullptr) {
@@ -113,8 +152,13 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 			handle->close();
 
 			// Check if the project is a CMake project
-			if (detect_and_build_cmake_project_instead())
+			if (detect_and_build_cmake_project_instead()) {
 				return Error::OK;
+			}
+			
+			if (detect_and_build_scons_project_instead()) {
+				return Error::OK;
+			}
 
 			// Generate the C++ run-time API in the project root
 			auto_generate_cpp_api("res://generated_api.hpp");
