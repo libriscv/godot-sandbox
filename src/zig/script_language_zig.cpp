@@ -176,7 +176,7 @@ int32_t ZigScriptLanguage::_profiling_get_frame_data(ScriptLanguageExtensionProf
 	return 0;
 }
 void ZigScriptLanguage::_frame() {
-	static bool icon_registered = false;
+	static bool icon_registered = true;
 	if (!icon_registered && Engine::get_singleton()->is_editor_hint()) {
 		icon_registered = true;
 		// Manually register language icon

@@ -157,7 +157,7 @@ int32_t ELFScriptLanguage::_profiling_get_frame_data(ScriptLanguageExtensionProf
 	return 0;
 }
 void ELFScriptLanguage::_frame() {
-	static bool icon_registered = false;
+	static bool icon_registered = true;
 	if (!icon_registered && Engine::get_singleton()->is_editor_hint()) {
 		icon_registered = true;
 		// Manually register ELFScript icon
