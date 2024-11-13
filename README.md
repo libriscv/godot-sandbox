@@ -25,7 +25,7 @@
 
 <p align = "center">
 	<strong>
-		<a href="https://github.com/user-attachments/files/17091630/Introducing.the.New.Godot.Sandbox.odp">GodotCon 2024 Presentation</a>
+  		<a href="https://github.com/user-attachments/files/17729740/Introducing.the.New.Godot.Sandbox.pdf">GodotCon 2024 Presentation</a>
 	</strong>
 </p>
 
