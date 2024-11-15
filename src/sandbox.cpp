@@ -41,7 +41,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("vmcallable_address", "address", "args"), &Sandbox::vmcallable_address, DEFVAL(Array{}));
 
 	// Sandbox restrictions.
-	ClassDB::bind_method(D_METHOD("set_restrictions"), &Sandbox::set_restrictions);
+	ClassDB::bind_method(D_METHOD("set_restrictions", "restrictions"), &Sandbox::set_restrictions);
 	ClassDB::bind_method(D_METHOD("get_restrictions"), &Sandbox::get_restrictions);
 	ClassDB::bind_method(D_METHOD("add_allowed_object", "instance"), &Sandbox::add_allowed_object);
 	ClassDB::bind_method(D_METHOD("remove_allowed_object", "instance"), &Sandbox::remove_allowed_object);
@@ -56,7 +56,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_allowed_method", "instance", "method"), &Sandbox::is_allowed_method);
 	ClassDB::bind_method(D_METHOD("is_allowed_property", "instance", "property", "is_set"), &Sandbox::is_allowed_property, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("is_allowed_resource", "res"), &Sandbox::is_allowed_resource);
-	ClassDB::bind_static_method("Sandbox", D_METHOD("restrictive_callback_function"), &Sandbox::restrictive_callback_function);
+	ClassDB::bind_static_method("Sandbox", D_METHOD("restrictive_callback_function", "arg"), &Sandbox::restrictive_callback_function);
 
 	// Internal testing, debugging and introspection.
 	ClassDB::bind_method(D_METHOD("set_redirect_stdout", "callback"), &Sandbox::set_redirect_stdout);
@@ -65,7 +65,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_argument_registers", "args"), &Sandbox::set_argument_registers);
 	ClassDB::bind_method(D_METHOD("get_current_instruction"), &Sandbox::get_current_instruction);
 	ClassDB::bind_method(D_METHOD("make_resumable"), &Sandbox::make_resumable);
-	ClassDB::bind_method(D_METHOD("resume"), &Sandbox::resume);
+	ClassDB::bind_method(D_METHOD("resume", "max_instructions"), &Sandbox::resume);
 
 	ClassDB::bind_method(D_METHOD("assault", "test", "iterations"), &Sandbox::assault);
 	ClassDB::bind_method(D_METHOD("has_function", "function"), &Sandbox::has_function);
