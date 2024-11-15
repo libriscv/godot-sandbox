@@ -35,7 +35,6 @@ librisc_sources = [
 	"ext/libriscv/lib/libriscv/serialize.cpp",
 
 	# POSIX
-	"ext/libriscv/lib/libriscv/posix/socket_calls.cpp",
 	"ext/libriscv/lib/libriscv/posix/minimal.cpp",
 	"ext/libriscv/lib/libriscv/posix/signals.cpp",
 	"ext/libriscv/lib/libriscv/posix/threads.cpp",
