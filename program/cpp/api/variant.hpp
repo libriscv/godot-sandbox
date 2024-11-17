@@ -80,6 +80,7 @@ struct Variant
 		PACKED_VECTOR2_ARRAY,
 		PACKED_VECTOR3_ARRAY,
 		PACKED_COLOR_ARRAY,
+		PACKED_VECTOR4_ARRAY,
 
 		VARIANT_MAX
 	};
@@ -147,6 +148,7 @@ struct Variant
 	Variant(const PackedArray<int64_t>&);
 	Variant(const PackedArray<Vector2>&);
 	Variant(const PackedArray<Vector3>&);
+	Variant(const PackedArray<Vector4>&);
 	Variant(const PackedArray<Color>&);
 	Variant(const PackedArray<std::string>&);
 
@@ -241,6 +243,7 @@ struct Variant
 	PackedArray<int64_t> as_int64_array() const;
 	PackedArray<Vector2> as_vector2_array() const;
 	PackedArray<Vector3> as_vector3_array() const;
+	PackedArray<Vector4> as_vector4_array() const;
 	PackedArray<Color> as_color_array() const;
 	PackedArray<std::string> as_string_array() const;
 
@@ -251,6 +254,7 @@ struct Variant
 	operator PackedArray<int64_t>() const { return as_int64_array(); }
 	operator PackedArray<Vector2>() const { return as_vector2_array(); }
 	operator PackedArray<Vector3>() const { return as_vector3_array(); }
+	operator PackedArray<Vector4>() const { return as_vector4_array(); }
 	operator PackedArray<Color>() const { return as_color_array(); }
 	operator PackedArray<std::string>() const { return as_string_array(); }
 
@@ -447,6 +451,11 @@ inline Variant::Variant(const PackedArray<Vector2> &array)
 inline Variant::Variant(const PackedArray<Vector3> &array)
 {
 	m_type = PACKED_VECTOR3_ARRAY;
+	v.i = array.get_variant_index();
+}
+inline Variant::Variant(const PackedArray<Vector4> &array)
+{
+	m_type = PACKED_VECTOR4_ARRAY;
 	v.i = array.get_variant_index();
 }
 inline Variant::Variant(const PackedArray<Color> &array)
@@ -770,6 +779,13 @@ inline PackedArray<Vector3> Variant::as_vector3_array() const {
 	api_throw("std::bad_cast", "Failed to cast Variant to PackedVector3Array", this);
 }
 
+inline PackedArray<Vector4> Variant::as_vector4_array() const {
+	if (m_type == PACKED_VECTOR4_ARRAY) {
+		return PackedArray<Vector4>::from_index(v.i);
+	}
+	api_throw("std::bad_cast", "Failed to cast Variant to PackedVector4Array", this);
+}
+
 inline PackedArray<Color> Variant::as_color_array() const {
 	if (m_type == PACKED_COLOR_ARRAY) {
 		return PackedArray<Color>::from_index(v.i);
@@ -787,7 +803,7 @@ inline PackedArray<std::string> Variant::as_string_array() const {
 inline Variant::Variant(const Variant &other)
 {
 	m_type = other.m_type;
-	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY || m_type == NODE_PATH || m_type == STRING_NAME)
+	if (m_type == STRING || m_type == NODE_PATH || m_type == STRING_NAME)
 		this->internal_clone(other);
 	else
 		v = other.v;
@@ -802,7 +818,7 @@ inline Variant::Variant(Variant &&other)
 
 inline Variant &Variant::operator=(const Variant &other) {
 	m_type = other.m_type;
-	if (m_type == STRING || m_type == PACKED_BYTE_ARRAY || m_type == NODE_PATH || m_type == STRING_NAME)
+	if (m_type == STRING || m_type == NODE_PATH || m_type == STRING_NAME)
 		this->internal_clone(other);
 	else
 		v = other.v;

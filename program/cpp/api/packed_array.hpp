@@ -15,10 +15,11 @@ struct Variant;
  * - PackedFloat64Array
  * - PackedVector2Array
  * - PackedVector3Array
+ * - PackedVector4Array
  * - PackedColorArray
  * - PackedStringArray
  * 
- * @tparam T uint8_t, int32_t, int64_t, float, double, Vector2, Vector3, Color or std::string.
+ * @tparam T uint8_t, int32_t, int64_t, float, double, Vector2, Vector3, Vector4, Color or std::string.
  */
 template <typename T>
 struct PackedArray {
@@ -68,6 +69,6 @@ private:
 	unsigned m_idx = INT32_MIN; // Host-side Variant index.
 
 	static_assert(std::is_same_v<T, uint8_t> || std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t> || std::is_same_v<T, float> || std::is_same_v<T, double>
-		|| std::is_same_v<T, Vector2> || std::is_same_v<T, Vector3> || std::is_same_v<T, Color> || std::is_same_v<T, std::string>,
+		|| std::is_same_v<T, Vector2> || std::is_same_v<T, Vector3> || std::is_same_v<T, Vector4> || std::is_same_v<T, Color> || std::is_same_v<T, std::string>,
 		"PackedArray type must be uint8_t, int32_t, int64_t, float, double, Vector2, Vector3 or Color.");
 };

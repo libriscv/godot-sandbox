@@ -164,6 +164,8 @@ func test_types():
 	assert_eq_deep(s.vmcall("test_pa_vec2", pa_vec2_pp), pa_vec2_pp)
 	var pa_vec3_pp : PackedVector3Array = [Vector3(1, 1, 1), Vector3(2, 2, 2), Vector3(3, 3, 3)]
 	assert_eq_deep(s.vmcall("test_pa_vec3", pa_vec3_pp), pa_vec3_pp)
+	var pa_vec4_pp : PackedVector4Array = [Vector4(1, 1, 1, 1), Vector4(2, 2, 2, 2), Vector4(3, 3, 3, 3)]
+	assert_eq_deep(s.vmcall("test_pa_vec4", pa_vec4_pp), pa_vec4_pp)
 	var pa_color_pp : PackedColorArray = [Color(0, 0, 0, 0), Color(1, 1, 1, 1)]
 	assert_eq_deep(s.vmcall("test_pa_color", pa_color_pp), pa_color_pp)
 	var pa_string_pp : PackedStringArray = ["Hello", "from", "the", "other", "side"]
@@ -176,6 +178,7 @@ func test_types():
 	assert_eq(s.vmcall("test_create_pa_i64"), PackedInt64Array([1, 2, 3, 4]))
 	assert_eq(s.vmcall("test_create_pa_vec2"), PackedVector2Array([Vector2(1, 1), Vector2(2, 2), Vector2(3, 3)]))
 	assert_eq(s.vmcall("test_create_pa_vec3"), PackedVector3Array([Vector3(1, 1, 1), Vector3(2, 2, 2), Vector3(3, 3, 3)]))
+	assert_eq(s.vmcall("test_create_pa_vec4"), PackedVector4Array([Vector4(1, 1, 1, 1), Vector4(2, 2, 2, 2), Vector4(3, 3, 3, 3)]))
 	assert_eq(s.vmcall("test_create_pa_color"), PackedColorArray([Color(0, 0, 0, 0), Color(1, 1, 1, 1)]))
 	assert_eq(s.vmcall("test_create_pa_string"), PackedStringArray(["Hello", "from", "the", "other", "side"]))
 
@@ -273,6 +276,8 @@ func execute_vmcallv_with(s : Sandbox, vmfunc : String):
 	assert_same(s.vmcallv(vmfunc, pa_vec2_pp), pa_vec2_pp)
 	var pa_vec3_pp : PackedVector3Array = [Vector3(0, 0, 0), Vector3(1, 1, 1), Vector3(2, 2, 2)]
 	assert_same(s.vmcallv(vmfunc, pa_vec3_pp), pa_vec3_pp)
+	var pa_vec4_pp : PackedVector4Array = [Vector4(0, 0, 0, 0), Vector4(1, 1, 1, 1), Vector4(2, 2, 2, 2)]
+	assert_same(s.vmcallv(vmfunc, pa_vec4_pp), pa_vec4_pp)
 	var pca_pp : PackedColorArray = [Color(0, 0, 0, 0), Color(1, 1, 1, 1)]
 	assert_same(s.vmcallv(vmfunc, pca_pp), pca_pp)
 	var pa_string_pp : PackedStringArray = ["Hello", "from", "the", "other", "side"]
@@ -352,6 +357,8 @@ func execute_vmcallv_comparison(s : Sandbox, vmfunc : String):
 	assert_true(s.vmcallv(vmfunc, pa_vec2_pp, pa_vec2_pp), "PackedVector2Array == PackedVector2Array")
 	var pa_vec3_pp : PackedVector3Array = [Vector3(0, 0, 0), Vector3(1, 1, 1), Vector3(2, 2, 2)]
 	assert_true(s.vmcallv(vmfunc, pa_vec3_pp, pa_vec3_pp), "PackedVector3Array == PackedVector3Array")
+	var pa_vec4_pp : PackedVector4Array = [Vector4(0, 0, 0, 0), Vector4(1, 1, 1, 1), Vector4(2, 2, 2, 2)]
+	assert_true(s.vmcallv(vmfunc, pa_vec4_pp, pa_vec4_pp), "PackedVector4Array == PackedVector4Array")
 	var pca_pp : PackedColorArray = [Color(0, 0, 0, 0), Color(1, 1, 1, 1)]
 	assert_true(s.vmcallv(vmfunc, pca_pp, pca_pp), "PackedColorArray == PackedColorArray")
 	var pa_string_pp : PackedStringArray = ["Hello", "from", "the", "other", "side"]

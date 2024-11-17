@@ -542,6 +542,7 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 			case Variant::PACKED_INT64_ARRAY:
 			case Variant::PACKED_VECTOR2_ARRAY:
 			case Variant::PACKED_VECTOR3_ARRAY:
+			case Variant::PACKED_VECTOR4_ARRAY:
 			case Variant::PACKED_COLOR_ARRAY:
 			case Variant::PACKED_STRING_ARRAY: { // Uses Variant index to reference the object
 				unsigned idx = this->add_scoped_variant(&arg);

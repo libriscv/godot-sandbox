@@ -333,6 +333,19 @@ APICALL(api_vcreate) {
 			vp->type = type;
 			vp->v.i = idx;
 		} break;
+		case Variant::PACKED_VECTOR4_ARRAY: {
+			PackedVector4Array a;
+			if (gdata != 0x0) {
+				// Copy std::vector<Vector4> from guest memory.
+				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				std::vector<Vector4> vec = gvec->to_vector<Vector4>(machine);
+				a.resize(vec.size());
+				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(Vector4));
+			}
+			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
+			vp->type = type;
+			vp->v.i = idx;
+		} break;
 		case Variant::PACKED_COLOR_ARRAY: {
 			PackedColorArray a;
 			if (gdata != 0x0) {
@@ -442,6 +455,13 @@ APICALL(api_vfetch) {
 				auto arr = var.operator PackedVector3Array();
 				auto [sptr, saddr] = gvec->alloc<Vector3>(machine, arr.size());
 				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(Vector3));
+				break;
+			}
+			case Variant::PACKED_VECTOR4_ARRAY: {
+				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				auto arr = var.operator PackedVector4Array();
+				auto [sptr, saddr] = gvec->alloc<Vector4>(machine, arr.size());
+				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(Vector4));
 				break;
 			}
 			case Variant::PACKED_COLOR_ARRAY: {
@@ -567,6 +587,15 @@ APICALL(api_vstore) {
 			auto *data = machine.memory.memarray<Vector3>(gdata, gsize);
 			arr.resize(gsize);
 			std::memcpy(arr.ptrw(), data, gsize * sizeof(Vector3));
+			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			break;
+		}
+		case Variant::PACKED_VECTOR4_ARRAY: {
+			PackedVector4Array arr;
+			// Copy the array from guest memory into the Variant.
+			auto *data = machine.memory.memarray<Vector4>(gdata, gsize);
+			arr.resize(gsize);
+			std::memcpy(arr.ptrw(), data, gsize * sizeof(Vector4));
 			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
 			break;
 		}

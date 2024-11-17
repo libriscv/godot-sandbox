@@ -270,6 +270,7 @@ static const char *variant_type_names[] = {
 	"PackedVector2Array",
 	"PackedVector3Array",
 	"PackedColorArray",
+	"PackedVector4Array",
 
 	"Max",
 };

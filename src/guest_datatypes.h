@@ -341,6 +341,7 @@ inline bool GuestVariant::is_scoped_variant() const noexcept {
 		case Variant::PACKED_INT64_ARRAY:
 		case Variant::PACKED_VECTOR2_ARRAY:
 		case Variant::PACKED_VECTOR3_ARRAY:
+		case Variant::PACKED_VECTOR4_ARRAY:
 		case Variant::PACKED_COLOR_ARRAY:
 		case Variant::PACKED_STRING_ARRAY: {
 			return true;

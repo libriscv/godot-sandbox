@@ -240,6 +240,9 @@ extern "C" Variant test_pa_vec2(PackedArray<Vector2> arr) {
 extern "C" Variant test_pa_vec3(PackedArray<Vector3> arr) {
 	return PackedArray<Vector3> (arr.fetch());
 }
+extern "C" Variant test_pa_vec4(PackedArray<Vector4> arr) {
+	return PackedArray<Vector4> (arr.fetch());
+}
 extern "C" Variant test_pa_color(PackedArray<Color> arr) {
 	return PackedArray<Color> (arr.fetch());
 }
@@ -273,6 +276,10 @@ extern "C" Variant test_create_pa_vec2() {
 }
 extern "C" Variant test_create_pa_vec3() {
 	PackedArray<Vector3> arr({ { 1, 1, 1 }, { 2, 2, 2 }, { 3, 3, 3 } });
+	return arr;
+}
+extern "C" Variant test_create_pa_vec4() {
+	PackedArray<Vector4> arr({ { 1, 1, 1, 1 }, { 2, 2, 2, 2 }, { 3, 3, 3, 3 } });
 	return arr;
 }
 extern "C" Variant test_create_pa_color() {
