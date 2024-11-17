@@ -284,6 +284,20 @@ extern "C" Variant test_create_pa_string() {
 	return arr;
 }
 
+extern "C" Variant test_assign_pa_to_array(PackedArray<int64_t> pa) {
+	Array arr = Array::Create();
+	arr.push_back(pa);
+	arr.push_back(pa);
+	return arr;
+}
+
+extern "C" Variant test_assign_pa_to_dict(PackedArray<int64_t> arr) {
+	Dictionary d = Dictionary::Create();
+	d["a1"] = arr;
+	d["a2"] = arr;
+	return d;
+}
+
 extern "C" Variant test_exception() {
 	asm("unimp");
 	__builtin_unreachable();

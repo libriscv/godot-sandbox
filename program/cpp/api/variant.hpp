@@ -456,6 +456,11 @@ inline Variant::Variant(const PackedArray<std::string> &array)
 	v.i = array.get_variant_index();
 }
 
+template <typename T>
+inline PackedArray<T>::operator Variant() const {
+	return Variant(*this);
+}
+
 inline Variant Variant::string_name(const std::string &name) {
 	Variant v;
 	v.internal_create_string(STRING_NAME, name);

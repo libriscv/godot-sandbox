@@ -179,6 +179,14 @@ func test_types():
 	assert_eq(s.vmcall("test_create_pa_color"), PackedColorArray([Color(0, 0, 0, 0), Color(1, 1, 1, 1)]))
 	assert_eq(s.vmcall("test_create_pa_string"), PackedStringArray(["Hello", "from", "the", "other", "side"]))
 
+	# Assign packed array to Array
+	assert_eq(s.vmcall("test_assign_pa_to_array", PackedInt64Array([1, 2, 3, 4])),
+		[PackedInt64Array([1, 2, 3, 4]), PackedInt64Array([1, 2, 3, 4])])
+
+	# Assign packed array to Dictionary
+	assert_eq(s.vmcall("test_assign_pa_to_dict", PackedInt64Array([1, 2, 3, 4])),
+		{"a1": PackedInt64Array([1, 2, 3, 4]), "a2": PackedInt64Array([1, 2, 3, 4])})
+
 	# Callables
 	var cb : Callable = Callable(callable_function)
 	s.vmcall("test_callable", Callable(callable_callee))
