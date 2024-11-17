@@ -163,7 +163,7 @@ inline Vector2 Vector2::normalized() const noexcept {
 	return {x, y};
 }
 
-inline Vector2 Vector2::rotated(float angle) const noexcept {
+inline Vector2 Vector2::rotated(real_t angle) const noexcept {
 	register float x asm("fa0") = this->x;
 	register float y asm("fa1") = this->y;
 	register float a asm("fa2") = angle;

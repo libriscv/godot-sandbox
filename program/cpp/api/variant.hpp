@@ -309,7 +309,11 @@ private:
 	std::string internal_fetch_string() const;
 	std::u32string internal_fetch_u32string() const;
 };
+#ifdef DOUBLE_PRECISION_REAL_T
+static_assert(sizeof(Variant) == 40, "Variant size mismatch");
+#else
 static_assert(sizeof(Variant) == 24, "Variant size mismatch");
+#endif
 
 template <typename T>
 inline Variant::Variant(T value)

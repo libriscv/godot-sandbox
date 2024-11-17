@@ -4,7 +4,11 @@
 #include <string_view>
 struct Object;
 struct Variant;
+#ifdef DOUBLE_PRECISION_REAL_T
+using real_t = double;
+#else
 using real_t = float;
+#endif
 
 #define EXTERN_SYSCALL(rval, name, ...) \
 	extern "C" rval name(__VA_ARGS__);

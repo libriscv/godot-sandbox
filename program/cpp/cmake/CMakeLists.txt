@@ -10,6 +10,7 @@ set(CMAKE_CXX_EXTENSIONS ON)
 set(VERSION 9)
 
 option(SANDBOX_RISCV_EXT_C "Enable RISC-V C extension" ON)
+option(DOUBLE_PRECISION    "Enable double precision real_t" OFF)
 
 set(CXXFLAGS -O2 -std=gnu++23 -fno-stack-protector -fno-threadsafe-statics)
 set(CFLAGS   -O2 -std=gnu11 -fno-stack-protector -fno-threadsafe-statics)
@@ -85,6 +86,11 @@ function (add_sandbox_program name)
 		-Wl,--whole-archive sandbox_api -Wl,--no-whole-archive
 		-static -static-libgcc -static-libstdc++
 	)
+	if (DOUBLE_PRECISION)
+		target_compile_definitions(${name} PUBLIC
+			DOUBLE_PRECISION_REAL_T
+		)
+	endif()
 	target_include_directories(${name} PRIVATE
 		${CMAKE_CURRENT_SOURCE_DIR}
 	)
