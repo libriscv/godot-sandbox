@@ -155,7 +155,7 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 			if (detect_and_build_cmake_project_instead()) {
 				return Error::OK;
 			}
-			
+
 			if (detect_and_build_scons_project_instead()) {
 				return Error::OK;
 			}
@@ -164,7 +164,7 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 			auto_generate_cpp_api("res://generated_api.hpp");
 
 			// Get the absolute path without the file name
-			String path = handle->get_path().get_base_dir().replace("res://", "") + "/";
+			String path = handle->get_path().get_base_dir().replace("res://", "") + "./";
 			String inpname = path + "*.cpp";
 			String foldername = Docker::GetFolderName(handle->get_path().get_base_dir());
 			String outname = path + foldername + String(".elf");
