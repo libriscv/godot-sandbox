@@ -305,9 +305,9 @@ struct GuestVariant {
 		int64_t i = 0;
 		bool b;
 		double f;
-		std::array<float, 2> v2f;
-		std::array<float, 3> v3f;
-		std::array<float, 4> v4f;
+		std::array<real_t, 2> v2f;
+		std::array<real_t, 3> v3f;
+		std::array<real_t, 4> v4f;
 		std::array<int32_t, 2> v2i;
 		std::array<int32_t, 3> v3i;
 		std::array<int32_t, 4> v4i;
@@ -350,8 +350,6 @@ inline bool GuestVariant::is_scoped_variant() const noexcept {
 			return false;
 	}
 }
-
-static_assert(sizeof(GuestVariant) == 24, "GuestVariant size mismatch");
 
 static inline void hash_combine(gaddr_t &seed, gaddr_t hash) {
 	hash += 0x9e3779b9 + (seed << 6) + (seed >> 2);
