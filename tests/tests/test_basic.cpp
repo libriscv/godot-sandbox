@@ -166,6 +166,21 @@ extern "C" Variant test_array(Array array) {
 	return "Fail";
 }
 
+extern "C" Variant test_array_assign(Array arr) {
+	arr[0] = 42;
+	arr[1] = "Hello";
+	arr[2] = PackedArray<double> ({ 3.14, 2.71 });
+	if (arr[0] != 42 || arr[1] != "Hello" || arr[2].get().get_type() != Variant::Type::PACKED_FLOAT64_ARRAY) {
+		return "Fail";
+	}
+	PackedArray<double> pa = arr[2];
+	std::vector<double> vec = pa.fetch();
+	if (vec[0] != 3.14 || vec[1] != 2.71 || vec.size() != 2) {
+		return "Fail";
+	}
+	return arr;
+}
+
 extern "C" Variant test_dict(Dictionary arg) {
 	return arg;
 }
