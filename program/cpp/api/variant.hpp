@@ -455,6 +455,13 @@ inline Variant::Variant(const PackedArray<std::string> &array)
 	m_type = PACKED_STRING_ARRAY;
 	v.i = array.get_variant_index();
 }
+template <typename T>
+inline PackedArray<T>::PackedArray(const Variant& v) {
+	if (v.get_type() < Variant::PACKED_BYTE_ARRAY || v.get_type() >= Variant::PACKED_VECTOR3_ARRAY) {
+		api_throw("std::bad_cast", "Failed to cast Variant to PackedArray", &v);
+	}
+	m_idx = v.get_internal_index();
+}
 
 template <typename T>
 inline PackedArray<T>::operator Variant() const {

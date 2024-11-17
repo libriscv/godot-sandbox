@@ -3,6 +3,7 @@
 #include <vector>
 #include "color.hpp"
 #include "vector.hpp"
+struct Variant;
 
 /**
  * @brief A reference to a host-side Packed Array.
@@ -22,6 +23,10 @@
 template <typename T>
 struct PackedArray {
 	constexpr PackedArray() {}
+
+	/// @brief Create a PackedArray from a Variant.
+	/// @param v The Variant.
+	PackedArray(const Variant& v);
 
 	/// @brief Create a PackedArray from a vector of data.
 	/// @param data The initial data.

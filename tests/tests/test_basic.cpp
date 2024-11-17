@@ -298,6 +298,11 @@ extern "C" Variant test_assign_pa_to_dict(PackedArray<int64_t> arr) {
 	return d;
 }
 
+extern "C" Variant test_construct_pa_from_array_at(Array arr, int idx) {
+	PackedArray<int64_t> pa(arr.at(idx));
+	return pa;
+}
+
 extern "C" Variant test_exception() {
 	asm("unimp");
 	__builtin_unreachable();
