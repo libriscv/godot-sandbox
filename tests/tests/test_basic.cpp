@@ -173,11 +173,17 @@ extern "C" Variant test_array_assign(Array arr) {
 	if (arr[0] != 42 || arr[1] != "Hello" || arr[2].get().get_type() != Variant::Type::PACKED_FLOAT64_ARRAY) {
 		return "Fail";
 	}
+
+	Array arr2 = Array::Create();
+	arr2.push_back(PackedArray<double> ({ 1.0, 2.0, 3.0 }));
+	arr.push_back(arr2);
+
 	PackedArray<double> pa = arr[2];
 	std::vector<double> vec = pa.fetch();
 	if (vec[0] != 3.14 || vec[1] != 2.71 || vec.size() != 2) {
 		return "Fail";
 	}
+
 	return arr;
 }
 

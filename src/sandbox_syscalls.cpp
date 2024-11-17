@@ -1320,10 +1320,16 @@ APICALL(api_throw) {
 	Sandbox &emu = riscv::emu(machine);
 	SYS_TRACE("throw", String::utf8(type.data(), type.size()), String::utf8(msg.data(), msg.size()), vaddr);
 
-	GuestVariant *var = machine.memory.memarray<GuestVariant>(vaddr, 1);
-	String error_string = "Sandbox exception of type " + String::utf8(type.data(), type.size()) + ": " + String::utf8(msg.data(), msg.size()) + " for Variant of type " + itos(var->type);
-	ERR_PRINT(error_string);
-	throw std::runtime_error("Sandbox exception of type " + std::string(type) + ": " + std::string(msg) + " for Variant of type " + std::to_string(var->type));
+	if (vaddr != 0) {
+		GuestVariant *var = machine.memory.memarray<GuestVariant>(vaddr, 1);
+		String error_string = "Sandbox exception of type " + String::utf8(type.data(), type.size()) + ": " + String::utf8(msg.data(), msg.size()) + " for Variant of type " + itos(var->type);
+		ERR_PRINT(error_string);
+		throw std::runtime_error("Sandbox exception of type " + std::string(type) + ": " + std::string(msg) + " for Variant of type " + std::to_string(var->type));
+	} else {
+		String error_string = "Sandbox exception in " + String::utf8(type.data(), type.size()) + ": " + String::utf8(msg.data(), msg.size());
+		ERR_PRINT(error_string);
+		throw std::runtime_error("Sandbox exception in " + std::string(type) + ": " + std::string(msg));
+	}
 }
 
 APICALL(api_array_ops) {

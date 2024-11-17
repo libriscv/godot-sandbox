@@ -10,6 +10,8 @@ using real_t = double;
 using real_t = float;
 #endif
 
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+
 #define EXTERN_SYSCALL(rval, name, ...) \
 	extern "C" rval name(__VA_ARGS__);
 
@@ -21,6 +23,7 @@ inline __attribute__((noreturn)) void api_throw(std::string_view type, std::stri
 	sys_throw(type.data(), type.size(), msg.data(), msg.size(), srcVar);
 	__builtin_unreachable();
 }
+#define EXPECT(cond, msg) if (UNLIKELY(!(cond))) { api_throw(__FUNCTION__, msg); }
 
 extern "C" __attribute__((noreturn)) void fast_exit();
 
