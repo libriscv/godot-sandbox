@@ -35,7 +35,7 @@ Error ResourceFormatSaverZig::_save(const Ref<Resource> &p_resource, const Strin
 			handle->store_string(script->_get_source_code());
 			handle->close();
 			// Get the absolute path without the file name
-			String path = handle->get_path().get_base_dir().replace("res://", "") + "./";
+			String path = handle->get_path().get_base_dir().replace("res://", "") + "/";
 			String inpname = path + "*.zig";
 			String foldername = Docker::GetFolderName(handle->get_path().get_base_dir());
 			String outname = path + foldername + String(".elf");
