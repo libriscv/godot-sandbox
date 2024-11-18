@@ -688,6 +688,8 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 					}
 					profdata.visited.clear();
 				}
+			} else if (get_instructions_max() <= 0) {
+				m_machine->cpu.simulate_inaccurate(address);
 			} else {
 				m_machine->simulate_with(get_instructions_max() << 20, 0u, address);
 			}
