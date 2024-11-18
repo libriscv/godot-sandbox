@@ -99,6 +99,10 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_instructions_max"), &Sandbox::get_instructions_max);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE, "Maximum millions of instructions executed before cancelling execution"), "set_instructions_max", "get_instructions_max");
 
+	ClassDB::bind_method(D_METHOD("set_allocations_max", "max"), &Sandbox::set_allocations_max, DEFVAL(4000));
+	ClassDB::bind_method(D_METHOD("get_allocations_max"), &Sandbox::get_allocations_max);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "allocations_max", PROPERTY_HINT_NONE, "Maximum number of allocations allowed"), "set_allocations_max", "get_allocations_max");
+
 	ClassDB::bind_method(D_METHOD("set_use_unboxed_arguments", "use_unboxed_arguments"), &Sandbox::set_use_unboxed_arguments);
 	ClassDB::bind_method(D_METHOD("get_use_unboxed_arguments"), &Sandbox::get_use_unboxed_arguments);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PROPERTY_HINT_NONE, "Use unboxed arguments for VM function calls"), "set_use_unboxed_arguments", "get_use_unboxed_arguments");
@@ -153,6 +157,7 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 	list.push_back(PropertyInfo(Variant::INT, "references_max", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::INT, "memory_max", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE));
+	list.push_back(PropertyInfo(Variant::INT, "allocations_max", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "profiling", PROPERTY_HINT_NONE));
@@ -374,6 +379,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		// Add native system call interfaces
 		machine().setup_native_heap(HEAP_SYSCALLS_BASE, heap_area, heap_size);
 		machine().setup_native_memory(MEMORY_SYSCALLS_BASE);
+		machine().arena().set_max_chunks(get_allocations_max());
 
 		// Set up a Linux environment for the program
 		const std::vector<std::string> *argv = argv_ptr ? argv_ptr : &program_arguments;
@@ -1021,6 +1027,9 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	} else if (name == StringName("execution_timeout")) {
 		set_instructions_max(value);
 		return true;
+	} else if (name == StringName("allocations_max")) {
+		set_allocations_max(value);
+		return true;
 	} else if (name == StringName("use_unboxed_arguments")) {
 		set_use_unboxed_arguments(value);
 		return true;
@@ -1057,6 +1066,9 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 		return true;
 	} else if (name == StringName("execution_timeout")) {
 		r_ret = get_instructions_max();
+		return true;
+	} else if (name == StringName("allocations_max")) {
+		r_ret = get_allocations_max();
 		return true;
 	} else if (name == StringName("use_unboxed_arguments")) {
 		r_ret = get_use_unboxed_arguments();
@@ -1197,6 +1209,13 @@ void Sandbox::set_max_refs(uint32_t max) {
 		}
 	} else {
 		ERR_PRINT("Sandbox: Cannot change max references during a Sandbox call.");
+	}
+}
+
+void Sandbox::set_allocations_max(int64_t max) {
+	this->m_allocations_max = max;
+	if (machine().has_arena()) {
+		machine().arena().set_max_chunks(max);
 	}
 }
 

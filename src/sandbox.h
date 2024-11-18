@@ -135,6 +135,8 @@ public:
 	uint32_t get_memory_max() const { return m_memory_max; }
 	void set_instructions_max(int64_t max) { m_insn_max = max; }
 	int64_t get_instructions_max() const { return m_insn_max; }
+	void set_allocations_max(int64_t max);
+	int64_t get_allocations_max() const { return m_allocations_max; }
 	void set_heap_usage(int64_t) {} // Do nothing (it's a read-only property)
 	int64_t get_heap_usage() const;
 	void set_exceptions(unsigned exceptions) {} // Do nothing (it's a read-only property)
@@ -486,6 +488,7 @@ private:
 	uint32_t m_max_refs = MAX_REFS;
 	uint32_t m_memory_max = MAX_VMEM;
 	int64_t m_insn_max = MAX_INSTRUCTIONS;
+	uint32_t m_allocations_max = 4000;
 
 	uint8_t m_throttled = 0;
 	bool m_use_unboxed_arguments = false;
