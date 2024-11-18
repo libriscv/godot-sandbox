@@ -1,5 +1,6 @@
 #include "script_language_rust.h"
 #include "script_rust.h"
+#include "../script_language_common.h"
 #include <godot_cpp/classes/editor_interface.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>
@@ -233,7 +234,7 @@ int32_t RustScriptLanguage::_profiling_get_frame_data(ScriptLanguageExtensionPro
 	return 0;
 }
 void RustScriptLanguage::_frame() {
-	static bool icon_registered = false;
+	static bool icon_registered = register_language_icons;
 	if (!icon_registered && Engine::get_singleton()->is_editor_hint()) {
 		icon_registered = true;
 		// Manually register language icon
