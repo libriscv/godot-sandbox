@@ -564,28 +564,49 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 	}
 }
 GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int argc) {
-	sp -= sizeof(GuestVariant) * (argc + 1);
-	sp &= ~gaddr_t(0xF); // re-align stack pointer
-	const gaddr_t arrayDataPtr = sp;
-	const int arrayElements = argc + 1;
-
-	GuestVariant *v = m_machine->memory.memarray<GuestVariant>(arrayDataPtr, arrayElements);
-	if (argc > 7)
-		throw std::runtime_error("Sandbox: Too many arguments for VM function call");
-
-	// Set up first argument (return value, also a Variant)
-	m_machine->cpu.reg(10) = arrayDataPtr;
-	//v[0].type = Variant::Type::NIL;
-
 	if (this->m_use_unboxed_arguments) {
+		sp -= sizeof(GuestVariant) * (argc + 1);
+		sp &= ~gaddr_t(0xF); // re-align stack pointer
+		const gaddr_t arrayDataPtr = sp;
+		const int arrayElements = argc + 1;
+
+		GuestVariant *v = m_machine->memory.memarray<GuestVariant>(arrayDataPtr, arrayElements);
+
+		// Set up first argument (return value, also a Variant)
+		m_machine->cpu.reg(10) = arrayDataPtr;
+
+		if (argc > 7)
+			throw std::runtime_error("Sandbox: Too many arguments for VM function call");
 		setup_arguments_native(arrayDataPtr, v, args, argc);
 		// A0 is the return value (Variant) of the function
 		return &v[0];
 	}
 
+	// We will support up to 16 arguments, with the first argument being the return value
+	if (argc > 16)
+		throw std::runtime_error("Sandbox: Too many arguments for VM function call");
+
+	// The offset to where the first Variant is stored
+	// The first argument is the return value, so we start at 1
+	// The rest are overflow arguments, which are pushed onto the stack
+	const int overflow_args = argc > 7 ? argc - 7 : 0;
+
+	sp -= sizeof(GuestVariant) * (argc + 1) + sizeof(gaddr_t) * overflow_args;
+	sp &= ~gaddr_t(0xF); // re-align stack pointer
+	const gaddr_t arrayDataPtr = sp + sizeof(gaddr_t) * overflow_args;
+	const int arrayElements = argc + 1;
+
+	GuestVariant *v = m_machine->memory.memarray<GuestVariant>(arrayDataPtr, arrayElements);
+	gaddr_t *overflow = nullptr;
+	if (overflow_args > 0)
+		overflow = m_machine->memory.memarray<gaddr_t>(sp, overflow_args);
+
+	// Set up first argument (return value, also a Variant)
+	m_machine->cpu.reg(10) = arrayDataPtr + overflow_args * sizeof(GuestVariant);
+
 	for (size_t i = 0; i < argc; i++) {
 		const Variant &arg = *args[i];
-		GuestVariant &g_arg = v[i + 1];
+		GuestVariant &g_arg = v[1 + i];
 		// Fast-path for simple types
 		GDNativeVariant *inner = (GDNativeVariant *)arg._native_ptr();
 		// Incoming arguments are implicitly trusted, as they are provided by the host
@@ -615,10 +636,14 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 			default:
 				g_arg.set(*this, *args[i], true);
 		}
-		m_machine->cpu.reg(11 + i) = arrayDataPtr + (i + 1) * sizeof(GuestVariant);
+		if (i < 7) {
+			m_machine->cpu.reg(11 + i) = arrayDataPtr + (1 + i) * sizeof(GuestVariant);
+		} else {
+			overflow[i - 7] = arrayDataPtr + (1 + i) * sizeof(GuestVariant);
+		}
 	}
 	// A0 is the return value (Variant) of the function
-	return &v[0];
+	return &v[overflow_args];
 }
 Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc) {
 	this->m_current_state += 1;

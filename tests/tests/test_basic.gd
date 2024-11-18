@@ -297,6 +297,12 @@ func test_vmcallv():
 	assert_eq(s.has_function("test_ping_move_pong"), true)
 	execute_vmcallv_with(s, "test_ping_move_pong")
 
+	assert_eq(s.has_function("test_many_arguments"), true)
+	assert_same(s.vmcallv("test_many_arguments", 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, "11", "12", "13", "14", "15", "16"), 136)
+
+	assert_eq(s.has_function("test_many_arguments2"), true)
+	assert_same(s.vmcallv("test_many_arguments2", 1, 2, 3, 4, 5, 6, 7, "8"), 36)
+
 	s.queue_free()
 
 func execute_vmcallv_comparison(s : Sandbox, vmfunc : String):

@@ -416,3 +416,13 @@ extern "C" Variant test_property_proxy() {
 	}
 	return node.get_name();
 }
+
+// This tests the higher limit for boxed arguments with up to 16 arguments
+// We will pass in 10 integers and 6 strings, which we add up and return
+extern "C" Variant test_many_arguments(Variant a1, Variant a2, Variant a3, Variant a4, Variant a5, Variant a6, Variant a7, Variant a8, Variant a9, Variant a10, Variant a11, Variant a12, Variant a13, Variant a14, Variant a15, Variant a16) {
+	return int(a1) + int(a2) + int(a3) + int(a4) + int(a5) + int(a6) + int(a7) + int(a8) + int(a9) + int(a10) + a11.as_string().to_int() + a12.as_string().to_int() + a13.as_string().to_int() + a14.as_string().to_int() + a15.as_string().to_int() + a16.as_string().to_int();
+}
+
+extern "C" Variant test_many_arguments2(Variant a1, Variant a2, Variant a3, Variant a4, Variant a5, Variant a6, Variant a7, Variant a8) {
+	return int(a1) + int(a2) + int(a3) + int(a4) + int(a5) + int(a6) + int(a7) + a8.as_string().to_int();
+}
