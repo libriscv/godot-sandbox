@@ -303,6 +303,12 @@ func test_vmcallv():
 	assert_eq(s.has_function("test_many_arguments2"), true)
 	assert_same(s.vmcallv("test_many_arguments2", 1, 2, 3, 4, 5, 6, 7, "8"), 36)
 
+	assert_eq(s.has_function("test_many_unboxed_arguments"), true)
+	assert_same(s.vmcall("test_many_unboxed_arguments", 1, 2, 3, 4, 5, 6, 7, 8.0, 9.0, 10.0, 11.0), 66)
+
+	assert_eq(s.has_function("test_many_unboxed_arguments2"), true)
+	assert_same(s.vmcall("test_many_unboxed_arguments2", 1, 2, 3, 4, 5, 6, 7, Vector2(8.0, 9.0), Vector2(10.0, 11.0), Vector2(12.0, 13.0), Vector2(14.0, 15.0)), 120)
+
 	s.queue_free()
 
 func execute_vmcallv_comparison(s : Sandbox, vmfunc : String):

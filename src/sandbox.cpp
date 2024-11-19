@@ -574,6 +574,10 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 			}
 		}
 	}
+
+	if (UNLIKELY(index > 18 || flindex > 18)) {
+		throw std::runtime_error("Sandbox: Too many arguments for VM function call (register overflow)");
+	}
 }
 GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int argc) {
 	if (this->m_use_unboxed_arguments) {
@@ -587,7 +591,7 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 		// Set up first argument (return value, also a Variant)
 		m_machine->cpu.reg(10) = arrayDataPtr;
 
-		if (argc > 7)
+		if (argc > 11)
 			throw std::runtime_error("Sandbox: Too many arguments for VM function call");
 		setup_arguments_native(arrayDataPtr, v, args, argc);
 		// A0 is the return value (Variant) of the function

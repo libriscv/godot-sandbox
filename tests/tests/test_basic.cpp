@@ -430,3 +430,11 @@ extern "C" Variant test_many_arguments(Variant a1, Variant a2, Variant a3, Varia
 extern "C" Variant test_many_arguments2(Variant a1, Variant a2, Variant a3, Variant a4, Variant a5, Variant a6, Variant a7, Variant a8) {
 	return int(a1) + int(a2) + int(a3) + int(a4) + int(a5) + int(a6) + int(a7) + a8.as_string().to_int();
 }
+
+extern "C" Variant test_many_unboxed_arguments(int a1, int a2, int a3, int a4, int a5, int a6, int a7, double f1, double f2, double f3, double f4) {
+	return int(a1) + int(a2) + int(a3) + int(a4) + int(a5) + int(a6) + int(a7) + int(f1) + int(f2) + int(f3) + int(f4);
+}
+
+extern "C" Variant test_many_unboxed_arguments2(int a1, int a2, int a3, int a4, int a5, int a6, int a7, Vector2 v1, Vector2 v2, Vector2 v3, Vector2 v4) {
+	return int(a1) + int(a2) + int(a3) + int(a4) + int(a5) + int(a6) + int(a7) + int(v1.x) + int(v1.y) + int(v2.x) + int(v2.y) + int(v3.x) + int(v3.y) + int(v4.x) + int(v4.y);
+}
