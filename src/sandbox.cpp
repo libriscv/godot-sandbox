@@ -123,6 +123,15 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_heap_usage"), &Sandbox::get_heap_usage);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_heap_usage", PROPERTY_HINT_NONE, "Current memory arena usage", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY), "", "get_heap_usage");
 
+	ClassDB::bind_method(D_METHOD("get_heap_chunk_count"), &Sandbox::get_heap_chunk_count);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_heap_chunk_count", PROPERTY_HINT_NONE, "Number of memory chunks allocated", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY), "", "get_heap_chunk_count");
+
+	ClassDB::bind_method(D_METHOD("get_heap_allocation_counter"), &Sandbox::get_heap_allocation_counter);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_heap_allocation_counter", PROPERTY_HINT_NONE, "Number of heap allocations", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY), "", "get_heap_allocation_counter");
+
+	ClassDB::bind_method(D_METHOD("get_heap_deallocation_counter"), &Sandbox::get_heap_deallocation_counter);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_heap_deallocation_counter", PROPERTY_HINT_NONE, "Number of heap deallocations", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY), "", "get_heap_deallocation_counter");
+
 	ClassDB::bind_method(D_METHOD("get_exceptions"), &Sandbox::get_exceptions);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_exceptions", PROPERTY_HINT_NONE, "Number of exceptions thrown", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY), "", "get_exceptions");
 
@@ -167,6 +176,9 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 	// Add the group name to the property name to group them in the editor.
 	list.push_back(PropertyInfo(Variant::NIL, "Monitoring", PROPERTY_HINT_NONE, "monitor_", PROPERTY_USAGE_GROUP));
 	list.push_back(PropertyInfo(Variant::INT, "monitor_heap_usage", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
+	list.push_back(PropertyInfo(Variant::INT, "monitor_heap_chunk_count", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
+	list.push_back(PropertyInfo(Variant::INT, "monitor_heap_allocation_counter", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
+	list.push_back(PropertyInfo(Variant::INT, "monitor_heap_deallocation_counter", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
 	list.push_back(PropertyInfo(Variant::INT, "monitor_exceptions", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
 	list.push_back(PropertyInfo(Variant::INT, "monitor_execution_timeouts", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
 	list.push_back(PropertyInfo(Variant::INT, "monitor_calls_made", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
@@ -832,13 +844,6 @@ bool Sandbox::has_function(const StringName &p_function) const {
 	return address != 0x0;
 }
 
-int64_t Sandbox::get_heap_usage() const {
-	if (machine().has_arena()) {
-		return machine().arena().bytes_used();
-	}
-	return 0;
-}
-
 //-- Scoped objects and variants --//
 
 unsigned Sandbox::add_scoped_variant(const Variant *value) const {
@@ -1112,6 +1117,15 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	} else if (name == StringName("monitor_heap_usage")) {
 		r_ret = get_heap_usage();
 		return true;
+	} else if (name == StringName("monitor_heap_chunk_count")) {
+		r_ret = get_heap_chunk_count();
+		return true;
+	} else if (name == StringName("monitor_heap_allocation_counter")) {
+		r_ret = get_heap_allocation_counter();
+		return true;
+	} else if (name == StringName("monitor_heap_deallocation_counter")) {
+		r_ret = get_heap_deallocation_counter();
+		return true;
 	} else if (name == StringName("monitor_exceptions")) {
 		r_ret = get_exceptions();
 		return true;
@@ -1244,6 +1258,34 @@ void Sandbox::set_allocations_max(int64_t max) {
 	if (machine().has_arena()) {
 		machine().arena().set_max_chunks(max);
 	}
+}
+
+int64_t Sandbox::get_heap_usage() const {
+	if (machine().has_arena()) {
+		return machine().arena().bytes_used();
+	}
+	return 0;
+}
+
+int64_t Sandbox::get_heap_chunk_count() const {
+	if (machine().has_arena()) {
+		return machine().arena().chunks_used();
+	}
+	return 0;
+}
+
+int64_t Sandbox::get_heap_allocation_counter() const {
+	if (machine().has_arena()) {
+		return machine().arena().allocation_counter();
+	}
+	return 0;
+}
+
+int64_t Sandbox::get_heap_deallocation_counter() const {
+	if (machine().has_arena()) {
+		return machine().arena().deallocation_counter();
+	}
+	return 0;
 }
 
 String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool automatic_nbit_as) const {

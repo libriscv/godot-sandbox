@@ -137,8 +137,10 @@ public:
 	int64_t get_instructions_max() const { return m_insn_max; }
 	void set_allocations_max(int64_t max);
 	int64_t get_allocations_max() const { return m_allocations_max; }
-	void set_heap_usage(int64_t) {} // Do nothing (it's a read-only property)
 	int64_t get_heap_usage() const;
+	int64_t get_heap_chunk_count() const;
+	int64_t get_heap_allocation_counter() const;
+	int64_t get_heap_deallocation_counter() const;
 	void set_exceptions(unsigned exceptions) {} // Do nothing (it's a read-only property)
 	unsigned get_exceptions() const { return m_exceptions; }
 	void set_timeouts(unsigned budget) {} // Do nothing (it's a read-only property)
