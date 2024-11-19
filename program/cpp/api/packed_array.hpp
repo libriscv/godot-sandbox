@@ -38,6 +38,14 @@ struct PackedArray {
 	/// @param size The size of the data in elements.
 	PackedArray(const T *data, size_t size);
 
+	/// @brief Retrieve the size of the host-side array.
+	/// @return size_t The size of the host-side array.
+	size_t size() const { return const_cast<PackedArray*>(this)->operator ()("size"); }
+
+	/// @brief Check if the host-side array is empty.
+	/// @return bool True if the host-side array is empty, false otherwise.
+	bool is_empty() const { return this->size() == 0; }
+
 	/// @brief Retrieve the host-side array data.
 	/// @return std::vector<T> The host-side array data.
 	std::vector<T> fetch() const;

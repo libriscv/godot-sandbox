@@ -177,8 +177,12 @@ extern "C" Variant test_array_assign(Array arr) {
 	Array arr2 = Array::Create();
 	arr2.push_back(PackedArray<double> ({ 1.0, 2.0, 3.0 }));
 	arr.push_back(arr2);
+	arr[3] = arr2;
 
 	PackedArray<double> pa = arr[2];
+	if (pa.size() != 2 || pa.is_empty()) {
+		return "Fail";
+	}
 	std::vector<double> vec = pa.fetch();
 	if (vec[0] != 3.14 || vec[1] != 2.71 || vec.size() != 2) {
 		return "Fail";
@@ -192,7 +196,7 @@ extern "C" Variant test_dict(Dictionary arg) {
 }
 
 extern "C" Variant test_sub_dictionary(Dictionary dict) {
-	return Dictionary(dict)["1"];
+	return Dictionary(dict["1"].value());
 }
 
 extern "C" Variant test_rid(RID rid) {
