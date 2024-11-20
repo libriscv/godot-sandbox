@@ -1,5 +1,7 @@
 #include "sandbox.h"
 
+#include <godot_cpp/classes/file_access.hpp>
+
 #if defined(__linux__)
 # include <dlfcn.h>
 #elif defined(__MINGW32__) || defined(__MINGW64__) || defined(_MSC_VER)
@@ -70,9 +72,16 @@ bool Sandbox::load_binary_translation(const String &shared_library_path) {
 #ifdef RISCV_BINARY_TRANSLATION
 	// Load the shared library on platforms that support it
 #  if defined(__linux__) || defined(YEP_IS_WINDOWS) || defined(YEP_IS_OSX)
-	void *handle = dlopen(shared_library_path.utf8().ptr(), RTLD_LAZY);
+	Ref<FileAccess> fa = FileAccess::open(shared_library_path, FileAccess::ModeFlags::READ);
+	if (!fa->is_open()) {
+		//ERR_PRINT("Sandbox: Failed to open shared library: " + shared_library_path);
+		return false;
+	}
+	String path = fa->get_path_absolute();
+	fa->close();
+	void *handle = dlopen(path.utf8().ptr(), RTLD_LAZY);
 	if (handle == nullptr) {
-		//ERR_PRINT("Sandbox: Failed to load shared library: " + shared_library_path);
+		ERR_PRINT("Sandbox: Failed to load shared library: " + shared_library_path);
 		return false;
 	}
 	// If the shared library has a callback-based registration function, call it
