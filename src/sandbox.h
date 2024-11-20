@@ -456,6 +456,12 @@ public:
 	/// @warning Do *NOT* enable automatic_nbit_as unless you are sure the program is compatible with it.
 	String emit_binary_translation(bool ignore_instruction_limit = false, bool automatic_nbit_as = false) const;
 
+	/// @brief Open a shared library, which should self-register its functions.
+	/// @param shared_library_path The path to the shared library.
+	/// @note This is not a general-purpose function for loading shared libraries. It is only a
+	/// convenience helper function for loading shared libraries that self-register their functions.
+	static bool load_binary_translation(const String &shared_library_path);
+
 	/// @brief  Check if the program has found and loaded binary translation.
 	/// @return True if binary translation is loaded, false otherwise.
 	bool is_binary_translated() const;

@@ -80,6 +80,7 @@ void Sandbox::_bind_methods() {
 
 	// Binary translation.
 	ClassDB::bind_method(D_METHOD("emit_binary_translation", "ignore_instruction_limit", "automatic_nbit_address_space"), &Sandbox::emit_binary_translation, DEFVAL(false), DEFVAL(false));
+	ClassDB::bind_static_method("Sandbox", D_METHOD("load_binary_translation", "shared_library_path"), &Sandbox::load_binary_translation);
 	ClassDB::bind_method(D_METHOD("is_binary_translated"), &Sandbox::is_binary_translated);
 
 	// Properties.
@@ -1290,48 +1291,6 @@ int64_t Sandbox::get_heap_deallocation_counter() const {
 		return machine().arena().deallocation_counter();
 	}
 	return 0;
-}
-
-String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool automatic_nbit_as) const {
-	const std::string_view &binary = machine().memory.binary();
-	if (binary.empty()) {
-		ERR_PRINT("Sandbox: No binary loaded.");
-		return String();
-	}
-#ifdef RISCV_BINARY_TRANSLATION
-	// 1. Re-create the same options
-	auto options = std::make_shared<riscv::MachineOptions<RISCV_ARCH>>(machine().options());
-	options->use_shared_execute_segments = false;
-	options->translate_enabled = false;
-	options->translate_enable_embedded = true;
-	options->translate_invoke_compiler = false;
-	options->translate_ignore_instruction_limit = ignore_instruction_limit;
-	options->translate_automatic_nbit_address_space = automatic_nbit_as;
-
-	// 2. Enable binary translation output to a string
-	std::string code_output;
-	options->cross_compile.push_back(riscv::MachineTranslationEmbeddableCodeOptions{
-			.result_c99 = &code_output,
-	});
-
-	// 3. Emit the binary translation by constructing a new machine
-	machine_t m{ binary, *options };
-
-	// 4. Verify that the translation was successful
-	if (code_output.empty()) {
-		ERR_PRINT("Sandbox: Binary translation failed.");
-		return String();
-	}
-	// 5. Return the translated code
-	return String::utf8(code_output.c_str(), code_output.size());
-#else
-	ERR_PRINT("Sandbox: Binary translation is not enabled.");
-	return String();
-#endif
-}
-
-bool Sandbox::is_binary_translated() const {
-	return this->m_machine->is_binary_translation_enabled();
 }
 
 void Sandbox::print(const Variant &v) {

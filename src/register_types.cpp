@@ -104,9 +104,6 @@ static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 }
 
 extern "C" {
-void riscv_test() {
-	ERR_PRINT("test123");
-}
 // Initialization.
 GDExtensionBool GDE_EXPORT riscv_library_init(GDExtensionInterfaceGetProcAddress p_get_proc_address, GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization) {
 	godot::GDExtensionBinding::InitObject init_obj(p_get_proc_address, p_library, r_initialization);
