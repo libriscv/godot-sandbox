@@ -1,7 +1,19 @@
 #include "sandbox.h"
 
-#ifdef  __linux__
+#if defined(__linux__)
 #include <dlfcn.h>
+#elif defined(__MINGW32__) || defined(__MINGW64__) || defined(_MSC_VER)
+# define YEP_IS_WINDOWS 1
+# include <libriscv/win32/dlfcn.h>
+# ifdef _MSC_VER
+#  define access _access
+#  define unlink _unlink
+extern "C" int access(const char* path, int mode);
+extern "C" int unlink(const char* path);
+#  define R_OK   4       /* Test for read permission.  */
+# else // _MSC_VER
+#  include <unistd.h>
+# endif
 #endif
 extern "C" void libriscv_register_translation8(...);
 
@@ -46,8 +58,8 @@ String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool auto
 bool Sandbox::load_binary_translation(const String &shared_library_path) {
 #ifdef RISCV_BINARY_TRANSLATION
 	// Load the shared library on platforms that support it
-#  ifdef __linux__
-	void *handle = dlopen(shared_library_path.utf8().ptr(), RTLD_LAZY|RTLD_GLOBAL);
+#  if defined(__linux__) || defined(YEP_IS_WINDOWS)
+	void *handle = dlopen(shared_library_path.utf8().ptr(), RTLD_LAZY);
 	if (handle == nullptr) {
 		ERR_PRINT("Sandbox: Failed to load shared library: " + shared_library_path);
 		return false;
