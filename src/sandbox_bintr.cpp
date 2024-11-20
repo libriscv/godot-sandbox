@@ -72,8 +72,14 @@ bool Sandbox::load_binary_translation(const String &shared_library_path) {
 #  if defined(__linux__) || defined(YEP_IS_WINDOWS) || defined(YEP_IS_OSX)
 	void *handle = dlopen(shared_library_path.utf8().ptr(), RTLD_LAZY);
 	if (handle == nullptr) {
-		ERR_PRINT("Sandbox: Failed to load shared library: " + shared_library_path);
+		//ERR_PRINT("Sandbox: Failed to load shared library: " + shared_library_path);
 		return false;
+	}
+	// If the shared library has a callback-based registration function, call it
+	void *register_translation = dlsym(handle, "libriscv_init_with_callback8");
+	if (register_translation != nullptr) {
+		using CallbackFunction = void (*)(void(*)(...));
+		((CallbackFunction)register_translation)(libriscv_register_translation8);
 	}
 #  else
 	ERR_PRINT("Sandbox: Loading shared libraries has not been implemented on this platform.");
