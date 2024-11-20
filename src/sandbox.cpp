@@ -221,7 +221,8 @@ Sandbox::Sandbox() {
 	}
 	this->constructor_initialize();
 	this->m_tree_base = this;
-	this->m_global_instance_count += 1;
+	this->m_global_instances_current += 1;
+	this->m_global_instances_seen += 1;
 	// In order to reduce checks we guarantee that this
 	// class is well-formed at all times.
 	this->reset_machine();
@@ -237,7 +238,7 @@ Sandbox::~Sandbox() {
 	if (this->is_in_vmcall()) {
 		ERR_PRINT("Sandbox instance destroyed while a VM call is in progress.");
 	}
-	this->m_global_instance_count -= 1;
+	this->m_global_instances_current -= 1;
 	this->set_program_data_internal(nullptr);
 	try {
 		if (this->m_machine != dummy_machine)

@@ -62,6 +62,11 @@ String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool auto
 }
 
 bool Sandbox::load_binary_translation(const String &shared_library_path) {
+	if (m_global_instances_seen > 0) {
+		ERR_PRINT("Sandbox: Loading shared libraries after Sandbox instances have been created is a security risk."
+			"Please load shared libraries before creating any Sandbox instances.");
+		return false;
+	}
 #ifdef RISCV_BINARY_TRANSLATION
 	// Load the shared library on platforms that support it
 #  if defined(__linux__) || defined(YEP_IS_WINDOWS) || defined(YEP_IS_OSX)
