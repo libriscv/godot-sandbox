@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use std::arch::asm;
+use std::fmt;
 
 #[repr(C)]
 pub enum VariantType {
@@ -292,6 +293,33 @@ impl Variant
 		}
 	}
 
+	pub fn to_string(&self) -> String
+	{
+		const SYSCALL_STRING_OPS: i64 = 526;
+		const STRING_OP_TO_STD_STRING: i64 = 7;
+
+		match self.t {
+			VariantType::String => {
+				let s = unsafe {
+					let mut std_string = GuestStdString::new_empty();
+					// sys_string_ops(String_Op::TO_STD_STRING, m_idx, 0, (Variant *)&str);
+					asm!("ecall",
+						in("a0") STRING_OP_TO_STD_STRING,
+						in("a1") self.u.i, // m_idx
+						in("a2") 0,  // utf-8
+						inout("a3") &mut std_string => _, // std::string
+						in("a7") 526, // SYSCALL_STRING_OPS
+						lateout("a0") _,
+						options(nostack));
+					let s = std::string::String::from_raw_parts(std_string.ptr as *mut u8, std_string.len, std_string.len);
+					s
+				};
+				return s
+			},
+			_ => panic!("Variant is not a String"),
+		}
+	}
+
 	pub fn internal_create_string(t: VariantType, s: &str) -> Variant
 	{
 		const SYSCALL_VCREATE: i64 = 517;
@@ -394,7 +422,83 @@ impl GuestStdString
 		let v = GuestStdString { ptr: s.as_ptr() as *const char, len: s.len(), cap_or_sso: CapacityOrSSO { cap: s.len() } };
 		v
 	}
+
+	pub fn new_empty() -> GuestStdString
+	{
+		let v = GuestStdString { ptr: std::ptr::null(), len: 0, cap_or_sso: CapacityOrSSO { cap: 0 } };
+		return v;
+	}
+
+	pub fn as_str(&self) -> &str
+	{
+		unsafe {
+			let s = std::str::from_utf8_unchecked(std::slice::from_raw_parts(self.ptr as *const u8, self.len));
+			return s;
+		}
+	}
+
+	pub fn as_string(&self) -> String
+	{
+		unsafe {
+			let s = std::string::String::from_raw_parts(self.ptr as *mut u8, self.len, self.len);
+			return s;
+		}
+	}
 }
+
+impl fmt::Display for Variant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self.t {
+			VariantType::Bool => {
+        		write!(f, "{}", self.to_bool())
+			},
+			VariantType::Integer => {
+				write!(f, "{}", self.to_integer())
+			},
+			VariantType::Float => {
+				write!(f, "{}", self.to_float())
+			},
+			VariantType::Vector2 => {
+				let v = self.to_vec2();
+				write!(f, "({}, {})", v.x, v.y)
+			},
+			VariantType::Vector2i => {
+				let v = self.to_vec2i();
+				write!(f, "({}, {})", v.x, v.y)
+			},
+			VariantType::Vector3 => {
+				let v = self.to_vec3();
+				write!(f, "({}, {}, {})", v.x, v.y, v.z)
+			},
+			VariantType::Vector3i => {
+				let v = self.to_vec3i();
+				write!(f, "({}, {}, {})", v.x, v.y, v.z)
+			},
+			VariantType::Rect2 => {
+				let r = self.to_rect2();
+				write!(f, "({}, {},  {} {})", r.position.x, r.position.y, r.size.x, r.size.y)
+			},
+			VariantType::Rect2i => {
+				let r = self.to_rect2i();
+				write!(f, "({}, {},  {} {})", r.position.x, r.position.y, r.size.x, r.size.y)
+			},
+			VariantType::Vector4 => {
+				let v = self.to_vec4();
+				write!(f, "({}, {}, {}, {})", v.x, v.y, v.z, v.w)
+			},
+			VariantType::Vector4i => {
+				let v = self.to_vec4i();
+				write!(f, "({}, {}, {}, {})", v.x, v.y, v.z, v.w)
+			},
+			VariantType::String => {
+				write!(f, "{}", self.to_string())
+			},
+			_ => {
+				write!(f, "Unknown")
+			},
+		} // match
+    } // fn
+} // impl
 
 const SYSCALL_PRINT: i64 = 500;
 const SYSCALL_THROW: i64 = 511;
