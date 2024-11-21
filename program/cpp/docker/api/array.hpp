@@ -32,6 +32,7 @@ struct Array {
 	// Array access
 	ArrayProxy operator[](int idx) const;
 	Variant at(int idx) const;
+	Variant at_or(int idx, const Variant &default_value) const;
 	Variant front() const;
 	Variant back() const;
 	bool has(const Variant &value) const;
@@ -113,6 +114,10 @@ inline Variant::operator Array() const {
 	return as_array();
 }
 
+inline Variant Array::at_or(int idx, const Variant &default_value) const {
+	return (idx >= 0 && idx < size()) ? at(idx) : default_value;
+}
+
 
 struct ArrayProxy {
 	ArrayProxy(const Array &array, int idx)
@@ -135,10 +140,11 @@ struct ArrayProxy {
 	bool operator <(const Variant &value) const { return get() < value; }
 
 	Variant get() const;
+	Variant get_or(const Variant &default_value) const { return (m_idx >= 0 && m_idx < m_array.size()) ? get() : default_value; }
 
 private:
 	Array m_array;
-	int m_idx;
+	const int m_idx;
 };
 
 inline ArrayProxy Array::operator[](int idx) const {

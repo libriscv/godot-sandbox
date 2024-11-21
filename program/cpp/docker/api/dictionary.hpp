@@ -75,6 +75,7 @@ struct DictAccessor {
 	operator Variant() const { return dict().get(m_key); }
 	Variant operator *() const { return dict().get(m_key); }
 	Variant value() const { return dict().get(m_key); }
+	Variant value_or(const Variant &def) const { return dict().get_or_add(m_key, def); }
 
 	void operator=(const Variant &value) { dict().set(m_key, value); }
 
