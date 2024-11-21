@@ -106,6 +106,55 @@ pub fn __wrap_memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32
 }
 
 #[no_mangle]
+pub fn __wrap_strlen(s: *const u8) -> usize
+{
+	let result: usize;
+	unsafe {
+		asm!("ecall",
+			in("a0") s,
+			in("a7") 490,
+			lateout("a0") result,
+			options(nostack, readonly)
+		);
+	}
+	return result;
+}
+
+#[no_mangle]
+pub fn __wrap_strcmp(s1: *const u8, s2: *const u8) -> i32
+{
+	let result: i32;
+	unsafe {
+		asm!("ecall",
+			in("a0") s1,
+			in("a1") s2,
+			in("a2") 4096, // MAX_STRLEN
+			in("a7") 491,
+			lateout("a0") result,
+			options(nostack, readonly)
+		);
+	}
+	return result;
+}
+
+#[no_mangle]
+pub fn __wrap_strncmp(s1: *const u8, s2: *const u8, n: usize) -> i32
+{
+	let result: i32;
+	unsafe {
+		asm!("ecall",
+			in("a0") s1,
+			in("a1") s2,
+			in("a2") n,
+			in("a7") 491,
+			lateout("a0") result,
+			options(nostack, readonly)
+		);
+	}
+	return result;
+}
+
+#[no_mangle]
 pub fn fast_exit() -> ! {
 	unsafe {
 		asm!("ecall",

@@ -38,6 +38,6 @@ jobs:
         with:
           platforms: linux/amd64,linux/arm64
           registry: ${{ env.REGISTRY }}
-          context: program/${{ matrix.compiler }}
+          context: program/${{ matrix.compiler }}/docker
           push: true
           tags: ghcr.io/libriscv/${{ matrix.compiler }}_compiler:latest
