@@ -1323,8 +1323,13 @@ APICALL(api_throw) {
 	if (vaddr != 0) {
 		GuestVariant *var = machine.memory.memarray<GuestVariant>(vaddr, 1);
 		String error_string = "Sandbox exception of type " + String::utf8(type.data(), type.size()) + ": " + String::utf8(msg.data(), msg.size()) + " for Variant of type " + itos(var->type);
+		if (var->type >= 0 && var->type < Variant::VARIANT_MAX) {
+			const char *type_hint = GuestVariant::type_name(var->type);
+			error_string += " (" + String::utf8(type_hint) + ")";
+		}
 		ERR_PRINT(error_string);
-		throw std::runtime_error("Sandbox exception of type " + std::string(type) + ": " + std::string(msg) + " for Variant of type " + std::to_string(var->type));
+		const std::string cpp_error = error_string.utf8().ptr();
+		throw std::runtime_error(cpp_error);
 	} else {
 		String error_string = "Sandbox exception in " + String::utf8(type.data(), type.size()) + ": " + String::utf8(msg.data(), msg.size());
 		ERR_PRINT(error_string);
