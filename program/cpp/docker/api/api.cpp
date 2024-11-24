@@ -6,7 +6,7 @@
 
 /* void sys_print(const Variant *, size_t) */
 MAKE_SYSCALL(ECALL_PRINT, void, sys_print, const Variant *, size_t);
-MAKE_SYSCALL(ECALL_THROW, void, sys_throw, const char *, size_t, const char *, size_t, const Variant *);
+MAKE_SYSCALL(ECALL_THROW, void, sys_throw, const char *, size_t, const char *, size_t, ...);
 EXTERN_SYSCALL(uint64_t, sys_node_create, Node_Create_Shortlist, const char *, size_t, const char *, size_t);
 MAKE_SYSCALL(ECALL_LOAD, void, sys_load, const char *, size_t, Variant *);
 

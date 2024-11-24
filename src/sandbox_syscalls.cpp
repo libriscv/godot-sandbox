@@ -1316,7 +1316,7 @@ APICALL(api_node3d) {
 }
 
 APICALL(api_throw) {
-	auto [type, msg, vaddr] = machine.sysargs<std::string_view, std::string_view, gaddr_t>();
+	auto [type, msg, vaddr, vfunc] = machine.sysargs<std::string_view, std::string_view, gaddr_t, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
 	SYS_TRACE("throw", String::utf8(type.data(), type.size()), String::utf8(msg.data(), msg.size()), vaddr);
 
@@ -1327,13 +1327,19 @@ APICALL(api_throw) {
 			const char *type_hint = GuestVariant::type_name(var->type);
 			error_string += " (" + String::utf8(type_hint) + ")";
 		}
+		if (vfunc != 0x0) {
+			error_string += " in function " + String::utf8(machine.memory.memstring(vfunc).c_str());
+		}
 		ERR_PRINT(error_string);
 		const std::string cpp_error = error_string.utf8().ptr();
 		throw std::runtime_error(cpp_error);
 	} else {
 		String error_string = "Sandbox exception in " + String::utf8(type.data(), type.size()) + ": " + String::utf8(msg.data(), msg.size());
+		if (vfunc != 0x0) {
+			error_string += " in function " + String::utf8(machine.memory.memstring(vfunc).c_str());
+		}
 		ERR_PRINT(error_string);
-		throw std::runtime_error("Sandbox exception in " + std::string(type) + ": " + std::string(msg));
+		throw std::runtime_error(error_string.utf8().ptr());
 	}
 }
 

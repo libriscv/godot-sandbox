@@ -471,7 +471,7 @@ inline Variant::Variant(const PackedArray<std::string> &array)
 template <typename T>
 inline PackedArray<T>::PackedArray(const Variant& v) {
 	if (v.get_type() < Variant::PACKED_BYTE_ARRAY || v.get_type() > Variant::PACKED_VECTOR4_ARRAY) {
-		api_throw("std::bad_cast", "Failed to cast Variant to PackedArray", &v);
+		API_THROW("std::bad_cast", "Failed to cast Variant to PackedArray", &v);
 	}
 	m_idx = v.get_internal_index();
 }
@@ -491,63 +491,63 @@ inline Variant::operator bool() const
 {
 	if (m_type == BOOL || m_type == INT)
 		return v.b;
-	api_throw("std::bad_cast", "Failed to cast Variant to bool", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to bool", this);
 }
 
 inline Variant::operator int64_t() const
 {
 	if (m_type == INT || m_type == FLOAT)
 		return v.i;
-	api_throw("std::bad_cast", "Failed to cast Variant to int64", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to int64", this);
 }
 
 inline Variant::operator int32_t() const
 {
 	if (m_type == INT || m_type == FLOAT)
 		return static_cast<int32_t>(v.i);
-	api_throw("std::bad_cast", "Failed to cast Variant to int32", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to int32", this);
 }
 
 inline Variant::operator int16_t() const
 {
 	if (m_type == INT || m_type == FLOAT)
 		return static_cast<int16_t>(v.i);
-	api_throw("std::bad_cast", "Failed to cast Variant to int16", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to int16", this);
 }
 
 inline Variant::operator int8_t() const
 {
 	if (m_type == INT || m_type == FLOAT)
 		return static_cast<int8_t>(v.i);
-	api_throw("std::bad_cast", "Failed to cast Variant to int8", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to int8", this);
 }
 
 inline Variant::operator uint64_t() const
 {
 	if (m_type == INT || m_type == FLOAT || m_type == OBJECT)
 		return static_cast<uint64_t>(v.i);
-	api_throw("std::bad_cast", "Failed to cast Variant to uint64", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to uint64", this);
 }
 
 inline Variant::operator uint32_t() const
 {
 	if (m_type == INT || m_type == FLOAT)
 		return static_cast<uint32_t>(v.i);
-	api_throw("std::bad_cast", "Failed to cast Variant to uint32", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to uint32", this);
 }
 
 inline Variant::operator uint16_t() const
 {
 	if (m_type == INT || m_type == FLOAT)
 		return static_cast<uint16_t>(v.i);
-	api_throw("std::bad_cast", "Failed to cast Variant to uint16", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to uint16", this);
 }
 
 inline Variant::operator uint8_t() const
 {
 	if (m_type == INT || m_type == FLOAT)
 		return static_cast<uint8_t>(v.i);
-	api_throw("std::bad_cast", "Failed to cast Variant to uint8", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to uint8", this);
 }
 
 inline Variant::operator double() const
@@ -556,7 +556,7 @@ inline Variant::operator double() const
 		return v.f;
 	if (m_type == INT)
 		return static_cast<double>(v.i);
-	api_throw("std::bad_cast", "Failed to cast Variant to double", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to double", this);
 }
 
 inline Variant::operator float() const
@@ -565,21 +565,21 @@ inline Variant::operator float() const
 		return static_cast<float>(v.f);
 	if (m_type == INT)
 		return static_cast<float>(v.i);
-	api_throw("std::bad_cast", "Failed to cast Variant to float", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to float", this);
 }
 
 inline Variant::operator std::string() const
 {
 	if (m_type == STRING || m_type == STRING_NAME || m_type == NODE_PATH || m_type == PACKED_BYTE_ARRAY)
 		return internal_fetch_string();
-	api_throw("std::bad_cast", "Failed to cast Variant to const std::string&", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to const std::string&", this);
 }
 
 inline Variant::operator std::u32string() const
 {
 	if (m_type == STRING || m_type == STRING_NAME)
 		return internal_fetch_u32string();
-	api_throw("std::bad_cast", "Failed to cast Variant to const std::u32string&", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to const std::u32string&", this);
 }
 
 inline std::string Variant::as_std_string() const {
@@ -594,210 +594,210 @@ inline const Vector2 &Variant::v2() const
 {
 	if (m_type == VECTOR2)
 		return *reinterpret_cast<const Vector2 *>(v.v4);
-	api_throw("std::bad_cast", "Failed to cast Variant to Vector2", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Vector2", this);
 }
 
 inline Vector2 &Variant::v2()
 {
 	if (m_type == VECTOR2)
 		return *reinterpret_cast<Vector2 *>(v.v4);
-	api_throw("std::bad_cast", "Failed to cast Variant to Vector2", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Vector2", this);
 }
 
 inline const Vector2i &Variant::v2i() const
 {
 	if (m_type == VECTOR2I)
 		return *reinterpret_cast<const Vector2i *>(v.v4i);
-	api_throw("std::bad_cast", "Failed to cast Variant to Vector2i", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Vector2i", this);
 }
 
 inline Vector2i &Variant::v2i()
 {
 	if (m_type == VECTOR2I)
 		return *reinterpret_cast<Vector2i *>(v.v4i);
-	api_throw("std::bad_cast", "Failed to cast Variant to Vector2o", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Vector2o", this);
 }
 
 inline const Vector3 &Variant::v3() const
 {
 	if (m_type == VECTOR3)
 		return *reinterpret_cast<const Vector3 *>(v.v4);
-	api_throw("std::bad_cast", "Failed to cast Variant to Vector3", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Vector3", this);
 }
 
 inline Vector3 &Variant::v3()
 {
 	if (m_type == VECTOR3)
 		return *reinterpret_cast<Vector3 *>(v.v4);
-	api_throw("std::bad_cast", "Failed to cast Variant to Vector3", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Vector3", this);
 }
 
 inline const Vector3i &Variant::v3i() const
 {
 	if (m_type == VECTOR3I)
 		return *reinterpret_cast<const Vector3i *>(v.v4i);
-	api_throw("std::bad_cast", "Failed to cast Variant to Vector3i", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Vector3i", this);
 }
 
 inline Vector3i &Variant::v3i()
 {
 	if (m_type == VECTOR3I)
 		return *reinterpret_cast<Vector3i *>(v.v4i);
-	api_throw("std::bad_cast", "Failed to cast Variant to Vector3i", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Vector3i", this);
 }
 
 inline const Vector4 &Variant::v4() const
 {
 	if (m_type == VECTOR4)
 		return *reinterpret_cast<const Vector4 *>(v.v4);
-	api_throw("std::bad_cast", "Failed to cast Variant to Vector4", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Vector4", this);
 }
 
 inline Vector4 &Variant::v4()
 {
 	if (m_type == VECTOR4)
 		return *reinterpret_cast<Vector4 *>(v.v4);
-	api_throw("std::bad_cast", "Failed to cast Variant to Vector4", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Vector4", this);
 }
 
 inline const Vector4i &Variant::v4i() const
 {
 	if (m_type == VECTOR4I)
 		return *reinterpret_cast<const Vector4i *>(v.v4i);
-	api_throw("std::bad_cast", "Failed to cast Variant to Vector4i", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Vector4i", this);
 }
 
 inline Vector4i &Variant::v4i()
 {
 	if (m_type == VECTOR4I)
 		return *reinterpret_cast<Vector4i *>(v.v4i);
-	api_throw("std::bad_cast", "Failed to cast Variant to Vector4i", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Vector4i", this);
 }
 
 inline const Rect2& Variant::r2() const
 {
 	if (m_type == RECT2)
 		return *reinterpret_cast<const Rect2 *>(v.v4);
-	api_throw("std::bad_cast", "Failed to cast Variant to Rect2", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Rect2", this);
 }
 
 inline Rect2 &Variant::r2()
 {
 	if (m_type == RECT2)
 		return *reinterpret_cast<Rect2 *>(v.v4);
-	api_throw("std::bad_cast", "Failed to cast Variant to Rect2", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Rect2", this);
 }
 
 inline const Rect2i &Variant::r2i() const
 {
 	if (m_type == RECT2I)
 		return *reinterpret_cast<const Rect2i *>(v.v4i);
-	api_throw("std::bad_cast", "Failed to cast Variant to Rect2i", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Rect2i", this);
 }
 
 inline Rect2i &Variant::r2i()
 {
 	if (m_type == RECT2I)
 		return *reinterpret_cast<Rect2i *>(v.v4i);
-	api_throw("std::bad_cast", "Failed to cast Variant to Rect2i", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Rect2i", this);
 }
 
 inline const Color &Variant::color() const
 {
 	if (m_type == COLOR)
 		return *reinterpret_cast<const Color *>(v.v4);
-	api_throw("std::bad_cast", "Failed to cast Variant to Color", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Color", this);
 }
 
 inline Color &Variant::color()
 {
 	if (m_type == COLOR)
 		return *reinterpret_cast<Color *>(v.v4);
-	api_throw("std::bad_cast", "Failed to cast Variant to Color", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Color", this);
 }
 
 inline const Plane &Variant::plane() const
 {
 	if (m_type == PLANE)
 		return reinterpret_cast<const Plane &>(v.v4);
-	api_throw("std::bad_cast", "Failed to cast Variant to Plane", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Plane", this);
 }
 
 inline Plane &Variant::plane()
 {
 	if (m_type == PLANE)
 		return reinterpret_cast<Plane &>(v.v4);
-	api_throw("std::bad_cast", "Failed to cast Variant to Plane", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to Plane", this);
 }
 
 inline PackedArray<uint8_t> Variant::as_byte_array() const {
 	if (m_type == PACKED_BYTE_ARRAY) {
 		return PackedArray<uint8_t>::from_index(v.i);
 	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedByteArray", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to PackedByteArray", this);
 }
 
 inline PackedArray<float> Variant::as_float32_array() const {
 	if (m_type == PACKED_FLOAT32_ARRAY) {
 		return PackedArray<float>::from_index(v.i);
 	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedFloat32Array", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to PackedFloat32Array", this);
 }
 
 inline PackedArray<double> Variant::as_float64_array() const {
 	if (m_type == PACKED_FLOAT64_ARRAY) {
 		return PackedArray<double>::from_index(v.i);
 	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedFloat64Array", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to PackedFloat64Array", this);
 }
 
 inline PackedArray<int32_t> Variant::as_int32_array() const {
 	if (m_type == PACKED_INT32_ARRAY) {
 		return PackedArray<int32_t>::from_index(v.i);
 	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedInt32Array", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to PackedInt32Array", this);
 }
 
 inline PackedArray<int64_t> Variant::as_int64_array() const {
 	if (m_type == PACKED_INT64_ARRAY) {
 		return PackedArray<int64_t>::from_index(v.i);
 	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedInt64Array", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to PackedInt64Array", this);
 }
 
 inline PackedArray<Vector2> Variant::as_vector2_array() const {
 	if (m_type == PACKED_VECTOR2_ARRAY) {
 		return PackedArray<Vector2>::from_index(v.i);
 	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedVector2Array", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to PackedVector2Array", this);
 }
 
 inline PackedArray<Vector3> Variant::as_vector3_array() const {
 	if (m_type == PACKED_VECTOR3_ARRAY) {
 		return PackedArray<Vector3>::from_index(v.i);
 	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedVector3Array", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to PackedVector3Array", this);
 }
 
 inline PackedArray<Vector4> Variant::as_vector4_array() const {
 	if (m_type == PACKED_VECTOR4_ARRAY) {
 		return PackedArray<Vector4>::from_index(v.i);
 	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedVector4Array", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to PackedVector4Array", this);
 }
 
 inline PackedArray<Color> Variant::as_color_array() const {
 	if (m_type == PACKED_COLOR_ARRAY) {
 		return PackedArray<Color>::from_index(v.i);
 	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedColorArray", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to PackedColorArray", this);
 }
 
 inline PackedArray<std::string> Variant::as_string_array() const {
 	if (m_type == PACKED_STRING_ARRAY) {
 		return PackedArray<std::string>::from_index(v.i);
 	}
-	api_throw("std::bad_cast", "Failed to cast Variant to PackedStringArray", this);
+	API_THROW("std::bad_cast", "Failed to cast Variant to PackedStringArray", this);
 }
 
 inline Variant::Variant(const Variant &other)
