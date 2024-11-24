@@ -402,11 +402,16 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		// Run the program through to its main() function
 		if (!this->m_resumable_mode) {
 			if (!this->get_use_precise_simulation()) {
-				m.simulate(get_instructions_max() << 30);
+				if (get_instructions_max() <= 0) {
+					m.cpu.simulate_inaccurate(m.cpu.pc());
+				} else {
+					m.simulate(get_instructions_max() << 20);
+				}
 			} else {
 				// Precise simulation can help discover bugs in the program,
 				// as the exact PC address will be known when an exception occurs.
-				m.set_max_instructions(get_instructions_max() << 30);
+				uint64_t max_instr = get_instructions_max() << 20;
+				m.set_max_instructions(max_instr ? max_instr : ~0ULL);
 				m.cpu.simulate_precise();
 			}
 		}
@@ -746,7 +751,8 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			// set up each argument, and return value
 			retvar = this->setup_arguments(sp, args, argc);
 			// execute preemption! (precise simulation not supported)
-			cpu.preempt_internal(regs, true, address, get_instructions_max() << 20);
+			uint64_t max_instr = get_instructions_max() << 20;
+			cpu.preempt_internal(regs, true, address, max_instr ? max_instr : ~0ULL);
 		}
 
 		// Treat return value as pointer to Variant
