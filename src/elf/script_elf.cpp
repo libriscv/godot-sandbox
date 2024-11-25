@@ -114,14 +114,11 @@ String ELFScript::_get_source_code() const {
 	if (source_code.is_empty()) {
 		return String();
 	}
-	Array functions_array;
-	for (String function : functions) {
-		Dictionary function_dictionary;
-		function_dictionary["name"] = function;
-		function_dictionary["args"] = Array();
-		functions_array.push_back(function_dictionary);
+	if (functions.is_empty()) {
+		return JSON::stringify(function_names, "  ");
+	} else {
+		return JSON::stringify(functions, "  ");
 	}
-	return JSON::stringify(functions_array, "  ");
 }
 void ELFScript::_set_source_code(const String &p_code) {
 }
@@ -137,7 +134,7 @@ String ELFScript::_get_class_icon_path() const {
 	return String("res://addons/godot_sandbox/Sandbox.svg");
 }
 bool ELFScript::_has_method(const StringName &p_method) const {
-	bool result = functions.find(p_method) != -1;
+	bool result = function_names.find(p_method) != -1;
 	if (!result) {
 		if (p_method == StringName("_init"))
 			result = true;
@@ -153,7 +150,7 @@ bool ELFScript::_has_static_method(const StringName &p_method) const {
 }
 Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
 	TypedArray<Dictionary> functions_array;
-	for (String function : functions) {
+	for (String function : function_names) {
 		if (function == p_method) {
 			if constexpr (VERBOSE_ELFSCRIPT) {
 				printf("ELFScript::_get_method_info: method %s\n", p_method.to_ascii_buffer().ptr());
@@ -225,7 +222,7 @@ TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
 void ELFScript::_update_exports() {}
 TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
 	TypedArray<Dictionary> functions_array;
-	for (String function : functions) {
+	for (String function : function_names) {
 		Dictionary method;
 		method["name"] = function;
 		method["args"] = Array();
@@ -290,8 +287,9 @@ void ELFScript::set_file(const String &p_path) {
 
 	global_name = "Sandbox_" + path.get_basename().replace("res://", "").replace("/", "_").replace("-", "_").capitalize().replace(" ", "");
 	Sandbox::BinaryInfo info = Sandbox::get_program_info_from_binary(source_code);
-	info.functions.sort();
-	this->functions = std::move(info.functions);
+	this->function_names = std::move(info.functions);
+	this->functions.clear();
+
 	this->elf_programming_language = info.language;
 	this->elf_api_version = info.version;
 
@@ -301,6 +299,29 @@ void ELFScript::set_file(const String &p_path) {
 	for (Sandbox *sandbox : sandbox_map[path]) {
 		sandbox->set_program(Ref<ELFScript>(this));
 	}
+
+	// Update the instance methods only if functions are still empty
+	if (functions.is_empty()) {
+		for (ELFScriptInstance *instance : this->instances) {
+			instance->update_methods();
+		}
+	}
+}
+
+void ELFScript::set_public_api_functions(Array &&p_functions) {
+	functions = std::move(p_functions);
+
+	if constexpr (VERBOSE_ELFSCRIPT) {
+		printf("ELFScript::set_public_api_functions: %s\n", path.utf8().ptr());
+	}
+
+	// Update the function names
+	function_names.clear();
+	for (int i = 0; i < functions.size(); i++) {
+		Dictionary func = functions[i];
+		function_names.push_back(func["name"]);
+	}
+
 	for (ELFScriptInstance *instance : this->instances) {
 		instance->update_methods();
 	}

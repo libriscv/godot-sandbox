@@ -30,7 +30,10 @@ protected:
 	static inline HashMap<String, HashSet<Sandbox *>> sandbox_map;
 
 public:
-	PackedStringArray functions;
+	Array functions;
+	PackedStringArray function_names;
+
+	void set_public_api_functions(Array &&p_functions);
 	String get_elf_programming_language() const;
 	int get_elf_api_version() const noexcept { return elf_api_version; }
 	int get_source_version() const noexcept { return source_version; }

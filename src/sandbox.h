@@ -381,7 +381,7 @@ public:
 
 	/// @brief Get the public functions available to call in the guest program.
 	/// @return Array of public callable functions.
-	PackedStringArray get_functions() const;
+	Array get_functions() const;
 	struct BinaryInfo {
 		String language;
 		PackedStringArray functions;
@@ -481,6 +481,8 @@ private:
 	void reset_machine();
 	void set_program_data_internal(Ref<ELFScript> program);
 	bool load(const PackedByteArray *vbuf, const std::vector<std::string> *argv = nullptr);
+	static Array get_public_api_functions(const machine_t&);
+	static PackedStringArray get_public_functions(const machine_t&);
 	void read_program_properties(bool editor) const;
 	void handle_exception(gaddr_t);
 	void handle_timeout(gaddr_t);
