@@ -428,7 +428,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		// We can't read them without having loaded the program first
 		// If the functions Array in the ELFScript object is empty, we will look for the API functions
 		if (this->m_program_data->functions.is_empty()) {
-			Array api = this->get_public_api_functions(machine());
+			Array api = this->get_public_api_functions();
 			if (!api.is_empty()) {
 				// Set the public API functions on the ELFScript object
 				this->m_program_data->set_public_api_functions(std::move(api));

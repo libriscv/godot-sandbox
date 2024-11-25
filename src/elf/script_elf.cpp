@@ -149,8 +149,13 @@ bool ELFScript::_has_static_method(const StringName &p_method) const {
 	return false;
 }
 Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
-	TypedArray<Dictionary> functions_array;
-	for (String function : function_names) {
+	for (int i = 0; i < functions.size(); i++) {
+		Dictionary function = functions[i];
+		if (StringName(function.get("name", "")) == p_method) {
+			return function;
+		}
+	}
+	for (const String &function : function_names) {
 		if (function == p_method) {
 			if constexpr (VERBOSE_ELFSCRIPT) {
 				printf("ELFScript::_get_method_info: method %s\n", p_method.to_ascii_buffer().ptr());
@@ -221,6 +226,9 @@ TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
 
 void ELFScript::_update_exports() {}
 TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
+	if (!this->functions.is_empty()) {
+		return this->functions;
+	}
 	TypedArray<Dictionary> functions_array;
 	for (String function : function_names) {
 		Dictionary method;
@@ -229,11 +237,11 @@ TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
 		method["default_args"] = Array();
 		Dictionary type;
 		type["name"] = "type";
-		type["type"] = Variant::Type::BOOL;
+		type["type"] = Variant::Type::NIL;
 		type["class_name"] = "class";
 		type["hint"] = PropertyHint::PROPERTY_HINT_NONE;
 		type["hint_string"] = String();
-		type["usage"] = PROPERTY_USAGE_DEFAULT;
+		type["usage"] = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NIL_IS_VARIANT;
 		method["return"] = type;
 		method["flags"] = METHOD_FLAG_VARARG;
 		functions_array.push_back(method);

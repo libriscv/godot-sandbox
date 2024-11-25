@@ -191,10 +191,10 @@ retry_callp:
 }
 
 GDExtensionMethodInfo create_method_info(const MethodInfo &method_info) {
-	return GDExtensionMethodInfo{
+	 GDExtensionMethodInfo result{
 		.name = stringname_alloc(method_info.name),
 		.return_value = GDExtensionPropertyInfo{
-				.type = GDEXTENSION_VARIANT_TYPE_OBJECT,
+				.type = (GDExtensionVariantType)method_info.return_val.type,
 				.name = stringname_alloc(method_info.return_val.name),
 				.class_name = stringname_alloc(method_info.return_val.class_name),
 				.hint = method_info.return_val.hint,
@@ -207,6 +207,20 @@ GDExtensionMethodInfo create_method_info(const MethodInfo &method_info) {
 		.default_argument_count = 0,
 		.default_arguments = nullptr,
 	};
+	if (!method_info.arguments.empty()) {
+		result.arguments = memnew_arr(GDExtensionPropertyInfo, method_info.arguments.size());
+		for (int i = 0; i < method_info.arguments.size(); i++) {
+			const PropertyInfo &arg = method_info.arguments[i];
+			result.arguments[i] = GDExtensionPropertyInfo{
+					.type = (GDExtensionVariantType)arg.type,
+					.name = stringname_alloc(arg.name),
+					.class_name = stringname_alloc(arg.class_name),
+					.hint = arg.hint,
+					.hint_string = stringname_alloc(arg.hint_string),
+					.usage = arg.usage };
+		}
+	}
+	return result;
 }
 
 void ELFScriptInstance::update_methods() const {
@@ -216,11 +230,20 @@ void ELFScriptInstance::update_methods() const {
 	this->has_updated_methods = true;
 	this->methods_info.clear();
 
-	for (const String &function : script->function_names) {
-		MethodInfo method_info = MethodInfo(
-				Variant::NIL,
-				StringName(function));
-		this->methods_info.push_back(method_info);
+	if (script->functions.is_empty()) {
+		// Fallback: Use the function names from the ELFScript
+		for (const String &function : script->function_names) {
+			MethodInfo method_info(
+					Variant::NIL,
+					StringName(function));
+			this->methods_info.push_back(method_info);
+		}
+	} else {
+		// Create highly specific MethodInfo based on 'functions' Array
+		for (size_t i = 0; i < script->functions.size(); i++) {
+			const Dictionary func = script->functions[i].operator Dictionary();
+			this->methods_info.push_back(MethodInfo::from_dict(func));
+		}
 	}
 }
 
@@ -237,7 +260,7 @@ const GDExtensionMethodInfo *ELFScriptInstance::get_method_list(uint32_t *r_coun
 	const int size = methods_info.size();
 	GDExtensionMethodInfo *list = memnew_arr(GDExtensionMethodInfo, size);
 	int i = 0;
-	for (godot::MethodInfo &method_info : methods_info) {
+	for (const godot::MethodInfo &method_info : methods_info) {
 		list[i] = create_method_info(method_info);
 		i++;
 	}
@@ -352,16 +375,10 @@ bool ELFScriptInstance::has_method(const StringName &p_name) const {
 	if (script.is_null()) {
 		return true;
 	}
-	bool result = false;
-	for (const std::string &function : godot_functions) {
-		if (p_name == StringName(function.c_str())) {
-			result = true;
-			break;
-		}
-	}
+	bool result = script->function_names.has(p_name);
 	if (!result) {
-		for (const String &function : script->function_names) {
-			if (p_name == StringName(function)) {
+		for (const std::string &function : godot_functions) {
+			if (p_name == StringName(function.c_str())) {
 				result = true;
 				break;
 			}
@@ -376,6 +393,12 @@ bool ELFScriptInstance::has_method(const StringName &p_name) const {
 
 void ELFScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list, uint32_t p_count) const {
 	if (p_list) {
+		for (uint32_t i = 0; i < p_count; i++) {
+			const GDExtensionMethodInfo &method_info = p_list[i];
+			if (method_info.arguments) {
+				memdelete_arr(method_info.arguments);
+			}
+		}
 		memdelete_arr(p_list);
 	}
 }
