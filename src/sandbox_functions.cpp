@@ -1313,10 +1313,10 @@ static Variant::Type convert_guest_type_to_variant(const String &type) {
 	return Variant::NIL;
 }
 
-Array Sandbox::get_public_api_functions(const machine_t& machine) {
+Array Sandbox::get_public_api_functions() const {
 	TypedArray<Dictionary> result;
 	try {
-		gaddr_t public_api_addr = machine.address_of("public_api");
+		gaddr_t public_api_addr = machine().address_of("public_api");
 		if (public_api_addr != 0x0) {
 			// Get the public API from this address instead of the symbol table.
 			// It's an array of structs, ending with a null pointer.
@@ -1330,25 +1330,26 @@ Array Sandbox::get_public_api_functions(const machine_t& machine) {
 
 			// View up to 32 public functions, however we will stop at the first null pointer.
 			static constexpr size_t MAX_PAPI = 32;
-			const PublicAPI *api = machine.memory.memarray<PublicAPI>(public_api_addr, MAX_PAPI);
+			const PublicAPI *api = machine().memory.memarray<PublicAPI>(public_api_addr, MAX_PAPI);
 			for (size_t i = 0; i < MAX_PAPI; i++) {
 				const PublicAPI &entry = api[i];
 				if (entry.name == 0x0) {
 					break;
 				}
-				std::string_view name = machine.memory.memstring_view(entry.name);
+				std::string_view name = machine().memory.memstring_view(entry.name);
 				if (name.empty() || name.size() > 64 || entry.address == 0x0) {
 					ERR_PRINT("Sandbox: Invalid public API address.");
 					return result;
 				}
 				Dictionary func;
-				func["name"] = String::utf8(name.begin(), name.size());
+				String godot_name = String::utf8(name.begin(), name.size());
+				func["name"] = godot_name;
 				func["address"] = entry.address;
 				func["flags"] = METHOD_FLAG_NORMAL;
 
 				Dictionary return_value;
 				if (entry.return_type != 0x0) {
-					std::string_view return_type = machine.memory.memstring_view(entry.return_type);
+					std::string_view return_type = machine().memory.memstring_view(entry.return_type);
 					return_value["type"] = convert_guest_type_to_variant(String::utf8(return_type.begin(), return_type.size()));
 				} else {
 					return_value["type"] = Variant::NIL;
@@ -1356,13 +1357,13 @@ Array Sandbox::get_public_api_functions(const machine_t& machine) {
 				func["return"] = std::move(return_value);
 
 				if (entry.description != 0x0) {
-					std::string_view description = machine.memory.memstring_view(entry.description);
+					std::string_view description = machine().memory.memstring_view(entry.description);
 					func["description"] = String::utf8(description.begin(), description.size());
 				}
 
 				TypedArray<Dictionary> args;
 				if (entry.args != 0x0) {
-					std::string_view arg_list = machine.memory.memstring_view(entry.args);
+					std::string_view arg_list = machine().memory.memstring_view(entry.args);
 					PackedStringArray arg_names = String::utf8(arg_list.begin(), arg_list.size()).split(", ");
 					PackedStringArray arg_name_and_type;
 					for (const String &arg : arg_names) {
@@ -1390,6 +1391,9 @@ Array Sandbox::get_public_api_functions(const machine_t& machine) {
 
 				func["args"] = std::move(args);
 				result.append(std::move(func));
+
+				// Since this public function was accepted, cache the address under the function name.
+				this->m_lookup.insert_or_assign(godot_name.hash(), entry.address);
 			}
 		}
 	} catch (const std::exception &e) {
@@ -1423,7 +1427,7 @@ PackedStringArray Sandbox::get_public_functions(const machine_t& machine) {
 
 Array Sandbox::get_functions() const {
 	// Check if the guest program has a public API.
-	Array result = get_public_api_functions(machine());
+	Array result = this->get_public_api_functions();
 	if (!result.is_empty()) {
 		return result;
 	}

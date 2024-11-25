@@ -481,7 +481,7 @@ private:
 	void reset_machine();
 	void set_program_data_internal(Ref<ELFScript> program);
 	bool load(const PackedByteArray *vbuf, const std::vector<std::string> *argv = nullptr);
-	static Array get_public_api_functions(const machine_t&);
+	Array get_public_api_functions() const;
 	static PackedStringArray get_public_functions(const machine_t&);
 	void read_program_properties(bool editor) const;
 	void handle_exception(gaddr_t);
