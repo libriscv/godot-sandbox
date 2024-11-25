@@ -423,6 +423,19 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 	// Read the program's custom properties, if any
 	this->read_program_properties(true);
 
+	// Attempt to read the public API functions when an ELF program is loaded
+	if (this->m_program_data.is_valid()) {
+		// We can't read them without having loaded the program first
+		// If the functions Array in the ELFScript object is empty, we will look for the API functions
+		if (this->m_program_data->functions.is_empty()) {
+			Array api = this->get_public_api_functions(machine());
+			if (!api.is_empty()) {
+				// Set the public API functions on the ELFScript object
+				this->m_program_data->set_public_api_functions(std::move(api));
+			}
+		}
+	}
+
 	// Accumulate startup time
 	const uint64_t startup_t1 = Time::get_singleton()->get_ticks_usec();
 	double startup_time = (startup_t1 - startup_t0) / 1e6;
@@ -1051,9 +1064,6 @@ void Sandbox::add_property(const String &name, Variant::Type vtype, uint64_t set
 }
 
 bool Sandbox::set_property(const StringName &name, const Variant &value) {
-	if (m_properties.empty()) {
-		this->read_program_properties(false);
-	}
 	for (SandboxProperty &prop : m_properties) {
 		if (prop.name() == name) {
 			prop.set(*this, value);
@@ -1091,9 +1101,6 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 }
 
 bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
-	if (m_properties.empty()) {
-		this->read_program_properties(false);
-	}
 	for (const SandboxProperty &prop : m_properties) {
 		if (prop.name() == name) {
 			r_ret = prop.get(*this);

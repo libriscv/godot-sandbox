@@ -66,6 +66,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"_malloc_trim_r",
 	"_mbrtowc_r",
 	"_mbtowc_r",
+	"_mid_memalign.constprop.0",
 	"_mid_memalign.isra.0",
 	"_mprec_log10",
 	"_pthread_cleanup_pop",
@@ -449,9 +450,14 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"emul",
 	"enlarge_userbuf",
 	"enormlz",
+	"epoll_create1",
+	"epoll_ctl",
+	"epoll_pwait",
+	"epoll_wait",
 	"eshdn1",
 	"eshift.part.0",
 	"eshup1",
+	"eventfd",
 	"execute_cfa_program_generic",
 	"execute_cfa_program_specialized",
 	"execute_cfa_program",
@@ -882,6 +888,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"posix.sigaction",
 	"powf",
 	"powf32",
+	"ppoll",
 	"prctl",
 	"pread",
 	"pread64",
@@ -918,6 +925,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"readdir",
 	"readdir64",
 	"readlink",
+	"readlinkat",
 	"readv",
 	"realloc",
 	"realpath",
@@ -1106,6 +1114,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"sysconf",
 	"sysinfo",
 	"sysmalloc_mmap_fallback.constprop.0",
+	"sysmalloc_mmap.constprop.0",
 	"sysmalloc_mmap.isra.0",
 	"sysmalloc",
 	"systrim.constprop.0",
@@ -1133,6 +1142,7 @@ static const std::unordered_set<std::string_view> exclude_functions{
 	"ULtox",
 	"uname",
 	"ungetc",
+	"unlink_chunk.constprop.0",
 	"unlink_chunk.isra.0",
 	"unlink",
 	"unlinkat",
@@ -1226,12 +1236,75 @@ static bool is_excluded_function(const std::string_view function) {
 	return false;
 }
 
-PackedStringArray Sandbox::get_functions() const {
+Array Sandbox::get_public_api_functions(const machine_t& machine) {
+	Array result;
+	try {
+		gaddr_t public_api_addr = machine.address_of("public_api");
+		if (public_api_addr != 0x0) {
+			// Get the public API from this address instead of the symbol table.
+			// It's an array of structs, ending with a null pointer.
+			struct PublicAPI {
+				gaddr_t name;
+				gaddr_t address;
+				gaddr_t description;
+				gaddr_t return_type;
+				gaddr_t args; // Comma-separated list of argument names and types.
+			};
+
+			// View up to 32 public functions, however we will stop at the first null pointer.
+			static constexpr size_t MAX_PAPI = 32;
+			const PublicAPI *api = machine.memory.memarray<PublicAPI>(public_api_addr, MAX_PAPI);
+			for (size_t i = 0; i < MAX_PAPI; i++) {
+				const PublicAPI &entry = api[i];
+				if (entry.name == 0x0) {
+					break;
+				}
+				std::string_view name = machine.memory.memstring_view(entry.name);
+				if (name.empty() || name.size() > 64 || entry.address == 0x0) {
+					ERR_PRINT("Sandbox: Invalid public API address.");
+					return result;
+				}
+				Dictionary func;
+				func["name"] = String::utf8(name.begin(), name.size());
+				func["address"] = entry.address;
+				if (entry.return_type != 0x0) {
+					std::string_view return_type = machine.memory.memstring_view(entry.return_type);
+					func["return_type"] = String::utf8(return_type.begin(), return_type.size());
+				}
+
+				if (entry.description != 0x0) {
+					std::string_view description = machine.memory.memstring_view(entry.description);
+					func["description"] = String::utf8(description.begin(), description.size());
+				}
+
+				Array args;
+				if (entry.args != 0x0) {
+					std::string_view arg_list = machine.memory.memstring_view(entry.args);
+					PackedStringArray arg_names = String::utf8(arg_list.begin(), arg_list.size()).split(", ");
+					for (const String &arg : arg_names) {
+						args.append(arg);
+					}
+				} else {
+					ERR_PRINT("Sandbox: Invalid function arguments.");
+					return result;
+				}
+
+				func["args"] = args;
+				result.append(func);
+			}
+		}
+	} catch (const std::exception &e) {
+		ERR_PRINT("Sandbox: Failed to get functions: " + String(e.what()));
+	}
+	return result;
+}
+
+PackedStringArray Sandbox::get_public_functions(const machine_t& machine) {
 	PackedStringArray result;
 	try {
 		// Get all unmangled public functions from the guest program.
 		// Exclude functions that belong to the C/C++ runtime, as well as compiler-generated functions.
-		for (std::string_view function : machine().memory.all_unmangled_function_symbols()) {
+		for (std::string_view function : machine.memory.all_unmangled_function_symbols()) {
 			// Double underscore functions are compiler-generated functions.
 			if (function.size() >= 2 && function[0] == '_' && function[1] == '_') {
 				continue;
@@ -1247,6 +1320,16 @@ PackedStringArray Sandbox::get_functions() const {
 		ERR_PRINT("Sandbox: Failed to get functions: " + String(e.what()));
 	}
 	return result;
+}
+
+Array Sandbox::get_functions() const {
+	// Check if the guest program has a public API.
+	Array result = get_public_api_functions(machine());
+	if (!result.is_empty()) {
+		return result;
+	}
+	// Otherwise, get all public functions from the symbol table.
+	return this->get_public_functions(machine());
 }
 
 Sandbox::BinaryInfo Sandbox::get_program_info_from_binary(const PackedByteArray &binary) {
@@ -1294,20 +1377,8 @@ Sandbox::BinaryInfo Sandbox::get_program_info_from_binary(const PackedByteArray 
 		}
 		//printf("Detected language: %s, version: %d\n", result.language.utf8().ptr(), result.version);
 
-		// Get all unmangled public functions from the guest program.
-		// Exclude functions that belong to the C/C++ runtime, as well as compiler-generated functions.
-		for (std::string_view function : machine.memory.all_unmangled_function_symbols()) {
-			// Double underscore functions are compiler-generated functions.
-			if (function.size() >= 2 && function[0] == '_' && function[1] == '_') {
-				continue;
-			}
-			if (is_excluded_function(function)) {
-				continue;
-			}
-			if (exclude_functions.count(function) == 0) {
-				result.functions.append(String::utf8(function.begin(), function.size()));
-			}
-		}
+		result.functions = Sandbox::get_public_functions(machine);
+
 	} catch (const std::exception &e) {
 		ERR_PRINT("Failed to get functions from binary. " + String(e.what()));
 	}

@@ -225,3 +225,15 @@ inline bool is_part_of_tree(Node node) {
 	return get_tree().get_edited_scene_root() == node.get_owner();
 }
 #endif
+
+extern "C" struct PublicAPI {
+	const char * const name;
+	const void * const address;
+	const char * const description;
+	const char * const return_type;
+	// Simple comma-separated list of arguments: "int a, double b, String c"
+	const char * const arguments;
+};
+#define NUM_APIARGS(...)  (sizeof((PublicAPI[]){PublicAPI{}, ##__VA_ARGS__})/sizeof(PublicAPI))
+#define SANDBOX_API(...) \
+	extern "C" const PublicAPI public_api[NUM_APIARGS(__VA_ARGS__)] { __VA_ARGS__, {0} };

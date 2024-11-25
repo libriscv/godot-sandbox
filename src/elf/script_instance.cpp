@@ -128,7 +128,7 @@ Variant ELFScriptInstance::callp(
 	}
 
 retry_callp:
-	if (script->functions.has(p_method)) {
+	if (script->function_names.has(p_method)) {
 		if (current_sandbox && current_sandbox->has_program_loaded()) {
 			// Set the Sandbox instance tree base to the owner node
 			ScopedTreeBase stb(current_sandbox, godot::Object::cast_to<Node>(this->owner));
@@ -151,7 +151,7 @@ retry_callp:
 	} else if (p_method == StringName("_get_configuration_warnings")) {
 		// Returns an array of strings with warnings about the script configuration
 		Array warnings;
-		if (script->functions.is_empty()) {
+		if (script->function_names.is_empty()) {
 			warnings.push_back("No public functions found");
 		}
 		if (script->get_elf_programming_language() == "Unknown") {
@@ -216,7 +216,7 @@ void ELFScriptInstance::update_methods() const {
 	this->has_updated_methods = true;
 	this->methods_info.clear();
 
-	for (String &function : script->functions) {
+	for (const String &function : script->function_names) {
 		MethodInfo method_info = MethodInfo(
 				Variant::NIL,
 				StringName(function));
@@ -360,7 +360,7 @@ bool ELFScriptInstance::has_method(const StringName &p_name) const {
 		}
 	}
 	if (!result) {
-		for (String &function : script->functions) {
+		for (const String &function : script->function_names) {
 			if (p_name == StringName(function)) {
 				result = true;
 				break;
