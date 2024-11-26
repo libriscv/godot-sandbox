@@ -237,6 +237,16 @@ inline bool is_part_of_tree(Node node) {
 }
 #endif
 
+/// @brief Create a public API for the program.
+/// @param ... The list of public API functions.
+/// @example
+/// SANDBOX_API({
+/// 	.name = "hello_world",
+/// 	.address = (void *)hello_world,
+/// 	.description = "Prints 'Hello, world!' to the console.",
+/// 	.return_type = "void",
+/// 	.arguments = "",
+/// });
 extern "C" struct PublicAPI {
 	const char * const name;
 	const void * const address;
