@@ -127,6 +127,12 @@ public:
 	/// @return True if profiling is enabled, false otherwise.
 	bool get_profiling() const { return m_local_profiling_data != nullptr; }
 
+	/// @brief  Check if the sandbox is currently initializing (running through main()).
+	/// @return True if the sandbox is initializing, false otherwise.
+	/// @note This is used to enforce or prevent certain operations from being performed during initialization.
+	/// For example, it's only possible to add properties or public API functions to the sandbox during initialization.
+	bool is_initializing() const { return !m_is_initialization; }
+
 	// -= Sandbox Properties =-
 
 	uint32_t get_max_refs() const { return m_max_refs; }
@@ -323,7 +329,7 @@ public:
 	/// @param setter The guest address of the setter function.
 	/// @param getter The guest address of the getter function.
 	/// @param def The default value of the property.
-	void add_property(const String &name, Variant::Type vtype, uint64_t setter, uint64_t getter, const Variant &def = "") const;
+	void add_property(const String &name, Variant::Type vtype, gaddr_t setter, gaddr_t getter, const Variant &def = "") const;
 
 	/// @brief Set a property in the sandbox.
 	/// @param name The name of the property.
@@ -504,6 +510,7 @@ private:
 	bool m_use_unboxed_arguments = false;
 	bool m_resumable_mode = false; // If enabled, allow running startup in small increments
 	bool m_precise_simulation = false; // Run simulation in the slower, precise mode
+	bool m_is_initialization = false; // If true, the program is in the initialization phase
 
 	CurrentState *m_current_state = nullptr;
 	// State stack, with the permanent (initial) state at index 0.

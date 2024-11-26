@@ -1732,6 +1732,36 @@ APICALL(api_load) {
 	g_result->set_object(emu, obj);
 }
 
+APICALL(api_sandbox_add) {
+	// Add a new sandboxed property or public API method to the sandbox.
+	Sandbox &emu = riscv::emu(machine);
+	if (!emu.is_initializing()) {
+		ERR_PRINT("Sandbox add called outside of initialization");
+		throw std::runtime_error("Sandbox add called outside of initialization");
+	}
+	// Check which operation it is.
+	int method = machine.cpu.reg(10); // A0
+	switch (method) {
+		case 0: {
+			// Add a new sandboxed property.
+			auto [method, name, type, setter, getter, defval] = machine.sysargs<int, std::string_view, Variant::Type, gaddr_t, gaddr_t, GuestVariant *>();
+			String utf8_name = String::utf8(name.data(), name.size());
+			SYS_TRACE("sandbox_add", "property", utf8_name, int(type), setter, getter, defval->toVariant(emu));
+			emu.add_property(utf8_name, type, setter, getter, defval->toVariant(emu));
+		} break;
+		case 1: {
+			// Add a new sandboxed public API method.
+			auto [method, name, address] = machine.sysargs<int, std::string_view, gaddr_t>();
+			SYS_TRACE("sandbox_add", "method", String::utf8(name.data(), name.size()));
+			//emu.add_method(String::utf8(name.data(), name.size()), address);
+			throw std::runtime_error("Sandbox add public API method not implemented");
+		} break;
+		default:
+			ERR_PRINT("Invalid sandbox add operation");
+			throw std::runtime_error("Invalid sandbox add operation");
+	}
+}
+
 } //namespace riscv
 
 void Sandbox::initialize_syscalls() {
@@ -1803,6 +1833,8 @@ void Sandbox::initialize_syscalls() {
 
 			{ ECALL_OBJ_PROP_GET, api_obj_property_get },
 			{ ECALL_OBJ_PROP_SET, api_obj_property_set },
+
+			{ ECALL_SANDBOX_ADD, api_sandbox_add },
 	});
 
 	// Add system calls from other modules.
