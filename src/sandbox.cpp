@@ -346,6 +346,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 
 	/** We can't handle exceptions until the Machine is fully constructed. Two steps.  */
 	try {
+		// Reset the machine
 		if (this->m_machine != dummy_machine)
 			delete this->m_machine;
 
@@ -377,6 +378,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 
 	/** Now we can process symbols, backtraces etc. */
 	try {
+		this->m_is_initialization = true;
 		machine_t &m = machine();
 
 		m.set_userdata(this);
@@ -415,8 +417,10 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				m.cpu.simulate_precise();
 			}
 		}
+		this->m_is_initialization = false;
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
+		this->m_is_initialization = false;
 		this->handle_exception(machine().cpu.pc());
 	}
 
