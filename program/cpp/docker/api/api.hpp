@@ -95,6 +95,17 @@ struct Property {
 #define SANDBOXED_PROPERTIES(num, ...) \
 	extern "C" const Property properties[num+1] { __VA_ARGS__, {0} };
 
+/// @brief Add a new property to the Sandbox class.
+/// @param name The name of the property.
+/// @param type The type of the property.
+/// @param getter A function that returns the property value.
+/// @param setter A function that sets the property value.
+/// @param default_value The default value of the property.
+/// @note This function must be called during the initialization phase of the program.
+static inline void add_property(std::string_view name, Variant::Type type, Variant (*getter)(), Variant (*setter)(Variant), const Variant &default_value) {
+	sys_sandbox_add(0, name.data(), name.size(), type, setter, getter, &default_value);
+}
+
 /// @brief Stop execution of the program.
 /// @note This function may return if the program is resumed. However, no such
 /// functionality is currently implemented.

@@ -18,6 +18,7 @@ using real_t = float;
 EXTERN_SYSCALL(void, sys_print, const Variant *, size_t);
 EXTERN_SYSCALL(void, sys_throw, const char *, size_t, const char *, size_t, ...);
 EXTERN_SYSCALL(unsigned, sys_callable_create, void (*)(), const Variant *, const void *, size_t);
+EXTERN_SYSCALL(void, sys_sandbox_add, int, ...);
 
 inline __attribute__((noreturn)) void api_throw_at(std::string_view type, std::string_view msg, const Variant *srcVar, const char *func) {
 	sys_throw(type.data(), type.size(), msg.data(), msg.size(), srcVar, func);
