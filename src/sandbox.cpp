@@ -437,6 +437,14 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				// Set the public API functions on the ELFScript object
 				this->m_program_data->set_public_api_functions(std::move(api));
 			}
+		} else {
+			// Cache the public API functions from the ELFScript object
+			for (int i = 0; i < this->m_program_data->functions.size(); i++) {
+				const Dictionary func = this->m_program_data->functions[i];
+				const String &name = func["name"];
+				const gaddr_t address = func.get("address", 0x0);
+				this->m_lookup.insert_or_assign(name.hash(), address);
+			}
 		}
 	}
 
