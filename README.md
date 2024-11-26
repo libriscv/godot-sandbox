@@ -31,7 +31,7 @@
 
 -----
 
-This extension exists to allow Godot creators to implement safe modding support, such that they can pass around programs built by other players, knowing that _restricted_ programs cannot harm other players. All Godot platforms are supported.
+Godot Sandbox allows Godot creators to implement safe modding support, such that they can pass around programs built by other players, knowing that _restricted_ programs cannot harm other players. All Godot platforms are supported.
 
 
 ## Installation
@@ -46,12 +46,11 @@ This extension exists to allow Godot creators to implement safe modding support,
 	- You can implement a modding API for your game. This API can then be used by other players to extend your game, in a safe manner.
 	- Put restrictions on resources, classes and objects to say what is accessible inside the sandbox.
 - Build once, run everywhere
-	- You can publish your game for all mobile and console platforms, without paying a performance penalty. It's not going to be a laggy mess, which is a risk with solutions that are only fast when JIT is available.
-	- Programs will behave the same way on all platforms, including 32-bit platforms.
+	- You can publish your game for all mobile and console platforms, without paying a performance penalty. It's not going to be laggy on some platforms, which is a risk with solutions that are only fast when JIT is available.
 - High-performance
 	- You can use this extension as a way to write higher performance code than GDScript permits, without having to resort to writing and maintaining a GDExtension for all platforms.
 	- Enable binary translation to increase performance drastically. Also works on all platforms, but has to be [embedded in the project or loaded as a DLL](https://libriscv.no/docs/godot_docs/bintr).
-	- Yields 2.5-7.5x performance boost by default, 5-50x with binary translation
+	- Yields [2.5-10x performance boost by default](https://libriscv.no/docs/performance/#godot-sandbox-performance), 5-50x with binary translation
 - Publish and then make updates without re-publishing
 	- You can distribute programs from a server to clients as part of the login sequence. You can use this to live-distribute changes like bugfixes or even new features to the game without having to re-publish the game itself. I do this in my game.
 
