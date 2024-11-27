@@ -1,7 +1,5 @@
 #pragma once
-
-#include <godot_cpp/classes/control.hpp>
-
+#include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/core/binder_common.hpp>
 #include <godot_cpp/templates/hash_set.hpp>
 #include <libriscv/machine.hpp>
@@ -384,6 +382,9 @@ public:
 	/// @brief Load a program from a buffer into the sandbox.
 	/// @param buffer The buffer containing the program.
 	void load_buffer(const PackedByteArray &buffer);
+
+	/// @brief Reset the sandbox, clearing all state and reloads the program.
+	void reset(bool unload = false);
 
 	/// @brief Get the public functions available to call in the guest program.
 	/// @return Array of public callable functions.

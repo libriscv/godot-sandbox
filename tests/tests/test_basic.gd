@@ -40,19 +40,34 @@ func test_instantiation():
 
 	# Verify that the sandbox program can be set to another program
 	s.set_program(Sandbox_TestsTests)
-	assert_eq(s.has_function("test_ping_pong"), true)
+	assert_eq(s.has_function("test_ping_pong"), true, "Program has test_ping_pong function")
 
 	s.queue_free()
 
 	# Create a new sandbox from a buffer
-	var buffer : PackedByteArray
+	var buffer : PackedByteArray = Sandbox_TestsTests.get_content()
 	for i in 10:
 		var s2 = Sandbox.FromBuffer(buffer)
-		assert_false(s2.has_program_loaded(), "Program loaded")
+		assert_true(s2.has_program_loaded(), "Program loaded from buffer")
 		s2.free()
 	for i in 10:
 		var s2 = Sandbox.FromProgram(Sandbox_TestsTests)
+		assert_true(s2.has_program_loaded(), "Program loaded from program")
 		s2.free()
+
+	# Test resetting the sandbox
+	var s3 = Sandbox.FromProgram(Sandbox_TestsTests)
+	for i in 10:
+		s3.reset()
+		assert_true(s3.has_program_loaded(), "Program still loaded after reset")
+		assert_true(s3.has_function("test_ping_pong"), "Function still exists after reset")
+		assert_eq(s.vmcall("test_int", 1234), 1234) # test that the sandbox is still working
+	# Test unloading many times (only the first unload should do anything)
+	for i in 10:
+		s3.reset(true)
+		assert_false(s3.has_program_loaded(), "Program still unloaded after reset")
+		assert_false(s3.has_function("test_ping_pong"), "Function does not exist after reset")
+	s3.free()
 
 func test_binary_translation():
 	# Create a new sandbox

@@ -29,6 +29,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_program"), &Sandbox::get_program);
 	ClassDB::bind_method(D_METHOD("has_program_loaded"), &Sandbox::has_program_loaded);
 	ClassDB::bind_method(D_METHOD("load_buffer", "buffer"), &Sandbox::load_buffer);
+	ClassDB::bind_method(D_METHOD("reset", "unload"), &Sandbox::reset, DEFVAL(false));
 	{
 		MethodInfo mi;
 		//mi.arguments.push_back(PropertyInfo(Variant::STRING, "function"));
@@ -266,14 +267,18 @@ void Sandbox::set_program(Ref<ELFScript> program) {
 	}
 
 	// Try to retain Sandboxed properties
-	std::vector<SandboxProperty> properties = std::move(this->m_properties);
 	std::vector<Variant> property_values;
-	property_values.reserve(properties.size());
-	for (const SandboxProperty &prop : properties) {
+	property_values.reserve(this->m_properties.size());
+	for (const SandboxProperty &prop : this->m_properties) {
 		Variant value;
-		this->get_property(prop.name(), value);
-		property_values.push_back(value);
+		if (this->get_property(prop.name(), value)) {
+			property_values.push_back(value);
+		} else {
+			property_values.push_back(Variant());
+		}
 	}
+	// Move the properties to a temporary vector (reset coming up)
+	std::vector<SandboxProperty> properties = std::move(this->m_properties);
 
 	this->set_program_data_internal(program);
 	this->m_program_bytes = {};
@@ -328,7 +333,34 @@ void Sandbox::load_buffer(const PackedByteArray &buffer) {
 
 	this->set_program_data_internal(nullptr);
 	this->m_program_bytes = buffer;
+
+	// Reset the machine
+	this->full_reset();
+
 	this->load(&this->m_program_bytes);
+}
+void Sandbox::reset(bool unload) {
+	// Check if a call is being made from the VM already,
+	// which could spell trouble when we now reset the machine.
+	if (this->is_in_vmcall()) {
+		ERR_PRINT("Cannot reset the sandbox while a VM call is in progress.");
+		return;
+	}
+
+	// Allow the program to be reloaded
+	this->m_source_version = -1;
+	if (unload) {
+		this->set_program_data_internal(nullptr);
+		this->m_program_bytes = {};
+		this->full_reset();
+	} else {
+		// Reset the machine
+		if (this->m_program_data.is_valid()) {
+			this->set_program(this->m_program_data);
+		} else if (!this->m_program_bytes.is_empty()) {
+			this->load_buffer(this->m_program_bytes);
+		}
+	}
 }
 bool Sandbox::has_program_loaded() const {
 	return !machine().memory.binary().empty();
