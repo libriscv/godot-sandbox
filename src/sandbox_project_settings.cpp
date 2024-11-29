@@ -83,8 +83,8 @@ void SandboxProjectSettings::register_settings() {
 	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
 	register_setting_plain(DEBUG_INFO, false, DEBUG_INFO_HINT, false);
 	register_setting_plain(GLOBAL_DEFINES, Array(), GLOBAL_DEFINES_HINT, false);
-	register_setting_plain(GENERATE_RUNTIME_API, false, GENERATE_RUNTIME_API_HINT, false);
-	register_setting_plain(METHOD_ARGUMENTS, false, METHOD_ARGUMENTS_HINT, false);
+	register_setting_plain(GENERATE_RUNTIME_API, false, GENERATE_RUNTIME_API_HINT, true);
+	register_setting_plain(METHOD_ARGUMENTS, false, METHOD_ARGUMENTS_HINT, true);
 	Array skipped_classes;
 	skipped_classes.push_back("Editor");
 	skipped_classes.push_back("Multiplayer");
