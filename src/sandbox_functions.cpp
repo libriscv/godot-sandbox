@@ -1237,7 +1237,9 @@ static bool is_excluded_function(const std::string_view function) {
 }
 
 static Variant::Type convert_guest_type_to_variant(const String &type) {
-	if (type == "bool") {
+	if (type == "void") {
+		return Variant::NIL;
+	} else if (type == "bool") {
 		return Variant::BOOL;
 	} else if (type == "int" || type == "int32_t" || type == "int64_t" || type == "uint32_t" || type == "uint64_t" || type == "long" || type == "unsigned") {
 		return Variant::INT;
@@ -1310,7 +1312,7 @@ static Variant::Type convert_guest_type_to_variant(const String &type) {
 	} else if (type == "PackedColorArray") {
 		return Variant::PACKED_COLOR_ARRAY;
 	}
-	return Variant::NIL;
+	return Variant::OBJECT;
 }
 
 Array Sandbox::get_public_api_functions() const {
@@ -1371,7 +1373,7 @@ Array Sandbox::get_public_api_functions() const {
 						arg_name_and_type = arg.split(" ");
 						// Convert the argument name and type to a dictionary.
 						String arg_name = arg_name_and_type[0];
-						String arg_type = "Variant";
+						String arg_type = "Object";
 						if (arg_name_and_type.size() > 1) {
 							arg_type = arg_name_and_type[0];
 							arg_name = arg_name_and_type[1];
@@ -1380,7 +1382,7 @@ Array Sandbox::get_public_api_functions() const {
 						Dictionary argument;
 						argument["name"] = arg_name;
 						argument["type"] = convert_guest_type_to_variant(arg_type);
-						argument["class_name"] = "Variant";
+						argument["class_name"] = arg_type;
 						argument["usage"] = PROPERTY_USAGE_NIL_IS_VARIANT;
 
 						args.append(std::move(argument));
