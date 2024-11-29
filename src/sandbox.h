@@ -469,6 +469,12 @@ public:
 	/// convenience helper function for loading shared libraries that self-register their functions.
 	static bool load_binary_translation(const String &shared_library_path);
 
+	/// @brief Try to emit the binary translation code, and then compile it. Does not load the binary translation.
+	/// @note For security reasons, the binary translation is not loaded automatically. A game restart is required,
+	/// as binary translations can only be loaded before any Sandbox instances are created.
+	/// @return True if the binary translation was emitted and compiled successfully, false otherwise.
+	bool try_compile_binary_translation(String shared_library_path = "res://bintr", const String &cc = "cc", const String &extra_cflags = "", bool ignore_instruction_limit = false, bool automatic_nbit_as = false);
+
 	/// @brief  Check if the program has found and loaded binary translation.
 	/// @return True if binary translation is loaded, false otherwise.
 	bool is_binary_translated() const;

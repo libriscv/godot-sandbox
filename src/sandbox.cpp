@@ -82,6 +82,7 @@ void Sandbox::_bind_methods() {
 	// Binary translation.
 	ClassDB::bind_method(D_METHOD("emit_binary_translation", "ignore_instruction_limit", "automatic_nbit_address_space"), &Sandbox::emit_binary_translation, DEFVAL(false), DEFVAL(false));
 	ClassDB::bind_static_method("Sandbox", D_METHOD("load_binary_translation", "shared_library_path"), &Sandbox::load_binary_translation);
+	ClassDB::bind_method(D_METHOD("try_compile_binary_translation", "shared_library_path", "compiler", "extra_cflags", "ignore_instruction_limit", "automatic_nbit_as"), &Sandbox::try_compile_binary_translation, DEFVAL("res://bintr"), DEFVAL("cc"), DEFVAL(""), DEFVAL(false), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("is_binary_translated"), &Sandbox::is_binary_translated);
 
 	// Properties.
