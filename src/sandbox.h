@@ -484,6 +484,12 @@ public:
 	machine_t &machine() { return *m_machine; }
 	const machine_t &machine() const { return *m_machine; }
 	void print(const Variant &v);
+
+	/// @brief Generate the run-time API for the guest program, by iterating through all loaded classes.
+	/// @param language The language to generate the API for.
+	/// @param header_extra Extra header code to add to the generated API.
+	/// @param use_argument_names If true, use argument names with default values in the generated API. Increases the size of the generated API and the compilation time.
+	/// @return The generated API code as a string.
 	static String generate_api(String language = "cpp", String header_extra = "", bool use_argument_names = false);
 
 private:
