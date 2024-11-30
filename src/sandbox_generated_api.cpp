@@ -170,10 +170,9 @@ static String emit_class(ClassDBSingleton *class_db, const HashSet<String> &cpp_
 		const int flags = int(method["flags"]);
 		//if (flags & METHOD_FLAG_STATIC) ...
 		const bool is_const = flags & METHOD_FLAG_CONST;
-		// Variant::NIL is a special case, as it's a void return type.
-		// Sometimes it's a Variant return type, other times it's a void return type.
-		// We speculate that if the method name doesn't start with "set_", it's a Variant return type.
-		const bool is_void = (type == 0 && method_name.begins_with("set_"));
+		// Variant::NIL is a special case, as it's can be a void or Variant return type.
+		const int return_flags = int(return_value["usage"]);
+		const bool is_void = type == 0 && (return_flags & PROPERTY_USAGE_NIL_IS_VARIANT) == 0;
 
 		if (use_argument_names) {
 			// Example: { "name": "play_stream",
