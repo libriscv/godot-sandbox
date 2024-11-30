@@ -43,6 +43,8 @@ class ELFScriptInstance : public ScriptInstanceExtension {
 	Sandbox *create_sandbox(const Ref<ELFScript> &p_script);
 	friend class ELFScript;
 
+	static inline std::vector<StringName> godot_functions;
+
 public:
 	bool set(const StringName &p_name, const Variant &p_value) override;
 	bool get(const StringName &p_name, Variant &r_ret) const override;

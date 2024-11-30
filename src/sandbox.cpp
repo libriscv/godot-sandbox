@@ -15,6 +15,29 @@ static const int HEAP_SYSCALLS_BASE = 480;
 static const int MEMORY_SYSCALLS_BASE = 485;
 static const std::vector<std::string> program_arguments = { "program" };
 static riscv::Machine<RISCV_ARCH> *dummy_machine;
+enum SandboxPropertyNameIndex : int {
+	PROP_REFERENCES_MAX,
+	PROP_MEMORY_MAX,
+	PROP_EXECUTION_TIMEOUT,
+	PROP_ALLOCATIONS_MAX,
+	PROP_USE_UNBOXED_ARGUMENTS,
+	PROP_USE_PRECISE_SIMULATION,
+	PROP_PROFILING,
+	PROP_RESTRICTIONS,
+	PROP_MONITOR_HEAP_USAGE,
+	PROP_MONITOR_HEAP_CHUNK_COUNT,
+	PROP_MONITOR_HEAP_ALLOCATION_COUNTER,
+	PROP_MONITOR_HEAP_DEALLOCATION_COUNTER,
+	PROP_MONITOR_EXCEPTIONS,
+	PROP_MONITOR_EXECUTION_TIMEOUTS,
+	PROP_MONITOR_CALLS_MADE,
+	PROP_GLOBAL_CALLS_MADE,
+	PROP_GLOBAL_EXCEPTIONS,
+	PROP_GLOBAL_TIMEOUTS,
+	PROP_MONITOR_ACCUMULATED_STARTUP_TIME,
+	PROP_MONITOR_GLOBAL_INSTANCE_COUNT,
+};
+static std::vector<StringName> property_names;
 
 String Sandbox::_to_string() const {
 	return "[ GDExtension::Sandbox <--> Instance ID:" + uitos(get_instance_id()) + " ]";
@@ -220,6 +243,28 @@ void Sandbox::full_reset() {
 Sandbox::Sandbox() {
 	if (dummy_machine == nullptr) {
 		dummy_machine = new machine_t{};
+		property_names = {
+			"references_max",
+			"memory_max",
+			"execution_timeout",
+			"allocations_max",
+			"use_unboxed_arguments",
+			"use_precise_simulation",
+			"profiling",
+			"restrictions",
+			"monitor_heap_usage",
+			"monitor_heap_chunk_count",
+			"monitor_heap_allocation_counter",
+			"monitor_heap_deallocation_counter",
+			"monitor_exceptions",
+			"monitor_execution_timeouts",
+			"monitor_calls_made",
+			"global_calls_made",
+			"global_exceptions",
+			"global_timeouts",
+			"monitor_accumulated_startup_time",
+			"monitor_global_instance_count",
+		};
 	}
 	this->constructor_initialize();
 	this->m_tree_base = this;
@@ -1117,28 +1162,28 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 		}
 	}
 	// Not the most efficient way to do this, but it's (currently) a small list
-	if (name == StringName("references_max")) {
+	if (name == property_names[PROP_REFERENCES_MAX]) {
 		set_max_refs(value);
 		return true;
-	} else if (name == StringName("memory_max")) {
+	} else if (name == property_names[PROP_MEMORY_MAX]) {
 		set_memory_max(value);
 		return true;
-	} else if (name == StringName("execution_timeout")) {
+	} else if (name == property_names[PROP_EXECUTION_TIMEOUT]) {
 		set_instructions_max(value);
 		return true;
-	} else if (name == StringName("allocations_max")) {
+	} else if (name == property_names[PROP_ALLOCATIONS_MAX]) {
 		set_allocations_max(value);
 		return true;
-	} else if (name == StringName("use_unboxed_arguments")) {
+	} else if (name == property_names[PROP_USE_UNBOXED_ARGUMENTS]) {
 		set_use_unboxed_arguments(value);
 		return true;
-	} else if (name == StringName("use_precise_simulation")) {
+	} else if (name == property_names[PROP_USE_PRECISE_SIMULATION]) {
 		set_use_precise_simulation(value);
 		return true;
-	} else if (name == StringName("profiling")) {
+	} else if (name == property_names[PROP_PROFILING]) {
 		set_profiling(value);
 		return true;
-	} else if (name == StringName("restrictions")) {
+	} else if (name == property_names[PROP_RESTRICTIONS]) {
 		set_restrictions(value);
 		return true;
 	}
@@ -1154,64 +1199,64 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 		}
 	}
 	// Not the most efficient way to do this, but it's (currently) a small list
-	if (name == StringName("references_max")) {
+	if (name == property_names[PROP_REFERENCES_MAX]) {
 		r_ret = get_max_refs();
 		return true;
-	} else if (name == StringName("memory_max")) {
+	} else if (name == property_names[PROP_MEMORY_MAX]) {
 		r_ret = get_memory_max();
 		return true;
-	} else if (name == StringName("execution_timeout")) {
+	} else if (name == property_names[PROP_EXECUTION_TIMEOUT]) {
 		r_ret = get_instructions_max();
 		return true;
-	} else if (name == StringName("allocations_max")) {
+	} else if (name == property_names[PROP_ALLOCATIONS_MAX]) {
 		r_ret = get_allocations_max();
 		return true;
-	} else if (name == StringName("use_unboxed_arguments")) {
+	} else if (name == property_names[PROP_USE_UNBOXED_ARGUMENTS]) {
 		r_ret = get_use_unboxed_arguments();
 		return true;
-	} else if (name == StringName("use_precise_simulation")) {
+	} else if (name == property_names[PROP_USE_PRECISE_SIMULATION]) {
 		r_ret = get_use_precise_simulation();
 		return true;
-	} else if (name == StringName("profiling")) {
+	} else if (name == property_names[PROP_PROFILING]) {
 		r_ret = get_profiling();
 		return true;
-	} else if (name == StringName("restrictions")) {
+	} else if (name == property_names[PROP_RESTRICTIONS]) {
 		r_ret = get_restrictions();
 		return true;
-	} else if (name == StringName("monitor_heap_usage")) {
+	} else if (name == property_names[PROP_MONITOR_HEAP_USAGE]) {
 		r_ret = get_heap_usage();
 		return true;
-	} else if (name == StringName("monitor_heap_chunk_count")) {
+	} else if (name == property_names[PROP_MONITOR_HEAP_CHUNK_COUNT]) {
 		r_ret = get_heap_chunk_count();
 		return true;
-	} else if (name == StringName("monitor_heap_allocation_counter")) {
+	} else if (name == property_names[PROP_MONITOR_HEAP_ALLOCATION_COUNTER]) {
 		r_ret = get_heap_allocation_counter();
 		return true;
-	} else if (name == StringName("monitor_heap_deallocation_counter")) {
+	} else if (name == property_names[PROP_MONITOR_HEAP_DEALLOCATION_COUNTER]) {
 		r_ret = get_heap_deallocation_counter();
 		return true;
-	} else if (name == StringName("monitor_exceptions")) {
+	} else if (name == property_names[PROP_MONITOR_EXCEPTIONS]) {
 		r_ret = get_exceptions();
 		return true;
-	} else if (name == StringName("monitor_execution_timeouts")) {
+	} else if (name == property_names[PROP_MONITOR_EXECUTION_TIMEOUTS]) {
 		r_ret = get_timeouts();
 		return true;
-	} else if (name == StringName("monitor_calls_made")) {
+	} else if (name == property_names[PROP_MONITOR_CALLS_MADE]) {
 		r_ret = get_calls_made();
 		return true;
-	} else if (name == StringName("global_calls_made")) {
+	} else if (name == property_names[PROP_GLOBAL_CALLS_MADE]) {
 		r_ret = get_global_calls_made();
 		return true;
-	} else if (name == StringName("global_exceptions")) {
+	} else if (name == property_names[PROP_GLOBAL_EXCEPTIONS]) {
 		r_ret = get_global_exceptions();
 		return true;
-	} else if (name == StringName("global_timeouts")) {
+	} else if (name == property_names[PROP_GLOBAL_TIMEOUTS]) {
 		r_ret = get_global_timeouts();
 		return true;
-	} else if (name == StringName("monitor_accumulated_startup_time")) {
+	} else if (name == property_names[PROP_MONITOR_ACCUMULATED_STARTUP_TIME]) {
 		r_ret = get_accumulated_startup_time();
 		return true;
-	} else if (name == StringName("monitor_global_instance_count")) {
+	} else if (name == property_names[PROP_MONITOR_GLOBAL_INSTANCE_COUNT]) {
 		r_ret = get_global_instance_count();
 		return true;
 	}

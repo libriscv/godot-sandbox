@@ -26,12 +26,6 @@ struct ScopedTreeBase {
 	}
 };
 
-static const std::vector<std::string> godot_functions = {
-	"_get_editor_name",
-	"_hide_script_from_inspector",
-	"_is_read_only",
-};
-
 static void handle_language_warnings(Array &warnings, const Ref<ELFScript> &script) {
 	if (!SandboxProjectSettings::get_docker_enabled()) {
 		return;
@@ -91,7 +85,8 @@ bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 }
 
 bool ELFScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
-	if (p_name == StringName("script")) {
+	static const StringName s_script("script");
+	if (p_name == s_script) {
 		r_ret = script;
 		return true;
 	}
@@ -295,7 +290,7 @@ const GDExtensionPropertyInfo *ELFScriptInstance::get_property_list(uint32_t *r_
 
 	for (const SandboxProperty &property : properties) {
 		if constexpr (VERBOSE_LOGGING) {
-			printf("ELFScriptInstance::get_property_list %s\n", property.name().utf8().ptr());
+			printf("ELFScriptInstance::get_property_list %s\n", String(property.name()).utf8().ptr());
 			fflush(stdout);
 		}
 		list->name = stringname_alloc(property.name());
@@ -353,9 +348,9 @@ bool ELFScriptInstance::validate_property(GDExtensionPropertyInfo &p_property) c
 		return false;
 	}
 	for (const SandboxProperty &property : sandbox->get_properties()) {
-		if (*(StringName *)p_property.name == StringName(property.name())) {
+		if (*(StringName *)p_property.name == property.name()) {
 			if constexpr (VERBOSE_LOGGING) {
-				printf("ELFScriptInstance::validate_property %s => true\n", property.name().utf8().ptr());
+				printf("ELFScriptInstance::validate_property %s => true\n", String(property.name()).utf8().ptr());
 			}
 			return true;
 		}
@@ -377,8 +372,8 @@ bool ELFScriptInstance::has_method(const StringName &p_name) const {
 	}
 	bool result = script->function_names.has(p_name);
 	if (!result) {
-		for (const std::string &function : godot_functions) {
-			if (p_name == StringName(function.c_str())) {
+		for (const StringName &function : godot_functions) {
+			if (p_name == function) {
 				result = true;
 				break;
 			}
@@ -460,6 +455,14 @@ ScriptLanguage *ELFScriptInstance::_get_language() {
 
 ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_script) :
 		owner(p_owner), script(p_script) {
+	if (godot_functions.empty()) {
+		godot_functions = {
+			"_get_editor_name",
+			"_hide_script_from_inspector",
+			"_is_read_only",
+		};
+	}
+
 	this->current_sandbox = Object::cast_to<Sandbox>(p_owner);
 	this->auto_created_sandbox = (this->current_sandbox == nullptr);
 	if (auto_created_sandbox) {
@@ -469,10 +472,10 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 	}
 	this->current_sandbox->set_tree_base(godot::Object::cast_to<godot::Node>(owner));
 
-	for (const std::string &godot_function : godot_functions) {
+	for (const StringName &godot_function : godot_functions) {
 		MethodInfo method_info = MethodInfo(
 				Variant::NIL,
-				StringName(godot_function.c_str()));
+				godot_function);
 		methods_info.push_back(method_info);
 	}
 }
