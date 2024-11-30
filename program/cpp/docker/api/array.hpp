@@ -139,8 +139,30 @@ struct ArrayProxy {
 	bool operator !=(const Variant &value) const { return get() != value; }
 	bool operator <(const Variant &value) const { return get() < value; }
 
+	/// @brief Get the value at the given index in the array.
+	/// @return The value at the given index.
 	Variant get() const;
-	Variant get_or(const Variant &default_value) const { return (m_idx >= 0 && m_idx < m_array.size()) ? get() : default_value; }
+
+	/// @brief Get the value at the given index in the array, or a default value if the index is out of bounds.
+	/// @param default_value The default value to return if the index is out of bounds.
+	Variant get_or(const Variant &default_value = {}) const { return (m_idx >= 0 && m_idx < m_array.size()) ? get() : default_value; }
+
+	/// @brief Get the value as a specific type, by storing it in the given reference.
+	/// @tparam T The type to convert the value to.
+	/// @param type  The expected Variant type of the value.
+	/// @param value The reference to store the value in. It will be converted to the expected type from a Variant.
+	/// @return True if the value was successfully converted, false otherwise.
+	template <typename T>
+	bool get_as_type(Variant::Type type, T &value) const {
+		if (m_idx >= 0 && m_idx < m_array.size()) {
+			Variant v = get();
+			if (v.get_type() == type) {
+				value = v;
+				return true;
+			}
+		}
+		return false;
+	}
 
 private:
 	Array m_array;
