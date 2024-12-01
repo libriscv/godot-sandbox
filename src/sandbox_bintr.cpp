@@ -94,12 +94,12 @@ bool Sandbox::load_binary_translation(const String &shared_library_path) {
 		((CallbackFunction)register_translation)(libriscv_register_translation8);
 	}
 #  else
-	ERR_PRINT("Sandbox: Loading shared libraries has not been implemented on this platform.");
+	WARN_PRINT_ONCE("Sandbox: Loading shared libraries has not been implemented on this platform.");
 #  endif
 	// We don't need to do anything with the handle, as the shared library should self-register its functions
 	return true;
 #else
-	ERR_PRINT("Sandbox: Binary translation is not enabled.");
+	WARN_PRINT_ONCE("Sandbox: Binary translation is not enabled.");
 #endif
 	return false;
 }
@@ -131,7 +131,7 @@ bool Sandbox::try_compile_binary_translation(String shared_library_path, const S
 #elif defined(YEP_IS_OSX)
 	shared_library_path += ".dylib";
 #else
-	ERR_PRINT("Sandbox: Loading shared libraries has not been implemented on this platform.");
+	WARN_PRINT_ONCE("Sandbox: Compiling binary translations has not been implemented on this platform.");
 	return false;
 #endif
 	const String code = this->emit_binary_translation(ignore_instruction_limit, automatic_nbit_as);
