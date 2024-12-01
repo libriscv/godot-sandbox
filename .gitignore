@@ -13,3 +13,4 @@ bin/addons/godot_sandbox/bin/*
 
 # Ignore all CPP files in the bintr directory
 src/bintr/*.cpp
+src/gen/
