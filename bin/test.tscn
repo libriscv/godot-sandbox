@@ -1,17 +1,10 @@
-[gd_scene load_steps=2 format=3 uid="uid://cvdqbqcr3b6cy"]
+[gd_scene load_steps=3 format=3 uid="uid://cvdqbqcr3b6cy"]
 
 [ext_resource type="Script" path="res://test.gd" id="1_ac6ii"]
+[ext_resource type="Script" path="res://src/src.elf" id="2_kin5p"]
 
 [node name="Node" type="Node"]
+script = ExtResource("1_ac6ii")
 
 [node name="Sandbox" type="Sandbox" parent="."]
-_import_path = NodePath("")
-unique_name_in_owner = false
-process_mode = 0
-process_priority = 0
-process_physics_priority = 0
-process_thread_group = 0
-physics_interpolation_mode = 0
-auto_translate_mode = 0
-editor_description = ""
-script = ExtResource("1_ac6ii")
+script = ExtResource("2_kin5p")

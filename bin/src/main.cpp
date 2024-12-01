@@ -1,17 +1,25 @@
-#include "api.hpp"
-#include <cstdio>
+#include <api.hpp>
 
-int main() {
-	UtilityFunctions::print("main()");
-	halt();
-}
-
-extern "C" Variant my_function(Variant variant) {
-	UtilityFunctions::print("Arg: ", variant);
+extern "C" Variant my_function(Vector4 v) {
+	print("Arg: ", v);
 	return 123;
 }
 
-extern "C" Variant my_function2(Variant var1, Variant var2) {
-	UtilityFunctions::print("Args: ", var1, var2);
-	return 456;
+extern "C" Variant my_function2(String s, Array a) {
+	print("Args: ", s, a);
+	return {};
 }
+
+SANDBOX_API({
+	.name = "my_function",
+	.address = (void*)my_function,
+	.description = "Takes a Vector4",
+	.return_type = "int",
+	.arguments = "Vector4 v",
+}, {
+	.name = "my_function2",
+	.address = (void*)my_function2,
+	.description = "Takes a String and an Array",
+	.return_type = "void",
+	.arguments = "String s, Array a",
+});

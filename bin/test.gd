@@ -1,10 +1,10 @@
-class_name Test123
-extends Sandbox
+extends Node
 
-@export var program_elf: ELF_src_src
-
-# Called when the node enters the scene tree for the first time.
+# NOTE: Build main.cpp (Ctrl+S) before running this demo project!
 func _ready() -> void:
-	print("cast working? " + str(program_elf))
-	print(get_functions())
-	print(vmcall("my_function", Vector4(1, 2, 3, 4)))
+	# Casting the Sandbox to the unique program type gives us auto-completion in GDScript
+	var sandbox = get_node("Sandbox") as Sandbox_SrcSrc
+	# Prints the Vector4 argument, returns 123
+	print(sandbox.my_function(Vector4(1, 2, 3, 4)))
+	# Prints the string and array arguments
+	sandbox.my_function2("Hello World!", Array([]))
