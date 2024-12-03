@@ -1551,8 +1551,8 @@ APICALL(api_string_ops) {
 
 	std::optional<const Variant *> opt_str = emu.get_scoped_variant(str_idx);
 	if (!opt_str.has_value()) {
-		ERR_PRINT("Invalid String object");
-		throw std::runtime_error("Invalid String object");
+		ERR_PRINT("Invalid String object idx: " + itos(str_idx));
+		throw std::runtime_error("Invalid String object: " + std::to_string(str_idx));
 	}
 	const Variant::Type type = opt_str.value()->get_type();
 	if (type != Variant::STRING && type != Variant::STRING_NAME && type != Variant::NODE_PATH) {
