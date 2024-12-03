@@ -1,7 +1,6 @@
 #pragma once
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/core/binder_common.hpp>
-#include <godot_cpp/templates/hash_set.hpp>
 #include <libriscv/machine.hpp>
 #include <optional>
 
@@ -506,6 +505,11 @@ public:
 	/// @param args The arguments of the function.
 	/// @return The MethodInfo dictionary.
 	static Dictionary create_public_api_function(std::string_view name, gaddr_t address, std::string_view description, std::string_view return_type, std::string_view args);
+
+	/// @brief Download a named program from the Godot Sandbox programs repository.
+	/// @param program_name The name of the program to download. Must be a program built in the Godot Sandbox programs repository.
+	/// @return The downloaded program as a byte array.
+	static PackedByteArray download_program(const String &program_name);
 
 private:
 	static void generate_runtime_cpp_api(bool use_argument_names = false);
