@@ -94,6 +94,11 @@ PackedStringArray RustScriptLanguage::_get_reserved_words() const {
 		"unsized",
 		"virtual",
 		"yield"
+		// Integers, floats, and strings are not reserved words in Rust, but we want the highlighting to be consistent
+		"i8", "i16", "i32", "i64", "i128", "isize",
+		"u8", "u16", "u32", "u64", "u128", "usize",
+		"f32", "f64",
+		"GodotString", "Variant"
 	};
 	return reserved_words;
 }
