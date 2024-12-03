@@ -523,6 +523,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				const gaddr_t address = func.get("address", 0x0);
 				this->m_lookup.insert_or_assign(name.hash(), address);
 			}
+			this->m_program_data->update_public_api_functions();
 		}
 	}
 
@@ -957,6 +958,10 @@ String Sandbox::lookup_address(gaddr_t address) const {
 bool Sandbox::has_function(const StringName &p_function) const {
 	const gaddr_t address = cached_address_of(p_function.hash(), p_function);
 	return address != 0x0;
+}
+
+void Sandbox::add_cached_address(int64_t hash, gaddr_t address) {
+	m_lookup.insert_or_assign(hash, address);
 }
 
 //-- Scoped objects and variants --//

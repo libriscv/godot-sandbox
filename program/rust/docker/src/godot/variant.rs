@@ -1,6 +1,7 @@
 #![allow(dead_code)]
-use std::arch::asm;
+use core::arch::asm;
 use std::fmt;
+use super::string::*;
 
 #[repr(C)]
 pub enum VariantType {
@@ -21,51 +22,44 @@ pub enum VariantType {
 }
 
 #[repr(C)]
-pub(self) union CapacityOrSSO {
-	pub cap: usize,
-	pub sso: [u8; 16],
-}
-
-#[repr(C)]
-pub struct GuestStdString {
-	// 64-bit pointer + 64-bit length + 64-bit capacity OR 16-byte SSO data
-	pub ptr: *const char,
-	pub len: usize,
-	pub(self) cap_or_sso: CapacityOrSSO,
-}
-
 #[derive(Copy, Clone)]
 pub struct Vector2 {
 	pub x: f32,
 	pub y: f32,
 }
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Vector2i {
 	pub x: i32,
 	pub y: i32,
 }
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Vector3 {
 	pub x: f32,
 	pub y: f32,
 	pub z: f32,
 }
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Vector3i {
 	pub x: i32,
 	pub y: i32,
 	pub z: i32,
 }
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Rect2 {
 	pub position: Vector2,
 	pub size: Vector2,
 }
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Rect2i {
 	pub position: Vector2i,
 	pub size: Vector2i,
 }
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Vector4 {
 	pub x: f32,
@@ -73,6 +67,7 @@ pub struct Vector4 {
 	pub z: f32,
 	pub w: f32,
 }
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Vector4i {
 	pub x: i32,
@@ -295,26 +290,10 @@ impl Variant
 
 	pub fn to_string(&self) -> String
 	{
-		const SYSCALL_STRING_OPS: i64 = 526;
-		const STRING_OP_TO_STD_STRING: i64 = 7;
-
 		match self.t {
 			VariantType::String => {
-				let s = unsafe {
-					let mut std_string = GuestStdString::new_empty();
-					// sys_string_ops(String_Op::TO_STD_STRING, m_idx, 0, (Variant *)&str);
-					asm!("ecall",
-						in("a0") STRING_OP_TO_STD_STRING,
-						in("a1") self.u.i, // m_idx
-						in("a2") 0,  // utf-8
-						inout("a3") &mut std_string => _, // std::string
-						in("a7") 526, // SYSCALL_STRING_OPS
-						lateout("a0") _,
-						options(nostack));
-					let s = std::string::String::from_raw_parts(std_string.ptr as *mut u8, std_string.len, std_string.len);
-					s
-				};
-				return s
+				let gs = GodotString::from_ref(unsafe { self.u.i } as i32);
+				gs.to_string()
 			},
 			_ => panic!("Variant is not a String"),
 		}
@@ -322,22 +301,10 @@ impl Variant
 
 	pub fn internal_create_string(t: VariantType, s: &str) -> Variant
 	{
-		const SYSCALL_VCREATE: i64 = 517;
+		let gs = GodotString::create(s);
 		let mut v = Variant::new_nil();
-		// Arg0: pointer to this
-		// Arg1: variant type
-		// Arg2: pointer to GuestStdString
-		// TODO: Add a new syscall for creating a string more efficiently (avoiding the need for a GuestStdString)
-		let s = GuestStdString::new(s);
-		unsafe {
-			asm!("ecall",
-				inout("a0") &mut v => _, // Ensure the host can write to the Variant
-				in("a1") t as i64,
-				in("a2") 0, // std::string
-				in("a3") &s,
-				in("a7") SYSCALL_VCREATE,
-				options(nostack));
-		}
+		v.t = t;
+		v.u.i = gs.reference as i64;
 		return v;
 	}
 }
@@ -403,46 +370,6 @@ impl Vector4i
 	pub fn new(x: i32, y: i32, z: i32, w: i32) -> Vector4i
 	{
 		Vector4i { x: x, y: y, z: z, w: w }
-	}
-}
-
-impl GuestStdString
-{
-	pub fn new(s: &str) -> GuestStdString
-	{
-		if s.len() <= 16 {
-			let mut sso = [0; 16];
-			for i in 0..s.len() {
-				sso[i] = s.as_bytes()[i];
-			}
-			let v = GuestStdString { ptr: s.as_ptr() as *const char, len: s.len(), cap_or_sso: CapacityOrSSO { sso: sso } };
-			return v;
-		}
-
-		let v = GuestStdString { ptr: s.as_ptr() as *const char, len: s.len(), cap_or_sso: CapacityOrSSO { cap: s.len() } };
-		v
-	}
-
-	pub fn new_empty() -> GuestStdString
-	{
-		let v = GuestStdString { ptr: std::ptr::null(), len: 0, cap_or_sso: CapacityOrSSO { cap: 0 } };
-		return v;
-	}
-
-	pub fn as_str(&self) -> &str
-	{
-		unsafe {
-			let s = std::str::from_utf8_unchecked(std::slice::from_raw_parts(self.ptr as *const u8, self.len));
-			return s;
-		}
-	}
-
-	pub fn as_string(&self) -> String
-	{
-		unsafe {
-			let s = std::string::String::from_raw_parts(self.ptr as *mut u8, self.len, self.len);
-			return s;
-		}
 	}
 }
 
