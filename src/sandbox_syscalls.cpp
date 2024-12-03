@@ -1739,6 +1739,7 @@ APICALL(api_sandbox_add) {
 		ERR_PRINT("Sandbox add called outside of initialization");
 		throw std::runtime_error("Sandbox add called outside of initialization");
 	}
+	PENALIZE(100'000); // Costly Sandbox operations.
 	// Check which operation it is.
 	int method = machine.cpu.reg(10); // A0
 	switch (method) {
@@ -1750,11 +1751,45 @@ APICALL(api_sandbox_add) {
 			emu.add_property(utf8_name, type, setter, getter, defval->toVariant(emu));
 		} break;
 		case 1: {
-			// Add a new sandboxed public API method.
-			auto [method, name, address] = machine.sysargs<int, std::string_view, gaddr_t>();
+			// Add a new sandboxed public API method. Name, address, description, return type and arguments.
+			struct GuestFunctionExtra {
+				gaddr_t desc;
+				gaddr_t desc_len;
+				gaddr_t ret;
+				gaddr_t ret_len;
+				gaddr_t args;
+				gaddr_t args_len;
+			};
+			auto [method, name, address, g_extra] = machine.sysargs<int, std::string_view, gaddr_t, GuestFunctionExtra *>();
 			SYS_TRACE("sandbox_add", "method", String::utf8(name.data(), name.size()));
-			//emu.add_method(String::utf8(name.data(), name.size()), address);
-			throw std::runtime_error("Sandbox add public API method not implemented");
+			if (Ref<ELFScript> program = emu.get_program(); program.is_valid()) {
+				// Get the description, return type and arguments. We have a limited amount of registers,
+				// so we will use zero-terminated strings for the description and return type.
+				std::string_view description = machine.memory.memview(g_extra->desc, g_extra->desc_len);
+				std::string_view return_type = machine.memory.memview(g_extra->ret, g_extra->ret_len);
+				std::string_view arguments = machine.memory.memview(g_extra->args, g_extra->args_len);
+				Dictionary func = Sandbox::create_public_api_function(name, address, description, return_type, arguments);
+				// Add the function to the ELFScript method list.
+				if (func.size() > 0) {
+					if (program->functions.size() >= Sandbox::MAX_PUBLIC_FUNCTIONS) {
+						ERR_PRINT("Too many public functions in the Sandbox program");
+						throw std::runtime_error("Too many public functions in the Sandbox program");
+					}
+					if (program->function_names.has(func["name"])) {
+						// Remove the old function with the same name.
+						for (int i = 0; i < program->functions.size(); i++) {
+							Dictionary old_func = program->functions[i];
+							if (old_func["name"].operator String() == func["name"].operator String()) {
+								program->functions.remove_at(i);
+								break;
+							}
+						}
+					}
+					program->functions.push_back(func);
+				}
+			} else {
+				ERR_PRINT("No ELFScript program loaded");
+			}
 		} break;
 		default:
 			ERR_PRINT("Invalid sandbox add operation");

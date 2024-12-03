@@ -43,6 +43,7 @@ public:
 	static constexpr unsigned MAX_REFS = 100; // Default maximum number of references
 	static constexpr unsigned EDITOR_THROTTLE = 8; // Throttle VM calls from the editor
 	static constexpr unsigned MAX_PROPERTIES = 32; // Maximum number of sandboxed properties
+	static constexpr unsigned MAX_PUBLIC_FUNCTIONS = 128; // Maximum number of public functions
 
 	struct CurrentState {
 		std::vector<Variant> variants;
@@ -129,7 +130,7 @@ public:
 	/// @return True if the sandbox is initializing, false otherwise.
 	/// @note This is used to enforce or prevent certain operations from being performed during initialization.
 	/// For example, it's only possible to add properties or public API functions to the sandbox during initialization.
-	bool is_initializing() const { return !m_is_initialization; }
+	bool is_initializing() const { return m_is_initialization; }
 
 	// -= Sandbox Properties =-
 
@@ -176,6 +177,11 @@ public:
 	/// @param p_function The name of the function to check.
 	/// @return True if the function exists, false otherwise.
 	bool has_function(const StringName &p_function) const;
+
+	/// @brief Add a hash to address mapping to the cache.
+	/// @param hash The hash of the name.
+	/// @param address The address of the function or symbol.
+	void add_cached_address(int64_t hash, gaddr_t address);
 
 	// -= Call State Management =-
 
@@ -491,6 +497,15 @@ public:
 	/// @param use_argument_names If true, use argument names with default values in the generated API. Increases the size of the generated API and the compilation time.
 	/// @return The generated API code as a string.
 	static String generate_api(String language = "cpp", String header_extra = "", bool use_argument_names = false);
+
+	/// @brief Create a MethodInfo dictionary for a public API function.
+	/// @param name The name of the function.
+	/// @param address The address of the function.
+	/// @param description The description of the function.
+	/// @param return_type The return type of the function.
+	/// @param args The arguments of the function.
+	/// @return The MethodInfo dictionary.
+	static Dictionary create_public_api_function(std::string_view name, gaddr_t address, std::string_view description, std::string_view return_type, std::string_view args);
 
 private:
 	static void generate_runtime_cpp_api(bool use_argument_names = false);

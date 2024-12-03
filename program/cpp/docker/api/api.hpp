@@ -258,3 +258,34 @@ extern "C" struct PublicAPI {
 #define NUM_APIARGS(...)  (sizeof((PublicAPI[]){PublicAPI{}, ##__VA_ARGS__})/sizeof(PublicAPI))
 #define SANDBOX_API(...) \
 	extern "C" const PublicAPI public_api[NUM_APIARGS(__VA_ARGS__)] { __VA_ARGS__, {0} };
+
+/// @brief Add a new public API function to the program during initialization.
+/// @param name  The name of the function. Eg. "my_function".
+/// @param address  The address of the function. Eg. my_function.
+/// @param return_type  The return type of the function. Eg. void, int, String, Dictionary, etc.
+/// @param args  The comma-separated arguments of the function. Eg. "int a, double b, String c"
+/// @param description  The description of the function. Can be empty.
+/// @example add_sandbox_api_function(
+///    "add_numbers", (void *)add_numbers, "int", "int a, int b", "Adds two numbers together.");
+template <typename F>
+static inline void add_sandbox_api_function(std::string_view name, F *address, std::string_view return_type, std::string_view args, std::string_view description = "") {
+	struct GuestFunctionExtra {
+		const char *desc;
+		size_t desc_len;
+		const char *ret;
+		size_t ret_len;
+		const char *args;
+		size_t args_len;
+	};
+	GuestFunctionExtra extra = {
+		.desc = description.data(),
+		.desc_len = description.size(),
+		.ret = return_type.data(),
+		.ret_len = return_type.size(),
+		.args = args.data(),
+		.args_len = args.size(),
+	};
+	sys_sandbox_add(1, name.data(), name.size(), address, &extra);
+}
+#define ADD_API_FUNCTION(func, return_type, args, ...) \
+	add_sandbox_api_function(#func, func, return_type, args, ##__VA_ARGS__)

@@ -322,7 +322,10 @@ void ELFScript::set_public_api_functions(Array &&p_functions) {
 	if constexpr (VERBOSE_ELFSCRIPT) {
 		printf("ELFScript::set_public_api_functions: %s\n", path.utf8().ptr());
 	}
+	this->update_public_api_functions();
+}
 
+void ELFScript::update_public_api_functions() {
 	// Update the function names
 	function_names.clear();
 	for (int i = 0; i < functions.size(); i++) {
@@ -330,6 +333,7 @@ void ELFScript::set_public_api_functions(Array &&p_functions) {
 		function_names.push_back(func["name"]);
 	}
 
+	// Update the instance methods
 	for (ELFScriptInstance *instance : this->instances) {
 		instance->update_methods();
 	}

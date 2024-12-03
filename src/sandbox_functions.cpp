@@ -1315,6 +1315,63 @@ static Variant::Type convert_guest_type_to_variant(const String &type) {
 	return Variant::OBJECT;
 }
 
+Dictionary Sandbox::create_public_api_function(std::string_view name, gaddr_t address,
+	std::string_view description, std::string_view return_type, std::string_view args)
+{
+	Dictionary func;
+	if (name.empty() || name.size() > 64 || address == 0x0) {
+		ERR_PRINT("Sandbox: Invalid public API function.");
+		return func;
+	}
+	if (args.size() > 1024) {
+		ERR_PRINT("Sandbox: Invalid public API function arguments.");
+		return func;
+	}
+
+	String godot_name = String::utf8(name.begin(), name.size());
+	func["name"] = godot_name;
+	func["address"] = address;
+	func["flags"] = METHOD_FLAG_NORMAL;
+
+	Dictionary return_value;
+	return_value["type"] = convert_guest_type_to_variant(String::utf8(return_type.begin(), return_type.size()));
+	func["return"] = std::move(return_value);
+	func["description"] = String::utf8(description.begin(), description.size());
+
+	TypedArray<Dictionary> args_array;
+	PackedStringArray arg_names = String::utf8(args.begin(), args.size()).split(", ");
+	if (arg_names.is_empty()) {
+		return func;
+	}
+	if (arg_names.size() > 16) {
+		ERR_PRINT("Sandbox: Too many arguments for public API function.");
+		return func;
+	}
+	PackedStringArray arg_name_and_type;
+	for (const String &arg : arg_names) {
+		arg_name_and_type.clear();
+		arg_name_and_type = arg.split(" ");
+		// Convert the argument name and type to a dictionary.
+		String arg_name = arg_name_and_type[0];
+		String arg_type = "Object";
+		if (arg_name_and_type.size() > 1) {
+			arg_type = arg_name_and_type[0];
+			arg_name = arg_name_and_type[1];
+		}
+
+		Dictionary argument;
+		argument["name"] = arg_name;
+		argument["type"] = convert_guest_type_to_variant(arg_type);
+		argument["class_name"] = arg_type;
+		argument["usage"] = PROPERTY_USAGE_NIL_IS_VARIANT;
+
+		args_array.append(std::move(argument));
+	}
+
+	func["args"] = std::move(args_array);
+	return func;
+}
+
 Array Sandbox::get_public_api_functions() const {
 	TypedArray<Dictionary> result;
 	try {
@@ -1343,59 +1400,27 @@ Array Sandbox::get_public_api_functions() const {
 					ERR_PRINT("Sandbox: Invalid public API address.");
 					return result;
 				}
-				Dictionary func;
-				String godot_name = String::utf8(name.begin(), name.size());
-				func["name"] = godot_name;
-				func["address"] = entry.address;
-				func["flags"] = METHOD_FLAG_NORMAL;
-
-				Dictionary return_value;
-				if (entry.return_type != 0x0) {
-					std::string_view return_type = machine().memory.memstring_view(entry.return_type);
-					return_value["type"] = convert_guest_type_to_variant(String::utf8(return_type.begin(), return_type.size()));
-				} else {
-					return_value["type"] = Variant::NIL;
+				if (entry.return_type == 0x0) {
+					ERR_PRINT("Sandbox: Invalid public API return type.");
+					return result;
 				}
-				func["return"] = std::move(return_value);
-
-				if (entry.description != 0x0) {
-					std::string_view description = machine().memory.memstring_view(entry.description);
-					func["description"] = String::utf8(description.begin(), description.size());
+				if (entry.description == 0x0) {
+					ERR_PRINT("Sandbox: Invalid public API description.");
+					return result;
 				}
-
-				TypedArray<Dictionary> args;
-				if (entry.args != 0x0) {
-					std::string_view arg_list = machine().memory.memstring_view(entry.args);
-					PackedStringArray arg_names = String::utf8(arg_list.begin(), arg_list.size()).split(", ");
-					PackedStringArray arg_name_and_type;
-					for (const String &arg : arg_names) {
-						arg_name_and_type.clear();
-						arg_name_and_type = arg.split(" ");
-						// Convert the argument name and type to a dictionary.
-						String arg_name = arg_name_and_type[0];
-						String arg_type = "Object";
-						if (arg_name_and_type.size() > 1) {
-							arg_type = arg_name_and_type[0];
-							arg_name = arg_name_and_type[1];
-						}
-
-						Dictionary argument;
-						argument["name"] = arg_name;
-						argument["type"] = convert_guest_type_to_variant(arg_type);
-						argument["class_name"] = arg_type;
-						argument["usage"] = PROPERTY_USAGE_NIL_IS_VARIANT;
-
-						args.append(std::move(argument));
-					}
-				} else {
-					ERR_PRINT("Sandbox: Invalid function arguments.");
+				if (entry.args == 0x0) {
+					ERR_PRINT("Sandbox: Invalid public API arguments.");
+					return result;
 				}
+				std::string_view return_type = machine().memory.memstring_view(entry.return_type);
+				std::string_view description = machine().memory.memstring_view(entry.description);
+				std::string_view arg_list = machine().memory.memstring_view(entry.args);
 
-				func["args"] = std::move(args);
-				result.append(std::move(func));
-
+				Dictionary func = create_public_api_function(name, entry.address, description, return_type, arg_list);
 				// Since this public function was accepted, cache the address under the function name.
-				this->m_lookup.insert_or_assign(godot_name.hash(), entry.address);
+				this->m_lookup.insert_or_assign(func["name"].hash(), entry.address);
+
+				result.append(std::move(func));
 			}
 		}
 	} catch (const std::exception &e) {
