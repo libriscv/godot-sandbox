@@ -3,8 +3,6 @@
 #include "guest_datatypes.h"
 #include "sandbox_project_settings.h"
 #include <godot_cpp/classes/engine.hpp>
-#include <godot_cpp/classes/file_access.hpp>
-#include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -97,6 +95,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("address_of", "symbol"), &Sandbox::address_of);
 	ClassDB::bind_method(D_METHOD("lookup_address", "address"), &Sandbox::lookup_address);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("generate_api", "language", "header_extra", "use_argument_names"), &Sandbox::generate_api, DEFVAL("cpp"), DEFVAL(""), DEFVAL(false));
+	ClassDB::bind_static_method("Sandbox", D_METHOD("download_program", "program_name"), &Sandbox::download_program, DEFVAL("hello_world"));
 
 	// Profiling.
 	ClassDB::bind_static_method("Sandbox", D_METHOD("get_hotspots", "total", "callable"), &Sandbox::get_hotspots, DEFVAL(6), DEFVAL(Callable()));

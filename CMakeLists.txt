@@ -34,6 +34,7 @@ set(SOURCES
 	src/sandbox_globals.cpp
 	src/sandbox_generated_api.cpp
 	src/sandbox_profiling.cpp
+	src/sandbox_programs.cpp
 	src/sandbox_project_settings.cpp
 	src/sandbox_restrictions.cpp
 	src/sandbox_syscalls.cpp
