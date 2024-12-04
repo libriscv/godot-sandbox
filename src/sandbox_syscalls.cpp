@@ -108,7 +108,7 @@ APICALL(api_vcall) {
 
 	const GuestVariant *args = machine.memory.memarray<GuestVariant>(args_ptr, args_size);
 	StringName method_sn;
-	std::string_view method_sv = machine.memory.rvview(method, mlen + 1); // Include null terminator.
+	std::string_view method_sv = machine.memory.memview(method, mlen + 1); // Include null terminator.
 	if (method_sv.back() == '\0') {
 		method_sn = StringName(method_sv.data());
 	} else {

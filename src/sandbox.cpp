@@ -1013,6 +1013,8 @@ std::optional<const Variant *> Sandbox::get_scoped_variant(int32_t index) const 
 		if (index < init_state.scoped_variants.size()) {
 			return init_state.scoped_variants[index];
 		}
+		ERR_PRINT("Invalid permanent variant index: " + itos(index));
+		return std::nullopt;
 	}
 	ERR_PRINT("Invalid scoped variant index: " + itos(index));
 	return std::nullopt;
@@ -1046,8 +1048,8 @@ unsigned Sandbox::create_permanent_variant(unsigned idx) {
 	}
 	std::optional<const Variant *> var_opt = get_scoped_variant(idx);
 	if (!var_opt.has_value()) {
-		ERR_PRINT("Invalid scoped variant index.");
-		throw std::runtime_error("Invalid scoped variant index: " + std::to_string(idx));
+		ERR_PRINT("create_permanent_variant(): Invalid scoped variant index " + itos(idx));
+		throw std::runtime_error("Could not make permanent: Invalid scoped variant index " + std::to_string(idx));
 	}
 	const Variant *var = var_opt.value();
 	// Find the variant in the variants list
