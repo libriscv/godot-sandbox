@@ -1762,15 +1762,15 @@ APICALL(api_sandbox_add) {
 			};
 			auto [method, name, address, g_extra] = machine.sysargs<int, std::string_view, gaddr_t, GuestFunctionExtra *>();
 			SYS_TRACE("sandbox_add", "method", String::utf8(name.data(), name.size()));
-			if (Ref<ELFScript> program = emu.get_program(); program.is_valid()) {
-				// Get the description, return type and arguments. We have a limited amount of registers,
-				// so we will use zero-terminated strings for the description and return type.
-				std::string_view description = machine.memory.memview(g_extra->desc, g_extra->desc_len);
-				std::string_view return_type = machine.memory.memview(g_extra->ret, g_extra->ret_len);
-				std::string_view arguments = machine.memory.memview(g_extra->args, g_extra->args_len);
-				Dictionary func = Sandbox::create_public_api_function(name, address, description, return_type, arguments);
+			// Get the description, return type and arguments. We have a limited amount of registers,
+			// so we will use zero-terminated strings for the description and return type.
+			std::string_view description = machine.memory.memview(g_extra->desc, g_extra->desc_len);
+			std::string_view return_type = machine.memory.memview(g_extra->ret, g_extra->ret_len);
+			std::string_view arguments = machine.memory.memview(g_extra->args, g_extra->args_len);
+			Dictionary func = Sandbox::create_public_api_function(name, address, description, return_type, arguments);
+			if (func.size() > 0) {
 				// Add the function to the ELFScript method list.
-				if (func.size() > 0) {
+				if (Ref<ELFScript> program = emu.get_program(); program.is_valid()) {
 					if (program->functions.size() >= Sandbox::MAX_PUBLIC_FUNCTIONS) {
 						ERR_PRINT("Too many public functions in the Sandbox program");
 						throw std::runtime_error("Too many public functions in the Sandbox program");
@@ -1787,8 +1787,9 @@ APICALL(api_sandbox_add) {
 					}
 					program->functions.push_back(func);
 				}
-			} else {
-				ERR_PRINT("No ELFScript program loaded");
+				// Cache the function name hash with the address for faster lookup.
+				int64_t name_hash = func["name"].operator String().hash();
+				emu.add_cached_address(name_hash, address);
 			}
 		} break;
 		default:

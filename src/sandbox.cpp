@@ -524,6 +524,20 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 			}
 			this->m_program_data->update_public_api_functions();
 		}
+	} else {
+		// If the program is not an ELFScript, we will look for the API functions
+		if (this->m_lookup.empty()) {
+			Array api = this->get_public_api_functions();
+			if (!api.is_empty()) {
+				// Cache the public API functions
+				for (int i = 0; i < api.size(); i++) {
+					const Dictionary func = api[i];
+					const String &name = func["name"];
+					const gaddr_t address = func.get("address", 0x0);
+					this->m_lookup.insert_or_assign(name.hash(), address);
+				}
+			}
+		}
 	}
 
 	// Accumulate startup time
