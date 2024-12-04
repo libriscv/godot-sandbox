@@ -1357,6 +1357,9 @@ Dictionary Sandbox::create_public_api_function(std::string_view name, gaddr_t ad
 		if (arg_name_and_type.size() > 1) {
 			arg_type = arg_name_and_type[0];
 			arg_name = arg_name_and_type[1];
+		} else if (arg_name.is_empty()) {
+			// An argument without type and name is invalid (or just an empty string).
+			break;
 		}
 
 		Dictionary argument;
