@@ -56,7 +56,6 @@ static PackedByteArray handle_request(HTTPClient *client, String url) {
 
 	if (client->get_response_code() != 200) {
 		ERR_PRINT("Failed to download program: HTTP status " + itos(client->get_response_code()));
-		memdelete(client);
 		return PackedByteArray();
 	}
 
@@ -87,6 +86,10 @@ PackedByteArray Sandbox::download_program(const String &program_name) {
 	//printf("Response code: %d\n", client->get_response_code());
 	//UtilityFunctions::print(client->get_response_headers_as_dictionary());
 	memdelete(client);
+
+	if (data.is_empty()) {
+		return data;
+	}
 
 	// Save the downloaded program to a temporary file
 	Ref<FileAccess> file = FileAccess::open("user://temp.zip", FileAccess::ModeFlags::WRITE);
