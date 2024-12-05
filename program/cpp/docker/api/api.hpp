@@ -98,11 +98,15 @@ struct Property {
 /// @brief Add a new property to the Sandbox class.
 /// @param name The name of the property.
 /// @param type The type of the property.
+/// @param default_value The default value of the property.
 /// @param getter A function that returns the property value.
 /// @param setter A function that sets the property value.
-/// @param default_value The default value of the property.
 /// @note This function must be called during the initialization phase of the program.
-static inline void add_property(std::string_view name, Variant::Type type, Variant (*getter)(), Variant (*setter)(Variant), const Variant &default_value) {
+/// @example
+/// add_property("meaning_of_life", Variant::Type::INT, 42,
+/// 	[]() -> Variant { return 42; },
+/// 	[](Variant value) -> Variant { print("Set to: ", value); return Nil; });
+static inline void add_property(std::string_view name, Variant::Type type, const Variant &default_value, Variant (*getter)(), Variant (*setter)(Variant)) {
 	sys_sandbox_add(0, name.data(), name.size(), type, setter, getter, &default_value);
 }
 
