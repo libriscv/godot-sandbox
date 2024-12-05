@@ -7,6 +7,7 @@
 #include <godot_cpp/classes/zip_reader.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 using namespace godot;
+static constexpr bool VERBOSE = false;
 
 static PackedByteArray handle_request(HTTPClient *client, String url) {
 	while (client->get_status() != HTTPClient::Status::STATUS_CONNECTED) {
@@ -36,7 +37,9 @@ static PackedByteArray handle_request(HTTPClient *client, String url) {
 
 	if (client->get_response_code() >= 300 && client->get_response_code() < 400) {
 		String location = client->get_response_headers_as_dictionary()["Location"];
-		ERR_PRINT("Redirected to: " + location);
+		if constexpr (VERBOSE) {
+			ERR_PRINT("Redirected to: " + location);
+		}
 
 		client->close();
 		// Find first / after :// to get the host and path
