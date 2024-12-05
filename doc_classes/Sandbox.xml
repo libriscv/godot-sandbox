@@ -1,0 +1,337 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="Sandbox" inherits="Node" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/godotengine/godot/master/doc/class.xsd">
+	<brief_description>
+	</brief_description>
+	<description>
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="FromBuffer" qualifiers="static">
+			<return type="Sandbox" />
+			<param index="0" name="buffer" type="PackedByteArray" />
+			<description>
+			</description>
+		</method>
+		<method name="FromProgram" qualifiers="static">
+			<return type="Sandbox" />
+			<param index="0" name="program" type="ELFScript" />
+			<description>
+			</description>
+		</method>
+		<method name="add_allowed_object">
+			<return type="void" />
+			<param index="0" name="instance" type="Object" />
+			<description>
+			</description>
+		</method>
+		<method name="address_of" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="symbol" type="String" />
+			<description>
+			</description>
+		</method>
+		<method name="assault">
+			<return type="void" />
+			<param index="0" name="test" type="String" />
+			<param index="1" name="iterations" type="int" />
+			<description>
+			</description>
+		</method>
+		<method name="clear_allowed_objects">
+			<return type="void" />
+			<description>
+			</description>
+		</method>
+		<method name="clear_hotspots" qualifiers="static">
+			<return type="void" />
+			<description>
+			</description>
+		</method>
+		<method name="emit_binary_translation" qualifiers="const">
+			<return type="String" />
+			<param index="0" name="ignore_instruction_limit" type="bool" default="false" />
+			<param index="1" name="automatic_nbit_address_space" type="bool" default="false" />
+			<description>
+			</description>
+		</method>
+		<method name="generate_api" qualifiers="static">
+			<return type="String" />
+			<param index="0" name="language" type="String" default="&quot;cpp&quot;" />
+			<param index="1" name="header_extra" type="String" default="&quot;&quot;" />
+			<param index="2" name="use_argument_names" type="bool" default="false" />
+			<description>
+			</description>
+		</method>
+		<method name="get">
+			<return type="Variant" />
+			<param index="0" name="name" type="StringName" />
+			<description>
+			</description>
+		</method>
+		<method name="get_current_instruction" qualifiers="const">
+			<return type="String" />
+			<description>
+			</description>
+		</method>
+		<method name="get_floating_point_registers" qualifiers="const">
+			<return type="Array" />
+			<description>
+			</description>
+		</method>
+		<method name="get_functions" qualifiers="const">
+			<return type="Array" />
+			<description>
+			</description>
+		</method>
+		<method name="get_general_registers" qualifiers="const">
+			<return type="Array" />
+			<description>
+			</description>
+		</method>
+		<method name="get_hotspots" qualifiers="static">
+			<return type="Array" />
+			<param index="0" name="total" type="int" default="6" />
+			<param index="1" name="callable" type="Callable" default="Callable()" />
+			<description>
+			</description>
+		</method>
+		<method name="get_program">
+			<return type="ELFScript" />
+			<description>
+			</description>
+		</method>
+		<method name="get_property_list" qualifiers="const">
+			<return type="Array" />
+			<description>
+			</description>
+		</method>
+		<method name="has_function" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="function" type="StringName" />
+			<description>
+			</description>
+		</method>
+		<method name="has_program_loaded" qualifiers="const">
+			<return type="bool" />
+			<description>
+			</description>
+		</method>
+		<method name="is_allowed_class" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="name" type="String" />
+			<description>
+			</description>
+		</method>
+		<method name="is_allowed_method" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="instance" type="Object" />
+			<param index="1" name="method" type="Variant" />
+			<description>
+			</description>
+		</method>
+		<method name="is_allowed_object" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="instance" type="Object" />
+			<description>
+			</description>
+		</method>
+		<method name="is_allowed_property" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="instance" type="Object" />
+			<param index="1" name="property" type="Variant" />
+			<param index="2" name="is_set" type="bool" default="true" />
+			<description>
+			</description>
+		</method>
+		<method name="is_allowed_resource" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="res" type="String" />
+			<description>
+			</description>
+		</method>
+		<method name="is_binary_translated" qualifiers="const">
+			<return type="bool" />
+			<description>
+			</description>
+		</method>
+		<method name="load_binary_translation" qualifiers="static">
+			<return type="bool" />
+			<param index="0" name="shared_library_path" type="String" />
+			<description>
+			</description>
+		</method>
+		<method name="load_buffer">
+			<return type="void" />
+			<param index="0" name="buffer" type="PackedByteArray" />
+			<description>
+			</description>
+		</method>
+		<method name="lookup_address" qualifiers="const">
+			<return type="String" />
+			<param index="0" name="address" type="int" />
+			<description>
+			</description>
+		</method>
+		<method name="make_resumable">
+			<return type="void" />
+			<description>
+			</description>
+		</method>
+		<method name="remove_allowed_object">
+			<return type="void" />
+			<param index="0" name="instance" type="Object" />
+			<description>
+			</description>
+		</method>
+		<method name="reset">
+			<return type="void" />
+			<param index="0" name="unload" type="bool" default="false" />
+			<description>
+			</description>
+		</method>
+		<method name="restrictive_callback_function" qualifiers="static">
+			<return type="bool" />
+			<param index="0" name="arg" type="Variant" />
+			<description>
+			</description>
+		</method>
+		<method name="resume">
+			<return type="bool" />
+			<param index="0" name="max_instructions" type="int" />
+			<description>
+			</description>
+		</method>
+		<method name="set">
+			<return type="void" />
+			<param index="0" name="name" type="StringName" />
+			<param index="1" name="value" type="Variant" />
+			<description>
+			</description>
+		</method>
+		<method name="set_argument_registers">
+			<return type="void" />
+			<param index="0" name="args" type="Array" />
+			<description>
+			</description>
+		</method>
+		<method name="set_class_allowed_callback">
+			<return type="void" />
+			<param index="0" name="instance" type="Callable" />
+			<description>
+			</description>
+		</method>
+		<method name="set_method_allowed_callback">
+			<return type="void" />
+			<param index="0" name="instance" type="Callable" />
+			<description>
+			</description>
+		</method>
+		<method name="set_object_allowed_callback">
+			<return type="void" />
+			<param index="0" name="instance" type="Callable" />
+			<description>
+			</description>
+		</method>
+		<method name="set_program">
+			<return type="void" />
+			<param index="0" name="program" type="ELFScript" />
+			<description>
+			</description>
+		</method>
+		<method name="set_property_allowed_callback">
+			<return type="void" />
+			<param index="0" name="instance" type="Callable" />
+			<description>
+			</description>
+		</method>
+		<method name="set_redirect_stdout">
+			<return type="void" />
+			<param index="0" name="callback" type="Callable" />
+			<description>
+			</description>
+		</method>
+		<method name="set_resource_allowed_callback">
+			<return type="void" />
+			<param index="0" name="instance" type="Callable" />
+			<description>
+			</description>
+		</method>
+		<method name="try_compile_binary_translation">
+			<return type="bool" />
+			<param index="0" name="shared_library_path" type="String" default="&quot;res://bintr&quot;" />
+			<param index="1" name="compiler" type="String" default="&quot;cc&quot;" />
+			<param index="2" name="extra_cflags" type="String" default="&quot;&quot;" />
+			<param index="3" name="ignore_instruction_limit" type="bool" default="false" />
+			<param index="4" name="automatic_nbit_as" type="bool" default="false" />
+			<description>
+			</description>
+		</method>
+		<method name="vmcall" qualifiers="const vararg">
+			<return type="Variant" />
+			<description>
+			</description>
+		</method>
+		<method name="vmcallable">
+			<return type="Variant" />
+			<param index="0" name="function" type="String" />
+			<param index="1" name="args" type="Array" default="[]" />
+			<description>
+			</description>
+		</method>
+		<method name="vmcallable_address">
+			<return type="Variant" />
+			<param index="0" name="address" type="int" />
+			<param index="1" name="args" type="Array" default="[]" />
+			<description>
+			</description>
+		</method>
+		<method name="vmcallv" qualifiers="const vararg">
+			<return type="Variant" />
+			<description>
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="allocations_max" type="int" setter="set_allocations_max" getter="get_allocations_max" default="4000">
+		</member>
+		<member name="execution_timeout" type="int" setter="set_instructions_max" getter="get_instructions_max" default="8000">
+		</member>
+		<member name="memory_max" type="int" setter="set_memory_max" getter="get_memory_max" default="16">
+		</member>
+		<member name="monitor_accumulated_startup_time" type="float" setter="" getter="get_accumulated_startup_time" default="0.0">
+		</member>
+		<member name="monitor_calls_made" type="int" setter="" getter="get_calls_made" default="0">
+		</member>
+		<member name="monitor_exceptions" type="int" setter="" getter="get_exceptions" default="0">
+		</member>
+		<member name="monitor_execution_timeouts" type="int" setter="" getter="get_timeouts" default="0">
+		</member>
+		<member name="monitor_global_calls_made" type="int" setter="" getter="get_global_calls_made" default="0">
+		</member>
+		<member name="monitor_global_exceptions" type="int" setter="" getter="get_global_exceptions" default="0">
+		</member>
+		<member name="monitor_global_execution_timeouts" type="int" setter="" getter="get_global_timeouts" default="0">
+		</member>
+		<member name="monitor_global_instance_count" type="int" setter="" getter="get_global_instance_count" default="1">
+		</member>
+		<member name="monitor_heap_allocation_counter" type="int" setter="" getter="get_heap_allocation_counter" default="0">
+		</member>
+		<member name="monitor_heap_chunk_count" type="int" setter="" getter="get_heap_chunk_count" default="0">
+		</member>
+		<member name="monitor_heap_deallocation_counter" type="int" setter="" getter="get_heap_deallocation_counter" default="0">
+		</member>
+		<member name="monitor_heap_usage" type="int" setter="" getter="get_heap_usage" default="0">
+		</member>
+		<member name="profiling" type="bool" setter="set_profiling" getter="get_profiling" default="false">
+		</member>
+		<member name="references_max" type="int" setter="set_max_refs" getter="get_max_refs" default="100">
+		</member>
+		<member name="restrictions" type="bool" setter="set_restrictions" getter="get_restrictions" default="false">
+		</member>
+		<member name="use_precise_simulation" type="bool" setter="set_use_precise_simulation" getter="get_use_precise_simulation" default="false">
+		</member>
+		<member name="use_unboxed_arguments" type="bool" setter="set_use_unboxed_arguments" getter="get_use_unboxed_arguments" default="true">
+		</member>
+	</members>
+</class>
