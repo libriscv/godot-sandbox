@@ -1767,10 +1767,10 @@ APICALL(api_sandbox_add) {
 			std::string_view description = machine.memory.memview(g_extra->desc, g_extra->desc_len);
 			std::string_view return_type = machine.memory.memview(g_extra->ret, g_extra->ret_len);
 			std::string_view arguments = machine.memory.memview(g_extra->args, g_extra->args_len);
-			Dictionary func = Sandbox::create_public_api_function(name, address, description, return_type, arguments);
-			if (func.size() > 0) {
-				// Add the function to the ELFScript method list.
-				if (Ref<ELFScript> program = emu.get_program(); program.is_valid()) {
+			// Add the function to the ELFScript method list.
+			if (Ref<ELFScript> program = emu.get_program(); program.is_valid()) {
+				Dictionary func = Sandbox::create_public_api_function(name, address, description, return_type, arguments);
+				if (func.size() > 0) {
 					if (program->functions.size() >= Sandbox::MAX_PUBLIC_FUNCTIONS) {
 						ERR_PRINT("Too many public functions in the Sandbox program");
 						throw std::runtime_error("Too many public functions in the Sandbox program");
@@ -1787,10 +1787,10 @@ APICALL(api_sandbox_add) {
 					}
 					program->functions.push_back(func);
 				}
-				// Cache the function name hash with the address for faster lookup.
-				int64_t name_hash = func["name"].operator String().hash();
-				emu.add_cached_address(name_hash, address);
 			}
+			// Cache the function name hash with the address for faster lookup.
+			int64_t name_hash = String::utf8(name.data(), name.size()).hash();
+			emu.add_cached_address(name_hash, address);
 		} break;
 		default:
 			ERR_PRINT("Invalid sandbox add operation");
