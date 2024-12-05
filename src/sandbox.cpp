@@ -91,7 +91,6 @@ void Sandbox::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("assault", "test", "iterations"), &Sandbox::assault);
 	ClassDB::bind_method(D_METHOD("has_function", "function"), &Sandbox::has_function);
-	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
 	ClassDB::bind_method(D_METHOD("address_of", "symbol"), &Sandbox::address_of);
 	ClassDB::bind_method(D_METHOD("lookup_address", "address"), &Sandbox::lookup_address);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("generate_api", "language", "header_extra", "use_argument_names"), &Sandbox::generate_api, DEFVAL("cpp"), DEFVAL(""), DEFVAL(false));
@@ -508,13 +507,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 	if (this->m_program_data.is_valid()) {
 		// We can't read them without having loaded the program first
 		// If the functions Array in the ELFScript object is empty, we will look for the API functions
-		if (this->m_program_data->functions.is_empty()) {
-			Array api = this->get_public_api_functions();
-			if (!api.is_empty()) {
-				// Set the public API functions on the ELFScript object
-				this->m_program_data->set_public_api_functions(std::move(api));
-			}
-		} else {
+		if (!this->m_program_data->functions.is_empty()) {
 			// Cache the public API functions from the ELFScript object
 			for (int i = 0; i < this->m_program_data->functions.size(); i++) {
 				const Dictionary func = this->m_program_data->functions[i];
@@ -523,20 +516,6 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				this->m_lookup.insert_or_assign(name.hash(), address);
 			}
 			this->m_program_data->update_public_api_functions();
-		}
-	} else {
-		// If the program is not an ELFScript, we will look for the API functions
-		if (this->m_lookup.empty()) {
-			Array api = this->get_public_api_functions();
-			if (!api.is_empty()) {
-				// Cache the public API functions
-				for (int i = 0; i < api.size(); i++) {
-					const Dictionary func = api[i];
-					const String &name = func["name"];
-					const gaddr_t address = func.get("address", 0x0);
-					this->m_lookup.insert_or_assign(name.hash(), address);
-				}
-			}
 		}
 	}
 

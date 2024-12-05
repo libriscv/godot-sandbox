@@ -1375,63 +1375,6 @@ Dictionary Sandbox::create_public_api_function(std::string_view name, gaddr_t ad
 	return func;
 }
 
-Array Sandbox::get_public_api_functions() const {
-	TypedArray<Dictionary> result;
-	try {
-		gaddr_t public_api_addr = machine().address_of("public_api");
-		if (public_api_addr != 0x0) {
-			// Get the public API from this address instead of the symbol table.
-			// It's an array of structs, ending with a null pointer.
-			struct PublicAPI {
-				gaddr_t name;
-				gaddr_t address;
-				gaddr_t description;
-				gaddr_t return_type;
-				gaddr_t args; // Comma-separated list of argument names and types.
-			};
-
-			// View up to 32 public functions, however we will stop at the first null pointer.
-			static constexpr size_t MAX_PAPI = 32;
-			const PublicAPI *api = machine().memory.memarray<PublicAPI>(public_api_addr, MAX_PAPI);
-			for (size_t i = 0; i < MAX_PAPI; i++) {
-				const PublicAPI &entry = api[i];
-				if (entry.name == 0x0) {
-					break;
-				}
-				std::string_view name = machine().memory.memstring_view(entry.name);
-				if (name.empty() || name.size() > 64 || entry.address == 0x0) {
-					ERR_PRINT("Sandbox: Invalid public API address.");
-					return result;
-				}
-				if (entry.return_type == 0x0) {
-					ERR_PRINT("Sandbox: Invalid public API return type.");
-					return result;
-				}
-				if (entry.description == 0x0) {
-					ERR_PRINT("Sandbox: Invalid public API description.");
-					return result;
-				}
-				if (entry.args == 0x0) {
-					ERR_PRINT("Sandbox: Invalid public API arguments.");
-					return result;
-				}
-				std::string_view return_type = machine().memory.memstring_view(entry.return_type);
-				std::string_view description = machine().memory.memstring_view(entry.description);
-				std::string_view arg_list = machine().memory.memstring_view(entry.args);
-
-				Dictionary func = create_public_api_function(name, entry.address, description, return_type, arg_list);
-				// Since this public function was accepted, cache the address under the function name.
-				this->m_lookup.insert_or_assign(func["name"].hash(), entry.address);
-
-				result.append(std::move(func));
-			}
-		}
-	} catch (const std::exception &e) {
-		ERR_PRINT("Sandbox: Failed to get functions: " + String(e.what()));
-	}
-	return result;
-}
-
 PackedStringArray Sandbox::get_public_functions(const machine_t& machine) {
 	PackedStringArray result;
 	try {
@@ -1453,16 +1396,6 @@ PackedStringArray Sandbox::get_public_functions(const machine_t& machine) {
 		ERR_PRINT("Sandbox: Failed to get functions: " + String(e.what()));
 	}
 	return result;
-}
-
-Array Sandbox::get_functions() const {
-	// Check if the guest program has a public API.
-	Array result = this->get_public_api_functions();
-	if (!result.is_empty()) {
-		return result;
-	}
-	// Otherwise, get all public functions from the symbol table.
-	return this->get_public_functions(machine());
 }
 
 Sandbox::BinaryInfo Sandbox::get_program_info_from_binary(const PackedByteArray &binary) {
