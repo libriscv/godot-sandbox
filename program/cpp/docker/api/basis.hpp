@@ -95,5 +95,5 @@ inline Basis &Basis::operator =(const Basis &basis) {
 
 template <typename... Args>
 inline Variant Basis::operator () (std::string_view method, Args&&... args) {
-	return Variant::method_call(method, std::forward<Args>(args)...);
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
 }

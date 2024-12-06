@@ -87,5 +87,5 @@ inline Quaternion &Quaternion::operator =(const Quaternion &q) {
 
 template <typename... Args>
 inline Variant Quaternion::operator () (std::string_view method, Args&&... args) {
-	return Variant::method_call(method, std::forward<Args>(args)...);
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
 }
