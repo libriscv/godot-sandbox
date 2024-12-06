@@ -64,7 +64,8 @@ target_compile_definitions(sandbox_api PUBLIC
 )
 target_compile_options(sandbox_api PUBLIC
 	${RISCV_ARCH} ${RISCV_ABI}
-	${CXXFLAGS}
+	$<$<COMPILE_LANGUAGE:CXX>:${CXXFLAGS}>
+	$<$<COMPILE_LANGUAGE:C>:${CFLAGS}>
 )
 target_include_directories(sandbox_api PUBLIC
 	${API_DIR}
