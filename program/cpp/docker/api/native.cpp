@@ -24,34 +24,40 @@
 #define STR(x) STR1(x)
 
 // clang-format off
-#define WRAP_FUNC(name, syscall_id)                 \
+#define CREATE_SYSCALL(name, syscall_id)                 \
 	__asm__(".pushsection .text\n"                  \
-			".global __wrap_" #name "\n"            \
-			".type __wrap_" #name ", @function\n"   \
-			"__wrap_" #name ":\n"                   \
+			".global " #name "\n"            \
+			".type " #name ", @function\n"   \
+			"" #name ":\n"                   \
 			"	li a7, " STR(syscall_id) "\n"       \
 			"	ecall\n" \
 			"	ret\n"   \
 			".popsection .text\n")
 // clang-format on
 
-WRAP_FUNC(calloc, SYSCALL_CALLOC);
-WRAP_FUNC(realloc, SYSCALL_REALLOC);
-
+#ifdef ZIG_COMPILER
+#define WRAP_FANCY 0
+#else
 #define WRAP_FANCY 1
+#endif
 
 #if !WRAP_FANCY
-WRAP_FUNC(malloc, SYSCALL_MALLOC);
-WRAP_FUNC(free, SYSCALL_FREE);
-WRAP_FUNC(memset, SYSCALL_MEMSET);
-WRAP_FUNC(memcpy, SYSCALL_MEMCPY);
-WRAP_FUNC(memmove, SYSCALL_MEMMOVE);
-WRAP_FUNC(memcmp, SYSCALL_MEMCMP);
-WRAP_FUNC(strlen, SYSCALL_STRLEN);
-WRAP_FUNC(strcmp, SYSCALL_STRCMP);
-WRAP_FUNC(strncmp, SYSCALL_STRCMP);
+CREATE_SYSCALL(malloc, SYSCALL_MALLOC);
+CREATE_SYSCALL(calloc, SYSCALL_CALLOC);
+CREATE_SYSCALL(realloc, SYSCALL_REALLOC);
+CREATE_SYSCALL(free, SYSCALL_FREE);
+CREATE_SYSCALL(memset, SYSCALL_MEMSET);
+CREATE_SYSCALL(memcpy, SYSCALL_MEMCPY);
+CREATE_SYSCALL(memmove, SYSCALL_MEMMOVE);
+CREATE_SYSCALL(memcmp, SYSCALL_MEMCMP);
+CREATE_SYSCALL(strlen, SYSCALL_STRLEN);
+CREATE_SYSCALL(strcmp, SYSCALL_STRCMP);
+CREATE_SYSCALL(strncmp, SYSCALL_STRCMP);
 
 #else // WRAP_FANCY
+
+CREATE_SYSCALL(__wrap_calloc, SYSCALL_CALLOC);
+CREATE_SYSCALL(__wrap_realloc, SYSCALL_REALLOC);
 
 extern "C" void *__wrap_malloc(size_t size) {
 	register void *ret __asm__("a0");

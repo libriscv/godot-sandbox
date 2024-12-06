@@ -203,6 +203,14 @@ APICALL(api_vcreate) {
 			if (method == 0) {
 				GuestStdString *str = machine.memory.memarray<GuestStdString>(gdata, 1);
 				godot_str = str->to_godot_string(machine);
+			} else if (method == 1) { // const char*, size_t
+				struct Buffer {
+					gaddr_t data;
+					gaddr_t size;
+				} *buffer = machine.memory.memarray<Buffer>(gdata, 1);
+				// View the string from guest memory.
+				std::string_view view = machine.memory.memview(buffer->data, buffer->size);
+				godot_str = String::utf8(view.data(), view.size());
 			} else if (method == 2) { // From std::u32string
 				GuestStdU32String *str = machine.memory.memarray<GuestStdU32String>(gdata, 1);
 				godot_str = str->to_godot_string(machine);
@@ -397,6 +405,15 @@ APICALL(api_vfetch) {
 					auto u8str = var.operator String().utf8();
 					auto *gstr = machine.memory.memarray<GuestStdString>(gdata, 1);
 					gstr->set_string(machine, gdata, u8str.ptr(), u8str.length());
+				} else if (method == 1) { // const char*, size_t struct
+					auto u8str = var.operator String().utf8();
+					struct Buffer {
+						gaddr_t ptr;
+						gaddr_t size;
+					} *gstr = machine.memory.memarray<Buffer>(gdata, 1);
+					gstr->ptr  = machine.arena().malloc(u8str.length());
+					gstr->size = u8str.length();
+					machine.memory.memcpy(gstr->ptr, u8str.ptr(), u8str.length());
 				} else if (method == 2) { // std::u32string
 					auto u32str = var.operator String();
 					auto *gstr = machine.memory.memarray<GuestStdU32String>(gdata, 1);
@@ -1575,6 +1592,17 @@ APICALL(api_string_ops) {
 				CharString utf8 = str.utf8();
 				GuestStdString *gstr = machine.memory.memarray<GuestStdString>(vaddr, 1);
 				gstr->set_string(machine, vaddr, utf8.ptr(), utf8.length());
+			} else if (index == 1) { // Get the string as a const char*, size_t struct.
+				struct Buffer {
+					gaddr_t ptr;
+					gaddr_t size;
+				} *buffer = machine.memory.memarray<Buffer>(vaddr, 1);
+				CharString utf8 = str.utf8();
+				// Allocate memory for the string in the guest memory.
+				buffer->size = utf8.length();
+				buffer->ptr = machine.arena().malloc(buffer->size);
+				// Copy the string to the guest memory.
+				machine.memory.memcpy(buffer->ptr, utf8.ptr(), buffer->size);
 			} else if (index == 2) { // Get the string as a std::u32string.
 				GuestStdU32String *gstr = machine.memory.memarray<GuestStdU32String>(vaddr, 1);
 				gstr->set_string(machine, vaddr, str.ptr(), str.length());

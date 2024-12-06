@@ -2,6 +2,7 @@
 
 #include "syscalls.h"
 #include "variant.hpp"
+#include <stdexcept>
 
 MAKE_SYSCALL(ECALL_GET_OBJ, uint64_t, sys_get_obj, const char *, size_t);
 MAKE_SYSCALL(ECALL_OBJ, void, sys_obj, Object_Op, uint64_t, Variant *);
@@ -10,16 +11,19 @@ MAKE_SYSCALL(ECALL_OBJ_PROP_GET, void, sys_obj_property_get, uint64_t, const cha
 MAKE_SYSCALL(ECALL_OBJ_PROP_SET, void, sys_obj_property_set, uint64_t, const char *, size_t, const Variant *);
 
 static_assert(sizeof(std::vector<std::string>) == 24, "std::vector<std::string> is not 24 bytes");
-static_assert(sizeof(std::string) == 32, "std::string is not 32 bytes");
 
 Object::Object(const std::string &name) :
 		m_address{ sys_get_obj(name.c_str(), name.size()) } {
 }
 
 std::vector<std::string> Object::get_method_list() const {
-	std::vector<std::string> methods;
-	sys_obj(Object_Op::GET_METHOD_LIST, address(), (Variant *)&methods);
-	return methods;
+	if constexpr (sizeof(std::string) == 32) {
+		std::vector<std::string> methods;
+		sys_obj(Object_Op::GET_METHOD_LIST, address(), (Variant *)&methods);
+		return methods;
+	} else {
+		throw std::runtime_error("Fast-path std::string is not supported on this platform");
+	}
 }
 
 Variant Object::get(std::string_view name) const {
@@ -61,9 +65,13 @@ void Object::set(std::string_view name, const Variant &value) {
 }
 
 std::vector<std::string> Object::get_property_list() const {
-	std::vector<std::string> properties;
-	sys_obj(Object_Op::GET_PROPERTY_LIST, address(), (Variant *)&properties);
-	return properties;
+	if constexpr (sizeof(std::string) == 32) {
+		std::vector<std::string> properties;
+		sys_obj(Object_Op::GET_PROPERTY_LIST, address(), (Variant *)&properties);
+		return properties;
+	} else {
+		throw std::runtime_error("Fast-path std::string is not supported on this platform");
+	}
 }
 
 void Object::connect(Object target, const std::string &signal, std::string_view method) {
@@ -83,7 +91,11 @@ void Object::disconnect(Object target, const std::string &signal, std::string_vi
 }
 
 std::vector<std::string> Object::get_signal_list() const {
-	std::vector<std::string> signals;
-	sys_obj(Object_Op::GET_SIGNAL_LIST, address(), (Variant *)&signals);
-	return signals;
+	if constexpr (sizeof(std::string) == 32) {
+		std::vector<std::string> signals;
+		sys_obj(Object_Op::GET_SIGNAL_LIST, address(), (Variant *)&signals);
+		return signals;
+	} else {
+		throw std::runtime_error("Fast-path std::string is not supported on this platform");
+	}
 }

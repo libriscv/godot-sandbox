@@ -22,12 +22,18 @@ elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
 	set(CFLAGS   ${CFLAGS} -O2 -gdwarf-4)
 endif()
 
-if (SANDBOX_RISCV_EXT_C)
-	set(RISCV_ARCH "-march=rv64gc_zba_zbb_zbs_zbc")
+# If the compiler contains Zig, don't set RISCV_ARCH and RISCV_ABI
+if (${CMAKE_CXX_COMPILER} MATCHES "zig")
+	set(RISCV_ARCH "")
+	set(RISCV_ABI "")
 else()
-	set(RISCV_ARCH "-march=rv64g_zba_zbb_zbs_zbc")
+	if (SANDBOX_RISCV_EXT_C)
+		set(RISCV_ARCH "-march=rv64gc_zba_zbb_zbs_zbc")
+	else()
+		set(RISCV_ARCH "-march=rv64g_zba_zbb_zbs_zbc")
+	endif()
+	set(RISCV_ABI "-mabi=lp64d")
 endif()
-set(RISCV_ABI "-mabi=lp64d")
 
 set(API_DIR ${CMAKE_CURRENT_LIST_DIR}/api)
 
@@ -63,12 +69,17 @@ target_compile_options(sandbox_api PUBLIC
 target_include_directories(sandbox_api PUBLIC
 	${API_DIR}
 )
-target_link_libraries(sandbox_api PUBLIC
-	-Wl,--wrap=memcpy,--wrap=memset,--wrap=memcmp,--wrap=memmove
-	-Wl,--wrap=strlen,--wrap=strcmp,--wrap=strncmp
-	-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free
-	-static
-)
+if (NOT ZIG_COMPILER)
+	target_link_libraries(sandbox_api PUBLIC
+		-Wl,--wrap=memcpy,--wrap=memset,--wrap=memcmp,--wrap=memmove
+		-Wl,--wrap=strlen,--wrap=strcmp,--wrap=strncmp
+		-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free
+	)
+else()
+	target_compile_definitions(sandbox_api PUBLIC
+		ZIG_COMPILER=1
+	)
+endif()
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 	# If the GCC version is 14.0 or higher, we can use the -fuse-ld=mold flag
 	if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14.0)
@@ -84,7 +95,9 @@ function (add_sandbox_program name)
 	add_executable(${name} ${ARGN})
 	target_link_libraries(${name} PRIVATE
 		-Wl,--whole-archive sandbox_api -Wl,--no-whole-archive
-		-static -static-libgcc -static-libstdc++
+	)
+	target_link_libraries(${name} PUBLIC
+		-static
 	)
 	if (DOUBLE_PRECISION)
 		target_compile_definitions(${name} PUBLIC

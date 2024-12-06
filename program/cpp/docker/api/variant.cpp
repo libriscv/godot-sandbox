@@ -37,7 +37,15 @@ void Variant::evaluate(const Operator &op, const Variant &a, const Variant &b, V
 }
 
 void Variant::internal_create_string(Type type, const std::string &value) {
-	sys_vcreate(this, type, 0, &value);
+	if constexpr (sizeof(std::string) == 32) {
+		sys_vcreate(this, type, 0, &value);
+	} else {
+		struct Buffer {
+			const char *data;
+			size_t size;
+		} buffer = { value.data(), value.size() };
+		sys_vcreate(this, type, 1, &buffer);
+	}
 }
 
 void Variant::internal_create_u32string(Type type, const std::u32string &value) {
@@ -46,13 +54,23 @@ void Variant::internal_create_u32string(Type type, const std::u32string &value) 
 
 std::string Variant::internal_fetch_string() const {
 	std::string result;
-	sys_vfetch(this->v.i, &result, 0); // Fetch as std::string
+	if constexpr (sizeof(std::string) == 32) {
+		sys_vfetch(this->v.i, &result, 0); // Fetch as std::string
+	} else {
+		struct Buffer {
+			char *data;
+			size_t size;
+		} buffer;
+		sys_vfetch(this->v.i, &buffer, 1); // Fetch as const char*, size_t struct
+		result.assign(buffer.data, buffer.size);
+		delete[] buffer.data;
+	}
 	return result;
 }
 
 std::u32string Variant::internal_fetch_u32string() const {
 	std::u32string result;
-	sys_vfetch(this->v.i, &result, 2); // Fetch as u32string
+	sys_vfetch(this->v.i, &result, 2); // Fetch as std::u32string
 	return result;
 }
 

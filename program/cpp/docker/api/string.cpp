@@ -49,7 +49,17 @@ unsigned String::Create(const char *data, size_t size) {
 
 std::string String::utf8() const {
 	std::string str;
-	sys_string_ops(String_Op::TO_STD_STRING, m_idx, 0, (Variant *)&str);
+	if constexpr (sizeof(std::string) == 32) {
+		sys_string_ops(String_Op::TO_STD_STRING, m_idx, 0, (Variant *)&str);
+	} else {
+		struct Buffer {
+			char *data;
+			size_t size;
+		} buffer;
+		sys_string_ops(String_Op::TO_STD_STRING, m_idx, 1, (Variant *)&buffer);
+		str.assign(buffer.data, buffer.data + buffer.size);
+		std::free(buffer.data);
+	}
 	return str;
 }
 

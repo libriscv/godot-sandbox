@@ -27,7 +27,7 @@ struct PackedArray {
 
 	/// @brief Create a PackedArray from a Variant.
 	/// @param v The Variant.
-	PackedArray(const Variant& v);
+	explicit PackedArray(const Variant& v);
 
 	/// @brief Create a PackedArray from a vector of data.
 	/// @param data The initial data.
