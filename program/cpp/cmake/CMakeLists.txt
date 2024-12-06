@@ -79,6 +79,9 @@ else()
 	target_compile_definitions(sandbox_api PUBLIC
 		ZIG_COMPILER=1
 	)
+	target_link_libraries(sandbox_api PUBLIC
+		-Wl,--image-base=0x100000
+	)
 endif()
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 	# If the GCC version is 14.0 or higher, we can use the -fuse-ld=mold flag

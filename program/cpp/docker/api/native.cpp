@@ -33,6 +33,16 @@
 			"	ecall\n" \
 			"	ret\n"   \
 			".popsection .text\n")
+#define CREATE_SYSCALL_STRCMP(name, syscall_id) \
+	__asm__(".pushsection .text\n"              \
+			".global " #name "\n"            \
+			".type " #name ", @function\n"   \
+			"" #name ":\n"                   \
+			"   li a2, 4096\n"               \
+			"	li a7, " STR(syscall_id) "\n"       \
+			"	ecall\n" \
+			"	ret\n"   \
+			".popsection .text\n")
 // clang-format on
 
 #ifdef ZIG_COMPILER
@@ -51,7 +61,7 @@ CREATE_SYSCALL(memcpy, SYSCALL_MEMCPY);
 CREATE_SYSCALL(memmove, SYSCALL_MEMMOVE);
 CREATE_SYSCALL(memcmp, SYSCALL_MEMCMP);
 CREATE_SYSCALL(strlen, SYSCALL_STRLEN);
-CREATE_SYSCALL(strcmp, SYSCALL_STRCMP);
+CREATE_SYSCALL_STRCMP(strcmp, SYSCALL_STRCMP);
 CREATE_SYSCALL(strncmp, SYSCALL_STRCMP);
 
 #else // WRAP_FANCY
