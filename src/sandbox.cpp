@@ -46,9 +46,6 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_static_method("Sandbox", D_METHOD("FromBuffer", "buffer"), &Sandbox::FromBuffer);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("FromProgram", "program"), &Sandbox::FromProgram);
 	// Methods.
-	ClassDB::bind_method(D_METHOD("set_program", "program"), &Sandbox::set_program);
-	ClassDB::bind_method(D_METHOD("get_program"), &Sandbox::get_program);
-	ClassDB::bind_method(D_METHOD("has_program_loaded"), &Sandbox::has_program_loaded);
 	ClassDB::bind_method(D_METHOD("load_buffer", "buffer"), &Sandbox::load_buffer);
 	ClassDB::bind_method(D_METHOD("reset", "unload"), &Sandbox::reset, DEFVAL(false));
 	{
@@ -141,6 +138,11 @@ void Sandbox::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "restrictions", PROPERTY_HINT_NONE, "Enable sandbox restrictions"), "set_restrictions", "get_restrictions");
 
+	ClassDB::bind_method(D_METHOD("set_program", "program"), &Sandbox::set_program);
+	ClassDB::bind_method(D_METHOD("get_program"), &Sandbox::get_program);
+	ClassDB::bind_method(D_METHOD("has_program_loaded"), &Sandbox::has_program_loaded);
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "program", PROPERTY_HINT_RESOURCE_TYPE, "ELFScript"), "set_program", "get_program");
+
 	// Group for monitored Sandbox health.
 	ADD_GROUP("Sandbox Monitoring", "monitor_");
 
@@ -195,6 +197,9 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 	list.push_back(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "profiling", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "restrictions", PROPERTY_HINT_NONE));
+
+	// Group for sandbox properties.
+	list.push_back(PropertyInfo(Variant::OBJECT, "program", PROPERTY_HINT_RESOURCE_TYPE, "ELFScript"));
 
 	// Group for monitored Sandbox health.
 	// Add the group name to the property name to group them in the editor.
