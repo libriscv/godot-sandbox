@@ -1,5 +1,7 @@
 #include "syscalls.h"
+#include <array>
 #include <cstddef>
+#include <cstdint>
 
 #define NATIVE_MEM_FUNCATTR /* */
 #define NATIVE_SYSCALLS_BASE 480 /* libc starts at 480 */
@@ -43,6 +45,7 @@
 			"	ecall\n" \
 			"	ret\n"   \
 			".popsection .text\n")
+
 // clang-format on
 
 #ifdef ZIG_COMPILER
@@ -68,6 +71,8 @@ CREATE_SYSCALL(strncmp, SYSCALL_STRCMP);
 
 CREATE_SYSCALL(__wrap_calloc, SYSCALL_CALLOC);
 CREATE_SYSCALL(__wrap_realloc, SYSCALL_REALLOC);
+
+#endif // WRAP_FANCY
 
 extern "C" void *__wrap_malloc(size_t size) {
 	register void *ret __asm__("a0");
@@ -177,4 +182,65 @@ extern "C" int __wrap_strncmp(const char *str1, const char *str2, size_t maxlen)
 	return a0_out;
 }
 
-#endif // WRAP_FANCY
+// Fallback implementation of aligned allocations
+extern "C" void *memalign(size_t alignment, size_t size) {
+	std::array<void*, 32> list;
+	size_t i = 0;
+	void *result = nullptr;
+	for (i = 0; i < list.size(); i++) {
+		result = __wrap_malloc(size);
+		list[i] = result;
+		const bool aligned = ((uintptr_t)result % alignment) == 0;
+		if (result && aligned) {
+			break;
+		} else if (result) {
+			__wrap_free(result);
+			list[i] = __wrap_malloc(8);
+		} else {
+			result = nullptr;
+			break;
+		}
+	}
+	for (size_t j = 0; j < i; j++) {
+		__wrap_free(list[j]);
+	}
+	return result;
+}
+extern "C"
+void *aligned_alloc(size_t alignment, size_t size) {
+	return memalign(alignment, size);
+}
+extern "C"
+int posix_memalign(void **memptr, size_t alignment, size_t size) {
+	void *result = memalign(alignment, size);
+	if (result) {
+		*memptr = result;
+		return 0;
+	}
+	return 1;
+}
+
+void *operator new(size_t size) noexcept(false) {
+	return __wrap_malloc(size);
+}
+void *operator new[](size_t size) noexcept(false) {
+	return __wrap_malloc(size);
+}
+void operator delete(void *ptr) noexcept(true) {
+	__wrap_free(ptr);
+}
+void operator delete[](void *ptr) noexcept(true) {
+	__wrap_free(ptr);
+}
+void *operator new (size_t size, size_t alignment) noexcept(false) {
+	return memalign(alignment, size);
+}
+void *operator new[](size_t size, size_t alignment) noexcept(false) {
+	return memalign(alignment, size);
+}
+void operator delete(void *ptr, size_t alignment) noexcept(true) {
+	__wrap_free(ptr);
+}
+void operator delete[](void *ptr, size_t alignment) noexcept(true) {
+	__wrap_free(ptr);
+}
