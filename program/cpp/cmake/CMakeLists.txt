@@ -24,8 +24,8 @@ endif()
 
 # If the compiler contains Zig, don't set RISCV_ARCH and RISCV_ABI
 if (${CMAKE_CXX_COMPILER} MATCHES "zig")
-	set(RISCV_ARCH "")
-	set(RISCV_ABI "")
+	set(RISCV_ARCH "-mcpu=baseline_rv64+rva22u64")
+	set(RISCV_ABI "-mabi=lp64d")
 else()
 	if (SANDBOX_RISCV_EXT_C)
 		set(RISCV_ARCH "-march=rv64gc_zba_zbb_zbs_zbc")
