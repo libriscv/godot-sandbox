@@ -184,7 +184,11 @@ extern "C" int __wrap_strncmp(const char *str1, const char *str2, size_t maxlen)
 
 // Fallback implementation of aligned allocations
 extern "C" void *memalign(size_t alignment, size_t size) {
-	std::array<void*, 32> list;
+	if (alignment <= 16) {
+		return __wrap_malloc(size);
+	}
+
+	std::array<void*, 16> list;
 	size_t i = 0;
 	void *result = nullptr;
 	for (i = 0; i < list.size(); i++) {
@@ -195,7 +199,7 @@ extern "C" void *memalign(size_t alignment, size_t size) {
 			break;
 		} else if (result) {
 			__wrap_free(result);
-			list[i] = __wrap_malloc(8);
+			list[i] = __wrap_malloc(16);
 		} else {
 			result = nullptr;
 			break;

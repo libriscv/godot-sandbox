@@ -33,7 +33,7 @@ struct Object; struct Node; struct Node2D; struct Node3D; struct Array; struct D
 
 struct Variant
 {
-	enum Type {
+	enum Type : uint32_t {
 		NIL,
 
 		// atomic types

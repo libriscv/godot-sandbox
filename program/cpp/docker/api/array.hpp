@@ -14,8 +14,6 @@ struct Array {
 	Array &operator =(const std::vector<Variant> &values);
 	Array &operator =(const Array &other);
 
-	operator Variant() const;
-
 	// Array operations
 	void append(const Variant &value) { push_back(value); }
 	void push_back(const Variant &value);
@@ -93,11 +91,6 @@ private:
 	unsigned m_idx = INT32_MIN;
 };
 
-// Array operations
-inline Array::operator Variant() const {
-	return Variant(*this);
-}
-
 inline Array Variant::as_array() const {
 	if (m_type != ARRAY) {
 		api_throw("std::bad_cast", "Failed to cast Variant to Array", this);
@@ -135,9 +128,12 @@ struct ArrayProxy {
 
 	operator Variant() const { return get(); }
 
-	bool operator ==(const Variant &value) const { return get() == value; }
-	bool operator !=(const Variant &value) const { return get() != value; }
-	bool operator <(const Variant &value) const { return get() < value; }
+	template <typename T>
+	bool operator ==(const T &value) const { return get() == Variant(value); }
+	template <typename T>
+	bool operator !=(const T &value) const { return get() != Variant(value); }
+	template <typename T>
+	bool operator <(const T &value) const { return get() < Variant(value); }
 
 	/// @brief Get the value at the given index in the array.
 	/// @return The value at the given index.

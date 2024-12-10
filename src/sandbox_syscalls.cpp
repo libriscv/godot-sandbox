@@ -372,9 +372,27 @@ APICALL(api_vcreate) {
 			if (gdata != 0x0) {
 				// Copy std::vector<String> from guest memory.
 				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
-				GuestStdString *str_array = gvec->view_as<GuestStdString>(machine);
-				for (size_t i = 0; i < gvec->size_bytes() / sizeof(GuestStdString); i++) {
-					a.push_back(str_array[i].to_godot_string(machine));
+				if (method == 0) {
+					const GuestStdString *str_array = gvec->view_as<GuestStdString>(machine);
+					for (size_t i = 0; i < gvec->size_bytes() / sizeof(GuestStdString); i++) {
+						a.push_back(str_array[i].to_godot_string(machine));
+					}
+				} else if (method == 1) {
+					// libc++ std::string implementation.
+					const GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+					struct Buffer {
+						gaddr_t ptr;
+						gaddr_t size;
+					};
+					const Buffer *buffers = gvec->view_as<Buffer>(machine);
+					for (size_t i = 0; i < gvec->size_bytes() / sizeof(Buffer); i++) {
+						const Buffer &buf = buffers[i];
+						std::string_view view = machine.memory.memview(buf.ptr, buf.size);
+						a.push_back(String::utf8(view.data(), view.size()));
+					}
+				} else {
+					ERR_PRINT("vcreate: Unsupported method for Variant::PACKED_STRING_ARRAY");
+					throw std::runtime_error("vcreate: Unsupported method for Variant::PACKED_STRING_ARRAY: " + std::to_string(method));
 				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
@@ -491,10 +509,28 @@ APICALL(api_vfetch) {
 			case Variant::PACKED_STRING_ARRAY: {
 				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
 				auto arr = var.operator PackedStringArray();
-				auto [sptr, saddr] = gvec->alloc<GuestStdString>(machine, arr.size());
-				for (unsigned i = 0; i < arr.size(); i++) {
-					auto u8str = arr[i].utf8();
-					sptr[i].set_string(machine, saddr + i * sizeof(GuestStdString), u8str.ptr(), u8str.length());
+				if (method == 0) {
+					auto [sptr, saddr] = gvec->alloc<GuestStdString>(machine, arr.size());
+					for (unsigned i = 0; i < arr.size(); i++) {
+						auto u8str = arr[i].utf8();
+						sptr[i].set_string(machine, saddr + i * sizeof(GuestStdString), u8str.ptr(), u8str.length());
+					}
+				} else if (method == 1) {
+					// libc++ std::string implementation.
+					struct Buffer {
+						gaddr_t ptr;
+						gaddr_t size;
+					};
+					auto [sptr, saddr] = gvec->alloc<Buffer>(machine, arr.size());
+					for (unsigned i = 0; i < arr.size(); i++) {
+						auto u8str = arr[i].utf8();
+						sptr[i].ptr  = machine.arena().malloc(u8str.length());
+						sptr[i].size = u8str.length();
+						machine.memory.memcpy(sptr[i].ptr, u8str.ptr(), u8str.length());
+					}
+				} else {
+					ERR_PRINT("vfetch: Unsupported method for Variant::PACKED_STRING_ARRAY");
+					throw std::runtime_error("vfetch: Unsupported method for Variant::PACKED_STRING_ARRAY");
 				}
 				break;
 			}
@@ -627,11 +663,26 @@ APICALL(api_vstore) {
 		}
 		case Variant::PACKED_STRING_ARRAY: {
 			PackedStringArray arr;
-			// Copy the array from guest memory into the Variant.
-			auto *data = machine.memory.memarray<GuestStdString>(gdata, gsize);
-			arr.resize(gsize);
-			for (unsigned i = 0; i < gsize; i++) {
-				arr.set(i, data[i].to_godot_string(machine));
+			if (gsize & 0x80000000) {
+				// Work-around for libc++ std::string implementation.
+				struct Buffer {
+					gaddr_t ptr;
+					gaddr_t size;
+				};
+				gsize &= 0x7FFFFFFF;
+				auto *buffers = machine.memory.memarray<Buffer>(gdata, gsize);
+				arr.resize(gsize);
+				for (unsigned i = 0; i < gsize; i++) {
+					std::string_view view = machine.memory.memview(buffers[i].ptr, buffers[i].size);
+					arr.set(i, String::utf8(view.data(), view.size()));
+				}
+			} else {
+				// Copy the array from guest memory into the Variant.
+				auto *data = machine.memory.memarray<GuestStdString>(gdata, gsize);
+				arr.resize(gsize);
+				for (unsigned i = 0; i < gsize; i++) {
+					arr.set(i, data[i].to_godot_string(machine));
+				}
 			}
 			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
 			break;

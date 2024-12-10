@@ -9,7 +9,6 @@ struct RID {
 	constexpr RID() : index(0) {}
 	constexpr RID(int64_t p_index) : index(p_index) {}
 	RID(const Variant &v);
-	operator Variant() const;
 };
 
 inline Variant::Variant(const ::RID& rid) {

@@ -13,6 +13,7 @@ option(DOWNLOAD_RUNTIME_API "Download the run-time generated API" ON)
 option(SANDBOX_RISCV_EXT_C "Enable RISC-V C extension" ON)
 option(DOUBLE_PRECISION    "Enable double precision real_t" OFF)
 option(STRIPPED            "Strip executables" OFF)
+option(FLTO                "Enable link-time optimization" OFF)
 
 set(CXXFLAGS -O2 -std=gnu++23 -fno-stack-protector -fno-threadsafe-statics)
 set(CFLAGS   -O2 -std=gnu11 -fno-stack-protector -fno-threadsafe-statics)
@@ -24,15 +25,16 @@ elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
 	set(CFLAGS   ${CFLAGS} -O2 -gdwarf-4)
 endif()
 
-if (${CMAKE_C_COMPILER} MATCHES "riscv64-unknown-elf*")
+if ("${CMAKE_C_COMPILER}" MATCHES "riscv64-unknown-elf*")
 	set(EMBEDDED_RISCV 1 CACHE BOOL "Building for embedded RISC-V")
 	message(STATUS "Building for embedded RISC-V")
-elseif (${CMAKE_C_COMPILER} MATCHES "zig")
+elseif ("${CMAKE_C_COMPILER}" MATCHES "zig")
 	set(ZIG_COMPILER 1 CACHE BOOL "Building using zig c++")
 	message(STATUS "Building using zig c++")
 	# Not necessary, but lowers binary size dramatically
 	configure_file("${CMAKE_CURRENT_LIST_DIR}/atomic.c" "${CMAKE_BINARY_DIR}/atomic.c" COPYONLY)
 	add_library(atomic STATIC "${CMAKE_BINARY_DIR}/atomic.c")
+	set_target_properties(atomic PROPERTIES LINKER_LANGUAGE CXX)
 	link_directories("${CMAKE_BINARY_DIR}")
 endif()
 
@@ -40,8 +42,6 @@ endif()
 if (${CMAKE_CXX_COMPILER} MATCHES "zig")
 	set(RISCV_ARCH "-mcpu=baseline_rv64+rva22u64")
 	set(RISCV_ABI "-mabi=lp64d")
-	set(CXXFLAGS ${CXXFLAGS} -flto)
-	set(CFLAGS ${CFLAGS} -flto)
 else()
 	if (SANDBOX_RISCV_EXT_C)
 		set(RISCV_ARCH "-march=rv64gc_zba_zbb_zbs_zbc")
@@ -49,6 +49,11 @@ else()
 		set(RISCV_ARCH "-march=rv64g_zba_zbb_zbs_zbc")
 	endif()
 	set(RISCV_ABI "-mabi=lp64d")
+endif()
+
+if (FLTO)
+	set(CXXFLAGS ${CXXFLAGS} -flto)
+	set(CFLAGS ${CFLAGS} -flto)
 endif()
 
 # Optional download of the run-time generated API
@@ -167,6 +172,11 @@ function (add_sandbox_library name)
 	target_link_libraries(${name} INTERFACE
 		sandbox_api
 	)
+endfunction()
+
+function (enable_flto_for target)
+	target_compile_options(${target} PRIVATE -flto)
+	target_link_options(${target} PRIVATE -flto)
 endfunction()
 
 # Example:

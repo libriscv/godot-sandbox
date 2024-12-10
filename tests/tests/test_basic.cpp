@@ -438,3 +438,6 @@ extern "C" Variant test_many_unboxed_arguments(int a1, int a2, int a3, int a4, i
 extern "C" Variant test_many_unboxed_arguments2(int a1, int a2, int a3, int a4, int a5, int a6, int a7, Vector2 v1, Vector2 v2, Vector2 v3, Vector2 v4) {
 	return int(a1) + int(a2) + int(a3) + int(a4) + int(a5) + int(a6) + int(a7) + int(v1.x) + int(v1.y) + int(v2.x) + int(v2.y) + int(v3.x) + int(v3.y) + int(v4.x) + int(v4.y);
 }
+
+#include "test_math.cpp"
+#include "test_properties.cpp"

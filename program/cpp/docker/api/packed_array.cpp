@@ -69,7 +69,21 @@ PackedArray<Color>::PackedArray(const std::vector<Color> &data) {
 template <>
 PackedArray<std::string>::PackedArray(const std::vector<std::string> &data) {
 	Variant v;
-	sys_vcreate(&v, Variant::PACKED_STRING_ARRAY, 0, &data);
+	if constexpr (sizeof(std::string) == 32) {
+		sys_vcreate(&v, Variant::PACKED_STRING_ARRAY, 0, &data);
+	} else {
+		// Work-around for libc++'s std::string implementation.
+		struct Buffer {
+			const char *ptr;
+			size_t size;
+		};
+		std::vector<Buffer> buffers;
+		buffers.reserve(data.size());
+		for (const auto &str : data) {
+			buffers.push_back({ str.data(), str.size() });
+		}
+		sys_vcreate(&v, Variant::PACKED_STRING_ARRAY, 1, &buffers);
+	}
 	this->m_idx = v.get_internal_index();
 }
 
@@ -130,7 +144,22 @@ std::vector<Color> PackedArray<Color>::fetch() const {
 template <>
 std::vector<std::string> PackedArray<std::string>::fetch() const {
 	std::vector<std::string> result;
-	sys_vfetch(m_idx, &result, 0);
+	if constexpr (sizeof(std::string) == 32) {
+		sys_vfetch(m_idx, &result, 0);
+	} else {
+		// Work-around for libc++'s std::string implementation.
+		struct Buffer {
+			const char *ptr;
+			size_t size;
+		};
+		std::vector<Buffer> buffers;
+		sys_vfetch(m_idx, &buffers, 1);
+		result.reserve(buffers.size());
+		for (const auto &buffer : buffers) {
+			result.emplace_back(buffer.ptr, buffer.size);
+			delete[] buffer.ptr;
+		}
+	}
 	return result;
 }
 
@@ -213,5 +242,19 @@ void PackedArray<Color>::store(const Color *data, size_t size) {
 }
 template <>
 void PackedArray<std::string>::store(const std::string *data, size_t size) {
-	sys_vstore(&m_idx, Variant::PACKED_STRING_ARRAY, data, size);
+	if constexpr (sizeof(std::string) == 32) {
+		sys_vstore(&m_idx, Variant::PACKED_STRING_ARRAY, data, size);
+	} else {
+		// Work-around for libc++'s std::string implementation.
+		struct Buffer {
+			const char *ptr;
+			size_t size;
+		};
+		std::vector<Buffer> buffers;
+		buffers.reserve(size);
+		for (size_t i = 0; i < size; ++i) {
+			buffers.push_back({ data[i].data(), data[i].size() });
+		}
+		sys_vstore(&m_idx, Variant::PACKED_STRING_ARRAY, buffers.data(), size | 0x80000000);
+	}
 }
