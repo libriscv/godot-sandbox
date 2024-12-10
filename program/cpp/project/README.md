@@ -4,13 +4,15 @@ This folder contains an example CMake project that uses Zig to build RISC-V C an
 
 ## Building
 
-The project is built using `build.sh`:
+The project is built using [build.sh](build.sh):
 
 ```sh
 Usage: ./build.sh [options]
 
 Options:
   -h, --help      Display this help and exit
+  --runtime-api   Download a run-time generated Godot API header
+  --no-runtime-api Do not download a run-time generated Godot API header
   --debug         Build with debug symbols
   --debinfo       Build with debug info
   --strip         Strip the binary

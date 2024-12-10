@@ -16,6 +16,8 @@ usage()
 	echo
 	echo "Options:"
 	echo "  -h, --help      Display this help and exit"
+	echo "  --runtime-api   Download a run-time generated Godot API header"
+	echo "  --no-runtime-api Do not download a run-time generated Godot API header"
 	echo "  --debug         Build with debug symbols"
 	echo "  --debinfo       Build with debug info"
 	echo "  --strip         Strip the binary"
@@ -33,6 +35,8 @@ usage()
 while [[ "$#" -gt 0 ]]; do
     case $1 in
 		-h|--help ) usage; exit; ;;
+		--runtime-api) ARGS="$ARGS -DDOWNLOAD_RUNTIME_API=ON" ;;
+		--no-runtime-api) ARGS="$ARGS -DDOWNLOAD_RUNTIME_API=OFF" ;;
 		--debug) BTYPE="Debug" ;;
 		--debinfo) BTYPE="RelWithDebInfo" ;;
 		--strip) ARGS="$ARGS -DSTRIPPED=ON" ;;

@@ -9,6 +9,7 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_EXTENSIONS ON)
 set(VERSION 9)
 
+option(DOWNLOAD_RUNTIME_API "Download the run-time generated API" ON)
 option(SANDBOX_RISCV_EXT_C "Enable RISC-V C extension" ON)
 option(DOUBLE_PRECISION    "Enable double precision real_t" OFF)
 option(STRIPPED            "Strip executables" OFF)
@@ -48,6 +49,19 @@ else()
 		set(RISCV_ARCH "-march=rv64g_zba_zbb_zbs_zbc")
 	endif()
 	set(RISCV_ABI "-mabi=lp64d")
+endif()
+
+# Optional download of the run-time generated API
+# This won't cover all classes since Godot 4.4 or when using custom extensions
+# but it gets you 99% of the way there
+if (DOWNLOAD_RUNTIME_API)
+	if (NOT EXISTS "${CMAKE_BINARY_DIR}/generated_api.hpp")
+		message(STATUS "Downloading generated API")
+		file(DOWNLOAD
+			https://github.com/libriscv/godot-sandbox-programs/releases/download/v0.1/generated_api.hpp
+			${CMAKE_BINARY_DIR}/generated_api.hpp)
+	endif()
+	set_source_files_properties(${CMAKE_BINARY_DIR}/generated_api.hpp PROPERTIES GENERATED TRUE)
 endif()
 
 set(API_DIR ${CMAKE_CURRENT_LIST_DIR}/api)
@@ -131,6 +145,13 @@ function (add_sandbox_program name)
 	target_include_directories(${name} PRIVATE
 		${CMAKE_CURRENT_SOURCE_DIR}
 	)
+	if (DOWNLOAD_RUNTIME_API)
+		# The header is automatically found using <generated_api.hpp>
+		# We simply need to add the binary directory to the include path
+		target_include_directories(${name} PRIVATE
+			${CMAKE_BINARY_DIR}
+		)
+	endif()
 endfunction()
 
 function (add_sandbox_program_at name path)

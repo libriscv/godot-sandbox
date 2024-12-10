@@ -26,6 +26,12 @@ static Variant fibonacci(int n) {
 int main() {
 	print("Hello, world!");
 
+	// The entire Godot API is available
+	Sandbox sandbox = get_node<Sandbox>();
+	print(sandbox.is_binary_translated()
+		? "The current program is accelerated by binary translation."
+		: "The current program is running in interpreter mode.");
+
 	// Add public API
 	ADD_API_FUNCTION(last_printed_string, "String", "", "Returns the last printed string");
 	ADD_API_FUNCTION(print_string, "void", "String str", "Prints a string to the console");
