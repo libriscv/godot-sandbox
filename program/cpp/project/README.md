@@ -77,11 +77,20 @@ $ ./build.sh --strip
 The name of the program files built depends on the name used in CMakeLists.txt:
 
 ```cmake
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.18)
 project (godot-sandbox-programs)
 
-add_subdirectory("${CMAKE_SOURCE_DIR}/../cmake" cmake)
+# Fetch godot-sandbox for add_sandbox_program and other functions
+include(FetchContent)
+FetchContent_Declare(
+	godot-sandbox
+	GIT_REPOSITORY https://github.com/libriscv/godot-sandbox.git
+	GIT_TAG        main
+	SOURCE_SUBDIR  "program/cpp/cmake"
+)
+FetchContent_MakeAvailable(godot-sandbox)
 
+# Build the godot-sandbox program `sandbox_program.elf`:
 add_sandbox_program(sandbox_program.elf
 	"src/program.cpp"
 )
@@ -105,11 +114,11 @@ drwxrwxr-x 6 gonzo gonzo 4,0K des.  10 11:57 CMakeFiles
 -rwxrwxr-x 1 gonzo gonzo 219K des.  10 11:57 sandbox_program.elf
 ```
 
-We can see a 219kb `sandbox_program`.
+We can see a 219kb `sandbox_program`. This program is ready to use.
 
 ```sh
 $ file .build/sandbox_program.elf
 .build/sandbox_program.elf: ELF 64-bit LSB executable, UCB RISC-V, RVC, double-float ABI, version 1 (SYSV), statically linked, stripped
 ```
 
-It's a statically built RISC-V program, so it can be loaded by Godot Sandbox. In order for Godot Sandbox to see the ELF file as a resource, it should have `.elf` as file extension.
+It's a statically built RISC-V program, so it can be loaded by Godot Sandbox. In order for Godot Sandbox to see the ELF file as a resource, it should have the `.elf` file extension.
