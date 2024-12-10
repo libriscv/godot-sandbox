@@ -9,8 +9,6 @@ struct Dictionary {
 
 	Dictionary &operator =(const Dictionary &other);
 
-	operator Variant() const;
-
 	DictAccessor operator[](const Variant &key);
 	Variant get(const Variant &key) const;
 	void set(const Variant &key, const Variant &value);
@@ -48,10 +46,6 @@ struct Dictionary {
 private:
 	unsigned m_idx = INT32_MIN;
 };
-
-inline Dictionary::operator Variant() const {
-	return Variant(*this);
-}
 
 inline Dictionary Variant::as_dictionary() const {
 	if (m_type != DICTIONARY) {

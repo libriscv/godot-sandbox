@@ -1,3 +1,4 @@
+#!/bin/bash
 export CC="zig;cc;-target riscv64-linux-musl"
 export CXX="zig;c++;-target riscv64-linux-musl"
 ARGS=""
