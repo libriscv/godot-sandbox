@@ -63,10 +63,6 @@ struct PackedArray {
 	template <typename... Args>
 	Variant operator () (std::string_view method, Args&&... args);
 
-	/// @brief Cast the PackedArray to a Variant.
-	/// @return Variant The Variant.
-	operator Variant() const;
-
 	/// @brief Create a PackedArray from a host-side Variant index.
 	/// @param idx The host-side Variant index.
 	/// @return PackedArray<T> The PackedArray.

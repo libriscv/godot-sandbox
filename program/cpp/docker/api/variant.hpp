@@ -476,11 +476,6 @@ inline PackedArray<T>::PackedArray(const Variant& v) {
 	m_idx = v.get_internal_index();
 }
 
-template <typename T>
-inline PackedArray<T>::operator Variant() const {
-	return Variant(*this);
-}
-
 inline Variant Variant::string_name(const std::string &name) {
 	Variant v;
 	v.internal_create_string(STRING_NAME, name);
