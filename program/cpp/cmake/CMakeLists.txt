@@ -11,6 +11,7 @@ set(VERSION 9)
 
 option(SANDBOX_RISCV_EXT_C "Enable RISC-V C extension" ON)
 option(DOUBLE_PRECISION    "Enable double precision real_t" OFF)
+option(STRIPPED            "Strip executables" OFF)
 
 set(CXXFLAGS -O2 -std=gnu++23 -fno-stack-protector -fno-threadsafe-statics)
 set(CFLAGS   -O2 -std=gnu11 -fno-stack-protector -fno-threadsafe-statics)
@@ -108,6 +109,11 @@ function (add_sandbox_program name)
 	if (DOUBLE_PRECISION)
 		target_compile_definitions(${name} PUBLIC
 			DOUBLE_PRECISION_REAL_T
+		)
+	endif()
+	if (STRIPPED)
+		target_link_options(${name} PRIVATE
+			-s
 		)
 	endif()
 	target_include_directories(${name} PRIVATE
