@@ -23,6 +23,18 @@ elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
 	set(CFLAGS   ${CFLAGS} -O2 -gdwarf-4)
 endif()
 
+if (${CMAKE_C_COMPILER} MATCHES "riscv64-unknown-elf*")
+	set(EMBEDDED_RISCV 1 CACHE BOOL "Building for embedded RISC-V")
+	message(STATUS "Building for embedded RISC-V")
+elseif (${CMAKE_C_COMPILER} MATCHES "zig")
+	set(ZIG_COMPILER 1 CACHE BOOL "Building using zig c++")
+	message(STATUS "Building using zig c++")
+	# Not necessary, but lowers binary size dramatically
+	configure_file("${CMAKE_CURRENT_LIST_DIR}/atomic.c" "${CMAKE_BINARY_DIR}/atomic.c" COPYONLY)
+	add_library(atomic STATIC "${CMAKE_BINARY_DIR}/atomic.c")
+	link_directories("${CMAKE_BINARY_DIR}")
+endif()
+
 # If the compiler contains Zig, don't set RISCV_ARCH and RISCV_ABI
 if (${CMAKE_CXX_COMPILER} MATCHES "zig")
 	set(RISCV_ARCH "-mcpu=baseline_rv64+rva22u64")
