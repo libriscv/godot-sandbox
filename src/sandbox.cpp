@@ -298,6 +298,18 @@ Sandbox::~Sandbox() {
 	}
 }
 
+void Sandbox::set_memory_max(uint32_t max) {
+	m_memory_max = max;
+	if (this->has_program_loaded() && !this->is_in_vmcall()) {
+		// Reset the machine if the memory limit is changed
+		const gaddr_t current_arena = machine().memory.memory_arena_size();
+		const gaddr_t new_arena_size = uint64_t(max) << 20;
+		if (new_arena_size < current_arena) {
+			this->reset();
+		}
+	}
+}
+
 void Sandbox::set_program(Ref<ELFScript> program) {
 	// Check if a call is being made from the VM already,
 	// which could spell trouble when we now reset the machine.

@@ -135,7 +135,7 @@ public:
 
 	uint32_t get_max_refs() const { return m_max_refs; }
 	void set_max_refs(uint32_t max);
-	void set_memory_max(uint32_t max) { m_memory_max = max; }
+	void set_memory_max(uint32_t max);
 	uint32_t get_memory_max() const { return m_memory_max; }
 	void set_instructions_max(int64_t max) { m_insn_max = max; }
 	int64_t get_instructions_max() const { return m_insn_max; }
