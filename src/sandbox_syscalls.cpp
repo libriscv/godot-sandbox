@@ -1653,9 +1653,14 @@ APICALL(api_string_ops) {
 					gaddr_t size;
 				} *buffer = machine.memory.memarray<Buffer>(vaddr, 1);
 				CharString utf8 = str.utf8();
+				const size_t size = utf8.length();
 				// Allocate memory for the string in the guest memory.
-				buffer->size = utf8.length();
-				buffer->ptr = machine.arena().malloc(buffer->size);
+				if (buffer->size < size) {
+					buffer->size = size;
+					if (buffer->ptr)
+						machine.arena().free(buffer->ptr);
+					buffer->ptr = machine.arena().malloc(buffer->size);
+				}
 				// Copy the string to the guest memory.
 				machine.memory.memcpy(buffer->ptr, utf8.ptr(), buffer->size);
 			} else if (index == 2) { // Get the string as a std::u32string.

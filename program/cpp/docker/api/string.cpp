@@ -3,7 +3,7 @@
 #include "syscalls.h"
 
 MAKE_SYSCALL(ECALL_STRING_CREATE, unsigned, sys_string_create, const char *, size_t);
-MAKE_SYSCALL(ECALL_STRING_OPS, int, sys_string_ops, String_Op, unsigned, int, Variant *);
+MAKE_SYSCALL(ECALL_STRING_OPS, int, sys_string_ops, String_Op, unsigned, int, ...);
 MAKE_SYSCALL(ECALL_STRING_AT, unsigned, sys_string_at, unsigned, int);
 MAKE_SYSCALL(ECALL_STRING_SIZE, int, sys_string_size, unsigned);
 MAKE_SYSCALL(ECALL_STRING_APPEND, void, sys_string_append, unsigned, const char *, size_t);
@@ -15,11 +15,11 @@ String &String::operator=(const String &value) {
 }
 
 void String::append(const String &value) {
-	(void)sys_string_ops(String_Op::APPEND, m_idx, 0, (Variant *)&value);
+	(void)sys_string_ops(String_Op::APPEND, m_idx, 0, &value);
 }
 
 void String::insert(int idx, const String &value) {
-	(void)sys_string_ops(String_Op::INSERT, m_idx, 0, (Variant *)&value);
+	(void)sys_string_ops(String_Op::INSERT, m_idx, 0, &value);
 }
 
 void String::append(std::string_view value) {
@@ -27,11 +27,11 @@ void String::append(std::string_view value) {
 }
 
 void String::erase(int idx, int count) {
-	sys_string_ops(String_Op::ERASE, m_idx, idx, (Variant *)(uintptr_t)count);
+	sys_string_ops(String_Op::ERASE, m_idx, idx, count);
 }
 
 int String::find(const String &value) const {
-	return sys_string_ops(String_Op::FIND, m_idx, 0, (Variant *)&value);
+	return sys_string_ops(String_Op::FIND, m_idx, 0, &value);
 }
 
 String String::operator[](int idx) const {
@@ -50,29 +50,35 @@ unsigned String::Create(const char *data, size_t size) {
 std::string String::utf8() const {
 	std::string str;
 	if constexpr (sizeof(std::string) == 32) {
-		sys_string_ops(String_Op::TO_STD_STRING, m_idx, 0, (Variant *)&str);
+		sys_string_ops(String_Op::TO_STD_STRING, m_idx, 0, &str);
 	} else {
-		struct Buffer {
-			char *data;
-			size_t size;
-		} buffer;
-		sys_string_ops(String_Op::TO_STD_STRING, m_idx, 1, (Variant *)&buffer);
-		str.assign(buffer.data, buffer.data + buffer.size);
-		std::free(buffer.data);
+		// Guesstimate that the string is less than 32 bytes.
+		str.resize_and_overwrite(32, [idx = m_idx](char *data, size_t size) -> std::size_t {
+			struct Buffer {
+				char *data;
+				size_t size;
+			} buffer;
+			buffer.data = data;
+			buffer.size = size;
+			// This syscall will either copy to the existing buffer or allocate a new one,
+			// and then update the buffer struct with the new data, freeing the old buffer.
+			sys_string_ops(String_Op::TO_STD_STRING, idx, 1, &buffer);
+			return buffer.size;
+		});
 	}
 	return str;
 }
 
 std::u32string String::utf32() const {
 	std::u32string str;
-	sys_string_ops(String_Op::TO_STD_STRING, m_idx, 2, (Variant *)&str);
+	sys_string_ops(String_Op::TO_STD_STRING, m_idx, 2, &str);
 	return str;
 }
 
 bool String::operator==(const String &other) const {
-	return sys_string_ops(String_Op::COMPARE, m_idx, 0, (Variant *)&other);
+	return sys_string_ops(String_Op::COMPARE, m_idx, 0, &other);
 }
 
 bool String::operator==(const char *other) const {
-	return sys_string_ops(String_Op::COMPARE_CSTR, m_idx, 0, (Variant *)other);
+	return sys_string_ops(String_Op::COMPARE_CSTR, m_idx, 0, other);
 }
