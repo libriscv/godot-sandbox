@@ -9,6 +9,7 @@
 
 using namespace godot;
 
+static constexpr bool VERBOSE_PROPERTIES = false;
 static const int HEAP_SYSCALLS_BASE = 480;
 static const int MEMORY_SYSCALLS_BASE = 485;
 static const std::vector<std::string> program_arguments = { "program" };
@@ -22,6 +23,7 @@ enum SandboxPropertyNameIndex : int {
 	PROP_USE_PRECISE_SIMULATION,
 	PROP_PROFILING,
 	PROP_RESTRICTIONS,
+	PROP_PROGRAM,
 	PROP_MONITOR_HEAP_USAGE,
 	PROP_MONITOR_HEAP_CHUNK_COUNT,
 	PROP_MONITOR_HEAP_ALLOCATION_COUNTER,
@@ -255,6 +257,7 @@ Sandbox::Sandbox() {
 			"use_precise_simulation",
 			"profiling",
 			"restrictions",
+			"program",
 			"monitor_heap_usage",
 			"monitor_heap_chunk_count",
 			"monitor_heap_allocation_counter",
@@ -1211,6 +1214,12 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	} else if (name == property_names[PROP_RESTRICTIONS]) {
 		set_restrictions(value);
 		return true;
+	} else if (name == property_names[PROP_PROGRAM]) {
+		set_program(value);
+		return true;
+	}
+	if constexpr (VERBOSE_PROPERTIES) {
+		printf("Sandbox: SetProperty *not found*: %s\n", String(name).utf8().get_data());
 	}
 	return false;
 }
@@ -1248,6 +1257,9 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	} else if (name == property_names[PROP_RESTRICTIONS]) {
 		r_ret = get_restrictions();
 		return true;
+	} else if (name == property_names[PROP_PROGRAM]) {
+		r_ret = get_program();
+		return true;
 	} else if (name == property_names[PROP_MONITOR_HEAP_USAGE]) {
 		r_ret = get_heap_usage();
 		return true;
@@ -1284,6 +1296,9 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	} else if (name == property_names[PROP_MONITOR_GLOBAL_INSTANCE_COUNT]) {
 		r_ret = get_global_instance_count();
 		return true;
+	}
+	if constexpr (VERBOSE_PROPERTIES) {
+		printf("Sandbox: GetProperty *not found*: %s\n", String(name).utf8().get_data());
 	}
 	return false;
 }
