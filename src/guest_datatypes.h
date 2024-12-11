@@ -149,10 +149,14 @@ struct GuestStdU32String {
 			throw std::runtime_error("Guest std::u32string too large (size > 4MB)");
 		// Get a view of the string from guest memory, including the null terminator
 		const std::u32string_view view{ to_array(machine), size_t(size + 1) };
-		if (view.back() != U'\0')
-			throw std::runtime_error("Guest std::u32string is not null-terminated");
-		// Convert the string to a godot String
-		return String(view.data());
+		if (view.back() == U'\0') {
+			// Convert the string to a godot String directly
+			return String(view.data());
+		} else {
+			// Use a temporary std::u32string to convert the string to a godot String
+			std::u32string str(view.begin(), view.end() - 1);
+			return String(str.c_str());
+		}
 	}
 
 	void set_string(machine_t &machine, gaddr_t self, const char32_t *str, std::size_t len) {
