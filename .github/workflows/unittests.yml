@@ -26,7 +26,7 @@ jobs:
           sudo apt install -y gcc-12-riscv64-linux-gnu g++-12-riscv64-linux-gnu cmake
 
       - name: Configure
-        run: cmake -B ${{github.workspace}}/.build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B ${{github.workspace}}/.build -DCMAKE_BUILD_TYPE=Debug
 
       - name: Build the unittests
         run: cmake --build ${{github.workspace}}/.build --parallel 6
