@@ -10,6 +10,8 @@ using real_t = double;
 using real_t = float;
 #endif
 
+#define PUBLIC extern "C" __attribute__((used, retain))
+
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 
 #define EXTERN_SYSCALL(rval, name, ...) \
