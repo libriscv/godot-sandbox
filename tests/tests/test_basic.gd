@@ -119,6 +119,7 @@ func test_types():
 	assert_eq(s.vmcall("test_int", -1234), -1234) # Int
 	assert_eq(s.vmcall("test_float", 9876.0), 9876.0) # Float
 	assert_same(s.vmcall("test_string", "9876.0"), "9876.0") # String
+	assert_same(s.vmcall("test_u32string", "19876.1"), "19876.1") # std::u32string
 	assert_same(s.vmcall("test_nodepath", NodePath("Node")), NodePath("Node")) # NodePath
 	assert_eq(s.vmcall("test_vec2", Vector2(1, 2)), Vector2(1, 2)) # Vector2
 	assert_eq(s.vmcall("test_vec2i", Vector2i(1, 2)), Vector2i(1, 2)) # Vector2i
@@ -165,6 +166,7 @@ func test_types():
 	assert_same(s.vmcall("test_dict", d_pp), d_pp)
 	var s_pp : String = "12345"
 	assert_same(s.vmcall("test_string", s_pp), s_pp)
+	assert_same(s.vmcall("test_u32string", s_pp), s_pp)
 	assert_eq(s_pp, "12345")
 	# Packed arrays
 	var pba_pp : PackedByteArray = [1, 2, 3, 4]

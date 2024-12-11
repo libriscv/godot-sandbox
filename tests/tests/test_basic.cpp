@@ -103,6 +103,11 @@ extern "C" Variant test_string(String arg) {
 	return arg;
 }
 
+extern "C" Variant test_u32string(String arg) {
+	std::u32string u32 = arg.utf32();
+	return u32;
+}
+
 extern "C" Variant test_nodepath(NodePath arg) {
 	return arg;
 }
