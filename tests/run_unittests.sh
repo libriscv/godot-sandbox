@@ -19,7 +19,7 @@ export CXX="riscv64-linux-gnu-g++-12"
 # Build the unit test ELF file
 mkdir -p .build
 pushd .build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=../toolchain.cmake
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=../toolchain.cmake -DSTRIPPED=OFF
 make -j4
 popd
 

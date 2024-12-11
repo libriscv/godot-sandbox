@@ -14,15 +14,21 @@ option(SANDBOX_RISCV_EXT_C "Enable RISC-V C extension" ON)
 option(DOUBLE_PRECISION    "Enable double precision real_t" OFF)
 option(STRIPPED            "Strip executables" OFF)
 option(FLTO                "Enable link-time optimization" OFF)
+option(MINIMAL             "Build minimal programs using -Oz" OFF)
 
-set(CXXFLAGS -O2 -std=gnu++23 -fno-stack-protector -fno-threadsafe-statics)
-set(CFLAGS   -O2 -std=gnu11 -fno-stack-protector -fno-threadsafe-statics)
+set(CXXFLAGS -O3 -std=gnu++23 -fno-stack-protector -fno-threadsafe-statics)
+set(CFLAGS   -O3 -std=gnu11 -fno-stack-protector -fno-threadsafe-statics)
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 	set(CXXFLAGS ${CXXFLAGS} -O0 -gdwarf-4)
 	set(CFLAGS   ${CFLAGS} -O0 -gdwarf-4)
 elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
-	set(CXXFLAGS ${CXXFLAGS} -O2 -gdwarf-4)
-	set(CFLAGS   ${CFLAGS} -O2 -gdwarf-4)
+	set(CXXFLAGS ${CXXFLAGS} -O3 -gdwarf-4)
+	set(CFLAGS   ${CFLAGS} -O3 -gdwarf-4)
+endif()
+
+if (MINIMAL)
+	set(CXXFLAGS ${CXXFLAGS} -Oz)
+	set(CFLAGS ${CFLAGS} -Oz)
 endif()
 
 if ("${CMAKE_C_COMPILER}" MATCHES "riscv64-unknown-elf*")
@@ -142,16 +148,11 @@ function (add_sandbox_program name)
 			DOUBLE_PRECISION_REAL_T
 		)
 	endif()
+	if (MINIMAL)
+		target_link_options(${name} PRIVATE -Oz)
+	endif()
 	if (STRIPPED)
-		# Symbol names that we prefer to keep (known Godot functions, as well as a few others)
-		set(KEEP "main" "_input" "_notification" "_process" "_physics_process" "_ready" "_unhandled_input")
-		# We prefer --strip-unneeded over -s since it doesn't remove the symbol table
-		foreach (sym IN LISTS KEEP)
-			list(APPEND KEEP_SYMS "--keep-symbol=${sym}")
-		endforeach()
-		add_custom_command(TARGET ${name} POST_BUILD
-			COMMAND ${CMAKE_STRIP} -x ${KEEP_SYMS} $<TARGET_FILE:${name}>
-		)
+		target_link_options(${name} PRIVATE -s)
 	endif()
 	target_include_directories(${name} PRIVATE
 		${CMAKE_CURRENT_SOURCE_DIR}
