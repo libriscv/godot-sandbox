@@ -143,8 +143,14 @@ function (add_sandbox_program name)
 		)
 	endif()
 	if (STRIPPED)
-		target_link_options(${name} PRIVATE
-			-s
+		# Symbol names that we prefer to keep (known Godot functions, as well as a few others)
+		set(KEEP "main" "_input" "_notification" "_process" "_physics_process" "_ready" "_unhandled_input")
+		# We prefer --strip-unneeded over -s since it doesn't remove the symbol table
+		foreach (sym IN LISTS KEEP)
+			list(APPEND KEEP_SYMS "--keep-symbol=${sym}")
+		endforeach()
+		add_custom_command(TARGET ${name} POST_BUILD
+			COMMAND ${CMAKE_STRIP} -x ${KEEP_SYMS} $<TARGET_FILE:${name}>
 		)
 	endif()
 	target_include_directories(${name} PRIVATE
