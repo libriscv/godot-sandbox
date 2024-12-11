@@ -73,7 +73,7 @@ Godot Sandbox allows Godot creators to implement safe modding support, such that
 #include "api.hpp"
 static int coins = 0;
 
-extern "C" Variant reset_game() {
+PUBLIC Variant reset_game() {
 	coins = 0;
 	return Nil;
 }
@@ -85,7 +85,7 @@ static void add_coin(const Node& player) {
 		+ std::to_string(coins) + ((coins == 1) ? " coin" : " coins"));
 }
 
-extern "C" Variant _on_body_entered(CharacterBody2D body) {
+PUBLIC Variant _on_body_entered(CharacterBody2D body) {
 	if (body.get_name() != "Player")
 		return Nil;
 
