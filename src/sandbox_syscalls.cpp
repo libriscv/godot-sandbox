@@ -577,6 +577,10 @@ APICALL(api_vstore) {
 	auto &emu = riscv::emu(machine);
 	PENALIZE(10'000);
 	SYS_TRACE("vstore", vidx, type, gdata, gsize);
+	if (gsize > 16'777'216) {
+		ERR_PRINT("vstore: Array size is too large: " + itos(gsize));
+		throw std::runtime_error("vstore: Array size is too large: " + std::to_string(gsize));
+	}
 
 	// Find scoped Variant and store data from guest memory.
 	switch (type) {
