@@ -250,7 +250,7 @@ inline bool is_part_of_tree(Node node) {
 /// @example add_sandbox_api_function(
 ///    "add_numbers", (void *)add_numbers, "int", "int a, int b", "Adds two numbers together.");
 template <typename F>
-static inline void add_sandbox_api_function(std::string_view name, F *address, std::string_view return_type, std::string_view args, std::string_view description = "") {
+static inline void add_sandbox_api_function(std::string_view name, F *address, std::string_view return_type, std::string_view args = "", std::string_view description = "") {
 	struct GuestFunctionExtra {
 		const char *desc;
 		size_t desc_len;
@@ -269,5 +269,5 @@ static inline void add_sandbox_api_function(std::string_view name, F *address, s
 	};
 	sys_sandbox_add(1, name.data(), name.size(), address, &extra);
 }
-#define ADD_API_FUNCTION(func, return_type, args, ...) \
-	add_sandbox_api_function(#func, func, return_type, args, ##__VA_ARGS__)
+#define ADD_API_FUNCTION(func, return_type, ...) \
+	add_sandbox_api_function(#func, func, return_type, ##__VA_ARGS__)
