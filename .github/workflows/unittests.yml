@@ -37,8 +37,19 @@ jobs:
           wget -q https://github.com/godotengine/godot-builds/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
           unzip -q Godot_v4.3-stable_linux.x86_64.zip
 
-      - name: Run Gut tests
+      - name: Run Gut tests (RISC-V GNU toolchain)
         working-directory: ${{github.workspace}}/tests
         run: |
           # Run the tests
           CI=1 GODOT=./Godot_v4.3-stable_linux.x86_64 ./run_unittests.sh
+
+      - name: Run Gut tests (Zig)
+        working-directory: ${{github.workspace}}/tests
+        run: |
+          # Download and install Zig
+          wget https://ziglang.org/builds/zig-linux-x86_64-0.14.0-dev.2414+ba37a4369.tar.xz
+          tar -xf zig-linux-x86_64-0.14.0-dev.2414+ba37a4369.tar.xz
+          export PATH=$PWD/zig-linux-x86_64-0.14.0-dev.2414+ba37a4369:$PATH
+
+          # Run the tests with Zig
+          CI=1 GODOT=./Godot_v4.3-stable_linux.x86_64 ./zig_unittests.sh
