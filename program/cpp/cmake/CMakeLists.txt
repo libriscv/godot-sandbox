@@ -46,7 +46,12 @@ endif()
 
 # If the compiler contains Zig, don't set RISCV_ARCH and RISCV_ABI
 if (${CMAKE_CXX_COMPILER} MATCHES "zig")
-	set(RISCV_ARCH "-mcpu=baseline_rv64+rva22u64")
+	# If Clang is version 19.0 or higher, we can use the -mcpu flag
+	if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 19.0)
+		set(RISCV_ARCH "-mcpu=baseline_rv64+rva22u64")
+	else()
+		set(RISCV_ARCH "")
+	endif()
 	set(RISCV_ABI "-mabi=lp64d")
 else()
 	if (SANDBOX_RISCV_EXT_C)
