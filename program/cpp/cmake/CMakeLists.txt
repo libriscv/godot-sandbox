@@ -75,12 +75,12 @@ if (DOWNLOAD_RUNTIME_API)
 		message(STATUS "Downloading generated API")
 		file(DOWNLOAD
 			https://github.com/libriscv/godot-sandbox-programs/releases/download/v0.1/generated_api.hpp
-			${CMAKE_BINARY_DIR}/generated_api.hpp)
+			"${CMAKE_BINARY_DIR}/generated_api.hpp")
 	endif()
-	set_source_files_properties(${CMAKE_BINARY_DIR}/generated_api.hpp PROPERTIES GENERATED TRUE)
+	set_source_files_properties("${CMAKE_BINARY_DIR}/generated_api.hpp" PROPERTIES GENERATED TRUE)
 endif()
 
-set(API_DIR ${CMAKE_CURRENT_LIST_DIR}/api)
+set(API_DIR "${CMAKE_CURRENT_LIST_DIR}/../docker/api")
 
 set(API_SOURCES
 	"${API_DIR}/api.cpp"
