@@ -50,6 +50,11 @@ public:
 	virtual bool _is_placeholder_fallback_enabled() const override;
 	virtual Variant _get_rpc_config() const override;
 
+	/// @brief Detects if the project is a CMake or SCons project,
+	/// in which case Docker usage is not necessary.
+	/// @return true if the project is a CMake or SCons project.
+	static bool DetectCMakeOrSConsProject();
+
 	static void DockerContainerStart() {
 		if (!docker_container_started) {
 			Array output;

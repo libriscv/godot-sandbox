@@ -32,6 +32,12 @@ static void handle_language_warnings(Array &warnings, const Ref<ELFScript> &scri
 	}
 	const String language = script->get_elf_programming_language();
 	if (language == "C++") {
+		// Check if the project is a CMake or SCons project and avoid
+		// using the Docker container in that case. It's a big download.
+		// This detection is cached and returns fast the second time.
+		if (CPPScript::DetectCMakeOrSConsProject()) {
+			return;
+		}
 		// Compare C++ version against Docker version
 		const int docker_version = CPPScript::DockerContainerVersion();
 		if (docker_version < 0) {
