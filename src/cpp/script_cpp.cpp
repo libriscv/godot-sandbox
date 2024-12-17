@@ -4,6 +4,39 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 
+bool CPPScript::DetectCMakeOrSConsProject() {
+	static bool detected = false;
+	static bool detected_value = false;
+	// Avoid file system checks if the project type has already been detected
+	if (detected) {
+		return detected_value;
+	}
+	// If the project root contains a CMakeLists.txt file, or a cmake/CMakeLists.txt,
+	// build the project using CMake
+	// Get the project root using res://
+	String project_root = "res://";
+	detected = true;
+
+	// Check for CMakeLists.txt in the project root
+	const bool cmake_root = FileAccess::file_exists(project_root + "CMakeLists.txt");
+	if (cmake_root) {
+		detected_value = true;
+		return true;
+	}
+	const bool cmake_dir = FileAccess::file_exists(project_root + "cmake/CMakeLists.txt");
+	if (cmake_dir) {
+		detected_value = true;
+		return true;
+	}
+	const bool scons_root = FileAccess::file_exists(project_root + "SConstruct");
+	if (scons_root) {
+		detected_value = true;
+		return true;
+	}
+	detected_value = false;
+	return false;
+}
+
 bool CPPScript::_editor_can_reload_from_file() {
 	return true;
 }

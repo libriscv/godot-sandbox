@@ -151,13 +151,15 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 			handle->store_string(script->_get_source_code());
 			handle->close();
 
-			// Check if the project is a CMake project
-			if (detect_and_build_cmake_project_instead()) {
-				return Error::OK;
-			}
-
-			if (detect_and_build_scons_project_instead()) {
-				return Error::OK;
+			if (CPPScript::DetectCMakeOrSConsProject()) {
+				// Check if the project is a CMake project
+				if (detect_and_build_cmake_project_instead()) {
+					return Error::OK;
+				}
+				// Check if the project is a SCons project
+				if (detect_and_build_scons_project_instead()) {
+					return Error::OK;
+				}
 			}
 
 			// Generate the C++ run-time API in the project root
