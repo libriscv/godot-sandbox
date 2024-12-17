@@ -168,6 +168,9 @@ function (add_sandbox_program name)
 		target_include_directories(${name} PRIVATE
 			${CMAKE_BINARY_DIR}
 		)
+		target_sources(${name} PRIVATE
+			"${CMAKE_BINARY_DIR}/generated_api.hpp"
+		)
 	endif()
 endfunction()
 
