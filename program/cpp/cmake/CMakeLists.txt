@@ -178,7 +178,7 @@ function (add_sandbox_program_at name path)
 	add_sandbox_program(${name} ${ARGN})
 	set_target_properties(${name} PROPERTIES
 		RUNTIME_OUTPUT_DIRECTORY ${path}
-		RUNTIME_OUTPUT_NAME ${name}.elf
+		RUNTIME_OUTPUT_NAME ${name}
 	)
 endfunction()
 
