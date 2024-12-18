@@ -6,6 +6,7 @@
 #include <godot_cpp/classes/http_client.hpp>
 #include <godot_cpp/classes/zip_reader.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#include "sandbox_project_settings.h"
 using namespace godot;
 static constexpr bool VERBOSE = false;
 
@@ -77,8 +78,31 @@ static PackedByteArray handle_request(HTTPClient *client, String url) {
 	return data;
 }
 
-PackedByteArray Sandbox::download_program(const String &program_name) {
-	const String url = "/libriscv/godot-sandbox-programs/releases/latest/download/" + program_name + ".zip";
+PackedByteArray Sandbox::download_program(String program_name) {
+	String url;
+
+	// Check if the program is from another library
+	const int separator = program_name.find("/");
+	if (separator != -1) {
+		String library = program_name.substr(0, separator);
+		String program = program_name.substr(separator + 1);
+		if (library.is_empty() || program.is_empty()) {
+			ERR_PRINT("Invalid library or program name");
+			return PackedByteArray();
+		}
+
+		Dictionary libraries = SandboxProjectSettings::get_program_libraries();
+		if (!libraries.has(library)) {
+			ERR_PRINT("Unknown library: " + library);
+			return PackedByteArray();
+		}
+		// Get the URL for the program from the custom library
+		program_name = program;
+		url = String("/") + String(libraries[library]) + "/releases/latest/download/" + program + ".zip";
+	} else {
+		// Use the default URL for Sandbox programs
+		url = "/libriscv/godot-sandbox-programs/releases/latest/download/" + program_name + ".zip";
+	}
 
 	// Download the program from the URL
 	HTTPClient *client = memnew(HTTPClient);

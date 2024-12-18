@@ -506,7 +506,7 @@ public:
 	/// @brief Download a named program from the Godot Sandbox programs repository.
 	/// @param program_name The name of the program to download. Must be a program built in the Godot Sandbox programs repository.
 	/// @return The downloaded program as a byte array.
-	static PackedByteArray download_program(const String &program_name);
+	static PackedByteArray download_program(String program_name);
 
 private:
 	static void generate_runtime_cpp_api(bool use_argument_names = false);

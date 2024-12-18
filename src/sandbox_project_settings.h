@@ -27,4 +27,6 @@ public:
 	static bool generate_runtime_api();
 	static bool generate_method_arguments();
 	static Array generated_api_skipped_classes();
+
+	static Dictionary get_program_libraries();
 };

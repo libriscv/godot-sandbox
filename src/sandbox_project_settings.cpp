@@ -31,6 +31,9 @@ static constexpr char METHOD_ARGUMENTS_HINT[] = "Generate method arguments for t
 static constexpr char GENAPI_SKIPPED_CLASSES[] = "editor/script/generated_api_skipped_classes";
 static constexpr char GENAPI_SKIPPED_CLASSES_HINT[] = "Matching classes to skip when generating the run-time API";
 
+static constexpr char PROGRAM_LIBRARIES[] = "editor/script/program_libraries";
+static constexpr char PROGRAM_LIBRARIES_HINT[] = "Custom libraries for downloadable Sandbox programs";
+
 static void register_setting(
 		const String &p_name,
 		const Variant &p_value,
@@ -94,6 +97,10 @@ void SandboxProjectSettings::register_settings() {
 	skipped_classes.push_back("Saver");
 	skipped_classes.push_back("OS");
 	register_setting_plain(GENAPI_SKIPPED_CLASSES, skipped_classes, GENAPI_SKIPPED_CLASSES_HINT, false);
+
+	Dictionary libraries;
+	libraries["godot-sandbox-programs"] = "libriscv/godot-sandbox-programs";
+	register_setting_plain(PROGRAM_LIBRARIES, libraries, PROGRAM_LIBRARIES_HINT, false);
 }
 
 template <typename TType>
@@ -148,4 +155,8 @@ bool SandboxProjectSettings::generate_method_arguments() {
 }
 Array SandboxProjectSettings::generated_api_skipped_classes() {
 	return get_setting<Array>(GENAPI_SKIPPED_CLASSES);
+}
+
+Dictionary SandboxProjectSettings::get_program_libraries() {
+	return get_setting<Dictionary>(PROGRAM_LIBRARIES);
 }
