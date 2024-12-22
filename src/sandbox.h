@@ -55,6 +55,14 @@ public:
 		void reset();
 		bool is_mutable_variant(const Variant &var) const;
 	};
+	struct LookupEntry {
+		String  name;
+		gaddr_t address;
+	};
+	struct ProfilingState {
+		std::unordered_map<gaddr_t, int> hotspots;
+		std::vector<LookupEntry> lookup;
+	};
 
 	Sandbox();
 	Sandbox(const PackedByteArray &buffer);
@@ -178,9 +186,9 @@ public:
 	bool has_function(const StringName &p_function) const;
 
 	/// @brief Add a hash to address mapping to the cache.
-	/// @param hash The hash of the name.
+	/// @param name The name of the function or symbol.
 	/// @param address The address of the function or symbol.
-	void add_cached_address(int64_t hash, gaddr_t address);
+	void add_cached_address(const String &name, gaddr_t address) const;
 
 	// -= Call State Management =-
 
@@ -548,7 +556,7 @@ private:
 
 	// Properties
 	mutable std::vector<SandboxProperty> m_properties;
-	mutable std::unordered_map<int64_t, gaddr_t> m_lookup;
+	mutable std::unordered_map<int64_t, LookupEntry> m_lookup;
 
 	// Restrictions
 	std::unordered_set<godot::Object *> m_allowed_objects;
@@ -584,7 +592,7 @@ private:
 	struct ProfilingData {
 		// ELF path -> Address -> Count
 		// Anonymous sandboxes are stored as ""
-		std::unordered_map<std::string_view, std::unordered_map<gaddr_t, int>> visited;
+		std::unordered_map<std::string_view, ProfilingState> state;
 	};
 	static inline std::unique_ptr<ProfilingData> m_profiling_data = nullptr;
 	struct LocalProfilingData {

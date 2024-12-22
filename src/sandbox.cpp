@@ -535,9 +535,9 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 			// Cache the public API functions from the ELFScript object
 			for (int i = 0; i < this->m_program_data->functions.size(); i++) {
 				const Dictionary func = this->m_program_data->functions[i];
-				const String &name = func["name"];
+				String name = func["name"];
 				const gaddr_t address = func.get("address", 0x0);
-				this->m_lookup.insert_or_assign(name.hash(), address);
+				this->m_lookup.insert_or_assign(name.hash(), LookupEntry{ std::move(name), address });
 			}
 			this->m_program_data->update_public_api_functions();
 		}
@@ -854,9 +854,19 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 					// Update the global profiler
 					{
 						std::scoped_lock lock(profiling_mutex);
-						std::unordered_map<gaddr_t, int> &visited = gprofdata.visited[path];
+						ProfilingState &gprofstate = gprofdata.state[path];
+						// Add all the local known functions to the global state,
+						// to aid lookup in the profiler later on
+						if (gprofstate.lookup.size() < this->m_lookup.size()) {
+							gprofstate.lookup.clear();
+							for (const auto [hash, entry] : this->m_lookup) {
+								gprofstate.lookup.push_back(entry);
+							}
+						}
+						// Update the global visited map
+						std::unordered_map<gaddr_t, int> &hotspots = gprofstate.hotspots;
 						for (const gaddr_t address : profdata.visited) {
-							visited[address] ++;
+							hotspots[address] ++;
 						}
 					}
 					profdata.visited.clear();
@@ -959,19 +969,27 @@ gaddr_t Sandbox::cached_address_of(int64_t hash, const String &function) const {
 				ERR_PRINT(error);
 			}
 		}
-		m_lookup.insert_or_assign(hash, address);
+		// Cache the address and symbol name
+		LookupEntry entry{ function, address };
+		m_lookup.insert_or_assign(hash, std::move(entry));
 	} else {
-		address = it->second;
+		address = it->second.address;
 	}
 
 	return address;
 }
 
 gaddr_t Sandbox::address_of(const String &symbol) const {
-	return machine().address_of(std::string_view(symbol.utf8().ptr()));
+	const int64_t hash = symbol.hash();
+	return cached_address_of(hash, symbol);
 }
 
 String Sandbox::lookup_address(gaddr_t address) const {
+	for (const auto &entry : m_lookup) {
+		if (entry.second.address == address) {
+			return entry.second.name;
+		}
+	}
 	riscv::Memory<RISCV_ARCH>::Callsite callsite = machine().memory.lookup(address);
 	return String::utf8(callsite.name.c_str(), callsite.name.size());
 }
@@ -981,8 +999,8 @@ bool Sandbox::has_function(const StringName &p_function) const {
 	return address != 0x0;
 }
 
-void Sandbox::add_cached_address(int64_t hash, gaddr_t address) {
-	m_lookup.insert_or_assign(hash, address);
+void Sandbox::add_cached_address(const String &name, gaddr_t address) const {
+	m_lookup.insert_or_assign(name.hash(), LookupEntry{name, address});
 }
 
 //-- Scoped objects and variants --//
@@ -1179,6 +1197,10 @@ void Sandbox::add_property(const String &name, Variant::Type vtype, uint64_t set
 		}
 	}
 	m_properties.push_back(SandboxProperty(name, vtype, setter, getter, def));
+
+	// Make the property getter/setter functions visible to address_of and profiling
+	this->add_cached_address("set_" + name, getter);
+	this->add_cached_address("get_" + name, setter);
 }
 
 bool Sandbox::set_property(const StringName &name, const Variant &value) {

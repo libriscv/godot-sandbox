@@ -39,6 +39,7 @@ void Sandbox::enable_profiling(bool enable, uint32_t interval) {
 struct Result {
 	std::string elf;
 	gaddr_t pc = 0;
+	int64_t offset = 0;
 	int count = 0;
 	int line = 0;
 	String function;
@@ -65,7 +66,9 @@ static ProfilingMachine *requisition(const std::string &elf) {
 	return &it->second;
 }
 
-static void resolve(Result &res, const Callable &callback) {
+static void resolve(Result &res, const Callable &callback,
+	const Sandbox::ProfilingState &gprofstate) {
+	// Try to resolve the address using addr2line
 #ifdef __linux__
 	if (USE_ADDR2LINE && !res.elf.empty()) {
 		// execute riscv64-linux-gnu-addr2line -e <binary> -f -C 0x<address>
@@ -116,10 +119,26 @@ static void resolve(Result &res, const Callable &callback) {
 	res.file = "(unknown)";
 	res.function = "??";
 	if (!res.elf.empty()) {
-		ProfilingMachine *pm = requisition(res.elf);
-		if (pm) {
-			riscv::Memory<RISCV_ARCH>::Callsite callsite = pm->machine->memory.lookup(res.pc);
-			res.function = String::utf8(callsite.name.c_str(), callsite.name.size());
+		// Prefer gprofstate lookup
+		gaddr_t best = ~0ULL;
+		res.offset = 0x0;
+		for (const auto &entry : gprofstate.lookup) {
+			if (res.pc < entry.address || entry.address >= best) {
+				continue;
+			}
+			best = entry.address;
+			res.offset = res.pc - entry.address;
+			res.function = entry.name;
+		}
+
+		// Try to resolve the address using the ELF file, if the offset from lookup was too large
+		if (best == ~0ULL || res.offset > 0x4000) {
+			ProfilingMachine *pm = requisition(res.elf);
+			if (pm) {
+				riscv::Memory<RISCV_ARCH>::Callsite callsite = pm->machine->memory.lookup(res.pc);
+				res.function = String::utf8(callsite.name.c_str(), callsite.name.size());
+				res.offset = callsite.offset;
+			}
 		}
 		res.file = String::utf8(res.elf.c_str(), res.elf.size());
 	}
@@ -130,7 +149,7 @@ static void resolve(Result &res, const Callable &callback) {
 }
 
 Array Sandbox::get_hotspots(unsigned total, const Callable &callable) {
-	std::unordered_map<std::string_view, std::unordered_map<gaddr_t, int>> visited;
+	std::unordered_map<std::string_view, ProfilingState> gprofstate;
 	{
 		std::scoped_lock lock(profiling_mutex);
 		if (!m_profiling_data) {
@@ -139,7 +158,7 @@ Array Sandbox::get_hotspots(unsigned total, const Callable &callable) {
 		}
 		ProfilingData &profdata = *m_profiling_data;
 		// Copy the profiling data
-		visited = profdata.visited;
+		gprofstate = profdata.state;
 	}
 	// Prevent re-entrancy into the profiling data
 	std::scoped_lock lock(generate_hotspots_mutex);
@@ -148,18 +167,18 @@ Array Sandbox::get_hotspots(unsigned total, const Callable &callable) {
 	std::vector<Result> results;
 	unsigned total_measurements = 0;
 
-	for (const auto &path : visited) {
+	for (const auto &path : gprofstate) {
 		std::string_view elf_path = path.first;
-		const auto &visited = path.second;
+		const auto &state = path.second;
 
-		for (const auto &entry : visited) {
+		for (const auto &entry : state.hotspots) {
 			Result res;
 			res.elf = elf_path;
 			res.pc = entry.first;
 			res.count = entry.second;
 			total_measurements += res.count;
 
-			resolve(res, callable);
+			resolve(res, callable, state);
 
 			results.push_back(std::move(res));
 		}
@@ -199,6 +218,7 @@ Array Sandbox::get_hotspots(unsigned total, const Callable &callable) {
 		Dictionary hotspot;
 		hotspot["function"] = res.function;
 		hotspot["address"] = String::num_int64(res.pc, 16);
+		hotspot["offset"] = String::num_int64(res.offset, 16);
 		hotspot["file"] = res.file;
 		hotspot["line"] = res.line;
 		hotspot["samples"] = res.count;
@@ -220,6 +240,6 @@ void Sandbox::clear_hotspots() {
 		ERR_PRINT("Profiling is not currently enabled.");
 		return;
 	}
-	m_profiling_data->visited.clear();
+	m_profiling_data->state.clear();
 	lookup_machines.clear();
 }

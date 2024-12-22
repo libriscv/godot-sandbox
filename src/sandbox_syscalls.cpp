@@ -1877,8 +1877,7 @@ APICALL(api_sandbox_add) {
 				}
 			}
 			// Cache the function name hash with the address for faster lookup.
-			int64_t name_hash = String::utf8(name.data(), name.size()).hash();
-			emu.add_cached_address(name_hash, address);
+			emu.add_cached_address(String::utf8(name.data(), name.size()), address);
 		} break;
 		default:
 			ERR_PRINT("Invalid sandbox add operation");
