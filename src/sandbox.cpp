@@ -451,10 +451,10 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				//.verbose_loader = true,
 				.default_exit_function = "fast_exit",
 #ifdef RISCV_BINARY_TRANSLATION
-				.translate_enabled = false,
+				.translate_enabled = riscv::libtcc_enabled,
 				.translate_enable_embedded = true,
 				.translate_future_segments = false,
-				.translate_invoke_compiler = false,
+				.translate_invoke_compiler = riscv::libtcc_enabled,
 				//.translate_trace = true,
 				//.translate_timing = true,
 				// We don't care about the instruction limit when full binary translation is enabled
