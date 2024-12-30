@@ -19,7 +19,7 @@ export CXX="zig;c++;-target riscv64-linux-musl"
 # Build the unit test ELF file
 mkdir -p .zig
 pushd .zig
-cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX"
+cmake .. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX"
 make -j4
 popd
 

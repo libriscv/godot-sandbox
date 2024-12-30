@@ -1,5 +1,26 @@
 #include "api.hpp"
 
+struct MyException : public std::exception {
+	using std::exception::exception;
+	const char *what() const noexcept override {
+		return "This is a test exception";
+	}
+};
+
+extern "C" Variant test_exceptions() {
+#ifdef ZIG_COMPILER
+#warning "Zig does not support exceptions (yet)"
+	return "This is a test exception";
+#else
+	try {
+		throw MyException();
+	} catch (const std::exception &e) {
+		return e.what();
+	}
+	return "";
+#endif
+}
+
 // This works: it's being created during initialization
 static Dictionary d = Dictionary::Create();
 

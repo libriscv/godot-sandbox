@@ -69,6 +69,18 @@ func test_instantiation():
 		assert_false(s3.has_function("test_ping_pong"), "Function does not exist after reset")
 	s3.free()
 
+func test_environment():
+	var s = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	# Verify that C++ exceptions are caught
+	assert_eq(s.has_function("test_exceptions"), true)
+	for i in 1:
+		assert_eq(s.vmcall("test_exceptions"), "This is a test exception")
+
+	s.queue_free()
+
+
 func test_binary_translation():
 	# Create a new sandbox
 	var s = Sandbox.new()
