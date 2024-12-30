@@ -91,7 +91,7 @@ public:
 	/// @param args The arguments to pass to the function.
 	/// @param arg_count The number of arguments.
 	/// @return The return value of the function call.
-	Variant vmcall_fn(const StringName &function, const Variant **args, GDExtensionInt arg_count);
+	Variant vmcall_fn(const StringName &function, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
 	/// @brief Make a function call to a function in the guest by its guest address.
 	/// @param address The address of the function to call.
 	/// @param args The arguments to pass to the function.

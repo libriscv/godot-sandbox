@@ -134,8 +134,7 @@ retry_callp:
 			// Set the Sandbox instance tree base to the owner node
 			ScopedTreeBase stb(current_sandbox, godot::Object::cast_to<Node>(this->owner));
 			// Perform the vmcall
-			r_error.error = GDEXTENSION_CALL_OK;
-			return current_sandbox->vmcall_fn(p_method, p_args, p_argument_count);
+			return current_sandbox->vmcall_fn(p_method, p_args, p_argument_count, r_error);
 		}
 	}
 

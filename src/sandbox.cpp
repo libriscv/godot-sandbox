@@ -561,13 +561,21 @@ Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtens
 		error.argument = -1;
 		return Variant();
 	}
-	error.error = GDEXTENSION_CALL_OK;
 
 	const Variant &function = *args[0];
 	args += 1;
 	arg_count -= 1;
 	const String function_name = function.operator String();
-	return this->vmcall_internal(cached_address_of(function_name.hash(), function_name), args, arg_count);
+	const gaddr_t address = cached_address_of(function_name.hash(), function_name);
+	if (address == 0) {
+		ERR_PRINT("Function not found: " + function_name + " (Added to the public API?)");
+		error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+		error.argument = 0;
+		return Variant();
+	}
+
+	error.error = GDEXTENSION_CALL_OK;
+	return this->vmcall_internal(address, args, arg_count);
 }
 Variant Sandbox::vmcallv(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
 	if (arg_count < 1) {
@@ -575,26 +583,43 @@ Variant Sandbox::vmcallv(const Variant **args, GDExtensionInt arg_count, GDExten
 		error.argument = -1;
 		return Variant();
 	}
-	error.error = GDEXTENSION_CALL_OK;
 
 	const Variant &function = *args[0];
 	args += 1;
 	arg_count -= 1;
 	const String function_name = function.operator String();
+	const gaddr_t address = cached_address_of(function_name.hash(), function_name);
+	if (address == 0) {
+		ERR_PRINT("Function not found: " + function_name + " (Added to the public API?)");
+		error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+		error.argument = 0;
+		return Variant();
+	}
+
 	// Store use_unboxed_arguments state and restore it after the call
 	Variant result;
 	auto old_use_unboxed_arguments = this->m_use_unboxed_arguments;
 	this->m_use_unboxed_arguments = false;
-	result = this->vmcall_internal(cached_address_of(function_name.hash(), function_name), args, arg_count);
+	result = this->vmcall_internal(address, args, arg_count);
 	this->m_use_unboxed_arguments = old_use_unboxed_arguments;
+
+	error.error = GDEXTENSION_CALL_OK;
 	return result;
 }
-Variant Sandbox::vmcall_fn(const StringName &function, const Variant **args, GDExtensionInt arg_count) {
+Variant Sandbox::vmcall_fn(const StringName &function_name, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
 	if (this->m_throttled > 0) {
 		this->m_throttled--;
 		return Variant();
 	}
-	Variant result = this->vmcall_internal(cached_address_of(function.hash(), function), args, arg_count);
+	const gaddr_t address = cached_address_of(function_name.hash(), function_name);
+	if (address == 0) {
+		ERR_PRINT("Function not found: " + function_name + " (Added to the public API?)");
+		error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+		return Variant();
+	}
+
+	Variant result = this->vmcall_internal(address, args, arg_count);
+	error.error = GDEXTENSION_CALL_OK;
 	return result;
 }
 void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, const Variant **args, int argc) {
