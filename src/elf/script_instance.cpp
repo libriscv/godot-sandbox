@@ -6,7 +6,7 @@
 #include "../sandbox_project_settings.h"
 #include "../zig/script_zig.h"
 #include "script_elf.h"
-#include "script_instance_helper.h"
+#include "script_instance_helper.h" // register_types.h
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/templates/local_vector.hpp>
 static constexpr bool VERBOSE_LOGGING = false;
@@ -26,6 +26,7 @@ struct ScopedTreeBase {
 	}
 };
 
+#ifdef PLATFORM_HAS_EDITOR
 static void handle_language_warnings(Array &warnings, const Ref<ELFScript> &script) {
 	if (!SandboxProjectSettings::get_docker_enabled()) {
 		return;
@@ -75,6 +76,7 @@ static void handle_language_warnings(Array &warnings, const Ref<ELFScript> &scri
 		}
 	}
 }
+#endif
 
 bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 	if constexpr (VERBOSE_LOGGING) {
@@ -138,6 +140,7 @@ retry_callp:
 		}
 	}
 
+#ifdef PLATFORM_HAS_EDITOR
 	// Handle internal methods
 	if (p_method == StringName("_get_editor_name")) {
 		r_error.error = GDEXTENSION_CALL_OK;
@@ -161,6 +164,7 @@ retry_callp:
 		r_error.error = GDEXTENSION_CALL_OK;
 		return warnings;
 	}
+#endif
 
 	// When the script instance must have a sandbox as owner,
 	// use _enter_tree to get the sandbox instance.

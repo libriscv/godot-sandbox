@@ -8,24 +8,26 @@
 #include <godot_cpp/godot.hpp>
 #include <godot_cpp/core/error_macros.hpp>
 
-#include "cpp/resource_loader_cpp.h"
-#include "cpp/resource_saver_cpp.h"
-#include "cpp/script_cpp.h"
-#include "cpp/script_language_cpp.h"
 #include "elf/resource_loader_elf.h"
 #include "elf/resource_saver_elf.h"
 #include "elf/script_elf.h"
 #include "elf/script_language_elf.h"
+#include "sandbox.h"
+#include "sandbox_project_settings.h"
+#ifdef PLATFORM_HAS_EDITOR
+#include "cpp/resource_loader_cpp.h"
+#include "cpp/resource_saver_cpp.h"
+#include "cpp/script_cpp.h"
+#include "cpp/script_language_cpp.h"
 #include "rust/resource_loader_rust.h"
 #include "rust/resource_saver_rust.h"
 #include "rust/script_language_rust.h"
 #include "rust/script_rust.h"
-#include "sandbox.h"
-#include "sandbox_project_settings.h"
 #include "zig/resource_loader_zig.h"
 #include "zig/resource_saver_zig.h"
 #include "zig/script_language_zig.h"
 #include "zig/script_zig.h"
+#endif
 
 using namespace godot;
 
@@ -47,6 +49,7 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ClassDB::register_class<ELFScriptLanguage>();
 	ClassDB::register_class<ResourceFormatLoaderELF>();
 	ClassDB::register_class<ResourceFormatSaverELF>();
+#ifdef PLATFORM_HAS_EDITOR
 	ClassDB::register_class<CPPScript>();
 	ClassDB::register_class<CPPScriptLanguage>();
 	ClassDB::register_class<ResourceFormatLoaderCPP>();
@@ -59,12 +62,14 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ClassDB::register_class<ZigScriptLanguage>();
 	ClassDB::register_class<ResourceFormatLoaderZig>();
 	ClassDB::register_class<ResourceFormatSaverZig>();
+#endif
 	elf_loader.instantiate();
 	elf_saver.instantiate();
 	ResourceLoader::get_singleton()->add_resource_format_loader(elf_loader, true);
 	ResourceSaver::get_singleton()->add_resource_format_saver(elf_saver);
 	elf_language = memnew(ELFScriptLanguage);
 	Engine::get_singleton()->register_script_language(elf_language);
+#ifdef PLATFORM_HAS_EDITOR
 	CPPScriptLanguage::init();
 	ResourceFormatLoaderCPP::init();
 	ResourceFormatSaverCPP::init();
@@ -74,6 +79,7 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ZigScriptLanguage::init();
 	ResourceFormatLoaderZig::init();
 	ResourceFormatSaverZig::init();
+#endif
 	SandboxProjectSettings::register_settings();
 }
 
@@ -82,9 +88,11 @@ static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 	Engine *engine = Engine::get_singleton();
+#ifdef PLATFORM_HAS_EDITOR
 	engine->unregister_script_language(CPPScriptLanguage::get_singleton());
 	engine->unregister_script_language(RustScriptLanguage::get_singleton());
 	engine->unregister_script_language(ZigScriptLanguage::get_singleton());
+#endif
 	if (elf_language) {
 		engine->unregister_script_language(elf_language);
 		memdelete(elf_language);
@@ -95,12 +103,14 @@ static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	ResourceSaver::get_singleton()->remove_resource_format_saver(elf_saver);
 	elf_loader.unref();
 	elf_saver.unref();
+#ifdef PLATFORM_HAS_EDITOR
 	ResourceFormatLoaderCPP::deinit();
 	ResourceFormatSaverCPP::deinit();
 	ResourceFormatLoaderRust::deinit();
 	ResourceFormatSaverRust::deinit();
 	ResourceFormatLoaderZig::deinit();
 	ResourceFormatSaverZig::deinit();
+#endif
 }
 
 extern "C" {
