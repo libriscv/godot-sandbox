@@ -1,7 +1,7 @@
 [configuration]
 
 entry_symbol = "riscv_library_init"
-compatibility_minimum = "4.1"
+compatibility_minimum = "4.3"
 
 [libraries]
 
@@ -51,5 +51,6 @@ web.release.wasm32 = "res://addons/godot_sandbox/bin/libgodot_riscv.web.template
 
 CPPScript = "res://addons/godot_sandbox/CPPScript.svg"
 RustScript = "res://addons/godot_sandbox/RustScript.svg"
+ZigScript = "res://addons/godot_sandbox/ZigScript.svg"
 ELFScript = "res://addons/godot_sandbox/ELFScript.svg"
 Sandbox = "res://addons/godot_sandbox/Sandbox.svg"
