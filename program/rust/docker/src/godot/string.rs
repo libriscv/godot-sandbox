@@ -38,6 +38,11 @@ impl GodotString {
 		v
 	}
 
+	/* Godot String API */
+	pub fn length(&self) -> i64 {
+		return self.call("length", &[]).to_integer();
+	}
+
 	/* Make a method call on the string (as Variant) */
 	pub fn call(&self, method: &str, args: &[Variant]) -> Variant {
 		// Call the method using Variant::callp

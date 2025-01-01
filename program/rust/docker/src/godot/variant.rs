@@ -13,12 +13,41 @@ pub enum VariantType {
 
 	Vector2,
 	Vector2i,
-	Vector3,
-	Vector3i,
 	Rect2,
 	Rect2i,
+	Vector3,
+	Vector3i,
+	Transform2D,
 	Vector4,
 	Vector4i,
+	Plane,
+	Quaterion,
+	AABB,
+	Basis,
+	Transform3D,
+	Projection,
+
+	Color,
+	StringName,
+	NodePath,
+	RID,
+	Object,
+	Callable,
+	Signal,
+	Dictionary,
+	Array,
+
+	// Packed arrays
+	PackedByteArray,
+	PackedInt32Array,
+	PackedInt64Array,
+	PackedFloat32Array,
+	PackedFloat64Array,
+	PackedStringArray,
+	PackedVector2Array,
+	PackedVector3Array,
+	PackedColorArray,
+	PackedVector4Array,
 }
 
 #[repr(C)]
@@ -297,6 +326,14 @@ impl Variant
 	{
 		match self.t {
 			VariantType::String => {
+				let gs = GodotString::from_ref(unsafe { self.u.i } as i32);
+				gs.to_string()
+			},
+			VariantType::StringName => {
+				let gs = GodotString::from_ref(unsafe { self.u.i } as i32);
+				gs.to_string()
+			},
+			VariantType::NodePath => {
 				let gs = GodotString::from_ref(unsafe { self.u.i } as i32);
 				gs.to_string()
 			},
