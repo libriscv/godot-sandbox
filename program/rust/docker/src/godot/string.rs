@@ -1,4 +1,7 @@
+#![allow(dead_code)]
 use super::syscalls::*;
+use crate::Variant;
+use crate::VariantType;
 
 #[repr(C)]
 pub struct GodotString {
@@ -26,5 +29,19 @@ impl GodotString {
 
 	pub fn to_string(&self) -> String {
 		godot_string_to_string(self.reference)
+	}
+
+	pub fn to_variant(&self) -> Variant {
+		let mut v = Variant::new_nil();
+		v.t = VariantType::String;
+		v.u.i = self.reference as i64;
+		v
+	}
+
+	/* Make a method call on the string (as Variant) */
+	pub fn call(&self, method: &str, args: &[Variant]) -> Variant {
+		// Call the method using Variant::callp
+		let var = Variant::from_ref(VariantType::String, self.reference);
+		var.call(method, &args)
 	}
 }

@@ -166,6 +166,11 @@ impl Variant
 		let v = Variant::internal_create_string(VariantType::String, s);
 		return v;
 	}
+	pub fn from_ref(t: VariantType, r: i32) -> Variant
+	{
+		let v = Variant { t: t, u: VariantUnion { i: r.into() } };
+		return v;
+	}
 
 	pub fn to_bool(&self) -> bool
 	{
@@ -306,6 +311,24 @@ impl Variant
 		v.t = t;
 		v.u.i = gs.reference as i64;
 		return v;
+	}
+
+	pub fn call(&self, method: &str, args: &[Variant]) -> Variant
+	{
+		const SYSCALL_VCALL: i64 = 501;
+		let mut res = Variant::new_nil();
+		unsafe {
+			asm!("ecall",
+				in("a0") self,
+				in("a1") method.as_ptr(),
+				in("a2") method.len(),
+				in("a3") args.as_ptr(),
+				in("a4") args.len(),
+				in("a5") &mut res,
+				in("a7") SYSCALL_VCALL,
+				options(nostack));
+		}
+		return res;
 	}
 }
 
