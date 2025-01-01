@@ -1879,9 +1879,23 @@ APICALL(api_sandbox_add) {
 			// Cache the function name hash with the address for faster lookup.
 			emu.add_cached_address(String::utf8(name.data(), name.size()), address);
 		} break;
+		case 2: { // Set new exit address.
+			SYS_TRACE("sandbox_add", "exit", machine.cpu.reg(11));
+			const gaddr_t exit_address = machine.cpu.reg(11); // A1
+			if (exit_address == 0 || (exit_address & 0x1) != 0) {
+				ERR_PRINT("Invalid program exit address");
+				throw std::runtime_error("Invalid program exit address");
+			}
+			const auto &exec = emu.machine().memory.exec_segment_for(exit_address);
+			if (!exec->is_within(exit_address)) {
+				ERR_PRINT("Invalid program exit address");
+				throw std::runtime_error("Invalid program exit address");
+			}
+			emu.machine().memory.set_exit_address(exit_address);
+			break;
+		}
 		default:
-			ERR_PRINT("Invalid sandbox add operation");
-			throw std::runtime_error("Invalid sandbox add operation");
+			WARN_PRINT("Unhandled sandbox add method: " + itos(method));
 	}
 }
 

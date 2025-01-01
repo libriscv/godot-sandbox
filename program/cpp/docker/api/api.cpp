@@ -34,8 +34,10 @@ Variant loadv(std::string_view path) {
 	return result;
 }
 
-/* Handle uncaught C++ exceptions */
-__attribute__((constructor)) void handle_unhandled_exceptions() {
+__attribute__((constructor, used)) void setup_native_stuff() {
+	/* Set exit address to fast_exit */
+	sys_sandbox_add(2, &fast_exit);
+	/* Handle uncaught C++ exceptions */
 	std::set_terminate([] {
 		try {
 			std::rethrow_exception(std::current_exception());

@@ -449,7 +449,6 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		auto options = std::make_shared<riscv::MachineOptions<RISCV_ARCH>>(riscv::MachineOptions<RISCV_ARCH>{
 				.memory_max = uint64_t(get_memory_max()) << 20, // in MiB
 				//.verbose_loader = true,
-				.default_exit_function = "fast_exit",
 #ifdef RISCV_BINARY_TRANSLATION
 				.translate_enabled = riscv::libtcc_enabled,
 				.translate_enable_embedded = true,
@@ -973,7 +972,9 @@ void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r
 gaddr_t Sandbox::cached_address_of(int64_t hash, const String &function) const {
 	gaddr_t address = 0x0;
 	auto it = m_lookup.find(hash);
-	if (it == m_lookup.end()) {
+	if (it != m_lookup.end()) {
+		return it->second.address;
+	} else if (m_machine != dummy_machine) {
 		const CharString ascii = function.ascii();
 		const std::string_view str{ ascii.get_data(), (size_t)ascii.length() };
 		address = machine().address_of(str);
@@ -997,10 +998,7 @@ gaddr_t Sandbox::cached_address_of(int64_t hash, const String &function) const {
 		// Cache the address and symbol name
 		LookupEntry entry{ function, address };
 		m_lookup.insert_or_assign(hash, std::move(entry));
-	} else {
-		address = it->second.address;
 	}
-
 	return address;
 }
 
