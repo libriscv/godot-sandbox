@@ -73,6 +73,10 @@ func test_environment():
 	var s = Sandbox.new()
 	s.set_program(Sandbox_TestsTests)
 
+	# Verify that fast_exit is visible
+	# It accelerates the speed of VM calls in general, stopping the VM faster
+	assert_eq(s.has_function("fast_exit"), true)
+
 	# Verify that C++ exceptions are caught
 	assert_eq(s.has_function("test_exceptions"), true)
 	for i in 1:
