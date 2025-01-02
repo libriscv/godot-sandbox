@@ -7,7 +7,7 @@ MAKE_SYSCALL(ECALL_VCALL, void, sys_vcall, Variant *, const char *, size_t, cons
 MAKE_SYSCALL(ECALL_VEVAL, bool, sys_veval, int, const Variant *, const Variant *, Variant *);
 MAKE_SYSCALL(ECALL_VASSIGN, unsigned, sys_vassign, unsigned, Variant *);
 
-MAKE_SYSCALL(ECALL_VCREATE, void, sys_vcreate, Variant *, int, int, const void *);
+MAKE_SYSCALL(ECALL_VCREATE, void, sys_vcreate, Variant *, int, int, ...);
 MAKE_SYSCALL(ECALL_VFETCH, void, sys_vfetch, unsigned, void *, int);
 MAKE_SYSCALL(ECALL_VCLONE, void, sys_vclone, const Variant *, Variant *);
 MAKE_SYSCALL(ECALL_VSTORE, void, sys_vstore, unsigned *, const void *, size_t);

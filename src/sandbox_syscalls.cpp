@@ -227,11 +227,24 @@ APICALL(api_vcreate) {
 			// Create a new empty? array, assign to vp.
 			Array a;
 			if (gdata != 0x0) {
-				// Copy std::vector<Variant> from guest memory.
-				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
-				std::vector<GuestVariant> vec = gvec->to_vector<GuestVariant>(machine);
-				for (const GuestVariant &v : vec) {
-					a.push_back(std::move(v.toVariant(emu)));
+				if (method == 0) {
+					// Copy std::vector<Variant> from guest memory.
+					GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+					std::vector<GuestVariant> vec = gvec->to_vector<GuestVariant>(machine);
+					for (const GuestVariant &v : vec) {
+						a.push_back(std::move(v.toVariant(emu)));
+					}
+				} else if (method == 1) {
+					// Get elements from register A4
+					const unsigned size = machine.cpu.reg(REG_ARG4);
+					// Copy array of Variants from guest memory.
+					GuestVariant *gvec = machine.memory.memarray<GuestVariant>(gdata, size);
+					for (int i = 0; i < size; i++) {
+						a.push_back(gvec[i].toVariant(emu));
+					}
+				} else {
+					// In order to support future methods, we shouldn't throw an error here.
+					WARN_PRINT("vcreate: Unsupported method for Variant::ARRAY: " + itos(method));
 				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
