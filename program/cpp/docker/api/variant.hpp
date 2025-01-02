@@ -978,3 +978,9 @@ template <typename... Args>
 inline Variant PackedArray<T>::operator () (std::string_view method, Args&&... args) {
 	return Variant(*this).method_call(method, std::forward<Args>(args)...);
 }
+
+template <typename T>
+template <typename... Args>
+inline Variant PackedArray<T>::operator()(std::string_view method, Args &&...args) const {
+	return Variant(*this).method_call(method, std::forward<Args>(args)...);
+}

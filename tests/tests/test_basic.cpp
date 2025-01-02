@@ -270,8 +270,8 @@ extern "C" Variant test_create_callable() {
 }
 // clang-format on
 
-extern "C" Variant test_pa_u8(PackedArray<uint8_t> arr) {
-	return PackedArray<uint8_t> (arr.fetch());
+extern "C" Variant test_pa_u8(PackedByteArray arr) {
+	return PackedByteArray (arr.fetch());
 }
 extern "C" Variant test_pa_f32(PackedArray<float> arr) {
 	return PackedArray<float> (arr.fetch());
@@ -302,7 +302,7 @@ extern "C" Variant test_pa_string(PackedArray<std::string> arr) {
 }
 
 extern "C" Variant test_create_pa_u8() {
-	PackedArray<uint8_t> arr({ 1, 2, 3, 4 });
+	PackedByteArray arr({ 1, 2, 3, 4 });
 	return arr;
 }
 extern "C" Variant test_create_pa_f32() {

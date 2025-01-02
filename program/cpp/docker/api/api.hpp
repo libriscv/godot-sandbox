@@ -15,6 +15,8 @@
 #include "node3d.hpp"
 #include "syscalls_fwd.hpp"
 #include "timer.hpp"
+// Individual packed arrays
+#include "packed_byte_array.hpp"
 
 template <typename T>
 using remove_cvref = std::remove_cv_t<std::remove_reference_t<T>>;
