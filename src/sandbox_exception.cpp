@@ -12,7 +12,21 @@ static inline String to_hex(gaddr_t value) {
 }
 
 void Sandbox::handle_exception(gaddr_t address) {
-	auto callsite = machine().memory.lookup(address);
+	riscv::Memory<RISCV_ARCH>::Callsite callsite = machine().memory.lookup(address);
+	// If the callsite is not found, try to use the cache to find the address
+	if (callsite.address == 0x0) {
+		callsite.address = address;
+		auto it = m_lookup.find(address);
+		if (it != m_lookup.end()) {
+			const auto u8str = it->second.name.utf8();
+			callsite = riscv::Memory<RISCV_ARCH>::Callsite{
+				.name = std::string(u8str.ptr(), u8str.length()),
+				.address = it->second.address,
+				.offset = 0x0,
+				.size = 0
+			};
+		}
+	}
 	UtilityFunctions::print(
 			"[", get_name(), "] Exception when calling:\n  ", callsite.name.c_str(), " (0x",
 			to_hex(callsite.address), ")\n", "Backtrace:");
