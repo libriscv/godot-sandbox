@@ -76,3 +76,15 @@ private:
 		|| std::is_same_v<T, Vector2> || std::is_same_v<T, Vector3> || std::is_same_v<T, Vector4> || std::is_same_v<T, Color> || std::is_same_v<T, std::string>,
 		"PackedArray type must be uint8_t, int32_t, int64_t, float, double, Vector2, Vector3 or Color.");
 };
+
+// Aliases for common PackedArray types.
+using PackedByteArray = PackedArray<uint8_t>;
+using PackedInt32Array = PackedArray<int32_t>;
+using PackedInt64Array = PackedArray<int64_t>;
+using PackedFloat32Array = PackedArray<float>;
+using PackedFloat64Array = PackedArray<double>;
+using PackedVector2Array = PackedArray<Vector2>;
+using PackedVector3Array = PackedArray<Vector3>;
+using PackedVector4Array = PackedArray<Vector4>;
+using PackedColorArray = PackedArray<Color>;
+using PackedStringArray = PackedArray<std::string>;
