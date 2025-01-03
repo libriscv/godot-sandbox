@@ -56,12 +56,12 @@ jobs:
         sudo apt install -y git cmake zip wget xz-utils
         git submodule update --init --recursive --depth=1
         # Install Zig
-        wget https://ziglang.org/builds/zig-linux-x86_64-0.14.0-dev.2414+ba37a4369.tar.xz
-        tar -xf zig-linux-x86_64-0.14.0-dev.2414+ba37a4369.tar.xz
+        wget https://ziglang.org/builds/zig-linux-x86_64-0.14.0-dev.2851+b074fb7dd.tar.xz
+        tar -xf zig-linux-x86_64-0.14.0-dev.2851+b074fb7dd.tar.xz
 
     - name: Build the example program
       run: |
-        export PATH=$PWD/zig-linux-x86_64-0.14.0-dev.2414+ba37a4369:$PATH
+        export PATH=$PWD/zig-linux-x86_64-0.14.0-dev.2851+b074fb7dd:$PATH
         cmake -B build -DCMAKE_BUILD_TYPE=Release -DSTRIPPED=ON
         cmake --build build --parallel 8
 
