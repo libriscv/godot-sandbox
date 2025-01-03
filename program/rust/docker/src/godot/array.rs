@@ -67,6 +67,10 @@ impl GodotArray {
 		self.call("pop_back", &[]);
 	}
 
+	pub fn clear(&self) {
+		self.call("clear", &[]);
+	}
+
 	pub fn get(&self, idx: i32) -> Variant {
 		const ECALL_ARRAY_AT: i32 = 522;
 		let mut var = Variant::new_nil();
