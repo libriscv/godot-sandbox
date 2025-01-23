@@ -56,7 +56,7 @@ Godot Sandbox allows Godot creators to implement safe modding support, such that
 
 ## Usage
 
-- Write C++ or Rust in the Godot editor. An accompanying ELF resource is created. This resource can be loaded into any Sandbox instance on every platform without recompiling.
+- Write C++, Zig or Rust in the Godot editor. An accompanying ELF resource is created. This resource can be loaded into any Sandbox instance on every platform without recompiling.
 
 - Create a new `Sandbox` and [assign the ELF resource to it](https://libriscv.no/docs/godot/sandbox/#create-a-sandbox)
 	- Lifetime as any other node
