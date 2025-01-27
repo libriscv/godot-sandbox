@@ -1,4 +1,5 @@
 #pragma once
+#include <libriscv/machine.hpp>
 
 #define APICALL(func) static void func(machine_t &machine [[maybe_unused]])
 
@@ -61,5 +62,10 @@ static inline void sys_trace(const String &name, Result result, Args &&...args) 
 	fflush(stderr);
 }
 // clang-format on
+
+	template <typename T>
+	using CppVector = riscv::GuestStdVector<RISCV_ARCH, T>;
+
+	using CppString = riscv::GuestStdString<RISCV_ARCH>;
 
 } // namespace riscv

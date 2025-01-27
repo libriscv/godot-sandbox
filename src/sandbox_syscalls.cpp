@@ -201,8 +201,8 @@ APICALL(api_vcreate) {
 		case Variant::NODE_PATH: { // From std::string
 			String godot_str;
 			if (method == 0) {
-				GuestStdString *str = machine.memory.memarray<GuestStdString>(gdata, 1);
-				godot_str = str->to_godot_string(machine);
+				CppString *str = machine.memory.memarray<CppString>(gdata, 1);
+				godot_str = to_godot_string(str, machine);
 			} else if (method == 1) { // const char*, size_t
 				struct Buffer {
 					gaddr_t data;
@@ -229,9 +229,9 @@ APICALL(api_vcreate) {
 			if (gdata != 0x0) {
 				if (method == 0) {
 					// Copy std::vector<Variant> from guest memory.
-					GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
-					std::vector<GuestVariant> vec = gvec->to_vector<GuestVariant>(machine);
-					for (const GuestVariant &v : vec) {
+					CppVector<GuestVariant> *vec = machine.memory.memarray<CppVector<GuestVariant>>(gdata, 1);
+					for (size_t i = 0; i < vec->size(); i++) {
+						const GuestVariant &v = vec->at(machine, i);
 						a.push_back(std::move(v.toVariant(emu)));
 					}
 				} else if (method == 1) {
@@ -262,9 +262,9 @@ APICALL(api_vcreate) {
 			if (gdata != 0x0) {
 				if (method == 0) {
 					// Copy std::vector<uint8_t> from guest memory.
-					GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
-					a.resize(gvec->size<uint8_t>());
-					std::memcpy(a.ptrw(), gvec->view_as<uint8_t>(machine), gvec->size_bytes());
+					CppVector<uint8_t> *gvec = machine.memory.memarray<CppVector<uint8_t>>(gdata, 1);
+					a.resize(gvec->size());
+					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 				} else {
 					// Method is the buffer length.
 					a.resize(method);
@@ -281,9 +281,9 @@ APICALL(api_vcreate) {
 			PackedFloat32Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<float> from guest memory.
-				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
-				a.resize(gvec->size<float>());
-				std::memcpy(a.ptrw(), gvec->view_as<float>(machine), gvec->size_bytes());
+				CppVector<float> *gvec = machine.memory.memarray<CppVector<float>>(gdata, 1);
+				a.resize(gvec->size());
+				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -293,10 +293,9 @@ APICALL(api_vcreate) {
 			PackedFloat64Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<double> from guest memory.
-				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
-				std::vector<double> vec = gvec->to_vector<double>(machine);
-				a.resize(vec.size());
-				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(double));
+				CppVector<double> *gvec = machine.memory.memarray<CppVector<double>>(gdata, 1);
+				a.resize(gvec->size());
+				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -306,10 +305,9 @@ APICALL(api_vcreate) {
 			PackedInt32Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<int32_t> from guest memory.
-				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
-				std::vector<int32_t> vec = gvec->to_vector<int32_t>(machine);
-				a.resize(vec.size());
-				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(int32_t));
+				CppVector<int32_t> *gvec = machine.memory.memarray<CppVector<int32_t>>(gdata, 1);
+				a.resize(gvec->size());
+				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -319,10 +317,9 @@ APICALL(api_vcreate) {
 			PackedInt64Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<int64_t> from guest memory.
-				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
-				std::vector<int64_t> vec = gvec->to_vector<int64_t>(machine);
-				a.resize(vec.size());
-				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(int64_t));
+				CppVector<int64_t> *gvec = machine.memory.memarray<CppVector<int64_t>>(gdata, 1);
+				a.resize(gvec->size());
+				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -332,10 +329,9 @@ APICALL(api_vcreate) {
 			PackedVector2Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<Vector2> from guest memory.
-				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
-				std::vector<Vector2> vec = gvec->to_vector<Vector2>(machine);
-				a.resize(vec.size());
-				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(Vector2));
+				CppVector<Vector2> *gvec = machine.memory.memarray<CppVector<Vector2>>(gdata, 1);
+				a.resize(gvec->size());
+				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -345,10 +341,9 @@ APICALL(api_vcreate) {
 			PackedVector3Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<Vector3> from guest memory.
-				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
-				std::vector<Vector3> vec = gvec->to_vector<Vector3>(machine);
-				a.resize(vec.size());
-				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(Vector3));
+				CppVector<Vector3> *gvec = machine.memory.memarray<CppVector<Vector3>>(gdata, 1);
+				a.resize(gvec->size());
+				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -358,10 +353,9 @@ APICALL(api_vcreate) {
 			PackedVector4Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<Vector4> from guest memory.
-				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
-				std::vector<Vector4> vec = gvec->to_vector<Vector4>(machine);
-				a.resize(vec.size());
-				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(Vector4));
+				CppVector<Vector4> *gvec = machine.memory.memarray<CppVector<Vector4>>(gdata, 1);
+				a.resize(gvec->size());
+				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -371,10 +365,9 @@ APICALL(api_vcreate) {
 			PackedColorArray a;
 			if (gdata != 0x0) {
 				// Copy std::vector<Color> from guest memory.
-				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
-				std::vector<Color> vec = gvec->to_vector<Color>(machine);
-				a.resize(vec.size());
-				std::memcpy(a.ptrw(), vec.data(), vec.size() * sizeof(Color));
+				CppVector<Color> *gvec = machine.memory.memarray<CppVector<Color>>(gdata, 1);
+				a.resize(gvec->size());
+				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -384,21 +377,21 @@ APICALL(api_vcreate) {
 			PackedStringArray a;
 			if (gdata != 0x0) {
 				// Copy std::vector<String> from guest memory.
-				GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
 				if (method == 0) {
-					const GuestStdString *str_array = gvec->view_as<GuestStdString>(machine);
-					for (size_t i = 0; i < gvec->size_bytes() / sizeof(GuestStdString); i++) {
-						a.push_back(str_array[i].to_godot_string(machine));
+					CppVector<CppString> *gvec = machine.memory.memarray<CppVector<CppString>>(gdata, 1);
+					CppString *str_array = gvec->as_array(machine);
+					for (size_t i = 0; i < gvec->size(); i++) {
+						a.push_back(to_godot_string(&str_array[i], machine));
 					}
 				} else if (method == 1) {
 					// libc++ std::string implementation.
-					const GuestStdVector *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
 					struct Buffer {
 						gaddr_t ptr;
 						gaddr_t size;
 					};
-					const Buffer *buffers = gvec->view_as<Buffer>(machine);
-					for (size_t i = 0; i < gvec->size_bytes() / sizeof(Buffer); i++) {
+					CppVector<Buffer> *gvec = machine.memory.memarray<CppVector<Buffer>>(gdata, 1);
+					const Buffer *buffers = gvec->as_array(machine);
+					for (size_t i = 0; i < gvec->size(); i++) {
 						const Buffer &buf = buffers[i];
 						std::string_view view = machine.memory.memview(buf.ptr, buf.size);
 						a.push_back(String::utf8(view.data(), view.size()));
@@ -434,7 +427,7 @@ APICALL(api_vfetch) {
 			case Variant::NODE_PATH: {
 				if (method == 0) { // std::string
 					auto u8str = var.operator String().utf8();
-					auto *gstr = machine.memory.memarray<GuestStdString>(gdata, 1);
+					CppString *gstr = machine.memory.memarray<CppString>(gdata, 1);
 					gstr->set_string(machine, gdata, u8str.ptr(), u8str.length());
 				} else if (method == 1) { // const char*, size_t struct
 					auto u8str = var.operator String().utf8();
@@ -456,77 +449,68 @@ APICALL(api_vfetch) {
 				break;
 			}
 			case Variant::PACKED_BYTE_ARRAY: {
-				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				CppVector<uint8_t> *gvec = machine.memory.memarray<CppVector<uint8_t>>(gdata, 1);
 				auto arr = var.operator PackedByteArray();
-				auto [sptr, saddr] = gvec->alloc<uint8_t>(machine, arr.size());
-				std::memcpy(sptr, arr.ptr(), arr.size());
+				gvec->assign(machine, arr.ptr(), arr.size());
 				break;
 			}
 			case Variant::PACKED_FLOAT32_ARRAY: {
-				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				CppVector<float> *gvec = machine.memory.memarray<CppVector<float>>(gdata, 1);
 				auto arr = var.operator PackedFloat32Array();
-				// Allocate and copy the array into the guest memory.
-				auto [sptr, saddr] = gvec->alloc<float>(machine, arr.size());
-				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(float));
+				gvec->assign(machine, arr.ptr(), arr.size());
 				break;
 			}
 			case Variant::PACKED_FLOAT64_ARRAY: {
-				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				CppVector<double> *gvec = machine.memory.memarray<CppVector<double>>(gdata, 1);
 				auto arr = var.operator PackedFloat64Array();
-				auto [sptr, saddr] = gvec->alloc<double>(machine, arr.size());
-				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(double));
+				gvec->assign(machine, arr.ptr(), arr.size());
 				break;
 			}
 			case Variant::PACKED_INT32_ARRAY: {
-				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				CppVector<int32_t> *gvec = machine.memory.memarray<CppVector<int32_t>>(gdata, 1);
 				auto arr = var.operator PackedInt32Array();
-				auto [sptr, saddr] = gvec->alloc<int32_t>(machine, arr.size());
-				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(int32_t));
+				gvec->assign(machine, arr.ptr(), arr.size());
 				break;
 			}
 			case Variant::PACKED_INT64_ARRAY: {
-				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				CppVector<int64_t> *gvec = machine.memory.memarray<CppVector<int64_t>>(gdata, 1);
 				auto arr = var.operator PackedInt64Array();
-				auto [sptr, saddr] = gvec->alloc<int64_t>(machine, arr.size());
-				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(int64_t));
+				gvec->assign(machine, arr.ptr(), arr.size());
 				break;
 			}
 			case Variant::PACKED_VECTOR2_ARRAY: {
-				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				CppVector<Vector2> *gvec = machine.memory.memarray<CppVector<Vector2>>(gdata, 1);
 				auto arr = var.operator PackedVector2Array();
-				auto [sptr, saddr] = gvec->alloc<Vector2>(machine, arr.size());
-				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(Vector2));
+				gvec->assign(machine, arr.ptr(), arr.size());
 				break;
 			}
 			case Variant::PACKED_VECTOR3_ARRAY: {
-				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				CppVector<Vector3> *gvec = machine.memory.memarray<CppVector<Vector3>>(gdata, 1);
 				auto arr = var.operator PackedVector3Array();
-				auto [sptr, saddr] = gvec->alloc<Vector3>(machine, arr.size());
-				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(Vector3));
+				gvec->assign(machine, arr.ptr(), arr.size());
 				break;
 			}
 			case Variant::PACKED_VECTOR4_ARRAY: {
-				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				CppVector<Vector4> *gvec = machine.memory.memarray<CppVector<Vector4>>(gdata, 1);
 				auto arr = var.operator PackedVector4Array();
-				auto [sptr, saddr] = gvec->alloc<Vector4>(machine, arr.size());
-				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(Vector4));
+				gvec->assign(machine, arr.ptr(), arr.size());
 				break;
 			}
 			case Variant::PACKED_COLOR_ARRAY: {
-				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
+				CppVector<Color> *gvec = machine.memory.memarray<CppVector<Color>>(gdata, 1);
 				auto arr = var.operator PackedColorArray();
-				auto [sptr, saddr] = gvec->alloc<Color>(machine, arr.size());
-				std::memcpy(sptr, arr.ptr(), arr.size() * sizeof(Color));
+				gvec->assign(machine, arr.ptr(), arr.size());
 				break;
 			}
 			case Variant::PACKED_STRING_ARRAY: {
-				auto *gvec = machine.memory.memarray<GuestStdVector>(gdata, 1);
 				auto arr = var.operator PackedStringArray();
 				if (method == 0) {
-					auto [sptr, saddr] = gvec->alloc<GuestStdString>(machine, arr.size());
+					CppVector<CppString> *gvec = machine.memory.memarray<CppVector<CppString>>(gdata, 1);
+					gvec->resize(machine, arr.size());
 					for (unsigned i = 0; i < arr.size(); i++) {
 						auto u8str = arr[i].utf8();
-						sptr[i].set_string(machine, saddr + i * sizeof(GuestStdString), u8str.ptr(), u8str.length());
+						const gaddr_t self = gvec->address_at(i);
+						gvec->at(machine, i).set_string(machine, self, std::string_view(u8str.ptr(), u8str.length()));
 					}
 				} else if (method == 1) {
 					// libc++ std::string implementation.
@@ -534,12 +518,15 @@ APICALL(api_vfetch) {
 						gaddr_t ptr;
 						gaddr_t size;
 					};
-					auto [sptr, saddr] = gvec->alloc<Buffer>(machine, arr.size());
+					CppVector<Buffer> *gvec = machine.memory.memarray<CppVector<Buffer>>(gdata, 1);
+					gvec->reserve(machine, arr.size());
 					for (unsigned i = 0; i < arr.size(); i++) {
 						auto u8str = arr[i].utf8();
-						sptr[i].ptr  = machine.arena().malloc(u8str.length());
-						sptr[i].size = u8str.length();
-						machine.memory.memcpy(sptr[i].ptr, u8str.ptr(), u8str.length());
+						Buffer gb;
+						gb.ptr  = machine.arena().malloc(u8str.length());
+						gb.size = u8str.length();
+						machine.memory.memcpy(gb.ptr, u8str.ptr(), u8str.length());
+						gvec->push_back(machine, gb);
 					}
 				} else {
 					ERR_PRINT("vfetch: Unsupported method for Variant::PACKED_STRING_ARRAY");
@@ -695,10 +682,10 @@ APICALL(api_vstore) {
 				}
 			} else {
 				// Copy the array from guest memory into the Variant.
-				auto *data = machine.memory.memarray<GuestStdString>(gdata, gsize);
+				const CppString *data = machine.memory.memarray<CppString>(gdata, gsize);
 				arr.resize(gsize);
 				for (unsigned i = 0; i < gsize; i++) {
-					arr.set(i, data[i].to_godot_string(machine));
+					arr.set(i, to_godot_string(&data[i], machine));
 				}
 			}
 			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
@@ -793,15 +780,15 @@ APICALL(api_obj) {
 
 	switch (Object_Op(op)) {
 		case Object_Op::GET_METHOD_LIST: {
-			auto *vec = machine.memory.memarray<GuestStdVector>(gvar, 1);
+			CppVector<CppString> *vec = machine.memory.memarray<CppVector<CppString>>(gvar, 1);
 			// XXX: vec->free(machine);
 			auto methods = obj->get_method_list();
-			auto [sptr, saddr] = vec->alloc<GuestStdString>(machine, methods.size());
+			vec->resize(machine, methods.size());
 			for (size_t i = 0; i < methods.size(); i++) {
 				Dictionary dict = methods[i].operator godot::Dictionary();
 				auto name = String(dict["name"]).utf8();
-				const gaddr_t self = saddr + sizeof(GuestStdString) * i;
-				sptr[i].set_string(machine, self, name.ptr(), name.length());
+				const gaddr_t self = vec->address_at(i);
+				vec->at(machine, i).set_string(machine, self, name.ptr(), name.length());
 			}
 		} break;
 		case Object_Op::GET: { // Get a property of the object.
@@ -823,15 +810,15 @@ APICALL(api_obj) {
 			obj->set(name, var[1].toVariant(emu));
 		} break;
 		case Object_Op::GET_PROPERTY_LIST: {
-			GuestStdVector *vec = machine.memory.memarray<GuestStdVector>(gvar, 1);
+			CppVector<CppString> *vec = machine.memory.memarray<CppVector<CppString>>(gvar, 1);
 			// XXX: vec->free(machine);
 			TypedArray<Dictionary> properties = obj->get_property_list();
-			auto [sptr, saddr] = vec->alloc<GuestStdString>(machine, properties.size());
+			vec->resize(machine, properties.size());
 			for (size_t i = 0; i < properties.size(); i++) {
 				Dictionary dict = properties[i].operator godot::Dictionary();
 				auto name = String(dict["name"]).utf8();
-				const gaddr_t self = saddr + sizeof(GuestStdString) * i;
-				sptr[i].set_string(machine, self, name.ptr(), name.length());
+				const gaddr_t self = vec->address_at(i);
+				vec->at(machine, i).set_string(machine, self, name.ptr(), name.length());
 			}
 		} break;
 		case Object_Op::CONNECT: {
@@ -847,15 +834,14 @@ APICALL(api_obj) {
 			obj->disconnect(vars[1].toVariant(emu).operator String(), callable);
 		} break;
 		case Object_Op::GET_SIGNAL_LIST: {
-			GuestStdVector *vec = machine.memory.memarray<GuestStdVector>(gvar, 1);
-			// XXX: vec->free(machine);
+			CppVector<CppString> *vec = machine.memory.memarray<CppVector<CppString>>(gvar, 1);
 			TypedArray<Dictionary> signals = obj->get_signal_list();
-			auto [sptr, saddr] = vec->alloc<GuestStdString>(machine, signals.size());
+			vec->resize(machine, signals.size());
 			for (size_t i = 0; i < signals.size(); i++) {
 				Dictionary dict = signals[i].operator godot::Dictionary();
 				auto name = String(dict["name"]).utf8();
-				const gaddr_t self = saddr + sizeof(GuestStdString) * i;
-				sptr[i].set_string(machine, self, name.ptr(), name.length());
+				const gaddr_t self = vec->address_at(i);
+				vec->at(machine, i).set_string(machine, self, std::string_view(name.ptr(), name.length()));
 			}
 		} break;
 		default:
@@ -1223,19 +1209,19 @@ APICALL(api_node) {
 				throw std::runtime_error("Banned method accessed: get_children");
 			}
 			// Get a GuestStdVector from guest to store the children.
-			GuestStdVector *vec = machine.memory.memarray<GuestStdVector>(gvar, 1);
+			CppVector<uint64_t> *vec = machine.memory.memarray<CppVector<uint64_t>>(gvar, 1);
 			// Get the children of the node.
 			TypedArray<Node> children = node->get_children();
 			// Allocate memory for the children in the guest vector.
-			auto [cptr, _] = vec->alloc<uint64_t>(machine, children.size());
+			vec->reserve(machine, children.size());
 			// Copy the children to the guest vector, and add them to the scoped objects.
 			for (int i = 0; i < children.size(); i++) {
 				godot::Node *child = godot::Object::cast_to<godot::Node>(children[i]);
 				if (child) {
 					emu.add_scoped_object(child);
-					cptr[i] = uint64_t(uintptr_t(child));
+					vec->push_back(machine, uint64_t(uintptr_t(child)));
 				} else {
-					cptr[i] = 0;
+					vec->push_back(machine, 0);
 				}
 			}
 			// No return value is needed.
@@ -1485,12 +1471,10 @@ APICALL(api_array_ops) {
 			array.sort();
 			break;
 		case Array_Op::FETCH_TO_VECTOR: {
-			auto *vec = machine.memory.memarray<GuestStdVector>(vaddr, 1);
-			// XXX: vec->free(machine);
-			auto [sptr, saddr] = vec->alloc<GuestVariant>(machine, array.size());
+			CppVector<GuestVariant> *vec = machine.memory.memarray<CppVector<GuestVariant>>(vaddr, 1);
+			vec->resize(machine, array.size());
 			for (int i = 0; i < array.size(); i++) {
-				const gaddr_t self = saddr + sizeof(GuestVariant) * i;
-				sptr[i].create(emu, array[i].duplicate(false));
+				vec->at(machine, i).create(emu, array[i].duplicate(false));
 			}
 			break;
 		}
@@ -1658,7 +1642,7 @@ APICALL(api_string_ops) {
 		case String_Op::TO_STD_STRING: {
 			if (index == 0) { // Get the string as a std::string.
 				CharString utf8 = str.utf8();
-				GuestStdString *gstr = machine.memory.memarray<GuestStdString>(vaddr, 1);
+				CppString *gstr = machine.memory.memarray<CppString>(vaddr, 1);
 				gstr->set_string(machine, vaddr, utf8.ptr(), utf8.length());
 			} else if (index == 1) { // Get the string as a const char*, size_t struct.
 				struct Buffer {
