@@ -4,7 +4,7 @@ Import("env_modules")
 
 import os
 
-ARGUMENTS["disable_exceptions"] = "0"
+env["disable_exceptions"] = "0"
 
 env_gdextension = env_modules.Clone()
 
@@ -13,7 +13,6 @@ os.system("cd ext/godot-cpp && scons build_library=False")
 
 env_gdextension.Append(CPPDEFINES = ['RISCV_SYSCALLS_MAX=600', 'RISCV_BRK_MEMORY_SIZE=0x100000'])
 
-env_gdextension.Append(CPPPATH=["#modules/sandbox"])
 
 # Libriscv
 env_gdextension.Prepend(CPPPATH=["#modules/sandbox/ext/libriscv/lib"])
@@ -34,7 +33,7 @@ librisc_sources = [
 	"#modules/sandbox/ext/libriscv/lib/libriscv/multiprocessing.cpp",
 	"#modules/sandbox/ext/libriscv/lib/libriscv/native_libc.cpp",
 	"#modules/sandbox/ext/libriscv/lib/libriscv/native_threads.cpp",
-	#"#modules/sandbox/ext/libriscv/lib/libriscv/rv32i.cpp",
+	#"ext/libriscv/lib/libriscv/rv32i.cpp",
 	"#modules/sandbox/ext/libriscv/lib/libriscv/rv64i.cpp",
 	"#modules/sandbox/ext/libriscv/lib/libriscv/serialize.cpp",
 
@@ -61,7 +60,7 @@ else:
         "#modules/sandbox/ext/libriscv/lib/libriscv/linux/system_calls.cpp",
 
 		# Binary translator - TCC
-		#"#modules/sandbox/ext/libriscv/lib/libriscv/tr_tcc.cpp"
+		#"ext/libriscv/lib/libriscv/tr_tcc.cpp"
 		# Binary translator - System compiler
 		"#modules/sandbox/ext/libriscv/lib/libriscv/tr_compiler.cpp",
     ]
@@ -80,9 +79,10 @@ elif env_gdextension["platform"] == "linux" or env["platform"] == "android":
 
 
 # Add source files from libriscv
-env.modules_sources.append(librisc_sources)
+for source in librisc_sources:
+	env_gdextension.add_source_files(env.modules_sources, source)
 # Add code
-env_gdextension.Prepend(CPPPATH=["#modules/sandbox/src/", "."])
+env_gdextension.Prepend(CPPPATH=["#modules/sandbox/src/"])
 
 env_gdextension.add_source_files(env.modules_sources, "*.cpp")
 env_gdextension.add_source_files(env.modules_sources, "src/*.cpp")
@@ -100,3 +100,4 @@ env_gdextension.Append(CPPPATH=["#modules/sandbox/ext/godot-cpp/gen/include"])
 env_gdextension.add_source_files(env.modules_sources, "ext/godot-cpp/src/*.cpp")
 env_gdextension.add_source_files(env.modules_sources, "ext/godot-cpp/gen/*.cpp")
 
+print("CPPPATH:", env_gdextension["CPPPATH"])
