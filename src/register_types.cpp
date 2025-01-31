@@ -47,21 +47,13 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ClassDB::register_class<Sandbox>();
 	ClassDB::register_class<ELFScript>();
 	ClassDB::register_class<ELFScriptLanguage>();
-	ClassDB::register_class<ResourceFormatLoaderELF>();
-	ClassDB::register_class<ResourceFormatSaverELF>();
 #ifdef PLATFORM_HAS_EDITOR
 	ClassDB::register_class<CPPScript>();
 	ClassDB::register_class<CPPScriptLanguage>();
-	ClassDB::register_class<ResourceFormatLoaderCPP>();
-	ClassDB::register_class<ResourceFormatSaverCPP>();
 	ClassDB::register_class<RustScript>();
 	ClassDB::register_class<RustScriptLanguage>();
-	ClassDB::register_class<ResourceFormatLoaderRust>();
-	ClassDB::register_class<ResourceFormatSaverRust>();
 	ClassDB::register_class<ZigScript>();
 	ClassDB::register_class<ZigScriptLanguage>();
-	ClassDB::register_class<ResourceFormatLoaderZig>();
-	ClassDB::register_class<ResourceFormatSaverZig>();
 #endif
 	elf_loader.instantiate();
 	elf_saver.instantiate();

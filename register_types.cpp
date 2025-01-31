@@ -4,14 +4,7 @@
 #include "core/extension/gdextension_manager.h"
 #include "./gdextension_static_library_loader.h"
 #include "core/object/ref_counted.h"
-
-extern "C" {
-    GDExtensionBool riscv_library_init(
-        GDExtensionInterfaceGetProcAddress p_get_proc_address,
-        GDExtensionClassLibraryPtr p_library,
-        GDExtensionInitialization *r_initialization
-    );
-}
+#include "src/register_types.h"
 
 void initialize_sandbox_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SERVERS) {
