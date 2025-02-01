@@ -12,7 +12,7 @@ env_gdextension = env_modules.Clone()
 os.system("cd ext/godot-cpp && scons build_library=False")
 
 env_gdextension.Append(CPPDEFINES = ['RISCV_SYSCALLS_MAX=600', 'RISCV_BRK_MEMORY_SIZE=0x100000'])
-
+#env_gdextension.Append(CPPDEFINES = ['GODOT_ERROR_MACROS_HPP'])
 
 # Libriscv
 env_gdextension.Prepend(CPPPATH=["#modules/sandbox/ext/libriscv/lib"])
@@ -94,6 +94,7 @@ env_gdextension.add_source_files(env.modules_sources, "src/godot/*.cpp")
 env_gdextension.add_source_files(env.modules_sources, "src/bintr/*.cpp")
 
 # Godot cpp
+env_gdextension.Append(CPPPATH=["#modules/sandbox/ext/godot-cpp/gdextension"])
 env_gdextension.Append(CPPPATH=["#modules/sandbox/ext/godot-cpp/include"])
 env_gdextension.Append(CPPPATH=["#modules/sandbox/ext/godot-cpp/gen/include"])
 
