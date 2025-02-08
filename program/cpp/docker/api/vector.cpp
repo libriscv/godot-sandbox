@@ -147,5 +147,11 @@ float Vector3::angle_to(const Vector3 &other) const noexcept {
 	return angle;
 }
 
+Vector3 Vector3::direction_to(const Vector3 &other) const noexcept {
+	Vector3 ret(other.x - x, other.y - y, other.z - z);
+	ret.normalize();
+	return ret;
+}
+
 static_assert(sizeof(Vector3) == 12, "Vector3 size mismatch");
 static_assert(alignof(Vector3) == 4, "Vector3 alignment mismatch");
