@@ -4,12 +4,13 @@
 #include "core/extension/gdextension_manager.h"
 #include "core/extension/./gdextension_static_library_loader.h"
 #include "core/object/ref_counted.h"
-#include "src/register_types.h"
-
 
 extern "C" {
-// Initialization.
-GDExtensionBool GDE_EXPORT riscv_library_init(GDExtensionInterfaceGetProcAddress p_get_proc_address, GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization);
+    GDExtensionBool riscv_library_init(
+        GDExtensionInterfaceGetProcAddress p_get_proc_address,
+        GDExtensionClassLibraryPtr p_library,
+        GDExtensionInitialization *r_initialization
+    );
 }
 
 void initialize_sandbox_module(ModuleInitializationLevel p_level) {
@@ -24,4 +25,5 @@ void initialize_sandbox_module(ModuleInitializationLevel p_level) {
 }
 
 void uninitialize_sandbox_module(ModuleInitializationLevel p_level) {
+	GDExtensionManager::get_singleton()->unload_extension("sandbox");
 }

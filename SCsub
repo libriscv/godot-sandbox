@@ -1,104 +1,48 @@
+
 #!/usr/bin/env python
+import os
+
 Import("env")
 Import("env_modules")
 
-import os
+def get_addon_target():
+	return "template_release"
 
-env["disable_exceptions"] = "0"
+def get_addon_platform():
+	return env["platform"].replace("linuxbsd", "linux")
+
+def get_sufix():
+    suffix = ".{}.{}".format(get_addon_platform(), get_addon_target())
+    # In godot it's "linuxbsd"
+    if env["precision"] == "double":
+        suffix += ".double"
+    suffix += "." + env["arch"]
+    if not env["threads"]:
+        suffix += ".nothreads"
+    return suffix
+
+os.system("scons platform=" + get_addon_platform() + " target=" + get_addon_target())
+
+match get_addon_platform():
+	case "macos":
+		base_path = "#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.macos.template_release.universal.framework/"
+	case _:
+		base_path = "#modules/sandbox/bin/addons/godot_sandbox/bin"
+
+base_file = "libgodot_riscv{}".format(get_sufix())
 
 env_gdextension = env_modules.Clone()
 
-# in the folder ext/godot-cpp run scons build_library=False
-os.system("cd ext/godot-cpp && scons build_library=False")
+env_gdextension.Append(LIBS=[base_file])
+env_gdextension.Append(LIBPATH=[base_path])
 
-env_gdextension.Append(CPPDEFINES = ['RISCV_SYSCALLS_MAX=600', 'RISCV_BRK_MEMORY_SIZE=0x100000'])
-#env_gdextension.Append(CPPDEFINES = ['GODOT_ERROR_MACROS_HPP'])
+# Godot-cpp
+base_path = "#modules/sandbox/ext/godot-cpp/bin"
+base_file = "libgodot-cpp{}".format(get_sufix())
 
-# Libriscv
-env_gdextension.Prepend(CPPPATH=["#modules/sandbox/ext/libriscv/lib"])
-librisc_sources = [
-	# threaded fast-path:
-	"#modules/sandbox/ext/libriscv/lib/libriscv/threaded_dispatch.cpp",
+env_gdextension.Append(LIBS=[base_file])
+env_gdextension.Append(LIBPATH=[base_path])
 
-	"#modules/sandbox/ext/libriscv/lib/libriscv/cpu.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/debug.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/decode_bytecodes.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/decoder_cache.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/machine.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/machine_defaults.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/memory.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/memory_elf.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/memory_mmap.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/memory_rw.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/multiprocessing.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/native_libc.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/native_threads.cpp",
-	#"ext/libriscv/lib/libriscv/rv32i.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/rv64i.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/serialize.cpp",
-
-	# POSIX
-	"#modules/sandbox/ext/libriscv/lib/libriscv/posix/minimal.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/posix/signals.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/posix/threads.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/util/crc32c.cpp",
-
-	# Binary translator
-	"#modules/sandbox/ext/libriscv/lib/libriscv/tr_api.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/tr_emit.cpp",
-	"#modules/sandbox/ext/libriscv/lib/libriscv/tr_translate.cpp",
-]
-
-if env_gdextension["platform"] == "windows":
-    librisc_sources += [
-        "#modules/sandbox/ext/libriscv/lib/libriscv/win32/dlfcn.cpp",
-        "#modules/sandbox/ext/libriscv/lib/libriscv/win32/system_calls.cpp",
-        "#modules/sandbox/ext/libriscv/lib/libriscv/win32/tr_msvc.cpp",
-    ]
-else:
-    librisc_sources += [
-        "#modules/sandbox/ext/libriscv/lib/libriscv/linux/system_calls.cpp",
-
-		# Binary translator - TCC
-		#"ext/libriscv/lib/libriscv/tr_tcc.cpp"
-		# Binary translator - System compiler
-		"#modules/sandbox/ext/libriscv/lib/libriscv/tr_compiler.cpp",
-    ]
-
-if env_gdextension["platform"] != "windows" or env["use_mingw"]:
-    env_gdextension.Append(CXXFLAGS=["-std=c++20"])
-else:
-    env_gdextension.Append(CXXFLAGS=["/std:c++20"])
-
-if env_gdextension["platform"] == "windows":
-	env_gdextension.Prepend(CPPPATH=["#modules/sandbox/ext/libriscv/lib/libriscv/lib/win32"])
-elif env_gdextension["platform"] == "macos":
-    env_gdextension.Prepend(CPPPATH=["#modules/sandbox/ext/libriscv/lib/libriscv/lib/macos"])
-elif env_gdextension["platform"] == "linux" or env["platform"] == "android":
-    env_gdextension.Prepend(CPPPATH=["#modules/sandbox/ext/libriscv/lib/libriscv/lib/linux"])
-
-
-# Add source files from libriscv
-for source in librisc_sources:
-	env_gdextension.add_source_files(env.modules_sources, source)
-# Add code
-env_gdextension.Prepend(CPPPATH=["#modules/sandbox/src/"])
+# Sources
 
 env_gdextension.add_source_files(env.modules_sources, "*.cpp")
-env_gdextension.add_source_files(env.modules_sources, "src/*.cpp")
-env_gdextension.add_source_files(env.modules_sources, "src/cpp/*.cpp")
-env_gdextension.add_source_files(env.modules_sources, "src/rust/*.cpp")
-env_gdextension.add_source_files(env.modules_sources, "src/zig/*.cpp")
-env_gdextension.add_source_files(env.modules_sources, "src/elf/*.cpp")
-env_gdextension.add_source_files(env.modules_sources, "src/godot/*.cpp")
-env_gdextension.add_source_files(env.modules_sources, "src/bintr/*.cpp")
-
-# Godot cpp
-env_gdextension.Append(CPPPATH=["#modules/sandbox/ext/godot-cpp/gdextension"])
-env_gdextension.Append(CPPPATH=["#modules/sandbox/ext/godot-cpp/include"])
-env_gdextension.Append(CPPPATH=["#modules/sandbox/ext/godot-cpp/gen/include"])
-
-env_gdextension.add_source_files(env.modules_sources, "ext/godot-cpp/src/*.cpp")
-env_gdextension.add_source_files(env.modules_sources, "ext/godot-cpp/gen/*.cpp")
-
-print("CPPPATH:", env_gdextension["CPPPATH"])
