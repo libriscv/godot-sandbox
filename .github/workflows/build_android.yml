@@ -31,7 +31,7 @@ jobs:
           sudo ./llvm.sh 17
 
       - name: 🔗 GDExtension Build
-        uses: godotengine/godot-cpp-template/.github/actions/build@main
+        uses: godotengine/godot-cpp-template/.github/actions/build@f9564a9c8115139b9624692d39e358291f6d76ce
         with:
           platform: android
           arch: ${{ matrix.arch }}
