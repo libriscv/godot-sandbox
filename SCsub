@@ -21,11 +21,11 @@ def get_sufix():
         suffix += ".nothreads"
     return suffix
 
-os.system("scons platform=" + get_addon_platform() + " target=" + get_addon_target())
+os.system("scons platform=" + get_addon_platform() + " target=" + get_addon_target() + " arch=" + env["arch"] + " precision=" + env["precision"] + " threads=" + str(env["threads"]))
 
 match get_addon_platform():
 	case "macos":
-		base_path = "#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.macos.template_release.universal.framework/"
+		base_path = f"#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.macos.template_release.{env["arch"]}.framework/"
 	case _:
 		base_path = "#modules/sandbox/bin/addons/godot_sandbox/bin"
 
@@ -33,15 +33,15 @@ base_file = "libgodot_riscv{}".format(get_sufix())
 
 env_gdextension = env_modules.Clone()
 
-env_gdextension.Append(LIBS=[base_file])
-env_gdextension.Append(LIBPATH=[base_path])
+env.Append(LIBS=[base_file])
+env.Append(LIBPATH=[base_path])
 
 # Godot-cpp
 base_path = "#modules/sandbox/ext/godot-cpp/bin"
 base_file = "libgodot-cpp{}".format(get_sufix())
 
-env_gdextension.Append(LIBS=[base_file])
-env_gdextension.Append(LIBPATH=[base_path])
+env.Append(LIBS=[base_file])
+env.Append(LIBPATH=[base_path])
 
 # Sources
 
