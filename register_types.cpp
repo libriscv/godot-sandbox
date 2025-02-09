@@ -22,7 +22,7 @@ void initialize_sandbox_module(ModuleInitializationLevel p_level) {
 
 	loader.instantiate();
 	loader->set_entry_funcptr((void*)&riscv_library_init);
-	GDExtensionManager::get_singleton()->load_extension_with_loader("sandbox", loader);
+	GDExtensionManager::get_singleton()->load_extension_with_loader("riscv_library", loader);
 }
 
 void uninitialize_sandbox_module(ModuleInitializationLevel p_level) {
@@ -30,6 +30,6 @@ void uninitialize_sandbox_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 	ERR_PRINT("UNINIT SANDBOX");
-	GDExtensionManager::get_singleton()->unload_extension("sandbox");
+	GDExtensionManager::get_singleton()->unload_extension("riscv_library");
 	loader.unref();
 }

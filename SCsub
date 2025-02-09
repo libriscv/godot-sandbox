@@ -6,14 +6,20 @@ Import("env")
 Import("env_modules")
 
 def get_addon_target():
-	return "template_release"
+    if env["target"] == "template_release":
+        return "template_release"
+    return "template_debug"
 
 def get_addon_platform():
 	return env["platform"].replace("linuxbsd", "linux")
 
+dev_build_extension = ""
+if env["dev_build"]:
+    dev_build_extension += ".dev"
+
 def get_sufix():
     suffix = ".{}.{}".format(get_addon_platform(), get_addon_target())
-    # In godot it's "linuxbsd"
+    suffix += dev_build_extension
     if env["precision"] == "double":
         suffix += ".double"
     suffix += "." + env["arch"]
@@ -21,15 +27,18 @@ def get_sufix():
         suffix += ".nothreads"
     return suffix
 
-os.system("scons platform=" + get_addon_platform() + " target=" + get_addon_target() + " arch=" + env["arch"] + " precision=" + env["precision"] + " threads=" + str(env["threads"]))
+
+os.system("scons platform=" + get_addon_platform() + " target=" + get_addon_target() + " arch=" + env["arch"] + " precision=" + env["precision"] + " threads=" + str(env["threads"]) + " dev_build=" + str(env["dev_build"]))
 
 match get_addon_platform():
 	case "macos":
-		base_path = f"#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.macos.template_release.{env["arch"]}.framework/"
+		base_path = f"#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.macos.{get_addon_target()}{dev_build_extension}.{env["arch"]}.framework/"
 	case _:
 		base_path = "#modules/sandbox/bin/addons/godot_sandbox/bin"
 
+print(get_sufix())
 base_file = "libgodot_riscv{}".format(get_sufix())
+print(base_file)
 
 env_gdextension = env_modules.Clone()
 
