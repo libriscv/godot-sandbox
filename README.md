@@ -126,8 +126,12 @@ The script icon is built from the Godot icons. It's using the same font as the G
 If you want to build this as a module, simply download the `sandbox.zip` from releases, unzip it, and copy it to the modules folder in godot, build it:
 
 ```sh
-scons module_sandbox_enabled=True disable_exceptions=False target=editor
+scons
 ```
+
+The module requires the following PR: https://github.com/godotengine/godot/commit/8a41b1d90ff447fb3014b7402f28f820ddc7c8a6 as well as the following files for static loader added:
+- `gdextension_static_library_loader.cpp`
+- `gdextension_static_library_loader.h`
 
 ## Contributors ✨
 
