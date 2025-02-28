@@ -38,3 +38,4 @@ jobs:
             ${{ github.workspace }}/bin/**/*.a
             ${{ github.workspace }}/ext/godot-cpp/**/*.a
           if-no-files-found: error
+          retention-days: 10 # 90 days by default

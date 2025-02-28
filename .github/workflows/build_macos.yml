@@ -64,3 +64,4 @@ jobs:
           path: |
             ${{ github.workspace }}/bin/**/*.universal
           if-no-files-found: error
+          retention-days: 10 # 90 days by default

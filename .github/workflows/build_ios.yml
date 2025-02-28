@@ -35,6 +35,7 @@ jobs:
           path: |
             ${{ github.workspace }}/bin/**/*.arm64
           if-no-files-found: error
+          retention-days: 10 # 90 days by default
 
       - name: Upload Artifact Static
         uses: actions/upload-artifact@v4
@@ -44,3 +45,4 @@ jobs:
             ${{ github.workspace }}/bin/**/*.a
             ${{ github.workspace }}/ext/godot-cpp/**/*.a
           if-no-files-found: error
+          retention-days: 10 # 90 days by default
