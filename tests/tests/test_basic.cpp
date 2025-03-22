@@ -217,6 +217,18 @@ extern "C" Variant test_array_assign(Array arr) {
 	return arr;
 }
 
+extern "C" Variant test_array_assign2(Array arr, const size_t idx) {
+
+	std::vector<size_t> indices = { 0, 1, 2, 3, 4, 5, 6, 7, 8 };
+
+	arr.resize(indices.size());
+	for (size_t i = 0; i < indices.size(); i++) {
+		arr[i] = indices[i];
+	}
+
+	return arr;
+}
+
 extern "C" Variant test_dict(Dictionary arg) {
 	return arg;
 }

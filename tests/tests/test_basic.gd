@@ -178,6 +178,9 @@ func test_types():
 	assert_eq_deep(a_pp, [1, "2", 3.0])
 	var assigned_array : Array = [42, "Hello", PackedFloat64Array([3.14, 2.71]), Array([PackedFloat64Array([1.0, 2.0, 3.0])])]
 	assert_eq_deep(s.vmcall("test_array_assign", a_pp), assigned_array)
+	a_pp.clear()
+	assigned_array = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+	assert_eq_deep(s.vmcall("test_array_assign2", a_pp), assigned_array)
 	var d_pp : Dictionary
 	assert_same(s.vmcall("test_dict", d_pp), d_pp)
 	var s_pp : String = "12345"

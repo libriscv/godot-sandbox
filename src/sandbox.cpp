@@ -911,7 +911,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			retvar = this->setup_arguments(sp, args, argc);
 			// execute preemption! (precise simulation not supported)
 			uint64_t max_instr = get_instructions_max() << 20;
-			cpu.preempt_internal(regs, true, address, max_instr ? max_instr : ~0ULL);
+			cpu.preempt_internal(regs, true, true, address, max_instr ? max_instr : ~0ULL);
 		}
 
 		// Treat return value as pointer to Variant
