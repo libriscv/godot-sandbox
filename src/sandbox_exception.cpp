@@ -2,6 +2,20 @@
 
 #include "cpp/script_cpp.h"
 #include <charconv>
+#ifdef __linux__
+#include <libriscv/rsp_server.hpp>
+
+#include <unistd.h>
+static const uint16_t RSP_PORT = 2159;
+
+static const char *getenv_with_default(const char *str, const char *defval)
+{
+	const char *value = getenv(str);
+	if (value)
+		return value;
+	return defval;
+}
+#endif
 
 static constexpr bool VERBOSE_EXCEPTIONS = false;
 
@@ -60,13 +74,14 @@ void Sandbox::handle_exception(gaddr_t address) {
 		ERR_PRINT(("Exception: " + std::string(e.what())).c_str());
 	}
 
+	String elfpath = "";
 #if defined(__linux__) || defined(__APPLE__)
 	// Attempt to print the source code line using addr2line from the C++ Docker container
 	// It's not unthinkable that this works for every ELF, regardless of the language
 	Ref<ELFScript> script = this->get_program();
 	if (!script.is_null()) {
 		Array line_out;
-		String elfpath = get_program()->get_dockerized_program_path();
+		elfpath = get_program()->get_dockerized_program_path();
 		CPPScript::DockerContainerExecute({ "/usr/api/build.sh", "--line", to_hex(address), elfpath }, line_out, false);
 		if (line_out.size() > 0) {
 			const String line = String(line_out[0]).replace("\n", "").replace("/usr/src/", "res://");
@@ -89,7 +104,78 @@ void Sandbox::handle_exception(gaddr_t address) {
 		UtilityFunctions::print(
 				"Stack page: ", machine().memory.get_page_info(machine().cpu.reg(2)).c_str());
 	}
-}
+
+#ifdef __linux__
+	if (getenv("GDB")) {
+		const bool oneFrameUp = false;
+		const uint16_t port = RSP_PORT;
+		if (0 == fork())
+		{
+			char scrname[64];
+			strncpy(scrname, "/tmp/dbgscript-XXXXXX", sizeof(scrname));
+			const int fd = mkstemp(scrname);
+			if (fd < 0)
+			{
+				throw std::runtime_error("Unable to create script for debugging");
+			}
+
+			const std::string debugscript =
+				// Delete the script file (after GDB closes it)
+				"shell unlink " + std::string(scrname)
+				+ "\n"
+				// Load the original file used by the script
+				"file "
+				+ std::string(getenv("GDB"))
+				+ "\n"
+				// Connect remotely to the given port @port
+				"target remote localhost:"
+				+ std::to_string(port)
+				+ "\n"
+				// Enable the fancy TUI
+				"layout next\nlayout next\n"
+				// Disable pagination for the message
+				"set pagination off\n"
+				// Print the message given by the caller
+				"echo Remote debugging session started\n"
+				+ "\n"
+				// Go up one step from the syscall wrapper (which can fail)
+				+ std::string(oneFrameUp ? "up\n" : "");
+
+			ssize_t len = write(fd, debugscript.c_str(), debugscript.size());
+			if (len < (ssize_t)debugscript.size())
+			{
+				throw std::runtime_error(
+					"Unable to write script file for debugging");
+			}
+			close(fd);
+
+			const char* argv[]
+				= {getenv_with_default("GDBPATH", "/usr/bin/gdb-multiarch"), "-x",
+				scrname, nullptr};
+			// XXX: This is not kosher, but GDB is open-source, safe and let's not
+			// pretend that anyone downloads gdb-multiarch from a website anyway.
+			// There is a finite list of things we should pass to GDB to make it
+			// behave well, but I haven't been able to find the right combination.
+			extern char** environ;
+			if (-1 == execve(argv[0], (char* const*)argv, environ))
+			{
+				throw std::runtime_error(
+					"Unable to start gdb-multiarch for debugging");
+			}
+		} // child
+
+		riscv::RSP<RISCV_ARCH> server {this->machine(), port};
+		auto client = server.accept();
+		if (client != nullptr)
+		{
+			printf("GDB connected\n");
+			// client->set_verbose(true);
+			while (client->process_one())
+				;
+		}
+	} // if getenv("GDB")
+#endif
+} // handle_exception()
 
 void Sandbox::handle_timeout(gaddr_t address) {
 	this->m_timeouts++;
