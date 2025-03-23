@@ -1,0 +1,57 @@
+
+#!/usr/bin/env python
+import os
+
+Import("env")
+Import("env_modules")
+
+def get_addon_target():
+    if env["target"] == "template_release":
+        return "template_release"
+    return "template_debug"
+
+def get_addon_platform():
+	return env["platform"].replace("linuxbsd", "linux")
+
+dev_build_extension = ""
+if env["dev_build"]:
+    dev_build_extension += ".dev"
+
+def get_sufix():
+    suffix = ".{}.{}".format(get_addon_platform(), get_addon_target())
+    suffix += dev_build_extension
+    if env["precision"] == "double":
+        suffix += ".double"
+    suffix += "." + env["arch"]
+    if not env["threads"]:
+        suffix += ".nothreads"
+    return suffix
+
+
+os.system("scons platform=" + get_addon_platform() + " target=" + get_addon_target() + " arch=" + env["arch"] + " precision=" + env["precision"] + " threads=" + str(env["threads"]) + " dev_build=" + str(env["dev_build"]))
+
+match get_addon_platform():
+	case "macos":
+		base_path = f"#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.macos.{get_addon_target()}{dev_build_extension}.{env["arch"]}.framework/"
+	case _:
+		base_path = "#modules/sandbox/bin/addons/godot_sandbox/bin"
+
+print(get_sufix())
+base_file = "libgodot_riscv{}".format(get_sufix())
+print(base_file)
+
+env_gdextension = env_modules.Clone()
+
+env.Append(LIBS=[base_file])
+env.Append(LIBPATH=[base_path])
+
+# Godot-cpp
+base_path = "#modules/sandbox/ext/godot-cpp/bin"
+base_file = "libgodot-cpp{}".format(get_sufix())
+
+env.Append(LIBS=[base_file])
+env.Append(LIBPATH=[base_path])
+
+# Sources
+
+env_gdextension.add_source_files(env.modules_sources, "*.cpp")

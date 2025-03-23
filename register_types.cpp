@@ -2,8 +2,10 @@
 #include "core/object/object.h"
 #include "core/extension/gdextension_interface.h"
 #include "core/extension/gdextension_manager.h"
-#include "./gdextension_static_library_loader.h"
+#include "core/extension/./gdextension_static_library_loader.h"
 #include "core/object/ref_counted.h"
+
+Ref<GDExtensionStaticLibraryLoader> loader;
 
 extern "C" {
     GDExtensionBool riscv_library_init(
@@ -14,15 +16,20 @@ extern "C" {
 }
 
 void initialize_sandbox_module(ModuleInitializationLevel p_level) {
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SERVERS) {
+	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
 
-	Ref<GDExtensionStaticLibraryLoader> loader;
 	loader.instantiate();
 	loader->set_entry_funcptr((void*)&riscv_library_init);
-	GDExtensionManager::get_singleton()->load_extension_with_loader("sandbox", loader);
+	GDExtensionManager::get_singleton()->load_extension_with_loader("riscv_library", loader);
 }
 
 void uninitialize_sandbox_module(ModuleInitializationLevel p_level) {
+	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+		return;
+	}
+	ERR_PRINT("UNINIT SANDBOX");
+	GDExtensionManager::get_singleton()->unload_extension("riscv_library");
+	loader.unref();
 }
