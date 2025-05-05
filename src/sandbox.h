@@ -2,6 +2,7 @@
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/core/binder_common.hpp>
 #include <libriscv/machine.hpp>
+#include <algorithm>
 #include <optional>
 
 using namespace godot;
