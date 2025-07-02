@@ -122,7 +122,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_instructions_max"), &Sandbox::get_instructions_max);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE, "Maximum millions of instructions executed before cancelling execution"), "set_instructions_max", "get_instructions_max");
 
-	ClassDB::bind_method(D_METHOD("set_allocations_max", "max"), &Sandbox::set_allocations_max, DEFVAL(4000));
+	ClassDB::bind_method(D_METHOD("set_allocations_max", "max"), &Sandbox::set_allocations_max, DEFVAL(MAX_HEAP_ALLOCS));
 	ClassDB::bind_method(D_METHOD("get_allocations_max"), &Sandbox::get_allocations_max);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "allocations_max", PROPERTY_HINT_NONE, "Maximum number of allocations allowed"), "set_allocations_max", "get_allocations_max");
 

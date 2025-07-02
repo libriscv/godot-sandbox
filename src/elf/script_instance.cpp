@@ -415,6 +415,18 @@ bool ELFScriptInstance::property_can_revert(const StringName &p_name) const {
 	if (const SandboxProperty *prop = sandbox->find_property_or_null(p_name)) {
 		return true;
 	}
+	const String name = p_name;
+	if (name == "references_max"
+		|| name == "memory_max"
+		|| name == "execution_timeout"
+		|| name == "allocations_max"
+		|| name == "use_unboxed_arguments"
+		|| name == "use_precise_simulation"
+		|| name == "profiling"
+		|| name == "restrictions") {
+		// These are default properties that can be reverted
+		return true;
+	}
 	return false;
 }
 
@@ -425,6 +437,32 @@ bool ELFScriptInstance::property_get_revert(const StringName &p_name, Variant &r
 	}
 	if (const SandboxProperty *prop = sandbox->find_property_or_null(p_name)) {
 		r_ret = prop->default_value();
+		return true;
+	}
+	const String name = p_name;
+	if (name == "references_max") {
+		r_ret = Sandbox::MAX_REFS;
+		return true;
+	} else if (name == "memory_max") {
+		r_ret = Sandbox::MAX_VMEM;
+		return true;
+	} else if (name == "execution_timeout") {
+		r_ret = Sandbox::MAX_INSTRUCTIONS;
+		return true;
+	} else if (name == "allocations_max") {
+		r_ret = Sandbox::MAX_HEAP_ALLOCS;
+		return true;
+	} else if (name == "use_unboxed_arguments") {
+		r_ret = true;
+		return true;
+	} else if (name == "use_precise_simulation") {
+		r_ret = false;
+		return true;
+	} else if (name == "profiling") {
+		r_ret = false;
+		return true;
+	} else if (name == "restrictions") {
+		r_ret = false;
 		return true;
 	}
 	return false;
