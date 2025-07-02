@@ -16,6 +16,7 @@ sources = [Glob("src/*.cpp"), Glob("src/cpp/*.cpp"), Glob("src/rust/*.cpp"), Glo
 librisc_sources = [
 	# threaded fast-path:
 	"ext/libriscv/lib/libriscv/threaded_dispatch.cpp",
+	"ext/libriscv/lib/libriscv/threaded_inaccurate_dispatch.cpp",
 
 	"ext/libriscv/lib/libriscv/cpu.cpp",
 	"ext/libriscv/lib/libriscv/debug.cpp",
