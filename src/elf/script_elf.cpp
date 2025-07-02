@@ -279,16 +279,26 @@ String ELFScript::get_elf_programming_language() const {
 }
 
 void ELFScript::set_file(const String &p_path) {
+	if (p_path.is_empty()) {
+		if constexpr (VERBOSE_ELFSCRIPT) {
+			printf("ELFScript::set_file: Empty path provided, skipping.\n");
+		}
+		return;
+	}
 	// res://path/to/file.elf
-	path = p_path;
+	this->path = String(p_path);
 	// path/to/file.elf as a C++ string
-	std_path = std::string(path.replace("res://", "").utf8().ptr());
+	CharString resless_path = p_path.replace("res://", "").utf8();
+	this->std_path = std::string(resless_path.ptr(), resless_path.length());
 
-	PackedByteArray new_source_code = FileAccess::get_file_as_bytes(path);
+	PackedByteArray new_source_code = FileAccess::get_file_as_bytes(this->path);
 	if (new_source_code == source_code) {
 		if constexpr (VERBOSE_ELFSCRIPT) {
 			printf("ELFScript::set_file: No changes in %s\n", path.utf8().ptr());
 		}
+		return;
+	} else if (new_source_code.is_empty()) {
+		ERR_FAIL_MSG("ELFScript::set_file: Failed to load file '" + this->path + "'. The file is empty or does not exist.");
 		return;
 	}
 	source_code = std::move(new_source_code);
@@ -302,7 +312,7 @@ void ELFScript::set_file(const String &p_path) {
 	this->elf_api_version = info.version;
 
 	if constexpr (VERBOSE_ELFSCRIPT) {
-		printf("ELFScript::set_file: %s Sandbox instances: %d\n", path.utf8().ptr(), sandbox_map[path].size());
+		printf("ELFScript::set_file: %s Sandbox instances: %u\n", std_path.c_str(), sandbox_map[path].size());
 	}
 	for (Sandbox *sandbox : sandbox_map[path]) {
 		sandbox->set_program(Ref<ELFScript>(this));
