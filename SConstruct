@@ -71,7 +71,7 @@ else:
 sources.extend(librisc_sources)
 
 # GodotCPP XML documenation
-if env["target"] in ["editor", "template_debug"]:
+if env["target"] in ["editor", "template_release"]:
 	try:
 		doc_data = env.GodotCPPDocData("src/gen/doc_data.gen.cpp", source=Glob("doc_classes/*.xml"))
 		sources.append(doc_data)

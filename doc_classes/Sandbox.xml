@@ -48,6 +48,12 @@
 			<description>
 			</description>
 		</method>
+		<method name="download_program" qualifiers="static">
+			<return type="PackedByteArray" />
+			<param index="0" name="program_name" type="String" default="&quot;hello_world&quot;" />
+			<description>
+			</description>
+		</method>
 		<method name="emit_binary_translation" qualifiers="const">
 			<return type="String" />
 			<param index="0" name="ignore_instruction_limit" type="bool" default="false" />
@@ -79,11 +85,6 @@
 			<description>
 			</description>
 		</method>
-		<method name="get_functions" qualifiers="const">
-			<return type="Array" />
-			<description>
-			</description>
-		</method>
 		<method name="get_general_registers" qualifiers="const">
 			<return type="Array" />
 			<description>
@@ -93,11 +94,6 @@
 			<return type="Array" />
 			<param index="0" name="total" type="int" default="6" />
 			<param index="1" name="callable" type="Callable" default="Callable()" />
-			<description>
-			</description>
-		</method>
-		<method name="get_program">
-			<return type="ELFScript" />
 			<description>
 			</description>
 		</method>
@@ -233,12 +229,6 @@
 			<description>
 			</description>
 		</method>
-		<method name="set_program">
-			<return type="void" />
-			<param index="0" name="program" type="ELFScript" />
-			<description>
-			</description>
-		</method>
 		<method name="set_property_allowed_callback">
 			<return type="void" />
 			<param index="0" name="instance" type="Callable" />
@@ -324,6 +314,8 @@
 		<member name="monitor_heap_usage" type="int" setter="" getter="get_heap_usage" default="0">
 		</member>
 		<member name="profiling" type="bool" setter="set_profiling" getter="get_profiling" default="false">
+		</member>
+		<member name="program" type="ELFScript" setter="set_program" getter="get_program">
 		</member>
 		<member name="references_max" type="int" setter="set_max_refs" getter="get_max_refs" default="100">
 		</member>
