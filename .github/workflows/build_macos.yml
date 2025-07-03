@@ -2,19 +2,6 @@ name: Build MacOS
 on:
   workflow_dispatch:
   workflow_call:
-    secrets:
-      APPLE_CERT_BASE64:
-        required: true
-      APPLE_CERT_PASSWORD:
-        required: true
-      APPLE_DEV_PASSWORD:
-        required: true
-      APPLE_DEV_ID:
-        required: true
-      APPLE_DEV_TEAM_ID:
-        required: true
-      APPLE_DEV_APP_ID:
-        required: true
 
 jobs:
   build:
@@ -30,7 +17,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: true
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: 🔗 GDExtension Build
         uses: godotengine/godot-cpp-template/.github/actions/build@f9564a9c8115139b9624692d39e358291f6d76ce
@@ -40,22 +27,6 @@ jobs:
           build-target-type: template_release
           float-precision: ${{ matrix.precision }}
           godot-cpp-directory: ext/godot-cpp
-
-      - name: Mac Sign
-        uses: godotengine/godot-cpp-template/.github/actions/sign@main
-        with:
-          FRAMEWORK_PATH: bin/addons/godot_sandbox/bin/libgodot_riscv.macos.template_release.universal.framework
-          SIGN_FLAGS: "--deep"
-          APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
-          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
-          APPLE_DEV_PASSWORD: ${{ secrets.APPLE_DEV_PASSWORD }}
-          APPLE_DEV_ID: ${{ secrets.APPLE_DEV_ID }}
-          APPLE_DEV_TEAM_ID: ${{ secrets.APPLE_DEV_TEAM_ID }}
-          APPLE_DEV_APP_ID: ${{ secrets.APPLE_DEV_APP_ID }}
-        env: 
-            APPLE_DEV_ID: ${{ secrets.APPLE_DEV_ID }}
-        # Only run this on main branch where secret is set
-        if: ${{ env.APPLE_DEV_ID != '' }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

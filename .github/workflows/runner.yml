@@ -25,13 +25,6 @@ jobs:
   build_macos:
     needs: [lint]
     uses: ./.github/workflows/build_macos.yml
-    secrets:
-      APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
-      APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
-      APPLE_DEV_PASSWORD: ${{ secrets.APPLE_DEV_PASSWORD }}
-      APPLE_DEV_ID: ${{ secrets.APPLE_DEV_ID }}
-      APPLE_DEV_TEAM_ID: ${{ secrets.APPLE_DEV_TEAM_ID }}
-      APPLE_DEV_APP_ID: ${{ secrets.APPLE_DEV_APP_ID }}
   build_windows:
     needs: [lint]
     uses: ./.github/workflows/build_windows.yml
