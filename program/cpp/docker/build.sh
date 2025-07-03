@@ -14,7 +14,7 @@ usage() {
 
 locally=false
 verbose=false
-current_version=9
+current_version=10
 CPPFLAGS="-O2 -std=gnu++23 -DVERSION=$current_version -fno-stack-protector -fno-threadsafe-statics"
 ADDR2LINE="riscv64-linux-gnu-addr2line"
 

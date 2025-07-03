@@ -227,16 +227,16 @@ APICALL(api_vcreate) {
 			// Create a new empty? array, assign to vp.
 			Array a;
 			if (gdata != 0x0) {
-				if (method == 0) {
+				if (method == -1) {
 					// Copy std::vector<Variant> from guest memory.
 					CppVector<GuestVariant> *vec = machine.memory.memarray<CppVector<GuestVariant>>(gdata, 1);
 					for (size_t i = 0; i < vec->size(); i++) {
 						const GuestVariant &v = vec->at(machine, i);
 						a.push_back(std::move(v.toVariant(emu)));
 					}
-				} else if (method == 1) {
-					// Get elements from register A4
-					const unsigned size = machine.cpu.reg(REG_ARG4);
+				} else if (method >= 0) {
+					// Get elements from method argument.
+					const unsigned size = method;
 					// Copy array of Variants from guest memory.
 					GuestVariant *gvec = machine.memory.memarray<GuestVariant>(gdata, size);
 					for (int i = 0; i < size; i++) {
@@ -260,7 +260,7 @@ APICALL(api_vcreate) {
 		case Variant::PACKED_BYTE_ARRAY: {
 			PackedByteArray a;
 			if (gdata != 0x0) {
-				if (method == 0) {
+				if (method < 0) {
 					// Copy std::vector<uint8_t> from guest memory.
 					CppVector<uint8_t> *gvec = machine.memory.memarray<CppVector<uint8_t>>(gdata, 1);
 					a.resize(gvec->size());
@@ -377,13 +377,13 @@ APICALL(api_vcreate) {
 			PackedStringArray a;
 			if (gdata != 0x0) {
 				// Copy std::vector<String> from guest memory.
-				if (method == 0) {
+				if (method == -1) {
 					CppVector<CppString> *gvec = machine.memory.memarray<CppVector<CppString>>(gdata, 1);
 					CppString *str_array = gvec->as_array(machine);
 					for (size_t i = 0; i < gvec->size(); i++) {
 						a.push_back(to_godot_string(&str_array[i], machine));
 					}
-				} else if (method == 1) {
+				} else if (method == -2) {
 					// libc++ std::string implementation.
 					struct Buffer {
 						gaddr_t ptr;

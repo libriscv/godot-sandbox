@@ -7,7 +7,7 @@
 set(CMAKE_TRY_COMPILE_TARGET_TYPE "STATIC_LIBRARY")
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_EXTENSIONS ON)
-set(VERSION 9)
+set(VERSION 10)
 
 option(DOWNLOAD_RUNTIME_API "Download the run-time generated API" ON)
 option(SANDBOX_RISCV_EXT_C "Enable RISC-V C extension" ON)

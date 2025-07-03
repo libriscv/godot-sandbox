@@ -1,19 +1,19 @@
 set -e
-GODOT_VERSION=4.3
+GODOT_VERSION=4.4
 
 # Check if unit tests are run from Github Actions
 if [ -n "$CI" ]; then
-	GODOT=./Godot_v4.3-stable_linux.x86_64
+	GODOT=./Godot_v4.4-stable_linux.x86_64
 	# Use the --import flag to properly initialize the project
 	$GODOT --path "$PWD" --headless --import
 else
 	# Use a local Godot binary
 	if [ -z "$GODOT" ]; then
-		GODOT=~/Godot_v4.3-stable_linux.x86_64
+		GODOT=~/Godot_v4.4-stable_linux.x86_64
 	fi
 fi
 
-export CXX="riscv64-linux-gnu-g++-12"
+export CXX="riscv64-linux-gnu-g++-14"
 #export CXX="riscv64-unknown-elf-g++"
 
 # Build the unit test ELF file

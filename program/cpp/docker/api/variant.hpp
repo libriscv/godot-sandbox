@@ -159,6 +159,8 @@ struct Variant
 	static Variant new_array();
 	// Create a new Array from a vector of Variants
 	static Variant from_array(const std::vector<Variant> &array);
+	// Create a new Array from a span of Variants
+	static Variant from_array(std::span<const Variant> array);
 
 	// Empty Dictionary constructor
 	static Variant new_dictionary();

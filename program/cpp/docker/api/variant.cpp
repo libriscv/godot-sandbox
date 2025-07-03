@@ -22,7 +22,12 @@ Variant Variant::new_array() {
 
 Variant Variant::from_array(const std::vector<Variant> &values) {
 	Variant v;
-	sys_vcreate(&v, ARRAY, 0, &values);
+	sys_vcreate(&v, ARRAY, -1, &values);
+	return v;
+}
+Variant Variant::from_array(std::span<const Variant> array) {
+	Variant v;
+	sys_vcreate(&v, ARRAY, array.size(), array.data());
 	return v;
 }
 

@@ -210,6 +210,7 @@ func test_types():
 	assert_eq_deep(s.vmcall("test_pa_string", pa_string_pp), pa_string_pp)
 	# Packed arrays created in the guest
 	assert_eq(s.vmcall("test_create_pa_u8"), PackedByteArray([1, 2, 3, 4]))
+	assert_eq_deep(s.vmcall("test_create_pa_u8_ptr"), PackedByteArray([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))
 	assert_eq(s.vmcall("test_create_pa_f32"), PackedFloat32Array([1, 2, 3, 4]))
 	assert_eq(s.vmcall("test_create_pa_f64"), PackedFloat64Array([1, 2, 3, 4]))
 	assert_eq(s.vmcall("test_create_pa_i32"), PackedInt32Array([1, 2, 3, 4]))

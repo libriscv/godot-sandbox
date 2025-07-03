@@ -9,7 +9,7 @@ EXTERN_SYSCALL(void, sys_vfetch, unsigned, void *, int);
 template <>
 PackedArray<uint8_t>::PackedArray(const std::vector<uint8_t> &data) {
 	Variant v;
-	sys_vcreate(&v, Variant::PACKED_BYTE_ARRAY, 0, &data);
+	sys_vcreate(&v, Variant::PACKED_BYTE_ARRAY, -1, &data);
 	this->m_idx = v.get_internal_index();
 }
 template <>
@@ -21,56 +21,56 @@ PackedArray<uint8_t>::PackedArray(const uint8_t *data, size_t size) {
 template <>
 PackedArray<int32_t>::PackedArray(const std::vector<int32_t> &data) {
 	Variant v;
-	sys_vcreate(&v, Variant::PACKED_INT32_ARRAY, 0, &data);
+	sys_vcreate(&v, Variant::PACKED_INT32_ARRAY, -1, &data);
 	this->m_idx = v.get_internal_index();
 }
 template <>
 PackedArray<int64_t>::PackedArray(const std::vector<int64_t> &data) {
 	Variant v;
-	sys_vcreate(&v, Variant::PACKED_INT64_ARRAY, 0, &data);
+	sys_vcreate(&v, Variant::PACKED_INT64_ARRAY, -1, &data);
 	this->m_idx = v.get_internal_index();
 }
 template <>
 PackedArray<float>::PackedArray(const std::vector<float> &data) {
 	Variant v;
-	sys_vcreate(&v, Variant::PACKED_FLOAT32_ARRAY, 0, &data);
+	sys_vcreate(&v, Variant::PACKED_FLOAT32_ARRAY, -1, &data);
 	this->m_idx = v.get_internal_index();
 }
 template <>
 PackedArray<double>::PackedArray(const std::vector<double> &data) {
 	Variant v;
-	sys_vcreate(&v, Variant::PACKED_FLOAT64_ARRAY, 0, &data);
+	sys_vcreate(&v, Variant::PACKED_FLOAT64_ARRAY, -1, &data);
 	this->m_idx = v.get_internal_index();
 }
 template <>
 PackedArray<Vector2>::PackedArray(const std::vector<Vector2> &data) {
 	Variant v;
-	sys_vcreate(&v, Variant::PACKED_VECTOR2_ARRAY, 0, &data);
+	sys_vcreate(&v, Variant::PACKED_VECTOR2_ARRAY, -1, &data);
 	this->m_idx = v.get_internal_index();
 }
 template <>
 PackedArray<Vector3>::PackedArray(const std::vector<Vector3> &data) {
 	Variant v;
-	sys_vcreate(&v, Variant::PACKED_VECTOR3_ARRAY, 0, &data);
+	sys_vcreate(&v, Variant::PACKED_VECTOR3_ARRAY, -1, &data);
 	this->m_idx = v.get_internal_index();
 }
 template <>
 PackedArray<Vector4>::PackedArray(const std::vector<Vector4> &data) {
 	Variant v;
-	sys_vcreate(&v, Variant::PACKED_VECTOR4_ARRAY, 0, &data);
+	sys_vcreate(&v, Variant::PACKED_VECTOR4_ARRAY, -1, &data);
 	this->m_idx = v.get_internal_index();
 }
 template <>
 PackedArray<Color>::PackedArray(const std::vector<Color> &data) {
 	Variant v;
-	sys_vcreate(&v, Variant::PACKED_COLOR_ARRAY, 0, &data);
+	sys_vcreate(&v, Variant::PACKED_COLOR_ARRAY, -1, &data);
 	this->m_idx = v.get_internal_index();
 }
 template <>
 PackedArray<std::string>::PackedArray(const std::vector<std::string> &data) {
 	Variant v;
 	if constexpr (sizeof(std::string) == 32) {
-		sys_vcreate(&v, Variant::PACKED_STRING_ARRAY, 0, &data);
+		sys_vcreate(&v, Variant::PACKED_STRING_ARRAY, -1, &data);
 	} else {
 		// Work-around for libc++'s std::string implementation.
 		struct Buffer {
@@ -82,7 +82,7 @@ PackedArray<std::string>::PackedArray(const std::vector<std::string> &data) {
 		for (const auto &str : data) {
 			buffers.push_back({ str.data(), str.size() });
 		}
-		sys_vcreate(&v, Variant::PACKED_STRING_ARRAY, 1, &buffers);
+		sys_vcreate(&v, Variant::PACKED_STRING_ARRAY, -2, &buffers);
 	}
 	this->m_idx = v.get_internal_index();
 }
