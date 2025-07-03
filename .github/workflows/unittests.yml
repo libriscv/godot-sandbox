@@ -23,7 +23,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y gcc-12-riscv64-linux-gnu g++-12-riscv64-linux-gnu cmake
+          sudo apt install -y gcc-14-riscv64-linux-gnu g++-14-riscv64-linux-gnu cmake
 
       - name: Configure
         run: cmake -B ${{github.workspace}}/.build -DCMAKE_BUILD_TYPE=Debug

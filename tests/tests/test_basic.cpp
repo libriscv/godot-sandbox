@@ -317,7 +317,7 @@ extern "C" Variant test_create_pa_u8() {
 	PackedByteArray arr({ 1, 2, 3, 4 });
 	return arr;
 }
-static uint8_t pa_u8_data[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+static const uint8_t pa_u8_data[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
 extern "C" Variant test_create_pa_u8_ptr() {
 	return PackedByteArray(pa_u8_data, sizeof(pa_u8_data) / sizeof(uint8_t));
 }

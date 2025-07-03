@@ -201,18 +201,18 @@ APICALL(api_vcreate) {
 		case Variant::NODE_PATH: { // From std::string
 			String godot_str;
 			if (method == 0) {
-				CppString *str = machine.memory.memarray<CppString>(gdata, 1);
+				const CppString *str = machine.memory.memarray<const CppString>(gdata, 1);
 				godot_str = to_godot_string(str, machine);
 			} else if (method == 1) { // const char*, size_t
-				struct Buffer {
+				const struct Buffer {
 					gaddr_t data;
 					gaddr_t size;
-				} *buffer = machine.memory.memarray<Buffer>(gdata, 1);
+				} *buffer = machine.memory.memarray<const Buffer>(gdata, 1);
 				// View the string from guest memory.
 				std::string_view view = machine.memory.memview(buffer->data, buffer->size);
 				godot_str = String::utf8(view.data(), view.size());
 			} else if (method == 2) { // From std::u32string
-				GuestStdU32String *str = machine.memory.memarray<GuestStdU32String>(gdata, 1);
+				const GuestStdU32String *str = machine.memory.memarray<const GuestStdU32String>(gdata, 1);
 				godot_str = str->to_godot_string(machine);
 			} else {
 				ERR_PRINT("vcreate: Unsupported method for Variant::STRING");
@@ -229,7 +229,7 @@ APICALL(api_vcreate) {
 			if (gdata != 0x0) {
 				if (method == -1) {
 					// Copy std::vector<Variant> from guest memory.
-					CppVector<GuestVariant> *vec = machine.memory.memarray<CppVector<GuestVariant>>(gdata, 1);
+					const CppVector<GuestVariant> *vec = machine.memory.memarray<const CppVector<GuestVariant>>(gdata, 1);
 					for (size_t i = 0; i < vec->size(); i++) {
 						const GuestVariant &v = vec->at(machine, i);
 						a.push_back(std::move(v.toVariant(emu)));
@@ -238,7 +238,7 @@ APICALL(api_vcreate) {
 					// Get elements from method argument.
 					const unsigned size = method;
 					// Copy array of Variants from guest memory.
-					GuestVariant *gvec = machine.memory.memarray<GuestVariant>(gdata, size);
+					const GuestVariant *gvec = machine.memory.memarray<const GuestVariant>(gdata, size);
 					for (int i = 0; i < size; i++) {
 						a.push_back(gvec[i].toVariant(emu));
 					}
@@ -262,14 +262,14 @@ APICALL(api_vcreate) {
 			if (gdata != 0x0) {
 				if (method < 0) {
 					// Copy std::vector<uint8_t> from guest memory.
-					CppVector<uint8_t> *gvec = machine.memory.memarray<CppVector<uint8_t>>(gdata, 1);
+					const CppVector<uint8_t> *gvec = machine.memory.memarray<const CppVector<uint8_t>>(gdata, 1);
 					a.resize(gvec->size());
 					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 				} else {
 					// Method is the buffer length.
 					a.resize(method);
 					// Copy the buffer from guest memory.
-					uint8_t *ptr = machine.memory.memarray<uint8_t>(gdata, method);
+					const uint8_t *ptr = machine.memory.memarray<const uint8_t>(gdata, method);
 					std::memcpy(a.ptrw(), ptr, method);
 				}
 			}
@@ -281,7 +281,7 @@ APICALL(api_vcreate) {
 			PackedFloat32Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<float> from guest memory.
-				CppVector<float> *gvec = machine.memory.memarray<CppVector<float>>(gdata, 1);
+				const CppVector<float> *gvec = machine.memory.memarray<const CppVector<float>>(gdata, 1);
 				a.resize(gvec->size());
 				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
@@ -293,7 +293,7 @@ APICALL(api_vcreate) {
 			PackedFloat64Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<double> from guest memory.
-				CppVector<double> *gvec = machine.memory.memarray<CppVector<double>>(gdata, 1);
+				const CppVector<double> *gvec = machine.memory.memarray<const CppVector<double>>(gdata, 1);
 				a.resize(gvec->size());
 				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
@@ -305,7 +305,7 @@ APICALL(api_vcreate) {
 			PackedInt32Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<int32_t> from guest memory.
-				CppVector<int32_t> *gvec = machine.memory.memarray<CppVector<int32_t>>(gdata, 1);
+				const CppVector<int32_t> *gvec = machine.memory.memarray<const CppVector<int32_t>>(gdata, 1);
 				a.resize(gvec->size());
 				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
@@ -317,7 +317,7 @@ APICALL(api_vcreate) {
 			PackedInt64Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<int64_t> from guest memory.
-				CppVector<int64_t> *gvec = machine.memory.memarray<CppVector<int64_t>>(gdata, 1);
+				const CppVector<int64_t> *gvec = machine.memory.memarray<const CppVector<int64_t>>(gdata, 1);
 				a.resize(gvec->size());
 				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
@@ -329,7 +329,7 @@ APICALL(api_vcreate) {
 			PackedVector2Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<Vector2> from guest memory.
-				CppVector<Vector2> *gvec = machine.memory.memarray<CppVector<Vector2>>(gdata, 1);
+				const CppVector<Vector2> *gvec = machine.memory.memarray<const CppVector<Vector2>>(gdata, 1);
 				a.resize(gvec->size());
 				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
@@ -341,7 +341,7 @@ APICALL(api_vcreate) {
 			PackedVector3Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<Vector3> from guest memory.
-				CppVector<Vector3> *gvec = machine.memory.memarray<CppVector<Vector3>>(gdata, 1);
+				const CppVector<Vector3> *gvec = machine.memory.memarray<const CppVector<Vector3>>(gdata, 1);
 				a.resize(gvec->size());
 				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
@@ -353,7 +353,7 @@ APICALL(api_vcreate) {
 			PackedVector4Array a;
 			if (gdata != 0x0) {
 				// Copy std::vector<Vector4> from guest memory.
-				CppVector<Vector4> *gvec = machine.memory.memarray<CppVector<Vector4>>(gdata, 1);
+				const CppVector<Vector4> *gvec = machine.memory.memarray<const CppVector<Vector4>>(gdata, 1);
 				a.resize(gvec->size());
 				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
@@ -365,7 +365,7 @@ APICALL(api_vcreate) {
 			PackedColorArray a;
 			if (gdata != 0x0) {
 				// Copy std::vector<Color> from guest memory.
-				CppVector<Color> *gvec = machine.memory.memarray<CppVector<Color>>(gdata, 1);
+				const CppVector<Color> *gvec = machine.memory.memarray<const CppVector<Color>>(gdata, 1);
 				a.resize(gvec->size());
 				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
 			}
@@ -378,8 +378,8 @@ APICALL(api_vcreate) {
 			if (gdata != 0x0) {
 				// Copy std::vector<String> from guest memory.
 				if (method == -1) {
-					CppVector<CppString> *gvec = machine.memory.memarray<CppVector<CppString>>(gdata, 1);
-					CppString *str_array = gvec->as_array(machine);
+					const CppVector<CppString> *gvec = machine.memory.memarray<const CppVector<CppString>>(gdata, 1);
+					const CppString *str_array = gvec->as_array(machine);
 					for (size_t i = 0; i < gvec->size(); i++) {
 						a.push_back(to_godot_string(&str_array[i], machine));
 					}
@@ -389,7 +389,7 @@ APICALL(api_vcreate) {
 						gaddr_t ptr;
 						gaddr_t size;
 					};
-					CppVector<Buffer> *gvec = machine.memory.memarray<CppVector<Buffer>>(gdata, 1);
+					const CppVector<Buffer> *gvec = machine.memory.memarray<const CppVector<Buffer>>(gdata, 1);
 					const Buffer *buffers = gvec->as_array(machine);
 					for (size_t i = 0; i < gvec->size(); i++) {
 						const Buffer &buf = buffers[i];
