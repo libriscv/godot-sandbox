@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="Sandbox" inherits="Node" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/godotengine/godot/master/doc/class.xsd">
 	<brief_description>
+		Sandbox is designed to run programs in a controlled environment, providing a safe way to execute code with restricted access to the Godot engine's API and resources.
 	</brief_description>
 	<description>
+		The Sandbox class is designed to run ELFScript resources or byte arrays from unknown sources, encapsulating them in a controlled environment. It provides a way to execute code with restricted access to the Godot engine's API and resources.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -12,7 +14,7 @@
 			<param index="0" name="buffer" type="PackedByteArray" />
 			<description>
 				Creates a new Sandbox instance from a PackedByteArray buffer containing the binary data of an ELF program.
-				This is useful for loading ELF programs dynamically at runtime.
+				This is useful for loading ELF programs dynamically at runtime. Eg. from a downloaded file.
 			</description>
 		</method>
 		<method name="FromProgram" qualifiers="static">
@@ -20,14 +22,19 @@
 			<param index="0" name="program" type="ELFScript" />
 			<description>
 				Creates a new Sandbox instance from an ELF resource.
+				[codeblocks]
+				[gdscript]
+				var sandbox = Sandbox.FromProgram(Sandbox_TestTest)
+				[/gdscript]
+				[/codeblocks]
 			</description>
 		</method>
 		<method name="add_allowed_object">
 			<return type="void" />
 			<param index="0" name="instance" type="Object" />
 			<description>
-				Adds an Object to the list of allowed objects in the Sandbox.
-				Allowed objects can be accessed and manipulated by the sandboxed program.
+				Adds an Object instance to the list of allowed objects in the Sandbox.
+				Allowed objects can be referred to, accessed and potentially manipulated by the sandboxed program.
 			</description>
 		</method>
 		<method name="address_of" qualifiers="const">
@@ -43,8 +50,7 @@
 			<param index="0" name="test" type="String" />
 			<param index="1" name="iterations" type="int" />
 			<description>
-				Performs a stress test on the sandboxed program by executing a specified test function multiple times.
-				This is useful for testing the stability and performance of the sandboxed environment.
+				Performs a stress test on the sandboxed program by executing a specified test function multiple times. For internal testing only.
 			</description>
 		</method>
 		<method name="clear_allowed_objects">
@@ -57,15 +63,14 @@
 		<method name="clear_hotspots" qualifiers="static">
 			<return type="void" />
 			<description>
-				Clears the list of hotspots used for profiling.
-				This can be used to reset the profiling data before starting a new profiling session.
+				Clears the list of hotspots measured by profiling.
 			</description>
 		</method>
 		<method name="download_program" qualifiers="static">
 			<return type="PackedByteArray" />
 			<param index="0" name="program_name" type="String" default="&quot;hello_world&quot;" />
 			<description>
-				Downloads a program from a GitHub release page and returns its binary content as a PackedByteArray.
+				Downloads a program from a GitHub release page and returns its binary content as a PackedByteArray. This is a blocking operation that will wait until the download is complete.
 			</description>
 		</method>
 		<method name="emit_binary_translation" qualifiers="const">
@@ -76,6 +81,8 @@
 				Generates a binary translation of the sandboxed program as textual C code.
 				This C source file can then be compiled into a shared library for execution. Loading the
 				resulting shared library will allow the sandboxed program to run closer to native performance.
+				If `ignore_instruction_limit` is true, the instruction limit will not be enforced, improving performance. Having an execution limit is only really recommended while building programs, as the worst case scenario is that the program or game appears to hang, which is not a security issue in most cases.
+				If `automatic_nbit_address_space` is true, the translation will automatically use an n-bit (masked) address space, which can greatly improve performance for certain programs. It is however, somewhat experimental and may not work with all programs.
 			</description>
 		</method>
 		<method name="generate_api" qualifiers="static">
@@ -281,8 +288,10 @@
 			<return type="void" />
 			<param index="0" name="instance" type="Callable" />
 			<description>
-				Sets a callback that determines whether a class is allowed in the Sandbox.
-				This can be used to restrict access to certain classes for security or performance reasons.
+				Sets a callback that determines whether a class may be instantiated in the Sandbox.
+				This can be used to restrict access to certain classes for security reasons.
+
+				Please note that the sandboxed program is always allowed to instantiate Variant types.
 			</description>
 		</method>
 		<method name="set_method_allowed_callback">
@@ -322,7 +331,7 @@
 			<param index="0" name="instance" type="Callable" />
 			<description>
 				Sets a callback that determines whether a resource is allowed in the Sandbox.
-				This can be used to restrict access to certain resources for security or performance reasons.
+				This can be used to restrict access to certain resources for security reasons.
 			</description>
 		</method>
 		<method name="try_compile_binary_translation">
@@ -333,17 +342,31 @@
 			<param index="3" name="ignore_instruction_limit" type="bool" default="false" />
 			<param index="4" name="automatic_nbit_as" type="bool" default="false" />
 			<description>
-				Attempts to generate and then compile a binary translation of the sandboxed program into a shared library.
-				This allows the sandboxed program to run closer to native performance by executing pre-compiled code.
-				If the compilation is successful, the shared library will be loaded automatically on platforms
-				that support loading shared libraries.
+				Attempts to generate and then compile a binary translation of the sandboxed program into a shared library. This allows the sandboxed program to run closer to native performance by executing pre-compiled code. If the compilation is successful, the shared library will be loaded automatically on platforms that support loading shared libraries.
 			</description>
 		</method>
 		<method name="vmcall" qualifiers="const vararg">
 			<return type="Variant" />
 			<description>
-				Calls a function in the sandboxed program with the provided arguments.
-				This is used to execute functions defined in the ELF program from the Godot engine.
+				Calls a function in the sandboxed program with the provided arguments. This is used to make function calls defined in the ELF program from the Godot engine. Functions in the Sandbox always return a Variant.
+				The first argument is the string name of the function to call, and subsequent arguments are passed as parameters to that function. If the function does not exist, an error will be thrown.
+				Calling a function with the wrong arguments can lead to undefined behavior, so it is important to ensure that the function signature matches the arguments being passed. If this is undesirable please have a look at [code]vmcallv()[/code] which uses Variant for all arguments and is more resistant to mistakes, but also less performant.
+				[codeblocks]
+				[gdscript]
+				var sandbox = Sandbox.new()
+				sandbox.set_program(Sandbox_TestTest)
+				sandbox.vmcall("my_function", 123, "hello", [4.0, 5.0, 6.0])
+				[/gdscript]
+				[/codeblocks]
+				In order for the above function call to work, the sandboxed program must have a function that expects those exact arguments. C++ example:
+				[codeblocks]
+				[gdscript]
+				Variant my_function(int a, String b, Array c) {
+					print("my_function called with args: ", a, ", ", b, ", ", c)
+					return c[0] + c[1] + c[2];
+				}
+				[/gdscript]
+				[/codeblocks]
 			</description>
 		</method>
 		<method name="vmcallable">
@@ -351,11 +374,7 @@
 			<param index="0" name="function" type="String" />
 			<param index="1" name="args" type="Array" default="[]" />
 			<description>
-				Creates a callable object that can be used to later call a function in the sandboxed program.
-				The args parameter allows you to specify the pre-defined arguments that will be passed to the
-				function when it is called. Regular callable arguments will then be appended when the callable
-				is invoked. Eg. [1, 2, 3] will call the function with the arguments 1, 2, 3, and after that any
-				arguments passed to the callable will be appended to the end of the argument list.
+				Creates a Callable that can be used to later make a function call into the sandbox. The args parameter allows you to specify the pre-defined arguments that will be passed to the function when it is called. Regular callable arguments will then be appended when the callable is invoked. Eg. [1, 2, 3] will call the function with the arguments 1, 2, 3, and after that any arguments passed to the callable will be appended to the end of the argument list.
 			</description>
 		</method>
 		<method name="vmcallable_address">
@@ -363,64 +382,88 @@
 			<param index="0" name="address" type="int" />
 			<param index="1" name="args" type="Array" default="[]" />
 			<description>
-				Creates a callable object that can be used to later call a function at a specific memory address
-				in the sandboxed program. The args parameter allows you to specify the pre-defined arguments that
-				will be passed to the function when it is called. Regular callable arguments will then be appended
-				when the callable is invoked. Eg. [1, 2, 3] will call the function with the arguments 1, 2, 3, and
-				after that any arguments passed to the callable will be appended to the end of the argument list.
+				Creates a callable object that can be used to later call a function at a specific memory address in the sandboxed program. Works the same way as [code]vmcallable()[/code], but instead of a function name, it takes any executable address.
 			</description>
 		</method>
 		<method name="vmcallv" qualifiers="const vararg">
 			<return type="Variant" />
 			<description>
-				Calls a function in the sandboxed program with the provided arguments, similar to vmcall,
-				but allows for a variable number of arguments. This is useful for calling functions that
-				take a dynamic number of parameters.
+				Calls a function in the sandboxed program with the provided arguments, similar to vmcall, but uses Variants for all arguments. This is more resistant to mistakes, as it does not require knowing argument types in advance, but is less performant than vmcall. The first argument is the string name of the function to call, and subsequent arguments are passed as Variants to that function. If the function does not exist, an error will be thrown.
+				Note that the function inside the sandboxed program must also take each argument as a Variant, otherwise it will not work correctly. For maximum flexibility, one could use vmcallv with an Array as the first argument, which lets you iterate the arguments inside the function.
 			</description>
 		</method>
 	</methods>
 	<members>
 		<member name="allocations_max" type="int" setter="set_allocations_max" getter="get_allocations_max" default="4000">
+			The maximum number of heap allocations allowed inside the sandbox.
 		</member>
 		<member name="execution_timeout" type="int" setter="set_instructions_max" getter="get_instructions_max" default="8000">
+			The maximum number of instructions that can be executed in a single function call.
+			If this limit is reached, the current function call will be terminated to prevent infinite loops or excessive resource consumption.
 		</member>
 		<member name="memory_max" type="int" setter="set_memory_max" getter="get_memory_max" default="16">
+			The maximum amount of memory (in megabytes) that the sandboxed program can use.
 		</member>
 		<member name="monitor_accumulated_startup_time" type="float" setter="" getter="get_accumulated_startup_time" default="0.0">
+			The total accumulated time spent on initializing all sandboxes.
 		</member>
 		<member name="monitor_calls_made" type="int" setter="" getter="get_calls_made" default="0">
+			The total number of function calls made to this sandbox.
 		</member>
 		<member name="monitor_exceptions" type="int" setter="" getter="get_exceptions" default="0">
+			The total number of exceptions thrown by the sandbox.
 		</member>
 		<member name="monitor_execution_timeouts" type="int" setter="" getter="get_timeouts" default="0">
+			The total number of execution timeouts that have occurred in the sandbox.
 		</member>
 		<member name="monitor_global_calls_made" type="int" setter="" getter="get_global_calls_made" default="0">
+			The total number of function calls made across all sandboxes.
 		</member>
 		<member name="monitor_global_exceptions" type="int" setter="" getter="get_global_exceptions" default="0">
+			The total number of exceptions thrown across all sandboxes.
 		</member>
 		<member name="monitor_global_execution_timeouts" type="int" setter="" getter="get_global_timeouts" default="0">
+			The total number of execution timeouts that have occurred across all sandboxes.
 		</member>
 		<member name="monitor_global_instance_count" type="int" setter="" getter="get_global_instance_count" default="1">
+			The total number of sandbox instances currently active.
 		</member>
 		<member name="monitor_heap_allocation_counter" type="int" setter="" getter="get_heap_allocation_counter" default="0">
+			The total number of heap allocations made in the sandbox.
 		</member>
 		<member name="monitor_heap_chunk_count" type="int" setter="" getter="get_heap_chunk_count" default="0">
+			The total number of heap chunks currently allocated by the sandbox.
 		</member>
 		<member name="monitor_heap_deallocation_counter" type="int" setter="" getter="get_heap_deallocation_counter" default="0">
+			The total number of heap deallocations made in the sandbox.
 		</member>
 		<member name="monitor_heap_usage" type="int" setter="" getter="get_heap_usage" default="0">
+			The current amount of memory (in bytes) used by the heap in the sandbox.
 		</member>
 		<member name="profiling" type="bool" setter="set_profiling" getter="get_profiling" default="false">
+			Enables or disables profiling for the sandboxed program. When enabled, the sandbox will collect profiling data about function calls and execution times.
 		</member>
 		<member name="program" type="ELFScript" setter="set_program" getter="get_program">
+			The ELFScript program that is currently loaded in the Sandbox. This is the program that will be executed when the sandbox is run and when functions are called.
+
+			[codeblocks]
+			[gdscript]
+			var sandbox = Sandbox.new()
+			sandbox.set_program(Sandbox_TestTest)
+			[/gdscript]
+			[/codeblocks]
 		</member>
 		<member name="references_max" type="int" setter="set_max_refs" getter="get_max_refs" default="100">
+			The maximum number of object references that can be held in the sandboxed program.
 		</member>
 		<member name="restrictions" type="bool" setter="set_restrictions" getter="get_restrictions" default="false">
+			Enables or disables restrictions on the sandboxed program. When enabled, the program will have limited access to the Godot engine's API and resources.
 		</member>
 		<member name="use_precise_simulation" type="bool" setter="set_use_precise_simulation" getter="get_use_precise_simulation" default="false">
+			Enables or disables precise simulation mode for the sandboxed program. When enabled, the program will use a more accurate simulation, producing better backtraces and profiling data, but at the cost of performance.
 		</member>
 		<member name="use_unboxed_arguments" type="bool" setter="set_use_unboxed_arguments" getter="get_use_unboxed_arguments" default="true">
+			Enables or disables the use of unboxed arguments for function calls. When enabled, function arguments will be passed as their real types instead of Variants, which improves performance.
 		</member>
 	</members>
 </class>
