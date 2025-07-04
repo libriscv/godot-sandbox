@@ -47,9 +47,9 @@ public:
 	/// @return The Sandbox instance, or nullptr if not found.
 	Sandbox *get_sandbox_for(Object *p_for_object) const;
 
-	/// @brief Retrieve all Sandbox instances using this ELF resource.
-	/// @return An array of Sandbox instances.
-	Array get_sandboxes() const;
+	/// @brief Retrieve all Objects that share a Sandbox instance that uses this ELF resource.
+	/// @return An array of Objects that share a Sandbox instance.
+	Array get_sandbox_objects() const;
 
 	/// @brief Retrieve the content of the ELF resource as a byte array.
 	/// @return An ELF program as a byte array.

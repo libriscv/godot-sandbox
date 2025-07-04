@@ -69,6 +69,27 @@ func test_instantiation():
 		assert_false(s3.has_function("test_ping_pong"), "Function does not exist after reset")
 	s3.free()
 
+func test_script_instantiation():
+	var n = Node.new()
+	n.set_script(Sandbox_TestsTests)
+
+	var e : ELFScript = n.get_script() as ELFScript
+	var s = e.get_sandbox_for(n)
+	assert_true(s.has_program_loaded(), "Program loaded for script")
+	assert_true(s.has_function("test_ping_pong"), "Sandbox has test_ping_pong function")
+
+	# Get all objects for the ELFScript
+	var objects : Array = e.get_sandbox_objects()
+	assert_eq(objects.size(), 1, "One object associated with the ELFScript")
+	assert_eq_deep(objects, [n])
+
+	# Verify that the sandbox can be used from the top-level object
+	# In this mode we can call functions directly on the object
+	assert_eq(n.test_int(1234), 1234, "Can call test_int function directly")
+	assert_eq(n.test_string("1234"), "1234", "Can call test_string function directly")
+
+	n.free()
+
 func test_environment():
 	var s = Sandbox.new()
 	s.set_program(Sandbox_TestsTests)

@@ -11,24 +11,31 @@
 			<return type="Sandbox" />
 			<param index="0" name="buffer" type="PackedByteArray" />
 			<description>
+				Creates a new Sandbox instance from a PackedByteArray buffer containing the binary data of an ELF program.
+				This is useful for loading ELF programs dynamically at runtime.
 			</description>
 		</method>
 		<method name="FromProgram" qualifiers="static">
 			<return type="Sandbox" />
 			<param index="0" name="program" type="ELFScript" />
 			<description>
+				Creates a new Sandbox instance from an ELF resource.
 			</description>
 		</method>
 		<method name="add_allowed_object">
 			<return type="void" />
 			<param index="0" name="instance" type="Object" />
 			<description>
+				Adds an Object to the list of allowed objects in the Sandbox.
+				Allowed objects can be accessed and manipulated by the sandboxed program.
 			</description>
 		</method>
 		<method name="address_of" qualifiers="const">
 			<return type="int" />
 			<param index="0" name="symbol" type="String" />
 			<description>
+				Returns the address of a symbol in the sandboxed program.
+				This can be used to get the memory address of functions or variables defined in the ELF program.
 			</description>
 		</method>
 		<method name="assault">
@@ -36,22 +43,29 @@
 			<param index="0" name="test" type="String" />
 			<param index="1" name="iterations" type="int" />
 			<description>
+				Performs a stress test on the sandboxed program by executing a specified test function multiple times.
+				This is useful for testing the stability and performance of the sandboxed environment.
 			</description>
 		</method>
 		<method name="clear_allowed_objects">
 			<return type="void" />
 			<description>
+				Clears the list of allowed objects in the Sandbox.
+				After calling this method, no objects will be accessible to the sandboxed program until new ones are added.
 			</description>
 		</method>
 		<method name="clear_hotspots" qualifiers="static">
 			<return type="void" />
 			<description>
+				Clears the list of hotspots used for profiling.
+				This can be used to reset the profiling data before starting a new profiling session.
 			</description>
 		</method>
 		<method name="download_program" qualifiers="static">
 			<return type="PackedByteArray" />
 			<param index="0" name="program_name" type="String" default="&quot;hello_world&quot;" />
 			<description>
+				Downloads a program from a GitHub release page and returns its binary content as a PackedByteArray.
 			</description>
 		</method>
 		<method name="emit_binary_translation" qualifiers="const">
@@ -59,6 +73,9 @@
 			<param index="0" name="ignore_instruction_limit" type="bool" default="false" />
 			<param index="1" name="automatic_nbit_address_space" type="bool" default="false" />
 			<description>
+				Generates a binary translation of the sandboxed program as textual C code.
+				This C source file can then be compiled into a shared library for execution. Loading the
+				resulting shared library will allow the sandboxed program to run closer to native performance.
 			</description>
 		</method>
 		<method name="generate_api" qualifiers="static">
@@ -67,27 +84,37 @@
 			<param index="1" name="header_extra" type="String" default="&quot;&quot;" />
 			<param index="2" name="use_argument_names" type="bool" default="false" />
 			<description>
+				Generates an API header file for the sandboxed program in the specified language.
+				This header file contains function declarations and type definitions for the sandboxed program's API.
+				It can be used to interact with the entire/full Godot API from the sandboxed program.
 			</description>
 		</method>
 		<method name="get">
 			<return type="Variant" />
 			<param index="0" name="name" type="StringName" />
 			<description>
+				Retrieves the value of a property by its name from the Sandbox.
 			</description>
 		</method>
 		<method name="get_current_instruction" qualifiers="const">
 			<return type="String" />
 			<description>
+				Returns the current instruction being executed in the sandboxed program.
+				This can be useful for debugging or profiling purposes.
 			</description>
 		</method>
 		<method name="get_floating_point_registers" qualifiers="const">
 			<return type="Array" />
 			<description>
+				Returns an Array of floating-point registers used by the sandboxed program.
+				This can be useful for inspecting the state of floating-point computations.
 			</description>
 		</method>
 		<method name="get_general_registers" qualifiers="const">
 			<return type="Array" />
 			<description>
+				Returns an Array of general-purpose registers used by the sandboxed program.
+				This can be useful for inspecting the state of the program's execution.
 			</description>
 		</method>
 		<method name="get_hotspots" qualifiers="static">
@@ -95,28 +122,38 @@
 			<param index="0" name="total" type="int" default="6" />
 			<param index="1" name="callable" type="Callable" default="Callable()" />
 			<description>
+				Returns an Array of hotspots used for profiling.
+				Hotspots are functions or code segments that are frequently executed in the sandboxed program.
 			</description>
 		</method>
 		<method name="get_property_list" qualifiers="const">
 			<return type="Array" />
 			<description>
+				Returns a list of all properties available in the Sandbox, including properties that are
+				defined in the sandboxed program (by the program).
 			</description>
 		</method>
 		<method name="has_function" qualifiers="const">
 			<return type="bool" />
 			<param index="0" name="function" type="StringName" />
 			<description>
+				Checks if the sandboxed program has a function with the specified name.
+				This can be used to verify the existence of functions before attempting to call them.
 			</description>
 		</method>
 		<method name="has_program_loaded" qualifiers="const">
 			<return type="bool" />
 			<description>
+				Checks if the sandboxed program has been successfully loaded.
+				This is useful to ensure that the program is ready for execution before making any calls.
 			</description>
 		</method>
 		<method name="is_allowed_class" qualifiers="const">
 			<return type="bool" />
 			<param index="0" name="name" type="String" />
 			<description>
+				Checks if a class with the specified name is allowed in the Sandbox.
+				This is used to restrict access to certain classes for security or performance reasons.
 			</description>
 		</method>
 		<method name="is_allowed_method" qualifiers="const">
@@ -124,12 +161,16 @@
 			<param index="0" name="instance" type="Object" />
 			<param index="1" name="method" type="Variant" />
 			<description>
+				Checks if a method is allowed to be called on the specified Object instance.
+				This is used to enforce restrictions on method calls in the sandboxed program.
 			</description>
 		</method>
 		<method name="is_allowed_object" qualifiers="const">
 			<return type="bool" />
 			<param index="0" name="instance" type="Object" />
 			<description>
+				Checks if an Object instance is allowed to be accessed in the Sandbox.
+				This is used to restrict access to certain objects for security or performance reasons.
 			</description>
 		</method>
 		<method name="is_allowed_property" qualifiers="const">
@@ -138,64 +179,85 @@
 			<param index="1" name="property" type="Variant" />
 			<param index="2" name="is_set" type="bool" default="true" />
 			<description>
+				Checks if a property is allowed to be accessed or set on the specified Object instance.
+				This is used to enforce restrictions on property access in the sandboxed program.
 			</description>
 		</method>
 		<method name="is_allowed_resource" qualifiers="const">
 			<return type="bool" />
 			<param index="0" name="res" type="String" />
 			<description>
+				Checks if a resource with the specified name is allowed in the Sandbox.
+				This is used to restrict access to certain resources for security or performance reasons.
 			</description>
 		</method>
 		<method name="is_binary_translated" qualifiers="const">
 			<return type="bool" />
 			<description>
+				Checks if the sandboxed program has been binary translated.
+				This means that the program has been compiled into a shared library for execution, allowing it to run closer to native performance.
 			</description>
 		</method>
 		<method name="load_binary_translation" qualifiers="static">
 			<return type="bool" />
 			<param index="0" name="shared_library_path" type="String" />
 			<description>
+				Loads a binary translation of the sandboxed program from a shared library.
+				This allows the sandboxed program to run closer to native performance by executing pre-compiled code.
 			</description>
 		</method>
 		<method name="load_buffer">
 			<return type="void" />
 			<param index="0" name="buffer" type="PackedByteArray" />
 			<description>
+				Loads a sandboxed program from a PackedByteArray buffer containing the binary data of an ELF program.
 			</description>
 		</method>
 		<method name="lookup_address" qualifiers="const">
 			<return type="String" />
 			<param index="0" name="address" type="int" />
 			<description>
+				Looks up the name of a symbol at a specific memory address in the sandboxed program.
+				This can be useful for debugging or profiling purposes to identify which function or variable is located at a given address.
 			</description>
 		</method>
 		<method name="make_resumable">
 			<return type="void" />
 			<description>
+				Makes the sandboxed program resumable, allowing it to be paused and resumed later.
+				Does not work properly right now. Do not use.
 			</description>
 		</method>
 		<method name="remove_allowed_object">
 			<return type="void" />
 			<param index="0" name="instance" type="Object" />
 			<description>
+				Removes an Object from the list of allowed objects in the Sandbox.
+				After calling this method, the specified object will no longer be accessible to the sandboxed program.
 			</description>
 		</method>
 		<method name="reset">
 			<return type="void" />
 			<param index="0" name="unload" type="bool" default="false" />
 			<description>
+				Resets the Sandbox to its initial state.
+				If `unload` is true, it will also unload the currently loaded program, clearing all state.
 			</description>
 		</method>
 		<method name="restrictive_callback_function" qualifiers="static">
 			<return type="bool" />
 			<param index="0" name="arg" type="Variant" />
 			<description>
+				A restrictive callback function that can be used to enforce restrictions on method calls in the Sandbox.
+				This function can be set as a callback to restrict access to certain methods or properties.
 			</description>
 		</method>
 		<method name="resume">
 			<return type="bool" />
 			<param index="0" name="max_instructions" type="int" />
 			<description>
+				Resumes the execution of the sandboxed program after it has been paused.
+				Does not work properly right now. Do not use.
 			</description>
 		</method>
 		<method name="set">
@@ -203,48 +265,64 @@
 			<param index="0" name="name" type="StringName" />
 			<param index="1" name="value" type="Variant" />
 			<description>
+				Sets the value of a property by its name in the Sandbox.
+				This can be used to modify properties of the sandboxed program or its environment.
 			</description>
 		</method>
 		<method name="set_argument_registers">
 			<return type="void" />
 			<param index="0" name="args" type="Array" />
 			<description>
+				Sets the argument registers for the sandboxed program.
+				This allows you to specify the initial values of registers that will be used when the program starts executing.
 			</description>
 		</method>
 		<method name="set_class_allowed_callback">
 			<return type="void" />
 			<param index="0" name="instance" type="Callable" />
 			<description>
+				Sets a callback that determines whether a class is allowed in the Sandbox.
+				This can be used to restrict access to certain classes for security or performance reasons.
 			</description>
 		</method>
 		<method name="set_method_allowed_callback">
 			<return type="void" />
 			<param index="0" name="instance" type="Callable" />
 			<description>
+				Sets a callback that determines whether a method is allowed to be called on an Object instance in the Sandbox.
+				This can be used to enforce restrictions on method calls in the sandboxed program.
 			</description>
 		</method>
 		<method name="set_object_allowed_callback">
 			<return type="void" />
 			<param index="0" name="instance" type="Callable" />
 			<description>
+				Sets a callback that determines whether an Object instance is allowed to be accessed in the Sandbox.
+				This can be used to restrict access to certain objects for security or performance reasons.
 			</description>
 		</method>
 		<method name="set_property_allowed_callback">
 			<return type="void" />
 			<param index="0" name="instance" type="Callable" />
 			<description>
+				Sets a callback that determines whether a property is allowed to be accessed or set on an Object instance in the Sandbox.
+				This can be used to enforce restrictions on property access in the sandboxed program.
 			</description>
 		</method>
 		<method name="set_redirect_stdout">
 			<return type="void" />
 			<param index="0" name="callback" type="Callable" />
 			<description>
+				Sets a callback to redirect the standard output (stdout) of the sandboxed program.
+				This allows you to capture and process output generated by the program, such as print statements.
 			</description>
 		</method>
 		<method name="set_resource_allowed_callback">
 			<return type="void" />
 			<param index="0" name="instance" type="Callable" />
 			<description>
+				Sets a callback that determines whether a resource is allowed in the Sandbox.
+				This can be used to restrict access to certain resources for security or performance reasons.
 			</description>
 		</method>
 		<method name="try_compile_binary_translation">
@@ -255,11 +333,17 @@
 			<param index="3" name="ignore_instruction_limit" type="bool" default="false" />
 			<param index="4" name="automatic_nbit_as" type="bool" default="false" />
 			<description>
+				Attempts to generate and then compile a binary translation of the sandboxed program into a shared library.
+				This allows the sandboxed program to run closer to native performance by executing pre-compiled code.
+				If the compilation is successful, the shared library will be loaded automatically on platforms
+				that support loading shared libraries.
 			</description>
 		</method>
 		<method name="vmcall" qualifiers="const vararg">
 			<return type="Variant" />
 			<description>
+				Calls a function in the sandboxed program with the provided arguments.
+				This is used to execute functions defined in the ELF program from the Godot engine.
 			</description>
 		</method>
 		<method name="vmcallable">
@@ -267,6 +351,11 @@
 			<param index="0" name="function" type="String" />
 			<param index="1" name="args" type="Array" default="[]" />
 			<description>
+				Creates a callable object that can be used to later call a function in the sandboxed program.
+				The args parameter allows you to specify the pre-defined arguments that will be passed to the
+				function when it is called. Regular callable arguments will then be appended when the callable
+				is invoked. Eg. [1, 2, 3] will call the function with the arguments 1, 2, 3, and after that any
+				arguments passed to the callable will be appended to the end of the argument list.
 			</description>
 		</method>
 		<method name="vmcallable_address">
@@ -274,11 +363,19 @@
 			<param index="0" name="address" type="int" />
 			<param index="1" name="args" type="Array" default="[]" />
 			<description>
+				Creates a callable object that can be used to later call a function at a specific memory address
+				in the sandboxed program. The args parameter allows you to specify the pre-defined arguments that
+				will be passed to the function when it is called. Regular callable arguments will then be appended
+				when the callable is invoked. Eg. [1, 2, 3] will call the function with the arguments 1, 2, 3, and
+				after that any arguments passed to the callable will be appended to the end of the argument list.
 			</description>
 		</method>
 		<method name="vmcallv" qualifiers="const vararg">
 			<return type="Variant" />
 			<description>
+				Calls a function in the sandboxed program with the provided arguments, similar to vmcall,
+				but allows for a variable number of arguments. This is useful for calling functions that
+				take a dynamic number of parameters.
 			</description>
 		</method>
 	</methods>

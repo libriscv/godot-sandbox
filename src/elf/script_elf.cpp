@@ -13,7 +13,7 @@ static constexpr bool VERBOSE_ELFSCRIPT = false;
 
 void ELFScript::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sandbox_for", "for_object"), &ELFScript::get_sandbox_for);
-	ClassDB::bind_method(D_METHOD("get_sandboxes"), &ELFScript::get_sandboxes);
+	ClassDB::bind_method(D_METHOD("get_sandbox_objects"), &ELFScript::get_sandbox_objects);
 	ClassDB::bind_method(D_METHOD("get_content"), &ELFScript::get_content);
 }
 
@@ -28,7 +28,7 @@ Sandbox *ELFScript::get_sandbox_for(Object *p_for_object) const {
 	return nullptr;
 }
 
-Array ELFScript::get_sandboxes() const {
+Array ELFScript::get_sandbox_objects() const {
 	Array result;
 	for (ELFScriptInstance *instance : this->instances) {
 		result.push_back(instance->get_owner());
