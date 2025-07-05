@@ -97,7 +97,7 @@ PUBLIC Variant _on_body_entered(CharacterBody2D body) {
 
 Script of a simple Coin pickup, with a counter that updates a label in the outer tree. This script can be attached to the Coin in the editor just like GDScript.
 
-You may also have a look at our [demo repository](https://github.com/libriscv/godot-sandbox-demo) for the Godot Sandbox. It's a tiny platformer that uses C++ and Rust.
+You may also have a look at our [demo repository](https://github.com/libriscv/godot-sandbox-demo) for the Godot Sandbox. It's a tiny platformer that uses C++ and Rust. There is also [a 3D plane demo](https://github.com/libriscv/godot_bird_plane) that enables controlling the plane from C++ scripts.
 
 ## Contributing
 
