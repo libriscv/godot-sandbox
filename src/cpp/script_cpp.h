@@ -3,8 +3,11 @@
 #include "../docker.h"
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/script_language.hpp>
+#include <godot_cpp/templates/hash_set.hpp>
 
 using namespace godot;
+class CPPScriptInstance;
+class ELFScriptInstance;
 
 class CPPScript : public ScriptExtension {
 	GDCLASS(CPPScript, ScriptExtension);
@@ -84,6 +87,8 @@ public:
 		return Docker::ContainerExecute(docker_container_name, p_arguments, output, verbose);
 	}
 
+	bool connect_instance_to(Object *p_to_object, ELFScriptInstance *instance) const;
+
 	CPPScript();
 	~CPPScript() {}
 
@@ -92,4 +97,7 @@ private:
 	static inline int docker_container_version = 0;
 	static inline const char *docker_container_name = "godot-cpp-compiler";
 	static inline const char *docker_image_name = "ghcr.io/libriscv/cpp_compiler";
+
+	mutable HashSet<CPPScriptInstance *> instances;
+	friend class CPPScriptInstance;
 };

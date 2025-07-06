@@ -8,6 +8,7 @@ set(SOURCES
 	src/cpp/resource_loader_cpp.cpp
 	src/cpp/resource_saver_cpp.cpp
 	src/cpp/script_cpp.cpp
+	src/cpp/script_cpp_instance.cpp
 	src/cpp/script_language_cpp.cpp
 	src/elf/resource_loader_elf.cpp
 	src/elf/resource_saver_elf.cpp

@@ -95,6 +95,7 @@ public:
 	virtual Variant _get_rpc_config() const override;
 
 	void set_file(const String &path);
+
 	ELFScript() {}
 	~ELFScript() {}
 };

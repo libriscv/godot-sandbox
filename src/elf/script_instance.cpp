@@ -2,7 +2,7 @@
 
 #include "../cpp/script_cpp.h"
 #include "../rust/script_rust.h"
-#include "../sandbox.h"
+#include "../scoped_tree_base.h"
 #include "../sandbox_project_settings.h"
 #include "../zig/script_zig.h"
 #include "script_elf.h"
@@ -10,21 +10,6 @@
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/templates/local_vector.hpp>
 static constexpr bool VERBOSE_LOGGING = false;
-
-struct ScopedTreeBase {
-	Sandbox *sandbox = nullptr;
-	Node *old_tree_base = nullptr;
-
-	ScopedTreeBase(Sandbox *sandbox, Node *old_tree_base) :
-			sandbox(sandbox),
-			old_tree_base(sandbox->get_tree_base()) {
-		sandbox->set_tree_base(old_tree_base);
-	}
-
-	~ScopedTreeBase() {
-		sandbox->set_tree_base(old_tree_base);
-	}
-};
 
 #ifdef PLATFORM_HAS_EDITOR
 static void handle_language_warnings(Array &warnings, const Ref<ELFScript> &script) {
@@ -165,6 +150,53 @@ retry_callp:
 		return warnings;
 	}
 #endif
+	if (p_method == StringName("_connect_to")) {
+		// This method is used to connect the script instance to another object.
+		// It is used by CPPScript and RustScript to connect the script instance to the target object.
+		if (p_argument_count < 1) {
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("ELFScriptInstance::callp: _connect_to called with no arguments");
+			}
+			r_error.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+			return Variant();
+		}
+		if (p_args[0]->get_type() != Variant::OBJECT) {
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("ELFScriptInstance::callp: _connect_to called with non-object argument");
+			}
+			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
+			return Variant();
+		}
+		godot::Object *to_object = godot::Object::cast_to<godot::Object>(*p_args[0]);
+		if (to_object == nullptr) {
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("ELFScriptInstance::callp: _connect_to called with null object");
+			}
+			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
+			return Variant();
+		}
+		if (auto *cpp_script = godot::Object::cast_to<CPPScript>(to_object->get_script())) {
+			// If the script is a CPPScript, we can connect to it.
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("ELFScriptInstance::callp: _connect_to called on CPPScript");
+			}
+			if (cpp_script->connect_instance_to(to_object, this)) {
+				r_error.error = GDEXTENSION_CALL_OK;
+				return true;
+			} else {
+				if constexpr (VERBOSE_LOGGING) {
+					ERR_PRINT("ELFScriptInstance::callp: _connect_to failed to connect to CPPScript");
+				}
+				r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
+				return Variant();
+			}
+		} else {
+			// If the script is not a CPPScript, we cannot connect to it (yet).
+			ERR_PRINT("ELFScriptInstance::callp: _connect_to called on non-CPPScript");
+		}
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
+		return Variant();
+	}
 
 	// When the script instance must have a sandbox as owner,
 	// use _enter_tree to get the sandbox instance.
@@ -192,39 +224,6 @@ retry_callp:
 
 	r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 	return Variant();
-}
-
-GDExtensionMethodInfo create_method_info(const MethodInfo &method_info) {
-	 GDExtensionMethodInfo result{
-		.name = stringname_alloc(method_info.name),
-		.return_value = GDExtensionPropertyInfo{
-				.type = (GDExtensionVariantType)method_info.return_val.type,
-				.name = stringname_alloc(method_info.return_val.name),
-				.class_name = stringname_alloc(method_info.return_val.class_name),
-				.hint = method_info.return_val.hint,
-				.hint_string = stringname_alloc(method_info.return_val.hint_string),
-				.usage = method_info.return_val.usage },
-		.flags = method_info.flags,
-		.id = method_info.id,
-		.argument_count = (uint32_t)method_info.arguments.size(),
-		.arguments = nullptr,
-		.default_argument_count = 0,
-		.default_arguments = nullptr,
-	};
-	if (!method_info.arguments.empty()) {
-		result.arguments = memnew_arr(GDExtensionPropertyInfo, method_info.arguments.size());
-		for (int i = 0; i < method_info.arguments.size(); i++) {
-			const PropertyInfo &arg = method_info.arguments[i];
-			result.arguments[i] = GDExtensionPropertyInfo{
-					.type = (GDExtensionVariantType)arg.type,
-					.name = stringname_alloc(arg.name),
-					.class_name = stringname_alloc(arg.class_name),
-					.hint = arg.hint,
-					.hint_string = stringname_alloc(arg.hint_string),
-					.usage = arg.usage };
-		}
-	}
-	return result;
 }
 
 void ELFScriptInstance::update_methods() const {
@@ -507,6 +506,7 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 			"_get_editor_name",
 			"_hide_script_from_inspector",
 			"_is_read_only",
+			"_connect_to",
 		};
 	}
 

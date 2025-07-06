@@ -44,6 +44,39 @@ static GDExtensionPropertyInfo create_property_type(const Dictionary &p_src) {
 	return p_dst;
 }
 
+static GDExtensionMethodInfo create_method_info(const MethodInfo &method_info) {
+	GDExtensionMethodInfo result{
+	   .name = stringname_alloc(method_info.name),
+	   .return_value = GDExtensionPropertyInfo{
+			   .type = (GDExtensionVariantType)method_info.return_val.type,
+			   .name = stringname_alloc(method_info.return_val.name),
+			   .class_name = stringname_alloc(method_info.return_val.class_name),
+			   .hint = method_info.return_val.hint,
+			   .hint_string = stringname_alloc(method_info.return_val.hint_string),
+			   .usage = method_info.return_val.usage },
+	   .flags = method_info.flags,
+	   .id = method_info.id,
+	   .argument_count = (uint32_t)method_info.arguments.size(),
+	   .arguments = nullptr,
+	   .default_argument_count = 0,
+	   .default_arguments = nullptr,
+   };
+   if (!method_info.arguments.empty()) {
+	   result.arguments = memnew_arr(GDExtensionPropertyInfo, method_info.arguments.size());
+	   for (int i = 0; i < method_info.arguments.size(); i++) {
+		   const PropertyInfo &arg = method_info.arguments[i];
+		   result.arguments[i] = GDExtensionPropertyInfo{
+				   .type = (GDExtensionVariantType)arg.type,
+				   .name = stringname_alloc(arg.name),
+				   .class_name = stringname_alloc(arg.class_name),
+				   .hint = arg.hint,
+				   .hint_string = stringname_alloc(arg.hint_string),
+				   .usage = arg.usage };
+	   }
+   }
+   return result;
+}
+
 static void add_to_state(GDExtensionConstStringNamePtr p_name, GDExtensionConstVariantPtr p_value, void *p_userdata) {
 	List<Pair<StringName, Variant>> *list = reinterpret_cast<List<Pair<StringName, Variant>> *>(p_userdata);
 	list->push_back({ *(const StringName *)p_name, *(const Variant *)p_value });

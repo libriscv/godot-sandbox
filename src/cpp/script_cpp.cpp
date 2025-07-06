@@ -1,6 +1,7 @@
 #include "script_cpp.h"
 
 #include "script_language_cpp.h"
+#include "script_cpp_instance.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 
@@ -42,7 +43,7 @@ bool CPPScript::_editor_can_reload_from_file() {
 }
 void CPPScript::_placeholder_erased(void *p_placeholder) {}
 bool CPPScript::_can_instantiate() const {
-	return false;
+	return true;
 }
 Ref<Script> CPPScript::_get_base_script() const {
 	return Ref<Script>();
@@ -57,10 +58,12 @@ StringName CPPScript::_get_instance_base_type() const {
 	return StringName();
 }
 void *CPPScript::_instance_create(Object *p_for_object) const {
-	return nullptr;
+	CPPScriptInstance *instance = memnew(CPPScriptInstance(p_for_object, Ref<CPPScript>(this)));
+	instances.insert(instance);
+	return ScriptInstanceExtension::create_native_instance(instance);
 }
 void *CPPScript::_placeholder_instance_create(Object *p_for_object) const {
-	return nullptr;
+	return _instance_create(p_for_object);
 }
 bool CPPScript::_instance_has(Object *p_object) const {
 	return false;
@@ -99,7 +102,7 @@ bool CPPScript::_is_valid() const {
 	return true;
 }
 bool CPPScript::_is_abstract() const {
-	return true;
+	return false;
 }
 ScriptLanguage *CPPScript::_get_language() const {
 	return CPPScriptLanguage::get_singleton();
@@ -147,4 +150,20 @@ PUBLIC Variant public_function(String arg) {
     return "Hello from the other side";
 }
 )C0D3";
+}
+
+bool CPPScript::connect_instance_to(Object *p_to_object, ELFScriptInstance *instance) const {
+	if (p_to_object == nullptr || instance == nullptr) {
+		ERR_PRINT("CPPScript::connect_instance_to: Invalid parameters.");
+		return false;
+	}
+	// Connect the instance to the target object
+	for (const auto &it : instances) {
+		if (it->get_owner() == p_to_object) {
+			it->set_script_instance(instance);
+			return true;
+		}
+	}
+	ERR_PRINT("CPPScript::connect_instance_to: Could not find instance for object: " + p_to_object->get_class());
+	return false;
 }

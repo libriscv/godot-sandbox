@@ -7,12 +7,6 @@
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/script_language_extension.hpp>
 #include <godot_cpp/core/type_info.hpp>
-#include <godot_cpp/templates/hash_map.hpp>
-#include <godot_cpp/templates/hash_set.hpp>
-#include <godot_cpp/templates/list.hpp>
-#include <godot_cpp/templates/pair.hpp>
-#include <godot_cpp/templates/self_list.hpp>
-#include <godot_cpp/templates/vector.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/string.hpp>
@@ -20,28 +14,21 @@
 #include <godot_cpp/variant/variant.hpp>
 
 #include "../godot/script_instance.h"
-#include "../sandbox.h"
 using namespace godot;
 
+class CPPScript;
 class ELFScript;
+class ELFScriptInstance;
 
-class ELFScriptInstance : public ScriptInstanceExtension {
+class CPPScriptInstance : public ScriptInstanceExtension {
 	Object *owner;
-	Ref<ELFScript> script;
-	Sandbox *current_sandbox = nullptr;
-	mutable List<MethodInfo> methods_info;
-	mutable bool has_updated_methods = false;
-	bool auto_created_sandbox = false;
+	Ref<CPPScript> script;
+	Ref<ELFScript> elf_script;
+	ELFScriptInstance *elf_script_instance = nullptr;
 
 	void update_methods() const;
 
-	// Retrieve the sandbox and whether it was created automatically or not
-	std::tuple<Sandbox *, bool> get_sandbox() const;
-	Sandbox *create_sandbox(const Ref<ELFScript> &p_script);
-	friend class ELFScript;
-	friend class CPPScriptInstance;
-
-	static inline std::vector<StringName> godot_functions;
+	friend class CPPScript;
 
 public:
 	bool set(const StringName &p_name, const Variant &p_value) override;
@@ -69,6 +56,11 @@ public:
 	Variant property_get_fallback(const StringName &p_name, bool *r_valid) override;
 	ScriptLanguage *_get_language() override;
 
-	ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_script);
-	~ELFScriptInstance();
+	ELFScriptInstance *get_script_instance() const { return elf_script_instance; }
+	void set_script_instance(ELFScriptInstance *p_instance) {
+		elf_script_instance = p_instance;
+	}
+
+	CPPScriptInstance(Object *p_owner, const Ref<CPPScript> p_script);
+	~CPPScriptInstance();
 };
