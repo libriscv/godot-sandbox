@@ -1,6 +1,7 @@
 #include "script_cpp_instance.h"
 
 #include "script_cpp.h"
+#include "script_language_cpp.h"
 #include "../elf/script_elf.h"
 #include "../elf/script_instance.h"
 #include "../elf/script_instance_helper.h" // register_types.h
@@ -9,7 +10,40 @@
 #include <godot_cpp/templates/local_vector.hpp>
 static constexpr bool VERBOSE_LOGGING = false;
 
+void CPPScriptInstance::set_script_instance(ELFScriptInstance *p_instance)
+{
+	elf_script_instance = p_instance;
+	if (p_instance) {
+		// XXX: If elf_script is already set, and is different, that is a problem.
+		this->script->elf_script = p_instance->script.ptr();
+	}
+}
+
 bool CPPScriptInstance::set(const StringName &p_name, const Variant &p_value) {
+	if (p_name == StringName("associated_script")) {
+		// This is a property setter to set the associated script
+		Object *object = p_value.operator Object *();
+		if (object == nullptr) {
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("CPPScriptInstance::set: associated_script argument is not an Object");
+			}
+			return false;
+		}
+		ELFScript *new_elf_script = Object::cast_to<ELFScript>(object->get_script());
+		if (new_elf_script == nullptr) {
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("CPPScriptInstance::set: associated_script argument is not an ELFScript");
+			}
+			return false;
+		}
+		this->set_script_instance(new_elf_script->get_script_instance(object));
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScriptInstance::set: associated_script to " +
+				new_elf_script->get_path());
+		}
+		return true;
+	}
+
 	if (elf_script_instance) {
 		return elf_script_instance->set(p_name, p_value);
 	}
@@ -20,6 +54,28 @@ bool CPPScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 }
 
 bool CPPScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
+	static const StringName s_script("script");
+	static const StringName s_associated_script("associated_script");
+	if (p_name == s_associated_script) {
+		// This is a property getter to get the associated script
+		if (elf_script_instance) {
+			r_ret = elf_script_instance->get_owner();
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("CPPScriptInstance::get: associated_script is " +
+					Object::cast_to<Node>(elf_script_instance->get_owner())->get_path());
+			}
+			return true;
+		}
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScriptInstance::get: associated_script is not set");
+		}
+		return false;
+	}
+	else if (p_name == s_script) {
+		r_ret = script;
+		return true;
+	}
+
 	if (elf_script_instance) {
 		return elf_script_instance->get(p_name, r_ret);
 	}
@@ -41,9 +97,62 @@ Variant CPPScriptInstance::callp(
 		const Variant **p_args, const int p_argument_count,
 		GDExtensionCallError &r_error)
 {
-	if (elf_script_instance) {
-		Ref<ELFScript> script = elf_script_instance->script;
-		if (!script.is_valid()) {
+	if (p_method == StringName("set_associated_script"))
+	{
+		if (p_argument_count != 1) {
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("CPPScriptInstance::callp: set_associated_script requires exactly one argument");
+			}
+			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
+			return Variant();
+		}
+		Object *object = p_args[0]->operator Object *();
+		if (object == nullptr) {
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("CPPScriptInstance::callp: set_associated_script argument is null");
+			}
+			// If the argument is null, we can just clear the associated script.
+			this->set_script_instance(nullptr);
+			r_error.error = GDEXTENSION_CALL_OK;
+			return Variant();
+		}
+		ELFScript *new_elf_script = Object::cast_to<ELFScript>(object->get_script().operator Object *());
+		if (new_elf_script == nullptr) {
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("CPPScriptInstance::callp: set_associated_script argument is not an ELFScript");
+			}
+			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
+			return Variant();
+		}
+		this->set_script_instance(new_elf_script->get_script_instance(object));
+		r_error.error = GDEXTENSION_CALL_OK;
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScriptInstance::callp: set_associated_script to " +
+				Object::cast_to<Node>(elf_script_instance->get_owner())->get_path());
+		}
+		return Variant();
+	}
+	else if (p_method == StringName("get_associated_script"))
+	{
+		// This is a property getter to get the associated script
+		if (elf_script_instance) {
+			r_error.error = GDEXTENSION_CALL_OK;
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("CPPScriptInstance::callp: get_associated_script is set to " +
+					Object::cast_to<Node>(elf_script_instance->get_owner())->get_path());
+			}
+			return elf_script_instance->get_owner();
+		}
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScriptInstance::callp: get_associated_script is not set");
+		}
+		r_error.error = GDEXTENSION_CALL_OK;
+		return Variant();
+	}
+	else if (elf_script_instance)
+	{
+		Ref<ELFScript> &elf_script = elf_script_instance->script;
+		if (!elf_script.is_valid()) {
 			if constexpr (VERBOSE_LOGGING) {
 				ERR_PRINT("CPPScriptInstance::callp: script is null");
 			}
@@ -53,7 +162,7 @@ Variant CPPScriptInstance::callp(
 
 		// Try to call the method on the elf_script_instance, but use
 		// this instance owner as the base for the Sandbox node-tree.
-		if (script->function_names.has(p_method)) {
+		if (elf_script->function_names.has(p_method)) {
 			auto [sandbox, auto_created] = elf_script_instance->get_sandbox();
 			if (sandbox && sandbox->has_program_loaded()) {
 				// Set the Sandbox instance tree base to the owner node
@@ -97,18 +206,54 @@ const GDExtensionMethodInfo *CPPScriptInstance::get_method_list(uint32_t *r_coun
 	return nullptr;
 }
 
+static void set_property_info(
+		GDExtensionPropertyInfo &p_info,
+		const StringName &p_name,
+		const StringName &p_class_name,
+		GDExtensionVariantType p_type,
+		uint32_t p_hint,
+		const String &p_hint_string,
+		uint32_t p_usage)
+{
+	p_info.name = stringname_alloc(p_name);
+	p_info.class_name = stringname_alloc(p_class_name);
+	p_info.type = p_type;
+	p_info.hint = p_hint;
+	p_info.hint_string = string_alloc(p_hint_string);
+	p_info.usage = p_usage;
+}
+
 const GDExtensionPropertyInfo *CPPScriptInstance::get_property_list(uint32_t *r_count) const {
 	if (elf_script_instance) {
-		return elf_script_instance->get_property_list(r_count);
+		const GDExtensionPropertyInfo *cpi = elf_script_instance->get_property_list(r_count);
+		GDExtensionPropertyInfo *pinfo = (GDExtensionPropertyInfo *)cpi;
+		// Add a property for 'associated_script'
+		set_property_info(pinfo[*r_count],
+			StringName("associated_script"),
+			StringName(""),
+			GDEXTENSION_VARIANT_TYPE_OBJECT,
+			PROPERTY_HINT_NODE_TYPE,
+			"Sandbox",
+			PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NODE_PATH_FROM_SCENE_ROOT
+		);
+		*r_count += 1;
+		return cpi;
 	}
 
+	*r_count = 1;
+	GDExtensionPropertyInfo *pinfo = memnew_arr(GDExtensionPropertyInfo, *r_count);
+	set_property_info(pinfo[0],
+		StringName("associated_script"),
+		StringName(""),
+		GDEXTENSION_VARIANT_TYPE_OBJECT,
+		PROPERTY_HINT_NODE_TYPE,
+		"Sandbox",
+		PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NODE_PATH_FROM_SCENE_ROOT
+	);
 	if constexpr (VERBOSE_LOGGING) {
-		ERR_PRINT("CPPScriptInstance::get_property_list");
+		ERR_PRINT("CPPScriptInstance::get_property_list: returning associated_script property");
 	}
-
-	// If no properties are defined, return an empty list
-	*r_count = 0;
-	return nullptr;
+	return pinfo;
 }
 void CPPScriptInstance::free_property_list(const GDExtensionPropertyInfo *p_list, uint32_t p_count) const {
 	if (p_list) {
@@ -117,6 +262,13 @@ void CPPScriptInstance::free_property_list(const GDExtensionPropertyInfo *p_list
 }
 
 Variant::Type CPPScriptInstance::get_property_type(const StringName &p_name, bool *r_is_valid) const {
+	if (p_name == StringName("associated_script")) {
+		// This is a property getter to get the associated script
+		if (r_is_valid) {
+			*r_is_valid = true;
+		}
+		return Variant::OBJECT; // The type of the associated script is an Object
+	}
 	if (elf_script_instance) {
 		return elf_script_instance->get_property_type(p_name, r_is_valid);
 	}
@@ -131,6 +283,9 @@ void CPPScriptInstance::get_property_state(GDExtensionScriptInstancePropertyStat
 }
 
 bool CPPScriptInstance::validate_property(GDExtensionPropertyInfo &p_property) const {
+	if (*(StringName *)p_property.name == StringName("associated_script")) {
+		return true;
+	}
 	if (elf_script_instance) {
 		return elf_script_instance->validate_property(p_property);
 	}
@@ -146,6 +301,11 @@ GDExtensionInt CPPScriptInstance::get_method_argument_count(const StringName &p_
 }
 
 bool CPPScriptInstance::has_method(const StringName &p_name) const {
+	if (p_name == StringName("set_associated_script")) {
+		return true; // This method is always available
+	} else if (p_name == StringName("get_associated_script")) {
+		return true; // This method is always available
+	}
 	if (elf_script_instance) {
 		return elf_script_instance->has_method(p_name);
 	}
@@ -162,6 +322,9 @@ void CPPScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list, ui
 }
 
 bool CPPScriptInstance::property_can_revert(const StringName &p_name) const {
+	if (p_name == StringName("associated_script")) {
+		return true; // The associated_script can always be reverted
+	}
 	if (elf_script_instance) {
 		return elf_script_instance->property_can_revert(p_name);
 	}
@@ -172,12 +335,16 @@ bool CPPScriptInstance::property_can_revert(const StringName &p_name) const {
 }
 
 bool CPPScriptInstance::property_get_revert(const StringName &p_name, Variant &r_ret) const {
+	if (p_name == StringName("associated_script")) {
+		r_ret = Variant();
+		return true;
+	}
 	if (elf_script_instance)
 		return elf_script_instance->property_get_revert(p_name, r_ret);
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("CPPScriptInstance::property_get_revert " + p_name);
 	}
-	r_ret = Variant::NIL;
+	r_ret = Variant();
 	return false;
 }
 
@@ -210,7 +377,7 @@ Variant CPPScriptInstance::property_get_fallback(const StringName &p_name, bool 
 }
 
 ScriptLanguage *CPPScriptInstance::_get_language() {
-	return get_elf_language();
+	return CPPScriptLanguage::get_singleton();
 }
 
 CPPScriptInstance::CPPScriptInstance(Object *p_owner, const Ref<CPPScript> p_script) :

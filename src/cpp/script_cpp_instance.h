@@ -23,7 +23,6 @@ class ELFScriptInstance;
 class CPPScriptInstance : public ScriptInstanceExtension {
 	Object *owner;
 	Ref<CPPScript> script;
-	Ref<ELFScript> elf_script;
 	ELFScriptInstance *elf_script_instance = nullptr;
 
 	void update_methods() const;
@@ -57,9 +56,7 @@ public:
 	ScriptLanguage *_get_language() override;
 
 	ELFScriptInstance *get_script_instance() const { return elf_script_instance; }
-	void set_script_instance(ELFScriptInstance *p_instance) {
-		elf_script_instance = p_instance;
-	}
+	void set_script_instance(ELFScriptInstance *p_instance);
 
 	CPPScriptInstance(Object *p_owner, const Ref<CPPScript> p_script);
 	~CPPScriptInstance();

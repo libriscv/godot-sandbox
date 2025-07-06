@@ -55,6 +55,11 @@ public:
 	/// @return An ELF program as a byte array.
 	const PackedByteArray &get_content();
 
+	/// @brief Get an ELFScript instance using a Node as the owner.
+	/// @param p_for_object The owner Node.
+	/// @return A reference to the ELFScript instance.
+	ELFScriptInstance *get_script_instance(Object *p_for_object) const;
+
 	void register_instance(Sandbox *p_sandbox) { sandbox_map[path].insert(p_sandbox); }
 	void unregister_instance(Sandbox *p_sandbox) { sandbox_map[path].erase(p_sandbox); }
 

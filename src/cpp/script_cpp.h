@@ -7,6 +7,7 @@
 
 using namespace godot;
 class CPPScriptInstance;
+class ELFScript;
 class ELFScriptInstance;
 
 class CPPScript : public ScriptExtension {
@@ -87,7 +88,12 @@ public:
 		return Docker::ContainerExecute(docker_container_name, p_arguments, output, verbose);
 	}
 
-	bool connect_instance_to(Object *p_to_object, ELFScriptInstance *instance) const;
+	void set_file(const String &p_path);
+	CPPScriptInstance *get_cpp_script_instance() const;
+
+	static String PathToGlobalName(const String &p_path) {
+		return "CPPScript_" + p_path.get_basename().replace("res://", "").replace("/", "_").replace("-", "_").capitalize().replace(" ", "");
+	}
 
 	CPPScript();
 	~CPPScript() {}
@@ -98,6 +104,8 @@ private:
 	static inline const char *docker_container_name = "godot-cpp-compiler";
 	static inline const char *docker_image_name = "ghcr.io/libriscv/cpp_compiler";
 
+	String path;
 	mutable HashSet<CPPScriptInstance *> instances;
+	ELFScript *elf_script = nullptr;
 	friend class CPPScriptInstance;
 };

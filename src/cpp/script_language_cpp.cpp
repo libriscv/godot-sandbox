@@ -195,10 +195,10 @@ Object *CPPScriptLanguage::_create_script() const {
 	return script;
 }
 bool CPPScriptLanguage::_has_named_classes() const {
-	return false;
+	return true;
 }
 bool CPPScriptLanguage::_supports_builtin_mode() const {
-	return false;
+	return true;
 }
 bool CPPScriptLanguage::_supports_documentation() const {
 	return false;
@@ -318,8 +318,14 @@ void CPPScriptLanguage::load_icon()
 	reenter = false;
 }
 bool CPPScriptLanguage::_handles_global_class_type(const String &p_type) const {
-	return p_type == "CPPScript";
+	return p_type == "CPPScript" || p_type == "Sandbox";
 }
 Dictionary CPPScriptLanguage::_get_global_class_name(const String &p_path) const {
-	return Dictionary();
+	Dictionary dict;
+	if (!p_path.is_empty()) {
+		dict["name"] = CPPScript::PathToGlobalName(p_path);
+		dict["base_type"] = "Sandbox";
+		dict["icon_path"] = String(icon_path);
+	}
+	return dict;
 }

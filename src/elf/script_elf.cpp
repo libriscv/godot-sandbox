@@ -37,6 +37,17 @@ Array ELFScript::get_sandbox_objects() const {
 	return result;
 }
 
+ELFScriptInstance *ELFScript::get_script_instance(Object *p_for_object) const
+{
+	for (ELFScriptInstance *instance : this->instances) {
+		if (instance->get_owner() == p_for_object) {
+			return instance;
+		}
+	}
+	ERR_PRINT("ELFScript::get_script_instance: Script instance not found for object " + p_for_object->get_class());
+	return nullptr;
+}
+
 static Dictionary prop_to_dict(const PropertyInfo &p_prop) {
 	Dictionary d;
 	d["name"] = p_prop.name;

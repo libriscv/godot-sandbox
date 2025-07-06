@@ -3,6 +3,8 @@
 #include "script_language_cpp.h"
 #include "script_cpp_instance.h"
 #include "../elf/script_instance.h"
+#include "../sandbox_project_settings.h"
+#include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 
@@ -50,7 +52,7 @@ Ref<Script> CPPScript::_get_base_script() const {
 	return Ref<Script>();
 }
 StringName CPPScript::_get_global_name() const {
-	return StringName();
+	return PathToGlobalName(this->path);
 }
 bool CPPScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
@@ -167,21 +169,31 @@ TypedArray<Dictionary> CPPScript::_get_script_method_list() const {
 	return elf->get_elf_script()->_get_script_method_list();
 }
 TypedArray<Dictionary> CPPScript::_get_script_property_list() const {
+	TypedArray<Dictionary> properties;
+	Dictionary property;
+	property["name"] = "associated_script";
+	property["type"] = Variant::OBJECT;
+	property["hint"] = PROPERTY_HINT_NODE_TYPE;
+	property["hint_string"] = "Node";
+	property["usage"] = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SCRIPT_VARIABLE;
+	//property["default_value"] = source_code;
+	properties.push_back(property);
 	if (instances.is_empty()) {
 		ERR_PRINT("CPPScript::_get_script_property_list: No instances available.");
-		return {};
+		return properties;
 	}
 	CPPScriptInstance *instance = *instances.begin();
 	if (instance == nullptr) {
 		ERR_PRINT("CPPScript::_get_script_property_list: Instance is null.");
-		return {};
+		return properties;
 	}
 	ELFScriptInstance *elf = instance->get_script_instance();
 	if (elf == nullptr) {
-		return {};
+		return properties;
 	}
 	// Get the method information from the ELFScriptInstance
-	return elf->get_elf_script()->_get_script_property_list();
+	properties.append_array(elf->get_elf_script()->_get_script_property_list());
+	return properties;
 }
 int32_t CPPScript::_get_member_line(const StringName &p_member) const {
 	return 0;
@@ -209,18 +221,11 @@ PUBLIC Variant public_function(String arg) {
 )C0D3";
 }
 
-bool CPPScript::connect_instance_to(Object *p_to_object, ELFScriptInstance *instance) const {
-	if (p_to_object == nullptr || instance == nullptr) {
-		ERR_PRINT("CPPScript::connect_instance_to: Invalid parameters.");
-		return false;
+void CPPScript::set_file(const String &p_path) {
+	if (p_path.is_empty()) {
+		ERR_PRINT("CPPScript::set_file: Invalid path.");
+		return;
 	}
-	// Connect the instance to the target object
-	for (const auto &it : instances) {
-		if (it->get_owner() == p_to_object) {
-			it->set_script_instance(instance);
-			return true;
-		}
-	}
-	ERR_PRINT("CPPScript::connect_instance_to: Could not find instance for object: " + p_to_object->get_class());
-	return false;
+	this->path = p_path;
+	this->source_code = FileAccess::get_file_as_string(p_path);
 }

@@ -72,7 +72,7 @@ public:
 	ScriptLanguage *_get_language() override;
 
 	ELFScript *get_elf_script() const {
-		return Object::cast_to<ELFScript>(script.ptr());
+		return script.ptr();
 	}
 
 	ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_script);

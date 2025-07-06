@@ -150,53 +150,6 @@ retry_callp:
 		return warnings;
 	}
 #endif
-	if (p_method == StringName("_connect_to")) {
-		// This method is used to connect the script instance to another object.
-		// It is used by CPPScript and RustScript to connect the script instance to the target object.
-		if (p_argument_count < 1) {
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("ELFScriptInstance::callp: _connect_to called with no arguments");
-			}
-			r_error.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
-			return Variant();
-		}
-		if (p_args[0]->get_type() != Variant::OBJECT) {
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("ELFScriptInstance::callp: _connect_to called with non-object argument");
-			}
-			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
-			return Variant();
-		}
-		godot::Object *to_object = godot::Object::cast_to<godot::Object>(*p_args[0]);
-		if (to_object == nullptr) {
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("ELFScriptInstance::callp: _connect_to called with null object");
-			}
-			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
-			return Variant();
-		}
-		if (auto *cpp_script = godot::Object::cast_to<CPPScript>(to_object->get_script())) {
-			// If the script is a CPPScript, we can connect to it.
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("ELFScriptInstance::callp: _connect_to called on CPPScript");
-			}
-			if (cpp_script->connect_instance_to(to_object, this)) {
-				r_error.error = GDEXTENSION_CALL_OK;
-				return true;
-			} else {
-				if constexpr (VERBOSE_LOGGING) {
-					ERR_PRINT("ELFScriptInstance::callp: _connect_to failed to connect to CPPScript");
-				}
-				r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
-				return Variant();
-			}
-		} else {
-			// If the script is not a CPPScript, we cannot connect to it (yet).
-			ERR_PRINT("ELFScriptInstance::callp: _connect_to called on non-CPPScript");
-		}
-		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
-		return Variant();
-	}
 
 	// When the script instance must have a sandbox as owner,
 	// use _enter_tree to get the sandbox instance.
@@ -318,7 +271,7 @@ const GDExtensionPropertyInfo *ELFScriptInstance::get_property_list(uint32_t *r_
 	const std::vector<SandboxProperty> &properties = sandbox->get_properties();
 
 	*r_count = properties.size() + prop_list.size();
-	GDExtensionPropertyInfo *list = memnew_arr(GDExtensionPropertyInfo, *r_count);
+	GDExtensionPropertyInfo *list = memnew_arr(GDExtensionPropertyInfo, *r_count + 2);
 	const GDExtensionPropertyInfo *list_ptr = list;
 
 	for (const SandboxProperty &property : properties) {
@@ -531,7 +484,6 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 			"_get_editor_name",
 			"_hide_script_from_inspector",
 			"_is_read_only",
-			"_connect_to",
 		};
 		sandbox_functions = {
 			"FromBuffer",
