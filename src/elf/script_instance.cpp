@@ -222,6 +222,28 @@ retry_callp:
 		}
 	}
 
+	struct RecursiveTrap {
+		bool &recursive_trap;
+		RecursiveTrap(bool &trap) : recursive_trap(trap) {
+			recursive_trap = true; // Set the trap
+		}
+		~RecursiveTrap() {
+			recursive_trap = false; // Reset the trap
+		}
+	};
+
+	// Try calling a method on the Sandbox instance, but only if the owner is *NOT* a Sandbox.
+	// Otherwise, this will clobber the owner Sandbox instance's own methods.
+	const CharString method_name = String(p_method).ascii();
+	if (current_sandbox != nullptr && !recursive_trap && sandbox_functions.count(method_name.ptr()) != 0) {
+		RecursiveTrap trap(this->recursive_trap);
+		Array args;
+		for (int i = 0; i < p_argument_count; i++) {
+			args.push_back(*p_args[i]);
+		}
+		r_error.error = GDEXTENSION_CALL_OK;
+		return current_sandbox->callv(p_method, args);
+	}
 	r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 	return Variant();
 }
@@ -264,6 +286,9 @@ const GDExtensionMethodInfo *ELFScriptInstance::get_method_list(uint32_t *r_coun
 	GDExtensionMethodInfo *list = memnew_arr(GDExtensionMethodInfo, size);
 	int i = 0;
 	for (const godot::MethodInfo &method_info : methods_info) {
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("ELFScriptInstance::get_method_list: method " + String(method_info.name));
+		}
 		list[i] = create_method_info(method_info);
 		i++;
 	}
@@ -389,7 +414,7 @@ bool ELFScriptInstance::has_method(const StringName &p_name) const {
 	}
 
 	if constexpr (VERBOSE_LOGGING) {
-		fprintf(stderr, "ELFScriptInstance::has_method %s => %d\n", p_name.to_ascii_buffer().ptr(), result);
+		fprintf(stderr, "ELFScriptInstance::has_method %s => %d\n", String(p_name).utf8().ptr(), result);
 	}
 	return result;
 }
@@ -507,6 +532,79 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 			"_hide_script_from_inspector",
 			"_is_read_only",
 			"_connect_to",
+		};
+		sandbox_functions = {
+			"FromBuffer",
+			"FromProgram",
+			"load_buffer",
+			"reset",
+			"vmcall",
+			"vmcallv",
+			"vmcallable",
+			"vmcallable_address",
+			"set_restrictions",
+			"get_restrictions",
+			"add_allowed_object",
+			"remove_allowed_object",
+			"clear_allowed_objects",
+			"set_class_allowed_callback",
+			"set_object_allowed_callback",
+			"set_method_allowed_callback",
+			"set_property_allowed_callback",
+			"set_resource_allowed_callback",
+			"is_allowed_class",
+			"is_allowed_object",
+			"is_allowed_method",
+			"is_allowed_property",
+			"is_allowed_resource",
+			"restrictive_callback_function",
+			"set_redirect_stdout",
+			"get_general_registers",
+			"get_floating_point_registers",
+			"set_argument_registers",
+			"get_current_instruction",
+			"make_resumable",
+			"resume",
+			"has_function",
+			"address_of",
+			"lookup_address",
+			"generate_api",
+			"download_program",
+			"get_hotspots",
+			"clear_hotspots",
+			"emit_binary_translation",
+			"load_binary_translation",
+			"try_compile_binary_translation",
+			"is_binary_translated",
+			"set_max_refs",
+			"get_max_refs",
+			"set_memory_max",
+			"get_memory_max",
+			"set_instructions_max",
+			"get_instructions_max",
+			"set_allocations_max",
+			"get_allocations_max",
+			"set_use_unboxed_arguments",
+			"get_use_unboxed_arguments",
+			"set_use_precise_simulation",
+			"get_use_precise_simulation",
+			"set_profiling",
+			"get_profiling",
+			"set_program",
+			"get_program",
+			"has_program_loaded",
+			"get_heap_usage",
+			"get_heap_chunk_count",
+			"get_heap_allocation_counter",
+			"get_heap_deallocation_counter",
+			"get_exceptions",
+			"get_timeouts",
+			"get_calls_made",
+			"get_global_calls_made",
+			"get_global_exceptions",
+			"get_global_timeouts",
+			"get_global_instance_count",
+			"get_accumulated_startup_time"
 		};
 	}
 

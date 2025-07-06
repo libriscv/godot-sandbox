@@ -6,6 +6,11 @@ var Sandbox_TestsTests = load("res://tests/tests.elf")
 func test_instantiation():
 	# Create a new sandbox
 	var s = Sandbox.new()
+	var m = s.get_method_list()
+	var ma : Array
+	for i in m:
+		ma.append(i.name)
+	print(ma)
 	# Set the test program
 	s.set_program(Sandbox_TestsTests)
 
@@ -73,7 +78,7 @@ func test_script_instantiation():
 	var n = Node.new()
 	n.set_script(Sandbox_TestsTests)
 
-	var e : ELFScript = n.get_script() as ELFScript
+	var e = n.get_script()
 	var s = e.get_sandbox_for(n)
 	assert_true(s.has_program_loaded(), "Program loaded for script")
 	assert_true(s.has_function("test_ping_pong"), "Sandbox has test_ping_pong function")

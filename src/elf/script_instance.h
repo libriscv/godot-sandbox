@@ -32,6 +32,7 @@ class ELFScriptInstance : public ScriptInstanceExtension {
 	mutable List<MethodInfo> methods_info;
 	mutable bool has_updated_methods = false;
 	bool auto_created_sandbox = false;
+	bool recursive_trap = false;
 
 	void update_methods() const;
 
@@ -42,6 +43,7 @@ class ELFScriptInstance : public ScriptInstanceExtension {
 	friend class CPPScriptInstance;
 
 	static inline std::vector<StringName> godot_functions;
+	static inline std::unordered_set<std::string> sandbox_functions;
 
 public:
 	bool set(const StringName &p_name, const Variant &p_value) override;
@@ -68,6 +70,10 @@ public:
 	void property_set_fallback(const StringName &p_name, const Variant &p_value, bool *r_valid) override;
 	Variant property_get_fallback(const StringName &p_name, bool *r_valid) override;
 	ScriptLanguage *_get_language() override;
+
+	ELFScript *get_elf_script() const {
+		return Object::cast_to<ELFScript>(script.ptr());
+	}
 
 	ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_script);
 	~ELFScriptInstance();

@@ -2,6 +2,7 @@
 
 #include "script_language_cpp.h"
 #include "script_cpp_instance.h"
+#include "../elf/script_instance.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 
@@ -55,7 +56,7 @@ bool CPPScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
 }
 StringName CPPScript::_get_instance_base_type() const {
-	return StringName();
+	return StringName("Sandbox");
 }
 void *CPPScript::_instance_create(Object *p_for_object) const {
 	CPPScriptInstance *instance = memnew(CPPScriptInstance(p_for_object, Ref<CPPScript>(this)));
@@ -87,13 +88,41 @@ String CPPScript::_get_class_icon_path() const {
 	return String("res://addons/godot_sandbox/CPPScript.svg");
 }
 bool CPPScript::_has_method(const StringName &p_method) const {
-	return false;
+	if (instances.is_empty()) {
+		ERR_PRINT("CPPScript::has_method: No instances available.");
+		return false;
+	}
+	CPPScriptInstance *instance = *instances.begin();
+	if (instance == nullptr) {
+		ERR_PRINT("CPPScript::has_method: Instance is null.");
+		return false;
+	}
+	ELFScriptInstance *elf = instance->get_script_instance();
+	if (elf == nullptr) {
+		return false;
+	}
+	// Get the method information from the ELFScriptInstance
+	return elf->get_elf_script()->has_method(p_method);
 }
 bool CPPScript::_has_static_method(const StringName &p_method) const {
 	return false;
 }
 Dictionary CPPScript::_get_method_info(const StringName &p_method) const {
-	return Dictionary();
+	if (instances.is_empty()) {
+		ERR_PRINT("CPPScript::_get_method_info: No instances available.");
+		return Dictionary();
+	}
+	CPPScriptInstance *instance = *instances.begin();
+	if (instance == nullptr) {
+		ERR_PRINT("CPPScript::_get_method_info: Instance is null.");
+		return Dictionary();
+	}
+	ELFScriptInstance *elf = instance->get_script_instance();
+	if (elf == nullptr) {
+		return Dictionary();
+	}
+	// Get the method information from the ELFScriptInstance
+	return elf->get_elf_script()->_get_method_info(p_method);
 }
 bool CPPScript::_is_tool() const {
 	return true;
@@ -121,10 +150,38 @@ Variant CPPScript::_get_property_default_value(const StringName &p_property) con
 }
 void CPPScript::_update_exports() {}
 TypedArray<Dictionary> CPPScript::_get_script_method_list() const {
-	return TypedArray<Dictionary>();
+	if (instances.is_empty()) {
+		ERR_PRINT("CPPScript::_get_script_method_list: No instances available.");
+		return {};
+	}
+	CPPScriptInstance *instance = *instances.begin();
+	if (instance == nullptr) {
+		ERR_PRINT("CPPScript::_get_script_method_list: Instance is null.");
+		return {};
+	}
+	ELFScriptInstance *elf = instance->get_script_instance();
+	if (elf == nullptr) {
+		return {};
+	}
+	// Get the method information from the ELFScriptInstance
+	return elf->get_elf_script()->_get_script_method_list();
 }
 TypedArray<Dictionary> CPPScript::_get_script_property_list() const {
-	return TypedArray<Dictionary>();
+	if (instances.is_empty()) {
+		ERR_PRINT("CPPScript::_get_script_property_list: No instances available.");
+		return {};
+	}
+	CPPScriptInstance *instance = *instances.begin();
+	if (instance == nullptr) {
+		ERR_PRINT("CPPScript::_get_script_property_list: Instance is null.");
+		return {};
+	}
+	ELFScriptInstance *elf = instance->get_script_instance();
+	if (elf == nullptr) {
+		return {};
+	}
+	// Get the method information from the ELFScriptInstance
+	return elf->get_elf_script()->_get_script_property_list();
 }
 int32_t CPPScript::_get_member_line(const StringName &p_member) const {
 	return 0;

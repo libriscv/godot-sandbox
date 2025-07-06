@@ -54,12 +54,12 @@ Variant CPPScriptInstance::callp(
 		// Try to call the method on the elf_script_instance, but use
 		// this instance owner as the base for the Sandbox node-tree.
 		if (script->function_names.has(p_method)) {
-			Sandbox *current_sandbox = elf_script_instance->current_sandbox;
-			if (current_sandbox && current_sandbox->has_program_loaded()) {
+			auto [sandbox, auto_created] = elf_script_instance->get_sandbox();
+			if (sandbox && sandbox->has_program_loaded()) {
 				// Set the Sandbox instance tree base to the owner node
-				ScopedTreeBase stb(current_sandbox, godot::Object::cast_to<Node>(this->owner));
+				ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
 				// Perform the vmcall
-				return current_sandbox->vmcall_fn(p_method, p_args, p_argument_count, r_error);
+				return sandbox->vmcall_fn(p_method, p_args, p_argument_count, r_error);
 			}
 		}
 		// Fallback: callp on the elf_script_instance directly
@@ -158,8 +158,6 @@ bool CPPScriptInstance::has_method(const StringName &p_name) const {
 void CPPScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list, uint32_t p_count) const {
 	if (elf_script_instance) {
 		elf_script_instance->free_method_list(p_list, p_count);
-	} else {
-		ERR_PRINT("CPPScriptInstance::free_method_list called without elf_script_instance");
 	}
 }
 
