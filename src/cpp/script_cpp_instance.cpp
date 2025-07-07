@@ -12,10 +12,46 @@ static constexpr bool VERBOSE_LOGGING = false;
 
 void CPPScriptInstance::set_script_instance(ELFScriptInstance *p_instance)
 {
-	elf_script_instance = p_instance;
+	this->elf_script_instance = p_instance;
 	if (p_instance) {
 		// XXX: If elf_script is already set, and is different, that is a problem.
 		this->script->elf_script = p_instance->script.ptr();
+	}
+}
+void CPPScriptInstance::unset_script_instance()
+{
+	if (this->elf_script_instance) {
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScriptInstance::unset_script_instance: " +
+				Object::cast_to<Node>(this->elf_script_instance->get_owner())->get_path());
+		}
+		this->elf_script_instance = nullptr;
+	}
+	if (this->managed_esi != nullptr) {
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScriptInstance::unset_script_instance: managed_esi is not null, deleting it");
+		}
+		memdelete(this->managed_esi);
+		this->managed_esi = nullptr;
+	}
+}
+void CPPScriptInstance::manage_script_instance(ELFScript *p_script)
+{
+	if (this->managed_esi != nullptr) {
+		// If we already have a managed ESI, we need to free it.
+		memdelete(this->managed_esi);
+	}
+	this->managed_esi = memnew(ELFScriptInstance(get_owner(), p_script));
+	if (this->managed_esi == nullptr) {
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScriptInstance::manage_script_instance: managed_esi is null");
+		}
+		return;
+	}
+	this->set_script_instance(this->managed_esi);
+	if constexpr (VERBOSE_LOGGING) {
+		ERR_PRINT("CPPScriptInstance::manage_script_instance: managed_esi set to " +
+			Object::cast_to<Node>(this->managed_esi->get_owner())->get_path());
 	}
 }
 
@@ -24,13 +60,23 @@ bool CPPScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 		// This is a property setter to set the associated script
 		Object *object = p_value.operator Object *();
 		if (object == nullptr) {
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("CPPScriptInstance::set: associated_script argument is not an Object");
-			}
-			return false;
+			this->unset_script_instance();
+			return true;
 		}
 		ELFScript *new_elf_script = Object::cast_to<ELFScript>(object->get_script());
 		if (new_elf_script == nullptr) {
+			// XXX: TODO: It may be possible to create an artificial ELFScriptInstance based
+			// on p_value being an ELFScript, but that is not implemented yet. We could then
+			// set the script instance to that.
+			if (ELFScript *elf_script = Object::cast_to<ELFScript>(p_value.operator Object *()); elf_script) {
+				// This is an ELFScript, but we need an ELFScriptInstance in order to proxy
+				// the calls to the underlying Sandbox instance. Create a new instance?
+				if constexpr (VERBOSE_LOGGING) {
+					ERR_PRINT("CPPScriptInstance::set: associated_script argument is an ELFScript");
+				}
+				this->manage_script_instance(elf_script);
+				return true;
+			}
 			if constexpr (VERBOSE_LOGGING) {
 				ERR_PRINT("CPPScriptInstance::set: associated_script argument is not an ELFScript");
 			}
@@ -58,7 +104,15 @@ bool CPPScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 	static const StringName s_associated_script("associated_script");
 	if (p_name == s_associated_script) {
 		// This is a property getter to get the associated script
-		if (elf_script_instance) {
+		if (this->managed_esi != nullptr) {
+			// If we have a managed script instance, we can return it.
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("CPPScriptInstance::get: associated_script is managed");
+			}
+			r_ret = this->managed_esi->script;
+			return true;
+		}
+		else if (elf_script_instance) {
 			r_ret = elf_script_instance->get_owner();
 			if constexpr (VERBOSE_LOGGING) {
 				ERR_PRINT("CPPScriptInstance::get: associated_script is " +
@@ -108,11 +162,7 @@ Variant CPPScriptInstance::callp(
 		}
 		Object *object = p_args[0]->operator Object *();
 		if (object == nullptr) {
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("CPPScriptInstance::callp: set_associated_script argument is null");
-			}
-			// If the argument is null, we can just clear the associated script.
-			this->set_script_instance(nullptr);
+			this->unset_script_instance();
 			r_error.error = GDEXTENSION_CALL_OK;
 			return Variant();
 		}
@@ -120,6 +170,16 @@ Variant CPPScriptInstance::callp(
 		if (new_elf_script == nullptr) {
 			if constexpr (VERBOSE_LOGGING) {
 				ERR_PRINT("CPPScriptInstance::callp: set_associated_script argument is not an ELFScript");
+			}
+			if (ELFScript *elf_script = Object::cast_to<ELFScript>(object); elf_script) {
+				// This is an ELFScript, but we need an ELFScriptInstance in order to proxy
+				// the calls to the underlying Sandbox instance. Create a new instance?
+				if constexpr (VERBOSE_LOGGING) {
+					ERR_PRINT("CPPScriptInstance::callp: set_associated_script argument is an ELFScript");
+				}
+				this->manage_script_instance(elf_script);
+				r_error.error = GDEXTENSION_CALL_OK;
+				return Variant();
 			}
 			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
 			return Variant();
@@ -135,7 +195,15 @@ Variant CPPScriptInstance::callp(
 	else if (p_method == StringName("get_associated_script"))
 	{
 		// This is a property getter to get the associated script
-		if (elf_script_instance) {
+		if (this->managed_esi != nullptr) {
+			// If we have a managed script instance, we can return it.
+			r_error.error = GDEXTENSION_CALL_OK;
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("CPPScriptInstance::callp: get_associated_script is managed");
+			}
+			return this->managed_esi->script;
+		}
+		else if (elf_script_instance) {
 			r_error.error = GDEXTENSION_CALL_OK;
 			if constexpr (VERBOSE_LOGGING) {
 				ERR_PRINT("CPPScriptInstance::callp: get_associated_script is set to " +
@@ -232,8 +300,8 @@ const GDExtensionPropertyInfo *CPPScriptInstance::get_property_list(uint32_t *r_
 			StringName("associated_script"),
 			StringName(""),
 			GDEXTENSION_VARIANT_TYPE_OBJECT,
-			PROPERTY_HINT_NODE_TYPE,
-			"Sandbox",
+			PROPERTY_HINT_RESOURCE_TYPE,
+			"ELFScript",
 			PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NODE_PATH_FROM_SCENE_ROOT
 		);
 		*r_count += 1;
@@ -246,8 +314,8 @@ const GDExtensionPropertyInfo *CPPScriptInstance::get_property_list(uint32_t *r_
 		StringName("associated_script"),
 		StringName(""),
 		GDEXTENSION_VARIANT_TYPE_OBJECT,
-		PROPERTY_HINT_NODE_TYPE,
-		"Sandbox",
+		PROPERTY_HINT_RESOURCE_TYPE,
+		"ELFScript",
 		PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NODE_PATH_FROM_SCENE_ROOT
 	);
 	if constexpr (VERBOSE_LOGGING) {
@@ -388,5 +456,9 @@ CPPScriptInstance::CPPScriptInstance(Object *p_owner, const Ref<CPPScript> p_scr
 CPPScriptInstance::~CPPScriptInstance() {
 	if (this->script.is_valid()) {
 		script->instances.erase(this);
+	}
+	if (this->managed_esi != nullptr) {
+		memdelete(this->managed_esi);
+		this->managed_esi = nullptr;
 	}
 }
