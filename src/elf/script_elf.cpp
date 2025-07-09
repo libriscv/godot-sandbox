@@ -238,41 +238,26 @@ TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
 
 void ELFScript::_update_exports() {}
 TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
-	TypedArray<Dictionary> functions_array;
-	if (this->functions.is_empty()) {
-		for (String function : function_names) {
-			Dictionary method;
-			method["name"] = function;
-			method["args"] = Array();
-			method["default_args"] = Array();
-			Dictionary type;
-			type["name"] = "type";
-			type["type"] = Variant::Type::NIL;
-			type["class_name"] = "class";
-			type["hint"] = PropertyHint::PROPERTY_HINT_NONE;
-			type["hint_string"] = String();
-			type["usage"] = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NIL_IS_VARIANT;
-			method["return"] = type;
-			method["flags"] = METHOD_FLAG_VARARG;
-			functions_array.push_back(method);
-		}
-	} else {
-		functions_array.append_array(functions);
+	if (!this->functions.is_empty()) {
+		printf("ELFScript::_get_script_method_list: Returning %ld methods\n", functions.size());
+		return functions;
 	}
-	if (!instances.is_empty()) {
-		// Get methods from the first instance
-		ELFScriptInstance *instance = *instances.begin();
-		auto [sandbox, auto_created] = instance->get_sandbox();
-		if (sandbox != nullptr) {
-			if constexpr (VERBOSE_ELFSCRIPT) {
-				printf("ELFScript::_get_script_method_list: Instance has a Sandbox.\n");
-			}
-			functions_array.append_array(sandbox->get_method_list());
-		} else {
-			if constexpr (VERBOSE_ELFSCRIPT) {
-				printf("ELFScript::_get_script_method_list: No sandbox available for instance.\n");
-			}
-		}
+	TypedArray<Dictionary> functions_array;
+	for (String function : function_names) {
+		Dictionary method;
+		method["name"] = function;
+		method["args"] = Array();
+		method["default_args"] = Array();
+		Dictionary type;
+		type["name"] = "type";
+		type["type"] = Variant::Type::NIL;
+		//type["class_name"] = "class";
+		type["hint"] = PropertyHint::PROPERTY_HINT_NONE;
+		type["hint_string"] = String();
+		type["usage"] = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NIL_IS_VARIANT;
+		method["return"] = type;
+		method["flags"] = METHOD_FLAG_VARARG;
+		functions_array.push_back(method);
 	}
 	return functions_array;
 }

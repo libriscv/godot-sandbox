@@ -7,6 +7,7 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
+static constexpr bool VERBOSE_LOGGING = false;
 
 bool CPPScript::DetectCMakeOrSConsProject() {
 	static bool detected = false;
@@ -91,12 +92,16 @@ String CPPScript::_get_class_icon_path() const {
 }
 bool CPPScript::_has_method(const StringName &p_method) const {
 	if (instances.is_empty()) {
-		ERR_PRINT("CPPScript::has_method: No instances available.");
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScript::has_method: No instances available.");
+		}
 		return false;
 	}
 	CPPScriptInstance *instance = *instances.begin();
 	if (instance == nullptr) {
-		ERR_PRINT("CPPScript::has_method: Instance is null.");
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScript::has_method: Instance is null.");
+		}
 		return false;
 	}
 	ELFScriptInstance *elf = instance->get_script_instance();
@@ -111,12 +116,16 @@ bool CPPScript::_has_static_method(const StringName &p_method) const {
 }
 Dictionary CPPScript::_get_method_info(const StringName &p_method) const {
 	if (instances.is_empty()) {
-		ERR_PRINT("CPPScript::_get_method_info: No instances available.");
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScript::_get_method_info: No instances available.");
+		}
 		return Dictionary();
 	}
 	CPPScriptInstance *instance = *instances.begin();
 	if (instance == nullptr) {
-		ERR_PRINT("CPPScript::_get_method_info: Instance is null.");
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScript::_get_method_info: Instance is null.");
+		}
 		return Dictionary();
 	}
 	ELFScriptInstance *elf = instance->get_script_instance();
@@ -153,12 +162,16 @@ Variant CPPScript::_get_property_default_value(const StringName &p_property) con
 void CPPScript::_update_exports() {}
 TypedArray<Dictionary> CPPScript::_get_script_method_list() const {
 	if (instances.is_empty()) {
-		ERR_PRINT("CPPScript::_get_script_method_list: No instances available.");
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScript::_get_script_method_list: No instances available.");
+		}
 		return {};
 	}
 	CPPScriptInstance *instance = *instances.begin();
 	if (instance == nullptr) {
-		ERR_PRINT("CPPScript::_get_script_method_list: Instance is null.");
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScript::_get_script_method_list: Instance is null.");
+		}
 		return {};
 	}
 	ELFScriptInstance *elf = instance->get_script_instance();
@@ -179,12 +192,16 @@ TypedArray<Dictionary> CPPScript::_get_script_property_list() const {
 	//property["default_value"] = source_code;
 	properties.push_back(property);
 	if (instances.is_empty()) {
-		ERR_PRINT("CPPScript::_get_script_property_list: No instances available.");
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScript::_get_script_property_list: No instances available.");
+		}
 		return properties;
 	}
 	CPPScriptInstance *instance = *instances.begin();
 	if (instance == nullptr) {
-		ERR_PRINT("CPPScript::_get_script_property_list: Instance is null.");
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScript::_get_script_property_list: Instance is null.");
+		}
 		return properties;
 	}
 	ELFScriptInstance *elf = instance->get_script_instance();
@@ -223,7 +240,7 @@ PUBLIC Variant public_function(String arg) {
 
 void CPPScript::set_file(const String &p_path) {
 	if (p_path.is_empty()) {
-		ERR_PRINT("CPPScript::set_file: Invalid path.");
+		WARN_PRINT("CPPScript::set_file: Empty resource path.");
 		return;
 	}
 	this->path = p_path;

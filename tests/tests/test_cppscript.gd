@@ -60,9 +60,8 @@ func test_associated_script():
 func test_associated_elf_resource():
 	var n = Node.new()
 	n.set_script(cpp)
-	# Create an ELFScript instance
-	var nn = Node.new()
 	# Attach n under nn
+	var nn = Node.new()
 	nn.add_child(n)
 
 	n.associated_script = Sandbox_TestsTests
@@ -72,10 +71,43 @@ func test_associated_elf_resource():
 	# Verify that we can call methods from the ELF program
 	assert_eq(n.test_int(1234), 1234, "Can call test_int function directly")
 	assert_eq(n.get_tree_base_parent(), nn, "Verify node hierarchy is correct")
+	for i in n.get_method_list():
+		if i.name == "test_int":
+			#print(i)
+			assert_eq(n.test_int(1234), 1234, "Can call test_int function directly")
+			assert_eq(n.call("test_int", 1234), 1234, "Can call test_int function through call()")
+			break
 
 	# Verify that we also can call Sandbox-related functions through the Node
 	assert_true(n.execution_timeout > 0, "Can use property execution_timeout from Node")
 	assert_true(n.is_allowed_object(n), "Can use is_allowed_object function from Node")
+	assert_true(n.monitor_calls_made > 0, "We have made some calls in the Sandbox")
+
+	# Cleanup
+	nn.queue_free()
+	n.queue_free()
+
+func test_associated_elf_resource_on_sandbox():
+	var n = Sandbox.new()
+	n.set_script(cpp)
+	n.associated_script = Sandbox_TestsTests
+	# Attach n under nn
+	var nn = Node.new()
+	nn.add_child(n)
+
+	# Verify that we can call methods from the ELF program
+	assert_eq(n.test_int(1234), 1234, "Can call test_int function directly")
+	assert_eq(n.get_tree_base_parent(), nn, "Verify node hierarchy is correct")
+	for i in n.get_method_list():
+		if i.name == "test_int":
+			assert_eq(n.test_int(1234), 1234, "Can call test_int function directly")
+			assert_eq(n.call("test_int", 1234), 1234, "Can call test_int function through call()")
+			break
+
+	# Verify that we also can call Sandbox-related functions through the Node
+	assert_true(n.execution_timeout > 0, "Can use property execution_timeout from Node")
+	assert_true(n.is_allowed_object(n), "Can use is_allowed_object function from Node")
+	assert_true(n.monitor_calls_made > 0, "We have made some calls in the Sandbox")
 
 	# Cleanup
 	nn.queue_free()

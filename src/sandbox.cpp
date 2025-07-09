@@ -610,6 +610,11 @@ Variant Sandbox::vmcall_fn(const StringName &function_name, const Variant **args
 		this->m_throttled--;
 		return Variant();
 	}
+	// Sandbox.call() is a special case that allows calling functions by name
+	if (function_name == StringName("call")) {
+		// Redirect to vmcall() with the first argument as the function name
+		return this->vmcall(args, arg_count, error);
+	}
 	const gaddr_t address = cached_address_of(function_name.hash(), function_name);
 	if (address == 0) {
 		ERR_PRINT("Function not found: " + function_name + " (Added to the public API?)");
