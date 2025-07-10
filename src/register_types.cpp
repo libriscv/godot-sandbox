@@ -70,15 +70,15 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	elf_language = memnew(ELFScriptLanguage);
 	Engine::get_singleton()->register_script_language(elf_language);
 #ifdef PLATFORM_HAS_EDITOR
-	CPPScriptLanguage::init();
 	ResourceFormatLoaderCPP::init();
 	ResourceFormatSaverCPP::init();
-	RustScriptLanguage::init();
+	CPPScriptLanguage::init();
 	ResourceFormatLoaderRust::init();
 	ResourceFormatSaverRust::init();
-	ZigScriptLanguage::init();
+	RustScriptLanguage::init();
 	ResourceFormatLoaderZig::init();
 	ResourceFormatSaverZig::init();
+	ZigScriptLanguage::init();
 #endif
 	SandboxProjectSettings::register_settings();
 }

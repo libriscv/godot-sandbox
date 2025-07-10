@@ -90,6 +90,7 @@ public:
 
 	void set_file(const String &p_path);
 	CPPScriptInstance *get_cpp_script_instance() const;
+	void remove_instance(CPPScriptInstance *p_instance);
 
 	static String PathToGlobalName(const String &p_path) {
 		return "CPPScript_" + p_path.get_basename().replace("res://", "").replace("/", "_").replace("-", "_").capitalize().replace(" ", "");

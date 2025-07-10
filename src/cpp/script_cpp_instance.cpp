@@ -82,6 +82,7 @@ bool CPPScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 			}
 			return false;
 		}
+		this->unset_script_instance();
 		this->set_script_instance(new_elf_script->get_script_instance(object));
 		if constexpr (VERBOSE_LOGGING) {
 			ERR_PRINT("CPPScriptInstance::set: associated_script to " +
@@ -151,6 +152,9 @@ Variant CPPScriptInstance::callp(
 		const Variant **p_args, const int p_argument_count,
 		GDExtensionCallError &r_error)
 {
+	if constexpr (VERBOSE_LOGGING) {
+		ERR_PRINT("CPPScriptInstance::callp " + p_method);
+	}
 	if (p_method == StringName("set_associated_script"))
 	{
 		if (p_argument_count != 1) {
@@ -184,6 +188,7 @@ Variant CPPScriptInstance::callp(
 			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
 			return Variant();
 		}
+		this->unset_script_instance();
 		this->set_script_instance(new_elf_script->get_script_instance(object));
 		r_error.error = GDEXTENSION_CALL_OK;
 		if constexpr (VERBOSE_LOGGING) {
@@ -239,11 +244,12 @@ Variant CPPScriptInstance::callp(
 				return sandbox->vmcall_fn(p_method, p_args, p_argument_count, r_error);
 			}
 		}
+		if (p_method == StringName("_get_editor_name")) {
+			r_error.error = GDEXTENSION_CALL_OK;
+			return Variant("CPPScriptInstance");
+		}
 		// Fallback: callp on the elf_script_instance directly
 		return elf_script_instance->callp(p_method, p_args, p_argument_count, r_error);
-	}
-	if constexpr (VERBOSE_LOGGING) {
-		ERR_PRINT("CPPScriptInstance::callp " + p_method);
 	}
 	r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 	return Variant();
@@ -451,11 +457,24 @@ ScriptLanguage *CPPScriptInstance::_get_language() {
 CPPScriptInstance::CPPScriptInstance(Object *p_owner, const Ref<CPPScript> p_script) :
 		owner(p_owner), script(p_script)
 {
+	if (p_script->elf_script != nullptr) {
+		// If the script has an associated ELFScript, we can create an ELFScriptInstance
+		this->managed_esi = memnew(ELFScriptInstance(p_owner, script->elf_script));
+		if (this->managed_esi == nullptr) {
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("CPPScriptInstance::CPPScriptInstance: managed_esi is null");
+			}
+			return;
+		}
+		this->set_script_instance(this->managed_esi);
+	} else {
+		this->managed_esi = nullptr;
+	}
 }
 
 CPPScriptInstance::~CPPScriptInstance() {
 	if (this->script.is_valid()) {
-		script->instances.erase(this);
+		script->remove_instance(this);
 	}
 	if (this->managed_esi != nullptr) {
 		memdelete(this->managed_esi);

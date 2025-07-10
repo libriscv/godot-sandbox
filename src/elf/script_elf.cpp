@@ -238,8 +238,8 @@ TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
 
 void ELFScript::_update_exports() {}
 TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
+	ERR_PRINT("ELFScript::_get_script_method_list: Returning " + itos(functions.size()) + " methods");
 	if (!this->functions.is_empty()) {
-		printf("ELFScript::_get_script_method_list: Returning %ld methods\n", functions.size());
 		return functions;
 	}
 	TypedArray<Dictionary> functions_array;

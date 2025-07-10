@@ -82,6 +82,7 @@ void CPPScript::_set_source_code(const String &p_code) {
 	source_code = p_code;
 }
 Error CPPScript::_reload(bool p_keep_state) {
+	this->set_file(this->path);
 	return Error::OK;
 }
 TypedArray<Dictionary> CPPScript::_get_documentation() const {
@@ -91,6 +92,8 @@ String CPPScript::_get_class_icon_path() const {
 	return String("res://addons/godot_sandbox/CPPScript.svg");
 }
 bool CPPScript::_has_method(const StringName &p_method) const {
+	if (p_method == StringName("_init"))
+		return true;
 	if (instances.is_empty()) {
 		if constexpr (VERBOSE_LOGGING) {
 			ERR_PRINT("CPPScript::has_method: No instances available.");
@@ -245,4 +248,11 @@ void CPPScript::set_file(const String &p_path) {
 	}
 	this->path = p_path;
 	this->source_code = FileAccess::get_file_as_string(p_path);
+}
+
+void CPPScript::remove_instance(CPPScriptInstance *p_instance) {
+	instances.erase(p_instance);
+	if (instances.is_empty()) {
+		this->elf_script = nullptr;
+	}
 }

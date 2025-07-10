@@ -24,7 +24,7 @@ CPPScriptLanguage *CPPScriptLanguage::get_singleton() {
 }
 
 String CPPScriptLanguage::_get_name() const {
-	return "CPPScript";
+	return "CPP";
 }
 void CPPScriptLanguage::_init() {}
 String CPPScriptLanguage::_get_type() const {
