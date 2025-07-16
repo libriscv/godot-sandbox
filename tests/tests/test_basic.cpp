@@ -378,8 +378,8 @@ extern "C" Variant test_construct_pa_from_array_at(Array arr, int idx) {
 }
 
 extern "C" Variant test_exception() {
-	asm("unimp");
-	__builtin_unreachable();
+	asm volatile("unimp");
+	return "This should not be reached";
 }
 
 static bool timer_got_called = false;

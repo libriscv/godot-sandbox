@@ -2,8 +2,10 @@ extends GutTest
 
 var callable_was_called = false
 var Sandbox_TestsTests = load("res://tests/tests.elf")
+var holder = Sandbox.new()
 
 func test_instantiation():
+	holder.set_program(Sandbox_TestsTests)
 	# Create a new sandbox
 	var s = Sandbox.new()
 	var m = s.get_method_list()

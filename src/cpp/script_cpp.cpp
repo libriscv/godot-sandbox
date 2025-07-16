@@ -240,6 +240,8 @@ PUBLIC Variant public_function(String arg) {
 }
 )C0D3";
 }
+CPPScript::~CPPScript() {
+}
 
 void CPPScript::set_file(const String &p_path) {
 	if (p_path.is_empty()) {
@@ -249,10 +251,37 @@ void CPPScript::set_file(const String &p_path) {
 	this->path = p_path;
 	this->source_code = FileAccess::get_file_as_string(p_path);
 }
-
+bool CPPScript::detect_script_instance()
+{
+	// It's possible to speculate that eg. a fitting ELFScript would be located at
+	// "res://this/path.cpp" replacing the extension with ".elf".
+	if (this->path.is_empty()) {
+		WARN_PRINT("CPPScript::detect_script_instance: Empty resource path.");
+		return false;
+	}
+	const String elf_path = this->path.get_basename() + ".elf";
+	if (FileAccess::file_exists(elf_path)) {
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScript::detect_script_instance: Found ELF script at " + elf_path);
+		}
+		// Try to get the resource from the path
+		Ref<ELFScript> res = ResourceLoader::get_singleton()->load(elf_path, "ELFScript");
+		if (res.is_valid()) {
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("CPPScript::detect_script_instance: ELF script loaded successfully.");
+				this->elf_script = res;
+				return true;
+			}
+		}
+	}
+	if constexpr (VERBOSE_LOGGING) {
+		ERR_PRINT("CPPScript::detect_script_instance: No ELF script found at " + elf_path);
+	}
+	return false;
+}
 void CPPScript::remove_instance(CPPScriptInstance *p_instance) {
 	instances.erase(p_instance);
 	if (instances.is_empty()) {
-		this->elf_script = nullptr;
+		this->elf_script.unref();
 	}
 }

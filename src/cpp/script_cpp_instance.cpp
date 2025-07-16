@@ -15,7 +15,7 @@ void CPPScriptInstance::set_script_instance(ELFScriptInstance *p_instance)
 	this->elf_script_instance = p_instance;
 	if (p_instance) {
 		// XXX: If elf_script is already set, and is different, that is a problem.
-		this->script->elf_script = p_instance->script.ptr();
+		this->script->elf_script = p_instance->script;
 	}
 }
 void CPPScriptInstance::unset_script_instance()
@@ -457,7 +457,10 @@ ScriptLanguage *CPPScriptInstance::_get_language() {
 CPPScriptInstance::CPPScriptInstance(Object *p_owner, const Ref<CPPScript> p_script) :
 		owner(p_owner), script(p_script)
 {
-	if (p_script->elf_script != nullptr) {
+	if (script->elf_script == nullptr) {
+		script->detect_script_instance();
+	}
+	if (script->elf_script != nullptr) {
 		// If the script has an associated ELFScript, we can create an ELFScriptInstance
 		this->managed_esi = memnew(ELFScriptInstance(p_owner, script->elf_script));
 		if (this->managed_esi == nullptr) {
@@ -465,6 +468,11 @@ CPPScriptInstance::CPPScriptInstance(Object *p_owner, const Ref<CPPScript> p_scr
 				ERR_PRINT("CPPScriptInstance::CPPScriptInstance: managed_esi is null");
 			}
 			return;
+		}
+		if constexpr (VERBOSE_LOGGING) {
+			bool r_valid;
+			ERR_PRINT("CPPScriptInstance: managed_esi set to " +
+				this->managed_esi->to_string(&r_valid));
 		}
 		this->set_script_instance(this->managed_esi);
 	} else {

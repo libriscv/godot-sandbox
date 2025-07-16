@@ -90,6 +90,8 @@ public:
 
 	void set_file(const String &p_path);
 	CPPScriptInstance *get_cpp_script_instance() const;
+	const String &get_path() const { return path; }
+	bool detect_script_instance();
 	void remove_instance(CPPScriptInstance *p_instance);
 
 	static String PathToGlobalName(const String &p_path) {
@@ -97,7 +99,7 @@ public:
 	}
 
 	CPPScript();
-	~CPPScript() {}
+	~CPPScript();
 
 private:
 	static inline bool docker_container_started = false;
@@ -107,6 +109,6 @@ private:
 
 	String path;
 	mutable HashSet<CPPScriptInstance *> instances;
-	ELFScript *elf_script = nullptr;
+	Ref<ELFScript> elf_script;
 	friend class CPPScriptInstance;
 };

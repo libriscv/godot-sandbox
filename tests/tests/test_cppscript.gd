@@ -12,12 +12,11 @@ func test_set_script():
 	# Sanity check that we can use the ELFScript
 	assert_true(nn.execution_timeout > 0, "Can use property execution_timeout from ELFScript")
 	assert_true(nn.is_allowed_object(n), "Can use is_allowed_object function from Node with ELFScript")
-	# Connect the CPPScript to the ELFScript
-	n.associated_script = nn
 	# Attach n under nn
 	nn.add_child(n)
 
 	# Verify that we can call methods from the ELF program
+	n.associated_script = nn
 	assert_eq(n.test_int(1234), 1234, "Can call test_int function directly")
 	assert_eq(n.get_tree_base_parent(), nn, "Verify node hierarchy is correct")
 
@@ -64,7 +63,6 @@ func test_associated_elf_resource():
 	var nn = Node.new()
 	nn.add_child(n)
 
-	n.associated_script = Sandbox_TestsTests
 	assert_eq(n.associated_script, Sandbox_TestsTests, "Verify associated_script is set correctly")
 	assert_eq(n.get_associated_script(), Sandbox_TestsTests, "Verify get_associated_script returns the correct script")
 
@@ -90,7 +88,7 @@ func test_associated_elf_resource():
 func test_associated_elf_resource_on_sandbox():
 	var n = Sandbox.new()
 	n.set_script(cpp)
-	n.associated_script = Sandbox_TestsTests
+	assert_eq(n.associated_script, Sandbox_TestsTests, "Sandbox_TestsTests is already set as associated_script")
 	# Attach n under nn
 	var nn = Node.new()
 	nn.add_child(n)
