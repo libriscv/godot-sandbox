@@ -457,6 +457,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				//.translate_trace = true,
 				//.translate_timing = true,
 				.translate_ignore_instruction_limit = get_instructions_max() <= 0,
+				.translate_use_register_caching = false,
 #endif
 		});
 

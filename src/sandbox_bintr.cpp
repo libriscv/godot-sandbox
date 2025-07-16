@@ -43,6 +43,7 @@ String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool auto
 	options->translate_invoke_compiler = false;
 	options->translate_ignore_instruction_limit = ignore_instruction_limit;
 	options->translate_automatic_nbit_address_space = automatic_nbit_as;
+	options->translate_use_register_caching = false;
 
 	// 2. Enable binary translation output to a string
 	std::string code_output;
