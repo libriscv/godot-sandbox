@@ -106,7 +106,7 @@ bool Sandbox::load_binary_translation(const String &shared_library_path) {
 }
 
 bool Sandbox::try_compile_binary_translation(String shared_library_path, const String &cc, const String &extra_cflags, bool ignore_instruction_limit, bool automatic_nbit_as) {
-	if (this->is_binary_translated()) {
+	if (this->is_binary_translated() && !this->is_jit()) {
 		return true;
 	}
 	if (this->is_in_vmcall()) {
@@ -185,4 +185,9 @@ bool Sandbox::try_compile_binary_translation(String shared_library_path, const S
 
 bool Sandbox::is_binary_translated() const {
 	return this->m_machine->is_binary_translation_enabled();
+}
+
+bool Sandbox::is_jit() const {
+	auto& current_seg = this->m_machine->cpu.current_execute_segment();
+	return current_seg.is_libtcc();
 }

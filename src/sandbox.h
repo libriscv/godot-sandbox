@@ -491,6 +491,12 @@ public:
 	/// @return True if binary translation is loaded, false otherwise.
 	bool is_binary_translated() const;
 
+	/// @brief Check if the program has a binary translation produced by a JIT compiler.
+	/// @note is_binary_translated() will return true if the program has a binary translation,
+	/// regardless of whether it was produced by a JIT- or a system-compiler.
+	/// @return True if the program has a JIT-compiled binary translation, false otherwise.
+	bool is_jit() const;
+
 	void assault(const String &test, int64_t iterations);
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc);
 	machine_t &machine() { return *m_machine; }
