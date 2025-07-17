@@ -46,7 +46,7 @@ jobs:
       - name: Upload addon shared object
         uses: actions/upload-artifact@v4
         with:
-          name: godot-riscv-linux-jit
+          name: godot-jit-linux
           path: ${{github.workspace}}/.build/libgodot_riscv.linux.template_release.x86_64.so
           if-no-files-found: error # 'warn' or 'ignore' are also available, defaults to `warn`
           retention-days: 1 # 90 days by default

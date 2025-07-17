@@ -2,6 +2,10 @@ name: Builds
 
 on:
   workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - "main"
 
 jobs:
   lint:
@@ -15,6 +19,9 @@ jobs:
   build_linux:
     needs: [lint]
     uses: ./.github/workflows/build_linux.yml
+  jit_linux:
+    needs: [lint]
+    uses: ./.github/workflows/jit_linux.yml
   build_macos_static:
     needs: [lint]
     uses: ./.github/workflows/build_macos_static.yml
@@ -24,6 +31,9 @@ jobs:
   build_windows:
     needs: [lint]
     uses: ./.github/workflows/build_windows.yml
+  jit_windows:
+    needs: [lint]
+    uses: ./.github/workflows/jit_windows.yml
   build_web:
     needs: [lint]
     uses: ./.github/workflows/build_web.yml
@@ -31,7 +41,7 @@ jobs:
     uses: ./.github/workflows/build_godot.yml
   build_module:
     uses: ./.github/workflows/build_module.yml
-  
+
   docker_build:
     uses: ./.github/workflows/build_docker.yml
     if: github.ref == 'refs/heads/main'
@@ -54,6 +64,10 @@ jobs:
         with:
           name: static-sandbox
           pattern: static-sandbox-*
+      - uses: actions/upload-artifact/merge@v4
+        with:
+          name: godot-jit
+          pattern: godot-jit-*
 
   release:
     name: Create Release

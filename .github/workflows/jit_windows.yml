@@ -60,7 +60,7 @@ jobs:
     - name: Upload addon DLL
       uses: actions/upload-artifact@v4
       with:
-        name: godot-riscv-windows-jit
+        name: godot-jit-windows
         path: .build/libgodot_riscv.windows.template_release.x86_64.dll
         if-no-files-found: error # 'warn' or 'ignore' are also available, defaults to `warn`
         retention-days: 1 # 90 days by default
