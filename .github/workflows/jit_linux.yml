@@ -3,7 +3,6 @@ name: Linux CMake w/JIT
 on:
   workflow_dispatch:
   workflow_call:
-  push:
 
 jobs:
   build:

@@ -29,7 +29,7 @@ jobs:
           pattern: godot-jit-*
           merge-multiple: true
           path: sandbox
-          name: godot-sandbox-jit
+          name: godot-jit
       - name: Delete draft release(s)
         uses: hugo19941994/delete-draft-releases@v1.0.0
         env:
@@ -38,9 +38,11 @@ jobs:
         shell: sh
         run: |
           ls
+          mkdir -p godot-jit
+          mv sandbox/libgodot_riscv.* godot-jit/
           zip -r "godot-sandbox.zip" godot-sandbox
-          zip -r "godot-sandbox-jit.zip" godot-sandbox-jit
           zip -r "sandbox.zip" sandbox
+          zip -r "godot-sandbox-jit.zip" godot-jit
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
