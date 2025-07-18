@@ -31,6 +31,7 @@ enum SandboxPropertyNameIndex : int {
 	PROP_MONITOR_EXCEPTIONS,
 	PROP_MONITOR_EXECUTION_TIMEOUTS,
 	PROP_MONITOR_CALLS_MADE,
+	PROP_MONITOR_BINARY_TRANSLATED,
 	PROP_GLOBAL_CALLS_MADE,
 	PROP_GLOBAL_EXCEPTIONS,
 	PROP_GLOBAL_TIMEOUTS,
@@ -170,6 +171,8 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_calls_made"), &Sandbox::get_calls_made);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "monitor_calls_made", PROPERTY_HINT_NONE, "Number of calls made", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY), "", "get_calls_made");
 
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "monitor_binary_translated", PROPERTY_HINT_NONE, "Number of calls made", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY), "", "is_binary_translated");
+
 	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_calls_made"), &Sandbox::get_global_calls_made);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_exceptions"), &Sandbox::get_global_exceptions);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("get_global_timeouts"), &Sandbox::get_global_timeouts);
@@ -214,6 +217,7 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 	list.push_back(PropertyInfo(Variant::INT, "monitor_exceptions", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
 	list.push_back(PropertyInfo(Variant::INT, "monitor_execution_timeouts", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
 	list.push_back(PropertyInfo(Variant::INT, "monitor_calls_made", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
+	list.push_back(PropertyInfo(Variant::BOOL, "monitor_binary_translated", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
 
 	return list;
 }
@@ -266,6 +270,7 @@ Sandbox::Sandbox() {
 			"monitor_exceptions",
 			"monitor_execution_timeouts",
 			"monitor_calls_made",
+			"monitor_binary_translated",
 			"global_calls_made",
 			"global_exceptions",
 			"global_timeouts",
@@ -1330,6 +1335,9 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	} else if (name == property_names[PROP_MONITOR_CALLS_MADE]) {
 		r_ret = get_calls_made();
 		return true;
+	} else if (name == property_names[PROP_MONITOR_BINARY_TRANSLATED]) {
+		r_ret = is_binary_translated();
+		return true;
 	} else if (name == property_names[PROP_GLOBAL_CALLS_MADE]) {
 		r_ret = get_global_calls_made();
 		return true;
@@ -1392,7 +1400,7 @@ Array Sandbox::get_property_list() const {
 		Dictionary d;
 		d["name"] = prop.name;
 		d["type"] = prop.type;
-		d["usage"] = PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_SCRIPT_VARIABLE;;
+		d["usage"] = PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_SCRIPT_VARIABLE;
 		arr.push_back(d);
 	}
 	// Node properties
