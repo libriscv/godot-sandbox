@@ -184,10 +184,12 @@ bool Sandbox::try_compile_binary_translation(String shared_library_path, const S
 }
 
 bool Sandbox::is_binary_translated() const {
-	return this->m_machine->is_binary_translation_enabled();
+	// Get main execute segment
+	auto& main_seg = this->m_machine->memory.exec_segment_for(this->m_machine->memory.start_address());
+	return main_seg->is_binary_translated();
 }
 
 bool Sandbox::is_jit() const {
-	auto& current_seg = this->m_machine->cpu.current_execute_segment();
-	return current_seg.is_libtcc();
+	auto& main_seg = this->m_machine->memory.exec_segment_for(this->m_machine->memory.start_address());
+	return main_seg->is_libtcc();
 }
