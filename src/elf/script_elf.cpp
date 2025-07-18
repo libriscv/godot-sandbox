@@ -9,7 +9,6 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
-
 static constexpr bool VERBOSE_ELFSCRIPT = false;
 
 void ELFScript::_bind_methods() {
@@ -152,7 +151,8 @@ bool ELFScript::_has_method(const StringName &p_method) const {
 			result = true;
 	}
 	if constexpr (VERBOSE_ELFSCRIPT) {
-		printf("ELFScript::_has_method: method %s => %d\n", p_method.to_ascii_buffer().ptr(), result);
+		printf("ELFScript::_has_method: method %s => %s\n",
+			String(p_method).utf8().ptr(), result ? "true" : "false");
 	}
 
 	return result;

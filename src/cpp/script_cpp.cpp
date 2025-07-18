@@ -112,7 +112,13 @@ bool CPPScript::_has_method(const StringName &p_method) const {
 		return false;
 	}
 	// Get the method information from the ELFScriptInstance
-	return elf->get_elf_script()->has_method(p_method);
+	if (elf->get_elf_script()) {
+		return elf->get_elf_script()->has_method(p_method);
+	}
+	if constexpr (VERBOSE_LOGGING) {
+		ERR_PRINT("CPPScript::has_method: ELFScriptInstance had no ELFScript!?");
+	}
+	return false;
 }
 bool CPPScript::_has_static_method(const StringName &p_method) const {
 	return false;

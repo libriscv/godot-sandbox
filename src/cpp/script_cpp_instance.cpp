@@ -15,6 +15,12 @@ void CPPScriptInstance::set_script_instance(ELFScriptInstance *p_instance)
 	this->elf_script_instance = p_instance;
 	if (p_instance) {
 		// XXX: If elf_script is already set, and is different, that is a problem.
+		if (p_instance->script == nullptr) {
+			if constexpr (VERBOSE_LOGGING) {
+				ERR_PRINT("CPPScriptInstance::set_script_instance: p_instance->script is null");
+			}
+			return;
+		}
 		this->script->elf_script = p_instance->script;
 	}
 }
