@@ -9,8 +9,10 @@
 #include <godot_cpp/classes/editor_file_system.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
 #include <godot_cpp/classes/editor_settings.hpp>
+#include <godot_cpp/classes/dir_access.hpp>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/os.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/classes/script_editor.hpp>
 #include <godot_cpp/classes/script_editor_base.hpp>
@@ -19,6 +21,33 @@
 static Ref<ResourceFormatSaverCPP> cpp_saver;
 static std::unique_ptr<riscv::ThreadPool> thread_pool;
 static constexpr bool VERBOSE_CMD = false;
+
+static const char cmake_toolchain_bytes[] = R"(
+set(CMAKE_SYSTEM_NAME "Linux")
+set(CMAKE_SYSTEM_VERSION 1)
+set(CMAKE_SYSTEM_PROCESSOR "riscv64")
+set(CMAKE_CROSSCOMPILING TRUE)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+set(CMAKE_C_COMPILER "zig" cc -target riscv64-linux-musl)
+set(CMAKE_CXX_COMPILER "zig" c++ -target riscv64-linux-musl)
+
+if (CMAKE_HOST_WIN32)
+	# Windows: Disable .d files
+	set(CMAKE_C_LINKER_DEPFILE_SUPPORTED FALSE)
+	set(CMAKE_CXX_LINKER_DEPFILE_SUPPORTED FALSE)
+	# Windows: Work-around for zig ar and zig ranlib
+	set(CMAKE_AR "${CMAKE_CURRENT_LIST_DIR}/zig-ar.cmd")
+	set(CMAKE_RANLIB "${CMAKE_CURRENT_LIST_DIR}/zig-ranlib.cmd")
+endif()
+)";
+static const char cmake_zig_ar_bytes[] = R"(
+@echo off
+zig ar %*
+)";
+static const char cmake_zig_ranlib_bytes[] = R"(
+@echo off
+zig ranlib %*
+)";
 
 void ResourceFormatSaverCPP::init() {
 	thread_pool = std::make_unique<riscv::ThreadPool>(1); // Maximum 1 compiler job at a time
@@ -54,9 +83,120 @@ static void auto_generate_cpp_api(const String &path) {
 	}
 }
 
+static bool configure_cmake(const String &path) {
+	OS *os = OS::get_singleton();
+	// Configure cmake to generate the build files
+	// Example: cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DSTRIPPED=ON -DCMAKE_TOOLCHAIN_FILE=%HERE%\toolchain.cmake
+	Ref<DirAccess> dir_access = DirAccess::open(path);
+	if (!dir_access.is_valid()) {
+		ERR_PRINT("Failed to open directory: " + path);
+		return false;
+	}
+	// Create the .build directory if it does not exist
+	if (!dir_access->dir_exists(".build")) {
+		Error err = dir_access->make_dir(".build");
+		if (err != Error::OK) {
+			ERR_PRINT("Failed to create .build directory: " + path);
+			return false;
+		}
+	}
+	// Execute cmake to configure the project
+	// We assume that zig, cmake and git are available in the PATH
+	// TODO: Verify that zig, cmake and git are available in the PATH?
+	const String toolchain_path = path + String("/toolchain.cmake");
+	if (!FileAccess::file_exists(toolchain_path)) {
+		// Create the toolchain file
+		Ref<FileAccess> toolchain_file = FileAccess::open(toolchain_path, FileAccess::ModeFlags::WRITE);
+		if (toolchain_file.is_valid()) {
+			toolchain_file->store_string(cmake_toolchain_bytes);
+			toolchain_file->close();
+		} else {
+			ERR_PRINT("Failed to create toolchain file: " + toolchain_path);
+			return false;
+		}
+	}
+#ifdef _WIN32
+	// Create the zig-ar.cmd file, if it does not exist
+	const String zig_ar_path = path + String("/zig-ar.cmd");
+	if (!FileAccess::file_exists(zig_ar_path)) {
+		Ref<FileAccess> zig_ar_file = FileAccess::open(zig_ar_path, FileAccess::ModeFlags::WRITE);
+		if (zig_ar_file.is_valid()) {
+			zig_ar_file->store_string(cmake_zig_ar_bytes);
+			zig_ar_file->close();
+		} else {
+			ERR_PRINT("Failed to create zig-ar.cmd file: " + zig_ar_path);
+			return false;
+		}
+	}
+	// Create the zig-ranlib.cmd file, if it does not exist
+	const String zig_ranlib_path = path + String("/zig-ranlib.cmd");
+	if (!FileAccess::file_exists(zig_ranlib_path)) {
+		Ref<FileAccess> zig_ranlib_file = FileAccess::open(zig_ranlib_path, FileAccess::ModeFlags::WRITE);
+		if (zig_ranlib_file.is_valid()) {
+			zig_ranlib_file->store_string(cmake_zig_ranlib_bytes);
+			zig_ranlib_file->close();
+		} else {
+			ERR_PRINT("Failed to create zig-ranlib.cmd file: " + zig_ranlib_path);
+			return false;
+		}
+	}
+#endif
+
+	// Create toolchain absolute path
+	const String toolchain_path_absolute = ProjectSettings::get_singleton()->globalize_path("res://") + toolchain_path;
+
+	PackedStringArray arguments;
+	arguments.push_back("cmake");
+	arguments.push_back(path); // CMake directory
+	arguments.push_back("-B");
+	arguments.push_back(path + String("/.build")); // Build directory
+#ifdef _WIN32
+	arguments.push_back("-GNinja"); // Use Ninja as the build system
+#endif
+	arguments.push_back("-DCMAKE_BUILD_TYPE=Release");
+	arguments.push_back("-DSTRIPPED=ON");
+	arguments.push_back("-DCMAKE_TOOLCHAIN_FILE=" + toolchain_path_absolute);
+	//arguments.push_back("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON");
+
+	if (true) {
+		UtilityFunctions::print("CMake arguments: ", arguments);
+	}
+	Array output;
+	int32_t result = os->execute("cmake", arguments, output, true);
+	if (result != 0) {
+		if (!output.is_empty()) {
+			output = output[0].operator String().split("\n");
+			for (int i = 0; i < output.size(); i++) {
+				String line = output[i].operator String();
+				UtilityFunctions::printerr(line);
+			}
+		}
+		ERR_PRINT("Failed to configure cmake: " + itos(result));
+		return false;
+	}
+	UtilityFunctions::print("CMake configured successfully in: ", path);
+	return true;
+}
+
 static Array invoke_cmake(const String &path) {
+	Ref<DirAccess> dir_access = DirAccess::open(path);
+	if (!dir_access.is_valid()) {
+		ERR_PRINT("Failed to open directory: " + path);
+		return Array();
+	}
 	// Generate the C++ run-time API in the CMakelists.txt directory
+	// TODO: Only generate the API if it has not been generated yet
 	auto_generate_cpp_api("res://" + path + "/generated_api.hpp");
+	// Check if path/.build exists, if not, configure CMake
+	if (!dir_access->dir_exists(".build") ||
+		(!dir_access->file_exists(".build/build.ninja")
+		&& !dir_access->file_exists(".build/Makefile"))) {
+		// Configure cmake to generate the build files
+		if (!configure_cmake(path)) {
+			ERR_PRINT("Failed to configure cmake in: " + path);
+			return Array();
+		}
+	}
 	// Invoke cmake to build the project
 	PackedStringArray arguments;
 	arguments.push_back("--build");
