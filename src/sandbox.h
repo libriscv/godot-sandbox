@@ -497,6 +497,16 @@ public:
 	/// @return True if the program has a JIT-compiled binary translation, false otherwise.
 	bool is_jit() const;
 
+	/// @brief Set whether to automatically use nbit-as for binary translation.
+	/// @param automatic_nbit_as If true, use nbit-as for binary translation.
+	/// @warning Do *NOT* enable this unless you are sure the program is compatible with it.
+	void set_binary_translation_automatic_nbit_as(bool automatic_nbit_as) {
+		this->m_bintr_automatic_nbit_as = automatic_nbit_as;
+	}
+	bool get_binary_translation_automatic_nbit_as() const {
+		return this->m_bintr_automatic_nbit_as;
+	}
+
 	void assault(const String &test, int64_t iterations);
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc);
 	machine_t &machine() { return *m_machine; }
@@ -555,6 +565,7 @@ private:
 	bool m_resumable_mode = false; // If enabled, allow running startup in small increments
 	bool m_precise_simulation = false; // Run simulation in the slower, precise mode
 	bool m_is_initialization = false; // If true, the program is in the initialization phase
+	bool m_bintr_automatic_nbit_as = false; // If true, use automatic n-bit address space for binary translation
 
 	CurrentState *m_current_state = nullptr;
 	// State stack, with the permanent (initial) state at index 0.

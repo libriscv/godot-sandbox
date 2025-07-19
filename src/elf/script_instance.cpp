@@ -399,6 +399,7 @@ bool ELFScriptInstance::property_can_revert(const StringName &p_name) const {
 		|| name == "allocations_max"
 		|| name == "use_unboxed_arguments"
 		|| name == "use_precise_simulation"
+		|| name == "use_binary_translation_nbit_as"
 		|| name == "profiling"
 		|| name == "restrictions") {
 		// These are default properties that can be reverted
@@ -433,6 +434,9 @@ bool ELFScriptInstance::property_get_revert(const StringName &p_name, Variant &r
 		r_ret = true;
 		return true;
 	} else if (name == "use_precise_simulation") {
+		r_ret = false;
+		return true;
+	} else if (name == "use_binary_translation_nbit_as") {
 		r_ret = false;
 		return true;
 	} else if (name == "profiling") {
@@ -540,6 +544,8 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 			"get_use_unboxed_arguments",
 			"set_use_precise_simulation",
 			"get_use_precise_simulation",
+			"set_use_binary_translation_nbit_as",
+			"get_use_binary_translation_nbit_as",
 			"set_profiling",
 			"get_profiling",
 			"set_program",

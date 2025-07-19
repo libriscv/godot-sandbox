@@ -21,6 +21,7 @@ enum SandboxPropertyNameIndex : int {
 	PROP_ALLOCATIONS_MAX,
 	PROP_USE_UNBOXED_ARGUMENTS,
 	PROP_USE_PRECISE_SIMULATION,
+	PROP_USE_BINTR_NBIT_AS,
 	PROP_PROFILING,
 	PROP_RESTRICTIONS,
 	PROP_PROGRAM,
@@ -106,6 +107,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("try_compile_binary_translation", "shared_library_path", "compiler", "extra_cflags", "ignore_instruction_limit", "automatic_nbit_as"), &Sandbox::try_compile_binary_translation, DEFVAL("res://bintr"), DEFVAL("cc"), DEFVAL(""), DEFVAL(false), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("is_binary_translated"), &Sandbox::is_binary_translated);
 	ClassDB::bind_method(D_METHOD("is_jit"), &Sandbox::is_jit);
+	ClassDB::bind_method(D_METHOD("set_binary_translation_automatic_nbit_as", "automatic_nbit_as"), &Sandbox::set_binary_translation_automatic_nbit_as, DEFVAL(false));
 
 	// Properties.
 	ClassDB::bind_method(D_METHOD("set", "name", "value"), &Sandbox::set);
@@ -135,6 +137,10 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_use_precise_simulation", "use_precise_simulation"), &Sandbox::set_use_precise_simulation);
 	ClassDB::bind_method(D_METHOD("get_use_precise_simulation"), &Sandbox::get_use_precise_simulation);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE, "Use precise simulation for VM execution"), "set_use_precise_simulation", "get_use_precise_simulation");
+
+	ClassDB::bind_method(D_METHOD("set_use_binary_translation_nbit_as", "use_nbit_as"), &Sandbox::set_binary_translation_automatic_nbit_as);
+	ClassDB::bind_method(D_METHOD("get_use_binary_translation_nbit_as"), &Sandbox::get_binary_translation_automatic_nbit_as);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_binary_translation_nbit_as", PROPERTY_HINT_NONE, "Use n-bit address space for binary translation"), "set_use_binary_translation_nbit_as", "get_use_binary_translation_nbit_as");
 
 	ClassDB::bind_method(D_METHOD("set_profiling", "enable"), &Sandbox::set_profiling, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("get_profiling"), &Sandbox::get_profiling);
@@ -201,6 +207,7 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 	list.push_back(PropertyInfo(Variant::INT, "allocations_max", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE));
+	list.push_back(PropertyInfo(Variant::BOOL, "use_binary_translation_nbit_as", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "profiling", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "restrictions", PROPERTY_HINT_NONE));
 
@@ -260,6 +267,7 @@ Sandbox::Sandbox() {
 			"allocations_max",
 			"use_unboxed_arguments",
 			"use_precise_simulation",
+			"use_binary_translation_nbit_as",
 			"profiling",
 			"restrictions",
 			"program",
@@ -464,6 +472,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				//.translate_timing = true,
 				.translate_ignore_instruction_limit = get_instructions_max() <= 0,
 				.translate_use_register_caching = false,
+				.translate_automatic_nbit_address_space = Sandbox::m_bintr_automatic_nbit_as,
 #endif
 		});
 
@@ -1262,6 +1271,9 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	} else if (name == property_names[PROP_USE_PRECISE_SIMULATION]) {
 		set_use_precise_simulation(value);
 		return true;
+	} else if (name == property_names[PROP_USE_BINTR_NBIT_AS]) {
+		set_binary_translation_automatic_nbit_as(value);
+		return true;
 	} else if (name == property_names[PROP_PROFILING]) {
 		set_profiling(value);
 		return true;
@@ -1304,6 +1316,9 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 		return true;
 	} else if (name == property_names[PROP_USE_PRECISE_SIMULATION]) {
 		r_ret = get_use_precise_simulation();
+		return true;
+	} else if (name == property_names[PROP_USE_BINTR_NBIT_AS]) {
+		r_ret = this->m_bintr_automatic_nbit_as;
 		return true;
 	} else if (name == property_names[PROP_PROFILING]) {
 		r_ret = get_profiling();

@@ -230,6 +230,8 @@ TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
 	properties.push_back(
 			prop_to_dict(PropertyInfo(Variant::BOOL, "use_precise_simulation", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Use precise simulation for VM execution", PROPERTY_USAGE_DEFAULT)));
 	properties.push_back(
+			prop_to_dict(PropertyInfo(Variant::BOOL, "use_binary_translation_nbit_as", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Use n-bit address space for binary translation", PROPERTY_USAGE_DEFAULT)));
+	properties.push_back(
 			prop_to_dict(PropertyInfo(Variant::BOOL, "profiling", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Enable profiling for the sandboxed program", PROPERTY_USAGE_DEFAULT)));
 	properties.push_back(
 			prop_to_dict(PropertyInfo(Variant::BOOL, "restrictions", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Enable restrictions for the sandboxed program", PROPERTY_USAGE_DEFAULT)));
