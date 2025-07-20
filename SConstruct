@@ -84,7 +84,7 @@ if env["platform"] == "windows":
     add_godot_cpp_doc_data(env, sources)
 elif env["platform"] == "macos":
     env.Prepend(CPPPATH=["ext/libriscv/lib/libriscv/lib/macos"])
-    env.Append(FRAMEWORKS=["Security"])
+    env.Append(LINKFLAGS=["-framework", "Security"])
     add_godot_cpp_doc_data(env, sources)
 elif env["platform"] == "linux" or env["platform"] == "android":
     env.Prepend(CPPPATH=["ext/libriscv/lib/libriscv/lib/linux"])
