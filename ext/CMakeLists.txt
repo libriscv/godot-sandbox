@@ -1,6 +1,6 @@
 # Add godot-cpp library
-option(GODOTCPP_TARGET "" "template_release")
 option(GODOTCPP_DISABLE_EXCEPTIONS "" OFF)
+set(GODOTCPP_TARGET "template_release" CACHE STRING "")
 add_subdirectory(godot-cpp)
 
 # Add sandboxing library

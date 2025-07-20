@@ -1,5 +1,6 @@
 build/
 .build/
+.build_android/
 .build_mingw/
 .zig/
 .godot/
