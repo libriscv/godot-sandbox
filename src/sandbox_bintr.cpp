@@ -159,11 +159,23 @@ bool Sandbox::try_compile_binary_translation(String shared_library_path, const S
 	args.push_back("-DCALLBACK_INIT");
 	args.push_back("-o");
 #elif defined(YEP_IS_WINDOWS)
-	args.push_back("/LD");
-	args.push_back("/O2");
-	args.push_back("/w");
-	args.push_back("/DCALLBACK_INIT");
-	args.push_back("/Fe");
+	if (cc.ends_with("zig")) {
+		// Zig cc - C compiler
+		args.push_back("cc");
+		args.push_back("-shared");
+		args.push_back("-fPIC");
+		args.push_back("-fvisibility=hidden");
+		args.push_back("-O2");
+		args.push_back("-w");
+		args.push_back("-DCALLBACK_INIT");
+		args.push_back("-o");
+	} else {
+		args.push_back("/LD");
+		args.push_back("/O2");
+		args.push_back("/w");
+		args.push_back("/DCALLBACK_INIT");
+		args.push_back("/Fe");
+	}
 #endif
 	args.push_back(shared_library_path.replace("res://", ""));
 	if (!extra_cflags.is_empty())
