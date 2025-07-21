@@ -51,5 +51,4 @@ env.Append(LIBS=[base_file])
 env.Append(LIBPATH=[base_path])
 
 # Sources
-
 env_gdextension.add_source_files(env.modules_sources, "*.cpp")
