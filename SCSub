@@ -11,7 +11,7 @@ def get_addon_target():
     return "template_debug"
 
 def get_addon_platform():
-return env["platform"].replace("linuxbsd", "linux")
+    return env["platform"].replace("linuxbsd", "linux")
 
 dev_build_extension = ""
 if env["dev_build"]:
@@ -31,10 +31,10 @@ def get_sufix():
 os.system("scons platform=" + get_addon_platform() + " target=" + get_addon_target() + " arch=" + env["arch"] + " precision=" + env["precision"] + " threads=" + str(env["threads"]) + " dev_build=" + str(env["dev_build"]))
 
 match get_addon_platform():
-case "macos":
-    base_path = f"#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.macos.{get_addon_target()}{dev_build_extension}.{env["arch"]}.framework/"
-case _:
-    base_path = "#modules/sandbox/bin/addons/godot_sandbox/bin"
+    case "macos":
+        base_path = f"#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.macos.{get_addon_target()}{dev_build_extension}.{env["arch"]}.framework/"
+    case _:
+        base_path = "#modules/sandbox/bin/addons/godot_sandbox/bin"
 
 base_file = "libgodot_riscv{}".format(get_sufix())
 
