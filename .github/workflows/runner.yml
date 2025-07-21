@@ -36,8 +36,6 @@ jobs:
     uses: ./.github/workflows/build_web.yml
   build_godot:
     uses: ./.github/workflows/build_godot.yml
-  build_module:
-    uses: ./.github/workflows/build_module.yml
 
   docker_build:
     uses: ./.github/workflows/build_docker.yml
@@ -51,7 +49,7 @@ jobs:
   merge:
     runs-on: ubuntu-latest
     name: Merge
-    needs: [build_android, build_ios, build_linux, build_macos, build_windows, build_web, build_godot, build_module]
+    needs: [build_android, build_ios, build_linux, build_macos, build_windows, build_web, build_godot]
     steps:
       - uses: actions/upload-artifact/merge@v4
         with:
