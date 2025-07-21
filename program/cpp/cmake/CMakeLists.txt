@@ -193,6 +193,9 @@ function (enable_flto_for target)
 	target_compile_options(${target} PRIVATE -flto)
 	target_link_options(${target} PRIVATE -flto)
 endfunction()
+function (enable_stripped_for target)
+	target_link_options(${target} PRIVATE -s)
+endfunction()
 
 # Example:
 # add_sandbox_program(<name> <source_files>)
