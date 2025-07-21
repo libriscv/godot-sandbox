@@ -477,9 +477,10 @@ public:
 
 	/// @brief Open a shared library, which should self-register its functions.
 	/// @param shared_library_path The path to the shared library.
+	/// @param allow_insecure If true, allow loading shared libraries after other Sandbox instances have been created.
 	/// @note This is not a general-purpose function for loading shared libraries. It is only a
 	/// convenience helper function for loading shared libraries that self-register their functions.
-	static bool load_binary_translation(const String &shared_library_path);
+	static bool load_binary_translation(const String &shared_library_path, bool allow_insecure = false);
 
 	/// @brief Try to emit the binary translation code, and then compile it. Does not load the binary translation.
 	/// @note For security reasons, the binary translation is not loaded automatically. A game restart is required,

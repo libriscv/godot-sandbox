@@ -17,7 +17,7 @@ Variant ResourceFormatLoaderELF::_load(const String &p_path, const String &origi
 # endif
 	if (FileAccess::file_exists(dllpath)) {
 		// Load the binary translation library.
-		if (!Sandbox::load_binary_translation(dllpath)) {
+		if (!Sandbox::load_binary_translation(dllpath, true)) {
 			WARN_PRINT("Failed to auto-load binary translation library: " + dllpath);
 		} else if constexpr (VERBOSE_LOADER) {
 			WARN_PRINT("Auto-loaded binary translation library: " + dllpath);

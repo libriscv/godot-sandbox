@@ -67,8 +67,8 @@ String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool auto
 #endif
 }
 
-bool Sandbox::load_binary_translation(const String &shared_library_path) {
-	if (m_global_instances_seen > 0) {
+bool Sandbox::load_binary_translation(const String &shared_library_path, bool allow_insecure) {
+	if (m_global_instances_seen > 0 && !allow_insecure) {
 		ERR_PRINT("Sandbox: Loading shared libraries after Sandbox instances have been created is a security risk."
 			"Please load shared libraries before creating any Sandbox instances.");
 		return false;

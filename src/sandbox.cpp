@@ -103,7 +103,7 @@ void Sandbox::_bind_methods() {
 
 	// Binary translation.
 	ClassDB::bind_method(D_METHOD("emit_binary_translation", "ignore_instruction_limit", "automatic_nbit_address_space"), &Sandbox::emit_binary_translation, DEFVAL(false), DEFVAL(false));
-	ClassDB::bind_static_method("Sandbox", D_METHOD("load_binary_translation", "shared_library_path"), &Sandbox::load_binary_translation);
+	ClassDB::bind_static_method("Sandbox", D_METHOD("load_binary_translation", "shared_library_path", "allow_insecure"), &Sandbox::load_binary_translation, DEFVAL("res://bintr.so"), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("try_compile_binary_translation", "shared_library_path", "compiler", "extra_cflags", "ignore_instruction_limit", "automatic_nbit_as"), &Sandbox::try_compile_binary_translation, DEFVAL("res://bintr"), DEFVAL("cc"), DEFVAL(""), DEFVAL(false), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("is_binary_translated"), &Sandbox::is_binary_translated);
 	ClassDB::bind_method(D_METHOD("is_jit"), &Sandbox::is_jit);
@@ -471,7 +471,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				//.translate_trace = true,
 				//.translate_timing = true,
 				.translate_ignore_instruction_limit = get_instructions_max() <= 0,
-				.translate_use_register_caching = false,
+				.translate_use_register_caching = Sandbox::m_bintr_automatic_nbit_as,
 				.translate_automatic_nbit_address_space = Sandbox::m_bintr_automatic_nbit_as,
 #endif
 		});
