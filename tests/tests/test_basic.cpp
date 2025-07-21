@@ -7,7 +7,7 @@ struct MyException : public std::exception {
 	}
 };
 
-extern "C" Variant test_exceptions() {
+PUBLIC Variant test_exceptions() {
 #ifdef ZIG_COMPILER
 #warning "Zig does not support exceptions (yet)"
 	return "This is a test exception";
@@ -24,42 +24,42 @@ extern "C" Variant test_exceptions() {
 // This works: it's being created during initialization
 static Dictionary d = Dictionary::Create();
 
-extern "C" Variant test_static_storage(Variant key, Variant val) {
+PUBLIC Variant test_static_storage(Variant key, Variant val) {
 	d[key] = val;
 	return d;
 }
-extern "C" Variant test_failing_static_storage(Variant key, Variant val) {
+PUBLIC Variant test_failing_static_storage(Variant key, Variant val) {
 	// This works only once: it's being created after initialization
 	static Dictionary fd = Dictionary::Create();
 	fd[key] = val;
 	return fd;
 }
 static Dictionary fd = Dictionary::Create();
-extern "C" Variant test_permanent_storage(Variant key, Variant val) {
+PUBLIC Variant test_permanent_storage(Variant key, Variant val) {
 	fd[key] = val;
 	fd = Variant(fd).make_permanent();
 	return fd;
 }
 
 static String ps = "Hello this is a permanent string";
-extern "C" Variant test_permanent_string(String input) {
+PUBLIC Variant test_permanent_string(String input) {
 	ps = input;
 	return ps;
 }
 
 static Array pa = Array::Create();
-extern "C" Variant test_permanent_array(Array input) {
+PUBLIC Variant test_permanent_array(Array input) {
 	pa = input;
 	return pa;
 }
 
 static Dictionary pd = Dictionary::Create();
-extern "C" Variant test_permanent_dict(Dictionary input) {
+PUBLIC Variant test_permanent_dict(Dictionary input) {
 	pd = input;
 	return pd;
 }
 
-extern "C" Variant test_check_if_permanent(String test) {
+PUBLIC Variant test_check_if_permanent(String test) {
 	if (test == "string") {
 		printf("Checking if string %d is permanent\n", ps.get_variant_index());
 		return ps.is_permanent();
@@ -73,104 +73,104 @@ extern "C" Variant test_check_if_permanent(String test) {
 	return false;
 }
 
-extern "C" Variant test_infinite_loop() {
+PUBLIC Variant test_infinite_loop() {
 	while (true)
 		;
 }
 
-extern "C" Variant test_recursive_calls(Node sandbox) {
+PUBLIC Variant test_recursive_calls(Node sandbox) {
 	sandbox("vmcall", "test_recursive_calls", sandbox);
 	return {};
 }
 
-extern "C" Variant public_function() {
+PUBLIC Variant public_function() {
 	return "Hello from the other side";
 }
 
-extern "C" Variant test_ping_pong(Variant arg) {
+PUBLIC Variant test_ping_pong(Variant arg) {
 	return arg;
 }
 
-extern "C" Variant test_ping_move_pong(Variant arg) {
+PUBLIC Variant test_ping_move_pong(Variant arg) {
 	Variant v = std::move(arg);
 	return v;
 }
 
-extern "C" Variant test_variant_eq(Variant arg1, Variant arg2) {
+PUBLIC Variant test_variant_eq(Variant arg1, Variant arg2) {
 	return arg1 == arg2;
 }
 
-extern "C" Variant test_variant_neq(Variant arg1, Variant arg2) {
+PUBLIC Variant test_variant_neq(Variant arg1, Variant arg2) {
 	return (arg1 != arg2) == false;
 }
 
-extern "C" Variant test_variant_lt(Variant arg1, Variant arg2) {
+PUBLIC Variant test_variant_lt(Variant arg1, Variant arg2) {
 	return arg1 < arg2;
 }
 
-extern "C" Variant test_bool(bool arg) {
+PUBLIC Variant test_bool(bool arg) {
 	return arg;
 }
 
-extern "C" Variant test_int(long arg) {
+PUBLIC Variant test_int(long arg) {
 	return arg;
 }
 
-extern "C" Variant test_float(double arg) {
+PUBLIC Variant test_float(double arg) {
 	return arg;
 }
 
-extern "C" Variant test_string(String arg) {
+PUBLIC Variant test_string(String arg) {
 	return arg;
 }
 
-extern "C" Variant test_u32string(String arg) {
+PUBLIC Variant test_u32string(String arg) {
 	std::u32string u32 = arg.utf32();
 	return u32;
 }
 
-extern "C" Variant test_nodepath(NodePath arg) {
+PUBLIC Variant test_nodepath(NodePath arg) {
 	return arg;
 }
 
-extern "C" Variant test_vec2(Vector2 arg) {
+PUBLIC Variant test_vec2(Vector2 arg) {
 	Vector2 result = arg;
 	return result;
 }
-extern "C" Variant test_vec2i(Vector2i arg) {
+PUBLIC Variant test_vec2i(Vector2i arg) {
 	Vector2i result = arg;
 	return result;
 }
 
-extern "C" Variant test_vec3(Vector3 arg) {
+PUBLIC Variant test_vec3(Vector3 arg) {
 	Vector3 result = arg;
 	return result;
 }
-extern "C" Variant test_vec3i(Vector3i arg) {
+PUBLIC Variant test_vec3i(Vector3i arg) {
 	Vector3i result = arg;
 	return result;
 }
 
-extern "C" Variant test_vec4(Vector4 arg) {
+PUBLIC Variant test_vec4(Vector4 arg) {
 	Vector4 result = arg;
 	return result;
 }
-extern "C" Variant test_vec4i(Vector4i arg) {
+PUBLIC Variant test_vec4i(Vector4i arg) {
 	Vector4i result = arg;
 	return result;
 }
 
-extern "C" Variant test_color(Color arg) {
+PUBLIC Variant test_color(Color arg) {
 	Color result = arg;
 	return result;
 }
 
-extern "C" Variant test_plane(Plane arg) {
+PUBLIC Variant test_plane(Plane arg) {
 	Plane result = arg;
 	return result;
 }
 
-extern "C" Variant test_array(Array array) {
+PUBLIC Variant test_array(Array array) {
 	array.push_back(2);
 	array.push_back("4");
 	array.push_back(6.0);
@@ -192,7 +192,7 @@ extern "C" Variant test_array(Array array) {
 	return "Fail";
 }
 
-extern "C" Variant test_array_assign(Array arr) {
+PUBLIC Variant test_array_assign(Array arr) {
 	arr[0] = 42;
 	arr[1] = "Hello";
 	arr[2] = PackedArray<double> ({ 3.14, 2.71 });
@@ -217,7 +217,7 @@ extern "C" Variant test_array_assign(Array arr) {
 	return arr;
 }
 
-extern "C" Variant test_array_assign2(Array arr, const size_t idx) {
+PUBLIC Variant test_array_assign2(Array arr, const size_t idx) {
 
 	std::vector<size_t> indices = { 0, 1, 2, 3, 4, 5, 6, 7, 8 };
 
@@ -229,49 +229,49 @@ extern "C" Variant test_array_assign2(Array arr, const size_t idx) {
 	return arr;
 }
 
-extern "C" Variant test_dict(Dictionary arg) {
+PUBLIC Variant test_dict(Dictionary arg) {
 	return arg;
 }
 
-extern "C" Variant test_sub_dictionary(Dictionary dict) {
+PUBLIC Variant test_sub_dictionary(Dictionary dict) {
 	return Dictionary(dict["1"].value());
 }
 
-extern "C" Variant test_rid(RID rid) {
+PUBLIC Variant test_rid(RID rid) {
 	return rid;
 }
 
-extern "C" Variant test_object(Object arg) {
+PUBLIC Variant test_object(Object arg) {
 	Object result = arg;
 	return result;
 }
 
-extern "C" Variant test_basis(Basis basis) {
+PUBLIC Variant test_basis(Basis basis) {
 	Basis b = basis;
 	return b;
 }
 
-extern "C" Variant test_transform2d(Transform2D transform2d) {
+PUBLIC Variant test_transform2d(Transform2D transform2d) {
 	Transform2D t2d = transform2d;
 	return t2d;
 }
 
-extern "C" Variant test_transform3d(Transform3D transform3d) {
+PUBLIC Variant test_transform3d(Transform3D transform3d) {
 	Transform3D t3d = transform3d;
 	return t3d;
 }
 
-extern "C" Variant test_quaternion(Quaternion quaternion) {
+PUBLIC Variant test_quaternion(Quaternion quaternion) {
 	Quaternion q2 = quaternion;
 	return q2;
 }
 
-extern "C" Variant test_callable(Callable callable) {
+PUBLIC Variant test_callable(Callable callable) {
 	return callable.call(1, 2, "3");
 }
 
 // clang-format off
-extern "C" Variant test_create_callable() {
+PUBLIC Variant test_create_callable() {
 	Array array = Array::Create();
 	array.push_back(1);
 	array.push_back(2);
@@ -282,108 +282,108 @@ extern "C" Variant test_create_callable() {
 }
 // clang-format on
 
-extern "C" Variant test_pa_u8(PackedByteArray arr) {
+PUBLIC Variant test_pa_u8(PackedByteArray arr) {
 	return PackedByteArray (arr.fetch());
 }
-extern "C" Variant test_pa_f32(PackedArray<float> arr) {
+PUBLIC Variant test_pa_f32(PackedArray<float> arr) {
 	return PackedArray<float> (arr.fetch());
 }
-extern "C" Variant test_pa_f64(PackedArray<double> arr) {
+PUBLIC Variant test_pa_f64(PackedArray<double> arr) {
 	return PackedArray<double> (arr.fetch());
 }
-extern "C" Variant test_pa_i32(PackedArray<int32_t> arr) {
+PUBLIC Variant test_pa_i32(PackedArray<int32_t> arr) {
 	return PackedArray<int32_t> (arr.fetch());
 }
-extern "C" Variant test_pa_i64(PackedArray<int64_t> arr) {
+PUBLIC Variant test_pa_i64(PackedArray<int64_t> arr) {
 	return PackedArray<int64_t> (arr.fetch());
 }
-extern "C" Variant test_pa_vec2(PackedArray<Vector2> arr) {
+PUBLIC Variant test_pa_vec2(PackedArray<Vector2> arr) {
 	return PackedArray<Vector2> (arr.fetch());
 }
-extern "C" Variant test_pa_vec3(PackedArray<Vector3> arr) {
+PUBLIC Variant test_pa_vec3(PackedArray<Vector3> arr) {
 	return PackedArray<Vector3> (arr.fetch());
 }
-extern "C" Variant test_pa_vec4(PackedArray<Vector4> arr) {
+PUBLIC Variant test_pa_vec4(PackedArray<Vector4> arr) {
 	return PackedArray<Vector4> (arr.fetch());
 }
-extern "C" Variant test_pa_color(PackedArray<Color> arr) {
+PUBLIC Variant test_pa_color(PackedArray<Color> arr) {
 	return PackedArray<Color> (arr.fetch());
 }
-extern "C" Variant test_pa_string(PackedArray<std::string> arr) {
+PUBLIC Variant test_pa_string(PackedArray<std::string> arr) {
 	return PackedArray<std::string> (arr.fetch());
 }
 
-extern "C" Variant test_create_pa_u8() {
+PUBLIC Variant test_create_pa_u8() {
 	PackedByteArray arr({ 1, 2, 3, 4 });
 	return arr;
 }
 static const uint8_t pa_u8_data[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-extern "C" Variant test_create_pa_u8_ptr() {
+PUBLIC Variant test_create_pa_u8_ptr() {
 	return PackedByteArray(pa_u8_data, sizeof(pa_u8_data) / sizeof(uint8_t));
 }
-extern "C" Variant test_create_pa_f32() {
+PUBLIC Variant test_create_pa_f32() {
 	PackedArray<float> arr({ 1, 2, 3, 4 });
 	return arr;
 }
-extern "C" Variant test_create_pa_f64() {
+PUBLIC Variant test_create_pa_f64() {
 	PackedArray<double> arr({ 1, 2, 3, 4 });
 	return arr;
 }
-extern "C" Variant test_create_pa_i32() {
+PUBLIC Variant test_create_pa_i32() {
 	PackedArray<int32_t> arr({ 1, 2, 3, 4 });
 	return arr;
 }
-extern "C" Variant test_create_pa_i64() {
+PUBLIC Variant test_create_pa_i64() {
 	PackedArray<int64_t> arr({ 1, 2, 3, 4 });
 	return arr;
 }
-extern "C" Variant test_create_pa_vec2() {
+PUBLIC Variant test_create_pa_vec2() {
 	PackedArray<Vector2> arr({ { 1, 1 }, { 2, 2 }, { 3, 3 } });
 	return arr;
 }
-extern "C" Variant test_create_pa_vec3() {
+PUBLIC Variant test_create_pa_vec3() {
 	PackedArray<Vector3> arr({ { 1, 1, 1 }, { 2, 2, 2 }, { 3, 3, 3 } });
 	return arr;
 }
-extern "C" Variant test_create_pa_vec4() {
+PUBLIC Variant test_create_pa_vec4() {
 	PackedArray<Vector4> arr({ { 1, 1, 1, 1 }, { 2, 2, 2, 2 }, { 3, 3, 3, 3 } });
 	return arr;
 }
-extern "C" Variant test_create_pa_color() {
+PUBLIC Variant test_create_pa_color() {
 	PackedArray<Color> arr({ { 0, 0, 0, 0 }, { 1, 1, 1, 1 } });
 	return arr;
 }
-extern "C" Variant test_create_pa_string() {
+PUBLIC Variant test_create_pa_string() {
 	PackedArray<std::string> arr({ "Hello", "from", "the", "other", "side" });
 	return arr;
 }
 
-extern "C" Variant test_assign_pa_to_array(PackedArray<int64_t> pa) {
+PUBLIC Variant test_assign_pa_to_array(PackedArray<int64_t> pa) {
 	Array arr = Array::Create();
 	arr.push_back(pa);
 	arr.push_back(pa);
 	return arr;
 }
 
-extern "C" Variant test_assign_pa_to_dict(PackedArray<int64_t> arr) {
+PUBLIC Variant test_assign_pa_to_dict(PackedArray<int64_t> arr) {
 	Dictionary d = Dictionary::Create();
 	d["a1"] = arr;
 	d["a2"] = arr;
 	return d;
 }
 
-extern "C" Variant test_construct_pa_from_array_at(Array arr, int idx) {
+PUBLIC Variant test_construct_pa_from_array_at(Array arr, int idx) {
 	PackedArray<int64_t> pa(arr.at(idx));
 	return pa;
 }
 
-extern "C" Variant test_exception() {
+PUBLIC Variant test_exception() {
 	asm volatile("unimp");
 	return "This should not be reached";
 }
 
 static bool timer_got_called = false;
-extern "C" Variant test_timers() {
+PUBLIC Variant test_timers() {
 	long val1 = 11;
 	float val2 = 22.0f;
 	return CallbackTimer::native_periodic(0.01, [=](Node timer) -> Variant {
@@ -393,11 +393,11 @@ extern "C" Variant test_timers() {
 		return {};
 	});
 }
-extern "C" Variant verify_timers() {
+PUBLIC Variant verify_timers() {
 	return timer_got_called;
 }
 
-extern "C" Variant call_method(Variant v, Variant vmethod, Variant vargs) {
+PUBLIC Variant call_method(Variant v, Variant vmethod, Variant vargs) {
 	std::string method = vmethod.as_std_string();
 	Array args_array = vargs.as_array();
 	std::vector<Variant> args = args_array.to_vector();
@@ -406,7 +406,7 @@ extern "C" Variant call_method(Variant v, Variant vmethod, Variant vargs) {
 	return ret;
 }
 
-extern "C" Variant voidcall_method(Variant v, Variant vmethod, Variant vargs) {
+PUBLIC Variant voidcall_method(Variant v, Variant vmethod, Variant vargs) {
 	std::string method = vmethod.as_std_string();
 	Array args_array = vargs.as_array();
 	std::vector<Variant> args = args_array.to_vector();
@@ -414,21 +414,21 @@ extern "C" Variant voidcall_method(Variant v, Variant vmethod, Variant vargs) {
 	return Nil;
 }
 
-extern "C" Variant access_a_parent(Node n) {
+PUBLIC Variant access_a_parent(Node n) {
 	Node p = n.get_parent();
 	return p;
 }
 
-extern "C" Variant creates_a_node() {
+PUBLIC Variant creates_a_node() {
 	return Node::Create("test");
 }
 
-extern "C" Variant free_self() {
+PUBLIC Variant free_self() {
 	get_node()("free");
 	return Nil;
 }
 
-extern "C" Variant access_an_invalid_child_node() {
+PUBLIC Variant access_an_invalid_child_node() {
 	Node n = Node::Create("test");
 	Node c = Node::Create("child");
 	n.add_child(c);
@@ -437,17 +437,17 @@ extern "C" Variant access_an_invalid_child_node() {
 	return c;
 }
 
-extern "C" Variant access_an_invalid_child_resource(String path) {
+PUBLIC Variant access_an_invalid_child_resource(String path) {
 	Variant resource = loadv(path.utf8());
 	return resource.method_call("instantiate");
 }
 
-extern "C" Variant disable_restrictions() {
+PUBLIC Variant disable_restrictions() {
 	get_node().call("disable_restrictions");
 	return Nil;
 }
 
-extern "C" Variant test_property_proxy() {
+PUBLIC Variant test_property_proxy() {
 	Node node = Node::Create("Fail 1");
 	node.name() = "Fail 1.5";
 	node.set_name("Fail 2");
@@ -465,22 +465,22 @@ extern "C" Variant test_property_proxy() {
 
 // This tests the higher limit for boxed arguments with up to 16 arguments
 // We will pass in 10 integers and 6 strings, which we add up and return
-extern "C" Variant test_many_arguments(Variant a1, Variant a2, Variant a3, Variant a4, Variant a5, Variant a6, Variant a7, Variant a8, Variant a9, Variant a10, Variant a11, Variant a12, Variant a13, Variant a14, Variant a15, Variant a16) {
+PUBLIC Variant test_many_arguments(Variant a1, Variant a2, Variant a3, Variant a4, Variant a5, Variant a6, Variant a7, Variant a8, Variant a9, Variant a10, Variant a11, Variant a12, Variant a13, Variant a14, Variant a15, Variant a16) {
 	return int(a1) + int(a2) + int(a3) + int(a4) + int(a5) + int(a6) + int(a7) + int(a8) + int(a9) + int(a10) + a11.as_string().to_int() + a12.as_string().to_int() + a13.as_string().to_int() + a14.as_string().to_int() + a15.as_string().to_int() + a16.as_string().to_int();
 }
 
-extern "C" Variant test_many_arguments2(Variant a1, Variant a2, Variant a3, Variant a4, Variant a5, Variant a6, Variant a7, Variant a8) {
+PUBLIC Variant test_many_arguments2(Variant a1, Variant a2, Variant a3, Variant a4, Variant a5, Variant a6, Variant a7, Variant a8) {
 	return int(a1) + int(a2) + int(a3) + int(a4) + int(a5) + int(a6) + int(a7) + a8.as_string().to_int();
 }
 
-extern "C" Variant test_many_unboxed_arguments(int a1, int a2, int a3, int a4, int a5, int a6, int a7, double f1, double f2, double f3, double f4) {
+PUBLIC Variant test_many_unboxed_arguments(int a1, int a2, int a3, int a4, int a5, int a6, int a7, double f1, double f2, double f3, double f4) {
 	return int(a1) + int(a2) + int(a3) + int(a4) + int(a5) + int(a6) + int(a7) + int(f1) + int(f2) + int(f3) + int(f4);
 }
 
-extern "C" Variant test_many_unboxed_arguments2(int a1, int a2, int a3, int a4, int a5, int a6, int a7, Vector2 v1, Vector2 v2, Vector2 v3, Vector2 v4) {
+PUBLIC Variant test_many_unboxed_arguments2(int a1, int a2, int a3, int a4, int a5, int a6, int a7, Vector2 v1, Vector2 v2, Vector2 v3, Vector2 v4) {
 	return int(a1) + int(a2) + int(a3) + int(a4) + int(a5) + int(a6) + int(a7) + int(v1.x) + int(v1.y) + int(v2.x) + int(v2.y) + int(v3.x) + int(v3.y) + int(v4.x) + int(v4.y);
 }
 
-extern "C" Variant get_tree_base_parent() {
+PUBLIC Variant get_tree_base_parent() {
 	return get_parent();
 }
