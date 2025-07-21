@@ -112,6 +112,21 @@ static inline void add_property(std::string_view name, Variant::Type type, const
 	sys_sandbox_add(0, name.data(), name.size(), type, setter, getter, &default_value);
 }
 
+/// @brief Add a new property to the Sandbox class. Simplified version.
+/// @param name The name of the property.
+/// @param type The type of the property.
+/// The ADD_PROPERTY macro is a convenience macro that allows you to define a property
+/// without a default value, or getter and setter. It assumes there's a global variable
+/// with the same name as the property, and uses that as the getter and setter. The default
+/// value is set to the current value of the variable.
+/// @example
+/// static double player_speed = 60.0;
+/// int main() {
+/// 	ADD_PROPERTY(player_speed, Variant::FLOAT);
+/// }
+#define ADD_PROPERTY(name, type) \
+	add_property(#name, type, name, []() -> Variant { return name; }, [](Variant value) -> Variant { name = (decltype(name))value; return {}; });
+
 /// @brief Stop execution of the program.
 /// @note This function may return if the program is resumed. However, no such
 /// functionality is currently implemented.
