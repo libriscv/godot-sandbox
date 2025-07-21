@@ -90,30 +90,34 @@ elif env["platform"] == "linux" or env["platform"] == "android":
     env.Prepend(CPPPATH=["ext/libriscv/lib/libriscv/lib/linux"])
     add_godot_cpp_doc_data(env, sources)
 
-if env["platform"] == "macos" or env["platform"] == "ios":
-    library = env.SharedLibrary(
-        "bin/addons/godot_sandbox/bin/libgodot_riscv{}.framework/libgodot_riscv{}".format(
-            env["suffix"], env["suffix"]
-        ),
-        source=sources,
-    )
+if "static_build" not in ARGUMENTS or ARGUMENTS["static_build"]!="yes":
+    print("Building shared library")
+    if env["platform"] == "macos" or env["platform"] == "ios":
+        library = env.SharedLibrary(
+            "bin/addons/godot_sandbox/bin/libgodot_riscv{}.framework/libgodot_riscv{}".format(
+                env["suffix"], env["suffix"]
+            ),
+            source=sources,
+        )
+    else:
+        library = env.SharedLibrary(
+            "bin/addons/godot_sandbox/bin/libgodot_riscv{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+            source=sources,
+        )
+    Default(library)
 else:
-    library = env.SharedLibrary(
-        "bin/addons/godot_sandbox/bin/libgodot_riscv{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
-        source=sources,
-    )
-Default(library)
-# Static lib
-if env["platform"] == "macos" or env["platform"] == "ios":
-    library = env.StaticLibrary(
-        "bin/addons/godot_sandbox/bin/libgodot_riscv{}.framework/libgodot_riscv{}{}".format(
-            env["suffix"], env["suffix"], env["LIBSUFFIX"]
-        ),
-        source=sources,
-    )
-else:
-    library = env.StaticLibrary(
-        "bin/addons/godot_sandbox/bin/libgodot_riscv{}{}".format(env["suffix"], env["LIBSUFFIX"]),
-        source=sources,
-    )
-Default(library)
+    print("Building static library")
+    # Static lib
+    if env["platform"] == "macos" or env["platform"] == "ios":
+        library = env.StaticLibrary(
+            "bin/addons/godot_sandbox/bin/libgodot_riscv{}.framework/libgodot_riscv{}{}".format(
+                env["suffix"], env["suffix"], env["LIBSUFFIX"]
+            ),
+            source=sources,
+        )
+    else:
+        library = env.StaticLibrary(
+            "bin/addons/godot_sandbox/bin/libgodot_riscv{}{}".format(env["suffix"], env["LIBSUFFIX"]),
+            source=sources,
+        )
+    Default(library)

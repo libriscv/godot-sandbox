@@ -16,13 +16,6 @@ jobs:
           merge-multiple: true
           path: godot-sandbox
           name: godot-sandbox
-      - name: Download artifacts static
-        uses: actions/download-artifact@v4
-        with:
-          pattern: static-sandbox-*
-          merge-multiple: true
-          path: sandbox
-          name: static-sandbox
       - name: Download artifacts JIT
         uses: actions/download-artifact@v4
         with:

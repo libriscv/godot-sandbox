@@ -22,9 +22,6 @@ jobs:
   jit_linux:
     needs: [lint]
     uses: ./.github/workflows/jit_linux.yml
-  build_macos_static:
-    needs: [lint]
-    uses: ./.github/workflows/build_macos_static.yml
   build_macos:
     needs: [lint]
     uses: ./.github/workflows/build_macos.yml
@@ -54,16 +51,12 @@ jobs:
   merge:
     runs-on: ubuntu-latest
     name: Merge
-    needs: [build_android, build_ios, build_linux, build_macos, build_macos_static, build_windows, build_web, build_godot, build_module]
+    needs: [build_android, build_ios, build_linux, build_macos, build_windows, build_web, build_godot, build_module]
     steps:
       - uses: actions/upload-artifact/merge@v4
         with:
           name: godot-sandbox
           pattern: godot-sandbox-*
-      - uses: actions/upload-artifact/merge@v4
-        with:
-          name: static-sandbox
-          pattern: static-sandbox-*
       - uses: actions/upload-artifact/merge@v4
         with:
           name: godot-jit

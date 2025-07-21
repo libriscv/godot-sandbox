@@ -40,13 +40,3 @@ jobs:
             ${{ github.workspace }}/bin/**/*.dll
           if-no-files-found: error
           retention-days: 10 # 90 days by default
-
-      - name: Upload Artifact Static
-        uses: actions/upload-artifact@v4
-        with:
-          name: static-sandbox-windows-${{ matrix.arch }}-${{ matrix.precision }}
-          path: |
-            ${{ github.workspace }}/bin/**/*.a
-            ${{ github.workspace }}/ext/godot-cpp/**/*.a
-          if-no-files-found: error
-          retention-days: 10 # 90 days by default
