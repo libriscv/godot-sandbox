@@ -154,7 +154,7 @@ static bool configure_cmake(const String &path) {
 	arguments.push_back("-GNinja"); // Use Ninja as the build system
 #endif
 	arguments.push_back("-DCMAKE_BUILD_TYPE=Release");
-	arguments.push_back("-DSTRIPPED=ON");
+	arguments.push_back("-DSTRIPPED=OFF");
 	arguments.push_back("-DCMAKE_TOOLCHAIN_FILE=" + toolchain_path_absolute);
 	//arguments.push_back("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON");
 
