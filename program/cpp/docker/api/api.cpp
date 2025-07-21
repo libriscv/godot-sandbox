@@ -49,6 +49,58 @@ __attribute__((constructor, used)) void setup_native_stuff() {
 	});
 }
 
+// Use Godot-Sandbox Math system calls for some math functions.
+// 32-bit floating point math functions:
+extern "C" __attribute__((used)) float sinf(float x) {
+	return Math::sinf(x);
+}
+extern "C" __attribute__((used)) float cosf(float x) {
+	return Math::cosf(x);
+}
+extern "C" __attribute__((used)) float tanf(float x) {
+	return Math::tanf(x);
+}
+extern "C" __attribute__((used)) float asinf(float x) {
+	return Math::asinf(x);
+}
+extern "C" __attribute__((used)) float acosf(float x) {
+	return Math::acosf(x);
+}
+extern "C" __attribute__((used)) float atanf(float x) {
+	return Math::atanf(x);
+}
+extern "C" __attribute__((used)) float atan2f(float y, float x) {
+	return Math::atan2f(y, x);
+}
+extern "C" __attribute__((used)) float powf(float x, float y) {
+	return Math::powf(x, y);
+}
+// 64-bit floating point math functions:
+extern "C" __attribute__((used)) double sin(double x) {
+	return Math::sin(x);
+}
+extern "C" __attribute__((used)) double cos(double x) {
+	return Math::cos(x);
+}
+extern "C" __attribute__((used)) double tan(double x) {
+	return Math::tan(x);
+}
+extern "C" __attribute__((used)) double asin(double x) {
+	return Math::asin(x);
+}
+extern "C" __attribute__((used)) double acos(double x) {
+	return Math::acos(x);
+}
+extern "C" __attribute__((used)) double atan(double x) {
+	return Math::atan(x);
+}
+extern "C" __attribute__((used)) double atan2(double y, double x) {
+	return Math::atan2(y, x);
+}
+extern "C" __attribute__((used)) double pow(double x, double y) {
+	return Math::pow(x, y);
+}
+
 // clang-format off
 #define STR2(x) #x
 #define STR(x) STR2(x)
