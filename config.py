@@ -3,7 +3,7 @@ def can_build(env, platform):
 
 
 def configure(env):
-    return env["is_msvc"] != True
+    return env.get("is_msvc", False) != True
 
 def get_doc_classes():
     return [
