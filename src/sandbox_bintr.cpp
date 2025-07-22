@@ -150,6 +150,10 @@ bool Sandbox::try_compile_binary_translation(String shared_library_path, const S
 	fa->close();
 	// Compile the generated code
 	Array args;
+	if (cc.ends_with("zig")) {
+		// Zig cc - C compiler (faster than C++)
+		args.push_back("cc");
+	}
 #if defined(__linux__) || defined(YEP_IS_MACOSX)
 	args.push_back("-shared");
 	args.push_back("-fPIC");
@@ -161,7 +165,6 @@ bool Sandbox::try_compile_binary_translation(String shared_library_path, const S
 #elif defined(YEP_IS_WINDOWS)
 	if (cc.ends_with("zig")) {
 		// Zig cc - C compiler
-		args.push_back("cc");
 		args.push_back("-shared");
 		args.push_back("-fPIC");
 		args.push_back("-fvisibility=hidden");
