@@ -38,8 +38,10 @@ match get_addon_platform():
     case _:
         base_path = "#modules/sandbox/bin/addons/godot_sandbox/bin"
 
-base_file = "godot_riscv{}".format(get_sufix())
-
+if get_addon_platform() == "windows":
+    base_file = "godot_riscv{}".format(get_sufix()) + ".lib"
+else:
+    base_file = "godot_riscv{}".format(get_sufix())
 env_gdextension = env_modules.Clone()
 print("Using base path: {}".format(base_path))
 print("Using base file: {}".format(base_file))
