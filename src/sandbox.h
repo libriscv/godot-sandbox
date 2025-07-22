@@ -380,7 +380,7 @@ public:
 	/// @brief Get the list of sandbox properties as a dictionary.
 	/// @note These are unrelated to SandboxProperty objects. It's all the properties that are exposed to the Godot editor.
 	/// @return The dictionary of sandbox properties.
-	std::vector<PropertyInfo> create_sandbox_property_list() const;
+	static std::vector<PropertyInfo> create_sandbox_property_list();
 
 	// -= Program management & public functions =-
 
@@ -498,6 +498,7 @@ public:
 	/// @return True if the program has a JIT-compiled binary translation, false otherwise.
 	bool is_jit() const;
 
+#ifdef RISCV_LIBTCC
 	/// @brief Set whether to automatically use nbit-as for binary translation.
 	/// @param automatic_nbit_as If true, use nbit-as for binary translation.
 	/// @warning Do *NOT* enable this unless you are sure the program is compatible with it.
@@ -507,6 +508,24 @@ public:
 	bool get_binary_translation_automatic_nbit_as() const {
 		return this->m_bintr_automatic_nbit_as;
 	}
+
+	/// @brief Set whether to perform binary translation in the background.
+	/// @param bg_compilation If true, perform binary translation in the background.
+	void set_binary_translation_bg_compilation(bool bg_compilation) {
+		this->m_bintr_bg_compilation = bg_compilation;
+	}
+	bool get_binary_translation_bg_compilation() const {
+		return this->m_bintr_bg_compilation;
+	}
+
+	/// @brief Enable or disable the use of JIT-compilation.
+	/// @param enable If true, enable JIT-compilation, false to disable it.
+	static void set_jit_enabled(bool enable) { m_bintr_jit = enable; }
+
+	/// @brief Check if JIT-compilation is enabled.
+	/// @return True if JIT-compilation is enabled, false otherwise.
+	static bool is_jit_enabled() { return m_bintr_jit; }
+#endif
 
 	void assault(const String &test, int64_t iterations);
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc);
@@ -566,7 +585,10 @@ private:
 	bool m_resumable_mode = false; // If enabled, allow running startup in small increments
 	bool m_precise_simulation = false; // Run simulation in the slower, precise mode
 	bool m_is_initialization = false; // If true, the program is in the initialization phase
-	bool m_bintr_automatic_nbit_as = false; // If true, use automatic n-bit address space for binary translation
+#ifdef RISCV_LIBTCC
+	bool m_bintr_automatic_nbit_as = false; // Automatic n-bit address space for binary translation
+	bool m_bintr_bg_compilation = true; // Perform binary translation in the background
+#endif
 
 	CurrentState *m_current_state = nullptr;
 	// State stack, with the permanent (initial) state at index 0.
@@ -631,6 +653,9 @@ private:
 	static inline uint32_t m_global_instances_current = 0; // Counts the number of current instances
 	static inline uint32_t m_global_instances_seen = 0; // Incremented for each instance created
 	static inline double m_accumulated_startup_time = 0.0;
+#ifdef RISCV_LIBTCC
+	static inline bool m_bintr_jit = true; // Enable JIT compilation by default
+#endif
 };
 
 inline void Sandbox::CurrentState::append(Variant &&value) {

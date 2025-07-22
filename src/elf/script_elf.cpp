@@ -217,24 +217,9 @@ Variant ELFScript::_get_property_default_value(const StringName &p_property) con
 }
 TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
 	TypedArray<Dictionary> properties;
-	properties.push_back(
-			prop_to_dict(PropertyInfo(Variant::INT, "references_max", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Maximum references allowed by the sandboxed program", PROPERTY_USAGE_DEFAULT)));
-	properties.push_back(
-			prop_to_dict(PropertyInfo(Variant::INT, "memory_max", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Maximum memory used by the sandboxed program", PROPERTY_USAGE_DEFAULT)));
-	properties.push_back(
-			prop_to_dict(PropertyInfo(Variant::INT, "execution_timeout", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Maximum instructions executed by the sandboxed program", PROPERTY_USAGE_DEFAULT)));
-	properties.push_back(
-			prop_to_dict(PropertyInfo(Variant::INT, "allocations_max", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Maximum number of allocations allowed by the sandboxed program", PROPERTY_USAGE_DEFAULT)));
-	properties.push_back(
-			prop_to_dict(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Use unboxed arguments for Sandbox function calls", PROPERTY_USAGE_DEFAULT)));
-	properties.push_back(
-			prop_to_dict(PropertyInfo(Variant::BOOL, "use_precise_simulation", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Use precise simulation for VM execution", PROPERTY_USAGE_DEFAULT)));
-	properties.push_back(
-			prop_to_dict(PropertyInfo(Variant::BOOL, "use_binary_translation_nbit_as", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Use n-bit address space for binary translation", PROPERTY_USAGE_DEFAULT)));
-	properties.push_back(
-			prop_to_dict(PropertyInfo(Variant::BOOL, "profiling", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Enable profiling for the sandboxed program", PROPERTY_USAGE_DEFAULT)));
-	properties.push_back(
-			prop_to_dict(PropertyInfo(Variant::BOOL, "restrictions", PropertyHint::PROPERTY_HINT_TYPE_STRING, "Enable restrictions for the sandboxed program", PROPERTY_USAGE_DEFAULT)));
+	for (const PropertyInfo &prop : Sandbox::create_sandbox_property_list()) {
+		properties.push_back(prop_to_dict(prop));
+	}
 	return properties;
 }
 

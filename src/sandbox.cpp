@@ -6,6 +6,9 @@
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#if defined(RISCV_BINARY_TRANSLATION) && defined(RISCV_LIBTCC)
+#include <future>
+#endif
 
 using namespace godot;
 
@@ -21,7 +24,10 @@ enum SandboxPropertyNameIndex : int {
 	PROP_ALLOCATIONS_MAX,
 	PROP_USE_UNBOXED_ARGUMENTS,
 	PROP_USE_PRECISE_SIMULATION,
-	PROP_USE_BINTR_NBIT_AS,
+#ifdef RISCV_LIBTCC
+	PROP_BINTR_NBIT_AS,
+	PROP_BINTR_BG_COMPILE,
+#endif // RISCV_LIBTCC
 	PROP_PROFILING,
 	PROP_RESTRICTIONS,
 	PROP_PROGRAM,
@@ -107,7 +113,10 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("try_compile_binary_translation", "shared_library_path", "compiler", "extra_cflags", "ignore_instruction_limit", "automatic_nbit_as"), &Sandbox::try_compile_binary_translation, DEFVAL("res://bintr"), DEFVAL("cc"), DEFVAL(""), DEFVAL(false), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("is_binary_translated"), &Sandbox::is_binary_translated);
 	ClassDB::bind_method(D_METHOD("is_jit"), &Sandbox::is_jit);
-	ClassDB::bind_method(D_METHOD("set_binary_translation_automatic_nbit_as", "automatic_nbit_as"), &Sandbox::set_binary_translation_automatic_nbit_as, DEFVAL(false));
+#ifdef RISCV_LIBTCC
+	ClassDB::bind_static_method("Sandbox", D_METHOD("set_jit_enabled", "enable"), &Sandbox::set_jit_enabled);
+	ClassDB::bind_static_method("Sandbox", D_METHOD("is_jit_enabled"), &Sandbox::is_jit_enabled);
+#endif
 
 	// Properties.
 	ClassDB::bind_method(D_METHOD("set", "name", "value"), &Sandbox::set);
@@ -138,9 +147,15 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_use_precise_simulation"), &Sandbox::get_use_precise_simulation);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE, "Use precise simulation for VM execution"), "set_use_precise_simulation", "get_use_precise_simulation");
 
-	ClassDB::bind_method(D_METHOD("set_use_binary_translation_nbit_as", "use_nbit_as"), &Sandbox::set_binary_translation_automatic_nbit_as);
-	ClassDB::bind_method(D_METHOD("get_use_binary_translation_nbit_as"), &Sandbox::get_binary_translation_automatic_nbit_as);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_binary_translation_nbit_as", PROPERTY_HINT_NONE, "Use n-bit address space for binary translation"), "set_use_binary_translation_nbit_as", "get_use_binary_translation_nbit_as");
+#ifdef RISCV_LIBTCC
+	ClassDB::bind_method(D_METHOD("set_binary_translation_nbit_as", "use_nbit_as"), &Sandbox::set_binary_translation_automatic_nbit_as);
+	ClassDB::bind_method(D_METHOD("get_binary_translation_nbit_as"), &Sandbox::get_binary_translation_automatic_nbit_as);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "binary_translation_nbit_as", PROPERTY_HINT_NONE, "Use n-bit address space for binary translation"), "set_binary_translation_nbit_as", "get_binary_translation_nbit_as");
+
+	ClassDB::bind_method(D_METHOD("set_binary_translation_bg_compilation", "bg_compilation"), &Sandbox::set_binary_translation_bg_compilation);
+	ClassDB::bind_method(D_METHOD("get_binary_translation_bg_compilation"), &Sandbox::get_binary_translation_bg_compilation);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "binary_translation_bg_compilation", PROPERTY_HINT_NONE, "Perform binary translation in the background"), "set_binary_translation_bg_compilation", "get_binary_translation_bg_compilation");
+#endif // RISCV_LIBTCC
 
 	ClassDB::bind_method(D_METHOD("set_profiling", "enable"), &Sandbox::set_profiling, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("get_profiling"), &Sandbox::get_profiling);
@@ -195,7 +210,7 @@ void Sandbox::_bind_methods() {
 	ADD_GROUP("Sandboxed Properties", "custom_");
 }
 
-std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
+std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() {
 	std::vector<PropertyInfo> list;
 	// Create a list of properties for the Sandbox class only.
 	// This is used to expose the basic properties to the editor.
@@ -207,7 +222,10 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() const {
 	list.push_back(PropertyInfo(Variant::INT, "allocations_max", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE));
-	list.push_back(PropertyInfo(Variant::BOOL, "use_binary_translation_nbit_as", PROPERTY_HINT_NONE));
+#ifdef RISCV_LIBTCC
+	list.push_back(PropertyInfo(Variant::BOOL, "binary_translation_nbit_as", PROPERTY_HINT_NONE));
+	list.push_back(PropertyInfo(Variant::BOOL, "binary_translation_bg_compilation", PROPERTY_HINT_NONE));
+#endif // RISCV_LIBTCC
 	list.push_back(PropertyInfo(Variant::BOOL, "profiling", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "restrictions", PROPERTY_HINT_NONE));
 
@@ -267,7 +285,10 @@ Sandbox::Sandbox() {
 			"allocations_max",
 			"use_unboxed_arguments",
 			"use_precise_simulation",
-			"use_binary_translation_nbit_as",
+#ifdef RISCV_LIBTCC
+			"binary_translation_nbit_as",
+			"binary_translation_bg_compilation",
+#endif // RISCV_LIBTCC
 			"profiling",
 			"restrictions",
 			"program",
@@ -470,11 +491,38 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				.translate_invoke_compiler = riscv::libtcc_enabled,
 				//.translate_trace = true,
 				//.translate_timing = true,
+#  ifdef RISCV_LIBTCC
 				.translate_ignore_instruction_limit = get_instructions_max() <= 0,
 				.translate_use_register_caching = Sandbox::m_bintr_automatic_nbit_as,
 				.translate_automatic_nbit_address_space = Sandbox::m_bintr_automatic_nbit_as,
+#  endif // RISCV_LIBTCC
 #endif
 		});
+#if defined(RISCV_BINARY_TRANSLATION) && defined(RISCV_LIBTCC)
+		// Background compilation, if enabled, will run the compilation in a separate thread
+		// and live-patch the results into the decoder cache after the compilation is done.
+		if (this->m_bintr_bg_compilation) {
+			options->translate_background_callback = [](std::function<void()>& callback) {
+				// This is called from inside the binary translator in the main thread,
+				// and the goal is to run the callback in a separate thread, to avoid
+				// blocking the main thread while the compilation step is running.
+				std::thread([callback = std::move(callback)]() {
+					// Run the callback in a separate thread
+					// This is useful for long-running compilation tasks
+					// that should not block the main thread.
+					// The callback will be called when the compilation is done.
+					// Note: This is a no-op if the callback is empty.
+					try {
+						if (callback)
+							callback();
+					} catch (const std::exception &e) {
+						String what = e.what();
+						ERR_PRINT(("Binary translation background compilation exception: " + what));
+					}
+				}).detach();
+			};
+		}
+#endif
 
 		this->m_machine = new machine_t{ binary_view, *options };
 		this->m_machine->set_options(std::move(options));
@@ -1271,9 +1319,14 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	} else if (name == property_names[PROP_USE_PRECISE_SIMULATION]) {
 		set_use_precise_simulation(value);
 		return true;
-	} else if (name == property_names[PROP_USE_BINTR_NBIT_AS]) {
+#ifdef RISCV_LIBTCC
+	} else if (name == property_names[PROP_BINTR_NBIT_AS]) {
 		set_binary_translation_automatic_nbit_as(value);
 		return true;
+	} else if (name == property_names[PROP_BINTR_BG_COMPILE]) {
+		set_binary_translation_bg_compilation(value);
+		return true;
+#endif // RISCV_LIBTCC
 	} else if (name == property_names[PROP_PROFILING]) {
 		set_profiling(value);
 		return true;
@@ -1317,9 +1370,14 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	} else if (name == property_names[PROP_USE_PRECISE_SIMULATION]) {
 		r_ret = get_use_precise_simulation();
 		return true;
-	} else if (name == property_names[PROP_USE_BINTR_NBIT_AS]) {
+#ifdef RISCV_LIBTCC
+	} else if (name == property_names[PROP_BINTR_NBIT_AS]) {
 		r_ret = this->m_bintr_automatic_nbit_as;
 		return true;
+	} else if (name == property_names[PROP_BINTR_BG_COMPILE]) {
+		r_ret = this->m_bintr_bg_compilation;
+		return true;
+#endif // RISCV_LIBTCC
 	} else if (name == property_names[PROP_PROFILING]) {
 		r_ret = get_profiling();
 		return true;

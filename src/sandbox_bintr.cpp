@@ -35,6 +35,7 @@ String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool auto
 		return String();
 	}
 #ifdef RISCV_BINARY_TRANSLATION
+	std::string code_output;
 	// 1. Re-create the same options
 	auto options = std::make_shared<riscv::MachineOptions<RISCV_ARCH>>(machine().options());
 	options->use_shared_execute_segments = false;
@@ -46,13 +47,17 @@ String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool auto
 	options->translate_use_register_caching = false;
 
 	// 2. Enable binary translation output to a string
-	std::string code_output;
 	options->cross_compile.push_back(riscv::MachineTranslationEmbeddableCodeOptions{
 			.result_c99 = &code_output,
 	});
 
 	// 3. Emit the binary translation by constructing a new machine
 	machine_t m{ binary, *options };
+
+	// 4. Wait for any potential background compilation to finish
+	{
+		std::scoped_lock lock(m.cpu.current_execute_segment().background_compilation_mutex());
+	}
 
 	// 4. Verify that the translation was successful
 	if (code_output.empty()) {
@@ -206,5 +211,5 @@ bool Sandbox::is_binary_translated() const {
 
 bool Sandbox::is_jit() const {
 	auto& main_seg = this->m_machine->memory.exec_segment_for(this->m_machine->memory.start_address());
-	return main_seg->is_libtcc();
+	return main_seg->is_libtcc() || main_seg->is_background_compiling();
 }
