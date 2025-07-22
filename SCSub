@@ -30,18 +30,23 @@ def get_sufix():
 
 os.system("scons static_build=yes platform=" + get_addon_platform() + " target=" + get_addon_target() + " arch=" + env["arch"] + " precision=" + env["precision"] + " threads=" + str(env["threads"]) + " dev_build=" + str(env["dev_build"]))
 
-match get_addon_platform():
-    case "macos":
-        base_path = f"#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.macos.{get_addon_target()}{dev_build_extension}.{env["arch"]}.framework/"
-    case "ios":
-        base_path = f"#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.ios.{get_addon_target()}{dev_build_extension}.{env["arch"]}.framework/"
-    case _:
-        base_path = "#modules/sandbox/bin/addons/godot_sandbox/bin"
+platform = get_addon_platform()
+target = get_addon_target()
+arch = env["arch"]
 
-if get_addon_platform() == "windows":
-    base_file = "godot_riscv{}".format(get_sufix()) + ".lib"
+if platform == "macos":
+    base_path = f"#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.macos.{target}{dev_build_extension}.{arch}.framework/"
+    base_file = f"{base_path}libgodot_riscv.macos.{target}{dev_build_extension}.{arch}"
+elif platform == "ios":
+    base_path = f"#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.ios.{target}{dev_build_extension}.{arch}.framework/"
+    base_file = f"{base_path}libgodot_riscv.ios.{target}{dev_build_extension}.{arch}"
+elif platform == "windows":
+    base_path = "#modules/sandbox/bin/addons/godot_sandbox/bin"
+    base_file = "godot_riscv"
 else:
+    base_path = "#modules/sandbox/bin/addons/godot_sandbox/bin"
     base_file = "godot_riscv{}".format(get_sufix())
+
 env_gdextension = env_modules.Clone()
 print("Using base path: {}".format(base_path))
 print("Using base file: {}".format(base_file))
@@ -49,11 +54,18 @@ env.Append(LIBS=[base_file])
 env.Append(LIBPATH=[base_path])
 
 # Godot-cpp
-base_path = "#modules/sandbox/ext/godot-cpp/bin"
-base_file = "godot-cpp{}".format(get_sufix())
+cpp_base_path = "#modules/sandbox/ext/godot-cpp/bin"
+if platform == "macos":
+    cpp_base_file = f"{cpp_base_path}/libgodot-cpp.macos.{target}{dev_build_extension}.{arch}"
+elif platform == "ios":
+    cpp_base_file = f"{cpp_base_path}/libgodot-cpp.ios.{target}{dev_build_extension}.{arch}"
+elif platform == "windows":
+    cpp_base_file = "godot-cpp"
+else:
+    cpp_base_file = "godot-cpp{}".format(get_sufix())
 
-env.Append(LIBS=[base_file])
-env.Append(LIBPATH=[base_path])
+env.Append(LIBS=[cpp_base_file])
+env.Append(LIBPATH=[cpp_base_path])
 
 # Sources
 env_gdextension.add_source_files(env.modules_sources, "*.cpp")
