@@ -107,6 +107,7 @@ if "static_build" not in ARGUMENTS or ARGUMENTS["static_build"]!="yes":
     Default(library)
 else:
     print("Building static library")
+    env.Append(CPPDEFINES = ['SANDBOX_MODULE'])
     # Static lib
     if env["platform"] == "macos" or env["platform"] == "ios":
         library = env.StaticLibrary(

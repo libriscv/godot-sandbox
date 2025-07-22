@@ -33,6 +33,8 @@ os.system("scons static_build=yes platform=" + get_addon_platform() + " target="
 match get_addon_platform():
     case "macos":
         base_path = f"#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.macos.{get_addon_target()}{dev_build_extension}.{env["arch"]}.framework/"
+    case "ios":
+        base_path = f"#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.ios.{get_addon_target()}{dev_build_extension}.{env["arch"]}.framework/"
     case _:
         base_path = "#modules/sandbox/bin/addons/godot_sandbox/bin"
 
