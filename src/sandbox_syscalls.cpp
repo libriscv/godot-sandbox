@@ -12,6 +12,7 @@
 #include <godot_cpp/variant/variant.hpp>
 //#define ENABLE_SYSCALL_TRACE 1
 #include "syscalls_helpers.hpp"
+#include <libriscv/rv32i_instr.hpp>
 
 #define PENALIZE(x) \
 	if (!emu.get_profiling()) { \
@@ -1974,4 +1975,33 @@ void Sandbox::initialize_syscalls() {
 	// Add system calls from other modules.
 	Sandbox::initialize_syscalls_2d();
 	Sandbox::initialize_syscalls_3d();
+
+	using namespace riscv;
+	static const Instruction<RISCV_ARCH> validated_syscall_instruction {
+		[](CPU<RISCV_ARCH>& cpu, rv32i_instruction instr)
+		{
+			Machine<RISCV_ARCH>::syscall_handlers[instr.Itype.imm](cpu.machine());
+		},
+		[](char* buffer, size_t len, const CPU<RISCV_ARCH>&, rv32i_instruction instr) -> int
+		{
+			return snprintf(buffer, len,
+				"DYNCALL: 4-byte idx=0x%X (inline, 0x%X)",
+				uint32_t(instr.Itype.imm),
+				instr.whole
+			);
+		}};
+	// Override the machines unimplemented instruction handling,
+	// in order to use the custom instruction instead.
+	CPU<RISCV_ARCH>::on_unimplemented_instruction
+		= [](rv32i_instruction instr) -> const Instruction<RISCV_ARCH>&
+	{
+		if (instr.opcode() == 0b1011011 && instr.Itype.rs1 == 0 && instr.Itype.rd == 0)
+		{
+			if (instr.Itype.imm < Machine<RISCV_ARCH>::syscall_handlers.size())
+			{
+				return validated_syscall_instruction;
+			}
+		}
+		return CPU<RISCV_ARCH>::get_unimplemented_instruction();
+	};
 }
