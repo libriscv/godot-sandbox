@@ -117,6 +117,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_static_method("Sandbox", D_METHOD("set_jit_enabled", "enable"), &Sandbox::set_jit_enabled);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("is_jit_enabled"), &Sandbox::is_jit_enabled);
 #endif
+	ClassDB::bind_static_method("Sandbox", D_METHOD("has_feature_jit"), &Sandbox::has_feature_jit);
 
 	// Properties.
 	ClassDB::bind_method(D_METHOD("set", "name", "value"), &Sandbox::set);
@@ -485,10 +486,10 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				.memory_max = uint64_t(get_memory_max()) << 20, // in MiB
 				//.verbose_loader = true,
 #ifdef RISCV_BINARY_TRANSLATION
-				.translate_enabled = riscv::libtcc_enabled,
+				.translate_enabled = riscv::libtcc_enabled && m_bintr_jit,
 				.translate_enable_embedded = true,
 				.translate_future_segments = false,
-				.translate_invoke_compiler = riscv::libtcc_enabled,
+				.translate_invoke_compiler = riscv::libtcc_enabled && m_bintr_jit,
 				//.translate_trace = true,
 				//.translate_timing = true,
 #  ifdef RISCV_LIBTCC

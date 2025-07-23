@@ -527,6 +527,10 @@ public:
 	static bool is_jit_enabled() { return m_bintr_jit; }
 #endif
 
+	static bool has_feature_jit() {
+		return riscv::libtcc_enabled;
+	}
+
 	void assault(const String &test, int64_t iterations);
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc);
 	machine_t &machine() { return *m_machine; }
@@ -653,9 +657,7 @@ private:
 	static inline uint32_t m_global_instances_current = 0; // Counts the number of current instances
 	static inline uint32_t m_global_instances_seen = 0; // Incremented for each instance created
 	static inline double m_accumulated_startup_time = 0.0;
-#ifdef RISCV_LIBTCC
-	static inline bool m_bintr_jit = true; // Enable JIT compilation by default
-#endif
+	static inline bool m_bintr_jit = riscv::libtcc_enabled; // JIT compilation enabled
 };
 
 inline void Sandbox::CurrentState::append(Variant &&value) {
