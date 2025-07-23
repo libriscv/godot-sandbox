@@ -49,8 +49,9 @@ Godot Sandbox allows Godot creators to implement safe modding support, such that
 	- You can publish your game for all mobile and console platforms, without paying a performance penalty. It's not going to be laggy on some platforms, which is a risk with solutions that are only fast when JIT is available.
 - High-performance
 	- You can use this extension as a way to write higher performance code than GDScript permits, without having to resort to writing and maintaining a GDExtension for all platforms.
-	- Enable binary translation to increase performance drastically. Also works on all platforms, but has to be [embedded in the project or loaded as a DLL](https://libriscv.no/docs/godot_docs/bintr).
+	- Enable full binary translation to increase performance drastically. Also works on all platforms, but has to be [embedded in the project or loaded as a DLL](https://libriscv.no/docs/godot_docs/bintr).
 	- Yields [2.5-10x performance boost by default](https://libriscv.no/docs/performance/#godot-sandbox-performance), 5-50x with binary translation
+	- Experimental JIT builds are also available in the Releases section for Windows and Linux. The JIT will enhance performance automatically in the background for all programs.
 - Publish and then make updates without re-publishing
 	- You can distribute programs from a server to clients as part of the login sequence. You can use this to live-distribute changes like bugfixes or even new features to the game without having to re-publish the game itself. I do this in my game.
 
@@ -73,25 +74,60 @@ Godot Sandbox allows Godot creators to implement safe modding support, such that
 #include "api.hpp"
 static int coins = 0;
 
-PUBLIC Variant reset_game() {
+static Variant reset_game() {
 	coins = 0;
 	return Nil;
 }
 
-static void add_coin(const Node& player) {
+static inline void add_coin(const Node& player) {
 	coins ++;
+	// In our demo project we can access the coin label from the player
+	// using a node path: Player -> get_parent() -> Texts -> CoinLabel
 	Label coinlabel = player.get_node<Label>("../Texts/CoinLabel");
 	coinlabel.set_text("You have collected "
-		+ std::to_string(coins) + ((coins == 1) ? " coin" : " coins"));
+		+ std::to_string(coins) + ((coins == 1) ? " coinyboys" : " coins"));
 }
 
-PUBLIC Variant _on_body_entered(CharacterBody2D body) {
+static Variant _on_body_entered(CharacterBody2D body) {
 	if (body.get_name() != "Player")
 		return Nil;
 
 	get_node().queue_free(); // Remove the current coin!
 	add_coin(body);
 	return Nil;
+}
+
+static Variant _ready() {
+	if (is_editor_hint()) {
+		get_node().set_process_input(false);
+	}
+	return Nil; //
+}
+
+static Variant _process(double delta) {
+	if (is_editor_hint()) {
+		AnimatedSprite2D sprite("AnimatedSprite2D");
+		sprite.play("idle");
+		sprite.set_speed_scale(1.0f);
+	}
+	return Nil;
+}
+
+static Variant _input(InputEvent event) {
+	if (event.is_action_pressed("jump")) {
+		get_node<Node2D>().set_modulate(0xFF6060FF);
+	} else if (event.is_action_released("jump")) {
+		get_node<Node2D>().set_modulate(0xFFFFFFFF);
+	}
+	return Nil;
+}
+
+int main() {
+	ADD_API_FUNCTION(_on_body_entered, "void", "CharacterBody2D");
+	ADD_API_FUNCTION(_ready, "void");
+	ADD_API_FUNCTION(_process, "void", "double");
+	ADD_API_FUNCTION(_input, "void", "InputEvent");
+	ADD_API_FUNCTION(reset_game, "void");
 }
 ```
 
@@ -108,26 +144,10 @@ Requirements:
 If you want to contribute to this repo, here are steps on how to build locally:
 
 ```sh
-scons
+./build.sh
 ```
 
-Linting:
-
-```sh
-./scripts/clang-tidy.sh
-```
-
-## Icons
-
-The script icon is built from the Godot icons. It's using the same font as the Godot Logo, which is Lilita One. The icons are then imported into Godot once in order to check the box `Scale With Editor` in the import panel.
-
-## Module
-
-If you want to build this as a module, simply download the `sandbox.zip` from releases, unzip it, and copy it to the modules folder in godot, build it:
-
-```sh
-scons module_sandbox_enabled=True disable_exceptions=False target=editor
-```
+You can also use `scons` similar to how godot-cpp addons are built.
 
 ## Contributors ✨
 
