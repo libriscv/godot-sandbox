@@ -14,11 +14,11 @@
 #include "elf/script_language_elf.h"
 #include "sandbox.h"
 #include "sandbox_project_settings.h"
-#ifdef PLATFORM_HAS_EDITOR
 #include "cpp/resource_loader_cpp.h"
 #include "cpp/resource_saver_cpp.h"
 #include "cpp/script_cpp.h"
 #include "cpp/script_language_cpp.h"
+#ifdef PLATFORM_HAS_EDITOR
 #include "rust/resource_loader_rust.h"
 #include "rust/resource_saver_rust.h"
 #include "rust/script_language_rust.h"
@@ -49,11 +49,11 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ClassDB::register_class<ELFScriptLanguage>();
 	ClassDB::register_class<ResourceFormatLoaderELF>();
 	ClassDB::register_class<ResourceFormatSaverELF>();
-#ifdef PLATFORM_HAS_EDITOR
 	ClassDB::register_class<CPPScript>();
 	ClassDB::register_class<CPPScriptLanguage>();
 	ClassDB::register_class<ResourceFormatLoaderCPP>();
 	ClassDB::register_class<ResourceFormatSaverCPP>();
+#ifdef PLATFORM_HAS_EDITOR
 	ClassDB::register_class<RustScript>();
 	ClassDB::register_class<RustScriptLanguage>();
 	ClassDB::register_class<ResourceFormatLoaderRust>();
@@ -69,10 +69,10 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ResourceSaver::get_singleton()->add_resource_format_saver(elf_saver);
 	elf_language = memnew(ELFScriptLanguage);
 	Engine::get_singleton()->register_script_language(elf_language);
-#ifdef PLATFORM_HAS_EDITOR
 	ResourceFormatLoaderCPP::init();
 	ResourceFormatSaverCPP::init();
 	CPPScriptLanguage::init();
+#ifdef PLATFORM_HAS_EDITOR
 	ResourceFormatLoaderRust::init();
 	ResourceFormatSaverRust::init();
 	RustScriptLanguage::init();
@@ -88,8 +88,8 @@ static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 	Engine *engine = Engine::get_singleton();
-#ifdef PLATFORM_HAS_EDITOR
 	engine->unregister_script_language(CPPScriptLanguage::get_singleton());
+#ifdef PLATFORM_HAS_EDITOR
 	engine->unregister_script_language(RustScriptLanguage::get_singleton());
 	engine->unregister_script_language(ZigScriptLanguage::get_singleton());
 #endif
@@ -103,9 +103,9 @@ static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	ResourceSaver::get_singleton()->remove_resource_format_saver(elf_saver);
 	elf_loader.unref();
 	elf_saver.unref();
-#ifdef PLATFORM_HAS_EDITOR
 	ResourceFormatLoaderCPP::deinit();
 	ResourceFormatSaverCPP::deinit();
+#ifdef PLATFORM_HAS_EDITOR
 	ResourceFormatLoaderRust::deinit();
 	ResourceFormatSaverRust::deinit();
 	ResourceFormatLoaderZig::deinit();
