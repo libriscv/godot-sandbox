@@ -26,7 +26,7 @@ enum SandboxPropertyNameIndex : int {
 	PROP_USE_PRECISE_SIMULATION,
 #ifdef RISCV_LIBTCC
 	PROP_BINTR_NBIT_AS,
-	PROP_BINTR_BG_COMPILE,
+	PROP_BINTR_REG_CACHE,
 #endif // RISCV_LIBTCC
 	PROP_PROFILING,
 	PROP_RESTRICTIONS,
@@ -153,9 +153,12 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_binary_translation_nbit_as"), &Sandbox::get_binary_translation_automatic_nbit_as);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "binary_translation_nbit_as", PROPERTY_HINT_NONE, "Use n-bit address space for binary translation"), "set_binary_translation_nbit_as", "get_binary_translation_nbit_as");
 
+	ClassDB::bind_method(D_METHOD("set_binary_translation_register_caching", "register_caching"), &Sandbox::set_binary_translation_register_caching);
+	ClassDB::bind_method(D_METHOD("get_binary_translation_register_caching"), &Sandbox::get_binary_translation_register_caching);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "binary_translation_register_caching", PROPERTY_HINT_NONE, "Use register caching for binary translation"), "set_binary_translation_register_caching", "get_binary_translation_register_caching");
+
 	ClassDB::bind_method(D_METHOD("set_binary_translation_bg_compilation", "bg_compilation"), &Sandbox::set_binary_translation_bg_compilation);
 	ClassDB::bind_method(D_METHOD("get_binary_translation_bg_compilation"), &Sandbox::get_binary_translation_bg_compilation);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "binary_translation_bg_compilation", PROPERTY_HINT_NONE, "Perform binary translation in the background"), "set_binary_translation_bg_compilation", "get_binary_translation_bg_compilation");
 #endif // RISCV_LIBTCC
 
 	ClassDB::bind_method(D_METHOD("set_profiling", "enable"), &Sandbox::set_profiling, DEFVAL(false));
@@ -225,7 +228,7 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() {
 	list.push_back(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE));
 #ifdef RISCV_LIBTCC
 	list.push_back(PropertyInfo(Variant::BOOL, "binary_translation_nbit_as", PROPERTY_HINT_NONE));
-	list.push_back(PropertyInfo(Variant::BOOL, "binary_translation_bg_compilation", PROPERTY_HINT_NONE));
+	list.push_back(PropertyInfo(Variant::BOOL, "binary_translation_register_caching", PROPERTY_HINT_NONE));
 #endif // RISCV_LIBTCC
 	list.push_back(PropertyInfo(Variant::BOOL, "profiling", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "restrictions", PROPERTY_HINT_NONE));
@@ -288,7 +291,7 @@ Sandbox::Sandbox() {
 			"use_precise_simulation",
 #ifdef RISCV_LIBTCC
 			"binary_translation_nbit_as",
-			"binary_translation_bg_compilation",
+			"binary_translation_register_caching",
 #endif // RISCV_LIBTCC
 			"profiling",
 			"restrictions",
@@ -494,8 +497,8 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				//.translate_timing = true,
 #  ifdef RISCV_LIBTCC
 				.translate_ignore_instruction_limit = get_instructions_max() <= 0,
-				.translate_use_register_caching = Sandbox::m_bintr_automatic_nbit_as,
-				.translate_automatic_nbit_address_space = Sandbox::m_bintr_automatic_nbit_as,
+				.translate_use_register_caching = this->m_bintr_register_caching,
+				.translate_automatic_nbit_address_space = this->m_bintr_automatic_nbit_as,
 #  endif // RISCV_LIBTCC
 #endif
 		});
@@ -1324,8 +1327,8 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	} else if (name == property_names[PROP_BINTR_NBIT_AS]) {
 		set_binary_translation_automatic_nbit_as(value);
 		return true;
-	} else if (name == property_names[PROP_BINTR_BG_COMPILE]) {
-		set_binary_translation_bg_compilation(value);
+	} else if (name == property_names[PROP_BINTR_REG_CACHE]) {
+		set_binary_translation_register_caching(value);
 		return true;
 #endif // RISCV_LIBTCC
 	} else if (name == property_names[PROP_PROFILING]) {
@@ -1375,8 +1378,8 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	} else if (name == property_names[PROP_BINTR_NBIT_AS]) {
 		r_ret = this->m_bintr_automatic_nbit_as;
 		return true;
-	} else if (name == property_names[PROP_BINTR_BG_COMPILE]) {
-		r_ret = this->m_bintr_bg_compilation;
+	} else if (name == property_names[PROP_BINTR_REG_CACHE]) {
+		r_ret = this->m_bintr_register_caching;
 		return true;
 #endif // RISCV_LIBTCC
 	} else if (name == property_names[PROP_PROFILING]) {

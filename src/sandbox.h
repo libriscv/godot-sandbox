@@ -509,6 +509,15 @@ public:
 		return this->m_bintr_automatic_nbit_as;
 	}
 
+	/// @brief Set whether to use register caching for binary translation.
+	/// @param register_caching If true, use register caching for binary translation.
+	void set_binary_translation_register_caching(bool register_caching) {
+		this->m_bintr_register_caching = register_caching;
+	}
+	bool get_binary_translation_register_caching() const {
+		return this->m_bintr_register_caching;
+	}
+
 	/// @brief Set whether to perform binary translation in the background.
 	/// @param bg_compilation If true, perform binary translation in the background.
 	void set_binary_translation_bg_compilation(bool bg_compilation) {
@@ -591,6 +600,7 @@ private:
 	bool m_is_initialization = false; // If true, the program is in the initialization phase
 #ifdef RISCV_LIBTCC
 	bool m_bintr_automatic_nbit_as = false; // Automatic n-bit address space for binary translation
+	bool m_bintr_register_caching = true; // Use register caching for binary translation
 	bool m_bintr_bg_compilation = true; // Perform binary translation in the background
 #endif
 
