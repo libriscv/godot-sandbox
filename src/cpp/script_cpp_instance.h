@@ -26,8 +26,6 @@ class CPPScriptInstance : public ScriptInstanceExtension {
 	ELFScriptInstance *managed_esi = nullptr;
 	ELFScriptInstance *elf_script_instance = nullptr;
 
-	void update_methods() const;
-
 	friend class CPPScript;
 
 public:

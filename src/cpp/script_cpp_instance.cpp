@@ -261,17 +261,6 @@ Variant CPPScriptInstance::callp(
 	return Variant();
 }
 
-void CPPScriptInstance::update_methods() const {
-	if (elf_script_instance) {
-		elf_script_instance->update_methods();
-		return;
-	}
-
-	if constexpr (VERBOSE_LOGGING) {
-		ERR_PRINT("CPPScriptInstance::update_methods called without elf_script_instance");
-	}
-}
-
 const GDExtensionMethodInfo *CPPScriptInstance::get_method_list(uint32_t *r_count) const {
 	if (elf_script_instance) {
 		return elf_script_instance->get_method_list(r_count);
