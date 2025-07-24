@@ -132,6 +132,17 @@ bool Sandbox::try_compile_binary_translation(String shared_library_path, const S
 		ERR_PRINT("Sandbox: Shared library path must begin with 'res://'.");
 		return false;
 	}
+	// Android, WebAssembly, Nintendo Switch, and iOS do not support direct
+	// compilation of binary translations into shared libraries (on that platform).
+#if defined(__ANDROID__) || defined(__wasm__) || defined(__SWITCH__) || defined(__EMSCRIPTEN__)
+	ERR_PRINT("Sandbox: Directly compiling binary translation is not supported on this platform.");
+	return false;
+#elif defined(__APPLE__) && !defined(__MACH__) // iOS?
+	// TODO: Check for iOS?
+	ERR_PRINT("Sandbox: Directly compiling binary translation is not supported on this platform.");
+	return false;
+#endif
+
 #ifdef __linux__
 	shared_library_path += ".so";
 #elif defined(YEP_IS_WINDOWS)

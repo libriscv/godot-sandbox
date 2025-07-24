@@ -116,10 +116,14 @@ func test_environment():
 func test_binary_translation():
 	# Create a new sandbox
 	var s = Sandbox.new()
+
+	var str : String = s.emit_binary_translation()
+	assert_true(str.is_empty(), "Binary translation is empty")
+
 	# Set the test program
 	s.set_program(Sandbox_TestsTests)
 
-	var str : String = s.emit_binary_translation()
+	str = s.emit_binary_translation()
 	assert_false(str.is_empty(), "Binary translation is not empty")
 	#print(str)
 
