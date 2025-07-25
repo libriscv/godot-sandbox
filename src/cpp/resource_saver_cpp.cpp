@@ -100,6 +100,14 @@ static bool configure_cmake(const String &path) {
 			return false;
 		}
 	}
+
+	const String runtime_api_path = path + String("/.build/generated_api.hpp");
+	if (!FileAccess::file_exists(runtime_api_path)) {
+		// Generate the C++ run-time API in the .build directory
+		// This will be used by C++ programs to access the wider Godot API
+		auto_generate_cpp_api(runtime_api_path);
+	}
+
 	// Execute cmake to configure the project
 	// We assume that zig, cmake and git are available in the PATH
 	// TODO: Verify that zig, cmake and git are available in the PATH?
@@ -184,9 +192,6 @@ static Array invoke_cmake(const String &path) {
 		ERR_PRINT("Failed to open directory: " + path);
 		return Array();
 	}
-	// Generate the C++ run-time API in the CMakelists.txt directory
-	// TODO: Only generate the API if it has not been generated yet
-	auto_generate_cpp_api("res://" + path + "/generated_api.hpp");
 	// Check if path/.build exists, if not, configure CMake
 	if (!dir_access->dir_exists(".build") ||
 		(!dir_access->file_exists(".build/build.ninja")
