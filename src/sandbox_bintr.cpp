@@ -35,6 +35,10 @@ String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool auto
 		return String();
 	}
 #ifdef RISCV_BINARY_TRANSLATION
+	if (machine().is_binary_translation_enabled() && !is_jit()) {
+		WARN_PRINT("Sandbox: Binary translation is already enabled.");
+		return String();
+	}
 	std::string code_output;
 	// 1. Re-create the same options
 	auto options = std::make_shared<riscv::MachineOptions<RISCV_ARCH>>(machine().options());
@@ -57,7 +61,7 @@ String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool auto
 	machine_t m{ binary, *options };
 
 	// 4. Wait for any potential background compilation to finish
-	{
+	if constexpr (riscv::libtcc_enabled) {
 		std::scoped_lock lock(m.cpu.current_execute_segment().background_compilation_mutex());
 	}
 
@@ -223,6 +227,10 @@ bool Sandbox::is_binary_translated() const {
 }
 
 bool Sandbox::is_jit() const {
+#ifdef RISCV_BINARY_TRANSLATION
 	auto& main_seg = this->m_machine->memory.exec_segment_for(this->m_machine->memory.start_address());
 	return main_seg->is_libtcc() || main_seg->is_background_compiling();
+#else
+	return false;
+#endif
 }

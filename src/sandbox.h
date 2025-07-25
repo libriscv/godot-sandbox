@@ -534,6 +534,15 @@ public:
 	/// @brief Check if JIT-compilation is enabled.
 	/// @return True if JIT-compilation is enabled, false otherwise.
 	static bool is_jit_enabled() { return m_bintr_jit; }
+#else
+	void set_binary_translation_automatic_nbit_as(bool) {}
+	bool get_binary_translation_automatic_nbit_as() const { return false; }
+	void set_binary_translation_register_caching(bool) {}
+	bool get_binary_translation_register_caching() const { return false; }
+	void set_binary_translation_bg_compilation(bool) {}
+	bool get_binary_translation_bg_compilation() const { return false; }
+	static void set_jit_enabled(bool) {}
+	static bool is_jit_enabled() { return false; }
 #endif
 
 	static bool has_feature_jit() {

@@ -113,10 +113,8 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("try_compile_binary_translation", "shared_library_path", "compiler", "extra_cflags", "ignore_instruction_limit", "automatic_nbit_as"), &Sandbox::try_compile_binary_translation, DEFVAL("res://bintr"), DEFVAL("cc"), DEFVAL(""), DEFVAL(false), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("is_binary_translated"), &Sandbox::is_binary_translated);
 	ClassDB::bind_method(D_METHOD("is_jit"), &Sandbox::is_jit);
-#ifdef RISCV_LIBTCC
 	ClassDB::bind_static_method("Sandbox", D_METHOD("set_jit_enabled", "enable"), &Sandbox::set_jit_enabled);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("is_jit_enabled"), &Sandbox::is_jit_enabled);
-#endif
 	ClassDB::bind_static_method("Sandbox", D_METHOD("has_feature_jit"), &Sandbox::has_feature_jit);
 
 	// Properties.
@@ -148,18 +146,20 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_use_precise_simulation"), &Sandbox::get_use_precise_simulation);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE, "Use precise simulation for VM execution"), "set_use_precise_simulation", "get_use_precise_simulation");
 
-#ifdef RISCV_LIBTCC
 	ClassDB::bind_method(D_METHOD("set_binary_translation_nbit_as", "use_nbit_as"), &Sandbox::set_binary_translation_automatic_nbit_as);
 	ClassDB::bind_method(D_METHOD("get_binary_translation_nbit_as"), &Sandbox::get_binary_translation_automatic_nbit_as);
+#ifdef RISCV_LIBTCC
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "binary_translation_nbit_as", PROPERTY_HINT_NONE, "Use n-bit address space for binary translation"), "set_binary_translation_nbit_as", "get_binary_translation_nbit_as");
+#endif // RISCV_LIBTCC
 
 	ClassDB::bind_method(D_METHOD("set_binary_translation_register_caching", "register_caching"), &Sandbox::set_binary_translation_register_caching);
 	ClassDB::bind_method(D_METHOD("get_binary_translation_register_caching"), &Sandbox::get_binary_translation_register_caching);
+#ifdef RISCV_LIBTCC
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "binary_translation_register_caching", PROPERTY_HINT_NONE, "Use register caching for binary translation"), "set_binary_translation_register_caching", "get_binary_translation_register_caching");
+#endif // RISCV_LIBTCC
 
 	ClassDB::bind_method(D_METHOD("set_binary_translation_bg_compilation", "bg_compilation"), &Sandbox::set_binary_translation_bg_compilation);
 	ClassDB::bind_method(D_METHOD("get_binary_translation_bg_compilation"), &Sandbox::get_binary_translation_bg_compilation);
-#endif // RISCV_LIBTCC
 
 	ClassDB::bind_method(D_METHOD("set_profiling", "enable"), &Sandbox::set_profiling, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("get_profiling"), &Sandbox::get_profiling);
@@ -1289,7 +1289,7 @@ void Sandbox::add_property(const String &name, Variant::Type vtype, uint64_t set
 			return;
 		}
 	}
-	m_properties.push_back(SandboxProperty(name, vtype, setter, getter, def));
+	m_properties.emplace_back(name, vtype, setter, getter, def);
 
 	// Make the property getter/setter functions visible to address_of and profiling
 	this->add_cached_address("set_" + name, getter);
