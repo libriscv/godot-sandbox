@@ -77,6 +77,9 @@ bool ELFScriptLanguage::_supports_documentation() const {
 bool ELFScriptLanguage::_can_inherit_from_file() const {
 	return false;
 }
+bool ELFScriptLanguage::_can_make_function() const {
+	return false;
+}
 int32_t ELFScriptLanguage::_find_function(const String &p_function, const String &p_code) const {
 	return -1;
 }

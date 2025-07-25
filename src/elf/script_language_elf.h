@@ -33,6 +33,7 @@ public:
 	virtual bool _supports_builtin_mode() const override;
 	virtual bool _supports_documentation() const override;
 	virtual bool _can_inherit_from_file() const override;
+	virtual bool _can_make_function() const override;
 	virtual int32_t _find_function(const String &p_function, const String &p_code) const override;
 	virtual String _make_function(const String &p_class_name, const String &p_function_name, const PackedStringArray &p_function_args) const override;
 	virtual Error _open_in_external_editor(const Ref<Script> &p_script, int32_t p_line, int32_t p_column) override;

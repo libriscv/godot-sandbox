@@ -206,6 +206,9 @@ bool CPPScriptLanguage::_supports_documentation() const {
 bool CPPScriptLanguage::_can_inherit_from_file() const {
 	return false;
 }
+bool CPPScriptLanguage::_can_make_function() const {
+	return false;
+}
 int32_t CPPScriptLanguage::_find_function(const String &p_function, const String &p_code) const {
 	return -1;
 }
