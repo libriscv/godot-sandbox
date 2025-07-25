@@ -3,6 +3,7 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/dir_access.hpp>
 #include <godot_cpp/classes/os.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
 #if defined(__linux__)
@@ -162,7 +163,7 @@ bool Sandbox::try_compile_binary_translation(String shared_library_path, const S
 		ERR_PRINT("Sandbox: Failed to emit binary translation.");
 		return false;
 	}
-	static const String c99_path = "res://temp_sandbox_generated.c";
+	static const String c99_path = "user://temp_sandbox_generated.c";
 	Ref<FileAccess> fa = FileAccess::open(c99_path, FileAccess::ModeFlags::WRITE);
 	if (!fa->is_open()) {
 		ERR_PRINT("Sandbox: Failed to open file for writing: " + c99_path);
@@ -205,15 +206,15 @@ bool Sandbox::try_compile_binary_translation(String shared_library_path, const S
 	args.push_back(shared_library_path.replace("res://", ""));
 	if (!extra_cflags.is_empty())
 		args.append_array(extra_cflags.split(" "));
-	args.push_back(c99_path.replace("res://", ""));
+	args.push_back(ProjectSettings::get_singleton()->globalize_path(c99_path));
 	UtilityFunctions::print(cc, args);
 	Array output;
 	int ret = OS::get_singleton()->execute(cc, args, output, true);
 	// Remove the generated C99 file
-	Ref<DirAccess> dir = DirAccess::open("res://");
+	Ref<DirAccess> dir = DirAccess::open("user://");
 	dir->remove(c99_path);
 	if (ret != 0) {
-		ERR_PRINT("Sandbox: Failed to compile generated code: " + c99_path);
+		ERR_PRINT("Sandbox: Failed to compile generated code: " + shared_library_path);
 		UtilityFunctions::print(output);
 		return false;
 	}
