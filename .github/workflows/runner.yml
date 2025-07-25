@@ -31,6 +31,9 @@ jobs:
   build_macos:
     needs: [lint]
     uses: ./.github/workflows/build_macos.yml
+  jit_macos:
+    needs: [lint]
+    uses: ./.github/workflows/jit_macos.yml
   build_windows:
     needs: [lint]
     uses: ./.github/workflows/build_windows.yml
