@@ -178,8 +178,9 @@ func _on_download_complete(result, response_code, headers, body, downloaded_name
 				binary_name = "bin/cmake"
 		"macOS":
 			if downloaded_name == "cmake":
-				binary_name = "CMake.app/Contents/MacOS/CMake"
+				binary_name = "CMake.app/Contents/bin/cmake"
 	ProjectSettings.set("editor/script/%s" % downloaded_name, ProjectSettings.globalize_path("user://godot-sandbox/%s" % downloaded_name).path_join(binary_name))
+	ProjectSettings.save()
 	_update_status()
 
 
@@ -193,21 +194,21 @@ func _on_zig_button_pressed() -> void:
 	match OS.get_name():
 		"Windows":
 			if OS.has_feature("x86_64"):
-				download_url = "https://ziglang.org/builds/zig-x86_64-windows-0.15.0-dev.1222+5fb36d260.zip"
+				download_url = "https://ziglang.org/download/0.14.1/zig-x86_64-windows-0.14.1.zip"
 			elif OS.has_feature("x86_32"):
-				download_url = "https://ziglang.org/builds/zig-x86-windows-0.15.0-dev.1222+5fb36d260.zip"
+				download_url = "https://ziglang.org/download/0.14.1/zig-x86-windows-0.14.1.zip"
 			elif OS.has_feature("arm64"):
-				download_url = "https://ziglang.org/builds/zig-aarch64-windows-0.15.0-dev.1222+5fb36d260.zip"
+				download_url = "https://ziglang.org/download/0.14.1/zig-aarch64-windows-0.14.1.zip"
 		"Linux":
 			if OS.has_feature("x86_64"):
-				download_url = "https://ziglang.org/builds/zig-x86_64-linux-0.15.0-dev.1222+5fb36d260.tar.xz"
+				download_url = "https://ziglang.org/download/0.14.1/zig-x86_64-linux-0.14.1.tar.xz"
 			elif OS.has_feature("arm64"):
-				download_url = "https://ziglang.org/builds/zig-aarch64-linux-0.15.0-dev.1222+5fb36d260.tar.xz"
+				download_url = "https://ziglang.org/download/0.14.1/zig-aarch64-linux-0.14.1.tar.xz"
 		"macOS":
 			if OS.has_feature("x86_64"):
-				download_url = "https://ziglang.org/builds/zig-x86_64-macos-0.15.0-dev.1222+5fb36d260.tar.xz"
+				download_url = "https://ziglang.org/download/0.14.1/zig-x86_64-macos-0.14.1.tar.xz"
 			elif OS.has_feature("arm64"):
-				download_url = "https://ziglang.org/builds/zig-aarch64-macos-0.15.0-dev.1222+5fb36d260.tar.xz"
+				download_url = "https://ziglang.org/download/0.14.1/zig-aarch64-macos-0.14.1.tar.xz"
 		_:
 			print("Cannot find download URL")
 			_update_status()

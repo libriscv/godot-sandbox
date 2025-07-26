@@ -42,6 +42,10 @@ if (CMAKE_HOST_WIN32)
 	set(CMAKE_AR "${CMAKE_CURRENT_LIST_DIR}/zig-ar.cmd")
 	set(CMAKE_RANLIB "${CMAKE_CURRENT_LIST_DIR}/zig-ranlib.cmd")
 endif()
+if (CMAKE_HOST_APPLE)
+	set(CMAKE_AR "${CMAKE_CURRENT_LIST_DIR}/zig-ar.cmd")
+	set(CMAKE_RANLIB "${CMAKE_CURRENT_LIST_DIR}/zig-ranlib.cmd")
+endif()
 )";
 static const char cmake_zig_ar_bytes[] = R"(
 @echo off
@@ -126,7 +130,7 @@ static bool configure_cmake(const String &path) {
 			return false;
 		}
 	}
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
 	// Create the zig-ar.cmd file, if it does not exist
 	const String zig_ar_path = path + String("/zig-ar.cmd");
 	if (!FileAccess::file_exists(zig_ar_path)) {
@@ -170,7 +174,7 @@ static bool configure_cmake(const String &path) {
 	// Zig path
 	const String zig_path = SandboxProjectSettings::get_zig_path();
 	if (!zig_path.is_empty()) {
-		arguments.push_back("-DZIG_PATH=\"" + zig_path + "\"");
+		arguments.push_back("-DZIG_PATH=" + zig_path + "");
 	}
 	//arguments.push_back("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON");
 

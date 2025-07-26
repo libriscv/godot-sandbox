@@ -1,12 +1,12 @@
 [gd_scene load_steps=3 format=3 uid="uid://l82vam6qgpgf"]
 
-[ext_resource type="Script" uid="uid://1wcqxb2ekh55" path="res://addons/godot_sandbox/downloader.gd" id="1_843n5"]
+[ext_resource type="Script" uid="uid://dyk2fnsixyben" path="res://addons/godot_sandbox/downloader.gd" id="1_843n5"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_843n5"]
 bg_color = Color(0.129412, 0.14902, 0.180392, 1)
 
 [node name="Downloader" type="Window" node_paths=PackedStringArray("cmake_status", "make_status", "git_status", "zig_status", "os_tab_container")]
-title = "Godot Sandbox Dependencies"
+title = "Godot Sandbox Dependencies ( macOS arm64 )"
 initial_position = 2
 size = Vector2i(1240, 910)
 visible = false
