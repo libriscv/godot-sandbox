@@ -133,7 +133,11 @@ String SandboxProjectSettings::get_docker_path() {
 }
 
 String SandboxProjectSettings::get_cmake_path() {
-	return get_setting<String>(CMAKE_PATH);
+	String cmake_path = get_setting<String>(CMAKE_PATH);
+	if (cmake_path.begins_with("user://")) {
+		cmake_path = ProjectSettings::get_singleton()->globalize_path(cmake_path);
+	}
+	return cmake_path;
 }
 
 String SandboxProjectSettings::get_scons_path() {
