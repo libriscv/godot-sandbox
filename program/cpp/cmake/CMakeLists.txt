@@ -37,11 +37,14 @@ if ("${CMAKE_C_COMPILER}" MATCHES "riscv64-unknown-elf*")
 elseif ("${CMAKE_C_COMPILER}" MATCHES "zig")
 	set(ZIG_COMPILER 1 CACHE BOOL "Building using zig c++")
 	message(STATUS "Building using zig c++")
-	# Not necessary, but lowers binary size dramatically
-	configure_file("${CMAKE_CURRENT_LIST_DIR}/atomic.c" "${CMAKE_BINARY_DIR}/atomic.c" COPYONLY)
-	add_library(atomic STATIC "${CMAKE_BINARY_DIR}/atomic.c")
-	set_target_properties(atomic PROPERTIES LINKER_LANGUAGE CXX)
-	link_directories("${CMAKE_BINARY_DIR}")
+	# This doesn't work on macOS
+	if (NOT CMAKE_HOST_APPLE)
+		# Not necessary, but lowers binary size dramatically
+		configure_file("${CMAKE_CURRENT_LIST_DIR}/atomic.c" "${CMAKE_BINARY_DIR}/atomic.c" COPYONLY)
+		add_library(atomic STATIC "${CMAKE_BINARY_DIR}/atomic.c")
+		set_target_properties(atomic PROPERTIES LINKER_LANGUAGE CXX)
+		link_directories("${CMAKE_BINARY_DIR}")
+	endif()
 endif()
 
 # If the compiler contains Zig, don't set RISCV_ARCH and RISCV_ABI
