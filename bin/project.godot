@@ -12,5 +12,14 @@ config_version=5
 
 config/name="Godot RISCV"
 run/main_scene="res://test.tscn"
-config/features=PackedStringArray("4.3", "Forward Plus")
+config/features=PackedStringArray("4.4", "Forward Plus")
 config/icon="res://icon.png"
+
+[editor]
+
+script/cmake="/Users/dragosdaian/Library/Application Support/Godot/app_userdata/Godot RISCV/godot-sandbox/cmake/CMake.app/Contents/MacOS/CMake"
+script/zig="/Users/dragosdaian/Library/Application Support/Godot/app_userdata/Godot RISCV/godot-sandbox/zig/zig"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/godot_sandbox/plugin.cfg")
