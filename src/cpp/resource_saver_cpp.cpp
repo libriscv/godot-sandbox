@@ -23,13 +23,16 @@ static std::unique_ptr<riscv::ThreadPool> thread_pool;
 static constexpr bool VERBOSE_CMD = false;
 
 static const char cmake_toolchain_bytes[] = R"(
+if (NOT DEFINED ZIG_PATH)
+	set(ZIG_PATH "zig")
+endif()
 set(CMAKE_SYSTEM_NAME "Linux")
 set(CMAKE_SYSTEM_VERSION 1)
 set(CMAKE_SYSTEM_PROCESSOR "riscv64")
 set(CMAKE_CROSSCOMPILING TRUE)
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
-set(CMAKE_C_COMPILER "zig" cc -target riscv64-linux-musl)
-set(CMAKE_CXX_COMPILER "zig" c++ -target riscv64-linux-musl)
+set(CMAKE_C_COMPILER "${ZIG_PATH}" cc -target riscv64-linux-musl)
+set(CMAKE_CXX_COMPILER "${ZIG_PATH}" c++ -target riscv64-linux-musl)
 
 if (CMAKE_HOST_WIN32)
 	# Windows: Disable .d files
@@ -164,6 +167,11 @@ static bool configure_cmake(const String &path) {
 	arguments.push_back("-DCMAKE_BUILD_TYPE=Release");
 	arguments.push_back("-DSTRIPPED=OFF");
 	arguments.push_back("-DCMAKE_TOOLCHAIN_FILE=" + toolchain_path_absolute);
+	// Zig path
+	const String zig_path = SandboxProjectSettings::get_zig_path();
+	if (!zig_path.is_empty()) {
+		arguments.push_back("-DZIG_PATH=\"" + zig_path + "\"");
+	}
 	//arguments.push_back("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON");
 
 	if (true) {

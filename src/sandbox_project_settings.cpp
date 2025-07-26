@@ -11,7 +11,8 @@ static constexpr char DOCKER_ENABLED[] = "editor/script/docker_enabled";
 static constexpr char DOCKER_ENABLED_HINT[] = "Enable Docker for compilation";
 static constexpr char DOCKER_PATH[] = "editor/script/docker";
 static constexpr char DOCKER_PATH_HINT[] = "Path to the Docker executable";
-
+static constexpr char ZIG_PATH[] = "editor/script/zig";
+static constexpr char ZIG_PATH_HINT[] = "Path to the Zig executable";
 static constexpr char SCONS_PATH[] = "editor/script/sconstruct";
 static constexpr char SCONS_PATH_HINT[] = "Path to the SConstruct executable";
 
@@ -81,6 +82,7 @@ void SandboxProjectSettings::register_settings() {
 #else
 	register_setting_plain(DOCKER_PATH, "docker", DOCKER_PATH_HINT, true);
 #endif
+	register_setting_plain(ZIG_PATH, "zig", ZIG_PATH_HINT, true);
 	register_setting_plain(SCONS_PATH, "scons", SCONS_PATH_HINT, true);
 	register_setting_plain(ASYNC_COMPILATION, true, ASYNC_COMPILATION_HINT, false);
 	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
@@ -129,6 +131,10 @@ String SandboxProjectSettings::get_docker_path() {
 
 String SandboxProjectSettings::get_scons_path() {
 	return get_setting<String>(SCONS_PATH);
+}
+
+String SandboxProjectSettings::get_zig_path() {
+	return get_setting<String>(ZIG_PATH);
 }
 
 bool SandboxProjectSettings::async_compilation() {

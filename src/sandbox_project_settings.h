@@ -13,7 +13,7 @@ public:
 	static bool get_docker_enabled();
 
 	static String get_docker_path();
-
+	static String get_zig_path();
 	static String get_scons_path();
 
 	static bool async_compilation();
