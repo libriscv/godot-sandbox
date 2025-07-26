@@ -182,7 +182,7 @@ static bool configure_cmake(const String &path) {
 		UtilityFunctions::print("CMake arguments: ", arguments);
 	}
 	Array output;
-	int32_t result = os->execute(cmake_path, arguments, output, true);
+	int32_t result = os->execute(SandboxProjectSettings::get_cmake_path(), arguments, output, true);
 	if (result != 0) {
 		if (!output.is_empty()) {
 			output = output[0].operator String().split("\n");
