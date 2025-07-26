@@ -20,3 +20,6 @@ src/gen/
 
 # UID files
 *.uid
+
+# Build files
+*.pyc
