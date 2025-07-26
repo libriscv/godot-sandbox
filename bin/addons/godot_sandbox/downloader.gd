@@ -26,7 +26,7 @@ func _ready():
 		"macOS":
 			os_tab_container.current_tab = 1
 			
-	title += " ( " + OS.get_name() + " " + Engine.get_architecture_name() + " )"
+	title = "Godot Sandbox Dependencies" + " ( " + OS.get_name() + " " + Engine.get_architecture_name() + " )"
 	http_cmake = HTTPRequest.new()
 	http_zig = HTTPRequest.new()
 	http_ninja = HTTPRequest.new()

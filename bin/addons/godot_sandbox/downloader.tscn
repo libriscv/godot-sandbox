@@ -6,7 +6,7 @@
 bg_color = Color(0.129412, 0.14902, 0.180392, 1)
 
 [node name="Downloader" type="Window" node_paths=PackedStringArray("cmake_status", "make_status", "git_status", "zig_status", "os_tab_container")]
-title = "Godot Sandbox Dependencies ( macOS arm64 )"
+title = "Godot Sandbox Dependencies"
 initial_position = 2
 size = Vector2i(1240, 900)
 wrap_controls = true
@@ -47,9 +47,10 @@ selection_enabled = true
 
 [node name="TabContainer" type="TabContainer" parent="Panel/VBoxContainer"]
 layout_mode = 2
-current_tab = 0
+current_tab = 1
 
 [node name="Windows" type="VBoxContainer" parent="Panel/VBoxContainer/TabContainer"]
+visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 metadata/_tab_index = 0
@@ -70,7 +71,6 @@ fit_content = true
 selection_enabled = true
 
 [node name="macOS" type="VBoxContainer" parent="Panel/VBoxContainer/TabContainer"]
-visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 metadata/_tab_index = 1
@@ -124,25 +124,25 @@ text = "Download Zig"
 [node name="CmakeStatus" type="RichTextLabel" parent="Panel/VBoxContainer"]
 layout_mode = 2
 bbcode_enabled = true
-text = "CMake: [color=red]Not installed[/color]"
+text = "CMake: [color=green]Installed[/color]"
 fit_content = true
 
 [node name="ZigStatus" type="RichTextLabel" parent="Panel/VBoxContainer"]
 layout_mode = 2
 bbcode_enabled = true
-text = "Zig: [color=red]Not installed[/color]"
+text = "Zig: [color=green]Installed[/color]"
 fit_content = true
 
 [node name="GitStatus" type="RichTextLabel" parent="Panel/VBoxContainer"]
 layout_mode = 2
 bbcode_enabled = true
-text = "Git: [color=red]Not installed[/color]"
+text = "Git: [color=green]Installed[/color]"
 fit_content = true
 
 [node name="MakeStatus" type="RichTextLabel" parent="Panel/VBoxContainer"]
 layout_mode = 2
 bbcode_enabled = true
-text = "Make: [color=red]Not installed[/color]"
+text = "Make: [color=green]Installed[/color]"
 fit_content = true
 
 [connection signal="about_to_popup" from="." to="." method="_on_about_to_popup"]
