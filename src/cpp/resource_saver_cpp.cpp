@@ -155,9 +155,13 @@ static bool configure_cmake(const String &path) {
 
 	// Create toolchain absolute path
 	const String toolchain_path_absolute = ProjectSettings::get_singleton()->globalize_path("res://") + toolchain_path;
+	String cmake_path = SandboxProjectSettings::get_cmake_path();
+	if (cmake_path.begins_with("user://")) {
+		cmake_path = ProjectSettings::get_singleton()->globalize_path(cmake_path);
+	}
 
 	PackedStringArray arguments;
-	arguments.push_back("cmake");
+	arguments.push_back(cmake_path); // CMake executable
 	arguments.push_back(path); // CMake directory
 	arguments.push_back("-B");
 	arguments.push_back(path + String("/.build")); // Build directory
@@ -210,6 +214,12 @@ static Array invoke_cmake(const String &path) {
 			return Array();
 		}
 	}
+
+	String cmake_path = SandboxProjectSettings::get_cmake_path();
+	if (cmake_path.begins_with("user://")) {
+		cmake_path = ProjectSettings::get_singleton()->globalize_path(cmake_path);
+	}
+
 	// Invoke cmake to build the project
 	PackedStringArray arguments;
 	arguments.push_back("--build");
@@ -220,7 +230,7 @@ static Array invoke_cmake(const String &path) {
 	OS *os = OS::get_singleton();
 	UtilityFunctions::print("Invoking cmake: ", arguments);
 	Array output;
-	int32_t result = os->execute("cmake", arguments, output, true);
+	int32_t result = os->execute(cmake_path, arguments, output, true);
 
 	if (result != 0) {
 		if (!output.is_empty()) {

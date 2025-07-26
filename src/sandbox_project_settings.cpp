@@ -13,6 +13,8 @@ static constexpr char DOCKER_PATH[] = "editor/script/docker";
 static constexpr char DOCKER_PATH_HINT[] = "Path to the Docker executable";
 static constexpr char ZIG_PATH[] = "editor/script/zig";
 static constexpr char ZIG_PATH_HINT[] = "Path to the Zig executable";
+static constexpr char CMAKE_PATH[] = "editor/script/cmake";
+static constexpr char CMAKE_PATH_HINT[] = "Path to the CMake executable";
 static constexpr char SCONS_PATH[] = "editor/script/sconstruct";
 static constexpr char SCONS_PATH_HINT[] = "Path to the SConstruct executable";
 
@@ -84,6 +86,7 @@ void SandboxProjectSettings::register_settings() {
 #endif
 	register_setting_plain(ZIG_PATH, "zig", ZIG_PATH_HINT, true);
 	register_setting_plain(SCONS_PATH, "scons", SCONS_PATH_HINT, true);
+	register_setting_plain(CMAKE_PATH, "cmake", CMAKE_PATH_HINT, true);
 	register_setting_plain(ASYNC_COMPILATION, true, ASYNC_COMPILATION_HINT, false);
 	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
 	register_setting_plain(DEBUG_INFO, false, DEBUG_INFO_HINT, false);
@@ -127,6 +130,10 @@ bool SandboxProjectSettings::get_docker_enabled() {
 
 String SandboxProjectSettings::get_docker_path() {
 	return get_setting<String>(DOCKER_PATH);
+}
+
+String SandboxProjectSettings::get_cmake_path() {
+	return get_setting<String>(CMAKE_PATH);
 }
 
 String SandboxProjectSettings::get_scons_path() {

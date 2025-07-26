@@ -14,6 +14,7 @@ public:
 
 	static String get_docker_path();
 	static String get_zig_path();
+	static String get_cmake_path();
 	static String get_scons_path();
 
 	static bool async_compilation();
