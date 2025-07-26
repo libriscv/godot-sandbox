@@ -215,3 +215,7 @@ func _on_zig_button_pressed() -> void:
 	var err = http_zig.request(download_url)
 	if err != OK:
 		print("Failed to start HTTP request: %s" % err)
+
+
+func _on_button_pressed() -> void:
+	hide()

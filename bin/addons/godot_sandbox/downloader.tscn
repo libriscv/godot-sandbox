@@ -8,7 +8,7 @@ bg_color = Color(0.129412, 0.14902, 0.180392, 1)
 [node name="Downloader" type="Window" node_paths=PackedStringArray("cmake_status", "make_status", "git_status", "zig_status", "os_tab_container")]
 title = "Godot Sandbox Dependencies"
 initial_position = 2
-size = Vector2i(1240, 900)
+size = Vector2i(1240, 910)
 visible = false
 wrap_controls = true
 script = ExtResource("1_843n5")
@@ -146,6 +146,13 @@ bbcode_enabled = true
 text = "Make: [color=green]Installed[/color]"
 fit_content = true
 
+[node name="Panel" type="VBoxContainer" parent="Panel/VBoxContainer"]
+layout_mode = 2
+
+[node name="Button" type="Button" parent="Panel/VBoxContainer/Panel"]
+layout_mode = 2
+text = "Close"
+
 [connection signal="about_to_popup" from="." to="." method="_on_about_to_popup"]
 [connection signal="meta_clicked" from="Panel/VBoxContainer/Label2" to="." method="_on_label_meta_clicked"]
 [connection signal="meta_clicked" from="Panel/VBoxContainer/TabContainer/Windows/Label" to="." method="_on_label_meta_clicked"]
@@ -153,3 +160,4 @@ fit_content = true
 [connection signal="meta_clicked" from="Panel/VBoxContainer/TabContainer/Linux/Label" to="." method="_on_label_meta_clicked"]
 [connection signal="pressed" from="Panel/VBoxContainer/HBoxContainer/CmakeButton" to="." method="_on_cmake_button_pressed"]
 [connection signal="pressed" from="Panel/VBoxContainer/HBoxContainer/ZigButton" to="." method="_on_zig_button_pressed"]
+[connection signal="pressed" from="Panel/VBoxContainer/Panel/Button" to="." method="_on_button_pressed"]
