@@ -459,10 +459,10 @@
 		<member name="restrictions" type="bool" setter="set_restrictions" getter="get_restrictions" default="false">
 			Enables or disables restrictions on the sandboxed program. When enabled, the program will have limited access to the Godot engine's API and resources.
 		</member>
-		<member name="use_precise_simulation" type="bool" setter="set_use_precise_simulation" getter="get_use_precise_simulation" default="false">
+		<member name="precise_simulation" type="bool" setter="set_precise_simulation" getter="get_precise_simulation" default="false">
 			Enables or disables precise simulation mode for the sandboxed program. When enabled, the program will use a more accurate simulation, producing better backtraces and profiling data, but at the cost of performance.
 		</member>
-		<member name="use_unboxed_arguments" type="bool" setter="set_use_unboxed_arguments" getter="get_use_unboxed_arguments" default="true">
+		<member name="unboxed_arguments" type="bool" setter="set_unboxed_arguments" getter="get_unboxed_arguments" default="true">
 			Enables or disables the use of unboxed arguments for function calls. When enabled, function arguments will be passed as their real types instead of Variants, which improves performance.
 		</member>
 	</members>

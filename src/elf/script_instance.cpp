@@ -397,8 +397,8 @@ bool ELFScriptInstance::property_can_revert(const StringName &p_name) const {
 		|| name == "memory_max"
 		|| name == "execution_timeout"
 		|| name == "allocations_max"
-		|| name == "use_unboxed_arguments"
-		|| name == "use_precise_simulation"
+		|| name == "unboxed_arguments"
+		|| name == "precise_simulation"
 #ifdef RISCV_LIBTCC
 		|| name == "binary_translation_nbit_as"
 		|| name == "binary_translation_register_caching"
@@ -433,10 +433,10 @@ bool ELFScriptInstance::property_get_revert(const StringName &p_name, Variant &r
 	} else if (name == "allocations_max") {
 		r_ret = Sandbox::MAX_HEAP_ALLOCS;
 		return true;
-	} else if (name == "use_unboxed_arguments") {
+	} else if (name == "unboxed_arguments") {
 		r_ret = true;
 		return true;
-	} else if (name == "use_precise_simulation") {
+	} else if (name == "precise_simulation") {
 		r_ret = false;
 		return true;
 #ifdef RISCV_LIBTCC
@@ -548,10 +548,10 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 			"get_instructions_max",
 			"set_allocations_max",
 			"get_allocations_max",
-			"set_use_unboxed_arguments",
-			"get_use_unboxed_arguments",
-			"set_use_precise_simulation",
-			"get_use_precise_simulation",
+			"set_unboxed_arguments",
+			"get_unboxed_arguments",
+			"set_precise_simulation",
+			"get_precise_simulation",
 #ifdef RISCV_LIBTCC
 			"set_binary_translation_bg_compilation",
 			"get_binary_translation_bg_compilation",

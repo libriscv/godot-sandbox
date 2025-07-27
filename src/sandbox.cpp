@@ -22,8 +22,8 @@ enum SandboxPropertyNameIndex : int {
 	PROP_MEMORY_MAX,
 	PROP_EXECUTION_TIMEOUT,
 	PROP_ALLOCATIONS_MAX,
-	PROP_USE_UNBOXED_ARGUMENTS,
-	PROP_USE_PRECISE_SIMULATION,
+	PROP_UNBOXED_ARGUMENTS,
+	PROP_PRECISE_SIMULATION,
 #ifdef RISCV_LIBTCC
 	PROP_BINTR_NBIT_AS,
 	PROP_BINTR_REG_CACHE,
@@ -138,13 +138,13 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_allocations_max"), &Sandbox::get_allocations_max);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "allocations_max", PROPERTY_HINT_NONE, "Maximum number of allocations allowed"), "set_allocations_max", "get_allocations_max");
 
-	ClassDB::bind_method(D_METHOD("set_use_unboxed_arguments", "use_unboxed_arguments"), &Sandbox::set_use_unboxed_arguments);
-	ClassDB::bind_method(D_METHOD("get_use_unboxed_arguments"), &Sandbox::get_use_unboxed_arguments);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PROPERTY_HINT_NONE, "Use unboxed arguments for VM function calls"), "set_use_unboxed_arguments", "get_use_unboxed_arguments");
+	ClassDB::bind_method(D_METHOD("set_unboxed_arguments", "unboxed_arguments"), &Sandbox::set_unboxed_arguments);
+	ClassDB::bind_method(D_METHOD("get_unboxed_arguments"), &Sandbox::get_unboxed_arguments);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "unboxed_arguments", PROPERTY_HINT_NONE, "Use unboxed arguments for VM function calls"), "set_unboxed_arguments", "get_unboxed_arguments");
 
-	ClassDB::bind_method(D_METHOD("set_use_precise_simulation", "use_precise_simulation"), &Sandbox::set_use_precise_simulation);
-	ClassDB::bind_method(D_METHOD("get_use_precise_simulation"), &Sandbox::get_use_precise_simulation);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE, "Use precise simulation for VM execution"), "set_use_precise_simulation", "get_use_precise_simulation");
+	ClassDB::bind_method(D_METHOD("set_precise_simulation", "precise_simulation"), &Sandbox::set_precise_simulation);
+	ClassDB::bind_method(D_METHOD("get_precise_simulation"), &Sandbox::get_precise_simulation);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "precise_simulation", PROPERTY_HINT_NONE, "Use precise simulation for VM execution"), "set_precise_simulation", "get_precise_simulation");
 
 	ClassDB::bind_method(D_METHOD("set_binary_translation_nbit_as", "use_nbit_as"), &Sandbox::set_binary_translation_automatic_nbit_as);
 	ClassDB::bind_method(D_METHOD("get_binary_translation_nbit_as"), &Sandbox::get_binary_translation_automatic_nbit_as);
@@ -224,8 +224,8 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() {
 	list.push_back(PropertyInfo(Variant::INT, "memory_max", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::INT, "allocations_max", PROPERTY_HINT_NONE));
-	list.push_back(PropertyInfo(Variant::BOOL, "use_unboxed_arguments", PROPERTY_HINT_NONE));
-	list.push_back(PropertyInfo(Variant::BOOL, "use_precise_simulation", PROPERTY_HINT_NONE));
+	list.push_back(PropertyInfo(Variant::BOOL, "unboxed_arguments", PROPERTY_HINT_NONE));
+	list.push_back(PropertyInfo(Variant::BOOL, "precise_simulation", PROPERTY_HINT_NONE));
 #ifdef RISCV_LIBTCC
 	list.push_back(PropertyInfo(Variant::BOOL, "binary_translation_nbit_as", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "binary_translation_register_caching", PROPERTY_HINT_NONE));
@@ -271,9 +271,9 @@ void Sandbox::reset_machine() {
 }
 void Sandbox::full_reset() {
 	this->reset_machine();
-	const bool use_unboxed_arguments = this->get_use_unboxed_arguments();
+	const bool unboxed_arguments = this->get_unboxed_arguments();
 	this->constructor_initialize();
-	this->set_use_unboxed_arguments(use_unboxed_arguments);
+	this->set_unboxed_arguments(unboxed_arguments);
 
 	this->m_properties.clear();
 	this->m_lookup.clear();
@@ -287,8 +287,8 @@ Sandbox::Sandbox() {
 			"memory_max",
 			"execution_timeout",
 			"allocations_max",
-			"use_unboxed_arguments",
-			"use_precise_simulation",
+			"unboxed_arguments",
+			"precise_simulation",
 #ifdef RISCV_LIBTCC
 			"binary_translation_nbit_as",
 			"binary_translation_register_caching",
@@ -563,7 +563,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 
 		// Run the program through to its main() function
 		if (!this->m_resumable_mode) {
-			if (!this->get_use_precise_simulation()) {
+			if (!this->get_precise_simulation()) {
 				if (get_instructions_max() <= 0) {
 					m.cpu.simulate_inaccurate(m.cpu.pc());
 				} else {
@@ -660,12 +660,12 @@ Variant Sandbox::vmcallv(const Variant **args, GDExtensionInt arg_count, GDExten
 		return Variant();
 	}
 
-	// Store use_unboxed_arguments state and restore it after the call
+	// Store unboxed_arguments state and restore it after the call
 	Variant result;
-	auto old_use_unboxed_arguments = this->m_use_unboxed_arguments;
-	this->m_use_unboxed_arguments = false;
+	auto old_unboxed_arguments = this->get_unboxed_arguments();
+	this->set_unboxed_arguments(false);
 	result = this->vmcall_internal(address, args, arg_count);
-	this->m_use_unboxed_arguments = old_use_unboxed_arguments;
+	this->set_unboxed_arguments(old_unboxed_arguments);
 
 	error.error = GDEXTENSION_CALL_OK;
 	return result;
@@ -801,7 +801,7 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 	}
 }
 GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int argc) {
-	if (this->m_use_unboxed_arguments) {
+	if (this->get_unboxed_arguments()) {
 		sp -= sizeof(GuestVariant) * (argc + 1);
 		sp &= ~gaddr_t(0xF); // re-align stack pointer
 		const gaddr_t arrayDataPtr = sp;
@@ -1317,11 +1317,11 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	} else if (name == property_names[PROP_ALLOCATIONS_MAX]) {
 		set_allocations_max(value);
 		return true;
-	} else if (name == property_names[PROP_USE_UNBOXED_ARGUMENTS]) {
-		set_use_unboxed_arguments(value);
+	} else if (name == property_names[PROP_UNBOXED_ARGUMENTS]) {
+		set_unboxed_arguments(value);
 		return true;
-	} else if (name == property_names[PROP_USE_PRECISE_SIMULATION]) {
-		set_use_precise_simulation(value);
+	} else if (name == property_names[PROP_PRECISE_SIMULATION]) {
+		set_precise_simulation(value);
 		return true;
 #ifdef RISCV_LIBTCC
 	} else if (name == property_names[PROP_BINTR_NBIT_AS]) {
@@ -1368,11 +1368,11 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	} else if (name == property_names[PROP_ALLOCATIONS_MAX]) {
 		r_ret = get_allocations_max();
 		return true;
-	} else if (name == property_names[PROP_USE_UNBOXED_ARGUMENTS]) {
-		r_ret = get_use_unboxed_arguments();
+	} else if (name == property_names[PROP_UNBOXED_ARGUMENTS]) {
+		r_ret = get_unboxed_arguments();
 		return true;
-	} else if (name == property_names[PROP_USE_PRECISE_SIMULATION]) {
-		r_ret = get_use_precise_simulation();
+	} else if (name == property_names[PROP_PRECISE_SIMULATION]) {
+		r_ret = get_precise_simulation();
 		return true;
 #ifdef RISCV_LIBTCC
 	} else if (name == property_names[PROP_BINTR_NBIT_AS]) {
@@ -1491,12 +1491,12 @@ void SandboxProperty::set(Sandbox &sandbox, const Variant &value) {
 		return;
 	}
 	const Variant *args[] = { &value };
-	// Store use_unboxed_arguments state and restore it after the call
+	// Store unboxed_arguments state and restore it after the call
 	// It's much more convenient to use Variant arguments for properties
-	auto old_use_unboxed_arguments = sandbox.get_use_unboxed_arguments();
-	sandbox.set_use_unboxed_arguments(false);
+	auto old_unboxed_arguments = sandbox.get_unboxed_arguments();
+	sandbox.set_unboxed_arguments(false);
 	sandbox.vmcall_internal(m_setter_address, args, 1);
-	sandbox.set_use_unboxed_arguments(old_use_unboxed_arguments);
+	sandbox.set_unboxed_arguments(old_unboxed_arguments);
 }
 
 Variant SandboxProperty::get(const Sandbox &sandbox) const {

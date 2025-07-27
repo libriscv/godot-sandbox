@@ -114,18 +114,18 @@ public:
 
 	/// @brief Set whether to prefer register values for VM function calls.
 	/// @param use_unboxed_arguments True to prefer register values, false to prefer Variant values.
-	void set_use_unboxed_arguments(bool use_unboxed_arguments) { m_use_unboxed_arguments = use_unboxed_arguments; }
+	void set_unboxed_arguments(bool use_unboxed_arguments) { m_use_unboxed_arguments = use_unboxed_arguments; }
 	/// @brief Get whether to prefer register values for VM function calls.
 	/// @return True if register values are preferred, false if Variant values are preferred.
-	bool get_use_unboxed_arguments() const { return m_use_unboxed_arguments; }
+	bool get_unboxed_arguments() const { return m_use_unboxed_arguments; }
 
 	/// @brief Set whether to use precise simulation for VM execution.
 	/// @param use_precise_simulation True to use precise simulation, false to use fast simulation.
-	void set_use_precise_simulation(bool use_precise_simulation) { m_precise_simulation = use_precise_simulation; }
+	void set_precise_simulation(bool use_precise_simulation) { m_precise_simulation = use_precise_simulation; }
 
 	/// @brief Get whether to use precise simulation for VM execution.
 	/// @return True if precise simulation is used, false otherwise.
-	bool get_use_precise_simulation() const { return m_precise_simulation; }
+	bool get_precise_simulation() const { return m_precise_simulation; }
 
 	/// @brief Set whether or not to enable profiling of the guest program.
 	/// @param enable True to enable profiling, false to disable it.
