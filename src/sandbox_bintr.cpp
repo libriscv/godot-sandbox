@@ -50,6 +50,10 @@ String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool auto
 	options->translate_ignore_instruction_limit = ignore_instruction_limit;
 	options->translate_automatic_nbit_address_space = automatic_nbit_as;
 	options->translate_use_register_caching = false;
+	if constexpr (riscv::libtcc_enabled) {
+		// Avoid any shenanigans with background compilation
+		options->translate_background_callback = nullptr;
+	}
 	// TODO: Make this configurable
 	options->translate_instr_max = 75'000u;
 
@@ -177,7 +181,7 @@ bool Sandbox::try_compile_binary_translation(String shared_library_path, const S
 		// Zig cc - C compiler (faster than C++)
 		args.push_back("cc");
 	}
-#if defined(__linux__) || defined(YEP_IS_MACOSX)
+#if defined(__linux__) || defined(YEP_IS_OSX)
 	args.push_back("-shared");
 	args.push_back("-fPIC");
 	args.push_back("-fvisibility=hidden");
