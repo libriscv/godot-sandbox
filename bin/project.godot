@@ -18,8 +18,6 @@ config/icon="res://icon.png"
 [editor]
 
 script/docker_enabled=false
-script/zig="/Users/dragosdaian/Library/Application Support/Godot/app_userdata/Godot RISCV/godot-sandbox/zig/zig"
-script/cmake="/Users/dragosdaian/Library/Application Support/Godot/app_userdata/Godot RISCV/godot-sandbox/cmake/CMake.app/Contents/bin/cmake"
 
 [editor_plugins]
 

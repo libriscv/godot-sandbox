@@ -179,6 +179,11 @@ endfunction()
 
 function (add_sandbox_program_at name path)
 	add_sandbox_program(${name} ${ARGN})
+	# if the path is relative, make it relative to
+	# the CMake source directory
+	if (NOT IS_ABSOLUTE "${path}")
+		set(path "${CMAKE_SOURCE_DIR}/${path}")
+	endif()
 	set_target_properties(${name} PROPERTIES
 		RUNTIME_OUTPUT_DIRECTORY ${path}
 		RUNTIME_OUTPUT_NAME ${name}

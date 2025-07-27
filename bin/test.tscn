@@ -1,18 +1,17 @@
 [gd_scene load_steps=4 format=3 uid="uid://cvdqbqcr3b6cy"]
 
-[ext_resource type="Script" uid="uid://c1v5yuo2j3aqe" path="res://cmake/test.cpp" id="1_37kl0"]
-[ext_resource type="Script" uid="uid://dhanhu7flt2ce" path="res://cmake/example.elf" id="3_6uqi0"]
-[ext_resource type="Script" uid="uid://dhanhu7flt2ce" path="res://cmake/example.elf" id="3_ppyta"]
+[ext_resource type="Script" uid="uid://c6g2q1leheg3n" path="res://src/test.gd" id="1_8uh7m"]
+[ext_resource type="Script" uid="uid://bmvqihc88irwr" path="res://src/example.elf" id="3_6uqi0"]
+[ext_resource type="Script" uid="uid://bmvqihc88irwr" path="res://src/example.elf" id="3_ppyta"]
 
-[node name="Node" type="Node"]
-script = ExtResource("1_37kl0")
-references_max = 100
-memory_max = 16
-execution_timeout = 8000
-allocations_max = 4000
-use_unboxed_arguments = true
-use_precise_simulation = false
-profiling = true
-restrictions = true
-program = ExtResource("3_ppyta")
-associated_script = ExtResource("3_6uqi0")
+[node name="Node" type="Node" node_paths=PackedStringArray("sandbox")]
+script = ExtResource("1_8uh7m")
+sandbox = NodePath("Sandbox_Example")
+
+[node name="Sandbox_Example" type="Sandbox" parent="."]
+program = ExtResource("3_6uqi0")
+script = ExtResource("3_ppyta")
+my_vector4 = Vector4(1, 2, 3, 4)
+my_string = "Hello, World!"
+program = ExtResource("3_6uqi0")
+metadata/_custom_type_script = "uid://bmvqihc88irwr"

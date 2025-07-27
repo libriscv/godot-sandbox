@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 project(example LANGUAGES CXX)
 
-# Fetch godot-sandbox repository (add_subdirectory is implicitly called)
+# Fetch godot-sandbox C++ API
 include(FetchContent)
 FetchContent_Declare(
 	godot-sandbox
@@ -13,10 +13,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(godot-sandbox)
 
-add_sandbox_program(example.elf
-	test.cpp
-)
-
-set_target_properties(example.elf PROPERTIES
-	RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/.."
+# Create example.elf in the src folder
+add_sandbox_program_at(example.elf ../src
+	../src/example.cpp
 )
