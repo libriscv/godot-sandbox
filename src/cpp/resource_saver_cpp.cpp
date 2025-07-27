@@ -55,6 +55,28 @@ static const char cmake_zig_ranlib_bytes[] = R"(
 @echo off
 zig ranlib %*
 )";
+static const char cmake_cmakelists_bytes[] = R"(
+cmake_minimum_required(VERSION 3.10)
+project(example LANGUAGES CXX)
+
+# Fetch godot-sandbox C++ API
+include(FetchContent)
+FetchContent_Declare(
+	godot-sandbox
+	GIT_REPOSITORY https://github.com/libriscv/godot-sandbox.git
+	GIT_TAG        main
+	GIT_SHALLOW    TRUE
+	GIT_SUBMODULES ""
+	SOURCE_SUBDIR  "program/cpp/cmake"
+)
+FetchContent_MakeAvailable(godot-sandbox)
+
+# Put an example.cpp in a src folder and CMake
+# will create example.elf in the same folder with this:
+add_sandbox_program_at(example.elf ../src
+	../src/example.cpp
+)
+)";
 
 void ResourceFormatSaverCPP::init() {
 	thread_pool = std::make_unique<riscv::ThreadPool>(1); // Maximum 1 compiler job at a time
@@ -113,6 +135,19 @@ static bool configure_cmake(const String &path) {
 		// Generate the C++ run-time API in the .build directory
 		// This will be used by C++ programs to access the wider Godot API
 		auto_generate_cpp_api(runtime_api_path);
+	}
+
+	// Create the CMakeLists.txt file if it does not exist
+	const String cmakelists_path = path + String("/CMakeLists.txt");
+	if (!FileAccess::file_exists(cmakelists_path)) {
+		Ref<FileAccess> cmakelists_file = FileAccess::open(cmakelists_path, FileAccess::ModeFlags::WRITE);
+		if (cmakelists_file.is_valid()) {
+			cmakelists_file->store_string(cmake_cmakelists_bytes);
+			cmakelists_file->close();
+		} else {
+			ERR_PRINT("Failed to create CMakeLists.txt file: " + cmakelists_path);
+			return false;
+		}
 	}
 
 	// Execute cmake to configure the project
