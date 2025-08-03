@@ -67,7 +67,7 @@ String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool auto
 
 	// 4. Wait for any potential background compilation to finish
 	if constexpr (riscv::libtcc_enabled) {
-		std::scoped_lock lock(m.cpu.current_execute_segment().background_compilation_mutex());
+		m.cpu.current_execute_segment().wait_for_compilation_complete();
 	}
 
 	// 4. Verify that the translation was successful

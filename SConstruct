@@ -28,7 +28,6 @@ librisc_sources = [
     "ext/libriscv/lib/libriscv/memory_elf.cpp",
     "ext/libriscv/lib/libriscv/memory_mmap.cpp",
     "ext/libriscv/lib/libriscv/memory_rw.cpp",
-    "ext/libriscv/lib/libriscv/multiprocessing.cpp",
     "ext/libriscv/lib/libriscv/native_libc.cpp",
     "ext/libriscv/lib/libriscv/native_threads.cpp",
     #"ext/libriscv/lib/libriscv/rv32i.cpp",
