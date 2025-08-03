@@ -52,15 +52,24 @@ func _update_status():
 		cmake_status.text = "CMake: " + status["not_installed"]
 		show()
 	
-	# Make
-	exit_code = OS.execute(ProjectSettings.get_setting("editor/script/make", "make"), ["--version"], output, true)
-	
-	if exit_code == 0:
-		make_status.text = "Make: " + status["installed"]
+	# Make (Linux/macOS) or Ninja (Windows)
+	if OS.get_name() == "Windows":
+		exit_code = OS.execute(ProjectSettings.get_setting("editor/script/make", "ninja"), ["--version"], output, true)
+		if exit_code == 0:
+			make_status.text = "Ninja: " + status["installed"]
+		else:
+			print("Ninja not installed: ", output)
+			make_status.text = "Ninja: " + status["not_installed"]
+			show()
 	else:
-		print("Make not installed: ", output)
-		make_status.text = "Make: " + status["not_installed"]
-		show()
+		exit_code = OS.execute(ProjectSettings.get_setting("editor/script/make", "make"), ["--version"], output, true)
+		if exit_code == 0:
+			make_status.text = "Make: " + status["installed"]
+		else:
+			print("Make not installed: ", output)
+			make_status.text = "Make: " + status["not_installed"]
+			show()
+
 	
 	# Git
 	exit_code = OS.execute(ProjectSettings.get_setting("editor/script/git", "git"), ["--version"], output, true)
