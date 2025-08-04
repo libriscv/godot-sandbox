@@ -119,14 +119,14 @@ struct Variant
 		OP_MAX
 	};
 
-	Variant() { m_type = NIL; }
+	constexpr Variant() { m_type = NIL; }
 	Variant(const Variant &other);
 	Variant(Variant &&other);
 	~Variant() {}
 
 	// Constructor for common types
 	template <typename T>
-	Variant(T value);
+	constexpr Variant(T value);
 
 	Variant(const Array&);
 	Variant(const Dictionary&);
@@ -322,7 +322,7 @@ static_assert(sizeof(Variant) == 24, "Variant size mismatch");
 #endif
 
 template <typename T>
-inline Variant::Variant(T value)
+inline constexpr Variant::Variant(T value)
 {
 	if constexpr (std::is_same_v<T, bool>) {
 		m_type = BOOL;
