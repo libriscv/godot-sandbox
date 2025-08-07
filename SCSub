@@ -5,67 +5,90 @@ import os
 Import("env")
 Import("env_modules")
 
-def get_addon_target():
-    if env["target"] == "template_release":
-        return "template_release"
-    return "template_debug"
 
+#region Helpers
 def get_addon_platform():
     return env["platform"].replace("linuxbsd", "linux")
 
-dev_build_extension = ""
-if env["dev_build"]:
-    dev_build_extension += ".dev"
+def get_addon_threads():
+    return "yes" if env["threads"] else "no"
 
-def get_sufix():
-    suffix = ".{}.{}".format(get_addon_platform(), get_addon_target())
-    suffix += dev_build_extension
+def get_addon_llvm():
+    return "yes" if env.get("use_llvm", False) else "no"
+
+def get_addon_devbuild():
+    return "yes" if env.get("dev_build", False) else "no"
+
+def get_addon_target():
+    return "template_release" if env["target"] == "editor" else env["target"]
+
+def get_addon_mingw():
+    return "yes" if env.get("use_mingw", False) else "no"
+
+# TODO remove when godot-cpp 4.5 is released
+# Replace in godot-cpp android ndk from "23.2.8568313" to "28.1.13356709"
+if env["platform"] == "android":
+    os.system("sed -i 's/23.2.8568313/28.1.13356709/g' godot-cpp/tools/android.py")
+os.system(f"scons static_build=yes platform={get_addon_platform()} target={get_addon_target()} arch={env['arch']} precision={env['precision']} threads={get_addon_threads()} dev_build={get_addon_devbuild()} use_llvm={get_addon_llvm()} lto={env['lto']} use_mingw={get_addon_mingw()}")
+
+def get_sufix_before():
+    suffix = f".{get_addon_platform()}.{env['target']}"
+    if env["dev_build"]:
+        suffix += ".dev"
     if env["precision"] == "double":
         suffix += ".double"
-    suffix += "." + env["arch"]
+    suffix += f".{env['arch']}"
     if not env["threads"]:
         suffix += ".nothreads"
+    if env.get("use_llvm", False):
+        suffix += ".llvm"
     return suffix
 
 
-os.system("scons static_build=yes platform=" + get_addon_platform() + " target=" + get_addon_target() + " arch=" + env["arch"] + " precision=" + env["precision"] + " threads=" + str(env["threads"]) + " dev_build=" + str(env["dev_build"]))
+def get_sufix_after():
+    suffix = f".{get_addon_platform()}.{get_addon_target()}"
+    if env["dev_build"]:
+        suffix += ".dev"
+    if env["precision"] == "double":
+        suffix += ".double"
+    suffix += f".{env['arch']}"
+    if not env["threads"]:
+        suffix += ".nothreads"
+    return suffix
+os.system("ls -l bin/")
+# Rename if target is editor
+if env["target"] == "editor" or env["platform"] == "windows":
+    lib_extension = ".a" if env["platform"] != "windows" else ".lib"
+    lib_prefix = "lib" if env["platform"] != "windows" else ""
+    if env.get("use_mingw", False):
+        lib_extension = ".a"
+        lib_prefix = "lib"
+    # Rename our lib
+    os.rename(
+        f"bin/libsandbox{get_sufix_after()}{lib_extension}",
+        f"bin/{lib_prefix}sandbox{get_sufix_before()}{lib_extension}"
+    )
+    # Rename godot-cpp lib
+    os.rename(
+        f"godot-cpp/bin/libgodot-cpp{get_sufix_after()}{lib_extension}",
+        f"godot-cpp/bin/{lib_prefix}godot-cpp{get_sufix_before()}{lib_extension}"
+    )
+        
+# Do an ls on bin folder
+os.system("ls -l bin/")
+#endregion
 
-platform = get_addon_platform()
-target = get_addon_target()
-arch = env["arch"]
-
-if platform == "macos":
-    base_path = f"#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.macos.{target}{dev_build_extension}.{arch}.framework/"
-    base_file = f"{base_path}libgodot_riscv.macos.{target}{dev_build_extension}.{arch}"
-elif platform == "ios":
-    base_path = f"#modules/sandbox/bin/addons/godot_sandbox/bin/libgodot_riscv.ios.{target}{dev_build_extension}.{arch}.framework/"
-    base_file = f"{base_path}libgodot_riscv.ios.{target}{dev_build_extension}.{arch}"
-elif platform == "windows":
-    base_path = "#modules/sandbox/bin/addons/godot_sandbox/bin"
-    base_file = "godot_riscv"
+env_sandbox = env_modules.Clone()
+suffix = get_sufix_before()
+if env["platform"] == "ios":
+    env_sandbox.Append(LIBPATH=["#modules/sandbox/bin", "#modules/sandbox/godot-cpp/bin"])
+    env_sandbox.Append(LIBS=[f"libsandbox{suffix}", f"libgodot-cpp{suffix}"])
+elif env["platform"] != "windows" or env.get("use_mingw", False):
+    env.Append(LIBPATH=["#modules/sandbox/bin", "#modules/sandbox/godot-cpp/bin"])
+    env.Append(LIBS=[f"sandbox{suffix}", f"godot-cpp{suffix}"])
 else:
-    base_path = "#modules/sandbox/bin/addons/godot_sandbox/bin"
-    base_file = "godot_riscv{}".format(get_sufix())
+    env.Append(LIBPATH=["#modules/sandbox/bin", "#modules/sandbox/godot-cpp/bin"])
+    env.Append(LIBS=["sandbox", "godot-cpp"])
 
-env_gdextension = env_modules.Clone()
-print("Using base path: {}".format(base_path))
-print("Using base file: {}".format(base_file))
-env.Append(LIBS=[base_file])
-env.Append(LIBPATH=[base_path])
 
-# Godot-cpp
-cpp_base_path = "#modules/sandbox/ext/godot-cpp/bin"
-if platform == "macos":
-    cpp_base_file = f"{cpp_base_path}/libgodot-cpp.macos.{target}{dev_build_extension}.{arch}"
-elif platform == "ios":
-    cpp_base_file = f"{cpp_base_path}/libgodot-cpp.ios.{target}{dev_build_extension}.{arch}"
-elif platform == "windows":
-    cpp_base_file = "godot-cpp"
-else:
-    cpp_base_file = "godot-cpp{}".format(get_sufix())
-
-env.Append(LIBS=[cpp_base_file])
-env.Append(LIBPATH=[cpp_base_path])
-
-# Sources
-env_gdextension.add_source_files(env.modules_sources, "*.cpp")
+env.add_source_files(env.modules_sources, "register_types.cpp")

@@ -89,8 +89,8 @@ elif env["platform"] == "linux" or env["platform"] == "android":
     env.Prepend(CPPPATH=["ext/libriscv/lib/libriscv/lib/linux"])
     add_godot_cpp_doc_data(env, sources)
 
+env.Append(CPPDEFINES = ["SANDBOX_GDEXTENSION"])
 if "static_build" not in ARGUMENTS or ARGUMENTS["static_build"]!="yes":
-    print("Building shared library")
     if env["platform"] == "macos" or env["platform"] == "ios":
         library = env.SharedLibrary(
             "bin/addons/godot_sandbox/bin/libgodot_riscv{}.framework/libgodot_riscv{}".format(
@@ -105,19 +105,8 @@ if "static_build" not in ARGUMENTS or ARGUMENTS["static_build"]!="yes":
         )
     Default(library)
 else:
-    print("Building static library")
-    env.Append(CPPDEFINES = ['SANDBOX_MODULE'])
-    # Static lib
-    if env["platform"] == "macos" or env["platform"] == "ios":
-        library = env.StaticLibrary(
-            "bin/addons/godot_sandbox/bin/libgodot_riscv{}.framework/libgodot_riscv{}{}".format(
-                env["suffix"], env["suffix"], env["LIBSUFFIX"]
-            ),
-            source=sources,
-        )
-    else:
-        library = env.StaticLibrary(
-            "bin/addons/godot_sandbox/bin/libgodot_riscv{}{}".format(env["suffix"], env["LIBSUFFIX"]),
-            source=sources,
-        )
+    library = env.StaticLibrary(
+        "bin/libtiny_lobby{}{}".format(env["suffix"], env["LIBSUFFIX"]),
+        source=sources,
+    )
     Default(library)
