@@ -89,7 +89,6 @@ elif env["platform"] == "linux" or env["platform"] == "android":
     env.Prepend(CPPPATH=["ext/libriscv/lib/libriscv/lib/linux"])
     add_godot_cpp_doc_data(env, sources)
 
-env.Append(CPPDEFINES = ["SANDBOX_GDEXTENSION"])
 if "static_build" not in ARGUMENTS or ARGUMENTS["static_build"]!="yes":
     if env["platform"] == "macos" or env["platform"] == "ios":
         library = env.SharedLibrary(
