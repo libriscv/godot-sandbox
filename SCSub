@@ -73,8 +73,8 @@ if env["target"] == "editor" or env["platform"] == "windows":
     )
     # Rename godot-cpp lib
     os.rename(
-        f"godot-cpp/bin/libgodot-cpp{get_sufix_after()}{lib_extension}",
-        f"godot-cpp/bin/{lib_prefix}godot-cpp{get_sufix_before()}{lib_extension}"
+        f"ext/godot-cpp/bin/libgodot-cpp{get_sufix_after()}{lib_extension}",
+        f"ext/godot-cpp/bin/{lib_prefix}godot-cpp{get_sufix_before()}{lib_extension}"
     )
         
 # Do an ls on bin folder
