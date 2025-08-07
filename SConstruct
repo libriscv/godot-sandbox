@@ -105,7 +105,7 @@ if "static_build" not in ARGUMENTS or ARGUMENTS["static_build"]!="yes":
     Default(library)
 else:
     library = env.StaticLibrary(
-        "bin/libtiny_lobby{}{}".format(env["suffix"], env["LIBSUFFIX"]),
+        "bin/libsandbox{}{}".format(env["suffix"], env["LIBSUFFIX"]),
         source=sources,
     )
     Default(library)
