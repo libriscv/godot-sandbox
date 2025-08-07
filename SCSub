@@ -29,7 +29,10 @@ def get_addon_mingw():
 # Replace in godot-cpp android ndk from "23.2.8568313" to "28.1.13356709"
 if env["platform"] == "android":
     os.system("sed -i 's/23.2.8568313/28.1.13356709/g' godot-cpp/tools/android.py")
-os.system(f"scons static_build=yes platform={get_addon_platform()} target={get_addon_target()} arch={env['arch']} precision={env['precision']} threads={get_addon_threads()} dev_build={get_addon_devbuild()} use_llvm={get_addon_llvm()} lto={env['lto']} use_mingw={get_addon_mingw()}")
+
+# Only build if we are not using MSVC
+if env.get("use_mingw", False):
+    os.system(f"scons static_build=yes platform={get_addon_platform()} target={get_addon_target()} arch={env['arch']} precision={env['precision']} threads={get_addon_threads()} dev_build={get_addon_devbuild()} use_llvm={get_addon_llvm()} lto={env['lto']} use_mingw={get_addon_mingw()}")
 
 def get_sufix_before():
     suffix = f".{get_addon_platform()}.{env['target']}"
@@ -80,14 +83,15 @@ os.system("ls -l bin/")
 
 env_sandbox = env_modules.Clone()
 suffix = get_sufix_before()
+godot_cpp_path = "#modules/sandbox/ext/godot-cpp/bin"
 if env["platform"] == "ios":
-    env_sandbox.Append(LIBPATH=["#modules/sandbox/bin", "#modules/sandbox/godot-cpp/bin"])
+    env_sandbox.Append(LIBPATH=["#modules/sandbox/bin", godot_cpp_path])
     env_sandbox.Append(LIBS=[f"libsandbox{suffix}", f"libgodot-cpp{suffix}"])
 elif env["platform"] != "windows" or env.get("use_mingw", False):
-    env.Append(LIBPATH=["#modules/sandbox/bin", "#modules/sandbox/godot-cpp/bin"])
+    env.Append(LIBPATH=["#modules/sandbox/bin", godot_cpp_path])
     env.Append(LIBS=[f"sandbox{suffix}", f"godot-cpp{suffix}"])
 else:
-    env.Append(LIBPATH=["#modules/sandbox/bin", "#modules/sandbox/godot-cpp/bin"])
+    env.Append(LIBPATH=["#modules/sandbox/bin", godot_cpp_path])
     env.Append(LIBS=["sandbox", "godot-cpp"])
 
 
