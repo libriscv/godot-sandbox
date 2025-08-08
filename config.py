@@ -1,5 +1,6 @@
 def can_build(env, platform):
-    return env.get("is_msvc", False) != True
+    # All platforms minus windows without mingw
+    return (env["platform"] == "windows" and env.get("use_mingw", False)) or env["platform"] != "windows"
 
 
 def configure(env):
