@@ -1328,18 +1328,18 @@ Dictionary Sandbox::create_public_api_function(std::string_view name, gaddr_t ad
 		return func;
 	}
 
-	String godot_name = String::utf8(name.begin(), name.size());
+	String godot_name = String::utf8(name.data(), name.size());
 	func["name"] = godot_name;
 	func["address"] = address;
 	func["flags"] = METHOD_FLAG_NORMAL;
 
 	Dictionary return_value;
-	return_value["type"] = convert_guest_type_to_variant(String::utf8(return_type.begin(), return_type.size()));
+	return_value["type"] = convert_guest_type_to_variant(String::utf8(return_type.data(), return_type.size()));
 	func["return"] = std::move(return_value);
-	func["description"] = String::utf8(description.begin(), description.size());
+	func["description"] = String::utf8(description.data(), description.size());
 
 	TypedArray<Dictionary> args_array;
-	PackedStringArray arg_names = String::utf8(args.begin(), args.size()).split(", ");
+	PackedStringArray arg_names = String::utf8(args.data(), args.size()).split(", ");
 	if (arg_names.is_empty()) {
 		return func;
 	}
@@ -1389,7 +1389,7 @@ PackedStringArray Sandbox::get_public_functions(const machine_t& machine) {
 				continue;
 			}
 			if (exclude_functions.count(function) == 0) {
-				result.append(String::utf8(function.begin(), function.size()));
+				result.append(String::utf8(function.data(), function.size()));
 			}
 		}
 	} catch (const std::exception &e) {

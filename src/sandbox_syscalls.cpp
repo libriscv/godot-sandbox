@@ -1046,7 +1046,7 @@ APICALL(api_node_create) {
 		throw std::runtime_error("Failed to create Node");
 	}
 	if (!name.empty()) {
-		node->set_name(String::utf8(name.begin(), name.size()));
+		node->set_name(String::utf8(name.data(), name.size()));
 	}
 	emu.add_scoped_object(node);
 	machine.set_result(uint64_t(uintptr_t(node)));

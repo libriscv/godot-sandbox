@@ -884,7 +884,9 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 }
 Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc) {
 	this->m_current_state += 1;
-	if (UNLIKELY(this->m_current_state >= this->m_states.end())) {
+	const auto *beginptr = this->m_states.data();
+	const auto *endptr = this->m_states.data() + this->m_states.size();
+	if (UNLIKELY(this->m_current_state >= endptr)) {
 		ERR_PRINT("Too many VM calls in progress");
 		this->m_exceptions ++;
 		this->m_global_exceptions ++;
@@ -893,7 +895,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 	}
 
 	CurrentState &state = *this->m_current_state;
-	const bool is_reentrant_call = (this->m_current_state - this->m_states.begin()) > 1;
+	const bool is_reentrant_call = (this->m_current_state - beginptr) > 1;
 	state.reset();
 
 	// Call statistics
