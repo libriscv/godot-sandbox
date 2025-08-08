@@ -28,7 +28,7 @@ def get_addon_mingw():
 # TODO remove when godot-cpp 4.5 is released
 # Replace in godot-cpp android ndk from "23.2.8568313" to "28.1.13356709"
 if env["platform"] == "android":
-    os.system("sed -i 's/23.2.8568313/28.1.13356709/g' godot-cpp/tools/android.py")
+    os.system("sed -i 's/23.2.8568313/28.1.13356709/g' ext/godot-cpp/tools/android.py")
 
 # Only build if we are not using MSVC
 if (env.get("use_mingw", False) and env["platform"] == "windows") or env["platform"] != "windows":
