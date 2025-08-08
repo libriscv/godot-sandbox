@@ -31,7 +31,7 @@ if env["platform"] == "android":
     os.system("sed -i 's/23.2.8568313/28.1.13356709/g' godot-cpp/tools/android.py")
 
 # Only build if we are not using MSVC
-if (env.get("use_mingw", False) and env["platform"] != "windows") or env["platform"] != "windows":
+if (env.get("use_mingw", False) and env["platform"] == "windows") or env["platform"] != "windows":
     os.system(f"scons static_build=yes platform={get_addon_platform()} target={get_addon_target()} arch={env['arch']} precision={env['precision']} threads={get_addon_threads()} dev_build={get_addon_devbuild()} use_llvm={get_addon_llvm()} lto={env['lto']} use_mingw={get_addon_mingw()}")
 
 def get_sufix_before():
