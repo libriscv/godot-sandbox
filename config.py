@@ -1,4 +1,5 @@
 def can_build(env, platform):
+    print("Building with ", env)
     if env.get("module_mono_enabled", False):
         print("Sandbox module cannot be built with Mono enabled.")
         return False
