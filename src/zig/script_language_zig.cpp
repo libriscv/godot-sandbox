@@ -18,6 +18,13 @@ void ZigScriptLanguage::init() {
 	zig_language = memnew(ZigScriptLanguage);
 	Engine::get_singleton()->register_script_language(zig_language);
 }
+void ZigScriptLanguage::deinit() {
+	if (zig_language) {
+		Engine::get_singleton()->unregister_script_language(zig_language);
+		memdelete(zig_language);
+		zig_language = nullptr;
+	}
+}
 
 ZigScriptLanguage *ZigScriptLanguage::get_singleton() {
 	return zig_language;

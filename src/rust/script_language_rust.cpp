@@ -18,6 +18,13 @@ void RustScriptLanguage::init() {
 	rust_language = memnew(RustScriptLanguage);
 	Engine::get_singleton()->register_script_language(rust_language);
 }
+void RustScriptLanguage::deinit() {
+	if (rust_language) {
+		Engine::get_singleton()->unregister_script_language(rust_language);
+		memdelete(rust_language);
+		rust_language = nullptr;
+	}
+}
 
 RustScriptLanguage *RustScriptLanguage::get_singleton() {
 	return rust_language;
