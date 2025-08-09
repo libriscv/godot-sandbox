@@ -135,6 +135,16 @@ Script of a simple Coin pickup, with a counter that updates a label in the outer
 
 You may also have a look at our [demo repository](https://github.com/libriscv/godot-sandbox-demo) for the Godot Sandbox. It's a tiny platformer that uses C++ and Rust. There is also [a 3D plane demo](https://github.com/libriscv/godot_bird_plane) that enables controlling the plane from C++ scripts.
 
+## Module Build
+
+In order to build module, add it to a godot repo:
+
+```
+git submodule add https://github.com/libriscv/godot-sandbox modules/sandbox
+cd modules/sandbox
+git submodule update --init --recursive
+```
+
 ## Contributing
 
 Requirements:
