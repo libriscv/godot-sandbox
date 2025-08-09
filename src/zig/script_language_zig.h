@@ -14,6 +14,7 @@ protected:
 
 public:
 	static void init();
+	static void deinit();
 	static ZigScriptLanguage *get_singleton();
 
 	virtual String _get_name() const override;

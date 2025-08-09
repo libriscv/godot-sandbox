@@ -88,10 +88,10 @@ static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 	Engine *engine = Engine::get_singleton();
-	engine->unregister_script_language(CPPScriptLanguage::get_singleton());
+	CPPScriptLanguage::deinit();
 #ifdef PLATFORM_HAS_EDITOR
-	engine->unregister_script_language(RustScriptLanguage::get_singleton());
-	engine->unregister_script_language(ZigScriptLanguage::get_singleton());
+	RustScriptLanguage::deinit();
+	ZigScriptLanguage::deinit();
 #endif
 	if (elf_language) {
 		engine->unregister_script_language(elf_language);

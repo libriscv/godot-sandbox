@@ -18,6 +18,13 @@ void CPPScriptLanguage::init() {
 	cpp_language = memnew(CPPScriptLanguage);
 	Engine::get_singleton()->register_script_language(cpp_language);
 }
+void CPPScriptLanguage::deinit() {
+	if (cpp_language) {
+		Engine::get_singleton()->unregister_script_language(cpp_language);
+		memdelete(cpp_language);
+		cpp_language = nullptr;
+	}
+}
 
 CPPScriptLanguage *CPPScriptLanguage::get_singleton() {
 	return cpp_language;
