@@ -38,6 +38,7 @@ set(SOURCES
 	src/sandbox_programs.cpp
 	src/sandbox_project_settings.cpp
 	src/sandbox_restrictions.cpp
+	src/sandbox_shm.cpp
 	src/sandbox_syscalls.cpp
 	src/sandbox_syscalls_2d.cpp
 	src/sandbox_syscalls_3d.cpp

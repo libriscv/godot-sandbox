@@ -45,6 +45,7 @@ public:
 	static constexpr unsigned EDITOR_THROTTLE = 8; // Throttle VM calls from the editor
 	static constexpr unsigned MAX_PROPERTIES = 32; // Maximum number of sandboxed properties
 	static constexpr unsigned MAX_PUBLIC_FUNCTIONS = 128; // Maximum number of public functions
+	static constexpr gaddr_t SHM_BASE_ADDRESS = 0x400000000; // 16 GB
 
 	struct CurrentState {
 		std::vector<Variant> variants;
@@ -60,6 +61,15 @@ public:
 	struct LookupEntry {
 		String  name;
 		gaddr_t address;
+	};
+	struct SharedMemoryRange {
+		gaddr_t start;
+		gaddr_t size;
+
+		SharedMemoryRange(gaddr_t p_start, gaddr_t p_size) : start(p_start), size(p_size) {}
+		bool contains(gaddr_t address) const {
+			return address >= start && address < start + size;
+		}
 	};
 	struct ProfilingState {
 		std::unordered_map<gaddr_t, int> hotspots;
@@ -417,6 +427,30 @@ public:
 	/// TODO: Implement this
 	//Array get_method_list() const;
 
+	// -= Shared Memory =-
+
+	/// @brief Share a byte array with the guest program. Page-unaligned memory
+	/// at the end is initialized to zero.
+	/// @param allow_write Whether the guest program is allowed to write to the shared memory range.
+	/// @param array The array to share.
+	/// @return The guest address of the shared memory range.
+	/// @warning Deallocating or resizing the underlying array will break the shared memory range.
+	/// @warning The shared memory must be freed manually by calling unshare_array() when no longer needed.
+	gaddr_t share_byte_array(bool allow_write, const PackedByteArray &array);
+	gaddr_t share_float32_array(bool allow_write, const PackedFloat32Array &array);
+	gaddr_t share_float64_array(bool allow_write, const PackedFloat64Array &array);
+	gaddr_t share_int32_array(bool allow_write, const PackedInt32Array &array);
+	gaddr_t share_int64_array(bool allow_write, const PackedInt64Array &array);
+	gaddr_t share_vec2_array(bool allow_write, const PackedVector2Array &array);
+	gaddr_t share_vec3_array(bool allow_write, const PackedVector3Array &array);
+	gaddr_t share_vec4_array(bool allow_write, const PackedVector4Array &array);
+
+	/// @brief Unshare an array of any type from the guest program.
+	/// @param address The guest address of the shared memory range.
+	/// @return True if the array was successfully unshared, false otherwise.
+	/// @note This will not free the memory, but will remove the shared memory range from the sandbox.
+	bool unshare_array(gaddr_t address);
+
 	// -= Profiling & Hotspots =-
 
 	/// @brief Generate the top N hotspots from profiling recorded so far.
@@ -578,6 +612,7 @@ public:
 
 private:
 	static void generate_runtime_cpp_api(bool use_argument_names = false);
+	gaddr_t share_array_internal(void* data, size_t size, bool allow_write);
 	bool is_in_vmcall() const noexcept { return m_current_state != &m_states[0]; }
 	void constructor_initialize();
 	void full_reset();
@@ -622,6 +657,10 @@ private:
 	// Properties
 	mutable std::vector<SandboxProperty> m_properties;
 	mutable std::unordered_map<int64_t, LookupEntry> m_lookup;
+
+	// Shared memory ranges
+	std::vector<SharedMemoryRange> m_shared_memory_ranges;
+	gaddr_t m_shared_memory_base = SHM_BASE_ADDRESS;
 
 	// Restrictions
 	std::unordered_set<godot::Object *> m_allowed_objects;
