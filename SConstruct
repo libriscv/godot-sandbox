@@ -89,6 +89,28 @@ elif env["platform"] == "linux" or env["platform"] == "android":
     env.Prepend(CPPPATH=["ext/libriscv/lib/libriscv/lib/linux"])
     add_godot_cpp_doc_data(env, sources)
 
+if env["platform"] == "windows" or env["platform"] == "macos" or env["platform"] == "linux" or env["platform"] == "android":
+    # We can enable JIT compilation for these platforms
+    env.Append(CPPDEFINES=["RISCV_LIBTCC=1"])
+    # Add the TCC library
+    env.Prepend(CPPPATH=["ext/libriscv/lib/libriscv/tinycc"])
+    # Add libtcc.c to the sources
+    libtcc_sources = [
+        "ext/libriscv/lib/libriscv/tinycc/libtcc.c",
+        "ext/libriscv/lib/libriscv/tr_tcc.cpp",
+    ]
+    sources.extend(libtcc_sources)
+    # Platform-specific defines
+    if env["platform"] == "windows":
+        env.Append(CPPDEFINES=["TARGETOS_Windows=1", "TCC_TARGET_X86_64=1", "TCC_TARGET_PE=1"])
+    elif env["platform"] == "macos":
+        env.Append(CPPDEFINES=["TARGETOS_Darwin=1", "TCC_TARGET_ARM64=1", "TCC_TARGET_MACHO=1"])
+    elif env["platform"] == "linux":
+        env.Append(CPPDEFINES=["TARGETOS_Linux=1", "TCC_TARGET_X86_64=1"])
+    elif env["platform"] == "android":
+        env.Append(CPPDEFINES=["TARGETOS_Android=1", "TCC_TARGET_ARM64=1"])
+
+
 if "static_build" not in ARGUMENTS or ARGUMENTS["static_build"]!="yes":
     if env["platform"] == "macos" or env["platform"] == "ios":
         library = env.SharedLibrary(
