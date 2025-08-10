@@ -6,6 +6,12 @@ gaddr_t Sandbox::share_array_internal(void* data, size_t bytes, bool allow_write
 		ERR_PRINT("Cannot share array while a VM call is in progress.");
 		return 0;
 	}
+#ifdef RISCV_LIBTCC
+		if (this->m_bintr_automatic_nbit_as) {
+			ERR_PRINT("Cannot share array while the program is in automatic N-bit mode. Virtual memory is disabled.");
+			return 0;
+		}
+#endif
 
 	const gaddr_t vaddr = this->m_shared_memory_base;
 	const size_t  vsize = (bytes + 0xFFFLL) & ~0xFFFLL; // Align to 4KB
