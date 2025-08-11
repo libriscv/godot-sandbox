@@ -1,4 +1,5 @@
 #include "sandbox.h"
+static constexpr bool VERBOSE_SHM = false;
 
 gaddr_t Sandbox::share_array_internal(void* data, size_t bytes, bool allow_write)
 {
@@ -24,7 +25,9 @@ gaddr_t Sandbox::share_array_internal(void* data, size_t bytes, bool allow_write
 	try {
 		// If the data is larger than a page, we can directly insert it as non-owned memory
 		if (valignsize > 0) {
-			printf("Inserting %zu bytes of data into shared memory at address 0x%lx\n", valignsize, vaddr);
+			if constexpr (VERBOSE_SHM) {
+				printf("Inserting %zu bytes of data into shared memory at address 0x%lx\n", valignsize, vaddr);
+			}
 			machine().memory.insert_non_owned_memory(
 				vaddr, data, valignsize, riscv::PageAttributes{
 					.read = true,
@@ -36,7 +39,9 @@ gaddr_t Sandbox::share_array_internal(void* data, size_t bytes, bool allow_write
 		// The remaining bytes must be copied into the end of shared memory
 		const size_t remaining = bytes - valignsize;
 		if (remaining > 0) {
-			printf("Copying remaining %zu bytes of data into shared memory at address 0x%lx\n", remaining, vaddr + valignsize);
+			if constexpr (VERBOSE_SHM) {
+				printf("Copying remaining %zu bytes of data into shared memory at address 0x%lx\n", remaining, vaddr + valignsize);
+			}
 			machine().memory.memcpy(vaddr + valignsize, static_cast<const uint8_t *>(data) + valignsize, remaining);
 			machine().memory.set_page_attr(
 				vaddr + valignsize, riscv::Page::size(), riscv::PageAttributes{
@@ -47,8 +52,8 @@ gaddr_t Sandbox::share_array_internal(void* data, size_t bytes, bool allow_write
 			// And the remaining bytes internal to the page are already zeroed (or guest-owned).
 		}
 
-		// Add the new range to the shared memory ranges
-		this->m_shared_memory_ranges.emplace_back(vaddr, vsize);
+		// Add the new range to the shared memory ranges (we need the real bytes)
+		this->m_shared_memory_ranges.emplace_back(vaddr, bytes, data);
 		return vaddr;
 
 	} catch (const std::exception &e) {
@@ -74,9 +79,28 @@ bool Sandbox::unshare_array(gaddr_t address) {
 		return false;
 	}
 
+	// Copy back the remaining bytes (overflow on the last page) if any
+	const size_t remaining = it->size & (riscv::Page::size() - 1);
+	if (remaining > 0) {
+		if constexpr (VERBOSE_SHM) {
+			printf("Copying remaining %zu bytes from shared memory at address 0x%lx\n", remaining, it->start + it->size - remaining);
+		}
+		// Get the base pointer to the shared memory range by getting the page data at start
+		uint8_t *base_ptr = (uint8_t *)it->base_ptr;
+
+		const gaddr_t offset = it->size - remaining;
+		machine().copy_from_guest(
+			base_ptr + offset, it->start + offset, remaining);
+	}
+
 	// Remove the range from the shared memory ranges
-	printf("Freeing pages from shared memory range: start=0x%lx, size=0x%lx\n", it->start, it->size);
-	machine().memory.free_pages(it->start, it->size);
+	if constexpr (VERBOSE_SHM) {
+		printf("Freeing pages from shared memory range: start=0x%lx, size=0x%lx\n", it->start, it->size);
+	}
+	// Align up the size to page size
+	const size_t aligned_size = (it->size + riscv::Page::size() - 1) & ~(riscv::Page::size() - 1);
+	// Free the pages in the range
+	machine().memory.free_pages(it->start, aligned_size);
 
 	this->m_shared_memory_ranges.erase(it);
 	return true;

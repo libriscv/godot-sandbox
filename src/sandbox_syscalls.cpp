@@ -281,10 +281,18 @@ APICALL(api_vcreate) {
 		case Variant::PACKED_FLOAT32_ARRAY: {
 			PackedFloat32Array a;
 			if (gdata != 0x0) {
-				// Copy std::vector<float> from guest memory.
-				const CppVector<float> *gvec = machine.memory.memarray<const CppVector<float>>(gdata, 1);
-				a.resize(gvec->size());
-				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+				if (method < 0) {
+					// Copy std::vector<float> from guest memory.
+					const CppVector<float> *gvec = machine.memory.memarray<const CppVector<float>>(gdata, 1);
+					a.resize(gvec->size());
+					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+				} else {
+					// Method is the buffer length.
+					a.resize(method);
+					// Copy the buffer from guest memory.
+					const float *ptr = machine.memory.memarray<const float>(gdata, method);
+					std::memcpy(a.ptrw(), ptr, method * sizeof(float));
+				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -293,10 +301,18 @@ APICALL(api_vcreate) {
 		case Variant::PACKED_FLOAT64_ARRAY: {
 			PackedFloat64Array a;
 			if (gdata != 0x0) {
-				// Copy std::vector<double> from guest memory.
-				const CppVector<double> *gvec = machine.memory.memarray<const CppVector<double>>(gdata, 1);
-				a.resize(gvec->size());
-				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+				if (method < 0) {
+					// Copy std::vector<double> from guest memory.
+					const CppVector<double> *gvec = machine.memory.memarray<const CppVector<double>>(gdata, 1);
+					a.resize(gvec->size());
+					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+				} else {
+					// Method is the buffer length.
+					a.resize(method);
+					// Copy the buffer from guest memory.
+					const double *ptr = machine.memory.memarray<const double>(gdata, method);
+					std::memcpy(a.ptrw(), ptr, method * sizeof(double));
+				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -305,10 +321,18 @@ APICALL(api_vcreate) {
 		case Variant::PACKED_INT32_ARRAY: {
 			PackedInt32Array a;
 			if (gdata != 0x0) {
-				// Copy std::vector<int32_t> from guest memory.
-				const CppVector<int32_t> *gvec = machine.memory.memarray<const CppVector<int32_t>>(gdata, 1);
-				a.resize(gvec->size());
-				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+				if (method < 0) {
+					// Copy std::vector<int32_t> from guest memory.
+					const CppVector<int32_t> *gvec = machine.memory.memarray<const CppVector<int32_t>>(gdata, 1);
+					a.resize(gvec->size());
+					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+				} else {
+					// Method is the buffer length.
+					a.resize(method);
+					// Copy the buffer from guest memory.
+					const int32_t *ptr = machine.memory.memarray<const int32_t>(gdata, method);
+					std::memcpy(a.ptrw(), ptr, method * sizeof(int32_t));
+				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -317,10 +341,18 @@ APICALL(api_vcreate) {
 		case Variant::PACKED_INT64_ARRAY: {
 			PackedInt64Array a;
 			if (gdata != 0x0) {
-				// Copy std::vector<int64_t> from guest memory.
-				const CppVector<int64_t> *gvec = machine.memory.memarray<const CppVector<int64_t>>(gdata, 1);
-				a.resize(gvec->size());
-				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+				if (method < 0) {
+					// Copy std::vector<int64_t> from guest memory.
+					const CppVector<int64_t> *gvec = machine.memory.memarray<const CppVector<int64_t>>(gdata, 1);
+					a.resize(gvec->size());
+					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+				} else {
+					// Method is the buffer length.
+					a.resize(method);
+					// Copy the buffer from guest memory.
+					const int64_t *ptr = machine.memory.memarray<const int64_t>(gdata, method);
+					std::memcpy(a.ptrw(), ptr, method * sizeof(int64_t));
+				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -329,10 +361,18 @@ APICALL(api_vcreate) {
 		case Variant::PACKED_VECTOR2_ARRAY: {
 			PackedVector2Array a;
 			if (gdata != 0x0) {
-				// Copy std::vector<Vector2> from guest memory.
-				const CppVector<Vector2> *gvec = machine.memory.memarray<const CppVector<Vector2>>(gdata, 1);
-				a.resize(gvec->size());
-				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+				if (method < 0) {
+					// Copy std::vector<Vector2> from guest memory.
+					const CppVector<Vector2> *gvec = machine.memory.memarray<const CppVector<Vector2>>(gdata, 1);
+					a.resize(gvec->size());
+					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+				} else {
+					// Method is the buffer length.
+					a.resize(method);
+					// Copy the buffer from guest memory.
+					const Vector2 *ptr = machine.memory.memarray<const Vector2>(gdata, method);
+					std::memcpy(a.ptrw(), ptr, method * sizeof(Vector2));
+				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -341,10 +381,18 @@ APICALL(api_vcreate) {
 		case Variant::PACKED_VECTOR3_ARRAY: {
 			PackedVector3Array a;
 			if (gdata != 0x0) {
-				// Copy std::vector<Vector3> from guest memory.
-				const CppVector<Vector3> *gvec = machine.memory.memarray<const CppVector<Vector3>>(gdata, 1);
-				a.resize(gvec->size());
-				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+				if (method < 0) {
+					// Copy std::vector<Vector3> from guest memory.
+					const CppVector<Vector3> *gvec = machine.memory.memarray<const CppVector<Vector3>>(gdata, 1);
+					a.resize(gvec->size());
+					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+				} else {
+					// Method is the buffer length.
+					a.resize(method);
+					// Copy the buffer from guest memory.
+					const Vector3 *ptr = machine.memory.memarray<const Vector3>(gdata, method);
+					std::memcpy(a.ptrw(), ptr, method * sizeof(Vector3));
+				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -353,10 +401,18 @@ APICALL(api_vcreate) {
 		case Variant::PACKED_VECTOR4_ARRAY: {
 			PackedVector4Array a;
 			if (gdata != 0x0) {
-				// Copy std::vector<Vector4> from guest memory.
-				const CppVector<Vector4> *gvec = machine.memory.memarray<const CppVector<Vector4>>(gdata, 1);
-				a.resize(gvec->size());
-				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+				if (method < 0) {
+					// Copy std::vector<Vector4> from guest memory.
+					const CppVector<Vector4> *gvec = machine.memory.memarray<const CppVector<Vector4>>(gdata, 1);
+					a.resize(gvec->size());
+					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+				} else {
+					// Method is the buffer length.
+					a.resize(method);
+					// Copy the buffer from guest memory.
+					const Vector4 *ptr = machine.memory.memarray<const Vector4>(gdata, method);
+					std::memcpy(a.ptrw(), ptr, method * sizeof(Vector4));
+				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;

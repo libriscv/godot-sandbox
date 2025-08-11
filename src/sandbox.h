@@ -65,8 +65,10 @@ public:
 	struct SharedMemoryRange {
 		gaddr_t start;
 		gaddr_t size;
+		void *base_ptr;
 
-		SharedMemoryRange(gaddr_t p_start, gaddr_t p_size) : start(p_start), size(p_size) {}
+		SharedMemoryRange(gaddr_t p_start, gaddr_t p_size, void *p_base_ptr)
+			: start(p_start), size(p_size), base_ptr(p_base_ptr) {}
 		bool contains(gaddr_t address) const {
 			return address >= start && address < start + size;
 		}

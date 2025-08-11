@@ -7,4 +7,5 @@ add_sandbox_program(unittests
 	"tests/test_basic.cpp"
 	"tests/test_math.cpp"
 	"tests/test_properties.cpp"
+	"tests/test_shm.cpp"
 )

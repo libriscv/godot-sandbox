@@ -25,9 +25,21 @@ PackedArray<int32_t>::PackedArray(const std::vector<int32_t> &data) {
 	this->m_idx = v.get_internal_index();
 }
 template <>
+PackedArray<int32_t>::PackedArray(const int32_t *data, size_t size) {
+	Variant v;
+	sys_vcreate(&v, Variant::PACKED_INT32_ARRAY, size, data);
+	this->m_idx = v.get_internal_index();
+}
+template <>
 PackedArray<int64_t>::PackedArray(const std::vector<int64_t> &data) {
 	Variant v;
 	sys_vcreate(&v, Variant::PACKED_INT64_ARRAY, -1, &data);
+	this->m_idx = v.get_internal_index();
+}
+template <>
+PackedArray<int64_t>::PackedArray(const int64_t *data, size_t size) {
+	Variant v;
+	sys_vcreate(&v, Variant::PACKED_INT64_ARRAY, size, data);
 	this->m_idx = v.get_internal_index();
 }
 template <>
@@ -37,9 +49,21 @@ PackedArray<float>::PackedArray(const std::vector<float> &data) {
 	this->m_idx = v.get_internal_index();
 }
 template <>
+PackedArray<float>::PackedArray(const float *data, size_t size) {
+	Variant v;
+	sys_vcreate(&v, Variant::PACKED_FLOAT32_ARRAY, size, data);
+	this->m_idx = v.get_internal_index();
+}
+template <>
 PackedArray<double>::PackedArray(const std::vector<double> &data) {
 	Variant v;
 	sys_vcreate(&v, Variant::PACKED_FLOAT64_ARRAY, -1, &data);
+	this->m_idx = v.get_internal_index();
+}
+template <>
+PackedArray<double>::PackedArray(const double *data, size_t size) {
+	Variant v;
+	sys_vcreate(&v, Variant::PACKED_FLOAT64_ARRAY, size, data);
 	this->m_idx = v.get_internal_index();
 }
 template <>
@@ -49,15 +73,33 @@ PackedArray<Vector2>::PackedArray(const std::vector<Vector2> &data) {
 	this->m_idx = v.get_internal_index();
 }
 template <>
+PackedArray<Vector2>::PackedArray(const Vector2 *data, size_t size) {
+	Variant v;
+	sys_vcreate(&v, Variant::PACKED_VECTOR2_ARRAY, size, data);
+	this->m_idx = v.get_internal_index();
+}
+template <>
 PackedArray<Vector3>::PackedArray(const std::vector<Vector3> &data) {
 	Variant v;
 	sys_vcreate(&v, Variant::PACKED_VECTOR3_ARRAY, -1, &data);
 	this->m_idx = v.get_internal_index();
 }
 template <>
+PackedArray<Vector3>::PackedArray(const Vector3 *data, size_t size) {
+	Variant v;
+	sys_vcreate(&v, Variant::PACKED_VECTOR3_ARRAY, size, data);
+	this->m_idx = v.get_internal_index();
+}
+template <>
 PackedArray<Vector4>::PackedArray(const std::vector<Vector4> &data) {
 	Variant v;
 	sys_vcreate(&v, Variant::PACKED_VECTOR4_ARRAY, -1, &data);
+	this->m_idx = v.get_internal_index();
+}
+template <>
+PackedArray<Vector4>::PackedArray(const Vector4 *data, size_t size) {
+	Variant v;
+	sys_vcreate(&v, Variant::PACKED_VECTOR4_ARRAY, size, data);
 	this->m_idx = v.get_internal_index();
 }
 template <>
