@@ -13,3 +13,29 @@ PUBLIC Variant test_shm(float* array, size_t size) {
 
 	return PackedArray<float>(array, size);
 }
+
+PUBLIC Variant test_shm2(float* array, size_t size) {
+	if (array == nullptr || size == 0) {
+		return Nil;
+	}
+
+	for (size_t i = 0; i < 5; ++i) {
+		array[i] = (1.0f + i) * 2.0f; // Example operation: double each element
+	}
+
+	return Nil;
+}
+
+PUBLIC Variant verify_shm2(float* array, size_t size) {
+	if (array == nullptr || size < 5) {
+		return false;
+	}
+
+	for (size_t i = 0; i < 5; ++i) {
+		if (array[i] != (1.0f + i) * 2.0f) {
+			return false; // Verification failed
+		}
+	}
+
+	return true; // Verification succeeded
+}
