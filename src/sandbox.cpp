@@ -900,8 +900,8 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 	const auto *endptr = this->m_states.data() + this->m_states.size();
 	if (UNLIKELY(this->m_current_state >= endptr)) {
 		ERR_PRINT("Too many VM calls in progress");
-		this->m_exceptions ++;
-		this->m_global_exceptions ++;
+		this->m_exceptions++;
+		this->m_global_exceptions++;
 		this->m_current_state -= 1;
 		return Variant();
 	}
@@ -974,7 +974,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 						// Update the global visited map
 						std::unordered_map<gaddr_t, int> &hotspots = gprofstate.hotspots;
 						for (const gaddr_t address : profdata.visited) {
-							hotspots[address] ++;
+							hotspots[address]++;
 						}
 					}
 					profdata.visited.clear();
@@ -1107,7 +1107,7 @@ bool Sandbox::has_function(const StringName &p_function) const {
 }
 
 void Sandbox::add_cached_address(const String &name, gaddr_t address) const {
-	m_lookup.insert_or_assign(name.hash(), LookupEntry{name, address});
+	m_lookup.insert_or_assign(name.hash(), LookupEntry{ name, address });
 }
 
 //-- Scoped objects and variants --//

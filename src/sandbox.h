@@ -1,8 +1,8 @@
 #pragma once
+#include <algorithm>
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/core/binder_common.hpp>
 #include <libriscv/machine.hpp>
-#include <algorithm>
 #include <optional>
 
 using namespace godot;
@@ -59,7 +59,7 @@ public:
 		bool is_mutable_variant(const Variant &var) const;
 	};
 	struct LookupEntry {
-		String  name;
+		String name;
 		gaddr_t address;
 	};
 	struct SharedMemoryRange {
@@ -614,14 +614,14 @@ public:
 
 private:
 	static void generate_runtime_cpp_api(bool use_argument_names = false);
-	gaddr_t share_array_internal(void* data, size_t size, bool allow_write);
+	gaddr_t share_array_internal(void *data, size_t size, bool allow_write);
 	bool is_in_vmcall() const noexcept { return m_current_state != &m_states[0]; }
 	void constructor_initialize();
 	void full_reset();
 	void reset_machine();
 	void set_program_data_internal(Ref<ELFScript> program);
 	bool load(const PackedByteArray *vbuf, const std::vector<std::string> *argv = nullptr);
-	static PackedStringArray get_public_functions(const machine_t&);
+	static PackedStringArray get_public_functions(const machine_t &);
 	void read_program_properties(bool editor) const;
 	void handle_exception(gaddr_t);
 	void handle_timeout(gaddr_t);
@@ -684,7 +684,6 @@ private:
 
 	// Redirections
 	Callable m_redirect_stdout;
-
 
 	Ref<ELFScript> m_program_data;
 	PackedByteArray m_program_bytes;

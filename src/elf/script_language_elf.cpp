@@ -1,13 +1,13 @@
 #include "script_language_elf.h"
-#include "script_elf.h"
 #include "../script_language_common.h"
+#include "script_elf.h"
+#include <godot_cpp/classes/control.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/classes/theme.hpp>
-#include <godot_cpp/classes/control.hpp>
 static constexpr const char *icon_path = "res://addons/godot_sandbox/Sandbox.svg";
 
 String ELFScriptLanguage::_get_name() const {
@@ -170,16 +170,14 @@ void ELFScriptLanguage::_frame() {
 		EditorInterface::get_singleton()->get_base_control()->connect("theme_changed", callable_mp(this, &ELFScriptLanguage::load_icon));
 	}
 }
-void ELFScriptLanguage::load_icon()
-{
+void ELFScriptLanguage::load_icon() {
 	static bool reenter = false;
 	if (reenter)
 		return;
 	reenter = true;
 	if (Engine::get_singleton()->is_editor_hint() && FileAccess::file_exists(icon_path)) {
 		Ref<Theme> editor_theme = EditorInterface::get_singleton()->get_editor_theme();
-		if (editor_theme.is_valid() && !editor_theme->has_icon("ELFScript", "EditorIcons"))
-		{
+		if (editor_theme.is_valid() && !editor_theme->has_icon("ELFScript", "EditorIcons")) {
 			ResourceLoader *resource_loader = ResourceLoader::get_singleton();
 			Ref<Texture2D> tex = resource_loader->load(icon_path);
 			editor_theme->set_icon("ELFScript", "EditorIcons", tex);

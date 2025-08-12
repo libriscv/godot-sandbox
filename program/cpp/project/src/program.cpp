@@ -11,8 +11,7 @@ static Variant print_string(String str) {
 	return Nil;
 }
 
-static long fib(long n, long acc, long prev)
-{
+static long fib(long n, long acc, long prev) {
 	if (n == 0)
 		return acc;
 	else

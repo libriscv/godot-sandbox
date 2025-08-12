@@ -86,7 +86,7 @@ std::vector<Variant> Array::to_vector() const {
 }
 
 
-ArrayProxy &ArrayProxy::operator =(const Variant &value) { // set
+ArrayProxy &ArrayProxy::operator=(const Variant &value) { // set
 	const int set_idx = -this->m_idx - 1;
 	sys_array_at(this->m_array.get_variant_index(), set_idx, (Variant *)&value);
 	return *this;

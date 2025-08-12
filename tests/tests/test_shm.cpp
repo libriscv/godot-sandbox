@@ -1,6 +1,6 @@
 #include "api.hpp"
 
-PUBLIC Variant test_shm(float* array, size_t size) {
+PUBLIC Variant test_shm(float *array, size_t size) {
 	// This function is a placeholder for shared memory operations.
 	// It assumes that the array is already allocated in shared memory.
 	if (array == nullptr || size == 0) {
@@ -14,7 +14,7 @@ PUBLIC Variant test_shm(float* array, size_t size) {
 	return PackedArray<float>(array, size);
 }
 
-PUBLIC Variant test_shm2(float* array, size_t size) {
+PUBLIC Variant test_shm2(float *array, size_t size) {
 	if (array == nullptr || size == 0) {
 		return Nil;
 	}
@@ -26,7 +26,7 @@ PUBLIC Variant test_shm2(float* array, size_t size) {
 	return Nil;
 }
 
-PUBLIC Variant verify_shm2(float* array, size_t size) {
+PUBLIC Variant verify_shm2(float *array, size_t size) {
 	if (array == nullptr || size < 5) {
 		return false;
 	}

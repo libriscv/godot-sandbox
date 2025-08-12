@@ -1,12 +1,12 @@
 #include "script_cpp.h"
 
-#include "script_language_cpp.h"
-#include "script_cpp_instance.h"
 #include "../elf/script_instance.h"
 #include "../sandbox_project_settings.h"
-#include <godot_cpp/core/class_db.hpp>
+#include "script_language_cpp.h"
+#include "script_cpp_instance.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/core/class_db.hpp>
 static constexpr bool VERBOSE_LOGGING = false;
 
 bool CPPScript::DetectCMakeOrSConsProject() {
@@ -275,8 +275,7 @@ void CPPScript::set_file(const String &p_path) {
 	this->path = p_path;
 	this->source_code = FileAccess::get_file_as_string(p_path);
 }
-bool CPPScript::detect_script_instance()
-{
+bool CPPScript::detect_script_instance() {
 	// It's possible to speculate that eg. a fitting ELFScript would be located at
 	// "res://this/path.cpp" replacing the extension with ".elf".
 	if (this->path.is_empty()) {

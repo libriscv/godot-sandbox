@@ -1,10 +1,10 @@
 #include "script_elf.h"
 
+#include "../cpp/script_cpp.h"
 #include "../docker.h"
 #include "../register_types.h"
 #include "../sandbox.h"
 #include "../sandbox_project_settings.h"
-#include "../cpp/script_cpp.h"
 #include "script_instance.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/json.hpp>
@@ -36,8 +36,7 @@ Array ELFScript::get_sandbox_objects() const {
 	return result;
 }
 
-ELFScriptInstance *ELFScript::get_script_instance(Object *p_for_object) const
-{
+ELFScriptInstance *ELFScript::get_script_instance(Object *p_for_object) const {
 	for (ELFScriptInstance *instance : this->instances) {
 		if (instance->get_owner() == p_for_object) {
 			return instance;

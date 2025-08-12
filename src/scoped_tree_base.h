@@ -1,7 +1,7 @@
 #pragma once
 
-#include <godot_cpp/classes/node.hpp>
 #include "sandbox.h"
+#include <godot_cpp/classes/node.hpp>
 
 struct ScopedTreeBase {
 	Sandbox *sandbox = nullptr;

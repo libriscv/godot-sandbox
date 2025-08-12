@@ -1,17 +1,16 @@
 #include "script_cpp_instance.h"
 
-#include "script_cpp.h"
-#include "script_language_cpp.h"
 #include "../elf/script_elf.h"
 #include "../elf/script_instance.h"
 #include "../elf/script_instance_helper.h" // register_types.h
 #include "../scoped_tree_base.h"
+#include "script_cpp.h"
+#include "script_language_cpp.h"
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/templates/local_vector.hpp>
 static constexpr bool VERBOSE_LOGGING = false;
 
-void CPPScriptInstance::set_script_instance(ELFScriptInstance *p_instance)
-{
+void CPPScriptInstance::set_script_instance(ELFScriptInstance *p_instance) {
 	this->elf_script_instance = p_instance;
 	if (p_instance) {
 		// XXX: If elf_script is already set, and is different, that is a problem.
@@ -24,8 +23,7 @@ void CPPScriptInstance::set_script_instance(ELFScriptInstance *p_instance)
 		this->script->elf_script = p_instance->script;
 	}
 }
-void CPPScriptInstance::unset_script_instance()
-{
+void CPPScriptInstance::unset_script_instance() {
 	if (this->elf_script_instance) {
 		if constexpr (VERBOSE_LOGGING) {
 			ERR_PRINT("CPPScriptInstance::unset_script_instance: " +
@@ -41,8 +39,7 @@ void CPPScriptInstance::unset_script_instance()
 		this->managed_esi = nullptr;
 	}
 }
-void CPPScriptInstance::manage_script_instance(ELFScript *p_script)
-{
+void CPPScriptInstance::manage_script_instance(ELFScript *p_script) {
 	if (this->managed_esi != nullptr) {
 		// If we already have a managed ESI, we need to free it.
 		memdelete(this->managed_esi);
@@ -161,8 +158,7 @@ Variant CPPScriptInstance::callp(
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("CPPScriptInstance::callp " + p_method);
 	}
-	if (p_method == StringName("set_associated_script"))
-	{
+	if (p_method == StringName("set_associated_script")) {
 		if (p_argument_count != 1) {
 			if constexpr (VERBOSE_LOGGING) {
 				ERR_PRINT("CPPScriptInstance::callp: set_associated_script requires exactly one argument");
@@ -203,8 +199,7 @@ Variant CPPScriptInstance::callp(
 		}
 		return Variant();
 	}
-	else if (p_method == StringName("get_associated_script"))
-	{
+	else if (p_method == StringName("get_associated_script")) {
 		// This is a property getter to get the associated script
 		if (this->managed_esi != nullptr) {
 			// If we have a managed script instance, we can return it.
@@ -228,8 +223,7 @@ Variant CPPScriptInstance::callp(
 		r_error.error = GDEXTENSION_CALL_OK;
 		return Variant();
 	}
-	else if (elf_script_instance)
-	{
+	else if (elf_script_instance) {
 		Ref<ELFScript> &elf_script = elf_script_instance->script;
 		if (!elf_script.is_valid()) {
 			if constexpr (VERBOSE_LOGGING) {
@@ -408,8 +402,9 @@ bool CPPScriptInstance::property_get_revert(const StringName &p_name, Variant &r
 		r_ret = Variant();
 		return true;
 	}
-	if (elf_script_instance)
+	if (elf_script_instance) {
 		return elf_script_instance->property_get_revert(p_name, r_ret);
+	}
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("CPPScriptInstance::property_get_revert " + p_name);
 	}

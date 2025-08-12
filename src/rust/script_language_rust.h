@@ -73,7 +73,7 @@ public:
 	virtual bool _handles_global_class_type(const String &p_type) const override;
 	virtual Dictionary _get_global_class_name(const String &p_path) const override;
 	void load_icon();
-	
+
 	RustScriptLanguage() {}
 	~RustScriptLanguage() {}
 };

@@ -1232,7 +1232,6 @@ static bool is_excluded_function(const std::string_view function) {
 		return true;
 	}
 
-
 	return false;
 }
 
@@ -1375,7 +1374,7 @@ Dictionary Sandbox::create_public_api_function(std::string_view name, gaddr_t ad
 	return func;
 }
 
-PackedStringArray Sandbox::get_public_functions(const machine_t& machine) {
+PackedStringArray Sandbox::get_public_functions(const machine_t &machine) {
 	PackedStringArray result;
 	try {
 		// Get all unmangled public functions from the guest program.

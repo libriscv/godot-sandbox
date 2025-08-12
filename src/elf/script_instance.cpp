@@ -2,8 +2,8 @@
 
 #include "../cpp/script_cpp.h"
 #include "../rust/script_rust.h"
-#include "../scoped_tree_base.h"
 #include "../sandbox_project_settings.h"
+#include "../scoped_tree_base.h"
 #include "../zig/script_zig.h"
 #include "script_elf.h"
 #include "script_instance_helper.h" // register_types.h

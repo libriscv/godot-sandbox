@@ -1,13 +1,13 @@
 #include "script_language_zig.h"
-#include "script_zig.h"
 #include "../script_language_common.h"
+#include "script_zig.h"
+#include <godot_cpp/classes/control.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/classes/theme.hpp>
-#include <godot_cpp/classes/control.hpp>
 #include <string>
 #include <unordered_set>
 static constexpr const char *icon_path = "res://addons/godot_sandbox/ZigScript.svg";
@@ -193,16 +193,14 @@ void ZigScriptLanguage::_frame() {
 		EditorInterface::get_singleton()->get_base_control()->connect("theme_changed", callable_mp(this, &ZigScriptLanguage::load_icon));
 	}
 }
-void ZigScriptLanguage::load_icon()
-{
+void ZigScriptLanguage::load_icon() {
 	static bool reenter = false;
 	if (reenter)
 		return;
 	reenter = true;
 	if (Engine::get_singleton()->is_editor_hint() && FileAccess::file_exists(icon_path)) {
 		Ref<Theme> editor_theme = EditorInterface::get_singleton()->get_editor_theme();
-		if (editor_theme.is_valid() && !editor_theme->has_icon("ZigScript", "EditorIcons"))
-		{
+		if (editor_theme.is_valid() && !editor_theme->has_icon("ZigScript", "EditorIcons")) {
 			ResourceLoader *resource_loader = ResourceLoader::get_singleton();
 			Ref<Texture2D> tex = resource_loader->load(icon_path);
 			editor_theme->set_icon("ZigScript", "EditorIcons", tex);

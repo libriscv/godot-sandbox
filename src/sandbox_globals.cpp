@@ -2,12 +2,12 @@
 
 #include <godot_cpp/classes/audio_server.hpp>
 #include <godot_cpp/classes/display_server.hpp>
-#include <godot_cpp/classes/geometry2d.hpp>
-#include <godot_cpp/classes/geometry3d.hpp>
+#include <godot_cpp/classes/editor_interface.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/engine_debugger.hpp>
-#include <godot_cpp/classes/editor_interface.hpp>
 #include <godot_cpp/classes/gd_extension_manager.hpp>
+#include <godot_cpp/classes/geometry2d.hpp>
+#include <godot_cpp/classes/geometry3d.hpp>
 #include <godot_cpp/classes/input.hpp>
 #include <godot_cpp/classes/input_map.hpp>
 #include <godot_cpp/classes/marshalls.hpp>
@@ -17,8 +17,8 @@
 #include <godot_cpp/classes/navigation_server3d.hpp>
 #include <godot_cpp/classes/performance.hpp>
 #include <godot_cpp/classes/physics_server2d.hpp>
-#include <godot_cpp/classes/physics_server3d.hpp>
 #include <godot_cpp/classes/physics_server2d_manager.hpp>
+#include <godot_cpp/classes/physics_server3d.hpp>
 #include <godot_cpp/classes/physics_server3d_manager.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
@@ -68,4 +68,4 @@ std::unordered_map<std::string, std::function<uint64_t()>> global_singleton_list
 	{ "XRServer", [] { return uint64_t(uintptr_t(XRServer::get_singleton())); } },
 };
 
-} // riscv
+} // namespace riscv

@@ -218,11 +218,11 @@ static inline void hash_combine(gaddr_t &seed, gaddr_t hash) {
 
 #include "syscalls_helpers.hpp"
 
-inline String to_godot_string(const riscv::CppString* string, machine_t &machine, std::size_t max_len = 4UL << 20) {
+inline String to_godot_string(const riscv::CppString *string, machine_t &machine, std::size_t max_len = 4UL << 20) {
 	std::string_view view = string->to_view(machine, max_len);
 	return String::utf8(view.data(), view.size());
 }
-inline PackedByteArray to_godot_packed_byte_array(const riscv::CppString* string, machine_t &machine, std::size_t max_len = 4UL << 20) {
+inline PackedByteArray to_godot_packed_byte_array(const riscv::CppString *string, machine_t &machine, std::size_t max_len = 4UL << 20) {
 	std::string_view view = string->to_view(machine, max_len);
 	PackedByteArray arr;
 	arr.resize(view.size());

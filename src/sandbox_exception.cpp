@@ -8,8 +8,7 @@
 #include <unistd.h>
 static const uint16_t RSP_PORT = 2159;
 
-static const char *getenv_with_default(const char *str, const char *defval)
-{
+static const char *getenv_with_default(const char *str, const char *defval) {
 	const char *value = getenv(str);
 	if (value)
 		return value;
@@ -109,13 +108,12 @@ void Sandbox::handle_exception(gaddr_t address) {
 	if (getenv("GDB")) {
 		const bool oneFrameUp = false;
 		const uint16_t port = RSP_PORT;
-		if (0 == fork())
-		{
+
+		if (0 == fork()) {
 			char scrname[64];
 			strncpy(scrname, "/tmp/dbgscript-XXXXXX", sizeof(scrname));
 			const int fd = mkstemp(scrname);
-			if (fd < 0)
-			{
+			if (fd < 0) {
 				throw std::runtime_error("Unable to create script for debugging");
 			}
 
@@ -142,8 +140,7 @@ void Sandbox::handle_exception(gaddr_t address) {
 				+ std::string(oneFrameUp ? "up\n" : "");
 
 			ssize_t len = write(fd, debugscript.c_str(), debugscript.size());
-			if (len < (ssize_t)debugscript.size())
-			{
+			if (len < (ssize_t)debugscript.size()) {
 				throw std::runtime_error(
 					"Unable to write script file for debugging");
 			}
@@ -157,17 +154,15 @@ void Sandbox::handle_exception(gaddr_t address) {
 			// There is a finite list of things we should pass to GDB to make it
 			// behave well, but I haven't been able to find the right combination.
 			extern char** environ;
-			if (-1 == execve(argv[0], (char* const*)argv, environ))
-			{
+			if (-1 == execve(argv[0], (char* const*)argv, environ)) {
 				throw std::runtime_error(
 					"Unable to start gdb-multiarch for debugging");
 			}
 		} // child
 
-		riscv::RSP<RISCV_ARCH> server {this->machine(), port};
+		riscv::RSP<RISCV_ARCH> server { this->machine(), port };
 		auto client = server.accept();
-		if (client != nullptr)
-		{
+		if (client != nullptr) {
 			printf("GDB connected\n");
 			// client->set_verbose(true);
 			while (client->process_one())

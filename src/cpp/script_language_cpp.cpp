@@ -1,13 +1,13 @@
 #include "script_language_cpp.h"
-#include "script_cpp.h"
 #include "../script_language_common.h"
+#include "script_cpp.h"
+#include <godot_cpp/classes/control.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/classes/theme.hpp>
-#include <godot_cpp/classes/control.hpp>
 #include <string>
 #include <unordered_set>
 static constexpr const char *icon_path = "res://addons/godot_sandbox/CPPScript.svg";
@@ -310,8 +310,7 @@ void CPPScriptLanguage::_frame() {
 		EditorInterface::get_singleton()->get_base_control()->connect("theme_changed", callable_mp(this, &CPPScriptLanguage::load_icon));
 	}
 }
-void CPPScriptLanguage::load_icon()
-{
+void CPPScriptLanguage::load_icon() {
 	static bool reenter = false;
 	if (reenter)
 		return;

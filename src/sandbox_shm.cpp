@@ -108,26 +108,26 @@ bool Sandbox::unshare_array(gaddr_t address) {
 
 
 gaddr_t Sandbox::share_byte_array(bool allow_write, const PackedByteArray &array) {
-	return this->share_array_internal((void*)array.ptr(), array.size(), allow_write);
+	return this->share_array_internal((void *)array.ptr(), array.size(), allow_write);
 }
 gaddr_t Sandbox::share_float32_array(bool allow_write, const PackedFloat32Array &array) {
-	return this->share_array_internal((void*)array.ptr(), array.size() * sizeof(float), allow_write);
+	return this->share_array_internal((void *)array.ptr(), array.size() * sizeof(float), allow_write);
 }
 gaddr_t Sandbox::share_float64_array(bool allow_write, const PackedFloat64Array &array) {
-	return this->share_array_internal((void*)array.ptr(), array.size() * sizeof(double), allow_write);
+	return this->share_array_internal((void *)array.ptr(), array.size() * sizeof(double), allow_write);
 }
 gaddr_t Sandbox::share_int32_array(bool allow_write, const PackedInt32Array &array) {
-	return this->share_array_internal((void*)array.ptr(), array.size() * sizeof(int32_t), allow_write);
+	return this->share_array_internal((void *)array.ptr(), array.size() * sizeof(int32_t), allow_write);
 }
 gaddr_t Sandbox::share_int64_array(bool allow_write, const PackedInt64Array &array) {
-	return this->share_array_internal((void*)array.ptr(), array.size() * sizeof(int64_t), allow_write);
+	return this->share_array_internal((void *)array.ptr(), array.size() * sizeof(int64_t), allow_write);
 }
 gaddr_t Sandbox::share_vec2_array(bool allow_write, const PackedVector2Array &array) {
-	return this->share_array_internal((void*)array.ptr(), array.size() * sizeof(Vector2), allow_write);
+	return this->share_array_internal((void *)array.ptr(), array.size() * sizeof(Vector2), allow_write);
 }
 gaddr_t Sandbox::share_vec3_array(bool allow_write, const PackedVector3Array &array) {
-	return this->share_array_internal((void*)array.ptr(), array.size() * sizeof(Vector3), allow_write);
+	return this->share_array_internal((void *)array.ptr(), array.size() * sizeof(Vector3), allow_write);
 }
 gaddr_t Sandbox::share_vec4_array(bool allow_write, const PackedVector4Array &array) {
-	return this->share_array_internal((void*)array.ptr(), array.size() * sizeof(Vector4), allow_write);
+	return this->share_array_internal((void *)array.ptr(), array.size() * sizeof(Vector4), allow_write);
 }

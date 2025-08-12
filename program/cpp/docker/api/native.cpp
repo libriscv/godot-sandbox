@@ -100,7 +100,7 @@ CREATE_SYSCALL_STRCMP(__wrap_strcmp, SYSCALL_STRCMP);
 CREATE_SYSCALL_STRCMP(__wrap_strncmp, SYSCALL_STRCMP);
 
 extern "C" void *__wrap_malloc(size_t size);
-extern "C" void  __wrap_free(void *ptr);
+extern "C" void __wrap_free(void *ptr);
 #endif // WRAP_FANCY
 
 // extern "C" void *__wrap_memset(void *vdest, const int ch, size_t size) {
@@ -198,7 +198,7 @@ extern "C" void *memalign(size_t alignment, size_t size) {
 		return __wrap_malloc(size);
 	}
 
-	std::array<void*, 16> list;
+	std::array<void *, 16> list;
 	size_t i = 0;
 	void *result = nullptr;
 	for (i = 0; i < list.size(); i++) {
@@ -220,12 +220,10 @@ extern "C" void *memalign(size_t alignment, size_t size) {
 	}
 	return result;
 }
-extern "C"
-void *aligned_alloc(size_t alignment, size_t size) {
+extern "C" void *aligned_alloc(size_t alignment, size_t size) {
 	return memalign(alignment, size);
 }
-extern "C"
-int posix_memalign(void **memptr, size_t alignment, size_t size) {
+extern "C" int posix_memalign(void **memptr, size_t alignment, size_t size) {
 	void *result = memalign(alignment, size);
 	if (result) {
 		*memptr = result;
@@ -246,7 +244,7 @@ void operator delete(void *ptr) noexcept(true) {
 void operator delete[](void *ptr) noexcept(true) {
 	__wrap_free(ptr);
 }
-void *operator new (size_t size, size_t alignment) noexcept(false) {
+void *operator new(size_t size, size_t alignment) noexcept(false) {
 	return memalign(alignment, size);
 }
 void *operator new[](size_t size, size_t alignment) noexcept(false) {
