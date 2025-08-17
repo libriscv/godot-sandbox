@@ -36,30 +36,24 @@ String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool auto
 		return String();
 	}
 #ifdef RISCV_BINARY_TRANSLATION
-	if (machine().is_binary_translation_enabled() && !is_jit()) {
-		WARN_PRINT("Sandbox: Binary translation is already enabled.");
-		return String();
-	}
 	std::string code_output;
 	// 1. Re-create the same options
 	auto options = std::make_shared<riscv::MachineOptions<RISCV_ARCH>>(machine().options());
 	options->use_shared_execute_segments = false;
 	options->translate_enabled = false;
-	options->translate_enable_embedded = true;
+	options->translate_enable_embedded = false;
 	options->translate_invoke_compiler = false;
 	options->translate_ignore_instruction_limit = ignore_instruction_limit;
 	options->translate_automatic_nbit_address_space = automatic_nbit_as;
 	options->translate_use_register_caching = false;
-	if constexpr (riscv::libtcc_enabled) {
-		// Avoid any shenanigans with background compilation
-		options->translate_background_callback = nullptr;
-	}
+	// Avoid any shenanigans with background compilation
+	options->translate_background_callback = nullptr;
 	// TODO: Make this configurable
 	options->translate_instr_max = 75'000u;
 
 	// 2. Enable binary translation output to a string
 	options->cross_compile.push_back(riscv::MachineTranslationEmbeddableCodeOptions{
-			.result_c99 = &code_output,
+		.result_c99 = &code_output,
 	});
 
 	// 3. Emit the binary translation by constructing a new machine
