@@ -124,6 +124,10 @@ PUBLIC Variant test_string(String arg) {
 	return arg;
 }
 
+PUBLIC Variant test_fetch_string(String arg) {
+	return std::string(arg.utf8());
+}
+
 PUBLIC Variant test_u32string(String arg) {
 	std::u32string u32 = arg.utf32();
 	return u32;

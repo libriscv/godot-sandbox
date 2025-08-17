@@ -166,7 +166,10 @@ func test_types():
 	assert_eq(s.vmcall("test_int", 1234), 1234) # Int
 	assert_eq(s.vmcall("test_int", -1234), -1234) # Int
 	assert_eq(s.vmcall("test_float", 9876.0), 9876.0) # Float
-	assert_same(s.vmcall("test_string", "9876.0"), "9876.0") # String
+	assert_same(s.vmcall("test_string", "9876.0"), "9876.0") # SSO String
+	assert_same(s.vmcall("test_string", "123456789.123456"), "123456789.123456") # Heap String
+	assert_same(s.vmcall("test_fetch_string", "9876.0"), "9876.0") # SSO String
+	assert_same(s.vmcall("test_fetch_string", "123456789.123456"), "123456789.123456") # Heap String
 	assert_same(s.vmcall("test_u32string", "19876.1"), "19876.1") # std::u32string
 	assert_same(s.vmcall("test_nodepath", NodePath("Node")), NodePath("Node")) # NodePath
 	assert_eq(s.vmcall("test_vec2", Vector2(1, 2)), Vector2(1, 2)) # Vector2
