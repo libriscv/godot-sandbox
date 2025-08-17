@@ -26,7 +26,7 @@ gaddr_t Sandbox::share_array_internal(void* data, size_t bytes, bool allow_write
 		// If the data is larger than a page, we can directly insert it as non-owned memory
 		if (valignsize > 0) {
 			if constexpr (VERBOSE_SHM) {
-				printf("Inserting %zu bytes of data into shared memory at address 0x%lx\n", valignsize, vaddr);
+				printf("Inserting %zu bytes of data into shared memory at address 0x%lx\n", valignsize, long(vaddr));
 			}
 			machine().memory.insert_non_owned_memory(
 				vaddr, data, valignsize, riscv::PageAttributes{
@@ -40,7 +40,7 @@ gaddr_t Sandbox::share_array_internal(void* data, size_t bytes, bool allow_write
 		const size_t remaining = bytes - valignsize;
 		if (remaining > 0) {
 			if constexpr (VERBOSE_SHM) {
-				printf("Copying remaining %zu bytes of data into shared memory at address 0x%lx\n", remaining, vaddr + valignsize);
+				printf("Copying remaining %zu bytes of data into shared memory at address 0x%lx\n", remaining, long(vaddr + valignsize));
 			}
 			machine().memory.memcpy(vaddr + valignsize, static_cast<const uint8_t *>(data) + valignsize, remaining);
 			machine().memory.set_page_attr(
@@ -83,7 +83,7 @@ bool Sandbox::unshare_array(gaddr_t address) {
 	const size_t remaining = it->size & (riscv::Page::size() - 1);
 	if (remaining > 0) {
 		if constexpr (VERBOSE_SHM) {
-			printf("Copying remaining %zu bytes from shared memory at address 0x%lx\n", remaining, it->start + it->size - remaining);
+			printf("Copying remaining %zu bytes from shared memory at address 0x%lx\n", remaining, long(it->start + it->size - remaining));
 		}
 		// Get the base pointer to the shared memory range by getting the page data at start
 		uint8_t *base_ptr = (uint8_t *)it->base_ptr;
@@ -95,7 +95,7 @@ bool Sandbox::unshare_array(gaddr_t address) {
 
 	// Remove the range from the shared memory ranges
 	if constexpr (VERBOSE_SHM) {
-		printf("Freeing pages from shared memory range: start=0x%lx, size=0x%lx\n", it->start, it->size);
+		printf("Freeing pages from shared memory range: start=0x%lx, size=0x%lx\n", long(it->start), long(it->size));
 	}
 	// Align up the size to page size
 	const size_t aligned_size = (it->size + riscv::Page::size() - 1) & ~(riscv::Page::size() - 1);
