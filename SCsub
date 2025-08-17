@@ -88,8 +88,9 @@ env_sandbox = env_modules.Clone()
 suffix = get_sufix_before()
 godot_cpp_path = "#modules/sandbox/ext/godot-cpp/bin"
 if env["platform"] == "ios":
-    env_sandbox.Append(LIBPATH=["#modules/sandbox/bin", godot_cpp_path])
-    env_sandbox.Append(LIBS=[f"libsandbox{suffix}", f"libgodot-cpp{suffix}"])
+    sandbox = f"#modules/sandbox/bin/libsandbox{suffix}.a"
+    godotcpp_path = f"#modules/sandbox/ext/godot-cpp/bin/libgodot-cpp{suffix}.a"
+    env.Append(LIBS=[env.File(sandbox), env.File(godotcpp_path)])
 elif env["platform"] != "windows" or env.get("use_mingw", False):
     env.Append(LIBPATH=["#modules/sandbox/bin", godot_cpp_path])
     env.Append(LIBS=[f"sandbox{suffix}", f"godot-cpp{suffix}"])
