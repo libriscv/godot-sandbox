@@ -509,7 +509,6 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 #  ifdef RISCV_LIBTCC
 				.translate_ignore_instruction_limit = get_instructions_max() <= 0,
 				.translate_use_register_caching = this->m_bintr_register_caching,
-				.translate_use_syscall_clobbering_optimization = false,
 				.translate_automatic_nbit_address_space = this->m_bintr_automatic_nbit_as,
 				.translate_live_patching = false, // Don't meddle with instruction stream
 #  endif // RISCV_LIBTCC
