@@ -49,6 +49,8 @@ static std::vector<StringName> property_names;
 
 void Sandbox::Initialize()
 {
+	Sandbox::initialize_syscalls();
+
 	property_names = {
 		"references_max",
 		"memory_max",
@@ -560,7 +562,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 			sandbox->print(String::utf8(str, len));
 		});
 
-		this->initialize_syscalls();
+		this->initialize_syscalls_runtime();
 
 		const gaddr_t heap_size = gaddr_t(machine().memory.memory_arena_size() * 0.8) & ~0xFFFLL;
 		const gaddr_t heap_area = machine().memory.mmap_allocate(heap_size);

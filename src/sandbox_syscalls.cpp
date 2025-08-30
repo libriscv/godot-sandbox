@@ -1954,7 +1954,7 @@ APICALL(api_sandbox_add) {
 
 } //namespace riscv
 
-void Sandbox::initialize_syscalls() {
+void Sandbox::initialize_syscalls_runtime() {
 	using namespace riscv;
 
 	// Initialize common Linux system calls
@@ -1970,12 +1970,10 @@ void Sandbox::initialize_syscalls() {
 #endif
 		machine.set_result(-ENOSYS);
 	};
+}
 
-	static bool initialized_before = false;
-	if (initialized_before) {
-		return;
-	}
-	initialized_before = true;
+void Sandbox::initialize_syscalls() {
+	using namespace riscv;
 
 	// Add the Godot system calls.
 	machine_t::install_syscall_handlers({

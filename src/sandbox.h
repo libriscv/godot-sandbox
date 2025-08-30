@@ -627,9 +627,10 @@ private:
 	void handle_exception(gaddr_t);
 	void handle_timeout(gaddr_t);
 	void print_backtrace(gaddr_t);
-	void initialize_syscalls();
-	void initialize_syscalls_2d();
-	void initialize_syscalls_3d();
+	void initialize_syscalls_runtime();
+	static void initialize_syscalls();
+	static void initialize_syscalls_2d();
+	static void initialize_syscalls_3d();
 	GuestVariant *setup_arguments(gaddr_t &sp, const Variant **args, int argc);
 	void setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, const Variant **args, int argc);
 
