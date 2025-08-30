@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           brew update
-          brew install cmake ccache
+          brew install ccache
 
       - name: '🚧 CCache setup'
         uses: hendrikmuhs/ccache-action@v1.2
