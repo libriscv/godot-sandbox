@@ -16,7 +16,7 @@ static constexpr bool VERBOSE_PROPERTIES = false;
 static const int HEAP_SYSCALLS_BASE = 480;
 static const int MEMORY_SYSCALLS_BASE = 485;
 static const std::vector<std::string> program_arguments = { "program" };
-static riscv::Machine<RISCV_ARCH> *dummy_machine;
+static riscv::Machine<RISCV_ARCH> dummy_machine;
 enum SandboxPropertyNameIndex : int {
 	PROP_REFERENCES_MAX,
 	PROP_MEMORY_MAX,
@@ -272,9 +272,9 @@ void Sandbox::constructor_initialize() {
 }
 void Sandbox::reset_machine() {
 	try {
-		if (this->m_machine != dummy_machine) {
+		if (this->m_machine != &dummy_machine) {
 			delete this->m_machine;
-			this->m_machine = dummy_machine;
+			this->m_machine = &dummy_machine;
 		}
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
@@ -291,8 +291,7 @@ void Sandbox::full_reset() {
 	this->m_allowed_objects.clear();
 }
 Sandbox::Sandbox() {
-	if (dummy_machine == nullptr) {
-		dummy_machine = new machine_t{};
+	if (property_names.empty()) {
 		property_names = {
 			"references_max",
 			"memory_max",
@@ -344,7 +343,7 @@ Sandbox::~Sandbox() {
 	this->m_global_instances_current -= 1;
 	this->set_program_data_internal(nullptr);
 	try {
-		if (this->m_machine != dummy_machine)
+		if (this->m_machine != &dummy_machine)
 			delete this->m_machine;
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox exception: " + std::string(e.what())).c_str());
@@ -493,7 +492,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 	/** We can't handle exceptions until the Machine is fully constructed. Two steps.  */
 	try {
 		// Reset the machine
-		if (this->m_machine != dummy_machine)
+		if (this->m_machine != &dummy_machine)
 			delete this->m_machine;
 
 		auto options = std::make_shared<riscv::MachineOptions<RISCV_ARCH>>(riscv::MachineOptions<RISCV_ARCH>{
@@ -544,7 +543,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		this->m_machine->set_options(std::move(options));
 	} catch (const std::exception &e) {
 		ERR_PRINT(("Sandbox construction exception: " + std::string(e.what())).c_str());
-		this->m_machine = dummy_machine;
+		this->m_machine = &dummy_machine;
 		return false;
 	}
 
@@ -1058,7 +1057,7 @@ gaddr_t Sandbox::cached_address_of(int64_t hash, const String &function) const {
 	auto it = m_lookup.find(hash);
 	if (it != m_lookup.end()) {
 		return it->second.address;
-	} else if (m_machine != dummy_machine) {
+	} else if (m_machine != &dummy_machine) {
 		const CharString ascii = function.ascii();
 		const std::string_view str{ ascii.get_data(), (size_t)ascii.length() };
 		address = machine().address_of(str);
