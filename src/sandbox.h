@@ -82,6 +82,7 @@ public:
 	Sandbox(const PackedByteArray &buffer);
 	Sandbox(Ref<ELFScript> program);
 	~Sandbox();
+	static void Initialize();
 
 	static Sandbox *FromBuffer(const PackedByteArray &buffer) { return memnew(Sandbox(buffer)); }
 	static Sandbox *FromProgram(Ref<ELFScript> program) { return memnew(Sandbox(std::move(program))); }

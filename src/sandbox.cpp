@@ -47,6 +47,38 @@ enum SandboxPropertyNameIndex : int {
 };
 static std::vector<StringName> property_names;
 
+void Sandbox::Initialize()
+{
+	property_names = {
+		"references_max",
+		"memory_max",
+		"execution_timeout",
+		"allocations_max",
+		"unboxed_arguments",
+		"precise_simulation",
+#ifdef RISCV_LIBTCC
+		"binary_translation_nbit_as",
+		"binary_translation_register_caching",
+#endif // RISCV_LIBTCC
+		"profiling",
+		"restrictions",
+		"program",
+		"monitor_heap_usage",
+		"monitor_heap_chunk_count",
+		"monitor_heap_allocation_counter",
+		"monitor_heap_deallocation_counter",
+		"monitor_exceptions",
+		"monitor_execution_timeouts",
+		"monitor_calls_made",
+		"monitor_binary_translated",
+		"global_calls_made",
+		"global_exceptions",
+		"global_timeouts",
+		"monitor_accumulated_startup_time",
+		"monitor_global_instance_count",
+	};
+}
+
 String Sandbox::_to_string() const {
 	return "[ GDExtension::Sandbox <--> Instance ID:" + uitos(get_instance_id()) + " ]";
 }
@@ -291,36 +323,6 @@ void Sandbox::full_reset() {
 	this->m_allowed_objects.clear();
 }
 Sandbox::Sandbox() {
-	if (property_names.empty()) {
-		property_names = {
-			"references_max",
-			"memory_max",
-			"execution_timeout",
-			"allocations_max",
-			"unboxed_arguments",
-			"precise_simulation",
-#ifdef RISCV_LIBTCC
-			"binary_translation_nbit_as",
-			"binary_translation_register_caching",
-#endif // RISCV_LIBTCC
-			"profiling",
-			"restrictions",
-			"program",
-			"monitor_heap_usage",
-			"monitor_heap_chunk_count",
-			"monitor_heap_allocation_counter",
-			"monitor_heap_deallocation_counter",
-			"monitor_exceptions",
-			"monitor_execution_timeouts",
-			"monitor_calls_made",
-			"monitor_binary_translated",
-			"global_calls_made",
-			"global_exceptions",
-			"global_timeouts",
-			"monitor_accumulated_startup_time",
-			"monitor_global_instance_count",
-		};
-	}
 	this->constructor_initialize();
 	this->m_tree_base = this;
 	this->m_global_instances_current += 1;

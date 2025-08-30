@@ -81,6 +81,8 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ZigScriptLanguage::init();
 #endif
 	SandboxProjectSettings::register_settings();
+	// Initialize the Sandbox node.
+	Sandbox::Initialize();
 }
 
 static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
