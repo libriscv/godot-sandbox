@@ -1,11 +1,15 @@
-#include "guest_datatypes.h"
+#include "guest_datatypes.h" // includes sandbox.h
 #include "syscalls.h"
 
 #include <godot_cpp/variant/basis.hpp>
+#include <godot_cpp/variant/quaternion.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
 #include <godot_cpp/variant/variant.hpp>
+#include <godot_cpp/variant/vector3.hpp>
 //#define ENABLE_SYSCALL_TRACE 1
 #include "syscalls_helpers.hpp"
+#include <cmath>
+#include <functional> // std::hash
 
 namespace riscv {
 

@@ -1445,7 +1445,6 @@ APICALL(api_node3d) {
 
 APICALL(api_throw) {
 	auto [type, msg, vaddr, vfunc] = machine.sysargs<std::string_view, std::string_view, gaddr_t, gaddr_t>();
-	Sandbox &emu = riscv::emu(machine);
 	SYS_TRACE("throw", String::utf8(type.data(), type.size()), String::utf8(msg.data(), msg.size()), vaddr);
 
 	if (vaddr != 0) {
@@ -1647,7 +1646,7 @@ APICALL(api_dict_ops) {
 			if (v.get_type() == Variant::NIL) {
 				const gaddr_t vdefaddr = machine.cpu.reg(14); // A4
 				const GuestVariant *vdef = machine.memory.memarray<GuestVariant>(vdefaddr, 1);
-				v = std::move(vdef->toVariant(emu));
+				v = vdef->toVariant(emu);
 			}
 			vp->set(emu, v, true); // Implicit trust, as we are returning our own object.
 			break;
