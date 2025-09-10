@@ -94,21 +94,16 @@ void ResourceFormatSaverCPP::deinit() {
 }
 
 static void auto_generate_cpp_api(const String &path) {
-	static bool api_written_to_project_root = false;
-	if (!api_written_to_project_root) {
-		// Check if the run-time API should be generated
-		if (!SandboxProjectSettings::generate_runtime_api()) {
-			api_written_to_project_root = true;
-			return;
-		}
-		// Write the API to the project root
-		Ref<FileAccess> api_handle = FileAccess::open(path, FileAccess::ModeFlags::WRITE);
-		if (api_handle.is_valid()) {
-			const bool use_argument_names = SandboxProjectSettings::generate_method_arguments();
-			api_handle->store_string(Sandbox::generate_api("cpp", "", use_argument_names));
-			api_handle->close();
-		}
-		api_written_to_project_root = true;
+	// Check if the run-time API should be generated
+	if (!SandboxProjectSettings::generate_runtime_api()) {
+		return;
+	}
+	// Write the API to the project root
+	Ref<FileAccess> api_handle = FileAccess::open(path, FileAccess::ModeFlags::WRITE);
+	if (api_handle.is_valid()) {
+		const bool use_argument_names = SandboxProjectSettings::generate_method_arguments();
+		api_handle->store_string(Sandbox::generate_api("cpp", "", use_argument_names));
+		api_handle->close();
 	}
 }
 
@@ -248,6 +243,14 @@ static Array invoke_cmake(const String &path) {
 			ERR_PRINT("Failed to configure cmake in: " + path);
 			return Array();
 		}
+	} else {
+		// Ensure the C++ run-time API exists in the .build directory
+		// Most projects will rely heavily on this, and it may be deleted
+		// in order to force a re-generation (adding new classes, addons etc.)
+		const String runtime_api_path = path + String("/.build/generated_api.hpp");
+		if (!FileAccess::file_exists(runtime_api_path)) {
+			auto_generate_cpp_api(runtime_api_path);
+		}
 	}
 
 	// Invoke cmake to build the project
@@ -356,7 +359,11 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 			}
 
 			// Generate the C++ run-time API in the project root
-			auto_generate_cpp_api("res://generated_api.hpp");
+			static bool api_written_to_project_root = false;
+			if (!api_written_to_project_root) {
+				api_written_to_project_root = true;
+				auto_generate_cpp_api("res://generated_api.hpp");
+			}
 
 			// Get the absolute path without the file name
 			String path = handle->get_path().get_base_dir().replace("res://", "") + "/";
