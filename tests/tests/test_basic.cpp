@@ -390,7 +390,7 @@ static bool timer_got_called = false;
 PUBLIC Variant test_timers() {
 	long val1 = 11;
 	float val2 = 22.0f;
-	return CallbackTimer::native_periodic(0.01, [=](Node timer) -> Variant {
+	return CallbackTimer::periodic(0.01, [=](Node timer) -> Variant {
 		print("Timer with values: ", val1, val2);
 		timer.queue_free();
 		timer_got_called = true;
