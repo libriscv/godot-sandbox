@@ -42,3 +42,11 @@ PUBLIC Variant test_math_clamp(double x, double a, double b) {
 PUBLIC Variant test_math_slerp(double a, double b, double t) {
 	return Math::slerp(a, b, t);
 }
+
+PUBLIC Variant test_math_fabs(double x) {
+	return double(fabs(x));
+}
+
+PUBLIC Variant test_math_fmod(double x, double y) {
+	return double(fmod(x, y));
+}

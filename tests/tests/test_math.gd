@@ -25,5 +25,11 @@ func test_math():
 
 	assert_eq(s.vmcall("test_math_lerp",       0.0, 1.0, 0.5), 0.5)
 	assert_eq(s.vmcall("test_math_smoothstep", 0.0, 1.0, 0.5), 0.5)
+
+	# Regular math functions
+	assert_eq(s.vmcall("test_math_fabs", -5.25), 5.25)
+	assert_eq(s.vmcall("test_math_fmod", 5.25, 2.0), 1.25)
+	assert_eq(s.vmcall("test_math_fmod", 5.25, 0.25), 0.0)
+
 	s.queue_free()
 
