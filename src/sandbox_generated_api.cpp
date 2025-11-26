@@ -91,6 +91,8 @@ static const char *cpp_compatible_variant_type(int type) {
 			return "PackedArray<Vector2>";
 		case Variant::PACKED_VECTOR3_ARRAY:
 			return "PackedArray<Vector3>";
+		case Variant::PACKED_VECTOR4_ARRAY:
+			return "PackedArray<Vector4>";
 		case Variant::PACKED_COLOR_ARRAY:
 			return "PackedArray<Color>";
 		default:
