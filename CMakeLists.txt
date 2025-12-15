@@ -23,6 +23,13 @@ set(SOURCES
 	src/zig/resource_saver_zig.cpp
 	src/zig/script_zig.cpp
 	src/zig/script_language_zig.cpp
+	src/gdscript_elf/language/gdscript_elf.cpp
+	src/gdscript_elf/language/gdscript_elf_function.cpp
+	src/gdscript_elf/language/gdscript_elf_instance.cpp
+	src/gdscript_elf/language/gdscript_elf_language.cpp
+	src/gdscript_elf/language/register_gdscript_elf.cpp
+	src/gdscript_elf/language/resource_loader_gdscript_elf.cpp
+	src/gdscript_elf/language/resource_saver_gdscript_elf.cpp
 	src/docker.cpp
 	src/godot/script_instance.cpp
 	src/guest_variant.cpp

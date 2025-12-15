@@ -30,7 +30,9 @@
 
 #pragma once
 
-#include "core/io/resource_saver.h"
+#include <godot_cpp/classes/resource_format_saver.hpp>
+
+using namespace godot;
 
 class ResourceFormatSaverGDScriptELF : public ResourceFormatSaver {
 	GDCLASS(ResourceFormatSaverGDScriptELF, ResourceFormatSaver);

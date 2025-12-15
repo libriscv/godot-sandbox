@@ -30,7 +30,9 @@
 
 #pragma once
 
-#include "core/io/resource_loader.h"
+#include <godot_cpp/classes/resource_format_loader.hpp>
+
+using namespace godot;
 
 class ResourceFormatLoaderGDScriptELF : public ResourceFormatLoader {
 	GDCLASS(ResourceFormatLoaderGDScriptELF, ResourceFormatLoader);

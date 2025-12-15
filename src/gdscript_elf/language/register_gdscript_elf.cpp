@@ -34,10 +34,13 @@
 #include "resource_loader_gdscript_elf.h"
 #include "resource_saver_gdscript_elf.h"
 
-#include "core/io/resource_loader.h"
-#include "core/io/resource_saver.h"
-#include "core/object/script_language.h"
-#include "core/object/script_server.h"
+#include <gdextension_interface.h>
+#include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/resource_saver.hpp>
+
+using namespace godot;
 
 static GDScriptELFLanguage *script_language_gdelf = nullptr;
 static Ref<ResourceFormatLoaderGDScriptELF> resource_loader_gdelf;

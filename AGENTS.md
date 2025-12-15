@@ -5,6 +5,7 @@
 Godot Sandbox is a Godot engine module that provides safe, low-latency, and fast sandboxed execution for multiple programming languages. It enables Godot creators to implement safe modding support, allowing programs built by other players to be executed in a restricted environment that cannot harm other players or the host system.
 
 **Key Technologies:**
+
 - C++ (Godot engine module)
 - RISC-V emulation (libriscv)
 - Multiple script languages: C++, Rust, Zig, ELF, and GDScriptELF
@@ -13,6 +14,7 @@ Godot Sandbox is a Godot engine module that provides safe, low-latency, and fast
 - CMake (for unit tests and program compilation)
 
 **Architecture:**
+
 - Sandboxed execution via RISC-V emulator
 - Multiple script language implementations
 - Resource loaders/savers for each language
@@ -20,6 +22,7 @@ Godot Sandbox is a Godot engine module that provides safe, low-latency, and fast
 - Syscall-based API access with restrictions
 
 **Main Components:**
+
 - `Sandbox` - Core sandbox node for executing programs
 - `ELFScript` / `ELFScriptLanguage` - ELF script resource and language
 - `CPPScript` / `CPPScriptLanguage` - C++ script resource and language
@@ -71,12 +74,14 @@ godot-sandbox/
 ### Initial Setup
 
 1. **Clone the repository:**
+
    ```bash
    git clone https://github.com/libriscv/godot-sandbox.git
    cd godot-sandbox
    ```
 
 2. **Initialize submodules:**
+
    ```bash
    git submodule update --init --recursive
    ```
@@ -94,6 +99,7 @@ godot-sandbox/
 ### Building the Module
 
 **As a Godot Module (SCons):**
+
 ```bash
 # Build Godot with sandbox module
 # From Godot engine root directory
@@ -103,6 +109,7 @@ scons target=template_debug platform=linuxbsd
 ```
 
 **As an Addon (CMake/Ninja):**
+
 ```bash
 # Build the addon library
 ./build.sh
@@ -115,6 +122,7 @@ ninja
 ```
 
 **Platform-Specific Builds:**
+
 ```bash
 # Android
 ./build_android.sh
@@ -126,6 +134,7 @@ ninja
 ### Running Tests
 
 **Unit Tests (GUT Framework):**
+
 ```bash
 # Run unit tests
 cd tests
@@ -138,6 +147,7 @@ cd tests
 ```
 
 **Test Structure:**
+
 - Unit tests use GUT (Godot Unit Test) framework
 - Tests located in `tests/tests/` directory
 - Test ELF files compiled via CMake
@@ -146,6 +156,7 @@ cd tests
 ### Code Formatting
 
 **Format Code:**
+
 ```bash
 # Format C++ code
 ./scripts/clang-format.sh
@@ -155,6 +166,7 @@ clang-format -i src/**/*.{cpp,h,hpp}
 ```
 
 **Linting:**
+
 ```bash
 # Run clang-tidy
 ./scripts/clang-tidy.sh
@@ -223,6 +235,7 @@ clang-format -i src/**/*.{cpp,h,hpp}
 ### Writing Tests
 
 **GDScript Tests:**
+
 ```gdscript
 extends GutTest
 
@@ -233,6 +246,7 @@ func test_sandbox_creation():
 ```
 
 **ELF Test Programs:**
+
 ```cpp
 // tests/tests/test_program.cpp
 #include "api.hpp"
@@ -301,6 +315,7 @@ Fixes #12345
 ```
 
 **Examples:**
+
 ```
 [sandbox] Add memory limit configuration
 
@@ -367,18 +382,21 @@ Related to #67890
 ### Debugging
 
 **Enable Debug Logging:**
+
 ```cpp
 // In code
 ERR_PRINT("Debug message: " + String(variable));
 ```
 
 **Sandbox Debugging:**
+
 - Use `Sandbox::set_debug_enabled(true)`
 - Check sandbox execution logs
 - Monitor syscall invocations
 - Inspect memory state
 
 **ELF Execution Debugging:**
+
 - Check ELF binary loading
 - Verify function address resolution
 - Monitor argument marshaling
@@ -391,16 +409,19 @@ ERR_PRINT("Debug message: " + String(variable));
 Each script language follows this pattern:
 
 1. **ScriptLanguage**: Extends `ScriptLanguageExtension`
+
    - Registers language with Godot
    - Handles script validation
    - Provides editor integration
 
 2. **Script Resource**: Extends `ScriptExtension`
+
    - Represents script file
    - Handles compilation/loading
    - Manages script instances
 
 3. **Script Instance**: Extends `ScriptInstanceExtension`
+
    - Manages script execution state
    - Handles property access
    - Executes functions
@@ -435,11 +456,13 @@ Return Value
 GDScriptELF follows a different pattern:
 
 1. **Compilation Pipeline**:
+
    - Tokenizer → Parser → Analyzer → Compiler
    - Bytecode Generation → ELF Compilation
    - Stores ELF binaries per function
 
 2. **Execution**:
+
    - Function calls check for ELF binary
    - Execute in sandbox if available
    - Fallback to VM if ELF unavailable

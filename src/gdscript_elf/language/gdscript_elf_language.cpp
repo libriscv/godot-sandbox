@@ -35,9 +35,11 @@
 #include "../compilation/gdscript_compiler.h"
 #include "../compilation/gdscript_utility_functions.h"
 
-#include "core/config/engine.h"
-#include "core/config/project_settings.h"
-#include "core/core_constants.h"
+#include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
+#include <godot_cpp/core/defs.hpp>
+
+using namespace godot;
 
 GDScriptELFLanguage *GDScriptELFLanguage::singleton = nullptr;
 

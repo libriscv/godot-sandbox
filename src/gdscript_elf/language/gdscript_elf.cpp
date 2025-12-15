@@ -38,9 +38,11 @@
 #include "../compilation/gdscript_function.h"
 #include "../compilation/gdscript.h"
 #include "../elf/gdscript_bytecode_elf_compiler.h"
-#include "core/io/file_access.h"
-#include "core/object/script_language.h"
-#include "scene/scene_string_names.h"
+#include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/script_language.hpp>
+#include <godot_cpp/classes/scene_tree.hpp>
+
+using namespace godot;
 
 void GDScriptELF::_bind_methods() {
 	// Bind methods if needed

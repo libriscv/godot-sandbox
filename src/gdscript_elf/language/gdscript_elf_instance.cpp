@@ -31,8 +31,10 @@
 #include "gdscript_elf_instance.h"
 #include "gdscript_elf_language.h"
 #include "../../sandbox.h"
-#include "core/object/object.h"
-#include "core/variant/variant.h"
+#include <godot_cpp/classes/object.hpp>
+#include <godot_cpp/variant/variant.hpp>
+
+using namespace godot;
 
 GDScriptELFInstance::GDScriptELFInstance() {
 	owner = nullptr;

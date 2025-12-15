@@ -30,15 +30,17 @@
 
 #pragma once
 
-#include "core/object/script_language.h"
+#include <godot_cpp/classes/script_language_extension.hpp>
+
+using namespace godot;
 
 class GDScriptELF;
 
 // GDScriptELFLanguage - ScriptLanguage implementation for GDScriptELF
 // Registers as a new language with .gde extension
 // Compiles GDScript source to ELF instead of VM bytecode
-class GDScriptELFLanguage : public ScriptLanguage {
-	GDCLASS(GDScriptELFLanguage, ScriptLanguage);
+class GDScriptELFLanguage : public ScriptLanguageExtension {
+	GDCLASS(GDScriptELFLanguage, ScriptLanguageExtension);
 
 	static GDScriptELFLanguage *singleton;
 

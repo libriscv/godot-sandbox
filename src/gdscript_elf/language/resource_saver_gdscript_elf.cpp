@@ -30,7 +30,9 @@
 
 #include "resource_saver_gdscript_elf.h"
 #include "gdscript_elf.h"
-#include "core/io/file_access.h"
+#include <godot_cpp/classes/file_access.hpp>
+
+using namespace godot;
 
 Error ResourceFormatSaverGDScriptELF::save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_saver_flags) {
 	Ref<GDScriptELF> script = p_resource;

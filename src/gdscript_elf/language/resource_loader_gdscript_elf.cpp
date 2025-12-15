@@ -30,7 +30,9 @@
 
 #include "resource_loader_gdscript_elf.h"
 #include "gdscript_elf.h"
-#include "core/io/file_access.h"
+#include <godot_cpp/classes/file_access.hpp>
+
+using namespace godot;
 
 Ref<Resource> ResourceFormatLoaderGDScriptELF::load(const String &p_path, const String &p_original_path, Error *r_error, bool p_use_sub_threads, float *r_progress, CacheMode p_cache_mode) {
 	if (r_error) {

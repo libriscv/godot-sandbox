@@ -32,12 +32,14 @@
 
 #include "gdscript_elf.h"
 #include "gdscript_elf_function.h"
-#include "core/object/script_instance.h"
-#include "core/templates/self_list.h"
+#include <godot_cpp/classes/script_instance_extension.hpp>
+#include <godot_cpp/templates/self_list.hpp>
+
+using namespace godot;
 
 class Sandbox;
 
-class GDScriptELFInstance : public ScriptInstance {
+class GDScriptELFInstance : public ScriptInstanceExtension {
 	friend class GDScriptELF;
 	friend class GDScriptELFFunction;
 

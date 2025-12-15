@@ -36,11 +36,13 @@
 #include "../compilation/gdscript_analyzer.h"
 #include "../compilation/gdscript_compiler.h"
 #include "../elf/gdscript_bytecode_elf_compiler.h"
-#include "core/io/resource_loader.h"
-#include "core/io/resource_saver.h"
-#include "core/object/script_language.h"
-#include "core/templates/rb_set.h"
-#include "core/templates/self_list.h"
+#include <godot_cpp/classes/script_extension.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/resource_saver.hpp>
+#include <godot_cpp/templates/hash_set.hpp>
+#include <godot_cpp/templates/self_list.hpp>
+
+using namespace godot;
 
 class GDScriptELFLanguage;
 class GDScriptELFInstance;
@@ -48,8 +50,8 @@ class GDScriptELFFunction;
 
 // GDScriptELF - Script implementation that compiles GDScript to ELF
 // Similar to GDScript but compiles to ELF instead of VM bytecode
-class GDScriptELF : public Script {
-	GDCLASS(GDScriptELF, Script);
+class GDScriptELF : public ScriptExtension {
+	GDCLASS(GDScriptELF, ScriptExtension);
 
 	friend class GDScriptELFInstance;
 	friend class GDScriptELFFunction;

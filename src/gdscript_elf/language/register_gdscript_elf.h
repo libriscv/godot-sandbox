@@ -30,7 +30,9 @@
 
 #pragma once
 
-#include "core/extension/gdextension_interface.h"
+#include <godot_cpp/core/defs.hpp>
+
+using namespace godot;
 
 // Initialize GDScriptELF language
 // Can be called from module initialization or GDExtension initialization
@@ -38,13 +40,3 @@ void initialize_gdscript_elf_language(ModuleInitializationLevel p_level);
 
 // Uninitialize GDScriptELF language
 void uninitialize_gdscript_elf_language(ModuleInitializationLevel p_level);
-
-// GDExtension initialization function
-// This allows GDScriptELF to be loaded as a GDExtension
-extern "C" {
-	GDExtensionBool GDE_EXPORT gdscript_elf_extension_init(
-		GDExtensionInterfaceGetProcAddress p_get_proc_address,
-		GDExtensionClassLibraryPtr p_library,
-		GDExtensionInitialization *r_initialization
-	);
-}

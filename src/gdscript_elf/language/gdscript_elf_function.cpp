@@ -32,8 +32,10 @@
 #include "gdscript_elf_instance.h"
 #include "gdscript_elf.h"
 #include "../../sandbox.h"
-#include "core/variant/variant.h"
-#include "core/variant/callable.h"
+#include <godot_cpp/variant/variant.hpp>
+#include <godot_cpp/variant/callable.hpp>
+
+using namespace godot;
 
 using gaddr_t = riscv::address_type<riscv::RISCV64>;
 

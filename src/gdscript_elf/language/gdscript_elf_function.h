@@ -32,9 +32,11 @@
 
 #include "../compilation/gdscript_function.h"
 #include "../compilation/gdscript.h"
-#include "core/object/ref_counted.h"
-#include "core/templates/self_list.h"
-#include "core/variant/variant.h"
+#include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/templates/self_list.hpp>
+#include <godot_cpp/variant/variant.hpp>
+
+using namespace godot;
 
 class GDScriptELFInstance;
 class GDScriptELF;
