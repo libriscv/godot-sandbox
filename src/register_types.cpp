@@ -18,6 +18,7 @@
 #include "cpp/resource_saver_cpp.h"
 #include "cpp/script_cpp.h"
 #include "cpp/script_language_cpp.h"
+#include "gdscript_elf/language/register_gdscript_elf.h"
 #ifdef PLATFORM_HAS_EDITOR
 #include "rust/resource_loader_rust.h"
 #include "rust/resource_saver_rust.h"
@@ -83,6 +84,8 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	SandboxProjectSettings::register_settings();
 	// Initialize the Sandbox node.
 	Sandbox::Initialize();
+	// Initialize GDScriptELF language
+	initialize_gdscript_elf_language(MODULE_INITIALIZATION_LEVEL_SCENE);
 }
 
 static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
@@ -113,6 +116,8 @@ static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	ResourceFormatLoaderZig::deinit();
 	ResourceFormatSaverZig::deinit();
 #endif
+	// Uninitialize GDScriptELF language
+	uninitialize_gdscript_elf_language(MODULE_INITIALIZATION_LEVEL_SCENE);
 }
 
 extern "C" {
