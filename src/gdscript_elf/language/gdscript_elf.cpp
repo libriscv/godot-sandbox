@@ -36,6 +36,7 @@
 #include "../compilation/gdscript_analyzer.h"
 #include "../compilation/gdscript_compiler.h"
 #include "../compilation/gdscript_function.h"
+#include "../compilation/gdscript.h"
 #include "../elf/gdscript_bytecode_elf_compiler.h"
 #include "core/io/file_access.h"
 #include "core/object/script_language.h"
@@ -237,17 +238,19 @@ bool GDScriptELF::has_property_default_value(const StringName &p_property) const
 }
 
 Variant GDScriptELF::get_property_default_value(const StringName &p_property) const {
-	// Extract default value from parser
+	// Extract default value using analyzer's evaluation
 	if (analyzer.is_valid() && analyzer->get_parser()) {
 		const GDScriptParser::ClassNode *class_node = analyzer->get_parser()->get_tree();
 		if (class_node) {
 			for (const GDScriptParser::ClassNode::Member &member : class_node->members) {
 				if (member.type == GDScriptParser::ClassNode::Member::VARIABLE &&
-					member.variable->identifier->name == p_property &&
-					member.variable->initializer) {
-					// TODO: Evaluate initializer expression to get default value
-					// This requires running the analyzer's constant evaluation
-					return Variant();
+					member.variable->identifier->name == p_property) {
+					// Use analyzer's make_variable_default_value to evaluate the default
+					// This handles both initializer expressions and type defaults
+					// Note: We need to cast away const since make_variable_default_value takes non-const
+					// This is safe because we're only reading the variable node
+					GDScriptParser::VariableNode *var_node = const_cast<GDScriptParser::VariableNode *>(member.variable);
+					return analyzer->make_variable_default_value(var_node);
 				}
 			}
 		}
@@ -328,9 +331,19 @@ Error GDScriptELF::_compile_to_elf() {
 	}
 
 	// Compile to bytecode first (using GDScriptCompiler)
-	// Note: We need to create a temporary GDScript to use the compiler
-	// For now, we'll extract function information from the parser/analyzer
-	// and compile functions individually to ELF
+	// Create a temporary GDScript instance to use with the compiler
+	Ref<GDScript> temp_script = memnew(GDScript);
+	temp_script->set_source_code(source);
+	temp_script->set_path(path);
+
+	// Use GDScriptCompiler to generate bytecode
+	GDScriptCompiler compiler;
+	err = compiler.compile(parser.ptr(), temp_script.ptr(), false);
+	if (err != OK) {
+		compilation_error = err;
+		ERR_PRINT("GDScriptELF: Compilation failed: " + compiler.get_error());
+		return err;
+	}
 
 	const GDScriptParser::ClassNode *class_node = parser->get_tree();
 	if (!class_node) {
@@ -348,69 +361,118 @@ Error GDScriptELF::_compile_to_elf() {
 		// Base class handling would go here
 	}
 
-	// Extract constants
-	for (const GDScriptParser::ClassNode::Member &member : class_node->members) {
-		if (member.type == GDScriptParser::ClassNode::Member::VARIABLE) {
-			if (member.variable->is_constant) {
-				constants[member.variable->identifier->name] = Variant(); // TODO: Evaluate constant value
-			}
-		}
+	// Extract constants from compiled script and parser
+	// First get constants from compiled script (these are evaluated)
+	for (const KeyValue<StringName, Variant> &E : temp_script->get_constants()) {
+		constants[E.key] = E.value;
 	}
+	
+	// Also extract constants from parser/analyzer for variables with initializers
+	// These will be evaluated when needed via get_property_default_value()
 
-	// Extract member variables
+	// Extract member variables from compiled script
 	int member_index = 0;
-	for (const GDScriptParser::ClassNode::Member &member : class_node->members) {
-		if (member.type == GDScriptParser::ClassNode::Member::VARIABLE && !member.variable->is_constant) {
-			MemberInfo info;
-			info.index = member_index++;
-			info.data_type = GDScriptDataType(); // TODO: Convert from parser data type
-			info.property_info.name = member.variable->identifier->name;
-			info.property_info.type = Variant::NIL; // TODO: Convert from data type
-			member_indices[member.variable->identifier->name] = info;
-			members.insert(member.variable->identifier->name);
-		}
+	for (const KeyValue<StringName, GDScript::MemberInfo> &E : temp_script->debug_get_member_indices()) {
+		MemberInfo info;
+		info.index = member_index++;
+		info.data_type = E.value.data_type;
+		info.property_info = E.value.property_info;
+		info.setter = E.value.setter;
+		info.getter = E.value.getter;
+		member_indices[E.key] = info;
+		members.insert(E.key);
 	}
 
 	// Extract and compile functions to ELF
-	for (const GDScriptParser::ClassNode::Member &member : class_node->members) {
-		if (member.type == GDScriptParser::ClassNode::Member::FUNCTION) {
-			StringName func_name = member.function->identifier->name;
+	// Get all member functions from the compiled script
+	const HashMap<StringName, GDScriptFunction *> &compiled_functions = temp_script->get_member_functions();
+	
+	for (const KeyValue<StringName, GDScriptFunction *> &E : compiled_functions) {
+		StringName func_name = E.key;
+		GDScriptFunction *gd_function = E.value;
 
-			// Create GDScriptELFFunction
-			GDScriptELFFunction *func = memnew(GDScriptELFFunction);
-			func->name = func_name;
-			func->script = this;
-			func->argument_count = member.function->parameters.size();
-			func->line = member.function->start_line;
+		// Create GDScriptELFFunction
+		GDScriptELFFunction *elf_func = memnew(GDScriptELFFunction);
+		elf_func->name = func_name;
+		elf_func->script = this;
+		elf_func->argument_count = gd_function->argument_count;
+		elf_func->default_argument_count = gd_function->default_arguments.size();
+		elf_func->default_arguments = gd_function->default_arguments;
+		elf_func->argument_types = gd_function->argument_types;
+		elf_func->return_type = gd_function->return_type;
+		elf_func->is_static = gd_function->is_static;
+		elf_func->is_vararg = gd_function->is_vararg();
+		elf_func->has_yield = gd_function->has_yield;
+		elf_func->line = gd_function->get_line();
 
-			// Extract argument types
-			for (const GDScriptParser::ParameterNode *param : member.function->parameters) {
-				GDScriptDataType arg_type;
-				if (param->data_type.is_set()) {
-					// TODO: Convert parser data type to GDScriptDataType
-				}
-				func->argument_types.push_back(arg_type);
+		// Copy bytecode for VM fallback
+		elf_func->code = gd_function->code;
+		elf_func->constants = gd_function->constants;
+		elf_func->stack = gd_function->stack;
+
+		// Try to compile to ELF
+		if (GDScriptBytecodeELFCompiler::can_compile_function(gd_function)) {
+			PackedByteArray elf_binary = GDScriptBytecodeELFCompiler::compile_function_to_elf(gd_function);
+			if (!elf_binary.is_empty()) {
+				elf_func->set_elf_binary(elf_binary);
+				function_elf_binaries[func_name] = elf_binary;
+			} else {
+				// ELF compilation failed, but we have bytecode fallback
+				String error = GDScriptBytecodeELFCompiler::get_last_error();
+				WARN_PRINT("GDScriptELF: Failed to compile function '" + String(func_name) + "' to ELF: " + error + ". Using VM fallback.");
 			}
+		} else {
+			// Function cannot be compiled to ELF (e.g., unsupported opcodes)
+			WARN_PRINT("GDScriptELF: Function '" + String(func_name) + "' cannot be compiled to ELF. Using VM fallback.");
+		}
 
-			// TODO: Compile function bytecode to ELF
-			// For now, we'll need to use GDScriptCompiler to generate bytecode first
-			// Then use GDScriptBytecodeELFCompiler to compile to ELF
-			// This is a complex integration that requires:
-			// 1. Creating a temporary GDScriptFunction with bytecode
-			// 2. Compiling that to ELF using GDScriptBytecodeELFCompiler
-			// 3. Storing the ELF binary
+		member_functions[func_name] = elf_func;
 
-			// For now, mark function as created but not yet compiled to ELF
-			member_functions[func_name] = func;
+		// Store special functions
+		if (func_name == StringName("_init")) {
+			initializer = elf_func;
+		} else if (func_name == StringName("_ready")) {
+			implicit_ready = elf_func;
+		} else if (func_name == StringName("_static_init")) {
+			static_initializer = elf_func;
+		}
+	}
 
-			// Store special functions
-			if (func_name == StringName("_init")) {
-				initializer = func;
-			} else if (func_name == StringName("_ready")) {
-				implicit_ready = func;
-			} else if (func_name == StringName("_static_init")) {
-				static_initializer = func;
-			}
+	// Handle implicit initializer and ready functions
+	if (temp_script->get_implicit_initializer()) {
+		GDScriptFunction *gd_func = temp_script->get_implicit_initializer();
+		GDScriptELFFunction *elf_func = memnew(GDScriptELFFunction);
+		elf_func->name = StringName("@implicit_new");
+		elf_func->script = this;
+		elf_func->code = gd_func->code;
+		elf_func->constants = gd_func->constants;
+		elf_func->stack = gd_func->stack;
+		implicit_initializer = elf_func;
+	}
+
+	if (temp_script->get_implicit_ready()) {
+		GDScriptFunction *gd_func = temp_script->get_implicit_ready();
+		GDScriptELFFunction *elf_func = memnew(GDScriptELFFunction);
+		elf_func->name = StringName("@implicit_ready");
+		elf_func->script = this;
+		elf_func->code = gd_func->code;
+		elf_func->constants = gd_func->constants;
+		elf_func->stack = gd_func->stack;
+		if (!implicit_ready) {
+			implicit_ready = elf_func;
+		}
+	}
+
+	if (temp_script->get_static_initializer()) {
+		GDScriptFunction *gd_func = temp_script->get_static_initializer();
+		GDScriptELFFunction *elf_func = memnew(GDScriptELFFunction);
+		elf_func->name = StringName("@static_init");
+		elf_func->script = this;
+		elf_func->code = gd_func->code;
+		elf_func->constants = gd_func->constants;
+		elf_func->stack = gd_func->stack;
+		if (!static_initializer) {
+			static_initializer = elf_func;
 		}
 	}
 

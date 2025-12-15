@@ -35,6 +35,8 @@
 #include "core/variant/variant.h"
 #include "core/variant/callable.h"
 
+using gaddr_t = riscv::address_type<riscv::RISCV64>;
+
 GDScriptELFFunction::GDScriptELFFunction() {
 	script = nullptr;
 	argument_count = 0;
@@ -96,28 +98,69 @@ Variant GDScriptELFFunction::execute_elf(GDScriptELFInstance *p_instance, const 
 		return Variant();
 	}
 
+	if (elf_binary.is_empty()) {
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
+		ERR_PRINT("GDScriptELFFunction: No ELF binary available for function '" + String(name) + "'");
+		return Variant();
+	}
+
 	Sandbox *sandbox = p_instance->sandbox;
 
 	// Load ELF binary into sandbox if not already loaded
-	// For now, we'll assume the ELF binary is already loaded
-	// In a full implementation, we'd need to:
-	// 1. Load the ELF binary into the sandbox
-	// 2. Resolve the function address
-	// 3. Call the function with marshaled arguments
-
-	// Prepare arguments for VM call
-	Array vm_args;
-	for (int i = 0; i < p_argcount; i++) {
-		vm_args.push_back(*p_args[i]);
+	if (!sandbox->has_program_loaded()) {
+		sandbox->load_buffer(elf_binary);
+		if (!sandbox->has_program_loaded()) {
+			// Fallback to VM if loading fails
+			ERR_PRINT("GDScriptELFFunction: Failed to load ELF binary, falling back to VM");
+			return execute_vm_fallback(p_instance, p_args, p_argcount, r_error);
+		}
 	}
 
-	// Call function in sandbox
+	// Generate function symbol name matching C code generation
+	// The C code generator creates functions with prefix "gdscript_"
+	String func_name = name.operator String();
+	func_name = func_name.replace(".", "_").replace(" ", "_");
+	String symbol_name = "gdscript_" + func_name;
+
+	// Resolve function address
+	gaddr_t func_address = sandbox->address_of(symbol_name);
+	if (func_address == 0) {
+		// Function symbol not found, try fallback to VM
+		WARN_PRINT("GDScriptELFFunction: Function symbol '" + symbol_name + "' not found in ELF, falling back to VM");
+		return execute_vm_fallback(p_instance, p_args, p_argcount, r_error);
+	}
+
+	// Prepare arguments for sandbox call
+	// The function signature expects: [result_ptr, arg0, arg1, ..., argN, instance_ptr, constants_addr, operator_funcs_addr]
+	// For now, we'll use a simplified approach with just the arguments
+	// TODO: Implement full argument marshaling with result pointer and context
+	
+	// Fill in default arguments if needed
+	Vector<const Variant *> final_args;
+	final_args.resize(argument_count);
+	int arg_index = 0;
+	for (; arg_index < p_argcount && arg_index < argument_count; arg_index++) {
+		final_args[arg_index] = p_args[arg_index];
+	}
+	for (; arg_index < argument_count; arg_index++) {
+		int default_index = arg_index - (argument_count - default_argument_count);
+		if (default_index >= 0 && default_index < default_arguments.size()) {
+			final_args[arg_index] = &default_arguments[default_index];
+		} else {
+			r_error.error = Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS;
+			r_error.argument = arg_index;
+			return Variant();
+		}
+	}
+
+	// Call function in sandbox by address
 	GDExtensionCallError vm_error;
-	Variant result = sandbox->vmcall((const Variant **)vm_args.ptr(), vm_args.size(), vm_error);
+	Variant result = sandbox->vmcall_address(func_address, final_args.ptr(), final_args.size(), vm_error);
 
 	if (vm_error.error != GDEXTENSION_CALL_OK) {
-		r_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
-		return Variant();
+		// Fallback to VM on error
+		WARN_PRINT("GDScriptELFFunction: ELF execution failed for '" + String(name) + "', falling back to VM");
+		return execute_vm_fallback(p_instance, p_args, p_argcount, r_error);
 	}
 
 	r_error.error = Callable::CallError::CALL_OK;
@@ -126,10 +169,55 @@ Variant GDScriptELFFunction::execute_elf(GDScriptELFInstance *p_instance, const 
 
 Variant GDScriptELFFunction::execute_vm_fallback(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, Callable::CallError &r_error) {
 	// Fallback to VM execution if ELF is not available
-	// This would use the bytecode stored in the 'code' member
-	// For now, return an error indicating VM fallback is not implemented
+	// This uses the bytecode stored in the 'code' member
+	
+	if (code.is_empty()) {
+		r_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
+		ERR_PRINT("GDScriptELFFunction: No bytecode available for VM fallback");
+		return Variant();
+	}
+
+	// For now, we'll use a simplified approach:
+	// Create a temporary GDScriptFunction-like execution context
+	// This is a minimal implementation that handles basic cases
+	
+	// Validate argument count
+	if (p_argcount < argument_count - default_argument_count) {
+		r_error.error = Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS;
+		r_error.argument = argument_count - default_argument_count;
+		return Variant();
+	}
+
+	if (!is_vararg && p_argcount > argument_count) {
+		r_error.error = Callable::CallError::CALL_ERROR_TOO_MANY_ARGUMENTS;
+		r_error.argument = argument_count;
+		return Variant();
+	}
+
+	// Fill in default arguments if needed
+	Vector<const Variant *> final_args;
+	final_args.resize(argument_count);
+	int arg_index = 0;
+	for (; arg_index < p_argcount && arg_index < argument_count; arg_index++) {
+		final_args[arg_index] = p_args[arg_index];
+	}
+	for (; arg_index < argument_count; arg_index++) {
+		int default_index = arg_index - (argument_count - default_argument_count);
+		if (default_index >= 0 && default_index < default_arguments.size()) {
+			final_args[arg_index] = &default_arguments[default_index];
+		} else {
+			r_error.error = Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS;
+			r_error.argument = arg_index;
+			return Variant();
+		}
+	}
+
+	// Note: Full VM execution would require implementing the entire opcode interpreter
+	// For now, we'll return an error indicating that VM fallback needs full implementation
+	// In a production system, this would execute the bytecode using GDScriptVM
+	WARN_PRINT("GDScriptELFFunction: VM fallback execution not fully implemented. Function '" + String(name) + "' requires full VM support.");
+	
 	r_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
-	ERR_PRINT("GDScriptELFFunction: VM fallback not yet implemented");
 	return Variant();
 }
 
