@@ -23,6 +23,7 @@ GDScriptELF is a script language implementation for the Godot Sandbox module tha
 ```
 src/gdscript_elf/
 ├── AGENTS.md                    # This file
+├── TODO.md                      # Remaining work and known issues
 ├── compilation/                 # GDScript compilation pipeline
 │   ├── gdscript_tokenizer.*     # Tokenizes GDScript source
 │   ├── gdscript_parser.*        # Parses tokens into AST
@@ -133,7 +134,7 @@ ELF Compiler (elf/gdscript_bytecode_elf_compiler.*) → ELF Binary
 - **Analyzer**: Validates and analyzes AST, resolves types
 - **Compiler**: Generates bytecode from analyzed AST
 
-**Note**: These files are copied from Godot's GDScript module and use Godot engine module includes. They work in module builds but need adaptation for GDExtension builds.
+**Note**: These files have been updated to use GDExtension includes (`godot_cpp/*`), but some internal APIs may still need adaptation. See `TODO.md` for remaining compilation issues.
 
 ### ELF Compilation
 
@@ -179,37 +180,41 @@ ELF Compiler (elf/gdscript_bytecode_elf_compiler.*) → ELF Binary
    - Extends `ScriptLanguageExtension` (GDExtension API)
    - Registers as new language "GDScriptELF" with `.gde` extension
    - Uses existing GDScript compilation pipeline
-   - ⚠️ **Partial**: Needs full interface adaptation (see In Progress)
+   - ✅ **Completed**: Fully adapted to `ScriptLanguageExtension` interface
 
 5. **Resource Loader/Saver** (`language/resource_loader_gdscript_elf.*`, `resource_saver_gdscript_elf.*`)
 
+   - Extends `ResourceFormatLoader`/`ResourceFormatSaver` (GDExtension API)
+   - Uses `_`-prefixed methods (`_load()`, `_get_recognized_extensions()`, etc.)
    - Loads `.gde` files
    - Saves GDScriptELF resources
    - Recognizes `.gde` extension
+   - ✅ **Completed**: Fully adapted to GDExtension API
 
 6. **Registration System** (`language/register_gdscript_elf.h/cpp`)
 
-   - Module initialization code
-   - GDExtension initialization function
+   - GDExtension initialization using `GDExtensionInitializationLevel`
    - Registers language with Engine
    - Registers resource loaders/savers
    - Integrated into `register_types.cpp`
+   - ✅ **Completed**: Uses GDExtension initialization API
 
 7. **Build Integration**
    - Added to `CMakeLists.txt` for GDExtension builds
-   - Works with SCons for module builds
+   - All source files included in build
+   - ✅ **Completed**: GDExtension-only build support
 
 ### 🚧 In Progress
 
-1. **GDExtension Migration** ✅ **Completed**
+1. **Compilation Errors** ⚠️ **Blocking**
 
-   - ✅ `GDScriptELFLanguage` fully adapted to `ScriptLanguageExtension` interface
-   - ✅ All methods use `_`-prefixed names (`_get_name()`, `_init()`, etc.)
-   - ✅ Return types updated (`Vector<String>` → `PackedStringArray`, `List<T>*` → `Dictionary`)
-   - ✅ All compilation pipeline includes updated (`core/*` → `godot_cpp/*`)
-   - ✅ `Mutex` replaced with `std::mutex`
-   - ✅ `CoreConstants` and `Math::` usage replaced with GDExtension equivalents
-   - ⚠️ Some compilation pipeline files still use `CoreConstants` and `Math::` internally (may need further updates)
+   - Missing GDExtension API methods in `gdscript_function.h`:
+     - `Variant::get_validated_object_with_check()`
+     - `Object::get_class_name()`
+     - `Object::get_script_instance()`
+   - Missing Variant internal types (ValidatedOperatorEvaluator, ValidatedSetter, etc.)
+   - Incomplete `Script` type in some contexts
+   - **See**: `TODO.md` for detailed list and solutions
 
 2. **VM Fallback Implementation**
 
@@ -217,7 +222,19 @@ ELF Compiler (elf/gdscript_bytecode_elf_compiler.*) → ELF Binary
    - Needs full VM bytecode interpreter implementation
    - Should handle all GDScript opcodes not supported by ELF compilation
 
-3. **Base Class Inheritance**
+3. **CoreConstants and Math:: Usage**
+
+   - Some compilation pipeline files still use `CoreConstants` internally:
+     - `gdscript_analyzer.cpp`
+     - `gdscript_editor.cpp`
+     - `gdscript.cpp`
+     - `gdscript_parser.cpp`
+   - Some files still use `Math::`:
+     - `gdscript_utility_functions.cpp`
+     - `gdscript_parser.cpp`
+   - **See**: `TODO.md` for tracking
+
+4. **Base Class Inheritance**
 
    - Base class handling in compilation pipeline
    - Inheritance chain resolution
@@ -357,14 +374,18 @@ src/gdscript_elf/language/resource_saver_gdscript_elf.cpp
 
 ### SCons (Module)
 
-GDScriptELF is automatically included when building as a Godot module via `SCsub`.
+**Note**: Module build support has been dropped. GDScriptELF now only supports GDExtension builds via CMake.
 
 ## Known Issues
 
-1. **VM Fallback**: Basic structure exists but needs full bytecode interpreter implementation
-2. **CoreConstants Usage**: Some compilation pipeline files still use `CoreConstants` internally (e.g., `gdscript_analyzer.cpp`, `gdscript_editor.cpp`, `gdscript.cpp`) - these may need further adaptation or wrapper functions
-3. **Math:: Usage**: Some files still use `Math::PI`, `Math::TAU`, etc. - these have been replaced in language interface but may remain in compilation pipeline
-4. **Editor-Only Features**: Some includes and features (e.g., `gdscript_editor.cpp`) may not be fully compatible with GDExtension builds and may need conditional compilation or removal
+See `TODO.md` for a comprehensive list of remaining issues. Key items:
+
+1. **Compilation Errors**: Missing GDExtension API methods and internal types in compilation pipeline (see `TODO.md` Critical Issues)
+2. **VM Fallback**: Basic structure exists but needs full bytecode interpreter implementation
+3. **CoreConstants/Math:: Usage**: Some compilation pipeline files still use these internally - may need wrapper functions or alternative implementations
+4. **Editor-Only Features**: Some includes and features may not be fully compatible with GDExtension builds
+
+**Note**: The language interface layer (`language/`) is fully migrated to GDExtension. Remaining issues are primarily in the compilation pipeline (`compilation/`) which needs further refactoring for full GDExtension compatibility.
 
 ## Compilation Flow
 
@@ -400,7 +421,7 @@ GDScriptELFFunction::call()
 ## References
 
 - **Main Project AGENTS.md**: `/AGENTS.md` - Overall project documentation
-- **Implementation Status**: `/IMPLEMENTATION_STATUS.md` - Detailed implementation tracking
+- **TODO.md**: `TODO.md` - Remaining work and known issues tracking
 - **Godot GDScript Module**: Reference implementation for compilation pipeline
 - **GDExtension Documentation**: https://docs.godotengine.org/en/stable/tutorials/scripting/gdextension/
 - **RISC-V Specification**: https://riscv.org/technical/specifications/
@@ -411,8 +432,9 @@ GDScriptELFFunction::call()
 When contributing to GDScriptELF:
 
 1. Follow the main project's commit message format: `[gdscript_elf] Description`
-2. Ensure both module and GDExtension builds work (if possible)
+2. Ensure GDExtension builds work (module builds are no longer supported)
 3. Add tests for new functionality
-4. Update this documentation for significant changes
+4. Update this documentation and `TODO.md` for significant changes
 5. Consider VM fallback for unsupported features
 6. Test with and without RISC-V cross-compiler available
+7. Check `TODO.md` for known issues before starting work
