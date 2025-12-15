@@ -75,7 +75,7 @@ src/gdscript_elf/
 - Provides script validation and editor integration
 - Manages language-level state
 
-**Status**: ⚠️ **In Progress** - Needs adaptation to `ScriptLanguageExtension` interface (use `_`-prefixed methods)
+**Status**: ✅ **Completed** - Fully adapted to `ScriptLanguageExtension` interface with `_`-prefixed methods
 
 ### GDScriptELFInstance (Script Instance)
 
@@ -201,41 +201,27 @@ ELF Compiler (elf/gdscript_bytecode_elf_compiler.*) → ELF Binary
 
 ### 🚧 In Progress
 
-1. **GDScriptELFLanguage Interface Adaptation**
+1. **GDExtension Migration** ✅ **Completed**
 
-   - Currently uses `ScriptLanguage` interface methods
-   - Needs to use `ScriptLanguageExtension` interface with `_`-prefixed methods:
-     - `get_name()` → `_get_name()`
-     - `init()` → `_init()`
-     - `get_type()` → `_get_type()`
-     - `get_extension()` → `_get_extension()`
-     - And all other methods need `_` prefix
-   - Return types may need adaptation (e.g., `Vector<String>` → `PackedStringArray`)
+   - ✅ `GDScriptELFLanguage` fully adapted to `ScriptLanguageExtension` interface
+   - ✅ All methods use `_`-prefixed names (`_get_name()`, `_init()`, etc.)
+   - ✅ Return types updated (`Vector<String>` → `PackedStringArray`, `List<T>*` → `Dictionary`)
+   - ✅ All compilation pipeline includes updated (`core/*` → `godot_cpp/*`)
+   - ✅ `Mutex` replaced with `std::mutex`
+   - ✅ `CoreConstants` and `Math::` usage replaced with GDExtension equivalents
+   - ⚠️ Some compilation pipeline files still use `CoreConstants` and `Math::` internally (may need further updates)
 
-2. **GDExtension Include Compatibility**
-
-   - GDScript compilation files (`compilation/`) use Godot engine module includes:
-     - `core/string/string_name.h`
-     - `core/variant/variant.h`
-     - `core/object/script_language.h`
-   - These need adaptation for GDExtension builds
-   - Options: wrapper includes, conditional compilation, or full adaptation
-
-3. **VM Fallback Implementation**
+2. **VM Fallback Implementation**
 
    - Basic structure exists in `execute_vm_fallback()`
    - Needs full VM bytecode interpreter implementation
    - Should handle all GDScript opcodes not supported by ELF compilation
 
-4. **Base Class Inheritance**
+3. **Base Class Inheritance**
 
    - Base class handling in compilation pipeline
    - Inheritance chain resolution
    - Method/property inheritance
-
-5. **Mutex Type**
-   - Currently uses `Mutex` in `GDScriptELFLanguage`
-   - May need GDExtension-compatible alternative
 
 ### ⏳ Future Work
 
@@ -277,14 +263,14 @@ Follow the same conventions as the main project (see root `AGENTS.md`):
 - **Methods**: snake_case (e.g., `_compile_to_elf()`, `execute_elf()`)
 - **GDExtension**: Use `godot::` namespace, extend `ScriptExtension`/`ScriptLanguageExtension`
 
-### GDExtension vs Module Builds
+### GDExtension Builds
 
-**Important**: GDScriptELF is designed to work in both module and GDExtension builds:
+**Important**: GDScriptELF is now fully migrated to GDExtension builds:
 
-- **Module Build**: Uses Godot engine module includes (`core/object/script_language.h`, etc.)
 - **GDExtension Build**: Uses godot-cpp includes (`<godot_cpp/classes/script_language_extension.hpp>`, etc.)
-
-The compilation pipeline files (`compilation/`) use module includes and work in module builds. For GDExtension builds, these may need wrapper includes or conditional compilation.
+- All language interface files use GDExtension API
+- Compilation pipeline files (`compilation/`) have been updated to use GDExtension includes
+- Module build compatibility has been dropped in favor of GDExtension-only support
 
 ### Adding New Features
 
@@ -375,10 +361,10 @@ GDScriptELF is automatically included when building as a Godot module via `SCsub
 
 ## Known Issues
 
-1. **GDScriptELFLanguage Interface**: Currently uses `ScriptLanguage` interface but needs `ScriptLanguageExtension` with `_`-prefixed methods
-2. **Module Includes in GDExtension**: Compilation pipeline files use Godot engine module includes that may not be available in GDExtension builds
-3. **VM Fallback**: Basic structure exists but needs full bytecode interpreter implementation
-4. **Mutex Type**: Uses `Mutex` which may need to be replaced with GDExtension-compatible type
+1. **VM Fallback**: Basic structure exists but needs full bytecode interpreter implementation
+2. **CoreConstants Usage**: Some compilation pipeline files still use `CoreConstants` internally (e.g., `gdscript_analyzer.cpp`, `gdscript_editor.cpp`, `gdscript.cpp`) - these may need further adaptation or wrapper functions
+3. **Math:: Usage**: Some files still use `Math::PI`, `Math::TAU`, etc. - these have been replaced in language interface but may remain in compilation pipeline
+4. **Editor-Only Features**: Some includes and features (e.g., `gdscript_editor.cpp`) may not be fully compatible with GDExtension builds and may need conditional compilation or removal
 
 ## Compilation Flow
 

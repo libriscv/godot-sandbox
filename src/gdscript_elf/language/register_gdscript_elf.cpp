@@ -46,8 +46,8 @@ static GDScriptELFLanguage *script_language_gdelf = nullptr;
 static Ref<ResourceFormatLoaderGDScriptELF> resource_loader_gdelf;
 static Ref<ResourceFormatSaverGDScriptELF> resource_saver_gdelf;
 
-void initialize_gdscript_elf_language(ModuleInitializationLevel p_level) {
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+void initialize_gdscript_elf_language(GDExtensionInitializationLevel p_level) {
+	if (p_level != GDEXTENSION_INITIALIZATION_SCENE) {
 		return;
 	}
 
@@ -72,8 +72,8 @@ void initialize_gdscript_elf_language(ModuleInitializationLevel p_level) {
 	script_language_gdelf->init();
 }
 
-void uninitialize_gdscript_elf_language(ModuleInitializationLevel p_level) {
-	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+void uninitialize_gdscript_elf_language(GDExtensionInitializationLevel p_level) {
+	if (p_level != GDEXTENSION_INITIALIZATION_SCENE) {
 		return;
 	}
 

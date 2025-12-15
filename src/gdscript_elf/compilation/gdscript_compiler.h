@@ -35,7 +35,7 @@
 #include "gdscript_function.h"
 #include "gdscript_parser.h"
 
-#include "core/templates/hash_set.h"
+#include <godot_cpp/templates/hash_set.hpp>
 
 class GDScriptCompiler {
 	const GDScriptParser *parser = nullptr;

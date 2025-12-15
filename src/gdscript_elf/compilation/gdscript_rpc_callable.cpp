@@ -30,8 +30,8 @@
 
 #include "gdscript_rpc_callable.h"
 
-#include "core/object/script_language.h"
-#include "core/templates/hashfuncs.h"
+#include <godot_cpp/classes/script_language_extension.hpp>
+// Note: hashfuncs may need special handling
 #include "scene/main/node.h"
 
 bool GDScriptRPCCallable::compare_equal(const CallableCustom *p_a, const CallableCustom *p_b) {

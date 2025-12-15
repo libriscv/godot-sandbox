@@ -32,10 +32,10 @@
 
 #include "gdscript.h"
 
-#include "core/object/ref_counted.h"
-#include "core/templates/vector.h"
-#include "core/variant/callable.h"
-#include "core/variant/variant.h"
+#include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/templates/vector.hpp>
+#include <godot_cpp/variant/callable.hpp>
+#include <godot_cpp/variant/variant.hpp>
 
 class GDScriptFunction;
 class GDScriptInstance;

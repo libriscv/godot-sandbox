@@ -34,40 +34,43 @@
 
 using namespace godot;
 
-Ref<Resource> ResourceFormatLoaderGDScriptELF::load(const String &p_path, const String &p_original_path, Error *r_error, bool p_use_sub_threads, float *r_progress, CacheMode p_cache_mode) {
-	if (r_error) {
-		*r_error = OK;
-	}
-
+Variant ResourceFormatLoaderGDScriptELF::_load(const String &path, const String &original_path, bool use_sub_threads, int32_t cache_mode) const {
 	Ref<GDScriptELF> script = memnew(GDScriptELF);
-	script->set_path(p_path);
+	script->set_path(path);
 
 	// Load source code
 	Error err = script->reload();
 	if (err != OK) {
-		if (r_error) {
-			*r_error = err;
-		}
-		return Ref<Resource>();
+		return Variant(); // Return invalid Variant on error
 	}
 
 	return script;
 }
 
-void ResourceFormatLoaderGDScriptELF::get_recognized_extensions(List<String> *p_extensions) const {
-	if (p_extensions) {
-		p_extensions->push_back("gde");
+PackedStringArray ResourceFormatLoaderGDScriptELF::_get_recognized_extensions() const {
+	PackedStringArray array;
+	array.push_back("gde");
+	return array;
+}
+
+bool ResourceFormatLoaderGDScriptELF::_recognize_path(const String &path, const StringName &type) const {
+	String el = path.get_extension().to_lower();
+	if (el == "gde") {
+		return true;
 	}
+	return false;
 }
 
-bool ResourceFormatLoaderGDScriptELF::handles_type(const String &p_type) const {
-	return p_type == "GDScriptELF" || p_type == "Script";
+bool ResourceFormatLoaderGDScriptELF::_handles_type(const StringName &type) const {
+	String type_str = type;
+	return type_str == "GDScriptELF" || type_str == "Script";
 }
 
-String ResourceFormatLoaderGDScriptELF::get_resource_type(const String &p_path) const {
+String ResourceFormatLoaderGDScriptELF::_get_resource_type(const String &p_path) const {
 	String el = p_path.get_extension().to_lower();
 	if (el == "gde") {
 		return "GDScriptELF";
 	}
 	return "";
 }
+

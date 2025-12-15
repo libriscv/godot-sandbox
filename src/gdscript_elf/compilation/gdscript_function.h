@@ -32,13 +32,16 @@
 
 #include "gdscript_utility_functions.h"
 
-#include "core/object/ref_counted.h"
-#include "core/object/script_language.h"
-#include "core/os/thread.h"
-#include "core/string/string_name.h"
-#include "core/templates/pair.h"
-#include "core/templates/self_list.h"
-#include "core/variant/variant.h"
+#include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/classes/script_language_extension.hpp>
+#include <godot_cpp/templates/hash_map.hpp>
+#include <thread>
+#include <godot_cpp/variant/string_name.hpp>
+#include <godot_cpp/templates/pair.hpp>
+#include <godot_cpp/templates/self_list.hpp>
+#include <godot_cpp/variant/variant.hpp>
+
+using namespace godot;
 
 class GDScriptInstance;
 class GDScript;

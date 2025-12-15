@@ -33,8 +33,8 @@
 #include "gdscript_function.h"
 #include "gdscript_utility_functions.h"
 
-#include "core/string/string_name.h"
-#include "core/variant/variant.h"
+#include <godot_cpp/variant/string_name.hpp>
+#include <godot_cpp/variant/variant.hpp>
 
 class GDScriptCodeGenerator {
 public:

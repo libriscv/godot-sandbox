@@ -33,14 +33,13 @@
 #include "gdscript.h"
 #include "gdscript_tokenizer_buffer.h"
 
-#include "core/config/project_settings.h"
-#include "core/io/resource_loader.h"
-#include "core/math/math_defs.h"
-#include "scene/main/multiplayer_api.h"
+#include <godot_cpp/classes/project_settings.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/variant/variant.hpp>
+// Note: multiplayer_api and text_server may need special handling
 
 #ifdef DEBUG_ENABLED
-#include "core/string/string_builder.h"
-#include "servers/text/text_server.h"
+#include <godot_cpp/core/string_builder.hpp>
 #endif
 
 #ifdef TOOLS_ENABLED

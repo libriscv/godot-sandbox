@@ -32,7 +32,7 @@
 
 #include "gdscript_utility_functions.h"
 
-#include "core/variant/callable.h"
+#include <godot_cpp/variant/callable.hpp>
 
 class GDScriptUtilityCallable : public CallableCustom {
 	StringName function_name;

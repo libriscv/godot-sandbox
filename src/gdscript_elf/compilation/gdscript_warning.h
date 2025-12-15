@@ -32,9 +32,9 @@
 
 #ifdef DEBUG_ENABLED
 
-#include "core/object/object.h"
-#include "core/string/ustring.h"
-#include "core/templates/vector.h"
+#include <godot_cpp/classes/object.hpp>
+#include <godot_cpp/core/string.hpp>
+#include <godot_cpp/templates/vector.hpp>
 
 class GDScriptWarning {
 public:

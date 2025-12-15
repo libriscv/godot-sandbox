@@ -33,8 +33,8 @@
 #include "gdscript_cache.h"
 #include "gdscript_parser.h"
 
-#include "core/object/object.h"
-#include "core/object/ref_counted.h"
+#include <godot_cpp/classes/object.hpp>
+#include <godot_cpp/classes/ref_counted.hpp>
 
 class GDScriptAnalyzer {
 	GDScriptParser *parser = nullptr;

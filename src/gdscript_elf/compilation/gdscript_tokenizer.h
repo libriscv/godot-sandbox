@@ -30,10 +30,10 @@
 
 #pragma once
 
-#include "core/templates/hash_map.h"
-#include "core/templates/list.h"
-#include "core/templates/vector.h"
-#include "core/variant/variant.h"
+#include <godot_cpp/templates/hash_map.hpp>
+#include <godot_cpp/templates/list.hpp>
+#include <godot_cpp/templates/vector.hpp>
+#include <godot_cpp/variant/variant.hpp>
 
 class GDScriptTokenizer {
 public:

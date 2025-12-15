@@ -49,16 +49,17 @@
 #include "tests/test_gdscript.h"
 #endif
 
-#include "core/io/file_access.h"
-#include "core/io/resource_loader.h"
+#include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
 
 #ifdef TOOLS_ENABLED
-#include "editor/editor_node.h"
-#include "editor/export/editor_export.h"
-#include "editor/translations/editor_translation_parser.h"
+// Note: editor headers may not be available in GDExtension
+// #include "editor/editor_node.h"
+// #include "editor/export/editor_export.h"
+// #include "editor/translations/editor_translation_parser.h"
 
 #ifndef GDSCRIPT_NO_LSP
-#include "core/config/engine.h"
+#include <godot_cpp/classes/engine.hpp>
 #endif
 #endif // TOOLS_ENABLED
 

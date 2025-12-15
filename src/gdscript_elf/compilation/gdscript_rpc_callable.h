@@ -30,8 +30,8 @@
 
 #pragma once
 
-#include "core/variant/callable.h"
-#include "core/variant/variant.h"
+#include <godot_cpp/variant/callable.hpp>
+#include <godot_cpp/variant/variant.hpp>
 
 class Node;
 

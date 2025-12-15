@@ -34,7 +34,7 @@
 
 using namespace godot;
 
-Error ResourceFormatSaverGDScriptELF::save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_saver_flags) {
+Error ResourceFormatSaverGDScriptELF::_save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags) {
 	Ref<GDScriptELF> script = p_resource;
 	ERR_FAIL_COND_V(script.is_null(), ERR_INVALID_PARAMETER);
 
@@ -48,14 +48,24 @@ Error ResourceFormatSaverGDScriptELF::save(const Ref<Resource> &p_resource, cons
 	return OK;
 }
 
-void ResourceFormatSaverGDScriptELF::get_recognized_extensions(const Ref<Resource> &p_resource, List<String> *p_extensions) const {
-	if (Object::cast_to<GDScriptELF>(*p_resource)) {
-		if (p_extensions) {
-			p_extensions->push_back("gde");
-		}
-	}
+Error ResourceFormatSaverGDScriptELF::_set_uid(const String &p_path, int64_t p_uid) {
+	// TODO: Implement UID setting if needed
+	return ERR_UNAVAILABLE;
 }
 
-bool ResourceFormatSaverGDScriptELF::recognize(const Ref<Resource> &p_resource) const {
+bool ResourceFormatSaverGDScriptELF::_recognize(const Ref<Resource> &p_resource) const {
 	return Object::cast_to<GDScriptELF>(*p_resource) != nullptr;
+}
+
+PackedStringArray ResourceFormatSaverGDScriptELF::_get_recognized_extensions(const Ref<Resource> &p_resource) const {
+	PackedStringArray array;
+	if (Object::cast_to<GDScriptELF>(*p_resource)) {
+		array.push_back("gde");
+	}
+	return array;
+}
+
+bool ResourceFormatSaverGDScriptELF::_recognize_path(const Ref<Resource> &p_resource, const String &p_path) const {
+	String el = p_path.get_extension().to_lower();
+	return el == "gde" && Object::cast_to<GDScriptELF>(*p_resource) != nullptr;
 }

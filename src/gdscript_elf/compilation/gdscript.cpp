@@ -46,17 +46,19 @@
 #include "tests/gdscript_test_runner.h"
 #endif
 
-#include "core/config/engine.h"
-#include "core/config/project_settings.h"
-#include "core/core_constants.h"
-#include "core/io/file_access.h"
+#include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
+// Note: core_constants replaced with direct constants or ProjectSettings
+#include <godot_cpp/classes/file_access.hpp>
 
-#include "scene/resources/packed_scene.h"
-#include "scene/scene_string_names.h"
+// Note: scene headers may need special handling
+// #include "scene/resources/packed_scene.h"
+// #include "scene/scene_string_names.h"
 
 #ifdef TOOLS_ENABLED
-#include "core/extension/gdextension_manager.h"
-#include "editor/file_system/editor_paths.h"
+// Note: GDExtension manager may not be available in GDExtension builds
+// #include "core/extension/gdextension_manager.h"
+// #include "editor/file_system/editor_paths.h"
 #endif
 
 ///////////////////////////

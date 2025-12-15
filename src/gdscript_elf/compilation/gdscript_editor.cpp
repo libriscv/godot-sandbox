@@ -40,15 +40,17 @@
 #include "editor/script_templates/templates.gen.h"
 #endif
 
-#include "core/config/engine.h"
-#include "core/core_constants.h"
-#include "core/io/file_access.h"
-#include "core/math/expression.h"
-#include "core/variant/container_type_validate.h"
+#include <godot_cpp/classes/engine.hpp>
+// Note: core_constants replaced with direct constants or ProjectSettings
+#include <godot_cpp/classes/file_access.hpp>
+// Note: expression and container_type_validate may need special handling
+// #include "core/math/expression.h"
+// #include "core/variant/container_type_validate.h"
 
 #ifdef TOOLS_ENABLED
-#include "core/config/project_settings.h"
-#include "editor/editor_node.h"
+#include <godot_cpp/classes/project_settings.hpp>
+// Note: editor_node may not be available in GDExtension
+// #include "editor/editor_node.h"
 #include "editor/editor_string_names.h"
 #include "editor/file_system/editor_file_system.h"
 #include "editor/settings/editor_settings.h"

@@ -30,7 +30,7 @@
 
 #include "gdscript_warning.h"
 
-#include "core/variant/variant.h"
+#include <godot_cpp/variant/variant.hpp>
 
 #ifdef DEBUG_ENABLED
 

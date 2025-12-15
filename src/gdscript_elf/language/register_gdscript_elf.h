@@ -30,13 +30,11 @@
 
 #pragma once
 
-#include <godot_cpp/core/defs.hpp>
-
-using namespace godot;
+#include <gdextension_interface.h>
 
 // Initialize GDScriptELF language
 // Can be called from module initialization or GDExtension initialization
-void initialize_gdscript_elf_language(ModuleInitializationLevel p_level);
+void initialize_gdscript_elf_language(GDExtensionInitializationLevel p_level);
 
 // Uninitialize GDScriptELF language
-void uninitialize_gdscript_elf_language(ModuleInitializationLevel p_level);
+void uninitialize_gdscript_elf_language(GDExtensionInitializationLevel p_level);

@@ -32,13 +32,14 @@
 
 #include "gdscript_function.h"
 
-#include "core/debugger/engine_debugger.h"
-#include "core/debugger/script_debugger.h"
-#include "core/doc_data.h"
-#include "core/io/resource_loader.h"
-#include "core/io/resource_saver.h"
-#include "core/object/script_language.h"
-#include "core/templates/rb_set.h"
+// Note: debugger headers may not be available in GDExtension
+// #include "core/debugger/engine_debugger.h"
+// #include "core/debugger/script_debugger.h"
+// #include "core/doc_data.h"
+#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/resource_saver.hpp>
+#include <godot_cpp/classes/script_language_extension.hpp>
+#include <godot_cpp/templates/hash_set.hpp>
 
 class GDScriptNativeClass : public RefCounted {
 	GDCLASS(GDScriptNativeClass, RefCounted);

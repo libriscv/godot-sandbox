@@ -30,8 +30,9 @@
 
 #include "gdscript_tokenizer_buffer.h"
 
-#include "core/io/compression.h"
-#include "core/io/marshalls.h"
+// Note: compression and marshalls may need special handling
+// #include "core/io/compression.h"
+// #include "core/io/marshalls.h"
 
 int GDScriptTokenizerBuffer::_token_to_binary(const Token &p_token, Vector<uint8_t> &r_buffer, int p_start, HashMap<StringName, uint32_t> &r_identifiers_map, HashMap<Variant, uint32_t> &r_constants_map) {
 	int pos = p_start;

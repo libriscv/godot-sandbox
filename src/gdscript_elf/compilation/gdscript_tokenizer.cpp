@@ -30,8 +30,8 @@
 
 #include "gdscript_tokenizer.h"
 
-#include "core/error/error_macros.h"
-#include "core/string/char_utils.h"
+#include <godot_cpp/core/error_macros.hpp>
+// Note: char_utils may need special handling
 
 #ifdef DEBUG_ENABLED
 #include "servers/text/text_server.h"

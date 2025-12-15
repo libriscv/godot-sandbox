@@ -37,18 +37,18 @@
 #include "gdscript_warning.h"
 #endif
 
-#include "core/io/resource.h"
-#include "core/object/ref_counted.h"
-#include "core/object/script_language.h"
-#include "core/string/string_name.h"
-#include "core/string/ustring.h"
-#include "core/templates/hash_map.h"
-#include "core/templates/list.h"
-#include "core/templates/vector.h"
-#include "core/variant/variant.h"
+#include <godot_cpp/classes/resource.hpp>
+#include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/classes/script_language_extension.hpp>
+#include <godot_cpp/variant/string_name.hpp>
+#include <godot_cpp/core/string.hpp>
+#include <godot_cpp/templates/hash_map.hpp>
+#include <godot_cpp/templates/list.hpp>
+#include <godot_cpp/templates/vector.hpp>
+#include <godot_cpp/variant/variant.hpp>
 
 #ifdef DEBUG_ENABLED
-#include "core/string/string_builder.h"
+#include <godot_cpp/core/string_builder.hpp>
 #endif
 
 class GDScriptParser {

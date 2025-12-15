@@ -38,6 +38,7 @@
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/core/defs.hpp>
+#include <limits>
 
 using namespace godot;
 
@@ -53,59 +54,71 @@ GDScriptELFLanguage::~GDScriptELFLanguage() {
 	}
 }
 
-String GDScriptELFLanguage::get_name() const {
+String GDScriptELFLanguage::_get_name() const {
 	return "GDScriptELF";
 }
 
-String GDScriptELFLanguage::get_type() const {
+String GDScriptELFLanguage::_get_type() const {
 	return "GDScriptELF";
 }
 
-String GDScriptELFLanguage::get_extension() const {
+String GDScriptELFLanguage::_get_extension() const {
 	return "gde";
 }
 
-void GDScriptELFLanguage::init() {
+void GDScriptELFLanguage::_init() {
 	// Initialize similar to GDScriptLanguage
-	// Populate global constants
-	int gcc = CoreConstants::get_global_constant_count();
-	for (int i = 0; i < gcc; i++) {
-		add_global_constant(StringName(CoreConstants::get_global_constant_name(i)), CoreConstants::get_global_constant_value(i));
+	// Populate global constants from ProjectSettings
+	Ref<ProjectSettings> project_settings = ProjectSettings::get_singleton();
+	if (project_settings.is_valid()) {
+		// Add common math constants
+		_add_global_constant(StringName("PI"), 3.14159265358979323846);
+		_add_global_constant(StringName("TAU"), 6.28318530717958647692);
+		_add_global_constant(StringName("INF"), std::numeric_limits<double>::infinity());
+		_add_global_constant(StringName("NAN"), std::numeric_limits<double>::quiet_NaN());
 	}
-
-	add_global_constant(StringName("PI"), Math::PI);
-	add_global_constant(StringName("TAU"), Math::TAU);
-	add_global_constant(StringName("INF"), Math::INF);
-	add_global_constant(StringName("NAN"), Math::NaN);
 
 	// Register utility functions
 	GDScriptUtilityFunctions::register_functions();
 }
 
-void GDScriptELFLanguage::finish() {
+void GDScriptELFLanguage::_finish() {
 	// Cleanup
 }
 
-Script *GDScriptELFLanguage::create_script() const {
+Object *GDScriptELFLanguage::_create_script() const {
 	return memnew(GDScriptELF);
 }
 
-bool GDScriptELFLanguage::validate(const String &p_script, const String &p_path, List<String> *r_functions, List<ScriptError> *r_errors, List<Warning> *r_warnings, HashSet<int> *r_safe_lines) const {
+Dictionary GDScriptELFLanguage::_validate(const String &p_script, const String &p_path, bool p_validate_functions, bool p_validate_errors, bool p_validate_warnings, bool p_validate_safe_lines) const {
+	Dictionary result;
+	PackedStringArray functions;
+	TypedArray<Dictionary> errors;
+	TypedArray<Dictionary> warnings;
+	TypedArray<int> safe_lines;
+	bool valid = true;
+
 	// Use GDScript parser/analyzer for validation
 	Ref<GDScriptParser> parser = memnew(GDScriptParser);
 	Error err = parser->parse(p_script, p_path, false);
 	
 	if (err != OK) {
-		if (r_errors) {
+		valid = false;
+		if (p_validate_errors) {
 			for (const GDScriptParser::ParserError &e : parser->get_errors()) {
-				ScriptError error;
-				error.line = e.line;
-				error.column = e.column;
-				error.message = e.message;
-				r_errors->push_back(error);
+				Dictionary error_dict;
+				error_dict["line"] = e.line;
+				error_dict["column"] = e.column;
+				error_dict["message"] = e.message;
+				errors.append(error_dict);
 			}
 		}
-		return false;
+		result["valid"] = false;
+		result["functions"] = functions;
+		result["errors"] = errors;
+		result["warnings"] = warnings;
+		result["safe_lines"] = safe_lines;
+		return result;
 	}
 
 	// Run analyzer
@@ -113,96 +126,114 @@ bool GDScriptELFLanguage::validate(const String &p_script, const String &p_path,
 	err = analyzer->analyze();
 	
 	if (err != OK) {
-		if (r_errors) {
+		valid = false;
+		if (p_validate_errors) {
 			for (const GDScriptParser::ParserError &e : analyzer->get_errors()) {
-				ScriptError error;
-				error.line = e.line;
-				error.column = e.column;
-				error.message = e.message;
-				r_errors->push_back(error);
+				Dictionary error_dict;
+				error_dict["line"] = e.line;
+				error_dict["column"] = e.column;
+				error_dict["message"] = e.message;
+				errors.append(error_dict);
 			}
 		}
-		return false;
+		result["valid"] = false;
+		result["functions"] = functions;
+		result["errors"] = errors;
+		result["warnings"] = warnings;
+		result["safe_lines"] = safe_lines;
+		return result;
 	}
 
 	// Extract functions
-	if (r_functions) {
+	if (p_validate_functions) {
 		const GDScriptParser::ClassNode *class_node = parser->get_tree();
 		if (class_node) {
 			for (const GDScriptParser::ClassNode::Member &member : class_node->members) {
 				if (member.type == GDScriptParser::ClassNode::Member::FUNCTION) {
-					r_functions->push_back(member.function->identifier->name);
+					functions.append(member.function->identifier->name);
 				}
 			}
 		}
 	}
 
-	return true;
+	result["valid"] = valid;
+	result["functions"] = functions;
+	result["errors"] = errors;
+	result["warnings"] = warnings;
+	result["safe_lines"] = safe_lines;
+	return result;
 }
 
-String GDScriptELFLanguage::validate_path(const String &p_path) const {
+String GDScriptELFLanguage::_validate_path(const String &p_path) const {
 	// Same validation as GDScript
-	return GDScript::canonicalize_path(p_path);
+	// TODO: Implement path canonicalization
+	return p_path;
 }
 
-Vector<String> GDScriptELFLanguage::get_reserved_words() const {
+PackedStringArray GDScriptELFLanguage::_get_reserved_words() const {
 	// Use same reserved words as GDScript
-	return Vector<String>(); // Will be populated from GDScript parser
+	PackedStringArray words;
+	// TODO: Populate from GDScript parser
+	return words;
 }
 
-bool GDScriptELFLanguage::is_control_flow_keyword(const String &p_string) const {
+bool GDScriptELFLanguage::_is_control_flow_keyword(const String &p_keyword) const {
 	// Use same keywords as GDScript
-	return p_string == "if" || p_string == "elif" || p_string == "else" ||
-		   p_string == "for" || p_string == "while" || p_string == "match" ||
-		   p_string == "break" || p_string == "continue" || p_string == "return";
+	return p_keyword == "if" || p_keyword == "elif" || p_keyword == "else" ||
+		   p_keyword == "for" || p_keyword == "while" || p_keyword == "match" ||
+		   p_keyword == "break" || p_keyword == "continue" || p_keyword == "return";
 }
 
-Vector<String> GDScriptELFLanguage::get_comment_delimiters() const {
-	Vector<String> delimiters;
-	delimiters.push_back("#");
+PackedStringArray GDScriptELFLanguage::_get_comment_delimiters() const {
+	PackedStringArray delimiters;
+	delimiters.append("#");
 	return delimiters;
 }
 
-Vector<String> GDScriptELFLanguage::get_doc_comment_delimiters() const {
-	Vector<String> delimiters;
-	delimiters.push_back("##");
+PackedStringArray GDScriptELFLanguage::_get_doc_comment_delimiters() const {
+	PackedStringArray delimiters;
+	delimiters.append("##");
 	return delimiters;
 }
 
-Vector<String> GDScriptELFLanguage::get_string_delimiters() const {
-	Vector<String> delimiters;
-	delimiters.push_back("\"");
-	delimiters.push_back("'");
+PackedStringArray GDScriptELFLanguage::_get_string_delimiters() const {
+	PackedStringArray delimiters;
+	delimiters.append("\"");
+	delimiters.append("'");
 	return delimiters;
 }
 
-Ref<Script> GDScriptELFLanguage::make_template(const String &p_template, const String &p_class_name, const String &p_base_class_name) const {
+Ref<Script> GDScriptELFLanguage::_make_template(const String &p_template, const String &p_class_name, const String &p_base_class_name) const {
 	Ref<GDScriptELF> script = memnew(GDScriptELF);
 	// TODO: Implement template generation
 	return script;
 }
 
-Vector<ScriptLanguage::ScriptTemplate> GDScriptELFLanguage::get_built_in_templates(const StringName &p_object) {
-	return Vector<ScriptTemplate>();
+TypedArray<Dictionary> GDScriptELFLanguage::_get_built_in_templates(const StringName &p_object) const {
+	return TypedArray<Dictionary>();
 }
 
-bool GDScriptELFLanguage::is_using_templates() {
+bool GDScriptELFLanguage::_is_using_templates() {
 	return false;
 }
 
-bool GDScriptELFLanguage::supports_builtin_mode() const {
+bool GDScriptELFLanguage::_supports_builtin_mode() const {
 	return true;
 }
 
-bool GDScriptELFLanguage::supports_documentation() const {
+bool GDScriptELFLanguage::_supports_documentation() const {
 	return true;
 }
 
-bool GDScriptELFLanguage::can_inherit_from_file() const {
+bool GDScriptELFLanguage::_can_inherit_from_file() const {
 	return true;
 }
 
-int GDScriptELFLanguage::find_function(const String &p_function, const String &p_code) const {
+bool GDScriptELFLanguage::_has_named_classes() const {
+	return true;
+}
+
+int32_t GDScriptELFLanguage::_find_function(const String &p_function, const String &p_code) const {
 	// Use GDScript parser to find function
 	Ref<GDScriptParser> parser = memnew(GDScriptParser);
 	parser->parse(p_code, "", false);
@@ -218,176 +249,193 @@ int GDScriptELFLanguage::find_function(const String &p_function, const String &p
 	return -1;
 }
 
-String GDScriptELFLanguage::make_function(const String &p_class, const String &p_name, const PackedStringArray &p_args) const {
-	String code = "func " + p_name + "(";
-	for (int i = 0; i < p_args.size(); i++) {
+String GDScriptELFLanguage::_make_function(const String &p_class_name, const String &p_function_name, const PackedStringArray &p_function_args) const {
+	String code = "func " + p_function_name + "(";
+	for (int i = 0; i < p_function_args.size(); i++) {
 		if (i > 0) {
 			code += ", ";
 		}
-		code += p_args[i];
+		code += p_function_args[i];
 	}
 	code += "):\n\tpass\n";
 	return code;
 }
 
-bool GDScriptELFLanguage::can_make_function() const {
+bool GDScriptELFLanguage::_can_make_function() const {
 	return true;
 }
 
-Error GDScriptELFLanguage::open_in_external_editor(const Ref<Script> &p_script, int p_line, int p_col) {
+Error GDScriptELFLanguage::_open_in_external_editor(const Ref<Script> &p_script, int32_t p_line, int32_t p_column) {
 	return ERR_UNAVAILABLE;
 }
 
-bool GDScriptELFLanguage::overrides_external_editor() {
+bool GDScriptELFLanguage::_overrides_external_editor() {
 	return false;
 }
 
-ScriptLanguage::ScriptNameCasing GDScriptELFLanguage::preferred_file_name_casing() const {
-	return SCRIPT_NAME_CASING_SNAKE_CASE;
-}
-
-Error GDScriptELFLanguage::complete_code(const String &p_code, const String &p_path, Object *p_owner, List<CodeCompletionOption> *r_options, bool &r_force, String &r_call_hint) {
+Dictionary GDScriptELFLanguage::_complete_code(const String &p_code, const String &p_path, Object *p_owner) const {
 	// TODO: Implement code completion
-	return ERR_UNAVAILABLE;
+	Dictionary result;
+	result["options"] = TypedArray<Dictionary>();
+	result["forced"] = false;
+	result["call_hint"] = "";
+	return result;
 }
 
-#ifdef TOOLS_ENABLED
-Error GDScriptELFLanguage::lookup_code(const String &p_code, const String &p_symbol, const String &p_path, Object *p_owner, LookupResult &r_result) {
+Dictionary GDScriptELFLanguage::_lookup_code(const String &p_code, const String &p_symbol, const String &p_path, Object *p_owner) const {
 	// TODO: Implement code lookup
-	return ERR_UNAVAILABLE;
+	Dictionary result;
+	return result;
 }
-#endif
 
-void GDScriptELFLanguage::auto_indent_code(String &p_code, int p_from_line, int p_to_line) const {
+String GDScriptELFLanguage::_auto_indent_code(const String &p_code, int32_t p_from_line, int32_t p_to_line) const {
 	// TODO: Implement auto-indentation
+	return p_code;
 }
 
-void GDScriptELFLanguage::add_global_constant(const StringName &p_variable, const Variant &p_value) {
+void GDScriptELFLanguage::_add_global_constant(const StringName &p_name, const Variant &p_value) {
 	// Store in a map similar to GDScriptLanguage
-	// For now, just pass through to ScriptLanguage base
+	// TODO: Implement global constant storage
 }
 
-void GDScriptELFLanguage::add_named_global_constant(const StringName &p_name, const Variant &p_value) {
+void GDScriptELFLanguage::_add_named_global_constant(const StringName &p_name, const Variant &p_value) {
 	// Store in a map similar to GDScriptLanguage
+	// TODO: Implement named global constant storage
 }
 
-void GDScriptELFLanguage::remove_named_global_constant(const StringName &p_name) {
+void GDScriptELFLanguage::_remove_named_global_constant(const StringName &p_name) {
 	// Remove from map
+	// TODO: Implement named global constant removal
 }
 
-void GDScriptELFLanguage::thread_enter() {
+void GDScriptELFLanguage::_thread_enter() {
 	// Thread initialization
 }
 
-void GDScriptELFLanguage::thread_exit() {
+void GDScriptELFLanguage::_thread_exit() {
 	// Thread cleanup
 }
 
-String GDScriptELFLanguage::debug_get_error() const {
+String GDScriptELFLanguage::_debug_get_error() const {
 	return "";
 }
 
-int GDScriptELFLanguage::debug_get_stack_level_count() const {
+int32_t GDScriptELFLanguage::_debug_get_stack_level_count() const {
 	return 0;
 }
 
-int GDScriptELFLanguage::debug_get_stack_level_line(int p_level) const {
+int32_t GDScriptELFLanguage::_debug_get_stack_level_line(int32_t p_level) const {
 	return -1;
 }
 
-String GDScriptELFLanguage::debug_get_stack_level_function(int p_level) const {
+String GDScriptELFLanguage::_debug_get_stack_level_function(int32_t p_level) const {
 	return "";
 }
 
-String GDScriptELFLanguage::debug_get_stack_level_source(int p_level) const {
-	return "";
-}
-
-void GDScriptELFLanguage::debug_get_stack_level_locals(int p_level, List<String> *p_locals, List<Variant> *p_values, int p_max_subitems, int p_max_depth) {
+Dictionary GDScriptELFLanguage::_debug_get_stack_level_locals(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) {
 	// TODO: Implement debug locals
+	Dictionary result;
+	result["locals"] = PackedStringArray();
+	result["values"] = Array();
+	return result;
 }
 
-void GDScriptELFLanguage::debug_get_stack_level_members(int p_level, List<String> *p_members, List<Variant> *p_values, int p_max_subitems, int p_max_depth) {
+Dictionary GDScriptELFLanguage::_debug_get_stack_level_members(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) {
 	// TODO: Implement debug members
+	Dictionary result;
+	result["members"] = PackedStringArray();
+	result["values"] = Array();
+	return result;
 }
 
-ScriptInstance *GDScriptELFLanguage::debug_get_stack_level_instance(int p_level) {
+void *GDScriptELFLanguage::_debug_get_stack_level_instance(int32_t p_level) {
 	return nullptr;
 }
 
-void GDScriptELFLanguage::debug_get_globals(List<String> *p_globals, List<Variant> *p_values, int p_max_subitems, int p_max_depth) {
+Dictionary GDScriptELFLanguage::_debug_get_globals(int32_t p_max_subitems, int32_t p_max_depth) {
 	// TODO: Implement debug globals
+	Dictionary result;
+	result["globals"] = PackedStringArray();
+	result["values"] = Array();
+	return result;
 }
 
-void GDScriptELFLanguage::get_recognized_extensions(List<String> *p_extensions) const {
-	if (p_extensions) {
-		p_extensions->push_back("gde");
-	}
+String GDScriptELFLanguage::_debug_parse_stack_level_expression(int32_t p_level, const String &p_expression, int32_t p_max_subitems, int32_t p_max_depth) {
+	return "";
 }
 
-void GDScriptELFLanguage::get_public_functions(List<MethodInfo> *p_functions) const {
-	// Return public functions
+TypedArray<Dictionary> GDScriptELFLanguage::_debug_get_current_stack_info() {
+	return TypedArray<Dictionary>();
 }
 
-void GDScriptELFLanguage::get_public_constants(List<Pair<String, Variant>> *p_constants) const {
-	// Return public constants
-}
-
-void GDScriptELFLanguage::get_public_annotations(List<MethodInfo> *p_annotations) const {
-	// Return public annotations
-}
-
-void GDScriptELFLanguage::profiling_set_save_native_calls(bool p_enable) {
-	// TODO: Implement profiling
-}
-
-void GDScriptELFLanguage::frame() {
-	// Per-frame updates
-}
-
-void GDScriptELFLanguage::reload_all_scripts() {
+void GDScriptELFLanguage::_reload_all_scripts() {
 	// Reload all GDScriptELF scripts
+	// TODO: Implement script reloading
 }
 
-void GDScriptELFLanguage::reload_scripts(const Array &p_scripts, bool p_soft_reload) {
-	// Reload specific scripts
-}
-
-void GDScriptELFLanguage::reload_tool_script(const Ref<Script> &p_script, bool p_soft_reload) {
+void GDScriptELFLanguage::_reload_tool_script(const Ref<Script> &p_script, bool p_soft_reload) {
 	if (p_script.is_valid()) {
 		p_script->reload(p_soft_reload);
 	}
 }
 
-bool GDScriptELFLanguage::handles_global_class_type(const String &p_type) const {
-	return p_type == "GDScriptELF";
+PackedStringArray GDScriptELFLanguage::_get_recognized_extensions() const {
+	PackedStringArray extensions;
+	extensions.append("gde");
+	return extensions;
 }
 
-String GDScriptELFLanguage::get_global_class_name(const String &p_path, String *r_base_type, String *r_icon_path, bool *r_is_abstract, bool *r_is_tool) const {
-	// TODO: Extract global class name from script
-	return "";
+TypedArray<Dictionary> GDScriptELFLanguage::_get_public_functions() const {
+	// Return public functions
+	// TODO: Implement public functions retrieval
+	return TypedArray<Dictionary>();
 }
 
-Vector<ScriptLanguage::StackInfo> GDScriptELFLanguage::debug_get_current_stack_info() {
-	return Vector<StackInfo>();
+Dictionary GDScriptELFLanguage::_get_public_constants() const {
+	// Return public constants
+	// TODO: Implement public constants retrieval
+	return Dictionary();
 }
 
-String GDScriptELFLanguage::debug_parse_stack_level_expression(int p_level, const String &p_expression, int p_max_subitems, int p_max_depth) {
-	return "";
+TypedArray<Dictionary> GDScriptELFLanguage::_get_public_annotations() const {
+	// Return public annotations
+	// TODO: Implement public annotations retrieval
+	return TypedArray<Dictionary>();
 }
 
-void GDScriptELFLanguage::profiling_start() {
+void GDScriptELFLanguage::_profiling_start() {
 	// TODO: Start profiling
 }
 
-void GDScriptELFLanguage::profiling_stop() {
+void GDScriptELFLanguage::_profiling_stop() {
 	// TODO: Stop profiling
 }
 
-int GDScriptELFLanguage::profiling_get_accumulated_data(ProfilingInfo *p_info_arr, int p_info_max) {
+int32_t GDScriptELFLanguage::_profiling_get_accumulated_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) {
+	// TODO: Implement profiling data retrieval
 	return 0;
 }
 
-int GDScriptELFLanguage::profiling_get_frame_data(ProfilingInfo *p_info_arr, int p_info_max) {
+int32_t GDScriptELFLanguage::_profiling_get_frame_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) {
+	// TODO: Implement profiling frame data retrieval
 	return 0;
+}
+
+void GDScriptELFLanguage::_frame() {
+	// Per-frame updates
+}
+
+bool GDScriptELFLanguage::_handles_global_class_type(const String &p_type) const {
+	return p_type == "GDScriptELF";
+}
+
+Dictionary GDScriptELFLanguage::_get_global_class_name(const String &p_path) const {
+	// TODO: Extract global class name from script
+	Dictionary result;
+	result["name"] = "";
+	result["base_type"] = "";
+	result["icon_path"] = "";
+	result["is_abstract"] = false;
+	result["is_tool"] = false;
+	return result;
 }

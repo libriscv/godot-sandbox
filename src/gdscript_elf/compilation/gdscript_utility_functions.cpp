@@ -32,25 +32,28 @@
 
 #include "gdscript.h"
 
-#include "core/io/resource_loader.h"
-#include "core/object/class_db.h"
-#include "core/object/object.h"
-#include "core/templates/a_hash_map.h"
-#include "core/templates/vector.h"
-#include "core/variant/typed_array.h"
+#include <gdextension_interface.h>
+#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/classes/object.hpp>
+#include <godot_cpp/templates/hash_map.hpp>
+#include <godot_cpp/templates/vector.hpp>
+#include <godot_cpp/variant/typed_array.hpp>
+
+using namespace godot;
 
 #ifdef DEBUG_ENABLED
 
 #define DEBUG_VALIDATE_ARG_COUNT(m_min_count, m_max_count)                  \
 	if (unlikely(p_arg_count < m_min_count)) {                              \
 		*r_ret = Variant();                                                 \
-		r_error.error = Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS;  \
+		r_error.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;  \
 		r_error.expected = m_min_count;                                     \
 		return;                                                             \
 	}                                                                       \
 	if (unlikely(p_arg_count > m_max_count)) {                              \
 		*r_ret = Variant();                                                 \
-		r_error.error = Callable::CallError::CALL_ERROR_TOO_MANY_ARGUMENTS; \
+		r_error.error = GDEXTENSION_CALL_ERROR_TOO_MANY_ARGUMENTS; \
 		r_error.expected = m_max_count;                                     \
 		return;                                                             \
 	}
@@ -58,7 +61,7 @@
 #define DEBUG_VALIDATE_ARG_TYPE(m_arg, m_type)                                       \
 	if (unlikely(!Variant::can_convert_strict(p_args[m_arg]->get_type(), m_type))) { \
 		*r_ret = Variant();                                                          \
-		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;            \
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;            \
 		r_error.argument = m_arg;                                                    \
 		r_error.expected = m_type;                                                   \
 		return;                                                                      \
@@ -67,7 +70,7 @@
 #define DEBUG_VALIDATE_ARG_CUSTOM(m_arg, m_type, m_cond, m_msg)           \
 	if (unlikely(m_cond)) {                                               \
 		*r_ret = m_msg;                                                   \
-		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT; \
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT; \
 		r_error.argument = m_arg;                                         \
 		r_error.expected = m_type;                                        \
 		return;                                                           \
@@ -93,13 +96,13 @@
 #define GDFUNC_FAIL_COND_MSG(m_cond, m_msg)                             \
 	if (unlikely(m_cond)) {                                             \
 		*r_ret = m_msg;                                                 \
-		r_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD; \
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD; \
 		return;                                                         \
 	}
 
 struct GDScriptUtilityFunctionsDefinitions {
 #ifndef DISABLE_DEPRECATED
-	static inline void convert(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+	static inline void convert(Variant *r_ret, const Variant **p_args, int p_arg_count, GDExtensionCallError &r_error) {
 		DEBUG_VALIDATE_ARG_COUNT(2, 2);
 		DEBUG_VALIDATE_ARG_TYPE(1, Variant::INT);
 

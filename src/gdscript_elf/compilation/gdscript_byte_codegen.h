@@ -35,7 +35,8 @@
 #include "gdscript_function.h"
 #include "gdscript_utility_functions.h"
 
-#include "core/templates/rb_map.h"
+#include <godot_cpp/templates/hash_map.hpp>
+// Note: rb_map replaced with hash_map
 
 class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 	struct StackSlot {

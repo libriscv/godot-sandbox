@@ -35,8 +35,8 @@
 #include "gdscript_cache.h"
 #include "gdscript_utility_functions.h"
 
-#include "core/config/engine.h"
-#include "core/config/project_settings.h"
+#include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
 
 #include "scene/scene_string_names.h"
 

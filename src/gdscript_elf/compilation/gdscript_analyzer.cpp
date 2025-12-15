@@ -34,14 +34,14 @@
 #include "gdscript_utility_callable.h"
 #include "gdscript_utility_functions.h"
 
-#include "core/config/engine.h"
-#include "core/config/project_settings.h"
-#include "core/core_constants.h"
-#include "core/io/file_access.h"
-#include "core/io/resource_loader.h"
-#include "core/object/class_db.h"
-#include "core/object/script_language.h"
-#include "core/templates/hash_map.h"
+#include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
+// Note: core_constants replaced with direct constants or ProjectSettings
+#include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/classes/script_language_extension.hpp>
+#include <godot_cpp/templates/hash_map.hpp>
 #include "scene/main/node.h"
 
 #if defined(TOOLS_ENABLED) && !defined(DISABLE_DEPRECATED)
