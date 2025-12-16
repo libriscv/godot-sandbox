@@ -32,6 +32,7 @@
 
 #include "../compilation/gdscript_function.h"
 #include "../compilation/gdscript.h"
+#include <gdextension_interface.h>
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/templates/self_list.hpp>
 #include <godot_cpp/variant/variant.hpp>
@@ -70,7 +71,8 @@ class GDScriptELFFunction : public RefCounted {
 	// Original VM bytecode (for fallback if ELF compilation fails)
 	Vector<int> code;
 	Vector<Variant> constants;
-	LocalStack stack;
+	// LocalStack doesn't exist in GDExtension - use Vector<Variant> for stack
+	Vector<Variant> stack;
 
 	SelfList<GDScriptELFFunction> function_list;
 
@@ -88,7 +90,7 @@ public:
 	~GDScriptELFFunction();
 
 	// Main call method - executes ELF binary in sandbox
-	Variant call(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, Callable::CallError &r_error, CallState *p_state = nullptr);
+	Variant call(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error, CallState *p_state = nullptr);
 
 	// Check if ELF compilation is available
 	bool has_elf_code() const { return elf_compiled && !elf_binary.is_empty(); }
@@ -109,8 +111,8 @@ public:
 
 private:
 	// Execute ELF binary in sandbox
-	Variant execute_elf(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, Callable::CallError &r_error);
+	Variant execute_elf(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error);
 
 	// Fallback to VM execution if ELF is not available
-	Variant execute_vm_fallback(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, Callable::CallError &r_error);
+	Variant execute_vm_fallback(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error);
 };

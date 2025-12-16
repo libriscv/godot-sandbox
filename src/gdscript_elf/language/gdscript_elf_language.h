@@ -67,7 +67,7 @@ public:
 	virtual PackedStringArray _get_doc_comment_delimiters() const override;
 	virtual PackedStringArray _get_string_delimiters() const override;
 	virtual Ref<Script> _make_template(const String &p_template, const String &p_class_name, const String &p_base_class_name) const override;
-	virtual TypedArray<Dictionary> _get_built_in_templates(const StringName &p_object) const override;
+	virtual godot::TypedArray<godot::Dictionary> _get_built_in_templates(const StringName &p_object) const override;
 	virtual bool _is_using_templates() override;
 	virtual Dictionary _validate(const String &p_script, const String &p_path, bool p_validate_functions, bool p_validate_errors, bool p_validate_warnings, bool p_validate_safe_lines) const override;
 	virtual String _validate_path(const String &p_path) const override;
@@ -98,13 +98,13 @@ public:
 	virtual void *_debug_get_stack_level_instance(int32_t p_level) override;
 	virtual Dictionary _debug_get_globals(int32_t p_max_subitems, int32_t p_max_depth) override;
 	virtual String _debug_parse_stack_level_expression(int32_t p_level, const String &p_expression, int32_t p_max_subitems, int32_t p_max_depth) override;
-	virtual TypedArray<Dictionary> _debug_get_current_stack_info() override;
+	virtual godot::TypedArray<godot::Dictionary> _debug_get_current_stack_info() override;
 	virtual void _reload_all_scripts() override;
 	virtual void _reload_tool_script(const Ref<Script> &p_script, bool p_soft_reload) override;
 	virtual PackedStringArray _get_recognized_extensions() const override;
-	virtual TypedArray<Dictionary> _get_public_functions() const override;
+	virtual godot::TypedArray<godot::Dictionary> _get_public_functions() const override;
 	virtual Dictionary _get_public_constants() const override;
-	virtual TypedArray<Dictionary> _get_public_annotations() const override;
+	virtual godot::TypedArray<godot::Dictionary> _get_public_annotations() const override;
 	virtual void _profiling_start() override;
 	virtual void _profiling_stop() override;
 	virtual int32_t _profiling_get_accumulated_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) override;

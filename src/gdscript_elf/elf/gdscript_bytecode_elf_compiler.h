@@ -30,9 +30,9 @@
 
 #pragma once
 
-#include "core/string/string_name.h"
-#include "core/templates/vector.h"
-#include "core/variant/variant.h"
+#include <godot_cpp/variant/string_name.hpp>
+#include <godot_cpp/templates/vector.hpp>
+#include <godot_cpp/variant/variant.hpp>
 
 // Forward declarations
 class GDScriptFunction;

@@ -93,9 +93,9 @@ Object *GDScriptELFLanguage::_create_script() const {
 Dictionary GDScriptELFLanguage::_validate(const String &p_script, const String &p_path, bool p_validate_functions, bool p_validate_errors, bool p_validate_warnings, bool p_validate_safe_lines) const {
 	Dictionary result;
 	PackedStringArray functions;
-	TypedArray<Dictionary> errors;
-	TypedArray<Dictionary> warnings;
-	TypedArray<int> safe_lines;
+	godot::TypedArray<godot::Dictionary> errors;
+	godot::TypedArray<godot::Dictionary> warnings;
+		godot::TypedArray<int> safe_lines;
 	bool valid = true;
 
 	// Use GDScript parser/analyzer for validation
@@ -128,7 +128,8 @@ Dictionary GDScriptELFLanguage::_validate(const String &p_script, const String &
 	if (err != OK) {
 		valid = false;
 		if (p_validate_errors) {
-			for (const GDScriptParser::ParserError &e : analyzer->get_errors()) {
+			// Get errors from parser, not analyzer
+			for (const GDScriptParser::ParserError &e : parser->get_errors()) {
 				Dictionary error_dict;
 				error_dict["line"] = e.line;
 				error_dict["column"] = e.column;
@@ -209,8 +210,8 @@ Ref<Script> GDScriptELFLanguage::_make_template(const String &p_template, const 
 	return script;
 }
 
-TypedArray<Dictionary> GDScriptELFLanguage::_get_built_in_templates(const StringName &p_object) const {
-	return TypedArray<Dictionary>();
+godot::TypedArray<godot::Dictionary> GDScriptELFLanguage::_get_built_in_templates(const StringName &p_object) const {
+	return godot::TypedArray<godot::Dictionary>();
 }
 
 bool GDScriptELFLanguage::_is_using_templates() {
@@ -276,7 +277,7 @@ bool GDScriptELFLanguage::_overrides_external_editor() {
 Dictionary GDScriptELFLanguage::_complete_code(const String &p_code, const String &p_path, Object *p_owner) const {
 	// TODO: Implement code completion
 	Dictionary result;
-	result["options"] = TypedArray<Dictionary>();
+	result["options"] = godot::TypedArray<godot::Dictionary>();
 	result["forced"] = false;
 	result["call_hint"] = "";
 	return result;
@@ -364,8 +365,8 @@ String GDScriptELFLanguage::_debug_parse_stack_level_expression(int32_t p_level,
 	return "";
 }
 
-TypedArray<Dictionary> GDScriptELFLanguage::_debug_get_current_stack_info() {
-	return TypedArray<Dictionary>();
+godot::TypedArray<godot::Dictionary> GDScriptELFLanguage::_debug_get_current_stack_info() {
+	return godot::TypedArray<godot::Dictionary>();
 }
 
 void GDScriptELFLanguage::_reload_all_scripts() {
@@ -385,10 +386,10 @@ PackedStringArray GDScriptELFLanguage::_get_recognized_extensions() const {
 	return extensions;
 }
 
-TypedArray<Dictionary> GDScriptELFLanguage::_get_public_functions() const {
+godot::TypedArray<godot::Dictionary> GDScriptELFLanguage::_get_public_functions() const {
 	// Return public functions
 	// TODO: Implement public functions retrieval
-	return TypedArray<Dictionary>();
+	return godot::TypedArray<godot::Dictionary>();
 }
 
 Dictionary GDScriptELFLanguage::_get_public_constants() const {
@@ -397,10 +398,10 @@ Dictionary GDScriptELFLanguage::_get_public_constants() const {
 	return Dictionary();
 }
 
-TypedArray<Dictionary> GDScriptELFLanguage::_get_public_annotations() const {
+godot::TypedArray<godot::Dictionary> GDScriptELFLanguage::_get_public_annotations() const {
 	// Return public annotations
 	// TODO: Implement public annotations retrieval
-	return TypedArray<Dictionary>();
+	return godot::TypedArray<godot::Dictionary>();
 }
 
 void GDScriptELFLanguage::_profiling_start() {

@@ -31,10 +31,14 @@
 #pragma once
 
 #include "gdscript_utility_functions.h"
+#include "gdscript_gdextension_helpers.h"
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/script_language_extension.hpp>
+#include <godot_cpp/classes/script.hpp>
+#include <godot_cpp/core/object.hpp>
 #include <godot_cpp/templates/hash_map.hpp>
+#include <gdextension_interface.h>
 #include <thread>
 #include <godot_cpp/variant/string_name.hpp>
 #include <godot_cpp/templates/pair.hpp>
@@ -142,12 +146,12 @@ public:
 				}
 
 				bool was_freed = false;
-				Object *obj = p_variant.get_validated_object_with_check(was_freed);
+				Object *obj = get_validated_object_safe(p_variant, was_freed);
 				if (!obj) {
 					return !was_freed;
 				}
 
-				if (!ClassDB::is_parent_class(obj->get_class_name(), native_type)) {
+				if (!ClassDB::is_parent_class(obj->get_class(), native_type)) {
 					return false;
 				}
 				return true;
@@ -162,12 +166,13 @@ public:
 				}
 
 				bool was_freed = false;
-				Object *obj = p_variant.get_validated_object_with_check(was_freed);
+				Object *obj = get_validated_object_safe(p_variant, was_freed);
 				if (!obj) {
 					return !was_freed;
 				}
 
-				Ref<Script> base = obj && obj->get_script_instance() ? obj->get_script_instance()->get_script() : nullptr;
+				// Use get_script() directly instead of get_script_instance()
+				Ref<Script> base = obj->get_script();
 				bool valid = false;
 				while (base.is_valid()) {
 					if (base == script_type) {
@@ -486,16 +491,16 @@ private:
 	Vector<int> default_arguments;
 	Vector<Variant> constants;
 	Vector<StringName> global_names;
-	Vector<Variant::ValidatedOperatorEvaluator> operator_funcs;
-	Vector<Variant::ValidatedSetter> setters;
-	Vector<Variant::ValidatedGetter> getters;
-	Vector<Variant::ValidatedKeyedSetter> keyed_setters;
-	Vector<Variant::ValidatedKeyedGetter> keyed_getters;
-	Vector<Variant::ValidatedIndexedSetter> indexed_setters;
-	Vector<Variant::ValidatedIndexedGetter> indexed_getters;
-	Vector<Variant::ValidatedBuiltInMethod> builtin_methods;
-	Vector<Variant::ValidatedConstructor> constructors;
-	Vector<Variant::ValidatedUtilityFunction> utilities;
+	Vector<OperatorEvaluatorFunc> operator_funcs;
+	Vector<SetterFunc> setters;
+	Vector<GetterFunc> getters;
+	Vector<KeyedSetterFunc> keyed_setters;
+	Vector<KeyedGetterFunc> keyed_getters;
+	Vector<IndexedSetterFunc> indexed_setters;
+	Vector<IndexedGetterFunc> indexed_getters;
+	Vector<BuiltInMethodFunc> builtin_methods;
+	Vector<ConstructorFunc> constructors;
+	Vector<UtilityFunctionFunc> utilities;
 	Vector<GDScriptUtilityFunctions::FunctionPtr> gds_utilities;
 	Vector<MethodBind *> methods;
 	Vector<GDScriptFunction *> lambdas;
@@ -522,16 +527,16 @@ private:
 	const int *_default_arg_ptr = nullptr;
 	mutable Variant *_constants_ptr = nullptr;
 	const StringName *_global_names_ptr = nullptr;
-	const Variant::ValidatedOperatorEvaluator *_operator_funcs_ptr = nullptr;
-	const Variant::ValidatedSetter *_setters_ptr = nullptr;
-	const Variant::ValidatedGetter *_getters_ptr = nullptr;
-	const Variant::ValidatedKeyedSetter *_keyed_setters_ptr = nullptr;
-	const Variant::ValidatedKeyedGetter *_keyed_getters_ptr = nullptr;
-	const Variant::ValidatedIndexedSetter *_indexed_setters_ptr = nullptr;
-	const Variant::ValidatedIndexedGetter *_indexed_getters_ptr = nullptr;
-	const Variant::ValidatedBuiltInMethod *_builtin_methods_ptr = nullptr;
-	const Variant::ValidatedConstructor *_constructors_ptr = nullptr;
-	const Variant::ValidatedUtilityFunction *_utilities_ptr = nullptr;
+	const OperatorEvaluatorFunc *_operator_funcs_ptr = nullptr;
+	const SetterFunc *_setters_ptr = nullptr;
+	const GetterFunc *_getters_ptr = nullptr;
+	const KeyedSetterFunc *_keyed_setters_ptr = nullptr;
+	const KeyedGetterFunc *_keyed_getters_ptr = nullptr;
+	const IndexedSetterFunc *_indexed_setters_ptr = nullptr;
+	const IndexedGetterFunc *_indexed_getters_ptr = nullptr;
+	const BuiltInMethodFunc *_builtin_methods_ptr = nullptr;
+	const ConstructorFunc *_constructors_ptr = nullptr;
+	const UtilityFunctionFunc *_utilities_ptr = nullptr;
 	const GDScriptUtilityFunctions::FunctionPtr *_gds_utilities_ptr = nullptr;
 	MethodBind **_methods_ptr = nullptr;
 	GDScriptFunction **_lambdas_ptr = nullptr;
@@ -569,8 +574,8 @@ private:
 	} profile;
 #endif
 
-	String _get_call_error(const String &p_where, const Variant **p_argptrs, int p_argcount, const Variant &p_ret, const Callable::CallError &p_err) const;
-	String _get_callable_call_error(const String &p_where, const Callable &p_callable, const Variant **p_argptrs, int p_argcount, const Variant &p_ret, const Callable::CallError &p_err) const;
+	String _get_call_error(const String &p_where, const Variant **p_argptrs, int p_argcount, const Variant &p_ret, const GDExtensionCallError &p_err) const;
+	String _get_callable_call_error(const String &p_where, const Callable &p_callable, const Variant **p_argptrs, int p_argcount, const Variant &p_ret, const GDExtensionCallError &p_err) const;
 	Variant _get_default_variant_for_data_type(const GDScriptDataType &p_data_type);
 
 public:
@@ -605,7 +610,7 @@ public:
 	Variant get_constant(int p_idx) const;
 	StringName get_global_name(int p_idx) const;
 
-	Variant call(GDScriptInstance *p_instance, const Variant **p_args, int p_argcount, Callable::CallError &r_err, CallState *p_state = nullptr);
+	Variant call(GDScriptInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_err, CallState *p_state = nullptr);
 	void debug_get_stack_member_state(int p_line, List<Pair<StringName, int>> *r_stackvars) const;
 
 #ifdef DEBUG_ENABLED
@@ -622,7 +627,7 @@ class GDScriptFunctionState : public RefCounted {
 	friend class GDScriptFunction;
 	GDScriptFunction *function = nullptr;
 	GDScriptFunction::CallState state;
-	Variant _signal_callback(const Variant **p_args, int p_argcount, Callable::CallError &r_error);
+	Variant _signal_callback(const Variant **p_args, int p_argcount, GDExtensionCallError &r_error);
 	Ref<GDScriptFunctionState> first_state;
 
 	SelfList<GDScriptFunctionState> scripts_list;

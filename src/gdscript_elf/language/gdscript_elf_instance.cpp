@@ -31,8 +31,12 @@
 #include "gdscript_elf_instance.h"
 #include "gdscript_elf_language.h"
 #include "../../sandbox.h"
+#include "../../elf/script_instance_helper.h"
 #include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/variant/variant.hpp>
+#include <godot_cpp/core/method_info.hpp>
+#include <godot_cpp/core/property_info.hpp>
+#include <godot_cpp/templates/list.hpp>
 
 using namespace godot;
 
@@ -109,14 +113,32 @@ bool GDScriptELFInstance::get(const StringName &p_name, Variant &r_ret) const {
 	return false;
 }
 
-void GDScriptELFInstance::get_property_list(List<PropertyInfo> *p_properties) const {
+const GDExtensionPropertyInfo *GDScriptELFInstance::get_property_list(uint32_t *r_count) const {
 	if (!script.is_valid()) {
-		return;
+		*r_count = 0;
+		return nullptr;
 	}
 
+	const int size = script->member_indices.size();
+	GDExtensionPropertyInfo *list = memnew_arr(GDExtensionPropertyInfo, size);
+	int i = 0;
 	for (const KeyValue<StringName, GDScriptELF::MemberInfo> &E : script->member_indices) {
-		p_properties->push_back(E.value.property_info);
+		list[i] = create_property_info(E.value.property_info);
+		i++;
 	}
+
+	*r_count = size;
+	return list;
+}
+
+void GDScriptELFInstance::free_property_list(const GDExtensionPropertyInfo *p_list, uint32_t p_count) const {
+	if (!p_list) {
+		return;
+	}
+	for (uint32_t i = 0; i < p_count; i++) {
+		free_property_info(p_list[i]);
+	}
+	memdelete_arr(p_list);
 }
 
 Variant::Type GDScriptELFInstance::get_property_type(const StringName &p_name, bool *r_is_valid) const {
@@ -166,12 +188,35 @@ bool GDScriptELFInstance::property_get_revert(const StringName &p_name, Variant 
 	return false;
 }
 
-void GDScriptELFInstance::get_method_list(List<MethodInfo> *p_list) const {
+const GDExtensionMethodInfo *GDScriptELFInstance::get_method_list(uint32_t *r_count) const {
 	if (!script.is_valid()) {
-		return;
+		*r_count = 0;
+		return nullptr;
 	}
 
-	script->get_script_method_list(p_list);
+	List<MethodInfo> method_list;
+	script->get_script_method_list(&method_list);
+
+	const int size = method_list.size();
+	GDExtensionMethodInfo *list = memnew_arr(GDExtensionMethodInfo, size);
+	int i = 0;
+	for (const MethodInfo &method_info : method_list) {
+		list[i] = create_method_info(method_info);
+		i++;
+	}
+
+	*r_count = size;
+	return list;
+}
+
+void GDScriptELFInstance::free_method_list(const GDExtensionMethodInfo *p_list, uint32_t p_count) const {
+	if (!p_list) {
+		return;
+	}
+	for (uint32_t i = 0; i < p_count; i++) {
+		free_method_info(p_list[i]);
+	}
+	memdelete_arr(p_list);
 }
 
 bool GDScriptELFInstance::has_method(const StringName &p_method) const {
@@ -182,7 +227,7 @@ bool GDScriptELFInstance::has_method(const StringName &p_method) const {
 	return script->has_method(p_method);
 }
 
-int GDScriptELFInstance::get_method_argument_count(const StringName &p_method, bool *r_is_valid) const {
+GDExtensionInt GDScriptELFInstance::get_method_argument_count(const StringName &p_method, bool &r_valid) const {
 	if (!script.is_valid()) {
 		if (r_is_valid) {
 			*r_is_valid = false;

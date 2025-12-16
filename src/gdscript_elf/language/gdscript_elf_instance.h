@@ -32,7 +32,7 @@
 
 #include "gdscript_elf.h"
 #include "gdscript_elf_function.h"
-#include <godot_cpp/classes/script_instance_extension.hpp>
+#include "../../godot/script_instance.h"
 #include <godot_cpp/templates/self_list.hpp>
 
 using namespace godot;
@@ -61,32 +61,35 @@ public:
 
 	virtual bool set(const StringName &p_name, const Variant &p_value) override;
 	virtual bool get(const StringName &p_name, Variant &r_ret) const override;
-	virtual void get_property_list(List<PropertyInfo> *p_properties) const override;
+	virtual const GDExtensionPropertyInfo *get_property_list(uint32_t *r_count) const override;
+	virtual void free_property_list(const GDExtensionPropertyInfo *p_list, uint32_t p_count) const override;
 	virtual Variant::Type get_property_type(const StringName &p_name, bool *r_is_valid = nullptr) const override;
-	virtual void validate_property(PropertyInfo &p_property) const override;
+	virtual bool validate_property(GDExtensionPropertyInfo &p_property) const override;
 
 	virtual bool property_can_revert(const StringName &p_name) const override;
 	virtual bool property_get_revert(const StringName &p_name, Variant &r_ret) const override;
 
-	virtual void get_method_list(List<MethodInfo> *p_list) const override;
+	virtual const GDExtensionMethodInfo *get_method_list(uint32_t *r_count) const override;
+	virtual void free_method_list(const GDExtensionMethodInfo *p_list, uint32_t p_count) const override;
 	virtual bool has_method(const StringName &p_method) const override;
 
-	virtual int get_method_argument_count(const StringName &p_method, bool *r_is_valid = nullptr) const override;
+	virtual GDExtensionInt get_method_argument_count(const StringName &p_method, bool &r_valid) const override;
 
-	virtual Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount, Callable::CallError &r_error) override;
+	virtual Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) override;
 
 	virtual void notification(int p_notification, bool p_reversed = false) override;
 	String to_string(bool *r_valid);
 
 	virtual Ref<Script> get_script() const override;
 
-	virtual ScriptLanguage *get_language() override;
+	virtual ScriptLanguage *_get_language() override;
 
 	void set_path(const String &p_path);
 
 	void reload_members();
 
-	virtual const Variant get_rpc_config() const override;
+	// get_rpc_config doesn't exist in ScriptInstanceExtension - remove override
+	Variant get_rpc_config() const;
 
 	GDScriptELFInstance();
 	~GDScriptELFInstance();

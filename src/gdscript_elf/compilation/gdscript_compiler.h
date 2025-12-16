@@ -107,7 +107,7 @@ class GDScriptCompiler {
 				Object *obj = p_constant;
 				if (obj) {
 					type.kind = GDScriptDataType::NATIVE;
-					type.native_type = obj->get_class_name();
+					type.native_type = obj->get_class();
 
 					Ref<Script> scr = obj->get_script();
 					if (scr.is_valid()) {

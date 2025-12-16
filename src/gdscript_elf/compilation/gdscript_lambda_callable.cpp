@@ -31,6 +31,7 @@
 #include "gdscript_lambda_callable.h"
 
 #include "gdscript.h"
+#include "gdscript_gdextension_helpers.h"
 
 #include "core/templates/hashfuncs.h"
 
@@ -105,7 +106,7 @@ void GDScriptLambdaCallable::call(const Variant **p_arguments, int p_argcount, V
 			args[i] = &captures[i];
 			if (captures[i].get_type() == Variant::OBJECT) {
 				bool was_freed = false;
-				captures[i].get_validated_object_with_check(was_freed);
+				get_validated_object_safe(captures[i], was_freed);
 				if (was_freed) {
 					ERR_PRINT(vformat(R"(Lambda capture at index %d was freed. Passed "null" instead.)", i));
 					static Variant nil;
@@ -215,7 +216,10 @@ int GDScriptLambdaSelfCallable::get_argument_count(bool &r_is_valid) const {
 
 void GDScriptLambdaSelfCallable::call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, Callable::CallError &r_call_error) const {
 #ifdef DEBUG_ENABLED
-	if (object->get_script_instance() == nullptr || object->get_script_instance()->get_language() != GDScriptLanguage::get_singleton()) {
+	// In GDExtension, we can't directly get script instance
+	// Check if object has a script instead
+	Ref<Script> script = object->get_script();
+	if (!script.is_valid() || script->get_language() != GDScriptLanguage::get_singleton()) {
 		ERR_PRINT("Trying to call a lambda with an invalid instance.");
 		r_call_error.error = Callable::CallError::CALL_ERROR_INSTANCE_IS_NULL;
 		return;
@@ -237,7 +241,7 @@ void GDScriptLambdaSelfCallable::call(const Variant **p_arguments, int p_argcoun
 			args[i] = &captures[i];
 			if (captures[i].get_type() == Variant::OBJECT) {
 				bool was_freed = false;
-				captures[i].get_validated_object_with_check(was_freed);
+				get_validated_object_safe(captures[i], was_freed);
 				if (was_freed) {
 					ERR_PRINT(vformat(R"(Lambda capture at index %d was freed. Passed "null" instead.)", i));
 					static Variant nil;
@@ -249,7 +253,10 @@ void GDScriptLambdaSelfCallable::call(const Variant **p_arguments, int p_argcoun
 			args[i + captures_amount] = p_arguments[i];
 		}
 
-		r_return_value = function->call(static_cast<GDScriptInstance *>(object->get_script_instance()), args, total_argcount, r_call_error);
+		// In GDExtension, we can't cast to GDScriptInstance directly
+		// This is a limitation - we may need to handle this differently
+		// For now, pass nullptr and let the function handle it
+		r_return_value = function->call(nullptr, args, total_argcount, r_call_error);
 		switch (r_call_error.error) {
 			case Callable::CallError::CALL_ERROR_INVALID_ARGUMENT:
 				r_call_error.argument -= captures_amount;

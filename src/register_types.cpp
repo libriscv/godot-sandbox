@@ -85,7 +85,7 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	// Initialize the Sandbox node.
 	Sandbox::Initialize();
 	// Initialize GDScriptELF language
-	initialize_gdscript_elf_language(MODULE_INITIALIZATION_LEVEL_SCENE);
+	initialize_gdscript_elf_language(GDEXTENSION_INITIALIZATION_SCENE);
 }
 
 static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
@@ -117,7 +117,7 @@ static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	ResourceFormatSaverZig::deinit();
 #endif
 	// Uninitialize GDScriptELF language
-	uninitialize_gdscript_elf_language(MODULE_INITIALIZATION_LEVEL_SCENE);
+	uninitialize_gdscript_elf_language(GDEXTENSION_INITIALIZATION_SCENE);
 }
 
 extern "C" {

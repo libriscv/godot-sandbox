@@ -48,7 +48,7 @@ void GDScriptELF::_bind_methods() {
 	// Bind methods if needed
 }
 
-GDScriptELF::GDScriptELF() {
+GDScriptELF::GDScriptELF() : script_list(this) {
 	valid = false;
 	tool = false;
 	reloading = false;
@@ -64,9 +64,7 @@ GDScriptELF::~GDScriptELF() {
 	_clear();
 }
 
-bool GDScriptELF::is_valid() const {
-	return valid;
-}
+// is_valid() is already defined inline in header
 
 bool GDScriptELF::inherits_script(const Ref<Script> &p_script) const {
 	if (p_script.is_null()) {
@@ -78,7 +76,7 @@ bool GDScriptELF::inherits_script(const Ref<Script> &p_script) const {
 		return false;
 	}
 	
-	GDScriptELF *s = this;
+	const GDScriptELF *s = this;
 	while (s) {
 		if (s == gdelf.ptr()) {
 			return true;
@@ -89,13 +87,9 @@ bool GDScriptELF::inherits_script(const Ref<Script> &p_script) const {
 	return false;
 }
 
-bool GDScriptELF::is_tool() const {
-	return tool;
-}
+// is_tool() is already defined inline in header
 
-bool GDScriptELF::is_abstract() const {
-	return _is_abstract;
-}
+// is_abstract() is already defined inline in header
 
 Ref<Script> GDScriptELF::get_base_script() const {
 	if (base.is_valid()) {
@@ -109,16 +103,17 @@ StringName GDScriptELF::get_global_name() const {
 }
 
 StringName GDScriptELF::get_instance_base_type() const {
-	if (analyzer.is_valid() && analyzer->get_parser()) {
-		const GDScriptParser::ClassNode *class_node = analyzer->get_parser()->get_tree();
-		if (class_node && class_node->base_type.is_valid()) {
-			return class_node->base_type->name;
+	// Use parser directly instead of analyzer->get_parser()
+	if (parser.is_valid()) {
+		const GDScriptParser::ClassNode *class_node = parser->get_tree();
+		if (class_node && class_node->base_type.kind == GDScriptParser::DataType::CLASS) {
+			return class_node->base_type.class_type->name;
 		}
 	}
 	return StringName("RefCounted"); // Default base type
 }
 
-ScriptInstance *GDScriptELF::instance_create(Object *p_this) {
+ScriptInstanceExtension *GDScriptELF::instance_create(Object *p_this) {
 	if (!valid) {
 		return nullptr;
 	}
@@ -141,10 +136,11 @@ ScriptInstance *GDScriptELF::instance_create(Object *p_this) {
 	return instance;
 }
 
-PlaceHolderScriptInstance *GDScriptELF::placeholder_instance_create(Object *p_this) {
-	// TODO: Create placeholder instance
-	return nullptr;
-}
+// PlaceHolderScriptInstance doesn't exist in GDExtension
+// PlaceHolderScriptInstance *GDScriptELF::placeholder_instance_create(Object *p_this) {
+// 	// TODO: Create placeholder instance
+// 	return nullptr;
+// }
 
 bool GDScriptELF::has_script_signal(const StringName &p_signal) const {
 	return _signals.has(p_signal);

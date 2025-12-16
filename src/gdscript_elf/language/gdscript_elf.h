@@ -41,6 +41,8 @@
 #include <godot_cpp/classes/resource_saver.hpp>
 #include <godot_cpp/templates/hash_set.hpp>
 #include <godot_cpp/templates/self_list.hpp>
+#include <gdextension_interface.h>
+#include "../../godot/script_instance.h"
 
 using namespace godot;
 
@@ -94,7 +96,7 @@ class GDScriptELF : public ScriptExtension {
 	GDScriptELFFunction *static_initializer = nullptr;
 
 	int subclass_count = 0;
-	RBSet<Object *> instances;
+	HashSet<Object *> instances;
 	bool destructing = false;
 	bool clearing = false;
 
@@ -121,38 +123,42 @@ protected:
 	bool _get(const StringName &p_name, Variant &r_ret) const;
 	bool _set(const StringName &p_name, const Variant &p_value);
 	void _get_property_list(List<PropertyInfo> *p_properties) const;
-	Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount, Callable::CallError &r_error) override;
+	Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error);
 	static void _bind_methods();
 
 public:
 	GDScriptELF();
 	~GDScriptELF();
 
-	virtual bool is_valid() const override { return valid; }
-	virtual bool inherits_script(const Ref<Script> &p_script) const override;
-	virtual bool is_tool() const override { return tool; }
-	virtual bool is_abstract() const override { return _is_abstract; }
-	virtual Ref<Script> get_base_script() const override;
-	virtual StringName get_global_name() const override;
-	virtual StringName get_instance_base_type() const override;
-	virtual ScriptInstance *instance_create(Object *p_this) override;
-	virtual PlaceHolderScriptInstance *placeholder_instance_create(Object *p_this) override;
-	virtual bool has_script_signal(const StringName &p_signal) const override;
-	virtual void get_script_signal_list(List<MethodInfo> *r_signals) const override;
-	virtual bool can_instantiate() const override;
-	virtual bool has_source_code() const override;
-	virtual String get_source_code() const override;
-	virtual void set_source_code(const String &p_code) override;
-	virtual Error reload(bool p_keep_state = false) override;
-	virtual bool has_method(const StringName &p_method) const override;
-	virtual bool has_static_method(const StringName &p_method) const override;
-	virtual Dictionary get_method_info(const StringName &p_method) const override;
-	virtual void get_script_method_list(List<MethodInfo> *p_list) const override;
-	virtual void get_script_property_list(List<PropertyInfo> *p_list) const override;
-	virtual bool has_property_default_value(const StringName &p_property) const override;
-	virtual Variant get_property_default_value(const StringName &p_property) const override;
-	virtual void update_exports() override;
-	virtual Variant get_rpc_config() const override;
+	// ScriptExtension methods - these may not all exist in GDExtension
+	// Implement only what's available
+	bool is_valid() const { return valid; }
+	bool inherits_script(const Ref<Script> &p_script) const;
+	bool is_tool() const { return tool; }
+	bool is_abstract() const { return _is_abstract; }
+	Ref<Script> get_base_script() const;
+	StringName get_global_name() const;
+	StringName get_instance_base_type() const;
+	ScriptInstanceExtension *instance_create(Object *p_this);
+	// PlaceHolderScriptInstance doesn't exist in GDExtension
+	// virtual PlaceHolderScriptInstance *placeholder_instance_create(Object *p_this) override;
+	bool has_script_signal(const StringName &p_signal) const;
+	void get_script_signal_list(List<MethodInfo> *r_signals) const;
+	bool can_instantiate() const;
+	// These methods are not virtual in ScriptExtension - implement as regular methods
+	bool has_source_code() const;
+	String get_source_code() const;
+	void set_source_code(const String &p_code);
+	Error reload(bool p_keep_state = false);
+	bool has_method(const StringName &p_method) const;
+	bool has_static_method(const StringName &p_method) const;
+	Dictionary get_method_info(const StringName &p_method) const;
+	void get_script_method_list(List<MethodInfo> *p_list) const;
+	void get_script_property_list(List<PropertyInfo> *p_list) const;
+	bool has_property_default_value(const StringName &p_property) const;
+	Variant get_property_default_value(const StringName &p_property) const;
+	void update_exports();
+	Variant get_rpc_config() const;
 
 	// GDScriptELF-specific
 	_FORCE_INLINE_ const HashMap<StringName, GDScriptELFFunction *> &get_member_functions() const { return member_functions; }

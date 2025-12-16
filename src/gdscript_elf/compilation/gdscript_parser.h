@@ -41,7 +41,7 @@
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/script_language_extension.hpp>
 #include <godot_cpp/variant/string_name.hpp>
-#include <godot_cpp/core/string.hpp>
+#include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/templates/hash_map.hpp>
 #include <godot_cpp/templates/list.hpp>
 #include <godot_cpp/templates/vector.hpp>

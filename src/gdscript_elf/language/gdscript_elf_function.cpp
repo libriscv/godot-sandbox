@@ -54,16 +54,16 @@ GDScriptELFFunction::~GDScriptELFFunction() {
 	// Cleanup
 }
 
-Variant GDScriptELFFunction::call(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, Callable::CallError &r_error, CallState *p_state) {
+Variant GDScriptELFFunction::call(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error, CallState *p_state) {
 	// Validate argument count
 	if (p_argcount < argument_count - default_argument_count) {
-		r_error.error = Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS;
+		r_error.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
 		r_error.argument = argument_count - default_argument_count;
 		return Variant();
 	}
 
 	if (!is_vararg && p_argcount > argument_count) {
-		r_error.error = Callable::CallError::CALL_ERROR_TOO_MANY_ARGUMENTS;
+		r_error.error = GDEXTENSION_CALL_ERROR_TOO_MANY_ARGUMENTS;
 		r_error.argument = argument_count;
 		return Variant();
 	}
@@ -94,14 +94,14 @@ Variant GDScriptELFFunction::call(GDScriptELFInstance *p_instance, const Variant
 	}
 }
 
-Variant GDScriptELFFunction::execute_elf(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, Callable::CallError &r_error) {
+Variant GDScriptELFFunction::execute_elf(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) {
 	if (!p_instance || !p_instance->sandbox) {
-		r_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 		return Variant();
 	}
 
 	if (elf_binary.is_empty()) {
-		r_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 		ERR_PRINT("GDScriptELFFunction: No ELF binary available for function '" + String(name) + "'");
 		return Variant();
 	}
@@ -165,16 +165,16 @@ Variant GDScriptELFFunction::execute_elf(GDScriptELFInstance *p_instance, const 
 		return execute_vm_fallback(p_instance, p_args, p_argcount, r_error);
 	}
 
-	r_error.error = Callable::CallError::CALL_OK;
+	r_error.error = GDEXTENSION_CALL_ERROR_NONE;
 	return result;
 }
 
-Variant GDScriptELFFunction::execute_vm_fallback(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, Callable::CallError &r_error) {
+Variant GDScriptELFFunction::execute_vm_fallback(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) {
 	// Fallback to VM execution if ELF is not available
 	// This uses the bytecode stored in the 'code' member
 	
 	if (code.is_empty()) {
-		r_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 		ERR_PRINT("GDScriptELFFunction: No bytecode available for VM fallback");
 		return Variant();
 	}
@@ -191,7 +191,7 @@ Variant GDScriptELFFunction::execute_vm_fallback(GDScriptELFInstance *p_instance
 	}
 
 	if (!is_vararg && p_argcount > argument_count) {
-		r_error.error = Callable::CallError::CALL_ERROR_TOO_MANY_ARGUMENTS;
+		r_error.error = GDEXTENSION_CALL_ERROR_TOO_MANY_ARGUMENTS;
 		r_error.argument = argument_count;
 		return Variant();
 	}

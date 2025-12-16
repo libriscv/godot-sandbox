@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #include "gdscript_utility_functions.h"
+#include "gdscript_gdextension_helpers.h"
 
 #include "gdscript.h"
 
@@ -256,13 +257,16 @@ struct GDScriptUtilityFunctionsDefinitions {
 			return;
 		}
 
-		VALIDATE_ARG_CUSTOM(0, Variant::OBJECT,
-				!obj->get_script_instance() || obj->get_script_instance()->get_language() != GDScriptLanguage::get_singleton(),
+		// In GDExtension, we can't directly get script instance
+		// Check if object has a script instead
+		Ref<Script> script = obj->get_script();
+		VALIDATE_ARG_CUSTOM(0, Variant::OBJECT, !script.is_valid(),
 				RTR("Not a script with an instance."));
 
-		GDScriptInstance *inst = static_cast<GDScriptInstance *>(obj->get_script_instance());
-
-		Ref<GDScript> base = inst->get_script();
+		// Note: In GDExtension, we can't cast to GDScriptInstance directly
+		// This is a limitation - we may need to handle this differently
+		// For now, we'll use the script directly
+		Ref<GDScript> base = script;
 		VALIDATE_ARG_CUSTOM(0, Variant::OBJECT, base.is_null(), RTR("Not based on a script."));
 
 		GDScript *p = base.ptr();
@@ -322,8 +326,11 @@ struct GDScriptUtilityFunctionsDefinitions {
 			return;
 		}
 
-		GDScriptInstance *inst = static_cast<GDScriptInstance *>(static_cast<Object *>(*r_ret)->get_script_instance());
-		Ref<GDScript> gd_ref = inst->get_script();
+		// In GDExtension, we can't directly get script instance
+		// Get script directly from object
+		Object *ret_obj = static_cast<Object *>(*r_ret);
+		Ref<Script> script = ret_obj->get_script();
+		Ref<GDScript> gd_ref = script;
 
 		for (KeyValue<StringName, GDScript::MemberInfo> &E : gd_ref->member_indices) {
 			if (d.has(E.key)) {
@@ -466,13 +473,13 @@ struct GDScriptUtilityFunctionsDefinitions {
 		}
 
 		bool was_type_freed = false;
-		Object *type_object = p_args[1]->get_validated_object_with_check(was_type_freed);
+		Object *type_object = get_validated_object_safe(*p_args[1], was_type_freed);
 		VALIDATE_ARG_CUSTOM(1, Variant::NIL, was_type_freed, RTR("Type argument is a previously freed instance."));
 		VALIDATE_ARG_CUSTOM(1, Variant::NIL, !type_object,
 				RTR("Invalid type argument for is_instance_of(), should be a TYPE_* constant, a class or a script."));
 
 		bool was_value_freed = false;
-		Object *value_object = p_args[0]->get_validated_object_with_check(was_value_freed);
+		Object *value_object = get_validated_object_safe(*p_args[0], was_value_freed);
 		VALIDATE_ARG_CUSTOM(0, Variant::NIL, was_value_freed, RTR("Value argument is a previously freed instance."));
 		if (!value_object) {
 			*r_ret = false;
@@ -481,21 +488,22 @@ struct GDScriptUtilityFunctionsDefinitions {
 
 		GDScriptNativeClass *native_type = Object::cast_to<GDScriptNativeClass>(type_object);
 		if (native_type) {
-			*r_ret = ClassDB::is_parent_class(value_object->get_class_name(), native_type->get_name());
+			*r_ret = ClassDB::is_parent_class(value_object->get_class(), native_type->get_name());
 			return;
 		}
 
 		Script *script_type = Object::cast_to<Script>(type_object);
 		if (script_type) {
 			bool result = false;
-			if (value_object->get_script_instance()) {
-				Script *script_ptr = value_object->get_script_instance()->get_script().ptr();
-				while (script_ptr) {
-					if (script_ptr == script_type) {
+			Ref<Script> value_script = value_object->get_script();
+			if (value_script.is_valid()) {
+				Ref<Script> script_ptr = value_script;
+				while (script_ptr.is_valid()) {
+					if (script_ptr.ptr() == script_type) {
 						result = true;
 						break;
 					}
-					script_ptr = script_ptr->get_base_script().ptr();
+					script_ptr = script_ptr->get_base_script();
 				}
 			}
 			*r_ret = result;
