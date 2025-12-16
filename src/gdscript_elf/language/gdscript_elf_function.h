@@ -64,15 +64,18 @@ class GDScriptELFFunction : public RefCounted {
 	bool has_yield = false;
 	int line = -1;
 
-	// ELF-specific: Compiled ELF binary for this function
-	PackedByteArray elf_binary;
-	bool elf_compiled = false;
+	// AST nodes for direct interpretation (replaces ELF/bytecode)
+	const GDScriptParser::FunctionNode *ast_function = nullptr;
+	const GDScriptParser::ClassNode *ast_class = nullptr;
+	
+	// ELF-specific: Compiled ELF binary for this function (disabled - preserved for future)
+	// PackedByteArray elf_binary;
+	// bool elf_compiled = false;
 
-	// Original VM bytecode (for fallback if ELF compilation fails)
-	Vector<int> code;
-	Vector<Variant> constants;
-	// LocalStack doesn't exist in GDExtension - use Vector<Variant> for stack
-	Vector<Variant> stack;
+	// Original VM bytecode (disabled - using direct AST interpretation)
+	// Vector<int> code;
+	// Vector<Variant> constants;
+	// Vector<Variant> stack;
 
 	SelfList<GDScriptELFFunction> function_list;
 
@@ -92,12 +95,19 @@ public:
 	// Main call method - executes ELF binary in sandbox
 	Variant call(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error, CallState *p_state = nullptr);
 
-	// Check if ELF compilation is available
-	bool has_elf_code() const { return elf_compiled && !elf_binary.is_empty(); }
+	// Check if AST is available for interpretation
+	bool has_ast() const { return ast_function != nullptr; }
 
-	// Get/set ELF binary
-	void set_elf_binary(const PackedByteArray &p_elf) { elf_binary = p_elf; elf_compiled = !p_elf.is_empty(); }
-	PackedByteArray get_elf_binary() const { return elf_binary; }
+	// Set AST nodes for interpretation
+	void set_ast_nodes(const GDScriptParser::FunctionNode *p_function, const GDScriptParser::ClassNode *p_class) {
+		ast_function = p_function;
+		ast_class = p_class;
+	}
+
+	// ELF binary methods (disabled - preserved for future)
+	// bool has_elf_code() const { return elf_compiled && !elf_binary.is_empty(); }
+	// void set_elf_binary(const PackedByteArray &p_elf) { elf_binary = p_elf; elf_compiled = !p_elf.is_empty(); }
+	// PackedByteArray get_elf_binary() const { return elf_binary; }
 
 	// Function metadata
 	_FORCE_INLINE_ StringName get_name() const { return name; }
@@ -110,9 +120,10 @@ public:
 	_FORCE_INLINE_ const Vector<GDScriptDataType> &get_argument_types() const { return argument_types; }
 
 private:
-	// Execute ELF binary in sandbox
-	Variant execute_elf(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error);
+	// Execute AST directly using interpreter
+	Variant execute_ast(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error);
 
-	// Fallback to VM execution if ELF is not available
-	Variant execute_vm_fallback(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error);
+	// ELF/VM execution methods (disabled - preserved for future)
+	// Variant execute_elf(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error);
+	// Variant execute_vm_fallback(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error);
 };

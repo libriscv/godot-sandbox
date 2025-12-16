@@ -1,3 +1,6 @@
+#if 0
+// AST-to-ELF compilation disabled - preserved for future reconnection
+// TODO: Re-enable when AST-to-C generation path is reconnected
 /**************************************************************************/
 /*  gdscript_ast_elf_compiler.h                                           */
 /**************************************************************************/
@@ -68,3 +71,5 @@ private:
 	// Main compilation logic
 	static Error compile_internal(const GDScriptParser::FunctionNode *p_function, const GDScriptParser::ClassNode *p_class, GDScriptAnalyzer *p_analyzer, PackedByteArray &r_elf_output);
 };
+
+#endif // #if 0 - AST-to-ELF compilation disabled

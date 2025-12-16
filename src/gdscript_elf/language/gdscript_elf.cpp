@@ -37,7 +37,8 @@
 #include "../compilation/gdscript_compiler.h"
 #include "../compilation/gdscript_function.h"
 #include "../compilation/gdscript_types.h"
-#include "../elf/gdscript_ast_elf_compiler.h"
+// TODO: Re-enable when AST-to-C generation is reconnected
+// #include "../elf/gdscript_ast_elf_compiler.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
@@ -503,7 +504,9 @@ Error GDScriptELF::_compile_to_elf() {
 		elf_func->has_yield = false; // TODO: Check if function has yield
 		elf_func->line = func_node->start_line;
 
-		// Try to compile to ELF using AST (direct approach)
+		// TODO: AST-to-ELF compilation disabled - using direct AST interpretation instead
+		// Re-enable this when AST-to-C generation is reconnected
+		/*
 		if (GDScriptASTELFCompiler::can_compile_function(func_node)) {
 			PackedByteArray elf_binary = GDScriptASTELFCompiler::compile_function_to_elf(func_node, class_node, analyzer);
 			if (!elf_binary.is_empty()) {
@@ -516,7 +519,15 @@ Error GDScriptELF::_compile_to_elf() {
 			}
 		} else {
 			// Function cannot be compiled to ELF
-			String error = GDScriptASTELFCompiler::get_last_error();
+			String error_msg = GDScriptASTELFCompiler::get_last_error();
+		*/
+		{
+			// Store AST nodes for direct interpretation
+			// (No ELF compilation - using direct AST interpretation)
+			elf_func->set_ast_nodes(func_node, class_node);
+			
+			// Note: VM bytecode storage removed - using AST interpretation only
+			// No need to copy code/constants as we're using AST directly
 			WARN_PRINT("GDScriptELF: Function '" + String(func_name) + "' cannot be compiled to ELF: " + error + ". Using VM fallback.");
 		}
 
@@ -565,8 +576,9 @@ Error GDScriptELF::_compile_to_elf() {
 		GDScriptELFFunction *elf_func = memnew(GDScriptELFFunction);
 		elf_func->name = StringName("@static_init");
 		elf_func->script = this;
-		elf_func->code = gd_func->code;
-		elf_func->constants = gd_func->constants;
+		// VM bytecode storage removed - using AST interpretation only
+		// elf_func->code = gd_func->code;
+		// elf_func->constants = gd_func->constants;
 		// stack is managed per-call in CallState, not stored in GDScriptFunction
 		if (!static_initializer) {
 			static_initializer = elf_func;

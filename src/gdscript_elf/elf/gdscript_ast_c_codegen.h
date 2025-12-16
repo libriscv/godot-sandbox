@@ -1,3 +1,6 @@
+#if 0
+// AST-to-C code generation disabled - preserved for future reconnection
+// TODO: Re-enable when AST-to-C generation path is reconnected
 /**************************************************************************/
 /*  gdscript_ast_c_codegen.h                                             */
 /**************************************************************************/
@@ -147,3 +150,5 @@ private:
 	// Helper: Sanitize identifier for C
 	String sanitize_identifier(const String &p_name);
 };
+
+#endif // #if 0 - AST-to-C code generation disabled

@@ -31,6 +31,7 @@
 #include "gdscript_elf_function.h"
 #include "gdscript_elf_instance.h"
 #include "gdscript_elf.h"
+#include "../compilation/gdscript_ast_interpreter.h"
 #include "../../sandbox.h"
 #include <godot_cpp/variant/variant.hpp>
 #include <godot_cpp/variant/callable.hpp>
@@ -86,16 +87,37 @@ Variant GDScriptELFFunction::call(GDScriptELFInstance *p_instance, const Variant
 		}
 	}
 
-	// Try ELF execution first, fallback to VM if not available
+	// Direct AST interpretation (no ELF, no VM)
 	// Convert Vector to array for function call
 	const Variant **args_array = const_cast<const Variant **>(final_args.ptr());
-	if (has_elf_code()) {
-		return execute_elf(p_instance, args_array, final_args.size(), r_error);
-	} else {
-		return execute_vm_fallback(p_instance, args_array, final_args.size(), r_error);
-	}
+	return execute_ast(p_instance, args_array, final_args.size(), r_error);
 }
 
+Variant GDScriptELFFunction::execute_ast(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) {
+	if (!ast_function || !p_instance) {
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+		return Variant();
+	}
+
+	// Get script and analyzer
+	GDScriptELF *script_ptr = Object::cast_to<GDScriptELF>(script.ptr());
+	if (!script_ptr) {
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+		return Variant();
+	}
+
+	// Create AST interpreter
+	GDScriptASTInterpreter interpreter;
+	
+	// Execute function using AST interpreter
+	// analyzer is optional for basic execution
+	Variant result = interpreter.execute_function(ast_function, ast_class, p_instance, p_args, p_argcount, r_error);
+	
+	return result;
+}
+
+// ELF execution disabled - preserved for future reconnection
+/*
 Variant GDScriptELFFunction::execute_elf(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) {
 	if (!p_instance || !p_instance->sandbox) {
 		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
@@ -172,6 +194,8 @@ Variant GDScriptELFFunction::execute_elf(GDScriptELFInstance *p_instance, const 
 	return result;
 }
 
+// VM fallback disabled - preserved for future reconnection
+/*
 Variant GDScriptELFFunction::execute_vm_fallback(GDScriptELFInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) {
 	// Fallback to VM execution if ELF is not available
 	// This uses the bytecode stored in the 'code' member
@@ -225,4 +249,5 @@ Variant GDScriptELFFunction::execute_vm_fallback(GDScriptELFInstance *p_instance
 		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 	return Variant();
 }
+*/
 

@@ -37,6 +37,7 @@
 #include "gdscript_rpc_callable.h"
 #include "gdscript_tokenizer_buffer.h"
 #include "gdscript_warning.h"
+#include "../../elf/script_instance_helper.h"
 
 #ifdef TOOLS_ENABLED
 #include "editor/gdscript_docgen.h"
@@ -267,7 +268,8 @@ Variant GDScript::_new(const Variant **p_args, int p_argcount, GDExtensionCallEr
 
 bool GDScript::can_instantiate() const {
 #ifdef TOOLS_ENABLED
-	return valid && (tool || ScriptServer::is_scripting_enabled()) && !Engine::get_singleton()->is_recovery_mode_hint();
+	// ScriptServer not available in GDExtension - assume scripting is enabled
+	return valid && (tool || true) && !Engine::get_singleton()->is_recovery_mode_hint();
 #else
 	return valid;
 #endif
@@ -303,8 +305,9 @@ struct _GDScriptMemberSort {
 
 #ifdef TOOLS_ENABLED
 
-void GDScript::_placeholder_erased(PlaceHolderScriptInstance *p_placeholder) {
-	placeholders.erase(p_placeholder);
+void GDScript::_placeholder_erased(void *p_placeholder) {
+	// PlaceHolderScriptInstance not available in GDExtension
+	// placeholders.erase(p_placeholder);
 }
 
 #endif
@@ -419,7 +422,7 @@ bool GDScript::get_property_default_value(const StringName &p_property, Variant 
 	return false;
 }
 
-ScriptInstance *GDScript::instance_create(Object *p_this) {
+void *GDScript::instance_create(Object *p_this) {
 	ERR_FAIL_COND_V_MSG(!valid, nullptr, "Script is invalid!");
 
 	GDScript *top = this;
@@ -428,11 +431,12 @@ ScriptInstance *GDScript::instance_create(Object *p_this) {
 	}
 
 	if (top->native.is_valid()) {
-		if (!ClassDB::is_parent_class(p_this->get_class_name(), top->native->get_name())) {
-			if (EngineDebugger::is_active()) {
-				GDScriptLanguage::get_singleton()->debug_break_parse(_get_debug_path(), 1, "Script inherits from native type '" + String(top->native->get_name()) + "', so it can't be assigned to an object of type: '" + p_this->get_class() + "'");
-			}
-			ERR_FAIL_V_MSG(nullptr, "Script inherits from native type '" + String(top->native->get_name()) + "', so it can't be assigned to an object of type '" + p_this->get_class() + "'" + ".");
+		// Note: get_class_name() not available in GDExtension, use get_class() instead
+		String owner_class = p_this->get_class();
+		String native_class = top->native->get_name();
+		if (!ClassDB::is_parent_class(owner_class, native_class)) {
+			// EngineDebugger not available in GDExtension
+			ERR_FAIL_V_MSG(nullptr, "Script inherits from native type '" + native_class + "', so it can't be assigned to an object of type '" + owner_class + "'" + ".");
 		}
 	}
 
@@ -440,12 +444,11 @@ ScriptInstance *GDScript::instance_create(Object *p_this) {
 	return _create_instance(nullptr, 0, p_this, unchecked_error);
 }
 
-PlaceHolderScriptInstance *GDScript::placeholder_instance_create(Object *p_this) {
+void *GDScript::placeholder_instance_create(Object *p_this) {
 #ifdef TOOLS_ENABLED
-	PlaceHolderScriptInstance *si = memnew(PlaceHolderScriptInstance(GDScriptLanguage::get_singleton(), Ref<Script>(this), p_this));
-	placeholders.insert(si);
-	_update_exports(nullptr, false, si);
-	return si;
+	// PlaceHolderScriptInstance not available in GDExtension
+	// TODO: Implement placeholder functionality if needed
+	return nullptr;
 #else
 	return nullptr;
 #endif
@@ -516,7 +519,7 @@ String GDScript::get_class_icon_path() const {
 }
 #endif
 
-bool GDScript::_update_exports(bool *r_err, bool p_recursive_call, PlaceHolderScriptInstance *p_instance_to_update, bool p_base_exports_changed) {
+bool GDScript::_update_exports(bool *r_err, bool p_recursive_call, void *p_instance_to_update, bool p_base_exports_changed) {
 #ifdef TOOLS_ENABLED
 
 	static Vector<GDScript *> base_caches;
@@ -635,7 +638,11 @@ bool GDScript::_update_exports(bool *r_err, bool p_recursive_call, PlaceHolderSc
 		_update_exports_values(values, propnames);
 
 		if (changed) {
-			for (PlaceHolderScriptInstance *E : placeholders) {
+			// PlaceHolderScriptInstance not available in GDExtension
+			// for (PlaceHolderScriptInstance *E : placeholders) {
+			// Stub: placeholders functionality disabled in GDExtension
+			if (false) {
+				void *E = nullptr; // Stub
 				E->update(propnames, values);
 			}
 		} else {
@@ -725,8 +732,25 @@ void GDScript::_static_default_init() {
 			static_variables.write[E.value.index] = default_value;
 		} else {
 			Variant default_value;
-			GDExtensionCallError err;
-			Variant::construct(type.builtin_type, default_value, nullptr, 0, err);
+			// Use helper function to initialize default value
+			// init_variant_default is static in gdscript_vm.cpp, so we'll inline the logic here
+			switch (type.builtin_type) {
+				case Variant::BOOL:
+					default_value = Variant(false);
+					break;
+				case Variant::INT:
+					default_value = Variant((int64_t)0);
+					break;
+				case Variant::FLOAT:
+					default_value = Variant(0.0);
+					break;
+				case Variant::STRING:
+					default_value = Variant(String());
+					break;
+				default:
+					default_value = Variant(); // NIL
+					break;
+			}
 			static_variables.write[E.value.index] = default_value;
 		}
 	}
@@ -823,7 +847,8 @@ Error GDScript::reload(bool p_keep_state) {
 		}
 	}
 
-	bool can_run = ScriptServer::is_scripting_enabled() || is_tool();
+	// ScriptServer not available in GDExtension, assume scripting is always enabled
+	bool can_run = true || is_tool();
 
 #ifdef TOOLS_ENABLED
 	if (p_keep_state && can_run && is_valid()) {
@@ -840,11 +865,12 @@ Error GDScript::reload(bool p_keep_state) {
 		err = parser.parse(source, path, false);
 	}
 	if (err) {
-		if (EngineDebugger::is_active()) {
+				// EngineDebugger not available in GDExtension
+				if (false) {
 			GDScriptLanguage::get_singleton()->debug_break_parse(_get_debug_path(), parser.get_errors().front()->get().line, "Parser Error: " + parser.get_errors().front()->get().message);
 		}
 		// TODO: Show all error messages.
-		_err_print_error("GDScript::reload", path.is_empty() ? "built-in" : (const char *)path.utf8().get_data(), parser.get_errors().front()->get().line, ("Parse Error: " + parser.get_errors().front()->get().message).utf8().get_data(), false, ERR_HANDLER_SCRIPT);
+				ERR_PRINT("GDScript::reload: Parse Error at line " + String::num_int64(parser.get_errors().front()->get().line) + ": " + parser.get_errors().front()->get().message);
 		reloading = false;
 		return ERR_PARSE_ERROR;
 	}
@@ -853,29 +879,32 @@ Error GDScript::reload(bool p_keep_state) {
 	err = analyzer.analyze();
 
 	if (err) {
-		if (EngineDebugger::is_active()) {
+				// EngineDebugger not available in GDExtension
+				if (false) {
 			GDScriptLanguage::get_singleton()->debug_break_parse(_get_debug_path(), parser.get_errors().front()->get().line, "Parser Error: " + parser.get_errors().front()->get().message);
 		}
 
 		const List<GDScriptParser::ParserError>::Element *e = parser.get_errors().front();
 		while (e != nullptr) {
-			_err_print_error("GDScript::reload", path.is_empty() ? "built-in" : (const char *)path.utf8().get_data(), e->get().line, ("Parse Error: " + e->get().message).utf8().get_data(), false, ERR_HANDLER_SCRIPT);
+						ERR_PRINT("GDScript::reload: Parse Error at line " + String::num_int64(e->get().line) + ": " + e->get().message);
 			e = e->next();
 		}
 		reloading = false;
 		return ERR_PARSE_ERROR;
 	}
 
-	can_run = ScriptServer::is_scripting_enabled() || parser.is_tool();
+		// ScriptServer not available in GDExtension, assume scripting is always enabled
+		can_run = true || parser.is_tool();
 
 	GDScriptCompiler compiler;
 	err = compiler.compile(&parser, this, p_keep_state);
 
 	if (err) {
 		// TODO: Provide the script function as the first argument.
-		_err_print_error("GDScript::reload", path.is_empty() ? "built-in" : (const char *)path.utf8().get_data(), compiler.get_error_line(), ("Compile Error: " + compiler.get_error()).utf8().get_data(), false, ERR_HANDLER_SCRIPT);
+		ERR_PRINT("GDScript::reload: Compile Error at line " + String::num_int64(compiler.get_error_line()) + ": " + compiler.get_error());
 		if (can_run) {
-			if (EngineDebugger::is_active()) {
+				// EngineDebugger not available in GDExtension
+				if (false) {
 				GDScriptLanguage::get_singleton()->debug_break_parse(_get_debug_path(), compiler.get_error_line(), "Parser Error: " + compiler.get_error());
 			}
 			reloading = false;
@@ -894,10 +923,13 @@ Error GDScript::reload(bool p_keep_state) {
 
 #ifdef DEBUG_ENABLED
 	for (const GDScriptWarning &warning : parser.get_warnings()) {
-		if (EngineDebugger::is_active()) {
+				// EngineDebugger not available in GDExtension
+				if (false) {
 			Vector<ScriptLanguage::StackInfo> si;
 			// TODO: Provide the script function as the first argument.
-			EngineDebugger::get_script_debugger()->send_error("GDScript::reload", get_script_path(), warning.start_line, warning.get_name(), warning.get_message(), false, ERR_HANDLER_WARNING, si);
+			// EngineDebugger not available in GDExtension
+			// EngineDebugger::get_script_debugger()->send_error(...);
+			ERR_PRINT("GDScript::reload: Warning at line " + String::num_int64(warning.start_line) + ": " + warning.get_message());
 		}
 	}
 #endif
@@ -1043,7 +1075,8 @@ bool GDScript::_set(const StringName &p_name, const Variant &p_value) {
 			if (!member->data_type.is_type(value)) {
 				const Variant *args = &p_value;
 				GDExtensionCallError err;
-				Variant::construct(member->data_type.builtin_type, value, &args, 1, err);
+				// Variant::construct not available in GDExtension, use direct assignment
+				value = p_value;
 				if (err.error != GDEXTENSION_CALL_OK || !member->data_type.is_type(value)) {
 					return false;
 				}
@@ -1320,7 +1353,8 @@ HashSet<GDScript *> GDScript::get_must_clear_dependencies() {
 	}
 
 	for (GDScript *E : dependencies) {
-		if (cant_clear.has(E) || ScriptServer::is_global_class(E->get_fully_qualified_name())) {
+		// ScriptServer not available in GDExtension
+		if (cant_clear.has(E) || false) { // || ScriptServer::is_global_class(E->get_fully_qualified_name())) {
 			continue;
 		}
 		must_clear_dependencies.insert(E);
@@ -1703,7 +1737,8 @@ bool GDScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 			if (!member->data_type.is_type(value)) {
 				const Variant *args = &p_value;
 				GDExtensionCallError err;
-				Variant::construct(member->data_type.builtin_type, value, &args, 1, err);
+				// Variant::construct not available in GDExtension, use direct assignment
+				value = p_value;
 				if (err.error != GDEXTENSION_CALL_OK || !member->data_type.is_type(value)) {
 					return false;
 				}
@@ -1730,7 +1765,8 @@ bool GDScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 				if (!member->data_type.is_type(value)) {
 					const Variant *args = &p_value;
 					GDExtensionCallError err;
-					Variant::construct(member->data_type.builtin_type, value, &args, 1, err);
+					// Variant::construct not available in GDExtension, use direct assignment
+				value = p_value;
 					if (err.error != GDEXTENSION_CALL_OK || !member->data_type.is_type(value)) {
 						return false;
 					}
@@ -1868,7 +1904,7 @@ Variant::Type GDScriptInstance::get_property_type(const StringName &p_name, bool
 	return Variant::NIL;
 }
 
-void GDScriptInstance::validate_property(PropertyInfo &p_property) const {
+void GDScriptInstance::validate_property_internal(PropertyInfo &p_property) const {
 	const GDScript *sptr = script.ptr();
 	while (sptr) {
 		if (likely(sptr->valid)) {
@@ -1889,7 +1925,145 @@ void GDScriptInstance::validate_property(PropertyInfo &p_property) const {
 	}
 }
 
-void GDScriptInstance::get_property_list(List<PropertyInfo> *p_properties) const {
+const GDExtensionPropertyInfo *GDScriptInstance::get_property_list(uint32_t *r_count) const {
+	// Convert List<PropertyInfo> to GDExtensionPropertyInfo array
+	List<PropertyInfo> properties;
+	get_property_list_internal(&properties);
+	
+	const int size = properties.size();
+	if (size == 0) {
+		*r_count = 0;
+		return nullptr;
+	}
+	
+	GDExtensionPropertyInfo *list = memnew_arr(GDExtensionPropertyInfo, size);
+	int i = 0;
+	for (const PropertyInfo &prop_info : properties) {
+		list[i] = create_property_info(prop_info);
+		i++;
+	}
+	
+	*r_count = size;
+	return list;
+}
+
+void GDScriptInstance::free_property_list(const GDExtensionPropertyInfo *p_list, uint32_t p_count) const {
+	if (!p_list) {
+		return;
+	}
+	memdelete_arr(p_list);
+}
+
+bool GDScriptInstance::validate_property(GDExtensionPropertyInfo &p_property) const {
+	// Convert GDExtensionPropertyInfo to PropertyInfo and validate
+	PropertyInfo prop_info;
+	prop_info.type = (Variant::Type)p_property.type;
+	prop_info.name = *reinterpret_cast<StringName *>(p_property.name);
+	prop_info.class_name = *reinterpret_cast<StringName *>(p_property.class_name);
+	prop_info.hint = p_property.hint;
+	prop_info.hint_string = *reinterpret_cast<String *>(p_property.hint_string);
+	prop_info.usage = p_property.usage;
+	
+	// Call internal validate_property
+	validate_property_internal(prop_info);
+	
+	// Update GDExtensionPropertyInfo with validated values
+	p_property.type = (GDExtensionVariantType)prop_info.type;
+	*(reinterpret_cast<StringName *>(p_property.name)) = prop_info.name;
+	*(reinterpret_cast<StringName *>(p_property.class_name)) = prop_info.class_name;
+	p_property.hint = prop_info.hint;
+	*(reinterpret_cast<String *>(p_property.hint_string)) = prop_info.hint_string;
+	p_property.usage = prop_info.usage;
+	
+	return true;
+}
+
+void GDScriptInstance::get_property_state(GDExtensionScriptInstancePropertyStateAdd p_add_func, void *p_userdata) {
+	// Get property state via callback
+	// TODO: Implement property state retrieval
+}
+
+const GDExtensionMethodInfo *GDScriptInstance::get_method_list(uint32_t *r_count) const {
+	List<MethodInfo> method_list;
+	get_method_list_internal(&method_list);
+	
+	const int size = method_list.size();
+	if (size == 0) {
+		*r_count = 0;
+		return nullptr;
+	}
+	
+	GDExtensionMethodInfo *list = memnew_arr(GDExtensionMethodInfo, size);
+	int i = 0;
+	for (const MethodInfo &method_info : method_list) {
+		list[i] = create_method_info(method_info);
+		i++;
+	}
+	
+	*r_count = size;
+	return list;
+}
+
+void GDScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list, uint32_t p_count) const {
+	if (!p_list) {
+		return;
+	}
+	for (uint32_t i = 0; i < p_count; i++) {
+		free_method_info(p_list[i]);
+	}
+	memdelete_arr(p_list);
+}
+
+GDExtensionInt GDScriptInstance::get_method_argument_count(const StringName &p_method, bool &r_valid) const {
+	return get_method_argument_count_internal(p_method, &r_valid);
+}
+
+void GDScriptInstance::refcount_incremented() {
+	// Handle refcount increment
+	// GDScriptInstance doesn't need special handling
+}
+
+bool GDScriptInstance::refcount_decremented() {
+	// Handle refcount decrement
+	// Return true if object should be freed
+	return false;
+}
+
+bool GDScriptInstance::is_placeholder() const {
+	return false;
+}
+
+void GDScriptInstance::property_set_fallback(const StringName &p_name, const Variant &p_value, bool *r_valid) {
+	// Fallback property set
+	if (r_valid) {
+		*r_valid = false;
+	}
+}
+
+Variant GDScriptInstance::property_get_fallback(const StringName &p_name, bool *r_valid) {
+	// Fallback property get
+	if (r_valid) {
+		*r_valid = false;
+	}
+	return Variant();
+}
+
+ScriptLanguage *GDScriptInstance::_get_language() {
+	// GDScriptLanguage is the language singleton for GDScript
+	// In GDExtension, we return the language singleton
+	return GDScriptLanguage::get_singleton();
+}
+
+void GDScriptInstance::get_property_state(GDExtensionScriptInstancePropertyStateAdd p_add_func, void *p_userdata) {
+	// Get property state via callback
+	// Iterate through all members and call the callback
+	for (const KeyValue<StringName, GDScript::MemberInfo> &E : script->member_indices) {
+		Variant value = members[E.value.index];
+		p_add_func(E.key._native_ptr(), value._native_ptr(), p_userdata);
+	}
+}
+
+void GDScriptInstance::get_property_list_internal(List<PropertyInfo> *p_properties) const {
 	// exported members, not done yet!
 
 	const GDScript *sptr = script.ptr();
@@ -2014,7 +2188,7 @@ bool GDScriptInstance::property_get_revert(const StringName &p_name, Variant &r_
 	return false;
 }
 
-void GDScriptInstance::get_method_list(List<MethodInfo> *p_list) const {
+void GDScriptInstance::get_method_list_internal(List<MethodInfo> *p_list) const {
 	const GDScript *sptr = script.ptr();
 	while (sptr) {
 		for (const KeyValue<StringName, GDScriptFunction *> &E : sptr->member_functions) {
@@ -2062,7 +2236,7 @@ void GDScriptInstance::_call_implicit_ready_recursively(GDScript *p_script) {
 		_call_implicit_ready_recursively(p_script->_base);
 	}
 	if (likely(p_script->valid) && p_script->implicit_ready) {
-		Callable::CallError err;
+		GDExtensionCallError err;
 		p_script->implicit_ready->call(this, nullptr, 0, err);
 	}
 }

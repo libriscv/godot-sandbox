@@ -48,9 +48,11 @@ set(SOURCES
 	src/gdscript_elf/compilation/gdscript_tokenizer.cpp
 	src/gdscript_elf/compilation/gdscript_utility_callable.cpp
 	src/gdscript_elf/compilation/register_types.cpp
-	src/gdscript_elf/elf/gdscript_ast_c_codegen.cpp
-	src/gdscript_elf/elf/gdscript_ast_elf_compiler.cpp
-	src/gdscript_elf/elf/gdscript_c_compiler.cpp
+	src/gdscript_elf/compilation/gdscript_ast_interpreter.cpp
+	# AST-to-C code generation disabled - preserved for future reconnection
+	# src/gdscript_elf/elf/gdscript_ast_c_codegen.cpp
+	# src/gdscript_elf/elf/gdscript_ast_elf_compiler.cpp
+	# src/gdscript_elf/elf/gdscript_c_compiler.cpp
 	src/docker.cpp
 	src/godot/script_instance.cpp
 	src/guest_variant.cpp

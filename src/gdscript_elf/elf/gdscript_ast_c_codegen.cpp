@@ -1,3 +1,6 @@
+#if 0
+// AST-to-C code generation disabled - preserved for future reconnection
+// TODO: Re-enable when AST-to-C generation path is reconnected
 /**************************************************************************/
 /*  gdscript_ast_c_codegen.cpp                                            */
 /**************************************************************************/
@@ -460,6 +463,8 @@ String GDScriptASTCCodeGenerator::get_c_variable_name(const StringName &p_name) 
 	variable_names[p_name] = sanitized;
 	return sanitized;
 }
+
+#endif // #if 0 - AST-to-C code generation disabled
 
 String GDScriptASTCCodeGenerator::generate_temp_var() {
 	return "temp_" + itos(temp_counter++);

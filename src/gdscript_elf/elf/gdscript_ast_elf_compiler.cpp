@@ -111,3 +111,5 @@ Error GDScriptASTELFCompiler::compile_internal(const GDScriptParser::FunctionNod
 
 	return OK;
 }
+
+#endif // #if 0 - AST-to-ELF compilation disabled
