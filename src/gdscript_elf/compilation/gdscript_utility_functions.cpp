@@ -273,9 +273,9 @@ struct GDScriptUtilityFunctionsDefinitions {
 		String path = p->get_script_path();
 		Vector<StringName> sname;
 
-		while (p->_owner) {
+		while (p->_script_owner) {
 			sname.push_back(p->local_name);
-			p = p->_owner;
+			p = p->_script_owner;
 		}
 		sname.reverse();
 

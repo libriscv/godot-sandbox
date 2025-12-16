@@ -383,7 +383,7 @@ GDScriptCodeGenerator::Address GDScriptCompiler::_parse_expression(CodeGen &code
 							}
 						}
 
-						owner = owner->_owner;
+						owner = owner->_script_owner;
 					}
 				} break;
 				case GDScriptParser::IdentifierNode::STATIC_VARIABLE: {
@@ -3163,7 +3163,7 @@ void GDScriptCompiler::make_scripts(GDScript *p_script, const GDScriptParser::Cl
 			subclass.instantiate();
 		}
 
-		subclass->_owner = p_script;
+		subclass->_script_owner = p_script;
 		subclass->path = p_script->path;
 		p_script->subclasses.insert(name, subclass);
 
@@ -3312,7 +3312,7 @@ Error GDScriptCompiler::compile(const GDScriptParser *p_parser, GDScript *p_scri
 	// Create scripts for subclasses beforehand so they can be referenced
 	make_scripts(p_script, root, p_keep_state);
 
-	main_script->_owner = nullptr;
+	main_script->_script_owner = nullptr;
 	Error err = _prepare_compilation(main_script, parser->get_tree(), p_keep_state);
 
 	if (err) {

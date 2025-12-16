@@ -466,6 +466,7 @@ private:
 	friend class GDScriptBytecodeCCodeGenerator;
 	friend class GDScriptBytecodeELFCompiler;
 	friend class GDScriptFunctionWrapper;
+	friend class GDScriptELF; // For accessing code and constants
 
 	StringName name;
 	StringName source;

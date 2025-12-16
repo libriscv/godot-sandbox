@@ -478,8 +478,8 @@ void GDScript::_update_exports_values(HashMap<StringName, Variant> &values, List
 
 void GDScript::_add_doc(const DocData::ClassDoc &p_doc) {
 	doc_class_name = p_doc.name;
-	if (_owner) { // Only the top-level class stores doc info.
-		_owner->_add_doc(p_doc);
+	if (_script_owner) { // Only the top-level class stores doc info.
+		_script_owner->_add_doc(p_doc);
 	} else { // Remove old docs, add new.
 		for (int i = 0; i < docs.size(); i++) {
 			if (docs[i].name == p_doc.name) {
@@ -1219,9 +1219,9 @@ GDScript *GDScript::find_class(const String &p_qualified_name) {
 	} else if (HashMap<StringName, Ref<GDScript>>::Iterator E = subclasses.find(first)) {
 		class_names = p_qualified_name.split("::");
 		result = E->value.ptr();
-	} else if (_owner != nullptr) {
+	} else if (_script_owner != nullptr) {
 		// Check parent scope.
-		return _owner->find_class(p_qualified_name);
+		return _script_owner->find_class(p_qualified_name);
 	}
 
 	// Starts at index 1 because index 0 was handled above.
@@ -1249,8 +1249,8 @@ bool GDScript::has_class(const GDScript *p_script) {
 
 GDScript *GDScript::get_root_script() {
 	GDScript *result = this;
-	while (result->_owner) {
-		result = result->_owner;
+	while (result->_script_owner) {
+		result = result->_script_owner;
 	}
 	return result;
 }
@@ -1436,7 +1436,7 @@ void GDScript::_save_orphaned_subclasses(ClearData *p_clear_data) {
 	Vector<ClassRefWithName> weak_subclasses;
 	// collect subclasses ObjectID and name
 	for (KeyValue<StringName, Ref<GDScript>> &E : subclasses) {
-		E.value->_owner = nullptr; //bye, you are no longer owned cause I died
+		E.value->_script_owner = nullptr; //bye, you are no longer owned cause I died
 		ClassRefWithName subclass;
 		subclass.id = E.value->get_instance_id();
 		subclass.fully_qualified_name = E.value->fully_qualified_name;
@@ -1610,7 +1610,7 @@ void GDScript::clear(ClearData *p_clear_data) {
 
 #ifdef TOOLS_ENABLED
 	// Clearing inner class doc, script doc only cleared when the script source deleted.
-	if (_owner) {
+	if (_script_owner) {
 		_clear_doc();
 	}
 #endif

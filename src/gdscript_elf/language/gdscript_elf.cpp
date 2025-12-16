@@ -53,7 +53,6 @@ GDScriptELF::GDScriptELF() : script_list(this) {
 	tool = false;
 	reloading = false;
 	is_abstract_flag = false;
-	subclass_count = 0;
 	destructing = false;
 	clearing = false;
 	path_valid = false;
@@ -195,7 +194,7 @@ Dictionary GDScriptELF::get_method_info(const StringName &p_method) const {
 	MethodInfo info;
 	info.name = p_method;
 	GDScriptDataType return_type = func->get_return_type();
-	info.return_val.type = return_type.has_type ? Variant::NIL : Variant::NIL; // TODO: Convert return type
+	info.return_val.type = return_type.has_type() ? Variant::NIL : Variant::NIL; // TODO: Convert return type
 	// MethodInfo doesn't have argument_count, use arguments.size() instead
 
 	const Vector<GDScriptDataType> &arg_types = func->get_argument_types();
@@ -213,7 +212,7 @@ void GDScriptELF::get_script_method_list(List<MethodInfo> *p_list) const {
 		MethodInfo info;
 		info.name = E.key;
 		GDScriptDataType return_type = E.value->get_return_type();
-		info.return_val.type = return_type.has_type ? Variant::NIL : Variant::NIL; // TODO: Convert return type
+		info.return_val.type = return_type.has_type() ? Variant::NIL : Variant::NIL; // TODO: Convert return type
 		// MethodInfo doesn't have argument_count, populate arguments instead
 		for (int i = 0; i < E.value->get_argument_types().size(); i++) {
 			PropertyInfo arg_info;
@@ -495,7 +494,7 @@ Error GDScriptELF::_compile_to_elf() {
 		// We'll need to extract these through public APIs or store them differently
 		// For now, set defaults and extract what we can
 		elf_func->default_argument_count = 0; // TODO: Get from GDScriptFunction public API
-		elf_func->is_static = gd_function->is_static;
+		elf_func->is_static = gd_function->is_static();
 		elf_func->is_vararg = gd_function->is_vararg();
 		elf_func->has_yield = false; // TODO: Check if function has yield
 		elf_func->line = -1; // TODO: Get line number from function
@@ -559,7 +558,8 @@ Error GDScriptELF::_compile_to_elf() {
 	}
 
 	if (temp_script->get_static_initializer()) {
-		GDScriptFunction *gd_func = temp_script->get_static_initializer();
+		const GDScriptFunction *gd_func_const = temp_script->get_static_initializer();
+		GDScriptFunction *gd_func = const_cast<GDScriptFunction *>(gd_func_const); // Safe: we're friends
 		GDScriptELFFunction *elf_func = memnew(GDScriptELFFunction);
 		elf_func->name = StringName("@static_init");
 		elf_func->script = this;

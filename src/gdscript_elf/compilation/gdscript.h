@@ -101,12 +101,15 @@ class GDScript : public Script {
 	friend class GDScriptLambdaSelfCallable;
 	friend class GDScriptLanguage;
 	friend struct GDScriptUtilityFunctionsDefinitions;
+	friend class GDScriptELF; // For accessing MemberInfo
 
 	Ref<GDScriptNativeClass> native;
 	Ref<GDScript> base;
 	GDScript *_base = nullptr; //fast pointer access
-	GDScript *_owner = nullptr; //for subclasses
 
+	GDScript *_script_owner = nullptr; //for subclasses (renamed to avoid collision with Wrapped::_owner)
+
+private:
 	// Members are just indices to the instantiated script.
 	HashMap<StringName, MemberInfo> member_indices; // Includes member info of all base GDScript classes.
 	HashSet<StringName> members; // Only members of the current class.
@@ -265,7 +268,7 @@ public:
 	GDScript *find_class(const String &p_qualified_name);
 	bool has_class(const GDScript *p_script);
 	GDScript *get_root_script();
-	bool is_root_script() const { return _owner == nullptr; }
+	bool is_root_script() const { return _script_owner == nullptr; }
 	String get_fully_qualified_name() const { return fully_qualified_name; }
 	const HashMap<StringName, Ref<GDScript>> &get_subclasses() const { return subclasses; }
 	const HashMap<StringName, Variant> &get_constants() const { return constants; }
