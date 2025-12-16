@@ -33,6 +33,10 @@
 #include "gdscript_lambda_callable.h"
 #include "gdscript_gdextension_helpers.h"
 
+#include <godot_cpp/gdextension/gdextension_interface.h>
+
+using namespace godot;
+
 // Note: os.h may need special handling
 // #include "core/os/os.h"
 
@@ -140,12 +144,125 @@ Variant GDScriptFunction::_get_default_variant_for_data_type(const GDScriptDataT
 
 			return dict;
 		} else {
-			Callable::CallError ce;
+			// Create default Variant for builtin type
+			// In GDExtension, we use Variant constructors directly
 			Variant variant;
-			Variant::construct(p_data_type.builtin_type, variant, nullptr, 0, ce);
-
-			ERR_FAIL_COND_V(ce.error != Callable::CallError::CALL_OK, Variant());
-
+			switch (p_data_type.builtin_type) {
+				case Variant::BOOL:
+					variant = Variant(false);
+					break;
+				case Variant::INT:
+					variant = Variant((int64_t)0);
+					break;
+				case Variant::FLOAT:
+					variant = Variant(0.0);
+					break;
+				case Variant::STRING:
+					variant = Variant(String());
+					break;
+				case Variant::VECTOR2:
+					variant = Variant(Vector2());
+					break;
+				case Variant::VECTOR2I:
+					variant = Variant(Vector2i());
+					break;
+				case Variant::RECT2:
+					variant = Variant(Rect2());
+					break;
+				case Variant::RECT2I:
+					variant = Variant(Rect2i());
+					break;
+				case Variant::VECTOR3:
+					variant = Variant(Vector3());
+					break;
+				case Variant::VECTOR3I:
+					variant = Variant(Vector3i());
+					break;
+				case Variant::TRANSFORM2D:
+					variant = Variant(Transform2D());
+					break;
+				case Variant::VECTOR4:
+					variant = Variant(Vector4());
+					break;
+				case Variant::VECTOR4I:
+					variant = Variant(Vector4i());
+					break;
+				case Variant::PLANE:
+					variant = Variant(Plane());
+					break;
+				case Variant::QUATERNION:
+					variant = Variant(Quaternion());
+					break;
+				case Variant::AABB:
+					variant = Variant(AABB());
+					break;
+				case Variant::BASIS:
+					variant = Variant(Basis());
+					break;
+				case Variant::TRANSFORM3D:
+					variant = Variant(Transform3D());
+					break;
+				case Variant::PROJECTION:
+					variant = Variant(Projection());
+					break;
+				case Variant::COLOR:
+					variant = Variant(Color());
+					break;
+				case Variant::STRING_NAME:
+					variant = Variant(StringName());
+					break;
+				case Variant::NODE_PATH:
+					variant = Variant(NodePath());
+					break;
+				case Variant::RID:
+					variant = Variant(RID());
+					break;
+				case Variant::CALLABLE:
+					variant = Variant(Callable());
+					break;
+				case Variant::SIGNAL:
+					variant = Variant(Signal());
+					break;
+				case Variant::DICTIONARY:
+					variant = Variant(Dictionary());
+					break;
+				case Variant::ARRAY:
+					variant = Variant(Array());
+					break;
+				case Variant::PACKED_BYTE_ARRAY:
+					variant = Variant(PackedByteArray());
+					break;
+				case Variant::PACKED_INT32_ARRAY:
+					variant = Variant(PackedInt32Array());
+					break;
+				case Variant::PACKED_INT64_ARRAY:
+					variant = Variant(PackedInt64Array());
+					break;
+				case Variant::PACKED_FLOAT32_ARRAY:
+					variant = Variant(PackedFloat32Array());
+					break;
+				case Variant::PACKED_FLOAT64_ARRAY:
+					variant = Variant(PackedFloat64Array());
+					break;
+				case Variant::PACKED_STRING_ARRAY:
+					variant = Variant(PackedStringArray());
+					break;
+				case Variant::PACKED_VECTOR2_ARRAY:
+					variant = Variant(PackedVector2Array());
+					break;
+				case Variant::PACKED_VECTOR3_ARRAY:
+					variant = Variant(PackedVector3Array());
+					break;
+				case Variant::PACKED_COLOR_ARRAY:
+					variant = Variant(PackedColorArray());
+					break;
+				case Variant::PACKED_VECTOR4_ARRAY:
+					variant = Variant(PackedVector4Array());
+					break;
+				default:
+					variant = Variant(); // NIL
+					break;
+			}
 			return variant;
 		}
 	}
@@ -153,16 +270,16 @@ Variant GDScriptFunction::_get_default_variant_for_data_type(const GDScriptDataT
 	return Variant();
 }
 
-String GDScriptFunction::_get_call_error(const String &p_where, const Variant **p_argptrs, int p_argcount, const Variant &p_ret, const Callable::CallError &p_err) const {
+String GDScriptFunction::_get_call_error(const String &p_where, const Variant **p_argptrs, int p_argcount, const Variant &p_ret, const GDExtensionCallError &p_err) const {
 	switch (p_err.error) {
-		case Callable::CallError::CALL_OK:
+		case GDEXTENSION_CALL_OK:
 			return String();
-		case Callable::CallError::CALL_ERROR_INVALID_METHOD:
+		case GDEXTENSION_CALL_ERROR_INVALID_METHOD:
 			if (p_ret.get_type() == Variant::STRING && !p_ret.operator String().is_empty()) {
 				return "Invalid call " + p_where + ": " + p_ret.operator String();
 			}
 			return "Invalid call. Nonexistent " + p_where + ".";
-		case Callable::CallError::CALL_ERROR_INVALID_ARGUMENT:
+		case GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT:
 			ERR_FAIL_INDEX_V_MSG(p_err.argument, p_argcount, "Bug: Invalid call error argument index.", "Bug: Invalid call error argument index.");
 			ERR_FAIL_NULL_V_MSG(p_argptrs[p_err.argument], "Bug: Argument is null pointer.", "Bug: Argument is null pointer.");
 			// Handle the Object to Object case separately as we don't have further class details.
@@ -178,22 +295,23 @@ String GDScriptFunction::_get_call_error(const String &p_where, const Variant **
 			}
 #endif // DEBUG_ENABLED
 			return "Invalid type in " + p_where + ". Cannot convert argument " + itos(p_err.argument + 1) + " from " + Variant::get_type_name(p_argptrs[p_err.argument]->get_type()) + " to " + Variant::get_type_name(Variant::Type(p_err.expected)) + ".";
-		case Callable::CallError::CALL_ERROR_TOO_MANY_ARGUMENTS:
-		case Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS:
+		case GDEXTENSION_CALL_ERROR_TOO_MANY_ARGUMENTS:
+		case GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS:
 			return "Invalid call to " + p_where + ". Expected " + itos(p_err.expected) + " argument(s).";
-		case Callable::CallError::CALL_ERROR_INSTANCE_IS_NULL:
+		case GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL:
 			return "Attempt to call " + p_where + " on a null instance.";
-		case Callable::CallError::CALL_ERROR_METHOD_NOT_CONST:
+		case GDEXTENSION_CALL_ERROR_METHOD_NOT_CONST:
 			return "Attempt to call " + p_where + " on a const instance.";
 	}
 	return "Bug: Invalid call error code " + itos(p_err.error) + ".";
 }
 
-String GDScriptFunction::_get_callable_call_error(const String &p_where, const Callable &p_callable, const Variant **p_argptrs, int p_argcount, const Variant &p_ret, const Callable::CallError &p_err) const {
+String GDScriptFunction::_get_callable_call_error(const String &p_where, const Callable &p_callable, const Variant **p_argptrs, int p_argcount, const Variant &p_ret, const GDExtensionCallError &p_err) const {
+	// In GDExtension, get_bound_arguments_ref and get_unbound_arguments_count don't exist
+	// For now, just call _get_call_error directly without handling bound arguments
+	// TODO: Implement proper bound arguments handling if needed
+	int args_unbound = 0;
 	Vector<Variant> binds;
-	p_callable.get_bound_arguments_ref(binds);
-
-	int args_unbound = p_callable.get_unbound_arguments_count();
 
 	if (p_argcount - args_unbound < 0) {
 		return "Callable unbinds " + itos(args_unbound) + " arguments, but called with " + itos(p_argcount);
@@ -210,46 +328,166 @@ String GDScriptFunction::_get_callable_call_error(const String &p_where, const C
 	}
 }
 
+// Helper function to initialize a Variant to its default value
+static void init_variant_default(Variant *p_var, Variant::Type p_type) {
+	switch (p_type) {
+		case Variant::BOOL:
+			*p_var = Variant(false);
+			break;
+		case Variant::INT:
+			*p_var = Variant((int64_t)0);
+			break;
+		case Variant::FLOAT:
+			*p_var = Variant(0.0);
+			break;
+		case Variant::STRING:
+			*p_var = Variant(String());
+			break;
+		case Variant::VECTOR2:
+			*p_var = Variant(Vector2());
+			break;
+		case Variant::VECTOR2I:
+			*p_var = Variant(Vector2i());
+			break;
+		case Variant::RECT2:
+			*p_var = Variant(Rect2());
+			break;
+		case Variant::RECT2I:
+			*p_var = Variant(Rect2i());
+			break;
+		case Variant::VECTOR3:
+			*p_var = Variant(Vector3());
+			break;
+		case Variant::VECTOR3I:
+			*p_var = Variant(Vector3i());
+			break;
+		case Variant::TRANSFORM2D:
+			*p_var = Variant(Transform2D());
+			break;
+		case Variant::VECTOR4:
+			*p_var = Variant(Vector4());
+			break;
+		case Variant::VECTOR4I:
+			*p_var = Variant(Vector4i());
+			break;
+		case Variant::PLANE:
+			*p_var = Variant(Plane());
+			break;
+		case Variant::QUATERNION:
+			*p_var = Variant(Quaternion());
+			break;
+		case Variant::AABB:
+			*p_var = Variant(AABB());
+			break;
+		case Variant::BASIS:
+			*p_var = Variant(Basis());
+			break;
+		case Variant::TRANSFORM3D:
+			*p_var = Variant(Transform3D());
+			break;
+		case Variant::PROJECTION:
+			*p_var = Variant(Projection());
+			break;
+		case Variant::COLOR:
+			*p_var = Variant(Color());
+			break;
+		case Variant::STRING_NAME:
+			*p_var = Variant(StringName());
+			break;
+		case Variant::NODE_PATH:
+			*p_var = Variant(NodePath());
+			break;
+		case Variant::RID:
+			*p_var = Variant(RID());
+			break;
+		case Variant::CALLABLE:
+			*p_var = Variant(Callable());
+			break;
+		case Variant::SIGNAL:
+			*p_var = Variant(Signal());
+			break;
+		case Variant::DICTIONARY:
+			*p_var = Variant(Dictionary());
+			break;
+		case Variant::ARRAY:
+			*p_var = Variant(Array());
+			break;
+		case Variant::PACKED_BYTE_ARRAY:
+			*p_var = Variant(PackedByteArray());
+			break;
+		case Variant::PACKED_INT32_ARRAY:
+			*p_var = Variant(PackedInt32Array());
+			break;
+		case Variant::PACKED_INT64_ARRAY:
+			*p_var = Variant(PackedInt64Array());
+			break;
+		case Variant::PACKED_FLOAT32_ARRAY:
+			*p_var = Variant(PackedFloat32Array());
+			break;
+		case Variant::PACKED_FLOAT64_ARRAY:
+			*p_var = Variant(PackedFloat64Array());
+			break;
+		case Variant::PACKED_STRING_ARRAY:
+			*p_var = Variant(PackedStringArray());
+			break;
+		case Variant::PACKED_VECTOR2_ARRAY:
+			*p_var = Variant(PackedVector2Array());
+			break;
+		case Variant::PACKED_VECTOR3_ARRAY:
+			*p_var = Variant(PackedVector3Array());
+			break;
+		case Variant::PACKED_COLOR_ARRAY:
+			*p_var = Variant(PackedColorArray());
+			break;
+		case Variant::PACKED_VECTOR4_ARRAY:
+			*p_var = Variant(PackedVector4Array());
+			break;
+		default:
+			*p_var = Variant(); // NIL
+			break;
+	}
+}
+
 void (*type_init_function_table[])(Variant *) = {
 	nullptr, // NIL (shouldn't be called).
-	&VariantInitializer<bool>::init, // BOOL.
-	&VariantInitializer<int64_t>::init, // INT.
-	&VariantInitializer<double>::init, // FLOAT.
-	&VariantInitializer<String>::init, // STRING.
-	&VariantInitializer<Vector2>::init, // VECTOR2.
-	&VariantInitializer<Vector2i>::init, // VECTOR2I.
-	&VariantInitializer<Rect2>::init, // RECT2.
-	&VariantInitializer<Rect2i>::init, // RECT2I.
-	&VariantInitializer<Vector3>::init, // VECTOR3.
-	&VariantInitializer<Vector3i>::init, // VECTOR3I.
-	&VariantInitializer<Transform2D>::init, // TRANSFORM2D.
-	&VariantInitializer<Vector4>::init, // VECTOR4.
-	&VariantInitializer<Vector4i>::init, // VECTOR4I.
-	&VariantInitializer<Plane>::init, // PLANE.
-	&VariantInitializer<Quaternion>::init, // QUATERNION.
-	&VariantInitializer<AABB>::init, // AABB.
-	&VariantInitializer<Basis>::init, // BASIS.
-	&VariantInitializer<Transform3D>::init, // TRANSFORM3D.
-	&VariantInitializer<Projection>::init, // PROJECTION.
-	&VariantInitializer<Color>::init, // COLOR.
-	&VariantInitializer<StringName>::init, // STRING_NAME.
-	&VariantInitializer<NodePath>::init, // NODE_PATH.
-	&VariantInitializer<RID>::init, // RID.
-	&VariantInitializer<Object *>::init, // OBJECT.
-	&VariantInitializer<Callable>::init, // CALLABLE.
-	&VariantInitializer<Signal>::init, // SIGNAL.
-	&VariantInitializer<Dictionary>::init, // DICTIONARY.
-	&VariantInitializer<Array>::init, // ARRAY.
-	&VariantInitializer<PackedByteArray>::init, // PACKED_BYTE_ARRAY.
-	&VariantInitializer<PackedInt32Array>::init, // PACKED_INT32_ARRAY.
-	&VariantInitializer<PackedInt64Array>::init, // PACKED_INT64_ARRAY.
-	&VariantInitializer<PackedFloat32Array>::init, // PACKED_FLOAT32_ARRAY.
-	&VariantInitializer<PackedFloat64Array>::init, // PACKED_FLOAT64_ARRAY.
-	&VariantInitializer<PackedStringArray>::init, // PACKED_STRING_ARRAY.
-	&VariantInitializer<PackedVector2Array>::init, // PACKED_VECTOR2_ARRAY.
-	&VariantInitializer<PackedVector3Array>::init, // PACKED_VECTOR3_ARRAY.
-	&VariantInitializer<PackedColorArray>::init, // PACKED_COLOR_ARRAY.
-	&VariantInitializer<PackedVector4Array>::init, // PACKED_VECTOR4_ARRAY.
+	[](Variant *v) { init_variant_default(v, Variant::BOOL); }, // BOOL.
+	[](Variant *v) { init_variant_default(v, Variant::INT); }, // INT.
+	[](Variant *v) { init_variant_default(v, Variant::FLOAT); }, // FLOAT.
+	[](Variant *v) { init_variant_default(v, Variant::STRING); }, // STRING.
+	[](Variant *v) { init_variant_default(v, Variant::VECTOR2); }, // VECTOR2.
+	[](Variant *v) { init_variant_default(v, Variant::VECTOR2I); }, // VECTOR2I.
+	[](Variant *v) { init_variant_default(v, Variant::RECT2); }, // RECT2.
+	[](Variant *v) { init_variant_default(v, Variant::RECT2I); }, // RECT2I.
+	[](Variant *v) { init_variant_default(v, Variant::VECTOR3); }, // VECTOR3.
+	[](Variant *v) { init_variant_default(v, Variant::VECTOR3I); }, // VECTOR3I.
+	[](Variant *v) { init_variant_default(v, Variant::TRANSFORM2D); }, // TRANSFORM2D.
+	[](Variant *v) { init_variant_default(v, Variant::VECTOR4); }, // VECTOR4.
+	[](Variant *v) { init_variant_default(v, Variant::VECTOR4I); }, // VECTOR4I.
+	[](Variant *v) { init_variant_default(v, Variant::PLANE); }, // PLANE.
+	[](Variant *v) { init_variant_default(v, Variant::QUATERNION); }, // QUATERNION.
+	[](Variant *v) { init_variant_default(v, Variant::AABB); }, // AABB.
+	[](Variant *v) { init_variant_default(v, Variant::BASIS); }, // BASIS.
+	[](Variant *v) { init_variant_default(v, Variant::TRANSFORM3D); }, // TRANSFORM3D.
+	[](Variant *v) { init_variant_default(v, Variant::PROJECTION); }, // PROJECTION.
+	[](Variant *v) { init_variant_default(v, Variant::COLOR); }, // COLOR.
+	[](Variant *v) { init_variant_default(v, Variant::STRING_NAME); }, // STRING_NAME.
+	[](Variant *v) { init_variant_default(v, Variant::NODE_PATH); }, // NODE_PATH.
+	[](Variant *v) { init_variant_default(v, Variant::RID); }, // RID.
+	[](Variant *v) { init_variant_default(v, Variant::OBJECT); }, // OBJECT.
+	[](Variant *v) { init_variant_default(v, Variant::CALLABLE); }, // CALLABLE.
+	[](Variant *v) { init_variant_default(v, Variant::SIGNAL); }, // SIGNAL.
+	[](Variant *v) { init_variant_default(v, Variant::DICTIONARY); }, // DICTIONARY.
+	[](Variant *v) { init_variant_default(v, Variant::ARRAY); }, // ARRAY.
+	[](Variant *v) { init_variant_default(v, Variant::PACKED_BYTE_ARRAY); }, // PACKED_BYTE_ARRAY.
+	[](Variant *v) { init_variant_default(v, Variant::PACKED_INT32_ARRAY); }, // PACKED_INT32_ARRAY.
+	[](Variant *v) { init_variant_default(v, Variant::PACKED_INT64_ARRAY); }, // PACKED_INT64_ARRAY.
+	[](Variant *v) { init_variant_default(v, Variant::PACKED_FLOAT32_ARRAY); }, // PACKED_FLOAT32_ARRAY.
+	[](Variant *v) { init_variant_default(v, Variant::PACKED_FLOAT64_ARRAY); }, // PACKED_FLOAT64_ARRAY.
+	[](Variant *v) { init_variant_default(v, Variant::PACKED_STRING_ARRAY); }, // PACKED_STRING_ARRAY.
+	[](Variant *v) { init_variant_default(v, Variant::PACKED_VECTOR2_ARRAY); }, // PACKED_VECTOR2_ARRAY.
+	[](Variant *v) { init_variant_default(v, Variant::PACKED_VECTOR3_ARRAY); }, // PACKED_VECTOR3_ARRAY.
+	[](Variant *v) { init_variant_default(v, Variant::PACKED_COLOR_ARRAY); }, // PACKED_COLOR_ARRAY.
+	[](Variant *v) { init_variant_default(v, Variant::PACKED_VECTOR4_ARRAY); }, // PACKED_VECTOR4_ARRAY.
 };
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -497,14 +735,14 @@ void (*type_init_function_table[])(Variant *) = {
 #define METHOD_CALL_ON_NULL_VALUE_ERROR(method_pointer) "Cannot call method '" + (method_pointer)->get_name() + "' on a null value."
 #define METHOD_CALL_ON_FREED_INSTANCE_ERROR(method_pointer) "Cannot call method '" + (method_pointer)->get_name() + "' on a previously freed instance."
 
-Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_args, int p_argcount, Callable::CallError &r_err, CallState *p_state) {
+Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_args, int p_argcount, GDExtensionCallError &r_err, CallState *p_state) {
 	OPCODES_TABLE;
 
 	if (!_code_ptr) {
 		return _get_default_variant_for_data_type(return_type);
 	}
 
-	r_err.error = Callable::CallError::CALL_OK;
+		r_err.error = GDEXTENSION_CALL_OK;
 
 	static thread_local int call_depth = 0;
 	if (unlikely(++call_depth > MAX_CALL_DEPTH)) {
@@ -556,13 +794,13 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 		if (p_argcount != _argument_count) {
 			if (p_argcount > _argument_count) {
 				if (!is_vararg()) {
-					r_err.error = Callable::CallError::CALL_ERROR_TOO_MANY_ARGUMENTS;
+					r_err.error = GDEXTENSION_CALL_ERROR_TOO_MANY_ARGUMENTS;
 					r_err.expected = _argument_count;
 					call_depth--;
 					return _get_default_variant_for_data_type(return_type);
 				}
 			} else if (p_argcount < _argument_count - _default_arg_count) {
-				r_err.error = Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS;
+				r_err.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
 				r_err.expected = _argument_count - _default_arg_count;
 				call_depth--;
 				return _get_default_variant_for_data_type(return_type);
@@ -589,7 +827,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				continue;
 			}
 			if (!argument_types[i].is_type(*p_args[i], true)) {
-				r_err.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+				r_err.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
 				r_err.argument = i;
 				r_err.expected = argument_types[i].builtin_type;
 				call_depth--;
@@ -609,7 +847,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					Variant variant;
 					Variant::construct(argument_types[i].builtin_type, variant, &p_args[i], 1, r_err);
 					if (unlikely(r_err.error)) {
-						r_err.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+						r_err.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
 						r_err.argument = i;
 						r_err.expected = argument_types[i].builtin_type;
 						call_depth--;
@@ -1416,7 +1654,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 #ifdef DEBUG_ENABLED
 					if (Variant::can_convert_strict(src->get_type(), var_type)) {
 #endif // DEBUG_ENABLED
-						Callable::CallError ce;
+						GDExtensionCallError ce;
 						Variant::construct(var_type, *dst, const_cast<const Variant **>(&src), 1, ce);
 					} else {
 #ifdef DEBUG_ENABLED
@@ -1621,11 +1859,11 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				}
 #endif
 
-				Callable::CallError err;
+				GDExtensionCallError err;
 				Variant::construct(to_type, *dst, (const Variant **)&src, 1, err);
 
 #ifdef DEBUG_ENABLED
-				if (err.error != Callable::CallError::CALL_OK) {
+				if (err.error != GDEXTENSION_CALL_OK) {
 					err_text = "Invalid cast: could not convert value to '" + Variant::get_type_name(to_type) + "'.";
 					OPCODE_BREAK;
 				}
@@ -1730,11 +1968,11 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 
 				GET_INSTRUCTION_ARG(dst, argc);
 
-				Callable::CallError err;
+				GDExtensionCallError err;
 				Variant::construct(t, *dst, (const Variant **)argptrs, argc, err);
 
 #ifdef DEBUG_ENABLED
-				if (err.error != Callable::CallError::CALL_OK) {
+				if (err.error != GDEXTENSION_CALL_OK) {
 					err_text = _get_call_error("'" + Variant::get_type_name(t) + "' constructor", (const Variant **)argptrs, argc, *dst, err);
 					OPCODE_BREAK;
 				}
@@ -1915,7 +2153,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 #endif
 
 				Variant temp_ret;
-				Callable::CallError err;
+				GDExtensionCallError err;
 				if (call_ret) {
 					GET_INSTRUCTION_ARG(ret, argc + 1);
 					base->callp(*methodname, (const Variant **)argptrs, argc, temp_ret, err);
@@ -1960,7 +2198,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					function_call_time += t_taken;
 				}
 
-				if (err.error != Callable::CallError::CALL_OK) {
+				if (err.error != GDEXTENSION_CALL_OK) {
 					String methodstr = *methodname;
 					String basestr = _get_var_type(base);
 					bool is_callable = false;
@@ -1968,7 +2206,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					if (methodstr == "call") {
 						if (argc >= 1 && base->get_type() != Variant::CALLABLE) {
 							methodstr = String(*argptrs[0]) + " (via call)";
-							if (err.error == Callable::CallError::CALL_ERROR_INVALID_ARGUMENT) {
+							if (err.error == GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT) {
 								err.argument += 1;
 							}
 						} else {
@@ -1976,7 +2214,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 							is_callable = true;
 						}
 					} else if (methodstr == "free") {
-						if (err.error == Callable::CallError::CALL_ERROR_INVALID_METHOD) {
+						if (err.error == GDEXTENSION_CALL_ERROR_INVALID_METHOD) {
 							if (base->is_ref_counted()) {
 								err_text = "Attempted to free a RefCounted object.";
 								OPCODE_BREAK;
@@ -1988,7 +2226,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					} else if (methodstr == "call_recursive" && basestr == "TreeItem") {
 						if (argc >= 1) {
 							methodstr = String(*argptrs[0]) + " (via TreeItem.call_recursive)";
-							if (err.error == Callable::CallError::CALL_ERROR_INVALID_ARGUMENT) {
+							if (err.error == GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT) {
 								err.argument += 1;
 							}
 						}
@@ -2045,7 +2283,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 #endif
 
 				Variant temp_ret;
-				Callable::CallError err;
+				GDExtensionCallError err;
 				if (call_ret) {
 					GET_INSTRUCTION_ARG(ret, argc + 1);
 					temp_ret = method->call(base_obj, (const Variant **)argptrs, argc, err);
@@ -2062,19 +2300,19 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					function_call_time += t_taken;
 				}
 
-				if (err.error != Callable::CallError::CALL_OK) {
+				if (err.error != GDEXTENSION_CALL_OK) {
 					String methodstr = method->get_name();
 					String basestr = _get_var_type(base);
 
 					if (methodstr == "call") {
 						if (argc >= 1) {
 							methodstr = String(*argptrs[0]) + " (via call)";
-							if (err.error == Callable::CallError::CALL_ERROR_INVALID_ARGUMENT) {
+							if (err.error == GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT) {
 								err.argument += 1;
 							}
 						}
 					} else if (methodstr == "free") {
-						if (err.error == Callable::CallError::CALL_ERROR_INVALID_METHOD) {
+						if (err.error == GDEXTENSION_CALL_ERROR_INVALID_METHOD) {
 							if (base->is_ref_counted()) {
 								err_text = "Attempted to free a RefCounted object.";
 								OPCODE_BREAK;
@@ -2112,11 +2350,11 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 
 				const Variant **argptrs = const_cast<const Variant **>(instruction_args);
 
-				Callable::CallError err;
+				GDExtensionCallError err;
 				Variant::call_static(builtin_type, *methodname, argptrs, argc, *ret, err);
 
 #ifdef DEBUG_ENABLED
-				if (err.error != Callable::CallError::CALL_OK) {
+				if (err.error != GDEXTENSION_CALL_OK) {
 					err_text = _get_call_error("static function '" + methodname->operator String() + "' in type '" + Variant::get_type_name(builtin_type) + "'", argptrs, argc, *ret, err);
 					OPCODE_BREAK;
 				}
@@ -2149,7 +2387,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				}
 #endif
 
-				Callable::CallError err;
+				GDExtensionCallError err;
 				*ret = method->call(nullptr, argptrs, argc, err);
 
 #ifdef DEBUG_ENABLED
@@ -2160,7 +2398,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				}
 #endif
 
-				if (err.error != Callable::CallError::CALL_OK) {
+				if (err.error != GDEXTENSION_CALL_OK) {
 					err_text = _get_call_error("static function '" + method->get_name().operator String() + "' in type '" + method->get_instance_class().operator String() + "'", argptrs, argc, *ret, err);
 					OPCODE_BREAK;
 				}
@@ -2382,11 +2620,11 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 
 				GET_INSTRUCTION_ARG(dst, argc);
 
-				Callable::CallError err;
+				GDExtensionCallError err;
 				Variant::call_utility_function(function, dst, (const Variant **)argptrs, argc, err);
 
 #ifdef DEBUG_ENABLED
-				if (err.error != Callable::CallError::CALL_OK) {
+				if (err.error != GDEXTENSION_CALL_OK) {
 					String methodstr = function;
 					if (dst->get_type() == Variant::STRING && !dst->operator String().is_empty()) {
 						// Call provided error string.
@@ -2439,11 +2677,11 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 
 				GET_INSTRUCTION_ARG(dst, argc);
 
-				Callable::CallError err;
+				GDExtensionCallError err;
 				function(dst, (const Variant **)argptrs, argc, err);
 
 #ifdef DEBUG_ENABLED
-				if (err.error != Callable::CallError::CALL_OK) {
+				if (err.error != GDEXTENSION_CALL_OK) {
 					String methodstr = gds_utilities_names[_code_ptr[ip + 2]];
 					if (dst->get_type() == Variant::STRING && !dst->operator String().is_empty()) {
 						// Call provided error string.
@@ -2491,7 +2729,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					}
 				}
 
-				Callable::CallError err;
+				GDExtensionCallError err;
 
 				if (E) {
 					*dst = E->value->call(p_instance, (const Variant **)argptrs, argc, err);
@@ -2499,7 +2737,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					if (*methodname != GDScriptLanguage::get_singleton()->strings._init) {
 						MethodBind *mb = ClassDB::get_method(gds->native->get_name(), *methodname);
 						if (!mb) {
-							err.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
+							err.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 						} else {
 							*dst = mb->call(p_instance->owner, (const Variant **)argptrs, argc, err);
 						}
@@ -2514,7 +2752,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					}
 				}
 
-				if (err.error != Callable::CallError::CALL_OK) {
+				if (err.error != GDEXTENSION_CALL_OK) {
 					String methodstr = *methodname;
 					err_text = _get_call_error("function '" + methodstr + "'", (const Variant **)argptrs, argc, *dst, err);
 
@@ -2783,7 +3021,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 
 				if (r->get_type() != ret_type) {
 					if (Variant::can_convert_strict(r->get_type(), ret_type)) {
-						Callable::CallError ce;
+						GDExtensionCallError ce;
 						Variant::construct(ret_type, retvalue, const_cast<const Variant **>(&r), 1, ce);
 					} else {
 #ifdef DEBUG_ENABLED
@@ -2792,7 +3030,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 #endif // DEBUG_ENABLED
 
 						// Construct a base type anyway so type constraints are met.
-						Callable::CallError ce;
+						GDExtensionCallError ce;
 						Variant::construct(ret_type, retvalue, nullptr, 0, ce);
 						OPCODE_BREAK;
 					}

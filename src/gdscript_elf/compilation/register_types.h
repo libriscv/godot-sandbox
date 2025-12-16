@@ -32,5 +32,7 @@
 
 #include "modules/register_module_types.h"
 
+using namespace godot;
+
 void initialize_gdscript_module(ModuleInitializationLevel p_level);
 void uninitialize_gdscript_module(ModuleInitializationLevel p_level);

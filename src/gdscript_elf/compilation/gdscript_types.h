@@ -32,6 +32,8 @@
 
 #include "gdscript.h"
 
+using namespace godot;
+
 // Type alias for the duplicated GDScript class from compilation directory
 // This distinguishes it from the native Godot GDScript class to avoid confusion
 typedef GDScript CompiledGDScript;

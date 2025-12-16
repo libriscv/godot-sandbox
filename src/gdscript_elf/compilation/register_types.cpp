@@ -65,6 +65,8 @@
 
 #ifdef TESTS_ENABLED
 #include "tests/test_macros.h"
+
+using namespace godot;
 #endif
 
 GDScriptLanguage *script_language_gd = nullptr;

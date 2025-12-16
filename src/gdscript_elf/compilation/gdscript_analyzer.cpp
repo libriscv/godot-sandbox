@@ -42,11 +42,13 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/script_language_extension.hpp>
 #include <godot_cpp/templates/hash_map.hpp>
-#include "scene/main/node.h"
+#include <godot_cpp/classes/node.hpp>
 
 #if defined(TOOLS_ENABLED) && !defined(DISABLE_DEPRECATED)
 #define SUGGEST_GODOT4_RENAMES
 #include "editor/project_upgrade/renames_map_3_to_4.h"
+
+using namespace godot;
 #endif
 
 #define UNNAMED_ENUM "<anonymous enum>"

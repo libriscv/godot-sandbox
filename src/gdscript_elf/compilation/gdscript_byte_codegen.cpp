@@ -29,6 +29,9 @@
 /**************************************************************************/
 
 #include "gdscript_byte_codegen.h"
+#include "gdscript_gdextension_helpers.h"
+
+using namespace godot;
 
 // Note: debugger may not be available in GDExtension
 // #include "core/debugger/engine_debugger.h"
@@ -241,7 +244,7 @@ GDScriptFunction *GDScriptByteCodeGenerator::write_end() {
 		function->operator_funcs.resize(operator_func_map.size());
 		function->_operator_funcs_count = function->operator_funcs.size();
 		function->_operator_funcs_ptr = function->operator_funcs.ptr();
-		for (const KeyValue<Variant::ValidatedOperatorEvaluator, int> &E : operator_func_map) {
+		for (const KeyValue<OperatorEvaluatorFunc, int> &E : operator_func_map) {
 			function->operator_funcs.write[E.value] = E.key;
 		}
 	} else {
@@ -253,7 +256,7 @@ GDScriptFunction *GDScriptByteCodeGenerator::write_end() {
 		function->setters.resize(setters_map.size());
 		function->_setters_count = function->setters.size();
 		function->_setters_ptr = function->setters.ptr();
-		for (const KeyValue<Variant::ValidatedSetter, int> &E : setters_map) {
+		for (const KeyValue<SetterFunc, int> &E : setters_map) {
 			function->setters.write[E.value] = E.key;
 		}
 	} else {
@@ -265,7 +268,7 @@ GDScriptFunction *GDScriptByteCodeGenerator::write_end() {
 		function->getters.resize(getters_map.size());
 		function->_getters_count = function->getters.size();
 		function->_getters_ptr = function->getters.ptr();
-		for (const KeyValue<Variant::ValidatedGetter, int> &E : getters_map) {
+		for (const KeyValue<GetterFunc, int> &E : getters_map) {
 			function->getters.write[E.value] = E.key;
 		}
 	} else {
@@ -277,7 +280,7 @@ GDScriptFunction *GDScriptByteCodeGenerator::write_end() {
 		function->keyed_setters.resize(keyed_setters_map.size());
 		function->_keyed_setters_count = function->keyed_setters.size();
 		function->_keyed_setters_ptr = function->keyed_setters.ptr();
-		for (const KeyValue<Variant::ValidatedKeyedSetter, int> &E : keyed_setters_map) {
+		for (const KeyValue<KeyedSetterFunc, int> &E : keyed_setters_map) {
 			function->keyed_setters.write[E.value] = E.key;
 		}
 	} else {
@@ -289,7 +292,7 @@ GDScriptFunction *GDScriptByteCodeGenerator::write_end() {
 		function->keyed_getters.resize(keyed_getters_map.size());
 		function->_keyed_getters_count = function->keyed_getters.size();
 		function->_keyed_getters_ptr = function->keyed_getters.ptr();
-		for (const KeyValue<Variant::ValidatedKeyedGetter, int> &E : keyed_getters_map) {
+		for (const KeyValue<KeyedGetterFunc, int> &E : keyed_getters_map) {
 			function->keyed_getters.write[E.value] = E.key;
 		}
 	} else {
@@ -301,7 +304,7 @@ GDScriptFunction *GDScriptByteCodeGenerator::write_end() {
 		function->indexed_setters.resize(indexed_setters_map.size());
 		function->_indexed_setters_count = function->indexed_setters.size();
 		function->_indexed_setters_ptr = function->indexed_setters.ptr();
-		for (const KeyValue<Variant::ValidatedIndexedSetter, int> &E : indexed_setters_map) {
+		for (const KeyValue<IndexedSetterFunc, int> &E : indexed_setters_map) {
 			function->indexed_setters.write[E.value] = E.key;
 		}
 	} else {
@@ -313,7 +316,7 @@ GDScriptFunction *GDScriptByteCodeGenerator::write_end() {
 		function->indexed_getters.resize(indexed_getters_map.size());
 		function->_indexed_getters_count = function->indexed_getters.size();
 		function->_indexed_getters_ptr = function->indexed_getters.ptr();
-		for (const KeyValue<Variant::ValidatedIndexedGetter, int> &E : indexed_getters_map) {
+		for (const KeyValue<IndexedGetterFunc, int> &E : indexed_getters_map) {
 			function->indexed_getters.write[E.value] = E.key;
 		}
 	} else {
@@ -325,7 +328,7 @@ GDScriptFunction *GDScriptByteCodeGenerator::write_end() {
 		function->builtin_methods.resize(builtin_method_map.size());
 		function->_builtin_methods_ptr = function->builtin_methods.ptr();
 		function->_builtin_methods_count = builtin_method_map.size();
-		for (const KeyValue<Variant::ValidatedBuiltInMethod, int> &E : builtin_method_map) {
+		for (const KeyValue<BuiltInMethodFunc, int> &E : builtin_method_map) {
 			function->builtin_methods.write[E.value] = E.key;
 		}
 	} else {
@@ -337,7 +340,7 @@ GDScriptFunction *GDScriptByteCodeGenerator::write_end() {
 		function->constructors.resize(constructors_map.size());
 		function->_constructors_ptr = function->constructors.ptr();
 		function->_constructors_count = constructors_map.size();
-		for (const KeyValue<Variant::ValidatedConstructor, int> &E : constructors_map) {
+		for (const KeyValue<ConstructorFunc, int> &E : constructors_map) {
 			function->constructors.write[E.value] = E.key;
 		}
 	} else {
@@ -349,7 +352,7 @@ GDScriptFunction *GDScriptByteCodeGenerator::write_end() {
 		function->utilities.resize(utilities_map.size());
 		function->_utilities_ptr = function->utilities.ptr();
 		function->_utilities_count = utilities_map.size();
-		for (const KeyValue<Variant::ValidatedUtilityFunction, int> &E : utilities_map) {
+		for (const KeyValue<UtilityFunctionFunc, int> &E : utilities_map) {
 			function->utilities.write[E.value] = E.key;
 		}
 	} else {
@@ -555,7 +558,7 @@ void GDScriptByteCodeGenerator::write_type_adjust(const Address &p_target, Varia
 void GDScriptByteCodeGenerator::write_unary_operator(const Address &p_target, Variant::Operator p_operator, const Address &p_left_operand) {
 	if (HAS_BUILTIN_TYPE(p_left_operand)) {
 		// Gather specific operator.
-		Variant::ValidatedOperatorEvaluator op_func = Variant::get_validated_operator_evaluator(p_operator, p_left_operand.type.builtin_type, Variant::NIL);
+		OperatorEvaluatorFunc op_func = get_operator_evaluator(p_operator, p_left_operand.type.builtin_type, Variant::NIL);
 
 		append_opcode(GDScriptFunction::OPCODE_OPERATOR_VALIDATED);
 		append(p_left_operand);
@@ -576,7 +579,7 @@ void GDScriptByteCodeGenerator::write_unary_operator(const Address &p_target, Va
 	append(p_operator);
 	append(0); // Signature storage.
 	append(0); // Return type storage.
-	constexpr int _pointer_size = sizeof(Variant::ValidatedOperatorEvaluator) / sizeof(*(opcodes.ptr()));
+	constexpr int _pointer_size = sizeof(OperatorEvaluatorFunc) / sizeof(*(opcodes.ptr()));
 	for (int i = 0; i < _pointer_size; i++) {
 		append(0); // Space for function pointer.
 	}
@@ -604,7 +607,7 @@ void GDScriptByteCodeGenerator::write_binary_operator(const Address &p_target, V
 
 	if (valid) {
 		if (p_target.mode == Address::TEMPORARY) {
-			Variant::Type result_type = Variant::get_operator_return_type(p_operator, p_left_operand.type.builtin_type, p_right_operand.type.builtin_type);
+			Variant::Type result_type = get_operator_return_type(p_operator, p_left_operand.type.builtin_type, p_right_operand.type.builtin_type);
 			Variant::Type temp_type = temporaries[p_target.address].type;
 			if (result_type != temp_type) {
 				write_type_adjust(p_target, result_type);
@@ -612,7 +615,7 @@ void GDScriptByteCodeGenerator::write_binary_operator(const Address &p_target, V
 		}
 
 		// Gather specific operator.
-		Variant::ValidatedOperatorEvaluator op_func = Variant::get_validated_operator_evaluator(p_operator, p_left_operand.type.builtin_type, p_right_operand.type.builtin_type);
+		OperatorEvaluatorFunc op_func = get_operator_evaluator(p_operator, p_left_operand.type.builtin_type, p_right_operand.type.builtin_type);
 
 		append_opcode(GDScriptFunction::OPCODE_OPERATOR_VALIDATED);
 		append(p_left_operand);
@@ -633,7 +636,7 @@ void GDScriptByteCodeGenerator::write_binary_operator(const Address &p_target, V
 	append(p_operator);
 	append(0); // Signature storage.
 	append(0); // Return type storage.
-	constexpr int _pointer_size = sizeof(Variant::ValidatedOperatorEvaluator) / sizeof(*(opcodes.ptr()));
+	constexpr int _pointer_size = sizeof(OperatorEvaluatorFunc) / sizeof(*(opcodes.ptr()));
 	for (int i = 0; i < _pointer_size; i++) {
 		append(0); // Space for function pointer.
 	}
@@ -789,18 +792,18 @@ void GDScriptByteCodeGenerator::write_end_ternary() {
 
 void GDScriptByteCodeGenerator::write_set(const Address &p_target, const Address &p_index, const Address &p_source) {
 	if (HAS_BUILTIN_TYPE(p_target)) {
-		if (IS_BUILTIN_TYPE(p_index, Variant::INT) && Variant::get_member_validated_indexed_setter(p_target.type.builtin_type) &&
-				IS_BUILTIN_TYPE(p_source, Variant::get_indexed_element_type(p_target.type.builtin_type))) {
+		if (IS_BUILTIN_TYPE(p_index, Variant::INT) && get_member_validated_indexed_setter(p_target.type.builtin_type) &&
+				IS_BUILTIN_TYPE(p_source, get_indexed_element_type(p_target.type.builtin_type))) {
 			// Use indexed setter instead.
-			Variant::ValidatedIndexedSetter setter = Variant::get_member_validated_indexed_setter(p_target.type.builtin_type);
+			IndexedSetterFunc setter = get_member_validated_indexed_setter(p_target.type.builtin_type);
 			append_opcode(GDScriptFunction::OPCODE_SET_INDEXED_VALIDATED);
 			append(p_target);
 			append(p_index);
 			append(p_source);
 			append(setter);
 			return;
-		} else if (Variant::get_member_validated_keyed_setter(p_target.type.builtin_type)) {
-			Variant::ValidatedKeyedSetter setter = Variant::get_member_validated_keyed_setter(p_target.type.builtin_type);
+		} else if (get_member_validated_keyed_setter(p_target.type.builtin_type)) {
+			KeyedSetterFunc setter = get_member_validated_keyed_setter(p_target.type.builtin_type);
 			append_opcode(GDScriptFunction::OPCODE_SET_KEYED_VALIDATED);
 			append(p_target);
 			append(p_index);
@@ -818,17 +821,17 @@ void GDScriptByteCodeGenerator::write_set(const Address &p_target, const Address
 
 void GDScriptByteCodeGenerator::write_get(const Address &p_target, const Address &p_index, const Address &p_source) {
 	if (HAS_BUILTIN_TYPE(p_source)) {
-		if (IS_BUILTIN_TYPE(p_index, Variant::INT) && Variant::get_member_validated_indexed_getter(p_source.type.builtin_type)) {
+		if (IS_BUILTIN_TYPE(p_index, Variant::INT) && get_member_validated_indexed_getter(p_source.type.builtin_type)) {
 			// Use indexed getter instead.
-			Variant::ValidatedIndexedGetter getter = Variant::get_member_validated_indexed_getter(p_source.type.builtin_type);
+			IndexedGetterFunc getter = get_member_validated_indexed_getter(p_source.type.builtin_type);
 			append_opcode(GDScriptFunction::OPCODE_GET_INDEXED_VALIDATED);
 			append(p_source);
 			append(p_index);
 			append(p_target);
 			append(getter);
 			return;
-		} else if (Variant::get_member_validated_keyed_getter(p_source.type.builtin_type)) {
-			Variant::ValidatedKeyedGetter getter = Variant::get_member_validated_keyed_getter(p_source.type.builtin_type);
+		} else if (get_member_validated_keyed_getter(p_source.type.builtin_type)) {
+			KeyedGetterFunc getter = get_member_validated_keyed_getter(p_source.type.builtin_type);
 			append_opcode(GDScriptFunction::OPCODE_GET_KEYED_VALIDATED);
 			append(p_source);
 			append(p_index);

@@ -30,9 +30,10 @@
 
 #include "gdscript_rpc_callable.h"
 
+#include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/script_language_extension.hpp>
-// Note: hashfuncs may need special handling
-#include "scene/main/node.h"
+
+using namespace godot;
 
 bool GDScriptRPCCallable::compare_equal(const CallableCustom *p_a, const CallableCustom *p_b) {
 	return p_a->hash() == p_b->hash();
@@ -79,7 +80,7 @@ int GDScriptRPCCallable::get_argument_count(bool &r_is_valid) const {
 	return object->get_method_argument_count(method, &r_is_valid);
 }
 
-void GDScriptRPCCallable::call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, Callable::CallError &r_call_error) const {
+void GDScriptRPCCallable::call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const {
 	r_return_value = object->callp(method, p_arguments, p_argcount, r_call_error);
 }
 
@@ -93,11 +94,11 @@ GDScriptRPCCallable::GDScriptRPCCallable(Object *p_object, const StringName &p_m
 	ERR_FAIL_NULL_MSG(node, "RPC can only be defined on class that extends Node.");
 }
 
-Error GDScriptRPCCallable::rpc(int p_peer_id, const Variant **p_arguments, int p_argcount, Callable::CallError &r_call_error) const {
+Error GDScriptRPCCallable::rpc(int p_peer_id, const Variant **p_arguments, int p_argcount, GDExtensionCallError &r_call_error) const {
 	if (unlikely(!node)) {
-		r_call_error.error = Callable::CallError::CALL_ERROR_INSTANCE_IS_NULL;
+		r_call_error.error = GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;
 		return ERR_UNCONFIGURED;
 	}
-	r_call_error.error = Callable::CallError::CALL_OK;
+	r_call_error.error = GDEXTENSION_CALL_OK;
 	return node->rpcp(p_peer_id, method, p_arguments, p_argcount);
 }

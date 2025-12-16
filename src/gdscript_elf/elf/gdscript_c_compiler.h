@@ -30,9 +30,12 @@
 
 #pragma once
 
-#include "core/error/error_list.h"
-#include "core/string/ustring.h"
-#include "core/variant/variant.h"
+#include <godot_cpp/core/error_macros.hpp>
+#include <godot_cpp/variant/string.hpp>
+#include <godot_cpp/variant/variant.hpp>
+#include <godot_cpp/variant/packed_byte_array.hpp>
+
+using namespace godot;
 
 // Invokes RISC-V cross-compiler to compile C++ code to ELF
 class GDScriptCCompiler {

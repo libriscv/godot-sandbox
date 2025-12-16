@@ -33,6 +33,8 @@
 #include <godot_cpp/templates/hash_map.hpp>
 #include <godot_cpp/templates/list.hpp>
 #include <godot_cpp/templates/vector.hpp>
+
+using namespace godot;
 #include <godot_cpp/variant/variant.hpp>
 
 class GDScriptTokenizer {

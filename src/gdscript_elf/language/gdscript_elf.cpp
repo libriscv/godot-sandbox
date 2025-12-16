@@ -37,7 +37,7 @@
 #include "../compilation/gdscript_compiler.h"
 #include "../compilation/gdscript_function.h"
 #include "../compilation/gdscript_types.h"
-#include "../elf/gdscript_bytecode_elf_compiler.h"
+#include "../elf/gdscript_ast_elf_compiler.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
@@ -477,45 +477,47 @@ Error GDScriptELF::_compile_to_elf() {
 		members.insert(E.key);
 	}
 
-	// Extract and compile functions to ELF
-	// Get all member functions from the compiled script
-	const HashMap<StringName, GDScriptFunction *> &compiled_functions = temp_script->get_member_functions();
-	
-	for (const KeyValue<StringName, GDScriptFunction *> &E : compiled_functions) {
-		StringName func_name = E.key;
-		GDScriptFunction *gd_function = E.value;
+	// Extract and compile functions to ELF using AST (direct approach)
+	// This bypasses bytecode generation, avoiding VM-specific types
+	for (int i = 0; i < class_node->members.size(); i++) {
+		const GDScriptParser::ClassNode::Member &member = class_node->members[i];
+		if (member.type != GDScriptParser::ClassNode::Member::FUNCTION) {
+			continue;
+		}
+
+		const GDScriptParser::FunctionNode *func_node = member.function;
+		if (!func_node || !func_node->identifier) {
+			continue;
+		}
+
+		StringName func_name = func_node->identifier->name;
 
 		// Create GDScriptELFFunction
 		GDScriptELFFunction *elf_func = memnew(GDScriptELFFunction);
 		elf_func->name = func_name;
 		elf_func->script = this;
-		elf_func->argument_count = gd_function->get_argument_count();
-		// Note: default_arguments, argument_types, return_type, code, constants are private
-		// We'll need to extract these through public APIs or store them differently
-		// For now, set defaults and extract what we can
-		elf_func->default_argument_count = 0; // TODO: Get from GDScriptFunction public API
-		elf_func->is_static = gd_function->is_static();
-		elf_func->is_vararg = gd_function->is_vararg();
+		elf_func->argument_count = func_node->parameters.size();
+		elf_func->default_argument_count = func_node->default_arg_values.size();
+		elf_func->is_static = func_node->is_static;
+		elf_func->is_vararg = false; // TODO: Check if function is vararg
 		elf_func->has_yield = false; // TODO: Check if function has yield
-		elf_func->line = -1; // TODO: Get line number from function
-		
-		// TODO: Extract argument_types and return_type through public API
-		// TODO: Copy bytecode for VM fallback - need public accessor
+		elf_func->line = func_node->start_line;
 
-		// Try to compile to ELF
-		if (GDScriptBytecodeELFCompiler::can_compile_function(gd_function)) {
-			PackedByteArray elf_binary = GDScriptBytecodeELFCompiler::compile_function_to_elf(gd_function);
+		// Try to compile to ELF using AST (direct approach)
+		if (GDScriptASTELFCompiler::can_compile_function(func_node)) {
+			PackedByteArray elf_binary = GDScriptASTELFCompiler::compile_function_to_elf(func_node, class_node, analyzer);
 			if (!elf_binary.is_empty()) {
 				elf_func->set_elf_binary(elf_binary);
 				function_elf_binaries[func_name] = elf_binary;
 			} else {
-				// ELF compilation failed, but we have bytecode fallback
-				String error = GDScriptBytecodeELFCompiler::get_last_error();
+				// ELF compilation failed
+				String error = GDScriptASTELFCompiler::get_last_error();
 				WARN_PRINT("GDScriptELF: Failed to compile function '" + String(func_name) + "' to ELF: " + error + ". Using VM fallback.");
 			}
 		} else {
-			// Function cannot be compiled to ELF (e.g., unsupported opcodes)
-			WARN_PRINT("GDScriptELF: Function '" + String(func_name) + "' cannot be compiled to ELF. Using VM fallback.");
+			// Function cannot be compiled to ELF
+			String error = GDScriptASTELFCompiler::get_last_error();
+			WARN_PRINT("GDScriptELF: Function '" + String(func_name) + "' cannot be compiled to ELF: " + error + ". Using VM fallback.");
 		}
 
 		member_functions[func_name] = elf_func;
@@ -565,7 +567,7 @@ Error GDScriptELF::_compile_to_elf() {
 		elf_func->script = this;
 		elf_func->code = gd_func->code;
 		elf_func->constants = gd_func->constants;
-		elf_func->stack = gd_func->stack;
+		// stack is managed per-call in CallState, not stored in GDScriptFunction
 		if (!static_initializer) {
 			static_initializer = elf_func;
 		}
@@ -599,8 +601,15 @@ void GDScriptELF::_clear() {
 	_base = nullptr;
 	_script_owner = nullptr;
 	
-	parser.unref();
-	analyzer.unref();
+	// parser and analyzer are raw pointers, not RefCounted
+	if (parser) {
+		memdelete(parser);
+		parser = nullptr;
+	}
+	if (analyzer) {
+		memdelete(analyzer);
+		analyzer = nullptr;
+	}
 	
 	clearing = false;
 }
@@ -629,13 +638,13 @@ void GDScriptELF::_get_property_list(List<PropertyInfo> *p_properties) const {
 	}
 }
 
-Variant GDScriptELF::callp(const StringName &p_method, const Variant **p_args, int p_argcount, Callable::CallError &r_error) {
+Variant GDScriptELF::callp(const StringName &p_method, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) {
 	if (member_functions.has(p_method)) {
 		// Static method call - would need an instance
 		// For now, return error as static calls need proper handling
-		r_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 		return Variant();
 	}
-	r_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
+	r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 	return Variant();
 }

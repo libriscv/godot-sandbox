@@ -53,6 +53,8 @@
 
 // Note: scene headers may need special handling
 // #include "scene/resources/packed_scene.h"
+
+using namespace godot;
 // #include "scene/scene_string_names.h"
 
 #ifdef TOOLS_ENABLED
@@ -1255,8 +1257,8 @@ GDScript *GDScript::get_root_script() {
 	return result;
 }
 
-RBSet<GDScript *> GDScript::get_dependencies() {
-	RBSet<GDScript *> dependencies;
+HashSet<GDScript *> GDScript::get_dependencies() {
+	HashSet<GDScript *> dependencies;
 
 	_collect_dependencies(dependencies, this);
 	dependencies.erase(this);
@@ -1264,8 +1266,8 @@ RBSet<GDScript *> GDScript::get_dependencies() {
 	return dependencies;
 }
 
-HashMap<GDScript *, RBSet<GDScript *>> GDScript::get_all_dependencies() {
-	HashMap<GDScript *, RBSet<GDScript *>> all_dependencies;
+HashMap<GDScript *, HashSet<GDScript *>> GDScript::get_all_dependencies() {
+	HashMap<GDScript *, HashSet<GDScript *>> all_dependencies;
 
 	List<GDScript *> scripts;
 	{
@@ -1288,13 +1290,13 @@ HashMap<GDScript *, RBSet<GDScript *>> GDScript::get_all_dependencies() {
 	return all_dependencies;
 }
 
-RBSet<GDScript *> GDScript::get_must_clear_dependencies() {
-	RBSet<GDScript *> dependencies = get_dependencies();
-	RBSet<GDScript *> must_clear_dependencies;
-	HashMap<GDScript *, RBSet<GDScript *>> all_dependencies = get_all_dependencies();
+HashSet<GDScript *> GDScript::get_must_clear_dependencies() {
+	HashSet<GDScript *> dependencies = get_dependencies();
+	HashSet<GDScript *> must_clear_dependencies;
+	HashMap<GDScript *, HashSet<GDScript *>> all_dependencies = get_all_dependencies();
 
-	RBSet<GDScript *> cant_clear;
-	for (KeyValue<GDScript *, RBSet<GDScript *>> &E : all_dependencies) {
+	HashSet<GDScript *> cant_clear;
+	for (KeyValue<GDScript *, HashSet<GDScript *>> &E : all_dependencies) {
 		if (dependencies.has(E.key)) {
 			continue;
 		}
@@ -1364,7 +1366,7 @@ GDScript *GDScript::_get_gdscript_from_variant(const Variant &p_variant) {
 	return Object::cast_to<GDScript>(obj);
 }
 
-void GDScript::_collect_function_dependencies(GDScriptFunction *p_func, RBSet<GDScript *> &p_dependencies, const GDScript *p_except) {
+void GDScript::_collect_function_dependencies(GDScriptFunction *p_func, HashSet<GDScript *> &p_dependencies, const GDScript *p_except) {
 	if (p_func == nullptr) {
 		return;
 	}
@@ -1379,7 +1381,7 @@ void GDScript::_collect_function_dependencies(GDScriptFunction *p_func, RBSet<GD
 	}
 }
 
-void GDScript::_collect_dependencies(RBSet<GDScript *> &p_dependencies, const GDScript *p_except) {
+void GDScript::_collect_dependencies(HashSet<GDScript *> &p_dependencies, const GDScript *p_except) {
 	if (p_dependencies.has(this)) {
 		return;
 	}
@@ -1567,7 +1569,7 @@ void GDScript::clear(ClearData *p_clear_data) {
 	// If we're in the process of shutting things down then every single script will be cleared
 	// anyway, so we can safely skip this very costly operation.
 	if (!GDScriptLanguage::singleton->finishing) {
-		RBSet<GDScript *> must_clear_dependencies = get_must_clear_dependencies();
+		HashSet<GDScript *> must_clear_dependencies = get_must_clear_dependencies();
 		for (GDScript *E : must_clear_dependencies) {
 			clear_data->scripts.insert(E);
 			E->clear(clear_data);

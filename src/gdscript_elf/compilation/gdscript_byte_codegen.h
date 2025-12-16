@@ -34,9 +34,12 @@
 #include "gdscript_codegen.h"
 #include "gdscript_function.h"
 #include "gdscript_utility_functions.h"
+#include "gdscript_gdextension_helpers.h"
 
 #include <godot_cpp/templates/hash_map.hpp>
-// Note: rb_map replaced with hash_map
+#include <godot_cpp/templates/rb_map.hpp>
+
+using namespace godot;
 
 class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 	struct StackSlot {
@@ -91,11 +94,11 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 	Vector<StackSlot> temporaries;
 	List<int> used_temporaries;
 	HashSet<int> temporaries_pending_clear;
-	RBMap<Variant::Type, List<int>> temporaries_pool;
+	HashMap<Variant::Type, List<int>> temporaries_pool;
 
 	List<GDScriptFunction::StackDebug> stack_debug;
-	List<RBMap<StringName, int>> block_identifier_stack;
-	RBMap<StringName, int> block_identifiers;
+	List<HashMap<StringName, int>> block_identifier_stack;
+	HashMap<StringName, int> block_identifiers;
 
 	int max_locals = 0;
 	int current_line = 0;
@@ -106,23 +109,23 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 #endif
 
 	HashMap<Variant, int> constant_map;
-	RBMap<StringName, int> name_map;
+	HashMap<StringName, int> name_map;
 #ifdef TOOLS_ENABLED
 	Vector<StringName> named_globals;
 #endif
-	RBMap<Variant::ValidatedOperatorEvaluator, int> operator_func_map;
-	RBMap<Variant::ValidatedSetter, int> setters_map;
-	RBMap<Variant::ValidatedGetter, int> getters_map;
-	RBMap<Variant::ValidatedKeyedSetter, int> keyed_setters_map;
-	RBMap<Variant::ValidatedKeyedGetter, int> keyed_getters_map;
-	RBMap<Variant::ValidatedIndexedSetter, int> indexed_setters_map;
-	RBMap<Variant::ValidatedIndexedGetter, int> indexed_getters_map;
-	RBMap<Variant::ValidatedBuiltInMethod, int> builtin_method_map;
-	RBMap<Variant::ValidatedConstructor, int> constructors_map;
-	RBMap<Variant::ValidatedUtilityFunction, int> utilities_map;
-	RBMap<GDScriptUtilityFunctions::FunctionPtr, int> gds_utilities_map;
-	RBMap<MethodBind *, int> method_bind_map;
-	RBMap<GDScriptFunction *, int> lambdas_map;
+	HashMap<OperatorEvaluatorFunc, int> operator_func_map;
+	HashMap<SetterFunc, int> setters_map;
+	HashMap<GetterFunc, int> getters_map;
+	HashMap<KeyedSetterFunc, int> keyed_setters_map;
+	HashMap<KeyedGetterFunc, int> keyed_getters_map;
+	HashMap<IndexedSetterFunc, int> indexed_setters_map;
+	HashMap<IndexedGetterFunc, int> indexed_getters_map;
+	HashMap<BuiltInMethodFunc, int> builtin_method_map;
+	HashMap<ConstructorFunc, int> constructors_map;
+	HashMap<UtilityFunctionFunc, int> utilities_map;
+	HashMap<GDScriptUtilityFunctions::FunctionPtr, int> gds_utilities_map;
+	HashMap<MethodBind *, int> method_bind_map;
+	HashMap<GDScriptFunction *, int> lambdas_map;
 
 #ifdef DEBUG_ENABLED
 	// Keep method and property names for pointer and validated operations.
@@ -183,7 +186,11 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 		stack_identifiers_counts.push_back(locals.size());
 		stack_id_stack.push_back(stack_identifiers);
 		if (GDScriptLanguage::get_singleton()->should_track_locals()) {
-			RBMap<StringName, int> block_ids(block_identifiers);
+			// Copy HashMap to new HashMap for the stack
+			HashMap<StringName, int> block_ids;
+			for (const KeyValue<StringName, int> &E : block_identifiers) {
+				block_ids[E.key] = E.value;
+			}
 			block_identifier_stack.push_back(block_ids);
 			block_identifiers.clear();
 		}
@@ -237,7 +244,7 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 		return pos;
 	}
 
-	int get_operation_pos(const Variant::ValidatedOperatorEvaluator p_operation) {
+	int get_operation_pos(const OperatorEvaluatorFunc p_operation) {
 		if (operator_func_map.has(p_operation)) {
 			return operator_func_map[p_operation];
 		}
@@ -246,7 +253,7 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 		return pos;
 	}
 
-	int get_setter_pos(const Variant::ValidatedSetter p_setter) {
+	int get_setter_pos(const SetterFunc p_setter) {
 		if (setters_map.has(p_setter)) {
 			return setters_map[p_setter];
 		}
@@ -255,7 +262,7 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 		return pos;
 	}
 
-	int get_getter_pos(const Variant::ValidatedGetter p_getter) {
+	int get_getter_pos(const GetterFunc p_getter) {
 		if (getters_map.has(p_getter)) {
 			return getters_map[p_getter];
 		}
@@ -264,7 +271,7 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 		return pos;
 	}
 
-	int get_keyed_setter_pos(const Variant::ValidatedKeyedSetter p_keyed_setter) {
+	int get_keyed_setter_pos(const KeyedSetterFunc p_keyed_setter) {
 		if (keyed_setters_map.has(p_keyed_setter)) {
 			return keyed_setters_map[p_keyed_setter];
 		}
@@ -273,7 +280,7 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 		return pos;
 	}
 
-	int get_keyed_getter_pos(const Variant::ValidatedKeyedGetter p_keyed_getter) {
+	int get_keyed_getter_pos(const KeyedGetterFunc p_keyed_getter) {
 		if (keyed_getters_map.has(p_keyed_getter)) {
 			return keyed_getters_map[p_keyed_getter];
 		}
@@ -282,7 +289,7 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 		return pos;
 	}
 
-	int get_indexed_setter_pos(const Variant::ValidatedIndexedSetter p_indexed_setter) {
+	int get_indexed_setter_pos(const IndexedSetterFunc p_indexed_setter) {
 		if (indexed_setters_map.has(p_indexed_setter)) {
 			return indexed_setters_map[p_indexed_setter];
 		}
@@ -291,7 +298,7 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 		return pos;
 	}
 
-	int get_indexed_getter_pos(const Variant::ValidatedIndexedGetter p_indexed_getter) {
+	int get_indexed_getter_pos(const IndexedGetterFunc p_indexed_getter) {
 		if (indexed_getters_map.has(p_indexed_getter)) {
 			return indexed_getters_map[p_indexed_getter];
 		}
@@ -300,7 +307,7 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 		return pos;
 	}
 
-	int get_builtin_method_pos(const Variant::ValidatedBuiltInMethod p_method) {
+	int get_builtin_method_pos(const BuiltInMethodFunc p_method) {
 		if (builtin_method_map.has(p_method)) {
 			return builtin_method_map[p_method];
 		}
@@ -309,7 +316,7 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 		return pos;
 	}
 
-	int get_constructor_pos(const Variant::ValidatedConstructor p_constructor) {
+	int get_constructor_pos(const ConstructorFunc p_constructor) {
 		if (constructors_map.has(p_constructor)) {
 			return constructors_map[p_constructor];
 		}
@@ -318,7 +325,7 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 		return pos;
 	}
 
-	int get_utility_pos(const Variant::ValidatedUtilityFunction p_utility) {
+	int get_utility_pos(const UtilityFunctionFunc p_utility) {
 		if (utilities_map.has(p_utility)) {
 			return utilities_map[p_utility];
 		}
@@ -400,43 +407,45 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 		opcodes.push_back(get_name_map_pos(p_name));
 	}
 
-	void append(const Variant::ValidatedOperatorEvaluator p_operation) {
+	void append(const OperatorEvaluatorFunc p_operation) {
 		opcodes.push_back(get_operation_pos(p_operation));
 	}
 
-	void append(const Variant::ValidatedSetter p_setter) {
+	void append(const SetterFunc p_setter) {
 		opcodes.push_back(get_setter_pos(p_setter));
 	}
 
-	void append(const Variant::ValidatedGetter p_getter) {
+	void append(const GetterFunc p_getter) {
 		opcodes.push_back(get_getter_pos(p_getter));
 	}
 
-	void append(const Variant::ValidatedKeyedSetter p_keyed_setter) {
+	void append(const KeyedSetterFunc p_keyed_setter) {
 		opcodes.push_back(get_keyed_setter_pos(p_keyed_setter));
 	}
 
-	void append(const Variant::ValidatedKeyedGetter p_keyed_getter) {
+	void append(const KeyedGetterFunc p_keyed_getter) {
 		opcodes.push_back(get_keyed_getter_pos(p_keyed_getter));
 	}
 
-	void append(const Variant::ValidatedIndexedSetter p_indexed_setter) {
+	void append(const IndexedSetterFunc p_indexed_setter) {
 		opcodes.push_back(get_indexed_setter_pos(p_indexed_setter));
 	}
 
-	void append(const Variant::ValidatedIndexedGetter p_indexed_getter) {
+	void append(const IndexedGetterFunc p_indexed_getter) {
 		opcodes.push_back(get_indexed_getter_pos(p_indexed_getter));
 	}
 
-	void append(const Variant::ValidatedBuiltInMethod p_method) {
+	// Note: BuiltInMethodFunc, ConstructorFunc, and UtilityFunctionFunc have the same signature
+	// So we need separate methods with different names or use a union
+	void append_builtin_method(const BuiltInMethodFunc p_method) {
 		opcodes.push_back(get_builtin_method_pos(p_method));
 	}
 
-	void append(const Variant::ValidatedConstructor p_constructor) {
+	void append_constructor(const ConstructorFunc p_constructor) {
 		opcodes.push_back(get_constructor_pos(p_constructor));
 	}
 
-	void append(const Variant::ValidatedUtilityFunction p_utility) {
+	void append_utility(const UtilityFunctionFunc p_utility) {
 		opcodes.push_back(get_utility_pos(p_utility));
 	}
 

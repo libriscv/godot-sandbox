@@ -30,6 +30,10 @@
 
 #include "gdscript_utility_callable.h"
 
+#include <godot_cpp/gdextension/gdextension_interface.h>
+
+using namespace godot;
+
 bool GDScriptUtilityCallable::compare_equal(const CallableCustom *p_a, const CallableCustom *p_b) {
 	return p_a->hash() == p_b->hash();
 }
@@ -93,11 +97,11 @@ int GDScriptUtilityCallable::get_argument_count(bool &r_is_valid) const {
 	ERR_FAIL_V_MSG(0, "Invalid type.");
 }
 
-void GDScriptUtilityCallable::call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, Callable::CallError &r_call_error) const {
+void GDScriptUtilityCallable::call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const {
 	switch (type) {
 		case TYPE_INVALID:
 			r_return_value = vformat(R"(Trying to call invalid utility function "%s".)", function_name);
-			r_call_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
+			r_call_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 			r_call_error.argument = 0;
 			r_call_error.expected = 0;
 			break;

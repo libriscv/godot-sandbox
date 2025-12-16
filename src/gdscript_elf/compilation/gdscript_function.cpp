@@ -31,6 +31,21 @@
 #include "gdscript_function.h"
 
 #include "gdscript.h"
+#include <godot_cpp/classes/mutex.hpp>
+
+using namespace godot;
+
+// RAII wrapper for Mutex lock
+class MutexLock {
+	Mutex *mutex;
+public:
+	MutexLock(Mutex &p_mutex) : mutex(&p_mutex) {
+		mutex->lock();
+	}
+	~MutexLock() {
+		mutex->unlock();
+	}
+};
 
 Variant GDScriptFunction::get_constant(int p_idx) const {
 	ERR_FAIL_INDEX_V(p_idx, constants.size(), "<errconst>");
@@ -134,13 +149,13 @@ GDScriptFunction::~GDScriptFunction() {
 
 /////////////////////
 
-Variant GDScriptFunctionState::_signal_callback(const Variant **p_args, int p_argcount, Callable::CallError &r_error) {
+Variant GDScriptFunctionState::_signal_callback(const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) {
 	Variant arg;
-	r_error.error = Callable::CallError::CALL_OK;
+	r_error.error = GDEXTENSION_CALL_OK;
 
 	if (p_argcount == 0) {
-		r_error.error = Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS;
-		r_error.expected = 1;
+		r_error.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+		r_error.argument = 0;
 		return Variant();
 	} else if (p_argcount == 1) {
 		//noooneee
@@ -157,7 +172,7 @@ Variant GDScriptFunctionState::_signal_callback(const Variant **p_args, int p_ar
 	Ref<GDScriptFunctionState> self = *p_args[p_argcount - 1];
 
 	if (self.is_null()) {
-		r_error.error = Callable::CallError::CALL_ERROR_INVALID_ARGUMENT;
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
 		r_error.argument = p_argcount - 1;
 		r_error.expected = Variant::OBJECT;
 		return Variant();
@@ -212,7 +227,7 @@ Variant GDScriptFunctionState::resume(const Variant &p_arg) {
 	}
 
 	state.result = p_arg;
-	Callable::CallError err;
+	GDExtensionCallError err = {};
 	Variant ret = function->call(nullptr, nullptr, 0, err, &state);
 
 	bool completed = true;

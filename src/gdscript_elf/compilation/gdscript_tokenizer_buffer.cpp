@@ -30,7 +30,54 @@
 
 #include "gdscript_tokenizer_buffer.h"
 
-// Note: compression and marshalls may need special handling
+#include <godot_cpp/classes/file_access.hpp>
+#include <cstring>
+
+using namespace godot;
+
+// Helper functions to replace core/io/marshalls.h functions
+inline void encode_uint32(uint32_t p_val, uint8_t *p_dest) {
+	p_dest[0] = (p_val >> 24) & 0xFF;
+	p_dest[1] = (p_val >> 16) & 0xFF;
+	p_dest[2] = (p_val >> 8) & 0xFF;
+	p_dest[3] = p_val & 0xFF;
+}
+
+inline uint32_t decode_uint32(const uint8_t *p_src) {
+	return ((uint32_t)p_src[0] << 24) | ((uint32_t)p_src[1] << 16) | ((uint32_t)p_src[2] << 8) | (uint32_t)p_src[3];
+}
+
+// Compression helper - simplified version to replace core/io/compression.h
+namespace Compression {
+	enum Mode {
+		MODE_ZSTD = 0,
+		MODE_GZIP = 1,
+		MODE_DEFLATE = 2,
+		MODE_ZIP = 3,
+	};
+	
+	// Note: For now, we'll return an error if compression is needed
+	// Full implementation would require zstd library
+	int64_t decompress(uint8_t *p_dst, int64_t p_dst_max_size, const uint8_t *p_src, int64_t p_src_size, Mode p_mode) {
+		// For now, if no compression (size matches), just copy
+		if (p_src_size == p_dst_max_size) {
+			memcpy(p_dst, p_src, p_src_size);
+			return p_src_size;
+		}
+		// Compression not yet implemented - return error
+		return -1;
+	}
+	
+	int64_t compress(uint8_t *p_dst, const uint8_t *p_src, int64_t p_src_size, Mode p_mode) {
+		// Compression not yet implemented - return error
+		return -1;
+	}
+	
+	int64_t get_max_compressed_buffer_size(int64_t p_src_size, Mode p_mode) {
+		// Return a safe estimate
+		return p_src_size * 2;
+	}
+}
 // #include "core/io/compression.h"
 // #include "core/io/marshalls.h"
 

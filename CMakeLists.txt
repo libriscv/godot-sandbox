@@ -30,6 +30,27 @@ set(SOURCES
 	src/gdscript_elf/language/register_gdscript_elf.cpp
 	src/gdscript_elf/language/resource_loader_gdscript_elf.cpp
 	src/gdscript_elf/language/resource_saver_gdscript_elf.cpp
+	src/gdscript_elf/compilation/gdscript.cpp
+	src/gdscript_elf/compilation/gdscript_analyzer.cpp
+	src/gdscript_elf/compilation/gdscript_compiler.cpp
+	src/gdscript_elf/compilation/gdscript_function.cpp
+	src/gdscript_elf/compilation/gdscript_parser.cpp
+	src/gdscript_elf/compilation/gdscript_cache.cpp
+	src/gdscript_elf/compilation/gdscript_utility_functions.cpp
+	src/gdscript_elf/compilation/gdscript_byte_codegen.cpp
+	src/gdscript_elf/compilation/gdscript_lambda_callable.cpp
+	src/gdscript_elf/compilation/gdscript_vm.cpp
+	src/gdscript_elf/compilation/gdscript_editor.cpp
+	src/gdscript_elf/compilation/gdscript_disassembler.cpp
+	src/gdscript_elf/compilation/gdscript_rpc_callable.cpp
+	src/gdscript_elf/compilation/gdscript_tokenizer_buffer.cpp
+	src/gdscript_elf/compilation/gdscript_warning.cpp
+	src/gdscript_elf/compilation/gdscript_tokenizer.cpp
+	src/gdscript_elf/compilation/gdscript_utility_callable.cpp
+	src/gdscript_elf/compilation/register_types.cpp
+	src/gdscript_elf/elf/gdscript_ast_c_codegen.cpp
+	src/gdscript_elf/elf/gdscript_ast_elf_compiler.cpp
+	src/gdscript_elf/elf/gdscript_c_compiler.cpp
 	src/docker.cpp
 	src/godot/script_instance.cpp
 	src/guest_variant.cpp

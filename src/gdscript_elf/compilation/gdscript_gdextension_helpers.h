@@ -99,3 +99,64 @@ inline void operator_evaluator_wrapper(Variant *r_ret, const Variant *p_a, const
 		*r_ret = Variant();
 	}
 }
+
+// Helper to get operator evaluator function pointer
+// In GDExtension, we use the wrapper function for all operators
+inline OperatorEvaluatorFunc get_operator_evaluator(Variant::Operator p_op, Variant::Type p_left_type, Variant::Type p_right_type) {
+	// For now, always use the wrapper - it handles all cases via Variant::evaluate
+	return &operator_evaluator_wrapper;
+}
+
+// Helper to get operator return type
+// This is a simplified version - returns Variant for most cases
+inline Variant::Type get_operator_return_type(Variant::Operator p_op, Variant::Type p_left_type, Variant::Type p_right_type) {
+	// Simplified: most operators return Variant
+	// TODO: Implement proper type inference
+	switch (p_op) {
+		case Variant::OP_EQUAL:
+		case Variant::OP_NOT_EQUAL:
+		case Variant::OP_LESS:
+		case Variant::OP_LESS_EQUAL:
+		case Variant::OP_GREATER:
+		case Variant::OP_GREATER_EQUAL:
+			return Variant::BOOL;
+		default:
+			// For arithmetic operators, try to preserve type
+			if (p_left_type == p_right_type && p_left_type != Variant::NIL) {
+				return p_left_type;
+			}
+			return Variant::NIL; // Unknown, will be Variant
+	}
+}
+
+// Stub functions for member validated getters/setters (not available in GDExtension)
+// These return nullptr to disable optimized paths
+inline IndexedSetterFunc get_member_validated_indexed_setter(Variant::Type p_type) {
+	// In GDExtension, we don't have access to validated setters
+	// Return nullptr to use generic path
+	return nullptr;
+}
+
+inline KeyedSetterFunc get_member_validated_keyed_setter(Variant::Type p_type) {
+	// In GDExtension, we don't have access to validated setters
+	// Return nullptr to use generic path
+	return nullptr;
+}
+
+inline IndexedGetterFunc get_member_validated_indexed_getter(Variant::Type p_type) {
+	// In GDExtension, we don't have access to validated getters
+	// Return nullptr to use generic path
+	return nullptr;
+}
+
+inline Variant::Type get_indexed_element_type(Variant::Type p_type) {
+	// Simplified: return NIL to disable optimized path
+	// TODO: Implement proper element type detection
+	return Variant::NIL;
+}
+
+inline KeyedGetterFunc get_member_validated_keyed_getter(Variant::Type p_type) {
+	// In GDExtension, we don't have access to validated getters
+	// Return nullptr to use generic path
+	return nullptr;
+}

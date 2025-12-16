@@ -30,13 +30,17 @@
 
 #include "gdscript_c_compiler.h"
 
-#include "core/error/error_macros.h"
-#include "core/io/dir_access.h"
-#include "core/io/file_access.h"
-#include "core/templates/list.h"
-#include "core/os/os.h"
-#include "core/string/string_builder.h"
-#include "core/variant/array.h"
+#include <godot_cpp/core/error_macros.hpp>
+#include <godot_cpp/classes/dir_access.hpp>
+#include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/os.hpp>
+#include <godot_cpp/templates/list.hpp>
+#include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/string.hpp>
+#include <godot_cpp/variant/packed_string_array.hpp>
+#include <godot_cpp/core/string_utils.hpp>
+
+using namespace godot;
 
 GDScriptCCompiler::GDScriptCCompiler() {
 	last_error.clear();
@@ -74,7 +78,13 @@ PackedByteArray GDScriptCCompiler::compile_to_elf(const String &p_c_code) {
 	}
 
 	// Generate ELF output file path
-	String elf_file = c_file.get_basename() + ".elf";
+	// Remove .c extension and add .elf
+	String elf_file = c_file;
+	if (elf_file.ends_with(".c")) {
+		elf_file = elf_file.substr(0, elf_file.length() - 2) + ".elf";
+	} else {
+		elf_file = elf_file + ".elf";
+	}
 
 	// Invoke compiler
 	Error err = invoke_compiler(c_file, elf_file);
@@ -164,8 +174,10 @@ String GDScriptCCompiler::find_compiler_in_path(const String &p_compiler_name) {
 
 String GDScriptCCompiler::write_temp_c_file(const String &p_c_code) {
 	// Create temporary file
-	String temp_dir = OS::get_singleton()->get_cache_path();
-	String temp_file = temp_dir.path_join("gdscript_elf_" + itos(OS::get_singleton()->get_ticks_msec()) + ".c");
+	OS *os = OS::get_singleton();
+	String temp_dir = os->get_cache_path();
+	// Generate unique filename using timestamp
+	String temp_file = temp_dir + "/gdscript_elf_" + String::num_int64(os->get_ticks_msec()) + ".c";
 
 	Ref<FileAccess> fa = FileAccess::open(temp_file, FileAccess::WRITE);
 	if (fa.is_null()) {
@@ -183,7 +195,7 @@ String GDScriptCCompiler::write_temp_c_file(const String &p_c_code) {
 Error GDScriptCCompiler::invoke_compiler(const String &p_c_file, const String &p_elf_file) {
 	// Build compiler arguments
 	// riscv64-unknown-elf-gcc -o output.elf -nostdlib -static -O0 input.c
-	List<String> arguments;
+	PackedStringArray arguments;
 	arguments.push_back("-o");
 	arguments.push_back(p_elf_file);
 	arguments.push_back("-nostdlib");
@@ -191,14 +203,17 @@ Error GDScriptCCompiler::invoke_compiler(const String &p_c_file, const String &p
 	arguments.push_back("-O0");
 	arguments.push_back(p_c_file);
 
-	String output;
-	int exit_code = 0;
-	Error err = OS::get_singleton()->execute(compiler_path, arguments, &output, &exit_code, true, nullptr, false);
+	OS *os = OS::get_singleton();
+	Array output;
+	int exit_code = os->execute(compiler_path, arguments, output, true);
 
-	if (exit_code != 0 || err != OK) {
-		last_error = "Compiler failed with exit code " + itos(exit_code);
+	if (exit_code != 0) {
+		last_error = "Compiler failed with exit code " + String::num_int64(exit_code);
 		if (!output.is_empty()) {
-			last_error += ": " + output;
+			String output_str = output[0].operator String();
+			if (!output_str.is_empty()) {
+				last_error += ": " + output_str;
+			}
 		}
 		ERR_PRINT("GDScriptCCompiler: " + last_error);
 		return ERR_COMPILATION_FAILED;
@@ -236,16 +251,28 @@ PackedByteArray GDScriptCCompiler::read_elf_file(const String &p_elf_file) {
 void GDScriptCCompiler::cleanup_temp_files(const String &p_c_file, const String &p_elf_file) {
 	// Delete temporary files
 	if (!p_c_file.is_empty()) {
-		Ref<DirAccess> da = DirAccess::open(p_c_file.get_base_dir());
-		if (da.is_valid()) {
-			da->remove(p_c_file);
+		// Extract directory from file path
+		int last_slash = p_c_file.rfind("/");
+		if (last_slash >= 0) {
+			String dir_path = p_c_file.substr(0, last_slash);
+			Ref<DirAccess> da = DirAccess::open(dir_path);
+			if (da.is_valid()) {
+				String filename = p_c_file.substr(last_slash + 1);
+				da->remove(filename);
+			}
 		}
 	}
 
 	if (!p_elf_file.is_empty()) {
-		Ref<DirAccess> da = DirAccess::open(p_elf_file.get_base_dir());
-		if (da.is_valid()) {
-			da->remove(p_elf_file);
+		// Extract directory from file path
+		int last_slash = p_elf_file.rfind("/");
+		if (last_slash >= 0) {
+			String dir_path = p_elf_file.substr(0, last_slash);
+			Ref<DirAccess> da = DirAccess::open(dir_path);
+			if (da.is_valid()) {
+				String filename = p_elf_file.substr(last_slash + 1);
+				da->remove(filename);
+			}
 		}
 	}
 }

@@ -34,6 +34,7 @@
 #include "../../elf/script_instance_helper.h"
 #include <godot_cpp/variant/typed_array.hpp>
 #include <godot_cpp/classes/object.hpp>
+#include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/variant/variant.hpp>
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/core/property_info.hpp>
@@ -41,7 +42,7 @@
 
 using namespace godot;
 
-GDScriptELFInstance::GDScriptELFInstance() {
+GDScriptELFInstance::GDScriptELFInstance() : script_instance_list(this) {
 	owner = nullptr;
 	sandbox = nullptr;
 }
@@ -62,7 +63,7 @@ bool GDScriptELFInstance::set(const StringName &p_name, const Variant &p_value) 
 	if (script->member_indices.has(p_name)) {
 		const GDScriptELF::MemberInfo &member = script->member_indices[p_name];
 		if (member.index >= 0 && member.index < members.size()) {
-			members[member.index] = p_value;
+			members.write[member.index] = p_value;
 			return true;
 		}
 	}
@@ -100,7 +101,7 @@ bool GDScriptELFInstance::get(const StringName &p_name, Variant &r_ret) const {
 		const GDScriptELF::MemberInfo &member = script->member_indices[p_name];
 		if (!member.getter.is_empty()) {
 			GDExtensionCallError ce;
-			r_ret = callp(member.getter, nullptr, 0, ce);
+			r_ret = const_cast<GDScriptELFInstance *>(this)->callp(member.getter, nullptr, 0, ce);
 			return ce.error == GDEXTENSION_CALL_OK;
 		}
 	}
@@ -266,7 +267,7 @@ void GDScriptELFInstance::notification(int p_notification, bool p_reversed) {
 	}
 
 	// Call _ready if available
-	if (p_notification == NOTIFICATION_READY && script->implicit_ready) {
+	if (p_notification == Node::NOTIFICATION_READY && script->implicit_ready) {
 		GDExtensionCallError ce;
 		Variant result = script->implicit_ready->call(this, nullptr, 0, ce);
 		(void)result; // Suppress unused variable warning
@@ -327,7 +328,9 @@ void GDScriptELFInstance::get_property_state(GDExtensionScriptInstancePropertySt
 	// Add all member properties to the state
 	for (const KeyValue<StringName, GDScriptELF::MemberInfo> &E : script->member_indices) {
 		if (E.value.index >= 0 && E.value.index < members.size()) {
-			p_add_func(E.key, members[E.value.index], p_userdata);
+			const StringName &key = E.key;
+			const Variant &value = members[E.value.index];
+			p_add_func((GDExtensionConstStringNamePtr)&key, &value, p_userdata);
 		}
 	}
 }

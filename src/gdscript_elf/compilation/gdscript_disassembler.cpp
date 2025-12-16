@@ -35,6 +35,8 @@
 
 #include <godot_cpp/core/string_builder.hpp>
 
+using namespace godot;
+
 static String _get_variant_string(const Variant &p_variant) {
 	String txt;
 	if (p_variant.get_type() == Variant::STRING) {

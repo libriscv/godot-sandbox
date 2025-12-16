@@ -69,8 +69,8 @@ String GDScriptELFLanguage::_get_extension() const {
 void GDScriptELFLanguage::_init() {
 	// Initialize similar to GDScriptLanguage
 	// Populate global constants from ProjectSettings
-	Ref<ProjectSettings> project_settings = ProjectSettings::get_singleton();
-	if (project_settings.is_valid()) {
+	ProjectSettings *project_settings = ProjectSettings::get_singleton();
+	if (project_settings) {
 		// Add common math constants
 		_add_global_constant(StringName("PI"), 3.14159265358979323846);
 		_add_global_constant(StringName("TAU"), 6.28318530717958647692);
@@ -99,7 +99,7 @@ Dictionary GDScriptELFLanguage::_validate(const String &p_script, const String &
 	bool valid = true;
 
 	// Use GDScript parser/analyzer for validation
-	Ref<GDScriptParser> parser = memnew(GDScriptParser);
+	GDScriptParser *parser = memnew(GDScriptParser);
 	Error err = parser->parse(p_script, p_path, false);
 	
 	if (err != OK) {
@@ -113,6 +113,7 @@ Dictionary GDScriptELFLanguage::_validate(const String &p_script, const String &
 				errors.append(error_dict);
 			}
 		}
+		memdelete(parser);
 		result["valid"] = false;
 		result["functions"] = functions;
 		result["errors"] = errors;
@@ -122,7 +123,7 @@ Dictionary GDScriptELFLanguage::_validate(const String &p_script, const String &
 	}
 
 	// Run analyzer
-	Ref<GDScriptAnalyzer> analyzer = memnew(GDScriptAnalyzer(parser.ptr()));
+	GDScriptAnalyzer *analyzer = memnew(GDScriptAnalyzer(parser));
 	err = analyzer->analyze();
 	
 	if (err != OK) {
@@ -137,6 +138,8 @@ Dictionary GDScriptELFLanguage::_validate(const String &p_script, const String &
 				errors.append(error_dict);
 			}
 		}
+		memdelete(analyzer);
+		memdelete(parser);
 		result["valid"] = false;
 		result["functions"] = functions;
 		result["errors"] = errors;
@@ -157,6 +160,8 @@ Dictionary GDScriptELFLanguage::_validate(const String &p_script, const String &
 		}
 	}
 
+	memdelete(analyzer);
+	memdelete(parser);
 	result["valid"] = valid;
 	result["functions"] = functions;
 	result["errors"] = errors;
@@ -236,7 +241,7 @@ bool GDScriptELFLanguage::_has_named_classes() const {
 
 int32_t GDScriptELFLanguage::_find_function(const String &p_function, const String &p_code) const {
 	// Use GDScript parser to find function
-	Ref<GDScriptParser> parser = memnew(GDScriptParser);
+	GDScriptParser *parser = memnew(GDScriptParser);
 	parser->parse(p_code, "", false);
 	const GDScriptParser::ClassNode *class_node = parser->get_tree();
 	if (class_node) {

@@ -40,6 +40,8 @@
 
 #include "scene/scene_string_names.h"
 
+using namespace godot;
+
 bool GDScriptCompiler::_is_class_member_property(CodeGen &codegen, const StringName &p_name) {
 	if (codegen.function_node && codegen.function_node->is_static) {
 		return false;
@@ -3049,8 +3051,8 @@ Error GDScriptCompiler::_compile_class(GDScript *p_script, const GDScriptParser:
 	//validate instances if keeping state
 
 	if (p_keep_state) {
-		for (RBSet<Object *>::Element *E = p_script->instances.front(); E;) {
-			RBSet<Object *>::Element *N = E->next();
+		for (HashSet<Object *>::Element *E = p_script->instances.front(); E;) {
+			HashSet<Object *>::Element *N = E->next();
 
 			ScriptInstance *si = E->get()->get_script_instance();
 			if (si->is_placeholder()) {

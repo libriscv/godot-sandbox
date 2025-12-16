@@ -36,6 +36,8 @@
 #include <godot_cpp/core/string.hpp>
 #include <godot_cpp/templates/vector.hpp>
 
+using namespace godot;
+
 class GDScriptWarning {
 public:
 	enum WarnLevel {

@@ -33,6 +33,8 @@
 #include <godot_cpp/core/error_macros.hpp>
 // Note: char_utils may need special handling
 
+using namespace godot;
+
 #ifdef DEBUG_ENABLED
 #include "servers/text/text_server.h"
 #endif

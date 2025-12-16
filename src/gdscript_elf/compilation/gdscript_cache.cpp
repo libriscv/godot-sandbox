@@ -36,6 +36,7 @@
 #include "gdscript_parser.h"
 
 #include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/core/mutex_lock.hpp>
 #include <godot_cpp/templates/vector.hpp>
 
 using namespace godot;
@@ -77,8 +78,8 @@ Error GDScriptParserRef::raise_status(Status p_new_status) {
 				// It's ok if its the first thing done here.
 				get_parser()->clear();
 				status = PARSED;
-				String remapped_path = ResourceLoader::path_remap(path);
-				if (remapped_path.has_extension("gdc")) {
+				String remapped_path = path; // TODO: path_remap not available in GDExtension
+				if (remapped_path.ends_with(".gdc")) {
 					Vector<uint8_t> tokens = GDScriptCache::get_binary_tokens(remapped_path);
 					source_hash = hash_djb2_buffer(tokens.ptr(), tokens.size());
 					result = get_parser()->parse_binary(tokens, path);
@@ -219,8 +220,8 @@ Ref<GDScriptParserRef> GDScriptCache::get_parser(const String &p_path, GDScriptP
 			return ref;
 		}
 	} else {
-		String remapped_path = ResourceLoader::path_remap(p_path);
-		if (!FileAccess::exists(remapped_path)) {
+		String remapped_path = p_path; // TODO: path_remap not available in GDExtension
+		if (!FileAccess::file_exists(remapped_path)) {
 			r_error = ERR_FILE_NOT_FOUND;
 			return ref;
 		}
@@ -244,7 +245,7 @@ void GDScriptCache::remove_parser(const String &p_path) {
 	if (singleton->parser_map.has(p_path)) {
 		GDScriptParserRef *parser_ref = singleton->parser_map[p_path];
 		parser_ref->abandoned = true;
-		singleton->abandoned_parser_map[p_path].push_back(parser_ref->get_instance_id());
+				singleton->abandoned_parser_map[p_path].push_back(ObjectID(parser_ref->get_instance_id()));
 	}
 
 	// Can't clear the parser because some other parser might be currently using it in the chain of calls.
@@ -261,8 +262,8 @@ void GDScriptCache::remove_parser(const String &p_path) {
 String GDScriptCache::get_source_code(const String &p_path) {
 	Vector<uint8_t> source_file;
 	Error err;
-	Ref<FileAccess> f = FileAccess::open(p_path, FileAccess::READ, &err);
-	ERR_FAIL_COND_V(err, "");
+	Ref<FileAccess> f = FileAccess::open(p_path, FileAccess::READ);
+	ERR_FAIL_COND_V(f.is_null(), "");
 
 	uint64_t len = f->get_length();
 	source_file.resize(len + 1);
@@ -270,18 +271,15 @@ String GDScriptCache::get_source_code(const String &p_path) {
 	ERR_FAIL_COND_V(r != len, "");
 	source_file.write[len] = 0;
 
-	String source;
-	if (source.append_utf8((const char *)source_file.ptr(), len) != OK) {
-		ERR_FAIL_V_MSG("", "Script '" + p_path + "' contains invalid unicode (UTF-8), so it was not loaded. Please ensure that scripts are saved in valid UTF-8 unicode.");
-	}
+	String source = String::utf8((const char *)source_file.ptr(), len);
 	return source;
 }
 
 Vector<uint8_t> GDScriptCache::get_binary_tokens(const String &p_path) {
 	Vector<uint8_t> buffer;
 	Error err = OK;
-	Ref<FileAccess> f = FileAccess::open(p_path, FileAccess::READ, &err);
-	ERR_FAIL_COND_V_MSG(err != OK, buffer, "Failed to open binary GDScript file '" + p_path + "'.");
+	Ref<FileAccess> f = FileAccess::open(p_path, FileAccess::READ);
+	ERR_FAIL_COND_V_MSG(f.is_null(), buffer, "Failed to open binary GDScript file '" + p_path + "'.");
 
 	uint64_t len = f->get_length();
 	buffer.resize(len);
@@ -304,12 +302,12 @@ Ref<GDScript> GDScriptCache::get_shallow_script(const String &p_path, Error &r_e
 		return singleton->shallow_gdscript_cache[p_path];
 	}
 
-	const String remapped_path = ResourceLoader::path_remap(p_path);
+	const String remapped_path = p_path; // TODO: path_remap not available in GDExtension
 
 	Ref<GDScript> script;
 	script.instantiate();
 	script->set_path(p_path, true);
-	if (remapped_path.has_extension("gdc")) {
+	if (remapped_path.ends_with(".gdc")) {
 		Vector<uint8_t> buffer = get_binary_tokens(remapped_path);
 		if (buffer.is_empty()) {
 			r_error = ERR_FILE_CANT_READ;
@@ -357,10 +355,10 @@ Ref<GDScript> GDScriptCache::get_full_script(const String &p_path, Error &r_erro
 		}
 	}
 
-	const String remapped_path = ResourceLoader::path_remap(p_path);
+	const String remapped_path = p_path; // TODO: path_remap not available in GDExtension
 
 	if (p_update_from_disk) {
-		if (remapped_path.has_extension("gdc")) {
+		if (remapped_path.ends_with(".gdc")) {
 			Vector<uint8_t> buffer = get_binary_tokens(remapped_path);
 			if (buffer.is_empty()) {
 				r_error = ERR_FILE_CANT_READ;
@@ -465,7 +463,7 @@ void GDScriptCache::clear() {
 
 	singleton->abandoned_parser_map.clear();
 
-	RBSet<Ref<GDScriptParserRef>> parser_map_refs;
+	HashSet<Ref<GDScriptParserRef>> parser_map_refs;
 	for (KeyValue<String, GDScriptParserRef *> &E : singleton->parser_map) {
 		parser_map_refs.insert(E.value);
 	}

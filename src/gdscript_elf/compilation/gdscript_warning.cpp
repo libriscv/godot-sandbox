@@ -32,6 +32,8 @@
 
 #include <godot_cpp/variant/variant.hpp>
 
+using namespace godot;
+
 #ifdef DEBUG_ENABLED
 
 String GDScriptWarning::get_message() const {

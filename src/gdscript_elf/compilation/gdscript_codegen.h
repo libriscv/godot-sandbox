@@ -36,6 +36,8 @@
 #include <godot_cpp/variant/string_name.hpp>
 #include <godot_cpp/variant/variant.hpp>
 
+using namespace godot;
+
 class GDScriptCodeGenerator {
 public:
 	struct Address {

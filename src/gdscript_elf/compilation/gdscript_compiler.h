@@ -37,6 +37,8 @@
 
 #include <godot_cpp/templates/hash_set.hpp>
 
+using namespace godot;
+
 class GDScriptCompiler {
 	const GDScriptParser *parser = nullptr;
 	HashSet<GDScript *> parsed_classes;

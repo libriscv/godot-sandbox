@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  gdscript_rpc_callable.h                                               */
+/*  gdscript_ast_elf_compiler.h                                           */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -30,34 +30,41 @@
 
 #pragma once
 
-#include <godot_cpp/gdextension/gdextension_interface.h>
-#include <godot_cpp/variant/callable.hpp>
+#include "gdscript_ast_c_codegen.h"
+#include "gdscript_c_compiler.h"
+
+#include <godot_cpp/variant/string_name.hpp>
+#include <godot_cpp/templates/vector.hpp>
 #include <godot_cpp/variant/variant.hpp>
+#include "../compilation/gdscript_parser.h"
 
 using namespace godot;
 
-class Node;
+// Forward declaration
+class GDScriptAnalyzer;
 
-class GDScriptRPCCallable : public CallableCustom {
-	Object *object = nullptr;
-	Node *node = nullptr;
-	StringName method;
-	uint32_t h = 0;
-
-	static bool compare_equal(const CallableCustom *p_a, const CallableCustom *p_b);
-	static bool compare_less(const CallableCustom *p_a, const CallableCustom *p_b);
-
+// Orchestrates AST-to-ELF compilation via direct C code generation
+// This bypasses bytecode entirely, avoiding VM-specific types
+class GDScriptASTELFCompiler {
 public:
-	uint32_t hash() const override;
-	String get_as_text() const override;
-	CompareEqualFunc get_compare_equal_func() const override;
-	CompareLessFunc get_compare_less_func() const override;
-	ObjectID get_object() const override;
-	StringName get_method() const;
-	int get_argument_count(bool &r_is_valid) const override;
-	void call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const override;
-	Error rpc(int p_peer_id, const Variant **p_arguments, int p_argcount, GDExtensionCallError &r_call_error) const;
+	// Compile a function from AST to RISC-V ELF
+	// Returns the ELF binary as a PackedByteArray
+	// Returns empty PackedByteArray on error
+	static PackedByteArray compile_function_to_elf(const GDScriptParser::FunctionNode *p_function, const GDScriptParser::ClassNode *p_class, GDScriptAnalyzer *p_analyzer);
 
-	GDScriptRPCCallable(Object *p_object, const StringName &p_method);
-	virtual ~GDScriptRPCCallable() = default;
+	// Check if a function can be compiled to ELF
+	// Returns true if cross-compiler is available and function is valid
+	static bool can_compile_function(const GDScriptParser::FunctionNode *p_function);
+
+	// Check if cross-compiler is available
+	static bool is_compiler_available();
+
+	// Get last compilation error (if any)
+	static String get_last_error();
+
+private:
+	static String last_compilation_error;
+
+	// Main compilation logic
+	static Error compile_internal(const GDScriptParser::FunctionNode *p_function, const GDScriptParser::ClassNode *p_class, GDScriptAnalyzer *p_analyzer, PackedByteArray &r_elf_output);
 };

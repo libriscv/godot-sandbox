@@ -54,6 +54,8 @@
 #include "editor/editor_string_names.h"
 #include "editor/file_system/editor_file_system.h"
 #include "editor/settings/editor_settings.h"
+
+using namespace godot;
 #endif
 
 Vector<String> GDScriptLanguage::get_comment_delimiters() const {

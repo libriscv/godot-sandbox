@@ -32,6 +32,8 @@
 
 #include "gdscript_tokenizer.h"
 
+using namespace godot;
+
 class GDScriptTokenizerBuffer : public GDScriptTokenizer {
 public:
 	enum CompressMode {
