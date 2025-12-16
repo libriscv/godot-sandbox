@@ -30,9 +30,9 @@
 
 #pragma once
 
-#include <godot_cpp/gdextension/gdextension_interface.h>
 #include <godot_cpp/variant/callable.hpp>
 #include <godot_cpp/variant/variant.hpp>
+#include "gdscript_gdextension_helpers.h"
 
 using namespace godot;
 

@@ -33,6 +33,7 @@
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/variant/variant.hpp>
+#include <gdextension_interface.h>
 
 using namespace godot;
 
