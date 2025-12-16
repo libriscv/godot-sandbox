@@ -222,6 +222,7 @@ Variant GDScriptASTInterpreter::execute_function(const GDScriptParser::FunctionN
 		
 		// Generate nested if statements using macro (up to 32 levels for max trace length)
 		// Each level provides padding for better branch prediction (16-byte spacing)
+		// http://www.emulators.com/docs/nx25_nostradamus.htm
 		NOSTRADAMUS_NEXT()
 		if (handler != (ASTNodeHandler)ast_fire_escape_handler && !has_return_value) {
 			NOSTRADAMUS_NEXT()

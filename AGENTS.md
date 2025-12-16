@@ -463,13 +463,19 @@ GDScriptELF follows a different pattern:
 
 2. **Execution**:
 
-   - Function calls check for ELF binary
-   - Execute in sandbox if available
-   - Fallback to VM if ELF unavailable
+   - **AST Interpreter** (Primary): Direct AST interpretation using Nostradamus Distributor pattern
+     - Bypasses bytecode/VM entirely
+     - Interprets AST nodes directly for fast execution
+     - Uses handler-based dispatch for efficient control flow
+   - **ELF Execution** (Future): Function calls check for ELF binary
+     - Execute in sandbox if available
+     - Fallback to VM if ELF unavailable
+   - **VM Fallback**: Bytecode execution for unsupported features
 
 3. **Integration**:
    - Uses existing GDScript compilation pipeline
-   - Replaces bytecode generation with ELF compilation
+   - AST interpreter provides direct execution path
+   - ELF compilation available for performance-critical functions
    - Maintains GDScript syntax compatibility
 
 ## Dependencies
@@ -535,6 +541,7 @@ GDScriptELF follows a different pattern:
 - ✅ Syscall API implementation
 - ✅ Binary translation support
 - ✅ GDScriptELF language structure
+- ✅ GDScriptELF AST interpreter (Nostradamus Distributor pattern)
 
 ### In Progress
 

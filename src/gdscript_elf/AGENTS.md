@@ -31,6 +31,7 @@ src/gdscript_elf/
 │   ├── gdscript_compiler.*       # Compiles AST to bytecode
 │   ├── gdscript_function.*       # Function representation
 │   ├── gdscript.*                # GDScript class (read-only reference)
+│   ├── gdscript_ast_interpreter.* # Direct AST interpretation (Nostradamus Distributor)
 │   ├── gdscript_gdextension_helpers.h  # GDExtension API helper functions
 │   └── ...
 ├── elf/                         # ELF compilation components
@@ -100,13 +101,19 @@ src/gdscript_elf/
 
 - Wraps individual function execution
 - Stores ELF binary and VM bytecode fallback
-- Dispatches to ELF execution or VM fallback
+- Dispatches to AST interpreter (primary), ELF execution, or VM fallback
 
 **Key Methods:**
 
-- `execute_elf()` - Executes function via ELF binary in sandbox
-- `execute_vm_fallback()` - Executes function via VM bytecode
-- `call()` - Main entry point for function execution
+- `call()` - Main entry point for function execution (uses AST interpreter)
+- `execute_elf()` - Executes function via ELF binary in sandbox (future)
+- `execute_vm_fallback()` - Executes function via VM bytecode (fallback)
+
+**Execution Priority:**
+
+1. **AST Interpreter** (Current): Direct AST interpretation using `GDScriptASTInterpreter`
+2. **ELF Execution** (Future): Native ELF binary execution in sandbox
+3. **VM Fallback**: Bytecode execution for unsupported features
 
 ### Compilation Pipeline
 
@@ -137,11 +144,26 @@ ELF Compiler (elf/gdscript_bytecode_elf_compiler.*) → ELF Binary
 
 **Note**: These files have been updated to use GDExtension includes (`godot_cpp/*`), but some internal APIs may still need adaptation. See `TODO.md` for remaining compilation issues.
 
-**GDExtension Helpers** (`gdscript_gdextension_helpers.h`):
-- Provides helper functions to replace missing GDExtension API methods
-- Includes `get_validated_object_safe()` to replace `Variant::get_validated_object_with_check()`
-- Includes function pointer types for Variant operators and methods
-- Used throughout the compilation pipeline for GDExtension compatibility
+### AST Interpreter
+
+**Files**: `compilation/gdscript_ast_interpreter.{h,cpp}`
+
+- **Purpose**: Direct AST interpretation bypassing bytecode/VM entirely
+- **Pattern**: Nostradamus Distributor pattern for efficient handler dispatch
+- **Architecture**: Handler-based execution where each node type has a handler function
+- **Execution Flow**: Handlers execute nodes and return next handler pointer (software pipelining)
+
+**Key Features:**
+
+- Direct AST node execution without bytecode generation
+- Handler-based dispatch for control flow (if, for, while, etc.)
+- Expression evaluation (binary/unary operators, calls, identifiers, literals)
+- Variable management (locals, stack, return values)
+- Control flow support (break, continue, return)
+
+**Usage:**
+
+The AST interpreter is the primary execution method in `GDScriptELFFunction::call()`, providing fast direct interpretation without the overhead of bytecode generation or VM execution.
 
 **GDExtension Helpers** (`gdscript_gdextension_helpers.h`):
 - Provides helper functions to replace missing GDExtension API methods
@@ -183,8 +205,9 @@ ELF Compiler (elf/gdscript_bytecode_elf_compiler.*) → ELF Binary
 3. **GDScriptELFFunction** (`language/gdscript_elf_function.h/cpp`)
 
    - Function execution wrapper
-   - ELF execution via sandbox (`execute_elf()`)
-   - VM fallback structure (`execute_vm_fallback()`)
+   - **AST Interpreter** (Primary): Direct AST interpretation via `GDScriptASTInterpreter`
+   - ELF execution via sandbox (`execute_elf()`) - Future implementation
+   - VM fallback structure (`execute_vm_fallback()`) - For unsupported features
    - Function metadata and calling conventions
    - Stores ELF binary and bytecode fallback
 
@@ -212,7 +235,16 @@ ELF Compiler (elf/gdscript_bytecode_elf_compiler.*) → ELF Binary
    - Integrated into `register_types.cpp`
    - ✅ **Completed**: Uses GDExtension initialization API
 
-7. **Build Integration**
+7. **AST Interpreter** (`compilation/gdscript_ast_interpreter.h/cpp`)
+
+   - Direct AST interpretation using Nostradamus Distributor pattern
+   - Handler-based dispatch for efficient execution
+   - Supports variable declarations, assignments, control flow (if, for, while)
+   - Expression evaluation (operators, calls, identifiers, literals)
+   - Integrated as primary execution method in `GDScriptELFFunction::call()`
+   - ✅ **Completed**: Core AST interpreter implementation
+
+8. **Build Integration**
    - Added to `CMakeLists.txt` for GDExtension builds
    - All source files included in build
    - ✅ **Completed**: GDExtension-only build support
@@ -229,11 +261,19 @@ ELF Compiler (elf/gdscript_bytecode_elf_compiler.*) → ELF Binary
    - Incomplete `Script` type in some contexts
    - **See**: `TODO.md` for detailed list and solutions
 
-2. **VM Fallback Implementation**
+2. **AST Interpreter Enhancements**
+
+   - ✅ Basic AST interpreter implemented with Nostradamus Distributor pattern
+   - 🚧 Additional node type handlers (match, switch, etc.)
+   - 🚧 Advanced control flow (yield, coroutines)
+   - 🚧 Signal handling and connections
+   - 🚧 Complete expression evaluation coverage
+
+3. **VM Fallback Implementation**
 
    - Basic structure exists in `execute_vm_fallback()`
    - Needs full VM bytecode interpreter implementation
-   - Should handle all GDScript opcodes not supported by ELF compilation
+   - Should handle all GDScript opcodes not supported by AST interpreter or ELF compilation
 
 3. **CoreConstants and Math:: Usage**
 
@@ -304,10 +344,11 @@ Follow the same conventions as the main project (see root `AGENTS.md`):
 
 ### Adding New Features
 
-1. **New Function Opcodes**: Add to `gdscript_bytecode_c_codegen.cpp` to generate C code
-2. **New Language Features**: Extend parser/analyzer in `compilation/` directory
-3. **Performance Improvements**: Optimize ELF compilation or execution paths
-4. **VM Fallback**: Extend `execute_vm_fallback()` in `gdscript_elf_function.cpp`
+1. **New AST Node Types**: Add handler function in `gdscript_ast_interpreter.cpp` following Nostradamus Distributor pattern
+2. **New Function Opcodes**: Add to `gdscript_bytecode_c_codegen.cpp` to generate C code
+3. **New Language Features**: Extend parser/analyzer in `compilation/` directory
+4. **Performance Improvements**: Optimize AST interpreter, ELF compilation, or execution paths
+5. **VM Fallback**: Extend `execute_vm_fallback()` in `gdscript_elf_function.cpp`
 
 ### Testing
 
@@ -342,12 +383,17 @@ func test_gdscript_elf_compilation():
 **Execution Issues:**
 
 - Enable sandbox debug logging
-- Check function address resolution in `execute_elf()`
+- Check AST interpreter execution in `GDScriptASTInterpreter::execute_function()`
+- Verify handler dispatch and control flow
+- Check function address resolution in `execute_elf()` (if using ELF)
 - Verify argument marshaling
 - Check VM fallback execution
 
 **Common Issues:**
 
+- **AST Interpreter Errors**: Check handler registration and node type matching
+- **Missing Handler**: Add handler function for new AST node type
+- **Control Flow Issues**: Verify break/continue/return handling in loops
 - **Missing ELF Binary**: Function may not be compilable, check `can_compile_function()`
 - **Symbol Not Found**: Function name mismatch between C code and ELF symbol
 - **VM Fallback Not Working**: `execute_vm_fallback()` needs full implementation
@@ -424,11 +470,15 @@ Store ELF binaries in function_elf_binaries
 GDScriptELFInstance::callp()
     ↓
 GDScriptELFFunction::call()
-    ├─→ execute_elf() (if ELF available)
+    ├─→ GDScriptASTInterpreter::execute_function() (Primary - Direct AST interpretation)
+    │   ├─→ Handler dispatch (Nostradamus Distributor pattern)
+    │   ├─→ Statement execution (if, for, while, etc.)
+    │   └─→ Expression evaluation (operators, calls, identifiers)
+    ├─→ execute_elf() (Future - if ELF available)
     │   ├─→ Sandbox::load_buffer()
     │   ├─→ Sandbox::address_of()
     │   └─→ Sandbox::vmcall_address()
-    └─→ execute_vm_fallback() (if ELF unavailable)
+    └─→ execute_vm_fallback() (Fallback - if AST/ELF unavailable)
 ```
 
 ## References
