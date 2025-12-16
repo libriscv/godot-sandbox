@@ -39,12 +39,21 @@
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/resource_saver.hpp>
+#include <godot_cpp/godot.hpp>
 
 using namespace godot;
 
 static GDScriptELFLanguage *script_language_gdelf = nullptr;
 static Ref<ResourceFormatLoaderGDScriptELF> resource_loader_gdelf;
 static Ref<ResourceFormatSaverGDScriptELF> resource_saver_gdelf;
+
+// Wrapper to convert ModuleInitializationLevel to GDExtensionInitializationLevel
+static void initialize_gdscript_elf_language_wrapper(ModuleInitializationLevel p_level) {
+	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+		return;
+	}
+	initialize_gdscript_elf_language(GDEXTENSION_INITIALIZATION_SCENE);
+}
 
 void initialize_gdscript_elf_language(GDExtensionInitializationLevel p_level) {
 	if (p_level != GDEXTENSION_INITIALIZATION_SCENE) {
@@ -59,17 +68,25 @@ void initialize_gdscript_elf_language(GDExtensionInitializationLevel p_level) {
 
 	// Create and register language
 	script_language_gdelf = memnew(GDScriptELFLanguage);
-	ScriptServer::register_language(script_language_gdelf);
+	Engine::get_singleton()->register_script_language(script_language_gdelf);
 
 	// Create and register resource loaders/savers
 	resource_loader_gdelf.instantiate();
-	ResourceLoader::add_resource_format_loader(resource_loader_gdelf);
+	ResourceLoader::get_singleton()->add_resource_format_loader(resource_loader_gdelf, true);
 
 	resource_saver_gdelf.instantiate();
-	ResourceSaver::add_resource_format_saver(resource_saver_gdelf);
+	ResourceSaver::get_singleton()->add_resource_format_saver(resource_saver_gdelf);
 
 	// Initialize language
-	script_language_gdelf->init();
+	script_language_gdelf->_init();
+}
+
+// Wrapper to convert ModuleInitializationLevel to GDExtensionInitializationLevel
+static void uninitialize_gdscript_elf_language_wrapper(ModuleInitializationLevel p_level) {
+	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+		return;
+	}
+	uninitialize_gdscript_elf_language(GDEXTENSION_INITIALIZATION_SCENE);
 }
 
 void uninitialize_gdscript_elf_language(GDExtensionInitializationLevel p_level) {
@@ -79,20 +96,20 @@ void uninitialize_gdscript_elf_language(GDExtensionInitializationLevel p_level) 
 
 	// Unregister language
 	if (script_language_gdelf) {
-		ScriptServer::unregister_language(script_language_gdelf);
-		script_language_gdelf->finish();
+		Engine::get_singleton()->unregister_script_language(script_language_gdelf);
+		script_language_gdelf->_finish();
 		memdelete(script_language_gdelf);
 		script_language_gdelf = nullptr;
 	}
 
 	// Remove resource loaders/savers
 	if (resource_loader_gdelf.is_valid()) {
-		ResourceLoader::remove_resource_format_loader(resource_loader_gdelf);
+		ResourceLoader::get_singleton()->remove_resource_format_loader(resource_loader_gdelf);
 		resource_loader_gdelf.unref();
 	}
 
 	if (resource_saver_gdelf.is_valid()) {
-		ResourceSaver::remove_resource_format_saver(resource_saver_gdelf);
+		ResourceSaver::get_singleton()->remove_resource_format_saver(resource_saver_gdelf);
 		resource_saver_gdelf.unref();
 	}
 }
@@ -107,8 +124,8 @@ GDExtensionBool GDE_EXPORT gdscript_elf_extension_init(
 	GDExtensionBinding::InitObject init_obj(p_get_proc_address, p_library, r_initialization);
 
 	// Register initialization and termination functions
-	init_obj.register_initializer(initialize_gdscript_elf_language);
-	init_obj.register_terminator(uninitialize_gdscript_elf_language);
+	init_obj.register_initializer(initialize_gdscript_elf_language_wrapper);
+	init_obj.register_terminator(uninitialize_gdscript_elf_language_wrapper);
 	init_obj.set_minimum_library_initialization_level(MODULE_INITIALIZATION_LEVEL_SCENE);
 
 	return init_obj.init();

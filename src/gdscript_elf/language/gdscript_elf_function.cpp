@@ -39,7 +39,7 @@ using namespace godot;
 
 using gaddr_t = riscv::address_type<riscv::RISCV64>;
 
-GDScriptELFFunction::GDScriptELFFunction() {
+GDScriptELFFunction::GDScriptELFFunction() : function_list(this) {
 	script = nullptr;
 	argument_count = 0;
 	default_argument_count = 0;
@@ -73,24 +73,26 @@ Variant GDScriptELFFunction::call(GDScriptELFInstance *p_instance, const Variant
 	final_args.resize(argument_count);
 	int arg_index = 0;
 	for (; arg_index < p_argcount && arg_index < argument_count; arg_index++) {
-		final_args[arg_index] = p_args[arg_index];
+		final_args.write[arg_index] = p_args[arg_index];
 	}
 	for (; arg_index < argument_count; arg_index++) {
 		int default_index = arg_index - (argument_count - default_argument_count);
 		if (default_index >= 0 && default_index < default_arguments.size()) {
-			final_args[arg_index] = &default_arguments[default_index];
+			final_args.write[arg_index] = &default_arguments[default_index];
 		} else {
-			r_error.error = Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS;
+			r_error.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
 			r_error.argument = arg_index;
 			return Variant();
 		}
 	}
 
 	// Try ELF execution first, fallback to VM if not available
+	// Convert Vector to array for function call
+	const Variant **args_array = const_cast<const Variant **>(final_args.ptr());
 	if (has_elf_code()) {
-		return execute_elf(p_instance, final_args.ptr(), final_args.size(), r_error);
+		return execute_elf(p_instance, args_array, final_args.size(), r_error);
 	} else {
-		return execute_vm_fallback(p_instance, final_args.ptr(), final_args.size(), r_error);
+		return execute_vm_fallback(p_instance, args_array, final_args.size(), r_error);
 	}
 }
 
@@ -120,7 +122,7 @@ Variant GDScriptELFFunction::execute_elf(GDScriptELFInstance *p_instance, const 
 
 	// Generate function symbol name matching C code generation
 	// The C code generator creates functions with prefix "gdscript_"
-	String func_name = name.operator String();
+	String func_name = String(name);
 	func_name = func_name.replace(".", "_").replace(" ", "_");
 	String symbol_name = "gdscript_" + func_name;
 
@@ -142,14 +144,14 @@ Variant GDScriptELFFunction::execute_elf(GDScriptELFInstance *p_instance, const 
 	final_args.resize(argument_count);
 	int arg_index = 0;
 	for (; arg_index < p_argcount && arg_index < argument_count; arg_index++) {
-		final_args[arg_index] = p_args[arg_index];
+		final_args.write[arg_index] = p_args[arg_index];
 	}
 	for (; arg_index < argument_count; arg_index++) {
 		int default_index = arg_index - (argument_count - default_argument_count);
 		if (default_index >= 0 && default_index < default_arguments.size()) {
-			final_args[arg_index] = &default_arguments[default_index];
+			final_args.write[arg_index] = &default_arguments[default_index];
 		} else {
-			r_error.error = Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS;
+			r_error.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
 			r_error.argument = arg_index;
 			return Variant();
 		}
@@ -157,7 +159,8 @@ Variant GDScriptELFFunction::execute_elf(GDScriptELFInstance *p_instance, const 
 
 	// Call function in sandbox by address
 	GDExtensionCallError vm_error;
-	Variant result = sandbox->vmcall_address(func_address, final_args.ptr(), final_args.size(), vm_error);
+	const Variant **args_array = const_cast<const Variant **>(final_args.ptr());
+	Variant result = sandbox->vmcall_address(func_address, args_array, final_args.size(), vm_error);
 
 	if (vm_error.error != GDEXTENSION_CALL_OK) {
 		// Fallback to VM on error
@@ -165,7 +168,7 @@ Variant GDScriptELFFunction::execute_elf(GDScriptELFInstance *p_instance, const 
 		return execute_vm_fallback(p_instance, p_args, p_argcount, r_error);
 	}
 
-	r_error.error = GDEXTENSION_CALL_ERROR_NONE;
+		r_error.error = GDEXTENSION_CALL_OK;
 	return result;
 }
 
@@ -185,7 +188,7 @@ Variant GDScriptELFFunction::execute_vm_fallback(GDScriptELFInstance *p_instance
 	
 	// Validate argument count
 	if (p_argcount < argument_count - default_argument_count) {
-		r_error.error = Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS;
+		r_error.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
 		r_error.argument = argument_count - default_argument_count;
 		return Variant();
 	}
@@ -201,14 +204,14 @@ Variant GDScriptELFFunction::execute_vm_fallback(GDScriptELFInstance *p_instance
 	final_args.resize(argument_count);
 	int arg_index = 0;
 	for (; arg_index < p_argcount && arg_index < argument_count; arg_index++) {
-		final_args[arg_index] = p_args[arg_index];
+		final_args.write[arg_index] = p_args[arg_index];
 	}
 	for (; arg_index < argument_count; arg_index++) {
 		int default_index = arg_index - (argument_count - default_argument_count);
 		if (default_index >= 0 && default_index < default_arguments.size()) {
-			final_args[arg_index] = &default_arguments[default_index];
+			final_args.write[arg_index] = &default_arguments[default_index];
 		} else {
-			r_error.error = Callable::CallError::CALL_ERROR_TOO_FEW_ARGUMENTS;
+			r_error.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
 			r_error.argument = arg_index;
 			return Variant();
 		}
@@ -219,7 +222,7 @@ Variant GDScriptELFFunction::execute_vm_fallback(GDScriptELFInstance *p_instance
 	// In a production system, this would execute the bytecode using GDScriptVM
 	WARN_PRINT("GDScriptELFFunction: VM fallback execution not fully implemented. Function '" + String(name) + "' requires full VM support.");
 	
-	r_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 	return Variant();
 }
 

@@ -32,9 +32,10 @@
 #include "gdscript_elf_language.h"
 #include "../../sandbox.h"
 #include "../../elf/script_instance_helper.h"
+#include <godot_cpp/variant/typed_array.hpp>
 #include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/variant/variant.hpp>
-#include <godot_cpp/core/method_info.hpp>
+#include <godot_cpp/core/object.hpp>
 #include <godot_cpp/core/property_info.hpp>
 #include <godot_cpp/templates/list.hpp>
 
@@ -70,10 +71,10 @@ bool GDScriptELFInstance::set(const StringName &p_name, const Variant &p_value) 
 	if (script->member_indices.has(p_name)) {
 		const GDScriptELF::MemberInfo &member = script->member_indices[p_name];
 		if (!member.setter.is_empty()) {
-			Callable::CallError ce;
-			Variant setter_args[1] = { p_value };
-			callp(member.setter, (const Variant **)setter_args, 1, ce);
-			return ce.error == Callable::CallError::CALL_OK;
+			GDExtensionCallError ce;
+			const Variant *setter_args[1] = { &p_value };
+			callp(member.setter, setter_args, 1, ce);
+			return ce.error == GDEXTENSION_CALL_OK;
 		}
 	}
 
@@ -98,9 +99,9 @@ bool GDScriptELFInstance::get(const StringName &p_name, Variant &r_ret) const {
 	if (script->member_indices.has(p_name)) {
 		const GDScriptELF::MemberInfo &member = script->member_indices[p_name];
 		if (!member.getter.is_empty()) {
-			Callable::CallError ce;
+			GDExtensionCallError ce;
 			r_ret = callp(member.getter, nullptr, 0, ce);
-			return ce.error == Callable::CallError::CALL_OK;
+			return ce.error == GDEXTENSION_CALL_OK;
 		}
 	}
 
@@ -163,8 +164,9 @@ Variant::Type GDScriptELFInstance::get_property_type(const StringName &p_name, b
 	return Variant::NIL;
 }
 
-void GDScriptELFInstance::validate_property(PropertyInfo &p_property) const {
-	// Property validation
+bool GDScriptELFInstance::validate_property(GDExtensionPropertyInfo &p_property) const {
+	// Property validation - return true if valid
+	return true;
 }
 
 bool GDScriptELFInstance::property_can_revert(const StringName &p_name) const {
@@ -229,29 +231,23 @@ bool GDScriptELFInstance::has_method(const StringName &p_method) const {
 
 GDExtensionInt GDScriptELFInstance::get_method_argument_count(const StringName &p_method, bool &r_valid) const {
 	if (!script.is_valid()) {
-		if (r_is_valid) {
-			*r_is_valid = false;
-		}
+		r_valid = false;
 		return -1;
 	}
 
 	if (script->member_functions.has(p_method)) {
 		GDScriptELFFunction *func = script->member_functions[p_method];
-		if (r_is_valid) {
-			*r_is_valid = true;
-		}
+		r_valid = true;
 		return func->get_argument_count();
 	}
 
-	if (r_is_valid) {
-		*r_is_valid = false;
-	}
+	r_valid = false;
 	return -1;
 }
 
-Variant GDScriptELFInstance::callp(const StringName &p_method, const Variant **p_args, int p_argcount, Callable::CallError &r_error) {
+Variant GDScriptELFInstance::callp(const StringName &p_method, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) {
 	if (!script.is_valid()) {
-		r_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 		return Variant();
 	}
 
@@ -260,7 +256,7 @@ Variant GDScriptELFInstance::callp(const StringName &p_method, const Variant **p
 		return func->call(this, p_args, p_argcount, r_error);
 	}
 
-	r_error.error = Callable::CallError::CALL_ERROR_INVALID_METHOD;
+	r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 	return Variant();
 }
 
@@ -271,7 +267,7 @@ void GDScriptELFInstance::notification(int p_notification, bool p_reversed) {
 
 	// Call _ready if available
 	if (p_notification == NOTIFICATION_READY && script->implicit_ready) {
-		Callable::CallError ce;
+		GDExtensionCallError ce;
 		Variant result = script->implicit_ready->call(this, nullptr, 0, ce);
 		(void)result; // Suppress unused variable warning
 	}
@@ -284,11 +280,63 @@ String GDScriptELFInstance::to_string(bool *r_valid) {
 	return String("[GDScriptELFInstance]");
 }
 
+void GDScriptELFInstance::refcount_incremented() {
+	// Handle reference count increment if needed
+}
+
+bool GDScriptELFInstance::refcount_decremented() {
+	// Handle reference count decrement
+	// Return true if object should be freed
+	return false;
+}
+
+bool GDScriptELFInstance::is_placeholder() const {
+	return false; // GDScriptELF instances are never placeholders
+}
+
+void GDScriptELFInstance::property_set_fallback(const StringName &p_name, const Variant &p_value, bool *r_valid) {
+	if (r_valid) {
+		*r_valid = false;
+	}
+	// Try to set property using standard set method
+	if (const_cast<GDScriptELFInstance *>(this)->set(p_name, p_value)) {
+		if (r_valid) {
+			*r_valid = true;
+		}
+	}
+}
+
+Variant GDScriptELFInstance::property_get_fallback(const StringName &p_name, bool *r_valid) {
+	if (r_valid) {
+		*r_valid = false;
+	}
+	Variant ret;
+	if (const_cast<GDScriptELFInstance *>(this)->get(p_name, ret)) {
+		if (r_valid) {
+			*r_valid = true;
+		}
+		return ret;
+	}
+	return Variant();
+}
+
+void GDScriptELFInstance::get_property_state(GDExtensionScriptInstancePropertyStateAdd p_add_func, void *p_userdata) {
+	if (!script.is_valid()) {
+		return;
+	}
+	// Add all member properties to the state
+	for (const KeyValue<StringName, GDScriptELF::MemberInfo> &E : script->member_indices) {
+		if (E.value.index >= 0 && E.value.index < members.size()) {
+			p_add_func(E.key, members[E.value.index], p_userdata);
+		}
+	}
+}
+
 Ref<Script> GDScriptELFInstance::get_script() const {
 	return script;
 }
 
-ScriptLanguage *GDScriptELFInstance::get_language() {
+ScriptLanguage *GDScriptELFInstance::_get_language() {
 	return GDScriptELFLanguage::get_singleton();
 }
 
@@ -314,13 +362,13 @@ void GDScriptELFInstance::reload_members() {
 		// Initialize with default values
 		for (const KeyValue<StringName, GDScriptELF::MemberInfo> &E : script->member_indices) {
 			if (script->has_property_default_value(E.key)) {
-				members[E.value.index] = script->get_property_default_value(E.key);
+				members.write[E.value.index] = script->get_property_default_value(E.key);
 			}
 		}
 	}
 }
 
-const Variant GDScriptELFInstance::get_rpc_config() const {
+Variant GDScriptELFInstance::get_rpc_config() const {
 	if (!script.is_valid()) {
 		return Variant();
 	}
@@ -339,7 +387,7 @@ void GDScriptELFInstance::_call_implicit_ready_recursively(GDScriptELF *p_script
 
 	// Call this script's _ready
 	if (p_script->implicit_ready) {
-		Callable::CallError ce;
+		GDExtensionCallError ce;
 		p_script->implicit_ready->call(this, nullptr, 0, ce);
 	}
 }

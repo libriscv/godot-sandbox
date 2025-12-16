@@ -31,6 +31,7 @@ src/gdscript_elf/
 │   ├── gdscript_compiler.*       # Compiles AST to bytecode
 │   ├── gdscript_function.*       # Function representation
 │   ├── gdscript.*                # GDScript class (read-only reference)
+│   ├── gdscript_gdextension_helpers.h  # GDExtension API helper functions
 │   └── ...
 ├── elf/                         # ELF compilation components
 │   ├── gdscript_bytecode_c_codegen.*      # Bytecode to C code
@@ -135,6 +136,18 @@ ELF Compiler (elf/gdscript_bytecode_elf_compiler.*) → ELF Binary
 - **Compiler**: Generates bytecode from analyzed AST
 
 **Note**: These files have been updated to use GDExtension includes (`godot_cpp/*`), but some internal APIs may still need adaptation. See `TODO.md` for remaining compilation issues.
+
+**GDExtension Helpers** (`gdscript_gdextension_helpers.h`):
+- Provides helper functions to replace missing GDExtension API methods
+- Includes `get_validated_object_safe()` to replace `Variant::get_validated_object_with_check()`
+- Includes function pointer types for Variant operators and methods
+- Used throughout the compilation pipeline for GDExtension compatibility
+
+**GDExtension Helpers** (`gdscript_gdextension_helpers.h`):
+- Provides helper functions to replace missing GDExtension API methods
+- Includes `get_validated_object_safe()` to replace `Variant::get_validated_object_with_check()`
+- Includes function pointer types for Variant operators and methods
+- Used throughout the compilation pipeline for GDExtension compatibility
 
 ### ELF Compilation
 

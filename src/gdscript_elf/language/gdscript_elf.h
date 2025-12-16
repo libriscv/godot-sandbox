@@ -30,7 +30,7 @@
 
 #pragma once
 
-#include "../compilation/gdscript.h"
+#include "../compilation/gdscript_types.h"
 #include "../compilation/gdscript_function.h"
 #include "../compilation/gdscript_parser.h"
 #include "../compilation/gdscript_analyzer.h"
@@ -63,7 +63,7 @@ class GDScriptELF : public ScriptExtension {
 	bool tool = false;
 	bool valid = false;
 	bool reloading = false;
-	bool _is_abstract = false;
+	bool is_abstract_flag = false;
 
 	struct MemberInfo {
 		int index = 0;
@@ -75,7 +75,9 @@ class GDScriptELF : public ScriptExtension {
 
 	Ref<GDScriptELF> base;
 	GDScriptELF *_base = nullptr; //fast pointer access
-	GDScriptELF *_owner = nullptr; //for subclasses
+	GDScriptELF *_script_owner = nullptr; //for nested classes
+
+protected:
 
 	// Members are just indices to the instantiated script.
 	HashMap<StringName, MemberInfo> member_indices;
@@ -83,7 +85,7 @@ class GDScriptELF : public ScriptExtension {
 
 	HashMap<StringName, Variant> constants;
 	HashMap<StringName, GDScriptELFFunction *> member_functions;
-	HashMap<StringName, Ref<GDScriptELF>> subclasses;
+	HashMap<StringName, Ref<GDScriptELF>> subclasses; //nested classes
 	HashMap<StringName, MethodInfo> _signals;
 	Dictionary rpc_config;
 
@@ -95,7 +97,6 @@ class GDScriptELF : public ScriptExtension {
 	GDScriptELFFunction *implicit_ready = nullptr;
 	GDScriptELFFunction *static_initializer = nullptr;
 
-	int subclass_count = 0;
 	HashSet<Object *> instances;
 	bool destructing = false;
 	bool clearing = false;
@@ -112,8 +113,10 @@ class GDScriptELF : public ScriptExtension {
 	SelfList<GDScriptELF> script_list;
 
 	// Compilation state
-	Ref<GDScriptParser> parser;
-	Ref<GDScriptAnalyzer> analyzer;
+	// Note: GDScriptParser and GDScriptAnalyzer don't inherit from RefCounted
+	// Use raw pointers and manual memory management
+	GDScriptParser *parser = nullptr;
+	GDScriptAnalyzer *analyzer = nullptr;
 	Error compilation_error = OK;
 
 	Error _compile_to_elf();
@@ -135,7 +138,10 @@ public:
 	bool is_valid() const { return valid; }
 	bool inherits_script(const Ref<Script> &p_script) const;
 	bool is_tool() const { return tool; }
-	bool is_abstract() const { return _is_abstract; }
+	bool is_abstract() const { return is_abstract_flag; }
+	
+	// ScriptExtension virtual methods
+	virtual bool _is_abstract() const override { return is_abstract_flag; }
 	Ref<Script> get_base_script() const;
 	StringName get_global_name() const;
 	StringName get_instance_base_type() const;
@@ -169,7 +175,7 @@ public:
 	_FORCE_INLINE_ const GDScriptELFFunction *get_static_initializer() const { return static_initializer; }
 	Ref<GDScriptELF> get_base() const;
 	GDScriptELF *find_class(const String &p_qualified_name);
-	bool has_class(const GDScriptELF *p_script);
+	bool has_class(const GDScriptELF *p_script) const;
 	StringName get_local_name() const { return local_name; }
 	String get_fully_qualified_name() const { return fully_qualified_name; }
 	const HashMap<StringName, Ref<GDScriptELF>> &get_subclasses() const { return subclasses; }

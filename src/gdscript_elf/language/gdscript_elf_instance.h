@@ -78,7 +78,14 @@ public:
 	virtual Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) override;
 
 	virtual void notification(int p_notification, bool p_reversed = false) override;
-	String to_string(bool *r_valid);
+	virtual String to_string(bool *r_valid) override;
+
+	virtual void refcount_incremented() override;
+	virtual bool refcount_decremented() override;
+	virtual bool is_placeholder() const override;
+	virtual void property_set_fallback(const StringName &p_name, const Variant &p_value, bool *r_valid) override;
+	virtual Variant property_get_fallback(const StringName &p_name, bool *r_valid) override;
+	virtual void get_property_state(GDExtensionScriptInstancePropertyStateAdd p_add_func, void *p_userdata) override;
 
 	virtual Ref<Script> get_script() const override;
 

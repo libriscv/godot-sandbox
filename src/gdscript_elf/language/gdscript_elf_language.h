@@ -47,6 +47,9 @@ class GDScriptELFLanguage : public ScriptLanguageExtension {
 
 	Mutex mutex;
 
+protected:
+	static void _bind_methods() {}
+
 public:
 	static GDScriptELFLanguage *get_singleton() { return singleton; }
 
