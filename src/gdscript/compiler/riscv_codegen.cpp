@@ -12,6 +12,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_label_uses.clear();
 	m_functions.clear();
 	m_variant_offsets.clear();
+	m_string_constants = &program.string_constants;
 
 	// Emit a STOP instruction at entry point (offset 0)
 	// This prevents accidental execution when ELF is loaded
@@ -146,6 +147,30 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// Create boolean Variant at stack offset
 				emit_variant_create_bool(stack_offset, value != 0);
+
+				// If in register, load stack offset (pointer) into register
+				if (preg >= 0) {
+					// Load stack offset into register: addi preg, sp, stack_offset
+					if (stack_offset < 2048) {
+						emit_i_type(0x13, preg, 0, REG_SP, stack_offset);
+					} else {
+						emit_li(REG_T0, stack_offset);
+						emit_add(preg, REG_SP, REG_T0);
+					}
+				}
+				break;
+			}
+
+			case IROpcode::LOAD_STRING: {
+				int vreg = std::get<int>(instr.operands[0].value);
+				int64_t string_idx = std::get<int64_t>(instr.operands[1].value);
+
+				// Allocate register for Variant pointer (stack offset)
+				int preg = m_allocator.allocate_register(vreg, m_current_instr_idx);
+				int stack_offset = get_variant_stack_offset(vreg);
+
+				// Create string Variant at stack offset
+				emit_variant_create_string(stack_offset, static_cast<int>(string_idx));
 
 				// If in register, load stack offset (pointer) into register
 				if (preg >= 0) {
@@ -821,6 +846,97 @@ void RISCVCodeGen::emit_variant_create_bool(int stack_offset, bool value) {
 		emit_li(REG_T2, stack_offset + 8);
 		emit_add(REG_T2, REG_SP, REG_T2);
 		emit_s_type(0x23, 3, REG_T2, REG_T0, 0);
+	}
+}
+
+void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) {
+	// Create a string Variant using VCREATE syscall
+	// VCREATE signature: void vcreate(Variant* dst, Variant::Type type, int method, void* data)
+	// For strings with method==1: data = struct { const char* str; size_t length; }
+
+	if (!m_string_constants || string_idx < 0 || string_idx >= static_cast<int>(m_string_constants->size())) {
+		throw std::runtime_error("Invalid string constant index: " + std::to_string(string_idx));
+	}
+
+	const std::string& str = (*m_string_constants)[string_idx];
+	int str_len = static_cast<int>(str.length());
+
+	// Handle register clobbering (VCREATE uses a0-a3)
+	std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
+	auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+	for (const auto& move : moves) {
+		emit_mv(move.second, move.first);
+	}
+
+	// Allocate stack space for: string data + struct { char*, size_t }
+	int str_space = ((str_len + 1) + 7) & ~7; // String + null terminator, aligned to 8 bytes
+	int struct_space = 16; // Two 8-byte fields
+	int total_space = str_space + struct_space;
+	total_space = (total_space + 15) & ~15; // Align to 16 bytes
+
+	// Adjust stack pointer
+	if (total_space < 2048) {
+		emit_i_type(0x13, REG_SP, 0, REG_SP, -total_space);
+	} else {
+		emit_li(REG_T0, -total_space);
+		emit_add(REG_SP, REG_SP, REG_T0);
+	}
+
+	// Store string data on stack
+	for (size_t i = 0; i < str.length(); i++) {
+		emit_li(REG_T0, static_cast<unsigned char>(str[i]));
+		emit_s_type(0x23, 0, REG_SP, REG_T0, i); // SB (store byte)
+	}
+	// Store null terminator
+	emit_s_type(0x23, 0, REG_SP, REG_ZERO, str_len); // SB
+
+	// Create struct at sp + str_space
+	// struct.str = sp (pointer to string data)
+	if (str_space < 2048) {
+		emit_i_type(0x13, REG_T0, 0, REG_SP, 0); // T0 = SP + 0 (pointer to string)
+	} else {
+		emit_mv(REG_T0, REG_SP);
+	}
+	emit_s_type(0x23, 3, REG_SP, REG_T0, str_space); // SD (store pointer at sp + str_space)
+
+	// struct.length = str_len
+	emit_li(REG_T0, str_len);
+	emit_s_type(0x23, 3, REG_SP, REG_T0, str_space + 8); // SD (store length)
+
+	// Call VCREATE
+	// a0 = pointer to destination Variant (stack_offset + total_space)
+	int adjusted_dst_offset = stack_offset + total_space;
+	if (adjusted_dst_offset < 2048) {
+		emit_i_type(0x13, REG_A0, 0, REG_SP, adjusted_dst_offset);
+	} else {
+		emit_li(REG_A0, adjusted_dst_offset);
+		emit_add(REG_A0, REG_SP, REG_A0);
+	}
+
+	// a1 = Variant::STRING (4)
+	emit_li(REG_A1, 4);
+
+	// a2 = method (1 for const char* + size_t)
+	emit_li(REG_A2, 1);
+
+	// a3 = pointer to struct (sp + str_space)
+	if (str_space < 2048) {
+		emit_i_type(0x13, REG_A3, 0, REG_SP, str_space);
+	} else {
+		emit_li(REG_A3, str_space);
+		emit_add(REG_A3, REG_SP, REG_A3);
+	}
+
+	// a7 = ECALL_VCREATE (517)
+	emit_li(REG_A7, 517);
+	emit_ecall();
+
+	// Restore stack pointer
+	if (total_space < 2048) {
+		emit_i_type(0x13, REG_SP, 0, REG_SP, total_space);
+	} else {
+		emit_li(REG_T0, total_space);
+		emit_add(REG_SP, REG_SP, REG_T0);
 	}
 }
 

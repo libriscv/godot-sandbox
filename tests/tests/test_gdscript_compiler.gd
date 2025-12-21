@@ -158,12 +158,22 @@ func test_simple(str):
 	str = str.to_upper()
 	return str
 
-func test_chain(str):
+func test_literal():
+	return "Hello, World!"
+
+func test_assign_literal():
+	var str = "Hello, Assigned World!"
+	return str
+
+func test_chain():
+	var str = "Hello, World!"
 	str = str.to_upper().to_lower()
 	return str
 
-func test_args(str, arg):
-	return str.split_floats(arg)
+func test_args1(str):
+	return str.split_floats(",")
+func test_args2(str):
+	return str.split_floats("-")
 """
 
 	var ts : Sandbox = Sandbox.new()
@@ -180,11 +190,18 @@ func test_args(str, arg):
 	var result = s.vmcallv("test_simple", "Hello, World!")
 	assert_eq(result, "HELLO, WORLD!", "test_simple should convert string to uppercase")
 
-	result = s.vmcallv("test_chain", "Hello, World!")
+	result = s.vmcallv("test_literal")
+	assert_eq(result, "Hello, World!", "test_literal should return the literal string")
+	result = s.vmcallv("test_assign_literal")
+	assert_eq(result, "Hello, Assigned World!", "test_assign_literal should return the assigned literal string")
+
+	result = s.vmcallv("test_chain")
 	assert_eq(result, "hello, world!", "test_chain should convert string to uppercase then lowercase")
 
-	result = s.vmcallv("test_args", "1.5,2.5,3.5", ",")
 	var array : PackedFloat64Array = [1.5, 2.5, 3.5]
+	result = s.vmcallv("test_args1", "1.5,2.5,3.5", ",")
+	assert_eq_deep(result, array)
+	result = s.vmcallv("test_args2", "1.5-2.5-3.5", "-")
 	assert_eq_deep(result, array)
 
 	s.queue_free()

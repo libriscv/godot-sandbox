@@ -429,7 +429,7 @@ int CodeGenerator::gen_literal(const LiteralExpr* expr, IRFunction& func) {
 
 		case LiteralExpr::Type::STRING: {
 			int str_idx = add_string_constant(std::get<std::string>(expr->value));
-			func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(reg), IRValue::imm(str_idx));
+			func.instructions.emplace_back(IROpcode::LOAD_STRING, IRValue::reg(reg), IRValue::imm(str_idx));
 			break;
 		}
 

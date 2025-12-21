@@ -70,6 +70,7 @@ private:
 	// Variant management
 	void emit_variant_create_int(int stack_offset, int64_t value);
 	void emit_variant_create_bool(int stack_offset, bool value);
+	void emit_variant_create_string(int stack_offset, int string_idx);
 	void emit_variant_copy(int dst_offset, int src_offset);
 	void emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op);
 	
@@ -96,6 +97,9 @@ private:
 	int m_next_variant_slot = 0; // Next Variant slot to allocate
 	int m_current_instr_idx = 0; // Current instruction index for register allocation
 	static constexpr int VARIANT_SIZE = 24; // Size of Variant struct
+
+	// String constants from IR
+	const std::vector<std::string>* m_string_constants = nullptr;
 
 	// RISC-V RV64I register definitions
 	static constexpr uint8_t REG_ZERO = 0;  // x0 - always zero

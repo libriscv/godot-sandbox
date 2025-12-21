@@ -14,6 +14,7 @@ enum class IROpcode {
 	// Stack and register operations
 	LOAD_IMM,        // Load immediate integer value into register
 	LOAD_BOOL,       // Load immediate boolean value into register
+	LOAD_STRING,     // Load immediate string value into register
 	LOAD_VAR,        // Load variable into register
 	STORE_VAR,       // Store register into variable
 	MOVE,            // Move between registers
