@@ -601,7 +601,7 @@ void CodeGenerator::pop_scope() {
 
 CodeGenerator::Variable* CodeGenerator::find_variable(const std::string& name) {
 	// Search from innermost to outermost scope
-	for (int i = m_scope_stack.size() - 1; i >= 0; i--) {
+	for (int i = static_cast<int>(m_scope_stack.size()) - 1; i >= 0; i--) {
 		auto it = m_scope_stack[i].variables.find(name);
 		if (it != m_scope_stack[i].variables.end()) {
 			return &it->second;

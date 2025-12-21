@@ -14,6 +14,7 @@ set(COMPILER_SOURCES
     ir.cpp
     codegen.cpp
     riscv_codegen.cpp
+    register_allocator.cpp
     elf_builder.cpp
     compiler.cpp
     ir_interpreter.cpp
@@ -50,16 +51,20 @@ add_executable(test_primitives tests/test_primitives.cpp)
 target_link_libraries(test_primitives gdscript_compiler)
 add_test(NAME PrimitivesTests COMMAND test_primitives)
 
+add_executable(test_compilation tests/test_compilation.cpp)
+target_link_libraries(test_compilation gdscript_compiler)
+add_test(NAME CompilationTests COMMAND test_compilation)
+
 # Run all tests target
 add_custom_target(run_tests
-    COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-    DEPENDS test_lexer test_parser test_codegen test_integration test_primitives
-    COMMENT "Running all GDScript compiler tests"
+	COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+	DEPENDS test_lexer test_parser test_codegen test_integration test_primitives test_compilation
+	COMMENT "Running all GDScript compiler tests"
 )
 
 # Install targets
 install(TARGETS gdscript_compiler gdscript_compiler_test
-        test_lexer test_parser test_codegen test_integration test_primitives
+        test_lexer test_parser test_codegen test_integration test_primitives test_compilation
         RUNTIME DESTINATION bin
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib)
