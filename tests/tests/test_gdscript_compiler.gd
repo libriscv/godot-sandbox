@@ -7,6 +7,11 @@ var holder = Sandbox.new()
 
 func test_compile_and_run():
 	var gdscript_code = """
+func truthy():
+	return true
+func falsy():
+	return false
+
 func add(x, y):
 	return x + y
 
@@ -33,11 +38,15 @@ func sum2(n):
 	var s = Sandbox.new()
 	s.load_buffer(compiled_elf)
 	s.set_instructions_max(600)
+	assert_true(s.has_function("truthy"), "Compiled ELF should have function 'truthy'")
+	assert_true(s.has_function("falsy"), "Compiled ELF should have function 'falsy'")
 	assert_true(s.has_function("add"), "Compiled ELF should have function 'add'")
 	assert_true(s.has_function("sum1"), "Compiled ELF should have function 'sum1'")
 	assert_true(s.has_function("sum2"), "Compiled ELF should have function 'sum2'")
 
 	# Test the compiled functions
+	assert_eq(s.vmcallv("truthy"), true, "truthy() should return true")
+	assert_eq(s.vmcallv("falsy"), false, "falsy() should return false")
 	assert_eq(s.vmcallv("add", 7, 21), 28, "add(7, 21) = 28")
 	assert_eq(s.vmcallv("sum1", 10), 45, "sum1(10) should return 45")
 	assert_eq(s.vmcallv("sum2", 10), 45, "sum2(10) should return 45")

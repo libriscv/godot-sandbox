@@ -119,10 +119,34 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// Allocate register for Variant pointer (stack offset)
 				int preg = m_allocator.allocate_register(vreg, m_current_instr_idx);
 				int stack_offset = get_variant_stack_offset(vreg);
-				
+
 				// Create integer Variant at stack offset
 				emit_variant_create_int(stack_offset, value);
-				
+
+				// If in register, load stack offset (pointer) into register
+				if (preg >= 0) {
+					// Load stack offset into register: addi preg, sp, stack_offset
+					if (stack_offset < 2048) {
+						emit_i_type(0x13, preg, 0, REG_SP, stack_offset);
+					} else {
+						emit_li(REG_T0, stack_offset);
+						emit_add(preg, REG_SP, REG_T0);
+					}
+				}
+				break;
+			}
+
+			case IROpcode::LOAD_BOOL: {
+				int vreg = std::get<int>(instr.operands[0].value);
+				int64_t value = std::get<int64_t>(instr.operands[1].value);
+
+				// Allocate register for Variant pointer (stack offset)
+				int preg = m_allocator.allocate_register(vreg, m_current_instr_idx);
+				int stack_offset = get_variant_stack_offset(vreg);
+
+				// Create boolean Variant at stack offset
+				emit_variant_create_bool(stack_offset, value != 0);
+
 				// If in register, load stack offset (pointer) into register
 				if (preg >= 0) {
 					// Load stack offset into register: addi preg, sp, stack_offset

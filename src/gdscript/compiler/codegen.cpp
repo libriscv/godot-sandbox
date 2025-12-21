@@ -423,7 +423,7 @@ int CodeGenerator::gen_literal(const LiteralExpr* expr, IRFunction& func) {
 		}
 
 		case LiteralExpr::Type::BOOL:
-			func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(reg),
+			func.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(reg),
 			                               IRValue::imm(std::get<bool>(expr->value) ? 1 : 0));
 			break;
 

@@ -6,6 +6,7 @@ namespace gdscript {
 const char* ir_opcode_name(IROpcode op) {
 	switch (op) {
 		case IROpcode::LOAD_IMM: return "LOAD_IMM";
+		case IROpcode::LOAD_BOOL: return "LOAD_BOOL";
 		case IROpcode::LOAD_VAR: return "LOAD_VAR";
 		case IROpcode::STORE_VAR: return "STORE_VAR";
 		case IROpcode::MOVE: return "MOVE";
