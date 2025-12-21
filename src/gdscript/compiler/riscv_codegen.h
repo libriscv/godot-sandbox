@@ -1,5 +1,6 @@
 #pragma once
 #include "ir.h"
+#include "register_allocator.h"
 #include <vector>
 #include <unordered_map>
 #include <cstdint>
@@ -16,6 +17,9 @@ public:
 
 	// Get function offsets (name -> offset in code)
 	const std::unordered_map<std::string, size_t>& get_function_offsets() const { return m_functions; }
+	
+	// Get register allocator (for testing)
+	const RegisterAllocator& get_allocator() const { return m_allocator; }
 
 private:
 	struct Function {
@@ -68,7 +72,11 @@ private:
 	void emit_variant_create_bool(int stack_offset, bool value);
 	void emit_variant_copy(int dst_offset, int src_offset);
 	void emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op);
-
+	
+	// Get Variant pointer in register (or compute from stack offset)
+	// Returns the register containing the pointer, or -1 if needs to be computed
+	int get_variant_pointer_reg(int vreg, uint8_t target_reg);
+	
 	// Get stack offset for a virtual register (in bytes)
 	int get_variant_stack_offset(int virtual_reg);
 
@@ -78,11 +86,15 @@ private:
 	std::vector<std::pair<std::string, size_t>> m_label_uses;
 	std::unordered_map<std::string, size_t> m_functions;
 
-	// Variant-based virtual register mapping
+	// Register allocator
+	RegisterAllocator m_allocator;
+	
+	// Variant-based virtual register mapping (for spilled registers)
 	std::unordered_map<int, int> m_variant_offsets; // virtual_reg -> stack offset
 	size_t m_num_params = 0; // Number of parameters in current function
 	int m_stack_frame_size = 0; // Total stack frame size in bytes
 	int m_next_variant_slot = 0; // Next Variant slot to allocate
+	int m_current_instr_idx = 0; // Current instruction index for register allocation
 	static constexpr int VARIANT_SIZE = 24; // Size of Variant struct
 
 	// RISC-V RV64I register definitions

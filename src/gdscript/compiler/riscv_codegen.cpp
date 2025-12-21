@@ -39,9 +39,14 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	m_num_params = func.parameters.size();
 	m_next_variant_slot = 0;
 	m_stack_frame_size = 0;
+	m_current_instr_idx = 0;
+
+	// Initialize register allocator
+	m_allocator.init(func);
 
 	// Calculate stack frame size
-	// Need space for: max_registers * VARIANT_SIZE + saved registers
+	// Need space for: spilled registers * VARIANT_SIZE + saved registers
+	// We'll calculate this after allocation, but estimate based on max_registers
 	int max_variants = func.max_registers;
 	int variant_space = max_variants * VARIANT_SIZE;
 	int saved_reg_space = 24; // Save ra, fp, and a0 (return pointer)
@@ -81,9 +86,9 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	// Copy parameter Variants from argument registers to stack
 	// Parameters come in a1-a7 as POINTERS to Variants
 	for (size_t i = 0; i < m_num_params && i < 7; i++) {
-		int param_vreg = i; // Parameters map to virtual registers 0-6
+		int param_vreg = static_cast<int>(i); // Parameters map to virtual registers 0-6
 		int dst_offset = get_variant_stack_offset(param_vreg);
-		uint8_t arg_reg = REG_A1 + i;
+		uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
 
 		// Copy 24 bytes from pointer in arg_reg to stack
 		for (int j = 0; j < 3; j++) {
@@ -100,6 +105,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 	// Process each IR instruction
 	for (const auto& instr : func.instructions) {
+		m_current_instr_idx++;
+		
 		switch (instr.opcode) {
 			case IROpcode::LABEL:
 				define_label(std::get<std::string>(instr.operands[0].value));
@@ -109,12 +116,23 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int vreg = std::get<int>(instr.operands[0].value);
 				int64_t value = std::get<int64_t>(instr.operands[1].value);
 
-				// Get stack offset for this Variant
-				int offset = get_variant_stack_offset(vreg);
-
+				// Allocate register for Variant pointer (stack offset)
+				int preg = m_allocator.allocate_register(vreg, m_current_instr_idx);
+				int stack_offset = get_variant_stack_offset(vreg);
+				
 				// Create integer Variant at stack offset
-				// We'll use a helper function to emit this
-				emit_variant_create_int(offset, value);
+				emit_variant_create_int(stack_offset, value);
+				
+				// If in register, load stack offset (pointer) into register
+				if (preg >= 0) {
+					// Load stack offset into register: addi preg, sp, stack_offset
+					if (stack_offset < 2048) {
+						emit_i_type(0x13, preg, 0, REG_SP, stack_offset);
+					} else {
+						emit_li(REG_T0, stack_offset);
+						emit_add(preg, REG_SP, REG_T0);
+					}
+				}
 				break;
 			}
 
@@ -425,10 +443,10 @@ void RISCVCodeGen::emit_li(uint8_t rd, int64_t imm) {
 	// For small values, use addi; for larger, use lui+addi
 	if (imm >= -2048 && imm < 2048) {
 		// addi rd, x0, imm
-		emit_i_type(0x13, rd, 0, REG_ZERO, imm);
+		emit_i_type(0x13, rd, 0, REG_ZERO, static_cast<int32_t>(imm));
 	} else {
 		// lui rd, imm[31:12]
-		uint32_t upper = (imm + 0x800) >> 12; // Add 0x800 for rounding
+		uint32_t upper = static_cast<uint32_t>((imm + 0x800) >> 12); // Add 0x800 for rounding
 		emit_u_type(0x37, rd, upper << 12);
 
 		// addi rd, rd, imm[11:0]
@@ -648,6 +666,15 @@ void RISCVCodeGen::emit_variant_copy(int dst_offset, int src_offset) {
 void RISCVCodeGen::emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op) {
 	// Call sys_veval(op, &lhs, &rhs, &result)
 	// Signature: bool sys_veval(int op, const Variant* a, const Variant* b, Variant* result)
+	
+	// VEVAL clobbers a0-a3, so handle register clobbering first
+	std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
+	auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+	
+	// Emit moves to save live values from clobbered registers
+	for (const auto& move : moves) {
+		emit_mv(move.second, move.first); // Move from clobbered reg to new reg
+	}
 
 	// Load operator into a0
 	emit_li(REG_A0, op);

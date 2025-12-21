@@ -83,7 +83,7 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 		}
 
 		Elf64_Sym sym = {};
-		sym.st_name = symbol_name_offsets[i];
+		sym.st_name = static_cast<uint32_t>(symbol_name_offsets[i]);
 		sym.st_info = (1 << 4) | 2; // STB_GLOBAL (1) << 4 | STT_FUNC (2)
 		sym.st_other = 0;
 		sym.st_shndx = 1; // .text section
@@ -157,9 +157,9 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 	ehdr.e_flags = 0x5; // RV64I + RV64M (multiply/divide)
 	ehdr.e_ehsize = sizeof(Elf64_Ehdr);
 	ehdr.e_phentsize = sizeof(Elf64_Phdr);
-	ehdr.e_phnum = num_phdrs;
+	ehdr.e_phnum = static_cast<uint16_t>(num_phdrs);
 	ehdr.e_shentsize = sizeof(Elf64_Shdr);
-	ehdr.e_shnum = num_sections;
+	ehdr.e_shnum = static_cast<uint16_t>(num_sections);
 	ehdr.e_shstrndx = 4; // .shstrtab is section 4
 
 	write_value(elf_data, ehdr);
@@ -170,11 +170,11 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 
 	phdr.p_type = 1; // PT_LOAD
 	phdr.p_flags = 5; // PF_R | PF_X (readable + executable)
-	phdr.p_offset = text_offset;
+	phdr.p_offset = static_cast<uint64_t>(text_offset);
 	phdr.p_vaddr = BASE_ADDR;
 	phdr.p_paddr = BASE_ADDR;
-	phdr.p_filesz = code_size;
-	phdr.p_memsz = code_size;
+	phdr.p_filesz = static_cast<uint64_t>(code_size);
+	phdr.p_memsz = static_cast<uint64_t>(code_size);
 	phdr.p_align = 0x1000;
 
 	write_value(elf_data, phdr);
@@ -216,21 +216,21 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 
 	// Section 1: .text
 	Elf64_Shdr shdr_text = {};
-	shdr_text.sh_name = section_name_offsets[1];
+	shdr_text.sh_name = static_cast<uint32_t>(section_name_offsets[1]);
 	shdr_text.sh_type = 1; // SHT_PROGBITS
 	shdr_text.sh_flags = 6; // SHF_ALLOC | SHF_EXECINSTR
 	shdr_text.sh_addr = BASE_ADDR;
-	shdr_text.sh_offset = text_offset;
-	shdr_text.sh_size = code_size;
+	shdr_text.sh_offset = static_cast<uint64_t>(text_offset);
+	shdr_text.sh_size = static_cast<uint64_t>(code_size);
 	shdr_text.sh_addralign = 4;
 	write_value(elf_data, shdr_text);
 
 	// Section 2: .symtab
 	Elf64_Shdr shdr_symtab = {};
-	shdr_symtab.sh_name = section_name_offsets[2];
+	shdr_symtab.sh_name = static_cast<uint32_t>(section_name_offsets[2]);
 	shdr_symtab.sh_type = 2; // SHT_SYMTAB
-	shdr_symtab.sh_offset = symtab_offset;
-	shdr_symtab.sh_size = symtab_size;
+	shdr_symtab.sh_offset = static_cast<uint64_t>(symtab_offset);
+	shdr_symtab.sh_size = static_cast<uint64_t>(symtab_size);
 	shdr_symtab.sh_link = 3; // Link to .strtab
 	shdr_symtab.sh_info = 1; // Index of first non-local symbol
 	shdr_symtab.sh_addralign = 8;
@@ -239,19 +239,19 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 
 	// Section 3: .strtab
 	Elf64_Shdr shdr_strtab = {};
-	shdr_strtab.sh_name = section_name_offsets[3];
+	shdr_strtab.sh_name = static_cast<uint32_t>(section_name_offsets[3]);
 	shdr_strtab.sh_type = 3; // SHT_STRTAB
-	shdr_strtab.sh_offset = strtab_offset;
-	shdr_strtab.sh_size = strtab.size();
+	shdr_strtab.sh_offset = static_cast<uint64_t>(strtab_offset);
+	shdr_strtab.sh_size = static_cast<uint64_t>(strtab.size());
 	shdr_strtab.sh_addralign = 1;
 	write_value(elf_data, shdr_strtab);
 
 	// Section 4: .shstrtab
 	Elf64_Shdr shdr_shstrtab = {};
-	shdr_shstrtab.sh_name = section_name_offsets[4];
+	shdr_shstrtab.sh_name = static_cast<uint32_t>(section_name_offsets[4]);
 	shdr_shstrtab.sh_type = 3; // SHT_STRTAB
-	shdr_shstrtab.sh_offset = shstrtab_offset;
-	shdr_shstrtab.sh_size = shstrtab.size();
+	shdr_shstrtab.sh_offset = static_cast<uint64_t>(shstrtab_offset);
+	shdr_shstrtab.sh_size = static_cast<uint64_t>(shstrtab.size());
 	shdr_shstrtab.sh_addralign = 1;
 	write_value(elf_data, shdr_shstrtab);
 

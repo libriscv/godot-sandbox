@@ -23,7 +23,7 @@ IRInterpreter::Value IRInterpreter::call(const std::string& function_name, const
 
 	// Set up parameters in registers (first N registers)
 	for (size_t i = 0; i < args.size() && i < func->parameters.size(); i++) {
-		ctx.registers[i] = args[i];
+		ctx.registers[static_cast<int>(i)] = args[i];
 	}
 
 	// Build label map
