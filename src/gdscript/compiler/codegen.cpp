@@ -528,10 +528,16 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, IRFunction& func)
 	int result_reg = alloc_register();
 
 	// Use VCALL for Variant method calls
-	func.instructions.emplace_back(IROpcode::VCALL,
-	                               IRValue::reg(result_reg),
-	                               IRValue::reg(obj_reg),
-	                               IRValue::str(expr->member_name));
+	// Format: VCALL result_reg, obj_reg, method_name, arg_count, arg1_reg, arg2_reg, ...
+	IRInstruction vcall_instr(IROpcode::VCALL);
+	vcall_instr.operands.push_back(IRValue::reg(result_reg));
+	vcall_instr.operands.push_back(IRValue::reg(obj_reg));
+	vcall_instr.operands.push_back(IRValue::str(expr->member_name));
+	vcall_instr.operands.push_back(IRValue::imm(arg_regs.size()));
+	for (int arg_reg : arg_regs) {
+		vcall_instr.operands.push_back(IRValue::reg(arg_reg));
+	}
+	func.instructions.push_back(vcall_instr);
 
 	free_register(obj_reg);
 	for (int reg : arg_regs) {

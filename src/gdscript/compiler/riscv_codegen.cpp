@@ -357,10 +357,170 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				break;
 			}
 
+			case IROpcode::VCALL: {
+				// VCALL format: result_reg, obj_reg, method_name, arg_count, arg1_reg, arg2_reg, ...
+				if (instr.operands.size() < 4) {
+					throw std::runtime_error("VCALL requires at least 4 operands");
+				}
+
+				int result_vreg = std::get<int>(instr.operands[0].value);
+				int obj_vreg = std::get<int>(instr.operands[1].value);
+				std::string method_name = std::get<std::string>(instr.operands[2].value);
+				int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+
+				if (instr.operands.size() != static_cast<size_t>(4 + arg_count)) {
+					throw std::runtime_error("VCALL argument count mismatch");
+				}
+
+				int result_offset = get_variant_stack_offset(result_vreg);
+				int obj_offset = get_variant_stack_offset(obj_vreg);
+
+				// VCALL clobbers a0-a7, handle register clobbering
+				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6, REG_A7};
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+
+				for (const auto& move : moves) {
+					emit_mv(move.second, move.first);
+				}
+
+				// If we have arguments, allocate stack space for argument array
+				int args_stack_offset = 0;
+				if (arg_count > 0) {
+					args_stack_offset = m_stack_frame_size - (arg_count * VARIANT_SIZE);
+					// Expand stack if needed
+					int additional_space = arg_count * VARIANT_SIZE;
+					additional_space = (additional_space + 15) & ~15; // Align to 16 bytes
+
+					// Adjust stack pointer: addi sp, sp, -additional_space
+					if (additional_space < 2048) {
+						emit_i_type(0x13, REG_SP, 0, REG_SP, -additional_space);
+					} else {
+						emit_li(REG_T0, -additional_space);
+						emit_add(REG_SP, REG_SP, REG_T0);
+					}
+
+					// Copy argument Variants to the new stack space
+					for (int i = 0; i < arg_count; i++) {
+						int arg_vreg = std::get<int>(instr.operands[4 + i].value);
+						int arg_src_offset = get_variant_stack_offset(arg_vreg) + additional_space; // Adjust for moved stack
+						int arg_dst_offset = i * VARIANT_SIZE;
+
+						// Copy 24 bytes from src to dst (3 8-byte loads/stores)
+						for (int j = 0; j < 3; j++) {
+							// Load from source
+							if (arg_src_offset + j * 8 < 2048) {
+								emit_i_type(0x03, REG_T0, 3, REG_SP, arg_src_offset + j * 8); // LD
+							} else {
+								emit_li(REG_T1, arg_src_offset + j * 8);
+								emit_add(REG_T1, REG_SP, REG_T1);
+								emit_i_type(0x03, REG_T0, 3, REG_T1, 0);
+							}
+
+							// Store to destination
+							if (arg_dst_offset + j * 8 < 2048) {
+								emit_s_type(0x23, 3, REG_SP, REG_T0, arg_dst_offset + j * 8); // SD
+							} else {
+								emit_li(REG_T1, arg_dst_offset + j * 8);
+								emit_add(REG_T1, REG_SP, REG_T1);
+								emit_s_type(0x23, 3, REG_T1, REG_T0, 0);
+							}
+						}
+					}
+
+					// a3 = pointer to arguments array (sp + 0)
+					emit_mv(REG_A3, REG_SP);
+				} else {
+					// No arguments, a3 = 0
+					emit_mv(REG_A3, REG_ZERO);
+				}
+
+				// a0 = pointer to object Variant (sp + obj_offset + additional_space if we allocated stack)
+				int adjusted_obj_offset = obj_offset;
+				if (arg_count > 0) {
+					int additional_space = arg_count * VARIANT_SIZE;
+					additional_space = (additional_space + 15) & ~15;
+					adjusted_obj_offset += additional_space;
+				}
+
+				if (adjusted_obj_offset < 2048) {
+					emit_i_type(0x13, REG_A0, 0, REG_SP, adjusted_obj_offset);
+				} else {
+					emit_li(REG_A0, adjusted_obj_offset);
+					emit_add(REG_A0, REG_SP, REG_A0);
+				}
+
+				// a1 = pointer to method name string (need to store in .rodata section)
+				// For now, we'll use a temporary approach: store the string on stack
+				// TODO: Better approach would be to use .rodata section
+				int method_len = method_name.length();
+				int str_space = ((method_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
+
+				// Allocate more stack space for the string
+				if (str_space < 2048) {
+					emit_i_type(0x13, REG_SP, 0, REG_SP, -str_space);
+				} else {
+					emit_li(REG_T0, -str_space);
+					emit_add(REG_SP, REG_SP, REG_T0);
+				}
+
+				// Store method name on stack
+				for (size_t i = 0; i < method_name.length(); i++) {
+					emit_li(REG_T0, static_cast<unsigned char>(method_name[i]));
+					emit_s_type(0x23, 0, REG_SP, REG_T0, i); // SB (store byte)
+				}
+				// Store null terminator
+				emit_s_type(0x23, 0, REG_SP, REG_ZERO, method_len); // SB
+
+				// a1 = pointer to method name (sp)
+				emit_mv(REG_A1, REG_SP);
+
+				// a2 = method length
+				emit_li(REG_A2, method_len);
+
+				// a4 = argument count
+				emit_li(REG_A4, arg_count);
+
+				// a5 = pointer to result Variant
+				int adjusted_result_offset = result_offset;
+				if (arg_count > 0) {
+					int additional_space = arg_count * VARIANT_SIZE;
+					additional_space = (additional_space + 15) & ~15;
+					adjusted_result_offset += additional_space;
+				}
+				adjusted_result_offset += str_space;
+
+				if (adjusted_result_offset < 2048) {
+					emit_i_type(0x13, REG_A5, 0, REG_SP, adjusted_result_offset);
+				} else {
+					emit_li(REG_A5, adjusted_result_offset);
+					emit_add(REG_A5, REG_SP, REG_A5);
+				}
+
+				// a7 = ECALL_VCALL (501)
+				emit_li(REG_A7, 501);
+				emit_ecall();
+
+				// Restore stack pointer
+				int total_stack_adjust = str_space;
+				if (arg_count > 0) {
+					int additional_space = arg_count * VARIANT_SIZE;
+					additional_space = (additional_space + 15) & ~15;
+					total_stack_adjust += additional_space;
+				}
+
+				if (total_stack_adjust < 2048) {
+					emit_i_type(0x13, REG_SP, 0, REG_SP, total_stack_adjust);
+				} else {
+					emit_li(REG_T0, total_stack_adjust);
+					emit_add(REG_SP, REG_SP, REG_T0);
+				}
+
+				break;
+			}
+
 			// Not implementing these for now
 			case IROpcode::CALL:
 			case IROpcode::CALL_SYSCALL:
-			case IROpcode::VCALL:
 			case IROpcode::VGET:
 			case IROpcode::VSET:
 			case IROpcode::LOAD_VAR:

@@ -141,3 +141,42 @@ func test_func():
 	# This would require compiler internals access, so we verify functionality instead
 	s.queue_free()
 
+func test_vcall_method_calls():
+	# Test VCALL - calling methods on Variants
+	# Start with a simple test that just returns a constant
+	var gdscript_code = """
+func test_simple(str):
+	str = str.to_upper()
+	return str
+
+func test_chain(str):
+	str = str.to_upper().to_lower()
+	return str
+
+func test_args(str, arg):
+	return str.split_floats(arg)
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+	assert_true(s.has_function("test_simple"), "Compiled ELF should have function 'test_simple'")
+
+	# Test the compiled function
+	var result = s.vmcallv("test_simple", "Hello, World!")
+	assert_eq(result, "HELLO, WORLD!", "test_simple should convert string to uppercase")
+
+	result = s.vmcallv("test_chain", "Hello, World!")
+	assert_eq(result, "hello, world!", "test_chain should convert string to uppercase then lowercase")
+
+	result = s.vmcallv("test_args", "1.5,2.5,3.5", ",")
+	var array : PackedFloat64Array = [1.5, 2.5, 3.5]
+	assert_eq_deep(result, array)
+
+	s.queue_free()
+
