@@ -14,11 +14,7 @@ void IROptimizer::optimize(IRProgram& program) {
 void IROptimizer::optimize_function(IRFunction& func) {
 	// Multiple optimization passes
 	// Run constant folding first as it can enable more optimizations
-	// TODO: Constant folding has an issue with continue statements in loops
-	// that causes 2 tests to timeout. Needs further investigation.
-	// For now, disabled to maintain test stability while still getting
-	// benefits from peephole and dead code elimination.
-	//constant_folding(func);
+	constant_folding(func);
 
 	// Peephole optimization to remove redundant moves and operations
 	peephole_optimization(func);
@@ -199,6 +195,20 @@ void IROptimizer::constant_folding(IRFunction& func) {
 				}
 				break;
 			}
+
+			// System calls and variant operations - invalidate destination only
+			case IROpcode::VCALL:
+			case IROpcode::VGET:
+			case IROpcode::VSET:
+			case IROpcode::CALL_SYSCALL:
+			case IROpcode::CALL:
+				// These write to the first operand (destination register)
+				// but we shouldn't invalidate the input operands
+				if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+					invalidate_register(std::get<int>(instr.operands[0].value));
+				}
+				new_instructions.push_back(instr);
+				break;
 
 			default:
 				// Clear constant tracking for any instruction that might modify registers

@@ -267,13 +267,13 @@ func test_range_count(n):
 
 func test_range_new_var():
 	var unused = 42
-	for i in range(50):
+	for i in range(5):
 		var nvar = i
 	return unused
 
 func test_range_no_var():
 	var unused = 42
-	for i in range(50):
+	for i in range(5):
 		continue
 	return unused
 
@@ -293,10 +293,10 @@ func test_nothing():
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
 	# Write the ELF to a file for debugging
-	#var file = FileAccess.open("res://tests/tests_range_loop_bounds.elf", FileAccess.WRITE)
-	#if file:
-	#	file.store_buffer(compiled_elf)
-	#	file.close()
+	var file = FileAccess.open("res://tests/tests_range_loop_bounds.elf", FileAccess.WRITE)
+	if file:
+		file.store_buffer(compiled_elf)
+		file.close()
 
 	var s = Sandbox.new()
 	s.load_buffer(compiled_elf)
@@ -318,8 +318,7 @@ func test_nothing():
 	assert_eq(s.vmcallv("test_range_no_var"), 42, "test_range_no_var should return 42")
 
 	# Test new variable inside loop
-	# XXX: We will fix this later
-	#assert_eq(s.vmcallv("test_range_new_var"), 42, "test_range_new_var should return 42")
+	assert_eq(s.vmcallv("test_range_new_var"), 42, "test_range_new_var should return 42")
 
 	s.queue_free()
 

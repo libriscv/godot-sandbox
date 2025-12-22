@@ -58,6 +58,17 @@ private:
 	void emit_ecall();
 	void emit_ret();
 
+	// Load/Store instructions (with automatic large offset handling)
+	void emit_ld(uint8_t rd, uint8_t rs1, int32_t offset);   // Load doubleword (64-bit)
+	void emit_lw(uint8_t rd, uint8_t rs1, int32_t offset);   // Load word (32-bit)
+	void emit_lh(uint8_t rd, uint8_t rs1, int32_t offset);   // Load halfword (16-bit)
+	void emit_lb(uint8_t rd, uint8_t rs1, int32_t offset);   // Load byte (8-bit signed)
+	void emit_lbu(uint8_t rd, uint8_t rs1, int32_t offset);  // Load byte unsigned (8-bit)
+	void emit_sd(uint8_t rs2, uint8_t rs1, int32_t offset);  // Store doubleword (64-bit)
+	void emit_sw(uint8_t rs2, uint8_t rs1, int32_t offset);  // Store word (32-bit)
+	void emit_sh(uint8_t rs2, uint8_t rs1, int32_t offset);  // Store halfword (16-bit)
+	void emit_sb(uint8_t rs2, uint8_t rs1, int32_t offset);  // Store byte (8-bit)
+
 	// Pseudo-instructions
 	void emit_call(const std::string& func_name);
 	void emit_jump(const std::string& label);
@@ -66,6 +77,15 @@ private:
 	void define_label(const std::string& label);
 	void mark_label_use(const std::string& label, size_t code_offset);
 	void resolve_labels();
+
+	// Variant field access helpers
+	// Load/store Variant fields with proper types and offsets
+	void emit_load_variant_type(uint8_t rd, uint8_t base_reg, int32_t variant_offset);
+	void emit_store_variant_type(uint8_t rs, uint8_t base_reg, int32_t variant_offset);
+	void emit_load_variant_bool(uint8_t rd, uint8_t base_reg, int32_t variant_offset);
+	void emit_store_variant_bool(uint8_t rs, uint8_t base_reg, int32_t variant_offset);
+	void emit_load_variant_int(uint8_t rd, uint8_t base_reg, int32_t variant_offset);
+	void emit_store_variant_int(uint8_t rs, uint8_t base_reg, int32_t variant_offset);
 
 	// Variant management
 	void emit_variant_create_int(int stack_offset, int64_t value);
@@ -110,7 +130,12 @@ private:
 	int m_stack_frame_size = 0; // Total stack frame size in bytes
 	int m_next_variant_slot = 0; // Next Variant slot to allocate
 	int m_current_instr_idx = 0; // Current instruction index for register allocation
-	static constexpr int VARIANT_SIZE = 24; // Size of Variant struct
+
+	// Variant structure layout constants
+	// Variant layout: [uint32_t m_type (4)] [padding (4)] [union data (16)]
+	static constexpr int VARIANT_SIZE = 24;           // Total size of Variant struct
+	static constexpr int VARIANT_TYPE_OFFSET = 0;     // Offset to m_type field (4 bytes)
+	static constexpr int VARIANT_DATA_OFFSET = 8;     // Offset to union data (bool/int64/etc)
 
 	// String constants from IR
 	const std::vector<std::string>* m_string_constants = nullptr;
