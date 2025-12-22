@@ -108,8 +108,15 @@ struct IRValue {
 };
 
 struct IRInstruction {
+	enum class TypeHint {
+		NONE,       // No type information
+		RAW_INT,    // Integer value, can use physical registers
+		RAW_BOOL,   // Boolean value, can use physical registers
+	};
+
 	IROpcode opcode;
 	std::vector<IRValue> operands;
+	TypeHint type_hint = TypeHint::NONE; // Type hint for result (operand 0)
 
 	IRInstruction(IROpcode op) : opcode(op) {}
 	IRInstruction(IROpcode op, IRValue a) : opcode(op), operands{a} {}

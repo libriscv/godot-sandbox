@@ -228,21 +228,48 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 	if (call_expr->arguments.size() == 1) {
 		// range(n): start=0, end=n, step=1
 		start_reg = alloc_register();
-		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(start_reg), IRValue::imm(0));
+		auto& start_instr = func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(start_reg), IRValue::imm(0));
+		start_instr.type_hint = IRInstruction::TypeHint::RAW_INT;
 		end_reg = gen_expr(call_expr->arguments[0].get(), func);
+		// Mark the last instruction (which produces end_reg) as RAW_INT
+		if (!func.instructions.empty()) {
+			func.instructions.back().type_hint = IRInstruction::TypeHint::RAW_INT;
+		}
 		step_reg = alloc_register();
-		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(step_reg), IRValue::imm(1));
+		auto& step_instr = func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(step_reg), IRValue::imm(1));
+		step_instr.type_hint = IRInstruction::TypeHint::RAW_INT;
 	} else if (call_expr->arguments.size() == 2) {
 		// range(start, end): step=1
 		start_reg = gen_expr(call_expr->arguments[0].get(), func);
+		// Mark start as RAW_INT
+		if (!func.instructions.empty()) {
+			func.instructions.back().type_hint = IRInstruction::TypeHint::RAW_INT;
+		}
 		end_reg = gen_expr(call_expr->arguments[1].get(), func);
+		// Mark end as RAW_INT
+		if (!func.instructions.empty()) {
+			func.instructions.back().type_hint = IRInstruction::TypeHint::RAW_INT;
+		}
 		step_reg = alloc_register();
-		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(step_reg), IRValue::imm(1));
+		auto& step_instr = func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(step_reg), IRValue::imm(1));
+		step_instr.type_hint = IRInstruction::TypeHint::RAW_INT;
 	} else if (call_expr->arguments.size() == 3) {
 		// range(start, end, step)
 		start_reg = gen_expr(call_expr->arguments[0].get(), func);
+		// Mark start as RAW_INT
+		if (!func.instructions.empty()) {
+			func.instructions.back().type_hint = IRInstruction::TypeHint::RAW_INT;
+		}
 		end_reg = gen_expr(call_expr->arguments[1].get(), func);
+		// Mark end as RAW_INT
+		if (!func.instructions.empty()) {
+			func.instructions.back().type_hint = IRInstruction::TypeHint::RAW_INT;
+		}
 		step_reg = gen_expr(call_expr->arguments[2].get(), func);
+		// Mark step as RAW_INT
+		if (!func.instructions.empty()) {
+			func.instructions.back().type_hint = IRInstruction::TypeHint::RAW_INT;
+		}
 	} else {
 		throw std::runtime_error("range() takes 1, 2, or 3 arguments");
 	}
@@ -260,7 +287,8 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 
 	// Initialize loop variable with start value
 	int loop_var_reg = alloc_register();
-	func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(loop_var_reg), IRValue::reg(start_reg));
+	auto& move_instr = func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(loop_var_reg), IRValue::reg(start_reg));
+	move_instr.type_hint = IRInstruction::TypeHint::RAW_INT; // Loop counter is always integer from range()
 	declare_variable(stmt->variable, loop_var_reg);
 
 	// Loop start
@@ -294,12 +322,14 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 		// Optimize: use appropriate comparison based on constant step
 		if (step_value >= 0) {
 			// Forward iteration: loop_var < end
-			func.instructions.emplace_back(IROpcode::CMP_LT, IRValue::reg(cond_reg),
+			auto& cmp_instr = func.instructions.emplace_back(IROpcode::CMP_LT, IRValue::reg(cond_reg),
 			                               IRValue::reg(loop_var_reg), IRValue::reg(end_reg));
+			cmp_instr.type_hint = IRInstruction::TypeHint::RAW_INT; // Integer comparison
 		} else {
 			// Backward iteration: loop_var > end
-			func.instructions.emplace_back(IROpcode::CMP_GT, IRValue::reg(cond_reg),
+			auto& cmp_instr = func.instructions.emplace_back(IROpcode::CMP_GT, IRValue::reg(cond_reg),
 			                               IRValue::reg(loop_var_reg), IRValue::reg(end_reg));
+			cmp_instr.type_hint = IRInstruction::TypeHint::RAW_INT; // Integer comparison
 		}
 	} else {
 		// Runtime step: check sign dynamically
@@ -312,8 +342,9 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(zero_reg), IRValue::imm(0));
 
 		int step_sign_reg = alloc_register();
-		func.instructions.emplace_back(IROpcode::CMP_GTE, IRValue::reg(step_sign_reg),
+		auto& step_cmp = func.instructions.emplace_back(IROpcode::CMP_GTE, IRValue::reg(step_sign_reg),
 		                               IRValue::reg(step_reg), IRValue::reg(zero_reg));
+		step_cmp.type_hint = IRInstruction::TypeHint::RAW_INT; // Integer comparison
 		free_register(zero_reg);
 
 		// If step >= 0, use loop_var < end
@@ -321,14 +352,16 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 		                               IRValue::label(pos_step_label));
 
 		// Negative step: loop_var > end
-		func.instructions.emplace_back(IROpcode::CMP_GT, IRValue::reg(cond_reg),
+		auto& neg_cmp = func.instructions.emplace_back(IROpcode::CMP_GT, IRValue::reg(cond_reg),
 		                               IRValue::reg(loop_var_reg), IRValue::reg(end_reg));
+		neg_cmp.type_hint = IRInstruction::TypeHint::RAW_INT; // Integer comparison
 		func.instructions.emplace_back(IROpcode::JUMP, IRValue::label(check_cond_label));
 
 		// Positive step: loop_var < end
 		func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(pos_step_label));
-		func.instructions.emplace_back(IROpcode::CMP_LT, IRValue::reg(cond_reg),
+		auto& pos_cmp = func.instructions.emplace_back(IROpcode::CMP_LT, IRValue::reg(cond_reg),
 		                               IRValue::reg(loop_var_reg), IRValue::reg(end_reg));
+		pos_cmp.type_hint = IRInstruction::TypeHint::RAW_INT; // Integer comparison
 
 		func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(check_cond_label));
 		free_register(step_sign_reg);
@@ -349,9 +382,11 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 
 	// Increment: loop_var = loop_var + step
 	int new_val_reg = alloc_register();
-	func.instructions.emplace_back(IROpcode::ADD, IRValue::reg(new_val_reg),
+	auto& add_instr = func.instructions.emplace_back(IROpcode::ADD, IRValue::reg(new_val_reg),
 	                               IRValue::reg(loop_var_reg), IRValue::reg(step_reg));
-	func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(loop_var_reg), IRValue::reg(new_val_reg));
+	add_instr.type_hint = IRInstruction::TypeHint::RAW_INT; // Integer addition
+	auto& move_instr2 = func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(loop_var_reg), IRValue::reg(new_val_reg));
+	move_instr2.type_hint = IRInstruction::TypeHint::RAW_INT; // Keep as integer
 	free_register(new_val_reg);
 
 	// Jump back to loop start

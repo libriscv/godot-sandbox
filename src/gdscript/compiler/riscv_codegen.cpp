@@ -126,10 +126,30 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int vreg = std::get<int>(instr.operands[0].value);
 				int64_t value = std::get<int64_t>(instr.operands[1].value);
 
-				// All values must be Variants for correct GDScript semantics
-				// Create integer Variant on stack
-				int stack_offset = get_variant_stack_offset(vreg);
-				emit_variant_create_int(stack_offset, value);
+				if (instr.type_hint == IRInstruction::TypeHint::RAW_INT) {
+					// Optimization: keep as raw integer in physical register
+					int preg = m_allocator.allocate_register(vreg, m_current_instr_idx);
+					if (preg >= 0) {
+						emit_li(preg, value);
+						m_vreg_types[vreg] = ValueType::RAW_INT;
+
+						// Also materialize to Variant on stack so it's accessible
+						int stack_offset = get_variant_stack_offset(vreg);
+						emit_li(REG_T0, 2); // Variant::INT type
+						emit_store_variant_type(REG_T0, REG_SP, stack_offset);
+						emit_store_variant_int(preg, REG_SP, stack_offset);
+					} else {
+						// No physical register available, fallback to Variant on stack
+						int stack_offset = get_variant_stack_offset(vreg);
+						emit_variant_create_int(stack_offset, value);
+						m_vreg_types[vreg] = ValueType::VARIANT;
+					}
+				} else {
+					// Standard: create integer Variant on stack
+					int stack_offset = get_variant_stack_offset(vreg);
+					emit_variant_create_int(stack_offset, value);
+					m_vreg_types[vreg] = ValueType::VARIANT;
+				}
 				break;
 			}
 
@@ -190,16 +210,47 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					break;
 				}
 
-				int dst_offset = get_variant_stack_offset(dst_vreg);
-				int src_offset = get_variant_stack_offset(src_vreg);
+				// Check if source is RAW_INT
+				auto src_type_it = m_vreg_types.find(src_vreg);
+				ValueType src_type = (src_type_it != m_vreg_types.end()) ? src_type_it->second : ValueType::VARIANT;
 
-				// Skip if source and destination are at same stack location
-				if (dst_offset == src_offset) {
-					break;
+				if (instr.type_hint == IRInstruction::TypeHint::RAW_INT && src_type == ValueType::RAW_INT) {
+					// Both source and dest are raw integers - use register move
+					int dst_preg = m_allocator.allocate_register(dst_vreg, m_current_instr_idx);
+					int src_preg = m_allocator.get_physical_register(src_vreg);
+
+					if (dst_preg >= 0 && src_preg >= 0) {
+						emit_mv(dst_preg, src_preg);
+						m_vreg_types[dst_vreg] = ValueType::RAW_INT;
+
+						// Also materialize to Variant on stack so LOAD_VAR can access it
+						int dst_offset = get_variant_stack_offset(dst_vreg);
+						emit_li(REG_T0, 2); // Variant::INT type
+						emit_store_variant_type(REG_T0, REG_SP, dst_offset);
+						emit_store_variant_int(dst_preg, REG_SP, dst_offset);
+					} else {
+						// Fallback to Variant copy if registers unavailable
+						int dst_offset = get_variant_stack_offset(dst_vreg);
+						int src_offset = get_variant_stack_offset(src_vreg);
+						if (dst_offset != src_offset) {
+							emit_variant_copy(dst_offset, src_offset);
+						}
+						m_vreg_types[dst_vreg] = ValueType::VARIANT;
+					}
+				} else {
+					// Standard Variant copy
+					int dst_offset = get_variant_stack_offset(dst_vreg);
+					int src_offset = get_variant_stack_offset(src_vreg);
+
+					// Skip if source and destination are at same stack location
+					if (dst_offset == src_offset) {
+						break;
+					}
+
+					// Copy Variant: use sys_vclone or memcpy (24 bytes)
+					emit_variant_copy(dst_offset, src_offset);
+					m_vreg_types[dst_vreg] = ValueType::VARIANT;
 				}
-
-				// Copy Variant: use sys_vclone or memcpy (24 bytes)
-				emit_variant_copy(dst_offset, src_offset);
 				break;
 			}
 
@@ -212,22 +263,61 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int lhs_vreg = std::get<int>(instr.operands[1].value);
 				int rhs_vreg = std::get<int>(instr.operands[2].value);
 
-				int dst_offset = get_variant_stack_offset(dst_vreg);
-				int lhs_offset = get_variant_stack_offset(lhs_vreg);
-				int rhs_offset = get_variant_stack_offset(rhs_vreg);
+				// Check if operands are RAW_INT
+				auto lhs_type_it = m_vreg_types.find(lhs_vreg);
+				auto rhs_type_it = m_vreg_types.find(rhs_vreg);
+				ValueType lhs_type = (lhs_type_it != m_vreg_types.end()) ? lhs_type_it->second : ValueType::VARIANT;
+				ValueType rhs_type = (rhs_type_it != m_vreg_types.end()) ? rhs_type_it->second : ValueType::VARIANT;
 
-				// Map IR opcode to Variant::Operator
-				int variant_op;
-				switch (instr.opcode) {
-					case IROpcode::ADD: variant_op = 6; break;  // OP_ADD
-					case IROpcode::SUB: variant_op = 7; break;  // OP_SUBTRACT
-					case IROpcode::MUL: variant_op = 8; break;  // OP_MULTIPLY
-					case IROpcode::DIV: variant_op = 9; break;  // OP_DIVIDE
-					case IROpcode::MOD: variant_op = 12; break; // OP_MODULE
-					default: variant_op = 6; break;
+				if (instr.type_hint == IRInstruction::TypeHint::RAW_INT &&
+				    lhs_type == ValueType::RAW_INT && rhs_type == ValueType::RAW_INT) {
+					// Optimization: use native RISC-V integer arithmetic
+					int dst_preg = m_allocator.allocate_register(dst_vreg, m_current_instr_idx);
+					int lhs_preg = m_allocator.get_physical_register(lhs_vreg);
+					int rhs_preg = m_allocator.get_physical_register(rhs_vreg);
+
+					if (dst_preg >= 0 && lhs_preg >= 0 && rhs_preg >= 0) {
+						// Emit native RISC-V arithmetic instruction
+						if (instr.opcode == IROpcode::ADD) {
+							emit_add(dst_preg, lhs_preg, rhs_preg);
+						} else if (instr.opcode == IROpcode::SUB) {
+							emit_sub(dst_preg, lhs_preg, rhs_preg);
+						} else {
+							// MUL/DIV/MOD need special handling or fallback
+							// For now, fallback to VEVAL for complex ops
+							goto variant_arithmetic;
+						}
+						m_vreg_types[dst_vreg] = ValueType::RAW_INT;
+
+						// Also materialize to Variant on stack so it's accessible
+						int dst_offset = get_variant_stack_offset(dst_vreg);
+						emit_li(REG_T0, 2); // Variant::INT type
+						emit_store_variant_type(REG_T0, REG_SP, dst_offset);
+						emit_store_variant_int(dst_preg, REG_SP, dst_offset);
+					} else {
+						goto variant_arithmetic;
+					}
+				} else {
+					variant_arithmetic:
+					// Standard Variant arithmetic through VEVAL
+					int dst_offset = get_variant_stack_offset(dst_vreg);
+					int lhs_offset = get_variant_stack_offset(lhs_vreg);
+					int rhs_offset = get_variant_stack_offset(rhs_vreg);
+
+					// Map IR opcode to Variant::Operator
+					int variant_op;
+					switch (instr.opcode) {
+						case IROpcode::ADD: variant_op = 6; break;  // OP_ADD
+						case IROpcode::SUB: variant_op = 7; break;  // OP_SUBTRACT
+						case IROpcode::MUL: variant_op = 8; break;  // OP_MULTIPLY
+						case IROpcode::DIV: variant_op = 9; break;  // OP_DIVIDE
+						case IROpcode::MOD: variant_op = 12; break; // OP_MODULE
+						default: variant_op = 6; break;
+					}
+
+					emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
+					m_vreg_types[dst_vreg] = ValueType::VARIANT;
 				}
-
-				emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
 				break;
 			}
 
@@ -259,23 +349,81 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int lhs_vreg = std::get<int>(instr.operands[1].value);
 				int rhs_vreg = std::get<int>(instr.operands[2].value);
 
-				int dst_offset = get_variant_stack_offset(dst_vreg);
-				int lhs_offset = get_variant_stack_offset(lhs_vreg);
-				int rhs_offset = get_variant_stack_offset(rhs_vreg);
+				// Check if operands are RAW_INT
+				auto lhs_type_it = m_vreg_types.find(lhs_vreg);
+				auto rhs_type_it = m_vreg_types.find(rhs_vreg);
+				ValueType lhs_type = (lhs_type_it != m_vreg_types.end()) ? lhs_type_it->second : ValueType::VARIANT;
+				ValueType rhs_type = (rhs_type_it != m_vreg_types.end()) ? rhs_type_it->second : ValueType::VARIANT;
 
-				// Map IR opcode to Variant::Operator
-				int variant_op;
-				switch (instr.opcode) {
-					case IROpcode::CMP_EQ:  variant_op = 0; break; // OP_EQUAL
-					case IROpcode::CMP_NEQ: variant_op = 1; break; // OP_NOT_EQUAL
-					case IROpcode::CMP_LT:  variant_op = 2; break; // OP_LESS
-					case IROpcode::CMP_LTE: variant_op = 3; break; // OP_LESS_EQUAL
-					case IROpcode::CMP_GT:  variant_op = 4; break; // OP_GREATER
-					case IROpcode::CMP_GTE: variant_op = 5; break; // OP_GREATER_EQUAL
-					default: variant_op = 0; break;
+				if (instr.type_hint == IRInstruction::TypeHint::RAW_INT &&
+				    lhs_type == ValueType::RAW_INT && rhs_type == ValueType::RAW_INT) {
+					// Optimization: use native RISC-V integer comparison
+					// Result is stored as RAW_INT (0 or 1) in a register
+					int dst_preg = m_allocator.allocate_register(dst_vreg, m_current_instr_idx);
+					int lhs_preg = m_allocator.get_physical_register(lhs_vreg);
+					int rhs_preg = m_allocator.get_physical_register(rhs_vreg);
+
+					if (dst_preg >= 0 && lhs_preg >= 0 && rhs_preg >= 0) {
+						// Use native RISC-V comparison instructions
+						// Set dst_preg = 1 if condition is true, 0 otherwise
+						switch (instr.opcode) {
+							case IROpcode::CMP_LT:
+								// slt rd, rs1, rs2: rd = (rs1 < rs2) ? 1 : 0
+								emit_slt(dst_preg, lhs_preg, rhs_preg);
+								break;
+							case IROpcode::CMP_GT:
+								// slt rd, rs2, rs1: rd = (rs2 < rs1) ? 1 : 0 = (rs1 > rs2)
+								emit_slt(dst_preg, rhs_preg, lhs_preg);
+								break;
+							case IROpcode::CMP_LTE:
+								// rs1 <= rs2 is !(rs2 < rs1)
+								emit_slt(dst_preg, rhs_preg, lhs_preg);
+								emit_xori(dst_preg, dst_preg, 1); // Flip the result
+								break;
+							case IROpcode::CMP_GTE:
+								// rs1 >= rs2 is !(rs1 < rs2)
+								emit_slt(dst_preg, lhs_preg, rhs_preg);
+								emit_xori(dst_preg, dst_preg, 1); // Flip the result
+								break;
+							case IROpcode::CMP_EQ:
+								// rs1 == rs2: xor rd, rs1, rs2; seqz rd, rd
+								emit_xor(dst_preg, lhs_preg, rhs_preg);
+								emit_seqz(dst_preg, dst_preg);
+								break;
+							case IROpcode::CMP_NEQ:
+								// rs1 != rs2: xor rd, rs1, rs2; snez rd, rd
+								emit_xor(dst_preg, lhs_preg, rhs_preg);
+								emit_snez(dst_preg, dst_preg);
+								break;
+							default:
+								goto variant_comparison;
+						}
+						m_vreg_types[dst_vreg] = ValueType::RAW_INT;
+					} else {
+						goto variant_comparison;
+					}
+				} else {
+					variant_comparison:
+					// Standard Variant comparison through VEVAL
+					int dst_offset = get_variant_stack_offset(dst_vreg);
+					int lhs_offset = get_variant_stack_offset(lhs_vreg);
+					int rhs_offset = get_variant_stack_offset(rhs_vreg);
+
+					// Map IR opcode to Variant::Operator
+					int variant_op;
+					switch (instr.opcode) {
+						case IROpcode::CMP_EQ:  variant_op = 0; break; // OP_EQUAL
+						case IROpcode::CMP_NEQ: variant_op = 1; break; // OP_NOT_EQUAL
+						case IROpcode::CMP_LT:  variant_op = 2; break; // OP_LESS
+						case IROpcode::CMP_LTE: variant_op = 3; break; // OP_LESS_EQUAL
+						case IROpcode::CMP_GT:  variant_op = 4; break; // OP_GREATER
+						case IROpcode::CMP_GTE: variant_op = 5; break; // OP_GREATER_EQUAL
+						default: variant_op = 0; break;
+					}
+
+					emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
+					m_vreg_types[dst_vreg] = ValueType::VARIANT;
 				}
-
-				emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
 				break;
 			}
 
@@ -320,27 +468,63 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 			case IROpcode::BRANCH_ZERO: {
 				int vreg = std::get<int>(instr.operands[0].value);
-				int offset = get_variant_stack_offset(vreg);
 
-				// Load Variant's boolean value
-				emit_load_variant_bool(REG_T0, REG_SP, offset);
+				// Check if value is RAW_INT in a register
+				auto vreg_type_it = m_vreg_types.find(vreg);
+				ValueType vreg_type = (vreg_type_it != m_vreg_types.end()) ? vreg_type_it->second : ValueType::VARIANT;
 
-				// Branch if zero
-				mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
-				emit_beq(REG_T0, REG_ZERO, 0);
+				if (vreg_type == ValueType::RAW_INT) {
+					// Optimization: value is in a physical register
+					int preg = m_allocator.get_physical_register(vreg);
+					if (preg >= 0) {
+						// Branch if register is zero
+						mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
+						emit_beq(preg, REG_ZERO, 0);
+					} else {
+						// Fallback to Variant load if not in register
+						int offset = get_variant_stack_offset(vreg);
+						emit_load_variant_bool(REG_T0, REG_SP, offset);
+						mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
+						emit_beq(REG_T0, REG_ZERO, 0);
+					}
+				} else {
+					// Standard: load from Variant
+					int offset = get_variant_stack_offset(vreg);
+					emit_load_variant_bool(REG_T0, REG_SP, offset);
+					mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
+					emit_beq(REG_T0, REG_ZERO, 0);
+				}
 				break;
 			}
 
 			case IROpcode::BRANCH_NOT_ZERO: {
 				int vreg = std::get<int>(instr.operands[0].value);
-				int offset = get_variant_stack_offset(vreg);
 
-				// Load Variant's boolean value
-				emit_load_variant_bool(REG_T0, REG_SP, offset);
+				// Check if value is RAW_INT in a register
+				auto vreg_type_it = m_vreg_types.find(vreg);
+				ValueType vreg_type = (vreg_type_it != m_vreg_types.end()) ? vreg_type_it->second : ValueType::VARIANT;
 
-				// Branch if not zero
-				mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
-				emit_bne(REG_T0, REG_ZERO, 0);
+				if (vreg_type == ValueType::RAW_INT) {
+					// Optimization: value is in a physical register
+					int preg = m_allocator.get_physical_register(vreg);
+					if (preg >= 0) {
+						// Branch if register is not zero
+						mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
+						emit_bne(preg, REG_ZERO, 0);
+					} else {
+						// Fallback to Variant load if not in register
+						int offset = get_variant_stack_offset(vreg);
+						emit_load_variant_bool(REG_T0, REG_SP, offset);
+						mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
+						emit_bne(REG_T0, REG_ZERO, 0);
+					}
+				} else {
+					// Standard: load from Variant
+					int offset = get_variant_stack_offset(vreg);
+					emit_load_variant_bool(REG_T0, REG_SP, offset);
+					mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
+					emit_bne(REG_T0, REG_ZERO, 0);
+				}
 				break;
 			}
 
@@ -742,6 +926,20 @@ void RISCVCodeGen::emit_xor(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 
 void RISCVCodeGen::emit_slt(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 	emit_r_type(0x33, rd, 2, rs1, rs2, 0);
+}
+
+void RISCVCodeGen::emit_xori(uint8_t rd, uint8_t rs, int32_t imm) {
+	emit_i_type(0x13, rd, 4, rs, imm); // XORI
+}
+
+void RISCVCodeGen::emit_seqz(uint8_t rd, uint8_t rs) {
+	// seqz rd, rs is pseudo-instruction for sltiu rd, rs, 1
+	emit_i_type(0x13, rd, 3, rs, 1); // SLTIU rd, rs, 1
+}
+
+void RISCVCodeGen::emit_snez(uint8_t rd, uint8_t rs) {
+	// snez rd, rs is pseudo-instruction for sltu rd, x0, rs
+	emit_r_type(0x33, rd, 3, REG_ZERO, rs, 0); // SLTU rd, x0, rs
 }
 
 void RISCVCodeGen::emit_beq(uint8_t rs1, uint8_t rs2, int32_t offset) {

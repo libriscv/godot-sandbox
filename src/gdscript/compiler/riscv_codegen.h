@@ -50,7 +50,10 @@ private:
 	void emit_and(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_or(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_xor(uint8_t rd, uint8_t rs1, uint8_t rs2);
+	void emit_xori(uint8_t rd, uint8_t rs, int32_t imm);  // XOR immediate
 	void emit_slt(uint8_t rd, uint8_t rs1, uint8_t rs2);
+	void emit_seqz(uint8_t rd, uint8_t rs);   // Set if equal to zero (pseudo: sltiu rd, rs, 1)
+	void emit_snez(uint8_t rd, uint8_t rs);   // Set if not equal to zero (pseudo: sltu rd, x0, rs)
 	void emit_beq(uint8_t rs1, uint8_t rs2, int32_t offset);
 	void emit_bne(uint8_t rs1, uint8_t rs2, int32_t offset);
 	void emit_jal(uint8_t rd, int32_t offset);
