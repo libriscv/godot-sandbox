@@ -215,6 +215,15 @@ APICALL(api_vcreate) {
 			} else if (method == 2) { // From std::u32string
 				const GuestStdU32String *str = machine.memory.memarray<const GuestStdU32String>(gdata, 1);
 				godot_str = str->to_godot_string(machine);
+			} else if (method == 3) { // const int32_t*, size_t
+				const struct Buffer {
+					gaddr_t data;
+					gaddr_t size;
+				} *buffer = machine.memory.memarray<const Buffer>(gdata, 1);
+				// View the string from guest memory.
+				const int32_t* chars = machine.memory.memarray<const int32_t>(buffer->data, buffer->size);
+				std::u32string str(chars, chars + buffer->size);
+				godot_str = String(str.data());
 			} else {
 				ERR_PRINT("vcreate: Unsupported method for Variant::STRING");
 				throw std::runtime_error("vcreate: Unsupported method for Variant::STRING: " + std::to_string(method));
