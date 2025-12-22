@@ -835,6 +835,55 @@ func test_large_step():
 	std::cout << "  ✓ For loop edge cases passed" << std::endl;
 }
 
+void test_for_loop_variable_assignment() {
+	std::cout << "Testing for loop with variable assignment..." << std::endl;
+
+	std::string source = R"(
+func test():
+	var last = -1
+	for i in range(5):
+		last = i
+	return last
+)";
+
+	// Debug: compile with IR dump
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+	CodeGenerator codegen;
+	IRProgram ir = codegen.generate(program);
+
+	std::cout << "Generated IR for test():" << std::endl;
+	std::cout << "Opcodes: LOAD_IMM=0, MOVE=5, ADD=6, CMP_LT=11, LABEL=18, JUMP=19, BRANCH_ZERO=20" << std::endl;
+	for (const auto& func : ir.functions) {
+		if (func.name == "test") {
+			std::cout << "Function has " << func.max_registers << " max registers" << std::endl;
+			for (size_t i = 0; i < func.instructions.size(); i++) {
+				const auto& instr = func.instructions[i];
+				std::cout << "  " << i << ": opcode=" << static_cast<int>(instr.opcode);
+				for (size_t j = 0; j < instr.operands.size(); j++) {
+					const auto& op = instr.operands[j];
+					std::cout << " op" << j << "=";
+					if (std::holds_alternative<int>(op.value)) {
+						std::cout << "r" << std::get<int>(op.value);
+					} else if (std::holds_alternative<int64_t>(op.value)) {
+						std::cout << "#" << std::get<int64_t>(op.value);
+					} else if (std::holds_alternative<std::string>(op.value)) {
+						std::cout << "\"" << std::get<std::string>(op.value) << "\"";
+					}
+				}
+				std::cout << std::endl;
+			}
+			break;
+		}
+	}
+
+	// Try to execute with the fix for map iterator invalidation
+	std::cout << "  Attempting execution..." << std::endl;
+	assert(execute_int(source, "test") == 4);
+	std::cout << "  ✓ For loop with variable assignment passed!" << std::endl;
+}
+
 void test_function_calls_with_multiple_args() {
 	std::cout << "Testing function calls with multiple arguments..." << std::endl;
 
@@ -1130,6 +1179,7 @@ int main() {
 		test_for_loop_nested();
 		test_for_loop_with_break();
 		test_for_loop_with_continue();
+		test_for_loop_variable_assignment();
 
 		std::cout << "\n=== Enhanced Comprehensive Tests ===" << std::endl;
 

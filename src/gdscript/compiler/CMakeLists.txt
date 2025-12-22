@@ -32,27 +32,27 @@ target_link_libraries(gdscript_compiler_test gdscript_compiler)
 enable_testing()
 
 add_executable(test_lexer tests/test_lexer.cpp)
-target_link_libraries(test_lexer gdscript_compiler)
+target_link_libraries(test_lexer -static gdscript_compiler)
 add_test(NAME LexerTests COMMAND test_lexer)
 
 add_executable(test_parser tests/test_parser.cpp)
-target_link_libraries(test_parser gdscript_compiler)
+target_link_libraries(test_parser -static gdscript_compiler)
 add_test(NAME ParserTests COMMAND test_parser)
 
 add_executable(test_codegen tests/test_codegen.cpp)
-target_link_libraries(test_codegen gdscript_compiler)
+target_link_libraries(test_codegen -static gdscript_compiler)
 add_test(NAME CodeGenTests COMMAND test_codegen)
 
 add_executable(test_integration tests/test_integration.cpp)
-target_link_libraries(test_integration gdscript_compiler)
+target_link_libraries(test_integration -static gdscript_compiler)
 add_test(NAME IntegrationTests COMMAND test_integration)
 
 add_executable(test_primitives tests/test_primitives.cpp)
-target_link_libraries(test_primitives gdscript_compiler)
+target_link_libraries(test_primitives -static gdscript_compiler)
 add_test(NAME PrimitivesTests COMMAND test_primitives)
 
 add_executable(test_compilation tests/test_compilation.cpp)
-target_link_libraries(test_compilation gdscript_compiler)
+target_link_libraries(test_compilation -static gdscript_compiler)
 add_test(NAME CompilationTests COMMAND test_compilation)
 
 # Run all tests target

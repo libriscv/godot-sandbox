@@ -76,7 +76,9 @@ void IRInterpreter::execute_instruction(const IRInstruction& instr, ExecutionCon
 		case IROpcode::MOVE: {
 			int dst = std::get<int>(instr.operands[0].value);
 			int src = std::get<int>(instr.operands[1].value);
-			ctx.registers[dst] = get_register(ctx, src);
+			// Get src value first to avoid map iterator invalidation
+			Value src_value = get_register(ctx, src);
+			ctx.registers[dst] = src_value;
 			break;
 		}
 
@@ -88,7 +90,10 @@ void IRInterpreter::execute_instruction(const IRInstruction& instr, ExecutionCon
 			int dst = std::get<int>(instr.operands[0].value);
 			int src1 = std::get<int>(instr.operands[1].value);
 			int src2 = std::get<int>(instr.operands[2].value);
-			ctx.registers[dst] = binary_op(get_register(ctx, src1), get_register(ctx, src2), instr.opcode);
+			// Get operands first to avoid map iterator invalidation
+			Value val1 = get_register(ctx, src1);
+			Value val2 = get_register(ctx, src2);
+			ctx.registers[dst] = binary_op(val1, val2, instr.opcode);
 			break;
 		}
 
