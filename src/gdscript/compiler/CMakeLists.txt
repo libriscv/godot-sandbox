@@ -12,6 +12,7 @@ set(COMPILER_SOURCES
     lexer.cpp
     parser.cpp
     ir.cpp
+    ir_optimizer.cpp
     codegen.cpp
     riscv_codegen.cpp
     register_allocator.cpp

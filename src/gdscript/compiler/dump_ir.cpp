@@ -1,6 +1,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "codegen.h"
+#include "ir_optimizer.h"
 #include <iostream>
 #include <variant>
 
@@ -80,6 +81,10 @@ int main(int argc, char** argv)
 
 		CodeGenerator codegen;
 		IRProgram ir = codegen.generate(program);
+
+		// Apply optimizations
+		IROptimizer optimizer;
+		optimizer.optimize(ir);
 
 		for (const auto& func : ir.functions) {
 			std::cout << "Function: " << func.name << "(";

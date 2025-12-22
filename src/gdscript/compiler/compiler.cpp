@@ -2,6 +2,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "codegen.h"
+#include "ir_optimizer.h"
 #include "elf_builder.h"
 #include <iostream>
 #include <fstream>
@@ -48,7 +49,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 		IRProgram ir_program = codegen.generate(program);
 
 		if (options.dump_ir) {
-			std::cout << "=== IR ===" << std::endl;
+			std::cout << "=== IR (unoptimized) ===" << std::endl;
 			for (const auto& func : ir_program.functions) {
 				std::cout << "Function: " << func.name << std::endl;
 				std::cout << "  Max registers: " << func.max_registers << std::endl;
@@ -64,6 +65,23 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 				std::cout << "  [" << i << "] \"" << ir_program.string_constants[i] << "\"" << std::endl;
 			}
 			std::cout << std::endl;
+		}
+
+		// Step 3.5: Optimize IR
+		IROptimizer optimizer;
+		optimizer.optimize(ir_program);
+
+		if (options.dump_ir) {
+			std::cout << "=== IR (optimized) ===" << std::endl;
+			for (const auto& func : ir_program.functions) {
+				std::cout << "Function: " << func.name << std::endl;
+				std::cout << "  Max registers: " << func.max_registers << std::endl;
+				std::cout << "  Instructions:" << std::endl;
+				for (const auto& instr : func.instructions) {
+					std::cout << "    " << instr.to_string() << std::endl;
+				}
+				std::cout << std::endl;
+			}
 		}
 
 		// Step 4: RISC-V code generation (IR -> machine code)
