@@ -87,11 +87,25 @@ private:
 	std::vector<std::pair<std::string, size_t>> m_label_uses;
 	std::unordered_map<std::string, size_t> m_functions;
 
+	// Value type tracking
+	enum class ValueType {
+		RAW_INT,    // 64-bit integer in register
+		RAW_BOOL,   // Boolean (stored as 64-bit int)
+		VARIANT     // Full Variant on stack
+	};
+
 	// Register allocator
 	RegisterAllocator m_allocator;
-	
-	// Variant-based virtual register mapping (for spilled registers)
-	std::unordered_map<int, int> m_variant_offsets; // virtual_reg -> stack offset
+
+	// Value type tracking for each virtual register
+	std::unordered_map<int, ValueType> m_vreg_types;
+
+	// For RAW values: virtual_reg -> physical_reg mapping
+	// (managed by m_allocator, but we track which are raw vs variant)
+
+	// For VARIANT values: virtual_reg -> stack offset
+	std::unordered_map<int, int> m_variant_offsets;
+
 	size_t m_num_params = 0; // Number of parameters in current function
 	int m_stack_frame_size = 0; // Total stack frame size in bytes
 	int m_next_variant_slot = 0; // Next Variant slot to allocate

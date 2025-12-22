@@ -55,6 +55,9 @@ add_executable(test_compilation tests/test_compilation.cpp)
 target_link_libraries(test_compilation -static gdscript_compiler)
 add_test(NAME CompilationTests COMMAND test_compilation)
 
+add_executable(dump_ir dump_ir.cpp)
+target_link_libraries(dump_ir -static gdscript_compiler)
+
 # Run all tests target
 add_custom_target(run_tests
 	COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
