@@ -1,8 +1,8 @@
 #pragma once
 #include <memory>
-#include <vector>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace gdscript {
 
@@ -22,7 +22,11 @@ struct Expr {
 
 // Literal expression: 42, 3.14, "hello", true, false, null
 struct LiteralExpr : Expr {
-	enum class Type { INTEGER, FLOAT, STRING, BOOL, NULL_VAL };
+	enum class Type { INTEGER,
+		FLOAT,
+		STRING,
+		BOOL,
+		NULL_VAL };
 	Type lit_type;
 	std::variant<int64_t, double, std::string, bool> value;
 
@@ -46,22 +50,32 @@ struct VariableExpr : Expr {
 // Binary operation: a + b, x * y
 struct BinaryExpr : Expr {
 	enum class Op {
-		ADD, SUB, MUL, DIV, MOD,
-		EQ, NEQ, LT, LTE, GT, GTE,
-		AND, OR
+		ADD,
+		SUB,
+		MUL,
+		DIV,
+		MOD,
+		EQ,
+		NEQ,
+		LT,
+		LTE,
+		GT,
+		GTE,
+		AND,
+		OR
 	};
 
 	ExprPtr left;
 	Op op;
 	ExprPtr right;
 
-	BinaryExpr(ExprPtr l, Op o, ExprPtr r)
-		: left(std::move(l)), op(o), right(std::move(r)) {}
+	BinaryExpr(ExprPtr l, Op o, ExprPtr r) : left(std::move(l)), op(o), right(std::move(r)) {}
 };
 
 // Unary operation: -x, not y
 struct UnaryExpr : Expr {
-	enum class Op { NEG, NOT };
+	enum class Op { NEG,
+		NOT };
 
 	Op op;
 	ExprPtr operand;
@@ -74,8 +88,7 @@ struct CallExpr : Expr {
 	std::string function_name;
 	std::vector<ExprPtr> arguments;
 
-	CallExpr(std::string name, std::vector<ExprPtr> args)
-		: function_name(std::move(name)), arguments(std::move(args)) {}
+	CallExpr(std::string name, std::vector<ExprPtr> args) : function_name(std::move(name)), arguments(std::move(args)) {}
 };
 
 // Member access: obj.method(args) or obj.property
@@ -84,8 +97,7 @@ struct MemberCallExpr : Expr {
 	std::string member_name;
 	std::vector<ExprPtr> arguments; // Empty if property access
 
-	MemberCallExpr(ExprPtr obj, std::string name, std::vector<ExprPtr> args = {})
-		: object(std::move(obj)), member_name(std::move(name)), arguments(std::move(args)) {}
+	MemberCallExpr(ExprPtr obj, std::string name, std::vector<ExprPtr> args = {}) : object(std::move(obj)), member_name(std::move(name)), arguments(std::move(args)) {}
 };
 
 // Array index: arr[0]
@@ -93,8 +105,25 @@ struct IndexExpr : Expr {
 	ExprPtr object;
 	ExprPtr index;
 
-	IndexExpr(ExprPtr obj, ExprPtr idx)
-		: object(std::move(obj)), index(std::move(idx)) {}
+	IndexExpr(ExprPtr obj, ExprPtr idx) : object(std::move(obj)), index(std::move(idx)) {}
+};
+
+// Array literal: [1, 2, 3]
+struct ArrayExpr : Expr {
+	std::vector<ExprPtr> elements;
+
+	ArrayExpr(std::vector<ExprPtr> elems) : elements(std::move(elems)) {}
+};
+
+// Dictionary literal: {"key1": value1, "key2": value2}
+struct DictionaryExpr : Expr {
+	struct KeyValue {
+		ExprPtr key;
+		ExprPtr value;
+	};
+	std::vector<KeyValue> pairs;
+
+	DictionaryExpr(std::vector<KeyValue> p) : pairs(std::move(p)) {}
 };
 
 // Statement base class
@@ -115,8 +144,7 @@ struct VarDeclStmt : Stmt {
 	std::string name;
 	ExprPtr initializer; // Can be null
 
-	VarDeclStmt(std::string n, ExprPtr init = nullptr)
-		: name(std::move(n)), initializer(std::move(init)) {}
+	VarDeclStmt(std::string n, ExprPtr init = nullptr) : name(std::move(n)), initializer(std::move(init)) {}
 };
 
 // Assignment: x = 42
@@ -124,8 +152,7 @@ struct AssignStmt : Stmt {
 	std::string name;
 	ExprPtr value;
 
-	AssignStmt(std::string n, ExprPtr v)
-		: name(std::move(n)), value(std::move(v)) {}
+	AssignStmt(std::string n, ExprPtr v) : name(std::move(n)), value(std::move(v)) {}
 };
 
 // Return statement: return x
@@ -141,8 +168,7 @@ struct IfStmt : Stmt {
 	std::vector<StmtPtr> then_branch;
 	std::vector<StmtPtr> else_branch; // Can be empty
 
-	IfStmt(ExprPtr cond, std::vector<StmtPtr> then_b, std::vector<StmtPtr> else_b = {})
-		: condition(std::move(cond)), then_branch(std::move(then_b)), else_branch(std::move(else_b)) {}
+	IfStmt(ExprPtr cond, std::vector<StmtPtr> then_b, std::vector<StmtPtr> else_b = {}) : condition(std::move(cond)), then_branch(std::move(then_b)), else_branch(std::move(else_b)) {}
 };
 
 // While statement
@@ -150,18 +176,16 @@ struct WhileStmt : Stmt {
 	ExprPtr condition;
 	std::vector<StmtPtr> body;
 
-	WhileStmt(ExprPtr cond, std::vector<StmtPtr> b)
-		: condition(std::move(cond)), body(std::move(b)) {}
+	WhileStmt(ExprPtr cond, std::vector<StmtPtr> b) : condition(std::move(cond)), body(std::move(b)) {}
 };
 
 // For statement: for variable in iterable:
 struct ForStmt : Stmt {
-	std::string variable;  // Loop variable name
-	ExprPtr iterable;      // Expression to iterate over (e.g., range(10))
+	std::string variable; // Loop variable name
+	ExprPtr iterable; // Expression to iterate over (e.g., range(10))
 	std::vector<StmtPtr> body;
 
-	ForStmt(std::string var, ExprPtr iter, std::vector<StmtPtr> b)
-		: variable(std::move(var)), iterable(std::move(iter)), body(std::move(b)) {}
+	ForStmt(std::string var, ExprPtr iter, std::vector<StmtPtr> b) : variable(std::move(var)), iterable(std::move(iter)), body(std::move(b)) {}
 };
 
 // Break statement

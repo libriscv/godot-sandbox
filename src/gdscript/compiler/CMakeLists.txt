@@ -44,6 +44,18 @@ add_executable(test_codegen tests/test_codegen.cpp)
 target_link_libraries(test_codegen -static gdscript_compiler)
 add_test(NAME CodeGenTests COMMAND test_codegen)
 
+add_executable(test_parser_literals tests/test_parser_literals.cpp)
+target_link_libraries(test_parser_literals -static gdscript_compiler)
+add_test(NAME ParserLiteralsTests COMMAND test_parser_literals)
+
+add_executable(test_codegen_literals tests/test_codegen_literals.cpp)
+target_link_libraries(test_codegen_literals -static gdscript_compiler)
+add_test(NAME CodeGenLiteralsTests COMMAND test_codegen_literals)
+
+add_executable(test_literals_integration tests/test_literals_integration.cpp)
+target_link_libraries(test_literals_integration -static gdscript_compiler)
+add_test(NAME LiteralsIntegrationTests COMMAND test_literals_integration)
+
 add_executable(test_integration tests/test_integration.cpp)
 target_link_libraries(test_integration -static gdscript_compiler)
 add_test(NAME IntegrationTests COMMAND test_integration)

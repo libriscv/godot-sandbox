@@ -395,3 +395,174 @@ func pf32a_operation(array):
 		print("%s benchmark took %d us" % [name, end_time - start_time])
 
 		s.queue_free()
+
+func test_array_literal_runtime():
+	# Test that array literals compile and return correct values
+	var gdscript_code = """
+func return_array():
+	return [1, 2, 3]
+
+func return_empty():
+	return []
+
+func return_single():
+	return [42]
+
+func return_with_expressions():
+	return [1 + 2, 3 * 4, 10 - 5]
+
+func return_nested():
+	return [[1, 2], [3, 4]]
+
+func return_large():
+	return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+
+	# Test return_array
+	var result = s.vmcallv("return_array")
+	assert_eq_deep(result, [1, 2, 3], "return_array() should return [1, 2, 3]")
+
+	# Test return_empty
+	result = s.vmcallv("return_empty")
+	assert_eq_deep(result, [], "return_empty() should return []")
+
+	# Test return_single
+	result = s.vmcallv("return_single")
+	assert_eq_deep(result, [42], "return_single() should return [42]")
+
+	# Test return_with_expressions
+	result = s.vmcallv("return_with_expressions")
+	assert_eq_deep(result, [3, 12, 5], "return_with_expressions() should return [3, 12, 5]")
+
+	# Test return_nested
+	result = s.vmcallv("return_nested")
+	assert_eq_deep(result, [[1, 2], [3, 4]], "return_nested() should return [[1, 2], [3, 4]]")
+
+	# Test return_large
+	result = s.vmcallv("return_large")
+	assert_eq_deep(result, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], "return_large() should return [0..9]")
+
+	s.queue_free()
+
+func test_dictionary_literal_runtime():
+	# Test that dictionary literals compile and return correct values
+	var gdscript_code = """
+func return_dict():
+	return {"key1": "value1", "key2": 42, "key3": true}
+
+func return_empty():
+	return {}
+
+func return_single():
+	return {"key": "value"}
+
+func return_with_expressions():
+	return {1 + 1: 2 * 2, "key": 10 - 5}
+
+func return_nested():
+	return {"a": {"b": {"c": 1}}}
+
+func return_with_array():
+	return {"arr": [1, 2, 3], "num": 42}
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+
+	# Test return_dict
+	var result = s.vmcallv("return_dict")
+	assert_eq(result.get("key1"), "value1", "return_dict() should have key1 = value1")
+	assert_eq(result.get("key2"), 42, "return_dict() should have key2 = 42")
+	assert_eq(result.get("key3"), true, "return_dict() should have key3 = true")
+
+	# Test return_empty
+	result = s.vmcallv("return_empty")
+	assert_eq(result.size(), 0, "return_empty() should return empty dict")
+
+	# Test return_single
+	result = s.vmcallv("return_single")
+	assert_eq(result.size(), 1, "return_single() should have 1 key")
+	assert_eq(result.get("key"), "value", "return_single() should have key = value")
+
+	# Test return_with_expressions
+	result = s.vmcallv("return_with_expressions")
+	assert_eq(result.get(2), 4, "return_with_expressions() should have 2: 4")
+	assert_eq(result.get("key"), 5, "return_with_expressions() should have key: 5")
+
+	# Test return_nested
+	result = s.vmcallv("return_nested")
+	var nested = result.get("a")
+	assert_eq(nested.get("b").get("c"), 1, "return_nested() should have a.b.c = 1")
+
+	# Test return_with_array
+	result = s.vmcallv("return_with_array")
+	assert_eq_deep(result.get("arr"), [1, 2, 3], "return_with_array() should have arr = [1, 2, 3]")
+	assert_eq(result.get("num"), 42, "return_with_array() should have num = 42")
+
+	s.queue_free()
+
+func test_array_dict_mixed_runtime():
+	# Test complex mixed structures
+	var gdscript_code = """
+func return_mixed():
+	return [1, 2, {"a": 1, "b": 2}]
+
+func return_complex():
+	return [[1, 2, 3], {"a": 1, "b": 2}, [{"x": 10}, {"y": 20}]]
+
+func return_array_of_dicts():
+	return [{"a": 1}, {"b": 2}, {"c": 3}]
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+
+	# Test return_mixed
+	var result = s.vmcallv("return_mixed")
+	assert_eq(result.size(), 3, "return_mixed() should have 3 elements")
+	assert_eq(result[0], 1, "return_mixed()[0] should be 1")
+	assert_eq(result[1], 2, "return_mixed()[1] should be 2")
+	var dict = result[2]
+	assert_eq(dict.get("a"), 1, "return_mixed()[2] should have a = 1")
+	assert_eq(dict.get("b"), 2, "return_mixed()[2] should have b = 2")
+
+	# Test return_complex
+	result = s.vmcallv("return_complex")
+	assert_eq(result.size(), 3, "return_complex() should have 3 elements")
+	assert_eq_deep(result[0], [1, 2, 3], "return_complex()[0] should be [1, 2, 3]")
+	dict = result[1]
+	assert_eq(dict.get("a"), 1, "return_complex()[1] should have a = 1")
+	var arr = result[2]
+	assert_eq(arr.size(), 2, "return_complex()[2] should have 2 elements")
+	assert_eq(arr[0].get("x"), 10, "return_complex()[2][0] should have x = 10")
+	assert_eq(arr[1].get("y"), 20, "return_complex()[2][1] should have y = 20")
+
+	# Test return_array_of_dicts
+	result = s.vmcallv("return_array_of_dicts")
+	assert_eq(result.size(), 3, "return_array_of_dicts() should have 3 elements")
+	assert_eq(result[0].get("a"), 1, "return_array_of_dicts()[0] should have a = 1")
+	assert_eq(result[1].get("b"), 2, "return_array_of_dicts()[1] should have b = 2")
+	assert_eq(result[2].get("c"), 3, "return_array_of_dicts()[2] should have c = 3")
+
+	s.queue_free()

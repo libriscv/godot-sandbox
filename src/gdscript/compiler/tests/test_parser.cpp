@@ -24,7 +24,7 @@ void test_simple_function() {
 	assert(program.functions[0].body.size() == 1);
 
 	// Check return statement
-	auto* ret_stmt = dynamic_cast<ReturnStmt*>(program.functions[0].body[0].get());
+	auto *ret_stmt = dynamic_cast<ReturnStmt *>(program.functions[0].body[0].get());
 	assert(ret_stmt != nullptr);
 	assert(ret_stmt->value != nullptr);
 
@@ -45,12 +45,12 @@ void test_variable_declaration() {
 
 	assert(program.functions[0].body.size() == 2);
 
-	auto* var1 = dynamic_cast<VarDeclStmt*>(program.functions[0].body[0].get());
+	auto *var1 = dynamic_cast<VarDeclStmt *>(program.functions[0].body[0].get());
 	assert(var1 != nullptr);
 	assert(var1->name == "x");
 	assert(var1->initializer != nullptr);
 
-	auto* var2 = dynamic_cast<VarDeclStmt*>(program.functions[0].body[1].get());
+	auto *var2 = dynamic_cast<VarDeclStmt *>(program.functions[0].body[1].get());
 	assert(var2 != nullptr);
 	assert(var2->name == "y");
 	assert(var2->initializer == nullptr);
@@ -74,7 +74,7 @@ void test_if_statement() {
 
 	assert(program.functions[0].body.size() == 1);
 
-	auto* if_stmt = dynamic_cast<IfStmt*>(program.functions[0].body[0].get());
+	auto *if_stmt = dynamic_cast<IfStmt *>(program.functions[0].body[0].get());
 	assert(if_stmt != nullptr);
 	assert(if_stmt->condition != nullptr);
 	assert(if_stmt->then_branch.size() == 1);
@@ -98,7 +98,7 @@ void test_while_loop() {
 
 	assert(program.functions[0].body.size() == 2);
 
-	auto* while_stmt = dynamic_cast<WhileStmt*>(program.functions[0].body[1].get());
+	auto *while_stmt = dynamic_cast<WhileStmt *>(program.functions[0].body[1].get());
 	assert(while_stmt != nullptr);
 	assert(while_stmt->condition != nullptr);
 	assert(while_stmt->body.size() == 1);
@@ -124,7 +124,7 @@ void test_expressions() {
 
 	// Check that all are variable declarations with expressions
 	for (int i = 0; i < 4; i++) {
-		auto* var_decl = dynamic_cast<VarDeclStmt*>(program.functions[0].body[i].get());
+		auto *var_decl = dynamic_cast<VarDeclStmt *>(program.functions[0].body[i].get());
 		assert(var_decl != nullptr);
 		assert(var_decl->initializer != nullptr);
 	}
@@ -147,10 +147,10 @@ void test_function_call() {
 	assert(program.functions[0].body.size() == 2);
 
 	// First statement: var result = add(1, 2)
-	auto* var_decl = dynamic_cast<VarDeclStmt*>(program.functions[0].body[0].get());
+	auto *var_decl = dynamic_cast<VarDeclStmt *>(program.functions[0].body[0].get());
 	assert(var_decl != nullptr);
 
-	auto* call_expr = dynamic_cast<CallExpr*>(var_decl->initializer.get());
+	auto *call_expr = dynamic_cast<CallExpr *>(var_decl->initializer.get());
 	assert(call_expr != nullptr);
 	assert(call_expr->function_name == "add");
 	assert(call_expr->arguments.size() == 2);
@@ -174,10 +174,10 @@ void test_method_call() {
 	assert(program.functions[0].body.size() == 3);
 
 	// Second statement: node.set_position(...)
-	auto* expr_stmt = dynamic_cast<ExprStmt*>(program.functions[0].body[1].get());
+	auto *expr_stmt = dynamic_cast<ExprStmt *>(program.functions[0].body[1].get());
 	assert(expr_stmt != nullptr);
 
-	auto* member_call = dynamic_cast<MemberCallExpr*>(expr_stmt->expression.get());
+	auto *member_call = dynamic_cast<MemberCallExpr *>(expr_stmt->expression.get());
 	assert(member_call != nullptr);
 	assert(member_call->member_name == "set_position");
 	assert(member_call->arguments.size() == 1);
@@ -202,11 +202,11 @@ void test_nested_control_flow() {
 	Parser parser(lexer.tokenize());
 	Program program = parser.parse();
 
-	auto* if_stmt = dynamic_cast<IfStmt*>(program.functions[0].body[0].get());
+	auto *if_stmt = dynamic_cast<IfStmt *>(program.functions[0].body[0].get());
 	assert(if_stmt != nullptr);
 	assert(if_stmt->then_branch.size() == 1);
 
-	auto* while_stmt = dynamic_cast<WhileStmt*>(if_stmt->then_branch[0].get());
+	auto *while_stmt = dynamic_cast<WhileStmt *>(if_stmt->then_branch[0].get());
 	assert(while_stmt != nullptr);
 	assert(while_stmt->body.size() == 2);
 
@@ -256,7 +256,7 @@ int main() {
 
 		std::cout << "\n✅ All parser tests passed!" << std::endl;
 		return 0;
-	} catch (const std::exception& e) {
+	} catch (const std::exception &e) {
 		std::cerr << "\n❌ Test failed: " << e.what() << std::endl;
 		return 1;
 	}

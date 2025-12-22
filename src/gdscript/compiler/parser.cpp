@@ -1,6 +1,6 @@
 #include "parser.h"
-#include <stdexcept>
 #include <sstream>
+#include <stdexcept>
 
 namespace gdscript {
 
@@ -283,7 +283,7 @@ ExprPtr Parser::parse_and_expression() {
 ExprPtr Parser::parse_equality() {
 	ExprPtr left = parse_comparison();
 
-	while (match_one_of({TokenType::EQUAL, TokenType::NOT_EQUAL})) {
+	while (match_one_of({ TokenType::EQUAL, TokenType::NOT_EQUAL })) {
 		Token op = previous();
 		ExprPtr right = parse_comparison();
 
@@ -297,17 +297,26 @@ ExprPtr Parser::parse_equality() {
 ExprPtr Parser::parse_comparison() {
 	ExprPtr left = parse_term();
 
-	while (match_one_of({TokenType::LESS, TokenType::LESS_EQUAL, TokenType::GREATER, TokenType::GREATER_EQUAL})) {
+	while (match_one_of({ TokenType::LESS, TokenType::LESS_EQUAL, TokenType::GREATER, TokenType::GREATER_EQUAL })) {
 		Token op = previous();
 		ExprPtr right = parse_term();
 
 		BinaryExpr::Op bin_op;
 		switch (op.type) {
-			case TokenType::LESS: bin_op = BinaryExpr::Op::LT; break;
-			case TokenType::LESS_EQUAL: bin_op = BinaryExpr::Op::LTE; break;
-			case TokenType::GREATER: bin_op = BinaryExpr::Op::GT; break;
-			case TokenType::GREATER_EQUAL: bin_op = BinaryExpr::Op::GTE; break;
-			default: throw std::runtime_error("Invalid comparison operator");
+			case TokenType::LESS:
+				bin_op = BinaryExpr::Op::LT;
+				break;
+			case TokenType::LESS_EQUAL:
+				bin_op = BinaryExpr::Op::LTE;
+				break;
+			case TokenType::GREATER:
+				bin_op = BinaryExpr::Op::GT;
+				break;
+			case TokenType::GREATER_EQUAL:
+				bin_op = BinaryExpr::Op::GTE;
+				break;
+			default:
+				throw std::runtime_error("Invalid comparison operator");
 		}
 
 		left = std::make_unique<BinaryExpr>(std::move(left), bin_op, std::move(right));
@@ -319,7 +328,7 @@ ExprPtr Parser::parse_comparison() {
 ExprPtr Parser::parse_term() {
 	ExprPtr left = parse_factor();
 
-	while (match_one_of({TokenType::PLUS, TokenType::MINUS})) {
+	while (match_one_of({ TokenType::PLUS, TokenType::MINUS })) {
 		Token op = previous();
 		ExprPtr right = parse_factor();
 
@@ -333,16 +342,23 @@ ExprPtr Parser::parse_term() {
 ExprPtr Parser::parse_factor() {
 	ExprPtr left = parse_unary();
 
-	while (match_one_of({TokenType::MULTIPLY, TokenType::DIVIDE, TokenType::MODULO})) {
+	while (match_one_of({ TokenType::MULTIPLY, TokenType::DIVIDE, TokenType::MODULO })) {
 		Token op = previous();
 		ExprPtr right = parse_unary();
 
 		BinaryExpr::Op bin_op;
 		switch (op.type) {
-			case TokenType::MULTIPLY: bin_op = BinaryExpr::Op::MUL; break;
-			case TokenType::DIVIDE: bin_op = BinaryExpr::Op::DIV; break;
-			case TokenType::MODULO: bin_op = BinaryExpr::Op::MOD; break;
-			default: throw std::runtime_error("Invalid factor operator");
+			case TokenType::MULTIPLY:
+				bin_op = BinaryExpr::Op::MUL;
+				break;
+			case TokenType::DIVIDE:
+				bin_op = BinaryExpr::Op::DIV;
+				break;
+			case TokenType::MODULO:
+				bin_op = BinaryExpr::Op::MOD;
+				break;
+			default:
+				throw std::runtime_error("Invalid factor operator");
 		}
 
 		left = std::make_unique<BinaryExpr>(std::move(left), bin_op, std::move(right));
@@ -352,7 +368,7 @@ ExprPtr Parser::parse_factor() {
 }
 
 ExprPtr Parser::parse_unary() {
-	if (match_one_of({TokenType::MINUS, TokenType::NOT})) {
+	if (match_one_of({ TokenType::MINUS, TokenType::NOT })) {
 		Token op = previous();
 		ExprPtr operand = parse_unary();
 
@@ -380,7 +396,7 @@ ExprPtr Parser::parse_call() {
 			consume(TokenType::RPAREN, "Expected ')' after arguments");
 
 			// Check if this is a method call
-			if (auto* var_expr = dynamic_cast<VariableExpr*>(expr.get())) {
+			if (auto *var_expr = dynamic_cast<VariableExpr *>(expr.get())) {
 				// Local function call
 				std::string func_name = var_expr->name;
 				expr.release(); // We're replacing it
@@ -452,6 +468,33 @@ ExprPtr Parser::parse_primary() {
 		return std::make_unique<VariableExpr>(name.lexeme);
 	}
 
+	if (match(TokenType::LBRACKET)) {
+		// Array literal: [expr1, expr2, ...]
+		std::vector<ExprPtr> elements;
+		if (!check(TokenType::RBRACKET)) {
+			do {
+				elements.push_back(parse_expression());
+			} while (match(TokenType::COMMA));
+		}
+		consume(TokenType::RBRACKET, "Expected ']' after array elements");
+		return std::make_unique<ArrayExpr>(std::move(elements));
+	}
+
+	if (match(TokenType::LBRACE)) {
+		// Dictionary literal: {"key1": value1, "key2": value2}
+		std::vector<DictionaryExpr::KeyValue> pairs;
+		if (!check(TokenType::RBRACE)) {
+			do {
+				ExprPtr key = parse_expression();
+				consume(TokenType::COLON, "Expected ':' after dictionary key");
+				ExprPtr value = parse_expression();
+				pairs.push_back({ std::move(key), std::move(value) });
+			} while (match(TokenType::COMMA));
+		}
+		consume(TokenType::RBRACE, "Expected '}' after dictionary pairs");
+		return std::make_unique<DictionaryExpr>(std::move(pairs));
+	}
+
 	if (match(TokenType::LPAREN)) {
 		ExprPtr expr = parse_expression();
 		consume(TokenType::RPAREN, "Expected ')' after expression");
@@ -480,12 +523,14 @@ bool Parser::match_one_of(std::initializer_list<TokenType> types) {
 }
 
 bool Parser::check(TokenType type) const {
-	if (is_at_end()) return false;
+	if (is_at_end())
+		return false;
 	return peek().type == type;
 }
 
 Token Parser::advance() {
-	if (!is_at_end()) m_current++;
+	if (!is_at_end())
+		m_current++;
 	return previous();
 }
 
@@ -501,8 +546,9 @@ bool Parser::is_at_end() const {
 	return peek().type == TokenType::EOF_TOKEN;
 }
 
-Token Parser::consume(TokenType type, const std::string& message) {
-	if (check(type)) return advance();
+Token Parser::consume(TokenType type, const std::string &message) {
+	if (check(type))
+		return advance();
 
 	error(message + " but got " + peek().to_string());
 	return peek();
@@ -512,7 +558,8 @@ void Parser::synchronize() {
 	advance();
 
 	while (!is_at_end()) {
-		if (previous().type == TokenType::NEWLINE) return;
+		if (previous().type == TokenType::NEWLINE)
+			return;
 
 		switch (peek().type) {
 			case TokenType::FUNC:
@@ -527,7 +574,7 @@ void Parser::synchronize() {
 	}
 }
 
-void Parser::error(const std::string& message) {
+void Parser::error(const std::string &message) {
 	Token token = peek();
 	std::ostringstream oss;
 	oss << "Parse error at line " << token.line << ", column " << token.column << ": " << message;
