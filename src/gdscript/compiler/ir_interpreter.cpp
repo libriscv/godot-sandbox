@@ -179,13 +179,17 @@ void IRInterpreter::execute_instruction(const IRInstruction& instr, ExecutionCon
 		}
 
 		case IROpcode::CALL: {
+			// CALL format: function_name, result_reg, arg_count, arg1_reg, arg2_reg, ...
 			std::string func_name = std::get<std::string>(instr.operands[0].value);
 			int result_reg = std::get<int>(instr.operands[1].value);
+			int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
 
-			// For now, collect arguments from context (simplified)
-			// In full implementation, would pass args properly
+			// Collect arguments from registers
 			std::vector<Value> args;
-			// This is simplified - real implementation needs better calling convention
+			for (int i = 0; i < arg_count; i++) {
+				int arg_reg = std::get<int>(instr.operands[3 + i].value);
+				args.push_back(get_register(ctx, arg_reg));
+			}
 
 			Value result = call(func_name, args);
 			ctx.registers[result_reg] = result;

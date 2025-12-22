@@ -505,9 +505,16 @@ int CodeGenerator::gen_call(const CallExpr* expr, IRFunction& func) {
 
 	int result_reg = alloc_register();
 
-	// For now, generate a CALL instruction
-	// In real implementation, would handle parameter passing per RISC-V ABI
-	func.instructions.emplace_back(IROpcode::CALL, IRValue::str(expr->function_name), IRValue::reg(result_reg));
+	// Generate CALL instruction with function name, result register, and argument registers
+	// Format: CALL function_name, result_reg, arg_count, arg1_reg, arg2_reg, ...
+	IRInstruction call_instr(IROpcode::CALL);
+	call_instr.operands.push_back(IRValue::str(expr->function_name));
+	call_instr.operands.push_back(IRValue::reg(result_reg));
+	call_instr.operands.push_back(IRValue::imm(arg_regs.size()));
+	for (int arg_reg : arg_regs) {
+		call_instr.operands.push_back(IRValue::reg(arg_reg));
+	}
+	func.instructions.push_back(call_instr);
 
 	for (int reg : arg_regs) {
 		free_register(reg);

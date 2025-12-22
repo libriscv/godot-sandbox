@@ -1005,6 +1005,96 @@ func exponential_growth():
 	std::cout << "  ✓ Loop counter variations passed" << std::endl;
 }
 
+void test_local_function_calls() {
+	std::cout << "Testing local function calls..." << std::endl;
+
+	// Test simple function calling another function
+	std::string source_simple = R"(
+func add(a, b):
+	return a + b
+
+func double_add(x, y):
+	var result = add(x, y)
+	return result * 2
+)";
+
+	assert(execute_int(source_simple, "add", {int64_t(3), int64_t(4)}) == 7);
+	assert(execute_int(source_simple, "double_add", {int64_t(3), int64_t(4)}) == 14);
+
+	// Test chained function calls
+	std::string source_chain = R"(
+func triple(x):
+	return x * 3
+
+func add_five(x):
+	return x + 5
+
+func process(x):
+	var step1 = triple(x)
+	var step2 = add_five(step1)
+	return step2
+)";
+
+	assert(execute_int(source_chain, "process", {int64_t(4)}) == 17); // 4*3+5 = 17
+
+	// Test multiple calls to same function
+	std::string source_multiple = R"(
+func square(x):
+	return x * x
+
+func sum_of_squares(a, b):
+	return square(a) + square(b)
+)";
+
+	assert(execute_int(source_multiple, "sum_of_squares", {int64_t(3), int64_t(4)}) == 25); // 9+16
+
+	// Test nested calls
+	std::string source_nested = R"(
+func add(a, b):
+	return a + b
+
+func multiply(a, b):
+	return a * b
+
+func complex(x, y):
+	return add(multiply(x, 2), multiply(y, 3))
+)";
+
+	assert(execute_int(source_nested, "complex", {int64_t(5), int64_t(2)}) == 16); // 5*2 + 2*3 = 16
+
+	std::cout << "  ✓ Local function calls passed" << std::endl;
+}
+
+void test_recursive_calls() {
+	std::cout << "Testing recursive function calls..." << std::endl;
+
+	// Test simple recursion - factorial
+	std::string source_factorial = R"(
+func factorial(n):
+	if n <= 1:
+		return 1
+	return n * factorial(n - 1)
+)";
+
+	assert(execute_int(source_factorial, "factorial", {int64_t(5)}) == 120);
+	assert(execute_int(source_factorial, "factorial", {int64_t(1)}) == 1);
+	assert(execute_int(source_factorial, "factorial", {int64_t(6)}) == 720);
+
+	// Test fibonacci with recursion
+	std::string source_fib = R"(
+func fib(n):
+	if n <= 1:
+		return n
+	return fib(n - 1) + fib(n - 2)
+)";
+
+	assert(execute_int(source_fib, "fib", {int64_t(0)}) == 0);
+	assert(execute_int(source_fib, "fib", {int64_t(1)}) == 1);
+	assert(execute_int(source_fib, "fib", {int64_t(6)}) == 8); // 0,1,1,2,3,5,8
+
+	std::cout << "  ✓ Recursive function calls passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== Running Integration Tests ===" << std::endl;
 	std::cout << "These tests compile GDScript and execute it via IR interpreter\n" << std::endl;
@@ -1052,6 +1142,10 @@ int main() {
 		test_conditional_complexity();
 		test_real_world_algorithms();
 		test_loop_counter_variations();
+
+		std::cout << "\n=== Function Call Tests ===" << std::endl;
+		test_local_function_calls();
+		test_recursive_calls();
 
 		// ELF generation test
 		test_elf_generation();

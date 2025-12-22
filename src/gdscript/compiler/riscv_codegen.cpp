@@ -23,6 +23,8 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	// Generate code for each function
 	for (const auto& func : program.functions) {
 		m_functions[func.name] = m_code.size();
+		// Also register function name as a label for CALL instructions
+		m_labels[func.name] = m_code.size();
 		gen_function(func);
 	}
 
@@ -567,8 +569,65 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				break;
 			}
 
+			case IROpcode::CALL: {
+				// CALL format: function_name, result_reg, arg_count, arg1_reg, arg2_reg, ...
+				if (instr.operands.size() < 3) {
+					throw std::runtime_error("CALL requires at least 3 operands");
+				}
+
+				std::string func_name = std::get<std::string>(instr.operands[0].value);
+				int result_vreg = std::get<int>(instr.operands[1].value);
+				int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+
+				if (instr.operands.size() != static_cast<size_t>(3 + arg_count)) {
+					throw std::runtime_error("CALL argument count mismatch");
+				}
+
+				// Handle register clobbering (calls clobber a0-a7, ra, and temporaries)
+				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6, REG_A7, REG_RA};
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+
+				for (const auto& move : moves) {
+					emit_mv(move.second, move.first);
+				}
+
+				// Allocate stack space for return value Variant
+				int return_var_offset = get_variant_stack_offset(result_vreg);
+
+				// Set up arguments: a1-a7 point to Variant arguments on stack
+				// a0 points to return Variant
+				for (int i = 0; i < arg_count && i < 7; i++) {
+					int arg_vreg = std::get<int>(instr.operands[3 + i].value);
+					int arg_offset = get_variant_stack_offset(arg_vreg);
+					uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
+
+					// Load address of argument Variant: addi arg_reg, sp, arg_offset
+					if (arg_offset < 2048) {
+						emit_i_type(0x13, arg_reg, 0, REG_SP, arg_offset);
+					} else {
+						emit_li(REG_T0, arg_offset);
+						emit_add(arg_reg, REG_SP, REG_T0);
+					}
+				}
+
+				// a0 = pointer to return Variant
+				if (return_var_offset < 2048) {
+					emit_i_type(0x13, REG_A0, 0, REG_SP, return_var_offset);
+				} else {
+					emit_li(REG_A0, return_var_offset);
+					emit_add(REG_A0, REG_SP, REG_A0);
+				}
+
+				// Call the function using JAL with label
+				// We'll use the function name as a label that will be resolved later
+				mark_label_use(func_name, m_code.size());
+				emit_jal(REG_RA, 0); // JAL ra, func_name
+
+				// Return value is already in the Variant at result_vreg
+				break;
+			}
+
 			// Not implementing these for now
-			case IROpcode::CALL:
 			case IROpcode::CALL_SYSCALL:
 			case IROpcode::VGET:
 			case IROpcode::VSET:

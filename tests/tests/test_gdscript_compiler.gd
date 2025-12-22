@@ -206,3 +206,52 @@ func test_args2(str):
 
 	s.queue_free()
 
+
+func test_local_function_calls():
+	var gdscript_code = """
+func test_to_upper(str):
+	str = str.to_upper()
+	return str
+
+func test_call():
+	return test_to_upper("Hello, World!")
+
+func test_call2():
+	return test_call()
+
+func test_call3():
+	return test_call2()
+
+func test_call_with_shuffling(a0, a1):
+	return test_to_upper(a1)
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+	assert_true(s.has_function("test_to_upper"), "Compiled ELF should have function 'test_to_upper'")
+	assert_true(s.has_function("test_call"), "Compiled ELF should have function 'test_call'")
+
+	# Test the compiled function
+	var result = s.vmcallv("test_to_upper", "Hello, World!")
+	assert_eq(result, "HELLO, WORLD!", "test_to_upper should convert string to uppercase")
+
+	# Indirectly test via test_call
+	result = s.vmcallv("test_call")
+	assert_eq(result, "HELLO, WORLD!", "test_call should return uppercase string via test_to_upper")
+
+	result = s.vmcallv("test_call2")
+	assert_eq(result, "HELLO, WORLD!", "test_call2 should return uppercase string via test_call")
+
+	result = s.vmcallv("test_call3")
+	assert_eq(result, "HELLO, WORLD!", "test_call3 should return uppercase string via test_call2")
+
+	result = s.vmcallv("test_call_with_shuffling", "first", "second")
+	assert_eq(result, "SECOND", "test_call_with_shuffling should return uppercase of second argument")
+
+	s.queue_free()
