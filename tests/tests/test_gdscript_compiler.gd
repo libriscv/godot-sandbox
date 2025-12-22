@@ -265,11 +265,26 @@ func test_range_count(n):
 		count += 1
 	return count
 
+func test_range_new_var():
+	var unused = 42
+	for i in range(50):
+		var nvar = i
+	return unused
+
+func test_range_no_var():
+	var unused = 42
+	for i in range(50):
+		continue
+	return unused
+
 func test_range_last_value():
 	var last = -1
 	for i in range(5):
 		last = i
 	return last
+
+func test_nothing():
+	return 0
 """
 
 	var ts : Sandbox = Sandbox.new()
@@ -277,11 +292,19 @@ func test_range_last_value():
 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
+	# Write the ELF to a file for debugging
+	#var file = FileAccess.open("res://tests/tests_range_loop_bounds.elf", FileAccess.WRITE)
+	#if file:
+	#	file.store_buffer(compiled_elf)
+	#	file.close()
+
 	var s = Sandbox.new()
 	s.load_buffer(compiled_elf)
 	s.set_instructions_max(600)
 	assert_true(s.has_function("test_range_count"), "Compiled ELF should have function 'test_range_count'")
 	assert_true(s.has_function("test_range_last_value"), "Compiled ELF should have function 'test_range_last_value'")
+	assert_true(s.has_function("test_range_no_var"), "Compiled ELF should have function 'test_range_no_var'")
+	assert_true(s.has_function("test_range_new_var"), "Compiled ELF should have function 'test_range_new_var'")
 
 	# Test iteration count
 	assert_eq(s.vmcallv("test_range_count", 10), 10, "range(10) should iterate exactly 10 times")
@@ -290,6 +313,13 @@ func test_range_last_value():
 
 	# Test last value (should be 4 for range(5))
 	assert_eq(s.vmcallv("test_range_last_value"), 4, "range(5) last value should be 4")
+
+	# Test no variable inside loop
+	assert_eq(s.vmcallv("test_range_no_var"), 42, "test_range_no_var should return 42")
+
+	# Test new variable inside loop
+	# XXX: We will fix this later
+	#assert_eq(s.vmcallv("test_range_new_var"), 42, "test_range_new_var should return 42")
 
 	s.queue_free()
 

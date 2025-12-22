@@ -884,6 +884,22 @@ func test():
 	std::cout << "  ✓ For loop with variable assignment passed!" << std::endl;
 }
 
+void test_for_loop_new_variable() {
+	std::cout << "Testing for loop with new variable declaration in body..." << std::endl;
+
+	std::string source = R"(
+func test():
+	var unused = 42
+	for i in range(50):
+		var nvar = i
+	return unused
+)";
+
+	// Compile and execute
+	assert(execute_int(source, "test") == 42);
+	std::cout << "  ✓ For loop with new variable in body passed!" << std::endl;
+}
+
 void test_function_calls_with_multiple_args() {
 	std::cout << "Testing function calls with multiple arguments..." << std::endl;
 
@@ -1180,6 +1196,7 @@ int main() {
 		test_for_loop_with_break();
 		test_for_loop_with_continue();
 		test_for_loop_variable_assignment();
+		test_for_loop_new_variable();
 
 		std::cout << "\n=== Enhanced Comprehensive Tests ===" << std::endl;
 

@@ -122,8 +122,11 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, IRFunction& func) {
 void CodeGenerator::gen_return(const ReturnStmt* stmt, IRFunction& func) {
 	if (stmt->value) {
 		int reg = gen_expr(stmt->value.get(), func);
-		// Move return value to a0 (RISC-V return register)
-		func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(0), IRValue::reg(reg));
+		// Move return value to register 0 (return register)
+		// Skip if already in register 0
+		if (reg != 0) {
+			func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(0), IRValue::reg(reg));
+		}
 		free_register(reg);
 	}
 
@@ -334,10 +337,12 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 	func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(cond_reg), IRValue::label(end_label));
 	free_register(cond_reg);
 
-	// Loop body
+	// Loop body (new scope for body, separate from loop variable scope)
+	push_scope();
 	for (const auto& s : stmt->body) {
 		gen_stmt(s.get(), func);
 	}
+	pop_scope();
 
 	// Continue label - where continue jumps to
 	func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(continue_label));

@@ -48,12 +48,18 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	m_allocator.init(func);
 
 	// Calculate stack frame size
-	// Need space for: spilled registers * VARIANT_SIZE + saved registers
-	// We'll calculate this after allocation, but estimate based on max_registers
+	// Need space for: saved registers (24 bytes) + space for Variants
+	// We allocate Variants on-demand via get_variant_stack_offset()
+	// For now, pre-allocate based on max_registers, but we could optimize this
+	// to use a smaller initial size or do two-pass compilation
+	int saved_reg_space = 24; // Save ra, fp, and a0 (return pointer)
+
+	// Pre-allocate space for all potential virtual registers
+	// TODO: Optimize to only allocate what's actually used (requires two-pass or dynamic adjustment)
 	int max_variants = func.max_registers;
 	int variant_space = max_variants * VARIANT_SIZE;
-	int saved_reg_space = 24; // Save ra, fp, and a0 (return pointer)
-	m_stack_frame_size = variant_space + saved_reg_space;
+
+	m_stack_frame_size = saved_reg_space + variant_space;
 
 	// Align to 16 bytes (RISC-V ABI requirement)
 	m_stack_frame_size = (m_stack_frame_size + 15) & ~15;
@@ -190,6 +196,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::MOVE: {
 				int dst_vreg = std::get<int>(instr.operands[0].value);
 				int src_vreg = std::get<int>(instr.operands[1].value);
+
+				// Skip no-op moves
+				if (dst_vreg == src_vreg) {
+					break;
+				}
 
 				int dst_offset = get_variant_stack_offset(dst_vreg);
 				int src_offset = get_variant_stack_offset(src_vreg);
