@@ -55,6 +55,12 @@ enum class IROpcode {
 	VCALL,           // Variant method call
 	VGET,            // Get property from variant
 	VSET,            // Set property on variant
+
+	// Array and Dictionary operations
+	CREATE_ARRAY,    // Create an array, returns variant register
+	ARRAY_PUSH,      // Push element to array (array_reg, element_reg)
+	CREATE_DICT,     // Create a dictionary, returns variant register
+	DICT_SET,        // Set key-value pair in dictionary (dict_reg, key_reg, value_reg)
 };
 
 struct IRValue {

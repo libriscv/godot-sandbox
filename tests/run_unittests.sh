@@ -13,7 +13,15 @@ else
 	fi
 fi
 
-export CXX="riscv64-linux-gnu-g++-14"
+# Try to find the RISC-V cross-compiler
+if command -v riscv64-linux-gnu-g++-14 >/dev/null 2>&1; then
+	export CXX="riscv64-linux-gnu-g++-14"
+elif command -v riscv64-linux-gnu-g++ >/dev/null 2>&1; then
+	export CXX="riscv64-linux-gnu-g++"
+else
+	echo "Error: RISC-V cross-compiler not found. Please install g++-riscv64-linux-gnu"
+	exit 1
+fi
 #export CXX="riscv64-unknown-elf-g++"
 
 # Build the unit test ELF file
