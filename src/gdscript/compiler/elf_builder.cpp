@@ -12,6 +12,7 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 	RISCVCodeGen codegen;
 	std::vector<uint8_t> code = codegen.generate(program);
 	auto func_offsets = codegen.get_function_offsets();
+	auto const_pool = codegen.get_constant_pool();
 
 	// Build complete ELF file
 	std::vector<uint8_t> elf_data;
@@ -22,11 +23,14 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 	size_t shdr_size = sizeof(Elf64_Shdr);
 
 	// We'll have 5 sections: NULL, .text, .symtab, .strtab, .shstrtab
+	// Constants are appended to .text section for simplicity
 	size_t num_sections = 5;
-	size_t num_phdrs = 1; // One PT_LOAD segment
+	size_t num_phdrs = 1; // One PT_LOAD segment for .text
 
 	// Calculate section sizes
-	size_t code_size = code.size();
+	// Append constant pool to code section
+	size_t rodata_size = const_pool.size() * 8; // Each constant is 8 bytes (int64_t)
+	size_t code_size = code.size() + rodata_size;
 
 	// Build string tables
 	std::vector<std::string> section_names = {"", ".text", ".symtab", ".strtab", ".shstrtab"};
@@ -108,7 +112,7 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 	// Align to page
 	offset = (offset + 0xFFF) & ~0xFFF;
 
-	// .text section
+	// .text section (includes code + constant pool)
 	size_t text_offset = offset;
 	offset += code_size;
 
@@ -164,7 +168,7 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 
 	write_value(elf_data, ehdr);
 
-	// 2. Program Header (PT_LOAD for .text)
+	// 2. Program Header (PT_LOAD for .text, includes code + constants)
 	Elf64_Phdr phdr;
 	memset(&phdr, 0, sizeof(phdr));
 
@@ -184,8 +188,16 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 		elf_data.push_back(0);
 	}
 
-	// 3. .text section (code)
+	// 3. .text section (code + constant pool appended)
 	elf_data.insert(elf_data.end(), code.begin(), code.end());
+
+	// Append constant pool to .text section
+	for (int64_t constant : const_pool) {
+		// Write as little-endian 64-bit value
+		for (int i = 0; i < 8; i++) {
+			elf_data.push_back((constant >> (i * 8)) & 0xFF);
+		}
+	}
 
 	// Pad to symtab
 	while (elf_data.size() < symtab_offset) {

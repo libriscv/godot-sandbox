@@ -301,15 +301,9 @@ func countdown_loop():
 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
-	# Write the ELF to a file for debugging
-	var file = FileAccess.open("res://tests/tests_range_loop_bounds.elf", FileAccess.WRITE)
-	if file:
-		file.store_buffer(compiled_elf)
-		file.close()
-
 	var s = Sandbox.new()
 	s.load_buffer(compiled_elf)
-	s.set_instructions_max(600)
+	s.set_instructions_max(1)
 	assert_true(s.has_function("test_range_count"), "Compiled ELF should have function 'test_range_count'")
 	assert_true(s.has_function("test_range_last_value"), "Compiled ELF should have function 'test_range_last_value'")
 	assert_true(s.has_function("test_range_no_var"), "Compiled ELF should have function 'test_range_no_var'")
@@ -457,5 +451,91 @@ func test_chained_get(arr):
 	var arr2 = [5, 15]
 	result = s.vmcallv("test_chained_get", arr2)
 	assert_eq(result, 20, "chained subscripts should return 5 + 15 = 20")
+
+	s.queue_free()
+
+func test_inline_vector_primitives():
+	# Test inline construction and member access for Vector2/3/4 without syscalls
+	var gdscript_code = """
+func test_vector2():
+	var v = Vector2(3.0, 4.0)
+	return v.x + v.y
+
+func test_vector3():
+	var v = Vector3(1.0, 2.0, 3.0)
+	return v.x + v.y + v.z
+
+func test_vector4():
+	var v = Vector4(10.0, 20.0, 30.0, 40.0)
+	return v.x + v.y + v.z + v.w
+
+func test_vector2i():
+	var v = Vector2i(5, 7)
+	return v.x + v.y
+
+func test_vector3i():
+	var v = Vector3i(1, 2, 3)
+	return v.x * v.y * v.z
+
+func test_vector4i():
+	var v = Vector4i(2, 3, 5, 7)
+	return v.x + v.y + v.z + v.w
+
+func test_color():
+	var c = Color(0.5, 0.25, 0.75, 1.0)
+	return c.r + c.g + c.b + c.a
+
+func test_chained_vectors():
+	var v1 = Vector2(10.0, 20.0)
+	var v2 = Vector2(v1.x, v1.y)
+	return v2.x + v2.y
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	# Write the ELF to a file for debugging
+	var file = FileAccess.open("res://tests/vec.elf", FileAccess.WRITE)
+	if file:
+		file.store_buffer(compiled_elf)
+		file.close()
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(1000)
+
+	# Test Vector2
+	var result = s.vmcallv("test_vector2")
+	assert_almost_eq(result, 7.0, 0.001, "Vector2(3, 4).x + .y should be 7.0")
+
+	# Test Vector3
+	result = s.vmcallv("test_vector3")
+	assert_almost_eq(result, 6.0, 0.001, "Vector3(1, 2, 3) sum should be 6.0")
+
+	# Test Vector4
+	result = s.vmcallv("test_vector4")
+	assert_almost_eq(result, 100.0, 0.001, "Vector4(10, 20, 30, 40) sum should be 100.0")
+
+	# Test Vector2i
+	result = s.vmcallv("test_vector2i")
+	assert_eq(result, 12, "Vector2i(5, 7).x + .y should be 12")
+
+	# Test Vector3i
+	result = s.vmcallv("test_vector3i")
+	assert_eq(result, 6, "Vector3i(1, 2, 3) product should be 6")
+
+	# Test Vector4i
+	result = s.vmcallv("test_vector4i")
+	assert_eq(result, 17, "Vector4i(2, 3, 5, 7) sum should be 17")
+
+	# Test Color
+	result = s.vmcallv("test_color")
+	assert_almost_eq(result, 2.5, 0.001, "Color components sum should be 2.5")
+
+	# Test chained operations
+	result = s.vmcallv("test_chained_vectors")
+	assert_almost_eq(result, 30.0, 0.001, "Chained vector operations should work")
 
 	s.queue_free()

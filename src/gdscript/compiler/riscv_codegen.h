@@ -17,9 +17,12 @@ public:
 
 	// Get function offsets (name -> offset in code)
 	const std::unordered_map<std::string, size_t>& get_function_offsets() const { return m_functions; }
-	
+
 	// Get register allocator (for testing)
 	const RegisterAllocator& get_allocator() const { return m_allocator; }
+
+	// Get constant pool (for ELF builder to create .rodata section)
+	const std::vector<int64_t>& get_constant_pool() const { return m_constant_pool; }
 
 private:
 	struct Function {
@@ -38,6 +41,7 @@ private:
 	void emit_b_type(uint8_t opcode, uint8_t funct3, uint8_t rs1, uint8_t rs2, int32_t imm);
 	void emit_u_type(uint8_t opcode, uint8_t rd, uint32_t imm);
 	void emit_j_type(uint8_t opcode, uint8_t rd, int32_t imm);
+	void emit_r4_type(uint8_t opcode, uint8_t rd, uint8_t funct3, uint8_t rs1, uint8_t rs2, uint8_t rs3, uint8_t funct2);
 
 	// Higher-level RISC-V instructions
 	void emit_li(uint8_t rd, int64_t imm);      // Load immediate
@@ -64,6 +68,7 @@ private:
 	// Load/Store instructions (with automatic large offset handling)
 	void emit_ld(uint8_t rd, uint8_t rs1, int32_t offset);   // Load doubleword (64-bit)
 	void emit_lw(uint8_t rd, uint8_t rs1, int32_t offset);   // Load word (32-bit)
+	void emit_lwu(uint8_t rd, uint8_t rs1, int32_t offset);  // Load word unsigned (32-bit, zero-extended to 64-bit)
 	void emit_lh(uint8_t rd, uint8_t rs1, int32_t offset);   // Load halfword (16-bit)
 	void emit_lb(uint8_t rd, uint8_t rs1, int32_t offset);   // Load byte (8-bit signed)
 	void emit_lbu(uint8_t rd, uint8_t rs1, int32_t offset);  // Load byte unsigned (8-bit)
@@ -71,6 +76,17 @@ private:
 	void emit_sw(uint8_t rs2, uint8_t rs1, int32_t offset);  // Store word (32-bit)
 	void emit_sh(uint8_t rs2, uint8_t rs1, int32_t offset);  // Store halfword (16-bit)
 	void emit_sb(uint8_t rs2, uint8_t rs1, int32_t offset);  // Store byte (8-bit)
+
+	// Floating-point load/store (RV64D extension)
+	void emit_fld(uint8_t rd, uint8_t rs1, int32_t offset);  // Load double (64-bit FP)
+	void emit_fsd(uint8_t rs2, uint8_t rs1, int32_t offset); // Store double (64-bit FP)
+	void emit_flw(uint8_t rd, uint8_t rs1, int32_t offset);  // Load float (32-bit FP)
+	void emit_fsw(uint8_t rs2, uint8_t rs1, int32_t offset); // Store float (32-bit FP)
+	void emit_fcvt_d_s(uint8_t rd, uint8_t rs1);             // Convert float to double
+	void emit_fcvt_s_d(uint8_t rd, uint8_t rs1);             // Convert double to float
+
+	// Additional integer instructions
+	void emit_sext_w(uint8_t rd, uint8_t rs);  // Sign-extend word to doubleword (addiw rd, rs, 0)
 
 	// Pseudo-instructions
 	void emit_call(const std::string& func_name);
@@ -143,6 +159,13 @@ private:
 	// String constants from IR
 	const std::vector<std::string>* m_string_constants = nullptr;
 
+	// Constant pool for large immediates (64-bit values that can't be encoded in instructions)
+	std::vector<int64_t> m_constant_pool;
+	std::unordered_map<int64_t, size_t> m_constant_pool_map; // value -> index
+
+	// Add a constant to the pool and return its index
+	size_t add_constant(int64_t value);
+
 	// RISC-V RV64I register definitions
 	static constexpr uint8_t REG_ZERO = 0;  // x0 - always zero
 	static constexpr uint8_t REG_RA = 1;    // x1 - return address
@@ -152,6 +175,13 @@ private:
 	static constexpr uint8_t REG_T0 = 5;    // x5-x7 - temporaries
 	static constexpr uint8_t REG_T1 = 6;
 	static constexpr uint8_t REG_T2 = 7;
+	// x8-x9 are s0-s1 (saved registers)
+	// x10-x17 are a0-a7 (argument registers)
+	// x18-x27 are s2-s11 (saved registers)
+	static constexpr uint8_t REG_T3 = 28;   // x28-x31 - temporaries
+	static constexpr uint8_t REG_T4 = 29;
+	static constexpr uint8_t REG_T5 = 30;
+	static constexpr uint8_t REG_T6 = 31;
 	static constexpr uint8_t REG_FP = 8;    // x8 - frame pointer
 	static constexpr uint8_t REG_S1 = 9;    // x9 - saved register
 	static constexpr uint8_t REG_A0 = 10;   // x10-x17 - arguments/return values
@@ -162,6 +192,15 @@ private:
 	static constexpr uint8_t REG_A5 = 15;
 	static constexpr uint8_t REG_A6 = 16;
 	static constexpr uint8_t REG_A7 = 17;
+
+	static constexpr uint8_t REG_FA0 = 0;  // f0-f1 - floating-point return values
+	static constexpr uint8_t REG_FA1 = 1;  // f0-f7 - floating-point arguments
+	static constexpr uint8_t REG_FA2 = 2;
+	static constexpr uint8_t REG_FA3 = 3;
+	static constexpr uint8_t REG_FA4 = 4;
+	static constexpr uint8_t REG_FA5 = 5;
+	static constexpr uint8_t REG_FA6 = 6;
+	static constexpr uint8_t REG_FA7 = 7;
 };
 
 } // namespace gdscript

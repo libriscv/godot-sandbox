@@ -56,19 +56,23 @@ add_executable(test_compilation tests/test_compilation.cpp)
 target_link_libraries(test_compilation -static gdscript_compiler)
 add_test(NAME CompilationTests COMMAND test_compilation)
 
+add_executable(test_constant_pool tests/test_constant_pool.cpp)
+target_link_libraries(test_constant_pool -static gdscript_compiler)
+add_test(NAME ConstantPoolTests COMMAND test_constant_pool)
+
 add_executable(dump_ir dump_ir.cpp)
 target_link_libraries(dump_ir -static gdscript_compiler)
 
 # Run all tests target
 add_custom_target(run_tests
 	COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-	DEPENDS test_lexer test_parser test_codegen test_integration test_primitives test_compilation
+	DEPENDS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool
 	COMMENT "Running all GDScript compiler tests"
 )
 
 # Install targets
 install(TARGETS gdscript_compiler gdscript_compiler_test
-        test_lexer test_parser test_codegen test_integration test_primitives test_compilation
+        test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool
         RUNTIME DESTINATION bin
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib)

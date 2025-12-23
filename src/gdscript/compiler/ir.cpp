@@ -36,6 +36,18 @@ const char* ir_opcode_name(IROpcode op) {
 		case IROpcode::VCALL: return "VCALL";
 		case IROpcode::VGET: return "VGET";
 		case IROpcode::VSET: return "VSET";
+		case IROpcode::MAKE_VECTOR2: return "MAKE_VECTOR2";
+		case IROpcode::MAKE_VECTOR3: return "MAKE_VECTOR3";
+		case IROpcode::MAKE_VECTOR4: return "MAKE_VECTOR4";
+		case IROpcode::MAKE_VECTOR2I: return "MAKE_VECTOR2I";
+		case IROpcode::MAKE_VECTOR3I: return "MAKE_VECTOR3I";
+		case IROpcode::MAKE_VECTOR4I: return "MAKE_VECTOR4I";
+		case IROpcode::MAKE_COLOR: return "MAKE_COLOR";
+		case IROpcode::MAKE_RECT2: return "MAKE_RECT2";
+		case IROpcode::MAKE_RECT2I: return "MAKE_RECT2I";
+		case IROpcode::MAKE_PLANE: return "MAKE_PLANE";
+		case IROpcode::VGET_INLINE: return "VGET_INLINE";
+		case IROpcode::VSET_INLINE: return "VSET_INLINE";
 		default: return "UNKNOWN";
 	}
 }

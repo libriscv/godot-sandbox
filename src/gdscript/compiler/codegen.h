@@ -47,6 +47,7 @@ private:
 	struct Variable {
 		std::string name;
 		int register_num; // Current register holding the value, or -1 if spilled
+		IRInstruction::TypeHint type_hint = IRInstruction::TypeHint::NONE;
 	};
 
 	// Scope stack for nested blocks
@@ -60,6 +61,9 @@ private:
 	int m_next_label = 0;
 	std::vector<std::string> m_string_constants;
 
+	// Type tracking for registers
+	std::unordered_map<int, IRInstruction::TypeHint> m_register_types;
+
 	// Scope management
 	void push_scope();
 	void pop_scope();
@@ -72,6 +76,14 @@ private:
 		std::string continue_label;
 	};
 	std::vector<LoopContext> m_loop_stack;
+
+	// Type tracking helpers
+	void set_register_type(int reg, IRInstruction::TypeHint type);
+	IRInstruction::TypeHint get_register_type(int reg) const;
+	bool is_inline_primitive_constructor(const std::string& name) const;
+	bool is_inline_member_access(IRInstruction::TypeHint type, const std::string& member) const;
+	int gen_inline_constructor(const std::string& name, const std::vector<int>& arg_regs, IRFunction& func);
+	int gen_inline_member_get(int obj_reg, IRInstruction::TypeHint obj_type, const std::string& member, IRFunction& func);
 };
 
 } // namespace gdscript

@@ -106,25 +106,11 @@ void IROptimizer::constant_folding(IRFunction& func) {
 			case IROpcode::MUL:
 			case IROpcode::DIV:
 			case IROpcode::MOD: {
+				// Disable constant folding for arithmetic operations
+				// because floats are stored as bit patterns and shouldn't be added as integers
 				int dst = std::get<int>(instr.operands[0].value);
-				int lhs_reg = std::get<int>(instr.operands[1].value);
-				int rhs_reg = std::get<int>(instr.operands[2].value);
-
-				// Try to fold if both operands are constant
-				if (m_constants.count(lhs_reg) && m_constants.count(rhs_reg)) {
-					ConstantValue result;
-					if (try_fold_binary_op(instr.opcode, m_constants[lhs_reg], m_constants[rhs_reg], result)) {
-						// Replace with LOAD_IMM
-						new_instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(dst), IRValue::imm(result.int_value));
-						set_register_constant(dst, result);
-						folded = true;
-					}
-				}
-
-				if (!folded) {
-					invalidate_register(dst);
-					new_instructions.push_back(instr);
-				}
+				invalidate_register(dst);
+				new_instructions.push_back(instr);
 				break;
 			}
 
@@ -417,6 +403,20 @@ std::unordered_set<int> IROptimizer::find_live_registers(const IRFunction& func)
 			case IROpcode::VCALL:
 			case IROpcode::VGET:
 			case IROpcode::VSET:
+			// Inline primitive construction - these read from their argument registers
+			case IROpcode::MAKE_VECTOR2:
+			case IROpcode::MAKE_VECTOR3:
+			case IROpcode::MAKE_VECTOR4:
+			case IROpcode::MAKE_VECTOR2I:
+			case IROpcode::MAKE_VECTOR3I:
+			case IROpcode::MAKE_VECTOR4I:
+			case IROpcode::MAKE_COLOR:
+			case IROpcode::MAKE_RECT2:
+			case IROpcode::MAKE_RECT2I:
+			case IROpcode::MAKE_PLANE:
+			// Inline member access - these read from the object register
+			case IROpcode::VGET_INLINE:
+			case IROpcode::VSET_INLINE:
 				// Mark all register operands (except first for most ops) as live
 				for (size_t i = 1; i < instr.operands.size(); i++) {
 					if (instr.operands[i].type == IRValue::Type::REGISTER) {

@@ -6,12 +6,28 @@ namespace gdscript {
 
 RISCVCodeGen::RISCVCodeGen() {}
 
+size_t RISCVCodeGen::add_constant(int64_t value) {
+	// Check if constant already exists in pool
+	auto it = m_constant_pool_map.find(value);
+	if (it != m_constant_pool_map.end()) {
+		return it->second;
+	}
+
+	// Add new constant
+	size_t index = m_constant_pool.size();
+	m_constant_pool.push_back(value);
+	m_constant_pool_map[value] = index;
+	return index;
+}
+
 std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_code.clear();
 	m_labels.clear();
 	m_label_uses.clear();
 	m_functions.clear();
 	m_variant_offsets.clear();
+	m_constant_pool.clear();
+	m_constant_pool_map.clear();
 	m_string_constants = &program.string_constants;
 
 	// Emit a STOP instruction at entry point (offset 0)
@@ -26,6 +42,14 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		// Also register function name as a label for CALL instructions
 		m_labels[func.name] = m_code.size();
 		gen_function(func);
+	}
+
+	// Define constant pool labels at the end of code
+	// Constants are appended after the code section
+	size_t const_pool_base = m_code.size();
+	for (size_t i = 0; i < m_constant_pool.size(); i++) {
+		std::string label = ".LC" + std::to_string(i);
+		m_labels[label] = const_pool_base + (i * 8);
 	}
 
 	// Resolve all label references
@@ -144,6 +168,19 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						emit_variant_create_int(stack_offset, value);
 						m_vreg_types[vreg] = ValueType::VARIANT;
 					}
+				} else if (instr.type_hint == IRInstruction::TypeHint::VARIANT_FLOAT) {
+					// Float literal - value is 64-bit double bit pattern
+					int stack_offset = get_variant_stack_offset(vreg);
+
+					// Set m_type = FLOAT (3)
+					emit_li(REG_T0, 3);
+					emit_sw(REG_T0, REG_SP, stack_offset);
+
+					// Store the 64-bit double bits at offset 8
+					emit_li(REG_T0, value);
+					emit_sd(REG_T0, REG_SP, stack_offset + 8);
+
+					m_vreg_types[vreg] = ValueType::VARIANT;
 				} else {
 					// Standard: create integer Variant on stack
 					int stack_offset = get_variant_stack_offset(vreg);
@@ -789,7 +826,192 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				break;
 			}
 
+			// Inline primitive construction (no syscalls!)
+			case IROpcode::MAKE_VECTOR2:
+			case IROpcode::MAKE_VECTOR3:
+			case IROpcode::MAKE_VECTOR4: {
+				// Format: MAKE_VECTORn result_reg, x_reg, y_reg, [z_reg], [w_reg]
+				int num_components = (instr.opcode == IROpcode::MAKE_VECTOR2) ? 2 :
+				                     (instr.opcode == IROpcode::MAKE_VECTOR3) ? 3 : 4;
+
+				if (instr.operands.size() != static_cast<size_t>(1 + num_components)) {
+					throw std::runtime_error("MAKE_VECTOR requires correct number of operands");
+				}
+
+				int result_vreg = std::get<int>(instr.operands[0].value);
+				int result_offset = get_variant_stack_offset(result_vreg);
+
+				// Set m_type field (offset 0)
+				int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2) ? 5 :  // VECTOR2
+				                   (instr.opcode == IROpcode::MAKE_VECTOR3) ? 9 : 12; // VECTOR3 : VECTOR4
+				emit_li(REG_T0, variant_type);
+				emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
+
+				// Store each component at offset 8, 12, 16, 20 (4 bytes per component as real_t=float)
+				// The components are FLOAT Variants, their 64-bit double values are at offset 8
+				// We need to convert double to float and store 4 bytes
+				for (int i = 0; i < num_components; i++) {
+					int comp_vreg = std::get<int>(instr.operands[1 + i].value);
+					int comp_offset = get_variant_stack_offset(comp_vreg);
+
+					// Load the 64-bit double value from the source FLOAT Variant (offset 8)
+					emit_fld(REG_FA0, REG_SP, comp_offset + 8);
+
+					// Convert double (64-bit) to float (32-bit)
+					emit_fcvt_s_d(REG_FA0, REG_FA0);
+
+					// Store 4-byte float to result at offset 8 + i*4
+					emit_fsw(REG_FA0, REG_SP, result_offset + 8 + i * 4);
+				}
+
+				m_vreg_types[result_vreg] = ValueType::VARIANT;
+				break;
+			}
+
+			case IROpcode::MAKE_VECTOR2I:
+			case IROpcode::MAKE_VECTOR3I:
+			case IROpcode::MAKE_VECTOR4I: {
+				// Format: MAKE_VECTORnI result_reg, x_reg, y_reg, [z_reg], [w_reg]
+				int num_components = (instr.opcode == IROpcode::MAKE_VECTOR2I) ? 2 :
+				                     (instr.opcode == IROpcode::MAKE_VECTOR3I) ? 3 : 4;
+
+				if (instr.operands.size() != static_cast<size_t>(1 + num_components)) {
+					throw std::runtime_error("MAKE_VECTORnI requires correct number of operands");
+				}
+
+				int result_vreg = std::get<int>(instr.operands[0].value);
+				int result_offset = get_variant_stack_offset(result_vreg);
+
+				// Set m_type field (offset 0)
+				int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2I) ? 6 :  // VECTOR2I
+				                   (instr.opcode == IROpcode::MAKE_VECTOR3I) ? 10 : 13; // VECTOR3I : VECTOR4I
+				emit_li(REG_T0, variant_type);
+				emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
+
+				// Store each component in v.v4i[] at offset 8, 12, 16, 20
+				for (int i = 0; i < num_components; i++) {
+					int comp_vreg = std::get<int>(instr.operands[1 + i].value);
+					int comp_offset = get_variant_stack_offset(comp_vreg);
+
+					// Load the component value (it's a Variant containing int)
+					// Load v.i from offset 8 (lower 32 bits)
+					emit_lw(REG_T0, REG_SP, comp_offset + 8);
+
+					// Store to result v.v4i[i] at offset 8 + i*4
+					emit_sw(REG_T0, REG_SP, result_offset + 8 + i * 4);
+				}
+
+				break;
+			}
+
+			case IROpcode::MAKE_COLOR: {
+				// Format: MAKE_COLOR result_reg, r_reg, g_reg, b_reg, a_reg
+				if (instr.operands.size() != 5) {
+					throw std::runtime_error("MAKE_COLOR requires 5 operands");
+				}
+
+				int result_vreg = std::get<int>(instr.operands[0].value);
+				int result_offset = get_variant_stack_offset(result_vreg);
+
+				// Set m_type field to COLOR (20)
+				emit_li(REG_T0, 20);
+				emit_sw(REG_T0, REG_SP, result_offset);
+
+				// Store each component (r, g, b, a) as 32-bit floats (real_t)
+				// The components are FLOAT Variants with 64-bit double values at offset 8
+				// We need to convert double to float and store 4 bytes
+				for (int i = 0; i < 4; i++) {
+					int comp_vreg = std::get<int>(instr.operands[1 + i].value);
+					int comp_offset = get_variant_stack_offset(comp_vreg);
+
+					// Load the 64-bit double value from the source FLOAT Variant (offset 8)
+					emit_fld(REG_FA0, REG_SP, comp_offset + 8);
+
+					// Convert double (64-bit) to float (32-bit)
+					emit_fcvt_s_d(REG_FA0, REG_FA0);
+
+					// Store 4-byte float to result at offset 8 + i*4
+					emit_fsw(REG_FA0, REG_SP, result_offset + 8 + i * 4);
+				}
+
+				m_vreg_types[result_vreg] = ValueType::VARIANT;
+				break;
+			}
+
+			case IROpcode::VGET_INLINE: {
+				// Format: VGET_INLINE result_reg, obj_reg, member_name, obj_type_hint
+				if (instr.operands.size() != 4) {
+					throw std::runtime_error("VGET_INLINE requires 4 operands");
+				}
+
+				int result_vreg = std::get<int>(instr.operands[0].value);
+				int obj_vreg = std::get<int>(instr.operands[1].value);
+				std::string member = std::get<std::string>(instr.operands[2].value);
+				int obj_type_hint = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+
+				int result_offset = get_variant_stack_offset(result_vreg);
+				int obj_offset = get_variant_stack_offset(obj_vreg);
+
+				// Determine the offset within the object Variant
+				// Vector types with float components (real_t=float=4 bytes): offsets at 8, 12, 16, 20
+				// Vector types with int components (int32_t=4 bytes): offsets at 8, 12, 16, 20
+				int member_offset = 8; // Base offset
+				bool is_int_type = false;
+
+				// Map member name to array index
+				int component_idx = 0;
+				if (member == "x" || member == "r") component_idx = 0;
+				else if (member == "y" || member == "g") component_idx = 1;
+				else if (member == "z" || member == "b") component_idx = 2;
+				else if (member == "w" || member == "a") component_idx = 3;
+
+				// Check if it's an integer vector type (from IR TypeHint enum values)
+				// IR TypeHint: VARIANT_VECTOR2I = 9, VARIANT_VECTOR3I = 10, VARIANT_VECTOR4I = 11
+				if (obj_type_hint == 9 || obj_type_hint == 10 || obj_type_hint == 11) {
+					is_int_type = true;
+				}
+
+				// All vector components are stored as 4-byte values
+				member_offset += component_idx * 4;
+
+				if (is_int_type) {
+					// Load 32-bit integer from object
+					emit_lw(REG_T0, REG_SP, obj_offset + member_offset);
+
+					// Create result Variant with INT type (2)
+					emit_li(REG_T1, 2);
+					emit_sw(REG_T1, REG_SP, result_offset); // m_type = INT
+
+					// Sign-extend to 64-bit and store in v.i
+					emit_sext_w(REG_T0, REG_T0);
+					emit_sd(REG_T0, REG_SP, result_offset + 8);
+				} else {
+					// For float components from Vector types:
+					// Use FP instructions to convert 4-byte float to 8-byte double
+					// FLW loads 32-bit float, FCVT.D.S converts to double, FSD stores 64-bit double
+
+					// Load 4-byte float component to FP register FA0
+					emit_flw(REG_FA0, REG_SP, obj_offset + member_offset);
+
+					// Convert float (32-bit) to double (64-bit)
+					emit_fcvt_d_s(REG_FA0, REG_FA0);
+
+					// Set result Variant type to FLOAT (3)
+					emit_li(REG_T0, 3);
+					emit_sw(REG_T0, REG_SP, result_offset); // m_type = FLOAT
+
+					// Store 8-byte double to v.f field
+					emit_fsd(REG_FA0, REG_SP, result_offset + 8);
+				}
+
+				break;
+			}
+
 			// Not implementing these for now
+			case IROpcode::MAKE_RECT2:
+			case IROpcode::MAKE_RECT2I:
+			case IROpcode::MAKE_PLANE:
+			case IROpcode::VSET_INLINE:
 			case IROpcode::CALL_SYSCALL:
 			case IROpcode::VGET:
 			case IROpcode::VSET:
@@ -867,23 +1089,65 @@ void RISCVCodeGen::emit_j_type(uint8_t opcode, uint8_t rd, int32_t imm) {
 	m_code.push_back((instr >> 24) & 0xFF);
 }
 
+void RISCVCodeGen::emit_r4_type(uint8_t opcode, uint8_t rd, uint8_t funct3, uint8_t rs1, uint8_t rs2, uint8_t rs3, uint8_t funct2)
+{
+	union {
+		struct {
+			uint32_t opcode : 7;
+			uint32_t rd     : 5;
+			uint32_t funct3 : 3;
+			uint32_t rs1    : 5;
+			uint32_t rs2    : 5;
+			uint32_t funct2 : 2;
+			uint32_t rs3    : 5;
+		} R4type;
+		uint32_t value;
+	} r4;
+	r4.R4type.opcode = opcode;
+	r4.R4type.rd = rd;
+	r4.R4type.funct3 = funct3;
+	r4.R4type.rs1 = rs1;
+	r4.R4type.rs2 = rs2;
+	r4.R4type.funct2 = funct2;
+	r4.R4type.rs3 = rs3;
+	emit_word(r4.value);
+}
+
 // Higher-level instructions
 void RISCVCodeGen::emit_li(uint8_t rd, int64_t imm) {
 	// Load immediate - handles 64-bit values
-	// For small values, use addi; for larger, use lui+addi
+	// For small values, use addi; for larger, build up the value
 	if (imm >= -2048 && imm < 2048) {
-		// addi rd, x0, imm
+		// Small immediate: addi rd, x0, imm
 		emit_i_type(0x13, rd, 0, REG_ZERO, static_cast<int32_t>(imm));
-	} else {
-		// lui rd, imm[31:12]
-		uint32_t upper = static_cast<uint32_t>((imm + 0x800) >> 12); // Add 0x800 for rounding
+	} else if (imm >= INT32_MIN && imm <= INT32_MAX) {
+		// 32-bit immediate: lui + addi
+		int32_t imm32 = static_cast<int32_t>(imm);
+		int32_t upper = (imm32 + 0x800) >> 12; // Add 0x800 for rounding
 		emit_u_type(0x37, rd, upper << 12);
 
-		// addi rd, rd, imm[11:0]
-		int32_t lower = imm & 0xFFF;
-		if (lower != 0) {
+		int32_t lower = imm32 & 0xFFF;
+		if (lower != 0 || upper == 0) {
 			emit_i_type(0x13, rd, 0, rd, lower);
 		}
+	} else {
+		// Full 64-bit immediate: load from constant pool appended to .text
+		// This avoids using temporary registers and generates cleaner code
+		size_t const_index = add_constant(imm);
+
+		// We'll use a label to refer to the constant pool entry
+		// The constant will be located at: code_end + (const_index * 8)
+		// We use AUIPC to get PC-relative address, then LD to load the value
+		std::string label = ".LC" + std::to_string(const_index);
+
+		// Mark this as a use of the constant label
+		// Only mark AUIPC since we'll patch both AUIPC and LD together
+		size_t auipc_offset = m_code.size();
+		mark_label_use(label, auipc_offset);
+		emit_u_type(0x17, rd, 0);  // auipc rd, 0 (will be patched)
+
+		// Emit LD instruction (offset will be patched when AUIPC is resolved)
+		emit_ld(rd, rd, 0);  // ld rd, 0(rd) (offset will be patched)
 	}
 }
 
@@ -1017,6 +1281,35 @@ void RISCVCodeGen::resolve_labels() {
 			uint32_t imm19_12 = (offset >> 12) & 0xFF;
 
 			instr = opcode | (rd << 7) | (imm19_12 << 12) | (imm11 << 20) | (imm10_1 << 21) | (imm20 << 31);
+		} else if (opcode == 0x17) { // U-type (AUIPC) - for constant pool access
+			// This is AUIPC instruction for loading constants
+			// It's followed by LD instruction
+			// We need to patch both AUIPC and LD with correct offsets
+
+			uint8_t rd = (instr >> 7) & 0x1F;
+
+			// Calculate PC-relative offset
+			// Split into upper 20 bits (for AUIPC) and lower 12 bits (for LD)
+			int32_t upper = (offset + 0x800) >> 12; // Add 0x800 for sign extension
+			int32_t lower = offset & 0xFFF;
+
+			// Patch AUIPC with upper 20 bits
+			instr = opcode | (rd << 7) | ((upper & 0xFFFFF) << 12);
+			memcpy(&m_code[use_offset], &instr, 4);
+
+			// Patch the following LD instruction with lower 12 bits
+			// LD is at use_offset + 4
+			uint32_t ld_instr;
+			memcpy(&ld_instr, &m_code[use_offset + 4], 4);
+			// LD opcode is 0x03, modify the immediate field
+			uint8_t ld_rd = (ld_instr >> 7) & 0x1F;
+			uint8_t ld_rs1 = (ld_instr >> 15) & 0x1F;
+			uint8_t ld_funct3 = (ld_instr >> 12) & 0x7;
+			ld_instr = 0x03 | (ld_rd << 7) | (ld_funct3 << 12) | (ld_rs1 << 15) | ((lower & 0xFFF) << 20);
+			memcpy(&m_code[use_offset + 4], &ld_instr, 4);
+
+			// Skip the next use since we processed both AUIPC and LD together
+			continue;
 		}
 
 		memcpy(&m_code[use_offset], &instr, 4);
@@ -1261,6 +1554,17 @@ void RISCVCodeGen::emit_lw(uint8_t rd, uint8_t rs1, int32_t offset) {
 	}
 }
 
+void RISCVCodeGen::emit_lwu(uint8_t rd, uint8_t rs1, int32_t offset) {
+	// LWU (Load Word Unsigned) - RV64I specific, zero-extends to 64 bits
+	if (offset >= -2048 && offset < 2048) {
+		emit_i_type(0x03, rd, 4, rs1, offset);  // funct3=4 for LWU
+	} else {
+		emit_li(REG_T2, offset);
+		emit_add(REG_T2, rs1, REG_T2);
+		emit_i_type(0x03, rd, 4, REG_T2, 0);  // funct3=4 for LWU
+	}
+}
+
 void RISCVCodeGen::emit_lh(uint8_t rd, uint8_t rs1, int32_t offset) {
 	if (offset >= -2048 && offset < 2048) {
 		emit_i_type(0x03, rd, 1, rs1, offset);
@@ -1329,6 +1633,67 @@ void RISCVCodeGen::emit_sb(uint8_t rs2, uint8_t rs1, int32_t offset) {
 		emit_add(REG_T2, rs1, REG_T2);
 		emit_s_type(0x23, 0, REG_T2, rs2, 0);
 	}
+}
+
+// Floating-point load/store (RV64D extension)
+void RISCVCodeGen::emit_fld(uint8_t rd, uint8_t rs1, int32_t offset) {
+	// FLD: opcode=0x07, funct3=3
+	if (offset >= -2048 && offset < 2048) {
+		emit_i_type(0x07, rd, 3, rs1, offset);
+	} else {
+		emit_li(REG_T2, offset);
+		emit_add(REG_T2, rs1, REG_T2);
+		emit_i_type(0x07, rd, 3, REG_T2, 0);
+	}
+}
+
+void RISCVCodeGen::emit_fsd(uint8_t rs2, uint8_t rs1, int32_t offset) {
+	// FSD: opcode=0x27, funct3=3
+	if (offset >= -2048 && offset < 2048) {
+		emit_s_type(0x27, 3, rs1, rs2, offset);
+	} else {
+		emit_li(REG_T2, offset);
+		emit_add(REG_T2, rs1, REG_T2);
+		emit_s_type(0x27, 3, REG_T2, rs2, 0);
+	}
+}
+
+void RISCVCodeGen::emit_flw(uint8_t rd, uint8_t rs1, int32_t offset) {
+	// FLW: opcode=0x07, funct3=2 (RV32F/RV64F)
+	if (offset >= -2048 && offset < 2048) {
+		emit_i_type(0x07, rd, 2, rs1, offset);
+	} else {
+		emit_li(REG_T2, offset);
+		emit_add(REG_T2, rs1, REG_T2);
+		emit_i_type(0x07, rd, 2, REG_T2, 0);
+	}
+}
+
+void RISCVCodeGen::emit_fsw(uint8_t rs2, uint8_t rs1, int32_t offset) {
+	// FSW: opcode=0x27, funct3=2 (RV32F/RV64F)
+	if (offset >= -2048 && offset < 2048) {
+		emit_s_type(0x27, 2, rs1, rs2, offset);
+	} else {
+		emit_li(REG_T2, offset);
+		emit_add(REG_T2, rs1, REG_T2);
+		emit_s_type(0x27, 2, REG_T2, rs2, 0);
+	}
+}
+
+void RISCVCodeGen::emit_fcvt_d_s(uint8_t rd, uint8_t rs1) {
+	// FCVT.D.S: Convert float (32-bit) to double (64-bit)
+	emit_r4_type(0b1010011, rd, 0, rs1, 0, 0b01000, 1);
+}
+
+void RISCVCodeGen::emit_fcvt_s_d(uint8_t rd, uint8_t rs1) {
+	// FCVT.S.D: Convert double (64-bit) to float (32-bit)
+	emit_r4_type(0b1010011, rd, 0, rs1, 1, 0b01000, 0);
+}
+
+// Sign-extend word to doubleword (addiw rd, rs, 0)
+void RISCVCodeGen::emit_sext_w(uint8_t rd, uint8_t rs) {
+	// ADDIW: opcode=0x1b, funct3=0
+	emit_i_type(0x1b, rd, 0, rs, 0);
 }
 
 } // namespace gdscript

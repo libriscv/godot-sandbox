@@ -484,11 +484,15 @@ int CodeGenerator::gen_literal(const LiteralExpr* expr, IRFunction& func) {
 			break;
 
 		case LiteralExpr::Type::FLOAT: {
-			// For float, we'll need to store as int64 bits for now
+			// For float literals, store as 64-bit double bit pattern
+			// The Variant's FLOAT type is always a double (64-bit)
 			double d = std::get<double>(expr->value);
 			int64_t bits;
 			memcpy(&bits, &d, sizeof(double));
-			func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(reg), IRValue::imm(bits));
+			IRInstruction instr(IROpcode::LOAD_IMM, IRValue::reg(reg), IRValue::imm(bits));
+			instr.type_hint = IRInstruction::TypeHint::VARIANT_FLOAT;
+			func.instructions.push_back(instr);
+			set_register_type(reg, IRInstruction::TypeHint::VARIANT_FLOAT);
 			break;
 		}
 
@@ -520,6 +524,13 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, IRFunction& func) {
 	// Return a copy in a new register
 	int new_reg = alloc_register();
 	func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(new_reg), IRValue::reg(var->register_num));
+
+	// Propagate type information from the variable to the new register
+	IRInstruction::TypeHint var_type = get_register_type(var->register_num);
+	if (var_type != IRInstruction::TypeHint::NONE) {
+		set_register_type(new_reg, var_type);
+	}
+
 	return new_reg;
 }
 
@@ -573,6 +584,15 @@ int CodeGenerator::gen_call(const CallExpr* expr, IRFunction& func) {
 		arg_regs.push_back(gen_expr(arg.get(), func));
 	}
 
+	// Check if this is an inline primitive constructor
+	if (is_inline_primitive_constructor(expr->function_name)) {
+		int result = gen_inline_constructor(expr->function_name, arg_regs, func);
+		for (int reg : arg_regs) {
+			free_register(reg);
+		}
+		return result;
+	}
+
 	int result_reg = alloc_register();
 
 	// Generate CALL instruction with function name, result register, and argument registers
@@ -600,6 +620,16 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, IRFunction& func)
 	std::vector<int> arg_regs;
 	for (const auto& arg : expr->arguments) {
 		arg_regs.push_back(gen_expr(arg.get(), func));
+	}
+
+	// Check if this is inline member access (property get with no arguments)
+	if (arg_regs.empty()) {
+		IRInstruction::TypeHint obj_type = get_register_type(obj_reg);
+		if (is_inline_member_access(obj_type, expr->member_name)) {
+			int result = gen_inline_member_get(obj_reg, obj_type, expr->member_name, func);
+			free_register(obj_reg);
+			return result;
+		}
 	}
 
 	int result_reg = alloc_register();
@@ -711,6 +741,153 @@ void CodeGenerator::declare_variable(const std::string& name, int register_num) 
 	}
 
 	current_scope.variables[name] = {name, register_num};
+}
+
+// Type tracking helpers
+void CodeGenerator::set_register_type(int reg, IRInstruction::TypeHint type) {
+	m_register_types[reg] = type;
+}
+
+IRInstruction::TypeHint CodeGenerator::get_register_type(int reg) const {
+	auto it = m_register_types.find(reg);
+	if (it != m_register_types.end()) {
+		return it->second;
+	}
+	return IRInstruction::TypeHint::NONE;
+}
+
+bool CodeGenerator::is_inline_primitive_constructor(const std::string& name) const {
+	return name == "Vector2" || name == "Vector3" || name == "Vector4" ||
+	       name == "Vector2i" || name == "Vector3i" || name == "Vector4i" ||
+	       name == "Color" || name == "Rect2" || name == "Rect2i" || name == "Plane";
+}
+
+bool CodeGenerator::is_inline_member_access(IRInstruction::TypeHint type, const std::string& member) const {
+	switch (type) {
+		case IRInstruction::TypeHint::VARIANT_VECTOR2:
+		case IRInstruction::TypeHint::VARIANT_VECTOR2I:
+			return member == "x" || member == "y";
+
+		case IRInstruction::TypeHint::VARIANT_VECTOR3:
+		case IRInstruction::TypeHint::VARIANT_VECTOR3I:
+			return member == "x" || member == "y" || member == "z";
+
+		case IRInstruction::TypeHint::VARIANT_VECTOR4:
+		case IRInstruction::TypeHint::VARIANT_VECTOR4I:
+			return member == "x" || member == "y" || member == "z" || member == "w";
+
+		case IRInstruction::TypeHint::VARIANT_COLOR:
+			return member == "r" || member == "g" || member == "b" || member == "a";
+
+		case IRInstruction::TypeHint::VARIANT_RECT2:
+		case IRInstruction::TypeHint::VARIANT_RECT2I:
+			// Rect2 has position and size, which are Vector2/Vector2i
+			// For now, don't optimize these - they're more complex
+			return false;
+
+		case IRInstruction::TypeHint::VARIANT_PLANE:
+			// Plane has normal (Vector3) and d (float)
+			// For now, don't optimize these
+			return false;
+
+		default:
+			return false;
+	}
+}
+
+int CodeGenerator::gen_inline_constructor(const std::string& name, const std::vector<int>& arg_regs, IRFunction& func) {
+	int result_reg = alloc_register();
+	IRInstruction instr(IROpcode::CALL); // Default fallback
+	IRInstruction::TypeHint result_type = IRInstruction::TypeHint::NONE;
+
+	if (name == "Vector2" && arg_regs.size() == 2) {
+		instr = IRInstruction(IROpcode::MAKE_VECTOR2);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::reg(arg_regs[0])); // x
+		instr.operands.push_back(IRValue::reg(arg_regs[1])); // y
+		result_type = IRInstruction::TypeHint::VARIANT_VECTOR2;
+	} else if (name == "Vector3" && arg_regs.size() == 3) {
+		instr = IRInstruction(IROpcode::MAKE_VECTOR3);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::reg(arg_regs[0])); // x
+		instr.operands.push_back(IRValue::reg(arg_regs[1])); // y
+		instr.operands.push_back(IRValue::reg(arg_regs[2])); // z
+		result_type = IRInstruction::TypeHint::VARIANT_VECTOR3;
+	} else if (name == "Vector4" && arg_regs.size() == 4) {
+		instr = IRInstruction(IROpcode::MAKE_VECTOR4);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::reg(arg_regs[0])); // x
+		instr.operands.push_back(IRValue::reg(arg_regs[1])); // y
+		instr.operands.push_back(IRValue::reg(arg_regs[2])); // z
+		instr.operands.push_back(IRValue::reg(arg_regs[3])); // w
+		result_type = IRInstruction::TypeHint::VARIANT_VECTOR4;
+	} else if (name == "Vector2i" && arg_regs.size() == 2) {
+		instr = IRInstruction(IROpcode::MAKE_VECTOR2I);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::reg(arg_regs[0])); // x
+		instr.operands.push_back(IRValue::reg(arg_regs[1])); // y
+		result_type = IRInstruction::TypeHint::VARIANT_VECTOR2I;
+	} else if (name == "Vector3i" && arg_regs.size() == 3) {
+		instr = IRInstruction(IROpcode::MAKE_VECTOR3I);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::reg(arg_regs[0])); // x
+		instr.operands.push_back(IRValue::reg(arg_regs[1])); // y
+		instr.operands.push_back(IRValue::reg(arg_regs[2])); // z
+		result_type = IRInstruction::TypeHint::VARIANT_VECTOR3I;
+	} else if (name == "Vector4i" && arg_regs.size() == 4) {
+		instr = IRInstruction(IROpcode::MAKE_VECTOR4I);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::reg(arg_regs[0])); // x
+		instr.operands.push_back(IRValue::reg(arg_regs[1])); // y
+		instr.operands.push_back(IRValue::reg(arg_regs[2])); // z
+		instr.operands.push_back(IRValue::reg(arg_regs[3])); // w
+		result_type = IRInstruction::TypeHint::VARIANT_VECTOR4I;
+	} else if (name == "Color" && arg_regs.size() == 4) {
+		instr = IRInstruction(IROpcode::MAKE_COLOR);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::reg(arg_regs[0])); // r
+		instr.operands.push_back(IRValue::reg(arg_regs[1])); // g
+		instr.operands.push_back(IRValue::reg(arg_regs[2])); // b
+		instr.operands.push_back(IRValue::reg(arg_regs[3])); // a
+		result_type = IRInstruction::TypeHint::VARIANT_COLOR;
+	} else {
+		// Fallback to regular CALL for unsupported constructors or wrong arg counts
+		instr.operands.push_back(IRValue::str(name));
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::imm(arg_regs.size()));
+		for (int arg_reg : arg_regs) {
+			instr.operands.push_back(IRValue::reg(arg_reg));
+		}
+	}
+
+	func.instructions.push_back(instr);
+
+	if (result_type != IRInstruction::TypeHint::NONE) {
+		set_register_type(result_reg, result_type);
+	}
+
+	return result_reg;
+}
+
+int CodeGenerator::gen_inline_member_get(int obj_reg, IRInstruction::TypeHint obj_type, const std::string& member, IRFunction& func) {
+	int result_reg = alloc_register();
+
+	IRInstruction instr(IROpcode::VGET_INLINE);
+	instr.operands.push_back(IRValue::reg(result_reg));
+	instr.operands.push_back(IRValue::reg(obj_reg));
+	instr.operands.push_back(IRValue::str(member));
+	instr.operands.push_back(IRValue::imm(static_cast<int>(obj_type)));
+
+	func.instructions.push_back(instr);
+
+	// Result is always a float or int Variant
+	bool is_int_vector = (obj_type == IRInstruction::TypeHint::VARIANT_VECTOR2I ||
+	                      obj_type == IRInstruction::TypeHint::VARIANT_VECTOR3I ||
+	                      obj_type == IRInstruction::TypeHint::VARIANT_VECTOR4I);
+
+	set_register_type(result_reg, is_int_vector ? IRInstruction::TypeHint::VARIANT_INT : IRInstruction::TypeHint::VARIANT_FLOAT);
+
+	return result_reg;
 }
 
 } // namespace gdscript

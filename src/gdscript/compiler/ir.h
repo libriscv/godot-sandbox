@@ -55,6 +55,22 @@ enum class IROpcode {
 	VCALL,           // Variant method call
 	VGET,            // Get property from variant
 	VSET,            // Set property on variant
+
+	// Inline primitive construction (no syscalls)
+	MAKE_VECTOR2,    // Construct Vector2 inline
+	MAKE_VECTOR3,    // Construct Vector3 inline
+	MAKE_VECTOR4,    // Construct Vector4 inline
+	MAKE_VECTOR2I,   // Construct Vector2i inline
+	MAKE_VECTOR3I,   // Construct Vector3i inline
+	MAKE_VECTOR4I,   // Construct Vector4i inline
+	MAKE_COLOR,      // Construct Color inline
+	MAKE_RECT2,      // Construct Rect2 inline
+	MAKE_RECT2I,     // Construct Rect2i inline
+	MAKE_PLANE,      // Construct Plane inline
+
+	// Inline member access (no syscalls)
+	VGET_INLINE,     // Get inlined member from Variant (x, y, z, w, r, g, b, a)
+	VSET_INLINE,     // Set inlined member on Variant
 };
 
 struct IRValue {
@@ -112,6 +128,21 @@ struct IRInstruction {
 		NONE,       // No type information
 		RAW_INT,    // Integer value, can use physical registers
 		RAW_BOOL,   // Boolean value, can use physical registers
+
+		// Variant types (tracked for optimization)
+		VARIANT_INT,
+		VARIANT_FLOAT,
+		VARIANT_BOOL,
+		VARIANT_VECTOR2,
+		VARIANT_VECTOR3,
+		VARIANT_VECTOR4,
+		VARIANT_VECTOR2I,
+		VARIANT_VECTOR3I,
+		VARIANT_VECTOR4I,
+		VARIANT_COLOR,
+		VARIANT_RECT2,
+		VARIANT_RECT2I,
+		VARIANT_PLANE,
 	};
 
 	IROpcode opcode;

@@ -4,105 +4,201 @@
 #include "ir_optimizer.h"
 #include <iostream>
 #include <variant>
+#include <iomanip>
 
 using namespace gdscript;
 
-std::string opcode_to_string(IROpcode op) {
-	switch (op) {
-		case IROpcode::LOAD_IMM: return "LOAD_IMM";
-		case IROpcode::LOAD_BOOL: return "LOAD_BOOL";
-		case IROpcode::LOAD_STRING: return "LOAD_STRING";
-		case IROpcode::LOAD_VAR: return "LOAD_VAR";
-		case IROpcode::STORE_VAR: return "STORE_VAR";
-		case IROpcode::MOVE: return "MOVE";
-		case IROpcode::ADD: return "ADD";
-		case IROpcode::SUB: return "SUB";
-		case IROpcode::MUL: return "MUL";
-		case IROpcode::DIV: return "DIV";
-		case IROpcode::MOD: return "MOD";
-		case IROpcode::NEG: return "NEG";
-		case IROpcode::CMP_EQ: return "CMP_EQ";
-		case IROpcode::CMP_NEQ: return "CMP_NEQ";
-		case IROpcode::CMP_LT: return "CMP_LT";
-		case IROpcode::CMP_LTE: return "CMP_LTE";
-		case IROpcode::CMP_GT: return "CMP_GT";
-		case IROpcode::CMP_GTE: return "CMP_GTE";
-		case IROpcode::AND: return "AND";
-		case IROpcode::OR: return "OR";
-		case IROpcode::NOT: return "NOT";
-		case IROpcode::LABEL: return "LABEL";
-		case IROpcode::JUMP: return "JUMP";
-		case IROpcode::BRANCH_ZERO: return "BRANCH_ZERO";
-		case IROpcode::BRANCH_NOT_ZERO: return "BRANCH_NOT_ZERO";
-		case IROpcode::CALL: return "CALL";
-		case IROpcode::CALL_SYSCALL: return "CALL_SYSCALL";
-		case IROpcode::RETURN: return "RETURN";
-		case IROpcode::VCALL: return "VCALL";
-		case IROpcode::VGET: return "VGET";
-		case IROpcode::VSET: return "VSET";
+// Helper to convert TypeHint to string
+const char* type_hint_name(IRInstruction::TypeHint hint) {
+	switch (hint) {
+		case IRInstruction::TypeHint::NONE: return "NONE";
+		case IRInstruction::TypeHint::RAW_INT: return "RAW_INT";
+		case IRInstruction::TypeHint::RAW_BOOL: return "RAW_BOOL";
+		case IRInstruction::TypeHint::VARIANT_INT: return "VARIANT_INT";
+		case IRInstruction::TypeHint::VARIANT_FLOAT: return "VARIANT_FLOAT";
+		case IRInstruction::TypeHint::VARIANT_BOOL: return "VARIANT_BOOL";
+		case IRInstruction::TypeHint::VARIANT_VECTOR2: return "VARIANT_VECTOR2";
+		case IRInstruction::TypeHint::VARIANT_VECTOR3: return "VARIANT_VECTOR3";
+		case IRInstruction::TypeHint::VARIANT_VECTOR4: return "VARIANT_VECTOR4";
+		case IRInstruction::TypeHint::VARIANT_VECTOR2I: return "VARIANT_VECTOR2I";
+		case IRInstruction::TypeHint::VARIANT_VECTOR3I: return "VARIANT_VECTOR3I";
+		case IRInstruction::TypeHint::VARIANT_VECTOR4I: return "VARIANT_VECTOR4I";
+		case IRInstruction::TypeHint::VARIANT_COLOR: return "VARIANT_COLOR";
+		case IRInstruction::TypeHint::VARIANT_RECT2: return "VARIANT_RECT2";
+		case IRInstruction::TypeHint::VARIANT_RECT2I: return "VARIANT_RECT2I";
+		case IRInstruction::TypeHint::VARIANT_PLANE: return "VARIANT_PLANE";
 		default: return "UNKNOWN";
 	}
 }
 
-std::string value_to_string(const IRValue& val) {
-	switch (val.type) {
+// Helper to format operand with detailed type info
+std::string format_operand_detailed(const IRValue& op) {
+	std::ostringstream oss;
+
+	switch (op.type) {
 		case IRValue::Type::REGISTER:
-			return "r" + std::to_string(std::get<int>(val.value));
-		case IRValue::Type::IMMEDIATE:
-			return "#" + std::to_string(std::get<int64_t>(val.value));
+			oss << "r" << std::get<int>(op.value);
+			break;
+		case IRValue::Type::IMMEDIATE: {
+			int64_t val = std::get<int64_t>(op.value);
+			oss << val << " (0x" << std::hex << val << std::dec << ")";
+			// Also show as float interpretation if it could be a float
+			union { int64_t i; double d; } u;
+			u.i = val;
+			if (val != 0) {
+				oss << " [as_float: " << u.d << "]";
+			}
+			break;
+		}
 		case IRValue::Type::LABEL:
-			return std::get<std::string>(val.value);
+			oss << "@" << std::get<std::string>(op.value);
+			break;
 		case IRValue::Type::VARIABLE:
-			return std::get<std::string>(val.value);
+			oss << "$" << std::get<std::string>(op.value);
+			break;
 		case IRValue::Type::STRING:
-			return "\"" + std::get<std::string>(val.value) + "\"";
-		default:
-			return "???";
+			oss << "\"" << std::get<std::string>(op.value) << "\"";
+			break;
 	}
+
+	return oss.str();
 }
 
 int main(int argc, char** argv)
 {
 	std::string source;
-	if (argc < 2) {
+	bool verbose = false;
+	bool no_optimize = false;
+
+	// Parse arguments
+	for (int i = 1; i < argc; i++) {
+		std::string arg = argv[i];
+		if (arg == "-v" || arg == "--verbose") {
+			verbose = true;
+		} else if (arg == "--no-opt" || arg == "--no-optimize") {
+			no_optimize = true;
+		} else if (source.empty()) {
+			source = arg;
+		}
+	}
+
+	if (source.empty()) {
 		// Read from stdin
 		std::string line;
 		while (std::getline(std::cin, line)) {
 			source += line + "\n";
 		}
-	} else {
-		source = argv[1];
 	}
 
 	try {
 		Lexer lexer(source);
-		Parser parser(lexer.tokenize());
+		auto tokens = lexer.tokenize();
+
+		if (verbose) {
+			std::cout << "=== TOKENS ===" << std::endl;
+			for (const auto& tok : tokens) {
+				std::cout << "  " << tok.lexeme << " [type=" << token_type_name(tok.type) << "]" << std::endl;
+			}
+			std::cout << std::endl;
+		}
+
+		Parser parser(tokens);
 		Program program = parser.parse();
+
+		if (verbose) {
+			std::cout << "=== AST ===" << std::endl;
+			std::cout << "  Functions: " << program.functions.size() << std::endl;
+			for (const auto& func : program.functions) {
+				std::cout << "    " << func.name << "(";
+				for (size_t i = 0; i < func.parameters.size(); i++) {
+					if (i > 0) std::cout << ", ";
+					std::cout << func.parameters[i].name;
+				}
+				std::cout << ") - " << func.body.size() << " statement(s)" << std::endl;
+			}
+			std::cout << std::endl;
+		}
 
 		CodeGenerator codegen;
 		IRProgram ir = codegen.generate(program);
 
-		// Apply optimizations
-		IROptimizer optimizer;
-		optimizer.optimize(ir);
+		// Apply optimizations unless disabled
+		if (!no_optimize) {
+			IROptimizer optimizer;
+			optimizer.optimize(ir);
+		}
 
+		// Print string constants
+		if (!ir.string_constants.empty()) {
+			std::cout << "=== STRING CONSTANTS ===" << std::endl;
+			for (size_t i = 0; i < ir.string_constants.size(); i++) {
+				std::cout << "  [" << i << "] \"" << ir.string_constants[i] << "\"" << std::endl;
+			}
+			std::cout << std::endl;
+		}
+
+		// Print functions
 		for (const auto& func : ir.functions) {
-			std::cout << "Function: " << func.name << "(";
+			std::cout << "=== Function: " << func.name << "(";
 			for (size_t i = 0; i < func.parameters.size(); i++) {
 				if (i > 0) std::cout << ", ";
 				std::cout << func.parameters[i];
 			}
-			std::cout << ")" << std::endl;
-			std::cout << "  max_registers: " << func.max_registers << std::endl;
-			std::cout << "  Instructions:" << std::endl;
+			std::cout << ") ===" << std::endl;
+			std::cout << "max_registers: " << func.max_registers << std::endl;
+			std::cout << std::endl;
 
 			for (size_t i = 0; i < func.instructions.size(); i++) {
 				const auto& instr = func.instructions[i];
-				std::cout << "    " << i << ": " << opcode_to_string(instr.opcode);
 
-				for (const auto& operand : instr.operands) {
-					std::cout << " " << value_to_string(operand);
+				// Format instruction index
+				std::cout << std::setw(4) << i << ": ";
+
+				// Format opcode
+				std::cout << std::setw(20) << std::left << ir_opcode_name(instr.opcode);
+
+				// Format operands
+				for (size_t j = 0; j < instr.operands.size(); j++) {
+					if (j > 0) std::cout << ", ";
+					if (verbose) {
+						std::cout << format_operand_detailed(instr.operands[j]);
+					} else {
+						std::cout << instr.operands[j].to_string();
+					}
 				}
+
+				// Show type hint if present
+				if (instr.type_hint != IRInstruction::TypeHint::NONE) {
+					std::cout << "  [type: " << type_hint_name(instr.type_hint) << "]";
+				}
+
+				// Add semantic comments for certain instructions
+				if (!verbose) {
+					switch (instr.opcode) {
+						case IROpcode::MAKE_VECTOR2:
+						case IROpcode::MAKE_VECTOR3:
+						case IROpcode::MAKE_VECTOR4:
+						case IROpcode::MAKE_VECTOR2I:
+						case IROpcode::MAKE_VECTOR3I:
+						case IROpcode::MAKE_VECTOR4I:
+						case IROpcode::MAKE_COLOR:
+							std::cout << "  ; Inline construction";
+							break;
+						case IROpcode::VGET_INLINE:
+							if (instr.operands.size() >= 3) {
+								std::cout << "  ; Get inline member";
+							}
+							break;
+						case IROpcode::VSET_INLINE:
+							if (instr.operands.size() >= 3) {
+								std::cout << "  ; Set inline member";
+							}
+							break;
+						default:
+							break;
+					}
+				}
+
 				std::cout << std::endl;
 			}
 			std::cout << std::endl;
