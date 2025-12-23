@@ -185,6 +185,7 @@ APICALL(api_veval) {
 	bool valid = false;
 	Variant ret;
 	Variant::evaluate(static_cast<Variant::Operator>(op), ap->toVariant(emu), bp->toVariant(emu), ret, valid);
+	//WARN_PRINT(String("veval: ") + String(ap->toVariant(emu)) + " " + itos(op) + " " + String(bp->toVariant(emu)) + " = " + String(ret));
 
 	machine.set_result(valid);
 	retp->create(emu, std::move(ret));

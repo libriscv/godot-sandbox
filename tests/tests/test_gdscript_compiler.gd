@@ -334,11 +334,10 @@ func countdown_loop():
 	# sum = 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 = 45
 	assert_eq(result, 45, "countup_loop should sum 1..9 = 45")
 
-	# Note: countdown loops with negative step might need more investigation
-	# Commenting out for now until we can debug the issue
-	# result = s.vmcallv("countdown_loop")
-	# # sum = 10 + 9 + 8 + 7 + 6 + 5 + 4 + 3 + 2 + 1 = 55
-	# assert_eq(result, 55, "countdown_loop should sum 10..1 = 55")
+	# Test countdown loop with negative step
+	result = s.vmcallv("countdown_loop")
+	# sum = 10 + 9 + 8 + 7 + 6 + 5 + 4 + 3 + 2 + 1 = 55
+	assert_eq(result, 55, "countdown_loop should sum 10..1 = 55")
 
 	s.queue_free()
 
