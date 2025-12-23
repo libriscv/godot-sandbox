@@ -1,5 +1,6 @@
 #include "ir_optimizer.h"
 #include <algorithm>
+#include <cmath>
 
 namespace gdscript {
 
@@ -69,6 +70,17 @@ void IROptimizer::constant_folding(IRFunction& func) {
 				break;
 			}
 
+			case IROpcode::LOAD_FLOAT_IMM: {
+				int reg = std::get<int>(instr.operands[0].value);
+				double val = std::get<double>(instr.operands[1].value);
+				ConstantValue cv;
+				cv.type = ConstantValue::Type::FLOAT;
+				cv.float_value = val;
+				set_register_constant(reg, cv);
+				new_instructions.push_back(instr);
+				break;
+			}
+
 			case IROpcode::LOAD_BOOL: {
 				int reg = std::get<int>(instr.operands[0].value);
 				int64_t val = std::get<int64_t>(instr.operands[1].value);
@@ -106,11 +118,33 @@ void IROptimizer::constant_folding(IRFunction& func) {
 			case IROpcode::MUL:
 			case IROpcode::DIV:
 			case IROpcode::MOD: {
-				// Disable constant folding for arithmetic operations
-				// because floats are stored as bit patterns and shouldn't be added as integers
 				int dst = std::get<int>(instr.operands[0].value);
-				invalidate_register(dst);
-				new_instructions.push_back(instr);
+				int lhs_reg = std::get<int>(instr.operands[1].value);
+				int rhs_reg = std::get<int>(instr.operands[2].value);
+
+				// Try to fold arithmetic operations
+				if (m_constants.count(lhs_reg) && m_constants.count(rhs_reg)) {
+					ConstantValue result;
+					if (try_fold_binary_op(instr.opcode, instr.type_hint, m_constants[lhs_reg], m_constants[rhs_reg], result)) {
+						// Replace with appropriate load instruction based on result type
+						if (result.type == ConstantValue::Type::FLOAT) {
+							new_instructions.emplace_back(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(dst), IRValue::fimm(result.float_value));
+							new_instructions.back().type_hint = IRInstruction::TypeHint::VARIANT_FLOAT;
+						} else {
+							new_instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(dst), IRValue::imm(result.int_value));
+							if (instr.type_hint == IRInstruction::TypeHint::VARIANT_INT) {
+								new_instructions.back().type_hint = IRInstruction::TypeHint::VARIANT_INT;
+							}
+						}
+						set_register_constant(dst, result);
+						folded = true;
+					}
+				}
+
+				if (!folded) {
+					invalidate_register(dst);
+					new_instructions.push_back(instr);
+				}
 				break;
 			}
 
@@ -127,7 +161,7 @@ void IROptimizer::constant_folding(IRFunction& func) {
 				// Try to fold comparisons
 				if (m_constants.count(lhs_reg) && m_constants.count(rhs_reg)) {
 					ConstantValue result;
-					if (try_fold_binary_op(instr.opcode, m_constants[lhs_reg], m_constants[rhs_reg], result)) {
+					if (try_fold_binary_op(instr.opcode, instr.type_hint, m_constants[lhs_reg], m_constants[rhs_reg], result)) {
 						// Replace with LOAD_BOOL
 						new_instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(dst), IRValue::imm(result.bool_value ? 1 : 0));
 						set_register_constant(dst, result);
@@ -146,13 +180,24 @@ void IROptimizer::constant_folding(IRFunction& func) {
 				int dst = std::get<int>(instr.operands[0].value);
 				int src = std::get<int>(instr.operands[1].value);
 
-				if (m_constants.count(src) && m_constants[src].type == ConstantValue::Type::INT) {
+				if (m_constants.count(src)) {
+					const auto& cv = m_constants[src];
 					ConstantValue result;
-					result.type = ConstantValue::Type::INT;
-					result.int_value = -m_constants[src].int_value;
-					new_instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(dst), IRValue::imm(result.int_value));
-					set_register_constant(dst, result);
-					folded = true;
+
+					if (cv.type == ConstantValue::Type::INT) {
+						result.type = ConstantValue::Type::INT;
+						result.int_value = -cv.int_value;
+						new_instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(dst), IRValue::imm(result.int_value));
+						set_register_constant(dst, result);
+						folded = true;
+					} else if (cv.type == ConstantValue::Type::FLOAT) {
+						result.type = ConstantValue::Type::FLOAT;
+						result.float_value = -cv.float_value;
+						new_instructions.emplace_back(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(dst), IRValue::fimm(result.float_value));
+						new_instructions.back().type_hint = IRInstruction::TypeHint::VARIANT_FLOAT;
+						set_register_constant(dst, result);
+						folded = true;
+					}
 				}
 
 				if (!folded) {
@@ -212,73 +257,177 @@ void IROptimizer::constant_folding(IRFunction& func) {
 	func.instructions = std::move(new_instructions);
 }
 
-bool IROptimizer::try_fold_binary_op(IROpcode op, const ConstantValue& lhs, const ConstantValue& rhs, ConstantValue& result) {
-	// Only fold integer arithmetic for now
-	if (lhs.type != ConstantValue::Type::INT || rhs.type != ConstantValue::Type::INT) {
-		return false;
+bool IROptimizer::try_fold_binary_op(IROpcode op, IRInstruction::TypeHint type_hint, const ConstantValue& lhs, const ConstantValue& rhs, ConstantValue& result) {
+	// Handle float arithmetic - if type_hint is VARIANT_FLOAT or either operand is float,
+	// we must perform float arithmetic (GDScript semantics)
+	bool is_float_op = (type_hint == IRInstruction::TypeHint::VARIANT_FLOAT ||
+	                    lhs.type == ConstantValue::Type::FLOAT ||
+	                    rhs.type == ConstantValue::Type::FLOAT);
+
+	// For arithmetic operations, promote to float if needed
+	if (is_float_op) {
+		// Convert int operands to float for the operation
+		double lhs_val = (lhs.type == ConstantValue::Type::FLOAT) ? lhs.float_value : static_cast<double>(lhs.int_value);
+		double rhs_val = (rhs.type == ConstantValue::Type::FLOAT) ? rhs.float_value : static_cast<double>(rhs.int_value);
+
+		switch (op) {
+			case IROpcode::ADD:
+				result.type = ConstantValue::Type::FLOAT;
+				result.float_value = lhs_val + rhs_val;
+				return true;
+
+			case IROpcode::SUB:
+				result.type = ConstantValue::Type::FLOAT;
+				result.float_value = lhs_val - rhs_val;
+				return true;
+
+			case IROpcode::MUL:
+				result.type = ConstantValue::Type::FLOAT;
+				result.float_value = lhs_val * rhs_val;
+				return true;
+
+			case IROpcode::DIV:
+				if (rhs_val == 0.0) return false; // Don't fold division by zero
+				result.type = ConstantValue::Type::FLOAT;
+				result.float_value = lhs_val / rhs_val;
+				return true;
+
+			case IROpcode::MOD:
+				if (rhs_val == 0.0) return false; // Don't fold modulo by zero
+				result.type = ConstantValue::Type::FLOAT;
+				result.float_value = std::fmod(lhs_val, rhs_val);
+				return true;
+
+			default:
+				break; // Fall through to comparison handling
+		}
 	}
 
-	switch (op) {
-		case IROpcode::ADD:
-			result.type = ConstantValue::Type::INT;
-			result.int_value = lhs.int_value + rhs.int_value;
-			return true;
+	// Handle integer arithmetic (only when both operands are int and not a float operation)
+	if (!is_float_op && lhs.type == ConstantValue::Type::INT && rhs.type == ConstantValue::Type::INT) {
+		switch (op) {
+			case IROpcode::ADD:
+				result.type = ConstantValue::Type::INT;
+				result.int_value = lhs.int_value + rhs.int_value;
+				return true;
 
-		case IROpcode::SUB:
-			result.type = ConstantValue::Type::INT;
-			result.int_value = lhs.int_value - rhs.int_value;
-			return true;
+			case IROpcode::SUB:
+				result.type = ConstantValue::Type::INT;
+				result.int_value = lhs.int_value - rhs.int_value;
+				return true;
 
-		case IROpcode::MUL:
-			result.type = ConstantValue::Type::INT;
-			result.int_value = lhs.int_value * rhs.int_value;
-			return true;
+			case IROpcode::MUL:
+				result.type = ConstantValue::Type::INT;
+				result.int_value = lhs.int_value * rhs.int_value;
+				return true;
 
-		case IROpcode::DIV:
-			if (rhs.int_value == 0) return false; // Don't fold division by zero
-			result.type = ConstantValue::Type::INT;
-			result.int_value = lhs.int_value / rhs.int_value;
-			return true;
+			case IROpcode::DIV:
+				if (rhs.int_value == 0) return false; // Don't fold division by zero
+				result.type = ConstantValue::Type::INT;
+				result.int_value = lhs.int_value / rhs.int_value;
+				return true;
 
-		case IROpcode::MOD:
-			if (rhs.int_value == 0) return false; // Don't fold modulo by zero
-			result.type = ConstantValue::Type::INT;
-			result.int_value = lhs.int_value % rhs.int_value;
-			return true;
+			case IROpcode::MOD:
+				if (rhs.int_value == 0) return false; // Don't fold modulo by zero
+				result.type = ConstantValue::Type::INT;
+				result.int_value = lhs.int_value % rhs.int_value;
+				return true;
 
-		case IROpcode::CMP_EQ:
-			result.type = ConstantValue::Type::BOOL;
-			result.bool_value = (lhs.int_value == rhs.int_value);
-			return true;
-
-		case IROpcode::CMP_NEQ:
-			result.type = ConstantValue::Type::BOOL;
-			result.bool_value = (lhs.int_value != rhs.int_value);
-			return true;
-
-		case IROpcode::CMP_LT:
-			result.type = ConstantValue::Type::BOOL;
-			result.bool_value = (lhs.int_value < rhs.int_value);
-			return true;
-
-		case IROpcode::CMP_LTE:
-			result.type = ConstantValue::Type::BOOL;
-			result.bool_value = (lhs.int_value <= rhs.int_value);
-			return true;
-
-		case IROpcode::CMP_GT:
-			result.type = ConstantValue::Type::BOOL;
-			result.bool_value = (lhs.int_value > rhs.int_value);
-			return true;
-
-		case IROpcode::CMP_GTE:
-			result.type = ConstantValue::Type::BOOL;
-			result.bool_value = (lhs.int_value >= rhs.int_value);
-			return true;
-
-		default:
-			return false;
+			default:
+				break; // Fall through to comparison handling
+		}
 	}
+
+	// Handle comparisons - work for both int and float
+	bool comparable = (lhs.type == ConstantValue::Type::INT && rhs.type == ConstantValue::Type::INT) ||
+	                  (lhs.type == ConstantValue::Type::FLOAT && rhs.type == ConstantValue::Type::FLOAT) ||
+	                  (lhs.type == ConstantValue::Type::INT && rhs.type == ConstantValue::Type::FLOAT) ||
+	                  (lhs.type == ConstantValue::Type::FLOAT && rhs.type == ConstantValue::Type::INT);
+
+	if (comparable) {
+		// Get comparable values
+		bool lhs_is_float = (lhs.type == ConstantValue::Type::FLOAT);
+		bool rhs_is_float = (rhs.type == ConstantValue::Type::FLOAT);
+
+		if (lhs_is_float || rhs_is_float) {
+			// Float comparison
+			double lhs_val = lhs_is_float ? lhs.float_value : static_cast<double>(lhs.int_value);
+			double rhs_val = rhs_is_float ? rhs.float_value : static_cast<double>(rhs.int_value);
+
+			switch (op) {
+				case IROpcode::CMP_EQ:
+					result.type = ConstantValue::Type::BOOL;
+					result.bool_value = (lhs_val == rhs_val);
+					return true;
+
+				case IROpcode::CMP_NEQ:
+					result.type = ConstantValue::Type::BOOL;
+					result.bool_value = (lhs_val != rhs_val);
+					return true;
+
+				case IROpcode::CMP_LT:
+					result.type = ConstantValue::Type::BOOL;
+					result.bool_value = (lhs_val < rhs_val);
+					return true;
+
+				case IROpcode::CMP_LTE:
+					result.type = ConstantValue::Type::BOOL;
+					result.bool_value = (lhs_val <= rhs_val);
+					return true;
+
+				case IROpcode::CMP_GT:
+					result.type = ConstantValue::Type::BOOL;
+					result.bool_value = (lhs_val > rhs_val);
+					return true;
+
+				case IROpcode::CMP_GTE:
+					result.type = ConstantValue::Type::BOOL;
+					result.bool_value = (lhs_val >= rhs_val);
+					return true;
+
+				default:
+					return false;
+			}
+		} else {
+			// Integer comparison
+			switch (op) {
+				case IROpcode::CMP_EQ:
+					result.type = ConstantValue::Type::BOOL;
+					result.bool_value = (lhs.int_value == rhs.int_value);
+					return true;
+
+				case IROpcode::CMP_NEQ:
+					result.type = ConstantValue::Type::BOOL;
+					result.bool_value = (lhs.int_value != rhs.int_value);
+					return true;
+
+				case IROpcode::CMP_LT:
+					result.type = ConstantValue::Type::BOOL;
+					result.bool_value = (lhs.int_value < rhs.int_value);
+					return true;
+
+				case IROpcode::CMP_LTE:
+					result.type = ConstantValue::Type::BOOL;
+					result.bool_value = (lhs.int_value <= rhs.int_value);
+					return true;
+
+				case IROpcode::CMP_GT:
+					result.type = ConstantValue::Type::BOOL;
+					result.bool_value = (lhs.int_value > rhs.int_value);
+					return true;
+
+				case IROpcode::CMP_GTE:
+					result.type = ConstantValue::Type::BOOL;
+					result.bool_value = (lhs.int_value >= rhs.int_value);
+					return true;
+
+				default:
+					return false;
+			}
+		}
+	}
+
+	return false;
 }
 
 void IROptimizer::peephole_optimization(IRFunction& func) {

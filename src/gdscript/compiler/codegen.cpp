@@ -484,12 +484,9 @@ int CodeGenerator::gen_literal(const LiteralExpr* expr, IRFunction& func) {
 			break;
 
 		case LiteralExpr::Type::FLOAT: {
-			// For float literals, store as 64-bit double bit pattern
-			// The Variant's FLOAT type is always a double (64-bit)
+			// Float literals are always 64-bit doubles in GDScript
 			double d = std::get<double>(expr->value);
-			int64_t bits;
-			memcpy(&bits, &d, sizeof(double));
-			IRInstruction instr(IROpcode::LOAD_IMM, IRValue::reg(reg), IRValue::imm(bits));
+			IRInstruction instr(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(reg), IRValue::fimm(d));
 			instr.type_hint = IRInstruction::TypeHint::VARIANT_FLOAT;
 			func.instructions.push_back(instr);
 			set_register_type(reg, IRInstruction::TypeHint::VARIANT_FLOAT);
@@ -539,6 +536,30 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, IRFunction& func) {
 	int right_reg = gen_expr(expr->right.get(), func);
 	int result_reg = alloc_register();
 
+	// Check type hints for operands to determine if result should be float
+	IRInstruction::TypeHint left_type = get_register_type(left_reg);
+	IRInstruction::TypeHint right_type = get_register_type(right_reg);
+
+	// Determine if this is an arithmetic operation (vs comparison or logical)
+	bool is_arithmetic = (expr->op == BinaryExpr::Op::ADD ||
+	                      expr->op == BinaryExpr::Op::SUB ||
+	                      expr->op == BinaryExpr::Op::MUL ||
+	                      expr->op == BinaryExpr::Op::DIV ||
+	                      expr->op == BinaryExpr::Op::MOD);
+
+	// In GDScript, if either operand is a float, the result is a float
+	// for arithmetic operations
+	IRInstruction::TypeHint result_type = IRInstruction::TypeHint::NONE;
+	if (is_arithmetic) {
+		if (left_type == IRInstruction::TypeHint::VARIANT_FLOAT ||
+		    right_type == IRInstruction::TypeHint::VARIANT_FLOAT) {
+			result_type = IRInstruction::TypeHint::VARIANT_FLOAT;
+		} else if (left_type == IRInstruction::TypeHint::VARIANT_INT &&
+		           right_type == IRInstruction::TypeHint::VARIANT_INT) {
+			result_type = IRInstruction::TypeHint::VARIANT_INT;
+		}
+	}
+
 	IROpcode op;
 	switch (expr->op) {
 		case BinaryExpr::Op::ADD: op = IROpcode::ADD; break;
@@ -558,7 +579,13 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, IRFunction& func) {
 			throw std::runtime_error("Unknown binary operator");
 	}
 
-	func.instructions.emplace_back(op, IRValue::reg(result_reg), IRValue::reg(left_reg), IRValue::reg(right_reg));
+	IRInstruction instr(op, IRValue::reg(result_reg), IRValue::reg(left_reg), IRValue::reg(right_reg));
+	instr.type_hint = result_type;
+	func.instructions.push_back(instr);
+
+	if (result_type != IRInstruction::TypeHint::NONE) {
+		set_register_type(result_reg, result_type);
+	}
 
 	free_register(left_reg);
 	free_register(right_reg);

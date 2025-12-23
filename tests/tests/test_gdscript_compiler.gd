@@ -539,3 +539,86 @@ func test_chained_vectors():
 	assert_almost_eq(result, 30.0, 0.001, "Chained vector operations should work")
 
 	s.queue_free()
+
+func test_float_constant_folding():
+	var gdscript_code = """
+func test_float_add():
+	return 1.5 + 2.5
+
+func test_float_mul():
+	return 2.5 * 4.0
+
+func test_float_sub():
+	return 5.5 - 2.5
+
+func test_float_div():
+	return 10.0 / 2.0
+
+func test_int_float_promotion():
+	return 1 + 2.5
+
+func test_float_comparison_lt():
+	return 1.5 < 2.5
+
+func test_float_comparison_gte():
+	return 3.5 >= 2.5
+
+func test_complex_fold():
+	return 1.5 + 2.5 * 2.0
+
+func test_int_neg():
+	return -42
+
+func test_float_neg():
+	return -3.14
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(1000)
+
+	# Test float addition
+	var result = s.vmcallv("test_float_add")
+	assert_almost_eq(result, 4.0, 0.001, "Float constant folding: 1.5 + 2.5 should be 4.0")
+
+	# Test float multiplication
+	result = s.vmcallv("test_float_mul")
+	assert_almost_eq(result, 10.0, 0.001, "Float constant folding: 2.5 * 4.0 should be 10.0")
+
+	# Test float subtraction
+	result = s.vmcallv("test_float_sub")
+	assert_almost_eq(result, 3.0, 0.001, "Float constant folding: 5.5 - 2.5 should be 3.0")
+
+	# Test float division
+	result = s.vmcallv("test_float_div")
+	assert_almost_eq(result, 5.0, 0.001, "Float constant folding: 10.0 / 2.0 should be 5.0")
+
+	# Test int + float promotion
+	result = s.vmcallv("test_int_float_promotion")
+	assert_almost_eq(result, 3.5, 0.001, "Int + float: 1 + 2.5 should be 3.5")
+
+	# Test float comparison
+	result = s.vmcallv("test_float_comparison_lt")
+	assert_eq(result, true, "Float comparison: 1.5 < 2.5 should be true")
+
+	result = s.vmcallv("test_float_comparison_gte")
+	assert_eq(result, true, "Float comparison: 3.5 >= 2.5 should be true")
+
+	# Test complex expression folding
+	result = s.vmcallv("test_complex_fold")
+	assert_almost_eq(result, 6.5, 0.001, "Complex folding: 1.5 + 2.5 * 2.0 should be 6.5")
+
+	# Test integer negation
+	result = s.vmcallv("test_int_neg")
+	assert_eq(result, -42, "Int negation: -42 should be -42")
+
+	# Test float negation
+	result = s.vmcallv("test_float_neg")
+	assert_almost_eq(result, -3.14, 0.001, "Float negation: -3.14 should be -3.14")
+
+	s.queue_free()

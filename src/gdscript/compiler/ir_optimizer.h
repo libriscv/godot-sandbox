@@ -25,9 +25,10 @@ private:
 
 	// Helper for constant folding
 	struct ConstantValue {
-		enum class Type { NONE, INT, BOOL, STRING };
+		enum class Type { NONE, INT, FLOAT, BOOL, STRING };
 		Type type = Type::NONE;
 		int64_t int_value = 0;
+		double float_value = 0.0;
 		bool bool_value = false;
 		std::string string_value;
 
@@ -39,7 +40,7 @@ private:
 
 	// Helper methods
 	ConstantValue get_constant(const IRValue& val);
-	bool try_fold_binary_op(IROpcode op, const ConstantValue& lhs, const ConstantValue& rhs, ConstantValue& result);
+	bool try_fold_binary_op(IROpcode op, IRInstruction::TypeHint type_hint, const ConstantValue& lhs, const ConstantValue& rhs, ConstantValue& result);
 	void set_register_constant(int reg, const ConstantValue& value);
 	void invalidate_register(int reg);
 

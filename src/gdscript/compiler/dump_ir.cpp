@@ -5,6 +5,7 @@
 #include <iostream>
 #include <variant>
 #include <iomanip>
+#include <limits>
 
 using namespace gdscript;
 
@@ -42,12 +43,11 @@ std::string format_operand_detailed(const IRValue& op) {
 		case IRValue::Type::IMMEDIATE: {
 			int64_t val = std::get<int64_t>(op.value);
 			oss << val << " (0x" << std::hex << val << std::dec << ")";
-			// Also show as float interpretation if it could be a float
-			union { int64_t i; double d; } u;
-			u.i = val;
-			if (val != 0) {
-				oss << " [as_float: " << u.d << "]";
-			}
+			break;
+		}
+		case IRValue::Type::FLOAT: {
+			double val = std::get<double>(op.value);
+			oss << std::setprecision(std::numeric_limits<double>::max_digits10) << val;
 			break;
 		}
 		case IRValue::Type::LABEL:

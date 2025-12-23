@@ -6,6 +6,7 @@ namespace gdscript {
 const char* ir_opcode_name(IROpcode op) {
 	switch (op) {
 		case IROpcode::LOAD_IMM: return "LOAD_IMM";
+		case IROpcode::LOAD_FLOAT_IMM: return "LOAD_FLOAT_IMM";
 		case IROpcode::LOAD_BOOL: return "LOAD_BOOL";
 		case IROpcode::LOAD_STRING: return "LOAD_STRING";
 		case IROpcode::LOAD_VAR: return "LOAD_VAR";
@@ -60,6 +61,9 @@ std::string IRValue::to_string() const {
 			break;
 		case Type::IMMEDIATE:
 			oss << std::get<int64_t>(value);
+			break;
+		case Type::FLOAT:
+			oss << std::get<double>(value);
 			break;
 		case Type::LABEL:
 			oss << "@" << std::get<std::string>(value);

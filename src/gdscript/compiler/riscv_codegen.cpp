@@ -168,25 +168,34 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						emit_variant_create_int(stack_offset, value);
 						m_vreg_types[vreg] = ValueType::VARIANT;
 					}
-				} else if (instr.type_hint == IRInstruction::TypeHint::VARIANT_FLOAT) {
-					// Float literal - value is 64-bit double bit pattern
-					int stack_offset = get_variant_stack_offset(vreg);
-
-					// Set m_type = FLOAT (3)
-					emit_li(REG_T0, 3);
-					emit_sw(REG_T0, REG_SP, stack_offset);
-
-					// Store the 64-bit double bits at offset 8
-					emit_li(REG_T0, value);
-					emit_sd(REG_T0, REG_SP, stack_offset + 8);
-
-					m_vreg_types[vreg] = ValueType::VARIANT;
 				} else {
 					// Standard: create integer Variant on stack
 					int stack_offset = get_variant_stack_offset(vreg);
 					emit_variant_create_int(stack_offset, value);
 					m_vreg_types[vreg] = ValueType::VARIANT;
 				}
+				break;
+			}
+
+			case IROpcode::LOAD_FLOAT_IMM: {
+				int vreg = std::get<int>(instr.operands[0].value);
+				double value = std::get<double>(instr.operands[1].value);
+
+				// Convert double to bit pattern for storage
+				int64_t bits;
+				memcpy(&bits, &value, sizeof(double));
+
+				int stack_offset = get_variant_stack_offset(vreg);
+
+				// Set m_type = FLOAT (3)
+				emit_li(REG_T0, 3);
+				emit_sw(REG_T0, REG_SP, stack_offset);
+
+				// Store the 64-bit double bits at offset 8
+				emit_li(REG_T0, bits);
+				emit_sd(REG_T0, REG_SP, stack_offset + 8);
+
+				m_vreg_types[vreg] = ValueType::VARIANT;
 				break;
 			}
 

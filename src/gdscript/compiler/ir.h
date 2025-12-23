@@ -13,6 +13,7 @@ namespace gdscript {
 enum class IROpcode {
 	// Stack and register operations
 	LOAD_IMM,        // Load immediate integer value into register
+	LOAD_FLOAT_IMM,  // Load immediate float value into register
 	LOAD_BOOL,       // Load immediate boolean value into register
 	LOAD_STRING,     // Load immediate string value into register
 	LOAD_VAR,        // Load variable into register
@@ -77,13 +78,14 @@ struct IRValue {
 	enum class Type {
 		REGISTER,    // Virtual register (will be mapped to RISC-V registers)
 		IMMEDIATE,   // Immediate integer value
+		FLOAT,       // Immediate float value (64-bit double)
 		LABEL,       // Branch target label
 		VARIABLE,    // Local variable name
 		STRING       // String constant
 	};
 
 	Type type;
-	std::variant<int, int64_t, std::string> value;
+	std::variant<int, int64_t, double, std::string> value;
 
 	static IRValue reg(int r) {
 		IRValue v;
@@ -96,6 +98,13 @@ struct IRValue {
 		IRValue v;
 		v.type = Type::IMMEDIATE;
 		v.value = i;
+		return v;
+	}
+
+	static IRValue fimm(double d) {
+		IRValue v;
+		v.type = Type::FLOAT;
+		v.value = d;
 		return v;
 	}
 
