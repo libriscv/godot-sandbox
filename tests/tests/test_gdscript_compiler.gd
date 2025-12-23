@@ -622,3 +622,115 @@ func test_float_neg():
 	assert_almost_eq(result, -3.14, 0.001, "Float negation: -3.14 should be -3.14")
 
 	s.queue_free()
+
+func test_array_dictionary_constructors():
+	# Test Array() and Dictionary() constructor support
+	var gdscript_code = """
+func make_empty_array():
+	return Array()
+
+func make_empty_dictionary():
+	return Dictionary()
+
+func make_array_and_add():
+	var arr = Array()
+	arr.append(42)
+	arr.append(100)
+	return arr
+
+func make_dict_and_add():
+	var dict = Dictionary()
+	dict["key1"] = "value1"
+	dict["key2"] = 42
+	return dict
+
+func array_size():
+	var arr = Array()
+	arr.append(1)
+	arr.append(2)
+	arr.append(3)
+	return arr.size()
+
+func dict_size():
+	var dict = Dictionary()
+	dict["a"] = 1
+	dict["b"] = 2
+	dict["c"] = 3
+	return dict.size()
+
+func make_array_single():
+	return Array(42)
+
+func make_array_two():
+	return Array(1, 2)
+
+func make_array_with_values():
+	return Array(1, 2, 3, 4, 5)
+
+func make_array_with_strings():
+	return Array("hello", "world", "test")
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(1000)
+
+	# Test empty array
+	var arr = s.vmcallv("make_empty_array")
+	assert_eq(arr.size(), 0, "Empty Array() should have size 0")
+
+	# Test empty dictionary
+	var dict = s.vmcallv("make_empty_dictionary")
+	assert_eq(dict.size(), 0, "Empty Dictionary() should have size 0")
+
+	# Test array with append
+	arr = s.vmcallv("make_array_and_add")
+	assert_eq(arr.size(), 2, "Array with 2 appends should have size 2")
+	assert_eq(arr[0], 42, "First element should be 42")
+	assert_eq(arr[1], 100, "Second element should be 100")
+
+	# Test dictionary with set
+	dict = s.vmcallv("make_dict_and_add")
+	assert_eq(dict.size(), 2, "Dictionary with 2 keys should have size 2")
+	assert_eq(dict["key1"], "value1", "key1 should have value 'value1'")
+	assert_eq(dict["key2"], 42, "key2 should have value 42")
+
+	# Test array size
+	assert_eq(s.vmcallv("array_size"), 3, "array_size() should return 3")
+
+	# Test dictionary size
+	assert_eq(s.vmcallv("dict_size"), 3, "dict_size() should return 3")
+
+	# Test Array with single element
+	arr = s.vmcallv("make_array_single")
+	assert_eq(arr.size(), 1, "Array(42) should have size 1")
+	assert_eq(arr[0], 42, "First element should be 42")
+
+	# Test Array with two elements
+	arr = s.vmcallv("make_array_two")
+	assert_eq(arr.size(), 2, "Array(1,2) should have size 2")
+	assert_eq(arr[0], 1, "First element should be 1")
+	assert_eq(arr[1], 2, "Second element should be 2")
+
+	# Test Array with initial integer values
+	arr = s.vmcallv("make_array_with_values")
+	assert_eq(arr.size(), 5, "Array(1,2,3,4,5) should have size 5")
+	assert_eq(arr[0], 1, "First element should be 1")
+	assert_eq(arr[1], 2, "Second element should be 2")
+	assert_eq(arr[2], 3, "Third element should be 3")
+	assert_eq(arr[3], 4, "Fourth element should be 4")
+	assert_eq(arr[4], 5, "Fifth element should be 5")
+
+	# Test Array with initial string values
+	arr = s.vmcallv("make_array_with_strings")
+	assert_eq(arr.size(), 3, "Array with 3 strings should have size 3")
+	assert_eq(arr[0], "hello", "First string should be 'hello'")
+	assert_eq(arr[1], "world", "Second string should be 'world'")
+	assert_eq(arr[2], "test", "Third string should be 'test'")
+
+	s.queue_free()

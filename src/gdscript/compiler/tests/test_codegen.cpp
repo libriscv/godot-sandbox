@@ -350,6 +350,63 @@ void test_subscript_operations() {
 	std::cout << "  ✓ Subscript operations test passed" << std::endl;
 }
 
+void test_array_dictionary_constructors() {
+	std::cout << "Testing Array and Dictionary constructor generation..." << std::endl;
+
+	// Test empty Array constructor
+	std::string source_array = R"(
+func make_array():
+	return Array()
+)";
+
+	Lexer lexer_array(source_array);
+	Parser parser_array(lexer_array.tokenize());
+	Program program_array = parser_array.parse();
+
+	CodeGenerator codegen_array;
+	IRProgram ir_array = codegen_array.generate(program_array);
+
+	// Should have MAKE_ARRAY instruction
+	bool has_make_array = false;
+	for (const auto& instr : ir_array.functions[0].instructions) {
+		if (instr.opcode == IROpcode::MAKE_ARRAY) {
+			has_make_array = true;
+			// Check that element count is 0
+			if (instr.operands.size() >= 2) {
+				int count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+				assert(count == 0);
+			}
+			break;
+		}
+	}
+	assert(has_make_array);
+
+	// Test empty Dictionary constructor
+	std::string source_dict = R"(
+func make_dict():
+	return Dictionary()
+)";
+
+	Lexer lexer_dict(source_dict);
+	Parser parser_dict(lexer_dict.tokenize());
+	Program program_dict = parser_dict.parse();
+
+	CodeGenerator codegen_dict;
+	IRProgram ir_dict = codegen_dict.generate(program_dict);
+
+	// Should have MAKE_DICTIONARY instruction
+	bool has_make_dict = false;
+	for (const auto& instr : ir_dict.functions[0].instructions) {
+		if (instr.opcode == IROpcode::MAKE_DICTIONARY) {
+			has_make_dict = true;
+			break;
+		}
+	}
+	assert(has_make_dict);
+
+	std::cout << "  ✓ Array and Dictionary constructor test passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== Running Code Generation Tests ===" << std::endl;
 
@@ -364,6 +421,7 @@ int main() {
 		test_complex_expression();
 		test_string_constants();
 		test_subscript_operations();
+		test_array_dictionary_constructors();
 
 		std::cout << "\n✅ All code generation tests passed!" << std::endl;
 		return 0;

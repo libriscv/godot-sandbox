@@ -47,6 +47,8 @@ const char* ir_opcode_name(IROpcode op) {
 		case IROpcode::MAKE_RECT2: return "MAKE_RECT2";
 		case IROpcode::MAKE_RECT2I: return "MAKE_RECT2I";
 		case IROpcode::MAKE_PLANE: return "MAKE_PLANE";
+		case IROpcode::MAKE_ARRAY: return "MAKE_ARRAY";
+		case IROpcode::MAKE_DICTIONARY: return "MAKE_DICTIONARY";
 		case IROpcode::VGET_INLINE: return "VGET_INLINE";
 		case IROpcode::VSET_INLINE: return "VSET_INLINE";
 		default: return "UNKNOWN";

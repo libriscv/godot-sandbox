@@ -69,6 +69,10 @@ enum class IROpcode {
 	MAKE_RECT2I,     // Construct Rect2i inline
 	MAKE_PLANE,      // Construct Plane inline
 
+	// Array and Dictionary construction (via VCREATE syscall)
+	MAKE_ARRAY,      // Construct Array (empty or with elements)
+	MAKE_DICTIONARY, // Construct Dictionary (empty)
+
 	// Inline member access (no syscalls)
 	VGET_INLINE,     // Get inlined member from Variant (x, y, z, w, r, g, b, a)
 	VSET_INLINE,     // Set inlined member on Variant
@@ -152,6 +156,8 @@ struct IRInstruction {
 		VARIANT_RECT2,
 		VARIANT_RECT2I,
 		VARIANT_PLANE,
+		VARIANT_ARRAY,
+		VARIANT_DICTIONARY,
 	};
 
 	IROpcode opcode;

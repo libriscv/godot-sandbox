@@ -563,6 +563,8 @@ std::unordered_set<int> IROptimizer::find_live_registers(const IRFunction& func)
 			case IROpcode::MAKE_RECT2:
 			case IROpcode::MAKE_RECT2I:
 			case IROpcode::MAKE_PLANE:
+			case IROpcode::MAKE_ARRAY:
+			case IROpcode::MAKE_DICTIONARY:
 			// Inline member access - these read from the object register
 			case IROpcode::VGET_INLINE:
 			case IROpcode::VSET_INLINE:

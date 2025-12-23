@@ -786,7 +786,8 @@ IRInstruction::TypeHint CodeGenerator::get_register_type(int reg) const {
 bool CodeGenerator::is_inline_primitive_constructor(const std::string& name) const {
 	return name == "Vector2" || name == "Vector3" || name == "Vector4" ||
 	       name == "Vector2i" || name == "Vector3i" || name == "Vector4i" ||
-	       name == "Color" || name == "Rect2" || name == "Rect2i" || name == "Plane";
+	       name == "Color" || name == "Rect2" || name == "Rect2i" || name == "Plane" ||
+	       name == "Array" || name == "Dictionary";
 }
 
 bool CodeGenerator::is_inline_member_access(IRInstruction::TypeHint type, const std::string& member) const {
@@ -877,6 +878,21 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 		instr.operands.push_back(IRValue::reg(arg_regs[2])); // b
 		instr.operands.push_back(IRValue::reg(arg_regs[3])); // a
 		result_type = IRInstruction::TypeHint::VARIANT_COLOR;
+	} else if (name == "Array") {
+		// Array() - empty array or with initial elements
+		// For now, only support empty Array()
+		instr = IRInstruction(IROpcode::MAKE_ARRAY);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		for (int arg_reg : arg_regs) {
+			instr.operands.push_back(IRValue::reg(arg_reg));
+		}
+		result_type = IRInstruction::TypeHint::VARIANT_ARRAY;
+	} else if (name == "Dictionary") {
+		// Dictionary() - empty dictionary
+		instr = IRInstruction(IROpcode::MAKE_DICTIONARY);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		result_type = IRInstruction::TypeHint::VARIANT_DICTIONARY;
 	} else {
 		// Fallback to regular CALL for unsupported constructors or wrong arg counts
 		instr.operands.push_back(IRValue::str(name));
