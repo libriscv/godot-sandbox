@@ -469,6 +469,8 @@ int CodeGenerator::gen_expr(const Expr* expr, IRFunction& func) {
 		return gen_member_call(member, func);
 	} else if (auto* index = dynamic_cast<const IndexExpr*>(expr)) {
 		return gen_index(index, func);
+	} else if (auto* array_lit = dynamic_cast<const ArrayLiteralExpr*>(expr)) {
+		return gen_array_literal(array_lit, func);
 	} else {
 		throw std::runtime_error("Unknown expression type");
 	}
@@ -699,6 +701,37 @@ int CodeGenerator::gen_index(const IndexExpr* expr, IRFunction& func) {
 
 	free_register(obj_reg);
 	free_register(idx_reg);
+
+	return result_reg;
+}
+
+int CodeGenerator::gen_array_literal(const ArrayLiteralExpr* expr, IRFunction& func) {
+	std::vector<int> elem_regs;
+
+	// Generate code for each element
+	for (const auto& elem : expr->elements) {
+		int reg = gen_expr(elem.get(), func);
+		elem_regs.push_back(reg);
+	}
+
+	int result_reg = alloc_register();
+
+	// Create MAKE_ARRAY instruction
+	// Format: MAKE_ARRAY result_reg, element_count, elem1_reg, elem2_reg, ...
+	IRInstruction instr(IROpcode::MAKE_ARRAY);
+	instr.operands.push_back(IRValue::reg(result_reg));
+	instr.operands.push_back(IRValue::imm(static_cast<int>(elem_regs.size()))); // element count
+	for (int reg : elem_regs) {
+		instr.operands.push_back(IRValue::reg(reg));
+	}
+
+	func.instructions.push_back(instr);
+	set_register_type(result_reg, IRInstruction::TypeHint::VARIANT_ARRAY);
+
+	// Free element registers
+	for (int reg : elem_regs) {
+		free_register(reg);
+	}
 
 	return result_reg;
 }

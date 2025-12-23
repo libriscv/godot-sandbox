@@ -36,6 +36,7 @@ private:
 	int gen_call(const CallExpr* expr, IRFunction& func);
 	int gen_member_call(const MemberCallExpr* expr, IRFunction& func);
 	int gen_index(const IndexExpr* expr, IRFunction& func);
+	int gen_array_literal(const ArrayLiteralExpr* expr, IRFunction& func);
 
 	// Utilities
 	int alloc_register();

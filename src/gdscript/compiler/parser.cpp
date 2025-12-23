@@ -466,6 +466,20 @@ ExprPtr Parser::parse_primary() {
 		return expr;
 	}
 
+	if (match(TokenType::LBRACKET)) {
+		// Array literal: [1, 2, 3]
+		std::vector<ExprPtr> elements;
+
+		if (!check(TokenType::RBRACKET)) {
+			do {
+				elements.push_back(parse_expression());
+			} while (match(TokenType::COMMA));
+		}
+
+		consume(TokenType::RBRACKET, "Expected ']' after array elements");
+		return std::make_unique<ArrayLiteralExpr>(std::move(elements));
+	}
+
 	error("Expected expression");
 	return nullptr;
 }

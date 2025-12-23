@@ -734,3 +734,179 @@ func make_array_with_strings():
 	assert_eq(arr[2], "test", "Third string should be 'test'")
 
 	s.queue_free()
+
+func test_comprehensive_compiler_readiness():
+	# A comprehensive test that progressively tests more complex features
+	# Each function tests more features together to uncover integration bugs
+	# NOTE: Temporarily using minimal test to identify compilation issues
+	var gdscript_code = """
+# LEVEL 1: Basic types and literals
+func level1_literals():
+	var int_val = 42
+	var float_val = 3.14
+	var string_val = "Hello"
+	var bool_val = true
+	return int_val + float_val + string_val.length()
+
+# LEVEL 2: Arithmetic operations
+func level2_arithmetic(a, b):
+	var sum = a + b
+	var diff = a - b
+	var prod = a * b
+	var div = a / b
+	var mod = a % b
+	return sum + diff + prod + div + mod
+
+# LEVEL 3: String operations and method chaining
+func level3_strings(name):
+	var greeting = "Hello, " + name + "!"
+	var upper = greeting.to_upper()
+	var lower = upper.to_lower()
+	var trimmed = lower.strip_edges()
+	return trimmed.length()
+
+# LEVEL 4: Array operations
+func level4_arrays():
+	var arr = Array()
+	arr.append(10)
+	arr.append(20)
+	arr.append(30)
+	var first = arr[0]
+	var last = arr[arr.size() - 1]
+	arr.sort()
+	return arr[0] + arr[1] + arr[2]
+
+# LEVEL 5: Dictionary operations
+func level5_dictionaries():
+	var dict = Dictionary()
+	dict["count"] = 0
+	for i in range(5):
+		dict["count"] = dict["count"] + 1
+	dict["doubled"] = dict["count"] * 2
+	return dict["count"] + dict["doubled"]
+
+# LEVEL 6: Control flow - if/else
+func level6_ifelse(x, y):
+	if x > y:
+		return x * 2
+	elif x < y:
+		return y * 2
+	else:
+		return x + y
+
+# LEVEL 7: Nested loops with arrays
+func level7_nested_loops():
+	var matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+	var sum = 0
+	for i in range(3):
+		for j in range(3):
+			sum = sum + matrix[i][j]
+	return sum
+
+# LEVEL 8: Function calls and recursion
+func level8_recursive(n):
+	if n <= 1:
+		return 1
+	return n * level8_recursive(n - 1)
+
+func level8_helper(x):
+	return x * x
+
+func level8_call_chain(n):
+	var squared = level8_helper(n)
+	var doubled = squared * 2
+	return level8_recursive(doubled % 5 + 1)
+
+# LEVEL 9: Vector types and math
+func level9_vectors():
+	var v2 = Vector2(3.0, 4.0)
+	var v3 = Vector3(1.0, 2.0, 3.0)
+	var v2i = Vector2i(10, 20)
+	var v3i = Vector3i(2, 3, 4)
+	var v2_len = v2.x + v2.y
+	var v3_len = v3.x + v3.y + v3.z
+	var v2i_len = v2i.x + v2i.y
+	var v3i_len = v3i.x * v3i.y * v3i.z
+	return v2_len + v3_len + v2i_len + v3i_len
+
+# LEVEL 10: Mixed complex operations
+func level10_complex(data):
+	var result = 0
+	for i in range(data.size()):
+		var val = data[i]
+		if val > 0:
+			result = result + val
+		elif val < 0:
+			result = result - val
+		else:
+			result = result + 10
+	return result
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(100000)
+
+	# LEVEL 1: Basic types
+	var result = s.vmcallv("level1_literals")
+	# 42 + 3.14 + 5 (length of "Hello") = 50.14
+	assert_eq(result, 50.14, "Level 1: Basic literals should work")
+
+	# LEVEL 2: Arithmetic
+	result = s.vmcallv("level2_arithmetic", 10, 3)
+	# sum=13, diff=7, prod=30, div=3, mod=1 => 13+7+30+3+1 = 54
+	assert_eq(result, 54, "Level 2: Arithmetic operations")
+
+	# LEVEL 3: String operations
+	result = s.vmcallv("level3_strings", "Claude")
+	# "Hello, Claude!" -> uppercase -> lowercase -> trim -> length = 14
+	assert_eq(result, 14, "Level 3: String operations")
+
+	# LEVEL 4: Array operations
+	result = s.vmcallv("level4_arrays")
+	# [10, 20, 30] sorted -> [10, 20, 30] -> sum = 60
+	assert_eq(result, 60, "Level 4: Array operations")
+
+	# LEVEL 5: Dictionary operations
+	result = s.vmcallv("level5_dictionaries")
+	# count = 5, doubled = 10 -> 15
+	assert_eq(result, 15, "Level 5: Dictionary operations")
+
+	# LEVEL 6: Control flow
+	result = s.vmcallv("level6_ifelse", 10, 5)
+	assert_eq(result, 20, "Level 6: If/else (x > y)")
+	result = s.vmcallv("level6_ifelse", 5, 10)
+	assert_eq(result, 20, "Level 6: If/else (x < y)")
+	result = s.vmcallv("level6_ifelse", 5, 5)
+	assert_eq(result, 10, "Level 6: If/else (x == y)")
+
+	# LEVEL 7: Nested loops
+	result = s.vmcallv("level7_nested_loops")
+	# 1+2+3+4+5+6+7+8+9 = 45
+	assert_eq(result, 45, "Level 7: Nested loops")
+
+	# LEVEL 8: Recursion
+	result = s.vmcallv("level8_recursive", 5)
+	# 5! = 120
+	assert_eq(result, 120, "Level 8: Recursive factorial")
+	result = s.vmcallv("level8_call_chain", 3)
+	# squared=9, doubled=18, 18%5+1=4, 4! = 24
+	assert_eq(result, 24, "Level 8: Call chain")
+
+	# LEVEL 9: Vectors
+	result = s.vmcallv("level9_vectors")
+	# v2: 7.0, v3: 6.0, v2i: 30, v3i: 24 -> 67.0
+	assert_eq(result, 67.0, "Level 9: Vector operations")
+
+	# LEVEL 10: Complex with mixed data
+	var test_data = [1, -2, 3, -4, 0, 5]
+	result = s.vmcallv("level10_complex", test_data)
+	# 1 + 2 + 3 + 4 + 10 + 5 = 25
+	assert_eq(result, 25, "Level 10: Mixed complex operations")
+
+	s.queue_free()

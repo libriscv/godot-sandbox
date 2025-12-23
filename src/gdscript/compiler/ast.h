@@ -97,6 +97,14 @@ struct IndexExpr : Expr {
 		: object(std::move(obj)), index(std::move(idx)) {}
 };
 
+// Array literal: [1, 2, 3]
+struct ArrayLiteralExpr : Expr {
+	std::vector<ExprPtr> elements;
+
+	explicit ArrayLiteralExpr(std::vector<ExprPtr> elems)
+		: elements(std::move(elems)) {}
+};
+
 // Statement base class
 struct Stmt {
 	virtual ~Stmt() = default;
