@@ -566,3 +566,210 @@ func return_array_of_dicts():
 	assert_eq(result[2].get("c"), 3, "return_array_of_dicts()[2] should have c = 3")
 
 	s.queue_free()
+
+func test_array_index_assignment():
+	var gdscript_code = """
+func test():
+	var arr = [1, 2, 3, 4, 5]
+	arr[0] = 42
+	arr[2] = 99
+	return arr
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+
+	var result = s.vmcallv("test")
+	assert_eq(result.size(), 5, "Array should have 5 elements")
+	assert_eq(result[0], 42, "arr[0] should be 42")
+	assert_eq(result[1], 2, "arr[1] should be 2")
+	assert_eq(result[2], 99, "arr[2] should be 99")
+	assert_eq(result[3], 4, "arr[3] should be 4")
+	assert_eq(result[4], 5, "arr[4] should be 5")
+
+	s.queue_free()
+
+func test_dictionary_index_assignment():
+	var gdscript_code = """
+func test():
+	var dict = {"key1": "value1", "key2": 42}
+	dict["key3"] = "value3"
+	dict["key2"] = 100
+	return dict
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+
+	var result = s.vmcallv("test")
+	assert_eq(result.get("key1"), "value1", "dict[\"key1\"] should be \"value1\"")
+	assert_eq(result.get("key2"), 100, "dict[\"key2\"] should be 100")
+	assert_eq(result.get("key3"), "value3", "dict[\"key3\"] should be \"value3\"")
+
+	s.queue_free()
+
+func test_index_assignment_with_expression():
+	var gdscript_code = """
+func test():
+	var arr = [1, 2, 3, 4, 5]
+	var i = 1
+	arr[i + 1] = 10
+	arr[i * 2] = 20
+	return arr
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+
+	var result = s.vmcallv("test")
+	assert_eq(result[0], 1, "arr[0] should be 1")
+	assert_eq(result[1], 2, "arr[1] should be 2")
+	assert_eq(result[2], 10, "arr[2] should be 10 (i+1 = 2)")
+	assert_eq(result[4], 20, "arr[4] should be 20 (i*2 = 2)")
+
+	s.queue_free()
+
+func test_nested_index_assignment():
+	var gdscript_code = """
+func test():
+	var arr = [[1, 2], [3, 4]]
+	arr[0][1] = 99
+	return arr
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+
+	var result = s.vmcallv("test")
+	assert_eq(result.size(), 2, "Array should have 2 elements")
+	assert_eq(result[0].size(), 2, "arr[0] should have 2 elements")
+	assert_eq(result[0][0], 1, "arr[0][0] should be 1")
+	assert_eq(result[0][1], 99, "arr[0][1] should be 99")
+
+	s.queue_free()
+
+# Test cases from godot-dodo dataset
+func test_godot_dodo_array_index_assignment():
+	# From godot-dodo: array index assignment with variable index
+	var gdscript_code = """
+func test():
+	var plugins = [1, 2, 3, 4]
+	var index = 2
+	plugins[index] = plugins[index-1]
+	plugins[index-1] = plugins[index]
+	return plugins
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+
+	var result = s.vmcallv("test")
+	assert_eq(result.size(), 4, "Array should have 4 elements")
+
+	s.queue_free()
+
+func test_godot_dodo_dictionary_index_assignment():
+	# From godot-dodo: dictionary index assignment
+	var gdscript_code = """
+func test():
+	var event_data = {"definition": "old", "condition": "old", "value": "old"}
+	event_data['definition'] = ''
+	event_data['condition'] = ''
+	event_data['value'] = ''
+	return event_data
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+
+	var result = s.vmcallv("test")
+	assert_eq(result.get("definition"), "", "dict['definition'] should be empty string")
+	assert_eq(result.get("condition"), "", "dict['condition'] should be empty string")
+	assert_eq(result.get("value"), "", "dict['value'] should be empty string")
+
+	s.queue_free()
+
+func test_godot_dodo_nested_array_assignment():
+	# From godot-dodo: nested array assignment (2D array)
+	var gdscript_code = """
+func test():
+	var current_state = [[0, 1], [2, 3]]
+	var x = 0
+	var y = 1
+	current_state[x][y] = 99
+	return current_state
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+
+	var result = s.vmcallv("test")
+	assert_eq(result.size(), 2, "Array should have 2 elements")
+	assert_eq(result[0].size(), 2, "result[0] should have 2 elements")
+	assert_eq(result[0][1], 99, "current_state[0][1] should be 99")
+
+	s.queue_free()
+
+func test_godot_dodo_array_swap_pattern():
+	# From godot-dodo: array swap pattern
+	var gdscript_code = """
+func test():
+	var arr = [10, 20, 30, 40]
+	var index = 1
+	var tmp = arr[index]
+	arr[index] = arr[index+1]
+	arr[index+1] = tmp
+	return arr
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+
+	var result = s.vmcallv("test")
+	assert_eq(result.size(), 4, "Array should have 4 elements")
+	assert_eq(result[0], 10, "arr[0] should be 10")
+	assert_eq(result[1], 30, "arr[1] should be 30 (swapped)")
+	assert_eq(result[2], 20, "arr[2] should be 20 (swapped)")
+	assert_eq(result[3], 40, "arr[3] should be 40")
+
+	s.queue_free()

@@ -652,6 +652,136 @@ void test_dictionary_with_nested_dict_and_array_codegen() {
 	std::cout << "  ✓ Dictionary with nested dict and array codegen test passed" << std::endl;
 }
 
+void test_array_index_assignment_codegen() {
+	std::cout << "Testing array index assignment codegen..." << std::endl;
+
+	std::string source = R"(func test():
+	var arr = [1, 2, 3]
+	arr[0] = 42
+	return arr
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	CodeGenerator codegen;
+	IRProgram ir = codegen.generate(parser.parse());
+
+	assert(ir.functions.size() == 1);
+	const auto &func = ir.functions[0];
+
+	// Should have VSET instruction for arr[0] = 42
+	bool has_vset = false;
+	for (const auto &instr : func.instructions) {
+		if (instr.opcode == IROpcode::VSET) {
+			has_vset = true;
+			// VSET should have 3 operands: obj_reg, idx_reg, value_reg
+			assert(instr.operands.size() == 3);
+			break;
+		}
+	}
+	assert(has_vset);
+
+	std::cout << "  ✓ Array index assignment codegen test passed" << std::endl;
+}
+
+void test_dictionary_index_assignment_codegen() {
+	std::cout << "Testing dictionary index assignment codegen..." << std::endl;
+
+	std::string source = R"(func test():
+	var dict = {"key1": "value1"}
+	dict["key2"] = "value2"
+	return dict
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	CodeGenerator codegen;
+	IRProgram ir = codegen.generate(parser.parse());
+
+	assert(ir.functions.size() == 1);
+	const auto &func = ir.functions[0];
+
+	// Should have VSET instruction for dict["key2"] = "value2"
+	bool has_vset = false;
+	for (const auto &instr : func.instructions) {
+		if (instr.opcode == IROpcode::VSET) {
+			has_vset = true;
+			assert(instr.operands.size() == 3);
+			break;
+		}
+	}
+	assert(has_vset);
+
+	std::cout << "  ✓ Dictionary index assignment codegen test passed" << std::endl;
+}
+
+void test_index_read_codegen() {
+	std::cout << "Testing index read codegen..." << std::endl;
+
+	std::string source = R"(func test():
+	var arr = [1, 2, 3]
+	var x = arr[0]
+	return x
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	CodeGenerator codegen;
+	IRProgram ir = codegen.generate(parser.parse());
+
+	assert(ir.functions.size() == 1);
+	const auto &func = ir.functions[0];
+
+	// Should have VGET instruction for arr[0]
+	bool has_vget = false;
+	for (const auto &instr : func.instructions) {
+		if (instr.opcode == IROpcode::VGET) {
+			has_vget = true;
+			// VGET should have 3 operands: result_reg, obj_reg, idx_reg
+			assert(instr.operands.size() == 3);
+			break;
+		}
+	}
+	assert(has_vget);
+
+	std::cout << "  ✓ Index read codegen test passed" << std::endl;
+}
+
+void test_variable_assignment_still_works_codegen() {
+	std::cout << "Testing variable assignment still works codegen..." << std::endl;
+
+	std::string source = R"(func test():
+	var x = 5
+	x = 10
+	return x
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	CodeGenerator codegen;
+	IRProgram ir = codegen.generate(parser.parse());
+
+	assert(ir.functions.size() == 1);
+	const auto &func = ir.functions[0];
+
+	// Should NOT have VSET (variable assignment uses MOVE)
+	// Should have MOVE instruction for x = 10
+	bool has_move = false;
+	bool has_vset = false;
+	for (const auto &instr : func.instructions) {
+		if (instr.opcode == IROpcode::MOVE) {
+			has_move = true;
+		}
+		if (instr.opcode == IROpcode::VSET) {
+			has_vset = true;
+		}
+	}
+	assert(has_move);
+	assert(!has_vset); // Variable assignment should not use VSET
+
+	std::cout << "  ✓ Variable assignment still works codegen test passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== Running Array and Dictionary Literal Code Generation Tests ===" << std::endl;
 
@@ -671,6 +801,12 @@ int main() {
 		test_large_array_codegen();
 		test_array_of_arrays_of_dictionaries_codegen();
 		test_dictionary_with_nested_dict_and_array_codegen();
+
+		// Index assignment codegen tests
+		test_array_index_assignment_codegen();
+		test_dictionary_index_assignment_codegen();
+		test_index_read_codegen();
+		test_variable_assignment_still_works_codegen();
 
 		std::cout << "\n✅ All array and dictionary literal code generation tests passed!" << std::endl;
 		return 0;

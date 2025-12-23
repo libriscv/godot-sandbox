@@ -532,6 +532,153 @@ void test_dictionary_with_nested_dict_and_array() {
 	std::cout << "  ✓ Dictionary with nested dict and array test passed" << std::endl;
 }
 
+void test_array_index_assignment() {
+	std::cout << "Testing array index assignment..." << std::endl;
+
+	std::string source = R"(func test():
+	var arr = [1, 2, 3]
+	arr[0] = 42
+	return arr
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	assert(program.functions[0].body.size() == 3);
+
+	// Check assignment statement
+	auto *assign = dynamic_cast<AssignStmt *>(program.functions[0].body[1].get());
+	assert(assign != nullptr);
+	assert(assign->value != nullptr);
+
+	// Check that target is an IndexExpr
+	auto *index_expr = dynamic_cast<IndexExpr *>(assign->target.get());
+	assert(index_expr != nullptr);
+	assert(index_expr->object != nullptr);
+	assert(index_expr->index != nullptr);
+
+	// Check object is a variable
+	auto *var_expr = dynamic_cast<VariableExpr *>(index_expr->object.get());
+	assert(var_expr != nullptr);
+	assert(var_expr->name == "arr");
+
+	// Check index is a literal
+	auto *idx_lit = dynamic_cast<LiteralExpr *>(index_expr->index.get());
+	assert(idx_lit != nullptr);
+	assert(idx_lit->lit_type == LiteralExpr::Type::INTEGER);
+	assert(std::get<int64_t>(idx_lit->value) == 0);
+
+	// Check value is a literal
+	auto *val_lit = dynamic_cast<LiteralExpr *>(assign->value.get());
+	assert(val_lit != nullptr);
+	assert(val_lit->lit_type == LiteralExpr::Type::INTEGER);
+	assert(std::get<int64_t>(val_lit->value) == 42);
+
+	std::cout << "  ✓ Array index assignment test passed" << std::endl;
+}
+
+void test_dictionary_index_assignment() {
+	std::cout << "Testing dictionary index assignment..." << std::endl;
+
+	std::string source = R"(func test():
+	var dict = {"key1": "value1"}
+	dict["key2"] = "value2"
+	return dict
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	assert(program.functions[0].body.size() == 3);
+
+	// Check assignment statement
+	auto *assign = dynamic_cast<AssignStmt *>(program.functions[0].body[1].get());
+	assert(assign != nullptr);
+
+	// Check that target is an IndexExpr
+	auto *index_expr = dynamic_cast<IndexExpr *>(assign->target.get());
+	assert(index_expr != nullptr);
+
+	// Check object is a variable
+	auto *var_expr = dynamic_cast<VariableExpr *>(index_expr->object.get());
+	assert(var_expr != nullptr);
+	assert(var_expr->name == "dict");
+
+	// Check index is a string literal
+	auto *idx_lit = dynamic_cast<LiteralExpr *>(index_expr->index.get());
+	assert(idx_lit != nullptr);
+	assert(idx_lit->lit_type == LiteralExpr::Type::STRING);
+	assert(std::get<std::string>(idx_lit->value) == "key2");
+
+	std::cout << "  ✓ Dictionary index assignment test passed" << std::endl;
+}
+
+void test_index_assignment_with_expression() {
+	std::cout << "Testing index assignment with expression..." << std::endl;
+
+	std::string source = R"(func test():
+	var arr = [1, 2, 3]
+	var i = 1
+	arr[i + 1] = 10
+	return arr
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	assert(program.functions[0].body.size() == 4);
+
+	// Check assignment statement
+	auto *assign = dynamic_cast<AssignStmt *>(program.functions[0].body[2].get());
+	assert(assign != nullptr);
+
+	// Check that target is an IndexExpr
+	auto *index_expr = dynamic_cast<IndexExpr *>(assign->target.get());
+	assert(index_expr != nullptr);
+
+	// Check index is a binary expression
+	auto *bin_expr = dynamic_cast<BinaryExpr *>(index_expr->index.get());
+	assert(bin_expr != nullptr);
+	assert(bin_expr->op == BinaryExpr::Op::ADD);
+
+	std::cout << "  ✓ Index assignment with expression test passed" << std::endl;
+}
+
+void test_variable_assignment_still_works() {
+	std::cout << "Testing variable assignment still works..." << std::endl;
+
+	std::string source = R"(func test():
+	var x = 5
+	x = 10
+	return x
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	assert(program.functions[0].body.size() == 3);
+
+	// Check assignment statement
+	auto *assign = dynamic_cast<AssignStmt *>(program.functions[0].body[1].get());
+	assert(assign != nullptr);
+
+	// Check that target is a VariableExpr (not IndexExpr)
+	auto *var_expr = dynamic_cast<VariableExpr *>(assign->target.get());
+	assert(var_expr != nullptr);
+	assert(var_expr->name == "x");
+
+	// Check value
+	auto *val_lit = dynamic_cast<LiteralExpr *>(assign->value.get());
+	assert(val_lit != nullptr);
+	assert(std::get<int64_t>(val_lit->value) == 10);
+
+	std::cout << "  ✓ Variable assignment still works test passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== Running Array and Dictionary Literal Parser Tests ===" << std::endl;
 
@@ -551,6 +698,12 @@ int main() {
 		test_large_array();
 		test_array_of_arrays_of_dictionaries();
 		test_dictionary_with_nested_dict_and_array();
+
+		// Index assignment tests
+		test_array_index_assignment();
+		test_dictionary_index_assignment();
+		test_index_assignment_with_expression();
+		test_variable_assignment_still_works();
 
 		std::cout << "\n✅ All array and dictionary literal parser tests passed!" << std::endl;
 		return 0;

@@ -147,12 +147,13 @@ struct VarDeclStmt : Stmt {
 	VarDeclStmt(std::string n, ExprPtr init = nullptr) : name(std::move(n)), initializer(std::move(init)) {}
 };
 
-// Assignment: x = 42
+// Assignment: x = 42 or arr[0] = value
 struct AssignStmt : Stmt {
-	std::string name;
+	ExprPtr target; // VariableExpr for x = value, IndexExpr for arr[0] = value
 	ExprPtr value;
+	// Future: std::optional<std::string> type_hint; // For: arr[0]: int = 5
 
-	AssignStmt(std::string n, ExprPtr v) : name(std::move(n)), value(std::move(v)) {}
+	AssignStmt(ExprPtr t, ExprPtr v) : target(std::move(t)), value(std::move(v)) {}
 };
 
 // Return statement: return x

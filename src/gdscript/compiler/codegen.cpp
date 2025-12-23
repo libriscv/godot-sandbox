@@ -104,19 +104,38 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, IRFunction& func) {
 void CodeGenerator::gen_assign(const AssignStmt* stmt, IRFunction& func) {
 	int value_reg = gen_expr(stmt->value.get(), func);
 
-	Variable* var = find_variable(stmt->name);
-	if (!var) {
-		throw std::runtime_error("Undefined variable: " + stmt->name);
-	}
+	if (auto *var_expr = dynamic_cast<VariableExpr *>(stmt->target.get())) {
+		// Variable assignment: x = value
+		Variable *var = find_variable(var_expr->name);
+		if (!var) {
+			throw std::runtime_error("Undefined variable: " + var_expr->name);
+		}
 
-	// Store value into variable's register
-	if (var->register_num != value_reg) {
-		func.instructions.emplace_back(IROpcode::MOVE,
-		                               IRValue::reg(var->register_num),
-		                               IRValue::reg(value_reg));
-	}
+		// Store value into variable's register
+		if (var->register_num != value_reg) {
+			func.instructions.emplace_back(IROpcode::MOVE,
+					IRValue::reg(var->register_num),
+					IRValue::reg(value_reg));
+		}
 
-	free_register(value_reg);
+		free_register(value_reg);
+	} else if (auto *index_expr = dynamic_cast<IndexExpr *>(stmt->target.get())) {
+		// Index assignment: arr[0] = value or dict["key"] = value
+		int obj_reg = gen_expr(index_expr->object.get(), func);
+		int idx_reg = gen_expr(index_expr->index.get(), func);
+
+		// Emit VSET instruction: VSET obj_reg, idx_reg, value_reg
+		func.instructions.emplace_back(IROpcode::VSET,
+				IRValue::reg(obj_reg),
+				IRValue::reg(idx_reg),
+				IRValue::reg(value_reg));
+
+		free_register(obj_reg);
+		free_register(idx_reg);
+		free_register(value_reg);
+	} else {
+		throw std::runtime_error("Invalid assignment target: expected VariableExpr or IndexExpr");
+	}
 }
 
 void CodeGenerator::gen_return(const ReturnStmt* stmt, IRFunction& func) {

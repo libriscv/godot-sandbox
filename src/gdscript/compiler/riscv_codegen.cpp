@@ -787,12 +787,318 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// Return value is already in the Variant at result_vreg
 				break;
+		}
+
+		case IROpcode::CREATE_ARRAY: {
+				// CREATE_ARRAY format: result_reg, size
+				if (instr.operands.size() != 2) {
+					throw std::runtime_error("CREATE_ARRAY requires 2 operands");
+				}
+				int result_vreg = std::get<int>(instr.operands[0].value);
+				int64_t size = std::get<int64_t>(instr.operands[1].value);
+
+				int result_offset = get_variant_stack_offset(result_vreg);
+
+				// Handle register clobbering
+				std::vector<uint8_t> clobbered_regs = { REG_A0, REG_A1, REG_A2, REG_A3 };
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+				for (const auto &move : moves) {
+					emit_mv(move.second, move.first);
+				}
+
+				// a0 = Array_Op::CREATE (0)
+				emit_li(REG_A0, 0);
+				// a1 = size
+				emit_li(REG_A1, size);
+				// a2 = idx (not used for CREATE, set to 0)
+				emit_li(REG_A2, 0);
+				// a3 = pointer to result Variant
+				if (result_offset < 2048) {
+					emit_i_type(0x13, REG_A3, 0, REG_SP, result_offset);
+				} else {
+					emit_li(REG_A3, result_offset);
+					emit_add(REG_A3, REG_SP, REG_A3);
+				}
+
+				// ECALL_ARRAY_OPS = 521
+				emit_li(REG_A7, 521);
+				emit_ecall();
+
+				m_vreg_types[result_vreg] = ValueType::VARIANT;
+				break;
 			}
 
-			// Not implementing these for now
+			case IROpcode::ARRAY_PUSH: {
+				// ARRAY_PUSH format: array_reg, element_reg
+				if (instr.operands.size() != 2) {
+					throw std::runtime_error("ARRAY_PUSH requires 2 operands");
+				}
+				int array_vreg = std::get<int>(instr.operands[0].value);
+				int elem_vreg = std::get<int>(instr.operands[1].value);
+
+				int array_offset = get_variant_stack_offset(array_vreg);
+				int elem_offset = get_variant_stack_offset(elem_vreg);
+
+				// Handle register clobbering
+				std::vector<uint8_t> clobbered_regs = { REG_A0, REG_A1, REG_A2, REG_A3, REG_A4 };
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+				for (const auto &move : moves) {
+					emit_mv(move.second, move.first);
+				}
+
+				// a0 = Array_Op::PUSH_BACK (1)
+				emit_li(REG_A0, 1);
+				// Load array variant index from stack into a1
+				emit_ld(REG_A1, REG_SP, array_offset + 8); // Load array variant index
+				// a2 = idx (not used for PUSH_BACK, set to 0)
+				emit_li(REG_A2, 0);
+				// a3 = pointer to element Variant
+				if (elem_offset < 2048) {
+					emit_i_type(0x13, REG_A3, 0, REG_SP, elem_offset);
+				} else {
+					emit_li(REG_A3, elem_offset);
+					emit_add(REG_A3, REG_SP, REG_A3);
+				}
+
+				// ECALL_ARRAY_OPS = 521
+				emit_li(REG_A7, 521);
+				emit_ecall();
+				break;
+			}
+
+			case IROpcode::VGET: {
+				// VGET format: result_reg, obj_reg, idx_reg
+				// Get value from array[idx] or dict[key]
+				if (instr.operands.size() != 3) {
+					throw std::runtime_error("VGET requires 3 operands");
+				}
+				int result_vreg = std::get<int>(instr.operands[0].value);
+				int obj_vreg = std::get<int>(instr.operands[1].value);
+				int idx_vreg = std::get<int>(instr.operands[2].value);
+
+				int result_offset = get_variant_stack_offset(result_vreg);
+				int obj_offset = get_variant_stack_offset(obj_vreg);
+				int idx_offset = get_variant_stack_offset(idx_vreg);
+
+				// Handle register clobbering
+				std::vector<uint8_t> clobbered_regs = { REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6, REG_A7 };
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+				for (const auto &move : moves) {
+					emit_mv(move.second, move.first);
+				}
+
+				// Check variant type to determine if it's Array or Dictionary
+				// Load object variant type into t0
+				emit_load_variant_type(REG_T0, REG_SP, obj_offset);
+
+				// Variant::ARRAY = 19, Variant::DICTIONARY = 20 (Godot C++ API)
+				// Compare with ARRAY type - branch to array path if equal
+				emit_li(REG_T1, 19); // Variant::ARRAY
+				size_t beq_array_pos = m_code.size();
+				emit_beq(REG_T0, REG_T1, 0); // Offset will be patched
+
+				// Not an array, check if dictionary
+				emit_li(REG_T1, 20); // Variant::DICTIONARY
+				size_t bne_dict_pos = m_code.size();
+				emit_bne(REG_T0, REG_T1, 0); // Offset will be patched
+
+				// Dictionary GET path
+				// a0 = Dictionary_Op::GET (0)
+				emit_li(REG_A0, 0);
+				// Load dict variant index from stack into a1
+				emit_ld(REG_A1, REG_SP, obj_offset + 8); // Load dict variant index
+				// a2 = pointer to key Variant
+				if (idx_offset < 2048) {
+					emit_i_type(0x13, REG_A2, 0, REG_SP, idx_offset);
+				} else {
+					emit_li(REG_A2, idx_offset);
+					emit_add(REG_A2, REG_SP, REG_A2);
+				}
+				// a3 = pointer to result Variant
+				if (result_offset < 2048) {
+					emit_i_type(0x13, REG_A3, 0, REG_SP, result_offset);
+				} else {
+					emit_li(REG_A3, result_offset);
+					emit_add(REG_A3, REG_SP, REG_A3);
+				}
+				// ECALL_DICTIONARY_OPS = 524
+				emit_li(REG_A7, 524);
+				emit_ecall();
+				size_t jal_end_pos = m_code.size();
+				emit_jal(REG_ZERO, 0); // Offset will be patched
+
+				// Array GET path (target of beq)
+				size_t array_path_pos = m_code.size();
+				// Patch beq offset: (array_path_pos - beq_array_pos) / 2
+				int32_t beq_offset = (array_path_pos - beq_array_pos) / 2;
+				// Rewrite the beq instruction with correct offset
+				uint32_t beq_instr = (0x63 << 25) | (REG_T1 << 20) | (REG_T0 << 15) | (0x0 << 12) | ((beq_offset & 0x1e) << 7) | ((beq_offset >> 5) << 25);
+				*(uint32_t *)(&m_code[beq_array_pos]) = beq_instr;
+
+				// Load array variant index from stack into a1
+				emit_ld(REG_A1, REG_SP, obj_offset + 8); // Load array variant index
+				// Load index variant value (as int) into a2
+				emit_load_variant_int(REG_A2, REG_SP, idx_offset);
+				// a3 = pointer to result Variant
+				if (result_offset < 2048) {
+					emit_i_type(0x13, REG_A3, 0, REG_SP, result_offset);
+				} else {
+					emit_li(REG_A3, result_offset);
+					emit_add(REG_A3, REG_SP, REG_A3);
+				}
+				// ECALL_ARRAY_AT = 522 (get mode: positive index)
+				emit_li(REG_A7, 522);
+				emit_ecall();
+
+				// End label (target of jal from dict path)
+				size_t end_pos = m_code.size();
+				// Patch jal offset: (end_pos - jal_end_pos) / 2
+				int32_t jal_offset = (end_pos - jal_end_pos) / 2;
+				uint32_t jal_instr = (0x6f << 25) | ((jal_offset & 0xff000) << 0) | ((jal_offset & 0x800) << 20) | ((jal_offset & 0x7fe) << 9) | (REG_ZERO << 7);
+				*(uint32_t *)(&m_code[jal_end_pos]) = jal_instr;
+
+				// Error path (target of bne if not dictionary)
+				size_t error_pos = m_code.size();
+				// Patch bne offset: (error_pos - bne_dict_pos) / 2
+				int32_t bne_offset = (error_pos - bne_dict_pos) / 2;
+				uint32_t bne_instr = (0x63 << 25) | (REG_T1 << 20) | (REG_T0 << 15) | (0x1 << 12) | ((bne_offset & 0x1e) << 7) | ((bne_offset >> 5) << 25);
+				*(uint32_t *)(&m_code[bne_dict_pos]) = bne_instr;
+
+				// Error: try array_at anyway, it will throw at runtime
+				emit_ld(REG_A1, REG_SP, obj_offset + 8);
+				emit_load_variant_int(REG_A2, REG_SP, idx_offset);
+				if (result_offset < 2048) {
+					emit_i_type(0x13, REG_A3, 0, REG_SP, result_offset);
+				} else {
+					emit_li(REG_A3, result_offset);
+					emit_add(REG_A3, REG_SP, REG_A3);
+				}
+				emit_li(REG_A7, 522);
+				emit_ecall();
+
+				m_vreg_types[result_vreg] = ValueType::VARIANT;
+				break;
+			}
+
+			case IROpcode::VSET: {
+				// VSET format: obj_reg, idx_reg, value_reg
+				// Set value in array[idx] = value or dict[key] = value
+				if (instr.operands.size() != 3) {
+					throw std::runtime_error("VSET requires 3 operands");
+				}
+				int obj_vreg = std::get<int>(instr.operands[0].value);
+				int idx_vreg = std::get<int>(instr.operands[1].value);
+				int value_vreg = std::get<int>(instr.operands[2].value);
+
+				int obj_offset = get_variant_stack_offset(obj_vreg);
+				int idx_offset = get_variant_stack_offset(idx_vreg);
+				int value_offset = get_variant_stack_offset(value_vreg);
+
+				// Handle register clobbering
+				std::vector<uint8_t> clobbered_regs = { REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6, REG_A7 };
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+				for (const auto &move : moves) {
+					emit_mv(move.second, move.first);
+				}
+
+				// Check variant type to determine if it's Array or Dictionary
+				// Load object variant type into t0
+				emit_load_variant_type(REG_T0, REG_SP, obj_offset);
+
+				// Variant::ARRAY = 19, Variant::DICTIONARY = 20
+				// Compare with ARRAY type - branch to array path if equal
+				emit_li(REG_T1, 19); // Variant::ARRAY
+				size_t beq_array_pos = m_code.size();
+				emit_beq(REG_T0, REG_T1, 0); // Offset will be patched
+
+				// Not an array, check if dictionary
+				emit_li(REG_T1, 20); // Variant::DICTIONARY
+				size_t bne_dict_pos = m_code.size();
+				emit_bne(REG_T0, REG_T1, 0); // Offset will be patched
+
+				// Dictionary SET path
+				// a0 = Dictionary_Op::SET (1)
+				emit_li(REG_A0, 1);
+				// Load dict variant index from stack into a1
+				emit_ld(REG_A1, REG_SP, obj_offset + 8); // Load dict variant index
+				// a2 = pointer to key Variant
+				if (idx_offset < 2048) {
+					emit_i_type(0x13, REG_A2, 0, REG_SP, idx_offset);
+				} else {
+					emit_li(REG_A2, idx_offset);
+					emit_add(REG_A2, REG_SP, REG_A2);
+				}
+				// a3 = pointer to value Variant
+				if (value_offset < 2048) {
+					emit_i_type(0x13, REG_A3, 0, REG_SP, value_offset);
+				} else {
+					emit_li(REG_A3, value_offset);
+					emit_add(REG_A3, REG_SP, REG_A3);
+				}
+				// ECALL_DICTIONARY_OPS = 524
+				emit_li(REG_A7, 524);
+				emit_ecall();
+				size_t jal_end_pos = m_code.size();
+				emit_jal(REG_ZERO, 0); // Offset will be patched
+
+				// Array SET path (target of beq)
+				size_t array_path_pos = m_code.size();
+				// Patch beq offset: (array_path_pos - beq_array_pos) / 2
+				int32_t beq_offset = (array_path_pos - beq_array_pos) / 2;
+				// Rewrite the beq instruction with correct offset
+				uint32_t beq_instr = (0x63 << 25) | (REG_T1 << 20) | (REG_T0 << 15) | (0x0 << 12) | ((beq_offset & 0x1e) << 7) | ((beq_offset >> 5) << 25);
+				*(uint32_t *)(&m_code[beq_array_pos]) = beq_instr;
+
+				// Load array variant index from stack into a1
+				emit_ld(REG_A1, REG_SP, obj_offset + 8); // Load array variant index
+				// Load index variant value (as int) into a2, then negate for set mode
+				emit_load_variant_int(REG_A2, REG_SP, idx_offset);
+				emit_sub(REG_A2, REG_ZERO, REG_A2); // Negate: a2 = -a2
+				emit_i_type(0x13, REG_A2, 0, REG_A2, -1); // addi a2, a2, -1 (set mode encoding: -idx - 1)
+				// a3 = pointer to value Variant
+				if (value_offset < 2048) {
+					emit_i_type(0x13, REG_A3, 0, REG_SP, value_offset);
+				} else {
+					emit_li(REG_A3, value_offset);
+					emit_add(REG_A3, REG_SP, REG_A3);
+				}
+				// ECALL_ARRAY_AT = 522 (set mode: negative index)
+				emit_li(REG_A7, 522);
+				emit_ecall();
+
+				// End label (target of jal from dict path)
+				size_t end_pos = m_code.size();
+				// Patch jal offset: (end_pos - jal_end_pos) / 2
+				int32_t jal_offset = (end_pos - jal_end_pos) / 2;
+				uint32_t jal_instr = (0x6f << 25) | ((jal_offset & 0xff000) << 0) | ((jal_offset & 0x800) << 20) | ((jal_offset & 0x7fe) << 9) | (REG_ZERO << 7);
+				*(uint32_t *)(&m_code[jal_end_pos]) = jal_instr;
+
+				// Error path (target of bne if not dictionary)
+				size_t error_pos = m_code.size();
+				// Patch bne offset: (error_pos - bne_dict_pos) / 2
+				int32_t bne_offset = (error_pos - bne_dict_pos) / 2;
+				uint32_t bne_instr = (0x63 << 25) | (REG_T1 << 20) | (REG_T0 << 15) | (0x1 << 12) | ((bne_offset & 0x1e) << 7) | ((bne_offset >> 5) << 25);
+				*(uint32_t *)(&m_code[bne_dict_pos]) = bne_instr;
+
+				// Error: try array_at anyway, it will throw at runtime
+				emit_ld(REG_A1, REG_SP, obj_offset + 8);
+				emit_load_variant_int(REG_A2, REG_SP, idx_offset);
+				emit_sub(REG_A2, REG_ZERO, REG_A2);
+				emit_i_type(0x13, REG_A2, 0, REG_A2, -1); // addi a2, a2, -1
+				if (value_offset < 2048) {
+					emit_i_type(0x13, REG_A3, 0, REG_SP, value_offset);
+				} else {
+					emit_li(REG_A3, value_offset);
+					emit_add(REG_A3, REG_SP, REG_A3);
+				}
+				emit_li(REG_A7, 522);
+				emit_ecall();
+
+			break;
+		}
+
+		// Not implementing these for now
 			case IROpcode::CALL_SYSCALL:
-			case IROpcode::VGET:
-			case IROpcode::VSET:
 			case IROpcode::LOAD_VAR:
 			case IROpcode::STORE_VAR:
 				throw std::runtime_error("Opcode not yet implemented in RISC-V codegen");

@@ -191,63 +191,53 @@ StmtPtr Parser::parse_return_stmt() {
 }
 
 StmtPtr Parser::parse_expr_or_assign_stmt() {
-	// Try to parse an identifier followed by '='
-	if (check(TokenType::IDENTIFIER)) {
-		size_t saved_pos = m_current;
-		Token name = advance();
+	// Try to parse an assignment target (variable or index expression)
+	// Save position in case we need to backtrack
+	size_t saved_pos = m_current;
 
-		if (match(TokenType::ASSIGN)) {
-			ExprPtr value = parse_expression();
-			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name.lexeme, std::move(value));
-		}
+	// Try parsing an expression - could be VariableExpr, IndexExpr, or something else
+	ExprPtr target = parse_call(); // parse_call handles variables and member/index access
 
-		// Handle compound assignments: +=, -=, *=, /=, %=
-		// Convert them to: name = name op value
-		if (match(TokenType::PLUS_ASSIGN)) {
-			ExprPtr var_expr = std::make_unique<VariableExpr>(name.lexeme);
-			ExprPtr value = parse_expression();
-			ExprPtr add_expr = std::make_unique<BinaryExpr>(std::move(var_expr), BinaryExpr::Op::ADD, std::move(value));
-			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name.lexeme, std::move(add_expr));
-		}
-
-		if (match(TokenType::MINUS_ASSIGN)) {
-			ExprPtr var_expr = std::make_unique<VariableExpr>(name.lexeme);
-			ExprPtr value = parse_expression();
-			ExprPtr sub_expr = std::make_unique<BinaryExpr>(std::move(var_expr), BinaryExpr::Op::SUB, std::move(value));
-			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name.lexeme, std::move(sub_expr));
-		}
-
-		if (match(TokenType::MULTIPLY_ASSIGN)) {
-			ExprPtr var_expr = std::make_unique<VariableExpr>(name.lexeme);
-			ExprPtr value = parse_expression();
-			ExprPtr mul_expr = std::make_unique<BinaryExpr>(std::move(var_expr), BinaryExpr::Op::MUL, std::move(value));
-			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name.lexeme, std::move(mul_expr));
-		}
-
-		if (match(TokenType::DIVIDE_ASSIGN)) {
-			ExprPtr var_expr = std::make_unique<VariableExpr>(name.lexeme);
-			ExprPtr value = parse_expression();
-			ExprPtr div_expr = std::make_unique<BinaryExpr>(std::move(var_expr), BinaryExpr::Op::DIV, std::move(value));
-			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name.lexeme, std::move(div_expr));
-		}
-
-		if (match(TokenType::MODULO_ASSIGN)) {
-			ExprPtr var_expr = std::make_unique<VariableExpr>(name.lexeme);
-			ExprPtr value = parse_expression();
-			ExprPtr mod_expr = std::make_unique<BinaryExpr>(std::move(var_expr), BinaryExpr::Op::MOD, std::move(value));
-			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name.lexeme, std::move(mod_expr));
-		}
-
-		// Not an assignment, backtrack
-		m_current = saved_pos;
+	// Check if this is followed by an assignment operator
+	if (match(TokenType::ASSIGN)) {
+		ExprPtr value = parse_expression();
+		consume(TokenType::NEWLINE, "Expected newline after assignment");
+		return std::make_unique<AssignStmt>(std::move(target), std::move(value));
 	}
 
+	// Handle compound assignments: +=, -=, *=, /=, %=
+	// Only support compound assignments for variable targets (not index expressions)
+	if (auto *var_expr = dynamic_cast<VariableExpr *>(target.get())) {
+		BinaryExpr::Op op;
+		if (match(TokenType::PLUS_ASSIGN)) {
+			op = BinaryExpr::Op::ADD;
+		} else if (match(TokenType::MINUS_ASSIGN)) {
+			op = BinaryExpr::Op::SUB;
+		} else if (match(TokenType::MULTIPLY_ASSIGN)) {
+			op = BinaryExpr::Op::MUL;
+		} else if (match(TokenType::DIVIDE_ASSIGN)) {
+			op = BinaryExpr::Op::DIV;
+		} else if (match(TokenType::MODULO_ASSIGN)) {
+			op = BinaryExpr::Op::MOD;
+		} else {
+			// Not a compound assignment, backtrack
+			m_current = saved_pos;
+			// Parse as expression statement
+			ExprPtr expr = parse_expression();
+			consume(TokenType::NEWLINE, "Expected newline after expression");
+			return std::make_unique<ExprStmt>(std::move(expr));
+		}
+
+		// Convert compound assignment to: target = target op value
+		ExprPtr value = parse_expression();
+		ExprPtr var_expr_copy = std::make_unique<VariableExpr>(var_expr->name);
+		ExprPtr bin_expr = std::make_unique<BinaryExpr>(std::move(var_expr_copy), op, std::move(value));
+		consume(TokenType::NEWLINE, "Expected newline after assignment");
+		return std::make_unique<AssignStmt>(std::move(target), std::move(bin_expr));
+	}
+
+	// Not an assignment, backtrack
+	m_current = saved_pos;
 	// Parse as expression statement
 	ExprPtr expr = parse_expression();
 	consume(TokenType::NEWLINE, "Expected newline after expression");
