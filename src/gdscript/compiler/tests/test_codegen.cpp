@@ -290,6 +290,66 @@ void test_string_constants() {
 	std::cout << "  ✓ String constants test passed" << std::endl;
 }
 
+void test_subscript_operations() {
+	std::cout << "Testing subscript operations..." << std::endl;
+
+	// Test array/dict indexing for reading
+	std::string source_read = R"(func get_item(arr, idx):
+	var item = arr[idx]
+	return item
+)";
+
+	Lexer lexer_read(source_read);
+	Parser parser_read(lexer_read.tokenize());
+	Program program_read = parser_read.parse();
+
+	CodeGenerator codegen_read;
+	IRProgram ir_read = codegen_read.generate(program_read);
+
+	// Should have VCALL for arr.get(idx)
+	bool has_get_vcall = false;
+	for (const auto& instr : ir_read.functions[0].instructions) {
+		if (instr.opcode == IROpcode::VCALL) {
+			if (instr.operands.size() >= 3 && instr.operands[2].type == IRValue::Type::STRING) {
+				if (std::get<std::string>(instr.operands[2].value) == "get") {
+					has_get_vcall = true;
+					break;
+				}
+			}
+		}
+	}
+	assert(has_get_vcall);
+
+	// Test array/dict indexing for writing
+	std::string source_write = R"(func set_item(arr, idx, value):
+	arr[idx] = value
+	return arr
+)";
+
+	Lexer lexer_write(source_write);
+	Parser parser_write(lexer_write.tokenize());
+	Program program_write = parser_write.parse();
+
+	CodeGenerator codegen_write;
+	IRProgram ir_write = codegen_write.generate(program_write);
+
+	// Should have VCALL for arr.set(idx, value)
+	bool has_set_vcall = false;
+	for (const auto& instr : ir_write.functions[0].instructions) {
+		if (instr.opcode == IROpcode::VCALL) {
+			if (instr.operands.size() >= 3 && instr.operands[2].type == IRValue::Type::STRING) {
+				if (std::get<std::string>(instr.operands[2].value) == "set") {
+					has_set_vcall = true;
+					break;
+				}
+			}
+		}
+	}
+	assert(has_set_vcall);
+
+	std::cout << "  ✓ Subscript operations test passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== Running Code Generation Tests ===" << std::endl;
 
@@ -303,6 +363,7 @@ int main() {
 		test_logical_operators();
 		test_complex_expression();
 		test_string_constants();
+		test_subscript_operations();
 
 		std::cout << "\n✅ All code generation tests passed!" << std::endl;
 		return 0;

@@ -104,6 +104,36 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, IRFunction& func) {
 void CodeGenerator::gen_assign(const AssignStmt* stmt, IRFunction& func) {
 	int value_reg = gen_expr(stmt->value.get(), func);
 
+	// Check if this is an indexed assignment (arr[0] = value)
+	if (stmt->target) {
+		// Transform arr[idx] = value to arr.set(idx, value)
+		if (auto* index_expr = dynamic_cast<const IndexExpr*>(stmt->target.get())) {
+			int obj_reg = gen_expr(index_expr->object.get(), func);
+			int idx_reg = gen_expr(index_expr->index.get(), func);
+
+			// Use VCALL to call .set(index, value)
+			// Format: VCALL result_reg, obj_reg, method_name, arg_count, arg1_reg, arg2_reg
+			int result_reg = alloc_register();
+			IRInstruction vcall_instr(IROpcode::VCALL);
+			vcall_instr.operands.push_back(IRValue::reg(result_reg));
+			vcall_instr.operands.push_back(IRValue::reg(obj_reg));
+			vcall_instr.operands.push_back(IRValue::str("set"));
+			vcall_instr.operands.push_back(IRValue::imm(2)); // 2 arguments
+			vcall_instr.operands.push_back(IRValue::reg(idx_reg));
+			vcall_instr.operands.push_back(IRValue::reg(value_reg));
+			func.instructions.push_back(vcall_instr);
+
+			free_register(obj_reg);
+			free_register(idx_reg);
+			free_register(value_reg);
+			free_register(result_reg);
+			return;
+		} else {
+			throw std::runtime_error("Invalid assignment target type");
+		}
+	}
+
+	// Simple variable assignment
 	Variable* var = find_variable(stmt->name);
 	if (!var) {
 		throw std::runtime_error("Undefined variable: " + stmt->name);
@@ -600,9 +630,15 @@ int CodeGenerator::gen_index(const IndexExpr* expr, IRFunction& func) {
 
 	int result_reg = alloc_register();
 
-	// Array indexing through Variant operations
-	func.instructions.emplace_back(IROpcode::VGET, IRValue::reg(result_reg),
-	                               IRValue::reg(obj_reg), IRValue::reg(idx_reg));
+	// Transform arr[x] to arr.get(x) using VCALL
+	// Format: VCALL result_reg, obj_reg, method_name, arg_count, arg1_reg
+	IRInstruction vcall_instr(IROpcode::VCALL);
+	vcall_instr.operands.push_back(IRValue::reg(result_reg));
+	vcall_instr.operands.push_back(IRValue::reg(obj_reg));
+	vcall_instr.operands.push_back(IRValue::str("get"));
+	vcall_instr.operands.push_back(IRValue::imm(1)); // 1 argument
+	vcall_instr.operands.push_back(IRValue::reg(idx_reg));
+	func.instructions.push_back(vcall_instr);
 
 	free_register(obj_reg);
 	free_register(idx_reg);

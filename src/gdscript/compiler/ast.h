@@ -119,13 +119,19 @@ struct VarDeclStmt : Stmt {
 		: name(std::move(n)), initializer(std::move(init)) {}
 };
 
-// Assignment: x = 42
+// Assignment: x = 42 or arr[0] = 42
 struct AssignStmt : Stmt {
-	std::string name;
+	std::string name;        // For simple variable assignment
+	ExprPtr target;          // For indexed assignment (IndexExpr)
 	ExprPtr value;
 
+	// Simple variable assignment
 	AssignStmt(std::string n, ExprPtr v)
-		: name(std::move(n)), value(std::move(v)) {}
+		: name(std::move(n)), target(nullptr), value(std::move(v)) {}
+
+	// Indexed assignment (e.g., arr[0] = value)
+	AssignStmt(ExprPtr t, ExprPtr v)
+		: name(""), target(std::move(t)), value(std::move(v)) {}
 };
 
 // Return statement: return x

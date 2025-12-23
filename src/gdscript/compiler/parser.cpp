@@ -191,67 +191,75 @@ StmtPtr Parser::parse_return_stmt() {
 }
 
 StmtPtr Parser::parse_expr_or_assign_stmt() {
-	// Try to parse an identifier followed by '='
-	if (check(TokenType::IDENTIFIER)) {
-		size_t saved_pos = m_current;
-		Token name = advance();
+	// Parse a postfix expression (which can be identifier or indexed expression)
+	size_t saved_pos = m_current;
+	ExprPtr lhs = parse_call();
 
-		if (match(TokenType::ASSIGN)) {
-			ExprPtr value = parse_expression();
-			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name.lexeme, std::move(value));
+	// Check if it's an assignment
+	if (match(TokenType::ASSIGN)) {
+		ExprPtr value = parse_expression();
+		consume(TokenType::NEWLINE, "Expected newline after assignment");
+
+		// Check if lhs is a simple variable or an indexed expression
+		if (auto* var_expr = dynamic_cast<VariableExpr*>(lhs.get())) {
+			// Simple variable assignment: x = value
+			return std::make_unique<AssignStmt>(var_expr->name, std::move(value));
+		} else if (dynamic_cast<IndexExpr*>(lhs.get())) {
+			// Indexed assignment: arr[0] = value
+			return std::make_unique<AssignStmt>(std::move(lhs), std::move(value));
+		} else {
+			throw std::runtime_error("Invalid assignment target");
 		}
+	}
 
-		// Handle compound assignments: +=, -=, *=, /=, %=
-		// Convert them to: name = name op value
+	// Handle compound assignments for simple variables only
+	if (auto* var_expr = dynamic_cast<VariableExpr*>(lhs.get())) {
+		std::string name = var_expr->name;
+
 		if (match(TokenType::PLUS_ASSIGN)) {
-			ExprPtr var_expr = std::make_unique<VariableExpr>(name.lexeme);
-			ExprPtr value = parse_expression();
-			ExprPtr add_expr = std::make_unique<BinaryExpr>(std::move(var_expr), BinaryExpr::Op::ADD, std::move(value));
+			ExprPtr var_ref = std::make_unique<VariableExpr>(name);
+			ExprPtr rhs = parse_expression();
+			ExprPtr add_expr = std::make_unique<BinaryExpr>(std::move(var_ref), BinaryExpr::Op::ADD, std::move(rhs));
 			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name.lexeme, std::move(add_expr));
+			return std::make_unique<AssignStmt>(name, std::move(add_expr));
 		}
 
 		if (match(TokenType::MINUS_ASSIGN)) {
-			ExprPtr var_expr = std::make_unique<VariableExpr>(name.lexeme);
-			ExprPtr value = parse_expression();
-			ExprPtr sub_expr = std::make_unique<BinaryExpr>(std::move(var_expr), BinaryExpr::Op::SUB, std::move(value));
+			ExprPtr var_ref = std::make_unique<VariableExpr>(name);
+			ExprPtr rhs = parse_expression();
+			ExprPtr sub_expr = std::make_unique<BinaryExpr>(std::move(var_ref), BinaryExpr::Op::SUB, std::move(rhs));
 			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name.lexeme, std::move(sub_expr));
+			return std::make_unique<AssignStmt>(name, std::move(sub_expr));
 		}
 
 		if (match(TokenType::MULTIPLY_ASSIGN)) {
-			ExprPtr var_expr = std::make_unique<VariableExpr>(name.lexeme);
-			ExprPtr value = parse_expression();
-			ExprPtr mul_expr = std::make_unique<BinaryExpr>(std::move(var_expr), BinaryExpr::Op::MUL, std::move(value));
+			ExprPtr var_ref = std::make_unique<VariableExpr>(name);
+			ExprPtr rhs = parse_expression();
+			ExprPtr mul_expr = std::make_unique<BinaryExpr>(std::move(var_ref), BinaryExpr::Op::MUL, std::move(rhs));
 			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name.lexeme, std::move(mul_expr));
+			return std::make_unique<AssignStmt>(name, std::move(mul_expr));
 		}
 
 		if (match(TokenType::DIVIDE_ASSIGN)) {
-			ExprPtr var_expr = std::make_unique<VariableExpr>(name.lexeme);
-			ExprPtr value = parse_expression();
-			ExprPtr div_expr = std::make_unique<BinaryExpr>(std::move(var_expr), BinaryExpr::Op::DIV, std::move(value));
+			ExprPtr var_ref = std::make_unique<VariableExpr>(name);
+			ExprPtr rhs = parse_expression();
+			ExprPtr div_expr = std::make_unique<BinaryExpr>(std::move(var_ref), BinaryExpr::Op::DIV, std::move(rhs));
 			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name.lexeme, std::move(div_expr));
+			return std::make_unique<AssignStmt>(name, std::move(div_expr));
 		}
 
 		if (match(TokenType::MODULO_ASSIGN)) {
-			ExprPtr var_expr = std::make_unique<VariableExpr>(name.lexeme);
-			ExprPtr value = parse_expression();
-			ExprPtr mod_expr = std::make_unique<BinaryExpr>(std::move(var_expr), BinaryExpr::Op::MOD, std::move(value));
+			ExprPtr var_ref = std::make_unique<VariableExpr>(name);
+			ExprPtr rhs = parse_expression();
+			ExprPtr mod_expr = std::make_unique<BinaryExpr>(std::move(var_ref), BinaryExpr::Op::MOD, std::move(rhs));
 			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name.lexeme, std::move(mod_expr));
+			return std::make_unique<AssignStmt>(name, std::move(mod_expr));
 		}
-
-		// Not an assignment, backtrack
-		m_current = saved_pos;
 	}
 
-	// Parse as expression statement
-	ExprPtr expr = parse_expression();
+	// Not an assignment, treat as expression statement
 	consume(TokenType::NEWLINE, "Expected newline after expression");
-	return std::make_unique<ExprStmt>(std::move(expr));
+	return std::make_unique<ExprStmt>(std::move(lhs));
 }
 
 ExprPtr Parser::parse_expression() {
