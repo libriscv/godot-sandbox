@@ -40,4 +40,24 @@ if [ -n "$CI" ]; then
 fi
 
 # Run the unit tests using the GUT addon
-$GODOT --path "$PWD" --headless -s addons/gut/gut_cmdln.gd $@
+# Use a temporary file to capture output while still showing it
+TEMP_OUTPUT=$(mktemp)
+trap "rm -f $TEMP_OUTPUT" EXIT
+
+# Run tests and capture output while displaying it
+$GODOT --path "$PWD" --headless -s addons/gut/gut_cmdln.gd $@ 2>&1 | tee "$TEMP_OUTPUT"
+EXIT_CODE=${PIPESTATUS[0]}
+
+# Check if GDExtension failed to load (tests can't run without it)
+if grep -q "GDExtension dynamic library not found" "$TEMP_OUTPUT"; then
+	echo "ERROR: GDExtension library failed to load. Tests cannot run."
+	exit 1
+fi
+
+# Check if no tests were run (another indicator of failure)
+if grep -q "Nothing was run" "$TEMP_OUTPUT"; then
+	echo "ERROR: No tests were executed. This usually indicates the GDExtension failed to load."
+	exit 1
+fi
+
+exit $EXIT_CODE
