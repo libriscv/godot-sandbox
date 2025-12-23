@@ -25,12 +25,6 @@ jobs:
           sudo apt update
           sudo apt install -y gcc-14-riscv64-linux-gnu g++-14-riscv64-linux-gnu cmake
 
-      - name: Configure
-        run: cmake -B ${{github.workspace}}/.build -DCMAKE_BUILD_TYPE=Debug
-
-      - name: Build the unittests
-        run: cmake --build ${{github.workspace}}/.build --parallel 6
-
       - name: Download and extract Godot
         working-directory: ${{github.workspace}}/tests
         run: |
