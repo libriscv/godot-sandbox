@@ -32,6 +32,7 @@ func sum2(n):
 
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
@@ -78,6 +79,7 @@ func many_variables():
 
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
@@ -100,6 +102,7 @@ func complex_expr(x, y, z):
 
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
@@ -132,6 +135,7 @@ func test_func():
 
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
 
 	# Enable IR dumping to verify register usage
 	# Note: This requires access to compiler internals, so we'll just test that it compiles
@@ -178,6 +182,7 @@ func test_args2(str):
 
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
@@ -228,6 +233,7 @@ func test_call_with_shuffling(a0, a1):
 
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
@@ -298,6 +304,7 @@ func countdown_loop():
 
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
@@ -360,6 +367,7 @@ func pf32a_operation(array):
 
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
 
 	for name in benchmarks.keys():
 		var gdscript_code = benchmarks[name]
@@ -414,6 +422,7 @@ func test_chained_get(arr):
 
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
@@ -493,6 +502,7 @@ func test_chained_vectors():
 
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
@@ -575,6 +585,7 @@ func test_float_neg():
 
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
@@ -673,6 +684,7 @@ func make_array_with_strings():
 
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
@@ -845,6 +857,7 @@ func level10_complex(data):
 
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
@@ -924,10 +937,16 @@ func test_chained_call():
 
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+
 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
 	var s = Sandbox.new()
+	s.restrictions = true
+	s.set_class_allowed_callback(func(sandbox, name): return name == "Time")
+	s.set_method_allowed_callback(func(sandbox, obj, method):
+		return obj.get_class() == "Time" and method == "get_ticks_usec")
 	s.load_buffer(compiled_elf)
 	s.set_instructions_max(5000)
 
@@ -940,4 +959,3 @@ func test_chained_call():
 	assert_true(result >= 0, "Time.get_ticks_usec() chained should return a non-negative value")
 
 	s.queue_free()
-
