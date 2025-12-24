@@ -1183,12 +1183,93 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::MAKE_RECT2I:
 			case IROpcode::MAKE_PLANE:
 			case IROpcode::VSET_INLINE:
-			case IROpcode::CALL_SYSCALL:
 			case IROpcode::VGET:
 			case IROpcode::VSET:
 			case IROpcode::LOAD_VAR:
 			case IROpcode::STORE_VAR:
 				throw std::runtime_error("Opcode not yet implemented in RISC-V codegen");
+
+			case IROpcode::CALL_SYSCALL: {
+				// CALL_SYSCALL format: result_reg, syscall_number, arg1, arg2, ...
+				// For ECALL_GET_OBJ (504): result_reg, 504, string_index, string_length
+				// ECALL_GET_OBJ calling convention: a0=string_ptr, a1=length
+				// Returns: a0 contains the object data (uint64_t)
+				if (instr.operands.size() < 4) {
+					throw std::runtime_error("CALL_SYSCALL requires at least 4 operands");
+				}
+
+				int result_vreg = std::get<int>(instr.operands[0].value);
+				int syscall_num = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+				int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+				int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+
+				// Get the string constant
+				if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
+					throw std::runtime_error("String constant index out of range");
+				}
+				const std::string& str = (*m_string_constants)[string_idx];
+
+				int result_offset = get_variant_stack_offset(result_vreg);
+
+				// ECALL_GET_OBJ clobbers a0 and a1
+				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1};
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+
+				for (const auto& move : moves) {
+					emit_mv(move.second, move.first);
+				}
+
+				// Allocate stack space for the string
+				int str_space = ((string_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
+
+				if (str_space < 2048) {
+					emit_i_type(0x13, REG_SP, 0, REG_SP, -str_space);
+				} else {
+					emit_li(REG_T0, -str_space);
+					emit_add(REG_SP, REG_SP, REG_T0);
+				}
+
+				// Store string on stack
+				for (size_t i = 0; i < str.length(); i++) {
+					emit_li(REG_T0, static_cast<unsigned char>(str[i]));
+					emit_sb(REG_T0, REG_SP, i); // SB (store byte)
+				}
+				// Store null terminator
+				emit_sb(REG_ZERO, REG_SP, string_len); // SB
+
+				// a0 = pointer to class name string (sp) - FIRST ARGUMENT
+				emit_mv(REG_A0, REG_SP);
+
+				// a1 = string length - SECOND ARGUMENT
+				emit_li(REG_A1, string_len);
+
+				// a7 = syscall number (504 for ECALL_GET_OBJ)
+				emit_li(REG_A7, syscall_num);
+				emit_ecall();
+
+				// After ecall, a0 contains the object data (uint64_t)
+				// We need to store this into the result Variant
+				// Variant structure: 4-byte type + 4-byte padding + 8-byte data (for object) + 8-byte padding = 24 bytes
+				// For OBJECT type, we store the type (GDOBJECT) and the object data
+
+				// First, restore stack pointer (before storing result)
+				if (str_space < 2048) {
+					emit_i_type(0x13, REG_SP, 0, REG_SP, str_space);
+				} else {
+					emit_li(REG_T0, str_space);
+					emit_add(REG_SP, REG_SP, REG_T0);
+				}
+
+				// Store the object type (GDOBJECT = 24) into Variant
+				// TODO: Need to define the GDOBJECT constant
+				emit_li(REG_T0, 24); // GDOBJECT type
+				emit_sw(REG_T0, REG_SP, result_offset); // Store 4-byte type at offset 0
+
+				// Store the object data from a0 into the Variant data area (offset 8)
+				emit_sd(REG_A0, REG_SP, result_offset + 8); // Store 8-byte object data
+
+				break;
+			}
 
 			default:
 				throw std::runtime_error("Unknown IR opcode");

@@ -910,3 +910,34 @@ func level10_complex(data):
 	assert_eq(result, 25, "Level 10: Mixed complex operations")
 
 	s.queue_free()
+
+func test_global_class_access():
+	# Test accessing global classes like Time
+	var gdscript_code = """
+func test_time_get_ticks_usec():
+	var time_obj = Time
+	return time_obj.get_ticks_usec()
+
+func test_chained_call():
+	return Time.get_ticks_usec()
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(5000)
+
+	# Test direct global class access and method call
+	var result = s.vmcallv("test_time_get_ticks_usec")
+	assert_true(result >= 0, "Time.get_ticks_usec() should return a non-negative value")
+
+	# Test chained call
+	result = s.vmcallv("test_chained_call")
+	assert_true(result >= 0, "Time.get_ticks_usec() chained should return a non-negative value")
+
+	s.queue_free()
+

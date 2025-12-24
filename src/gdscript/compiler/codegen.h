@@ -2,6 +2,7 @@
 #include "ast.h"
 #include "ir.h"
 #include <unordered_map>
+#include <unordered_set>
 #include <string>
 
 namespace gdscript {
@@ -85,6 +86,13 @@ private:
 	bool is_inline_member_access(IRInstruction::TypeHint type, const std::string& member) const;
 	int gen_inline_constructor(const std::string& name, const std::vector<int>& arg_regs, IRFunction& func);
 	int gen_inline_member_get(int obj_reg, IRInstruction::TypeHint obj_type, const std::string& member, IRFunction& func);
+
+	// Global class detection
+	bool is_global_class(const std::string& name) const;
+	int gen_global_class_get(const std::string& class_name, IRFunction& func);
+
+	// Set of global class names
+	static std::unordered_set<std::string> get_global_classes();
 };
 
 } // namespace gdscript

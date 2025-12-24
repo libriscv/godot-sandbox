@@ -515,6 +515,11 @@ int CodeGenerator::gen_literal(const LiteralExpr* expr, IRFunction& func) {
 }
 
 int CodeGenerator::gen_variable(const VariableExpr* expr, IRFunction& func) {
+	// Check if this is a global class reference
+	if (is_global_class(expr->name)) {
+		return gen_global_class_get(expr->name, func);
+	}
+
 	Variable* var = find_variable(expr->name);
 	if (!var) {
 		throw std::runtime_error("Undefined variable: " + expr->name);
@@ -962,6 +967,68 @@ int CodeGenerator::gen_inline_member_get(int obj_reg, IRInstruction::TypeHint ob
 	                      obj_type == IRInstruction::TypeHint::VARIANT_VECTOR4I);
 
 	set_register_type(result_reg, is_int_vector ? IRInstruction::TypeHint::VARIANT_INT : IRInstruction::TypeHint::VARIANT_FLOAT);
+
+	return result_reg;
+}
+
+std::unordered_set<std::string> CodeGenerator::get_global_classes() {
+	// Common Godot global classes
+	return {
+		"AudioServer",
+		"CameraServer",
+		"DisplayServer",
+		"NavigationServer2D",
+		"NavigationServer3D",
+		"PhysicsServer2D",
+		"PhysicsServer3D",
+		"TextServerManager",
+		"ClassDB",
+		"EditorInterface",
+		"Engine",
+		"EngineDebugger",
+		"Geometry2D",
+		"Geometry3D",
+		"Input",
+		"InputMap",
+		"IP",
+		"OS",
+		"Performance",
+		"ProjectSettings",
+		"ResourceLoader",
+		"ResourceSaver",
+		"ThemeDB",
+		"Time",
+		"WorkerThreadPool",
+	};
+}
+
+bool CodeGenerator::is_global_class(const std::string& name) const {
+	static const auto global_classes = get_global_classes();
+	return global_classes.find(name) != global_classes.end();
+}
+
+int CodeGenerator::gen_global_class_get(const std::string& class_name, IRFunction& func) {
+	// Generate a CALL_SYSCALL instruction to get the global class object
+	// ECALL_GET_OBJ (504) takes: a0 = result pointer, a1 = class name pointer, a2 = class name length
+	// Returns: a0 contains the object data
+
+	int result_reg = alloc_register();
+
+	// Add the class name as a string constant
+	int str_idx = add_string_constant(class_name);
+
+	// Generate CALL_SYSCALL instruction
+	// Format: CALL_SYSCALL result_reg, syscall_number, string_index, string_length
+	IRInstruction instr(IROpcode::CALL_SYSCALL);
+	instr.operands.push_back(IRValue::reg(result_reg));              // result register
+	instr.operands.push_back(IRValue::imm(504));                     // ECALL_GET_OBJ
+	instr.operands.push_back(IRValue::imm(str_idx));                 // string constant index
+	instr.operands.push_back(IRValue::imm(static_cast<int64_t>(class_name.length()))); // string length
+
+	func.instructions.push_back(instr);
+
+	// The result is an OBJECT Variant
+	set_register_type(result_reg, IRInstruction::TypeHint::NONE); // Objects don't have a specific primitive type
 
 	return result_reg;
 }
