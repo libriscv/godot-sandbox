@@ -21,6 +21,7 @@ private:
 	void constant_folding(IRFunction& func);
 	void eliminate_dead_code(IRFunction& func);
 	void peephole_optimization(IRFunction& func);
+	void copy_propagation(IRFunction& func);
 	void reduce_register_pressure(IRFunction& func);
 
 	// Helper for constant folding

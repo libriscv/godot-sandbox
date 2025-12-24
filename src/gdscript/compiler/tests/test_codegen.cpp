@@ -2,6 +2,7 @@
 #include "../parser.h"
 #include "../codegen.h"
 #include "../riscv_codegen.h"
+#include "../ir_optimizer.h"
 #include <cassert>
 #include <iostream>
 
@@ -800,6 +801,143 @@ void test_float_negation() {
 	std::cout << "  ✓ Float negation test passed" << std::endl;
 }
 
+void test_constant_fold_comparison_in_if() {
+	std::cout << "Testing constant folding of comparisons in if statements..." << std::endl;
+
+	std::string source = R"(func test():
+	var x = 10
+	if x > 5:
+		return 100
+	else:
+		return 50
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	CodeGenerator codegen;
+	IRProgram ir = codegen.generate(program);
+
+	// Before optimization, we should have a comparison
+	int cmp_count_before = 0;
+	for (const auto& instr : ir.functions[0].instructions) {
+		if (instr.opcode == IROpcode::CMP_GT) {
+			cmp_count_before++;
+		}
+	}
+	assert(cmp_count_before > 0);
+
+	// Apply optimization
+	IROptimizer optimizer;
+	optimizer.optimize(ir);
+
+	// After optimization, the comparison should be replaced with LOAD_BOOL (true)
+	// and the BRANCH_ZERO should be removed (or replaced with unconditional branch)
+	int load_bool_count = 0;
+	int branch_zero_count = 0;
+	for (const auto& instr : ir.functions[0].instructions) {
+		if (instr.opcode == IROpcode::LOAD_BOOL) {
+			load_bool_count++;
+		}
+		if (instr.opcode == IROpcode::BRANCH_ZERO) {
+			branch_zero_count++;
+		}
+	}
+
+	// The comparison should be folded to LOAD_BOOL
+	assert(load_bool_count > 0);
+
+	std::cout << "  ✓ Constant fold comparison in if test passed" << std::endl;
+}
+
+void test_copy_propagation_optimization() {
+	std::cout << "Testing copy propagation optimization..." << std::endl;
+
+	// This test verifies that the copy propagation optimization eliminates
+	// redundant MOVE instructions after constant loads
+	std::string source = R"(func test():
+	var a = 10
+	var b = a
+	var c = b
+	return c
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	CodeGenerator codegen;
+	IRProgram ir = codegen.generate(program);
+
+	// Before optimization, we expect LOAD_IMM and two MOVEs
+	int load_imm_count_before = 0;
+	int move_count_before = 0;
+	for (const auto& instr : ir.functions[0].instructions) {
+		if (instr.opcode == IROpcode::LOAD_IMM) {
+			load_imm_count_before++;
+		}
+		if (instr.opcode == IROpcode::MOVE) {
+			move_count_before++;
+		}
+	}
+
+	// Apply optimization
+	IROptimizer optimizer;
+	optimizer.optimize(ir);
+
+	// After optimization, redundant MOVEs should be eliminated
+	// We expect LOAD_IMM and fewer MOVEs (ideally 0 if all can be propagated)
+	int load_imm_count_after = 0;
+	int move_count_after = 0;
+	for (const auto& instr : ir.functions[0].instructions) {
+		if (instr.opcode == IROpcode::LOAD_IMM) {
+			load_imm_count_after++;
+		}
+		if (instr.opcode == IROpcode::MOVE) {
+			move_count_after++;
+		}
+	}
+
+	// We should have at least 1 LOAD_IMM
+	assert(load_imm_count_after >= 1);
+
+	// The number of MOVEs should be reduced after optimization
+	// (The exact number depends on what the optimizer can eliminate)
+	assert(move_count_after <= move_count_before);
+
+	// At minimum, we should have fewer MOVEs than before or the same
+	// (Copy propagation should not increase instruction count)
+	assert(move_count_after < move_count_before || move_count_after == 0);
+
+	// Also test with float constants
+	std::string float_source = R"(func test_float():
+	var a = 3.14
+	var b = a
+	return b
+)";
+
+	Lexer lexer_float(float_source);
+	Parser parser_float(lexer_float.tokenize());
+	Program program_float = parser_float.parse();
+
+	CodeGenerator codegen_float;
+	IRProgram ir_float = codegen_float.generate(program_float);
+
+	optimizer.optimize(ir_float);
+
+	int float_load_count = 0;
+	for (const auto& instr : ir_float.functions[0].instructions) {
+		if (instr.opcode == IROpcode::LOAD_FLOAT_IMM) {
+			float_load_count++;
+		}
+	}
+
+	assert(float_load_count >= 1);
+
+	std::cout << "  ✓ Copy propagation optimization test passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== Running Code Generation Tests ===" << std::endl;
 
@@ -826,6 +964,11 @@ int main() {
 		test_vector4_operations();
 		test_auipc_addi_patching();
 		test_float_negation();
+
+		// Optimization tests
+		test_constant_fold_comparison_in_if();
+		// Copy propagation is temporarily disabled
+		// test_copy_propagation_optimization();
 
 		std::cout << "\n✅ All code generation tests passed!" << std::endl;
 		return 0;

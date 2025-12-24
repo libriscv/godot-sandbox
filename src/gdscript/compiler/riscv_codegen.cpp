@@ -522,80 +522,10 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					throw std::runtime_error("Comparison operations require at least 3 operands with first being REGISTER");
 				}
 
-				int dst_vreg = std::get<int>(instr.operands[0].value);
-				int lhs_vreg = 0;
-				int rhs_vreg = 0;
-				std::unordered_map<int, ValueType>::iterator lhs_type_it, rhs_type_it;
-				ValueType lhs_type, rhs_type;
-
-				// Check if operands are RAW_INT or IMMEDIATE
-				bool lhs_is_reg = (instr.operands[1].type == IRValue::Type::REGISTER);
-				bool rhs_is_reg = (instr.operands[2].type == IRValue::Type::REGISTER);
-
-				// For now, if any operand is not a register, fall back to variant comparison
-				if (!lhs_is_reg || !rhs_is_reg) {
-					goto variant_comparison;
-				}
-
-				lhs_vreg = std::get<int>(instr.operands[1].value);
-				rhs_vreg = std::get<int>(instr.operands[2].value);
-
-				// Check if operands are RAW_INT
-				lhs_type_it = m_vreg_types.find(lhs_vreg);
-				rhs_type_it = m_vreg_types.find(rhs_vreg);
-				lhs_type = (lhs_type_it != m_vreg_types.end()) ? lhs_type_it->second : ValueType::VARIANT;
-				rhs_type = (rhs_type_it != m_vreg_types.end()) ? rhs_type_it->second : ValueType::VARIANT;
-
-				if (instr.type_hint == IRInstruction::TypeHint::RAW_INT &&
-				    lhs_type == ValueType::RAW_INT && rhs_type == ValueType::RAW_INT) {
-					// Optimization: use native RISC-V integer comparison
-					// Result is stored as RAW_INT (0 or 1) in a register
-					int dst_preg = m_allocator.allocate_register(dst_vreg, m_current_instr_idx);
-					int lhs_preg = m_allocator.get_physical_register(lhs_vreg);
-					int rhs_preg = m_allocator.get_physical_register(rhs_vreg);
-
-					if (dst_preg >= 0 && lhs_preg >= 0 && rhs_preg >= 0) {
-						// Use native RISC-V comparison instructions
-						// Set dst_preg = 1 if condition is true, 0 otherwise
-						switch (instr.opcode) {
-							case IROpcode::CMP_LT:
-								// slt rd, rs1, rs2: rd = (rs1 < rs2) ? 1 : 0
-								emit_slt(dst_preg, lhs_preg, rhs_preg);
-								break;
-							case IROpcode::CMP_GT:
-								// slt rd, rs2, rs1: rd = (rs2 < rs1) ? 1 : 0 = (rs1 > rs2)
-								emit_slt(dst_preg, rhs_preg, lhs_preg);
-								break;
-							case IROpcode::CMP_LTE:
-								// rs1 <= rs2 is !(rs2 < rs1)
-								emit_slt(dst_preg, rhs_preg, lhs_preg);
-								emit_xori(dst_preg, dst_preg, 1); // Flip the result
-								break;
-							case IROpcode::CMP_GTE:
-								// rs1 >= rs2 is !(rs1 < rs2)
-								emit_slt(dst_preg, lhs_preg, rhs_preg);
-								emit_xori(dst_preg, dst_preg, 1); // Flip the result
-								break;
-							case IROpcode::CMP_EQ:
-								// rs1 == rs2: xor rd, rs1, rs2; seqz rd, rd
-								emit_xor(dst_preg, lhs_preg, rhs_preg);
-								emit_seqz(dst_preg, dst_preg);
-								break;
-							case IROpcode::CMP_NEQ:
-								// rs1 != rs2: xor rd, rs1, rs2; snez rd, rd
-								emit_xor(dst_preg, lhs_preg, rhs_preg);
-								emit_snez(dst_preg, dst_preg);
-								break;
-							default:
-								goto variant_comparison;
-						}
-						m_vreg_types[dst_vreg] = ValueType::RAW_INT;
-					} else {
-						goto variant_comparison;
-					}
-				} else {
-					variant_comparison:
-					// Standard Variant comparison through VEVAL
+				// Always use Variant comparisons to ensure compatibility with logical operators
+				// RAW_INT optimization produces raw integers that can't be used with AND/OR operations
+				{
+					int dst_vreg = std::get<int>(instr.operands[0].value);
 					int dst_offset = get_variant_stack_offset(dst_vreg);
 
 					// Map IR opcode to Variant::Operator
@@ -610,40 +540,41 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						default: variant_op = 0; break;
 					}
 
-					// Handle different operand types (register vs immediate)
+					// Check if operands are registers
+					bool lhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
+					bool rhs_is_reg = instr.operands.size() > 2 && instr.operands[2].type == IRValue::Type::REGISTER;
+
 					if (lhs_is_reg && rhs_is_reg) {
+						// Both operands are registers
 						int lhs_vreg = std::get<int>(instr.operands[1].value);
 						int rhs_vreg = std::get<int>(instr.operands[2].value);
 						int lhs_offset = get_variant_stack_offset(lhs_vreg);
 						int rhs_offset = get_variant_stack_offset(rhs_vreg);
 						emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
+						m_vreg_types[dst_vreg] = ValueType::VARIANT;
 					} else if (lhs_is_reg && !rhs_is_reg && instr.operands[2].type == IRValue::Type::IMMEDIATE) {
-						// Left operand is register, right is immediate
+						// Left is register, right is immediate integer
 						int lhs_vreg = std::get<int>(instr.operands[1].value);
-						int64_t imm_val = std::get<int64_t>(instr.operands[2].value);
 						int lhs_offset = get_variant_stack_offset(lhs_vreg);
+						int64_t imm_val = std::get<int64_t>(instr.operands[2].value);
 
-						// Create a temporary Variant for the immediate value
-						int imm_vreg = m_next_variant_slot++;
-						int imm_offset = get_variant_stack_offset(imm_vreg);
+						int imm_offset = m_next_variant_slot++;
 						emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
 						emit_variant_eval(dst_offset, lhs_offset, imm_offset, variant_op);
+						m_vreg_types[dst_vreg] = ValueType::VARIANT;
 					} else if (!lhs_is_reg && rhs_is_reg && instr.operands[1].type == IRValue::Type::IMMEDIATE) {
-						// Left operand is immediate, right is register
-						int64_t imm_val = std::get<int64_t>(instr.operands[1].value);
+						// Left is immediate integer, right is register
 						int rhs_vreg = std::get<int>(instr.operands[2].value);
 						int rhs_offset = get_variant_stack_offset(rhs_vreg);
+						int64_t imm_val = std::get<int64_t>(instr.operands[1].value);
 
-						// Create a temporary Variant for the immediate value
-						int imm_vreg = m_next_variant_slot++;
-						int imm_offset = get_variant_stack_offset(imm_vreg);
+						int imm_offset = m_next_variant_slot++;
 						emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
 						emit_variant_eval(dst_offset, imm_offset, rhs_offset, variant_op);
+						m_vreg_types[dst_vreg] = ValueType::VARIANT;
 					} else {
-						throw std::runtime_error("Unsupported operand types for comparison operation");
+						throw std::runtime_error("Unsupported operand types for comparison");
 					}
-
-					m_vreg_types[dst_vreg] = ValueType::VARIANT;
 				}
 				break;
 			}
@@ -657,7 +588,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int lhs_offset = get_variant_stack_offset(lhs_vreg);
 				int rhs_offset = get_variant_stack_offset(rhs_vreg);
 
-				emit_variant_eval(dst_offset, lhs_offset, rhs_offset, 18); // OP_AND
+				emit_variant_eval(dst_offset, lhs_offset, rhs_offset, 20); // OP_AND (corrected from 18)
 				break;
 			}
 
@@ -670,7 +601,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int lhs_offset = get_variant_stack_offset(lhs_vreg);
 				int rhs_offset = get_variant_stack_offset(rhs_vreg);
 
-				emit_variant_eval(dst_offset, lhs_offset, rhs_offset, 19); // OP_OR
+				emit_variant_eval(dst_offset, lhs_offset, rhs_offset, 21); // OP_OR (corrected from 19)
 				break;
 			}
 
@@ -683,7 +614,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// OP_NOT - use veval (unary operations need special handling)
 				// For now, use the same operand for both sides
-				emit_variant_eval(dst_offset, src_offset, src_offset, 21); // OP_NOT
+				emit_variant_eval(dst_offset, src_offset, src_offset, 23); // OP_NOT (corrected from 21)
 				break;
 			}
 

@@ -18,6 +18,10 @@ void IROptimizer::optimize_function(IRFunction& func) {
 	// Run constant folding first as it can enable more optimizations
 	constant_folding(func);
 
+	// Copy propagation to eliminate redundant MOVEs after constant loads
+	// TEMPORARILY DISABLED - suspected to be causing test failures
+	// copy_propagation(func);
+
 	// Peephole optimization to remove redundant moves and operations
 	peephole_optimization(func);
 
@@ -248,6 +252,55 @@ void IROptimizer::constant_folding(IRFunction& func) {
 					new_instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(dst), IRValue::imm(result.bool_value ? 1 : 0));
 					set_register_constant(dst, result);
 					folded = true;
+				}
+
+				if (!folded) {
+					invalidate_register(dst);
+					new_instructions.push_back(instr);
+				}
+				break;
+			}
+
+			case IROpcode::AND:
+			case IROpcode::OR: {
+				// Check that all operands are registers before attempting constant folding
+				if (instr.operands.size() < 3 ||
+				    instr.operands[0].type != IRValue::Type::REGISTER ||
+				    instr.operands[1].type != IRValue::Type::REGISTER ||
+				    instr.operands[2].type != IRValue::Type::REGISTER) {
+					// Can't fold if operands aren't all registers
+					if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+						int dst = std::get<int>(instr.operands[0].value);
+						invalidate_register(dst);
+					}
+					new_instructions.push_back(instr);
+					break;
+				}
+
+				int dst = std::get<int>(instr.operands[0].value);
+				int lhs_reg = std::get<int>(instr.operands[1].value);
+				int rhs_reg = std::get<int>(instr.operands[2].value);
+
+				// Try to fold logical operations
+				if (m_constants.count(lhs_reg) && m_constants.count(rhs_reg)) {
+					const auto& lhs_cv = m_constants[lhs_reg];
+					const auto& rhs_cv = m_constants[rhs_reg];
+
+					// Only fold if both are boolean constants
+					if (lhs_cv.type == ConstantValue::Type::BOOL && rhs_cv.type == ConstantValue::Type::BOOL) {
+						ConstantValue result;
+						result.type = ConstantValue::Type::BOOL;
+
+						if (instr.opcode == IROpcode::AND) {
+							result.bool_value = lhs_cv.bool_value && rhs_cv.bool_value;
+						} else {
+							result.bool_value = lhs_cv.bool_value || rhs_cv.bool_value;
+						}
+
+						new_instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(dst), IRValue::imm(result.bool_value ? 1 : 0));
+						set_register_constant(dst, result);
+						folded = true;
+					}
 				}
 
 				if (!folded) {
@@ -510,6 +563,68 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 	func.instructions = std::move(new_instructions);
 }
 
+void IROptimizer::copy_propagation(IRFunction& func) {
+	// This optimization eliminates redundant MOVE instructions after constant loads.
+	// Pattern: LOAD_IMM r0, 5; MOVE r1, r0; ... (r0 never used again)
+	// Optimize to: LOAD_IMM r1, 5
+
+	// Track constant values in registers
+	struct ConstantInfo {
+		IROpcode opcode;
+		IRValue value;  // The actual constant value
+	};
+
+	std::unordered_map<int, ConstantInfo> constant_regs;
+	std::vector<IRInstruction> new_instructions;
+	new_instructions.reserve(func.instructions.size());
+
+	for (size_t i = 0; i < func.instructions.size(); i++) {
+		const auto& instr = func.instructions[i];
+
+		// Clear constant tracking at labels (control flow boundaries)
+		if (instr.opcode == IROpcode::LABEL) {
+			constant_regs.clear();
+		}
+
+		// Mark the destination register as "killed" - it's no longer a constant we can propagate
+		if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+			int dst = std::get<int>(instr.operands[0].value);
+			constant_regs.erase(dst);
+		}
+
+		// Track constant loads
+		if (instr.opcode == IROpcode::LOAD_IMM || instr.opcode == IROpcode::LOAD_FLOAT_IMM) {
+			if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER &&
+			    instr.operands.size() >= 2) {
+				int dst = std::get<int>(instr.operands[0].value);
+				constant_regs[dst] = {instr.opcode, instr.operands[1]};
+			}
+		}
+
+		// Try to optimize MOVE instructions
+		if (instr.opcode == IROpcode::MOVE) {
+			int dst = std::get<int>(instr.operands[0].value);
+			int src = std::get<int>(instr.operands[1].value);
+
+			// Check if source is a constant we just loaded
+			if (constant_regs.count(src)) {
+				// Replace MOVE with the appropriate constant load
+				const auto& info = constant_regs[src];
+				new_instructions.emplace_back(info.opcode, IRValue::reg(dst), info.value);
+				// The new constant is now in dst
+				constant_regs[dst] = info;
+			} else {
+				// Keep the original MOVE
+				new_instructions.push_back(instr);
+			}
+		} else {
+			new_instructions.push_back(instr);
+		}
+	}
+
+	func.instructions = std::move(new_instructions);
+}
+
 void IROptimizer::eliminate_dead_code(IRFunction& func) {
 	// Find all live registers (used after definition)
 	auto live_regs = find_live_registers(func);
@@ -562,6 +677,15 @@ std::unordered_set<int> IROptimizer::find_live_registers(const IRFunction& func)
 	// Mark all read registers as live
 	for (const auto& instr : func.instructions) {
 		switch (instr.opcode) {
+			// Branch instructions - FIRST operand is the register to check
+			case IROpcode::BRANCH_ZERO:
+			case IROpcode::BRANCH_NOT_ZERO:
+				// Mark the first operand (register to check) as live
+				if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+					live.insert(std::get<int>(instr.operands[0].value));
+				}
+				break;
+
 			// Instructions that read from operands (not just write)
 			case IROpcode::MOVE:
 			case IROpcode::ADD:
@@ -571,14 +695,14 @@ std::unordered_set<int> IROptimizer::find_live_registers(const IRFunction& func)
 			case IROpcode::MOD:
 			case IROpcode::NEG:
 			case IROpcode::NOT:
+			case IROpcode::AND:     // Logical AND reads operands
+			case IROpcode::OR:      // Logical OR reads operands
 			case IROpcode::CMP_EQ:
 			case IROpcode::CMP_NEQ:
 			case IROpcode::CMP_LT:
 			case IROpcode::CMP_LTE:
 			case IROpcode::CMP_GT:
 			case IROpcode::CMP_GTE:
-			case IROpcode::BRANCH_ZERO:
-			case IROpcode::BRANCH_NOT_ZERO:
 			case IROpcode::VCALL:
 			case IROpcode::VGET:
 			case IROpcode::VSET:
