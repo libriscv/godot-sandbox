@@ -35,10 +35,10 @@ if (MINIMAL)
 	set(CFLAGS ${CFLAGS} -Oz)
 endif()
 
-if ("${CMAKE_C_COMPILER}" MATCHES "riscv64-unknown-elf*")
+if ("${CMAKE_CXX_COMPILER}" MATCHES "riscv64-unknown-elf*")
 	set(EMBEDDED_RISCV 1 CACHE BOOL "Building for embedded RISC-V")
 	message(STATUS "Building for embedded RISC-V")
-elseif ("${CMAKE_C_COMPILER}" MATCHES "zig")
+elseif ("${CMAKE_CXX_COMPILER}" MATCHES "zig")
 	set(ZIG_COMPILER 1 CACHE BOOL "Building using zig c++")
 	message(STATUS "Building using zig c++")
 	# This doesn't work on macOS

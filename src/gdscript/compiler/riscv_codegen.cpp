@@ -305,15 +305,35 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::MUL:
 			case IROpcode::DIV:
 			case IROpcode::MOD: {
-				int dst_vreg = std::get<int>(instr.operands[0].value);
-				int lhs_vreg = std::get<int>(instr.operands[1].value);
-				int rhs_vreg = std::get<int>(instr.operands[2].value);
+				// Check that all operands are valid before processing
+				if (instr.operands.size() < 3 ||
+				    instr.operands[0].type != IRValue::Type::REGISTER) {
+					throw std::runtime_error("Arithmetic operations require at least 3 operands with first being REGISTER");
+				}
 
-				// Check if operands are RAW_INT
-				auto lhs_type_it = m_vreg_types.find(lhs_vreg);
-				auto rhs_type_it = m_vreg_types.find(rhs_vreg);
-				ValueType lhs_type = (lhs_type_it != m_vreg_types.end()) ? lhs_type_it->second : ValueType::VARIANT;
-				ValueType rhs_type = (rhs_type_it != m_vreg_types.end()) ? rhs_type_it->second : ValueType::VARIANT;
+				int dst_vreg = std::get<int>(instr.operands[0].value);
+				int lhs_vreg = 0;
+				int rhs_vreg = 0;
+				std::unordered_map<int, ValueType>::iterator lhs_type_it, rhs_type_it;
+				ValueType lhs_type, rhs_type;
+
+				// Check if operands are RAW_INT or IMMEDIATE
+				bool lhs_is_reg = (instr.operands[1].type == IRValue::Type::REGISTER);
+				bool rhs_is_reg = (instr.operands[2].type == IRValue::Type::REGISTER);
+
+				// For now, if any operand is not a register, fall back to variant arithmetic
+				// TODO: Optimize for register + immediate cases
+				if (!lhs_is_reg || !rhs_is_reg) {
+					goto variant_arithmetic;
+				}
+
+				lhs_vreg = std::get<int>(instr.operands[1].value);
+				rhs_vreg = std::get<int>(instr.operands[2].value);
+
+				lhs_type_it = m_vreg_types.find(lhs_vreg);
+				rhs_type_it = m_vreg_types.find(rhs_vreg);
+				lhs_type = (lhs_type_it != m_vreg_types.end()) ? lhs_type_it->second : ValueType::VARIANT;
+				rhs_type = (rhs_type_it != m_vreg_types.end()) ? rhs_type_it->second : ValueType::VARIANT;
 
 				if (instr.type_hint == IRInstruction::TypeHint::RAW_INT &&
 				    lhs_type == ValueType::RAW_INT && rhs_type == ValueType::RAW_INT) {
@@ -347,8 +367,6 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					variant_arithmetic:
 					// Standard Variant arithmetic through VEVAL
 					int dst_offset = get_variant_stack_offset(dst_vreg);
-					int lhs_offset = get_variant_stack_offset(lhs_vreg);
-					int rhs_offset = get_variant_stack_offset(rhs_vreg);
 
 					// Map IR opcode to Variant::Operator
 					int variant_op;
@@ -361,7 +379,39 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						default: variant_op = 6; break;
 					}
 
-					emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
+					// Handle different operand types (register vs immediate)
+					if (lhs_is_reg && rhs_is_reg) {
+						int lhs_vreg_local = std::get<int>(instr.operands[1].value);
+						int rhs_vreg_local = std::get<int>(instr.operands[2].value);
+						int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
+						int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
+						emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
+					} else if (lhs_is_reg && !rhs_is_reg && instr.operands[2].type == IRValue::Type::IMMEDIATE) {
+						// Left operand is register, right is immediate
+						int lhs_vreg_local = std::get<int>(instr.operands[1].value);
+						int64_t imm_val = std::get<int64_t>(instr.operands[2].value);
+						int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
+
+						// Create a temporary Variant for the immediate value
+						int imm_vreg = m_next_variant_slot++;
+						int imm_offset = get_variant_stack_offset(imm_vreg);
+						emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
+						emit_variant_eval(dst_offset, lhs_offset, imm_offset, variant_op);
+					} else if (!lhs_is_reg && rhs_is_reg && instr.operands[1].type == IRValue::Type::IMMEDIATE) {
+						// Left operand is immediate, right is register
+						int64_t imm_val = std::get<int64_t>(instr.operands[1].value);
+						int rhs_vreg_local = std::get<int>(instr.operands[2].value);
+						int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
+
+						// Create a temporary Variant for the immediate value
+						int imm_vreg = m_next_variant_slot++;
+						int imm_offset = get_variant_stack_offset(imm_vreg);
+						emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
+						emit_variant_eval(dst_offset, imm_offset, rhs_offset, variant_op);
+					} else {
+						throw std::runtime_error("Unsupported operand types for arithmetic operation");
+					}
+
 					m_vreg_types[dst_vreg] = ValueType::VARIANT;
 				}
 				break;
@@ -391,15 +441,35 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::CMP_LTE:
 			case IROpcode::CMP_GT:
 			case IROpcode::CMP_GTE: {
+				// Check that all operands are valid
+				if (instr.operands.size() < 3 ||
+				    instr.operands[0].type != IRValue::Type::REGISTER) {
+					throw std::runtime_error("Comparison operations require at least 3 operands with first being REGISTER");
+				}
+
 				int dst_vreg = std::get<int>(instr.operands[0].value);
-				int lhs_vreg = std::get<int>(instr.operands[1].value);
-				int rhs_vreg = std::get<int>(instr.operands[2].value);
+				int lhs_vreg = 0;
+				int rhs_vreg = 0;
+				std::unordered_map<int, ValueType>::iterator lhs_type_it, rhs_type_it;
+				ValueType lhs_type, rhs_type;
+
+				// Check if operands are RAW_INT or IMMEDIATE
+				bool lhs_is_reg = (instr.operands[1].type == IRValue::Type::REGISTER);
+				bool rhs_is_reg = (instr.operands[2].type == IRValue::Type::REGISTER);
+
+				// For now, if any operand is not a register, fall back to variant comparison
+				if (!lhs_is_reg || !rhs_is_reg) {
+					goto variant_comparison;
+				}
+
+				lhs_vreg = std::get<int>(instr.operands[1].value);
+				rhs_vreg = std::get<int>(instr.operands[2].value);
 
 				// Check if operands are RAW_INT
-				auto lhs_type_it = m_vreg_types.find(lhs_vreg);
-				auto rhs_type_it = m_vreg_types.find(rhs_vreg);
-				ValueType lhs_type = (lhs_type_it != m_vreg_types.end()) ? lhs_type_it->second : ValueType::VARIANT;
-				ValueType rhs_type = (rhs_type_it != m_vreg_types.end()) ? rhs_type_it->second : ValueType::VARIANT;
+				lhs_type_it = m_vreg_types.find(lhs_vreg);
+				rhs_type_it = m_vreg_types.find(rhs_vreg);
+				lhs_type = (lhs_type_it != m_vreg_types.end()) ? lhs_type_it->second : ValueType::VARIANT;
+				rhs_type = (rhs_type_it != m_vreg_types.end()) ? rhs_type_it->second : ValueType::VARIANT;
 
 				if (instr.type_hint == IRInstruction::TypeHint::RAW_INT &&
 				    lhs_type == ValueType::RAW_INT && rhs_type == ValueType::RAW_INT) {
@@ -452,8 +522,6 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					variant_comparison:
 					// Standard Variant comparison through VEVAL
 					int dst_offset = get_variant_stack_offset(dst_vreg);
-					int lhs_offset = get_variant_stack_offset(lhs_vreg);
-					int rhs_offset = get_variant_stack_offset(rhs_vreg);
 
 					// Map IR opcode to Variant::Operator
 					int variant_op;
@@ -467,7 +535,39 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						default: variant_op = 0; break;
 					}
 
-					emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
+					// Handle different operand types (register vs immediate)
+					if (lhs_is_reg && rhs_is_reg) {
+						int lhs_vreg = std::get<int>(instr.operands[1].value);
+						int rhs_vreg = std::get<int>(instr.operands[2].value);
+						int lhs_offset = get_variant_stack_offset(lhs_vreg);
+						int rhs_offset = get_variant_stack_offset(rhs_vreg);
+						emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
+					} else if (lhs_is_reg && !rhs_is_reg && instr.operands[2].type == IRValue::Type::IMMEDIATE) {
+						// Left operand is register, right is immediate
+						int lhs_vreg = std::get<int>(instr.operands[1].value);
+						int64_t imm_val = std::get<int64_t>(instr.operands[2].value);
+						int lhs_offset = get_variant_stack_offset(lhs_vreg);
+
+						// Create a temporary Variant for the immediate value
+						int imm_vreg = m_next_variant_slot++;
+						int imm_offset = get_variant_stack_offset(imm_vreg);
+						emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
+						emit_variant_eval(dst_offset, lhs_offset, imm_offset, variant_op);
+					} else if (!lhs_is_reg && rhs_is_reg && instr.operands[1].type == IRValue::Type::IMMEDIATE) {
+						// Left operand is immediate, right is register
+						int64_t imm_val = std::get<int64_t>(instr.operands[1].value);
+						int rhs_vreg = std::get<int>(instr.operands[2].value);
+						int rhs_offset = get_variant_stack_offset(rhs_vreg);
+
+						// Create a temporary Variant for the immediate value
+						int imm_vreg = m_next_variant_slot++;
+						int imm_offset = get_variant_stack_offset(imm_vreg);
+						emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
+						emit_variant_eval(dst_offset, imm_offset, rhs_offset, variant_op);
+					} else {
+						throw std::runtime_error("Unsupported operand types for comparison operation");
+					}
+
 					m_vreg_types[dst_vreg] = ValueType::VARIANT;
 				}
 				break;
@@ -1191,82 +1291,165 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 			case IROpcode::CALL_SYSCALL: {
 				// CALL_SYSCALL format: result_reg, syscall_number, arg1, arg2, ...
-				// For ECALL_GET_OBJ (504): result_reg, 504, string_index, string_length
-				// ECALL_GET_OBJ calling convention: a0=string_ptr, a1=length
-				// Returns: a0 contains the object data (uint64_t)
-				if (instr.operands.size() < 4) {
-					throw std::runtime_error("CALL_SYSCALL requires at least 4 operands");
+				// Different syscalls have different calling conventions:
+				// ECALL_GET_OBJ (504): result_reg, 504, string_index, string_length
+				// ECALL_ARRAY_SIZE (523): result_reg, 523, array_vreg
+				// ECALL_ARRAY_AT (522): result_reg, 522, array_vreg, index_vreg
+
+				if (instr.operands.size() < 2) {
+					throw std::runtime_error("CALL_SYSCALL requires at least 2 operands (result_reg, syscall_num)");
 				}
 
 				int result_vreg = std::get<int>(instr.operands[0].value);
 				int syscall_num = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
-				int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
-				int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
 
-				// Get the string constant
-				if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
-					throw std::runtime_error("String constant index out of range");
-				}
-				const std::string& str = (*m_string_constants)[string_idx];
+				// Handle different syscalls based on their calling conventions
+				if (syscall_num == 504) {
+					// ECALL_GET_OBJ: result_reg, 504, string_index, string_length
+					if (instr.operands.size() != 4) {
+						throw std::runtime_error("ECALL_GET_OBJ requires 4 operands");
+					}
 
-				int result_offset = get_variant_stack_offset(result_vreg);
+					int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+					int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
 
-				// ECALL_GET_OBJ clobbers a0 and a1
-				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1};
-				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+					// Get the string constant
+					if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
+						throw std::runtime_error("String constant index out of range");
+					}
+					const std::string& str = (*m_string_constants)[string_idx];
 
-				for (const auto& move : moves) {
-					emit_mv(move.second, move.first);
-				}
+					int result_offset = get_variant_stack_offset(result_vreg);
 
-				// Allocate stack space for the string
-				int str_space = ((string_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
+					// ECALL_GET_OBJ clobbers a0 and a1
+					std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1};
+					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
 
-				if (str_space < 2048) {
-					emit_i_type(0x13, REG_SP, 0, REG_SP, -str_space);
+					for (const auto& move : moves) {
+						emit_mv(move.second, move.first);
+					}
+
+					// Allocate stack space for the string
+					int str_space = ((string_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
+
+					if (str_space < 2048) {
+						emit_i_type(0x13, REG_SP, 0, REG_SP, -str_space);
+					} else {
+						emit_li(REG_T0, -str_space);
+						emit_add(REG_SP, REG_SP, REG_T0);
+					}
+
+					// Store string on stack
+					for (size_t i = 0; i < str.length(); i++) {
+						emit_li(REG_T0, static_cast<unsigned char>(str[i]));
+						emit_sb(REG_T0, REG_SP, i); // SB (store byte)
+					}
+					// Store null terminator
+					emit_sb(REG_ZERO, REG_SP, string_len); // SB
+
+					// a0 = pointer to class name string (sp) - FIRST ARGUMENT
+					emit_mv(REG_A0, REG_SP);
+
+					// a1 = string length - SECOND ARGUMENT
+					emit_li(REG_A1, string_len);
+
+					// a7 = syscall number (504 for ECALL_GET_OBJ)
+					emit_li(REG_A7, syscall_num);
+					emit_ecall();
+
+					// After ecall, a0 contains the object data (uint64_t)
+					// We need to store this into the result Variant
+
+					// First, restore stack pointer (before storing result)
+					if (str_space < 2048) {
+						emit_i_type(0x13, REG_SP, 0, REG_SP, str_space);
+					} else {
+						emit_li(REG_T0, str_space);
+						emit_add(REG_SP, REG_SP, REG_T0);
+					}
+
+					// Store the object type (GDOBJECT = 24) into Variant
+					emit_li(REG_T0, 24); // GDOBJECT type
+					emit_sw(REG_T0, REG_SP, result_offset); // Store 4-byte type at offset 0
+
+					// Store the object data from a0 into the Variant data area (offset 8)
+					emit_sd(REG_A0, REG_SP, result_offset + 8); // Store 8-byte object data
+
+				} else if (syscall_num == 523) {
+					// ECALL_ARRAY_SIZE: result_reg, 523, array_vreg
+					// Takes: a0 = array variant index (unsigned)
+					// Returns: a0 = array size (int)
+					if (instr.operands.size() != 3) {
+						throw std::runtime_error("ECALL_ARRAY_SIZE requires 3 operands");
+					}
+
+					int array_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
+					int array_offset = get_variant_stack_offset(array_vreg);
+
+					// ECALL_ARRAY_SIZE clobbers a0
+					std::vector<uint8_t> clobbered_regs = {REG_A0};
+					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+
+					for (const auto& move : moves) {
+						emit_mv(move.second, move.first);
+					}
+
+					// Load the array variant index from offset 8 of the array Variant
+					emit_ld(REG_A0, REG_SP, array_offset + 8); // Load 64-bit variant index
+
+					// a7 = syscall number (523 for ECALL_ARRAY_SIZE)
+					emit_li(REG_A7, syscall_num);
+					emit_ecall();
+
+					// After ecall, a0 contains the size (int)
+					// Store it into the result Variant as an integer
+					int result_offset = get_variant_stack_offset(result_vreg);
+					emit_li(REG_T0, 2); // INT type = 2
+					emit_sw(REG_T0, REG_SP, result_offset); // Store 4-byte type
+					emit_sw(REG_A0, REG_SP, result_offset + 8); // Store 4-byte integer at offset 8
+
+				} else if (syscall_num == 522) {
+					// ECALL_ARRAY_AT: result_reg, 522, array_vreg, index_vreg
+					// Takes: a0 = array variant index (unsigned), a1 = index (int), a2 = result GuestVariant pointer
+					// Returns: result variant is filled with the element
+					if (instr.operands.size() != 4) {
+						throw std::runtime_error("ECALL_ARRAY_AT requires 4 operands");
+					}
+
+					int array_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
+					int index_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
+
+					int array_offset = get_variant_stack_offset(array_vreg);
+					int result_offset = get_variant_stack_offset(result_vreg);
+
+					// ECALL_ARRAY_AT clobbers a0, a1, a2
+					std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2};
+					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+
+					for (const auto& move : moves) {
+						emit_mv(move.second, move.first);
+					}
+
+					// a0 = array variant index (load from offset 8 of array Variant)
+					emit_ld(REG_A0, REG_SP, array_offset + 8); // Load 64-bit variant index
+
+					// a1 = index (load from index_vreg)
+					// The index is stored as a Variant, we need to extract the integer value
+					int index_offset = get_variant_stack_offset(index_vreg);
+					emit_lw(REG_A1, REG_SP, index_offset + 8); // Load integer from offset 8
+
+					// a2 = pointer to result GuestVariant
+					emit_i_type(0x13, REG_A2, 0, REG_SP, result_offset); // addi a2, sp, result_offset
+
+					// a7 = syscall number (522 for ECALL_ARRAY_AT)
+					emit_li(REG_A7, syscall_num);
+					emit_ecall();
+
+					// After ecall, the result Variant is already filled by the syscall
+
 				} else {
-					emit_li(REG_T0, -str_space);
-					emit_add(REG_SP, REG_SP, REG_T0);
+					throw std::runtime_error("Unknown syscall number: " + std::to_string(syscall_num));
 				}
-
-				// Store string on stack
-				for (size_t i = 0; i < str.length(); i++) {
-					emit_li(REG_T0, static_cast<unsigned char>(str[i]));
-					emit_sb(REG_T0, REG_SP, i); // SB (store byte)
-				}
-				// Store null terminator
-				emit_sb(REG_ZERO, REG_SP, string_len); // SB
-
-				// a0 = pointer to class name string (sp) - FIRST ARGUMENT
-				emit_mv(REG_A0, REG_SP);
-
-				// a1 = string length - SECOND ARGUMENT
-				emit_li(REG_A1, string_len);
-
-				// a7 = syscall number (504 for ECALL_GET_OBJ)
-				emit_li(REG_A7, syscall_num);
-				emit_ecall();
-
-				// After ecall, a0 contains the object data (uint64_t)
-				// We need to store this into the result Variant
-				// Variant structure: 4-byte type + 4-byte padding + 8-byte data (for object) + 8-byte padding = 24 bytes
-				// For OBJECT type, we store the type (GDOBJECT) and the object data
-
-				// First, restore stack pointer (before storing result)
-				if (str_space < 2048) {
-					emit_i_type(0x13, REG_SP, 0, REG_SP, str_space);
-				} else {
-					emit_li(REG_T0, str_space);
-					emit_add(REG_SP, REG_SP, REG_T0);
-				}
-
-				// Store the object type (GDOBJECT = 24) into Variant
-				// TODO: Need to define the GDOBJECT constant
-				emit_li(REG_T0, 24); // GDOBJECT type
-				emit_sw(REG_T0, REG_SP, result_offset); // Store 4-byte type at offset 0
-
-				// Store the object data from a0 into the Variant data area (offset 8)
-				emit_sd(REG_A0, REG_SP, result_offset + 8); // Store 8-byte object data
 
 				break;
 			}

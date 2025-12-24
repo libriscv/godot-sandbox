@@ -1,6 +1,7 @@
 #include "ir_optimizer.h"
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 
 namespace gdscript {
 
@@ -118,6 +119,21 @@ void IROptimizer::constant_folding(IRFunction& func) {
 			case IROpcode::MUL:
 			case IROpcode::DIV:
 			case IROpcode::MOD: {
+				// Check that all operands are registers before attempting constant folding
+				if (instr.operands.size() < 3 ||
+				    instr.operands[0].type != IRValue::Type::REGISTER ||
+				    instr.operands[1].type != IRValue::Type::REGISTER ||
+				    instr.operands[2].type != IRValue::Type::REGISTER) {
+					// Can't fold if operands aren't all registers
+					// Invalidate destination if it's a register
+					if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+						int dst = std::get<int>(instr.operands[0].value);
+						invalidate_register(dst);
+					}
+					new_instructions.push_back(instr);
+					break;
+				}
+
 				int dst = std::get<int>(instr.operands[0].value);
 				int lhs_reg = std::get<int>(instr.operands[1].value);
 				int rhs_reg = std::get<int>(instr.operands[2].value);
@@ -154,6 +170,20 @@ void IROptimizer::constant_folding(IRFunction& func) {
 			case IROpcode::CMP_LTE:
 			case IROpcode::CMP_GT:
 			case IROpcode::CMP_GTE: {
+				// Check that all operands are registers before attempting constant folding
+				if (instr.operands.size() < 3 ||
+				    instr.operands[0].type != IRValue::Type::REGISTER ||
+				    instr.operands[1].type != IRValue::Type::REGISTER ||
+				    instr.operands[2].type != IRValue::Type::REGISTER) {
+					// Can't fold if operands aren't all registers
+					if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+						int dst = std::get<int>(instr.operands[0].value);
+						invalidate_register(dst);
+					}
+					new_instructions.push_back(instr);
+					break;
+				}
+
 				int dst = std::get<int>(instr.operands[0].value);
 				int lhs_reg = std::get<int>(instr.operands[1].value);
 				int rhs_reg = std::get<int>(instr.operands[2].value);
@@ -552,6 +582,8 @@ std::unordered_set<int> IROptimizer::find_live_registers(const IRFunction& func)
 			case IROpcode::VCALL:
 			case IROpcode::VGET:
 			case IROpcode::VSET:
+			case IROpcode::CALL:
+			case IROpcode::CALL_SYSCALL:
 			// Inline primitive construction - these read from their argument registers
 			case IROpcode::MAKE_VECTOR2:
 			case IROpcode::MAKE_VECTOR3:

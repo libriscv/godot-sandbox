@@ -959,3 +959,64 @@ func test_chained_call():
 	assert_true(result >= 0, "Time.get_ticks_usec() chained should return a non-negative value")
 
 	s.queue_free()
+
+func test_array_iteration():
+	# Test for item in array iteration
+	var gdscript_code = """
+func test_simple_array_iteration():
+	var arr = [1, 2, 3, 4, 5]
+	var sum = 0
+	for item in arr:
+		sum = sum + item
+	return sum
+
+func test_array_string_iteration():
+	var arr = ["hello", "world", "test"]
+	var result = ""
+	for item in arr:
+		result = result + item
+	return result
+
+func test_empty_array():
+	var arr = []
+	var count = 0
+	for item in arr:
+		count = count + 1
+	return count
+
+func test_nested_array_iteration():
+	var matrix = [[1, 2], [3, 4]]
+	var sum = 0
+	for row in matrix:
+		for item in row:
+			sum = sum + item
+	return sum
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	# Test simple array iteration
+	var result = s.vmcallv("test_simple_array_iteration")
+	assert_eq(result, 15, "Sum of [1,2,3,4,5] should be 15")
+
+	# Test array with string elements
+	result = s.vmcallv("test_array_string_iteration")
+	assert_eq(result, "helloworldtest", "Concatenated strings should be 'helloworldtest'")
+
+	# Test empty array
+	result = s.vmcallv("test_empty_array")
+	assert_eq(result, 0, "Empty array should iterate 0 times")
+
+	# Test nested array iteration
+	result = s.vmcallv("test_nested_array_iteration")
+	assert_eq(result, 10, "Sum of [[1,2],[3,4]] should be 10")
+
+	s.queue_free()

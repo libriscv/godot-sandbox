@@ -6,6 +6,7 @@
 #include <variant>
 #include <iomanip>
 #include <limits>
+#include <sstream>
 
 using namespace gdscript;
 

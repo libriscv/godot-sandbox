@@ -18,6 +18,7 @@ PUBLIC Variant compile_to_elf(String code)
 	auto elf_data = compiler.compile(code.utf8(), options);
 
 	if (elf_data.empty()) {
+		print("ERROR: Compilation failed: ", compiler.get_error());
 		return PackedByteArray(std::vector<uint8_t>{}); // Return empty array on failure
 	}
 

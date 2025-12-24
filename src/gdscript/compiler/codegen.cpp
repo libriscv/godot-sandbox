@@ -234,18 +234,112 @@ void CodeGenerator::gen_while(const WhileStmt* stmt, IRFunction& func) {
 
 void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 	// Desugar: for variable in iterable: body
-	// For now, we only support range() calls
-	// Convert to:
+	// Support range() calls and array iteration
+	// For range(): Convert to:
 	//   var _iter = iterable  (evaluate range())
 	//   var variable = 0
 	//   while variable < _iter:
 	//     body
 	//     variable = variable + 1
+	// For arrays: Convert to:
+	//   var _array = iterable
+	//   var _idx = 0
+	//   while _idx < _array.size():
+	//     var variable = _array[_idx]
+	//     body
+	//     _idx = _idx + 1
 
 	// Check if iterable is a range() call
 	auto* call_expr = dynamic_cast<const CallExpr*>(stmt->iterable.get());
-	if (!call_expr || call_expr->function_name != "range") {
-		throw std::runtime_error("For loops currently only support range() - general iterables not yet implemented");
+	bool is_range = call_expr && call_expr->function_name == "range";
+
+	if (!is_range) {
+		// Array iteration
+		// Evaluate the array expression
+		int array_reg = gen_expr(stmt->iterable.get(), func);
+
+		// Call ECALL_ARRAY_SIZE to get the array size
+		// ECALL_ARRAY_SIZE = GAME_API_BASE + 23 = 523
+		int size_reg = alloc_register();
+		IRInstruction size_syscall(IROpcode::CALL_SYSCALL);
+		size_syscall.operands.push_back(IRValue::reg(size_reg));  // result register
+		size_syscall.operands.push_back(IRValue::imm(523));         // ECALL_ARRAY_SIZE
+		size_syscall.operands.push_back(IRValue::reg(array_reg));   // array register
+		func.instructions.push_back(size_syscall);
+
+		std::string loop_label = make_label("for_loop");
+		std::string continue_label = make_label("for_continue");
+		std::string end_label = make_label("for_end");
+
+		// Push loop context for break/continue
+		m_loop_stack.push_back({end_label, continue_label});
+
+		// Create new scope for loop (includes loop variable)
+		push_scope();
+
+		// Initialize index counter with 0
+		int index_reg = alloc_register();
+		auto& index_load = func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(index_reg), IRValue::imm(0));
+		index_load.type_hint = IRInstruction::TypeHint::RAW_INT;
+
+		// Loop start
+		func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
+
+		// Condition: index < size
+		int cond_reg = alloc_register();
+		auto& cmp_instr = func.instructions.emplace_back(IROpcode::CMP_LT, IRValue::reg(cond_reg),
+		                               IRValue::reg(index_reg), IRValue::reg(size_reg));
+		cmp_instr.type_hint = IRInstruction::TypeHint::RAW_INT;
+
+		func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(cond_reg), IRValue::label(end_label));
+		free_register(cond_reg);
+
+		// Get element from array using ECALL_ARRAY_AT
+		// ECALL_ARRAY_AT = GAME_API_BASE + 22 = 522
+		int elem_reg = alloc_register();
+		IRInstruction at_syscall(IROpcode::CALL_SYSCALL);
+		at_syscall.operands.push_back(IRValue::reg(elem_reg));    // result register (element)
+		at_syscall.operands.push_back(IRValue::imm(522));         // ECALL_ARRAY_AT
+		at_syscall.operands.push_back(IRValue::reg(array_reg));   // array register
+		at_syscall.operands.push_back(IRValue::reg(index_reg));   // index register
+		func.instructions.push_back(at_syscall);
+
+		// Assign the element to the loop variable
+		declare_variable(stmt->variable, elem_reg);
+
+		// Loop body (new scope for body, separate from loop variable scope)
+		push_scope();
+		for (const auto& s : stmt->body) {
+			gen_stmt(s.get(), func);
+		}
+		pop_scope();
+
+		// Continue label - where continue jumps to
+		func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(continue_label));
+
+		// Increment: index = index + 1
+		int new_idx_reg = alloc_register();
+		auto& add_instr = func.instructions.emplace_back(IROpcode::ADD, IRValue::reg(new_idx_reg),
+		                               IRValue::reg(index_reg), IRValue::imm(1));
+		add_instr.type_hint = IRInstruction::TypeHint::RAW_INT;
+		auto& move_instr = func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(index_reg), IRValue::reg(new_idx_reg));
+		move_instr.type_hint = IRInstruction::TypeHint::RAW_INT;
+		free_register(new_idx_reg);
+
+		// Jump back to loop start
+		func.instructions.emplace_back(IROpcode::JUMP, IRValue::label(loop_label));
+
+		// Loop end
+		func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+
+		// Clean up
+		pop_scope();
+		m_loop_stack.pop_back();
+		free_register(array_reg);
+		free_register(size_reg);
+		free_register(index_reg);
+		free_register(elem_reg);
+		return;
 	}
 
 	// Generate range() arguments

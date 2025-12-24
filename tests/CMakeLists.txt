@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(unittests LANGUAGES CXX)
+project(unittests LANGUAGES C CXX)
 
 add_subdirectory(../program/cpp/cmake sandbox_api)
 add_subdirectory(../src/gdscript/compiler gdscript_compiler)
