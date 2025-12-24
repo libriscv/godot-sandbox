@@ -37,8 +37,8 @@ protected:
 
 public:
 	static constexpr unsigned MAX_INSTRUCTIONS = 8000; // Millions
-	static constexpr unsigned MAX_HEAP = 16ul; // MBs
-	static constexpr unsigned MAX_VMEM = 16ul; // MBs
+	static constexpr unsigned MAX_HEAP = 20ul; // MBs
+	static constexpr unsigned MAX_VMEM = 20ul; // MBs
 	static constexpr unsigned MAX_HEAP_ALLOCS = 4000; // Max guest heap allocations
 	static constexpr unsigned MAX_LEVEL = 4; // Maximum call recursion depth
 	static constexpr unsigned MAX_REFS = 100; // Default maximum number of references
