@@ -70,6 +70,7 @@ std::vector<Parameter> Parser::parse_parameters() {
 std::vector<StmtPtr> Parser::parse_block() {
 	std::vector<StmtPtr> statements;
 
+	skip_newlines();
 	consume(TokenType::INDENT, "Expected indented block");
 
 	while (!check(TokenType::DEDENT) && !is_at_end()) {

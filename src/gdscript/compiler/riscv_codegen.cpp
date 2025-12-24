@@ -200,8 +200,13 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				int stack_offset = get_variant_stack_offset(vreg);
 
-				if (instr.type_hint == IRInstruction::TypeHint::RAW_FLOAT) {
-					// Optimization: keep float value in FP register
+				// Try RAW_FLOAT optimization when type hint indicates a float value
+				// This includes both RAW_FLOAT and VARIANT_FLOAT (backend-driven optimization)
+				bool is_float_type = (instr.type_hint == IRInstruction::TypeHint::RAW_FLOAT ||
+				                     instr.type_hint == IRInstruction::TypeHint::VARIANT_FLOAT);
+
+				if (is_float_type) {
+					// Optimization: try to keep float value in FP register
 					int fpreg = allocate_fp_register(vreg);
 
 					if (fpreg >= 0) {
@@ -400,6 +405,36 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						emit_li(REG_T0, 2); // Variant::INT type
 						emit_store_variant_type(REG_T0, REG_SP, dst_offset);
 						emit_store_variant_int(dst_preg, REG_SP, dst_offset);
+					} else {
+						goto variant_arithmetic;
+					}
+				} else if (lhs_type == ValueType::RAW_FLOAT && rhs_type == ValueType::RAW_FLOAT) {
+					// Optimization: use native RISC-V FP arithmetic for doubles
+					int dst_fpreg = allocate_fp_register(dst_vreg);
+					int lhs_fpreg = get_fp_register(lhs_vreg);
+					int rhs_fpreg = get_fp_register(rhs_vreg);
+
+					if (dst_fpreg >= 0 && lhs_fpreg >= 0 && rhs_fpreg >= 0) {
+						// Emit native RISC-V FP arithmetic instruction
+						if (instr.opcode == IROpcode::ADD) {
+							emit_fadd_d(dst_fpreg, lhs_fpreg, rhs_fpreg);
+						} else if (instr.opcode == IROpcode::SUB) {
+							emit_fsub_d(dst_fpreg, lhs_fpreg, rhs_fpreg);
+						} else if (instr.opcode == IROpcode::MUL) {
+							emit_fmul_d(dst_fpreg, lhs_fpreg, rhs_fpreg);
+						} else if (instr.opcode == IROpcode::DIV) {
+							emit_fdiv_d(dst_fpreg, lhs_fpreg, rhs_fpreg);
+						} else {
+							// MOD not supported for FP, fallback to VEVAL
+							goto variant_arithmetic;
+						}
+						m_vreg_types[dst_vreg] = ValueType::RAW_FLOAT;
+
+						// Also materialize to Variant on stack so it's accessible
+						int dst_offset = get_variant_stack_offset(dst_vreg);
+						emit_li(REG_T0, 3); // Variant::FLOAT type
+						emit_sw(REG_T0, REG_SP, dst_offset);
+						emit_fsd(dst_fpreg, REG_SP, dst_offset + 8);
 					} else {
 						goto variant_arithmetic;
 					}
@@ -1795,35 +1830,60 @@ void RISCVCodeGen::resolve_labels() {
 			uint32_t imm19_12 = (offset >> 12) & 0xFF;
 
 			instr = opcode | (rd << 7) | (imm19_12 << 12) | (imm11 << 20) | (imm10_1 << 21) | (imm20 << 31);
-		} else if (opcode == 0x17) { // U-type (AUIPC) - for constant pool access
-			// This is AUIPC instruction for loading constants
-			// It's followed by LD instruction
-			// We need to patch both AUIPC and LD with correct offsets
-
+		} else if (opcode == 0x17) { // U-type (AUIPC) - for constant pool or address loading
 			uint8_t rd = (instr >> 7) & 0x1F;
 
-			// Calculate PC-relative offset
-			// Split into upper 20 bits (for AUIPC) and lower 12 bits (for LD)
-			int32_t upper = (offset + 0x800) >> 12; // Add 0x800 for sign extension
-			int32_t lower = offset & 0xFFF;
+			// Check if the next instruction is LD (for constant pool) or ADDI (for address)
+			uint32_t next_instr;
+			memcpy(&next_instr, &m_code[use_offset + 4], 4);
+			uint8_t next_opcode = next_instr & 0x7F;
 
-			// Patch AUIPC with upper 20 bits
-			instr = opcode | (rd << 7) | ((upper & 0xFFFFF) << 12);
-			memcpy(&m_code[use_offset], &instr, 4);
+			if (next_opcode == 0x03) { // LD instruction (for constant pool access)
+				// Calculate PC-relative offset
+				// Split into upper 20 bits (for AUIPC) and lower 12 bits (for LD)
+				int32_t upper = (offset + 0x800) >> 12; // Add 0x800 for sign extension
+				int32_t lower = offset & 0xFFF;
 
-			// Patch the following LD instruction with lower 12 bits
-			// LD is at use_offset + 4
-			uint32_t ld_instr;
-			memcpy(&ld_instr, &m_code[use_offset + 4], 4);
-			// LD opcode is 0x03, modify the immediate field
-			uint8_t ld_rd = (ld_instr >> 7) & 0x1F;
-			uint8_t ld_rs1 = (ld_instr >> 15) & 0x1F;
-			uint8_t ld_funct3 = (ld_instr >> 12) & 0x7;
-			ld_instr = 0x03 | (ld_rd << 7) | (ld_funct3 << 12) | (ld_rs1 << 15) | ((lower & 0xFFF) << 20);
-			memcpy(&m_code[use_offset + 4], &ld_instr, 4);
+				// Patch AUIPC with upper 20 bits
+				instr = opcode | (rd << 7) | ((upper & 0xFFFFF) << 12);
+				memcpy(&m_code[use_offset], &instr, 4);
 
-			// Skip the next use since we processed both AUIPC and LD together
-			continue;
+				// Patch the following LD instruction with lower 12 bits
+				// LD is at use_offset + 4
+				uint8_t ld_rd = (next_instr >> 7) & 0x1F;
+				uint8_t ld_rs1 = (next_instr >> 15) & 0x1F;
+				uint8_t ld_funct3 = (next_instr >> 12) & 0x7;
+				next_instr = 0x03 | (ld_rd << 7) | (ld_funct3 << 12) | (ld_rs1 << 15) | ((lower & 0xFFF) << 20);
+				memcpy(&m_code[use_offset + 4], &next_instr, 4);
+
+				// Skip the next use since we processed both AUIPC and LD together
+				continue;
+			} else if (next_opcode == 0x13) { // ADDI instruction (for load address)
+				// AUIPC + ADDI pattern for load address (emit_la)
+				uint8_t addi_funct3 = (next_instr >> 12) & 0x7;
+				uint8_t addi_rs1 = (next_instr >> 15) & 0x1F;
+
+				// For AUIPC+ADDI, the offset is the full 32-bit value
+				// Split into upper 20 bits (for AUIPC) and lower 12 bits (for ADDI)
+				int32_t upper = (offset + 0x800) >> 12; // Add 0x800 for sign extension
+				int32_t lower = offset & 0xFFF;
+
+				// Verify ADDI is using the same register as rd (rs1 == rd)
+				// This is required for AUIPC+ADDI pattern
+				if (addi_rs1 == rd && addi_funct3 == 0) {
+					// Patch AUIPC with upper 20 bits
+					instr = opcode | (rd << 7) | ((upper & 0xFFFFF) << 12);
+					memcpy(&m_code[use_offset], &instr, 4);
+
+					// Patch the following ADDI instruction with lower 12 bits
+					uint8_t addi_rd = (next_instr >> 7) & 0x1F;
+					next_instr = 0x13 | (addi_rd << 7) | (addi_funct3 << 12) | (addi_rs1 << 15) | ((lower & 0xFFF) << 20);
+					memcpy(&m_code[use_offset + 4], &next_instr, 4);
+
+					// Skip the next use since we processed both AUIPC and ADDI together
+					continue;
+				}
+			}
 		}
 
 		memcpy(&m_code[use_offset], &instr, 4);
@@ -2202,6 +2262,26 @@ void RISCVCodeGen::emit_fcvt_d_s(uint8_t rd, uint8_t rs1) {
 void RISCVCodeGen::emit_fcvt_s_d(uint8_t rd, uint8_t rs1) {
 	// FCVT.S.D: Convert double (64-bit) to float (32-bit)
 	emit_r4_type(0b1010011, rd, 0, rs1, 1, 0b01000, 0);
+}
+
+void RISCVCodeGen::emit_fadd_d(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	// FADD.D: Double-precision FP add
+	emit_r_type(0x53, rd, 0, rs1, rs2, 0x01);
+}
+
+void RISCVCodeGen::emit_fsub_d(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	// FSUB.D: Double-precision FP subtract
+	emit_r_type(0x53, rd, 0, rs1, rs2, 0x05);
+}
+
+void RISCVCodeGen::emit_fmul_d(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	// FMUL.D: Double-precision FP multiply
+	emit_r_type(0x53, rd, 0, rs1, rs2, 0x09);
+}
+
+void RISCVCodeGen::emit_fdiv_d(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	// FDIV.D: Double-precision FP divide
+	emit_r_type(0x53, rd, 0, rs1, rs2, 0x0D);
 }
 
 // Sign-extend word to doubleword (addiw rd, rs, 0)

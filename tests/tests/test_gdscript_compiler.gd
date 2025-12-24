@@ -1020,3 +1020,263 @@ func test_nested_array_iteration():
 	assert_eq(result, 10, "Sum of [[1,2],[3,4]] should be 10")
 
 	s.queue_free()
+
+# Comprehensive FP arithmetic tests to stress FP register allocation and AUIPC+ADDI patching
+func test_fp_register_allocation_stress():
+	var gdscript_code = """
+func many_float_vars():
+	var f1 = 1.1
+	var f2 = 2.2
+	var f3 = 3.3
+	var f4 = 4.4
+	var f5 = 5.5
+	var f6 = 6.6
+	var f7 = 7.7
+	var f8 = 8.8
+	var f9 = 9.9
+	var f10 = 10.10
+	var f11 = 11.11
+	var f12 = 12.12
+	var f13 = 13.13
+	var f14 = 14.14
+	var f15 = 15.15
+	var sum = f1 + f2 + f3 + f4 + f5
+	return sum
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	var result = s.vmcallv("many_float_vars")
+	# 1.1 + 2.2 + 3.3 + 4.4 + 5.5 = 16.5
+	assert_almost_eq(result, 16.5, 0.01, "Sum of 5 floats should be 16.5")
+
+	s.queue_free()
+
+func test_large_float_constants():
+	var gdscript_code = """
+func large_constants():
+	var f1 = 123456.789
+	var f2 = 987654.321
+	var f3 = 111111.222
+	var f4 = 999999.999
+	var sum = f1 + f2 + f3 + f4
+	return sum
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	var result = s.vmcallv("large_constants")
+	assert_almost_eq(result, 2222222.331, 0.01, "Sum of large floats should be correct")
+
+	s.queue_free()
+
+func test_complex_float_arithmetic():
+	var gdscript_code = """
+func complex_arithmetic():
+	var a = 1.5
+	var b = 2.5
+	var c = 3.0
+	var d = 4.0
+	var sum1 = a + b
+	var sum2 = c + d
+	var product = sum1 * sum2
+	var quotient = product / a
+	return quotient
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	var result = s.vmcallv("complex_arithmetic")
+	# (1.5 + 2.5) * (3.0 + 4.0) / 1.5 = 4.0 * 7.0 / 1.5 = 28.0 / 1.5 = 18.666...
+	assert_almost_eq(result, 18.666, 0.001, "Complex arithmetic should work")
+
+	s.queue_free()
+
+func test_vector_fp_arithmetic():
+	var gdscript_code = """
+func vector_arithmetic():
+	var v1 = Vector2(1.5, 2.5)
+	var v2 = Vector2(3.0, 4.0)
+	# Add components: v1.x + v2.x, v1.y + v2.y
+	var x_sum = v1.x + v2.x
+	var y_sum = v1.y + v2.y
+	var total = x_sum + y_sum
+	return total
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	var result = s.vmcallv("vector_arithmetic")
+	# (1.5 + 3.0) + (2.5 + 4.0) = 4.5 + 6.5 = 11.0
+	assert_almost_eq(result, 11.0, 0.001, "Vector FP arithmetic should work")
+
+	s.queue_free()
+
+func test_vector3_operations():
+	var gdscript_code = """
+func vector3_ops():
+	var v = Vector3(1.0, 2.0, 3.0)
+	var x = v.x
+	var y = v.y
+	var z = v.z
+	# Test each component access and arithmetic
+	var x2 = x * 2.0
+	var y2 = y * 3.0
+	var z2 = z * 4.0
+	return x2 + y2 + z2
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	var result = s.vmcallv("vector3_ops")
+	# 1.0 * 2 + 2.0 * 3 + 3.0 * 4 = 2 + 6 + 12 = 20
+	assert_almost_eq(result, 20.0, 0.001, "Vector3 operations should work")
+
+	s.queue_free()
+
+func test_vector4_operations():
+	var gdscript_code = """
+func vector4_ops():
+	var v = Vector4(1.0, 2.0, 3.0, 4.0)
+	var w = v.w
+	var z = v.z
+	var y = v.y
+	var x = v.x
+	# Test component order and arithmetic
+	var sum = w + z + y + x
+	return sum
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	var result = s.vmcallv("vector4_ops")
+	assert_almost_eq(result, 10.0, 0.001, "Vector4 component access should work")
+
+	s.queue_free()
+
+func test_float_vector_chaining():
+	var gdscript_code = """
+func chain_vector_ops():
+	var v1 = Vector2(1.0, 2.0)
+	var v2 = Vector2(v1.x + 1.0, v1.y + 2.0)
+	var v3 = Vector2(v2.x * 2.0, v2.y * 3.0)
+	return v3.x + v3.y
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	var result = s.vmcallv("chain_vector_ops")
+	# v1 = (1.0, 2.0), v2 = (2.0, 4.0), v3 = (4.0, 12.0)
+	# 4.0 + 12.0 = 16.0
+	assert_almost_eq(result, 16.0, 0.001, "Chained vector operations should work")
+
+	s.queue_free()
+
+func test_mixed_int_float_arithmetic():
+	var gdscript_code = """
+func mixed_arithmetic():
+	var f = 10.5
+	var i = 5
+	var sum1 = f + i
+	var sum2 = i + f
+	var product = f * i
+	return sum1 + sum2 + product
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	var result = s.vmcallv("mixed_arithmetic")
+	# 10.5 + 5 + 5 + 10.5 + 10.5 * 5 = 15.5 + 15.5 + 52.5 = 83.5
+	assert_almost_eq(result, 83.5, 0.001, "Mixed int/float arithmetic should work")
+
+	s.queue_free()
+
+func test_float_division_edge_cases():
+	var gdscript_code = """
+func float_division():
+	var a = 100.0
+	var b = 4.0
+	var c = 3.0
+	var result = a / b / c
+	return result
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	var result = s.vmcallv("float_division")
+	# 100.0 / 4.0 / 3.0 = 25.0 / 3.0 = 8.333...
+	assert_almost_eq(result, 8.333, 0.001, "Float division chain should work")
+
+	s.queue_free()

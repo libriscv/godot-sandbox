@@ -86,6 +86,12 @@ private:
 	void emit_fcvt_d_s(uint8_t rd, uint8_t rs1);             // Convert float to double
 	void emit_fcvt_s_d(uint8_t rd, uint8_t rs1);             // Convert double to float
 
+	// FP arithmetic instructions (RV64D extension)
+	void emit_fadd_d(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Double-precision FP add
+	void emit_fsub_d(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Double-precision FP sub
+	void emit_fmul_d(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Double-precision FP mul
+	void emit_fdiv_d(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Double-precision FP div
+
 	// Additional integer instructions
 	void emit_sext_w(uint8_t rd, uint8_t rs);  // Sign-extend word to doubleword (addiw rd, rs, 0)
 
