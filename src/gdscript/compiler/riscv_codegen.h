@@ -45,6 +45,7 @@ private:
 
 	// Higher-level RISC-V instructions
 	void emit_li(uint8_t rd, int64_t imm);      // Load immediate
+	void emit_la(uint8_t rd, const std::string& label); // Load address (pseudo: auipc + addi)
 	void emit_mv(uint8_t rd, uint8_t rs);       // Move
 	void emit_add(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_sub(uint8_t rd, uint8_t rs1, uint8_t rs2);
@@ -120,6 +121,14 @@ private:
 	// Get stack offset for a virtual register (in bytes)
 	int get_variant_stack_offset(int virtual_reg);
 
+	// FP register allocation helpers (simple pool-based, no full allocator)
+	// Available FP temporary registers: ft0-ft11 (f8-f19, excluding fa0-fa7)
+	// Returns FP register number or -1 if none available
+	int allocate_fp_register(int vreg);
+	void free_fp_register(int vreg);
+	int get_fp_register(int vreg) const;
+	void materialize_raw_float_to_variant(int vreg); // Spill RAW_FLOAT to stack Variant
+
 	// Output buffer
 	std::vector<uint8_t> m_code;
 	std::unordered_map<std::string, size_t> m_labels;
@@ -130,6 +139,7 @@ private:
 	enum class ValueType {
 		RAW_INT,    // 64-bit integer in register
 		RAW_BOOL,   // Boolean (stored as 64-bit int)
+		RAW_FLOAT,  // Float in FP register (stored as double)
 		VARIANT     // Full Variant on stack
 	};
 
@@ -144,6 +154,13 @@ private:
 
 	// For VARIANT values: virtual_reg -> stack offset
 	std::unordered_map<int, int> m_variant_offsets;
+
+	// For RAW_FLOAT values: virtual_reg -> FP register (f0-f31)
+	std::unordered_map<int, uint8_t> m_vreg_to_fpreg;
+	std::unordered_map<uint8_t, int> m_fpreg_to_vreg;
+
+	// Free FP register pool (ft0-ft11 = f8-f19)
+	std::vector<uint8_t> m_free_fp_registers;
 
 	size_t m_num_params = 0; // Number of parameters in current function
 	int m_stack_frame_size = 0; // Total stack frame size in bytes

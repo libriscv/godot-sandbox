@@ -28,7 +28,14 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_variant_offsets.clear();
 	m_constant_pool.clear();
 	m_constant_pool_map.clear();
+	m_vreg_to_fpreg.clear();
+	m_fpreg_to_vreg.clear();
+	m_vreg_types.clear();
 	m_string_constants = &program.string_constants;
+
+	// Initialize free FP register pool (ft0-ft11 = f8-f19, excluding fa0-fa7)
+	// FP registers: f0-f7 are args/return, f8-f19 are temps, f20-f31 are saved
+	m_free_fp_registers = {8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
 
 	// Emit a STOP instruction at entry point (offset 0)
 	// This prevents accidental execution when ELF is loaded
@@ -63,10 +70,16 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	// a0 = pointer to return Variant (pre-allocated by caller)
 	// a1-a7 = pointers to argument Variants
 	m_variant_offsets.clear();
+	m_vreg_to_fpreg.clear();
+	m_fpreg_to_vreg.clear();
+	m_vreg_types.clear();
 	m_num_params = func.parameters.size();
 	m_next_variant_slot = 0;
 	m_stack_frame_size = 0;
 	m_current_instr_idx = 0;
+
+	// Re-initialize free FP register pool for this function
+	m_free_fp_registers = {8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
 
 	// Initialize register allocator
 	m_allocator.init(func);
@@ -187,15 +200,42 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				int stack_offset = get_variant_stack_offset(vreg);
 
-				// Set m_type = FLOAT (3)
-				emit_li(REG_T0, 3);
-				emit_sw(REG_T0, REG_SP, stack_offset);
+				if (instr.type_hint == IRInstruction::TypeHint::RAW_FLOAT) {
+					// Optimization: keep float value in FP register
+					int fpreg = allocate_fp_register(vreg);
 
-				// Store the 64-bit double bits at offset 8
-				emit_li(REG_T0, bits);
-				emit_sd(REG_T0, REG_SP, stack_offset + 8);
+					if (fpreg >= 0) {
+						// Load the 64-bit double into FP register
+						// Use constant pool and FLD to load
+						size_t const_idx = add_constant(bits);
+						std::string label = ".LC" + std::to_string(const_idx);
 
-				m_vreg_types[vreg] = ValueType::VARIANT;
+						// Load address of constant into integer register, then FLD
+						emit_la(REG_T0, label);
+						emit_fld(fpreg, REG_T0, 0);
+
+						m_vreg_types[vreg] = ValueType::RAW_FLOAT;
+
+						// Also materialize to Variant on stack so it's accessible
+						emit_li(REG_T0, 3); // Variant::FLOAT type
+						emit_sw(REG_T0, REG_SP, stack_offset);
+						emit_fsd(fpreg, REG_SP, stack_offset + 8);
+					} else {
+						// No FP register available, fallback to Variant on stack
+						emit_li(REG_T0, 3); // Variant::FLOAT type
+						emit_sw(REG_T0, REG_SP, stack_offset);
+						emit_li(REG_T0, bits);
+						emit_sd(REG_T0, REG_SP, stack_offset + 8);
+						m_vreg_types[vreg] = ValueType::VARIANT;
+					}
+				} else {
+					// Standard: create float Variant on stack
+					emit_li(REG_T0, 3); // Variant::FLOAT type
+					emit_sw(REG_T0, REG_SP, stack_offset);
+					emit_li(REG_T0, bits);
+					emit_sd(REG_T0, REG_SP, stack_offset + 8);
+					m_vreg_types[vreg] = ValueType::VARIANT;
+				}
 				break;
 			}
 
@@ -957,20 +997,37 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
 
 				// Store each component at offset 8, 12, 16, 20 (4 bytes per component as real_t=float)
-				// The components are FLOAT Variants, their 64-bit double values are at offset 8
-				// We need to convert double to float and store 4 bytes
+				// The components are 64-bit doubles, need to convert to 32-bit float for storage
 				for (int i = 0; i < num_components; i++) {
 					int comp_vreg = std::get<int>(instr.operands[1 + i].value);
-					int comp_offset = get_variant_stack_offset(comp_vreg);
 
-					// Load the 64-bit double value from the source FLOAT Variant (offset 8)
-					emit_fld(REG_FA0, REG_SP, comp_offset + 8);
+					// Check if component is RAW_FLOAT (in FP register)
+					auto comp_type_it = m_vreg_types.find(comp_vreg);
+					ValueType comp_type = (comp_type_it != m_vreg_types.end()) ? comp_type_it->second : ValueType::VARIANT;
 
-					// Convert double (64-bit) to float (32-bit)
-					emit_fcvt_s_d(REG_FA0, REG_FA0);
-
-					// Store 4-byte float to result at offset 8 + i*4
-					emit_fsw(REG_FA0, REG_SP, result_offset + 8 + i * 4);
+					if (comp_type == ValueType::RAW_FLOAT) {
+						// Use FP register directly
+						int fpreg = get_fp_register(comp_vreg);
+						if (fpreg >= 0) {
+							// Convert double (64-bit) to float (32-bit)
+							uint8_t temp_freg = REG_FA0; // Use a temporary
+							emit_fcvt_s_d(temp_freg, fpreg);
+							// Store 4-byte float to result at offset 8 + i*4
+							emit_fsw(temp_freg, REG_SP, result_offset + 8 + i * 4);
+						} else {
+							// Fallback to stack load
+							int comp_offset = get_variant_stack_offset(comp_vreg);
+							emit_fld(REG_FA0, REG_SP, comp_offset + 8);
+							emit_fcvt_s_d(REG_FA0, REG_FA0);
+							emit_fsw(REG_FA0, REG_SP, result_offset + 8 + i * 4);
+						}
+					} else {
+						// Load from stack Variant
+						int comp_offset = get_variant_stack_offset(comp_vreg);
+						emit_fld(REG_FA0, REG_SP, comp_offset + 8);
+						emit_fcvt_s_d(REG_FA0, REG_FA0);
+						emit_fsw(REG_FA0, REG_SP, result_offset + 8 + i * 4);
+					}
 				}
 
 				m_vreg_types[result_vreg] = ValueType::VARIANT;
@@ -1236,11 +1293,9 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				else if (member == "z" || member == "b") component_idx = 2;
 				else if (member == "w" || member == "a") component_idx = 3;
 
-				// Check if it's an integer vector type (from IR TypeHint enum values)
-				// IR TypeHint: VARIANT_VECTOR2I = 9, VARIANT_VECTOR3I = 10, VARIANT_VECTOR4I = 11
-				if (obj_type_hint == 9 || obj_type_hint == 10 || obj_type_hint == 11) {
-					is_int_type = true;
-				}
+				// Check if it's an integer vector type using helper function
+				IRInstruction::TypeHint hint = static_cast<IRInstruction::TypeHint>(obj_type_hint);
+				is_int_type = TypeHintUtils::is_int_vector(hint);
 
 				// All vector components are stored as 4-byte values
 				member_offset += component_idx * 4;
@@ -1259,20 +1314,31 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				} else {
 					// For float components from Vector types:
 					// Use FP instructions to convert 4-byte float to 8-byte double
-					// FLW loads 32-bit float, FCVT.D.S converts to double, FSD stores 64-bit double
+					// FLW loads 32-bit float, FCVT.D.S converts to double
 
-					// Load 4-byte float component to FP register FA0
-					emit_flw(REG_FA0, REG_SP, obj_offset + member_offset);
+					// Try to allocate an FP register for RAW_FLOAT optimization
+					int fpreg = allocate_fp_register(result_vreg);
+
+					// Load 4-byte float component to FP register
+					uint8_t load_freg = (fpreg >= 0) ? static_cast<uint8_t>(fpreg) : REG_FA0;
+					emit_flw(load_freg, REG_SP, obj_offset + member_offset);
 
 					// Convert float (32-bit) to double (64-bit)
-					emit_fcvt_d_s(REG_FA0, REG_FA0);
+					emit_fcvt_d_s(load_freg, load_freg);
 
 					// Set result Variant type to FLOAT (3)
 					emit_li(REG_T0, 3);
 					emit_sw(REG_T0, REG_SP, result_offset); // m_type = FLOAT
 
 					// Store 8-byte double to v.f field
-					emit_fsd(REG_FA0, REG_SP, result_offset + 8);
+					emit_fsd(load_freg, REG_SP, result_offset + 8);
+
+					// Mark as RAW_FLOAT if we allocated an FP register
+					if (fpreg >= 0) {
+						m_vreg_types[result_vreg] = ValueType::RAW_FLOAT;
+					} else {
+						m_vreg_types[result_vreg] = ValueType::VARIANT;
+					}
 				}
 
 				break;
@@ -1589,6 +1655,19 @@ void RISCVCodeGen::emit_li(uint8_t rd, int64_t imm) {
 void RISCVCodeGen::emit_mv(uint8_t rd, uint8_t rs) {
 	// mv rd, rs = addi rd, rs, 0
 	emit_i_type(0x13, rd, 0, rs, 0);
+}
+
+void RISCVCodeGen::emit_la(uint8_t rd, const std::string& label) {
+	// Load address using AUIPC + ADDI
+	// auipc rd, 0  # Load PC-relative upper bits
+	// addi rd, rd, offset  # Add lower bits (will be patched)
+
+	size_t auipc_offset = m_code.size();
+	mark_label_use(label, auipc_offset);
+	emit_u_type(0x17, rd, 0);  // auipc rd, 0 (will be patched)
+
+	// Emit ADDI instruction (offset will be patched when AUIPC is resolved)
+	emit_i_type(0x13, rd, 0, rd, 0);  // addi rd, rd, 0 (will be patched)
 }
 
 void RISCVCodeGen::emit_add(uint8_t rd, uint8_t rs1, uint8_t rs2) {
@@ -2129,6 +2208,66 @@ void RISCVCodeGen::emit_fcvt_s_d(uint8_t rd, uint8_t rs1) {
 void RISCVCodeGen::emit_sext_w(uint8_t rd, uint8_t rs) {
 	// ADDIW: opcode=0x1b, funct3=0
 	emit_i_type(0x1b, rd, 0, rs, 0);
+}
+
+// FP register allocation helpers
+int RISCVCodeGen::allocate_fp_register(int vreg) {
+	// Check if already allocated
+	auto it = m_vreg_to_fpreg.find(vreg);
+	if (it != m_vreg_to_fpreg.end()) {
+		return it->second;
+	}
+
+	// Allocate from free pool
+	if (m_free_fp_registers.empty()) {
+		return -1; // No FP registers available
+	}
+
+	uint8_t fpreg = m_free_fp_registers.back();
+	m_free_fp_registers.pop_back();
+	m_vreg_to_fpreg[vreg] = fpreg;
+	m_fpreg_to_vreg[fpreg] = vreg;
+	return fpreg;
+}
+
+void RISCVCodeGen::free_fp_register(int vreg) {
+	auto it = m_vreg_to_fpreg.find(vreg);
+	if (it == m_vreg_to_fpreg.end()) {
+		return;
+	}
+
+	uint8_t fpreg = it->second;
+	m_free_fp_registers.push_back(fpreg);
+	m_fpreg_to_vreg.erase(fpreg);
+	m_vreg_to_fpreg.erase(it);
+}
+
+int RISCVCodeGen::get_fp_register(int vreg) const {
+	auto it = m_vreg_to_fpreg.find(vreg);
+	if (it != m_vreg_to_fpreg.end()) {
+		return it->second;
+	}
+	return -1;
+}
+
+void RISCVCodeGen::materialize_raw_float_to_variant(int vreg) {
+	int fpreg = get_fp_register(vreg);
+	if (fpreg < 0) {
+		return; // Not an FP register
+	}
+
+	// Get stack offset for the Variant
+	int stack_offset = get_variant_stack_offset(vreg);
+
+	// Set m_type = FLOAT (3)
+	emit_li(REG_T0, 3);
+	emit_sw(REG_T0, REG_SP, stack_offset);
+
+	// Store the 64-bit double value at offset 8
+	emit_fsd(fpreg, REG_SP, stack_offset + 8);
+
+	// Mark as VARIANT (materialized)
+	m_vreg_types[vreg] = ValueType::VARIANT;
 }
 
 } // namespace gdscript

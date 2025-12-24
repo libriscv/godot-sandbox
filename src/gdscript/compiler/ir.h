@@ -141,6 +141,7 @@ struct IRInstruction {
 		NONE,       // No type information
 		RAW_INT,    // Integer value, can use physical registers
 		RAW_BOOL,   // Boolean value, can use physical registers
+		RAW_FLOAT,  // Float value, can use FP registers
 
 		// Variant types (tracked for optimization)
 		VARIANT_INT,
@@ -185,5 +186,57 @@ struct IRProgram {
 };
 
 const char* ir_opcode_name(IROpcode op);
+
+// TypeHint helper functions - avoids hardcoded enum values
+namespace TypeHintUtils {
+	// Check if TypeHint is a raw type (kept in registers)
+	inline bool is_raw(IRInstruction::TypeHint hint) {
+		return hint == IRInstruction::TypeHint::RAW_INT ||
+		       hint == IRInstruction::TypeHint::RAW_BOOL ||
+		       hint == IRInstruction::TypeHint::RAW_FLOAT;
+	}
+
+	// Check if TypeHint is a Variant type
+	inline bool is_variant(IRInstruction::TypeHint hint) {
+		return hint >= IRInstruction::TypeHint::VARIANT_INT &&
+		       hint <= IRInstruction::TypeHint::VARIANT_DICTIONARY;
+	}
+
+	// Check if TypeHint is a vector type
+	inline bool is_vector(IRInstruction::TypeHint hint) {
+		return hint == IRInstruction::TypeHint::VARIANT_VECTOR2 ||
+		       hint == IRInstruction::TypeHint::VARIANT_VECTOR3 ||
+		       hint == IRInstruction::TypeHint::VARIANT_VECTOR4 ||
+		       hint == IRInstruction::TypeHint::VARIANT_VECTOR2I ||
+		       hint == IRInstruction::TypeHint::VARIANT_VECTOR3I ||
+		       hint == IRInstruction::TypeHint::VARIANT_VECTOR4I;
+	}
+
+	// Check if TypeHint is an integer vector type
+	inline bool is_int_vector(IRInstruction::TypeHint hint) {
+		return hint == IRInstruction::TypeHint::VARIANT_VECTOR2I ||
+		       hint == IRInstruction::TypeHint::VARIANT_VECTOR3I ||
+		       hint == IRInstruction::TypeHint::VARIANT_VECTOR4I;
+	}
+
+	// Check if TypeHint is a float vector type
+	inline bool is_float_vector(IRInstruction::TypeHint hint) {
+		return hint == IRInstruction::TypeHint::VARIANT_VECTOR2 ||
+		       hint == IRInstruction::TypeHint::VARIANT_VECTOR3 ||
+		       hint == IRInstruction::TypeHint::VARIANT_VECTOR4;
+	}
+
+	// Get the base type without the variant wrapper
+	// Returns the corresponding VARIANT_* or NONE if not a variant
+	inline IRInstruction::TypeHint get_base_type(IRInstruction::TypeHint hint) {
+		if (is_raw(hint)) {
+			// Map raw types to their variant equivalents
+			if (hint == IRInstruction::TypeHint::RAW_INT) return IRInstruction::TypeHint::VARIANT_INT;
+			if (hint == IRInstruction::TypeHint::RAW_BOOL) return IRInstruction::TypeHint::VARIANT_BOOL;
+			if (hint == IRInstruction::TypeHint::RAW_FLOAT) return IRInstruction::TypeHint::VARIANT_FLOAT;
+		}
+		return hint;
+	}
+} // namespace TypeHintUtils
 
 } // namespace gdscript
