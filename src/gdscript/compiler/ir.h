@@ -88,46 +88,46 @@ struct IRValue {
 		STRING       // String constant
 	};
 
-	Type type;
+	Type type = Type::IMMEDIATE;
 	std::variant<int, int64_t, double, std::string> value;
 
 	static IRValue reg(int r) {
-		IRValue v;
+		IRValue v {};
 		v.type = Type::REGISTER;
 		v.value = r;
 		return v;
 	}
 
 	static IRValue imm(int64_t i) {
-		IRValue v;
+		IRValue v {};
 		v.type = Type::IMMEDIATE;
 		v.value = i;
 		return v;
 	}
 
 	static IRValue fimm(double d) {
-		IRValue v;
+		IRValue v {};
 		v.type = Type::FLOAT;
 		v.value = d;
 		return v;
 	}
 
 	static IRValue label(const std::string& l) {
-		IRValue v;
+		IRValue v {};
 		v.type = Type::LABEL;
 		v.value = l;
 		return v;
 	}
 
 	static IRValue var(const std::string& name) {
-		IRValue v;
+		IRValue v {};
 		v.type = Type::VARIABLE;
 		v.value = name;
 		return v;
 	}
 
 	static IRValue str(const std::string& s) {
-		IRValue v;
+		IRValue v {};
 		v.type = Type::STRING;
 		v.value = s;
 		return v;
@@ -160,7 +160,7 @@ struct IRInstruction {
 		VARIANT_DICTIONARY,
 	};
 
-	IROpcode opcode;
+	IROpcode opcode {};
 	std::vector<IRValue> operands;
 	TypeHint type_hint = TypeHint::NONE; // Type hint for result (operand 0)
 
