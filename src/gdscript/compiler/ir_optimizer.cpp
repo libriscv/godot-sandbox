@@ -19,8 +19,7 @@ void IROptimizer::optimize_function(IRFunction& func) {
 	constant_folding(func);
 
 	// Copy propagation to eliminate redundant MOVEs after constant loads
-	// TEMPORARILY DISABLED - suspected to be causing test failures
-	// copy_propagation(func);
+	copy_propagation(func);
 
 	// Peephole optimization to remove redundant moves and operations
 	peephole_optimization(func);

@@ -23,7 +23,5 @@ PUBLIC Variant compile_to_elf(String code)
 		return PackedByteArray(std::vector<uint8_t>{}); // Return empty array on failure
 	}
 
-	PackedByteArray elf(elf_data);
-	print("SUCCESS: Compiled ELF size: ", elf.size());
-	return elf;
+	return PackedByteArray(elf_data);
 }
