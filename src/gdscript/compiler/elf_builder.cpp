@@ -35,7 +35,9 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 	// Build string tables
 	std::vector<std::string> section_names = {"", ".text", ".symtab", ".strtab", ".shstrtab"};
 	std::vector<uint8_t> shstrtab;
+	shstrtab.reserve(1 + (1 + section_names.size()) * 10); // Rough estimate
 	std::vector<size_t> section_name_offsets;
+	section_name_offsets.reserve(section_names.size());
 
 	for (const auto& name : section_names) {
 		section_name_offsets.push_back(shstrtab.size());
@@ -48,7 +50,9 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 	strtab.push_back(0); // First byte is always null
 
 	std::vector<std::string> symbol_names;
+	symbol_names.reserve(program.functions.size());
 	std::vector<size_t> symbol_name_offsets;
+	symbol_name_offsets.reserve(program.functions.size());
 
 	for (const auto& func : program.functions) {
 		symbol_names.push_back(func.name);
@@ -58,7 +62,8 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 	}
 
 	// Build symbol table
-	struct Elf64_Sym {
+	// NOTE: Keep this struct defined here to avoid any issues with alignment/packing
+	struct alignas(8) Elf64_Sym {
 		uint32_t st_name;
 		uint8_t st_info;
 		uint8_t st_other;
@@ -67,10 +72,14 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 		uint64_t st_size;
 	};
 
+	static_assert(sizeof(Elf64_Sym) == 24, "Elf64_Sym must be 24 bytes");
+
 	std::vector<Elf64_Sym> symtab;
+	symtab.reserve(1 + program.functions.size());
 
 	// First symbol is always null
 	Elf64_Sym null_sym = {};
+	memset(&null_sym, 0, sizeof(null_sym));  // Ensure all bytes are zero
 	symtab.push_back(null_sym);
 
 	// Add function symbols
@@ -87,6 +96,7 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 		}
 
 		Elf64_Sym sym = {};
+		memset(&sym, 0, sizeof(sym));  // Ensure all bytes are zero
 		sym.st_name = static_cast<uint32_t>(symbol_name_offsets[i]);
 		sym.st_info = (1 << 4) | 2; // STB_GLOBAL (1) << 4 | STT_FUNC (2)
 		sym.st_other = 0;

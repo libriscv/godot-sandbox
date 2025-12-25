@@ -153,7 +153,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	// Process each IR instruction
 	for (const auto& instr : func.instructions) {
 		m_current_instr_idx++;
-		
+
 		switch (instr.opcode) {
 			case IROpcode::LABEL:
 				define_label(std::get<std::string>(instr.operands[0].value));

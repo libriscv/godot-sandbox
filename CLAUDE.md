@@ -14,9 +14,11 @@ There is an ongoing GDScript-to-RISC-V compiler project under the src/gdscript/c
 
 The GDScript-to-RISC-V unit tests are under /tests/tests. You can only visually inspect RISC-V ELFs using riscv64-linux-gnu-objdump. Executing the unit tests specific to GDScript is from the tests folder:
 ./run_unittests.sh -gselect compiler
-Always run unit tests from the tests folder.
+Always run unit tests from the tests folder. There is a separate script for running Zig C++ unit tests:
+./zig_unittests.sh -gselect compiler
+Also must be run from the tests folder. The GDScript compiler is RUNNING INSIDE a sandbox instance in all unit tests. That means when there's a failure and the originating call is `compile_to_elf`, it means the compiler crashed/failed INSIDE the sandbox instance.
 
-The Godot Sandbox ABI has a very complex passing scheme in order to be fast and low-latency. However, it has a second mode where all arguments in and out are always Variants. Using Variant only is the best choice for the GDScript compiler, as it makes it fully dynamic just like real GDScript. Most people don't use type hints anyway, and we'd have to verify them regardless. Real GDScript has an optimization phase where bytecodes are replaced with faster specific bytecodes once types have been checked. We are not going to focus on that, but rather on getting everything up and working.
+The Godot Sandbox ABI has a complex passing scheme in order to be fast and low-latency. However, it has a second mode where all arguments in and out are always Variants. Using Variant only is the best choice for the GDScript compiler, as it makes it fully dynamic just like real GDScript. Most people don't use type hints anyway, and we'd have to verify them regardless. Real GDScript has an optimization phase where bytecodes are replaced with faster specific bytecodes once types have been checked. We are not going to focus on that, but rather on getting everything up and working.
 
 Register A0 is always the Variant return value pointer. A1-A7 are function arguments as pointers.
 The Variant ABI is a 4-byte type, 4-byte padding and then 16-bytes of inlined data (for certain types), making it 24 bytes with regular settings. Variants are placed on the stack and the pointer is placed in registers for calls. In order to make the sandbox not unbox Variants into registers `vmcallv()` is used instead of `vmcall()`. Variants don't need be zeroed. Only the relevant portion has to have non-garbage value. For example Integer type needs only m_type and v.i to be valid, covering only 12/24 bytes.
