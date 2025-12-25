@@ -89,8 +89,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	int saved_reg_space = 24; // Save ra, fp, and a0 (return pointer)
 
 	// Pre-allocate stack offsets for ALL virtual registers in order
-	// This is CRITICAL: we must assign offsets deterministically based on
-	// virtual register number, not based on the order instructions are visited.
+	// Assign offsets deterministically based on virtual register number,
+	// not based on the order instructions are visited.
 	// Otherwise, optimizations that reorder or eliminate instructions will
 	// cause different virtual registers to get different offsets, breaking the code.
 	int max_variants = func.max_registers;
@@ -166,18 +166,18 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				if (instr.type_hint == IRInstruction::TypeHint::RAW_INT) {
 					// Optimization: keep as raw integer in physical register
 					int preg = m_allocator.allocate_register(vreg, m_current_instr_idx);
+					int stack_offset = get_variant_stack_offset(vreg);
+
 					if (preg >= 0) {
 						emit_li(preg, value);
+						// Initialize stack with the value
+						// This serves as a backup if the register is clobbered
+						emit_variant_create_int(stack_offset, value);
 						m_vreg_types[vreg] = ValueType::RAW_INT;
-
-						// Also materialize to Variant on stack so it's accessible
-						int stack_offset = get_variant_stack_offset(vreg);
-						emit_li(REG_T0, 2); // Variant::INT type
-						emit_store_variant_type(REG_T0, REG_SP, stack_offset);
-						emit_store_variant_int(preg, REG_SP, stack_offset);
+						// Track that this vreg has been initialized on stack
+						m_initialized_vregs.insert(vreg);
 					} else {
 						// No physical register available, fallback to Variant on stack
-						int stack_offset = get_variant_stack_offset(vreg);
 						emit_variant_create_int(stack_offset, value);
 						m_vreg_types[vreg] = ValueType::VARIANT;
 					}
@@ -219,12 +219,17 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						emit_la(REG_T0, label);
 						emit_fld(fpreg, REG_T0, 0);
 
-						// OPTIMIZATION: Don't immediately materialize to stack
-						// Keep the value in the FP register only, materialize later when needed
+						// Initialize stack with the value as backup
+						emit_li(REG_T0, 3); // FLOAT type
+						emit_sw(REG_T0, REG_SP, stack_offset);
+						emit_li(REG_T0, bits);
+						emit_sd(REG_T0, REG_SP, stack_offset + 8);
 						m_vreg_types[vreg] = ValueType::RAW_FLOAT;
+						// Track that this vreg has been initialized on stack
+						m_initialized_vregs.insert(vreg);
 					} else {
 						// No FP register available, fallback to Variant on stack
-						emit_li(REG_T0, 3); // Variant::FLOAT type
+						emit_li(REG_T0, 3); // FLOAT type
 						emit_sw(REG_T0, REG_SP, stack_offset);
 						emit_li(REG_T0, bits);
 						emit_sd(REG_T0, REG_SP, stack_offset + 8);
@@ -232,7 +237,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					}
 				} else {
 					// Standard: create float Variant on stack
-					emit_li(REG_T0, 3); // Variant::FLOAT type
+					emit_li(REG_T0, 3); // FLOAT type
 					emit_sw(REG_T0, REG_SP, stack_offset);
 					emit_li(REG_T0, bits);
 					emit_sd(REG_T0, REG_SP, stack_offset + 8);
@@ -309,10 +314,18 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 					if (dst_fpreg >= 0 && src_fpreg >= 0) {
 						// Use FP register move
-						emit_fmv_d(dst_fpreg, src_fpreg);
+						if (dst_fpreg != src_fpreg) {
+							emit_fmv_d(dst_fpreg, src_fpreg);
+						}
+						// NOTE: If dst_fpreg == src_fpreg, the move is a no-op but the value is correct
 						m_vreg_types[dst_vreg] = ValueType::RAW_FLOAT;
 
-						// Don't materialize to stack yet - lazy evaluation
+						// Also copy stack value to keep backup in sync
+						int dst_offset = get_variant_stack_offset(dst_vreg);
+						int src_offset = get_variant_stack_offset(src_vreg);
+						if (dst_offset != src_offset) {
+							emit_variant_copy(dst_offset, src_offset);
+						}
 					} else if (src_fpreg >= 0) {
 						// Can't allocate FP register for dest, materialize source and copy Variant
 						materialize_raw_float_to_variant(src_vreg);
@@ -327,28 +340,41 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						// Source not in FP register (shouldn't happen), fall through to Variant copy
 						goto variant_move;
 					}
-				} else if (instr.type_hint == IRInstruction::TypeHint::RAW_INT && src_type == ValueType::RAW_INT) {
-					// Both source and dest are raw integers - use register move
-					int dst_preg = m_allocator.allocate_register(dst_vreg, m_current_instr_idx);
+				} else if (src_type == ValueType::RAW_INT) {
+					// OPTIMIZATION: Move RAW_INT between registers
 					int src_preg = m_allocator.get_physical_register(src_vreg);
+					int dst_preg = m_allocator.allocate_register(dst_vreg, m_current_instr_idx);
 
 					if (dst_preg >= 0 && src_preg >= 0) {
-						emit_mv(dst_preg, src_preg);
+						// Use register move
+						if (dst_preg != src_preg) {
+							emit_mv(dst_preg, src_preg);
+						}
+						// NOTE: If dst_preg == src_preg, the move is a no-op but the value is correct
+						// (both vregs are in the same physical register), so we just update type tracking
 						m_vreg_types[dst_vreg] = ValueType::RAW_INT;
 
-						// Also materialize to Variant on stack so LOAD_VAR can access it
+						// Also copy stack value to keep backup in sync
 						int dst_offset = get_variant_stack_offset(dst_vreg);
-						emit_li(REG_T0, 2); // Variant::INT type
-						emit_store_variant_type(REG_T0, REG_SP, dst_offset);
-						emit_store_variant_int(dst_preg, REG_SP, dst_offset);
-					} else {
-						// Fallback to Variant copy if registers unavailable
+						int src_offset = get_variant_stack_offset(src_vreg);
+						if (dst_offset != src_offset) {
+							emit_variant_copy(dst_offset, src_offset);
+						}
+					} else if (src_preg >= 0) {
+						// Can't allocate register for dest, materialize source and copy Variant
+						// Even though source is RAW_INT, we need to mark dest as VARIANT here
+						// because we're copying to the stack, not keeping it in a register
+						materialize_raw_int_to_variant(src_vreg);
+
 						int dst_offset = get_variant_stack_offset(dst_vreg);
 						int src_offset = get_variant_stack_offset(src_vreg);
 						if (dst_offset != src_offset) {
 							emit_variant_copy(dst_offset, src_offset);
 						}
 						m_vreg_types[dst_vreg] = ValueType::VARIANT;
+					} else {
+						// Source not in register (shouldn't happen), fall through to Variant copy
+						goto variant_move;
 					}
 				} else {
 					variant_move:
@@ -364,6 +390,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// Copy Variant: use sys_vclone or memcpy (24 bytes)
 					emit_variant_copy(dst_offset, src_offset);
 					m_vreg_types[dst_vreg] = ValueType::VARIANT;
+
+					// Invalidate physical register for dst_vreg
+					// The value has been updated on the stack through variant copy, so any stale
+					// physical register value must be invalidated to prevent it from being used
+					invalidate_physical_register(dst_vreg);
 				}
 				break;
 			}
@@ -411,6 +442,9 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					int rhs_preg = m_allocator.get_physical_register(rhs_vreg);
 
 					if (dst_preg >= 0 && lhs_preg >= 0 && rhs_preg >= 0) {
+						// Also write result to stack as backup
+						int dst_offset = get_variant_stack_offset(dst_vreg);
+
 						// Emit native RISC-V arithmetic instruction
 						if (instr.opcode == IROpcode::ADD) {
 							emit_add(dst_preg, lhs_preg, rhs_preg);
@@ -421,13 +455,12 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 							// For now, fallback to VEVAL for complex ops
 							goto variant_arithmetic;
 						}
-						m_vreg_types[dst_vreg] = ValueType::RAW_INT;
+						// Write result to stack as backup for materialization
+						emit_li(REG_T0, 2); // INT type
+						emit_sw(REG_T0, REG_SP, dst_offset);
+						emit_sd(dst_preg, REG_SP, dst_offset + 8);
 
-						// Also materialize to Variant on stack so it's accessible
-						int dst_offset = get_variant_stack_offset(dst_vreg);
-						emit_li(REG_T0, 2); // Variant::INT type
-						emit_store_variant_type(REG_T0, REG_SP, dst_offset);
-						emit_store_variant_int(dst_preg, REG_SP, dst_offset);
+						m_vreg_types[dst_vreg] = ValueType::RAW_INT;
 					} else {
 						goto variant_arithmetic;
 					}
@@ -438,6 +471,9 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					int rhs_fpreg = get_fp_register(rhs_vreg);
 
 					if (dst_fpreg >= 0 && lhs_fpreg >= 0 && rhs_fpreg >= 0) {
+						// Also write result to stack as backup
+						int dst_offset = get_variant_stack_offset(dst_vreg);
+
 						// Emit native RISC-V FP arithmetic instruction
 						if (instr.opcode == IROpcode::ADD) {
 							emit_fadd_d(dst_fpreg, lhs_fpreg, rhs_fpreg);
@@ -451,8 +487,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 							// MOD not supported for FP, fallback to VEVAL
 							goto variant_arithmetic;
 						}
-						// OPTIMIZATION: Don't immediately materialize to stack
-						// Keep the result in FP register only
+						// Write result to stack as backup for materialization
+						emit_li(REG_T0, 3); // FLOAT type
+						emit_sw(REG_T0, REG_SP, dst_offset);
+						emit_fsd(dst_fpreg, REG_SP, dst_offset + 8);
+
 						m_vreg_types[dst_vreg] = ValueType::RAW_FLOAT;
 					} else {
 						goto variant_arithmetic;
@@ -462,20 +501,12 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// Standard Variant arithmetic through VEVAL
 					int dst_offset = get_variant_stack_offset(dst_vreg);
 
-					// Materialize RAW_FLOAT operands to stack before variant arithmetic
+					// Materialize RAW operands to stack before variant arithmetic
 					if (lhs_is_reg) {
-						int lhs_vreg_local = std::get<int>(instr.operands[1].value);
-						auto lhs_it = m_vreg_types.find(lhs_vreg_local);
-						if (lhs_it != m_vreg_types.end() && lhs_it->second == ValueType::RAW_FLOAT) {
-							materialize_raw_float_to_variant(lhs_vreg_local);
-						}
+						ensure_materialized(std::get<int>(instr.operands[1].value));
 					}
 					if (rhs_is_reg) {
-						int rhs_vreg_local = std::get<int>(instr.operands[2].value);
-						auto rhs_it = m_vreg_types.find(rhs_vreg_local);
-						if (rhs_it != m_vreg_types.end() && rhs_it->second == ValueType::RAW_FLOAT) {
-							materialize_raw_float_to_variant(rhs_vreg_local);
-						}
+						ensure_materialized(std::get<int>(instr.operands[2].value));
 					}
 
 					// Map IR opcode to Variant::Operator
@@ -523,6 +554,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					}
 
 					m_vreg_types[dst_vreg] = ValueType::VARIANT;
+
+					// Invalidate physical register for dst_vreg
+					// The value has been updated on the stack through VEVAL, so any stale
+					// physical register value must be invalidated to prevent it from being used
+					invalidate_physical_register(dst_vreg);
 				}
 				break;
 			}
@@ -580,16 +616,28 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					bool rhs_is_reg = instr.operands.size() > 2 && instr.operands[2].type == IRValue::Type::REGISTER;
 
 					if (lhs_is_reg && rhs_is_reg) {
-						// Both operands are registers
+						// Both operands are registers - materialize if RAW
 						int lhs_vreg = std::get<int>(instr.operands[1].value);
 						int rhs_vreg = std::get<int>(instr.operands[2].value);
+
+						// Ensure operands are materialized
+						ensure_materialized(lhs_vreg);
+						ensure_materialized(rhs_vreg);
+
 						int lhs_offset = get_variant_stack_offset(lhs_vreg);
 						int rhs_offset = get_variant_stack_offset(rhs_vreg);
 						emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
 						m_vreg_types[dst_vreg] = ValueType::VARIANT;
+
+						// Invalidate physical register for dst_vreg
+						invalidate_physical_register(dst_vreg);
 					} else if (lhs_is_reg && !rhs_is_reg && instr.operands[2].type == IRValue::Type::IMMEDIATE) {
 						// Left is register, right is immediate integer
 						int lhs_vreg = std::get<int>(instr.operands[1].value);
+
+						// Ensure lhs is materialized
+						ensure_materialized(lhs_vreg);
+
 						int lhs_offset = get_variant_stack_offset(lhs_vreg);
 						int64_t imm_val = std::get<int64_t>(instr.operands[2].value);
 
@@ -597,9 +645,16 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
 						emit_variant_eval(dst_offset, lhs_offset, imm_offset, variant_op);
 						m_vreg_types[dst_vreg] = ValueType::VARIANT;
+
+						// Invalidate physical register for dst_vreg
+						invalidate_physical_register(dst_vreg);
 					} else if (!lhs_is_reg && rhs_is_reg && instr.operands[1].type == IRValue::Type::IMMEDIATE) {
 						// Left is immediate integer, right is register
 						int rhs_vreg = std::get<int>(instr.operands[2].value);
+
+						// Ensure rhs is materialized
+						ensure_materialized(rhs_vreg);
+
 						int rhs_offset = get_variant_stack_offset(rhs_vreg);
 						int64_t imm_val = std::get<int64_t>(instr.operands[1].value);
 
@@ -607,6 +662,9 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
 						emit_variant_eval(dst_offset, imm_offset, rhs_offset, variant_op);
 						m_vreg_types[dst_vreg] = ValueType::VARIANT;
+
+						// Invalidate physical register for dst_vreg
+						invalidate_physical_register(dst_vreg);
 					} else {
 						throw std::runtime_error("Unsupported operand types for comparison");
 					}
@@ -618,6 +676,10 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int dst_vreg = std::get<int>(instr.operands[0].value);
 				int lhs_vreg = std::get<int>(instr.operands[1].value);
 				int rhs_vreg = std::get<int>(instr.operands[2].value);
+
+				// Ensure operands are materialized
+				ensure_materialized(lhs_vreg);
+				ensure_materialized(rhs_vreg);
 
 				int dst_offset = get_variant_stack_offset(dst_vreg);
 				int lhs_offset = get_variant_stack_offset(lhs_vreg);
@@ -632,6 +694,10 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int lhs_vreg = std::get<int>(instr.operands[1].value);
 				int rhs_vreg = std::get<int>(instr.operands[2].value);
 
+				// Ensure operands are materialized
+				ensure_materialized(lhs_vreg);
+				ensure_materialized(rhs_vreg);
+
 				int dst_offset = get_variant_stack_offset(dst_vreg);
 				int lhs_offset = get_variant_stack_offset(lhs_vreg);
 				int rhs_offset = get_variant_stack_offset(rhs_vreg);
@@ -643,6 +709,9 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::NOT: {
 				int dst_vreg = std::get<int>(instr.operands[0].value);
 				int src_vreg = std::get<int>(instr.operands[1].value);
+
+				// Ensure operand is materialized
+				ensure_materialized(src_vreg);
 
 				int dst_offset = get_variant_stack_offset(dst_vreg);
 				int src_offset = get_variant_stack_offset(src_vreg);
@@ -731,10 +800,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				if (m_variant_offsets.find(0) != m_variant_offsets.end()) {
 					// We have a return value in virtual register 0
 					// Ensure it's materialized to stack if it's a RAW value
-					auto it = m_vreg_types.find(0);
-					if (it != m_vreg_types.end() && it->second == ValueType::RAW_FLOAT) {
-						materialize_raw_float_to_variant(0);
-					}
+					ensure_materialized(0);
 
 					int src_offset = get_variant_stack_offset(0);
 
@@ -821,11 +887,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					for (int i = 0; i < arg_count; i++) {
 						int arg_vreg = std::get<int>(instr.operands[4 + i].value);
 
-						// Ensure argument is materialized if it's a RAW_FLOAT
-						auto arg_it = m_vreg_types.find(arg_vreg);
-						if (arg_it != m_vreg_types.end() && arg_it->second == ValueType::RAW_FLOAT) {
-							materialize_raw_float_to_variant(arg_vreg);
-						}
+						// Ensure argument is materialized if it's a RAW value
+						ensure_materialized(arg_vreg);
 
 						int arg_src_offset = get_variant_stack_offset(arg_vreg) + additional_space; // Adjust for moved stack
 						int arg_dst_offset = i * VARIANT_SIZE;
@@ -1072,14 +1135,30 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// Store each component in v.v4i[] at offset 8, 12, 16, 20
 				for (int i = 0; i < num_components; i++) {
 					int comp_vreg = std::get<int>(instr.operands[1 + i].value);
-					int comp_offset = get_variant_stack_offset(comp_vreg);
 
-					// Load the component value (it's a Variant containing int)
-					// Load v.i from offset 8 (lower 32 bits)
-					emit_lw(REG_T0, REG_SP, comp_offset + 8);
+					// Check if component is RAW_INT (in register)
+					auto comp_type_it = m_vreg_types.find(comp_vreg);
+					ValueType comp_type = (comp_type_it != m_vreg_types.end()) ? comp_type_it->second : ValueType::VARIANT;
 
-					// Store to result v.v4i[i] at offset 8 + i*4
-					emit_sw(REG_T0, REG_SP, result_offset + 8 + i * 4);
+					if (comp_type == ValueType::RAW_INT) {
+						// Use integer register directly
+						int preg = m_allocator.get_physical_register(comp_vreg);
+						if (preg >= 0) {
+							// Store lower 32 bits to result at offset 8 + i*4
+							emit_sw(preg, REG_SP, result_offset + 8 + i * 4);
+						} else {
+							// Fallback: materialize to stack first, then load
+							materialize_raw_int_to_variant(comp_vreg);
+							int comp_offset = get_variant_stack_offset(comp_vreg);
+							emit_lw(REG_T0, REG_SP, comp_offset + 8);
+							emit_sw(REG_T0, REG_SP, result_offset + 8 + i * 4);
+						}
+					} else {
+						// Load from stack Variant
+						int comp_offset = get_variant_stack_offset(comp_vreg);
+						emit_lw(REG_T0, REG_SP, comp_offset + 8);
+						emit_sw(REG_T0, REG_SP, result_offset + 8 + i * 4);
+					}
 				}
 
 				break;
@@ -1197,6 +1276,10 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// Copy full GuestVariant structures (24 bytes each) to stack
 					for (int i = 0; i < element_count; i++) {
 						int elem_vreg = std::get<int>(instr.operands[2 + i].value);
+
+						// Ensure element is materialized if it's a RAW value
+						ensure_materialized(elem_vreg);
+
 						int elem_offset = get_variant_stack_offset(elem_vreg);
 
 						// Destination address for this element
@@ -1459,7 +1542,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_li(REG_A7, syscall_num);
 					emit_ecall();
 
-					// After ecall, a0 contains the object data (uint64_t)
+					// After ecall, a0 contains the object reference (32-bit int)
 					// We need to store this into the result Variant
 
 					// First, restore stack pointer (before storing result)
@@ -1475,7 +1558,9 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_sw(REG_T0, REG_SP, result_offset); // Store 4-byte type at offset 0
 
 					// Store the object data from a0 into the Variant data area (offset 8)
-					emit_sd(REG_A0, REG_SP, result_offset + 8); // Store 8-byte object data
+					emit_sd(REG_A0, REG_SP, result_offset + 8); // Store object reference in v.i
+
+					m_vreg_types[result_vreg] = ValueType::VARIANT;
 
 				} else if (syscall_num == 523) {
 					// ECALL_ARRAY_SIZE: result_reg, 523, array_vreg
@@ -1486,6 +1571,14 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					}
 
 					int array_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
+
+					// Ensure result variant has a stack slot BEFORE handling clobbering
+					// This prevents the allocator from moving it during syscall setup
+					int result_offset = get_variant_stack_offset(result_vreg);
+
+					// Ensure array is materialized to stack before the syscall
+					ensure_materialized(array_vreg);
+
 					int array_offset = get_variant_stack_offset(array_vreg);
 
 					// ECALL_ARRAY_SIZE clobbers a0
@@ -1497,18 +1590,20 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					}
 
 					// Load the array variant index from offset 8 of the array Variant
-					emit_ld(REG_A0, REG_SP, array_offset + 8); // Load 64-bit variant index
+					emit_lw(REG_A0, REG_SP, array_offset + 8); // Load 32-bit variant index
 
 					// a7 = syscall number (523 for ECALL_ARRAY_SIZE)
 					emit_li(REG_A7, syscall_num);
 					emit_ecall();
 
-					// After ecall, a0 contains the size (int)
+					// After ecall, a0 contains the size (64-bit int)
 					// Store it into the result Variant as an integer
-					int result_offset = get_variant_stack_offset(result_vreg);
+					// NOTE: We use emit_sd (8 bytes) because a0 contains a 64-bit value, not 32-bit!
 					emit_li(REG_T0, 2); // INT type = 2
 					emit_sw(REG_T0, REG_SP, result_offset); // Store 4-byte type
-					emit_sw(REG_A0, REG_SP, result_offset + 8); // Store 4-byte integer at offset 8
+					emit_sd(REG_A0, REG_SP, result_offset + 8); // Store 8-byte integer at offset 8
+
+					m_vreg_types[result_vreg] = ValueType::VARIANT;
 
 				} else if (syscall_num == 522) {
 					// ECALL_ARRAY_AT: result_reg, 522, array_vreg, index_vreg
@@ -1521,8 +1616,15 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					int array_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
 					int index_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
 
-					int array_offset = get_variant_stack_offset(array_vreg);
+					// Ensure all variants have stack slots BEFORE handling clobbering
+					// This prevents the allocator from moving them during syscall setup
 					int result_offset = get_variant_stack_offset(result_vreg);
+					int array_offset = get_variant_stack_offset(array_vreg);
+					int index_offset = get_variant_stack_offset(index_vreg);
+
+					// Ensure array and index are materialized to stack before the syscall
+					ensure_materialized(array_vreg);
+					ensure_materialized(index_vreg);
 
 					// ECALL_ARRAY_AT clobbers a0, a1, a2
 					std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2};
@@ -1533,12 +1635,12 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					}
 
 					// a0 = array variant index (load from offset 8 of array Variant)
-					emit_ld(REG_A0, REG_SP, array_offset + 8); // Load 64-bit variant index
+					emit_lw(REG_A0, REG_SP, array_offset + 8); // Load 32-bit variant index
 
 					// a1 = index (load from index_vreg)
 					// The index is stored as a Variant, we need to extract the integer value
-					int index_offset = get_variant_stack_offset(index_vreg);
-					emit_lw(REG_A1, REG_SP, index_offset + 8); // Load integer from offset 8
+					// NOTE: Use emit_ld (64-bit) because integer Variants store 64-bit values, not 32-bit!
+					emit_ld(REG_A1, REG_SP, index_offset + 8); // Load 64-bit integer from offset 8
 
 					// a2 = pointer to result GuestVariant
 					emit_i_type(0x13, REG_A2, 0, REG_SP, result_offset); // addi a2, sp, result_offset
@@ -1548,6 +1650,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_ecall();
 
 					// After ecall, the result Variant is already filled by the syscall
+					m_vreg_types[result_vreg] = ValueType::VARIANT;
 
 				} else {
 					throw std::runtime_error("Unknown syscall number: " + std::to_string(syscall_num));
@@ -2329,6 +2432,21 @@ void RISCVCodeGen::free_fp_register(int vreg) {
 	m_vreg_to_fpreg.erase(it);
 }
 
+void RISCVCodeGen::invalidate_fp_register(int vreg) {
+	// Same as free_fp_register - removes the vreg->fpreg mapping and frees the FP register
+	// This is necessary when the value is updated on the stack through variant operations,
+	// to prevent stale FP register values from being used
+	auto it = m_vreg_to_fpreg.find(vreg);
+	if (it == m_vreg_to_fpreg.end()) {
+		return;
+	}
+
+	uint8_t fpreg = it->second;
+	m_free_fp_registers.push_back(fpreg);
+	m_fpreg_to_vreg.erase(fpreg);
+	m_vreg_to_fpreg.erase(it);
+}
+
 int RISCVCodeGen::get_fp_register(int vreg) const {
 	auto it = m_vreg_to_fpreg.find(vreg);
 	if (it != m_vreg_to_fpreg.end()) {
@@ -2343,6 +2461,25 @@ void RISCVCodeGen::materialize_raw_float_to_variant(int vreg) {
 		return; // Not an FP register
 	}
 
+	// Check if this virtual register has already been materialized to a VARIANT on the stack
+	// In that case, the stack value is correct and the register value is stale
+	auto it = m_vreg_types.find(vreg);
+	if (it != m_vreg_types.end() && it->second == ValueType::VARIANT) {
+		// Already materialized! The stack value is correct, register is stale.
+		// Just invalidate the register to prevent future use of the stale value.
+		invalidate_fp_register(vreg);
+		return;
+	}
+
+	// Check if this vreg was initialized on stack (has a valid backup value)
+	// If so, don't overwrite it with the (potentially clobbered) register value
+	if (m_initialized_vregs.count(vreg) > 0) {
+		// Stack was already initialized, just invalidate the register and mark as VARIANT
+		invalidate_fp_register(vreg);
+		m_vreg_types[vreg] = ValueType::VARIANT;
+		return;
+	}
+
 	// Get stack offset for the Variant
 	int stack_offset = get_variant_stack_offset(vreg);
 
@@ -2355,6 +2492,81 @@ void RISCVCodeGen::materialize_raw_float_to_variant(int vreg) {
 
 	// Mark as VARIANT (materialized)
 	m_vreg_types[vreg] = ValueType::VARIANT;
+}
+
+void RISCVCodeGen::materialize_raw_int_to_variant(int vreg) {
+	int preg = m_allocator.get_physical_register(vreg);
+	if (preg < 0) {
+		return; // Not in a register
+	}
+
+	// Check if this virtual register has already been materialized to a VARIANT on the stack
+	// This can happen when the value was updated through variant operations (arithmetic, MOVE, etc.)
+	// In that case, the stack value is correct and the register value is stale, so we should:
+	// 1. Invalidate the physical register (to prevent future use of the stale value)
+	// 2. NOT overwrite the stack value with the stale register value
+	auto it = m_vreg_types.find(vreg);
+	if (it != m_vreg_types.end() && it->second == ValueType::VARIANT) {
+		// Already materialized! The stack value is correct, register is stale.
+		// Just invalidate the register to prevent future use of the stale value.
+		m_allocator.invalidate_register(vreg);
+		return;
+	}
+
+	// Check if this vreg was initialized on stack (has a valid backup value)
+	// If so, don't overwrite it with the (potentially clobbered) register value
+	if (m_initialized_vregs.count(vreg) > 0) {
+		// Stack was already initialized, just invalidate the register and mark as VARIANT
+		m_allocator.invalidate_register(vreg);
+		m_vreg_types[vreg] = ValueType::VARIANT;
+		return;
+	}
+
+	// Get stack offset for the Variant
+	int stack_offset = get_variant_stack_offset(vreg);
+
+	// Set m_type = INT (2)
+	emit_li(REG_T0, 2);
+	emit_sw(REG_T0, REG_SP, stack_offset);
+
+	// Store the 64-bit integer value at offset 8
+	emit_sd(preg, REG_SP, stack_offset + 8);
+
+	// Mark as VARIANT (materialized)
+	m_vreg_types[vreg] = ValueType::VARIANT;
+}
+
+void RISCVCodeGen::ensure_materialized(int vreg) {
+	// Check if this virtual register has a tracked type
+	auto it = m_vreg_types.find(vreg);
+	if (it == m_vreg_types.end()) {
+		// No type tracking, assume it's already a VARIANT on stack
+		return;
+	}
+
+	// Materialize based on the current type
+	ValueType type = it->second;
+	switch (type) {
+		case ValueType::RAW_FLOAT:
+			materialize_raw_float_to_variant(vreg);
+			break;
+		case ValueType::RAW_INT:
+			materialize_raw_int_to_variant(vreg);
+			break;
+		case ValueType::VARIANT:
+			// Already materialized, nothing to do
+			break;
+		default:
+			// Unknown type, do nothing
+			break;
+	}
+}
+
+void RISCVCodeGen::invalidate_physical_register(int vreg) {
+	// Remove the mapping from vreg to physical register
+	// This is necessary when the value is updated on the stack (e.g., through variant arithmetic)
+	// so that stale physical register values aren't used
+	m_allocator.invalidate_register(vreg);
 }
 
 } // namespace gdscript

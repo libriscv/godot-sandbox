@@ -31,3 +31,5 @@ When dealing with floats it's CRUCIAL to understand that:
 1. v.f (the regular float) in the Variant structure is _always_ 64-bit.
 2. real_t is CONFIGURABLE, but 32-bit float by default
 3. Adding integer and float (whether constant or not) produces a float result
+
+When dealing with object references, they are 32-bit integers which are stored in the data section of the Variant. When the sandbox stores this value, it's stored as a 64-bit value, so it won't matter if loaded as 32-bit or 64-bit int, however it does matter when storing the value: Use 64-bit sd instruction.

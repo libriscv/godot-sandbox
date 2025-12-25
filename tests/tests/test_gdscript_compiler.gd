@@ -944,6 +944,12 @@ func test_nested_array_iteration():
 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
 
+	# Write ELF for objdump inspection
+	var file = FileAccess.open("res://tests/array.elf", FileAccess.WRITE)
+	if file:
+		file.store_buffer(compiled_elf)
+		file.close()
+
 	var s = Sandbox.new()
 	s.load_buffer(compiled_elf)
 	s.set_instructions_max(10000)

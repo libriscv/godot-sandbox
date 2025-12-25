@@ -1,8 +1,7 @@
 #pragma once
 #include "ir.h"
 #include "register_allocator.h"
-#include <vector>
-#include <unordered_map>
+#include <unordered_set>
 #include <cstdint>
 
 namespace gdscript {
@@ -120,11 +119,11 @@ private:
 	void emit_variant_create_string(int stack_offset, int string_idx);
 	void emit_variant_copy(int dst_offset, int src_offset);
 	void emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op);
-	
+
 	// Get Variant pointer in register (or compute from stack offset)
 	// Returns the register containing the pointer, or -1 if needs to be computed
 	int get_variant_pointer_reg(int vreg, uint8_t target_reg);
-	
+
 	// Get stack offset for a virtual register (in bytes)
 	int get_variant_stack_offset(int virtual_reg);
 
@@ -133,8 +132,18 @@ private:
 	// Returns FP register number or -1 if none available
 	int allocate_fp_register(int vreg);
 	void free_fp_register(int vreg);
+	void invalidate_fp_register(int vreg);
 	int get_fp_register(int vreg) const;
+
+	// Value materialization helpers
+	// These convert RAW values (kept in registers for optimization) to full Variants on stack
 	void materialize_raw_float_to_variant(int vreg); // Spill RAW_FLOAT to stack Variant
+	void materialize_raw_int_to_variant(int vreg);    // Spill RAW_INT to stack Variant
+
+	// Unified materialization API - ensures a vreg is materialized to stack if needed
+	// Checks the value type and calls the appropriate materialization function
+	// No-op if the value is already a VARIANT on stack
+	void ensure_materialized(int vreg);
 
 	// Output buffer
 	std::vector<uint8_t> m_code;
@@ -155,6 +164,12 @@ private:
 
 	// Value type tracking for each virtual register
 	std::unordered_map<int, ValueType> m_vreg_types;
+
+	// Track which virtual registers have been initialized on stack (for RAW_INT/RAW_FLOAT materialization)
+	std::unordered_set<int> m_initialized_vregs;
+
+	// Invalidate physical register for a virtual register (when value is modified on stack)
+	void invalidate_physical_register(int vreg);
 
 	// For RAW values: virtual_reg -> physical_reg mapping
 	// (managed by m_allocator, but we track which are raw vs variant)

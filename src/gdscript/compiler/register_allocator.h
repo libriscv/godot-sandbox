@@ -116,7 +116,18 @@ public:
 	 * @param vreg Virtual register to free
 	 */
 	void free_register(int vreg);
-	
+
+	/**
+	 * @brief Invalidate physical register for a virtual register
+	 *
+	 * Removes the mapping from vreg to physical register and frees the physical register.
+	 * This is necessary when the value is updated on the stack through variant operations,
+	 * to prevent stale physical register values from being used.
+	 *
+	 * @param vreg Virtual register to invalidate
+	 */
+	void invalidate_register(int vreg);
+
 	/**
 	 * @brief Check if a physical register is available
 	 * 

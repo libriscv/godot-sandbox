@@ -172,6 +172,19 @@ void RegisterAllocator::free_register(int vreg) {
 	}
 }
 
+void RegisterAllocator::invalidate_register(int vreg) {
+	// Same as free_register - removes the vreg->preg mapping and frees the physical register
+	// This is necessary when the value is updated on the stack through variant operations,
+	// to prevent stale physical register values from being used
+	std::unordered_map<int, uint8_t>::iterator it = m_vreg_to_preg.find(vreg);
+	if (it != m_vreg_to_preg.end()) {
+		uint8_t preg = it->second;
+		m_free_registers.push_back(preg);
+		m_preg_to_vreg.erase(preg);
+		m_vreg_to_preg.erase(vreg);
+	}
+}
+
 bool RegisterAllocator::is_register_available(uint8_t preg) const {
 	return std::find(m_free_registers.begin(), m_free_registers.end(), preg) != m_free_registers.end();
 }
