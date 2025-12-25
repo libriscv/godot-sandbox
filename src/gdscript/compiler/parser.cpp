@@ -392,7 +392,6 @@ ExprPtr Parser::parse_call() {
 			if (auto* var_expr = dynamic_cast<VariableExpr*>(expr.get())) {
 				// Local function call
 				std::string func_name = var_expr->name;
-				expr.release(); // We're replacing it
 				expr = std::make_unique<CallExpr>(func_name, std::move(arguments));
 			} else {
 				error("Invalid call expression");
