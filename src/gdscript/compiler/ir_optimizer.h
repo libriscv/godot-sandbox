@@ -48,6 +48,10 @@ private:
 	// Dead code elimination helpers
 	std::unordered_set<int> find_live_registers(const IRFunction& func);
 	bool is_register_used_after(const IRFunction& func, int reg, size_t instr_idx);
+
+	// Peephole optimization helpers
+	static bool is_arithmetic_op(IROpcode op);
+	static bool is_reg_used_between_exclusive(const IRFunction& func, int reg, size_t start_idx, size_t end_idx);
 };
 
 } // namespace gdscript

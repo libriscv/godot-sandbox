@@ -516,9 +516,11 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 	std::vector<IRInstruction> new_instructions;
 	new_instructions.reserve(func.instructions.size());
 
-	for (size_t i = 0; i < func.instructions.size(); i++) {
+	size_t i = 0;
+	while (i < func.instructions.size()) {
 		const auto& instr = func.instructions[i];
 		bool skip = false;
+		bool handled = false;
 
 		// Pattern 1: MOVE r0, r0 -> eliminate
 		if (instr.opcode == IROpcode::MOVE) {
@@ -526,36 +528,166 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 			int src = std::get<int>(instr.operands[1].value);
 			if (dst == src) {
 				skip = true; // Eliminate self-move
+				i++;
+				continue;
 			}
-		}
 
-		// Pattern 2: MOVE r1, r0; MOVE r2, r1 -> MOVE r2, r0 (if r1 not used after)
-		// BUT: don't do this optimization - it's too risky with loops
-		// The is_register_used_after check doesn't account for control flow (jumps/branches)
-		// where a register might be used by an earlier instruction via a jump
-		//
-		// Disabled for safety - the gain is minimal anyway
-		/*
-		if (!skip && instr.opcode == IROpcode::MOVE && i + 1 < func.instructions.size()) {
-			const auto& next = func.instructions[i + 1];
-			if (next.opcode == IROpcode::MOVE) {
-				int dst1 = std::get<int>(instr.operands[0].value);
-				int src1 = std::get<int>(instr.operands[1].value);
-				int dst2 = std::get<int>(next.operands[0].value);
-				int src2 = std::get<int>(next.operands[1].value);
+			// Pattern 2: Eliminate redundant MOVEs around arithmetic/logical operations
+			// Pattern A: MOVE tmp1, src1; MOVE tmp2, src2; OP dst, tmp1, tmp2; MOVE result, dst
+			//          -> OP result, src1, src2
+			// Pattern B/C: MOVE tmp, src; OP dst, ..., tmp; MOVE result, dst
+			//          -> OP result, ..., src
+			//
+			// Only apply if:
+			// - The temporary registers (tmp1, tmp2, dst) are never used elsewhere
+			// - No control flow boundaries between the instructions
+			if (!skip && !handled && i + 3 < func.instructions.size()) {
+				const auto& move1 = func.instructions[i];
+				const auto& move2 = func.instructions[i + 1];
+				const auto& op = func.instructions[i + 2];
+				const auto& move3 = func.instructions[i + 3];
 
-				if (dst1 == src2 && !is_register_used_after(func, dst1, i + 2)) {
-					// Merge into single move
-					new_instructions.emplace_back(IROpcode::MOVE, IRValue::reg(dst2), IRValue::reg(src1));
-					i++; // Skip next instruction
-					skip = true;
+				// Check for Pattern A: MOVE; MOVE; OP; MOVE
+				if (move2.opcode == IROpcode::MOVE &&
+				    is_arithmetic_op(op.opcode) &&
+				    move3.opcode == IROpcode::MOVE &&
+				    op.operands.size() >= 3) {
+
+					int move1_dst = std::get<int>(move1.operands[0].value);
+					int move1_src = std::get<int>(move1.operands[1].value);
+					int move2_dst = std::get<int>(move2.operands[0].value);
+					int move2_src = std::get<int>(move2.operands[1].value);
+					int op_dst = std::get<int>(op.operands[0].value);
+					int move3_dst = std::get<int>(move3.operands[0].value);
+					int move3_src = std::get<int>(move3.operands[1].value);
+
+					// Check if operands match the pattern
+					if (op.operands[1].type == IRValue::Type::REGISTER &&
+					    op.operands[2].type == IRValue::Type::REGISTER) {
+						int op_lhs = std::get<int>(op.operands[1].value);
+						int op_rhs = std::get<int>(op.operands[2].value);
+
+						// Pattern A: tmp1=move1_dst, tmp2=move2_dst, result=move3_dst
+						if (move1_dst == op_lhs && move2_dst == op_rhs &&
+						    move3_src == op_dst) {
+							// Check that temps are not used elsewhere
+							// tmp1 (move1_dst) should only be used by the OP at i+2
+							// tmp2 (move2_dst) should only be used by the OP at i+2
+							// dst (op_dst) should only be used by the MOVE at i+3
+							bool tmp1_safe = !is_reg_used_between_exclusive(func, move1_dst, i, i + 2);
+							bool tmp2_safe = !is_reg_used_between_exclusive(func, move2_dst, i + 1, i + 2);
+							bool dst_safe = !is_reg_used_between_exclusive(func, op_dst, i + 2, i + 3);
+
+							if (tmp1_safe && tmp2_safe && dst_safe) {
+								// Emit optimized instruction
+								IRInstruction new_op = op;
+								new_op.operands[0] = IRValue::reg(move3_dst);
+								new_op.operands[1] = IRValue::reg(move1_src);
+								new_op.operands[2] = IRValue::reg(move2_src);
+								new_instructions.push_back(new_op);
+
+								i += 4;
+								skip = true;
+								handled = true;
+							}
+						}
+					}
+				}
+			}
+
+			// Pattern B/C: MOVE; OP; MOVE (only one move before op)
+			if (!skip && !handled && i + 2 < func.instructions.size()) {
+				const auto& move1 = func.instructions[i];
+				const auto& op = func.instructions[i + 1];
+				const auto& move2 = func.instructions[i + 2];
+
+				if (is_arithmetic_op(op.opcode) &&
+				    move2.opcode == IROpcode::MOVE &&
+				    op.operands.size() >= 3) {
+
+					int move1_dst = std::get<int>(move1.operands[0].value);
+					int move1_src = std::get<int>(move1.operands[1].value);
+					int op_dst = std::get<int>(op.operands[0].value);
+					int move2_dst = std::get<int>(move2.operands[0].value);
+					int move2_src = std::get<int>(move2.operands[1].value);
+
+					// Check for Pattern B: tmp is first operand
+					if (op.operands[1].type == IRValue::Type::REGISTER) {
+						int op_lhs = std::get<int>(op.operands[1].value);
+
+						if (move1_dst == op_lhs && move2_src == op_dst &&
+						    !is_reg_used_between_exclusive(func, move1_dst, i, i + 1) &&
+						    !is_reg_used_between_exclusive(func, op_dst, i + 1, i + 2)) {
+
+							// Emit optimized instruction
+							IRInstruction new_op = op;
+							new_op.operands[0] = IRValue::reg(move2_dst);
+							new_op.operands[1] = IRValue::reg(move1_src);
+							// operand 2 stays the same
+							new_instructions.push_back(new_op);
+
+							i += 3;
+							skip = true;
+							handled = true;
+						}
+					}
+
+					// Check for Pattern C: tmp is second operand
+					if (!handled && op.operands[2].type == IRValue::Type::REGISTER) {
+						int op_rhs = std::get<int>(op.operands[2].value);
+
+						if (move1_dst == op_rhs && move2_src == op_dst &&
+						    !is_reg_used_between_exclusive(func, move1_dst, i, i + 1) &&
+						    !is_reg_used_between_exclusive(func, op_dst, i + 1, i + 2)) {
+
+							// Emit optimized instruction
+							IRInstruction new_op = op;
+							new_op.operands[0] = IRValue::reg(move2_dst);
+							// operand 1 stays the same
+							new_op.operands[2] = IRValue::reg(move1_src);
+							new_instructions.push_back(new_op);
+
+							i += 3;
+							skip = true;
+							handled = true;
+						}
+					}
 				}
 			}
 		}
-		*/
 
-		if (!skip) {
+		// Pattern D: OP dst, ...; MOVE result, dst (without preceding MOVE)
+		if (!skip && !handled && i + 1 < func.instructions.size()) {
+			if (is_arithmetic_op(func.instructions[i].opcode) &&
+			    func.instructions[i + 1].opcode == IROpcode::MOVE) {
+
+				const auto& op = func.instructions[i];
+				const auto& move = func.instructions[i + 1];
+
+				if (op.operands.size() >= 1 && move.operands.size() >= 2) {
+					int op_dst = std::get<int>(op.operands[0].value);
+					int move_dst = std::get<int>(move.operands[0].value);
+					int move_src = std::get<int>(move.operands[1].value);
+
+					if (move_src == op_dst &&
+					    !is_reg_used_between_exclusive(func, op_dst, i, i + 2)) {
+
+						// Emit optimized instruction
+						IRInstruction new_op = op;
+						new_op.operands[0] = IRValue::reg(move_dst);
+						new_instructions.push_back(new_op);
+
+						i += 2;
+						skip = true;
+						handled = true;
+					}
+				}
+			}
+		}
+
+		if (!skip && !handled) {
 			new_instructions.push_back(instr);
+			i++;
 		}
 	}
 
@@ -845,6 +977,68 @@ IROptimizer::ConstantValue IROptimizer::get_constant(const IRValue& val) {
 		cv.int_value = std::get<int64_t>(val.value);
 	}
 	return cv;
+}
+
+bool IROptimizer::is_arithmetic_op(IROpcode op) {
+	switch (op) {
+		case IROpcode::ADD:
+		case IROpcode::SUB:
+		case IROpcode::MUL:
+		case IROpcode::DIV:
+		case IROpcode::MOD:
+		case IROpcode::NEG:
+		case IROpcode::AND:
+		case IROpcode::OR:
+		case IROpcode::CMP_EQ:
+		case IROpcode::CMP_NEQ:
+		case IROpcode::CMP_LT:
+		case IROpcode::CMP_LTE:
+		case IROpcode::CMP_GT:
+		case IROpcode::CMP_GTE:
+			return true;
+		default:
+			return false;
+	}
+}
+
+bool IROptimizer::is_reg_used_between_exclusive(const IRFunction& func, int reg, size_t start_idx, size_t end_idx) {
+	// Check if register is used in the instruction range (start_idx, end_idx)
+	// Exclusive of both boundaries
+
+	// Safety check
+	if (start_idx >= func.instructions.size() || end_idx > func.instructions.size()) {
+		return true; // Conservative: assume used if indices are out of bounds
+	}
+
+	for (size_t i = start_idx + 1; i < end_idx; i++) {
+		const auto& instr = func.instructions[i];
+
+		// LABEL is a control flow boundary - be conservative
+		if (instr.opcode == IROpcode::LABEL) {
+			return true;
+		}
+
+		// Check if register is read (used as source operand)
+		for (size_t j = 1; j < instr.operands.size(); j++) {
+			if (instr.operands[j].type == IRValue::Type::REGISTER) {
+				int r = std::get<int>(instr.operands[j].value);
+				if (r == reg) {
+					return true;
+				}
+			}
+		}
+
+		// Special case: BRANCH_ZERO and BRANCH_NOT_ZERO read first operand
+		if ((instr.opcode == IROpcode::BRANCH_ZERO || instr.opcode == IROpcode::BRANCH_NOT_ZERO) &&
+		    instr.operands.size() >= 1 && instr.operands[0].type == IRValue::Type::REGISTER) {
+			int r = std::get<int>(instr.operands[0].value);
+			if (r == reg) {
+				return true;
+			}
+		}
+	}
+
+	return false;
 }
 
 } // namespace gdscript
