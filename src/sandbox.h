@@ -639,7 +639,7 @@ private:
 	uint32_t m_max_refs = MAX_REFS;
 	uint32_t m_memory_max = MAX_VMEM;
 	int64_t m_insn_max = MAX_INSTRUCTIONS;
-	uint32_t m_allocations_max = 4000;
+	uint32_t m_allocations_max = MAX_HEAP_ALLOCS;
 
 	uint8_t m_throttled = 0;
 	bool m_use_unboxed_arguments = false;
