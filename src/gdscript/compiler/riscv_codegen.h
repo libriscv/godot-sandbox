@@ -145,6 +145,23 @@ private:
 	// No-op if the value is already a VARIANT on stack
 	void ensure_materialized(int vreg);
 
+	// Syscall result handling helpers
+	// Store syscall result from register to Variant, with optional register allocation
+	// result_vreg: virtual register for the result
+	// result_reg: physical register containing the result (e.g., REG_A0 after syscall)
+	// result_offset: stack offset for the Variant
+	// variant_type: Variant type value (e.g., 2 for INT, 24 for GDOBJECT)
+	void emit_syscall_result(int result_vreg, uint8_t result_reg, int result_offset, int variant_type);
+
+	// Stack manipulation helpers
+	// Adjust stack pointer by a constant amount (positive or negative)
+	// Handles both small immediates (< 2048) and large values
+	void emit_stack_adjust(int32_t amount);
+
+	// Load stack pointer offset into a register
+	// If offset < 2048, uses addi; otherwise loads into temp register and adds
+	void emit_load_stack_offset(uint8_t rd, int32_t offset);
+
 	// Output buffer
 	std::vector<uint8_t> m_code;
 	std::unordered_map<std::string, size_t> m_labels;

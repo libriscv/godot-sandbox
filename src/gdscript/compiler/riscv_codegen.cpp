@@ -875,13 +875,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					int additional_space = arg_count * VARIANT_SIZE;
 					additional_space = (additional_space + 15) & ~15; // Align to 16 bytes
 
-					// Adjust stack pointer: addi sp, sp, -additional_space
-					if (additional_space < 2048) {
-						emit_i_type(0x13, REG_SP, 0, REG_SP, -additional_space);
-					} else {
-						emit_li(REG_T0, -additional_space);
-						emit_add(REG_SP, REG_SP, REG_T0);
-					}
+					// Adjust stack pointer
+					emit_stack_adjust(-additional_space);
 
 					// Copy argument Variants to the new stack space
 					for (int i = 0; i < arg_count; i++) {
@@ -918,12 +913,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					adjusted_obj_offset += additional_space;
 				}
 
-				if (adjusted_obj_offset < 2048) {
-					emit_i_type(0x13, REG_A0, 0, REG_SP, adjusted_obj_offset);
-				} else {
-					emit_li(REG_A0, adjusted_obj_offset);
-					emit_add(REG_A0, REG_SP, REG_A0);
-				}
+				emit_load_stack_offset(REG_A0, adjusted_obj_offset);
 
 				// a1 = pointer to method name string (need to store in .rodata section)
 				// For now, we'll use a temporary approach: store the string on stack
@@ -932,12 +922,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int str_space = ((method_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
 
 				// Allocate more stack space for the string
-				if (str_space < 2048) {
-					emit_i_type(0x13, REG_SP, 0, REG_SP, -str_space);
-				} else {
-					emit_li(REG_T0, -str_space);
-					emit_add(REG_SP, REG_SP, REG_T0);
-				}
+				emit_stack_adjust(-str_space);
 
 				// Store method name on stack
 				for (size_t i = 0; i < method_name.length(); i++) {
@@ -965,12 +950,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				}
 				adjusted_result_offset += str_space;
 
-				if (adjusted_result_offset < 2048) {
-					emit_i_type(0x13, REG_A5, 0, REG_SP, adjusted_result_offset);
-				} else {
-					emit_li(REG_A5, adjusted_result_offset);
-					emit_add(REG_A5, REG_SP, REG_A5);
-				}
+				emit_load_stack_offset(REG_A5, adjusted_result_offset);
 
 				// a7 = ECALL_VCALL (501)
 				emit_li(REG_A7, 501);
@@ -984,12 +964,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					total_stack_adjust += additional_space;
 				}
 
-				if (total_stack_adjust < 2048) {
-					emit_i_type(0x13, REG_SP, 0, REG_SP, total_stack_adjust);
-				} else {
-					emit_li(REG_T0, total_stack_adjust);
-					emit_add(REG_SP, REG_SP, REG_T0);
-				}
+				emit_stack_adjust(total_stack_adjust);
 
 				break;
 			}
@@ -1228,7 +1203,6 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int result_offset = get_variant_stack_offset(result_vreg);
 
 				// Handle register clobbering (VCREATE uses a0-a3)
-				// Note: t0-t1 are used here for copying, they're not clobbered by the syscall itself
 				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
 				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
 				for (const auto& move : moves) {
@@ -1517,12 +1491,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// Allocate stack space for the string
 					int str_space = ((string_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
 
-					if (str_space < 2048) {
-						emit_i_type(0x13, REG_SP, 0, REG_SP, -str_space);
-					} else {
-						emit_li(REG_T0, -str_space);
-						emit_add(REG_SP, REG_SP, REG_T0);
-					}
+					emit_stack_adjust(-str_space);
 
 					// Store string on stack
 					for (size_t i = 0; i < str.length(); i++) {
@@ -1543,24 +1512,13 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_ecall();
 
 					// After ecall, a0 contains the object reference (32-bit int)
-					// We need to store this into the result Variant
+					// Try to keep it in a register (RAW_INT optimization)
 
 					// First, restore stack pointer (before storing result)
-					if (str_space < 2048) {
-						emit_i_type(0x13, REG_SP, 0, REG_SP, str_space);
-					} else {
-						emit_li(REG_T0, str_space);
-						emit_add(REG_SP, REG_SP, REG_T0);
-					}
+					emit_stack_adjust(str_space);
 
-					// Store the object type (GDOBJECT = 24) into Variant
-					emit_li(REG_T0, 24); // GDOBJECT type
-					emit_sw(REG_T0, REG_SP, result_offset); // Store 4-byte type at offset 0
-
-					// Store the object data from a0 into the Variant data area (offset 8)
-					emit_sd(REG_A0, REG_SP, result_offset + 8); // Store object reference in v.i
-
-					m_vreg_types[result_vreg] = ValueType::VARIANT;
+					// Store syscall result with register allocation optimization
+					emit_syscall_result(result_vreg, REG_A0, result_offset, 24); // GDOBJECT type = 24
 
 				} else if (syscall_num == 523) {
 					// ECALL_ARRAY_SIZE: result_reg, 523, array_vreg
@@ -1597,13 +1555,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_ecall();
 
 					// After ecall, a0 contains the size (64-bit int)
-					// Store it into the result Variant as an integer
-					// NOTE: We use emit_sd (8 bytes) because a0 contains a 64-bit value, not 32-bit!
-					emit_li(REG_T0, 2); // INT type = 2
-					emit_sw(REG_T0, REG_SP, result_offset); // Store 4-byte type
-					emit_sd(REG_A0, REG_SP, result_offset + 8); // Store 8-byte integer at offset 8
-
-					m_vreg_types[result_vreg] = ValueType::VARIANT;
+					// Store syscall result with register allocation optimization
+					emit_syscall_result(result_vreg, REG_A0, result_offset, 2); // INT type = 2
 
 				} else if (syscall_num == 522) {
 					// ECALL_ARRAY_AT: result_reg, 522, array_vreg, index_vreg
@@ -1650,6 +1603,10 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_ecall();
 
 					// After ecall, the result Variant is already filled by the syscall
+					// NOTE: We can't optimize this to keep the result in a register because:
+					// 1. The syscall directly fills the Variant structure
+					// 2. We don't know the type at compile time (could be any Variant type)
+					// 3. Extracting it would require runtime type checks and branches
 					m_vreg_types[result_vreg] = ValueType::VARIANT;
 
 				} else {
@@ -2559,6 +2516,52 @@ void RISCVCodeGen::ensure_materialized(int vreg) {
 		default:
 			// Unknown type, do nothing
 			break;
+	}
+}
+
+void RISCVCodeGen::emit_syscall_result(int result_vreg, uint8_t result_reg, int result_offset, int variant_type) {
+	// Try to allocate a register for the result
+	int result_preg = m_allocator.allocate_register(result_vreg, m_current_instr_idx);
+
+	if (result_preg >= 0) {
+		// Optimization: Keep result in register (RAW_INT)
+		// Move result_reg to the allocated register if different
+		if (result_preg != result_reg) {
+			emit_mv(result_preg, result_reg);
+		}
+
+		// Initialize stack with the value as backup
+		emit_li(REG_T0, variant_type);
+		emit_sw(REG_T0, REG_SP, result_offset); // Store 4-byte type
+		emit_sd(result_preg, REG_SP, result_offset + 8); // Store 8-byte integer at offset 8
+
+		m_vreg_types[result_vreg] = ValueType::RAW_INT;
+		m_initialized_vregs.insert(result_vreg);
+	} else {
+		// No register available, fallback to Variant on stack
+		emit_li(REG_T0, variant_type);
+		emit_sw(REG_T0, REG_SP, result_offset); // Store 4-byte type
+		emit_sd(result_reg, REG_SP, result_offset + 8); // Store 8-byte integer at offset 8
+
+		m_vreg_types[result_vreg] = ValueType::VARIANT;
+	}
+}
+
+void RISCVCodeGen::emit_stack_adjust(int32_t amount) {
+	if (amount >= -2048 && amount < 2048) {
+		emit_i_type(0x13, REG_SP, 0, REG_SP, amount);
+	} else {
+		emit_li(REG_T0, amount);
+		emit_add(REG_SP, REG_SP, REG_T0);
+	}
+}
+
+void RISCVCodeGen::emit_load_stack_offset(uint8_t rd, int32_t offset) {
+	if (offset >= -2048 && offset < 2048) {
+		emit_i_type(0x13, rd, 0, REG_SP, offset);
+	} else {
+		emit_li(REG_T0, offset);
+		emit_add(rd, REG_SP, REG_T0);
 	}
 }
 
