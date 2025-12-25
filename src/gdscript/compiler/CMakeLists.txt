@@ -32,34 +32,22 @@ target_link_libraries(gdscript_compiler_test gdscript_compiler)
 # Build unit tests
 enable_testing()
 
-add_executable(test_lexer tests/test_lexer.cpp)
-target_link_libraries(test_lexer -static gdscript_compiler)
-add_test(NAME LexerTests COMMAND test_lexer)
+function(add_gdscript_test test_name test_source)
+	add_executable(${test_name} ${test_source})
+	target_compile_options(${test_name} PUBLIC -fsanitize=address,undefined)
+	target_link_libraries(${test_name} -fsanitize=address,undefined gdscript_compiler)
+	add_test(NAME ${test_name} COMMAND ${test_name})
+endfunction()
 
-add_executable(test_parser tests/test_parser.cpp)
-target_link_libraries(test_parser -static gdscript_compiler)
-add_test(NAME ParserTests COMMAND test_parser)
+add_gdscript_test(test_lexer tests/test_lexer.cpp)
+add_gdscript_test(test_parser tests/test_parser.cpp)
+add_gdscript_test(test_codegen tests/test_codegen.cpp)
+add_gdscript_test(test_integration tests/test_integration.cpp)
+add_gdscript_test(test_primitives tests/test_primitives.cpp)
+add_gdscript_test(test_compilation tests/test_compilation.cpp)
+add_gdscript_test(test_constant_pool tests/test_constant_pool.cpp)
 
-add_executable(test_codegen tests/test_codegen.cpp)
-target_link_libraries(test_codegen -static gdscript_compiler)
-add_test(NAME CodeGenTests COMMAND test_codegen)
-
-add_executable(test_integration tests/test_integration.cpp)
-target_link_libraries(test_integration -static gdscript_compiler)
-add_test(NAME IntegrationTests COMMAND test_integration)
-
-add_executable(test_primitives tests/test_primitives.cpp)
-target_link_libraries(test_primitives -static gdscript_compiler)
-add_test(NAME PrimitivesTests COMMAND test_primitives)
-
-add_executable(test_compilation tests/test_compilation.cpp)
-target_link_libraries(test_compilation -static gdscript_compiler)
-add_test(NAME CompilationTests COMMAND test_compilation)
-
-add_executable(test_constant_pool tests/test_constant_pool.cpp)
-target_link_libraries(test_constant_pool -static gdscript_compiler)
-add_test(NAME ConstantPoolTests COMMAND test_constant_pool)
-
+# Dump IR utility
 add_executable(dump_ir dump_ir.cpp)
 target_link_libraries(dump_ir -static gdscript_compiler)
 
