@@ -91,6 +91,7 @@ private:
 	void emit_fsub_d(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Double-precision FP sub
 	void emit_fmul_d(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Double-precision FP mul
 	void emit_fdiv_d(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Double-precision FP div
+	void emit_fmv_d(uint8_t rd, uint8_t rs);                // Double-precision FP move
 
 	// Additional integer instructions
 	void emit_sext_w(uint8_t rd, uint8_t rs);  // Sign-extend word to doubleword (addiw rd, rs, 0)
