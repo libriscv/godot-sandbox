@@ -966,14 +966,52 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 		instr.operands.push_back(IRValue::reg(arg_regs[2])); // z
 		instr.operands.push_back(IRValue::reg(arg_regs[3])); // w
 		result_type = Variant::VECTOR4I;
-	} else if (name == "Color" && arg_regs.size() == 4) {
-		instr = IRInstruction(IROpcode::MAKE_COLOR);
-		instr.operands.push_back(IRValue::reg(result_reg));
-		instr.operands.push_back(IRValue::reg(arg_regs[0])); // r
-		instr.operands.push_back(IRValue::reg(arg_regs[1])); // g
-		instr.operands.push_back(IRValue::reg(arg_regs[2])); // b
-		instr.operands.push_back(IRValue::reg(arg_regs[3])); // a
-		result_type = Variant::COLOR;
+	} else if (name == "Color") {
+		// Color() with 0 args: white (1, 1, 1, 1)
+		// Color(r, g, b) with 3 args: default alpha to 1.0
+		// Color(r, g, b, a) with 4 args: full specification
+		if (arg_regs.size() == 0) {
+			// Color() - white with alpha 1.0
+			int r_reg = alloc_register();
+			int g_reg = alloc_register();
+			int b_reg = alloc_register();
+			int a_reg = alloc_register();
+
+			func.instructions.emplace_back(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(r_reg), IRValue::fimm(1.0));
+			func.instructions.emplace_back(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(g_reg), IRValue::fimm(1.0));
+			func.instructions.emplace_back(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(b_reg), IRValue::fimm(1.0));
+			func.instructions.emplace_back(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(a_reg), IRValue::fimm(1.0));
+
+			instr = IRInstruction(IROpcode::MAKE_COLOR);
+			instr.operands.push_back(IRValue::reg(result_reg));
+			instr.operands.push_back(IRValue::reg(r_reg));
+			instr.operands.push_back(IRValue::reg(g_reg));
+			instr.operands.push_back(IRValue::reg(b_reg));
+			instr.operands.push_back(IRValue::reg(a_reg));
+			result_type = Variant::COLOR;
+		} else if (arg_regs.size() == 3) {
+			// Color(r, g, b) - default alpha to 1.0
+			int a_reg = alloc_register();
+			func.instructions.emplace_back(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(a_reg), IRValue::fimm(1.0));
+
+			instr = IRInstruction(IROpcode::MAKE_COLOR);
+			instr.operands.push_back(IRValue::reg(result_reg));
+			instr.operands.push_back(IRValue::reg(arg_regs[0])); // r
+			instr.operands.push_back(IRValue::reg(arg_regs[1])); // g
+			instr.operands.push_back(IRValue::reg(arg_regs[2])); // b
+			instr.operands.push_back(IRValue::reg(a_reg)); // a = 1.0
+			result_type = Variant::COLOR;
+		} else if (arg_regs.size() == 4) {
+			instr = IRInstruction(IROpcode::MAKE_COLOR);
+			instr.operands.push_back(IRValue::reg(result_reg));
+			instr.operands.push_back(IRValue::reg(arg_regs[0])); // r
+			instr.operands.push_back(IRValue::reg(arg_regs[1])); // g
+			instr.operands.push_back(IRValue::reg(arg_regs[2])); // b
+			instr.operands.push_back(IRValue::reg(arg_regs[3])); // a
+			result_type = Variant::COLOR;
+		} else {
+			throw std::runtime_error("Color constructor requires 0, 3, or 4 arguments");
+		}
 	} else if (name == "Array") {
 		// Array() - empty array or with initial elements
 		// For now, only support empty Array()

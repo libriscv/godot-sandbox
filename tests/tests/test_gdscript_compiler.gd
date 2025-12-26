@@ -1483,80 +1483,80 @@ func test_mod_with_vars():
 
 	s.queue_free()
 
-# Color type comprehensive tests - NOT SUPPORTED (Color type)
-# func test_color_comprehensive():
-# 	var gdscript_code = """
-# func test_color_construction():
-# 	var c = Color(1.0, 0.5, 0.25, 0.75)
-# 	return c.r + c.g + c.b + c.a
-#
-# func test_color_members():
-# 	var c = Color(0.1, 0.2, 0.3, 1.0)
-# 	var red = c.r
-# 	var green = c.g
-# 	var blue = c.b
-# 	var alpha = c.a
-# 	return red + green + blue + alpha
-#
-# func test_color_operations():
-# 	var c1 = Color(0.5, 0.5, 0.5, 0.5)
-# 	var r = c1.r * 2.0
-# 	return r
-#
-# func test_color_named_colors():
-# 	# Test that Color() constructor works
-# 	var c = Color()
-# 	return c.a  # Default alpha is 1.0
-#
-# func test_color_component_access():
-# 	var c = Color(1.0, 0.8, 0.6, 0.4)
-# 	var arr = [c.r, c.g, c.b, c.a]
-# 	var sum = 0.0
-# 	for val in arr:
-# 		sum = sum + val
-# 	return sum
-#
-# func test_color_comparison():
-# 	var c1 = Color(1.0, 0.0, 0.0, 1.0)
-# 	var c2 = Color(1.0, 0.0, 0.0, 1.0)
-# 	return c1.r == c2.r and c1.g == c2.g
-# """
-#
-# 	var ts : Sandbox = Sandbox.new()
-# 	ts.set_program(Sandbox_TestsTests)
-# 	ts.restrictions = true
-# 	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
-# 	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
-#
-# 	var s = Sandbox.new()
-# 	s.load_buffer(compiled_elf)
-# 	s.set_instructions_max(10000)
-#
-# 	# Test color construction
-# 	var result = s.vmcallv("test_color_construction")
-# 	assert_almost_eq(result, 2.5, 0.001, "Color component sum should be 2.5")
-#
-# 	# Test color member access
-# 	result = s.vmcallv("test_color_members")
-# 	assert_almost_eq(result, 1.6, 0.001, "Color members should sum to 1.6")
-#
-# 	# Test color operations
-# 	result = s.vmcallv("test_color_operations")
-# 	assert_almost_eq(result, 1.0, 0.001, "Color r * 2 should be 1.0")
-#
-# 	# Test default color
-# 	result = s.vmcallv("test_color_named_colors")
-# 	assert_almost_eq(result, 1.0, 0.001, "Default Color alpha should be 1.0")
-#
-# 	# Test component access with loop
-# 	result = s.vmcallv("test_color_component_access")
-# 	assert_almost_eq(result, 2.8, 0.001, "Color sum via loop should be 2.8")
-#
-# 	# Test color comparison
-# 	result = s.vmcallv("test_color_comparison")
-# 	assert_eq(result, true, "Color comparison should work")
-#
-# 	s.queue_free()
+# Color type comprehensive tests
+func test_color_comprehensive():
+	var gdscript_code = """
+func test_color_construction():
+	var c = Color(1.0, 0.5, 0.25, 0.75)
+	return c.r + c.g + c.b + c.a
+
+func test_color_members():
+	var c = Color(0.1, 0.2, 0.3, 1.0)
+	var red = c.r
+	var green = c.g
+	var blue = c.b
+	var alpha = c.a
+	return red + green + blue + alpha
+
+func test_color_operations():
+	var c1 = Color(0.5, 0.5, 0.5, 0.5)
+	var r = c1.r * 2.0
+	return r
+
+func test_color_named_colors():
+	# Test that Color() constructor works
+	var c = Color()
+	return c.a  # Default alpha is 1.0
+
+func test_color_component_access():
+	var c = Color(1.0, 0.8, 0.6, 0.4)
+	var arr = [c.r, c.g, c.b, c.a]
+	var sum = 0.0
+	for val in arr:
+		sum = sum + val
+	return sum
+
+func test_color_comparison():
+	var c1 = Color(1.0, 0.0, 0.0, 1.0)
+	var c2 = Color(1.0, 0.0, 0.0, 1.0)
+	return c1.r == c2.r and c1.g == c2.g
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	# Test color construction
+	var result = s.vmcallv("test_color_construction")
+	assert_almost_eq(result, 2.5, 0.001, "Color component sum should be 2.5")
+
+	# Test color member access
+	result = s.vmcallv("test_color_members")
+	assert_almost_eq(result, 1.6, 0.001, "Color members should sum to 1.6")
+
+	# Test color operations
+	result = s.vmcallv("test_color_operations")
+	assert_almost_eq(result, 1.0, 0.001, "Color r * 2 should be 1.0")
+
+	# Test default color
+	result = s.vmcallv("test_color_named_colors")
+	assert_almost_eq(result, 1.0, 0.001, "Default Color alpha should be 1.0")
+
+	# Test component access with loop
+	result = s.vmcallv("test_color_component_access")
+	assert_almost_eq(result, 2.8, 0.001, "Color sum via loop should be 2.8")
+
+	# Test color comparison
+	result = s.vmcallv("test_color_comparison")
+	assert_eq(result, true, "Color comparison should work")
+
+	s.queue_free()
 
 
 # Optimization verification tests (constant folding)
@@ -2359,8 +2359,8 @@ func test_packed_vector3_array_i():
 func test_empty_packed_color_array():
 	return PackedColorArray()
 
-#func test_packed_color_array():
-#	return PackedColorArray([Color(1,0,0), Color(0,1,0), Color(0,0,1)])
+func test_packed_color_array():
+	return PackedColorArray([Color(1.0,0.0,0.0), Color(0.0,1.0,0.0), Color(0.0,0.0,1.0)])
 
 func test_empty_packed_vector4_array():
 	return PackedVector4Array()
@@ -2403,7 +2403,7 @@ func test_packed_vector4_array_i():
 	assert_true(s.has_function("test_packed_vector2_array_i"), "Should have test_packed_vector2_array_i function")
 	assert_true(s.has_function("test_packed_vector3_array"), "Should have test_packed_vector3_array function")
 	assert_true(s.has_function("test_packed_vector3_array_i"), "Should have test_packed_vector3_array_i function")
-	#assert_true(s.has_function("test_packed_color_array"), "Should have test_packed_color_array function")
+	assert_true(s.has_function("test_packed_color_array"), "Should have test_packed_color_array function")
 	assert_true(s.has_function("test_packed_vector4_array"), "Should have test_packed_vector4_array function")
 	assert_true(s.has_function("test_packed_vector4_array_i"), "Should have test_packed_vector4_array_i function")
 
@@ -2454,8 +2454,8 @@ func test_packed_vector4_array_i():
 
 	result = s.vmcallv("test_empty_packed_color_array")
 	assert_eq_deep(result, PackedColorArray([]))
-	#result = s.vmcallv("test_packed_color_array")
-	#assert_eq_deep(result, PackedColorArray([Color(1,0,0), Color(0,1,0), Color(0,0,1)]))
+	result = s.vmcallv("test_packed_color_array")
+	assert_eq_deep(result, PackedColorArray([Color(1,0,0), Color(0,1,0), Color(0,0,1)]))
 
 	result = s.vmcallv("test_empty_packed_vector4_array")
 	assert_eq_deep(result, PackedVector4Array([]))
