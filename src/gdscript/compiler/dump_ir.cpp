@@ -27,21 +27,38 @@ const char* reg_name(uint8_t reg) {
 
 // Helper to convert TypeHint to string
 const char* type_hint_name(IRInstruction::TypeHint hint) {
+	if (hint == IRInstruction::TypeHint_NONE) {
+		return "NONE";
+	}
+	// Use Variant::Type enum values directly
 	switch (hint) {
-		case IRInstruction::TypeHint::NONE: return "NONE";
-		case IRInstruction::TypeHint::VARIANT_INT: return "VARIANT_INT";
-		case IRInstruction::TypeHint::VARIANT_FLOAT: return "VARIANT_FLOAT";
-		case IRInstruction::TypeHint::VARIANT_BOOL: return "VARIANT_BOOL";
-		case IRInstruction::TypeHint::VARIANT_VECTOR2: return "VARIANT_VECTOR2";
-		case IRInstruction::TypeHint::VARIANT_VECTOR3: return "VARIANT_VECTOR3";
-		case IRInstruction::TypeHint::VARIANT_VECTOR4: return "VARIANT_VECTOR4";
-		case IRInstruction::TypeHint::VARIANT_VECTOR2I: return "VARIANT_VECTOR2I";
-		case IRInstruction::TypeHint::VARIANT_VECTOR3I: return "VARIANT_VECTOR3I";
-		case IRInstruction::TypeHint::VARIANT_VECTOR4I: return "VARIANT_VECTOR4I";
-		case IRInstruction::TypeHint::VARIANT_COLOR: return "VARIANT_COLOR";
-		case IRInstruction::TypeHint::VARIANT_RECT2: return "VARIANT_RECT2";
-		case IRInstruction::TypeHint::VARIANT_RECT2I: return "VARIANT_RECT2I";
-		case IRInstruction::TypeHint::VARIANT_PLANE: return "VARIANT_PLANE";
+		case Variant::NIL: return "NIL";
+		case Variant::BOOL: return "BOOL";
+		case Variant::INT: return "INT";
+		case Variant::FLOAT: return "FLOAT";
+		case Variant::STRING: return "STRING";
+		case Variant::VECTOR2: return "VECTOR2";
+		case Variant::VECTOR2I: return "VECTOR2I";
+		case Variant::VECTOR3: return "VECTOR3";
+		case Variant::VECTOR3I: return "VECTOR3I";
+		case Variant::VECTOR4: return "VECTOR4";
+		case Variant::VECTOR4I: return "VECTOR4I";
+		case Variant::COLOR: return "COLOR";
+		case Variant::RECT2: return "RECT2";
+		case Variant::RECT2I: return "RECT2I";
+		case Variant::PLANE: return "PLANE";
+		case Variant::ARRAY: return "ARRAY";
+		case Variant::DICTIONARY: return "DICTIONARY";
+		case Variant::PACKED_BYTE_ARRAY: return "PACKED_BYTE_ARRAY";
+		case Variant::PACKED_INT32_ARRAY: return "PACKED_INT32_ARRAY";
+		case Variant::PACKED_INT64_ARRAY: return "PACKED_INT64_ARRAY";
+		case Variant::PACKED_FLOAT32_ARRAY: return "PACKED_FLOAT32_ARRAY";
+		case Variant::PACKED_FLOAT64_ARRAY: return "PACKED_FLOAT64_ARRAY";
+		case Variant::PACKED_STRING_ARRAY: return "PACKED_STRING_ARRAY";
+		case Variant::PACKED_VECTOR2_ARRAY: return "PACKED_VECTOR2_ARRAY";
+		case Variant::PACKED_VECTOR3_ARRAY: return "PACKED_VECTOR3_ARRAY";
+		case Variant::PACKED_COLOR_ARRAY: return "PACKED_COLOR_ARRAY";
+		case Variant::PACKED_VECTOR4_ARRAY: return "PACKED_VECTOR4_ARRAY";
 		default: return "UNKNOWN";
 	}
 }
@@ -211,6 +228,16 @@ int main(int argc, char** argv)
 					case IROpcode::VCALL:
 					case IROpcode::VGET:
 					case IROpcode::MAKE_ARRAY:
+					case IROpcode::MAKE_PACKED_BYTE_ARRAY:
+					case IROpcode::MAKE_PACKED_INT32_ARRAY:
+					case IROpcode::MAKE_PACKED_INT64_ARRAY:
+					case IROpcode::MAKE_PACKED_FLOAT32_ARRAY:
+					case IROpcode::MAKE_PACKED_FLOAT64_ARRAY:
+					case IROpcode::MAKE_PACKED_STRING_ARRAY:
+					case IROpcode::MAKE_PACKED_VECTOR2_ARRAY:
+					case IROpcode::MAKE_PACKED_VECTOR3_ARRAY:
+					case IROpcode::MAKE_PACKED_COLOR_ARRAY:
+					case IROpcode::MAKE_PACKED_VECTOR4_ARRAY:
 					case IROpcode::MAKE_DICTIONARY:
 					case IROpcode::ADD:
 					case IROpcode::SUB:
@@ -272,7 +299,7 @@ int main(int argc, char** argv)
 				}
 
 				// Show type hint if present
-				if (instr.type_hint != IRInstruction::TypeHint::NONE) {
+				if (instr.type_hint != IRInstruction::TypeHint_NONE) {
 					std::cout << "  [type: " << type_hint_name(instr.type_hint) << "]";
 				}
 

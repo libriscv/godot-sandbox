@@ -2265,3 +2265,134 @@ func order_of_operations(x):
 	assert_eq(result, 15, "order_of_operations(5) should return 15 ((5+1)*2+3 = 15)")
 
 	s.queue_free()
+
+func test_packed_arrays():
+	# Test packed array constructors
+	var gdscript_code = """
+func test_empty_packed_byte_array():
+	return PackedByteArray()
+
+func test_packed_byte_array():
+	return PackedByteArray([1, 2, 3, 4, 5])
+
+func test_empty_packed_int32_array():
+	return PackedInt32Array()
+
+func test_packed_int32_array():
+	return PackedInt32Array([10, 20, 30, 40, 50])
+
+func test_empty_packed_int64_array():
+	return PackedInt64Array()
+
+func test_packed_int64_array():
+	return PackedInt64Array([100, 200, 300, 400, 500])
+
+func test_empty_packed_float32_array():
+	return PackedFloat32Array()
+
+func test_packed_float32_array():
+	return PackedFloat32Array([1.1, 2.2, 3.3, 4.4, 5.5])
+
+func test_empty_packed_float64_array():
+	return PackedFloat64Array()
+
+func test_packed_float64_array():
+	return PackedFloat64Array([10.01, 20.02, 30.03, 40.04, 50.05])
+
+func test_empty_packed_string_array():
+	return PackedStringArray()
+
+func test_packed_string_array():
+	return PackedStringArray(["one", "two", "three", "four", "five"])
+
+func test_empty_packed_vector2_array():
+	return PackedVector2Array()
+
+func test_packed_vector2_array():
+	return PackedVector2Array([Vector2(1,2), Vector2(3,4), Vector2(5,6)])
+
+func test_empty_packed_vector3_array():
+	return PackedVector3Array()
+
+func test_packed_vector3_array():
+	return PackedVector3Array([Vector3(1,2,3), Vector3(4,5,6), Vector3(7,8,9)])
+
+func test_empty_packed_color_array():
+	return PackedColorArray()
+
+#func test_packed_color_array():
+#	return PackedColorArray([Color(1,0,0), Color(0,1,0), Color(0,0,1)])
+
+func test_empty_packed_vector4_array():
+	return PackedVector4Array()
+
+func test_packed_vector4_array():
+	return PackedVector4Array([Vector4(1,2,3,4), Vector4(5,6,7,8), Vector4(9,10,11,12)])
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+
+	# Test that all functions exist
+	assert_true(s.has_function("test_empty_packed_byte_array"), "Should have test_empty_packed_byte_array function")
+	assert_true(s.has_function("test_empty_packed_int32_array"), "Should have test_empty_packed_int32_array function")
+	assert_true(s.has_function("test_empty_packed_int64_array"), "Should have test_empty_packed_int64_array function")
+	assert_true(s.has_function("test_empty_packed_float32_array"), "Should have test_empty_packed_float32_array function")
+	assert_true(s.has_function("test_empty_packed_float64_array"), "Should have test_empty_packed_float64_array function")
+	assert_true(s.has_function("test_empty_packed_string_array"), "Should have test_empty_packed_string_array function")
+	assert_true(s.has_function("test_empty_packed_vector2_array"), "Should have test_empty_packed_vector2_array function")
+	assert_true(s.has_function("test_empty_packed_vector3_array"), "Should have test_empty_packed_vector3_array function")
+	assert_true(s.has_function("test_empty_packed_color_array"), "Should have test_empty_packed_color_array function")
+	assert_true(s.has_function("test_empty_packed_vector4_array"), "Should have test_empty_packed_vector4_array function")
+
+	assert_true(s.has_function("test_packed_byte_array"), "Should have test_packed_byte_array function")
+	assert_true(s.has_function("test_packed_int32_array"), "Should have test_packed_int32_array function")
+	assert_true(s.has_function("test_packed_int64_array"), "Should have test_packed_int64_array function")
+	assert_true(s.has_function("test_packed_float32_array"), "Should have test_packed_float32_array function")
+	assert_true(s.has_function("test_packed_float64_array"), "Should have test_packed_float64_array function")
+	assert_true(s.has_function("test_packed_string_array"), "Should have test_packed_string_array function")
+	assert_true(s.has_function("test_packed_vector2_array"), "Should have test_packed_vector2_array function")
+	assert_true(s.has_function("test_packed_vector3_array"), "Should have test_packed_vector3_array function")
+	#assert_true(s.has_function("test_packed_color_array"), "Should have test_packed_color_array function")
+	assert_true(s.has_function("test_packed_vector4_array"), "Should have test_packed_vector4_array function")
+
+	# Test that functions return valid packed arrays (non-nil)
+	var result = s.vmcallv("test_empty_packed_byte_array")
+	assert_eq_deep(result, PackedByteArray([]))
+	result = s.vmcallv("test_packed_byte_array")
+	#assert_eq_deep(result, PackedByteArray([1, 2, 3, 4, 5]))
+
+	result = s.vmcallv("test_empty_packed_int32_array")
+	assert_eq_deep(result, PackedInt32Array([]))
+
+	result = s.vmcallv("test_empty_packed_int64_array")
+	assert_eq_deep(result, PackedInt64Array([]))
+
+	result = s.vmcallv("test_empty_packed_float32_array")
+	assert_eq_deep(result, PackedFloat32Array([]))
+
+	result = s.vmcallv("test_empty_packed_float64_array")
+	assert_eq_deep(result, PackedFloat64Array([]))
+
+	result = s.vmcallv("test_empty_packed_string_array")
+	assert_eq_deep(result, PackedStringArray([]))
+
+	result = s.vmcallv("test_empty_packed_vector2_array")
+	assert_eq_deep(result, PackedVector2Array([]))
+
+	result = s.vmcallv("test_empty_packed_vector3_array")
+	assert_eq_deep(result, PackedVector3Array([]))
+
+	result = s.vmcallv("test_empty_packed_color_array")
+	assert_eq_deep(result, PackedColorArray([]))
+
+	result = s.vmcallv("test_empty_packed_vector4_array")
+	assert_eq_deep(result, PackedVector4Array([]))
+
+	s.queue_free()

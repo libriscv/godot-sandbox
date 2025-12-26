@@ -542,9 +542,9 @@ int CodeGenerator::gen_literal(const LiteralExpr* expr, IRFunction& func) {
 			// Float literals are always 64-bit doubles in GDScript
 			double d = std::get<double>(expr->value);
 			IRInstruction instr(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(reg), IRValue::fimm(d));
-			instr.type_hint = IRInstruction::TypeHint::VARIANT_FLOAT;
+			instr.type_hint = Variant::FLOAT;
 			func.instructions.push_back(instr);
-			set_register_type(reg, IRInstruction::TypeHint::VARIANT_FLOAT);
+			set_register_type(reg, Variant::FLOAT);
 			break;
 		}
 
@@ -584,7 +584,7 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, IRFunction& func) {
 
 	// Propagate type information from the variable to the new register
 	IRInstruction::TypeHint var_type = get_register_type(var->register_num);
-	if (var_type != IRInstruction::TypeHint::NONE) {
+	if (var_type != IRInstruction::TypeHint_NONE) {
 		set_register_type(new_reg, var_type);
 	}
 
@@ -609,14 +609,14 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, IRFunction& func) {
 
 	// In GDScript, if either operand is a float, the result is a float
 	// for arithmetic operations
-	IRInstruction::TypeHint result_type = IRInstruction::TypeHint::NONE;
+	IRInstruction::TypeHint result_type = IRInstruction::TypeHint_NONE;
 	if (is_arithmetic) {
-		if (left_type == IRInstruction::TypeHint::VARIANT_FLOAT ||
-		    right_type == IRInstruction::TypeHint::VARIANT_FLOAT) {
-			result_type = IRInstruction::TypeHint::VARIANT_FLOAT;
-		} else if (left_type == IRInstruction::TypeHint::VARIANT_INT &&
-		           right_type == IRInstruction::TypeHint::VARIANT_INT) {
-			result_type = IRInstruction::TypeHint::VARIANT_INT;
+		if (left_type == Variant::FLOAT ||
+		    right_type == Variant::FLOAT) {
+			result_type = Variant::FLOAT;
+		} else if (left_type == Variant::INT &&
+		           right_type == Variant::INT) {
+			result_type = Variant::INT;
 		}
 	}
 
@@ -643,7 +643,7 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, IRFunction& func) {
 	instr.type_hint = result_type;
 	func.instructions.push_back(instr);
 
-	if (result_type != IRInstruction::TypeHint::NONE) {
+	if (result_type != IRInstruction::TypeHint_NONE) {
 		set_register_type(result_reg, result_type);
 	}
 
@@ -784,7 +784,7 @@ int CodeGenerator::gen_array_literal(const ArrayLiteralExpr* expr, IRFunction& f
 	}
 
 	func.instructions.push_back(instr);
-	set_register_type(result_reg, IRInstruction::TypeHint::VARIANT_ARRAY);
+	set_register_type(result_reg, Variant::ARRAY);
 
 	// Free element registers
 	for (int reg : elem_regs) {
@@ -871,40 +871,45 @@ IRInstruction::TypeHint CodeGenerator::get_register_type(int reg) const {
 	if (it != m_register_types.end()) {
 		return it->second;
 	}
-	return IRInstruction::TypeHint::NONE;
+	return IRInstruction::TypeHint_NONE;
 }
 
 bool CodeGenerator::is_inline_primitive_constructor(const std::string& name) const {
 	return name == "Vector2" || name == "Vector3" || name == "Vector4" ||
 	       name == "Vector2i" || name == "Vector3i" || name == "Vector4i" ||
 	       name == "Color" || name == "Rect2" || name == "Rect2i" || name == "Plane" ||
-	       name == "Array" || name == "Dictionary";
+	       name == "Array" || name == "Dictionary" ||
+	       name == "PackedByteArray" || name == "PackedInt32Array" ||
+	       name == "PackedInt64Array" || name == "PackedFloat32Array" ||
+	       name == "PackedFloat64Array" || name == "PackedStringArray" ||
+	       name == "PackedVector2Array" || name == "PackedVector3Array" ||
+	       name == "PackedColorArray" || name == "PackedVector4Array";
 }
 
 bool CodeGenerator::is_inline_member_access(IRInstruction::TypeHint type, const std::string& member) const {
 	switch (type) {
-		case IRInstruction::TypeHint::VARIANT_VECTOR2:
-		case IRInstruction::TypeHint::VARIANT_VECTOR2I:
+		case Variant::VECTOR2:
+		case Variant::VECTOR2I:
 			return member == "x" || member == "y";
 
-		case IRInstruction::TypeHint::VARIANT_VECTOR3:
-		case IRInstruction::TypeHint::VARIANT_VECTOR3I:
+		case Variant::VECTOR3:
+		case Variant::VECTOR3I:
 			return member == "x" || member == "y" || member == "z";
 
-		case IRInstruction::TypeHint::VARIANT_VECTOR4:
-		case IRInstruction::TypeHint::VARIANT_VECTOR4I:
+		case Variant::VECTOR4:
+		case Variant::VECTOR4I:
 			return member == "x" || member == "y" || member == "z" || member == "w";
 
-		case IRInstruction::TypeHint::VARIANT_COLOR:
+		case Variant::COLOR:
 			return member == "r" || member == "g" || member == "b" || member == "a";
 
-		case IRInstruction::TypeHint::VARIANT_RECT2:
-		case IRInstruction::TypeHint::VARIANT_RECT2I:
+		case Variant::RECT2:
+		case Variant::RECT2I:
 			// Rect2 has position and size, which are Vector2/Vector2i
 			// For now, don't optimize these - they're more complex
 			return false;
 
-		case IRInstruction::TypeHint::VARIANT_PLANE:
+		case Variant::PLANE:
 			// Plane has normal (Vector3) and d (float)
 			// For now, don't optimize these
 			return false;
@@ -917,21 +922,21 @@ bool CodeGenerator::is_inline_member_access(IRInstruction::TypeHint type, const 
 int CodeGenerator::gen_inline_constructor(const std::string& name, const std::vector<int>& arg_regs, IRFunction& func) {
 	int result_reg = alloc_register();
 	IRInstruction instr(IROpcode::CALL); // Default fallback
-	IRInstruction::TypeHint result_type = IRInstruction::TypeHint::NONE;
+	IRInstruction::TypeHint result_type = IRInstruction::TypeHint_NONE;
 
 	if (name == "Vector2" && arg_regs.size() == 2) {
 		instr = IRInstruction(IROpcode::MAKE_VECTOR2);
 		instr.operands.push_back(IRValue::reg(result_reg));
 		instr.operands.push_back(IRValue::reg(arg_regs[0])); // x
 		instr.operands.push_back(IRValue::reg(arg_regs[1])); // y
-		result_type = IRInstruction::TypeHint::VARIANT_VECTOR2;
+		result_type = Variant::VECTOR2;
 	} else if (name == "Vector3" && arg_regs.size() == 3) {
 		instr = IRInstruction(IROpcode::MAKE_VECTOR3);
 		instr.operands.push_back(IRValue::reg(result_reg));
 		instr.operands.push_back(IRValue::reg(arg_regs[0])); // x
 		instr.operands.push_back(IRValue::reg(arg_regs[1])); // y
 		instr.operands.push_back(IRValue::reg(arg_regs[2])); // z
-		result_type = IRInstruction::TypeHint::VARIANT_VECTOR3;
+		result_type = Variant::VECTOR3;
 	} else if (name == "Vector4" && arg_regs.size() == 4) {
 		instr = IRInstruction(IROpcode::MAKE_VECTOR4);
 		instr.operands.push_back(IRValue::reg(result_reg));
@@ -939,20 +944,20 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 		instr.operands.push_back(IRValue::reg(arg_regs[1])); // y
 		instr.operands.push_back(IRValue::reg(arg_regs[2])); // z
 		instr.operands.push_back(IRValue::reg(arg_regs[3])); // w
-		result_type = IRInstruction::TypeHint::VARIANT_VECTOR4;
+		result_type = Variant::VECTOR4;
 	} else if (name == "Vector2i" && arg_regs.size() == 2) {
 		instr = IRInstruction(IROpcode::MAKE_VECTOR2I);
 		instr.operands.push_back(IRValue::reg(result_reg));
 		instr.operands.push_back(IRValue::reg(arg_regs[0])); // x
 		instr.operands.push_back(IRValue::reg(arg_regs[1])); // y
-		result_type = IRInstruction::TypeHint::VARIANT_VECTOR2I;
+		result_type = Variant::VECTOR2I;
 	} else if (name == "Vector3i" && arg_regs.size() == 3) {
 		instr = IRInstruction(IROpcode::MAKE_VECTOR3I);
 		instr.operands.push_back(IRValue::reg(result_reg));
 		instr.operands.push_back(IRValue::reg(arg_regs[0])); // x
 		instr.operands.push_back(IRValue::reg(arg_regs[1])); // y
 		instr.operands.push_back(IRValue::reg(arg_regs[2])); // z
-		result_type = IRInstruction::TypeHint::VARIANT_VECTOR3I;
+		result_type = Variant::VECTOR3I;
 	} else if (name == "Vector4i" && arg_regs.size() == 4) {
 		instr = IRInstruction(IROpcode::MAKE_VECTOR4I);
 		instr.operands.push_back(IRValue::reg(result_reg));
@@ -960,7 +965,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 		instr.operands.push_back(IRValue::reg(arg_regs[1])); // y
 		instr.operands.push_back(IRValue::reg(arg_regs[2])); // z
 		instr.operands.push_back(IRValue::reg(arg_regs[3])); // w
-		result_type = IRInstruction::TypeHint::VARIANT_VECTOR4I;
+		result_type = Variant::VECTOR4I;
 	} else if (name == "Color" && arg_regs.size() == 4) {
 		instr = IRInstruction(IROpcode::MAKE_COLOR);
 		instr.operands.push_back(IRValue::reg(result_reg));
@@ -968,7 +973,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 		instr.operands.push_back(IRValue::reg(arg_regs[1])); // g
 		instr.operands.push_back(IRValue::reg(arg_regs[2])); // b
 		instr.operands.push_back(IRValue::reg(arg_regs[3])); // a
-		result_type = IRInstruction::TypeHint::VARIANT_COLOR;
+		result_type = Variant::COLOR;
 	} else if (name == "Array") {
 		// Array() - empty array or with initial elements
 		// For now, only support empty Array()
@@ -978,12 +983,92 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 		for (int arg_reg : arg_regs) {
 			instr.operands.push_back(IRValue::reg(arg_reg));
 		}
-		result_type = IRInstruction::TypeHint::VARIANT_ARRAY;
+		result_type = Variant::ARRAY;
+	} else if (name == "PackedByteArray") {
+		instr = IRInstruction(IROpcode::MAKE_PACKED_BYTE_ARRAY);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		for (int arg_reg : arg_regs) {
+			instr.operands.push_back(IRValue::reg(arg_reg));
+		}
+		result_type = Variant::PACKED_BYTE_ARRAY;
+	} else if (name == "PackedInt32Array") {
+		instr = IRInstruction(IROpcode::MAKE_PACKED_INT32_ARRAY);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		for (int arg_reg : arg_regs) {
+			instr.operands.push_back(IRValue::reg(arg_reg));
+		}
+		result_type = Variant::PACKED_INT32_ARRAY;
+	} else if (name == "PackedInt64Array") {
+		instr = IRInstruction(IROpcode::MAKE_PACKED_INT64_ARRAY);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		for (int arg_reg : arg_regs) {
+			instr.operands.push_back(IRValue::reg(arg_reg));
+		}
+		result_type = Variant::PACKED_INT64_ARRAY;
+	} else if (name == "PackedFloat32Array") {
+		instr = IRInstruction(IROpcode::MAKE_PACKED_FLOAT32_ARRAY);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		for (int arg_reg : arg_regs) {
+			instr.operands.push_back(IRValue::reg(arg_reg));
+		}
+		result_type = Variant::PACKED_FLOAT32_ARRAY;
+	} else if (name == "PackedFloat64Array") {
+		instr = IRInstruction(IROpcode::MAKE_PACKED_FLOAT64_ARRAY);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		for (int arg_reg : arg_regs) {
+			instr.operands.push_back(IRValue::reg(arg_reg));
+		}
+		result_type = Variant::PACKED_FLOAT64_ARRAY;
+	} else if (name == "PackedStringArray") {
+		instr = IRInstruction(IROpcode::MAKE_PACKED_STRING_ARRAY);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		for (int arg_reg : arg_regs) {
+			instr.operands.push_back(IRValue::reg(arg_reg));
+		}
+		result_type = Variant::PACKED_STRING_ARRAY;
+	} else if (name == "PackedVector2Array") {
+		instr = IRInstruction(IROpcode::MAKE_PACKED_VECTOR2_ARRAY);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		for (int arg_reg : arg_regs) {
+			instr.operands.push_back(IRValue::reg(arg_reg));
+		}
+		result_type = Variant::PACKED_VECTOR2_ARRAY;
+	} else if (name == "PackedVector3Array") {
+		instr = IRInstruction(IROpcode::MAKE_PACKED_VECTOR3_ARRAY);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		for (int arg_reg : arg_regs) {
+			instr.operands.push_back(IRValue::reg(arg_reg));
+		}
+		result_type = Variant::PACKED_VECTOR3_ARRAY;
+	} else if (name == "PackedColorArray") {
+		instr = IRInstruction(IROpcode::MAKE_PACKED_COLOR_ARRAY);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		for (int arg_reg : arg_regs) {
+			instr.operands.push_back(IRValue::reg(arg_reg));
+		}
+		result_type = Variant::PACKED_COLOR_ARRAY;
+	} else if (name == "PackedVector4Array") {
+		instr = IRInstruction(IROpcode::MAKE_PACKED_VECTOR4_ARRAY);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		for (int arg_reg : arg_regs) {
+			instr.operands.push_back(IRValue::reg(arg_reg));
+		}
+		result_type = Variant::PACKED_VECTOR4_ARRAY;
 	} else if (name == "Dictionary") {
 		// Dictionary() - empty dictionary
 		instr = IRInstruction(IROpcode::MAKE_DICTIONARY);
 		instr.operands.push_back(IRValue::reg(result_reg));
-		result_type = IRInstruction::TypeHint::VARIANT_DICTIONARY;
+		result_type = Variant::DICTIONARY;
 	} else {
 		// Fallback to regular CALL for unsupported constructors or wrong arg counts
 		instr.operands.push_back(IRValue::str(name));
@@ -996,7 +1081,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 
 	func.instructions.push_back(instr);
 
-	if (result_type != IRInstruction::TypeHint::NONE) {
+	if (result_type != IRInstruction::TypeHint_NONE) {
 		set_register_type(result_reg, result_type);
 	}
 
@@ -1015,11 +1100,11 @@ int CodeGenerator::gen_inline_member_get(int obj_reg, IRInstruction::TypeHint ob
 	func.instructions.push_back(instr);
 
 	// Result is always a float or int Variant
-	bool is_int_vector = (obj_type == IRInstruction::TypeHint::VARIANT_VECTOR2I ||
-	                      obj_type == IRInstruction::TypeHint::VARIANT_VECTOR3I ||
-	                      obj_type == IRInstruction::TypeHint::VARIANT_VECTOR4I);
+	bool is_int_vector = (obj_type == Variant::VECTOR2I ||
+	                      obj_type == Variant::VECTOR3I ||
+	                      obj_type == Variant::VECTOR4I);
 
-	set_register_type(result_reg, is_int_vector ? IRInstruction::TypeHint::VARIANT_INT : IRInstruction::TypeHint::VARIANT_FLOAT);
+	set_register_type(result_reg, is_int_vector ? Variant::INT : Variant::FLOAT);
 
 	return result_reg;
 }
@@ -1081,7 +1166,7 @@ int CodeGenerator::gen_global_class_get(const std::string& class_name, IRFunctio
 	func.instructions.push_back(instr);
 
 	// The result is an OBJECT Variant
-	set_register_type(result_reg, IRInstruction::TypeHint::NONE); // Objects don't have a specific primitive type
+	set_register_type(result_reg, IRInstruction::TypeHint_NONE); // Objects don't have a specific primitive type
 
 	return result_reg;
 }

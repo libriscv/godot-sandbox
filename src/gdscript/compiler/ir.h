@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <variant>
 #include <memory>
+#include "variant_types.h"
 
 namespace gdscript {
 
@@ -73,6 +74,18 @@ enum class IROpcode {
 	MAKE_ARRAY,      // Construct Array (empty or with elements)
 	MAKE_DICTIONARY, // Construct Dictionary (empty)
 
+	// Packed array construction (via VCREATE syscall)
+	MAKE_PACKED_BYTE_ARRAY,      // Construct PackedByteArray (empty or with elements)
+	MAKE_PACKED_INT32_ARRAY,     // Construct PackedInt32Array (empty or with elements)
+	MAKE_PACKED_INT64_ARRAY,     // Construct PackedInt64Array (empty or with elements)
+	MAKE_PACKED_FLOAT32_ARRAY,   // Construct PackedFloat32Array (empty or with elements)
+	MAKE_PACKED_FLOAT64_ARRAY,   // Construct PackedFloat64Array (empty or with elements)
+	MAKE_PACKED_STRING_ARRAY,    // Construct PackedStringArray (empty or with elements)
+	MAKE_PACKED_VECTOR2_ARRAY,   // Construct PackedVector2Array (empty or with elements)
+	MAKE_PACKED_VECTOR3_ARRAY,   // Construct PackedVector3Array (empty or with elements)
+	MAKE_PACKED_COLOR_ARRAY,     // Construct PackedColorArray (empty or with elements)
+	MAKE_PACKED_VECTOR4_ARRAY,   // Construct PackedVector4Array (empty or with elements)
+
 	// Inline member access (no syscalls)
 	VGET_INLINE,     // Get inlined member from Variant (x, y, z, w, r, g, b, a)
 	VSET_INLINE,     // Set inlined member on Variant
@@ -137,30 +150,14 @@ struct IRValue {
 };
 
 struct IRInstruction {
-	enum class TypeHint {
-		NONE,       // No type information
-
-		// Variant types (tracked for optimization)
-		VARIANT_INT,
-		VARIANT_FLOAT,
-		VARIANT_BOOL,
-		VARIANT_VECTOR2,
-		VARIANT_VECTOR3,
-		VARIANT_VECTOR4,
-		VARIANT_VECTOR2I,
-		VARIANT_VECTOR3I,
-		VARIANT_VECTOR4I,
-		VARIANT_COLOR,
-		VARIANT_RECT2,
-		VARIANT_RECT2I,
-		VARIANT_PLANE,
-		VARIANT_ARRAY,
-		VARIANT_DICTIONARY,
-	};
+	// Type hint is simply Variant::Type, with -1 (or a special value) for NONE
+	// We use int32_t to match the Variant::Type enum
+	static constexpr int32_t TypeHint_NONE = -1;
+	using TypeHint = int32_t;
 
 	IROpcode opcode {};
 	std::vector<IRValue> operands;
-	TypeHint type_hint = TypeHint::NONE; // Type hint for result (operand 0)
+	TypeHint type_hint = TypeHint_NONE; // Type hint for result (operand 0)
 
 	IRInstruction(IROpcode op) : opcode(op) {}
 	IRInstruction(IROpcode op, IRValue a) : opcode(op), operands{a} {}
@@ -184,36 +181,35 @@ struct IRProgram {
 
 const char* ir_opcode_name(IROpcode op);
 
-// TypeHint helper functions - avoids hardcoded enum values
+// TypeHint helper functions - now using Variant::Type directly
 namespace TypeHintUtils {
-	// Check if TypeHint is a Variant type
+	// Check if TypeHint is a Variant type (not NONE)
 	inline bool is_variant(IRInstruction::TypeHint hint) {
-		return hint >= IRInstruction::TypeHint::VARIANT_INT &&
-		       hint <= IRInstruction::TypeHint::VARIANT_DICTIONARY;
+		return hint != IRInstruction::TypeHint_NONE;
 	}
 
 	// Check if TypeHint is a vector type
 	inline bool is_vector(IRInstruction::TypeHint hint) {
-		return hint == IRInstruction::TypeHint::VARIANT_VECTOR2 ||
-		       hint == IRInstruction::TypeHint::VARIANT_VECTOR3 ||
-		       hint == IRInstruction::TypeHint::VARIANT_VECTOR4 ||
-		       hint == IRInstruction::TypeHint::VARIANT_VECTOR2I ||
-		       hint == IRInstruction::TypeHint::VARIANT_VECTOR3I ||
-		       hint == IRInstruction::TypeHint::VARIANT_VECTOR4I;
+		return hint == Variant::VECTOR2 ||
+		       hint == Variant::VECTOR3 ||
+		       hint == Variant::VECTOR4 ||
+		       hint == Variant::VECTOR2I ||
+		       hint == Variant::VECTOR3I ||
+		       hint == Variant::VECTOR4I;
 	}
 
 	// Check if TypeHint is an integer vector type
 	inline bool is_int_vector(IRInstruction::TypeHint hint) {
-		return hint == IRInstruction::TypeHint::VARIANT_VECTOR2I ||
-		       hint == IRInstruction::TypeHint::VARIANT_VECTOR3I ||
-		       hint == IRInstruction::TypeHint::VARIANT_VECTOR4I;
+		return hint == Variant::VECTOR2I ||
+		       hint == Variant::VECTOR3I ||
+		       hint == Variant::VECTOR4I;
 	}
 
 	// Check if TypeHint is a float vector type
 	inline bool is_float_vector(IRInstruction::TypeHint hint) {
-		return hint == IRInstruction::TypeHint::VARIANT_VECTOR2 ||
-		       hint == IRInstruction::TypeHint::VARIANT_VECTOR3 ||
-		       hint == IRInstruction::TypeHint::VARIANT_VECTOR4;
+		return hint == Variant::VECTOR2 ||
+		       hint == Variant::VECTOR3 ||
+		       hint == Variant::VECTOR4;
 	}
 } // namespace TypeHintUtils
 

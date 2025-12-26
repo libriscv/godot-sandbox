@@ -157,11 +157,11 @@ void IROptimizer::constant_folding(IRFunction& func) {
 						// Replace with appropriate load instruction based on result type
 						if (result.type == ConstantValue::Type::FLOAT) {
 							new_instructions.emplace_back(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(dst), IRValue::fimm(result.float_value));
-							new_instructions.back().type_hint = IRInstruction::TypeHint::VARIANT_FLOAT;
+							new_instructions.back().type_hint = Variant::FLOAT;
 						} else {
 							new_instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(dst), IRValue::imm(result.int_value));
-							if (instr.type_hint == IRInstruction::TypeHint::VARIANT_INT) {
-								new_instructions.back().type_hint = IRInstruction::TypeHint::VARIANT_INT;
+							if (instr.type_hint == Variant::INT) {
+								new_instructions.back().type_hint = Variant::INT;
 							}
 						}
 						set_register_constant(dst, result);
@@ -236,7 +236,7 @@ void IROptimizer::constant_folding(IRFunction& func) {
 						result.type = ConstantValue::Type::FLOAT;
 						result.float_value = -cv.float_value;
 						new_instructions.emplace_back(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(dst), IRValue::fimm(result.float_value));
-						new_instructions.back().type_hint = IRInstruction::TypeHint::VARIANT_FLOAT;
+						new_instructions.back().type_hint = Variant::FLOAT;
 						set_register_constant(dst, result);
 						folded = true;
 					}
@@ -351,7 +351,7 @@ void IROptimizer::constant_folding(IRFunction& func) {
 bool IROptimizer::try_fold_binary_op(IROpcode op, IRInstruction::TypeHint type_hint, const ConstantValue& lhs, const ConstantValue& rhs, ConstantValue& result) {
 	// Handle float arithmetic - if type_hint is VARIANT_FLOAT or either operand is float,
 	// we must perform float arithmetic (GDScript semantics)
-	bool is_float_op = (type_hint == IRInstruction::TypeHint::VARIANT_FLOAT ||
+	bool is_float_op = (type_hint == Variant::FLOAT ||
 	                    lhs.type == ConstantValue::Type::FLOAT ||
 	                    rhs.type == ConstantValue::Type::FLOAT);
 

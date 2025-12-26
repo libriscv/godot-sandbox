@@ -1,4 +1,5 @@
 #include "riscv_codegen.h"
+#include "variant_types.h"
 #include <stdexcept>
 #include <cstring>
 
@@ -771,8 +772,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						emit_add(REG_A0, REG_SP, REG_A0);
 					}
 
-					// a1 = Variant::ARRAY (28)
-					emit_li(REG_A1, 28);
+					// a1 = Variant::ARRAY
+					emit_li(REG_A1, Variant::ARRAY);
 
 					// a2 = method (0 for empty)
 					emit_li(REG_A2, 0);
@@ -836,8 +837,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						emit_add(REG_A0, REG_SP, REG_A0);
 					}
 
-					// a1 = Variant::ARRAY (28)
-					emit_li(REG_A1, 28);
+					// a1 = Variant::ARRAY
+					emit_li(REG_A1, Variant::ARRAY);
 
 					// a2 = size (element_count)
 					emit_li(REG_A2, element_count);
@@ -886,8 +887,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_add(REG_A0, REG_SP, REG_A0);
 				}
 
-				// a1 = Variant::DICTIONARY (27)
-				emit_li(REG_A1, 27);
+				// a1 = Variant::DICTIONARY
+				emit_li(REG_A1, Variant::DICTIONARY);
 
 				// a2 = method (0 for empty)
 				emit_li(REG_A2, 0);
@@ -898,6 +899,151 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// a7 = ECALL_VCREATE (517)
 				emit_li(REG_A7, 517);
 				emit_ecall();
+
+				break;
+			}
+
+			case IROpcode::MAKE_PACKED_BYTE_ARRAY:
+			case IROpcode::MAKE_PACKED_INT32_ARRAY:
+			case IROpcode::MAKE_PACKED_INT64_ARRAY:
+			case IROpcode::MAKE_PACKED_FLOAT32_ARRAY:
+			case IROpcode::MAKE_PACKED_FLOAT64_ARRAY:
+			case IROpcode::MAKE_PACKED_STRING_ARRAY:
+			case IROpcode::MAKE_PACKED_VECTOR2_ARRAY:
+			case IROpcode::MAKE_PACKED_VECTOR3_ARRAY:
+			case IROpcode::MAKE_PACKED_COLOR_ARRAY:
+			case IROpcode::MAKE_PACKED_VECTOR4_ARRAY: {
+				// Format: MAKE_PACKED_*_ARRAY result_reg, element_count, [element_reg1, element_reg2, ...]
+				// Works identically to MAKE_ARRAY but with different Variant type
+				if (instr.operands.size() < 2) {
+					throw std::runtime_error("Packed array constructor requires at least 2 operands");
+				}
+
+				int result_vreg = std::get<int>(instr.operands[0].value);
+				int element_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+				int result_offset = get_variant_stack_offset(result_vreg);
+
+				// Determine the Variant type based on opcode
+				int variant_type;
+				switch (instr.opcode) {
+					case IROpcode::MAKE_PACKED_BYTE_ARRAY:
+						variant_type = Variant::PACKED_BYTE_ARRAY;
+						break;
+					case IROpcode::MAKE_PACKED_INT32_ARRAY:
+						variant_type = Variant::PACKED_INT32_ARRAY;
+						break;
+					case IROpcode::MAKE_PACKED_INT64_ARRAY:
+						variant_type = Variant::PACKED_INT64_ARRAY;
+						break;
+					case IROpcode::MAKE_PACKED_FLOAT32_ARRAY:
+						variant_type = Variant::PACKED_FLOAT32_ARRAY;
+						break;
+					case IROpcode::MAKE_PACKED_FLOAT64_ARRAY:
+						variant_type = Variant::PACKED_FLOAT64_ARRAY;
+						break;
+					case IROpcode::MAKE_PACKED_STRING_ARRAY:
+						variant_type = Variant::PACKED_STRING_ARRAY;
+						break;
+					case IROpcode::MAKE_PACKED_VECTOR2_ARRAY:
+						variant_type = Variant::PACKED_VECTOR2_ARRAY;
+						break;
+					case IROpcode::MAKE_PACKED_VECTOR3_ARRAY:
+						variant_type = Variant::PACKED_VECTOR3_ARRAY;
+						break;
+					case IROpcode::MAKE_PACKED_COLOR_ARRAY:
+						variant_type = Variant::PACKED_COLOR_ARRAY;
+						break;
+					case IROpcode::MAKE_PACKED_VECTOR4_ARRAY:
+						variant_type = Variant::PACKED_VECTOR4_ARRAY;
+						break;
+					default:
+						variant_type = Variant::ARRAY; // Should not happen
+						break;
+				}
+
+				if (element_count == 0) {
+					// Empty packed array: sys_vcreate(&v, TYPE, 0, nullptr)
+					// a0 = pointer to destination Variant
+					if (result_offset < 2048) {
+						emit_i_type(0x13, REG_A0, 0, REG_SP, result_offset);
+					} else {
+						emit_li(REG_A0, result_offset);
+						emit_add(REG_A0, REG_SP, REG_A0);
+					}
+
+					// a1 = Variant type
+					emit_li(REG_A1, variant_type);
+
+					// a2 = method (0 for empty)
+					emit_li(REG_A2, 0);
+
+					// a3 = nullptr (0)
+					emit_li(REG_A3, 0);
+
+					// a7 = ECALL_VCREATE (517)
+					emit_li(REG_A7, 517);
+					emit_ecall();
+				} else {
+					// Packed array with elements: sys_vcreate(&v, TYPE, size, data_pointer)
+					// GuestVariant is 24 bytes (4-byte type + 4-byte padding + 16-byte data)
+					// We need to copy the full Variant structures to stack
+					constexpr int VARIANT_SIZE = 24;
+					int args_space = element_count * VARIANT_SIZE;
+					args_space = (args_space + 15) & ~15; // Align to 16 bytes
+
+					// Allocate stack space
+					if (args_space < 2048) {
+						emit_addi(REG_SP, REG_SP, -args_space);
+					} else {
+						emit_li(REG_T0, -args_space);
+						emit_add(REG_SP, REG_SP, REG_T0);
+					}
+
+					// Copy each element variant to the stack
+					for (int i = 0; i < element_count; i++) {
+						int elem_vreg = std::get<int>(instr.operands[2 + i].value);
+						int elem_offset = get_variant_stack_offset(elem_vreg);
+						int dst_offset = i * VARIANT_SIZE;
+
+						// Copy 24 bytes from source to destination
+						// We use a simple loop with load/store
+						for (int j = 0; j < 24; j += 8) {
+							emit_ld(REG_T0, REG_SP, args_space + elem_offset + j);
+							emit_sd(REG_T0, REG_SP, dst_offset + j);
+						}
+					}
+
+					// a0 = pointer to destination Variant
+					// After SP -= args_space, it's now at result_offset + args_space from NEW SP
+					int adjusted_dst_offset = result_offset + args_space;
+					if (adjusted_dst_offset < 2048) {
+						emit_i_type(0x13, REG_A0, 0, REG_SP, adjusted_dst_offset);
+					} else {
+						emit_li(REG_A0, adjusted_dst_offset);
+						emit_add(REG_A0, REG_SP, REG_A0);
+					}
+
+					// a1 = Variant type
+					emit_li(REG_A1, variant_type);
+
+					// a2 = size (element_count)
+					emit_li(REG_A2, element_count);
+
+					// a3 = pointer to element array (sp + 0)
+					emit_mv(REG_A3, REG_SP);
+
+					// a7 = ECALL_VCREATE (517)
+					emit_li(REG_A7, 517);
+					emit_ecall();
+
+					// Restore stack pointer
+					if (args_space < 2048) {
+						emit_i_type(0x13, REG_SP, 0, REG_SP, args_space);
+					} else {
+						emit_li(REG_T0, args_space);
+						emit_add(REG_SP, REG_SP, REG_T0);
+					}
+				}
 
 				break;
 			}
@@ -1268,6 +1414,10 @@ void RISCVCodeGen::emit_mv(uint8_t rd, uint8_t rs) {
 	emit_i_type(0x13, rd, 0, rs, 0);
 }
 
+void RISCVCodeGen::emit_addi(uint8_t rd, uint8_t rs1, int32_t imm) {
+	emit_i_type(0x13, rd, 0, rs1, imm);
+}
+
 void RISCVCodeGen::emit_la(uint8_t rd, const std::string& label) {
 	// Load address using AUIPC + ADDI
 	// auipc rd, 0  # Load PC-relative upper bits
@@ -1567,8 +1717,8 @@ void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) 
 		emit_add(REG_A0, REG_SP, REG_A0);
 	}
 
-	// a1 = Variant::STRING (4)
-	emit_li(REG_A1, 4);
+	// a1 = Variant::STRING
+	emit_li(REG_A1, Variant::STRING);
 
 	// a2 = method (1 for const char* + size_t)
 	emit_li(REG_A2, 1);

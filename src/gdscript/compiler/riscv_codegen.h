@@ -46,6 +46,7 @@ private:
 	void emit_li(uint8_t rd, int64_t imm);      // Load immediate
 	void emit_la(uint8_t rd, const std::string& label); // Load address (pseudo: auipc + addi)
 	void emit_mv(uint8_t rd, uint8_t rs);       // Move
+	void emit_addi(uint8_t rd, uint8_t rs1, int32_t imm); // Add immediate
 	void emit_add(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_sub(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_mul(uint8_t rd, uint8_t rs1, uint8_t rs2);

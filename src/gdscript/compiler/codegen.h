@@ -49,7 +49,7 @@ private:
 	struct Variable {
 		std::string name;
 		int register_num; // Current register holding the value, or -1 if spilled
-		IRInstruction::TypeHint type_hint = IRInstruction::TypeHint::NONE;
+		IRInstruction::TypeHint type_hint = IRInstruction::TypeHint_NONE;
 	};
 
 	// Scope stack for nested blocks
