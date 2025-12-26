@@ -415,12 +415,24 @@ func test_vector2():
 	var v = Vector2(3.0, 4.0)
 	return v.x + v.y
 
+func test_vector2_int():
+	var v = Vector2(3, 4)
+	return v.x + v.y
+
 func test_vector3():
 	var v = Vector3(1.0, 2.0, 3.0)
 	return v.x + v.y + v.z
 
+func test_vector3_int():
+	var v = Vector3(1, 2, 3)
+	return v.x + v.y + v.z
+
 func test_vector4():
 	var v = Vector4(10.0, 20.0, 30.0, 40.0)
+	return v.x + v.y + v.z + v.w
+
+func test_vector4_int():
+	var v = Vector4(10, 20, 30, 40)
 	return v.x + v.y + v.z + v.w
 
 func test_vector2i():
@@ -437,6 +449,10 @@ func test_vector4i():
 
 func test_color():
 	var c = Color(0.5, 0.25, 0.75, 1.0)
+	return c.r + c.g + c.b + c.a
+
+func test_color_int():
+	var c = Color(0, 128, 255, 255)
 	return c.r + c.g + c.b + c.a
 
 func test_chained_vectors():
@@ -463,14 +479,26 @@ func test_chained_vectors():
 
 	# Test Vector2
 	var result = s.vmcallv("test_vector2")
+	assert_almost_eq(result, 7.0, 0.001, "Vector2(3.0, 4.0).x + .y should be 7.0")
+
+	# Test Vector2 with integer args
+	result = s.vmcallv("test_vector2_int")
 	assert_almost_eq(result, 7.0, 0.001, "Vector2(3, 4).x + .y should be 7.0")
 
 	# Test Vector3
 	result = s.vmcallv("test_vector3")
+	assert_almost_eq(result, 6.0, 0.001, "Vector3(1.0, 2.0, 3.0) sum should be 6.0")
+
+	# Test Vector3 with integer args
+	result = s.vmcallv("test_vector3_int")
 	assert_almost_eq(result, 6.0, 0.001, "Vector3(1, 2, 3) sum should be 6.0")
 
 	# Test Vector4
 	result = s.vmcallv("test_vector4")
+	assert_almost_eq(result, 100.0, 0.001, "Vector4(10.0, 20.0, 30.0, 40.0) sum should be 100.0")
+
+	# Test Vector4 with integer args
+	result = s.vmcallv("test_vector4_int")
 	assert_almost_eq(result, 100.0, 0.001, "Vector4(10, 20, 30, 40) sum should be 100.0")
 
 	# Test Vector2i
@@ -488,6 +516,11 @@ func test_chained_vectors():
 	# Test Color
 	result = s.vmcallv("test_color")
 	assert_almost_eq(result, 2.5, 0.001, "Color components sum should be 2.5")
+
+	# Test Color with integer args (0, 128, 255, 255 = 0.0, 0.502, 1.0, 1.0)
+	result = s.vmcallv("test_color_int")
+	var expected = 0.0 + (128.0 / 255.0) + 1.0 + 1.0
+	assert_almost_eq(result, expected, 0.01, "Color with int args should work")
 
 	# Test chained operations
 	result = s.vmcallv("test_chained_vectors")
@@ -2311,11 +2344,17 @@ func test_empty_packed_vector2_array():
 func test_packed_vector2_array():
 	return PackedVector2Array([Vector2(1.0,2.0), Vector2(3.0,4.0), Vector2(5.0,6.0)])
 
+func test_packed_vector2_array_i():
+	return PackedVector2Array([Vector2(1,2), Vector2(3,4), Vector2(5,6)])
+
 func test_empty_packed_vector3_array():
 	return PackedVector3Array()
 
 func test_packed_vector3_array():
 	return PackedVector3Array([Vector3(1.0,2.0,3.0), Vector3(4.0,5.0,6.0), Vector3(7.0,8.0,9.0)])
+
+func test_packed_vector3_array_i():
+	return PackedVector3Array([Vector3(1,2,3), Vector3(4,5,6), Vector3(7,8,9)])
 
 func test_empty_packed_color_array():
 	return PackedColorArray()
@@ -2328,6 +2367,9 @@ func test_empty_packed_vector4_array():
 
 func test_packed_vector4_array():
 	return PackedVector4Array([Vector4(1.0,2.0,3.0,4.0), Vector4(5.0,6.0,7.0,8.0), Vector4(9.0,10.0,11.0,12.0)])
+
+func test_packed_vector4_array_i():
+	return PackedVector4Array([Vector4(1,2,3,4), Vector4(5,6,7,8), Vector4(9,10,11,12)])
 """
 
 	var ts : Sandbox = Sandbox.new()
@@ -2358,9 +2400,12 @@ func test_packed_vector4_array():
 	assert_true(s.has_function("test_packed_float64_array"), "Should have test_packed_float64_array function")
 	assert_true(s.has_function("test_packed_string_array"), "Should have test_packed_string_array function")
 	assert_true(s.has_function("test_packed_vector2_array"), "Should have test_packed_vector2_array function")
+	assert_true(s.has_function("test_packed_vector2_array_i"), "Should have test_packed_vector2_array_i function")
 	assert_true(s.has_function("test_packed_vector3_array"), "Should have test_packed_vector3_array function")
+	assert_true(s.has_function("test_packed_vector3_array_i"), "Should have test_packed_vector3_array_i function")
 	#assert_true(s.has_function("test_packed_color_array"), "Should have test_packed_color_array function")
 	assert_true(s.has_function("test_packed_vector4_array"), "Should have test_packed_vector4_array function")
+	assert_true(s.has_function("test_packed_vector4_array_i"), "Should have test_packed_vector4_array_i function")
 
 	# Test that functions return valid packed arrays (non-nil)
 	var result = s.vmcallv("test_empty_packed_byte_array")
@@ -2397,10 +2442,14 @@ func test_packed_vector4_array():
 	assert_eq_deep(result, PackedVector2Array([]))
 	result = s.vmcallv("test_packed_vector2_array")
 	assert_eq_deep(result, PackedVector2Array([Vector2(1,2), Vector2(3,4), Vector2(5,6)]))
+	result = s.vmcallv("test_packed_vector2_array_i")
+	assert_eq_deep(result, PackedVector2Array([Vector2(1,2), Vector2(3,4), Vector2(5,6)]))
 
 	result = s.vmcallv("test_empty_packed_vector3_array")
 	assert_eq_deep(result, PackedVector3Array([]))
 	result = s.vmcallv("test_packed_vector3_array")
+	assert_eq_deep(result, PackedVector3Array([Vector3(1,2,3), Vector3(4,5,6), Vector3(7,8,9)]))
+	result = s.vmcallv("test_packed_vector3_array_i")
 	assert_eq_deep(result, PackedVector3Array([Vector3(1,2,3), Vector3(4,5,6), Vector3(7,8,9)]))
 
 	result = s.vmcallv("test_empty_packed_color_array")
@@ -2411,6 +2460,8 @@ func test_packed_vector4_array():
 	result = s.vmcallv("test_empty_packed_vector4_array")
 	assert_eq_deep(result, PackedVector4Array([]))
 	result = s.vmcallv("test_packed_vector4_array")
+	assert_eq_deep(result, PackedVector4Array([Vector4(1,2,3,4), Vector4(5,6,7,8), Vector4(9,10,11,12)]))
+	result = s.vmcallv("test_packed_vector4_array_i")
 	assert_eq_deep(result, PackedVector4Array([Vector4(1,2,3,4), Vector4(5,6,7,8), Vector4(9,10,11,12)]))
 
 	s.queue_free()

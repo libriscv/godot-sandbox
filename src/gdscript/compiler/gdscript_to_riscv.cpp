@@ -32,7 +32,7 @@ std::string run_command(const char* cmd) {
 int main(int argc, char** argv)
 {
 	std::string source;
-	std::string output_function = "_start"; // Function to disassemble
+	std::string output_function; // Function to disassemble
 	std::string temp_elf = "/tmp/gdscript_temp_XXXXXX";
 	bool no_optimize = false;
 
@@ -82,8 +82,8 @@ int main(int argc, char** argv)
 		// Find and print the relevant function
 		std::istringstream stream(disasm);
 		std::string line;
-		bool in_function = false;
-		bool function_found = false;
+		bool function_found = output_function.empty(); // If no function specified, print all
+		bool in_function = function_found;
 
 		while (std::getline(stream, line)) {
 			// Check for function start
@@ -98,7 +98,7 @@ int main(int argc, char** argv)
 			// Print lines while in the function
 			if (in_function) {
 				// Stop at next function
-				if (!line.empty() && line[0] != ' ' && line.find("Disassembly") == std::string::npos) {
+				if (!output_function.empty() && !line.empty() && line[0] != ' ' && line.find("Disassembly") == std::string::npos) {
 					in_function = false;
 					break;
 				}

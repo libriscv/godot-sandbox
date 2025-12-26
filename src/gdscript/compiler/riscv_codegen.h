@@ -85,6 +85,7 @@ private:
 	void emit_fsw(uint8_t rs2, uint8_t rs1, int32_t offset); // Store float (32-bit FP)
 	void emit_fcvt_d_s(uint8_t rd, uint8_t rs1);             // Convert float to double
 	void emit_fcvt_s_d(uint8_t rd, uint8_t rs1);             // Convert double to float
+	void emit_fcvt_d_l(uint8_t rd, uint8_t rs1);             // Convert signed 64-bit int to double
 
 	// FP arithmetic instructions (RV64D extension)
 	void emit_fadd_d(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Double-precision FP add
@@ -173,6 +174,17 @@ private:
 
 	// Add a constant to the pool and return its index
 	size_t add_constant(int64_t value);
+
+	// Generate a unique local label for internal use
+	std::string gen_local_label(const std::string& prefix);
+
+	// Convert a Variant component (at comp_offset) to float and store to dest_offset + store_offset
+	// Handles both INT and FLOAT Variants
+	// If normalize_by_255 is true, divides integers by 255.0 (for Color components)
+	void emit_variant_component_to_float(int comp_offset, int result_offset, int store_offset, bool normalize_by_255 = false);
+
+	// Label counter for generating unique local labels
+	int m_label_counter = 0;
 
 	// RISC-V RV64I register definitions
 	static constexpr uint8_t REG_ZERO = 0;  // x0 - always zero

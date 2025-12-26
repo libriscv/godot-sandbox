@@ -21,6 +21,54 @@ size_t RISCVCodeGen::add_constant(int64_t value) {
 	return index;
 }
 
+std::string RISCVCodeGen::gen_local_label(const std::string& prefix) {
+	return prefix + std::to_string(m_label_counter++);
+}
+
+void RISCVCodeGen::emit_variant_component_to_float(int comp_offset, int result_offset, int store_offset, bool normalize_by_255) {
+	// Convert a Variant component (at comp_offset) to float and store to result_offset + store_offset
+	// Handles both INT (type=2) and FLOAT (type=3) Variants
+	// If normalize_by_255 is true, divides INTEGER values by 255.0 (for Color components)
+	std::string label_float = gen_local_label(".float");
+	std::string label_cont = gen_local_label(".cont");
+
+	// Load the component's type field
+	emit_lwu(REG_T0, REG_SP, comp_offset); // Load type (4 bytes, zero-extended)
+
+	// Check if type is INT (2) or FLOAT (3)
+	// Branch if INT (subtract 2, so 0 means INT, non-zero means FLOAT)
+	emit_addi(REG_T1, REG_T0, -2);
+	mark_label_use(label_float, m_code.size());
+	emit_bne(REG_T1, REG_ZERO, 0); // Branch if not INT (i.e., if FLOAT)
+
+	// INT case: Load integer and convert to float
+	emit_ld(REG_T0, REG_SP, comp_offset + 8); // Load int64_t
+	emit_fcvt_d_l(REG_FA0, REG_T0); // Convert int64 to double
+
+	if (normalize_by_255) {
+		// For Color, normalize integer values by dividing by 255.0
+		// Load 255.0 from constant pool
+		size_t const_idx = add_constant(0x406FC00000000000LL); // 255.0 as double
+		std::string label_255 = ".LC" + std::to_string(const_idx);
+		emit_la(REG_T0, label_255);
+		emit_fld(REG_FA1, REG_T0, 0); // Load 255.0 into FA1
+		emit_fdiv_d(REG_FA0, REG_FA0, REG_FA1); // Divide by 255.0
+	}
+
+	emit_fcvt_s_d(REG_FA0, REG_FA0); // Convert double to float
+	mark_label_use(label_cont, m_code.size());
+	emit_jal(REG_ZERO, 0); // Skip to end
+
+	// FLOAT case: Load double and convert to float
+	define_label(label_float);
+	emit_fld(REG_FA0, REG_SP, comp_offset + 8); // Load double
+	// Note: We do NOT normalize float values - they're already in the correct range
+	emit_fcvt_s_d(REG_FA0, REG_FA0); // Convert double to float
+	define_label(label_cont);
+
+	emit_fsw(REG_FA0, REG_SP, result_offset + store_offset); // Store float
+}
+
 std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_code.clear();
 	m_labels.clear();
@@ -668,15 +716,10 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
 
 				// Store each component at offset 8, 12, 16, 20 (4 bytes per component as real_t=float)
-				// The components are 64-bit doubles, need to convert to 32-bit float for storage
 				for (int i = 0; i < num_components; i++) {
 					int comp_vreg = std::get<int>(instr.operands[1 + i].value);
 					int comp_offset = get_variant_stack_offset(comp_vreg);
-
-					// Load from stack Variant
-					emit_fld(REG_FA0, REG_SP, comp_offset + 8);
-					emit_fcvt_s_d(REG_FA0, REG_FA0);
-					emit_fsw(REG_FA0, REG_SP, result_offset + 8 + i * 4);
+					emit_variant_component_to_float(comp_offset, result_offset, 8 + i * 4);
 				}
 
 				break;
@@ -729,16 +772,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				emit_sw(REG_T0, REG_SP, result_offset);
 
 				// Store each component (r, g, b, a) as 32-bit floats (real_t)
-				// The components are FLOAT Variants with 64-bit double values at offset 8
-				// We need to convert double to float and store 4 bytes
+				// Color components need to be normalized (0-255 integers -> 0.0-1.0 floats)
 				for (int i = 0; i < 4; i++) {
 					int comp_vreg = std::get<int>(instr.operands[1 + i].value);
 					int comp_offset = get_variant_stack_offset(comp_vreg);
-
-					// Load from stack Variant
-					emit_fld(REG_FA0, REG_SP, comp_offset + 8);
-					emit_fcvt_s_d(REG_FA0, REG_FA0);
-					emit_fsw(REG_FA0, REG_SP, result_offset + 8 + i * 4);
+					emit_variant_component_to_float(comp_offset, result_offset, 8 + i * 4, true); // normalize_by_255 = true
 				}
 
 				break;
@@ -1987,6 +2025,11 @@ void RISCVCodeGen::emit_fcvt_d_s(uint8_t rd, uint8_t rs1) {
 void RISCVCodeGen::emit_fcvt_s_d(uint8_t rd, uint8_t rs1) {
 	// FCVT.S.D: Convert double (64-bit) to float (32-bit)
 	emit_r4_type(0b1010011, rd, 0, rs1, 1, 0b01000, 0);
+}
+
+void RISCVCodeGen::emit_fcvt_d_l(uint8_t rd, uint8_t rs1) {
+	// FCVT.D.L: Convert signed 64-bit integer to double
+	emit_r4_type(0b1010011, rd, 0, rs1, 2, 0b11010, 1);
 }
 
 void RISCVCodeGen::emit_fadd_d(uint8_t rd, uint8_t rs1, uint8_t rs2) {
