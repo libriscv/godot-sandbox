@@ -10,7 +10,45 @@ ELFScript is a Godot-specific Resource type that is the result of loading and EL
 
 The host-side and guest-side share a common system call API for all languages supported. The system calls are defined in syscalls.h, and are fixed numbers that cannot be reassigned, as that would break existing users programs. Instead new functionality is added as new system calls, or as options to existing system calls when that is possible.
 
-There is an ongoing GDScript-to-RISC-V compiler project under the src/gdscript/compiler folder. It's parsing GDScript into AST, then to IR and it will finally be transformed to 64-bit RISC-V and packed into an ELF container as the last step. At that point the goal is to make it executable inside Godot Sandbox. It has written like a CMake library, and it currently being used in the unit tests. One unit test compiles an ELF inside the sandbox and then runs the result in another sandbox. When running tests for the compiler, they should have a timeout as loops may run forever. Do NOT under any circumstance disable tests, FIX the problem. The unit tests can be executed with `ctest .` in the src/gdscript/compiler/build folder. IR can be inspected using the `cat /tmp/test_simple.gd | ./dump_ir` program in the compiler build folder.
+There is an ongoing GDScript-to-RISC-V compiler project under the src/gdscript/compiler folder. It's parsing GDScript into AST, then to IR and it will finally be transformed to 64-bit RISC-V and packed into an ELF container as the last step. At that point the goal is to make it executable inside Godot Sandbox. It has written like a CMake library, and it currently being used in the unit tests. One unit test compiles an ELF inside the sandbox and then runs the result in another sandbox. When running tests for the compiler, they should have a timeout as loops may run forever. Do NOT under any circumstance disable tests, FIX the problem. The unit tests can be executed with `ctest .` in the src/gdscript/compiler/build folder.
+
+## Compiler Debugging Tools
+
+Two debugging tools are available in the compiler build folder:
+
+### dump_ir
+Inspects the IR (Intermediate Representation) generated from GDScript.
+
+**Usage:**
+```bash
+cat script.gd | ./dump_ir                    # Basic IR dump
+cat script.gd | ./dump_ir --no-optimize      # IR without optimizations
+cat script.gd | ./dump_ir --codegen          # IR with register allocation info
+cat script.gd | ./dump_ir -v --codegen       # Verbose with detailed operands
+```
+
+**What it shows:**
+- Virtual registers (r0, r1, ...)
+- Physical register allocation when using `--codegen` (t0, t1, s0, a0, etc.)
+- Stack slot assignments for spilled values
+- Type hints and instruction operands
+
+### gdscript_to_riscv
+Compiles GDScript to RISC-V ELF and immediately shows the disassembled machine code.
+
+**Usage:**
+```bash
+cat script.gd | ./gdscript_to_riscv              # Disassemble all functions
+cat script.gd | ./gdscript_to_riscv -f test      # Disassemble specific function
+```
+
+**What it shows:**
+- Actual RISC-V instructions generated
+- Machine code bytes
+- Memory addresses
+- Equivalent assembly with register names
+
+These tools are essential for tracking down bugs in the compiler pipeline by showing what's generated at each stage.
 
 The GDScript-to-RISC-V unit tests are under /tests/tests. You can only visually inspect RISC-V ELFs using riscv64-linux-gnu-objdump. Executing the unit tests specific to GDScript is from the tests folder:
 ./run_unittests.sh -gselect compiler
@@ -25,11 +63,11 @@ The Variant ABI is a 4-byte type, 4-byte padding and then 16-bytes of inlined da
 
 The GDScript compiler has a register allocator that can be used to avoid clobbered registers especially when performing system calls. Any new feature needs an internal (CMake) test before an integration test in the unit tests is written.
 
-The RISC-V codegen has to use Variants as that is the fundamental unit of GDScript. The structure of the Variant can be seen in program/cpp/docker/api/variant.hpp, including the enum types. This means we can actually add together two Vector2's, two Vector4i's, concatenate strings etc. without really knowing what they are. Any optimization needs to carefully consider whether or not we know the actual Variant types being dealt with before reconstructing the logic. Under some circumstances it might be okay to use type hints without verifying them. Sandboxed Variants aren't real Variants - they are closely guarded, so "using them wrong" is not going to hurt the host (unless there is a bug). So, I think that for example adding two type-hinted integers or floats could be performed in physical registers, or at least without going through VEVAL.
+The RISC-V codegen has to use Variants as that is the fundamental unit of GDScript. The structure of the Variant can be seen in program/cpp/docker/api/variant.hpp, including the enum types. This means we can actually add together two Vector2's, two Vector4i's, concatenate strings etc. without really knowing what they are. Any optimization needs to carefully consider whether or not we know the actual Variant types being dealt with before reconstructing the logic. With proper type hints we can perform arithmetic on two Variants without VEVAL. Sandboxed Variants aren't real Variants - they are closely guarded, so "using them wrong" is not going to hurt the host (unless there is a bug). So, for example adding two type-hinted integers or floats can be performed in physical registers.
 
 When dealing with floats it's CRUCIAL to understand that:
 1. v.f (the regular float) in the Variant structure is _always_ 64-bit.
-2. real_t is CONFIGURABLE, but 32-bit float by default
+2. real_t is CONFIGURABLE, but 32-bit float by default. Vectors use real_t.
 3. Adding integer and float (whether constant or not) produces a float result
 
 When dealing with object references, they are 32-bit integers which are stored in the data section of the Variant. When the sandbox stores this value, it's stored as a 64-bit value, so it won't matter if loaded as 32-bit or 64-bit int, however it does matter when storing the value: Use 64-bit sd instruction.

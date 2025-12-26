@@ -51,6 +51,10 @@ add_gdscript_test(test_constant_pool tests/test_constant_pool.cpp)
 add_executable(dump_ir dump_ir.cpp)
 target_link_libraries(dump_ir -static gdscript_compiler)
 
+# GDScript to RISC-V disassembly tool
+add_executable(gdscript_to_riscv gdscript_to_riscv.cpp)
+target_link_libraries(gdscript_to_riscv -static gdscript_compiler)
+
 # Run all tests target
 add_custom_target(run_tests
 	COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure

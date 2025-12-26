@@ -129,8 +129,28 @@ public:
 	void invalidate_register(int vreg);
 
 	/**
+	 * @brief Force a virtual register to be mapped to a specific physical register
+	 *
+	 * This is used for RELOAD instructions where we need to ensure a value is in a
+	 * specific register (e.g., REG_T0) regardless of the allocator's state.
+	 * This bypasses normal allocation and should only be used in special cases.
+	 *
+	 * @param vreg Virtual register to map
+	 * @param preg Physical register to map to
+	 */
+	void force_register_mapping(int vreg, uint8_t preg);
+
+	/**
+	 * @brief Get the virtual register mapped to a physical register
+	 *
+	 * @param preg Physical register number
+	 * @return Virtual register number, or -1 if not mapped
+	 */
+	int get_vreg_for_preg(uint8_t preg) const;
+
+	/**
 	 * @brief Check if a physical register is available
-	 * 
+	 *
 	 * @param preg Physical register number (0-31)
 	 * @return true if the register is in the free pool, false otherwise
 	 */
@@ -198,50 +218,34 @@ private:
 	
 	/**
 	 * @brief Maps virtual register → physical register
-	 * 
+	 *
 	 * Tracks which physical register each virtual register is currently in.
 	 */
 	std::unordered_map<int, uint8_t> m_vreg_to_preg;
-	
+
 	/**
 	 * @brief Reverse map: physical register → virtual register
-	 * 
+	 *
 	 * Allows quick lookup of which virtual register is in a given physical register.
 	 */
 	std::unordered_map<uint8_t, int> m_preg_to_vreg;
-	
+
 	/**
 	 * @brief Available physical registers (free pool)
-	 * 
+	 *
 	 * Vector of physical register numbers that are currently free and available
 	 * for allocation. Initially contains 18 registers (t0-t6, s1-s11).
 	 */
 	std::vector<uint8_t> m_free_registers;
-	
+
 	/**
 	 * @brief All uses of each virtual register (for computing next use dynamically)
-	 * 
+	 *
 	 * Maps vreg → sorted list of instruction indices where it's used.
 	 * Used by get_next_use() to efficiently find the next use after a given
 	 * instruction using binary search.
 	 */
 	std::unordered_map<int, std::vector<int>> m_vreg_all_uses;
-	
-	/**
-	 * @brief Spilled virtual registers: vreg → stack offset
-	 * 
-	 * Tracks virtual registers that have been spilled to the stack.
-	 * Maps virtual register number to its stack offset in bytes.
-	 */
-	std::unordered_map<int, int> m_spilled_vregs;
-	
-	/**
-	 * @brief Stack offset counter (for spilled registers)
-	 * 
-	 * Tracks the next available stack offset for spilling registers.
-	 * Starts at 16 (after saved registers: ra, fp).
-	 */
-	int m_next_stack_offset;
 	
 	/**
 	 * @brief Size of Variant struct in bytes

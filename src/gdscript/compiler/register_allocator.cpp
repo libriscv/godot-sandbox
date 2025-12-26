@@ -5,7 +5,6 @@ namespace gdscript {
 
 RegisterAllocator::RegisterAllocator() {
 	init_free_registers();
-	m_next_stack_offset = 16;
 }
 
 void RegisterAllocator::init_free_registers() {
@@ -20,10 +19,8 @@ void RegisterAllocator::init_free_registers() {
 void RegisterAllocator::init(const IRFunction& func) {
 	m_vreg_to_preg.clear();
 	m_preg_to_vreg.clear();
-	m_spilled_vregs.clear();
 	m_vreg_all_uses.clear();
 	init_free_registers();
-	m_next_stack_offset = 16;
 	compute_next_use(func);
 }
 
@@ -56,48 +53,25 @@ int RegisterAllocator::allocate_register(int vreg, int current_instr_idx) {
 	if (it != m_vreg_to_preg.end()) {
 		return static_cast<int>(it->second);
 	}
-	
-	std::unordered_map<int, int>::iterator spill_it = m_spilled_vregs.find(vreg);
-	if (spill_it != m_spilled_vregs.end()) {
-		if (m_free_registers.empty()) {
-			int spill_candidate = find_spill_candidate(current_instr_idx);
-			if (spill_candidate != -1) {
-				spill_register(spill_candidate);
-			}
-		}
-		
-		if (m_free_registers.empty()) {
-			return -1;
-		}
-		
-		uint8_t preg = m_free_registers.back();
-		m_free_registers.pop_back();
-		m_vreg_to_preg[vreg] = preg;
-		m_preg_to_vreg[preg] = vreg;
-		m_spilled_vregs.erase(vreg);
-		
-		return static_cast<int>(preg);
-	}
-	
+
+	// No register allocated yet, try to allocate one
 	if (m_free_registers.empty()) {
 		int spill_candidate = find_spill_candidate(current_instr_idx);
 		if (spill_candidate != -1) {
 			spill_register(spill_candidate);
 		}
 	}
-	
+
 	if (m_free_registers.empty()) {
-		int stack_offset = m_next_stack_offset;
-		m_next_stack_offset += VARIANT_SIZE;
-		m_spilled_vregs[vreg] = stack_offset;
+		// No register available, vreg will need to be on stack
 		return -1;
 	}
-	
+
 	uint8_t preg = m_free_registers.back();
 	m_free_registers.pop_back();
 	m_vreg_to_preg[vreg] = preg;
 	m_preg_to_vreg[preg] = vreg;
-	
+
 	return static_cast<int>(preg);
 }
 
@@ -110,27 +84,25 @@ int RegisterAllocator::get_physical_register(int vreg) const {
 }
 
 int RegisterAllocator::get_stack_offset(int vreg) const {
-	std::unordered_map<int, int>::const_iterator it = m_spilled_vregs.find(vreg);
-	if (it != m_spilled_vregs.end()) {
-		return it->second;
-	}
+	// The register allocator no longer manages stack offsets.
+	// Stack slots are pre-allocated by the codegen in m_variant_offsets.
+	// This function is kept for API compatibility but always returns -1.
 	return -1;
 }
 
 void RegisterAllocator::spill_register(int vreg) {
+	// Spill a virtual register by freeing its physical register.
+	// Note: This does NOT write the value to stack. The codegen is responsible
+	// for materializing values to stack before they can be spilled.
 	std::unordered_map<int, uint8_t>::iterator it = m_vreg_to_preg.find(vreg);
 	if (it == m_vreg_to_preg.end()) {
 		return;
 	}
-	
+
 	uint8_t preg = it->second;
 	m_free_registers.push_back(preg);
 	m_preg_to_vreg.erase(preg);
 	m_vreg_to_preg.erase(vreg);
-	
-	int stack_offset = m_next_stack_offset;
-	m_next_stack_offset += VARIANT_SIZE;
-	m_spilled_vregs[vreg] = stack_offset;
 }
 
 std::vector<std::pair<uint8_t, uint8_t>> RegisterAllocator::handle_syscall_clobbering(
@@ -183,6 +155,47 @@ void RegisterAllocator::invalidate_register(int vreg) {
 		m_preg_to_vreg.erase(preg);
 		m_vreg_to_preg.erase(vreg);
 	}
+}
+
+void RegisterAllocator::force_register_mapping(int vreg, uint8_t preg) {
+	// Force a virtual register to be mapped to a specific physical register
+	// This is used for RELOAD instructions where we need to ensure a value is in a register
+
+	// If preg is currently mapped to another vreg, invalidate that mapping
+	std::unordered_map<uint8_t, int>::iterator it = m_preg_to_vreg.find(preg);
+	if (it != m_preg_to_vreg.end() && it->second != vreg) {
+		int other_vreg = it->second;
+		// Remove the other vreg's mapping
+		m_vreg_to_preg.erase(other_vreg);
+	}
+
+	// If vreg is currently mapped to a different preg, remove that mapping
+	std::unordered_map<int, uint8_t>::iterator vreg_it = m_vreg_to_preg.find(vreg);
+	if (vreg_it != m_vreg_to_preg.end() && vreg_it->second != preg) {
+		uint8_t old_preg = vreg_it->second;
+		m_preg_to_vreg.erase(old_preg);
+		// Add the old register back to the free pool
+		m_free_registers.push_back(old_preg);
+	}
+
+	// Remove preg from the free pool if it's there
+	std::vector<uint8_t>::iterator free_it = std::find(m_free_registers.begin(), m_free_registers.end(), preg);
+	if (free_it != m_free_registers.end()) {
+		m_free_registers.erase(free_it);
+	}
+
+	// Set the new mapping
+	m_vreg_to_preg[vreg] = preg;
+	m_preg_to_vreg[preg] = vreg;
+}
+
+int RegisterAllocator::get_vreg_for_preg(uint8_t preg) const {
+	// Get the virtual register mapped to a physical register
+	std::unordered_map<uint8_t, int>::const_iterator it = m_preg_to_vreg.find(preg);
+	if (it != m_preg_to_vreg.end()) {
+		return it->second;
+	}
+	return -1;
 }
 
 bool RegisterAllocator::is_register_available(uint8_t preg) const {
