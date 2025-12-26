@@ -98,7 +98,7 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, IRFunction& func) {
 		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(reg), IRValue::imm(0));
 	}
 
-	declare_variable(stmt->name, reg);
+	declare_variable(stmt->name, reg, stmt->is_const);
 }
 
 void CodeGenerator::gen_assign(const AssignStmt* stmt, IRFunction& func) {
@@ -137,6 +137,11 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, IRFunction& func) {
 	Variable* var = find_variable(stmt->name);
 	if (!var) {
 		throw std::runtime_error("Undefined variable: " + stmt->name);
+	}
+
+	// Check if variable is const
+	if (var->is_const) {
+		throw std::runtime_error("Cannot assign to const variable: " + stmt->name);
 	}
 
 	// Store value into variable's register
@@ -847,7 +852,7 @@ CodeGenerator::Variable* CodeGenerator::find_variable(const std::string& name) {
 	return nullptr; // Not found
 }
 
-void CodeGenerator::declare_variable(const std::string& name, int register_num) {
+void CodeGenerator::declare_variable(const std::string& name, int register_num, bool is_const) {
 	if (m_scope_stack.empty()) {
 		throw std::runtime_error("Cannot declare variable: no scope active");
 	}
@@ -858,7 +863,7 @@ void CodeGenerator::declare_variable(const std::string& name, int register_num) 
 		throw std::runtime_error("Variable '" + name + "' already declared in current scope");
 	}
 
-	current_scope.variables[name] = {name, register_num};
+	current_scope.variables[name] = {name, register_num, IRInstruction::TypeHint_NONE, is_const};
 }
 
 // Type tracking helpers

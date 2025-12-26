@@ -19,7 +19,7 @@ private:
 
 	// Statement parsing
 	StmtPtr parse_statement();
-	StmtPtr parse_var_decl();
+	StmtPtr parse_var_decl(bool is_const);
 	StmtPtr parse_if_stmt();
 	StmtPtr parse_while_stmt();
 	StmtPtr parse_for_stmt();

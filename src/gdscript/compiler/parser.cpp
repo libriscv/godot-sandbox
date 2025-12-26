@@ -89,7 +89,10 @@ StmtPtr Parser::parse_statement() {
 	skip_newlines();
 
 	if (match(TokenType::VAR)) {
-		return parse_var_decl();
+		return parse_var_decl(false);
+	}
+	if (match(TokenType::CONST)) {
+		return parse_var_decl(true);
 	}
 	if (match(TokenType::IF)) {
 		return parse_if_stmt();
@@ -122,16 +125,18 @@ StmtPtr Parser::parse_statement() {
 	return parse_expr_or_assign_stmt();
 }
 
-StmtPtr Parser::parse_var_decl() {
+StmtPtr Parser::parse_var_decl(bool is_const) {
 	Token name = consume(TokenType::IDENTIFIER, "Expected variable name");
 
 	ExprPtr initializer = nullptr;
 	if (match(TokenType::ASSIGN)) {
 		initializer = parse_expression();
+	} else if (is_const) {
+		error("Const variables must have an initializer");
 	}
 
 	consume(TokenType::NEWLINE, "Expected newline after variable declaration");
-	return std::make_unique<VarDeclStmt>(name.lexeme, std::move(initializer));
+	return std::make_unique<VarDeclStmt>(name.lexeme, std::move(initializer), is_const);
 }
 
 StmtPtr Parser::parse_if_stmt() {

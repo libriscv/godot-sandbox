@@ -1047,10 +1047,10 @@ func many_float_vars():
 func test_large_float_constants():
 	var gdscript_code = """
 func large_constants():
-	var f1 = 123456.789
-	var f2 = 987654.321
-	var f3 = 111111.222
-	var f4 = 999999.999
+	const f1 = 123456.789
+	const f2 = 987654.321
+	const f3 = 111111.222
+	const f4 = 999999.999
 	var sum = f1 + f2 + f3 + f4
 	return sum
 """
@@ -2463,5 +2463,72 @@ func test_packed_vector4_array_i():
 	assert_eq_deep(result, PackedVector4Array([Vector4(1,2,3,4), Vector4(5,6,7,8), Vector4(9,10,11,12)]))
 	result = s.vmcallv("test_packed_vector4_array_i")
 	assert_eq_deep(result, PackedVector4Array([Vector4(1,2,3,4), Vector4(5,6,7,8), Vector4(9,10,11,12)]))
+
+	s.queue_free()
+
+func test_const_declarations():
+	# Test const declarations (const is synonymous with var)
+	var gdscript_code = """
+func test_const_int():
+	const x = 42
+	return x
+
+func test_const_float():
+	const pi = 3.14159
+	return pi
+
+func test_const_string():
+	const greeting = "hello"
+	return greeting
+
+func test_const_bool():
+	const flag = true
+	return flag
+
+func test_const_multiple():
+	const a = 10
+	const b = 20
+	const c = 30
+	return a + b + c
+
+func test_const_in_expression():
+	const multiplier = 2.5
+	const base = 10
+	return base * multiplier
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	# Test const int
+	var result = s.vmcallv("test_const_int")
+	assert_eq(result, 42, "Const int should be 42")
+
+	# Test const float
+	result = s.vmcallv("test_const_float")
+	assert_almost_eq(result, 3.14159, 0.00001, "Const float should be 3.14159")
+
+	# Test const string
+	result = s.vmcallv("test_const_string")
+	assert_eq(result, "hello", "Const string should be 'hello'")
+
+	# Test const bool
+	result = s.vmcallv("test_const_bool")
+	assert_eq(result, true, "Const bool should be true")
+
+	# Test multiple const declarations
+	result = s.vmcallv("test_const_multiple")
+	assert_eq(result, 60, "Sum of consts should be 60")
+
+	# Test const in expression
+	result = s.vmcallv("test_const_in_expression")
+	assert_almost_eq(result, 25.0, 0.001, "Const expression should be 25.0")
 
 	s.queue_free()

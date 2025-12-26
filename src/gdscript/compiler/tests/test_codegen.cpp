@@ -938,6 +938,61 @@ void test_copy_propagation_optimization() {
 	std::cout << "  ✓ Copy propagation optimization test passed" << std::endl;
 }
 
+void test_const_declarations() {
+	std::cout << "Testing const declarations..." << std::endl;
+
+	// Test basic const declaration
+	std::string source = R"(func test():
+	const x = 10
+	const y = 1.5
+	const z = "hello"
+	return x
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	CodeGenerator codegen;
+	IRProgram ir = codegen.generate(program);
+
+	assert(ir.functions.size() == 1);
+	assert(ir.functions[0].name == "test");
+	assert(ir.functions[0].instructions.size() > 0);
+
+	std::cout << "  ✓ Const declarations test passed" << std::endl;
+}
+
+void test_const_assignment_prevention() {
+	std::cout << "Testing const assignment prevention..." << std::endl;
+
+	// Test that assignment to const variables is prevented
+	std::string source = R"(func test():
+	const x = 10
+	x = 20
+	return x
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	CodeGenerator codegen;
+	bool caught_error = false;
+	try {
+		IRProgram ir = codegen.generate(program);
+	} catch (const std::runtime_error& e) {
+		caught_error = true;
+		std::string error_msg(e.what());
+		assert(error_msg.find("const") != std::string::npos ||
+		       error_msg.find("Cannot assign") != std::string::npos);
+	}
+
+	assert(caught_error);
+
+	std::cout << "  ✓ Const assignment prevention test passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== Running Code Generation Tests ===" << std::endl;
 
@@ -969,6 +1024,10 @@ int main() {
 		test_constant_fold_comparison_in_if();
 		// Copy propagation is temporarily disabled
 		// test_copy_propagation_optimization();
+
+		// Const support tests
+		test_const_declarations();
+		test_const_assignment_prevention();
 
 		std::cout << "\n✅ All code generation tests passed!" << std::endl;
 		return 0;

@@ -50,6 +50,7 @@ private:
 		std::string name;
 		int register_num; // Current register holding the value, or -1 if spilled
 		IRInstruction::TypeHint type_hint = IRInstruction::TypeHint_NONE;
+		bool is_const = false; // Whether this is a const variable
 	};
 
 	// Scope stack for nested blocks
@@ -70,7 +71,7 @@ private:
 	void push_scope();
 	void pop_scope();
 	Variable* find_variable(const std::string& name);
-	void declare_variable(const std::string& name, int register_num);
+	void declare_variable(const std::string& name, int register_num, bool is_const = false);
 
 	// Loop context for break/continue
 	struct LoopContext {

@@ -118,13 +118,14 @@ struct ExprStmt : Stmt {
 	explicit ExprStmt(ExprPtr e) : expression(std::move(e)) {}
 };
 
-// Variable declaration: var x = 10
+// Variable declaration: var x = 10 or const x = 10
 struct VarDeclStmt : Stmt {
 	std::string name;
 	ExprPtr initializer; // Can be null
+	bool is_const = false; // Whether this is a const declaration
 
-	VarDeclStmt(std::string n, ExprPtr init = nullptr)
-		: name(std::move(n)), initializer(std::move(init)) {}
+	VarDeclStmt(std::string n, ExprPtr init = nullptr, bool const_flag = false)
+		: name(std::move(n)), initializer(std::move(init)), is_const(const_flag) {}
 };
 
 // Assignment: x = 42 or arr[0] = 42

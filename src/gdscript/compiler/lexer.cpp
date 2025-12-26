@@ -7,6 +7,7 @@ namespace gdscript {
 const std::unordered_map<std::string, TokenType> Lexer::keywords = {
 	{"func", TokenType::FUNC},
 	{"var", TokenType::VAR},
+	{"const", TokenType::CONST},
 	{"return", TokenType::RETURN},
 	{"if", TokenType::IF},
 	{"else", TokenType::ELSE},

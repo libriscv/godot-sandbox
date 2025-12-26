@@ -14,6 +14,7 @@ enum class TokenType {
 	// Keywords
 	FUNC,
 	VAR,
+	CONST,
 	RETURN,
 	IF,
 	ELSE,
