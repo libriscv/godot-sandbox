@@ -2076,3 +2076,192 @@ func pf32a_operation(array):
 		print("%s benchmark took %d us" % [name, end_time - start_time])
 
 		s.queue_free()
+
+
+func test_peephole_pattern_e():
+	# Test Pattern E optimization: x = x + 1 (increment optimization)
+	# This tests that the compiler properly optimizes the common increment pattern
+	var gdscript_code = """
+func increment_by_one(x):
+	var i = x
+	i += 1
+	return i
+
+func increment_multiple_times():
+	var count = 0
+	count += 1
+	count += 1
+	count += 1
+	count += 1
+	count += 1
+	return count
+
+func increment_in_loop():
+	var sum = 0
+	for i in range(10):
+		sum += 1
+	return sum
+
+func increment_with_arithmetic(x):
+	var result = x
+	result += 5
+	result += 3
+	return result
+
+func float_increment(x):
+	var f = x
+	f += 1.5
+	f += 2.5
+	return f
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	# Test increment by one
+	assert_true(s.has_function("increment_by_one"), "Should have increment_by_one function")
+	var result = s.vmcallv("increment_by_one", 5)
+	assert_eq(result, 6, "increment_by_one(5) should return 6")
+
+	result = s.vmcallv("increment_by_one", 0)
+	assert_eq(result, 1, "increment_by_one(0) should return 1")
+
+	result = s.vmcallv("increment_by_one", -5)
+	assert_eq(result, -4, "increment_by_one(-5) should return -4")
+
+	# Test multiple increments
+	assert_true(s.has_function("increment_multiple_times"), "Should have increment_multiple_times function")
+	result = s.vmcallv("increment_multiple_times")
+	assert_eq(result, 5, "increment_multiple_times should return 5")
+
+	# Test increment in loop
+	assert_true(s.has_function("increment_in_loop"), "Should have increment_in_loop function")
+	result = s.vmcallv("increment_in_loop")
+	assert_eq(result, 10, "increment_in_loop should return 10")
+
+	# Test increment with arithmetic
+	assert_true(s.has_function("increment_with_arithmetic"), "Should have increment_with_arithmetic function")
+	result = s.vmcallv("increment_with_arithmetic", 10)
+	assert_eq(result, 18, "increment_with_arithmetic(10) should return 18")
+
+	# Test float increment
+	assert_true(s.has_function("float_increment"), "Should have float_increment function")
+	result = s.vmcallv("float_increment", 1.0)
+	assert_eq(result, 5.0, "float_increment(1.0) should return 5.0")
+
+	s.queue_free()
+
+
+func test_peephole_combined_patterns():
+	# Test combination of multiple peephole optimizations
+	var gdscript_code = """
+func combined_arithmetic(a, b, c):
+	var x = a
+	var y = b
+	var z = x + y
+	var result = z + c
+	return result
+
+func nested_arithmetic():
+	var a = 1
+	var b = 2
+	var c = 3
+	var d = 4
+	var result = a + b + c + d
+	return result
+
+func arithmetic_chain(x):
+	var result = x
+	result = result + 1
+	result = result + 2
+	result = result + 3
+	return result
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	# Test combined arithmetic
+	assert_true(s.has_function("combined_arithmetic"), "Should have combined_arithmetic function")
+	var result = s.vmcallv("combined_arithmetic", 10, 20, 30)
+	assert_eq(result, 60, "combined_arithmetic(10, 20, 30) should return 60")
+
+	# Test nested arithmetic
+	assert_true(s.has_function("nested_arithmetic"), "Should have nested_arithmetic function")
+	result = s.vmcallv("nested_arithmetic")
+	assert_eq(result, 10, "nested_arithmetic should return 10")
+
+	# Test arithmetic chain
+	assert_true(s.has_function("arithmetic_chain"), "Should have arithmetic_chain function")
+	result = s.vmcallv("arithmetic_chain", 100)
+	assert_eq(result, 106, "arithmetic_chain(100) should return 106")
+
+	s.queue_free()
+
+
+func test_optimization_preserves_semantics():
+	# Ensure that optimizations don't change program semantics
+	var gdscript_code = """
+func side_effect_test(x):
+	var a = x
+	var b = a + 1
+	var c = b + 1
+	var d = c + 1
+	return d
+
+func constant_folding_test():
+	var a = 5 + 3
+	var b = a + 2
+	var c = b * 2
+	return c
+
+func order_of_operations(x):
+	var a = x + 1
+	var b = a * 2
+	var c = b + 3
+	return c
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	# Test side effects
+	assert_true(s.has_function("side_effect_test"), "Should have side_effect_test function")
+	var result = s.vmcallv("side_effect_test", 0)
+	assert_eq(result, 3, "side_effect_test(0) should return 3")
+
+	result = s.vmcallv("side_effect_test", 10)
+	assert_eq(result, 13, "side_effect_test(10) should return 13")
+
+	# Test constant folding preserves semantics
+	assert_true(s.has_function("constant_folding_test"), "Should have constant_folding_test function")
+	result = s.vmcallv("constant_folding_test")
+	assert_eq(result, 20, "constant_folding_test should return 20 ((5+3)+2)*2 = 20")
+
+	# Test order of operations
+	assert_true(s.has_function("order_of_operations"), "Should have order_of_operations function")
+	result = s.vmcallv("order_of_operations", 5)
+	assert_eq(result, 15, "order_of_operations(5) should return 15 ((5+1)*2+3 = 15)")
+
+	s.queue_free()

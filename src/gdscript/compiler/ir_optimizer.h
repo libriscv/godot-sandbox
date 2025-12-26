@@ -22,6 +22,7 @@ private:
 	void eliminate_dead_code(IRFunction& func);
 	void peephole_optimization(IRFunction& func);
 	void copy_propagation(IRFunction& func);
+	void eliminate_redundant_stores(IRFunction& func);
 	void reduce_register_pressure(IRFunction& func);
 
 	// Helper for constant folding
@@ -52,6 +53,7 @@ private:
 	// Peephole optimization helpers
 	static bool is_arithmetic_op(IROpcode op);
 	static bool is_reg_used_between_exclusive(const IRFunction& func, int reg, size_t start_idx, size_t end_idx);
+	static bool is_pure_load_op(IROpcode op);
 };
 
 } // namespace gdscript

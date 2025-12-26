@@ -24,6 +24,15 @@ void IROptimizer::optimize_function(IRFunction& func) {
 	// Peephole optimization to remove redundant moves and operations
 	peephole_optimization(func);
 
+	// Run peephole again to catch patterns that emerged after previous optimizations
+	peephole_optimization(func);
+
+	// Eliminate redundant store operations (run before dead code elimination)
+	eliminate_redundant_stores(func);
+
+	// Run peephole once more after eliminate_redundant_stores to clean up remaining patterns
+	peephole_optimization(func);
+
 	// Eliminate dead code (unused registers and instructions)
 	eliminate_dead_code(func);
 
@@ -654,6 +663,90 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 					}
 				}
 			}
+
+			// Pattern E: MOVE tmp, var; LOAD_IMM/LOAD_FLOAT_IMM const; OP dst, tmp, const; MOVE var, dst
+			//          -> OP var, var, const
+			// This handles the common "count = count + 1" pattern efficiently
+			if (!skip && !handled && i + 3 < func.instructions.size()) {
+				const auto& move1 = func.instructions[i];
+				const auto& load = func.instructions[i + 1];
+				const auto& op = func.instructions[i + 2];
+				const auto& move2 = func.instructions[i + 3];
+
+				if (move1.opcode == IROpcode::MOVE &&
+				    (load.opcode == IROpcode::LOAD_IMM || load.opcode == IROpcode::LOAD_FLOAT_IMM) &&
+				    is_arithmetic_op(op.opcode) &&
+				    move2.opcode == IROpcode::MOVE &&
+				    op.operands.size() >= 3) {
+
+					int move1_dst = std::get<int>(move1.operands[0].value);
+					int move1_src = std::get<int>(move1.operands[1].value);
+					int load_dst = std::get<int>(load.operands[0].value);
+					int op_dst = std::get<int>(op.operands[0].value);
+					int move2_dst = std::get<int>(move2.operands[0].value);
+					int move2_src = std::get<int>(move2.operands[1].value);
+
+					// Check if operands match the pattern: MOVE tmp, var; LOAD const; OP dst, tmp, const; MOVE var, dst
+					if (op.operands[1].type == IRValue::Type::REGISTER &&
+					    op.operands[2].type == IRValue::Type::REGISTER) {
+						int op_lhs = std::get<int>(op.operands[1].value);
+						int op_rhs = std::get<int>(op.operands[2].value);
+
+						// Pattern E requires: tmp=move1_dst=op_lhs, const=load_dst=op_rhs, var=move1_src=move2_dst, dst=op_dst=move2_src
+						if (move1_dst == op_lhs && load_dst == op_rhs &&
+						    move1_src == move2_dst && move2_src == op_dst) {
+							// Check that temps are not used elsewhere (excluding the OP instruction at i+2)
+							// tmp1 (move1_dst) should only be used by OP at i+2 - check before OP
+							bool tmp1_safe = !is_reg_used_between_exclusive(func, move1_dst, i, i + 2);
+							// const (load_dst) should only be used by OP at i+2 - check before and after (excluding OP)
+							bool tmp2_safe = !is_reg_used_between_exclusive(func, load_dst, i + 1, i + 2) &&
+							                 !is_reg_used_between_exclusive(func, load_dst, i + 2, i + 3);
+							// dst (op_dst) should only be used by MOVE at i+3 - check between OP and MOVE
+							bool dst_safe = !is_reg_used_between_exclusive(func, op_dst, i + 2, i + 3);
+
+							if (tmp1_safe && tmp2_safe && dst_safe) {
+								// Emit the LOAD_IMM instruction first (we still need the constant)
+								new_instructions.push_back(load);
+
+								// Emit optimized instruction: OP var, var, const
+								IRInstruction new_op = op;
+								new_op.operands[0] = IRValue::reg(move2_dst);  // var as destination
+								new_op.operands[1] = IRValue::reg(move1_src);  // var as first operand
+								// operand 2 (const) stays the same (load_dst)
+								new_instructions.push_back(new_op);
+
+								i += 4;
+								skip = true;
+								handled = true;
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Pattern F: Handle MOVE r10, r0; MOVE r0, r10 -> eliminate (redundant pair)
+		if (!skip && !handled && i + 1 < func.instructions.size()) {
+			if (func.instructions[i].opcode == IROpcode::MOVE &&
+			    func.instructions[i + 1].opcode == IROpcode::MOVE) {
+				const auto& move1 = func.instructions[i];
+				const auto& move2 = func.instructions[i + 1];
+
+				int move1_dst = std::get<int>(move1.operands[0].value);
+				int move1_src = std::get<int>(move1.operands[1].value);
+				int move2_dst = std::get<int>(move2.operands[0].value);
+				int move2_src = std::get<int>(move2.operands[1].value);
+
+				// Check for: MOVE tmp, src; MOVE src, tmp
+				// This is a redundant swap pattern - just eliminate both
+				if (move1_dst == move2_src && move1_src == move2_dst && move1_dst != move1_src) {
+					// Both moves are redundant - eliminate them
+					i += 2;
+					skip = true;
+					handled = true;
+					continue;
+				}
+			}
 		}
 
 		// Pattern D: OP dst, ...; MOVE result, dst (without preceding MOVE)
@@ -1039,6 +1132,159 @@ bool IROptimizer::is_reg_used_between_exclusive(const IRFunction& func, int reg,
 	}
 
 	return false;
+}
+
+static void flush_pending(std::vector<IRInstruction>& new_instructions,
+	std::unordered_map<int, size_t>& pending_stores, const IRFunction& func)
+{
+	if (!pending_stores.empty()) {
+		// Sort by original instruction index to maintain order
+		std::vector<std::pair<int, size_t>> sorted(pending_stores.begin(), pending_stores.end());
+		std::sort(sorted.begin(), sorted.end(),
+		         [](const auto& a, const auto& b) { return a.second < b.second; });
+
+		for (const auto& [reg, idx] : sorted) {
+			new_instructions.push_back(func.instructions[idx]);
+		}
+		pending_stores.clear();
+	}
+}
+static bool reads_pending_store(const IRInstruction& instr,
+	const std::unordered_map<int, size_t>& pending_stores)
+{
+	for (size_t i = 1; i < instr.operands.size(); i++) {
+		const auto& op = instr.operands[i];
+		if (op.type == IRValue::Type::REGISTER) {
+			int reg = std::get<int>(op.value);
+			if (pending_stores.count(reg)) {
+				return true;
+			}
+		}
+	}
+	// Special case: BRANCH_ZERO and BRANCH_NOT_ZERO read the first operand
+	if ((instr.opcode == IROpcode::BRANCH_ZERO || instr.opcode == IROpcode::BRANCH_NOT_ZERO) &&
+		!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+		int reg = std::get<int>(instr.operands[0].value);
+		if (pending_stores.count(reg)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void IROptimizer::eliminate_redundant_stores(IRFunction& func) {
+	// This pass eliminates redundant store operations:
+	// 1. Dead stores: Store to a register that is immediately overwritten
+	//    Example: LOAD_IMM r0, 10; LOAD_IMM r0, 20  -> first instruction is dead
+	// 2. Consecutive identical stores: Same value stored to same register
+	//    Example: LOAD_IMM r0, 10; LOAD_IMM r0, 10  -> second is redundant
+	//
+	// This is done by delaying the emission of store instructions until we're sure
+	// they're not dead (overwritten without being read) or redundant (same value).
+
+	if (func.instructions.empty()) {
+		return;
+	}
+
+	std::vector<IRInstruction> new_instructions;
+	new_instructions.reserve(func.instructions.size());
+
+	// Track pending stores that haven't been emitted yet
+	std::unordered_map<int, size_t> pending_stores;  // reg -> instruction index
+
+	for (size_t i = 0; i < func.instructions.size(); i++) {
+		const auto& instr = func.instructions[i];
+
+		// Control flow boundaries - flush all pending stores
+		if (instr.opcode == IROpcode::LABEL ||
+		    instr.opcode == IROpcode::JUMP ||
+		    instr.opcode == IROpcode::BRANCH_ZERO ||
+		    instr.opcode == IROpcode::BRANCH_NOT_ZERO ||
+		    instr.opcode == IROpcode::CALL ||
+		    instr.opcode == IROpcode::VCALL ||
+		    instr.opcode == IROpcode::CALL_SYSCALL ||
+		    instr.opcode == IROpcode::RETURN) {
+			flush_pending(new_instructions, pending_stores, func);
+			new_instructions.push_back(instr);
+			continue;
+		}
+
+		// Check if this instruction reads from a register with a pending store
+		if (reads_pending_store(instr, pending_stores)) {
+			flush_pending(new_instructions, pending_stores, func);
+		}
+
+		// Check if this is a pure load/store operation to a register
+		if (is_pure_load_op(instr.opcode) && !instr.operands.empty() &&
+		    instr.operands[0].type == IRValue::Type::REGISTER) {
+			int dst = std::get<int>(instr.operands[0].value);
+
+			// Check if we have a previous pending store to the same register
+			if (pending_stores.count(dst)) {
+				size_t prev_idx = pending_stores[dst];
+				const auto& prev_instr = func.instructions[prev_idx];
+
+				// Check if stores are identical (same opcode and value)
+				bool is_identical = (prev_instr.opcode == instr.opcode &&
+				                     prev_instr.operands.size() == instr.operands.size());
+
+				if (is_identical && instr.operands.size() >= 2) {
+					const auto& curr_val = instr.operands[1];
+					const auto& prev_val = prev_instr.operands[1];
+
+					if (curr_val.type != prev_val.type) {
+						is_identical = false;
+					} else if (curr_val.type == IRValue::Type::IMMEDIATE) {
+						is_identical = (std::get<int64_t>(curr_val.value) ==
+						                std::get<int64_t>(prev_val.value));
+					} else if (curr_val.type == IRValue::Type::FLOAT) {
+						is_identical = (std::get<double>(curr_val.value) ==
+						                std::get<double>(prev_val.value));
+					} else if (curr_val.type == IRValue::Type::REGISTER) {
+						// For MOVE: compare source register
+						is_identical = (std::get<int>(curr_val.value) ==
+						                std::get<int>(prev_val.value));
+					} else {
+						is_identical = false;
+					}
+				}
+
+				if (is_identical) {
+					// Consecutive identical stores - skip current one
+					continue;
+				}
+
+				// Different store to same register - replace previous with this one
+				pending_stores[dst] = i;
+				continue;
+			}
+
+			// First store to this register - track it as pending
+			pending_stores[dst] = i;
+			continue;
+		}
+
+		// Not a store operation - add it directly
+		new_instructions.push_back(instr);
+	}
+
+	// Flush any remaining pending stores
+	flush_pending(new_instructions, pending_stores, func);
+
+	func.instructions = std::move(new_instructions);
+}
+
+bool IROptimizer::is_pure_load_op(IROpcode op) {
+	switch (op) {
+		case IROpcode::LOAD_IMM:
+		case IROpcode::LOAD_FLOAT_IMM:
+		case IROpcode::LOAD_BOOL:
+		case IROpcode::LOAD_STRING:
+		case IROpcode::MOVE:
+			return true;
+		default:
+			return false;
+	}
 }
 
 } // namespace gdscript
