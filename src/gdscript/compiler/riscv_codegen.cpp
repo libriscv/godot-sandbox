@@ -984,9 +984,9 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_li(REG_A7, 517);
 					emit_ecall();
 				} else {
-					// Packed array with elements: sys_vcreate(&v, TYPE, size, data_pointer)
-					// GuestVariant is 24 bytes (4-byte type + 4-byte padding + 16-byte data)
-					// We need to copy the full Variant structures to stack
+					// Packed array with elements: Use ECALL_PACKED_ARRAY_OPS (548)
+					// Signature: a0=op(type), a1=result_ptr, a2=array_ptr, a3=array_size
+					// The syscall converts an Array of Variants to a PackedArray
 					constexpr int VARIANT_SIZE = 24;
 					int args_space = element_count * VARIANT_SIZE;
 					args_space = (args_space + 15) & ~15; // Align to 16 bytes
@@ -999,41 +999,40 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						emit_add(REG_SP, REG_SP, REG_T0);
 					}
 
-					// Copy each element variant to the stack
+					// Copy each element variant to the stack (as GuestVariant array)
 					for (int i = 0; i < element_count; i++) {
 						int elem_vreg = std::get<int>(instr.operands[2 + i].value);
 						int elem_offset = get_variant_stack_offset(elem_vreg);
 						int dst_offset = i * VARIANT_SIZE;
 
 						// Copy 24 bytes from source to destination
-						// We use a simple loop with load/store
 						for (int j = 0; j < 24; j += 8) {
 							emit_ld(REG_T0, REG_SP, args_space + elem_offset + j);
 							emit_sd(REG_T0, REG_SP, dst_offset + j);
 						}
 					}
 
-					// a0 = pointer to destination Variant
+					// a0 = op (the packed array type, which also indicates CREATE_FROM_ARRAY)
+					emit_li(REG_A0, variant_type);
+
+					// a1 = pointer to destination Variant
 					// After SP -= args_space, it's now at result_offset + args_space from NEW SP
 					int adjusted_dst_offset = result_offset + args_space;
 					if (adjusted_dst_offset < 2048) {
-						emit_i_type(0x13, REG_A0, 0, REG_SP, adjusted_dst_offset);
+						emit_i_type(0x13, REG_A1, 0, REG_SP, adjusted_dst_offset);
 					} else {
-						emit_li(REG_A0, adjusted_dst_offset);
-						emit_add(REG_A0, REG_SP, REG_A0);
+						emit_li(REG_A1, adjusted_dst_offset);
+						emit_add(REG_A1, REG_SP, REG_A1);
 					}
 
-					// a1 = Variant type
-					emit_li(REG_A1, variant_type);
+					// a2 = pointer to element array (sp + 0)
+					emit_mv(REG_A2, REG_SP);
 
-					// a2 = size (element_count)
-					emit_li(REG_A2, element_count);
+					// a3 = element_count
+					emit_li(REG_A3, element_count);
 
-					// a3 = pointer to element array (sp + 0)
-					emit_mv(REG_A3, REG_SP);
-
-					// a7 = ECALL_VCREATE (517)
-					emit_li(REG_A7, 517);
+					// a7 = ECALL_PACKED_ARRAY_OPS (548)
+					emit_li(REG_A7, 548);
 					emit_ecall();
 
 					// Restore stack pointer

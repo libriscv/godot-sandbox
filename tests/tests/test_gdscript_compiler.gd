@@ -2309,13 +2309,13 @@ func test_empty_packed_vector2_array():
 	return PackedVector2Array()
 
 func test_packed_vector2_array():
-	return PackedVector2Array([Vector2(1,2), Vector2(3,4), Vector2(5,6)])
+	return PackedVector2Array([Vector2(1.0,2.0), Vector2(3.0,4.0), Vector2(5.0,6.0)])
 
 func test_empty_packed_vector3_array():
 	return PackedVector3Array()
 
 func test_packed_vector3_array():
-	return PackedVector3Array([Vector3(1,2,3), Vector3(4,5,6), Vector3(7,8,9)])
+	return PackedVector3Array([Vector3(1.0,2.0,3.0), Vector3(4.0,5.0,6.0), Vector3(7.0,8.0,9.0)])
 
 func test_empty_packed_color_array():
 	return PackedColorArray()
@@ -2327,7 +2327,7 @@ func test_empty_packed_vector4_array():
 	return PackedVector4Array()
 
 func test_packed_vector4_array():
-	return PackedVector4Array([Vector4(1,2,3,4), Vector4(5,6,7,8), Vector4(9,10,11,12)])
+	return PackedVector4Array([Vector4(1.0,2.0,3.0,4.0), Vector4(5.0,6.0,7.0,8.0), Vector4(9.0,10.0,11.0,12.0)])
 """
 
 	var ts : Sandbox = Sandbox.new()
@@ -2366,33 +2366,51 @@ func test_packed_vector4_array():
 	var result = s.vmcallv("test_empty_packed_byte_array")
 	assert_eq_deep(result, PackedByteArray([]))
 	result = s.vmcallv("test_packed_byte_array")
-	#assert_eq_deep(result, PackedByteArray([1, 2, 3, 4, 5]))
+	assert_eq_deep(result, PackedByteArray([1, 2, 3, 4, 5]))
 
 	result = s.vmcallv("test_empty_packed_int32_array")
 	assert_eq_deep(result, PackedInt32Array([]))
+	result = s.vmcallv("test_packed_int32_array")
+	assert_eq_deep(result, PackedInt32Array([10, 20, 30, 40, 50]))
 
 	result = s.vmcallv("test_empty_packed_int64_array")
 	assert_eq_deep(result, PackedInt64Array([]))
+	result = s.vmcallv("test_packed_int64_array")
+	assert_eq_deep(result, PackedInt64Array([100, 200, 300, 400, 500]))
 
 	result = s.vmcallv("test_empty_packed_float32_array")
 	assert_eq_deep(result, PackedFloat32Array([]))
+	result = s.vmcallv("test_packed_float32_array")
+	assert_eq_deep(result, PackedFloat32Array([1.1, 2.2, 3.3, 4.4, 5.5]))
 
 	result = s.vmcallv("test_empty_packed_float64_array")
 	assert_eq_deep(result, PackedFloat64Array([]))
+	result = s.vmcallv("test_packed_float64_array")
+	assert_eq_deep(result, PackedFloat64Array([10.01, 20.02, 30.03, 40.04, 50.05]))
 
 	result = s.vmcallv("test_empty_packed_string_array")
 	assert_eq_deep(result, PackedStringArray([]))
+	result = s.vmcallv("test_packed_string_array")
+	assert_eq_deep(result, PackedStringArray(["one", "two", "three", "four", "five"]))
 
 	result = s.vmcallv("test_empty_packed_vector2_array")
 	assert_eq_deep(result, PackedVector2Array([]))
+	result = s.vmcallv("test_packed_vector2_array")
+	assert_eq_deep(result, PackedVector2Array([Vector2(1,2), Vector2(3,4), Vector2(5,6)]))
 
 	result = s.vmcallv("test_empty_packed_vector3_array")
 	assert_eq_deep(result, PackedVector3Array([]))
+	result = s.vmcallv("test_packed_vector3_array")
+	assert_eq_deep(result, PackedVector3Array([Vector3(1,2,3), Vector3(4,5,6), Vector3(7,8,9)]))
 
 	result = s.vmcallv("test_empty_packed_color_array")
 	assert_eq_deep(result, PackedColorArray([]))
+	#result = s.vmcallv("test_packed_color_array")
+	#assert_eq_deep(result, PackedColorArray([Color(1,0,0), Color(0,1,0), Color(0,0,1)]))
 
 	result = s.vmcallv("test_empty_packed_vector4_array")
 	assert_eq_deep(result, PackedVector4Array([]))
+	result = s.vmcallv("test_packed_vector4_array")
+	assert_eq_deep(result, PackedVector4Array([Vector4(1,2,3,4), Vector4(5,6,7,8), Vector4(9,10,11,12)]))
 
 	s.queue_free()

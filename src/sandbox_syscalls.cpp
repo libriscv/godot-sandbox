@@ -1962,6 +1962,116 @@ APICALL(api_sandbox_add) {
 	}
 }
 
+template <typename T, typename PA>
+static PA createPackedArrayFromGuestArray(Sandbox &emu, const Array& array)
+{
+	const size_t size = array.size();
+	PA packed_array;
+	packed_array.resize(size);
+	for (int i = 0; i < size; i++) {
+		if constexpr (std::is_same_v<T, godot::String>) {
+			packed_array[i] = array[i].operator String();
+		} else {
+			packed_array[i] = static_cast<T>(array[i]);
+		}
+	}
+	return packed_array;
+}
+
+APICALL(api_packed_array_ops)
+{
+	auto [op] = machine.sysargs<int>();
+	Sandbox &emu = riscv::emu(machine);
+	PENALIZE(50'000); // Costly PackedArray operations.
+	SYS_TRACE("packed_array_ops", int(op), arr_idx, idx, vaddr);
+
+	// CREATE_FROM_ARRAY (op="Any Packed*Array Variant type, starting at 29")
+	switch (op) {
+	case Variant::PACKED_BYTE_ARRAY:
+	case Variant::PACKED_INT32_ARRAY:
+	case Variant::PACKED_INT64_ARRAY:
+	case Variant::PACKED_FLOAT32_ARRAY:
+	case Variant::PACKED_FLOAT64_ARRAY:
+	case Variant::PACKED_VECTOR2_ARRAY:
+	case Variant::PACKED_VECTOR3_ARRAY:
+	case Variant::PACKED_VECTOR4_ARRAY:
+	case Variant::PACKED_COLOR_ARRAY:
+	case Variant::PACKED_STRING_ARRAY:
+	{
+		// Create a Packed*Array from an Array.
+		auto [unused_op, result_ptr, arr_ptr] = machine.sysargs<int, gaddr_t, int>();
+		// This is a scoped Array type GuestVariant.
+		GuestVariant *garray = machine.memory.memarray<GuestVariant>(arr_ptr, 1);
+		if (garray->type != Variant::ARRAY) {
+			ERR_PRINT("Invalid Array object for PackedArray creation");
+			throw std::runtime_error("Invalid Array object for PackedArray creation");
+		}
+		godot::Array array = emu.get_scoped_variant(garray->v.i).value()->operator Array();
+		GuestVariant *gres = machine.memory.memarray<GuestVariant>(result_ptr, 1);
+		switch (op) {
+			case Variant::PACKED_BYTE_ARRAY: {
+				PackedByteArray packed_array = createPackedArrayFromGuestArray<uint8_t, PackedByteArray>(emu, array);
+				gres->create(emu, std::move(packed_array));
+				break;
+			}
+			case Variant::PACKED_INT32_ARRAY: {
+				PackedInt32Array packed_array = createPackedArrayFromGuestArray<int32_t, PackedInt32Array>(emu, array);
+				gres->create(emu, std::move(packed_array));
+				break;
+			}
+			case Variant::PACKED_INT64_ARRAY: {
+				PackedInt64Array packed_array = createPackedArrayFromGuestArray<int64_t, PackedInt64Array>(emu, array);
+				gres->create(emu, std::move(packed_array));
+				break;
+			}
+			case Variant::PACKED_FLOAT32_ARRAY: {
+				PackedFloat32Array packed_array = createPackedArrayFromGuestArray<float, PackedFloat32Array>(emu, array);
+				gres->create(emu, std::move(packed_array));
+				break;
+			}
+			case Variant::PACKED_FLOAT64_ARRAY: {
+				PackedFloat64Array packed_array = createPackedArrayFromGuestArray<double, PackedFloat64Array>(emu, array);
+				gres->create(emu, std::move(packed_array));
+				break;
+			}
+			case Variant::PACKED_VECTOR2_ARRAY: {
+				PackedVector2Array packed_array = createPackedArrayFromGuestArray<godot::Vector2, PackedVector2Array>(emu, array);
+				gres->create(emu, std::move(packed_array));
+				break;
+			}
+			case Variant::PACKED_VECTOR3_ARRAY: {
+				PackedVector3Array packed_array = createPackedArrayFromGuestArray<godot::Vector3, PackedVector3Array>(emu, array);
+				gres->create(emu, std::move(packed_array));
+				break;
+			}
+			case Variant::PACKED_VECTOR4_ARRAY: {
+				PackedVector4Array packed_array = createPackedArrayFromGuestArray<godot::Vector4, PackedVector4Array>(emu, array);
+				gres->create(emu, std::move(packed_array));
+				break;
+			}
+			case Variant::PACKED_COLOR_ARRAY: {
+				PackedColorArray packed_array = createPackedArrayFromGuestArray<godot::Color, PackedColorArray>(emu, array);
+				gres->create(emu, std::move(packed_array));
+				break;
+			}
+			case Variant::PACKED_STRING_ARRAY: {
+				PackedStringArray packed_array = createPackedArrayFromGuestArray<godot::String, PackedStringArray>(emu, array);
+				gres->create(emu, std::move(packed_array));
+				break;
+			}
+			default:
+				ERR_PRINT("Invalid PackedArray type for creation: " + itos(gres->type));
+				throw std::runtime_error("Invalid PackedArray type for creation: " + std::to_string(gres->type));
+		}
+		return;
+	}
+	default:
+		// Unknown operation
+		ERR_PRINT("Invalid PackedArray operation");
+		throw std::runtime_error("Invalid PackedArray operation");
+	}
+}
+
 } //namespace riscv
 
 void Sandbox::initialize_syscalls_runtime() {
@@ -2033,6 +2143,8 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_OBJ_PROP_SET, api_obj_property_set },
 
 			{ ECALL_SANDBOX_ADD, api_sandbox_add },
+
+			{ ECALL_PACKED_ARRAY_OPS, api_packed_array_ops },
 	});
 
 	// Add system calls from other modules.
