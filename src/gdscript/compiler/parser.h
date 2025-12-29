@@ -52,6 +52,10 @@ private:
 	void error(const std::string& message);
 	void skip_newlines();
 
+	// Type hint parsing
+	std::string parse_type_hint();  // Parse optional type hint (e.g., ": int", ": String")
+	std::string parse_return_type();  // Parse optional return type (e.g., "-> void")
+
 	std::vector<Token> m_tokens;
 	size_t m_current = 0;
 };

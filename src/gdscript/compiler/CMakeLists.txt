@@ -62,11 +62,14 @@ if (BUILD_TESTING)
 		DEPENDS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer
 		COMMENT "Running all GDScript compiler tests"
 	)
+
+	# Install test targets (only when BUILD_TESTING is ON)
+	install(TARGETS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer
+	        RUNTIME DESTINATION bin)
 endif()
 
-# Install targets
+# Install targets (always built)
 install(TARGETS gdscript_compiler gdscript_compiler_test
-        test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer
         RUNTIME DESTINATION bin
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib)
