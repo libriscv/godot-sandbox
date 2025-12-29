@@ -51,13 +51,13 @@ Godot Sandbox allows Godot creators to implement safe modding support, such that
 	- You can use this extension as a way to write higher performance code than GDScript permits, without having to resort to writing and maintaining a GDExtension for all platforms.
 	- Enable full binary translation to increase performance drastically. Also works on all platforms, but has to be [embedded in the project or loaded as a DLL](https://libriscv.no/docs/godot_docs/bintr).
 	- Yields [2.5-10x performance boost by default](https://libriscv.no/docs/performance/#godot-sandbox-performance), 5-50x with binary translation
-	- Experimental JIT builds are also available in the Releases section for Windows and Linux. The JIT will enhance performance automatically in the background for all programs.
+	- JIT builds are also available in the Releases section for Windows, macOS, Android and Linux. The JIT will enhance performance automatically in the background for all programs, including SafeGDScript.
 - Publish and then make updates without re-publishing
 	- You can distribute programs from a server to clients as part of the login sequence. You can use this to live-distribute changes like bugfixes or even new features to the game without having to re-publish the game itself. I do this in my game.
 
 ## Usage
 
-- Write C++ or Rust in the Godot editor. An accompanying ELF resource is created. This resource can be loaded into any Sandbox instance on every platform without recompiling.
+- Write C++, Rust and SafeGDScript in the Godot editor. An accompanying ELF resource is created. This resource can be loaded into any Sandbox instance on every platform without recompiling. In the case of SafeGDScript it should be attached as a script, and it will work similarly to GDScript.
 
 - Create a new `Sandbox` and [assign the ELF resource to it](https://libriscv.no/docs/godot/sandbox/#create-a-sandbox)
 	- Lifetime as any other node
