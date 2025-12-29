@@ -121,6 +121,7 @@ struct ExprStmt : Stmt {
 // Variable declaration: var x = 10 or const x = 10
 struct VarDeclStmt : Stmt {
 	std::string name;
+	std::string type_hint;  // Type annotation if present (e.g., "int", "float", "String")
 	ExprPtr initializer; // Can be null
 	bool is_const = false; // Whether this is a const declaration
 
@@ -191,13 +192,14 @@ struct PassStmt : Stmt {};
 // Function parameter
 struct Parameter {
 	std::string name;
-	// For simple version, no type annotations
+	std::string type_hint;  // Type annotation if present (e.g., "int", "float", "String")
 };
 
 // Function declaration
 struct FunctionDecl {
 	std::string name;
 	std::vector<Parameter> parameters;
+	std::string return_type;  // Return type annotation if present (e.g., "void", "int")
 	std::vector<StmtPtr> body;
 	int line = 0;
 	int column = 0;

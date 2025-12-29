@@ -240,6 +240,115 @@ func main():
 	std::cout << "  ✓ Multiple functions test passed" << std::endl;
 }
 
+void test_parameter_type_hints() {
+	std::cout << "Testing parameter type hints..." << std::endl;
+
+	std::string source = R"(func add(a: int, b: int):
+	return a + b
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	assert(program.functions.size() == 1);
+	assert(program.functions[0].parameters.size() == 2);
+	assert(program.functions[0].parameters[0].name == "a");
+	assert(program.functions[0].parameters[0].type_hint == "int");
+	assert(program.functions[0].parameters[1].name == "b");
+	assert(program.functions[0].parameters[1].type_hint == "int");
+
+	std::cout << "  ✓ Parameter type hints test passed" << std::endl;
+}
+
+void test_function_return_type() {
+	std::cout << "Testing function return type..." << std::endl;
+
+	std::string source = R"(func add(a: int, b: int) -> int:
+	return a + b
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	assert(program.functions.size() == 1);
+	assert(program.functions[0].return_type == "int");
+
+	std::cout << "  ✓ Function return type test passed" << std::endl;
+}
+
+void test_variable_type_hints() {
+	std::cout << "Testing variable type hints..." << std::endl;
+
+	std::string source = R"(func test():
+	var x: int = 10
+	var y: float = 3.14
+	var name: String = "hello"
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	assert(program.functions[0].body.size() == 3);
+
+	auto* var1 = dynamic_cast<VarDeclStmt*>(program.functions[0].body[0].get());
+	assert(var1 != nullptr);
+	assert(var1->name == "x");
+	assert(var1->type_hint == "int");
+
+	auto* var2 = dynamic_cast<VarDeclStmt*>(program.functions[0].body[1].get());
+	assert(var2 != nullptr);
+	assert(var2->name == "y");
+	assert(var2->type_hint == "float");
+
+	auto* var3 = dynamic_cast<VarDeclStmt*>(program.functions[0].body[2].get());
+	assert(var3 != nullptr);
+	assert(var3->name == "name");
+	assert(var3->type_hint == "String");
+
+	std::cout << "  ✓ Variable type hints test passed" << std::endl;
+}
+
+void test_mixed_type_hints() {
+	std::cout << "Testing mixed type hints (with and without)..." << std::endl;
+
+	std::string source = R"(func test(a: int, b, c: float) -> void:
+	var x: int = 10
+	var y = 20
+	var z: String
+	return x
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	assert(program.functions.size() == 1);
+	assert(program.functions[0].parameters.size() == 3);
+
+	// Check parameter type hints
+	assert(program.functions[0].parameters[0].type_hint == "int");
+	assert(program.functions[0].parameters[1].type_hint == "");  // No type hint
+	assert(program.functions[0].parameters[2].type_hint == "float");
+
+	// Check return type
+	assert(program.functions[0].return_type == "void");
+
+	// Check variable type hints
+	auto* var1 = dynamic_cast<VarDeclStmt*>(program.functions[0].body[0].get());
+	assert(var1->type_hint == "int");
+
+	auto* var2 = dynamic_cast<VarDeclStmt*>(program.functions[0].body[1].get());
+	assert(var2->type_hint == "");  // No type hint
+
+	auto* var3 = dynamic_cast<VarDeclStmt*>(program.functions[0].body[2].get());
+	assert(var3->type_hint == "String");
+
+	std::cout << "  ✓ Mixed type hints test passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== Running Parser Tests ===" << std::endl;
 
@@ -253,6 +362,10 @@ int main() {
 		test_method_call();
 		test_nested_control_flow();
 		test_multiple_functions();
+		test_parameter_type_hints();
+		test_function_return_type();
+		test_variable_type_hints();
+		test_mixed_type_hints();
 
 		std::cout << "\n✅ All parser tests passed!" << std::endl;
 		return 0;

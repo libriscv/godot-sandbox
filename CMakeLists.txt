@@ -23,6 +23,11 @@ set(SOURCES
 	src/zig/resource_saver_zig.cpp
 	src/zig/script_zig.cpp
 	src/zig/script_language_zig.cpp
+	src/safegdscript/script_instance_safegdscript.cpp
+	src/safegdscript/script_language_safegdscript.cpp
+	src/safegdscript/script_safegdscript.cpp
+	src/safegdscript/resource_loader_safegdscript.cpp
+	src/safegdscript/resource_saver_safegdscript.cpp
 	src/docker.cpp
 	src/godot/script_instance.cpp
 	src/guest_variant.cpp

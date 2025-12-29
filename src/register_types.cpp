@@ -18,6 +18,10 @@
 #include "cpp/resource_saver_cpp.h"
 #include "cpp/script_cpp.h"
 #include "cpp/script_language_cpp.h"
+#include "safegdscript/script_safegdscript.h"
+#include "safegdscript/script_language_safegdscript.h"
+#include "safegdscript/resource_loader_safegdscript.h"
+#include "safegdscript/resource_saver_safegdscript.h"
 #ifdef PLATFORM_HAS_EDITOR
 #include "rust/resource_loader_rust.h"
 #include "rust/resource_saver_rust.h"
@@ -53,6 +57,10 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ClassDB::register_class<CPPScriptLanguage>();
 	ClassDB::register_class<ResourceFormatLoaderCPP>();
 	ClassDB::register_class<ResourceFormatSaverCPP>();
+	ClassDB::register_class<SafeGDScript>();
+	ClassDB::register_class<SafeGDScriptLanguage>();
+	ClassDB::register_class<ResourceFormatLoaderSafeGDScript>();
+	ClassDB::register_class<ResourceFormatSaverSafeGDScript>();
 #ifdef PLATFORM_HAS_EDITOR
 	ClassDB::register_class<RustScript>();
 	ClassDB::register_class<RustScriptLanguage>();
@@ -72,6 +80,9 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ResourceFormatLoaderCPP::init();
 	ResourceFormatSaverCPP::init();
 	CPPScriptLanguage::init();
+	SafeGDScriptLanguage::init();
+	ResourceFormatLoaderSafeGDScript::init();
+	ResourceFormatSaverSafeGDScript::init();
 #ifdef PLATFORM_HAS_EDITOR
 	ResourceFormatLoaderRust::init();
 	ResourceFormatSaverRust::init();
@@ -91,6 +102,9 @@ static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	}
 	Engine *engine = Engine::get_singleton();
 	CPPScriptLanguage::deinit();
+	SafeGDScriptLanguage::deinit();
+	ResourceFormatLoaderSafeGDScript::deinit();
+	ResourceFormatSaverSafeGDScript::deinit();
 #ifdef PLATFORM_HAS_EDITOR
 	RustScriptLanguage::deinit();
 	ZigScriptLanguage::deinit();

@@ -36,6 +36,10 @@ FunctionDecl Parser::parse_function() {
 	consume(TokenType::LPAREN, "Expected '(' after function name");
 	func.parameters = parse_parameters();
 	consume(TokenType::RPAREN, "Expected ')' after parameters");
+
+	// Parse optional return type (e.g., "-> void")
+	func.return_type = parse_return_type();
+
 	consume(TokenType::COLON, "Expected ':' after function signature");
 	consume(TokenType::NEWLINE, "Expected newline after function signature");
 
@@ -55,6 +59,10 @@ std::vector<Parameter> Parser::parse_parameters() {
 		Token param_name = consume(TokenType::IDENTIFIER, "Expected parameter name");
 		Parameter param;
 		param.name = param_name.lexeme;
+
+		// Parse optional type hint (e.g., ": int")
+		param.type_hint = parse_type_hint();
+
 		params.push_back(param);
 
 		if (!check(TokenType::RPAREN)) {
@@ -128,6 +136,9 @@ StmtPtr Parser::parse_statement() {
 StmtPtr Parser::parse_var_decl(bool is_const) {
 	Token name = consume(TokenType::IDENTIFIER, "Expected variable name");
 
+	// Parse optional type hint (e.g., ": int")
+	std::string type_hint = parse_type_hint();
+
 	ExprPtr initializer = nullptr;
 	if (match(TokenType::ASSIGN)) {
 		initializer = parse_expression();
@@ -136,7 +147,9 @@ StmtPtr Parser::parse_var_decl(bool is_const) {
 	}
 
 	consume(TokenType::NEWLINE, "Expected newline after variable declaration");
-	return std::make_unique<VarDeclStmt>(name.lexeme, std::move(initializer), is_const);
+	auto stmt = std::make_unique<VarDeclStmt>(name.lexeme, std::move(initializer), is_const);
+	stmt->type_hint = type_hint;
+	return stmt;
 }
 
 StmtPtr Parser::parse_if_stmt() {
@@ -565,6 +578,45 @@ void Parser::skip_newlines() {
 	while (match(TokenType::NEWLINE)) {
 		// Skip
 	}
+}
+
+std::string Parser::parse_type_hint() {
+	// Type hints are optional and follow the pattern ": type"
+	// We just consume the colon and the following identifier/type
+	if (match(TokenType::COLON)) {
+		// Look ahead to see if there's a type name
+		// For now, we just capture whatever comes after the colon
+		// This could be a simple identifier like "int" or a more complex type like "Array[int]"
+		if (check(TokenType::IDENTIFIER)) {
+			Token type_token = consume(TokenType::IDENTIFIER, "Expected type name");
+			return type_token.lexeme;
+		}
+		// If there's no identifier immediately after, return empty
+		// This allows for things like "var x:" which we'll just treat as no type hint
+	}
+	return "";
+}
+
+std::string Parser::parse_return_type() {
+	// Return types are optional and follow the pattern "-> type"
+	// We need to check for the arrow token (which would be MINUS + GREATER)
+	// For now, let's check if we have MINUS followed by GREATER
+	size_t saved_pos = m_current;
+
+	if (match(TokenType::MINUS)) {
+		if (match(TokenType::GREATER)) {
+			// We found ->, now parse the type
+			if (check(TokenType::IDENTIFIER)) {
+				Token type_token = consume(TokenType::IDENTIFIER, "Expected return type");
+				return type_token.lexeme;
+			}
+			return "";  // Found -> but no type
+		}
+		// Not a return type, rewind
+		m_current = saved_pos;
+	}
+
+	return "";
 }
 
 } // namespace gdscript

@@ -1,69 +1,23 @@
 #pragma once
 
+#include "../docker.h"
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/templates/hash_set.hpp>
 
 using namespace godot;
-class ELFScriptInstance;
 class Sandbox;
-namespace godot {
-	class ScriptInstanceExtension;
-}
+class SafeGDScriptInstance;
+class ELFScript;
 
-class ELFScript : public ScriptExtension {
-	GDCLASS(ELFScript, ScriptExtension);
+class SafeGDScript : public ScriptExtension {
+	GDCLASS(SafeGDScript, ScriptExtension);
 
 protected:
-	static void _bind_methods();
-	PackedByteArray source_code;
-	String global_name;
-	String path;
-	std::string std_path;
-	int source_version = 0;
-	int elf_api_version;
-	String elf_programming_language;
-
-	mutable HashSet<ELFScriptInstance *> instances;
-	friend class ELFScriptInstance;
-	friend class SafeGDScript;
-
-	static inline HashMap<String, HashSet<Sandbox *>> sandbox_map;
+	static void _bind_methods() {}
+	String source_code;
 
 public:
-	Array functions;
-	PackedStringArray function_names;
-
-	void set_public_api_functions(Array &&p_functions);
-	void update_public_api_functions();
-	String get_elf_programming_language() const;
-	int get_elf_api_version() const noexcept { return elf_api_version; }
-	int get_source_version() const noexcept { return source_version; }
-	String get_dockerized_program_path() const;
-	const String &get_path() const noexcept { return path; }
-	const std::string &get_std_path() const noexcept { return std_path; }
-
-	/// @brief Retrieve a Sandbox instance based on a given owner object.
-	/// @param p_for_object The owner object.
-	/// @return The Sandbox instance, or nullptr if not found.
-	Sandbox *get_sandbox_for(Object *p_for_object) const;
-
-	/// @brief Retrieve all Objects that share a Sandbox instance that uses this ELF resource.
-	/// @return An array of Objects that share a Sandbox instance.
-	Array get_sandbox_objects() const;
-
-	/// @brief Retrieve the content of the ELF resource as a byte array.
-	/// @return An ELF program as a byte array.
-	const PackedByteArray &get_content();
-
-	/// @brief Get an ELFScript instance using a Node as the owner.
-	/// @param p_for_object The owner Node.
-	/// @return A reference to the ELFScript instance.
-	ELFScriptInstance *get_script_instance(Object *p_for_object) const;
-
-	void register_instance(Sandbox *p_sandbox) { sandbox_map[path].insert(p_sandbox); }
-	void unregister_instance(Sandbox *p_sandbox) { sandbox_map[path].erase(p_sandbox); }
-
 	virtual bool _editor_can_reload_from_file() override;
 	virtual void _placeholder_erased(void *p_placeholder) override;
 	virtual bool _can_instantiate() const override;
@@ -100,8 +54,24 @@ public:
 	virtual bool _is_placeholder_fallback_enabled() const override;
 	virtual Variant _get_rpc_config() const override;
 
-	void set_file(const String &path);
+	void set_path(const String &p_path);
+	SafeGDScriptInstance *get_safegdscript_script_instance() const;
+	const String &get_path() const { return path; }
+	bool compile_source_to_elf();
+	void remove_instance(SafeGDScriptInstance *p_instance);
+	void update_methods_info(Sandbox *p_sandbox);
 
-	ELFScript() {}
-	~ELFScript() {}
+	static String PathToGlobalName(const String &p_path) {
+		return "SafeGDScript_" + p_path.get_basename().replace("res://", "").replace("/", "_").replace("-", "_").capitalize().replace(" ", "");
+	}
+
+	SafeGDScript();
+	~SafeGDScript();
+
+private:
+	String path;
+	mutable HashSet<SafeGDScriptInstance *> instances;
+	PackedByteArray elf_data;
+	std::vector<godot::MethodInfo> methods_info;
+	friend class SafeGDScriptInstance;
 };

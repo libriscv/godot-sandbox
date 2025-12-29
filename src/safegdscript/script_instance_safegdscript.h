@@ -7,12 +7,6 @@
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/script_language_extension.hpp>
 #include <godot_cpp/core/type_info.hpp>
-#include <godot_cpp/templates/hash_map.hpp>
-#include <godot_cpp/templates/hash_set.hpp>
-#include <godot_cpp/templates/list.hpp>
-#include <godot_cpp/templates/pair.hpp>
-#include <godot_cpp/templates/self_list.hpp>
-#include <godot_cpp/templates/vector.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/string.hpp>
@@ -23,28 +17,14 @@
 #include "../sandbox.h"
 using namespace godot;
 
-class ELFScript;
+class SafeGDScript;
 
-class ELFScriptInstance : public ScriptInstanceExtension {
+class SafeGDScriptInstance : public ScriptInstanceExtension {
 	Object *owner;
-	Ref<ELFScript> script;
-	Sandbox *current_sandbox = nullptr;
-	mutable List<MethodInfo> methods_info;
-	mutable bool has_updated_methods = false;
-	bool auto_created_sandbox = false;
-	bool recursive_trap = false;
+	Ref<SafeGDScript> script;
+	Sandbox* sandbox = nullptr;
 
-	void update_methods() const;
-
-	// Retrieve the sandbox and whether it was created automatically or not
-	std::tuple<Sandbox *, bool> get_sandbox() const;
-	Sandbox *create_sandbox(const Ref<ELFScript> &p_script);
-	friend class ELFScript;
-	friend class CPPScriptInstance;
-	friend class SafeGDScriptInstance;
-
-	static inline std::vector<StringName> godot_functions;
-	static inline std::unordered_set<std::string> sandbox_functions;
+	friend class SafeGDScript;
 
 public:
 	bool set(const StringName &p_name, const Variant &p_value) override;
@@ -72,10 +52,7 @@ public:
 	Variant property_get_fallback(const StringName &p_name, bool *r_valid) override;
 	ScriptLanguage *_get_language() override;
 
-	ELFScript *get_elf_script() const {
-		return script.ptr();
-	}
-
-	ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_script);
-	~ELFScriptInstance();
+	void reset_to(const PackedByteArray &p_elf_data);
+	SafeGDScriptInstance(Object *p_owner, const Ref<SafeGDScript> p_script);
+	~SafeGDScriptInstance();
 };
