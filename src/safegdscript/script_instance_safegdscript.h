@@ -14,15 +14,17 @@
 #include <godot_cpp/variant/variant.hpp>
 
 #include "../godot/script_instance.h"
-#include "../sandbox.h"
 using namespace godot;
 
+class Sandbox;
 class SafeGDScript;
 
 class SafeGDScriptInstance : public ScriptInstanceExtension {
 	Object *owner;
 	Ref<SafeGDScript> script;
-	Sandbox* sandbox = nullptr;
+	Sandbox *current_sandbox = nullptr;
+	bool auto_created_sandbox = false;
+	std::tuple<Sandbox *, bool> get_sandbox() const;
 
 	friend class SafeGDScript;
 

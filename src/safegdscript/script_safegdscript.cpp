@@ -66,6 +66,7 @@ bool SafeGDScript::_has_method(const StringName &p_method) const {
 		return true;
 	for (const godot::MethodInfo &method_info : methods_info) {
 		if (method_info.name == p_method) {
+			WARN_PRINT("SafeGDScript::_has_method: found method " + p_method);
 			return true;
 		}
 	}
@@ -75,12 +76,6 @@ bool SafeGDScript::_has_static_method(const StringName &p_method) const {
 	return false;
 }
 Dictionary SafeGDScript::_get_method_info(const StringName &p_method) const {
-	if (instances.is_empty()) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("SafeGDScript::_get_method_info: No instances available.");
-		}
-		return Dictionary();
-	}
 	Dictionary method_dict;
 	for (const godot::MethodInfo &method_info : methods_info) {
 		if (method_info.name == p_method) {
@@ -130,12 +125,6 @@ Variant SafeGDScript::_get_property_default_value(const StringName &p_property) 
 }
 void SafeGDScript::_update_exports() {}
 TypedArray<Dictionary> SafeGDScript::_get_script_method_list() const {
-	if (instances.is_empty()) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("SafeGDScript::_get_script_method_list: No instances available.");
-		}
-		return {};
-	}
 	TypedArray<Dictionary> functions_array;
 	for (const godot::MethodInfo &method_info : methods_info) {
 		Dictionary method;
@@ -266,6 +255,8 @@ bool SafeGDScript::compile_source_to_elf() {
 		return false;
 	}
 
+	this->update_methods_info();
+
 	for (SafeGDScriptInstance *instance : instances) {
 		instance->reset_to(this->elf_data);
 	}
@@ -281,19 +272,11 @@ void SafeGDScript::remove_instance(SafeGDScriptInstance *p_instance) {
 	instances.erase(p_instance);
 }
 
-void SafeGDScript::update_methods_info(Sandbox *p_sandbox) {
-	if (!methods_info.empty())
-		return;
-	if (elf_data.is_empty() || p_sandbox == nullptr) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("SafeGDScript::update_methods_info: No ELF data available.");
-		}
-		return;
-	}
-
+void SafeGDScript::update_methods_info() {
 	Sandbox::BinaryInfo info = Sandbox::get_program_info_from_binary(this->elf_data);
+	this->methods_info.clear();
 	for (const String &func_name : info.functions) {
-		WARN_PRINT("Found function: " + func_name);
+		//WARN_PRINT("Found function: " + func_name);
 		methods_info.push_back(MethodInfo(func_name));
 	}
 

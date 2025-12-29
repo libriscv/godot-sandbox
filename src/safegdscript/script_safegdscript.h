@@ -57,9 +57,9 @@ public:
 	void set_path(const String &p_path);
 	SafeGDScriptInstance *get_safegdscript_script_instance() const;
 	const String &get_path() const { return path; }
+	const PackedByteArray &get_content() const { return elf_data; }
 	bool compile_source_to_elf();
 	void remove_instance(SafeGDScriptInstance *p_instance);
-	void update_methods_info(Sandbox *p_sandbox);
 
 	static String PathToGlobalName(const String &p_path) {
 		return "SafeGDScript_" + p_path.get_basename().replace("res://", "").replace("/", "_").replace("-", "_").capitalize().replace(" ", "");
@@ -69,6 +69,8 @@ public:
 	~SafeGDScript();
 
 private:
+	void update_methods_info();
+
 	String path;
 	mutable HashSet<SafeGDScriptInstance *> instances;
 	PackedByteArray elf_data;
