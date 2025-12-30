@@ -41,6 +41,9 @@ func _ready():
 	_update_status()
 
 func _update_status():
+	if ProjectSettings.get_setting("editor/script/skip", false):
+		hide()
+		return
 	# CMake
 	var output := []
 	var exit_code := OS.execute(ProjectSettings.get_setting("editor/script/cmake", "cmake"), ["--version"], output, true)
@@ -51,7 +54,7 @@ func _update_status():
 		print("CMake not installed: ", output)
 		cmake_status.text = "CMake: " + status["not_installed"]
 		show()
-	
+	output = []
 	# Make (Linux/macOS) or Ninja (Windows)
 	if OS.get_name() == "Windows":
 		exit_code = OS.execute(ProjectSettings.get_setting("editor/script/make", "ninja"), ["--version"], output, true)
@@ -70,7 +73,7 @@ func _update_status():
 			make_status.text = "Make: " + status["not_installed"]
 			show()
 
-	
+	output = []
 	# Git
 	exit_code = OS.execute(ProjectSettings.get_setting("editor/script/git", "git"), ["--version"], output, true)
 	
@@ -80,7 +83,7 @@ func _update_status():
 		print("Git not installed: ", output)
 		git_status.text = "Git: " + status["not_installed"]
 		show()
-	
+	output = []
 	# Zig
 	exit_code = OS.execute(ProjectSettings.get_setting("editor/script/zig", "zig"), ["--help"], output, true)
 	
@@ -176,7 +179,11 @@ func _on_download_complete(result, response_code, headers, body, downloaded_name
 	DirAccess.make_dir_recursive_absolute("user://godot-sandbox/%s" % downloaded_name)
 	var first_subfolder = ("user://godot-sandbox/tmp/%s" % downloaded_name) + "/" + DirAccess.open("user://godot-sandbox/tmp/%s" % downloaded_name).get_directories()[0]
 	print("Renaming ", first_subfolder, " to ", "user://godot-sandbox/%s" % downloaded_name)
-	DirAccess.rename_absolute(first_subfolder, "user://godot-sandbox/%s" % downloaded_name)
+	await get_tree().create_timer(1.0).timeout
+	var err = DirAccess.rename_absolute(first_subfolder, "user://godot-sandbox/%s" % downloaded_name)
+	if err != OK:
+		print("Error renaming %s " % downloaded_name)
+		push_error("Error code: ", err)
 	var binary_name = downloaded_name
 	match OS.get_name():
 		"Windows":
@@ -228,4 +235,10 @@ func _on_zig_button_pressed() -> void:
 
 
 func _on_button_pressed() -> void:
+	hide()
+
+
+func _on_skip_pressed() -> void:
+	ProjectSettings.set_setting("editor/script/skip", true)
+	ProjectSettings.save()
 	hide()

@@ -6,9 +6,10 @@
 bg_color = Color(0.129412, 0.14902, 0.180392, 1)
 
 [node name="Downloader" type="Window" node_paths=PackedStringArray("cmake_status", "make_status", "git_status", "zig_status", "os_tab_container")]
+oversampling_override = 1.0
 title = "Godot Sandbox Dependencies ( macOS arm64 )"
 initial_position = 2
-size = Vector2i(1240, 910)
+size = Vector2i(1240, 950)
 visible = false
 wrap_controls = true
 script = ExtResource("1_843n5")
@@ -39,7 +40,7 @@ layout_mode = 2
 size_flags_vertical = 4
 focus_mode = 2
 bbcode_enabled = true
-text = "You need to install the following dependencies: [url=https://cmake.org/download/]CMake[/url], [url=https://ziglang.org/download/]Zig[/url], [url=https://git-scm.com/downloads]Git[/url]. On windows need additionally [url=https://ninja-build.org]Ninja[/url].
+text = "If you don't use Safe GDScript, you need to install the following dependencies (for elf compilation): [url=https://cmake.org/download/]CMake[/url], [url=https://ziglang.org/download/]Zig[/url], [url=https://git-scm.com/downloads]Git[/url]. On windows need additionally [url=https://ninja-build.org]Ninja[/url].
 Either install with the following [b]commands[/b], or download manually to user://godot-sandbox using the below [b]buttons[/b].
 Aslo make sure the paths are set correctly in the [b]PATH[/b] or in the following Project Settings:
 [color=gray]\"editor/script/cmake\", \"editor/script/zig\", \"editor/script/git\", \"editor/script/make\"[/color]"
@@ -131,7 +132,7 @@ fit_content = true
 [node name="ZigStatus" type="RichTextLabel" parent="Panel/VBoxContainer"]
 layout_mode = 2
 bbcode_enabled = true
-text = "Zig: [color=green]Installed[/color]"
+text = "Zig: [color=red]Not installed[/color]"
 fit_content = true
 
 [node name="GitStatus" type="RichTextLabel" parent="Panel/VBoxContainer"]
@@ -149,9 +150,13 @@ fit_content = true
 [node name="Panel" type="VBoxContainer" parent="Panel/VBoxContainer"]
 layout_mode = 2
 
-[node name="Button" type="Button" parent="Panel/VBoxContainer/Panel"]
+[node name="Close" type="Button" parent="Panel/VBoxContainer/Panel"]
 layout_mode = 2
 text = "Close"
+
+[node name="Skip" type="Button" parent="Panel/VBoxContainer/Panel"]
+layout_mode = 2
+text = "Skip"
 
 [connection signal="about_to_popup" from="." to="." method="_on_about_to_popup"]
 [connection signal="meta_clicked" from="Panel/VBoxContainer/Label2" to="." method="_on_label_meta_clicked"]
@@ -160,4 +165,5 @@ text = "Close"
 [connection signal="meta_clicked" from="Panel/VBoxContainer/TabContainer/Linux/Label" to="." method="_on_label_meta_clicked"]
 [connection signal="pressed" from="Panel/VBoxContainer/HBoxContainer/CmakeButton" to="." method="_on_cmake_button_pressed"]
 [connection signal="pressed" from="Panel/VBoxContainer/HBoxContainer/ZigButton" to="." method="_on_zig_button_pressed"]
-[connection signal="pressed" from="Panel/VBoxContainer/Panel/Button" to="." method="_on_button_pressed"]
+[connection signal="pressed" from="Panel/VBoxContainer/Panel/Close" to="." method="_on_button_pressed"]
+[connection signal="pressed" from="Panel/VBoxContainer/Panel/Skip" to="." method="_on_skip_pressed"]
