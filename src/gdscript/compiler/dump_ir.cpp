@@ -227,6 +227,7 @@ int main(int argc, char** argv)
 					case IROpcode::CALL_SYSCALL:
 					case IROpcode::VCALL:
 					case IROpcode::VGET:
+					case IROpcode::VSET:
 					case IROpcode::MAKE_ARRAY:
 					case IROpcode::MAKE_PACKED_BYTE_ARRAY:
 					case IROpcode::MAKE_PACKED_INT32_ARRAY:
@@ -323,6 +324,16 @@ int main(int argc, char** argv)
 						case IROpcode::VSET_INLINE:
 							if (instr.operands.size() >= 3) {
 								std::cout << "  ; Set inline member";
+							}
+							break;
+						case IROpcode::VGET:
+							if (instr.operands.size() >= 3) {
+								std::cout << "  ; Property get (sugar for obj.get)";
+							}
+							break;
+						case IROpcode::VSET:
+							if (instr.operands.size() >= 3) {
+								std::cout << "  ; Property set (sugar for obj.set)";
 							}
 							break;
 						default:

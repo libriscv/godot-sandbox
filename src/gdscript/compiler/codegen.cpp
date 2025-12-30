@@ -110,9 +110,9 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, IRFunction& func) {
 void CodeGenerator::gen_assign(const AssignStmt* stmt, IRFunction& func) {
 	int value_reg = gen_expr(stmt->value.get(), func);
 
-	// Check if this is an indexed assignment (arr[0] = value)
+	// Check if this is an indexed assignment (arr[0] = value) or property assignment (obj.prop = value)
 	if (stmt->target) {
-		// Transform arr[idx] = value to arr.set(idx, value)
+		// Check for indexed assignment: arr[idx] = value
 		if (auto* index_expr = dynamic_cast<const IndexExpr*>(stmt->target.get())) {
 			int obj_reg = gen_expr(index_expr->object.get(), func);
 			int idx_reg = gen_expr(index_expr->index.get(), func);
@@ -134,9 +134,48 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, IRFunction& func) {
 			free_register(value_reg);
 			free_register(result_reg);
 			return;
-		} else {
-			throw std::runtime_error("Invalid assignment target type");
 		}
+
+		// Check for property assignment: obj.prop = value
+		if (auto* member_expr = dynamic_cast<const MemberCallExpr*>(stmt->target.get())) {
+			// Verify this is a property access (not a method call)
+			if (member_expr->is_method_call) {
+				throw std::runtime_error("Cannot assign to method call");
+			}
+
+			int obj_reg = gen_expr(member_expr->object.get(), func);
+
+			// Property set: obj.prop = value
+			// Sugar for: obj.set("property", value)
+			// Emit VCALL with method="set" and two arguments (property name string, value)
+
+			// Create a String Variant for the property name
+			int prop_name_reg = alloc_register();
+			int str_idx = add_string_constant(member_expr->member_name);
+			IRInstruction load_str_instr(IROpcode::LOAD_STRING);
+			load_str_instr.operands.push_back(IRValue::reg(prop_name_reg));
+			load_str_instr.operands.push_back(IRValue::imm(str_idx));
+			func.instructions.push_back(load_str_instr);
+
+			// Emit VCALL to obj.set("property", value)
+			int result_reg = alloc_register();
+			IRInstruction vcall_instr(IROpcode::VCALL);
+			vcall_instr.operands.push_back(IRValue::reg(result_reg));
+			vcall_instr.operands.push_back(IRValue::reg(obj_reg));
+			vcall_instr.operands.push_back(IRValue::str("set"));
+			vcall_instr.operands.push_back(IRValue::imm(2)); // 2 arguments
+			vcall_instr.operands.push_back(IRValue::reg(prop_name_reg));
+			vcall_instr.operands.push_back(IRValue::reg(value_reg));
+			func.instructions.push_back(vcall_instr);
+
+			free_register(obj_reg);
+			free_register(prop_name_reg);
+			free_register(value_reg);
+			free_register(result_reg);
+			return;
+		}
+
+		throw std::runtime_error("Invalid assignment target type");
 	}
 
 	// Simple variable assignment
@@ -809,14 +848,40 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, IRFunction& func)
 		arg_regs.push_back(gen_expr(arg.get(), func));
 	}
 
-	// Check if this is inline member access (property get with no arguments)
-	if (arg_regs.empty()) {
+	// Check if this is inline member access (x, y, z, r, g, b, a on vectors)
+	if (!expr->is_method_call && arg_regs.empty()) {
 		IRInstruction::TypeHint obj_type = get_register_type(obj_reg);
 		if (is_inline_member_access(obj_type, expr->member_name)) {
 			int result = gen_inline_member_get(obj_reg, obj_type, expr->member_name, func);
 			free_register(obj_reg);
 			return result;
 		}
+
+		// Property access: obj.property (no parentheses)
+		// Sugar for: obj.get("property")
+		// Emit VCALL with method="get" and one String argument
+		int result_reg = alloc_register();
+
+		// Create a String Variant for the property name
+		int prop_name_reg = alloc_register();
+		int str_idx = add_string_constant(expr->member_name);
+		IRInstruction load_str_instr(IROpcode::LOAD_STRING);
+		load_str_instr.operands.push_back(IRValue::reg(prop_name_reg));
+		load_str_instr.operands.push_back(IRValue::imm(str_idx));
+		func.instructions.push_back(load_str_instr);
+
+		// Emit VCALL to obj.get("property")
+		IRInstruction vcall_instr(IROpcode::VCALL);
+		vcall_instr.operands.push_back(IRValue::reg(result_reg));
+		vcall_instr.operands.push_back(IRValue::reg(obj_reg));
+		vcall_instr.operands.push_back(IRValue::str("get"));
+		vcall_instr.operands.push_back(IRValue::imm(1)); // 1 argument
+		vcall_instr.operands.push_back(IRValue::reg(prop_name_reg));
+		func.instructions.push_back(vcall_instr);
+
+		free_register(obj_reg);
+		free_register(prop_name_reg);
+		return result_reg;
 	}
 
 	int result_reg = alloc_register();

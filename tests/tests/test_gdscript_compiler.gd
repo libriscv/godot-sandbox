@@ -2636,3 +2636,53 @@ func test_multiple_calls():
 	assert_eq(result, true, "get_name() and self.get_name() should return the same value")
 
 	s.queue_free()
+
+
+func test_properties():
+	# Test property access - obj.property should translate to obj.get("property")
+	# and obj.property = value should translate to obj.set("property", value)
+	var gdscript_code = """
+func test_property_get():
+	var node = get_node()
+	# Access the 'name' property - should use VGET instruction
+	var name = node.name
+	return name
+func test_property_set():
+	var node = get_node()
+	# Set the 'name' property using VSET instruction
+	var old_name = node.name
+	node.name = "test_name"
+	var new_name = node.name
+	return new_name
+
+func test_property_self_get():
+	return self.name
+func test_property_self_set():
+	var old_name = self.name
+	self.name = "test_name"
+	return self.name
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	# Test that property access works
+	var result = s.vmcallv("test_property_get")
+	assert_not_null(result, "node.name should return a value")
+
+	result = s.vmcallv("test_property_set")
+	assert_eq(result, "test_name", "After setting, node.name should be 'test_name'")
+
+	result = s.vmcallv("test_property_self_get")
+	assert_not_null(result, "self.name should return a value")
+	result = s.vmcallv("test_property_self_set")
+	assert_eq(result, "test_name", "After setting, self.name should be 'test_name'")
+
+	s.queue_free()

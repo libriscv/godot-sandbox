@@ -219,12 +219,19 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 		ExprPtr value = parse_expression();
 		consume(TokenType::NEWLINE, "Expected newline after assignment");
 
-		// Check if lhs is a simple variable or an indexed expression
+		// Check if lhs is a simple variable, indexed expression, or property access
 		if (auto* var_expr = dynamic_cast<VariableExpr*>(lhs.get())) {
 			// Simple variable assignment: x = value
 			return std::make_unique<AssignStmt>(var_expr->name, std::move(value));
 		} else if (dynamic_cast<IndexExpr*>(lhs.get())) {
 			// Indexed assignment: arr[0] = value
+			return std::make_unique<AssignStmt>(std::move(lhs), std::move(value));
+		} else if (auto* member_expr = dynamic_cast<MemberCallExpr*>(lhs.get())) {
+			// Property assignment: obj.prop = value
+			// Verify it's a property access (not a method call)
+			if (member_expr->is_method_call) {
+				throw std::runtime_error("Cannot assign to method call");
+			}
 			return std::make_unique<AssignStmt>(std::move(lhs), std::move(value));
 		} else {
 			throw std::runtime_error("Invalid assignment target");
@@ -419,7 +426,7 @@ ExprPtr Parser::parse_call() {
 			Token member = consume(TokenType::IDENTIFIER, "Expected property or method name after '.'");
 
 			if (match(TokenType::LPAREN)) {
-				// Method call
+				// Method call (including argument-less methods like obj.method())
 				std::vector<ExprPtr> arguments;
 
 				if (!check(TokenType::RPAREN)) {
@@ -429,10 +436,10 @@ ExprPtr Parser::parse_call() {
 				}
 
 				consume(TokenType::RPAREN, "Expected ')' after arguments");
-				expr = std::make_unique<MemberCallExpr>(std::move(expr), member.lexeme, std::move(arguments));
+				expr = std::make_unique<MemberCallExpr>(std::move(expr), member.lexeme, std::move(arguments), true);
 			} else {
-				// Property access
-				expr = std::make_unique<MemberCallExpr>(std::move(expr), member.lexeme);
+				// Property access (no parentheses)
+				expr = std::unique_ptr<MemberCallExpr>(new MemberCallExpr(std::move(expr), member.lexeme, {}, false));
 			}
 		} else if (match(TokenType::LBRACKET)) {
 			// Array indexing

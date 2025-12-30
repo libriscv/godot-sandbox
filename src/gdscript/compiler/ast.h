@@ -83,9 +83,10 @@ struct MemberCallExpr : Expr {
 	ExprPtr object;
 	std::string member_name;
 	std::vector<ExprPtr> arguments; // Empty if property access
+	bool is_method_call = false;    // true if this is obj.method(), false if obj.property
 
-	MemberCallExpr(ExprPtr obj, std::string name, std::vector<ExprPtr> args = {})
-		: object(std::move(obj)), member_name(std::move(name)), arguments(std::move(args)) {}
+	MemberCallExpr(ExprPtr obj, std::string name, std::vector<ExprPtr> args = {}, bool is_method = false)
+		: object(std::move(obj)), member_name(std::move(name)), arguments(std::move(args)), is_method_call(is_method) {}
 };
 
 // Array index: arr[0]
