@@ -66,7 +66,7 @@ bool SafeGDScript::_has_method(const StringName &p_method) const {
 		return true;
 	for (const godot::MethodInfo &method_info : methods_info) {
 		if (method_info.name == p_method) {
-			WARN_PRINT("SafeGDScript::_has_method: found method " + p_method);
+			//WARN_PRINT("SafeGDScript::_has_method: found method " + p_method);
 			return true;
 		}
 	}

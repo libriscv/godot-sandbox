@@ -33,7 +33,6 @@ bool SafeGDScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 		r_ret = this->script;
 		return true;
 	}
-
 	auto [sandbox, created] = get_sandbox();
 	if (sandbox) {
 		ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
@@ -71,9 +70,32 @@ Variant SafeGDScriptInstance::callp(
 	}
 	const auto address = sandbox->cached_address_of(p_method.hash(), p_method);
 	if (address == 0) {
-		//WARN_PRINT("SafeGDScriptInstance::callp: method not found: " + p_method);
-		r_error.error = GDExtensionCallErrorType::GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-		return Variant();
+		// Block methods that definitely doesn't belong to the Sandbox node
+		if (p_method == StringName("_ready")
+			|| p_method == StringName("_enter_tree")
+			|| p_method == StringName("_exit_tree")
+			|| p_method == StringName("_process")
+			|| p_method == StringName("_physics_process")
+			|| p_method == StringName("_input")
+			|| p_method == StringName("_unhandled_input")
+			|| p_method == StringName("_unhandled_key_input")
+			|| p_method == StringName("_notification")
+			|| p_method == StringName("_get_configuration_warnings")
+			|| p_method == StringName("_hide_script_from_inspector")
+			|| p_method == StringName("_hide_metadata_from_inspector")
+			|| p_method == StringName("_get_property_list")
+			|| p_method == StringName("_get_method_list")
+			|| p_method == StringName("_get_script_method_list"))
+		{
+			r_error.error = GDExtensionCallErrorType::GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+			return Variant();
+		}
+		Array args;
+		for (int i = 0; i < p_argument_count; i++) {
+			args.push_back(*p_args[i]);
+		}
+		r_error.error = GDEXTENSION_CALL_OK;
+		return sandbox->callv(p_method, args);
 	}
 	//WARN_PRINT("SafeGDScriptInstance::callp: Calling method " + p_method + " at address " + itos(address) + " with " + itos(p_argument_count) + " arguments.");
 	ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
@@ -91,8 +113,8 @@ const GDExtensionMethodInfo *SafeGDScriptInstance::get_method_list(uint32_t *r_c
 		list[i] = create_method_info(method_info);
 		i++;
 	}
-
 	*r_count = size;
+
 	return list;
 }
 
@@ -155,7 +177,6 @@ const GDExtensionPropertyInfo *SafeGDScriptInstance::get_property_list(uint32_t 
 		list->usage = prop.usage;
 		list++;
 	}
-
 	return list_ptr;
 }
 void SafeGDScriptInstance::free_property_list(const GDExtensionPropertyInfo *p_list, uint32_t p_count) const {
