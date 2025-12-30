@@ -41,9 +41,7 @@ func _ready():
 	_update_status()
 
 func _update_status():
-	print("Skip: ",  ProjectSettings.get_setting("editor/script/skip", false))
 	if ProjectSettings.get_setting("editor/script/skip", false):
-		print("Skipping")
 		hide()
 		return
 	# CMake
@@ -181,6 +179,7 @@ func _on_download_complete(result, response_code, headers, body, downloaded_name
 	DirAccess.make_dir_recursive_absolute("user://godot-sandbox/%s" % downloaded_name)
 	var first_subfolder = ("user://godot-sandbox/tmp/%s" % downloaded_name) + "/" + DirAccess.open("user://godot-sandbox/tmp/%s" % downloaded_name).get_directories()[0]
 	print("Renaming ", first_subfolder, " to ", "user://godot-sandbox/%s" % downloaded_name)
+	await get_tree().create_timer(1.0).timeout
 	var err = DirAccess.rename_absolute(first_subfolder, "user://godot-sandbox/%s" % downloaded_name)
 	if err != OK:
 		print("Error renaming %s " % downloaded_name)

@@ -10,6 +10,7 @@ oversampling_override = 1.0
 title = "Godot Sandbox Dependencies ( macOS arm64 )"
 initial_position = 2
 size = Vector2i(1240, 950)
+visible = false
 wrap_controls = true
 script = ExtResource("1_843n5")
 cmake_status = NodePath("Panel/VBoxContainer/CmakeStatus")
