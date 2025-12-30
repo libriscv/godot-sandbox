@@ -2532,3 +2532,107 @@ func test_const_in_expression():
 	assert_almost_eq(result, 25.0, 0.001, "Const expression should be 25.0")
 
 	s.queue_free()
+
+
+func test_self_get_name():
+	# Test self.get_name() - calling a method on self
+	var gdscript_code = """
+func test_get_name():
+	return self.get_name()
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	# Test that get_name() can be called on self
+	# get_name() returns a StringName, which is type 21
+	var result = s.vmcallv("test_get_name")
+	assert_eq(typeof(result), TYPE_STRING_NAME, "self.get_name() should return a StringName")
+	# Just check that we got some result (not null)
+	assert_not_null(result, "self.get_name() should return a value")
+
+	s.queue_free()
+
+
+func test_freestanding_function_call():
+	# Test freestanding get_name() - should be treated as self.get_name()
+	var gdscript_code = """
+func test_freestanding():
+	return get_name()
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	# Test that get_name() works as a freestanding function
+	var result = s.vmcallv("test_freestanding")
+	assert_eq(typeof(result), TYPE_STRING_NAME, "get_name() should return a StringName")
+	assert_not_null(result, "get_name() should return a value")
+
+	s.queue_free()
+
+
+func test_get_node_no_args():
+	# Test get_node() without arguments - should return self
+	var gdscript_code = """
+func test_get_node_self():
+	var node = get_node()
+	return node.get_name()
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	# Test that get_node() returns a node
+	var result = s.vmcallv("test_get_node_self")
+	assert_eq(typeof(result), TYPE_STRING_NAME, "get_node().get_name() should return a StringName")
+	assert_not_null(result, "get_node().get_name() should return a value")
+
+	s.queue_free()
+
+
+func test_multiple_freestanding_calls():
+	# Test multiple freestanding function calls in sequence
+	var gdscript_code = """
+func test_multiple_calls():
+	var name1 = get_name()
+	var name2 = self.get_name()
+	return name1 == name2
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	# Both should return the same name
+	var result = s.vmcallv("test_multiple_calls")
+	assert_eq(result, true, "get_name() and self.get_name() should return the same value")
+
+	s.queue_free()

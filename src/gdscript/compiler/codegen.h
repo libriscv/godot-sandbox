@@ -92,8 +92,14 @@ private:
 	bool is_global_class(const std::string& name) const;
 	int gen_global_class_get(const std::string& class_name, IRFunction& func);
 
+	// Local function detection
+	bool is_local_function(const std::string& name) const;
+
 	// Set of global class names
 	static std::unordered_set<std::string> get_global_classes();
+
+	// Track locally defined functions
+	std::unordered_set<std::string> m_local_functions;
 };
 
 } // namespace gdscript

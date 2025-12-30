@@ -1307,6 +1307,81 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_li(REG_A7, syscall_num);
 					emit_ecall();
 
+				} else if (syscall_num == 507) {
+					// ECALL_GET_NODE: result_reg, 507, addr, [path_vreg]
+					// Takes: a0 = base node address (0 for owner), a1 = path string pointer, a2 = path length
+					// Returns: a0 = node object reference
+					if (instr.operands.size() < 3) {
+						throw std::runtime_error("ECALL_GET_NODE requires at least 3 operands");
+					}
+
+					int base_addr = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+					bool has_path = instr.operands.size() >= 4;
+
+					// Ensure result variant has a stack slot BEFORE handling clobbering
+					int result_offset = get_variant_stack_offset(result_vreg);
+
+					// ECALL_GET_NODE clobbers a0, a1, a2
+					std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2};
+					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+
+					for (const auto& move : moves) {
+						emit_mv(move.second, move.first);
+					}
+
+					if (has_path) {
+						// get_node(path) - load path from variant register
+						int path_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
+						int path_offset = get_variant_stack_offset(path_vreg);
+
+						// Load the String variant from path_vreg
+						// String variant structure: type(4) + padding(4) + data(16)
+						// For strings, we need to extract the pointer and length
+
+						// a0 = base node address (0 for owner)
+						emit_li(REG_A0, base_addr);
+
+						// Load string pointer from offset 8 of the String variant
+						emit_ld(REG_A1, REG_SP, path_offset + 8); // Load 64-bit pointer
+
+						// Load string length from offset 16 (assuming it's stored there)
+						// For now, we'll use a fixed approach - this may need adjustment
+						// String length might be at offset 16 or we may need to query it
+						emit_ld(REG_A2, REG_SP, path_offset + 16); // Load 64-bit length
+					} else {
+						// get_node() - no path argument, get the current node using "."
+						// Allocate space for the "." string (2 bytes: '.' + null terminator)
+						int dot_str_space = 8; // Align to 8 bytes
+						emit_stack_adjust(-dot_str_space);
+
+						// Store "." string on stack
+						emit_li(REG_T0, static_cast<uint8_t>('.'));
+						emit_sb(REG_T0, REG_SP, 0); // Store '.'
+						emit_sb(REG_ZERO, REG_SP, 1); // Store null terminator
+
+						// a0 = base node address (0 for owner)
+						emit_li(REG_A0, base_addr);
+
+						// a1 = pointer to "." string
+						emit_mv(REG_A1, REG_SP);
+
+						// a2 = string length (1)
+						emit_li(REG_A2, 1);
+					}
+
+					// a7 = syscall number (507 for ECALL_GET_NODE)
+					emit_li(REG_A7, syscall_num);
+					emit_ecall();
+
+					// After ecall, a0 contains the node object reference
+					// Restore stack if we allocated space for the "."
+					if (!has_path) {
+						emit_stack_adjust(8); // Restore the stack space for "."
+					}
+
+					// Store syscall result
+					emit_syscall_result(result_vreg, REG_A0, result_offset, 24); // OBJECT type = 24
+
 				} else {
 					throw std::runtime_error("Unknown syscall number: " + std::to_string(syscall_num));
 				}

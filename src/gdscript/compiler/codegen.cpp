@@ -10,6 +10,12 @@ CodeGenerator::CodeGenerator() {}
 IRProgram CodeGenerator::generate(const Program& program) {
 	IRProgram ir_program;
 
+	// Collect all locally defined function names
+	m_local_functions.clear();
+	for (const auto& func : program.functions) {
+		m_local_functions.insert(func.name);
+	}
+
 	for (const auto& func : program.functions) {
 		ir_program.functions.push_back(generate_function(func));
 	}
@@ -578,6 +584,21 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, IRFunction& func) {
 		return gen_global_class_get(expr->name, func);
 	}
 
+	// Handle 'self' as an alias for get_node()
+	if (expr->name == "self") {
+		// Generate get_node() call
+		int result_reg = alloc_register();
+
+		// CALL_SYSCALL result_reg, ECALL_GET_NODE, 0
+		IRInstruction instr(IROpcode::CALL_SYSCALL);
+		instr.operands.push_back(IRValue::reg(result_reg));    // result register
+		instr.operands.push_back(IRValue::imm(507));            // ECALL_GET_NODE
+		instr.operands.push_back(IRValue::imm(0));              // addr = 0 (owner node)
+		func.instructions.push_back(instr);
+
+		return result_reg;
+	}
+
 	Variable* var = find_variable(expr->name);
 	if (!var) {
 		throw std::runtime_error("Undefined variable: " + expr->name);
@@ -685,19 +706,93 @@ int CodeGenerator::gen_call(const CallExpr* expr, IRFunction& func) {
 		return result;
 	}
 
+	// Handle get_node() as a special syscall
+	if (expr->function_name == "get_node") {
+		// get_node() takes 0 or 1 argument (node path)
+		if (arg_regs.size() > 1) {
+			throw std::runtime_error("get_node() takes at most 1 argument");
+		}
+
+		int result_reg = alloc_register();
+
+		if (arg_regs.empty()) {
+			// get_node() with no args - get the owner node
+			// CALL_SYSCALL result_reg, ECALL_GET_NODE, 0
+			IRInstruction instr(IROpcode::CALL_SYSCALL);
+			instr.operands.push_back(IRValue::reg(result_reg));    // result register
+			instr.operands.push_back(IRValue::imm(507));            // ECALL_GET_NODE
+			instr.operands.push_back(IRValue::imm(0));              // addr = 0 (owner node)
+			func.instructions.push_back(instr);
+		} else {
+			// get_node(path) - will be handled in RISC-V codegen
+			// For now, convert to CALL_SYSCALL with the path argument
+			int path_reg = arg_regs[0];
+
+			IRInstruction instr(IROpcode::CALL_SYSCALL);
+			instr.operands.push_back(IRValue::reg(result_reg));    // result register
+			instr.operands.push_back(IRValue::imm(507));            // ECALL_GET_NODE
+			instr.operands.push_back(IRValue::imm(0));              // addr = 0 (owner node)
+			instr.operands.push_back(IRValue::reg(path_reg));       // path register
+			func.instructions.push_back(instr);
+		}
+
+		for (int reg : arg_regs) {
+			free_register(reg);
+		}
+
+		return result_reg;
+	}
+
+	// Check if this is a call to a locally defined function
+	if (is_local_function(expr->function_name)) {
+		// Local function call - use regular CALL instruction
+		int result_reg = alloc_register();
+
+		// Generate CALL instruction with function name, result register, and argument registers
+		// Format: CALL function_name, result_reg, arg_count, arg1_reg, arg2_reg, ...
+		IRInstruction call_instr(IROpcode::CALL);
+		call_instr.operands.push_back(IRValue::str(expr->function_name));
+		call_instr.operands.push_back(IRValue::reg(result_reg));
+		call_instr.operands.push_back(IRValue::imm(arg_regs.size()));
+		for (int arg_reg : arg_regs) {
+			call_instr.operands.push_back(IRValue::reg(arg_reg));
+		}
+		func.instructions.push_back(call_instr);
+
+		for (int reg : arg_regs) {
+			free_register(reg);
+		}
+
+		return result_reg;
+	}
+
+	// Treat all other freestanding function calls as self-calls
+	// Convert foo(arg1, arg2) to self.foo(arg1, arg2)
+	int self_reg = alloc_register();
+
+	// Generate get_node() for self
+	// CALL_SYSCALL self_reg, ECALL_GET_NODE, 0
+	IRInstruction get_self_instr(IROpcode::CALL_SYSCALL);
+	get_self_instr.operands.push_back(IRValue::reg(self_reg));     // result register
+	get_self_instr.operands.push_back(IRValue::imm(507));            // ECALL_GET_NODE
+	get_self_instr.operands.push_back(IRValue::imm(0));              // addr = 0 (owner node)
+	func.instructions.push_back(get_self_instr);
+
 	int result_reg = alloc_register();
 
-	// Generate CALL instruction with function name, result register, and argument registers
-	// Format: CALL function_name, result_reg, arg_count, arg1_reg, arg2_reg, ...
-	IRInstruction call_instr(IROpcode::CALL);
-	call_instr.operands.push_back(IRValue::str(expr->function_name));
-	call_instr.operands.push_back(IRValue::reg(result_reg));
-	call_instr.operands.push_back(IRValue::imm(arg_regs.size()));
+	// Generate VCALL instruction for self.method call
+	// Format: VCALL result_reg, self_reg, method_name, arg_count, arg1_reg, arg2_reg, ...
+	IRInstruction vcall_instr(IROpcode::VCALL);
+	vcall_instr.operands.push_back(IRValue::reg(result_reg));
+	vcall_instr.operands.push_back(IRValue::reg(self_reg));
+	vcall_instr.operands.push_back(IRValue::str(expr->function_name));
+	vcall_instr.operands.push_back(IRValue::imm(arg_regs.size()));
 	for (int arg_reg : arg_regs) {
-		call_instr.operands.push_back(IRValue::reg(arg_reg));
+		vcall_instr.operands.push_back(IRValue::reg(arg_reg));
 	}
-	func.instructions.push_back(call_instr);
+	func.instructions.push_back(vcall_instr);
 
+	free_register(self_reg);
 	for (int reg : arg_regs) {
 		free_register(reg);
 	}
@@ -1186,6 +1281,10 @@ std::unordered_set<std::string> CodeGenerator::get_global_classes() {
 bool CodeGenerator::is_global_class(const std::string& name) const {
 	static const auto global_classes = get_global_classes();
 	return global_classes.find(name) != global_classes.end();
+}
+
+bool CodeGenerator::is_local_function(const std::string& name) const {
+	return m_local_functions.find(name) != m_local_functions.end();
 }
 
 int CodeGenerator::gen_global_class_get(const std::string& class_name, IRFunction& func) {
