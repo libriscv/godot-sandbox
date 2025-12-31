@@ -25,6 +25,7 @@ enum class TokenType {
 	BREAK,
 	CONTINUE,
 	PASS,
+	EXTENDS,
 	TRUE,
 	FALSE,
 	NULL_VAL,

@@ -12,7 +12,13 @@ Program Parser::parse() {
 	skip_newlines();
 
 	while (!is_at_end()) {
-		if (check(TokenType::FUNC)) {
+		if (check(TokenType::EXTENDS)) {
+			// Parse and ignore extends statement
+			advance(); // consume 'extends'
+			consume(TokenType::IDENTIFIER, "Expected class name after 'extends'");
+			// Skip any newlines after extends
+			skip_newlines();
+		} else if (check(TokenType::FUNC)) {
 			program.functions.push_back(parse_function());
 		} else {
 			error("Expected function declaration");

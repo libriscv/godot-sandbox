@@ -349,6 +349,52 @@ void test_mixed_type_hints() {
 	std::cout << "  ✓ Mixed type hints test passed" << std::endl;
 }
 
+void test_extends_keyword() {
+	std::cout << "Testing extends keyword (ignored)..." << std::endl;
+
+	std::string source = R"(extends Node
+
+func test():
+	return 42
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	// extends should be parsed and ignored
+	assert(program.functions.size() == 1);
+	assert(program.functions[0].name == "test");
+
+	std::cout << "  ✓ Extends keyword test passed" << std::endl;
+}
+
+void test_extends_with_multiple_functions() {
+	std::cout << "Testing extends with multiple functions..." << std::endl;
+
+	std::string source = R"(extends CharacterBody2D
+
+func _ready():
+	pass
+
+func _process(delta: float):
+	return delta
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	// extends should be parsed and ignored, functions should be parsed normally
+	assert(program.functions.size() == 2);
+	assert(program.functions[0].name == "_ready");
+	assert(program.functions[1].name == "_process");
+	assert(program.functions[1].parameters.size() == 1);
+	assert(program.functions[1].parameters[0].type_hint == "float");
+
+	std::cout << "  ✓ Extends with multiple functions test passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== Running Parser Tests ===" << std::endl;
 
@@ -366,6 +412,8 @@ int main() {
 		test_function_return_type();
 		test_variable_type_hints();
 		test_mixed_type_hints();
+		test_extends_keyword();
+		test_extends_with_multiple_functions();
 
 		std::cout << "\n✅ All parser tests passed!" << std::endl;
 		return 0;
