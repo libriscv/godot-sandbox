@@ -42,10 +42,6 @@ if (CMAKE_HOST_WIN32)
 	set(CMAKE_AR "${CMAKE_CURRENT_LIST_DIR}/zig-ar.cmd")
 	set(CMAKE_RANLIB "${CMAKE_CURRENT_LIST_DIR}/zig-ranlib.cmd")
 endif()
-if (CMAKE_HOST_APPLE)
-	set(CMAKE_AR "${CMAKE_CURRENT_LIST_DIR}/zig-ar.cmd")
-	set(CMAKE_RANLIB "${CMAKE_CURRENT_LIST_DIR}/zig-ranlib.cmd")
-endif()
 )";
 static const char cmake_zig_ar_bytes[] = R"(
 @echo off
@@ -160,7 +156,7 @@ static bool configure_cmake(const String &path) {
 			return false;
 		}
 	}
-#if defined(_WIN32) || defined(__APPLE__)
+#if defined(_WIN32)
 	// Create the zig-ar.cmd file, if it does not exist
 	const String zig_ar_path = path + String("/zig-ar.cmd");
 	if (!FileAccess::file_exists(zig_ar_path)) {
