@@ -922,7 +922,23 @@ APICALL(api_obj_property_get) {
 	PENALIZE(150'000);
 	SYS_TRACE("obj_property_get", addr, method, vret);
 
-	godot::Object *obj = get_object_from_address(emu, addr);
+	godot::Object *obj = nullptr;
+	if ((uint16_t)addr != addr) {
+		obj = get_object_from_address(emu, addr);
+	} else {
+		// It's likely a Variant index
+		std::optional<const Variant *> var = emu.get_scoped_variant(uint32_t(addr));
+		if (var.has_value()) {
+			if (var.value()->get_type() != Variant::OBJECT) {
+				ERR_PRINT("api_obj_property_get: Variant is not an Object");
+				throw std::runtime_error("api_obj_property_get: Variant is not an Object");
+			}
+			obj = var.value()->operator godot::Object *();
+		} else {
+			ERR_PRINT("api_obj_property_get: Variant is not scoped");
+			throw std::runtime_error("api_obj_property_get: Variant is not scoped");
+		}
+	}
 	String prop_name = String::utf8(method.data(), method.size());
 
 	if (UNLIKELY(!emu.is_allowed_property(obj, prop_name, false))) {
@@ -939,7 +955,23 @@ APICALL(api_obj_property_set) {
 	PENALIZE(150'000);
 	SYS_TRACE("obj_property_set", addr, method, value);
 
-	godot::Object *obj = get_object_from_address(emu, addr);
+	godot::Object *obj = nullptr;
+	if ((uint16_t)addr != addr) {
+		obj = get_object_from_address(emu, addr);
+	} else {
+		// It's likely a Variant index
+		std::optional<const Variant *> var = emu.get_scoped_variant(uint32_t(addr));
+		if (var.has_value()) {
+			if (var.value()->get_type() != Variant::OBJECT) {
+				ERR_PRINT("api_obj_property_get: Variant is not an Object");
+				throw std::runtime_error("api_obj_property_get: Variant is not an Object");
+			}
+			obj = var.value()->operator godot::Object *();
+		} else {
+			ERR_PRINT("api_obj_property_get: Variant is not scoped");
+			throw std::runtime_error("api_obj_property_get: Variant is not scoped");
+		}
+	}
 	String prop_name = String::utf8(method.data(), method.size());
 
 	if (UNLIKELY(!emu.is_allowed_property(obj, prop_name, true))) {

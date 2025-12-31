@@ -146,32 +146,22 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, IRFunction& func) {
 			int obj_reg = gen_expr(member_expr->object.get(), func);
 
 			// Property set: obj.prop = value
-			// Sugar for: obj.set("property", value)
-			// Emit VCALL with method="set" and two arguments (property name string, value)
+			// Use dedicated VSET instruction with ECALL_OBJ_PROP_SET syscall
 
-			// Create a String Variant for the property name
-			int prop_name_reg = alloc_register();
+			// Get string index for property name
 			int str_idx = add_string_constant(member_expr->member_name);
-			IRInstruction load_str_instr(IROpcode::LOAD_STRING);
-			load_str_instr.operands.push_back(IRValue::reg(prop_name_reg));
-			load_str_instr.operands.push_back(IRValue::imm(str_idx));
-			func.instructions.push_back(load_str_instr);
 
-			// Emit VCALL to obj.set("property", value)
-			int result_reg = alloc_register();
-			IRInstruction vcall_instr(IROpcode::VCALL);
-			vcall_instr.operands.push_back(IRValue::reg(result_reg));
-			vcall_instr.operands.push_back(IRValue::reg(obj_reg));
-			vcall_instr.operands.push_back(IRValue::str("set"));
-			vcall_instr.operands.push_back(IRValue::imm(2)); // 2 arguments
-			vcall_instr.operands.push_back(IRValue::reg(prop_name_reg));
-			vcall_instr.operands.push_back(IRValue::reg(value_reg));
-			func.instructions.push_back(vcall_instr);
+			// Emit VSET instruction
+			// Format: VSET obj_reg, string_idx, string_len, value_reg
+			IRInstruction vset_instr(IROpcode::VSET);
+			vset_instr.operands.push_back(IRValue::reg(obj_reg));
+			vset_instr.operands.push_back(IRValue::imm(str_idx));
+			vset_instr.operands.push_back(IRValue::imm(static_cast<int64_t>(member_expr->member_name.length())));
+			vset_instr.operands.push_back(IRValue::reg(value_reg));
+			func.instructions.push_back(vset_instr);
 
 			free_register(obj_reg);
-			free_register(prop_name_reg);
 			free_register(value_reg);
-			free_register(result_reg);
 			return;
 		}
 
@@ -858,29 +848,22 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, IRFunction& func)
 		}
 
 		// Property access: obj.property (no parentheses)
-		// Sugar for: obj.get("property")
-		// Emit VCALL with method="get" and one String argument
+		// Use dedicated VGET instruction with ECALL_OBJ_PROP_GET syscall
 		int result_reg = alloc_register();
 
-		// Create a String Variant for the property name
-		int prop_name_reg = alloc_register();
+		// Get string index for property name
 		int str_idx = add_string_constant(expr->member_name);
-		IRInstruction load_str_instr(IROpcode::LOAD_STRING);
-		load_str_instr.operands.push_back(IRValue::reg(prop_name_reg));
-		load_str_instr.operands.push_back(IRValue::imm(str_idx));
-		func.instructions.push_back(load_str_instr);
 
-		// Emit VCALL to obj.get("property")
-		IRInstruction vcall_instr(IROpcode::VCALL);
-		vcall_instr.operands.push_back(IRValue::reg(result_reg));
-		vcall_instr.operands.push_back(IRValue::reg(obj_reg));
-		vcall_instr.operands.push_back(IRValue::str("get"));
-		vcall_instr.operands.push_back(IRValue::imm(1)); // 1 argument
-		vcall_instr.operands.push_back(IRValue::reg(prop_name_reg));
-		func.instructions.push_back(vcall_instr);
+		// Emit VGET instruction
+		// Format: VGET result_reg, obj_reg, string_idx, string_len
+		IRInstruction vget_instr(IROpcode::VGET);
+		vget_instr.operands.push_back(IRValue::reg(result_reg));
+		vget_instr.operands.push_back(IRValue::reg(obj_reg));
+		vget_instr.operands.push_back(IRValue::imm(str_idx));
+		vget_instr.operands.push_back(IRValue::imm(static_cast<int64_t>(expr->member_name.length())));
+		func.instructions.push_back(vget_instr);
 
 		free_register(obj_reg);
-		free_register(prop_name_reg);
 		return result_reg;
 	}
 

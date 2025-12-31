@@ -2684,5 +2684,7 @@ func test_property_self_set():
 	assert_not_null(result, "self.name should return a value")
 	result = s.vmcallv("test_property_self_set")
 	assert_eq(result, "test_name", "After setting, self.name should be 'test_name'")
+	result = s.vmcallv("test_property_self_get")
+	assert_eq(result, "test_name", "self.name should be 'test_name' after setting")
 
 	s.queue_free()

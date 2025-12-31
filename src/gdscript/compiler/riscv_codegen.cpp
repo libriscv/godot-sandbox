@@ -1152,13 +1152,156 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				break;
 			}
 
+			case IROpcode::VGET: {
+				// VGET format: result_reg, obj_reg, string_idx, string_len
+				// Uses ECALL_OBJ_PROP_GET (545)
+				// Calling convention:
+				//   A0 = object address (v.i from object Variant)
+				//   A1 = property name pointer
+				//   A2 = property name length
+				//   A3 = pointer to result Variant
+
+				if (instr.operands.size() != 4) {
+					throw std::runtime_error("VGET requires 4 operands (result_reg, obj_reg, string_idx, string_len)");
+				}
+
+				int result_vreg = std::get<int>(instr.operands[0].value);
+				int obj_vreg = std::get<int>(instr.operands[1].value);
+				int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+				int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+
+				// Get the string constant
+				if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
+					throw std::runtime_error("String constant index out of range");
+				}
+				const std::string& str = (*m_string_constants)[string_idx];
+
+				int result_offset = get_variant_stack_offset(result_vreg);
+				int obj_offset = get_variant_stack_offset(obj_vreg);
+
+				// ECALL_OBJ_PROP_GET clobbers a0-a3
+				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+
+				for (const auto& move : moves) {
+					emit_mv(move.second, move.first);
+				}
+
+				// A0 = object address (load from Variant's v.i field at offset 8)
+				// IMPORTANT: Load this BEFORE adjusting the stack, so obj_offset is correct
+				emit_ld(REG_A0, REG_SP, obj_offset + 8);
+
+				// Allocate stack space for the string
+				int str_space = ((string_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
+
+				emit_stack_adjust(-str_space);
+
+				// Store string on stack
+				for (size_t i = 0; i < str.length(); i++) {
+					emit_li(REG_T0, static_cast<unsigned char>(str[i]));
+					emit_sb(REG_T0, REG_SP, i); // SB (store byte)
+				}
+				// Store null terminator
+				emit_sb(REG_ZERO, REG_SP, string_len); // SB
+
+				// A1 = pointer to property name string (sp)
+				emit_mv(REG_A1, REG_SP);
+
+				// A2 = string length
+				emit_li(REG_A2, string_len);
+
+				// A3 = pointer to result Variant
+				// IMPORTANT: Account for str_space since SP was adjusted
+				emit_load_stack_offset(REG_A3, result_offset + str_space);
+
+				// A7 = syscall number (545 for ECALL_OBJ_PROP_GET)
+				emit_li(REG_A7, 545);
+				emit_ecall();
+
+				// Restore stack pointer
+				emit_stack_adjust(str_space);
+
+				break;
+			}
+
+			case IROpcode::VSET: {
+				// VSET format: obj_reg, string_idx, string_len, value_reg
+				// Uses ECALL_OBJ_PROP_SET (546)
+				// Calling convention:
+				//   A0 = object address (v.i from object Variant)
+				//   A1 = property name pointer
+				//   A2 = property name length
+				//   A3 = pointer to value Variant
+
+				if (instr.operands.size() != 4) {
+					throw std::runtime_error("VSET requires 4 operands (obj_reg, string_idx, string_len, value_reg)");
+				}
+
+				int obj_vreg = std::get<int>(instr.operands[0].value);
+				int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+				int string_len = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+				int value_vreg = std::get<int>(instr.operands[3].value);
+
+				// Get the string constant
+				if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
+					throw std::runtime_error("String constant index out of range");
+				}
+				const std::string& str = (*m_string_constants)[string_idx];
+
+				int obj_offset = get_variant_stack_offset(obj_vreg);
+				int value_offset = get_variant_stack_offset(value_vreg);
+
+				// ECALL_OBJ_PROP_SET clobbers a0-a3
+				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+
+				for (const auto& move : moves) {
+					emit_mv(move.second, move.first);
+				}
+
+				// A0 = object address (load from Variant's v.i field at offset 8)
+				// IMPORTANT: Load this BEFORE adjusting the stack, so obj_offset is correct
+				emit_ld(REG_A0, REG_SP, obj_offset + 8);
+
+				// Allocate stack space for the string
+				int str_space = ((string_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
+
+				emit_stack_adjust(-str_space);
+
+				// Store string on stack
+				for (size_t i = 0; i < str.length(); i++) {
+					emit_li(REG_T0, static_cast<unsigned char>(str[i]));
+					emit_sb(REG_T0, REG_SP, i); // SB (store byte)
+				}
+				// Store null terminator
+				emit_sb(REG_ZERO, REG_SP, string_len); // SB
+
+				// A1 = pointer to property name string (sp)
+				emit_mv(REG_A1, REG_SP);
+
+				// A2 = string length
+				emit_li(REG_A2, string_len);
+
+				// A3 = pointer to value Variant
+				// IMPORTANT: Calculate this AFTER adjusting the stack, and account for str_space
+				// emit_load_stack_offset does: addi a3, sp, offset, so we get the correct address directly
+				emit_load_stack_offset(REG_A3, value_offset + str_space);
+
+				// A7 = syscall number (546 for ECALL_OBJ_PROP_SET)
+				emit_li(REG_A7, 546);
+				emit_ecall();
+
+				// Restore stack pointer
+				emit_stack_adjust(str_space);
+
+				break;
+			}
+
 			// Not implementing these for now
 			case IROpcode::MAKE_RECT2:
 			case IROpcode::MAKE_RECT2I:
 			case IROpcode::MAKE_PLANE:
 			case IROpcode::VSET_INLINE:
-			case IROpcode::VGET:
-			case IROpcode::VSET:
 			case IROpcode::LOAD_VAR:
 			case IROpcode::STORE_VAR:
 				throw std::runtime_error("Opcode not yet implemented in RISC-V codegen");
