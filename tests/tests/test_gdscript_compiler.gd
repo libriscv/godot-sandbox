@@ -21,6 +21,18 @@ func typed_add(x : int, y : int):
 func typed_sub(x : int, y : int):
 	return x - y
 
+func typed_float_add(x : float, y : float):
+	return x + y
+
+func typed_float_mul(x : float, y : float):
+	return x * y
+
+func typed_vec3_add(a : Vector3, b : Vector3):
+	return a + b
+
+func typed_vec3_mul(a : Vector3, b : Vector3):
+	return a * b
+
 func sum1(n):
 	var total = 0
 	for i in range(n):
@@ -60,6 +72,23 @@ func sum2(n):
 	assert_eq(s.vmcallv("add", 7, 21), 28, "add(7, 21) = 28")
 	assert_eq(s.vmcallv("typed_add", 10, 15), 25, "typed_add(10, 15) = 25")
 	assert_eq(s.vmcallv("typed_sub", 10, 15), -5, "typed_sub(10, 15) = -5")
+
+	# Test typed float operations (optimized with double-precision FP)
+	var f_result = s.vmcallv("typed_float_add", 3.5, 2.5)
+	assert_almost_eq(f_result, 6.0, 0.0001, "typed_float_add(3.5, 2.5) = 6.0")
+	f_result = s.vmcallv("typed_float_mul", 2.5, 4.0)
+	assert_almost_eq(f_result, 10.0, 0.0001, "typed_float_mul(2.5, 4.0) = 10.0")
+
+	# Test typed Vector3 operations (optimized with single-precision FP)
+	var v3_result = s.vmcallv("typed_vec3_add", Vector3(6.0, 8.0, 10.0), Vector3(2.0, 2.0, 5.0))
+	assert_almost_eq(v3_result.x, 8.0, 0.0001, "vec3_add.x = 8.0")
+	assert_almost_eq(v3_result.y, 10.0, 0.0001, "vec3_add.y = 10.0")
+	assert_almost_eq(v3_result.z, 15.0, 0.0001, "vec3_add.z = 15.0")
+	v3_result = s.vmcallv("typed_vec3_mul", Vector3(3.0, 4.0, 5.0), Vector3(2.0, 2.0, 2.0))
+	assert_almost_eq(v3_result.x, 6.0, 0.0001, "vec3_mul.x = 6.0")
+	assert_almost_eq(v3_result.y, 8.0, 0.0001, "vec3_mul.y = 8.0")
+	assert_almost_eq(v3_result.z, 10.0, 0.0001, "vec3_mul.z = 10.0")
+
 	assert_eq(s.vmcallv("sum1", 10), 45, "sum1(10) should return 45")
 	assert_eq(s.vmcallv("sum2", 10), 45, "sum2(10) should return 45")
 

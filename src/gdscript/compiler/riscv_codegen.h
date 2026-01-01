@@ -87,12 +87,18 @@ private:
 	void emit_fcvt_s_d(uint8_t rd, uint8_t rs1);             // Convert double to float
 	void emit_fcvt_d_l(uint8_t rd, uint8_t rs1);             // Convert signed 64-bit int to double
 
-	// FP arithmetic instructions (RV64D extension)
+	// FP arithmetic instructions (RV64D extension - double precision)
 	void emit_fadd_d(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Double-precision FP add
 	void emit_fsub_d(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Double-precision FP sub
 	void emit_fmul_d(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Double-precision FP mul
 	void emit_fdiv_d(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Double-precision FP div
 	void emit_fmv_d(uint8_t rd, uint8_t rs);                // Double-precision FP move
+
+	// FP arithmetic instructions (RV32F extension - single precision)
+	void emit_fadd_s(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Single-precision FP add
+	void emit_fsub_s(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Single-precision FP sub
+	void emit_fmul_s(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Single-precision FP mul
+	void emit_fdiv_s(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Single-precision FP div
 
 	// Additional integer instructions
 	void emit_sext_w(uint8_t rd, uint8_t rs);  // Sign-extend word to doubleword (addiw rd, rs, 0)
@@ -126,6 +132,8 @@ private:
 	// These emit native RISC-V instructions instead of syscalls
 	void emit_typed_int_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op);
 	void emit_typed_int_comparison(int result_offset, int lhs_offset, int rhs_offset, IROpcode cmp_op);
+	void emit_typed_float_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op);
+	void emit_typed_vector_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op, IRInstruction::TypeHint type_hint);
 
 	// Get stack offset for a virtual register (in bytes)
 	int get_variant_stack_offset(int virtual_reg);

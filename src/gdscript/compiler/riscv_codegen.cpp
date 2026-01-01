@@ -278,23 +278,39 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				bool rhs_is_reg = instr.operands.size() > 2 && instr.operands[2].type == IRValue::Type::REGISTER;
 
 				// Use optimized typed path if:
-				// 1. Instruction has INT type hint
+				// 1. Instruction has a type hint (INT, FLOAT, or vector type)
 				// 2. Both operands are registers (not immediates)
 				// This is the common case for type-hinted arithmetic
-				if (instr.type_hint == Variant::INT && lhs_is_reg && rhs_is_reg) {
+				//
+				// IMPORTANT: We ONLY optimize Variants with type hints.
+				// Untyped Variants fall back to VEVAL syscall, which also acts as
+				// deoptimization to find bugs (unknown types are unpredictable).
+				if (instr.type_hint != IRInstruction::TypeHint_NONE && lhs_is_reg && rhs_is_reg) {
 					int lhs_vreg_local = std::get<int>(instr.operands[1].value);
 					int rhs_vreg_local = std::get<int>(instr.operands[2].value);
 					int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
 					int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
 
-					// Use native RISC-V arithmetic instead of syscall
-					emit_typed_int_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
-					break;
+					// Dispatch based on type hint
+					if (instr.type_hint == Variant::INT) {
+						// Scalar int: optimized 64-bit integer arithmetic
+						emit_typed_int_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
+						break;
+					} else if (instr.type_hint == Variant::FLOAT) {
+						// Scalar float: optimized 64-bit double arithmetic
+						emit_typed_float_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
+						break;
+					} else if (TypeHintUtils::is_vector(instr.type_hint)) {
+						// Vector types: element-wise arithmetic (2, 3, or 4 components)
+						emit_typed_vector_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode, instr.type_hint);
+						break;
+					}
+					// Other type hints (if any) fall through to VEVAL
 				}
 
 				// Fall back to generic Variant evaluation for:
-				// - Untyped operations
-				// - Non-INT types (FLOAT, etc.)
+				// - Untyped operations (no type hint)
+				// - Unsupported type hints
 				// - Operations with immediate operands (handled via temporary Variants)
 
 				// Map IR opcode to Variant::Operator
@@ -2201,6 +2217,164 @@ void RISCVCodeGen::emit_typed_int_comparison(int result_offset, int lhs_offset, 
 	emit_store_variant_bool(REG_T2, REG_SP, result_offset);
 }
 
+void RISCVCodeGen::emit_typed_float_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op) {
+	// Optimized path for type-hinted float (double) arithmetic
+	// IMPORTANT: Variant v.f is ALWAYS 64-bit double, not real_t
+	//
+	// Process:
+	// 1. Load double values from Variants (at offset +8)
+	// 2. Perform native RISC-V double-precision FP arithmetic
+	// 3. Store result back as a FLOAT Variant
+	//
+	// This avoids VEVAL syscall overhead for typed float operations
+
+	// Load lhs double value: fld fa0, lhs_offset+8(sp)
+	emit_fld(REG_FA0, REG_SP, lhs_offset + VARIANT_DATA_OFFSET);
+
+	// Load rhs double value: fld fa1, rhs_offset+8(sp)
+	emit_fld(REG_FA1, REG_SP, rhs_offset + VARIANT_DATA_OFFSET);
+
+	// Perform the double-precision FP operation in REG_FA2
+	switch (op) {
+		case IROpcode::ADD:
+			emit_fadd_d(REG_FA2, REG_FA0, REG_FA1);
+			break;
+		case IROpcode::SUB:
+			emit_fsub_d(REG_FA2, REG_FA0, REG_FA1);
+			break;
+		case IROpcode::MUL:
+			emit_fmul_d(REG_FA2, REG_FA0, REG_FA1);
+			break;
+		case IROpcode::DIV:
+			emit_fdiv_d(REG_FA2, REG_FA0, REG_FA1);
+			break;
+		default:
+			throw std::runtime_error("Unsupported typed float binary op");
+	}
+
+	// Store result as FLOAT Variant
+	// Set type to FLOAT (3)
+	emit_li(REG_T0, Variant::FLOAT);
+	emit_store_variant_type(REG_T0, REG_SP, result_offset);
+
+	// Store computed double value to v.f field
+	emit_fsd(REG_FA2, REG_SP, result_offset + VARIANT_DATA_OFFSET);
+}
+
+void RISCVCodeGen::emit_typed_vector_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op, IRInstruction::TypeHint type_hint) {
+	// Optimized path for type-hinted vector arithmetic
+	// Vectors are stored inline in Variant's data union:
+	// - VECTOR2/3/4: real_t v4[4] (32-bit float by default)
+	// - VECTOR2I/3I/4I: int32_t v4i[4]
+	//
+	// Process:
+	// 1. Determine element count (2, 3, or 4) and type (int32 vs real_t)
+	// 2. Loop over components, performing element-wise arithmetic
+	// 3. Store result back with proper Variant type
+	//
+	// This is game math - Vector3 * Vector3 means component-wise multiplication
+
+	// Determine vector properties
+	int elem_count = 0;
+	bool is_int = false;
+
+	switch (type_hint) {
+		case Variant::VECTOR2:
+			elem_count = 2;
+			is_int = false;
+			break;
+		case Variant::VECTOR2I:
+			elem_count = 2;
+			is_int = true;
+			break;
+		case Variant::VECTOR3:
+			elem_count = 3;
+			is_int = false;
+			break;
+		case Variant::VECTOR3I:
+			elem_count = 3;
+			is_int = true;
+			break;
+		case Variant::VECTOR4:
+		case Variant::COLOR:  // Color is also 4 real_t components
+			elem_count = 4;
+			is_int = false;
+			break;
+		case Variant::VECTOR4I:
+			elem_count = 4;
+			is_int = true;
+			break;
+		default:
+			throw std::runtime_error("Invalid vector type hint");
+	}
+
+	// Perform element-wise operations
+	for (int i = 0; i < elem_count; i++) {
+		// Component offset: VARIANT_DATA_OFFSET + i * 4 bytes
+		// (both int32_t and real_t are 4 bytes in default config)
+		int component_offset = VARIANT_DATA_OFFSET + i * 4;
+
+		if (is_int) {
+			// Integer vector: use lw/sw and integer ALU
+			emit_lw(REG_T0, REG_SP, lhs_offset + component_offset);
+			emit_lw(REG_T1, REG_SP, rhs_offset + component_offset);
+
+			// Perform integer operation
+			switch (op) {
+				case IROpcode::ADD:
+					emit_add(REG_T2, REG_T0, REG_T1);
+					break;
+				case IROpcode::SUB:
+					emit_sub(REG_T2, REG_T0, REG_T1);
+					break;
+				case IROpcode::MUL:
+					emit_mul(REG_T2, REG_T0, REG_T1);
+					break;
+				case IROpcode::DIV:
+					emit_div(REG_T2, REG_T0, REG_T1);
+					break;
+				case IROpcode::MOD:
+					emit_rem(REG_T2, REG_T0, REG_T1);
+					break;
+				default:
+					throw std::runtime_error("Unsupported vector int operation");
+			}
+
+			// Store result component
+			emit_sw(REG_T2, REG_SP, result_offset + component_offset);
+		} else {
+			// Float vector: use flw/fsw and FP ALU (real_t = 32-bit float)
+			emit_flw(REG_FA0, REG_SP, lhs_offset + component_offset);
+			emit_flw(REG_FA1, REG_SP, rhs_offset + component_offset);
+
+			// Perform single-precision FP operation
+			switch (op) {
+				case IROpcode::ADD:
+					emit_fadd_s(REG_FA2, REG_FA0, REG_FA1);
+					break;
+				case IROpcode::SUB:
+					emit_fsub_s(REG_FA2, REG_FA0, REG_FA1);
+					break;
+				case IROpcode::MUL:
+					emit_fmul_s(REG_FA2, REG_FA0, REG_FA1);
+					break;
+				case IROpcode::DIV:
+					emit_fdiv_s(REG_FA2, REG_FA0, REG_FA1);
+					break;
+				default:
+					throw std::runtime_error("Unsupported vector float operation");
+			}
+
+			// Store result component
+			emit_fsw(REG_FA2, REG_SP, result_offset + component_offset);
+		}
+	}
+
+	// Set result Variant type
+	emit_li(REG_T0, type_hint);
+	emit_store_variant_type(REG_T0, REG_SP, result_offset);
+}
+
 // Variant field access helpers
 void RISCVCodeGen::emit_load_variant_type(uint8_t rd, uint8_t base_reg, int32_t variant_offset) {
 	// Load m_type field (4 bytes at variant_offset + 0)
@@ -2420,6 +2594,27 @@ void RISCVCodeGen::emit_fmv_d(uint8_t rd, uint8_t rs) {
 	// FMV.D: Double-precision FP move
 	// FSGNJ.D with rs1=rs2 implements move
 	emit_r4_type(0x53, rd, 0x0, rs, rs, 0b00100, 1);
+}
+
+void RISCVCodeGen::emit_fadd_s(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	// FADD.S: Single-precision FP add
+	// funct7=0x00 for single-precision (vs 0x01 for double)
+	emit_r_type(0x53, rd, 0, rs1, rs2, 0x00);
+}
+
+void RISCVCodeGen::emit_fsub_s(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	// FSUB.S: Single-precision FP subtract
+	emit_r_type(0x53, rd, 0, rs1, rs2, 0x04);
+}
+
+void RISCVCodeGen::emit_fmul_s(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	// FMUL.S: Single-precision FP multiply
+	emit_r_type(0x53, rd, 0, rs1, rs2, 0x08);
+}
+
+void RISCVCodeGen::emit_fdiv_s(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	// FDIV.S: Single-precision FP divide
+	emit_r_type(0x53, rd, 0, rs1, rs2, 0x0C);
 }
 
 // Sign-extend word to doubleword (addiw rd, rs, 0)

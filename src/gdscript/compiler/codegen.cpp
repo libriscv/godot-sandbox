@@ -5,6 +5,35 @@
 
 namespace gdscript {
 
+// Helper function to convert type hint string to Variant::Type
+static IRInstruction::TypeHint type_hint_from_string(const std::string& type_str) {
+	if (type_str == "int") {
+		return Variant::INT;
+	} else if (type_str == "float") {
+		return Variant::FLOAT;
+	} else if (type_str == "bool") {
+		return Variant::BOOL;
+	} else if (type_str == "String") {
+		return Variant::STRING;
+	} else if (type_str == "Vector2") {
+		return Variant::VECTOR2;
+	} else if (type_str == "Vector2i") {
+		return Variant::VECTOR2I;
+	} else if (type_str == "Vector3") {
+		return Variant::VECTOR3;
+	} else if (type_str == "Vector3i") {
+		return Variant::VECTOR3I;
+	} else if (type_str == "Vector4") {
+		return Variant::VECTOR4;
+	} else if (type_str == "Vector4i") {
+		return Variant::VECTOR4I;
+	} else if (type_str == "Color") {
+		return Variant::COLOR;
+	}
+	// Unknown type, return NONE
+	return IRInstruction::TypeHint_NONE;
+}
+
 CodeGenerator::CodeGenerator() {}
 
 IRProgram CodeGenerator::generate(const Program& program) {
@@ -49,18 +78,7 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& func) {
 
 		// Track parameter type if type hint is present
 		if (!param.type_hint.empty()) {
-			IRInstruction::TypeHint type = IRInstruction::TypeHint_NONE;
-			if (param.type_hint == "int") {
-				type = Variant::INT;
-			} else if (param.type_hint == "float") {
-				type = Variant::FLOAT;
-			} else if (param.type_hint == "bool") {
-				type = Variant::BOOL;
-			} else if (param.type_hint == "String") {
-				type = Variant::STRING;
-			}
-			// Add more types as needed
-
+			IRInstruction::TypeHint type = type_hint_from_string(param.type_hint);
 			if (type != IRInstruction::TypeHint_NONE) {
 				set_register_type(reg, type);
 			}
@@ -125,18 +143,7 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, IRFunction& func) {
 
 	// Track type hint if provided
 	if (!stmt->type_hint.empty()) {
-		IRInstruction::TypeHint type = IRInstruction::TypeHint_NONE;
-		if (stmt->type_hint == "int") {
-			type = Variant::INT;
-		} else if (stmt->type_hint == "float") {
-			type = Variant::FLOAT;
-		} else if (stmt->type_hint == "bool") {
-			type = Variant::BOOL;
-		} else if (stmt->type_hint == "String") {
-			type = Variant::STRING;
-		}
-		// Add more types as needed
-
+		IRInstruction::TypeHint type = type_hint_from_string(stmt->type_hint);
 		if (type != IRInstruction::TypeHint_NONE) {
 			set_register_type(reg, type);
 		}
@@ -723,24 +730,26 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, IRFunction& func) {
 	                      expr->op == BinaryExpr::Op::GT ||
 	                      expr->op == BinaryExpr::Op::GTE);
 
-	// For arithmetic operations: if either operand is float, result is float
-	// For comparisons: track operand type to enable typed comparisons
+	// For arithmetic operations and comparisons:
+	// ONLY set type hint when BOTH operands have the SAME type
+	// This enables native RISC-V codegen optimizations
+	//
+	// When types don't match (e.g. INT + FLOAT), we leave result_type as NONE
+	// and fall back to VEVAL syscall which handles type coercion correctly
 	IRInstruction::TypeHint result_type = IRInstruction::TypeHint_NONE;
-	if (is_arithmetic) {
-		if (left_type == Variant::FLOAT ||
-		    right_type == Variant::FLOAT) {
-			result_type = Variant::FLOAT;
-		} else if (left_type == Variant::INT &&
-		           right_type == Variant::INT) {
-			result_type = Variant::INT;
-		}
-	} else if (is_comparison) {
-		// For comparisons, use type hint to indicate operand type for codegen optimization
+	if (is_arithmetic || is_comparison) {
 		if (left_type == Variant::INT && right_type == Variant::INT) {
 			result_type = Variant::INT;
 		} else if (left_type == Variant::FLOAT && right_type == Variant::FLOAT) {
 			result_type = Variant::FLOAT;
+		} else if (left_type != IRInstruction::TypeHint_NONE &&
+		           right_type != IRInstruction::TypeHint_NONE &&
+		           left_type == right_type &&
+		           TypeHintUtils::is_vector(left_type)) {
+			// Both operands are the same vector type
+			result_type = left_type;
 		}
+		// Mixed types or unsupported types: leave as NONE for VEVAL fallback
 	}
 
 	IROpcode op;
@@ -1333,11 +1342,13 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 		}
 	}
 
-	func.instructions.push_back(instr);
-
+	// Set the instruction's type hint
 	if (result_type != IRInstruction::TypeHint_NONE) {
+		instr.type_hint = result_type;
 		set_register_type(result_reg, result_type);
 	}
+
+	func.instructions.push_back(instr);
 
 	return result_reg;
 }
