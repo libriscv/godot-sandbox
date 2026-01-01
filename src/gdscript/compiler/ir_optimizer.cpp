@@ -21,6 +21,13 @@ void IROptimizer::optimize_function(IRFunction& func) {
 	// Copy propagation to eliminate redundant MOVEs after constant loads
 	copy_propagation(func);
 
+	// Enhanced copy propagation - eliminates more MOVE patterns
+	enhanced_copy_propagation(func);
+
+	// Loop-invariant code motion - hoist invariant code out of loops
+	// Skips functions with nested loops to avoid complexity
+	loop_invariant_code_motion(func);
+
 	// Peephole optimization to remove redundant moves and operations
 	peephole_optimization(func);
 
@@ -1285,6 +1292,382 @@ bool IROptimizer::is_pure_load_op(IROpcode op) {
 		default:
 			return false;
 	}
+}
+
+// ============================================================================
+// Loop-Invariant Code Motion (LICM)
+// ============================================================================
+
+std::vector<IROptimizer::LoopInfo> IROptimizer::identify_loops(const IRFunction& func) {
+	std::vector<LoopInfo> loops;
+
+	// Map label names to instruction indices
+	std::unordered_map<std::string, size_t> label_positions;
+	for (size_t i = 0; i < func.instructions.size(); i++) {
+		if (func.instructions[i].opcode == IROpcode::LABEL) {
+			std::string label = std::get<std::string>(func.instructions[i].operands[0].value);
+			label_positions[label] = i;
+		}
+	}
+
+	// Find all loops by detecting back edges (JUMP to earlier label)
+	// Also find loop exit labels
+	std::unordered_map<std::string, std::string> loop_to_exit;  // header -> exit label
+
+	for (size_t i = 0; i < func.instructions.size(); i++) {
+		const auto& instr = func.instructions[i];
+
+		// Look for JUMP instructions
+		if (instr.opcode == IROpcode::JUMP && !instr.operands.empty() &&
+		    instr.operands[0].type == IRValue::Type::LABEL) {
+			std::string target_label = std::get<std::string>(instr.operands[0].value);
+
+			// Check if this is a back edge (jumping to earlier instruction)
+			auto it = label_positions.find(target_label);
+			if (it != label_positions.end() && it->second <= i) {
+				size_t header_idx = it->second;
+
+				// Try to find the loop exit label
+				// Look for BRANCH_ZERO/BRANCH_NOT_ZERO between header and back edge
+				std::string exit_label;
+				for (size_t j = header_idx; j < i; j++) {
+					const auto& loop_instr = func.instructions[j];
+					if ((loop_instr.opcode == IROpcode::BRANCH_ZERO ||
+					     loop_instr.opcode == IROpcode::BRANCH_NOT_ZERO) &&
+					    loop_instr.operands.size() >= 2 &&
+					    loop_instr.operands[1].type == IRValue::Type::LABEL) {
+						exit_label = std::get<std::string>(loop_instr.operands[1].value);
+						break;
+					}
+				}
+
+				// Find the exit label position
+				size_t exit_idx = i + 1;  // Default to after back edge
+				if (!exit_label.empty()) {
+					auto exit_it = label_positions.find(exit_label);
+					if (exit_it != label_positions.end()) {
+						exit_idx = exit_it->second;
+					}
+				}
+
+				// Check if we already have this loop
+				bool found = false;
+				for (auto& loop : loops) {
+					if (loop.header_idx == header_idx) {
+						loop.back_edges.push_back(i);
+						found = true;
+						break;
+					}
+				}
+
+				if (!found) {
+					LoopInfo loop;
+					loop.header_idx = header_idx;
+					loop.end_idx = exit_idx;
+					loop.header_label = target_label;
+					loop.end_label = exit_label;
+					loop.back_edges.push_back(i);
+					loops.push_back(loop);
+				}
+			}
+		}
+	}
+
+	return loops;
+}
+
+bool IROptimizer::is_loop_invariant(const IRInstruction& instr, const LoopInfo& loop,
+                                    const IRFunction& func, const std::unordered_set<int>& invariant_regs) {
+	// Only consider pure operations
+	if (!is_pure_load_op(instr.opcode)) {
+		return false;
+	}
+
+	// LOAD_IMM, LOAD_FLOAT_IMM, LOAD_BOOL are always invariant (no register operands)
+	if (instr.opcode == IROpcode::LOAD_IMM ||
+	    instr.opcode == IROpcode::LOAD_FLOAT_IMM ||
+	    instr.opcode == IROpcode::LOAD_BOOL ||
+	    instr.opcode == IROpcode::LOAD_STRING) {
+		return true;
+	}
+
+	// MOVE is invariant if source register is invariant
+	if (instr.opcode == IROpcode::MOVE && instr.operands.size() >= 2 &&
+	    instr.operands[1].type == IRValue::Type::REGISTER) {
+		int src_reg = std::get<int>(instr.operands[1].value);
+		return invariant_regs.count(src_reg) > 0;
+	}
+
+	return false;
+}
+
+bool IROptimizer::can_safely_hoist(const IRInstruction& instr, size_t instr_idx, const LoopInfo& loop, const IRFunction& func) {
+	// Check that:
+	// 1. The destination register is not used before being defined in the loop
+	// 2. Source registers are not modified anywhere in the loop (loop-invariant)
+
+	if (instr.operands.empty() || instr.operands[0].type != IRValue::Type::REGISTER) {
+		return false;
+	}
+
+	int dst_reg = std::get<int>(instr.operands[0].value);
+
+	// Collect source registers from this instruction
+	std::unordered_set<int> src_regs;
+	for (size_t j = 1; j < instr.operands.size(); j++) {
+		if (instr.operands[j].type == IRValue::Type::REGISTER) {
+			src_regs.insert(std::get<int>(instr.operands[j].value));
+		}
+	}
+
+	// Check the entire loop body (from header to all back edges)
+	for (size_t i = loop.header_idx; i < loop.end_idx && i < func.instructions.size(); i++) {
+		const auto& loop_instr = func.instructions[i];
+
+		// Skip the instruction we're trying to hoist
+		if (i == instr_idx) {
+			continue;
+		}
+
+		// Check if any source register is modified in the loop
+		if (!loop_instr.operands.empty() && loop_instr.operands[0].type == IRValue::Type::REGISTER) {
+			int modified_reg = std::get<int>(loop_instr.operands[0].value);
+			if (src_regs.count(modified_reg)) {
+				return false;  // Can't hoist - source register is modified in loop
+			}
+		}
+
+		// Check if dst_reg is read before being written (only before this instruction)
+		if (i < instr_idx) {
+			for (size_t j = 1; j < loop_instr.operands.size(); j++) {
+				if (loop_instr.operands[j].type == IRValue::Type::REGISTER) {
+					int reg = std::get<int>(loop_instr.operands[j].value);
+					if (reg == dst_reg) {
+						return false;  // Can't hoist - dst is read before being written
+					}
+				}
+			}
+		}
+	}
+
+	return true;
+}
+
+void IROptimizer::loop_invariant_code_motion(IRFunction& func) {
+	auto loops = identify_loops(func);
+
+	if (loops.empty()) {
+		return;  // No loops to optimize
+	}
+
+	// Check for nested loops - if any loop is nested, skip LICM entirely
+	// A loop is nested if its header is between another loop's header and end
+	for (const auto& loop : loops) {
+		for (const auto& other : loops) {
+			if (&loop == &other) continue;
+			// Check if this loop is inside the other loop
+			if (loop.header_idx > other.header_idx && loop.header_idx < other.end_idx) {
+				// Found nested loops - skip LICM to avoid complexity
+				return;
+			}
+		}
+	}
+
+	// No nested loops - safe to optimize
+	// Process each loop
+	for (const auto& loop : loops) {
+			// Build set of invariant registers
+			// Start with registers defined outside the loop
+			std::unordered_set<int> invariant_regs;
+
+			for (size_t i = 0; i < loop.header_idx; i++) {
+				const auto& instr = func.instructions[i];
+				if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+					invariant_regs.insert(std::get<int>(instr.operands[0].value));
+				}
+			}
+
+			// Iteratively find invariant instructions within the loop
+			std::unordered_set<size_t> invariant_instrs;
+			bool loop_changed = true;
+
+			while (loop_changed) {
+				loop_changed = false;
+
+				for (size_t i = loop.header_idx + 1; i < loop.end_idx && i < func.instructions.size(); i++) {
+					if (invariant_instrs.count(i)) {
+						continue;  // Already marked as invariant
+					}
+
+					const auto& instr = func.instructions[i];
+
+					// Skip labels and control flow
+					if (instr.opcode == IROpcode::LABEL ||
+					    instr.opcode == IROpcode::JUMP ||
+					    instr.opcode == IROpcode::BRANCH_ZERO ||
+					    instr.opcode == IROpcode::BRANCH_NOT_ZERO) {
+						continue;
+					}
+
+					if (is_loop_invariant(instr, loop, func, invariant_regs) &&
+					    can_safely_hoist(instr, i, loop, func)) {
+						invariant_instrs.insert(i);
+
+						// Add destination register to invariant set
+						if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+							invariant_regs.insert(std::get<int>(instr.operands[0].value));
+						}
+
+						loop_changed = true;
+					}
+				}
+			}
+
+		// Hoist invariant instructions
+		if (!invariant_instrs.empty()) {
+			std::vector<IRInstruction> hoisted;
+			std::vector<IRInstruction> remaining;
+
+			for (size_t i = 0; i < func.instructions.size(); i++) {
+				if (i >= loop.header_idx && i < loop.end_idx && invariant_instrs.count(i)) {
+					// This instruction will be hoisted
+					hoisted.push_back(func.instructions[i]);
+				} else {
+					remaining.push_back(func.instructions[i]);
+				}
+			}
+
+			// Rebuild function with hoisted instructions inserted before loop header
+			std::vector<IRInstruction> new_instructions;
+			for (size_t i = 0; i < remaining.size(); i++) {
+				if (remaining[i].opcode == IROpcode::LABEL && i < remaining.size() &&
+				    std::get<std::string>(remaining[i].operands[0].value) == loop.header_label) {
+					// Insert hoisted instructions before loop header
+					new_instructions.insert(new_instructions.end(), hoisted.begin(), hoisted.end());
+				}
+				new_instructions.push_back(remaining[i]);
+			}
+
+			func.instructions = std::move(new_instructions);
+		}
+	}
+}
+
+// ============================================================================
+// Enhanced Copy Propagation
+// ============================================================================
+
+bool IROptimizer::register_unmodified_between(const IRFunction& func, int reg,
+                                              size_t start_idx, size_t end_idx) {
+	for (size_t i = start_idx + 1; i < end_idx && i < func.instructions.size(); i++) {
+		const auto& instr = func.instructions[i];
+
+		// Check if this instruction writes to the register
+		if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+			int dst = std::get<int>(instr.operands[0].value);
+			if (dst == reg) {
+				return false;  // Register is modified
+			}
+		}
+
+		// Control flow boundaries - be conservative
+		if (instr.opcode == IROpcode::LABEL) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+void IROptimizer::enhanced_copy_propagation(IRFunction& func) {
+	// Track copies: register -> source register
+	std::unordered_map<int, CopyInfo> copies;
+	std::vector<IRInstruction> new_instructions;
+	new_instructions.reserve(func.instructions.size());
+
+	for (size_t i = 0; i < func.instructions.size(); i++) {
+		auto instr = func.instructions[i];  // Make a copy we can modify
+
+		// Clear copy tracking at control flow boundaries
+		if (instr.opcode == IROpcode::LABEL ||
+		    instr.opcode == IROpcode::JUMP ||
+		    instr.opcode == IROpcode::BRANCH_ZERO ||
+		    instr.opcode == IROpcode::BRANCH_NOT_ZERO ||
+		    instr.opcode == IROpcode::CALL ||
+		    instr.opcode == IROpcode::VCALL ||
+		    instr.opcode == IROpcode::CALL_SYSCALL) {
+			copies.clear();
+		}
+
+		// Track MOVE instructions
+		if (instr.opcode == IROpcode::MOVE && instr.operands.size() >= 2 &&
+		    instr.operands[0].type == IRValue::Type::REGISTER &&
+		    instr.operands[1].type == IRValue::Type::REGISTER) {
+			int dst = std::get<int>(instr.operands[0].value);
+			int src = std::get<int>(instr.operands[1].value);
+
+			// Follow the copy chain: if src is itself a copy, use the original source
+			while (copies.count(src)) {
+				src = copies[src].source_reg;
+			}
+
+			copies[dst] = {src, i};
+		}
+
+		// Propagate copies in operands (skip first operand which is usually destination)
+		bool modified = false;
+		for (size_t j = 1; j < instr.operands.size(); j++) {
+			if (instr.operands[j].type == IRValue::Type::REGISTER) {
+				int reg = std::get<int>(instr.operands[j].value);
+
+				// Check if we can propagate this copy
+				if (copies.count(reg)) {
+					const auto& copy_info = copies[reg];
+
+					// Verify the source register hasn't been modified
+					if (register_unmodified_between(func, copy_info.source_reg, copy_info.def_idx, i)) {
+						instr.operands[j].value = copy_info.source_reg;
+						modified = true;
+					}
+				}
+			}
+		}
+
+		// Special case: BRANCH_ZERO and BRANCH_NOT_ZERO read first operand
+		if ((instr.opcode == IROpcode::BRANCH_ZERO || instr.opcode == IROpcode::BRANCH_NOT_ZERO) &&
+		    !instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+			int reg = std::get<int>(instr.operands[0].value);
+
+			if (copies.count(reg)) {
+				const auto& copy_info = copies[reg];
+				if (register_unmodified_between(func, copy_info.source_reg, copy_info.def_idx, i)) {
+					instr.operands[0].value = copy_info.source_reg;
+					modified = true;
+				}
+			}
+		}
+
+		// Invalidate copies when destination register is written
+		if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+			int dst = std::get<int>(instr.operands[0].value);
+
+			// Remove any copies of this register
+			copies.erase(dst);
+
+			// Remove any copies that use this register as source
+			for (auto it = copies.begin(); it != copies.end(); ) {
+				if (it->second.source_reg == dst) {
+					it = copies.erase(it);
+				} else {
+					++it;
+				}
+			}
+		}
+
+		new_instructions.push_back(instr);
+	}
+
+	func.instructions = std::move(new_instructions);
 }
 
 } // namespace gdscript

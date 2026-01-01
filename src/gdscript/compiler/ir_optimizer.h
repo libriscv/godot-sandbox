@@ -24,6 +24,8 @@ private:
 	void copy_propagation(IRFunction& func);
 	void eliminate_redundant_stores(IRFunction& func);
 	void reduce_register_pressure(IRFunction& func);
+	void loop_invariant_code_motion(IRFunction& func);
+	void enhanced_copy_propagation(IRFunction& func);
 
 	// Helper for constant folding
 	struct ConstantValue {
@@ -54,6 +56,26 @@ private:
 	static bool is_arithmetic_op(IROpcode op);
 	static bool is_reg_used_between_exclusive(const IRFunction& func, int reg, size_t start_idx, size_t end_idx);
 	static bool is_pure_load_op(IROpcode op);
+
+	// LICM helpers
+	struct LoopInfo {
+		size_t header_idx;      // Index of loop header LABEL
+		size_t end_idx;         // Index of loop end LABEL
+		std::string header_label;
+		std::string end_label;
+		std::vector<size_t> back_edges;  // Indices of JUMP instructions to header
+	};
+	std::vector<LoopInfo> identify_loops(const IRFunction& func);
+	bool is_loop_invariant(const IRInstruction& instr, const LoopInfo& loop,
+	                       const IRFunction& func, const std::unordered_set<int>& invariant_regs);
+	bool can_safely_hoist(const IRInstruction& instr, size_t instr_idx, const LoopInfo& loop, const IRFunction& func);
+
+	// Enhanced copy propagation helpers
+	struct CopyInfo {
+		int source_reg;
+		size_t def_idx;
+	};
+	bool register_unmodified_between(const IRFunction& func, int reg, size_t start_idx, size_t end_idx);
 };
 
 } // namespace gdscript
