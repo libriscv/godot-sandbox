@@ -273,6 +273,30 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int dst_vreg = std::get<int>(instr.operands[0].value);
 				int dst_offset = get_variant_stack_offset(dst_vreg);
 
+				// Check if operands are registers
+				bool lhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
+				bool rhs_is_reg = instr.operands.size() > 2 && instr.operands[2].type == IRValue::Type::REGISTER;
+
+				// Use optimized typed path if:
+				// 1. Instruction has INT type hint
+				// 2. Both operands are registers (not immediates)
+				// This is the common case for type-hinted arithmetic
+				if (instr.type_hint == Variant::INT && lhs_is_reg && rhs_is_reg) {
+					int lhs_vreg_local = std::get<int>(instr.operands[1].value);
+					int rhs_vreg_local = std::get<int>(instr.operands[2].value);
+					int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
+					int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
+
+					// Use native RISC-V arithmetic instead of syscall
+					emit_typed_int_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
+					break;
+				}
+
+				// Fall back to generic Variant evaluation for:
+				// - Untyped operations
+				// - Non-INT types (FLOAT, etc.)
+				// - Operations with immediate operands (handled via temporary Variants)
+
 				// Map IR opcode to Variant::Operator
 				int variant_op;
 				switch (instr.opcode) {
@@ -283,10 +307,6 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					case IROpcode::MOD: variant_op = 12; break; // OP_MODULE
 					default: variant_op = 6; break;
 				}
-
-				// Check if operands are registers
-				bool lhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
-				bool rhs_is_reg = instr.operands.size() > 2 && instr.operands[2].type == IRValue::Type::REGISTER;
 
 				if (lhs_is_reg && rhs_is_reg) {
 					int lhs_vreg_local = std::get<int>(instr.operands[1].value);
@@ -355,6 +375,25 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int dst_vreg = std::get<int>(instr.operands[0].value);
 				int dst_offset = get_variant_stack_offset(dst_vreg);
 
+				// Check if operands are registers
+				bool lhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
+				bool rhs_is_reg = instr.operands.size() > 2 && instr.operands[2].type == IRValue::Type::REGISTER;
+
+				// Use optimized typed path for INT comparisons with register operands
+				// This is very common in loops: for i: int in range(N)
+				if (instr.type_hint == Variant::INT && lhs_is_reg && rhs_is_reg) {
+					int lhs_vreg = std::get<int>(instr.operands[1].value);
+					int rhs_vreg = std::get<int>(instr.operands[2].value);
+					int lhs_offset = get_variant_stack_offset(lhs_vreg);
+					int rhs_offset = get_variant_stack_offset(rhs_vreg);
+
+					// Use native RISC-V comparison instead of syscall
+					emit_typed_int_comparison(dst_offset, lhs_offset, rhs_offset, instr.opcode);
+					break;
+				}
+
+				// Fall back to generic Variant evaluation for untyped or non-INT comparisons
+
 				// Map IR opcode to Variant::Operator
 				int variant_op;
 				switch (instr.opcode) {
@@ -366,10 +405,6 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					case IROpcode::CMP_GTE: variant_op = 5; break; // OP_GREATER_EQUAL
 					default: variant_op = 0; break;
 				}
-
-				// Check if operands are registers
-				bool lhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
-				bool rhs_is_reg = instr.operands.size() > 2 && instr.operands[2].type == IRValue::Type::REGISTER;
 
 				if (lhs_is_reg && rhs_is_reg) {
 					int lhs_vreg = std::get<int>(instr.operands[1].value);
@@ -2013,11 +2048,11 @@ void RISCVCodeGen::emit_variant_copy(int dst_offset, int src_offset) {
 void RISCVCodeGen::emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op) {
 	// Call sys_veval(op, &lhs, &rhs, &result)
 	// Signature: bool sys_veval(int op, const Variant* a, const Variant* b, Variant* result)
-	
+
 	// VEVAL clobbers a0-a3, so handle register clobbering first
 	std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
 	auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
-	
+
 	// Emit moves to save live values from clobbered registers
 	for (const auto& move : moves) {
 		emit_mv(move.second, move.first); // Move from clobbered reg to new reg
@@ -2053,6 +2088,117 @@ void RISCVCodeGen::emit_variant_eval(int result_offset, int lhs_offset, int rhs_
 	// Make the ecall to sys_veval (ECALL_VEVAL = 502)
 	emit_li(REG_A7, 502); // ECALL_VEVAL
 	emit_ecall();
+}
+
+void RISCVCodeGen::emit_typed_int_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op) {
+	// Optimized path for type-hinted integer arithmetic
+	// Instead of calling VEVAL syscall, we:
+	// 1. Load int64 values from Variants directly (from v.i field at offset +8)
+	// 2. Perform native RISC-V arithmetic in registers
+	// 3. Store result back as an INT Variant
+	//
+	// This is safe because:
+	// - Type hints are verified by the parser
+	// - Variant int64 field is well-defined at VARIANT_DATA_OFFSET
+	// - We maintain Variant structure for ABI compatibility
+
+	// Load lhs int64 value: ld t0, lhs_offset+8(sp)
+	emit_load_variant_int(REG_T0, REG_SP, lhs_offset);
+
+	// Load rhs int64 value: ld t1, rhs_offset+8(sp)
+	emit_load_variant_int(REG_T1, REG_SP, rhs_offset);
+
+	// Perform the operation in REG_T2
+	switch (op) {
+		case IROpcode::ADD:
+			emit_add(REG_T2, REG_T0, REG_T1);
+			break;
+		case IROpcode::SUB:
+			emit_sub(REG_T2, REG_T0, REG_T1);
+			break;
+		case IROpcode::MUL:
+			emit_mul(REG_T2, REG_T0, REG_T1);
+			break;
+		case IROpcode::DIV:
+			// Note: RISC-V div by zero produces -1 (all bits set) for positive dividend
+			// This matches Variant behavior which should be checked at runtime
+			emit_div(REG_T2, REG_T0, REG_T1);
+			break;
+		case IROpcode::MOD:
+			emit_rem(REG_T2, REG_T0, REG_T1);
+			break;
+		default:
+			throw std::runtime_error("Unsupported typed int binary op");
+	}
+
+	// Store result as INT Variant
+	// Set type to INT (2)
+	emit_li(REG_T0, Variant::INT);
+	emit_store_variant_type(REG_T0, REG_SP, result_offset);
+
+	// Store computed value to v.i field
+	emit_store_variant_int(REG_T2, REG_SP, result_offset);
+}
+
+void RISCVCodeGen::emit_typed_int_comparison(int result_offset, int lhs_offset, int rhs_offset, IROpcode cmp_op) {
+	// Optimized path for type-hinted integer comparisons
+	// Common in loops: for i: int in range(N)
+	//
+	// Process:
+	// 1. Load int64 values from Variants
+	// 2. Perform RISC-V comparison
+	// 3. Store result as BOOL Variant (0 or 1)
+
+	// Load lhs and rhs int64 values
+	emit_load_variant_int(REG_T0, REG_SP, lhs_offset);
+	emit_load_variant_int(REG_T1, REG_SP, rhs_offset);
+
+	// Perform comparison and set REG_T2 to 0 or 1
+	switch (cmp_op) {
+		case IROpcode::CMP_EQ:
+			// xor t2, t0, t1; seqz t2, t2  (set if equal to zero)
+			emit_xor(REG_T2, REG_T0, REG_T1);
+			emit_seqz(REG_T2, REG_T2);
+			break;
+
+		case IROpcode::CMP_NEQ:
+			// xor t2, t0, t1; snez t2, t2  (set if not equal to zero)
+			emit_xor(REG_T2, REG_T0, REG_T1);
+			emit_snez(REG_T2, REG_T2);
+			break;
+
+		case IROpcode::CMP_LT:
+			// slt t2, t0, t1  (set if t0 < t1, signed)
+			emit_slt(REG_T2, REG_T0, REG_T1);
+			break;
+
+		case IROpcode::CMP_LTE:
+			// t0 <= t1  is equivalent to  !(t1 < t0)
+			// slt t2, t1, t0; xori t2, t2, 1
+			emit_slt(REG_T2, REG_T1, REG_T0);
+			emit_xori(REG_T2, REG_T2, 1);
+			break;
+
+		case IROpcode::CMP_GT:
+			// t0 > t1  is equivalent to  t1 < t0
+			emit_slt(REG_T2, REG_T1, REG_T0);
+			break;
+
+		case IROpcode::CMP_GTE:
+			// t0 >= t1  is equivalent to  !(t0 < t1)
+			// slt t2, t0, t1; xori t2, t2, 1
+			emit_slt(REG_T2, REG_T0, REG_T1);
+			emit_xori(REG_T2, REG_T2, 1);
+			break;
+
+		default:
+			throw std::runtime_error("Unsupported typed int comparison");
+	}
+
+	// Store result as BOOL Variant
+	emit_li(REG_T0, Variant::BOOL);
+	emit_store_variant_type(REG_T0, REG_SP, result_offset);
+	emit_store_variant_bool(REG_T2, REG_SP, result_offset);
 }
 
 // Variant field access helpers

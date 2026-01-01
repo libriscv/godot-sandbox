@@ -122,6 +122,11 @@ private:
 	void emit_variant_copy(int dst_offset, int src_offset);
 	void emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op);
 
+	// Typed operations (optimized paths when type hints are available)
+	// These emit native RISC-V instructions instead of syscalls
+	void emit_typed_int_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op);
+	void emit_typed_int_comparison(int result_offset, int lhs_offset, int rhs_offset, IROpcode cmp_op);
+
 	// Get stack offset for a virtual register (in bytes)
 	int get_variant_stack_offset(int virtual_reg);
 

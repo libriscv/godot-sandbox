@@ -46,6 +46,25 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& func) {
 		// In real implementation, would load from parameter registers
 		// For now, assume parameters are already in variables
 		declare_variable(param.name, reg);
+
+		// Track parameter type if type hint is present
+		if (!param.type_hint.empty()) {
+			IRInstruction::TypeHint type = IRInstruction::TypeHint_NONE;
+			if (param.type_hint == "int") {
+				type = Variant::INT;
+			} else if (param.type_hint == "float") {
+				type = Variant::FLOAT;
+			} else if (param.type_hint == "bool") {
+				type = Variant::BOOL;
+			} else if (param.type_hint == "String") {
+				type = Variant::STRING;
+			}
+			// Add more types as needed
+
+			if (type != IRInstruction::TypeHint_NONE) {
+				set_register_type(reg, type);
+			}
+		}
 	}
 
 	// Generate code for function body
