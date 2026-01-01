@@ -18,6 +18,9 @@ func add(x, y):
 func typed_add(x : int, y : int):
 	return x + y
 
+func typed_sub(x : int, y : int):
+	return x - y
+
 func sum1(n):
 	var total = 0
 	for i in range(n):
@@ -46,6 +49,7 @@ func sum2(n):
 	assert_true(s.has_function("falsy"), "Compiled ELF should have function 'falsy'")
 	assert_true(s.has_function("add"), "Compiled ELF should have function 'add'")
 	assert_true(s.has_function("typed_add"), "Compiled ELF should have function 'typed_add'")
+	assert_true(s.has_function("typed_sub"), "Compiled ELF should have function 'typed_sub'")
 
 	assert_true(s.has_function("sum1"), "Compiled ELF should have function 'sum1'")
 	assert_true(s.has_function("sum2"), "Compiled ELF should have function 'sum2'")
@@ -55,10 +59,12 @@ func sum2(n):
 	assert_eq(s.vmcallv("falsy"), false, "falsy() should return false")
 	assert_eq(s.vmcallv("add", 7, 21), 28, "add(7, 21) = 28")
 	assert_eq(s.vmcallv("typed_add", 10, 15), 25, "typed_add(10, 15) = 25")
+	assert_eq(s.vmcallv("typed_sub", 10, 15), -5, "typed_sub(10, 15) = -5")
 	assert_eq(s.vmcallv("sum1", 10), 45, "sum1(10) should return 45")
 	assert_eq(s.vmcallv("sum2", 10), 45, "sum2(10) should return 45")
 
 	s.queue_free()
+	ts.queue_free()
 
 
 func test_many_variables():
@@ -98,6 +104,7 @@ func many_variables():
 	assert_eq(result, 120, "many_variables() should return 120 (sum of 1-15)")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_complex_expression():
 	# Test register allocation with deeply nested expressions
@@ -125,6 +132,7 @@ func complex_expr(x, y, z):
 	assert_eq(result, 236, "complex_expr(2, 3, 4) should return 236")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_ir_verification():
 	# Verify that register allocation avoids unnecessary stack spilling
@@ -159,6 +167,7 @@ func test_func():
 	# Note: IR verification would check max_registers <= 25
 	# This would require compiler internals access, so we verify functionality instead
 	s.queue_free()
+	ts.queue_free()
 
 func test_vcall_method_calls():
 	# Test VCALL - calling methods on Variants
@@ -216,6 +225,7 @@ func test_args2(str):
 	assert_eq_deep(result, array)
 
 	s.queue_free()
+	ts.queue_free()
 
 
 func test_local_function_calls():
@@ -267,6 +277,7 @@ func test_call_with_shuffling(a0, a1):
 	assert_eq(result, "SECOND", "test_call_with_shuffling should return uppercase of second argument")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_range_loop_bounds():
 	# Test that for i in range(n) doesn't execute n+1 iterations
@@ -347,6 +358,7 @@ func countdown_loop():
 	#assert_eq(result, 55, "countdown_loop should sum 10..1 = 55")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_subscript_operations():
 	# Test array and dictionary subscript operations using [] operator
@@ -413,6 +425,7 @@ func test_chained_get(arr):
 	assert_eq(result, 20, "chained subscripts should return 5 + 15 = 20")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_inline_vector_primitives():
 	# Test inline construction and member access for Vector2/3/4 without syscalls
@@ -533,6 +546,7 @@ func test_chained_vectors():
 	assert_almost_eq(result, 30.0, 0.001, "Chained vector operations should work")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_float_constant_folding():
 	var gdscript_code = """
@@ -617,6 +631,7 @@ func test_float_neg():
 	assert_almost_eq(result, -3.14, 0.001, "Float negation: -3.14 should be -3.14")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_array_dictionary_constructors():
 	# Test Array() and Dictionary() constructor support
@@ -730,6 +745,7 @@ func make_array_with_strings():
 	assert_eq(arr[2], "test", "Third string should be 'test'")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_comprehensive_compiler_readiness():
 	# A comprehensive test that progressively tests more complex features
@@ -907,6 +923,7 @@ func level10_complex(data):
 	assert_eq(result, 25, "Level 10: Mixed complex operations")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_global_class_access():
 	# Test accessing global classes like Time
@@ -943,6 +960,7 @@ func test_chained_call():
 	assert_true(result >= 0, "Time.get_ticks_usec() chained should return a non-negative value")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_array_iteration():
 	# Test for item in array iteration
@@ -1010,6 +1028,7 @@ func test_nested_array_iteration():
 	assert_eq(result, 10, "Sum of [[1,2],[3,4]] should be 10")
 
 	s.queue_free()
+	ts.queue_free()
 
 # Comprehensive FP arithmetic tests to stress FP register allocation and AUIPC+ADDI patching
 func test_fp_register_allocation_stress():
@@ -1049,6 +1068,7 @@ func many_float_vars():
 	assert_almost_eq(result, 16.5, 0.01, "Sum of 5 floats should be 16.5")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_large_float_constants():
 	var gdscript_code = """
@@ -1075,6 +1095,7 @@ func large_constants():
 	assert_almost_eq(result, 2222222.331, 0.01, "Sum of large floats should be correct")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_complex_float_arithmetic():
 	var gdscript_code = """
@@ -1105,6 +1126,7 @@ func complex_arithmetic():
 	assert_almost_eq(result, 18.666, 0.001, "Complex arithmetic should work")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_vector_fp_arithmetic():
 	var gdscript_code = """
@@ -1133,6 +1155,7 @@ func vector_arithmetic():
 	assert_almost_eq(result, 11.0, 0.001, "Vector FP arithmetic should work")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_vector3_operations():
 	var gdscript_code = """
@@ -1163,6 +1186,7 @@ func vector3_ops():
 	assert_almost_eq(result, 20.0, 0.001, "Vector3 operations should work")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_vector4_operations():
 	var gdscript_code = """
@@ -1217,6 +1241,7 @@ func chain_vector_ops():
 	assert_almost_eq(result, 16.0, 0.001, "Chained vector operations should work")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_mixed_int_float_arithmetic():
 	var gdscript_code = """
@@ -1270,6 +1295,7 @@ func float_division():
 	assert_almost_eq(result, 8.333, 0.001, "Float division chain should work")
 
 	s.queue_free()
+	ts.queue_free()
 
 # Logical operator tests (and, or, not)
 func test_logical_operators():
@@ -1361,6 +1387,7 @@ func test_or_with_result():
 	assert_eq(result, true, "(-5 > 0) or (10 > 0) should be true")
 
 	s.queue_free()
+	ts.queue_free()
 
 # String concatenation tests - NOT SUPPORTED (string + operator)
 # func test_string_concatenation():
@@ -1488,6 +1515,7 @@ func test_mod_with_vars():
 	assert_eq(result, 1, "25 % 4 should be 1")
 
 	s.queue_free()
+	ts.queue_free()
 
 # Color type comprehensive tests
 func test_color_comprehensive():
@@ -1563,6 +1591,7 @@ func test_color_comparison():
 	assert_eq(result, true, "Color comparison should work")
 
 	s.queue_free()
+	ts.queue_free()
 
 
 # Optimization verification tests (constant folding)
@@ -1658,6 +1687,7 @@ func test_fold_no_fold_vars():
 	assert_eq(result, 30, "Variables should still add: 10 + 20 = 30")
 
 	s.queue_free()
+	ts.queue_free()
 
 # Negative step in range loops - KNOWN BUG, disabled for now
 # func test_negative_range_step():
@@ -1798,6 +1828,7 @@ func test_chain_comparisons():
 	assert_eq(result, true, "Chain comparisons should work")
 
 	s.queue_free()
+	ts.queue_free()
 
 # Control flow comprehensive tests
 func test_control_flow_comprehensive():
@@ -1889,6 +1920,7 @@ func test_while_with_continue():
 	assert_eq(result, 25, "While with continue should sum odd numbers to 25")
 
 	s.queue_free()
+	ts.queue_free()
 
 # Array methods and operations
 func test_array_operations():
@@ -1951,6 +1983,7 @@ func test_array_reverse():
 	assert_eq(result, 3, "After reverse, first element should be 3")
 
 	s.queue_free()
+	ts.queue_free()
 
 # Method call tests
 func test_method_calls():
@@ -2000,6 +2033,7 @@ func test_string_find():
 	assert_eq(result, 6, "Find 'World' in 'Hello World' should return 6")
 
 	s.queue_free()
+	ts.queue_free()
 
 # Codegen quality verification via ELF inspection helper
 func test_codegen_quality_verification():
@@ -2060,6 +2094,7 @@ func float_test():
 	assert_almost_eq(result, 4.0, 0.001, "float_test should return 4.0")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_gdscript_benchmarks():
 	var benchmarks = {
@@ -2115,6 +2150,7 @@ func pf32a_operation(array):
 		print("%s benchmark took %d us" % [name, end_time - start_time])
 
 		s.queue_free()
+	ts.queue_free()
 
 
 func test_peephole_pattern_e():
@@ -2196,6 +2232,7 @@ func float_increment(x):
 	assert_eq(result, 5.0, "float_increment(1.0) should return 5.0")
 
 	s.queue_free()
+	ts.queue_free()
 
 
 func test_peephole_combined_patterns():
@@ -2250,6 +2287,7 @@ func arithmetic_chain(x):
 	assert_eq(result, 106, "arithmetic_chain(100) should return 106")
 
 	s.queue_free()
+	ts.queue_free()
 
 
 func test_optimization_preserves_semantics():
@@ -2304,6 +2342,7 @@ func order_of_operations(x):
 	assert_eq(result, 15, "order_of_operations(5) should return 15 ((5+1)*2+3 = 15)")
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_packed_arrays():
 	# Test packed array constructors
@@ -2471,6 +2510,7 @@ func test_packed_vector4_array_i():
 	assert_eq_deep(result, PackedVector4Array([Vector4(1,2,3,4), Vector4(5,6,7,8), Vector4(9,10,11,12)]))
 
 	s.queue_free()
+	ts.queue_free()
 
 func test_const_declarations():
 	# Test const declarations (const is synonymous with var)
@@ -2538,6 +2578,7 @@ func test_const_in_expression():
 	assert_almost_eq(result, 25.0, 0.001, "Const expression should be 25.0")
 
 	s.queue_free()
+	ts.queue_free()
 
 
 func test_self_get_name():
@@ -2590,6 +2631,7 @@ func test_freestanding():
 	assert_not_null(result, "get_name() should return a value")
 
 	s.queue_free()
+	ts.queue_free()
 
 
 func test_get_node_no_args():
@@ -2616,6 +2658,7 @@ func test_get_node_self():
 	assert_not_null(result, "get_node().get_name() should return a value")
 
 	s.queue_free()
+	ts.queue_free()
 
 
 func test_multiple_freestanding_calls():
@@ -2642,6 +2685,7 @@ func test_multiple_calls():
 	assert_eq(result, true, "get_name() and self.get_name() should return the same value")
 
 	s.queue_free()
+	ts.queue_free()
 
 
 func test_properties():
@@ -2694,3 +2738,4 @@ func test_property_self_set():
 	assert_eq(result, "test_name", "self.name should be 'test_name' after setting")
 
 	s.queue_free()
+	ts.queue_free()
