@@ -123,6 +123,31 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, IRFunction& func) {
 		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(reg), IRValue::imm(0));
 	}
 
+	// Track type hint if provided
+	if (!stmt->type_hint.empty()) {
+		IRInstruction::TypeHint type = IRInstruction::TypeHint_NONE;
+		if (stmt->type_hint == "int") {
+			type = Variant::INT;
+		} else if (stmt->type_hint == "float") {
+			type = Variant::FLOAT;
+		} else if (stmt->type_hint == "bool") {
+			type = Variant::BOOL;
+		} else if (stmt->type_hint == "String") {
+			type = Variant::STRING;
+		}
+		// Add more types as needed
+
+		if (type != IRInstruction::TypeHint_NONE) {
+			set_register_type(reg, type);
+		}
+	} else if (stmt->initializer) {
+		// Infer type from initializer
+		IRInstruction::TypeHint init_type = get_register_type(reg);
+		if (init_type != IRInstruction::TypeHint_NONE) {
+			set_register_type(reg, init_type);
+		}
+	}
+
 	declare_variable(stmt->name, reg, stmt->is_const);
 }
 
@@ -592,10 +617,14 @@ int CodeGenerator::gen_literal(const LiteralExpr* expr, IRFunction& func) {
 	int reg = alloc_register();
 
 	switch (expr->lit_type) {
-		case LiteralExpr::Type::INTEGER:
-			func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(reg),
-			                               IRValue::imm(std::get<int64_t>(expr->value)));
+		case LiteralExpr::Type::INTEGER: {
+			IRInstruction instr(IROpcode::LOAD_IMM, IRValue::reg(reg),
+			                    IRValue::imm(std::get<int64_t>(expr->value)));
+			instr.type_hint = Variant::INT;
+			func.instructions.push_back(instr);
+			set_register_type(reg, Variant::INT);
 			break;
+		}
 
 		case LiteralExpr::Type::FLOAT: {
 			// Float literals are always 64-bit doubles in GDScript
@@ -607,14 +636,21 @@ int CodeGenerator::gen_literal(const LiteralExpr* expr, IRFunction& func) {
 			break;
 		}
 
-		case LiteralExpr::Type::BOOL:
-			func.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(reg),
-			                               IRValue::imm(std::get<bool>(expr->value) ? 1 : 0));
+		case LiteralExpr::Type::BOOL: {
+			IRInstruction instr(IROpcode::LOAD_BOOL, IRValue::reg(reg),
+			                    IRValue::imm(std::get<bool>(expr->value) ? 1 : 0));
+			instr.type_hint = Variant::BOOL;
+			func.instructions.push_back(instr);
+			set_register_type(reg, Variant::BOOL);
 			break;
+		}
 
 		case LiteralExpr::Type::STRING: {
 			int str_idx = add_string_constant(std::get<std::string>(expr->value));
-			func.instructions.emplace_back(IROpcode::LOAD_STRING, IRValue::reg(reg), IRValue::imm(str_idx));
+			IRInstruction instr(IROpcode::LOAD_STRING, IRValue::reg(reg), IRValue::imm(str_idx));
+			instr.type_hint = Variant::STRING;
+			func.instructions.push_back(instr);
+			set_register_type(reg, Variant::STRING);
 			break;
 		}
 
@@ -680,9 +716,15 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, IRFunction& func) {
 	                      expr->op == BinaryExpr::Op::MUL ||
 	                      expr->op == BinaryExpr::Op::DIV ||
 	                      expr->op == BinaryExpr::Op::MOD);
+	bool is_comparison = (expr->op == BinaryExpr::Op::EQ ||
+	                      expr->op == BinaryExpr::Op::NEQ ||
+	                      expr->op == BinaryExpr::Op::LT ||
+	                      expr->op == BinaryExpr::Op::LTE ||
+	                      expr->op == BinaryExpr::Op::GT ||
+	                      expr->op == BinaryExpr::Op::GTE);
 
-	// In GDScript, if either operand is a float, the result is a float
-	// for arithmetic operations
+	// For arithmetic operations: if either operand is float, result is float
+	// For comparisons: track operand type to enable typed comparisons
 	IRInstruction::TypeHint result_type = IRInstruction::TypeHint_NONE;
 	if (is_arithmetic) {
 		if (left_type == Variant::FLOAT ||
@@ -691,6 +733,13 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, IRFunction& func) {
 		} else if (left_type == Variant::INT &&
 		           right_type == Variant::INT) {
 			result_type = Variant::INT;
+		}
+	} else if (is_comparison) {
+		// For comparisons, use type hint to indicate operand type for codegen optimization
+		if (left_type == Variant::INT && right_type == Variant::INT) {
+			result_type = Variant::INT;
+		} else if (left_type == Variant::FLOAT && right_type == Variant::FLOAT) {
+			result_type = Variant::FLOAT;
 		}
 	}
 
