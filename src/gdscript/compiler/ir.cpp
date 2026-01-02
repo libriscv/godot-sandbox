@@ -31,6 +31,12 @@ const char* ir_opcode_name(IROpcode op) {
 		case IROpcode::JUMP: return "JUMP";
 		case IROpcode::BRANCH_ZERO: return "BRANCH_ZERO";
 		case IROpcode::BRANCH_NOT_ZERO: return "BRANCH_NOT_ZERO";
+		case IROpcode::BRANCH_EQ: return "BRANCH_EQ";
+		case IROpcode::BRANCH_NEQ: return "BRANCH_NEQ";
+		case IROpcode::BRANCH_LT: return "BRANCH_LT";
+		case IROpcode::BRANCH_LTE: return "BRANCH_LTE";
+		case IROpcode::BRANCH_GT: return "BRANCH_GT";
+		case IROpcode::BRANCH_GTE: return "BRANCH_GTE";
 		case IROpcode::CALL: return "CALL";
 		case IROpcode::CALL_SYSCALL: return "CALL_SYSCALL";
 		case IROpcode::RETURN: return "RETURN";

@@ -54,7 +54,8 @@ private:
 
 	// Peephole optimization helpers
 	static bool is_arithmetic_op(IROpcode op);
-	static bool is_reg_used_between_exclusive(const IRFunction& func, int reg, size_t start_idx, size_t end_idx);
+	static bool is_branch_op(IROpcode op);
+	static bool is_reg_used_between_exclusive(const IRFunction& func, int reg, size_t start_idx, size_t end_idx, bool conservative_at_labels = true);
 	static bool is_pure_load_op(IROpcode op);
 
 	// LICM helpers

@@ -509,6 +509,99 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				break;
 			}
 
+			case IROpcode::BRANCH_EQ:
+			case IROpcode::BRANCH_NEQ:
+			case IROpcode::BRANCH_LT:
+			case IROpcode::BRANCH_LTE:
+			case IROpcode::BRANCH_GT:
+			case IROpcode::BRANCH_GTE: {
+				// Fused comparison + branch instructions
+				// Format: BRANCH_* lhs, rhs, label
+				// These directly emit BEQ/BNE/BLT/BGE without storing result
+				if (instr.operands.size() < 3) {
+					throw std::runtime_error("Fused branch requires 3 operands: lhs, rhs, label");
+				}
+
+				// Check if operands are registers
+				bool lhs_is_reg = instr.operands[0].type == IRValue::Type::REGISTER;
+				bool rhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
+
+				// For now, only support register operands (can be extended later for immediates)
+				if (!lhs_is_reg || !rhs_is_reg) {
+					throw std::runtime_error("Fused branch requires register operands");
+				}
+
+				int lhs_vreg = std::get<int>(instr.operands[0].value);
+				int rhs_vreg = std::get<int>(instr.operands[1].value);
+				std::string label = std::get<std::string>(instr.operands[2].value);
+
+				// Use optimized path for type-hinted INT comparisons
+				if (instr.type_hint == Variant::INT) {
+					int lhs_offset = get_variant_stack_offset(lhs_vreg);
+					int rhs_offset = get_variant_stack_offset(rhs_vreg);
+
+					// Load both int64 values
+					emit_load_variant_int(REG_T0, REG_SP, lhs_offset);
+					emit_load_variant_int(REG_T1, REG_SP, rhs_offset);
+
+					// Emit direct branch based on comparison type
+					mark_label_use(label, m_code.size());
+					switch (instr.opcode) {
+						case IROpcode::BRANCH_EQ:
+							emit_beq(REG_T0, REG_T1, 0);
+							break;
+						case IROpcode::BRANCH_NEQ:
+							emit_bne(REG_T0, REG_T1, 0);
+							break;
+						case IROpcode::BRANCH_LT:
+							emit_blt(REG_T0, REG_T1, 0);
+							break;
+						case IROpcode::BRANCH_LTE:
+							// t0 <= t1 is !(t0 > t1), which is !(t1 < t0)
+							// So we branch if NOT (t1 < t0), i.e., t1 >= t0
+							emit_bge(REG_T1, REG_T0, 0);
+							break;
+						case IROpcode::BRANCH_GT:
+							// t0 > t1 is t1 < t0
+							emit_blt(REG_T1, REG_T0, 0);
+							break;
+						case IROpcode::BRANCH_GTE:
+							emit_bge(REG_T0, REG_T1, 0);
+							break;
+						default:
+							throw std::runtime_error("Unknown fused branch opcode");
+					}
+				} else {
+					// Fall back to comparison + branch for non-INT types
+					// This is less optimal but maintains correctness
+					int lhs_offset = get_variant_stack_offset(lhs_vreg);
+					int rhs_offset = get_variant_stack_offset(rhs_vreg);
+					int tmp_vreg = m_next_variant_slot++;
+					int tmp_offset = get_variant_stack_offset(tmp_vreg);
+
+					// Map IR opcode to Variant::Operator
+					int variant_op;
+					switch (instr.opcode) {
+						case IROpcode::BRANCH_EQ:  variant_op = 0; break; // OP_EQUAL
+						case IROpcode::BRANCH_NEQ: variant_op = 1; break; // OP_NOT_EQUAL
+						case IROpcode::BRANCH_LT:  variant_op = 2; break; // OP_LESS
+						case IROpcode::BRANCH_LTE: variant_op = 3; break; // OP_LESS_EQUAL
+						case IROpcode::BRANCH_GT:  variant_op = 4; break; // OP_GREATER
+						case IROpcode::BRANCH_GTE: variant_op = 5; break; // OP_GREATER_EQUAL
+						default: variant_op = 0; break;
+					}
+
+					// Perform comparison via syscall
+					emit_variant_eval(tmp_offset, lhs_offset, rhs_offset, variant_op);
+
+					// Load result and branch
+					emit_load_variant_bool(REG_T0, REG_SP, tmp_offset);
+					mark_label_use(label, m_code.size());
+					emit_bne(REG_T0, REG_ZERO, 0);
+				}
+				break;
+			}
+
 			case IROpcode::JUMP:
 				mark_label_use(std::get<std::string>(instr.operands[0].value), m_code.size());
 				emit_jal(REG_ZERO, 0);
@@ -1793,6 +1886,22 @@ void RISCVCodeGen::emit_beq(uint8_t rs1, uint8_t rs2, int32_t offset) {
 
 void RISCVCodeGen::emit_bne(uint8_t rs1, uint8_t rs2, int32_t offset) {
 	emit_b_type(0x63, 1, rs1, rs2, offset);
+}
+
+void RISCVCodeGen::emit_blt(uint8_t rs1, uint8_t rs2, int32_t offset) {
+	emit_b_type(0x63, 4, rs1, rs2, offset);
+}
+
+void RISCVCodeGen::emit_bge(uint8_t rs1, uint8_t rs2, int32_t offset) {
+	emit_b_type(0x63, 5, rs1, rs2, offset);
+}
+
+void RISCVCodeGen::emit_bltu(uint8_t rs1, uint8_t rs2, int32_t offset) {
+	emit_b_type(0x63, 6, rs1, rs2, offset);
+}
+
+void RISCVCodeGen::emit_bgeu(uint8_t rs1, uint8_t rs2, int32_t offset) {
+	emit_b_type(0x63, 7, rs1, rs2, offset);
 }
 
 void RISCVCodeGen::emit_jal(uint8_t rd, int32_t offset) {

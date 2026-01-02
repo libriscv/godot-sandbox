@@ -61,6 +61,10 @@ private:
 	void emit_snez(uint8_t rd, uint8_t rs);   // Set if not equal to zero (pseudo: sltu rd, x0, rs)
 	void emit_beq(uint8_t rs1, uint8_t rs2, int32_t offset);
 	void emit_bne(uint8_t rs1, uint8_t rs2, int32_t offset);
+	void emit_blt(uint8_t rs1, uint8_t rs2, int32_t offset);
+	void emit_bge(uint8_t rs1, uint8_t rs2, int32_t offset);
+	void emit_bltu(uint8_t rs1, uint8_t rs2, int32_t offset);
+	void emit_bgeu(uint8_t rs1, uint8_t rs2, int32_t offset);
 	void emit_jal(uint8_t rd, int32_t offset);
 	void emit_jalr(uint8_t rd, uint8_t rs1, int32_t offset);
 	void emit_ecall();

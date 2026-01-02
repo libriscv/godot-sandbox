@@ -538,8 +538,84 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 		bool skip = false;
 		bool handled = false;
 
+		// Pattern 0: Fuse CMP + BRANCH -> BRANCH_CMP
+		// Detect pattern: CMP_* dst, lhs, rhs; BRANCH_ZERO/NOT_ZERO dst, label
+		// Transform to: BRANCH_CMP lhs, rhs, label (where CMP is the comparison type)
+		// This eliminates the need to store and load the comparison result
+		// XXX: This optimization is known to fail untyped recursive fibonacci(20)
+		if (!skip && !handled && i + 1 < func.instructions.size()) {
+			const auto& cmp_instr = func.instructions[i];
+			const auto& branch_instr = func.instructions[i + 1];
+
+			// Check if this is a comparison instruction
+			bool is_cmp = (cmp_instr.opcode == IROpcode::CMP_EQ ||
+			               cmp_instr.opcode == IROpcode::CMP_NEQ ||
+			               cmp_instr.opcode == IROpcode::CMP_LT ||
+			               cmp_instr.opcode == IROpcode::CMP_LTE ||
+			               cmp_instr.opcode == IROpcode::CMP_GT ||
+			               cmp_instr.opcode == IROpcode::CMP_GTE);
+
+			// Check if next instruction branches on the comparison result
+			bool is_branch_on_cmp = (branch_instr.opcode == IROpcode::BRANCH_ZERO ||
+			                          branch_instr.opcode == IROpcode::BRANCH_NOT_ZERO);
+
+			if (is_cmp && is_branch_on_cmp && cmp_instr.operands.size() >= 3 && branch_instr.operands.size() >= 2) {
+				// Get comparison destination register
+				int cmp_dst = std::get<int>(cmp_instr.operands[0].value);
+				// Get branch condition register
+				int branch_reg = std::get<int>(branch_instr.operands[0].value);
+
+				// Check if branch uses the comparison result AND result is not used elsewhere
+				// We check if it's used after the branch (i+2 onwards), not including the branch itself
+				// Pass false for conservative_at_labels since comparison results don't persist across control flow
+				bool reg_not_used_after = !is_reg_used_between_exclusive(func, cmp_dst, i + 1, func.instructions.size(), false);
+				if (cmp_dst == branch_reg && reg_not_used_after) {
+					// Fuse the instructions
+					IROpcode fused_opcode;
+					bool invert = (branch_instr.opcode == IROpcode::BRANCH_ZERO);
+
+					// Map CMP + BRANCH_ZERO to direct branch (or invert for BRANCH_NOT_ZERO)
+					if (invert) {
+						// BRANCH_ZERO means branch when condition is false, so invert comparison
+						switch (cmp_instr.opcode) {
+							case IROpcode::CMP_EQ:  fused_opcode = IROpcode::BRANCH_NEQ; break;
+							case IROpcode::CMP_NEQ: fused_opcode = IROpcode::BRANCH_EQ; break;
+							case IROpcode::CMP_LT:  fused_opcode = IROpcode::BRANCH_GTE; break;
+							case IROpcode::CMP_LTE: fused_opcode = IROpcode::BRANCH_GT; break;
+							case IROpcode::CMP_GT:  fused_opcode = IROpcode::BRANCH_LTE; break;
+							case IROpcode::CMP_GTE: fused_opcode = IROpcode::BRANCH_LT; break;
+							default: throw std::runtime_error("Unexpected comparison opcode in peephole optimization");
+						}
+					} else {
+						// BRANCH_NOT_ZERO means branch when condition is true, use same comparison
+						switch (cmp_instr.opcode) {
+							case IROpcode::CMP_EQ:  fused_opcode = IROpcode::BRANCH_EQ; break;
+							case IROpcode::CMP_NEQ: fused_opcode = IROpcode::BRANCH_NEQ; break;
+							case IROpcode::CMP_LT:  fused_opcode = IROpcode::BRANCH_LT; break;
+							case IROpcode::CMP_LTE: fused_opcode = IROpcode::BRANCH_LTE; break;
+							case IROpcode::CMP_GT:  fused_opcode = IROpcode::BRANCH_GT; break;
+							case IROpcode::CMP_GTE: fused_opcode = IROpcode::BRANCH_GTE; break;
+							default: throw std::runtime_error("Unexpected comparison opcode in peephole optimization");
+						}
+					}
+
+					// Create fused instruction: BRANCH_CMP lhs, rhs, label
+					IRInstruction fused(fused_opcode);
+					fused.operands.push_back(cmp_instr.operands[1]); // lhs
+					fused.operands.push_back(cmp_instr.operands[2]); // rhs
+					fused.operands.push_back(branch_instr.operands[1]); // label
+					fused.type_hint = cmp_instr.type_hint;
+
+					new_instructions.push_back(fused);
+					i += 2; // Skip both instructions
+					skip = true;
+					handled = true;
+				}
+			}
+		}
+
 		// Pattern 1: MOVE r0, r0 -> eliminate
-		if (instr.opcode == IROpcode::MOVE) {
+		if (!skip && !handled && instr.opcode == IROpcode::MOVE) {
 			int dst = std::get<int>(instr.operands[0].value);
 			int src = std::get<int>(instr.operands[1].value);
 			if (dst == src) {
@@ -907,15 +983,21 @@ std::unordered_set<int> IROptimizer::find_live_registers(const IRFunction& func)
 
 	// Mark all read registers as live
 	for (const auto& instr : func.instructions) {
-		switch (instr.opcode) {
-			// Branch instructions - FIRST operand is the register to check
-			case IROpcode::BRANCH_ZERO:
-			case IROpcode::BRANCH_NOT_ZERO:
-				// Mark the first operand (register to check) as live
-				if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-					live.insert(std::get<int>(instr.operands[0].value));
+		// Handle all branch instructions
+		if (is_branch_op(instr.opcode)) {
+			// BRANCH_ZERO/NOT_ZERO: first operand is the register to check
+			// Fused branches (EQ/NEQ/LT/etc): first TWO operands are registers to compare
+			size_t num_reg_operands = (instr.opcode == IROpcode::BRANCH_ZERO ||
+			                             instr.opcode == IROpcode::BRANCH_NOT_ZERO) ? 1 : 2;
+			for (size_t i = 0; i < num_reg_operands && i < instr.operands.size(); i++) {
+				if (instr.operands[i].type == IRValue::Type::REGISTER) {
+					live.insert(std::get<int>(instr.operands[i].value));
 				}
-				break;
+			}
+			continue;
+		}
+
+		switch (instr.opcode) {
 
 			// Instructions that read from operands (not just write)
 			case IROpcode::MOVE:
@@ -1101,25 +1183,49 @@ bool IROptimizer::is_arithmetic_op(IROpcode op) {
 	}
 }
 
-bool IROptimizer::is_reg_used_between_exclusive(const IRFunction& func, int reg, size_t start_idx, size_t end_idx) {
+bool IROptimizer::is_branch_op(IROpcode op) {
+	switch (op) {
+		case IROpcode::BRANCH_ZERO:
+		case IROpcode::BRANCH_NOT_ZERO:
+		case IROpcode::BRANCH_EQ:
+		case IROpcode::BRANCH_NEQ:
+		case IROpcode::BRANCH_LT:
+		case IROpcode::BRANCH_LTE:
+		case IROpcode::BRANCH_GT:
+		case IROpcode::BRANCH_GTE:
+			return true;
+		default:
+			return false;
+	}
+}
+
+bool IROptimizer::is_reg_used_between_exclusive(const IRFunction& func, int reg, size_t start_idx, size_t end_idx, bool conservative_at_labels) {
 	// Check if register is used in the instruction range (start_idx, end_idx)
 	// Exclusive of both boundaries
-
-	// Safety check
-	if (start_idx >= func.instructions.size() || end_idx > func.instructions.size()) {
-		return true; // Conservative: assume used if indices are out of bounds
-	}
+	end_idx = std::min(end_idx, func.instructions.size());
 
 	for (size_t i = start_idx + 1; i < end_idx; i++) {
 		const auto& instr = func.instructions[i];
 
-		// LABEL is a control flow boundary - be conservative
+		// LABEL is a control flow boundary - be conservative (unless told otherwise)
 		if (instr.opcode == IROpcode::LABEL) {
-			return true;
+			return conservative_at_labels;
 		}
 
+		// Fused branch instructions read both operands 0 and 1 as source operands (not destinations)
+		bool is_fused_branch = (instr.opcode == IROpcode::BRANCH_EQ ||
+		                         instr.opcode == IROpcode::BRANCH_NEQ ||
+		                         instr.opcode == IROpcode::BRANCH_LT ||
+		                         instr.opcode == IROpcode::BRANCH_LTE ||
+		                         instr.opcode == IROpcode::BRANCH_GT ||
+		                         instr.opcode == IROpcode::BRANCH_GTE);
+
+		// For fused branches, check operands 0 and 1 (both are source operands)
+		// For other instructions, skip operand 0 (it's the destination)
+		size_t start_operand = is_fused_branch ? 0 : 1;
+
 		// Check if register is read (used as source operand)
-		for (size_t j = 1; j < instr.operands.size(); j++) {
+		for (size_t j = start_operand; j < instr.operands.size(); j++) {
 			if (instr.operands[j].type == IRValue::Type::REGISTER) {
 				int r = std::get<int>(instr.operands[j].value);
 				if (r == reg) {
@@ -1205,8 +1311,7 @@ void IROptimizer::eliminate_redundant_stores(IRFunction& func) {
 		// Control flow boundaries - flush all pending stores
 		if (instr.opcode == IROpcode::LABEL ||
 		    instr.opcode == IROpcode::JUMP ||
-		    instr.opcode == IROpcode::BRANCH_ZERO ||
-		    instr.opcode == IROpcode::BRANCH_NOT_ZERO ||
+		    is_branch_op(instr.opcode) ||
 		    instr.opcode == IROpcode::CALL ||
 		    instr.opcode == IROpcode::VCALL ||
 		    instr.opcode == IROpcode::CALL_SYSCALL ||
@@ -1328,16 +1433,18 @@ std::vector<IROptimizer::LoopInfo> IROptimizer::identify_loops(const IRFunction&
 				size_t header_idx = it->second;
 
 				// Try to find the loop exit label
-				// Look for BRANCH_ZERO/BRANCH_NOT_ZERO between header and back edge
+				// Look for branch instructions between header and back edge
 				std::string exit_label;
 				for (size_t j = header_idx; j < i; j++) {
 					const auto& loop_instr = func.instructions[j];
-					if ((loop_instr.opcode == IROpcode::BRANCH_ZERO ||
-					     loop_instr.opcode == IROpcode::BRANCH_NOT_ZERO) &&
-					    loop_instr.operands.size() >= 2 &&
-					    loop_instr.operands[1].type == IRValue::Type::LABEL) {
-						exit_label = std::get<std::string>(loop_instr.operands[1].value);
-						break;
+					if (is_branch_op(loop_instr.opcode)) {
+						// Find the label operand (last operand for all branch types)
+						size_t label_idx = loop_instr.operands.size() - 1;
+						if (label_idx < loop_instr.operands.size() &&
+						    loop_instr.operands[label_idx].type == IRValue::Type::LABEL) {
+							exit_label = std::get<std::string>(loop_instr.operands[label_idx].value);
+							break;
+						}
 					}
 				}
 
@@ -1504,8 +1611,7 @@ void IROptimizer::loop_invariant_code_motion(IRFunction& func) {
 					// Skip labels and control flow
 					if (instr.opcode == IROpcode::LABEL ||
 					    instr.opcode == IROpcode::JUMP ||
-					    instr.opcode == IROpcode::BRANCH_ZERO ||
-					    instr.opcode == IROpcode::BRANCH_NOT_ZERO) {
+					    is_branch_op(instr.opcode)) {
 						continue;
 					}
 
@@ -1591,8 +1697,7 @@ void IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 		// Clear copy tracking at control flow boundaries
 		if (instr.opcode == IROpcode::LABEL ||
 		    instr.opcode == IROpcode::JUMP ||
-		    instr.opcode == IROpcode::BRANCH_ZERO ||
-		    instr.opcode == IROpcode::BRANCH_NOT_ZERO ||
+		    is_branch_op(instr.opcode) ||
 		    instr.opcode == IROpcode::CALL ||
 		    instr.opcode == IROpcode::VCALL ||
 		    instr.opcode == IROpcode::CALL_SYSCALL) {

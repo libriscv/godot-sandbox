@@ -274,6 +274,16 @@ func test_call3():
 
 func test_call_with_shuffling(a0, a1):
 	return test_to_upper(a1)
+
+func untyped_fibonacci(n):
+	if n <= 1:
+		return n
+	return untyped_fibonacci(n - 1) + untyped_fibonacci(n - 2)
+
+func typed_fibonacci(n : int):
+	if n <= 1:
+		return n
+	return typed_fibonacci(n - 1) + typed_fibonacci(n - 2)
 """
 
 	var ts : Sandbox = Sandbox.new()
@@ -304,6 +314,13 @@ func test_call_with_shuffling(a0, a1):
 
 	result = s.vmcallv("test_call_with_shuffling", "first", "second")
 	assert_eq(result, "SECOND", "test_call_with_shuffling should return uppercase of second argument")
+
+	# Test typed/untyped fibonacci
+	result = s.vmcallv("typed_fibonacci", 20)
+	assert_eq(result, 6765, "typed_fibonacci(20) should return 6765")
+
+	result = s.vmcallv("untyped_fibonacci", 20)
+	assert_eq(result, 6765, "untyped_fibonacci(20) should return 6765")
 
 	s.queue_free()
 	ts.queue_free()
@@ -2147,62 +2164,6 @@ func float_test():
 	s.queue_free()
 	ts.queue_free()
 
-func test_gdscript_benchmarks():
-	var benchmarks = {
-		"fibonacci": """
-func fibonacci(n):
-	if n <= 1:
-		return n
-	return fibonacci(n - 1) + fibonacci(n - 2)
-""",
-		"factorial": """
-func factorial(n):
-	if n <= 1:
-		return 1
-	return n * factorial(n - 1)
-""",
-		"pf32a_operation": """
-func pf32a_operation(array):
-	var i = 0
-	for n in range(10000):
-		array.set(i, i * 2.0)
-	return array
-"""
-	}
-
-	var ts : Sandbox = Sandbox.new()
-	ts.set_program(Sandbox_TestsTests)
-	ts.restrictions = true
-
-	for name in benchmarks.keys():
-		var gdscript_code = benchmarks[name]
-		var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
-		assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty for %s" % name)
-
-		var s = Sandbox.new()
-		s.load_buffer(compiled_elf)
-		s.set_instructions_max(20000)
-		assert_true(s.has_function(name), "Compiled ELF should have function '%s'" % name)
-
-		# Benchmark the compiled function
-		var start_time = Time.get_ticks_usec()
-		if name == "fibonacci":
-			var result = s.vmcallv(name, 20)  # Fibonacci of 20
-			assert_eq(result, 6765, "fibonacci(20) should return 6765")
-		elif name == "factorial":
-			var result = s.vmcallv(name, 10)  # Factorial of 10
-			assert_eq(result, 3628800, "factorial(10) should return 3628800")
-		elif name == "pf32a_operation":
-			var array : PackedFloat32Array = PackedFloat32Array()
-			array.resize(10000)
-			var result = s.vmcallv(name, array)
-			assert_eq(result.size(), 10000, "pf32a_operation should return array of length 10000")
-		var end_time = Time.get_ticks_usec()
-		print("%s benchmark took %d us" % [name, end_time - start_time])
-
-		s.queue_free()
-	ts.queue_free()
-
 
 func test_peephole_pattern_e():
 	# Test Pattern E optimization: x = x + 1 (increment optimization)
@@ -2790,3 +2751,60 @@ func test_property_self_set():
 
 	s.queue_free()
 	ts.queue_free()
+
+func test_gdscript_benchmarks():
+	var benchmarks = {
+		"fibonacci": """
+func fibonacci(n : int):
+	if n <= 1:
+		return n
+	return fibonacci(n - 1) + fibonacci(n - 2)
+""",
+		"factorial": """
+func factorial(n):
+	if n <= 1:
+		return 1
+	return n * factorial(n - 1)
+""",
+		"pf32a_operation": """
+func pf32a_operation(array):
+	var i = 0
+	for n in range(10000):
+		array.set(i, i * 2.0)
+	return array
+"""
+	}
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+
+	for name in benchmarks.keys():
+		var gdscript_code = benchmarks[name]
+		var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+		assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty for %s" % name)
+
+		var s = Sandbox.new()
+		s.load_buffer(compiled_elf)
+		s.set_instructions_max(20000)
+		assert_true(s.has_function(name), "Compiled ELF should have function '%s'" % name)
+
+		# Benchmark the compiled function
+		var start_time = Time.get_ticks_usec()
+		if name == "fibonacci":
+			var result = s.vmcallv(name, 20)  # Fibonacci of 20
+			assert_eq(result, 6765, "fibonacci(20) should return 6765")
+		elif name == "factorial":
+			var result = s.vmcallv(name, 10)  # Factorial of 10
+			assert_eq(result, 3628800, "factorial(10) should return 3628800")
+		elif name == "pf32a_operation":
+			var array : PackedFloat32Array = PackedFloat32Array()
+			array.resize(10000)
+			var result = s.vmcallv(name, array)
+			assert_eq(result.size(), 10000, "pf32a_operation should return array of length 10000")
+		var end_time = Time.get_ticks_usec()
+		print("%s benchmark took %d us" % [name, end_time - start_time])
+
+		s.queue_free()
+	ts.queue_free()
+

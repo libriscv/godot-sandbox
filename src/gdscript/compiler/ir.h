@@ -47,6 +47,12 @@ enum class IROpcode {
 	JUMP,            // Unconditional jump
 	BRANCH_ZERO,     // Branch if register == 0
 	BRANCH_NOT_ZERO, // Branch if register != 0
+	BRANCH_EQ,       // Branch if reg1 == reg2 (fused comparison + branch)
+	BRANCH_NEQ,      // Branch if reg1 != reg2 (fused comparison + branch)
+	BRANCH_LT,       // Branch if reg1 < reg2 (fused comparison + branch)
+	BRANCH_LTE,      // Branch if reg1 <= reg2 (fused comparison + branch)
+	BRANCH_GT,       // Branch if reg1 > reg2 (fused comparison + branch)
+	BRANCH_GTE,      // Branch if reg1 >= reg2 (fused comparison + branch)
 
 	// Function calls
 	CALL,            // Call local function
