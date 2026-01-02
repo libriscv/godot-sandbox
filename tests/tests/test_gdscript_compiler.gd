@@ -2808,3 +2808,79 @@ func pf32a_operation(array):
 		s.queue_free()
 	ts.queue_free()
 
+func test_global_variables():
+	# Test that global var and const declarations work correctly
+	var gdscript_code = """
+var global_counter: int = 0
+const GLOBAL_CONST: float = 42.0
+var global_string: String  # String initialization not yet supported, leave uninitialized
+
+func increment_counter():
+	global_counter = global_counter + 1
+	return global_counter
+
+func get_counter():
+	return global_counter
+
+func loop_counter():
+	global_counter = 0
+	while global_counter < 5:
+		global_counter = global_counter + 1
+	return global_counter
+
+func get_const():
+	return GLOBAL_CONST
+
+func const_arithmetic():
+	return GLOBAL_CONST * 2.0 + 8.0
+
+func get_string():
+	return global_string
+
+func set_string(new_value):
+	global_string = new_value
+	return global_string
+"""
+
+	print("Compiling GDScript code with global variables:")
+	print(gdscript_code)
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty for global variables test")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(1000)
+
+	assert_true(s.has_function("increment_counter"), "Compiled ELF should have function 'increment_counter'")
+	assert_true(s.has_function("get_counter"), "Compiled ELF should have function 'get_counter'")
+	assert_true(s.has_function("loop_counter"), "Compiled ELF should have function 'loop_counter'")
+	assert_true(s.has_function("get_const"), "Compiled ELF should have function 'get_const'")
+	assert_true(s.has_function("const_arithmetic"), "Compiled ELF should have function 'const_arithmetic'")
+	assert_true(s.has_function("get_string"), "Compiled ELF should have function 'get_string'")
+	assert_true(s.has_function("set_string"), "Compiled ELF should have function 'set_string'")
+
+	# Test global constant
+	assert_eq(s.vmcallv("get_const"), 42.0, "get_const() should return 42.0")
+	assert_almost_eq(s.vmcallv("const_arithmetic"), 92.0, 0.001, "const_arithmetic() should return 92.0")
+
+	# Test global variable that gets incremented
+	assert_eq(s.vmcallv("get_counter"), 0, "Initial counter should be 0")
+	assert_eq(s.vmcallv("increment_counter"), 1, "First increment should return 1")
+	assert_eq(s.vmcallv("get_counter"), 1, "Counter should now be 1")
+	assert_eq(s.vmcallv("increment_counter"), 2, "Second increment should return 2")
+	assert_eq(s.vmcallv("get_counter"), 2, "Counter should now be 2")
+	assert_eq(s.vmcallv("loop_counter"), 5, "loop_counter should return 5")
+
+	# Test global string - DISABLED
+	# String globals require additional scoping infrastructure not yet implemented
+	# TODO: Re-enable once string scoping is implemented
+	# assert_eq(s.vmcallv("set_string", "world"), "world", "set_string should return new value")
+	# assert_eq(s.vmcallv("get_string"), "world", "String should now be 'world'")
+
+	s.queue_free()
+	ts.queue_free()
+

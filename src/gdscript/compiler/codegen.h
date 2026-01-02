@@ -100,6 +100,10 @@ private:
 
 	// Track locally defined functions
 	std::unordered_set<std::string> m_local_functions;
+
+	// Global variables
+	std::unordered_map<std::string, size_t> m_global_variables; // Maps global name to index
+	bool is_global_variable(const std::string& name) const;
 };
 
 } // namespace gdscript

@@ -223,7 +223,6 @@ int main(int argc, char** argv)
 					case IROpcode::LOAD_FLOAT_IMM:
 					case IROpcode::LOAD_BOOL:
 					case IROpcode::LOAD_STRING:
-					case IROpcode::LOAD_VAR:
 					case IROpcode::CALL_SYSCALL:
 					case IROpcode::VCALL:
 					case IROpcode::VGET:

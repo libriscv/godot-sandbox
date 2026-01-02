@@ -208,6 +208,7 @@ struct FunctionDecl {
 
 // Top-level program
 struct Program {
+	std::vector<VarDeclStmt> globals; // Global variable declarations
 	std::vector<FunctionDecl> functions;
 };
 

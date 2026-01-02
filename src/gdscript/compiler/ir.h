@@ -17,8 +17,8 @@ enum class IROpcode {
 	LOAD_FLOAT_IMM,  // Load immediate float value into register
 	LOAD_BOOL,       // Load immediate boolean value into register
 	LOAD_STRING,     // Load immediate string value into register
-	LOAD_VAR,        // Load variable into register
-	STORE_VAR,       // Store register into variable
+	LOAD_GLOBAL,     // Load global variable into register
+	STORE_GLOBAL,    // Store register into global variable
 	MOVE,            // Move between registers
 
 	// Arithmetic
@@ -180,7 +180,20 @@ struct IRFunction {
 	int max_registers = 0; // Number of virtual registers used
 };
 
+// Global variable declaration in IR
+struct IRGlobalVar {
+	std::string name;
+	bool is_const = false;
+	IRInstruction::TypeHint type_hint = IRInstruction::TypeHint_NONE;
+
+	// Initialization value (if any)
+	enum class InitType { NONE, INT, FLOAT, STRING, BOOL, NULL_VAL };
+	InitType init_type = InitType::NONE;
+	std::variant<int64_t, double, std::string, bool> init_value;
+};
+
 struct IRProgram {
+	std::vector<IRGlobalVar> globals;
 	std::vector<IRFunction> functions;
 	std::vector<std::string> string_constants;
 };

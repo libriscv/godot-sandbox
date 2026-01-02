@@ -23,6 +23,10 @@ public:
 	// Get constant pool (for ELF builder to create .rodata section)
 	const std::vector<int64_t>& get_constant_pool() const { return m_constant_pool; }
 
+	// Get global variables information
+	const std::vector<IRGlobalVar>& get_globals() const { return m_globals; }
+	size_t get_global_data_size() const { return m_global_data_size; }
+
 private:
 	struct Function {
 		std::string name;
@@ -202,6 +206,11 @@ private:
 
 	// Label counter for generating unique local labels
 	int m_label_counter = 0;
+
+	// Global variables
+	std::vector<IRGlobalVar> m_globals;
+	size_t m_global_count = 0;
+	size_t m_global_data_size = 0;
 
 	// RISC-V RV64I register definitions
 	static constexpr uint8_t REG_ZERO = 0;  // x0 - always zero

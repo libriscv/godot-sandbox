@@ -79,8 +79,77 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_constant_pool_map.clear();
 	m_string_constants = &program.string_constants;
 
-	// Emit a STOP instruction at entry point (offset 0)
-	// This prevents accidental execution when ELF is loaded
+	// Entry point: Initialize global variables, then STOP
+	// Store globals info early so we can reference it during init
+	m_global_count = program.globals.size();
+	m_globals = program.globals;
+
+	// Generate initialization code for globals at entry point
+	if (m_global_count > 0) {
+		// We'll calculate the .globals virtual address when we define it later
+		// For now, emit placeholder that will be resolved during label resolution
+		for (size_t i = 0; i < program.globals.size(); i++) {
+			const auto& global = program.globals[i];
+
+			// Only initialize globals with explicit initial values (skip NONE)
+			if (global.init_type == IRGlobalVar::InitType::NONE) {
+				continue;
+			}
+
+			// Load address of global variable into t0
+			// Address = .globals + (i * 24)
+			emit_la(REG_T0, ".globals");
+			if (i > 0) {
+				int offset = i * VARIANT_SIZE;
+				emit_addi(REG_T0, REG_T0, offset);
+			}
+
+			// Initialize based on type
+			if (global.init_type == IRGlobalVar::InitType::INT) {
+				// Write type field: m_type = 2 (INT)
+				emit_li(REG_T1, Variant::INT);
+				emit_sw(REG_T1, REG_T0, 0);
+
+				// Write value: v.i at offset 8
+				int64_t value = std::get<int64_t>(global.init_value);
+				emit_li(REG_T1, value);
+				emit_sd(REG_T1, REG_T0, 8);
+			} else if (global.init_type == IRGlobalVar::InitType::FLOAT) {
+				// Write type field: m_type = 3 (FLOAT)
+				emit_li(REG_T1, Variant::FLOAT);
+				emit_sw(REG_T1, REG_T0, 0);
+
+				// Write value: v.f (64-bit double) at offset 8
+				double value = std::get<double>(global.init_value);
+				int64_t bits;
+				memcpy(&bits, &value, sizeof(double));
+				emit_li(REG_T1, bits);
+				emit_sd(REG_T1, REG_T0, 8);
+			} else if (global.init_type == IRGlobalVar::InitType::BOOL) {
+				// Write type field: m_type = 1 (BOOL)
+				emit_li(REG_T1, Variant::BOOL);
+				emit_sw(REG_T1, REG_T0, 0);
+
+				// Write value: v.b at offset 8
+				bool value = std::get<bool>(global.init_value);
+				emit_li(REG_T1, value ? 1 : 0);
+				emit_sd(REG_T1, REG_T0, 8);
+			} else if (global.init_type == IRGlobalVar::InitType::STRING) {
+				// String initialization not yet supported
+				throw std::runtime_error("Global variable '" + global.name + "': String initialization is not yet supported. " +
+					"Supported types: int, float, bool. Leave string globals uninitialized or set them in a function.");
+			} else if (global.init_type == IRGlobalVar::InitType::NULL_VAL) {
+				// Write type field: m_type = 0 (NIL)
+				emit_li(REG_T1, Variant::NIL);
+				emit_sw(REG_T1, REG_T0, 0);
+			} else {
+				// Unknown initialization type
+				throw std::runtime_error("Global variable '" + global.name + "': Unknown initialization type.");
+			}
+		}
+	}
+
+	// Emit STOP instruction after initialization
 	// STOP is encoded as: SYSTEM instruction (I-type) with imm[11:0] = 0x7ff
 	// SYSTEM opcode = 0x73, funct3 = 0, rs1 = 0, rd = 0, imm = 0x7ff
 	emit_i_type(0x73, 0, 0, 0, 0x7ff);
@@ -99,6 +168,44 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	for (size_t i = 0; i < m_constant_pool.size(); i++) {
 		std::string label = ".LC" + std::to_string(i);
 		m_labels[label] = const_pool_base + (i * 8);
+	}
+
+	// Append constant pool data to code
+	for (int64_t constant : m_constant_pool) {
+		for (int i = 0; i < 8; i++) {
+			m_code.push_back(static_cast<uint8_t>((constant >> (i * 8)) & 0xFF));
+		}
+	}
+
+	// Calculate global data size (m_global_count and m_globals already set earlier)
+	m_global_data_size = m_global_count * VARIANT_SIZE;
+
+	// Define .globals label and allocate global data area
+	// This will be placed in a separate R+W PT_LOAD segment by the ELF builder
+	if (m_global_count > 0) {
+		// Align to 8-byte boundary for proper Variant alignment
+		while (m_code.size() % 8 != 0) {
+			m_code.push_back(0);
+		}
+
+		// Calculate the virtual address for the .data segment
+		// The .data segment will be loaded at: BASE_ADDR + text_size, aligned to 4KB
+		size_t text_size = m_code.size();  // Current code size (before globals)
+		size_t globals_vaddr = 0x10000 + text_size;
+		globals_vaddr = (globals_vaddr + 0xFFF) & ~0xFFF;  // Align to 4KB page
+
+		// For label resolution, we need to store this as if it were a code offset
+		// Since BASE_ADDR (0x10000) is added during resolution, we store: vaddr - BASE_ADDR
+		m_labels[".globals"] = globals_vaddr - 0x10000;
+
+		// Allocate and initialize global variables to zero (NIL Variants)
+		// Each Variant is 24 bytes: [type:4][padding:4][data:16]
+		for (size_t i = 0; i < m_global_count; i++) {
+			// Write NIL Variant (type = 0, all other bytes = 0)
+			for (int j = 0; j < VARIANT_SIZE; j++) {
+				m_code.push_back(0);
+			}
+		}
 	}
 
 	// Resolve all label references
@@ -256,6 +363,68 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// Copy Variant (24 bytes)
 				emit_variant_copy(dst_offset, src_offset);
+				break;
+			}
+
+			case IROpcode::LOAD_GLOBAL: {
+				// LOAD_GLOBAL dst_reg, global_index
+				// Loads a global variable (Variant) from the global data area into a virtual register
+				int dst_vreg = std::get<int>(instr.operands[0].value);
+				int64_t global_idx = std::get<int64_t>(instr.operands[1].value);
+				int dst_offset = get_variant_stack_offset(dst_vreg);
+
+				// Load address of global variable: gp + (global_idx * 24)
+				// GP register points to the start of global data area
+				int global_offset = global_idx * VARIANT_SIZE;
+
+				// Load global base address into t0
+				// For now, we'll use a label to mark the global data section
+				std::string global_label = ".globals";
+				emit_la(REG_T0, global_label);
+
+				// Add offset for specific global
+				if (global_offset > 0) {
+					emit_addi(REG_T0, REG_T0, global_offset);
+				}
+
+				// Load destination address into t1
+				emit_load_stack_offset(REG_T1, dst_offset);
+
+				// Copy 24 bytes (3 8-byte loads/stores) from global to stack
+				for (int i = 0; i < 3; i++) {
+					emit_ld(REG_T2, REG_T0, i * 8);
+					emit_sd(REG_T2, REG_T1, i * 8);
+				}
+				break;
+			}
+
+			case IROpcode::STORE_GLOBAL: {
+				// STORE_GLOBAL global_index, src_reg
+				// Stores a virtual register (Variant) into a global variable
+				int64_t global_idx = std::get<int64_t>(instr.operands[0].value);
+				int src_vreg = std::get<int>(instr.operands[1].value);
+				int src_offset = get_variant_stack_offset(src_vreg);
+
+				// Load address of global variable: gp + (global_idx * 24)
+				int global_offset = global_idx * VARIANT_SIZE;
+
+				// Load global base address into t0
+				std::string global_label = ".globals";
+				emit_la(REG_T0, global_label);
+
+				// Add offset for specific global
+				if (global_offset > 0) {
+					emit_addi(REG_T0, REG_T0, global_offset);
+				}
+
+				// Load source address into t1
+				emit_load_stack_offset(REG_T1, src_offset);
+
+				// Copy 24 bytes (3 8-byte loads/stores) from stack to global
+				for (int i = 0; i < 3; i++) {
+					emit_ld(REG_T2, REG_T1, i * 8);
+					emit_sd(REG_T2, REG_T0, i * 8);
+				}
 				break;
 			}
 
@@ -1446,8 +1615,6 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::MAKE_RECT2I:
 			case IROpcode::MAKE_PLANE:
 			case IROpcode::VSET_INLINE:
-			case IROpcode::LOAD_VAR:
-			case IROpcode::STORE_VAR:
 				throw std::runtime_error("Opcode not yet implemented in RISC-V codegen");
 
 			case IROpcode::CALL_SYSCALL: {

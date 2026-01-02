@@ -13,6 +13,7 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 	std::vector<uint8_t> code = codegen.generate(program);
 	auto func_offsets = codegen.get_function_offsets();
 	auto const_pool = codegen.get_constant_pool();
+	auto global_data_size = codegen.get_global_data_size();
 
 	// Build complete ELF file
 	std::vector<uint8_t> elf_data;
@@ -22,18 +23,30 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 	size_t phdr_size = sizeof(Elf64_Phdr);
 	size_t shdr_size = sizeof(Elf64_Shdr);
 
-	// We'll have 5 sections: NULL, .text, .symtab, .strtab, .shstrtab
-	// Constants are appended to .text section for simplicity
-	size_t num_sections = 5;
-	size_t num_phdrs = 1; // One PT_LOAD segment for .text
+	// Determine if we need separate .text and .data segments
+	// If we have global variables, we need two PT_LOAD segments:
+	// 1. .text segment (R+X) - code and constants
+	// 2. .data segment (R+W) - global variables
+	bool has_globals = global_data_size > 0;
+	size_t num_phdrs = has_globals ? 2 : 1;
+
+	// We'll have 5 or 6 sections depending on whether we have globals
+	// NULL, .text, [.data], .symtab, .strtab, .shstrtab
+	size_t num_sections = has_globals ? 6 : 5;
 
 	// Calculate section sizes
-	// Append constant pool to code section
-	size_t rodata_size = const_pool.size() * 8; // Each constant is 8 bytes (int64_t)
-	size_t code_size = code.size() + rodata_size;
+	// The code vector includes: code + constant pool + global data (if any)
+	// We need to split it if we have globals
+	size_t text_size = code.size() - global_data_size;
+	size_t data_size = global_data_size;
 
 	// Build string tables
-	std::vector<std::string> section_names = {"", ".text", ".symtab", ".strtab", ".shstrtab"};
+	std::vector<std::string> section_names;
+	if (has_globals) {
+		section_names = {"", ".text", ".data", ".symtab", ".strtab", ".shstrtab"};
+	} else {
+		section_names = {"", ".text", ".symtab", ".strtab", ".shstrtab"};
+	}
 	std::vector<uint8_t> shstrtab;
 	shstrtab.reserve(1 + (1 + section_names.size()) * 10); // Rough estimate
 	std::vector<size_t> section_name_offsets;
@@ -87,8 +100,8 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 		const auto& func = program.functions[i];
 		size_t func_offset = func_offsets.at(func.name);
 
-		// Calculate function size (distance to next function or end of code)
-		size_t func_size = code_size - func_offset;
+		// Calculate function size (distance to next function or end of text section)
+		size_t func_size = text_size - func_offset;
 		if (i + 1 < program.functions.size()) {
 			const auto& next_func = program.functions[i + 1];
 			size_t next_offset = func_offsets.at(next_func.name);
@@ -122,9 +135,18 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 	// Align to page
 	offset = (offset + 0xFFF) & ~0xFFF;
 
-	// .text section (includes code + constant pool)
+	// .text section (code + constant pool)
 	size_t text_offset = offset;
-	offset += code_size;
+	offset += text_size;
+
+	// .data section (global variables) - only if we have globals
+	size_t data_offset = 0;
+	if (has_globals) {
+		// Align to page boundary for separate PT_LOAD segment
+		offset = (offset + 0xFFF) & ~0xFFF;
+		data_offset = offset;
+		offset += data_size;
+	}
 
 	// Align
 	offset = (offset + 7) & ~7;
@@ -174,39 +196,63 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 	ehdr.e_phnum = static_cast<uint16_t>(num_phdrs);
 	ehdr.e_shentsize = sizeof(Elf64_Shdr);
 	ehdr.e_shnum = static_cast<uint16_t>(num_sections);
-	ehdr.e_shstrndx = 4; // .shstrtab is section 4
+	ehdr.e_shstrndx = has_globals ? 5 : 4; // .shstrtab is the last section
 
 	write_value(elf_data, ehdr);
 
-	// 2. Program Header (PT_LOAD for .text, includes code + constants)
-	Elf64_Phdr phdr;
-	memset(&phdr, 0, sizeof(phdr));
+	// 2. Program Headers
+	// First PT_LOAD: .text (R+X) - code and constants
+	Elf64_Phdr phdr_text;
+	memset(&phdr_text, 0, sizeof(phdr_text));
 
-	phdr.p_type = 1; // PT_LOAD
-	phdr.p_flags = 5; // PF_R | PF_X (readable + executable)
-	phdr.p_offset = static_cast<uint64_t>(text_offset);
-	phdr.p_vaddr = BASE_ADDR;
-	phdr.p_paddr = BASE_ADDR;
-	phdr.p_filesz = static_cast<uint64_t>(code_size);
-	phdr.p_memsz = static_cast<uint64_t>(code_size);
-	phdr.p_align = 0x1000;
+	phdr_text.p_type = 1; // PT_LOAD
+	phdr_text.p_flags = 5; // PF_R | PF_X (readable + executable)
+	phdr_text.p_offset = static_cast<uint64_t>(text_offset);
+	phdr_text.p_vaddr = BASE_ADDR;
+	phdr_text.p_paddr = BASE_ADDR;
+	phdr_text.p_filesz = static_cast<uint64_t>(text_size);
+	phdr_text.p_memsz = static_cast<uint64_t>(text_size);
+	phdr_text.p_align = 0x1000;
 
-	write_value(elf_data, phdr);
+	write_value(elf_data, phdr_text);
+
+	// Second PT_LOAD: .data (R+W) - global variables (if any)
+	if (has_globals) {
+		// Calculate data virtual address (after text segment, aligned to page)
+		uint64_t data_vaddr = BASE_ADDR + text_size;
+		data_vaddr = (data_vaddr + 0xFFF) & ~0xFFFULL; // Align to 4KB page
+
+		Elf64_Phdr phdr_data;
+		memset(&phdr_data, 0, sizeof(phdr_data));
+
+		phdr_data.p_type = 1; // PT_LOAD
+		phdr_data.p_flags = 6; // PF_R | PF_W (readable + writable)
+		phdr_data.p_offset = static_cast<uint64_t>(data_offset);
+		phdr_data.p_vaddr = data_vaddr;
+		phdr_data.p_paddr = data_vaddr;
+		phdr_data.p_filesz = static_cast<uint64_t>(data_size);
+		phdr_data.p_memsz = static_cast<uint64_t>(data_size);
+		phdr_data.p_align = 0x1000;
+
+		write_value(elf_data, phdr_data);
+	}
 
 	// Pad to text section
 	while (elf_data.size() < text_offset) {
 		elf_data.push_back(0);
 	}
 
-	// 3. .text section (code + constant pool appended)
-	elf_data.insert(elf_data.end(), code.begin(), code.end());
+	// 3. .text section (code + constant pool, excluding global data)
+	elf_data.insert(elf_data.end(), code.begin(), code.begin() + text_size);
 
-	// Append constant pool to .text section
-	for (int64_t constant : const_pool) {
-		// Write as little-endian 64-bit value
-		for (int i = 0; i < 8; i++) {
-			elf_data.push_back((constant >> (i * 8)) & 0xFF);
+	// 4. .data section (global variables) - only if we have globals
+	if (has_globals) {
+		// Pad to data section
+		while (elf_data.size() < data_offset) {
+			elf_data.push_back(0);
 		}
+		// Write global data
+		elf_data.insert(elf_data.end(), code.begin() + text_size, code.end());
 	}
 
 	// Pad to symtab
@@ -243,34 +289,54 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
 	shdr_text.sh_flags = 6; // SHF_ALLOC | SHF_EXECINSTR
 	shdr_text.sh_addr = BASE_ADDR;
 	shdr_text.sh_offset = static_cast<uint64_t>(text_offset);
-	shdr_text.sh_size = static_cast<uint64_t>(code_size);
+	shdr_text.sh_size = static_cast<uint64_t>(text_size);
 	shdr_text.sh_addralign = 4;
 	write_value(elf_data, shdr_text);
 
-	// Section 2: .symtab
+	// Section 2: .data (only if we have globals)
+	if (has_globals) {
+		// Calculate data virtual address (same as in PT_LOAD)
+		uint64_t data_vaddr = BASE_ADDR + text_size;
+		data_vaddr = (data_vaddr + 0xFFF) & ~0xFFFULL; // Align to 4KB page
+
+		Elf64_Shdr shdr_data = {};
+		shdr_data.sh_name = static_cast<uint32_t>(section_name_offsets[2]);
+		shdr_data.sh_type = 1; // SHT_PROGBITS
+		shdr_data.sh_flags = 3; // SHF_WRITE | SHF_ALLOC
+		shdr_data.sh_addr = data_vaddr;
+		shdr_data.sh_offset = static_cast<uint64_t>(data_offset);
+		shdr_data.sh_size = static_cast<uint64_t>(data_size);
+		shdr_data.sh_addralign = 8;
+		write_value(elf_data, shdr_data);
+	}
+
+	// Section: .symtab (index 2 or 3 depending on has_globals)
+	size_t symtab_idx = has_globals ? 3 : 2;
+	size_t strtab_idx = has_globals ? 4 : 3;
 	Elf64_Shdr shdr_symtab = {};
-	shdr_symtab.sh_name = static_cast<uint32_t>(section_name_offsets[2]);
+	shdr_symtab.sh_name = static_cast<uint32_t>(section_name_offsets[symtab_idx]);
 	shdr_symtab.sh_type = 2; // SHT_SYMTAB
 	shdr_symtab.sh_offset = static_cast<uint64_t>(symtab_offset);
 	shdr_symtab.sh_size = static_cast<uint64_t>(symtab_size);
-	shdr_symtab.sh_link = 3; // Link to .strtab
+	shdr_symtab.sh_link = static_cast<uint32_t>(strtab_idx); // Link to .strtab
 	shdr_symtab.sh_info = 1; // Index of first non-local symbol
 	shdr_symtab.sh_addralign = 8;
 	shdr_symtab.sh_entsize = sizeof(Elf64_Sym);
 	write_value(elf_data, shdr_symtab);
 
-	// Section 3: .strtab
+	// Section: .strtab
 	Elf64_Shdr shdr_strtab = {};
-	shdr_strtab.sh_name = static_cast<uint32_t>(section_name_offsets[3]);
+	shdr_strtab.sh_name = static_cast<uint32_t>(section_name_offsets[strtab_idx]);
 	shdr_strtab.sh_type = 3; // SHT_STRTAB
 	shdr_strtab.sh_offset = static_cast<uint64_t>(strtab_offset);
 	shdr_strtab.sh_size = static_cast<uint64_t>(strtab.size());
 	shdr_strtab.sh_addralign = 1;
 	write_value(elf_data, shdr_strtab);
 
-	// Section 4: .shstrtab
+	// Section: .shstrtab
+	size_t shstrtab_idx = has_globals ? 5 : 4;
 	Elf64_Shdr shdr_shstrtab = {};
-	shdr_shstrtab.sh_name = static_cast<uint32_t>(section_name_offsets[4]);
+	shdr_shstrtab.sh_name = static_cast<uint32_t>(section_name_offsets[shstrtab_idx]);
 	shdr_shstrtab.sh_type = 3; // SHT_STRTAB
 	shdr_shstrtab.sh_offset = static_cast<uint64_t>(shstrtab_offset);
 	shdr_shstrtab.sh_size = static_cast<uint64_t>(shstrtab.size());

@@ -35,6 +35,7 @@ int main(int argc, char** argv)
 	std::string output_function; // Function to disassemble
 	std::string temp_elf = "/tmp/gdscript_temp_XXXXXX";
 	bool no_optimize = false;
+	bool show_program_headers = false;
 
 	// Parse arguments
 	for (int i = 1; i < argc; i++) {
@@ -45,6 +46,8 @@ int main(int argc, char** argv)
 			if (i + 1 < argc) {
 				output_function = argv[++i];
 			}
+		} else if (arg == "-l" || arg == "--program-headers") {
+			show_program_headers = true;
 		} else if (source.empty()) {
 			source = arg;
 		}
@@ -72,6 +75,16 @@ int main(int argc, char** argv)
 		{
 			std::ofstream out(temp_elf, std::ios::binary);
 			out.write(reinterpret_cast<const char*>(elf.data()), elf.size());
+		}
+
+		// If user requested program headers, show them and exit
+		if (show_program_headers) {
+			std::ostringstream cmd;
+			cmd << "readelf -l " << temp_elf << " 2>&1";
+			std::string output = run_command(cmd.str().c_str());
+			std::cout << output;
+			unlink(temp_elf.c_str());
+			return 0;
 		}
 
 		// Run objdump to disassemble

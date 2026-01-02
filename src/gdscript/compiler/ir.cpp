@@ -9,8 +9,8 @@ const char* ir_opcode_name(IROpcode op) {
 		case IROpcode::LOAD_FLOAT_IMM: return "LOAD_FLOAT_IMM";
 		case IROpcode::LOAD_BOOL: return "LOAD_BOOL";
 		case IROpcode::LOAD_STRING: return "LOAD_STRING";
-		case IROpcode::LOAD_VAR: return "LOAD_VAR";
-		case IROpcode::STORE_VAR: return "STORE_VAR";
+		case IROpcode::LOAD_GLOBAL: return "LOAD_GLOBAL";
+		case IROpcode::STORE_GLOBAL: return "STORE_GLOBAL";
 		case IROpcode::MOVE: return "MOVE";
 		case IROpcode::ADD: return "ADD";
 		case IROpcode::SUB: return "SUB";

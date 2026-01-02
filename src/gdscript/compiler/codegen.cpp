@@ -45,6 +45,54 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		m_local_functions.insert(func.name);
 	}
 
+	// Process global variables
+	m_global_variables.clear();
+	for (size_t i = 0; i < program.globals.size(); i++) {
+		const auto& global = program.globals[i];
+		m_global_variables[global.name] = i;
+
+		// Convert AST global to IR global
+		IRGlobalVar ir_global;
+		ir_global.name = global.name;
+		ir_global.is_const = global.is_const;
+
+		// Convert type hint
+		if (!global.type_hint.empty()) {
+			ir_global.type_hint = type_hint_from_string(global.type_hint);
+		}
+
+		// Extract initializer value if it's a literal
+		if (global.initializer) {
+			if (auto* lit = dynamic_cast<const LiteralExpr*>(global.initializer.get())) {
+				switch (lit->lit_type) {
+					case LiteralExpr::Type::INTEGER:
+						ir_global.init_type = IRGlobalVar::InitType::INT;
+						ir_global.init_value = std::get<int64_t>(lit->value);
+						break;
+					case LiteralExpr::Type::FLOAT:
+						ir_global.init_type = IRGlobalVar::InitType::FLOAT;
+						ir_global.init_value = std::get<double>(lit->value);
+						break;
+					case LiteralExpr::Type::STRING:
+						ir_global.init_type = IRGlobalVar::InitType::STRING;
+						ir_global.init_value = std::get<std::string>(lit->value);
+						break;
+					case LiteralExpr::Type::BOOL:
+						ir_global.init_type = IRGlobalVar::InitType::BOOL;
+						ir_global.init_value = std::get<bool>(lit->value);
+						break;
+					case LiteralExpr::Type::NULL_VAL:
+						ir_global.init_type = IRGlobalVar::InitType::NULL_VAL;
+						break;
+				}
+			}
+			// For non-literal initializers, we'll need to generate initialization code
+			// This would be done in a special initialization function or at first access
+		}
+
+		ir_program.globals.push_back(ir_global);
+	}
+
 	for (const auto& func : program.functions) {
 		ir_program.functions.push_back(generate_function(func));
 	}
@@ -220,6 +268,14 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, IRFunction& func) {
 	}
 
 	// Simple variable assignment
+	// Check if this is a global variable
+	if (is_global_variable(stmt->name)) {
+		size_t global_idx = m_global_variables.at(stmt->name);
+		func.instructions.emplace_back(IROpcode::STORE_GLOBAL, IRValue::imm(global_idx), IRValue::reg(value_reg));
+		free_register(value_reg);
+		return;
+	}
+
 	Variable* var = find_variable(stmt->name);
 	if (!var) {
 		throw std::runtime_error("Undefined variable: " + stmt->name);
@@ -708,6 +764,14 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, IRFunction& func) {
 		instr.operands.push_back(IRValue::imm(0));              // addr = 0 (owner node)
 		func.instructions.push_back(instr);
 
+		return result_reg;
+	}
+
+	// Check if this is a global variable
+	if (is_global_variable(expr->name)) {
+		int result_reg = alloc_register();
+		size_t global_idx = m_global_variables.at(expr->name);
+		func.instructions.emplace_back(IROpcode::LOAD_GLOBAL, IRValue::reg(result_reg), IRValue::imm(global_idx));
 		return result_reg;
 	}
 
@@ -1433,6 +1497,10 @@ bool CodeGenerator::is_global_class(const std::string& name) const {
 
 bool CodeGenerator::is_local_function(const std::string& name) const {
 	return m_local_functions.find(name) != m_local_functions.end();
+}
+
+bool CodeGenerator::is_global_variable(const std::string& name) const {
+	return m_global_variables.find(name) != m_global_variables.end();
 }
 
 int CodeGenerator::gen_global_class_get(const std::string& class_name, IRFunction& func) {

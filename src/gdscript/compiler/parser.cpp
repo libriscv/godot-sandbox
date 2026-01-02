@@ -18,10 +18,28 @@ Program Parser::parse() {
 			consume(TokenType::IDENTIFIER, "Expected class name after 'extends'");
 			// Skip any newlines after extends
 			skip_newlines();
+		} else if (check(TokenType::VAR)) {
+			// Parse global var declaration
+			advance(); // consume 'var'
+			auto var_decl = parse_var_decl(false);
+			if (auto* decl = dynamic_cast<VarDeclStmt*>(var_decl.get())) {
+				VarDeclStmt global_decl(decl->name, std::move(decl->initializer), decl->is_const);
+				global_decl.type_hint = decl->type_hint;
+				program.globals.push_back(std::move(global_decl));
+			}
+		} else if (check(TokenType::CONST)) {
+			// Parse global const declaration
+			advance(); // consume 'const'
+			auto const_decl = parse_var_decl(true);
+			if (auto* decl = dynamic_cast<VarDeclStmt*>(const_decl.get())) {
+				VarDeclStmt global_decl(decl->name, std::move(decl->initializer), decl->is_const);
+				global_decl.type_hint = decl->type_hint;
+				program.globals.push_back(std::move(global_decl));
+			}
 		} else if (check(TokenType::FUNC)) {
 			program.functions.push_back(parse_function());
 		} else {
-			error("Expected function declaration");
+			error("Expected function or variable declaration");
 			synchronize();
 		}
 		skip_newlines();
