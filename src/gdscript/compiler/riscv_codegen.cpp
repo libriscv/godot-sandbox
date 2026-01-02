@@ -761,8 +761,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int result_offset = get_variant_stack_offset(result_vreg);
 
 				// Set m_type field (offset 0)
-				int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2) ? 5 :  // VECTOR2
-				                   (instr.opcode == IROpcode::MAKE_VECTOR3) ? 9 : 12; // VECTOR3 : VECTOR4
+				int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2) ? Variant::VECTOR2 :
+				                   (instr.opcode == IROpcode::MAKE_VECTOR3) ? Variant::VECTOR3 : Variant::VECTOR4;
 				emit_li(REG_T0, variant_type);
 				emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
 
@@ -791,8 +791,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int result_offset = get_variant_stack_offset(result_vreg);
 
 				// Set m_type field (offset 0)
-				int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2I) ? 6 :  // VECTOR2I
-				                   (instr.opcode == IROpcode::MAKE_VECTOR3I) ? 10 : 13; // VECTOR3I : VECTOR4I
+				int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2I) ? Variant::VECTOR2I :
+				                   (instr.opcode == IROpcode::MAKE_VECTOR3I) ? Variant::VECTOR3I : Variant::VECTOR4I;
 				emit_li(REG_T0, variant_type);
 				emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
 
@@ -818,8 +818,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int result_vreg = std::get<int>(instr.operands[0].value);
 				int result_offset = get_variant_stack_offset(result_vreg);
 
-				// Set m_type field to COLOR (20)
-				emit_li(REG_T0, 20);
+				// Set m_type field to COLOR
+				emit_li(REG_T0, Variant::COLOR);
 				emit_sw(REG_T0, REG_SP, result_offset);
 
 				// Store each component (r, g, b, a) as 32-bit floats (real_t)
@@ -1192,8 +1192,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// Convert float (32-bit) to double (64-bit)
 					emit_fcvt_d_s(REG_FA0, REG_FA0);
 
-					// Set result Variant type to FLOAT (3)
-					emit_li(REG_T0, 3);
+					// Set result Variant type to FLOAT
+					emit_li(REG_T0, Variant::FLOAT);
 					emit_sw(REG_T0, REG_SP, result_offset); // m_type = FLOAT
 
 					// Store 8-byte double to v.f field
