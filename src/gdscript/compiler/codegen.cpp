@@ -520,10 +520,12 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 			// Forward iteration: loop_var < end
 			auto& cmp_instr = func.instructions.emplace_back(IROpcode::CMP_LT, IRValue::reg(cond_reg),
 			                               IRValue::reg(loop_var_reg), IRValue::reg(end_reg));
+			cmp_instr.type_hint = Variant::INT; // range() always produces integers
 		} else {
 			// Backward iteration: loop_var > end
 			auto& cmp_instr = func.instructions.emplace_back(IROpcode::CMP_GT, IRValue::reg(cond_reg),
 			                               IRValue::reg(loop_var_reg), IRValue::reg(end_reg));
+			cmp_instr.type_hint = Variant::INT; // range() always produces integers
 		}
 	} else {
 		// Runtime step: check sign dynamically
@@ -538,6 +540,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 		int step_sign_reg = alloc_register();
 		auto& step_cmp = func.instructions.emplace_back(IROpcode::CMP_GTE, IRValue::reg(step_sign_reg),
 		                               IRValue::reg(step_reg), IRValue::reg(zero_reg));
+		step_cmp.type_hint = Variant::INT; // range() always produces integers
 		free_register(zero_reg);
 
 		// If step >= 0, use loop_var < end
@@ -547,12 +550,14 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 		// Negative step: loop_var > end
 		auto& neg_cmp = func.instructions.emplace_back(IROpcode::CMP_GT, IRValue::reg(cond_reg),
 		                               IRValue::reg(loop_var_reg), IRValue::reg(end_reg));
+		neg_cmp.type_hint = Variant::INT; // range() always produces integers
 		func.instructions.emplace_back(IROpcode::JUMP, IRValue::label(check_cond_label));
 
 		// Positive step: loop_var < end
 		func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(pos_step_label));
 		auto& pos_cmp = func.instructions.emplace_back(IROpcode::CMP_LT, IRValue::reg(cond_reg),
 		                               IRValue::reg(loop_var_reg), IRValue::reg(end_reg));
+		pos_cmp.type_hint = Variant::INT; // range() always produces integers
 
 		func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(check_cond_label));
 		free_register(step_sign_reg);
@@ -575,6 +580,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 	int new_val_reg = alloc_register();
 	auto& add_instr = func.instructions.emplace_back(IROpcode::ADD, IRValue::reg(new_val_reg),
 	                               IRValue::reg(loop_var_reg), IRValue::reg(step_reg));
+	add_instr.type_hint = Variant::INT; // range() always produces integers
 	auto& move_instr2 = func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(loop_var_reg), IRValue::reg(new_val_reg));
 	free_register(new_val_reg);
 
