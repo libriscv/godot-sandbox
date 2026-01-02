@@ -344,6 +344,21 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 	auto* call_expr = dynamic_cast<const CallExpr*>(stmt->iterable.get());
 	bool is_range = call_expr && call_expr->function_name == "range";
 
+	// Check for obviously non-iterable types and give a proper error
+	auto* literal = dynamic_cast<const LiteralExpr*>(stmt->iterable.get());
+	if (literal) {
+		if (literal->lit_type == LiteralExpr::Type::INTEGER ||
+		    literal->lit_type == LiteralExpr::Type::FLOAT ||
+		    literal->lit_type == LiteralExpr::Type::BOOL ||
+		    literal->lit_type == LiteralExpr::Type::NULL_VAL) {
+			throw std::runtime_error("Cannot iterate over non-iterable type in 'for' loop. Did you mean 'for " +
+			                         stmt->variable + " in range(" +
+			                         (literal->lit_type == LiteralExpr::Type::INTEGER ?
+			                          std::to_string(std::get<int64_t>(literal->value)) : "N") +
+			                         "):'?");
+		}
+	}
+
 	if (!is_range) {
 		// Array iteration
 		std::string loop_label = make_label("for_loop");

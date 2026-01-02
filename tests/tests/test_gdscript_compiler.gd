@@ -346,6 +346,13 @@ func countdown_loop():
 	for i in range(10, 0, -1):
 		sum = sum + i
 	return sum
+
+func test_loopy_ints():
+	var a = 0
+	const b = 1
+	for i in range(10):
+		a = a + b
+	return a
 """
 
 	var ts : Sandbox = Sandbox.new()
@@ -382,9 +389,13 @@ func countdown_loop():
 	assert_eq(result, 45, "countup_loop should sum 1..9 = 45")
 
 	# Test countdown loop with negative step
-	#result = s.vmcallv("countdown_loop")
+	result = s.vmcallv("countdown_loop")
 	# sum = 10 + 9 + 8 + 7 + 6 + 5 + 4 + 3 + 2 + 1 = 55
-	#assert_eq(result, 55, "countdown_loop should sum 10..1 = 55")
+	assert_eq(result, 55, "countdown_loop should sum 10..1 = 55")
+
+	# Test loopy ints
+	result = s.vmcallv("test_loopy_ints")
+	assert_eq(result, 10, "test_loopy_ints should return 10")
 
 	s.queue_free()
 	ts.queue_free()
@@ -507,6 +518,13 @@ func test_chained_vectors():
 	var v1 = Vector2(10.0, 20.0)
 	var v2 = Vector2(v1.x, v1.y)
 	return v2.x + v2.y
+
+func test_loopy_vector():
+	var v = Vector2(0.0, 0.0)
+	const v2 = Vector2(1.0, 1.0)
+	for i in range(10):
+		v = v + v2
+	return v
 """
 
 	var ts : Sandbox = Sandbox.new()
@@ -573,6 +591,10 @@ func test_chained_vectors():
 	# Test chained operations
 	result = s.vmcallv("test_chained_vectors")
 	assert_almost_eq(result, 30.0, 0.001, "Chained vector operations should work")
+
+	# Test loopy vector addition
+	result = s.vmcallv("test_loopy_vector")
+	assert_eq(result, Vector2(10.0, 10.0), "Loopy vector addition should result in Vector2(10.0, 10.0)")
 
 	s.queue_free()
 	ts.queue_free()
