@@ -4,6 +4,8 @@
 #include <string>
 using namespace gdscript;
 
+static String last_error = "";
+
 PUBLIC Variant compile_to_elf(String code)
 {
 	print("Compiling GDScript code to RISC-V ELF:", code);
@@ -20,8 +22,14 @@ PUBLIC Variant compile_to_elf(String code)
 	if (elf_data.empty()) {
 		print("ERROR: Compilation failed: ", compiler.get_error());
 		print("ERROR DETAILS: ", String(compiler.get_error()));
+		last_error = String(compiler.get_error());
 		return PackedByteArray(std::vector<uint8_t>{}); // Return empty array on failure
 	}
 
 	return PackedByteArray(elf_data);
+}
+
+PUBLIC Variant get_compiler_error(Compiler* compiler)
+{
+	return last_error;
 }

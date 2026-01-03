@@ -2925,9 +2925,9 @@ func test():
 	# Should fail to compile
 	assert_eq(compiled_elf.is_empty(), true, "Compilation should fail for untyped global without initializer")
 
-	#var error_msg = ts.vmcall("get_compiler_error", "")
-	#assert_true(error_msg.find("requires either a type hint or an initializer") != -1, \
-	#	"Error message should mention type hint or initializer requirement")
+	var error_msg = ts.vmcall("get_compiler_error", "")
+	assert_true(error_msg.find("requires either a type hint or an initializer") != -1, \
+		"Error message should mention type hint or initializer requirement")
 
 	ts.queue_free()
 

@@ -1,4 +1,5 @@
 #include "riscv_codegen.h"
+#include "compiler_exception.h"
 #include "variant_types.h"
 #include <stdexcept>
 #include <cstring>
@@ -250,7 +251,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 			emit_sw(REG_T1, REG_T0, 0);
 		} else {
 			// Unknown initialization type
-			throw std::runtime_error("Global variable '" + global.name + "': Unknown initialization type.");
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Global variable '" + global.name + "': Unknown initialization type.");
 		}
 	}
 
@@ -584,7 +585,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// Check that all operands are valid before processing
 				if (instr.operands.size() < 3 ||
 					instr.operands[0].type != IRValue::Type::REGISTER) {
-					throw std::runtime_error("Arithmetic operations require at least 3 operands with first being REGISTER");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Arithmetic operations require at least 3 operands with first being REGISTER");
 				}
 
 				int dst_vreg = std::get<int>(instr.operands[0].value);
@@ -670,7 +671,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
 					emit_variant_eval(dst_offset, imm_offset, rhs_offset, variant_op);
 				} else {
-					throw std::runtime_error("Unsupported operand types for arithmetic operation");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported operand types for arithmetic operation");
 				}
 				break;
 			}
@@ -702,7 +703,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// Check that all operands are valid
 				if (instr.operands.size() < 3 ||
 					instr.operands[0].type != IRValue::Type::REGISTER) {
-					throw std::runtime_error("Comparison operations require at least 3 operands with first being REGISTER");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Comparison operations require at least 3 operands with first being REGISTER");
 				}
 
 				int dst_vreg = std::get<int>(instr.operands[0].value);
@@ -764,7 +765,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
 					emit_variant_eval(dst_offset, imm_offset, rhs_offset, variant_op);
 				} else {
-					throw std::runtime_error("Unsupported operand types for comparison");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported operand types for comparison");
 				}
 				break;
 			}
@@ -836,7 +837,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// Format: BRANCH_* lhs, rhs, label
 				// These directly emit BEQ/BNE/BLT/BGE without storing result
 				if (instr.operands.size() < 3) {
-					throw std::runtime_error("Fused branch requires 3 operands: lhs, rhs, label");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Fused branch requires 3 operands: lhs, rhs, label");
 				}
 
 				// Check if operands are registers
@@ -845,7 +846,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// For now, only support register operands (can be extended later for immediates)
 				if (!lhs_is_reg || !rhs_is_reg) {
-					throw std::runtime_error("Fused branch requires register operands");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Fused branch requires register operands");
 				}
 
 				int lhs_vreg = std::get<int>(instr.operands[0].value);
@@ -886,7 +887,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 							emit_bge(REG_T0, REG_T1, 0);
 							break;
 						default:
-							throw std::runtime_error("Unknown fused branch opcode");
+							throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unknown fused branch opcode");
 					}
 				} else {
 					// Fall back to comparison + branch for non-INT types
@@ -975,7 +976,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::VCALL: {
 				// VCALL format: result_reg, obj_reg, method_name, arg_count, arg1_reg, arg2_reg, ...
 				if (instr.operands.size() < 4) {
-					throw std::runtime_error("VCALL requires at least 4 operands");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VCALL requires at least 4 operands");
 				}
 
 				int result_vreg = std::get<int>(instr.operands[0].value);
@@ -984,7 +985,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
 
 				if (instr.operands.size() != static_cast<size_t>(4 + arg_count)) {
-					throw std::runtime_error("VCALL argument count mismatch");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VCALL argument count mismatch");
 				}
 
 				int result_offset = get_variant_stack_offset(result_vreg);
@@ -1100,7 +1101,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::CALL: {
 				// CALL format: function_name, result_reg, arg_count, arg1_reg, arg2_reg, ...
 				if (instr.operands.size() < 3) {
-					throw std::runtime_error("CALL requires at least 3 operands");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL requires at least 3 operands");
 				}
 
 				std::string func_name = std::get<std::string>(instr.operands[0].value);
@@ -1108,7 +1109,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
 
 				if (instr.operands.size() != static_cast<size_t>(3 + arg_count)) {
-					throw std::runtime_error("CALL argument count mismatch");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL argument count mismatch");
 				}
 
 				// Handle register clobbering (calls clobber a0-a7, ra, and temporaries)
@@ -1164,7 +1165,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 									 (instr.opcode == IROpcode::MAKE_VECTOR3) ? 3 : 4;
 
 				if (instr.operands.size() != static_cast<size_t>(1 + num_components)) {
-					throw std::runtime_error("MAKE_VECTOR requires correct number of operands");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_VECTOR requires correct number of operands");
 				}
 
 				int result_vreg = std::get<int>(instr.operands[0].value);
@@ -1194,7 +1195,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 									 (instr.opcode == IROpcode::MAKE_VECTOR3I) ? 3 : 4;
 
 				if (instr.operands.size() != static_cast<size_t>(1 + num_components)) {
-					throw std::runtime_error("MAKE_VECTORnI requires correct number of operands");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_VECTORnI requires correct number of operands");
 				}
 
 				int result_vreg = std::get<int>(instr.operands[0].value);
@@ -1222,7 +1223,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::MAKE_COLOR: {
 				// Format: MAKE_COLOR result_reg, r_reg, g_reg, b_reg, a_reg
 				if (instr.operands.size() != 5) {
-					throw std::runtime_error("MAKE_COLOR requires 5 operands");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_COLOR requires 5 operands");
 				}
 
 				int result_vreg = std::get<int>(instr.operands[0].value);
@@ -1247,7 +1248,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// Format: MAKE_ARRAY result_reg, element_count, [element_reg1, element_reg2, ...]
 				// For empty arrays: element_count = 0, no element regs
 				if (instr.operands.size() < 2) {
-					throw std::runtime_error("MAKE_ARRAY requires at least 2 operands");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_ARRAY requires at least 2 operands");
 				}
 
 				int result_vreg = std::get<int>(instr.operands[0].value);
@@ -1346,7 +1347,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// Format: MAKE_DICTIONARY result_reg
 				// Empty Dictionary: sys_vcreate(&v, DICTIONARY, 0, nullptr)
 				if (instr.operands.size() != 1) {
-					throw std::runtime_error("MAKE_DICTIONARY requires 1 operand");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_DICTIONARY requires 1 operand");
 				}
 
 				int result_vreg = std::get<int>(instr.operands[0].value);
@@ -1371,7 +1372,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// Format: MAKE_PACKED_*_ARRAY result_reg, element_count, [element_reg1, element_reg2, ...]
 				// Works identically to MAKE_ARRAY but with different Variant type
 				if (instr.operands.size() < 2) {
-					throw std::runtime_error("Packed array constructor requires at least 2 operands");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Packed array constructor requires at least 2 operands");
 				}
 
 				int result_vreg = std::get<int>(instr.operands[0].value);
@@ -1505,7 +1506,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::VGET_INLINE: {
 				// Format: VGET_INLINE result_reg, obj_reg, member_name, obj_type_hint
 				if (instr.operands.size() != 4) {
-					throw std::runtime_error("VGET_INLINE requires 4 operands");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VGET_INLINE requires 4 operands");
 				}
 
 				int result_vreg = std::get<int>(instr.operands[0].value);
@@ -1579,7 +1580,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				//   A3 = pointer to result Variant
 
 				if (instr.operands.size() != 4) {
-					throw std::runtime_error("VGET requires 4 operands (result_reg, obj_reg, string_idx, string_len)");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VGET requires 4 operands (result_reg, obj_reg, string_idx, string_len)");
 				}
 
 				int result_vreg = std::get<int>(instr.operands[0].value);
@@ -1589,7 +1590,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// Get the string constant
 				if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
-					throw std::runtime_error("String constant index out of range");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
 				}
 				const std::string& str = (*m_string_constants)[string_idx];
 
@@ -1651,7 +1652,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				//   A3 = pointer to value Variant
 
 				if (instr.operands.size() != 4) {
-					throw std::runtime_error("VSET requires 4 operands (obj_reg, string_idx, string_len, value_reg)");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VSET requires 4 operands (obj_reg, string_idx, string_len, value_reg)");
 				}
 
 				int obj_vreg = std::get<int>(instr.operands[0].value);
@@ -1661,7 +1662,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// Get the string constant
 				if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
-					throw std::runtime_error("String constant index out of range");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
 				}
 				const std::string& str = (*m_string_constants)[string_idx];
 
@@ -1719,7 +1720,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::MAKE_RECT2I:
 			case IROpcode::MAKE_PLANE:
 			case IROpcode::VSET_INLINE:
-				throw std::runtime_error("Opcode not yet implemented in RISC-V codegen");
+				throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Opcode not yet implemented in RISC-V codegen");
 
 			case IROpcode::CALL_SYSCALL: {
 				// CALL_SYSCALL format: result_reg, syscall_number, arg1, arg2, ...
@@ -1729,7 +1730,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// ECALL_ARRAY_AT (522): result_reg, 522, array_vreg, index_vreg
 
 				if (instr.operands.size() < 2) {
-					throw std::runtime_error("CALL_SYSCALL requires at least 2 operands (result_reg, syscall_num)");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL_SYSCALL requires at least 2 operands (result_reg, syscall_num)");
 				}
 
 				int result_vreg = std::get<int>(instr.operands[0].value);
@@ -1739,7 +1740,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				if (syscall_num == 504) {
 					// ECALL_GET_OBJ: result_reg, 504, string_index, string_length
 					if (instr.operands.size() != 4) {
-						throw std::runtime_error("ECALL_GET_OBJ requires 4 operands");
+						throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_GET_OBJ requires 4 operands");
 					}
 
 					int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
@@ -1747,7 +1748,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 					// Get the string constant
 					if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
-						throw std::runtime_error("String constant index out of range");
+						throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
 					}
 					const std::string& str = (*m_string_constants)[string_idx];
 
@@ -1796,7 +1797,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// Takes: a0 = array variant index (unsigned)
 					// Returns: a0 = array size (int)
 					if (instr.operands.size() != 3) {
-						throw std::runtime_error("ECALL_ARRAY_SIZE requires 3 operands");
+						throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_ARRAY_SIZE requires 3 operands");
 					}
 
 					int array_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
@@ -1830,7 +1831,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// Takes: a0 = array variant index (unsigned), a1 = index (int), a2 = result GuestVariant pointer
 					// Returns: result variant is filled with the element
 					if (instr.operands.size() != 4) {
-						throw std::runtime_error("ECALL_ARRAY_AT requires 4 operands");
+						throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_ARRAY_AT requires 4 operands");
 					}
 
 					int array_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
@@ -1870,7 +1871,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// Takes: a0 = base node address (0 for owner), a1 = path string pointer, a2 = path length
 					// Returns: a0 = node object reference
 					if (instr.operands.size() < 3) {
-						throw std::runtime_error("ECALL_GET_NODE requires at least 3 operands");
+						throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_GET_NODE requires at least 3 operands");
 					}
 
 					int base_addr = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
@@ -1941,14 +1942,14 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_syscall_result(result_vreg, REG_A0, result_offset, 24); // OBJECT type = 24
 
 				} else {
-					throw std::runtime_error("Unknown syscall number: " + std::to_string(syscall_num));
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unknown syscall number: " + std::to_string(syscall_num));
 				}
 
 				break;
 			}
 
 			default:
-				throw std::runtime_error("Unknown IR opcode");
+				throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unknown IR opcode");
 		}
 	}
 }
@@ -2209,7 +2210,7 @@ void RISCVCodeGen::resolve_labels() {
 
 		auto it = m_labels.find(label);
 		if (it == m_labels.end()) {
-			throw std::runtime_error("Undefined label: " + label);
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Undefined label: " + label);
 		}
 
 		size_t target_offset = it->second;
@@ -2345,7 +2346,7 @@ void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) 
 	// For strings with method==1: data = struct { const char* str; size_t length; }
 
 	if (!m_string_constants || string_idx < 0 || string_idx >= static_cast<int>(m_string_constants->size())) {
-		throw std::runtime_error("Invalid string constant index: " + std::to_string(string_idx));
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Invalid string constant index: " + std::to_string(string_idx));
 	}
 
 	const std::string& str = (*m_string_constants)[string_idx];
@@ -2572,7 +2573,7 @@ void RISCVCodeGen::emit_typed_int_binary_op(int result_offset, int lhs_offset, i
 			emit_rem(REG_T2, REG_T0, REG_T1);
 			break;
 		default:
-			throw std::runtime_error("Unsupported typed int binary op");
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported typed int binary op");
 	}
 
 	// Store result as INT Variant
@@ -2636,7 +2637,7 @@ void RISCVCodeGen::emit_typed_int_comparison(int result_offset, int lhs_offset, 
 			break;
 
 		default:
-			throw std::runtime_error("Unsupported typed int comparison");
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported typed int comparison");
 	}
 
 	// Store result as BOOL Variant
@@ -2677,7 +2678,7 @@ void RISCVCodeGen::emit_typed_float_binary_op(int result_offset, int lhs_offset,
 			emit_fdiv_d(REG_FA2, REG_FA0, REG_FA1);
 			break;
 		default:
-			throw std::runtime_error("Unsupported typed float binary op");
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported typed float binary op");
 	}
 
 	// Store result as FLOAT Variant
@@ -2733,7 +2734,7 @@ void RISCVCodeGen::emit_typed_vector_binary_op(int result_offset, int lhs_offset
 			is_int = true;
 			break;
 		default:
-			throw std::runtime_error("Invalid vector type hint");
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Invalid vector type hint");
 	}
 
 	// Perform element-wise operations
@@ -2765,7 +2766,7 @@ void RISCVCodeGen::emit_typed_vector_binary_op(int result_offset, int lhs_offset
 					emit_rem(REG_T2, REG_T0, REG_T1);
 					break;
 				default:
-					throw std::runtime_error("Unsupported vector int operation");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported vector int operation");
 			}
 
 			// Store result component
@@ -2790,7 +2791,7 @@ void RISCVCodeGen::emit_typed_vector_binary_op(int result_offset, int lhs_offset
 					emit_fdiv_s(REG_FA2, REG_FA0, REG_FA1);
 					break;
 				default:
-					throw std::runtime_error("Unsupported vector float operation");
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported vector float operation");
 			}
 
 			// Store result component

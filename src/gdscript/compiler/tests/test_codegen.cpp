@@ -3,6 +3,7 @@
 #include "../codegen.h"
 #include "../riscv_codegen.h"
 #include "../ir_optimizer.h"
+#include "../compiler_exception.h"
 #include <cassert>
 #include <iostream>
 
@@ -588,7 +589,7 @@ void test_many_float_constants() {
 		std::vector<uint8_t> code = codegen_obj.generate(ir);
 		// Should generate code successfully even with FP register exhaustion
 		assert(code.size() > 0);
-	} catch (const std::exception& e) {
+	} catch (const CompilerException& e) {
 		// If it fails, it should be a known issue
 		std::cerr << "    Note: Code generation issue with many floats: " << e.what() << std::endl;
 	}
@@ -757,7 +758,7 @@ void test_auipc_addi_patching() {
 		}
 		// Should have AUIPC for loading large constants
 		// (Note: this might not always trigger depending on constant values, but we check the code gen doesn't crash)
-	} catch (const std::exception& e) {
+	} catch (const CompilerException& e) {
 		std::cerr << "    Note: AUIPC+ADDI test encountered issue: " << e.what() << std::endl;
 	}
 
@@ -981,7 +982,7 @@ void test_const_assignment_prevention() {
 	bool caught_error = false;
 	try {
 		IRProgram ir = codegen.generate(program);
-	} catch (const std::runtime_error& e) {
+	} catch (const CompilerException& e) {
 		caught_error = true;
 		std::string error_msg(e.what());
 		assert(error_msg.find("const") != std::string::npos ||
@@ -1012,7 +1013,7 @@ func test():
 
 	try {
 		IRProgram ir = codegen.generate(program);
-	} catch (const std::runtime_error& e) {
+	} catch (const CompilerException& e) {
 		caught_error = true;
 		std::string error_msg(e.what());
 		// Check that error message is helpful
@@ -1029,7 +1030,7 @@ void test_valid_global_declarations() {
 	std::cout << "Testing valid global variable declarations..." << std::endl;
 
 	// Test that all valid forms work
-	std::string source = R"(var typed_global: Array
+	std::string source = R"(var typed_global: Array = []
 var inferred_global = []
 var typed_int: int
 var inferred_int = 42
@@ -1110,7 +1111,7 @@ int main() {
 
 		std::cout << "\n✅ All code generation tests passed!" << std::endl;
 		return 0;
-	} catch (const std::exception& e) {
+	} catch (const CompilerException& e) {
 		std::cerr << "\n❌ Test failed: " << e.what() << std::endl;
 		return 1;
 	}

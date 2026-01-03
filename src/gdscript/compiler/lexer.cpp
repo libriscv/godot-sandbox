@@ -1,4 +1,5 @@
 #include "lexer.h"
+#include "compiler_exception.h"
 #include <cctype>
 #include <stdexcept>
 
@@ -301,8 +302,7 @@ void Lexer::add_token(TokenType type, const std::string& value) {
 }
 
 void Lexer::error(const std::string& message) {
-	throw std::runtime_error("Lexer error at line " + std::to_string(m_line) +
-	                         ", column " + std::to_string(m_column) + ": " + message);
+	throw CompilerException(ErrorType::LEXER_ERROR, message, m_line, m_column);
 }
 
 } // namespace gdscript

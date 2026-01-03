@@ -1,4 +1,5 @@
 #include "parser.h"
+#include "compiler_exception.h"
 #include <stdexcept>
 #include <sstream>
 
@@ -254,11 +255,11 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 			// Property assignment: obj.prop = value
 			// Verify it's a property access (not a method call)
 			if (member_expr->is_method_call) {
-				throw std::runtime_error("Cannot assign to method call");
+				throw CompilerException::parser_error("Cannot assign to method call", lhs->line, lhs->column);
 			}
 			return std::make_unique<AssignStmt>(std::move(lhs), std::move(value));
 		} else {
-			throw std::runtime_error("Invalid assignment target");
+			throw CompilerException::parser_error("Invalid assignment target", lhs->line, lhs->column);
 		}
 	}
 
@@ -365,7 +366,7 @@ ExprPtr Parser::parse_comparison() {
 			case TokenType::LESS_EQUAL: bin_op = BinaryExpr::Op::LTE; break;
 			case TokenType::GREATER: bin_op = BinaryExpr::Op::GT; break;
 			case TokenType::GREATER_EQUAL: bin_op = BinaryExpr::Op::GTE; break;
-			default: throw std::runtime_error("Invalid comparison operator");
+			default: throw CompilerException::parser_error("Invalid comparison operator", op.line, op.column);
 		}
 
 		left = std::make_unique<BinaryExpr>(std::move(left), bin_op, std::move(right));
@@ -400,7 +401,7 @@ ExprPtr Parser::parse_factor() {
 			case TokenType::MULTIPLY: bin_op = BinaryExpr::Op::MUL; break;
 			case TokenType::DIVIDE: bin_op = BinaryExpr::Op::DIV; break;
 			case TokenType::MODULO: bin_op = BinaryExpr::Op::MOD; break;
-			default: throw std::runtime_error("Invalid factor operator");
+			default: throw CompilerException::parser_error("Invalid factor operator", op.line, op.column);
 		}
 
 		left = std::make_unique<BinaryExpr>(std::move(left), bin_op, std::move(right));
@@ -600,9 +601,7 @@ void Parser::synchronize() {
 
 void Parser::error(const std::string& message) {
 	Token token = peek();
-	std::ostringstream oss;
-	oss << "Parse error at line " << token.line << ", column " << token.column << ": " << message;
-	throw std::runtime_error(oss.str());
+	throw CompilerException(ErrorType::PARSER_ERROR, message, token.line, token.column);
 }
 
 void Parser::skip_newlines() {

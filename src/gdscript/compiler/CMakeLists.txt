@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Compiler sources
 set(COMPILER_SOURCES
+    compiler_exception.cpp
     token.cpp
     lexer.cpp
     parser.cpp

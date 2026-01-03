@@ -1,4 +1,5 @@
 #include "ir_optimizer.h"
+#include "compiler_exception.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -584,7 +585,7 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 							case IROpcode::CMP_LTE: fused_opcode = IROpcode::BRANCH_GT; break;
 							case IROpcode::CMP_GT:  fused_opcode = IROpcode::BRANCH_LTE; break;
 							case IROpcode::CMP_GTE: fused_opcode = IROpcode::BRANCH_LT; break;
-							default: throw std::runtime_error("Unexpected comparison opcode in peephole optimization");
+							default: throw CompilerException(ErrorType::OPTIMIZER_ERROR, "Unexpected comparison opcode in peephole optimization");
 						}
 					} else {
 						// BRANCH_NOT_ZERO means branch when condition is true, use same comparison
@@ -595,7 +596,7 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 							case IROpcode::CMP_LTE: fused_opcode = IROpcode::BRANCH_LTE; break;
 							case IROpcode::CMP_GT:  fused_opcode = IROpcode::BRANCH_GT; break;
 							case IROpcode::CMP_GTE: fused_opcode = IROpcode::BRANCH_GTE; break;
-							default: throw std::runtime_error("Unexpected comparison opcode in peephole optimization");
+							default: throw CompilerException(ErrorType::OPTIMIZER_ERROR, "Unexpected comparison opcode in peephole optimization");
 						}
 					}
 

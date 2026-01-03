@@ -1,4 +1,5 @@
 #include "ir_interpreter.h"
+#include "compiler_exception.h"
 #include <cmath>
 #include <sstream>
 
@@ -152,7 +153,7 @@ void IRInterpreter::execute_instruction(const IRInstruction& instr, ExecutionCon
 			if (it != ctx.labels.end()) {
 				ctx.pc = it->second;
 			} else {
-				throw std::runtime_error("Label not found: " + label);
+				throw CompilerException(ErrorType::OPTIMIZER_ERROR, "Label not found: " + label);
 			}
 			break;
 		}
@@ -212,7 +213,7 @@ void IRInterpreter::execute_instruction(const IRInstruction& instr, ExecutionCon
 			break;
 
 		default:
-			throw std::runtime_error("Unimplemented opcode in interpreter");
+			throw CompilerException(ErrorType::OPTIMIZER_ERROR, "Unimplemented opcode in interpreter");
 	}
 }
 

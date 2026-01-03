@@ -1,4 +1,5 @@
 #include "codegen.h"
+#include "compiler_exception.h"
 #include <stdexcept>
 #include <sstream>
 #include <cstring>
@@ -66,11 +67,10 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		// require VASSIGN for proper reference counting. Without type information, we
 		// cannot determine at compile time whether VASSIGN is needed.
 		if (global.type_hint.empty() && !global.initializer) {
-			throw std::runtime_error(
+			throw CompilerException(ErrorType::CODEGEN_ERROR,
 				"Global variable '" + global.name + "' requires either a type hint or an initializer. " +
 				"Please add ': type' (e.g., ': Array') or an initializer (e.g., '= []'). " +
-				"This is required to ensure proper memory management for complex types."
-			);
+				"This is required to ensure proper memory management for complex types.");
 		}
 
 		// Extract initializer value if it's a literal
@@ -194,7 +194,7 @@ void CodeGenerator::gen_stmt(const Stmt* stmt, IRFunction& func) {
 	} else if (auto* expr_stmt = dynamic_cast<const ExprStmt*>(stmt)) {
 		gen_expr_stmt(expr_stmt, func);
 	} else {
-		throw std::runtime_error("Unknown statement type");
+		throw CompilerException(ErrorType::CODEGEN_ERROR, "Unknown statement type");
 	}
 }
 
@@ -259,7 +259,7 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, IRFunction& func) {
 		if (auto* member_expr = dynamic_cast<const MemberCallExpr*>(stmt->target.get())) {
 			// Verify this is a property access (not a method call)
 			if (member_expr->is_method_call) {
-				throw std::runtime_error("Cannot assign to method call");
+				throw CompilerException(ErrorType::CODEGEN_ERROR, "Cannot assign to method call");
 			}
 
 			int obj_reg = gen_expr(member_expr->object.get(), func);
@@ -284,7 +284,7 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, IRFunction& func) {
 			return;
 		}
 
-		throw std::runtime_error("Invalid assignment target type");
+		throw CompilerException(ErrorType::CODEGEN_ERROR, "Invalid assignment target type");
 	}
 
 	// Simple variable assignment
@@ -298,12 +298,12 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, IRFunction& func) {
 
 	Variable* var = find_variable(stmt->name);
 	if (!var) {
-		throw std::runtime_error("Undefined variable: " + stmt->name);
+		throw CompilerException(ErrorType::CODEGEN_ERROR, "Undefined variable: " + stmt->name);
 	}
 
 	// Check if variable is const
 	if (var->is_const) {
-		throw std::runtime_error("Cannot assign to const variable: " + stmt->name);
+		throw CompilerException(ErrorType::CODEGEN_ERROR, "Cannot assign to const variable: " + stmt->name);
 	}
 
 	// Store value into variable's register
@@ -427,7 +427,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 		    literal->lit_type == LiteralExpr::Type::FLOAT ||
 		    literal->lit_type == LiteralExpr::Type::BOOL ||
 		    literal->lit_type == LiteralExpr::Type::NULL_VAL) {
-			throw std::runtime_error("Cannot iterate over non-iterable type in 'for' loop. Did you mean 'for " +
+			throw CompilerException(ErrorType::CODEGEN_ERROR, "Cannot iterate over non-iterable type in 'for' loop. Did you mean 'for " +
 			                         stmt->variable + " in range(" +
 			                         (literal->lit_type == LiteralExpr::Type::INTEGER ?
 			                          std::to_string(std::get<int64_t>(literal->value)) : "N") +
@@ -544,7 +544,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 		end_reg = gen_expr(call_expr->arguments[1].get(), func);
 		step_reg = gen_expr(call_expr->arguments[2].get(), func);
 	} else {
-		throw std::runtime_error("range() takes 1, 2, or 3 arguments");
+		throw CompilerException(ErrorType::CODEGEN_ERROR, "range() takes 1, 2, or 3 arguments");
 	}
 
 	std::string loop_label = make_label("for_loop");
@@ -676,7 +676,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 
 void CodeGenerator::gen_break(const BreakStmt* stmt, IRFunction& func) {
 	if (m_loop_stack.empty()) {
-		throw std::runtime_error("'break' outside of loop");
+		throw CompilerException(ErrorType::CODEGEN_ERROR, "'break' outside of loop");
 	}
 
 	func.instructions.emplace_back(IROpcode::JUMP, IRValue::label(m_loop_stack.back().break_label));
@@ -684,7 +684,7 @@ void CodeGenerator::gen_break(const BreakStmt* stmt, IRFunction& func) {
 
 void CodeGenerator::gen_continue(const ContinueStmt* stmt, IRFunction& func) {
 	if (m_loop_stack.empty()) {
-		throw std::runtime_error("'continue' outside of loop");
+		throw CompilerException(ErrorType::CODEGEN_ERROR, "'continue' outside of loop");
 	}
 
 	func.instructions.emplace_back(IROpcode::JUMP, IRValue::label(m_loop_stack.back().continue_label));
@@ -713,7 +713,7 @@ int CodeGenerator::gen_expr(const Expr* expr, IRFunction& func) {
 	} else if (auto* array_lit = dynamic_cast<const ArrayLiteralExpr*>(expr)) {
 		return gen_array_literal(array_lit, func);
 	} else {
-		throw std::runtime_error("Unknown expression type");
+		throw CompilerException(ErrorType::CODEGEN_ERROR, "Unknown expression type");
 	}
 }
 
@@ -797,7 +797,7 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, IRFunction& func) {
 
 	Variable* var = find_variable(expr->name);
 	if (!var) {
-		throw std::runtime_error("Undefined variable: " + expr->name);
+		throw CompilerException(ErrorType::CODEGEN_ERROR, "Undefined variable: " + expr->name);
 	}
 
 	// Return a copy in a new register
@@ -873,7 +873,7 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, IRFunction& func) {
 		case BinaryExpr::Op::AND: op = IROpcode::AND; break;
 		case BinaryExpr::Op::OR: op = IROpcode::OR; break;
 		default:
-			throw std::runtime_error("Unknown binary operator");
+			throw CompilerException(ErrorType::CODEGEN_ERROR, "Unknown binary operator");
 	}
 
 	IRInstruction instr(op, IRValue::reg(result_reg), IRValue::reg(left_reg), IRValue::reg(right_reg));
@@ -921,7 +921,7 @@ int CodeGenerator::gen_call(const CallExpr* expr, IRFunction& func) {
 	if (expr->function_name == "get_node") {
 		// get_node() takes 0 or 1 argument (node path)
 		if (arg_regs.size() > 1) {
-			throw std::runtime_error("get_node() takes at most 1 argument");
+			throw CompilerException(ErrorType::CODEGEN_ERROR, "get_node() takes at most 1 argument");
 		}
 
 		int result_reg = alloc_register();
@@ -1161,7 +1161,7 @@ void CodeGenerator::push_scope() {
 
 void CodeGenerator::pop_scope() {
 	if (m_scope_stack.empty()) {
-		throw std::runtime_error("Cannot pop scope: scope stack is empty");
+		throw CompilerException(ErrorType::CODEGEN_ERROR, "Cannot pop scope: scope stack is empty");
 	}
 	m_scope_stack.pop_back();
 }
@@ -1179,13 +1179,13 @@ CodeGenerator::Variable* CodeGenerator::find_variable(const std::string& name) {
 
 void CodeGenerator::declare_variable(const std::string& name, int register_num, bool is_const) {
 	if (m_scope_stack.empty()) {
-		throw std::runtime_error("Cannot declare variable: no scope active");
+		throw CompilerException(ErrorType::CODEGEN_ERROR, "Cannot declare variable: no scope active");
 	}
 
 	// Check if variable already exists in current scope (shadowing is allowed, but redeclaration in same scope is not)
 	auto& current_scope = m_scope_stack.back();
 	if (current_scope.variables.find(name) != current_scope.variables.end()) {
-		throw std::runtime_error("Variable '" + name + "' already declared in current scope");
+		throw CompilerException(ErrorType::CODEGEN_ERROR, "Variable '" + name + "' already declared in current scope");
 	}
 
 	current_scope.variables[name] = {name, register_num, IRInstruction::TypeHint_NONE, is_const};
@@ -1340,7 +1340,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 			instr.operands.push_back(IRValue::reg(arg_regs[3])); // a
 			result_type = Variant::COLOR;
 		} else {
-			throw std::runtime_error("Color constructor requires 0, 3, or 4 arguments");
+			throw CompilerException(ErrorType::CODEGEN_ERROR, "Color constructor requires 0, 3, or 4 arguments");
 		}
 	} else if (name == "Array") {
 		// Array() - empty array or with initial elements
