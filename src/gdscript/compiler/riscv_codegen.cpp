@@ -85,174 +85,172 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_globals = program.globals;
 
 	// Generate initialization code for globals at entry point
-	if (m_global_count > 0) {
-		// We'll calculate the .globals virtual address when we define it later
-		// For now, emit placeholder that will be resolved during label resolution
-		for (size_t i = 0; i < program.globals.size(); i++) {
-			const auto& global = program.globals[i];
+	// We'll calculate the .globals virtual address when we define it later
+	// For now, emit placeholder that will be resolved during label resolution
+	for (size_t i = 0; i < program.globals.size(); i++) {
+		const auto& global = program.globals[i];
 
-			// Only initialize globals with explicit initial values (skip NONE)
-			if (global.init_type == IRGlobalVar::InitType::NONE) {
-				continue;
-			}
+		// Only initialize globals with explicit initial values (skip NONE)
+		if (global.init_type == IRGlobalVar::InitType::NONE) {
+			continue;
+		}
 
-			// Load address of global variable into t0
-			// Address = .globals + (i * 24)
-			emit_la(REG_T0, ".globals");
-			if (i > 0) {
-				int offset = i * VARIANT_SIZE;
-				emit_addi(REG_T0, REG_T0, offset);
-			}
+		// Load address of global variable into t0
+		// Address = .globals + (i * 24)
+		emit_la(REG_T0, ".globals");
+		if (i > 0) {
+			int offset = i * VARIANT_SIZE;
+			emit_addi(REG_T0, REG_T0, offset);
+		}
 
-			// Initialize based on type
-			if (global.init_type == IRGlobalVar::InitType::INT) {
-				// Write type field: m_type = 2 (INT)
-				emit_li(REG_T1, Variant::INT);
-				emit_sw(REG_T1, REG_T0, 0);
+		// Initialize based on type
+		if (global.init_type == IRGlobalVar::InitType::INT) {
+			// Write type field: m_type = 2 (INT)
+			emit_li(REG_T1, Variant::INT);
+			emit_sw(REG_T1, REG_T0, 0);
 
-				// Write value: v.i at offset 8
-				int64_t value = std::get<int64_t>(global.init_value);
-				emit_li(REG_T1, value);
-				emit_sd(REG_T1, REG_T0, 8);
-			} else if (global.init_type == IRGlobalVar::InitType::FLOAT) {
-				// Write type field: m_type = 3 (FLOAT)
-				emit_li(REG_T1, Variant::FLOAT);
-				emit_sw(REG_T1, REG_T0, 0);
+			// Write value: v.i at offset 8
+			int64_t value = std::get<int64_t>(global.init_value);
+			emit_li(REG_T1, value);
+			emit_sd(REG_T1, REG_T0, 8);
+		} else if (global.init_type == IRGlobalVar::InitType::FLOAT) {
+			// Write type field: m_type = 3 (FLOAT)
+			emit_li(REG_T1, Variant::FLOAT);
+			emit_sw(REG_T1, REG_T0, 0);
 
-				// Write value: v.f (64-bit double) at offset 8
-				double value = std::get<double>(global.init_value);
-				int64_t bits;
-				memcpy(&bits, &value, sizeof(double));
-				emit_li(REG_T1, bits);
-				emit_sd(REG_T1, REG_T0, 8);
-			} else if (global.init_type == IRGlobalVar::InitType::BOOL) {
-				// Write type field: m_type = 1 (BOOL)
-				emit_li(REG_T1, Variant::BOOL);
-				emit_sw(REG_T1, REG_T0, 0);
+			// Write value: v.f (64-bit double) at offset 8
+			double value = std::get<double>(global.init_value);
+			int64_t bits;
+			memcpy(&bits, &value, sizeof(double));
+			emit_li(REG_T1, bits);
+			emit_sd(REG_T1, REG_T0, 8);
+		} else if (global.init_type == IRGlobalVar::InitType::BOOL) {
+			// Write type field: m_type = 1 (BOOL)
+			emit_li(REG_T1, Variant::BOOL);
+			emit_sw(REG_T1, REG_T0, 0);
 
-				// Write value: v.b at offset 8
-				bool value = std::get<bool>(global.init_value);
-				emit_li(REG_T1, value ? 1 : 0);
-				emit_sd(REG_T1, REG_T0, 8);
-			} else if (global.init_type == IRGlobalVar::InitType::STRING) {
-				// String initialization using VCREATE
-				std::string str_value = std::get<std::string>(global.init_value);
-				int str_len = static_cast<int>(str_value.length());
+			// Write value: v.b at offset 8
+			bool value = std::get<bool>(global.init_value);
+			emit_li(REG_T1, value ? 1 : 0);
+			emit_sd(REG_T1, REG_T0, 8);
+		} else if (global.init_type == IRGlobalVar::InitType::STRING) {
+			// String initialization using VCREATE
+			std::string str_value = std::get<std::string>(global.init_value);
+			int str_len = static_cast<int>(str_value.length());
 
-				// Allocate stack space for: string data + struct { char*, size_t }
-				int str_space = ((str_len + 1) + 7) & ~7; // String + null terminator, aligned to 8 bytes
-				int struct_space = 16; // Two 8-byte fields
-				int total_space = str_space + struct_space;
-				total_space = (total_space + 15) & ~15; // Align to 16 bytes
+			// Allocate stack space for: string data + struct { char*, size_t }
+			int str_space = ((str_len + 1) + 7) & ~7; // String + null terminator, aligned to 8 bytes
+			int struct_space = 16; // Two 8-byte fields
+			int total_space = str_space + struct_space;
+			total_space = (total_space + 15) & ~15; // Align to 16 bytes
 
-				// Adjust stack pointer
-				if (total_space < 2048) {
-					emit_i_type(0x13, REG_SP, 0, REG_SP, -total_space);
-				} else {
-					emit_li(REG_T2, -total_space);
-					emit_add(REG_SP, REG_SP, REG_T2);
-				}
-
-				// Store string data on stack
-				for (size_t j = 0; j < str_value.length(); j++) {
-					emit_li(REG_T2, static_cast<unsigned char>(str_value[j]));
-					emit_sb(REG_T2, REG_SP, j);
-				}
-				// Store null terminator
-				emit_sb(REG_ZERO, REG_SP, str_len);
-
-				// Create struct at sp + str_space
-				// struct.str = sp (pointer to string data)
-				if (str_space < 2048) {
-					emit_i_type(0x13, REG_T2, 0, REG_SP, 0); // T2 = SP + 0 (pointer to string)
-				} else {
-					emit_mv(REG_T2, REG_SP);
-				}
-				emit_sd(REG_T2, REG_SP, str_space); // Store pointer
-
-				// struct.length = str_len
-				emit_li(REG_T2, str_len);
-				emit_sd(REG_T2, REG_SP, str_space + 8); // Store length
-
-				// Prepare data pointer in T1 for VCREATE
-				if (str_space < 2048) {
-					emit_i_type(0x13, REG_T1, 0, REG_SP, str_space);
-				} else {
-					emit_li(REG_T1, str_space);
-					emit_add(REG_T1, REG_SP, REG_T1);
-				}
-
-				// Calculate the offset to the global Variant after stack adjustment
-				// T0 still points to the global Variant (loaded with la before stack adjustment)
-				// We need the offset from current SP to pass to emit_vcreate_syscall
-				// Since T0 is an absolute address, we can't use it directly with emit_vcreate_syscall
-				// We need to use VCREATE directly here
-
-				// a0 = T0 (pointer to destination Variant - already calculated)
-				emit_mv(REG_A0, REG_T0);
-
-				// a1 = Variant::STRING
-				emit_li(REG_A1, Variant::STRING);
-
-				// a2 = method (1 for const char* + size_t)
-				emit_li(REG_A2, 1);
-
-				// a3 = pointer to struct (T1)
-				emit_mv(REG_A3, REG_T1);
-
-				// a7 = ECALL_VCREATE (517)
-				emit_li(REG_A7, 517);
-				emit_ecall();
-
-				// Restore stack pointer
-				if (total_space < 2048) {
-					emit_i_type(0x13, REG_SP, 0, REG_SP, total_space);
-				} else {
-					emit_li(REG_T2, total_space);
-					emit_add(REG_SP, REG_SP, REG_T2);
-				}
-			} else if (global.init_type == IRGlobalVar::InitType::EMPTY_ARRAY) {
-				// Empty Array initialization using VCREATE
-				// a0 = pointer to destination Variant (T0 already points to it)
-				emit_mv(REG_A0, REG_T0);
-
-				// a1 = Variant::ARRAY
-				emit_li(REG_A1, Variant::ARRAY);
-
-				// a2 = method (0 for empty)
-				emit_li(REG_A2, 0);
-
-				// a3 = nullptr (0)
-				emit_li(REG_A3, 0);
-
-				// a7 = ECALL_VCREATE (517)
-				emit_li(REG_A7, 517);
-				emit_ecall();
-			} else if (global.init_type == IRGlobalVar::InitType::EMPTY_DICT) {
-				// Empty Dictionary initialization using VCREATE
-				// a0 = pointer to destination Variant (T0 already points to it)
-				emit_mv(REG_A0, REG_T0);
-
-				// a1 = Variant::DICTIONARY
-				emit_li(REG_A1, Variant::DICTIONARY);
-
-				// a2 = method (0 for empty)
-				emit_li(REG_A2, 0);
-
-				// a3 = nullptr (0)
-				emit_li(REG_A3, 0);
-
-				// a7 = ECALL_VCREATE (517)
-				emit_li(REG_A7, 517);
-				emit_ecall();
-			} else if (global.init_type == IRGlobalVar::InitType::NULL_VAL) {
-				// Write type field: m_type = 0 (NIL)
-				emit_li(REG_T1, Variant::NIL);
-				emit_sw(REG_T1, REG_T0, 0);
+			// Adjust stack pointer
+			if (total_space < 2048) {
+				emit_i_type(0x13, REG_SP, 0, REG_SP, -total_space);
 			} else {
-				// Unknown initialization type
-				throw std::runtime_error("Global variable '" + global.name + "': Unknown initialization type.");
+				emit_li(REG_T2, -total_space);
+				emit_add(REG_SP, REG_SP, REG_T2);
 			}
+
+			// Store string data on stack
+			for (size_t j = 0; j < str_value.length(); j++) {
+				emit_li(REG_T2, static_cast<unsigned char>(str_value[j]));
+				emit_sb(REG_T2, REG_SP, j);
+			}
+			// Store null terminator
+			emit_sb(REG_ZERO, REG_SP, str_len);
+
+			// Create struct at sp + str_space
+			// struct.str = sp (pointer to string data)
+			if (str_space < 2048) {
+				emit_i_type(0x13, REG_T2, 0, REG_SP, 0); // T2 = SP + 0 (pointer to string)
+			} else {
+				emit_mv(REG_T2, REG_SP);
+			}
+			emit_sd(REG_T2, REG_SP, str_space); // Store pointer
+
+			// struct.length = str_len
+			emit_li(REG_T2, str_len);
+			emit_sd(REG_T2, REG_SP, str_space + 8); // Store length
+
+			// Prepare data pointer in T1 for VCREATE
+			if (str_space < 2048) {
+				emit_i_type(0x13, REG_T1, 0, REG_SP, str_space);
+			} else {
+				emit_li(REG_T1, str_space);
+				emit_add(REG_T1, REG_SP, REG_T1);
+			}
+
+			// Calculate the offset to the global Variant after stack adjustment
+			// T0 still points to the global Variant (loaded with la before stack adjustment)
+			// We need the offset from current SP to pass to emit_vcreate_syscall
+			// Since T0 is an absolute address, we can't use it directly with emit_vcreate_syscall
+			// We need to use VCREATE directly here
+
+			// a0 = T0 (pointer to destination Variant - already calculated)
+			emit_mv(REG_A0, REG_T0);
+
+			// a1 = Variant::STRING
+			emit_li(REG_A1, Variant::STRING);
+
+			// a2 = method (1 for const char* + size_t)
+			emit_li(REG_A2, 1);
+
+			// a3 = pointer to struct (T1)
+			emit_mv(REG_A3, REG_T1);
+
+			// a7 = ECALL_VCREATE (517)
+			emit_li(REG_A7, 517);
+			emit_ecall();
+
+			// Restore stack pointer
+			if (total_space < 2048) {
+				emit_i_type(0x13, REG_SP, 0, REG_SP, total_space);
+			} else {
+				emit_li(REG_T2, total_space);
+				emit_add(REG_SP, REG_SP, REG_T2);
+			}
+		} else if (global.init_type == IRGlobalVar::InitType::EMPTY_ARRAY) {
+			// Empty Array initialization using VCREATE
+			// a0 = pointer to destination Variant (T0 already points to it)
+			emit_mv(REG_A0, REG_T0);
+
+			// a1 = Variant::ARRAY
+			emit_li(REG_A1, Variant::ARRAY);
+
+			// a2 = method (0 for empty)
+			emit_li(REG_A2, 0);
+
+			// a3 = nullptr (0)
+			emit_li(REG_A3, 0);
+
+			// a7 = ECALL_VCREATE (517)
+			emit_li(REG_A7, 517);
+			emit_ecall();
+		} else if (global.init_type == IRGlobalVar::InitType::EMPTY_DICT) {
+			// Empty Dictionary initialization using VCREATE
+			// a0 = pointer to destination Variant (T0 already points to it)
+			emit_mv(REG_A0, REG_T0);
+
+			// a1 = Variant::DICTIONARY
+			emit_li(REG_A1, Variant::DICTIONARY);
+
+			// a2 = method (0 for empty)
+			emit_li(REG_A2, 0);
+
+			// a3 = nullptr (0)
+			emit_li(REG_A3, 0);
+
+			// a7 = ECALL_VCREATE (517)
+			emit_li(REG_A7, 517);
+			emit_ecall();
+		} else if (global.init_type == IRGlobalVar::InitType::NULL_VAL) {
+			// Write type field: m_type = 0 (NIL)
+			emit_li(REG_T1, Variant::NIL);
+			emit_sw(REG_T1, REG_T0, 0);
+		} else {
+			// Unknown initialization type
+			throw std::runtime_error("Global variable '" + global.name + "': Unknown initialization type.");
 		}
 	}
 

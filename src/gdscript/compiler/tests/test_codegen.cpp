@@ -993,6 +993,81 @@ void test_const_assignment_prevention() {
 	std::cout << "  ✓ Const assignment prevention test passed" << std::endl;
 }
 
+void test_untyped_global_error() {
+	std::cout << "Testing untyped global variable error..." << std::endl;
+
+	// Test that untyped global without initializer throws error
+	std::string source = R"(var bad_global
+
+func test():
+	return 42
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	CodeGenerator codegen;
+	bool caught_error = false;
+
+	try {
+		IRProgram ir = codegen.generate(program);
+	} catch (const std::runtime_error& e) {
+		caught_error = true;
+		std::string error_msg(e.what());
+		// Check that error message is helpful
+		assert(error_msg.find("bad_global") != std::string::npos);
+		assert(error_msg.find("type hint") != std::string::npos ||
+		       error_msg.find("initializer") != std::string::npos);
+	}
+
+	assert(caught_error);
+	std::cout << "  ✓ Untyped global error test passed" << std::endl;
+}
+
+void test_valid_global_declarations() {
+	std::cout << "Testing valid global variable declarations..." << std::endl;
+
+	// Test that all valid forms work
+	std::string source = R"(var typed_global: Array
+var inferred_global = []
+var typed_int: int
+var inferred_int = 42
+var typed_string: String = "hello"
+
+func test():
+	typed_global.append(1)
+	inferred_global.append(2)
+	typed_int = 100
+	inferred_int = 200
+	return typed_global.size() + inferred_global.size()
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	CodeGenerator codegen;
+	IRProgram ir = codegen.generate(program);
+
+	// Should have 5 global variables
+	assert(ir.globals.size() == 5);
+	assert(ir.globals[0].name == "typed_global");
+	assert(ir.globals[1].name == "inferred_global");
+	assert(ir.globals[2].name == "typed_int");
+	assert(ir.globals[3].name == "inferred_int");
+	assert(ir.globals[4].name == "typed_string");
+
+	// Check type hints where applicable
+	assert(ir.globals[0].type_hint == Variant::ARRAY);  // : Array
+	assert(ir.globals[1].init_type == IRGlobalVar::InitType::EMPTY_ARRAY);  // = []
+	assert(ir.globals[2].type_hint == Variant::INT);  // : int
+	assert(ir.globals[3].init_type == IRGlobalVar::InitType::INT);  // = 42
+	assert(ir.globals[4].type_hint == Variant::STRING);  // : String
+
+	std::cout << "  ✓ Valid global declarations test passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== Running Code Generation Tests ===" << std::endl;
 
@@ -1028,6 +1103,10 @@ int main() {
 		// Const support tests
 		test_const_declarations();
 		test_const_assignment_prevention();
+
+		// Global variable tests
+		test_untyped_global_error();
+		test_valid_global_declarations();
 
 		std::cout << "\n✅ All code generation tests passed!" << std::endl;
 		return 0;

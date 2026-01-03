@@ -2904,3 +2904,30 @@ func set_array(new_array):
 	s.queue_free()
 	ts.queue_free()
 
+func test_untyped_global_error():
+	# Test that untyped global variables without initializers produce a helpful error
+	var gdscript_code = """
+var untyped_global
+
+func test():
+	untyped_global = 42
+	return untyped_global
+"""
+
+	print("Testing untyped global variable error handling:")
+	print(gdscript_code)
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+
+	# Should fail to compile
+	assert_eq(compiled_elf.is_empty(), true, "Compilation should fail for untyped global without initializer")
+
+	#var error_msg = ts.vmcall("get_compiler_error", "")
+	#assert_true(error_msg.find("requires either a type hint or an initializer") != -1, \
+	#	"Error message should mention type hint or initializer requirement")
+
+	ts.queue_free()
+

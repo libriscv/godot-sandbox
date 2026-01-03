@@ -61,6 +61,18 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			ir_global.type_hint = type_hint_from_string(global.type_hint);
 		}
 
+		// Validate that global variables have either a type hint or an initializer
+		// This is necessary for complex types (String, Array, Dictionary, etc.) which
+		// require VASSIGN for proper reference counting. Without type information, we
+		// cannot determine at compile time whether VASSIGN is needed.
+		if (global.type_hint.empty() && !global.initializer) {
+			throw std::runtime_error(
+				"Global variable '" + global.name + "' requires either a type hint or an initializer. " +
+				"Please add ': type' (e.g., ': Array') or an initializer (e.g., '= []'). " +
+				"This is required to ensure proper memory management for complex types."
+			);
+		}
+
 		// Extract initializer value if it's a literal
 		if (global.initializer) {
 			if (auto* lit = dynamic_cast<const LiteralExpr*>(global.initializer.get())) {
