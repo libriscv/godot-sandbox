@@ -2813,7 +2813,8 @@ func test_global_variables():
 	var gdscript_code = """
 var global_counter: int = 0
 const GLOBAL_CONST: float = 42.0
-var global_string: String  # String initialization not yet supported, leave uninitialized
+var g_string = "Hello, World!"
+var g_array = []
 
 func increment_counter():
 	global_counter = global_counter + 1
@@ -2835,11 +2836,21 @@ func const_arithmetic():
 	return GLOBAL_CONST * 2.0 + 8.0
 
 func get_string():
-	return global_string
+	return g_string
 
 func set_string(new_value):
-	global_string = new_value
-	return global_string
+	g_string = new_value
+	return g_string
+
+func test_array():
+	g_array.append(10)
+	g_array.append(20)
+	return g_array
+
+func set_array(new_array):
+	g_array = new_array
+	return g_array
+
 """
 
 	print("Compiling GDScript code with global variables:")
@@ -2862,6 +2873,8 @@ func set_string(new_value):
 	assert_true(s.has_function("const_arithmetic"), "Compiled ELF should have function 'const_arithmetic'")
 	assert_true(s.has_function("get_string"), "Compiled ELF should have function 'get_string'")
 	assert_true(s.has_function("set_string"), "Compiled ELF should have function 'set_string'")
+	assert_true(s.has_function("test_array"), "Compiled ELF should have function 'test_array'")
+	assert_true(s.has_function("set_array"), "Compiled ELF should have function 'set_array'")
 
 	# Test global constant
 	assert_eq(s.vmcallv("get_const"), 42.0, "get_const() should return 42.0")
@@ -2875,11 +2888,18 @@ func set_string(new_value):
 	assert_eq(s.vmcallv("get_counter"), 2, "Counter should now be 2")
 	assert_eq(s.vmcallv("loop_counter"), 5, "loop_counter should return 5")
 
-	# Test global string - DISABLED
-	# String globals require additional scoping infrastructure not yet implemented
-	# TODO: Re-enable once string scoping is implemented
-	# assert_eq(s.vmcallv("set_string", "world"), "world", "set_string should return new value")
-	# assert_eq(s.vmcallv("get_string"), "world", "String should now be 'world'")
+	# Test global string
+	assert_eq(s.vmcallv("get_string"), "Hello, World!", "Initial string should be 'Hello, World!'")
+	assert_eq(s.vmcallv("set_string", "world"), "world", "set_string should return new value")
+	assert_eq(s.vmcallv("get_string"), "world", "String should now be 'world'")
+
+	# Test global array
+	var array_result = s.vmcallv("test_array")
+	assert_eq_deep(array_result, [10, 20])
+	array_result = s.vmcallv("set_array", [333, 666, 999])
+	assert_eq_deep(array_result, [333, 666, 999])
+	array_result = s.vmcallv("test_array")
+	assert_eq_deep(array_result, [333, 666, 999, 10, 20])
 
 	s.queue_free()
 	ts.queue_free()

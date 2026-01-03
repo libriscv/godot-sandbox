@@ -85,8 +85,16 @@ IRProgram CodeGenerator::generate(const Program& program) {
 						ir_global.init_type = IRGlobalVar::InitType::NULL_VAL;
 						break;
 				}
+			} else if (auto* array_lit = dynamic_cast<const ArrayLiteralExpr*>(global.initializer.get())) {
+				// Support empty array literals as global initializers
+				if (array_lit->elements.empty()) {
+					ir_global.init_type = IRGlobalVar::InitType::EMPTY_ARRAY;
+				} else {
+					// Non-empty arrays would require complex initialization
+					// For now, leave as NONE (NIL) - can be improved later
+				}
 			}
-			// For non-literal initializers, we'll need to generate initialization code
+			// For other non-literal initializers, we'll need to generate initialization code
 			// This would be done in a special initialization function or at first access
 		}
 

@@ -136,6 +136,20 @@ private:
 	void emit_variant_copy(int dst_offset, int src_offset);
 	void emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op);
 
+	// VCREATE syscall abstraction
+	// Generic VCREATE emission that handles register clobbering and stack management
+	// variant_type: Variant::Type enum value (e.g., Variant::STRING, Variant::ARRAY)
+	// method: Constructor method number (type-specific)
+	// data_ptr_reg: Register containing pointer to data (or REG_ZERO for nullptr)
+	// result_offset: Stack offset where to create the Variant
+	// Note: Caller is responsible for setting up data_ptr_reg before calling
+	void emit_vcreate_syscall(int variant_type, int method, uint8_t data_ptr_reg, int result_offset);
+
+	// High-level variant constructors using VCREATE
+	// These handle all the setup including data preparation
+	void emit_variant_create_empty_array(int stack_offset);
+	void emit_variant_create_empty_dictionary(int stack_offset);
+
 	// Typed operations (optimized paths when type hints are available)
 	// These emit native RISC-V instructions instead of syscalls
 	void emit_typed_int_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op);
@@ -162,6 +176,9 @@ private:
 	// Load stack pointer offset into a register
 	// If offset < 2048, uses addi; otherwise loads into temp register and adds
 	void emit_load_stack_offset(uint8_t rd, int32_t offset);
+
+	// Check if a Variant type needs permanent storage (refcounted/complex types)
+	static bool is_complex_variant_type(int variant_type);
 
 	// Output buffer
 	std::vector<uint8_t> m_code;

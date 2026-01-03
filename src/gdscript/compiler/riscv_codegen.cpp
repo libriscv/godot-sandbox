@@ -135,9 +135,116 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 				emit_li(REG_T1, value ? 1 : 0);
 				emit_sd(REG_T1, REG_T0, 8);
 			} else if (global.init_type == IRGlobalVar::InitType::STRING) {
-				// String initialization not yet supported
-				throw std::runtime_error("Global variable '" + global.name + "': String initialization is not yet supported. " +
-					"Supported types: int, float, bool. Leave string globals uninitialized or set them in a function.");
+				// String initialization using VCREATE
+				std::string str_value = std::get<std::string>(global.init_value);
+				int str_len = static_cast<int>(str_value.length());
+
+				// Allocate stack space for: string data + struct { char*, size_t }
+				int str_space = ((str_len + 1) + 7) & ~7; // String + null terminator, aligned to 8 bytes
+				int struct_space = 16; // Two 8-byte fields
+				int total_space = str_space + struct_space;
+				total_space = (total_space + 15) & ~15; // Align to 16 bytes
+
+				// Adjust stack pointer
+				if (total_space < 2048) {
+					emit_i_type(0x13, REG_SP, 0, REG_SP, -total_space);
+				} else {
+					emit_li(REG_T2, -total_space);
+					emit_add(REG_SP, REG_SP, REG_T2);
+				}
+
+				// Store string data on stack
+				for (size_t j = 0; j < str_value.length(); j++) {
+					emit_li(REG_T2, static_cast<unsigned char>(str_value[j]));
+					emit_sb(REG_T2, REG_SP, j);
+				}
+				// Store null terminator
+				emit_sb(REG_ZERO, REG_SP, str_len);
+
+				// Create struct at sp + str_space
+				// struct.str = sp (pointer to string data)
+				if (str_space < 2048) {
+					emit_i_type(0x13, REG_T2, 0, REG_SP, 0); // T2 = SP + 0 (pointer to string)
+				} else {
+					emit_mv(REG_T2, REG_SP);
+				}
+				emit_sd(REG_T2, REG_SP, str_space); // Store pointer
+
+				// struct.length = str_len
+				emit_li(REG_T2, str_len);
+				emit_sd(REG_T2, REG_SP, str_space + 8); // Store length
+
+				// Prepare data pointer in T1 for VCREATE
+				if (str_space < 2048) {
+					emit_i_type(0x13, REG_T1, 0, REG_SP, str_space);
+				} else {
+					emit_li(REG_T1, str_space);
+					emit_add(REG_T1, REG_SP, REG_T1);
+				}
+
+				// Calculate the offset to the global Variant after stack adjustment
+				// T0 still points to the global Variant (loaded with la before stack adjustment)
+				// We need the offset from current SP to pass to emit_vcreate_syscall
+				// Since T0 is an absolute address, we can't use it directly with emit_vcreate_syscall
+				// We need to use VCREATE directly here
+
+				// a0 = T0 (pointer to destination Variant - already calculated)
+				emit_mv(REG_A0, REG_T0);
+
+				// a1 = Variant::STRING
+				emit_li(REG_A1, Variant::STRING);
+
+				// a2 = method (1 for const char* + size_t)
+				emit_li(REG_A2, 1);
+
+				// a3 = pointer to struct (T1)
+				emit_mv(REG_A3, REG_T1);
+
+				// a7 = ECALL_VCREATE (517)
+				emit_li(REG_A7, 517);
+				emit_ecall();
+
+				// Restore stack pointer
+				if (total_space < 2048) {
+					emit_i_type(0x13, REG_SP, 0, REG_SP, total_space);
+				} else {
+					emit_li(REG_T2, total_space);
+					emit_add(REG_SP, REG_SP, REG_T2);
+				}
+			} else if (global.init_type == IRGlobalVar::InitType::EMPTY_ARRAY) {
+				// Empty Array initialization using VCREATE
+				// a0 = pointer to destination Variant (T0 already points to it)
+				emit_mv(REG_A0, REG_T0);
+
+				// a1 = Variant::ARRAY
+				emit_li(REG_A1, Variant::ARRAY);
+
+				// a2 = method (0 for empty)
+				emit_li(REG_A2, 0);
+
+				// a3 = nullptr (0)
+				emit_li(REG_A3, 0);
+
+				// a7 = ECALL_VCREATE (517)
+				emit_li(REG_A7, 517);
+				emit_ecall();
+			} else if (global.init_type == IRGlobalVar::InitType::EMPTY_DICT) {
+				// Empty Dictionary initialization using VCREATE
+				// a0 = pointer to destination Variant (T0 already points to it)
+				emit_mv(REG_A0, REG_T0);
+
+				// a1 = Variant::DICTIONARY
+				emit_li(REG_A1, Variant::DICTIONARY);
+
+				// a2 = method (0 for empty)
+				emit_li(REG_A2, 0);
+
+				// a3 = nullptr (0)
+				emit_li(REG_A3, 0);
+
+				// a7 = ECALL_VCREATE (517)
+				emit_li(REG_A7, 517);
+				emit_ecall();
 			} else if (global.init_type == IRGlobalVar::InitType::NULL_VAL) {
 				// Write type field: m_type = 0 (NIL)
 				emit_li(REG_T1, Variant::NIL);
@@ -405,28 +512,71 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int src_vreg = std::get<int>(instr.operands[1].value);
 				int src_offset = get_variant_stack_offset(src_vreg);
 
-				// Load address of global variable: gp + (global_idx * 24)
-				int global_offset = global_idx * VARIANT_SIZE;
+				// Get the global's type information
+				const IRGlobalVar& global = m_globals[global_idx];
 
-				// Load global base address into t0
+				// Determine if this is a complex type that needs VASSIGN
+				// Complex types: STRING, STRING_NAME, NODE_PATH, RID, OBJECT, CALLABLE,
+				//                SIGNAL, DICTIONARY, ARRAY, and all PACKED_*_ARRAY types
+				bool needs_vassign = false;
+
+				if (global.type_hint != IRInstruction::TypeHint_NONE) {
+					// Use type hint if available
+					int32_t type = global.type_hint;
+					needs_vassign = (type == 3) || (type >= 17); // STRING or complex types
+				} else if (global.init_type == IRGlobalVar::InitType::STRING ||
+						   global.init_type == IRGlobalVar::InitType::EMPTY_ARRAY ||
+						   global.init_type == IRGlobalVar::InitType::EMPTY_DICT) {
+					// Infer from initialization type
+					needs_vassign = true;
+				} else {
+					// Fallback: Assume simple type (INT, FLOAT, BOOL, NIL)
+					/// XXX: Throw error or warning here?
+				}
+
+				// Load address of global variable
+				int global_offset = global_idx * VARIANT_SIZE;
 				std::string global_label = ".globals";
 				emit_la(REG_T0, global_label);
-
-				// Add offset for specific global
 				if (global_offset > 0) {
 					emit_addi(REG_T0, REG_T0, global_offset);
 				}
 
-				// Load source address into t1
+				// Load source address
 				emit_load_stack_offset(REG_T1, src_offset);
 
-				// Copy 24 bytes (3 8-byte loads/stores) from stack to global
-				for (int i = 0; i < 3; i++) {
-					emit_ld(REG_T2, REG_T1, i * 8);
-					emit_sd(REG_T2, REG_T0, i * 8);
+				if (needs_vassign) {
+					// Complex type: Use VASSIGN to handle permanent indices
+					// VASSIGN takes: a0 = dest_index, a1 = src_index
+					// Returns: a0 = resulting index
+					std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A7};
+					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+
+					for (const auto& move : moves) {
+						emit_mv(move.second, move.first);
+					}
+
+					// Load indices (v.i at offset 8)
+					emit_lw(REG_A0, REG_T0, 8); // dest index
+					emit_lw(REG_A1, REG_T1, 8); // src index
+
+					// Call VASSIGN (syscall 503)
+					emit_li(REG_A7, 503);
+					emit_ecall();
+
+					// VASSIGN returns the new index in A0
+					// Store it back to the global's v.i field (offset 8)
+					emit_sd(REG_A0, REG_T0, 8);
+				} else {
+					// Simple type: Just copy 24 bytes
+					for (int i = 0; i < 3; i++) {
+						emit_ld(REG_T2, REG_T1, i * 8);
+						emit_sd(REG_T2, REG_T0, i * 8);
+					}
 				}
 				break;
 			}
+
 
 			case IROpcode::ADD:
 			case IROpcode::SUB:
@@ -435,7 +585,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::MOD: {
 				// Check that all operands are valid before processing
 				if (instr.operands.size() < 3 ||
-				    instr.operands[0].type != IRValue::Type::REGISTER) {
+					instr.operands[0].type != IRValue::Type::REGISTER) {
 					throw std::runtime_error("Arithmetic operations require at least 3 operands with first being REGISTER");
 				}
 
@@ -553,7 +703,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::CMP_GTE: {
 				// Check that all operands are valid
 				if (instr.operands.size() < 3 ||
-				    instr.operands[0].type != IRValue::Type::REGISTER) {
+					instr.operands[0].type != IRValue::Type::REGISTER) {
 					throw std::runtime_error("Comparison operations require at least 3 operands with first being REGISTER");
 				}
 
@@ -1013,7 +1163,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::MAKE_VECTOR4: {
 				// Format: MAKE_VECTORn result_reg, x_reg, y_reg, [z_reg], [w_reg]
 				int num_components = (instr.opcode == IROpcode::MAKE_VECTOR2) ? 2 :
-				                     (instr.opcode == IROpcode::MAKE_VECTOR3) ? 3 : 4;
+									 (instr.opcode == IROpcode::MAKE_VECTOR3) ? 3 : 4;
 
 				if (instr.operands.size() != static_cast<size_t>(1 + num_components)) {
 					throw std::runtime_error("MAKE_VECTOR requires correct number of operands");
@@ -1024,7 +1174,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// Set m_type field (offset 0)
 				int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2) ? Variant::VECTOR2 :
-				                   (instr.opcode == IROpcode::MAKE_VECTOR3) ? Variant::VECTOR3 : Variant::VECTOR4;
+								   (instr.opcode == IROpcode::MAKE_VECTOR3) ? Variant::VECTOR3 : Variant::VECTOR4;
 				emit_li(REG_T0, variant_type);
 				emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
 
@@ -1043,7 +1193,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::MAKE_VECTOR4I: {
 				// Format: MAKE_VECTORnI result_reg, x_reg, y_reg, [z_reg], [w_reg]
 				int num_components = (instr.opcode == IROpcode::MAKE_VECTOR2I) ? 2 :
-				                     (instr.opcode == IROpcode::MAKE_VECTOR3I) ? 3 : 4;
+									 (instr.opcode == IROpcode::MAKE_VECTOR3I) ? 3 : 4;
 
 				if (instr.operands.size() != static_cast<size_t>(1 + num_components)) {
 					throw std::runtime_error("MAKE_VECTORnI requires correct number of operands");
@@ -1054,7 +1204,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// Set m_type field (offset 0)
 				int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2I) ? Variant::VECTOR2I :
-				                   (instr.opcode == IROpcode::MAKE_VECTOR3I) ? Variant::VECTOR3I : Variant::VECTOR4I;
+								   (instr.opcode == IROpcode::MAKE_VECTOR3I) ? Variant::VECTOR3I : Variant::VECTOR4I;
 				emit_li(REG_T0, variant_type);
 				emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
 
@@ -1114,27 +1264,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				}
 
 				if (element_count == 0) {
-					// Empty Array: sys_vcreate(&v, ARRAY, 0, nullptr)
-					// a0 = pointer to destination Variant
-					if (result_offset < 2048) {
-						emit_i_type(0x13, REG_A0, 0, REG_SP, result_offset);
-					} else {
-						emit_li(REG_A0, result_offset);
-						emit_add(REG_A0, REG_SP, REG_A0);
-					}
-
-					// a1 = Variant::ARRAY
-					emit_li(REG_A1, Variant::ARRAY);
-
-					// a2 = method (0 for empty)
-					emit_li(REG_A2, 0);
-
-					// a3 = nullptr (0)
-					emit_li(REG_A3, 0);
-
-					// a7 = ECALL_VCREATE (517)
-					emit_li(REG_A7, 517);
-					emit_ecall();
+					// Empty Array: use the abstraction
+					emit_variant_create_empty_array(result_offset);
 				} else {
 					// Array with elements: sys_vcreate(&v, ARRAY, size, data_pointer)
 					// GuestVariant is 24 bytes (4-byte type + 4-byte padding + 16-byte data)
@@ -1223,33 +1354,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int result_vreg = std::get<int>(instr.operands[0].value);
 				int result_offset = get_variant_stack_offset(result_vreg);
 
-				// Handle register clobbering (VCREATE uses a0-a3)
-				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
-				for (const auto& move : moves) {
-					emit_mv(move.second, move.first);
-				}
-
-				// a0 = pointer to destination Variant
-				if (result_offset < 2048) {
-					emit_i_type(0x13, REG_A0, 0, REG_SP, result_offset);
-				} else {
-					emit_li(REG_A0, result_offset);
-					emit_add(REG_A0, REG_SP, REG_A0);
-				}
-
-				// a1 = Variant::DICTIONARY
-				emit_li(REG_A1, Variant::DICTIONARY);
-
-				// a2 = method (0 for empty)
-				emit_li(REG_A2, 0);
-
-				// a3 = nullptr (0)
-				emit_li(REG_A3, 0);
-
-				// a7 = ECALL_VCREATE (517)
-				emit_li(REG_A7, 517);
-				emit_ecall();
+				// Use the new abstraction for creating empty dictionaries
+				emit_variant_create_empty_dictionary(result_offset);
 
 				break;
 			}
@@ -2326,6 +2432,54 @@ void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) 
 	}
 }
 
+void RISCVCodeGen::emit_vcreate_syscall(int variant_type, int method, uint8_t data_ptr_reg, int result_offset) {
+	// Generic VCREATE syscall emission
+	// VCREATE signature: void vcreate(Variant* dst, Variant::Type type, int method, void* data)
+	// This handles register clobbering for a0-a3
+
+	// Handle register clobbering (VCREATE uses a0-a3)
+	std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
+	auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+	for (const auto& move : moves) {
+		emit_mv(move.second, move.first);
+	}
+
+	// a0 = pointer to destination Variant (result_offset from SP)
+	if (result_offset < 2048) {
+		emit_i_type(0x13, REG_A0, 0, REG_SP, result_offset);
+	} else {
+		emit_li(REG_A0, result_offset);
+		emit_add(REG_A0, REG_SP, REG_A0);
+	}
+
+	// a1 = Variant::Type
+	emit_li(REG_A1, variant_type);
+
+	// a2 = method
+	emit_li(REG_A2, method);
+
+	// a3 = data pointer (already in data_ptr_reg, or REG_ZERO for null)
+	if (data_ptr_reg != REG_A3) {
+		emit_mv(REG_A3, data_ptr_reg);
+	}
+
+	// a7 = ECALL_VCREATE (517)
+	emit_li(REG_A7, 517);
+	emit_ecall();
+}
+
+void RISCVCodeGen::emit_variant_create_empty_array(int stack_offset) {
+	// Create empty Array using VCREATE syscall
+	// sys_vcreate(&v, ARRAY, 0, nullptr)
+	emit_vcreate_syscall(Variant::ARRAY, 0, REG_ZERO, stack_offset);
+}
+
+void RISCVCodeGen::emit_variant_create_empty_dictionary(int stack_offset) {
+	// Create empty Dictionary using VCREATE syscall
+	// sys_vcreate(&v, DICTIONARY, 0, nullptr)
+	emit_vcreate_syscall(Variant::DICTIONARY, 0, REG_ZERO, stack_offset);
+}
+
 void RISCVCodeGen::emit_variant_copy(int dst_offset, int src_offset) {
 	// Copy 24 bytes from src to dst
 	for (int i = 0; i < 3; i++) {
@@ -2921,6 +3075,31 @@ void RISCVCodeGen::emit_load_stack_offset(uint8_t rd, int32_t offset) {
 	} else {
 		emit_li(REG_T0, offset);
 		emit_add(rd, REG_SP, REG_T0);
+	}
+}
+
+bool RISCVCodeGen::is_complex_variant_type(int variant_type) {
+	// Simple/inline types that DON'T need permanent storage:
+	// NIL, BOOL, INT, FLOAT, Vector2/3/4, Vector2/3/4i, Color, Rect2/2i, Plane
+	// Everything else (String, Array, Dictionary, Object, packed arrays, etc.) needs permanent storage
+	switch (variant_type) {
+		case Variant::NIL:
+		case Variant::BOOL:
+		case Variant::INT:
+		case Variant::FLOAT:
+		case Variant::VECTOR2:
+		case Variant::VECTOR2I:
+		case Variant::VECTOR3:
+		case Variant::VECTOR3I:
+		case Variant::VECTOR4:
+		case Variant::VECTOR4I:
+		case Variant::RECT2:
+		case Variant::RECT2I:
+		case Variant::PLANE:
+		case Variant::COLOR:
+			return false; // These are simple inline types
+		default:
+			return true; // Everything else is complex and needs permanent storage
 	}
 }
 

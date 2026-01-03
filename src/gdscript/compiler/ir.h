@@ -187,7 +187,16 @@ struct IRGlobalVar {
 	IRInstruction::TypeHint type_hint = IRInstruction::TypeHint_NONE;
 
 	// Initialization value (if any)
-	enum class InitType { NONE, INT, FLOAT, STRING, BOOL, NULL_VAL };
+	enum class InitType {
+		NONE,           // No initialization (will be NIL)
+		INT,            // Integer literal
+		FLOAT,          // Float literal
+		STRING,         // String literal
+		BOOL,           // Bool literal
+		NULL_VAL,       // Explicit null
+		EMPTY_ARRAY,    // Empty array []
+		EMPTY_DICT      // Empty dictionary {}
+	};
 	InitType init_type = InitType::NONE;
 	std::variant<int64_t, double, std::string, bool> init_value;
 };
