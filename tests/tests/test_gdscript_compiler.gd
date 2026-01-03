@@ -2931,3 +2931,76 @@ func test():
 
 	ts.queue_free()
 
+
+func test_export_attribute():
+	# Test that @export attribute works for global variables
+	var gdscript_code = """
+@export
+var exported_int : int = 42
+
+@export
+var exported_float : float = 3.14
+
+@export
+var exported_string : String = "test"
+
+@export
+var exported_array : Array = []
+
+var non_exported : int = 100
+
+func get_exported_int():
+	return exported_int
+
+func get_exported_float():
+	return exported_float
+
+func get_exported_string():
+	return exported_string
+
+func get_exported_array():
+	return exported_array
+
+func get_non_exported():
+	return non_exported
+"""
+
+	print("Testing @export attribute:")
+	print(gdscript_code)
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compilation with @export should succeed")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(10000)
+
+	# Test that exported variables work correctly
+	assert_eq(s.vmcallv("get_exported_int"), 42, "exported_int should be 42")
+	assert_almost_eq(s.vmcallv("get_exported_float"), 3.14, 0.001, "exported_float should be 3.14")
+	assert_eq(s.vmcallv("get_exported_string"), "test", "exported_string should be 'test'")
+	var array_result = s.vmcallv("get_exported_array")
+	assert_eq_deep(array_result, [])
+	assert_eq(s.vmcallv("get_non_exported"), 100, "non_exported should be 100")
+
+	assert_eq(s.get("exported_int"), 42, "exported_int property should be 42")
+	assert_almost_eq(s.get("exported_float"), 3.14, 0.001, "exported_float property should be 3.14")
+	assert_eq(s.get("exported_string"), "test", "exported_string property should be 'test'")
+	assert_eq_deep(s.get("exported_array"), [])
+	assert_eq(s.get("non_exported"), null, "non_exported is not exported, should be nil")
+
+	s.set("exported_int", 100)
+	assert_eq(s.get("exported_int"), 100, "exported_int property should be updated to 100")
+	s.set("exported_float", 6.28)
+	assert_almost_eq(s.get("exported_float"), 6.28, 0.001, "exported_float property should be updated to 6.28")
+	s.set("exported_string", "updated")
+	assert_eq(s.get("exported_string"), "updated", "exported_string property should be updated to 'updated'")
+	s.set("exported_array", [1, 2, 3])
+	assert_eq_deep(s.get("exported_array"), [1, 2, 3])
+
+	s.queue_free()
+	ts.queue_free()
+

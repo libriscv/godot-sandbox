@@ -125,6 +125,7 @@ struct VarDeclStmt : Stmt {
 	std::string type_hint;  // Type annotation if present (e.g., "int", "float", "String")
 	ExprPtr initializer; // Can be null
 	bool is_const = false; // Whether this is a const declaration
+	bool is_property = false; // Whether this is an exported property (@export)
 
 	VarDeclStmt(std::string n, ExprPtr init = nullptr, bool const_flag = false)
 		: name(std::move(n)), initializer(std::move(init)), is_const(const_flag) {}

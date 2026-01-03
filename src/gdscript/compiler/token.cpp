@@ -52,6 +52,7 @@ const char* token_type_name(TokenType type) {
 		case TokenType::COLON: return "COLON";
 		case TokenType::COMMA: return "COMMA";
 		case TokenType::DOT: return "DOT";
+		case TokenType::AT: return "AT";
 		case TokenType::NEWLINE: return "NEWLINE";
 		case TokenType::INDENT: return "INDENT";
 		case TokenType::DEDENT: return "DEDENT";

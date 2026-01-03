@@ -253,6 +253,60 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 			// Unknown initialization type
 			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Global variable '" + global.name + "': Unknown initialization type.");
 		}
+
+		// If this is a property (@export), register it using ECALL_SANDBOX_ADD
+		if (global.is_property) {
+			// ECALL_SANDBOX_ADD (547)
+			// A0 = 0 (add property)
+			// A1 = name pointer
+			// A2 = name length
+			// A3 = Variant type
+			// A4 = 0
+			// A5 = 0
+			// A6 = Variant pointer (T0 still has the address)
+
+			// Store the property name for later emission into the code section
+			const std::string name_label = ".LPROP" + std::to_string(i);
+			m_property_name_strings.push_back({global.name, name_label});
+
+			// A0 = 0 (add property)
+			emit_li(REG_A0, 0);
+
+			// A1 = pointer to variable name string
+			emit_la(REG_A1, name_label);
+
+			// A2 = name length
+			emit_li(REG_A2, static_cast<int64_t>(global.name.length()));
+
+			// A3 = Variant type (from type hint or init type)
+			int32_t variant_type = Variant::NIL;
+			if (global.type_hint != IRInstruction::TypeHint_NONE) {
+				variant_type = global.type_hint;
+			} else {
+				// Derive type from init_type
+				switch (global.init_type) {
+					case IRGlobalVar::InitType::INT: variant_type = Variant::INT; break;
+					case IRGlobalVar::InitType::FLOAT: variant_type = Variant::FLOAT; break;
+					case IRGlobalVar::InitType::BOOL: variant_type = Variant::BOOL; break;
+					case IRGlobalVar::InitType::STRING: variant_type = Variant::STRING; break;
+					case IRGlobalVar::InitType::EMPTY_ARRAY: variant_type = Variant::ARRAY; break;
+					case IRGlobalVar::InitType::EMPTY_DICT: variant_type = Variant::DICTIONARY; break;
+					default: throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+						"Global variable '" + global.name + "': Could not derive Variant type from initializer.");
+				}
+			}
+			emit_li(REG_A3, variant_type);
+			emit_li(REG_A4, 0); // A4 = 0
+			emit_li(REG_A5, 0); // A5 = 0
+			// A6 = Variant pointer (T0 still has the address)
+			emit_mv(REG_A6, REG_T0);
+
+			// A7 = ECALL_SANDBOX_ADD (547)
+			emit_li(REG_A7, 547);
+
+			// Make the syscall
+			emit_ecall();
+		}
 	}
 
 	// Emit STOP instruction after initialization
@@ -281,6 +335,20 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		for (int i = 0; i < 8; i++) {
 			m_code.push_back(static_cast<uint8_t>((constant >> (i * 8)) & 0xFF));
 		}
+	}
+
+	// Emit property name strings for @export globals
+	for (const auto& [str, label] : m_property_name_strings) {
+		// Align to 1-byte (strings are byte sequences)
+		m_labels[label] = m_code.size();
+
+		// Emit string bytes
+		for (char c : str) {
+			m_code.push_back(static_cast<uint8_t>(c));
+		}
+
+		// Null terminator
+		m_code.push_back(0);
 	}
 
 	// Calculate global data size (m_global_count and m_globals already set earlier)

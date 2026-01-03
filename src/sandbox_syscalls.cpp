@@ -1931,8 +1931,25 @@ APICALL(api_sandbox_add) {
 			auto [method, name, type, setter, getter, defval] = machine.sysargs<int, std::string_view, Variant::Type, gaddr_t, gaddr_t, GuestVariant *>();
 			String utf8_name = String::utf8(name.data(), name.size());
 			SYS_TRACE("sandbox_add", "property", utf8_name, int(type), setter, getter, defval->toVariant(emu));
-			emu.add_property(utf8_name, type, setter, getter, defval->toVariant(emu));
-		} break;
+			if (type <= 0) {
+				ERR_PRINT("Invalid property type for sandbox property" + itos(type));
+				throw std::runtime_error("Invalid property type for sandbox property");
+			}
+			if (type >= Variant::VARIANT_MAX) {
+				ERR_PRINT("Invalid property type for sandbox property: " + itos(type));
+				throw std::runtime_error("Invalid property type for sandbox property: " + std::to_string(type));
+			}
+			if (getter == 0 && setter == 0) {
+				// Treat as a guest-side variable, where the "default" value is
+				// the address of the Variant, and the current value is the default.
+				const gaddr_t address = machine.cpu.reg(REG_ARG6);
+				emu.add_property(utf8_name, type, address, defval->toVariant(emu));
+			} else {
+				// If the setter is zero, it is a read-only property.
+				emu.add_property(utf8_name, type, setter, getter, defval->toVariant(emu));
+			}
+			break;
+		}
 		case 1: {
 			// Add a new sandboxed public API method. Name, address, description, return type and arguments.
 			struct GuestFunctionExtra {

@@ -56,6 +56,9 @@ private:
 	std::string parse_type_hint();  // Parse optional type hint (e.g., ": int", ": String")
 	std::string parse_return_type();  // Parse optional return type (e.g., "-> void")
 
+	// Attribute parsing
+	bool parse_attribute();  // Parse attribute (e.g., @export), returns true if @export
+
 	std::vector<Token> m_tokens;
 	size_t m_current = 0;
 };

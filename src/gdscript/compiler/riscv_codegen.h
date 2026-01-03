@@ -229,6 +229,10 @@ private:
 	size_t m_global_count = 0;
 	size_t m_global_data_size = 0;
 
+	// Property name strings for @export globals
+	// These are stored as: vector of {string_data, label_name}
+	std::vector<std::pair<std::string, std::string>> m_property_name_strings;
+
 	// RISC-V RV64I register definitions
 	static constexpr uint8_t REG_ZERO = 0;  // x0 - always zero
 	static constexpr uint8_t REG_RA = 1;    // x1 - return address

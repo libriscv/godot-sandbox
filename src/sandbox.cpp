@@ -1282,6 +1282,12 @@ void Sandbox::add_property(const String &name, Variant::Type vtype, uint64_t set
 		ERR_PRINT("Sandbox: Maximum number of properties reached");
 		return;
 	}
+	for (const String &builtin_name : property_names) {
+		if (name.begins_with(builtin_name)) {
+			ERR_PRINT("Sandbox: Property name conflicts with built-in property: " + name);
+			return;
+		}
+	}
 	for (const SandboxProperty &prop : m_properties) {
 		if (prop.name() == name) {
 			// TODO: Allow overriding properties?
@@ -1294,6 +1300,29 @@ void Sandbox::add_property(const String &name, Variant::Type vtype, uint64_t set
 	// Make the property getter/setter functions visible to address_of and profiling
 	this->add_cached_address("set_" + name, getter);
 	this->add_cached_address("get_" + name, setter);
+}
+void Sandbox::add_property(const String &name, Variant::Type vtype, gaddr_t address, const Variant &def) const
+{
+	if (address == 0) {
+		ERR_PRINT("Sandbox: Address not found for property: " + name);
+		return;
+	} else if (m_properties.size() >= MAX_PROPERTIES) {
+		ERR_PRINT("Sandbox: Maximum number of properties reached");
+		return;
+	}
+	for (const String &builtin_name : property_names) {
+		if (name.begins_with(builtin_name)) {
+			ERR_PRINT("Sandbox: Property name conflicts with built-in property: " + name);
+			return;
+		}
+	}
+	for (const SandboxProperty &prop : m_properties) {
+		if (prop.name() == name) {
+			ERR_PRINT("Sandbox: Property already exists: " + name);
+			return;
+		}
+	}
+	m_properties.emplace_back(name, vtype, address, def);
 }
 
 bool Sandbox::set_property(const StringName &name, const Variant &value) {
@@ -1487,6 +1516,12 @@ Array Sandbox::get_property_list() const {
 
 void SandboxProperty::set(Sandbox &sandbox, const Variant &value) {
 	if (m_setter_address == 0) {
+		if (m_address != 0) {
+			// Direct property access
+			GuestVariant *g_prop = sandbox.machine().memory.memarray<GuestVariant>(m_address, 1);
+			g_prop->create(sandbox, Variant(value));
+			return;
+		}
 		ERR_PRINT("Sandbox: Setter was invalid for property: " + m_name);
 		return;
 	}
@@ -1501,6 +1536,11 @@ void SandboxProperty::set(Sandbox &sandbox, const Variant &value) {
 
 Variant SandboxProperty::get(const Sandbox &sandbox) const {
 	if (m_getter_address == 0) {
+		if (m_address != 0) {
+			// Direct property access
+			GuestVariant *g_prop = sandbox.machine().memory.memarray<GuestVariant>(m_address, 1);
+			return g_prop->toVariant(sandbox);
+		}
 		ERR_PRINT("Sandbox: Getter was invalid for property: " + m_name);
 		return Variant();
 	}

@@ -60,6 +60,7 @@ enum class TokenType {
 	COLON,       // :
 	COMMA,       // ,
 	DOT,         // .
+	AT,          // @
 	NEWLINE,
 	INDENT,
 	DEDENT,

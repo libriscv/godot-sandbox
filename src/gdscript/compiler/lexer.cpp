@@ -83,6 +83,7 @@ void Lexer::scan_token() {
 		case ':': add_token(TokenType::COLON); break;
 		case ',': add_token(TokenType::COMMA); break;
 		case '.': add_token(TokenType::DOT); break;
+		case '@': add_token(TokenType::AT); break;
 		case '+': add_token(match('=') ? TokenType::PLUS_ASSIGN : TokenType::PLUS); break;
 		case '-': add_token(match('=') ? TokenType::MINUS_ASSIGN : TokenType::MINUS); break;
 		case '*': add_token(match('=') ? TokenType::MULTIPLY_ASSIGN : TokenType::MULTIPLY); break;

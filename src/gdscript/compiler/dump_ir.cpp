@@ -180,6 +180,10 @@ int main(int argc, char** argv)
 				const auto& global = ir.globals[i];
 				std::cout << "  [" << i << "] " << global.name;
 
+				if (global.is_property) {
+					std::cout << " (@export)";
+				}
+
 				if (global.is_const) {
 					std::cout << " (const)";
 				}

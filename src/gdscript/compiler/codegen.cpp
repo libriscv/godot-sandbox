@@ -122,6 +122,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		IRGlobalVar ir_global;
 		ir_global.name = global.name;
 		ir_global.is_const = global.is_const;
+		ir_global.is_property = global.is_property;
 
 		// Convert type hint
 		if (!global.type_hint.empty()) {

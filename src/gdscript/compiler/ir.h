@@ -184,6 +184,7 @@ struct IRFunction {
 struct IRGlobalVar {
 	std::string name;
 	bool is_const = false;
+	bool is_property = false; // Whether this is an exported property (@export)
 	IRInstruction::TypeHint type_hint = IRInstruction::TypeHint_NONE;
 
 	// Initialization value (if any)

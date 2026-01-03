@@ -356,6 +356,7 @@ public:
 	/// @param getter The guest address of the getter function.
 	/// @param def The default value of the property.
 	void add_property(const String &name, Variant::Type vtype, gaddr_t setter, gaddr_t getter, const Variant &def = "") const;
+	void add_property(const String &name, Variant::Type vtype, gaddr_t address, const Variant &def = "") const;
 
 	/// @brief Set a property in the sandbox.
 	/// @param name The name of the property.

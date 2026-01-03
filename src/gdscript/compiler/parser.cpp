@@ -19,6 +19,27 @@ Program Parser::parse() {
 			consume(TokenType::IDENTIFIER, "Expected class name after 'extends'");
 			// Skip any newlines after extends
 			skip_newlines();
+		} else if (check(TokenType::AT)) {
+			// Parse attribute (e.g., @export)
+			bool is_export = parse_attribute();
+
+			// Skip newlines after attribute
+			skip_newlines();
+
+			// After attribute, we expect a var declaration
+			if (check(TokenType::VAR)) {
+				advance(); // consume 'var'
+				auto var_decl = parse_var_decl(false);
+				if (auto* decl = dynamic_cast<VarDeclStmt*>(var_decl.get())) {
+					VarDeclStmt global_decl(decl->name, std::move(decl->initializer), decl->is_const);
+					global_decl.type_hint = decl->type_hint;
+					global_decl.is_property = is_export;
+					program.globals.push_back(std::move(global_decl));
+				}
+			} else {
+				error("Expected variable declaration after attribute");
+				synchronize();
+			}
 		} else if (check(TokenType::VAR)) {
 			// Parse global var declaration
 			advance(); // consume 'var'
@@ -647,6 +668,25 @@ std::string Parser::parse_return_type() {
 	}
 
 	return "";
+}
+
+bool Parser::parse_attribute() {
+	// Parse attribute annotations like @export
+	// Currently only @export is supported
+	consume(TokenType::AT, "Expected '@' for attribute");
+
+	if (match(TokenType::IDENTIFIER)) {
+		Token attr_name = previous();
+		if (attr_name.lexeme == "export") {
+			return true; // This is an @export attribute
+		} else {
+			error("Unknown attribute: @" + attr_name.lexeme);
+		}
+	} else {
+		error("Expected identifier after '@'");
+	}
+
+	return false;
 }
 
 } // namespace gdscript
