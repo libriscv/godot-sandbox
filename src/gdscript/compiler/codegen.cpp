@@ -8,6 +8,7 @@ namespace gdscript {
 
 // Helper function to convert type hint string to Variant::Type
 static IRInstruction::TypeHint type_hint_from_string(const std::string& type_str) {
+	// Basic types
 	if (type_str == "int") {
 		return Variant::INT;
 	} else if (type_str == "float") {
@@ -16,7 +17,14 @@ static IRInstruction::TypeHint type_hint_from_string(const std::string& type_str
 		return Variant::BOOL;
 	} else if (type_str == "String") {
 		return Variant::STRING;
-	} else if (type_str == "Vector2") {
+	} else if (type_str == "StringName") {
+		return Variant::STRING_NAME;
+	} else if (type_str == "NodePath") {
+		return Variant::NODE_PATH;
+	}
+
+	// Math types
+	else if (type_str == "Vector2") {
 		return Variant::VECTOR2;
 	} else if (type_str == "Vector2i") {
 		return Variant::VECTOR2I;
@@ -28,9 +36,67 @@ static IRInstruction::TypeHint type_hint_from_string(const std::string& type_str
 		return Variant::VECTOR4;
 	} else if (type_str == "Vector4i") {
 		return Variant::VECTOR4I;
+	} else if (type_str == "Rect2") {
+		return Variant::RECT2;
+	} else if (type_str == "Rect2i") {
+		return Variant::RECT2I;
+	} else if (type_str == "Transform2D") {
+		return Variant::TRANSFORM2D;
+	} else if (type_str == "Transform3D") {
+		return Variant::TRANSFORM3D;
+	} else if (type_str == "Basis") {
+		return Variant::BASIS;
+	} else if (type_str == "Quaternion") {
+		return Variant::QUATERNION;
+	} else if (type_str == "Plane") {
+		return Variant::PLANE;
+	} else if (type_str == "AABB") {
+		return Variant::AABB;
+	} else if (type_str == "Projection") {
+		return Variant::PROJECTION;
 	} else if (type_str == "Color") {
 		return Variant::COLOR;
 	}
+
+	// Collection types
+	else if (type_str == "Array") {
+		return Variant::ARRAY;
+	} else if (type_str == "Dictionary") {
+		return Variant::DICTIONARY;
+	}
+
+	// Packed array types
+	else if (type_str == "PackedByteArray") {
+		return Variant::PACKED_BYTE_ARRAY;
+	} else if (type_str == "PackedInt32Array") {
+		return Variant::PACKED_INT32_ARRAY;
+	} else if (type_str == "PackedInt64Array") {
+		return Variant::PACKED_INT64_ARRAY;
+	} else if (type_str == "PackedFloat32Array") {
+		return Variant::PACKED_FLOAT32_ARRAY;
+	} else if (type_str == "PackedFloat64Array") {
+		return Variant::PACKED_FLOAT64_ARRAY;
+	} else if (type_str == "PackedStringArray") {
+		return Variant::PACKED_STRING_ARRAY;
+	} else if (type_str == "PackedVector2Array") {
+		return Variant::PACKED_VECTOR2_ARRAY;
+	} else if (type_str == "PackedVector3Array") {
+		return Variant::PACKED_VECTOR3_ARRAY;
+	} else if (type_str == "PackedColorArray") {
+		return Variant::PACKED_COLOR_ARRAY;
+	} else if (type_str == "PackedVector4Array") {
+		return Variant::PACKED_VECTOR4_ARRAY;
+	}
+
+	// Special types
+	else if (type_str == "RID") {
+		return Variant::RID;
+	} else if (type_str == "Callable") {
+		return Variant::CALLABLE;
+	} else if (type_str == "Signal") {
+		return Variant::SIGNAL;
+	}
+
 	// Unknown type, return NONE
 	return IRInstruction::TypeHint_NONE;
 }

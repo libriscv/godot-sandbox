@@ -37,6 +37,8 @@ const char* type_hint_name(IRInstruction::TypeHint hint) {
 		case Variant::INT: return "INT";
 		case Variant::FLOAT: return "FLOAT";
 		case Variant::STRING: return "STRING";
+		case Variant::STRING_NAME: return "STRING_NAME";
+		case Variant::NODE_PATH: return "NODE_PATH";
 		case Variant::VECTOR2: return "VECTOR2";
 		case Variant::VECTOR2I: return "VECTOR2I";
 		case Variant::VECTOR3: return "VECTOR3";
@@ -46,9 +48,18 @@ const char* type_hint_name(IRInstruction::TypeHint hint) {
 		case Variant::COLOR: return "COLOR";
 		case Variant::RECT2: return "RECT2";
 		case Variant::RECT2I: return "RECT2I";
+		case Variant::TRANSFORM2D: return "TRANSFORM2D";
+		case Variant::TRANSFORM3D: return "TRANSFORM3D";
+		case Variant::BASIS: return "BASIS";
+		case Variant::QUATERNION: return "QUATERNION";
 		case Variant::PLANE: return "PLANE";
+		case Variant::AABB: return "AABB";
+		case Variant::PROJECTION: return "PROJECTION";
 		case Variant::ARRAY: return "ARRAY";
 		case Variant::DICTIONARY: return "DICTIONARY";
+		case Variant::RID: return "RID";
+		case Variant::CALLABLE: return "CALLABLE";
+		case Variant::SIGNAL: return "SIGNAL";
 		case Variant::PACKED_BYTE_ARRAY: return "PACKED_BYTE_ARRAY";
 		case Variant::PACKED_INT32_ARRAY: return "PACKED_INT32_ARRAY";
 		case Variant::PACKED_INT64_ARRAY: return "PACKED_INT64_ARRAY";
@@ -160,6 +171,53 @@ int main(int argc, char** argv)
 		if (!no_optimize) {
 			IROptimizer optimizer;
 			optimizer.optimize(ir);
+		}
+
+		// Print global variables
+		if (!ir.globals.empty()) {
+			std::cout << "=== GLOBAL VARIABLES ===" << std::endl;
+			for (size_t i = 0; i < ir.globals.size(); i++) {
+				const auto& global = ir.globals[i];
+				std::cout << "  [" << i << "] " << global.name;
+
+				if (global.is_const) {
+					std::cout << " (const)";
+				}
+
+				if (global.type_hint != IRInstruction::TypeHint_NONE) {
+					std::cout << ": " << type_hint_name(global.type_hint);
+				}
+
+				if (global.init_type != IRGlobalVar::InitType::NONE) {
+					std::cout << " = ";
+					switch (global.init_type) {
+						case IRGlobalVar::InitType::INT:
+							std::cout << std::get<int64_t>(global.init_value);
+							break;
+						case IRGlobalVar::InitType::FLOAT:
+							std::cout << std::get<double>(global.init_value);
+							break;
+						case IRGlobalVar::InitType::STRING:
+							std::cout << "\"" << std::get<std::string>(global.init_value) << "\"";
+							break;
+						case IRGlobalVar::InitType::BOOL:
+							std::cout << (std::get<bool>(global.init_value) ? "true" : "false");
+							break;
+						case IRGlobalVar::InitType::EMPTY_ARRAY:
+							std::cout << "[]";
+							break;
+						case IRGlobalVar::InitType::EMPTY_DICT:
+							std::cout << "{}";
+							break;
+						default:
+							std::cout << "?";
+							break;
+					}
+				}
+
+				std::cout << std::endl;
+			}
+			std::cout << std::endl;
 		}
 
 		// Print string constants
