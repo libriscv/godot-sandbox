@@ -779,6 +779,8 @@ int CodeGenerator::gen_expr(const Expr* expr, IRFunction& func) {
 		return gen_index(index, func);
 	} else if (auto* array_lit = dynamic_cast<const ArrayLiteralExpr*>(expr)) {
 		return gen_array_literal(array_lit, func);
+	} else if (auto* dict_lit = dynamic_cast<const DictionaryLiteralExpr*>(expr)) {
+		return gen_dictionary_literal(dict_lit, func);
 	} else {
 		throw CompilerException(ErrorType::CODEGEN_ERROR, "Unknown expression type");
 	}
@@ -1185,6 +1187,46 @@ int CodeGenerator::gen_array_literal(const ArrayLiteralExpr* expr, IRFunction& f
 
 	// Free element registers
 	for (int reg : elem_regs) {
+		free_register(reg);
+	}
+
+	return result_reg;
+}
+
+int CodeGenerator::gen_dictionary_literal(const DictionaryLiteralExpr* expr, IRFunction& func) {
+	std::vector<int> key_regs;
+	std::vector<int> value_regs;
+
+	// Generate code for each key-value pair
+	for (const auto& [key, value] : expr->elements) {
+		int key_reg = gen_expr(key.get(), func);
+		int value_reg = gen_expr(value.get(), func);
+		key_regs.push_back(key_reg);
+		value_regs.push_back(value_reg);
+	}
+
+	int result_reg = alloc_register();
+
+	// Create MAKE_DICTIONARY instruction
+	// Format: MAKE_DICTIONARY result_reg, pair_count, key1_reg, val1_reg, key2_reg, val2_reg, ...
+	IRInstruction instr(IROpcode::MAKE_DICTIONARY);
+	instr.operands.push_back(IRValue::reg(result_reg));
+	instr.operands.push_back(IRValue::imm(static_cast<int>(key_regs.size()))); // pair count
+
+	// Interleave keys and values: key1, val1, key2, val2, ...
+	for (size_t i = 0; i < key_regs.size(); i++) {
+		instr.operands.push_back(IRValue::reg(key_regs[i]));
+		instr.operands.push_back(IRValue::reg(value_regs[i]));
+	}
+
+	func.instructions.push_back(instr);
+	set_register_type(result_reg, Variant::DICTIONARY);
+
+	// Free key and value registers
+	for (int reg : key_regs) {
+		free_register(reg);
+	}
+	for (int reg : value_regs) {
 		free_register(reg);
 	}
 

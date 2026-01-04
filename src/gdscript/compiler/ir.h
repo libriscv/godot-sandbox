@@ -78,7 +78,7 @@ enum class IROpcode {
 
 	// Array and Dictionary construction (via VCREATE syscall)
 	MAKE_ARRAY,      // Construct Array (empty or with elements)
-	MAKE_DICTIONARY, // Construct Dictionary (empty)
+	MAKE_DICTIONARY, // Construct Dictionary (empty or with key-value pairs)
 
 	// Packed array construction (via VCREATE syscall)
 	MAKE_PACKED_BYTE_ARRAY,      // Construct PackedByteArray (empty or with elements)

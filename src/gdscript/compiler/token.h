@@ -57,6 +57,8 @@ enum class TokenType {
 	RPAREN,      // )
 	LBRACKET,    // [
 	RBRACKET,    // ]
+	LBRACE,      // {
+	RBRACE,      // }
 	COLON,       // :
 	COMMA,       // ,
 	DOT,         // .

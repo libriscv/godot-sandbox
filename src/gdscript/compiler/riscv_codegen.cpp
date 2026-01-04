@@ -1412,17 +1412,108 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			}
 
 			case IROpcode::MAKE_DICTIONARY: {
-				// Format: MAKE_DICTIONARY result_reg
-				// Empty Dictionary: sys_vcreate(&v, DICTIONARY, 0, nullptr)
-				if (instr.operands.size() != 1) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_DICTIONARY requires 1 operand");
+				// Format: MAKE_DICTIONARY result_reg, pair_count, [key1_reg, val1_reg, key2_reg, val2_reg, ...]
+				// For empty dictionaries via Dictionary() constructor: MAKE_DICTIONARY result_reg
+				// For empty dictionaries via literal {}: MAKE_DICTIONARY result_reg, 0
+				// For dictionaries with elements: pair_count > 0 with key/value regs
+				if (instr.operands.size() < 1) {
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_DICTIONARY requires at least 1 operand");
 				}
 
 				int result_vreg = std::get<int>(instr.operands[0].value);
 				int result_offset = get_variant_stack_offset(result_vreg);
 
-				// Use the new abstraction for creating empty dictionaries
-				emit_variant_create_empty_dictionary(result_offset);
+				// Check if this is the old Dictionary() constructor format (only 1 operand)
+				// or the new dictionary literal format (2+ operands)
+				bool is_constructor_format = (instr.operands.size() == 1);
+				int pair_count = is_constructor_format ? 0 : static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+
+				// Handle register clobbering (VCREATE uses a0-a3)
+				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+				for (const auto& move : moves) {
+					emit_mv(move.second, move.first);
+				}
+
+				if (pair_count == 0) {
+					// Empty Dictionary: use the abstraction
+					emit_variant_create_empty_dictionary(result_offset);
+				} else {
+					// Dictionary with elements: sys_vcreate(&v, DICTIONARY, size, data_pointer)
+					// GuestVariant is 24 bytes (4-byte type + 4-byte padding + 16-byte data)
+					// We need to copy the full Variant structures to stack
+					constexpr int VARIANT_SIZE = 24;
+					int total_variants = pair_count * 2; // Each pair has 2 variants (key and value)
+					int args_space = total_variants * VARIANT_SIZE;
+					args_space = (args_space + 15) & ~15; // Align to 16 bytes
+
+					// Adjust stack pointer
+					if (args_space < 2048) {
+						emit_i_type(0x13, REG_SP, 0, REG_SP, -args_space);
+					} else {
+						emit_li(REG_T0, -args_space);
+						emit_add(REG_SP, REG_SP, REG_T0);
+					}
+
+					// Copy full GuestVariant structures (24 bytes each) to stack
+					// Operands are interleaved: key1, val1, key2, val2, ...
+					for (int i = 0; i < total_variants; i++) {
+						int variant_vreg = std::get<int>(instr.operands[2 + i].value);
+						int variant_offset = get_variant_stack_offset(variant_vreg);
+
+						// Destination address for this variant
+						int dst_offset = i * VARIANT_SIZE;
+
+						// The variant Variant is at variant_offset from the ORIGINAL stack frame
+						// After SP -= args_space, it's now at variant_offset + args_space from NEW SP
+						// So we load from (variant_offset + args_space) and store to dst_offset
+
+						// Copy 24 bytes: 8 + 8 + 8 = three 64-bit loads/stores
+						// First 8 bytes (type + padding)
+						emit_ld(REG_T0, REG_SP, variant_offset + args_space);
+						emit_sd(REG_T0, REG_SP, dst_offset);
+
+						// Second 8 bytes (data part 1)
+						emit_ld(REG_T0, REG_SP, variant_offset + args_space + 8);
+						emit_sd(REG_T0, REG_SP, dst_offset + 8);
+
+						// Third 8 bytes (data part 2)
+						emit_ld(REG_T0, REG_SP, variant_offset + args_space + 16);
+						emit_sd(REG_T0, REG_SP, dst_offset + 16);
+					}
+
+					// a0 = pointer to destination Variant
+					// The result Variant is at result_offset from the ORIGINAL stack frame
+					// After SP -= args_space, it's now at result_offset + args_space from NEW SP
+					int adjusted_dst_offset = result_offset + args_space;
+					if (adjusted_dst_offset < 2048) {
+						emit_i_type(0x13, REG_A0, 0, REG_SP, adjusted_dst_offset);
+					} else {
+						emit_li(REG_A0, adjusted_dst_offset);
+						emit_add(REG_A0, REG_SP, REG_A0);
+					}
+
+					// a1 = Variant::DICTIONARY
+					emit_li(REG_A1, Variant::DICTIONARY);
+
+					// a2 = size (pair_count * 2 = total number of variants)
+					emit_li(REG_A2, total_variants);
+
+					// a3 = pointer to variant array (sp + 0)
+					emit_mv(REG_A3, REG_SP);
+
+					// a7 = ECALL_VCREATE (517)
+					emit_li(REG_A7, 517);
+					emit_ecall();
+
+					// Restore stack pointer
+					if (args_space < 2048) {
+						emit_i_type(0x13, REG_SP, 0, REG_SP, args_space);
+					} else {
+						emit_li(REG_T0, args_space);
+						emit_add(REG_SP, REG_SP, REG_T0);
+					}
+				}
 
 				break;
 			}

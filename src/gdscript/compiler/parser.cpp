@@ -551,6 +551,33 @@ ExprPtr Parser::parse_primary() {
 		return std::make_unique<ArrayLiteralExpr>(std::move(elements));
 	}
 
+	if (match(TokenType::LBRACE)) {
+		// Dictionary literal: {"key": "value", "num": 42} or {key: "value", num: 42}
+		std::vector<std::pair<ExprPtr, ExprPtr>> elements;
+
+		if (!check(TokenType::RBRACE)) {
+			do {
+				// Check if the key is an identifier (for shorthand {name: value} syntax)
+				ExprPtr key;
+				if (match(TokenType::IDENTIFIER)) {
+					// Convert identifier to string literal
+					Token identifier = previous();
+					key = std::make_unique<LiteralExpr>(identifier.lexeme);
+				} else {
+					// Otherwise parse as a normal expression
+					key = parse_expression();
+				}
+
+				consume(TokenType::COLON, "Expected ':' after dictionary key");
+				ExprPtr value = parse_expression();
+				elements.push_back({std::move(key), std::move(value)});
+			} while (match(TokenType::COMMA));
+		}
+
+		consume(TokenType::RBRACE, "Expected '}' after dictionary elements");
+		return std::make_unique<DictionaryLiteralExpr>(std::move(elements));
+	}
+
 	error("Expected expression");
 	return nullptr;
 }

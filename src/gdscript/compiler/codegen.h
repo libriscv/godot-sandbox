@@ -38,6 +38,7 @@ private:
 	int gen_member_call(const MemberCallExpr* expr, IRFunction& func);
 	int gen_index(const IndexExpr* expr, IRFunction& func);
 	int gen_array_literal(const ArrayLiteralExpr* expr, IRFunction& func);
+	int gen_dictionary_literal(const DictionaryLiteralExpr* expr, IRFunction& func);
 
 	// Utilities
 	int alloc_register();

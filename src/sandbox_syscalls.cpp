@@ -264,7 +264,22 @@ APICALL(api_vcreate) {
 		} break;
 		case Variant::DICTIONARY: {
 			// Create a new empty? dictionary, assign to vp.
-			unsigned idx = emu.create_scoped_variant(Variant(Dictionary()));
+			Dictionary d;
+			const unsigned size = method;
+			if (gdata == 0x0 && size > 0) {
+				ERR_PRINT("vcreate: gdata is null for non-empty Dictionary");
+				throw std::runtime_error("vcreate: gdata is null for non-empty Dictionary");
+			} else if (size > 1024) {
+				ERR_PRINT("vcreate: Dictionary size too large: " + itos(size));
+				throw std::runtime_error("vcreate: Dictionary size too large: " + std::to_string(size));
+			}
+			const GuestVariant *gdata_ptr = machine.memory.memarray<const GuestVariant>(gdata, size);
+			for (unsigned i = 0; i < size; i += 2) {
+				const GuestVariant &gkey = gdata_ptr[i];
+				const GuestVariant &gval = gdata_ptr[i + 1];
+				d.set(gkey.toVariant(emu), gval.toVariant(emu));
+			}
+			unsigned idx = emu.create_scoped_variant(Variant(std::move(d)));
 			vp->type = type;
 			vp->v.i = idx;
 		} break;

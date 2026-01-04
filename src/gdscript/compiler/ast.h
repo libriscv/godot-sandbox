@@ -106,6 +106,15 @@ struct ArrayLiteralExpr : Expr {
 		: elements(std::move(elems)) {}
 };
 
+// Dictionary literal: {"key": "value", "num": 42}
+struct DictionaryLiteralExpr : Expr {
+	// Key-value pairs
+	std::vector<std::pair<ExprPtr, ExprPtr>> elements;
+
+	explicit DictionaryLiteralExpr(std::vector<std::pair<ExprPtr, ExprPtr>> elems)
+		: elements(std::move(elems)) {}
+};
+
 // Statement base class
 struct Stmt {
 	virtual ~Stmt() = default;

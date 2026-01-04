@@ -49,6 +49,8 @@ const char* token_type_name(TokenType type) {
 		case TokenType::RPAREN: return "RPAREN";
 		case TokenType::LBRACKET: return "LBRACKET";
 		case TokenType::RBRACKET: return "RBRACKET";
+		case TokenType::LBRACE: return "LBRACE";
+		case TokenType::RBRACE: return "RBRACE";
 		case TokenType::COLON: return "COLON";
 		case TokenType::COMMA: return "COMMA";
 		case TokenType::DOT: return "DOT";

@@ -716,10 +716,18 @@ func make_array_and_add():
 	arr.append(100)
 	return arr
 
-func make_dict_and_add():
+func make_dict():
 	var dict = Dictionary()
 	dict["key1"] = "value1"
 	dict["key2"] = 42
+	return dict
+
+func dict_literal():
+	var dict = {key1: "value", key2: 42}
+	return dict
+
+func nested_dict_literal():
+	var dict = {key1: "value", key2: 42, key3: {nested_key: "nested_value", number: 99}}
 	return dict
 
 func array_size():
@@ -774,10 +782,24 @@ func make_array_with_strings():
 	assert_eq(arr[1], 100, "Second element should be 100")
 
 	# Test dictionary with set
-	dict = s.vmcallv("make_dict_and_add")
+	dict = s.vmcallv("make_dict")
 	assert_eq(dict.size(), 2, "Dictionary with 2 keys should have size 2")
 	assert_eq(dict["key1"], "value1", "key1 should have value 'value1'")
 	assert_eq(dict["key2"], 42, "key2 should have value 42")
+	# Test dictionary literal
+	var dict2 = s.vmcallv("dict_literal")
+	assert_eq(dict2.size(), 2, "Dictionary literal should have size 2")
+	assert_eq(dict2["key1"], "value", "key1 should have value 'value'")
+	assert_eq(dict2["key2"], 42, "key2 should have value 42")
+	# Test nested dictionary literal
+	var dict3 = s.vmcallv("nested_dict_literal")
+	assert_eq(dict3.size(), 3, "Nested dictionary literal should have size 3")
+	assert_eq(dict3["key1"], "value", "key1 should have value 'value'")
+	assert_eq(dict3["key2"], 42, "key2 should have value 42")
+	var nested = dict3["key3"]
+	assert_eq(nested.size(), 2, "Nested dictionary should have size 2")
+	assert_eq(nested["nested_key"], "nested_value", "nested_key should have value 'nested_value'")
+	assert_eq(nested["number"], 99, "number should have value 99")
 
 	# Test array size
 	assert_eq(s.vmcallv("array_size"), 3, "array_size() should return 3")

@@ -1069,6 +1069,102 @@ func test():
 	std::cout << "  ✓ Valid global declarations test passed" << std::endl;
 }
 
+void test_dictionary_literals() {
+	std::cout << "Testing dictionary literal generation..." << std::endl;
+
+	// Test empty dictionary literal
+	std::string source_empty = R"(
+func make_empty_dict():
+	return {}
+)";
+
+	Lexer lexer_empty(source_empty);
+	Parser parser_empty(lexer_empty.tokenize());
+	Program program_empty = parser_empty.parse();
+
+	CodeGenerator codegen_empty;
+	IRProgram ir_empty = codegen_empty.generate(program_empty);
+
+	// Should have MAKE_DICTIONARY instruction with 0 pairs
+	bool has_make_dict_empty = false;
+	for (const auto& instr : ir_empty.functions[0].instructions) {
+		if (instr.opcode == IROpcode::MAKE_DICTIONARY) {
+			has_make_dict_empty = true;
+			if (instr.operands.size() >= 2) {
+				int pair_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+				assert(pair_count == 0);
+			}
+			break;
+		}
+	}
+	assert(has_make_dict_empty);
+
+	// Test dictionary literal with key-value pairs
+	std::string source = R"(
+func make_dict():
+	var d = {"name": "Thor", "hp": 100, "mp": 50.5}
+	return d
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	CodeGenerator codegen;
+	IRProgram ir = codegen.generate(program);
+
+	// Should have MAKE_DICTIONARY instruction with 3 pairs
+	bool has_make_dict = false;
+	for (const auto& instr : ir.functions[0].instructions) {
+		if (instr.opcode == IROpcode::MAKE_DICTIONARY) {
+			has_make_dict = true;
+			// Check pair count
+			if (instr.operands.size() >= 2) {
+				int pair_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+				assert(pair_count == 3);
+				// Should have 6 more operands (3 key-value pairs = 6 variants)
+				assert(instr.operands.size() == 2 + 6);
+			}
+			break;
+		}
+	}
+	assert(has_make_dict);
+
+	// Test dictionary with nested array
+	std::string source_nested = R"(
+func make_nested_dict():
+	var player = {"name": "Thor", "inventory": ["sword", "shield", "map"], "energy": 67}
+	return player
+)";
+
+	Lexer lexer_nested(source_nested);
+	Parser parser_nested(lexer_nested.tokenize());
+	Program program_nested = parser_nested.parse();
+
+	CodeGenerator codegen_nested;
+	IRProgram ir_nested = codegen_nested.generate(program_nested);
+
+	// Should have both MAKE_ARRAY and MAKE_DICTIONARY
+	bool has_make_array = false;
+	bool has_make_dict_nested = false;
+	for (const auto& instr : ir_nested.functions[0].instructions) {
+		if (instr.opcode == IROpcode::MAKE_ARRAY) {
+			has_make_array = true;
+		}
+		if (instr.opcode == IROpcode::MAKE_DICTIONARY) {
+			has_make_dict_nested = true;
+			if (instr.operands.size() >= 2) {
+				int pair_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+				assert(pair_count == 3); // 3 key-value pairs
+			}
+		}
+	}
+	assert(has_make_array);
+	assert(has_make_dict_nested);
+
+	std::cout << "  ✓ Dictionary literal test passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== Running Code Generation Tests ===" << std::endl;
 
@@ -1084,6 +1180,7 @@ int main() {
 		test_string_constants();
 		test_subscript_operations();
 		test_array_dictionary_constructors();
+		test_dictionary_literals();
 
 		// New FP arithmetic tests
 		test_float_arithmetic();
