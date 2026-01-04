@@ -21,8 +21,9 @@ bool SafeGDScriptInstance::set(const StringName &p_name, const Variant &p_value)
 	auto [sandbox, created] = get_sandbox();
 	if (sandbox) {
 		ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
-		sandbox->set(p_name, p_value);
-		return true;
+		if (sandbox->set_property(p_name, p_value)) {
+			return true;
+		}
 	}
 	return false;
 }
@@ -36,8 +37,9 @@ bool SafeGDScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 	auto [sandbox, created] = get_sandbox();
 	if (sandbox) {
 		ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
-		r_ret = sandbox->get(p_name);
-		return true;
+		if (sandbox->get_property(p_name, r_ret)) {
+			return true;
+		}
 	}
 	return false;
 }
