@@ -70,24 +70,9 @@ Variant SafeGDScriptInstance::callp(
 	}
 	const auto address = sandbox->cached_address_of(p_method.hash(), p_method);
 	if (address == 0) {
-		// Block methods that definitely doesn't belong to the Sandbox node
-		if (p_method == StringName("_ready")
-			|| p_method == StringName("_enter_tree")
-			|| p_method == StringName("_exit_tree")
-			|| p_method == StringName("_process")
-			|| p_method == StringName("_physics_process")
-			|| p_method == StringName("_input")
-			|| p_method == StringName("_unhandled_input")
-			|| p_method == StringName("_unhandled_key_input")
-			|| p_method == StringName("_notification")
-			|| p_method == StringName("_get_configuration_warnings")
-			|| p_method == StringName("_hide_script_from_inspector")
-			|| p_method == StringName("_hide_metadata_from_inspector")
-			|| p_method == StringName("_get_property_list")
-			|| p_method == StringName("_get_method_list")
-			|| p_method == StringName("_get_script_method_list"))
-		{
-			r_error.error = GDExtensionCallErrorType::GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+		const bool found = sandbox->has_method(p_method);
+		if (!found) {
+			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 			return Variant();
 		}
 		Array args;
