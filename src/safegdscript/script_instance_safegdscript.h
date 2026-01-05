@@ -23,7 +23,6 @@ class SafeGDScriptInstance : public ScriptInstanceExtension {
 	Object *owner;
 	Ref<SafeGDScript> script;
 	Sandbox *current_sandbox = nullptr;
-	Sandbox *get_sandbox() const;
 
 	friend class SafeGDScript;
 

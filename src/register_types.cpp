@@ -103,8 +103,6 @@ static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	Engine *engine = Engine::get_singleton();
 	CPPScriptLanguage::deinit();
 	SafeGDScriptLanguage::deinit();
-	ResourceFormatLoaderSafeGDScript::deinit();
-	ResourceFormatSaverSafeGDScript::deinit();
 #ifdef PLATFORM_HAS_EDITOR
 	RustScriptLanguage::deinit();
 	ZigScriptLanguage::deinit();
@@ -121,6 +119,8 @@ static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	elf_saver.unref();
 	ResourceFormatLoaderCPP::deinit();
 	ResourceFormatSaverCPP::deinit();
+	ResourceFormatLoaderSafeGDScript::deinit();
+	ResourceFormatSaverSafeGDScript::deinit();
 #ifdef PLATFORM_HAS_EDITOR
 	ResourceFormatLoaderRust::deinit();
 	ResourceFormatSaverRust::deinit();

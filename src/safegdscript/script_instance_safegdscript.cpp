@@ -18,12 +18,10 @@ bool SafeGDScriptInstance::set(const StringName &p_name, const Variant &p_value)
 		return false;
 	}
 
-	Sandbox *sandbox = get_sandbox();
-	if (sandbox) {
-		ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
-		if (sandbox->set_property(p_name, p_value)) {
-			return true;
-		}
+	Sandbox *sandbox = current_sandbox;
+	ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
+	if (sandbox->set_property(p_name, p_value)) {
+		return true;
 	}
 	return false;
 }
@@ -34,12 +32,10 @@ bool SafeGDScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 		r_ret = this->script;
 		return true;
 	}
-	Sandbox *sandbox = get_sandbox();
-	if (sandbox) {
-		ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
-		if (sandbox->get_property(p_name, r_ret)) {
-			return true;
-		}
+	Sandbox *sandbox = current_sandbox;
+	ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
+	if (sandbox->get_property(p_name, r_ret)) {
+		return true;
 	}
 	return false;
 }
@@ -56,11 +52,7 @@ Variant SafeGDScriptInstance::callp(
 		const Variant **p_args, const int p_argument_count,
 		GDExtensionCallError &r_error)
 {
-	Sandbox *sandbox = get_sandbox();
-	if (!sandbox) {
-		r_error.error = GDExtensionCallErrorType::GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;
-		return Variant();
-	}
+	Sandbox *sandbox = current_sandbox;
 	const auto address = sandbox->cached_address_of(p_method.hash(), p_method);
 	if (address == 0) {
 		const bool found = sandbox->has_method(p_method);
@@ -114,7 +106,7 @@ static void set_property_info(
 }
 
 const GDExtensionPropertyInfo *SafeGDScriptInstance::get_property_list(uint32_t *r_count) const {
-	Sandbox *sandbox = get_sandbox();
+	Sandbox *sandbox = current_sandbox;
 	std::vector<PropertyInfo> prop_list = sandbox->create_sandbox_property_list();
 
 	// Sandboxed properties
@@ -167,7 +159,7 @@ Variant::Type SafeGDScriptInstance::get_property_type(const StringName &p_name, 
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("SafeGDScriptInstance::get_property_type " + p_name);
 	}
-	Sandbox *sandbox = get_sandbox();
+	Sandbox *sandbox = current_sandbox;
 	if (const SandboxProperty *prop = sandbox->find_property_or_null(p_name)) {
 		*r_is_valid = true;
 		return prop->type();
@@ -263,36 +255,28 @@ ScriptLanguage *SafeGDScriptInstance::_get_language() {
 }
 
 void SafeGDScriptInstance::reset_to(const PackedByteArray &p_elf_data) {
-	Sandbox *sandbox = get_sandbox();
-	if (sandbox) {
-		sandbox->load_buffer(p_elf_data);
-	}
+	Sandbox *sandbox = current_sandbox;
+	sandbox->load_buffer(p_elf_data);
 }
 
-static std::unordered_map<SafeGDScript *, Sandbox *> sandbox_instances;
-
-Sandbox *SafeGDScriptInstance::get_sandbox() const {
-	auto it = sandbox_instances.find(this->script.ptr());
-	if (it != sandbox_instances.end()) {
-		return it->second;
-	}
-	return nullptr;
-}
+struct SandboxAndCount {
+	Sandbox *sandbox = nullptr;
+	unsigned count = 0;
+};
+static std::unordered_map<SafeGDScript *, SandboxAndCount> sandbox_instances;
 
 static Sandbox *create_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_script) {
 	auto it = sandbox_instances.find(p_script.ptr());
 	if (it != sandbox_instances.end()) {
-		return it->second;
+		it->second.count++;
+		return it->second.sandbox;
 	}
 
-	Sandbox *sandbox_ptr = memnew(Sandbox);
+	Sandbox *sandbox_ptr = memnew(Sandbox());
 	sandbox_ptr->set_tree_base(Object::cast_to<Node>(p_owner));
 	sandbox_ptr->set_unboxed_arguments(false);
 	sandbox_ptr->load_buffer(p_script->get_content());
-	sandbox_instances.insert_or_assign(p_script.ptr(), sandbox_ptr);
-	if constexpr (VERBOSE_LOGGING) {
-		ERR_PRINT("SafeGDScriptInstance: created sandbox for " + Object::cast_to<Node>(p_owner)->get_name());
-	}
+	sandbox_instances.insert_or_assign(p_script.ptr(), SandboxAndCount{sandbox_ptr, 1});
 
 	return sandbox_ptr;
 }
@@ -305,10 +289,14 @@ SafeGDScriptInstance::SafeGDScriptInstance(Object *p_owner, const Ref<SafeGDScri
 }
 
 SafeGDScriptInstance::~SafeGDScriptInstance() {
-	if (current_sandbox) {
-		sandbox_instances.erase(script.ptr());
-		memdelete(current_sandbox);
+	auto it = sandbox_instances.find(script.ptr());
+	if (it != sandbox_instances.end()) {
+		it->second.count--;
+		if (it->second.count == 0) {
+			memdelete(it->second.sandbox);
+			sandbox_instances.erase(it);
+		}
 	}
-	if (script.is_valid())
-		script->remove_instance(this);
+	this->current_sandbox = nullptr;
+	script->remove_instance(this);
 }
