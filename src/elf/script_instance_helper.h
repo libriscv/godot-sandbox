@@ -81,3 +81,41 @@ static void add_to_state(GDExtensionConstStringNamePtr p_name, GDExtensionConstV
 	List<Pair<StringName, Variant>> *list = reinterpret_cast<List<Pair<StringName, Variant>> *>(p_userdata);
 	list->push_back({ *(const StringName *)p_name, *(const Variant *)p_value });
 }
+
+static Dictionary prop_to_dict(const PropertyInfo &p_prop) {
+	Dictionary d;
+	d["name"] = p_prop.name;
+	d["type"] = p_prop.type;
+	d["class_name"] = p_prop.class_name;
+	d["hint"] = p_prop.hint;
+	d["hint_string"] = p_prop.hint_string;
+	d["usage"] = p_prop.usage;
+	return d;
+}
+
+static Dictionary method_to_dict(const MethodInfo &p_method) {
+	Dictionary d;
+
+	d["name"] = p_method.name;
+	d["flags"] = p_method.flags;
+
+	if (p_method.arguments.size() > 0) {
+		Array args;
+		for (const PropertyInfo &arg : p_method.arguments) {
+			args.push_back(prop_to_dict(arg));
+		}
+		d["args"] = args;
+	}
+
+	if (p_method.default_arguments.size() > 0) {
+		Array defaults;
+		for (const Variant &value : p_method.default_arguments) {
+			defaults.push_back(value);
+		}
+		d["default_args"] = defaults;
+	}
+
+	d["return"] = prop_to_dict(p_method.return_val);
+
+	return d;
+}

@@ -17,14 +17,14 @@
 using namespace godot;
 
 class CPPScript;
+class Sandbox;
 class ELFScript;
-class ELFScriptInstance;
 
 class CPPScriptInstance : public ScriptInstanceExtension {
 	Object *owner;
 	Ref<CPPScript> script;
-	ELFScriptInstance *managed_esi = nullptr;
-	ELFScriptInstance *elf_script_instance = nullptr;
+	Sandbox *current_sandbox = nullptr;
+	void set_new_elf_script(ELFScript* p_elf_script);
 
 	friend class CPPScript;
 
@@ -54,11 +54,8 @@ public:
 	Variant property_get_fallback(const StringName &p_name, bool *r_valid) override;
 	ScriptLanguage *_get_language() override;
 
-	ELFScriptInstance *get_script_instance() const { return elf_script_instance; }
-	void set_script_instance(ELFScriptInstance *p_instance);
-	void unset_script_instance();
-	void manage_script_instance(ELFScript *p_script);
-
+	static Sandbox *create_sandbox(Object *p_owner, const Ref<CPPScript> &p_script);
+	void reset_to(const Ref<ELFScript> &p_elf_script);
 	CPPScriptInstance(Object *p_owner, const Ref<CPPScript> p_script);
 	~CPPScriptInstance();
 };

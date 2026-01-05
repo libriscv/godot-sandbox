@@ -8,7 +8,6 @@
 using namespace godot;
 class CPPScriptInstance;
 class ELFScript;
-class ELFScriptInstance;
 
 class CPPScript : public ScriptExtension {
 	GDCLASS(CPPScript, ScriptExtension);
@@ -91,8 +90,11 @@ public:
 	void set_file(const String &p_path);
 	CPPScriptInstance *get_cpp_script_instance() const;
 	const String &get_path() const { return path; }
+	const PackedByteArray &get_elf_data() const;
 	bool detect_script_instance();
 	void remove_instance(CPPScriptInstance *p_instance);
+	const Ref<ELFScript> &get_elf_script() const { return elf_script; }
+	void set_elf_script(const Ref<ELFScript> &p_elf_script);
 
 	static String PathToGlobalName(const String &p_path) {
 		return "CPPScript_" + p_path.get_basename().replace("res://", "").replace("/", "_").replace("-", "_").capitalize().replace(" ", "");
@@ -102,6 +104,7 @@ public:
 	~CPPScript();
 
 private:
+	void update_methods_info() const;
 	static inline bool docker_container_started = false;
 	static inline int docker_container_version = 0;
 	static inline const char *docker_container_name = "godot-cpp-compiler";
@@ -110,5 +113,6 @@ private:
 	String path;
 	mutable HashSet<CPPScriptInstance *> instances;
 	Ref<ELFScript> elf_script;
+	mutable std::vector<godot::MethodInfo> methods_info;
 	friend class CPPScriptInstance;
 };

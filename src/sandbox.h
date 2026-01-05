@@ -425,11 +425,10 @@ public:
 	/// @return An array of public callable functions and programming language.
 	static BinaryInfo get_program_info_from_binary(const PackedByteArray &binary);
 
-	/// @brief Get a list of Sandbox methods, including VM exported functions, Sandbox
-	/// methods, and Godot methods.
-	/// @return The list of Sandbox methods.
-	/// TODO: Implement this
-	//Array get_method_list() const;
+	/// @brief Check if a function is Sandbox-specific (and public API).
+	/// @param p_function The name of the function to check.
+	/// @return True if the function is Sandbox-specific, false otherwise.
+	bool is_sandbox_function(const StringName &p_function) const;
 
 	// -= Shared Memory =-
 

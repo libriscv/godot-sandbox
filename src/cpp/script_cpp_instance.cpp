@@ -2,7 +2,8 @@
 
 #include "../elf/script_elf.h"
 #include "../elf/script_instance.h"
-#include "../elf/script_instance_helper.h" // register_types.h
+#include "../elf/script_instance_helper.h"
+#include "../sandbox.h"
 #include "../scoped_tree_base.h"
 #include "script_cpp.h"
 #include "script_language_cpp.h"
@@ -10,95 +11,70 @@
 #include <godot_cpp/templates/local_vector.hpp>
 static constexpr bool VERBOSE_LOGGING = false;
 
-void CPPScriptInstance::set_script_instance(ELFScriptInstance *p_instance) {
-	this->elf_script_instance = p_instance;
-	if (p_instance) {
-		// XXX: If elf_script is already set, and is different, that is a problem.
-		if (p_instance->script == nullptr) {
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("CPPScriptInstance::set_script_instance: p_instance->script is null");
-			}
-			return;
-		}
-		this->script->elf_script = p_instance->script;
+struct SandboxAndCount {
+	Sandbox *sandbox = nullptr;
+	unsigned count = 0;
+};
+static std::unordered_map<CPPScript *, SandboxAndCount> sandbox_instances;
+
+Sandbox *CPPScriptInstance::create_sandbox(Object *p_owner, const Ref<CPPScript> &p_script) {
+	auto it = sandbox_instances.find(p_script.ptr());
+	if (it != sandbox_instances.end()) {
+		it->second.count++;
+		return it->second.sandbox;
+	}
+
+	Sandbox *sandbox_ptr = memnew(Sandbox);
+	sandbox_ptr->set_tree_base(Object::cast_to<Node>(p_owner));
+	sandbox_instances.insert_or_assign(p_script.ptr(), SandboxAndCount{ sandbox_ptr, 1 });
+
+	const Ref<ELFScript> &elf = p_script->get_elf_script();
+	if (elf.is_valid()) {
+		sandbox_ptr->set_program(elf);
+	}
+
+	return sandbox_ptr;
+}
+
+void CPPScriptInstance::reset_to(const Ref<ELFScript> &p_elf_script) {
+	Sandbox *sandbox = current_sandbox;
+	if (sandbox != nullptr && sandbox->get_program() != p_elf_script) {
+		sandbox->set_program(p_elf_script);
 	}
 }
-void CPPScriptInstance::unset_script_instance() {
-	if (this->elf_script_instance) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("CPPScriptInstance::unset_script_instance: " +
-				Object::cast_to<Node>(this->elf_script_instance->get_owner())->get_path());
-		}
-		this->elf_script_instance = nullptr;
-	}
-	if (this->managed_esi != nullptr) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("CPPScriptInstance::unset_script_instance: managed_esi is not null, deleting it");
-		}
-		memdelete(this->managed_esi);
-		this->managed_esi = nullptr;
-	}
-}
-void CPPScriptInstance::manage_script_instance(ELFScript *p_script) {
-	if (this->managed_esi != nullptr) {
-		// If we already have a managed ESI, we need to free it.
-		memdelete(this->managed_esi);
-	}
-	this->managed_esi = memnew(ELFScriptInstance(get_owner(), p_script));
-	if (this->managed_esi == nullptr) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("CPPScriptInstance::manage_script_instance: managed_esi is null");
-		}
-		return;
-	}
-	this->set_script_instance(this->managed_esi);
-	if constexpr (VERBOSE_LOGGING) {
-		ERR_PRINT("CPPScriptInstance::manage_script_instance: managed_esi set to " +
-			Object::cast_to<Node>(this->managed_esi->get_owner())->get_path());
-	}
+
+void CPPScriptInstance::set_new_elf_script(ELFScript* p_elf_script) {
+	this->script->set_elf_script(Ref<ELFScript>(p_elf_script));
 }
 
 bool CPPScriptInstance::set(const StringName &p_name, const Variant &p_value) {
-	if (p_name == StringName("associated_script")) {
-		// This is a property setter to set the associated script
+	static const StringName s_script("script");
+	static const StringName s_program("program");
+	static const StringName s_associated_script("associated_script");
+	if (p_name == s_script || p_name == s_program) {
+		return false;
+	} else if (p_name == s_associated_script) {
 		Object *object = p_value.operator Object *();
-		if (object == nullptr) {
-			this->unset_script_instance();
+		if (object == nullptr) { // Unset the script
+			this->set_new_elf_script(nullptr);
 			return true;
 		}
-		ELFScript *new_elf_script = Object::cast_to<ELFScript>(object->get_script());
-		if (new_elf_script == nullptr) {
-			// XXX: TODO: It may be possible to create an artificial ELFScriptInstance based
-			// on p_value being an ELFScript, but that is not implemented yet. We could then
-			// set the script instance to that.
-			if (ELFScript *elf_script = Object::cast_to<ELFScript>(p_value.operator Object *()); elf_script) {
-				// This is an ELFScript, but we need an ELFScriptInstance in order to proxy
-				// the calls to the underlying Sandbox instance. Create a new instance?
-				if constexpr (VERBOSE_LOGGING) {
-					ERR_PRINT("CPPScriptInstance::set: associated_script argument is an ELFScript");
-				}
-				this->manage_script_instance(elf_script);
-				return true;
-			}
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("CPPScriptInstance::set: associated_script argument is not an ELFScript");
-			}
+		ELFScript *new_elf_script = Object::cast_to<ELFScript>(object);
+		if (new_elf_script != nullptr) {
+			this->set_new_elf_script(new_elf_script);
+			return true;
+		} else {
 			return false;
 		}
-		this->unset_script_instance();
-		this->set_script_instance(new_elf_script->get_script_instance(object));
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("CPPScriptInstance::set: associated_script to " +
-				new_elf_script->get_path());
-		}
-		return true;
 	}
 
-	if (elf_script_instance) {
-		return elf_script_instance->set(p_name, p_value);
+	Sandbox *sandbox = current_sandbox;
+	if (sandbox == nullptr) {
+		return false;
 	}
-	if constexpr (VERBOSE_LOGGING) {
-		ERR_PRINT("CPPScriptInstance::set " + p_name);
+	ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
+	if (sandbox->set_property(p_name, p_value)) {
+		return true;
 	}
 	return false;
 }
@@ -106,39 +82,21 @@ bool CPPScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 bool CPPScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 	static const StringName s_script("script");
 	static const StringName s_associated_script("associated_script");
-	if (p_name == s_associated_script) {
-		// This is a property getter to get the associated script
-		if (this->managed_esi != nullptr) {
-			// If we have a managed script instance, we can return it.
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("CPPScriptInstance::get: associated_script is managed");
-			}
-			r_ret = this->managed_esi->script;
-			return true;
-		}
-		else if (elf_script_instance) {
-			r_ret = elf_script_instance->get_owner();
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("CPPScriptInstance::get: associated_script is " +
-					Object::cast_to<Node>(elf_script_instance->get_owner())->get_path());
-			}
-			return true;
-		}
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("CPPScriptInstance::get: associated_script is not set");
-		}
-		return false;
-	}
-	else if (p_name == s_script) {
-		r_ret = script;
+	if (p_name == s_script) {
+		r_ret = this->script;
+		return true;
+	} else if (p_name == s_associated_script) {
+		r_ret = this->script->get_elf_script();
 		return true;
 	}
 
-	if (elf_script_instance) {
-		return elf_script_instance->get(p_name, r_ret);
+	Sandbox *sandbox = current_sandbox;
+	if (sandbox == nullptr) {
+		return false;
 	}
-	if constexpr (VERBOSE_LOGGING) {
-		ERR_PRINT("CPPScriptInstance::get " + p_name);
+	ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
+	if (sandbox->get_property(p_name, r_ret)) {
+		return true;
 	}
 	return false;
 }
@@ -155,118 +113,68 @@ Variant CPPScriptInstance::callp(
 		const Variant **p_args, const int p_argument_count,
 		GDExtensionCallError &r_error)
 {
-	if constexpr (VERBOSE_LOGGING) {
-		ERR_PRINT("CPPScriptInstance::callp " + p_method);
-	}
-	if (p_method == StringName("set_associated_script")) {
+	static const StringName s_get_associated_script("get_associated_script");
+	static const StringName s_set_associated_script("set_associated_script");
+
+	if (p_method == s_get_associated_script) {
+		r_error.error = GDEXTENSION_CALL_OK;
+		return this->script->get_elf_script();
+	} else if (p_method == s_set_associated_script) {
 		if (p_argument_count != 1) {
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("CPPScriptInstance::callp: set_associated_script requires exactly one argument");
-			}
 			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
 			return Variant();
 		}
 		Object *object = p_args[0]->operator Object *();
-		if (object == nullptr) {
-			this->unset_script_instance();
+		if (object == nullptr) { // Unset the script
+			this->set_new_elf_script(nullptr);
+        	r_error.error = GDEXTENSION_CALL_OK;
+        	return Variant();
+		}
+		ELFScript *new_elf_script = Object::cast_to<ELFScript>(object);
+		if (new_elf_script != nullptr) {
+			this->set_new_elf_script(new_elf_script);
 			r_error.error = GDEXTENSION_CALL_OK;
 			return Variant();
-		}
-		ELFScript *new_elf_script = Object::cast_to<ELFScript>(object->get_script().operator Object *());
-		if (new_elf_script == nullptr) {
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("CPPScriptInstance::callp: set_associated_script argument is not an ELFScript");
-			}
-			if (ELFScript *elf_script = Object::cast_to<ELFScript>(object); elf_script) {
-				// This is an ELFScript, but we need an ELFScriptInstance in order to proxy
-				// the calls to the underlying Sandbox instance. Create a new instance?
-				if constexpr (VERBOSE_LOGGING) {
-					ERR_PRINT("CPPScriptInstance::callp: set_associated_script argument is an ELFScript");
-				}
-				this->manage_script_instance(elf_script);
-				r_error.error = GDEXTENSION_CALL_OK;
-				return Variant();
-			}
+		} else {
 			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
 			return Variant();
 		}
-		this->unset_script_instance();
-		this->set_script_instance(new_elf_script->get_script_instance(object));
-		r_error.error = GDEXTENSION_CALL_OK;
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("CPPScriptInstance::callp: set_associated_script to " +
-				Object::cast_to<Node>(elf_script_instance->get_owner())->get_path());
-		}
-		return Variant();
 	}
-	else if (p_method == StringName("get_associated_script")) {
-		// This is a property getter to get the associated script
-		if (this->managed_esi != nullptr) {
-			// If we have a managed script instance, we can return it.
-			r_error.error = GDEXTENSION_CALL_OK;
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("CPPScriptInstance::callp: get_associated_script is managed");
-			}
-			return this->managed_esi->script;
-		}
-		else if (elf_script_instance) {
-			r_error.error = GDEXTENSION_CALL_OK;
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("CPPScriptInstance::callp: get_associated_script is set to " +
-					Object::cast_to<Node>(elf_script_instance->get_owner())->get_path());
-			}
-			return elf_script_instance->get_owner();
-		}
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("CPPScriptInstance::callp: get_associated_script is not set");
-		}
-		r_error.error = GDEXTENSION_CALL_OK;
-		return Variant();
-	}
-	else if (elf_script_instance) {
-		Ref<ELFScript> &elf_script = elf_script_instance->script;
-		if (!elf_script.is_valid()) {
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("CPPScriptInstance::callp: script is null");
-			}
-			r_error.error = GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;
+
+	Sandbox *sandbox = current_sandbox;
+	const auto address = sandbox->cached_address_of(p_method.hash(), p_method);
+	if (address == 0) {
+		const bool found = sandbox->is_sandbox_function(p_method);
+		if (!found) {
+			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 			return Variant();
 		}
-
-		// Try to call the method on the elf_script_instance, but use
-		// this instance owner as the base for the Sandbox node-tree.
-		if (elf_script->function_names.has(p_method)) {
-			auto [sandbox, auto_created] = elf_script_instance->get_sandbox();
-			if (sandbox && sandbox->has_program_loaded()) {
-				// Set the Sandbox instance tree base to the owner node
-				ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
-				// Perform the vmcall
-				return sandbox->vmcall_fn(p_method, p_args, p_argument_count, r_error);
-			}
+		Array args;
+		for (int i = 0; i < p_argument_count; i++) {
+			args.push_back(*p_args[i]);
 		}
-		if (p_method == StringName("_get_editor_name")) {
-			r_error.error = GDEXTENSION_CALL_OK;
-			return Variant("CPPScriptInstance");
-		}
-		// Fallback: callp on the elf_script_instance directly
-		return elf_script_instance->callp(p_method, p_args, p_argument_count, r_error);
+		r_error.error = GDEXTENSION_CALL_OK;
+		return sandbox->callv(p_method, args);
 	}
-	r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-	return Variant();
+
+	ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
+	return sandbox->vmcall_address(address, p_args, p_argument_count, r_error);
 }
 
 const GDExtensionMethodInfo *CPPScriptInstance::get_method_list(uint32_t *r_count) const {
-	if (elf_script_instance) {
-		return elf_script_instance->get_method_list(r_count);
+	const int size = script->methods_info.size();
+	GDExtensionMethodInfo *list = memnew_arr(GDExtensionMethodInfo, size);
+	int i = 0;
+	for (const godot::MethodInfo &method_info : script->methods_info) {
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScriptInstance::get_method_list: method " + String(method_info.name));
+		}
+		list[i] = create_method_info(method_info);
+		i++;
 	}
+	*r_count = size;
 
-	if constexpr (VERBOSE_LOGGING) {
-		ERR_PRINT("CPPScriptInstance::get_method_list");
-	}
-
-	// If no methods are defined, return an empty list
-	*r_count = 0;
-	return nullptr;
+	return list;
 }
 
 static void set_property_info(
@@ -287,37 +195,63 @@ static void set_property_info(
 }
 
 const GDExtensionPropertyInfo *CPPScriptInstance::get_property_list(uint32_t *r_count) const {
-	if (elf_script_instance) {
-		const GDExtensionPropertyInfo *cpi = elf_script_instance->get_property_list(r_count);
-		GDExtensionPropertyInfo *pinfo = (GDExtensionPropertyInfo *)cpi;
-		// Add a property for 'associated_script'
-		set_property_info(pinfo[*r_count],
-			StringName("associated_script"),
-			StringName(""),
-			GDEXTENSION_VARIANT_TYPE_OBJECT,
-			PROPERTY_HINT_RESOURCE_TYPE,
-			"ELFScript",
-			PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NODE_PATH_FROM_SCENE_ROOT
-		);
-		*r_count += 1;
-		return cpi;
+	Sandbox *sandbox = current_sandbox;
+	if (sandbox == nullptr) {
+		*r_count = 0;
+		return nullptr;
 	}
 
-	*r_count = 1;
-	GDExtensionPropertyInfo *pinfo = memnew_arr(GDExtensionPropertyInfo, *r_count);
-	set_property_info(pinfo[0],
-		StringName("associated_script"),
-		StringName(""),
-		GDEXTENSION_VARIANT_TYPE_OBJECT,
-		PROPERTY_HINT_RESOURCE_TYPE,
-		"ELFScript",
-		PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NODE_PATH_FROM_SCENE_ROOT
-	);
-	if constexpr (VERBOSE_LOGGING) {
-		ERR_PRINT("CPPScriptInstance::get_property_list: returning associated_script property");
+	std::vector<PropertyInfo> prop_list = sandbox->create_sandbox_property_list();
+	const std::vector<SandboxProperty> &properties = sandbox->get_properties();
+
+	*r_count = properties.size() + prop_list.size();
+	GDExtensionPropertyInfo *list = memnew_arr(GDExtensionPropertyInfo, *r_count + 2);
+	const GDExtensionPropertyInfo *list_ptr = list;
+
+	for (const SandboxProperty &property : properties) {
+		if constexpr (VERBOSE_LOGGING) {
+			printf("CPPScriptInstance::get_property_list %s\n", String(property.name()).utf8().ptr());
+			fflush(stdout);
+		}
+		list->name = stringname_alloc(property.name());
+		list->class_name = stringname_alloc("Variant");
+		list->type = (GDExtensionVariantType)property.type();
+		list->hint = 0;
+		list->hint_string = string_alloc("");
+		list->usage = PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_SCRIPT_VARIABLE | PROPERTY_USAGE_NIL_IS_VARIANT;
+		list++;
 	}
-	return pinfo;
+	for (int i = 0; i < prop_list.size(); i++) {
+		const PropertyInfo &prop = prop_list[i];
+		if constexpr (VERBOSE_LOGGING) {
+			printf("CPPScriptInstance::get_property_list %s\n", String(prop.name).utf8().ptr());
+			fflush(stdout);
+		}
+		// Rewrite "program" property to "associated_script", disallowing 'program'
+		// and publishing associated_script instead.
+		if (prop.name == StringName("program")) {
+			set_property_info(
+				*list,
+				"associated_script",
+				"",
+				GDEXTENSION_VARIANT_TYPE_OBJECT,
+				PROPERTY_HINT_RESOURCE_TYPE,
+				"ELFScript",
+				PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NODE_PATH_FROM_SCENE_ROOT);
+			list++;
+			continue;
+		}
+		list->name = stringname_alloc(prop.name);
+		list->class_name = stringname_alloc(prop.class_name);
+		list->type = (GDExtensionVariantType) int(prop.type);
+		list->hint = prop.hint;
+		list->hint_string = string_alloc(prop.hint_string);
+		list->usage = prop.usage;
+		list++;
+	}
+	return list_ptr;
 }
+
 void CPPScriptInstance::free_property_list(const GDExtensionPropertyInfo *p_list, uint32_t p_count) const {
 	if (p_list) {
 		memdelete_arr(p_list);
@@ -325,18 +259,22 @@ void CPPScriptInstance::free_property_list(const GDExtensionPropertyInfo *p_list
 }
 
 Variant::Type CPPScriptInstance::get_property_type(const StringName &p_name, bool *r_is_valid) const {
-	if (p_name == StringName("associated_script")) {
-		// This is a property getter to get the associated script
-		if (r_is_valid) {
-			*r_is_valid = true;
-		}
-		return Variant::OBJECT; // The type of the associated script is an Object
-	}
-	if (elf_script_instance) {
-		return elf_script_instance->get_property_type(p_name, r_is_valid);
-	}
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("CPPScriptInstance::get_property_type " + p_name);
+	}
+	if (p_name == StringName("associated_script")) {
+		if (r_is_valid)
+			*r_is_valid = true;
+		return Variant::OBJECT;
+	}
+	Sandbox *sandbox = current_sandbox;
+	if (sandbox == nullptr) {
+		*r_is_valid = false;
+		return Variant::NIL;
+	}
+	if (const SandboxProperty *prop = sandbox->find_property_or_null(p_name)) {
+		*r_is_valid = true;
+		return prop->type();
 	}
 	*r_is_valid = false;
 	return Variant::NIL;
@@ -346,16 +284,10 @@ void CPPScriptInstance::get_property_state(GDExtensionScriptInstancePropertyStat
 }
 
 bool CPPScriptInstance::validate_property(GDExtensionPropertyInfo &p_property) const {
-	if (*(StringName *)p_property.name == StringName("associated_script")) {
-		return true;
-	}
-	if (elf_script_instance) {
-		return elf_script_instance->validate_property(p_property);
-	}
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("CPPScriptInstance::validate_property");
 	}
-	return false;
+	return true;
 }
 
 GDExtensionInt CPPScriptInstance::get_method_argument_count(const StringName &p_method, bool &r_valid) const {
@@ -364,33 +296,34 @@ GDExtensionInt CPPScriptInstance::get_method_argument_count(const StringName &p_
 }
 
 bool CPPScriptInstance::has_method(const StringName &p_name) const {
-	if (p_name == StringName("set_associated_script")) {
-		return true; // This method is always available
-	} else if (p_name == StringName("get_associated_script")) {
-		return true; // This method is always available
-	}
-	if (elf_script_instance) {
-		return elf_script_instance->has_method(p_name);
-	}
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("CPPScriptInstance::has_method " + p_name);
+	}
+	if (p_name == StringName("set_associated_script")
+		|| p_name == StringName("get_associated_script")) {
+		return true; // These methods are always available
+	}
+	for (const godot::MethodInfo &method_info : script->methods_info) {
+		if (method_info.name == p_name) {
+			return true;
+		}
 	}
 	return false;
 }
 
 void CPPScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list, uint32_t p_count) const {
-	if (elf_script_instance) {
-		elf_script_instance->free_method_list(p_list, p_count);
+	if (p_list) {
+		for (uint32_t i = 0; i < p_count; i++) {
+			const GDExtensionMethodInfo &method_info = p_list[i];
+			if (method_info.arguments) {
+				memdelete_arr(method_info.arguments);
+			}
+		}
+		memdelete_arr(p_list);
 	}
 }
 
 bool CPPScriptInstance::property_can_revert(const StringName &p_name) const {
-	if (p_name == StringName("associated_script")) {
-		return true; // The associated_script can always be reverted
-	}
-	if (elf_script_instance) {
-		return elf_script_instance->property_can_revert(p_name);
-	}
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("CPPScriptInstance::property_can_revert " + p_name);
 	}
@@ -398,13 +331,6 @@ bool CPPScriptInstance::property_can_revert(const StringName &p_name) const {
 }
 
 bool CPPScriptInstance::property_get_revert(const StringName &p_name, Variant &r_ret) const {
-	if (p_name == StringName("associated_script")) {
-		r_ret = Variant();
-		return true;
-	}
-	if (elf_script_instance) {
-		return elf_script_instance->property_get_revert(p_name, r_ret);
-	}
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("CPPScriptInstance::property_get_revert " + p_name);
 	}
@@ -447,35 +373,24 @@ ScriptLanguage *CPPScriptInstance::_get_language() {
 CPPScriptInstance::CPPScriptInstance(Object *p_owner, const Ref<CPPScript> p_script) :
 		owner(p_owner), script(p_script)
 {
-	if (script->elf_script == nullptr) {
+	if (script->get_elf_script().is_null()) {
 		script->detect_script_instance();
 	}
-	if (script->elf_script != nullptr) {
-		// If the script has an associated ELFScript, we can create an ELFScriptInstance
-		this->managed_esi = memnew(ELFScriptInstance(p_owner, script->elf_script));
-		if (this->managed_esi == nullptr) {
-			if constexpr (VERBOSE_LOGGING) {
-				ERR_PRINT("CPPScriptInstance::CPPScriptInstance: managed_esi is null");
-			}
-			return;
-		}
-		if constexpr (VERBOSE_LOGGING) {
-			bool r_valid;
-			ERR_PRINT("CPPScriptInstance: managed_esi set to " +
-				this->managed_esi->to_string(&r_valid));
-		}
-		this->set_script_instance(this->managed_esi);
-	} else {
-		this->managed_esi = nullptr;
+	this->current_sandbox = create_sandbox(p_owner, p_script);
+	if (this->current_sandbox != nullptr) {
+		this->current_sandbox->set_tree_base(godot::Object::cast_to<godot::Node>(owner));
 	}
 }
 
 CPPScriptInstance::~CPPScriptInstance() {
-	if (this->script.is_valid()) {
-		script->remove_instance(this);
+	auto it = sandbox_instances.find(script.ptr());
+	if (it != sandbox_instances.end()) {
+		it->second.count--;
+		if (it->second.count == 0) {
+			it->second.sandbox->queue_free();
+			sandbox_instances.erase(it);
+		}
 	}
-	if (this->managed_esi != nullptr) {
-		memdelete(this->managed_esi);
-		this->managed_esi = nullptr;
-	}
+	this->current_sandbox = nullptr;
+	script->remove_instance(this);
 }

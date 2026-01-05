@@ -55,7 +55,7 @@ Variant SafeGDScriptInstance::callp(
 	Sandbox *sandbox = current_sandbox;
 	const auto address = sandbox->cached_address_of(p_method.hash(), p_method);
 	if (address == 0) {
-		const bool found = sandbox->has_method(p_method);
+		const bool found = sandbox->is_sandbox_function(p_method);
 		if (!found) {
 			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 			return Variant();
@@ -293,7 +293,7 @@ SafeGDScriptInstance::~SafeGDScriptInstance() {
 	if (it != sandbox_instances.end()) {
 		it->second.count--;
 		if (it->second.count == 0) {
-			memdelete(it->second.sandbox);
+			it->second.sandbox->queue_free();
 			sandbox_instances.erase(it);
 		}
 	}

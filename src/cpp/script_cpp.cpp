@@ -4,6 +4,7 @@
 #include "../sandbox_project_settings.h"
 #include "script_language_cpp.h"
 #include "script_cpp_instance.h"
+#include "../elf/script_instance_helper.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -64,6 +65,9 @@ StringName CPPScript::_get_instance_base_type() const {
 void *CPPScript::_instance_create(Object *p_for_object) const {
 	CPPScriptInstance *instance = memnew(CPPScriptInstance(p_for_object, Ref<CPPScript>(this)));
 	instances.insert(instance);
+	if (instances.size() == 1) {
+		this->update_methods_info();
+	}
 	return ScriptInstanceExtension::create_native_instance(instance);
 }
 void *CPPScript::_placeholder_instance_create(Object *p_for_object) const {
@@ -94,29 +98,10 @@ String CPPScript::_get_class_icon_path() const {
 bool CPPScript::_has_method(const StringName &p_method) const {
 	if (p_method == StringName("_init"))
 		return true;
-	if (instances.is_empty()) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("CPPScript::has_method: No instances available.");
+	for (const godot::MethodInfo &method_info : methods_info) {
+		if (method_info.name == p_method) {
+			return true;
 		}
-		return false;
-	}
-	CPPScriptInstance *instance = *instances.begin();
-	if (instance == nullptr) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("CPPScript::has_method: Instance is null.");
-		}
-		return false;
-	}
-	ELFScriptInstance *elf = instance->get_script_instance();
-	if (elf == nullptr) {
-		return false;
-	}
-	// Get the method information from the ELFScriptInstance
-	if (elf->get_elf_script()) {
-		return elf->get_elf_script()->has_method(p_method);
-	}
-	if constexpr (VERBOSE_LOGGING) {
-		ERR_PRINT("CPPScript::has_method: ELFScriptInstance had no ELFScript!?");
 	}
 	return false;
 }
@@ -124,31 +109,34 @@ bool CPPScript::_has_static_method(const StringName &p_method) const {
 	return false;
 }
 Dictionary CPPScript::_get_method_info(const StringName &p_method) const {
-	if (instances.is_empty()) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("CPPScript::_get_method_info: No instances available.");
+	Dictionary method_dict;
+	for (const godot::MethodInfo &method_info : methods_info) {
+		if (method_info.name == p_method) {
+			method_dict["name"] = method_info.name;
+			method_dict["flags"] = method_info.flags;
+			method_dict["return_type"] = method_info.return_val.type;
+			TypedArray<Dictionary> args;
+			for (const godot::PropertyInfo &arg_info : method_info.arguments) {
+				Dictionary arg_dict;
+				arg_dict["name"] = arg_info.name;
+				arg_dict["type"] = arg_info.type;
+				arg_dict["usage"] = arg_info.usage;
+				args.append(arg_dict);
+			}
+			method_dict["arguments"] = args;
+			return method_dict;
 		}
-		return Dictionary();
 	}
-	CPPScriptInstance *instance = *instances.begin();
-	if (instance == nullptr) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("CPPScript::_get_method_info: Instance is null.");
-		}
-		return Dictionary();
+	if constexpr (VERBOSE_LOGGING) {
+		ERR_PRINT("CPPScript::_get_method_info: Method " + String(p_method) + " not found.");
 	}
-	ELFScriptInstance *elf = instance->get_script_instance();
-	if (elf == nullptr) {
-		return Dictionary();
-	}
-	// Get the method information from the ELFScriptInstance
-	return elf->get_elf_script()->_get_method_info(p_method);
+	return Dictionary();
 }
 bool CPPScript::_is_tool() const {
 	return true;
 }
 bool CPPScript::_is_valid() const {
-	return true;
+	return elf_script.is_valid() && !elf_script->get_content().is_empty();
 }
 bool CPPScript::_is_abstract() const {
 	return false;
@@ -170,27 +158,31 @@ Variant CPPScript::_get_property_default_value(const StringName &p_property) con
 }
 void CPPScript::_update_exports() {}
 TypedArray<Dictionary> CPPScript::_get_script_method_list() const {
-	if (instances.is_empty()) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("CPPScript::_get_script_method_list: No instances available.");
-		}
-		return {};
+	TypedArray<Dictionary> functions_array;
+	for (const godot::MethodInfo &method_info : methods_info) {
+		Dictionary method;
+		method["name"] = method_info.name;
+		method["args"] = Array();
+		method["default_args"] = Array();
+		Dictionary type;
+		type["name"] = "type";
+		type["type"] = Variant::Type::NIL;
+		type["hint"] = PropertyHint::PROPERTY_HINT_NONE;
+		type["hint_string"] = String();
+		type["usage"] = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NIL_IS_VARIANT;
+		method["return"] = type;
+		method["flags"] = METHOD_FLAG_VARARG;
+		functions_array.push_back(method);
 	}
-	CPPScriptInstance *instance = *instances.begin();
-	if (instance == nullptr) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("CPPScript::_get_script_method_list: Instance is null.");
-		}
-		return {};
-	}
-	ELFScriptInstance *elf = instance->get_script_instance();
-	if (elf == nullptr) {
-		return {};
-	}
-	// Get the method information from the ELFScriptInstance
-	return elf->get_elf_script()->_get_script_method_list();
+	return functions_array;
 }
 TypedArray<Dictionary> CPPScript::_get_script_property_list() const {
+	if (instances.is_empty()) {
+		if constexpr (VERBOSE_LOGGING) {
+			ERR_PRINT("CPPScript::_get_script_property_list: No instances available.");
+		}
+		return {};
+	}
 	TypedArray<Dictionary> properties;
 	Dictionary property;
 	property["name"] = "associated_script";
@@ -200,25 +192,9 @@ TypedArray<Dictionary> CPPScript::_get_script_property_list() const {
 	property["usage"] = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SCRIPT_VARIABLE;
 	//property["default_value"] = source_code;
 	properties.push_back(property);
-	if (instances.is_empty()) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("CPPScript::_get_script_property_list: No instances available.");
-		}
-		return properties;
+	for (const PropertyInfo &prop : Sandbox::create_sandbox_property_list()) {
+		properties.push_back(prop_to_dict(prop));
 	}
-	CPPScriptInstance *instance = *instances.begin();
-	if (instance == nullptr) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("CPPScript::_get_script_property_list: Instance is null.");
-		}
-		return properties;
-	}
-	ELFScriptInstance *elf = instance->get_script_instance();
-	if (elf == nullptr) {
-		return properties;
-	}
-	// Get the method information from the ELFScriptInstance
-	properties.append_array(elf->get_elf_script()->_get_script_property_list());
 	return properties;
 }
 int32_t CPPScript::_get_member_line(const StringName &p_member) const {
@@ -275,6 +251,15 @@ void CPPScript::set_file(const String &p_path) {
 	this->path = p_path;
 	this->source_code = FileAccess::get_file_as_string(p_path);
 }
+
+const PackedByteArray &CPPScript::get_elf_data() const {
+	if (elf_script.is_valid()) {
+		return elf_script->get_content();
+	}
+	static PackedByteArray empty;
+	return empty;
+}
+
 bool CPPScript::detect_script_instance() {
 	// It's possible to speculate that eg. a fitting ELFScript would be located at
 	// "res://this/path.cpp" replacing the extension with ".elf".
@@ -292,9 +277,10 @@ bool CPPScript::detect_script_instance() {
 		if (res.is_valid()) {
 			if constexpr (VERBOSE_LOGGING) {
 				ERR_PRINT("CPPScript::detect_script_instance: ELF script loaded successfully.");
-				this->elf_script = res;
-				return true;
 			}
+			this->elf_script = res;
+			this->update_methods_info();
+			return true;
 		}
 	}
 	if constexpr (VERBOSE_LOGGING) {
@@ -302,9 +288,46 @@ bool CPPScript::detect_script_instance() {
 	}
 	return false;
 }
+
+void CPPScript::set_elf_script(const Ref<ELFScript> &p_elf_script) {
+	this->elf_script = p_elf_script;
+
+	for (CPPScriptInstance *instance : instances) {
+		instance->reset_to(p_elf_script);
+	}
+
+	this->update_methods_info();
+}
+
 void CPPScript::remove_instance(CPPScriptInstance *p_instance) {
 	instances.erase(p_instance);
 	if (instances.is_empty()) {
 		this->elf_script.unref();
+	}
+}
+
+void CPPScript::update_methods_info() const {
+	if (!elf_script.is_valid())
+		return;
+
+	this->methods_info.clear();
+	if (elf_script.is_valid() && !elf_script->function_names.is_empty()) {
+		const auto& methods = elf_script->function_names;
+		for (int i = 0; i < methods.size(); i++) {
+			godot::MethodInfo method_info = godot::MethodInfo(methods[i]);
+			methods_info.push_back(method_info);
+		}
+	} else {
+		const PackedByteArray &elf_data = elf_script->get_content();
+		Sandbox::BinaryInfo info = Sandbox::get_program_info_from_binary(elf_data);
+		for (const String &func_name : info.functions) {
+			methods_info.push_back(MethodInfo(func_name));
+		}
+	}
+	methods_info.push_back(MethodInfo("get_associated_script"));
+	methods_info.push_back(MethodInfo("set_associated_script"));
+
+	if constexpr (VERBOSE_LOGGING) {
+		ERR_PRINT("CPPScript::update_methods_info: Updated methods info with " + itos(methods_info.size()) + " methods.");
 	}
 }

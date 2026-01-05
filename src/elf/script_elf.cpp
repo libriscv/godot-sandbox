@@ -6,6 +6,7 @@
 #include "../sandbox.h"
 #include "../sandbox_project_settings.h"
 #include "script_instance.h"
+#include "script_instance_helper.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
@@ -44,44 +45,6 @@ ELFScriptInstance *ELFScript::get_script_instance(Object *p_for_object) const {
 	}
 	ERR_PRINT("ELFScript::get_script_instance: Script instance not found for object " + p_for_object->get_class());
 	return nullptr;
-}
-
-static Dictionary prop_to_dict(const PropertyInfo &p_prop) {
-	Dictionary d;
-	d["name"] = p_prop.name;
-	d["type"] = p_prop.type;
-	d["class_name"] = p_prop.class_name;
-	d["hint"] = p_prop.hint;
-	d["hint_string"] = p_prop.hint_string;
-	d["usage"] = p_prop.usage;
-	return d;
-}
-
-static Dictionary method_to_dict(const MethodInfo &p_method) {
-	Dictionary d;
-
-	d["name"] = p_method.name;
-	d["flags"] = p_method.flags;
-
-	if (p_method.arguments.size() > 0) {
-		Array args;
-		for (const PropertyInfo &arg : p_method.arguments) {
-			args.push_back(prop_to_dict(arg));
-		}
-		d["args"] = args;
-	}
-
-	if (p_method.default_arguments.size() > 0) {
-		Array defaults;
-		for (const Variant &value : p_method.default_arguments) {
-			defaults.push_back(value);
-		}
-		d["default_args"] = defaults;
-	}
-
-	d["return"] = prop_to_dict(p_method.return_val);
-
-	return d;
 }
 
 bool ELFScript::_editor_can_reload_from_file() {

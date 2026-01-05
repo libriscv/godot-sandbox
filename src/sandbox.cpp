@@ -1629,3 +1629,75 @@ void Sandbox::print(const Variant &v) {
 
 	already_been_here = false;
 }
+
+bool Sandbox::is_sandbox_function(const StringName &p_function) const {
+	// Only functions listed in sandbox.h and public:
+	static const HashSet<StringName> sandbox_functions = {
+		"vmcall",
+		"vmcall_address",
+		"vmcallable",
+		"vmcallable_address",
+		"get_program",
+		"set_program",
+		"has_function",
+		"address_of",
+		"lookup_address",
+		"get_max_refs",
+		"set_max_refs",
+		"get_memory_max",
+		"set_memory_max",
+		"get_instructions_max",
+		"set_instructions_max",
+		"get_allocations_max",
+		"set_allocations_max",
+		"get_unboxed_arguments",
+		"set_unboxed_arguments",
+		"get_precise_simulation",
+		"set_precise_simulation",
+		"get_profiling",
+		"set_profiling",
+		"get_restrictions",
+		"set_restrictions",
+		"get_exceptions",
+		"get_timeouts",
+		"get_calls_made",
+		"is_binary_translated",
+		"get_global_calls_made",
+		"get_global_exceptions",
+		"get_global_timeouts",
+		"get_accumulated_startup_time",
+		"get_global_instance_count",
+
+		"set_object_allowed_callback",
+		"is_allowed_object",
+		"set_class_allowed_callback",
+		"is_allowed_class",
+		"set_resource_allowed_callback",
+		"is_allowed_resource",
+		"set_method_allowed_callback",
+		"is_allowed_method",
+		"set_property_allowed_callback",
+		"is_allowed_property",
+
+		"share_byte_array",
+		"share_float32_array",
+		"share_float64_array",
+		"share_int32_array",
+		"share_int64_array",
+		"share_vec2_array",
+		"share_vec3_array",
+		"share_vec4_array",
+		"unshare_array",
+
+		"get_hotspots",
+		"clear_hotspots",
+		"get_redirect_stdout",
+		"set_redirect_stdout",
+
+		"set_jit_enabled",
+		"is_jit_enabled",
+		"has_feature_jit",
+	};
+
+	return sandbox_functions.has(p_function);
+}
