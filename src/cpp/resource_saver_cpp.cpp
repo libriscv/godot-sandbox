@@ -362,10 +362,10 @@ Error ResourceFormatSaverCPP::_save(const Ref<Resource> &p_resource, const Strin
 			}
 
 			// Get the absolute path without the file name
-			String path = handle->get_path().get_base_dir().replace("res://", "") + "/";
-			String inpname = path + "*.cpp";
+			String path = handle->get_path().get_base_dir();
+			String inpname = path.path_join("*.cpp").replace("res://", "");
 			String foldername = Docker::GetFolderName(handle->get_path().get_base_dir());
-			String outname = path + foldername + String(".elf");
+			String outname = path.path_join(foldername).path_join(".elf").replace("res://", "");
 
 			auto builder = [inpname = std::move(inpname), outname = std::move(outname)] {
 				// Invoke docker to compile the file
