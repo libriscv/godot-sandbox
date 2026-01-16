@@ -2875,9 +2875,6 @@ func set_array(new_array):
 
 """
 
-	print("Compiling GDScript code with global variables:")
-	print(gdscript_code)
-
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
 	ts.restrictions = true
@@ -2936,9 +2933,6 @@ func test():
 	return untyped_global
 """
 
-	print("Testing untyped global variable error handling:")
-	print(gdscript_code)
-
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
 	ts.restrictions = true
@@ -2987,9 +2981,6 @@ func get_non_exported():
 	return non_exported
 """
 
-	print("Testing @export attribute:")
-	print(gdscript_code)
-
 	var ts : Sandbox = Sandbox.new()
 	ts.set_program(Sandbox_TestsTests)
 	ts.restrictions = true
@@ -3026,3 +3017,50 @@ func get_non_exported():
 	s.queue_free()
 	ts.queue_free()
 
+func test_safegdscript():
+	var gdscript_code = """
+extends Label3D
+
+func some_function():
+	var counter = 0
+	while counter < 10:
+		counter += 2
+	return counter
+
+func meaning_of_life():
+	return 42
+
+func meaning_of_this() -> String:
+	var hi: String = "Hi"
+	set_text(hi)
+	return hi
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compilation with @export should succeed")
+
+	var temp_file_path = "user://temp_safegdscript.elf"
+	var file = FileAccess.open(temp_file_path, FileAccess.WRITE)
+	file.store_buffer(compiled_elf)
+	file.close()
+
+	var l = Label3D.new()
+	l.set_script(load(temp_file_path))
+	l.set_instructions_max(10000)
+
+	# Test that exported variables work correctly
+	var result = l.call("some_function")
+	assert_eq(result, 10, "some_function should return 10")
+
+	result = l.call("meaning_of_life")
+	assert_eq(result, 42, "meaning_of_life should return 42")
+
+	result = l.call("meaning_of_this")
+	assert_eq(result, "Hi", "meaning_of_this should return 'Hi'")
+	assert_eq(l.get("text"), "Hi", "Label3D text property should be 'Hi'")
+
+	l.queue_free()
+	ts.queue_free()
