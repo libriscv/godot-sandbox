@@ -3062,5 +3062,23 @@ func meaning_of_this() -> String:
 	assert_eq(result, "Hi", "meaning_of_this should return 'Hi'")
 	assert_eq(l.get("text"), "Hi", "Label3D text property should be 'Hi'")
 
+	# Write GDScript to "user://temp_safegdscript.sgd"
+	var gdscript_file = FileAccess.open("user://temp_safegdscript.sgd", FileAccess.WRITE)
+	gdscript_file.store_string(gdscript_code)
+	gdscript_file.close()
+
+	# Load the GDScript file using SafeGDScript
+	l.set_script(load("user://temp_safegdscript.sgd"))
+	l.set_instructions_max(10000)
+
+	# Test that exported variables work correctly
+	result = l.call("some_function")
+	assert_eq(result, 10, "some_function should return 10 after loading from .sgd")
+	result = l.call("meaning_of_life")
+	assert_eq(result, 42, "meaning_of_life should return 42 after loading from .sgd")
+	result = l.call("meaning_of_this")
+	assert_eq(result, "Hi", "meaning_of_this should return 'Hi' after loading from .sgd")
+	assert_eq(l.get("text"), "Hi", "Label3D text property should be 'Hi' after loading from .sgd")
+
 	l.queue_free()
 	ts.queue_free()

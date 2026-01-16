@@ -29,6 +29,27 @@ PUBLIC Variant compile_to_elf(String code)
 	return PackedByteArray(elf_data);
 }
 
+PUBLIC Variant compile(String code)
+{
+	CompilerOptions options;
+	options.dump_tokens = false;
+	options.dump_ast = false;
+	options.dump_ir = false;
+	options.output_elf = true;
+
+	Compiler compiler;
+	auto elf_data = compiler.compile(code.utf8(), options);
+
+	if (elf_data.empty()) {
+		print("ERROR: Compilation failed: ", compiler.get_error());
+		print("ERROR DETAILS: ", String(compiler.get_error()));
+		last_error = String(compiler.get_error());
+		return PackedByteArray(std::vector<uint8_t>{}); // Return empty array on failure
+	}
+
+	return PackedByteArray(elf_data);
+}
+
 PUBLIC Variant get_compiler_error(Compiler* compiler)
 {
 	return last_error;
