@@ -61,7 +61,7 @@ static GDExtensionMethodInfo create_method_info(const MethodInfo &method_info) {
 	   .default_argument_count = 0,
 	   .default_arguments = nullptr,
    };
-   if (!method_info.arguments.empty()) {
+   if (!method_info.arguments.is_empty()) {
 	   result.arguments = memnew_arr(GDExtensionPropertyInfo, method_info.arguments.size());
 	   for (int i = 0; i < method_info.arguments.size(); i++) {
 		   const PropertyInfo &arg = method_info.arguments[i];
