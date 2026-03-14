@@ -97,8 +97,8 @@ void Sandbox::_bind_methods() {
 		//mi.arguments.push_back(PropertyInfo(Variant::STRING, "function"));
 		mi.name = "vmcall";
 		mi.return_val = PropertyInfo(Variant::OBJECT, "result");
-		ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "vmcall", &Sandbox::vmcall, mi, DEFVAL(std::vector<Variant>{}));
-		ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "vmcallv", &Sandbox::vmcallv, mi, DEFVAL(std::vector<Variant>{}));
+		ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "vmcall", &Sandbox::vmcall, mi, DEFVAL(LocalVector<Variant>{}));
+		ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "vmcallv", &Sandbox::vmcallv, mi, DEFVAL(LocalVector<Variant>{}));
 	}
 	ClassDB::bind_method(D_METHOD("vmcallable", "function", "args"), &Sandbox::vmcallable, DEFVAL(Array{}));
 	ClassDB::bind_method(D_METHOD("vmcallable_address", "address", "args"), &Sandbox::vmcallable_address, DEFVAL(Array{}));

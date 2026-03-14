@@ -5,6 +5,11 @@ import sys
 ARGUMENTS["disable_exceptions"] = "0"
 ARGUMENTS["use_mingw"] = "yes"
 
+# Use a double-precision extension_api.json for double builds, since the
+# default one shipped with godot-cpp is single-precision only.
+if ARGUMENTS.get("precision", "single") == "double" and "custom_api_file" not in ARGUMENTS:
+    ARGUMENTS["custom_api_file"] = os.path.join(Dir('.').abspath, "gdextension", "extension_api_double.json")
+
 env = SConscript("ext/godot-cpp/SConstruct")
 
 env.Append(CPPDEFINES = ['RISCV_SYSCALLS_MAX=600', 'RISCV_BRK_MEMORY_SIZE=0x100000'])

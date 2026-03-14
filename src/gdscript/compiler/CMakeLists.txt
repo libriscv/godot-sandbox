@@ -39,11 +39,19 @@ endfunction()
 
 # Dump IR utility
 add_executable(dump_ir dump_ir.cpp)
-target_link_libraries(dump_ir -static gdscript_compiler)
+if(APPLE)
+	target_link_libraries(dump_ir gdscript_compiler)
+else()
+	target_link_libraries(dump_ir -static gdscript_compiler)
+endif()
 
 # GDScript to RISC-V disassembly tool
 add_executable(gdscript_to_riscv gdscript_to_riscv.cpp)
-target_link_libraries(gdscript_to_riscv -static gdscript_compiler)
+if(APPLE)
+	target_link_libraries(gdscript_to_riscv gdscript_compiler)
+else()
+	target_link_libraries(gdscript_to_riscv -static gdscript_compiler)
+endif()
 
 if (BUILD_TESTING)
 	enable_testing()

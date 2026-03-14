@@ -3,6 +3,7 @@
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/templates/hash_set.hpp>
+#include <string>
 
 using namespace godot;
 class ELFScriptInstance;
