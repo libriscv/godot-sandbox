@@ -1,0 +1,47 @@
+name: Build GDScript Compiler ELF
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build gdscript.elf
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install RISC-V cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-14-riscv64-linux-gnu g++-14-riscv64-linux-gnu cmake
+
+      - name: Configure
+        env:
+          CC: riscv64-linux-gnu-gcc-14
+          CXX: riscv64-linux-gnu-g++-14
+        run: |
+          cmake -B build \
+            -DCMAKE_TOOLCHAIN_FILE=${{github.workspace}}/tests/toolchain.cmake \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -DSTRIPPED=ON \
+            -S program/cpp/gdscript_compiler
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Rename artifact
+        run: mv build/gdscript build/gdscript.elf
+
+      - name: Verify ELF
+        run: file build/gdscript.elf
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-sandbox-gdscript-elf
+          path: build/gdscript.elf
+          if-no-files-found: error

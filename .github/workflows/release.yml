@@ -23,6 +23,11 @@ jobs:
           merge-multiple: true
           path: sandbox
           name: godot-jit
+      - name: Download GDScript compiler ELF
+        uses: actions/download-artifact@v4
+        with:
+          name: godot-sandbox-gdscript-elf
+          path: .
       - name: Delete draft release(s)
         uses: hugo19941994/delete-draft-releases@v1.0.0
         env:
@@ -44,6 +49,7 @@ jobs:
             godot-sandbox.zip
             godot-sandbox-jit.zip
             sandbox.zip
+            gdscript.elf
           tag_name: nightly
           generate_release_notes: true
           draft: true
