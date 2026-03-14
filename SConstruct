@@ -8,7 +8,7 @@ ARGUMENTS["use_mingw"] = "yes"
 # Use a double-precision extension_api.json for double builds, since the
 # default one shipped with godot-cpp is single-precision only.
 if ARGUMENTS.get("precision", "single") == "double" and "custom_api_file" not in ARGUMENTS:
-    ARGUMENTS["custom_api_file"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gdextension", "extension_api_double.json")
+    ARGUMENTS["custom_api_file"] = os.path.join(Dir('.').abspath, "gdextension", "extension_api_double.json")
 
 env = SConscript("ext/godot-cpp/SConstruct")
 

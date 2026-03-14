@@ -18,6 +18,9 @@ jobs:
           - {arch: x86_32, precision: single}
           - {arch: x86_32, precision: double}
     runs-on: ubuntu-22.04
+    env:
+      ANDROID_NDK_VERSION: 28.1.13356709
+      SCONS_CACHE: ${{ github.workspace }}/.scons-cache/
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,20 +28,41 @@ jobs:
           submodules: true
           fetch-depth: 1
 
-      - name: Install newer Clang
-        run: |
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x ./llvm.sh
-          sudo ./llvm.sh 17
-
-      - name: 🔗 GDExtension Build
-        uses: godotengine/godot-cpp-template/.github/actions/build@f9564a9c8115139b9624692d39e358291f6d76ce
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
         with:
-          platform: android
-          arch: ${{ matrix.arch }}
-          build-target-type: template_release
-          float-precision: ${{ matrix.precision }}
-          godot-cpp-directory: ext/godot-cpp
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android environment
+        run: |
+          sudo rm -rf /usr/local/lib/android/sdk/**
+          echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=/usr/local/lib/android/sdk/ndk/${{ env.ANDROID_NDK_VERSION }}" >> "$GITHUB_ENV"
+
+      - name: Install Android SDK and NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: ndk;${{ env.ANDROID_NDK_VERSION }} cmdline-tools;latest build-tools;34.0.0 platforms;android-34 cmake;3.22.1
+          accept-android-sdk-licenses: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.x
+
+      - name: Install SCons
+        run: pip install scons==4.4.0
+
+      - name: Cache SCons
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SCONS_CACHE }}
+          key: android_${{ matrix.arch }}_${{ matrix.precision }}_template_release_cache
+
+      - name: Build
+        run: scons target=template_release platform=android arch=${{ matrix.arch }} precision=${{ matrix.precision }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -47,4 +71,4 @@ jobs:
           path: |
             ${{ github.workspace }}/bin/**/*.so
           if-no-files-found: error
-          retention-days: 10 # 90 days by default
+          retention-days: 10
