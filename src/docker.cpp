@@ -80,7 +80,7 @@ bool Docker::ContainerStart(String container_name, String image_name, Array &out
 	}
 	// Start the container, even if the image pull failed. It might be locally available.
 	godot::OS *OS = godot::OS::get_singleton();
-	PackedStringArray arguments = { "run", "--name", container_name, "-dv", ".:/usr/src", image_name };
+	PackedStringArray arguments = { "run", "--name", container_name, "-dv", ".:/usr/src:z", image_name };
 	if constexpr (VERBOSE_CMD) {
 		UtilityFunctions::print(SandboxProjectSettings::get_docker_path(), arguments);
 	}
