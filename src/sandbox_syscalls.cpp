@@ -53,28 +53,68 @@ inline godot::Node *get_node_from_address(const Sandbox &emu, uint64_t addr) {
 	return node;
 }
 
-static inline Variant object_callp(godot::Object *obj, const Variant **args, int argc) {
-	static GDExtensionMethodBindPtr mtd = internal::gdextension_interface_classdb_get_method_bind(Object::get_class_static()._native_ptr(), StringName("call")._native_ptr(), 3400424181);
+// Resolved once at load time: godot::Object::call(), the variadic entry point that
+// dispatches by name, honouring script instances the way GDScript's own calls do.
+static GDExtensionMethodBindPtr object_call_mtd = nullptr;
+
+// Storage for a Variant that Godot constructs in place. The method-bind call always
+// placement-constructs its return value, so default-constructing one first only pays
+// for an out-of-line call into Godot to write a nil that is immediately overwritten.
+struct CallResult {
+	Variant &get() noexcept { return *std::launder(reinterpret_cast<Variant *>(&storage)); }
+	// Only flagged once Godot has actually placed a Variant here, so that an exception
+	// thrown while marshalling arguments cannot destroy uninitialized storage.
+	void mark_constructed() noexcept { m_constructed = true; }
+	~CallResult() {
+		if (m_constructed)
+			get().~Variant();
+	}
+
+private:
+	std::aligned_storage_t<sizeof(Variant), alignof(Variant)> storage;
+	bool m_constructed = false;
+};
+
+static inline void object_callp(godot::Object *obj, const Variant **args, int argc, CallResult &result) {
 	GDExtensionCallError error;
-	Variant ret;
-	internal::gdextension_interface_object_method_bind_call(mtd, obj->_owner, reinterpret_cast<GDExtensionConstVariantPtr *>(args), argc, &ret, &error);
-	return ret;
+	internal::gdextension_interface_object_method_bind_call(object_call_mtd, obj->_owner, reinterpret_cast<GDExtensionConstVariantPtr *>(args), argc, &result.get(), &error);
+	result.mark_constructed();
 }
 
-static inline Variant object_call(Sandbox &emu, godot::Object *obj, const Variant &method, const GuestVariant *args, int argc) {
+// Scratch space for arguments that have to be materialized as real Variants.
+// godot::Variant has a non-trivial constructor and destructor, so an array of them
+// costs 8 constructions and 8 destructions per call even when nothing is passed.
+// This constructs exactly the slots that are used, and unwinds them on the way out.
+struct VariantScratch {
+	static constexpr unsigned MAX = 8;
+
+	Variant *emplace(Variant &&value) {
+		return new (&storage[m_count++]) Variant(std::move(value));
+	}
+	~VariantScratch() {
+		for (unsigned i = 0; i < m_count; i++)
+			std::launder(reinterpret_cast<Variant *>(&storage[i]))->~Variant();
+	}
+
+private:
+	std::aligned_storage_t<sizeof(Variant), alignof(Variant)> storage[MAX];
+	unsigned m_count = 0;
+};
+
+static inline void object_call(Sandbox &emu, godot::Object *obj, const Variant &method, const GuestVariant *args, int argc, CallResult &result) {
 	SYS_TRACE("object_call", method, argc);
-	std::array<Variant, 8> vstorage;
-	std::array<const Variant *, 9> vargs; // 8 is the maximum number of arguments we will accept.
+	VariantScratch scratch;
+	const Variant *vargs[9]; // 8 is the maximum number of arguments we will accept.
 	vargs[0] = &method;
 	for (int i = 0; i < argc; i++) {
 		if (args[i].is_scoped_variant()) {
 			vargs[i + 1] = args[i].toVariantPtr(emu);
 		} else {
-			vstorage[i] = args[i].toVariant(emu);
-			vargs[i + 1] = &vstorage[i];
+			vargs[i + 1] = scratch.emplace(args[i].toVariant(emu));
 		}
 	}
-	return object_callp(obj, vargs.data(), argc + 1);
+	// Constructed last: the result's destructor assumes the call below has run.
+	object_callp(obj, vargs, argc + 1, result);
 }
 
 APICALL(api_print) {
@@ -108,13 +148,10 @@ APICALL(api_vcall) {
 	}
 
 	const GuestVariant *args = machine.memory.memarray<GuestVariant>(args_ptr, args_size);
-	StringName method_sn;
-	std::string_view method_sv = memview_with_terminator(machine, method, mlen); // Include null terminator.
-	if (method_sv.back() == '\0') {
-		method_sn = StringName(method_sv.data());
-	} else {
-		method_sn = String::utf8(method_sv.data(), mlen);
-	}
+	const std::string_view method_sv = memview_with_terminator(machine, method, mlen).substr(0, size_t(mlen) + 1); // Include null terminator.
+	// Reuse the StringName built for this call site. Held by value, as the call below can
+	// re-enter the sandbox and evict the cache entry.
+	const StringName method_sn = emu.cached_guest_name(method, method_sv.substr(0, mlen), method_sv.back() == '\0').sname;
 
 	Variant ret;
 
@@ -124,19 +161,20 @@ APICALL(api_vcall) {
 		// Check if the method is allowed.
 		if (!emu.is_allowed_method(obj, method_sn)) {
 			ERR_PRINT("Variant::call(): Method not allowed: " + method_sn);
-			throw std::runtime_error("Variant::call(): Method not allowed: " + std::string(method_sv));
+			throw std::runtime_error("Variant::call(): Method not allowed: " + std::string(method_sv.substr(0, mlen)));
 		}
 
-		ret = object_call(emu, obj, method_sn, args, args_size);
+		CallResult result;
+		object_call(emu, obj, method_sn, args, args_size, result);
+		ret = std::move(result.get());
 	} else {
-		std::array<Variant, 8> vargs;
-		std::array<const Variant *, 8> argptrs;
+		VariantScratch scratch;
+		const Variant *argptrs[8];
 		for (size_t i = 0; i < args_size; i++) {
 			if (args[i].is_scoped_variant()) {
 				argptrs[i] = args[i].toVariantPtr(emu);
 			} else {
-				vargs[i] = args[i].toVariant(emu);
-				argptrs[i] = &vargs[i];
+				argptrs[i] = scratch.emplace(args[i].toVariant(emu));
 			}
 		}
 
@@ -144,11 +182,11 @@ APICALL(api_vcall) {
 		if (vp->is_scoped_variant()) {
 			Variant *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
 			//internal::gdextension_interface_variant_call(vcall, &method_sn, reinterpret_cast<GDExtensionConstVariantPtr *>(&argptrs[0]), args_size, &ret, &error);
-			vcall->callp(method_sn, argptrs.data(), args_size, ret, error);
+			vcall->callp(method_sn, argptrs, args_size, ret, error);
 		} else {
 			Variant vcall = vp->toVariant(emu);
 			//internal::gdextension_interface_variant_call(&vcall, &method_sn, reinterpret_cast<GDExtensionConstVariantPtr *>(&argptrs[0]), args_size, &ret, &error);
-			vcall.callp(method_sn, argptrs.data(), args_size, ret, error);
+			vcall.callp(method_sn, argptrs, args_size, ret, error);
 		}
 	}
 	// Create a new Variant with the result, if any.
@@ -503,129 +541,123 @@ APICALL(api_vfetch) {
 	SYS_TRACE("vfetch", index, gdata, method);
 
 	// Find scoped Variant and copy data into gdata.
-	std::optional<const Variant *> opt = emu.get_scoped_variant(index);
-	if (opt.has_value()) {
-		const godot::Variant &var = *opt.value();
-		switch (var.get_type()) {
-			case Variant::STRING:
-			case Variant::STRING_NAME:
-			case Variant::NODE_PATH: {
-				if (method == 0) { // std::string
-					auto u8str = var.operator String().utf8();
-					CppString *gstr = machine.memory.memarray<CppString>(gdata, 1);
-					gstr->set_string(machine, gdata, u8str.ptr(), u8str.length());
-				} else if (method == 1) { // const char*, size_t struct
-					auto u8str = var.operator String().utf8();
-					struct Buffer {
-						gaddr_t ptr;
-						gaddr_t size;
-					} *gstr = machine.memory.memarray<Buffer>(gdata, 1);
-					gstr->ptr  = machine.arena().malloc(u8str.length());
-					gstr->size = u8str.length();
-					machine.memory.memcpy(gstr->ptr, u8str.ptr(), u8str.length());
-				} else if (method == 2) { // std::u32string
-					auto u32str = var.operator String();
-					auto *gstr = machine.memory.memarray<GuestStdU32String>(gdata, 1);
-					gstr->set_string(machine, gdata, u32str.ptr(), u32str.length());
-				} else {
-					ERR_PRINT("vfetch: Unsupported method for Variant::STRING");
-					throw std::runtime_error("vfetch: Unsupported method for Variant::STRING");
-				}
-				break;
+	const godot::Variant &var = get_scoped_variant_or_throw(emu, index, "Variant::fetch");
+	switch (var.get_type()) {
+		case Variant::STRING:
+		case Variant::STRING_NAME:
+		case Variant::NODE_PATH: {
+			if (method == 0) { // std::string
+				auto u8str = var.operator String().utf8();
+				CppString *gstr = machine.memory.memarray<CppString>(gdata, 1);
+				gstr->set_string(machine, gdata, u8str.ptr(), u8str.length());
+			} else if (method == 1) { // const char*, size_t struct
+				auto u8str = var.operator String().utf8();
+				struct Buffer {
+					gaddr_t ptr;
+					gaddr_t size;
+				} *gstr = machine.memory.memarray<Buffer>(gdata, 1);
+				gstr->ptr  = machine.arena().malloc(u8str.length());
+				gstr->size = u8str.length();
+				machine.memory.memcpy(gstr->ptr, u8str.ptr(), u8str.length());
+			} else if (method == 2) { // std::u32string
+				auto u32str = var.operator String();
+				auto *gstr = machine.memory.memarray<GuestStdU32String>(gdata, 1);
+				gstr->set_string(machine, gdata, u32str.ptr(), u32str.length());
+			} else {
+				ERR_PRINT("vfetch: Unsupported method for Variant::STRING");
+				throw std::runtime_error("vfetch: Unsupported method for Variant::STRING");
 			}
-			case Variant::PACKED_BYTE_ARRAY: {
-				CppVector<uint8_t> *gvec = machine.memory.memarray<CppVector<uint8_t>>(gdata, 1);
-				auto arr = var.operator PackedByteArray();
-				gvec->assign(machine, arr.ptr(), arr.size());
-				break;
-			}
-			case Variant::PACKED_FLOAT32_ARRAY: {
-				CppVector<float> *gvec = machine.memory.memarray<CppVector<float>>(gdata, 1);
-				auto arr = var.operator PackedFloat32Array();
-				gvec->assign(machine, arr.ptr(), arr.size());
-				break;
-			}
-			case Variant::PACKED_FLOAT64_ARRAY: {
-				CppVector<double> *gvec = machine.memory.memarray<CppVector<double>>(gdata, 1);
-				auto arr = var.operator PackedFloat64Array();
-				gvec->assign(machine, arr.ptr(), arr.size());
-				break;
-			}
-			case Variant::PACKED_INT32_ARRAY: {
-				CppVector<int32_t> *gvec = machine.memory.memarray<CppVector<int32_t>>(gdata, 1);
-				auto arr = var.operator PackedInt32Array();
-				gvec->assign(machine, arr.ptr(), arr.size());
-				break;
-			}
-			case Variant::PACKED_INT64_ARRAY: {
-				CppVector<int64_t> *gvec = machine.memory.memarray<CppVector<int64_t>>(gdata, 1);
-				auto arr = var.operator PackedInt64Array();
-				gvec->assign(machine, arr.ptr(), arr.size());
-				break;
-			}
-			case Variant::PACKED_VECTOR2_ARRAY: {
-				CppVector<Vector2> *gvec = machine.memory.memarray<CppVector<Vector2>>(gdata, 1);
-				auto arr = var.operator PackedVector2Array();
-				gvec->assign(machine, arr.ptr(), arr.size());
-				break;
-			}
-			case Variant::PACKED_VECTOR3_ARRAY: {
-				CppVector<Vector3> *gvec = machine.memory.memarray<CppVector<Vector3>>(gdata, 1);
-				auto arr = var.operator PackedVector3Array();
-				gvec->assign(machine, arr.ptr(), arr.size());
-				break;
-			}
-			case Variant::PACKED_VECTOR4_ARRAY: {
-				CppVector<Vector4> *gvec = machine.memory.memarray<CppVector<Vector4>>(gdata, 1);
-				auto arr = var.operator PackedVector4Array();
-				gvec->assign(machine, arr.ptr(), arr.size());
-				break;
-			}
-			case Variant::PACKED_COLOR_ARRAY: {
-				CppVector<Color> *gvec = machine.memory.memarray<CppVector<Color>>(gdata, 1);
-				auto arr = var.operator PackedColorArray();
-				gvec->assign(machine, arr.ptr(), arr.size());
-				break;
-			}
-			case Variant::PACKED_STRING_ARRAY: {
-				auto arr = var.operator PackedStringArray();
-				if (method == 0) {
-					CppVector<CppString> *gvec = machine.memory.memarray<CppVector<CppString>>(gdata, 1);
-					gvec->resize(machine, arr.size());
-					for (unsigned i = 0; i < arr.size(); i++) {
-						auto u8str = arr[i].utf8();
-						const gaddr_t self = gvec->address_at(i);
-						gvec->at(machine, i).set_string(machine, self, std::string_view(u8str.ptr(), u8str.length()));
-					}
-				} else if (method == 1) {
-					// libc++ std::string implementation.
-					struct Buffer {
-						gaddr_t ptr;
-						gaddr_t size;
-					};
-					CppVector<Buffer> *gvec = machine.memory.memarray<CppVector<Buffer>>(gdata, 1);
-					gvec->reserve(machine, arr.size());
-					for (unsigned i = 0; i < arr.size(); i++) {
-						auto u8str = arr[i].utf8();
-						Buffer gb;
-						gb.ptr  = machine.arena().malloc(u8str.length());
-						gb.size = u8str.length();
-						machine.memory.memcpy(gb.ptr, u8str.ptr(), u8str.length());
-						gvec->push_back(machine, gb);
-					}
-				} else {
-					ERR_PRINT("vfetch: Unsupported method for Variant::PACKED_STRING_ARRAY");
-					throw std::runtime_error("vfetch: Unsupported method for Variant::PACKED_STRING_ARRAY");
-				}
-				break;
-			}
-			default:
-				ERR_PRINT("vfetch: Cannot fetch value into guest for Variant type");
-				throw std::runtime_error("vfetch: Cannot fetch value into guest for Variant type");
+			break;
 		}
-	} else {
-		ERR_PRINT("vfetch: Variant is not scoped");
-		throw std::runtime_error("vfetch: Variant is not scoped");
+		case Variant::PACKED_BYTE_ARRAY: {
+			CppVector<uint8_t> *gvec = machine.memory.memarray<CppVector<uint8_t>>(gdata, 1);
+			auto arr = var.operator PackedByteArray();
+			gvec->assign(machine, arr.ptr(), arr.size());
+			break;
+		}
+		case Variant::PACKED_FLOAT32_ARRAY: {
+			CppVector<float> *gvec = machine.memory.memarray<CppVector<float>>(gdata, 1);
+			auto arr = var.operator PackedFloat32Array();
+			gvec->assign(machine, arr.ptr(), arr.size());
+			break;
+		}
+		case Variant::PACKED_FLOAT64_ARRAY: {
+			CppVector<double> *gvec = machine.memory.memarray<CppVector<double>>(gdata, 1);
+			auto arr = var.operator PackedFloat64Array();
+			gvec->assign(machine, arr.ptr(), arr.size());
+			break;
+		}
+		case Variant::PACKED_INT32_ARRAY: {
+			CppVector<int32_t> *gvec = machine.memory.memarray<CppVector<int32_t>>(gdata, 1);
+			auto arr = var.operator PackedInt32Array();
+			gvec->assign(machine, arr.ptr(), arr.size());
+			break;
+		}
+		case Variant::PACKED_INT64_ARRAY: {
+			CppVector<int64_t> *gvec = machine.memory.memarray<CppVector<int64_t>>(gdata, 1);
+			auto arr = var.operator PackedInt64Array();
+			gvec->assign(machine, arr.ptr(), arr.size());
+			break;
+		}
+		case Variant::PACKED_VECTOR2_ARRAY: {
+			CppVector<Vector2> *gvec = machine.memory.memarray<CppVector<Vector2>>(gdata, 1);
+			auto arr = var.operator PackedVector2Array();
+			gvec->assign(machine, arr.ptr(), arr.size());
+			break;
+		}
+		case Variant::PACKED_VECTOR3_ARRAY: {
+			CppVector<Vector3> *gvec = machine.memory.memarray<CppVector<Vector3>>(gdata, 1);
+			auto arr = var.operator PackedVector3Array();
+			gvec->assign(machine, arr.ptr(), arr.size());
+			break;
+		}
+		case Variant::PACKED_VECTOR4_ARRAY: {
+			CppVector<Vector4> *gvec = machine.memory.memarray<CppVector<Vector4>>(gdata, 1);
+			auto arr = var.operator PackedVector4Array();
+			gvec->assign(machine, arr.ptr(), arr.size());
+			break;
+		}
+		case Variant::PACKED_COLOR_ARRAY: {
+			CppVector<Color> *gvec = machine.memory.memarray<CppVector<Color>>(gdata, 1);
+			auto arr = var.operator PackedColorArray();
+			gvec->assign(machine, arr.ptr(), arr.size());
+			break;
+		}
+		case Variant::PACKED_STRING_ARRAY: {
+			auto arr = var.operator PackedStringArray();
+			if (method == 0) {
+				CppVector<CppString> *gvec = machine.memory.memarray<CppVector<CppString>>(gdata, 1);
+				gvec->resize(machine, arr.size());
+				for (unsigned i = 0; i < arr.size(); i++) {
+					auto u8str = arr[i].utf8();
+					const gaddr_t self = gvec->address_at(i);
+					gvec->at(machine, i).set_string(machine, self, std::string_view(u8str.ptr(), u8str.length()));
+				}
+			} else if (method == 1) {
+				// libc++ std::string implementation.
+				struct Buffer {
+					gaddr_t ptr;
+					gaddr_t size;
+				};
+				CppVector<Buffer> *gvec = machine.memory.memarray<CppVector<Buffer>>(gdata, 1);
+				gvec->reserve(machine, arr.size());
+				for (unsigned i = 0; i < arr.size(); i++) {
+					auto u8str = arr[i].utf8();
+					Buffer gb;
+					gb.ptr  = machine.arena().malloc(u8str.length());
+					gb.size = u8str.length();
+					machine.memory.memcpy(gb.ptr, u8str.ptr(), u8str.length());
+					gvec->push_back(machine, gb);
+				}
+			} else {
+				ERR_PRINT("vfetch: Unsupported method for Variant::PACKED_STRING_ARRAY");
+				throw std::runtime_error("vfetch: Unsupported method for Variant::PACKED_STRING_ARRAY");
+			}
+			break;
+		}
+		default:
+			ERR_PRINT("vfetch: Cannot fetch value into guest for Variant type " + String(GuestVariant::type_name(var.get_type())));
+			throw std::runtime_error("vfetch: Cannot fetch value into guest for Variant type " + std::string(GuestVariant::type_name(var.get_type())));
 	}
 }
 
@@ -637,17 +669,12 @@ APICALL(api_vclone) {
 
 	if (vret_addr != 0) {
 		// Find scoped Variant and clone it.
-		std::optional<const Variant *> var = emu.get_scoped_variant(vp->v.i);
-		if (var.has_value()) {
-			const unsigned index = emu.create_scoped_variant(var.value()->duplicate());
-			// Duplicate the Variant and store the index in the guest memory.
-			GuestVariant *vret = machine.memory.memarray<GuestVariant>(vret_addr, 1);
-			vret->type = var.value()->get_type();
-			vret->v.i = index;
-		} else {
-			ERR_PRINT("vclone: Variant is not scoped");
-			throw std::runtime_error("vclone: Variant is not scoped");
-		}
+		const Variant &var = get_scoped_variant_or_throw(emu, vp->v.i, "Variant::clone");
+		const unsigned index = emu.create_scoped_variant(var.duplicate());
+		// Duplicate the Variant and store the index in the guest memory.
+		GuestVariant *vret = machine.memory.memarray<GuestVariant>(vret_addr, 1);
+		vret->type = var.get_type();
+		vret->v.i = index;
 	} else {
 		// Duplicate or move the Variant into permanent storage (m_level[0]).
 		const unsigned idx = vp->v.i;
@@ -799,24 +826,17 @@ APICALL(api_vassign) {
 	}
 
 	// Find scoped Variants and assign the value of b to a.
-	std::optional<const Variant *> a_opt = emu.get_scoped_variant(a_idx);
-	std::optional<const Variant *> b_opt = emu.get_scoped_variant(b_idx);
-	if (a_opt.has_value() && b_opt.has_value()) {
-		const Variant *va = *a_opt;
-		const Variant *vb = *b_opt;
-		// XXX: This might be too strict. Assigning arbitrarily between different types is allowed in GDScript.
-		if (va->get_type() != Variant::NIL && va->get_type() != vb->get_type()) {
-			ERR_PRINT("vassign: Variant types do not match");
-			throw std::runtime_error("vassign: Variant types do not match: " + std::to_string(va->get_type()) + " != " + std::to_string(vb->get_type()));
-		}
-
-		// Try assigning the value of b to a.
-		unsigned res_idx = emu.try_reuse_assign_variant(b_idx, *va, a_idx, *vb);
-		machine.set_result(res_idx);
-	} else {
-		ERR_PRINT("vassign: Variants were not scoped");
-		throw std::runtime_error("vassign: Variants were not scoped");
+	const Variant &va = get_scoped_variant_or_throw(emu, a_idx, "Variant::assign (destination)");
+	const Variant &vb = get_scoped_variant_or_throw(emu, b_idx, "Variant::assign (source)");
+	// XXX: This might be too strict. Assigning arbitrarily between different types is allowed in GDScript.
+	if (va.get_type() != Variant::NIL && va.get_type() != vb.get_type()) {
+		ERR_PRINT("vassign: Variant types do not match");
+		throw std::runtime_error("vassign: Variant types do not match: " + std::string(GuestVariant::type_name(va.get_type())) + " != " + std::string(GuestVariant::type_name(vb.get_type())));
 	}
+
+	// Try assigning the value of b to a.
+	unsigned res_idx = emu.try_reuse_assign_variant(b_idx, va, a_idx, vb);
+	machine.set_result(res_idx);
 }
 
 APICALL(api_get_obj) {
@@ -956,7 +976,8 @@ APICALL(api_obj) {
 }
 
 APICALL(api_obj_property_get) {
-	auto [addr, method, vret] = machine.sysargs<uint64_t, std::string_view, GuestVariant *>();
+	auto [addr, g_property, g_property_len, vret] = machine.sysargs<uint64_t, gaddr_t, unsigned, GuestVariant *>();
+	const std::string_view method = machine.memory.memview(g_property, g_property_len);
 	auto &emu = riscv::emu(machine);
 	PENALIZE(150'000);
 	SYS_TRACE("obj_property_get", addr, method, vret);
@@ -966,30 +987,28 @@ APICALL(api_obj_property_get) {
 		obj = get_object_from_address(emu, addr);
 	} else {
 		// It's likely a Variant index
-		std::optional<const Variant *> var = emu.get_scoped_variant(uint32_t(addr));
-		if (var.has_value()) {
-			if (var.value()->get_type() != Variant::OBJECT) {
-				ERR_PRINT("api_obj_property_get: Variant is not an Object");
-				throw std::runtime_error("api_obj_property_get: Variant is not an Object");
-			}
-			obj = var.value()->operator godot::Object *();
-		} else {
-			ERR_PRINT("api_obj_property_get: Variant is not scoped");
-			throw std::runtime_error("api_obj_property_get: Variant is not scoped");
+		const Variant &var = get_scoped_variant_or_throw(emu, uint32_t(addr), "Object::get_property");
+		if (var.get_type() != Variant::OBJECT) {
+			ERR_PRINT("api_obj_property_get: Variant is not an Object, but " + String(GuestVariant::type_name(var.get_type())));
+			throw std::runtime_error("api_obj_property_get: Variant is not an Object, but " + std::string(GuestVariant::type_name(var.get_type())));
 		}
+		obj = var.operator godot::Object *();
 	}
-	String prop_name = String::utf8(method.data(), method.size());
+	// Reuse the StringName built for this call site. Held by value, as the allowed-property
+	// callback below may re-enter the sandbox and evict the cache entry.
+	const StringName prop_name = emu.cached_guest_name(g_property, method, false).sname;
 
 	if (UNLIKELY(!emu.is_allowed_property(obj, prop_name, false))) {
 		ERR_PRINT("Banned property accessed: " + prop_name);
-		throw std::runtime_error("Banned property accessed: " + std::string(prop_name.utf8()));
+		throw std::runtime_error("Banned property accessed: " + std::string(method));
 	}
 
 	vret->create(emu, obj->get(prop_name));
 }
 
 APICALL(api_obj_property_set) {
-	auto [addr, method, g_value] = machine.sysargs<uint64_t, std::string_view, const GuestVariant *>();
+	auto [addr, g_property, g_property_len, g_value] = machine.sysargs<uint64_t, gaddr_t, unsigned, const GuestVariant *>();
+	const std::string_view method = machine.memory.memview(g_property, g_property_len);
 	auto &emu = riscv::emu(machine);
 	PENALIZE(150'000);
 	SYS_TRACE("obj_property_set", addr, method, value);
@@ -999,23 +1018,20 @@ APICALL(api_obj_property_set) {
 		obj = get_object_from_address(emu, addr);
 	} else {
 		// It's likely a Variant index
-		std::optional<const Variant *> var = emu.get_scoped_variant(uint32_t(addr));
-		if (var.has_value()) {
-			if (var.value()->get_type() != Variant::OBJECT) {
-				ERR_PRINT("api_obj_property_get: Variant is not an Object");
-				throw std::runtime_error("api_obj_property_get: Variant is not an Object");
-			}
-			obj = var.value()->operator godot::Object *();
-		} else {
-			ERR_PRINT("api_obj_property_get: Variant is not scoped");
-			throw std::runtime_error("api_obj_property_get: Variant is not scoped");
+		const Variant &var = get_scoped_variant_or_throw(emu, uint32_t(addr), "Object::set_property");
+		if (var.get_type() != Variant::OBJECT) {
+			ERR_PRINT("api_obj_property_set: Variant is not an Object, but " + String(GuestVariant::type_name(var.get_type())));
+			throw std::runtime_error("api_obj_property_set: Variant is not an Object, but " + std::string(GuestVariant::type_name(var.get_type())));
 		}
+		obj = var.operator godot::Object *();
 	}
-	String prop_name = String::utf8(method.data(), method.size());
+	// Reuse the StringName built for this call site. Held by value, as the allowed-property
+	// callback below may re-enter the sandbox and evict the cache entry.
+	const StringName prop_name = emu.cached_guest_name(g_property, method, false).sname;
 
 	if (UNLIKELY(!emu.is_allowed_property(obj, prop_name, true))) {
 		ERR_PRINT("Banned property set: " + prop_name);
-		throw std::runtime_error("Banned property set: " + std::string(prop_name.utf8()));
+		throw std::runtime_error("Banned property set: " + std::string(method));
 	}
 
 	obj->set(prop_name, g_value->toVariant(emu));
@@ -1032,29 +1048,27 @@ APICALL(api_obj_callp) {
 		ERR_PRINT("Too many arguments to obj_callp");
 		throw std::runtime_error("Too many arguments to obj_callp");
 	}
-	const GuestVariant *g_args = machine.memory.memarray<GuestVariant>(args_addr, args_size);
+	// Zero-argument calls are the common case, and have nothing to translate or validate.
+	const GuestVariant *g_args = args_size ? machine.memory.memarray<GuestVariant>(args_addr, args_size) : nullptr;
 
-	Variant method;
-	std::string_view method_view = memview_with_terminator(machine, g_method, g_method_len);
-
-	// Check if the method is null-terminated.
-	if (method_view.back() == '\0') {
-		method = StringName(method_view.data(), false);
-	} else {
-		method = String::utf8(method_view.data(), method_view.size() - 1);
-	}
+	const std::string_view method_view = memview_with_terminator(machine, g_method, g_method_len).substr(0, size_t(g_method_len) + 1);
+	// Reuse the StringName built for this call site, keyed on the guest address it came from.
+	// Held by value: the allowed-method callback below may re-enter the sandbox and evict the
+	// cache entry, and the method we vet must be the method we go on to call.
+	const Variant method = emu.cached_guest_name(g_method, method_view.substr(0, g_method_len), method_view.back() == '\0').variant;
 
 	// Check for banned methods.
 	if (UNLIKELY(!emu.is_allowed_method(obj, method))) {
 		ERR_PRINT("Banned method called: " + method.operator String());
-		throw std::runtime_error("Banned method called: " + std::string(method_view));
+		throw std::runtime_error("Banned method called: " + std::string(method_view.substr(0, g_method_len)));
 	}
 
 	if (!deferred) {
-		Variant ret = object_call(emu, obj, method, g_args, args_size);
+		CallResult result;
+		object_call(emu, obj, method, g_args, args_size, result);
 		if (vret_ptr != 0) {
 			GuestVariant *vret = machine.memory.memarray<GuestVariant>(vret_ptr, 1);
-			vret->create(emu, std::move(ret));
+			vret->create(emu, std::move(result.get()));
 		}
 	} else {
 		// Call deferred unfortunately takes a parameter pack, so we have to manually
@@ -1601,12 +1615,12 @@ APICALL(api_array_ops) {
 		return;
 	}
 
-	std::optional<const Variant *> opt_array = emu.get_scoped_variant(arr_idx);
-	if (!opt_array.has_value() || opt_array.value()->get_type() != Variant::ARRAY) {
-		ERR_PRINT("Invalid Array object");
-		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx));
+	const Variant &var_array = get_scoped_variant_or_throw(emu, arr_idx, "Array::operation");
+	if (var_array.get_type() != Variant::ARRAY) {
+		ERR_PRINT("Invalid Array object, type = " + String(GuestVariant::type_name(var_array.get_type())));
+		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx) + " type = " + GuestVariant::type_name(var_array.get_type()));
 	}
-	godot::Array array = opt_array.value()->operator Array();
+	godot::Array array = var_array.operator Array();
 
 	switch (op) {
 		case Array_Op::PUSH_BACK:
@@ -1666,13 +1680,13 @@ APICALL(api_array_at) {
 	PENALIZE(10'000); // Costly Array operations.
 	SYS_TRACE("array_at", arr_idx, idx, vret);
 
-	std::optional<const Variant *> opt_array = emu.get_scoped_variant(arr_idx);
-	if (!opt_array.has_value() || opt_array.value()->get_type() != Variant::ARRAY) {
-		ERR_PRINT("Invalid Array object");
-		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx));
+	const Variant &var_array = get_scoped_variant_or_throw(emu, arr_idx, "Array::at");
+	if (var_array.get_type() != Variant::ARRAY) {
+		ERR_PRINT("Invalid Array object, type = " + String(GuestVariant::type_name(var_array.get_type())));
+		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx) + " type = " + GuestVariant::type_name(var_array.get_type()));
 	}
 
-	godot::Array array = opt_array.value()->operator Array();
+	godot::Array array = var_array.operator Array();
 	const bool set_mode = idx < 0;
 	if (set_mode) {
 		idx = -idx - 1;
@@ -1694,13 +1708,13 @@ APICALL(api_array_size) {
 	auto [arr_idx] = machine.sysargs<unsigned>();
 	Sandbox &emu = riscv::emu(machine);
 
-	std::optional<const Variant *> opt_array = emu.get_scoped_variant(arr_idx);
-	if (!opt_array.has_value() || opt_array.value()->get_type() != Variant::ARRAY) {
-		ERR_PRINT("Invalid Array object");
-		throw std::runtime_error("Invalid Array object");
+	const Variant &var_array = get_scoped_variant_or_throw(emu, arr_idx, "Array::size");
+	if (var_array.get_type() != Variant::ARRAY) {
+		ERR_PRINT("Invalid Array object, type = " + String(GuestVariant::type_name(var_array.get_type())));
+		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx) + " type = " + GuestVariant::type_name(var_array.get_type()));
 	}
 
-	godot::Array array = opt_array.value()->operator Array();
+	godot::Array array = var_array.operator Array();
 	machine.set_result(array.size());
 }
 
@@ -1710,12 +1724,12 @@ APICALL(api_dict_ops) {
 	PENALIZE(50'000); // Costly Dictionary operations.
 	SYS_TRACE("dict_ops", int(op), dict_idx, vkey, vaddr);
 
-	std::optional<const Variant *> opt_dict = emu.get_scoped_variant(dict_idx);
-	if (!opt_dict.has_value() || opt_dict.value()->get_type() != Variant::DICTIONARY) {
-		ERR_PRINT("Invalid Dictionary object");
-		throw std::runtime_error("Invalid Dictionary object");
+	const Variant &var_dict = get_scoped_variant_or_throw(emu, dict_idx, "Dictionary::operation");
+	if (var_dict.get_type() != Variant::DICTIONARY) {
+		ERR_PRINT("Invalid Dictionary object, type = " + String(GuestVariant::type_name(var_dict.get_type())));
+		throw std::runtime_error("Invalid Dictionary object, idx = " + std::to_string(dict_idx) + " type = " + GuestVariant::type_name(var_dict.get_type()));
 	}
-	godot::Dictionary dict = opt_dict.value()->operator Dictionary();
+	godot::Dictionary dict = var_dict.operator Dictionary();
 
 	switch (op) {
 		case Dictionary_Op::GET: {
@@ -1788,17 +1802,13 @@ APICALL(api_string_ops) {
 	PENALIZE(10'000); // Costly String operations.
 	SYS_TRACE("string_ops", int(op), str_idx, index, vaddr);
 
-	std::optional<const Variant *> opt_str = emu.get_scoped_variant(str_idx);
-	if (!opt_str.has_value()) {
-		ERR_PRINT("Invalid String object idx: " + itos(str_idx));
-		throw std::runtime_error("Invalid String object: " + std::to_string(str_idx));
-	}
-	const Variant::Type type = opt_str.value()->get_type();
+	const Variant &var_str = get_scoped_variant_or_throw(emu, str_idx, "String::operation");
+	const Variant::Type type = var_str.get_type();
 	if (type != Variant::STRING && type != Variant::STRING_NAME && type != Variant::NODE_PATH) {
-		ERR_PRINT("Invalid String object type: " + itos(type));
-		throw std::runtime_error("Invalid String object type: " + std::to_string(type));
+		ERR_PRINT("Invalid String object type: " + String(GuestVariant::type_name(type)));
+		throw std::runtime_error("Invalid String object type: " + std::string(GuestVariant::type_name(type)));
 	}
-	godot::String str = opt_str.value()->operator String();
+	godot::String str = var_str.operator String();
 
 	switch (op) {
 		case String_Op::APPEND: {
@@ -1863,12 +1873,12 @@ APICALL(api_string_at) {
 	Sandbox &emu = riscv::emu(machine);
 	SYS_TRACE("string_at", str_idx, index);
 
-	std::optional<const Variant *> opt_str = emu.get_scoped_variant(str_idx);
-	if (!opt_str.has_value() || opt_str.value()->get_type() != Variant::STRING) {
-		ERR_PRINT("Invalid String object");
-		throw std::runtime_error("Invalid String object");
+	const Variant &var_str = get_scoped_variant_or_throw(emu, str_idx, "String::at");
+	if (var_str.get_type() != Variant::STRING) {
+		ERR_PRINT("Invalid String object, type = " + String(GuestVariant::type_name(var_str.get_type())));
+		throw std::runtime_error("Invalid String object, idx = " + std::to_string(str_idx) + " type = " + GuestVariant::type_name(var_str.get_type()));
 	}
-	godot::String str = opt_str.value()->operator String();
+	godot::String str = var_str.operator String();
 
 	if (index < 0 || index >= str.length()) {
 		ERR_PRINT("String index out of bounds");
@@ -1885,12 +1895,12 @@ APICALL(api_string_size) {
 	Sandbox &emu = riscv::emu(machine);
 	SYS_TRACE("string_size", str_idx);
 
-	std::optional<const Variant *> opt_str = emu.get_scoped_variant(str_idx);
-	if (!opt_str.has_value() || opt_str.value()->get_type() != Variant::STRING) {
-		ERR_PRINT("Invalid String object");
-		throw std::runtime_error("Invalid String object");
+	const Variant &var_str = get_scoped_variant_or_throw(emu, str_idx, "String::size");
+	if (var_str.get_type() != Variant::STRING) {
+		ERR_PRINT("Invalid String object, type = " + String(GuestVariant::type_name(var_str.get_type())));
+		throw std::runtime_error("Invalid String object, idx = " + std::to_string(str_idx) + " type = " + GuestVariant::type_name(var_str.get_type()));
 	}
-	godot::String str = opt_str.value()->operator String();
+	godot::String str = var_str.operator String();
 	machine.set_result(str.length());
 }
 
@@ -2217,6 +2227,11 @@ void Sandbox::initialize_syscalls_runtime() {
 
 void Sandbox::initialize_syscalls() {
 	using namespace riscv;
+
+	// Resolve Object::call() once, instead of going through a function-local static
+	// (and its thread-safe initialization guard) on every single object call.
+	riscv::object_call_mtd = internal::gdextension_interface_classdb_get_method_bind(
+			Object::get_class_static()._native_ptr(), StringName("call")._native_ptr(), 3400424181);
 
 	// Add the Godot system calls.
 	machine_t::install_syscall_handlers({

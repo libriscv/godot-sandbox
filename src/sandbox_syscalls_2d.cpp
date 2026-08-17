@@ -142,12 +142,11 @@ APICALL(api_transform2d_ops) {
 		return;
 	}
 
-	std::optional<const Variant *> opt_t = emu.get_scoped_variant(idx);
-	if (!opt_t.has_value() || opt_t.value()->get_type() != Variant::TRANSFORM2D) {
-		ERR_PRINT("Invalid Transform2D object");
-		throw std::runtime_error("Invalid Transform2D object");
+	const Variant *t_variant = &get_scoped_variant_or_throw(emu, idx, "Transform2D::operation");
+	if (t_variant->get_type() != Variant::TRANSFORM2D) {
+		ERR_PRINT("Invalid Transform2D object, type = " + String(GuestVariant::type_name(t_variant->get_type())));
+		throw std::runtime_error("Invalid Transform2D object, idx = " + std::to_string(idx) + " type = " + GuestVariant::type_name(t_variant->get_type()));
 	}
-	const Variant *t_variant = *opt_t;
 	godot::Transform2D t = t_variant->operator Transform2D();
 
 	// Additional integers start at A2 (12), and floats start at FA0 (10).

@@ -322,6 +322,7 @@ void Sandbox::full_reset() {
 
 	this->m_properties.clear();
 	this->m_lookup.clear();
+	this->m_guest_names.clear();
 	this->m_allowed_objects.clear();
 }
 Sandbox::Sandbox() {
@@ -489,6 +490,9 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		return false;
 	}
 	const std::string_view binary_view = std::string_view{ (const char *)buffer->ptr(), static_cast<size_t>(buffer->size()) };
+
+	// Guest addresses are about to change, so names cached against them are no longer valid.
+	this->m_guest_names.clear();
 
 	// Get t0 for the startup time
 	const uint64_t startup_t0 = Time::get_singleton()->get_ticks_usec();
@@ -1094,6 +1098,30 @@ bool Sandbox::has_function(const StringName &p_function) const {
 
 void Sandbox::add_cached_address(const String &name, gaddr_t address) const {
 	m_lookup.insert_or_assign(name.hash(), LookupEntry{ name, address });
+}
+
+const Sandbox::CachedName &Sandbox::cached_guest_name(gaddr_t address, std::string_view name, bool terminated) const {
+	// Guest names sit at byte-aligned addresses in .rodata, so neighbouring literals would
+	// all land in adjacent slots. Mix the address before folding it into an index.
+	const unsigned index = ((address * 2654435761u) >> 8) & (GuestNameCache::SIZE - 1);
+	GuestNameCache::Entry &entry = m_guest_names.entries[index];
+
+	if (entry.address == address && entry.terminated == terminated && entry.text.size() == name.size() && std::memcmp(entry.text.data(), name.data(), name.size()) == 0) {
+		return entry.name;
+	}
+
+	// Miss: build the name once and keep it. The two branches mirror how guests pass names:
+	// a pointer to a NUL-terminated literal, or a view into a longer string.
+	entry.address = address;
+	entry.terminated = terminated;
+	entry.text.assign(name.data(), name.size());
+	if (terminated) {
+		entry.name.sname = StringName(entry.text.c_str(), false);
+	} else {
+		entry.name.sname = StringName(String::utf8(entry.text.data(), entry.text.size()));
+	}
+	entry.name.variant = entry.name.sname;
+	return entry.name;
 }
 
 //-- Scoped objects and variants --//

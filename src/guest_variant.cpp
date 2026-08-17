@@ -50,8 +50,8 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 				return *var;
 			} else {
 				char buffer[128];
-				snprintf(buffer, sizeof(buffer), "GuestVariant::toVariant(): %u (%s) is not known/scoped",
-						type, GuestVariant::type_name(type));
+				snprintf(buffer, sizeof(buffer), "GuestVariant::toVariant(): %u (%s) idx=%d is not known/scoped",
+						type, GuestVariant::type_name(type), int32_t(this->v.i));
 				throw std::runtime_error(buffer);
 			}
 	}
@@ -62,8 +62,8 @@ const Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
 		return v.value();
 
 	char buffer[128];
-	snprintf(buffer, sizeof(buffer), "GuestVariant::toVariantPtr(): %u (%s) is not known/scoped",
-			type, GuestVariant::type_name(type));
+	snprintf(buffer, sizeof(buffer), "GuestVariant::toVariantPtr(): %u (%s) idx=%d is not known/scoped",
+			type, GuestVariant::type_name(type), int32_t(this->v.i));
 	throw std::runtime_error(buffer);
 }
 
@@ -73,7 +73,60 @@ void GuestVariant::set_object(Sandbox &emu, godot::Object *obj) {
 	this->v.i = (uintptr_t)obj;
 }
 
+bool GuestVariant::set_inlined(const Variant &value) noexcept {
+	// Godot only stores these types inline when real_t is a 32-bit float; with a wider
+	// real_t the larger vectors move to the heap and the layout below no longer holds.
+	if constexpr (sizeof(real_t) != sizeof(float)) {
+		return false;
+	} else {
+		const GDNativeVariant *inner = (const GDNativeVariant *)value._native_ptr();
+
+		// Only the bytes that actually belong to the value are copied. Godot leaves the
+		// remainder of the payload holding whatever the Variant used to contain, and that
+		// must never be handed to the guest.
+		unsigned bytes;
+		switch (inner->type) {
+			case Variant::NIL:
+				this->type = Variant::NIL;
+				return true;
+			case Variant::BOOL:
+				bytes = sizeof(bool);
+				break;
+			case Variant::INT:
+			case Variant::FLOAT:
+			case Variant::VECTOR2:
+			case Variant::VECTOR2I:
+				bytes = 8;
+				break;
+			case Variant::VECTOR3:
+			case Variant::VECTOR3I:
+				bytes = 12;
+				break;
+			case Variant::RECT2:
+			case Variant::RECT2I:
+			case Variant::VECTOR4:
+			case Variant::VECTOR4I:
+			case Variant::COLOR:
+			case Variant::PLANE:
+				bytes = 16;
+				break;
+			default:
+				return false; // Not stored inline: the caller has to scope it instead
+		}
+		this->type = Variant::Type(inner->type);
+		std::memset(&this->v, 0, sizeof(this->v));
+		std::memcpy(&this->v, &inner->value, bytes);
+		return true;
+	}
+}
+
 void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) {
+	// Fast path: copy the payload straight out of the Variant. Every godot-cpp accessor
+	// (including get_type()) is an out-of-line call into Godot, which is more than these
+	// types are worth on a path taken by every API call that returns a value.
+	if (LIKELY(this->set_inlined(value)))
+		return;
+
 	this->type = value.get_type();
 
 	switch (this->type) {
@@ -185,27 +238,14 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 }
 
 void GuestVariant::create(Sandbox &emu, Variant &&value) {
+	// Fast path for the types that live inline in the GuestVariant, which covers most
+	// return values. See set_inlined() for why this beats going through godot-cpp.
+	if (LIKELY(this->set_inlined(value)))
+		return;
+
 	this->type = value.get_type();
 
 	switch (this->type) {
-		case Variant::NIL:
-		case Variant::BOOL:
-		case Variant::INT:
-		case Variant::FLOAT:
-
-		case Variant::VECTOR2:
-		case Variant::VECTOR2I:
-		case Variant::RECT2:
-		case Variant::RECT2I:
-		case Variant::VECTOR3:
-		case Variant::VECTOR3I:
-		case Variant::VECTOR4:
-		case Variant::VECTOR4I:
-		case Variant::COLOR:
-		case Variant::PLANE:
-			this->set(emu, value, true); // Trust the value
-			break;
-
 		case Variant::OBJECT: {
 			godot::Object *obj = value.operator godot::Object *();
 			if (!emu.is_allowed_object(obj))

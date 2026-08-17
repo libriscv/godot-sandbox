@@ -153,6 +153,16 @@ struct GuestVariant {
 	void create(Sandbox &emu, Variant &&value);
 
 	/**
+	 * @brief Copies a Variant that is stored inline (scalars, vectors, colors, planes)
+	 * straight out of its payload, bypassing godot-cpp's out-of-line accessors.
+	 *
+	 * @param value The godot Variant.
+	 * @return true If the value was inlined into this GuestVariant. False means the type
+	 * is not stored inline and the caller has to fall back to scoping it.
+	 **/
+	bool set_inlined(const Variant &value) noexcept;
+
+	/**
 	 * @brief Check if the GuestVariant is implemented using an index to a scoped Variant.
 	 *
 	 * @return true If the type of the GuestVariant is implemented using an index to a scoped Variant.

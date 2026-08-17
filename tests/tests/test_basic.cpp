@@ -250,6 +250,33 @@ PUBLIC Variant test_object(Object arg) {
 	return result;
 }
 
+// The host caches method and property names keyed on the guest address they came from,
+// so it has to notice when a guest reuses one buffer for a different name. Both names
+// here are the same length, which leaves the text comparison as the only thing that can
+// tell them apart.
+PUBLIC Variant test_reused_name_buffer(Object obj) {
+	Array results = Array::Create();
+	char buffer[32];
+
+	__builtin_memcpy(buffer, "get_class", 10);
+	results.push_back(obj.callv(std::string_view(buffer, 9), false, nullptr, 0));
+	__builtin_memcpy(buffer, "get_index", 10);
+	results.push_back(obj.callv(std::string_view(buffer, 9), false, nullptr, 0));
+	__builtin_memcpy(buffer, "get_class", 10);
+	results.push_back(obj.callv(std::string_view(buffer, 9), false, nullptr, 0));
+
+	// The same buffer again, now naming two properties instead of two methods.
+	__builtin_memcpy(buffer, "editor_description", 19);
+	obj.set(std::string_view(buffer, 18), "described");
+	__builtin_memcpy(buffer, "name", 5);
+	obj.set(std::string_view(buffer, 4), "renamed");
+	results.push_back(obj.get(std::string_view(buffer, 4)));
+	__builtin_memcpy(buffer, "editor_description", 19);
+	results.push_back(obj.get(std::string_view(buffer, 18)));
+
+	return results;
+}
+
 PUBLIC Variant test_basis(Basis basis) {
 	Basis b = basis;
 	return b;

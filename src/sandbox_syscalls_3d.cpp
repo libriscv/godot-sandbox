@@ -111,12 +111,11 @@ APICALL(api_transform3d_ops) {
 		return;
 	}
 
-	std::optional<const Variant *> opt_t = emu.get_scoped_variant(idx);
-	if (!opt_t.has_value() || (*opt_t)->get_type() != Variant::TRANSFORM3D) {
-		ERR_PRINT("Invalid Transform3D object");
-		throw std::runtime_error("Invalid Transform3D object: " + std::to_string(int32_t(idx)));
+	const Variant *t_variant = &get_scoped_variant_or_throw(emu, idx, "Transform3D::operation");
+	if (t_variant->get_type() != Variant::TRANSFORM3D) {
+		ERR_PRINT("Invalid Transform3D object, type = " + String(GuestVariant::type_name(t_variant->get_type())));
+		throw std::runtime_error("Invalid Transform3D object, idx = " + std::to_string(int32_t(idx)) + " type = " + GuestVariant::type_name(t_variant->get_type()));
 	}
-	const Variant *t_variant = *opt_t;
 	godot::Transform3D t = t_variant->operator Transform3D();
 
 	// Additional integers start at A2 (12), and floats start at FA0 (10).
@@ -302,12 +301,11 @@ APICALL(api_basis_ops) {
 		return;
 	}
 
-	std::optional<const Variant *> opt_b = emu.get_scoped_variant(idx);
-	if (!opt_b.has_value() || opt_b.value()->get_type() != Variant::BASIS) {
-		ERR_PRINT("Invalid Basis object");
-		throw std::runtime_error("Invalid Basis object");
+	const Variant *b_variant = &get_scoped_variant_or_throw(emu, idx, "Basis::operation");
+	if (b_variant->get_type() != Variant::BASIS) {
+		ERR_PRINT("Invalid Basis object, type = " + String(GuestVariant::type_name(b_variant->get_type())));
+		throw std::runtime_error("Invalid Basis object, idx = " + std::to_string(int32_t(idx)) + " type = " + GuestVariant::type_name(b_variant->get_type()));
 	}
-	const Variant *b_variant = *opt_b;
 	godot::Basis b = b_variant->operator Basis();
 
 	// Additional integers start at A2 (12), and floats start at FA0 (10).
@@ -473,12 +471,11 @@ APICALL(api_quat_ops) {
 	}
 
 	// Outside of CREATE (constructor) operations, idx is the scoped Variant index for the Quaternion.
-	std::optional<const Variant *> opt_q = emu.get_scoped_variant(idx);
-	if (!opt_q.has_value() || opt_q.value()->get_type() != Variant::QUATERNION) {
-		ERR_PRINT("Invalid Quaternion object");
-		throw std::runtime_error("Invalid Quaternion object");
+	const Variant *q_variant = &get_scoped_variant_or_throw(emu, idx, "Quaternion::operation");
+	if (q_variant->get_type() != Variant::QUATERNION) {
+		ERR_PRINT("Invalid Quaternion object, type = " + String(GuestVariant::type_name(q_variant->get_type())));
+		throw std::runtime_error("Invalid Quaternion object, idx = " + std::to_string(int32_t(idx)) + " type = " + GuestVariant::type_name(q_variant->get_type()));
 	}
-	const Variant *q_variant = *opt_q;
 	godot::Quaternion q = q_variant->operator Quaternion();
 
 	// Additional integers start at A2 (12), and floats start at FA0 (10).

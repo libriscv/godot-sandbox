@@ -107,30 +107,12 @@ bool Sandbox::is_allowed_resource(const String &path) const {
 	return true;
 }
 
-bool Sandbox::is_allowed_method(godot::Object *obj, const Variant &method) const {
-	// If the callable is valid, call it to allow the user to decide
-	if (m_just_in_time_allowed_methods.is_valid()) {
-		return m_just_in_time_allowed_methods.call(this, obj, method);
-	}
-	// If the callable is not valid, allow all methods
-	return true;
-}
-
 void Sandbox::set_method_allowed_callback(const Callable &callback) {
 	if (is_in_vmcall()) {
 		ERR_PRINT("Cannot set method allowed callback during a VM call.");
 		return;
 	}
 	m_just_in_time_allowed_methods = callback;
-}
-
-bool Sandbox::is_allowed_property(godot::Object *obj, const Variant &property, bool is_set) const {
-	// If the callable is valid, call it to allow the user to decide
-	if (m_just_in_time_allowed_properties.is_valid()) {
-		return m_just_in_time_allowed_properties.call(this, obj, property, is_set);
-	}
-	// If the callable is not valid, allow all properties
-	return true;
 }
 
 void Sandbox::set_property_allowed_callback(const Callable &callback) {

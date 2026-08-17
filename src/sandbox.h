@@ -62,6 +62,46 @@ public:
 		String name;
 		gaddr_t address;
 	};
+	/// @brief A restriction callback, paired with a cached copy of its validity.
+	/// @note Callable::is_valid() crosses into Godot and looks the target up in the object
+	/// database, which is far more work than a check guarding every single API call can
+	/// afford. These callables are only ever replaced through their setters, so the flag
+	/// is simply refreshed there.
+	struct RestrictionCallback {
+		Callable callable;
+		bool valid = false;
+
+		RestrictionCallback &operator=(const Callable &p_callable) {
+			callable = p_callable;
+			valid = callable.is_valid();
+			return *this;
+		}
+		bool is_valid() const noexcept { return valid; }
+		template <typename... Args>
+		Variant call(Args &&...args) const { return callable.call(std::forward<Args>(args)...); }
+	};
+
+	/// @brief A method or property name from guest memory, in both forms the API needs.
+	struct CachedName {
+		StringName sname;
+		Variant variant; // Holds sname
+	};
+	// Direct-mapped cache of guest method and property names, see cached_guest_name().
+	struct GuestNameCache {
+		static constexpr unsigned SIZE = 32; // Must be a power of two
+		struct Entry {
+			gaddr_t address = 0;
+			bool terminated = false;
+			std::string text;
+			CachedName name;
+		};
+		Entry entries[SIZE];
+
+		void clear() {
+			for (Entry &entry : entries)
+				entry = Entry{};
+		}
+	};
 	struct SharedMemoryRange {
 		gaddr_t start;
 		gaddr_t size;
@@ -205,6 +245,22 @@ public:
 	/// @param address The address of the function or symbol.
 	void add_cached_address(const String &name, gaddr_t address) const;
 
+	// -= Guest Name Cache =-
+
+	/// @brief Turn a method or property name from guest memory into a Godot name.
+	/// @param address The guest address the name was read from, used as the cache key.
+	/// @param name The name as it currently reads in guest memory, without any terminator.
+	/// @param terminated True if the byte following the name in guest memory is a NUL.
+	/// @return The name, owned by the cache and valid only until the next lookup that
+	/// lands in the same cache slot. Callers that can re-enter the sandbox in between
+	/// (an allowed-method callback, a call that reaches a script) must take a copy.
+	/// @note Building a StringName means hashing the text and taking a global lock in
+	/// Godot's string-name table, which is far too expensive to repeat on every single
+	/// object call. Guests overwhelmingly pass a pointer to a string literal, so the
+	/// address is a stable key, and the text is stored alongside it and re-compared to
+	/// stay correct for guests that build names at run-time in a reused buffer.
+	const CachedName &cached_guest_name(gaddr_t address, std::string_view name, bool terminated) const;
+
 	// -= Call State Management =-
 
 	/// @brief Get the current call state.
@@ -326,7 +382,14 @@ public:
 	/// @brief Check if accessing a method on an object is allowed in the sandbox.
 	/// @param method The name of the method to check.
 	/// @return True if the method is allowed, false otherwise.
-	bool is_allowed_method(godot::Object *obj, const Variant &method) const;
+	/// @note Inline, and kept down to a single load in the common case: this guards
+	/// every object call the guest makes.
+	bool is_allowed_method(godot::Object *obj, const Variant &method) const {
+		// If the callable is not set, all methods are allowed
+		if (LIKELY(!m_just_in_time_allowed_methods.is_valid()))
+			return true;
+		return m_just_in_time_allowed_methods.call(this, obj, method);
+	}
 
 	/// @brief Set a callback to check if a method is allowed in the sandbox.
 	/// @param callback The callable to check if a method is allowed.
@@ -336,7 +399,13 @@ public:
 	/// @param obj The object to check.
 	/// @param property The name of the property to check.
 	/// @return True if the property is allowed, false otherwise.
-	bool is_allowed_property(godot::Object *obj, const Variant &property, bool is_set) const;
+	/// @note Inline for the same reason as is_allowed_method().
+	bool is_allowed_property(godot::Object *obj, const Variant &property, bool is_set) const {
+		// If the callable is not set, all properties are allowed
+		if (LIKELY(!m_just_in_time_allowed_properties.is_valid()))
+			return true;
+		return m_just_in_time_allowed_properties.call(this, obj, property, is_set);
+	}
 
 	/// @brief Set a callback to check if a property is allowed in the sandbox.
 	/// @param callback The callable to check if a property is allowed.
@@ -661,6 +730,7 @@ private:
 	// Properties
 	mutable std::vector<SandboxProperty> m_properties;
 	mutable std::unordered_map<int64_t, LookupEntry> m_lookup;
+	mutable GuestNameCache m_guest_names;
 
 	// Shared memory ranges
 	std::vector<SharedMemoryRange> m_shared_memory_ranges;
@@ -670,19 +740,19 @@ private:
 	std::unordered_set<godot::Object *> m_allowed_objects;
 	// If an object is not in the allowed list, and a callable is set for the
 	// just-in-time allowed objects, it will be called to check if the object is allowed.
-	Callable m_just_in_time_allowed_objects;
+	RestrictionCallback m_just_in_time_allowed_objects;
 	// If a class is not in the allowed list, and a callable is set for the
 	// just-in-time allowed classes, it will be called to check if the class is allowed.
-	Callable m_just_in_time_allowed_classes;
+	RestrictionCallback m_just_in_time_allowed_classes;
 	// If a callable is set for the just-in-time allowed resources,
 	// it will be called to check if access to a resource is allowed.
-	Callable m_just_in_time_allowed_resources;
+	RestrictionCallback m_just_in_time_allowed_resources;
 	// If a callable is set for allowed methods, it will be called when an object method
 	// call is attemped, to check if the method is allowed.
-	Callable m_just_in_time_allowed_methods;
+	RestrictionCallback m_just_in_time_allowed_methods;
 	// If a callable is set for allowed properties, it will be called when an object property
 	// access is attemped, to check if the property is allowed.
-	Callable m_just_in_time_allowed_properties;
+	RestrictionCallback m_just_in_time_allowed_properties;
 
 	// Redirections
 	Callable m_redirect_stdout;

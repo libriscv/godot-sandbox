@@ -636,3 +636,23 @@ func test_object_properties():
 	assert_eq(s.vmcall("test_property_proxy"), "TestOK", "PropertyProxy works")
 
 	s.queue_free()
+
+func test_reused_name_buffer():
+	# The host caches method and property names by the guest address they came from.
+	# A guest that builds names at run-time reuses one buffer, so the cache has to
+	# re-check the text rather than trusting the address.
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	var n = Node.new()
+	n.name = "original"
+	var r : Array = s.vmcall("test_reused_name_buffer", n)
+
+	assert_eq(r[0], "Node", "get_class() through a run-time name buffer")
+	assert_eq(r[1], -1, "get_index() must not reuse get_class()'s cached name")
+	assert_eq(r[2], "Node", "get_class() again, after the buffer changed and changed back")
+	assert_eq(r[3], "renamed", "name property set through a run-time name buffer")
+	assert_eq(r[4], "described", "editor_description must not reuse the name property")
+
+	n.queue_free()
+	s.queue_free()
