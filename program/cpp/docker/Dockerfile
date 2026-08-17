@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 #
 # To build the image:
 # docker build -t riscv64-linux-gnu .
@@ -8,7 +8,7 @@ FROM ubuntu:24.04
 #
 # Install dependencies
 RUN apt-get update && apt-get install -y \
-	g++-14-riscv64-linux-gnu \
+	g++-16-riscv64-linux-gnu \
 	mold ccache \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& apt-get clean

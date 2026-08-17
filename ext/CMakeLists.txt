@@ -7,6 +7,7 @@ add_subdirectory(godot-cpp)
 option(RISCV_32I "" OFF)
 option(RISCV_BINARY_TRANSLATION "" ON)
 option(RISCV_MEMORY_TRAPS "" OFF)
+option(RISCV_EXT_V "" ON)
 add_subdirectory(libriscv/lib libriscv)
 target_compile_definitions(riscv PUBLIC
 	RISCV_SYSCALLS_MAX=600

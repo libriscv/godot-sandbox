@@ -14,7 +14,7 @@ usage() {
 
 locally=false
 verbose=false
-current_version=10
+current_version=11
 CPPFLAGS="-O2 -std=gnu++23 -DVERSION=$current_version -fno-stack-protector -fno-threadsafe-statics"
 ADDR2LINE="riscv64-linux-gnu-addr2line"
 
@@ -56,8 +56,8 @@ for file in $@ $API/*.cpp; do
 	if [ "$locally" = true ]; then
 		riscv64-unknown-elf-g++ $CPPFLAGS -I$API -c $file -o $file.o &
 	else
-		export CXX="riscv64-linux-gnu-g++-14"
-		ccache $CXX $CPPFLAGS -march=rv64gc_zba_zbb_zbs_zbc -mabi=lp64d -I$API -I. -c $file -o $file.o &
+		export CXX="riscv64-linux-gnu-g++-16"
+		ccache $CXX $CPPFLAGS -march=rv64gcv_zba_zbb_zbs_zbc -mabi=lp64d -I$API -I. -c $file -o $file.o &
 	fi
 done
 
@@ -68,7 +68,7 @@ wait
 if [ "$locally" = true ]; then
 	riscv64-unknown-elf-g++ -static $CPPFLAGS $LINKEROPS $@.o $API/*.cpp.o -o $output
 else
-	export CXX="riscv64-linux-gnu-g++-14"
+	export CXX="riscv64-linux-gnu-g++-16"
 	LINKEROPS="$LINKEROPS -fuse-ld=mold"
-	ccache $CXX -static $CPPFLAGS -march=rv64gc_zba_zbb_zbs_zbc -mabi=lp64d $LINKEROPS $@.o $API/*.cpp.o -o $output
+	ccache $CXX -static $CPPFLAGS -march=rv64gcv_zba_zbb_zbs_zbc -mabi=lp64d $LINKEROPS $@.o $API/*.cpp.o -o $output
 fi

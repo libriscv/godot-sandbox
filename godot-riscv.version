@@ -1,0 +1,30 @@
+/* Linker version script for the GDExtension shared library.
+ *
+ * godot-cpp links libstdc++ statically (-static-libstdc++). Without this
+ * script every symbol of that static libstdc++ (and of the bundled libtcc)
+ * ends up in .dynsym and is visible process-wide.
+ *
+ * That is actively harmful: std::locale facet ids (std::num_put<char>::id,
+ * std::num_get<char>::id, ...) are emitted as STB_GNU_UNIQUE, which the
+ * dynamic linker deliberately merges into a single process-wide instance.
+ * As soon as anything else in the process pulls in the system
+ * libstdc++.so.6 - on Linux the GPU/GL drivers do exactly that - the two
+ * copies share those ids while keeping separate facet tables. Our classic
+ * locale then gets indexed with the *other* copy's ids and
+ * use_facet<num_put<char>>() returns some unrelated facet, so the first
+ * `stream << some_integer` calls through a mismatched vtable and crashes.
+ *
+ * Keeping everything but the entry points local keeps the two libstdc++
+ * copies fully independent.
+ */
+{
+	global:
+		/* GDExtension entry point (see *.gdextension: entry_symbol). */
+		riscv_library_init;
+		/* Called by binary translations that were compiled without
+		 * -DCALLBACK_INIT, which resolve this by name at dlopen() time. */
+		libriscv_register_translation4;
+		libriscv_register_translation8;
+	local:
+		*;
+};

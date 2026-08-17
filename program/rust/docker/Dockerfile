@@ -1,9 +1,9 @@
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 RUN apt-get -qq update && \
 	apt-get install -y -q \
 	curl \
-	g++-14-riscv64-linux-gnu \
+	g++-16-riscv64-linux-gnu \
 	git cmake mold
 
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y

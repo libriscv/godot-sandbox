@@ -70,6 +70,18 @@ add_subdirectory(ext)
 add_library(godot-riscv SHARED ${SOURCES})
 target_link_libraries(godot-riscv PUBLIC riscv godot-cpp)
 
+# Don't re-export the statically linked libstdc++ (godot-cpp passes
+# -static-libstdc++). Its std::locale facet ids are STB_GNU_UNIQUE and get
+# merged process-wide with the system libstdc++.so.6 that the GPU drivers
+# drag in, which leaves our facet table indexed by the other copy's ids.
+# See godot-riscv.version for the full story.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT MINGW AND NOT MINGW_TOOLCHAIN)
+	target_link_options(godot-riscv PRIVATE
+		"-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/godot-riscv.version")
+	set_target_properties(godot-riscv PROPERTIES
+		LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/godot-riscv.version")
+endif()
+
 if (STATIC_BUILD)
 	target_link_libraries(godot-riscv PUBLIC -static)
 endif()
