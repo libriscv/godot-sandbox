@@ -11,12 +11,13 @@ jobs:
         include:
           - {arch: arm64, precision: single}
           - {arch: arm64, precision: double}
-          - {arch: arm32, precision: single}
-          - {arch: arm32, precision: double}
           - {arch: x86_64, precision: single}
           - {arch: x86_64, precision: double}
-          - {arch: x86_32, precision: single}
-          - {arch: x86_32, precision: double}
+          # 32-bit targets disabled: rvv_instr.cpp requires __uint128_t
+          #- {arch: arm32, precision: single}
+          #- {arch: arm32, precision: double}
+          #- {arch: x86_32, precision: single}
+          #- {arch: x86_32, precision: double}
     runs-on: ubuntu-22.04
     env:
       ANDROID_NDK_VERSION: 28.1.13356709
