@@ -17,9 +17,16 @@
 /* #undef RISCV_MULTIPROCESS */
 #define RISCV_BINARY_TRANSLATION
 #define RISCV_FLAT_RW_ARENA
+#define RISCV_VIRTUAL_PAGING
 /* #undef RISCV_ENCOMPASSING_ARENA */
 #define RISCV_THREADED
 /* #undef RISCV_TAILCALL_DISPATCH */
 /* #undef RISCV_LIBTCC */
+
+/*
+ * Version information.
+ */
+#define RISCV_VERSION_MAJOR 1
+#define RISCV_VERSION_MINOR 11
 
 #endif /* LIBRISCV_SETTINGS_H */
