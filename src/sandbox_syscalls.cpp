@@ -101,6 +101,14 @@ private:
 	unsigned m_count = 0;
 };
 
+// The counterpart to object_callp() for the built-in Variant types. Godot
+// placement-constructs the return value here too, so it goes straight into
+// uninitialized storage instead of overwriting a freshly made nil.
+static inline void variant_callp(Variant *self, const StringName &method, const Variant **args, int argc, CallResult &result, GDExtensionCallError &error) {
+	internal::gdextension_interface_variant_call(self->_native_ptr(), method._native_ptr(), reinterpret_cast<GDExtensionConstVariantPtr *>(args), argc, &result.get(), &error);
+	result.mark_constructed();
+}
+
 static inline void object_call(Sandbox &emu, godot::Object *obj, const Variant &method, const GuestVariant *args, int argc, CallResult &result) {
 	SYS_TRACE("object_call", method, argc);
 	VariantScratch scratch;
@@ -142,32 +150,38 @@ APICALL(api_vcall) {
 	Sandbox &emu = riscv::emu(machine);
 	SYS_TRACE("vcall", method, mlen, args_ptr, args_size, vret_addr);
 
-	if (args_size > 8) {
+	if (UNLIKELY(args_size > 8)) {
 		ERR_PRINT("Variant::call(): Too many arguments");
 		throw std::runtime_error("Variant::call(): Too many arguments");
 	}
 
-	const GuestVariant *args = machine.memory.memarray<GuestVariant>(args_ptr, args_size);
+	// Zero-argument calls are the common case, and have nothing to translate.
+	const GuestVariant *args = args_size ? machine.memory.memarray<GuestVariant>(args_ptr, args_size) : nullptr;
 	const std::string_view method_sv = memview_with_terminator(machine, method, mlen).substr(0, size_t(mlen) + 1); // Include null terminator.
-	// Reuse the StringName built for this call site. Held by value, as the call below can
-	// re-enter the sandbox and evict the cache entry.
-	const StringName method_sn = emu.cached_guest_name(method, method_sv.substr(0, mlen), method_sv.back() == '\0').sname;
+	// Reuse the name built for this call site. Only the form the branch below actually
+	// needs is copied out: the two forms are not interchangeable without Godot building
+	// one from the other, which is the cost the cache exists to avoid.
+	const Sandbox::CachedName &cached_method = emu.cached_guest_name(method, method_sv.substr(0, mlen), method_sv.back() == '\0');
 
-	Variant ret;
+	// Both call paths have Godot construct the return value directly in this storage.
+	CallResult result;
 
 	if (vp->type == Variant::OBJECT) {
 		godot::Object *obj = get_object_from_address(emu, vp->v.i);
+		// Held by value, as the call below can re-enter the sandbox and evict the cache entry
+		// while Godot is still reading the name.
+		const Variant method_v = cached_method.variant;
 
 		// Check if the method is allowed.
-		if (!emu.is_allowed_method(obj, method_sn)) {
-			ERR_PRINT("Variant::call(): Method not allowed: " + method_sn);
+		if (UNLIKELY(!emu.is_allowed_method(obj, method_v))) {
+			ERR_PRINT("Variant::call(): Method not allowed: " + method_v.operator String());
 			throw std::runtime_error("Variant::call(): Method not allowed: " + std::string(method_sv.substr(0, mlen)));
 		}
 
-		CallResult result;
-		object_call(emu, obj, method_sn, args, args_size, result);
-		ret = std::move(result.get());
+		object_call(emu, obj, method_v, args, args_size, result);
 	} else {
+		const StringName method_sn = cached_method.sname; // Held by value, see above.
+
 		VariantScratch scratch;
 		const Variant *argptrs[8];
 		for (size_t i = 0; i < args_size; i++) {
@@ -181,18 +195,16 @@ APICALL(api_vcall) {
 		GDExtensionCallError error;
 		if (vp->is_scoped_variant()) {
 			Variant *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
-			//internal::gdextension_interface_variant_call(vcall, &method_sn, reinterpret_cast<GDExtensionConstVariantPtr *>(&argptrs[0]), args_size, &ret, &error);
-			vcall->callp(method_sn, argptrs, args_size, ret, error);
+			variant_callp(vcall, method_sn, argptrs, args_size, result, error);
 		} else {
 			Variant vcall = vp->toVariant(emu);
-			//internal::gdextension_interface_variant_call(&vcall, &method_sn, reinterpret_cast<GDExtensionConstVariantPtr *>(&argptrs[0]), args_size, &ret, &error);
-			vcall.callp(method_sn, argptrs, args_size, ret, error);
+			variant_callp(&vcall, method_sn, argptrs, args_size, result, error);
 		}
 	}
 	// Create a new Variant with the result, if any.
 	if (vret_addr != 0) {
 		GuestVariant *vret = machine.memory.memarray<GuestVariant>(vret_addr, 1);
-		vret->create(emu, std::move(ret));
+		vret->create(emu, std::move(result.get()));
 	}
 }
 

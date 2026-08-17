@@ -34,6 +34,8 @@ func test_bench_obj_callp():
 		s.vmcallv("bench_obj_call", node, 100000)
 		s.vmcallv("bench_obj_voidcall", node, 100000)
 		s.vmcallv("bench_obj_call_arg", node, 100000)
+		s.vmcallv("bench_vcall_obj", node, 100000)
+		s.vmcallv("bench_vcall_builtin", 100000)
 
 	print("--- obj_callp benchmark, N=%d ---" % N)
 
@@ -42,6 +44,8 @@ func test_bench_obj_callp():
 	_bench("sandbox obj.call()", func(n): s.vmcallv("bench_obj_call", node, n))
 	_bench("sandbox obj.voidcall()", func(n): s.vmcallv("bench_obj_voidcall", node, n))
 	_bench("sandbox obj.call(1 arg)", func(n): s.vmcallv("bench_obj_call_arg", node, n))
+	_bench("sandbox vcall obj", func(n): s.vmcallv("bench_vcall_obj", node, n))
+	_bench("sandbox vcall builtin", func(n): s.vmcallv("bench_vcall_builtin", n))
 	_bench("gdscript direct call", func(n):
 		for i in range(n):
 			node.get_child_count())

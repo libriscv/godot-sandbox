@@ -31,6 +31,29 @@ PUBLIC Variant bench_obj_call_arg(Variant vnode, Variant iterations) {
 	return Nil;
 }
 
+// Benchmark: hammer ECALL_VCALL through a Variant that holds an Object, which is the
+// path that ends up in Object::call() just like obj.call() above.
+PUBLIC Variant bench_vcall_obj(Variant vnode, Variant iterations) {
+	const long n = iterations;
+	Variant last;
+	for (long i = 0; i < n; i++) {
+		last = vnode("get_child_count");
+	}
+	return last;
+}
+
+// Benchmark: ECALL_VCALL on a built-in Variant type, which takes the other branch and
+// dispatches through Variant::callp() instead.
+PUBLIC Variant bench_vcall_builtin(Variant iterations) {
+	const long n = iterations;
+	Variant array = Variant::new_array();
+	Variant last;
+	for (long i = 0; i < n; i++) {
+		last = array("size");
+	}
+	return last;
+}
+
 // Baseline: the floor for any system call, doing no Godot work at all.
 PUBLIC Variant bench_minimal_syscall(Variant iterations) {
 	const long n = iterations;
