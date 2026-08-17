@@ -97,7 +97,7 @@ APICALL(api_transform3d_ops) {
 		unsigned b_idx = machine.cpu.reg(14); // A4 (Basis index)
 
 		// Get the basis from the given index.
-		const Basis basis = emu.get_scoped_variant(b_idx).value()->operator Basis();
+		const Basis basis = get_scoped_variant_or_throw(emu, b_idx, "Transform3D::create").operator Basis();
 
 		// Create a new scoped Variant with the transform.
 		*vidx = emu.create_scoped_variant(Variant(Transform3D(basis, *v3)));
@@ -124,7 +124,7 @@ APICALL(api_transform3d_ops) {
 		case Transform3D_Op::ASSIGN: {
 			unsigned *new_idx = machine.memory.memarray<unsigned>(machine.cpu.reg(12), 1); // A2
 			const unsigned t2_idx = machine.cpu.reg(13); // A3
-			const Variant *t2 = emu.get_scoped_variant(t2_idx).value();
+			const Variant *t2 = &get_scoped_variant_or_throw(emu, t2_idx, "Transform3D::assign");
 
 			// Smart-assign the given transform to the current Variant.
 			*new_idx = emu.try_reuse_assign_variant(idx, *t_variant, *new_idx, *t2);
@@ -142,7 +142,7 @@ APICALL(api_transform3d_ops) {
 		case Transform3D_Op::SET_BASIS: {
 			unsigned *new_idx = machine.memory.memarray<unsigned>(machine.cpu.reg(12), 1); // A2
 			const unsigned b_idx = machine.cpu.reg(13); // A3
-			const Variant *vbasis = emu.get_scoped_variant(b_idx).value();
+			const Variant *vbasis = &get_scoped_variant_or_throw(emu, b_idx, "Transform3D::set_basis");
 
 			// Set the basis of the current transform.
 			t.basis = vbasis->operator Basis();
@@ -265,7 +265,7 @@ APICALL(api_transform3d_ops) {
 			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
 
 			const unsigned t2_idx = machine.cpu.reg(13); // A3
-			const Transform3D to = emu.get_scoped_variant(t2_idx).value()->operator Transform3D();
+			const Transform3D to = get_scoped_variant_or_throw(emu, t2_idx, "Transform3D::interpolate_with").operator Transform3D();
 			const double weight = machine.cpu.registers().getfl(10).get<double>(); // fa0
 
 			t = t.interpolate_with(to, weight);
@@ -315,7 +315,7 @@ APICALL(api_basis_ops) {
 		case Basis_Op::ASSIGN: {
 			unsigned *new_idx = machine.memory.memarray<unsigned>(machine.cpu.reg(12), 1); // A2
 			const unsigned b_idx = machine.cpu.reg(13); // A3
-			const Variant *new_value = emu.get_scoped_variant(b_idx).value();
+			const Variant *new_value = &get_scoped_variant_or_throw(emu, b_idx, "Basis::assign");
 
 			// Smart-assign the given basis to the current Variant.
 			*new_idx = emu.try_reuse_assign_variant(idx, *b_variant, *new_idx, *new_value);
@@ -415,7 +415,7 @@ APICALL(api_basis_ops) {
 
 			// Get the second basis (from scoped Variant index) to interpolate with.
 			const unsigned b_idx = machine.cpu.reg(13); // A3
-			const Basis b2 = emu.get_scoped_variant(b_idx).value()->operator Basis();
+			const Basis b2 = get_scoped_variant_or_throw(emu, b_idx, "Basis::lerp").operator Basis();
 			const double weight = machine.cpu.registers().getfl(10).get<double>(); // fa0
 
 			// Linearly interpolate between the two bases, return a new basis.
@@ -428,7 +428,7 @@ APICALL(api_basis_ops) {
 
 			// Get the second basis (from scoped Variant index) to interpolate with.
 			const unsigned b_idx = machine.cpu.reg(13); // A3
-			const Basis b2 = emu.get_scoped_variant(b_idx).value()->operator Basis();
+			const Basis b2 = get_scoped_variant_or_throw(emu, b_idx, "Basis::slerp").operator Basis();
 			const double weight = machine.cpu.registers().getfl(10).get<double>(); // fa0
 
 			// Spherically interpolate between the two bases, return a new basis.
@@ -445,8 +445,6 @@ APICALL(api_quat_ops) {
 	auto [idx, op] = machine.sysargs<unsigned, Quaternion_Op>();
 	SYS_TRACE("quat_ops", idx, int(op));
 	Sandbox &emu = riscv::emu(machine);
-	SYS_TRACE("quat_ops", idx, int(op));
-	printf("Quaternion operation %d %d\n", idx, int(op));
 
 	if (op == Quaternion_Op::CREATE) {
 		switch (idx) {
@@ -488,8 +486,7 @@ APICALL(api_quat_ops) {
 		case Quaternion_Op::ASSIGN: {
 			unsigned *new_idx = machine.memory.memarray<unsigned>(machine.cpu.reg(12), 1); // A2
 			const unsigned q_idx = machine.cpu.reg(13); // A3
-			const Variant *new_value = emu.get_scoped_variant(q_idx).value();
-			printf("Quaternion assign %d %d\n", idx, q_idx);
+			const Variant *new_value = &get_scoped_variant_or_throw(emu, q_idx, "Quaternion::assign");
 
 			// Smart-assign the given quaternion to the current Variant.
 			*new_idx = emu.try_reuse_assign_variant(idx, *q_variant, *new_idx, *new_value);
@@ -497,7 +494,7 @@ APICALL(api_quat_ops) {
 		}
 		case Quaternion_Op::DOT: {
 			const unsigned q2_idx = machine.cpu.reg(12); // A2
-			const Quaternion q2 = emu.get_scoped_variant(q2_idx).value()->operator Quaternion();
+			const Quaternion q2 = get_scoped_variant_or_throw(emu, q2_idx, "Quaternion::dot").operator Quaternion();
 			double *res = machine.memory.memarray<double>(machine.cpu.reg(13), 1); // A3
 
 			// Return the dot product of the two quaternions.
@@ -574,7 +571,7 @@ APICALL(api_quat_ops) {
 			const gaddr_t vaddr = machine.cpu.reg(12); // A2
 			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
 			const unsigned q2_idx = machine.cpu.reg(13); // A3
-			const Quaternion q2 = emu.get_scoped_variant(q2_idx).value()->operator Quaternion();
+			const Quaternion q2 = get_scoped_variant_or_throw(emu, q2_idx, "Quaternion::mul").operator Quaternion();
 
 			// Multiply the two quaternions, return a new quaternion.
 			*vidx = emu.try_reuse_assign_variant(idx, *q_variant, *vidx, Variant(q * q2));
@@ -586,7 +583,7 @@ APICALL(api_quat_ops) {
 
 			// Get the second quaternion (from scoped Variant index) to interpolate with.
 			const unsigned q2_idx = machine.cpu.reg(13); // A3
-			const Quaternion q2 = emu.get_scoped_variant(q2_idx).value()->operator Quaternion();
+			const Quaternion q2 = get_scoped_variant_or_throw(emu, q2_idx, "Quaternion::slerp").operator Quaternion();
 			const double weight = machine.cpu.registers().getfl(10).get<double>(); // fa0
 
 			// Spherically interpolate between the two quaternions, return a new quaternion.
@@ -599,7 +596,7 @@ APICALL(api_quat_ops) {
 
 			// Get the second quaternion (from scoped Variant index) to interpolate with.
 			const unsigned q2_idx = machine.cpu.reg(13); // A3
-			const Quaternion q2 = emu.get_scoped_variant(q2_idx).value()->operator Quaternion();
+			const Quaternion q2 = get_scoped_variant_or_throw(emu, q2_idx, "Quaternion::slerpni").operator Quaternion();
 			const double weight = machine.cpu.registers().getfl(10).get<double>(); // fa0
 
 			// Spherically interpolate between the two quaternions, return a new quaternion.

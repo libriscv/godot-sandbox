@@ -229,7 +229,7 @@ APICALL(api_transform2d_ops) {
 		case Transform2D_Op::INTERPOLATE_WITH: {
 			unsigned *vres = machine.memory.memarray<unsigned>(machine.cpu.reg(12), 1); // A2
 			const unsigned t2_idx = machine.cpu.reg(13); // A3
-			const Transform2D to = emu.get_scoped_variant(t2_idx).value()->operator Transform2D();
+			const Transform2D to = get_scoped_variant_or_throw(emu, t2_idx, "Transform2D::interpolate_with").operator Transform2D();
 			const double weight = machine.cpu.registers().getfl(10).get<double>(); // fa0
 
 			*vres = emu.try_reuse_assign_variant(idx, *t_variant, *vres, Variant(t.interpolate_with(to, weight)));

@@ -68,4 +68,26 @@ static inline void sys_trace(const String &name, Result result, Args &&...args) 
 
 	using CppString = riscv::GuestStdString<RISCV_ARCH>;
 
+	/// @brief Fetch a scoped Variant by guest-provided index.
+	/// @throw std::runtime_error If the index does not refer to a scoped Variant.
+	/// @note Prefer this over get_scoped_variant(idx).value(), which throws a mysterious bad_optional_access.
+	static inline const Variant &get_scoped_variant_or_throw(const Sandbox &emu, int32_t idx, const char *what) {
+		std::optional<const Variant *> opt = emu.get_scoped_variant(idx);
+		if (UNLIKELY(!opt.has_value())) {
+			ERR_PRINT(String("Invalid scoped Variant index for ") + what + ": " + itos(idx));
+			throw std::runtime_error(std::string("Invalid scoped Variant index for ") + what + ": " + std::to_string(idx));
+		}
+		return *opt.value();
+	}
+
+	/// @brief View a guest string of len bytes, plus the byte that follows it, so that
+	/// the caller can check whether the string is already null-terminated.
+	/// @note The length is widened to size_t before the increment, as guests pass 32-bit
+	/// lengths: len+1 in 32-bit arithmetic wraps to zero for UINT32_MAX, and memview()
+	/// returns an empty view with a null data pointer for zero-length views. The returned
+	/// view is always at least 1 byte, so back() and operator[](len) are safe.
+	static inline std::string_view memview_with_terminator(machine_t &machine, gaddr_t addr, size_t len) {
+		return machine.memory.memview(addr, len + 1);
+	}
+
 } // namespace riscv

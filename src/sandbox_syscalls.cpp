@@ -109,7 +109,7 @@ APICALL(api_vcall) {
 
 	const GuestVariant *args = machine.memory.memarray<GuestVariant>(args_ptr, args_size);
 	StringName method_sn;
-	std::string_view method_sv = machine.memory.memview(method, mlen + 1); // Include null terminator.
+	std::string_view method_sv = memview_with_terminator(machine, method, mlen); // Include null terminator.
 	if (method_sv.back() == '\0') {
 		method_sn = StringName(method_sv.data());
 	} else {
@@ -272,6 +272,9 @@ APICALL(api_vcreate) {
 			} else if (size > 1024) {
 				ERR_PRINT("vcreate: Dictionary size too large: " + itos(size));
 				throw std::runtime_error("vcreate: Dictionary size too large: " + std::to_string(size));
+			} else if (size % 2 != 0) {
+				ERR_PRINT("vcreate: Dictionary size is not a multiple of 2: " + itos(size));
+				throw std::runtime_error("vcreate: Dictionary size is not a multiple of 2: " + std::to_string(size));
 			}
 			const GuestVariant *gdata_ptr = machine.memory.memarray<const GuestVariant>(gdata, size);
 			for (unsigned i = 0; i < size; i += 2) {
@@ -659,6 +662,12 @@ APICALL(api_vstore) {
 	auto &emu = riscv::emu(machine);
 	PENALIZE(10'000);
 	SYS_TRACE("vstore", vidx, type, gdata, gsize);
+	// PACKED_STRING_ARRAY encodes "use the libc++ std::string layout" in the high bit of
+	// the size, so it has to be stripped before the size is validated below.
+	const bool libcpp_string_layout = type == Variant::PACKED_STRING_ARRAY && (gsize & 0x80000000);
+	if (libcpp_string_layout) {
+		gsize &= 0x7FFFFFFF;
+	}
 	if (gsize > 16'777'216) {
 		ERR_PRINT("vstore: Array size is too large: " + itos(gsize));
 		throw std::runtime_error("vstore: Array size is too large: " + std::to_string(gsize));
@@ -749,13 +758,12 @@ APICALL(api_vstore) {
 		}
 		case Variant::PACKED_STRING_ARRAY: {
 			PackedStringArray arr;
-			if (gsize & 0x80000000) {
+			if (libcpp_string_layout) {
 				// Work-around for libc++ std::string implementation.
 				struct Buffer {
 					gaddr_t ptr;
 					gaddr_t size;
 				};
-				gsize &= 0x7FFFFFFF;
 				auto *buffers = machine.memory.memarray<Buffer>(gdata, gsize);
 				arr.resize(gsize);
 				for (unsigned i = 0; i < gsize; i++) {
@@ -906,14 +914,30 @@ APICALL(api_obj) {
 		case Object_Op::CONNECT: {
 			GuestVariant *vars = machine.memory.memarray<GuestVariant>(gvar, 3);
 			godot::Object *target = get_object_from_address(emu, vars[0].v.i);
-			Callable callable = Callable(target, vars[2].toVariant(emu).operator String());
-			obj->connect(vars[1].toVariant(emu).operator String(), callable);
+			const String signal_name = vars[1].toVariant(emu).operator String();
+			const String method_name = vars[2].toVariant(emu).operator String();
+			// Check connect() on the object, and also the method on the target, as
+			// connecting is a deferred way of calling that method on the target.
+			if (UNLIKELY(!emu.is_allowed_method(obj, "connect"))) {
+				ERR_PRINT("Banned method called: connect");
+				throw std::runtime_error("Banned method called: connect");
+			}
+			if (UNLIKELY(!emu.is_allowed_method(target, method_name))) {
+				ERR_PRINT("Banned method connected: " + method_name);
+				throw std::runtime_error("Banned method connected: " + std::string(method_name.utf8()));
+			}
+			obj->connect(signal_name, Callable(target, method_name));
 		} break;
 		case Object_Op::DISCONNECT: {
 			GuestVariant *vars = machine.memory.memarray<GuestVariant>(gvar, 3);
 			godot::Object *target = get_object_from_address(emu, vars[0].v.i);
-			auto callable = Callable(target, vars[2].toVariant(emu).operator String());
-			obj->disconnect(vars[1].toVariant(emu).operator String(), callable);
+			const String signal_name = vars[1].toVariant(emu).operator String();
+			const String method_name = vars[2].toVariant(emu).operator String();
+			if (UNLIKELY(!emu.is_allowed_method(obj, "disconnect"))) {
+				ERR_PRINT("Banned method called: disconnect");
+				throw std::runtime_error("Banned method called: disconnect");
+			}
+			obj->disconnect(signal_name, Callable(target, method_name));
 		} break;
 		case Object_Op::GET_SIGNAL_LIST: {
 			CppVector<CppString> *vec = machine.memory.memarray<CppVector<CppString>>(gvar, 1);
@@ -1011,7 +1035,7 @@ APICALL(api_obj_callp) {
 	const GuestVariant *g_args = machine.memory.memarray<GuestVariant>(args_addr, args_size);
 
 	Variant method;
-	std::string_view method_view = machine.memory.memview(g_method, g_method_len + 1);
+	std::string_view method_view = memview_with_terminator(machine, g_method, g_method_len);
 
 	// Check if the method is null-terminated.
 	if (method_view.back() == '\0') {
@@ -1097,7 +1121,7 @@ APICALL(api_node_create) {
 	switch (type) {
 		case Node_Create_Shortlist::CREATE_CLASSDB: {
 			// Get the class name from guest memory, including null terminator.
-			std::string_view class_name = machine.memory.memview(g_class_name, g_class_len + 1);
+			std::string_view class_name = memview_with_terminator(machine, g_class_name, g_class_len);
 			// Verify the class name is null-terminated.
 			if (class_name[g_class_len] != '\0') {
 				ERR_PRINT("Class name is not null-terminated");
@@ -1250,13 +1274,25 @@ APICALL(api_node) {
 			*result = uint64_t(uintptr_t(new_node));
 		} break;
 		case Node_Op::GET_CHILD_COUNT: {
+			// Check if getting the child count is allowed.
+			if (UNLIKELY(!emu.is_allowed_method(node, "get_child_count"))) {
+				ERR_PRINT("Banned method accessed: get_child_count");
+				throw std::runtime_error("Banned method accessed: get_child_count");
+			}
 			int64_t *result = machine.memory.memarray<int64_t>(gvar, 1);
 			*result = node->get_child_count();
 		} break;
 		case Node_Op::GET_CHILD: {
+			// Check if getting a child is allowed.
+			if (UNLIKELY(!emu.is_allowed_method(node, "get_child"))) {
+				ERR_PRINT("Banned method accessed: get_child");
+				throw std::runtime_error("Banned method accessed: get_child");
+			}
 			GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 			Node *child_node = node->get_child(var[0].v.i);
-			if (UNLIKELY(child_node == nullptr)) {
+			// Disallowed children are indistinguishable from missing ones, so that
+			// iterating the tree does not become a way to probe for banned objects.
+			if (UNLIKELY(child_node == nullptr || !emu.is_allowed_object(child_node))) {
 				var[0].set(emu, Variant());
 			} else {
 				emu.add_scoped_object(child_node);
@@ -1331,26 +1367,42 @@ APICALL(api_node) {
 			// Copy the children to the guest vector, and add them to the scoped objects.
 			for (int i = 0; i < children.size(); i++) {
 				godot::Node *child = godot::Object::cast_to<godot::Node>(children[i]);
-				if (child) {
+				if (child && emu.is_allowed_object(child)) {
 					emu.add_scoped_object(child);
 					vec->push_back(machine, uint64_t(uintptr_t(child)));
 				} else {
+					// Disallowed children are returned as null, keeping the indices intact.
 					vec->push_back(machine, 0);
 				}
 			}
 			// No return value is needed.
 		} break;
 		case Node_Op::ADD_TO_GROUP: {
+			// Check for banned methods.
+			if (UNLIKELY(!emu.is_allowed_method(node, "add_to_group"))) {
+				ERR_PRINT("Banned method called: add_to_group");
+				throw std::runtime_error("Banned method called: add_to_group");
+			}
 			// Reg 12: Group string pointer, Reg 13: Group string length.
 			std::string_view group = machine.memory.memview(gvar, machine.cpu.reg(13));
 			node->add_to_group(String::utf8(group.data(), group.size()));
 		} break;
 		case Node_Op::REMOVE_FROM_GROUP: {
+			// Check for banned methods.
+			if (UNLIKELY(!emu.is_allowed_method(node, "remove_from_group"))) {
+				ERR_PRINT("Banned method called: remove_from_group");
+				throw std::runtime_error("Banned method called: remove_from_group");
+			}
 			// Reg 12: Group string pointer, Reg 13: Group string length.
 			std::string_view group = machine.memory.memview(gvar, machine.cpu.reg(13));
 			node->remove_from_group(String::utf8(group.data(), group.size()));
 		} break;
 		case Node_Op::IS_IN_GROUP: {
+			// Check for banned methods.
+			if (UNLIKELY(!emu.is_allowed_method(node, "is_in_group"))) {
+				ERR_PRINT("Banned method accessed: is_in_group");
+				throw std::runtime_error("Banned method accessed: is_in_group");
+			}
 			// Reg 12: Group string pointer, Reg 13: Group string length, Reg 14: Result bool pointer.
 			std::string_view group = machine.memory.memview(gvar, machine.cpu.reg(13));
 			bool *result = machine.memory.memarray<bool>(machine.cpu.reg(14), 1);
@@ -1379,6 +1431,11 @@ APICALL(api_node) {
 			node->reparent(new_parent, keep_transform);
 		} break;
 		case Node_Op::IS_INSIDE_TREE: {
+			// Check for banned methods.
+			if (UNLIKELY(!emu.is_allowed_method(node, "is_inside_tree"))) {
+				ERR_PRINT("Banned method accessed: is_inside_tree");
+				throw std::runtime_error("Banned method accessed: is_inside_tree");
+			}
 			// Reg 12: Result bool pointer.
 			bool *result = machine.memory.memarray<bool>(gvar, 1);
 			*result = node->is_inside_tree();
@@ -1766,13 +1823,15 @@ APICALL(api_string_ops) {
 				const size_t size = utf8.length();
 				// Allocate memory for the string in the guest memory.
 				if (buffer->size < size) {
-					buffer->size = size;
 					if (buffer->ptr)
 						machine.arena().free(buffer->ptr);
-					buffer->ptr = machine.arena().malloc(buffer->size);
+					buffer->ptr = machine.arena().malloc(size);
 				}
+				// The buffer size is always the length of the string, never the
+				// (guest-provided) capacity, as that would read past the host string.
+				buffer->size = size;
 				// Copy the string to the guest memory.
-				machine.memory.memcpy(buffer->ptr, utf8.ptr(), buffer->size);
+				machine.memory.memcpy(buffer->ptr, utf8.ptr(), size);
 			} else if (index == 2) { // Get the string as a std::u32string.
 				GuestStdU32String *gstr = machine.memory.memarray<GuestStdU32String>(vaddr, 1);
 				gstr->set_string(machine, vaddr, str.ptr(), str.length());
@@ -1784,8 +1843,8 @@ APICALL(api_string_ops) {
 		}
 		case String_Op::COMPARE: {
 			unsigned *vother = machine.memory.memarray<unsigned>(vaddr, 1);
-			const Variant *other = emu.get_scoped_variant(*vother).value();
-			machine.set_result(str == other->operator String());
+			const Variant &other = get_scoped_variant_or_throw(emu, *vother, "String::compare");
+			machine.set_result(str == other.operator String());
 			break;
 		}
 		case String_Op::COMPARE_CSTR: {
@@ -2070,7 +2129,7 @@ APICALL(api_packed_array_ops)
 			ERR_PRINT("Invalid Array object for PackedArray creation");
 			throw std::runtime_error("Invalid Array object for PackedArray creation");
 		}
-		godot::Array array = emu.get_scoped_variant(garray->v.i).value()->operator Array();
+		godot::Array array = get_scoped_variant_or_throw(emu, garray->v.i, "PackedArray creation").operator Array();
 		GuestVariant *gres = machine.memory.memarray<GuestVariant>(result_ptr, 1);
 		switch (op) {
 			case Variant::PACKED_BYTE_ARRAY: {
