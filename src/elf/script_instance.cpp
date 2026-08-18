@@ -362,10 +362,10 @@ bool ELFScriptInstance::has_method(const StringName &p_name) const {
 	if (script.is_null()) {
 		return true;
 	}
-	bool result = script->function_names.has(p_name);
+	bool result = script->has_function_name(p_name);
 	if (!result) {
 		for (const StringName &function : godot_functions) {
-			if (p_name == function) {
+			if (stringname_equals(p_name, function)) {
 				result = true;
 				break;
 			}

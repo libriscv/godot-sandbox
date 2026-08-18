@@ -117,10 +117,10 @@ Variant CPPScriptInstance::callp(
 	static const StringName s_get_associated_script("get_associated_script");
 	static const StringName s_set_associated_script("set_associated_script");
 
-	if (p_method == s_get_associated_script) {
+	if (stringname_equals(p_method, s_get_associated_script)) {
 		r_error.error = GDEXTENSION_CALL_OK;
 		return this->script->get_elf_script();
-	} else if (p_method == s_set_associated_script) {
+	} else if (stringname_equals(p_method, s_set_associated_script)) {
 		if (p_argument_count != 1) {
 			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
 			return Variant();
@@ -143,7 +143,7 @@ Variant CPPScriptInstance::callp(
 	}
 
 	Sandbox *sandbox = current_sandbox;
-	const auto address = sandbox->cached_address_of(p_method.hash(), p_method);
+	const auto address = sandbox->cached_address_of(p_method);
 	if (address == 0) {
 		const bool found = sandbox->is_sandbox_function(p_method);
 		if (!found) {
@@ -158,7 +158,7 @@ Variant CPPScriptInstance::callp(
 		return sandbox->callv(p_method, args);
 	}
 
-	ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
+	ScopedTreeBase stb(sandbox, this->owner_node);
 	return sandbox->vmcall_address(address, p_args, p_argument_count, r_error);
 }
 
@@ -372,7 +372,7 @@ ScriptLanguage *CPPScriptInstance::_get_language() {
 }
 
 CPPScriptInstance::CPPScriptInstance(Object *p_owner, const Ref<CPPScript> p_script) :
-		owner(p_owner), script(p_script)
+		owner(p_owner), owner_node(fast_cast_to<Node>(p_owner)), script(p_script)
 {
 	if (script->get_elf_script().is_null()) {
 		script->detect_script_instance();

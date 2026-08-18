@@ -334,6 +334,7 @@ void Sandbox::full_reset() {
 	this->m_properties.clear();
 	this->m_lookup.clear();
 	this->m_sname_lookup.clear();
+	this->m_name_addresses.clear();
 	this->m_guest_names.clear();
 	this->m_allowed_objects.clear();
 }
@@ -660,10 +661,9 @@ Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtens
 	const Variant &function = *args[0];
 	args += 1;
 	arg_count -= 1;
-	const String function_name = function.operator String();
-	const gaddr_t address = cached_address_of(function_name.hash(), function_name);
+	const gaddr_t address = cached_address_of_variant(function);
 	if (address == 0) {
-		ERR_PRINT("Function not found: " + function_name + " (Added to the public API?)");
+		ERR_PRINT("Function not found: " + function.operator String() + " (Added to the public API?)");
 		error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 		error.argument = 0;
 		return Variant();
@@ -682,24 +682,28 @@ Variant Sandbox::vmcallv(const Variant **args, GDExtensionInt arg_count, GDExten
 	const Variant &function = *args[0];
 	args += 1;
 	arg_count -= 1;
-	const String function_name = function.operator String();
-	const gaddr_t address = cached_address_of(function_name.hash(), function_name);
+	const gaddr_t address = cached_address_of_variant(function);
 	if (address == 0) {
-		ERR_PRINT("Function not found: " + function_name + " (Added to the public API?)");
+		ERR_PRINT("Function not found: " + function.operator String() + " (Added to the public API?)");
 		error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
 		error.argument = 0;
 		return Variant();
 	}
 
-	// Store unboxed_arguments state and restore it after the call
-	Variant result;
-	auto old_unboxed_arguments = this->get_unboxed_arguments();
-	this->set_unboxed_arguments(false);
-	result = this->vmcall_internal(address, args, arg_count);
-	this->set_unboxed_arguments(old_unboxed_arguments);
+	// Force Variant arguments for the duration of the call, restoring the setting after,
+	// including when the call throws.
+	struct ScopedBoxedArguments {
+		Sandbox &sandbox;
+		const bool previous;
+		ScopedBoxedArguments(Sandbox &s) :
+				sandbox(s), previous(s.get_unboxed_arguments()) {
+			sandbox.set_unboxed_arguments(false);
+		}
+		~ScopedBoxedArguments() { sandbox.set_unboxed_arguments(previous); }
+	} boxed(*this);
 
 	error.error = GDEXTENSION_CALL_OK;
-	return result;
+	return this->vmcall_internal(address, args, arg_count);
 }
 Variant Sandbox::vmcall_fn(const StringName &function_name, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
 	if (this->m_throttled > 0) {
@@ -1101,6 +1105,33 @@ gaddr_t Sandbox::cached_address_of(const StringName &name) const {
 	return address;
 }
 
+gaddr_t Sandbox::cached_address_of_variant(const Variant &name) const {
+	const GDNativeVariant *inner = (const GDNativeVariant *)name._native_ptr();
+	// A StringName has an identity cache of its own, and it is what script calls arrive as.
+	if (inner->type == Variant::STRING_NAME) {
+		return cached_address_of(*(const StringName *)&inner->value);
+	}
+	if (UNLIKELY(inner->type != Variant::STRING)) {
+		const String str = name.operator String();
+		return cached_address_of(str.hash(), str);
+	}
+
+	// Read the String in place: copying it out of the Variant is two calls into the engine
+	// and two atomic refcount updates, all to look at a pointer.
+	const String &str = *(const String *)&inner->value;
+	const uintptr_t id = reinterpret_cast<uintptr_t>(string_id(str));
+	NameAddressCache::Entry &entry = m_name_addresses.entries[(id * 0x9E3779B97F4A7C15ull >> 32) & (NameAddressCache::SIZE - 1)];
+	if (entry.valid && string_id(entry.name) == (const void *)id) {
+		return entry.address;
+	}
+
+	const gaddr_t address = cached_address_of(str.hash(), str);
+	entry.name = str;
+	entry.address = address;
+	entry.valid = true;
+	return address;
+}
+
 gaddr_t Sandbox::address_of(const String &symbol) const {
 	const int64_t hash = symbol.hash();
 	return cached_address_of(hash, symbol);
@@ -1126,6 +1157,7 @@ void Sandbox::add_cached_address(const String &name, gaddr_t address) const {
 	// miss. There is no StringName here to overwrite the matching entry with, and this only
 	// runs while the guest publishes its API, so drop the whole cache instead.
 	m_sname_lookup.clear();
+	m_name_addresses.clear();
 }
 
 const Sandbox::CachedName &Sandbox::cached_guest_name(gaddr_t address, std::string_view name, bool terminated) const {
@@ -1388,46 +1420,46 @@ void Sandbox::add_property(const String &name, Variant::Type vtype, gaddr_t addr
 
 bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	for (SandboxProperty &prop : m_properties) {
-		if (prop.name() == name) {
+		if (stringname_equals(prop.name(), name)) {
 			prop.set(*this, value);
 			//ERR_PRINT("Sandbox: SetProperty *found*: " + name);
 			return true;
 		}
 	}
 	// Not the most efficient way to do this, but it's (currently) a small list
-	if (name == property_names[PROP_REFERENCES_MAX]) {
+	if (stringname_equals(name, property_names[PROP_REFERENCES_MAX])) {
 		set_max_refs(value);
 		return true;
-	} else if (name == property_names[PROP_MEMORY_MAX]) {
+	} else if (stringname_equals(name, property_names[PROP_MEMORY_MAX])) {
 		set_memory_max(value);
 		return true;
-	} else if (name == property_names[PROP_EXECUTION_TIMEOUT]) {
+	} else if (stringname_equals(name, property_names[PROP_EXECUTION_TIMEOUT])) {
 		set_instructions_max(value);
 		return true;
-	} else if (name == property_names[PROP_ALLOCATIONS_MAX]) {
+	} else if (stringname_equals(name, property_names[PROP_ALLOCATIONS_MAX])) {
 		set_allocations_max(value);
 		return true;
-	} else if (name == property_names[PROP_UNBOXED_ARGUMENTS]) {
+	} else if (stringname_equals(name, property_names[PROP_UNBOXED_ARGUMENTS])) {
 		set_unboxed_arguments(value);
 		return true;
-	} else if (name == property_names[PROP_PRECISE_SIMULATION]) {
+	} else if (stringname_equals(name, property_names[PROP_PRECISE_SIMULATION])) {
 		set_precise_simulation(value);
 		return true;
 #ifdef RISCV_LIBTCC
-	} else if (name == property_names[PROP_BINTR_NBIT_AS]) {
+	} else if (stringname_equals(name, property_names[PROP_BINTR_NBIT_AS])) {
 		set_binary_translation_automatic_nbit_as(value);
 		return true;
-	} else if (name == property_names[PROP_BINTR_REG_CACHE]) {
+	} else if (stringname_equals(name, property_names[PROP_BINTR_REG_CACHE])) {
 		set_binary_translation_register_caching(value);
 		return true;
 #endif // RISCV_LIBTCC
-	} else if (name == property_names[PROP_PROFILING]) {
+	} else if (stringname_equals(name, property_names[PROP_PROFILING])) {
 		set_profiling(value);
 		return true;
-	} else if (name == property_names[PROP_RESTRICTIONS]) {
+	} else if (stringname_equals(name, property_names[PROP_RESTRICTIONS])) {
 		set_restrictions(value);
 		return true;
-	} else if (name == property_names[PROP_PROGRAM]) {
+	} else if (stringname_equals(name, property_names[PROP_PROGRAM])) {
 		set_program(value);
 		return true;
 	}
@@ -1439,85 +1471,85 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 
 bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	for (const SandboxProperty &prop : m_properties) {
-		if (prop.name() == name) {
+		if (stringname_equals(prop.name(), name)) {
 			r_ret = prop.get(*this);
 			//ERR_PRINT("Sandbox: GetProperty *found*: " + name);
 			return true;
 		}
 	}
 	// Not the most efficient way to do this, but it's (currently) a small list
-	if (name == property_names[PROP_REFERENCES_MAX]) {
+	if (stringname_equals(name, property_names[PROP_REFERENCES_MAX])) {
 		r_ret = get_max_refs();
 		return true;
-	} else if (name == property_names[PROP_MEMORY_MAX]) {
+	} else if (stringname_equals(name, property_names[PROP_MEMORY_MAX])) {
 		r_ret = get_memory_max();
 		return true;
-	} else if (name == property_names[PROP_EXECUTION_TIMEOUT]) {
+	} else if (stringname_equals(name, property_names[PROP_EXECUTION_TIMEOUT])) {
 		r_ret = get_instructions_max();
 		return true;
-	} else if (name == property_names[PROP_ALLOCATIONS_MAX]) {
+	} else if (stringname_equals(name, property_names[PROP_ALLOCATIONS_MAX])) {
 		r_ret = get_allocations_max();
 		return true;
-	} else if (name == property_names[PROP_UNBOXED_ARGUMENTS]) {
+	} else if (stringname_equals(name, property_names[PROP_UNBOXED_ARGUMENTS])) {
 		r_ret = get_unboxed_arguments();
 		return true;
-	} else if (name == property_names[PROP_PRECISE_SIMULATION]) {
+	} else if (stringname_equals(name, property_names[PROP_PRECISE_SIMULATION])) {
 		r_ret = get_precise_simulation();
 		return true;
 #ifdef RISCV_LIBTCC
-	} else if (name == property_names[PROP_BINTR_NBIT_AS]) {
+	} else if (stringname_equals(name, property_names[PROP_BINTR_NBIT_AS])) {
 		r_ret = this->m_bintr_automatic_nbit_as;
 		return true;
-	} else if (name == property_names[PROP_BINTR_REG_CACHE]) {
+	} else if (stringname_equals(name, property_names[PROP_BINTR_REG_CACHE])) {
 		r_ret = this->m_bintr_register_caching;
 		return true;
 #endif // RISCV_LIBTCC
-	} else if (name == property_names[PROP_PROFILING]) {
+	} else if (stringname_equals(name, property_names[PROP_PROFILING])) {
 		r_ret = get_profiling();
 		return true;
-	} else if (name == property_names[PROP_RESTRICTIONS]) {
+	} else if (stringname_equals(name, property_names[PROP_RESTRICTIONS])) {
 		r_ret = get_restrictions();
 		return true;
-	} else if (name == property_names[PROP_PROGRAM]) {
+	} else if (stringname_equals(name, property_names[PROP_PROGRAM])) {
 		r_ret = get_program();
 		return true;
-	} else if (name == property_names[PROP_MONITOR_HEAP_USAGE]) {
+	} else if (stringname_equals(name, property_names[PROP_MONITOR_HEAP_USAGE])) {
 		r_ret = get_heap_usage();
 		return true;
-	} else if (name == property_names[PROP_MONITOR_HEAP_CHUNK_COUNT]) {
+	} else if (stringname_equals(name, property_names[PROP_MONITOR_HEAP_CHUNK_COUNT])) {
 		r_ret = get_heap_chunk_count();
 		return true;
-	} else if (name == property_names[PROP_MONITOR_HEAP_ALLOCATION_COUNTER]) {
+	} else if (stringname_equals(name, property_names[PROP_MONITOR_HEAP_ALLOCATION_COUNTER])) {
 		r_ret = get_heap_allocation_counter();
 		return true;
-	} else if (name == property_names[PROP_MONITOR_HEAP_DEALLOCATION_COUNTER]) {
+	} else if (stringname_equals(name, property_names[PROP_MONITOR_HEAP_DEALLOCATION_COUNTER])) {
 		r_ret = get_heap_deallocation_counter();
 		return true;
-	} else if (name == property_names[PROP_MONITOR_EXCEPTIONS]) {
+	} else if (stringname_equals(name, property_names[PROP_MONITOR_EXCEPTIONS])) {
 		r_ret = get_exceptions();
 		return true;
-	} else if (name == property_names[PROP_MONITOR_EXECUTION_TIMEOUTS]) {
+	} else if (stringname_equals(name, property_names[PROP_MONITOR_EXECUTION_TIMEOUTS])) {
 		r_ret = get_timeouts();
 		return true;
-	} else if (name == property_names[PROP_MONITOR_CALLS_MADE]) {
+	} else if (stringname_equals(name, property_names[PROP_MONITOR_CALLS_MADE])) {
 		r_ret = get_calls_made();
 		return true;
-	} else if (name == property_names[PROP_MONITOR_BINARY_TRANSLATED]) {
+	} else if (stringname_equals(name, property_names[PROP_MONITOR_BINARY_TRANSLATED])) {
 		r_ret = is_binary_translated();
 		return true;
-	} else if (name == property_names[PROP_GLOBAL_CALLS_MADE]) {
+	} else if (stringname_equals(name, property_names[PROP_GLOBAL_CALLS_MADE])) {
 		r_ret = get_global_calls_made();
 		return true;
-	} else if (name == property_names[PROP_GLOBAL_EXCEPTIONS]) {
+	} else if (stringname_equals(name, property_names[PROP_GLOBAL_EXCEPTIONS])) {
 		r_ret = get_global_exceptions();
 		return true;
-	} else if (name == property_names[PROP_GLOBAL_TIMEOUTS]) {
+	} else if (stringname_equals(name, property_names[PROP_GLOBAL_TIMEOUTS])) {
 		r_ret = get_global_timeouts();
 		return true;
-	} else if (name == property_names[PROP_MONITOR_ACCUMULATED_STARTUP_TIME]) {
+	} else if (stringname_equals(name, property_names[PROP_MONITOR_ACCUMULATED_STARTUP_TIME])) {
 		r_ret = get_accumulated_startup_time();
 		return true;
-	} else if (name == property_names[PROP_MONITOR_GLOBAL_INSTANCE_COUNT]) {
+	} else if (stringname_equals(name, property_names[PROP_MONITOR_GLOBAL_INSTANCE_COUNT])) {
 		r_ret = get_global_instance_count();
 		return true;
 	}
@@ -1529,7 +1561,7 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 
 const SandboxProperty *Sandbox::find_property_or_null(const StringName &name) const {
 	for (const SandboxProperty &prop : m_properties) {
-		if (prop.name() == name) {
+		if (stringname_equals(prop.name(), name)) {
 			return &prop;
 		}
 	}

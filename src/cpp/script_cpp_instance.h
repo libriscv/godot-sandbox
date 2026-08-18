@@ -22,6 +22,9 @@ class ELFScript;
 
 class CPPScriptInstance : public ScriptInstanceExtension {
 	Object *owner;
+	// The owner as a Node, resolved once: an object cannot change class, and the cast is
+	// an engine call that every single script call would otherwise repeat.
+	Node *owner_node = nullptr;
 	Ref<CPPScript> script;
 	Sandbox *current_sandbox = nullptr;
 	void set_new_elf_script(ELFScript* p_elf_script);
