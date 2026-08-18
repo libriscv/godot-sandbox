@@ -71,7 +71,7 @@ bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 
 	auto [sandbox, created] = get_sandbox();
 	if (sandbox) {
-		ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
+		ScopedTreeBase stb(sandbox, this->owner_node);
 		return sandbox->set_property(p_name, p_value);
 	}
 
@@ -80,7 +80,7 @@ bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 
 bool ELFScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 	static const StringName s_script("script");
-	if (p_name == s_script) {
+	if (stringname_equals(p_name, s_script)) {
 		r_ret = script;
 		return true;
 	}
@@ -90,7 +90,7 @@ bool ELFScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 
 	auto [sandbox, created] = get_sandbox();
 	if (sandbox) {
-		ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
+		ScopedTreeBase stb(sandbox, this->owner_node);
 		return sandbox->get_property(p_name, r_ret);
 	}
 
@@ -117,10 +117,10 @@ Variant ELFScriptInstance::callp(
 	}
 
 retry_callp:
-	if (script->function_names.has(p_method)) {
+	if (script->has_function_name(p_method)) {
 		if (current_sandbox && current_sandbox->has_program_loaded()) {
 			// Set the Sandbox instance tree base to the owner node
-			ScopedTreeBase stb(current_sandbox, fast_cast_to<Node>(this->owner));
+			ScopedTreeBase stb(current_sandbox, this->owner_node);
 			// Perform the vmcall
 			return current_sandbox->vmcall_fn(p_method, p_args, p_argument_count, r_error);
 		}
@@ -128,16 +128,20 @@ retry_callp:
 
 #ifdef PLATFORM_HAS_EDITOR
 	// Handle internal methods
-	if (p_method == StringName("_get_editor_name")) {
+	static const StringName s_get_editor_name("_get_editor_name");
+	static const StringName s_hide_from_inspector("_hide_script_from_inspector");
+	static const StringName s_is_read_only("_is_read_only");
+	static const StringName s_config_warnings("_get_configuration_warnings");
+	if (stringname_equals(p_method, s_get_editor_name)) {
 		r_error.error = GDEXTENSION_CALL_OK;
 		return Variant("ELFScriptInstance");
-	} else if (p_method == StringName("_hide_script_from_inspector")) {
+	} else if (stringname_equals(p_method, s_hide_from_inspector)) {
 		r_error.error = GDEXTENSION_CALL_OK;
 		return false;
-	} else if (p_method == StringName("_is_read_only")) {
+	} else if (stringname_equals(p_method, s_is_read_only)) {
 		r_error.error = GDEXTENSION_CALL_OK;
 		return false;
-	} else if (p_method == StringName("_get_configuration_warnings")) {
+	} else if (stringname_equals(p_method, s_config_warnings)) {
 		// Returns an array of strings with warnings about the script configuration
 		Array warnings;
 		if (script->function_names.is_empty()) {
@@ -156,7 +160,8 @@ retry_callp:
 	// use _enter_tree to get the sandbox instance.
 	// Also, avoid calling internal methods.
 	if (!this->auto_created_sandbox) {
-		if (p_method == StringName("_enter_tree")) {
+		static const StringName s_enter_tree("_enter_tree");
+		if (stringname_equals(p_method, s_enter_tree)) {
 			current_sandbox->set_program(script);
 		}
 	}
@@ -491,7 +496,7 @@ ScriptLanguage *ELFScriptInstance::_get_language() {
 }
 
 ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_script) :
-		owner(p_owner), script(p_script) {
+		owner(p_owner), owner_node(fast_cast_to<Node>(p_owner)), script(p_script) {
 	if (godot_functions.empty()) {
 		godot_functions = {
 			"_get_editor_name",

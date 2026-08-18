@@ -10,6 +10,7 @@ using namespace godot;
 using gaddr_t = riscv::address_type<RISCV_ARCH>;
 using machine_t = riscv::Machine<RISCV_ARCH>;
 #include "elf/script_elf.h"
+#include "stringname_id.hpp"
 #include "vmcallable.h"
 #include "vmproperty.h"
 
@@ -94,6 +95,26 @@ public:
 			bool terminated = false;
 			std::string text;
 			CachedName name;
+		};
+		Entry entries[SIZE];
+
+		void clear() {
+			for (Entry &entry : entries)
+				entry = Entry{};
+		}
+	};
+	/// @brief Direct-mapped cache of a function-name String to its guest address.
+	/// @note Keyed by the string's own buffer, which a GDScript call site reuses for its
+	/// constant argument every time, so a hit costs no engine calls at all. Names built
+	/// fresh per call simply miss and fall back to the hash lookup.
+	struct NameAddressCache {
+		static constexpr unsigned SIZE = 8; // Must be a power of two
+		struct Entry {
+			// Holding on to the String keeps its buffer alive, so no later string can be
+			// handed the address this entry is keyed by.
+			String name;
+			gaddr_t address = 0;
+			bool valid = false;
 		};
 		Entry entries[SIZE];
 
@@ -232,6 +253,18 @@ public:
 	gaddr_t address_of(const String &symbol) const;
 
 	gaddr_t cached_address_of(int64_t hash, const String &name) const;
+
+	/// @brief Look up a guest function address by StringName, without touching the engine.
+	/// @note The String-keyed cache needs a String to hash, and building one from a
+	/// StringName allocates. Method names arrive as StringNames on every script call, so
+	/// they get their own cache keyed by the StringName's own identity.
+	gaddr_t cached_address_of(const StringName &name) const;
+
+	/// @brief Look up a guest function address from a name held in a Variant.
+	/// @note vmcall() and friends receive the name as a Variant, and reaching the
+	/// String-keyed cache from there costs a String construction plus a hash that re-walks
+	/// the characters on every call.
+	gaddr_t cached_address_of_variant(const Variant &name) const;
 
 	String lookup_address(gaddr_t address) const;
 
@@ -674,7 +707,14 @@ public:
 		return riscv::libtcc_enabled;
 	}
 
-	void assault(const String &test, int64_t iterations);
+	/// @brief Fuzz the host side of the sandbox API with hostile arguments.
+	/// @param test Fuzzing target: "syscalls", "variants" or "all", optionally
+	/// suffixed with ":<seed>" to reproduce an earlier run.
+	/// @param iterations Number of system calls (or GuestVariants) to throw at it.
+	/// @return A Dictionary with the seed used, iterations completed and how many
+	/// were refused by throwing.
+	/// @warning Leaves guest memory and the Variant state arbitrary. Reset afterwards.
+	Dictionary assault(const String &test, int64_t iterations);
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc);
 	machine_t &machine() { return *m_machine; }
 	const machine_t &machine() const { return *m_machine; }
@@ -749,6 +789,8 @@ private:
 	// Properties
 	mutable std::vector<SandboxProperty> m_properties;
 	mutable std::unordered_map<int64_t, LookupEntry> m_lookup;
+	mutable StringNameMap<gaddr_t> m_sname_lookup;
+	mutable NameAddressCache m_name_addresses;
 	mutable GuestNameCache m_guest_names;
 
 	// Shared memory ranges

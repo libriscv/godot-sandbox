@@ -333,6 +333,7 @@ void Sandbox::full_reset() {
 
 	this->m_properties.clear();
 	this->m_lookup.clear();
+	this->m_sname_lookup.clear();
 	this->m_guest_names.clear();
 	this->m_allowed_objects.clear();
 }
@@ -706,11 +707,12 @@ Variant Sandbox::vmcall_fn(const StringName &function_name, const Variant **args
 		return Variant();
 	}
 	// Sandbox.call() is a special case that allows calling functions by name
-	if (function_name == StringName("call")) {
+	static const StringName s_call("call");
+	if (UNLIKELY(stringname_equals(function_name, s_call))) {
 		// Redirect to vmcall() with the first argument as the function name
 		return this->vmcall(args, arg_count, error);
 	}
-	const gaddr_t address = cached_address_of(function_name.hash(), function_name);
+	const gaddr_t address = cached_address_of(function_name);
 	if (address == 0) {
 		ERR_PRINT("Function not found: " + function_name + " (Added to the public API?)");
 		error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
@@ -1087,6 +1089,18 @@ gaddr_t Sandbox::cached_address_of(int64_t hash, const String &function) const {
 	return address;
 }
 
+gaddr_t Sandbox::cached_address_of(const StringName &name) const {
+	auto it = m_sname_lookup.find(name);
+	if (it != m_sname_lookup.end()) {
+		return it->second;
+	}
+	// Only the first call for a given name pays for the String conversion and its hash.
+	const String str(name);
+	const gaddr_t address = cached_address_of(str.hash(), str);
+	m_sname_lookup.emplace(name, address);
+	return address;
+}
+
 gaddr_t Sandbox::address_of(const String &symbol) const {
 	const int64_t hash = symbol.hash();
 	return cached_address_of(hash, symbol);
@@ -1103,12 +1117,15 @@ String Sandbox::lookup_address(gaddr_t address) const {
 }
 
 bool Sandbox::has_function(const StringName &p_function) const {
-	const gaddr_t address = cached_address_of(p_function.hash(), p_function);
-	return address != 0x0;
+	return cached_address_of(p_function) != 0x0;
 }
 
 void Sandbox::add_cached_address(const String &name, gaddr_t address) const {
 	m_lookup.insert_or_assign(name.hash(), LookupEntry{ name, address });
+	// A guest can register a function after something already looked for it and cached the
+	// miss. There is no StringName here to overwrite the matching entry with, and this only
+	// runs while the guest publishes its API, so drop the whole cache instead.
+	m_sname_lookup.clear();
 }
 
 const Sandbox::CachedName &Sandbox::cached_guest_name(gaddr_t address, std::string_view name, bool terminated) const {
@@ -1165,7 +1182,12 @@ std::optional<const Variant *> Sandbox::get_scoped_variant(int32_t index) const 
 	if (index >= 0 && index < state().scoped_variants.size()) {
 		return state().scoped_variants[index];
 	} else if (index < 0) {
-		// Negative index is access into initialization state
+		// Negative index is access into initialization state. INT32_MIN has no positive
+		// counterpart, so negating it is undefined behaviour rather than an invalid index.
+		if (UNLIKELY(index == INT32_MIN)) {
+			ERR_PRINT("Invalid permanent variant index: " + itos(index));
+			return std::nullopt;
+		}
 		index = -index - 1;
 		auto &init_state = this->m_states[0];
 		if (index < init_state.scoped_variants.size()) {
@@ -1598,9 +1620,12 @@ void Sandbox::CurrentState::reinitialize(unsigned level, unsigned max_refs) {
 	this->scoped_variants.clear();
 }
 bool Sandbox::CurrentState::is_mutable_variant(const Variant &var) const {
-	// Check if the address of the variant is within the range of the current state std::vector
+	// Check if the address of the variant is within the range of the current state std::vector.
+	// data() rather than &variants[0]: indexing an empty vector is undefined even when the
+	// result is only ever used as an address, and this is reached with no Variants scoped.
 	const Variant *ptr = &var;
-	return ptr >= &variants[0] && ptr < &variants[0] + variants.size();
+	const Variant *begin = variants.data();
+	return ptr >= begin && ptr < begin + variants.size();
 }
 
 void Sandbox::set_max_refs(uint32_t max) {

@@ -71,8 +71,11 @@ struct GuestStdU32String {
 	String to_godot_string(const machine_t &machine, std::size_t max_len = 1UL << 20) const {
 		if (size > max_len)
 			throw std::runtime_error("Guest std::u32string too large (size > 4MB)");
-		// Get a view of the string from guest memory, including the null terminator
-		const std::u32string_view view{ to_array(machine), size_t(size + 1) };
+		// A view of the string plus the character that follows it, so that the branch below
+		// can tell whether it is already null-terminated. The extra character has to be part
+		// of the bounds check: validating only size characters and then reading size + 1 runs
+		// off the end of guest memory for a string that ends exactly at the arena boundary.
+		const std::u32string_view view{ machine.memory.memarray<char32_t>(ptr, size + 1), size_t(size + 1) };
 		if (view.back() == U'\0') {
 			// Convert the string to a godot String directly
 			return String(view.data());

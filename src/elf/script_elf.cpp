@@ -107,10 +107,10 @@ String ELFScript::_get_class_icon_path() const {
 	return String("res://addons/godot_sandbox/Sandbox.svg");
 }
 bool ELFScript::_has_method(const StringName &p_method) const {
-	bool result = function_names.find(p_method) != -1;
+	bool result = has_function_name(p_method);
 	if (!result) {
-		if (p_method == StringName("_init"))
-			result = true;
+		static const StringName s_init("_init");
+		result = stringname_equals(p_method, s_init);
 	}
 	if constexpr (VERBOSE_ELFSCRIPT) {
 		printf("ELFScript::_has_method: method %s => %s\n",
@@ -267,6 +267,7 @@ void ELFScript::set_file(const String &p_path) {
 	global_name = "Sandbox_" + path.get_basename().replace("res://", "").replace("/", "_").replace("-", "_").capitalize().replace(" ", "");
 	Sandbox::BinaryInfo info = Sandbox::get_program_info_from_binary(source_code);
 	this->function_names = std::move(info.functions);
+	this->rebuild_function_name_set();
 	this->functions.clear();
 
 	this->elf_programming_language = info.language;
@@ -296,6 +297,14 @@ void ELFScript::set_public_api_functions(Array &&p_functions) {
 	this->update_public_api_functions();
 }
 
+void ELFScript::rebuild_function_name_set() {
+	function_name_set.clear();
+	function_name_set.reserve(function_names.size());
+	for (const String &function : function_names) {
+		function_name_set.emplace(function);
+	}
+}
+
 void ELFScript::update_public_api_functions() {
 	// Update the function names
 	function_names.clear();
@@ -303,6 +312,7 @@ void ELFScript::update_public_api_functions() {
 		Dictionary func = functions[i];
 		function_names.push_back(func["name"]);
 	}
+	this->rebuild_function_name_set();
 
 	// Update the instance methods
 	for (ELFScriptInstance *instance : this->instances) {

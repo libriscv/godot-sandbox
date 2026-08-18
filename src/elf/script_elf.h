@@ -5,6 +5,8 @@
 #include <godot_cpp/templates/hash_set.hpp>
 #include <string>
 
+#include "../stringname_id.hpp"
+
 using namespace godot;
 class ELFScriptInstance;
 class Sandbox;
@@ -31,9 +33,21 @@ protected:
 
 	static inline HashMap<String, HashSet<Sandbox *>> sandbox_map;
 
+	StringNameSet function_name_set;
+	/// @brief Refresh function_name_set from function_names.
+	void rebuild_function_name_set();
+
 public:
 	Array functions;
 	PackedStringArray function_names;
+
+	/// @brief Is this the name of a public API function of the guest program?
+	/// @note Every call into a script goes through here first. Asking the
+	/// PackedStringArray costs a String allocated from the StringName plus a linear scan
+	/// over every exported name, so keep the same names in a set that answers by identity.
+	bool has_function_name(const StringName &p_name) const noexcept {
+		return function_name_set.find(p_name) != function_name_set.end();
+	}
 
 	void set_public_api_functions(Array &&p_functions);
 	void update_public_api_functions();

@@ -27,6 +27,9 @@ class ELFScript;
 
 class ELFScriptInstance : public ScriptInstanceExtension {
 	Object *owner;
+	// The owner as a Node, resolved once: an object cannot change class, and the cast is
+	// an engine call that every single script call would otherwise repeat.
+	Node *owner_node = nullptr;
 	Ref<ELFScript> script;
 	Sandbox *current_sandbox = nullptr;
 	mutable List<MethodInfo> methods_info;

@@ -22,6 +22,11 @@
 namespace riscv {
 extern std::unordered_map<std::string, std::function<uint64_t()>> global_singleton_list;
 
+// The largest number of elements a guest may ask an array-like Variant to hold. Godot
+// treats an allocation failure as fatal, so a length the guest invented has to be
+// rejected here rather than discovered when the allocator gives up.
+static constexpr int64_t MAX_ARRAY_ELEMENTS = 16'777'216;
+
 godot::Object *get_object_from_address(const Sandbox &emu, uint64_t addr) {
 	SYS_TRACE("get_object_from_address", addr);
 	godot::Object *obj = (godot::Object *)uintptr_t(addr);
@@ -132,6 +137,51 @@ static inline void object_call(Sandbox &emu, godot::Object *obj, const Variant &
 	object_callp(obj, vargs, argc + 1, result);
 }
 
+/// @brief Call a method on an Object, after checking that the sandbox allows it.
+static inline void object_call_checked(Sandbox &emu, godot::Object *obj,
+		const Sandbox::CachedName &cached_method, std::string_view method_name,
+		const GuestVariant *args, int argc, CallResult &result) {
+	// Held by value, as the call below can re-enter the sandbox and evict the cache entry
+	// while Godot is still reading the name.
+	const Variant method_v = cached_method.variant;
+
+	if (UNLIKELY(!emu.is_allowed_method(obj, method_v))) {
+		ERR_PRINT("Variant::call(): Method not allowed: " + method_v.operator String());
+		throw std::runtime_error("Variant::call(): Method not allowed: " + std::string(method_name));
+	}
+	object_call(emu, obj, method_v, args, argc, result);
+}
+
+/// @brief Call a method on a resolved Variant, whatever the guest labelled it as.
+static inline void variant_or_object_call(Sandbox &emu, Variant *vcall,
+		const Sandbox::CachedName &cached_method, std::string_view method_name,
+		const GuestVariant *args, int argc, CallResult &result) {
+	// The guest owns the type tag, but not the Variant its index refers to, and the two
+	// need not agree. An Object reached through a non-OBJECT tag still has to take the
+	// object path: calling it as a built-in Variant would reach every method on it
+	// without ever asking is_allowed_method().
+	if (UNLIKELY(vcall->get_type() == Variant::OBJECT)) {
+		godot::Object *obj = get_object_from_address(emu, uint64_t(uintptr_t(vcall->operator godot::Object *())));
+		object_call_checked(emu, obj, cached_method, method_name, args, argc, result);
+		return;
+	}
+
+	const StringName method_sn = cached_method.sname; // Held by value, see above.
+
+	VariantScratch scratch;
+	const Variant *argptrs[8];
+	for (int i = 0; i < argc; i++) {
+		if (args[i].is_scoped_variant()) {
+			argptrs[i] = args[i].toVariantPtr(emu);
+		} else {
+			argptrs[i] = scratch.emplace(args[i].toVariant(emu));
+		}
+	}
+
+	GDExtensionCallError error;
+	variant_callp(vcall, method_sn, argptrs, argc, result, error);
+}
+
 APICALL(api_print) {
 	auto [array, len] = machine.sysargs<gaddr_t, unsigned>();
 	Sandbox &emu = riscv::emu(machine);
@@ -172,41 +222,17 @@ APICALL(api_vcall) {
 
 	// Both call paths have Godot construct the return value directly in this storage.
 	CallResult result;
+	const std::string_view method_name = method_sv.substr(0, mlen);
 
 	if (vp->type == Variant::OBJECT) {
 		godot::Object *obj = get_object_from_address(emu, vp->v.i);
-		// Held by value, as the call below can re-enter the sandbox and evict the cache entry
-		// while Godot is still reading the name.
-		const Variant method_v = cached_method.variant;
-
-		// Check if the method is allowed.
-		if (UNLIKELY(!emu.is_allowed_method(obj, method_v))) {
-			ERR_PRINT("Variant::call(): Method not allowed: " + method_v.operator String());
-			throw std::runtime_error("Variant::call(): Method not allowed: " + std::string(method_sv.substr(0, mlen)));
-		}
-
-		object_call(emu, obj, method_v, args, args_size, result);
+		object_call_checked(emu, obj, cached_method, method_name, args, args_size, result);
+	} else if (vp->is_scoped_variant()) {
+		Variant *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
+		variant_or_object_call(emu, vcall, cached_method, method_name, args, args_size, result);
 	} else {
-		const StringName method_sn = cached_method.sname; // Held by value, see above.
-
-		VariantScratch scratch;
-		const Variant *argptrs[8];
-		for (size_t i = 0; i < args_size; i++) {
-			if (args[i].is_scoped_variant()) {
-				argptrs[i] = args[i].toVariantPtr(emu);
-			} else {
-				argptrs[i] = scratch.emplace(args[i].toVariant(emu));
-			}
-		}
-
-		GDExtensionCallError error;
-		if (vp->is_scoped_variant()) {
-			Variant *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
-			variant_callp(vcall, method_sn, argptrs, args_size, result, error);
-		} else {
-			Variant vcall = vp->toVariant(emu);
-			variant_callp(&vcall, method_sn, argptrs, args_size, result, error);
-		}
+		Variant vcall = vp->toVariant(emu);
+		variant_or_object_call(emu, &vcall, cached_method, method_name, args, args_size, result);
 	}
 	// Create a new Variant with the result, if any.
 	if (vret_addr != 0) {
@@ -219,6 +245,13 @@ APICALL(api_veval) {
 	auto [op, ap, bp, retp] = machine.sysargs<int, GuestVariant *, GuestVariant *, GuestVariant *>();
 	auto &emu = riscv::emu(machine);
 	SYS_TRACE("veval", op, ap, bp, retp);
+
+	// Godot indexes its operator table with this directly, so an out-of-range operator
+	// is an out-of-bounds read on the host. The guest picks the number, so check it here.
+	if (UNLIKELY(unsigned(op) >= Variant::OP_MAX)) {
+		ERR_PRINT("Variant::evaluate(): Invalid operator: " + itos(op));
+		throw std::runtime_error("Variant::evaluate(): Invalid operator: " + std::to_string(op));
+	}
 
 	// Special case for comparing objects.
 	if (ap->type == Variant::OBJECT && bp->type == Variant::OBJECT) {
@@ -248,6 +281,14 @@ APICALL(api_veval) {
 	retp->create(emu, std::move(ret));
 }
 
+/// @brief Construct a Variant from data the guest describes.
+/// @note The Packed*Array branches take their element count from the guest, either as
+/// the method argument or out of a guest-side std::vector header. That count is only
+/// checked against guest memory by memarray()/as_array(), so the view is always taken
+/// before the Godot array is resized: resizing first would let the guest name a length
+/// it has no memory to back, and Godot treats an allocation failure as fatal. The copy
+/// is then sized from the same count, never from size_bytes(), which need not be a
+/// whole number of elements.
 APICALL(api_vcreate) {
 	auto [vp, type, method, gdata] = machine.sysargs<GuestVariant *, Variant::Type, int, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
@@ -349,13 +390,15 @@ APICALL(api_vcreate) {
 				if (method < 0) {
 					// Copy std::vector<uint8_t> from guest memory.
 					const CppVector<uint8_t> *gvec = machine.memory.memarray<const CppVector<uint8_t>>(gdata, 1);
-					a.resize(gvec->size());
-					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+					// View before resize; see the note at the top of api_vcreate().
+					const uint8_t *elements = gvec->as_array(machine);
+					const size_t count = gvec->size();
+					a.resize(count);
+					std::memcpy(a.ptrw(), elements, count * sizeof(uint8_t));
 				} else {
-					// Method is the buffer length.
-					a.resize(method);
-					// Copy the buffer from guest memory.
+					// Method is the buffer length. View before resize; see api_vcreate().
 					const uint8_t *ptr = machine.memory.memarray<const uint8_t>(gdata, method);
+					a.resize(method);
 					std::memcpy(a.ptrw(), ptr, method);
 				}
 			}
@@ -369,13 +412,15 @@ APICALL(api_vcreate) {
 				if (method < 0) {
 					// Copy std::vector<float> from guest memory.
 					const CppVector<float> *gvec = machine.memory.memarray<const CppVector<float>>(gdata, 1);
-					a.resize(gvec->size());
-					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+					// View before resize; see the note at the top of api_vcreate().
+					const float *elements = gvec->as_array(machine);
+					const size_t count = gvec->size();
+					a.resize(count);
+					std::memcpy(a.ptrw(), elements, count * sizeof(float));
 				} else {
-					// Method is the buffer length.
-					a.resize(method);
-					// Copy the buffer from guest memory.
+					// Method is the buffer length. View before resize; see api_vcreate().
 					const float *ptr = machine.memory.memarray<const float>(gdata, method);
+					a.resize(method);
 					std::memcpy(a.ptrw(), ptr, method * sizeof(float));
 				}
 			}
@@ -389,13 +434,15 @@ APICALL(api_vcreate) {
 				if (method < 0) {
 					// Copy std::vector<double> from guest memory.
 					const CppVector<double> *gvec = machine.memory.memarray<const CppVector<double>>(gdata, 1);
-					a.resize(gvec->size());
-					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+					// View before resize; see the note at the top of api_vcreate().
+					const double *elements = gvec->as_array(machine);
+					const size_t count = gvec->size();
+					a.resize(count);
+					std::memcpy(a.ptrw(), elements, count * sizeof(double));
 				} else {
-					// Method is the buffer length.
-					a.resize(method);
-					// Copy the buffer from guest memory.
+					// Method is the buffer length. View before resize; see api_vcreate().
 					const double *ptr = machine.memory.memarray<const double>(gdata, method);
+					a.resize(method);
 					std::memcpy(a.ptrw(), ptr, method * sizeof(double));
 				}
 			}
@@ -409,13 +456,15 @@ APICALL(api_vcreate) {
 				if (method < 0) {
 					// Copy std::vector<int32_t> from guest memory.
 					const CppVector<int32_t> *gvec = machine.memory.memarray<const CppVector<int32_t>>(gdata, 1);
-					a.resize(gvec->size());
-					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+					// View before resize; see the note at the top of api_vcreate().
+					const int32_t *elements = gvec->as_array(machine);
+					const size_t count = gvec->size();
+					a.resize(count);
+					std::memcpy(a.ptrw(), elements, count * sizeof(int32_t));
 				} else {
-					// Method is the buffer length.
-					a.resize(method);
-					// Copy the buffer from guest memory.
+					// Method is the buffer length. View before resize; see api_vcreate().
 					const int32_t *ptr = machine.memory.memarray<const int32_t>(gdata, method);
+					a.resize(method);
 					std::memcpy(a.ptrw(), ptr, method * sizeof(int32_t));
 				}
 			}
@@ -429,13 +478,15 @@ APICALL(api_vcreate) {
 				if (method < 0) {
 					// Copy std::vector<int64_t> from guest memory.
 					const CppVector<int64_t> *gvec = machine.memory.memarray<const CppVector<int64_t>>(gdata, 1);
-					a.resize(gvec->size());
-					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+					// View before resize; see the note at the top of api_vcreate().
+					const int64_t *elements = gvec->as_array(machine);
+					const size_t count = gvec->size();
+					a.resize(count);
+					std::memcpy(a.ptrw(), elements, count * sizeof(int64_t));
 				} else {
-					// Method is the buffer length.
-					a.resize(method);
-					// Copy the buffer from guest memory.
+					// Method is the buffer length. View before resize; see api_vcreate().
 					const int64_t *ptr = machine.memory.memarray<const int64_t>(gdata, method);
+					a.resize(method);
 					std::memcpy(a.ptrw(), ptr, method * sizeof(int64_t));
 				}
 			}
@@ -449,13 +500,15 @@ APICALL(api_vcreate) {
 				if (method < 0) {
 					// Copy std::vector<Vector2> from guest memory.
 					const CppVector<Vector2> *gvec = machine.memory.memarray<const CppVector<Vector2>>(gdata, 1);
-					a.resize(gvec->size());
-					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+					// View before resize; see the note at the top of api_vcreate().
+					const Vector2 *elements = gvec->as_array(machine);
+					const size_t count = gvec->size();
+					a.resize(count);
+					std::memcpy(a.ptrw(), elements, count * sizeof(Vector2));
 				} else {
-					// Method is the buffer length.
-					a.resize(method);
-					// Copy the buffer from guest memory.
+					// Method is the buffer length. View before resize; see api_vcreate().
 					const Vector2 *ptr = machine.memory.memarray<const Vector2>(gdata, method);
+					a.resize(method);
 					std::memcpy(a.ptrw(), ptr, method * sizeof(Vector2));
 				}
 			}
@@ -469,13 +522,15 @@ APICALL(api_vcreate) {
 				if (method < 0) {
 					// Copy std::vector<Vector3> from guest memory.
 					const CppVector<Vector3> *gvec = machine.memory.memarray<const CppVector<Vector3>>(gdata, 1);
-					a.resize(gvec->size());
-					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+					// View before resize; see the note at the top of api_vcreate().
+					const Vector3 *elements = gvec->as_array(machine);
+					const size_t count = gvec->size();
+					a.resize(count);
+					std::memcpy(a.ptrw(), elements, count * sizeof(Vector3));
 				} else {
-					// Method is the buffer length.
-					a.resize(method);
-					// Copy the buffer from guest memory.
+					// Method is the buffer length. View before resize; see api_vcreate().
 					const Vector3 *ptr = machine.memory.memarray<const Vector3>(gdata, method);
+					a.resize(method);
 					std::memcpy(a.ptrw(), ptr, method * sizeof(Vector3));
 				}
 			}
@@ -489,13 +544,15 @@ APICALL(api_vcreate) {
 				if (method < 0) {
 					// Copy std::vector<Vector4> from guest memory.
 					const CppVector<Vector4> *gvec = machine.memory.memarray<const CppVector<Vector4>>(gdata, 1);
-					a.resize(gvec->size());
-					std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+					// View before resize; see the note at the top of api_vcreate().
+					const Vector4 *elements = gvec->as_array(machine);
+					const size_t count = gvec->size();
+					a.resize(count);
+					std::memcpy(a.ptrw(), elements, count * sizeof(Vector4));
 				} else {
-					// Method is the buffer length.
-					a.resize(method);
-					// Copy the buffer from guest memory.
+					// Method is the buffer length. View before resize; see api_vcreate().
 					const Vector4 *ptr = machine.memory.memarray<const Vector4>(gdata, method);
+					a.resize(method);
 					std::memcpy(a.ptrw(), ptr, method * sizeof(Vector4));
 				}
 			}
@@ -508,8 +565,11 @@ APICALL(api_vcreate) {
 			if (gdata != 0x0) {
 				// Copy std::vector<Color> from guest memory.
 				const CppVector<Color> *gvec = machine.memory.memarray<const CppVector<Color>>(gdata, 1);
-				a.resize(gvec->size());
-				std::memcpy(a.ptrw(), gvec->as_array(machine), gvec->size_bytes());
+				// View before resize; see the note at the top of api_vcreate().
+				const Color *elements = gvec->as_array(machine);
+				const size_t count = gvec->size();
+				a.resize(count);
+				std::memcpy(a.ptrw(), elements, count * sizeof(Color));
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -714,7 +774,7 @@ APICALL(api_vstore) {
 	if (libcpp_string_layout) {
 		gsize &= 0x7FFFFFFF;
 	}
-	if (gsize > 16'777'216) {
+	if (gsize > MAX_ARRAY_ELEMENTS) {
 		ERR_PRINT("vstore: Array size is too large: " + itos(gsize));
 		throw std::runtime_error("vstore: Array size is too large: " + std::to_string(gsize));
 	}
@@ -909,6 +969,12 @@ APICALL(api_obj) {
 
 	switch (Object_Op(op)) {
 		case Object_Op::GET_METHOD_LIST: {
+			// Enumerating an object tells the guest what it may try next, so it is gated
+			// like the call it is a prelude to.
+			if (UNLIKELY(!emu.is_allowed_method(obj, "get_method_list"))) {
+				ERR_PRINT("Banned method called: get_method_list");
+				throw std::runtime_error("Banned method called: get_method_list");
+			}
 			CppVector<CppString> *vec = machine.memory.memarray<CppVector<CppString>>(gvar, 1);
 			// XXX: vec->free(machine);
 			auto methods = obj->get_method_list();
@@ -939,6 +1005,10 @@ APICALL(api_obj) {
 			obj->set(name, var[1].toVariant(emu));
 		} break;
 		case Object_Op::GET_PROPERTY_LIST: {
+			if (UNLIKELY(!emu.is_allowed_method(obj, "get_property_list"))) {
+				ERR_PRINT("Banned method called: get_property_list");
+				throw std::runtime_error("Banned method called: get_property_list");
+			}
 			CppVector<CppString> *vec = machine.memory.memarray<CppVector<CppString>>(gvar, 1);
 			// XXX: vec->free(machine);
 			TypedArray<Dictionary> properties = obj->get_property_list();
@@ -979,6 +1049,10 @@ APICALL(api_obj) {
 			obj->disconnect(signal_name, Callable(target, method_name));
 		} break;
 		case Object_Op::GET_SIGNAL_LIST: {
+			if (UNLIKELY(!emu.is_allowed_method(obj, "get_signal_list"))) {
+				ERR_PRINT("Banned method called: get_signal_list");
+				throw std::runtime_error("Banned method called: get_signal_list");
+			}
 			CppVector<CppString> *vec = machine.memory.memarray<CppVector<CppString>>(gvar, 1);
 			TypedArray<Dictionary> signals = obj->get_signal_list();
 			vec->resize(machine, signals.size());
@@ -1489,37 +1563,57 @@ APICALL(api_node2d) {
 	// that it is a Node, so there is no reason to pay for both checks.
 	godot::Node2D *node2d = get_class_from_address<godot::Node2D>(emu, addr);
 
+	// Every Node2D operation is a property access, and is gated the same way the
+	// equivalent access through Object::get()/set() would be. Without this the whole
+	// 2D transform of any scoped node is reachable with restrictions turned on.
+	const auto allowed = [&emu, node2d](const char *property, bool is_set) {
+		if (UNLIKELY(!emu.is_allowed_property(node2d, property, is_set))) {
+			ERR_PRINT(String(is_set ? "Banned property set: " : "Banned property accessed: ") + property);
+			throw std::runtime_error(std::string(is_set ? "Banned property set: " : "Banned property accessed: ") + property);
+		}
+	};
+
 	// View the variant from the guest memory.
 	GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 	switch (Node2D_Op(op)) {
 		case Node2D_Op::GET_POSITION:
+			allowed("position", false);
 			var->set(emu, node2d->get_position());
 			break;
 		case Node2D_Op::SET_POSITION:
+			allowed("position", true);
 			node2d->set_deferred("position", var->toVariant(emu));
 			break;
 		case Node2D_Op::GET_ROTATION:
+			allowed("rotation", false);
 			var->set(emu, node2d->get_rotation());
 			break;
 		case Node2D_Op::SET_ROTATION:
+			allowed("rotation", true);
 			node2d->set_rotation(var->toVariant(emu));
 			break;
 		case Node2D_Op::GET_SCALE:
+			allowed("scale", false);
 			var->set(emu, node2d->get_scale());
 			break;
 		case Node2D_Op::SET_SCALE:
+			allowed("scale", true);
 			node2d->set_scale(var->toVariant(emu));
 			break;
 		case Node2D_Op::GET_SKEW:
+			allowed("skew", false);
 			var->set(emu, node2d->get_skew());
 			break;
 		case Node2D_Op::SET_SKEW:
+			allowed("skew", true);
 			node2d->set_skew(var->toVariant(emu));
 			break;
 		case Node2D_Op::GET_TRANSFORM:
+			allowed("transform", false);
 			var->create(emu, node2d->get_transform());
 			break;
 		case Node2D_Op::SET_TRANSFORM:
+			allowed("transform", true);
 			node2d->set_transform(*var->toVariantPtr(emu));
 			break;
 		default:
@@ -1539,37 +1633,55 @@ APICALL(api_node3d) {
 	// that it is a Node, so there is no reason to pay for both checks.
 	godot::Node3D *node3d = get_class_from_address<godot::Node3D>(emu, addr);
 
+	// See api_node2d(): these are property accesses and are gated as such.
+	const auto allowed = [&emu, node3d](const char *property, bool is_set) {
+		if (UNLIKELY(!emu.is_allowed_property(node3d, property, is_set))) {
+			ERR_PRINT(String(is_set ? "Banned property set: " : "Banned property accessed: ") + property);
+			throw std::runtime_error(std::string(is_set ? "Banned property set: " : "Banned property accessed: ") + property);
+		}
+	};
+
 	// View the variant from the guest memory.
 	GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
 	switch (Node3D_Op(op)) {
 		case Node3D_Op::GET_POSITION:
+			allowed("position", false);
 			var->set(emu, node3d->get_position());
 			break;
 		case Node3D_Op::SET_POSITION:
+			allowed("position", true);
 			node3d->set_position(var->toVariant(emu));
 			break;
 		case Node3D_Op::GET_ROTATION:
+			allowed("rotation", false);
 			var->set(emu, node3d->get_rotation());
 			break;
 		case Node3D_Op::SET_ROTATION:
+			allowed("rotation", true);
 			node3d->set_rotation(var->toVariant(emu));
 			break;
 		case Node3D_Op::GET_SCALE:
+			allowed("scale", false);
 			var->set(emu, node3d->get_scale());
 			break;
 		case Node3D_Op::SET_SCALE:
+			allowed("scale", true);
 			node3d->set_scale(var->toVariant(emu));
 			break;
 		case Node3D_Op::GET_TRANSFORM:
+			allowed("transform", false);
 			var->create(emu, node3d->get_transform());
 			break;
 		case Node3D_Op::SET_TRANSFORM:
+			allowed("transform", true);
 			node3d->set_transform(*var->toVariantPtr(emu));
 			break;
 		case Node3D_Op::GET_QUATERNION:
+			allowed("quaternion", false);
 			var->set(emu, node3d->get_quaternion());
 			break;
 		case Node3D_Op::SET_QUATERNION:
+			allowed("quaternion", true);
 			node3d->set_quaternion(var->toVariant(emu));
 			break;
 		default:
@@ -1612,6 +1724,11 @@ APICALL(api_array_ops) {
 	SYS_TRACE("array_ops", int(op), arr_idx, idx, vaddr);
 
 	if (op == Array_Op::CREATE) {
+		// CREATE reuses arr_idx as the initial element count.
+		if (UNLIKELY(arr_idx > MAX_ARRAY_ELEMENTS)) {
+			ERR_PRINT("Array::create(): Size is too large: " + itos(arr_idx));
+			throw std::runtime_error("Array::create(): Size is too large: " + std::to_string(arr_idx));
+		}
 		// There is no scoped array, so we need to create one.
 		Array a;
 		a.resize(arr_idx); // Resize the array to the given size.
@@ -1653,6 +1770,10 @@ APICALL(api_array_ops) {
 			array.erase(machine.memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
 			break;
 		case Array_Op::RESIZE:
+			if (UNLIKELY(idx < 0 || idx > MAX_ARRAY_ELEMENTS)) {
+				ERR_PRINT("Array::resize(): Invalid size: " + itos(idx));
+				throw std::runtime_error("Array::resize(): Invalid size: " + std::to_string(idx));
+			}
 			array.resize(idx);
 			break;
 		case Array_Op::CLEAR:
@@ -1783,7 +1904,10 @@ APICALL(api_dict_ops) {
 				const GuestVariant *vdef = machine.memory.memarray<GuestVariant>(vdefaddr, 1);
 				v = vdef->toVariant(emu);
 			}
-			vp->set(emu, v, true); // Implicit trust, as we are returning our own object.
+			// A copy, not a reference: Dictionary::operator[] hands back a pointer into the
+			// Dictionary's own storage, and scoping that pointer would leave the guest holding
+			// a dangling index the moment it erases the key or clears the Dictionary.
+			vp->create(emu, Variant(v));
 			break;
 		}
 		default:
@@ -1929,6 +2053,13 @@ APICALL(api_timer_periodic) {
 	Sandbox &emu = riscv::emu(machine);
 	PENALIZE(100'000); // Costly Timer node creation.
 	SYS_TRACE("timer_periodic", interval, oneshot, callback, capture, vret);
+
+	// This instantiates a node and adds it to the scene tree, so it answers to the same
+	// class restriction as any other way of creating one.
+	if (UNLIKELY(!emu.is_allowed_class("Timer"))) {
+		ERR_PRINT("Class name is not allowed: Timer");
+		throw std::runtime_error("Class name is not allowed: Timer");
+	}
 
 	Timer *timer = memnew(Timer);
 	timer->set_wait_time(interval);

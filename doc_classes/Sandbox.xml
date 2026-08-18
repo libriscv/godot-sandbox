@@ -46,11 +46,14 @@
 			</description>
 		</method>
 		<method name="assault">
-			<return type="void" />
+			<return type="Dictionary" />
 			<param index="0" name="test" type="String" />
 			<param index="1" name="iterations" type="int" />
 			<description>
-				Performs a stress test on the sandboxed program by executing a specified test function multiple times. For internal testing only.
+				Fuzzes the host side of the sandbox API with hostile arguments, for the given number of iterations. For internal testing only.
+				[param test] selects the target, in the form [code]target[/syscall][:seed][/code]: [code]"syscalls"[/code] drives every system call handler, [code]"syscalls/517"[/code] drives only that one, [code]"variants"[/code] drives Variant conversion, and [code]""[/code] or [code]"all"[/code] does both. The [code]:seed[/code] suffix replays an earlier run.
+				Returns a Dictionary with the [code]seed[/code] used, the number of [code]iterations[/code] completed, how many were refused by throwing under [code]exceptions[/code], and per-system-call counts under [code]coverage[/code] (system call number to [code][invoked, returned][/code]).
+				The run enables all restrictions and installs no callbacks, so every allowed-class, method, property and resource question is answered no. It leaves guest memory and the Variant state arbitrary: reset the Sandbox afterwards before using it for anything else.
 			</description>
 		</method>
 		<method name="clear_allowed_objects">
