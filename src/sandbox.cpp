@@ -1,5 +1,6 @@
 #include "sandbox.h"
 
+#include "fast_cast.hpp"
 #include "guest_datatypes.h"
 #include "sandbox_project_settings.h"
 #include <godot_cpp/classes/engine.hpp>
@@ -11,6 +12,13 @@
 #endif
 
 using namespace godot;
+
+// fast_cast_to() picks a different (and much cheaper) strategy for engine classes than for
+// our own GDCLASS() ones, based on a compile-time trait. If a godot-cpp update ever breaks
+// that detection, the extension classes would silently start being static_cast from any
+// object that shares their engine base class, so fail the build here instead.
+static_assert(is_extension_class_v<Sandbox>, "GDCLASS() detection broke: fast_cast_to() would be unsafe for extension classes");
+static_assert(!is_extension_class_v<godot::Node>, "GDCLASS() detection broke: fast_cast_to() would be needlessly slow for engine classes");
 
 static constexpr bool VERBOSE_PROPERTIES = false;
 static const int HEAP_SYSCALLS_BASE = 480;
@@ -116,8 +124,11 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_resource_allowed_callback", "instance"), &Sandbox::set_resource_allowed_callback);
 	ClassDB::bind_method(D_METHOD("is_allowed_class", "name"), &Sandbox::is_allowed_class);
 	ClassDB::bind_method(D_METHOD("is_allowed_object", "instance"), &Sandbox::is_allowed_object);
-	ClassDB::bind_method(D_METHOD("is_allowed_method", "instance", "method"), &Sandbox::is_allowed_method);
-	ClassDB::bind_method(D_METHOD("is_allowed_property", "instance", "property", "is_set"), &Sandbox::is_allowed_property, DEFVAL(true));
+	// Disambiguated from the const char* overloads, which exist purely for internal call sites.
+	ClassDB::bind_method(D_METHOD("is_allowed_method", "instance", "method"),
+			static_cast<bool (Sandbox::*)(godot::Object *, const Variant &) const>(&Sandbox::is_allowed_method));
+	ClassDB::bind_method(D_METHOD("is_allowed_property", "instance", "property", "is_set"),
+			static_cast<bool (Sandbox::*)(godot::Object *, const Variant &, bool) const>(&Sandbox::is_allowed_property), DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("is_allowed_resource", "res"), &Sandbox::is_allowed_resource);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("restrictive_callback_function", "arg"), &Sandbox::restrictive_callback_function);
 

@@ -3,6 +3,7 @@
 #include "../elf/script_elf.h"
 #include "../elf/script_instance.h"
 #include "../elf/script_instance_helper.h"
+#include "../fast_cast.hpp"
 #include "../sandbox.h"
 #include "../scoped_tree_base.h"
 #include "script_cpp.h"
@@ -25,7 +26,7 @@ Sandbox *CPPScriptInstance::create_sandbox(Object *p_owner, const Ref<CPPScript>
 	}
 
 	Sandbox *sandbox_ptr = memnew(Sandbox);
-	sandbox_ptr->set_tree_base(Object::cast_to<Node>(p_owner));
+	sandbox_ptr->set_tree_base(fast_cast_to<Node>(p_owner));
 	sandbox_instances.insert_or_assign(p_script.ptr(), SandboxAndCount{ sandbox_ptr, 1 });
 
 	const Ref<ELFScript> &elf = p_script->get_elf_script();
@@ -59,7 +60,7 @@ bool CPPScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 			this->set_new_elf_script(nullptr);
 			return true;
 		}
-		ELFScript *new_elf_script = Object::cast_to<ELFScript>(object);
+		ELFScript *new_elf_script = fast_cast_to<ELFScript>(object);
 		if (new_elf_script != nullptr) {
 			this->set_new_elf_script(new_elf_script);
 			return true;
@@ -72,7 +73,7 @@ bool CPPScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 	if (sandbox == nullptr) {
 		return false;
 	}
-	ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
+	ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
 	if (sandbox->set_property(p_name, p_value)) {
 		return true;
 	}
@@ -94,7 +95,7 @@ bool CPPScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 	if (sandbox == nullptr) {
 		return false;
 	}
-	ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
+	ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
 	if (sandbox->get_property(p_name, r_ret)) {
 		return true;
 	}
@@ -130,7 +131,7 @@ Variant CPPScriptInstance::callp(
         	r_error.error = GDEXTENSION_CALL_OK;
         	return Variant();
 		}
-		ELFScript *new_elf_script = Object::cast_to<ELFScript>(object);
+		ELFScript *new_elf_script = fast_cast_to<ELFScript>(object);
 		if (new_elf_script != nullptr) {
 			this->set_new_elf_script(new_elf_script);
 			r_error.error = GDEXTENSION_CALL_OK;
@@ -157,7 +158,7 @@ Variant CPPScriptInstance::callp(
 		return sandbox->callv(p_method, args);
 	}
 
-	ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
+	ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
 	return sandbox->vmcall_address(address, p_args, p_argument_count, r_error);
 }
 
@@ -378,7 +379,7 @@ CPPScriptInstance::CPPScriptInstance(Object *p_owner, const Ref<CPPScript> p_scr
 	}
 	this->current_sandbox = create_sandbox(p_owner, p_script);
 	if (this->current_sandbox != nullptr) {
-		this->current_sandbox->set_tree_base(godot::Object::cast_to<godot::Node>(owner));
+		this->current_sandbox->set_tree_base(fast_cast_to<godot::Node>(owner));
 	}
 }
 

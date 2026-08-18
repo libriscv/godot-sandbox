@@ -42,15 +42,22 @@ godot::Object *get_object_from_address(const Sandbox &emu, uint64_t addr) {
 	}
 	return obj;
 }
+/// @brief Look up a scoped object and confirm it is a T, throwing if it is not.
+template <typename T>
+inline T *get_class_from_address(const Sandbox &emu, uint64_t addr) {
+	godot::Object *obj = get_object_from_address(emu, addr);
+	T *result = fast_cast_to<T>(obj);
+	if (UNLIKELY(result == nullptr)) {
+		const godot::String class_name = godot::String(T::get_class_static());
+		ERR_PRINT("Object is not a " + class_name + ": " + obj->get_class());
+		throw std::runtime_error("Object was not a " + std::string(class_name.utf8().get_data()));
+	}
+	return result;
+}
+
 inline godot::Node *get_node_from_address(const Sandbox &emu, uint64_t addr) {
 	SYS_TRACE("get_node_from_address", addr);
-	godot::Object *obj = get_object_from_address(emu, addr);
-	godot::Node *node = godot::Object::cast_to<godot::Node>(obj);
-	if (UNLIKELY(node == nullptr)) {
-		ERR_PRINT("Object is not a Node: " + obj->get_class());
-		throw std::runtime_error("Object was not a Node");
-	}
-	return node;
+	return get_class_from_address<godot::Node>(emu, addr);
 }
 
 // Resolved once at load time: godot::Object::call(), the variadic entry point that
@@ -1168,7 +1175,7 @@ APICALL(api_node_create) {
 			// Make sure the object held through the Variant has lifetime managed by the sandbox.
 			emu.create_scoped_variant(std::move(result));
 
-			node = Object::cast_to<Node>(obj);
+			node = fast_cast_to<Node>(obj);
 			// If it's not a Node, just return the Object.
 			if (node == nullptr) {
 				emu.add_scoped_object(obj);
@@ -1392,7 +1399,7 @@ APICALL(api_node) {
 			vec->reserve(machine, children.size());
 			// Copy the children to the guest vector, and add them to the scoped objects.
 			for (int i = 0; i < children.size(); i++) {
-				godot::Node *child = godot::Object::cast_to<godot::Node>(children[i]);
+				godot::Node *child = fast_cast_to<godot::Node>(children[i]);
 				if (child && emu.is_allowed_object(child)) {
 					emu.add_scoped_object(child);
 					vec->push_back(machine, uint64_t(uintptr_t(child)));
@@ -1478,15 +1485,9 @@ APICALL(api_node2d) {
 	PENALIZE(100'000); // Costly Node2D operations.
 	SYS_TRACE("node2d_op", op, addr, gvar);
 
-	// Get the Node2D object by its address.
-	godot::Node *node = get_node_from_address(emu, addr);
-
-	// Cast the Node2D object to a Node2D object.
-	godot::Node2D *node2d = godot::Object::cast_to<godot::Node2D>(node);
-	if (node2d == nullptr) {
-		ERR_PRINT("Node2D object is not a Node2D");
-		throw std::runtime_error("Node2D object is not a Node2D");
-	}
+	// Get the Node2D object by its address. Checking for Node2D directly also establishes
+	// that it is a Node, so there is no reason to pay for both checks.
+	godot::Node2D *node2d = get_class_from_address<godot::Node2D>(emu, addr);
 
 	// View the variant from the guest memory.
 	GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);
@@ -1534,15 +1535,9 @@ APICALL(api_node3d) {
 	PENALIZE(100'000); // Costly Node3D operations.
 	SYS_TRACE("node3d_op", op, addr, gvar);
 
-	// Get the Node3D object by its address
-	godot::Node *node = get_node_from_address(emu, addr);
-
-	// Cast the Node3D object to a Node3D object.
-	godot::Node3D *node3d = godot::Object::cast_to<godot::Node3D>(node);
-	if (node3d == nullptr) {
-		ERR_PRINT("Node3D object is not a Node3D");
-		throw std::runtime_error("Node3D object is not a Node3D");
-	}
+	// Get the Node3D object by its address. Checking for Node3D directly also establishes
+	// that it is a Node, so there is no reason to pay for both checks.
+	godot::Node3D *node3d = get_class_from_address<godot::Node3D>(emu, addr);
 
 	// View the variant from the guest memory.
 	GuestVariant *var = machine.memory.memarray<GuestVariant>(gvar, 1);

@@ -1,4 +1,5 @@
 #include "script_language_elf.h"
+#include "../fast_cast.hpp"
 #include "../script_language_common.h"
 #include "script_elf.h"
 #include <godot_cpp/classes/control.hpp>
@@ -190,7 +191,7 @@ bool ELFScriptLanguage::_handles_global_class_type(const String &p_type) const {
 }
 Dictionary ELFScriptLanguage::_get_global_class_name(const String &p_path) const {
 	Ref<Resource> resource = ResourceLoader::get_singleton()->load(p_path);
-	Ref<ELFScript> elf_model = Object::cast_to<ELFScript>(resource.ptr());
+	Ref<ELFScript> elf_model = fast_cast_to<ELFScript>(resource.ptr());
 	Dictionary dict;
 	if (elf_model.is_valid()) {
 		dict["name"] = elf_model->_get_global_name();

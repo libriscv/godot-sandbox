@@ -1,4 +1,5 @@
 #pragma once
+#include "fast_cast.hpp"
 #include <libriscv/machine.hpp>
 
 #define APICALL(func) static void func(machine_t &machine [[maybe_unused]])

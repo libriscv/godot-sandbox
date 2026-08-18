@@ -3,6 +3,7 @@
 #include "../elf/script_elf.h"
 #include "../elf/script_instance.h"
 #include "../elf/script_instance_helper.h"
+#include "../fast_cast.hpp"
 #include "../sandbox.h"
 #include "../scoped_tree_base.h"
 #include "script_safegdscript.h"
@@ -19,7 +20,7 @@ bool SafeGDScriptInstance::set(const StringName &p_name, const Variant &p_value)
 	}
 
 	Sandbox *sandbox = current_sandbox;
-	ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
+	ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
 	if (sandbox->set_property(p_name, p_value)) {
 		return true;
 	}
@@ -33,7 +34,7 @@ bool SafeGDScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 		return true;
 	}
 	Sandbox *sandbox = current_sandbox;
-	ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
+	ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
 	if (sandbox->get_property(p_name, r_ret)) {
 		return true;
 	}
@@ -68,7 +69,7 @@ Variant SafeGDScriptInstance::callp(
 		return sandbox->callv(p_method, args);
 	}
 	//WARN_PRINT("SafeGDScriptInstance::callp: Calling method " + p_method + " at address " + itos(address) + " with " + itos(p_argument_count) + " arguments.");
-	ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
+	ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
 	return sandbox->vmcall_address(address, p_args, p_argument_count, r_error);
 }
 
@@ -273,7 +274,7 @@ static Sandbox *create_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_scrip
 	}
 
 	Sandbox *sandbox_ptr = memnew(Sandbox());
-	sandbox_ptr->set_tree_base(Object::cast_to<Node>(p_owner));
+	sandbox_ptr->set_tree_base(fast_cast_to<Node>(p_owner));
 	sandbox_ptr->set_unboxed_arguments(false);
 	sandbox_ptr->load_buffer(p_script->get_content());
 	sandbox_instances.insert_or_assign(p_script.ptr(), SandboxAndCount{sandbox_ptr, 1});
@@ -285,7 +286,7 @@ SafeGDScriptInstance::SafeGDScriptInstance(Object *p_owner, const Ref<SafeGDScri
 		owner(p_owner), script(p_script)
 {
 	this->current_sandbox = create_sandbox(p_owner, p_script);
-	this->current_sandbox->set_tree_base(godot::Object::cast_to<godot::Node>(owner));
+	this->current_sandbox->set_tree_base(fast_cast_to<godot::Node>(owner));
 }
 
 SafeGDScriptInstance::~SafeGDScriptInstance() {

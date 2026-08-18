@@ -1,4 +1,5 @@
 #include "resource_saver_safegdscript.h"
+#include "../fast_cast.hpp"
 #include "script_safegdscript.h"
 #include <godot_cpp/classes/file_access.hpp>
 
@@ -17,7 +18,7 @@ void ResourceFormatSaverSafeGDScript::deinit() {
 }
 
 Error ResourceFormatSaverSafeGDScript::_save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags) {
-	SafeGDScript *script = Object::cast_to<SafeGDScript>(p_resource.ptr());
+	SafeGDScript *script = fast_cast_to<SafeGDScript>(p_resource.ptr());
 	if (script == nullptr) {
 		ERR_PRINT("ResourceFormatSaverSafeGDScript::_save: Resource is not a SafeGDScript.");
 		return ERR_FILE_CANT_WRITE;
@@ -38,17 +39,17 @@ Error ResourceFormatSaverSafeGDScript::_set_uid(const String &p_path, int64_t p_
 }
 
 bool ResourceFormatSaverSafeGDScript::_recognize(const Ref<Resource> &p_resource) const {
-	return Object::cast_to<SafeGDScript>(p_resource.ptr()) != nullptr;
+	return fast_cast_to<SafeGDScript>(p_resource.ptr()) != nullptr;
 }
 
 PackedStringArray ResourceFormatSaverSafeGDScript::_get_recognized_extensions(const Ref<Resource> &p_resource) const {
 	PackedStringArray array;
-	if (Object::cast_to<SafeGDScript>(p_resource.ptr()) == nullptr)
+	if (fast_cast_to<SafeGDScript>(p_resource.ptr()) == nullptr)
 		return array;
 	array.push_back("sgd");
 	return array;
 }
 
 bool ResourceFormatSaverSafeGDScript::_recognize_path(const Ref<Resource> &p_resource, const String &p_path) const {
-	return Object::cast_to<SafeGDScript>(p_resource.ptr()) != nullptr;
+	return fast_cast_to<SafeGDScript>(p_resource.ptr()) != nullptr;
 }

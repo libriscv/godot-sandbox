@@ -1,6 +1,7 @@
 #include "resource_saver_rust.h"
 #include "../elf/script_elf.h"
 #include "../elf/script_language_elf.h"
+#include "../fast_cast.hpp"
 #include "../register_types.h"
 #include "../sandbox_project_settings.h"
 #include "script_rust.h"
@@ -28,7 +29,7 @@ void ResourceFormatSaverRust::deinit() {
 }
 
 Error ResourceFormatSaverRust::_save(const Ref<Resource> &p_resource, const String &p_path, uint32_t p_flags) {
-	RustScript *script = Object::cast_to<RustScript>(p_resource.ptr());
+	RustScript *script = fast_cast_to<RustScript>(p_resource.ptr());
 	if (script != nullptr) {
 		Ref<FileAccess> handle = FileAccess::open(p_path, FileAccess::ModeFlags::WRITE);
 		if (handle.is_valid()) {
@@ -87,7 +88,7 @@ Error ResourceFormatSaverRust::_save(const Ref<Resource> &p_resource, const Stri
 			EditorInterface::get_singleton()->get_resource_filesystem()->scan();
 			TypedArray<Script> open_scripts = EditorInterface::get_singleton()->get_script_editor()->get_open_scripts();
 			for (int i = 0; i < open_scripts.size(); i++) {
-				ELFScript *elf_script = Object::cast_to<ELFScript>(open_scripts[i]);
+				ELFScript *elf_script = fast_cast_to<ELFScript>(open_scripts[i]);
 				if (elf_script) {
 					elf_script->reload(false);
 					elf_script->emit_changed();
@@ -104,15 +105,15 @@ Error ResourceFormatSaverRust::_set_uid(const String &p_path, int64_t p_uid) {
 	return Error::OK;
 }
 bool ResourceFormatSaverRust::_recognize(const Ref<Resource> &p_resource) const {
-	return Object::cast_to<RustScript>(p_resource.ptr()) != nullptr;
+	return fast_cast_to<RustScript>(p_resource.ptr()) != nullptr;
 }
 PackedStringArray ResourceFormatSaverRust::_get_recognized_extensions(const Ref<Resource> &p_resource) const {
 	PackedStringArray array;
-	if (Object::cast_to<RustScript>(p_resource.ptr()) == nullptr)
+	if (fast_cast_to<RustScript>(p_resource.ptr()) == nullptr)
 		return array;
 	array.push_back("rs");
 	return array;
 }
 bool ResourceFormatSaverRust::_recognize_path(const Ref<Resource> &p_resource, const String &p_path) const {
-	return Object::cast_to<RustScript>(p_resource.ptr()) != nullptr;
+	return fast_cast_to<RustScript>(p_resource.ptr()) != nullptr;
 }

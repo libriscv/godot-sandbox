@@ -2,8 +2,8 @@ extends GutTest
 
 var Sandbox_TestsTests = load("res://tests/tests.elf")
 
-const N = 200000
-const RUNS = 3
+const N = 50000
+const RUNS = 2
 
 func _bench(name : String, callable : Callable) -> float:
 	# Warmup, then report the best of several runs: the mean is dominated by scheduling
@@ -56,6 +56,30 @@ func test_bench_obj_callp():
 		for i in range(n):
 			node.set_process_priority(0))
 
+	_bench("gdscript node.get_name()", func(n):
+		for i in range(n):
+			node.get_name())
+
+	# Full host->guest->host roundtrips, which is what the demo project measures.
+	var call_get_name : Callable = s.vmcallable("bench_single_get_name")
+	var call_nothing : Callable = s.vmcallable("bench_single_nothing")
+	var call_name_via : Callable = s.vmcallable("bench_single_get_name_call")
+	_bench("roundtrip: empty", func(n):
+		for i in range(n):
+			call_nothing.call(node))
+	_bench("roundtrip: get_name", func(n):
+		for i in range(n):
+			call_get_name.call(node))
+	_bench("roundtrip: get_name/callp", func(n):
+		for i in range(n):
+			call_name_via.call(node))
+	_bench("gdscript equivalent", func(n):
+		for i in range(n):
+			_gds_get_name(node))
+
 	assert_true(true)
 	s.queue_free()
 	node.queue_free()
+
+func _gds_get_name(obj):
+	return obj.get_name()

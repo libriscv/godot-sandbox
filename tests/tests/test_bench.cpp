@@ -74,3 +74,23 @@ PUBLIC Variant bench_empty_loop(Variant iterations) {
 	}
 	return sum;
 }
+
+// The exact shape of the demo project's benchmark: a single host->guest call that takes
+// a Node argument and returns its name. Measures the whole roundtrip, not just the syscall.
+PUBLIC Variant bench_single_get_name(Node node) {
+	return node.get_name();
+}
+
+// Same roundtrip, but with no Godot work in the middle: isolates the vmcall + object
+// argument marshalling from the syscall itself.
+PUBLIC Variant bench_single_nothing(Node node) {
+	(void)node;
+	return Nil;
+}
+
+// Same result as bench_single_get_name(), but expressed as sugar over ECALL_OBJ_CALLP
+// instead of the dedicated ECALL_NODE op. This is the measurement that decides whether
+// the generic path can replace the specialised ones outright.
+PUBLIC Variant bench_single_get_name_call(Node node) {
+	return node.call("get_name");
+}

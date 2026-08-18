@@ -391,6 +391,17 @@ public:
 		return m_just_in_time_allowed_methods.call(this, obj, method);
 	}
 
+	/// @brief Overload for the API call sites that name a method with a string literal.
+	/// @note Taking the name as a Variant would build a heap-allocated String on every
+	/// single call, only to throw it away unused whenever no callback is installed --
+	/// which is the overwhelmingly common case. Deferring construction keeps the guard
+	/// down to the same single load as the Variant overload.
+	bool is_allowed_method(godot::Object *obj, const char *method) const {
+		if (LIKELY(!m_just_in_time_allowed_methods.is_valid()))
+			return true;
+		return m_just_in_time_allowed_methods.call(this, obj, String(method));
+	}
+
 	/// @brief Set a callback to check if a method is allowed in the sandbox.
 	/// @param callback The callable to check if a method is allowed.
 	void set_method_allowed_callback(const Callable &callback);
@@ -405,6 +416,14 @@ public:
 		if (LIKELY(!m_just_in_time_allowed_properties.is_valid()))
 			return true;
 		return m_just_in_time_allowed_properties.call(this, obj, property, is_set);
+	}
+
+	/// @brief Overload for the API call sites that name a property with a string literal.
+	/// @note Inline for the same reason as the is_allowed_method() overload above.
+	bool is_allowed_property(godot::Object *obj, const char *property, bool is_set) const {
+		if (LIKELY(!m_just_in_time_allowed_properties.is_valid()))
+			return true;
+		return m_just_in_time_allowed_properties.call(this, obj, String(property), is_set);
 	}
 
 	/// @brief Set a callback to check if a property is allowed in the sandbox.

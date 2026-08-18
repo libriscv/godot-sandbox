@@ -1,6 +1,7 @@
 #include "script_instance.h"
 
 #include "../cpp/script_cpp.h"
+#include "../fast_cast.hpp"
 #include "../rust/script_rust.h"
 #include "../sandbox_project_settings.h"
 #include "../scoped_tree_base.h"
@@ -70,7 +71,7 @@ bool ELFScriptInstance::set(const StringName &p_name, const Variant &p_value) {
 
 	auto [sandbox, created] = get_sandbox();
 	if (sandbox) {
-		ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
+		ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
 		return sandbox->set_property(p_name, p_value);
 	}
 
@@ -89,7 +90,7 @@ bool ELFScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 
 	auto [sandbox, created] = get_sandbox();
 	if (sandbox) {
-		ScopedTreeBase stb(sandbox, godot::Object::cast_to<Node>(this->owner));
+		ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
 		return sandbox->get_property(p_name, r_ret);
 	}
 
@@ -119,7 +120,7 @@ retry_callp:
 	if (script->function_names.has(p_method)) {
 		if (current_sandbox && current_sandbox->has_program_loaded()) {
 			// Set the Sandbox instance tree base to the owner node
-			ScopedTreeBase stb(current_sandbox, godot::Object::cast_to<Node>(this->owner));
+			ScopedTreeBase stb(current_sandbox, fast_cast_to<Node>(this->owner));
 			// Perform the vmcall
 			return current_sandbox->vmcall_fn(p_method, p_args, p_argument_count, r_error);
 		}
@@ -589,14 +590,14 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 		};
 	}
 
-	this->current_sandbox = Object::cast_to<Sandbox>(p_owner);
+	this->current_sandbox = fast_cast_to<Sandbox>(p_owner);
 	this->auto_created_sandbox = (this->current_sandbox == nullptr);
 	if (auto_created_sandbox) {
 		this->current_sandbox = create_sandbox(p_script);
 		//ERR_PRINT("ELFScriptInstance: owner is not a Sandbox");
 		//fprintf(stderr, "ELFScriptInstance: owner is instead a '%s'!\n", p_owner->get_class().utf8().get_data());
 	}
-	this->current_sandbox->set_tree_base(godot::Object::cast_to<godot::Node>(owner));
+	this->current_sandbox->set_tree_base(fast_cast_to<godot::Node>(owner));
 
 	for (const StringName &godot_function : godot_functions) {
 		MethodInfo method_info = MethodInfo(
@@ -624,7 +625,7 @@ std::tuple<Sandbox *, bool> ELFScriptInstance::get_sandbox() const {
 		return { it->second, true };
 	}
 
-	Sandbox *sandbox_ptr = Object::cast_to<Sandbox>(this->owner);
+	Sandbox *sandbox_ptr = fast_cast_to<Sandbox>(this->owner);
 	if (sandbox_ptr != nullptr) {
 		return { sandbox_ptr, false };
 	}
@@ -646,7 +647,7 @@ Sandbox *ELFScriptInstance::create_sandbox(const Ref<ELFScript> &p_script) {
 	sandbox_ptr->set_program(p_script);
 	sandbox_instances.insert_or_assign(p_script.ptr(), sandbox_ptr);
 	if constexpr (VERBOSE_LOGGING) {
-		ERR_PRINT("ELFScriptInstance: created sandbox for " + Object::cast_to<Node>(owner)->get_name());
+		ERR_PRINT("ELFScriptInstance: created sandbox for " + fast_cast_to<Node>(owner)->get_name());
 	}
 
 	return sandbox_ptr;
