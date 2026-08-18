@@ -1938,7 +1938,13 @@ APICALL(api_timer_periodic) {
 	if (topnode != nullptr) {
 		topnode->add_child(timer);
 		timer->set_owner(topnode);
-		timer->start();
+		if (topnode->is_inside_tree()) {
+			timer->start();
+		} else {
+			// A Timer can only be started once it's in the scene tree, so let it
+			// start itself when the tree base enters the tree.
+			timer->set_autostart(true);
+		}
 	} else {
 		timer->set_autostart(true);
 	}

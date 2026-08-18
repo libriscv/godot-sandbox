@@ -20,6 +20,7 @@ func test_restrictions():
 	var exceptions = s.get_exceptions()
 	s.vmcall("access_a_parent", n)
 	# The function should have thrown an exception, as we didn't allow the parent object
+	assert_engine_error("Exception: Node::get_parent(): Parent is not allowed")
 	assert_eq(s.get_exceptions(), exceptions + 1)
 
 	# Allow the parent object
@@ -59,6 +60,8 @@ func test_restrictions():
 	exceptions = s.get_exceptions()
 	s.vmcall("creates_a_node")
 	# The function should have thrown an exception, as we only allowed the Node2D class
+	assert_engine_error("Class name is not allowed")
+	assert_engine_error("Exception: Class name is not allowed")
 	assert_eq(s.get_exceptions(), exceptions + 1)
 
 	# Disable all restrictions
@@ -74,6 +77,8 @@ func test_restrictions():
 	exceptions = s.get_exceptions()
 	s.vmcall("creates_a_node")
 	# The function should have thrown an exception, as we enabled restrictions
+	assert_engine_error("Class name is not allowed")
+	assert_engine_error("Exception: Class name is not allowed")
 	assert_eq(s.get_exceptions(), exceptions + 1, "Should have thrown an exception")
 
 	s.queue_free()
@@ -121,6 +126,8 @@ func test_insanity():
 
 	var exceptions = s.get_exceptions()
 	s.vmcall("access_an_invalid_child_node")
+	assert_engine_error("Banned method called: add_child")
+	assert_engine_error("Exception: Banned method called: add_child")
 
 	assert_eq(s.get_exceptions(), exceptions + 1)
 
@@ -141,6 +148,8 @@ func test_insanity():
 
 	s.vmcall("access_an_invalid_child_resource", "res://other.tscn")
 	# The function should have thrown an exception, as we didn't allow the resource
+	assert_engine_error("Resource path is not allowed: res://other.tscn")
+	assert_engine_error("Exception: Resource path is not allowed: res://other.tscn")
 	assert_eq(s.get_exceptions(), exceptions + 1)
 
 	if inst is Node:
@@ -153,6 +162,8 @@ func test_insanity():
 	s.vmcall("disable_restrictions")
 	# The function should have denied disabling restrictions, as it is forbidden
 	# to disable restrictions from within the sandbox
+	assert_engine_error("Banned method called: disable_restrictions")
+	assert_engine_error("Exception: Banned method called: disable_restrictions")
 	assert_eq(s.restrictions, true)
 
 	s.queue_free()

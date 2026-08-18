@@ -40,6 +40,7 @@ func test_instantiation():
 
 	# Verify that too many VM call recursion levels are prevented
 	s.vmcall("test_recursive_calls", s)
+	assert_engine_error("Too many VM calls in progress")
 
 	assert_eq(s.get_timeouts(), 0)
 	assert_eq(s.get_exceptions(), 1)
@@ -119,6 +120,7 @@ func test_binary_translation():
 
 	var str : String = s.emit_binary_translation()
 	assert_true(str.is_empty(), "Binary translation is empty")
+	assert_engine_error("No binary loaded")
 
 	# Set the test program
 	s.set_program(Sandbox_TestsTests)
@@ -588,6 +590,8 @@ func test_static_storage():
 	# So, an exception should be thrown
 	exceptions = s.get_exceptions()
 	result = s.vmcallv("test_failing_static_storage", "key2", "value2")
+	assert_engine_error("Invalid Dictionary object")
+	assert_engine_error("Exception: Invalid Dictionary object")
 	assert_eq(s.get_exceptions(), exceptions + 1)
 	assert_eq(result, null)
 

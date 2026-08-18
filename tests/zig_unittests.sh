@@ -1,15 +1,15 @@
 set -e
-GODOT_VERSION=4.4.1
+GODOT_VERSION=4.6.3
 
 # Check if unit tests are run from Github Actions
 if [ -n "$CI" ]; then
-	GODOT=./Godot_v4.4.1-stable_linux.x86_64
+	GODOT=./Godot_v4.6.3-stable_linux.x86_64
 	# Use the --import flag to properly initialize the project
 	$GODOT --path "$PWD" --headless --import
 else
 	# Use a local Godot binary
 	if [ -z "$GODOT" ]; then
-		GODOT=~/Godot_v4.4.1-stable_linux.x86_64
+		GODOT=~/Godot_v4.6.3-stable_linux.x86_64
 	fi
 fi
 
