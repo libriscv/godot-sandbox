@@ -38,6 +38,7 @@ librisc_sources = [
     #"ext/libriscv/lib/libriscv/rv32i.cpp",
     "ext/libriscv/lib/libriscv/rv64i.cpp",
     "ext/libriscv/lib/libriscv/serialize.cpp",
+    "ext/libriscv/lib/libriscv/shared_rodata.cpp",
 
     # POSIX
     "ext/libriscv/lib/libriscv/posix/minimal.cpp",
