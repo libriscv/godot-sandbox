@@ -1,8 +1,10 @@
 #pragma once
 
 #include "../docker.h"
+#include "../gdscript/compiler/function_signature.h"
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/script_language.hpp>
+#include <godot_cpp/templates/hash_map.hpp>
 #include <godot_cpp/templates/hash_set.hpp>
 #include <vector>
 
@@ -62,10 +64,15 @@ public:
 
 	void set_path(const String &p_path);
 	SafeGDScriptInstance *get_safegdscript_script_instance() const;
+	// The declared signature of one exported function, or null when the script
+	// does not export it.
+	const godot::MethodInfo *find_method_info(const StringName &p_method) const;
 	const String &get_path() const { return path; }
 	const PackedByteArray &get_content() const { return elf_data; }
 	bool compile_source_to_elf();
 	static String get_compiler_error_message();
+	// The parameter lists of the last compile, which the ELF does not carry.
+	static std::vector<gdscript::FunctionSignature> get_compiler_function_signatures();
 	void remove_instance(SafeGDScriptInstance *p_instance);
 
 	static String PathToGlobalName(const String &p_path) {

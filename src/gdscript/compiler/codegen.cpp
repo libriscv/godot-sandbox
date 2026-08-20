@@ -320,6 +320,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	m_globals_lowered = SIZE_MAX;
 
 	for (const auto& decl : program.functions) {
+		ir_program.signatures.push_back(build_signature(decl));
 		ir_program.functions.push_back(generate_function(decl));
 	}
 
@@ -2248,6 +2249,52 @@ void CodeGenerator::set_register_struct(FunctionContext& func, int reg, const St
 const StructDecl* CodeGenerator::get_register_struct(const FunctionContext& func, int reg) const {
 	auto it = func.register_structs.find(reg);
 	return it == func.register_structs.end() ? nullptr : it->second;
+}
+
+FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const {
+	FunctionSignature sig;
+	sig.name = decl.name;
+	sig.return_type = find_struct(decl.return_type) != nullptr
+		? int32_t(Variant::DICTIONARY)
+		: int32_t(type_hint_from_string(decl.return_type));
+
+	for (const Parameter& param : decl.parameters) {
+		FunctionParameter out;
+		out.name = param.name;
+		// A struct parameter is a Dictionary with a known key set, and a
+		// Dictionary is what the host would pass for one.
+		out.type = find_struct(param.type_hint) != nullptr
+			? int32_t(Variant::DICTIONARY)
+			: int32_t(type_hint_from_string(param.type_hint));
+
+		IRGlobalVar folded;
+		if (param.default_value && fold_global_initializer(param.default_value.get(), folded)) {
+			using InitType = IRGlobalVar::InitType;
+			using DefaultKind = FunctionParameter::DefaultKind;
+			switch (folded.init_type) {
+				case InitType::INT: out.default_kind = DefaultKind::INT; break;
+				case InitType::FLOAT: out.default_kind = DefaultKind::FLOAT; break;
+				case InitType::BOOL: out.default_kind = DefaultKind::BOOL; break;
+				case InitType::STRING: out.default_kind = DefaultKind::STRING; break;
+				case InitType::NULL_VAL: out.default_kind = DefaultKind::NIL; break;
+				case InitType::EMPTY_ARRAY: out.default_kind = DefaultKind::EMPTY_ARRAY; break;
+				case InitType::EMPTY_DICT: out.default_kind = DefaultKind::EMPTY_DICT; break;
+				case InitType::NONE:
+				case InitType::RUNTIME: break;
+			}
+			out.default_value = folded.init_value;
+		}
+		sig.parameters.push_back(std::move(out));
+	}
+
+	// The parser rejects a required parameter after an optional one, so the
+	// required ones are a prefix -- except where a default that did not fold
+	// made one required again, which the scan from the end handles.
+	sig.required_arguments = sig.parameters.size();
+	while (sig.required_arguments > 0 && sig.parameters[sig.required_arguments - 1].optional()) {
+		sig.required_arguments--;
+	}
+	return sig;
 }
 
 void CodeGenerator::apply_declared_type(int reg, const std::string& type_hint, FunctionContext& func) {

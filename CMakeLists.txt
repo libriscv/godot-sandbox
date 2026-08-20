@@ -28,6 +28,9 @@ set(SOURCES
 	src/safegdscript/script_safegdscript.cpp
 	src/safegdscript/resource_loader_safegdscript.cpp
 	src/safegdscript/resource_saver_safegdscript.cpp
+	# The one definition of the format the compiler publishes its function
+	# signatures in; the guest side of it lives inside gdscript.elf.
+	src/gdscript/compiler/function_signature.cpp
 	src/docker.cpp
 	src/godot/script_instance.cpp
 	src/guest_variant.cpp

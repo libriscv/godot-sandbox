@@ -7,6 +7,7 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include "../gdscript/compiler/function_signature.h"
 #include "../sandbox.h"
 static constexpr bool VERBOSE_LOGGING = false;
 static Sandbox* compiler = nullptr;
@@ -61,6 +62,55 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 String SafeGDScript::_get_class_icon_path() const {
 	return String("res://addons/godot_sandbox/SafeGDScript.svg");
 }
+// A property, then a method, in the shape Godot reads them back in:
+// PropertyInfo::from_dict() and MethodInfo::from_dict() look for these exact
+// keys, and quietly leave out anything spelled differently -- which is how a
+// method list can look complete and still report no arguments.
+static Dictionary property_dict(const godot::PropertyInfo &p_info) {
+	Dictionary type;
+	type["name"] = p_info.name;
+	type["class_name"] = p_info.class_name;
+	type["type"] = p_info.type;
+	type["hint"] = PropertyHint::PROPERTY_HINT_NONE;
+	type["hint_string"] = String();
+	type["usage"] = p_info.usage;
+	return type;
+}
+
+static Dictionary method_dict(const godot::MethodInfo &p_method) {
+	Dictionary method;
+	method["name"] = p_method.name;
+	method["flags"] = p_method.flags;
+	method["id"] = p_method.id;
+
+	// The argument list is what lets Godot refuse a call with the wrong number
+	// of arguments -- the editor's analyzer statically, the runtime on the way
+	// into the script instance.
+	Array args;
+	for (const godot::PropertyInfo &argument : p_method.arguments) {
+		args.push_back(property_dict(argument));
+	}
+	method["args"] = args;
+	Array default_args;
+	for (const Variant &value : p_method.default_arguments) {
+		default_args.push_back(value);
+	}
+	method["default_args"] = default_args;
+
+	godot::PropertyInfo return_val = p_method.return_val;
+	return_val.name = "type";
+	method["return"] = property_dict(return_val);
+	return method;
+}
+
+const godot::MethodInfo *SafeGDScript::find_method_info(const StringName &p_method) const {
+	for (const godot::MethodInfo &method_info : methods_info) {
+		if (method_info.name == p_method) {
+			return &method_info;
+		}
+	}
+	return nullptr;
+}
 bool SafeGDScript::_has_method(const StringName &p_method) const {
 	if (p_method == StringName("_init"))
 		return true;
@@ -76,23 +126,8 @@ bool SafeGDScript::_has_static_method(const StringName &p_method) const {
 	return false;
 }
 Dictionary SafeGDScript::_get_method_info(const StringName &p_method) const {
-	Dictionary method_dict;
-	for (const godot::MethodInfo &method_info : methods_info) {
-		if (method_info.name == p_method) {
-			method_dict["name"] = method_info.name;
-			method_dict["flags"] = method_info.flags;
-			method_dict["return_type"] = method_info.return_val.type;
-			TypedArray<Dictionary> args;
-			for (const godot::PropertyInfo &arg_info : method_info.arguments) {
-				Dictionary arg_dict;
-				arg_dict["name"] = arg_info.name;
-				arg_dict["type"] = arg_info.type;
-				arg_dict["usage"] = arg_info.usage;
-				args.append(arg_dict);
-			}
-			method_dict["arguments"] = args;
-			return method_dict;
-		}
+	if (const godot::MethodInfo *method_info = find_method_info(p_method)) {
+		return method_dict(*method_info);
 	}
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("SafeGDScript::_get_method_info: Method " + String(p_method) + " not found.");
@@ -127,20 +162,7 @@ void SafeGDScript::_update_exports() {}
 TypedArray<Dictionary> SafeGDScript::_get_script_method_list() const {
 	TypedArray<Dictionary> functions_array;
 	for (const godot::MethodInfo &method_info : methods_info) {
-		Dictionary method;
-		method["name"] = method_info.name;
-		method["args"] = Array();
-		method["default_args"] = Array();
-		Dictionary type;
-		type["name"] = "type";
-		type["type"] = Variant::Type::NIL;
-		//type["class_name"] = "class";
-		type["hint"] = PropertyHint::PROPERTY_HINT_NONE;
-		type["hint_string"] = String();
-		type["usage"] = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NIL_IS_VARIANT;
-		method["return"] = type;
-		method["flags"] = METHOD_FLAG_VARARG;
-		functions_array.push_back(method);
+		functions_array.push_back(method_dict(method_info));
 	}
 	return functions_array;
 }
@@ -299,12 +321,105 @@ void SafeGDScript::remove_instance(SafeGDScriptInstance *p_instance) {
 	instances.erase(p_instance);
 }
 
+// The signatures compile() just published, decoded from the blob the compiler
+// hands out. Empty when the compiler predates the call, which leaves every
+// method a vararg, as it was before.
+std::vector<gdscript::FunctionSignature> SafeGDScript::get_compiler_function_signatures() {
+	std::vector<gdscript::FunctionSignature> signatures;
+	Sandbox *compiler = get_compiler_sandbox();
+	if (compiler == nullptr || !compiler->has_function("get_function_signatures")) {
+		return signatures;
+	}
+	GDExtensionCallError error;
+	const Variant blob = compiler->vmcall_fn("get_function_signatures", nullptr, 0, error);
+	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK || blob.get_type() != Variant::Type::PACKED_BYTE_ARRAY) {
+		return signatures;
+	}
+	const PackedByteArray bytes = blob;
+	if (!gdscript::decode_function_signatures(bytes.ptr(), size_t(bytes.size()), signatures)) {
+		ERR_PRINT("SafeGDScript: the compiler returned a malformed function signature table.");
+	}
+	return signatures;
+}
+
+// The compiler reports an undeclared type as ANY_TYPE, which is not a
+// Variant::Type. Godot spells "any Variant" as NIL plus NIL_IS_VARIANT.
+static Variant::Type variant_type_or_nil(int32_t p_type) {
+	if (p_type < 0 || p_type >= Variant::Type::VARIANT_MAX) {
+		return Variant::Type::NIL;
+	}
+	return Variant::Type(p_type);
+}
+
+// The value the host passes for an argument the caller left out. Only the kinds
+// the compiler folds appear here; a parameter it could not fold is required, so
+// nothing ever asks for its default.
+static Variant default_argument_value(const gdscript::FunctionParameter &p_param) {
+	using DefaultKind = gdscript::FunctionParameter::DefaultKind;
+	switch (p_param.default_kind) {
+		case DefaultKind::INT:
+			return std::get<int64_t>(p_param.default_value);
+		case DefaultKind::FLOAT:
+			return std::get<double>(p_param.default_value);
+		case DefaultKind::BOOL:
+			return std::get<bool>(p_param.default_value);
+		case DefaultKind::STRING:
+			return String::utf8(std::get<std::string>(p_param.default_value).c_str(), std::get<std::string>(p_param.default_value).size());
+		case DefaultKind::EMPTY_ARRAY:
+			return Array();
+		case DefaultKind::EMPTY_DICT:
+			return Dictionary();
+		case DefaultKind::NONE:
+		case DefaultKind::NIL:
+			break;
+	}
+	return Variant();
+}
+
 void SafeGDScript::update_methods_info() {
 	Sandbox::BinaryInfo info = Sandbox::get_program_info_from_binary(this->elf_data);
 	this->methods_info.clear();
+
+	// The symbol table names the functions; only the compiler knows what they
+	// take. Without the parameter list Godot has nothing to reject a call
+	// against, and a missing argument arrives in the guest as a null Variant
+	// pointer, which faults the moment the function reads it.
+	HashMap<String, const gdscript::FunctionSignature *> signatures;
+	const std::vector<gdscript::FunctionSignature> table = get_compiler_function_signatures();
+	for (const gdscript::FunctionSignature &signature : table) {
+		signatures.insert(String::utf8(signature.name.c_str(), signature.name.size()), &signature);
+	}
+
 	for (const String &func_name : info.functions) {
-		//WARN_PRINT("Found function: " + func_name);
-		methods_info.push_back(MethodInfo(func_name));
+		MethodInfo method(func_name);
+		method.return_val.usage = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NIL_IS_VARIANT;
+
+		HashMap<String, const gdscript::FunctionSignature *>::Iterator it = signatures.find(func_name);
+		if (it == signatures.end()) {
+			// Not a function the compiler declared: a runtime helper linked
+			// into the program, say. Nothing is known about its arguments, so
+			// nothing is claimed about them.
+			method.flags = METHOD_FLAG_VARARG;
+			methods_info.push_back(std::move(method));
+			continue;
+		}
+
+		const gdscript::FunctionSignature &signature = *it->value;
+		method.flags = METHOD_FLAG_NORMAL;
+		method.return_val.type = variant_type_or_nil(signature.return_type);
+		for (const gdscript::FunctionParameter &param : signature.parameters) {
+			PropertyInfo argument;
+			argument.name = String::utf8(param.name.c_str(), param.name.size());
+			argument.type = variant_type_or_nil(param.type);
+			argument.usage = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NIL_IS_VARIANT;
+			method.arguments.push_back(std::move(argument));
+		}
+		// Godot's convention: the defaults cover the last N arguments, which is
+		// exactly the run of parameters past the required ones.
+		for (size_t i = signature.required_arguments; i < signature.parameters.size(); i++) {
+			method.default_arguments.push_back(default_argument_value(signature.parameters[i]));
+		}
+		methods_info.push_back(std::move(method));
 	}
 
 	if constexpr (VERBOSE_LOGGING) {

@@ -41,6 +41,7 @@ std::string source_line_at(const std::string& source, int line) {
 Compiler::Compiler() {}
 
 std::vector<uint8_t> Compiler::compile(const std::string& source, const CompilerOptions& options) {
+	m_signatures.clear();
 	try {
 		// Step 1: Lexical analysis
 		Lexer lexer(source);
@@ -75,6 +76,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 		// Step 3: Code generation (AST -> IR)
 		CodeGenerator codegen;
 		IRProgram ir_program = codegen.generate(program);
+		m_signatures = ir_program.signatures;
 
 		if (options.dump_ir) {
 			std::cout << "=== IR (unoptimized) ===" << std::endl;

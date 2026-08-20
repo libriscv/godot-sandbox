@@ -1,5 +1,6 @@
 #pragma once
 #include "compiler_exception.h"
+#include "function_signature.h"
 #include "variant_layout.h"
 #include <string>
 #include <vector>
@@ -54,9 +55,16 @@ public:
 	// that returned no ELF; has_error is false otherwise.
 	const CompilerError &get_error_info() const { return m_error_info; }
 
+	// What the host needs to know about each function the produced ELF exports:
+	// how many arguments it takes, and the defaults it cannot fill in itself.
+	// Filled in by every compile that got as far as code generation, including
+	// one with output_elf off; empty after a compile that failed before it.
+	const std::vector<FunctionSignature> &get_function_signatures() const { return m_signatures; }
+
 private:
 	std::string m_error;
 	CompilerError m_error_info;
+	std::vector<FunctionSignature> m_signatures;
 };
 
 } // namespace gdscript

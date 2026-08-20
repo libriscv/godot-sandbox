@@ -52,13 +52,13 @@ static GDExtensionMethodInfo create_method_info(const MethodInfo &method_info) {
 			   .name = stringname_alloc(method_info.return_val.name),
 			   .class_name = stringname_alloc(method_info.return_val.class_name),
 			   .hint = method_info.return_val.hint,
-			   .hint_string = stringname_alloc(method_info.return_val.hint_string),
+			   .hint_string = string_alloc(method_info.return_val.hint_string),
 			   .usage = method_info.return_val.usage },
 	   .flags = method_info.flags,
 	   .id = method_info.id,
 	   .argument_count = (uint32_t)method_info.arguments.size(),
 	   .arguments = nullptr,
-	   .default_argument_count = 0,
+	   .default_argument_count = (uint32_t)method_info.default_arguments.size(),
 	   .default_arguments = nullptr,
    };
    if (!method_info.arguments.is_empty()) {
@@ -74,7 +74,36 @@ static GDExtensionMethodInfo create_method_info(const MethodInfo &method_info) {
 				   .usage = arg.usage };
 	   }
    }
+   // The defaults cover the last N arguments, as they do in Godot's own method
+   // lists. Despite the GDExtensionVariantPtr* in the struct, the engine reads
+   // this back as one contiguous array of Variants -- an array of pointers is
+   // read as Variants and crashes on the first type tag. free_method_info()
+   // owns the array.
+   if (!method_info.default_arguments.is_empty()) {
+	   Variant *defaults = memnew_arr(Variant, method_info.default_arguments.size());
+	   for (int i = 0; i < method_info.default_arguments.size(); i++) {
+		   defaults[i] = method_info.default_arguments[i];
+	   }
+	   result.default_arguments = (GDExtensionVariantPtr *)defaults;
+   }
    return result;
+}
+
+// Undo create_method_info(). Both script languages' free_method_list() go
+// through this, so anything allocated above has exactly one place to be
+// released.
+static void free_method_info(const GDExtensionMethodInfo &p_method_info) {
+	memdelete((StringName *)p_method_info.name);
+	free_prop(p_method_info.return_value);
+	if (p_method_info.arguments) {
+		for (uint32_t i = 0; i < p_method_info.argument_count; i++) {
+			free_prop(p_method_info.arguments[i]);
+		}
+		memdelete_arr(p_method_info.arguments);
+	}
+	if (p_method_info.default_arguments) {
+		memdelete_arr((Variant *)p_method_info.default_arguments);
+	}
 }
 
 static void add_to_state(GDExtensionConstStringNamePtr p_name, GDExtensionConstVariantPtr p_value, void *p_userdata) {

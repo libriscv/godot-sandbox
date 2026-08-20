@@ -13,3 +13,6 @@ add_sandbox_program(unittests
 	"tests/test_gdscript_compiler.cpp"
 )
 target_link_libraries(unittests PRIVATE sandbox_api gdscript_compiler)
+# test_gdscript_compiler.cpp exports the same compiler entry points as
+# addons/godot_sandbox/gdscript.elf, and shares their implementation.
+target_include_directories(unittests PRIVATE ../program/cpp/gdscript_compiler/src)

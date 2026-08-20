@@ -1,4 +1,5 @@
 #include "api.hpp"
+#include "function_signatures.hpp"
 
 #include <compiler.h>
 #include <compiler_exception.h>
@@ -41,6 +42,9 @@ PUBLIC Variant compile(String code)
 
 	Compiler compiler;
 	auto elf_data = compiler.compile(code.utf8(), options);
+	// Kept for the get_function_signatures() the caller makes next: the ELF
+	// says which functions it exports, but not what they take.
+	gdscript_remember_signatures(compiler);
 
 	if (elf_data.empty()) {
 		print("ERROR: Compilation failed: ", compiler.get_error());
@@ -85,6 +89,13 @@ PUBLIC Variant validate(String code)
 PUBLIC Variant get_compiler_error()
 {
 	return last_error;
+}
+
+// What compile() just produced, one Dictionary per exported function. See
+// function_signatures.hpp for the shape and for why the ELF cannot carry it.
+PUBLIC Variant get_function_signatures()
+{
+	return gdscript_signatures_to_variant();
 }
 
 // The generated code hard-codes the Variant layout, so the compiler's idea of it

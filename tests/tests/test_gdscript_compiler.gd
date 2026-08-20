@@ -5124,3 +5124,109 @@ func test_cpu_loads_as_a_safegdscript_resource():
 	node.set_instructions_max(200000000)
 	assert_eq(node.call("sum_to", 10), [55], "sum_to(10) should emit 55 through the .sgd loader")
 	node.free()
+
+# -= Function signatures =-
+#
+# A call from Godot lands on the exported guest function directly, and the
+# Sandbox ABI gives that function one Variant pointer per argument and no count.
+# An argument the caller left out is therefore a null pointer, which the guest
+# faults on the moment it reads the parameter -- so the arity has to reach
+# Godot, and the produced ELF cannot carry it: its symbol table has names alone.
+# The compiler publishes the signatures beside the ELF, and the .sgd script
+# checks the call against them.
+
+const SIGNATURE_SOURCE = """
+func takes_one(f: float):
+	return f * 2.0
+
+func takes_none():
+	return 7
+
+func with_defaults(a, b = 10, c = 2.5):
+	return str(a) + "/" + str(b) + "/" + str(c)
+"""
+
+func _signature_node() -> Node:
+	var path = "user://temp_signatures.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(SIGNATURE_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the signature script should load as a SafeGDScript resource")
+	if script == null:
+		return null
+	var node = Node.new()
+	node.set_script(script)
+	node.set_instructions_max(100000)
+	return node
+
+func _method_info(node: Node, name: String) -> Dictionary:
+	for method in node.get_method_list():
+		if method["name"] == name:
+			return method
+	return {}
+
+func test_sgd_publishes_argument_lists():
+	var node = _signature_node()
+	if node == null:
+		return
+
+	var one = _method_info(node, "takes_one")
+	assert_eq(one.get("args", []).size(), 1, "takes_one should declare one argument")
+	assert_eq(one["args"][0]["name"], "f", "the argument should keep the name it was given")
+	assert_eq(one["args"][0]["type"], TYPE_FLOAT, "'f: float' should reach Godot as a float")
+	assert_eq(one.get("default_args", []).size(), 0, "takes_one has no defaults")
+
+	assert_eq(_method_info(node, "takes_none").get("args", []).size(), 0,
+		"takes_none should declare no arguments")
+
+	var defaults = _method_info(node, "with_defaults")
+	assert_eq(defaults.get("args", []).size(), 3, "with_defaults should declare three arguments")
+	assert_eq(defaults.get("default_args", []), [10, 2.5],
+		"the two constant defaults should reach Godot as values")
+	# An untyped parameter may hold anything, which Godot spells as NIL.
+	assert_eq(defaults["args"][0]["type"], TYPE_NIL, "an untyped parameter is any Variant")
+
+	node.free()
+
+func test_sgd_calls_with_the_declared_arity():
+	var node = _signature_node()
+	if node == null:
+		return
+
+	assert_eq(node.call("takes_one", 3.5), 7.0, "takes_one(3.5) should return 7.0")
+	assert_eq(node.call("takes_none"), 7, "takes_none() should return 7")
+
+	# The callee cannot fill a default in: it has no way to tell whether it was
+	# given the argument. The host appends the ones the compiler folded.
+	assert_eq(node.call("with_defaults", 1), "1/10/2.5", "both defaults should be supplied")
+	assert_eq(node.call("with_defaults", 1, 2), "1/2/2.5", "the last default should be supplied")
+	assert_eq(node.call("with_defaults", 1, 2, 3), "1/2/3", "no default should be supplied")
+
+	node.free()
+
+# One refused call, on its own frame: the runtime error it raises unwinds only
+# this function, which leaves the test that called it running.
+func _refused_call(node: Node, method: String, args: Array) -> void:
+	node.callv(method, args)
+
+func test_sgd_refuses_a_call_with_the_wrong_argument_count():
+	var node = _signature_node()
+	if node == null:
+		return
+
+	# Without the arity this reached the guest with a null pointer where 'f'
+	# should be, and faulted inside the sandbox instead of failing the call.
+	# A refused call is a runtime error, which unwinds the frame that made it,
+	# so each one is made from its own helper and the test goes on.
+	_refused_call(node, "takes_one", [])
+	assert_engine_error("'Node::takes_one': Method expected 1 argument(s), but called with 0.")
+
+	_refused_call(node, "takes_one", [1.0, 2.0])
+	assert_engine_error("'Node::takes_one': Method expected 1 argument(s), but called with 2.")
+
+	# 'a' has no default, so it is required even though the other two are not.
+	_refused_call(node, "with_defaults", [])
+	assert_engine_error("'Node::with_defaults': Method expected 1 argument(s), but called with 0.")
+
+	node.free()

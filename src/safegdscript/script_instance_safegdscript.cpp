@@ -68,9 +68,52 @@ Variant SafeGDScriptInstance::callp(
 		r_error.error = GDEXTENSION_CALL_OK;
 		return sandbox->callv(p_method, args);
 	}
+
+	// The Sandbox ABI passes one Variant pointer per argument and no count, so
+	// an argument the caller left out is a null pointer the guest dereferences
+	// as soon as it reads the parameter. Nothing downstream can recover from
+	// that, and Godot cannot check the arity itself: through a statically-typed
+	// Node it has no idea a .sgd script is on the other side. So the call is
+	// completed, or refused, here.
+	//
+	// Defaults are the same problem seen from the callee: it cannot fill one in
+	// either, having no way to tell whether it was given the argument. The
+	// compiler hands the constant ones over with the signature, and they are
+	// appended here exactly as Godot appends its own.
+	LocalVector<const Variant *> completed;
+	if (const MethodInfo *method = script->find_method_info(p_method)) {
+		if (!(method->flags & METHOD_FLAG_VARARG)) {
+			const int expected = int(method->arguments.size());
+			const int required = expected - int(method->default_arguments.size());
+			if (p_argument_count < required) {
+				r_error.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+				r_error.argument = p_argument_count;
+				r_error.expected = required;
+				return Variant();
+			}
+			if (p_argument_count > expected) {
+				r_error.error = GDEXTENSION_CALL_ERROR_TOO_MANY_ARGUMENTS;
+				r_error.argument = p_argument_count;
+				r_error.expected = expected;
+				return Variant();
+			}
+			if (p_argument_count < expected) {
+				completed.reserve(expected);
+				for (int i = 0; i < p_argument_count; i++) {
+					completed.push_back(p_args[i]);
+				}
+				const int first_default = int(method->default_arguments.size()) - (expected - p_argument_count);
+				for (int i = first_default; i < int(method->default_arguments.size()); i++) {
+					completed.push_back(&method->default_arguments[i]);
+				}
+				p_args = completed.ptr();
+			}
+		}
+	}
+
 	//WARN_PRINT("SafeGDScriptInstance::callp: Calling method " + p_method + " at address " + itos(address) + " with " + itos(p_argument_count) + " arguments.");
 	ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
-	return sandbox->vmcall_address(address, p_args, p_argument_count, r_error);
+	return sandbox->vmcall_address(address, p_args, completed.is_empty() ? p_argument_count : int(completed.size()), r_error);
 }
 
 const GDExtensionMethodInfo *SafeGDScriptInstance::get_method_list(uint32_t *r_count) const {
@@ -180,8 +223,15 @@ bool SafeGDScriptInstance::validate_property(GDExtensionPropertyInfo &p_property
 }
 
 GDExtensionInt SafeGDScriptInstance::get_method_argument_count(const StringName &p_method, bool &r_valid) const {
-	r_valid = false;
-	return 0;
+	const MethodInfo *method = script->find_method_info(p_method);
+	// A vararg entry is one the compiler said nothing about, so the count is
+	// unknown rather than zero.
+	if (method == nullptr || (method->flags & METHOD_FLAG_VARARG)) {
+		r_valid = false;
+		return 0;
+	}
+	r_valid = true;
+	return GDExtensionInt(method->arguments.size());
 }
 
 bool SafeGDScriptInstance::has_method(const StringName &p_name) const {
@@ -199,10 +249,7 @@ bool SafeGDScriptInstance::has_method(const StringName &p_name) const {
 void SafeGDScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list, uint32_t p_count) const {
 	if (p_list) {
 		for (uint32_t i = 0; i < p_count; i++) {
-			const GDExtensionMethodInfo &method_info = p_list[i];
-			if (method_info.arguments) {
-				memdelete_arr(method_info.arguments);
-			}
+			free_method_info(p_list[i]);
 		}
 		memdelete_arr(p_list);
 	}

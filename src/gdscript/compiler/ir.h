@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <variant>
 #include <memory>
+#include "function_signature.h"
 #include "variant_types.h"
 
 namespace gdscript {
@@ -261,6 +262,10 @@ struct IRProgram {
 	std::vector<IRGlobalVar> globals;
 	std::vector<IRFunction> functions;
 	std::vector<std::string> string_constants;
+
+	// What the host needs to call these functions: one entry per entry in
+	// `functions`, in the same order.
+	std::vector<FunctionSignature> signatures;
 
 	// Synthetic function evaluating every global initializer that is not a
 	// compile-time constant: array and dictionary literals, constructor calls,

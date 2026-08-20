@@ -118,6 +118,39 @@ struct BankAccount:
 - Nothing of a struct survives into the IR. `tests/test_structs.cpp` covers the
   lowering.
 
+### Function signatures
+
+Godot calls an exported function through its symbol, and the Sandbox ABI hands
+the guest one Variant pointer per argument and no count. An argument the caller
+left out is therefore a null pointer, and the guest faults reading a Variant out
+of it -- so the arity has to reach Godot, and the ELF cannot carry it: the
+symbol table has names alone.
+
+`IRProgram::signatures` (`function_signature.h`) is what the compiler publishes
+beside the ELF: parameter names, declared types, return type, and the count a
+caller must supply. `Compiler::get_function_signatures()` holds the last
+compile's, `get_function_signatures()` in `gdscript.elf` hands them out, and
+`SafeGDScript::update_methods_info()` turns them into the `MethodInfo` list
+Godot checks calls against. `SafeGDScriptInstance::callp` re-checks, for the
+paths Godot does not pre-check itself.
+
+- The table crosses the boundary as one `PackedByteArray`, not an Array of
+  Dictionaries. Everything a guest hands out that is not inlined in a Variant
+  costs a scoped variant, and `Sandbox::MAX_REFS` is 100: containers per
+  function run any real script into the cap. The format is documented in
+  `function_signature.h` and encoded/decoded by the one file both sides compile,
+  `function_signature.cpp`.
+- Defaults are the same problem seen from the callee, which cannot fill one in
+  either, having no way to tell whether it was given the argument. A default
+  that folds to a constant travels with the signature and the host appends it;
+  one that does not fold leaves the parameter required for a call from Godot,
+  which is refused rather than guessed at. A call inside the program is
+  unaffected: `gen_call` materialises the full expression at the call site.
+- Despite the `GDExtensionVariantPtr *` in `GDExtensionMethodInfo`, the engine
+  reads `default_arguments` back as one contiguous array of `Variant`.
+- `tests/test_signatures.cpp` covers what the compiler publishes;
+  `test_sgd_*` in `test_gdscript_compiler.gd` covers the arity Godot enforces.
+
 ### Dispatch
 
 A fetch-decode-execute loop whose execute step is one `match` on an opcode is

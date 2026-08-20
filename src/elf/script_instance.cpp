@@ -381,10 +381,7 @@ bool ELFScriptInstance::has_method(const StringName &p_name) const {
 void ELFScriptInstance::free_method_list(const GDExtensionMethodInfo *p_list, uint32_t p_count) const {
 	if (p_list) {
 		for (uint32_t i = 0; i < p_count; i++) {
-			const GDExtensionMethodInfo &method_info = p_list[i];
-			if (method_info.arguments) {
-				memdelete_arr(method_info.arguments);
-			}
+			free_method_info(p_list[i]);
 		}
 		memdelete_arr(p_list);
 	}

@@ -199,6 +199,11 @@ private:
 	// Give a register the type, and the struct, that a declared type names.
 	void apply_declared_type(int reg, const std::string& type_hint, FunctionContext& func);
 
+	// The signature the host sees for one function: parameter names, declared
+	// types, and the defaults that folded to constants. Built after the globals
+	// are lowered, so a default naming a global const folds too.
+	FunctionSignature build_signature(const FunctionDecl& decl) const;
+
 	void set_register_struct(FunctionContext& func, int reg, const StructDecl* decl);
 	const StructDecl* get_register_struct(const FunctionContext& func, int reg) const;
 
