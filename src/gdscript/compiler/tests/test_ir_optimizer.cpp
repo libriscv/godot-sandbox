@@ -474,6 +474,55 @@ func test():
 	std::cout << "  ✓ Dead code elimination keeps stored globals test passed" << std::endl;
 }
 
+// A chain of copies has to collapse onto its original source, and the copies
+// that nothing reads any more have to go.
+//
+// Both halves used to fail, and each hid the other. Copy propagation recorded a
+// MOVE as a copy and then immediately erased that record when it invalidated
+// the register the MOVE had written, so no later instruction ever saw a copy to
+// propagate. And dead-code elimination refused to delete any instruction that
+// read a register, which a MOVE always does, so the copies left behind by the
+// front end stayed to the end. A `return` at the end of a loop reached the
+// backend as three Variant copies where one would do.
+void test_copy_chains_collapse() {
+	std::cout << "Test: copy chains collapse to one move" << std::endl;
+
+	const std::string source = R"(
+func test(n):
+	var total = 0
+	for i in range(n):
+		total += i
+	return total
+)";
+
+	IRFunction unoptimized = compile_to_ir(source);
+	IRFunction optimized = compile_to_ir(source);
+	IROptimizer optimizer;
+	optimizer.optimize_function(optimized);
+
+	const int before = count_instructions(unoptimized, IROpcode::MOVE);
+	const int after = count_instructions(optimized, IROpcode::MOVE);
+	std::cout << "  MOVE instructions: " << before << " -> " << after << std::endl;
+	assert(after < before && "the copy chain into the return register survived");
+
+	// Whatever survives has to end with the value reaching the return register,
+	// which RETURN reads without naming it.
+	bool defines_return_register = false;
+	for (const auto& instr : optimized.instructions) {
+		if (ir_destination_register(instr) == IRFunction::RETURN_REGISTER) {
+			defines_return_register = true;
+		}
+	}
+	assert(defines_return_register && "nothing writes the value that gets returned");
+
+	// The registers the deleted copies used are gone with them.
+	std::cout << "  max_registers: " << unoptimized.max_registers
+			  << " -> " << optimized.max_registers << std::endl;
+	assert(optimized.max_registers < unoptimized.max_registers);
+
+	std::cout << "  PASSED" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== IR Optimizer Peephole Pattern Tests ===\n" << std::endl;
 
@@ -509,6 +558,9 @@ int main() {
 		std::cout << std::endl;
 
 		test_dead_code_elimination_keeps_stored_globals();
+		std::cout << std::endl;
+
+		test_copy_chains_collapse();
 		std::cout << std::endl;
 
 		test_combined_optimizations();

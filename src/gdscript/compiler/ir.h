@@ -217,6 +217,12 @@ struct IRFunction {
 	std::vector<std::string> parameters;
 	std::vector<IRInstruction> instructions;
 	int max_registers = 0; // Number of virtual registers used
+
+	// The calling convention in one constant. Parameters arrive in virtual
+	// registers 0..N-1, and the return value leaves in virtual register 0 --
+	// RETURN names no operand, so every pass that has to know where the result
+	// of a function lives asks here.
+	static constexpr int RETURN_REGISTER = 0;
 };
 
 // Global variable declaration in IR

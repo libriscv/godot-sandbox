@@ -192,9 +192,9 @@ bool ir_reads_operand(const IRInstruction& instr, size_t index) {
 }
 
 void ir_collect_read_registers(const IRInstruction& instr, std::vector<int>& out) {
-	// A bare RETURN returns whatever is in r0.
+	// A bare RETURN returns whatever is in the return register.
 	if (instr.opcode == IROpcode::RETURN && instr.operands.empty()) {
-		out.push_back(0);
+		out.push_back(IRFunction::RETURN_REGISTER);
 		return;
 	}
 	for (size_t i = 0; i < instr.operands.size(); i++) {

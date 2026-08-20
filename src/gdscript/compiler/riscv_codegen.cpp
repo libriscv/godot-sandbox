@@ -1,6 +1,7 @@
 #include "riscv_codegen.h"
 #include "compiler_exception.h"
 #include "variant_types.h"
+#include <algorithm>
 #include <stdexcept>
 #include <cstring>
 #include <climits>
@@ -422,9 +423,64 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	// Initialize register allocator
 	m_allocator.init(func);
 
+	m_fn.in_function = true;
+
+	// What has to be saved is a property of the instructions about to be
+	// generated, so read it off them before the prologue is emitted. A leaf
+	// function -- and every plain getter and setter is one -- keeps ra, and a
+	// function that makes no system call keeps the caller's return-value
+	// pointer in a0 for as long as it needs it.
+	for (const auto& instr : func.instructions) {
+		if (opcode_clobbers_abi_registers(instr.opcode)) {
+			m_fn.spills_return_pointer = true;
+		}
+		if (instr.opcode == IROpcode::CALL) {
+			m_fn.saves_return_address = true;
+		}
+	}
+	m_fn.forward_to_return = find_return_forwarding(func);
+
+	// A function that saves nothing, takes no parameters and writes every value
+	// it produces through a0 never addresses anything off sp. Its frame is two
+	// instructions that move the stack pointer down and back over memory
+	// nothing touches, and every plain getter has exactly this shape.
+	//
+	// get_variant_stack_offset() and get_scratch_variant_offset() refuse to
+	// answer once this is decided, so an expansion that turns out to want a
+	// slot after all fails the compile rather than quietly addressing the
+	// caller's frame through an sp that was never moved.
+	m_fn.omits_frame = !m_fn.saves_return_address && !m_fn.spills_return_pointer &&
+		m_fn.num_params == 0;
+	for (size_t i = 0; m_fn.omits_frame && i < func.instructions.size(); i++) {
+		switch (func.instructions[i].opcode) {
+			case IROpcode::LABEL:
+			case IROpcode::JUMP:
+				break; // Control flow only; touches no memory.
+			case IROpcode::RETURN:
+				// RETURN copies the return register's slot into the caller's
+				// Variant unless the instruction before it already wrote
+				// through a0 -- or unless the function has no registers at all,
+				// in which case there is no slot to copy.
+				m_fn.omits_frame = func.max_registers == 0 ||
+					(i > 0 && m_fn.forward_to_return[i - 1]);
+				break;
+			case IROpcode::LOAD_IMM:
+			case IROpcode::LOAD_FLOAT_IMM:
+			case IROpcode::LOAD_BOOL:
+			case IROpcode::LOAD_GLOBAL:
+				// These build their result through one base register, which is
+				// a0 when the result is being returned and a slot otherwise.
+				m_fn.omits_frame = m_fn.forward_to_return[i];
+				break;
+			default:
+				m_fn.omits_frame = false;
+				break;
+		}
+	}
+
 	// Calculate stack frame size
-	// Need space for: saved registers (24 bytes) + space for Variants
-	const int saved_reg_space = SAVED_REG_SPACE; // Save ra, fp, and a0 (return pointer)
+	// Need space for: saved registers + space for Variants
+	const int saved_reg_space = SAVED_REG_SPACE; // Save ra and a0 (return pointer)
 
 	// Pre-allocate stack offsets for ALL virtual registers in order
 	// Assign offsets deterministically based on virtual register number,
@@ -448,7 +504,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	m_fn.scratch_slot_base = max_variants;
 	m_fn.next_variant_slot = max_variants + SCRATCH_VARIANT_SLOTS;
 
-	m_fn.stack_frame_size = saved_reg_space + variant_space;
+	m_fn.stack_frame_size = m_fn.omits_frame ? 0 : saved_reg_space + variant_space;
 
 	// Align to 16 bytes (RISC-V ABI requirement)
 	m_fn.stack_frame_size = (m_fn.stack_frame_size + 15) & ~15;
@@ -460,16 +516,14 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	}
 
 	// Save return address: sd ra, 0(sp)
-	emit_sd(REG_RA, REG_SP, 0); // SD
+	if (m_fn.saves_return_address) {
+		emit_sd(REG_RA, REG_SP, SAVED_RA_OFFSET);
+	}
 
-	// Save frame pointer: sd fp, 8(sp)
-	emit_sd(REG_FP, REG_SP, 8); // SD
-
-	// Save a0 (return Variant pointer): sd a0, 16(sp)
-	emit_sd(REG_A0, REG_SP, 16); // SD
-
-	// Set frame pointer: addi fp, sp, frame_size
-	emit_add_offset(REG_FP, REG_SP, m_fn.stack_frame_size);
+	// Save a0 (return Variant pointer): sd a0, 8(sp)
+	if (m_fn.spills_return_pointer) {
+		emit_sd(REG_A0, REG_SP, SAVED_A0_OFFSET);
+	}
 
 	// Copy parameter Variants from argument registers to stack
 	// Parameters come in a1-a7 as POINTERS to Variants
@@ -483,8 +537,25 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	}
 
 	// Process each IR instruction
-	for (const auto& instr : func.instructions) {
+	for (size_t instr_idx = 0; instr_idx < func.instructions.size(); instr_idx++) {
+		const auto& instr = func.instructions[instr_idx];
+		const bool forward_return = m_fn.forward_to_return[instr_idx];
 		m_fn.current_instr_idx++;
+
+		// Where this instruction's result goes: normally the destination
+		// register's slot in the frame, but for the last write before a RETURN,
+		// straight through the caller's pointer in a0 -- which is where the
+		// RETURN would have copied it from the slot anyway. Asking is what
+		// commits to the forwarding, so only the expansion that is about to do
+		// the writing may ask, and only once.
+		auto value_destination = [&](int vreg) -> std::pair<uint8_t, int> {
+			if (forward_return) {
+				emit_load_return_pointer();
+				m_fn.return_value_written = true;
+				return { REG_A0, 0 };
+			}
+			return { REG_SP, get_variant_stack_offset(vreg) };
+		};
 
 		switch (instr.opcode) {
 			case IROpcode::LABEL:
@@ -494,34 +565,24 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::LOAD_IMM: {
 				int vreg = std::get<int>(instr.operands[0].value);
 				int64_t value = std::get<int64_t>(instr.operands[1].value);
-				int stack_offset = get_variant_stack_offset(vreg);
-				emit_variant_create_int(stack_offset, value);
+				auto [base, offset] = value_destination(vreg);
+				emit_variant_create_int(offset, value, base);
 				break;
 			}
 
 			case IROpcode::LOAD_FLOAT_IMM: {
 				int vreg = std::get<int>(instr.operands[0].value);
 				double value = std::get<double>(instr.operands[1].value);
-
-				// Convert double to bit pattern for storage
-				int64_t bits;
-				memcpy(&bits, &value, sizeof(double));
-
-				int stack_offset = get_variant_stack_offset(vreg);
-
-				// Create float Variant on stack
-				emit_li(REG_T0, 3); // FLOAT type
-				emit_sw(REG_T0, REG_SP, stack_offset);
-				emit_li(REG_T0, bits);
-				emit_sd(REG_T0, REG_SP, stack_offset + 8);
+				auto [base, offset] = value_destination(vreg);
+				emit_variant_create_float(offset, value, base);
 				break;
 			}
 
 			case IROpcode::LOAD_BOOL: {
 				int vreg = std::get<int>(instr.operands[0].value);
 				int64_t value = std::get<int64_t>(instr.operands[1].value);
-				int stack_offset = get_variant_stack_offset(vreg);
-				emit_variant_create_bool(stack_offset, value != 0);
+				auto [base, offset] = value_destination(vreg);
+				emit_variant_create_bool(offset, value != 0, base);
 				break;
 			}
 
@@ -551,7 +612,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				}
 
 				// Copy the whole Variant
-				emit_variant_copy(dst_offset, src_offset);
+				auto [base, offset] = value_destination(dst_vreg);
+				emit_variant_move(base, offset, REG_SP, src_offset, REG_T0);
 				break;
 			}
 
@@ -583,21 +645,17 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// Loads a global variable (Variant) from the global data area into a virtual register
 				int dst_vreg = std::get<int>(instr.operands[0].value);
 				int64_t global_idx = std::get<int64_t>(instr.operands[1].value);
-				int dst_offset = get_variant_stack_offset(dst_vreg);
-
-				// Load address of global variable: gp + (global_idx * sizeof(Variant))
-				// GP register points to the start of global data area
-				int global_offset = global_idx * variant_size();
 
 				// Load global base address into t0
 				// For now, we'll use a label to mark the global data section
 				emit_address_of_global(REG_T0, static_cast<size_t>(global_idx));
 
-				// Load destination address into t1
-				emit_load_stack_offset(REG_T1, dst_offset);
-
-				// Copy the whole Variant from the global data area to the stack
-				emit_variant_move(REG_T1, 0, REG_T0, 0, REG_T2);
+				// Copy the whole Variant out of the global data area. The
+				// destination is addressed off its base register directly
+				// rather than through a second pointer register, which is one
+				// instruction the stores were already able to do themselves.
+				auto [base, offset] = value_destination(dst_vreg);
+				emit_variant_move(base, offset, REG_T0, 0, REG_T1);
 				break;
 			}
 
@@ -1064,25 +1122,24 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// a0 points to pre-allocated Variant for return value
 				// Copy the return Variant (virtual register 0) to *a0
 
-				// First, restore a0 from stack (it may have been clobbered by syscalls)
-				emit_ld(REG_A0, REG_SP, 16); // LD a0, 16(sp)
+				// The instruction before this one may already have written the
+				// value through a0, in which case there is nothing left to copy.
+				if (m_fn.return_value_written) {
+					m_fn.return_value_written = false;
+				} else if (m_fn.variant_offsets.find(IRFunction::RETURN_REGISTER) != m_fn.variant_offsets.end()) {
+					int src_offset = get_variant_stack_offset(IRFunction::RETURN_REGISTER);
 
-				if (m_fn.variant_offsets.find(0) != m_fn.variant_offsets.end()) {
-					int src_offset = get_variant_stack_offset(0);
-
-					// Copy the return Variant from the stack to *a0
-					// Load address of source Variant: addi t0, sp, src_offset
-					emit_add_offset(REG_T0, REG_SP, src_offset);
-
-					emit_variant_move(REG_A0, 0, REG_T0, 0, REG_T1);
+					// Copy the return Variant from its slot to *a0, addressing
+					// the source off sp rather than through a pointer register.
+					emit_load_return_pointer();
+					emit_variant_move(REG_A0, 0, REG_SP, src_offset, REG_T0);
 				}
 
 				// Function epilogue - restore registers and deallocate stack
 				// Restore return address: ld ra, 0(sp)
-				emit_ld(REG_RA, REG_SP, 0); // LD
-
-				// Restore frame pointer: ld fp, 8(sp)
-				emit_ld(REG_FP, REG_SP, 8); // LD
+				if (m_fn.saves_return_address) {
+					emit_ld(REG_RA, REG_SP, SAVED_RA_OFFSET);
+				}
 
 				// Deallocate stack: addi sp, sp, frame_size
 				if (m_fn.stack_frame_size > 0) {
@@ -1253,6 +1310,10 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// Call the function using JAL with label
 				// We'll use the function name as a label that will be resolved later
+				if (!m_fn.saves_return_address) {
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+						"Call emitted in a function whose prologue did not save the return address");
+				}
 				mark_label_use(func_name, m_code.size());
 				emit_jal(REG_RA, 0); // JAL ra, func_name
 
@@ -2326,6 +2387,161 @@ void RISCVCodeGen::emit_add_offset(uint8_t rd, uint8_t base, int32_t offset) {
 	emit_add(rd, base, temp);
 }
 
+bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
+	switch (op) {
+		// Expansions that are nothing but loads, stores, arithmetic and
+		// branches over the frame. Nothing here reaches the host, so a0-a7 and
+		// ra survive across them.
+		case IROpcode::LOAD_IMM:
+		case IROpcode::LOAD_FLOAT_IMM:
+		case IROpcode::LOAD_BOOL:
+		case IROpcode::LOAD_GLOBAL:
+		case IROpcode::MOVE:
+		case IROpcode::LABEL:
+		case IROpcode::JUMP:
+		case IROpcode::RETURN:
+			return false;
+
+		// Everything else either makes a system call or calls another function
+		// in the program. Several of these have a faster inline path when the
+		// operand types are known -- typed integer arithmetic does not go
+		// through VEVAL -- but the answer here is per-opcode and has to hold
+		// for the slow path too.
+		case IROpcode::LOAD_STRING:
+		case IROpcode::STORE_GLOBAL:
+		case IROpcode::CONVERT:
+		case IROpcode::ADD:
+		case IROpcode::SUB:
+		case IROpcode::MUL:
+		case IROpcode::DIV:
+		case IROpcode::MOD:
+		case IROpcode::NEG:
+		case IROpcode::CMP_EQ:
+		case IROpcode::CMP_NEQ:
+		case IROpcode::CMP_LT:
+		case IROpcode::CMP_LTE:
+		case IROpcode::CMP_GT:
+		case IROpcode::CMP_GTE:
+		case IROpcode::AND:
+		case IROpcode::OR:
+		case IROpcode::NOT:
+		case IROpcode::BIT_AND:
+		case IROpcode::BIT_OR:
+		case IROpcode::BIT_XOR:
+		case IROpcode::BIT_NOT:
+		case IROpcode::SHL:
+		case IROpcode::SHR:
+		// A branch on a Variant of unknown type asks the host to booleanize it:
+		// only Godot knows whether a String or an Array is empty.
+		case IROpcode::BRANCH_ZERO:
+		case IROpcode::BRANCH_NOT_ZERO:
+		case IROpcode::BRANCH_EQ:
+		case IROpcode::BRANCH_NEQ:
+		case IROpcode::BRANCH_LT:
+		case IROpcode::BRANCH_LTE:
+		case IROpcode::BRANCH_GT:
+		case IROpcode::BRANCH_GTE:
+		case IROpcode::CALL:
+		case IROpcode::CALL_SYSCALL:
+		case IROpcode::VCALL:
+		case IROpcode::VGET:
+		case IROpcode::VSET:
+		case IROpcode::PRINT:
+		case IROpcode::GLOBAL_CALL:
+		case IROpcode::MAKE_VECTOR2:
+		case IROpcode::MAKE_VECTOR3:
+		case IROpcode::MAKE_VECTOR4:
+		case IROpcode::MAKE_VECTOR2I:
+		case IROpcode::MAKE_VECTOR3I:
+		case IROpcode::MAKE_VECTOR4I:
+		case IROpcode::MAKE_COLOR:
+		case IROpcode::MAKE_RECT2:
+		case IROpcode::MAKE_RECT2I:
+		case IROpcode::MAKE_PLANE:
+		case IROpcode::MAKE_ARRAY:
+		case IROpcode::MAKE_DICTIONARY:
+		case IROpcode::MAKE_PACKED_BYTE_ARRAY:
+		case IROpcode::MAKE_PACKED_INT32_ARRAY:
+		case IROpcode::MAKE_PACKED_INT64_ARRAY:
+		case IROpcode::MAKE_PACKED_FLOAT32_ARRAY:
+		case IROpcode::MAKE_PACKED_FLOAT64_ARRAY:
+		case IROpcode::MAKE_PACKED_STRING_ARRAY:
+		case IROpcode::MAKE_PACKED_VECTOR2_ARRAY:
+		case IROpcode::MAKE_PACKED_VECTOR3_ARRAY:
+		case IROpcode::MAKE_PACKED_COLOR_ARRAY:
+		case IROpcode::MAKE_PACKED_VECTOR4_ARRAY:
+		case IROpcode::VGET_INLINE:
+		case IROpcode::VSET_INLINE:
+			return true;
+	}
+	throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+		"Unknown IR opcode in ABI clobber analysis");
+}
+
+std::vector<bool> RISCVCodeGen::find_return_forwarding(const IRFunction& func) {
+	// A function that ends `MOVE r0, rN; RETURN` or `LOAD_GLOBAL r0, g; RETURN`
+	// copies a Variant into r0's stack slot and then copies the same Variant
+	// out of that slot into the caller's. The slot is a waypoint nobody reads,
+	// so the first copy can be made directly into *a0 and the second dropped --
+	// on a Variant that is six loads and six stores instead of twelve.
+	//
+	// Two things have to hold. The RETURN must be the very next instruction, so
+	// the two are in the same basic block and nothing can run between them. And
+	// nothing reachable afterwards may read r0, because its slot is left
+	// holding whatever it held before: RETURN is a terminator, so the code
+	// after it is only reachable through a label, and a backwards branch into a
+	// loop that reads r0 would read a stale value.
+	std::vector<bool> forward(func.instructions.size(), false);
+
+	std::vector<int> reads;
+	for (size_t i = 0; i + 1 < func.instructions.size(); i++) {
+		const auto& instr = func.instructions[i];
+		if (func.instructions[i + 1].opcode != IROpcode::RETURN) {
+			continue;
+		}
+		switch (instr.opcode) {
+			case IROpcode::LOAD_IMM:
+			case IROpcode::LOAD_FLOAT_IMM:
+			case IROpcode::LOAD_BOOL:
+			case IROpcode::LOAD_GLOBAL:
+			case IROpcode::MOVE:
+				break; // Writes its result through one base register, so it can write through a0.
+			default:
+				continue; // Everything else builds its result in the frame.
+		}
+		if (ir_destination_register(instr) != IRFunction::RETURN_REGISTER) {
+			continue;
+		}
+		// A self-move writes nothing, so there would be nothing to forward.
+		reads.clear();
+		ir_collect_read_registers(instr, reads);
+		if (std::find(reads.begin(), reads.end(), IRFunction::RETURN_REGISTER) != reads.end()) {
+			continue;
+		}
+
+		// The scan starts past the RETURN: RETURN's read of the return
+		// register is the one this forwards, not one that stops it.
+		bool read_later = false;
+		for (size_t j = i + 2; j < func.instructions.size() && !read_later; j++) {
+			reads.clear();
+			ir_collect_read_registers(func.instructions[j], reads);
+			read_later = std::find(reads.begin(), reads.end(), IRFunction::RETURN_REGISTER) != reads.end();
+		}
+		forward[i] = !read_later;
+	}
+
+	return forward;
+}
+
+void RISCVCodeGen::emit_load_return_pointer() {
+	// a0 arrives holding the caller's return Variant and stays there unless
+	// something in this function goes through the host, which takes a0 as its
+	// first argument register.
+	if (m_fn.spills_return_pointer) {
+		emit_ld(REG_A0, REG_SP, SAVED_A0_OFFSET);
+	}
+}
+
 void RISCVCodeGen::emit_address_of_global(uint8_t rd, size_t index) {
 	const int64_t byte_offset = static_cast<int64_t>(index) * variant_size();
 	if (byte_offset > INT32_MAX) {
@@ -2450,6 +2666,16 @@ void RISCVCodeGen::emit_jalr(uint8_t rd, uint8_t rs1, int32_t offset) {
 }
 
 void RISCVCodeGen::emit_ecall() {
+	// The prologue skipped spilling the caller's return-value pointer because
+	// opcode_clobbers_abi_registers() said no instruction in this function
+	// reaches the host. A system call here says otherwise, and a0 is about to
+	// be overwritten with a syscall argument. Refusing to encode it turns a
+	// wrong row in that switch into a failed compile instead of a function that
+	// returns whatever the last system call left behind.
+	if (m_fn.in_function && !m_fn.spills_return_pointer) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"System call emitted in a function whose prologue did not save the return-value pointer");
+	}
 	// ecall instruction: opcode = 0x73, funct3 = 0, rs1 = 0, rd = 0, imm = 0
 	emit_i_type(0x73, 0, 0, 0, 0);
 }
@@ -2657,6 +2883,10 @@ void RISCVCodeGen::resolve_labels() {
 }
 
 int RISCVCodeGen::get_variant_stack_offset(int virtual_reg) {
+	if (m_fn.omits_frame) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"Virtual register r" + std::to_string(virtual_reg) + " was asked for in a function generated without a stack frame");
+	}
 	auto it = m_fn.variant_offsets.find(virtual_reg);
 	if (it != m_fn.variant_offsets.end()) {
 		return it->second;
@@ -2671,6 +2901,10 @@ int RISCVCodeGen::get_variant_stack_offset(int virtual_reg) {
 }
 
 int RISCVCodeGen::get_scratch_variant_offset(int index) {
+	if (m_fn.omits_frame) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"A scratch Variant was asked for in a function generated without a stack frame");
+	}
 	if (index < 0 || index >= SCRATCH_VARIANT_SLOTS) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 				"Scratch Variant slot " + std::to_string(index) + " is out of range");
@@ -2679,26 +2913,39 @@ int RISCVCodeGen::get_scratch_variant_offset(int index) {
 	return SAVED_REG_SPACE + ((m_fn.scratch_slot_base + index) * variant_size());
 }
 
-void RISCVCodeGen::emit_variant_create_int(int stack_offset, int64_t value) {
-	// Create an integer Variant on the stack
+void RISCVCodeGen::emit_variant_create_int(int stack_offset, int64_t value, uint8_t base_reg) {
+	// Create an integer Variant
 	// Variant layout: [uint32_t m_type (4 bytes)] [padding (4 bytes)] [int64_t v.i (8 bytes)]
 
 	// Store m_type = INT (2) at stack_offset
 	emit_li(REG_T0, 2); // INT type
-	emit_store_variant_type(REG_T0, REG_SP, stack_offset);
+	emit_store_variant_type(REG_T0, base_reg, stack_offset);
 
 	// Store value
 	emit_li(REG_T0, value);
-	emit_store_variant_int(REG_T0, REG_SP, stack_offset);
+	emit_store_variant_int(REG_T0, base_reg, stack_offset);
 }
 
-void RISCVCodeGen::emit_variant_create_bool(int stack_offset, bool value) {
+void RISCVCodeGen::emit_variant_create_float(int stack_offset, double value, uint8_t base_reg) {
+	// v.f in a Variant is a 64-bit double whatever real_t is, so the bit
+	// pattern goes in whole and there is no rounding to think about.
+	int64_t bits;
+	memcpy(&bits, &value, sizeof(double));
+
+	emit_li(REG_T0, Variant::FLOAT);
+	emit_store_variant_type(REG_T0, base_reg, stack_offset);
+
+	emit_li(REG_T0, bits);
+	emit_sd(REG_T0, base_reg, stack_offset + VARIANT_DATA_OFFSET);
+}
+
+void RISCVCodeGen::emit_variant_create_bool(int stack_offset, bool value, uint8_t base_reg) {
 	// Similar to create_int but with BOOL type (1)
 	emit_li(REG_T0, 1); // BOOL type
-	emit_store_variant_type(REG_T0, REG_SP, stack_offset);
+	emit_store_variant_type(REG_T0, base_reg, stack_offset);
 
 	emit_li(REG_T0, value ? 1 : 0);
-	emit_store_variant_bool(REG_T0, REG_SP, stack_offset);
+	emit_store_variant_bool(REG_T0, base_reg, stack_offset);
 }
 
 void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) {
@@ -2809,10 +3056,6 @@ void RISCVCodeGen::emit_variant_create_empty_dictionary(int stack_offset) {
 	// Create empty Dictionary using VCREATE syscall
 	// sys_vcreate(&v, DICTIONARY, 0, nullptr)
 	emit_vcreate_syscall(Variant::DICTIONARY, 0, REG_ZERO, stack_offset);
-}
-
-void RISCVCodeGen::emit_variant_copy(int dst_offset, int src_offset) {
-	emit_variant_move(REG_SP, dst_offset, REG_SP, src_offset, REG_T0);
 }
 
 void RISCVCodeGen::emit_variant_move(uint8_t dst_base, int32_t dst_offset, uint8_t src_base, int32_t src_offset, uint8_t tmp_reg) {

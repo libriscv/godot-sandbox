@@ -112,6 +112,21 @@ private:
 	// because an `addi` after the address truncates at 85 globals.
 	void emit_address_of_global(uint8_t rd, size_t index);
 
+	// Put the caller's return-value pointer back in a0, if anything in this
+	// function could have clobbered it.
+	void emit_load_return_pointer();
+
+	// Whether generating this opcode can emit an ECALL or a call, and so
+	// clobber a0-a7 -- and, for a call, ra. Conservative by construction: the
+	// switch has no default, so a new opcode does not compile until it has
+	// answered, and the answer only has to be "no" where the expansion is
+	// provably nothing but loads, stores and arithmetic on the frame.
+	static bool opcode_clobbers_abi_registers(IROpcode op);
+
+	// Which instructions may write the return value straight into *a0 instead
+	// of into the return register's stack slot. See the definition.
+	static std::vector<bool> find_return_forwarding(const IRFunction& func);
+
 	// The label the global data area is defined at.
 	static constexpr const char* GLOBALS_LABEL = ".globals";
 	void emit_add(uint8_t rd, uint8_t rs1, uint8_t rs2);
@@ -247,10 +262,13 @@ private:
 	void emit_store_variant_int(uint8_t rs, uint8_t base_reg, int32_t variant_offset);
 
 	// Variant management
-	void emit_variant_create_int(int stack_offset, int64_t value);
-	void emit_variant_create_bool(int stack_offset, bool value);
+	// The base register defaults to sp because almost every Variant this
+	// backend builds lives in the frame. The exception is a value that is being
+	// returned, which is built through the caller's pointer in a0 instead.
+	void emit_variant_create_int(int stack_offset, int64_t value, uint8_t base_reg = REG_SP);
+	void emit_variant_create_bool(int stack_offset, bool value, uint8_t base_reg = REG_SP);
+	void emit_variant_create_float(int stack_offset, double value, uint8_t base_reg = REG_SP);
 	void emit_variant_create_string(int stack_offset, int string_idx);
-	void emit_variant_copy(int dst_offset, int src_offset);
 
 	// Copy a whole Variant (variant_size() bytes) between two [base + offset] locations,
 	// shuttling it through tmp_reg. Both endpoints must be 8-byte aligned.
@@ -385,6 +403,34 @@ private:
 		int next_variant_slot = 0;  // Next Variant slot to allocate
 		int scratch_slot_base = 0;  // First Variant slot of the scratch area
 		int current_instr_idx = 0;  // Current instruction index for register allocation
+
+		// False outside gen_function(), where the entry stub and the export
+		// table are emitted without a frame and the questions below have no
+		// answer.
+		bool in_function = false;
+
+		// What the prologue decided, from the instructions the function is
+		// about to generate. Both are the answer to "can the code between the
+		// prologue and the epilogue destroy this register", so both are set
+		// before the first instruction is emitted, and emit_ecall() and the
+		// CALL expansion check them: a function that saves nothing and then
+		// makes a call is a miscompile, and this is where it stops.
+		bool saves_return_address = false;   // some CALL clobbers ra
+		bool spills_return_pointer = false;  // some ecall or call clobbers a0
+
+		// No instruction in this function addresses anything off sp, so the
+		// function is generated without moving the stack pointer at all.
+		bool omits_frame = false;
+
+		// Set when a value has already been written through a0, so the RETURN
+		// that follows only has to emit the epilogue. Reset by that RETURN, so
+		// a function with several of them decides once per return.
+		bool return_value_written = false;
+
+		// Indexed by instruction: true where the instruction writes the return
+		// register and the next instruction is the RETURN that reads it, so the
+		// write can go straight into the caller's Variant.
+		std::vector<bool> forward_to_return;
 	};
 
 	FunctionState m_fn;
@@ -416,8 +462,13 @@ private:
 	int real_offset(int index) const { return m_layout.real_offset(index); }
 	static constexpr int int_offset(int index) { return VariantLayout::int_offset(index); }
 
-	// Space reserved at the bottom of every frame for saved ra, fp and a0
-	static constexpr int SAVED_REG_SPACE = 24;
+	// Space reserved at the bottom of every frame for the saved ra and a0, and
+	// where each one sits. There is no saved frame pointer: every access in the
+	// backend is sp-relative and the frame never changes size after the
+	// prologue, so an fp would have been set up, saved, restored and never read.
+	static constexpr int SAVED_RA_OFFSET = 0;
+	static constexpr int SAVED_A0_OFFSET = 8;
+	static constexpr int SAVED_REG_SPACE = 16;
 
 	// String constants from IR
 	const std::vector<std::string>* m_string_constants = nullptr;

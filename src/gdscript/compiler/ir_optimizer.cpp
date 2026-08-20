@@ -1112,51 +1112,46 @@ void IROptimizer::copy_propagation(IRFunction& func) {
 }
 
 void IROptimizer::eliminate_dead_code(IRFunction& func) {
-	// Find all live registers (used after definition)
-	auto live_regs = find_live_registers(func);
+	// An instruction can go when both hold:
+	//
+	//   - it is pure, so deleting it cannot change anything the program
+	//     observes (the metadata table answers this, not a list kept here,
+	//     and it is asked about the instruction rather than the opcode: an
+	//     unread randi() still has to be called), and
+	//   - it defines a register nothing reads.
+	//
+	// That an instruction reads registers of its own is not a reason to keep
+	// it. Its inputs were only live because this instruction read them, so
+	// deleting it can make their definitions dead in turn -- which is why this
+	// runs to a fixed point rather than once. What the rule does depend on
+	// entirely is find_live_registers() accounting for every read in the
+	// program, including the return value, which RETURN reads without naming.
+	// A register operand missed there turns into a deleted definition and a
+	// silently wrong program, so that function, not this one, is where the
+	// conservatism lives.
+	//
+	// The bound is a backstop, not a schedule: each round deletes at least one
+	// instruction or is the last, so the loop cannot run longer than the
+	// function it is shrinking.
+	for (size_t round = 0; round < func.instructions.size() + 1; round++) {
+		const auto live_regs = find_live_registers(func);
 
-	std::vector<IRInstruction> new_instructions;
-	new_instructions.reserve(func.instructions.size());
+		std::vector<IRInstruction> new_instructions;
+		new_instructions.reserve(func.instructions.size());
 
-	std::vector<int> reads;
-	for (const auto& instr : func.instructions) {
-		// An instruction can go when all three hold:
-		//
-		//   - it is pure, so deleting it cannot change anything the program
-		//     observes (the metadata table answers this, not a list kept here,
-		//     and it is asked about the instruction rather than the opcode: an
-		//     unread randi() still has to be called),
-		//   - it defines a register nothing reads, and
-		//   - it reads no register itself, so there is no input whose own
-		//     definition this was keeping alive and no calling-convention MOVE
-		//     to disturb.
-		//
-		// That is deliberately narrow. Widening it means trusting
-		// find_live_registers() to have accounted for every read in the
-		// program, and a register operand missed there turns into a deleted
-		// definition and a silently wrong program.
-		if (!ir_instruction_is_pure(instr)) {
+		for (const auto& instr : func.instructions) {
+			const int dst = ir_destination_register(instr);
+			if (dst >= 0 && live_regs.count(dst) == 0 && ir_instruction_is_pure(instr)) {
+				continue; // Dead: pure, defines a register nothing reads.
+			}
 			new_instructions.push_back(instr);
-			continue;
 		}
 
-		const int dst = ir_destination_register(instr);
-		if (dst < 0 || live_regs.count(dst) != 0) {
-			new_instructions.push_back(instr);
-			continue;
+		if (new_instructions.size() == func.instructions.size()) {
+			return; // Nothing left to delete.
 		}
-
-		reads.clear();
-		ir_collect_read_registers(instr, reads);
-		if (!reads.empty()) {
-			new_instructions.push_back(instr);
-			continue;
-		}
-
-		// Dead: pure, defines an unread register, reads nothing.
+		func.instructions = std::move(new_instructions);
 	}
-
-	func.instructions = std::move(new_instructions);
 }
 
 std::unordered_set<int> IROptimizer::find_live_registers(const IRFunction& func) {
@@ -1175,6 +1170,11 @@ std::unordered_set<int> IROptimizer::find_live_registers(const IRFunction& func)
 		ir_collect_read_registers(instr, reads);
 		live.insert(reads.begin(), reads.end());
 	}
+
+	// The return value needs no special case here: RETURN names no operand, but
+	// ir_collect_read_registers() reports it as reading the return register
+	// anyway, which is what keeps the definition that produced the return value
+	// off the list of things to delete.
 
 	return live;
 }
@@ -1820,26 +1820,10 @@ void IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 			copies.clear();
 		}
 
-		// Track MOVE instructions
-		if (instr.opcode == IROpcode::MOVE && instr.operands.size() >= 2 &&
-		    instr.operands[0].type == IRValue::Type::REGISTER &&
-		    instr.operands[1].type == IRValue::Type::REGISTER) {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src = std::get<int>(instr.operands[1].value);
-
-			// Follow the copy chain: if src is itself a copy, use the original source
-			while (copies.count(src)) {
-				src = copies[src].source_reg;
-			}
-
-			copies[dst] = {src, i};
-		}
-
 		// Propagate copies into every operand the instruction reads. Asking the
 		// operand-role table rather than starting at operand 1 is what keeps the
 		// branch operands (which are read at operand 0) and the CALL result
 		// (which is written at operand 1) on the right sides of the line.
-		bool modified = false;
 		for (size_t j = 0; j < instr.operands.size(); j++) {
 			if (!ir_reads_operand(instr, j)) {
 				continue;
@@ -1853,7 +1837,6 @@ void IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 				// Verify the source register hasn't been modified
 				if (register_unmodified_between(func, copy_info.source_reg, copy_info.def_idx, i)) {
 					instr.operands[j].value = copy_info.source_reg;
-					modified = true;
 				}
 			}
 		}
@@ -1871,6 +1854,23 @@ void IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 				} else {
 					++it;
 				}
+			}
+		}
+
+		// Record this MOVE as a copy, after the invalidation above and not
+		// before it: a MOVE writes the register it is recorded under, so
+		// tracking it first meant the invalidation immediately erased what had
+		// just been learned. Nothing downstream ever saw a copy, and a chain
+		// `MOVE rb, ra; MOVE rc, rb` reached the backend as two Variant copies
+		// where one would do. The source is read from the propagated operand,
+		// so a chain collapses onto its original source in one pass.
+		if (instr.opcode == IROpcode::MOVE && instr.operands.size() >= 2 &&
+		    instr.operands[0].type == IRValue::Type::REGISTER &&
+		    instr.operands[1].type == IRValue::Type::REGISTER) {
+			const int dst = std::get<int>(instr.operands[0].value);
+			const int src = std::get<int>(instr.operands[1].value);
+			if (dst != src) {
+				copies[dst] = {src, i};
 			}
 		}
 
