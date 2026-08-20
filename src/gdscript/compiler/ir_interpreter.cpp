@@ -358,6 +358,36 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 					std::string(info->name) + "() needs the host Variant API and is not available"
 					" in the IR interpreter (in function '" + func.name + "')");
 			}
+			if (info->impure) {
+				// The random draws. Answering with a number of this
+				// interpreter's own choosing would be a number the machine
+				// never produced, and every test that compares the two reads
+				// that as a miscompilation.
+				throw CompilerException(ErrorType::OPTIMIZER_ERROR,
+					std::string(info->name) + "() needs the host's random number generator"
+					" and is not available in the IR interpreter (in function '" + func.name + "')");
+			}
+
+			// int(), float() and bool() of something whose type the compiler
+			// did not know. Everything a Value can hold converts here except a
+			// String to a number: Godot's parse is the definition of what
+			// int("42") means, and guessing at it here would be a second
+			// definition to disagree with.
+			if (info->kind == GlobalKind::CAST) {
+				const Value& value = args.at(0);
+				if (std::holds_alternative<std::string>(value) && fn != GlobalFn::TO_BOOL) {
+					throw CompilerException(ErrorType::OPTIMIZER_ERROR,
+						std::string(info->name) + "() of a String needs the host Variant API and is"
+						" not available in the IR interpreter (in function '" + func.name + "')");
+				}
+				switch (fn) {
+					case GlobalFn::TO_INT: ctx.registers[result_reg] = get_int(value); break;
+					case GlobalFn::TO_FLOAT: ctx.registers[result_reg] = get_double(value); break;
+					// Variant::booleanize(), which get_bool() already is.
+					default: ctx.registers[result_reg] = get_bool(value); break;
+				}
+				break;
+			}
 
 			// An unresolved NUMERIC global follows the values it was handed,
 			// the same way the backend's run-time type test does.

@@ -302,6 +302,17 @@ bool ir_reads_operand(const IRInstruction& instr, size_t index);
 // implicitly reads r0.
 void ir_collect_read_registers(const IRInstruction& instr, std::vector<int>& out);
 
+// Whether *this* instruction can be deleted when nothing reads its
+// destination, and moved when its inputs allow.
+//
+// ir_is_pure() answers for an opcode, which is enough for every opcode but
+// one: GLOBAL_CALL carries which global it calls as an immediate, and randi()
+// is not abs(). A random draw advances the generator the whole project shares,
+// so a call nobody reads the result of still has to happen and two calls are
+// not one call. A pass that asks the opcode instead of the instruction would
+// delete it.
+bool ir_instruction_is_pure(const IRInstruction& instr);
+
 // TypeHint helper functions - now using Variant::Type directly
 namespace TypeHintUtils {
 	// Check if TypeHint is a Variant type (not NONE)

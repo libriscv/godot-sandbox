@@ -1123,7 +1123,9 @@ void IROptimizer::eliminate_dead_code(IRFunction& func) {
 		// An instruction can go when all three hold:
 		//
 		//   - it is pure, so deleting it cannot change anything the program
-		//     observes (the metadata table answers this, not a list kept here),
+		//     observes (the metadata table answers this, not a list kept here,
+		//     and it is asked about the instruction rather than the opcode: an
+		//     unread randi() still has to be called),
 		//   - it defines a register nothing reads, and
 		//   - it reads no register itself, so there is no input whose own
 		//     definition this was keeping alive and no calling-convention MOVE
@@ -1133,7 +1135,7 @@ void IROptimizer::eliminate_dead_code(IRFunction& func) {
 		// find_live_registers() to have accounted for every read in the
 		// program, and a register operand missed there turns into a deleted
 		// definition and a silently wrong program.
-		if (!ir_is_pure(instr.opcode)) {
+		if (!ir_instruction_is_pure(instr)) {
 			new_instructions.push_back(instr);
 			continue;
 		}
@@ -1363,7 +1365,7 @@ void IROptimizer::eliminate_redundant_stores(IRFunction& func) {
 		// from elsewhere, a call or a store because it can observe the value.
 		// Asking the metadata table is what keeps this list from going stale the
 		// next time an opcode is added.
-		if (!ir_is_pure(instr.opcode)) {
+		if (!ir_instruction_is_pure(instr)) {
 			flush_pending(new_instructions, pending_stores, func);
 			new_instructions.push_back(instr);
 			continue;
@@ -1814,7 +1816,7 @@ void IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 		// Clear copy tracking at anything that is not pure: a control flow join
 		// invalidates the straight-line reasoning, and a call or a store can
 		// change what a register holds without a visible definition.
-		if (!ir_is_pure(instr.opcode)) {
+		if (!ir_instruction_is_pure(instr)) {
 			copies.clear();
 		}
 

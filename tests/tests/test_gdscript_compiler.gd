@@ -552,6 +552,174 @@ func length(x):
 	ts.queue_free()
 
 
+func test_global_type_constructors():
+	# int(), float(), bool() and String(). The compiler performs the first
+	# three inline when it already knows the argument is a number or a bool,
+	# and asks the host otherwise -- a String is the reason it has to ask.
+	var gdscript_code = """
+func to_int(x):
+	return int(x)
+
+func to_float(x):
+	return float(x)
+
+func to_bool(x):
+	return bool(x)
+
+func to_string_of(x):
+	return String(x)
+
+func empty_string():
+	return String()
+
+func typed_to_int(x : float):
+	return int(x)
+
+func typed_to_float(x : int):
+	return float(x)
+
+func typed_to_bool(x : float):
+	return bool(x)
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+
+	# The host performs these: the argument could be anything a Variant holds.
+	assert_eq(s.vmcallv("to_int", 2.9), 2, "int(2.9) truncates toward zero")
+	assert_eq(s.vmcallv("to_int", -2.9), -2, "int(-2.9) truncates toward zero")
+	assert_eq(s.vmcallv("to_int", 7), 7, "int() of an int is that int")
+	assert_eq(s.vmcallv("to_int", true), 1, "int(true)")
+	assert_eq(s.vmcallv("to_int", "42"), 42, "int() of a String parses it")
+	assert_eq(s.vmcallv("to_int", "-42"), -42, "int() of a negative String parses it")
+	assert_eq(typeof(s.vmcallv("to_int", 2.9)), TYPE_INT, "int() returns an int")
+
+	assert_almost_eq(s.vmcallv("to_float", 7), 7.0, 0.0000001, "float(7)")
+	assert_almost_eq(s.vmcallv("to_float", 2.5), 2.5, 0.0000001, "float(2.5)")
+	assert_almost_eq(s.vmcallv("to_float", "2.5"), 2.5, 0.0000001, "float() of a String parses it")
+	assert_eq(typeof(s.vmcallv("to_float", 7)), TYPE_FLOAT, "float() returns a float")
+
+	# bool() is Variant::booleanize(), which every type answers.
+	assert_eq(s.vmcallv("to_bool", 0), false, "bool(0)")
+	assert_eq(s.vmcallv("to_bool", 7), true, "bool(7)")
+	assert_eq(s.vmcallv("to_bool", 0.0), false, "bool(0.0)")
+	assert_eq(s.vmcallv("to_bool", 0.5), true, "bool(0.5)")
+	assert_eq(s.vmcallv("to_bool", ""), false, "bool() of an empty String")
+	assert_eq(s.vmcallv("to_bool", "x"), true, "bool() of a String")
+	assert_eq(s.vmcallv("to_bool", []), false, "bool() of an empty Array")
+	assert_eq(s.vmcallv("to_bool", [1]), true, "bool() of an Array")
+	assert_eq(typeof(s.vmcallv("to_bool", 7)), TYPE_BOOL, "bool() returns a bool")
+
+	# String(x) is str(x) of one argument.
+	assert_eq(s.vmcallv("to_string_of", 42), "42", "String(42)")
+	assert_eq(s.vmcallv("to_string_of", 1.5), str(1.5), "String(1.5)")
+	assert_eq(s.vmcallv("to_string_of", [1, 2]), str([1, 2]), "String() of an Array")
+	assert_eq(typeof(s.vmcallv("to_string_of", 42)), TYPE_STRING, "String() returns a String")
+	assert_eq(s.vmcallv("empty_string"), "", "String() with no arguments is the empty String")
+
+	# The same conversions, where the type hint puts them inline instead.
+	assert_eq(s.vmcallv("typed_to_int", 2.9), 2, "int() of a float that the compiler knows is one")
+	assert_eq(typeof(s.vmcallv("typed_to_int", 2.9)), TYPE_INT, "the inline int() returns an int")
+	assert_almost_eq(s.vmcallv("typed_to_float", 7), 7.0, 0.0000001, "float() of a known int")
+	assert_eq(typeof(s.vmcallv("typed_to_float", 7)), TYPE_FLOAT, "the inline float() returns a float")
+	assert_eq(s.vmcallv("typed_to_bool", 0.0), false, "bool() of a known float")
+	assert_eq(s.vmcallv("typed_to_bool", 0.5), true, "bool() of a known float")
+	assert_eq(typeof(s.vmcallv("typed_to_bool", 0.5)), TYPE_BOOL, "the inline bool() returns a bool")
+
+	s.queue_free()
+	ts.queue_free()
+
+
+func test_global_random():
+	# The random draws are the one family of globals whose answer depends on
+	# host state, so what can be asserted is the shape of the answer: its type,
+	# its range, and that two calls are two draws.
+	var gdscript_code = """
+func draw_int():
+	return randi()
+
+func roll():
+	return randi_range(1, 6)
+
+func wide_range(a, b):
+	return randi_range(a, b)
+
+func draw_float():
+	return randf()
+
+func in_range(a, b):
+	return randf_range(a, b)
+
+func normal(mean, deviation):
+	return randfn(mean, deviation)
+
+func distinct_draws(n):
+	# Two draws in a row are two draws: a pass that folded them into one, or
+	# dropped the one whose result is unused, would show up here.
+	var first = randi()
+	var same = 0
+	var i = 0
+	while i < n:
+		if randi() == first:
+			same += 1
+		i += 1
+	return same
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(20000)
+
+	assert_eq(typeof(s.vmcallv("draw_int")), TYPE_INT, "randi() returns an int")
+	assert_eq(typeof(s.vmcallv("draw_float")), TYPE_FLOAT, "randf() returns a float")
+	assert_eq(typeof(s.vmcallv("roll")), TYPE_INT, "randi_range() returns an int")
+	assert_eq(typeof(s.vmcallv("in_range", 0.0, 1.0)), TYPE_FLOAT, "randf_range() returns a float")
+	assert_eq(typeof(s.vmcallv("normal", 0.0, 1.0)), TYPE_FLOAT, "randfn() returns a float")
+
+	# randi_range() is inclusive at both ends, and its bounds travel as 64-bit
+	# integers rather than as doubles.
+	var seen := {}
+	for i in range(60):
+		var roll = s.vmcallv("roll")
+		assert_true(roll >= 1 and roll <= 6, "randi_range(1, 6) stays in range")
+		seen[roll] = true
+	assert_true(seen.size() > 1, "60 rolls of a die are not all the same number")
+
+	# A bound reaches Godot as the 64-bit integer the program wrote, not as a
+	# double that lost its low bit on the way. Godot's own randi_range()
+	# narrows to 32 bits before drawing, so what this pins down is that the
+	# guest and GDScript hand it the same number and get the same answer --
+	# narrowing included.
+	var big : int = 9007199254740993  # 2^53 + 1, which a double cannot hold
+	assert_eq(s.vmcallv("wide_range", big, big), randi_range(big, big),
+		"randi_range() is handed the bound the program wrote")
+
+	for i in range(20):
+		var f = s.vmcallv("draw_float")
+		assert_true(f >= 0.0 and f <= 1.0, "randf() stays in [0, 1]")
+		var r = s.vmcallv("in_range", -2.5, 2.5)
+		assert_true(r >= -2.5 and r <= 2.5, "randf_range() stays in range")
+
+	# 40 draws all landing on the first one would mean the calls were folded.
+	assert_true(s.vmcallv("distinct_draws", 40) < 40, "two randi() calls are two draws")
+
+	s.queue_free()
+	ts.queue_free()
+
+
 func test_global_math_in_a_loop():
 	# The globals have to work where they are actually used: inside a loop, with
 	# the result feeding the arithmetic around it.

@@ -144,6 +144,18 @@ std::string IRValue::to_string() const {
 	return oss.str();
 }
 
+bool ir_instruction_is_pure(const IRInstruction& instr) {
+	if (!ir_is_pure(instr.opcode)) {
+		return false;
+	}
+	if (instr.opcode != IROpcode::GLOBAL_CALL || instr.operands.size() < 2 ||
+		!std::holds_alternative<int64_t>(instr.operands[1].value)) {
+		return true;
+	}
+	// GLOBAL_CALL result, global_fn, ...
+	return !global_function(static_cast<GlobalFn>(std::get<int64_t>(instr.operands[1].value))).impure;
+}
+
 int ir_destination_operand_index(IROpcode op) {
 	const IROperandSignature& signature = ir_opcode_info(op).signature;
 	for (size_t i = 0; i < signature.fixed_count(); i++) {

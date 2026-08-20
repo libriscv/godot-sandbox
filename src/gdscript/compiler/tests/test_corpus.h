@@ -521,6 +521,24 @@ func measure(x):
 func test():
 	return measure(pick(true)) + measure(pick(false))
 )" },
+		// The type constructors, in the form the compiler can lower inline: an
+		// argument it already knows is a number or a bool. int() of a String
+		// is Godot's parse and goes to the host, which this harness has no
+		// Variants for.
+		{ "global_type_constructors", R"(
+func test():
+	var f = 2.9
+	var i = 7
+	var zero = 0.0
+	var total = 0
+	total = total + int(f) + int(-f) + int(i)
+	total = total + int(float(i)) + int(float(f) * 2.0)
+	if bool(f) and not bool(zero):
+		total = total + 100
+	if bool(i) and not bool(0):
+		total = total + 1000
+	return total
+)" },
 		{ "global_float_forms", R"(
 func test():
 	var a = -2.5

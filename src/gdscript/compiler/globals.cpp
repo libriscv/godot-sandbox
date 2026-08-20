@@ -122,12 +122,41 @@ static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 	{ "str", GlobalFn::STR, GlobalKind::HOST, 1, 63, GlobalResult::STRING, UTILITY_STR, 0, NO_FORM, NO_FORM },
 	{ "len", GlobalFn::LEN, GlobalKind::HOST, 1, 1, GlobalResult::INT, UTILITY_LEN, 0, NO_FORM, NO_FORM },
 
+	// -= The type constructors =-
+	//
+	// int(x), float(x) and bool(x) convert anything a Variant can hold, so the
+	// host performs them -- except when the compiler already knows the
+	// argument is a number or a bool, which is what int_form is for. String(x)
+	// is str(x) of one argument, and has no inline form at all.
+	{ "int", GlobalFn::TO_INT, GlobalKind::CAST, 1, 1, GlobalResult::INT, UTILITY_TO_INT, 0, GlobalFn::INT_IDENTITY, NO_FORM },
+	{ "float", GlobalFn::TO_FLOAT, GlobalKind::CAST, 1, 1, GlobalResult::FLOAT, UTILITY_TO_FLOAT, 0, GlobalFn::FLOAT_IDENTITY, NO_FORM },
+	{ "bool", GlobalFn::TO_BOOL, GlobalKind::CAST, 1, 1, GlobalResult::BOOL, UTILITY_TO_BOOL, 0, GlobalFn::BOOLEANIZE, NO_FORM },
+	{ "String", GlobalFn::TO_STRING, GlobalKind::HOST, 0, 1, GlobalResult::STRING, UTILITY_STR, 0, NO_FORM, NO_FORM },
+
+	// -= Randomness =-
+	//
+	// The last column is what sets these apart from everything above: a call
+	// advances the generator the whole project draws from, so it is something
+	// the program does and not only something it computes. randomize() and
+	// seed() are deliberately absent -- they would let a guest decide what the
+	// rest of the project rolls next.
+	{ "randf", GlobalFn::RANDF, GlobalKind::SYSCALL, 0, 0, GlobalResult::FLOAT, UTILITY_RANDF, 0, NO_FORM, NO_FORM, true },
+	{ "randf_range", GlobalFn::RANDF_RANGE, GlobalKind::SYSCALL, 2, 2, GlobalResult::FLOAT, UTILITY_RANDF_RANGE, 2, NO_FORM, NO_FORM, true },
+	{ "randfn", GlobalFn::RANDFN, GlobalKind::SYSCALL, 2, 2, GlobalResult::FLOAT, UTILITY_RANDFN, 2, NO_FORM, NO_FORM, true },
+	{ "randi", GlobalFn::RANDI, GlobalKind::SYSCALL_INT, 0, 0, GlobalResult::INT, UTILITY_RANDI, 0, NO_FORM, NO_FORM, true },
+	{ "randi_range", GlobalFn::RANDI_RANGE, GlobalKind::SYSCALL_INT, 2, 2, GlobalResult::INT, UTILITY_RANDI_RANGE, 0, NO_FORM, NO_FORM, true },
+
 	// -= Forms with no GDScript name of their own =-
 	//
 	// floor(), ceil() and round() of an integer are that integer. The
 	// dispatchers above name this as their integer form; nothing can call it
 	// directly, which is why the name is not a valid identifier.
 	{ ".int_identity", GlobalFn::INT_IDENTITY, GlobalKind::INT_OP, 1, 1, GlobalResult::INT, NO_OP, 0, NO_FORM, NO_FORM },
+	// float() of a number, and bool() of one. Loading a Variant as a double is
+	// already float()'s conversion, so the operation itself is the identity;
+	// booleanize() is the comparison against zero that follows it.
+	{ ".float_identity", GlobalFn::FLOAT_IDENTITY, GlobalKind::FLOAT_OP, 1, 1, GlobalResult::FLOAT, NO_OP, 0, NO_FORM, NO_FORM },
+	{ ".booleanize", GlobalFn::BOOLEANIZE, GlobalKind::FLOAT_OP, 1, 1, GlobalResult::BOOL, NO_OP, 0, NO_FORM, NO_FORM },
 };
 
 #undef NO_OP
@@ -170,6 +199,25 @@ GlobalFn resolve_numeric_form(const GlobalFunction& info, bool all_integer) {
 		return info.fn;
 	}
 	return all_integer ? info.int_form : info.float_form;
+}
+
+GlobalFn resolve_cast_form(const GlobalFunction& info, int hint) {
+	if (info.kind != GlobalKind::CAST) {
+		return info.fn;
+	}
+	// A number or a bool converts inline: loading the Variant as an integer or
+	// as a double *is* the conversion, and the run-time type test the backend
+	// emits for an untyped argument already covers all three. Anything else --
+	// a String above all, where int("42") is 42 and not zero -- is Godot's
+	// conversion, which only Godot can perform.
+	switch (hint) {
+		case Variant::INT:
+		case Variant::FLOAT:
+		case Variant::BOOL:
+			return info.int_form;
+		default:
+			return info.fn;
+	}
 }
 
 // -= Evaluation =-
@@ -347,8 +395,24 @@ double eval_utility_op(int16_t utility_op, const double args[UTILITY_MAX_FLOAT_A
 
 		case UTILITY_STR:
 		case UTILITY_LEN:
+		case UTILITY_TO_INT:
+		case UTILITY_TO_FLOAT:
+		case UTILITY_TO_BOOL:
 			throw CompilerException(ErrorType::CODEGEN_ERROR,
-				"str() and len() need the host's Variant API and cannot be evaluated here");
+				"str(), len() and the type constructors need the host's Variant API"
+				" and cannot be evaluated here");
+
+		case UTILITY_RANDF:
+		case UTILITY_RANDF_RANGE:
+		case UTILITY_RANDFN:
+		case UTILITY_RANDI:
+		case UTILITY_RANDI_RANGE:
+			// There is no answer to give: the host's generator has the state
+			// these read, and inventing a number here would be a number the
+			// machine did not produce.
+			throw CompilerException(ErrorType::CODEGEN_ERROR,
+				"The random functions need the host's random number generator"
+				" and cannot be evaluated here");
 		default:
 			throw CompilerException(ErrorType::CODEGEN_ERROR,
 				"Unknown utility op " + std::to_string(utility_op));
@@ -416,6 +480,14 @@ int64_t eval_global_int(GlobalFn fn, const int64_t* args, size_t count) {
 	}
 }
 
+int64_t eval_global_int_syscall(GlobalFn fn, const int64_t* args, size_t count) {
+	(void)args;
+	(void)count;
+	throw CompilerException(ErrorType::CODEGEN_ERROR,
+		std::string(global_function(fn).name) + "() needs the host's random number generator"
+		" and cannot be evaluated here");
+}
+
 double eval_global_float(GlobalFn fn, const double* args, size_t count) {
 	const GlobalFunction& info = global_function(fn);
 
@@ -452,6 +524,15 @@ double eval_global_float(GlobalFn fn, const double* args, size_t count) {
 			if (args[0] < args[1]) return args[1];
 			if (args[0] > args[2]) return args[2];
 			return args[0];
+		case GlobalFn::FLOAT_IDENTITY:
+			// float() of a number: the load already converted it.
+			need(1);
+			return args[0];
+		case GlobalFn::BOOLEANIZE:
+			// bool() of a number, which is Variant::booleanize(): anything but
+			// zero is true, and that includes NaN.
+			need(1);
+			return (args[0] != 0.0) ? 1.0 : 0.0;
 		default:
 			throw CompilerException(ErrorType::CODEGEN_ERROR,
 				std::string(info.name) + " is not a floating-point operation");

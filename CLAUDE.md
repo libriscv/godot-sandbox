@@ -19,7 +19,24 @@ GDScript's `@GlobalScope` functions -- `print`, `abs`, `sin`, `clamp`, `lerp`,
 must never fall through to the self-call path: Godot accepts the resulting VCALL
 and drops it in silence. Every global the compiler knows is one row in
 `src/gdscript/compiler/globals.h`, saying what it is called, how many arguments
-it takes, what it returns, and which lowering performs it:
+it takes, what it returns, and which lowering performs it: inline integer or
+floating-point code, a call to the host through `ECALL_UTILITY`, or a run-time
+choice between the two when the argument types are not known.
+
+The type constructors `int()`, `float()`, `bool()` and `String()` are rows in
+that table too. The first three lower inline when the compiler already knows
+the argument is a number or a bool, and go to the host otherwise, because
+`int("42")` is 42 and only Godot's parse says so.
+
+`randi()`, `randf()`, `randi_range()`, `randf_range()` and `randfn()` are the
+one family there whose answer depends on host state. Their rows are marked
+impure, which is what stops a pass from deleting a draw nobody reads, and the
+IR interpreter refuses to evaluate one rather than inventing a number the
+machine would not have produced -- so they cannot appear in the differential or
+optimizer-invariance corpus. `randomize()` and `seed()` are deliberately absent:
+they set the seed of the generator the rest of the project draws from, which is
+the host's state and not the guest's. Anything else that reaches engine state
+belongs outside this table for the same reason.
 
 ### Structs
 

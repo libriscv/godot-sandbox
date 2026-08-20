@@ -9,10 +9,16 @@
 //             single exact IEEE-754 primitive, so that what the machine
 //             computes is what globals.cpp's evaluator computes, to the bit
 //   SYSCALL   ECALL_UTILITY: arguments in fa0-fa4, the answer in fa0
+//   SYSCALL_INT the same call with the arguments in a1-a3 and the answer in
+//             a0, for the ops whose arguments are integers that a double
+//             would not carry back unchanged
 //   NUMERIC   neither, until run time: `abs(x)` is an integer when x is one
 //             and a float otherwise, and when the compiler does not know which
 //             it emits the type test and both forms
-//   HOST      str() and len(), which need the host's Variant API
+//   CAST      int(), float() and bool() of something whose type is not known:
+//             the host converts it, because a String is one of the things it
+//             might be
+//   HOST      str(), len() and String(), which need the host's Variant API
 //
 // -= Registers =-
 //
@@ -107,6 +113,14 @@ void RISCVCodeGen::emit_global_form(const GlobalFunction& info, const std::vecto
 		case GlobalKind::SYSCALL:
 			emit_global_syscall_form(info, arg_offsets, result_offset, typed);
 			return;
+		case GlobalKind::SYSCALL_INT:
+			emit_global_int_syscall_form(info, arg_offsets, result_offset, typed);
+			return;
+		// A CAST that reached the backend is one the compiler could not resolve
+		// to an inline form, so the argument may be anything a Variant holds
+		// and the host performs the conversion -- over the Variant itself,
+		// which is the same way str() travels.
+		case GlobalKind::CAST:
 		case GlobalKind::HOST:
 			emit_global_host_form(info, arg_offsets, result_offset);
 			return;
@@ -266,6 +280,28 @@ void RISCVCodeGen::emit_global_double_result(int result_offset, uint8_t fs, Glob
 	}
 	throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 		"A global computing a double cannot return that result type");
+}
+
+void RISCVCodeGen::emit_global_int_result(int result_offset, uint8_t rs, GlobalResult result) {
+	switch (result) {
+		case GlobalResult::INT:
+			emit_li(REG_T0, Variant::INT);
+			emit_store_variant_type(REG_T0, REG_SP, result_offset);
+			emit_store_variant_int(rs, REG_SP, result_offset);
+			return;
+		case GlobalResult::BOOL:
+			emit_li(REG_T0, Variant::BOOL);
+			emit_store_variant_type(REG_T0, REG_SP, result_offset);
+			emit_store_variant_bool(rs, REG_SP, result_offset);
+			return;
+		case GlobalResult::NIL:
+		case GlobalResult::FLOAT:
+		case GlobalResult::STRING:
+		case GlobalResult::NUMERIC:
+			break;
+	}
+	throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+		"A global computing an integer cannot return that result type");
 }
 
 // -= Integer forms =-
@@ -433,6 +469,23 @@ void RISCVCodeGen::emit_global_float_form(const GlobalFunction& info, const std:
 			emit_fsqrt_d(out, a);
 			break;
 
+		case GlobalFn::FLOAT_IDENTITY:
+			// float() of a number: the load above is the conversion.
+			emit_fmv_d(out, a);
+			break;
+
+		case GlobalFn::BOOLEANIZE: {
+			// bool() of a number, which is Variant::booleanize(): true for
+			// anything but zero. FEQ.D is false on a NaN, so `not (x == 0)`
+			// makes bool(NAN) true the way Godot does; `x != 0` written as a
+			// comparison would make it false.
+			emit_fcvt_d_l(REG_FA1, REG_ZERO);
+			emit_feq_d(REG_T0, a, REG_FA1);
+			emit_xori(REG_T0, REG_T0, 1);
+			emit_fcvt_d_l(out, REG_T0);
+			break;
+		}
+
 		case GlobalFn::MINF:
 		case GlobalFn::MAXF: {
 			// `a < b ? a : b`, not FMIN.D: Godot's MIN() is the comparison, and
@@ -508,6 +561,30 @@ void RISCVCodeGen::emit_global_syscall_form(const GlobalFunction& info, const st
 
 	// The host answers in fa0.
 	emit_global_double_result(result_offset, REG_ABI_FA0, info.result);
+}
+
+void RISCVCodeGen::emit_global_int_syscall_form(const GlobalFunction& info, const std::vector<int>& arg_offsets,
+	int result_offset, bool typed)
+{
+	if (arg_offsets.size() > UTILITY_MAX_INT_ARGS) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			std::string(info.name) + " has more integer arguments than a1-a3 can carry");
+	}
+
+	// a0 holds the op, so the arguments start at a1. Each conversion writes
+	// only its own destination and uses t0, t1 and fa0 as scratch, so filling
+	// them in order is safe.
+	const uint8_t INT_ARG_REGS[UTILITY_MAX_INT_ARGS] = { REG_A1, REG_A2, REG_A3 };
+	for (size_t i = 0; i < arg_offsets.size(); i++) {
+		emit_variant_to_int(INT_ARG_REGS[i], arg_offsets[i], typed);
+	}
+
+	emit_li(REG_A0, info.utility_op);
+	emit_li(REG_A7, ECALL_UTILITY);
+	emit_ecall();
+
+	// The host answers in a0.
+	emit_global_int_result(result_offset, REG_A0, info.result);
 }
 
 void RISCVCodeGen::emit_global_host_form(const GlobalFunction& info, const std::vector<int>& arg_offsets,

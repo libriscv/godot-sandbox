@@ -2245,6 +2245,18 @@ int CodeGenerator::gen_global_call(const GlobalFunction& info, const std::vector
 		}
 	}
 
+	// int(), float() and bool() convert whatever the Variant holds, which for a
+	// String is Godot's own parse and not something the guest can do. When the
+	// argument is already known to be a number or a bool the conversion is a
+	// load, and the inline form performs it; otherwise the call stays a CAST
+	// and the host performs it.
+	if (info.kind == GlobalKind::CAST) {
+		const IRInstruction::TypeHint hint = arg_regs.empty()
+			? IRInstruction::TypeHint_NONE
+			: get_register_type(func, arg_regs[0]);
+		chosen = &global_function(resolve_cast_form(info, hint));
+	}
+
 	// The form works in integers or in doubles, and the backend can skip the
 	// run-time type test on an argument that already is one. Where the
 	// conversion is the one GDScript performs implicitly -- an integer where a
@@ -2255,6 +2267,7 @@ int CodeGenerator::gen_global_call(const GlobalFunction& info, const std::vector
 	IRInstruction::TypeHint wanted = IRInstruction::TypeHint_NONE;
 	switch (chosen->kind) {
 		case GlobalKind::INT_OP:
+		case GlobalKind::SYSCALL_INT:
 			wanted = Variant::INT;
 			break;
 		case GlobalKind::FLOAT_OP:
@@ -2263,6 +2276,9 @@ int CodeGenerator::gen_global_call(const GlobalFunction& info, const std::vector
 			break;
 		case GlobalKind::PRINT:
 		case GlobalKind::NUMERIC:
+		// A CAST is handed the Variant as it is: knowing its type is what would
+		// have made it something other than a CAST.
+		case GlobalKind::CAST:
 		case GlobalKind::HOST:
 			break;
 	}

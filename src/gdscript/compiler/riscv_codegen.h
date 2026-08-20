@@ -187,6 +187,7 @@ private:
 	void emit_fsqrt_d(uint8_t rd, uint8_t rs1);              // Double-precision square root
 	void emit_fabs_d(uint8_t rd, uint8_t rs1);               // |x| (fsgnjx.d rd, rs, rs)
 	void emit_flt_d(uint8_t rd, uint8_t rs1, uint8_t rs2);   // rd = (rs1 < rs2), into an integer register
+	void emit_feq_d(uint8_t rd, uint8_t rs1, uint8_t rs2);   // rd = (rs1 == rs2), into an integer register
 	void emit_fcvt_l_d(uint8_t rd, uint8_t rs1);             // double -> signed 64-bit int, truncating
 
 	// FP arithmetic instructions (RV32F extension - single precision)
@@ -294,6 +295,8 @@ private:
 		int result_offset, bool typed);
 	void emit_global_syscall_form(const GlobalFunction& info, const std::vector<int>& arg_offsets,
 		int result_offset, bool typed);
+	void emit_global_int_syscall_form(const GlobalFunction& info, const std::vector<int>& arg_offsets,
+		int result_offset, bool typed);
 	void emit_global_host_form(const GlobalFunction& info, const std::vector<int>& arg_offsets,
 		int result_offset);
 
@@ -311,6 +314,9 @@ private:
 	// Write the double in `fs` into the result Variant, as whatever the global
 	// returns: the double itself, its truncation to an integer, or a boolean.
 	void emit_global_double_result(int result_offset, uint8_t fs, GlobalResult result);
+
+	// The same, for a global that computed a 64-bit integer in `rs`.
+	void emit_global_int_result(int result_offset, uint8_t rs, GlobalResult result);
 
 	// Get stack offset for a virtual register (in bytes)
 	int get_variant_stack_offset(int virtual_reg);

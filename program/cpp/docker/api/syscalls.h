@@ -70,7 +70,11 @@
 
 #define ECALL_PACKED_ARRAY_OPS (GAME_API_BASE + 48)
 
-#define ECALL_LAST (GAME_API_BASE + 49)
+// @GlobalScope's utility functions: str(), len() and the global math
+// functions. See Utility_Op below.
+#define ECALL_UTILITY (GAME_API_BASE + 49)
+
+#define ECALL_LAST (GAME_API_BASE + 50)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
@@ -215,6 +219,99 @@ enum class Lerp_Op {
 	SMOOTHSTEP,
 	CLAMP,
 	SLERP,
+};
+
+// -= GDScript's global functions =-
+//
+// @GlobalScope's utility functions -- str(), len(), and the arithmetic ones --
+// as the guest asks the host to perform them, through ECALL_UTILITY.
+//
+// STR and LEN take a1 = the Variant to write the answer into, a2 = an array of
+// argument Variants, a3 = how many. Every other op takes its arguments as
+// doubles in fa0-fa4 and leaves a double in fa0; a predicate answers 0.0 or
+// 1.0. The compiler mirrors these numbers in src/gdscript/compiler/globals.h,
+// so an existing one may never change its meaning -- a new op goes on the end.
+enum class Utility_Op {
+	STR = 0,
+	LEN = 1,
+
+	// Unary: fa0
+	FLOOR = 2,
+	CEIL = 3,
+	ROUND = 4,
+	SIGN = 5,
+	SIN = 6,
+	COS = 7,
+	TAN = 8,
+	ASIN = 9,
+	ACOS = 10,
+	ATAN = 11,
+	SINH = 12,
+	COSH = 13,
+	TANH = 14,
+	ASINH = 15,
+	ACOSH = 16,
+	ATANH = 17,
+	EXP = 18,
+	LOG = 19,
+	DEG_TO_RAD = 20,
+	RAD_TO_DEG = 21,
+	LINEAR_TO_DB = 22,
+	DB_TO_LINEAR = 23,
+	IS_NAN = 24,
+	IS_INF = 25,
+	IS_FINITE = 26,
+	IS_ZERO_APPROX = 27,
+
+	// Binary: fa0, fa1
+	ATAN2 = 28,
+	POW = 29,
+	FMOD = 30,
+	FPOSMOD = 31,
+	SNAPPED = 32,
+	IS_EQUAL_APPROX = 33,
+	ANGLE_DIFFERENCE = 34,
+	PINGPONG = 35,
+
+	// Ternary: fa0, fa1, fa2
+	LERP = 36,
+	INVERSE_LERP = 37,
+	SMOOTHSTEP = 38,
+	MOVE_TOWARD = 39,
+	LERP_ANGLE = 40,
+	ROTATE_TOWARD = 41,
+	WRAP = 42,
+
+	// Five arguments: fa0 - fa4
+	REMAP = 43,
+	CUBIC_INTERPOLATE = 44,
+	BEZIER_INTERPOLATE = 45,
+	BEZIER_DERIVATIVE = 46,
+
+	// Variant in, Variant out, the same shape as STR and LEN: a1 = the Variant
+	// to write the answer into, a2 = the argument, a3 = 1. These are the type
+	// constructors int(), float() and bool(), which convert anything a Variant
+	// can hold -- a String among them -- and so cannot be arithmetic on fa0.
+	TO_INT = 47,
+	TO_FLOAT = 48,
+	TO_BOOL = 49,
+
+	// -= Randomness =-
+	//
+	// These draw from the same generator the rest of the project draws from,
+	// so a call changes what the next call anywhere answers. That is the
+	// reason they are the one family here that a caller may not skip, fold or
+	// hoist.
+	//
+	// RANDF and friends are ordinary float ops: doubles in fa0-fa1, a double
+	// out in fa0. RANDI and RANDI_RANGE instead take 64-bit integers in a1-a2
+	// and answer in a0, because an int that does not fit a double must not
+	// come back as a different int.
+	RANDF = 50,
+	RANDF_RANGE = 51,
+	RANDFN = 52,
+	RANDI = 53,
+	RANDI_RANGE = 54,
 };
 
 enum class Vec2_Op {

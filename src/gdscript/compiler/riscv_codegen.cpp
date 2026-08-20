@@ -3379,6 +3379,12 @@ void RISCVCodeGen::emit_flt_d(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 	emit_r_type(0x53, rd, 0b001, rs1, rs2, 0b1010001);
 }
 
+void RISCVCodeGen::emit_feq_d(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	// FEQ.D: 1 or 0 into an *integer* register. Quiet, and false whenever
+	// either operand is a NaN, which is what C++ `a == b` does.
+	emit_r_type(0x53, rd, 0b010, rs1, rs2, 0b1010001);
+}
+
 void RISCVCodeGen::emit_fcvt_l_d(uint8_t rd, uint8_t rs1) {
 	// FCVT.L.D, rounding toward zero (rm=001): the C++ (int64_t) cast.
 	emit_r_type(0x53, rd, 0b001, rs1, 0b00010, 0b1100001);

@@ -402,9 +402,24 @@ static double utility_math_op(Utility_Op op, const double args[5]) {
 			return (b - a) * 3.0 * omt2 + (c - b) * 6.0 * omt * e + (d - c) * 3.0 * t2;
 		}
 
+		// Not arithmetic on fa0-fa4: the Variant-shaped ops and the integer
+		// random draws are performed by api_utility() before it gets here.
 		case Utility_Op::STR:
 		case Utility_Op::LEN:
+		case Utility_Op::TO_INT:
+		case Utility_Op::TO_FLOAT:
+		case Utility_Op::TO_BOOL:
+		case Utility_Op::RANDI:
+		case Utility_Op::RANDI_RANGE:
 			break;
+
+		// The random draws that *are* doubles. UtilityFunctions:: rather than
+		// a formula repeated here: these read the generator the rest of the
+		// project draws from, so there is nothing to keep in step with the
+		// compiler -- it cannot evaluate them at all.
+		case Utility_Op::RANDF: return UtilityFunctions::randf();
+		case Utility_Op::RANDF_RANGE: return UtilityFunctions::randf_range(a, b);
+		case Utility_Op::RANDFN: return UtilityFunctions::randfn(a, b);
 	}
 	ERR_PRINT("Invalid utility operation");
 	throw std::runtime_error("Invalid utility operation: " + std::to_string(int(op)));
@@ -449,33 +464,120 @@ static int64_t utility_len(const Variant &value) {
 			" can't provide a length");
 }
 
+// -= The type constructors =-
+//
+// int(x), float(x) and bool(x). A String parses the way Godot's String.to_int()
+// and String.to_float() parse, because that is what those calls mean in
+// GDScript; anything else that is not a number or a bool converts to zero
+// rather than raising a call error, which is the same deviation the rest of
+// the global functions make (see src/gdscript/compiler/globals.h). The
+// guest performs all three inline when it already knows the argument is a
+// number or a bool, so what arrives here is the case where it could be
+// anything.
+static int64_t utility_to_int(const Variant &value) {
+	switch (value.get_type()) {
+		case Variant::BOOL:
+		case Variant::INT:
+		case Variant::FLOAT:
+			return value.operator int64_t();
+		case Variant::STRING:
+		case Variant::STRING_NAME:
+			return value.operator String().to_int();
+		default:
+			return 0;
+	}
+}
+
+static double utility_to_float(const Variant &value) {
+	switch (value.get_type()) {
+		case Variant::BOOL:
+		case Variant::INT:
+		case Variant::FLOAT:
+			return value.operator double();
+		case Variant::STRING:
+		case Variant::STRING_NAME:
+			return value.operator String().to_float();
+		default:
+			return 0.0;
+	}
+}
+
 APICALL(api_utility) {
 	auto [op, vres_addr, args_addr, arg_count] = machine.sysargs<Utility_Op, gaddr_t, gaddr_t, unsigned>();
 	SYS_TRACE("utility", int(op), vres_addr, args_addr, arg_count);
 
-	if (op == Utility_Op::STR || op == Utility_Op::LEN) {
-		Sandbox &emu = riscv::emu(machine);
-		if (arg_count == 0 || arg_count >= 64) {
-			ERR_PRINT("utility(): Wrong number of arguments");
-			throw std::runtime_error("utility(): Wrong number of arguments: " + std::to_string(arg_count));
-		}
-		GuestVariant *vres = machine.memory.memarray<GuestVariant>(vres_addr, 1);
-		const GuestVariant *args = machine.memory.memarray<GuestVariant>(args_addr, arg_count);
-
-		if (op == Utility_Op::STR) {
-			// Stringifying is host work the guest asked for, the same as it is
-			// in print(), and there can be up to 63 arguments in one call.
-			PENALIZE(10'000 + 10'000 * arg_count);
-			String result;
-			for (unsigned i = 0; i < arg_count; i++) {
-				result += args[i].toVariant(emu).operator String();
+	switch (op) {
+		// -= Variant in, Variant out =-
+		//
+		// a1 = where the answer goes, a2 = the arguments, a3 = how many.
+		case Utility_Op::STR:
+		case Utility_Op::LEN:
+		case Utility_Op::TO_INT:
+		case Utility_Op::TO_FLOAT:
+		case Utility_Op::TO_BOOL: {
+			Sandbox &emu = riscv::emu(machine);
+			// str() takes up to 63 arguments and String() takes none at all;
+			// every other op here takes exactly one.
+			const unsigned max_args = (op == Utility_Op::STR) ? 63 : 1;
+			const unsigned min_args = (op == Utility_Op::STR) ? 0 : 1;
+			if (arg_count < min_args || arg_count > max_args) {
+				ERR_PRINT("utility(): Wrong number of arguments");
+				throw std::runtime_error("utility(): Wrong number of arguments: " + std::to_string(arg_count));
 			}
-			vres->create(emu, Variant(std::move(result)));
-		} else {
-			PENALIZE(10'000);
-			vres->create(emu, Variant(utility_len(args[0].toVariant(emu))));
+			GuestVariant *vres = machine.memory.memarray<GuestVariant>(vres_addr, 1);
+			const GuestVariant *args = arg_count
+					? machine.memory.memarray<GuestVariant>(args_addr, arg_count)
+					: nullptr;
+
+			switch (op) {
+				case Utility_Op::STR: {
+					// Stringifying is host work the guest asked for, the same
+					// as it is in print(), and there can be up to 63 arguments
+					// in one call.
+					PENALIZE(10'000 + 10'000 * arg_count);
+					String result;
+					for (unsigned i = 0; i < arg_count; i++) {
+						result += args[i].toVariant(emu).operator String();
+					}
+					vres->create(emu, Variant(std::move(result)));
+					break;
+				}
+				case Utility_Op::LEN:
+					PENALIZE(10'000);
+					vres->create(emu, Variant(utility_len(args[0].toVariant(emu))));
+					break;
+				case Utility_Op::TO_INT:
+					PENALIZE(10'000);
+					vres->create(emu, Variant(utility_to_int(args[0].toVariant(emu))));
+					break;
+				case Utility_Op::TO_FLOAT:
+					PENALIZE(10'000);
+					vres->create(emu, Variant(utility_to_float(args[0].toVariant(emu))));
+					break;
+				default:
+					PENALIZE(10'000);
+					vres->create(emu, Variant(args[0].toVariant(emu).booleanize()));
+					break;
+			}
+			return;
 		}
-		return;
+
+		// -= 64-bit integers in a1-a2, the answer in a0 =-
+		//
+		// randi() draws 32 bits, but randi_range()'s bounds are whatever the
+		// program says they are, and a double would not carry them back.
+		case Utility_Op::RANDI:
+			machine.set_result(UtilityFunctions::randi());
+			return;
+		case Utility_Op::RANDI_RANGE: {
+			const int64_t from = machine.sysarg<int64_t>(1); // a1
+			const int64_t to = machine.sysarg<int64_t>(2); // a2
+			machine.set_result(UtilityFunctions::randi_range(from, to));
+			return;
+		}
+
+		default:
+			break;
 	}
 
 	// Everything else is arithmetic on doubles in fa0-fa4, answering in fa0.
