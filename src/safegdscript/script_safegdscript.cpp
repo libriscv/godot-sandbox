@@ -202,6 +202,35 @@ void SafeGDScript::set_path(const String &p_path) {
 	this->compile_source_to_elf();
 }
 
+Sandbox *SafeGDScript::get_compiler_sandbox() {
+	if (compiler != nullptr) {
+		return compiler;
+	}
+
+	// Check if "gdscript.elf" exists in the addons/godot_sandbox/ directory
+	const String compiler_path = "res://addons/godot_sandbox/gdscript.elf";
+	if (!FileAccess::file_exists(compiler_path)) {
+		ERR_PRINT("SafeGDScript: GDScript compiler ELF not found at " + compiler_path);
+		return nullptr;
+	}
+	Sandbox *sandbox = memnew(Sandbox);
+	Ref<ELFScript> compiler_script = ResourceLoader::get_singleton()->load(compiler_path);
+	if (!compiler_script.is_valid()) {
+		ERR_PRINT("SafeGDScript: Failed to load GDScript compiler ELF resource.");
+		memdelete(sandbox);
+		return nullptr;
+	}
+	sandbox->set_program(compiler_script);
+	if (!sandbox->has_program_loaded()) {
+		ERR_PRINT("SafeGDScript: Failed to initialize GDScript compiler sandbox.");
+		memdelete(sandbox);
+		return nullptr;
+	}
+
+	compiler = sandbox;
+	return compiler;
+}
+
 bool SafeGDScript::compile_source_to_elf() {
 	if (this->source_code.is_empty()) {
 		if constexpr (VERBOSE_LOGGING) {
@@ -210,28 +239,9 @@ bool SafeGDScript::compile_source_to_elf() {
 		return false;
 	}
 
+	Sandbox *compiler = get_compiler_sandbox();
 	if (compiler == nullptr) {
-		// Check if "gdscript.elf" exists in the addons/godot_sandbox/ directory
-		String compiler_path = "res://addons/godot_sandbox/gdscript.elf";
-		if (!FileAccess::file_exists(compiler_path)) {
-			ERR_PRINT("SafeGDScript::compile_source_to_elf: GDScript compiler ELF not found at " + compiler_path);
-			return false;
-		}
-		compiler = memnew(Sandbox);
-		Ref<ELFScript> compiler_script = ResourceLoader::get_singleton()->load(compiler_path);
-		if (!compiler_script.is_valid()) {
-			ERR_PRINT("SafeGDScript::compile_source_to_elf: Failed to load GDScript compiler ELF resource.");
-			memdelete(compiler);
-			compiler = nullptr;
-			return false;
-		}
-		compiler->set_program(compiler_script);
-		if (!compiler->has_program_loaded()) {
-			ERR_PRINT("SafeGDScript::compile_source_to_elf: Failed to initialize GDScript compiler sandbox.");
-			memdelete(compiler);
-			compiler = nullptr;
-			return false;
-		}
+		return false;
 	}
 
 	// Compile the source code to ELF using the compiler sandbox
@@ -251,7 +261,9 @@ bool SafeGDScript::compile_source_to_elf() {
 
 	this->elf_data = result;
 	if (elf_data.is_empty()) {
-		ERR_PRINT("SafeGDScript::compile_source_to_elf: Compilation returned empty ELF data.");
+		// The compiler kept the reason around; saying what is wrong with the
+		// script beats saying that the result was empty.
+		ERR_PRINT("SafeGDScript: " + this->path + ": " + get_compiler_error_message());
 		return false;
 	}
 
@@ -266,6 +278,21 @@ bool SafeGDScript::compile_source_to_elf() {
 	}
 
 	return true;
+}
+
+// The formatted message the compiler kept from the last failed compile, quoting
+// the offending line. Only meaningful right after one has failed.
+String SafeGDScript::get_compiler_error_message() {
+	Sandbox *compiler = get_compiler_sandbox();
+	if (compiler == nullptr || !compiler->has_function("get_compiler_error")) {
+		return String("compilation failed");
+	}
+	GDExtensionCallError error;
+	const Variant message = compiler->vmcall_fn("get_compiler_error", nullptr, 0, error);
+	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK || message.get_type() != Variant::Type::STRING) {
+		return String("compilation failed");
+	}
+	return message;
 }
 
 void SafeGDScript::remove_instance(SafeGDScriptInstance *p_instance) {

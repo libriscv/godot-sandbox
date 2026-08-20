@@ -484,6 +484,121 @@ func find(limit):
 func test():
 	return find(50) * 100 + find(1000)
 )" },
+
+		// -= Global functions =-
+		//
+		// The interpreter evaluates these through globals.cpp and the machine
+		// through the emitted code and the ECALL_UTILITY shim, which evaluates
+		// through globals.cpp too -- so a disagreement is a disagreement about
+		// the emitted code, which is the point.
+		{ "global_int_forms", R"(
+func test():
+	var a = -7
+	var b = 3
+	return absi(a) + signi(a) + mini(a, b) + maxi(a, b) + clampi(a, -2, 2) + posmod(a, b) + wrapi(a, 0, 5)
+)" },
+		{ "global_numeric_dispatch_int", R"(
+func test():
+	var a = -9
+	return abs(a) + sign(a) + floor(a) + ceil(a) + round(a) + min(a, 4) + max(a, 4) + clamp(a, -3, 3)
+)" },
+		{ "global_numeric_dispatch_float", R"(
+func test():
+	var a = -9.5
+	return abs(a) + sign(a) + floor(a) + ceil(a) + round(a) + min(a, 4.0) + max(a, 4.0) + clamp(a, -3.0, 3.0)
+)" },
+		// The same call sites, with the argument type unknown at compile time:
+		// the backend has to emit the run-time test and both forms.
+		{ "global_numeric_dispatch_untyped", R"(
+func pick(which):
+	if which:
+		return -9
+	return -9.5
+
+func measure(x):
+	return abs(x) + sign(x) + floor(x) + ceil(x) + round(x) + min(x, 4) + max(x, 4)
+
+func test():
+	return measure(pick(true)) + measure(pick(false))
+)" },
+		{ "global_float_forms", R"(
+func test():
+	var a = -2.5
+	return absf(a) + signf(a) + minf(a, 1.0) + maxf(a, 1.0) + clampf(a, -1.0, 1.0) + sqrt(9.0)
+)" },
+		{ "global_rounding", R"(
+func test():
+	var a = 2.6
+	return floorf(a) + ceilf(a) + roundf(a) + floori(a) + ceili(a) + roundi(a) + snappedf(a, 0.5) + snappedi(a, 2)
+)" },
+		{ "global_transcendental", R"(
+func test():
+	return sin(1.0) + cos(1.0) + tan(0.5) + asin(0.5) + acos(0.5) + atan(0.5) + atan2(1.0, 2.0) + exp(1.0) + log(2.0) + pow(2.0, 10.0)
+)" },
+		{ "global_hyperbolic", R"(
+func test():
+	return sinh(0.5) + cosh(0.5) + tanh(0.5) + asinh(0.5) + acosh(1.5) + atanh(0.5)
+)" },
+		{ "global_interpolation", R"(
+func test():
+	return lerp(1.0, 5.0, 0.25) + inverse_lerp(1.0, 5.0, 2.0) + smoothstep(0.0, 1.0, 0.3) 		+ remap(5.0, 0.0, 10.0, 100.0, 200.0) + move_toward(1.0, 5.0, 0.5) 		+ cubic_interpolate(1.0, 2.0, 0.0, 3.0, 0.5) + bezier_interpolate(0.0, 1.0, 2.0, 3.0, 0.25) 		+ bezier_derivative(0.0, 1.0, 2.0, 3.0, 0.25)
+)" },
+		{ "global_angles", R"(
+func test():
+	return deg_to_rad(90.0) + rad_to_deg(1.0) + angle_difference(0.5, 3.0) + lerp_angle(0.5, 3.0, 0.25) 		+ rotate_toward(0.5, 3.0, 0.25) + pingpong(7.0, 3.0)
+)" },
+		{ "global_modulo", R"(
+func test():
+	return fmod(7.5, 2.0) + fposmod(-7.5, 2.0) + wrapf(7.5, 1.0, 5.0) + linear_to_db(0.5) + db_to_linear(-6.0)
+)" },
+		{ "global_predicates", R"(
+func test():
+	var total = 0
+	if is_nan(0.0):
+		total = total + 1
+	if is_inf(1.0):
+		total = total + 2
+	if is_finite(1.0):
+		total = total + 4
+	if is_zero_approx(0.0000001):
+		total = total + 8
+	if is_equal_approx(1.0, 1.0):
+		total = total + 16
+	return total
+)" },
+		// An integer where a float is wanted is the one implicit conversion
+		// GDScript performs, and it has to reach the host as a double.
+		{ "global_int_argument_widens", R"(
+func test():
+	return sqrt(16) + pow(2, 8) + lerp(0, 10, 1)
+)" },
+		{ "global_variadic_min_max", R"(
+func test():
+	return min(5, 2, 9, 1) + max(5, 2, 9, 1) + min(5.0, 2.0, 9.0)
+)" },
+		// The integer forms with the argument type unknown at compile time: the
+		// backend has to load a Variant it has not been told the type of.
+		{ "global_int_forms_untyped", R"(
+func measure(x):
+	return absi(x) + signi(x) + mini(x, 2) + maxi(x, 2) + clampi(x, -1, 1)
+
+func test():
+	return measure(-5) + measure(5) + measure(2.7) + measure(true)
+)" },
+		{ "global_edge_cases", R"(
+func test():
+	# A zero divisor and an empty range both answer rather than trap.
+	return posmod(7, 0) + wrapi(7, 3, 3) + snappedi(7.0, 0) + mini(-9223372036854775807, 1)
+)" },
+		{ "global_in_a_loop", R"(
+func test():
+	var total = 0.0
+	var i = 0
+	while i < 8:
+		total = total + abs(sin(i)) * clampf(i, 0.0, 4.0)
+		i = i + 1
+	return total
+)" },
 	};
 	return programs;
 }

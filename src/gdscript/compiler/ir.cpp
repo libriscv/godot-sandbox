@@ -1,4 +1,5 @@
 #include "ir.h"
+#include "globals.h"
 #include <sstream>
 
 namespace gdscript {
@@ -195,8 +196,15 @@ std::string IRInstruction::to_string() const {
 	std::ostringstream oss;
 	oss << ir_opcode_name(opcode);
 
-	for (const auto& op : operands) {
-		oss << " " << op.to_string();
+	for (size_t i = 0; i < operands.size(); i++) {
+		// GLOBAL_CALL's first immediate is a GlobalFn. A dump saying "11" says
+		// nothing; a dump saying "absi" says which global was compiled.
+		if (opcode == IROpcode::GLOBAL_CALL && i == 1 &&
+			operands[i].type == IRValue::Type::IMMEDIATE) {
+			oss << " " << global_function(static_cast<GlobalFn>(std::get<int64_t>(operands[i].value))).name;
+			continue;
+		}
+		oss << " " << operands[i].to_string();
 	}
 
 	return oss.str();

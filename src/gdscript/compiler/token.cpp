@@ -77,6 +77,22 @@ const char* token_type_name(TokenType type) {
 	}
 }
 
+std::string Token::describe() const {
+	switch (type) {
+		case TokenType::NEWLINE:   return "end of line";
+		case TokenType::INDENT:    return "an indented block";
+		case TokenType::DEDENT:    return "the end of a block";
+		case TokenType::EOF_TOKEN: return "end of file";
+		case TokenType::STRING:    return "a string";
+		case TokenType::INVALID:   return "an unrecognized token";
+		default: break;
+	}
+	if (lexeme.empty()) {
+		return token_type_name(type);
+	}
+	return "'" + lexeme + "'";
+}
+
 std::string Token::to_string() const {
 	std::ostringstream oss;
 	oss << token_type_name(type) << " '" << lexeme << "' at " << line << ":" << column;

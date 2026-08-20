@@ -1412,6 +1412,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				break;
 			}
 
+			case IROpcode::GLOBAL_CALL:
+				// Every global except print(). See riscv_globals.cpp.
+				emit_global_call(instr);
+				break;
+
 			case IROpcode::MAKE_ARRAY: {
 				// Format: MAKE_ARRAY result_reg, element_count, [element_reg1, element_reg2, ...]
 				// For empty arrays: element_count = 0, no element regs
@@ -3356,6 +3361,29 @@ void RISCVCodeGen::emit_fmv_d(uint8_t rd, uint8_t rs) {
 	emit_r4_type(0x53, rd, 0x0, rs, rs, 0b00100, 1);
 }
 
+void RISCVCodeGen::emit_fsqrt_d(uint8_t rd, uint8_t rs1) {
+	// FSQRT.D: funct7=0b0101101, rs2 is unused and must be zero
+	emit_r_type(0x53, rd, 0, rs1, 0, 0b0101101);
+}
+
+void RISCVCodeGen::emit_fabs_d(uint8_t rd, uint8_t rs1) {
+	// FABS.D is FSGNJX.D rd, rs, rs: the sign becomes rs's sign XOR rs's sign,
+	// which is positive, and the rest of the value is untouched. Exact, and
+	// defined for every input including the NaNs.
+	emit_r_type(0x53, rd, 0b010, rs1, rs1, 0b0010001);
+}
+
+void RISCVCodeGen::emit_flt_d(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	// FLT.D: 1 or 0 into an *integer* register. Quiet on ordered operands and
+	// false whenever either is a NaN, which is what C++ `a < b` does.
+	emit_r_type(0x53, rd, 0b001, rs1, rs2, 0b1010001);
+}
+
+void RISCVCodeGen::emit_fcvt_l_d(uint8_t rd, uint8_t rs1) {
+	// FCVT.L.D, rounding toward zero (rm=001): the C++ (int64_t) cast.
+	emit_r_type(0x53, rd, 0b001, rs1, 0b00010, 0b1100001);
+}
+
 void RISCVCodeGen::emit_fadd_s(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 	// FADD.S: Single-precision FP add
 	// funct7=0x00 for single-precision (vs 0x01 for double)
@@ -3460,6 +3488,12 @@ void RISCVCodeGen::emit_fdiv_r(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 }
 
 // Sign-extend word to doubleword (addiw rd, rs, 0)
+void RISCVCodeGen::emit_srai(uint8_t rd, uint8_t rs, uint8_t shamt) {
+	// SRAI on RV64: funct6=010000 and a six-bit shift amount, so the immediate
+	// field is (0b010000 << 6) | shamt.
+	emit_i_type(0x13, rd, 5, rs, (0b010000 << 6) | (shamt & 0x3F));
+}
+
 void RISCVCodeGen::emit_sext_w(uint8_t rd, uint8_t rs) {
 	// ADDIW: opcode=0x1b, funct3=0
 	emit_i_type(0x1b, rd, 0, rs, 0);

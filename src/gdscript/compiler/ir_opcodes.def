@@ -122,6 +122,22 @@ IR_OPCODE(VSET,            "VSET",            SIG(SRC, IMM, IMM, SRC),          
 
 IR_OPCODE(PRINT,           "PRINT",           SIG(DST, CNT, SRC_LIST),           IR_SIDE_EFFECTS | IR_CALL)
 
+// Every other global -- abs, sin, clamp, str, len, the lot -- is one opcode
+// carrying a GlobalFn (see globals.h) as its first immediate. The table there
+// says how the backend performs it: inline integer or floating-point code, a
+// call to the host through ECALL_UTILITY, or a run-time choice between an
+// integer and a floating-point form when the argument types are not known.
+//
+// The second immediate says the arguments are already Variants of the type the
+// chosen form works in, which is what lets the backend load them without
+// testing their type first. The code generator sets it from the argument type
+// hints, and inserts the int-to-float conversions that make it true.
+//
+// It is pure. None of these globals has a side effect, so a result nobody reads
+// means a call nobody has to make.
+
+IR_OPCODE(GLOBAL_CALL,     "GLOBAL_CALL",     SIG(DST, IMM, IMM, CNT, SRC_LIST), IR_PURE)
+
 // -= Inline primitive construction (no syscalls) =-
 
 IR_OPCODE(MAKE_VECTOR2,    "MAKE_VECTOR2",    SIG(DST, SRC, SRC),            IR_PURE)

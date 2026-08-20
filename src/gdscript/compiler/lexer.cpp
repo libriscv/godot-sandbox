@@ -198,38 +198,78 @@ void Lexer::handle_indent() {
 }
 
 void Lexer::scan_string() {
-	char quote = m_source[m_current - 1];
-	std::string value;
+	const char quote = m_source[m_current - 1];
+	// scan_token() has already consumed the opening quote, so back up one column
+	// to point at it: an unterminated string is reported where it starts, not
+	// where the file happened to run out.
+	const int open_line = m_line;
+	const int open_column = m_column - 1;
 
-	while (!is_at_end() && peek() != quote) {
-		if (peek() == '\n') {
+	// Three quotes open a string that may span lines, as in GDScript. A plain
+	// string may not, and ending one at its newline keeps a single stray quote
+	// from swallowing the rest of the file -- which is the difference between an
+	// editor underlining one line and underlining everything below it.
+	bool triple = false;
+	if (peek() == quote && peek_next() == quote) {
+		advance();
+		advance();
+		triple = true;
+	}
+
+	std::string value;
+	bool terminated = false;
+	while (!is_at_end()) {
+		const char c = peek();
+		if (c == quote) {
+			if (!triple) {
+				terminated = true;
+				break;
+			}
+			if (peek_next() == quote && peek_at(2) == quote) {
+				terminated = true;
+				break;
+			}
+		} else if (c == '\n') {
+			if (!triple) {
+				break;
+			}
 			m_line++;
 			m_column = 0;
-		} else if (peek() == '\\') {
+		} else if (c == '\\') {
 			advance();
-			if (!is_at_end()) {
-				char escaped = advance();
-				switch (escaped) {
-					case 'n': value += '\n'; break;
-					case 't': value += '\t'; break;
-					case 'r': value += '\r'; break;
-					case '\\': value += '\\'; break;
-					case '"': value += '"'; break;
-					case '\'': value += '\''; break;
-					default: value += escaped; break;
-				}
-				continue;
+			if (is_at_end()) {
+				break; // A backslash as the last character of the file.
 			}
+			const char escaped = advance();
+			switch (escaped) {
+				case 'n': value += '\n'; break;
+				case 't': value += '\t'; break;
+				case 'r': value += '\r'; break;
+				case '\\': value += '\\'; break;
+				case '"': value += '"'; break;
+				case '\'': value += '\''; break;
+				case '\n':
+					// A line continuation inside a triple-quoted string.
+					m_line++;
+					m_column = 0;
+					value += '\n';
+					break;
+				default: value += escaped; break;
+			}
+			continue;
 		}
 		value += advance();
 	}
 
-	if (is_at_end()) {
-		error("Unterminated string");
-		return;
+	if (!terminated) {
+		error_at("Unterminated string", open_line, open_column);
 	}
 
 	advance(); // Closing quote
+	if (triple) {
+		advance();
+		advance();
+	}
 	add_token(TokenType::STRING, value);
 }
 
@@ -410,7 +450,11 @@ void Lexer::add_token(TokenType type, const std::string& value) {
 }
 
 void Lexer::error(const std::string& message) {
-	throw CompilerException(ErrorType::LEXER_ERROR, message, m_line, m_column);
+	error_at(message, m_line, m_column);
+}
+
+void Lexer::error_at(const std::string& message, int line, int column) {
+	throw CompilerException(ErrorType::LEXER_ERROR, message, line, column);
 }
 
 } // namespace gdscript

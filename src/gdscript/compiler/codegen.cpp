@@ -2149,20 +2149,37 @@ bool CodeGenerator::is_inline_primitive_constructor(const std::string& name) con
 }
 
 bool CodeGenerator::is_global_function(const std::string& name) const {
-	return name == "print";
+	return find_global_function(name) != nullptr;
 }
 
 int CodeGenerator::gen_global_function(const CallExpr* expr, std::vector<int>& arg_regs, FunctionContext& func) {
-	// print(...) -> ECALL_PRINT. The host takes one contiguous array of
-	// Variants, so the count travels with the instruction and the backend does
-	// the gathering.
-	if (expr->function_name == "print") {
-		// The syscall rejects 64 or more, and it does so by throwing inside the
-		// guest. Catching it here names the call site instead.
-		if (arg_regs.size() >= 64) {
-			error_at("print() takes at most 63 arguments", expr);
-		}
+	const GlobalFunction* info = find_global_function(expr->function_name);
+	if (info == nullptr) {
+		throw CompilerException(ErrorType::CODEGEN_ERROR,
+			"is_global_function() accepts '" + expr->function_name + "' but there is no table entry for it");
+	}
 
+	// The arity comes from the table, so the message names the function rather
+	// than failing later as a missing operand.
+	const size_t given = arg_regs.size();
+	if (given < info->min_args || given > info->max_args) {
+		std::string expected;
+		if (info->min_args == info->max_args) {
+			expected = std::to_string(info->min_args);
+		} else if (info->max_args == 63) {
+			expected = "at least " + std::to_string(info->min_args);
+		} else {
+			expected = std::to_string(info->min_args) + " to " + std::to_string(info->max_args);
+		}
+		error_at(expr->function_name + "() takes " + expected + " argument" +
+			(info->min_args == 1 && info->max_args == 1 ? "" : "s") + ", got " +
+			std::to_string(given), expr);
+	}
+
+	if (info->kind == GlobalKind::PRINT) {
+		// print(...) -> ECALL_PRINT. The host takes one contiguous array of
+		// Variants, so the count travels with the instruction and the backend
+		// does the gathering.
 		int result_reg = alloc_register(func);
 
 		IRInstruction instr(IROpcode::PRINT);
@@ -2178,8 +2195,133 @@ int CodeGenerator::gen_global_function(const CallExpr* expr, std::vector<int>& a
 		return result_reg;
 	}
 
-	throw CompilerException(ErrorType::CODEGEN_ERROR,
-		"is_global_function() accepts '" + expr->function_name + "' but gen_global_function() does not handle it");
+	// min() and max() take any number of arguments; every other global takes a
+	// fixed number. Fold the tail into a chain of two-argument calls, so that
+	// the backend only ever sees two.
+	if ((info->fn == GlobalFn::MIN || info->fn == GlobalFn::MAX) && given > 2) {
+		int accumulated = arg_regs[0];
+		for (size_t i = 1; i < arg_regs.size(); i++) {
+			const std::vector<int> pair { accumulated, arg_regs[i] };
+			const int folded = gen_global_call(*info, pair, func, expr);
+			if (i > 1) {
+				// The register holding the running result of the previous pair
+				// is dead now. The arguments themselves belong to the caller.
+				free_register(func, accumulated);
+			}
+			accumulated = folded;
+		}
+		return accumulated;
+	}
+
+	return gen_global_call(*info, arg_regs, func, expr);
+}
+
+int CodeGenerator::gen_global_call(const GlobalFunction& info, const std::vector<int>& arg_regs,
+	FunctionContext& func, const Expr* site)
+{
+	(void)site;
+
+	// A NUMERIC global follows its arguments: abs(2) is the integer 2 and
+	// abs(2.0) is the float 2.0. When every argument is a known integer the
+	// integer form is chosen here; when any is a known float, the float form;
+	// and when the types are not known the backend decides at run time, which
+	// is what leaving the dispatcher in the instruction means.
+	const GlobalFunction* chosen = &info;
+	if (info.kind == GlobalKind::NUMERIC) {
+		bool all_integer = true;
+		bool all_known = true;
+		for (int reg : arg_regs) {
+			const IRInstruction::TypeHint hint = get_register_type(func, reg);
+			if (hint == Variant::INT) {
+				continue;
+			}
+			all_integer = false;
+			if (hint != Variant::FLOAT) {
+				all_known = false;
+			}
+		}
+		if (all_integer || all_known) {
+			chosen = &global_function(resolve_numeric_form(info, all_integer));
+		}
+	}
+
+	// The form works in integers or in doubles, and the backend can skip the
+	// run-time type test on an argument that already is one. Where the
+	// conversion is the one GDScript performs implicitly -- an integer where a
+	// float is wanted -- it happens here, as a CONVERT the optimizer can fold,
+	// rather than as a type test in the emitted code.
+	std::vector<int> call_args = arg_regs;
+	std::vector<int> converted;
+	IRInstruction::TypeHint wanted = IRInstruction::TypeHint_NONE;
+	switch (chosen->kind) {
+		case GlobalKind::INT_OP:
+			wanted = Variant::INT;
+			break;
+		case GlobalKind::FLOAT_OP:
+		case GlobalKind::SYSCALL:
+			wanted = Variant::FLOAT;
+			break;
+		case GlobalKind::PRINT:
+		case GlobalKind::NUMERIC:
+		case GlobalKind::HOST:
+			break;
+	}
+
+	bool typed = wanted != IRInstruction::TypeHint_NONE;
+	if (typed) {
+		for (int& reg : call_args) {
+			const IRInstruction::TypeHint hint = get_register_type(func, reg);
+			if (hint == wanted) {
+				continue;
+			}
+			if (wanted == Variant::FLOAT && hint == Variant::INT) {
+				const int widened = alloc_register(func);
+				IRInstruction convert(IROpcode::CONVERT, IRValue::reg(widened), IRValue::reg(reg));
+				convert.type_hint = Variant::FLOAT;
+				func.ir.instructions.push_back(convert);
+				set_register_type(func, widened, Variant::FLOAT);
+				converted.push_back(widened);
+				reg = widened;
+				continue;
+			}
+			typed = false;
+			break;
+		}
+	}
+
+	int result_reg = alloc_register(func);
+
+	IRInstruction instr(IROpcode::GLOBAL_CALL);
+	instr.operands.push_back(IRValue::reg(result_reg));
+	instr.operands.push_back(IRValue::imm(static_cast<int64_t>(chosen->fn)));
+	instr.operands.push_back(IRValue::imm(typed ? 1 : 0));
+	instr.operands.push_back(IRValue::imm(call_args.size()));
+	for (int arg_reg : call_args) {
+		instr.operands.push_back(IRValue::reg(arg_reg));
+	}
+
+	// The result type doubles as what the backend emits: a resolved NUMERIC
+	// entry has a concrete result, and an unresolved one does not, which is how
+	// the backend knows it has to test the argument types itself.
+	IRInstruction::TypeHint result_type = IRInstruction::TypeHint_NONE;
+	switch (chosen->result) {
+		case GlobalResult::NIL: result_type = Variant::NIL; break;
+		case GlobalResult::BOOL: result_type = Variant::BOOL; break;
+		case GlobalResult::INT: result_type = Variant::INT; break;
+		case GlobalResult::FLOAT: result_type = Variant::FLOAT; break;
+		case GlobalResult::STRING: result_type = Variant::STRING; break;
+		case GlobalResult::NUMERIC: break;
+	}
+	instr.type_hint = result_type;
+	func.ir.instructions.push_back(instr);
+
+	for (int reg : converted) {
+		free_register(func, reg);
+	}
+	if (result_type != IRInstruction::TypeHint_NONE) {
+		set_register_type(func, result_reg, result_type);
+	}
+	return result_reg;
 }
 
 bool CodeGenerator::is_inline_member_access(IRInstruction::TypeHint type, const std::string& member) const {

@@ -1,4 +1,5 @@
 #pragma once
+#include "globals.h"
 #include "ir.h"
 #include "register_allocator.h"
 #include "variant_layout.h"
@@ -183,6 +184,10 @@ private:
 	void emit_fmul_d(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Double-precision FP mul
 	void emit_fdiv_d(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Double-precision FP div
 	void emit_fmv_d(uint8_t rd, uint8_t rs);                // Double-precision FP move
+	void emit_fsqrt_d(uint8_t rd, uint8_t rs1);              // Double-precision square root
+	void emit_fabs_d(uint8_t rd, uint8_t rs1);               // |x| (fsgnjx.d rd, rs, rs)
+	void emit_flt_d(uint8_t rd, uint8_t rs1, uint8_t rs2);   // rd = (rs1 < rs2), into an integer register
+	void emit_fcvt_l_d(uint8_t rd, uint8_t rs1);             // double -> signed 64-bit int, truncating
 
 	// FP arithmetic instructions (RV32F extension - single precision)
 	void emit_fadd_s(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Single-precision FP add
@@ -192,6 +197,7 @@ private:
 
 	// Additional integer instructions
 	void emit_sext_w(uint8_t rd, uint8_t rs);  // Sign-extend word to doubleword (addiw rd, rs, 0)
+	void emit_srai(uint8_t rd, uint8_t rs, uint8_t shamt); // Arithmetic shift right by a constant
 
 	// Pseudo-instructions
 	void emit_call(const std::string& func_name);
@@ -270,6 +276,41 @@ private:
 	void emit_typed_int_comparison(int result_offset, int lhs_offset, int rhs_offset, IROpcode cmp_op);
 	void emit_typed_float_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op);
 	void emit_typed_vector_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op, IRInstruction::TypeHint type_hint);
+
+	// -= GDScript's global functions =-
+	//
+	// GLOBAL_CALL, in riscv_globals.cpp. What each global means, how many
+	// arguments it takes and which of these shapes performs it is globals.h's
+	// table; this is only the emission.
+	void emit_global_call(const IRInstruction& instr);
+	// One form -- a row of the table with a concrete kind. `typed` says the
+	// arguments are already Variants of the type the form works in, which is
+	// what lets the loads skip the run-time type test.
+	void emit_global_form(const GlobalFunction& info, const std::vector<int>& arg_offsets,
+		int result_offset, bool typed);
+	void emit_global_int_form(const GlobalFunction& info, const std::vector<int>& arg_offsets,
+		int result_offset, bool typed);
+	void emit_global_float_form(const GlobalFunction& info, const std::vector<int>& arg_offsets,
+		int result_offset, bool typed);
+	void emit_global_syscall_form(const GlobalFunction& info, const std::vector<int>& arg_offsets,
+		int result_offset, bool typed);
+	void emit_global_host_form(const GlobalFunction& info, const std::vector<int>& arg_offsets,
+		int result_offset);
+
+	// The Variant at `variant_offset(sp)` as a double in `fd`, or as a 64-bit
+	// integer in `rd`. `known` skips the run-time type test, and is only ever
+	// true where the type has been established -- by a type hint, or by the
+	// dispatch emit_args_all_int() performs.
+	void emit_variant_to_double(uint8_t fd, int variant_offset, bool known_float);
+	void emit_variant_to_int(uint8_t rd, int variant_offset, bool known_int);
+
+	// rd = 1 when every one of `arg_offsets` holds an INT Variant. This is the
+	// run-time half of GDScript's rule that abs(2) is 2 and abs(2.0) is 2.0.
+	void emit_args_all_int(uint8_t rd, const std::vector<int>& arg_offsets);
+
+	// Write the double in `fs` into the result Variant, as whatever the global
+	// returns: the double itself, its truncation to an integer, or a boolean.
+	void emit_global_double_result(int result_offset, uint8_t fs, GlobalResult result);
 
 	// Get stack offset for a virtual register (in bytes)
 	int get_variant_stack_offset(int virtual_reg);
@@ -438,6 +479,15 @@ private:
 	static constexpr uint8_t REG_FA5 = 5;
 	static constexpr uint8_t REG_FA6 = 6;
 	static constexpr uint8_t REG_FA7 = 7;
+
+	// -= The ABI's floating-point argument registers =-
+	//
+	// The REG_FA* constants above are f0-f7, which the calling convention calls
+	// ft0-ft7: scratch, and what every inline expansion in this backend uses. A
+	// syscall that takes floating-point arguments needs the real fa0-fa7, which
+	// are f10-f17. Passing REG_FA0 to one of those puts the argument in ft0 and
+	// the host reads whatever ft... f10 happened to hold.
+	static constexpr uint8_t REG_ABI_FA0 = 10;
 };
 
 } // namespace gdscript

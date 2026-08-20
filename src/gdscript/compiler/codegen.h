@@ -1,5 +1,6 @@
 #pragma once
 #include "ast.h"
+#include "globals.h"
 #include "ir.h"
 #include <unordered_map>
 #include <unordered_set>
@@ -145,8 +146,15 @@ private:
 	// GDScript global functions. These are not methods on the owner node, so
 	// they must not fall through to the self-call path in gen_call(), which
 	// would produce a VCALL that Godot silently drops.
+	// Which globals exist, and what each one lowers to, is globals.h's table.
 	bool is_global_function(const std::string& name) const;
 	int gen_global_function(const CallExpr* expr, std::vector<int>& arg_regs, FunctionContext& func);
+
+	// One GLOBAL_CALL for `info`, over the registers in `arg_regs`. Resolves a
+	// NUMERIC entry to its integer or floating-point form when the argument
+	// types say which, and leaves it to the backend when they do not.
+	int gen_global_call(const GlobalFunction& info, const std::vector<int>& arg_regs,
+		FunctionContext& func, const Expr* site);
 
 	// -= Structs =-
 	//

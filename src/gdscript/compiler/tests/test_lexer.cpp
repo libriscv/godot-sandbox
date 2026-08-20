@@ -1,9 +1,24 @@
 #include "../lexer.h"
+#include "../compiler_exception.h"
 #include <cassert>
 #include <iostream>
 #include <cmath>
+#include <stdexcept>
+#include <string>
 
 using namespace gdscript;
+
+// Tokenize source that is expected to be rejected, and hand back the error.
+static CompilerException lex_failure(const std::string& source) {
+	try {
+		Lexer lexer(source);
+		lexer.tokenize();
+	} catch (const CompilerException& e) {
+		return e;
+	}
+	assert(false && "expected this source to fail to tokenize");
+	throw std::runtime_error("unreachable");
+}
 
 void test_basic_tokens() {
 	std::cout << "Testing basic tokens..." << std::endl;
@@ -244,6 +259,58 @@ void test_match_keyword() {
 	std::cout << "  ✓ Match keyword test passed" << std::endl;
 }
 
+void test_triple_quoted_strings() {
+	std::cout << "Testing triple-quoted strings..." << std::endl;
+
+	// A triple quote is the one string that may hold a raw newline, which is
+	// what the .sgd editor's string delimiters have always advertised.
+	Lexer lexer("\"\"\"one\ntwo\"\"\"\n");
+	auto tokens = lexer.tokenize();
+
+	assert(tokens[0].type == TokenType::STRING);
+	assert(std::get<std::string>(tokens[0].value) == "one\ntwo");
+
+	// The lines it spans still count, so an error below it is reported on the
+	// line the user is looking at.
+	Lexer counting("\"\"\"one\ntwo\"\"\"\nx\n");
+	auto counted = counting.tokenize();
+	bool found_x = false;
+	for (const auto& tok : counted) {
+		if (tok.type == TokenType::IDENTIFIER && tok.lexeme == "x") {
+			assert(tok.line == 3);
+			found_x = true;
+		}
+	}
+	assert(found_x);
+
+	// Single quotes open one just the same, and an empty one is still a string.
+	Lexer single("'''a'''");
+	assert(std::get<std::string>(single.tokenize()[0].value) == "a");
+	Lexer empty("\"\"\"\"\"\"");
+	assert(std::get<std::string>(empty.tokenize()[0].value).empty());
+
+	std::cout << "  ✓ Triple-quoted strings test passed" << std::endl;
+}
+
+void test_unterminated_string_stops_at_the_line() {
+	std::cout << "Testing unterminated strings..." << std::endl;
+
+	// A plain string ends at its own line, so one stray quote does not swallow
+	// the rest of the file, and the error points at the quote that opened it
+	// rather than at the end of input.
+	const CompilerException error = lex_failure("func f():\n\tvar s = \"oops\n\treturn s\n");
+	assert(error.error_type() == ErrorType::LEXER_ERROR);
+	assert(error.line() == 2);
+	assert(error.column() == 10);
+
+	// An unterminated triple-quoted string is reported where it opened too.
+	const CompilerException triple = lex_failure("\n\"\"\"oops\nand more\n");
+	assert(triple.line() == 2);
+	assert(triple.column() == 1);
+
+	std::cout << "  ✓ Unterminated string test passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== Running Lexer Tests ===" << std::endl;
 
@@ -262,6 +329,8 @@ int main() {
 		test_radix_literals();
 		test_numeric_separators_and_exponents();
 		test_match_keyword();
+		test_triple_quoted_strings();
+		test_unterminated_string_stops_at_the_line();
 
 		std::cout << "\n✅ All lexer tests passed!" << std::endl;
 		return 0;

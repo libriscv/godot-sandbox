@@ -312,7 +312,12 @@ int main(int argc, char** argv)
 				// Format operands with register allocation info
 				for (size_t j = 0; j < instr.operands.size(); j++) {
 					if (j > 0) std::cout << ", ";
-					if (verbose) {
+					if (instr.opcode == IROpcode::GLOBAL_CALL && j == 1 &&
+						instr.operands[j].type == IRValue::Type::IMMEDIATE) {
+						// The GlobalFn, by name rather than by number.
+						std::cout << global_function(
+							static_cast<GlobalFn>(std::get<int64_t>(instr.operands[j].value))).name;
+					} else if (verbose) {
 						std::cout << format_operand_detailed(instr.operands[j]);
 					} else {
 						std::cout << instr.operands[j].to_string();

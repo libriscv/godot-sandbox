@@ -890,7 +890,7 @@ bool Parser::is_at_end() const {
 Token Parser::consume(TokenType type, const std::string& message) {
 	if (check(type)) return advance();
 
-	error(message + " but got " + peek().to_string());
+	error(message + ", but found " + peek().describe());
 	return peek();
 }
 

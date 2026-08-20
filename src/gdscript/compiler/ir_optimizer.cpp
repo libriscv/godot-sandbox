@@ -413,6 +413,7 @@ void IROptimizer::constant_folding(IRFunction& func) {
 
 			// System calls and variant operations - invalidate destination only
 			case IROpcode::PRINT:
+			case IROpcode::GLOBAL_CALL:
 			case IROpcode::VCALL:
 			case IROpcode::VGET:
 			case IROpcode::VSET:

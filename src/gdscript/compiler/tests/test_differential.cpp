@@ -32,6 +32,7 @@
 #include "../compiler_exception.h"
 #include "../elf_builder.h"
 #include "../ir_interpreter.h"
+#include "../globals.h"
 #include "../ir_optimizer.h"
 #include "../lexer.h"
 #include "../parser.h"
@@ -104,6 +105,7 @@ const SyscallName SYSCALL_NAMES[] = {
 	{ 546, "ECALL_OBJ_PROP_SET" },
 	{ 547, "ECALL_SANDBOX_ADD" },
 	{ 548, "ECALL_PACKED_ARRAY_OPS" },
+	{ 549, "ECALL_UTILITY" },
 };
 
 const char* syscall_name(int number) {
@@ -368,6 +370,39 @@ void syscall_veval(machine_t& machine) {
 	machine.cpu.reg(riscv::REG_ARG0) = valid ? 1 : 0;
 }
 
+// ECALL_UTILITY, the one host call a global function makes. The floating-point
+// ops are evaluated by globals.cpp -- the same code the IR interpreter runs --
+// so what this compares is the emitted code around the call: the conversions
+// into fa0-fa4, the op number, and what the answer is written back as. The real
+// host implements the same formulas against Godot's Math::.
+//
+// str() and len() are not here: they need Variants this harness cannot make.
+void syscall_utility(machine_t& machine) {
+	RunState& state = *machine.get_userdata<RunState>();
+
+	const int op = static_cast<int>(machine.cpu.reg(riscv::REG_ARG0));
+	if (op == gdscript::UTILITY_STR || op == gdscript::UTILITY_LEN) {
+		state.unsupported = "str() or len(), which need the host Variant API";
+		machine.stop();
+		return;
+	}
+
+	double args[gdscript::UTILITY_MAX_FLOAT_ARGS];
+	for (size_t i = 0; i < gdscript::UTILITY_MAX_FLOAT_ARGS; i++) {
+		args[i] = machine.cpu.registers().getfl(riscv::REG_FA0 + i).f64;
+	}
+
+	double result = 0.0;
+	try {
+		result = gdscript::eval_utility_op(static_cast<int16_t>(op), args);
+	} catch (const std::exception& e) {
+		state.unsupported = std::string("ECALL_UTILITY op ") + std::to_string(op) + ": " + e.what();
+		machine.stop();
+		return;
+	}
+	machine.cpu.registers().getfl(riscv::REG_FA0).set_double(result);
+}
+
 // Every other host call: stop and say which one, so a skipped program says why.
 template <int Number>
 void syscall_unsupported(machine_t& machine) {
@@ -482,6 +517,7 @@ Outcome run_source(const std::string& source) {
 		machine.set_userdata(&state);
 
 		machine_t::install_syscall_handler(502, syscall_veval);
+		machine_t::install_syscall_handler(549, syscall_utility);
 		machine_t::install_syscall_handler(500, syscall_unsupported<500>);
 		machine_t::install_syscall_handler(501, syscall_unsupported<501>);
 		machine_t::install_syscall_handler(503, syscall_unsupported<503>);

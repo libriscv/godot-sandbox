@@ -1,5 +1,6 @@
 #include "ir_interpreter.h"
 #include "compiler_exception.h"
+#include "globals.h"
 #include <cmath>
 #include <cstdint>
 #include <sstream>
@@ -331,6 +332,77 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 
 			Value result = call(func_name, args);
 			ctx.registers[result_reg] = result;
+			break;
+		}
+
+		case IROpcode::GLOBAL_CALL: {
+			// GLOBAL_CALL result_reg, global_fn, typed, arg_count, arg1_reg, ...
+			//
+			// The meanings live in globals.cpp, which is also what the
+			// differential harness's ECALL_UTILITY shim evaluates, so the
+			// interpreter and the machine cannot disagree about what a global
+			// computes.
+			const int result_reg = std::get<int>(instr.operands[0].value);
+			const GlobalFn fn = static_cast<GlobalFn>(std::get<int64_t>(instr.operands[1].value));
+			const int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+
+			std::vector<Value> args;
+			args.reserve(arg_count);
+			for (int i = 0; i < arg_count; i++) {
+				args.push_back(get_register(ctx, std::get<int>(instr.operands[4 + i].value)));
+			}
+
+			const GlobalFunction* info = &global_function(fn);
+			if (info->kind == GlobalKind::HOST) {
+				throw CompilerException(ErrorType::OPTIMIZER_ERROR,
+					std::string(info->name) + "() needs the host Variant API and is not available"
+					" in the IR interpreter (in function '" + func.name + "')");
+			}
+
+			// An unresolved NUMERIC global follows the values it was handed,
+			// the same way the backend's run-time type test does.
+			if (info->kind == GlobalKind::NUMERIC) {
+				bool all_integer = true;
+				for (const Value& value : args) {
+					if (!std::holds_alternative<int64_t>(value)) {
+						all_integer = false;
+						break;
+					}
+				}
+				info = &global_function(resolve_numeric_form(*info, all_integer));
+			}
+
+			if (info->kind == GlobalKind::INT_OP) {
+				std::vector<int64_t> int_args;
+				int_args.reserve(args.size());
+				for (const Value& value : args) {
+					int_args.push_back(get_int(value));
+				}
+				ctx.registers[result_reg] = eval_global_int(info->fn, int_args.data(), int_args.size());
+				break;
+			}
+
+			std::vector<double> float_args;
+			float_args.reserve(args.size());
+			for (const Value& value : args) {
+				float_args.push_back(get_double(value));
+			}
+			const double result = eval_global_float(info->fn, float_args.data(), float_args.size());
+
+			switch (info->result) {
+				case GlobalResult::BOOL:
+					ctx.registers[result_reg] = (result != 0.0);
+					break;
+				case GlobalResult::INT:
+					ctx.registers[result_reg] = static_cast<int64_t>(result);
+					break;
+				case GlobalResult::NIL:
+				case GlobalResult::FLOAT:
+				case GlobalResult::STRING:
+				case GlobalResult::NUMERIC:
+					ctx.registers[result_reg] = result;
+					break;
+			}
 			break;
 		}
 

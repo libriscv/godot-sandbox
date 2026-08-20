@@ -230,6 +230,262 @@ APICALL(api_print) {
 	emu.print(args, len);
 }
 
+// -= @GlobalScope's utility functions =-
+//
+// ECALL_UTILITY performs the GDScript globals that a guest cannot compute for
+// itself: str() and len(), which need the Variant API, and the global math
+// functions, which need libm.
+//
+// The formulas below are Godot's, from math_funcs.h. They are repeated here
+// rather than called through godot::Math:: for two reasons: several of Godot's
+// are written against real_t, so that a single-precision build would answer
+// something a double-precision build does not, and the GDScript-to-RISC-V
+// compiler evaluates the same ops in
+// src/gdscript/compiler/globals.cpp -- for constant folding, for its IR
+// interpreter, and for its differential test against a real machine. Those two
+// have to agree, so both are written out in doubles. A change to one belongs in
+// the other.
+static constexpr double UTILITY_PI = 3.1415926535897932384626433833;
+static constexpr double UTILITY_TAU = 6.2831853071795864769252867666;
+static constexpr double UTILITY_CMP_EPSILON = 0.00001;
+
+static double utility_sign(double x) {
+	// Godot's SIGN(): zero, and NaN, are neither positive nor negative.
+	return (x < 0.0) ? -1.0 : ((x > 0.0) ? 1.0 : 0.0);
+}
+
+static bool utility_is_equal_approx(double a, double b) {
+	// Exact equality first, so that infinities compare equal.
+	if (a == b) {
+		return true;
+	}
+	double tolerance = UTILITY_CMP_EPSILON * std::fabs(a);
+	if (tolerance < UTILITY_CMP_EPSILON) {
+		tolerance = UTILITY_CMP_EPSILON;
+	}
+	return std::fabs(a - b) < tolerance;
+}
+
+static bool utility_is_zero_approx(double x) {
+	return std::fabs(x) < UTILITY_CMP_EPSILON;
+}
+
+static double utility_lerp(double from, double to, double weight) {
+	return from + weight * (to - from);
+}
+
+static double utility_inverse_lerp(double from, double to, double value) {
+	return (value - from) / (to - from);
+}
+
+static double utility_angle_difference(double from, double to) {
+	const double difference = std::fmod(to - from, UTILITY_TAU);
+	return std::fmod(2.0 * difference, UTILITY_TAU) - difference;
+}
+
+static double utility_math_op(Utility_Op op, const double args[5]) {
+	const double a = args[0];
+	const double b = args[1];
+	const double c = args[2];
+	const double d = args[3];
+	const double e = args[4];
+
+	switch (op) {
+		case Utility_Op::FLOOR: return std::floor(a);
+		case Utility_Op::CEIL: return std::ceil(a);
+		// Godot rounds half away from zero through floor(), not through
+		// ::round(), and the two differ where adding 0.5 is not exact.
+		case Utility_Op::ROUND: return (a >= 0) ? std::floor(a + 0.5) : -std::floor(-a + 0.5);
+		case Utility_Op::SIGN: return utility_sign(a);
+		case Utility_Op::SIN: return std::sin(a);
+		case Utility_Op::COS: return std::cos(a);
+		case Utility_Op::TAN: return std::tan(a);
+		case Utility_Op::ASIN: return std::asin(a);
+		case Utility_Op::ACOS: return std::acos(a);
+		case Utility_Op::ATAN: return std::atan(a);
+		case Utility_Op::SINH: return std::sinh(a);
+		case Utility_Op::COSH: return std::cosh(a);
+		case Utility_Op::TANH: return std::tanh(a);
+		case Utility_Op::ASINH: return std::asinh(a);
+		case Utility_Op::ACOSH: return std::acosh(a);
+		case Utility_Op::ATANH: return std::atanh(a);
+		case Utility_Op::EXP: return std::exp(a);
+		case Utility_Op::LOG: return std::log(a);
+		case Utility_Op::DEG_TO_RAD: return a * UTILITY_PI / 180.0;
+		case Utility_Op::RAD_TO_DEG: return a * 180.0 / UTILITY_PI;
+		case Utility_Op::LINEAR_TO_DB: return std::log(a) * 8.6858896380650365530225783783321;
+		case Utility_Op::DB_TO_LINEAR: return std::exp(a * 0.11512925464970228420089957273422);
+		case Utility_Op::IS_NAN: return std::isnan(a) ? 1.0 : 0.0;
+		case Utility_Op::IS_INF: return std::isinf(a) ? 1.0 : 0.0;
+		case Utility_Op::IS_FINITE: return std::isfinite(a) ? 1.0 : 0.0;
+		case Utility_Op::IS_ZERO_APPROX: return utility_is_zero_approx(a) ? 1.0 : 0.0;
+
+		case Utility_Op::ATAN2: return std::atan2(a, b);
+		case Utility_Op::POW: return std::pow(a, b);
+		case Utility_Op::FMOD: return std::fmod(a, b);
+		case Utility_Op::FPOSMOD: {
+			double value = std::fmod(a, b);
+			if ((value < 0 && b > 0) || (value > 0 && b < 0)) {
+				value += b;
+			}
+			value += 0.0;
+			return value;
+		}
+		case Utility_Op::SNAPPED: return (b != 0) ? std::floor(a / b + 0.5) * b : a;
+		case Utility_Op::IS_EQUAL_APPROX: return utility_is_equal_approx(a, b) ? 1.0 : 0.0;
+		case Utility_Op::ANGLE_DIFFERENCE: return utility_angle_difference(a, b);
+		case Utility_Op::PINGPONG: {
+			if (b == 0.0) {
+				return 0.0;
+			}
+			const double x = (a - b) / (b * 2.0);
+			const double fract = x - std::floor(x);
+			return std::fabs(fract * b * 2.0 - b);
+		}
+
+		case Utility_Op::LERP: return utility_lerp(a, b, c);
+		case Utility_Op::INVERSE_LERP: return utility_inverse_lerp(a, b, c);
+		case Utility_Op::SMOOTHSTEP: {
+			if (utility_is_equal_approx(a, b)) {
+				return a;
+			}
+			double x = utility_inverse_lerp(a, b, c);
+			x = (x < 0.0) ? 0.0 : ((x > 1.0) ? 1.0 : x);
+			return x * x * (3.0 - 2.0 * x);
+		}
+		case Utility_Op::MOVE_TOWARD:
+			return std::fabs(b - a) <= c ? b : a + utility_sign(b - a) * c;
+		case Utility_Op::LERP_ANGLE:
+			return a + utility_angle_difference(a, b) * c;
+		case Utility_Op::ROTATE_TOWARD: {
+			// A negative delta moves no further than PI radians away from `to`,
+			// which is the largest an angular distance can be.
+			const double difference = utility_angle_difference(a, b);
+			const double abs_difference = std::fabs(difference);
+			const double lower = abs_difference - UTILITY_PI;
+			double delta = c;
+			delta = (delta < lower) ? lower : ((delta > abs_difference) ? abs_difference : delta);
+			return a + delta * ((difference >= 0.0) ? 1.0 : -1.0);
+		}
+		case Utility_Op::WRAP: {
+			const double range = c - b;
+			if (utility_is_zero_approx(range)) {
+				return b;
+			}
+			const double result = a - (range * std::floor((a - b) / range));
+			return utility_is_equal_approx(result, c) ? b : result;
+		}
+
+		case Utility_Op::REMAP:
+			return utility_lerp(d, e, utility_inverse_lerp(b, c, a));
+		case Utility_Op::CUBIC_INTERPOLATE: {
+			// cubic_interpolate(from, to, pre, post, weight)
+			const double from = a, to = b, pre = c, post = d, weight = e;
+			return 0.5 *
+					((from * 2.0) +
+							(-pre + to) * weight +
+							(2.0 * pre - 5.0 * from + 4.0 * to - post) * (weight * weight) +
+							(-pre + 3.0 * from - 3.0 * to + post) * (weight * weight * weight));
+		}
+		case Utility_Op::BEZIER_INTERPOLATE: {
+			const double omt = 1.0 - e;
+			const double omt2 = omt * omt;
+			const double omt3 = omt2 * omt;
+			const double t2 = e * e;
+			const double t3 = t2 * e;
+			return a * omt3 + b * omt2 * e * 3.0 + c * omt * t2 * 3.0 + d * t3;
+		}
+		case Utility_Op::BEZIER_DERIVATIVE: {
+			const double omt = 1.0 - e;
+			const double omt2 = omt * omt;
+			const double t2 = e * e;
+			return (b - a) * 3.0 * omt2 + (c - b) * 6.0 * omt * e + (d - c) * 3.0 * t2;
+		}
+
+		case Utility_Op::STR:
+		case Utility_Op::LEN:
+			break;
+	}
+	ERR_PRINT("Invalid utility operation");
+	throw std::runtime_error("Invalid utility operation: " + std::to_string(int(op)));
+}
+
+// Godot's len(): the number of elements, for the Variants that have one.
+static int64_t utility_len(const Variant &value) {
+	switch (value.get_type()) {
+		case Variant::STRING:
+		case Variant::STRING_NAME:
+		case Variant::NODE_PATH:
+			return value.operator String().length();
+		case Variant::ARRAY:
+			return value.operator Array().size();
+		case Variant::DICTIONARY:
+			return value.operator Dictionary().size();
+		case Variant::PACKED_BYTE_ARRAY:
+			return value.operator PackedByteArray().size();
+		case Variant::PACKED_INT32_ARRAY:
+			return value.operator PackedInt32Array().size();
+		case Variant::PACKED_INT64_ARRAY:
+			return value.operator PackedInt64Array().size();
+		case Variant::PACKED_FLOAT32_ARRAY:
+			return value.operator PackedFloat32Array().size();
+		case Variant::PACKED_FLOAT64_ARRAY:
+			return value.operator PackedFloat64Array().size();
+		case Variant::PACKED_STRING_ARRAY:
+			return value.operator PackedStringArray().size();
+		case Variant::PACKED_VECTOR2_ARRAY:
+			return value.operator PackedVector2Array().size();
+		case Variant::PACKED_VECTOR3_ARRAY:
+			return value.operator PackedVector3Array().size();
+		case Variant::PACKED_COLOR_ARRAY:
+			return value.operator PackedColorArray().size();
+		case Variant::PACKED_VECTOR4_ARRAY:
+			return value.operator PackedVector4Array().size();
+		default:
+			break;
+	}
+	ERR_PRINT("len(): Value of this type can't provide a length");
+	throw std::runtime_error(std::string("len(): A ") + GuestVariant::type_name(value.get_type()) +
+			" can't provide a length");
+}
+
+APICALL(api_utility) {
+	auto [op, vres_addr, args_addr, arg_count] = machine.sysargs<Utility_Op, gaddr_t, gaddr_t, unsigned>();
+	SYS_TRACE("utility", int(op), vres_addr, args_addr, arg_count);
+
+	if (op == Utility_Op::STR || op == Utility_Op::LEN) {
+		Sandbox &emu = riscv::emu(machine);
+		if (arg_count == 0 || arg_count >= 64) {
+			ERR_PRINT("utility(): Wrong number of arguments");
+			throw std::runtime_error("utility(): Wrong number of arguments: " + std::to_string(arg_count));
+		}
+		GuestVariant *vres = machine.memory.memarray<GuestVariant>(vres_addr, 1);
+		const GuestVariant *args = machine.memory.memarray<GuestVariant>(args_addr, arg_count);
+
+		if (op == Utility_Op::STR) {
+			// Stringifying is host work the guest asked for, the same as it is
+			// in print(), and there can be up to 63 arguments in one call.
+			PENALIZE(10'000 + 10'000 * arg_count);
+			String result;
+			for (unsigned i = 0; i < arg_count; i++) {
+				result += args[i].toVariant(emu).operator String();
+			}
+			vres->create(emu, Variant(std::move(result)));
+		} else {
+			PENALIZE(10'000);
+			vres->create(emu, Variant(utility_len(args[0].toVariant(emu))));
+		}
+		return;
+	}
+
+	// Everything else is arithmetic on doubles in fa0-fa4, answering in fa0.
+	double args[5];
+	for (int i = 0; i < 5; i++) {
+		args[i] = machine.cpu.registers().getfl(10 + i).get<double>(); // fa0-fa4
+	}
+	machine.set_result(utility_math_op(op, args));
+}
+
 APICALL(api_vcall) {
 	auto [vp, method, mlen, args_ptr, args_size, vret_addr] = machine.sysargs<GuestVariant *, gaddr_t, unsigned, gaddr_t, gaddr_t, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
@@ -2446,6 +2702,8 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_SANDBOX_ADD, api_sandbox_add },
 
 			{ ECALL_PACKED_ARRAY_OPS, api_packed_array_ops },
+
+			{ ECALL_UTILITY, api_utility },
 	});
 
 	// Add system calls from other modules.

@@ -25,10 +25,12 @@ set(COMPILER_SOURCES
     ir_verifier.cpp
     codegen.cpp
     riscv_codegen.cpp
+    riscv_globals.cpp
     register_allocator.cpp
     elf_builder.cpp
     compiler.cpp
     ir_interpreter.cpp
+    globals.cpp
 )
 
 # Build as library
@@ -91,6 +93,8 @@ if (BUILD_TESTING)
 	add_gdscript_test(test_double_precision tests/test_double_precision.cpp)
 	add_gdscript_test(test_regressions tests/test_regressions.cpp)
 	add_gdscript_test(test_structs tests/test_structs.cpp)
+	add_gdscript_test(test_globals tests/test_globals.cpp)
+	add_gdscript_test(test_diagnostics tests/test_diagnostics.cpp)
 	add_gdscript_test(test_opt_invariance tests/test_opt_invariance.cpp)
 	add_gdscript_test(test_ir_verifier tests/test_ir_verifier.cpp)
 	add_gdscript_test(test_encoders tests/test_encoders.cpp)
@@ -123,12 +127,12 @@ if (BUILD_TESTING)
 	# Run all tests target
 	add_custom_target(run_tests
 		COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-		DEPENDS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_opt_invariance test_ir_verifier test_encoders test_fuzz
+		DEPENDS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz
 		COMMENT "Running all GDScript compiler tests"
 	)
 
 	# Install test targets (only when BUILD_TESTING is ON)
-	install(TARGETS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_opt_invariance test_ir_verifier test_encoders test_fuzz
+	install(TARGETS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz
 	        RUNTIME DESTINATION bin)
 endif()
 

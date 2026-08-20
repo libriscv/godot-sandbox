@@ -12,6 +12,15 @@ The host-side and guest-side share a common system call API for all languages su
 
 There is an ongoing GDScript-to-RISC-V compiler project under the src/gdscript/compiler folder. It's parsing GDScript into AST, then to IR and it will finally be transformed to 64-bit RISC-V and packed into an ELF container as the last step. At that point the goal is to make it executable inside Godot Sandbox. It has written like a CMake library, and it currently being used in the unit tests. One unit test compiles an ELF inside the sandbox and then runs the result in another sandbox. When running tests for the compiler, they should have a timeout as loops may run forever. Do NOT under any circumstance disable tests, FIX the problem. The unit tests can be executed with `ctest .` in the src/gdscript/compiler/build folder.
 
+### Global functions
+
+GDScript's `@GlobalScope` functions -- `print`, `abs`, `sin`, `clamp`, `lerp`,
+`str`, `len` and the rest -- are not methods on the owner node, so a call to one
+must never fall through to the self-call path: Godot accepts the resulting VCALL
+and drops it in silence. Every global the compiler knows is one row in
+`src/gdscript/compiler/globals.h`, saying what it is called, how many arguments
+it takes, what it returns, and which lowering performs it:
+
 ### Structs
 
 `struct` is compiler-only sugar for a Dictionary with a fixed set of keys:
@@ -96,6 +105,7 @@ that a compiler bug fails a build rather than a user's program at run time. See
 - `test_fuzz` — a seeded generator (`tests/gdscript_generator.h`) feeding the
   first two, with a shrinker. `tests/fuzz_nightly.sh` runs it and the
   differential harness for longer, from fresh seeds.
+- `test_globals` — compile-time global functions
 
 `GDSC_PASSES=<comma-separated pass names>` selects which optimizer passes run,
 in every tool including `dump_ir`. `GDSC_PASSES=none` disables the optimizer;

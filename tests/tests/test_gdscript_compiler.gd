@@ -352,6 +352,249 @@ func returns_print_value():
 	ts.queue_free()
 
 
+func test_global_math_matches_gdscript():
+	# The global math functions are the same @GlobalScope functions Godot runs,
+	# so the assertion is not a table of constants but Godot itself: the
+	# compiled guest and the GDScript below have to agree.
+	var gdscript_code = """
+func f_abs(x):
+	return abs(x)
+func f_sign(x):
+	return sign(x)
+func f_floor(x):
+	return floor(x)
+func f_ceil(x):
+	return ceil(x)
+func f_round(x):
+	return round(x)
+func f_min(a, b):
+	return min(a, b)
+func f_max(a, b):
+	return max(a, b)
+func f_clamp(x, lo, hi):
+	return clamp(x, lo, hi)
+func f_sqrt(x):
+	return sqrt(x)
+func f_pow(x, y):
+	return pow(x, y)
+func f_sin(x):
+	return sin(x)
+func f_cos(x):
+	return cos(x)
+func f_atan2(y, x):
+	return atan2(y, x)
+func f_exp(x):
+	return exp(x)
+func f_log(x):
+	return log(x)
+func f_fmod(x, y):
+	return fmod(x, y)
+func f_fposmod(x, y):
+	return fposmod(x, y)
+func f_posmod(x, y):
+	return posmod(x, y)
+func f_lerp(a, b, t):
+	return lerp(a, b, t)
+func f_inverse_lerp(a, b, v):
+	return inverse_lerp(a, b, v)
+func f_remap(v, a, b, c, d):
+	return remap(v, a, b, c, d)
+func f_smoothstep(a, b, t):
+	return smoothstep(a, b, t)
+func f_deg_to_rad(x):
+	return deg_to_rad(x)
+func f_rad_to_deg(x):
+	return rad_to_deg(x)
+func f_snapped(x, step):
+	return snapped(x, step)
+func f_wrapi(v, lo, hi):
+	return wrapi(v, lo, hi)
+func f_wrapf(v, lo, hi):
+	return wrapf(v, lo, hi)
+func f_floori(x):
+	return floori(x)
+func f_ceili(x):
+	return ceili(x)
+func f_roundi(x):
+	return roundi(x)
+func f_is_equal_approx(a, b):
+	return is_equal_approx(a, b)
+func f_is_zero_approx(x):
+	return is_zero_approx(x)
+func f_is_nan(x):
+	return is_nan(x)
+func f_is_finite(x):
+	return is_finite(x)
+func f_variadic_min(a, b, c):
+	return min(a, b, c)
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+
+	# The type-preserving globals: an integer in, an integer out.
+	assert_eq(s.vmcallv("f_abs", -7), abs(-7), "abs(-7)")
+	assert_eq(typeof(s.vmcallv("f_abs", -7)), TYPE_INT, "abs() of an int is an int")
+	assert_almost_eq(s.vmcallv("f_abs", -7.5), abs(-7.5), 0.0000001, "abs(-7.5)")
+	assert_eq(typeof(s.vmcallv("f_abs", -7.5)), TYPE_FLOAT, "abs() of a float is a float")
+	assert_eq(s.vmcallv("f_sign", -7), sign(-7), "sign(-7)")
+	assert_eq(s.vmcallv("f_sign", 0), sign(0), "sign(0)")
+	assert_almost_eq(s.vmcallv("f_sign", 7.5), sign(7.5), 0.0000001, "sign(7.5)")
+	assert_eq(s.vmcallv("f_floor", -7), floor(-7), "floor() of an int is that int")
+	assert_almost_eq(s.vmcallv("f_floor", -7.5), floor(-7.5), 0.0000001, "floor(-7.5)")
+	assert_almost_eq(s.vmcallv("f_ceil", -7.5), ceil(-7.5), 0.0000001, "ceil(-7.5)")
+	assert_almost_eq(s.vmcallv("f_round", -7.5), round(-7.5), 0.0000001, "round(-7.5)")
+	assert_almost_eq(s.vmcallv("f_round", 2.5), round(2.5), 0.0000001, "round(2.5)")
+	assert_eq(s.vmcallv("f_min", 3, 9), min(3, 9), "min(3, 9)")
+	assert_almost_eq(s.vmcallv("f_min", 3.5, 9.5), min(3.5, 9.5), 0.0000001, "min(3.5, 9.5)")
+	assert_eq(s.vmcallv("f_max", 3, 9), max(3, 9), "max(3, 9)")
+	assert_eq(s.vmcallv("f_clamp", 11, 0, 10), clamp(11, 0, 10), "clamp(11, 0, 10)")
+	assert_eq(s.vmcallv("f_clamp", -11, 0, 10), clamp(-11, 0, 10), "clamp(-11, 0, 10)")
+	assert_almost_eq(s.vmcallv("f_clamp", 5.5, 0.0, 10.0), clamp(5.5, 0.0, 10.0), 0.0000001, "clamp(5.5, ...)")
+	assert_eq(s.vmcallv("f_variadic_min", 9, 3, 5), min(9, 3, 5), "min() takes any number of arguments")
+
+	# The transcendental ones, which the host performs.
+	assert_almost_eq(s.vmcallv("f_sqrt", 2.0), sqrt(2.0), 0.0000001, "sqrt(2.0)")
+	assert_almost_eq(s.vmcallv("f_pow", 2.0, 10.0), pow(2.0, 10.0), 0.0000001, "pow(2, 10)")
+	assert_almost_eq(s.vmcallv("f_sin", 1.25), sin(1.25), 0.0000001, "sin(1.25)")
+	assert_almost_eq(s.vmcallv("f_cos", 1.25), cos(1.25), 0.0000001, "cos(1.25)")
+	assert_almost_eq(s.vmcallv("f_atan2", 1.0, 2.0), atan2(1.0, 2.0), 0.0000001, "atan2(1, 2)")
+	assert_almost_eq(s.vmcallv("f_exp", 1.5), exp(1.5), 0.0000001, "exp(1.5)")
+	assert_almost_eq(s.vmcallv("f_log", 1.5), log(1.5), 0.0000001, "log(1.5)")
+	assert_almost_eq(s.vmcallv("f_deg_to_rad", 90.0), deg_to_rad(90.0), 0.0000001, "deg_to_rad(90)")
+	assert_almost_eq(s.vmcallv("f_rad_to_deg", 1.0), rad_to_deg(1.0), 0.0000001, "rad_to_deg(1)")
+
+	# Modulo and wrapping.
+	assert_almost_eq(s.vmcallv("f_fmod", 7.5, 2.0), fmod(7.5, 2.0), 0.0000001, "fmod(7.5, 2)")
+	assert_almost_eq(s.vmcallv("f_fposmod", -7.5, 2.0), fposmod(-7.5, 2.0), 0.0000001, "fposmod(-7.5, 2)")
+	assert_eq(s.vmcallv("f_posmod", -3, 5), posmod(-3, 5), "posmod(-3, 5)")
+	assert_eq(s.vmcallv("f_wrapi", 11, 0, 10), wrapi(11, 0, 10), "wrapi(11, 0, 10)")
+	assert_eq(s.vmcallv("f_wrapi", -1, 0, 10), wrapi(-1, 0, 10), "wrapi(-1, 0, 10)")
+	assert_almost_eq(s.vmcallv("f_wrapf", 11.5, 0.0, 10.0), wrapf(11.5, 0.0, 10.0), 0.0000001, "wrapf(11.5, ...)")
+	assert_almost_eq(s.vmcallv("f_snapped", 2.6, 0.5), snapped(2.6, 0.5), 0.0000001, "snapped(2.6, 0.5)")
+
+	# Interpolation.
+	assert_almost_eq(s.vmcallv("f_lerp", 1.0, 5.0, 0.25), lerp(1.0, 5.0, 0.25), 0.0000001, "lerp(1, 5, 0.25)")
+	assert_almost_eq(s.vmcallv("f_inverse_lerp", 1.0, 5.0, 2.0), inverse_lerp(1.0, 5.0, 2.0), 0.0000001, "inverse_lerp")
+	assert_almost_eq(s.vmcallv("f_remap", 5.0, 0.0, 10.0, 100.0, 200.0), remap(5.0, 0.0, 10.0, 100.0, 200.0), 0.0000001, "remap")
+	assert_almost_eq(s.vmcallv("f_smoothstep", 0.0, 1.0, 0.3), smoothstep(0.0, 1.0, 0.3), 0.0000001, "smoothstep")
+
+	# The forms that take a float and answer an integer.
+	assert_eq(s.vmcallv("f_floori", 2.6), floori(2.6), "floori(2.6)")
+	assert_eq(typeof(s.vmcallv("f_floori", 2.6)), TYPE_INT, "floori() returns an int")
+	assert_eq(s.vmcallv("f_ceili", 2.1), ceili(2.1), "ceili(2.1)")
+	assert_eq(s.vmcallv("f_roundi", 2.6), roundi(2.6), "roundi(2.6)")
+
+	# The predicates, which answer a bool.
+	assert_eq(s.vmcallv("f_is_equal_approx", 1.0, 1.0), true, "is_equal_approx(1, 1)")
+	assert_eq(s.vmcallv("f_is_equal_approx", 1.0, 2.0), false, "is_equal_approx(1, 2)")
+	assert_eq(s.vmcallv("f_is_zero_approx", 0.0), true, "is_zero_approx(0)")
+	assert_eq(s.vmcallv("f_is_nan", 0.0), false, "is_nan(0)")
+	assert_eq(s.vmcallv("f_is_finite", 1.0), true, "is_finite(1)")
+	assert_eq(typeof(s.vmcallv("f_is_finite", 1.0)), TYPE_BOOL, "a predicate returns a bool")
+
+	# An integer where a float is wanted is the one implicit conversion
+	# GDScript performs, and it has to reach the host as a double.
+	assert_almost_eq(s.vmcallv("f_sqrt", 16), 4.0, 0.0000001, "sqrt(16) with an int argument")
+	assert_almost_eq(s.vmcallv("f_pow", 2, 8), 256.0, 0.0000001, "pow(2, 8) with int arguments")
+
+	s.queue_free()
+	ts.queue_free()
+
+
+func test_global_str_and_len():
+	# str() and len() are the two globals that need the host's Variant API.
+	var gdscript_code = """
+func to_str(x):
+	return str(x)
+
+func join(a, b):
+	return str(a, b)
+
+func length(x):
+	return len(x)
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+
+	assert_eq(s.vmcallv("to_str", 42), "42", "str(42)")
+	assert_eq(typeof(s.vmcallv("to_str", 42)), TYPE_STRING, "str() returns a String")
+	assert_eq(s.vmcallv("to_str", 1.5), str(1.5), "str(1.5)")
+	assert_eq(s.vmcallv("to_str", true), str(true), "str(true)")
+	assert_eq(s.vmcallv("to_str", "already"), "already", "str() of a String")
+	assert_eq(s.vmcallv("to_str", [1, 2]), str([1, 2]), "str() of an Array")
+
+	# str() concatenates, the way GDScript's does.
+	assert_eq(s.vmcallv("join", "x = ", 7), "x = 7", "str() concatenates its arguments")
+
+	assert_eq(s.vmcallv("length", "abcd"), 4, "len() of a String")
+	assert_eq(s.vmcallv("length", [1, 2, 3]), 3, "len() of an Array")
+	assert_eq(s.vmcallv("length", {"a": 1}), 1, "len() of a Dictionary")
+	assert_eq(s.vmcallv("length", PackedByteArray([1, 2])), 2, "len() of a PackedByteArray")
+	assert_eq(typeof(s.vmcallv("length", "abcd")), TYPE_INT, "len() returns an int")
+
+	s.queue_free()
+	ts.queue_free()
+
+
+func test_global_math_in_a_loop():
+	# The globals have to work where they are actually used: inside a loop, with
+	# the result feeding the arithmetic around it.
+	var gdscript_code = """
+func total(n):
+	var sum = 0.0
+	var i = 0
+	while i < n:
+		sum += abs(sin(i)) * clampf(i, 0.0, 4.0)
+		i += 1
+	return sum
+
+func typed_total(n : int) -> float:
+	var sum : float = 0.0
+	for i in range(n):
+		sum += sqrt(i) + maxi(i, 2)
+	return sum
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(20000)
+
+	var expected = 0.0
+	for i in range(8):
+		expected += abs(sin(i)) * clampf(i, 0.0, 4.0)
+	assert_almost_eq(s.vmcallv("total", 8), expected, 0.0000001, "a global inside a loop")
+
+	expected = 0.0
+	for i in range(8):
+		expected += sqrt(i) + maxi(i, 2)
+	assert_almost_eq(s.vmcallv("typed_total", 8), expected, 0.0000001, "globals with type hints")
+
+	s.queue_free()
+	ts.queue_free()
+
+
 # A host object whose _to_string() runs guest code again. Godot calls
 # _to_string() during stringification, which is what print() does to its
 # arguments, so this is reachable from inside a guest print().
@@ -3944,3 +4187,95 @@ func literal_key():
 	assert_eq(s.vmcallv("literal_key"), 3, "Reading dictionary literal keys by name")
 
 	s.queue_free()
+
+# -= Diagnostics =-
+#
+# The .sgd script language extension underlines errors in the Godot editor, and
+# it gets them from validate() inside the compiler sandbox. What it needs beyond
+# a yes/no is a line and a column, so these tests hold the compiler to reporting
+# them, and to reporting them where the user is looking.
+
+func _validate(gdscript_code: String) -> Dictionary:
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var result = ts.vmcall("validate", gdscript_code)
+	ts.queue_free()
+	return result
+
+func test_validate_accepts_a_good_program():
+	var result = _validate("""
+func add(x, y):
+	return x + y
+""")
+	assert_true(result["valid"], "A program that compiles must validate")
+	assert_eq(result["message"], "", "A valid program has no error message")
+	assert_eq(result["line"], 0, "A valid program has no error line")
+
+func test_validate_reports_a_syntax_error():
+	# The 'func g(' on line 5 is never closed.
+	var result = _validate("""
+func f():
+	return 1
+
+func g(
+""")
+	assert_false(result["valid"], "An unclosed parameter list must not validate")
+	assert_eq(result["line"], 5, "The error belongs to the line that opened it")
+	assert_gt(result["column"], 0, "A syntax error carries a column")
+	assert_eq(result["type"], "Parser Error", "Reported as a parser error")
+	assert_ne(result["message"], "", "A rejected program says what is wrong")
+
+func test_validate_reports_an_unterminated_string_where_it_opens():
+	# A plain string ends at its own line, so a stray quote is reported at the
+	# quote rather than at the end of the file, and the lines below still parse.
+	var result = _validate("""
+func f():
+	var s = "oops
+	return s
+""")
+	assert_false(result["valid"], "An unterminated string must not validate")
+	assert_eq(result["type"], "Lexer Error", "Reported as a lexer error")
+	assert_eq(result["line"], 3, "Reported on the line holding the opening quote")
+
+func test_validate_reports_an_unknown_struct_field():
+	var result = _validate("""
+struct Point:
+	var x = 0
+
+func f():
+	var p = Point.new()
+	return p.z
+""")
+	assert_false(result["valid"], "An undeclared struct field must not validate")
+	assert_eq(result["line"], 7, "Reported on the line that reads the field")
+	assert_eq(result["function"], "f", "Reported with the function it happened in")
+	assert_true(result["hint"].contains("x"), "The hint lists the fields that do exist")
+
+func test_validate_leaves_no_error_behind():
+	# validate() runs on every keystroke in the editor, so a stale error would
+	# keep a fixed script underlined.
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+
+	assert_false(ts.vmcall("validate", "func f(")["valid"], "Broken source is rejected")
+	var fixed = ts.vmcall("validate", "func f():\n\treturn 1\n")
+	assert_true(fixed["valid"], "The fixed source validates")
+	assert_eq(fixed["line"], 0, "and carries none of the previous error")
+
+	ts.queue_free()
+
+func test_validate_does_not_disturb_compilation():
+	# Validation and compilation share one compiler sandbox in the editor.
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+
+	var code = "func answer():\n\treturn 42\n"
+	assert_true(ts.vmcall("validate", code)["valid"], "The program validates")
+	var elf = ts.vmcall("compile", code)
+	assert_false(elf.is_empty(), "and still compiles afterwards")
+	assert_true(ts.vmcall("validate", code)["valid"], "and validates again after compiling")
+
+	ts.queue_free()

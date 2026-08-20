@@ -55,11 +55,17 @@ public:
 	virtual bool _is_placeholder_fallback_enabled() const override;
 	virtual Variant _get_rpc_config() const override;
 
+	// The Sandbox running gdscript.elf, which everything that needs the compiler
+	// shares: compiling a script when it is saved, and validating one while it
+	// is being typed. Null when the compiler ELF is missing or fails to load.
+	static Sandbox *get_compiler_sandbox();
+
 	void set_path(const String &p_path);
 	SafeGDScriptInstance *get_safegdscript_script_instance() const;
 	const String &get_path() const { return path; }
 	const PackedByteArray &get_content() const { return elf_data; }
 	bool compile_source_to_elf();
+	static String get_compiler_error_message();
 	void remove_instance(SafeGDScriptInstance *p_instance);
 
 	static String PathToGlobalName(const String &p_path) {

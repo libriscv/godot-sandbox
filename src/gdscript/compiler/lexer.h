@@ -35,7 +35,8 @@ private:
 	void add_token(TokenType type, double value);
 	void add_token(TokenType type, const std::string& value);
 
-	void error(const std::string& message);
+	[[noreturn]] void error(const std::string& message);
+	[[noreturn]] void error_at(const std::string& message, int line, int column);
 
 	std::string m_source;
 	std::vector<Token> m_tokens;
