@@ -35,6 +35,12 @@ IRInterpreter::Value execute(const std::string& source, const std::string& funct
 int64_t execute_int(const std::string& source, const std::string& function = "main",
                      const std::vector<IRInterpreter::Value>& args = {}) {
 	auto result = execute(source, function, args);
+	// 'and', 'or' and 'not' produce a bool in GDScript, so an integer-valued
+	// expectation has to accept one. Anything else (a float, a string) is a
+	// genuine mismatch and still throws.
+	if (std::holds_alternative<bool>(result)) {
+		return std::get<bool>(result) ? 1 : 0;
+	}
 	return std::get<int64_t>(result);
 }
 

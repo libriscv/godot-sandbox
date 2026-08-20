@@ -3,6 +3,7 @@
 #include "variant_types.h"
 #include <stdexcept>
 #include <cstring>
+#include <climits>
 
 namespace gdscript {
 
@@ -92,18 +93,17 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	for (size_t i = 0; i < program.globals.size(); i++) {
 		const auto& global = program.globals[i];
 
-		// Only initialize globals with explicit initial values (skip NONE)
-		if (global.init_type == IRGlobalVar::InitType::NONE) {
+		// NONE stays NIL; RUNTIME is written by the global init function below.
+		if (global.init_type == IRGlobalVar::InitType::NONE ||
+		    global.init_type == IRGlobalVar::InitType::RUNTIME) {
 			continue;
 		}
 
 		// Load address of global variable into t0
-		// Address = .globals + (i * sizeof(Variant))
-		emit_la(REG_T0, ".globals");
-		if (i > 0) {
-			int offset = i * variant_size();
-			emit_addi(REG_T0, REG_T0, offset);
-		}
+		// Address = .globals + (i * sizeof(Variant)). The index is folded into
+		// the relocation so that programs with many globals still address the
+		// tail of the array correctly.
+		emit_la(REG_T0, ".globals", static_cast<int32_t>(i * variant_size()));
 
 		// Initialize based on type
 		if (global.init_type == IRGlobalVar::InitType::INT) {
@@ -255,65 +255,82 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Global variable '" + global.name + "': Unknown initialization type.");
 		}
 
-		// If this is a property (@export), register it using ECALL_SANDBOX_ADD
-		if (global.is_property) {
-			// ECALL_SANDBOX_ADD (547)
-			// A0 = 0 (add property)
-			// A1 = name pointer
-			// A2 = name length
-			// A3 = Variant type
-			// A4 = 0
-			// A5 = 0
-			// A6 = Variant pointer (T0 still has the address)
+	}
 
-			// Store the property name for later emission into the code section
-			const std::string name_label = ".LPROP" + std::to_string(i);
-			m_property_name_strings.push_back({global.name, name_label});
+	// Evaluate the initializers that are not compile-time constants. This runs
+	// before any property is registered, so an @export property is registered
+	// with the value it was declared with.
+	//
+	// The init function follows the normal calling convention and writes a
+	// return Variant through a0, so a0 has to point at real storage: the
+	// scratch slot allocated past the end of the .globals array.
+	if (program.has_global_init) {
+		emit_la(REG_A0, ".globals", static_cast<int32_t>(m_global_count * variant_size()));
+		mark_label_use(GLOBAL_INIT_LABEL, m_code.size());
+		emit_jal(REG_RA, 0); // JAL ra, .init_globals
+	}
 
-			// A0 = 0 (add property)
-			emit_li(REG_A0, 0);
-
-			// A1 = pointer to variable name string
-			emit_la(REG_A1, name_label);
-
-			// A2 = name length
-			emit_li(REG_A2, static_cast<int64_t>(global.name.length()));
-
-			// A3 = Variant type (from type hint or init type)
-			int32_t variant_type = Variant::NIL;
-			if (global.type_hint != IRInstruction::TypeHint_NONE) {
-				variant_type = global.type_hint;
-			} else {
-				// Derive type from init_type
-				switch (global.init_type) {
-					case IRGlobalVar::InitType::INT: variant_type = Variant::INT; break;
-					case IRGlobalVar::InitType::FLOAT: variant_type = Variant::FLOAT; break;
-					case IRGlobalVar::InitType::BOOL: variant_type = Variant::BOOL; break;
-					case IRGlobalVar::InitType::STRING: variant_type = Variant::STRING; break;
-					case IRGlobalVar::InitType::EMPTY_ARRAY: variant_type = Variant::ARRAY; break;
-					case IRGlobalVar::InitType::EMPTY_DICT: variant_type = Variant::DICTIONARY; break;
-					default: throw CompilerException(ErrorType::RISCV_codegen_ERROR,
-						"Global variable '" + global.name + "': Could not derive Variant type from initializer.");
-				}
-			}
-			emit_li(REG_A3, variant_type);
-			emit_li(REG_A4, 0); // A4 = 0
-			emit_li(REG_A5, 0); // A5 = 0
-			// A6 = Variant pointer (T0 still has the address)
-			emit_mv(REG_A6, REG_T0);
-
-			// A7 = ECALL_SANDBOX_ADD (547)
-			emit_li(REG_A7, 547);
-
-			// Make the syscall
-			emit_ecall();
+	// Register @export properties, after every global holds its initial value.
+	for (size_t i = 0; i < program.globals.size(); i++) {
+		const auto& global = program.globals[i];
+		if (!global.is_property) {
+			continue;
 		}
+
+		// ECALL_SANDBOX_ADD (547)
+		// A0 = 0 (add property)
+		// A1 = name pointer
+		// A2 = name length
+		// A3 = Variant type
+		// A4 = 0
+		// A5 = 0
+		// A6 = Variant pointer
+
+		// Store the property name for later emission into the code section
+		const std::string name_label = ".LPROP" + std::to_string(i);
+		m_property_name_strings.push_back({global.name, name_label});
+
+		// A0 = 0 (add property)
+		emit_li(REG_A0, 0);
+
+		// A1 = pointer to variable name string
+		emit_la(REG_A1, name_label);
+
+		// A2 = name length
+		emit_li(REG_A2, static_cast<int64_t>(global.name.length()));
+
+		// A3 = Variant type. The type is derived once, in the code generator,
+		// where the initializer expression is still available; NIL means the
+		// property holds an unconstrained Variant.
+		const int32_t variant_type = global.value_type != IRInstruction::TypeHint_NONE
+			? global.value_type
+			: static_cast<int32_t>(Variant::NIL);
+		emit_li(REG_A3, variant_type);
+		emit_li(REG_A4, 0); // A4 = 0
+		emit_li(REG_A5, 0); // A5 = 0
+
+		// A6 = pointer to the global's Variant
+		emit_la(REG_A6, ".globals", static_cast<int32_t>(i * variant_size()));
+
+		// A7 = ECALL_SANDBOX_ADD (547)
+		emit_li(REG_A7, 547);
+
+		// Make the syscall
+		emit_ecall();
 	}
 
 	// Emit STOP instruction after initialization
 	// STOP is encoded as: SYSTEM instruction (I-type) with imm[11:0] = 0x7ff
 	// SYSTEM opcode = 0x73, funct3 = 0, rs1 = 0, rd = 0, imm = 0x7ff
 	emit_i_type(0x73, 0, 0, 0, 0x7ff);
+
+	// Emit the global init function. It is deliberately not registered in
+	// m_functions: it is internal and must not appear in the ELF's public
+	// function table.
+	if (program.has_global_init) {
+		m_labels[GLOBAL_INIT_LABEL] = m_code.size();
+		gen_function(program.global_init);
+	}
 
 	// Generate code for each function
 	for (const auto& func : program.functions) {
@@ -352,8 +369,12 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		m_code.push_back(0);
 	}
 
-	// Calculate global data size (m_global_count and m_globals already set earlier)
-	m_global_data_size = m_global_count * variant_size();
+	// Calculate global data size (m_global_count and m_globals already set earlier).
+	// When there is a global init function, one extra Variant is allocated past
+	// the end as its return slot: it follows the normal calling convention and
+	// writes a return Variant through a0.
+	const size_t global_slots = m_global_count + (program.has_global_init ? 1 : 0);
+	m_global_data_size = global_slots * variant_size();
 
 	// Define .globals label and allocate global data area
 	// This will be placed in a separate R+W PT_LOAD segment by the ELF builder
@@ -373,12 +394,24 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		// Since BASE_ADDR (0x10000) is added during resolution, we store: vaddr - BASE_ADDR
 		m_labels[".globals"] = globals_vaddr - 0x10000;
 
-		// Allocate and initialize global variables to zero (NIL Variants)
-		// Each Variant is [type:4][padding:4][data:4 * sizeof(real_t)]
-		for (size_t i = 0; i < m_global_count; i++) {
-			// Write NIL Variant (type = 0, all other bytes = 0)
+		// Allocate global variables as empty Variants: type = NIL, payload =
+		// INT32_MIN.
+		//
+		// INT32_MIN rather than 0 is what makes the payload "empty": for a
+		// complex type the payload is a scoped-variant index, 0 is a perfectly
+		// valid one, and VASSIGN only takes its "destination is empty, adopt the
+		// source" path when the destination index is INT32_MIN. Leaving it 0
+		// makes the first assignment into an uninitialized complex global assign
+		// through whatever scoped variant happens to sit at index 0.
+		for (size_t i = 0; i < global_slots; i++) {
 			for (int j = 0; j < variant_size(); j++) {
-				m_code.push_back(0);
+				m_code.push_back(0); // type = NIL, and zero padding
+			}
+			// Overwrite the payload with a sign-extended INT32_MIN.
+			const int64_t empty_index = static_cast<int64_t>(INT32_MIN);
+			const size_t payload = m_code.size() - variant_size() + VARIANT_DATA_OFFSET;
+			for (int j = 0; j < 8; j++) {
+				m_code[payload + j] = static_cast<uint8_t>((empty_index >> (j * 8)) & 0xFF);
 			}
 		}
 	}
@@ -546,6 +579,29 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				break;
 			}
 
+			case IROpcode::CONVERT: {
+				// CONVERT dst_reg, src_reg  with the target type in type_hint.
+				int dst_vreg = std::get<int>(instr.operands[0].value);
+				int src_vreg = std::get<int>(instr.operands[1].value);
+				int dst_offset = get_variant_stack_offset(dst_vreg);
+				int src_offset = get_variant_stack_offset(src_vreg);
+
+				if (instr.type_hint != Variant::FLOAT) {
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+						std::string("CONVERT to ") + variant_type_name(instr.type_hint) +
+						" is not implemented; only int -> float conversion is.");
+				}
+
+				// int -> float. Variant::FLOAT is always a 64-bit double, whatever
+				// real_t is, so this is fcvt.d.l and a plain 64-bit store.
+				emit_ld(REG_T0, REG_SP, src_offset + VARIANT_DATA_OFFSET);
+				emit_fcvt_d_l(REG_FA0, REG_T0);
+				emit_li(REG_T0, Variant::FLOAT);
+				emit_sw(REG_T0, REG_SP, dst_offset);
+				emit_fsd(REG_FA0, REG_SP, dst_offset + VARIANT_DATA_OFFSET);
+				break;
+			}
+
 			case IROpcode::LOAD_GLOBAL: {
 				// LOAD_GLOBAL dst_reg, global_index
 				// Loads a global variable (Variant) from the global data area into a virtual register
@@ -560,12 +616,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// Load global base address into t0
 				// For now, we'll use a label to mark the global data section
 				std::string global_label = ".globals";
-				emit_la(REG_T0, global_label);
-
-				// Add offset for specific global
-				if (global_offset > 0) {
-					emit_addi(REG_T0, REG_T0, global_offset);
-				}
+				emit_la(REG_T0, global_label, global_offset);
 
 				// Load destination address into t1
 				emit_load_stack_offset(REG_T1, dst_offset);
@@ -590,27 +641,29 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				//                SIGNAL, DICTIONARY, ARRAY, and all PACKED_*_ARRAY types
 				bool needs_vassign = false;
 
-				if (global.type_hint != IRInstruction::TypeHint_NONE) {
-					// Use type hint if available
-					int32_t type = global.type_hint;
-					needs_vassign = (type == 3) || (type >= 17); // STRING or complex types
-				} else if (global.init_type == IRGlobalVar::InitType::STRING ||
-						   global.init_type == IRGlobalVar::InitType::EMPTY_ARRAY ||
-						   global.init_type == IRGlobalVar::InitType::EMPTY_DICT) {
-					// Infer from initialization type
-					needs_vassign = true;
+				// The global's Variant type is derived once by the code
+				// generator, from the type hint when there is one and from the
+				// initializer otherwise, so this does not have to re-derive it
+				// from init_type (which cannot describe a RUNTIME initializer).
+				if (global.value_type != IRInstruction::TypeHint_NONE) {
+					// is_complex_variant_type() is the single definition of which
+					// Variant types are stored as a host-side index rather than
+					// inline. The previous open-coded test here read `type == 3 ||
+					// type >= 17`, which classified FLOAT as complex and Color,
+					// Basis and Transform3D on the wrong sides of the line.
+					needs_vassign = is_complex_variant_type(global.value_type);
 				} else {
-					// Fallback: Assume simple type (INT, FLOAT, BOOL, NIL)
-					/// XXX: Throw error or warning here?
+					// Type unknown at compile time. A raw copy of the Variant
+					// would duplicate a scoped-variant index rather than assign
+					// through it, so assign through VASSIGN, which is correct for
+					// both trivial and reference-counted types.
+					needs_vassign = true;
 				}
 
 				// Load address of global variable
 				int global_offset = global_idx * variant_size();
 				std::string global_label = ".globals";
-				emit_la(REG_T0, global_label);
-				if (global_offset > 0) {
-					emit_addi(REG_T0, REG_T0, global_offset);
-				}
+				emit_la(REG_T0, global_label, global_offset);
 
 				// Load source address
 				emit_load_stack_offset(REG_T1, src_offset);
@@ -629,6 +682,13 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// Load indices (v.i at offset 8)
 					emit_lw(REG_A0, REG_T0, 8); // dest index
 					emit_lw(REG_A1, REG_T1, 8); // src index
+
+					// Carry the source's Variant type across. Storing only the
+					// index leaves a global that started out NIL claiming to be
+					// NIL while holding a live index, and prevents an untyped
+					// global from ever changing type - which GDScript allows.
+					emit_lw(REG_T2, REG_T1, 0);
+					emit_sw(REG_T2, REG_T0, 0);
 
 					// Call VASSIGN (syscall 503)
 					emit_li(REG_A7, 503);
@@ -906,25 +966,25 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// OP_NOT - use veval (unary operations need special handling)
 				// For now, use the same operand for both sides
-				emit_variant_eval(dst_offset, src_offset, src_offset, 23); // OP_NOT
+				emit_variant_eval_unary(dst_offset, src_offset, 23); // OP_NOT
 				break;
 			}
 
 			case IROpcode::BRANCH_ZERO: {
 				int vreg = std::get<int>(instr.operands[0].value);
 				int offset = get_variant_stack_offset(vreg);
-				emit_load_variant_bool(REG_T0, REG_SP, offset);
+				emit_variant_truthy(REG_T2, offset, instr.type_hint);
 				mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
-				emit_beq(REG_T0, REG_ZERO, 0);
+				emit_beq(REG_T2, REG_ZERO, 0);
 				break;
 			}
 
 			case IROpcode::BRANCH_NOT_ZERO: {
 				int vreg = std::get<int>(instr.operands[0].value);
 				int offset = get_variant_stack_offset(vreg);
-				emit_load_variant_bool(REG_T0, REG_SP, offset);
+				emit_variant_truthy(REG_T2, offset, instr.type_hint);
 				mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
-				emit_bne(REG_T0, REG_ZERO, 0);
+				emit_bne(REG_T2, REG_ZERO, 0);
 				break;
 			}
 
@@ -2235,13 +2295,17 @@ void RISCVCodeGen::emit_addi(uint8_t rd, uint8_t rs1, int32_t imm) {
 	emit_i_type(0x13, rd, 0, rs1, imm);
 }
 
-void RISCVCodeGen::emit_la(uint8_t rd, const std::string& label) {
+void RISCVCodeGen::emit_la(uint8_t rd, const std::string& label, int32_t addend) {
 	// Load address using AUIPC + ADDI
 	// auipc rd, 0  # Load PC-relative upper bits
 	// addi rd, rd, offset  # Add lower bits (will be patched)
+	//
+	// The addend is resolved together with the label, so `label + addend` is
+	// reachable for any 32-bit addend. Emitting a separate `addi rd, rd, addend`
+	// instead would truncate to a 12-bit signed immediate.
 
 	size_t auipc_offset = m_code.size();
-	mark_label_use(label, auipc_offset);
+	mark_label_use(label, auipc_offset, addend);
 	emit_u_type(0x17, rd, 0);  // auipc rd, 0 (will be patched)
 
 	// Emit ADDI instruction (offset will be patched when AUIPC is resolved)
@@ -2357,14 +2421,14 @@ void RISCVCodeGen::define_label(const std::string& label) {
 	m_labels[label] = m_code.size();
 }
 
-void RISCVCodeGen::mark_label_use(const std::string& label, size_t code_offset) {
-	m_label_uses.push_back({label, code_offset});
+void RISCVCodeGen::mark_label_use(const std::string& label, size_t code_offset, int32_t addend) {
+	m_label_uses.push_back({label, code_offset, addend});
 }
 
 void RISCVCodeGen::resolve_labels() {
 	for (const auto& use : m_label_uses) {
-		const std::string& label = use.first;
-		size_t use_offset = use.second;
+		const std::string& label = use.label;
+		size_t use_offset = use.code_offset;
 
 		auto it = m_labels.find(label);
 		if (it == m_labels.end()) {
@@ -2372,7 +2436,7 @@ void RISCVCodeGen::resolve_labels() {
 		}
 
 		size_t target_offset = it->second;
-		int32_t offset = static_cast<int32_t>(target_offset - use_offset);
+		int32_t offset = static_cast<int32_t>(target_offset - use_offset) + use.addend;
 
 		// Patch the instruction at use_offset with the correct offset
 		uint32_t instr;
@@ -2655,6 +2719,19 @@ void RISCVCodeGen::emit_variant_move(uint8_t dst_base, int32_t dst_offset, uint8
 		emit_ld(tmp_reg, src_base, src_offset + i * 8);
 		emit_sd(tmp_reg, dst_base, dst_offset + i * 8);
 	}
+}
+
+void RISCVCodeGen::emit_variant_eval_unary(int result_offset, int operand_offset, int op) {
+	// Godot registers its unary operators (OP_NOT, OP_NEGATE, OP_POSITIVE,
+	// OP_BIT_NEGATE) with NIL as the right-hand type, and Variant::evaluate()
+	// indexes operator_evaluator_table[op][a_type][b_type] directly. Passing the
+	// operand as both sides - the obvious reading of "a unary op has no second
+	// operand" - lands on an unregistered [op][T][T] entry, so evaluate() reports
+	// the operation invalid and returns NIL. Every `not x` then came out false.
+	const int nil_offset = get_scratch_variant_offset(1);
+	emit_li(REG_T0, Variant::NIL);
+	emit_store_variant_type(REG_T0, REG_SP, nil_offset);
+	emit_variant_eval(result_offset, operand_offset, nil_offset, op);
 }
 
 void RISCVCodeGen::emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op) {
@@ -2997,6 +3074,51 @@ void RISCVCodeGen::emit_load_variant_type(uint8_t rd, uint8_t base_reg, int32_t 
 void RISCVCodeGen::emit_store_variant_type(uint8_t rs, uint8_t base_reg, int32_t variant_offset) {
 	// Store m_type field (4 bytes at variant_offset + 0)
 	emit_sw(rs, base_reg, variant_offset + VARIANT_TYPE_OFFSET);
+}
+
+void RISCVCodeGen::emit_variant_truthy(uint8_t rd, int variant_offset, int32_t type_hint) {
+	// Compute Godot's Variant::booleanize() for the Variant at variant_offset(sp)
+	// and leave 0 or 1 in rd.
+	//
+	// This used to be a single `lbu` of the payload's low byte, which is only
+	// correct for BOOL: it makes the integer 256 false, and makes any scoped
+	// index whose low byte happens to be zero false as well.
+	switch (type_hint) {
+		case Variant::NIL:
+			emit_li(rd, 0);
+			return;
+		case Variant::BOOL:
+			emit_lbu(rd, REG_SP, variant_offset + VARIANT_DATA_OFFSET);
+			return;
+		case Variant::INT:
+			emit_ld(rd, REG_SP, variant_offset + VARIANT_DATA_OFFSET);
+			emit_snez(rd, rd);
+			return;
+		case Variant::FLOAT:
+			// Variant::FLOAT is always a 64-bit double. Shifting the sign bit out
+			// makes -0.0 compare equal to +0.0 and leaves every NaN non-zero,
+			// which is what comparing against 0.0 would do.
+			emit_ld(rd, REG_SP, variant_offset + VARIANT_DATA_OFFSET);
+			emit_i_type(0x13, rd, 1, rd, 1); // slli rd, rd, 1
+			emit_snez(rd, rd);
+			return;
+		default:
+			break;
+	}
+
+	// The type is not known at compile time. Strings, arrays, dictionaries and
+	// packed arrays booleanize by emptiness and objects by validity, none of
+	// which the guest can see, so the host decides. OP_NOT yields
+	// !booleanize(x); inverting it gives the truth value.
+	//
+	// The call is emitted unconditionally rather than behind a type dispatch:
+	// emit_variant_eval() asks the register allocator to move live values out of
+	// the syscall's clobbered registers, and those moves must not sit on a path
+	// that is sometimes skipped.
+	const int scratch_offset = get_scratch_variant_offset();
+	emit_variant_eval_unary(scratch_offset, variant_offset, 23); // OP_NOT
+	emit_lbu(rd, REG_SP, scratch_offset + VARIANT_DATA_OFFSET);
+	emit_seqz(rd, rd);
 }
 
 void RISCVCodeGen::emit_load_variant_bool(uint8_t rd, uint8_t base_reg, int32_t variant_offset) {

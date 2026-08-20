@@ -12,6 +12,7 @@ const char* ir_opcode_name(IROpcode op) {
 		case IROpcode::LOAD_GLOBAL: return "LOAD_GLOBAL";
 		case IROpcode::STORE_GLOBAL: return "STORE_GLOBAL";
 		case IROpcode::MOVE: return "MOVE";
+		case IROpcode::CONVERT: return "CONVERT";
 		case IROpcode::ADD: return "ADD";
 		case IROpcode::SUB: return "SUB";
 		case IROpcode::MUL: return "MUL";
@@ -77,6 +78,54 @@ const char* ir_opcode_name(IROpcode op) {
 	}
 }
 
+const char* variant_type_name(IRInstruction::TypeHint hint) {
+	if (hint == IRInstruction::TypeHint_NONE) {
+		return "NONE";
+	}
+	// Use Variant::Type enum values directly
+	switch (hint) {
+		case Variant::NIL: return "NIL";
+		case Variant::BOOL: return "BOOL";
+		case Variant::INT: return "INT";
+		case Variant::FLOAT: return "FLOAT";
+		case Variant::STRING: return "STRING";
+		case Variant::STRING_NAME: return "STRING_NAME";
+		case Variant::NODE_PATH: return "NODE_PATH";
+		case Variant::VECTOR2: return "VECTOR2";
+		case Variant::VECTOR2I: return "VECTOR2I";
+		case Variant::VECTOR3: return "VECTOR3";
+		case Variant::VECTOR3I: return "VECTOR3I";
+		case Variant::VECTOR4: return "VECTOR4";
+		case Variant::VECTOR4I: return "VECTOR4I";
+		case Variant::COLOR: return "COLOR";
+		case Variant::RECT2: return "RECT2";
+		case Variant::RECT2I: return "RECT2I";
+		case Variant::TRANSFORM2D: return "TRANSFORM2D";
+		case Variant::TRANSFORM3D: return "TRANSFORM3D";
+		case Variant::BASIS: return "BASIS";
+		case Variant::QUATERNION: return "QUATERNION";
+		case Variant::PLANE: return "PLANE";
+		case Variant::AABB: return "AABB";
+		case Variant::PROJECTION: return "PROJECTION";
+		case Variant::ARRAY: return "ARRAY";
+		case Variant::DICTIONARY: return "DICTIONARY";
+		case Variant::RID: return "RID";
+		case Variant::CALLABLE: return "CALLABLE";
+		case Variant::SIGNAL: return "SIGNAL";
+		case Variant::PACKED_BYTE_ARRAY: return "PACKED_BYTE_ARRAY";
+		case Variant::PACKED_INT32_ARRAY: return "PACKED_INT32_ARRAY";
+		case Variant::PACKED_INT64_ARRAY: return "PACKED_INT64_ARRAY";
+		case Variant::PACKED_FLOAT32_ARRAY: return "PACKED_FLOAT32_ARRAY";
+		case Variant::PACKED_FLOAT64_ARRAY: return "PACKED_FLOAT64_ARRAY";
+		case Variant::PACKED_STRING_ARRAY: return "PACKED_STRING_ARRAY";
+		case Variant::PACKED_VECTOR2_ARRAY: return "PACKED_VECTOR2_ARRAY";
+		case Variant::PACKED_VECTOR3_ARRAY: return "PACKED_VECTOR3_ARRAY";
+		case Variant::PACKED_COLOR_ARRAY: return "PACKED_COLOR_ARRAY";
+		case Variant::PACKED_VECTOR4_ARRAY: return "PACKED_VECTOR4_ARRAY";
+		default: return "UNKNOWN";
+	}
+}
+
 std::string IRValue::to_string() const {
 	std::ostringstream oss;
 	switch (type) {
@@ -100,6 +149,79 @@ std::string IRValue::to_string() const {
 			break;
 	}
 	return oss.str();
+}
+
+int ir_destination_operand_index(IROpcode op) {
+	switch (op) {
+		// No destination register at all: these either read operand 0 or take
+		// no register operands.
+		case IROpcode::LABEL:
+		case IROpcode::JUMP:
+		case IROpcode::BRANCH_ZERO:
+		case IROpcode::BRANCH_NOT_ZERO:
+		case IROpcode::BRANCH_EQ:
+		case IROpcode::BRANCH_NEQ:
+		case IROpcode::BRANCH_LT:
+		case IROpcode::BRANCH_LTE:
+		case IROpcode::BRANCH_GT:
+		case IROpcode::BRANCH_GTE:
+		case IROpcode::RETURN:
+		// STORE_GLOBAL writes memory: operand 0 is the global index, operand 1
+		// is the value being read.
+		case IROpcode::STORE_GLOBAL:
+		// VSET/VSET_INLINE write into the object held by operand 0, which they
+		// read rather than define.
+		case IROpcode::VSET:
+		case IROpcode::VSET_INLINE:
+			return -1;
+
+		// CALL is "CALL name, dst, argc, args..." - the callee name occupies
+		// operand 0.
+		case IROpcode::CALL:
+			return 1;
+
+		default:
+			return 0;
+	}
+}
+
+int ir_destination_register(const IRInstruction& instr) {
+	const int index = ir_destination_operand_index(instr.opcode);
+	if (index < 0 || static_cast<size_t>(index) >= instr.operands.size()) {
+		return -1;
+	}
+	const IRValue& operand = instr.operands[index];
+	if (operand.type != IRValue::Type::REGISTER) {
+		return -1;
+	}
+	return std::get<int>(operand.value);
+}
+
+bool ir_reads_operand(const IRInstruction& instr, size_t index) {
+	if (index >= instr.operands.size()) {
+		return false;
+	}
+	if (instr.operands[index].type != IRValue::Type::REGISTER) {
+		return false;
+	}
+	const int dst_index = ir_destination_operand_index(instr.opcode);
+	if (dst_index >= 0 && static_cast<size_t>(dst_index) == index) {
+		return false;
+	}
+	return true;
+}
+
+void ir_collect_read_registers(const IRInstruction& instr, std::vector<int>& out) {
+	// A bare RETURN returns whatever is in r0.
+	if (instr.opcode == IROpcode::RETURN && instr.operands.empty()) {
+		out.push_back(0);
+		return;
+	}
+	for (size_t i = 0; i < instr.operands.size(); i++) {
+		if (ir_reads_operand(instr, i)) {
+			out.push_back(std::get<int>(instr.operands[i].value));
+		}
+	}
 }
 
 std::string IRInstruction::to_string() const {

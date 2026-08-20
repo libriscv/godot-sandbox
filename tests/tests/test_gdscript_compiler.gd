@@ -3337,3 +3337,304 @@ func read_i():
 	assert_eq(s.vmcallv("read_i"), 9, "Global i should be 9")
 
 	s.queue_free()
+
+func test_local_shadows_global():
+	# A local declared with the same name as a global shadows it: reads and
+	# writes go to the local, and the global is left alone.
+	var gdscript_code = """
+var counter = 10
+
+func shadowed():
+	var counter = 1
+	counter = counter + 1
+	return counter
+
+func read_global():
+	return counter
+
+func param_shadows(counter):
+	return counter
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("shadowed"), 2, "The local shadows the global")
+	assert_eq(s.vmcallv("read_global"), 10, "The global is untouched by the shadowing local")
+	assert_eq(s.vmcallv("param_shadows", 3), 3, "A parameter shadows the global")
+
+	s.queue_free()
+
+func test_short_circuit_evaluation():
+	# 'and' and 'or' must not evaluate the right-hand side once the left decides
+	# the result. The counter makes a skipped evaluation observable.
+	var gdscript_code = """
+var calls = 0
+
+func bump():
+	calls = calls + 1
+	return true
+
+func reset():
+	calls = 0
+	return calls
+
+func and_false():
+	calls = 0
+	var r = false and bump()
+	return calls
+
+func and_true():
+	calls = 0
+	var r = true and bump()
+	return calls
+
+func or_true():
+	calls = 0
+	var r = true or bump()
+	return calls
+
+func or_false():
+	calls = 0
+	var r = false or bump()
+	return calls
+
+func and_value():
+	return 5 and 3
+
+func or_value():
+	return 0 or 7
+
+func not_value(a):
+	return not a
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("and_false"), 0, "'false and f()' must not call f()")
+	assert_eq(s.vmcallv("and_true"), 1, "'true and f()' must call f()")
+	assert_eq(s.vmcallv("or_true"), 0, "'true or f()' must not call f()")
+	assert_eq(s.vmcallv("or_false"), 1, "'false or f()' must call f()")
+
+	# The operators booleanize: they return a bool, not one of the operands.
+	assert_eq(s.vmcallv("and_value"), true, "'5 and 3' is true")
+	assert_eq(s.vmcallv("or_value"), true, "'0 or 7' is true")
+	assert_eq(s.vmcallv("not_value", false), true, "'not false' is true")
+	assert_eq(s.vmcallv("not_value", true), false, "'not true' is false")
+	assert_eq(s.vmcallv("not_value", 0), true, "'not 0' is true")
+
+	s.queue_free()
+
+func test_variant_truthiness():
+	# Truthiness follows Variant::booleanize(). Testing only the low byte of the
+	# payload made 256 false and 512 false as well.
+	var gdscript_code = """
+func truthy(a):
+	if a:
+		return 1
+	return 0
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("truthy", 256), 1, "256 is truthy")
+	assert_eq(s.vmcallv("truthy", 512), 1, "512 is truthy")
+	assert_eq(s.vmcallv("truthy", 1), 1, "1 is truthy")
+	assert_eq(s.vmcallv("truthy", 0), 0, "0 is falsy")
+	assert_eq(s.vmcallv("truthy", 1.5), 1, "1.5 is truthy")
+	assert_eq(s.vmcallv("truthy", 0.0), 0, "0.0 is falsy")
+	assert_eq(s.vmcallv("truthy", true), 1, "true is truthy")
+	assert_eq(s.vmcallv("truthy", false), 0, "false is falsy")
+
+	s.queue_free()
+
+func test_global_initializer_forms():
+	# Initializers that are not plain literals used to be dropped silently,
+	# leaving the global NIL.
+	var gdscript_code = """
+const MAX = 10
+var neg = -5
+var negf = -2.5
+var folded = MAX
+var arr = [1, 2, 3]
+var dict = {"a": 1, "b": 2}
+var nested = [[1, 2], {"k": 3}]
+var packed = PackedInt32Array()
+var empty_arr = []
+var empty_dict = {}
+var typed_arr: Array
+var typed_str: String
+var typed_int: int
+var typed_float: float
+
+func get_neg():
+	return neg
+
+func get_negf():
+	return negf
+
+func get_folded():
+	return folded
+
+func get_arr():
+	return arr
+
+func get_dict():
+	return dict
+
+func get_nested():
+	return nested
+
+func get_packed():
+	return packed
+
+func get_empty_arr():
+	return empty_arr
+
+func get_empty_dict():
+	return empty_dict
+
+func get_typed_arr():
+	return typed_arr
+
+func get_typed_str():
+	return typed_str
+
+func get_typed_int():
+	return typed_int
+
+func get_typed_float():
+	return typed_float
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("get_neg"), -5, "Negative integer literal initializer")
+	assert_almost_eq(s.vmcallv("get_negf"), -2.5, 0.001, "Negative float literal initializer")
+	assert_eq(s.vmcallv("get_folded"), 10, "Initializer referring to a const folds to its value")
+	assert_eq(s.vmcallv("get_arr"), [1, 2, 3], "Non-empty array literal initializer")
+	assert_eq(s.vmcallv("get_dict"), {"a": 1, "b": 2}, "Non-empty dictionary literal initializer")
+	assert_eq(s.vmcallv("get_nested"), [[1, 2], {"k": 3}], "Nested container initializer")
+	assert_eq(s.vmcallv("get_packed"), PackedInt32Array(), "Empty packed array initializer")
+	assert_eq(s.vmcallv("get_empty_arr"), [], "Empty array initializer")
+	assert_eq(s.vmcallv("get_empty_dict"), {}, "Empty dictionary initializer")
+
+	# A type hint with no initializer gets the type's default value.
+	assert_eq(s.vmcallv("get_typed_arr"), [], "A typed Array defaults to an empty Array")
+	assert_eq(s.vmcallv("get_typed_str"), "", "A typed String defaults to an empty String")
+	assert_eq(s.vmcallv("get_typed_int"), 0, "A typed int defaults to 0")
+	assert_almost_eq(s.vmcallv("get_typed_float"), 0.0, 0.001, "A typed float defaults to 0.0")
+
+	s.queue_free()
+
+func test_global_container_mutation():
+	# A container global holds a permanent Variant that has to survive across
+	# calls, and reassigning it must replace the value rather than leak it.
+	var gdscript_code = """
+var items = [1, 2]
+var lookup = {"a": 1}
+
+func append_item(v):
+	items.append(v)
+	return items
+
+func read_items():
+	return items
+
+func replace_items(v):
+	items = v
+	return items
+
+func read_lookup():
+	return lookup
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("read_items"), [1, 2], "The initializer survives into the first call")
+	assert_eq(s.vmcallv("append_item", 3), [1, 2, 3], "Appending mutates the global")
+	assert_eq(s.vmcallv("read_items"), [1, 2, 3], "The mutation survives across calls")
+	assert_eq(s.vmcallv("replace_items", [9]), [9], "Reassigning replaces the value")
+	assert_eq(s.vmcallv("read_items"), [9], "The replacement survives across calls")
+	assert_eq(s.vmcallv("read_lookup"), {"a": 1}, "A dictionary global keeps its value")
+
+	s.queue_free()
+
+func test_declared_float_type_coercion():
+	# A declared float holds a float even when initialized or assigned from an
+	# integer; without the conversion the payload is read as a double.
+	var gdscript_code = """
+var gf: float = 0
+
+func read_global():
+	return gf
+
+func assign_global():
+	gf = 3
+	return gf
+
+func local_init():
+	var f: float = 2
+	return f
+
+func local_assign():
+	var f: float = 0.0
+	f = 7
+	return f
+
+func local_math():
+	var f: float = 2
+	return f * 2.0
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_typeof(s.vmcallv("read_global"), TYPE_FLOAT)
+	assert_almost_eq(s.vmcallv("read_global"), 0.0, 0.001, "A float global initialized from 0")
+	assert_almost_eq(s.vmcallv("assign_global"), 3.0, 0.001, "Assigning an int to a float global")
+	assert_almost_eq(s.vmcallv("local_init"), 2.0, 0.001, "A float local initialized from an int")
+	assert_almost_eq(s.vmcallv("local_assign"), 7.0, 0.001, "Assigning an int to a float local")
+	assert_almost_eq(s.vmcallv("local_math"), 4.0, 0.001, "Arithmetic on a coerced float local")
+
+	s.queue_free()
+
+func test_many_globals():
+	# A global's address is .globals + index * sizeof(Variant). Adding that
+	# offset with a separate ADDI truncates it to 12 signed bits, so everything
+	# past global #85 addressed the wrong slot.
+	var gdscript_code = ""
+	for i in range(150):
+		gdscript_code += "var g%d = %d\n" % [i, i]
+	gdscript_code += """
+func read_first():
+	return g0
+
+func read_middle():
+	return g100
+
+func read_last():
+	return g149
+
+func write_last(v):
+	g149 = v
+	return g149
+
+func read_last_again():
+	return g149
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("read_first"), 0, "First global")
+	assert_eq(s.vmcallv("read_middle"), 100, "Global past the 12-bit immediate range")
+	assert_eq(s.vmcallv("read_last"), 149, "Last global")
+	assert_eq(s.vmcallv("write_last", 42), 42, "Writing a global past the immediate range")
+	assert_eq(s.vmcallv("read_last_again"), 42, "The write landed in the right slot")
+
+	s.queue_free()

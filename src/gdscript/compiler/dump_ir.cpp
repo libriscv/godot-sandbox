@@ -25,54 +25,8 @@ const char* reg_name(uint8_t reg) {
 	return "?";
 }
 
-// Helper to convert TypeHint to string
-const char* type_hint_name(IRInstruction::TypeHint hint) {
-	if (hint == IRInstruction::TypeHint_NONE) {
-		return "NONE";
-	}
-	// Use Variant::Type enum values directly
-	switch (hint) {
-		case Variant::NIL: return "NIL";
-		case Variant::BOOL: return "BOOL";
-		case Variant::INT: return "INT";
-		case Variant::FLOAT: return "FLOAT";
-		case Variant::STRING: return "STRING";
-		case Variant::STRING_NAME: return "STRING_NAME";
-		case Variant::NODE_PATH: return "NODE_PATH";
-		case Variant::VECTOR2: return "VECTOR2";
-		case Variant::VECTOR2I: return "VECTOR2I";
-		case Variant::VECTOR3: return "VECTOR3";
-		case Variant::VECTOR3I: return "VECTOR3I";
-		case Variant::VECTOR4: return "VECTOR4";
-		case Variant::VECTOR4I: return "VECTOR4I";
-		case Variant::COLOR: return "COLOR";
-		case Variant::RECT2: return "RECT2";
-		case Variant::RECT2I: return "RECT2I";
-		case Variant::TRANSFORM2D: return "TRANSFORM2D";
-		case Variant::TRANSFORM3D: return "TRANSFORM3D";
-		case Variant::BASIS: return "BASIS";
-		case Variant::QUATERNION: return "QUATERNION";
-		case Variant::PLANE: return "PLANE";
-		case Variant::AABB: return "AABB";
-		case Variant::PROJECTION: return "PROJECTION";
-		case Variant::ARRAY: return "ARRAY";
-		case Variant::DICTIONARY: return "DICTIONARY";
-		case Variant::RID: return "RID";
-		case Variant::CALLABLE: return "CALLABLE";
-		case Variant::SIGNAL: return "SIGNAL";
-		case Variant::PACKED_BYTE_ARRAY: return "PACKED_BYTE_ARRAY";
-		case Variant::PACKED_INT32_ARRAY: return "PACKED_INT32_ARRAY";
-		case Variant::PACKED_INT64_ARRAY: return "PACKED_INT64_ARRAY";
-		case Variant::PACKED_FLOAT32_ARRAY: return "PACKED_FLOAT32_ARRAY";
-		case Variant::PACKED_FLOAT64_ARRAY: return "PACKED_FLOAT64_ARRAY";
-		case Variant::PACKED_STRING_ARRAY: return "PACKED_STRING_ARRAY";
-		case Variant::PACKED_VECTOR2_ARRAY: return "PACKED_VECTOR2_ARRAY";
-		case Variant::PACKED_VECTOR3_ARRAY: return "PACKED_VECTOR3_ARRAY";
-		case Variant::PACKED_COLOR_ARRAY: return "PACKED_COLOR_ARRAY";
-		case Variant::PACKED_VECTOR4_ARRAY: return "PACKED_VECTOR4_ARRAY";
-		default: return "UNKNOWN";
-	}
-}
+// Type names come from ir.cpp so that every tool prints the same spelling.
+static const char* type_hint_name(IRInstruction::TypeHint hint) { return variant_type_name(hint); }
 
 // Helper to format operand with detailed type info
 std::string format_operand_detailed(const IRValue& op) {
@@ -219,6 +173,12 @@ int main(int argc, char** argv)
 						case IRGlobalVar::InitType::EMPTY_DICT:
 							std::cout << "{}";
 							break;
+						case IRGlobalVar::InitType::NULL_VAL:
+							std::cout << "null";
+							break;
+						case IRGlobalVar::InitType::RUNTIME:
+							std::cout << "<evaluated by " << ir.global_init.name << ">";
+							break;
 						default:
 							std::cout << "?";
 							break;
@@ -239,8 +199,17 @@ int main(int argc, char** argv)
 			std::cout << std::endl;
 		}
 
-		// Print functions
+		// Print functions. The global init function comes first: it runs before
+		// any of them.
+		std::vector<const IRFunction*> all_functions;
+		if (ir.has_global_init) {
+			all_functions.push_back(&ir.global_init);
+		}
 		for (const auto& func : ir.functions) {
+			all_functions.push_back(&func);
+		}
+		for (const IRFunction* func_ptr : all_functions) {
+			const IRFunction& func = *func_ptr;
 			std::cout << "=== Function: " << func.name << "(";
 			for (size_t i = 0; i < func.parameters.size(); i++) {
 				if (i > 0) std::cout << ", ";

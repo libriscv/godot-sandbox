@@ -115,14 +115,54 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		m_local_signatures[func.name] = &func;
 	}
 
-	// Process global variables
+	// Process global variables.
+	//
+	// An initializer is lowered in one of two ways. Anything that folds to a
+	// compile-time constant becomes an InitType that the backend writes straight
+	// into the .globals array, which costs nothing at startup. Everything else -
+	// array and dictionary literals, constructor calls, references to earlier
+	// globals - is evaluated by the synthetic global_init function through the
+	// ordinary expression path, so a global initializer supports exactly what a
+	// function body supports. Anything that reaches neither path is an error:
+	// leaving the global silently NIL is how initializer support used to
+	// regress unnoticed.
 	m_global_variables.clear();
+	m_global_consts.clear();
+	m_global_const_values.clear();
+	m_global_types.clear();
+	ir_program.globals.resize(program.globals.size());
+
+	// Every global name has to be known before any initializer is lowered, so
+	// that an initializer can name another global.
 	for (size_t i = 0; i < program.globals.size(); i++) {
 		const auto& global = program.globals[i];
+		if (m_global_variables.count(global.name)) {
+			throw CompilerException(ErrorType::CODEGEN_ERROR,
+				"Global variable '" + global.name + "' is declared more than once");
+		}
 		m_global_variables[global.name] = i;
+		if (global.is_const) {
+			m_global_consts.insert(global.name);
+		}
+		m_global_types.push_back(global.type_hint.empty()
+			? IRInstruction::TypeHint_NONE
+			: type_hint_from_string(global.type_hint));
+	}
 
-		// Convert AST global to IR global
-		IRGlobalVar ir_global;
+	// The init function is one straight-line block, generated with the same
+	// register and scope state that real function bodies use.
+	IRFunction& init_func = ir_program.global_init;
+	init_func.name = "__init_globals";
+	m_scope_stack.clear();
+	m_next_register = 0;
+	m_register_types.clear();
+	m_globals_lowered = 0;
+	push_scope();
+
+	for (size_t i = 0; i < program.globals.size(); i++) {
+		const auto& global = program.globals[i];
+		IRGlobalVar& ir_global = ir_program.globals[i];
+
 		ir_global.name = global.name;
 		ir_global.is_const = global.is_const;
 		ir_global.is_property = global.is_property;
@@ -143,45 +183,52 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				"This is required to ensure proper memory management for complex types.");
 		}
 
-		// Extract initializer value if it's a literal
-		if (global.initializer) {
-			if (auto* lit = dynamic_cast<const LiteralExpr*>(global.initializer.get())) {
-				switch (lit->lit_type) {
-					case LiteralExpr::Type::INTEGER:
-						ir_global.init_type = IRGlobalVar::InitType::INT;
-						ir_global.init_value = std::get<int64_t>(lit->value);
-						break;
-					case LiteralExpr::Type::FLOAT:
-						ir_global.init_type = IRGlobalVar::InitType::FLOAT;
-						ir_global.init_value = std::get<double>(lit->value);
-						break;
-					case LiteralExpr::Type::STRING:
-						ir_global.init_type = IRGlobalVar::InitType::STRING;
-						ir_global.init_value = std::get<std::string>(lit->value);
-						break;
-					case LiteralExpr::Type::BOOL:
-						ir_global.init_type = IRGlobalVar::InitType::BOOL;
-						ir_global.init_value = std::get<bool>(lit->value);
-						break;
-					case LiteralExpr::Type::NULL_VAL:
-						ir_global.init_type = IRGlobalVar::InitType::NULL_VAL;
-						break;
-				}
-			} else if (auto* array_lit = dynamic_cast<const ArrayLiteralExpr*>(global.initializer.get())) {
-				// Support empty array literals as global initializers
-				if (array_lit->elements.empty()) {
-					ir_global.init_type = IRGlobalVar::InitType::EMPTY_ARRAY;
-				} else {
-					// Non-empty arrays would require complex initialization
-					// For now, leave as NONE (NIL) - can be improved later
-				}
-			}
-			// For other non-literal initializers, we'll need to generate initialization code
-			// This would be done in a special initialization function or at first access
+		if (!global.initializer) {
+			// `var a: Array` is an empty Array in GDScript, not NIL. Give every
+			// type-hinted global without an initializer the default value of its
+			// type, so that an @export property is registered holding a value of
+			// the type it was declared with.
+			apply_default_initializer(ir_global, init_func, i, ir_program.has_global_init);
+			m_globals_lowered = i + 1;
+			continue;
 		}
 
-		ir_program.globals.push_back(ir_global);
+		{
+			if (fold_global_initializer(global.initializer.get(), ir_global)) {
+				coerce_folded_initializer(ir_global);
+				ir_global.value_type = derive_global_value_type(ir_global);
+			} else {
+				// Not a compile-time constant: evaluate it at startup.
+				int reg = gen_expr(global.initializer.get(), init_func);
+				init_func.instructions.emplace_back(IROpcode::STORE_GLOBAL,
+					IRValue::imm(static_cast<int64_t>(i)), IRValue::reg(reg));
+				ir_global.init_type = IRGlobalVar::InitType::RUNTIME;
+				ir_global.value_type = ir_global.type_hint != IRInstruction::TypeHint_NONE
+					? ir_global.type_hint
+					: get_register_type(reg);
+				free_register(reg);
+				ir_program.has_global_init = true;
+			}
+
+			// Remember const values so later initializers can fold references to them.
+			if (global.is_const && ir_global.init_type != IRGlobalVar::InitType::RUNTIME) {
+				m_global_const_values[global.name] = ir_global;
+			}
+		}
+
+		// Only globals lowered so far may be referenced by a later initializer.
+		m_globals_lowered = i + 1;
 	}
+
+	if (ir_program.has_global_init) {
+		init_func.instructions.emplace_back(IROpcode::RETURN);
+		init_func.max_registers = m_next_register;
+	} else {
+		// Nothing to run: drop whatever was generated for folded initializers.
+		init_func.instructions.clear();
+		init_func.max_registers = 0;
+	}
+	pop_scope();
 
 	for (const auto& func : program.functions) {
 		ir_program.functions.push_back(generate_function(func));
@@ -195,10 +242,18 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& func) {
 	IRFunction ir_func;
 	ir_func.name = func.name;
 
-	// Reset state for new function
+	// Function bodies run after every global has been initialized, so all of
+	// them are visible regardless of declaration order.
+	m_globals_lowered = SIZE_MAX;
+
+	// Reset state for new function. Virtual register numbers restart at 0 in
+	// every function, so the tracked register types have to be dropped as well -
+	// otherwise a register keeps the type the *previous* function left on it and
+	// the backend picks a native path for a Variant that is not of that type.
 	m_scope_stack.clear();
 	m_next_register = 0;
 	m_loop_stack.clear();
+	m_register_types.clear();
 
 	// Create root scope for function
 	push_scope();
@@ -285,6 +340,10 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, IRFunction& func) {
 	if (!stmt->type_hint.empty()) {
 		IRInstruction::TypeHint type = type_hint_from_string(stmt->type_hint);
 		if (type != IRInstruction::TypeHint_NONE) {
+			// The value has to actually become that type, not merely be labelled
+			// with it: `var f: float = 0` holds 0.0, and marking an INT Variant
+			// as FLOAT would have the backend read its payload as a double.
+			reg = coerce_to_declared_type(reg, type, func, "variable '" + stmt->name + "'");
 			set_register_type(reg, type);
 		}
 	} else if (stmt->initializer) {
@@ -359,17 +418,22 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, IRFunction& func) {
 		throw CompilerException(ErrorType::CODEGEN_ERROR, "Invalid assignment target type");
 	}
 
-	// Simple variable assignment
-	// Check if this is a global variable
-	if (is_global_variable(stmt->name)) {
-		size_t global_idx = m_global_variables.at(stmt->name);
-		func.instructions.emplace_back(IROpcode::STORE_GLOBAL, IRValue::imm(global_idx), IRValue::reg(value_reg));
-		free_register(value_reg);
-		return;
-	}
-
+	// Simple variable assignment.
+	// Locals shadow globals, so the enclosing scopes are searched first and the
+	// global table is only consulted when no local of that name is in scope.
 	Variable* var = find_variable(stmt->name);
 	if (!var) {
+		if (is_global_variable(stmt->name)) {
+			if (is_global_const(stmt->name)) {
+				throw CompilerException(ErrorType::CODEGEN_ERROR, "Cannot assign to const variable: " + stmt->name);
+			}
+			size_t global_idx = m_global_variables.at(stmt->name);
+			value_reg = coerce_to_declared_type(value_reg, m_global_types[global_idx], func,
+				"global '" + stmt->name + "'");
+			func.instructions.emplace_back(IROpcode::STORE_GLOBAL, IRValue::imm(global_idx), IRValue::reg(value_reg));
+			free_register(value_reg);
+			return;
+		}
 		throw CompilerException(ErrorType::CODEGEN_ERROR, "Undefined variable: " + stmt->name);
 	}
 
@@ -377,6 +441,9 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, IRFunction& func) {
 	if (var->is_const) {
 		throw CompilerException(ErrorType::CODEGEN_ERROR, "Cannot assign to const variable: " + stmt->name);
 	}
+
+	value_reg = coerce_to_declared_type(value_reg, get_register_type(var->register_num), func,
+		"variable '" + stmt->name + "'");
 
 	// Store value into variable's register
 	if (var->register_num != value_reg) {
@@ -402,6 +469,17 @@ void CodeGenerator::gen_return(const ReturnStmt* stmt, IRFunction& func) {
 	func.instructions.emplace_back(IROpcode::RETURN);
 }
 
+void CodeGenerator::emit_conditional_branch(IROpcode opcode, int cond_reg,
+	const std::string& label, IRFunction& func)
+{
+	// The tested register's type travels with the branch so that the backend can
+	// decide truthiness inline for the types it knows and only ask the host about
+	// the ones it does not.
+	IRInstruction branch(opcode, IRValue::reg(cond_reg), IRValue::label(label));
+	branch.type_hint = get_register_type(cond_reg);
+	func.instructions.push_back(branch);
+}
+
 void CodeGenerator::gen_if(const IfStmt* stmt, IRFunction& func) {
 	std::string else_label = make_label("else");
 	std::string end_label = make_label("endif");
@@ -411,9 +489,9 @@ void CodeGenerator::gen_if(const IfStmt* stmt, IRFunction& func) {
 
 	// Branch to else if condition is zero (false)
 	if (!stmt->else_branch.empty()) {
-		func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(cond_reg), IRValue::label(else_label));
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, else_label, func);
 	} else {
-		func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(cond_reg), IRValue::label(end_label));
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, end_label, func);
 	}
 
 	free_register(cond_reg);
@@ -473,7 +551,7 @@ void CodeGenerator::gen_match(const MatchStmt* stmt, IRFunction& func) {
 			IRInstruction cmp(IROpcode::CMP_EQ, IRValue::reg(pattern_reg),
 			                  IRValue::reg(subject_reg), IRValue::reg(pattern_reg));
 			func.instructions.push_back(cmp);
-			func.instructions.emplace_back(IROpcode::BRANCH_NOT_ZERO, IRValue::reg(pattern_reg), IRValue::label(body_label));
+			emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, pattern_reg, body_label, func);
 			free_register(pattern_reg);
 		}
 		func.instructions.emplace_back(IROpcode::JUMP, IRValue::label(next_label));
@@ -505,7 +583,7 @@ void CodeGenerator::gen_while(const WhileStmt* stmt, IRFunction& func) {
 
 	// Evaluate condition
 	int cond_reg = gen_expr(stmt->condition.get(), func);
-	func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(cond_reg), IRValue::label(end_label));
+	emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, end_label, func);
 	free_register(cond_reg);
 
 	// Loop body (new scope)
@@ -595,7 +673,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 		auto& cmp_instr = func.instructions.emplace_back(IROpcode::CMP_LT, IRValue::reg(cond_reg),
 		                               IRValue::reg(index_reg), IRValue::reg(size_reg));
 
-		func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(cond_reg), IRValue::label(end_label));
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, end_label, func);
 		free_register(cond_reg);
 
 		// Get element from array using ECALL_ARRAY_AT
@@ -745,8 +823,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 		free_register(zero_reg);
 
 		// If step >= 0, use loop_var < end
-		func.instructions.emplace_back(IROpcode::BRANCH_NOT_ZERO, IRValue::reg(step_sign_reg),
-		                               IRValue::label(pos_step_label));
+		emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, step_sign_reg, pos_step_label, func);
 
 		// Negative step: loop_var > end
 		auto& neg_cmp = func.instructions.emplace_back(IROpcode::CMP_GT, IRValue::reg(cond_reg),
@@ -764,7 +841,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, IRFunction& func) {
 		free_register(step_sign_reg);
 	}
 
-	func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(cond_reg), IRValue::label(end_label));
+	emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, end_label, func);
 	free_register(cond_reg);
 
 	// Loop body (new scope for body, separate from loop variable scope)
@@ -896,6 +973,20 @@ int CodeGenerator::gen_literal(const LiteralExpr* expr, IRFunction& func) {
 }
 
 int CodeGenerator::gen_variable(const VariableExpr* expr, IRFunction& func) {
+	// Locals shadow everything else, so the enclosing scopes are searched before
+	// globals and global class names. 'self' is not a declarable name, so it is
+	// handled below rather than here.
+	if (Variable* local = find_variable(expr->name)) {
+		int new_reg = alloc_register();
+		func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(new_reg), IRValue::reg(local->register_num));
+
+		IRInstruction::TypeHint type = get_register_type(local->register_num);
+		if (type != IRInstruction::TypeHint_NONE) {
+			set_register_type(new_reg, type);
+		}
+		return new_reg;
+	}
+
 	// Check if this is a global class reference
 	if (is_global_class(expr->name)) {
 		return gen_global_class_get(expr->name, func);
@@ -918,31 +1009,69 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, IRFunction& func) {
 
 	// Check if this is a global variable
 	if (is_global_variable(expr->name)) {
-		int result_reg = alloc_register();
 		size_t global_idx = m_global_variables.at(expr->name);
+		// While the global initializers are being lowered, a global that has not
+		// been initialized yet still holds NIL. Reading it would silently produce
+		// the wrong value, so a forward reference is rejected instead.
+		if (global_idx >= m_globals_lowered) {
+			throw CompilerException(ErrorType::CODEGEN_ERROR,
+				"Global variable '" + expr->name + "' is used in the initializer of a global "
+				"declared before it. Move the declaration of '" + expr->name + "' above that global.");
+		}
+		int result_reg = alloc_register();
 		func.instructions.emplace_back(IROpcode::LOAD_GLOBAL, IRValue::reg(result_reg), IRValue::imm(global_idx));
 		return result_reg;
 	}
 
-	Variable* var = find_variable(expr->name);
-	if (!var) {
-		throw CompilerException(ErrorType::CODEGEN_ERROR, "Undefined variable: " + expr->name);
-	}
+	throw CompilerException(ErrorType::CODEGEN_ERROR, "Undefined variable: " + expr->name);
+}
 
-	// Return a copy in a new register
-	int new_reg = alloc_register();
-	func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(new_reg), IRValue::reg(var->register_num));
+int CodeGenerator::gen_logical(const BinaryExpr* expr, IRFunction& func) {
+	// GDScript's 'and' and 'or' short-circuit: the right-hand side is only
+	// evaluated when the left-hand side does not already decide the result, and
+	// the result is a bool rather than one of the operands. Lowering them to a
+	// plain binary IR op evaluates both sides unconditionally, which runs the
+	// right side's side effects even when it should never have been reached.
+	//
+	//     a and b   ->   r = false; if !a goto end; if !b goto end; r = true
+	//     a or b    ->   r = true;  if a  goto end; if b  goto end; r = false
+	const bool is_and = expr->op == BinaryExpr::Op::AND;
+	const std::string end_label = make_label(is_and ? "and_end" : "or_end");
+	const IROpcode short_circuit_branch = is_and ? IROpcode::BRANCH_ZERO : IROpcode::BRANCH_NOT_ZERO;
 
-	// Propagate type information from the variable to the new register
-	IRInstruction::TypeHint var_type = get_register_type(var->register_num);
-	if (var_type != IRInstruction::TypeHint_NONE) {
-		set_register_type(new_reg, var_type);
-	}
+	int result_reg = alloc_register();
+	func.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(result_reg),
+		IRValue::imm(is_and ? 0 : 1));
+	set_register_type(result_reg, Variant::BOOL);
 
-	return new_reg;
+	int left_reg = gen_expr(expr->left.get(), func);
+	IRInstruction left_branch(short_circuit_branch, IRValue::reg(left_reg), IRValue::label(end_label));
+	// The type hint lets the backend test truthiness inline instead of asking
+	// the host what the Variant booleanizes to.
+	left_branch.type_hint = get_register_type(left_reg);
+	func.instructions.push_back(left_branch);
+	free_register(left_reg);
+
+	int right_reg = gen_expr(expr->right.get(), func);
+	IRInstruction right_branch(short_circuit_branch, IRValue::reg(right_reg), IRValue::label(end_label));
+	right_branch.type_hint = get_register_type(right_reg);
+	func.instructions.push_back(right_branch);
+	free_register(right_reg);
+
+	// Neither test short-circuited, so the result is the opposite of the value
+	// the short circuit would have produced.
+	func.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(result_reg),
+		IRValue::imm(is_and ? 1 : 0));
+	func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+
+	return result_reg;
 }
 
 int CodeGenerator::gen_binary(const BinaryExpr* expr, IRFunction& func) {
+	if (expr->op == BinaryExpr::Op::AND || expr->op == BinaryExpr::Op::OR) {
+		return gen_logical(expr, func);
+	}
+
 	int left_reg = gen_expr(expr->left.get(), func);
 	int right_reg = gen_expr(expr->right.get(), func);
 	int result_reg = alloc_register();
@@ -1026,7 +1155,13 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, IRFunction& func) {
 	instr.type_hint = result_type;
 	func.instructions.push_back(instr);
 
-	if (result_type != IRInstruction::TypeHint_NONE) {
+	if (is_comparison) {
+		// A comparison always produces a bool, whatever its operands were. The
+		// instruction's type hint describes the *operands* - it is what selects
+		// the backend's native compare path - so only the destination register's
+		// tracked type is corrected here.
+		set_register_type(result_reg, Variant::BOOL);
+	} else if (result_type != IRInstruction::TypeHint_NONE) {
 		set_register_type(result_reg, result_type);
 	}
 
@@ -1054,6 +1189,17 @@ int CodeGenerator::gen_unary(const UnaryExpr* expr, IRFunction& func) {
 		// ~int is always an int, so the native path can be used
 		instr.type_hint = Variant::INT;
 		set_register_type(result_reg, Variant::INT);
+	} else if (expr->op == UnaryExpr::Op::NOT) {
+		// 'not' booleanizes its operand, so the result is a bool for every
+		// operand type.
+		set_register_type(result_reg, Variant::BOOL);
+	} else if (expr->op == UnaryExpr::Op::NEG) {
+		// Negation preserves the numeric type.
+		const IRInstruction::TypeHint operand_type = get_register_type(operand_reg);
+		if (operand_type == Variant::INT || operand_type == Variant::FLOAT) {
+			instr.type_hint = operand_type;
+			set_register_type(result_reg, operand_type);
+		}
 	}
 	func.instructions.push_back(instr);
 
@@ -1072,7 +1218,7 @@ int CodeGenerator::gen_ternary(const TernaryExpr* expr, IRFunction& func) {
 	int result_reg = alloc_register();
 
 	int cond_reg = gen_expr(expr->condition.get(), func);
-	func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(cond_reg), IRValue::label(else_label));
+	emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, else_label, func);
 	free_register(cond_reg);
 
 	int true_reg = gen_expr(expr->true_value.get(), func);
@@ -1776,8 +1922,273 @@ bool CodeGenerator::is_local_function(const std::string& name) const {
 	return m_local_functions.find(name) != m_local_functions.end();
 }
 
+int CodeGenerator::coerce_to_declared_type(int reg, IRInstruction::TypeHint declared,
+	IRFunction& func, const std::string& what)
+{
+	if (declared == IRInstruction::TypeHint_NONE) {
+		return reg;
+	}
+	const IRInstruction::TypeHint actual = get_register_type(reg);
+	if (actual == IRInstruction::TypeHint_NONE || actual == declared) {
+		// Either already the right type, or not known until run time - in which
+		// case the host checks it on assignment.
+		return reg;
+	}
+
+	// int -> float is GDScript's one implicit numeric conversion. Without it the
+	// register keeps a Variant of type INT while the compiler believes it is a
+	// FLOAT, and the backend then reads the payload as a double.
+	if (declared == Variant::FLOAT && actual == Variant::INT) {
+		int converted = alloc_register();
+		IRInstruction convert(IROpcode::CONVERT, IRValue::reg(converted), IRValue::reg(reg));
+		convert.type_hint = Variant::FLOAT;
+		func.instructions.push_back(convert);
+		set_register_type(converted, Variant::FLOAT);
+		free_register(reg);
+		return converted;
+	}
+
+	// Narrowing float to int, or any other mismatch between two types that are
+	// both known, is an error in GDScript rather than a silent reinterpretation.
+	throw CompilerException(ErrorType::CODEGEN_ERROR,
+		"Cannot assign a value of type " + std::string(variant_type_name(actual)) +
+		" to " + what + " of type " + std::string(variant_type_name(declared)));
+}
+
+void CodeGenerator::coerce_folded_initializer(IRGlobalVar& global) const {
+	if (global.type_hint == IRInstruction::TypeHint_NONE ||
+	    global.init_type == IRGlobalVar::InitType::NULL_VAL) {
+		return;
+	}
+
+	// `var f: float = 0` declares a float, so the constant is folded to 0.0
+	// rather than stored as the integer 0 under a FLOAT label.
+	if (global.type_hint == Variant::FLOAT && global.init_type == IRGlobalVar::InitType::INT) {
+		global.init_type = IRGlobalVar::InitType::FLOAT;
+		global.init_value = static_cast<double>(std::get<int64_t>(global.init_value));
+		return;
+	}
+
+	IRGlobalVar probe = global;
+	probe.type_hint = IRInstruction::TypeHint_NONE;
+	const IRInstruction::TypeHint actual = derive_global_value_type(probe);
+	if (actual != IRInstruction::TypeHint_NONE && actual != global.type_hint) {
+		throw CompilerException(ErrorType::CODEGEN_ERROR,
+			"Global variable '" + global.name + "' is declared as " +
+			std::string(variant_type_name(global.type_hint)) +
+			" but initialized with a value of type " + std::string(variant_type_name(actual)));
+	}
+}
+
+void CodeGenerator::apply_default_initializer(IRGlobalVar& global, IRFunction& init_func,
+	size_t global_index, bool& has_global_init)
+{
+	global.value_type = global.type_hint;
+	if (global.type_hint == IRInstruction::TypeHint_NONE) {
+		// No type hint and no initializer is rejected before this point.
+		return;
+	}
+
+	switch (global.type_hint) {
+		case Variant::INT:
+			global.init_type = IRGlobalVar::InitType::INT;
+			global.init_value = int64_t(0);
+			return;
+		case Variant::FLOAT:
+			global.init_type = IRGlobalVar::InitType::FLOAT;
+			global.init_value = 0.0;
+			return;
+		case Variant::BOOL:
+			global.init_type = IRGlobalVar::InitType::BOOL;
+			global.init_value = false;
+			return;
+		case Variant::STRING:
+			global.init_type = IRGlobalVar::InitType::STRING;
+			global.init_value = std::string();
+			return;
+		case Variant::ARRAY:
+			global.init_type = IRGlobalVar::InitType::EMPTY_ARRAY;
+			return;
+		case Variant::DICTIONARY:
+			global.init_type = IRGlobalVar::InitType::EMPTY_DICT;
+			return;
+		default:
+			break;
+	}
+
+	// Packed arrays have a construction opcode but no compile-time
+	// representation, so an empty one is built by the init function.
+	const IROpcode make_op = packed_array_opcode(global.type_hint);
+	if (make_op != IROpcode::LABEL) {
+		int reg = alloc_register();
+		IRInstruction make(make_op);
+		make.operands.push_back(IRValue::reg(reg));
+		make.operands.push_back(IRValue::imm(0)); // no elements
+		make.type_hint = global.type_hint;
+		init_func.instructions.push_back(make);
+		init_func.instructions.emplace_back(IROpcode::STORE_GLOBAL,
+			IRValue::imm(static_cast<int64_t>(global_index)), IRValue::reg(reg));
+		free_register(reg);
+		global.init_type = IRGlobalVar::InitType::RUNTIME;
+		has_global_init = true;
+		return;
+	}
+
+	// Everything else (Object, Callable, Transform3D, ...) has no default the
+	// guest can construct, so it stays NIL until it is assigned.
+}
+
+IROpcode CodeGenerator::packed_array_opcode(IRInstruction::TypeHint type) {
+	switch (type) {
+		case Variant::PACKED_BYTE_ARRAY: return IROpcode::MAKE_PACKED_BYTE_ARRAY;
+		case Variant::PACKED_INT32_ARRAY: return IROpcode::MAKE_PACKED_INT32_ARRAY;
+		case Variant::PACKED_INT64_ARRAY: return IROpcode::MAKE_PACKED_INT64_ARRAY;
+		case Variant::PACKED_FLOAT32_ARRAY: return IROpcode::MAKE_PACKED_FLOAT32_ARRAY;
+		case Variant::PACKED_FLOAT64_ARRAY: return IROpcode::MAKE_PACKED_FLOAT64_ARRAY;
+		case Variant::PACKED_STRING_ARRAY: return IROpcode::MAKE_PACKED_STRING_ARRAY;
+		case Variant::PACKED_VECTOR2_ARRAY: return IROpcode::MAKE_PACKED_VECTOR2_ARRAY;
+		case Variant::PACKED_VECTOR3_ARRAY: return IROpcode::MAKE_PACKED_VECTOR3_ARRAY;
+		case Variant::PACKED_VECTOR4_ARRAY: return IROpcode::MAKE_PACKED_VECTOR4_ARRAY;
+		case Variant::PACKED_COLOR_ARRAY: return IROpcode::MAKE_PACKED_COLOR_ARRAY;
+		default:
+			// LABEL is never a construction opcode, so it doubles as "no default".
+			return IROpcode::LABEL;
+	}
+}
+
+bool CodeGenerator::fold_global_initializer(const Expr* expr, IRGlobalVar& out) const {
+	using InitType = IRGlobalVar::InitType;
+
+	if (auto* lit = dynamic_cast<const LiteralExpr*>(expr)) {
+		switch (lit->lit_type) {
+			case LiteralExpr::Type::INTEGER:
+				out.init_type = InitType::INT;
+				out.init_value = std::get<int64_t>(lit->value);
+				return true;
+			case LiteralExpr::Type::FLOAT:
+				out.init_type = InitType::FLOAT;
+				out.init_value = std::get<double>(lit->value);
+				return true;
+			case LiteralExpr::Type::STRING:
+				out.init_type = InitType::STRING;
+				out.init_value = std::get<std::string>(lit->value);
+				return true;
+			case LiteralExpr::Type::BOOL:
+				out.init_type = InitType::BOOL;
+				out.init_value = std::get<bool>(lit->value);
+				return true;
+			case LiteralExpr::Type::NULL_VAL:
+				out.init_type = InitType::NULL_VAL;
+				return true;
+		}
+		return false;
+	}
+
+	// Unary operators over a constant. '-5' parses as a unary minus applied to a
+	// literal, not as a negative literal, so without this a negated constant is
+	// not a constant.
+	if (auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+		IRGlobalVar inner;
+		if (!fold_global_initializer(unary->operand.get(), inner)) {
+			return false;
+		}
+		switch (unary->op) {
+			case UnaryExpr::Op::NEG:
+				if (inner.init_type == InitType::INT) {
+					// Negating INT64_MIN overflows a signed negate, so it is done
+					// in unsigned arithmetic and reinterpreted.
+					const uint64_t value = static_cast<uint64_t>(std::get<int64_t>(inner.init_value));
+					out.init_type = InitType::INT;
+					out.init_value = static_cast<int64_t>(0u - value);
+					return true;
+				}
+				if (inner.init_type == InitType::FLOAT) {
+					out.init_type = InitType::FLOAT;
+					out.init_value = -std::get<double>(inner.init_value);
+					return true;
+				}
+				return false;
+			case UnaryExpr::Op::BIT_NOT:
+				if (inner.init_type == InitType::INT) {
+					out.init_type = InitType::INT;
+					out.init_value = ~std::get<int64_t>(inner.init_value);
+					return true;
+				}
+				return false;
+			case UnaryExpr::Op::NOT:
+				out.init_type = InitType::BOOL;
+				switch (inner.init_type) {
+					case InitType::BOOL: out.init_value = !std::get<bool>(inner.init_value); return true;
+					case InitType::INT: out.init_value = std::get<int64_t>(inner.init_value) == 0; return true;
+					case InitType::FLOAT: out.init_value = std::get<double>(inner.init_value) == 0.0; return true;
+					case InitType::NULL_VAL: out.init_value = true; return true;
+					case InitType::STRING: out.init_value = std::get<std::string>(inner.init_value).empty(); return true;
+					default: return false;
+				}
+		}
+		return false;
+	}
+
+	// A reference to a global const that already folded to a constant.
+	if (auto* var = dynamic_cast<const VariableExpr*>(expr)) {
+		auto it = m_global_const_values.find(var->name);
+		if (it == m_global_const_values.end()) {
+			return false;
+		}
+		out.init_type = it->second.init_type;
+		out.init_value = it->second.init_value;
+		return true;
+	}
+
+	// Empty containers need no elements, so they are written directly by the
+	// backend rather than through the init function.
+	if (auto* array_lit = dynamic_cast<const ArrayLiteralExpr*>(expr)) {
+		if (array_lit->elements.empty()) {
+			out.init_type = InitType::EMPTY_ARRAY;
+			return true;
+		}
+		return false;
+	}
+	if (auto* dict_lit = dynamic_cast<const DictionaryLiteralExpr*>(expr)) {
+		if (dict_lit->elements.empty()) {
+			out.init_type = InitType::EMPTY_DICT;
+			return true;
+		}
+		return false;
+	}
+
+	return false;
+}
+
+IRInstruction::TypeHint CodeGenerator::derive_global_value_type(const IRGlobalVar& global) {
+	// An explicit type hint always wins: it is what the declaration promised.
+	if (global.type_hint != IRInstruction::TypeHint_NONE) {
+		return global.type_hint;
+	}
+	switch (global.init_type) {
+		case IRGlobalVar::InitType::INT: return Variant::INT;
+		case IRGlobalVar::InitType::FLOAT: return Variant::FLOAT;
+		case IRGlobalVar::InitType::BOOL: return Variant::BOOL;
+		case IRGlobalVar::InitType::STRING: return Variant::STRING;
+		case IRGlobalVar::InitType::EMPTY_ARRAY: return Variant::ARRAY;
+		case IRGlobalVar::InitType::EMPTY_DICT: return Variant::DICTIONARY;
+		case IRGlobalVar::InitType::NULL_VAL:
+		case IRGlobalVar::InitType::NONE:
+		case IRGlobalVar::InitType::RUNTIME:
+			// RUNTIME globals carry the type of the value the init function
+			// produced, which the caller fills in; an untyped one is just a
+			// Variant of any type.
+			return IRInstruction::TypeHint_NONE;
+	}
+	return IRInstruction::TypeHint_NONE;
+}
+
 bool CodeGenerator::is_global_variable(const std::string& name) const {
 	return m_global_variables.find(name) != m_global_variables.end();
+}
+
+bool CodeGenerator::is_global_const(const std::string& name) const {
+	return m_global_consts.find(name) != m_global_consts.end();
 }
 
 int CodeGenerator::gen_global_class_get(const std::string& class_name, IRFunction& func) {

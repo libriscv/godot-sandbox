@@ -12,6 +12,12 @@ void IROptimizer::optimize(IRProgram& program) {
 	for (auto& func : program.functions) {
 		optimize_function(func);
 	}
+	// The global init function is a normal IR function and has to be optimized
+	// with the rest, otherwise it is the one function in the program that the
+	// backend sees in unoptimized form.
+	if (program.has_global_init) {
+		optimize_function(program.global_init);
+	}
 }
 
 void IROptimizer::optimize_function(IRFunction& func) {
@@ -925,10 +931,13 @@ void IROptimizer::copy_propagation(IRFunction& func) {
 			constant_regs.clear();
 		}
 
-		// Mark the destination register as "killed" - it's no longer a constant we can propagate
-		if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-			int dst = std::get<int>(instr.operands[0].value);
-			constant_regs.erase(dst);
+		// Mark the destination register as "killed" - it's no longer a constant
+		// we can propagate. CALL holds its destination in operand 1, so this has
+		// to go through the operand-role table: missing the kill would let a
+		// stale constant be propagated over a call result.
+		const int killed = ir_destination_register(instr);
+		if (killed >= 0) {
+			constant_regs.erase(killed);
 		}
 
 		// Track constant loads
@@ -1017,105 +1026,46 @@ std::unordered_set<int> IROptimizer::find_live_registers(const IRFunction& func)
 	//
 	// This must be conservative: any register operand we fail to account for
 	// here can have its defining instruction deleted by eliminate_dead_code(),
-	// silently miscompiling the program. So instead of whitelisting the
-	// opcodes that read their operands, we assume EVERY instruction reads all
-	// of its register operands except operand 0, which is the destination for
-	// the vast majority of opcodes. The handful of opcodes that also read
-	// operand 0 are listed in reads_destination_operand().
+	// silently miscompiling the program. Every register operand that is not the
+	// instruction's destination counts as a read, with the destination located
+	// through the shared operand-role table in ir.cpp.
+	std::vector<int> reads;
 	for (const auto& instr : func.instructions) {
-		// RETURN with no operands implicitly returns r0
-		if (instr.opcode == IROpcode::RETURN && instr.operands.empty()) {
-			live.insert(0);
-			continue;
-		}
-
-		const size_t first = reads_destination_operand(instr.opcode) ? 0 : 1;
-		for (size_t i = first; i < instr.operands.size(); i++) {
-			if (instr.operands[i].type == IRValue::Type::REGISTER) {
-				live.insert(std::get<int>(instr.operands[i].value));
-			}
-		}
+		reads.clear();
+		ir_collect_read_registers(instr, reads);
+		live.insert(reads.begin(), reads.end());
 	}
 
 	return live;
 }
 
-bool IROptimizer::reads_destination_operand(IROpcode op) {
-	// Opcodes whose operand 0 is a source rather than a destination register
-	switch (op) {
-		// Branches test their first operand(s)
-		case IROpcode::BRANCH_ZERO:
-		case IROpcode::BRANCH_NOT_ZERO:
-		case IROpcode::BRANCH_EQ:
-		case IROpcode::BRANCH_NEQ:
-		case IROpcode::BRANCH_LT:
-		case IROpcode::BRANCH_LTE:
-		case IROpcode::BRANCH_GT:
-		case IROpcode::BRANCH_GTE:
-		// RETURN reads the value it returns
-		case IROpcode::RETURN:
-		// VSET/VSET_INLINE write into the object held by operand 0
-		case IROpcode::VSET:
-		case IROpcode::VSET_INLINE:
-			return true;
-		default:
-			return false;
-	}
-}
 
 bool IROptimizer::is_register_used_after(const IRFunction& func, int reg, size_t instr_idx) {
+	std::vector<int> reads;
+	bool crossed_control_flow = false;
 	for (size_t i = instr_idx; i < func.instructions.size(); i++) {
 		const auto& instr = func.instructions[i];
 
-		// Check if register is read
-		for (size_t j = 0; j < instr.operands.size(); j++) {
-			if (instr.operands[j].type == IRValue::Type::REGISTER) {
-				int r = std::get<int>(instr.operands[j].value);
-				if (r == reg) {
-					// For most instructions, first operand is destination, rest are sources
-					// Exception: BRANCH_ZERO, BRANCH_NOT_ZERO read first operand
-					if (j > 0 || instr.opcode == IROpcode::BRANCH_ZERO || instr.opcode == IROpcode::BRANCH_NOT_ZERO) {
-						return true;
-					}
-				}
+		// A read anywhere in the instruction keeps the register live.
+		reads.clear();
+		ir_collect_read_registers(instr, reads);
+		for (int r : reads) {
+			if (r == reg) {
+				return true;
 			}
 		}
 
-		// Check if register is written (kills liveness)
-		switch (instr.opcode) {
-			case IROpcode::LOAD_IMM:
-			case IROpcode::LOAD_BOOL:
-			case IROpcode::LOAD_STRING:
-			case IROpcode::MOVE:
-			case IROpcode::ADD:
-			case IROpcode::SUB:
-			case IROpcode::MUL:
-			case IROpcode::DIV:
-			case IROpcode::MOD:
-			case IROpcode::BIT_AND:
-			case IROpcode::BIT_OR:
-			case IROpcode::BIT_XOR:
-			case IROpcode::SHL:
-			case IROpcode::SHR:
-			case IROpcode::NEG:
-			case IROpcode::NOT:
-			case IROpcode::BIT_NOT:
-			case IROpcode::CMP_EQ:
-			case IROpcode::CMP_NEQ:
-			case IROpcode::CMP_LT:
-			case IROpcode::CMP_LTE:
-			case IROpcode::CMP_GT:
-			case IROpcode::CMP_GTE:
-				if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-					int dst = std::get<int>(instr.operands[0].value);
-					if (dst == reg) {
-						return false; // Register is overwritten before use
-					}
-				}
-				break;
-
-			default:
-				break;
+		// A definition that is not also a read kills liveness, but only while the
+		// scan is still straight-line: past a label or a branch the definition
+		// may sit on a path that is not taken, and treating it as a kill would
+		// declare a still-live register dead.
+		if (instr.opcode == IROpcode::LABEL || instr.opcode == IROpcode::JUMP ||
+		    is_branch_op(instr.opcode) || instr.opcode == IROpcode::RETURN) {
+			crossed_control_flow = true;
+			continue;
+		}
+		if (!crossed_control_flow && ir_destination_register(instr) == reg) {
+			return false;
 		}
 	}
 
@@ -1277,19 +1227,14 @@ static void flush_pending(std::vector<IRInstruction>& new_instructions,
 static bool reads_pending_store(const IRInstruction& instr,
 	const std::unordered_map<int, size_t>& pending_stores)
 {
-	for (size_t i = 1; i < instr.operands.size(); i++) {
-		const auto& op = instr.operands[i];
-		if (op.type == IRValue::Type::REGISTER) {
-			int reg = std::get<int>(op.value);
-			if (pending_stores.count(reg)) {
-				return true;
-			}
-		}
-	}
-	// Special case: BRANCH_ZERO and BRANCH_NOT_ZERO read the first operand
-	if ((instr.opcode == IROpcode::BRANCH_ZERO || instr.opcode == IROpcode::BRANCH_NOT_ZERO) &&
-		!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-		int reg = std::get<int>(instr.operands[0].value);
+	// Operand 0 is a read for the branches, RETURN, STORE_GLOBAL and VSET, and
+	// is not the destination for CALL. Delaying a store past an instruction that
+	// reads it would hand that instruction a stale value, so the roles come from
+	// the shared table rather than from a per-pass guess.
+	static thread_local std::vector<int> reads;
+	reads.clear();
+	ir_collect_read_registers(instr, reads);
+	for (int reg : reads) {
 		if (pending_stores.count(reg)) {
 			return true;
 		}
@@ -1386,6 +1331,15 @@ void IROptimizer::eliminate_redundant_stores(IRFunction& func) {
 			// First store to this register - track it as pending
 			pending_stores[dst] = i;
 			continue;
+		}
+
+		// Any other instruction that defines a register with a pending store
+		// makes that store dead: nothing read it (a read would have flushed
+		// above), and re-emitting it at the next flush point would land after
+		// this definition and clobber it.
+		const int defined = ir_destination_register(instr);
+		if (defined >= 0) {
+			pending_stores.erase(defined);
 		}
 
 		// Not a store operation - add it directly

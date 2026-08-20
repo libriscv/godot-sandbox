@@ -74,6 +74,42 @@ void IRInterpreter::execute_instruction(const IRInstruction& instr, ExecutionCon
 			break;
 		}
 
+		case IROpcode::LOAD_BOOL: {
+			int reg = std::get<int>(instr.operands[0].value);
+			int64_t imm = std::get<int64_t>(instr.operands[1].value);
+			ctx.registers[reg] = (imm != 0);
+			break;
+		}
+
+		case IROpcode::LOAD_FLOAT_IMM: {
+			int reg = std::get<int>(instr.operands[0].value);
+			ctx.registers[reg] = std::get<double>(instr.operands[1].value);
+			break;
+		}
+
+		case IROpcode::LOAD_STRING: {
+			int reg = std::get<int>(instr.operands[0].value);
+			const int64_t index = std::get<int64_t>(instr.operands[1].value);
+			if (index < 0 || static_cast<size_t>(index) >= m_program.string_constants.size()) {
+				throw CompilerException(ErrorType::OPTIMIZER_ERROR, "String constant index out of range");
+			}
+			ctx.registers[reg] = m_program.string_constants[index];
+			break;
+		}
+
+		case IROpcode::CONVERT: {
+			int dst = std::get<int>(instr.operands[0].value);
+			int src = std::get<int>(instr.operands[1].value);
+			Value src_value = get_register(ctx, src);
+			if (instr.type_hint != Variant::FLOAT) {
+				throw CompilerException(ErrorType::OPTIMIZER_ERROR,
+					std::string("CONVERT to ") + variant_type_name(instr.type_hint) +
+					" is not implemented in the interpreter");
+			}
+			ctx.registers[dst] = get_double(src_value);
+			break;
+		}
+
 		case IROpcode::MOVE: {
 			int dst = std::get<int>(instr.operands[0].value);
 			int src = std::get<int>(instr.operands[1].value);
@@ -225,7 +261,8 @@ void IRInterpreter::execute_instruction(const IRInstruction& instr, ExecutionCon
 			break;
 
 		default:
-			throw CompilerException(ErrorType::OPTIMIZER_ERROR, "Unimplemented opcode in interpreter");
+			throw CompilerException(ErrorType::OPTIMIZER_ERROR,
+				std::string("Unimplemented opcode in interpreter: ") + ir_opcode_name(instr.opcode));
 	}
 }
 

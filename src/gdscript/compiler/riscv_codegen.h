@@ -33,6 +33,11 @@ public:
 	const std::vector<IRGlobalVar>& get_globals() const { return m_globals; }
 	size_t get_global_data_size() const { return m_global_data_size; }
 
+	// Label of the synthetic function that evaluates non-constant global
+	// initializers. Not a user-visible function name, so it cannot collide with
+	// one: GDScript identifiers cannot contain a '.'.
+	static constexpr const char* GLOBAL_INIT_LABEL = ".init_globals";
+
 private:
 	struct Function {
 		std::string name;
@@ -54,7 +59,7 @@ private:
 
 	// Higher-level RISC-V instructions
 	void emit_li(uint8_t rd, int64_t imm);      // Load immediate
-	void emit_la(uint8_t rd, const std::string& label); // Load address (pseudo: auipc + addi)
+	void emit_la(uint8_t rd, const std::string& label, int32_t addend = 0); // Load address (pseudo: auipc + addi)
 	void emit_mv(uint8_t rd, uint8_t rs);       // Move
 	void emit_addi(uint8_t rd, uint8_t rs1, int32_t imm); // Add immediate
 	void emit_add(uint8_t rd, uint8_t rs1, uint8_t rs2);
@@ -138,13 +143,24 @@ private:
 
 	// Label management
 	void define_label(const std::string& label);
-	void mark_label_use(const std::string& label, size_t code_offset);
+	// `addend` is folded into the resolved address, which lets a single AUIPC+ADDI
+	// pair reach `label + addend` for any 32-bit addend. Computing the same address
+	// as `la` followed by `addi` silently truncates once the addend leaves the
+	// 12-bit immediate range, which happens as soon as a program has enough globals.
+	void mark_label_use(const std::string& label, size_t code_offset, int32_t addend = 0);
 	void resolve_labels();
 
 	// Variant field access helpers
 	// Load/store Variant fields with proper types and offsets
 	void emit_load_variant_type(uint8_t rd, uint8_t base_reg, int32_t variant_offset);
 	void emit_store_variant_type(uint8_t rs, uint8_t base_reg, int32_t variant_offset);
+	// Godot's Variant::booleanize() for the Variant at variant_offset(sp), into rd.
+	// type_hint is the statically known Variant type, or IRInstruction::TypeHint_NONE.
+	void emit_variant_truthy(uint8_t rd, int variant_offset, int32_t type_hint);
+
+	// Variant::evaluate() for a unary operator. Uses scratch slot 1 for the NIL
+	// right-hand operand Godot's operator table expects.
+	void emit_variant_eval_unary(int result_offset, int operand_offset, int op);
 	void emit_load_variant_bool(uint8_t rd, uint8_t base_reg, int32_t variant_offset);
 	void emit_store_variant_bool(uint8_t rs, uint8_t base_reg, int32_t variant_offset);
 	void emit_load_variant_int(uint8_t rd, uint8_t base_reg, int32_t variant_offset);
@@ -216,7 +232,12 @@ private:
 	// Output buffer
 	std::vector<uint8_t> m_code;
 	std::unordered_map<std::string, size_t> m_labels;
-	std::vector<std::pair<std::string, size_t>> m_label_uses;
+	struct LabelUse {
+		std::string label;
+		size_t code_offset;
+		int32_t addend;
+	};
+	std::vector<LabelUse> m_label_uses;
 	std::unordered_map<std::string, size_t> m_functions;
 
 	// Register allocator

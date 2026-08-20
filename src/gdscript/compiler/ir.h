@@ -20,6 +20,7 @@ enum class IROpcode {
 	LOAD_GLOBAL,     // Load global variable into register
 	STORE_GLOBAL,    // Store register into global variable
 	MOVE,            // Move between registers
+	CONVERT,         // Convert a Variant to the type in type_hint (currently INT -> FLOAT)
 
 	// Arithmetic
 	ADD,             // Add two registers
@@ -204,19 +205,66 @@ struct IRGlobalVar {
 		BOOL,           // Bool literal
 		NULL_VAL,       // Explicit null
 		EMPTY_ARRAY,    // Empty array []
-		EMPTY_DICT      // Empty dictionary {}
+		EMPTY_DICT,     // Empty dictionary {}
+		RUNTIME         // Evaluated by IRProgram::global_init at startup
 	};
 	InitType init_type = InitType::NONE;
 	std::variant<int64_t, double, std::string, bool> init_value;
+
+	// The Variant type the global holds, when it is known at compile time.
+	// Taken from the type hint when there is one and derived from the initializer
+	// otherwise. Drives both @export property registration and the decision of
+	// whether a store into this global has to go through VASSIGN. TypeHint_NONE
+	// means "any Variant".
+	IRInstruction::TypeHint value_type = IRInstruction::TypeHint_NONE;
 };
 
 struct IRProgram {
 	std::vector<IRGlobalVar> globals;
 	std::vector<IRFunction> functions;
 	std::vector<std::string> string_constants;
+
+	// Synthetic function evaluating every global initializer that is not a
+	// compile-time constant: array and dictionary literals, constructor calls,
+	// references to other globals. Runs once from the entry point, before any
+	// @export property is registered. Empty when all globals fold to constants.
+	IRFunction global_init;
+	bool has_global_init = false;
 };
 
 const char* ir_opcode_name(IROpcode op);
+
+// Human-readable name of a Variant type / type hint, for diagnostics and dumps.
+const char* variant_type_name(IRInstruction::TypeHint hint);
+
+// ---------------------------------------------------------------------------
+// Operand roles
+//
+// The IR is not SSA and the operand layout is not uniform: most opcodes put
+// their destination register in operand 0, but CALL puts the callee name there
+// and its destination in operand 1, while VSET, STORE_GLOBAL, RETURN and the
+// branches have no destination at all and read operand 0.
+//
+// Every pass that needs to know whether an operand is read or written has to go
+// through these helpers. Passes that instead hardcode "operand 0 is the
+// destination, the rest are sources" silently miscompile CALL and VSET, which is
+// exactly the class of bug these exist to prevent.
+// ---------------------------------------------------------------------------
+
+// Index of the operand holding the destination register, or -1 when the opcode
+// does not write a register.
+int ir_destination_operand_index(IROpcode op);
+
+// The destination register of an instruction, or -1 when it has none.
+int ir_destination_register(const IRInstruction& instr);
+
+// Whether operand `index` is a register that the instruction reads. Returns
+// false for non-register operands and for the destination operand.
+bool ir_reads_operand(const IRInstruction& instr, size_t index);
+
+// Collect every register the instruction reads. RETURN without operands
+// implicitly reads r0.
+void ir_collect_read_registers(const IRInstruction& instr, std::vector<int>& out);
 
 // TypeHint helper functions - now using Variant::Type directly
 namespace TypeHintUtils {

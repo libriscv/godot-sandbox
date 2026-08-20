@@ -222,20 +222,23 @@ void test_logical_operators() {
 	CodeGenerator codegen;
 	IRProgram ir = codegen.generate(program);
 
-	// Should have AND, OR, and NOT operations
-	bool has_and = false;
-	bool has_or = false;
+	// 'and' and 'or' short-circuit, so they lower to branches over the
+	// right-hand side rather than to an AND/OR that evaluates both sides.
+	// 'not' has no short circuit and stays a single instruction.
 	bool has_not = false;
-
+	int branch_count = 0;
 	for (const auto& instr : ir.functions[0].instructions) {
-		if (instr.opcode == IROpcode::AND) has_and = true;
-		if (instr.opcode == IROpcode::OR) has_or = true;
+		assert(instr.opcode != IROpcode::AND);
+		assert(instr.opcode != IROpcode::OR);
 		if (instr.opcode == IROpcode::NOT) has_not = true;
+		if (instr.opcode == IROpcode::BRANCH_ZERO || instr.opcode == IROpcode::BRANCH_NOT_ZERO) {
+			branch_count++;
+		}
 	}
 
-	assert(has_and);
-	assert(has_or);
 	assert(has_not);
+	// Two tests for 'and' (a, b) and two for 'or' (the and-result, 'not c').
+	assert(branch_count == 4);
 
 	std::cout << "  ✓ Logical operators test passed" << std::endl;
 }

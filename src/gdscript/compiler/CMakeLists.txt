@@ -79,16 +79,17 @@ if (BUILD_TESTING)
 	add_gdscript_test(test_constant_pool tests/test_constant_pool.cpp)
 	add_gdscript_test(test_ir_optimizer tests/test_ir_optimizer.cpp)
 	add_gdscript_test(test_double_precision tests/test_double_precision.cpp)
+	add_gdscript_test(test_regressions tests/test_regressions.cpp)
 
 	# Run all tests target
 	add_custom_target(run_tests
 		COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-		DEPENDS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision
+		DEPENDS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions
 		COMMENT "Running all GDScript compiler tests"
 	)
 
 	# Install test targets (only when BUILD_TESTING is ON)
-	install(TARGETS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision
+	install(TARGETS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions
 	        RUNTIME DESTINATION bin)
 endif()
 

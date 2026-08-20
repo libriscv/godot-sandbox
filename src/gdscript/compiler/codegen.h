@@ -28,12 +28,14 @@ private:
 	void gen_break(const BreakStmt* stmt, IRFunction& func);
 	void gen_continue(const ContinueStmt* stmt, IRFunction& func);
 	void gen_expr_stmt(const ExprStmt* stmt, IRFunction& func);
+	void emit_conditional_branch(IROpcode opcode, int cond_reg, const std::string& label, IRFunction& func);
 
 	// Expression code generation (returns register containing result)
 	int gen_expr(const Expr* expr, IRFunction& func);
 	int gen_literal(const LiteralExpr* expr, IRFunction& func);
 	int gen_variable(const VariableExpr* expr, IRFunction& func);
 	int gen_binary(const BinaryExpr* expr, IRFunction& func);
+	int gen_logical(const BinaryExpr* expr, IRFunction& func); // short-circuiting and/or
 	int gen_unary(const UnaryExpr* expr, IRFunction& func);
 	int gen_ternary(const TernaryExpr* expr, IRFunction& func);
 	int gen_call(const CallExpr* expr, IRFunction& func);
@@ -110,7 +112,47 @@ private:
 
 	// Global variables
 	std::unordered_map<std::string, size_t> m_global_variables; // Maps global name to index
+	std::unordered_set<std::string> m_global_consts; // Names of globals declared const
 	bool is_global_variable(const std::string& name) const;
+	bool is_global_const(const std::string& name) const;
+
+	// Values of global consts that folded to a compile-time constant, so that a
+	// later initializer can refer to them by name.
+	std::unordered_map<std::string, IRGlobalVar> m_global_const_values;
+
+	// Number of globals whose initializer has already been lowered. An
+	// initializer referring to a global at or beyond this index is a forward
+	// reference and would read NIL, so it is rejected instead.
+	size_t m_globals_lowered = 0;
+
+	// Fold a global initializer to a compile-time constant. Returns false when
+	// the expression has to be evaluated at startup instead.
+	bool fold_global_initializer(const Expr* expr, IRGlobalVar& out) const;
+
+	// Variant type a global holds, when known at compile time.
+	static IRInstruction::TypeHint derive_global_value_type(const IRGlobalVar& global);
+
+	// Give a type-hinted global without an initializer the default value of its
+	// declared type, the way GDScript does.
+	void apply_default_initializer(IRGlobalVar& global, IRFunction& init_func,
+		size_t global_index, bool& has_global_init);
+
+	// Construction opcode for a packed array type, or IROpcode::LABEL when the
+	// type is not a packed array.
+	static IROpcode packed_array_opcode(IRInstruction::TypeHint type);
+
+	// Make the value in `reg` match a declared type: performs GDScript's implicit
+	// int -> float conversion and rejects mismatches that GDScript rejects.
+	// Returns the register holding the coerced value.
+	int coerce_to_declared_type(int reg, IRInstruction::TypeHint declared,
+		IRFunction& func, const std::string& what);
+
+	// Make a folded constant initializer match the global's declared type, or
+	// reject it when it cannot.
+	void coerce_folded_initializer(IRGlobalVar& global) const;
+
+	// Declared type of each global by index, for coercing stores.
+	std::vector<IRInstruction::TypeHint> m_global_types;
 };
 
 } // namespace gdscript
