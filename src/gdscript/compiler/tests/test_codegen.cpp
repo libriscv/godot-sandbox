@@ -6,6 +6,7 @@
 #include "../compiler_exception.h"
 #include <cassert>
 #include <iostream>
+#include <algorithm>
 
 using namespace gdscript;
 
@@ -719,6 +720,181 @@ void test_vector4_operations() {
 	std::cout << "  ✓ Vector4 operations test passed" << std::endl;
 }
 
+// Walks the machine code of one function and verifies that every sp-relative access
+// stays inside the stack frame the prologue allocated. A slot placed past the end of
+// the frame does not fault: it silently writes into the caller's frame, so a wrong
+// offset only shows up as corrupted locals much later. Returns false if the function
+// adjusts sp in a way this simple linear walk cannot follow, in which case the caller
+// skips the check rather than reporting a bogus failure.
+static bool check_stack_accesses_in_frame(const std::vector<uint8_t>& code, size_t begin, size_t end,
+		const std::string& what) {
+	static constexpr int VARIANT_SIZE = 24;
+	static constexpr uint32_t REG_SP = 2;
+	static constexpr uint32_t REG_FP = 8;
+	static constexpr uint32_t RET_INSTR = 0x00008067; // jalr x0, 0(ra)
+
+	auto word_at = [&](size_t off) -> uint32_t {
+		return uint32_t(code[off]) | (uint32_t(code[off + 1]) << 8) |
+				(uint32_t(code[off + 2]) << 16) | (uint32_t(code[off + 3]) << 24);
+	};
+
+	if (begin + 4 > end) {
+		return false;
+	}
+
+	// Prologue: addi sp, sp, -frame_size
+	const uint32_t first = word_at(begin);
+	if ((first & 0x7F) != 0x13 || ((first >> 12) & 7) != 0 ||
+			((first >> 7) & 0x1F) != REG_SP || ((first >> 15) & 0x1F) != REG_SP) {
+		return false; // No recognizable frame (large frames use li + add)
+	}
+	const int32_t frame_size = -(int32_t(first) >> 20);
+	if (frame_size <= 0) {
+		return false;
+	}
+
+	// Offset of sp relative to the frame base, i.e. where sp stood right after the
+	// prologue. Argument shuffling for calls lowers it temporarily.
+	int32_t sp_delta = 0;
+
+	for (size_t off = begin + 4; off + 4 <= end; off += 4) {
+		const uint32_t instr = word_at(off);
+		const uint32_t opcode = instr & 0x7F;
+		const uint32_t rd = (instr >> 7) & 0x1F;
+		const uint32_t funct3 = (instr >> 12) & 7;
+		const uint32_t rs1 = (instr >> 15) & 0x1F;
+
+		if (instr == RET_INSTR) {
+			// A function can return from several places; each epilogue restores sp.
+			sp_delta = 0;
+			continue;
+		}
+
+		if (opcode == 0x13 && funct3 == 0 && rs1 == REG_SP) { // addi rd, sp, imm
+			const int32_t imm = int32_t(instr) >> 20;
+			if (rd == REG_SP) {
+				sp_delta += imm;
+				continue;
+			}
+			if (rd == REG_FP) {
+				continue; // Frame pointer setup: fp = sp + frame_size
+			}
+			// The address of a Variant slot: all 24 bytes of it must be in the frame.
+			const int32_t from_base = sp_delta + imm;
+			if (imm < 0 || from_base + VARIANT_SIZE > frame_size) {
+				std::cerr << "    " << what << ": Variant slot at sp+" << imm
+						  << " (frame base +" << from_base << ") escapes the "
+						  << frame_size << "-byte frame" << std::endl;
+				return true; // Recognized, and wrong
+			}
+			continue;
+		}
+		if (rs1 == REG_SP && (opcode == 0x03 || opcode == 0x07)) { // loads
+			const int32_t imm = int32_t(instr) >> 20;
+			if (imm < 0 || sp_delta + imm + 8 > frame_size) {
+				std::cerr << "    " << what << ": load at sp+" << imm << " escapes the "
+						  << frame_size << "-byte frame" << std::endl;
+				return true;
+			}
+			continue;
+		}
+		if (rs1 == REG_SP && (opcode == 0x23 || opcode == 0x27)) { // stores
+			const int32_t imm = (int32_t(instr & 0xFE000000) >> 20) | int32_t((instr >> 7) & 0x1F);
+			if (imm < 0 || sp_delta + imm + 8 > frame_size) {
+				std::cerr << "    " << what << ": store at sp+" << imm << " escapes the "
+						  << frame_size << "-byte frame" << std::endl;
+				return true;
+			}
+			continue;
+		}
+		// Anything else touching sp (add sp, sp, t0) makes the walk unreliable.
+		if ((opcode == 0x33 || opcode == 0x3B) && rd == REG_SP) {
+			return false;
+		}
+	}
+	return false;
+}
+
+// Compiles the source with the full pipeline and asserts no function writes outside
+// its own stack frame.
+static void assert_stack_frames_contain_all_slots(const std::string& source, const char* what) {
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	CodeGenerator codegen;
+	IRProgram ir = codegen.generate(program);
+	IROptimizer optimizer;
+	optimizer.optimize(ir);
+
+	RISCVCodeGen riscv;
+	std::vector<uint8_t> code = riscv.generate(ir);
+	assert(code.size() > 0);
+
+	// Function bodies run from one offset to the next; sort them to find the ends.
+	std::vector<std::pair<size_t, std::string>> funcs;
+	for (const auto& [name, offset] : riscv.get_function_offsets()) {
+		funcs.emplace_back(offset, name);
+	}
+	assert(!funcs.empty());
+	std::sort(funcs.begin(), funcs.end());
+
+	bool escaped = false;
+	for (size_t i = 0; i < funcs.size(); i++) {
+		const size_t begin = funcs[i].first;
+		const size_t end = (i + 1 < funcs.size()) ? funcs[i + 1].first : code.size();
+		escaped |= check_stack_accesses_in_frame(code, begin, end, std::string(what) + "/" + funcs[i].second);
+	}
+	assert(!escaped);
+}
+
+void test_stack_slots_stay_within_frame() {
+	std::cout << "Testing that Variant stack slots stay within the frame..." << std::endl;
+
+	// Untyped comparison: the fused compare-and-branch cannot use the native integer
+	// path, so it has to materialize the comparison result as a Variant. That scratch
+	// Variant used to be allocated after the frame had already been sized, which put
+	// it in the caller's frame and corrupted the caller's locals on every recursion.
+	assert_stack_frames_contain_all_slots(R"(func untyped_fibonacci(n):
+	if n <= 1:
+		return n
+	return untyped_fibonacci(n - 1) + untyped_fibonacci(n - 2)
+)",
+			"untyped fibonacci");
+
+	// Untyped comparisons and arithmetic against immediates both need a scratch Variant
+	// for the immediate operand.
+	assert_stack_frames_contain_all_slots(R"(func untyped_ops(a, b):
+	var c = a * 3
+	var d = 7 - b
+	var e = c == 21
+	var f = 4 != d
+	while a < 10:
+		a = a + 1
+	return [c, d, e, f, a]
+)",
+			"untyped ops");
+
+	// Negation builds a zero Variant to subtract from.
+	assert_stack_frames_contain_all_slots(R"(func negate(a):
+	return -a
+)",
+			"negation");
+
+	// Calls shuffle arguments through extra stack space below the frame.
+	assert_stack_frames_contain_all_slots(R"(func callee(a, b, c):
+	if a > b:
+		return c
+	return a
+
+func caller(x):
+	return callee(x, x - 1, x + 1)
+)",
+			"calls");
+
+	std::cout << "  ✓ Stack slots stay within frame test passed" << std::endl;
+}
+
 void test_auipc_addi_patching() {
 	std::cout << "Testing AUIPC+ADDI label patching (many constants)..." << std::endl;
 
@@ -1191,6 +1367,7 @@ int main() {
 		test_vector3_operations();
 		test_vector4_operations();
 		test_auipc_addi_patching();
+		test_stack_slots_stay_within_frame();
 		test_float_negation();
 
 		// Optimization tests

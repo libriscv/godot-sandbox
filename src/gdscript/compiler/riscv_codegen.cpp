@@ -395,6 +395,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	m_variant_offsets.clear();
 	m_num_params = func.parameters.size();
 	m_next_variant_slot = 0;
+	m_scratch_slot_base = 0;
 	m_stack_frame_size = 0;
 	m_current_instr_idx = 0;
 
@@ -411,14 +412,21 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	// Otherwise, optimizations that reorder or eliminate instructions will
 	// cause different virtual registers to get different offsets, breaking the code.
 	int max_variants = func.max_registers;
-	int variant_space = max_variants * VARIANT_SIZE;
+	// Some instructions have to materialize a Variant that no virtual register owns:
+	// an immediate operand, or the result of a comparison the following branch reads.
+	// Those live only for the length of one instruction's expansion, so a small shared
+	// scratch area is enough -- but it has to be part of the frame. Allocating it after
+	// the prologue was emitted would place it past the end of the frame, where the
+	// stores land in the caller's frame instead.
+	int variant_space = (max_variants + SCRATCH_VARIANT_SLOTS) * VARIANT_SIZE;
 
 	// Pre-assign all virtual register offsets
 	for (int vreg = 0; vreg < max_variants; vreg++) {
 		int offset = saved_reg_space + (vreg * VARIANT_SIZE);
 		m_variant_offsets[vreg] = offset;
 	}
-	m_next_variant_slot = max_variants;
+	m_scratch_slot_base = max_variants;
+	m_next_variant_slot = max_variants + SCRATCH_VARIANT_SLOTS;
 
 	m_stack_frame_size = saved_reg_space + variant_space;
 
@@ -723,8 +731,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
 
 					// Create a temporary Variant for the immediate value
-					int imm_vreg = m_next_variant_slot++;
-					int imm_offset = get_variant_stack_offset(imm_vreg);
+					int imm_offset = get_scratch_variant_offset();
 					emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
 					emit_variant_eval(dst_offset, lhs_offset, imm_offset, variant_op);
 				} else if (!lhs_is_reg && rhs_is_reg && instr.operands[1].type == IRValue::Type::IMMEDIATE) {
@@ -734,8 +741,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
 
 					// Create a temporary Variant for the immediate value
-					int imm_vreg = m_next_variant_slot++;
-					int imm_offset = get_variant_stack_offset(imm_vreg);
+					int imm_offset = get_scratch_variant_offset();
 					emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
 					emit_variant_eval(dst_offset, imm_offset, rhs_offset, variant_op);
 				} else {
@@ -755,8 +761,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// Actually for unary, we need a different approach - create a zero Variant
 				// For now, use subtract: 0 - src
 				// TODO: Add proper unary operation support
-				int zero_vreg = m_next_variant_slot++;
-				int zero_offset = get_variant_stack_offset(zero_vreg);
+				int zero_offset = get_scratch_variant_offset();
 				emit_variant_create_int(zero_offset, 0);
 				emit_variant_eval(dst_offset, zero_offset, src_offset, 7); // OP_SUBTRACT
 				break;
@@ -820,7 +825,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					int lhs_offset = get_variant_stack_offset(lhs_vreg);
 					int64_t imm_val = std::get<int64_t>(instr.operands[2].value);
 
-					int imm_offset = m_next_variant_slot++;
+					int imm_offset = get_scratch_variant_offset();
 					emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
 					emit_variant_eval(dst_offset, lhs_offset, imm_offset, variant_op);
 				} else if (!lhs_is_reg && rhs_is_reg && instr.operands[1].type == IRValue::Type::IMMEDIATE) {
@@ -829,7 +834,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					int rhs_offset = get_variant_stack_offset(rhs_vreg);
 					int64_t imm_val = std::get<int64_t>(instr.operands[1].value);
 
-					int imm_offset = m_next_variant_slot++;
+					int imm_offset = get_scratch_variant_offset();
 					emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
 					emit_variant_eval(dst_offset, imm_offset, rhs_offset, variant_op);
 				} else {
@@ -962,8 +967,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// This is less optimal but maintains correctness
 					int lhs_offset = get_variant_stack_offset(lhs_vreg);
 					int rhs_offset = get_variant_stack_offset(rhs_vreg);
-					int tmp_vreg = m_next_variant_slot++;
-					int tmp_offset = get_variant_stack_offset(tmp_vreg);
+					int tmp_offset = get_scratch_variant_offset();
 
 					// Map IR opcode to Variant::Operator
 					int variant_op;
@@ -2468,13 +2472,21 @@ int RISCVCodeGen::get_variant_stack_offset(int virtual_reg) {
 		return it->second;
 	}
 
-	// Allocate new stack slot for this Variant
-	// Stack layout: [saved ra (8)] [saved fp (8)] [saved a0 (8)] [Variants...]
-	int offset = 24 + (m_next_variant_slot * VARIANT_SIZE);
-	m_variant_offsets[virtual_reg] = offset;
-	m_next_variant_slot++;
+	// The frame was sized from IRFunction::max_registers before the body was emitted,
+	// so a virtual register that was never pre-assigned has no room in it. Growing the
+	// frame here is not possible any more, and handing out an offset past its end would
+	// silently corrupt the caller's frame, so fail the compilation instead.
+	throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"Virtual register r" + std::to_string(virtual_reg) + " is outside the stack frame (max_registers too low)");
+}
 
-	return offset;
+int RISCVCodeGen::get_scratch_variant_offset(int index) {
+	if (index < 0 || index >= SCRATCH_VARIANT_SLOTS) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+				"Scratch Variant slot " + std::to_string(index) + " is out of range");
+	}
+	// Stack layout: [saved ra (8)] [saved fp (8)] [saved a0 (8)] [Variants...] [scratch...]
+	return 24 + ((m_scratch_slot_base + index) * VARIANT_SIZE);
 }
 
 void RISCVCodeGen::emit_variant_create_int(int stack_offset, int64_t value) {

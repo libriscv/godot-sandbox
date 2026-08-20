@@ -125,9 +125,48 @@ func test_binary_translation():
 	# Set the test program
 	s.set_program(Sandbox_TestsTests)
 
-	str = s.emit_binary_translation()
-	assert_false(str.is_empty(), "Binary translation is not empty")
-	#print(str)
+	if Sandbox.has_feature_binary_translation():
+		str = s.emit_binary_translation()
+		assert_false(str.is_empty(), "Binary translation is not empty")
+		#print(str)
+	else:
+		# Only the binary translator can emit C99, so a build without it is
+		# expected to refuse. The JIT backends have nothing to emit.
+		str = s.emit_binary_translation()
+		assert_true(str.is_empty(), "Binary translation is empty")
+		assert_engine_error("Binary translation is not enabled")
+
+	s.queue_free()
+
+
+func test_binary_translation_properties():
+	# These properties exist no matter which binary translation backend (if any)
+	# was compiled in, so that programs don't have to know the build config.
+	# Backends without an equivalent option simply ignore them.
+	var s = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	assert_eq(s.binary_translation_nbit_as, false)
+	s.binary_translation_nbit_as = true
+	assert_eq(s.binary_translation_nbit_as, true)
+	s.binary_translation_nbit_as = false
+
+	assert_eq(s.binary_translation_register_caching, true)
+	s.binary_translation_register_caching = false
+	assert_eq(s.binary_translation_register_caching, false)
+
+	assert_eq(s.get_binary_translation_bg_compilation(), true)
+	s.set_binary_translation_bg_compilation(false)
+	assert_eq(s.get_binary_translation_bg_compilation(), false)
+
+	# JIT can be toggled even when no JIT backend is compiled in, but it only
+	# ever reports as enabled when there is one to enable.
+	var had_jit : bool = Sandbox.is_jit_enabled()
+	Sandbox.set_jit_enabled(false)
+	assert_eq(Sandbox.is_jit_enabled(), false)
+	Sandbox.set_jit_enabled(true)
+	assert_eq(Sandbox.is_jit_enabled(), Sandbox.has_feature_jit())
+	Sandbox.set_jit_enabled(had_jit)
 
 	s.queue_free()
 

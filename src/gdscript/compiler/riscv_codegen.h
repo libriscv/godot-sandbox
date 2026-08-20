@@ -160,6 +160,14 @@ private:
 	// Get stack offset for a virtual register (in bytes)
 	int get_variant_stack_offset(int virtual_reg);
 
+	// Get the stack offset of a scratch Variant slot (in bytes).
+	// Scratch slots hold the short-lived Variants that a single IR instruction has to
+	// materialize -- an immediate operand, or the result of a comparison that is
+	// consumed by the branch right after it. They are reserved as part of the stack
+	// frame, and reused by every instruction, so they must never be expected to survive
+	// past the instruction that wrote them.
+	int get_scratch_variant_offset(int index = 0);
+
 	// Syscall result handling helpers
 	// Store syscall result from register to Variant, with optional register allocation
 	// result_vreg: virtual register for the result
@@ -195,7 +203,12 @@ private:
 	size_t m_num_params = 0; // Number of parameters in current function
 	int m_stack_frame_size = 0; // Total stack frame size in bytes
 	int m_next_variant_slot = 0; // Next Variant slot to allocate
+	int m_scratch_slot_base = 0; // First Variant slot of the scratch area
 	int m_current_instr_idx = 0; // Current instruction index for register allocation
+
+	// Number of scratch Variant slots reserved in every stack frame. No instruction
+	// expansion needs more than one live at a time; the second is headroom.
+	static constexpr int SCRATCH_VARIANT_SLOTS = 2;
 
 	// Variant structure layout constants
 	// Variant layout: [uint32_t m_type (4)] [padding (4)] [union data (16)]
