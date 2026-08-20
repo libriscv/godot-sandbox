@@ -77,7 +77,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_labels.clear();
 	m_label_uses.clear();
 	m_functions.clear();
-	m_variant_offsets.clear();
+	m_fn = FunctionState {};
 	m_constant_pool.clear();
 	m_constant_pool_map.clear();
 	m_string_constants = &program.string_constants;
@@ -103,7 +103,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		// Address = .globals + (i * sizeof(Variant)). The index is folded into
 		// the relocation so that programs with many globals still address the
 		// tail of the array correctly.
-		emit_la(REG_T0, ".globals", static_cast<int32_t>(i * variant_size()));
+		emit_address_of_global(REG_T0, i);
 
 		// Initialize based on type
 		if (global.init_type == IRGlobalVar::InitType::INT) {
@@ -147,12 +147,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 			total_space = (total_space + 15) & ~15; // Align to 16 bytes
 
 			// Adjust stack pointer
-			if (total_space < 2048) {
-				emit_i_type(0x13, REG_SP, 0, REG_SP, -total_space);
-			} else {
-				emit_li(REG_T2, -total_space);
-				emit_add(REG_SP, REG_SP, REG_T2);
-			}
+			emit_add_offset(REG_SP, REG_SP, -total_space);
 
 			// Store string data on stack
 			for (size_t j = 0; j < str_value.length(); j++) {
@@ -164,11 +159,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 
 			// Create struct at sp + str_space
 			// struct.str = sp (pointer to string data)
-			if (str_space < 2048) {
-				emit_i_type(0x13, REG_T2, 0, REG_SP, 0); // T2 = SP + 0 (pointer to string)
-			} else {
-				emit_mv(REG_T2, REG_SP);
-			}
+			emit_mv(REG_T2, REG_SP); // T2 = pointer to the string data at sp
 			emit_sd(REG_T2, REG_SP, str_space); // Store pointer
 
 			// struct.length = str_len
@@ -176,12 +167,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 			emit_sd(REG_T2, REG_SP, str_space + 8); // Store length
 
 			// Prepare data pointer in T1 for VCREATE
-			if (str_space < 2048) {
-				emit_i_type(0x13, REG_T1, 0, REG_SP, str_space);
-			} else {
-				emit_li(REG_T1, str_space);
-				emit_add(REG_T1, REG_SP, REG_T1);
-			}
+			emit_add_offset(REG_T1, REG_SP, str_space);
 
 			// Calculate the offset to the global Variant after stack adjustment
 			// T0 still points to the global Variant (loaded with la before stack adjustment)
@@ -206,12 +192,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 			emit_ecall();
 
 			// Restore stack pointer
-			if (total_space < 2048) {
-				emit_i_type(0x13, REG_SP, 0, REG_SP, total_space);
-			} else {
-				emit_li(REG_T2, total_space);
-				emit_add(REG_SP, REG_SP, REG_T2);
-			}
+			emit_add_offset(REG_SP, REG_SP, total_space);
 		} else if (global.init_type == IRGlobalVar::InitType::EMPTY_ARRAY) {
 			// Empty Array initialization using VCREATE
 			// a0 = pointer to destination Variant (T0 already points to it)
@@ -265,7 +246,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	// return Variant through a0, so a0 has to point at real storage: the
 	// scratch slot allocated past the end of the .globals array.
 	if (program.has_global_init) {
-		emit_la(REG_A0, ".globals", static_cast<int32_t>(m_global_count * variant_size()));
+		emit_address_of_global(REG_A0, m_global_count);
 		mark_label_use(GLOBAL_INIT_LABEL, m_code.size());
 		emit_jal(REG_RA, 0); // JAL ra, .init_globals
 	}
@@ -310,7 +291,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		emit_li(REG_A5, 0); // A5 = 0
 
 		// A6 = pointer to the global's Variant
-		emit_la(REG_A6, ".globals", static_cast<int32_t>(i * variant_size()));
+		emit_address_of_global(REG_A6, i);
 
 		// A7 = ECALL_SANDBOX_ADD (547)
 		emit_li(REG_A7, 547);
@@ -339,6 +320,12 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		m_labels[func.name] = m_code.size();
 		gen_function(func);
 	}
+
+	// Rewrite any conditional branch that cannot reach its target. This has to
+	// happen while the buffer still holds nothing but instructions: it inserts
+	// instructions, and everything appended below is placed relative to the
+	// final code size.
+	relax_branches();
 
 	// Define constant pool labels at the end of code
 	// Constants are appended after the code section
@@ -392,7 +379,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 
 		// For label resolution, we need to store this as if it were a code offset
 		// Since BASE_ADDR (0x10000) is added during resolution, we store: vaddr - BASE_ADDR
-		m_labels[".globals"] = globals_vaddr - 0x10000;
+		m_labels[GLOBALS_LABEL] = globals_vaddr - 0x10000;
 
 		// Allocate global variables as empty Variants: type = NIL, payload =
 		// INT32_MIN.
@@ -426,12 +413,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	// Godot Sandbox calling convention with Variants:
 	// a0 = pointer to return Variant (pre-allocated by caller)
 	// a1-a7 = pointers to argument Variants
-	m_variant_offsets.clear();
-	m_num_params = func.parameters.size();
-	m_next_variant_slot = 0;
-	m_scratch_slot_base = 0;
-	m_stack_frame_size = 0;
-	m_current_instr_idx = 0;
+	//
+	// Everything this function keeps about itself lives in m_fn, which the
+	// guard resets on the way in and clears on the way out.
+	FunctionStateGuard function_state(*this);
+	m_fn.num_params = func.parameters.size();
 
 	// Initialize register allocator
 	m_allocator.init(func);
@@ -457,25 +443,20 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	// Pre-assign all virtual register offsets
 	for (int vreg = 0; vreg < max_variants; vreg++) {
 		int offset = saved_reg_space + (vreg * variant_size());
-		m_variant_offsets[vreg] = offset;
+		m_fn.variant_offsets[vreg] = offset;
 	}
-	m_scratch_slot_base = max_variants;
-	m_next_variant_slot = max_variants + SCRATCH_VARIANT_SLOTS;
+	m_fn.scratch_slot_base = max_variants;
+	m_fn.next_variant_slot = max_variants + SCRATCH_VARIANT_SLOTS;
 
-	m_stack_frame_size = saved_reg_space + variant_space;
+	m_fn.stack_frame_size = saved_reg_space + variant_space;
 
 	// Align to 16 bytes (RISC-V ABI requirement)
-	m_stack_frame_size = (m_stack_frame_size + 15) & ~15;
+	m_fn.stack_frame_size = (m_fn.stack_frame_size + 15) & ~15;
 
 	// Function prologue - allocate stack frame
 	// addi sp, sp, -frame_size
-	if (m_stack_frame_size > 0) {
-		if (m_stack_frame_size < 2048) {
-			emit_i_type(0x13, REG_SP, 0, REG_SP, -m_stack_frame_size);
-		} else {
-			emit_li(REG_T0, -m_stack_frame_size);
-			emit_add(REG_SP, REG_SP, REG_T0);
-		}
+	if (m_fn.stack_frame_size > 0) {
+		emit_add_offset(REG_SP, REG_SP, -m_fn.stack_frame_size);
 	}
 
 	// Save return address: sd ra, 0(sp)
@@ -488,16 +469,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	emit_sd(REG_A0, REG_SP, 16); // SD
 
 	// Set frame pointer: addi fp, sp, frame_size
-	if (m_stack_frame_size < 2048) {
-		emit_i_type(0x13, REG_FP, 0, REG_SP, m_stack_frame_size);
-	} else {
-		emit_li(REG_T0, m_stack_frame_size);
-		emit_add(REG_FP, REG_SP, REG_T0);
-	}
+	emit_add_offset(REG_FP, REG_SP, m_fn.stack_frame_size);
 
 	// Copy parameter Variants from argument registers to stack
 	// Parameters come in a1-a7 as POINTERS to Variants
-	for (size_t i = 0; i < m_num_params && i < 7; i++) {
+	for (size_t i = 0; i < m_fn.num_params && i < 7; i++) {
 		int param_vreg = static_cast<int>(i); // Parameters map to virtual registers 0-6
 		int dst_offset = get_variant_stack_offset(param_vreg);
 		uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
@@ -508,7 +484,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 	// Process each IR instruction
 	for (const auto& instr : func.instructions) {
-		m_current_instr_idx++;
+		m_fn.current_instr_idx++;
 
 		switch (instr.opcode) {
 			case IROpcode::LABEL:
@@ -615,8 +591,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// Load global base address into t0
 				// For now, we'll use a label to mark the global data section
-				std::string global_label = ".globals";
-				emit_la(REG_T0, global_label, global_offset);
+				emit_address_of_global(REG_T0, static_cast<size_t>(global_idx));
 
 				// Load destination address into t1
 				emit_load_stack_offset(REG_T1, dst_offset);
@@ -662,8 +637,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// Load address of global variable
 				int global_offset = global_idx * variant_size();
-				std::string global_label = ".globals";
-				emit_la(REG_T0, global_label, global_offset);
+				emit_address_of_global(REG_T0, static_cast<size_t>(global_idx));
 
 				// Load source address
 				emit_load_stack_offset(REG_T1, src_offset);
@@ -673,7 +647,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// VASSIGN takes: a0 = dest_index, a1 = src_index
 					// Returns: a0 = resulting index
 					std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A7};
-					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 
 					for (const auto& move : moves) {
 						emit_mv(move.second, move.first);
@@ -1093,17 +1067,12 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// First, restore a0 from stack (it may have been clobbered by syscalls)
 				emit_ld(REG_A0, REG_SP, 16); // LD a0, 16(sp)
 
-				if (m_variant_offsets.find(0) != m_variant_offsets.end()) {
+				if (m_fn.variant_offsets.find(0) != m_fn.variant_offsets.end()) {
 					int src_offset = get_variant_stack_offset(0);
 
 					// Copy the return Variant from the stack to *a0
 					// Load address of source Variant: addi t0, sp, src_offset
-					if (src_offset < 2048) {
-						emit_i_type(0x13, REG_T0, 0, REG_SP, src_offset);
-					} else {
-						emit_li(REG_T0, src_offset);
-						emit_add(REG_T0, REG_SP, REG_T0);
-					}
+					emit_add_offset(REG_T0, REG_SP, src_offset);
 
 					emit_variant_move(REG_A0, 0, REG_T0, 0, REG_T1);
 				}
@@ -1116,13 +1085,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				emit_ld(REG_FP, REG_SP, 8); // LD
 
 				// Deallocate stack: addi sp, sp, frame_size
-				if (m_stack_frame_size > 0) {
-					if (m_stack_frame_size < 2048) {
-						emit_i_type(0x13, REG_SP, 0, REG_SP, m_stack_frame_size);
-					} else {
-						emit_li(REG_T0, m_stack_frame_size);
-						emit_add(REG_SP, REG_SP, REG_T0);
-					}
+				if (m_fn.stack_frame_size > 0) {
+					emit_add_offset(REG_SP, REG_SP, m_fn.stack_frame_size);
 				}
 
 				emit_ret();
@@ -1149,7 +1113,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// VCALL clobbers a0-a7, handle register clobbering
 				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6, REG_A7};
-				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 
 				for (const auto& move : moves) {
 					emit_mv(move.second, move.first);
@@ -1158,7 +1122,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// If we have arguments, allocate stack space for argument array
 				int args_stack_offset = 0;
 				if (arg_count > 0) {
-					args_stack_offset = m_stack_frame_size - (arg_count * variant_size());
+					args_stack_offset = m_fn.stack_frame_size - (arg_count * variant_size());
 					// Expand stack if needed
 					int additional_space = arg_count * variant_size();
 					additional_space = (additional_space + 15) & ~15; // Align to 16 bytes
@@ -1264,7 +1228,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// Handle register clobbering (calls clobber a0-a7, ra, and temporaries)
 				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6, REG_A7, REG_RA};
-				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 
 				for (const auto& move : moves) {
 					emit_mv(move.second, move.first);
@@ -1280,22 +1244,12 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					int arg_offset = get_variant_stack_offset(arg_vreg);
 					uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
 
-					// Load address of argument Variant: addi arg_reg, sp, arg_offset
-					if (arg_offset < 2048) {
-						emit_i_type(0x13, arg_reg, 0, REG_SP, arg_offset);
-					} else {
-						emit_li(REG_T0, arg_offset);
-						emit_add(arg_reg, REG_SP, REG_T0);
-					}
+					// Load address of argument Variant
+					emit_add_offset(arg_reg, REG_SP, arg_offset);
 				}
 
 				// a0 = pointer to return Variant
-				if (return_var_offset < 2048) {
-					emit_i_type(0x13, REG_A0, 0, REG_SP, return_var_offset);
-				} else {
-					emit_li(REG_A0, return_var_offset);
-					emit_add(REG_A0, REG_SP, REG_A0);
-				}
+				emit_add_offset(REG_A0, REG_SP, return_var_offset);
 
 				// Call the function using JAL with label
 				// We'll use the function name as a label that will be resolved later
@@ -1408,7 +1362,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// Handle register clobbering (VCREATE uses a0-a3)
 				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 				for (const auto& move : moves) {
 					emit_mv(move.second, move.first);
 				}
@@ -1423,12 +1377,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					args_space = (args_space + 15) & ~15; // Align to 16 bytes
 
 					// Adjust stack pointer
-					if (args_space < 2048) {
-						emit_i_type(0x13, REG_SP, 0, REG_SP, -args_space);
-					} else {
-						emit_li(REG_T0, -args_space);
-						emit_add(REG_SP, REG_SP, REG_T0);
-					}
+					emit_add_offset(REG_SP, REG_SP, -args_space);
 
 					// Copy full GuestVariant structures to stack
 					for (int i = 0; i < element_count; i++) {
@@ -1448,12 +1397,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// The result Variant is at result_offset from the ORIGINAL stack frame
 					// After SP -= args_space, it's now at result_offset + args_space from NEW SP
 					int adjusted_dst_offset = result_offset + args_space;
-					if (adjusted_dst_offset < 2048) {
-						emit_i_type(0x13, REG_A0, 0, REG_SP, adjusted_dst_offset);
-					} else {
-						emit_li(REG_A0, adjusted_dst_offset);
-						emit_add(REG_A0, REG_SP, REG_A0);
-					}
+					emit_add_offset(REG_A0, REG_SP, adjusted_dst_offset);
 
 					// a1 = Variant::ARRAY
 					emit_li(REG_A1, Variant::ARRAY);
@@ -1469,12 +1413,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_ecall();
 
 					// Restore stack pointer
-					if (args_space < 2048) {
-						emit_i_type(0x13, REG_SP, 0, REG_SP, args_space);
-					} else {
-						emit_li(REG_T0, args_space);
-						emit_add(REG_SP, REG_SP, REG_T0);
-					}
+					emit_add_offset(REG_SP, REG_SP, args_space);
 				}
 
 				break;
@@ -1499,7 +1438,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// Handle register clobbering (VCREATE uses a0-a3)
 				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 				for (const auto& move : moves) {
 					emit_mv(move.second, move.first);
 				}
@@ -1515,12 +1454,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					args_space = (args_space + 15) & ~15; // Align to 16 bytes
 
 					// Adjust stack pointer
-					if (args_space < 2048) {
-						emit_i_type(0x13, REG_SP, 0, REG_SP, -args_space);
-					} else {
-						emit_li(REG_T0, -args_space);
-						emit_add(REG_SP, REG_SP, REG_T0);
-					}
+					emit_add_offset(REG_SP, REG_SP, -args_space);
 
 					// Copy full GuestVariant structures to stack
 					// Operands are interleaved: key1, val1, key2, val2, ...
@@ -1541,12 +1475,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// The result Variant is at result_offset from the ORIGINAL stack frame
 					// After SP -= args_space, it's now at result_offset + args_space from NEW SP
 					int adjusted_dst_offset = result_offset + args_space;
-					if (adjusted_dst_offset < 2048) {
-						emit_i_type(0x13, REG_A0, 0, REG_SP, adjusted_dst_offset);
-					} else {
-						emit_li(REG_A0, adjusted_dst_offset);
-						emit_add(REG_A0, REG_SP, REG_A0);
-					}
+					emit_add_offset(REG_A0, REG_SP, adjusted_dst_offset);
 
 					// a1 = Variant::DICTIONARY
 					emit_li(REG_A1, Variant::DICTIONARY);
@@ -1562,12 +1491,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_ecall();
 
 					// Restore stack pointer
-					if (args_space < 2048) {
-						emit_i_type(0x13, REG_SP, 0, REG_SP, args_space);
-					} else {
-						emit_li(REG_T0, args_space);
-						emit_add(REG_SP, REG_SP, REG_T0);
-					}
+					emit_add_offset(REG_SP, REG_SP, args_space);
 				}
 
 				break;
@@ -1634,12 +1558,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				if (element_count == 0) {
 					// Empty packed array: sys_vcreate(&v, TYPE, 0, nullptr)
 					// a0 = pointer to destination Variant
-					if (result_offset < 2048) {
-						emit_i_type(0x13, REG_A0, 0, REG_SP, result_offset);
-					} else {
-						emit_li(REG_A0, result_offset);
-						emit_add(REG_A0, REG_SP, REG_A0);
-					}
+					emit_add_offset(REG_A0, REG_SP, result_offset);
 
 					// a1 = Variant type
 					emit_li(REG_A1, variant_type);
@@ -1661,12 +1580,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					args_space = (args_space + 15) & ~15; // Align to 16 bytes
 
 					// Allocate stack space
-					if (args_space < 2048) {
-						emit_addi(REG_SP, REG_SP, -args_space);
-					} else {
-						emit_li(REG_T0, -args_space);
-						emit_add(REG_SP, REG_SP, REG_T0);
-					}
+					emit_stack_adjust(-args_space);
 
 					// Copy each element variant to the stack (as GuestVariant array)
 					for (int i = 0; i < element_count; i++) {
@@ -1684,12 +1598,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// a1 = pointer to destination Variant
 					// After SP -= args_space, it's now at result_offset + args_space from NEW SP
 					int adjusted_dst_offset = result_offset + args_space;
-					if (adjusted_dst_offset < 2048) {
-						emit_i_type(0x13, REG_A1, 0, REG_SP, adjusted_dst_offset);
-					} else {
-						emit_li(REG_A1, adjusted_dst_offset);
-						emit_add(REG_A1, REG_SP, REG_A1);
-					}
+					emit_add_offset(REG_A1, REG_SP, adjusted_dst_offset);
 
 					// a2 = pointer to element array (sp + 0)
 					emit_mv(REG_A2, REG_SP);
@@ -1702,12 +1611,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_ecall();
 
 					// Restore stack pointer
-					if (args_space < 2048) {
-						emit_i_type(0x13, REG_SP, 0, REG_SP, args_space);
-					} else {
-						emit_li(REG_T0, args_space);
-						emit_add(REG_SP, REG_SP, REG_T0);
-					}
+					emit_add_offset(REG_SP, REG_SP, args_space);
 				}
 
 				break;
@@ -1805,7 +1709,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// ECALL_OBJ_PROP_GET clobbers a0-a3
 				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 
 				for (const auto& move : moves) {
 					emit_mv(move.second, move.first);
@@ -1877,7 +1781,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// ECALL_OBJ_PROP_SET clobbers a0-a3
 				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 
 				for (const auto& move : moves) {
 					emit_mv(move.second, move.first);
@@ -1962,7 +1866,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 					// ECALL_GET_OBJ clobbers a0 and a1
 					std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1};
-					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 
 					for (const auto& move : moves) {
 						emit_mv(move.second, move.first);
@@ -2015,7 +1919,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 					// ECALL_ARRAY_SIZE clobbers a0
 					std::vector<uint8_t> clobbered_regs = {REG_A0};
-					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 
 					for (const auto& move : moves) {
 						emit_mv(move.second, move.first);
@@ -2051,7 +1955,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 					// ECALL_ARRAY_AT clobbers a0, a1, a2
 					std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2};
-					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 
 					for (const auto& move : moves) {
 						emit_mv(move.second, move.first);
@@ -2088,7 +1992,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 					// ECALL_GET_NODE clobbers a0, a1, a2
 					std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2};
-					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 
 					for (const auto& move : moves) {
 						emit_mv(move.second, move.first);
@@ -2154,8 +2058,9 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				break;
 			}
 
-			default:
-				throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unknown IR opcode");
+			// No `default:` here on purpose: every opcode in ir_opcodes.def has
+			// to be listed, so adding one is a compile error here rather than a
+			// program that silently omits it.
 		}
 	}
 }
@@ -2173,12 +2078,43 @@ void RISCVCodeGen::emit_r_type(uint8_t opcode, uint8_t rd, uint8_t funct3, uint8
 	emit_word(instr);
 }
 
+bool RISCVCodeGen::fits_in_signed(int64_t value, int bits) {
+	const int64_t limit = int64_t(1) << (bits - 1);
+	return value >= -limit && value < limit;
+}
+
+void RISCVCodeGen::check_immediate(const std::string& what, int64_t value, int bits) {
+	if (fits_in_signed(value, bits)) {
+		return;
+	}
+	throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+		what + " immediate " + std::to_string(value) + " does not fit in " +
+		std::to_string(bits) + " signed bits (" +
+		std::to_string(-(int64_t(1) << (bits - 1))) + " to " +
+		std::to_string((int64_t(1) << (bits - 1)) - 1) + ")");
+}
+
+void RISCVCodeGen::check_displacement(const std::string& what, int64_t offset, int bits) {
+	if ((offset & 1) != 0) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			what + " displacement " + std::to_string(offset) + " is not even");
+	}
+	if (!fits_in_signed(offset, bits)) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			what + " displacement " + std::to_string(offset) +
+			" is out of reach (" + std::to_string(bits) + " signed bits). "
+			"The function is too large for a single branch to span.");
+	}
+}
+
 void RISCVCodeGen::emit_i_type(uint8_t opcode, uint8_t rd, uint8_t funct3, uint8_t rs1, int32_t imm) {
+	check_immediate("I-type", imm, I_TYPE_IMM_BITS);
 	uint32_t instr = opcode | (rd << 7) | (funct3 << 12) | (rs1 << 15) | ((imm & 0xFFF) << 20);
 	emit_word(instr);
 }
 
 void RISCVCodeGen::emit_s_type(uint8_t opcode, uint8_t funct3, uint8_t rs1, uint8_t rs2, int32_t imm) {
+	check_immediate("S-type (store)", imm, S_TYPE_IMM_BITS);
 	uint32_t imm_lo = imm & 0x1F;
 	uint32_t imm_hi = (imm >> 5) & 0x7F;
 	uint32_t instr = opcode | (imm_lo << 7) | (funct3 << 12) | (rs1 << 15) | (rs2 << 20) | (imm_hi << 25);
@@ -2189,6 +2125,7 @@ void RISCVCodeGen::emit_s_type(uint8_t opcode, uint8_t funct3, uint8_t rs1, uint
 }
 
 void RISCVCodeGen::emit_b_type(uint8_t opcode, uint8_t funct3, uint8_t rs1, uint8_t rs2, int32_t imm) {
+	check_displacement("B-type (branch)", imm, B_TYPE_IMM_BITS);
 	// B-type immediate encoding (weird layout)
 	uint32_t imm12 = (imm >> 12) & 1;
 	uint32_t imm10_5 = (imm >> 5) & 0x3F;
@@ -2203,6 +2140,14 @@ void RISCVCodeGen::emit_b_type(uint8_t opcode, uint8_t funct3, uint8_t rs1, uint
 }
 
 void RISCVCodeGen::emit_u_type(uint8_t opcode, uint8_t rd, uint32_t imm) {
+	// A U-type immediate is the upper 20 bits, already shifted into place. Low
+	// bits would be silently dropped, so a caller that has them is confused
+	// about what this takes.
+	if ((imm & 0xFFF) != 0) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"U-type immediate " + std::to_string(imm) + " has bits below bit 12, which the "
+			"instruction cannot encode");
+	}
 	uint32_t instr = opcode | (rd << 7) | (imm & 0xFFFFF000);
 	m_code.push_back(instr & 0xFF);
 	m_code.push_back((instr >> 8) & 0xFF);
@@ -2211,6 +2156,7 @@ void RISCVCodeGen::emit_u_type(uint8_t opcode, uint8_t rd, uint32_t imm) {
 }
 
 void RISCVCodeGen::emit_j_type(uint8_t opcode, uint8_t rd, int32_t imm) {
+	check_displacement("J-type (jump)", imm, J_TYPE_IMM_BITS);
 	// J-type immediate encoding
 	uint32_t imm20 = (imm >> 20) & 1;
 	uint32_t imm10_1 = (imm >> 1) & 0x3FF;
@@ -2252,7 +2198,7 @@ void RISCVCodeGen::emit_r4_type(uint8_t opcode, uint8_t rd, uint8_t funct3, uint
 void RISCVCodeGen::emit_li(uint8_t rd, int64_t imm) {
 	// Load immediate - handles 64-bit values
 	// For small values, use addi; for larger, build up the value
-	if (imm >= -2048 && imm < 2048) {
+	if (fits_in_signed(imm, I_TYPE_IMM_BITS)) {
 		// Small immediate: addi rd, x0, imm
 		emit_i_type(0x13, rd, 0, REG_ZERO, static_cast<int32_t>(imm));
 	} else if (imm >= INT32_MIN && imm <= INT32_MAX) {
@@ -2261,7 +2207,10 @@ void RISCVCodeGen::emit_li(uint8_t rd, int64_t imm) {
 		int32_t upper = (imm32 + 0x800) >> 12; // Add 0x800 for rounding
 		emit_u_type(0x37, rd, upper << 12);
 
-		int32_t lower = imm32 & 0xFFF;
+		// The low 12 bits are the two's complement remainder after the rounded
+		// upper part, so they have to be sign-extended to be a valid I-type
+		// immediate rather than a raw 0..4095 bit pattern.
+		int32_t lower = ((imm32 & 0xFFF) ^ 0x800) - 0x800;
 		if (lower != 0 || upper == 0) {
 			emit_i_type(0x13, rd, 0, rd, lower);
 		}
@@ -2293,6 +2242,32 @@ void RISCVCodeGen::emit_mv(uint8_t rd, uint8_t rs) {
 
 void RISCVCodeGen::emit_addi(uint8_t rd, uint8_t rs1, int32_t imm) {
 	emit_i_type(0x13, rd, 0, rs1, imm);
+}
+
+void RISCVCodeGen::emit_add_offset(uint8_t rd, uint8_t base, int32_t offset) {
+	if (fits_in_signed(offset, I_TYPE_IMM_BITS)) {
+		emit_addi(rd, base, offset);
+		return;
+	}
+
+	// Too wide for the immediate: materialise it and add. rd can hold it
+	// itself unless it is also the base, in which case the base would be
+	// destroyed before it is read; the reserved scratch covers that.
+	const uint8_t temp = (rd == base) ? REG_WIDE_SCRATCH : rd;
+	emit_li(temp, offset);
+	emit_add(rd, base, temp);
+}
+
+void RISCVCodeGen::emit_address_of_global(uint8_t rd, size_t index) {
+	const int64_t byte_offset = static_cast<int64_t>(index) * variant_size();
+	if (byte_offset > INT32_MAX) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"Global variable " + std::to_string(index) + " is past the end of a 32-bit address space");
+	}
+	// The offset goes into the relocation, not into a following `addi`: an
+	// `addi` truncates to 12 signed bits, which a program stops fitting in at
+	// 85 globals.
+	emit_la(rd, GLOBALS_LABEL, static_cast<int32_t>(byte_offset));
 }
 
 void RISCVCodeGen::emit_la(uint8_t rd, const std::string& label, int32_t addend) {
@@ -2425,6 +2400,87 @@ void RISCVCodeGen::mark_label_use(const std::string& label, size_t code_offset, 
 	m_label_uses.push_back({label, code_offset, addend});
 }
 
+void RISCVCodeGen::relax_branches() {
+	// B-type: funct3 0=beq 1=bne 4=blt 5=bge 6=bltu 7=bgeu. Flipping the low
+	// bit inverts every one of them.
+	auto invert_condition = [](uint8_t funct3) -> uint8_t { return funct3 ^ 1; };
+
+	bool changed = true;
+	while (changed) {
+		changed = false;
+
+		for (size_t use_index = 0; use_index < m_label_uses.size(); use_index++) {
+			const LabelUse use = m_label_uses[use_index];
+			if (use.code_offset + 4 > m_code.size()) {
+				continue;
+			}
+
+			uint32_t instr = 0;
+			std::memcpy(&instr, &m_code[use.code_offset], 4);
+			if ((instr & 0x7F) != 0x63) {
+				continue; // Not a conditional branch
+			}
+
+			auto label = m_labels.find(use.label);
+			if (label == m_labels.end()) {
+				continue; // resolve_labels() reports this
+			}
+			const int64_t displacement =
+				static_cast<int64_t>(label->second) - static_cast<int64_t>(use.code_offset) + use.addend;
+			if (fits_in_signed(displacement, B_TYPE_IMM_BITS)) {
+				continue;
+			}
+
+			// Rewrite the branch in place to skip the jump that now follows it,
+			// and insert that jump.
+			const uint8_t funct3 = (instr >> 12) & 0x7;
+			const uint8_t rs1 = (instr >> 15) & 0x1F;
+			const uint8_t rs2 = (instr >> 20) & 0x1F;
+
+			const int32_t skip = 8; // over the jal that follows
+			const uint32_t imm11 = (skip >> 11) & 1;
+			const uint32_t imm4_1 = (skip >> 1) & 0xF;
+			const uint32_t imm10_5 = (skip >> 5) & 0x3F;
+			const uint32_t imm12 = (skip >> 12) & 1;
+			const uint32_t inverted = 0x63 | (imm11 << 7) | (imm4_1 << 8) |
+				(invert_condition(funct3) << 12) | (rs1 << 15) | (rs2 << 20) |
+				(imm10_5 << 25) | (imm12 << 31);
+			std::memcpy(&m_code[use.code_offset], &inverted, 4);
+
+			// jal x0, 0 -- the displacement is patched by resolve_labels().
+			const size_t insert_at = use.code_offset + 4;
+			const uint32_t jal = 0x6F;
+			uint8_t bytes[4];
+			std::memcpy(bytes, &jal, 4);
+			m_code.insert(m_code.begin() + static_cast<long>(insert_at), bytes, bytes + 4);
+
+			// Everything at or after the inserted instruction moved by 4.
+			for (auto& entry : m_labels) {
+				if (entry.second >= insert_at) {
+					entry.second += 4;
+				}
+			}
+			for (auto& entry : m_functions) {
+				if (entry.second >= insert_at) {
+					entry.second += 4;
+				}
+			}
+			for (auto& other : m_label_uses) {
+				if (other.code_offset >= insert_at) {
+					other.code_offset += 4;
+				}
+			}
+
+			// The branch no longer refers to a label -- its displacement is the
+			// fixed +8 written above -- and the jump does.
+			m_label_uses[use_index].code_offset = insert_at;
+
+			changed = true;
+			break; // Offsets moved; start again.
+		}
+	}
+}
+
 void RISCVCodeGen::resolve_labels() {
 	for (const auto& use : m_label_uses) {
 		const std::string& label = use.label;
@@ -2445,6 +2501,12 @@ void RISCVCodeGen::resolve_labels() {
 		uint8_t opcode = instr & 0x7F;
 
 		if (opcode == 0x63) { // B-type (branch)
+			// Patching re-encodes by hand rather than going through
+			// emit_b_type(), so the range check has to be repeated here. A
+			// branch that cannot reach its target would otherwise wrap around
+			// and jump somewhere else entirely.
+			check_displacement("B-type (branch) to '" + label + "'", offset, B_TYPE_IMM_BITS);
+
 			// Re-encode with correct offset
 			uint8_t funct3 = (instr >> 12) & 0x7;
 			uint8_t rs1 = (instr >> 15) & 0x1F;
@@ -2457,6 +2519,7 @@ void RISCVCodeGen::resolve_labels() {
 
 			instr = opcode | (imm11 << 7) | (imm4_1 << 8) | (funct3 << 12) | (rs1 << 15) | (rs2 << 20) | (imm10_5 << 25) | (imm12 << 31);
 		} else if (opcode == 0x6F) { // J-type (jal)
+			check_displacement("J-type (jump) to '" + label + "'", offset, J_TYPE_IMM_BITS);
 			uint8_t rd = (instr >> 7) & 0x1F;
 
 			uint32_t imm20 = (offset >> 20) & 1;
@@ -2526,8 +2589,8 @@ void RISCVCodeGen::resolve_labels() {
 }
 
 int RISCVCodeGen::get_variant_stack_offset(int virtual_reg) {
-	auto it = m_variant_offsets.find(virtual_reg);
-	if (it != m_variant_offsets.end()) {
+	auto it = m_fn.variant_offsets.find(virtual_reg);
+	if (it != m_fn.variant_offsets.end()) {
 		return it->second;
 	}
 
@@ -2545,7 +2608,7 @@ int RISCVCodeGen::get_scratch_variant_offset(int index) {
 				"Scratch Variant slot " + std::to_string(index) + " is out of range");
 	}
 	// Stack layout: [saved ra (8)] [saved fp (8)] [saved a0 (8)] [Variants...] [scratch...]
-	return SAVED_REG_SPACE + ((m_scratch_slot_base + index) * variant_size());
+	return SAVED_REG_SPACE + ((m_fn.scratch_slot_base + index) * variant_size());
 }
 
 void RISCVCodeGen::emit_variant_create_int(int stack_offset, int64_t value) {
@@ -2584,7 +2647,7 @@ void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) 
 
 	// Handle register clobbering (VCREATE uses a0-a3)
 	std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-	auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+	auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 	for (const auto& move : moves) {
 		emit_mv(move.second, move.first);
 	}
@@ -2596,12 +2659,7 @@ void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) 
 	total_space = (total_space + 15) & ~15; // Align to 16 bytes
 
 	// Adjust stack pointer
-	if (total_space < 2048) {
-		emit_i_type(0x13, REG_SP, 0, REG_SP, -total_space);
-	} else {
-		emit_li(REG_T0, -total_space);
-		emit_add(REG_SP, REG_SP, REG_T0);
-	}
+	emit_add_offset(REG_SP, REG_SP, -total_space);
 
 	// Store string data on stack
 	for (size_t i = 0; i < str.length(); i++) {
@@ -2613,11 +2671,7 @@ void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) 
 
 	// Create struct at sp + str_space
 	// struct.str = sp (pointer to string data)
-	if (str_space < 2048) {
-		emit_i_type(0x13, REG_T0, 0, REG_SP, 0); // T0 = SP + 0 (pointer to string)
-	} else {
-		emit_mv(REG_T0, REG_SP);
-	}
+	emit_mv(REG_T0, REG_SP); // T0 = pointer to the string data at sp
 	emit_sd(REG_T0, REG_SP, str_space); // SD (store pointer at sp + str_space)
 
 	// struct.length = str_len
@@ -2627,12 +2681,7 @@ void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) 
 	// Call VCREATE
 	// a0 = pointer to destination Variant (stack_offset + total_space)
 	int adjusted_dst_offset = stack_offset + total_space;
-	if (adjusted_dst_offset < 2048) {
-		emit_i_type(0x13, REG_A0, 0, REG_SP, adjusted_dst_offset);
-	} else {
-		emit_li(REG_A0, adjusted_dst_offset);
-		emit_add(REG_A0, REG_SP, REG_A0);
-	}
+	emit_add_offset(REG_A0, REG_SP, adjusted_dst_offset);
 
 	// a1 = Variant::STRING
 	emit_li(REG_A1, Variant::STRING);
@@ -2641,24 +2690,14 @@ void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) 
 	emit_li(REG_A2, 1);
 
 	// a3 = pointer to struct (sp + str_space)
-	if (str_space < 2048) {
-		emit_i_type(0x13, REG_A3, 0, REG_SP, str_space);
-	} else {
-		emit_li(REG_A3, str_space);
-		emit_add(REG_A3, REG_SP, REG_A3);
-	}
+	emit_add_offset(REG_A3, REG_SP, str_space);
 
 	// a7 = ECALL_VCREATE (517)
 	emit_li(REG_A7, 517);
 	emit_ecall();
 
 	// Restore stack pointer
-	if (total_space < 2048) {
-		emit_i_type(0x13, REG_SP, 0, REG_SP, total_space);
-	} else {
-		emit_li(REG_T0, total_space);
-		emit_add(REG_SP, REG_SP, REG_T0);
-	}
+	emit_add_offset(REG_SP, REG_SP, total_space);
 }
 
 void RISCVCodeGen::emit_vcreate_syscall(int variant_type, int method, uint8_t data_ptr_reg, int result_offset) {
@@ -2668,18 +2707,13 @@ void RISCVCodeGen::emit_vcreate_syscall(int variant_type, int method, uint8_t da
 
 	// Handle register clobbering (VCREATE uses a0-a3)
 	std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-	auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+	auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 	for (const auto& move : moves) {
 		emit_mv(move.second, move.first);
 	}
 
 	// a0 = pointer to destination Variant (result_offset from SP)
-	if (result_offset < 2048) {
-		emit_i_type(0x13, REG_A0, 0, REG_SP, result_offset);
-	} else {
-		emit_li(REG_A0, result_offset);
-		emit_add(REG_A0, REG_SP, REG_A0);
-	}
+	emit_add_offset(REG_A0, REG_SP, result_offset);
 
 	// a1 = Variant::Type
 	emit_li(REG_A1, variant_type);
@@ -2740,7 +2774,7 @@ void RISCVCodeGen::emit_variant_eval(int result_offset, int lhs_offset, int rhs_
 
 	// VEVAL clobbers a0-a3, so handle register clobbering first
 	std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-	auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_current_instr_idx);
+	auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 
 	// Emit moves to save live values from clobbered registers
 	for (const auto& move : moves) {
@@ -2751,28 +2785,13 @@ void RISCVCodeGen::emit_variant_eval(int result_offset, int lhs_offset, int rhs_
 	emit_li(REG_A0, op);
 
 	// Load address of lhs Variant into a1: addi a1, sp, lhs_offset
-	if (lhs_offset < 2048) {
-		emit_i_type(0x13, REG_A1, 0, REG_SP, lhs_offset);
-	} else {
-		emit_li(REG_A1, lhs_offset);
-		emit_add(REG_A1, REG_SP, REG_A1);
-	}
+	emit_add_offset(REG_A1, REG_SP, lhs_offset);
 
 	// Load address of rhs Variant into a2: addi a2, sp, rhs_offset
-	if (rhs_offset < 2048) {
-		emit_i_type(0x13, REG_A2, 0, REG_SP, rhs_offset);
-	} else {
-		emit_li(REG_A2, rhs_offset);
-		emit_add(REG_A2, REG_SP, REG_A2);
-	}
+	emit_add_offset(REG_A2, REG_SP, rhs_offset);
 
 	// Load address of result Variant into a3: addi a3, sp, result_offset
-	if (result_offset < 2048) {
-		emit_i_type(0x13, REG_A3, 0, REG_SP, result_offset);
-	} else {
-		emit_li(REG_A3, result_offset);
-		emit_add(REG_A3, REG_SP, REG_A3);
-	}
+	emit_add_offset(REG_A3, REG_SP, result_offset);
 
 	// Make the ecall to sys_veval (ECALL_VEVAL = 502)
 	emit_li(REG_A7, 502); // ECALL_VEVAL
@@ -3143,151 +3162,94 @@ void RISCVCodeGen::emit_store_variant_int(uint8_t rs, uint8_t base_reg, int32_t 
 	emit_sd(rs, base_reg, variant_offset + VARIANT_DATA_OFFSET);
 }
 
-// Load/Store helpers with automatic large offset handling
-void RISCVCodeGen::emit_ld(uint8_t rd, uint8_t rs1, int32_t offset) {
-	if (offset >= -2048 && offset < 2048) {
-		emit_i_type(0x03, rd, 3, rs1, offset);
-	} else {
-		emit_li(REG_T2, offset);
-		emit_add(REG_T2, rs1, REG_T2);
-		emit_i_type(0x03, rd, 3, REG_T2, 0);
+// Load/Store helpers with automatic large offset handling.
+//
+// Every load and every store shares these two, so the decision about what fits
+// in a 12-bit immediate is made once. Fourteen inline copies of it is thirteen
+// chances for one to check `< 2048` and forget `>= -2048`.
+void RISCVCodeGen::emit_load_with_offset(uint8_t opcode, uint8_t funct3, uint8_t rd, uint8_t rs1, int32_t offset) {
+	if (fits_in_signed(offset, I_TYPE_IMM_BITS)) {
+		emit_i_type(opcode, rd, funct3, rs1, offset);
+		return;
 	}
+	// The address goes in the reserved scratch rather than in a temporary the
+	// surrounding expansion may be using.
+	emit_add_offset(REG_WIDE_SCRATCH, rs1, offset);
+	emit_i_type(opcode, rd, funct3, REG_WIDE_SCRATCH, 0);
+}
+
+void RISCVCodeGen::emit_store_with_offset(uint8_t opcode, uint8_t funct3, uint8_t rs2, uint8_t rs1, int32_t offset) {
+	if (fits_in_signed(offset, S_TYPE_IMM_BITS)) {
+		emit_s_type(opcode, funct3, rs1, rs2, offset);
+		return;
+	}
+	// rs2 is the value being stored. Computing the address into a temporary
+	// that happened to be rs2 -- which is what `sd t2, 2048(sp)` did -- stores
+	// the address instead of the value.
+	emit_add_offset(REG_WIDE_SCRATCH, rs1, offset);
+	emit_s_type(opcode, funct3, REG_WIDE_SCRATCH, rs2, 0);
+}
+
+void RISCVCodeGen::emit_ld(uint8_t rd, uint8_t rs1, int32_t offset) {
+	emit_load_with_offset(0x03, 3, rd, rs1, offset);
 }
 
 void RISCVCodeGen::emit_lw(uint8_t rd, uint8_t rs1, int32_t offset) {
-	if (offset >= -2048 && offset < 2048) {
-		emit_i_type(0x03, rd, 2, rs1, offset);
-	} else {
-		emit_li(REG_T2, offset);
-		emit_add(REG_T2, rs1, REG_T2);
-		emit_i_type(0x03, rd, 2, REG_T2, 0);
-	}
+	emit_load_with_offset(0x03, 2, rd, rs1, offset);
 }
 
 void RISCVCodeGen::emit_lwu(uint8_t rd, uint8_t rs1, int32_t offset) {
 	// LWU (Load Word Unsigned) - RV64I specific, zero-extends to 64 bits
-	if (offset >= -2048 && offset < 2048) {
-		emit_i_type(0x03, rd, 4, rs1, offset);  // funct3=4 for LWU
-	} else {
-		emit_li(REG_T2, offset);
-		emit_add(REG_T2, rs1, REG_T2);
-		emit_i_type(0x03, rd, 4, REG_T2, 0);  // funct3=4 for LWU
-	}
+	emit_load_with_offset(0x03, 4, rd, rs1, offset);  // funct3=4 for LWU
 }
 
 void RISCVCodeGen::emit_lh(uint8_t rd, uint8_t rs1, int32_t offset) {
-	if (offset >= -2048 && offset < 2048) {
-		emit_i_type(0x03, rd, 1, rs1, offset);
-	} else {
-		emit_li(REG_T2, offset);
-		emit_add(REG_T2, rs1, REG_T2);
-		emit_i_type(0x03, rd, 1, REG_T2, 0);
-	}
+	emit_load_with_offset(0x03, 1, rd, rs1, offset);
 }
 
 void RISCVCodeGen::emit_lb(uint8_t rd, uint8_t rs1, int32_t offset) {
-	if (offset >= -2048 && offset < 2048) {
-		emit_i_type(0x03, rd, 0, rs1, offset);
-	} else {
-		emit_li(REG_T2, offset);
-		emit_add(REG_T2, rs1, REG_T2);
-		emit_i_type(0x03, rd, 0, REG_T2, 0);
-	}
+	emit_load_with_offset(0x03, 0, rd, rs1, offset);
 }
 
 void RISCVCodeGen::emit_lbu(uint8_t rd, uint8_t rs1, int32_t offset) {
-	if (offset >= -2048 && offset < 2048) {
-		emit_i_type(0x03, rd, 4, rs1, offset);
-	} else {
-		emit_li(REG_T2, offset);
-		emit_add(REG_T2, rs1, REG_T2);
-		emit_i_type(0x03, rd, 4, REG_T2, 0);
-	}
+	emit_load_with_offset(0x03, 4, rd, rs1, offset);
 }
 
 void RISCVCodeGen::emit_sd(uint8_t rs2, uint8_t rs1, int32_t offset) {
-	if (offset >= -2048 && offset < 2048) {
-		emit_s_type(0x23, 3, rs1, rs2, offset);
-	} else {
-		emit_li(REG_T2, offset);
-		emit_add(REG_T2, rs1, REG_T2);
-		emit_s_type(0x23, 3, REG_T2, rs2, 0);
-	}
+	emit_store_with_offset(0x23, 3, rs2, rs1, offset);
 }
 
 void RISCVCodeGen::emit_sw(uint8_t rs2, uint8_t rs1, int32_t offset) {
-	if (offset >= -2048 && offset < 2048) {
-		emit_s_type(0x23, 2, rs1, rs2, offset);
-	} else {
-		emit_li(REG_T2, offset);
-		emit_add(REG_T2, rs1, REG_T2);
-		emit_s_type(0x23, 2, REG_T2, rs2, 0);
-	}
+	emit_store_with_offset(0x23, 2, rs2, rs1, offset);
 }
 
 void RISCVCodeGen::emit_sh(uint8_t rs2, uint8_t rs1, int32_t offset) {
-	if (offset >= -2048 && offset < 2048) {
-		emit_s_type(0x23, 1, rs1, rs2, offset);
-	} else {
-		emit_li(REG_T2, offset);
-		emit_add(REG_T2, rs1, REG_T2);
-		emit_s_type(0x23, 1, REG_T2, rs2, 0);
-	}
+	emit_store_with_offset(0x23, 1, rs2, rs1, offset);
 }
 
 void RISCVCodeGen::emit_sb(uint8_t rs2, uint8_t rs1, int32_t offset) {
-	if (offset >= -2048 && offset < 2048) {
-		emit_s_type(0x23, 0, rs1, rs2, offset);
-	} else {
-		emit_li(REG_T2, offset);
-		emit_add(REG_T2, rs1, REG_T2);
-		emit_s_type(0x23, 0, REG_T2, rs2, 0);
-	}
+	emit_store_with_offset(0x23, 0, rs2, rs1, offset);
 }
 
 // Floating-point load/store (RV64D extension)
 void RISCVCodeGen::emit_fld(uint8_t rd, uint8_t rs1, int32_t offset) {
 	// FLD: opcode=0x07, funct3=3
-	if (offset >= -2048 && offset < 2048) {
-		emit_i_type(0x07, rd, 3, rs1, offset);
-	} else {
-		emit_li(REG_T2, offset);
-		emit_add(REG_T2, rs1, REG_T2);
-		emit_i_type(0x07, rd, 3, REG_T2, 0);
-	}
+	emit_load_with_offset(0x07, 3, rd, rs1, offset);
 }
 
 void RISCVCodeGen::emit_fsd(uint8_t rs2, uint8_t rs1, int32_t offset) {
 	// FSD: opcode=0x27, funct3=3
-	if (offset >= -2048 && offset < 2048) {
-		emit_s_type(0x27, 3, rs1, rs2, offset);
-	} else {
-		emit_li(REG_T2, offset);
-		emit_add(REG_T2, rs1, REG_T2);
-		emit_s_type(0x27, 3, REG_T2, rs2, 0);
-	}
+	emit_store_with_offset(0x27, 3, rs2, rs1, offset);
 }
 
 void RISCVCodeGen::emit_flw(uint8_t rd, uint8_t rs1, int32_t offset) {
 	// FLW: opcode=0x07, funct3=2 (RV32F/RV64F)
-	if (offset >= -2048 && offset < 2048) {
-		emit_i_type(0x07, rd, 2, rs1, offset);
-	} else {
-		emit_li(REG_T2, offset);
-		emit_add(REG_T2, rs1, REG_T2);
-		emit_i_type(0x07, rd, 2, REG_T2, 0);
-	}
+	emit_load_with_offset(0x07, 2, rd, rs1, offset);
 }
 
 void RISCVCodeGen::emit_fsw(uint8_t rs2, uint8_t rs1, int32_t offset) {
 	// FSW: opcode=0x27, funct3=2 (RV32F/RV64F)
-	if (offset >= -2048 && offset < 2048) {
-		emit_s_type(0x27, 2, rs1, rs2, offset);
-	} else {
-		emit_li(REG_T2, offset);
-		emit_add(REG_T2, rs1, REG_T2);
-		emit_s_type(0x27, 2, REG_T2, rs2, 0);
-	}
+	emit_store_with_offset(0x27, 2, rs2, rs1, offset);
 }
 
 void RISCVCodeGen::emit_fcvt_d_s(uint8_t rd, uint8_t rs1) {
@@ -3448,21 +3410,11 @@ void RISCVCodeGen::emit_syscall_result(int result_vreg, uint8_t result_reg, int 
 }
 
 void RISCVCodeGen::emit_stack_adjust(int32_t amount) {
-	if (amount >= -2048 && amount < 2048) {
-		emit_i_type(0x13, REG_SP, 0, REG_SP, amount);
-	} else {
-		emit_li(REG_T0, amount);
-		emit_add(REG_SP, REG_SP, REG_T0);
-	}
+	emit_add_offset(REG_SP, REG_SP, amount);
 }
 
 void RISCVCodeGen::emit_load_stack_offset(uint8_t rd, int32_t offset) {
-	if (offset >= -2048 && offset < 2048) {
-		emit_i_type(0x13, rd, 0, REG_SP, offset);
-	} else {
-		emit_li(REG_T0, offset);
-		emit_add(rd, REG_SP, REG_T0);
-	}
+	emit_add_offset(rd, REG_SP, offset);
 }
 
 bool RISCVCodeGen::is_complex_variant_type(int variant_type) {

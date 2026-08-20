@@ -18,6 +18,7 @@ enum class ErrorType {
 	CODEGEN_ERROR,        // IR generation errors
 	RISCV_codegen_ERROR,  // RISC-V code generation errors
 	OPTIMIZER_ERROR,      // IR optimization errors
+	IR_VERIFIER_ERROR,    // IR that no pass should have produced
 	ELF_ERROR,            // ELF binary creation errors
 	UNKNOWN_ERROR
 };

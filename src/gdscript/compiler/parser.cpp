@@ -34,6 +34,8 @@ Program Parser::parse() {
 					VarDeclStmt global_decl(decl->name, std::move(decl->initializer), decl->is_const);
 					global_decl.type_hint = decl->type_hint;
 					global_decl.is_property = is_export;
+					global_decl.line = decl->line;
+					global_decl.column = decl->column;
 					program.globals.push_back(std::move(global_decl));
 				}
 			} else {
@@ -47,6 +49,8 @@ Program Parser::parse() {
 			if (auto* decl = dynamic_cast<VarDeclStmt*>(var_decl.get())) {
 				VarDeclStmt global_decl(decl->name, std::move(decl->initializer), decl->is_const);
 				global_decl.type_hint = decl->type_hint;
+				global_decl.line = decl->line;
+				global_decl.column = decl->column;
 				program.globals.push_back(std::move(global_decl));
 			}
 		} else if (check(TokenType::CONST)) {
@@ -56,6 +60,8 @@ Program Parser::parse() {
 			if (auto* decl = dynamic_cast<VarDeclStmt*>(const_decl.get())) {
 				VarDeclStmt global_decl(decl->name, std::move(decl->initializer), decl->is_const);
 				global_decl.type_hint = decl->type_hint;
+				global_decl.line = decl->line;
+				global_decl.column = decl->column;
 				program.globals.push_back(std::move(global_decl));
 			}
 		} else if (check(TokenType::FUNC)) {
@@ -149,6 +155,18 @@ std::vector<StmtPtr> Parser::parse_block() {
 }
 
 StmtPtr Parser::parse_statement() {
+	// Statements are positioned here rather than at each of the eleven places
+	// one is constructed, so that adding a statement kind cannot forget to.
+	const Token start = peek();
+	StmtPtr stmt = parse_statement_impl();
+	if (stmt && stmt->line == 0) {
+		stmt->line = start.line;
+		stmt->column = start.column;
+	}
+	return stmt;
+}
+
+StmtPtr Parser::parse_statement_impl() {
 	skip_newlines();
 
 	if (match(TokenType::VAR)) {
@@ -205,7 +223,7 @@ StmtPtr Parser::parse_var_decl(bool is_const) {
 	}
 
 	consume(TokenType::NEWLINE, "Expected newline after variable declaration");
-	auto stmt = std::make_unique<VarDeclStmt>(name.lexeme, std::move(initializer), is_const);
+	auto stmt = make_at<VarDeclStmt>(name, name.lexeme, std::move(initializer), is_const);
 	stmt->type_hint = type_hint;
 	return stmt;
 }
@@ -371,9 +389,9 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 			if (!match(entry.token)) {
 				continue;
 			}
-			ExprPtr var_ref = std::make_unique<VariableExpr>(name);
+			ExprPtr var_ref = make_like<VariableExpr>(*lhs, name);
 			ExprPtr rhs = parse_expression();
-			ExprPtr combined = std::make_unique<BinaryExpr>(std::move(var_ref), entry.op, std::move(rhs));
+			ExprPtr combined = make_binary(std::move(var_ref), entry.op, std::move(rhs));
 			consume(TokenType::NEWLINE, "Expected newline after assignment");
 			return std::make_unique<AssignStmt>(name, std::move(combined));
 		}
@@ -382,6 +400,15 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 	// Not an assignment, treat as expression statement
 	consume(TokenType::NEWLINE, "Expected newline after expression");
 	return std::make_unique<ExprStmt>(std::move(lhs));
+}
+
+ExprPtr Parser::make_binary(ExprPtr left, BinaryExpr::Op op, ExprPtr right) {
+	const int line = left->line;
+	const int column = left->column;
+	auto node = std::make_unique<BinaryExpr>(std::move(left), op, std::move(right));
+	node->line = line;
+	node->column = column;
+	return node;
 }
 
 ExprPtr Parser::parse_expression() {
@@ -400,7 +427,9 @@ ExprPtr Parser::parse_ternary() {
 	consume(TokenType::ELSE, "Expected 'else' in conditional expression");
 	ExprPtr false_value = parse_ternary(); // Right-associative
 
-	return std::make_unique<TernaryExpr>(std::move(condition), std::move(true_value), std::move(false_value));
+	// "<true> if <cond> else <false>" starts at the true value.
+	const Expr& start = *true_value;
+	return make_like<TernaryExpr>(start, std::move(condition), std::move(true_value), std::move(false_value));
 }
 
 ExprPtr Parser::parse_or_expression() {
@@ -408,7 +437,7 @@ ExprPtr Parser::parse_or_expression() {
 
 	while (match(TokenType::OR)) {
 		ExprPtr right = parse_and_expression();
-		left = std::make_unique<BinaryExpr>(std::move(left), BinaryExpr::Op::OR, std::move(right));
+		left = make_binary(std::move(left), BinaryExpr::Op::OR, std::move(right));
 	}
 
 	return left;
@@ -419,7 +448,7 @@ ExprPtr Parser::parse_and_expression() {
 
 	while (match(TokenType::AND)) {
 		ExprPtr right = parse_equality();
-		left = std::make_unique<BinaryExpr>(std::move(left), BinaryExpr::Op::AND, std::move(right));
+		left = make_binary(std::move(left), BinaryExpr::Op::AND, std::move(right));
 	}
 
 	return left;
@@ -433,7 +462,7 @@ ExprPtr Parser::parse_equality() {
 		ExprPtr right = parse_comparison();
 
 		BinaryExpr::Op bin_op = (op.type == TokenType::EQUAL) ? BinaryExpr::Op::EQ : BinaryExpr::Op::NEQ;
-		left = std::make_unique<BinaryExpr>(std::move(left), bin_op, std::move(right));
+		left = make_binary(std::move(left), bin_op, std::move(right));
 	}
 
 	return left;
@@ -455,7 +484,7 @@ ExprPtr Parser::parse_comparison() {
 			default: throw CompilerException::parser_error("Invalid comparison operator", op.line, op.column);
 		}
 
-		left = std::make_unique<BinaryExpr>(std::move(left), bin_op, std::move(right));
+		left = make_binary(std::move(left), bin_op, std::move(right));
 	}
 
 	return left;
@@ -466,7 +495,7 @@ ExprPtr Parser::parse_bit_or() {
 
 	while (match(TokenType::BIT_OR)) {
 		ExprPtr right = parse_bit_xor();
-		left = std::make_unique<BinaryExpr>(std::move(left), BinaryExpr::Op::BIT_OR, std::move(right));
+		left = make_binary(std::move(left), BinaryExpr::Op::BIT_OR, std::move(right));
 	}
 
 	return left;
@@ -477,7 +506,7 @@ ExprPtr Parser::parse_bit_xor() {
 
 	while (match(TokenType::BIT_XOR)) {
 		ExprPtr right = parse_bit_and();
-		left = std::make_unique<BinaryExpr>(std::move(left), BinaryExpr::Op::BIT_XOR, std::move(right));
+		left = make_binary(std::move(left), BinaryExpr::Op::BIT_XOR, std::move(right));
 	}
 
 	return left;
@@ -488,7 +517,7 @@ ExprPtr Parser::parse_bit_and() {
 
 	while (match(TokenType::BIT_AND)) {
 		ExprPtr right = parse_shift();
-		left = std::make_unique<BinaryExpr>(std::move(left), BinaryExpr::Op::BIT_AND, std::move(right));
+		left = make_binary(std::move(left), BinaryExpr::Op::BIT_AND, std::move(right));
 	}
 
 	return left;
@@ -502,7 +531,7 @@ ExprPtr Parser::parse_shift() {
 		ExprPtr right = parse_term();
 
 		BinaryExpr::Op bin_op = (op.type == TokenType::SHIFT_LEFT) ? BinaryExpr::Op::SHL : BinaryExpr::Op::SHR;
-		left = std::make_unique<BinaryExpr>(std::move(left), bin_op, std::move(right));
+		left = make_binary(std::move(left), bin_op, std::move(right));
 	}
 
 	return left;
@@ -516,7 +545,7 @@ ExprPtr Parser::parse_term() {
 		ExprPtr right = parse_factor();
 
 		BinaryExpr::Op bin_op = (op.type == TokenType::PLUS) ? BinaryExpr::Op::ADD : BinaryExpr::Op::SUB;
-		left = std::make_unique<BinaryExpr>(std::move(left), bin_op, std::move(right));
+		left = make_binary(std::move(left), bin_op, std::move(right));
 	}
 
 	return left;
@@ -537,7 +566,7 @@ ExprPtr Parser::parse_factor() {
 			default: throw CompilerException::parser_error("Invalid factor operator", op.line, op.column);
 		}
 
-		left = std::make_unique<BinaryExpr>(std::move(left), bin_op, std::move(right));
+		left = make_binary(std::move(left), bin_op, std::move(right));
 	}
 
 	return left;
@@ -550,11 +579,11 @@ ExprPtr Parser::parse_unary() {
 
 		switch (op.type) {
 			case TokenType::MINUS:
-				return std::make_unique<UnaryExpr>(UnaryExpr::Op::NEG, std::move(operand));
+				return make_at<UnaryExpr>(op, UnaryExpr::Op::NEG, std::move(operand));
 			case TokenType::NOT:
-				return std::make_unique<UnaryExpr>(UnaryExpr::Op::NOT, std::move(operand));
+				return make_at<UnaryExpr>(op, UnaryExpr::Op::NOT, std::move(operand));
 			case TokenType::BIT_NOT:
-				return std::make_unique<UnaryExpr>(UnaryExpr::Op::BIT_NOT, std::move(operand));
+				return make_at<UnaryExpr>(op, UnaryExpr::Op::BIT_NOT, std::move(operand));
 			default:
 				// Unary '+' is a no-op
 				return operand;
@@ -584,7 +613,7 @@ ExprPtr Parser::parse_call() {
 			if (auto* var_expr = dynamic_cast<VariableExpr*>(expr.get())) {
 				// Local function call
 				std::string func_name = var_expr->name;
-				expr = std::make_unique<CallExpr>(func_name, std::move(arguments));
+				expr = make_like<CallExpr>(*expr, func_name, std::move(arguments));
 			} else {
 				error("Invalid call expression");
 			}
@@ -603,16 +632,16 @@ ExprPtr Parser::parse_call() {
 				}
 
 				consume(TokenType::RPAREN, "Expected ')' after arguments");
-				expr = std::make_unique<MemberCallExpr>(std::move(expr), member.lexeme, std::move(arguments), true);
+				expr = make_like<MemberCallExpr>(*expr, std::move(expr), member.lexeme, std::move(arguments), true);
 			} else {
 				// Property access (no parentheses)
-				expr = std::unique_ptr<MemberCallExpr>(new MemberCallExpr(std::move(expr), member.lexeme, {}, false));
+				expr = make_like<MemberCallExpr>(*expr, std::move(expr), member.lexeme, std::vector<ExprPtr>{}, false);
 			}
 		} else if (match(TokenType::LBRACKET)) {
 			// Array indexing
 			ExprPtr index = parse_expression();
 			consume(TokenType::RBRACKET, "Expected ']' after index");
-			expr = std::make_unique<IndexExpr>(std::move(expr), std::move(index));
+			expr = make_like<IndexExpr>(*expr, std::move(expr), std::move(index));
 		} else {
 			break;
 		}
@@ -623,33 +652,37 @@ ExprPtr Parser::parse_call() {
 
 ExprPtr Parser::parse_primary() {
 	if (match(TokenType::TRUE)) {
-		return std::make_unique<LiteralExpr>(true);
+		return make_at<LiteralExpr>(previous(), true);
 	}
 	if (match(TokenType::FALSE)) {
-		return std::make_unique<LiteralExpr>(false);
+		return make_at<LiteralExpr>(previous(), false);
 	}
 	if (match(TokenType::NULL_VAL)) {
-		return LiteralExpr::null();
+		const Token token = previous();
+		auto node = LiteralExpr::null();
+		node->line = token.line;
+		node->column = token.column;
+		return node;
 	}
 
 	if (match(TokenType::INTEGER)) {
 		Token num = previous();
-		return std::make_unique<LiteralExpr>(std::get<int64_t>(num.value));
+		return make_at<LiteralExpr>(num, std::get<int64_t>(num.value));
 	}
 
 	if (match(TokenType::FLOAT)) {
 		Token num = previous();
-		return std::make_unique<LiteralExpr>(std::get<double>(num.value));
+		return make_at<LiteralExpr>(num, std::get<double>(num.value));
 	}
 
 	if (match(TokenType::STRING)) {
 		Token str = previous();
-		return std::make_unique<LiteralExpr>(std::get<std::string>(str.value));
+		return make_at<LiteralExpr>(str, std::get<std::string>(str.value));
 	}
 
 	if (match(TokenType::IDENTIFIER)) {
 		Token name = previous();
-		return std::make_unique<VariableExpr>(name.lexeme);
+		return make_at<VariableExpr>(name, name.lexeme);
 	}
 
 	if (match(TokenType::LPAREN)) {
@@ -660,6 +693,7 @@ ExprPtr Parser::parse_primary() {
 
 	if (match(TokenType::LBRACKET)) {
 		// Array literal: [1, 2, 3]
+		const Token bracket = previous();
 		std::vector<ExprPtr> elements;
 
 		if (!check(TokenType::RBRACKET)) {
@@ -669,11 +703,12 @@ ExprPtr Parser::parse_primary() {
 		}
 
 		consume(TokenType::RBRACKET, "Expected ']' after array elements");
-		return std::make_unique<ArrayLiteralExpr>(std::move(elements));
+		return make_at<ArrayLiteralExpr>(bracket, std::move(elements));
 	}
 
 	if (match(TokenType::LBRACE)) {
 		// Dictionary literal: {"key": "value", "num": 42} or {key: "value", num: 42}
+		const Token brace = previous();
 		std::vector<std::pair<ExprPtr, ExprPtr>> elements;
 
 		if (!check(TokenType::RBRACE)) {
@@ -683,7 +718,7 @@ ExprPtr Parser::parse_primary() {
 				if (match(TokenType::IDENTIFIER)) {
 					// Convert identifier to string literal
 					Token identifier = previous();
-					key = std::make_unique<LiteralExpr>(identifier.lexeme);
+					key = make_at<LiteralExpr>(identifier, identifier.lexeme);
 				} else {
 					// Otherwise parse as a normal expression
 					key = parse_expression();
@@ -696,7 +731,7 @@ ExprPtr Parser::parse_primary() {
 		}
 
 		consume(TokenType::RBRACE, "Expected '}' after dictionary elements");
-		return std::make_unique<DictionaryLiteralExpr>(std::move(elements));
+		return make_at<DictionaryLiteralExpr>(brace, std::move(elements));
 	}
 
 	error("Expected expression");

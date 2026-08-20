@@ -68,8 +68,10 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 		}
 
 		// Step 3.5: Optimize IR
-		IROptimizer optimizer;
-		optimizer.optimize(ir_program);
+		if (options.optimize) {
+			IROptimizer optimizer;
+			optimizer.optimize(ir_program);
+		}
 
 		if (options.dump_ir) {
 			std::cout << "=== IR (optimized) ===" << std::endl;

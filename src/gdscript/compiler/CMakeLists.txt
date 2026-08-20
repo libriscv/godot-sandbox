@@ -22,6 +22,7 @@ set(COMPILER_SOURCES
     parser.cpp
     ir.cpp
     ir_optimizer.cpp
+    ir_verifier.cpp
     codegen.cpp
     riscv_codegen.cpp
     register_allocator.cpp
@@ -33,6 +34,15 @@ set(COMPILER_SOURCES
 # Build as library
 add_library(gdscript_compiler STATIC ${COMPILER_SOURCES})
 target_include_directories(gdscript_compiler PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+# A dispatch over IROpcode must not have a bare `default:`. Without one, adding
+# an opcode to ir_opcodes.def turns every dispatch site into a compile error
+# listing exactly what still needs handling; with one, it compiles and quietly
+# does the wrong thing. -Werror=switch is what makes that a rule rather than a
+# convention. PRIVATE, so a project embedding this library is not held to it.
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+	target_compile_options(gdscript_compiler PRIVATE -Wswitch -Werror=switch)
+endif()
 
 if (DOUBLE_PRECISION OR GODOTCPP_PRECISION STREQUAL "double")
 	# PUBLIC: the default in CompilerOptions is a header-inline value, so every
@@ -80,16 +90,44 @@ if (BUILD_TESTING)
 	add_gdscript_test(test_ir_optimizer tests/test_ir_optimizer.cpp)
 	add_gdscript_test(test_double_precision tests/test_double_precision.cpp)
 	add_gdscript_test(test_regressions tests/test_regressions.cpp)
+	add_gdscript_test(test_opt_invariance tests/test_opt_invariance.cpp)
+	add_gdscript_test(test_ir_verifier tests/test_ir_verifier.cpp)
+	add_gdscript_test(test_encoders tests/test_encoders.cpp)
+	add_gdscript_test(test_fuzz tests/test_fuzz.cpp)
+
+	# Differential testing: the same programs through the IR interpreter and
+	# through a real RISC-V machine. libriscv is already a dependency of the
+	# repository this library lives in; when it is not reachable (a standalone
+	# checkout, or the cross build that runs the compiler inside the sandbox)
+	# the rest of the tests still build.
+	set(LIBRISCV_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../ext/libriscv/lib)
+	if (NOT CMAKE_CROSSCOMPILING AND EXISTS ${LIBRISCV_DIR}/CMakeLists.txt)
+		if (NOT TARGET riscv)
+			set(RISCV_32I OFF CACHE BOOL "" FORCE)
+			set(RISCV_BINARY_TRANSLATION OFF CACHE BOOL "" FORCE)
+			add_subdirectory(${LIBRISCV_DIR} libriscv)
+			# The Godot Sandbox API numbers its syscalls from 500, past
+			# libriscv's default table size.
+			target_compile_definitions(riscv PUBLIC RISCV_SYSCALLS_MAX=600)
+		endif()
+		# No sanitizers on this one: it links libriscv, which is built without
+		# them, and whose interpreter dispatch ASan has opinions about.
+		add_executable(test_differential tests/test_differential.cpp)
+		target_link_libraries(test_differential gdscript_compiler riscv)
+		add_test(NAME test_differential COMMAND test_differential)
+	else()
+		message(STATUS "libriscv not found: skipping the differential test")
+	endif()
 
 	# Run all tests target
 	add_custom_target(run_tests
 		COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-		DEPENDS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions
+		DEPENDS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_opt_invariance test_ir_verifier test_encoders test_fuzz
 		COMMENT "Running all GDScript compiler tests"
 	)
 
 	# Install test targets (only when BUILD_TESTING is ON)
-	install(TARGETS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions
+	install(TARGETS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_opt_invariance test_ir_verifier test_encoders test_fuzz
 	        RUNTIME DESTINATION bin)
 endif()
 

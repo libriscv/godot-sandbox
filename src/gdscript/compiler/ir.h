@@ -11,100 +11,130 @@ namespace gdscript {
 // Intermediate Representation for RISC-V code generation
 // This represents a simplified, linear instruction stream that can be easily converted to RISC-V
 
+// The opcode enum, generated from the metadata table so that the list of
+// opcodes and the description of each one cannot drift apart. See
+// ir_opcodes.def.
 enum class IROpcode {
-	// Stack and register operations
-	LOAD_IMM,        // Load immediate integer value into register
-	LOAD_FLOAT_IMM,  // Load immediate float value into register
-	LOAD_BOOL,       // Load immediate boolean value into register
-	LOAD_STRING,     // Load immediate string value into register
-	LOAD_GLOBAL,     // Load global variable into register
-	STORE_GLOBAL,    // Store register into global variable
-	MOVE,            // Move between registers
-	CONVERT,         // Convert a Variant to the type in type_hint (currently INT -> FLOAT)
-
-	// Arithmetic
-	ADD,             // Add two registers
-	SUB,             // Subtract
-	MUL,             // Multiply
-	DIV,             // Divide
-	MOD,             // Modulo
-	NEG,             // Negate
-
-	// Comparison (sets register to 0 or 1)
-	CMP_EQ,          // ==
-	CMP_NEQ,         // !=
-	CMP_LT,          // <
-	CMP_LTE,         // <=
-	CMP_GT,          // >
-	CMP_GTE,         // >=
-
-	// Logical
-	AND,             // Logical AND
-	OR,              // Logical OR
-	NOT,             // Logical NOT
-
-	// Bitwise
-	BIT_AND,         // &
-	BIT_OR,          // |
-	BIT_XOR,         // ^
-	BIT_NOT,         // ~
-	SHL,             // <<
-	SHR,             // >>
-
-	// Control flow
-	LABEL,           // Target for branches
-	JUMP,            // Unconditional jump
-	BRANCH_ZERO,     // Branch if register == 0
-	BRANCH_NOT_ZERO, // Branch if register != 0
-	BRANCH_EQ,       // Branch if reg1 == reg2 (fused comparison + branch)
-	BRANCH_NEQ,      // Branch if reg1 != reg2 (fused comparison + branch)
-	BRANCH_LT,       // Branch if reg1 < reg2 (fused comparison + branch)
-	BRANCH_LTE,      // Branch if reg1 <= reg2 (fused comparison + branch)
-	BRANCH_GT,       // Branch if reg1 > reg2 (fused comparison + branch)
-	BRANCH_GTE,      // Branch if reg1 >= reg2 (fused comparison + branch)
-
-	// Function calls
-	CALL,            // Call local function
-	CALL_SYSCALL,    // Call syscall (for Godot API)
-	RETURN,          // Return from function
-
-	// Variant operations (through syscalls)
-	VCALL,           // Variant method call
-	VGET,            // Get property from variant
-	VSET,            // Set property on variant
-
-	// Inline primitive construction (no syscalls)
-	MAKE_VECTOR2,    // Construct Vector2 inline
-	MAKE_VECTOR3,    // Construct Vector3 inline
-	MAKE_VECTOR4,    // Construct Vector4 inline
-	MAKE_VECTOR2I,   // Construct Vector2i inline
-	MAKE_VECTOR3I,   // Construct Vector3i inline
-	MAKE_VECTOR4I,   // Construct Vector4i inline
-	MAKE_COLOR,      // Construct Color inline
-	MAKE_RECT2,      // Construct Rect2 inline
-	MAKE_RECT2I,     // Construct Rect2i inline
-	MAKE_PLANE,      // Construct Plane inline
-
-	// Array and Dictionary construction (via VCREATE syscall)
-	MAKE_ARRAY,      // Construct Array (empty or with elements)
-	MAKE_DICTIONARY, // Construct Dictionary (empty or with key-value pairs)
-
-	// Packed array construction (via VCREATE syscall)
-	MAKE_PACKED_BYTE_ARRAY,      // Construct PackedByteArray (empty or with elements)
-	MAKE_PACKED_INT32_ARRAY,     // Construct PackedInt32Array (empty or with elements)
-	MAKE_PACKED_INT64_ARRAY,     // Construct PackedInt64Array (empty or with elements)
-	MAKE_PACKED_FLOAT32_ARRAY,   // Construct PackedFloat32Array (empty or with elements)
-	MAKE_PACKED_FLOAT64_ARRAY,   // Construct PackedFloat64Array (empty or with elements)
-	MAKE_PACKED_STRING_ARRAY,    // Construct PackedStringArray (empty or with elements)
-	MAKE_PACKED_VECTOR2_ARRAY,   // Construct PackedVector2Array (empty or with elements)
-	MAKE_PACKED_VECTOR3_ARRAY,   // Construct PackedVector3Array (empty or with elements)
-	MAKE_PACKED_COLOR_ARRAY,     // Construct PackedColorArray (empty or with elements)
-	MAKE_PACKED_VECTOR4_ARRAY,   // Construct PackedVector4Array (empty or with elements)
-
-	// Inline member access (no syscalls)
-	VGET_INLINE,     // Get inlined member from Variant (x, y, z, w, r, g, b, a)
-	VSET_INLINE,     // Set inlined member on Variant
+#define IR_OPCODE(name, mnemonic, sig, effects) name,
+#include "ir_opcodes.def"
+#undef IR_OPCODE
 };
+
+// Number of opcodes, for table sizing and completeness checks.
+enum : size_t {
+	IR_OPCODE_COUNT =
+#define IR_OPCODE(name, mnemonic, sig, effects) + 1
+#include "ir_opcodes.def"
+#undef IR_OPCODE
+};
+
+// The role an operand plays. Everything that has to know whether an operand is
+// read, written, or not a register at all goes through these.
+enum class IROperandKind : uint8_t {
+	NONE,      // past the end of the signature
+	DST,       // destination register: the operand the instruction defines
+	SRC,       // source register: an operand the instruction reads
+	IMM,       // immediate integer
+	FIMM,      // immediate double
+	STR,       // inline string
+	LBL,       // branch target label
+	CNT,       // immediate holding the length of the trailing list
+	CNT2,      // immediate holding half the length of the trailing list (pairs)
+	SRC_LIST,  // trailing run of zero or more source registers
+	ARG_LIST,  // trailing run of zero or more source registers and/or immediates
+};
+
+// What a pass is allowed to do with an instruction.
+enum IREffect : uint32_t {
+	// The empty mask: no side effects. A pure instruction can be deleted when
+	// its destination is unused, and moved when its inputs allow.
+	IR_PURE          = 0,
+	// Must not be deleted or reordered against other side-effecting work.
+	IR_SIDE_EFFECTS  = 1u << 0,
+	IR_BRANCH        = 1u << 1,   // conditional transfer of control
+	IR_FUSED_BRANCH  = 1u << 2,   // comparison fused into the branch: reads two registers
+	IR_TERMINATOR    = 1u << 3,   // unconditional transfer of control
+	IR_LABEL         = 1u << 4,   // a branch target, and therefore a barrier
+	IR_CALL          = 1u << 5,   // transfers control to code this pass cannot see
+	IR_READS_GLOBAL  = 1u << 6,
+	IR_WRITES_GLOBAL = 1u << 7,
+	// Arithmetic, bitwise and comparison opcodes: a destination computed from
+	// register operands, foldable when the operands are known.
+	IR_ARITHMETIC    = 1u << 8,
+	IR_COMPARISON    = 1u << 9,   // destination is a boolean 0 or 1
+	// Materialises a value into a register from a single operand, without
+	// computing anything: the loads and MOVE.
+	IR_SIMPLE_LOAD   = 1u << 10,
+};
+
+// The operand roles of one opcode, in order.
+struct IROperandSignature {
+	static constexpr size_t MAX_OPERANDS = 8;
+
+	IROperandKind kinds[MAX_OPERANDS] {};
+	uint8_t count = 0;
+
+	constexpr IROperandSignature() = default;
+
+	template <typename... Kinds>
+	constexpr IROperandSignature(Kinds... kinds_in)
+		: kinds { kinds_in... }, count(sizeof...(Kinds))
+	{
+		static_assert(sizeof...(Kinds) <= MAX_OPERANDS, "IR opcode has too many operands");
+	}
+
+	// Whether the signature ends in a list that repeats.
+	constexpr bool is_variadic() const {
+		return count > 0 &&
+			(kinds[count - 1] == IROperandKind::SRC_LIST ||
+			 kinds[count - 1] == IROperandKind::ARG_LIST);
+	}
+
+	// Number of operands before the repeating tail.
+	constexpr size_t fixed_count() const {
+		return is_variadic() ? static_cast<size_t>(count) - 1 : static_cast<size_t>(count);
+	}
+
+	// The role of operand `index`, with the tail repeating forever. NONE means
+	// the instruction has no operand there.
+	constexpr IROperandKind kind_at(size_t index) const {
+		if (index < fixed_count()) {
+			return kinds[index];
+		}
+		if (is_variadic()) {
+			return kinds[count - 1];
+		}
+		return IROperandKind::NONE;
+	}
+};
+
+// Everything the compiler knows about an opcode, in one place.
+struct IROpcodeInfo {
+	IROpcode opcode;
+	const char* mnemonic;
+	IROperandSignature signature;
+	uint32_t effects;
+};
+
+// Metadata for an opcode. Every opcode has an entry; the table is checked
+// against the enum at build time.
+const IROpcodeInfo& ir_opcode_info(IROpcode op);
+
+inline bool ir_has_effect(IROpcode op, IREffect effect) {
+	return (ir_opcode_info(op).effects & effect) != 0;
+}
+
+// Whether the instruction can be deleted when nothing reads its destination,
+// and moved when its inputs allow.
+inline bool ir_is_pure(IROpcode op) {
+	return (ir_opcode_info(op).effects & IR_SIDE_EFFECTS) == 0;
+}
+
+// A label, a branch or a jump: anywhere a linear scan of the instruction stream
+// stops being a scan of one execution path.
+inline bool ir_is_control_flow(IROpcode op) {
+	return (ir_opcode_info(op).effects & (IR_LABEL | IR_BRANCH | IR_TERMINATOR)) != 0;
+}
 
 struct IRValue {
 	enum class Type {
@@ -234,6 +264,9 @@ struct IRProgram {
 
 const char* ir_opcode_name(IROpcode op);
 
+// Human-readable name of an operand role, for verifier diagnostics.
+const char* ir_operand_kind_name(IROperandKind kind);
+
 // Human-readable name of a Variant type / type hint, for diagnostics and dumps.
 const char* variant_type_name(IRInstruction::TypeHint hint);
 
@@ -249,6 +282,9 @@ const char* variant_type_name(IRInstruction::TypeHint hint);
 // through these helpers. Passes that instead hardcode "operand 0 is the
 // destination, the rest are sources" silently miscompile CALL and VSET, which is
 // exactly the class of bug these exist to prevent.
+//
+// All of them are lookups into the signature declared in ir_opcodes.def; none
+// of them re-derives anything.
 // ---------------------------------------------------------------------------
 
 // Index of the operand holding the destination register, or -1 when the opcode

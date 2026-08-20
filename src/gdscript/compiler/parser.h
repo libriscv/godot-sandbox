@@ -19,6 +19,7 @@ private:
 
 	// Statement parsing
 	StmtPtr parse_statement();
+	StmtPtr parse_statement_impl();
 	StmtPtr parse_var_decl(bool is_const);
 	StmtPtr parse_if_stmt();
 	StmtPtr parse_while_stmt();
@@ -44,6 +45,38 @@ private:
 	ExprPtr parse_unary();
 	ExprPtr parse_call();
 	ExprPtr parse_primary();
+
+	// -= Source positions =-
+	//
+	// Every AST node carries the position it starts at. A diagnostic that says
+	// what is wrong but not where is only half a diagnostic, and every node
+	// built here is built through one of these so that none of them is missed.
+
+	// Build a node positioned at `token`.
+	template <typename Node, typename... Args>
+	static std::unique_ptr<Node> make_at(const Token& token, Args&&... args) {
+		auto node = std::make_unique<Node>(std::forward<Args>(args)...);
+		node->line = token.line;
+		node->column = token.column;
+		return node;
+	}
+
+	// Build a node positioned where an existing node is: an expression built
+	// out of sub-expressions starts where its left-most operand starts.
+	template <typename Node, typename... Args>
+	static std::unique_ptr<Node> make_like(const Expr& like, Args&&... args) {
+		const int line = like.line;
+		const int column = like.column;
+		auto node = std::make_unique<Node>(std::forward<Args>(args)...);
+		node->line = line;
+		node->column = column;
+		return node;
+	}
+
+	// A binary expression starts where its left operand does. Reading the
+	// position before the operand is moved into the node is why this is a
+	// function rather than an expression at each of the twelve call sites.
+	static ExprPtr make_binary(ExprPtr left, BinaryExpr::Op op, ExprPtr right);
 
 	// Utilities
 	bool match(TokenType type);

@@ -3,79 +3,71 @@
 
 namespace gdscript {
 
-const char* ir_opcode_name(IROpcode op) {
-	switch (op) {
-		case IROpcode::LOAD_IMM: return "LOAD_IMM";
-		case IROpcode::LOAD_FLOAT_IMM: return "LOAD_FLOAT_IMM";
-		case IROpcode::LOAD_BOOL: return "LOAD_BOOL";
-		case IROpcode::LOAD_STRING: return "LOAD_STRING";
-		case IROpcode::LOAD_GLOBAL: return "LOAD_GLOBAL";
-		case IROpcode::STORE_GLOBAL: return "STORE_GLOBAL";
-		case IROpcode::MOVE: return "MOVE";
-		case IROpcode::CONVERT: return "CONVERT";
-		case IROpcode::ADD: return "ADD";
-		case IROpcode::SUB: return "SUB";
-		case IROpcode::MUL: return "MUL";
-		case IROpcode::DIV: return "DIV";
-		case IROpcode::MOD: return "MOD";
-		case IROpcode::NEG: return "NEG";
-		case IROpcode::CMP_EQ: return "CMP_EQ";
-		case IROpcode::CMP_NEQ: return "CMP_NEQ";
-		case IROpcode::CMP_LT: return "CMP_LT";
-		case IROpcode::CMP_LTE: return "CMP_LTE";
-		case IROpcode::CMP_GT: return "CMP_GT";
-		case IROpcode::CMP_GTE: return "CMP_GTE";
-		case IROpcode::AND: return "AND";
-		case IROpcode::OR: return "OR";
-		case IROpcode::NOT: return "NOT";
-		case IROpcode::BIT_AND: return "BIT_AND";
-		case IROpcode::BIT_OR: return "BIT_OR";
-		case IROpcode::BIT_XOR: return "BIT_XOR";
-		case IROpcode::BIT_NOT: return "BIT_NOT";
-		case IROpcode::SHL: return "SHL";
-		case IROpcode::SHR: return "SHR";
-		case IROpcode::LABEL: return "LABEL";
-		case IROpcode::JUMP: return "JUMP";
-		case IROpcode::BRANCH_ZERO: return "BRANCH_ZERO";
-		case IROpcode::BRANCH_NOT_ZERO: return "BRANCH_NOT_ZERO";
-		case IROpcode::BRANCH_EQ: return "BRANCH_EQ";
-		case IROpcode::BRANCH_NEQ: return "BRANCH_NEQ";
-		case IROpcode::BRANCH_LT: return "BRANCH_LT";
-		case IROpcode::BRANCH_LTE: return "BRANCH_LTE";
-		case IROpcode::BRANCH_GT: return "BRANCH_GT";
-		case IROpcode::BRANCH_GTE: return "BRANCH_GTE";
-		case IROpcode::CALL: return "CALL";
-		case IROpcode::CALL_SYSCALL: return "CALL_SYSCALL";
-		case IROpcode::RETURN: return "RETURN";
-		case IROpcode::VCALL: return "VCALL";
-		case IROpcode::VGET: return "VGET";
-		case IROpcode::VSET: return "VSET";
-		case IROpcode::MAKE_VECTOR2: return "MAKE_VECTOR2";
-		case IROpcode::MAKE_VECTOR3: return "MAKE_VECTOR3";
-		case IROpcode::MAKE_VECTOR4: return "MAKE_VECTOR4";
-		case IROpcode::MAKE_VECTOR2I: return "MAKE_VECTOR2I";
-		case IROpcode::MAKE_VECTOR3I: return "MAKE_VECTOR3I";
-		case IROpcode::MAKE_VECTOR4I: return "MAKE_VECTOR4I";
-		case IROpcode::MAKE_COLOR: return "MAKE_COLOR";
-		case IROpcode::MAKE_RECT2: return "MAKE_RECT2";
-		case IROpcode::MAKE_RECT2I: return "MAKE_RECT2I";
-		case IROpcode::MAKE_PLANE: return "MAKE_PLANE";
-		case IROpcode::MAKE_ARRAY: return "MAKE_ARRAY";
-		case IROpcode::MAKE_DICTIONARY: return "MAKE_DICTIONARY";
-		case IROpcode::MAKE_PACKED_BYTE_ARRAY: return "MAKE_PACKED_BYTE_ARRAY";
-		case IROpcode::MAKE_PACKED_INT32_ARRAY: return "MAKE_PACKED_INT32_ARRAY";
-		case IROpcode::MAKE_PACKED_INT64_ARRAY: return "MAKE_PACKED_INT64_ARRAY";
-		case IROpcode::MAKE_PACKED_FLOAT32_ARRAY: return "MAKE_PACKED_FLOAT32_ARRAY";
-		case IROpcode::MAKE_PACKED_FLOAT64_ARRAY: return "MAKE_PACKED_FLOAT64_ARRAY";
-		case IROpcode::MAKE_PACKED_STRING_ARRAY: return "MAKE_PACKED_STRING_ARRAY";
-		case IROpcode::MAKE_PACKED_VECTOR2_ARRAY: return "MAKE_PACKED_VECTOR2_ARRAY";
-		case IROpcode::MAKE_PACKED_VECTOR3_ARRAY: return "MAKE_PACKED_VECTOR3_ARRAY";
-		case IROpcode::MAKE_PACKED_COLOR_ARRAY: return "MAKE_PACKED_COLOR_ARRAY";
-		case IROpcode::MAKE_PACKED_VECTOR4_ARRAY: return "MAKE_PACKED_VECTOR4_ARRAY";
-		case IROpcode::VGET_INLINE: return "VGET_INLINE";
-		case IROpcode::VSET_INLINE: return "VSET_INLINE";
-		default: return "UNKNOWN";
+// The opcode metadata table, generated from ir_opcodes.def. Every accessor
+// below is a lookup into this one array, so a pass can never disagree with
+// another about what an opcode does.
+static constexpr IROpcodeInfo IR_OPCODE_TABLE[] = {
+#define DST       IROperandKind::DST
+#define SRC       IROperandKind::SRC
+#define IMM       IROperandKind::IMM
+#define FIMM      IROperandKind::FIMM
+#define STR       IROperandKind::STR
+#define LBL       IROperandKind::LBL
+#define CNT       IROperandKind::CNT
+#define CNT2      IROperandKind::CNT2
+#define SRC_LIST  IROperandKind::SRC_LIST
+#define ARG_LIST  IROperandKind::ARG_LIST
+#define SIG(...)  IROperandSignature(__VA_ARGS__)
+#define IR_OPCODE(name, mnemonic, sig, effects) \
+	IROpcodeInfo { IROpcode::name, mnemonic, sig, static_cast<uint32_t>(effects) },
+#include "ir_opcodes.def"
+#undef IR_OPCODE
+#undef SIG
+#undef ARG_LIST
+#undef SRC_LIST
+#undef CNT2
+#undef CNT
+#undef LBL
+#undef STR
+#undef FIMM
+#undef IMM
+#undef SRC
+#undef DST
+};
+
+static_assert(sizeof(IR_OPCODE_TABLE) / sizeof(IR_OPCODE_TABLE[0]) == IR_OPCODE_COUNT,
+	"The opcode metadata table and the opcode enum disagree");
+
+const IROpcodeInfo& ir_opcode_info(IROpcode op) {
+	const size_t index = static_cast<size_t>(op);
+	// The table is generated from the same list as the enum, so an out-of-range
+	// opcode is a corrupt IRInstruction rather than a missing table entry.
+	if (index >= IR_OPCODE_COUNT) {
+		static constexpr IROpcodeInfo unknown { IROpcode::LABEL, "UNKNOWN", IROperandSignature(), IR_SIDE_EFFECTS };
+		return unknown;
 	}
+	return IR_OPCODE_TABLE[index];
+}
+
+const char* ir_opcode_name(IROpcode op) {
+	return ir_opcode_info(op).mnemonic;
+}
+
+const char* ir_operand_kind_name(IROperandKind kind) {
+	switch (kind) {
+		case IROperandKind::NONE: return "nothing";
+		case IROperandKind::DST: return "destination register";
+		case IROperandKind::SRC: return "source register";
+		case IROperandKind::IMM: return "immediate";
+		case IROperandKind::FIMM: return "float immediate";
+		case IROperandKind::STR: return "string";
+		case IROperandKind::LBL: return "label";
+		case IROperandKind::CNT: return "argument count";
+		case IROperandKind::CNT2: return "pair count";
+		case IROperandKind::SRC_LIST: return "source register";
+		case IROperandKind::ARG_LIST: return "argument";
+	}
+	return "unknown";
 }
 
 const char* variant_type_name(IRInstruction::TypeHint hint) {
@@ -152,37 +144,13 @@ std::string IRValue::to_string() const {
 }
 
 int ir_destination_operand_index(IROpcode op) {
-	switch (op) {
-		// No destination register at all: these either read operand 0 or take
-		// no register operands.
-		case IROpcode::LABEL:
-		case IROpcode::JUMP:
-		case IROpcode::BRANCH_ZERO:
-		case IROpcode::BRANCH_NOT_ZERO:
-		case IROpcode::BRANCH_EQ:
-		case IROpcode::BRANCH_NEQ:
-		case IROpcode::BRANCH_LT:
-		case IROpcode::BRANCH_LTE:
-		case IROpcode::BRANCH_GT:
-		case IROpcode::BRANCH_GTE:
-		case IROpcode::RETURN:
-		// STORE_GLOBAL writes memory: operand 0 is the global index, operand 1
-		// is the value being read.
-		case IROpcode::STORE_GLOBAL:
-		// VSET/VSET_INLINE write into the object held by operand 0, which they
-		// read rather than define.
-		case IROpcode::VSET:
-		case IROpcode::VSET_INLINE:
-			return -1;
-
-		// CALL is "CALL name, dst, argc, args..." - the callee name occupies
-		// operand 0.
-		case IROpcode::CALL:
-			return 1;
-
-		default:
-			return 0;
+	const IROperandSignature& signature = ir_opcode_info(op).signature;
+	for (size_t i = 0; i < signature.fixed_count(); i++) {
+		if (signature.kinds[i] == IROperandKind::DST) {
+			return static_cast<int>(i);
+		}
 	}
+	return -1;
 }
 
 int ir_destination_register(const IRInstruction& instr) {
@@ -204,11 +172,10 @@ bool ir_reads_operand(const IRInstruction& instr, size_t index) {
 	if (instr.operands[index].type != IRValue::Type::REGISTER) {
 		return false;
 	}
-	const int dst_index = ir_destination_operand_index(instr.opcode);
-	if (dst_index >= 0 && static_cast<size_t>(dst_index) == index) {
-		return false;
-	}
-	return true;
+	// A register operand is read unless the signature says it is the one the
+	// instruction defines.
+	const IROperandKind kind = ir_opcode_info(instr.opcode).signature.kind_at(index);
+	return kind != IROperandKind::DST;
 }
 
 void ir_collect_read_registers(const IRInstruction& instr, std::vector<int>& out) {

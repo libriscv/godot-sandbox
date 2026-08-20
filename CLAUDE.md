@@ -50,6 +50,35 @@ cat script.gd | ./gdscript_to_riscv -f test      # Disassemble specific function
 
 These tools are essential for tracking down bugs in the compiler pipeline by showing what's generated at each stage.
 
+### Checking the compiler against itself
+
+Four checks run from `src/gdscript/compiler/build` with `ctest .`, and exist so
+that a compiler bug fails a build rather than a user's program at run time. See
+`src/gdscript/compiler/REFACTOR.md` for why each one is there.
+
+- `test_ir_verifier` — the IR verifier (`ir_verifier.h`), which also runs
+  between every optimizer pass in debug builds. It checks operand roles against
+  the metadata table, that every register read is defined on every path, that
+  labels resolve, and that type hints match what the operands hold.
+- `test_opt_invariance` — an optimizer pass must not change what a program
+  computes. Every corpus program is interpreted unoptimized and after each
+  prefix of the pipeline, and the answers have to match. On a mismatch it
+  bisects and names the pass.
+- `test_differential` — the same programs through the IR interpreter and
+  through a real libriscv machine over the produced ELF. `--file program.gd`
+  runs one program, which is how a failure gets reduced.
+- `test_fuzz` — a seeded generator (`tests/gdscript_generator.h`) feeding the
+  first two, with a shrinker. `tests/fuzz_nightly.sh` runs it and the
+  differential harness for longer, from fresh seeds.
+
+`GDSC_PASSES=<comma-separated pass names>` selects which optimizer passes run,
+in every tool including `dump_ir`. `GDSC_PASSES=none` disables the optimizer;
+the pass names are in `IROptimizer::pipeline()`.
+
+Adding an opcode to `ir_opcodes.def` is deliberately a compile error at every
+site that dispatches over `IROpcode`: those switches have no `default:` and the
+library is built with `-Werror=switch`.
+
 The GDScript-to-RISC-V unit tests are under /tests/tests. You can only visually inspect RISC-V ELFs using riscv64-linux-gnu-objdump. Executing the unit tests specific to GDScript is from the tests folder:
 ./run_unittests.sh -gselect compiler
 Always run unit tests from the tests folder. There is a separate script for running Zig C++ unit tests:

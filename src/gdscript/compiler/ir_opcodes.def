@@ -1,0 +1,147 @@
+// The one place an IR opcode is described.
+//
+//   IR_OPCODE(opcode, mnemonic, signature, effects)
+//
+// Everything a pass could want to know about an opcode is declared here: its
+// name, the role of each of its operands, and whether it can be moved or
+// deleted. The enum, ir_opcode_name(), the destination-operand lookup, the
+// read-operand test, the purity test dead-code elimination needs and the
+// verifier's arity checks are all derived from this list, so adding an opcode
+// without declaring its operand roles does not compile. That is the point:
+// before this table, adding an opcode and forgetting to update five passes
+// compiled fine and miscompiled quietly.
+//
+// signature -- SIG(...) over the operand kinds, in order:
+//
+//   DST       destination register: the operand the instruction defines
+//   SRC       source register: an operand the instruction reads
+//   IMM       immediate integer
+//   FIMM      immediate double
+//   STR       inline string (a name, not an index into the string constants)
+//   LBL       branch target label
+//   CNT       immediate holding the length of the trailing list
+//   CNT2      immediate holding half the length of the trailing list (pairs)
+//   SRC_LIST  trailing run of zero or more source registers
+//   ARG_LIST  trailing run of zero or more source registers and/or immediates
+//
+// A signature ending in SRC_LIST or ARG_LIST is variadic; everything else has
+// exactly as many operands as it lists.
+//
+// effects -- a bitmask of IREffect. IR_PURE is the empty mask, and says the
+// instruction can be deleted when its result is unused and moved when its
+// inputs allow. Anything a pass must not delete or reorder carries
+// IR_SIDE_EFFECTS.
+
+// -= Loads, stores and moves =-
+
+IR_OPCODE(LOAD_IMM,        "LOAD_IMM",        SIG(DST, IMM),       IR_PURE | IR_SIMPLE_LOAD)
+IR_OPCODE(LOAD_FLOAT_IMM,  "LOAD_FLOAT_IMM",  SIG(DST, FIMM),      IR_PURE | IR_SIMPLE_LOAD)
+IR_OPCODE(LOAD_BOOL,       "LOAD_BOOL",       SIG(DST, IMM),       IR_PURE | IR_SIMPLE_LOAD)
+IR_OPCODE(LOAD_STRING,     "LOAD_STRING",     SIG(DST, IMM),       IR_PURE | IR_SIMPLE_LOAD)
+IR_OPCODE(LOAD_GLOBAL,     "LOAD_GLOBAL",     SIG(DST, IMM),       IR_PURE | IR_READS_GLOBAL)
+IR_OPCODE(STORE_GLOBAL,    "STORE_GLOBAL",    SIG(IMM, SRC),       IR_SIDE_EFFECTS | IR_WRITES_GLOBAL)
+IR_OPCODE(MOVE,            "MOVE",            SIG(DST, SRC),       IR_PURE | IR_SIMPLE_LOAD)
+IR_OPCODE(CONVERT,         "CONVERT",         SIG(DST, SRC),       IR_PURE)
+
+// -= Arithmetic =-
+
+IR_OPCODE(ADD,             "ADD",             SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
+IR_OPCODE(SUB,             "SUB",             SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
+IR_OPCODE(MUL,             "MUL",             SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
+IR_OPCODE(DIV,             "DIV",             SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
+IR_OPCODE(MOD,             "MOD",             SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
+IR_OPCODE(NEG,             "NEG",             SIG(DST, SRC),       IR_PURE | IR_ARITHMETIC)
+
+// -= Comparison (sets the destination to 0 or 1) =-
+
+IR_OPCODE(CMP_EQ,          "CMP_EQ",          SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC | IR_COMPARISON)
+IR_OPCODE(CMP_NEQ,         "CMP_NEQ",         SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC | IR_COMPARISON)
+IR_OPCODE(CMP_LT,          "CMP_LT",          SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC | IR_COMPARISON)
+IR_OPCODE(CMP_LTE,         "CMP_LTE",         SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC | IR_COMPARISON)
+IR_OPCODE(CMP_GT,          "CMP_GT",          SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC | IR_COMPARISON)
+IR_OPCODE(CMP_GTE,         "CMP_GTE",         SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC | IR_COMPARISON)
+
+// -= Logical =-
+
+IR_OPCODE(AND,             "AND",             SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
+IR_OPCODE(OR,              "OR",              SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
+IR_OPCODE(NOT,             "NOT",             SIG(DST, SRC),       IR_PURE)
+
+// -= Bitwise =-
+
+IR_OPCODE(BIT_AND,         "BIT_AND",         SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
+IR_OPCODE(BIT_OR,          "BIT_OR",          SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
+IR_OPCODE(BIT_XOR,         "BIT_XOR",         SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
+IR_OPCODE(BIT_NOT,         "BIT_NOT",         SIG(DST, SRC),       IR_PURE | IR_ARITHMETIC)
+IR_OPCODE(SHL,             "SHL",             SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
+IR_OPCODE(SHR,             "SHR",             SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
+
+// -= Control flow =-
+//
+// All of these carry IR_SIDE_EFFECTS: control flow is the side effect, and a
+// pass that deletes or reorders one changes where the program goes.
+
+IR_OPCODE(LABEL,           "LABEL",           SIG(LBL),            IR_SIDE_EFFECTS | IR_LABEL)
+IR_OPCODE(JUMP,            "JUMP",            SIG(LBL),            IR_SIDE_EFFECTS | IR_TERMINATOR)
+IR_OPCODE(BRANCH_ZERO,     "BRANCH_ZERO",     SIG(SRC, LBL),       IR_SIDE_EFFECTS | IR_BRANCH)
+IR_OPCODE(BRANCH_NOT_ZERO, "BRANCH_NOT_ZERO", SIG(SRC, LBL),       IR_SIDE_EFFECTS | IR_BRANCH)
+IR_OPCODE(BRANCH_EQ,       "BRANCH_EQ",       SIG(SRC, SRC, LBL),  IR_SIDE_EFFECTS | IR_BRANCH | IR_FUSED_BRANCH)
+IR_OPCODE(BRANCH_NEQ,      "BRANCH_NEQ",      SIG(SRC, SRC, LBL),  IR_SIDE_EFFECTS | IR_BRANCH | IR_FUSED_BRANCH)
+IR_OPCODE(BRANCH_LT,       "BRANCH_LT",       SIG(SRC, SRC, LBL),  IR_SIDE_EFFECTS | IR_BRANCH | IR_FUSED_BRANCH)
+IR_OPCODE(BRANCH_LTE,      "BRANCH_LTE",      SIG(SRC, SRC, LBL),  IR_SIDE_EFFECTS | IR_BRANCH | IR_FUSED_BRANCH)
+IR_OPCODE(BRANCH_GT,       "BRANCH_GT",       SIG(SRC, SRC, LBL),  IR_SIDE_EFFECTS | IR_BRANCH | IR_FUSED_BRANCH)
+IR_OPCODE(BRANCH_GTE,      "BRANCH_GTE",      SIG(SRC, SRC, LBL),  IR_SIDE_EFFECTS | IR_BRANCH | IR_FUSED_BRANCH)
+
+// -= Function calls =-
+//
+// CALL is the reason ir_destination_operand_index() exists: the callee name
+// occupies operand 0, so the destination register is operand 1.
+
+IR_OPCODE(CALL,            "CALL",            SIG(STR, DST, CNT, SRC_LIST), IR_SIDE_EFFECTS | IR_CALL)
+IR_OPCODE(CALL_SYSCALL,    "CALL_SYSCALL",    SIG(DST, IMM, ARG_LIST),      IR_SIDE_EFFECTS | IR_CALL)
+IR_OPCODE(RETURN,          "RETURN",          SIG(),                        IR_SIDE_EFFECTS | IR_TERMINATOR)
+
+// -= Variant operations (through syscalls) =-
+//
+// VSET writes into the object held by operand 0, which it reads rather than
+// defines, so it has no DST at all.
+
+IR_OPCODE(VCALL,           "VCALL",           SIG(DST, SRC, STR, CNT, SRC_LIST), IR_SIDE_EFFECTS | IR_CALL)
+IR_OPCODE(VGET,            "VGET",            SIG(DST, SRC, IMM, IMM),           IR_SIDE_EFFECTS)
+IR_OPCODE(VSET,            "VSET",            SIG(SRC, IMM, IMM, SRC),           IR_SIDE_EFFECTS)
+
+// -= Inline primitive construction (no syscalls) =-
+
+IR_OPCODE(MAKE_VECTOR2,    "MAKE_VECTOR2",    SIG(DST, SRC, SRC),            IR_PURE)
+IR_OPCODE(MAKE_VECTOR3,    "MAKE_VECTOR3",    SIG(DST, SRC, SRC, SRC),       IR_PURE)
+IR_OPCODE(MAKE_VECTOR4,    "MAKE_VECTOR4",    SIG(DST, SRC, SRC, SRC, SRC),  IR_PURE)
+IR_OPCODE(MAKE_VECTOR2I,   "MAKE_VECTOR2I",   SIG(DST, SRC, SRC),            IR_PURE)
+IR_OPCODE(MAKE_VECTOR3I,   "MAKE_VECTOR3I",   SIG(DST, SRC, SRC, SRC),       IR_PURE)
+IR_OPCODE(MAKE_VECTOR4I,   "MAKE_VECTOR4I",   SIG(DST, SRC, SRC, SRC, SRC),  IR_PURE)
+IR_OPCODE(MAKE_COLOR,      "MAKE_COLOR",      SIG(DST, SRC, SRC, SRC, SRC),  IR_PURE)
+IR_OPCODE(MAKE_RECT2,      "MAKE_RECT2",      SIG(DST, SRC, SRC, SRC, SRC),  IR_PURE)
+IR_OPCODE(MAKE_RECT2I,     "MAKE_RECT2I",     SIG(DST, SRC, SRC, SRC, SRC),  IR_PURE)
+IR_OPCODE(MAKE_PLANE,      "MAKE_PLANE",      SIG(DST, SRC, SRC, SRC, SRC),  IR_PURE)
+
+// -= Array and Dictionary construction (via the VCREATE syscall) =-
+
+IR_OPCODE(MAKE_ARRAY,      "MAKE_ARRAY",      SIG(DST, CNT, SRC_LIST),  IR_PURE)
+IR_OPCODE(MAKE_DICTIONARY, "MAKE_DICTIONARY", SIG(DST, CNT2, SRC_LIST), IR_PURE)
+
+// -= Packed array construction (via the VCREATE syscall) =-
+
+IR_OPCODE(MAKE_PACKED_BYTE_ARRAY,    "MAKE_PACKED_BYTE_ARRAY",    SIG(DST, CNT, SRC_LIST), IR_PURE)
+IR_OPCODE(MAKE_PACKED_INT32_ARRAY,   "MAKE_PACKED_INT32_ARRAY",   SIG(DST, CNT, SRC_LIST), IR_PURE)
+IR_OPCODE(MAKE_PACKED_INT64_ARRAY,   "MAKE_PACKED_INT64_ARRAY",   SIG(DST, CNT, SRC_LIST), IR_PURE)
+IR_OPCODE(MAKE_PACKED_FLOAT32_ARRAY, "MAKE_PACKED_FLOAT32_ARRAY", SIG(DST, CNT, SRC_LIST), IR_PURE)
+IR_OPCODE(MAKE_PACKED_FLOAT64_ARRAY, "MAKE_PACKED_FLOAT64_ARRAY", SIG(DST, CNT, SRC_LIST), IR_PURE)
+IR_OPCODE(MAKE_PACKED_STRING_ARRAY,  "MAKE_PACKED_STRING_ARRAY",  SIG(DST, CNT, SRC_LIST), IR_PURE)
+IR_OPCODE(MAKE_PACKED_VECTOR2_ARRAY, "MAKE_PACKED_VECTOR2_ARRAY", SIG(DST, CNT, SRC_LIST), IR_PURE)
+IR_OPCODE(MAKE_PACKED_VECTOR3_ARRAY, "MAKE_PACKED_VECTOR3_ARRAY", SIG(DST, CNT, SRC_LIST), IR_PURE)
+IR_OPCODE(MAKE_PACKED_COLOR_ARRAY,   "MAKE_PACKED_COLOR_ARRAY",   SIG(DST, CNT, SRC_LIST), IR_PURE)
+IR_OPCODE(MAKE_PACKED_VECTOR4_ARRAY, "MAKE_PACKED_VECTOR4_ARRAY", SIG(DST, CNT, SRC_LIST), IR_PURE)
+
+// -= Inline member access (no syscalls) =-
+
+IR_OPCODE(VGET_INLINE,     "VGET_INLINE",     SIG(DST, SRC, STR, IMM),      IR_PURE)
+IR_OPCODE(VSET_INLINE,     "VSET_INLINE",     SIG(SRC, STR, IMM, SRC),      IR_SIDE_EFFECTS)

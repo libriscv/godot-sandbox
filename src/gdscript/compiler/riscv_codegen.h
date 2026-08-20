@@ -2,6 +2,7 @@
 #include "ir.h"
 #include "register_allocator.h"
 #include "variant_layout.h"
+#include <string>
 #include <unordered_set>
 #include <cstdint>
 
@@ -33,6 +34,39 @@ public:
 	const std::vector<IRGlobalVar>& get_globals() const { return m_globals; }
 	size_t get_global_data_size() const { return m_global_data_size; }
 
+	// -= Immediate ranges =-
+	//
+	// Every instruction immediate is a fixed-width signed field. Masking a value
+	// that does not fit -- which these encoders used to do -- silently emits a
+	// different instruction: `addi rd, rs, 4776` became `addi rd, rs, 680`, and
+	// three call sites computing global addresses that way produced wrong code
+	// once a program had enough globals. An immediate out of range is a compiler
+	// bug, so the encoders say so instead of encoding something else.
+	static constexpr int I_TYPE_IMM_BITS = 12;   // addi, loads, jalr
+	static constexpr int S_TYPE_IMM_BITS = 12;   // stores
+	static constexpr int B_TYPE_IMM_BITS = 13;   // conditional branches, always even
+	static constexpr int J_TYPE_IMM_BITS = 21;   // jal, always even
+
+	// Whether `value` fits in a `bits`-wide two's complement field.
+	static bool fits_in_signed(int64_t value, int bits);
+	// Throws unless it does, naming the instruction and the value.
+	static void check_immediate(const std::string& what, int64_t value, int bits);
+	// The same, for a branch or jump displacement, which is also always even.
+	static void check_displacement(const std::string& what, int64_t offset, int bits);
+
+	// The register a load or a store computes a wide address in.
+	//
+	// A stack frame larger than 2047 bytes cannot reach its upper slots with a
+	// 12-bit immediate, so those accesses have to materialize the address in a
+	// register first. Doing that in t0-t2, which is what every inline copy of
+	// the wide path used to do, silently destroys whatever the surrounding
+	// instruction expansion had there -- including, for `sd t2, 2048(sp)`, the
+	// value being stored, which then wrote a stack address into the Variant.
+	//
+	// This register is reserved: RegisterAllocator does not hand it out and no
+	// expansion uses it, so computing an address in it is always safe.
+	static constexpr uint8_t REG_WIDE_SCRATCH = 31; // x31 (t6)
+
 	// Label of the synthetic function that evaluates non-constant global
 	// initializers. Not a user-visible function name, so it cannot collide with
 	// one: GDScript identifiers cannot contain a '.'.
@@ -62,6 +96,23 @@ private:
 	void emit_la(uint8_t rd, const std::string& label, int32_t addend = 0); // Load address (pseudo: auipc + addi)
 	void emit_mv(uint8_t rd, uint8_t rs);       // Move
 	void emit_addi(uint8_t rd, uint8_t rs1, int32_t imm); // Add immediate
+
+	// rd = base + offset, whatever the offset is: `addi` when it fits in the
+	// 12-bit immediate, `li` + `add` when it does not. Every place that used to
+	// write that branch inline checked `offset < 2048` without checking
+	// `offset >= -2048`, which is half a range check.
+	//
+	// When rd and base are the same register the offset needs somewhere to
+	// live, and that somewhere is REG_WIDE_SCRATCH, which nothing else uses.
+	void emit_add_offset(uint8_t rd, uint8_t base, int32_t offset);
+
+	// Address of global variable `index`, i.e. ".globals + index * stride".
+	// The index is folded into the relocation rather than added afterwards,
+	// because an `addi` after the address truncates at 85 globals.
+	void emit_address_of_global(uint8_t rd, size_t index);
+
+	// The label the global data area is defined at.
+	static constexpr const char* GLOBALS_LABEL = ".globals";
 	void emit_add(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_sub(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_mul(uint8_t rd, uint8_t rs1, uint8_t rs2);
@@ -87,6 +138,11 @@ private:
 	void emit_jalr(uint8_t rd, uint8_t rs1, int32_t offset);
 	void emit_ecall();
 	void emit_ret();
+
+	// One range decision for every load and every store: the 12-bit immediate
+	// when the offset fits, a computed base register when it does not.
+	void emit_load_with_offset(uint8_t opcode, uint8_t funct3, uint8_t rd, uint8_t rs1, int32_t offset);
+	void emit_store_with_offset(uint8_t opcode, uint8_t funct3, uint8_t rs2, uint8_t rs1, int32_t offset);
 
 	// Load/Store instructions (with automatic large offset handling)
 	void emit_ld(uint8_t rd, uint8_t rs1, int32_t offset);   // Load doubleword (64-bit)
@@ -148,6 +204,23 @@ private:
 	// as `la` followed by `addi` silently truncates once the addend leaves the
 	// 12-bit immediate range, which happens as soon as a program has enough globals.
 	void mark_label_use(const std::string& label, size_t code_offset, int32_t addend = 0);
+
+	// Rewrite conditional branches that cannot reach their target.
+	//
+	// A B-type branch reaches +-4KB, which a function with a large enough body
+	// outgrows. Masking the displacement -- which is what the encoder used to
+	// do -- produced a branch to somewhere else entirely; refusing to encode it
+	// is correct but leaves a program that cannot be compiled at all. So a
+	// branch that cannot reach is turned into the standard pair
+	//
+	//     b<inverted> rs1, rs2, +8
+	//     jal x0, target
+	//
+	// which reaches +-1MB. Inserting an instruction moves everything after it,
+	// so this runs to a fixpoint: growing the code can put another branch out
+	// of reach.
+	void relax_branches();
+
 	void resolve_labels();
 
 	// Variant field access helpers
@@ -243,14 +316,41 @@ private:
 	// Register allocator
 	RegisterAllocator m_allocator;
 
-	// For VARIANT values: virtual_reg -> stack offset
-	std::unordered_map<int, int> m_variant_offsets;
+	// -= Per-function state =-
+	//
+	// Stack offsets are keyed by virtual register number, and virtual register
+	// numbers restart at 0 in every function, so all of this means nothing once
+	// the function ends. Clearing each piece by hand at the top of
+	// gen_function() is the shape that let a stale register type survive a
+	// function boundary in the IR code generator; grouping it means a field
+	// added here is reset with the rest, and the guard below takes it away
+	// again when the function ends so it cannot be read between functions.
+	//
+	// Unlike CodeGenerator::FunctionContext this is not passed down: every one
+	// of the hundred-odd encoder helpers reaches for the frame size or a slot
+	// offset, and threading a parameter through all of them would buy no
+	// safety the guard does not already give.
+	struct FunctionState {
+		// For VARIANT values: virtual_reg -> stack offset
+		std::unordered_map<int, int> variant_offsets;
+		size_t num_params = 0;      // Number of parameters in current function
+		int stack_frame_size = 0;   // Total stack frame size in bytes
+		int next_variant_slot = 0;  // Next Variant slot to allocate
+		int scratch_slot_base = 0;  // First Variant slot of the scratch area
+		int current_instr_idx = 0;  // Current instruction index for register allocation
+	};
 
-	size_t m_num_params = 0; // Number of parameters in current function
-	int m_stack_frame_size = 0; // Total stack frame size in bytes
-	int m_next_variant_slot = 0; // Next Variant slot to allocate
-	int m_scratch_slot_base = 0; // First Variant slot of the scratch area
-	int m_current_instr_idx = 0; // Current instruction index for register allocation
+	FunctionState m_fn;
+
+	// Installs a fresh FunctionState for the length of one function, and takes
+	// it away again afterwards.
+	struct FunctionStateGuard {
+		RISCVCodeGen& gen;
+		explicit FunctionStateGuard(RISCVCodeGen& g) : gen(g) { gen.m_fn = FunctionState {}; }
+		~FunctionStateGuard() { gen.m_fn = FunctionState {}; }
+		FunctionStateGuard(const FunctionStateGuard&) = delete;
+		FunctionStateGuard& operator=(const FunctionStateGuard&) = delete;
+	};
 
 	// Number of scratch Variant slots reserved in every stack frame. No instruction
 	// expansion needs more than one live at a time; the second is headroom.
@@ -318,6 +418,7 @@ private:
 	static constexpr uint8_t REG_T4 = 29;
 	static constexpr uint8_t REG_T5 = 30;
 	static constexpr uint8_t REG_T6 = 31;
+
 	static constexpr uint8_t REG_FP = 8;    // x8 - frame pointer
 	static constexpr uint8_t REG_S1 = 9;    // x9 - saved register
 	static constexpr uint8_t REG_A0 = 10;   // x10-x17 - arguments/return values

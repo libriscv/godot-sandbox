@@ -13,6 +13,7 @@
 #include "../variant_layout.h"
 #include <cassert>
 #include <climits>
+#include <unordered_map>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -602,6 +603,67 @@ static void test_globals_start_empty() {
 	std::cout << "  ✓ Globals start as empty Variants" << std::endl;
 }
 
+// Loop-invariant code motion hoisted definitions that only run on one path
+// through the loop body. A loop containing `if c: x = 1` and `else: x = 0` has
+// two invariant definitions of the same register; hoisting either makes the
+// register hold that value on both paths. A generated program found it, and it
+// produced a wrong answer with nothing else to see.
+static void test_licm_leaves_conditional_definitions_alone() {
+	std::cout << "Testing that LICM leaves conditional definitions alone..." << std::endl;
+
+	// `or` lowers to exactly that shape: a register set to 1 on the
+	// short-circuit path and to 0 on the other, both inside the loop body.
+	const std::string source = R"(
+func test():
+	var taken = 0
+	var i = 4
+	while i > 0:
+		i = i - 1
+		if true or false:
+			taken = taken + 1
+	return taken
+)";
+
+	assert(run_int(source, "test") == 4);
+
+	// The same answer with loop-invariant code motion as the only pass, so that
+	// a later pass cannot be the one making it right.
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program parsed = parser.parse();
+	CodeGenerator codegen;
+	IRProgram unoptimized = codegen.generate(parsed);
+
+	IRProgram hoisted = unoptimized;
+	IROptimizer optimizer;
+	optimizer.set_enabled_passes({ "licm" });
+	optimizer.optimize(hoisted);
+
+	IRInterpreter interpreter(hoisted);
+	const IRInterpreter::Value value = interpreter.call("test");
+	assert(std::get<int64_t>(value) == 4);
+
+	// And the pass did still run: the loop's unconditional invariants -- the
+	// comparison's 0 and the decrement's 1 -- are hoisted, so this is a test of
+	// LICM being selective rather than of LICM being off.
+	auto instructions_before_loop = [](const IRFunction& func) {
+		for (size_t i = 0; i < func.instructions.size(); i++) {
+			const auto& instr = func.instructions[i];
+			if (instr.opcode == IROpcode::LABEL &&
+			    std::get<std::string>(instr.operands.at(0).value).rfind("loop_", 0) == 0) {
+				return i;
+			}
+		}
+		throw std::runtime_error("no loop in the generated IR");
+	};
+
+	const size_t before = instructions_before_loop(find_function(unoptimized, "test"));
+	const size_t after = instructions_before_loop(find_function(hoisted, "test"));
+	assert(after > before && "LICM hoisted nothing, so this test proves nothing");
+
+	std::cout << "  ✓ LICM leaves conditional definitions alone" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Compiler Regression Tests ===" << std::endl << std::endl;
 
@@ -618,6 +680,7 @@ int main() {
 	test_declared_type_coercion();
 	test_bitwise_and_shifts();
 	test_globals_start_empty();
+	test_licm_leaves_conditional_definitions_alone();
 
 	std::cout << std::endl << "All regression tests passed!" << std::endl;
 	return 0;

@@ -3638,3 +3638,50 @@ func read_last_again():
 	assert_eq(s.vmcallv("read_last_again"), 42, "The write landed in the right slot")
 
 	s.queue_free()
+
+func test_large_stack_frame():
+	# A Variant slot past 2047 bytes into the frame cannot be reached with a
+	# 12-bit immediate, so the address has to be computed in a register first.
+	# Computing it in one the surrounding instruction was already using stored
+	# the address instead of the value: `sd t2, 2048(sp)` became "compute
+	# sp+2048 into t2, then store t2", and the variable came back as a stack
+	# address. Around eighty locals is enough.
+	var gdscript_code = "func many_locals():\n"
+	for i in range(120):
+		gdscript_code += "\tvar v%d = %d\n" % [i, i]
+	gdscript_code += "\treturn v0 + v60 + v119\n"
+
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("many_locals"), 0 + 60 + 119, "Locals past the 12-bit frame offset")
+
+	s.queue_free()
+
+
+func test_far_branch_is_relaxed():
+	# A conditional branch reaches +-4KB. A loop body long enough to outgrow
+	# that used to get a masked displacement, which is a branch to somewhere
+	# else entirely. The exit branch is now rewritten as an inverted branch over
+	# a jump, which reaches +-1MB.
+	var gdscript_code = "func long_loop():\n\tvar total = 0\n\tvar i = 0\n\twhile i < 3:\n"
+	for k in range(60):
+		gdscript_code += "\t\tvar a%d = i + %d\n" % [k, k]
+	gdscript_code += "\t\ttotal = total"
+	for k in range(60):
+		gdscript_code += " + a%d" % k
+	gdscript_code += "\n\t\ti = i + 1\n\treturn total\n"
+
+	var s = _compile_and_load(gdscript_code, 60000)
+	if s == null:
+		return
+
+	# Three iterations of sum(i + k) for k in 0..59, with i = 0, 1, 2.
+	var expected = 0
+	for i in range(3):
+		for k in range(60):
+			expected += i + k
+	assert_eq(s.vmcallv("long_loop"), expected, "A loop whose body outgrows a branch")
+
+	s.queue_free()

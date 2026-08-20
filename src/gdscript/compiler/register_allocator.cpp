@@ -8,11 +8,17 @@ RegisterAllocator::RegisterAllocator() {
 }
 
 void RegisterAllocator::init_free_registers() {
+	// t6 is deliberately absent: the code generator reserves it as the register
+	// a load or a store computes a wide stack offset in. A frame larger than
+	// 2047 bytes cannot reach its upper slots with a 12-bit immediate, and
+	// computing that address in a register the surrounding instruction is
+	// already using silently destroys the value being stored.
+	// See RISCVCodeGen::REG_WIDE_SCRATCH.
 	m_free_registers = {
 		REG_T0, REG_T1, REG_T2,
 		REG_S1, REG_S2, REG_S3, REG_S4, REG_S5, REG_S6, REG_S7,
 		REG_S8, REG_S9, REG_S10, REG_S11,
-		REG_T3, REG_T4, REG_T5, REG_T6
+		REG_T3, REG_T4, REG_T5
 	};
 }
 

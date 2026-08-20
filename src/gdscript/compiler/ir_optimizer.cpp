@@ -1,12 +1,92 @@
 #include "ir_optimizer.h"
 #include "compiler_exception.h"
+#include "ir_verifier.h"
 #include <algorithm>
+#include <climits>
 #include <cmath>
+#include <cstdint>
+#include <cstdlib>
 #include <iostream>
 
 namespace gdscript {
 
-IROptimizer::IROptimizer() {}
+IROptimizer::IROptimizer() {
+	// GDSC_PASSES names the passes to run, comma separated, and is how the
+	// optimization-invariance test bisects a miscompile from a shell loop.
+	// "all" (or an unset variable) runs everything, "none" runs nothing.
+	if (const char* env = std::getenv("GDSC_PASSES")) {
+		std::vector<std::string> names;
+		std::string current;
+		for (const char* p = env; ; p++) {
+			if (*p == ',' || *p == '\0') {
+				if (!current.empty()) {
+					names.push_back(current);
+					current.clear();
+				}
+				if (*p == '\0') break;
+			} else if (*p != ' ' && *p != '\t') {
+				current.push_back(*p);
+			}
+		}
+		if (names.empty()) {
+			names.push_back("none");
+		}
+		set_enabled_passes(names);
+	}
+}
+
+const std::vector<IRPass>& IROptimizer::pipeline() {
+	// Peephole appears three times on purpose: each earlier pass exposes
+	// patterns the previous peephole run could not see.
+	static const std::vector<IRPass> passes = {
+		{ "constant-folding", &IROptimizer::constant_folding },
+		{ "copy-propagation", &IROptimizer::copy_propagation },
+		{ "enhanced-copy-propagation", &IROptimizer::enhanced_copy_propagation },
+		{ "licm", &IROptimizer::loop_invariant_code_motion },
+		{ "peephole", &IROptimizer::peephole_optimization },
+		{ "peephole", &IROptimizer::peephole_optimization },
+		{ "redundant-stores", &IROptimizer::eliminate_redundant_stores },
+		{ "peephole", &IROptimizer::peephole_optimization },
+		{ "dead-code", &IROptimizer::eliminate_dead_code },
+	};
+	return passes;
+}
+
+void IROptimizer::set_enabled_passes(const std::vector<std::string>& names) {
+	m_enabled_passes.clear();
+	for (const auto& name : names) {
+		if (name == "all") {
+			// "all" is the default, expressed as "no restriction".
+			m_enabled_passes.clear();
+			return;
+		}
+		if (name == "none") {
+			continue;
+		}
+		bool known = false;
+		for (const auto& pass : pipeline()) {
+			if (name == pass.name) {
+				known = true;
+				break;
+			}
+		}
+		if (!known) {
+			throw CompilerException(ErrorType::OPTIMIZER_ERROR,
+				"Unknown optimizer pass: " + name);
+		}
+		m_enabled_passes.insert(name);
+	}
+	// An explicit selection that names no pass still has to mean "no pass", not
+	// "every pass", so mark the set non-empty with a name nothing matches.
+	m_enabled_passes.insert("");
+}
+
+bool IROptimizer::is_pass_enabled(const char* name) const {
+	if (m_enabled_passes.empty()) {
+		return true;
+	}
+	return m_enabled_passes.find(name) != m_enabled_passes.end();
+}
 
 void IROptimizer::optimize(IRProgram& program) {
 	for (auto& func : program.functions) {
@@ -21,42 +101,35 @@ void IROptimizer::optimize(IRProgram& program) {
 }
 
 void IROptimizer::optimize_function(IRFunction& func) {
-	// Multiple optimization passes
-	// Run constant folding first as it can enable more optimizations
-	constant_folding(func);
-
-	// Copy propagation to eliminate redundant MOVEs after constant loads
-	copy_propagation(func);
-
-	// Enhanced copy propagation - eliminates more MOVE patterns
-	enhanced_copy_propagation(func);
-
-	// Loop-invariant code motion - hoist invariant code out of loops
-	// Skips functions with nested loops to avoid complexity
-	loop_invariant_code_motion(func);
-
-	// Peephole optimization to remove redundant moves and operations
-	peephole_optimization(func);
-
-	// Run peephole again to catch patterns that emerged after previous optimizations
-	peephole_optimization(func);
-
-	// Eliminate redundant store operations (run before dead code elimination)
-	eliminate_redundant_stores(func);
-
-	// Run peephole once more after eliminate_redundant_stores to clean up remaining patterns
-	peephole_optimization(func);
-
-	// Eliminate dead code (unused registers and instructions)
-	eliminate_dead_code(func);
-
-	// NOTE: reduce_register_pressure() is disabled for now because it breaks
+	// NOTE: reduce_register_pressure() is not in the pipeline because it breaks
 	// the calling convention. Parameters are in specific registers (r0-r6)
 	// and return value must be in r0. We need to be more careful about
 	// which registers we renumber.
-	// reduce_register_pressure(func);
+	const auto& passes = pipeline();
+	const size_t limit = std::min(m_pass_limit, passes.size());
+	const bool verify = ir_verification_enabled();
 
-	// Recalculate max_registers after optimizations
+	// The IR going in has to be well-formed before a pass can be blamed for
+	// breaking it.
+	if (verify) {
+		ir_verify(func, "codegen");
+	}
+
+	for (size_t i = 0; i < limit; i++) {
+		if (!is_pass_enabled(passes[i].name)) {
+			continue;
+		}
+		(this->*passes[i].run)(func);
+		// Verifying between passes is what turns "a pass corrupted the IR" from
+		// something noticed when the generated code misbehaves, and only if a
+		// test happens to exercise it, into a failure that names the pass.
+		if (verify) {
+			ir_verify(func, passes[i].name);
+		}
+	}
+
+	// Recalculate max_registers after optimizations. This is bookkeeping rather
+	// than an optimization, so it runs even when every pass is disabled.
 	int max_reg = 0;
 	for (const auto& instr : func.instructions) {
 		for (const auto& op : instr.operands) {
@@ -247,7 +320,8 @@ void IROptimizer::constant_folding(IRFunction& func) {
 
 					if (cv.type == ConstantValue::Type::INT) {
 						result.type = ConstantValue::Type::INT;
-						result.int_value = -cv.int_value;
+						// Negating INT64_MIN wraps, as it does on the machine.
+						result.int_value = static_cast<int64_t>(0u - static_cast<uint64_t>(cv.int_value));
 						new_instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(dst), IRValue::imm(result.int_value));
 						set_register_constant(dst, result);
 						folded = true;
@@ -351,7 +425,49 @@ void IROptimizer::constant_folding(IRFunction& func) {
 				new_instructions.push_back(instr);
 				break;
 
-			default:
+			// Opcodes this pass does not model. Every one of them is listed
+			// rather than caught by a `default:`, so that adding an opcode is a
+			// compile error here and has to be given an answer: fold it, or say
+			// out loud that folding across it is not safe.
+			case IROpcode::BIT_NOT:
+			case IROpcode::BRANCH_EQ:
+			case IROpcode::BRANCH_GT:
+			case IROpcode::BRANCH_GTE:
+			case IROpcode::BRANCH_LT:
+			case IROpcode::BRANCH_LTE:
+			case IROpcode::BRANCH_NEQ:
+			case IROpcode::BRANCH_NOT_ZERO:
+			case IROpcode::BRANCH_ZERO:
+			case IROpcode::CONVERT:
+			case IROpcode::JUMP:
+			case IROpcode::LABEL:
+			case IROpcode::LOAD_GLOBAL:
+			case IROpcode::MAKE_ARRAY:
+			case IROpcode::MAKE_COLOR:
+			case IROpcode::MAKE_DICTIONARY:
+			case IROpcode::MAKE_PACKED_BYTE_ARRAY:
+			case IROpcode::MAKE_PACKED_COLOR_ARRAY:
+			case IROpcode::MAKE_PACKED_FLOAT32_ARRAY:
+			case IROpcode::MAKE_PACKED_FLOAT64_ARRAY:
+			case IROpcode::MAKE_PACKED_INT32_ARRAY:
+			case IROpcode::MAKE_PACKED_INT64_ARRAY:
+			case IROpcode::MAKE_PACKED_STRING_ARRAY:
+			case IROpcode::MAKE_PACKED_VECTOR2_ARRAY:
+			case IROpcode::MAKE_PACKED_VECTOR3_ARRAY:
+			case IROpcode::MAKE_PACKED_VECTOR4_ARRAY:
+			case IROpcode::MAKE_PLANE:
+			case IROpcode::MAKE_RECT2:
+			case IROpcode::MAKE_RECT2I:
+			case IROpcode::MAKE_VECTOR2:
+			case IROpcode::MAKE_VECTOR2I:
+			case IROpcode::MAKE_VECTOR3:
+			case IROpcode::MAKE_VECTOR3I:
+			case IROpcode::MAKE_VECTOR4:
+			case IROpcode::MAKE_VECTOR4I:
+			case IROpcode::RETURN:
+			case IROpcode::STORE_GLOBAL:
+			case IROpcode::VGET_INLINE:
+			case IROpcode::VSET_INLINE:
 				// Clear constant tracking for any instruction that might modify registers
 				for (const auto& op : instr.operands) {
 					if (op.type == IRValue::Type::REGISTER) {
@@ -418,27 +534,37 @@ bool IROptimizer::try_fold_binary_op(IROpcode op, IRInstruction::TypeHint type_h
 		switch (op) {
 			case IROpcode::ADD:
 				result.type = ConstantValue::Type::INT;
-				result.int_value = lhs.int_value + rhs.int_value;
+				// Folding has to produce the value the machine would: a RISC-V
+				// `add` wraps modulo 2^64, and computing it as signed int64_t
+				// here would be undefined behaviour as well as a disagreement.
+				result.int_value = static_cast<int64_t>(
+					static_cast<uint64_t>(lhs.int_value) + static_cast<uint64_t>(rhs.int_value));
 				return true;
 
 			case IROpcode::SUB:
 				result.type = ConstantValue::Type::INT;
-				result.int_value = lhs.int_value - rhs.int_value;
+				result.int_value = static_cast<int64_t>(
+					static_cast<uint64_t>(lhs.int_value) - static_cast<uint64_t>(rhs.int_value));
 				return true;
 
 			case IROpcode::MUL:
 				result.type = ConstantValue::Type::INT;
-				result.int_value = lhs.int_value * rhs.int_value;
+				result.int_value = static_cast<int64_t>(
+					static_cast<uint64_t>(lhs.int_value) * static_cast<uint64_t>(rhs.int_value));
 				return true;
 
 			case IROpcode::DIV:
-				if (rhs.int_value == 0) return false; // Don't fold division by zero
+				// Division by zero, and INT64_MIN / -1, are left for run time
+				// rather than folded to something the machine would not produce.
+				if (rhs.int_value == 0) return false;
+				if (rhs.int_value == -1 && lhs.int_value == INT64_MIN) return false;
 				result.type = ConstantValue::Type::INT;
 				result.int_value = lhs.int_value / rhs.int_value;
 				return true;
 
 			case IROpcode::MOD:
 				if (rhs.int_value == 0) return false; // Don't fold modulo by zero
+				if (rhs.int_value == -1 && lhs.int_value == INT64_MIN) return false;
 				result.type = ConstantValue::Type::INT;
 				result.int_value = lhs.int_value % rhs.int_value;
 				return true;
@@ -603,10 +729,11 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 				// Get branch condition register
 				int branch_reg = std::get<int>(branch_instr.operands[0].value);
 
-				// Check if branch uses the comparison result AND result is not used elsewhere
-				// We check if it's used after the branch (i+2 onwards), not including the branch itself
-				// Pass false for conservative_at_labels since comparison results don't persist across control flow
-				bool reg_not_used_after = !is_reg_used_between_exclusive(func, cmp_dst, i + 1, func.instructions.size(), false);
+				// Fusing deletes the comparison's destination, so it has to be
+				// read by nothing but the branch being fused into it. Scanning
+				// only forward, and stopping at the first label, misses a read
+				// on a later iteration of the loop the comparison sits in.
+				bool reg_not_used_after = !is_reg_read_outside(func, cmp_dst, i, i + 1);
 				if (cmp_dst == branch_reg && reg_not_used_after) {
 					// Fuse the instructions
 					IROpcode fused_opcode;
@@ -679,7 +806,7 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 
 				// Check for Pattern A: MOVE; MOVE; OP; MOVE
 				if (move2.opcode == IROpcode::MOVE &&
-				    is_arithmetic_op(op.opcode) &&
+				    ir_has_effect(op.opcode, IR_ARITHMETIC) &&
 				    move3.opcode == IROpcode::MOVE &&
 				    op.operands.size() >= 3) {
 
@@ -700,15 +827,20 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 						// Pattern A: tmp1=move1_dst, tmp2=move2_dst, result=move3_dst
 						if (move1_dst == op_lhs && move2_dst == op_rhs &&
 						    move3_src == op_dst) {
-							// Check that temps are not used elsewhere
-							// tmp1 (move1_dst) should only be used by the OP at i+2
-							// tmp2 (move2_dst) should only be used by the OP at i+2
-							// dst (op_dst) should only be used by the MOVE at i+3
-							bool tmp1_safe = !is_reg_used_between_exclusive(func, move1_dst, i, i + 2);
-							bool tmp2_safe = !is_reg_used_between_exclusive(func, move2_dst, i + 1, i + 2);
-							bool dst_safe = !is_reg_used_between_exclusive(func, op_dst, i + 2, i + 3);
+							// The rewrite deletes the definitions of tmp1, tmp2 and
+							// dst, so nothing outside these four instructions may
+							// read any of them.
+							bool tmp1_safe = !is_reg_read_outside(func, move1_dst, i, i + 3);
+							bool tmp2_safe = !is_reg_read_outside(func, move2_dst, i, i + 3);
+							bool dst_safe = !is_reg_read_outside(func, op_dst, i, i + 3);
 
-							if (tmp1_safe && tmp2_safe && dst_safe) {
+							// The rewritten instruction reads the sources at i
+							// instead of at i+2, so nothing in between may have
+							// changed them.
+							bool sources_safe = move2_dst != move1_src &&
+								op_dst != move1_src && op_dst != move2_src;
+
+							if (tmp1_safe && tmp2_safe && dst_safe && sources_safe) {
 								// Emit optimized instruction
 								IRInstruction new_op = op;
 								new_op.operands[0] = IRValue::reg(move3_dst);
@@ -731,7 +863,7 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 				const auto& op = func.instructions[i + 1];
 				const auto& move2 = func.instructions[i + 2];
 
-				if (is_arithmetic_op(op.opcode) &&
+				if (ir_has_effect(op.opcode, IR_ARITHMETIC) &&
 				    move2.opcode == IROpcode::MOVE &&
 				    op.operands.size() >= 3) {
 
@@ -746,8 +878,9 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 						int op_lhs = std::get<int>(op.operands[1].value);
 
 						if (move1_dst == op_lhs && move2_src == op_dst &&
-						    !is_reg_used_between_exclusive(func, move1_dst, i, i + 1) &&
-						    !is_reg_used_between_exclusive(func, op_dst, i + 1, i + 2)) {
+						    !is_reg_read_outside(func, move1_dst, i, i + 2) &&
+						    !is_reg_read_outside(func, op_dst, i, i + 2) &&
+						    op_dst != move1_src) {
 
 							// Emit optimized instruction
 							IRInstruction new_op = op;
@@ -767,8 +900,9 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 						int op_rhs = std::get<int>(op.operands[2].value);
 
 						if (move1_dst == op_rhs && move2_src == op_dst &&
-						    !is_reg_used_between_exclusive(func, move1_dst, i, i + 1) &&
-						    !is_reg_used_between_exclusive(func, op_dst, i + 1, i + 2)) {
+						    !is_reg_read_outside(func, move1_dst, i, i + 2) &&
+						    !is_reg_read_outside(func, op_dst, i, i + 2) &&
+						    op_dst != move1_src) {
 
 							// Emit optimized instruction
 							IRInstruction new_op = op;
@@ -796,7 +930,7 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 
 				if (move1.opcode == IROpcode::MOVE &&
 				    (load.opcode == IROpcode::LOAD_IMM || load.opcode == IROpcode::LOAD_FLOAT_IMM) &&
-				    is_arithmetic_op(op.opcode) &&
+				    ir_has_effect(op.opcode, IR_ARITHMETIC) &&
 				    move2.opcode == IROpcode::MOVE &&
 				    op.operands.size() >= 3) {
 
@@ -816,16 +950,14 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 						// Pattern E requires: tmp=move1_dst=op_lhs, const=load_dst=op_rhs, var=move1_src=move2_dst, dst=op_dst=move2_src
 						if (move1_dst == op_lhs && load_dst == op_rhs &&
 						    move1_src == move2_dst && move2_src == op_dst) {
-							// Check that temps are not used elsewhere (excluding the OP instruction at i+2)
-							// tmp1 (move1_dst) should only be used by OP at i+2 - check before OP
-							bool tmp1_safe = !is_reg_used_between_exclusive(func, move1_dst, i, i + 2);
-							// const (load_dst) should only be used by OP at i+2 - check before and after (excluding OP)
-							bool tmp2_safe = !is_reg_used_between_exclusive(func, load_dst, i + 1, i + 2) &&
-							                 !is_reg_used_between_exclusive(func, load_dst, i + 2, i + 3);
-							// dst (op_dst) should only be used by MOVE at i+3 - check between OP and MOVE
-							bool dst_safe = !is_reg_used_between_exclusive(func, op_dst, i + 2, i + 3);
+							// The rewrite deletes the definitions of tmp and dst,
+							// so nothing outside these four instructions may read
+							// either. The constant load survives, so load_dst may
+							// still be read anywhere.
+							bool tmp1_safe = !is_reg_read_outside(func, move1_dst, i, i + 3);
+							bool dst_safe = !is_reg_read_outside(func, op_dst, i, i + 3);
 
-							if (tmp1_safe && tmp2_safe && dst_safe) {
+							if (tmp1_safe && dst_safe) {
 								// Emit the LOAD_IMM instruction first (we still need the constant)
 								new_instructions.push_back(load);
 
@@ -859,8 +991,10 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 				int move2_src = std::get<int>(move2.operands[1].value);
 
 				// Check for: MOVE tmp, src; MOVE src, tmp
-				// This is a redundant swap pattern - just eliminate both
-				if (move1_dst == move2_src && move1_src == move2_dst && move1_dst != move1_src) {
+				// This is a redundant swap pattern - just eliminate both, which
+				// is only safe when nothing else reads the temporary.
+				if (move1_dst == move2_src && move1_src == move2_dst && move1_dst != move1_src &&
+				    !is_reg_read_outside(func, move1_dst, i, i + 1)) {
 					// Both moves are redundant - eliminate them
 					i += 2;
 					skip = true;
@@ -872,7 +1006,7 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 
 		// Pattern D: OP dst, ...; MOVE result, dst (without preceding MOVE)
 		if (!skip && !handled && i + 1 < func.instructions.size()) {
-			if (is_arithmetic_op(func.instructions[i].opcode) &&
+			if (ir_has_effect(func.instructions[i].opcode, IR_ARITHMETIC) &&
 			    func.instructions[i + 1].opcode == IROpcode::MOVE) {
 
 				const auto& op = func.instructions[i];
@@ -883,8 +1017,10 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 					int move_dst = std::get<int>(move.operands[0].value);
 					int move_src = std::get<int>(move.operands[1].value);
 
+					// Folding the MOVE into the OP deletes the OP's own
+					// destination, so nothing else may read it.
 					if (move_src == op_dst &&
-					    !is_reg_used_between_exclusive(func, op_dst, i, i + 2)) {
+					    !is_reg_read_outside(func, op_dst, i, i + 1)) {
 
 						// Emit optimized instruction
 						IRInstruction new_op = op;
@@ -980,40 +1116,40 @@ void IROptimizer::eliminate_dead_code(IRFunction& func) {
 	std::vector<IRInstruction> new_instructions;
 	new_instructions.reserve(func.instructions.size());
 
-	for (size_t i = 0; i < func.instructions.size(); i++) {
-		const auto& instr = func.instructions[i];
-		bool keep = true;
-
-		// Check if instruction produces a dead register
-		// BUT: be conservative - only eliminate truly "pure" operations
-		// Do NOT eliminate operations that might have side effects or are
-		// part of control flow setup
-		switch (instr.opcode) {
-			case IROpcode::LOAD_IMM:
-			case IROpcode::LOAD_BOOL: {
-				// These are pure and can be safely eliminated if unused
-				int dst = std::get<int>(instr.operands[0].value);
-				if (live_regs.find(dst) == live_regs.end()) {
-					keep = false; // Dead code
-				}
-				break;
-			}
-
-			// DO NOT eliminate these even if result appears unused:
-			// - MOVE: might be part of calling convention
-			// - Arithmetic ops: the input registers might have side effects
-			// - Comparisons: often used for control flow
-			// - LOAD_STRING: might be needed for vcall
-			// Better to keep them than to break the program
-
-			default:
-				// Keep all other instructions
-				break;
-		}
-
-		if (keep) {
+	std::vector<int> reads;
+	for (const auto& instr : func.instructions) {
+		// An instruction can go when all three hold:
+		//
+		//   - it is pure, so deleting it cannot change anything the program
+		//     observes (the metadata table answers this, not a list kept here),
+		//   - it defines a register nothing reads, and
+		//   - it reads no register itself, so there is no input whose own
+		//     definition this was keeping alive and no calling-convention MOVE
+		//     to disturb.
+		//
+		// That is deliberately narrow. Widening it means trusting
+		// find_live_registers() to have accounted for every read in the
+		// program, and a register operand missed there turns into a deleted
+		// definition and a silently wrong program.
+		if (!ir_is_pure(instr.opcode)) {
 			new_instructions.push_back(instr);
+			continue;
 		}
+
+		const int dst = ir_destination_register(instr);
+		if (dst < 0 || live_regs.count(dst) != 0) {
+			new_instructions.push_back(instr);
+			continue;
+		}
+
+		reads.clear();
+		ir_collect_read_registers(instr, reads);
+		if (!reads.empty()) {
+			new_instructions.push_back(instr);
+			continue;
+		}
+
+		// Dead: pure, defines an unread register, reads nothing.
 	}
 
 	func.instructions = std::move(new_instructions);
@@ -1059,8 +1195,7 @@ bool IROptimizer::is_register_used_after(const IRFunction& func, int reg, size_t
 		// scan is still straight-line: past a label or a branch the definition
 		// may sit on a path that is not taken, and treating it as a kill would
 		// declare a still-live register dead.
-		if (instr.opcode == IROpcode::LABEL || instr.opcode == IROpcode::JUMP ||
-		    is_branch_op(instr.opcode) || instr.opcode == IROpcode::RETURN) {
+		if (ir_is_control_flow(instr.opcode)) {
 			crossed_control_flow = true;
 			continue;
 		}
@@ -1117,55 +1252,34 @@ IROptimizer::ConstantValue IROptimizer::get_constant(const IRValue& val) {
 	return cv;
 }
 
-bool IROptimizer::is_arithmetic_op(IROpcode op) {
-	switch (op) {
-		case IROpcode::ADD:
-		case IROpcode::SUB:
-		case IROpcode::MUL:
-		case IROpcode::DIV:
-		case IROpcode::MOD:
-		case IROpcode::BIT_AND:
-		case IROpcode::BIT_OR:
-		case IROpcode::BIT_XOR:
-		case IROpcode::SHL:
-		case IROpcode::SHR:
-		case IROpcode::NEG:
-		case IROpcode::BIT_NOT:
-		case IROpcode::AND:
-		case IROpcode::OR:
-		case IROpcode::CMP_EQ:
-		case IROpcode::CMP_NEQ:
-		case IROpcode::CMP_LT:
-		case IROpcode::CMP_LTE:
-		case IROpcode::CMP_GT:
-		case IROpcode::CMP_GTE:
-			return true;
-		default:
-			return false;
+bool IROptimizer::is_reg_read_outside(const IRFunction& func, int reg, size_t first, size_t last) {
+	std::vector<int> reads;
+	for (size_t i = 0; i < func.instructions.size(); i++) {
+		if (i >= first && i <= last) {
+			continue;
+		}
+		reads.clear();
+		ir_collect_read_registers(func.instructions[i], reads);
+		for (int r : reads) {
+			if (r == reg) {
+				return true;
+			}
+		}
 	}
-}
-
-bool IROptimizer::is_branch_op(IROpcode op) {
-	switch (op) {
-		case IROpcode::BRANCH_ZERO:
-		case IROpcode::BRANCH_NOT_ZERO:
-		case IROpcode::BRANCH_EQ:
-		case IROpcode::BRANCH_NEQ:
-		case IROpcode::BRANCH_LT:
-		case IROpcode::BRANCH_LTE:
-		case IROpcode::BRANCH_GT:
-		case IROpcode::BRANCH_GTE:
-			return true;
-		default:
-			return false;
-	}
+	return false;
 }
 
 bool IROptimizer::is_reg_used_between_exclusive(const IRFunction& func, int reg, size_t start_idx, size_t end_idx, bool conservative_at_labels) {
-	// Check if register is used in the instruction range (start_idx, end_idx)
-	// Exclusive of both boundaries
+	// Check if register is read in the instruction range (start_idx, end_idx),
+	// exclusive of both boundaries.
+	//
+	// Which operands an instruction reads comes from the metadata table: the
+	// fused branches read both of their register operands, CALL writes the
+	// operand right after its name, and VSET reads the one every other opcode
+	// defines. Spelling any of that out here again is how the copies drift.
 	end_idx = std::min(end_idx, func.instructions.size());
 
+	std::vector<int> reads;
 	for (size_t i = start_idx + 1; i < end_idx; i++) {
 		const auto& instr = func.instructions[i];
 
@@ -1174,32 +1288,9 @@ bool IROptimizer::is_reg_used_between_exclusive(const IRFunction& func, int reg,
 			return conservative_at_labels;
 		}
 
-		// Fused branch instructions read both operands 0 and 1 as source operands (not destinations)
-		bool is_fused_branch = (instr.opcode == IROpcode::BRANCH_EQ ||
-		                         instr.opcode == IROpcode::BRANCH_NEQ ||
-		                         instr.opcode == IROpcode::BRANCH_LT ||
-		                         instr.opcode == IROpcode::BRANCH_LTE ||
-		                         instr.opcode == IROpcode::BRANCH_GT ||
-		                         instr.opcode == IROpcode::BRANCH_GTE);
-
-		// For fused branches, check operands 0 and 1 (both are source operands)
-		// For other instructions, skip operand 0 (it's the destination)
-		size_t start_operand = is_fused_branch ? 0 : 1;
-
-		// Check if register is read (used as source operand)
-		for (size_t j = start_operand; j < instr.operands.size(); j++) {
-			if (instr.operands[j].type == IRValue::Type::REGISTER) {
-				int r = std::get<int>(instr.operands[j].value);
-				if (r == reg) {
-					return true;
-				}
-			}
-		}
-
-		// Special case: BRANCH_ZERO and BRANCH_NOT_ZERO read first operand
-		if ((instr.opcode == IROpcode::BRANCH_ZERO || instr.opcode == IROpcode::BRANCH_NOT_ZERO) &&
-		    instr.operands.size() >= 1 && instr.operands[0].type == IRValue::Type::REGISTER) {
-			int r = std::get<int>(instr.operands[0].value);
+		reads.clear();
+		ir_collect_read_registers(instr, reads);
+		for (int r : reads) {
 			if (r == reg) {
 				return true;
 			}
@@ -1265,14 +1356,12 @@ void IROptimizer::eliminate_redundant_stores(IRFunction& func) {
 	for (size_t i = 0; i < func.instructions.size(); i++) {
 		const auto& instr = func.instructions[i];
 
-		// Control flow boundaries - flush all pending stores
-		if (instr.opcode == IROpcode::LABEL ||
-		    instr.opcode == IROpcode::JUMP ||
-		    is_branch_op(instr.opcode) ||
-		    instr.opcode == IROpcode::CALL ||
-		    instr.opcode == IROpcode::VCALL ||
-		    instr.opcode == IROpcode::CALL_SYSCALL ||
-		    instr.opcode == IROpcode::RETURN) {
+		// Anything that is not pure ends the straight-line run this pass reasons
+		// over: a label or a branch because the next instruction may be reached
+		// from elsewhere, a call or a store because it can observe the value.
+		// Asking the metadata table is what keeps this list from going stale the
+		// next time an opcode is added.
+		if (!ir_is_pure(instr.opcode)) {
 			flush_pending(new_instructions, pending_stores, func);
 			new_instructions.push_back(instr);
 			continue;
@@ -1284,7 +1373,7 @@ void IROptimizer::eliminate_redundant_stores(IRFunction& func) {
 		}
 
 		// Check if this is a pure load/store operation to a register
-		if (is_pure_load_op(instr.opcode) && !instr.operands.empty() &&
+		if (ir_has_effect(instr.opcode, IR_SIMPLE_LOAD) && !instr.operands.empty() &&
 		    instr.operands[0].type == IRValue::Type::REGISTER) {
 			int dst = std::get<int>(instr.operands[0].value);
 
@@ -1352,19 +1441,6 @@ void IROptimizer::eliminate_redundant_stores(IRFunction& func) {
 	func.instructions = std::move(new_instructions);
 }
 
-bool IROptimizer::is_pure_load_op(IROpcode op) {
-	switch (op) {
-		case IROpcode::LOAD_IMM:
-		case IROpcode::LOAD_FLOAT_IMM:
-		case IROpcode::LOAD_BOOL:
-		case IROpcode::LOAD_STRING:
-		case IROpcode::MOVE:
-			return true;
-		default:
-			return false;
-	}
-}
-
 // ============================================================================
 // Loop-Invariant Code Motion (LICM)
 // ============================================================================
@@ -1403,7 +1479,7 @@ std::vector<IROptimizer::LoopInfo> IROptimizer::identify_loops(const IRFunction&
 				std::string exit_label;
 				for (size_t j = header_idx; j < i; j++) {
 					const auto& loop_instr = func.instructions[j];
-					if (is_branch_op(loop_instr.opcode)) {
+					if (ir_has_effect(loop_instr.opcode, IR_BRANCH)) {
 						// Find the label operand (last operand for all branch types)
 						size_t label_idx = loop_instr.operands.size() - 1;
 						if (label_idx < loop_instr.operands.size() &&
@@ -1452,7 +1528,7 @@ std::vector<IROptimizer::LoopInfo> IROptimizer::identify_loops(const IRFunction&
 bool IROptimizer::is_loop_invariant(const IRInstruction& instr, const LoopInfo& loop,
                                     const IRFunction& func, const std::unordered_set<int>& invariant_regs) {
 	// Only consider pure operations
-	if (!is_pure_load_op(instr.opcode)) {
+	if (!ir_has_effect(instr.opcode, IR_SIMPLE_LOAD)) {
 		return false;
 	}
 
@@ -1475,23 +1551,37 @@ bool IROptimizer::is_loop_invariant(const IRInstruction& instr, const LoopInfo& 
 }
 
 bool IROptimizer::can_safely_hoist(const IRInstruction& instr, size_t instr_idx, const LoopInfo& loop, const IRFunction& func) {
-	// Check that:
-	// 1. The destination register is not used before being defined in the loop
-	// 2. Source registers are not modified anywhere in the loop (loop-invariant)
+	// Hoisting an instruction out of a loop moves it from "executed on every
+	// iteration, in this position" to "executed once, before the loop". That is
+	// only the same program when all of the following hold:
+	//
+	//   1. The instruction writes a register at all.
+	//   2. Its inputs are not modified anywhere in the loop.
+	//   3. Its destination is not read in the loop before it is written.
+	//   4. Its destination is written nowhere else in the loop.
+	//   5. It is executed on every iteration -- not inside an `if` within the
+	//      loop body.
+	//
+	// The last two are what a fuzzer found missing. A loop containing
+	//
+	//     if c:  x = 1
+	//     else:  x = 0
+	//
+	// has two invariant definitions of the same register on different paths;
+	// hoisting either one makes the register hold that value on both paths, and
+	// hoisting both makes it hold whichever was hoisted second. The program
+	// then computes something else entirely, with nothing to see but a wrong
+	// answer at run time.
 
-	if (instr.operands.empty() || instr.operands[0].type != IRValue::Type::REGISTER) {
+	const int dst_reg = ir_destination_register(instr);
+	if (dst_reg < 0) {
 		return false;
 	}
 
-	int dst_reg = std::get<int>(instr.operands[0].value);
-
 	// Collect source registers from this instruction
-	std::unordered_set<int> src_regs;
-	for (size_t j = 1; j < instr.operands.size(); j++) {
-		if (instr.operands[j].type == IRValue::Type::REGISTER) {
-			src_regs.insert(std::get<int>(instr.operands[j].value));
-		}
-	}
+	std::vector<int> reads;
+	ir_collect_read_registers(instr, reads);
+	std::unordered_set<int> src_regs(reads.begin(), reads.end());
 
 	// Check the entire loop body (from header to all back edges)
 	for (size_t i = loop.header_idx; i < loop.end_idx && i < func.instructions.size(); i++) {
@@ -1502,24 +1592,85 @@ bool IROptimizer::can_safely_hoist(const IRInstruction& instr, size_t instr_idx,
 			continue;
 		}
 
-		// Check if any source register is modified in the loop
-		if (!loop_instr.operands.empty() && loop_instr.operands[0].type == IRValue::Type::REGISTER) {
-			int modified_reg = std::get<int>(loop_instr.operands[0].value);
-			if (src_regs.count(modified_reg)) {
-				return false;  // Can't hoist - source register is modified in loop
-			}
+		// Check if any source register is modified in the loop. A CALL writes
+		// the operand after its name, not operand 0, so looking at operand 0
+		// here would let an instruction be hoisted over a call that redefines
+		// one of its inputs.
+		const int modified_reg = ir_destination_register(loop_instr);
+		if (modified_reg >= 0 && src_regs.count(modified_reg)) {
+			return false;  // Can't hoist - source register is modified in loop
+		}
+
+		// A second definition of the destination inside the loop means the
+		// register does not hold one value per iteration, and hoisting one of
+		// the definitions decides which value it holds for good.
+		if (modified_reg == dst_reg) {
+			return false;
 		}
 
 		// Check if dst_reg is read before being written (only before this instruction)
 		if (i < instr_idx) {
-			for (size_t j = 1; j < loop_instr.operands.size(); j++) {
-				if (loop_instr.operands[j].type == IRValue::Type::REGISTER) {
-					int reg = std::get<int>(loop_instr.operands[j].value);
-					if (reg == dst_reg) {
-						return false;  // Can't hoist - dst is read before being written
-					}
+			reads.clear();
+			ir_collect_read_registers(loop_instr, reads);
+			for (int reg : reads) {
+				if (reg == dst_reg) {
+					return false;  // Can't hoist - dst is read before being written
 				}
 			}
+		}
+	}
+
+	return is_unconditional_in_loop(instr_idx, loop, func);
+}
+
+bool IROptimizer::is_unconditional_in_loop(size_t instr_idx, const LoopInfo& loop, const IRFunction& func) {
+	// Whether every iteration that enters the loop body reaches this
+	// instruction. Walking from the header, anything that can route control
+	// past the instruction makes it conditional:
+	//
+	//   - a LABEL, which is a join and therefore the end of a region something
+	//     jumped over,
+	//   - an unconditional JUMP, which skips whatever follows it,
+	//   - a conditional branch to a label inside the loop, which is an `if`
+	//     within the body. A branch out of the loop is not one of these: taking
+	//     it ends the iteration rather than skipping part of it.
+	std::unordered_map<std::string, size_t> label_positions;
+	for (size_t i = 0; i < func.instructions.size(); i++) {
+		const auto& candidate = func.instructions[i];
+		if (ir_has_effect(candidate.opcode, IR_LABEL) && !candidate.operands.empty()) {
+			label_positions[std::get<std::string>(candidate.operands[0].value)] = i;
+		}
+	}
+
+	for (size_t i = loop.header_idx + 1; i < instr_idx && i < func.instructions.size(); i++) {
+		const auto& between = func.instructions[i];
+
+		if (ir_has_effect(between.opcode, IR_LABEL)) {
+			return false;
+		}
+		if (ir_has_effect(between.opcode, IR_TERMINATOR)) {
+			return false;
+		}
+		if (!ir_has_effect(between.opcode, IR_BRANCH)) {
+			continue;
+		}
+
+		// The branch target is the last operand of every branch shape.
+		if (between.operands.empty()) {
+			return false;
+		}
+		const IRValue& target = between.operands.back();
+		if (target.type != IRValue::Type::LABEL) {
+			return false;
+		}
+		auto it = label_positions.find(std::get<std::string>(target.value));
+		if (it == label_positions.end()) {
+			return false;
+		}
+		const size_t target_idx = it->second;
+		const bool leaves_the_loop = target_idx < loop.header_idx || target_idx >= loop.end_idx;
+		if (!leaves_the_loop) {
+			return false;
 		}
 	}
 
@@ -1575,9 +1726,7 @@ void IROptimizer::loop_invariant_code_motion(IRFunction& func) {
 					const auto& instr = func.instructions[i];
 
 					// Skip labels and control flow
-					if (instr.opcode == IROpcode::LABEL ||
-					    instr.opcode == IROpcode::JUMP ||
-					    is_branch_op(instr.opcode)) {
+					if (ir_is_control_flow(instr.opcode)) {
 						continue;
 					}
 
@@ -1660,13 +1809,10 @@ void IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 	for (size_t i = 0; i < func.instructions.size(); i++) {
 		auto instr = func.instructions[i];  // Make a copy we can modify
 
-		// Clear copy tracking at control flow boundaries
-		if (instr.opcode == IROpcode::LABEL ||
-		    instr.opcode == IROpcode::JUMP ||
-		    is_branch_op(instr.opcode) ||
-		    instr.opcode == IROpcode::CALL ||
-		    instr.opcode == IROpcode::VCALL ||
-		    instr.opcode == IROpcode::CALL_SYSCALL) {
+		// Clear copy tracking at anything that is not pure: a control flow join
+		// invalidates the straight-line reasoning, and a call or a store can
+		// change what a register holds without a visible definition.
+		if (!ir_is_pure(instr.opcode)) {
 			copies.clear();
 		}
 
@@ -1685,49 +1831,38 @@ void IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 			copies[dst] = {src, i};
 		}
 
-		// Propagate copies in operands (skip first operand which is usually destination)
+		// Propagate copies into every operand the instruction reads. Asking the
+		// operand-role table rather than starting at operand 1 is what keeps the
+		// branch operands (which are read at operand 0) and the CALL result
+		// (which is written at operand 1) on the right sides of the line.
 		bool modified = false;
-		for (size_t j = 1; j < instr.operands.size(); j++) {
-			if (instr.operands[j].type == IRValue::Type::REGISTER) {
-				int reg = std::get<int>(instr.operands[j].value);
-
-				// Check if we can propagate this copy
-				if (copies.count(reg)) {
-					const auto& copy_info = copies[reg];
-
-					// Verify the source register hasn't been modified
-					if (register_unmodified_between(func, copy_info.source_reg, copy_info.def_idx, i)) {
-						instr.operands[j].value = copy_info.source_reg;
-						modified = true;
-					}
-				}
+		for (size_t j = 0; j < instr.operands.size(); j++) {
+			if (!ir_reads_operand(instr, j)) {
+				continue;
 			}
-		}
+			int reg = std::get<int>(instr.operands[j].value);
 
-		// Special case: BRANCH_ZERO and BRANCH_NOT_ZERO read first operand
-		if ((instr.opcode == IROpcode::BRANCH_ZERO || instr.opcode == IROpcode::BRANCH_NOT_ZERO) &&
-		    !instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-			int reg = std::get<int>(instr.operands[0].value);
-
+			// Check if we can propagate this copy
 			if (copies.count(reg)) {
 				const auto& copy_info = copies[reg];
+
+				// Verify the source register hasn't been modified
 				if (register_unmodified_between(func, copy_info.source_reg, copy_info.def_idx, i)) {
-					instr.operands[0].value = copy_info.source_reg;
+					instr.operands[j].value = copy_info.source_reg;
 					modified = true;
 				}
 			}
 		}
 
-		// Invalidate copies when destination register is written
-		if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-			int dst = std::get<int>(instr.operands[0].value);
-
+		// Invalidate copies when the destination register is written
+		const int written = ir_destination_register(instr);
+		if (written >= 0) {
 			// Remove any copies of this register
-			copies.erase(dst);
+			copies.erase(written);
 
 			// Remove any copies that use this register as source
 			for (auto it = copies.begin(); it != copies.end(); ) {
-				if (it->second.source_reg == dst) {
+				if (it->second.source_reg == written) {
 					it = copies.erase(it);
 				} else {
 					++it;
