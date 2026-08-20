@@ -34,7 +34,9 @@
 			<param index="0" name="instance" type="Object" />
 			<description>
 				Adds an Object instance to the list of allowed objects in the Sandbox.
-				Allowed objects can be referred to, accessed and potentially manipulated by the sandboxed program.
+				Allowed objects can be referred to, accessed and potentially manipulated by the sandboxed program, including through a handle the program kept from an earlier call.
+				The entry is keyed by the object's instance ID, and a [RefCounted] is kept alive by it for as long as it is on the list.
+				The list is not affected by loading a new program with [method set_program] or [method load_buffer]; use [method remove_allowed_object] or [method clear_allowed_objects] to change it.
 			</description>
 		</method>
 		<method name="address_of" qualifiers="const">
@@ -59,8 +61,8 @@
 		<method name="clear_allowed_objects">
 			<return type="void" />
 			<description>
-				Clears the list of allowed objects in the Sandbox.
-				After calling this method, no objects will be accessible to the sandboxed program until new ones are added.
+				Clears the list of allowed objects in the Sandbox, releasing any [RefCounted] the list was keeping alive.
+				With the list empty and no object callback set the Sandbox is unrestricted again, and every object the host hands it is allowed. A handle the sandboxed program kept from an earlier call still is not: those are only honoured for objects that are explicitly on the list.
 			</description>
 		</method>
 		<method name="clear_hotspots" qualifiers="static">
@@ -242,8 +244,8 @@
 			<return type="void" />
 			<param index="0" name="instance" type="Object" />
 			<description>
-				Removes an Object from the list of allowed objects in the Sandbox.
-				After calling this method, the specified object will no longer be accessible to the sandboxed program.
+				Removes an Object from the list of allowed objects in the Sandbox, releasing the reference the list held if it was a [RefCounted].
+				After calling this method, the specified object will no longer be accessible to the sandboxed program, unless removing it left the list empty with no object callback set, which makes the Sandbox unrestricted again.
 			</description>
 		</method>
 		<method name="reset">

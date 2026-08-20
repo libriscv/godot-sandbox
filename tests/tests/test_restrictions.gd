@@ -167,3 +167,86 @@ func test_insanity():
 	assert_eq(s.restrictions, true)
 
 	s.queue_free()
+
+
+func test_allowed_objects_survive_load_buffer():
+	# Which objects the host is willing to expose has nothing to do with which program is
+	# loaded, but a full reset used to clear the allowed-objects list along with the
+	# machine, quietly turning the sandbox back into an unrestricted one.
+	var elf_bytes := FileAccess.get_file_as_bytes("res://tests/tests.elf")
+	assert_false(elf_bytes.is_empty(), "tests.elf should be readable as bytes")
+
+	var s = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	var n = Node.new()
+	n.name = "Kept"
+	s.add_allowed_object(n)
+	assert_true(s.is_allowed_object(n), "the Node was just allowed")
+	assert_false(s.is_allowed_object(s), "a non-empty list makes everything else denied")
+
+	s.load_buffer(elf_bytes)
+	assert_true(s.is_allowed_object(n), "load_buffer() must keep the allowed-objects list")
+	assert_false(s.is_allowed_object(s), "load_buffer() must not leave the sandbox unrestricted")
+
+	n.queue_free()
+	s.queue_free()
+
+
+func test_allowed_refcounted_is_kept_alive():
+	# An allowed object is named by its ObjectID, and an id outlives the object it names.
+	# A RefCounted has to be held by the list as well: nothing else here owns it, and once
+	# freed its address is free to be handed to whatever is allocated next.
+	var s = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	# An unrelated entry, so that the list never empties out -- an empty list means the
+	# sandbox is unrestricted, and then everything is allowed again.
+	var other := Node.new()
+	s.add_allowed_object(other)
+
+	var res := RefCounted.new()
+	var id := res.get_instance_id()
+	s.add_allowed_object(res)
+	res = null
+
+	assert_true(is_instance_id_valid(id), "an allowed RefCounted must not be freed")
+	var kept = instance_from_id(id)
+	assert_true(s.is_allowed_object(kept), "losing the caller's reference does not lose the entry")
+
+	s.remove_allowed_object(kept)
+	assert_false(s.is_allowed_object(kept), "the entry is gone after removing it")
+	kept = null
+	assert_false(is_instance_id_valid(id), "removing the entry releases the reference")
+
+	other.queue_free()
+
+	s.queue_free()
+
+
+func test_object_handle_kept_across_calls():
+	# The guest may store an Object handle and use it in a later call, where nothing scopes
+	# it any more. An empty allowed-objects list means "unrestricted", which says nothing
+	# about an address the guest is holding, so that has to be refused until the host has
+	# actually named the object.
+	var s = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+	assert_true(s.has_function("store_object"), "store_object should exist")
+
+	var n = Node.new()
+	n.name = "Remembered"
+	s.vmcall("store_object", n)
+
+	var exceptions = s.get_exceptions()
+	s.vmcall("use_stored_object")
+	assert_engine_error("Object is not scoped")
+	assert_engine_error("Exception: Object is not scoped")
+	assert_eq(s.get_exceptions(), exceptions + 1)
+
+	# Now say so explicitly, and the same handle resolves.
+	s.add_allowed_object(n)
+	assert_eq(s.vmcall("use_stored_object"), "Node", "an allowed object resolves from a stored handle")
+	assert_eq(s.get_exceptions(), exceptions + 1)
+
+	n.queue_free()
+	s.queue_free()

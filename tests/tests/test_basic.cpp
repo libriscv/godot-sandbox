@@ -445,6 +445,39 @@ PUBLIC Variant voidcall_method(Variant v, Variant vmethod, Variant vargs) {
 	return Nil;
 }
 
+// A RefCounted reaching the guest as the return value of a call is owned by nothing but
+// the temporary Variant that carried it across the API boundary. Touching the handle
+// afterwards only works if the sandbox took a reference of its own while it was there.
+PUBLIC Variant test_refcounted_result(Object maker) {
+	Variant made = maker.call("make_ref");
+	Array results = Array::Create();
+	results.push_back(made.method_call("get_class"));
+	results.push_back(made.method_call("get_meta", "marker"));
+	return results;
+}
+
+// The same object, but reached through an Array rather than directly, so that it is the
+// element and not the call result that has to stay alive.
+PUBLIC Variant test_refcounted_in_array(Object maker) {
+	Array made = maker.call("make_ref_array").as_array();
+	Variant first = made[0];
+	return first.method_call("get_meta", "marker");
+}
+
+// An Object handle the guest keeps is no longer scoped once the call that produced it
+// ends. Reaching it again is only allowed for an object the host put on the
+// allowed-objects list -- an address the guest remembered is not proof of anything.
+static Object stored_object{ uint64_t(0) };
+
+PUBLIC Variant store_object(Object obj) {
+	stored_object = obj;
+	return Nil;
+}
+
+PUBLIC Variant use_stored_object() {
+	return stored_object.get_class();
+}
+
 PUBLIC Variant access_a_parent(Node n) {
 	Node p = n.get_parent();
 	return p;

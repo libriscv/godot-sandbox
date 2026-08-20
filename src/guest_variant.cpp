@@ -68,9 +68,8 @@ const Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
 }
 
 void GuestVariant::set_object(Sandbox &emu, godot::Object *obj) {
-	emu.add_scoped_object(obj);
 	this->type = Variant::OBJECT;
-	this->v.i = (uintptr_t)obj;
+	this->v.i = emu.add_scoped_object(obj);
 }
 
 bool GuestVariant::set_inlined(const Variant &value) noexcept {
@@ -220,12 +219,15 @@ void GuestVariant::set(Sandbox &emu, const Variant &value, bool implicit_trust) 
 		case Variant::OBJECT: { // Objects are represented as uintptr_t
 			if (!implicit_trust)
 				throw std::runtime_error("GuestVariant::set(): Cannot set OBJECT type without implicit trust");
-			// TODO: Check if the object is already scoped?
-			godot::Object *obj = value.operator godot::Object *();
+			// A Variant outlives the object it names, and keeps pointing at it either way.
+			// get_validated_object() answers through the instance id instead, so a Variant
+			// left over from a freed object comes back null rather than as a stale pointer.
+			godot::Object *obj = value.get_validated_object();
+			if (obj == nullptr)
+				throw std::runtime_error("GuestVariant::set(): Object no longer exists");
 			if (!emu.is_allowed_object(obj))
 				throw std::runtime_error("GuestVariant::set(): Object is not allowed");
-			emu.add_scoped_object(obj);
-			this->v.i = (uintptr_t)obj;
+			this->v.i = emu.add_scoped_object(obj);
 			break;
 		}
 
@@ -247,11 +249,16 @@ void GuestVariant::create(Sandbox &emu, Variant &&value) {
 
 	switch (this->type) {
 		case Variant::OBJECT: {
-			godot::Object *obj = value.operator godot::Object *();
+			// Validated through the instance id, for the reason given in set() above.
+			godot::Object *obj = value.get_validated_object();
+			if (obj == nullptr)
+				throw std::runtime_error("GuestVariant::create(): Object no longer exists");
 			if (!emu.is_allowed_object(obj))
 				throw std::runtime_error("GuestVariant::create(): Object is not allowed");
-			emu.add_scoped_object(obj);
-			this->v.i = (uintptr_t)obj;
+			// value is an rvalue and dies right after this; add_scoped_object() takes a
+			// reference of its own when the object is RefCounted, so the guest's handle
+			// does not become a pointer to a freed Ref.
+			this->v.i = emu.add_scoped_object(obj);
 			break;
 		}
 

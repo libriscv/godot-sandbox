@@ -125,7 +125,9 @@ struct Object {
 	METHOD(void, free);
 	METHOD(Variant, get_incoming_connections);
 	METHOD(Variant, get_indexed);
-	METHOD(int, get_instance_id);
+	/// @note An ObjectID is a 64-bit value, and Godot sets its top bit for RefCounted
+	/// objects. Anything narrower loses that, and long-lived scenes reach ids past 2^32.
+	METHOD(uint64_t, get_instance_id);
 	METHOD(Variant, get_meta);
 	METHOD(Variant, get_meta_list);
 	METHOD(int, get_method_argument_count);

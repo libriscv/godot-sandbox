@@ -536,6 +536,33 @@ func test_objects():
 	s.queue_free()
 
 
+# Hands out RefCounted values that nothing else holds on to, so the only reference left
+# is the one carried by the return value itself.
+class RefMaker extends RefCounted:
+	func make_ref() -> RefCounted:
+		var r := RefCounted.new()
+		r.set_meta("marker", 1234)
+		return r
+	func make_ref_array() -> Array:
+		return [make_ref()]
+
+
+func test_refcounted_results():
+	# A Ref returned into the sandbox used to be freed the moment the Variant carrying it
+	# went away, leaving the guest holding a pointer into freed memory.
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+	assert_eq(s.has_function("test_refcounted_result"), true)
+
+	var maker := RefMaker.new()
+	var r : Array = s.vmcall("test_refcounted_result", maker)
+	assert_eq(r[0], "RefCounted", "get_class() on a Ref the guest was handed")
+	assert_eq(r[1], 1234, "the Ref is still the same object on a second call")
+
+	assert_eq(s.vmcall("test_refcounted_in_array", maker), 1234, "a Ref read out of an Array")
+	s.queue_free()
+
+
 func test_timers():
 	# Create a new sandbox
 	var s = Sandbox.new()

@@ -1,5 +1,7 @@
 #include "sandbox.h"
 
+#include "fast_cast.hpp"
+
 void Sandbox::set_restrictions(bool enable) {
 	// It is allowed to enable restrictions during a VM call, but not to disable them.
 	if (enable) {
@@ -48,11 +50,29 @@ void Sandbox::add_allowed_object(godot::Object *obj) {
 		ERR_PRINT("Cannot add allowed objects during a VM call.");
 		return;
 	}
-	m_allowed_objects.insert(obj);
+	if (obj == nullptr) {
+		ERR_PRINT("Cannot allow a null object.");
+		return;
+	}
+	const uint64_t id = engine_object_id(obj);
+	if (id == 0) {
+		ERR_PRINT("Cannot allow an object with no engine instance.");
+		return;
+	}
+	m_allowed_objects.insert_or_assign(id, engine_ptr(obj));
+	// Keep RefCounted entries alive. The list only stores an id and an address, neither of
+	// which owns anything, so a Resource the caller stops holding would be freed and the
+	// next object allocated could land on the same address.
+	if (RefCounted *ref = fast_cast_to<RefCounted>(obj))
+		m_allowed_object_refs.insert_or_assign(id, Ref<RefCounted>(ref));
 }
 
 void Sandbox::remove_allowed_object(godot::Object *obj) {
-	m_allowed_objects.erase(obj);
+	const uint64_t id = engine_object_id(obj);
+	if (id == 0)
+		return;
+	m_allowed_objects.erase(id);
+	m_allowed_object_refs.erase(id);
 }
 
 void Sandbox::clear_allowed_objects() {
@@ -63,6 +83,25 @@ void Sandbox::clear_allowed_objects() {
 		return;
 	}
 	m_allowed_objects.clear();
+	m_allowed_object_refs.clear();
+}
+
+godot::Object *Sandbox::get_explicitly_allowed_object(uintptr_t engine_object) const {
+	if (engine_object == 0)
+		return nullptr;
+	for (const auto &[id, ptr] : m_allowed_objects) {
+		if (ptr != engine_object)
+			continue;
+		// The address matched, but an address is only as good as the object that still
+		// occupies it. Ask the engine for the object the id names: it answers null once
+		// the object is gone, without anyone having to dereference a stale pointer. Keep
+		// looking on a miss -- a freed entry can share its address with a live one.
+		GDExtensionObjectPtr live = internal::gdextension_interface_object_get_instance_from_id(id);
+		if (live == nullptr || uintptr_t(live) != engine_object)
+			continue;
+		return internal::get_object_instance_binding(static_cast<GodotObject *>(live));
+	}
+	return nullptr;
 }
 
 void Sandbox::set_object_allowed_callback(const Callable &callback) {

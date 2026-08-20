@@ -388,7 +388,10 @@ void Sandbox::full_reset() {
 	this->m_sname_lookup.clear();
 	this->m_name_addresses.clear();
 	this->m_guest_names.clear();
-	this->m_allowed_objects.clear();
+	// The allowed-objects list deliberately survives: it describes what the host is
+	// willing to expose to this Sandbox, not anything about the program in it. Loading a
+	// program used to silently drop it, leaving the sandbox unrestricted. Use
+	// clear_allowed_objects() to actually clear it.
 }
 Sandbox::Sandbox() {
 	this->constructor_initialize();
@@ -849,9 +852,10 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 				break;
 			}
 			case Variant::OBJECT: { // Objects are represented as uintptr_t
-				godot::Object *obj = inner->to_object();
-				this->add_scoped_object(obj);
-				machine.cpu.reg(index++) = uintptr_t(obj); // Fits in a single register
+				// The engine pointer is right there in the Variant, so this avoids the
+				// mutex-locked instance-binding lookup to_object() would need. The caller's
+				// Variant keeps the object (and a RefCounted's reference) alive for the call.
+				machine.cpu.reg(index++) = this->add_scoped_engine_object(uintptr_t(inner->object_ptr)); // Fits in a single register
 				break;
 			}
 			case Variant::ARRAY:
@@ -956,9 +960,12 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 				g_arg.v.f = inner->flt;
 				break;
 			case Variant::OBJECT: {
-				godot::Object *obj = inner->to_object();
-				// Objects passed directly as arguments are implicitly trusted/allowed
-				g_arg.set_object(*this, obj);
+				// Objects passed directly as arguments are implicitly trusted/allowed.
+				// The engine pointer is already in the Variant, so the mutex-locked
+				// instance-binding lookup is left until the guest actually uses the handle;
+				// the caller's Variant keeps the object alive until then either way.
+				g_arg.type = Variant::OBJECT;
+				g_arg.v.i = this->add_scoped_engine_object(uintptr_t(inner->object_ptr));
 				break;
 			}
 			default:
@@ -1371,12 +1378,61 @@ unsigned Sandbox::try_reuse_assign_variant(int32_t src_idx, const Variant &src_v
 	}
 }
 
-void Sandbox::add_scoped_object(const void *ptr) {
+uint64_t Sandbox::engine_object_id(const godot::Object *obj) noexcept {
+	if (obj == nullptr || obj->_owner == nullptr)
+		return 0;
+	return internal::gdextension_interface_object_get_instance_id(obj->_owner);
+}
+
+void Sandbox::rem_scoped_object(const godot::Object *obj) {
+	const uintptr_t engine_object = engine_ptr(obj);
+	auto &objects = state().scoped_objects;
+	objects.erase(std::remove_if(objects.begin(), objects.end(),
+						  [engine_object](const CurrentState::ScopedObject &so) { return so.engine_object == engine_object; }),
+			objects.end());
+}
+
+godot::Object *Sandbox::resolve_scoped_object(CurrentState::ScopedObject &so) {
+	if (so.binding == nullptr)
+		so.binding = internal::get_object_instance_binding(reinterpret_cast<GodotObject *>(so.engine_object));
+	return so.binding;
+}
+
+bool Sandbox::add_scoped_entry(uintptr_t engine_object, godot::Object *binding) {
+	// The same object is commonly handed to the guest more than once in a call, eg. when
+	// it walks the tree. Scoping it again would burn one of the max_refs slots each time.
+	if (CurrentState::ScopedObject *so = this->find_scoped_object(engine_object)) {
+		if (so->binding == nullptr)
+			so->binding = binding;
+		return false;
+	}
 	if (state().scoped_objects.size() >= this->m_max_refs) {
 		ERR_PRINT("Maximum number of scoped objects reached.");
 		throw std::runtime_error("Maximum number of scoped objects reached.");
 	}
-	state().scoped_objects.push_back(reinterpret_cast<uintptr_t>(ptr));
+	state().scoped_objects.push_back(CurrentState::ScopedObject{ engine_object, binding });
+	return true;
+}
+
+uint64_t Sandbox::add_scoped_engine_object(uintptr_t engine_object) {
+	if (engine_object == 0)
+		return 0;
+	this->add_scoped_entry(engine_object, nullptr);
+	return engine_object;
+}
+
+uint64_t Sandbox::add_scoped_object(godot::Object *obj) {
+	const uintptr_t engine_object = engine_ptr(obj);
+	if (engine_object == 0)
+		return 0;
+	// A RefCounted often reaches the guest through a temporary Variant, eg. the return
+	// value of a method call, which is destroyed as soon as the pointer has been written
+	// out. Hold a reference of our own so the guest's handle stays valid for the call.
+	if (this->add_scoped_entry(engine_object, obj)) {
+		if (RefCounted *ref = fast_cast_to<RefCounted>(obj))
+			state().scoped_refs.push_back(Ref<RefCounted>(ref));
+	}
+	return engine_object;
 }
 
 //-- Properties --//
@@ -1701,6 +1757,7 @@ void Sandbox::CurrentState::reinitialize(unsigned level, unsigned max_refs) {
 	this->variants.clear();
 	this->scoped_objects.clear();
 	this->scoped_variants.clear();
+	this->scoped_refs.clear();
 }
 bool Sandbox::CurrentState::is_mutable_variant(const Variant &var) const {
 	// Check if the address of the variant is within the range of the current state std::vector.

@@ -12,6 +12,7 @@
 #include <godot_cpp/classes/theme.hpp>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 static constexpr const char *icon_path = "res://addons/godot_sandbox/SafeGDScript.svg";
 
@@ -76,34 +77,119 @@ struct SourceSymbol {
 	int line = 0; // 1-based, as the editor counts lines.
 };
 
+// A struct declaration and the fields its body declares. A struct is sugar for
+// a Dictionary with a fixed set of keys, so the field names are everything the
+// editor needs to complete a member access on one.
+struct SourceStruct {
+	String name;
+	int line = 0;
+	std::vector<String> fields;
+};
+
 struct SourceSymbols {
 	std::vector<SourceSymbol> functions;
 	std::vector<SourceSymbol> variables;
 	std::vector<SourceSymbol> constants;
+	std::vector<SourceStruct> structs;
+	// Names the source says hold a struct: a ': Struct' hint on a variable or a
+	// parameter, or an assignment from Struct.new(). The type is stored as
+	// written and matched against the struct list when it is used.
+	std::vector<std::pair<String, String>> struct_typed;
 };
+
+int leading_indent(const String &p_line) {
+	int indent = 0;
+	while (indent < p_line.length() && (p_line[indent] == ' ' || p_line[indent] == '\t')) {
+		indent++;
+	}
+	return indent;
+}
+
+// The type a declaration names, from a ': Type' hint or from the constructor it
+// is assigned: 'var a: Foo', 'var a := Foo.new()', 'var a = Foo()'.
+String declared_type(const String &p_line, int p_after_name) {
+	int p = skip_spaces(p_line, p_after_name);
+	if (p < p_line.length() && p_line[p] == ':') {
+		p = skip_spaces(p_line, p + 1);
+		if (p < p_line.length() && p_line[p] != '=') {
+			return identifier_at(p_line, p);
+		}
+	}
+	if (p < p_line.length() && p_line[p] == '=') {
+		return identifier_at(p_line, skip_spaces(p_line, p + 1));
+	}
+	return String();
+}
+
+// Type-hinted parameters of a 'func' line, appended as name/type pairs.
+void scan_parameters(const String &p_line, std::vector<std::pair<String, String>> &r_typed) {
+	const int open = p_line.find("(");
+	const int close = p_line.rfind(")");
+	if (open < 0 || close <= open) {
+		return;
+	}
+	const PackedStringArray parameters = p_line.substr(open + 1, close - open - 1).split(",");
+	for (int i = 0; i < parameters.size(); i++) {
+		const String parameter = parameters[i];
+		const int colon = parameter.find(":");
+		if (colon < 0) {
+			continue;
+		}
+		const String name = parameter.substr(0, colon).strip_edges();
+		// A default value follows the hint, and is not part of the type name.
+		const String type = parameter.substr(colon + 1).get_slice("=", 0).strip_edges();
+		if (!name.is_empty() && !type.is_empty()) {
+			r_typed.push_back({ name, type });
+		}
+	}
+}
 
 SourceSymbols scan_source(const String &p_code) {
 	SourceSymbols symbols;
 	const PackedStringArray lines = p_code.split("\n");
+	int struct_indent = -1; // Indent of the 'struct' line whose body we are in.
 	for (int i = 0; i < lines.size(); i++) {
-		const String line = strip_comment(lines[i]).strip_edges();
+		const String raw = strip_comment(lines[i]);
+		const String line = raw.strip_edges();
 		if (line.is_empty()) {
 			continue;
 		}
-		if (line.begins_with("func ")) {
-			const String name = identifier_at(line, skip_spaces(line, 5));
+		const int indent = leading_indent(raw);
+		if (struct_indent >= 0 && indent <= struct_indent) {
+			struct_indent = -1; // The body ends at the first line back out.
+		}
+		if (struct_indent >= 0) {
+			// Fields belong to the struct, not to the script's own symbols.
+			if (line.begins_with("var ")) {
+				const String name = identifier_at(line, skip_spaces(line, 4));
+				if (!name.is_empty()) {
+					symbols.structs.back().fields.push_back(name);
+				}
+			}
+			continue;
+		}
+		if (line.begins_with("struct ")) {
+			const String name = identifier_at(line, skip_spaces(line, 7));
+			if (!name.is_empty()) {
+				symbols.structs.push_back({ name, i + 1, {} });
+				struct_indent = indent;
+			}
+		} else if (line.begins_with("func ") || line.begins_with("static func ")) {
+			const int name_start = skip_spaces(line, line.begins_with("func ") ? 5 : 12);
+			const String name = identifier_at(line, name_start);
 			if (!name.is_empty()) {
 				symbols.functions.push_back({ name, i + 1 });
 			}
-		} else if (line.begins_with("static func ")) {
-			const String name = identifier_at(line, skip_spaces(line, 12));
-			if (!name.is_empty()) {
-				symbols.functions.push_back({ name, i + 1 });
-			}
+			scan_parameters(line, symbols.struct_typed);
 		} else if (line.begins_with("var ")) {
-			const String name = identifier_at(line, skip_spaces(line, 4));
+			const int name_start = skip_spaces(line, 4);
+			const String name = identifier_at(line, name_start);
 			if (!name.is_empty()) {
 				symbols.variables.push_back({ name, i + 1 });
+				const String type = declared_type(line, name_start + name.length());
+				if (!type.is_empty()) {
+					symbols.struct_typed.push_back({ name, type });
+				}
 			}
 		} else if (line.begins_with("const ")) {
 			const String name = identifier_at(line, skip_spaces(line, 6));
@@ -113,6 +199,26 @@ SourceSymbols scan_source(const String &p_code) {
 		}
 	}
 	return symbols;
+}
+
+const SourceStruct *find_struct(const SourceSymbols &p_symbols, const String &p_name) {
+	for (const SourceStruct &declaration : p_symbols.structs) {
+		if (declaration.name == p_name) {
+			return &declaration;
+		}
+	}
+	return nullptr;
+}
+
+// The struct held by the name in front of a '.', or null when the source does
+// not say that it holds one.
+const SourceStruct *struct_of_receiver(const SourceSymbols &p_symbols, const String &p_receiver) {
+	for (const std::pair<String, String> &typed : p_symbols.struct_typed) {
+		if (typed.first == p_receiver) {
+			return find_struct(p_symbols, typed.second);
+		}
+	}
+	return nullptr;
 }
 
 // What the caret is sitting on, derived from the code the editor hands us with
@@ -232,7 +338,9 @@ CompletionColors completion_colors() {
 	return colors;
 }
 
-// All five keys are mandatory: Godot skips options that are missing any of them.
+// All six keys are mandatory: complete_code() in script_language_extension.h
+// does an ERR_CONTINUE on every one of them, so an option missing any single
+// key is dropped with an error printed to the output log.
 void add_option(Array &r_options, int p_kind, const String &p_display, const String &p_insert, const Color &p_color, int p_location = ScriptLanguageExtension::LOCATION_OTHER) {
 	Dictionary option;
 	option["kind"] = p_kind;
@@ -240,6 +348,7 @@ void add_option(Array &r_options, int p_kind, const String &p_display, const Str
 	option["insert_text"] = p_insert;
 	option["font_color"] = p_color;
 	option["icon"] = Variant();
+	option["default_value"] = Variant();
 	option["location"] = p_location;
 	r_options.push_back(option);
 }
@@ -418,6 +527,7 @@ PackedStringArray SafeGDScriptLanguage::_get_reserved_words() const {
 		"func",
 		"signal",
 		"static",
+		"struct",
 		"var",
 		// Other keywords
 		"await",
@@ -592,6 +702,9 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 	Dictionary result;
 	result["result"] = Error::OK;
 	result["force"] = false;
+	// Required by complete_code() even when there is nothing to hint at: it
+	// fails the whole call with ERR_UNAVAILABLE when the key is missing.
+	result["call_hint"] = String();
 
 	Array options;
 	const CompletionContext ctx = analyze_completion(p_code);
@@ -601,13 +714,26 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 	}
 	const CompletionColors colors = completion_colors();
 
+	// Symbols declared by the script itself. The caret marker is dropped so the
+	// word being typed is not scanned as a declaration.
+	const SourceSymbols symbols = scan_source(p_code.replace(String::chr(COMPLETION_MARKER), String()));
+
 	if (ctx.annotation) {
 		// @export is the only annotation the compiler understands (parser.cpp).
 		add_option(options, CODE_COMPLETION_KIND_PLAIN_TEXT, "export", "export", colors.keyword);
 		result["force"] = true;
 	} else if (ctx.member) {
+		const SourceStruct *receiver_struct = struct_of_receiver(symbols, ctx.receiver);
 		if (ctx.receiver == "self" || ctx.receiver.is_empty()) {
 			add_class_members(options, owner_class(p_owner), colors);
+		} else if (find_struct(symbols, ctx.receiver) != nullptr) {
+			// The struct itself: the only thing reachable through it is .new().
+			add_option(options, CODE_COMPLETION_KIND_FUNCTION, "new(", "new(", colors.function, LOCATION_LOCAL);
+		} else if (receiver_struct != nullptr) {
+			// A value of a known struct, so only its declared fields exist.
+			for (const String &field : receiver_struct->fields) {
+				add_option(options, CODE_COMPLETION_KIND_MEMBER, field, field, colors.member, LOCATION_LOCAL);
+			}
 		} else {
 			// Any other receiver is a Variant of a type only the compiler knows,
 			// and member calls become vcalls, so offer the common Variant members.
@@ -638,9 +764,11 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 			add_option(options, CODE_COMPLETION_KIND_CONSTANT, *name, *name, colors.text);
 		}
 
-		// Symbols declared by the script itself. The caret marker is dropped so
-		// the word being typed is not scanned as a declaration.
-		const SourceSymbols symbols = scan_source(p_code.replace(String::chr(COMPLETION_MARKER), String()));
+		// A struct name is both a type hint and its own constructor.
+		for (const SourceStruct &declaration : symbols.structs) {
+			add_option(options, CODE_COMPLETION_KIND_CLASS, declaration.name, declaration.name, colors.type, LOCATION_LOCAL);
+			add_option(options, CODE_COMPLETION_KIND_CLASS, declaration.name + String("("), declaration.name + String("("), colors.type, LOCATION_LOCAL);
+		}
 		for (const SourceSymbol &function : symbols.functions) {
 			add_option(options, CODE_COMPLETION_KIND_FUNCTION, function.name + String("("), function.name + String("("), colors.function, LOCATION_LOCAL);
 		}

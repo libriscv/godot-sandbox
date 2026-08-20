@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <godot_cpp/classes/node.hpp>
+#include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/core/binder_common.hpp>
 #include <libriscv/machine.hpp>
 #include <optional>
@@ -51,7 +52,23 @@ public:
 	struct CurrentState {
 		std::vector<Variant> variants;
 		std::vector<const Variant *> scoped_variants;
-		std::vector<uintptr_t> scoped_objects;
+		/// @brief An object the guest may refer to during this call, and the godot-cpp
+		/// binding for it once someone has needed one.
+		struct ScopedObject {
+			/// The engine-side pointer (Object::_owner), which is also the handle the guest
+			/// sees. The binding wrapper is deliberately not the key: it is freed with the
+			/// object it belongs to, and the address is then reused.
+			uintptr_t engine_object;
+			/// Resolving a binding locks a per-object mutex in Godot, so it is done at most
+			/// once per object per call: on the way in when the caller already had one, and
+			/// otherwise the first time the guest actually uses the handle.
+			godot::Object *binding;
+		};
+		std::vector<ScopedObject> scoped_objects;
+		/// @brief Holds a reference to every RefCounted handed to the guest during this
+		/// call. Without it a Ref returned by value dies with the temporary Variant it
+		/// arrived in, and the guest is left with a pointer to freed memory.
+		std::vector<Ref<RefCounted>> scoped_refs;
 
 		void append(Variant &&value);
 		void initialize(unsigned level, unsigned max_refs);
@@ -359,18 +376,52 @@ public:
 	/// @return The index of the assigned variant, passed to and used by the guest.
 	unsigned try_reuse_assign_variant(int32_t src_idx, const Variant &src_var, int32_t assign_to_idx, const Variant &var);
 
-	/// @brief Add a scoped object to the current state.
-	/// @param ptr The pointer to the object to add.
-	void add_scoped_object(const void *ptr);
+	/// @brief The engine-side pointer that identifies an object, which is also the
+	/// handle the guest is given for it. Nothing else is stable: the godot-cpp binding
+	/// wrapper is created on demand and destroyed with the object.
+	static uintptr_t engine_ptr(const godot::Object *obj) noexcept { return obj != nullptr ? uintptr_t(obj->_owner) : 0u; }
+
+	/// @brief The ObjectID Godot assigned to an object. Unlike an address it is never
+	/// handed out twice, which is what makes it usable as a long-lived key.
+	/// @note Taken straight from the engine rather than through Object::get_instance_id(),
+	/// which is a bound method call and cannot be asked about an object that is already gone.
+	static uint64_t engine_object_id(const godot::Object *obj) noexcept;
+
+	/// @brief Scope an object for the duration of the current call, keeping it alive if
+	/// it is RefCounted.
+	/// @param obj The object to scope.
+	/// @return The handle the guest uses to refer to it.
+	uint64_t add_scoped_object(godot::Object *obj);
+
+	/// @brief Scope an object the caller already knows outlives the call, by its engine
+	/// pointer, skipping the binding lookup add_scoped_object() would need. The binding is
+	/// resolved later, and only if the guest uses the handle.
+	/// @return The handle the guest uses to refer to it.
+	uint64_t add_scoped_engine_object(uintptr_t engine_object);
 
 	/// @brief Remove a scoped object from the current state.
-	/// @param ptr The pointer to the object to remove.
-	void rem_scoped_object(const void *ptr) { state().scoped_objects.erase(std::remove(state().scoped_objects.begin(), state().scoped_objects.end(), reinterpret_cast<uintptr_t>(ptr)), state().scoped_objects.end()); }
+	void rem_scoped_object(const godot::Object *obj);
+
+	/// @brief Find a scoped object in the current state.
+	/// @param engine_object The guest-visible handle (an engine object pointer).
+	/// @return The entry, or nullptr if the object is not scoped by this call.
+	CurrentState::ScopedObject *find_scoped_object(uintptr_t engine_object) const noexcept {
+		for (CurrentState::ScopedObject &so : state().scoped_objects)
+			if (so.engine_object == engine_object)
+				return &so;
+		return nullptr;
+	}
 
 	/// @brief Check if an object is scoped in the current state.
-	/// @param ptr The pointer to the object to check.
-	/// @return True if the object is scoped, false otherwise.
-	bool is_scoped_object(const void *ptr) const noexcept { return state().scoped_objects.end() != std::find(state().scoped_objects.begin(), state().scoped_objects.end(), reinterpret_cast<uintptr_t>(ptr)); }
+	bool is_scoped_object(uintptr_t engine_object) const noexcept { return find_scoped_object(engine_object) != nullptr; }
+
+	/// @brief Check if an object is scoped in the current state.
+	bool is_scoped_object(const godot::Object *obj) const noexcept { return is_scoped_object(engine_ptr(obj)); }
+
+	/// @brief Resolve a guest handle to a usable object, for a handle already known to be
+	/// scoped by this call.
+	/// @return The godot-cpp object, resolving and remembering the binding if needed.
+	static godot::Object *resolve_scoped_object(CurrentState::ScopedObject &so);
 
 	// -= Sandbox Restrictions =-
 
@@ -385,6 +436,8 @@ public:
 
 	/// @brief Add an object to the list of allowed objects.
 	/// @param obj The object to add.
+	/// @note The entry is keyed by ObjectID, and a RefCounted is kept alive by it, so
+	/// that a freed object cannot hand its address to an unrelated one still on the list.
 	void add_allowed_object(godot::Object *obj);
 
 	/// @brief Remove an object from the list of allowed objects.
@@ -396,7 +449,25 @@ public:
 	void clear_allowed_objects();
 
 	/// @brief Check if an object is allowed in the sandbox.
+	/// @note An empty allowed-objects list with no callback set means unrestricted, so
+	/// this answers true for anything. Only use it on an object the host handed us; for
+	/// an address that came from the guest, see is_explicitly_allowed_object().
 	bool is_allowed_object(godot::Object *obj) const;
+
+	/// @brief Check if an ObjectID is on the allowed-objects list.
+	bool is_allowed_object_id(uint64_t object_id) const noexcept { return m_allowed_objects.find(object_id) != m_allowed_objects.end(); }
+
+	/// @brief Check if an object was explicitly allowed, either by being on the
+	/// allowed-objects list or by the just-in-time callback admitting it.
+	/// @note Unlike is_allowed_object() an empty list is not taken to mean "anything
+	/// goes": this is what a guest-supplied object has to pass, and there the absence of
+	/// a rule says nothing about whether the guest was ever given that object.
+	bool is_explicitly_allowed_object(godot::Object *obj) const;
+
+	/// @brief Resolve a guest-supplied engine object pointer against the allowed-objects
+	/// list, without dereferencing it.
+	/// @return The object, or nullptr if it is not allowed or no longer exists.
+	godot::Object *get_explicitly_allowed_object(uintptr_t engine_object) const;
 
 	/// @brief Set a callback to check if an object is allowed in the sandbox.
 	/// @param callback The callable to check if an object is allowed.
@@ -797,6 +868,10 @@ private:
 	bool m_bintr_register_caching = true; // Use register caching for binary translation
 	bool m_bintr_bg_compilation = true; // Perform binary translation in the background
 
+	/// @brief Scope an object, unless it already is.
+	/// @return True if the object was not scoped by this call before.
+	bool add_scoped_entry(uintptr_t engine_object, godot::Object *binding);
+
 	CurrentState *m_current_state = nullptr;
 	// State stack, with the permanent (initial) state at index 0.
 	// That means eg. static Variant values are held stored in the state at index 0,
@@ -815,7 +890,13 @@ private:
 	gaddr_t m_shared_memory_base = SHM_BASE_ADDRESS;
 
 	// Restrictions
-	std::unordered_set<godot::Object *> m_allowed_objects;
+	// Keyed by ObjectID -> engine object pointer. An ObjectID is never reused, while the
+	// address of a freed object is, so an address alone cannot say whether the object on
+	// the list is still the object at that address.
+	std::unordered_map<uint64_t, uintptr_t> m_allowed_objects;
+	// A RefCounted on the allowed list is held here for as long as it is on the list.
+	// Nothing else keeps it alive, and once freed its address is free to be reused.
+	std::unordered_map<uint64_t, Ref<RefCounted>> m_allowed_object_refs;
 	// If an object is not in the allowed list, and a callable is set for the
 	// just-in-time allowed objects, it will be called to check if the object is allowed.
 	RestrictionCallback m_just_in_time_allowed_objects;
@@ -878,18 +959,25 @@ inline void Sandbox::CurrentState::reset() {
 	variants.clear();
 	scoped_variants.clear();
 	scoped_objects.clear();
+	scoped_refs.clear();
 }
 
-inline bool Sandbox::is_allowed_object(godot::Object *obj) const {
-	// If the allowed list is empty, and the allowed-object callback is not set, all objects are allowed
-	if (m_allowed_objects.empty() && !m_just_in_time_allowed_objects.is_valid())
-		return true;
-	// Otherwise, check if the object is in the allowed list
-	if (m_allowed_objects.find(obj) != m_allowed_objects.end())
+inline bool Sandbox::is_explicitly_allowed_object(godot::Object *obj) const {
+	if (obj == nullptr)
+		return false;
+	// Check if the object is in the allowed list
+	if (is_allowed_object_id(engine_object_id(obj)))
 		return true;
 
 	// If the object-allowed callable is set, call it
 	if (m_just_in_time_allowed_objects.is_valid())
 		return m_just_in_time_allowed_objects.call(this, obj);
 	return false;
+}
+
+inline bool Sandbox::is_allowed_object(godot::Object *obj) const {
+	// If the allowed list is empty, and the allowed-object callback is not set, all objects are allowed
+	if (m_allowed_objects.empty() && !m_just_in_time_allowed_objects.is_valid())
+		return true;
+	return is_explicitly_allowed_object(obj);
 }

@@ -71,6 +71,8 @@ struct SyscallFuzzer {
 	unsigned variant_slots = 0;
 	std::vector<gaddr_t> name_addresses; // Null-terminated method and property names
 	unsigned scoped_variant_count = 0;
+	/// @brief The guest-visible handle of the one object the fuzzer scopes.
+	uint64_t scoped_object_handle = 0;
 
 	// How pointer-heavy the current iteration's registers are, out of 10. See argument().
 	unsigned pointer_weight = 5;
@@ -130,6 +132,9 @@ struct SyscallFuzzer {
 					return name_address();
 				case 4: // A pointer that mostly does not survive the bounds check.
 					return rng() % (machine.memory.memory_arena_size() * 2);
+				case 5: // The one scoped object, so the Object/Node calls get past their
+					// address check and into the work the run is actually aimed at.
+					return scoped_object_handle;
 				default: // Somewhere in the scratch buffer.
 					return scratch_address();
 			}
@@ -210,7 +215,7 @@ struct SyscallFuzzer {
 
 		// One real, scoped object to aim the Object/Node system calls at. With
 		// restrictions on, every operation on it is supposed to be refused.
-		emu.add_scoped_object(&emu);
+		scoped_object_handle = emu.add_scoped_object(&emu);
 
 		scoped_variant_count = unsigned(emu.state().scoped_variants.size());
 	}
@@ -251,7 +256,7 @@ struct SyscallFuzzer {
 			if (gv.type == Variant::OBJECT) {
 				// The one object the fuzzer has scoped. Everything done to it should be
 				// refused, which is exactly what the run is checking.
-				gv.v.i = int64_t(uintptr_t(&emu));
+				gv.v.i = int64_t(scoped_object_handle);
 			} else if (scoped_variant_count != 0 && pick(4) != 0) {
 				// An index that resolves, so the handler gets to its real work.
 				gv.v.i = int64_t(rng() % scoped_variant_count);

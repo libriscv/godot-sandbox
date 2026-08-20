@@ -29,23 +29,31 @@ static constexpr int64_t MAX_ARRAY_ELEMENTS = 16'777'216;
 
 godot::Object *get_object_from_address(const Sandbox &emu, uint64_t addr) {
 	SYS_TRACE("get_object_from_address", addr);
-	godot::Object *obj = (godot::Object *)uintptr_t(addr);
-	if (UNLIKELY(obj == nullptr)) {
+	// The guest's handle is the engine object pointer. It is an opaque number until it has
+	// been recognized here, so nothing may dereference it before then.
+	const uintptr_t engine_object = uintptr_t(addr);
+	if (UNLIKELY(engine_object == 0)) {
 		ERR_PRINT("Object is Null");
 		throw std::runtime_error("Object is Null");
-	} else if (UNLIKELY(!emu.is_scoped_object(obj))) {
-		char buffer[256];
-		const uintptr_t obj_uint = reinterpret_cast<uintptr_t>(obj);
-		if (obj_uint < 0x1000) {
-			snprintf(buffer, sizeof(buffer), "Object is not found, but likely a Variant with index: %lu", long(obj_uint));
-			ERR_PRINT(buffer);
-			throw std::runtime_error(buffer);
-		}
-		snprintf(buffer, sizeof(buffer), "Object is not scoped: %p", obj);
+	}
+	if (Sandbox::CurrentState::ScopedObject *so = emu.find_scoped_object(engine_object))
+		return Sandbox::resolve_scoped_object(*so);
+
+	// Not scoped by this call. A handle the guest kept from an earlier call is only
+	// honoured when the host explicitly allowed that object; an empty allowed-objects
+	// list means "unrestricted", which says nothing about an address the guest invented.
+	if (godot::Object *allowed = emu.get_explicitly_allowed_object(engine_object))
+		return allowed;
+
+	char buffer[256];
+	if (engine_object < 0x1000) {
+		snprintf(buffer, sizeof(buffer), "Object is not found, but likely a Variant with index: %lu", long(engine_object));
 		ERR_PRINT(buffer);
 		throw std::runtime_error(buffer);
 	}
-	return obj;
+	snprintf(buffer, sizeof(buffer), "Object is not scoped: %p", (void *)engine_object);
+	ERR_PRINT(buffer);
+	throw std::runtime_error(buffer);
 }
 /// @brief Look up a scoped object and confirm it is a T, throwing if it is not.
 template <typename T>
@@ -166,7 +174,7 @@ static inline void variant_or_object_call(Sandbox &emu, Variant *vcall,
 	// object path: calling it as a built-in Variant would reach every method on it
 	// without ever asking is_allowed_method().
 	if (UNLIKELY(vcall->get_type() == Variant::OBJECT)) {
-		godot::Object *obj = get_object_from_address(emu, uint64_t(uintptr_t(vcall->operator godot::Object *())));
+		godot::Object *obj = get_object_from_address(emu, Sandbox::engine_ptr(vcall->operator godot::Object *()));
 		object_call_checked(emu, obj, cached_method, method_name, args, argc, result);
 		return;
 	}
@@ -956,9 +964,8 @@ APICALL(api_get_obj) {
 	// Find allowed object by name and get its address from a lambda.
 	auto it = global_singleton_list.find(name);
 	if (it != global_singleton_list.end()) {
-		auto obj = it->second();
-		emu.add_scoped_object(reinterpret_cast<godot::Object *>(obj));
-		machine.set_result(obj);
+		godot::Object *obj = reinterpret_cast<godot::Object *>(it->second());
+		machine.set_result(emu.add_scoped_object(obj));
 		return;
 	}
 	// Special case for SceneTree.
@@ -971,8 +978,7 @@ APICALL(api_get_obj) {
 			return;
 		}
 		SceneTree *tree = owner_node->get_tree();
-		emu.add_scoped_object(tree);
-		machine.set_result(uint64_t(uintptr_t(tree)));
+		machine.set_result(emu.add_scoped_object(tree));
 	} else {
 		ERR_PRINT(("Unknown or inaccessible object: " + name).c_str());
 		machine.set_result(0);
@@ -1235,8 +1241,7 @@ APICALL(api_get_node) {
 		return;
 	}
 
-	emu.add_scoped_object(node);
-	machine.set_result(reinterpret_cast<uint64_t>(node));
+	machine.set_result(emu.add_scoped_object(node));
 }
 
 APICALL(api_node_create) {
@@ -1272,8 +1277,7 @@ APICALL(api_node_create) {
 			node = fast_cast_to<Node>(obj);
 			// If it's not a Node, just return the Object.
 			if (node == nullptr) {
-				emu.add_scoped_object(obj);
-				machine.set_result(uint64_t(uintptr_t(obj)));
+				machine.set_result(emu.add_scoped_object(obj));
 				return;
 			}
 			// It's a Node, so continue to set the name.
@@ -1312,8 +1316,7 @@ APICALL(api_node_create) {
 	if (!name.empty()) {
 		node->set_name(String::utf8(name.data(), name.size()));
 	}
-	emu.add_scoped_object(node);
-	machine.set_result(uint64_t(uintptr_t(node)));
+	machine.set_result(emu.add_scoped_object(node));
 }
 
 APICALL(api_node) {
@@ -1367,8 +1370,7 @@ APICALL(api_node) {
 				// TODO: Parent nodes allow access higher up the tree, which could be a security issue.
 				if (!emu.is_allowed_object(parent))
 					throw std::runtime_error("Node::get_parent(): Parent is not allowed");
-				emu.add_scoped_object(parent);
-				*result = uint64_t(uintptr_t(parent));
+				*result = emu.add_scoped_object(parent);
 			}
 		} break;
 		case Node_Op::QUEUE_FREE:
@@ -1397,8 +1399,7 @@ APICALL(api_node) {
 			uint64_t *result = machine.memory.memarray<uint64_t>(gvar, 1);
 			int flags = machine.cpu.reg(13); // Flags are passed in reg 13.
 			auto *new_node = node->duplicate(flags);
-			emu.add_scoped_object(new_node);
-			*result = uint64_t(uintptr_t(new_node));
+			*result = emu.add_scoped_object(new_node);
 		} break;
 		case Node_Op::GET_CHILD_COUNT: {
 			// Check if getting the child count is allowed.
@@ -1422,8 +1423,7 @@ APICALL(api_node) {
 			if (UNLIKELY(child_node == nullptr || !emu.is_allowed_object(child_node))) {
 				var[0].set(emu, Variant());
 			} else {
-				emu.add_scoped_object(child_node);
-				var[0].set(emu, int64_t(uintptr_t(child_node)));
+				var[0].set(emu, int64_t(emu.add_scoped_object(child_node)));
 			}
 		} break;
 		case Node_Op::ADD_CHILD_DEFERRED:
@@ -1495,8 +1495,7 @@ APICALL(api_node) {
 			for (int i = 0; i < children.size(); i++) {
 				godot::Node *child = fast_cast_to<godot::Node>(children[i]);
 				if (child && emu.is_allowed_object(child)) {
-					emu.add_scoped_object(child);
-					vec->push_back(machine, uint64_t(uintptr_t(child)));
+					vec->push_back(machine, emu.add_scoped_object(child));
 				} else {
 					// Disallowed children are returned as null, keeping the indices intact.
 					vec->push_back(machine, 0);
