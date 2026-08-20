@@ -7,8 +7,10 @@
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
-#if defined(RISCV_BINARY_TRANSLATION) && defined(RISCV_LIBTCC)
+#if defined(RISCV_BINARY_TRANSLATION) || defined(RISCV_ASMJIT)
 #include <future>
+#include <mutex>
+#include <thread>
 #endif
 
 using namespace godot;
@@ -32,10 +34,8 @@ enum SandboxPropertyNameIndex : int {
 	PROP_ALLOCATIONS_MAX,
 	PROP_UNBOXED_ARGUMENTS,
 	PROP_PRECISE_SIMULATION,
-#ifdef RISCV_LIBTCC
 	PROP_BINTR_NBIT_AS,
 	PROP_BINTR_REG_CACHE,
-#endif // RISCV_LIBTCC
 	PROP_PROFILING,
 	PROP_RESTRICTIONS,
 	PROP_PROGRAM,
@@ -55,6 +55,65 @@ enum SandboxPropertyNameIndex : int {
 };
 static std::vector<StringName> property_names;
 
+#if defined(RISCV_BINARY_TRANSLATION) || defined(RISCV_ASMJIT)
+namespace {
+// A background translation runs code that lives inside this extension. If Godot
+// unloads the extension while one is still running, the thread's own code is
+// unmapped underneath it and the process dies on the way out. So they are
+// tracked here and joined before the extension goes away.
+struct BackgroundTranslation {
+	std::thread thread;
+	std::shared_ptr<std::atomic<bool>> done;
+};
+std::mutex background_translations_mutex;
+std::vector<BackgroundTranslation> background_translations;
+} // namespace
+
+static void start_background_translation(std::function<void()> &&step)
+{
+	auto done = std::make_shared<std::atomic<bool>>(false);
+	std::thread thread([step = std::move(step), done]() mutable {
+		try {
+			// This is a no-op if the step is empty.
+			if (step)
+				step();
+		} catch (const std::exception &e) {
+			String what = e.what();
+			ERR_PRINT(("Binary translation background compilation exception: " + what));
+		}
+		done->store(true);
+	});
+
+	std::lock_guard<std::mutex> lock(background_translations_mutex);
+	// Reap whatever finished since the last translation was started, so that a
+	// long-running project doesn't accumulate joinable threads.
+	for (auto it = background_translations.begin(); it != background_translations.end();) {
+		if (it->done->load()) {
+			it->thread.join();
+			it = background_translations.erase(it);
+		} else {
+			++it;
+		}
+	}
+	background_translations.push_back({ std::move(thread), std::move(done) });
+}
+
+void Sandbox::Deinitialize()
+{
+	std::vector<BackgroundTranslation> pending;
+	{
+		std::lock_guard<std::mutex> lock(background_translations_mutex);
+		pending.swap(background_translations);
+	}
+	for (auto &bt : pending) {
+		if (bt.thread.joinable())
+			bt.thread.join();
+	}
+}
+#else
+void Sandbox::Deinitialize() {}
+#endif
+
 void Sandbox::Initialize()
 {
 	Sandbox::initialize_syscalls();
@@ -66,10 +125,8 @@ void Sandbox::Initialize()
 		"allocations_max",
 		"unboxed_arguments",
 		"precise_simulation",
-#ifdef RISCV_LIBTCC
 		"binary_translation_nbit_as",
 		"binary_translation_register_caching",
-#endif // RISCV_LIBTCC
 		"profiling",
 		"restrictions",
 		"program",
@@ -172,6 +229,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_static_method("Sandbox", D_METHOD("set_jit_enabled", "enable"), &Sandbox::set_jit_enabled);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("is_jit_enabled"), &Sandbox::is_jit_enabled);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("has_feature_jit"), &Sandbox::has_feature_jit);
+	ClassDB::bind_static_method("Sandbox", D_METHOD("has_feature_binary_translation"), &Sandbox::has_feature_binary_translation);
 
 	// Properties.
 	ClassDB::bind_method(D_METHOD("set", "name", "value"), &Sandbox::set);
@@ -204,15 +262,11 @@ void Sandbox::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_binary_translation_nbit_as", "use_nbit_as"), &Sandbox::set_binary_translation_automatic_nbit_as);
 	ClassDB::bind_method(D_METHOD("get_binary_translation_nbit_as"), &Sandbox::get_binary_translation_automatic_nbit_as);
-#ifdef RISCV_LIBTCC
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "binary_translation_nbit_as", PROPERTY_HINT_NONE, "Use n-bit address space for binary translation"), "set_binary_translation_nbit_as", "get_binary_translation_nbit_as");
-#endif // RISCV_LIBTCC
 
 	ClassDB::bind_method(D_METHOD("set_binary_translation_register_caching", "register_caching"), &Sandbox::set_binary_translation_register_caching);
 	ClassDB::bind_method(D_METHOD("get_binary_translation_register_caching"), &Sandbox::get_binary_translation_register_caching);
-#ifdef RISCV_LIBTCC
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "binary_translation_register_caching", PROPERTY_HINT_NONE, "Use register caching for binary translation"), "set_binary_translation_register_caching", "get_binary_translation_register_caching");
-#endif // RISCV_LIBTCC
 
 	ClassDB::bind_method(D_METHOD("set_binary_translation_bg_compilation", "bg_compilation"), &Sandbox::set_binary_translation_bg_compilation);
 	ClassDB::bind_method(D_METHOD("get_binary_translation_bg_compilation"), &Sandbox::get_binary_translation_bg_compilation);
@@ -282,10 +336,8 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() {
 	list.push_back(PropertyInfo(Variant::INT, "allocations_max", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "unboxed_arguments", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "precise_simulation", PROPERTY_HINT_NONE));
-#ifdef RISCV_LIBTCC
 	list.push_back(PropertyInfo(Variant::BOOL, "binary_translation_nbit_as", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "binary_translation_register_caching", PROPERTY_HINT_NONE));
-#endif // RISCV_LIBTCC
 	list.push_back(PropertyInfo(Variant::BOOL, "profiling", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::BOOL, "restrictions", PROPERTY_HINT_NONE));
 
@@ -533,30 +585,33 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				.translate_live_patching = false, // Don't meddle with instruction stream
 #  endif // RISCV_LIBTCC
 #endif
+#ifdef RISCV_ASMJIT
+				.asmjit_enabled = m_bintr_jit,
+#endif
 		});
-#if defined(RISCV_BINARY_TRANSLATION) && defined(RISCV_LIBTCC)
+#if defined(RISCV_BINARY_TRANSLATION) || defined(RISCV_ASMJIT)
 		// Background compilation, if enabled, will run the compilation in a separate thread
 		// and live-patch the results into the decoder cache after the compilation is done.
 		if (this->m_bintr_bg_compilation) {
-			options->translate_background_callback = [](std::function<void()>& callback) {
-				// This is called from inside the binary translator in the main thread,
-				// and the goal is to run the callback in a separate thread, to avoid
-				// blocking the main thread while the compilation step is running.
-				std::thread([callback = std::move(callback)]() {
-					// Run the callback in a separate thread
-					// This is useful for long-running compilation tasks
-					// that should not block the main thread.
-					// The callback will be called when the compilation is done.
-					// Note: This is a no-op if the callback is empty.
-					try {
-						if (callback)
-							callback();
-					} catch (const std::exception &e) {
-						String what = e.what();
-						ERR_PRINT(("Binary translation background compilation exception: " + what));
-					}
-				}).detach();
+			// This is called from inside the translator in the main thread, and the
+			// goal is to run the callback in a separate thread, to avoid blocking
+			// the main thread while the compilation step is running.
+			auto background_callback = [](std::function<void()>& callback) {
+				// Run the callback in a separate thread. This is useful for
+				// long-running compilation tasks that should not block the main
+				// thread. The thread is tracked so that it can be joined before
+				// the extension is unloaded, see Sandbox::Deinitialize().
+				start_background_translation(std::move(callback));
 			};
+#  if defined(RISCV_BINARY_TRANSLATION) && defined(RISCV_LIBTCC)
+			options->translate_background_callback = background_callback;
+#  endif
+#  ifdef RISCV_ASMJIT
+			// NOTE: libriscv disables asmjit entirely when binary translation is
+			// compiling in the background, as only one backend can own the patched
+			// decoder cache. Setting both is still correct, just redundant.
+			options->asmjit_background_callback = background_callback;
+#  endif
 		}
 #endif
 
@@ -1445,14 +1500,12 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	} else if (stringname_equals(name, property_names[PROP_PRECISE_SIMULATION])) {
 		set_precise_simulation(value);
 		return true;
-#ifdef RISCV_LIBTCC
 	} else if (stringname_equals(name, property_names[PROP_BINTR_NBIT_AS])) {
 		set_binary_translation_automatic_nbit_as(value);
 		return true;
 	} else if (stringname_equals(name, property_names[PROP_BINTR_REG_CACHE])) {
 		set_binary_translation_register_caching(value);
 		return true;
-#endif // RISCV_LIBTCC
 	} else if (stringname_equals(name, property_names[PROP_PROFILING])) {
 		set_profiling(value);
 		return true;
@@ -1496,14 +1549,12 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	} else if (stringname_equals(name, property_names[PROP_PRECISE_SIMULATION])) {
 		r_ret = get_precise_simulation();
 		return true;
-#ifdef RISCV_LIBTCC
 	} else if (stringname_equals(name, property_names[PROP_BINTR_NBIT_AS])) {
 		r_ret = this->m_bintr_automatic_nbit_as;
 		return true;
 	} else if (stringname_equals(name, property_names[PROP_BINTR_REG_CACHE])) {
 		r_ret = this->m_bintr_register_caching;
 		return true;
-#endif // RISCV_LIBTCC
 	} else if (stringname_equals(name, property_names[PROP_PROFILING])) {
 		r_ret = get_profiling();
 		return true;

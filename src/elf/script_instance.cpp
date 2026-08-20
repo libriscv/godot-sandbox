@@ -405,10 +405,8 @@ bool ELFScriptInstance::property_can_revert(const StringName &p_name) const {
 		|| name == "allocations_max"
 		|| name == "unboxed_arguments"
 		|| name == "precise_simulation"
-#ifdef RISCV_LIBTCC
 		|| name == "binary_translation_nbit_as"
 		|| name == "binary_translation_register_caching"
-#endif // RISCV_LIBTCC
 		|| name == "profiling"
 		|| name == "restrictions") {
 		// These are default properties that can be reverted
@@ -445,14 +443,12 @@ bool ELFScriptInstance::property_get_revert(const StringName &p_name, Variant &r
 	} else if (name == "precise_simulation") {
 		r_ret = false;
 		return true;
-#ifdef RISCV_LIBTCC
 	} else if (name == "binary_translation_nbit_as") {
 		r_ret = false;
 		return true;
 	} else if (name == "binary_translation_register_caching") {
 		r_ret = true;
 		return true;
-#endif // RISCV_LIBTCC
 	} else if (name == "profiling") {
 		r_ret = false;
 		return true;
@@ -546,6 +542,8 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 			"load_binary_translation",
 			"try_compile_binary_translation",
 			"is_binary_translated",
+			"has_feature_jit",
+			"has_feature_binary_translation",
 			"set_max_refs",
 			"get_max_refs",
 			"set_memory_max",
@@ -558,14 +556,12 @@ ELFScriptInstance::ELFScriptInstance(Object *p_owner, const Ref<ELFScript> p_scr
 			"get_unboxed_arguments",
 			"set_precise_simulation",
 			"get_precise_simulation",
-#ifdef RISCV_LIBTCC
 			"set_binary_translation_bg_compilation",
 			"get_binary_translation_bg_compilation",
 			"set_binary_translation_register_caching",
 			"get_binary_translation_register_caching",
 			"set_binary_translation_nbit_as",
 			"get_binary_translation_nbit_as",
-#endif // RISCV_LIBTCC
 			"share_byte_array",
 			"share_float32_array",
 			"share_float64_array",

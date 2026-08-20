@@ -144,6 +144,10 @@ public:
 	Sandbox(Ref<ELFScript> program);
 	~Sandbox();
 	static void Initialize();
+	/// @brief Join every background translation thread.
+	/// @note Background translations run code that lives inside this extension,
+	/// so they must all be finished before the extension can be unloaded.
+	static void Deinitialize();
 
 	static Sandbox *FromBuffer(const PackedByteArray &buffer) { return memnew(Sandbox(buffer)); }
 	static Sandbox *FromProgram(Ref<ELFScript> program) { return memnew(Sandbox(std::move(program))); }
@@ -656,9 +660,9 @@ public:
 	/// @return True if the program has a JIT-compiled binary translation, false otherwise.
 	bool is_jit() const;
 
-#ifdef RISCV_LIBTCC
 	/// @brief Set whether to automatically use nbit-as for binary translation.
 	/// @param automatic_nbit_as If true, use nbit-as for binary translation.
+	/// @note Ignored when the active binary translation backend has no such option.
 	/// @warning Do *NOT* enable this unless you are sure the program is compatible with it.
 	void set_binary_translation_automatic_nbit_as(bool automatic_nbit_as) {
 		this->m_bintr_automatic_nbit_as = automatic_nbit_as;
@@ -669,6 +673,8 @@ public:
 
 	/// @brief Set whether to use register caching for binary translation.
 	/// @param register_caching If true, use register caching for binary translation.
+	/// @note Ignored when the active binary translation backend has no such option.
+	/// The asmjit backend always caches registers.
 	void set_binary_translation_register_caching(bool register_caching) {
 		this->m_bintr_register_caching = register_caching;
 	}
@@ -678,6 +684,8 @@ public:
 
 	/// @brief Set whether to perform binary translation in the background.
 	/// @param bg_compilation If true, perform binary translation in the background.
+	/// @note Ignored when the active binary translation backend has no such option.
+	/// The asmjit backend translates synchronously.
 	void set_binary_translation_bg_compilation(bool bg_compilation) {
 		this->m_bintr_bg_compilation = bg_compilation;
 	}
@@ -687,24 +695,22 @@ public:
 
 	/// @brief Enable or disable the use of JIT-compilation.
 	/// @param enable If true, enable JIT-compilation, false to disable it.
+	/// @note Ignored when no JIT backend is compiled in. See has_feature_jit().
 	static void set_jit_enabled(bool enable) { m_bintr_jit = enable; }
 
 	/// @brief Check if JIT-compilation is enabled.
 	/// @return True if JIT-compilation is enabled, false otherwise.
-	static bool is_jit_enabled() { return m_bintr_jit; }
-#else
-	void set_binary_translation_automatic_nbit_as(bool) {}
-	bool get_binary_translation_automatic_nbit_as() const { return false; }
-	void set_binary_translation_register_caching(bool) {}
-	bool get_binary_translation_register_caching() const { return false; }
-	void set_binary_translation_bg_compilation(bool) {}
-	bool get_binary_translation_bg_compilation() const { return false; }
-	static void set_jit_enabled(bool) {}
-	static bool is_jit_enabled() { return false; }
-#endif
+	static bool is_jit_enabled() { return has_feature_jit() && m_bintr_jit; }
 
+	/// @brief Check if any JIT-compiling backend was compiled into the extension.
 	static bool has_feature_jit() {
-		return riscv::libtcc_enabled;
+		return riscv::libtcc_enabled || riscv::asmjit_enabled;
+	}
+
+	/// @brief Check if the binary translator was compiled into the extension.
+	/// @note Only the binary translator can emit, compile and load translations.
+	static bool has_feature_binary_translation() {
+		return riscv::binary_translation_enabled;
 	}
 
 	/// @brief Fuzz the host side of the sandbox API with hostile arguments.
@@ -774,11 +780,12 @@ private:
 	bool m_resumable_mode = false; // If enabled, allow running startup in small increments
 	bool m_precise_simulation = false; // Run simulation in the slower, precise mode
 	bool m_is_initialization = false; // If true, the program is in the initialization phase
-#ifdef RISCV_LIBTCC
+	// These are always present, even when the active binary translation backend
+	// has no equivalent option, so that scripts can set them without having to
+	// know how the extension was built.
 	bool m_bintr_automatic_nbit_as = false; // Automatic n-bit address space for binary translation
 	bool m_bintr_register_caching = true; // Use register caching for binary translation
 	bool m_bintr_bg_compilation = true; // Perform binary translation in the background
-#endif
 
 	CurrentState *m_current_state = nullptr;
 	// State stack, with the permanent (initial) state at index 0.
@@ -849,7 +856,7 @@ private:
 	static inline uint32_t m_global_instances_current = 0; // Counts the number of current instances
 	static inline uint32_t m_global_instances_seen = 0; // Incremented for each instance created
 	static inline double m_accumulated_startup_time = 0.0;
-	static inline bool m_bintr_jit = riscv::libtcc_enabled; // JIT compilation enabled
+	static inline bool m_bintr_jit = riscv::libtcc_enabled || riscv::asmjit_enabled; // JIT compilation enabled
 };
 
 inline void Sandbox::CurrentState::append(Variant &&value) {

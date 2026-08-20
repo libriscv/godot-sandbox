@@ -48,6 +48,11 @@ String Sandbox::emit_binary_translation(bool ignore_instruction_limit, bool auto
 	options->translate_use_register_caching = false;
 	// Avoid any shenanigans with background compilation
 	options->translate_background_callback = nullptr;
+#ifdef RISCV_ASMJIT
+	// This machine only exists to emit C99, so there is nothing for asmjit to do.
+	options->asmjit_enabled = false;
+	options->asmjit_background_callback = nullptr;
+#endif
 	// TODO: Make this configurable
 	options->translate_instr_max = 75'000u;
 
@@ -222,13 +227,16 @@ bool Sandbox::try_compile_binary_translation(String shared_library_path, const S
 bool Sandbox::is_binary_translated() const {
 	// Get main execute segment
 	auto &main_seg = this->m_machine->memory.exec_segment_for(this->m_machine->memory.start_address());
-	return main_seg->is_binary_translated();
+	return main_seg->is_binary_translated() || main_seg->is_asmjit_translated();
 }
 
 bool Sandbox::is_jit() const {
-#ifdef RISCV_BINARY_TRANSLATION
+#if defined(RISCV_BINARY_TRANSLATION) || defined(RISCV_ASMJIT)
 	auto &main_seg = this->m_machine->memory.exec_segment_for(this->m_machine->memory.start_address());
-	return main_seg->is_libtcc() || main_seg->is_background_compiling();
+	// asmjit only ever produces JIT-compiled code, and a segment that is still
+	// translating in the background is on its way to becoming JIT-compiled.
+	return main_seg->is_asmjit_translated() || main_seg->is_libtcc()
+		|| main_seg->is_background_compiling();
 #else
 	return false;
 #endif

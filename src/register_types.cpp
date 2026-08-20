@@ -100,6 +100,10 @@ static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
+	// Background translations execute code from this extension, so they must all
+	// be finished before Godot is allowed to unload it.
+	Sandbox::Deinitialize();
+
 	Engine *engine = Engine::get_singleton();
 	CPPScriptLanguage::deinit();
 	SafeGDScriptLanguage::deinit();
