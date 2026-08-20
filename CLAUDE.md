@@ -14,33 +14,88 @@ There is an ongoing GDScript-to-RISC-V compiler project under the src/gdscript/c
 
 ### Global functions
 
-GDScript's `@GlobalScope` functions -- `print`, `abs`, `sin`, `clamp`, `lerp`,
-`str`, `len` and the rest -- are not methods on the owner node, so a call to one
-must never fall through to the self-call path: Godot accepts the resulting VCALL
-and drops it in silence. Every global the compiler knows is one row in
-`src/gdscript/compiler/globals.h`, saying what it is called, how many arguments
-it takes, what it returns, and which lowering performs it: inline integer or
-floating-point code, a call to the host through `ECALL_UTILITY`, or a run-time
-choice between the two when the argument types are not known.
+`@GlobalScope` functions (`print`, `abs`, `sin`, `clamp`, `lerp`, `str`, `len`,
+...) are not methods on the owner node. A call to one must never fall through to
+the self-call path: Godot accepts the resulting VCALL and drops it silently.
 
-The type constructors `int()`, `float()`, `bool()` and `String()` are rows in
-that table too. The first three lower inline when the compiler already knows
-the argument is a number or a bool, and go to the host otherwise, because
-`int("42")` is 42 and only Godot's parse says so.
+One row per global in `src/gdscript/compiler/globals.h`: name, arity, return
+type, lowering (inline integer, inline float, `ECALL_UTILITY`, or a run-time
+choice between inline and host when argument types are unknown).
 
-`randi()`, `randf()`, `randi_range()`, `randf_range()` and `randfn()` are the
-one family there whose answer depends on host state. Their rows are marked
-impure, which is what stops a pass from deleting a draw nobody reads, and the
-IR interpreter refuses to evaluate one rather than inventing a number the
-machine would not have produced -- so they cannot appear in the differential or
-optimizer-invariance corpus. `randomize()` and `seed()` are deliberately absent:
-they set the seed of the generator the rest of the project draws from, which is
-the host's state and not the guest's. Anything else that reaches engine state
-belongs outside this table for the same reason.
+- `int()`, `float()`, `bool()`, `String()` are rows in the same table. The first
+  three lower inline when the argument is a known number or bool, host otherwise
+  (`int("42")` == 42 needs Godot's parse).
+- `randi`, `randf`, `randi_range`, `randf_range`, `randfn` are marked impure, so
+  DCE keeps an unused draw. The IR interpreter refuses them, which excludes them
+  from the differential and optimizer-invariance corpus.
+- `randomize()` and `seed()` are absent: they mutate host RNG state. Same rule
+  for anything else reaching engine state.
+
+### Operators
+
+Precedence in `parser.cpp`, loosest first: `as`, ternary, `or`, `and`, `not`,
+`in`/`not in`, equality, comparison, `|`, `^`, `&`, shifts, `+`/`-`, `*`/`/`/`%`,
+`is`/`is not`, `**`, unary `-`/`~`/`+`, call and subscript.
+
+Two entries deviate from the GDScript manual; the engine is authoritative and
+`test_gdscript_compiler.gd` checks both against it:
+
+- `**` is left-associative and binds looser than a leading `-`: `2 ** 3 ** 2` is
+  `(2**3)**2` == 64, `-2 ** 2` is `(-2)**2` == 4.
+- `not` binds looser than comparison: `not a == b` is `not (a == b)`.
+
+Lowering:
+
+- `**` and `in` always go to the host via `ECALL_VEVAL` (`OP_POWER` = 13,
+  `OP_IN` = 24); no native path. No inline expansion reproduces Godot's answer
+  for every type pair, and only the host knows whether the right operand of `in`
+  is an Array, Dictionary or String. The IR interpreter refuses both, so neither
+  appears in the differential or optimizer-invariance corpus.
+- `is` is a `lw`/`xori`/`seqz` on the Variant type tag, no syscall. Exact tag
+  compare, not convertibility: `1.0 is int` is false. Folds to a constant when
+  the type is already tracked. Class names are rejected (inheritance walk needs
+  the engine).
+- `as` is limited to `int`, `float`, `bool`, `String` and lowers to the
+  constructor of the same name. Class names are rejected: a failed cast yields
+  null, which the compiler cannot decide.
+
+### Enums
+
+`enum Mode { IDLE, RUN = 5, STOP }` is compiler-only, like a struct. Members are
+compile-time integers; nothing of an enum reaches the IR. `Mode.STOP`, and a
+bare `RIGHT` from an unnamed `enum { LEFT, RIGHT }`, become the immediate they
+stand for, typed `int` so a compare against one stays off the VEVAL path. An
+undeclared member is a compile error; a local of the same name shadows it.
+
+### Iterating a container
+
+- `for v in <array>`: walked by position via `ECALL_ARRAY_SIZE` and
+  `ECALL_ARRAY_AT`.
+- `for k in <dictionary>`: the loop setup replaces the Dictionary with
+  `Dictionary_Op::GET_KEYS` once, before the loop. Guarded by one `TYPE_TEST`
+  when the type is unknown, unguarded when known.
+- `GET_KEYS`/`GET_VALUES` were already numbered in `syscalls.h` and implemented
+  in `api_dict_ops`. Having no key argument, they take the result Variant
+  pointer in a2, not a3.
+
+### Statement layout
+
+- A newline inside `(`, `[` or `{` is layout, not a statement end, so argument
+  lists and literals may span lines.
+- `\` is an explicit line continuation; `;` separates statements on one line.
+- Trailing commas are allowed in literals and argument lists.
+- `{key = value}` is the Lua-style spelling of `{"key": value}`.
+- An unclosed bracket swallows the rest of the file, so the lexer reports it at
+  the position it was opened, not at EOF.
+- `static` and `class_name` are parsed and dropped: there is no class instance,
+  and the registered script name is a project fact.
+- Container element types (`Array[int]`, `Dictionary[String, int]`) are parsed
+  and dropped: every value the compiler moves is a Variant, and Godot enforces
+  typed containers at the boundary.
 
 ### Structs
 
-`struct` is compiler-only sugar for a Dictionary with a fixed set of keys:
+`struct` is compiler-only sugar for a Dictionary with a fixed key set:
 
 ```gdscript
 struct BankAccount:
@@ -48,21 +103,107 @@ struct BankAccount:
 	var loan: int = 0
 ```
 
-An instance is built with `BankAccount.new(...)` or `BankAccount(...)`, taking
-values positionally, by name (`BankAccount.new(loan = 50)`), or both, with any
-field left out keeping its declared default. It is an ordinary Dictionary
-Variant: Godot sees `{"balance": 0, "loan": 0}` coming back out, and a Dictionary
-passed in from Godot works as a struct parameter.
+- Constructed with `BankAccount.new(...)` or `BankAccount(...)`, positionally,
+  by name (`BankAccount.new(loan = 50)`), or both; omitted fields take their
+  declared default.
+- The instance is an ordinary Dictionary Variant: Godot sees
+  `{"balance": 0, "loan": 0}`, and a Dictionary from Godot works as a struct
+  parameter.
+- A field access is a Dictionary get/set, never `VGET`/`VSET`: the property
+  syscalls target Object properties and throw on a Dictionary. This holds for
+  plain dictionaries too, so `d.key` means `d["key"]` as in GDScript.
+- An undeclared field name is a compile error wherever the struct is known:
+  from `.new()`, a `: BankAccount` hint on a variable, parameter or global, or a
+  `-> BankAccount` return type.
+- Nothing of a struct survives into the IR. `tests/test_structs.cpp` covers the
+  lowering.
 
-A field access is a Dictionary get or set, never `VGET`/`VSET` -- the property
-syscalls reach an Object's properties and throw on a Dictionary. That applies to
-plain dictionaries too, so `d.key` now means `d["key"]` as it does in GDScript.
+### Dispatch
 
-What the declaration buys over a bare Dictionary is that a field name the struct
-does not declare is a compile error, wherever the compiler knows which struct a
-value is: from `.new()`, from a `: BankAccount` hint on a variable, parameter or
-global, or from a `-> BankAccount` return type. Nothing about a struct survives
-into the IR. `tests/test_structs.cpp` covers the lowering.
+A fetch-decode-execute loop whose execute step is one `match` on an opcode is
+the hot path for the logic CPUs people build with this, so `match` has two
+lowerings. `tests/test_switch.cpp` covers both; `tests/tests/test_cpu.sgd` is a
+sixteen-opcode machine the Godot tests run end to end.
+
+A `const` whose initializer folds is materialised at its use as an immediate,
+not loaded from the global data area. The point is the type, not the saved load:
+`LOAD_GLOBAL` carries no type, so `match op: OP_ADD:` compared an untyped
+Variant against an untyped Variant and every arm became a `VEVAL` syscall. A
+container const is exempt — it is a handle, and every read must yield the same
+container.
+
+Dense integer constant patterns lower to `SWITCH`: a table of `jal`
+instructions in the instruction stream, entered with
+
+```
+ld     t0, subject          # the integer out of its Variant
+li     t1, count
+bgeu   t0, t1, past         # one unsigned compare covers both ends
+auipc  t1, 0                # t1 = here; the table starts here + 12
+sh2add t0, t0, t1           # Zba, which libriscv decodes unconditionally
+jr     12(t0)
+```
+
+Dispatch is constant time in the opcode count and needs no relocation.
+`MIN_SWITCH_CASES`, `MAX_SWITCH_SPREAD` and `MAX_SWITCH_ENTRIES` in
+`codegen.cpp` set the density threshold.
+
+The table is a fast path, not a replacement. It falls through when the subject
+is not an integer or is out of range. What follows it depends on what the
+compiler knows: a `JUMP` to the wildcard when the subject is typed `int`,
+otherwise the full chain of equality tests, since `match 3.0` must still reach
+the `3:` arm and `match true` the `1:` arm. One pattern the compiler cannot
+evaluate disqualifies the whole match: a variable pattern may cover a value the
+table also covers, and GDScript takes the arm written first.
+
+### Match patterns
+
+An arm is a list of patterns, any one of which takes it, optionally followed by
+`when <condition>`. Five kinds; only the first is an equality test:
+
+```gdscript
+match value:
+	1, 2:                       # value: subject == pattern
+		...
+	[1, var rest, ..]:          # Array of that shape, elementwise
+		...
+	{"kind": "circle", "r": var r}:  # Dictionary with those keys
+		...
+	var v when v < 0:           # binds what it matched; the guard may decline
+		...
+	_:                          # wildcard, binds nothing
+		...
+```
+
+Arms form a chain: each tests its patterns, then its guard, then falls into its
+body or on to the next arm. Three properties the tests pin down:
+
+- A guard runs after the pattern matched and its bindings exist, and a declining
+  guard continues the chain instead of leaving the match, so two arms may bind
+  the same name and be told apart by their guards. Any guard disqualifies the
+  jump table (an entry jumping straight to a body would run a declined arm), and
+  a guarded `_` is not a catch-all.
+- A binding is a copy: assigning to the name in the body must not reach the
+  subject. It is declared in the arm's scope, which covers both test and body,
+  so arms may reuse the name.
+- A container pattern tests the type tag first (`TYPE_TEST`, no syscall), then
+  the length, then the elements: a short Array is never indexed past its end,
+  and an integer subject is never asked for a length. When the subject's type is
+  known not to be the container's, the whole arm is one jump and no
+  destructuring is emitted.
+
+Syscalls: Arrays use `ECALL_ARRAY_SIZE` and `ECALL_ARRAY_AT`; Dictionaries use
+`ECALL_DICTIONARY_OPS` with `GET_SIZE`, `HAS` and `GET`, where the keyed
+operations pass the key in a2 and the result in a3. Without a trailing `..` the
+size is part of the pattern — `{"kind": var k}` does not match a Dictionary that
+also has `"r"` — which is why the size is queried at all. The IR interpreter has
+no containers, so container patterns are excluded from the differential and
+optimizer-invariance corpus, as `**` and `in` are.
+
+`tests/test_match.cpp` covers the lowering. `test_match_bindings_and_guards` and
+`test_match_container_patterns` in `tests/tests/test_gdscript_compiler.gd` run
+each pattern in a real sandbox and against the engine's own `match` on the same
+values.
 
 ## Compiler Debugging Tools
 
@@ -104,7 +245,7 @@ These tools are essential for tracking down bugs in the compiler pipeline by sho
 
 ### Checking the compiler against itself
 
-Four checks run from `src/gdscript/compiler/build` with `ctest .`, and exist so
+These checks run from `src/gdscript/compiler/build` with `ctest .`, and exist so
 that a compiler bug fails a build rather than a user's program at run time. See
 `src/gdscript/compiler/REFACTOR.md` for why each one is there.
 
@@ -123,6 +264,12 @@ that a compiler bug fails a build rather than a user's program at run time. See
   first two, with a shrinker. `tests/fuzz_nightly.sh` runs it and the
   differential harness for longer, from fresh seeds.
 - `test_globals` — compile-time global functions
+- `test_operators` — operator lowering and precedence, including the two places
+  the engine differs from the manual
+- `test_switch` — const folding, the jump table density thresholds, what the
+  table must not decide alone, and the emitted dispatch sequence
+- `test_match` — the non-value pattern kinds: bindings, guards, array and
+  dictionary patterns, and the syscalls each does and does not make
 
 `GDSC_PASSES=<comma-separated pass names>` selects which optimizer passes run,
 in every tool including `dump_ir`. `GDSC_PASSES=none` disables the optimizer;

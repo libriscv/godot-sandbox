@@ -46,10 +46,11 @@ struct VariableExpr : Expr {
 // Binary operation: a + b, x * y
 struct BinaryExpr : Expr {
 	enum class Op {
-		ADD, SUB, MUL, DIV, MOD,
+		ADD, SUB, MUL, DIV, MOD, POW,
 		EQ, NEQ, LT, LTE, GT, GTE,
 		AND, OR,
-		BIT_AND, BIT_OR, BIT_XOR, SHL, SHR
+		BIT_AND, BIT_OR, BIT_XOR, SHL, SHR,
+		IN
 	};
 
 	ExprPtr left;
@@ -68,6 +69,17 @@ struct UnaryExpr : Expr {
 	ExprPtr operand;
 
 	UnaryExpr(Op o, ExprPtr e) : op(o), operand(std::move(e)) {}
+};
+
+// Type check: `x is int`. The type is kept as a name, not a Variant::Type: only
+// the code generator knows which names it can answer for (a built-in type is a
+// tag compare, a class name needs the engine and is rejected).
+struct TypeTestExpr : Expr {
+	ExprPtr value;
+	std::string type_name;
+
+	TypeTestExpr(ExprPtr v, std::string t)
+		: value(std::move(v)), type_name(std::move(t)) {}
 };
 
 // Ternary conditional: true_value if condition else false_value
@@ -235,12 +247,73 @@ struct ContinueStmt : Stmt {};
 // Pass statement (no-op)
 struct PassStmt : Stmt {};
 
+// One pattern of a `match` arm. VALUE is an equality test; the other kinds test
+// shape and/or bind, which no expression can express.
+struct MatchPattern;
+using MatchPatternPtr = std::unique_ptr<MatchPattern>;
+
+struct MatchPattern {
+	enum class Kind {
+		VALUE,      // 1, "text", OP_ADD -- compared with ==
+		WILDCARD,   // _ -- matches anything, binds nothing
+		BIND,       // var name -- matches anything, and names it
+		ARRAY,      // [p, p, ..] -- an Array of that length, elementwise
+		DICTIONARY, // {"k": p, "k2", ..} -- a Dictionary with those keys
+	};
+
+	Kind kind = Kind::VALUE;
+	ExprPtr value;                    // VALUE
+	std::string name;                 // BIND
+	std::vector<MatchPatternPtr> elements; // ARRAY
+	// DICTIONARY. An entry with no value pattern is `{"key"}`: the key must be
+	// present, its value is unconstrained.
+	struct Entry {
+		ExprPtr key;
+		MatchPatternPtr value;
+	};
+	std::vector<Entry> entries;
+	// Trailing `..`: "exactly these" becomes "at least these".
+	bool open = false;
+	int line = 0;
+	int column = 0;
+
+	// True if this pattern, or any nested one, binds a name. A binding branch
+	// cannot share an arm with other patterns (they would leave the name
+	// undefined) and cannot be a jump table entry.
+	bool binds() const {
+		if (kind == Kind::BIND) {
+			return true;
+		}
+		for (const auto& element : elements) {
+			if (element->binds()) {
+				return true;
+			}
+		}
+		for (const auto& entry : entries) {
+			if (entry.value && entry.value->binds()) {
+				return true;
+			}
+		}
+		return false;
+	}
+};
+
 // Match statement: match value: <patterns>
 struct MatchStmt : Stmt {
 	struct Branch {
-		// Values this branch matches. Empty means the wildcard pattern '_'.
-		std::vector<ExprPtr> patterns;
+		// The patterns this branch matches, any one of which is enough.
+		std::vector<MatchPatternPtr> patterns;
+		// `when <expr>`: evaluated after the pattern matched and its bindings
+		// exist, since a guard is normally about them. Null if absent.
+		ExprPtr guard;
 		std::vector<StmtPtr> body;
+
+		// The arm unmatched subjects fall to. A guard disqualifies it (a guarded
+		// `_` can decline), as does a second pattern, which would be dead.
+		bool is_catch_all() const {
+			return !guard && patterns.size() == 1 &&
+				patterns[0]->kind == MatchPattern::Kind::WILDCARD;
+		}
 	};
 
 	ExprPtr subject;
@@ -325,9 +398,36 @@ struct StructDecl {
 };
 
 // Top-level program
+// Enum declaration. Members are compile-time integers, so nothing of an enum
+// reaches the IR: a member reference becomes its immediate. An unnamed enum
+// contributes its members to file scope.
+struct EnumDecl {
+	struct Member {
+		std::string name;
+		int64_t value = 0;
+		int line = 0;
+		int column = 0;
+	};
+
+	std::string name; // empty for an unnamed enum
+	std::vector<Member> members;
+	int line = 0;
+	int column = 0;
+
+	const Member* find_member(const std::string& member_name) const {
+		for (const auto& member : members) {
+			if (member.name == member_name) {
+				return &member;
+			}
+		}
+		return nullptr;
+	}
+};
+
 struct Program {
 	std::vector<VarDeclStmt> globals; // Global variable declarations
 	std::vector<StructDecl> structs;  // Struct declarations
+	std::vector<EnumDecl> enums;      // Enum declarations
 	std::vector<FunctionDecl> functions;
 };
 

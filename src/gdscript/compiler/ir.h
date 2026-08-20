@@ -42,6 +42,7 @@ enum class IROperandKind : uint8_t {
 	CNT2,      // immediate holding half the length of the trailing list (pairs)
 	SRC_LIST,  // trailing run of zero or more source registers
 	ARG_LIST,  // trailing run of zero or more source registers and/or immediates
+	LBL_LIST,  // trailing run of zero or more branch target labels
 };
 
 // What a pass is allowed to do with an instruction.
@@ -87,7 +88,8 @@ struct IROperandSignature {
 	constexpr bool is_variadic() const {
 		return count > 0 &&
 			(kinds[count - 1] == IROperandKind::SRC_LIST ||
-			 kinds[count - 1] == IROperandKind::ARG_LIST);
+			 kinds[count - 1] == IROperandKind::ARG_LIST ||
+			 kinds[count - 1] == IROperandKind::LBL_LIST);
 	}
 
 	// Number of operands before the repeating tail.

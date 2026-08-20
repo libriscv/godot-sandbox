@@ -617,6 +617,29 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				break;
 			}
 
+			case IROpcode::TYPE_TEST: {
+				// TYPE_TEST dst, src, variant_type
+				//
+				// The type tag is the first 4 bytes of every Variant, so the test
+				// is a load, an xor against the tag, and seqz: no syscall, and no
+				// dependence on the payload.
+				int dst_vreg = std::get<int>(instr.operands[0].value);
+				int src_vreg = std::get<int>(instr.operands[1].value);
+				const int64_t tested = std::get<int64_t>(instr.operands[2].value);
+				int src_offset = get_variant_stack_offset(src_vreg);
+
+				emit_load_variant_type(REG_T0, REG_SP, src_offset);
+				// Every Variant::Type fits the 12-bit immediate range.
+				emit_xori(REG_T0, REG_T0, static_cast<int32_t>(tested));
+				emit_seqz(REG_T0, REG_T0);
+
+				auto [base, offset] = value_destination(dst_vreg);
+				emit_store_variant_bool(REG_T0, base, offset);
+				emit_li(REG_T1, Variant::BOOL);
+				emit_store_variant_type(REG_T1, base, offset);
+				break;
+			}
+
 			case IROpcode::CONVERT: {
 				// CONVERT dst_reg, src_reg  with the target type in type_hint.
 				int dst_vreg = std::get<int>(instr.operands[0].value);
@@ -746,7 +769,9 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::BIT_OR:
 			case IROpcode::BIT_XOR:
 			case IROpcode::SHL:
-			case IROpcode::SHR: {
+			case IROpcode::SHR:
+			case IROpcode::POW:
+			case IROpcode::IN: {
 				// Check that all operands are valid before processing
 				if (instr.operands.size() < 3 ||
 					instr.operands[0].type != IRValue::Type::REGISTER) {
@@ -768,7 +793,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// IMPORTANT: We ONLY optimize Variants with type hints.
 				// Untyped Variants fall back to VEVAL syscall, which also acts as
 				// deoptimization to find bugs (unknown types are unpredictable).
-				if (instr.type_hint != IRInstruction::TypeHint_NONE && lhs_is_reg && rhs_is_reg) {
+				// POW and IN have no native expansion matching the host's answer
+				// for every type pair, so they always take the VEVAL path.
+				const bool host_only = instr.opcode == IROpcode::POW || instr.opcode == IROpcode::IN;
+
+				if (!host_only && instr.type_hint != IRInstruction::TypeHint_NONE && lhs_is_reg && rhs_is_reg) {
 					int lhs_vreg_local = std::get<int>(instr.operands[1].value);
 					int rhs_vreg_local = std::get<int>(instr.operands[2].value);
 					int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
@@ -809,6 +838,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					case IROpcode::BIT_AND: variant_op = 16; break; // OP_BIT_AND
 					case IROpcode::BIT_OR: variant_op = 17; break;  // OP_BIT_OR
 					case IROpcode::BIT_XOR: variant_op = 18; break; // OP_BIT_XOR
+					case IROpcode::POW: variant_op = 13; break; // OP_POWER
+					case IROpcode::IN: variant_op = 24; break;  // OP_IN
 					default: variant_op = 6; break;
 				}
 
@@ -1116,6 +1147,68 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				mark_label_use(std::get<std::string>(instr.operands[0].value), m_code.size());
 				emit_jal(REG_ZERO, 0);
 				break;
+
+			case IROpcode::SWITCH: {
+				// SWITCH subject, base, count, label[0] .. label[count-1]
+				//
+				// Dense integer switch, dispatched through a table of `jal`
+				// instructions emitted inline here. The entries are ordinary
+				// jumps, so label resolution and branch relaxation treat them
+				// like any other jump and no .rodata relocation is needed. The
+				// entry for `v` is at table + (v - base) * 4.
+				//
+				// Falling through is the "none of the above" path, where the
+				// code generator puts the rest of the match.
+				const int subject_vreg = std::get<int>(instr.operands[0].value);
+				const int64_t base = std::get<int64_t>(instr.operands[1].value);
+				const int64_t count = std::get<int64_t>(instr.operands[2].value);
+				const int subject_offset = get_variant_stack_offset(subject_vreg);
+
+				const std::string past_table = ".switch" + std::to_string(m_switch_tables) + ".out";
+				m_switch_tables++;
+
+				// Only an integer indexes the table; any other type, including
+				// a float (`match 3.0` must still reach a `3:` arm), falls
+				// through. A type hint of INT skips the test entirely.
+				if (instr.type_hint != Variant::INT) {
+					emit_load_variant_type(REG_T0, REG_SP, subject_offset);
+					emit_li(REG_T1, Variant::INT);
+					mark_label_use(past_table, m_code.size());
+					emit_bne(REG_T0, REG_T1, 0);
+				}
+
+				emit_load_variant_int(REG_T0, REG_SP, subject_offset);
+				if (base != 0) {
+					if (fits_in_signed(-base, I_TYPE_IMM_BITS)) {
+						emit_addi(REG_T0, REG_T0, static_cast<int32_t>(-base));
+					} else {
+						emit_li(REG_T1, base);
+						emit_sub(REG_T0, REG_T0, REG_T1);
+					}
+				}
+
+				// One unsigned compare covers both ends: a subject below `base`
+				// wraps to a huge unsigned value and fails the same test.
+				emit_li(REG_T1, count);
+				mark_label_use(past_table, m_code.size());
+				emit_bgeu(REG_T0, REG_T1, 0);
+
+				// The table is three instructions past the AUIPC, so its address
+				// is this PC + 12, with no relocation: `auipc rd, 0` gives the
+				// current PC and the 12 rides in the jump's immediate. Loading
+				// the address instead would cost an ADDI and put a label use
+				// inside a sequence branch relaxation may move.
+				emit_u_type(0x17, REG_T1, 0);         // auipc t1, 0 -- t1 = here
+				emit_sh2add(REG_T0, REG_T0, REG_T1);  // t0 = here + index * 4
+				emit_jalr(REG_ZERO, REG_T0, 12);      // -> here + 12 + index * 4
+
+				for (int64_t entry = 0; entry < count; entry++) {
+					mark_label_use(std::get<std::string>(instr.operands[3 + entry].value), m_code.size());
+					emit_jal(REG_ZERO, 0);
+				}
+				define_label(past_table);
+				break;
+			}
 
 			case IROpcode::RETURN: {
 				// Godot Sandbox calling convention with Variants:
@@ -2099,11 +2192,69 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_ld(REG_A1, REG_SP, index_offset + 8); // Load 64-bit integer from offset 8
 
 					// a2 = pointer to result GuestVariant
-					emit_i_type(0x13, REG_A2, 0, REG_SP, result_offset); // addi a2, sp, result_offset
+					emit_load_stack_offset(REG_A2, result_offset); // addi a2, sp, result_offset
 
 					// a7 = syscall number (522 for ECALL_ARRAY_AT)
 					emit_li(REG_A7, syscall_num);
 					emit_ecall();
+
+				} else if (syscall_num == 524) {
+					// ECALL_DICTIONARY_OPS: result_reg, 524, op, dict_vreg [, key_vreg]
+					// a0 = Dictionary_Op, a1 = dictionary variant index,
+					// a2 = key GuestVariant pointer, a3 = result pointer
+					//
+					// The host reads the arguments in that order with or without a
+					// key, so a keyless operation puts its result in a2, the slot
+					// the key would have used.
+					//
+					// HAS (bool) and GET_SIZE (count) answer through the return
+					// register instead of a pointer, as ECALL_ARRAY_SIZE does.
+					if (instr.operands.size() != 4 && instr.operands.size() != 5) {
+						throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_DICTIONARY_OPS requires 4 or 5 operands");
+					}
+
+					constexpr int64_t DICT_OP_HAS = 3;
+					constexpr int64_t DICT_OP_GET_SIZE = 6;
+
+					const int64_t dict_op = std::get<int64_t>(instr.operands[2].value);
+					int dict_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
+					const bool has_key = instr.operands.size() == 5;
+					const bool returns_in_register = dict_op == DICT_OP_HAS || dict_op == DICT_OP_GET_SIZE;
+
+					int result_offset = get_variant_stack_offset(result_vreg);
+					int dict_offset = get_variant_stack_offset(dict_vreg);
+					int key_offset = has_key
+						? get_variant_stack_offset(static_cast<int>(std::get<int>(instr.operands[4].value)))
+						: 0;
+
+					std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2};
+					if (has_key) {
+						clobbered_regs.push_back(REG_A3);
+					}
+					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
+
+					for (const auto& move : moves) {
+						emit_mv(move.second, move.first);
+					}
+
+					emit_li(REG_A0, dict_op);
+					// The scoped index the host knows the Dictionary by is at
+					// offset 8 of the Variant, as for an Array.
+					emit_lw(REG_A1, REG_SP, dict_offset + 8);
+					if (has_key) {
+						emit_load_stack_offset(REG_A2, key_offset);    // addi a2, sp, key_offset
+						emit_load_stack_offset(REG_A3, result_offset); // addi a3, sp, result_offset
+					} else {
+						emit_load_stack_offset(REG_A2, result_offset); // addi a2, sp, result_offset
+					}
+
+					emit_li(REG_A7, syscall_num);
+					emit_ecall();
+
+					if (returns_in_register) {
+						emit_syscall_result(result_vreg, REG_A0,
+							result_offset, dict_op == DICT_OP_HAS ? Variant::BOOL : Variant::INT);
+					}
 
 				} else if (syscall_num == 507) {
 					// ECALL_GET_NODE: result_reg, 507, addr, [path_vreg]
@@ -2397,7 +2548,9 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::LOAD_BOOL:
 		case IROpcode::LOAD_GLOBAL:
 		case IROpcode::MOVE:
+		case IROpcode::TYPE_TEST:
 		case IROpcode::LABEL:
+		case IROpcode::SWITCH:
 		case IROpcode::JUMP:
 		case IROpcode::RETURN:
 			return false;
@@ -2410,6 +2563,8 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::LOAD_STRING:
 		case IROpcode::STORE_GLOBAL:
 		case IROpcode::CONVERT:
+		case IROpcode::POW:
+		case IROpcode::IN:
 		case IROpcode::ADD:
 		case IROpcode::SUB:
 		case IROpcode::MUL:
@@ -3737,6 +3892,13 @@ void RISCVCodeGen::emit_fdiv_r(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 }
 
 // Sign-extend word to doubleword (addiw rd, rs, 0)
+void RISCVCodeGen::emit_sh2add(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	// Zba: rd = (rs1 << 2) + rs2 in one instruction. libriscv decodes all of Zba
+	// unconditionally and these ELFs run nowhere else, so a jump table's
+	// shift-and-add costs one instruction, not two.
+	emit_r_type(0x33, rd, 4, rs1, rs2, 0b0010000);
+}
+
 void RISCVCodeGen::emit_srai(uint8_t rd, uint8_t rs, uint8_t shamt) {
 	// SRAI on RV64: funct6=010000 and a six-bit shift amount, so the immediate
 	// field is (0b010000 << 6) | shamt.

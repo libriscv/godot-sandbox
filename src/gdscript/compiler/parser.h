@@ -20,6 +20,19 @@ private:
 	// Struct parsing
 	StructDecl parse_struct();
 
+	// Enum parsing
+	EnumDecl parse_enum();
+
+	// Match patterns. A pattern is not an expression: `[a, 1]` destructures an
+	// Array rather than building one, and `_` and `var name` mean nothing
+	// outside a match.
+	MatchPatternPtr parse_match_pattern();
+	MatchPatternPtr parse_match_array_pattern();
+	MatchPatternPtr parse_match_dictionary_pattern();
+	// Consume a trailing `..` if present. `what` names the construct in the error
+	// for a `..` in the middle.
+	bool parse_pattern_rest(const char* what);
+
 	// Argument list of a call, up to and including the closing ')'. Fills
 	// `names` in step with `arguments`: the name an argument was passed under,
 	// or an empty string when it was passed positionally.
@@ -42,6 +55,8 @@ private:
 	ExprPtr parse_ternary();
 	ExprPtr parse_or_expression();
 	ExprPtr parse_and_expression();
+	ExprPtr parse_not();
+	ExprPtr parse_inclusion();
 	ExprPtr parse_equality();
 	ExprPtr parse_comparison();
 	ExprPtr parse_bit_or();
@@ -51,6 +66,8 @@ private:
 	ExprPtr parse_term();
 	ExprPtr parse_factor();
 	ExprPtr parse_unary();
+	ExprPtr parse_power();
+	ExprPtr parse_type_test();
 	ExprPtr parse_call();
 	ExprPtr parse_primary();
 
@@ -86,6 +103,11 @@ private:
 	// function rather than an expression at each of the twelve call sites.
 	static ExprPtr make_binary(ExprPtr left, BinaryExpr::Op op, ExprPtr right);
 
+	// A second copy of an assignment target, for rewriting `a op= b` into
+	// `a = a op b`. Null when the target cannot be read twice without changing
+	// the program's behaviour.
+	static ExprPtr clone_lvalue(const Expr* expr);
+
 	// Utilities
 	bool match(TokenType type);
 	bool match_one_of(std::initializer_list<TokenType> types);
@@ -99,10 +121,16 @@ private:
 	void synchronize();
 	void error(const std::string& message);
 	void skip_newlines();
+	// Consume a statement end: a newline, or a ';' before the next statement on
+	// the same line.
+	void consume_statement_end(const std::string& message);
 
 	// Type hint parsing
 	std::string parse_type_hint();  // Parse optional type hint (e.g., ": int", ": String")
-	std::string parse_return_type();  // Parse optional return type (e.g., "-> void")
+	// Optional return type, e.g. `-> void`.
+	std::string parse_return_type();
+	// Read past the element types of `Array[int]` / `Dictionary[K, V]`.
+	void skip_type_arguments();
 
 	// Attribute parsing
 	bool parse_attribute();  // Parse attribute (e.g., @export), returns true if @export

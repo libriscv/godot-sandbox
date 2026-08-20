@@ -27,9 +27,15 @@ const char* token_type_name(TokenType type) {
 		case TokenType::FALSE: return "FALSE";
 		case TokenType::NULL_VAL: return "NULL";
 		case TokenType::MATCH: return "MATCH";
+		case TokenType::IS: return "IS";
+		case TokenType::STATIC: return "STATIC";
+		case TokenType::ENUM: return "ENUM";
+		case TokenType::CLASS_NAME: return "CLASS_NAME";
+		case TokenType::AS: return "AS";
 		case TokenType::PLUS: return "PLUS";
 		case TokenType::MINUS: return "MINUS";
 		case TokenType::MULTIPLY: return "MULTIPLY";
+		case TokenType::POWER: return "POWER";
 		case TokenType::DIVIDE: return "DIVIDE";
 		case TokenType::MODULO: return "MODULO";
 		case TokenType::ASSIGN: return "ASSIGN";
@@ -38,6 +44,7 @@ const char* token_type_name(TokenType type) {
 		case TokenType::MULTIPLY_ASSIGN: return "MULTIPLY_ASSIGN";
 		case TokenType::DIVIDE_ASSIGN: return "DIVIDE_ASSIGN";
 		case TokenType::MODULO_ASSIGN: return "MODULO_ASSIGN";
+		case TokenType::POWER_ASSIGN: return "POWER_ASSIGN";
 		case TokenType::BIT_AND: return "BIT_AND";
 		case TokenType::BIT_OR: return "BIT_OR";
 		case TokenType::BIT_XOR: return "BIT_XOR";
@@ -66,7 +73,9 @@ const char* token_type_name(TokenType type) {
 		case TokenType::RBRACE: return "RBRACE";
 		case TokenType::COLON: return "COLON";
 		case TokenType::COMMA: return "COMMA";
+		case TokenType::SEMICOLON: return "SEMICOLON";
 		case TokenType::DOT: return "DOT";
+		case TokenType::DOT_DOT: return "DOT_DOT";
 		case TokenType::AT: return "AT";
 		case TokenType::NEWLINE: return "NEWLINE";
 		case TokenType::INDENT: return "INDENT";

@@ -28,6 +28,11 @@ const std::unordered_map<std::string, TokenType> Lexer::keywords = {
 	{"or", TokenType::OR},
 	{"not", TokenType::NOT},
 	{"match", TokenType::MATCH},
+	{"is", TokenType::IS},
+	{"static", TokenType::STATIC},
+	{"enum", TokenType::ENUM},
+	{"class_name", TokenType::CLASS_NAME},
+	{"as", TokenType::AS},
 };
 
 Lexer::Lexer(std::string source) : m_source(std::move(source)) {
@@ -40,6 +45,15 @@ std::vector<Token> Lexer::tokenize() {
 		scan_token();
 	}
 
+	// An unclosed bracket swallowed every newline after it, so it has eaten the
+	// rest of the file. Report it at the bracket: EOF is the symptom, not the
+	// mistake.
+	if (!m_open_brackets.empty()) {
+		const OpenBracket& open = m_open_brackets.back();
+		error_at(std::string("Unclosed '") + opener_for(open.closer) + "', expected '" +
+			open.closer + "' before the end of the file", open.line, open.column);
+	}
+
 	// Add remaining dedents at end of file
 	while (m_indent_stack.size() > 1) {
 		m_indent_stack.pop_back();
@@ -48,6 +62,24 @@ std::vector<Token> Lexer::tokenize() {
 
 	add_token(TokenType::EOF_TOKEN);
 	return m_tokens;
+}
+
+char Lexer::opener_for(char closer) {
+	switch (closer) {
+		case ')': return '(';
+		case ']': return '[';
+		default:  return '{';
+	}
+}
+
+void Lexer::push_bracket(char closer) {
+	m_open_brackets.push_back({closer, m_line, m_column - 1});
+}
+
+void Lexer::pop_bracket(char closer) {
+	if (!m_open_brackets.empty() && m_open_brackets.back().closer == closer) {
+		m_open_brackets.pop_back();
+	}
 }
 
 void Lexer::scan_token() {
@@ -67,10 +99,28 @@ void Lexer::scan_token() {
 			break;
 
 		case '\n':
-			add_token(TokenType::NEWLINE);
+			// Inside (), [] or {} a newline is layout, not a statement end, so
+			// argument lists and literals may span lines. Suppressing the token
+			// also bypasses the indent machinery, so continuation lines may be
+			// indented freely.
+			if (m_open_brackets.empty()) {
+				add_token(TokenType::NEWLINE);
+				m_at_line_start = true;
+			}
 			m_line++;
 			m_column = 1;
-			m_at_line_start = true;
+			break;
+
+		case '\\':
+			// Explicit line continuation. The backslash must be last on the
+			// line; anything after it is a typo, reported rather than swallowed.
+			while (peek() == ' ' || peek() == '\r' || peek() == '\t') advance();
+			if (peek() != '\n') {
+				error("Expected end of line after '\\' line continuation");
+			}
+			advance(); // consume the newline without emitting one
+			m_line++;
+			m_column = 1;
 			break;
 
 		case '#':
@@ -78,19 +128,32 @@ void Lexer::scan_token() {
 			while (peek() != '\n' && !is_at_end()) advance();
 			break;
 
-		case '(': add_token(TokenType::LPAREN); break;
-		case ')': add_token(TokenType::RPAREN); break;
-		case '[': add_token(TokenType::LBRACKET); break;
-		case ']': add_token(TokenType::RBRACKET); break;
-		case '{': add_token(TokenType::LBRACE); break;
-		case '}': add_token(TokenType::RBRACE); break;
+		case '(': push_bracket(')'); add_token(TokenType::LPAREN); break;
+		case '[': push_bracket(']'); add_token(TokenType::LBRACKET); break;
+		case '{': push_bracket('}'); add_token(TokenType::LBRACE); break;
+		// A stray closer is a parse error, not a lexer one, so an unmatched one is
+		// passed on rather than unbalancing the stack and disabling newlines for
+		// the rest of the file.
+		case ')': pop_bracket(')'); add_token(TokenType::RPAREN); break;
+		case ']': pop_bracket(']'); add_token(TokenType::RBRACKET); break;
+		case '}': pop_bracket('}'); add_token(TokenType::RBRACE); break;
 		case ':': add_token(TokenType::COLON); break;
 		case ',': add_token(TokenType::COMMA); break;
-		case '.': add_token(TokenType::DOT); break;
+		case ';': add_token(TokenType::SEMICOLON); break;
+		// '..' only occurs as the rest of a match pattern.
+		case '.': add_token(match('.') ? TokenType::DOT_DOT : TokenType::DOT); break;
 		case '@': add_token(TokenType::AT); break;
 		case '+': add_token(match('=') ? TokenType::PLUS_ASSIGN : TokenType::PLUS); break;
 		case '-': add_token(match('=') ? TokenType::MINUS_ASSIGN : TokenType::MINUS); break;
-		case '*': add_token(match('=') ? TokenType::MULTIPLY_ASSIGN : TokenType::MULTIPLY); break;
+		case '*':
+			// '**' before '*=', so `a **= b` is a power-assign and not a multiply
+			// followed by a dangling '*='.
+			if (match('*')) {
+				add_token(match('=') ? TokenType::POWER_ASSIGN : TokenType::POWER);
+			} else {
+				add_token(match('=') ? TokenType::MULTIPLY_ASSIGN : TokenType::MULTIPLY);
+			}
+			break;
 		case '/': add_token(match('=') ? TokenType::DIVIDE_ASSIGN : TokenType::DIVIDE); break;
 		case '%': add_token(match('=') ? TokenType::MODULO_ASSIGN : TokenType::MODULO); break;
 

@@ -23,9 +23,10 @@
 //   CNT2      immediate holding half the length of the trailing list (pairs)
 //   SRC_LIST  trailing run of zero or more source registers
 //   ARG_LIST  trailing run of zero or more source registers and/or immediates
+//   LBL_LIST  trailing run of zero or more branch target labels
 //
-// A signature ending in SRC_LIST or ARG_LIST is variadic; everything else has
-// exactly as many operands as it lists.
+// A signature ending in SRC_LIST, ARG_LIST or LBL_LIST is variadic; everything
+// else has exactly as many operands as it lists.
 //
 // effects -- a bitmask of IREffect. IR_PURE is the empty mask, and says the
 // instruction can be deleted when its result is unused and moved when its
@@ -43,6 +44,12 @@ IR_OPCODE(STORE_GLOBAL,    "STORE_GLOBAL",    SIG(IMM, SRC),       IR_SIDE_EFFEC
 IR_OPCODE(MOVE,            "MOVE",            SIG(DST, SRC),       IR_PURE | IR_SIMPLE_LOAD)
 IR_OPCODE(CONVERT,         "CONVERT",         SIG(DST, SRC),       IR_PURE)
 
+// `x is int`: dst is true when the Variant in `src` carries the type tag in the
+// immediate (a Variant::Type). The tag is the first field of every Variant, so
+// this is a 4-byte load and a compare, never a host call. Exact tag compare, not
+// convertibility: 1.0 is not an int.
+IR_OPCODE(TYPE_TEST,       "TYPE_TEST",       SIG(DST, SRC, IMM),  IR_PURE)
+
 // -= Arithmetic =-
 
 IR_OPCODE(ADD,             "ADD",             SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
@@ -51,6 +58,12 @@ IR_OPCODE(MUL,             "MUL",             SIG(DST, SRC, SRC),  IR_PURE | IR_
 IR_OPCODE(DIV,             "DIV",             SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
 IR_OPCODE(MOD,             "MOD",             SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
 IR_OPCODE(NEG,             "NEG",             SIG(DST, SRC),       IR_PURE | IR_ARITHMETIC)
+
+// `a ** b`. No RISC-V instruction, and no inline expansion reproduces Godot's
+// answer for every type pair: int ** int stays an int, int ** negative is a
+// float, float ** float is libm's pow. Always goes to the host via OP_POWER, and
+// carries no type hint that could tempt the backend onto a native path.
+IR_OPCODE(POW,             "POW",             SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
 
 // -= Comparison (sets the destination to 0 or 1) =-
 
@@ -76,6 +89,13 @@ IR_OPCODE(BIT_NOT,         "BIT_NOT",         SIG(DST, SRC),       IR_PURE | IR_
 IR_OPCODE(SHL,             "SHL",             SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
 IR_OPCODE(SHR,             "SHR",             SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
 
+// -= Containment =-
+//
+// `a in b`: OP_IN. The meaning is the container's -- Array member, Dictionary
+// key, String substring -- and only the host knows which `b` is, so like POW
+// there is no native path.
+IR_OPCODE(IN,              "IN",              SIG(DST, SRC, SRC),  IR_PURE | IR_ARITHMETIC)
+
 // -= Control flow =-
 //
 // All of these carry IR_SIDE_EFFECTS: control flow is the side effect, and a
@@ -91,6 +111,20 @@ IR_OPCODE(BRANCH_LT,       "BRANCH_LT",       SIG(SRC, SRC, LBL),  IR_SIDE_EFFEC
 IR_OPCODE(BRANCH_LTE,      "BRANCH_LTE",      SIG(SRC, SRC, LBL),  IR_SIDE_EFFECTS | IR_BRANCH | IR_FUSED_BRANCH)
 IR_OPCODE(BRANCH_GT,       "BRANCH_GT",       SIG(SRC, SRC, LBL),  IR_SIDE_EFFECTS | IR_BRANCH | IR_FUSED_BRANCH)
 IR_OPCODE(BRANCH_GTE,      "BRANCH_GTE",      SIG(SRC, SRC, LBL),  IR_SIDE_EFFECTS | IR_BRANCH | IR_FUSED_BRANCH)
+
+// Dense integer switch, the dispatch a `match` on an opcode wants.
+//
+//     SWITCH subject, base, count, label[0], label[1], ... label[count-1]
+//
+// For an integer v in `subject` with base <= v < base + count, control goes to
+// label[v - base]. Anything else -- out of range, or not an integer -- falls
+// through to the next instruction, where the code generator puts the rest of the
+// match: a jump to the wildcard for a subject known to be an integer, otherwise
+// the full compare chain, since `match 3.0` must reach the `3:` arm.
+//
+// Holes in the range get a label too, pointing where falling through would go,
+// so the table is always exactly `count` entries and needs no per-entry test.
+IR_OPCODE(SWITCH,          "SWITCH",          SIG(SRC, IMM, CNT, LBL_LIST), IR_SIDE_EFFECTS | IR_BRANCH)
 
 // -= Function calls =-
 //

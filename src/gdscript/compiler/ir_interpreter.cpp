@@ -228,6 +228,43 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			break;
 		}
 
+		case IROpcode::TYPE_TEST: {
+			int dst = std::get<int>(instr.operands[0].value);
+			int src = std::get<int>(instr.operands[1].value);
+			const int64_t tested = std::get<int64_t>(instr.operands[2].value);
+			const Value& value = get_register(ctx, src);
+			// A Value is one of four Variant types; the backend compares the
+			// same tags against the same immediate.
+			int64_t actual = Variant::NIL;
+			if (std::holds_alternative<bool>(value)) {
+				actual = Variant::BOOL;
+			} else if (std::holds_alternative<int64_t>(value)) {
+				actual = Variant::INT;
+			} else if (std::holds_alternative<double>(value)) {
+				actual = Variant::FLOAT;
+			} else {
+				actual = Variant::STRING;
+			}
+			ctx.registers[dst] = (actual == tested);
+			break;
+		}
+
+		case IROpcode::POW:
+			// int ** int is Godot's `(int64_t)Math::pow(double, double)`; its
+			// truncation and rounding near the int64 limits are the host's to
+			// define. Answering here would be a second definition, free to
+			// disagree with the machine's, as with the random draws.
+			throw CompilerException(ErrorType::OPTIMIZER_ERROR,
+				"'**' is evaluated by the host through Variant::evaluate() and is not"
+				" available in the IR interpreter (in function '" + func.name + "')");
+
+		case IROpcode::IN:
+			// `a in b` queries a container; this interpreter has none, only
+			// numbers, bools and strings.
+			throw CompilerException(ErrorType::OPTIMIZER_ERROR,
+				"'in' needs the host Variant API and is not available in the IR"
+				" interpreter (in function '" + func.name + "')");
+
 		case IROpcode::NEG:
 		case IROpcode::NOT:
 		case IROpcode::BIT_NOT: {
@@ -309,6 +346,27 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			if (fused_branch_taken(left, right, instr.opcode)) {
 				jump_to_label(instr, std::get<std::string>(instr.operands[2].value), ctx);
 			}
+			break;
+		}
+
+		case IROpcode::SWITCH: {
+			// SWITCH subject, base, count, label[0] .. label[count-1]
+			//
+			// Only an integer dispatches through the table. Anything else,
+			// including a whole-valued float (`match 3.0` must still reach the
+			// `3:` arm), falls through to the code emitted after it.
+			const Value subject = get_register(ctx, std::get<int>(instr.operands[0].value));
+			if (!std::holds_alternative<int64_t>(subject)) {
+				break;
+			}
+			const int64_t base = std::get<int64_t>(instr.operands[1].value);
+			const int64_t count = std::get<int64_t>(instr.operands[2].value);
+			const int64_t value = std::get<int64_t>(subject);
+			if (value < base || value >= base + count) {
+				break;
+			}
+			const size_t entry = 3 + static_cast<size_t>(value - base);
+			jump_to_label(instr, std::get<std::string>(instr.operands[entry].value), ctx);
 			break;
 		}
 

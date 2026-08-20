@@ -69,7 +69,7 @@ static void test_lexer_error_has_a_location() {
 }
 
 static void test_parser_error_has_a_location() {
-	const CompilerError error = failing_compile("func f():\n\treturn 1\n\nfunc g(\n");
+	const CompilerError error = failing_compile("func f():\n\treturn 1\n\nfunc g)\n");
 	assert(error.type == ErrorType::PARSER_ERROR);
 	assert(error.line == 4);
 	assert(error.column > 0);
@@ -101,7 +101,7 @@ static void test_message_has_no_type_prefix() {
 	// get_error() formats "[TYPE] message (line N)" for a terminal. The editor
 	// puts the message in its own error field and the line in its own gutter,
 	// so message must be the message alone.
-	const CompilerError error = failing_compile("func f():\n\treturn 1\n\nfunc g(\n");
+	const CompilerError error = failing_compile("func f():\n\treturn 1\n\nfunc g)\n");
 	assert(!error.message.empty());
 	assert(error.message.front() != '[');
 	assert(!contains(error.message, "line "));
@@ -113,13 +113,25 @@ static void test_formatted_message_quotes_the_source_line() {
 	// Only compile() has the source text, so it is the one place that can put
 	// the offending line under the message for a terminal user.
 	Compiler compiler;
-	assert(compiler.compile("func f():\n\treturn 1\n\nfunc g(\n").empty());
+	assert(compiler.compile("func f():\n\treturn 1\n\nfunc g)\n").empty());
 	const std::string message = compiler.get_error();
 	assert(contains(message, "[Parser Error]"));
-	assert(contains(message, "func g("));
+	assert(contains(message, "func g)"));
 	assert(contains(message, "^"));
 
 	std::cout << "  ✓ the formatted message quotes the offending line" << std::endl;
+}
+
+static void test_unclosed_bracket_points_at_the_bracket() {
+	// An unclosed '(' swallows every newline after it, so EOF is the symptom,
+	// not the cause: report the bracket's position.
+	const CompilerError error = failing_compile("func f():\n\treturn 1\n\nfunc g(\n");
+	assert(error.type == ErrorType::LEXER_ERROR);
+	assert(error.line == 4);
+	assert(error.column == 7);
+	assert(contains(error.message, "Unclosed '('"));
+
+	std::cout << "  ✓ an unclosed bracket is reported where it was opened" << std::endl;
 }
 
 static void test_source_line_survives_crlf() {
@@ -140,6 +152,7 @@ int main() {
 	test_error_is_cleared_by_a_later_success();
 	test_lexer_error_has_a_location();
 	test_parser_error_has_a_location();
+	test_unclosed_bracket_points_at_the_bracket();
 	test_codegen_error_names_the_function();
 	test_message_has_no_type_prefix();
 	test_formatted_message_quotes_the_source_line();

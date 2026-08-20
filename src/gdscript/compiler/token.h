@@ -31,11 +31,17 @@ enum class TokenType {
 	FALSE,
 	NULL_VAL,
 	MATCH,
+	IS,
+	AS,
+	STATIC,
+	ENUM,
+	CLASS_NAME,
 
 	// Operators
 	PLUS,        // +
 	MINUS,       // -
 	MULTIPLY,    // *
+	POWER,       // **
 	DIVIDE,      // /
 	MODULO,      // %
 	ASSIGN,      // =
@@ -44,6 +50,7 @@ enum class TokenType {
 	MULTIPLY_ASSIGN, // *=
 	DIVIDE_ASSIGN,  // /=
 	MODULO_ASSIGN,  // %=
+	POWER_ASSIGN,   // **=
 	BIT_AND,        // &
 	BIT_OR,         // |
 	BIT_XOR,        // ^
@@ -74,7 +81,9 @@ enum class TokenType {
 	RBRACE,      // }
 	COLON,       // :
 	COMMA,       // ,
+	SEMICOLON,   // ;
 	DOT,         // .
+	DOT_DOT,     // .. (the rest of an array or dictionary pattern)
 	AT,          // @
 	NEWLINE,
 	INDENT,

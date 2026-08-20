@@ -468,6 +468,12 @@ void IROptimizer::constant_folding(IRFunction& func) {
 			case IROpcode::MAKE_VECTOR4I:
 			case IROpcode::RETURN:
 			case IROpcode::STORE_GLOBAL:
+			// POW and IN are host-evaluated: nothing to fold, they only
+			// invalidate what they write.
+			case IROpcode::POW:
+			case IROpcode::IN:
+			case IROpcode::TYPE_TEST:
+			case IROpcode::SWITCH:
 			case IROpcode::VGET_INLINE:
 			case IROpcode::VSET_INLINE:
 				// Clear constant tracking for any instruction that might modify registers
@@ -1816,9 +1822,13 @@ void IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 		// Clear copy tracking at anything that is not pure: a control flow join
 		// invalidates the straight-line reasoning, and a call or a store can
 		// change what a register holds without a visible definition.
-		if (!ir_instruction_is_pure(instr)) {
-			copies.clear();
-		}
+		//
+		// Deferred until after this instruction's operands are rewritten below:
+		// an instruction reads its operands before it has its effect. Clearing
+		// first meant no impure instruction ever saw a copy, and every branch is
+		// impure, so `MOVE rb, ra; BRANCH_EQ rb, ...` reached the backend as a
+		// full 24-byte Variant copy the branch then read 8 bytes of.
+		const bool clear_after = !ir_instruction_is_pure(instr);
 
 		// Propagate copies into every operand the instruction reads. Asking the
 		// operand-role table rather than starting at operand 1 is what keeps the
@@ -1839,6 +1849,10 @@ void IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 					instr.operands[j].value = copy_info.source_reg;
 				}
 			}
+		}
+
+		if (clear_after) {
+			copies.clear();
 		}
 
 		// Invalidate copies when the destination register is written

@@ -19,6 +19,11 @@ private:
 	void scan_identifier();
 	void handle_indent();
 
+	// Bracket nesting, which decides whether a newline ends a statement.
+	void push_bracket(char closer);
+	void pop_bracket(char closer);
+	static char opener_for(char closer);
+
 	char advance();
 	char peek() const;
 	char peek_next() const;
@@ -47,6 +52,15 @@ private:
 	int m_line = 1;
 	int m_column = 1;
 	bool m_at_line_start = true;
+	// Unclosed (), [] and {}, innermost last. While non-empty, newlines are
+	// swallowed, which is what lets an argument list or literal span lines -- and
+	// what makes an unclosed bracket run to EOF, so each records where it opened.
+	struct OpenBracket {
+		char closer;
+		int line;
+		int column;
+	};
+	std::vector<OpenBracket> m_open_brackets;
 
 	static const std::unordered_map<std::string, TokenType> keywords;
 };

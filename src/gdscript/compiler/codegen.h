@@ -91,6 +91,13 @@ private:
 	int gen_binary(const BinaryExpr* expr, FunctionContext& func);
 	int gen_logical(const BinaryExpr* expr, FunctionContext& func); // short-circuiting and/or
 	int gen_unary(const UnaryExpr* expr, FunctionContext& func);
+	int gen_type_test(const TypeTestExpr* expr, FunctionContext& func);
+	// Replace a Dictionary in `iterable_reg` with the Array of its keys, so a for
+	// loop can walk it by position. Emits nothing for a known non-Dictionary.
+	void gen_dictionary_keys_for_iteration(int iterable_reg, FunctionContext& func);
+
+	// A compile-time integer in a register typed INT.
+	int gen_int_immediate(int64_t value, FunctionContext& func);
 	int gen_ternary(const TernaryExpr* expr, FunctionContext& func);
 	int gen_call(const CallExpr* expr, FunctionContext& func);
 	int gen_member_call(const MemberCallExpr* expr, FunctionContext& func);
@@ -203,6 +210,9 @@ private:
 	// Declared structs by name. The Program outlives generate(), so borrowing
 	// pointers into it is safe.
 	std::unordered_map<std::string, const StructDecl*> m_structs;
+	// Named enums by name; members of unnamed enums, reachable unqualified.
+	std::unordered_map<std::string, const EnumDecl*> m_enums;
+	std::unordered_map<std::string, int64_t> m_enum_members;
 
 	// Structs currently having their defaults built, so that a struct holding
 	// itself by value is reported instead of recursing forever.
@@ -243,6 +253,54 @@ private:
 	// Fold a global initializer to a compile-time constant. Returns false when
 	// the expression has to be evaluated at startup instead.
 	bool fold_global_initializer(const Expr* expr, IRGlobalVar& out) const;
+
+	// Emit a SWITCH for a match with dense integer constant patterns. Returns
+	// false if it does not qualify, leaving the compare chain to do the dispatch.
+	bool gen_match_jump_table(const MatchStmt* stmt, int subject_reg,
+	                          const std::vector<std::string>& body_labels,
+	                          const std::string& default_label, FunctionContext& func);
+
+	// -= Match patterns =-
+	//
+	// Each emits a test that falls through on a match and jumps to `fail_label`
+	// otherwise. A binding pattern declares its name in the open scope, which is
+	// the arm's, so the guard and the body both see it.
+	void gen_branch_test(const MatchStmt::Branch& branch, int subject_reg,
+	                     const std::string& fail_label, FunctionContext& func);
+	void gen_pattern_test(const MatchPattern& pattern, int subject_reg,
+	                      const std::string& fail_label, FunctionContext& func);
+	void gen_array_pattern_test(const MatchPattern& pattern, int subject_reg,
+	                            const std::string& fail_label, FunctionContext& func);
+	void gen_dictionary_pattern_test(const MatchPattern& pattern, int subject_reg,
+	                                 const std::string& fail_label, FunctionContext& func);
+
+	// Jump to `fail_label` unless the value has that Variant type. Emits nothing
+	// when the type is already known to match. Returns false when it is known
+	// not to, after emitting the unconditional jump that is then the whole test:
+	// the caller emits no destructuring, which could never run.
+	bool emit_type_guard(int value_reg, IRInstruction::TypeHint type,
+	                     const std::string& fail_label, FunctionContext& func);
+	// Array length, via ECALL_ARRAY_SIZE.
+	int gen_array_size(int array_reg, FunctionContext& func);
+	// Array element by position, via ECALL_ARRAY_AT.
+	int gen_array_element(int array_reg, int index_reg, FunctionContext& func);
+	// One ECALL_DICTIONARY_OPS. `key_reg` is -1 for keyless operations;
+	// `result_type` is the operation's known result type.
+	int gen_dictionary_op(int64_t op, int dict_reg, int key_reg,
+	                      IRInstruction::TypeHint result_type, FunctionContext& func);
+	// A comparison feeding a branch, carrying the operand type hint that keeps
+	// the backend off Variant::evaluate().
+	int gen_compare(IROpcode opcode, int left_reg, int right_reg, FunctionContext& func);
+
+	// The type hint a comparison of these operands may carry, or TypeHint_NONE if
+	// the backend must fall back to Variant::evaluate().
+	static IRInstruction::TypeHint fused_compare_type(IRInstruction::TypeHint left,
+	                                                  IRInstruction::TypeHint right);
+
+	// Materialise a global `const` as the immediate it folded to, typing the
+	// register accordingly. Returns -1 when `name` is not such a const, or holds
+	// a container, which stays a single shared handle on LOAD_GLOBAL.
+	int gen_const_global_value(const std::string& name, FunctionContext& func);
 
 	// Variant type a global holds, when known at compile time.
 	static IRInstruction::TypeHint derive_global_value_type(const IRGlobalVar& global);

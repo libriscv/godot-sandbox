@@ -18,12 +18,14 @@ static constexpr IROpcodeInfo IR_OPCODE_TABLE[] = {
 #define CNT2      IROperandKind::CNT2
 #define SRC_LIST  IROperandKind::SRC_LIST
 #define ARG_LIST  IROperandKind::ARG_LIST
+#define LBL_LIST  IROperandKind::LBL_LIST
 #define SIG(...)  IROperandSignature(__VA_ARGS__)
 #define IR_OPCODE(name, mnemonic, sig, effects) \
 	IROpcodeInfo { IROpcode::name, mnemonic, sig, static_cast<uint32_t>(effects) },
 #include "ir_opcodes.def"
 #undef IR_OPCODE
 #undef SIG
+#undef LBL_LIST
 #undef ARG_LIST
 #undef SRC_LIST
 #undef CNT2
@@ -67,6 +69,7 @@ const char* ir_operand_kind_name(IROperandKind kind) {
 		case IROperandKind::CNT2: return "pair count";
 		case IROperandKind::SRC_LIST: return "source register";
 		case IROperandKind::ARG_LIST: return "argument";
+		case IROperandKind::LBL_LIST: return "label";
 	}
 	return "unknown";
 }

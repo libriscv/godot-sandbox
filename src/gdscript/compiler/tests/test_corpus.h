@@ -355,6 +355,204 @@ func pick(n):
 func test():
 	return pick(1) + pick(2) + pick(7)
 )" },
+		// -= Dense integer matches, which lower to a jump table =-
+		//
+		// The table is a second lowering of `match`, so each of these must answer as
+		// the compare chain it replaces, including the cases the table cannot decide
+		// and leaves to the code after it.
+		{ "match_jump_table", R"(
+func dispatch(op : int) -> int:
+	match op:
+		0:
+			return 100
+		1:
+			return 101
+		2:
+			return 102
+		3:
+			return 103
+		5:
+			return 105
+		_:
+			return -1
+
+func test():
+	var total = 0
+	var i = -2
+	while i < 9:
+		total = total * 3 + dispatch(i)
+		i = i + 1
+	return total
+)" },
+		// An untyped subject keeps the compare chain behind the table: a
+		// whole-valued float, and a bool, must still reach the arm they equal.
+		{ "match_jump_table_untyped_subject", R"(
+func dispatch(op):
+	match op:
+		0:
+			return 100
+		1:
+			return 101
+		2:
+			return 102
+		3:
+			return 103
+		4:
+			return 104
+		_:
+			return -1
+
+func test():
+	return dispatch(2) * 1000000 + dispatch(3.0) * 10000 + dispatch(true) * 100 + dispatch(2.5)
+)" },
+		// Negative base, holes in the middle, a value repeated (first arm wins), and
+		// no wildcard: an unmatched subject falls out of the match and continues.
+		{ "match_jump_table_negative_and_holes", R"(
+const LOWEST = -4
+
+func classify(v : int) -> int:
+	var out = 0
+	match v:
+		LOWEST:
+			out = 1
+		-2, -1:
+			out = 2
+		1:
+			out = 3
+		3:
+			out = 4
+		LOWEST:
+			out = 999
+	return out * 10 + 7
+
+func test():
+	var total = 0
+	var i = -6
+	while i < 6:
+		total = total * 3 + classify(i)
+		i = i + 1
+	return total
+)" },
+		// A machine whose execute step is a switch on an opcode: the target case.
+		{ "match_opcode_machine", R"(
+const OP_HALT = 0
+const OP_PUSH = 1
+const OP_ADD  = 2
+const OP_SUB  = 3
+const OP_MUL  = 4
+const OP_DUP  = 5
+const OP_SWAP = 6
+const OP_DROP = 7
+
+func run(seed : int, steps : int) -> int:
+	var a : int = seed
+	var b : int = 1
+	var word : int = seed
+	while steps > 0:
+		steps = steps - 1
+		word = (word * 1103515245 + 12345) & 65535
+		match word & 7:
+			OP_HALT:
+				return a
+			OP_PUSH:
+				b = b + 1
+			OP_ADD:
+				a = a + b
+			OP_SUB:
+				a = a - b
+			OP_MUL:
+				a = (a * 3) & 262143
+			OP_DUP:
+				b = a
+			OP_SWAP:
+				var t = a
+				a = b
+				b = t
+			OP_DROP:
+				b = 1
+	return a * 31 + b
+
+func test():
+	return run(7, 64) + run(1234, 33)
+)" },
+		// -= Patterns beyond a value =-
+		//
+		// Bindings and guards are the pattern kinds the IR interpreter can execute, so
+		// they belong here, where every optimizer pass must leave them answering the
+		// same. Container patterns need a host with real Arrays and are covered by
+		// tests/test_match.cpp and the Godot integration tests.
+		{ "match_bindings_and_guards", R"(
+func classify(n):
+	match n:
+		0:
+			return 1000
+		var v when v < 0:
+			return -v
+		var v when v < 10:
+			return v * 2
+		var v:
+			return v + 7
+
+func test():
+	var total = 0
+	var i = -4
+	while i < 14:
+		total = total * 3 + classify(i)
+		i = i + 1
+	return total
+)" },
+		// The same value in two arms, told apart by a guard: the second is reachable
+		// only if a declining guard continues the chain instead of leaving the match.
+		{ "match_guard_declines_to_the_next_arm", R"(
+func pick(n, flag):
+	var out = 0
+	match n:
+		1 when flag:
+			out = 10
+		1:
+			out = 20
+		_ when flag:
+			out = 30
+		_:
+			out = 40
+	return out
+
+func test():
+	return pick(1, true) * 1000000 + pick(1, false) * 10000 + pick(9, true) * 100 + pick(9, false)
+)" },
+		// A match inside a match: the inner arms are an ordinary chain, and the labels
+		// and scopes of the two must not collide.
+		{ "match_nested", R"(
+func f(a, b):
+	match a:
+		var x when x > 0:
+			match b:
+				0:
+					return x
+				var y:
+					return x * y
+		_:
+			match b:
+				var y when y < 0:
+					return -y
+				_:
+					return 0
+
+func test():
+	return f(3, 0) * 10000 + f(3, 4) * 100 + f(-1, -7) * 10 + f(-1, 2)
+)" },
+		// A binding is a copy: writing the name must not reach the subject, which the
+		// value returned after the match shows.
+		{ "match_binding_is_a_copy", R"(
+func test():
+	var subject = 5
+	var seen = 0
+	match subject:
+		var v:
+			seen = v
+			v = 99
+	return subject * 100 + seen
+)" },
 		{ "compound_assign", R"(
 func test():
 	var a = 5
@@ -616,6 +814,87 @@ func test():
 		total = total + abs(sin(i)) * clampf(i, 0.0, 4.0)
 		i = i + 1
 	return total
+)" },
+
+		// -= Operators and layout =-
+		//
+		// `**` and `in` are deliberately absent: both are answered by
+		// Variant::evaluate() on the host and the IR interpreter refuses them, so there
+		// is nothing to compare against. `is` is the opposite -- the backend expands it
+		// inline to a tag load and a compare -- and these check that expansion against a
+		// real machine.
+		{ "type_test_on_an_unknown_type", R"(
+func pick(which):
+	if which:
+		return 5
+	return 5.0
+
+func test():
+	var a = pick(true)
+	var b = pick(false)
+	var score = 0
+	if a is int:
+		score = score + 1
+	if a is float:
+		score = score + 10
+	if b is int:
+		score = score + 100
+	if b is float:
+		score = score + 1000
+	if b is not int:
+		score = score + 10000
+	return score
+)" },
+		{ "type_test_on_a_known_type", R"(
+func test():
+	var i = 3
+	var f = 3.0
+	var b = true
+	var score = 0
+	if i is int:
+		score = score + 1
+	if f is float:
+		score = score + 2
+	if b is bool:
+		score = score + 4
+	if i is float:
+		score = score + 8
+	return score
+)" },
+		// `not` binds looser than a comparison, so this is `not (a == b)`.
+		{ "not_binds_looser_than_comparison", R"(
+func test():
+	var a = 2
+	var b = 1
+	var score = 0
+	if not a == b:
+		score = score + 1
+	if not a == 2:
+		score = score + 10
+	if not a < b:
+		score = score + 100
+	return score
+)" },
+		{ "enum_members_and_layout", R"(
+enum Mode { IDLE, RUN = 5, STOP }
+enum { LEFT, RIGHT }
+
+func classify(m):
+	if m == Mode.IDLE:
+		return 1
+	if m == Mode.RUN:
+		return 2
+	if m == Mode.STOP:
+		return 3
+	return 0
+
+func test():
+	var total = 0; var i = 0
+	while i < 8:
+		total = total + \
+			classify(i)
+		i = i + 1
+	return total * 10 + LEFT + RIGHT + Mode.STOP
 )" },
 	};
 	return programs;

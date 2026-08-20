@@ -4380,8 +4380,10 @@ func add(x, y):
 	assert_eq(result["message"], "", "A valid program has no error message")
 	assert_eq(result["line"], 0, "A valid program has no error line")
 
-func test_validate_reports_a_syntax_error():
-	# The 'func g(' on line 5 is never closed.
+func test_validate_reports_an_unclosed_bracket_where_it_opens():
+	# The 'func g(' on line 5 is never closed. A newline inside brackets is
+	# layout, not a statement end, so an unclosed '(' swallows the rest of the
+	# file: EOF is the symptom, and the bracket's position is the cause.
 	var result = _validate("""
 func f():
 	return 1
@@ -4390,6 +4392,21 @@ func g(
 """)
 	assert_false(result["valid"], "An unclosed parameter list must not validate")
 	assert_eq(result["line"], 5, "The error belongs to the line that opened it")
+	assert_gt(result["column"], 0, "A syntax error carries a column")
+	assert_eq(result["type"], "Lexer Error", "Reported as a lexer error")
+	assert_ne(result["message"], "", "A rejected program says what is wrong")
+
+func test_validate_reports_a_syntax_error():
+	# A malformed signature with no brackets, so the parser objects, on the line
+	# of the mistake.
+	var result = _validate("""
+func f():
+	return 1
+
+func g)
+""")
+	assert_false(result["valid"], "A malformed signature must not validate")
+	assert_eq(result["line"], 5, "Reported on the line holding the mistake")
 	assert_gt(result["column"], 0, "A syntax error carries a column")
 	assert_eq(result["type"], "Parser Error", "Reported as a parser error")
 	assert_ne(result["message"], "", "A rejected program says what is wrong")
@@ -4447,3 +4464,663 @@ func test_validate_does_not_disturb_compilation():
 	assert_true(ts.vmcall("validate", code)["valid"], "and validates again after compiling")
 
 	ts.queue_free()
+
+# -= Operators and everyday syntax =-
+#
+# These run the compiled program against the real engine, the only place the
+# operators answered by Variant::evaluate() can be checked: the IR interpreter
+# refuses '**' and 'in'. Where an expected value is written as GDScript, the
+# oracle is Godot's own evaluation of the same expression.
+
+func test_power_operator():
+	var gdscript_code = """
+func int_power(a : int, b : int):
+	return a ** b
+
+func float_power(a : float, b : float):
+	return a ** b
+
+func untyped_power(a, b):
+	return a ** b
+
+func right_associative():
+	return 2 ** 3 ** 2
+
+func binds_tighter_than_minus():
+	return -2 ** 2
+
+func compound(a : int):
+	var x = a
+	x **= 3
+	return x
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("int_power", 2, 10), 2 ** 10, "2 ** 10 should match Godot")
+	assert_eq(s.vmcallv("int_power", 3, 4), 3 ** 4, "3 ** 4 should match Godot")
+	assert_almost_eq(s.vmcallv("float_power", 2.0, 0.5), 2.0 ** 0.5, 0.0001, "A float power should match Godot")
+	assert_eq(s.vmcallv("untyped_power", 5, 3), 5 ** 3, "An untyped power should match Godot")
+	assert_eq(s.vmcallv("right_associative"), 2 ** 3 ** 2, "'**' should be right-associative")
+	assert_eq(s.vmcallv("binds_tighter_than_minus"), -2 ** 2, "'**' should bind tighter than unary '-'")
+	assert_eq(s.vmcallv("compound", 2), 2 ** 3, "'**=' should raise in place")
+
+	s.queue_free()
+
+func test_in_operator():
+	var gdscript_code = """
+func in_array(a):
+	return a in [1, 2, 3]
+
+func not_in_array(a):
+	return a not in [1, 2, 3]
+
+func in_dictionary(key):
+	var d = {"alpha": 1, "beta": 2}
+	return key in d
+
+func in_string(needle : String):
+	return needle in "haystack"
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_true(s.vmcallv("in_array", 2), "2 is in [1, 2, 3]")
+	assert_false(s.vmcallv("in_array", 7), "7 is not in [1, 2, 3]")
+	assert_false(s.vmcallv("not_in_array", 2), "'not in' should negate the test")
+	assert_true(s.vmcallv("not_in_array", 7), "7 is not in [1, 2, 3]")
+	assert_true(s.vmcallv("in_dictionary", "beta"), "'in' should find a Dictionary key")
+	assert_false(s.vmcallv("in_dictionary", "gamma"), "and should not find a missing one")
+	assert_true(s.vmcallv("in_string", "hay"), "'in' should find a substring")
+	assert_false(s.vmcallv("in_string", "needle"), "and should not find a missing one")
+
+	s.queue_free()
+
+func test_is_operator():
+	# 'is' compares the Variant's type tag: exact, not convertibility, so 5.0 is
+	# not an int.
+	var gdscript_code = """
+func is_int(a):
+	return a is int
+
+func is_float(a):
+	return a is float
+
+func is_string(a):
+	return a is String
+
+func is_array(a):
+	return a is Array
+
+func is_dictionary(a):
+	return a is Dictionary
+
+func is_not_int(a):
+	return a is not int
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_true(s.vmcallv("is_int", 5), "5 is an int")
+	assert_false(s.vmcallv("is_int", 5.0), "5.0 is not an int")
+	assert_true(s.vmcallv("is_float", 5.0), "5.0 is a float")
+	assert_true(s.vmcallv("is_string", "text"), "A String is a String")
+	assert_false(s.vmcallv("is_string", 5), "5 is not a String")
+	assert_true(s.vmcallv("is_array", [1, 2]), "An Array is an Array")
+	assert_false(s.vmcallv("is_array", {}), "A Dictionary is not an Array")
+	assert_true(s.vmcallv("is_dictionary", {"a": 1}), "A Dictionary is a Dictionary")
+	assert_true(s.vmcallv("is_not_int", 5.0), "'is not' should negate the test")
+	assert_false(s.vmcallv("is_not_int", 5), "and should be false for a match")
+
+	s.queue_free()
+
+func test_for_over_a_container():
+	# Iterating an Array used to emit an increment with an immediate where the
+	# opcode requires a register: the loop compiled, and the IR was malformed.
+	var gdscript_code = """
+func sum_array(a : Array):
+	var total = 0
+	for v in a:
+		total += v
+	return total
+
+func sum_literal():
+	var total = 0
+	for v in [1, 2, 3, 4]:
+		total += v
+	return total
+
+func join_keys(d : Dictionary):
+	var out = ""
+	for k in d:
+		out += k
+	return out
+
+func join_keys_untyped(d):
+	# The same loop with the type unknown at compile time: the path that decides
+	# between an Array and a Dictionary at run time.
+	var out = ""
+	for k in d:
+		out += k
+	return out
+
+func sum_values(d : Dictionary):
+	var total = 0
+	for k in d:
+		total += d[k]
+	return total
+
+func with_break(a : Array):
+	var total = 0
+	for v in a:
+		if v > 3:
+			break
+		total += v
+	return total
+
+func nested():
+	var total = 0
+	for a in [1, 2]:
+		for b in [10, 20]:
+			total += a * b
+	return total
+"""
+	var s = _compile_and_load(gdscript_code, 20000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("sum_array", [1, 2, 3]), 6, "Iterating an Array should visit every element")
+	assert_eq(s.vmcallv("sum_array", []), 0, "An empty Array should run no iterations")
+	assert_eq(s.vmcallv("sum_literal"), 10, "Iterating an Array literal should work")
+	assert_eq(s.vmcallv("join_keys", {"a": 1, "b": 2}), "ab", "Iterating a Dictionary should visit its keys")
+	assert_eq(s.vmcallv("join_keys_untyped", {"a": 1, "b": 2}), "ab", "An untyped Dictionary should iterate its keys")
+	assert_eq(s.vmcallv("join_keys_untyped", ["x", "y"]), "xy", "An untyped Array should still iterate its elements")
+	assert_eq(s.vmcallv("sum_values", {"a": 1, "b": 2}), 3, "A Dictionary's values should be reachable by key")
+	assert_eq(s.vmcallv("with_break", [1, 2, 3, 4, 5]), 6, "'break' should leave a container loop")
+	assert_eq(s.vmcallv("nested"), 90, "Container loops should nest")
+
+	s.queue_free()
+
+func test_not_binds_looser_than_comparison():
+	# 'not a == b' is 'not (a == b)', as in GDScript. It used to parse as
+	# '(not a) == b', which has a different answer.
+	var gdscript_code = """
+func differs(a : int, b : int):
+	return not a == b
+
+func not_less(a : int, b : int):
+	return not a < b
+
+func still_negates(a : bool):
+	return not a
+
+func and_is_looser(a : bool, b : bool):
+	return not a and b
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("differs", 2, 1), not 2 == 1, "'not a == b' should match Godot")
+	assert_eq(s.vmcallv("differs", 2, 2), not 2 == 2, "'not a == b' should match Godot")
+	assert_eq(s.vmcallv("not_less", 2, 1), not 2 < 1, "'not a < b' should match Godot")
+	assert_true(s.vmcallv("still_negates", false), "'not' should still negate a value")
+	assert_eq(s.vmcallv("and_is_looser", false, true), (not false) and true, "'and' should be looser than 'not'")
+
+	s.queue_free()
+
+func test_enum_declarations():
+	var gdscript_code = """
+enum Mode { IDLE, RUN = 5, STOP }
+enum { LEFT, RIGHT }
+
+func idle():
+	return Mode.IDLE
+
+func run():
+	return Mode.RUN
+
+func stop():
+	return Mode.STOP
+
+func unqualified():
+	return LEFT + RIGHT
+
+func classify(m : int):
+	if m == Mode.RUN:
+		return "run"
+	if m == Mode.STOP:
+		return "stop"
+	return "idle"
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("idle"), 0, "Enum numbering should start at zero")
+	assert_eq(s.vmcallv("run"), 5, "An explicit enum value should be used")
+	assert_eq(s.vmcallv("stop"), 6, "Numbering should continue from an explicit value")
+	assert_eq(s.vmcallv("unqualified"), 1, "An unnamed enum's members need no qualification")
+	assert_eq(s.vmcallv("classify", 5), "run", "An enum member should compare as its integer")
+	assert_eq(s.vmcallv("classify", 0), "idle", "An enum member should compare as its integer")
+
+	s.queue_free()
+
+func test_statement_layout():
+	# A semicolon, a backslash and an open bracket all say where a statement ends.
+	# None of them changes what a program means.
+	var gdscript_code = """
+func semicolons():
+	var a = 1; var b = 2
+	return a + b
+
+func explicit_continuation():
+	return 1 + \\
+		2 + \\
+		3
+
+func implicit_continuation():
+	return (1 +
+		2 +
+		3)
+
+func multiline_call(a : int, b : int, c : int):
+	return a + b + c
+
+func trailing_commas():
+	var a = [1, 2, 3,]
+	var d = {"x": 1,}
+	return multiline_call(
+		a[0],
+		a[1],
+		d["x"],
+	)
+
+func lua_style_dictionary():
+	var d = {alpha = 1, beta = 2}
+	return d["alpha"] + d["beta"]
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("semicolons"), 3, "';' should separate two statements on one line")
+	assert_eq(s.vmcallv("explicit_continuation"), 6, "'\\' should continue a line")
+	assert_eq(s.vmcallv("implicit_continuation"), 6, "A parenthesised expression should span lines")
+	assert_eq(s.vmcallv("trailing_commas"), 4, "A trailing comma should be allowed")
+	assert_eq(s.vmcallv("lua_style_dictionary"), 3, "'{key = value}' should build a Dictionary")
+
+	s.queue_free()
+
+func test_compound_assignment_to_containers():
+	var gdscript_code = """
+func bump_first(a : Array):
+	a[0] += 10
+	return a
+
+func scale_at(a : Array, i : int):
+	a[i] *= 3
+	return a
+
+func bump_key(d : Dictionary):
+	d["count"] += 1
+	return d
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("bump_first", [1, 2]), [11, 2], "'a[0] += 10' should update the element")
+	assert_eq(s.vmcallv("scale_at", [1, 2, 3], 2), [1, 2, 9], "'a[i] *= 3' should update the element")
+	assert_eq(s.vmcallv("bump_key", {"count": 4}), {"count": 5}, "'d[k] += 1' should update the value")
+
+	s.queue_free()
+
+func test_declarations_without_a_lowering():
+	# 'static', 'class_name' and container element types describe the script, not
+	# the code, and are accepted so an ordinary script compiles.
+	var gdscript_code = """
+class_name Widget
+
+static func answer():
+	return 42
+
+func typed_container(a : Array[int]) -> int:
+	var total : int = 0
+	for v in a:
+		total += v
+	return total
+
+func typed_dictionary() -> Dictionary[String, int]:
+	return {"a": 1}
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("answer"), 42, "'static func' should compile as a function")
+	assert_eq(s.vmcallv("typed_container", [1, 2, 3]), 6, "'Array[int]' should be accepted as a type hint")
+	assert_eq(s.vmcallv("typed_dictionary"), {"a": 1}, "'Dictionary[K, V]' should be accepted as a return type")
+
+	s.queue_free()
+
+func test_as_conversion():
+	var gdscript_code = """
+func to_int(a):
+	return a as int
+
+func to_float(a):
+	return a as float
+
+func to_bool(a):
+	return a as bool
+
+func to_string(a):
+	return a as String
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	# The expected values are literals rather than `2.7 as int`: Godot rejects a
+	# cast between types it sees as incompatible at parse time, and would not
+	# compile this file.
+	assert_eq(s.vmcallv("to_int", 2.7), 2, "'as int' should truncate a float")
+	assert_eq(s.vmcallv("to_int", "42"), 42, "'as int' should parse a String the way int() does")
+	assert_almost_eq(s.vmcallv("to_float", 3), 3.0, 0.0001, "'as float' should widen an int")
+	assert_eq(s.vmcallv("to_bool", 0), false, "'as bool' should booleanize")
+	assert_eq(s.vmcallv("to_bool", 3), true, "'as bool' should booleanize")
+	assert_eq(s.vmcallv("to_string", 42), "42", "'as String' should convert")
+
+	s.queue_free()
+
+# -= A logic CPU =-
+#
+# tests/tests/test_cpu.sgd is a small register machine whose execute step is a
+# `match` on the opcode: the program shape the jump-table lowering was written
+# for. These cases check that it is correct.
+
+const CPU_SOURCE_PATH = "res://tests/test_cpu.sgd"
+
+func _load_cpu_source() -> String:
+	var file = FileAccess.open(CPU_SOURCE_PATH, FileAccess.READ)
+	assert_not_null(file, "test_cpu.sgd should be readable")
+	if file == null:
+		return ""
+	var source = file.get_as_text()
+	file.close()
+	return source
+
+func test_match_bindings_and_guards():
+	# `var name` and `when` are the pattern features that need no container: the
+	# first binds what the arm matched, the second lets an arm decline after its
+	# pattern matched, which is what lets two arms bind the same name.
+	var gdscript_code = """
+func classify(n):
+	match n:
+		0:
+			return "zero"
+		var v when v < 0:
+			return "negative " + str(-v)
+		var v when v < 10:
+			return "small " + str(v)
+		var v:
+			return "large " + str(v)
+
+func first_or_default(n, flag):
+	match n:
+		1 when flag:
+			return 10
+		1:
+			return 20
+		_ when flag:
+			return 30
+		_:
+			return 40
+
+func binding_is_a_copy():
+	var subject = 5
+	match subject:
+		var v:
+			v = 99
+	return subject
+
+func matches_a_string(s):
+	match s:
+		"circle":
+			return 1
+		"square":
+			return 2
+		var other:
+			return other.length()
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("classify", 0), "zero", "A value pattern is tried before the bindings below it")
+	assert_eq(s.vmcallv("classify", -3), "negative 3", "A guard should see the name the pattern bound")
+	assert_eq(s.vmcallv("classify", 4), "small 4", "The first arm whose guard holds should win")
+	assert_eq(s.vmcallv("classify", 50), "large 50", "An unguarded binding should catch the rest")
+
+	assert_eq(s.vmcallv("first_or_default", 1, true), 10, "A guard that holds takes its arm")
+	assert_eq(s.vmcallv("first_or_default", 1, false), 20, "A declining guard should try the next arm")
+	assert_eq(s.vmcallv("first_or_default", 9, true), 30, "A guarded wildcard is still an arm")
+	assert_eq(s.vmcallv("first_or_default", 9, false), 40, "A wildcard catches what the guards declined")
+
+	assert_eq(s.vmcallv("binding_is_a_copy"), 5, "Assigning to a binding must not reach the subject")
+
+	assert_eq(s.vmcallv("matches_a_string", "circle"), 1, "A String subject should match a String pattern")
+	assert_eq(s.vmcallv("matches_a_string", "hexagon"), 7, "A binding should hold the String it matched")
+
+	# The same cases asked of the engine, the authority on what `match` answers.
+	assert_eq(s.vmcallv("classify", -3), _engine_classify(-3), "The engine and the guest should agree")
+	assert_eq(s.vmcallv("classify", 50), _engine_classify(50), "The engine and the guest should agree")
+
+	s.queue_free()
+
+func _engine_classify(n):
+	match n:
+		0:
+			return "zero"
+		var v when v < 0:
+			return "negative " + str(-v)
+		var v when v < 10:
+			return "small " + str(v)
+		var v:
+			return "large " + str(v)
+
+func test_match_container_patterns():
+	# Array and dictionary patterns test a value's shape, which only the host can
+	# answer: type tag, then length, then elements or keys.
+	var gdscript_code = """
+func shape(v):
+	match v:
+		[]:
+			return "empty"
+		[1, var x]:
+			return "one then " + str(x)
+		[var a, var b]:
+			return "pair " + str(a + b)
+		[var head, ..]:
+			return "starts with " + str(head)
+		_:
+			return "not an array"
+
+func nested(v):
+	match v:
+		[var a, [var b, var c]]:
+			return a + b + c
+		_:
+			return -1
+
+func describe(d):
+	match d:
+		{"kind": "circle", "r": var r}:
+			return "circle of " + str(r)
+		{"kind": var k}:
+			return "a " + str(k)
+		{"x", "y"}:
+			return "a point"
+		{}:
+			return "empty"
+		{..}:
+			return "something else"
+		_:
+			return "not a dictionary"
+"""
+	var s = _compile_and_load(gdscript_code, 200000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("shape", []), "empty", "An empty array pattern should match an empty Array")
+	assert_eq(s.vmcallv("shape", [1, 5]), "one then 5", "An element pattern should be compared elementwise")
+	assert_eq(s.vmcallv("shape", [2, 5]), "pair 7", "A pattern that does not match should try the next arm")
+	assert_eq(s.vmcallv("shape", [4, 5, 6]), "starts with 4", "'..' should match an Array that is longer")
+	assert_eq(s.vmcallv("shape", 7), "not an array", "A non-Array must not match an array pattern")
+	assert_eq(s.vmcallv("shape", {"a": 1}), "not an array", "A Dictionary must not match an array pattern")
+
+	assert_eq(s.vmcallv("nested", [1, [2, 3]]), 6, "Array patterns should nest")
+	assert_eq(s.vmcallv("nested", [1, [2, 3, 4]]), -1, "A nested pattern should check its own length")
+
+	assert_eq(s.vmcallv("describe", {"kind": "circle", "r": 3}), "circle of 3",
+		"A dictionary pattern should match its keys and their values")
+	assert_eq(s.vmcallv("describe", {"kind": "square"}), "a square",
+		"A binding should hold what the key held")
+	assert_eq(s.vmcallv("describe", {"x": 1, "y": 2}), "a point",
+		"A key-only entry should ask only that the key is there")
+	assert_eq(s.vmcallv("describe", {}), "empty", "An empty dictionary pattern should match an empty Dictionary")
+	assert_eq(s.vmcallv("describe", {"a": 1, "b": 2, "c": 3}), "something else",
+		"'..' should match a Dictionary with other keys")
+	assert_eq(s.vmcallv("describe", [1, 2]), "not a dictionary",
+		"An Array must not match a dictionary pattern")
+
+	# A closed dictionary pattern constrains the size too: an extra key is a
+	# different shape.
+	assert_eq(s.vmcallv("describe", {"kind": "circle", "r": 3, "extra": 1}), "something else",
+		"A closed dictionary pattern should not match a Dictionary with more keys")
+
+	# The same patterns run by the engine on the same values: what `match` means
+	# is Godot's to say, so every answer above is checked against it.
+	for value in [[], [1, 5], [2, 5], [4, 5, 6], 7, {"a": 1}]:
+		assert_eq(s.vmcallv("shape", value), _engine_shape(value),
+			"The engine and the guest should agree on " + str(value))
+	for value in [{"kind": "circle", "r": 3}, {"kind": "square"}, {"x": 1, "y": 2}, {},
+		{"a": 1, "b": 2, "c": 3}, {"kind": "circle", "r": 3, "extra": 1}, [1, 2]]:
+		assert_eq(s.vmcallv("describe", value), _engine_describe(value),
+			"The engine and the guest should agree on " + str(value))
+
+	s.queue_free()
+
+func _engine_shape(v):
+	match v:
+		[]:
+			return "empty"
+		[1, var x]:
+			return "one then " + str(x)
+		[var a, var b]:
+			return "pair " + str(a + b)
+		[var head, ..]:
+			return "starts with " + str(head)
+		_:
+			return "not an array"
+
+func _engine_describe(d):
+	match d:
+		{"kind": "circle", "r": var r}:
+			return "circle of " + str(r)
+		{"kind": var k}:
+			return "a " + str(k)
+		{"x", "y"}:
+			return "a point"
+		{}:
+			return "empty"
+		{..}:
+			return "something else"
+		_:
+			return "not a dictionary"
+
+func test_cpu_runs_its_programs():
+	var source = _load_cpu_source()
+	if source == "":
+		return
+
+	# The machine executes thousands of guest instructions per run, so it needs a
+	# larger instruction budget than the default.
+	var s = _compile_and_load(source, 200000000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("encode", 3, 1, 2, 7), 3 | (1 << 8) | (2 << 16) | (7 << 24),
+		"encode() should pack an instruction word")
+
+	# 1 + 2 + ... + n, computed by the guest machine, for a few n.
+	assert_eq(s.vmcallv("sum_to", 0), [0], "sum_to(0) should emit 0")
+	assert_eq(s.vmcallv("sum_to", 1), [1], "sum_to(1) should emit 1")
+	assert_eq(s.vmcallv("sum_to", 10), [55], "sum_to(10) should emit 55")
+	assert_eq(s.vmcallv("sum_to", 100), [5050], "sum_to(100) should emit 5050")
+
+	s.queue_free()
+
+func test_cpu_alu_arms():
+	# One OP_OUT per ALU opcode, so a wrong arm shows up as a wrong element rather
+	# than a wrong total.
+	var source = _load_cpu_source()
+	if source == "":
+		return
+	var s = _compile_and_load(source, 200000000)
+	if s == null:
+		return
+
+	var a = 12
+	var b = 5
+	var expected = [
+		a - b,
+		a * b,
+		a & b,
+		a | b,
+		a ^ b,
+		a << 1,
+		a >> 2,
+		3, 2, 1,  # the JNZ countdown
+	]
+	assert_eq(s.vmcallv("alu_trace", a, b), expected,
+		"every ALU opcode should emit what the operator does")
+
+	s.queue_free()
+
+func test_cpu_stops_on_what_it_does_not_know():
+	var source = _load_cpu_source()
+	if source == "":
+		return
+	var s = _compile_and_load(source, 200000000)
+	if s == null:
+		return
+
+	# An opcode outside the table falls out of the match and halts the machine,
+	# rather than running a neighbouring arm.
+	assert_eq(s.vmcallv("unknown_opcode"), [7],
+		"an unknown opcode should stop the machine where it stands")
+	# Running out of fuel returns what the machine emitted: one value per three
+	# instructions, so seven instructions is three values plus a partial fourth.
+	assert_eq(s.vmcallv("out_of_fuel"), [1, 1, 1],
+		"running out of fuel should return the trace so far")
+
+	s.queue_free()
+
+func test_cpu_loads_as_a_safegdscript_resource():
+	# The same file reached as a user reaches it: attached to a node as a script,
+	# compiled by the .sgd loader.
+	var script = load(CPU_SOURCE_PATH)
+	assert_not_null(script, "test_cpu.sgd should load as a SafeGDScript resource")
+	if script == null:
+		return
+
+	var node = Node.new()
+	node.set_script(script)
+	node.set_instructions_max(200000000)
+	assert_eq(node.call("sum_to", 10), [55], "sum_to(10) should emit 55 through the .sgd loader")
+	node.free()

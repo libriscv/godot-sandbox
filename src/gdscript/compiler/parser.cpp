@@ -66,7 +66,18 @@ Program Parser::parse() {
 			}
 		} else if (check(TokenType::STRUCT)) {
 			program.structs.push_back(parse_struct());
-		} else if (check(TokenType::FUNC)) {
+		} else if (check(TokenType::ENUM)) {
+			program.enums.push_back(parse_enum());
+		} else if (check(TokenType::CLASS_NAME)) {
+			// The registered script name is a project fact, not code: read and
+			// dropped, like `extends`.
+			advance();
+			consume(TokenType::IDENTIFIER, "Expected a class name after 'class_name'");
+			skip_newlines();
+		} else if (check(TokenType::STATIC) || check(TokenType::FUNC)) {
+			// `static` is accepted and ignored: with no class instance, every
+			// emitted function is already a plain function.
+			match(TokenType::STATIC);
 			program.functions.push_back(parse_function());
 		} else {
 			error("Expected function or variable declaration");
@@ -102,6 +113,64 @@ FunctionDecl Parser::parse_function() {
 	return func;
 }
 
+EnumDecl Parser::parse_enum() {
+	EnumDecl decl;
+	Token enum_token = consume(TokenType::ENUM, "Expected 'enum'");
+	decl.line = enum_token.line;
+	decl.column = enum_token.column;
+
+	// `enum Name { ... }` names the set; `enum { ... }` puts its members in file
+	// scope.
+	if (check(TokenType::IDENTIFIER)) {
+		decl.name = advance().lexeme;
+	}
+
+	consume(TokenType::LBRACE, "Expected '{' after 'enum'");
+
+	// The lexer swallows newlines inside the braces, so a member list may span
+	// lines with no handling here.
+	int64_t next_value = 0;
+	while (!check(TokenType::RBRACE) && !is_at_end()) {
+		Token member_name = consume(TokenType::IDENTIFIER, "Expected an enum member name");
+
+		EnumDecl::Member member;
+		member.name = member_name.lexeme;
+		member.line = member_name.line;
+		member.column = member_name.column;
+
+		if (match(TokenType::ASSIGN)) {
+			// Only a signed literal integer. GDScript allows a constant
+			// expression; anything not reducible to a number now would have to
+			// exist at run time, which an enum member cannot.
+			const bool negative = match(TokenType::MINUS);
+			if (!negative) {
+				match(TokenType::PLUS);
+			}
+			Token value_token = consume(TokenType::INTEGER,
+				"An enum member's value has to be an integer literal");
+			const int64_t magnitude = std::get<int64_t>(value_token.value);
+			next_value = negative ? -magnitude : magnitude;
+		}
+
+		member.value = next_value;
+		next_value++;
+
+		if (decl.find_member(member.name) != nullptr) {
+			throw CompilerException::parser_error(
+				"Enum member '" + member.name + "' is declared more than once",
+				member.line, member.column);
+		}
+		decl.members.push_back(std::move(member));
+
+		if (!match(TokenType::COMMA)) {
+			break;
+		}
+	}
+
+	consume(TokenType::RBRACE, "Expected '}' after enum members");
+	return decl;
+}
+
 StructDecl Parser::parse_struct() {
 	StructDecl decl;
 	Token struct_token = consume(TokenType::STRUCT, "Expected 'struct'");
@@ -125,7 +194,7 @@ StructDecl Parser::parse_struct() {
 
 		// 'pass' stands in for a body, which for a struct means no fields.
 		if (match(TokenType::PASS)) {
-			consume(TokenType::NEWLINE, "Expected newline after 'pass'");
+			consume_statement_end("Expected newline after 'pass'");
 			continue;
 		}
 
@@ -179,7 +248,10 @@ void Parser::parse_argument_list(std::vector<ExprPtr>& arguments, std::vector<st
 			}
 			arguments.push_back(parse_expression());
 			names.push_back(std::move(name));
-		} while (match(TokenType::COMMA));
+			if (!match(TokenType::COMMA)) {
+				break;
+			}
+		} while (!check(TokenType::RPAREN)); // a trailing ',' before ')' is allowed
 	}
 
 	consume(TokenType::RPAREN, "Expected ')' after arguments");
@@ -277,17 +349,17 @@ StmtPtr Parser::parse_statement_impl() {
 	}
 	if (match(TokenType::BREAK)) {
 		auto stmt = std::make_unique<BreakStmt>();
-		consume(TokenType::NEWLINE, "Expected newline after 'break'");
+		consume_statement_end("Expected newline after 'break'");
 		return stmt;
 	}
 	if (match(TokenType::CONTINUE)) {
 		auto stmt = std::make_unique<ContinueStmt>();
-		consume(TokenType::NEWLINE, "Expected newline after 'continue'");
+		consume_statement_end("Expected newline after 'continue'");
 		return stmt;
 	}
 	if (match(TokenType::PASS)) {
 		auto stmt = std::make_unique<PassStmt>();
-		consume(TokenType::NEWLINE, "Expected newline after 'pass'");
+		consume_statement_end("Expected newline after 'pass'");
 		return stmt;
 	}
 
@@ -307,7 +379,7 @@ StmtPtr Parser::parse_var_decl(bool is_const) {
 		error("Const variables must have an initializer");
 	}
 
-	consume(TokenType::NEWLINE, "Expected newline after variable declaration");
+	consume_statement_end("Expected newline after variable declaration");
 	auto stmt = make_at<VarDeclStmt>(name, name.lexeme, std::move(initializer), is_const);
 	stmt->type_hint = type_hint;
 	return stmt;
@@ -361,7 +433,7 @@ StmtPtr Parser::parse_for_stmt() {
 
 StmtPtr Parser::parse_match_stmt() {
 	// match <subject>:
-	//     <pattern>[, <pattern>...]:
+	//     <pattern>[, <pattern>...] [when <condition>]:
 	//         <body>
 	//     _:
 	//         <body>
@@ -373,7 +445,6 @@ StmtPtr Parser::parse_match_stmt() {
 	consume(TokenType::INDENT, "Expected indented block after 'match'");
 
 	std::vector<MatchStmt::Branch> branches;
-	bool seen_wildcard = false;
 
 	while (!check(TokenType::DEDENT) && !is_at_end()) {
 		skip_newlines();
@@ -383,26 +454,36 @@ StmtPtr Parser::parse_match_stmt() {
 
 		MatchStmt::Branch branch;
 
-		// A branch is a comma-separated list of patterns, or the wildcard '_'
+		// A branch is a comma-separated pattern list; any one match takes it.
 		do {
-			if (check(TokenType::IDENTIFIER) && peek().lexeme == "_") {
-				advance();
-				branch.patterns.clear(); // Wildcard: matches everything
-				seen_wildcard = true;
-				break;
+			branch.patterns.push_back(parse_match_pattern());
+		} while (match(TokenType::COMMA) && !check(TokenType::COLON));
+
+		// A binding must exist by the time the body runs. Next to another pattern
+		// it would not: the other pattern may be the one that matched, leaving
+		// nothing to name. GDScript rejects this for the same reason.
+		if (branch.patterns.size() > 1) {
+			for (const auto& pattern : branch.patterns) {
+				if (pattern->binds()) {
+					throw CompilerException::parser_error(
+						"A pattern that binds a name cannot share an arm with other patterns",
+						pattern->line, pattern->column);
+				}
 			}
-			branch.patterns.push_back(parse_expression());
-		} while (match(TokenType::COMMA));
+		}
+
+		// `when` is a contextual keyword -- an ordinary identifier everywhere
+		// else -- so it is matched by lexeme, not by token type.
+		if (check(TokenType::IDENTIFIER) && peek().lexeme == "when") {
+			advance();
+			branch.guard = parse_expression();
+		}
 
 		consume(TokenType::COLON, "Expected ':' after match pattern");
 		consume(TokenType::NEWLINE, "Expected newline after ':'");
 		branch.body = parse_block();
 
 		branches.push_back(std::move(branch));
-
-		if (seen_wildcard) {
-			break; // Nothing after the wildcard can ever match
-		}
 	}
 
 	skip_newlines();
@@ -415,6 +496,111 @@ StmtPtr Parser::parse_match_stmt() {
 	return std::make_unique<MatchStmt>(std::move(subject), std::move(branches));
 }
 
+MatchPatternPtr Parser::parse_match_pattern() {
+	auto pattern = std::make_unique<MatchPattern>();
+	pattern->line = peek().line;
+	pattern->column = peek().column;
+
+	// '_' matches anything and binds nothing. An identifier everywhere else, so
+	// it is matched by lexeme.
+	if (check(TokenType::IDENTIFIER) && peek().lexeme == "_") {
+		advance();
+		pattern->kind = MatchPattern::Kind::WILDCARD;
+		return pattern;
+	}
+
+	// `var name` matches anything and binds it for the guard and the body.
+	if (match(TokenType::VAR)) {
+		Token name = consume(TokenType::IDENTIFIER, "Expected a name after 'var' in a pattern");
+		pattern->kind = MatchPattern::Kind::BIND;
+		pattern->name = name.lexeme;
+		return pattern;
+	}
+
+	if (check(TokenType::LBRACKET)) {
+		return parse_match_array_pattern();
+	}
+	if (check(TokenType::LBRACE)) {
+		return parse_match_dictionary_pattern();
+	}
+
+	// Anything else is a value compared against the subject. The expression stops
+	// at the ',' between patterns and the ':' ending the arm, both of which end
+	// an expression anyway.
+	pattern->kind = MatchPattern::Kind::VALUE;
+	pattern->value = parse_expression();
+	pattern->line = pattern->value->line;
+	pattern->column = pattern->value->column;
+	return pattern;
+}
+
+bool Parser::parse_pattern_rest(const char* what) {
+	if (!match(TokenType::DOT_DOT)) {
+		return false;
+	}
+	// `..` means "and the rest", so it is last: a second one, or anything after
+	// it, has nothing left to describe.
+	match(TokenType::COMMA);
+	if (!check(TokenType::RBRACKET) && !check(TokenType::RBRACE)) {
+		Token at = peek();
+		throw CompilerException::parser_error(
+			std::string("'..' has to be the last entry of ") + what, at.line, at.column);
+	}
+	return true;
+}
+
+MatchPatternPtr Parser::parse_match_array_pattern() {
+	auto pattern = std::make_unique<MatchPattern>();
+	Token open_bracket = consume(TokenType::LBRACKET, "Expected '[' to start an array pattern");
+	pattern->kind = MatchPattern::Kind::ARRAY;
+	pattern->line = open_bracket.line;
+	pattern->column = open_bracket.column;
+
+	while (!check(TokenType::RBRACKET) && !is_at_end()) {
+		if (parse_pattern_rest("an array pattern")) {
+			pattern->open = true;
+			break;
+		}
+		pattern->elements.push_back(parse_match_pattern());
+		if (!match(TokenType::COMMA)) {
+			break;
+		}
+	}
+
+	consume(TokenType::RBRACKET, "Expected ']' after an array pattern");
+	return pattern;
+}
+
+MatchPatternPtr Parser::parse_match_dictionary_pattern() {
+	auto pattern = std::make_unique<MatchPattern>();
+	Token open_brace = consume(TokenType::LBRACE, "Expected '{' to start a dictionary pattern");
+	pattern->kind = MatchPattern::Kind::DICTIONARY;
+	pattern->line = open_brace.line;
+	pattern->column = open_brace.column;
+
+	while (!check(TokenType::RBRACE) && !is_at_end()) {
+		if (parse_pattern_rest("a dictionary pattern")) {
+			pattern->open = true;
+			break;
+		}
+
+		MatchPattern::Entry entry;
+		entry.key = parse_expression();
+		// `{"key": <pattern>}` constrains the value; `{"key"}` only presence.
+		if (match(TokenType::COLON)) {
+			entry.value = parse_match_pattern();
+		}
+		pattern->entries.push_back(std::move(entry));
+
+		if (!match(TokenType::COMMA)) {
+			break;
+		}
+	}
+
+	consume(TokenType::RBRACE, "Expected '}' after a dictionary pattern");
+	return pattern;
+}
+
 StmtPtr Parser::parse_return_stmt() {
 	ExprPtr value = nullptr;
 
@@ -422,7 +608,7 @@ StmtPtr Parser::parse_return_stmt() {
 		value = parse_expression();
 	}
 
-	consume(TokenType::NEWLINE, "Expected newline after return statement");
+	consume_statement_end("Expected newline after return statement");
 	return std::make_unique<ReturnStmt>(std::move(value));
 }
 
@@ -433,7 +619,7 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 	// Check if it's an assignment
 	if (match(TokenType::ASSIGN)) {
 		ExprPtr value = parse_expression();
-		consume(TokenType::NEWLINE, "Expected newline after assignment");
+		consume_statement_end("Expected newline after assignment");
 
 		// Check if lhs is a simple variable, indexed expression, or property access
 		if (auto* var_expr = dynamic_cast<VariableExpr*>(lhs.get())) {
@@ -454,19 +640,19 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 		}
 	}
 
-	// Handle compound assignments (x += 1, obj.field <<= 2, ...).
+	// Handle compound assignments (x += 1, obj.field <<= 2, arr[i] **= 2, ...).
 	//
-	// `a op= b` is rewritten to `a = a op b`, which needs a second copy of the
-	// target expression. The AST nodes are unique_ptr and do not clone, so the
-	// targets supported here are the ones that can be rebuilt from a name: a
-	// plain variable, and a field of a plain variable. `f().x += 1` is not one
-	// of them, and would evaluate f() twice if it were.
+	// `a op= b` becomes `a = a op b`, which needs a second copy of the target.
+	// AST nodes are unique_ptr and do not clone, so clone_lvalue() rebuilds the
+	// targets that can be rebuilt without evaluating anything twice. `f().x += 1`
+	// is not one of them -- it would call f() twice -- so it stays an error.
 	static const struct { TokenType token; BinaryExpr::Op op; } compound_ops[] = {
 		{TokenType::PLUS_ASSIGN,        BinaryExpr::Op::ADD},
 		{TokenType::MINUS_ASSIGN,       BinaryExpr::Op::SUB},
 		{TokenType::MULTIPLY_ASSIGN,    BinaryExpr::Op::MUL},
 		{TokenType::DIVIDE_ASSIGN,      BinaryExpr::Op::DIV},
 		{TokenType::MODULO_ASSIGN,      BinaryExpr::Op::MOD},
+		{TokenType::POWER_ASSIGN,       BinaryExpr::Op::POW},
 		{TokenType::BIT_AND_ASSIGN,     BinaryExpr::Op::BIT_AND},
 		{TokenType::BIT_OR_ASSIGN,      BinaryExpr::Op::BIT_OR},
 		{TokenType::BIT_XOR_ASSIGN,     BinaryExpr::Op::BIT_XOR},
@@ -474,41 +660,67 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 		{TokenType::SHIFT_RIGHT_ASSIGN, BinaryExpr::Op::SHR},
 	};
 
-	if (auto* var_expr = dynamic_cast<VariableExpr*>(lhs.get())) {
-		const std::string name = var_expr->name;
-		for (const auto& entry : compound_ops) {
-			if (!match(entry.token)) {
-				continue;
-			}
-			ExprPtr var_ref = make_like<VariableExpr>(*lhs, name);
-			ExprPtr rhs = parse_expression();
-			ExprPtr combined = make_binary(std::move(var_ref), entry.op, std::move(rhs));
-			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name, std::move(combined));
+	for (const auto& entry : compound_ops) {
+		if (!check(entry.token)) {
+			continue;
 		}
-	} else if (auto* member_expr = dynamic_cast<MemberCallExpr*>(lhs.get())) {
-		auto* object = dynamic_cast<VariableExpr*>(member_expr->object.get());
-		if (!member_expr->is_method_call && object != nullptr) {
-			const std::string object_name = object->name;
-			const std::string member_name = member_expr->member_name;
-			for (const auto& entry : compound_ops) {
-				if (!match(entry.token)) {
-					continue;
-				}
-				ExprPtr read = make_like<MemberCallExpr>(*lhs,
-					make_like<VariableExpr>(*lhs, object_name), member_name,
-					std::vector<ExprPtr>{}, false);
-				ExprPtr rhs = parse_expression();
-				ExprPtr combined = make_binary(std::move(read), entry.op, std::move(rhs));
-				consume(TokenType::NEWLINE, "Expected newline after assignment");
-				return std::make_unique<AssignStmt>(std::move(lhs), std::move(combined));
-			}
+		// Build the read before consuming the operator, so a target that cannot
+		// be read twice is reported as itself, not as whatever follows.
+		ExprPtr read = clone_lvalue(lhs.get());
+		if (!read) {
+			throw CompilerException::parser_error(
+				"Invalid target for compound assignment", lhs->line, lhs->column);
 		}
+		advance(); // the 'op=' token
+
+		ExprPtr rhs = parse_expression();
+		ExprPtr combined = make_binary(std::move(read), entry.op, std::move(rhs));
+		consume_statement_end("Expected newline after assignment");
+
+		if (auto* var_expr = dynamic_cast<VariableExpr*>(lhs.get())) {
+			return std::make_unique<AssignStmt>(var_expr->name, std::move(combined));
+		}
+		return std::make_unique<AssignStmt>(std::move(lhs), std::move(combined));
 	}
 
 	// Not an assignment, treat as expression statement
-	consume(TokenType::NEWLINE, "Expected newline after expression");
+	consume_statement_end("Expected newline after expression");
 	return std::make_unique<ExprStmt>(std::move(lhs));
+}
+
+ExprPtr Parser::clone_lvalue(const Expr* expr) {
+	// Rebuild an assignment target so `a op= b` can read and write it. Only pure
+	// lookups are rebuilt: re-evaluating a call, or an index that is itself a
+	// call, would run it twice and give `a[f()] += 1` two different elements.
+	if (auto* var = dynamic_cast<const VariableExpr*>(expr)) {
+		return make_like<VariableExpr>(*expr, var->name);
+	}
+	if (auto* lit = dynamic_cast<const LiteralExpr*>(expr)) {
+		auto copy = std::make_unique<LiteralExpr>(*lit);
+		copy->line = expr->line;
+		copy->column = expr->column;
+		return copy;
+	}
+	if (auto* member = dynamic_cast<const MemberCallExpr*>(expr)) {
+		if (member->is_method_call) {
+			return nullptr;
+		}
+		ExprPtr object = clone_lvalue(member->object.get());
+		if (!object) {
+			return nullptr;
+		}
+		return make_like<MemberCallExpr>(*expr, std::move(object), member->member_name,
+			std::vector<ExprPtr>{}, false);
+	}
+	if (auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+		ExprPtr object = clone_lvalue(index->object.get());
+		ExprPtr subscript = clone_lvalue(index->index.get());
+		if (!object || !subscript) {
+			return nullptr;
+		}
+		return make_like<IndexExpr>(*expr, std::move(object), std::move(subscript));
+	}
+	return nullptr;
 }
 
 ExprPtr Parser::make_binary(ExprPtr left, BinaryExpr::Op op, ExprPtr right) {
@@ -521,7 +733,31 @@ ExprPtr Parser::make_binary(ExprPtr left, BinaryExpr::Op op, ExprPtr right) {
 }
 
 ExprPtr Parser::parse_expression() {
-	return parse_ternary();
+	ExprPtr expr = parse_ternary();
+
+	// `as` is the loosest operator, so `a if c else b as int` casts the whole
+	// conditional.
+	while (match(TokenType::AS)) {
+		const Token type_token = consume(TokenType::IDENTIFIER, "Expected a type name after 'as'");
+		// For the built-in scalar types cast and constructor agree, so `x as int`
+		// compiles as `int(x)`. For a class name they do not: a failed cast
+		// yields null, which only the engine can decide. Rejecting here beats
+		// reporting a call to an unknown function later.
+		if (type_token.lexeme != "int" && type_token.lexeme != "float" &&
+		    type_token.lexeme != "bool" && type_token.lexeme != "String") {
+			throw CompilerException::parser_error(
+				"'as " + type_token.lexeme + "' is not supported: 'as' is only available for"
+				" int, float, bool and String", type_token.line, type_token.column);
+		}
+		std::vector<ExprPtr> arguments;
+		arguments.push_back(std::move(expr));
+		const Token& at = type_token;
+		auto call = make_at<CallExpr>(at, type_token.lexeme, std::move(arguments));
+		call->argument_names.resize(1);
+		expr = std::move(call);
+	}
+
+	return expr;
 }
 
 ExprPtr Parser::parse_ternary() {
@@ -553,11 +789,49 @@ ExprPtr Parser::parse_or_expression() {
 }
 
 ExprPtr Parser::parse_and_expression() {
-	ExprPtr left = parse_equality();
+	ExprPtr left = parse_not();
 
 	while (match(TokenType::AND)) {
-		ExprPtr right = parse_equality();
+		ExprPtr right = parse_not();
 		left = make_binary(std::move(left), BinaryExpr::Op::AND, std::move(right));
+	}
+
+	return left;
+}
+
+ExprPtr Parser::parse_not() {
+	// `not` binds looser than everything below it, as in GDScript and Python:
+	// `not a == b` is `not (a == b)`. It is the one unary operator that does not
+	// sit with `-` and `~`, which bind tighter than the arithmetic.
+	if (match(TokenType::NOT)) {
+		Token op = previous();
+		return make_at<UnaryExpr>(op, UnaryExpr::Op::NOT, parse_not());
+	}
+	return parse_inclusion();
+}
+
+ExprPtr Parser::parse_inclusion() {
+	ExprPtr left = parse_equality();
+
+	while (true) {
+		// `not in` is two tokens. Only `in` may follow `not` here; anything else
+		// is `not` applied to what comes next, which parses one level up. Decide
+		// by lookahead, without consuming.
+		bool negated = false;
+		if (check(TokenType::NOT) && peek_ahead(1).type == TokenType::IN) {
+			advance();
+			advance();
+			negated = true;
+		} else if (!match(TokenType::IN)) {
+			break;
+		}
+
+		ExprPtr right = parse_equality();
+		left = make_binary(std::move(left), BinaryExpr::Op::IN, std::move(right));
+		if (negated) {
+			const Expr& start = *left;
+			left = make_like<UnaryExpr>(start, UnaryExpr::Op::NOT, std::move(left));
+		}
 	}
 
 	return left;
@@ -661,11 +935,11 @@ ExprPtr Parser::parse_term() {
 }
 
 ExprPtr Parser::parse_factor() {
-	ExprPtr left = parse_unary();
+	ExprPtr left = parse_type_test();
 
 	while (match_one_of({TokenType::MULTIPLY, TokenType::DIVIDE, TokenType::MODULO})) {
 		Token op = previous();
-		ExprPtr right = parse_unary();
+		ExprPtr right = parse_type_test();
 
 		BinaryExpr::Op bin_op;
 		switch (op.type) {
@@ -682,15 +956,13 @@ ExprPtr Parser::parse_factor() {
 }
 
 ExprPtr Parser::parse_unary() {
-	if (match_one_of({TokenType::MINUS, TokenType::NOT, TokenType::BIT_NOT, TokenType::PLUS})) {
+	if (match_one_of({TokenType::MINUS, TokenType::BIT_NOT, TokenType::PLUS})) {
 		Token op = previous();
 		ExprPtr operand = parse_unary();
 
 		switch (op.type) {
 			case TokenType::MINUS:
 				return make_at<UnaryExpr>(op, UnaryExpr::Op::NEG, std::move(operand));
-			case TokenType::NOT:
-				return make_at<UnaryExpr>(op, UnaryExpr::Op::NOT, std::move(operand));
 			case TokenType::BIT_NOT:
 				return make_at<UnaryExpr>(op, UnaryExpr::Op::BIT_NOT, std::move(operand));
 			default:
@@ -700,6 +972,41 @@ ExprPtr Parser::parse_unary() {
 	}
 
 	return parse_call();
+}
+
+ExprPtr Parser::parse_power() {
+	ExprPtr left = parse_unary();
+
+	// Left-associative, and looser than a leading '-'. The manual's operator table
+	// says otherwise, but the engine is authoritative: it answers 64 for
+	// `2 ** 3 ** 2` ((2**3)**2) and 4 for `-2 ** 2` ((-2)**2).
+	while (match(TokenType::POWER)) {
+		ExprPtr right = parse_unary();
+		left = make_binary(std::move(left), BinaryExpr::Op::POW, std::move(right));
+	}
+
+	return left;
+}
+
+ExprPtr Parser::parse_type_test() {
+	ExprPtr left = parse_power();
+
+	// `x is int` and `x is not int`. Both bind tighter than every operator except
+	// call and subscript, so the type name is read here rather than as an
+	// expression: `int` is a type in this position, not the constructor.
+	while (check(TokenType::IS)) {
+		advance();
+		const bool negated = match(TokenType::NOT);
+		const Token type_token = consume(TokenType::IDENTIFIER, "Expected a type name after 'is'");
+		const Expr& start = *left;
+		left = make_like<TypeTestExpr>(start, std::move(left), type_token.lexeme);
+		if (negated) {
+			const Expr& test = *left;
+			left = make_like<UnaryExpr>(test, UnaryExpr::Op::NOT, std::move(left));
+		}
+	}
+
+	return left;
 }
 
 ExprPtr Parser::parse_call() {
@@ -802,7 +1109,10 @@ ExprPtr Parser::parse_primary() {
 		if (!check(TokenType::RBRACKET)) {
 			do {
 				elements.push_back(parse_expression());
-			} while (match(TokenType::COMMA));
+				if (!match(TokenType::COMMA)) {
+					break;
+				}
+			} while (!check(TokenType::RBRACKET)); // trailing ',' allowed
 		}
 
 		consume(TokenType::RBRACKET, "Expected ']' after array elements");
@@ -827,10 +1137,18 @@ ExprPtr Parser::parse_primary() {
 					key = parse_expression();
 				}
 
-				consume(TokenType::COLON, "Expected ':' after dictionary key");
+				// Godot accepts `{"k": v}` and the Lua-style `{k = v}`. The
+				// latter only applies to an identifier key, the only thing that
+				// can precede the '='.
+				if (!match(TokenType::ASSIGN)) {
+					consume(TokenType::COLON, "Expected ':' or '=' after dictionary key");
+				}
 				ExprPtr value = parse_expression();
 				elements.push_back({std::move(key), std::move(value)});
-			} while (match(TokenType::COMMA));
+				if (!match(TokenType::COMMA)) {
+					break;
+				}
+			} while (!check(TokenType::RBRACE)); // trailing ',' allowed
 		}
 
 		consume(TokenType::RBRACE, "Expected '}' after dictionary elements");
@@ -919,9 +1237,20 @@ void Parser::error(const std::string& message) {
 }
 
 void Parser::skip_newlines() {
-	while (match(TokenType::NEWLINE)) {
+	while (match(TokenType::NEWLINE) || match(TokenType::SEMICOLON)) {
 		// Skip
 	}
+}
+
+void Parser::consume_statement_end(const std::string& message) {
+	// A ';' ends a statement as a newline does, and allows another on the same
+	// line. What follows -- a statement, or the newline of a trailing ';' -- is
+	// the next statement's problem; skip_newlines() in parse_statement_impl()
+	// absorbs the latter.
+	if (match(TokenType::SEMICOLON)) {
+		return;
+	}
+	consume(TokenType::NEWLINE, message);
 }
 
 std::string Parser::parse_type_hint() {
@@ -933,6 +1262,7 @@ std::string Parser::parse_type_hint() {
 		// This could be a simple identifier like "int" or a more complex type like "Array[int]"
 		if (check(TokenType::IDENTIFIER)) {
 			Token type_token = consume(TokenType::IDENTIFIER, "Expected type name");
+			skip_type_arguments();
 			return type_token.lexeme;
 		}
 		// If there's no identifier immediately after, return empty
@@ -952,6 +1282,7 @@ std::string Parser::parse_return_type() {
 			// We found ->, now parse the type
 			if (check(TokenType::IDENTIFIER)) {
 				Token type_token = consume(TokenType::IDENTIFIER, "Expected return type");
+				skip_type_arguments();
 				return type_token.lexeme;
 			}
 			return "";  // Found -> but no type
@@ -961,6 +1292,28 @@ std::string Parser::parse_return_type() {
 	}
 
 	return "";
+}
+
+void Parser::skip_type_arguments() {
+	// The element types of `Array[int]` and `Dictionary[String, int]` are not
+	// checked: every value the compiler moves is a Variant, and Godot enforces
+	// typed containers at the boundary. Keep the base type, skip the arguments.
+	if (!match(TokenType::LBRACKET)) {
+		return;
+	}
+	int depth = 1;
+	while (depth > 0 && !is_at_end()) {
+		if (match(TokenType::LBRACKET)) {
+			depth++;
+		} else if (match(TokenType::RBRACKET)) {
+			depth--;
+		} else {
+			advance();
+		}
+	}
+	if (depth != 0) {
+		error("Expected ']' to close the element type");
+	}
 }
 
 bool Parser::parse_attribute() {

@@ -2261,6 +2261,16 @@ APICALL(api_dict_ops) {
 			machine.set_result(dict.has(key->toVariant(emu)));
 			break;
 		}
+		case Dictionary_Op::GET_KEYS: {
+			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vkey, 1);
+			vp->create(emu, dict.keys());
+			break;
+		}
+		case Dictionary_Op::GET_VALUES: {
+			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vkey, 1);
+			vp->create(emu, dict.values());
+			break;
+		}
 		case Dictionary_Op::GET_SIZE:
 			machine.set_result(dict.size());
 			break;

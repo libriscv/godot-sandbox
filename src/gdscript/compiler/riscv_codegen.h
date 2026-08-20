@@ -127,6 +127,10 @@ private:
 	// of into the return register's stack slot. See the definition.
 	static std::vector<bool> find_return_forwarding(const IRFunction& func);
 
+	// Jump tables emitted so far, used to give each one a unique label.
+	// Program-wide, not per function.
+	size_t m_switch_tables = 0;
+
 	// The label the global data area is defined at.
 	static constexpr const char* GLOBALS_LABEL = ".globals";
 	void emit_add(uint8_t rd, uint8_t rs1, uint8_t rs2);
@@ -214,6 +218,7 @@ private:
 	// Additional integer instructions
 	void emit_sext_w(uint8_t rd, uint8_t rs);  // Sign-extend word to doubleword (addiw rd, rs, 0)
 	void emit_srai(uint8_t rd, uint8_t rs, uint8_t shamt); // Arithmetic shift right by a constant
+	void emit_sh2add(uint8_t rd, uint8_t rs1, uint8_t rs2); // Zba: rd = (rs1 << 2) + rs2
 
 	// Pseudo-instructions
 	void emit_call(const std::string& func_name);

@@ -168,6 +168,7 @@ private:
 			case IROperandKind::STR:
 				return operand.type == IRValue::Type::STRING;
 			case IROperandKind::LBL:
+			case IROperandKind::LBL_LIST:
 				return operand.type == IRValue::Type::LABEL;
 			case IROperandKind::ARG_LIST:
 				// A syscall's arguments are registers or immediates, depending

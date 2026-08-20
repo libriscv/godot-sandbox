@@ -442,7 +442,10 @@ void test_ternary_and_match_parsing() {
 	assert(match_stmt != nullptr);
 	assert(match_stmt->branches.size() == 2);
 	assert(match_stmt->branches[0].patterns.size() == 2);
-	assert(match_stmt->branches[1].patterns.empty()); // Wildcard
+	assert(match_stmt->branches[0].patterns[0]->kind == MatchPattern::Kind::VALUE);
+	assert(match_stmt->branches[1].patterns.size() == 1);
+	assert(match_stmt->branches[1].patterns[0]->kind == MatchPattern::Kind::WILDCARD);
+	assert(match_stmt->branches[1].is_catch_all());
 
 	std::cout << "  ✓ Ternary and match parsing test passed" << std::endl;
 }
