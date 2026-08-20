@@ -395,6 +395,58 @@ func _process(delta: float):
 	std::cout << "  ✓ Extends with multiple functions test passed" << std::endl;
 }
 
+void test_default_parameter_values() {
+	std::cout << "Testing default parameter values..." << std::endl;
+
+	Lexer lexer("func f(a, b = 5, c: int = 10):\n\treturn a\n");
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	assert(program.functions.size() == 1);
+	const auto& params = program.functions[0].parameters;
+	assert(params.size() == 3);
+	assert(params[0].default_value == nullptr);
+	assert(params[1].default_value != nullptr);
+	assert(params[2].default_value != nullptr);
+	assert(params[2].type_hint == "int");
+
+	// A parameter without a default may not follow one that has a default
+	bool threw = false;
+	try {
+		Lexer bad_lexer("func f(a = 1, b):\n\treturn a\n");
+		Parser bad_parser(bad_lexer.tokenize());
+		bad_parser.parse();
+	} catch (const std::exception&) {
+		threw = true;
+	}
+	assert(threw && "Expected an error for a non-default parameter after a default one");
+
+	std::cout << "  ✓ Default parameter values test passed" << std::endl;
+}
+
+void test_ternary_and_match_parsing() {
+	std::cout << "Testing ternary and match parsing..." << std::endl;
+
+	Lexer lexer("func f(a):\n\treturn 1 if a else 2\n");
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+	assert(program.functions.size() == 1);
+	auto* ret = dynamic_cast<const ReturnStmt*>(program.functions[0].body[0].get());
+	assert(ret != nullptr);
+	assert(dynamic_cast<const TernaryExpr*>(ret->value.get()) != nullptr);
+
+	Lexer match_lexer("func f(a):\n\tmatch a:\n\t\t1, 2:\n\t\t\treturn 10\n\t\t_:\n\t\t\treturn 20\n");
+	Parser match_parser(match_lexer.tokenize());
+	Program match_program = match_parser.parse();
+	auto* match_stmt = dynamic_cast<const MatchStmt*>(match_program.functions[0].body[0].get());
+	assert(match_stmt != nullptr);
+	assert(match_stmt->branches.size() == 2);
+	assert(match_stmt->branches[0].patterns.size() == 2);
+	assert(match_stmt->branches[1].patterns.empty()); // Wildcard
+
+	std::cout << "  ✓ Ternary and match parsing test passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== Running Parser Tests ===" << std::endl;
 
@@ -414,6 +466,8 @@ int main() {
 		test_mixed_type_hints();
 		test_extends_keyword();
 		test_extends_with_multiple_functions();
+		test_default_parameter_values();
+		test_ternary_and_match_parsing();
 
 		std::cout << "\n✅ All parser tests passed!" << std::endl;
 		return 0;

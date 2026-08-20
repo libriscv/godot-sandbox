@@ -70,4 +70,18 @@ When dealing with floats it's CRUCIAL to understand that:
 2. real_t is CONFIGURABLE, but 32-bit float by default. Vectors use real_t.
 3. Adding integer and float (whether constant or not) produces a float result
 
+Godot's double-precision builds set real_t = double, which widens every real_t
+payload stored inline in a Variant (Vector2/3/4, Rect2, Plane, Quaternion, Color)
+and grows the Variant itself from 24 to 40 bytes. Integer vectors (Vector2i/3i/4i,
+Rect2i) and Variant::FLOAT are unaffected. In the compiler this is described by
+`src/gdscript/compiler/variant_layout.h`: every layout-dependent size and offset in
+the RISC-V backend goes through `VariantLayout`, and the real_t-width loads, stores
+and FP arithmetic go through the `emit_flr` / `emit_fsr` / `emit_fadd_r` family so
+that both builds share one code path. The layout is selected at run time by
+`CompilerOptions::double_precision`, which defaults to whatever the compiler was
+built for (`-DDOUBLE_PRECISION=ON` defines `DOUBLE_PRECISION_REAL_T`). The internal
+CMake test `test_double_precision` exercises both layouts from a single build.
+Do NOT run the Godot unit tests with a double-precision guest against a
+single-precision Godot binary - the layouts have to match end to end.
+
 When dealing with object references, they are 32-bit integers which are stored in the data section of the Variant. When the sandbox stores this value, it's stored as a 64-bit value, so it won't matter if loaded as 32-bit or 64-bit int, however it does matter when storing the value: Use 64-bit sd instruction.

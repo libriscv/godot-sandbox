@@ -1,4 +1,5 @@
 #pragma once
+#include "variant_layout.h"
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -11,6 +12,10 @@ struct CompilerOptions {
 	bool dump_ir = false;
 	bool output_elf = true;
 	std::string output_path;
+	// Emit code for a Godot build with real_t = double (REAL_T_IS_DOUBLE).
+	// Defaults to whatever this compiler was built for, which is the right
+	// answer both inside the sandbox and on the host.
+	bool double_precision = native_variant_layout().double_precision;
 };
 
 class Compiler {

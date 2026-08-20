@@ -101,6 +101,7 @@ std::vector<Parameter> Parser::parse_parameters() {
 		return params;
 	}
 
+	bool seen_default = false;
 	do {
 		Token param_name = consume(TokenType::IDENTIFIER, "Expected parameter name");
 		Parameter param;
@@ -109,7 +110,15 @@ std::vector<Parameter> Parser::parse_parameters() {
 		// Parse optional type hint (e.g., ": int")
 		param.type_hint = parse_type_hint();
 
-		params.push_back(param);
+		// Parse optional default value (e.g., "= 5")
+		if (match(TokenType::ASSIGN)) {
+			param.default_value = parse_expression();
+			seen_default = true;
+		} else if (seen_default) {
+			error("Parameter '" + param.name + "' without a default value cannot follow one with a default value");
+		}
+
+		params.push_back(std::move(param));
 
 		if (!check(TokenType::RPAREN)) {
 			if (!match(TokenType::COMMA)) {
@@ -156,6 +165,9 @@ StmtPtr Parser::parse_statement() {
 	}
 	if (match(TokenType::FOR)) {
 		return parse_for_stmt();
+	}
+	if (match(TokenType::MATCH)) {
+		return parse_match_stmt();
 	}
 	if (match(TokenType::RETURN)) {
 		return parse_return_stmt();
@@ -244,6 +256,62 @@ StmtPtr Parser::parse_for_stmt() {
 	return std::make_unique<ForStmt>(var_name.lexeme, std::move(iterable), std::move(body));
 }
 
+StmtPtr Parser::parse_match_stmt() {
+	// match <subject>:
+	//     <pattern>[, <pattern>...]:
+	//         <body>
+	//     _:
+	//         <body>
+	ExprPtr subject = parse_expression();
+	consume(TokenType::COLON, "Expected ':' after match subject");
+	consume(TokenType::NEWLINE, "Expected newline after ':'");
+
+	skip_newlines();
+	consume(TokenType::INDENT, "Expected indented block after 'match'");
+
+	std::vector<MatchStmt::Branch> branches;
+	bool seen_wildcard = false;
+
+	while (!check(TokenType::DEDENT) && !is_at_end()) {
+		skip_newlines();
+		if (check(TokenType::DEDENT) || is_at_end()) {
+			break;
+		}
+
+		MatchStmt::Branch branch;
+
+		// A branch is a comma-separated list of patterns, or the wildcard '_'
+		do {
+			if (check(TokenType::IDENTIFIER) && peek().lexeme == "_") {
+				advance();
+				branch.patterns.clear(); // Wildcard: matches everything
+				seen_wildcard = true;
+				break;
+			}
+			branch.patterns.push_back(parse_expression());
+		} while (match(TokenType::COMMA));
+
+		consume(TokenType::COLON, "Expected ':' after match pattern");
+		consume(TokenType::NEWLINE, "Expected newline after ':'");
+		branch.body = parse_block();
+
+		branches.push_back(std::move(branch));
+
+		if (seen_wildcard) {
+			break; // Nothing after the wildcard can ever match
+		}
+	}
+
+	skip_newlines();
+	consume(TokenType::DEDENT, "Expected dedent after match block");
+
+	if (branches.empty()) {
+		error("'match' requires at least one pattern");
+	}
+
+	return std::make_unique<MatchStmt>(std::move(subject), std::move(branches));
+}
+
 StmtPtr Parser::parse_return_stmt() {
 	ExprPtr value = nullptr;
 
@@ -257,7 +325,6 @@ StmtPtr Parser::parse_return_stmt() {
 
 StmtPtr Parser::parse_expr_or_assign_stmt() {
 	// Parse a postfix expression (which can be identifier or indexed expression)
-	size_t saved_pos = m_current;
 	ExprPtr lhs = parse_call();
 
 	// Check if it's an assignment
@@ -284,48 +351,31 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 		}
 	}
 
-	// Handle compound assignments for simple variables only
+	// Handle compound assignments (x += 1, x <<= 2, ...) for simple variables only
 	if (auto* var_expr = dynamic_cast<VariableExpr*>(lhs.get())) {
-		std::string name = var_expr->name;
+		static const struct { TokenType token; BinaryExpr::Op op; } compound_ops[] = {
+			{TokenType::PLUS_ASSIGN,        BinaryExpr::Op::ADD},
+			{TokenType::MINUS_ASSIGN,       BinaryExpr::Op::SUB},
+			{TokenType::MULTIPLY_ASSIGN,    BinaryExpr::Op::MUL},
+			{TokenType::DIVIDE_ASSIGN,      BinaryExpr::Op::DIV},
+			{TokenType::MODULO_ASSIGN,      BinaryExpr::Op::MOD},
+			{TokenType::BIT_AND_ASSIGN,     BinaryExpr::Op::BIT_AND},
+			{TokenType::BIT_OR_ASSIGN,      BinaryExpr::Op::BIT_OR},
+			{TokenType::BIT_XOR_ASSIGN,     BinaryExpr::Op::BIT_XOR},
+			{TokenType::SHIFT_LEFT_ASSIGN,  BinaryExpr::Op::SHL},
+			{TokenType::SHIFT_RIGHT_ASSIGN, BinaryExpr::Op::SHR},
+		};
 
-		if (match(TokenType::PLUS_ASSIGN)) {
+		const std::string name = var_expr->name;
+		for (const auto& entry : compound_ops) {
+			if (!match(entry.token)) {
+				continue;
+			}
 			ExprPtr var_ref = std::make_unique<VariableExpr>(name);
 			ExprPtr rhs = parse_expression();
-			ExprPtr add_expr = std::make_unique<BinaryExpr>(std::move(var_ref), BinaryExpr::Op::ADD, std::move(rhs));
+			ExprPtr combined = std::make_unique<BinaryExpr>(std::move(var_ref), entry.op, std::move(rhs));
 			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name, std::move(add_expr));
-		}
-
-		if (match(TokenType::MINUS_ASSIGN)) {
-			ExprPtr var_ref = std::make_unique<VariableExpr>(name);
-			ExprPtr rhs = parse_expression();
-			ExprPtr sub_expr = std::make_unique<BinaryExpr>(std::move(var_ref), BinaryExpr::Op::SUB, std::move(rhs));
-			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name, std::move(sub_expr));
-		}
-
-		if (match(TokenType::MULTIPLY_ASSIGN)) {
-			ExprPtr var_ref = std::make_unique<VariableExpr>(name);
-			ExprPtr rhs = parse_expression();
-			ExprPtr mul_expr = std::make_unique<BinaryExpr>(std::move(var_ref), BinaryExpr::Op::MUL, std::move(rhs));
-			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name, std::move(mul_expr));
-		}
-
-		if (match(TokenType::DIVIDE_ASSIGN)) {
-			ExprPtr var_ref = std::make_unique<VariableExpr>(name);
-			ExprPtr rhs = parse_expression();
-			ExprPtr div_expr = std::make_unique<BinaryExpr>(std::move(var_ref), BinaryExpr::Op::DIV, std::move(rhs));
-			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name, std::move(div_expr));
-		}
-
-		if (match(TokenType::MODULO_ASSIGN)) {
-			ExprPtr var_ref = std::make_unique<VariableExpr>(name);
-			ExprPtr rhs = parse_expression();
-			ExprPtr mod_expr = std::make_unique<BinaryExpr>(std::move(var_ref), BinaryExpr::Op::MOD, std::move(rhs));
-			consume(TokenType::NEWLINE, "Expected newline after assignment");
-			return std::make_unique<AssignStmt>(name, std::move(mod_expr));
+			return std::make_unique<AssignStmt>(name, std::move(combined));
 		}
 	}
 
@@ -335,7 +385,22 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 }
 
 ExprPtr Parser::parse_expression() {
-	return parse_or_expression();
+	return parse_ternary();
+}
+
+ExprPtr Parser::parse_ternary() {
+	// GDScript conditional expression: <true_value> if <condition> else <false_value>
+	ExprPtr true_value = parse_or_expression();
+
+	if (!match(TokenType::IF)) {
+		return true_value;
+	}
+
+	ExprPtr condition = parse_or_expression();
+	consume(TokenType::ELSE, "Expected 'else' in conditional expression");
+	ExprPtr false_value = parse_ternary(); // Right-associative
+
+	return std::make_unique<TernaryExpr>(std::move(condition), std::move(true_value), std::move(false_value));
 }
 
 ExprPtr Parser::parse_or_expression() {
@@ -375,11 +440,11 @@ ExprPtr Parser::parse_equality() {
 }
 
 ExprPtr Parser::parse_comparison() {
-	ExprPtr left = parse_term();
+	ExprPtr left = parse_bit_or();
 
 	while (match_one_of({TokenType::LESS, TokenType::LESS_EQUAL, TokenType::GREATER, TokenType::GREATER_EQUAL})) {
 		Token op = previous();
-		ExprPtr right = parse_term();
+		ExprPtr right = parse_bit_or();
 
 		BinaryExpr::Op bin_op;
 		switch (op.type) {
@@ -390,6 +455,53 @@ ExprPtr Parser::parse_comparison() {
 			default: throw CompilerException::parser_error("Invalid comparison operator", op.line, op.column);
 		}
 
+		left = std::make_unique<BinaryExpr>(std::move(left), bin_op, std::move(right));
+	}
+
+	return left;
+}
+
+ExprPtr Parser::parse_bit_or() {
+	ExprPtr left = parse_bit_xor();
+
+	while (match(TokenType::BIT_OR)) {
+		ExprPtr right = parse_bit_xor();
+		left = std::make_unique<BinaryExpr>(std::move(left), BinaryExpr::Op::BIT_OR, std::move(right));
+	}
+
+	return left;
+}
+
+ExprPtr Parser::parse_bit_xor() {
+	ExprPtr left = parse_bit_and();
+
+	while (match(TokenType::BIT_XOR)) {
+		ExprPtr right = parse_bit_and();
+		left = std::make_unique<BinaryExpr>(std::move(left), BinaryExpr::Op::BIT_XOR, std::move(right));
+	}
+
+	return left;
+}
+
+ExprPtr Parser::parse_bit_and() {
+	ExprPtr left = parse_shift();
+
+	while (match(TokenType::BIT_AND)) {
+		ExprPtr right = parse_shift();
+		left = std::make_unique<BinaryExpr>(std::move(left), BinaryExpr::Op::BIT_AND, std::move(right));
+	}
+
+	return left;
+}
+
+ExprPtr Parser::parse_shift() {
+	ExprPtr left = parse_term();
+
+	while (match_one_of({TokenType::SHIFT_LEFT, TokenType::SHIFT_RIGHT})) {
+		Token op = previous();
+		ExprPtr right = parse_term();
+
+		BinaryExpr::Op bin_op = (op.type == TokenType::SHIFT_LEFT) ? BinaryExpr::Op::SHL : BinaryExpr::Op::SHR;
 		left = std::make_unique<BinaryExpr>(std::move(left), bin_op, std::move(right));
 	}
 
@@ -432,12 +544,21 @@ ExprPtr Parser::parse_factor() {
 }
 
 ExprPtr Parser::parse_unary() {
-	if (match_one_of({TokenType::MINUS, TokenType::NOT})) {
+	if (match_one_of({TokenType::MINUS, TokenType::NOT, TokenType::BIT_NOT, TokenType::PLUS})) {
 		Token op = previous();
 		ExprPtr operand = parse_unary();
 
-		UnaryExpr::Op un_op = (op.type == TokenType::MINUS) ? UnaryExpr::Op::NEG : UnaryExpr::Op::NOT;
-		return std::make_unique<UnaryExpr>(un_op, std::move(operand));
+		switch (op.type) {
+			case TokenType::MINUS:
+				return std::make_unique<UnaryExpr>(UnaryExpr::Op::NEG, std::move(operand));
+			case TokenType::NOT:
+				return std::make_unique<UnaryExpr>(UnaryExpr::Op::NOT, std::move(operand));
+			case TokenType::BIT_NOT:
+				return std::make_unique<UnaryExpr>(UnaryExpr::Op::BIT_NOT, std::move(operand));
+			default:
+				// Unary '+' is a no-op
+				return operand;
+		}
 	}
 
 	return parse_call();

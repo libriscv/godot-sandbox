@@ -22,9 +22,11 @@ private:
 	char advance();
 	char peek() const;
 	char peek_next() const;
+	char peek_at(size_t ahead) const;
 	bool match(char expected);
 	bool is_at_end() const;
 	bool is_digit(char c) const;
+	bool is_hex_digit(char c) const;
 	bool is_alpha(char c) const;
 	bool is_alphanumeric(char c) const;
 

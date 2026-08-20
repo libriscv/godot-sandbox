@@ -1,6 +1,7 @@
 #pragma once
 #include "ir.h"
 #include "register_allocator.h"
+#include "variant_layout.h"
 #include <unordered_set>
 #include <cstdint>
 
@@ -9,10 +10,15 @@ namespace gdscript {
 // RISC-V instruction encoder
 class RISCVCodeGen {
 public:
-	RISCVCodeGen();
+	// The layout decides how wide real_t is, and therefore how big a Variant is.
+	// Defaults to the layout this compiler was built for.
+	explicit RISCVCodeGen(const VariantLayout& layout = native_variant_layout());
 
 	// Generate RISC-V machine code from IR
 	std::vector<uint8_t> generate(const IRProgram& program);
+
+	// The Variant layout this code generator emits for
+	const VariantLayout& get_layout() const { return m_layout; }
 
 	// Get function offsets (name -> offset in code)
 	const std::unordered_map<std::string, size_t>& get_function_offsets() const { return m_functions; }
@@ -60,6 +66,9 @@ private:
 	void emit_or(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_xor(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_xori(uint8_t rd, uint8_t rs, int32_t imm);  // XOR immediate
+	void emit_sll(uint8_t rd, uint8_t rs1, uint8_t rs2);
+	void emit_srl(uint8_t rd, uint8_t rs1, uint8_t rs2);
+	void emit_sra(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_slt(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_seqz(uint8_t rd, uint8_t rs);   // Set if equal to zero (pseudo: sltiu rd, rs, 1)
 	void emit_snez(uint8_t rd, uint8_t rs);   // Set if not equal to zero (pseudo: sltu rd, x0, rs)
@@ -94,6 +103,18 @@ private:
 	void emit_fcvt_d_s(uint8_t rd, uint8_t rs1);             // Convert float to double
 	void emit_fcvt_s_d(uint8_t rd, uint8_t rs1);             // Convert double to float
 	void emit_fcvt_d_l(uint8_t rd, uint8_t rs1);             // Convert signed 64-bit int to double
+	void emit_fmv_s(uint8_t rd, uint8_t rs);                 // Single-precision FP move
+
+	// real_t-width floating point. These pick the 32-bit or the 64-bit instruction
+	// depending on the target's real_t, so the vector code paths stay single-sourced.
+	void emit_flr(uint8_t rd, uint8_t rs1, int32_t offset);  // Load real_t (flw / fld)
+	void emit_fsr(uint8_t rs2, uint8_t rs1, int32_t offset); // Store real_t (fsw / fsd)
+	void emit_fcvt_d_r(uint8_t rd, uint8_t rs1);             // real_t -> double (widen, or move)
+	void emit_fcvt_r_d(uint8_t rd, uint8_t rs1);             // double -> real_t (narrow, or move)
+	void emit_fadd_r(uint8_t rd, uint8_t rs1, uint8_t rs2);  // real_t FP add
+	void emit_fsub_r(uint8_t rd, uint8_t rs1, uint8_t rs2);  // real_t FP sub
+	void emit_fmul_r(uint8_t rd, uint8_t rs1, uint8_t rs2);  // real_t FP mul
+	void emit_fdiv_r(uint8_t rd, uint8_t rs1, uint8_t rs2);  // real_t FP div
 
 	// FP arithmetic instructions (RV64D extension - double precision)
 	void emit_fadd_d(uint8_t rd, uint8_t rs1, uint8_t rs2);  // Double-precision FP add
@@ -134,6 +155,10 @@ private:
 	void emit_variant_create_bool(int stack_offset, bool value);
 	void emit_variant_create_string(int stack_offset, int string_idx);
 	void emit_variant_copy(int dst_offset, int src_offset);
+
+	// Copy a whole Variant (variant_size() bytes) between two [base + offset] locations,
+	// shuttling it through tmp_reg. Both endpoints must be 8-byte aligned.
+	void emit_variant_move(uint8_t dst_base, int32_t dst_offset, uint8_t src_base, int32_t src_offset, uint8_t tmp_reg);
 	void emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op);
 
 	// VCREATE syscall abstraction
@@ -210,11 +235,21 @@ private:
 	// expansion needs more than one live at a time; the second is headroom.
 	static constexpr int SCRATCH_VARIANT_SLOTS = 2;
 
-	// Variant structure layout constants
-	// Variant layout: [uint32_t m_type (4)] [padding (4)] [union data (16)]
-	static constexpr int VARIANT_SIZE = 24;           // Total size of Variant struct
-	static constexpr int VARIANT_TYPE_OFFSET = 0;     // Offset to m_type field (4 bytes)
-	static constexpr int VARIANT_DATA_OFFSET = 8;     // Offset to union data (bool/int64/etc)
+	// Variant structure layout
+	// Variant layout: [uint32_t m_type (4)] [padding (4)] [union data (4 * sizeof(real_t))]
+	VariantLayout m_layout;
+
+	static constexpr int VARIANT_TYPE_OFFSET = VariantLayout::TYPE_OFFSET; // m_type field (4 bytes)
+	static constexpr int VARIANT_DATA_OFFSET = VariantLayout::DATA_OFFSET; // union data (bool/int64/etc)
+
+	// Layout-dependent sizes and offsets, all routed through m_layout
+	int variant_size() const { return m_layout.variant_size(); }
+	int real_size() const { return m_layout.real_size(); }
+	int real_offset(int index) const { return m_layout.real_offset(index); }
+	static constexpr int int_offset(int index) { return VariantLayout::int_offset(index); }
+
+	// Space reserved at the bottom of every frame for saved ra, fp and a0
+	static constexpr int SAVED_REG_SPACE = 24;
 
 	// String constants from IR
 	const std::vector<std::string>* m_string_constants = nullptr;
@@ -229,10 +264,10 @@ private:
 	// Generate a unique local label for internal use
 	std::string gen_local_label(const std::string& prefix);
 
-	// Convert a Variant component (at comp_offset) to float and store to dest_offset + store_offset
+	// Convert a Variant component (at comp_offset) to real_t and store to result_offset + store_offset
 	// Handles both INT and FLOAT Variants
 	// If normalize_by_255 is true, divides integers by 255.0 (for Color components)
-	void emit_variant_component_to_float(int comp_offset, int result_offset, int store_offset, bool normalize_by_255 = false);
+	void emit_variant_component_to_real(int comp_offset, int result_offset, int store_offset, bool normalize_by_255 = false);
 
 	// Label counter for generating unique local labels
 	int m_label_counter = 0;

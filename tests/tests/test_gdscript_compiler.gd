@@ -5,6 +5,31 @@ var holder = Sandbox.new()
 
 # Compile GDScript using an embedded compiler and test the output
 
+func test_compiler_variant_layout():
+	# The compiler bakes the Variant layout into the code it emits, so it has to
+	# agree with the sandbox it is running in. Godot's double-precision builds
+	# (real_t = double) widen every inline real_t payload and grow the Variant
+	# from 24 to 40 bytes; a compiler that disagreed would read every vector
+	# component from the wrong offset.
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var layout = ts.vmcall("compiler_variant_layout")
+
+	assert_eq(layout["compiler_real_size"], layout["guest_real_size"],
+		"Compiler and sandbox API must agree on sizeof(real_t)")
+	assert_eq(layout["compiler_variant_size"], layout["guest_variant_size"],
+		"Compiler and sandbox API must agree on sizeof(Variant)")
+
+	if layout["double_precision"]:
+		assert_eq(layout["compiler_real_size"], 8, "real_t is a double in double-precision builds")
+		assert_eq(layout["compiler_variant_size"], 40, "Variant is 40 bytes in double-precision builds")
+	else:
+		assert_eq(layout["compiler_real_size"], 4, "real_t is a float in single-precision builds")
+		assert_eq(layout["compiler_variant_size"], 24, "Variant is 24 bytes in single-precision builds")
+
+	ts.queue_free()
+
 func test_compile_and_run():
 	var gdscript_code = """
 func truthy():
@@ -3082,3 +3107,233 @@ func meaning_of_this() -> String:
 
 	l.queue_free()
 	ts.queue_free()
+
+# Helper: compile GDScript inside a Sandbox and return a Sandbox running the result
+func _compile_and_load(gdscript_code: String, instructions_max: int = 4000) -> Sandbox:
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	ts.queue_free()
+	assert_eq(compiled_elf.is_empty(), false, "Compilation should succeed")
+	if compiled_elf.is_empty():
+		return null
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(instructions_max)
+	return s
+
+func test_bitwise_operators():
+	var gdscript_code = """
+func bit_and(a : int, b : int):
+	return a & b
+
+func bit_or(a : int, b : int):
+	return a | b
+
+func bit_xor(a : int, b : int):
+	return a ^ b
+
+func shift_left(a : int, b : int):
+	return a << b
+
+func shift_right(a : int, b : int):
+	return a >> b
+
+func bit_not(a : int):
+	return ~a
+
+func untyped_and(a, b):
+	return a & b
+
+func compound():
+	var a = 1
+	a <<= 4
+	a |= 3
+	a &= 30
+	a ^= 1
+	return a
+
+func precedence(a : int):
+	return a | 1 << 4
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("bit_and", 12, 10), 8, "12 & 10 should be 8")
+	assert_eq(s.vmcallv("bit_or", 12, 3), 15, "12 | 3 should be 15")
+	assert_eq(s.vmcallv("bit_xor", 12, 10), 6, "12 ^ 10 should be 6")
+	assert_eq(s.vmcallv("shift_left", 1, 10), 1024, "1 << 10 should be 1024")
+	assert_eq(s.vmcallv("shift_right", 1024, 3), 128, "1024 >> 3 should be 128")
+	assert_eq(s.vmcallv("shift_right", -8, 1), -4, ">> should be an arithmetic shift")
+	assert_eq(s.vmcallv("bit_not", 5), -6, "~5 should be -6")
+	assert_eq(s.vmcallv("untyped_and", 12, 10), 8, "Untyped 12 & 10 should be 8")
+	assert_eq(s.vmcallv("compound"), 19, "Bitwise compound assignment should yield 19")
+	assert_eq(s.vmcallv("precedence", 3), 3 | 1 << 4, "Shifts should bind tighter than |")
+
+	s.queue_free()
+
+func test_number_literals():
+	var gdscript_code = """
+func hex():
+	return 0xFF
+
+func hex_separated():
+	return 0xDEAD_BEEF
+
+func binary():
+	return 0b1011
+
+func separated():
+	return 1_000_000
+
+func exponent():
+	return 1.5e3
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("hex"), 255, "0xFF should be 255")
+	assert_eq(s.vmcallv("hex_separated"), 0xDEADBEEF, "0xDEAD_BEEF should be 3735928559")
+	assert_eq(s.vmcallv("binary"), 11, "0b1011 should be 11")
+	assert_eq(s.vmcallv("separated"), 1000000, "1_000_000 should be 1000000")
+	assert_almost_eq(s.vmcallv("exponent"), 1500.0, 0.001, "1.5e3 should be 1500.0")
+
+	s.queue_free()
+
+func test_ternary_expression():
+	var gdscript_code = """
+func pick(a):
+	return 10 if a else 20
+
+func nested(a : int):
+	return 1 if a == 1 else 2 if a == 2 else 3
+
+func in_expression(a):
+	return 1 + (10 if a else 20)
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("pick", true), 10, "Ternary should pick the true value")
+	assert_eq(s.vmcallv("pick", false), 20, "Ternary should pick the false value")
+	assert_eq(s.vmcallv("nested", 1), 1, "Nested ternary should return 1")
+	assert_eq(s.vmcallv("nested", 2), 2, "Nested ternary should return 2")
+	assert_eq(s.vmcallv("nested", 9), 3, "Nested ternary should return 3")
+	assert_eq(s.vmcallv("in_expression", true), 11, "Ternary inside an expression should work")
+
+	s.queue_free()
+
+func test_match_statement():
+	var gdscript_code = """
+func classify(a):
+	match a:
+		1:
+			return 10
+		2:
+			return 20
+		_:
+			return 30
+
+func multi_pattern(a):
+	match a:
+		1, 2, 3:
+			return 100
+		_:
+			return 200
+
+func strings(a):
+	match a:
+		"a":
+			return 1
+		"b":
+			return 2
+		_:
+			return 3
+
+func no_wildcard(a):
+	var r = 0
+	match a:
+		1:
+			r = 1
+		2:
+			r = 2
+	return r
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("classify", 1), 10, "match 1 should return 10")
+	assert_eq(s.vmcallv("classify", 2), 20, "match 2 should return 20")
+	assert_eq(s.vmcallv("classify", 9), 30, "match wildcard should return 30")
+	assert_eq(s.vmcallv("multi_pattern", 3), 100, "Multi-pattern branch should match 3")
+	assert_eq(s.vmcallv("multi_pattern", 4), 200, "Multi-pattern branch should not match 4")
+	assert_eq(s.vmcallv("strings", "b"), 2, "match on strings should work")
+	assert_eq(s.vmcallv("no_wildcard", 2), 2, "match without wildcard should take branch 2")
+	assert_eq(s.vmcallv("no_wildcard", 9), 0, "match without wildcard should take no branch")
+
+	s.queue_free()
+
+func test_default_arguments():
+	var gdscript_code = """
+func add(a, b = 5, c = 10):
+	return a + b + c
+
+func none_given():
+	return add(1)
+
+func one_given():
+	return add(1, 2)
+
+func all_given():
+	return add(1, 2, 3)
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("none_given"), 16, "add(1) should be 1 + 5 + 10")
+	assert_eq(s.vmcallv("one_given"), 13, "add(1, 2) should be 1 + 2 + 10")
+	assert_eq(s.vmcallv("all_given"), 6, "add(1, 2, 3) should be 6")
+
+	s.queue_free()
+
+func test_global_stores_survive_optimization():
+	# Regression test: the liveness analysis behind dead code elimination did
+	# not treat STORE_GLOBAL as reading its value register, so the instruction
+	# that produced the value was deleted as dead.
+	var gdscript_code = """
+var g = 0
+var h = 0
+var i = 0
+
+func setup():
+	g = 5
+	h = 7
+	i = 9
+
+func read_g():
+	setup()
+	return g
+
+func read_h():
+	setup()
+	return h
+
+func read_i():
+	setup()
+	return i
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("read_g"), 5, "Global g should be 5")
+	assert_eq(s.vmcallv("read_h"), 7, "Global h should be 7")
+	assert_eq(s.vmcallv("read_i"), 9, "Global i should be 9")
+
+	s.queue_free()

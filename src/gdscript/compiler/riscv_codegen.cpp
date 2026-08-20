@@ -6,7 +6,8 @@
 
 namespace gdscript {
 
-RISCVCodeGen::RISCVCodeGen() {}
+RISCVCodeGen::RISCVCodeGen(const VariantLayout& layout) :
+		m_layout(layout) {}
 
 size_t RISCVCodeGen::add_constant(int64_t value) {
 	// Check if constant already exists in pool
@@ -26,8 +27,8 @@ std::string RISCVCodeGen::gen_local_label(const std::string& prefix) {
 	return prefix + std::to_string(m_label_counter++);
 }
 
-void RISCVCodeGen::emit_variant_component_to_float(int comp_offset, int result_offset, int store_offset, bool normalize_by_255) {
-	// Convert a Variant component (at comp_offset) to float and store to result_offset + store_offset
+void RISCVCodeGen::emit_variant_component_to_real(int comp_offset, int result_offset, int store_offset, bool normalize_by_255) {
+	// Convert a Variant component (at comp_offset) to real_t and store to result_offset + store_offset
 	// Handles both INT (type=2) and FLOAT (type=3) Variants
 	// If normalize_by_255 is true, divides INTEGER values by 255.0 (for Color components)
 	std::string label_float = gen_local_label(".float");
@@ -56,18 +57,18 @@ void RISCVCodeGen::emit_variant_component_to_float(int comp_offset, int result_o
 		emit_fdiv_d(REG_FA0, REG_FA0, REG_FA1); // Divide by 255.0
 	}
 
-	emit_fcvt_s_d(REG_FA0, REG_FA0); // Convert double to float
+	emit_fcvt_r_d(REG_FA0, REG_FA0); // Narrow to real_t (no-op in double-precision builds)
 	mark_label_use(label_cont, m_code.size());
 	emit_jal(REG_ZERO, 0); // Skip to end
 
-	// FLOAT case: Load double and convert to float
+	// FLOAT case: Load the double (Variant::FLOAT is always 64-bit) and narrow to real_t
 	define_label(label_float);
-	emit_fld(REG_FA0, REG_SP, comp_offset + 8); // Load double
+	emit_fld(REG_FA0, REG_SP, comp_offset + VARIANT_DATA_OFFSET); // Load double
 	// Note: We do NOT normalize float values - they're already in the correct range
-	emit_fcvt_s_d(REG_FA0, REG_FA0); // Convert double to float
+	emit_fcvt_r_d(REG_FA0, REG_FA0); // Narrow to real_t (no-op in double-precision builds)
 	define_label(label_cont);
 
-	emit_fsw(REG_FA0, REG_SP, result_offset + store_offset); // Store float
+	emit_fsr(REG_FA0, REG_SP, result_offset + store_offset); // Store real_t
 }
 
 std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
@@ -97,10 +98,10 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		}
 
 		// Load address of global variable into t0
-		// Address = .globals + (i * 24)
+		// Address = .globals + (i * sizeof(Variant))
 		emit_la(REG_T0, ".globals");
 		if (i > 0) {
-			int offset = i * VARIANT_SIZE;
+			int offset = i * variant_size();
 			emit_addi(REG_T0, REG_T0, offset);
 		}
 
@@ -352,7 +353,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	}
 
 	// Calculate global data size (m_global_count and m_globals already set earlier)
-	m_global_data_size = m_global_count * VARIANT_SIZE;
+	m_global_data_size = m_global_count * variant_size();
 
 	// Define .globals label and allocate global data area
 	// This will be placed in a separate R+W PT_LOAD segment by the ELF builder
@@ -373,10 +374,10 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		m_labels[".globals"] = globals_vaddr - 0x10000;
 
 		// Allocate and initialize global variables to zero (NIL Variants)
-		// Each Variant is 24 bytes: [type:4][padding:4][data:16]
+		// Each Variant is [type:4][padding:4][data:4 * sizeof(real_t)]
 		for (size_t i = 0; i < m_global_count; i++) {
 			// Write NIL Variant (type = 0, all other bytes = 0)
-			for (int j = 0; j < VARIANT_SIZE; j++) {
+			for (int j = 0; j < variant_size(); j++) {
 				m_code.push_back(0);
 			}
 		}
@@ -404,7 +405,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 	// Calculate stack frame size
 	// Need space for: saved registers (24 bytes) + space for Variants
-	int saved_reg_space = 24; // Save ra, fp, and a0 (return pointer)
+	const int saved_reg_space = SAVED_REG_SPACE; // Save ra, fp, and a0 (return pointer)
 
 	// Pre-allocate stack offsets for ALL virtual registers in order
 	// Assign offsets deterministically based on virtual register number,
@@ -418,11 +419,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	// scratch area is enough -- but it has to be part of the frame. Allocating it after
 	// the prologue was emitted would place it past the end of the frame, where the
 	// stores land in the caller's frame instead.
-	int variant_space = (max_variants + SCRATCH_VARIANT_SLOTS) * VARIANT_SIZE;
+	int variant_space = (max_variants + SCRATCH_VARIANT_SLOTS) * variant_size();
 
 	// Pre-assign all virtual register offsets
 	for (int vreg = 0; vreg < max_variants; vreg++) {
-		int offset = saved_reg_space + (vreg * VARIANT_SIZE);
+		int offset = saved_reg_space + (vreg * variant_size());
 		m_variant_offsets[vreg] = offset;
 	}
 	m_scratch_slot_base = max_variants;
@@ -468,11 +469,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 		int dst_offset = get_variant_stack_offset(param_vreg);
 		uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
 
-		// Copy 24 bytes from pointer in arg_reg to stack
-		for (int j = 0; j < 3; j++) {
-			emit_ld(REG_T0, arg_reg, j * 8); // LD t0, j*8(arg_reg)
-			emit_sd(REG_T0, REG_SP, dst_offset + j * 8); // SD t0, offset(sp)
-		}
+		// Copy the whole Variant from the pointer in arg_reg to the stack
+		emit_variant_move(REG_SP, dst_offset, arg_reg, 0, REG_T0);
 	}
 
 	// Process each IR instruction
@@ -543,7 +541,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					break;
 				}
 
-				// Copy Variant (24 bytes)
+				// Copy the whole Variant
 				emit_variant_copy(dst_offset, src_offset);
 				break;
 			}
@@ -555,9 +553,9 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int64_t global_idx = std::get<int64_t>(instr.operands[1].value);
 				int dst_offset = get_variant_stack_offset(dst_vreg);
 
-				// Load address of global variable: gp + (global_idx * 24)
+				// Load address of global variable: gp + (global_idx * sizeof(Variant))
 				// GP register points to the start of global data area
-				int global_offset = global_idx * VARIANT_SIZE;
+				int global_offset = global_idx * variant_size();
 
 				// Load global base address into t0
 				// For now, we'll use a label to mark the global data section
@@ -572,11 +570,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// Load destination address into t1
 				emit_load_stack_offset(REG_T1, dst_offset);
 
-				// Copy 24 bytes (3 8-byte loads/stores) from global to stack
-				for (int i = 0; i < 3; i++) {
-					emit_ld(REG_T2, REG_T0, i * 8);
-					emit_sd(REG_T2, REG_T1, i * 8);
-				}
+				// Copy the whole Variant from the global data area to the stack
+				emit_variant_move(REG_T1, 0, REG_T0, 0, REG_T2);
 				break;
 			}
 
@@ -610,7 +605,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				}
 
 				// Load address of global variable
-				int global_offset = global_idx * VARIANT_SIZE;
+				int global_offset = global_idx * variant_size();
 				std::string global_label = ".globals";
 				emit_la(REG_T0, global_label);
 				if (global_offset > 0) {
@@ -643,11 +638,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// Store it back to the global's v.i field (offset 8)
 					emit_sd(REG_A0, REG_T0, 8);
 				} else {
-					// Simple type: Just copy 24 bytes
-					for (int i = 0; i < 3; i++) {
-						emit_ld(REG_T2, REG_T1, i * 8);
-						emit_sd(REG_T2, REG_T0, i * 8);
-					}
+					// Simple type: copy the whole Variant
+					emit_variant_move(REG_T0, 0, REG_T1, 0, REG_T2);
 				}
 				break;
 			}
@@ -657,7 +649,12 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::SUB:
 			case IROpcode::MUL:
 			case IROpcode::DIV:
-			case IROpcode::MOD: {
+			case IROpcode::MOD:
+			case IROpcode::BIT_AND:
+			case IROpcode::BIT_OR:
+			case IROpcode::BIT_XOR:
+			case IROpcode::SHL:
+			case IROpcode::SHR: {
 				// Check that all operands are valid before processing
 				if (instr.operands.size() < 3 ||
 					instr.operands[0].type != IRValue::Type::REGISTER) {
@@ -715,6 +712,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					case IROpcode::MUL: variant_op = 8; break;  // OP_MULTIPLY
 					case IROpcode::DIV: variant_op = 9; break;  // OP_DIVIDE
 					case IROpcode::MOD: variant_op = 12; break; // OP_MODULE
+					case IROpcode::SHL: variant_op = 14; break; // OP_SHIFT_LEFT
+					case IROpcode::SHR: variant_op = 15; break; // OP_SHIFT_RIGHT
+					case IROpcode::BIT_AND: variant_op = 16; break; // OP_BIT_AND
+					case IROpcode::BIT_OR: variant_op = 17; break;  // OP_BIT_OR
+					case IROpcode::BIT_XOR: variant_op = 18; break; // OP_BIT_XOR
 					default: variant_op = 6; break;
 				}
 
@@ -747,6 +749,32 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				} else {
 					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported operand types for arithmetic operation");
 				}
+				break;
+			}
+
+			case IROpcode::BIT_NOT: {
+				// ~x is x XOR -1
+				int dst_vreg = std::get<int>(instr.operands[0].value);
+				int src_vreg = std::get<int>(instr.operands[1].value);
+
+				int dst_offset = get_variant_stack_offset(dst_vreg);
+				int src_offset = get_variant_stack_offset(src_vreg);
+
+				if (instr.type_hint == Variant::INT) {
+					// Native path: load the int64, invert it, store it back
+					emit_load_variant_int(REG_T0, REG_SP, src_offset);
+					emit_xori(REG_T1, REG_T0, -1);
+					emit_li(REG_T0, Variant::INT);
+					emit_store_variant_type(REG_T0, REG_SP, dst_offset);
+					emit_store_variant_int(REG_T1, REG_SP, dst_offset);
+					break;
+				}
+
+				// Untyped: let the host evaluate x ^ -1, which also produces the
+				// correct type error for non-integer operands
+				int minus_one_offset = get_scratch_variant_offset();
+				emit_variant_create_int(minus_one_offset, -1);
+				emit_variant_eval(dst_offset, src_offset, minus_one_offset, 18); // OP_BIT_XOR
 				break;
 			}
 
@@ -1008,7 +1036,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				if (m_variant_offsets.find(0) != m_variant_offsets.end()) {
 					int src_offset = get_variant_stack_offset(0);
 
-					// Copy 24 bytes from stack to *a0
+					// Copy the return Variant from the stack to *a0
 					// Load address of source Variant: addi t0, sp, src_offset
 					if (src_offset < 2048) {
 						emit_i_type(0x13, REG_T0, 0, REG_SP, src_offset);
@@ -1017,11 +1045,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						emit_add(REG_T0, REG_SP, REG_T0);
 					}
 
-					// Copy 24 bytes (3 8-byte loads/stores)
-					for (int i = 0; i < 3; i++) {
-						emit_ld(REG_T1, REG_T0, i * 8); // LD t1, i*8(t0)
-						emit_sd(REG_T1, REG_A0, i * 8); // SD t1, i*8(a0)
-					}
+					emit_variant_move(REG_A0, 0, REG_T0, 0, REG_T1);
 				}
 
 				// Function epilogue - restore registers and deallocate stack
@@ -1074,9 +1098,9 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// If we have arguments, allocate stack space for argument array
 				int args_stack_offset = 0;
 				if (arg_count > 0) {
-					args_stack_offset = m_stack_frame_size - (arg_count * VARIANT_SIZE);
+					args_stack_offset = m_stack_frame_size - (arg_count * variant_size());
 					// Expand stack if needed
-					int additional_space = arg_count * VARIANT_SIZE;
+					int additional_space = arg_count * variant_size();
 					additional_space = (additional_space + 15) & ~15; // Align to 16 bytes
 
 					// Adjust stack pointer
@@ -1086,16 +1110,10 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					for (int i = 0; i < arg_count; i++) {
 						int arg_vreg = std::get<int>(instr.operands[4 + i].value);
 						int arg_src_offset = get_variant_stack_offset(arg_vreg) + additional_space; // Adjust for moved stack
-						int arg_dst_offset = i * VARIANT_SIZE;
+						int arg_dst_offset = i * variant_size();
 
-						// Copy 24 bytes from src to dst (3 8-byte loads/stores)
-						for (int j = 0; j < 3; j++) {
-							// Load from source
-							emit_ld(REG_T0, REG_SP, arg_src_offset + j * 8); // LD
-
-							// Store to destination
-							emit_sd(REG_T0, REG_SP, arg_dst_offset + j * 8); // SD
-						}
+						// Copy the whole Variant from src to dst
+						emit_variant_move(REG_SP, arg_dst_offset, REG_SP, arg_src_offset, REG_T0);
 					}
 
 					// a3 = pointer to arguments array (sp + 0)
@@ -1108,7 +1126,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// a0 = pointer to object Variant (sp + obj_offset + additional_space if we allocated stack)
 				int adjusted_obj_offset = obj_offset;
 				if (arg_count > 0) {
-					int additional_space = arg_count * VARIANT_SIZE;
+					int additional_space = arg_count * variant_size();
 					additional_space = (additional_space + 15) & ~15;
 					adjusted_obj_offset += additional_space;
 				}
@@ -1144,7 +1162,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// a5 = pointer to result Variant
 				int adjusted_result_offset = result_offset;
 				if (arg_count > 0) {
-					int additional_space = arg_count * VARIANT_SIZE;
+					int additional_space = arg_count * variant_size();
 					additional_space = (additional_space + 15) & ~15;
 					adjusted_result_offset += additional_space;
 				}
@@ -1159,7 +1177,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				// Restore stack pointer
 				int total_stack_adjust = str_space;
 				if (arg_count > 0) {
-					int additional_space = arg_count * VARIANT_SIZE;
+					int additional_space = arg_count * variant_size();
 					additional_space = (additional_space + 15) & ~15;
 					total_stack_adjust += additional_space;
 				}
@@ -1249,11 +1267,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				emit_li(REG_T0, variant_type);
 				emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
 
-				// Store each component at offset 8, 12, 16, 20 (4 bytes per component as real_t=float)
+				// Store each component as a real_t in v.v4[]
 				for (int i = 0; i < num_components; i++) {
 					int comp_vreg = std::get<int>(instr.operands[1 + i].value);
 					int comp_offset = get_variant_stack_offset(comp_vreg);
-					emit_variant_component_to_float(comp_offset, result_offset, 8 + i * 4);
+					emit_variant_component_to_real(comp_offset, result_offset, real_offset(i));
 				}
 
 				break;
@@ -1279,14 +1297,14 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				emit_li(REG_T0, variant_type);
 				emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
 
-				// Store each component in v.v4i[] at offset 8, 12, 16, 20
+				// Store each component in v.v4i[] (int32_t, same width in both builds)
 				for (int i = 0; i < num_components; i++) {
 					int comp_vreg = std::get<int>(instr.operands[1 + i].value);
 					int comp_offset = get_variant_stack_offset(comp_vreg);
 
 					// Load from stack Variant
-					emit_lw(REG_T0, REG_SP, comp_offset + 8);
-					emit_sw(REG_T0, REG_SP, result_offset + 8 + i * 4);
+					emit_lw(REG_T0, REG_SP, comp_offset + VARIANT_DATA_OFFSET);
+					emit_sw(REG_T0, REG_SP, result_offset + int_offset(i));
 				}
 
 				break;
@@ -1305,12 +1323,13 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				emit_li(REG_T0, Variant::COLOR);
 				emit_sw(REG_T0, REG_SP, result_offset);
 
-				// Store each component (r, g, b, a) as 32-bit floats (real_t)
+				// Store each component (r, g, b, a) as real_t: a Color inside a Variant
+				// shares the v.v4[] union with the vectors, so it follows real_t too.
 				// Color components need to be normalized (0-255 integers -> 0.0-1.0 floats)
 				for (int i = 0; i < 4; i++) {
 					int comp_vreg = std::get<int>(instr.operands[1 + i].value);
 					int comp_offset = get_variant_stack_offset(comp_vreg);
-					emit_variant_component_to_float(comp_offset, result_offset, 8 + i * 4, true); // normalize_by_255 = true
+					emit_variant_component_to_real(comp_offset, result_offset, real_offset(i), true); // normalize_by_255 = true
 				}
 
 				break;
@@ -1339,10 +1358,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_variant_create_empty_array(result_offset);
 				} else {
 					// Array with elements: sys_vcreate(&v, ARRAY, size, data_pointer)
-					// GuestVariant is 24 bytes (4-byte type + 4-byte padding + 16-byte data)
 					// We need to copy the full Variant structures to stack
-					constexpr int VARIANT_SIZE = 24;
-					int args_space = element_count * VARIANT_SIZE;
+					int args_space = element_count * variant_size();
 					args_space = (args_space + 15) & ~15; // Align to 16 bytes
 
 					// Adjust stack pointer
@@ -1353,30 +1370,18 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						emit_add(REG_SP, REG_SP, REG_T0);
 					}
 
-					// Copy full GuestVariant structures (24 bytes each) to stack
+					// Copy full GuestVariant structures to stack
 					for (int i = 0; i < element_count; i++) {
 						int elem_vreg = std::get<int>(instr.operands[2 + i].value);
 						int elem_offset = get_variant_stack_offset(elem_vreg);
 
 						// Destination address for this element
-						int dst_offset = i * VARIANT_SIZE;
+						int dst_offset = i * variant_size();
 
 						// The element Variant is at elem_offset from the ORIGINAL stack frame
 						// After SP -= args_space, it's now at elem_offset + args_space from NEW SP
 						// So we load from (elem_offset + args_space) and store to dst_offset
-
-						// Copy 24 bytes: 8 + 8 + 8 = three 64-bit loads/stores
-						// First 8 bytes (type + padding)
-						emit_ld(REG_T0, REG_SP, elem_offset + args_space);
-						emit_sd(REG_T0, REG_SP, dst_offset);
-
-						// Second 8 bytes (data part 1)
-						emit_ld(REG_T0, REG_SP, elem_offset + args_space + 8);
-						emit_sd(REG_T0, REG_SP, dst_offset + 8);
-
-						// Third 8 bytes (data part 2)
-						emit_ld(REG_T0, REG_SP, elem_offset + args_space + 16);
-						emit_sd(REG_T0, REG_SP, dst_offset + 16);
+						emit_variant_move(REG_SP, dst_offset, REG_SP, elem_offset + args_space, REG_T0);
 					}
 
 					// a0 = pointer to destination Variant
@@ -1444,11 +1449,9 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					emit_variant_create_empty_dictionary(result_offset);
 				} else {
 					// Dictionary with elements: sys_vcreate(&v, DICTIONARY, size, data_pointer)
-					// GuestVariant is 24 bytes (4-byte type + 4-byte padding + 16-byte data)
 					// We need to copy the full Variant structures to stack
-					constexpr int VARIANT_SIZE = 24;
 					int total_variants = pair_count * 2; // Each pair has 2 variants (key and value)
-					int args_space = total_variants * VARIANT_SIZE;
+					int args_space = total_variants * variant_size();
 					args_space = (args_space + 15) & ~15; // Align to 16 bytes
 
 					// Adjust stack pointer
@@ -1459,31 +1462,19 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 						emit_add(REG_SP, REG_SP, REG_T0);
 					}
 
-					// Copy full GuestVariant structures (24 bytes each) to stack
+					// Copy full GuestVariant structures to stack
 					// Operands are interleaved: key1, val1, key2, val2, ...
 					for (int i = 0; i < total_variants; i++) {
 						int variant_vreg = std::get<int>(instr.operands[2 + i].value);
 						int variant_offset = get_variant_stack_offset(variant_vreg);
 
 						// Destination address for this variant
-						int dst_offset = i * VARIANT_SIZE;
+						int dst_offset = i * variant_size();
 
 						// The variant Variant is at variant_offset from the ORIGINAL stack frame
 						// After SP -= args_space, it's now at variant_offset + args_space from NEW SP
 						// So we load from (variant_offset + args_space) and store to dst_offset
-
-						// Copy 24 bytes: 8 + 8 + 8 = three 64-bit loads/stores
-						// First 8 bytes (type + padding)
-						emit_ld(REG_T0, REG_SP, variant_offset + args_space);
-						emit_sd(REG_T0, REG_SP, dst_offset);
-
-						// Second 8 bytes (data part 1)
-						emit_ld(REG_T0, REG_SP, variant_offset + args_space + 8);
-						emit_sd(REG_T0, REG_SP, dst_offset + 8);
-
-						// Third 8 bytes (data part 2)
-						emit_ld(REG_T0, REG_SP, variant_offset + args_space + 16);
-						emit_sd(REG_T0, REG_SP, dst_offset + 16);
+						emit_variant_move(REG_SP, dst_offset, REG_SP, variant_offset + args_space, REG_T0);
 					}
 
 					// a0 = pointer to destination Variant
@@ -1606,8 +1597,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					// Packed array with elements: Use ECALL_PACKED_ARRAY_OPS (548)
 					// Signature: a0=op(type), a1=result_ptr, a2=array_ptr, a3=array_size
 					// The syscall converts an Array of Variants to a PackedArray
-					constexpr int VARIANT_SIZE = 24;
-					int args_space = element_count * VARIANT_SIZE;
+					int args_space = element_count * variant_size();
 					args_space = (args_space + 15) & ~15; // Align to 16 bytes
 
 					// Allocate stack space
@@ -1622,13 +1612,10 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					for (int i = 0; i < element_count; i++) {
 						int elem_vreg = std::get<int>(instr.operands[2 + i].value);
 						int elem_offset = get_variant_stack_offset(elem_vreg);
-						int dst_offset = i * VARIANT_SIZE;
+						int dst_offset = i * variant_size();
 
-						// Copy 24 bytes from source to destination
-						for (int j = 0; j < 24; j += 8) {
-							emit_ld(REG_T0, REG_SP, args_space + elem_offset + j);
-							emit_sd(REG_T0, REG_SP, dst_offset + j);
-						}
+						// Copy the whole Variant from source to destination
+						emit_variant_move(REG_SP, dst_offset, REG_SP, args_space + elem_offset, REG_T0);
 					}
 
 					// a0 = op (the packed array type, which also indicates CREATE_FROM_ARRAY)
@@ -1680,10 +1667,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int result_offset = get_variant_stack_offset(result_vreg);
 				int obj_offset = get_variant_stack_offset(obj_vreg);
 
-				// Determine the offset within the object Variant
-				// Vector types with float components (real_t=float=4 bytes): offsets at 8, 12, 16, 20
-				// Vector types with int components (int32_t=4 bytes): offsets at 8, 12, 16, 20
-				int member_offset = 8; // Base offset
+				// Determine the offset within the object Variant. Float vectors store
+				// real_t components (4 or 8 bytes), integer vectors always int32_t.
 				bool is_int_type = false;
 
 				// Map member name to array index
@@ -1697,8 +1682,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				IRInstruction::TypeHint hint = static_cast<IRInstruction::TypeHint>(obj_type_hint);
 				is_int_type = TypeHintUtils::is_int_vector(hint);
 
-				// All vector components are stored as 4-byte values
-				member_offset += component_idx * 4;
+				int member_offset = is_int_type ? int_offset(component_idx) : real_offset(component_idx);
 
 				if (is_int_type) {
 					// Load 32-bit integer from object
@@ -1710,24 +1694,23 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 					// Sign-extend to 64-bit and store in v.i
 					emit_sext_w(REG_T0, REG_T0);
-					emit_sd(REG_T0, REG_SP, result_offset + 8);
+					emit_sd(REG_T0, REG_SP, result_offset + VARIANT_DATA_OFFSET);
 				} else {
-					// For float components from Vector types:
-					// Use FP instructions to convert 4-byte float to 8-byte double
-					// FLW loads 32-bit float, FCVT.D.S converts to double
+					// For real_t components from Vector types: Variant::FLOAT is always a
+					// 64-bit double, so widen unless real_t already is one.
 
-					// Load 4-byte float component to FP register
-					emit_flw(REG_FA0, REG_SP, obj_offset + member_offset);
+					// Load the real_t component into an FP register
+					emit_flr(REG_FA0, REG_SP, obj_offset + member_offset);
 
-					// Convert float (32-bit) to double (64-bit)
-					emit_fcvt_d_s(REG_FA0, REG_FA0);
+					// Widen real_t to double
+					emit_fcvt_d_r(REG_FA0, REG_FA0);
 
 					// Set result Variant type to FLOAT
 					emit_li(REG_T0, Variant::FLOAT);
 					emit_sw(REG_T0, REG_SP, result_offset); // m_type = FLOAT
 
 					// Store 8-byte double to v.f field
-					emit_fsd(REG_FA0, REG_SP, result_offset + 8);
+					emit_fsd(REG_FA0, REG_SP, result_offset + VARIANT_DATA_OFFSET);
 				}
 
 				break;
@@ -2297,6 +2280,18 @@ void RISCVCodeGen::emit_xor(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 	emit_r_type(0x33, rd, 4, rs1, rs2, 0);
 }
 
+void RISCVCodeGen::emit_sll(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	emit_r_type(0x33, rd, 1, rs1, rs2, 0);
+}
+
+void RISCVCodeGen::emit_srl(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	emit_r_type(0x33, rd, 5, rs1, rs2, 0);
+}
+
+void RISCVCodeGen::emit_sra(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	emit_r_type(0x33, rd, 5, rs1, rs2, 0x20);
+}
+
 void RISCVCodeGen::emit_slt(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 	emit_r_type(0x33, rd, 2, rs1, rs2, 0);
 }
@@ -2486,7 +2481,7 @@ int RISCVCodeGen::get_scratch_variant_offset(int index) {
 				"Scratch Variant slot " + std::to_string(index) + " is out of range");
 	}
 	// Stack layout: [saved ra (8)] [saved fp (8)] [saved a0 (8)] [Variants...] [scratch...]
-	return 24 + ((m_scratch_slot_base + index) * VARIANT_SIZE);
+	return SAVED_REG_SPACE + ((m_scratch_slot_base + index) * variant_size());
 }
 
 void RISCVCodeGen::emit_variant_create_int(int stack_offset, int64_t value) {
@@ -2651,13 +2646,14 @@ void RISCVCodeGen::emit_variant_create_empty_dictionary(int stack_offset) {
 }
 
 void RISCVCodeGen::emit_variant_copy(int dst_offset, int src_offset) {
-	// Copy 24 bytes from src to dst
-	for (int i = 0; i < 3; i++) {
-		// Load from source
-		emit_ld(REG_T0, REG_SP, src_offset + i * 8); // LD
+	emit_variant_move(REG_SP, dst_offset, REG_SP, src_offset, REG_T0);
+}
 
-		// Store to destination
-		emit_sd(REG_T0, REG_SP, dst_offset + i * 8); // SD
+void RISCVCodeGen::emit_variant_move(uint8_t dst_base, int32_t dst_offset, uint8_t src_base, int32_t src_offset, uint8_t tmp_reg) {
+	// A Variant is 3 doublewords with float real_t, 5 with double real_t
+	for (int i = 0; i < m_layout.variant_words(); i++) {
+		emit_ld(tmp_reg, src_base, src_offset + i * 8);
+		emit_sd(tmp_reg, dst_base, dst_offset + i * 8);
 	}
 }
 
@@ -2742,6 +2738,24 @@ void RISCVCodeGen::emit_typed_int_binary_op(int result_offset, int lhs_offset, i
 			break;
 		case IROpcode::MOD:
 			emit_rem(REG_T2, REG_T0, REG_T1);
+			break;
+		case IROpcode::BIT_AND:
+			emit_and(REG_T2, REG_T0, REG_T1);
+			break;
+		case IROpcode::BIT_OR:
+			emit_or(REG_T2, REG_T0, REG_T1);
+			break;
+		case IROpcode::BIT_XOR:
+			emit_xor(REG_T2, REG_T0, REG_T1);
+			break;
+		case IROpcode::SHL:
+			// SLL/SRA use only the low 6 bits of the shift amount on RV64,
+			// which matches Godot's Variant shift behaviour
+			emit_sll(REG_T2, REG_T0, REG_T1);
+			break;
+		case IROpcode::SHR:
+			// GDScript's >> on integers is an arithmetic shift
+			emit_sra(REG_T2, REG_T0, REG_T1);
 			break;
 		default:
 			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported typed int binary op");
@@ -2864,8 +2878,9 @@ void RISCVCodeGen::emit_typed_float_binary_op(int result_offset, int lhs_offset,
 void RISCVCodeGen::emit_typed_vector_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op, IRInstruction::TypeHint type_hint) {
 	// Optimized path for type-hinted vector arithmetic
 	// Vectors are stored inline in Variant's data union:
-	// - VECTOR2/3/4: real_t v4[4] (32-bit float by default)
-	// - VECTOR2I/3I/4I: int32_t v4i[4]
+	// - VECTOR2/3/4: real_t v4[4] (32-bit float by default, 64-bit double in
+	//   double-precision builds)
+	// - VECTOR2I/3I/4I: int32_t v4i[4] (always 32-bit)
 	//
 	// Process:
 	// 1. Determine element count (2, 3, or 4) and type (int32 vs real_t)
@@ -2910,9 +2925,7 @@ void RISCVCodeGen::emit_typed_vector_binary_op(int result_offset, int lhs_offset
 
 	// Perform element-wise operations
 	for (int i = 0; i < elem_count; i++) {
-		// Component offset: VARIANT_DATA_OFFSET + i * 4 bytes
-		// (both int32_t and real_t are 4 bytes in default config)
-		int component_offset = VARIANT_DATA_OFFSET + i * 4;
+		int component_offset = is_int ? int_offset(i) : real_offset(i);
 
 		if (is_int) {
 			// Integer vector: use lw/sw and integer ALU
@@ -2943,30 +2956,30 @@ void RISCVCodeGen::emit_typed_vector_binary_op(int result_offset, int lhs_offset
 			// Store result component
 			emit_sw(REG_T2, REG_SP, result_offset + component_offset);
 		} else {
-			// Float vector: use flw/fsw and FP ALU (real_t = 32-bit float)
-			emit_flw(REG_FA0, REG_SP, lhs_offset + component_offset);
-			emit_flw(REG_FA1, REG_SP, rhs_offset + component_offset);
+			// Float vector: load/store and compute at real_t width
+			emit_flr(REG_FA0, REG_SP, lhs_offset + component_offset);
+			emit_flr(REG_FA1, REG_SP, rhs_offset + component_offset);
 
-			// Perform single-precision FP operation
+			// Perform the real_t-width FP operation
 			switch (op) {
 				case IROpcode::ADD:
-					emit_fadd_s(REG_FA2, REG_FA0, REG_FA1);
+					emit_fadd_r(REG_FA2, REG_FA0, REG_FA1);
 					break;
 				case IROpcode::SUB:
-					emit_fsub_s(REG_FA2, REG_FA0, REG_FA1);
+					emit_fsub_r(REG_FA2, REG_FA0, REG_FA1);
 					break;
 				case IROpcode::MUL:
-					emit_fmul_s(REG_FA2, REG_FA0, REG_FA1);
+					emit_fmul_r(REG_FA2, REG_FA0, REG_FA1);
 					break;
 				case IROpcode::DIV:
-					emit_fdiv_s(REG_FA2, REG_FA0, REG_FA1);
+					emit_fdiv_r(REG_FA2, REG_FA0, REG_FA1);
 					break;
 				default:
 					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported vector float operation");
 			}
 
 			// Store result component
-			emit_fsw(REG_FA2, REG_SP, result_offset + component_offset);
+			emit_fsr(REG_FA2, REG_SP, result_offset + component_offset);
 		}
 	}
 
@@ -3215,6 +3228,88 @@ void RISCVCodeGen::emit_fmul_s(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 void RISCVCodeGen::emit_fdiv_s(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 	// FDIV.S: Single-precision FP divide
 	emit_r_type(0x53, rd, 0, rs1, rs2, 0x0C);
+}
+
+void RISCVCodeGen::emit_fmv_s(uint8_t rd, uint8_t rs) {
+	// FMV.S: Single-precision FP move
+	// FSGNJ.S with rs1=rs2 implements move
+	emit_r4_type(0x53, rd, 0x0, rs, rs, 0b00100, 0);
+}
+
+// -= real_t-width floating point =-
+// One set of call sites, two instruction encodings. Everything that touches a
+// real_t component of a Variant (Vector2/3/4, Rect2, Plane, Quaternion, Color)
+// goes through these instead of picking flw/fld or fadd.s/fadd.d directly.
+
+void RISCVCodeGen::emit_flr(uint8_t rd, uint8_t rs1, int32_t offset) {
+	if (m_layout.double_precision) {
+		emit_fld(rd, rs1, offset);
+	} else {
+		emit_flw(rd, rs1, offset);
+	}
+}
+
+void RISCVCodeGen::emit_fsr(uint8_t rs2, uint8_t rs1, int32_t offset) {
+	if (m_layout.double_precision) {
+		emit_fsd(rs2, rs1, offset);
+	} else {
+		emit_fsw(rs2, rs1, offset);
+	}
+}
+
+void RISCVCodeGen::emit_fcvt_d_r(uint8_t rd, uint8_t rs1) {
+	// Widen real_t to the double that Variant::FLOAT always holds. When real_t
+	// already is a double this is at most a register move.
+	if (m_layout.double_precision) {
+		if (rd != rs1) {
+			emit_fmv_d(rd, rs1);
+		}
+	} else {
+		emit_fcvt_d_s(rd, rs1);
+	}
+}
+
+void RISCVCodeGen::emit_fcvt_r_d(uint8_t rd, uint8_t rs1) {
+	// Narrow a double down to real_t. No-op when real_t is a double.
+	if (m_layout.double_precision) {
+		if (rd != rs1) {
+			emit_fmv_d(rd, rs1);
+		}
+	} else {
+		emit_fcvt_s_d(rd, rs1);
+	}
+}
+
+void RISCVCodeGen::emit_fadd_r(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	if (m_layout.double_precision) {
+		emit_fadd_d(rd, rs1, rs2);
+	} else {
+		emit_fadd_s(rd, rs1, rs2);
+	}
+}
+
+void RISCVCodeGen::emit_fsub_r(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	if (m_layout.double_precision) {
+		emit_fsub_d(rd, rs1, rs2);
+	} else {
+		emit_fsub_s(rd, rs1, rs2);
+	}
+}
+
+void RISCVCodeGen::emit_fmul_r(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	if (m_layout.double_precision) {
+		emit_fmul_d(rd, rs1, rs2);
+	} else {
+		emit_fmul_s(rd, rs1, rs2);
+	}
+}
+
+void RISCVCodeGen::emit_fdiv_r(uint8_t rd, uint8_t rs1, uint8_t rs2) {
+	if (m_layout.double_precision) {
+		emit_fdiv_d(rd, rs1, rs2);
+	} else {
+		emit_fdiv_s(rd, rs1, rs2);
+	}
 }
 
 // Sign-extend word to doubleword (addiw rd, rs, 0)

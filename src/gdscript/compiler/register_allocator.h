@@ -248,13 +248,6 @@ private:
 	std::unordered_map<int, std::vector<int>> m_vreg_all_uses;
 	
 	/**
-	 * @brief Size of Variant struct in bytes
-	 * 
-	 * Used to calculate stack offsets when spilling registers.
-	 */
-	static constexpr int VARIANT_SIZE = 24;
-	
-	/**
 	 * @brief Find spill candidate register using Furthest Next Use heuristic
 	 * 
 	 * Selects the virtual register with the furthest next use (or unknown/never

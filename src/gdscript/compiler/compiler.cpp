@@ -90,7 +90,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 
 		if (options.output_elf) {
 			ElfBuilder elf_builder;
-			elf_data = elf_builder.build(ir_program);
+			elf_data = elf_builder.build(ir_program, VariantLayout(options.double_precision));
 		}
 
 		m_error.clear();

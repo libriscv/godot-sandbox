@@ -22,6 +22,7 @@ private:
 	void gen_assign(const AssignStmt* stmt, IRFunction& func);
 	void gen_return(const ReturnStmt* stmt, IRFunction& func);
 	void gen_if(const IfStmt* stmt, IRFunction& func);
+	void gen_match(const MatchStmt* stmt, IRFunction& func);
 	void gen_while(const WhileStmt* stmt, IRFunction& func);
 	void gen_for(const ForStmt* stmt, IRFunction& func);
 	void gen_break(const BreakStmt* stmt, IRFunction& func);
@@ -34,6 +35,7 @@ private:
 	int gen_variable(const VariableExpr* expr, IRFunction& func);
 	int gen_binary(const BinaryExpr* expr, IRFunction& func);
 	int gen_unary(const UnaryExpr* expr, IRFunction& func);
+	int gen_ternary(const TernaryExpr* expr, IRFunction& func);
 	int gen_call(const CallExpr* expr, IRFunction& func);
 	int gen_member_call(const MemberCallExpr* expr, IRFunction& func);
 	int gen_index(const IndexExpr* expr, IRFunction& func);
@@ -101,6 +103,10 @@ private:
 
 	// Track locally defined functions
 	std::unordered_set<std::string> m_local_functions;
+
+	// Signatures of locally defined functions, for default-argument filling.
+	// The Program outlives generate(), so borrowing pointers here is safe.
+	std::unordered_map<std::string, const FunctionDecl*> m_local_signatures;
 
 	// Global variables
 	std::unordered_map<std::string, size_t> m_global_variables; // Maps global name to index

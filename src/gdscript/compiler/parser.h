@@ -23,16 +23,22 @@ private:
 	StmtPtr parse_if_stmt();
 	StmtPtr parse_while_stmt();
 	StmtPtr parse_for_stmt();
+	StmtPtr parse_match_stmt();
 	StmtPtr parse_return_stmt();
 	StmtPtr parse_expr_or_assign_stmt();
 	std::vector<StmtPtr> parse_block();
 
 	// Expression parsing (precedence climbing)
 	ExprPtr parse_expression();
+	ExprPtr parse_ternary();
 	ExprPtr parse_or_expression();
 	ExprPtr parse_and_expression();
 	ExprPtr parse_equality();
 	ExprPtr parse_comparison();
+	ExprPtr parse_bit_or();
+	ExprPtr parse_bit_xor();
+	ExprPtr parse_bit_and();
+	ExprPtr parse_shift();
 	ExprPtr parse_term();
 	ExprPtr parse_factor();
 	ExprPtr parse_unary();

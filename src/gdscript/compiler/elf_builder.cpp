@@ -7,9 +7,9 @@ namespace gdscript {
 
 ElfBuilder::ElfBuilder() {}
 
-std::vector<uint8_t> ElfBuilder::build(const IRProgram& program) {
+std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLayout& layout) {
 	// Generate RISC-V machine code from IR
-	RISCVCodeGen codegen;
+	RISCVCodeGen codegen(layout);
 	std::vector<uint8_t> code = codegen.generate(program);
 	auto func_offsets = codegen.get_function_offsets();
 	auto const_pool = codegen.get_constant_pool();

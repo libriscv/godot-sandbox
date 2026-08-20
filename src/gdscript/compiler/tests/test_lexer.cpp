@@ -1,6 +1,7 @@
 #include "../lexer.h"
 #include <cassert>
 #include <iostream>
+#include <cmath>
 
 using namespace gdscript;
 
@@ -165,6 +166,84 @@ void test_comments() {
 	std::cout << "  ✓ Comments test passed" << std::endl;
 }
 
+void test_bitwise_operators() {
+	Lexer lexer("a & b | c ^ ~d << e >> f\n");
+	auto tokens = lexer.tokenize();
+
+	assert(tokens[1].type == TokenType::BIT_AND);
+	assert(tokens[3].type == TokenType::BIT_OR);
+	assert(tokens[5].type == TokenType::BIT_XOR);
+	assert(tokens[6].type == TokenType::BIT_NOT);
+	assert(tokens[8].type == TokenType::SHIFT_LEFT);
+	assert(tokens[10].type == TokenType::SHIFT_RIGHT);
+
+	std::cout << "  ✓ Bitwise operators test passed" << std::endl;
+}
+
+void test_bitwise_compound_assignment() {
+	Lexer lexer("a &= 1\nb |= 2\nc ^= 3\nd <<= 4\ne >>= 5\n");
+	auto tokens = lexer.tokenize();
+
+	assert(tokens[1].type == TokenType::BIT_AND_ASSIGN);
+	assert(tokens[5].type == TokenType::BIT_OR_ASSIGN);
+	assert(tokens[9].type == TokenType::BIT_XOR_ASSIGN);
+	assert(tokens[13].type == TokenType::SHIFT_LEFT_ASSIGN);
+	assert(tokens[17].type == TokenType::SHIFT_RIGHT_ASSIGN);
+
+	std::cout << "  ✓ Bitwise compound assignment test passed" << std::endl;
+}
+
+void test_logical_operator_aliases() {
+	// '&&', '||' and '!' are accepted as aliases for 'and', 'or' and 'not'
+	Lexer lexer("a && b || !c != d\n");
+	auto tokens = lexer.tokenize();
+
+	assert(tokens[1].type == TokenType::AND);
+	assert(tokens[3].type == TokenType::OR);
+	assert(tokens[4].type == TokenType::NOT);
+	assert(tokens[6].type == TokenType::NOT_EQUAL);
+
+	std::cout << "  ✓ Logical operator aliases test passed" << std::endl;
+}
+
+void test_radix_literals() {
+	Lexer lexer("0xFF 0Xdead_beef 0b1011 0B11\n");
+	auto tokens = lexer.tokenize();
+
+	assert(tokens[0].type == TokenType::INTEGER);
+	assert(std::get<int64_t>(tokens[0].value) == 255);
+	assert(std::get<int64_t>(tokens[1].value) == 0xdeadbeefLL);
+	assert(std::get<int64_t>(tokens[2].value) == 11);
+	assert(std::get<int64_t>(tokens[3].value) == 3);
+
+	std::cout << "  ✓ Radix literals test passed" << std::endl;
+}
+
+void test_numeric_separators_and_exponents() {
+	Lexer lexer("1_000_000 1.5e3 2.5E-3 7e2\n");
+	auto tokens = lexer.tokenize();
+
+	assert(tokens[0].type == TokenType::INTEGER);
+	assert(std::get<int64_t>(tokens[0].value) == 1000000);
+	assert(tokens[1].type == TokenType::FLOAT);
+	assert(std::get<double>(tokens[1].value) == 1500.0);
+	assert(tokens[2].type == TokenType::FLOAT);
+	assert(std::abs(std::get<double>(tokens[2].value) - 0.0025) < 1e-12);
+	assert(tokens[3].type == TokenType::FLOAT);
+	assert(std::get<double>(tokens[3].value) == 700.0);
+
+	std::cout << "  ✓ Numeric separators and exponents test passed" << std::endl;
+}
+
+void test_match_keyword() {
+	Lexer lexer("match x:\n");
+	auto tokens = lexer.tokenize();
+
+	assert(tokens[0].type == TokenType::MATCH);
+
+	std::cout << "  ✓ Match keyword test passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== Running Lexer Tests ===" << std::endl;
 
@@ -177,6 +256,12 @@ int main() {
 		test_keywords();
 		test_string_escapes();
 		test_comments();
+		test_bitwise_operators();
+		test_bitwise_compound_assignment();
+		test_logical_operator_aliases();
+		test_radix_literals();
+		test_numeric_separators_and_exponents();
+		test_match_keyword();
 
 		std::cout << "\n✅ All lexer tests passed!" << std::endl;
 		return 0;

@@ -727,8 +727,8 @@ void test_vector4_operations() {
 // adjusts sp in a way this simple linear walk cannot follow, in which case the caller
 // skips the check rather than reporting a bogus failure.
 static bool check_stack_accesses_in_frame(const std::vector<uint8_t>& code, size_t begin, size_t end,
-		const std::string& what) {
-	static constexpr int VARIANT_SIZE = 24;
+		const std::string& what, const VariantLayout& layout) {
+	const int variant_size = layout.variant_size();
 	static constexpr uint32_t REG_SP = 2;
 	static constexpr uint32_t REG_FP = 8;
 	static constexpr uint32_t RET_INSTR = 0x00008067; // jalr x0, 0(ra)
@@ -779,9 +779,9 @@ static bool check_stack_accesses_in_frame(const std::vector<uint8_t>& code, size
 			if (rd == REG_FP) {
 				continue; // Frame pointer setup: fp = sp + frame_size
 			}
-			// The address of a Variant slot: all 24 bytes of it must be in the frame.
+			// The address of a Variant slot: all of it must be in the frame.
 			const int32_t from_base = sp_delta + imm;
-			if (imm < 0 || from_base + VARIANT_SIZE > frame_size) {
+			if (imm < 0 || from_base + variant_size > frame_size) {
 				std::cerr << "    " << what << ": Variant slot at sp+" << imm
 						  << " (frame base +" << from_base << ") escapes the "
 						  << frame_size << "-byte frame" << std::endl;
@@ -817,7 +817,8 @@ static bool check_stack_accesses_in_frame(const std::vector<uint8_t>& code, size
 
 // Compiles the source with the full pipeline and asserts no function writes outside
 // its own stack frame.
-static void assert_stack_frames_contain_all_slots(const std::string& source, const char* what) {
+static void assert_stack_frames_contain_all_slots(const std::string& source, const char* what,
+		const VariantLayout& layout = VariantLayout()) {
 	Lexer lexer(source);
 	Parser parser(lexer.tokenize());
 	Program program = parser.parse();
@@ -827,7 +828,7 @@ static void assert_stack_frames_contain_all_slots(const std::string& source, con
 	IROptimizer optimizer;
 	optimizer.optimize(ir);
 
-	RISCVCodeGen riscv;
+	RISCVCodeGen riscv(layout);
 	std::vector<uint8_t> code = riscv.generate(ir);
 	assert(code.size() > 0);
 
@@ -843,14 +844,14 @@ static void assert_stack_frames_contain_all_slots(const std::string& source, con
 	for (size_t i = 0; i < funcs.size(); i++) {
 		const size_t begin = funcs[i].first;
 		const size_t end = (i + 1 < funcs.size()) ? funcs[i + 1].first : code.size();
-		escaped |= check_stack_accesses_in_frame(code, begin, end, std::string(what) + "/" + funcs[i].second);
+		escaped |= check_stack_accesses_in_frame(code, begin, end, std::string(what) + "/" + funcs[i].second, layout);
 	}
 	assert(!escaped);
 }
 
-void test_stack_slots_stay_within_frame() {
-	std::cout << "Testing that Variant stack slots stay within the frame..." << std::endl;
-
+// The frame has to hold whole Variants, so its sizing is layout-dependent: run the
+// whole set against both the 24-byte and the 40-byte (double-precision) Variant.
+static void check_stack_slots_stay_within_frame(const VariantLayout& layout) {
 	// Untyped comparison: the fused compare-and-branch cannot use the native integer
 	// path, so it has to materialize the comparison result as a Variant. That scratch
 	// Variant used to be allocated after the frame had already been sized, which put
@@ -860,7 +861,7 @@ void test_stack_slots_stay_within_frame() {
 		return n
 	return untyped_fibonacci(n - 1) + untyped_fibonacci(n - 2)
 )",
-			"untyped fibonacci");
+			"untyped fibonacci", layout);
 
 	// Untyped comparisons and arithmetic against immediates both need a scratch Variant
 	// for the immediate operand.
@@ -873,13 +874,13 @@ void test_stack_slots_stay_within_frame() {
 		a = a + 1
 	return [c, d, e, f, a]
 )",
-			"untyped ops");
+			"untyped ops", layout);
 
 	// Negation builds a zero Variant to subtract from.
 	assert_stack_frames_contain_all_slots(R"(func negate(a):
 	return -a
 )",
-			"negation");
+			"negation", layout);
 
 	// Calls shuffle arguments through extra stack space below the frame.
 	assert_stack_frames_contain_all_slots(R"(func callee(a, b, c):
@@ -890,7 +891,14 @@ void test_stack_slots_stay_within_frame() {
 func caller(x):
 	return callee(x, x - 1, x + 1)
 )",
-			"calls");
+			"calls", layout);
+}
+
+void test_stack_slots_stay_within_frame() {
+	std::cout << "Testing that Variant stack slots stay within the frame..." << std::endl;
+
+	check_stack_slots_stay_within_frame(VariantLayout(false));
+	check_stack_slots_stay_within_frame(VariantLayout(true));
 
 	std::cout << "  ✓ Stack slots stay within frame test passed" << std::endl;
 }

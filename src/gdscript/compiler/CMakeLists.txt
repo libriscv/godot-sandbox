@@ -6,6 +6,14 @@ project(gdscript_compiler)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Godot can be built with real_t = double, which widens every real_t-based
+# Variant payload (vectors, Rect2, Plane, Quaternion, Color) and grows the
+# Variant itself from 24 to 40 bytes. The generated code has to match the host,
+# so the default comes from the build. It stays overridable at run time through
+# CompilerOptions::double_precision.
+# No-op if a parent project (the sandbox API, godot-cpp) already declared it.
+option(DOUBLE_PRECISION "Enable double precision real_t" OFF)
+
 # Compiler sources
 set(COMPILER_SOURCES
     compiler_exception.cpp
@@ -25,6 +33,12 @@ set(COMPILER_SOURCES
 # Build as library
 add_library(gdscript_compiler STATIC ${COMPILER_SOURCES})
 target_include_directories(gdscript_compiler PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+if (DOUBLE_PRECISION OR GODOTCPP_PRECISION STREQUAL "double")
+	# PUBLIC: the default in CompilerOptions is a header-inline value, so every
+	# translation unit that includes compiler.h has to agree on it.
+	target_compile_definitions(gdscript_compiler PUBLIC DOUBLE_PRECISION_REAL_T)
+endif()
 
 # Build demo executable
 add_executable(gdscript_compiler_test test_compiler.cpp)
@@ -64,16 +78,17 @@ if (BUILD_TESTING)
 	add_gdscript_test(test_compilation tests/test_compilation.cpp)
 	add_gdscript_test(test_constant_pool tests/test_constant_pool.cpp)
 	add_gdscript_test(test_ir_optimizer tests/test_ir_optimizer.cpp)
+	add_gdscript_test(test_double_precision tests/test_double_precision.cpp)
 
 	# Run all tests target
 	add_custom_target(run_tests
 		COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-		DEPENDS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer
+		DEPENDS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision
 		COMMENT "Running all GDScript compiler tests"
 	)
 
 	# Install test targets (only when BUILD_TESTING is ON)
-	install(TARGETS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer
+	install(TARGETS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision
 	        RUNTIME DESTINATION bin)
 endif()
 

@@ -25,6 +25,7 @@ const char* token_type_name(TokenType type) {
 		case TokenType::TRUE: return "TRUE";
 		case TokenType::FALSE: return "FALSE";
 		case TokenType::NULL_VAL: return "NULL";
+		case TokenType::MATCH: return "MATCH";
 		case TokenType::PLUS: return "PLUS";
 		case TokenType::MINUS: return "MINUS";
 		case TokenType::MULTIPLY: return "MULTIPLY";
@@ -36,6 +37,17 @@ const char* token_type_name(TokenType type) {
 		case TokenType::MULTIPLY_ASSIGN: return "MULTIPLY_ASSIGN";
 		case TokenType::DIVIDE_ASSIGN: return "DIVIDE_ASSIGN";
 		case TokenType::MODULO_ASSIGN: return "MODULO_ASSIGN";
+		case TokenType::BIT_AND: return "BIT_AND";
+		case TokenType::BIT_OR: return "BIT_OR";
+		case TokenType::BIT_XOR: return "BIT_XOR";
+		case TokenType::BIT_NOT: return "BIT_NOT";
+		case TokenType::SHIFT_LEFT: return "SHIFT_LEFT";
+		case TokenType::SHIFT_RIGHT: return "SHIFT_RIGHT";
+		case TokenType::BIT_AND_ASSIGN: return "BIT_AND_ASSIGN";
+		case TokenType::BIT_OR_ASSIGN: return "BIT_OR_ASSIGN";
+		case TokenType::BIT_XOR_ASSIGN: return "BIT_XOR_ASSIGN";
+		case TokenType::SHIFT_LEFT_ASSIGN: return "SHIFT_LEFT_ASSIGN";
+		case TokenType::SHIFT_RIGHT_ASSIGN: return "SHIFT_RIGHT_ASSIGN";
 		case TokenType::EQUAL: return "EQUAL";
 		case TokenType::NOT_EQUAL: return "NOT_EQUAL";
 		case TokenType::LESS: return "LESS";

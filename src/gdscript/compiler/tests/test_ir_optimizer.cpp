@@ -7,6 +7,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 using namespace gdscript;
 
@@ -423,6 +424,56 @@ func test():
 	std::cout << "  ✓ Dead code elimination test passed" << std::endl;
 }
 
+void test_dead_code_elimination_keeps_stored_globals() {
+	std::cout << "Testing that dead code elimination keeps globals' source registers..." << std::endl;
+
+	// Regression test: STORE_GLOBAL reads its value from operand 1, but the
+	// liveness analysis used to only consider a whitelist of opcodes. Because
+	// STORE_GLOBAL was not on it, the LOAD_IMM defining the stored register
+	// looked dead and was deleted, leaving the global initialised from an
+	// uninitialised register.
+	std::string source = R"(
+var g = 0
+var h = 0
+func test():
+	g = 5
+	h = 7
+)";
+
+	IRFunction func = compile_to_ir(source);
+
+	IROptimizer optimizer;
+	optimizer.optimize_function(func);
+
+	// Collect every register that a STORE_GLOBAL reads
+	std::vector<int> stored_regs;
+	for (const auto& instr : func.instructions) {
+		if (instr.opcode == IROpcode::STORE_GLOBAL && instr.operands.size() > 1 &&
+		    instr.operands[1].type == IRValue::Type::REGISTER) {
+			stored_regs.push_back(std::get<int>(instr.operands[1].value));
+		}
+	}
+	assert(stored_regs.size() == 2);
+
+	// Each of them must still be defined before it is stored
+	for (int reg : stored_regs) {
+		bool defined = false;
+		for (const auto& instr : func.instructions) {
+			if (instr.opcode == IROpcode::STORE_GLOBAL) {
+				continue;
+			}
+			if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER &&
+			    std::get<int>(instr.operands[0].value) == reg) {
+				defined = true;
+				break;
+			}
+		}
+		assert(defined && "STORE_GLOBAL reads a register that is never defined");
+	}
+
+	std::cout << "  ✓ Dead code elimination keeps stored globals test passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== IR Optimizer Peephole Pattern Tests ===\n" << std::endl;
 
@@ -455,6 +506,9 @@ int main() {
 		std::cout << std::endl;
 
 		test_dead_code_elimination();
+		std::cout << std::endl;
+
+		test_dead_code_elimination_keeps_stored_globals();
 		std::cout << std::endl;
 
 		test_combined_optimizations();

@@ -112,6 +112,8 @@ int main(int argc, char** argv)
 	bool verbose = false;
 	bool no_optimize = false;
 	bool show_codegen = false;
+	// Which real_t the generated code targets; defaults to this build's
+	bool double_precision = native_variant_layout().double_precision;
 
 	// Parse arguments
 	for (int i = 1; i < argc; i++) {
@@ -122,6 +124,10 @@ int main(int argc, char** argv)
 			no_optimize = true;
 		} else if (arg == "--codegen" || arg == "-c") {
 			show_codegen = true;
+		} else if (arg == "--double-precision") {
+			double_precision = true;
+		} else if (arg == "--single-precision") {
+			double_precision = false;
 		} else if (source.empty()) {
 			source = arg;
 		}
@@ -242,6 +248,12 @@ int main(int argc, char** argv)
 			}
 			std::cout << ") ===" << std::endl;
 			std::cout << "max_registers: " << func.max_registers << std::endl;
+			{
+				const VariantLayout layout(double_precision);
+				std::cout << "real_t: " << (layout.double_precision ? "double" : "float")
+						  << " (sizeof(Variant) = " << layout.variant_size() << ", slot stride = "
+						  << layout.variant_size() << " bytes)" << std::endl;
+			}
 			std::cout << std::endl;
 
 			// Initialize register allocator to simulate codegen

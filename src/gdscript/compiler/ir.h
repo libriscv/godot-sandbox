@@ -42,6 +42,14 @@ enum class IROpcode {
 	OR,              // Logical OR
 	NOT,             // Logical NOT
 
+	// Bitwise
+	BIT_AND,         // &
+	BIT_OR,          // |
+	BIT_XOR,         // ^
+	BIT_NOT,         // ~
+	SHL,             // <<
+	SHR,             // >>
+
 	// Control flow
 	LABEL,           // Target for branches
 	JUMP,            // Unconditional jump

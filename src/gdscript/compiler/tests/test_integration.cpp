@@ -1160,6 +1160,202 @@ func fib(n):
 	std::cout << "  ✓ Recursive function calls passed" << std::endl;
 }
 
+void test_bitwise_operators() {
+	std::cout << "Testing bitwise operators..." << std::endl;
+
+	std::string source = R"(
+func bit_and(a, b):
+	return a & b
+
+func bit_or(a, b):
+	return a | b
+
+func bit_xor(a, b):
+	return a ^ b
+
+func shift_left(a, b):
+	return a << b
+
+func shift_right(a, b):
+	return a >> b
+
+func bit_not(a):
+	return ~a
+)";
+
+	assert(execute_int(source, "bit_and", {int64_t(12), int64_t(10)}) == 8);
+	assert(execute_int(source, "bit_or", {int64_t(12), int64_t(3)}) == 15);
+	assert(execute_int(source, "bit_xor", {int64_t(12), int64_t(10)}) == 6);
+	assert(execute_int(source, "shift_left", {int64_t(1), int64_t(10)}) == 1024);
+	assert(execute_int(source, "shift_right", {int64_t(1024), int64_t(3)}) == 128);
+	assert(execute_int(source, "shift_right", {int64_t(-8), int64_t(1)}) == -4); // Arithmetic shift
+	assert(execute_int(source, "bit_not", {int64_t(5)}) == -6);
+
+	std::cout << "  ✓ Bitwise operators test passed" << std::endl;
+}
+
+void test_bitwise_precedence() {
+	std::cout << "Testing bitwise operator precedence..." << std::endl;
+
+	// Bitwise operators bind tighter than comparisons, and among themselves
+	// the order is (tightest first): shifts, &, ^, |
+	std::string source = R"(
+func shift_before_or(a):
+	return a | 1 << 4
+
+func and_before_xor(a):
+	return a ^ 12 & 10
+
+func xor_before_or(a):
+	return a | 12 ^ 10
+
+func bitwise_before_comparison(a):
+	if a | 2 == 3:
+		return 1
+	return 0
+)";
+
+	assert(execute_int(source, "shift_before_or", {int64_t(3)}) == (3 | (1 << 4)));
+	assert(execute_int(source, "and_before_xor", {int64_t(1)}) == (1 ^ (12 & 10)));
+	assert(execute_int(source, "xor_before_or", {int64_t(1)}) == (1 | (12 ^ 10)));
+	assert(execute_int(source, "bitwise_before_comparison", {int64_t(1)}) == 1);
+
+	std::cout << "  ✓ Bitwise precedence test passed" << std::endl;
+}
+
+void test_bitwise_compound_assignment() {
+	std::cout << "Testing bitwise compound assignment..." << std::endl;
+
+	std::string source = R"(
+func main():
+	var a = 1
+	a <<= 4
+	a |= 3
+	a &= 30
+	a ^= 1
+	return a
+)";
+
+	// 1 << 4 == 16, | 3 == 19, & 30 == 18, ^ 1 == 19
+	assert(execute_int(source) == 19);
+
+	std::cout << "  ✓ Bitwise compound assignment test passed" << std::endl;
+}
+
+void test_radix_literals() {
+	std::cout << "Testing hexadecimal and binary literals..." << std::endl;
+
+	std::string source = R"(
+func hex():
+	return 0xFF
+
+func hex_separated():
+	return 0xDEAD_BEEF
+
+func binary():
+	return 0b1011
+
+func separated():
+	return 1_000_000
+)";
+
+	assert(execute_int(source, "hex") == 255);
+	assert(execute_int(source, "hex_separated") == 0xDEADBEEFLL);
+	assert(execute_int(source, "binary") == 11);
+	assert(execute_int(source, "separated") == 1000000);
+
+	std::cout << "  ✓ Radix literals test passed" << std::endl;
+}
+
+void test_ternary_expression() {
+	std::cout << "Testing ternary conditional expressions..." << std::endl;
+
+	std::string source = R"(
+func pick(a):
+	return 10 if a else 20
+
+func nested(a):
+	return 1 if a == 1 else 2 if a == 2 else 3
+
+func in_expression(a):
+	return 1 + (10 if a else 20)
+)";
+
+	assert(execute_int(source, "pick", {int64_t(1)}) == 10);
+	assert(execute_int(source, "pick", {int64_t(0)}) == 20);
+	assert(execute_int(source, "nested", {int64_t(1)}) == 1);
+	assert(execute_int(source, "nested", {int64_t(2)}) == 2);
+	assert(execute_int(source, "nested", {int64_t(9)}) == 3);
+	assert(execute_int(source, "in_expression", {int64_t(1)}) == 11);
+
+	std::cout << "  ✓ Ternary expression test passed" << std::endl;
+}
+
+void test_match_statement() {
+	std::cout << "Testing match statements..." << std::endl;
+
+	std::string source = R"(
+func classify(a):
+	match a:
+		1:
+			return 10
+		2:
+			return 20
+		_:
+			return 30
+
+func multi_pattern(a):
+	match a:
+		1, 2, 3:
+			return 100
+		_:
+			return 200
+
+func no_wildcard(a):
+	var r = 0
+	match a:
+		1:
+			r = 1
+		2:
+			r = 2
+	return r
+)";
+
+	assert(execute_int(source, "classify", {int64_t(1)}) == 10);
+	assert(execute_int(source, "classify", {int64_t(2)}) == 20);
+	assert(execute_int(source, "classify", {int64_t(9)}) == 30);
+	assert(execute_int(source, "multi_pattern", {int64_t(3)}) == 100);
+	assert(execute_int(source, "multi_pattern", {int64_t(4)}) == 200);
+	assert(execute_int(source, "no_wildcard", {int64_t(2)}) == 2);
+	assert(execute_int(source, "no_wildcard", {int64_t(9)}) == 0); // No branch taken
+
+	std::cout << "  ✓ Match statement test passed" << std::endl;
+}
+
+void test_default_arguments() {
+	std::cout << "Testing default parameter values..." << std::endl;
+
+	std::string source = R"(
+func add(a, b = 5, c = 10):
+	return a + b + c
+
+func none_given():
+	return add(1)
+
+func one_given():
+	return add(1, 2)
+
+func all_given():
+	return add(1, 2, 3)
+)";
+
+	assert(execute_int(source, "none_given") == 16);
+	assert(execute_int(source, "one_given") == 13);
+	assert(execute_int(source, "all_given") == 6);
+
+	std::cout << "  ✓ Default arguments test passed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== Running Integration Tests ===" << std::endl;
 	std::cout << "These tests compile GDScript and execute it via IR interpreter\n" << std::endl;
@@ -1209,6 +1405,15 @@ int main() {
 		test_conditional_complexity();
 		test_real_world_algorithms();
 		test_loop_counter_variations();
+
+		std::cout << "\n=== Operator and Statement Tests ===" << std::endl;
+		test_bitwise_operators();
+		test_bitwise_precedence();
+		test_bitwise_compound_assignment();
+		test_radix_literals();
+		test_ternary_expression();
+		test_match_statement();
+		test_default_arguments();
 
 		std::cout << "\n=== Function Call Tests ===" << std::endl;
 		test_local_function_calls();

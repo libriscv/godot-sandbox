@@ -106,10 +106,13 @@ CodeGenerator::CodeGenerator() {}
 IRProgram CodeGenerator::generate(const Program& program) {
 	IRProgram ir_program;
 
-	// Collect all locally defined function names
+	// Collect all locally defined function names, and remember their
+	// signatures so that call sites can supply missing default arguments.
 	m_local_functions.clear();
+	m_local_signatures.clear();
 	for (const auto& func : program.functions) {
 		m_local_functions.insert(func.name);
+		m_local_signatures[func.name] = &func;
 	}
 
 	// Process global variables
@@ -256,6 +259,8 @@ void CodeGenerator::gen_stmt(const Stmt* stmt, IRFunction& func) {
 		gen_break(nullptr, func);
 	} else if (dynamic_cast<const ContinueStmt*>(stmt)) {
 		gen_continue(nullptr, func);
+	} else if (auto* match_stmt = dynamic_cast<const MatchStmt*>(stmt)) {
+		gen_match(match_stmt, func);
 	} else if (dynamic_cast<const PassStmt*>(stmt)) {
 		// No-op
 	} else if (auto* expr_stmt = dynamic_cast<const ExprStmt*>(stmt)) {
@@ -433,6 +438,59 @@ void CodeGenerator::gen_if(const IfStmt* stmt, IRFunction& func) {
 	}
 
 	func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+}
+
+void CodeGenerator::gen_match(const MatchStmt* stmt, IRFunction& func) {
+	// Lowered to a chain of equality tests against the subject, which is
+	// evaluated exactly once:
+	//
+	//     match x:      ->    t = x
+	//         1, 2:           if t == 1 or t == 2: <body>; goto end
+	//             body        ...
+	//         _:              <wildcard body>
+	//             body    end:
+	std::string end_label = make_label("endmatch");
+
+	int subject_reg = gen_expr(stmt->subject.get(), func);
+
+	for (const auto& branch : stmt->branches) {
+		if (branch.patterns.empty()) {
+			// Wildcard '_': always taken, and the parser guarantees it is last
+			push_scope();
+			for (const auto& s : branch.body) {
+				gen_stmt(s.get(), func);
+			}
+			pop_scope();
+			break;
+		}
+
+		std::string body_label = make_label("match_body");
+		std::string next_label = make_label("match_next");
+
+		// Jump to the body when any of this branch's patterns compares equal
+		for (const auto& pattern : branch.patterns) {
+			int pattern_reg = gen_expr(pattern.get(), func);
+			IRInstruction cmp(IROpcode::CMP_EQ, IRValue::reg(pattern_reg),
+			                  IRValue::reg(subject_reg), IRValue::reg(pattern_reg));
+			func.instructions.push_back(cmp);
+			func.instructions.emplace_back(IROpcode::BRANCH_NOT_ZERO, IRValue::reg(pattern_reg), IRValue::label(body_label));
+			free_register(pattern_reg);
+		}
+		func.instructions.emplace_back(IROpcode::JUMP, IRValue::label(next_label));
+
+		func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(body_label));
+		push_scope();
+		for (const auto& s : branch.body) {
+			gen_stmt(s.get(), func);
+		}
+		pop_scope();
+		func.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
+
+		func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(next_label));
+	}
+
+	func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	free_register(subject_reg);
 }
 
 void CodeGenerator::gen_while(const WhileStmt* stmt, IRFunction& func) {
@@ -771,6 +829,8 @@ int CodeGenerator::gen_expr(const Expr* expr, IRFunction& func) {
 		return gen_binary(bin, func);
 	} else if (auto* un = dynamic_cast<const UnaryExpr*>(expr)) {
 		return gen_unary(un, func);
+	} else if (auto* ternary = dynamic_cast<const TernaryExpr*>(expr)) {
+		return gen_ternary(ternary, func);
 	} else if (auto* call = dynamic_cast<const CallExpr*>(expr)) {
 		return gen_call(call, func);
 	} else if (auto* member = dynamic_cast<const MemberCallExpr*>(expr)) {
@@ -897,6 +957,11 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, IRFunction& func) {
 	                      expr->op == BinaryExpr::Op::MUL ||
 	                      expr->op == BinaryExpr::Op::DIV ||
 	                      expr->op == BinaryExpr::Op::MOD);
+	bool is_bitwise = (expr->op == BinaryExpr::Op::BIT_AND ||
+	                   expr->op == BinaryExpr::Op::BIT_OR ||
+	                   expr->op == BinaryExpr::Op::BIT_XOR ||
+	                   expr->op == BinaryExpr::Op::SHL ||
+	                   expr->op == BinaryExpr::Op::SHR);
 	bool is_comparison = (expr->op == BinaryExpr::Op::EQ ||
 	                      expr->op == BinaryExpr::Op::NEQ ||
 	                      expr->op == BinaryExpr::Op::LT ||
@@ -911,7 +976,14 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, IRFunction& func) {
 	// When types don't match (e.g. INT + FLOAT), we leave result_type as NONE
 	// and fall back to VEVAL syscall which handles type coercion correctly
 	IRInstruction::TypeHint result_type = IRInstruction::TypeHint_NONE;
-	if (is_arithmetic || is_comparison) {
+	if (is_bitwise) {
+		// Bitwise operators are integer-only in GDScript. Only take the native
+		// path when both operands are known to be integers; otherwise fall
+		// back to VEVAL, which reports the type error at runtime.
+		if (left_type == Variant::INT && right_type == Variant::INT) {
+			result_type = Variant::INT;
+		}
+	} else if (is_arithmetic || is_comparison) {
 		if (left_type == Variant::INT && right_type == Variant::INT) {
 			result_type = Variant::INT;
 		} else if (left_type == Variant::FLOAT && right_type == Variant::FLOAT) {
@@ -941,6 +1013,11 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, IRFunction& func) {
 		case BinaryExpr::Op::GTE: op = IROpcode::CMP_GTE; break;
 		case BinaryExpr::Op::AND: op = IROpcode::AND; break;
 		case BinaryExpr::Op::OR: op = IROpcode::OR; break;
+		case BinaryExpr::Op::BIT_AND: op = IROpcode::BIT_AND; break;
+		case BinaryExpr::Op::BIT_OR: op = IROpcode::BIT_OR; break;
+		case BinaryExpr::Op::BIT_XOR: op = IROpcode::BIT_XOR; break;
+		case BinaryExpr::Op::SHL: op = IROpcode::SHL; break;
+		case BinaryExpr::Op::SHR: op = IROpcode::SHR; break;
 		default:
 			throw CompilerException(ErrorType::CODEGEN_ERROR, "Unknown binary operator");
 	}
@@ -963,10 +1040,60 @@ int CodeGenerator::gen_unary(const UnaryExpr* expr, IRFunction& func) {
 	int operand_reg = gen_expr(expr->operand.get(), func);
 	int result_reg = alloc_register();
 
-	IROpcode op = (expr->op == UnaryExpr::Op::NEG) ? IROpcode::NEG : IROpcode::NOT;
-	func.instructions.emplace_back(op, IRValue::reg(result_reg), IRValue::reg(operand_reg));
+	IROpcode op;
+	switch (expr->op) {
+		case UnaryExpr::Op::NEG: op = IROpcode::NEG; break;
+		case UnaryExpr::Op::NOT: op = IROpcode::NOT; break;
+		case UnaryExpr::Op::BIT_NOT: op = IROpcode::BIT_NOT; break;
+		default:
+			throw CompilerException(ErrorType::CODEGEN_ERROR, "Unknown unary operator");
+	}
+
+	IRInstruction instr(op, IRValue::reg(result_reg), IRValue::reg(operand_reg));
+	if (expr->op == UnaryExpr::Op::BIT_NOT && get_register_type(operand_reg) == Variant::INT) {
+		// ~int is always an int, so the native path can be used
+		instr.type_hint = Variant::INT;
+		set_register_type(result_reg, Variant::INT);
+	}
+	func.instructions.push_back(instr);
 
 	free_register(operand_reg);
+	return result_reg;
+}
+
+int CodeGenerator::gen_ternary(const TernaryExpr* expr, IRFunction& func) {
+	// <true_value> if <condition> else <false_value>
+	//
+	// Only the taken branch is evaluated, so this is lowered to real control
+	// flow rather than evaluating both sides.
+	std::string else_label = make_label("ternary_else");
+	std::string end_label = make_label("ternary_end");
+
+	int result_reg = alloc_register();
+
+	int cond_reg = gen_expr(expr->condition.get(), func);
+	func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(cond_reg), IRValue::label(else_label));
+	free_register(cond_reg);
+
+	int true_reg = gen_expr(expr->true_value.get(), func);
+	func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg), IRValue::reg(true_reg));
+	IRInstruction::TypeHint true_type = get_register_type(true_reg);
+	free_register(true_reg);
+	func.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
+
+	func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(else_label));
+	int false_reg = gen_expr(expr->false_value.get(), func);
+	func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg), IRValue::reg(false_reg));
+	IRInstruction::TypeHint false_type = get_register_type(false_reg);
+	free_register(false_reg);
+
+	func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+
+	// The result type is only known when both arms agree on it
+	if (true_type != IRInstruction::TypeHint_NONE && true_type == false_type) {
+		set_register_type(result_reg, true_type);
+	}
+
 	return result_reg;
 }
 
@@ -1025,6 +1152,27 @@ int CodeGenerator::gen_call(const CallExpr* expr, IRFunction& func) {
 
 	// Check if this is a call to a locally defined function
 	if (is_local_function(expr->function_name)) {
+		// Fill in default values for any arguments the call site omitted.
+		// The Sandbox ABI does not pass an argument count to the guest, so a
+		// callee cannot tell which arguments it actually received; defaults
+		// therefore have to be materialized here, at the call site.
+		auto sig = m_local_signatures.find(expr->function_name);
+		if (sig != m_local_signatures.end()) {
+			const auto& params = sig->second->parameters;
+			if (arg_regs.size() > params.size()) {
+				throw CompilerException(ErrorType::CODEGEN_ERROR,
+					"Too many arguments to '" + expr->function_name + "': expected at most " +
+					std::to_string(params.size()) + ", got " + std::to_string(arg_regs.size()));
+			}
+			for (size_t i = arg_regs.size(); i < params.size(); i++) {
+				if (!params[i].default_value) {
+					throw CompilerException(ErrorType::CODEGEN_ERROR,
+						"Missing argument '" + params[i].name + "' in call to '" + expr->function_name + "'");
+				}
+				arg_regs.push_back(gen_expr(params[i].default_value.get(), func));
+			}
+		}
+
 		// Local function call - use regular CALL instruction
 		int result_reg = alloc_register();
 

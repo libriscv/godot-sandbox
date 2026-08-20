@@ -29,6 +29,7 @@ enum class TokenType {
 	TRUE,
 	FALSE,
 	NULL_VAL,
+	MATCH,
 
 	// Operators
 	PLUS,        // +
@@ -42,6 +43,17 @@ enum class TokenType {
 	MULTIPLY_ASSIGN, // *=
 	DIVIDE_ASSIGN,  // /=
 	MODULO_ASSIGN,  // %=
+	BIT_AND,        // &
+	BIT_OR,         // |
+	BIT_XOR,        // ^
+	BIT_NOT,        // ~
+	SHIFT_LEFT,     // <<
+	SHIFT_RIGHT,    // >>
+	BIT_AND_ASSIGN,     // &=
+	BIT_OR_ASSIGN,      // |=
+	BIT_XOR_ASSIGN,     // ^=
+	SHIFT_LEFT_ASSIGN,  // <<=
+	SHIFT_RIGHT_ASSIGN, // >>=
 	EQUAL,       // ==
 	NOT_EQUAL,   // !=
 	LESS,        // <

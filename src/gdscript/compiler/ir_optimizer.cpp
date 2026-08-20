@@ -138,7 +138,12 @@ void IROptimizer::constant_folding(IRFunction& func) {
 			case IROpcode::SUB:
 			case IROpcode::MUL:
 			case IROpcode::DIV:
-			case IROpcode::MOD: {
+			case IROpcode::MOD:
+			case IROpcode::BIT_AND:
+			case IROpcode::BIT_OR:
+			case IROpcode::BIT_XOR:
+			case IROpcode::SHL:
+			case IROpcode::SHR: {
 				// Check that all operands are registers before attempting constant folding
 				if (instr.operands.size() < 3 ||
 				    instr.operands[0].type != IRValue::Type::REGISTER ||
@@ -430,6 +435,32 @@ bool IROptimizer::try_fold_binary_op(IROpcode op, IRInstruction::TypeHint type_h
 				if (rhs.int_value == 0) return false; // Don't fold modulo by zero
 				result.type = ConstantValue::Type::INT;
 				result.int_value = lhs.int_value % rhs.int_value;
+				return true;
+
+			case IROpcode::BIT_AND:
+				result.type = ConstantValue::Type::INT;
+				result.int_value = lhs.int_value & rhs.int_value;
+				return true;
+
+			case IROpcode::BIT_OR:
+				result.type = ConstantValue::Type::INT;
+				result.int_value = lhs.int_value | rhs.int_value;
+				return true;
+
+			case IROpcode::BIT_XOR:
+				result.type = ConstantValue::Type::INT;
+				result.int_value = lhs.int_value ^ rhs.int_value;
+				return true;
+
+			case IROpcode::SHL:
+				// Shift counts are masked to 0-63 to match the RISC-V backend
+				result.type = ConstantValue::Type::INT;
+				result.int_value = static_cast<int64_t>(static_cast<uint64_t>(lhs.int_value) << (rhs.int_value & 63));
+				return true;
+
+			case IROpcode::SHR:
+				result.type = ConstantValue::Type::INT;
+				result.int_value = lhs.int_value >> (rhs.int_value & 63);
 				return true;
 
 			default:
@@ -982,86 +1013,54 @@ void IROptimizer::eliminate_dead_code(IRFunction& func) {
 std::unordered_set<int> IROptimizer::find_live_registers(const IRFunction& func) {
 	std::unordered_set<int> live;
 
-	// Mark all read registers as live
+	// Mark every register that is READ by some instruction as live.
+	//
+	// This must be conservative: any register operand we fail to account for
+	// here can have its defining instruction deleted by eliminate_dead_code(),
+	// silently miscompiling the program. So instead of whitelisting the
+	// opcodes that read their operands, we assume EVERY instruction reads all
+	// of its register operands except operand 0, which is the destination for
+	// the vast majority of opcodes. The handful of opcodes that also read
+	// operand 0 are listed in reads_destination_operand().
 	for (const auto& instr : func.instructions) {
-		// Handle all branch instructions
-		if (is_branch_op(instr.opcode)) {
-			// BRANCH_ZERO/NOT_ZERO: first operand is the register to check
-			// Fused branches (EQ/NEQ/LT/etc): first TWO operands are registers to compare
-			size_t num_reg_operands = (instr.opcode == IROpcode::BRANCH_ZERO ||
-			                             instr.opcode == IROpcode::BRANCH_NOT_ZERO) ? 1 : 2;
-			for (size_t i = 0; i < num_reg_operands && i < instr.operands.size(); i++) {
-				if (instr.operands[i].type == IRValue::Type::REGISTER) {
-					live.insert(std::get<int>(instr.operands[i].value));
-				}
-			}
+		// RETURN with no operands implicitly returns r0
+		if (instr.opcode == IROpcode::RETURN && instr.operands.empty()) {
+			live.insert(0);
 			continue;
 		}
 
-		switch (instr.opcode) {
-
-			// Instructions that read from operands (not just write)
-			case IROpcode::MOVE:
-			case IROpcode::ADD:
-			case IROpcode::SUB:
-			case IROpcode::MUL:
-			case IROpcode::DIV:
-			case IROpcode::MOD:
-			case IROpcode::NEG:
-			case IROpcode::NOT:
-			case IROpcode::AND:     // Logical AND reads operands
-			case IROpcode::OR:      // Logical OR reads operands
-			case IROpcode::CMP_EQ:
-			case IROpcode::CMP_NEQ:
-			case IROpcode::CMP_LT:
-			case IROpcode::CMP_LTE:
-			case IROpcode::CMP_GT:
-			case IROpcode::CMP_GTE:
-			case IROpcode::VCALL:
-			case IROpcode::VGET:
-			case IROpcode::VSET:
-			case IROpcode::CALL:
-			case IROpcode::CALL_SYSCALL:
-			// Inline primitive construction - these read from their argument registers
-			case IROpcode::MAKE_VECTOR2:
-			case IROpcode::MAKE_VECTOR3:
-			case IROpcode::MAKE_VECTOR4:
-			case IROpcode::MAKE_VECTOR2I:
-			case IROpcode::MAKE_VECTOR3I:
-			case IROpcode::MAKE_VECTOR4I:
-			case IROpcode::MAKE_COLOR:
-			case IROpcode::MAKE_RECT2:
-			case IROpcode::MAKE_RECT2I:
-			case IROpcode::MAKE_PLANE:
-			case IROpcode::MAKE_ARRAY:
-			case IROpcode::MAKE_DICTIONARY:
-			// Inline member access - these read from the object register
-			case IROpcode::VGET_INLINE:
-			case IROpcode::VSET_INLINE:
-				// Mark all register operands (except first for most ops) as live
-				for (size_t i = 1; i < instr.operands.size(); i++) {
-					if (instr.operands[i].type == IRValue::Type::REGISTER) {
-						live.insert(std::get<int>(instr.operands[i].value));
-					}
-				}
-				break;
-
-			case IROpcode::RETURN:
-				// Return reads from register 0
-				if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-					live.insert(std::get<int>(instr.operands[0].value));
-				} else {
-					// Implicit return of r0
-					live.insert(0);
-				}
-				break;
-
-			default:
-				break;
+		const size_t first = reads_destination_operand(instr.opcode) ? 0 : 1;
+		for (size_t i = first; i < instr.operands.size(); i++) {
+			if (instr.operands[i].type == IRValue::Type::REGISTER) {
+				live.insert(std::get<int>(instr.operands[i].value));
+			}
 		}
 	}
 
 	return live;
+}
+
+bool IROptimizer::reads_destination_operand(IROpcode op) {
+	// Opcodes whose operand 0 is a source rather than a destination register
+	switch (op) {
+		// Branches test their first operand(s)
+		case IROpcode::BRANCH_ZERO:
+		case IROpcode::BRANCH_NOT_ZERO:
+		case IROpcode::BRANCH_EQ:
+		case IROpcode::BRANCH_NEQ:
+		case IROpcode::BRANCH_LT:
+		case IROpcode::BRANCH_LTE:
+		case IROpcode::BRANCH_GT:
+		case IROpcode::BRANCH_GTE:
+		// RETURN reads the value it returns
+		case IROpcode::RETURN:
+		// VSET/VSET_INLINE write into the object held by operand 0
+		case IROpcode::VSET:
+		case IROpcode::VSET_INLINE:
+			return true;
+		default:
+			return false;
+	}
 }
 
 bool IROptimizer::is_register_used_after(const IRFunction& func, int reg, size_t instr_idx) {
@@ -1093,8 +1092,14 @@ bool IROptimizer::is_register_used_after(const IRFunction& func, int reg, size_t
 			case IROpcode::MUL:
 			case IROpcode::DIV:
 			case IROpcode::MOD:
+			case IROpcode::BIT_AND:
+			case IROpcode::BIT_OR:
+			case IROpcode::BIT_XOR:
+			case IROpcode::SHL:
+			case IROpcode::SHR:
 			case IROpcode::NEG:
 			case IROpcode::NOT:
+			case IROpcode::BIT_NOT:
 			case IROpcode::CMP_EQ:
 			case IROpcode::CMP_NEQ:
 			case IROpcode::CMP_LT:
@@ -1169,7 +1174,13 @@ bool IROptimizer::is_arithmetic_op(IROpcode op) {
 		case IROpcode::MUL:
 		case IROpcode::DIV:
 		case IROpcode::MOD:
+		case IROpcode::BIT_AND:
+		case IROpcode::BIT_OR:
+		case IROpcode::BIT_XOR:
+		case IROpcode::SHL:
+		case IROpcode::SHR:
 		case IROpcode::NEG:
+		case IROpcode::BIT_NOT:
 		case IROpcode::AND:
 		case IROpcode::OR:
 		case IROpcode::CMP_EQ:

@@ -26,6 +26,7 @@ const std::unordered_map<std::string, TokenType> Lexer::keywords = {
 	{"and", TokenType::AND},
 	{"or", TokenType::OR},
 	{"not", TokenType::NOT},
+	{"match", TokenType::MATCH},
 };
 
 Lexer::Lexer(std::string source) : m_source(std::move(source)) {
@@ -97,19 +98,48 @@ void Lexer::scan_token() {
 			break;
 
 		case '!':
-			if (match('=')) {
-				add_token(TokenType::NOT_EQUAL);
-			} else {
-				error("Unexpected character '!'");
-			}
+			// '!' is an alias for 'not', '!=' is inequality
+			add_token(match('=') ? TokenType::NOT_EQUAL : TokenType::NOT);
 			break;
 
 		case '<':
-			add_token(match('=') ? TokenType::LESS_EQUAL : TokenType::LESS);
+			if (match('<')) {
+				add_token(match('=') ? TokenType::SHIFT_LEFT_ASSIGN : TokenType::SHIFT_LEFT);
+			} else {
+				add_token(match('=') ? TokenType::LESS_EQUAL : TokenType::LESS);
+			}
 			break;
 
 		case '>':
-			add_token(match('=') ? TokenType::GREATER_EQUAL : TokenType::GREATER);
+			if (match('>')) {
+				add_token(match('=') ? TokenType::SHIFT_RIGHT_ASSIGN : TokenType::SHIFT_RIGHT);
+			} else {
+				add_token(match('=') ? TokenType::GREATER_EQUAL : TokenType::GREATER);
+			}
+			break;
+
+		case '&':
+			if (match('&')) {
+				add_token(TokenType::AND); // && is an alias for 'and'
+			} else {
+				add_token(match('=') ? TokenType::BIT_AND_ASSIGN : TokenType::BIT_AND);
+			}
+			break;
+
+		case '|':
+			if (match('|')) {
+				add_token(TokenType::OR); // || is an alias for 'or'
+			} else {
+				add_token(match('=') ? TokenType::BIT_OR_ASSIGN : TokenType::BIT_OR);
+			}
+			break;
+
+		case '^':
+			add_token(match('=') ? TokenType::BIT_XOR_ASSIGN : TokenType::BIT_XOR);
+			break;
+
+		case '~':
+			add_token(TokenType::BIT_NOT);
 			break;
 
 		case '"':
@@ -203,25 +233,91 @@ void Lexer::scan_string() {
 }
 
 void Lexer::scan_number() {
-	while (is_digit(peek())) advance();
+	// Radix prefixes: 0x/0X (hex) and 0b/0B (binary). The leading '0' has
+	// already been consumed by scan_token().
+	if (m_source[m_start] == '0' && (peek() == 'x' || peek() == 'X' ||
+	                                 peek() == 'b' || peek() == 'B')) {
+		const bool hex = (peek() == 'x' || peek() == 'X');
+		advance(); // Consume the radix character
 
-	bool is_float = false;
+		std::string digits;
+		while (!is_at_end()) {
+			const char c = peek();
+			if (c == '_') { // Digit separator, e.g. 0xDEAD_BEEF
+				advance();
+				continue;
+			}
+			if (hex ? is_hex_digit(c) : (c == '0' || c == '1')) {
+				digits += advance();
+				continue;
+			}
+			break;
+		}
 
-	// Look for decimal point
-	if (peek() == '.' && is_digit(peek_next())) {
-		is_float = true;
-		advance(); // Consume '.'
-		while (is_digit(peek())) advance();
+		if (digits.empty()) {
+			error(hex ? "Expected hexadecimal digits after '0x'"
+			          : "Expected binary digits after '0b'");
+			return;
+		}
+
+		// Parse as unsigned so that literals with the top bit set (e.g.
+		// 0xFFFFFFFFFFFFFFFF) wrap around instead of throwing out_of_range.
+		int64_t value = 0;
+		try {
+			value = static_cast<int64_t>(std::stoull(digits, nullptr, hex ? 16 : 2));
+		} catch (const std::exception&) {
+			error("Integer literal out of range");
+			return;
+		}
+		add_token(TokenType::INTEGER, value);
+		return;
 	}
 
-	std::string num_str = m_source.substr(m_start, m_current - m_start);
+	// Decimal literal, with optional '_' digit separators, fraction and exponent
+	std::string num_str(1, m_source[m_start]);
+	bool is_float = false;
 
-	if (is_float) {
-		double d = std::stod(num_str);
-		add_token(TokenType::FLOAT, d);
-	} else {
-		int64_t i = std::stoll(num_str);
-		add_token(TokenType::INTEGER, i);
+	auto consume_digits = [&]() {
+		while (!is_at_end()) {
+			if (peek() == '_') { // Digit separator, e.g. 1_000_000
+				advance();
+				continue;
+			}
+			if (!is_digit(peek())) break;
+			num_str += advance();
+		}
+	};
+
+	consume_digits();
+
+	// Fractional part: only when a digit follows, so that "1.method()" and
+	// range syntax keep working
+	if (peek() == '.' && is_digit(peek_next())) {
+		is_float = true;
+		num_str += advance(); // Consume '.'
+		consume_digits();
+	}
+
+	// Exponent: 1e5, 2.5E-3
+	if ((peek() == 'e' || peek() == 'E') &&
+	    (is_digit(peek_next()) ||
+	     ((peek_next() == '+' || peek_next() == '-') && is_digit(peek_at(2))))) {
+		is_float = true;
+		num_str += advance(); // Consume 'e'
+		if (peek() == '+' || peek() == '-') {
+			num_str += advance();
+		}
+		consume_digits();
+	}
+
+	try {
+		if (is_float) {
+			add_token(TokenType::FLOAT, std::stod(num_str));
+		} else {
+			add_token(TokenType::INTEGER, static_cast<int64_t>(std::stoull(num_str)));
+		}
+	} catch (const std::exception&) {
+		error("Numeric literal out of range");
 	}
 }
 
@@ -247,8 +343,12 @@ char Lexer::peek() const {
 }
 
 char Lexer::peek_next() const {
-	if (m_current + 1 >= m_source.length()) return '\0';
-	return m_source[m_current + 1];
+	return peek_at(1);
+}
+
+char Lexer::peek_at(size_t ahead) const {
+	if (m_current + ahead >= m_source.length()) return '\0';
+	return m_source[m_current + ahead];
 }
 
 bool Lexer::match(char expected) {
@@ -266,6 +366,10 @@ bool Lexer::is_at_end() const {
 
 bool Lexer::is_digit(char c) const {
 	return c >= '0' && c <= '9';
+}
+
+bool Lexer::is_hex_digit(char c) const {
+	return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
 bool Lexer::is_alpha(char c) const {

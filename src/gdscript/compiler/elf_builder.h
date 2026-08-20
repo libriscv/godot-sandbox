@@ -1,5 +1,6 @@
 #pragma once
 #include "ir.h"
+#include "variant_layout.h"
 #include <vector>
 #include <cstdint>
 #include <string>
@@ -11,8 +12,9 @@ class ElfBuilder {
 public:
 	ElfBuilder();
 
-	// Build a complete ELF file from IR program
-	std::vector<uint8_t> build(const IRProgram& program);
+	// Build a complete ELF file from IR program.
+	// The layout selects single- or double-precision real_t for the generated code.
+	std::vector<uint8_t> build(const IRProgram& program, const VariantLayout& layout = native_variant_layout());
 
 private:
 	// ELF header structures

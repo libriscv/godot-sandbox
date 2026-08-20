@@ -50,6 +50,7 @@ private:
 
 	// Dead code elimination helpers
 	std::unordered_set<int> find_live_registers(const IRFunction& func);
+	static bool reads_destination_operand(IROpcode op);
 	bool is_register_used_after(const IRFunction& func, int reg, size_t instr_idx);
 
 	// Peephole optimization helpers

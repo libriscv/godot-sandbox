@@ -27,6 +27,12 @@ const char* ir_opcode_name(IROpcode op) {
 		case IROpcode::AND: return "AND";
 		case IROpcode::OR: return "OR";
 		case IROpcode::NOT: return "NOT";
+		case IROpcode::BIT_AND: return "BIT_AND";
+		case IROpcode::BIT_OR: return "BIT_OR";
+		case IROpcode::BIT_XOR: return "BIT_XOR";
+		case IROpcode::BIT_NOT: return "BIT_NOT";
+		case IROpcode::SHL: return "SHL";
+		case IROpcode::SHR: return "SHR";
 		case IROpcode::LABEL: return "LABEL";
 		case IROpcode::JUMP: return "JUMP";
 		case IROpcode::BRANCH_ZERO: return "BRANCH_ZERO";

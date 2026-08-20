@@ -48,7 +48,8 @@ struct BinaryExpr : Expr {
 	enum class Op {
 		ADD, SUB, MUL, DIV, MOD,
 		EQ, NEQ, LT, LTE, GT, GTE,
-		AND, OR
+		AND, OR,
+		BIT_AND, BIT_OR, BIT_XOR, SHL, SHR
 	};
 
 	ExprPtr left;
@@ -61,12 +62,22 @@ struct BinaryExpr : Expr {
 
 // Unary operation: -x, not y
 struct UnaryExpr : Expr {
-	enum class Op { NEG, NOT };
+	enum class Op { NEG, NOT, BIT_NOT };
 
 	Op op;
 	ExprPtr operand;
 
 	UnaryExpr(Op o, ExprPtr e) : op(o), operand(std::move(e)) {}
+};
+
+// Ternary conditional: true_value if condition else false_value
+struct TernaryExpr : Expr {
+	ExprPtr condition;
+	ExprPtr true_value;
+	ExprPtr false_value;
+
+	TernaryExpr(ExprPtr cond, ExprPtr t, ExprPtr f)
+		: condition(std::move(cond)), true_value(std::move(t)), false_value(std::move(f)) {}
 };
 
 // Function call: foo(1, 2, 3)
@@ -200,10 +211,26 @@ struct ContinueStmt : Stmt {};
 // Pass statement (no-op)
 struct PassStmt : Stmt {};
 
+// Match statement: match value: <patterns>
+struct MatchStmt : Stmt {
+	struct Branch {
+		// Values this branch matches. Empty means the wildcard pattern '_'.
+		std::vector<ExprPtr> patterns;
+		std::vector<StmtPtr> body;
+	};
+
+	ExprPtr subject;
+	std::vector<Branch> branches;
+
+	MatchStmt(ExprPtr subj, std::vector<Branch> b)
+		: subject(std::move(subj)), branches(std::move(b)) {}
+};
+
 // Function parameter
 struct Parameter {
 	std::string name;
 	std::string type_hint;  // Type annotation if present (e.g., "int", "float", "String")
+	ExprPtr default_value;  // Default value if present (e.g., "b = 5"), else nullptr
 };
 
 // Function declaration

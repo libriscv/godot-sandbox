@@ -36,6 +36,8 @@ int main(int argc, char** argv)
 	std::string temp_elf = "/tmp/gdscript_temp_XXXXXX";
 	bool no_optimize = false;
 	bool show_program_headers = false;
+	// Which real_t the generated code targets; defaults to this build's
+	bool double_precision = native_variant_layout().double_precision;
 
 	// Parse arguments
 	for (int i = 1; i < argc; i++) {
@@ -48,6 +50,10 @@ int main(int argc, char** argv)
 			}
 		} else if (arg == "-l" || arg == "--program-headers") {
 			show_program_headers = true;
+		} else if (arg == "--double-precision") {
+			double_precision = true;
+		} else if (arg == "--single-precision") {
+			double_precision = false;
 		} else if (source.empty()) {
 			source = arg;
 		}
@@ -69,6 +75,7 @@ int main(int argc, char** argv)
 		Compiler compiler;
 		CompilerOptions options;
 		options.output_elf = true;
+		options.double_precision = double_precision;
 		std::vector<uint8_t> elf = compiler.compile(source, options);
 
 		// Write ELF to temp file

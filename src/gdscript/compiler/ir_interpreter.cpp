@@ -87,7 +87,12 @@ void IRInterpreter::execute_instruction(const IRInstruction& instr, ExecutionCon
 		case IROpcode::SUB:
 		case IROpcode::MUL:
 		case IROpcode::DIV:
-		case IROpcode::MOD: {
+		case IROpcode::MOD:
+		case IROpcode::BIT_AND:
+		case IROpcode::BIT_OR:
+		case IROpcode::BIT_XOR:
+		case IROpcode::SHL:
+		case IROpcode::SHR: {
 			int dst = std::get<int>(instr.operands[0].value);
 			int src1 = std::get<int>(instr.operands[1].value);
 			int src2 = std::get<int>(instr.operands[2].value);
@@ -109,6 +114,13 @@ void IRInterpreter::execute_instruction(const IRInstruction& instr, ExecutionCon
 			int dst = std::get<int>(instr.operands[0].value);
 			int src = std::get<int>(instr.operands[1].value);
 			ctx.registers[dst] = unary_op(get_register(ctx, src), IROpcode::NOT);
+			break;
+		}
+
+		case IROpcode::BIT_NOT: {
+			int dst = std::get<int>(instr.operands[0].value);
+			int src = std::get<int>(instr.operands[1].value);
+			ctx.registers[dst] = unary_op(get_register(ctx, src), IROpcode::BIT_NOT);
 			break;
 		}
 
@@ -266,6 +278,12 @@ IRInterpreter::Value IRInterpreter::binary_op(const Value& left, const Value& ri
 		case IROpcode::MUL: return l * r;
 		case IROpcode::DIV: return r != 0 ? l / r : int64_t(0);
 		case IROpcode::MOD: return r != 0 ? l % r : int64_t(0);
+		case IROpcode::BIT_AND: return l & r;
+		case IROpcode::BIT_OR: return l | r;
+		case IROpcode::BIT_XOR: return l ^ r;
+		// Shift counts are masked to 0-63, matching the RISC-V backend
+		case IROpcode::SHL: return static_cast<int64_t>(static_cast<uint64_t>(l) << (r & 63));
+		case IROpcode::SHR: return l >> (r & 63);
 		default: return int64_t(0);
 	}
 }
@@ -276,6 +294,8 @@ IRInterpreter::Value IRInterpreter::unary_op(const Value& operand, IROpcode op) 
 			return -get_int(operand);
 		case IROpcode::NOT:
 			return !get_bool(operand) ? int64_t(1) : int64_t(0);
+		case IROpcode::BIT_NOT:
+			return ~get_int(operand);
 		default:
 			return int64_t(0);
 	}
