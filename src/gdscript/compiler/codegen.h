@@ -56,6 +56,11 @@ private:
 		std::vector<Scope> scopes;
 		// The Variant type each virtual register is known to hold.
 		std::unordered_map<int, IRInstruction::TypeHint> register_types;
+		// The struct each virtual register is known to hold an instance of.
+		// A register in here always has the DICTIONARY type as well: the struct
+		// is what the compiler knows on top of that, and the only thing it is
+		// used for is checking field names and typing what a field read yields.
+		std::unordered_map<int, const StructDecl*> register_structs;
 		// Enclosing loops, innermost last.
 		std::vector<LoopContext> loops;
 		// Next virtual register to hand out.
@@ -137,6 +142,64 @@ private:
 		FunctionContext& func, const Expr* site);
 	int gen_inline_member_get(int obj_reg, IRInstruction::TypeHint obj_type, const std::string& member, FunctionContext& func);
 
+	// GDScript global functions. These are not methods on the owner node, so
+	// they must not fall through to the self-call path in gen_call(), which
+	// would produce a VCALL that Godot silently drops.
+	bool is_global_function(const std::string& name) const;
+	int gen_global_function(const CallExpr* expr, std::vector<int>& arg_regs, FunctionContext& func);
+
+	// -= Structs =-
+	//
+	// A struct is a Dictionary with a fixed set of keys. `BankAccount.new()`
+	// builds that Dictionary from the declared defaults, and a field access on
+	// a value the compiler knows to be a BankAccount becomes a Dictionary get
+	// or set, checked against the declared field names.
+
+	// The struct of that name, or null when there is none.
+	const StructDecl* find_struct(const std::string& name) const;
+
+	// The named field of a struct. A name the struct does not declare is the
+	// mistake structs exist to catch, so it is an error rather than a new key.
+	const StructField& require_struct_field(const StructDecl& decl, const std::string& field_name,
+		int line, int column) const;
+
+	// Build an instance: a Dictionary holding every declared field, taking each
+	// value from the call site when it supplies one and from the declaration
+	// otherwise.
+	int gen_struct_construct(const StructDecl& decl, const std::vector<ExprPtr>& arguments,
+		const NamedArguments& names, FunctionContext& func, const Expr* site);
+
+	// The value a field takes when an instance does not supply one.
+	int gen_field_default(const StructDecl& decl, const StructField& field, FunctionContext& func);
+
+	// The default value of a declared type, the way GDScript gives one to a
+	// typed variable with no initializer. Returns -1 for a type that has no
+	// default the guest can construct.
+	int gen_default_value(const std::string& type_hint, FunctionContext& func);
+
+	// Dictionary element access, which is what a struct field access lowers to.
+	int gen_dict_get(int obj_reg, const std::string& key, FunctionContext& func);
+	void gen_dict_set(int obj_reg, const std::string& key, int value_reg, FunctionContext& func);
+
+	// Give a register the type, and the struct, that a declared type names.
+	void apply_declared_type(int reg, const std::string& type_hint, FunctionContext& func);
+
+	void set_register_struct(FunctionContext& func, int reg, const StructDecl* decl);
+	const StructDecl* get_register_struct(const FunctionContext& func, int reg) const;
+
+	// Named arguments are a struct-constructor feature. Anything else that
+	// reaches a call with them has to say so rather than drop the names.
+	void reject_named_arguments(const NamedArguments& names, const std::string& what,
+		const Expr* site) const;
+
+	// Declared structs by name. The Program outlives generate(), so borrowing
+	// pointers into it is safe.
+	std::unordered_map<std::string, const StructDecl*> m_structs;
+
+	// Structs currently having their defaults built, so that a struct holding
+	// itself by value is reported instead of recursing forever.
+	std::vector<const StructDecl*> m_struct_default_stack;
+
 	// Global class detection
 	bool is_global_class(const std::string& name) const;
 	int gen_global_class_get(const std::string& class_name, FunctionContext& func);
@@ -190,6 +253,10 @@ private:
 	// Returns the register holding the coerced value.
 	int coerce_to_declared_type(int reg, IRInstruction::TypeHint declared,
 		FunctionContext& func, const std::string& what, const Stmt* site);
+	// The same, for a value whose source position is not a statement: a struct
+	// field's declaration, or one argument of a constructor call.
+	int coerce_to_declared_type(int reg, IRInstruction::TypeHint declared,
+		FunctionContext& func, const std::string& what, int line, int column);
 
 	// Make a folded constant initializer match the global's declared type, or
 	// reject it when it cannot.
@@ -197,6 +264,11 @@ private:
 
 	// Declared type of each global by index, for coercing stores.
 	std::vector<IRInstruction::TypeHint> m_global_types;
+
+	// Struct each global was declared as, by index, or null. Read back when a
+	// global is loaded, so that a field access on it is checked the same way a
+	// local is.
+	std::vector<const StructDecl*> m_global_structs;
 };
 
 } // namespace gdscript

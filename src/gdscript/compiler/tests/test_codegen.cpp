@@ -357,6 +357,103 @@ void test_subscript_operations() {
 	std::cout << "  ✓ Subscript operations test passed" << std::endl;
 }
 
+void test_global_print() {
+	std::cout << "Testing global print() lowering..." << std::endl;
+
+	// print() is a GDScript global, not a method on the owner node. Lowering it
+	// to a self-call produces a VCALL that Godot accepts and silently drops, so
+	// the shape of this IR is the whole point of the test.
+	std::string source = R"(
+func say():
+	print("Hello", 42)
+)";
+
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	CodeGenerator codegen;
+	IRProgram ir = codegen.generate(program);
+
+	const IRFunction& fn = ir.functions[0];
+
+	bool has_print = false;
+	for (const auto& instr : fn.instructions) {
+		// No VCALL should survive: that is the bug being prevented.
+		assert(instr.opcode != IROpcode::VCALL);
+		if (instr.opcode == IROpcode::PRINT) {
+			has_print = true;
+			// PRINT dst, count, arg...
+			assert(instr.operands.size() == 4);
+			assert(instr.operands[0].type == IRValue::Type::REGISTER);
+			assert(std::get<int64_t>(instr.operands[1].value) == 2);
+			assert(instr.operands[2].type == IRValue::Type::REGISTER);
+			assert(instr.operands[3].type == IRValue::Type::REGISTER);
+		}
+	}
+	assert(has_print);
+
+	// Zero arguments is legal and still prints a blank line.
+	std::string source_empty = R"(
+func say():
+	print()
+)";
+
+	Lexer lexer_empty(source_empty);
+	Parser parser_empty(lexer_empty.tokenize());
+	Program program_empty = parser_empty.parse();
+
+	CodeGenerator codegen_empty;
+	IRProgram ir_empty = codegen_empty.generate(program_empty);
+
+	bool has_empty_print = false;
+	for (const auto& instr : ir_empty.functions[0].instructions) {
+		if (instr.opcode == IROpcode::PRINT) {
+			has_empty_print = true;
+			assert(instr.operands.size() == 2);
+			assert(std::get<int64_t>(instr.operands[1].value) == 0);
+		}
+	}
+	assert(has_empty_print);
+
+	// A script that declares its own print() keeps calling its own, the way a
+	// GDScript method shadows a global.
+	std::string source_shadow = R"(
+func print(x):
+	return x
+
+func say():
+	print(1)
+)";
+
+	Lexer lexer_shadow(source_shadow);
+	Parser parser_shadow(lexer_shadow.tokenize());
+	Program program_shadow = parser_shadow.parse();
+
+	CodeGenerator codegen_shadow;
+	IRProgram ir_shadow = codegen_shadow.generate(program_shadow);
+
+	const IRFunction* say = nullptr;
+	for (const auto& f : ir_shadow.functions) {
+		if (f.name == "say") {
+			say = &f;
+		}
+	}
+	assert(say != nullptr);
+
+	bool has_local_call = false;
+	for (const auto& instr : say->instructions) {
+		assert(instr.opcode != IROpcode::PRINT);
+		if (instr.opcode == IROpcode::CALL &&
+			std::get<std::string>(instr.operands[0].value) == "print") {
+			has_local_call = true;
+		}
+	}
+	assert(has_local_call);
+
+	std::cout << "  ✓ Global print() test passed" << std::endl;
+}
+
 void test_array_dictionary_constructors() {
 	std::cout << "Testing Array and Dictionary constructor generation..." << std::endl;
 
@@ -1366,6 +1463,7 @@ int main() {
 		test_complex_expression();
 		test_string_constants();
 		test_subscript_operations();
+		test_global_print();
 		test_array_dictionary_constructors();
 		test_dictionary_literals();
 

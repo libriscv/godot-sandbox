@@ -97,13 +97,14 @@ static inline void object_callp(godot::Object *obj, const Variant **args, int ar
 // godot::Variant has a non-trivial constructor and destructor, so an array of them
 // costs 8 constructions and 8 destructions per call even when nothing is passed.
 // This constructs exactly the slots that are used, and unwinds them on the way out.
-struct VariantScratch {
-	static constexpr unsigned MAX = 8;
+template <unsigned CAPACITY>
+struct VariantScratchN {
+	static constexpr unsigned MAX = CAPACITY;
 
 	Variant *emplace(Variant &&value) {
 		return new (&storage[m_count++]) Variant(std::move(value));
 	}
-	~VariantScratch() {
+	~VariantScratchN() {
 		for (unsigned i = 0; i < m_count; i++)
 			std::launder(reinterpret_cast<Variant *>(&storage[i]))->~Variant();
 	}
@@ -112,6 +113,10 @@ private:
 	std::aligned_storage_t<sizeof(Variant), alignof(Variant)> storage[MAX];
 	unsigned m_count = 0;
 };
+
+// Calls take at most 8 arguments; print() takes more, and says so where it
+// declares its own scratch.
+using VariantScratch = VariantScratchN<8>;
 
 // The counterpart to object_callp() for the built-in Variant types. Godot
 // placement-constructs the return value here too, so it goes straight into
@@ -192,14 +197,29 @@ APICALL(api_print) {
 	}
 	const GuestVariant *array_ptr = machine.memory.memarray<GuestVariant>(array, len);
 
-	// We really want print_internal to be a public function.
+	// Stringifying an argument is host work the guest asked for, and there can
+	// be up to 63 of them in one call. Charge for it, or a print() loop costs
+	// the guest nothing while the host does all the formatting.
+	PENALIZE(10'000 + 10'000 * len);
+
+	// One line per print() call, not per argument: Godot's print() concatenates
+	// its arguments with no separator and emits a single line, and every guest
+	// language here spells its print() to mean Godot's.
+	//
+	// Only the resolution happens here. Turning the arguments into text is left
+	// to Sandbox::print(), because stringify() can re-enter the guest and has to
+	// run under the same latch as the output. See the comment there.
+	VariantScratchN<64> scratch;
+	const Variant *args[64];
 	for (unsigned i = 0; i < len; i++) {
 		const GuestVariant &var = array_ptr[i];
 		if (var.is_scoped_variant())
-			emu.print(*var.toVariantPtr(emu));
+			args[i] = var.toVariantPtr(emu);
 		else
-			emu.print(var.toVariant(emu));
+			args[i] = scratch.emplace(var.toVariant(emu));
 	}
+	// A zero-argument print() still prints an empty line, as it does in GDScript.
+	emu.print(args, len);
 }
 
 APICALL(api_vcall) {

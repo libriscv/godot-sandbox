@@ -349,6 +349,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		// implemented above or listed here, so it cannot slip through as a
 		// silently unsupported instruction.
 		case IROpcode::CALL_SYSCALL:
+		case IROpcode::PRINT:
 		case IROpcode::VCALL:
 		case IROpcode::VGET:
 		case IROpcode::VSET:

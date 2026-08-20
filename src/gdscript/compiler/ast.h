@@ -80,8 +80,32 @@ struct TernaryExpr : Expr {
 		: condition(std::move(cond)), true_value(std::move(t)), false_value(std::move(f)) {}
 };
 
+// -= Named call arguments =-
+//
+// `BankAccount.new(balance = 10)` names the argument it passes. The name lives
+// beside the argument rather than inside it, so that everything which walks an
+// argument list keeps walking expressions. `argument_names` is either empty --
+// the call used no names at all -- or exactly as long as `arguments`, with an
+// empty string where an argument was passed positionally.
+struct NamedArguments {
+	std::vector<std::string> argument_names;
+
+	const std::string& argument_name(size_t index) const {
+		static const std::string unnamed;
+		return index < argument_names.size() ? argument_names[index] : unnamed;
+	}
+	bool has_named_arguments() const {
+		for (const auto& name : argument_names) {
+			if (!name.empty()) {
+				return true;
+			}
+		}
+		return false;
+	}
+};
+
 // Function call: foo(1, 2, 3)
-struct CallExpr : Expr {
+struct CallExpr : Expr, NamedArguments {
 	std::string function_name;
 	std::vector<ExprPtr> arguments;
 
@@ -90,7 +114,7 @@ struct CallExpr : Expr {
 };
 
 // Member access: obj.method(args) or obj.property
-struct MemberCallExpr : Expr {
+struct MemberCallExpr : Expr, NamedArguments {
 	ExprPtr object;
 	std::string member_name;
 	std::vector<ExprPtr> arguments; // Empty if property access
@@ -243,9 +267,67 @@ struct FunctionDecl {
 	int column = 0;
 };
 
+// -= Structs =-
+//
+// A struct is sugar for a Dictionary with a fixed set of keys: the declaration
+// names the keys and their defaults, and every instance is an ordinary
+// Dictionary Variant. The compiler keeps the declaration only so that it can
+// build that Dictionary and reject a field name the struct does not have --
+// nothing about a struct survives into the IR.
+
+// One field of a struct: var balance = 0
+struct StructField {
+	std::string name;
+	std::string type_hint;   // Type annotation if present (e.g. "int")
+	ExprPtr default_value;   // Value when the instance does not supply one, or null
+	int line = 0;
+	int column = 0;
+};
+
+// Struct declaration: struct BankAccount: <fields>
+struct StructDecl {
+	std::string name;
+	std::vector<StructField> fields;
+	int line = 0;
+	int column = 0;
+
+	const StructField* find_field(const std::string& field_name) const {
+		for (const auto& field : fields) {
+			if (field.name == field_name) {
+				return &field;
+			}
+		}
+		return nullptr;
+	}
+
+	// Position of a field in the declaration, which is the position it takes in
+	// a positional constructor call. -1 when the struct has no such field.
+	int field_index(const std::string& field_name) const {
+		for (size_t i = 0; i < fields.size(); i++) {
+			if (fields[i].name == field_name) {
+				return static_cast<int>(i);
+			}
+		}
+		return -1;
+	}
+
+	// The field names, for the "fields are: ..." line of a diagnostic.
+	std::string field_list() const {
+		std::string list;
+		for (const auto& field : fields) {
+			if (!list.empty()) {
+				list += ", ";
+			}
+			list += field.name;
+		}
+		return list.empty() ? "(none)" : list;
+	}
+};
+
 // Top-level program
 struct Program {
 	std::vector<VarDeclStmt> globals; // Global variable declarations
+	std::vector<StructDecl> structs;  // Struct declarations
 	std::vector<FunctionDecl> functions;
 };
 

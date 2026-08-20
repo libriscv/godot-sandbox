@@ -17,6 +17,14 @@ private:
 	FunctionDecl parse_function();
 	std::vector<Parameter> parse_parameters();
 
+	// Struct parsing
+	StructDecl parse_struct();
+
+	// Argument list of a call, up to and including the closing ')'. Fills
+	// `names` in step with `arguments`: the name an argument was passed under,
+	// or an empty string when it was passed positionally.
+	void parse_argument_list(std::vector<ExprPtr>& arguments, std::vector<std::string>& names);
+
 	// Statement parsing
 	StmtPtr parse_statement();
 	StmtPtr parse_statement_impl();
@@ -84,6 +92,7 @@ private:
 	bool check(TokenType type) const;
 	Token advance();
 	Token peek() const;
+	Token peek_ahead(size_t offset) const;
 	Token previous() const;
 	bool is_at_end() const;
 	Token consume(TokenType type, const std::string& message);

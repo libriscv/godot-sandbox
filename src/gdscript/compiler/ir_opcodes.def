@@ -110,6 +110,18 @@ IR_OPCODE(VCALL,           "VCALL",           SIG(DST, SRC, STR, CNT, SRC_LIST),
 IR_OPCODE(VGET,            "VGET",            SIG(DST, SRC, IMM, IMM),           IR_SIDE_EFFECTS)
 IR_OPCODE(VSET,            "VSET",            SIG(SRC, IMM, IMM, SRC),           IR_SIDE_EFFECTS)
 
+// -= Global functions =-
+//
+// GDScript's globals are not methods on the owner node, so they cannot go
+// through VCALL: `print(x)` lowered to `self.print(x)` reaches a Node that has
+// no such method, and Godot drops the call without a word. Each global that the
+// host exposes as a syscall gets an opcode here instead.
+//
+// PRINT's destination is the call's value. GDScript's print() returns null, so
+// codegen writes NIL there rather than reading anything back from the host.
+
+IR_OPCODE(PRINT,           "PRINT",           SIG(DST, CNT, SRC_LIST),           IR_SIDE_EFFECTS | IR_CALL)
+
 // -= Inline primitive construction (no syscalls) =-
 
 IR_OPCODE(MAKE_VECTOR2,    "MAKE_VECTOR2",    SIG(DST, SRC, SRC),            IR_PURE)

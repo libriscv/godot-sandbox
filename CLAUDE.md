@@ -12,6 +12,32 @@ The host-side and guest-side share a common system call API for all languages su
 
 There is an ongoing GDScript-to-RISC-V compiler project under the src/gdscript/compiler folder. It's parsing GDScript into AST, then to IR and it will finally be transformed to 64-bit RISC-V and packed into an ELF container as the last step. At that point the goal is to make it executable inside Godot Sandbox. It has written like a CMake library, and it currently being used in the unit tests. One unit test compiles an ELF inside the sandbox and then runs the result in another sandbox. When running tests for the compiler, they should have a timeout as loops may run forever. Do NOT under any circumstance disable tests, FIX the problem. The unit tests can be executed with `ctest .` in the src/gdscript/compiler/build folder.
 
+### Structs
+
+`struct` is compiler-only sugar for a Dictionary with a fixed set of keys:
+
+```gdscript
+struct BankAccount:
+	var balance = 0
+	var loan: int = 0
+```
+
+An instance is built with `BankAccount.new(...)` or `BankAccount(...)`, taking
+values positionally, by name (`BankAccount.new(loan = 50)`), or both, with any
+field left out keeping its declared default. It is an ordinary Dictionary
+Variant: Godot sees `{"balance": 0, "loan": 0}` coming back out, and a Dictionary
+passed in from Godot works as a struct parameter.
+
+A field access is a Dictionary get or set, never `VGET`/`VSET` -- the property
+syscalls reach an Object's properties and throw on a Dictionary. That applies to
+plain dictionaries too, so `d.key` now means `d["key"]` as it does in GDScript.
+
+What the declaration buys over a bare Dictionary is that a field name the struct
+does not declare is a compile error, wherever the compiler knows which struct a
+value is: from `.new()`, from a `: BankAccount` hint on a variable, parameter or
+global, or from a `-> BankAccount` return type. Nothing about a struct survives
+into the IR. `tests/test_structs.cpp` covers the lowering.
+
 ## Compiler Debugging Tools
 
 Two debugging tools are available in the compiler build folder:

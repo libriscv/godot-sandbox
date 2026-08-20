@@ -282,6 +282,131 @@ func test_args2(str):
 	ts.queue_free()
 
 
+var _printed : Array = []
+
+func _collect_print(v):
+	_printed.append(v)
+
+
+func test_global_print():
+	# print() is a GDScript global, not a method on the owner node. Compiled as
+	# a self-call it becomes a VCALL that Godot accepts and drops in silence,
+	# so the body ran and nothing was ever printed.
+	var gdscript_code = """
+func say_one():
+	print("Hello")
+
+func say_many():
+	print("x = ", 42, true)
+
+func say_nothing():
+	print()
+
+func say_and_return():
+	print("side effect")
+	return 7
+
+func returns_print_value():
+	return print("value")
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+	s.set_redirect_stdout(_collect_print)
+
+	_printed = []
+	s.vmcallv("say_one")
+	assert_eq_deep(_printed, ["Hello"])
+
+	# Godot's print() concatenates its arguments into one line with no
+	# separator, so this is one entry rather than three.
+	_printed = []
+	s.vmcallv("say_many")
+	assert_eq_deep(_printed, ["x = 42true"])
+
+	# print() with no arguments still prints an empty line.
+	_printed = []
+	s.vmcallv("say_nothing")
+	assert_eq_deep(_printed, [""])
+
+	# A print() in the middle of a function must not disturb the return value.
+	_printed = []
+	var result = s.vmcallv("say_and_return")
+	assert_eq(result, 7, "say_and_return should still return 7")
+	assert_eq_deep(_printed, ["side effect"])
+
+	# GDScript's print() evaluates to null.
+	_printed = []
+	result = s.vmcallv("returns_print_value")
+	assert_eq(result, null, "print() should evaluate to null")
+	assert_eq_deep(_printed, ["value"])
+
+	s.queue_free()
+	ts.queue_free()
+
+
+# A host object whose _to_string() runs guest code again. Godot calls
+# _to_string() during stringification, which is what print() does to its
+# arguments, so this is reachable from inside a guest print().
+class ReentrantPrinter extends Node:
+	var target : Sandbox = null
+	var depth : int = 0
+
+	func _to_string() -> String:
+		depth += 1
+		if depth < 4 and target != null:
+			target.vmcallv("print_arg", self)
+		return "<ReentrantPrinter>"
+
+
+func test_print_reentrancy_is_refused():
+	# print() concatenates its arguments before emitting anything, so the host
+	# holds a half-built line while it stringifies. Stringifying an Object runs
+	# _to_string(), which can re-enter the guest and reach print() again. That
+	# has to be refused: left open it recurses as deep as the guest likes, each
+	# level nesting a guest execution inside a host syscall.
+	var gdscript_code = """
+func print_arg(n):
+	print(n)
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(6000)
+	s.set_redirect_stdout(_collect_print)
+
+	var node = ReentrantPrinter.new()
+	node.target = s
+
+	_printed = []
+	s.vmcallv("print_arg", node)
+
+	# _to_string() ran once, for the outer print. The re-entrant print() inside
+	# it was refused, so it never got to stringify a second time.
+	assert_eq(node.depth, 1, "_to_string() should run exactly once")
+	assert_engine_error("Recursive call to Sandbox::print() detected, ignoring.")
+
+	# The outer print still produced its line.
+	assert_eq_deep(_printed, ["<ReentrantPrinter>"])
+
+	node.free()
+	s.queue_free()
+	ts.queue_free()
+
+
 func test_local_function_calls():
 	var gdscript_code = """
 func test_to_upper(str):
@@ -3683,5 +3808,139 @@ func test_far_branch_is_relaxed():
 		for k in range(60):
 			expected += i + k
 	assert_eq(s.vmcallv("long_loop"), expected, "A loop whose body outgrows a branch")
+
+	s.queue_free()
+
+
+func test_structs():
+	# A struct is sugar for a Dictionary with a fixed set of keys: an instance
+	# really is a Dictionary, so Godot sees one on the way back out.
+	var gdscript_code = """
+struct BankAccount:
+	var balance = 0
+	var loan = 0
+
+func make_default():
+	return BankAccount.new()
+
+func make_positional():
+	return BankAccount.new(100, 50)
+
+func make_plain_call():
+	return BankAccount(100, 50)
+
+func make_named():
+	return BankAccount.new(loan = 50, balance = 100)
+
+func make_mixed():
+	return BankAccount.new(100, loan = 50)
+
+func make_partial():
+	return BankAccount.new(loan = 50)
+
+func net_worth():
+	var account = BankAccount.new(100, 50)
+	return account.balance - account.loan
+
+func deposit(amount):
+	var account = BankAccount.new(100, 50)
+	account.balance += amount
+	return account.balance
+
+func repay(account: BankAccount, amount):
+	account.loan = account.loan - amount
+	return account.loan
+
+func is_a_dictionary():
+	return BankAccount.new().size()
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("make_default"), {"balance": 0, "loan": 0}, "Declared defaults")
+	assert_eq(s.vmcallv("make_positional"), {"balance": 100, "loan": 50}, "Positional values")
+	assert_eq(s.vmcallv("make_plain_call"), {"balance": 100, "loan": 50}, "Constructor-call form")
+	assert_eq(s.vmcallv("make_named"), {"balance": 100, "loan": 50}, "Named values, out of order")
+	assert_eq(s.vmcallv("make_mixed"), {"balance": 100, "loan": 50}, "Positional then named")
+	assert_eq(s.vmcallv("make_partial"), {"balance": 0, "loan": 50}, "A field left out keeps its default")
+
+	assert_eq(s.vmcallv("net_worth"), 50, "Reading two fields")
+	assert_eq(s.vmcallv("deposit", 5), 105, "Compound assignment to a field")
+	# An instance passed in from Godot is an ordinary Dictionary.
+	assert_eq(s.vmcallv("repay", {"balance": 100, "loan": 50}, 20), 30, "A struct parameter")
+	assert_eq(s.vmcallv("is_a_dictionary"), 2, "An instance is a Dictionary")
+
+	s.queue_free()
+
+
+func test_struct_globals_and_nesting():
+	# A struct-typed global is built by the global initializer, and a field
+	# declared as another struct defaults to an instance of it.
+	var gdscript_code = """
+struct Point:
+	var x = 0
+	var y = 0
+
+struct Sprite:
+	var pos: Point
+	var name = "unnamed"
+
+var vault: Point
+var origin = Point.new(3, 4)
+
+func read_vault():
+	return vault
+
+func write_vault():
+	vault.x = 7
+	vault.y = 8
+	return vault.x + vault.y
+
+func read_origin():
+	return origin.x + origin.y
+
+func nested_default():
+	return Sprite.new()
+
+func nested_read():
+	var s = Sprite.new()
+	s.pos.x = 5
+	return s.pos.x
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("read_vault"), {"x": 0, "y": 0}, "A struct-typed global starts at its defaults")
+	assert_eq(s.vmcallv("write_vault"), 15, "Writing fields of a struct global")
+	assert_eq(s.vmcallv("read_origin"), 7, "A global initialized from a constructor")
+	assert_eq(s.vmcallv("nested_default"), {"pos": {"x": 0, "y": 0}, "name": "unnamed"},
+		"A struct field defaults to an instance")
+	assert_eq(s.vmcallv("nested_read"), 5, "Writing through a nested struct")
+
+	s.queue_free()
+
+
+func test_dictionary_member_access():
+	# In GDScript d.key is d["key"]. The member path used to take the property
+	# syscall, which reaches an Object's properties and throws on a Dictionary.
+	var gdscript_code = """
+func round_trip():
+	var d = {}
+	d.count = 1
+	d.count += 4
+	return d.count
+
+func literal_key():
+	var d = {"a": 1, "b": 2}
+	return d.a + d.b
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("round_trip"), 5, "Member access on a Dictionary")
+	assert_eq(s.vmcallv("literal_key"), 3, "Reading dictionary literal keys by name")
 
 	s.queue_free()

@@ -1758,23 +1758,57 @@ int64_t Sandbox::get_heap_deallocation_counter() const {
 	return 0;
 }
 
-void Sandbox::print(const Variant &v) {
+// One print() call holds the text of every one of its arguments at once, which
+// is the one place in the guest print path where host memory scales with the
+// argument count rather than with a single argument. Past this the line is cut
+// short: the guest keeps running and gets told, instead of the host growing a
+// buffer to whatever size the guest picked.
+static constexpr int PRINT_LINE_MAX_CHARS = 1 << 18;
+
+void Sandbox::print(const Variant *const *args, unsigned count) {
+	// The latch covers the conversion, not just the output. Stringifying an
+	// argument runs Variant::operator String(), which for an Object reaches
+	// Object::to_string() and from there a script's _to_string() - and when that
+	// script is itself a Sandbox, the guest is running again inside this call and
+	// can reach print() a second time. Godot's print() concatenates before it
+	// emits anything, so the conversion sits between the latch and the output
+	// and has to be inside it.
 	static bool already_been_here = false;
 	if (already_been_here) {
 		ERR_PRINT("Recursive call to Sandbox::print() detected, ignoring.");
 		return;
 	}
 	already_been_here = true;
+	// Re-entering the guest can throw straight back out through here. Releasing
+	// the latch on the way out keeps one faulting _to_string() from silencing
+	// every print() for the rest of the process.
+	struct LatchGuard {
+		bool &flag;
+		~LatchGuard() { flag = false; }
+	} latch_guard{ already_been_here };
+
+	String line;
+	for (unsigned i = 0; i < count; i++) {
+		line += args[i]->stringify();
+		if (line.length() > PRINT_LINE_MAX_CHARS) {
+			ERR_PRINT("print(): Line too long, truncated");
+			line = line.substr(0, PRINT_LINE_MAX_CHARS);
+			break;
+		}
+	}
 
 	if (this->m_redirect_stdout.is_valid()) {
 		// Redirect to a GDScript callback function
-		this->m_redirect_stdout.call(v);
+		this->m_redirect_stdout.call(line);
 	} else {
 		// Print to the console
-		UtilityFunctions::print(v);
+		UtilityFunctions::print(line);
 	}
+}
 
-	already_been_here = false;
+void Sandbox::print(const Variant &v) {
+	const Variant *args[1] = { &v };
+	this->print(args, 1);
 }
 
 bool Sandbox::is_sandbox_function(const StringName &p_function) const {

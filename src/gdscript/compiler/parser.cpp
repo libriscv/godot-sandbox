@@ -64,6 +64,8 @@ Program Parser::parse() {
 				global_decl.column = decl->column;
 				program.globals.push_back(std::move(global_decl));
 			}
+		} else if (check(TokenType::STRUCT)) {
+			program.structs.push_back(parse_struct());
 		} else if (check(TokenType::FUNC)) {
 			program.functions.push_back(parse_function());
 		} else {
@@ -98,6 +100,89 @@ FunctionDecl Parser::parse_function() {
 	func.body = parse_block();
 
 	return func;
+}
+
+StructDecl Parser::parse_struct() {
+	StructDecl decl;
+	Token struct_token = consume(TokenType::STRUCT, "Expected 'struct'");
+	decl.line = struct_token.line;
+	decl.column = struct_token.column;
+
+	Token name = consume(TokenType::IDENTIFIER, "Expected struct name");
+	decl.name = name.lexeme;
+
+	consume(TokenType::COLON, "Expected ':' after struct name");
+	consume(TokenType::NEWLINE, "Expected newline after struct declaration");
+
+	skip_newlines();
+	consume(TokenType::INDENT, "Expected indented block after 'struct " + decl.name + ":'");
+
+	while (!check(TokenType::DEDENT) && !is_at_end()) {
+		skip_newlines();
+		if (check(TokenType::DEDENT) || is_at_end()) {
+			break;
+		}
+
+		// 'pass' stands in for a body, which for a struct means no fields.
+		if (match(TokenType::PASS)) {
+			consume(TokenType::NEWLINE, "Expected newline after 'pass'");
+			continue;
+		}
+
+		// A struct body is a list of fields and nothing else. Anything else --
+		// a method, a nested struct -- would silently not be part of the
+		// Dictionary the struct lowers to, so it is rejected rather than
+		// skipped.
+		Token var_token = consume(TokenType::VAR,
+			"A struct body holds only field declarations");
+
+		StructField field;
+		field.line = var_token.line;
+		field.column = var_token.column;
+
+		Token field_name = consume(TokenType::IDENTIFIER, "Expected field name");
+		field.name = field_name.lexeme;
+		field.type_hint = parse_type_hint();
+
+		if (match(TokenType::ASSIGN)) {
+			field.default_value = parse_expression();
+		}
+		consume(TokenType::NEWLINE, "Expected newline after field declaration");
+
+		if (decl.find_field(field.name) != nullptr) {
+			throw CompilerException::parser_error(
+				"Struct '" + decl.name + "' declares field '" + field.name + "' more than once",
+				field.line, field.column);
+		}
+		decl.fields.push_back(std::move(field));
+	}
+
+	consume(TokenType::DEDENT, "Expected dedent after struct body");
+	return decl;
+}
+
+void Parser::parse_argument_list(std::vector<ExprPtr>& arguments, std::vector<std::string>& names) {
+	if (!check(TokenType::RPAREN)) {
+		bool seen_named = false;
+		do {
+			std::string name;
+			// `name = value` is a named argument. Two tokens of lookahead
+			// separate it from an expression starting with an identifier: only
+			// '=' can follow, and '==' lexes as its own token, so a comparison
+			// is never mistaken for one.
+			if (check(TokenType::IDENTIFIER) && peek_ahead(1).type == TokenType::ASSIGN) {
+				name = advance().lexeme;
+				advance(); // consume '='
+				seen_named = true;
+			} else if (seen_named) {
+				error("A positional argument cannot follow a named argument");
+			}
+			arguments.push_back(parse_expression());
+			names.push_back(std::move(name));
+		} while (match(TokenType::COMMA));
+	}
+
+	consume(TokenType::RPAREN, "Expected ')' after arguments");
 }
 
 std::vector<Parameter> Parser::parse_parameters() {
@@ -369,21 +454,27 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 		}
 	}
 
-	// Handle compound assignments (x += 1, x <<= 2, ...) for simple variables only
-	if (auto* var_expr = dynamic_cast<VariableExpr*>(lhs.get())) {
-		static const struct { TokenType token; BinaryExpr::Op op; } compound_ops[] = {
-			{TokenType::PLUS_ASSIGN,        BinaryExpr::Op::ADD},
-			{TokenType::MINUS_ASSIGN,       BinaryExpr::Op::SUB},
-			{TokenType::MULTIPLY_ASSIGN,    BinaryExpr::Op::MUL},
-			{TokenType::DIVIDE_ASSIGN,      BinaryExpr::Op::DIV},
-			{TokenType::MODULO_ASSIGN,      BinaryExpr::Op::MOD},
-			{TokenType::BIT_AND_ASSIGN,     BinaryExpr::Op::BIT_AND},
-			{TokenType::BIT_OR_ASSIGN,      BinaryExpr::Op::BIT_OR},
-			{TokenType::BIT_XOR_ASSIGN,     BinaryExpr::Op::BIT_XOR},
-			{TokenType::SHIFT_LEFT_ASSIGN,  BinaryExpr::Op::SHL},
-			{TokenType::SHIFT_RIGHT_ASSIGN, BinaryExpr::Op::SHR},
-		};
+	// Handle compound assignments (x += 1, obj.field <<= 2, ...).
+	//
+	// `a op= b` is rewritten to `a = a op b`, which needs a second copy of the
+	// target expression. The AST nodes are unique_ptr and do not clone, so the
+	// targets supported here are the ones that can be rebuilt from a name: a
+	// plain variable, and a field of a plain variable. `f().x += 1` is not one
+	// of them, and would evaluate f() twice if it were.
+	static const struct { TokenType token; BinaryExpr::Op op; } compound_ops[] = {
+		{TokenType::PLUS_ASSIGN,        BinaryExpr::Op::ADD},
+		{TokenType::MINUS_ASSIGN,       BinaryExpr::Op::SUB},
+		{TokenType::MULTIPLY_ASSIGN,    BinaryExpr::Op::MUL},
+		{TokenType::DIVIDE_ASSIGN,      BinaryExpr::Op::DIV},
+		{TokenType::MODULO_ASSIGN,      BinaryExpr::Op::MOD},
+		{TokenType::BIT_AND_ASSIGN,     BinaryExpr::Op::BIT_AND},
+		{TokenType::BIT_OR_ASSIGN,      BinaryExpr::Op::BIT_OR},
+		{TokenType::BIT_XOR_ASSIGN,     BinaryExpr::Op::BIT_XOR},
+		{TokenType::SHIFT_LEFT_ASSIGN,  BinaryExpr::Op::SHL},
+		{TokenType::SHIFT_RIGHT_ASSIGN, BinaryExpr::Op::SHR},
+	};
 
+	if (auto* var_expr = dynamic_cast<VariableExpr*>(lhs.get())) {
 		const std::string name = var_expr->name;
 		for (const auto& entry : compound_ops) {
 			if (!match(entry.token)) {
@@ -394,6 +485,24 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 			ExprPtr combined = make_binary(std::move(var_ref), entry.op, std::move(rhs));
 			consume(TokenType::NEWLINE, "Expected newline after assignment");
 			return std::make_unique<AssignStmt>(name, std::move(combined));
+		}
+	} else if (auto* member_expr = dynamic_cast<MemberCallExpr*>(lhs.get())) {
+		auto* object = dynamic_cast<VariableExpr*>(member_expr->object.get());
+		if (!member_expr->is_method_call && object != nullptr) {
+			const std::string object_name = object->name;
+			const std::string member_name = member_expr->member_name;
+			for (const auto& entry : compound_ops) {
+				if (!match(entry.token)) {
+					continue;
+				}
+				ExprPtr read = make_like<MemberCallExpr>(*lhs,
+					make_like<VariableExpr>(*lhs, object_name), member_name,
+					std::vector<ExprPtr>{}, false);
+				ExprPtr rhs = parse_expression();
+				ExprPtr combined = make_binary(std::move(read), entry.op, std::move(rhs));
+				consume(TokenType::NEWLINE, "Expected newline after assignment");
+				return std::make_unique<AssignStmt>(std::move(lhs), std::move(combined));
+			}
 		}
 	}
 
@@ -600,20 +709,16 @@ ExprPtr Parser::parse_call() {
 		if (match(TokenType::LPAREN)) {
 			// Function call
 			std::vector<ExprPtr> arguments;
-
-			if (!check(TokenType::RPAREN)) {
-				do {
-					arguments.push_back(parse_expression());
-				} while (match(TokenType::COMMA));
-			}
-
-			consume(TokenType::RPAREN, "Expected ')' after arguments");
+			std::vector<std::string> names;
+			parse_argument_list(arguments, names);
 
 			// Check if this is a method call
 			if (auto* var_expr = dynamic_cast<VariableExpr*>(expr.get())) {
 				// Local function call
 				std::string func_name = var_expr->name;
-				expr = make_like<CallExpr>(*expr, func_name, std::move(arguments));
+				auto call = make_like<CallExpr>(*expr, func_name, std::move(arguments));
+				call->argument_names = std::move(names);
+				expr = std::move(call);
 			} else {
 				error("Invalid call expression");
 			}
@@ -624,15 +729,13 @@ ExprPtr Parser::parse_call() {
 			if (match(TokenType::LPAREN)) {
 				// Method call (including argument-less methods like obj.method())
 				std::vector<ExprPtr> arguments;
+				std::vector<std::string> names;
+				parse_argument_list(arguments, names);
 
-				if (!check(TokenType::RPAREN)) {
-					do {
-						arguments.push_back(parse_expression());
-					} while (match(TokenType::COMMA));
-				}
-
-				consume(TokenType::RPAREN, "Expected ')' after arguments");
-				expr = make_like<MemberCallExpr>(*expr, std::move(expr), member.lexeme, std::move(arguments), true);
+				auto call = make_like<MemberCallExpr>(*expr, std::move(expr), member.lexeme,
+					std::move(arguments), true);
+				call->argument_names = std::move(names);
+				expr = std::move(call);
 			} else {
 				// Property access (no parentheses)
 				expr = make_like<MemberCallExpr>(*expr, std::move(expr), member.lexeme, std::vector<ExprPtr>{}, false);
@@ -767,6 +870,13 @@ Token Parser::advance() {
 
 Token Parser::peek() const {
 	return m_tokens[m_current];
+}
+
+Token Parser::peek_ahead(size_t offset) const {
+	const size_t index = m_current + offset;
+	// The token stream always ends in EOF, so clamping to the last token gives
+	// a lookahead that never runs off the end.
+	return m_tokens[index < m_tokens.size() ? index : m_tokens.size() - 1];
 }
 
 Token Parser::previous() const {

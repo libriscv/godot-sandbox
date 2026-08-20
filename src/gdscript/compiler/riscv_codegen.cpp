@@ -1349,6 +1349,69 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				break;
 			}
 
+			case IROpcode::PRINT: {
+				// Format: PRINT result_reg, arg_count, [arg_reg1, arg_reg2, ...]
+				// sys_print(const Variant *array, size_t len): the host walks a
+				// contiguous array, so the arguments are copied out of their
+				// stack slots into one run below sp.
+				if (instr.operands.size() < 2) {
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "PRINT requires at least 2 operands");
+				}
+
+				int result_vreg = std::get<int>(instr.operands[0].value);
+				int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+
+				if (instr.operands.size() != static_cast<size_t>(2 + arg_count)) {
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "PRINT argument count mismatch");
+				}
+
+				int result_offset = get_variant_stack_offset(result_vreg);
+
+				// ECALL_PRINT reads a0-a1 and a7; the register allocator has to
+				// evacuate anything live in them first.
+				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1};
+				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
+				for (const auto& move : moves) {
+					emit_mv(move.second, move.first);
+				}
+
+				if (arg_count == 0) {
+					// print() with no arguments still prints a blank line, and
+					// the host reads no memory when len is 0.
+					emit_mv(REG_A0, REG_ZERO);
+					emit_li(REG_A1, 0);
+					emit_li(REG_A7, 500); // ECALL_PRINT
+					emit_ecall();
+				} else {
+					int args_space = arg_count * variant_size();
+					args_space = (args_space + 15) & ~15; // Align to 16 bytes
+
+					emit_add_offset(REG_SP, REG_SP, -args_space);
+
+					// Each argument lives at its own offset in the frame that sp
+					// just moved away from, so read it back at +args_space.
+					for (int i = 0; i < arg_count; i++) {
+						int arg_vreg = std::get<int>(instr.operands[2 + i].value);
+						int arg_src_offset = get_variant_stack_offset(arg_vreg) + args_space;
+						emit_variant_move(REG_SP, i * variant_size(), REG_SP, arg_src_offset, REG_T0);
+					}
+
+					// a0 = the argument array, a1 = its length
+					emit_mv(REG_A0, REG_SP);
+					emit_li(REG_A1, arg_count);
+					emit_li(REG_A7, 500); // ECALL_PRINT
+					emit_ecall();
+
+					emit_add_offset(REG_SP, REG_SP, args_space);
+				}
+
+				// print() evaluates to null. The host writes nothing back, so
+				// the destination is set here.
+				emit_li(REG_T0, Variant::NIL);
+				emit_store_variant_type(REG_T0, REG_SP, result_offset);
+				break;
+			}
+
 			case IROpcode::MAKE_ARRAY: {
 				// Format: MAKE_ARRAY result_reg, element_count, [element_reg1, element_reg2, ...]
 				// For empty arrays: element_count = 0, no element regs

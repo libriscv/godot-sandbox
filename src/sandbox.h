@@ -603,7 +603,9 @@ public:
 	const Callable &get_redirect_stdout() const { return m_redirect_stdout; }
 
 	/// @brief Set a Callable to redirect stdout from the guest program to.
-	/// @param callback The callable to redirect stdout.
+	/// @param callback The callable to redirect stdout. It receives one String
+	/// per guest print() call, already concatenated the way Godot's print()
+	/// concatenates its arguments.
 	void set_redirect_stdout(const Callable &callback) { m_redirect_stdout = callback; }
 
 	/// @brief Get the 32 integer registers of the RISC-V machine.
@@ -724,6 +726,14 @@ public:
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc);
 	machine_t &machine() { return *m_machine; }
 	const machine_t &machine() const { return *m_machine; }
+	/// @brief Print one line to the console, or to the redirect callback.
+	/// @param args The Variants making up the line.
+	/// @param count How many there are.
+	/// The arguments are concatenated with no separator, the way Godot's own
+	/// print() concatenates its arguments, and emitted as a single line. Both
+	/// the conversion and the output run under one non-reentrancy latch, and an
+	/// over-long line is truncated rather than allowed to grow.
+	void print(const Variant *const *args, unsigned count);
 	void print(const Variant &v);
 
 	/// @brief Generate the run-time API for the guest program, by iterating through all loaded classes.

@@ -22,7 +22,8 @@ template <typename T>
 using remove_cvref = std::remove_cv_t<std::remove_reference_t<T>>;
 
 /// @brief Print a message to the console.
-/// @param ...vars A list of Variants to print.
+/// @param ...vars A list of Variants to print. They are concatenated with no
+/// separator into a single line, the way Godot's own print() behaves.
 template <typename... Args>
 inline void print(Args &&...vars) {
 	std::array<Variant, sizeof...(Args)> vptrs;
