@@ -896,6 +896,31 @@ func test():
 		i = i + 1
 	return total * 10 + LEFT + RIGHT + Mode.STOP
 )" },
+		{ "dead_parameters", R"(
+func first_of_three(a, b, c):
+	return a
+
+func ignores_everything(a, b):
+	return 42
+
+func overwrites_its_parameter(a):
+	a = 7
+	return a
+
+func maybe_overwrites(b, n):
+	var t = 0
+	while t < n:
+		t = t + 1
+		b = t
+	return b
+
+func test():
+	return first_of_three(1, 2, 3) * 100000 \
+		+ ignores_everything(4, 5) * 1000 \
+		+ overwrites_its_parameter(9) * 100 \
+		+ maybe_overwrites(3, 0) * 10 \
+		+ maybe_overwrites(3, 2)
+)" },
 	};
 	return programs;
 }

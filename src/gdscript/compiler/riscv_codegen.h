@@ -127,6 +127,10 @@ private:
 	// of into the return register's stack slot. See the definition.
 	static std::vector<bool> find_return_forwarding(const IRFunction& func);
 
+	// Which parameters are still worth copying out of the argument registers.
+	// See the definition.
+	static std::vector<bool> find_live_parameters(const IRFunction& func);
+
 	// Jump tables emitted so far, used to give each one a unique label.
 	// Program-wide, not per function.
 	size_t m_switch_tables = 0;
@@ -436,6 +440,10 @@ private:
 		// register and the next instruction is the RETURN that reads it, so the
 		// write can go straight into the caller's Variant.
 		std::vector<bool> forward_to_return;
+
+		// Indexed by parameter: true where the incoming Variant is read before
+		// anything overwrites its register, and the prologue has to copy it in.
+		std::vector<bool> live_params;
 	};
 
 	FunctionState m_fn;

@@ -206,6 +206,19 @@ func last_of_seven(a, b, c, d, e, f, g):
 
 func none_of_two(a, b):
 	return 7
+
+func overwrites_its_parameter(a):
+	a = 7
+	return a
+
+func maybe_overwrites(b, n):
+	# The loop may not run, so the parameter that looks overwritten is still
+	# the value returned.
+	var t = 0
+	while t < n:
+		t = t + 1
+		b = t
+	return b
 """
 
 	var ts : Sandbox = Sandbox.new()
@@ -221,6 +234,9 @@ func none_of_two(a, b):
 	assert_eq(s.vmcallv("middle_of_three", 1, 2, 3), 2, "middle_of_three(1, 2, 3) should return 2")
 	assert_eq(s.vmcallv("last_of_seven", 1, 2, 3, 4, 5, 6, 7), 7, "last_of_seven(..) should return the seventh")
 	assert_eq(s.vmcallv("none_of_two", 1, 2), 7, "none_of_two(1, 2) should return 7")
+	assert_eq(s.vmcallv("overwrites_its_parameter", 3), 7, "overwrites_its_parameter(3) should return 7")
+	assert_eq(s.vmcallv("maybe_overwrites", 3, 0), 3, "maybe_overwrites(3, 0) should return the argument")
+	assert_eq(s.vmcallv("maybe_overwrites", 3, 2), 2, "maybe_overwrites(3, 2) should return the loop's value")
 
 	s.queue_free()
 	ts.queue_free()

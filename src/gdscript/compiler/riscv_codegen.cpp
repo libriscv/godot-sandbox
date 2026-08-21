@@ -439,18 +439,25 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 		}
 	}
 	m_fn.forward_to_return = find_return_forwarding(func);
+	m_fn.live_params = find_live_parameters(func);
+	const bool copies_a_parameter =
+		std::find(m_fn.live_params.begin(), m_fn.live_params.end(), true) != m_fn.live_params.end();
 
-	// A function that saves nothing, takes no parameters and writes every value
-	// it produces through a0 never addresses anything off sp. Its frame is two
-	// instructions that move the stack pointer down and back over memory
+	// A function that saves nothing, copies no parameter in and writes every
+	// value it produces through a0 never addresses anything off sp. Its frame is
+	// two instructions that move the stack pointer down and back over memory
 	// nothing touches, and every plain getter has exactly this shape.
+	//
+	// The question is what the prologue writes to the frame, not how the
+	// function was declared: a callback that ignores the arguments Godot passes
+	// it comes out the same shape as one that takes none.
 	//
 	// get_variant_stack_offset() and get_scratch_variant_offset() refuse to
 	// answer once this is decided, so an expansion that turns out to want a
 	// slot after all fails the compile rather than quietly addressing the
 	// caller's frame through an sp that was never moved.
 	m_fn.omits_frame = !m_fn.saves_return_address && !m_fn.spills_return_pointer &&
-		m_fn.num_params == 0;
+		!copies_a_parameter;
 	for (size_t i = 0; m_fn.omits_frame && i < func.instructions.size(); i++) {
 		switch (func.instructions[i].opcode) {
 			case IROpcode::LABEL:
@@ -537,6 +544,13 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			" arrive in registers");
 	}
 	for (size_t i = 0; i < m_fn.num_params; i++) {
+		if (!m_fn.live_params[i]) {
+			// Dead on entry: nothing reads the slot before something else
+			// writes it, so the copy would be six memory accesses into a
+			// Variant nobody looks at. The slot stays reserved -- a later
+			// write to the parameter's register still needs somewhere to go.
+			continue;
+		}
 		int param_vreg = static_cast<int>(i); // Parameters map to virtual registers 0-6
 		int dst_offset = get_variant_stack_offset(param_vreg);
 		uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
@@ -2648,6 +2662,102 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 	}
 	throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 		"Unknown IR opcode in ABI clobber analysis");
+}
+
+std::vector<bool> RISCVCodeGen::find_live_parameters(const IRFunction& func) {
+	// The prologue copies each incoming Variant out of its argument register
+	// into the parameter's stack slot -- three loads and three stores each, and
+	// twice that in a double-precision build. A parameter the function never
+	// reads, or overwrites before reading, does not need the copy: what the
+	// slot holds until the first write is then something nothing observes.
+	//
+	// "Never reads" is not a scan for the register number. `func f(a): a = 1;
+	// return a` reads r0 at the RETURN, but reads the 1, not the argument, and
+	// a loop can carry a read backwards past the write that looks like it kills
+	// it. So this is liveness at entry, computed backwards to a fixed point,
+	// and a parameter is copied unless it is provably dead there.
+	//
+	// Registers are independent of each other here, so only the parameter
+	// registers are tracked, and the whole state is one bool per parameter per
+	// instruction.
+	const size_t count = func.parameters.size();
+	std::vector<bool> live_at_entry(count, false);
+	if (count == 0 || func.instructions.empty()) {
+		return live_at_entry;
+	}
+
+	const size_t n = func.instructions.size();
+
+	std::unordered_map<std::string, size_t> label_index;
+	for (size_t i = 0; i < n; i++) {
+		if (ir_has_effect(func.instructions[i].opcode, IR_LABEL)) {
+			label_index[std::get<std::string>(func.instructions[i].operands.at(0).value)] = i;
+		}
+	}
+
+	// The instructions control can reach from instruction i. A terminator
+	// reaches only what it names -- nothing, for RETURN -- and everything else
+	// falls through as well as branching. An edge too many only keeps a
+	// parameter live that could have been dropped, so an opcode this does not
+	// know about costs a copy rather than correctness.
+	std::vector<std::vector<size_t>> successors(n);
+	for (size_t i = 0; i < n; i++) {
+		const IRInstruction& instr = func.instructions[i];
+		for (const auto& operand : instr.operands) {
+			if (operand.type != IRValue::Type::LABEL || ir_has_effect(instr.opcode, IR_LABEL)) {
+				continue;
+			}
+			auto it = label_index.find(std::get<std::string>(operand.value));
+			if (it != label_index.end()) {
+				successors[i].push_back(it->second);
+			}
+		}
+		if (!ir_has_effect(instr.opcode, IR_TERMINATOR) && i + 1 < n) {
+			successors[i].push_back(i + 1);
+		}
+	}
+
+	// live_in[i][p]: on some path from instruction i, parameter p is read
+	// before it is written.
+	std::vector<std::vector<bool>> live_in(n, std::vector<bool>(count, false));
+	std::vector<int> reads;
+	std::vector<bool> live_out(count, false);
+
+	for (bool changed = true; changed; ) {
+		changed = false;
+		for (size_t rev = 0; rev < n; rev++) {
+			const size_t i = n - 1 - rev;
+			const IRInstruction& instr = func.instructions[i];
+
+			live_out.assign(count, false);
+			for (size_t succ : successors[i]) {
+				for (size_t p = 0; p < count; p++) {
+					live_out[p] = live_out[p] || live_in[succ][p];
+				}
+			}
+
+			// A write kills what the register held; a read of it in the same
+			// instruction happens first, so the read wins.
+			const int dst = ir_destination_register(instr);
+			if (dst >= 0 && static_cast<size_t>(dst) < count) {
+				live_out[dst] = false;
+			}
+			reads.clear();
+			ir_collect_read_registers(instr, reads);
+			for (int reg : reads) {
+				if (reg >= 0 && static_cast<size_t>(reg) < count) {
+					live_out[reg] = true;
+				}
+			}
+
+			if (live_out != live_in[i]) {
+				live_in[i] = live_out;
+				changed = true;
+			}
+		}
+	}
+
+	return live_in[0];
 }
 
 std::vector<bool> RISCVCodeGen::find_return_forwarding(const IRFunction& func) {

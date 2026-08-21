@@ -32,6 +32,7 @@ constexpr uint8_t REG_ZERO = 0;
 constexpr uint8_t REG_RA = 1;
 constexpr uint8_t REG_SP = 2;
 constexpr uint8_t REG_A0 = 10;
+constexpr uint8_t REG_A1 = 11;
 
 constexpr uint32_t RET = 0x00008067; // jalr zero, 0(ra)
 
@@ -297,12 +298,12 @@ void test_forwarding_respects_later_reads() {
 	std::cout << "  ✓ Forwarding respects later reads" << std::endl;
 }
 
-// A parameter the body never mentions still arrives, and the prologue copies it
-// into its slot. The optimizer used to size the frame from the registers the
+// A parameter the body never mentions still arrives, and its register still owns
+// a slot. The optimizer used to size the frame from the registers the
 // instructions named, so deleting the last read of a parameter shrank the frame
-// out from under the copy: `func g(a, b): return a` sized a frame for one
-// Variant and then wrote the second parameter past its end -- which the backend
-// caught, refusing the compile with "max_registers too low".
+// out from under the prologue's copy: `func g(a, b): return a` sized a frame for
+// one Variant and then wrote the second parameter past its end -- which the
+// backend caught, refusing the compile with "max_registers too low".
 void test_unused_parameter_still_has_a_slot() {
 	std::cout << "Testing that an unused parameter keeps its slot..." << std::endl;
 
@@ -312,24 +313,79 @@ void test_unused_parameter_still_has_a_slot() {
 	const int frame_size = frame_size_of(words);
 	assert(frame_size > 0);
 
-	// Both parameters are copied in, and nothing the function does addresses
-	// memory the frame does not cover.
 	size_t frame_stores = 0;
 	for (uint32_t w : words) {
 		if (!touches_frame(w)) {
 			continue;
 		}
+		// Nothing the function does addresses memory the frame does not cover.
 		const int offset = frame_offset_of(w);
 		assert(offset >= 0 && offset < frame_size);
 		if (opcode_of(w) == 0x23) {
 			frame_stores++;
 		}
 	}
-	// One store per 8-byte word of each parameter Variant, and nothing else in
-	// this function writes to the frame.
-	assert(frame_stores == 2 * size_t(VariantLayout(false).variant_words()));
+	// One store per 8-byte word of the returned parameter, and nothing else:
+	// the second parameter is dead on entry and is not copied in at all.
+	assert(frame_stores == size_t(VariantLayout(false).variant_words()));
 
 	std::cout << "  ✓ An unused parameter keeps its slot" << std::endl;
+}
+
+// What a parameter costs when the function does read it: the copy is six memory
+// accesses per parameter, so a prologue that copies what nothing reads is the
+// most expensive part of a function that does nothing.
+void test_ignored_parameters_cost_nothing() {
+	std::cout << "Testing that ignored parameters cost nothing..." << std::endl;
+
+	// A callback Godot passes arguments to that the script does not use: the
+	// same shape as a function declared without parameters at all.
+	{
+		const Compiled compiled = compile("func g(a, b):\n\treturn 42\n");
+		const std::vector<uint32_t> words = function_words(compiled, "g");
+		assert(count(words, is_stack_adjust) == 0);
+		assert(count(words, touches_frame) == 0);
+		assert(is_store_through_return_pointer(words[words.size() - 2]));
+	}
+
+	// Overwritten before it is read: the incoming Variant is never observed, so
+	// there is nothing to copy and nothing to copy it into.
+	{
+		const Compiled compiled = compile("func f(a):\n\ta = 1\n\treturn a\n");
+		const std::vector<uint32_t> words = function_words(compiled, "f");
+		assert(count(words, is_stack_adjust) == 0);
+		assert(count(words, touches_frame) == 0);
+	}
+
+	std::cout << "  ✓ Ignored parameters cost nothing" << std::endl;
+}
+
+// Liveness, not a scan for the register number. A write that comes first in the
+// instruction stream does not kill the incoming Variant when a path reaches a
+// read without passing it -- here the loop whose body may not run at all.
+void test_loop_carried_parameter_is_copied() {
+	std::cout << "Testing that a loop-carried parameter is copied in..." << std::endl;
+
+	const Compiled compiled = compile(
+		"func loopy(b):\n"
+		"\tvar t = 0\n"
+		"\twhile t < 2:\n"
+		"\t\tt += 1\n"
+		"\t\tb = t\n"
+		"\treturn b\n");
+	const std::vector<uint32_t> words = function_words(compiled, "loopy");
+
+	// The copy is the first thing after the prologue: three loads through a1,
+	// which is where the parameter's Variant is.
+	size_t loads_from_a1 = 0;
+	for (uint32_t w : words) {
+		if (opcode_of(w) == 0x03 && rs1_of(w) == REG_A1) {
+			loads_from_a1++;
+		}
+	}
+	assert(loads_from_a1 == size_t(VariantLayout(false).variant_words()));
+
+	std::cout << "  ✓ A loop-carried parameter is copied in" << std::endl;
 }
 
 } // namespace
@@ -345,6 +401,8 @@ int main() {
 	test_no_frame_pointer_is_set_up();
 	test_forwarding_respects_later_reads();
 	test_unused_parameter_still_has_a_slot();
+	test_ignored_parameters_cost_nothing();
+	test_loop_carried_parameter_is_copied();
 
 	std::cout << std::endl << "All frame tests passed!" << std::endl;
 	return 0;
