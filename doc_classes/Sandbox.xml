@@ -115,6 +115,12 @@
 				This can be useful for debugging or profiling purposes.
 			</description>
 		</method>
+		<method name="get_functions" qualifiers="const">
+			<return type="PackedStringArray" />
+			<description>
+				Returns the names of the guest-registered public API functions.
+			</description>
+		</method>
 		<method name="get_floating_point_registers" qualifiers="const">
 			<return type="Array" />
 			<description>
@@ -127,6 +133,12 @@
 			<description>
 				Returns an Array of general-purpose registers used by the sandboxed program.
 				This can be useful for inspecting the state of the program's execution.
+			</description>
+		</method>
+		<method name="get_public_api" qualifiers="const">
+			<return type="Array" />
+			<description>
+				Returns the guest's public API as an Array of MethodInfo dictionaries (name, address, return type, arguments, description).
 			</description>
 		</method>
 		<method name="get_hotspots" qualifiers="static">

@@ -2738,29 +2738,14 @@ APICALL(api_sandbox_add) {
 			std::string_view description = machine.memory.memview(g_extra->desc, g_extra->desc_len);
 			std::string_view return_type = machine.memory.memview(g_extra->ret, g_extra->ret_len);
 			std::string_view arguments = machine.memory.memview(g_extra->args, g_extra->args_len);
-			// Add the function to the ELFScript method list.
-			if (Ref<ELFScript> program = emu.get_program(); program.is_valid()) {
-				Dictionary func = Sandbox::create_public_api_function(name, address, description, return_type, arguments);
-				if (func.size() > 0) {
-					if (program->functions.size() >= Sandbox::MAX_PUBLIC_FUNCTIONS) {
-						ERR_PRINT("Too many public functions in the Sandbox program");
-						throw std::runtime_error("Too many public functions in the Sandbox program");
-					}
-					if (program->function_names.has(func["name"])) {
-						// Remove the old function with the same name.
-						for (int i = 0; i < program->functions.size(); i++) {
-							Dictionary old_func = program->functions[i];
-							if (old_func["name"].operator String() == func["name"].operator String()) {
-								program->functions.remove_at(i);
-								break;
-							}
-						}
-					}
-					program->functions.push_back(func);
-				}
+			// Sandbox owns the list; ELFScript receives a copy after init.
+			Dictionary func = Sandbox::create_public_api_function(name, address, description, return_type, arguments);
+			if (func.size() > 0) {
+				emu.add_public_api_function(std::move(func));
+			} else {
+				// Malformed signature; cache the address so the name is still callable.
+				emu.add_cached_address(String::utf8(name.data(), name.size()), address);
 			}
-			// Cache the function name hash with the address for faster lookup.
-			emu.add_cached_address(String::utf8(name.data(), name.size()), address);
 		} break;
 		case 2: { // Set new exit address.
 			SYS_TRACE("sandbox_add", "exit", machine.cpu.reg(11));

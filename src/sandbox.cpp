@@ -200,6 +200,8 @@ void Sandbox::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("assault", "test", "iterations"), &Sandbox::assault);
 	ClassDB::bind_method(D_METHOD("has_function", "function"), &Sandbox::has_function);
+	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
+	ClassDB::bind_method(D_METHOD("get_public_api"), &Sandbox::get_public_api);
 	ClassDB::bind_method(D_METHOD("address_of", "symbol"), &Sandbox::address_of);
 	ClassDB::bind_method(D_METHOD("lookup_address", "address"), &Sandbox::lookup_address);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("generate_api", "language", "header_extra", "use_argument_names"), &Sandbox::generate_api, DEFVAL("cpp"), DEFVAL(""), DEFVAL(false));
@@ -373,6 +375,7 @@ void Sandbox::full_reset() {
 	this->set_unboxed_arguments(unboxed_arguments);
 
 	this->m_properties.clear();
+	this->m_public_api_functions.clear();
 	this->m_lookup.clear();
 	this->m_sname_lookup.clear();
 	this->m_name_addresses.clear();
@@ -670,12 +673,13 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 	// Read the program's custom properties, if any
 	this->read_program_properties(true);
 
-	// Attempt to read the public API functions when an ELF program is loaded
+	// Sync public API to ELFScript if present.
 	if (this->m_program_data.is_valid()) {
-		// We can't read them without having loaded the program first
-		// If the functions Array in the ELFScript object is empty, we will look for the API functions
-		if (!this->m_program_data->functions.is_empty()) {
-			// Cache the public API functions from the ELFScript object
+		if (!this->m_public_api_functions.is_empty()) {
+			this->m_program_data->set_public_api_functions(this->m_public_api_functions.duplicate());
+		} else if (!this->m_program_data->functions.is_empty()) {
+			// No guest registration (e.g. resumable mode); adopt from the resource.
+			this->m_public_api_functions = this->m_program_data->functions.duplicate();
 			for (int i = 0; i < this->m_program_data->functions.size(); i++) {
 				const Dictionary func = this->m_program_data->functions[i];
 				String name = func["name"];
@@ -1200,6 +1204,34 @@ String Sandbox::lookup_address(gaddr_t address) const {
 
 bool Sandbox::has_function(const StringName &p_function) const {
 	return cached_address_of(p_function) != 0x0;
+}
+
+PackedStringArray Sandbox::get_functions() const {
+	PackedStringArray names;
+	names.resize(m_public_api_functions.size());
+	for (int i = 0; i < m_public_api_functions.size(); i++) {
+		names.set(i, m_public_api_functions[i].operator Dictionary()["name"]);
+	}
+	return names;
+}
+
+void Sandbox::add_public_api_function(Dictionary &&func) {
+	const String name = func["name"];
+	// Duplicate name replaces the earlier entry.
+	for (int i = 0; i < m_public_api_functions.size(); i++) {
+		if (m_public_api_functions[i].operator Dictionary()["name"].operator String() == name) {
+			m_public_api_functions.remove_at(i);
+			break;
+		}
+	}
+	if (m_public_api_functions.size() >= MAX_PUBLIC_FUNCTIONS) {
+		ERR_PRINT("Too many public functions in the Sandbox program");
+		throw std::runtime_error("Too many public functions in the Sandbox program");
+	}
+	const gaddr_t address = func.get("address", 0x0);
+	m_public_api_functions.push_back(std::move(func));
+	// Populate address cache.
+	this->add_cached_address(name, address);
 }
 
 void Sandbox::add_cached_address(const String &name, gaddr_t address) const {

@@ -288,6 +288,18 @@ public:
 	/// @param address The address of the function or symbol.
 	void add_cached_address(const String &name, gaddr_t address) const;
 
+	// -= Public API =-
+
+	/// @brief Register a guest-published API function.
+	/// @param func MethodInfo dictionary from create_public_api_function().
+	void add_public_api_function(Dictionary &&func);
+
+	/// @brief Deep copy of the guest's public API (Array of MethodInfo dictionaries).
+	Array get_public_api() const { return m_public_api_functions.duplicate(true); }
+
+	/// @brief Names of the guest's registered public API functions.
+	PackedStringArray get_functions() const;
+
 	// -= Guest Name Cache =-
 
 	/// @brief Turn a method or property name from guest memory into a Godot name.
@@ -844,6 +856,8 @@ private:
 
 	// Properties
 	mutable std::vector<SandboxProperty> m_properties;
+	// Guest-published API; authoritative even without an ELFScript resource.
+	Array m_public_api_functions;
 	mutable std::unordered_map<int64_t, LookupEntry> m_lookup;
 	mutable StringNameMap<gaddr_t> m_sname_lookup;
 	mutable NameAddressCache m_name_addresses;
