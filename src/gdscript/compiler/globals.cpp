@@ -2,6 +2,7 @@
 #include "../../syscalls.h"
 #include "compiler_exception.h"
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <unordered_map>
 
@@ -177,6 +178,16 @@ const GlobalFunction* find_global_function(const std::string& name) {
 	return it == by_name.end() ? nullptr : it->second;
 }
 
+size_t global_function_count() {
+	return std::size(GLOBAL_FUNCTIONS);
+}
+
+const char* global_function_name(size_t index) {
+	const char* name = GLOBAL_FUNCTIONS[index].name;
+	// Leading '.' marks internal lowering forms; not source-visible.
+	return name[0] == '.' ? nullptr : name;
+}
+
 static const GlobalConstant GLOBAL_CONSTANTS[] = {
 #define GDSC_INT_CONSTANT(name, value) { #name, false, static_cast<int64_t>(value), 0.0 },
 #define GDSC_FLOAT_CONSTANT(name, value) { #name, true, 0, (value) },
@@ -194,6 +205,14 @@ const GlobalConstant* find_global_constant(const std::string& name) {
 
 	auto it = by_name.find(name);
 	return it == by_name.end() ? nullptr : it->second;
+}
+
+size_t global_constant_count() {
+	return std::size(GLOBAL_CONSTANTS);
+}
+
+const char* global_constant_name(size_t index) {
+	return GLOBAL_CONSTANTS[index].name;
 }
 
 static const BuiltinConstant BUILTIN_CONSTANTS[] = {
@@ -258,6 +277,18 @@ static const struct { const char* name; const char* reason; } UNIMPLEMENTED_GLOB
 	{ "NodePath", "no constructor lowering yet" },
 	{ "RID", "no constructor lowering yet" },
 };
+
+size_t builtin_constant_count() {
+	return std::size(BUILTIN_CONSTANTS);
+}
+
+const char* builtin_constant_type(size_t index) {
+	return BUILTIN_CONSTANTS[index].type;
+}
+
+const char* builtin_constant_name(size_t index) {
+	return BUILTIN_CONSTANTS[index].name;
+}
 
 const char* unimplemented_global_reason(const std::string& name) {
 	static const std::unordered_map<std::string, const char*> by_name = [] {

@@ -17,6 +17,22 @@ void safegdscript_sandbox_profiling_toggled(Sandbox &p_sandbox, bool p_enabled);
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+// Forward-declared; globals.h pulls variant_types.h whose namespace Variant
+// clashes with godot::Variant.
+namespace gdscript {
+struct GlobalConstant;
+struct GlobalFunction;
+const GlobalConstant *find_global_constant(const std::string &name);
+const GlobalFunction *find_global_function(const std::string &name);
+size_t global_constant_count();
+const char *global_constant_name(size_t index);
+size_t global_function_count();
+const char *global_function_name(size_t index);
+size_t builtin_constant_count();
+const char *builtin_constant_type(size_t index);
+const char *builtin_constant_name(size_t index);
+} // namespace gdscript
 static constexpr const char *icon_path = "res://addons/godot_sandbox/SafeGDScript.svg";
 
 static SafeGDScriptLanguage *safegdscript_language;
@@ -470,7 +486,42 @@ const char *const constructible_types[] = {
 	nullptr
 };
 
-const char *const global_constants[] = { "PI", "TAU", "INF", "NAN", nullptr };
+// Completion and lookup both resolve from the compiler's tables.
+void add_global_constants(Array &r_options, const CompletionColors &p_colors) {
+	for (size_t i = 0; i < gdscript::global_constant_count(); i++) {
+		const char *name = gdscript::global_constant_name(i);
+		add_option(r_options, ScriptLanguageExtension::CODE_COMPLETION_KIND_CONSTANT,
+				name, name, p_colors.text);
+	}
+}
+
+// Built-in type constants (Vector2.ZERO, Color.RED). Returns false when none
+// match, distinguishing type names from other receivers. Full scan; not
+// contiguous by type.
+bool add_builtin_constants(Array &r_options, const String &p_type, const CompletionColors &p_colors) {
+	bool found = false;
+	for (size_t i = 0; i < gdscript::builtin_constant_count(); i++) {
+		if (p_type != gdscript::builtin_constant_type(i)) {
+			continue;
+		}
+		const char *name = gdscript::builtin_constant_name(i);
+		add_option(r_options, ScriptLanguageExtension::CODE_COMPLETION_KIND_CONSTANT,
+				name, name, p_colors.text);
+		found = true;
+	}
+	return found;
+}
+
+void add_global_functions(Array &r_options, const CompletionColors &p_colors) {
+	for (size_t i = 0; i < gdscript::global_function_count(); i++) {
+		const char *name = gdscript::global_function_name(i);
+		if (name == nullptr) {
+			continue; // Internal lowering form; not source-visible.
+		}
+		add_option(r_options, ScriptLanguageExtension::CODE_COMPLETION_KIND_FUNCTION,
+				String(name) + String("("), String(name) + String("("), p_colors.function);
+	}
+}
 
 // Members of the built-in Variant types. Member calls compile to a vcall on the
 // Variant, so any of these work regardless of what the receiver turns out to be.
@@ -1086,6 +1137,7 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 			// The struct itself: the only thing reachable through it is .new().
 			add_option(options, CODE_COMPLETION_KIND_FUNCTION, "new(", "new(", colors.function, LOCATION_LOCAL);
 		} else if (!add_type_members(options, declared_type_of(symbols, ctx.receiver), symbols, colors) &&
+				!add_builtin_constants(options, ctx.receiver, colors) &&
 				!add_type_members(options, ctx.receiver, symbols, colors)) {
 			// Neither a value whose type the source states nor a class name of
 			// its own, so it is a Variant of a type only the compiler knows.
@@ -1113,11 +1165,8 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 		for (const char *const *name = constructible_types; *name != nullptr; name++) {
 			add_option(options, CODE_COMPLETION_KIND_CLASS, String(*name) + String("("), String(*name) + String("("), colors.type);
 		}
-		for (const char *const *name = global_constants; *name != nullptr; name++) {
-			add_option(options, CODE_COMPLETION_KIND_CONSTANT, *name, *name, colors.text);
-		}
-		// print() is the one global function the compiler lowers on its own.
-		add_option(options, CODE_COMPLETION_KIND_FUNCTION, "print(", "print(", colors.function);
+		add_global_constants(options, colors);
+		add_global_functions(options, colors);
 
 		// A struct name is both a type hint and its own constructor.
 		for (const SourceStruct &declaration : symbols.structs) {
@@ -1141,11 +1190,11 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 	return result;
 }
 Dictionary SafeGDScriptLanguage::_lookup_code(const String &p_code, const String &p_symbol, const String &p_path, Object *p_owner) const {
-	// "result" is mandatory: lookup_code() reads it back with ERR_FAIL_COND_V, so
-	// omitting it logs an error instead of reporting an unresolved symbol.
-	// Not-found is ERR_CANT_RESOLVE, as in GDScript's own lookup.
+	// Both "result" and "type" required: ERR_FAIL_COND_V on either missing.
+	// Called on every hover; missing key → two errors per mouse move.
 	Dictionary result;
 	result["result"] = Error::ERR_CANT_RESOLVE;
+	result["type"] = LOOKUP_RESULT_MAX;
 	const SourceSymbols symbols = scan_source(p_code);
 
 	// Something the file itself declares wins: ctrl-clicking a name in a script
@@ -1176,7 +1225,27 @@ Dictionary SafeGDScriptLanguage::_lookup_code(const String &p_code, const String
 		result["result"] = Error::OK;
 		result["type"] = LOOKUP_RESULT_SCRIPT_LOCATION;
 		result["location"] = line;
-		result["class_path"] = p_path;
+		result["script_path"] = p_path;
+		return result;
+	}
+
+	// Compiler-known globals; doc page is Godot's.
+	const std::string symbol = std::string(p_symbol.utf8().get_data());
+	if (gdscript::find_global_constant(symbol) != nullptr) {
+		result["result"] = Error::OK;
+		result["type"] = LOOKUP_RESULT_CLASS_CONSTANT;
+		// PI/TAU/INF/NAN → @GDScript; rest → @GlobalScope (matches engine lookup).
+		const bool gdscript_constant = p_symbol == "PI" || p_symbol == "TAU" ||
+				p_symbol == "INF" || p_symbol == "NAN";
+		result["class_name"] = gdscript_constant ? "@GDScript" : "@GlobalScope";
+		result["class_member"] = p_symbol;
+		return result;
+	}
+	if (gdscript::find_global_function(symbol) != nullptr) {
+		result["result"] = Error::OK;
+		result["type"] = LOOKUP_RESULT_CLASS_METHOD;
+		result["class_name"] = "@GlobalScope";
+		result["class_member"] = p_symbol;
 		return result;
 	}
 

@@ -32,6 +32,9 @@ set(SOURCES
 	# The one definition of the format the compiler publishes its function
 	# signatures in; the guest side of it lives inside gdscript.elf.
 	src/gdscript/compiler/function_signature.cpp
+	# Compiler symbol tables; editor completion and lookup resolve from these.
+	src/gdscript/compiler/globals.cpp
+	src/gdscript/compiler/compiler_exception.cpp
 	src/docker.cpp
 	src/godot/script_instance.cpp
 	src/guest_variant.cpp

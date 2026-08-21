@@ -307,6 +307,12 @@ struct GlobalFunction {
 // nullptr when `name` is not a known global (caller falls through to self-call).
 const GlobalFunction* find_global_function(const std::string& name);
 
+// Positional access for editor completion. Names only; host forward-declares
+// to avoid variant_types.h vs godot::Variant ambiguity.
+size_t global_function_count();
+// nullptr for internal lowering forms (leading '.'); skip when enumerating.
+const char* global_function_name(size_t index);
+
 // @GlobalScope constant. Folds to immediate; no syscall.
 struct GlobalConstant {
 	const char* name;
@@ -317,6 +323,9 @@ struct GlobalConstant {
 
 // nullptr if not a @GlobalScope constant.
 const GlobalConstant* find_global_constant(const std::string& name);
+
+size_t global_constant_count();
+const char* global_constant_name(size_t index);
 
 // Built-in type constant (Vector2.ZERO, Color.RED). Folded into MAKE_*.
 struct BuiltinConstant {
@@ -330,6 +339,11 @@ const BuiltinConstant* find_builtin_constant(const std::string& type, const std:
 
 // True if `type` has any built-in constants (distinguishes typo from unknown type).
 bool has_builtin_constants(const std::string& type);
+
+// Positional access for editor. Rows not contiguous by type; filter on name.
+size_t builtin_constant_count();
+const char* builtin_constant_type(size_t index);
+const char* builtin_constant_name(size_t index);
 
 // Unimplemented @GlobalScope name -> reason string, or nullptr if not a global.
 const char* unimplemented_global_reason(const std::string& name);

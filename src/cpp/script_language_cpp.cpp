@@ -229,10 +229,19 @@ bool CPPScriptLanguage::_overrides_external_editor() {
 	return false;
 }
 Dictionary CPPScriptLanguage::_complete_code(const String &p_code, const String &p_path, Object *p_owner) const {
-	return Dictionary();
+	// Empty dict fails ERR_FAIL_COND_V on "result"/"force"/"call_hint".
+	Dictionary result;
+	result["result"] = Error::OK;
+	result["force"] = false;
+	result["call_hint"] = String();
+	return result;
 }
 Dictionary CPPScriptLanguage::_lookup_code(const String &p_code, const String &p_symbol, const String &p_path, Object *p_owner) const {
-	return Dictionary();
+	// ERR_FAIL_COND_V on missing "result"/"type"; called on every hover.
+	Dictionary result;
+	result["result"] = Error::ERR_CANT_RESOLVE;
+	result["type"] = LOOKUP_RESULT_MAX;
+	return result;
 }
 String CPPScriptLanguage::_auto_indent_code(const String &p_code, int32_t p_from_line, int32_t p_to_line) const {
 	return String();
