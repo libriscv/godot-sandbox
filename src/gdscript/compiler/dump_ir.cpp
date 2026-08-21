@@ -266,6 +266,8 @@ int main(int argc, char** argv)
 					case IROpcode::LOAD_FLOAT_IMM:
 					case IROpcode::LOAD_BOOL:
 					case IROpcode::LOAD_STRING:
+					case IROpcode::ARRAY_APPEND:
+					case IROpcode::ARRAY_GET:
 					case IROpcode::CALL_SYSCALL:
 					case IROpcode::VCALL:
 					case IROpcode::VGET:

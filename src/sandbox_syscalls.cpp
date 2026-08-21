@@ -2191,21 +2191,29 @@ APICALL(api_array_at) {
 		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx) + " type = " + GuestVariant::type_name(var_array.get_type()));
 	}
 
-	godot::Array array = var_array.operator Array();
 	const bool set_mode = idx < 0;
-	if (set_mode) {
-		idx = -idx - 1;
-	}
-	if (idx >= array.size()) {
-		ERR_PRINT("Array index out of bounds: " + itos(idx));
-		throw std::runtime_error("Array index out of bounds: " + std::to_string(idx));
-	}
+	const int64_t index = set_mode ? -int64_t(idx) - 1 : idx;
+	GDExtensionBool valid = false;
+	GDExtensionBool oob = false;
 
 	if (set_mode) {
-		array[idx] = vret->toVariant(emu);
+		const Variant value = vret->toVariant(emu);
+		internal::gdextension_interface_variant_set_indexed(
+				const_cast<Variant &>(var_array)._native_ptr(), index,
+				value._native_ptr(), &valid, &oob);
 	} else {
-		Variant ref = array[idx];
-		vret->create(emu, std::move(ref));
+		CallResult result;
+		internal::gdextension_interface_variant_get_indexed(
+				var_array._native_ptr(), index, &result.get(), &valid, &oob);
+		result.mark_constructed();
+		if (LIKELY(valid && !oob)) {
+			vret->create(emu, std::move(result.get()));
+		}
+	}
+
+	if (UNLIKELY(!valid || oob)) {
+		ERR_PRINT("Array index out of bounds: " + itos(index));
+		throw std::runtime_error("Array index out of bounds: " + std::to_string(index));
 	}
 }
 
@@ -2234,23 +2242,45 @@ APICALL(api_dict_ops) {
 		ERR_PRINT("Invalid Dictionary object, type = " + String(GuestVariant::type_name(var_dict.get_type())));
 		throw std::runtime_error("Invalid Dictionary object, idx = " + std::to_string(dict_idx) + " type = " + GuestVariant::type_name(var_dict.get_type()));
 	}
-	godot::Dictionary dict = var_dict.operator Dictionary();
 
 	switch (op) {
 		case Dictionary_Op::GET: {
 			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
 			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vaddr, 1);
-			// TODO: Check if the value is already scoped?
-			Variant v = dict[key->toVariant(emu)];
-			vp->create(emu, std::move(v));
-			break;
+			const Variant key_variant = key->toVariant(emu);
+			CallResult value;
+			GDExtensionBool valid = false;
+			internal::gdextension_interface_variant_get_keyed(
+					var_dict._native_ptr(), key_variant._native_ptr(), &value.get(), &valid);
+			value.mark_constructed();
+			vp->create(emu, valid ? std::move(value.get()) : Variant());
+			return;
 		}
 		case Dictionary_Op::SET: {
 			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
 			GuestVariant *value = machine.memory.memarray<GuestVariant>(vaddr, 1);
-			dict[key->toVariant(emu)] = value->toVariant(emu);
-			break;
+			const Variant key_variant = key->toVariant(emu);
+			const Variant value_variant = value->toVariant(emu);
+			GDExtensionBool valid = false;
+			internal::gdextension_interface_variant_set_keyed(
+					const_cast<Variant &>(var_dict)._native_ptr(), key_variant._native_ptr(),
+					value_variant._native_ptr(), &valid);
+			if (UNLIKELY(!valid)) {
+				ERR_PRINT("Dictionary::set(): the key could not be assigned");
+				throw std::runtime_error("Dictionary::set(): the key could not be assigned");
+			}
+			return;
 		}
+		default:
+			break;
+	}
+
+	godot::Dictionary dict = var_dict.operator Dictionary();
+
+	switch (op) {
+		case Dictionary_Op::GET:
+		case Dictionary_Op::SET:
+			break; // Handled above
 		case Dictionary_Op::ERASE: {
 			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
 			dict.erase(key->toVariant(emu));

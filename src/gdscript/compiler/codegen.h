@@ -64,6 +64,9 @@ private:
 		std::unordered_map<int, const StructDecl*> register_structs;
 		// Enclosing loops, innermost last.
 		std::vector<LoopContext> loops;
+		// Declared return type, coerced to by gen_return() so that a caller may
+		// trust the same type read off the signature.
+		std::string return_type;
 		// Next virtual register to hand out.
 		int next_register = 0;
 	};
@@ -285,6 +288,8 @@ private:
 	// the caller emits no destructuring, which could never run.
 	bool emit_type_guard(int value_reg, IRInstruction::TypeHint type,
 	                     const std::string& fail_label, FunctionContext& func);
+	// Whether `a[i]` may lower to ARRAY_GET/ARRAY_SET rather than a VCALL.
+	bool is_array_element_access(int obj_reg, int idx_reg, FunctionContext& func);
 	// Array length, via ECALL_ARRAY_SIZE.
 	int gen_array_size(int array_reg, FunctionContext& func);
 	// Array element by position, via ECALL_ARRAY_AT.

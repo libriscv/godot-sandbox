@@ -282,7 +282,31 @@ private:
 	// Copy a whole Variant (variant_size() bytes) between two [base + offset] locations,
 	// shuttling it through tmp_reg. Both endpoints must be 8-byte aligned.
 	void emit_variant_move(uint8_t dst_base, int32_t dst_offset, uint8_t src_base, int32_t src_offset, uint8_t tmp_reg);
-	void emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op);
+	// `handle_clobbering` is false when the caller has already moved the live
+	// values out of a0-a3. It has to, when the call sits on a branch: the moves
+	// update the allocator's view of where a value lives, which has to hold on
+	// every path, not just the one the call is on.
+	void emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op,
+	                       bool handle_clobbering = true);
+
+	// Compares both Variant type tags against Variant::INT and branches to
+	// `slow_label` unless both are integers -- and, with `require_non_negative`,
+	// unless both are also >= 0, the shift operators' domain in Godot.
+	void emit_branch_unless_both_int(int lhs_offset, int rhs_offset, const std::string& slow_label,
+	                                 bool require_non_negative);
+
+	// Whether an untyped binary operation is worth testing for two integers at
+	// run time instead of going straight to Variant::evaluate().
+	static bool has_int_fast_path(IROpcode op);
+
+	// One conditional branch on the int64 payloads of two Variants, for a
+	// BRANCH_EQ..BRANCH_GTE known -- or just shown -- to compare two integers.
+	void emit_int_fused_branch(IROpcode op, int lhs_offset, int rhs_offset, const std::string& label);
+
+	// `a[i]` and `a[i] = v` on a known Array with a known int index, through
+	// ECALL_ARRAY_AT. `value_offset` is the slot the element is read into, or the
+	// one it is written from.
+	void emit_array_element_access(bool is_set, int array_offset, int index_offset, int value_offset);
 
 	// VCREATE syscall abstraction
 	// Generic VCREATE emission that handles register clobbering and stack management

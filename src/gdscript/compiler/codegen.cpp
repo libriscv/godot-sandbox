@@ -338,6 +338,8 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl) {
 	func.ir.name = decl.name;
 	m_current_function = decl.name;
 
+	func.return_type = decl.return_type;
+
 	// Create root scope for function
 	push_scope(func);
 
@@ -502,6 +504,24 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
 			int obj_reg = gen_expr(index_expr->object.get(), func);
 			int idx_reg = gen_expr(index_expr->index.get(), func);
 
+			if (is_array_element_access(obj_reg, idx_reg, func)) {
+				func.ir.instructions.emplace_back(IROpcode::ARRAY_SET, IRValue::reg(obj_reg),
+					IRValue::reg(idx_reg), IRValue::reg(value_reg));
+				free_register(func, obj_reg);
+				free_register(func, idx_reg);
+				free_register(func, value_reg);
+				return;
+			}
+
+			if (get_register_type(func, obj_reg) == Variant::DICTIONARY) {
+				func.ir.instructions.emplace_back(IROpcode::DICT_SET, IRValue::reg(obj_reg),
+					IRValue::reg(idx_reg), IRValue::reg(value_reg));
+				free_register(func, obj_reg);
+				free_register(func, idx_reg);
+				free_register(func, value_reg);
+				return;
+			}
+
 			// Use VCALL to call .set(index, value)
 			// Format: VCALL result_reg, obj_reg, method_name, arg_count, arg1_reg, arg2_reg
 			int result_reg = alloc_register(func);
@@ -617,6 +637,11 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
 void CodeGenerator::gen_return(const ReturnStmt* stmt, FunctionContext& func) {
 	if (stmt->value) {
 		int reg = gen_expr(stmt->value.get(), func);
+		// The declared return type types the caller's result register, and typed
+		// float arithmetic reads the payload as a double. `-> float: return 1` has
+		// to widen here, or the caller reads an INT 1 as a denormal.
+		reg = coerce_to_declared_type(reg, type_hint_from_string(func.return_type), func,
+			"the return value of '" + m_current_function + "'", stmt);
 		// Move return value to register 0 (return register)
 		// Skip if already in register 0
 		if (reg != 0) {
@@ -1227,17 +1252,14 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 
 	if (call_expr->arguments.size() == 1) {
 		// range(n): start=0, end=n, step=1
-		start_reg = alloc_register(func);
-		auto& start_instr = func.ir.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(start_reg), IRValue::imm(0));
+		start_reg = gen_int_immediate(0, func);
 		end_reg = gen_expr(call_expr->arguments[0].get(), func);
-		step_reg = alloc_register(func);
-		auto& step_instr = func.ir.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(step_reg), IRValue::imm(1));
+		step_reg = gen_int_immediate(1, func);
 	} else if (call_expr->arguments.size() == 2) {
 		// range(start, end): step=1
 		start_reg = gen_expr(call_expr->arguments[0].get(), func);
 		end_reg = gen_expr(call_expr->arguments[1].get(), func);
-		step_reg = alloc_register(func);
-		auto& step_instr = func.ir.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(step_reg), IRValue::imm(1));
+		step_reg = gen_int_immediate(1, func);
 	} else if (call_expr->arguments.size() == 3) {
 		// range(start, end, step)
 		start_reg = gen_expr(call_expr->arguments[0].get(), func);
@@ -1263,6 +1285,14 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 	int loop_var_reg = alloc_register(func);
 	auto& move_instr = func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(loop_var_reg), IRValue::reg(start_reg));
 	declare_variable(func, stmt->variable, loop_var_reg, false, stmt);
+
+	// The loop variable is `start`, then `start + step` repeatedly: INT exactly
+	// when both of those are, `end` only bounding it. Untyped, every use of it in
+	// the body takes the run-time type test instead of the native path.
+	if (get_register_type(func, start_reg) == Variant::INT &&
+		get_register_type(func, step_reg) == Variant::INT) {
+		set_register_type(func, loop_var_reg, Variant::INT);
+	}
 
 	// Loop start
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
@@ -1948,12 +1978,11 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 		// Local function call - use regular CALL instruction
 		int result_reg = alloc_register(func);
 
-		// `func open() -> BankAccount` makes the result a known instance, so a
-		// field access on it is checked at the call site.
+		// The declared return type types the result register: `-> BankAccount`
+		// checks a field access at the call site, `-> int` keeps the arithmetic
+		// that reads it off the VEVAL path. gen_return() coerces to make it true.
 		if (sig != m_local_signatures.end()) {
-			if (const StructDecl* returned = find_struct(sig->second->return_type)) {
-				set_register_struct(func, result_reg, returned);
-			}
+			apply_declared_type(result_reg, sig->second->return_type, func);
 		}
 
 		// Generate CALL instruction with function name, result register, and argument registers
@@ -2110,6 +2139,19 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 
 	int result_reg = alloc_register(func);
 
+	// append/push_back on a known Array: one system call, against a StringName
+	// build and a builtin-method lookup per element on the VCALL path.
+	if (expr->is_method_call && arg_regs.size() == 1 &&
+		(expr->member_name == "append" || expr->member_name == "push_back") &&
+		get_register_type(func, obj_reg) == Variant::ARRAY)
+	{
+		func.ir.instructions.emplace_back(IROpcode::ARRAY_APPEND, IRValue::reg(result_reg),
+			IRValue::reg(obj_reg), IRValue::reg(arg_regs[0]));
+		free_register(func, obj_reg);
+		free_register(func, arg_regs[0]);
+		return result_reg;
+	}
+
 	// Use VCALL for Variant method calls
 	// Format: VCALL result_reg, obj_reg, method_name, arg_count, arg1_reg, arg2_reg, ...
 	IRInstruction vcall_instr(IROpcode::VCALL);
@@ -2130,9 +2172,37 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 	return result_reg;
 }
 
+// The backend reads the Array's scoped index and the element index straight
+// out of the Variants, with no type check, so both types have to be known.
+// Anything less certain keeps the VCALL, which asks the host instead.
+bool CodeGenerator::is_array_element_access(int obj_reg, int idx_reg, FunctionContext& func) {
+	return get_register_type(func, obj_reg) == Variant::ARRAY &&
+		get_register_type(func, idx_reg) == Variant::INT;
+}
+
 int CodeGenerator::gen_index(const IndexExpr* expr, FunctionContext& func) {
 	int obj_reg = gen_expr(expr->object.get(), func);
 	int idx_reg = gen_expr(expr->index.get(), func);
+
+	if (is_array_element_access(obj_reg, idx_reg, func)) {
+		int element_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::ARRAY_GET, IRValue::reg(element_reg),
+			IRValue::reg(obj_reg), IRValue::reg(idx_reg));
+		free_register(func, obj_reg);
+		free_register(func, idx_reg);
+		return element_reg;
+	}
+
+	// A Dictionary is keyed by any Variant, so the key needs no type of its own:
+	// the host is handed a pointer either way.
+	if (get_register_type(func, obj_reg) == Variant::DICTIONARY) {
+		constexpr int64_t DICT_OP_GET = 0;
+		int value_reg = gen_dictionary_op(DICT_OP_GET, obj_reg, idx_reg,
+			IRInstruction::TypeHint_NONE, func);
+		free_register(func, obj_reg);
+		free_register(func, idx_reg);
+		return value_reg;
+	}
 
 	int result_reg = alloc_register(func);
 
@@ -2345,14 +2415,9 @@ int CodeGenerator::gen_dict_get(int obj_reg, const std::string& key, FunctionCon
 	func.ir.instructions.push_back(load_key);
 	set_register_type(func, key_reg, Variant::STRING);
 
-	int result_reg = alloc_register(func);
-	IRInstruction vcall(IROpcode::VCALL);
-	vcall.operands.push_back(IRValue::reg(result_reg));
-	vcall.operands.push_back(IRValue::reg(obj_reg));
-	vcall.operands.push_back(IRValue::str("get"));
-	vcall.operands.push_back(IRValue::imm(1));
-	vcall.operands.push_back(IRValue::reg(key_reg));
-	func.ir.instructions.push_back(vcall);
+	constexpr int64_t DICT_OP_GET = 0;
+	int result_reg = gen_dictionary_op(DICT_OP_GET, obj_reg, key_reg,
+		IRInstruction::TypeHint_NONE, func);
 
 	free_register(func, key_reg);
 	return result_reg;
@@ -2368,20 +2433,10 @@ void CodeGenerator::gen_dict_set(int obj_reg, const std::string& key, int value_
 	func.ir.instructions.push_back(load_key);
 	set_register_type(func, key_reg, Variant::STRING);
 
-	// Dictionary.set() returns whether the key was already there. Nothing reads
-	// it, but VCALL defines a destination, so it gets one of its own.
-	int result_reg = alloc_register(func);
-	IRInstruction vcall(IROpcode::VCALL);
-	vcall.operands.push_back(IRValue::reg(result_reg));
-	vcall.operands.push_back(IRValue::reg(obj_reg));
-	vcall.operands.push_back(IRValue::str("set"));
-	vcall.operands.push_back(IRValue::imm(2));
-	vcall.operands.push_back(IRValue::reg(key_reg));
-	vcall.operands.push_back(IRValue::reg(value_reg));
-	func.ir.instructions.push_back(vcall);
+	func.ir.instructions.emplace_back(IROpcode::DICT_SET, IRValue::reg(obj_reg),
+		IRValue::reg(key_reg), IRValue::reg(value_reg));
 
 	free_register(func, key_reg);
-	free_register(func, result_reg);
 }
 
 int CodeGenerator::gen_default_value(const std::string& type_hint, FunctionContext& func) {
@@ -2846,7 +2901,8 @@ int CodeGenerator::gen_global_call(const GlobalFunction& info, const std::vector
 			}
 			if (wanted == Variant::FLOAT && hint == Variant::INT) {
 				const int widened = alloc_register(func);
-				IRInstruction convert(IROpcode::CONVERT, IRValue::reg(widened), IRValue::reg(reg));
+				IRInstruction convert(IROpcode::CONVERT, IRValue::reg(widened), IRValue::reg(reg),
+					IRValue::imm(Variant::INT));
 				convert.type_hint = Variant::FLOAT;
 				func.ir.instructions.push_back(convert);
 				set_register_type(func, widened, Variant::FLOAT);
@@ -3220,15 +3276,19 @@ int CodeGenerator::coerce_to_declared_type(int reg, IRInstruction::TypeHint decl
 		return reg;
 	}
 
-	// int -> float is GDScript's one implicit numeric conversion. Without it the
-	// register keeps a Variant of type INT while the compiler believes it is a
-	// FLOAT, and the backend then reads the payload as a double.
-	if (declared == Variant::FLOAT && actual == Variant::INT) {
+	// The widening conversions: INT -> FLOAT, and BOOL -> INT/FLOAT, which is
+	// what `func f() -> int: return a < b` needs. Without them the register holds
+	// one type while the compiler assumes another, and the backend reads the
+	// payload as the assumed type: a BOOL payload is one byte, an INT eight.
+	const bool widening = (declared == Variant::FLOAT && actual == Variant::INT) ||
+		(actual == Variant::BOOL && (declared == Variant::INT || declared == Variant::FLOAT));
+	if (widening) {
 		int converted = alloc_register(func);
-		IRInstruction convert(IROpcode::CONVERT, IRValue::reg(converted), IRValue::reg(reg));
-		convert.type_hint = Variant::FLOAT;
+		IRInstruction convert(IROpcode::CONVERT, IRValue::reg(converted), IRValue::reg(reg),
+			IRValue::imm(actual));
+		convert.type_hint = declared;
 		func.ir.instructions.push_back(convert);
-		set_register_type(func, converted, Variant::FLOAT);
+		set_register_type(func, converted, declared);
 		free_register(func, reg);
 		return converted;
 	}

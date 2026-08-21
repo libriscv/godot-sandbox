@@ -670,19 +670,36 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int dst_offset = get_variant_stack_offset(dst_vreg);
 				int src_offset = get_variant_stack_offset(src_vreg);
 
-				if (instr.type_hint != Variant::FLOAT) {
+				const auto from = static_cast<IRInstruction::TypeHint>(std::get<int64_t>(instr.operands[2].value));
+
+				// The source type picks the load: a BOOL payload is one byte, an
+				// INT all eight. Nothing else differs -- both widen to the same
+				// 64-bit value.
+				if (from == Variant::BOOL) {
+					emit_lbu(REG_T0, REG_SP, src_offset + VARIANT_DATA_OFFSET);
+				} else if (from == Variant::INT) {
+					emit_ld(REG_T0, REG_SP, src_offset + VARIANT_DATA_OFFSET);
+				} else {
 					throw CompilerException(ErrorType::RISCV_codegen_ERROR,
-						std::string("CONVERT to ") + variant_type_name(instr.type_hint) +
-						" is not implemented; only int -> float conversion is.");
+						std::string("CONVERT from ") + variant_type_name(from) + " is not implemented");
 				}
 
-				// int -> float. Variant::FLOAT is always a 64-bit double, whatever
-				// real_t is, so this is fcvt.d.l and a plain 64-bit store.
-				emit_ld(REG_T0, REG_SP, src_offset + VARIANT_DATA_OFFSET);
-				emit_fcvt_d_l(REG_FA0, REG_T0);
-				emit_li(REG_T0, Variant::FLOAT);
-				emit_sw(REG_T0, REG_SP, dst_offset);
-				emit_fsd(REG_FA0, REG_SP, dst_offset + VARIANT_DATA_OFFSET);
+				if (instr.type_hint == Variant::FLOAT) {
+					// Variant::FLOAT is always a 64-bit double, whatever real_t
+					// is, so this is fcvt.d.l and a plain 64-bit store.
+					emit_fcvt_d_l(REG_FA0, REG_T0);
+					emit_li(REG_T1, Variant::FLOAT);
+					emit_sw(REG_T1, REG_SP, dst_offset);
+					emit_fsd(REG_FA0, REG_SP, dst_offset + VARIANT_DATA_OFFSET);
+				} else if (instr.type_hint == Variant::INT) {
+					emit_li(REG_T1, Variant::INT);
+					emit_sw(REG_T1, REG_SP, dst_offset);
+					emit_sd(REG_T0, REG_SP, dst_offset + VARIANT_DATA_OFFSET);
+				} else {
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+						std::string("CONVERT to ") + variant_type_name(instr.type_hint) +
+						" is not implemented");
+				}
 				break;
 			}
 
@@ -871,6 +888,33 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 					int rhs_vreg_local = std::get<int>(instr.operands[2].value);
 					int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
 					int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
+
+					// Untyped operands, but very often two integers at run time:
+					// everything an Array or a Dictionary hands back is untyped, and
+					// a fetch-decode-execute loop over one does all its arithmetic
+					// this way. Six instructions to test for it beat the syscall.
+					if (!host_only && has_int_fast_path(instr.opcode)) {
+						// The clobber moves go before the branch: they update the
+						// allocator's view of where a value lives, which has to
+						// hold on both paths, not just the VEVAL one.
+						std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
+						for (const auto& move : m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx)) {
+							emit_mv(move.second, move.first);
+						}
+
+						const bool shift = instr.opcode == IROpcode::SHL || instr.opcode == IROpcode::SHR;
+						const std::string host = gen_local_label(".veval");
+						const std::string done = gen_local_label(".veval_done");
+						emit_branch_unless_both_int(lhs_offset, rhs_offset, host, shift);
+						emit_typed_int_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
+						mark_label_use(done, m_code.size());
+						emit_jal(REG_ZERO, 0);
+						define_label(host);
+						emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op, false);
+						define_label(done);
+						break;
+					}
+
 					emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
 				} else if (lhs_is_reg && !rhs_is_reg && instr.operands[2].type == IRValue::Type::IMMEDIATE) {
 					// Left operand is register, right is immediate
@@ -1100,69 +1144,49 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				int rhs_vreg = std::get<int>(instr.operands[1].value);
 				std::string label = std::get<std::string>(instr.operands[2].value);
 
-				// Use optimized path for type-hinted INT comparisons
+				int lhs_offset = get_variant_stack_offset(lhs_vreg);
+				int rhs_offset = get_variant_stack_offset(rhs_vreg);
+
 				if (instr.type_hint == Variant::INT) {
-					int lhs_offset = get_variant_stack_offset(lhs_vreg);
-					int rhs_offset = get_variant_stack_offset(rhs_vreg);
-
-					// Load both int64 values
-					emit_load_variant_int(REG_T0, REG_SP, lhs_offset);
-					emit_load_variant_int(REG_T1, REG_SP, rhs_offset);
-
-					// Emit direct branch based on comparison type
-					mark_label_use(label, m_code.size());
-					switch (instr.opcode) {
-						case IROpcode::BRANCH_EQ:
-							emit_beq(REG_T0, REG_T1, 0);
-							break;
-						case IROpcode::BRANCH_NEQ:
-							emit_bne(REG_T0, REG_T1, 0);
-							break;
-						case IROpcode::BRANCH_LT:
-							emit_blt(REG_T0, REG_T1, 0);
-							break;
-						case IROpcode::BRANCH_LTE:
-							// t0 <= t1 is !(t0 > t1), which is !(t1 < t0)
-							// So we branch if NOT (t1 < t0), i.e., t1 >= t0
-							emit_bge(REG_T1, REG_T0, 0);
-							break;
-						case IROpcode::BRANCH_GT:
-							// t0 > t1 is t1 < t0
-							emit_blt(REG_T1, REG_T0, 0);
-							break;
-						case IROpcode::BRANCH_GTE:
-							emit_bge(REG_T0, REG_T1, 0);
-							break;
-						default:
-							throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unknown fused branch opcode");
-					}
-				} else {
-					// Fall back to comparison + branch for non-INT types
-					// This is less optimal but maintains correctness
-					int lhs_offset = get_variant_stack_offset(lhs_vreg);
-					int rhs_offset = get_variant_stack_offset(rhs_vreg);
-					int tmp_offset = get_scratch_variant_offset();
-
-					// Map IR opcode to Variant::Operator
-					int variant_op;
-					switch (instr.opcode) {
-						case IROpcode::BRANCH_EQ:  variant_op = 0; break; // OP_EQUAL
-						case IROpcode::BRANCH_NEQ: variant_op = 1; break; // OP_NOT_EQUAL
-						case IROpcode::BRANCH_LT:  variant_op = 2; break; // OP_LESS
-						case IROpcode::BRANCH_LTE: variant_op = 3; break; // OP_LESS_EQUAL
-						case IROpcode::BRANCH_GT:  variant_op = 4; break; // OP_GREATER
-						case IROpcode::BRANCH_GTE: variant_op = 5; break; // OP_GREATER_EQUAL
-						default: variant_op = 0; break;
-					}
-
-					// Perform comparison via syscall
-					emit_variant_eval(tmp_offset, lhs_offset, rhs_offset, variant_op);
-
-					// Load result and branch
-					emit_load_variant_bool(REG_T0, REG_SP, tmp_offset);
-					mark_label_use(label, m_code.size());
-					emit_bne(REG_T0, REG_ZERO, 0);
+					emit_int_fused_branch(instr.opcode, lhs_offset, rhs_offset, label);
+					break;
 				}
+
+				// Map IR opcode to Variant::Operator
+				int variant_op;
+				switch (instr.opcode) {
+					case IROpcode::BRANCH_EQ:  variant_op = 0; break; // OP_EQUAL
+					case IROpcode::BRANCH_NEQ: variant_op = 1; break; // OP_NOT_EQUAL
+					case IROpcode::BRANCH_LT:  variant_op = 2; break; // OP_LESS
+					case IROpcode::BRANCH_LTE: variant_op = 3; break; // OP_LESS_EQUAL
+					case IROpcode::BRANCH_GT:  variant_op = 4; break; // OP_GREATER
+					case IROpcode::BRANCH_GTE: variant_op = 5; break; // OP_GREATER_EQUAL
+					default: variant_op = 0; break;
+				}
+
+				// Untyped operands. Two integers compare in registers, and
+				// everything an Array or a Dictionary hands back is untyped, so
+				// the test is worth its six instructions; anything else is a
+				// comparison only Godot knows how to make.
+				const int tmp_offset = get_scratch_variant_offset();
+				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
+				for (const auto& move : m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx)) {
+					emit_mv(move.second, move.first);
+				}
+
+				const std::string host = gen_local_label(".vcmp");
+				const std::string done = gen_local_label(".vcmp_done");
+				emit_branch_unless_both_int(lhs_offset, rhs_offset, host, false);
+				emit_int_fused_branch(instr.opcode, lhs_offset, rhs_offset, label);
+				mark_label_use(done, m_code.size());
+				emit_jal(REG_ZERO, 0);
+
+				define_label(host);
+				emit_variant_eval(tmp_offset, lhs_offset, rhs_offset, variant_op, false);
+				emit_load_variant_bool(REG_T0, REG_SP, tmp_offset);
+				mark_label_use(label, m_code.size());
+				emit_bne(REG_T0, REG_ZERO, 0);
+				define_label(done);
 				break;
 			}
 
@@ -1263,6 +1287,76 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				}
 
 				emit_ret();
+				break;
+			}
+
+			case IROpcode::ARRAY_APPEND: {
+				// ARRAY_APPEND dst, array, value -- ECALL_ARRAY_OPS with
+				// a0 = Array_Op::PUSH_BACK, a1 = the Array's scoped index,
+				// a2 = an unused element index, a3 = the Variant to append.
+				const int result_offset = get_variant_stack_offset(std::get<int>(instr.operands[0].value));
+				const int array_offset = get_variant_stack_offset(std::get<int>(instr.operands[1].value));
+				const int value_offset = get_variant_stack_offset(std::get<int>(instr.operands[2].value));
+
+				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
+				for (const auto& move : m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx)) {
+					emit_mv(move.second, move.first);
+				}
+
+				emit_li(REG_A0, 1); // Array_Op::PUSH_BACK
+				emit_lw(REG_A1, REG_SP, array_offset + VARIANT_DATA_OFFSET);
+				emit_li(REG_A2, 0);
+				emit_add_offset(REG_A3, REG_SP, value_offset);
+				emit_li(REG_A7, 521); // ECALL_ARRAY_OPS
+				emit_ecall();
+
+				// Array.append() evaluates to null and the host writes nothing
+				// back, so the destination is stored here.
+				emit_li(REG_T0, Variant::NIL);
+				emit_store_variant_type(REG_T0, REG_SP, result_offset);
+				break;
+			}
+
+			case IROpcode::DICT_SET: {
+				// DICT_SET dict, key, value -- ECALL_DICTIONARY_OPS with
+				// a0 = Dictionary_Op::SET, a1 = the Dictionary's scoped index,
+				// a2 = the key and a3 = the value.
+				const int dict_offset = get_variant_stack_offset(std::get<int>(instr.operands[0].value));
+				const int key_offset = get_variant_stack_offset(std::get<int>(instr.operands[1].value));
+				const int value_offset = get_variant_stack_offset(std::get<int>(instr.operands[2].value));
+
+				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
+				for (const auto& move : m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx)) {
+					emit_mv(move.second, move.first);
+				}
+
+				emit_li(REG_A0, 1); // Dictionary_Op::SET
+				emit_lw(REG_A1, REG_SP, dict_offset + VARIANT_DATA_OFFSET);
+				emit_add_offset(REG_A2, REG_SP, key_offset);
+				emit_add_offset(REG_A3, REG_SP, value_offset);
+				emit_li(REG_A7, 524); // ECALL_DICTIONARY_OPS
+				emit_ecall();
+				break;
+			}
+
+			case IROpcode::ARRAY_GET:
+			case IROpcode::ARRAY_SET: {
+				// ARRAY_GET dst, array, index   /   ARRAY_SET array, index, value
+				const bool is_set = instr.opcode == IROpcode::ARRAY_SET;
+				const int array_operand = is_set ? 0 : 1;
+				const int index_operand = is_set ? 1 : 2;
+				const int value_operand = is_set ? 2 : 0;
+
+				const int array_offset = get_variant_stack_offset(std::get<int>(instr.operands[array_operand].value));
+				const int index_offset = get_variant_stack_offset(std::get<int>(instr.operands[index_operand].value));
+				const int value_offset = get_variant_stack_offset(std::get<int>(instr.operands[value_operand].value));
+
+				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2};
+				for (const auto& move : m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx)) {
+					emit_mv(move.second, move.first);
+				}
+
+				emit_array_element_access(is_set, array_offset, index_offset, value_offset);
 				break;
 			}
 
@@ -2627,6 +2721,10 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::BRANCH_LTE:
 		case IROpcode::BRANCH_GT:
 		case IROpcode::BRANCH_GTE:
+		case IROpcode::ARRAY_APPEND:
+		case IROpcode::ARRAY_GET:
+		case IROpcode::ARRAY_SET:
+		case IROpcode::DICT_SET:
 		case IROpcode::CALL:
 		case IROpcode::CALL_SYSCALL:
 		case IROpcode::VCALL:
@@ -3361,17 +3459,21 @@ void RISCVCodeGen::emit_variant_eval_unary(int result_offset, int operand_offset
 	emit_variant_eval(result_offset, operand_offset, nil_offset, op);
 }
 
-void RISCVCodeGen::emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op) {
+void RISCVCodeGen::emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op,
+	bool handle_clobbering)
+{
 	// Call sys_veval(op, &lhs, &rhs, &result)
 	// Signature: bool sys_veval(int op, const Variant* a, const Variant* b, Variant* result)
 
 	// VEVAL clobbers a0-a3, so handle register clobbering first
-	std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-	auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
+	if (handle_clobbering) {
+		std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
+		auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 
-	// Emit moves to save live values from clobbered registers
-	for (const auto& move : moves) {
-		emit_mv(move.second, move.first); // Move from clobbered reg to new reg
+		// Emit moves to save live values from clobbered registers
+		for (const auto& move : moves) {
+			emit_mv(move.second, move.first); // Move from clobbered reg to new reg
+		}
 	}
 
 	// Load operator into a0
@@ -3388,6 +3490,119 @@ void RISCVCodeGen::emit_variant_eval(int result_offset, int lhs_offset, int rhs_
 
 	// Make the ecall to sys_veval (ECALL_VEVAL = 502)
 	emit_li(REG_A7, 502); // ECALL_VEVAL
+	emit_ecall();
+}
+
+bool RISCVCodeGen::has_int_fast_path(IROpcode op) {
+	switch (op) {
+		// What the machine does directly on two integers. DIV and MOD are absent
+		// on purpose: a zero divisor traps natively but is a Godot error message
+		// on the host path, and there is no result to put in a register.
+		case IROpcode::ADD:
+		case IROpcode::SUB:
+		case IROpcode::MUL:
+		case IROpcode::BIT_AND:
+		case IROpcode::BIT_OR:
+		case IROpcode::BIT_XOR:
+		case IROpcode::SHL:
+		case IROpcode::SHR:
+			return true;
+		default:
+			return false;
+	}
+}
+
+void RISCVCodeGen::emit_branch_unless_both_int(int lhs_offset, int rhs_offset,
+	const std::string& slow_label, bool require_non_negative)
+{
+	// The type tag is the first field of a Variant, so this is two loads and a
+	// compare -- no host call.
+	emit_lwu(REG_T0, REG_SP, lhs_offset + VARIANT_TYPE_OFFSET);
+	emit_lwu(REG_T1, REG_SP, rhs_offset + VARIANT_TYPE_OFFSET);
+	emit_xori(REG_T0, REG_T0, Variant::INT);
+	emit_xori(REG_T1, REG_T1, Variant::INT);
+	emit_or(REG_T0, REG_T0, REG_T1);
+	mark_label_use(slow_label, m_code.size());
+	emit_bne(REG_T0, REG_ZERO, 0);
+
+	if (require_non_negative) {
+		// Godot errors on a negative shift operand rather than answering with a
+		// number. Only the host can raise that, so the native path declines it.
+		emit_load_variant_int(REG_T0, REG_SP, lhs_offset);
+		emit_load_variant_int(REG_T1, REG_SP, rhs_offset);
+		emit_or(REG_T0, REG_T0, REG_T1);
+		mark_label_use(slow_label, m_code.size());
+		emit_blt(REG_T0, REG_ZERO, 0);
+	}
+}
+
+void RISCVCodeGen::emit_int_fused_branch(IROpcode op, int lhs_offset, int rhs_offset,
+	const std::string& label)
+{
+	emit_load_variant_int(REG_T0, REG_SP, lhs_offset);
+	emit_load_variant_int(REG_T1, REG_SP, rhs_offset);
+
+	mark_label_use(label, m_code.size());
+	switch (op) {
+		case IROpcode::BRANCH_EQ:
+			emit_beq(REG_T0, REG_T1, 0);
+			break;
+		case IROpcode::BRANCH_NEQ:
+			emit_bne(REG_T0, REG_T1, 0);
+			break;
+		case IROpcode::BRANCH_LT:
+			emit_blt(REG_T0, REG_T1, 0);
+			break;
+		case IROpcode::BRANCH_LTE:
+			// t0 <= t1 is !(t1 < t0), i.e. t1 >= t0
+			emit_bge(REG_T1, REG_T0, 0);
+			break;
+		case IROpcode::BRANCH_GT:
+			// t0 > t1 is t1 < t0
+			emit_blt(REG_T1, REG_T0, 0);
+			break;
+		case IROpcode::BRANCH_GTE:
+			emit_bge(REG_T0, REG_T1, 0);
+			break;
+		default:
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unknown fused branch opcode");
+	}
+}
+
+void RISCVCodeGen::emit_array_element_access(bool is_set, int array_offset, int index_offset, int value_offset) {
+	// ECALL_ARRAY_AT(a0 = the Array's scoped-variant index, a1 = the element
+	// index, a2 = a Variant). A negative a1 writes the Variant at a2 into element
+	// -a1 - 1, which is how the set form is spelled; a non-negative one reads that
+	// element into it.
+	//
+	// The caller has already moved live values out of a0-a2.
+	const std::string in_range = gen_local_label(".array_index");
+
+	emit_lw(REG_A0, REG_SP, array_offset + VARIANT_DATA_OFFSET);
+	emit_load_variant_int(REG_A1, REG_SP, index_offset);
+
+	// A negative index counts from the end, as everywhere else in GDScript. Only
+	// that branch pays for the length, and ECALL_ARRAY_SIZE answers in a0 without
+	// touching a1.
+	mark_label_use(in_range, m_code.size());
+	emit_bge(REG_A1, REG_ZERO, 0);
+	emit_li(REG_A7, 523); // ECALL_ARRAY_SIZE
+	emit_ecall();
+	emit_add(REG_A1, REG_A1, REG_A0);
+	emit_lw(REG_A0, REG_SP, array_offset + VARIANT_DATA_OFFSET);
+	mark_label_use(in_range, m_code.size());
+	emit_bge(REG_A1, REG_ZERO, 0);
+	// Still negative: further from the end than the Array is long. Left as it is
+	// it would read as the set form, so substitute an index no Array can hold and
+	// let the host report the out-of-range access.
+	emit_li(REG_A1, 0x7fffffff);
+	define_label(in_range);
+
+	if (is_set) {
+		emit_xori(REG_A1, REG_A1, -1); // -index - 1
+	}
+	emit_add_offset(REG_A2, REG_SP, value_offset);
+	emit_li(REG_A7, 522); // ECALL_ARRAY_AT
 	emit_ecall();
 }
 
@@ -3792,8 +4007,11 @@ void RISCVCodeGen::emit_lw(uint8_t rd, uint8_t rs1, int32_t offset) {
 }
 
 void RISCVCodeGen::emit_lwu(uint8_t rd, uint8_t rs1, int32_t offset) {
-	// LWU (Load Word Unsigned) - RV64I specific, zero-extends to 64 bits
-	emit_load_with_offset(0x03, 4, rd, rs1, offset);  // funct3=4 for LWU
+	// LWU (Load Word Unsigned) - RV64I specific, zero-extends to 64 bits. funct3
+	// is 6; this emitted 4, which is LBU -- correct only by accident for the two
+	// callers, both loading a Variant type tag that fits in the low byte on a
+	// little-endian machine.
+	emit_load_with_offset(0x03, 6, rd, rs1, offset);
 }
 
 void RISCVCodeGen::emit_lh(uint8_t rd, uint8_t rs1, int32_t offset) {

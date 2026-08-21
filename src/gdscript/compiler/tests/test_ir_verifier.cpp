@@ -363,7 +363,8 @@ void test_type_hints() {
 		func.name = "convert";
 		func.max_registers = 2;
 		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(1), IRValue::imm(1));
-		func.instructions.emplace_back(IROpcode::CONVERT, IRValue::reg(0), IRValue::reg(1));
+		func.instructions.emplace_back(IROpcode::CONVERT, IRValue::reg(0), IRValue::reg(1),
+			IRValue::imm(Variant::INT));
 		func.instructions.emplace_back(IROpcode::RETURN);
 		expect_rejected(func, "CONVERT does not say what it converts to");
 

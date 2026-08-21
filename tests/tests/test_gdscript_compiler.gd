@@ -5283,3 +5283,216 @@ func test_sgd_refuses_a_call_with_the_wrong_argument_count():
 	assert_engine_error("'Node::with_defaults': Method expected 1 argument(s), but called with 0.")
 
 	node.free()
+
+func test_array_element_access():
+	# `a[i]` on a known Array is ECALL_ARRAY_AT rather than Variant::call("get"),
+	# and a negative index is normalised in the guest before the call. Array.get(),
+	# which the VCALL path reached, does not wrap -- so every answer here is
+	# checked against the engine's own.
+	var gdscript_code = """
+func read(a : Array, i : int):
+	return a[i]
+
+func write(a : Array, i : int, v):
+	a[i] = v
+	return a
+
+func swap_ends(a : Array):
+	var first = a[0]
+	a[0] = a[-1]
+	a[-1] = first
+	return a
+
+func build(n : int) -> Array:
+	var out : Array = []
+	var i : int = 0
+	while i < n:
+		out.append(i * i)
+		i += 1
+	return out
+
+func total(a : Array) -> int:
+	var acc : int = 0
+	var i : int = 0
+	while i < a.size():
+		acc += a[i]
+		i += 1
+	return acc
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	var values : Array = [10, 20, 30, 40]
+
+	# A positive index, and the negative one the VCALL path could not do.
+	for i in [0, 1, 2, 3, -1, -2, -3, -4]:
+		assert_eq(s.vmcallv("read", values, i), values[i],
+			"a[%d] should be what the engine says it is" % i)
+
+	assert_eq(s.vmcallv("write", [1, 2, 3], 1, 99), [1, 99, 3], "a positive index should write in place")
+	assert_eq(s.vmcallv("write", [1, 2, 3], -1, 99), [1, 2, 99], "a negative index should write from the end")
+	assert_eq(s.vmcallv("swap_ends", [1, 2, 3, 4]), [4, 2, 3, 1],
+		"reading and writing from the end should reach the same element")
+
+	# append and index in a loop: the shape the syscall path exists for.
+	var built = s.vmcallv("build", 8)
+	assert_eq(built, [0, 1, 4, 9, 16, 25, 36, 49], "append should build the same Array the engine would")
+	assert_eq(s.vmcallv("total", built), 140, "indexing should read back what append wrote")
+
+	# An Array from the engine, of mixed element types: the element type is not
+	# the compiler's to assume.
+	assert_eq(s.vmcallv("read", [1, "two", 3.5, [4]], 1), "two", "an element may be any Variant")
+	assert_eq(s.vmcallv("read", [1, "two", 3.5, [4]], 2), 3.5, "an element may be any Variant")
+
+	s.queue_free()
+
+func test_dictionary_element_access():
+	# `d[k]` is ECALL_DICTIONARY_OPS rather than Variant::call("get"). A missing
+	# key reads as null and is not created by the read, unlike
+	# Dictionary::operator[], which the host used to go through.
+	var gdscript_code = """
+func read(d : Dictionary, k):
+	return d[k]
+
+func write(d : Dictionary, k, v):
+	d[k] = v
+	return d
+
+func by_name(d : Dictionary):
+	d.count = d.count + 1
+	return d.count
+
+func histogram(words : Array) -> Dictionary:
+	var counts : Dictionary = {}
+	for w in words:
+		if counts.has(w):
+			counts[w] = counts[w] + 1
+		else:
+			counts[w] = 1
+	return counts
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	var d : Dictionary = {"a": 1, 2: "two", 3.5: [1, 2]}
+	assert_eq(s.vmcallv("read", d, "a"), 1, "a String key should read its value")
+	assert_eq(s.vmcallv("read", d, 2), "two", "an integer key should read its value")
+	assert_eq(s.vmcallv("read", d, 3.5), [1, 2], "a float key should read its value")
+
+	# A missing key reads as null, and the read leaves the Dictionary alone.
+	var probe : Dictionary = {"a": 1}
+	assert_eq(s.vmcallv("read", probe, "missing"), null, "a missing key should read as null")
+	assert_eq(probe.size(), 1, "reading a missing key should not create it")
+
+	assert_eq(s.vmcallv("write", {"a": 1}, "b", 2), {"a": 1, "b": 2}, "a write should add the key")
+	assert_eq(s.vmcallv("write", {"a": 1}, "a", 9), {"a": 9}, "a write should replace the value")
+	assert_eq(s.vmcallv("by_name", {"count": 4}), 5, "d.key should mean d[\"key\"]")
+
+	assert_eq(s.vmcallv("histogram", ["a", "b", "a", "c", "a", "b"]), {"a": 3, "b": 2, "c": 1},
+		"a keyed loop should build the same Dictionary the engine would")
+
+	s.queue_free()
+
+func test_untyped_arithmetic_matches_the_engine():
+	# Everything a container hands back is a Variant of unknown type, so untyped
+	# arithmetic tests for two integers at run time and falls back to Godot's
+	# Variant::evaluate() otherwise. Both paths have to answer what the engine
+	# answers -- including the shifts, which Godot errors on for a negative operand
+	# and which therefore may not take the register path.
+	var gdscript_code = """
+func add(a, b):
+	return a + b
+
+func mul(a, b):
+	return a * b
+
+func bit_and(a, b):
+	return a & b
+
+func shl(a, b):
+	return a << b
+
+func shr(a, b):
+	return a >> b
+
+func less(a, b):
+	if a < b:
+		return "less"
+	return "not less"
+
+func from_array(a : Array, i : int, j : int):
+	return a[i] + a[j]
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	# Two integers: the register path.
+	assert_eq(s.vmcallv("add", 3, 4), 7, "int + int")
+	assert_eq(s.vmcallv("mul", 3, 4), 12, "int * int")
+	assert_eq(s.vmcallv("bit_and", 12, 10), 8, "int & int")
+	assert_eq(s.vmcallv("shl", 3, 4), 48, "int << int")
+	assert_eq(s.vmcallv("shr", 48, 4), 3, "int >> int")
+	assert_eq(s.vmcallv("less", 3, 4), "less", "int < int")
+	assert_eq(s.vmcallv("less", 4, 3), "not less", "int < int")
+
+	# Anything else: the host path.
+	assert_eq(s.vmcallv("add", 3, 4.5), 7.5, "int + float")
+	assert_eq(s.vmcallv("add", 1.5, 4.5), 6.0, "float + float")
+	assert_eq(s.vmcallv("add", "ab", "cd"), "abcd", "String + String")
+	assert_eq(s.vmcallv("add", Vector2(1, 2), Vector2(3, 4)), Vector2(4, 6), "Vector2 + Vector2")
+	assert_eq(s.vmcallv("add", [1], [2]), [1, 2], "Array + Array")
+	assert_eq(s.vmcallv("mul", 3, 1.5), 4.5, "int * float")
+	assert_eq(s.vmcallv("less", 3, 4.5), "less", "int < float")
+	assert_eq(s.vmcallv("less", "a", "b"), "less", "String < String")
+
+	# Array elements carry no type: the run-time test on values the compiler
+	# never saw.
+	assert_eq(s.vmcallv("from_array", [1, 2, 3], 0, 2), 4, "int elements add in registers")
+	assert_eq(s.vmcallv("from_array", [1, 2.5, 3], 0, 1), 3.5, "a float element goes to the host")
+	assert_eq(s.vmcallv("from_array", ["a", "b"], 0, 1), "ab", "String elements go to the host")
+
+	s.queue_free()
+
+func test_declared_return_type_is_the_type_returned():
+	# A caller acts on the return type read off the signature: `-> float` types
+	# the call's result register, and typed float arithmetic reads the payload as
+	# a double. `return 1` has to widen to 1.0, or the caller reads an INT 1 as a
+	# denormal.
+	var gdscript_code = """
+func one() -> float:
+	return 1
+
+func doubled() -> float:
+	var x : float = one()
+	return x * 2.0
+
+func is_less(a : int, b : int) -> int:
+	return a < b
+
+func counted(n : int) -> int:
+	var acc : int = 0
+	for i in range(n):
+		acc += i * 2
+	return acc
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("one"), 1.0, "a function declared -> float should return a float")
+	assert_eq(typeof(s.vmcallv("one")), TYPE_FLOAT, "and it should carry the float type tag")
+	assert_eq(s.vmcallv("doubled"), 2.0, "the caller should read it as a float")
+
+	# GDScript converts a bool to the declared int, as the engine does below.
+	assert_eq(s.vmcallv("is_less", 1, 2), 1, "bool should convert to the declared int")
+	assert_eq(s.vmcallv("is_less", 2, 1), 0, "bool should convert to the declared int")
+
+	# `for i in range(n)` gives an integer, which is what keeps the body's
+	# arithmetic native rather than a Variant call.
+	assert_eq(s.vmcallv("counted", 5), 20, "a range loop should sum the same as the engine")
+	assert_eq(s.vmcallv("counted", 0), 0, "an empty range should run no iterations")
+
+	s.queue_free()

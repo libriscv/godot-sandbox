@@ -78,6 +78,20 @@ static int count_vcalls(const IRFunction& func, const std::string& method) {
 	return count;
 }
 
+// Dictionary element accesses, by Dictionary_Op. A field read is
+// ECALL_DICTIONARY_OPS with GET; a field write is the DICT_SET opcode.
+static int count_dict_gets(const IRFunction& func) {
+	int count = 0;
+	for (const auto& instr : func.instructions) {
+		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 3 &&
+			std::get<int64_t>(instr.operands[1].value) == 524 &&
+			std::get<int64_t>(instr.operands[2].value) == 0) {
+			count++;
+		}
+	}
+	return count;
+}
+
 // The string a register was last loaded with before instruction `before`.
 static std::string string_in_register(const IRProgram& ir, const IRFunction& func,
 	size_t before, int reg)
@@ -328,14 +342,14 @@ static void test_field_access_is_dictionary_access() {
 	// struct field has to take the element path or it throws at run time.
 	assert(count_opcode(test, IROpcode::VGET) == 0);
 	assert(count_opcode(test, IROpcode::VSET) == 0);
-	assert(count_vcalls(test, "set") == 1);
-	assert(count_vcalls(test, "get") == 1);
+	assert(count_opcode(test, IROpcode::DICT_SET) == 1);
+	assert(count_dict_gets(test) == 1);
 
 	// A field of a struct held in a parameter is known too, from the type hint.
 	const IRProgram parameter = compile_to_ir(BANK_ACCOUNT +
 		"func test(account: BankAccount):\n\treturn account.balance\n");
 	assert(count_opcode(find_function(parameter, "test"), IROpcode::VGET) == 0);
-	assert(count_vcalls(find_function(parameter, "test"), "get") == 1);
+	assert(count_dict_gets(find_function(parameter, "test")) == 1);
 
 	// And of one returned by a function that declares it returns one.
 	const IRProgram returned = compile_to_ir(BANK_ACCOUNT +
@@ -343,7 +357,7 @@ static void test_field_access_is_dictionary_access() {
 		"\n"
 		"func test():\n\treturn open().balance\n");
 	assert(count_opcode(find_function(returned, "test"), IROpcode::VGET) == 0);
-	assert(count_vcalls(find_function(returned, "test"), "get") == 1);
+	assert(count_dict_gets(find_function(returned, "test")) == 1);
 
 	std::cout << "  ✓ a field access is a Dictionary access" << std::endl;
 }
@@ -368,7 +382,7 @@ static void test_unknown_field_is_rejected() {
 	// The declared fields are still reachable through the Dictionary itself.
 	const IRProgram by_key = compile_to_ir(BANK_ACCOUNT +
 		"func test():\n\tvar a = BankAccount.new()\n\treturn a[\"balance\"]\n");
-	assert(count_vcalls(find_function(by_key, "test"), "get") == 1);
+	assert(count_dict_gets(find_function(by_key, "test")) == 1);
 
 	std::cout << "  ✓ an unknown field is rejected" << std::endl;
 }
@@ -453,7 +467,7 @@ static void test_nested_structs() {
 	assert(count_opcode(test, IROpcode::MAKE_DICTIONARY) == 2);
 	// Reading through the nesting stays on the element path the whole way.
 	assert(count_opcode(test, IROpcode::VGET) == 0);
-	assert(count_vcalls(test, "get") == 2);
+	assert(count_dict_gets(test) == 2);
 	// And the field of the nested struct is checked against Inner, not Outer.
 	assert(rejects(
 		"struct Inner:\n\tvar x = 1\n"
@@ -514,8 +528,8 @@ static void test_struct_globals() {
 	const IRFunction& test = find_function(typed, "test");
 	assert(count_opcode(test, IROpcode::VGET) == 0);
 	assert(count_opcode(test, IROpcode::VSET) == 0);
-	assert(count_vcalls(test, "get") == 1);
-	assert(count_vcalls(test, "set") == 1);
+	assert(count_dict_gets(test) == 1);
+	assert(count_opcode(test, IROpcode::DICT_SET) == 1);
 
 	// Which struct a global holds is also taken from its initializer, which is
 	// how a global is usually written.
@@ -524,7 +538,7 @@ static void test_struct_globals() {
 		"\n"
 		"func test():\n\treturn account.balance\n");
 	assert(count_opcode(find_function(inferred, "test"), IROpcode::VGET) == 0);
-	assert(count_vcalls(find_function(inferred, "test"), "get") == 1);
+	assert(count_dict_gets(find_function(inferred, "test")) == 1);
 	assert(rejects(BANK_ACCOUNT +
 		"var account = BankAccount.new()\n"
 		"\n"
@@ -544,8 +558,8 @@ static void test_compound_assignment_to_a_field() {
 		"\taccount.balance += 5\n"
 		"\treturn account.balance\n");
 	const IRFunction& test = find_function(ir, "test");
-	assert(count_vcalls(test, "set") == 1);
-	assert(count_vcalls(test, "get") == 2);
+	assert(count_opcode(test, IROpcode::DICT_SET) == 1);
+	assert(count_dict_gets(test) == 2);
 	assert(count_opcode(test, IROpcode::ADD) == 1);
 
 	// The rewrite needs a second copy of the target, so it is offered only for
@@ -575,8 +589,8 @@ static void test_dictionary_member_access() {
 	const IRFunction& test = find_function(ir, "test");
 	assert(count_opcode(test, IROpcode::VGET) == 0);
 	assert(count_opcode(test, IROpcode::VSET) == 0);
-	assert(count_vcalls(test, "get") == 1);
-	assert(count_vcalls(test, "set") == 1);
+	assert(count_dict_gets(test) == 1);
+	assert(count_opcode(test, IROpcode::DICT_SET) == 1);
 
 	// A Dictionary has no declared keys, so any name is allowed on one.
 	compile_to_ir("func test():\n\tvar d = {}\n\td.anything = 1\n\treturn d.anything\n");

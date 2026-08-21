@@ -261,10 +261,11 @@ void IROptimizer::constant_folding(IRFunction& func) {
 							new_instructions.emplace_back(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(dst), IRValue::fimm(result.float_value));
 							new_instructions.back().type_hint = Variant::FLOAT;
 						} else {
+							// Folding decided the result is an integer, so the load
+							// says so whatever the operation was hinted as: an untyped
+							// LOAD_IMM reads as unknown type to every later pass.
 							new_instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(dst), IRValue::imm(result.int_value));
-							if (instr.type_hint == Variant::INT) {
-								new_instructions.back().type_hint = Variant::INT;
-							}
+							new_instructions.back().type_hint = Variant::INT;
 						}
 						set_register_constant(dst, result);
 						folded = true;
@@ -333,6 +334,7 @@ void IROptimizer::constant_folding(IRFunction& func) {
 						// Negating INT64_MIN wraps, as it does on the machine.
 						result.int_value = static_cast<int64_t>(0u - static_cast<uint64_t>(cv.int_value));
 						new_instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(dst), IRValue::imm(result.int_value));
+						new_instructions.back().type_hint = Variant::INT;
 						set_register_constant(dst, result);
 						folded = true;
 					} else if (cv.type == ConstantValue::Type::FLOAT) {
@@ -421,7 +423,17 @@ void IROptimizer::constant_folding(IRFunction& func) {
 				break;
 			}
 
+			// An element write names no destination: operand 0 is the container
+			// it writes into, and invalidating it would drop a constant that is
+			// still exactly what it was.
+			case IROpcode::ARRAY_SET:
+			case IROpcode::DICT_SET:
+				new_instructions.push_back(instr);
+				break;
+
 			// System calls and variant operations - invalidate destination only
+			case IROpcode::ARRAY_APPEND:
+			case IROpcode::ARRAY_GET:
 			case IROpcode::PRINT:
 			case IROpcode::GLOBAL_CALL:
 			case IROpcode::VCALL:
@@ -1071,6 +1083,9 @@ void IROptimizer::copy_propagation(IRFunction& func) {
 	struct ConstantInfo {
 		IROpcode opcode;
 		IRValue value;  // The actual constant value
+		// The load's type hint, which the copy has to keep: an untyped LOAD_IMM
+		// reads as unknown type to every later pass, and to the dump.
+		IRInstruction::TypeHint type_hint;
 	};
 
 	std::unordered_map<int, ConstantInfo> constant_regs;
@@ -1099,7 +1114,7 @@ void IROptimizer::copy_propagation(IRFunction& func) {
 			if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER &&
 			    instr.operands.size() >= 2) {
 				int dst = std::get<int>(instr.operands[0].value);
-				constant_regs[dst] = {instr.opcode, instr.operands[1]};
+				constant_regs[dst] = {instr.opcode, instr.operands[1], instr.type_hint};
 			}
 		}
 
@@ -1113,6 +1128,7 @@ void IROptimizer::copy_propagation(IRFunction& func) {
 				// Replace MOVE with the appropriate constant load
 				const auto& info = constant_regs[src];
 				new_instructions.emplace_back(info.opcode, IRValue::reg(dst), info.value);
+				new_instructions.back().type_hint = info.type_hint;
 				// The new constant is now in dst
 				constant_regs[dst] = info;
 			} else {

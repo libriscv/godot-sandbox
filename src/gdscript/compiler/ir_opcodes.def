@@ -42,7 +42,11 @@ IR_OPCODE(LOAD_STRING,     "LOAD_STRING",     SIG(DST, IMM),       IR_PURE | IR_
 IR_OPCODE(LOAD_GLOBAL,     "LOAD_GLOBAL",     SIG(DST, IMM),       IR_PURE | IR_READS_GLOBAL)
 IR_OPCODE(STORE_GLOBAL,    "STORE_GLOBAL",    SIG(IMM, SRC),       IR_SIDE_EFFECTS | IR_WRITES_GLOBAL)
 IR_OPCODE(MOVE,            "MOVE",            SIG(DST, SRC),       IR_PURE | IR_SIMPLE_LOAD)
-IR_OPCODE(CONVERT,         "CONVERT",         SIG(DST, SRC),       IR_PURE)
+// A Variant of one type rebuilt as another: target in the type hint, source
+// type in the immediate. Both ends have to be known, because the expansion
+// reads the payload with no type check and the widths differ -- a BOOL payload
+// is one byte, an INT eight.
+IR_OPCODE(CONVERT,         "CONVERT",         SIG(DST, SRC, IMM),  IR_PURE)
 
 // `x is int`: dst is true when the Variant in `src` carries the type tag in the
 // immediate (a Variant::Type). The tag is the first field of every Variant, so
@@ -184,6 +188,34 @@ IR_OPCODE(MAKE_COLOR,      "MAKE_COLOR",      SIG(DST, SRC, SRC, SRC, SRC),  IR_
 IR_OPCODE(MAKE_RECT2,      "MAKE_RECT2",      SIG(DST, SRC, SRC, SRC, SRC),  IR_PURE)
 IR_OPCODE(MAKE_RECT2I,     "MAKE_RECT2I",     SIG(DST, SRC, SRC, SRC, SRC),  IR_PURE)
 IR_OPCODE(MAKE_PLANE,      "MAKE_PLANE",      SIG(DST, SRC, SRC, SRC, SRC),  IR_PURE)
+
+// -= Array element access =-
+//
+// `a[i]` and `a[i] = v` on a known Array with a known int index: ECALL_ARRAY_AT
+// rather than Variant::call("get"/"set"), which builds a StringName and looks a
+// builtin method up by it per element touched -- the cost that dominates a
+// fetch-decode-execute loop.
+//
+// The index is GDScript's, so a negative one counts from the end. The backend
+// normalises it with one ECALL_ARRAY_SIZE, on a branch a non-negative index
+// never takes; `Array.get(-1)`, which the VCALL path reached, does not wrap and
+// errors instead.
+//
+// Both carry IR_SIDE_EFFECTS: an out-of-range index throws, so neither may be
+// deleted or reordered.
+
+IR_OPCODE(ARRAY_GET,       "ARRAY_GET",       SIG(DST, SRC, SRC), IR_SIDE_EFFECTS)
+IR_OPCODE(ARRAY_SET,       "ARRAY_SET",       SIG(SRC, SRC, SRC), IR_SIDE_EFFECTS)
+
+// `a.append(v)` and `a.push_back(v)` on a known Array, through ECALL_ARRAY_OPS.
+// Like PRINT, the destination is the call's value rather than a host result:
+// Array.append() answers null, so codegen writes NIL there.
+IR_OPCODE(ARRAY_APPEND,    "ARRAY_APPEND",    SIG(DST, SRC, SRC), IR_SIDE_EFFECTS)
+
+// `d[k] = v` on a known Dictionary, through ECALL_DICTIONARY_OPS. The read is
+// an ordinary CALL_SYSCALL with a destination; the write has none -- operand 0
+// is the Dictionary it writes into, read rather than defined.
+IR_OPCODE(DICT_SET,        "DICT_SET",        SIG(SRC, SRC, SRC), IR_SIDE_EFFECTS)
 
 // -= Array and Dictionary construction (via the VCREATE syscall) =-
 

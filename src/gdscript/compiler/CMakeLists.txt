@@ -99,6 +99,7 @@ if (BUILD_TESTING)
 	add_gdscript_test(test_globals tests/test_globals.cpp)
 	add_gdscript_test(test_switch tests/test_switch.cpp)
 	add_gdscript_test(test_match tests/test_match.cpp)
+	add_gdscript_test(test_containers tests/test_containers.cpp)
 	add_gdscript_test(test_signatures tests/test_signatures.cpp)
 	add_gdscript_test(test_diagnostics tests/test_diagnostics.cpp)
 	add_gdscript_test(test_opt_invariance tests/test_opt_invariance.cpp)
@@ -133,12 +134,12 @@ if (BUILD_TESTING)
 	# Run all tests target
 	add_custom_target(run_tests
 		COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-		DEPENDS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_signatures
+		DEPENDS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_containers test_signatures
 		COMMENT "Running all GDScript compiler tests"
 	)
 
 	# Install test targets (only when BUILD_TESTING is ON)
-	install(TARGETS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_signatures
+	install(TARGETS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_containers test_signatures
 	        RUNTIME DESTINATION bin)
 endif()
 

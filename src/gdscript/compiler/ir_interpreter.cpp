@@ -190,12 +190,15 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			int dst = std::get<int>(instr.operands[0].value);
 			int src = std::get<int>(instr.operands[1].value);
 			Value src_value = get_register(ctx, src);
-			if (instr.type_hint != Variant::FLOAT) {
+			if (instr.type_hint == Variant::FLOAT) {
+				ctx.registers[dst] = get_double(src_value);
+			} else if (instr.type_hint == Variant::INT) {
+				ctx.registers[dst] = get_int(src_value);
+			} else {
 				throw CompilerException(ErrorType::OPTIMIZER_ERROR,
 					std::string("CONVERT to ") + variant_type_name(instr.type_hint) +
 					" is not implemented in the interpreter");
 			}
-			ctx.registers[dst] = get_double(src_value);
 			break;
 		}
 
@@ -508,6 +511,10 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		// here on purpose: an opcode added to ir_opcodes.def has to be either
 		// implemented above or listed here, so it cannot slip through as a
 		// silently unsupported instruction.
+		case IROpcode::ARRAY_APPEND:
+		case IROpcode::ARRAY_GET:
+		case IROpcode::ARRAY_SET:
+		case IROpcode::DICT_SET:
 		case IROpcode::CALL_SYSCALL:
 		case IROpcode::PRINT:
 		case IROpcode::VCALL:
