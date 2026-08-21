@@ -5496,3 +5496,258 @@ func counted(n : int) -> int:
 	assert_eq(s.vmcallv("counted", 0), 0, "an empty range should run no iterations")
 
 	s.queue_free()
+
+# Writing a component of an inline Variant type. VSET_INLINE is a payload store;
+# the property syscalls it replaced are Object-only and throw on a Vector2.
+# Every answer below is checked against the engine running the same expression.
+func test_inline_member_writes():
+	var gdscript_code = """
+func vec2_write(x : float, y : float) -> Vector2:
+	var v : Vector2 = Vector2(0.0, 0.0)
+	v.x = x
+	v.y = y
+	return v
+
+func vec2_compound(start : float) -> Vector2:
+	var v : Vector2 = Vector2(start, start)
+	v.x += 2.0
+	v.y *= 3.0
+	return v
+
+func vec3i_write(z : int) -> Vector3i:
+	var v : Vector3i = Vector3i(1, 2, 3)
+	v.z = z
+	return v
+
+func vec3i_from_float() -> Vector3i:
+	var v : Vector3i = Vector3i(0, 0, 0)
+	v.x = 3.7
+	return v
+
+func vec2_from_int() -> Vector2:
+	var v : Vector2 = Vector2(0.0, 0.0)
+	v.x = 4
+	return v
+
+func color_write(g : float) -> Color:
+	var c : Color = Color(1.0, 0.0, 0.0, 1.0)
+	c.g = g
+	return c
+
+func vec4_write(w : float) -> Vector4:
+	var v : Vector4 = Vector4(1.0, 2.0, 3.0, 4.0)
+	v.w = w
+	return v
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	# The engine's own answer for the same writes.
+	var expected_vec2 := Vector2(0.0, 0.0)
+	expected_vec2.x = 5.0
+	expected_vec2.y = 7.0
+	assert_eq(s.vmcallv("vec2_write", 5.0, 7.0), expected_vec2, "a Vector2 component write should stick")
+
+	var expected_compound := Vector2(1.0, 1.0)
+	expected_compound.x += 2.0
+	expected_compound.y *= 3.0
+	assert_eq(s.vmcallv("vec2_compound", 1.0), expected_compound, "compound assignment should read then write the component")
+
+	var expected_vec3i := Vector3i(1, 2, 3)
+	expected_vec3i.z = 9
+	assert_eq(s.vmcallv("vec3i_write", 9), expected_vec3i, "an integer vector component write should stick")
+
+	# An integer vector truncates a float, and a float vector widens an integer.
+	var expected_trunc := Vector3i(0, 0, 0)
+	expected_trunc.x = 3.7
+	assert_eq(s.vmcallv("vec3i_from_float"), expected_trunc, "a float assigned to an int component should truncate as the engine does")
+
+	var expected_widen := Vector2(0.0, 0.0)
+	expected_widen.x = 4
+	assert_eq(s.vmcallv("vec2_from_int"), expected_widen, "an int assigned to a float component should widen")
+
+	var expected_color := Color(1.0, 0.0, 0.0, 1.0)
+	expected_color.g = 0.5
+	assert_eq(s.vmcallv("color_write", 0.5), expected_color, "a Color channel write should stick")
+
+	var expected_vec4 := Vector4(1.0, 2.0, 3.0, 4.0)
+	expected_vec4.w = 8.0
+	assert_eq(s.vmcallv("vec4_write", 8.0), expected_vec4, "a Vector4 component write should stick")
+
+	s.queue_free()
+
+# A component of a value read out of a container is a copy: the mutation has to
+# travel back, one link at a time, or the write is lost.
+func test_member_write_travels_back():
+	var gdscript_code = """
+var origin : Vector2 = Vector2(0.0, 0.0)
+
+func global_write(x : float) -> Vector2:
+	origin.x = x
+	return origin
+
+func element_write(x : float) -> Array:
+	var a : Array = [Vector2(0.0, 0.0), Vector2(9.0, 9.0)]
+	var i : int = 0
+	a[i].x = x
+	return a
+
+func entry_write(x : float) -> Dictionary:
+	var d : Dictionary = {"p": Vector2(0.0, 0.0)}
+	d["p"].x = x
+	return d
+
+func nested_write(x : float) -> Array:
+	var inner : Array = [Vector2(0.0, 0.0)]
+	var outer : Array = [inner]
+	outer[0][0].x = x
+	return outer
+
+func copy_is_independent(x : float) -> Vector2:
+	var v : Vector2 = Vector2(1.0, 1.0)
+	var copy : Vector2 = v
+	copy.x = x
+	return v
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	var expected_global := Vector2(0.0, 0.0)
+	expected_global.x = 3.0
+	assert_eq(s.vmcallv("global_write", 3.0), expected_global, "a write through a global should reach the global")
+
+	var expected_array : Array = [Vector2(0.0, 0.0), Vector2(9.0, 9.0)]
+	expected_array[0].x = 3.0
+	assert_eq(s.vmcallv("element_write", 3.0), expected_array, "a write through an Array element should reach the element")
+
+	var expected_dict : Dictionary = {"p": Vector2(0.0, 0.0)}
+	expected_dict["p"].x = 3.0
+	assert_eq(s.vmcallv("entry_write", 3.0), expected_dict, "a write through a Dictionary value should reach the value")
+
+	var expected_inner : Array = [Vector2(0.0, 0.0)]
+	var expected_outer : Array = [expected_inner]
+	expected_outer[0][0].x = 3.0
+	assert_eq(s.vmcallv("nested_write", 3.0), expected_outer, "a write two links deep should reach the element")
+
+	# Assigning the vector copies it, so the original must not move.
+	assert_eq(s.vmcallv("copy_is_independent", 5.0), Vector2(1.0, 1.0), "writing through a copy should not reach the original")
+
+	s.queue_free()
+
+# The type is only known when the program says so. An untyped chain picks the
+# inline payload or the Object property from the type tag, at run time.
+func test_untyped_member_access():
+	var gdscript_code = """
+func read_x(v):
+	return v.x
+
+func write_x(v, x):
+	v.x = x
+	return v
+
+func read_name(o):
+	return o.name
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	# The same code has to serve every inline type it is handed.
+	assert_almost_eq(s.vmcallv("read_x", Vector2(1.5, 2.5)), 1.5, 0.001, "an untyped read should reach a Vector2 payload")
+	assert_almost_eq(s.vmcallv("read_x", Vector3(4.5, 0.0, 0.0)), 4.5, 0.001, "an untyped read should reach a Vector3 payload")
+	assert_eq(s.vmcallv("read_x", Vector2i(7, 8)), 7, "an untyped read should reach a Vector2i payload as an int")
+
+	var written = s.vmcallv("write_x", Vector2(0.0, 0.0), 6.0)
+	assert_eq(written, Vector2(6.0, 0.0), "an untyped write should reach a Vector2 payload")
+
+	var written3 = s.vmcallv("write_x", Vector3i(0, 1, 2), 6)
+	assert_eq(written3, Vector3i(6, 1, 2), "an untyped write should reach a Vector3i payload")
+
+	# A member no inline type carries is still an Object property.
+	var node := Node.new()
+	node.name = "Probe"
+	assert_eq(s.vmcallv("read_name", node), "Probe", "a property read should still reach the object")
+	node.queue_free()
+
+	s.queue_free()
+
+# Every position walk used ECALL_ARRAY_SIZE and ECALL_ARRAY_AT, which the host
+# refuses for anything but an Array. A packed array carries its own size/get, so
+# a declared one is walked through those instead. The type has to be declared:
+# an untyped parameter is still walked as an Array and throws in the host.
+func test_packed_array_iteration():
+	var gdscript_code = """
+func sum_int32(p : PackedInt32Array) -> int:
+	var total : int = 0
+	for v in p:
+		total += v
+	return total
+
+func sum_int64(p : PackedInt64Array) -> int:
+	var total : int = 0
+	for v in p:
+		total += v
+	return total
+
+func sum_bytes(p : PackedByteArray) -> int:
+	var total : int = 0
+	for v in p:
+		total += v
+	return total
+
+func join_strings(p : PackedStringArray) -> String:
+	var joined : String = ""
+	for s in p:
+		joined += s
+	return joined
+
+func subscript(p : PackedInt32Array, i : int):
+	return p[i]
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	var ints := PackedInt32Array([1, 2, 3, 4])
+	var expected := 0
+	for v in ints:
+		expected += v
+	assert_eq(s.vmcallv("sum_int32", ints), expected, "a PackedInt32Array should walk the same as the engine")
+
+	assert_eq(s.vmcallv("sum_int64", PackedInt64Array([10, 20])), 30, "a PackedInt64Array should walk")
+	assert_eq(s.vmcallv("sum_bytes", PackedByteArray([1, 2, 3])), 6, "a PackedByteArray should walk")
+	assert_eq(s.vmcallv("sum_int32", PackedInt32Array([])), 0, "an empty packed array should run no iterations")
+
+	assert_eq(s.vmcallv("join_strings", PackedStringArray(["a", "b", "c"])), "abc", "a PackedStringArray should walk")
+	assert_eq(s.vmcallv("subscript", PackedInt32Array([5, 6, 7]), 1), 6, "a packed array should subscript")
+
+	s.queue_free()
+
+# typeof() reads the Variant type tag the guest already holds, rather than
+# becoming self.typeof(), which Godot accepts and silently drops.
+func test_typeof():
+	var gdscript_code = """
+func tag(x) -> int:
+	return typeof(x)
+
+func is_int(x) -> bool:
+	return typeof(x) == 2
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("tag", 1), typeof(1), "typeof(int) should match the engine")
+	assert_eq(s.vmcallv("tag", 1.5), typeof(1.5), "typeof(float) should match the engine")
+	assert_eq(s.vmcallv("tag", true), typeof(true), "typeof(bool) should match the engine")
+	assert_eq(s.vmcallv("tag", "text"), typeof("text"), "typeof(String) should match the engine")
+	assert_eq(s.vmcallv("tag", [1]), typeof([1]), "typeof(Array) should match the engine")
+	assert_eq(s.vmcallv("tag", Vector2()), typeof(Vector2()), "typeof(Vector2) should match the engine")
+	assert_eq(s.vmcallv("tag", null), typeof(null), "typeof(null) should match the engine")
+
+	assert_eq(s.vmcallv("is_int", 7), true, "a typeof comparison should hold for an int")
+	assert_eq(s.vmcallv("is_int", 7.0), false, "and not for a float")
+
+	s.queue_free()

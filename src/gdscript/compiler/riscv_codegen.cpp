@@ -63,6 +63,24 @@ void RISCVCodeGen::emit_variant_component_to_real(int comp_offset, int result_of
 	emit_fsr(REG_FA0, REG_SP, result_offset + store_offset);
 }
 
+void RISCVCodeGen::emit_variant_component_to_int(int comp_offset, int result_offset, int store_offset) {
+	// INT or FLOAT Variant -> int32_t component (truncates, matching Godot).
+	std::string label_cont = gen_local_label(".icont");
+
+	emit_lwu(REG_T0, REG_SP, comp_offset);
+	emit_load_variant_int(REG_T1, REG_SP, comp_offset);
+	emit_addi(REG_T0, REG_T0, -2); // INT(2)->0, FLOAT(3)->1
+	mark_label_use(label_cont, m_code.size());
+	emit_beq(REG_T0, REG_ZERO, 0);
+
+	// FLOAT path: 64-bit double, fcvt truncates toward zero.
+	emit_fld(REG_FA0, REG_SP, comp_offset + VARIANT_DATA_OFFSET);
+	emit_fcvt_l_d(REG_T1, REG_FA0);
+	define_label(label_cont);
+
+	emit_sw(REG_T1, REG_SP, result_offset + store_offset);
+}
+
 std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_code.clear();
 	m_labels.clear();
@@ -937,6 +955,39 @@ void RISCVCodeGen::gen_vget_inline(const IRInstruction& instr) {
 	}
 }
 
+void RISCVCodeGen::gen_vset_inline(const IRInstruction& instr) {
+	if (instr.operands.size() != 4) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VSET_INLINE requires 4 operands");
+	}
+
+	int obj_vreg = std::get<int>(instr.operands[0].value);
+	std::string member = std::get<std::string>(instr.operands[1].value);
+	int obj_type_hint = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+	int value_vreg = std::get<int>(instr.operands[3].value);
+
+	int obj_offset = get_variant_stack_offset(obj_vreg);
+	int value_offset = get_variant_stack_offset(value_vreg);
+
+	int component_idx = 0;
+	if (member == "x" || member == "r") component_idx = 0;
+	else if (member == "y" || member == "g") component_idx = 1;
+	else if (member == "z" || member == "b") component_idx = 2;
+	else if (member == "w" || member == "a") component_idx = 3;
+
+	IRInstruction::TypeHint hint = static_cast<IRInstruction::TypeHint>(obj_type_hint);
+
+	// Stamp tag unconditionally; dynamic stores arrive with an unknown tag.
+	emit_li(REG_T0, obj_type_hint);
+	emit_sw(REG_T0, REG_SP, obj_offset);
+
+	if (TypeHintUtils::is_int_vector(hint)) {
+		emit_variant_component_to_int(value_offset, obj_offset, int_offset(component_idx));
+	} else {
+		// Color channels are reals; integer stores convert, not scale by 255.
+		emit_variant_component_to_real(value_offset, obj_offset, real_offset(component_idx));
+	}
+}
+
 void RISCVCodeGen::gen_switch(const IRInstruction& instr) {
 	// Dense integer switch via inline jal table; fall-through = no match
 	const int subject_vreg = std::get<int>(instr.operands[0].value);
@@ -1480,6 +1531,21 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			break;
 		}
 
+		case IROpcode::TYPE_OF: {
+			// typeof(): load tag (first 4 bytes), box as INT.
+			int dst_vreg = std::get<int>(instr.operands[0].value);
+			int src_vreg = std::get<int>(instr.operands[1].value);
+			int src_offset = get_variant_stack_offset(src_vreg);
+
+			emit_load_variant_type(REG_T0, REG_SP, src_offset);
+
+			auto [base, offset] = value_destination(dst_vreg);
+			emit_store_variant_int(REG_T0, base, offset);
+			emit_li(REG_T1, Variant::INT);
+			emit_store_variant_type(REG_T1, base, offset);
+			break;
+		}
+
 		case IROpcode::CONVERT: {
 			// CONVERT dst_reg, src_reg  with the target type in type_hint.
 			int dst_vreg = std::get<int>(instr.operands[0].value);
@@ -1869,10 +1935,12 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::VSET:
 			gen_vset(instr);
 			break;
+		case IROpcode::VSET_INLINE:
+			gen_vset_inline(instr);
+			break;
 		case IROpcode::MAKE_RECT2:
 		case IROpcode::MAKE_RECT2I:
 		case IROpcode::MAKE_PLANE:
-		case IROpcode::VSET_INLINE:
 			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Opcode not yet implemented in RISC-V codegen");
 
 		case IROpcode::CALL_SYSCALL:
@@ -2075,6 +2143,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::LOAD_GLOBAL:
 		case IROpcode::MOVE:
 		case IROpcode::TYPE_TEST:
+		case IROpcode::TYPE_OF:
 		case IROpcode::LABEL:
 		case IROpcode::SWITCH:
 		case IROpcode::JUMP:

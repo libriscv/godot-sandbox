@@ -28,6 +28,8 @@ enum : size_t {
 enum class IROperandKind : uint8_t {
 	NONE,
 	DST,
+	// Read-modify-write: copy propagation and DCE must preserve the register.
+	INOUT,
 	SRC,
 	IMM,
 	FIMM,
@@ -258,6 +260,9 @@ int ir_destination_operand_index(IROpcode op);
 int ir_destination_register(const IRInstruction& instr);
 
 bool ir_reads_operand(const IRInstruction& instr, size_t index);
+
+// True for DST or INOUT operands; substituting these redirects the write.
+bool ir_writes_operand(const IRInstruction& instr, size_t index);
 
 // Bare RETURN implicitly reads r0.
 void ir_collect_read_registers(const IRInstruction& instr, std::vector<int>& out);

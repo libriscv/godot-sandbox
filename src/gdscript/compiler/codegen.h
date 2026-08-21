@@ -2,9 +2,11 @@
 #include "ast.h"
 #include "globals.h"
 #include "ir.h"
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <string>
+#include <vector>
 
 namespace gdscript {
 
@@ -113,6 +115,43 @@ private:
 	int gen_inline_constructor(const std::string& name, const std::vector<int>& arg_regs,
 		FunctionContext& func, const Expr* site);
 	int gen_inline_member_get(int obj_reg, IRInstruction::TypeHint obj_type, const std::string& member, FunctionContext& func);
+	void gen_inline_member_set(int obj_reg, IRInstruction::TypeHint obj_type, const std::string& member,
+		int value_reg, FunctionContext& func);
+
+	// Types with `member` inline; non-empty means VGET/VSET (Object-only) is wrong.
+	std::vector<IRInstruction::TypeHint> inline_member_types(const std::string& member) const;
+	// Has own size()/get(); ECALL_ARRAY_SIZE/AT throw on these.
+	static bool is_packed_array_type(IRInstruction::TypeHint type);
+	int gen_vget(int obj_reg, const std::string& member, FunctionContext& func);
+	void gen_vset(int obj_reg, const std::string& member, int value_reg, FunctionContext& func);
+	// Untyped: branch on tag at run time.
+	int gen_dynamic_member_get(int obj_reg, const std::string& member, FunctionContext& func);
+	void gen_dynamic_member_set(int obj_reg, const std::string& member, int value_reg, FunctionContext& func);
+
+	// Assignment target with write-back chain. Value types (Vector2/3, Color, ...)
+	// need the mutated copy carried back; handles (Array, Dictionary, Object) do not.
+	struct LValue {
+		enum class Kind { LOCAL, GLOBAL, MEMBER, INDEX, VALUE };
+		Kind kind = Kind::VALUE;
+		int reg = -1;
+		std::shared_ptr<LValue> container; // MEMBER/INDEX: source of `reg`
+		std::string name;                  // LOCAL/GLOBAL/MEMBER
+		int index_reg = -1;                // INDEX
+		bool borrowed = false;             // LOCAL: `reg` owns the variable, skip free
+	};
+
+	LValue resolve_lvalue(const Expr* expr, FunctionContext& func);
+	void store_lvalue(const LValue& target, int value_reg, FunctionContext& func, const Stmt* site);
+	void free_lvalue(const LValue& lvalue, FunctionContext& func);
+	void gen_store_to(const Expr* target, int value_reg, FunctionContext& func, const Stmt* site);
+	void gen_store_to_variable(const std::string& name, int value_reg, FunctionContext& func, const Stmt* site);
+	int gen_member_read(int obj_reg, const std::string& member, FunctionContext& func,
+		const Expr* site = nullptr);
+	int gen_element_read(int obj_reg, int idx_reg, FunctionContext& func,
+		const Expr* site = nullptr);
+	// Returns true when the store mutated a value-type copy (caller must write back).
+	bool gen_member_store(int obj_reg, const std::string& member, int value_reg, FunctionContext& func);
+	void gen_element_store(int obj_reg, int idx_reg, int value_reg, FunctionContext& func);
 
 	// Global functions: must not fall through to self-call (Godot drops the VCALL).
 	bool is_global_function(const std::string& name) const;

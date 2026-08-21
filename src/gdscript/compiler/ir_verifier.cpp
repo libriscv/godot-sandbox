@@ -150,6 +150,7 @@ private:
 	static bool operand_matches(const IRValue& operand, IROperandKind kind) {
 		switch (kind) {
 			case IROperandKind::DST:
+			case IROperandKind::INOUT:
 			case IROperandKind::SRC:
 			case IROperandKind::SRC_LIST:
 				return operand.type == IRValue::Type::REGISTER;

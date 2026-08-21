@@ -8,6 +8,7 @@ namespace gdscript {
 static constexpr IROpcodeInfo IR_OPCODE_TABLE[] = {
 #define DST       IROperandKind::DST
 #define SRC       IROperandKind::SRC
+#define INOUT     IROperandKind::INOUT
 #define IMM       IROperandKind::IMM
 #define FIMM      IROperandKind::FIMM
 #define STR       IROperandKind::STR
@@ -33,6 +34,7 @@ static constexpr IROpcodeInfo IR_OPCODE_TABLE[] = {
 #undef FIMM
 #undef IMM
 #undef SRC
+#undef INOUT
 #undef DST
 };
 
@@ -57,6 +59,7 @@ const char* ir_operand_kind_name(IROperandKind kind) {
 	switch (kind) {
 		case IROperandKind::NONE: return "nothing";
 		case IROperandKind::DST: return "destination register";
+		case IROperandKind::INOUT: return "read-modify-write register";
 		case IROperandKind::SRC: return "source register";
 		case IROperandKind::IMM: return "immediate";
 		case IROperandKind::FIMM: return "float immediate";
@@ -158,7 +161,8 @@ bool ir_instruction_is_pure(const IRInstruction& instr) {
 int ir_destination_operand_index(IROpcode op) {
 	const IROperandSignature& signature = ir_opcode_info(op).signature;
 	for (size_t i = 0; i < signature.fixed_count(); i++) {
-		if (signature.kinds[i] == IROperandKind::DST) {
+		if (signature.kinds[i] == IROperandKind::DST ||
+			signature.kinds[i] == IROperandKind::INOUT) {
 			return static_cast<int>(i);
 		}
 	}
@@ -187,6 +191,17 @@ bool ir_reads_operand(const IRInstruction& instr, size_t index) {
 	// Read unless the signature marks it DST.
 	const IROperandKind kind = ir_opcode_info(instr.opcode).signature.kind_at(index);
 	return kind != IROperandKind::DST;
+}
+
+bool ir_writes_operand(const IRInstruction& instr, size_t index) {
+	if (index >= instr.operands.size()) {
+		return false;
+	}
+	if (instr.operands[index].type != IRValue::Type::REGISTER) {
+		return false;
+	}
+	const IROperandKind kind = ir_opcode_info(instr.opcode).signature.kind_at(index);
+	return kind == IROperandKind::DST || kind == IROperandKind::INOUT;
 }
 
 void ir_collect_read_registers(const IRInstruction& instr, std::vector<int>& out) {

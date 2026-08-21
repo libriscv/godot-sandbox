@@ -53,6 +53,8 @@ IR_OPCODE(CONVERT,         "CONVERT",         SIG(DST, SRC, IMM),  IR_PURE)
 // this is a 4-byte load and a compare, never a host call. Exact tag compare, not
 // convertibility: 1.0 is not an int.
 IR_OPCODE(TYPE_TEST,       "TYPE_TEST",       SIG(DST, SRC, IMM),  IR_PURE)
+// typeof(): tag as INT. Same load as TYPE_TEST, no compare.
+IR_OPCODE(TYPE_OF,         "TYPE_OF",         SIG(DST, SRC),       IR_PURE)
 
 // -= Arithmetic =-
 
@@ -238,4 +240,5 @@ IR_OPCODE(MAKE_PACKED_VECTOR4_ARRAY, "MAKE_PACKED_VECTOR4_ARRAY", SIG(DST, CNT, 
 // -= Inline member access (no syscalls) =-
 
 IR_OPCODE(VGET_INLINE,     "VGET_INLINE",     SIG(DST, SRC, STR, IMM),      IR_PURE)
-IR_OPCODE(VSET_INLINE,     "VSET_INLINE",     SIG(SRC, STR, IMM, SRC),      IR_SIDE_EFFECTS)
+// Object operand is read-modify-write: replaces one component, keeps the Variant.
+IR_OPCODE(VSET_INLINE,     "VSET_INLINE",     SIG(INOUT, STR, IMM, SRC),    IR_SIDE_EFFECTS)

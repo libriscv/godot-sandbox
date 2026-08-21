@@ -265,6 +265,9 @@ struct GlobalFunction {
 // nullptr when `name` is not a known global (caller falls through to self-call).
 const GlobalFunction* find_global_function(const std::string& name);
 
+// Unimplemented @GlobalScope name -> reason string, or nullptr if not a global.
+const char* unimplemented_global_reason(const std::string& name);
+
 // Row for a GlobalFn. Every enum value has one, including internal forms.
 const GlobalFunction& global_function(GlobalFn fn);
 

@@ -6,6 +6,7 @@ build/
 .godot/
 .mingw/
 .vscode/
+.rtk/
 program/test
 tests/claude_code_zai_env.sh
 .sconsign.dblite

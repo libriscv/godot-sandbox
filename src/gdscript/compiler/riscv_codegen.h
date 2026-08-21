@@ -59,6 +59,7 @@ private:
 	void gen_print(const IRInstruction& instr);
 	void gen_switch(const IRInstruction& instr);
 	void gen_vget_inline(const IRInstruction& instr);
+	void gen_vset_inline(const IRInstruction& instr);
 	void gen_vget(const IRInstruction& instr);
 	void gen_store_global(const IRInstruction& instr);
 	void gen_make_array(const IRInstruction& instr);
@@ -367,6 +368,7 @@ private:
 
 	// INT/FLOAT Variant -> real_t. normalize_by_255 for Color integer components.
 	void emit_variant_component_to_real(int comp_offset, int result_offset, int store_offset, bool normalize_by_255 = false);
+	void emit_variant_component_to_int(int comp_offset, int result_offset, int store_offset);
 
 	int m_label_counter = 0;
 

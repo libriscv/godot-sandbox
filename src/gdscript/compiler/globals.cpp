@@ -150,6 +150,84 @@ const GlobalFunction* find_global_function(const std::string& name) {
 	return it == by_name.end() ? nullptr : it->second;
 }
 
+// @GlobalScope names not yet lowered. Refused at compile time; the self-call
+// fallback would be silently dropped. Removed when a GLOBAL_FUNCTIONS row is added.
+static const struct { const char* name; const char* reason; } UNIMPLEMENTED_GLOBALS[] = {
+	// Output: ECALL_PRINT has no channel selector.
+	{ "printerr", "no host syscall for the error channel yet" },
+	{ "printraw", "no host syscall for the raw channel yet" },
+	{ "print_rich", "no host syscall for the rich channel yet" },
+	{ "print_debug", "no host syscall for the debug channel yet" },
+	{ "print_verbose", "no host syscall for the verbose channel yet" },
+	{ "printt", "no host syscall for tab-separated printing yet" },
+	{ "prints", "no host syscall for space-separated printing yet" },
+	{ "push_error", "no host syscall for the error channel yet" },
+	{ "push_warning", "no host syscall for the warning channel yet" },
+
+	// Serialization and identity: need ECALL_UTILITY ops.
+	{ "hash", "no ECALL_UTILITY op yet" },
+	{ "var_to_str", "no ECALL_UTILITY op yet" },
+	{ "str_to_var", "no ECALL_UTILITY op yet" },
+	{ "var_to_bytes", "no ECALL_UTILITY op yet" },
+	{ "bytes_to_var", "no ECALL_UTILITY op yet" },
+	{ "var_to_bytes_with_objects", "no ECALL_UTILITY op yet" },
+	{ "bytes_to_var_with_objects", "no ECALL_UTILITY op yet" },
+	{ "type_string", "no ECALL_UTILITY op yet" },
+	{ "type_convert", "no ECALL_UTILITY op yet" },
+	{ "error_string", "no ECALL_UTILITY op yet" },
+	{ "is_same", "no ECALL_UTILITY op yet" },
+
+	// Numeric: missing ops.
+	{ "ease", "no ECALL_UTILITY op yet" },
+	{ "nearest_po2", "no ECALL_UTILITY op yet" },
+	{ "step_decimals", "no ECALL_UTILITY op yet" },
+
+	// Object lifetime: sandbox uses allowlist, not instance ids.
+	{ "instance_from_id", "objects are reached through the sandbox allowlist, not by instance id" },
+	{ "is_instance_id_valid", "objects are reached through the sandbox allowlist, not by instance id" },
+	{ "is_instance_valid", "no ECALL_UTILITY op yet" },
+	{ "weakref", "no host syscall for weak references yet" },
+
+	// Engine/project state: deliberately unreachable from sandbox.
+	{ "randomize", "mutates the project's shared RNG state" },
+	{ "seed", "mutates the project's shared RNG state" },
+	{ "rand_from_seed", "no ECALL_UTILITY op yet" },
+	{ "preload", "resource loading is not available to the sandbox yet" },
+	{ "load", "resource loading is not available to the sandbox yet" },
+
+	// Containers and callables from global calls.
+	{ "range", "only 'for x in range(...)' is lowered; range() as a value needs an Array result" },
+	{ "assert", "not lowered yet; the condition would be evaluated and thrown away" },
+	{ "super", "there is no base script to forward to: the sandbox program is the whole script" },
+
+	// Built-in types: no inline constructor or ECALL_VCREATE lowering.
+	{ "Quaternion", "no constructor lowering yet" },
+	{ "Transform2D", "no constructor lowering yet" },
+	{ "Transform3D", "no constructor lowering yet" },
+	{ "Basis", "no constructor lowering yet" },
+	{ "AABB", "no constructor lowering yet" },
+	{ "Projection", "no constructor lowering yet" },
+	{ "Callable", "no constructor lowering yet" },
+	{ "Signal", "no constructor lowering yet" },
+	{ "StringName", "no constructor lowering yet" },
+	{ "NodePath", "no constructor lowering yet" },
+	{ "RID", "no constructor lowering yet" },
+	{ "Color8", "no constructor lowering yet" },
+};
+
+const char* unimplemented_global_reason(const std::string& name) {
+	static const std::unordered_map<std::string, const char*> by_name = [] {
+		std::unordered_map<std::string, const char*> map;
+		for (const auto& entry : UNIMPLEMENTED_GLOBALS) {
+			map[entry.name] = entry.reason;
+		}
+		return map;
+	}();
+
+	auto it = by_name.find(name);
+	return it == by_name.end() ? nullptr : it->second;
+}
+
 const GlobalFunction& global_function(GlobalFn fn) {
 	static const std::unordered_map<int16_t, const GlobalFunction*> by_fn = [] {
 		std::unordered_map<int16_t, const GlobalFunction*> map;

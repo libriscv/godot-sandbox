@@ -419,113 +419,40 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
 	int value_reg = gen_expr(stmt->value.get(), func);
 
 	if (stmt->target) {
-		if (auto* index_expr = dynamic_cast<const IndexExpr*>(stmt->target.get())) {
-			int obj_reg = gen_expr(index_expr->object.get(), func);
-			int idx_reg = gen_expr(index_expr->index.get(), func);
-
-			if (is_array_element_access(obj_reg, idx_reg, func)) {
-				func.ir.instructions.emplace_back(IROpcode::ARRAY_SET, IRValue::reg(obj_reg),
-					IRValue::reg(idx_reg), IRValue::reg(value_reg));
-				free_register(func, obj_reg);
-				free_register(func, idx_reg);
-				free_register(func, value_reg);
-				return;
-			}
-
-			if (get_register_type(func, obj_reg) == Variant::DICTIONARY) {
-				func.ir.instructions.emplace_back(IROpcode::DICT_SET, IRValue::reg(obj_reg),
-					IRValue::reg(idx_reg), IRValue::reg(value_reg));
-				free_register(func, obj_reg);
-				free_register(func, idx_reg);
-				free_register(func, value_reg);
-				return;
-			}
-
-			int result_reg = alloc_register(func);
-			IRInstruction vcall_instr(IROpcode::VCALL);
-			vcall_instr.operands.push_back(IRValue::reg(result_reg));
-			vcall_instr.operands.push_back(IRValue::reg(obj_reg));
-			vcall_instr.operands.push_back(IRValue::str("set"));
-			vcall_instr.operands.push_back(IRValue::imm(2)); // 2 arguments
-			vcall_instr.operands.push_back(IRValue::reg(idx_reg));
-			vcall_instr.operands.push_back(IRValue::reg(value_reg));
-			func.ir.instructions.push_back(vcall_instr);
-
-			free_register(func, obj_reg);
-			free_register(func, idx_reg);
-			free_register(func, value_reg);
-			free_register(func, result_reg);
-			return;
-		}
-
-		if (auto* member_expr = dynamic_cast<const MemberCallExpr*>(stmt->target.get())) {
-			if (member_expr->is_method_call) {
-				error_at("Cannot assign to method call", stmt);
-			}
-
-			int obj_reg = gen_expr(member_expr->object.get(), func);
-
-			// Struct field or Dictionary key: element write, not property write.
-			if (const StructDecl* decl = get_register_struct(func, obj_reg)) {
-				const StructField& field = require_struct_field(*decl, member_expr->member_name,
-					member_expr->line, member_expr->column);
-				if (!field.type_hint.empty()) {
-					value_reg = coerce_to_declared_type(value_reg,
-						type_hint_from_string(field.type_hint), func,
-						"field '" + field.name + "' of struct '" + decl->name + "'", stmt);
-				}
-				gen_dict_set(obj_reg, member_expr->member_name, value_reg, func);
-				free_register(func, obj_reg);
-				free_register(func, value_reg);
-				return;
-			}
-			if (get_register_type(func, obj_reg) == Variant::DICTIONARY) {
-				gen_dict_set(obj_reg, member_expr->member_name, value_reg, func);
-				free_register(func, obj_reg);
-				free_register(func, value_reg);
-				return;
-			}
-
-			int str_idx = add_string_constant(member_expr->member_name);
-			IRInstruction vset_instr(IROpcode::VSET);
-			vset_instr.operands.push_back(IRValue::reg(obj_reg));
-			vset_instr.operands.push_back(IRValue::imm(str_idx));
-			vset_instr.operands.push_back(IRValue::imm(static_cast<int64_t>(member_expr->member_name.length())));
-			vset_instr.operands.push_back(IRValue::reg(value_reg));
-			func.ir.instructions.push_back(vset_instr);
-
-			free_register(func, obj_reg);
-			free_register(func, value_reg);
-			return;
-		}
-
-		error_at("Invalid assignment target type", stmt);
+		gen_store_to(stmt->target.get(), value_reg, func, stmt);
+		return;
 	}
 
+	gen_store_to_variable(stmt->name, value_reg, func, stmt);
+}
+
+void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg,
+	FunctionContext& func, const Stmt* site)
+{
 	// Locals shadow globals.
-	Variable* var = find_variable(func, stmt->name);
+	Variable* var = find_variable(func, name);
 	if (!var) {
-		if (is_global_variable(stmt->name)) {
-			if (is_global_const(stmt->name)) {
-				error_at("Cannot assign to const variable: " + stmt->name, stmt);
+		if (is_global_variable(name)) {
+			if (is_global_const(name)) {
+				error_at("Cannot assign to const variable: " + name, site);
 			}
-			size_t global_idx = m_global_variables.at(stmt->name);
+			size_t global_idx = m_global_variables.at(name);
 			value_reg = coerce_to_declared_type(value_reg, m_global_types[global_idx], func,
-				"global '" + stmt->name + "'", stmt);
+				"global '" + name + "'", site);
 			func.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL, IRValue::imm(global_idx), IRValue::reg(value_reg));
 			free_register(func, value_reg);
 			return;
 		}
-		error_at("Undefined variable: " + stmt->name, stmt,
-			"Declare it with 'var " + stmt->name + " = ...' before assigning to it");
+		error_at("Undefined variable: " + name, site,
+			"Declare it with 'var " + name + " = ...' before assigning to it");
 	}
 
 	if (var->is_const) {
-		error_at("Cannot assign to const variable: " + stmt->name, stmt);
+		error_at("Cannot assign to const variable: " + name, site);
 	}
 
 	value_reg = coerce_to_declared_type(value_reg, get_register_type(func, var->register_num), func,
-		"variable '" + stmt->name + "'", stmt);
+		"variable '" + name + "'", site);
 
 	if (var->register_num != value_reg) {
 		func.ir.instructions.emplace_back(IROpcode::MOVE,
@@ -534,6 +461,155 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
 	}
 
 	free_register(func, value_reg);
+}
+
+void CodeGenerator::gen_store_to(const Expr* target, int value_reg, FunctionContext& func,
+	const Stmt* site)
+{
+	if (auto* var_expr = dynamic_cast<const VariableExpr*>(target)) {
+		gen_store_to_variable(var_expr->name, value_reg, func, site);
+		return;
+	}
+
+	if (auto* index_expr = dynamic_cast<const IndexExpr*>(target)) {
+		// Handles need no write-back, but the container may be a copy: resolve as lvalue.
+		LValue base = resolve_lvalue(index_expr->object.get(), func);
+		int idx_reg = gen_expr(index_expr->index.get(), func);
+		gen_element_store(base.reg, idx_reg, value_reg, func);
+		free_register(func, idx_reg);
+		free_register(func, value_reg);
+		free_lvalue(base, func);
+		return;
+	}
+
+	if (auto* member_expr = dynamic_cast<const MemberCallExpr*>(target)) {
+		if (member_expr->is_method_call) {
+			error_at("Cannot assign to method call", site);
+		}
+
+		LValue base = resolve_lvalue(member_expr->object.get(), func);
+
+		// Struct field: coerce to declared type.
+		if (const StructDecl* decl = get_register_struct(func, base.reg)) {
+			const StructField& field = require_struct_field(*decl, member_expr->member_name,
+				member_expr->line, member_expr->column);
+			if (!field.type_hint.empty()) {
+				value_reg = coerce_to_declared_type(value_reg,
+					type_hint_from_string(field.type_hint), func,
+					"field '" + field.name + "' of struct '" + decl->name + "'", site);
+			}
+		}
+
+		const bool mutated_copy = gen_member_store(base.reg, member_expr->member_name, value_reg, func);
+		free_register(func, value_reg);
+
+		// Value type: write the mutated copy back.
+		if (mutated_copy) {
+			store_lvalue(base, base.reg, func, site);
+		}
+
+		free_lvalue(base, func);
+		return;
+	}
+
+	error_at("Invalid assignment target type", site);
+}
+
+// Track origin of result for write-back. Each chain link evaluated once.
+CodeGenerator::LValue CodeGenerator::resolve_lvalue(const Expr* expr, FunctionContext& func) {
+	LValue lvalue;
+
+	if (auto* var_expr = dynamic_cast<const VariableExpr*>(expr)) {
+		if (Variable* var = find_variable(func, var_expr->name)) {
+			// Own register: member store mutates in place.
+			lvalue.kind = var->is_const ? LValue::Kind::VALUE : LValue::Kind::LOCAL;
+			lvalue.reg = var->register_num;
+			lvalue.name = var_expr->name;
+			lvalue.borrowed = true;
+			return lvalue;
+		}
+		if (is_global_variable(var_expr->name) && !is_global_const(var_expr->name)) {
+			lvalue.kind = LValue::Kind::GLOBAL;
+			lvalue.reg = gen_expr(expr, func);
+			lvalue.name = var_expr->name;
+			return lvalue;
+		}
+		lvalue.reg = gen_expr(expr, func);
+		return lvalue;
+	}
+
+	if (auto* member_expr = dynamic_cast<const MemberCallExpr*>(expr)) {
+		if (!member_expr->is_method_call && member_expr->arguments.empty()) {
+			auto container = std::make_shared<LValue>(resolve_lvalue(member_expr->object.get(), func));
+			lvalue.kind = LValue::Kind::MEMBER;
+			lvalue.name = member_expr->member_name;
+			lvalue.reg = gen_member_read(container->reg, member_expr->member_name, func);
+			lvalue.container = std::move(container);
+			return lvalue;
+		}
+	}
+
+	if (auto* index_expr = dynamic_cast<const IndexExpr*>(expr)) {
+		auto container = std::make_shared<LValue>(resolve_lvalue(index_expr->object.get(), func));
+		lvalue.kind = LValue::Kind::INDEX;
+		lvalue.index_reg = gen_expr(index_expr->index.get(), func);
+		lvalue.reg = gen_element_read(container->reg, lvalue.index_reg, func);
+		lvalue.container = std::move(container);
+		return lvalue;
+	}
+
+	// Temporary with no write-back target (Object handles mutate through the handle).
+	lvalue.reg = gen_expr(expr, func);
+	return lvalue;
+}
+
+void CodeGenerator::store_lvalue(const LValue& target, int value_reg, FunctionContext& func,
+	const Stmt* site)
+{
+	switch (target.kind) {
+		case LValue::Kind::LOCAL:
+			// Registers usually match; MOVE only when they diverge.
+			if (target.reg != value_reg) {
+				func.ir.instructions.emplace_back(IROpcode::MOVE,
+					IRValue::reg(target.reg), IRValue::reg(value_reg));
+			}
+			return;
+
+		case LValue::Kind::GLOBAL: {
+			size_t global_idx = m_global_variables.at(target.name);
+			func.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
+				IRValue::imm(global_idx), IRValue::reg(value_reg));
+			return;
+		}
+
+		case LValue::Kind::MEMBER: {
+			const bool mutated_copy = gen_member_store(target.container->reg, target.name, value_reg, func);
+			if (mutated_copy) {
+				store_lvalue(*target.container, target.container->reg, func, site);
+			}
+			return;
+		}
+
+		case LValue::Kind::INDEX:
+			gen_element_store(target.container->reg, target.index_reg, value_reg, func);
+			return;
+
+		case LValue::Kind::VALUE:
+			// No write-back target.
+			return;
+	}
+}
+
+void CodeGenerator::free_lvalue(const LValue& lvalue, FunctionContext& func) {
+	if (lvalue.index_reg >= 0) {
+		free_register(func, lvalue.index_reg);
+	}
+	if (lvalue.reg >= 0 && !lvalue.borrowed) {
+		free_register(func, lvalue.reg);
+	}
+	if (lvalue.container) {
+		free_lvalue(*lvalue.container, func);
+	}
 }
 
 void CodeGenerator::gen_return(const ReturnStmt* stmt, FunctionContext& func) {
@@ -958,8 +1034,19 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 
 		int array_reg = gen_expr(stmt->iterable.get(), func);
 
+		// Packed arrays use VCALL size()/get(); ECALL_ARRAY_SIZE/AT are Array-only.
+		const bool packed_walk = is_packed_array_type(get_register_type(func, array_reg));
+
+		if (get_register_type(func, array_reg) == Variant::STRING) {
+			error_at("Cannot iterate over a String yet", stmt,
+				"String has no get(); walking one needs a host syscall that yields"
+				" its characters");
+		}
+
 		// Dictionary: replaced by its keys array once before the loop.
-		gen_dictionary_keys_for_iteration(array_reg, func);
+		if (!packed_walk) {
+			gen_dictionary_keys_for_iteration(array_reg, func);
+		}
 
 		int index_reg = alloc_register(func);
 		auto& index_load = func.ir.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(index_reg), IRValue::imm(0));
@@ -973,11 +1060,20 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
 		int size_reg = alloc_register(func);
-		IRInstruction size_syscall(IROpcode::CALL_SYSCALL);
-		size_syscall.operands.push_back(IRValue::reg(size_reg));
-		size_syscall.operands.push_back(IRValue::imm(ECALL_ARRAY_SIZE));
-		size_syscall.operands.push_back(IRValue::reg(array_reg));
-		func.ir.instructions.push_back(size_syscall);
+		if (packed_walk) {
+			IRInstruction size_call(IROpcode::VCALL);
+			size_call.operands.push_back(IRValue::reg(size_reg));
+			size_call.operands.push_back(IRValue::reg(array_reg));
+			size_call.operands.push_back(IRValue::str("size"));
+			size_call.operands.push_back(IRValue::imm(0));
+			func.ir.instructions.push_back(size_call);
+		} else {
+			IRInstruction size_syscall(IROpcode::CALL_SYSCALL);
+			size_syscall.operands.push_back(IRValue::reg(size_reg));
+			size_syscall.operands.push_back(IRValue::imm(ECALL_ARRAY_SIZE));
+			size_syscall.operands.push_back(IRValue::reg(array_reg));
+			func.ir.instructions.push_back(size_syscall);
+		}
 		set_register_type(func, size_reg, Variant::INT);
 
 		int cond_reg = alloc_register(func);
@@ -990,12 +1086,22 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		free_register(func, cond_reg);
 
 		int elem_reg = alloc_register(func);
-		IRInstruction at_syscall(IROpcode::CALL_SYSCALL);
-		at_syscall.operands.push_back(IRValue::reg(elem_reg));
-		at_syscall.operands.push_back(IRValue::imm(ECALL_ARRAY_AT));
-		at_syscall.operands.push_back(IRValue::reg(array_reg));
-		at_syscall.operands.push_back(IRValue::reg(index_reg));
-		func.ir.instructions.push_back(at_syscall);
+		if (packed_walk) {
+			IRInstruction at_call(IROpcode::VCALL);
+			at_call.operands.push_back(IRValue::reg(elem_reg));
+			at_call.operands.push_back(IRValue::reg(array_reg));
+			at_call.operands.push_back(IRValue::str("get"));
+			at_call.operands.push_back(IRValue::imm(1));
+			at_call.operands.push_back(IRValue::reg(index_reg));
+			func.ir.instructions.push_back(at_call);
+		} else {
+			IRInstruction at_syscall(IROpcode::CALL_SYSCALL);
+			at_syscall.operands.push_back(IRValue::reg(elem_reg));
+			at_syscall.operands.push_back(IRValue::imm(ECALL_ARRAY_AT));
+			at_syscall.operands.push_back(IRValue::reg(array_reg));
+			at_syscall.operands.push_back(IRValue::reg(index_reg));
+			func.ir.instructions.push_back(at_syscall);
+		}
 
 		declare_variable(func, stmt->variable, elem_reg, false, stmt);
 		push_scope(func);
@@ -1342,6 +1448,10 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func)
 		int result_reg = alloc_register(func);
 		func.ir.instructions.emplace_back(IROpcode::LOAD_GLOBAL, IRValue::reg(result_reg), IRValue::imm(global_idx));
 		set_register_struct(func, result_reg, m_global_structs[global_idx]);
+		// Propagate declared type so member access skips the run-time tag test.
+		if (m_global_types[global_idx] != IRInstruction::TypeHint_NONE) {
+			set_register_type(func, result_reg, m_global_types[global_idx]);
+		}
 		return result_reg;
 	}
 
@@ -1589,6 +1699,22 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 		return result;
 	}
 
+	// typeof(): guest-side tag read, not a globals.h entry.
+	if (expr->function_name == "typeof") {
+		if (arg_regs.size() != 1) {
+			error_at("typeof() takes exactly 1 argument", expr);
+		}
+		int result_reg = alloc_register(func);
+		IRInstruction instr(IROpcode::TYPE_OF);
+		instr.operands.push_back(IRValue::reg(result_reg));
+		instr.operands.push_back(IRValue::reg(arg_regs[0]));
+		instr.type_hint = Variant::INT;
+		func.ir.instructions.push_back(instr);
+		set_register_type(func, result_reg, Variant::INT);
+		free_register(func, arg_regs[0]);
+		return result_reg;
+	}
+
 	if (expr->function_name == "get_node") {
 		if (arg_regs.size() > 1) {
 			error_at("get_node() takes at most 1 argument", expr);
@@ -1669,6 +1795,13 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 		return result;
 	}
 
+	// Refuse unimplemented globals; the self-call fallback would be silently dropped.
+	if (const char* reason = unimplemented_global_reason(expr->function_name)) {
+		error_at("'" + expr->function_name + "' is not supported: " + reason, expr,
+			"Calling it would compile to self." + expr->function_name +
+			"(), which Godot accepts and silently ignores");
+	}
+
 	// Unknown freestanding call -> self-call: foo(args) becomes self.foo(args).
 	int self_reg = alloc_register(func);
 	IRInstruction get_self_instr(IROpcode::CALL_SYSCALL);
@@ -1733,42 +1866,9 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 	}
 
 	if (!expr->is_method_call && arg_regs.empty()) {
-		IRInstruction::TypeHint obj_type = get_register_type(func, obj_reg);
-		if (is_inline_member_access(obj_type, expr->member_name)) {
-			int result = gen_inline_member_get(obj_reg, obj_type, expr->member_name, func);
-			free_register(func, obj_reg);
-			return result;
-		}
-
-		// Struct field: checked against declared fields.
-		if (const StructDecl* decl = get_register_struct(func, obj_reg)) {
-			const StructField& field = require_struct_field(*decl, expr->member_name,
-				expr->line, expr->column);
-			int result_reg = gen_dict_get(obj_reg, expr->member_name, func);
-			apply_declared_type(result_reg, field.type_hint, func);
-			free_register(func, obj_reg);
-			return result_reg;
-		}
-
-		// d.key on Dictionary: element path, not VGET (which is Object-only).
-		if (obj_type == Variant::DICTIONARY) {
-			int result_reg = gen_dict_get(obj_reg, expr->member_name, func);
-			free_register(func, obj_reg);
-			return result_reg;
-		}
-
-		int result_reg = alloc_register(func);
-		int str_idx = add_string_constant(expr->member_name);
-
-		IRInstruction vget_instr(IROpcode::VGET);
-		vget_instr.operands.push_back(IRValue::reg(result_reg));
-		vget_instr.operands.push_back(IRValue::reg(obj_reg));
-		vget_instr.operands.push_back(IRValue::imm(str_idx));
-		vget_instr.operands.push_back(IRValue::imm(static_cast<int64_t>(expr->member_name.length())));
-		func.ir.instructions.push_back(vget_instr);
-
+		int result = gen_member_read(obj_reg, expr->member_name, func, expr);
 		free_register(func, obj_reg);
-		return result_reg;
+		return result;
 	}
 
 	int result_reg = alloc_register(func);
@@ -1813,34 +1913,7 @@ int CodeGenerator::gen_index(const IndexExpr* expr, FunctionContext& func) {
 	int obj_reg = gen_expr(expr->object.get(), func);
 	int idx_reg = gen_expr(expr->index.get(), func);
 
-	if (is_array_element_access(obj_reg, idx_reg, func)) {
-		int element_reg = alloc_register(func);
-		func.ir.instructions.emplace_back(IROpcode::ARRAY_GET, IRValue::reg(element_reg),
-			IRValue::reg(obj_reg), IRValue::reg(idx_reg));
-		free_register(func, obj_reg);
-		free_register(func, idx_reg);
-		return element_reg;
-	}
-
-	if (get_register_type(func, obj_reg) == Variant::DICTIONARY) {
-		constexpr int64_t DICT_OP_GET = 0;
-		int value_reg = gen_dictionary_op(DICT_OP_GET, obj_reg, idx_reg,
-			IRInstruction::TypeHint_NONE, func);
-		free_register(func, obj_reg);
-		free_register(func, idx_reg);
-		return value_reg;
-	}
-
-	int result_reg = alloc_register(func);
-
-	// Fallback: arr[x] -> VCALL("get", x)
-	IRInstruction vcall_instr(IROpcode::VCALL);
-	vcall_instr.operands.push_back(IRValue::reg(result_reg));
-	vcall_instr.operands.push_back(IRValue::reg(obj_reg));
-	vcall_instr.operands.push_back(IRValue::str("get"));
-	vcall_instr.operands.push_back(IRValue::imm(1));
-	vcall_instr.operands.push_back(IRValue::reg(idx_reg));
-	func.ir.instructions.push_back(vcall_instr);
+	int result_reg = gen_element_read(obj_reg, idx_reg, func, expr);
 
 	free_register(func, obj_reg);
 	free_register(func, idx_reg);
@@ -2756,6 +2829,254 @@ int CodeGenerator::gen_inline_member_get(int obj_reg, IRInstruction::TypeHint ob
 	set_register_type(func, result_reg, is_int_vector ? Variant::INT : Variant::FLOAT);
 
 	return result_reg;
+}
+
+void CodeGenerator::gen_inline_member_set(int obj_reg, IRInstruction::TypeHint obj_type,
+	const std::string& member, int value_reg, FunctionContext& func)
+{
+	IRInstruction instr(IROpcode::VSET_INLINE);
+	instr.operands.push_back(IRValue::reg(obj_reg));
+	instr.operands.push_back(IRValue::str(member));
+	instr.operands.push_back(IRValue::imm(static_cast<int>(obj_type)));
+	instr.operands.push_back(IRValue::reg(value_reg));
+	func.ir.instructions.push_back(instr);
+}
+
+// Packed arrays have size()/get() via VCALL; String has neither.
+bool CodeGenerator::is_packed_array_type(IRInstruction::TypeHint type) {
+	switch (type) {
+		case Variant::PACKED_BYTE_ARRAY:
+		case Variant::PACKED_INT32_ARRAY:
+		case Variant::PACKED_INT64_ARRAY:
+		case Variant::PACKED_FLOAT32_ARRAY:
+		case Variant::PACKED_FLOAT64_ARRAY:
+		case Variant::PACKED_STRING_ARRAY:
+		case Variant::PACKED_VECTOR2_ARRAY:
+		case Variant::PACKED_VECTOR3_ARRAY:
+		case Variant::PACKED_VECTOR4_ARRAY:
+		case Variant::PACKED_COLOR_ARRAY:
+			return true;
+		default:
+			return false;
+	}
+}
+
+std::vector<IRInstruction::TypeHint> CodeGenerator::inline_member_types(const std::string& member) const {
+	// Kept in sync with is_inline_member_access.
+	static constexpr IRInstruction::TypeHint candidates[] = {
+		Variant::VECTOR2, Variant::VECTOR2I,
+		Variant::VECTOR3, Variant::VECTOR3I,
+		Variant::VECTOR4, Variant::VECTOR4I,
+		Variant::COLOR,
+	};
+
+	std::vector<IRInstruction::TypeHint> types;
+	for (IRInstruction::TypeHint type : candidates) {
+		if (is_inline_member_access(type, member)) {
+			types.push_back(type);
+		}
+	}
+	return types;
+}
+
+int CodeGenerator::gen_vget(int obj_reg, const std::string& member, FunctionContext& func) {
+	int result_reg = alloc_register(func);
+	int str_idx = add_string_constant(member);
+
+	IRInstruction instr(IROpcode::VGET);
+	instr.operands.push_back(IRValue::reg(result_reg));
+	instr.operands.push_back(IRValue::reg(obj_reg));
+	instr.operands.push_back(IRValue::imm(str_idx));
+	instr.operands.push_back(IRValue::imm(static_cast<int64_t>(member.length())));
+	func.ir.instructions.push_back(instr);
+
+	return result_reg;
+}
+
+void CodeGenerator::gen_vset(int obj_reg, const std::string& member, int value_reg, FunctionContext& func) {
+	int str_idx = add_string_constant(member);
+
+	IRInstruction instr(IROpcode::VSET);
+	instr.operands.push_back(IRValue::reg(obj_reg));
+	instr.operands.push_back(IRValue::imm(str_idx));
+	instr.operands.push_back(IRValue::imm(static_cast<int64_t>(member.length())));
+	instr.operands.push_back(IRValue::reg(value_reg));
+	func.ir.instructions.push_back(instr);
+}
+
+// Untyped `.x`: branch on tag to inline payload or VGET (Object-only).
+int CodeGenerator::gen_dynamic_member_get(int obj_reg, const std::string& member, FunctionContext& func) {
+	const std::vector<IRInstruction::TypeHint> types = inline_member_types(member);
+	const std::string end_label = make_label("member_get_end");
+	int result_reg = alloc_register(func);
+
+	for (IRInstruction::TypeHint type : types) {
+		const std::string next_label = make_label("member_get_next");
+		int test_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(test_reg),
+			IRValue::reg(obj_reg), IRValue::imm(static_cast<int64_t>(type)));
+		set_register_type(func, test_reg, Variant::BOOL);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, test_reg, next_label, func);
+		free_register(func, test_reg);
+
+		int inline_reg = gen_inline_member_get(obj_reg, type, member, func);
+		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg),
+			IRValue::reg(inline_reg));
+		free_register(func, inline_reg);
+		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(next_label));
+	}
+
+	int property_reg = gen_vget(obj_reg, member, func);
+	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg),
+		IRValue::reg(property_reg));
+	free_register(func, property_reg);
+	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+
+	// Result type unknown: paths yield int, float or property.
+	return result_reg;
+}
+
+void CodeGenerator::gen_dynamic_member_set(int obj_reg, const std::string& member, int value_reg,
+	FunctionContext& func)
+{
+	const std::vector<IRInstruction::TypeHint> types = inline_member_types(member);
+	const std::string end_label = make_label("member_set_end");
+
+	for (IRInstruction::TypeHint type : types) {
+		const std::string next_label = make_label("member_set_next");
+		int test_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(test_reg),
+			IRValue::reg(obj_reg), IRValue::imm(static_cast<int64_t>(type)));
+		set_register_type(func, test_reg, Variant::BOOL);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, test_reg, next_label, func);
+		free_register(func, test_reg);
+
+		gen_inline_member_set(obj_reg, type, member, value_reg, func);
+		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(next_label));
+	}
+
+	gen_vset(obj_reg, member, value_reg, func);
+	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+}
+
+int CodeGenerator::gen_member_read(int obj_reg, const std::string& member, FunctionContext& func,
+	const Expr* site)
+{
+	const IRInstruction::TypeHint obj_type = get_register_type(func, obj_reg);
+
+	if (is_inline_member_access(obj_type, member)) {
+		return gen_inline_member_get(obj_reg, obj_type, member, func);
+	}
+
+	// Struct field: validate and apply declared type.
+	if (const StructDecl* decl = get_register_struct(func, obj_reg)) {
+		const StructField& field = require_struct_field(*decl, member,
+			site ? site->line : 0, site ? site->column : 0);
+		int result_reg = gen_dict_get(obj_reg, member, func);
+		apply_declared_type(result_reg, field.type_hint, func);
+		return result_reg;
+	}
+
+	// Dictionary: element read, not VGET (Object-only).
+	if (obj_type == Variant::DICTIONARY) {
+		return gen_dict_get(obj_reg, member, func);
+	}
+
+	if (obj_type == IRInstruction::TypeHint_NONE && !inline_member_types(member).empty()) {
+		return gen_dynamic_member_get(obj_reg, member, func);
+	}
+
+	return gen_vget(obj_reg, member, func);
+}
+
+bool CodeGenerator::gen_member_store(int obj_reg, const std::string& member, int value_reg,
+	FunctionContext& func)
+{
+	// Struct/Dictionary: element write, no write-back needed.
+	if (get_register_struct(func, obj_reg) != nullptr ||
+		get_register_type(func, obj_reg) == Variant::DICTIONARY)
+	{
+		gen_dict_set(obj_reg, member, value_reg, func);
+		return false;
+	}
+
+	const IRInstruction::TypeHint obj_type = get_register_type(func, obj_reg);
+
+	if (is_inline_member_access(obj_type, member)) {
+		gen_inline_member_set(obj_reg, obj_type, member, value_reg, func);
+		return true;
+	}
+
+	if (obj_type == IRInstruction::TypeHint_NONE && !inline_member_types(member).empty()) {
+		gen_dynamic_member_set(obj_reg, member, value_reg, func);
+		return true;
+	}
+
+	gen_vset(obj_reg, member, value_reg, func);
+	return false;
+}
+
+int CodeGenerator::gen_element_read(int obj_reg, int idx_reg, FunctionContext& func,
+	const Expr* site)
+{
+	// Fallback is VCALL("get"). String lacks get(), so refuse it.
+	if (get_register_type(func, obj_reg) == Variant::STRING) {
+		error_at("Cannot subscript a String yet", site ? site->line : 0, site ? site->column : 0,
+			"String has no get(); indexing one needs a host syscall that yields a"
+			" one-character String");
+	}
+
+	if (is_array_element_access(obj_reg, idx_reg, func)) {
+		int element_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::ARRAY_GET, IRValue::reg(element_reg),
+			IRValue::reg(obj_reg), IRValue::reg(idx_reg));
+		return element_reg;
+	}
+
+	if (get_register_type(func, obj_reg) == Variant::DICTIONARY) {
+		constexpr int64_t DICT_OP_GET = 0;
+		return gen_dictionary_op(DICT_OP_GET, obj_reg, idx_reg,
+			IRInstruction::TypeHint_NONE, func);
+	}
+
+	// Fallback: obj[x] -> VCALL("get", x).
+	int result_reg = alloc_register(func);
+	IRInstruction instr(IROpcode::VCALL);
+	instr.operands.push_back(IRValue::reg(result_reg));
+	instr.operands.push_back(IRValue::reg(obj_reg));
+	instr.operands.push_back(IRValue::str("get"));
+	instr.operands.push_back(IRValue::imm(1));
+	instr.operands.push_back(IRValue::reg(idx_reg));
+	func.ir.instructions.push_back(instr);
+
+	return result_reg;
+}
+
+void CodeGenerator::gen_element_store(int obj_reg, int idx_reg, int value_reg, FunctionContext& func) {
+	if (is_array_element_access(obj_reg, idx_reg, func)) {
+		func.ir.instructions.emplace_back(IROpcode::ARRAY_SET, IRValue::reg(obj_reg),
+			IRValue::reg(idx_reg), IRValue::reg(value_reg));
+		return;
+	}
+
+	if (get_register_type(func, obj_reg) == Variant::DICTIONARY) {
+		func.ir.instructions.emplace_back(IROpcode::DICT_SET, IRValue::reg(obj_reg),
+			IRValue::reg(idx_reg), IRValue::reg(value_reg));
+		return;
+	}
+
+	int result_reg = alloc_register(func);
+	IRInstruction instr(IROpcode::VCALL);
+	instr.operands.push_back(IRValue::reg(result_reg));
+	instr.operands.push_back(IRValue::reg(obj_reg));
+	instr.operands.push_back(IRValue::str("set"));
+	instr.operands.push_back(IRValue::imm(2));
+	instr.operands.push_back(IRValue::reg(idx_reg));
+	instr.operands.push_back(IRValue::reg(value_reg));
+	func.ir.instructions.push_back(instr);
+	free_register(func, result_reg);
 }
 
 std::unordered_set<std::string> CodeGenerator::get_global_classes() {

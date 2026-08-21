@@ -157,11 +157,20 @@ static void test_unknown_container_keeps_the_vcall() {
 	assert(count_opcode(find_function(untyped_index, "test"), IROpcode::ARRAY_GET) == 0);
 	assert(count_vcalls(find_function(untyped_index, "test"), "get") == 1);
 
-	// A String is subscriptable too, and is not an Array.
-	const IRProgram string_index = compile_to_ir(
-		"func test(s : String, i : int):\n\treturn s[i]\n");
-	assert(count_opcode(find_function(string_index, "test"), IROpcode::ARRAY_GET) == 0);
-	assert(count_vcalls(find_function(string_index, "test"), "get") == 1);
+	// Packed array: has get(), falls through to VCALL.
+	const IRProgram packed_index = compile_to_ir(
+		"func test(p : PackedInt32Array, i : int):\n\treturn p[i]\n");
+	assert(count_opcode(find_function(packed_index, "test"), IROpcode::ARRAY_GET) == 0);
+	assert(count_vcalls(find_function(packed_index, "test"), "get") == 1);
+
+	// String: no get(), refused at compile time.
+	bool refused = false;
+	try {
+		compile_to_ir("func test(s : String, i : int):\n\treturn s[i]\n");
+	} catch (const CompilerException&) {
+		refused = true;
+	}
+	assert(refused);
 
 	// And a write to an unknown container.
 	const IRProgram untyped_write = compile_to_ir(

@@ -243,6 +243,25 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			break;
 		}
 
+		case IROpcode::TYPE_OF: {
+			int dst = std::get<int>(instr.operands[0].value);
+			int src = std::get<int>(instr.operands[1].value);
+			const Value& value = get_register(ctx, src);
+			// Match the backend's Variant type-tag read.
+			int64_t tag = Variant::NIL;
+			if (std::holds_alternative<bool>(value)) {
+				tag = Variant::BOOL;
+			} else if (std::holds_alternative<int64_t>(value)) {
+				tag = Variant::INT;
+			} else if (std::holds_alternative<double>(value)) {
+				tag = Variant::FLOAT;
+			} else {
+				tag = Variant::STRING;
+			}
+			ctx.registers[dst] = tag;
+			break;
+		}
+
 		case IROpcode::POW:
 			// Host-defined truncation/rounding; no second definition here.
 			throw CompilerException(ErrorType::OPTIMIZER_ERROR,

@@ -652,6 +652,7 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::POW:
 		case IROpcode::IN:
 		case IROpcode::TYPE_TEST:
+		case IROpcode::TYPE_OF:
 		case IROpcode::SWITCH:
 		case IROpcode::VGET_INLINE:
 		case IROpcode::VSET_INLINE:
@@ -1847,11 +1848,8 @@ bool IROptimizer::register_unmodified_between(const IRFunction& func, int reg,
 	for (size_t i = start_idx + 1; i < end_idx && i < func.instructions.size(); i++) {
 		const auto& instr = func.instructions[i];
 
-		if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-			int dst = std::get<int>(instr.operands[0].value);
-			if (dst == reg) {
-				return false;
-			}
+		if (ir_destination_register(instr) == reg) {
+			return false;
 		}
 
 		if (instr.opcode == IROpcode::LABEL) {
@@ -1877,6 +1875,10 @@ void IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 		// ir_reads_operand handles branches (read at 0) and CALL (write at 1).
 		for (size_t j = 0; j < instr.operands.size(); j++) {
 			if (!ir_reads_operand(instr, j)) {
+				continue;
+			}
+			// INOUT: substitution would redirect the write.
+			if (ir_writes_operand(instr, j)) {
 				continue;
 			}
 			int reg = std::get<int>(instr.operands[j].value);
