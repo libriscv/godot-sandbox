@@ -51,6 +51,17 @@ private:
 	void constant_folding(IRFunction& func);
 	void eliminate_dead_code(IRFunction& func);
 	void peephole_optimization(IRFunction& func);
+
+	// One peephole pattern. Looks at func.instructions[i]; on a match it
+	// appends the replacement to new_instructions, advances i past what it
+	// consumed, and returns true. Returning false must leave both untouched.
+	using PeepholePattern = bool (IROptimizer::*)(const IRFunction& func, size_t& i,
+		std::vector<IRInstruction>& new_instructions);
+
+	bool try_fuse_compare_and_branch(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions);
+	bool try_eliminate_moves_around_op(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions);
+	bool try_eliminate_move_pair(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions);
+	bool try_fold_move_after_op(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions);
 	void copy_propagation(IRFunction& func);
 	void eliminate_redundant_stores(IRFunction& func);
 	void reduce_register_pressure(IRFunction& func);

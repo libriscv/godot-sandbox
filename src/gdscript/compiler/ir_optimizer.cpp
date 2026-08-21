@@ -722,351 +722,371 @@ bool IROptimizer::try_fold_binary_op(IROpcode op, IRInstruction::TypeHint type_h
 	return false;
 }
 
+// Pattern 0: CMP_* dst, lhs, rhs; BRANCH_ZERO/NOT_ZERO dst -> one fused
+// BRANCH_*, so the comparison result is never stored and reloaded.
+// XXX: This optimization is known to fail untyped recursive fibonacci(20)
+bool IROptimizer::try_fuse_compare_and_branch(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions) {
+	if (!(i + 1 < func.instructions.size())) {
+		return false;
+	}
+	const auto& cmp_instr = func.instructions[i];
+	const auto& branch_instr = func.instructions[i + 1];
+
+	// Check if this is a comparison instruction
+	bool is_cmp = (cmp_instr.opcode == IROpcode::CMP_EQ ||
+	               cmp_instr.opcode == IROpcode::CMP_NEQ ||
+	               cmp_instr.opcode == IROpcode::CMP_LT ||
+	               cmp_instr.opcode == IROpcode::CMP_LTE ||
+	               cmp_instr.opcode == IROpcode::CMP_GT ||
+	               cmp_instr.opcode == IROpcode::CMP_GTE);
+
+	// Check if next instruction branches on the comparison result
+	bool is_branch_on_cmp = (branch_instr.opcode == IROpcode::BRANCH_ZERO ||
+	                          branch_instr.opcode == IROpcode::BRANCH_NOT_ZERO);
+
+	if (is_cmp && is_branch_on_cmp && cmp_instr.operands.size() >= 3 && branch_instr.operands.size() >= 2) {
+		// Get comparison destination register
+		int cmp_dst = std::get<int>(cmp_instr.operands[0].value);
+		// Get branch condition register
+		int branch_reg = std::get<int>(branch_instr.operands[0].value);
+
+		// Fusing deletes the comparison's destination, so it has to be
+		// read by nothing but the branch being fused into it. Scanning
+		// only forward, and stopping at the first label, misses a read
+		// on a later iteration of the loop the comparison sits in.
+		bool reg_not_used_after = !is_reg_read_outside(func, cmp_dst, i, i + 1);
+		if (cmp_dst == branch_reg && reg_not_used_after) {
+			// Fuse the instructions
+			IROpcode fused_opcode;
+			bool invert = (branch_instr.opcode == IROpcode::BRANCH_ZERO);
+
+			// Map CMP + BRANCH_ZERO to direct branch (or invert for BRANCH_NOT_ZERO)
+			if (invert) {
+				// BRANCH_ZERO means branch when condition is false, so invert comparison
+				switch (cmp_instr.opcode) {
+					case IROpcode::CMP_EQ:  fused_opcode = IROpcode::BRANCH_NEQ; break;
+					case IROpcode::CMP_NEQ: fused_opcode = IROpcode::BRANCH_EQ; break;
+					case IROpcode::CMP_LT:  fused_opcode = IROpcode::BRANCH_GTE; break;
+					case IROpcode::CMP_LTE: fused_opcode = IROpcode::BRANCH_GT; break;
+					case IROpcode::CMP_GT:  fused_opcode = IROpcode::BRANCH_LTE; break;
+					case IROpcode::CMP_GTE: fused_opcode = IROpcode::BRANCH_LT; break;
+					default: throw CompilerException(ErrorType::OPTIMIZER_ERROR, "Unexpected comparison opcode in peephole optimization");
+				}
+			} else {
+				// BRANCH_NOT_ZERO means branch when condition is true, use same comparison
+				switch (cmp_instr.opcode) {
+					case IROpcode::CMP_EQ:  fused_opcode = IROpcode::BRANCH_EQ; break;
+					case IROpcode::CMP_NEQ: fused_opcode = IROpcode::BRANCH_NEQ; break;
+					case IROpcode::CMP_LT:  fused_opcode = IROpcode::BRANCH_LT; break;
+					case IROpcode::CMP_LTE: fused_opcode = IROpcode::BRANCH_LTE; break;
+					case IROpcode::CMP_GT:  fused_opcode = IROpcode::BRANCH_GT; break;
+					case IROpcode::CMP_GTE: fused_opcode = IROpcode::BRANCH_GTE; break;
+					default: throw CompilerException(ErrorType::OPTIMIZER_ERROR, "Unexpected comparison opcode in peephole optimization");
+				}
+			}
+
+			// Create fused instruction: BRANCH_CMP lhs, rhs, label
+			IRInstruction fused(fused_opcode);
+			fused.operands.push_back(cmp_instr.operands[1]); // lhs
+			fused.operands.push_back(cmp_instr.operands[2]); // rhs
+			fused.operands.push_back(branch_instr.operands[1]); // label
+			fused.type_hint = cmp_instr.type_hint;
+
+			new_instructions.push_back(fused);
+			i += 2;
+			return true; // Skip both instructions
+		}
+	}
+	return false;
+}
+
+// Everything that starts at a MOVE: the self-move, and the shapes where a
+// MOVE exists only to feed or to catch the arithmetic next to it.
+bool IROptimizer::try_eliminate_moves_around_op(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions) {
+	const auto& instr = func.instructions[i];
+	if (instr.opcode != IROpcode::MOVE) {
+		return false;
+	}
+	int dst = std::get<int>(instr.operands[0].value);
+	int src = std::get<int>(instr.operands[1].value);
+	if (dst == src) {
+		i++;
+		return true;
+	}
+
+	// Pattern 2: Eliminate redundant MOVEs around arithmetic/logical operations
+	// Pattern A: MOVE tmp1, src1; MOVE tmp2, src2; OP dst, tmp1, tmp2; MOVE result, dst
+	//          -> OP result, src1, src2
+	// Pattern B/C: MOVE tmp, src; OP dst, ..., tmp; MOVE result, dst
+	//          -> OP result, ..., src
+	//
+	// Only apply if:
+	// - The temporary registers (tmp1, tmp2, dst) are never used elsewhere
+	// - No control flow boundaries between the instructions
+	if (i + 3 < func.instructions.size()) {
+		const auto& move1 = func.instructions[i];
+		const auto& move2 = func.instructions[i + 1];
+		const auto& op = func.instructions[i + 2];
+		const auto& move3 = func.instructions[i + 3];
+
+		// Check for Pattern A: MOVE; MOVE; OP; MOVE
+		if (move2.opcode == IROpcode::MOVE &&
+		    ir_has_effect(op.opcode, IR_ARITHMETIC) &&
+		    move3.opcode == IROpcode::MOVE &&
+		    op.operands.size() >= 3) {
+
+			int move1_dst = std::get<int>(move1.operands[0].value);
+			int move1_src = std::get<int>(move1.operands[1].value);
+			int move2_dst = std::get<int>(move2.operands[0].value);
+			int move2_src = std::get<int>(move2.operands[1].value);
+			int op_dst = std::get<int>(op.operands[0].value);
+			int move3_dst = std::get<int>(move3.operands[0].value);
+			int move3_src = std::get<int>(move3.operands[1].value);
+
+			// Check if operands match the pattern
+			if (op.operands[1].type == IRValue::Type::REGISTER &&
+			    op.operands[2].type == IRValue::Type::REGISTER) {
+				int op_lhs = std::get<int>(op.operands[1].value);
+				int op_rhs = std::get<int>(op.operands[2].value);
+
+				// Pattern A: tmp1=move1_dst, tmp2=move2_dst, result=move3_dst
+				if (move1_dst == op_lhs && move2_dst == op_rhs &&
+				    move3_src == op_dst) {
+					// The rewrite deletes the definitions of tmp1, tmp2 and
+					// dst, so nothing outside these four instructions may
+					// read any of them.
+					bool tmp1_safe = !is_reg_read_outside(func, move1_dst, i, i + 3);
+					bool tmp2_safe = !is_reg_read_outside(func, move2_dst, i, i + 3);
+					bool dst_safe = !is_reg_read_outside(func, op_dst, i, i + 3);
+
+					// The rewritten instruction reads the sources at i
+					// instead of at i+2, so nothing in between may have
+					// changed them.
+					bool sources_safe = move2_dst != move1_src &&
+						op_dst != move1_src && op_dst != move2_src;
+
+					if (tmp1_safe && tmp2_safe && dst_safe && sources_safe) {
+						// Emit optimized instruction
+						IRInstruction new_op = op;
+						new_op.operands[0] = IRValue::reg(move3_dst);
+						new_op.operands[1] = IRValue::reg(move1_src);
+						new_op.operands[2] = IRValue::reg(move2_src);
+						new_instructions.push_back(new_op);
+
+						i += 4;
+						return true;
+					}
+				}
+			}
+		}
+	}
+
+	// Pattern B/C: MOVE; OP; MOVE (only one move before op)
+	if (i + 2 < func.instructions.size()) {
+		const auto& move1 = func.instructions[i];
+		const auto& op = func.instructions[i + 1];
+		const auto& move2 = func.instructions[i + 2];
+
+		if (ir_has_effect(op.opcode, IR_ARITHMETIC) &&
+		    move2.opcode == IROpcode::MOVE &&
+		    op.operands.size() >= 3) {
+
+			int move1_dst = std::get<int>(move1.operands[0].value);
+			int move1_src = std::get<int>(move1.operands[1].value);
+			int op_dst = std::get<int>(op.operands[0].value);
+			int move2_dst = std::get<int>(move2.operands[0].value);
+			int move2_src = std::get<int>(move2.operands[1].value);
+
+			// Check for Pattern B: tmp is first operand
+			if (op.operands[1].type == IRValue::Type::REGISTER) {
+				int op_lhs = std::get<int>(op.operands[1].value);
+
+				if (move1_dst == op_lhs && move2_src == op_dst &&
+				    !is_reg_read_outside(func, move1_dst, i, i + 2) &&
+				    !is_reg_read_outside(func, op_dst, i, i + 2) &&
+				    op_dst != move1_src) {
+
+					// Emit optimized instruction
+					IRInstruction new_op = op;
+					new_op.operands[0] = IRValue::reg(move2_dst);
+					new_op.operands[1] = IRValue::reg(move1_src);
+					// operand 2 stays the same
+					new_instructions.push_back(new_op);
+
+					i += 3;
+					return true;
+				}
+			}
+
+			// Check for Pattern C: tmp is second operand
+			if (op.operands[2].type == IRValue::Type::REGISTER) {
+				int op_rhs = std::get<int>(op.operands[2].value);
+
+				if (move1_dst == op_rhs && move2_src == op_dst &&
+				    !is_reg_read_outside(func, move1_dst, i, i + 2) &&
+				    !is_reg_read_outside(func, op_dst, i, i + 2) &&
+				    op_dst != move1_src) {
+
+					// Emit optimized instruction
+					IRInstruction new_op = op;
+					new_op.operands[0] = IRValue::reg(move2_dst);
+					// operand 1 stays the same
+					new_op.operands[2] = IRValue::reg(move1_src);
+					new_instructions.push_back(new_op);
+
+					i += 3;
+					return true;
+				}
+			}
+		}
+	}
+
+	// Pattern E: MOVE tmp, var; LOAD_IMM/LOAD_FLOAT_IMM const; OP dst, tmp, const; MOVE var, dst
+	//          -> OP var, var, const
+	// This handles the common "count = count + 1" pattern efficiently
+	if (i + 3 < func.instructions.size()) {
+		const auto& move1 = func.instructions[i];
+		const auto& load = func.instructions[i + 1];
+		const auto& op = func.instructions[i + 2];
+		const auto& move2 = func.instructions[i + 3];
+
+		if (move1.opcode == IROpcode::MOVE &&
+		    (load.opcode == IROpcode::LOAD_IMM || load.opcode == IROpcode::LOAD_FLOAT_IMM) &&
+		    ir_has_effect(op.opcode, IR_ARITHMETIC) &&
+		    move2.opcode == IROpcode::MOVE &&
+		    op.operands.size() >= 3) {
+
+			int move1_dst = std::get<int>(move1.operands[0].value);
+			int move1_src = std::get<int>(move1.operands[1].value);
+			int load_dst = std::get<int>(load.operands[0].value);
+			int op_dst = std::get<int>(op.operands[0].value);
+			int move2_dst = std::get<int>(move2.operands[0].value);
+			int move2_src = std::get<int>(move2.operands[1].value);
+
+			// Check if operands match the pattern: MOVE tmp, var; LOAD const; OP dst, tmp, const; MOVE var, dst
+			if (op.operands[1].type == IRValue::Type::REGISTER &&
+			    op.operands[2].type == IRValue::Type::REGISTER) {
+				int op_lhs = std::get<int>(op.operands[1].value);
+				int op_rhs = std::get<int>(op.operands[2].value);
+
+				// Pattern E requires: tmp=move1_dst=op_lhs, const=load_dst=op_rhs, var=move1_src=move2_dst, dst=op_dst=move2_src
+				if (move1_dst == op_lhs && load_dst == op_rhs &&
+				    move1_src == move2_dst && move2_src == op_dst) {
+					// The rewrite deletes the definitions of tmp and dst,
+					// so nothing outside these four instructions may read
+					// either. The constant load survives, so load_dst may
+					// still be read anywhere.
+					bool tmp1_safe = !is_reg_read_outside(func, move1_dst, i, i + 3);
+					bool dst_safe = !is_reg_read_outside(func, op_dst, i, i + 3);
+
+					if (tmp1_safe && dst_safe) {
+						// Emit the LOAD_IMM instruction first (we still need the constant)
+						new_instructions.push_back(load);
+
+						// Emit optimized instruction: OP var, var, const
+						IRInstruction new_op = op;
+						new_op.operands[0] = IRValue::reg(move2_dst);  // var as destination
+						new_op.operands[1] = IRValue::reg(move1_src);  // var as first operand
+						// operand 2 (const) stays the same (load_dst)
+						new_instructions.push_back(new_op);
+
+						i += 4;
+						return true;
+					}
+				}
+			}
+		}
+	}
+	return false;
+}
+
+// Pattern F: MOVE a, b; MOVE b, a -- the second undoes the first.
+bool IROptimizer::try_eliminate_move_pair(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions) {
+	if (!(i + 1 < func.instructions.size())) {
+		return false;
+	}
+	if (func.instructions[i].opcode == IROpcode::MOVE &&
+	    func.instructions[i + 1].opcode == IROpcode::MOVE) {
+		const auto& move1 = func.instructions[i];
+		const auto& move2 = func.instructions[i + 1];
+
+		int move1_dst = std::get<int>(move1.operands[0].value);
+		int move1_src = std::get<int>(move1.operands[1].value);
+		int move2_dst = std::get<int>(move2.operands[0].value);
+		int move2_src = std::get<int>(move2.operands[1].value);
+
+		// Check for: MOVE tmp, src; MOVE src, tmp
+		// This is a redundant swap pattern - just eliminate both, which
+		// is only safe when nothing else reads the temporary.
+		if (move1_dst == move2_src && move1_src == move2_dst && move1_dst != move1_src &&
+		    !is_reg_read_outside(func, move1_dst, i, i + 1)) {
+			// Both moves are redundant - eliminate them
+			i += 2;
+			return true;
+		}
+	}
+	return false;
+}
+
+// Pattern D: OP dst, ...; MOVE result, dst -> OP result, ...
+bool IROptimizer::try_fold_move_after_op(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions) {
+	if (!(i + 1 < func.instructions.size())) {
+		return false;
+	}
+	if (ir_has_effect(func.instructions[i].opcode, IR_ARITHMETIC) &&
+	    func.instructions[i + 1].opcode == IROpcode::MOVE) {
+
+		const auto& op = func.instructions[i];
+		const auto& move = func.instructions[i + 1];
+
+		if (op.operands.size() >= 1 && move.operands.size() >= 2) {
+			int op_dst = std::get<int>(op.operands[0].value);
+			int move_dst = std::get<int>(move.operands[0].value);
+			int move_src = std::get<int>(move.operands[1].value);
+
+			// Folding the MOVE into the OP deletes the OP's own
+			// destination, so nothing else may read it.
+			if (move_src == op_dst &&
+			    !is_reg_read_outside(func, op_dst, i, i + 1)) {
+
+				// Emit optimized instruction
+				IRInstruction new_op = op;
+				new_op.operands[0] = IRValue::reg(move_dst);
+				new_instructions.push_back(new_op);
+
+				i += 2;
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 void IROptimizer::peephole_optimization(IRFunction& func) {
+	// Each matcher looks at func.instructions[i], and on a match appends what
+	// replaces the instructions it consumed, advances i past them, and returns
+	// true. Adding a pattern is a function and a row here.
+	static const std::vector<PeepholePattern> patterns = {
+		&IROptimizer::try_fuse_compare_and_branch,
+		&IROptimizer::try_eliminate_moves_around_op,
+		&IROptimizer::try_eliminate_move_pair,
+		&IROptimizer::try_fold_move_after_op,
+	};
+
 	std::vector<IRInstruction> new_instructions;
 	new_instructions.reserve(func.instructions.size());
 
 	size_t i = 0;
 	while (i < func.instructions.size()) {
-		const auto& instr = func.instructions[i];
-		bool skip = false;
-		bool handled = false;
-
-		// Pattern 0: Fuse CMP + BRANCH -> BRANCH_CMP
-		// Detect pattern: CMP_* dst, lhs, rhs; BRANCH_ZERO/NOT_ZERO dst, label
-		// Transform to: BRANCH_CMP lhs, rhs, label (where CMP is the comparison type)
-		// This eliminates the need to store and load the comparison result
-		// XXX: This optimization is known to fail untyped recursive fibonacci(20)
-		if (!skip && !handled && i + 1 < func.instructions.size()) {
-			const auto& cmp_instr = func.instructions[i];
-			const auto& branch_instr = func.instructions[i + 1];
-
-			// Check if this is a comparison instruction
-			bool is_cmp = (cmp_instr.opcode == IROpcode::CMP_EQ ||
-			               cmp_instr.opcode == IROpcode::CMP_NEQ ||
-			               cmp_instr.opcode == IROpcode::CMP_LT ||
-			               cmp_instr.opcode == IROpcode::CMP_LTE ||
-			               cmp_instr.opcode == IROpcode::CMP_GT ||
-			               cmp_instr.opcode == IROpcode::CMP_GTE);
-
-			// Check if next instruction branches on the comparison result
-			bool is_branch_on_cmp = (branch_instr.opcode == IROpcode::BRANCH_ZERO ||
-			                          branch_instr.opcode == IROpcode::BRANCH_NOT_ZERO);
-
-			if (is_cmp && is_branch_on_cmp && cmp_instr.operands.size() >= 3 && branch_instr.operands.size() >= 2) {
-				// Get comparison destination register
-				int cmp_dst = std::get<int>(cmp_instr.operands[0].value);
-				// Get branch condition register
-				int branch_reg = std::get<int>(branch_instr.operands[0].value);
-
-				// Fusing deletes the comparison's destination, so it has to be
-				// read by nothing but the branch being fused into it. Scanning
-				// only forward, and stopping at the first label, misses a read
-				// on a later iteration of the loop the comparison sits in.
-				bool reg_not_used_after = !is_reg_read_outside(func, cmp_dst, i, i + 1);
-				if (cmp_dst == branch_reg && reg_not_used_after) {
-					// Fuse the instructions
-					IROpcode fused_opcode;
-					bool invert = (branch_instr.opcode == IROpcode::BRANCH_ZERO);
-
-					// Map CMP + BRANCH_ZERO to direct branch (or invert for BRANCH_NOT_ZERO)
-					if (invert) {
-						// BRANCH_ZERO means branch when condition is false, so invert comparison
-						switch (cmp_instr.opcode) {
-							case IROpcode::CMP_EQ:  fused_opcode = IROpcode::BRANCH_NEQ; break;
-							case IROpcode::CMP_NEQ: fused_opcode = IROpcode::BRANCH_EQ; break;
-							case IROpcode::CMP_LT:  fused_opcode = IROpcode::BRANCH_GTE; break;
-							case IROpcode::CMP_LTE: fused_opcode = IROpcode::BRANCH_GT; break;
-							case IROpcode::CMP_GT:  fused_opcode = IROpcode::BRANCH_LTE; break;
-							case IROpcode::CMP_GTE: fused_opcode = IROpcode::BRANCH_LT; break;
-							default: throw CompilerException(ErrorType::OPTIMIZER_ERROR, "Unexpected comparison opcode in peephole optimization");
-						}
-					} else {
-						// BRANCH_NOT_ZERO means branch when condition is true, use same comparison
-						switch (cmp_instr.opcode) {
-							case IROpcode::CMP_EQ:  fused_opcode = IROpcode::BRANCH_EQ; break;
-							case IROpcode::CMP_NEQ: fused_opcode = IROpcode::BRANCH_NEQ; break;
-							case IROpcode::CMP_LT:  fused_opcode = IROpcode::BRANCH_LT; break;
-							case IROpcode::CMP_LTE: fused_opcode = IROpcode::BRANCH_LTE; break;
-							case IROpcode::CMP_GT:  fused_opcode = IROpcode::BRANCH_GT; break;
-							case IROpcode::CMP_GTE: fused_opcode = IROpcode::BRANCH_GTE; break;
-							default: throw CompilerException(ErrorType::OPTIMIZER_ERROR, "Unexpected comparison opcode in peephole optimization");
-						}
-					}
-
-					// Create fused instruction: BRANCH_CMP lhs, rhs, label
-					IRInstruction fused(fused_opcode);
-					fused.operands.push_back(cmp_instr.operands[1]); // lhs
-					fused.operands.push_back(cmp_instr.operands[2]); // rhs
-					fused.operands.push_back(branch_instr.operands[1]); // label
-					fused.type_hint = cmp_instr.type_hint;
-
-					new_instructions.push_back(fused);
-					i += 2; // Skip both instructions
-					skip = true;
-					handled = true;
-				}
+		bool matched = false;
+		for (const auto& pattern : patterns) {
+			if ((this->*pattern)(func, i, new_instructions)) {
+				matched = true;
+				break;
 			}
 		}
-
-		// Pattern 1: MOVE r0, r0 -> eliminate
-		if (!skip && !handled && instr.opcode == IROpcode::MOVE) {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src = std::get<int>(instr.operands[1].value);
-			if (dst == src) {
-				skip = true; // Eliminate self-move
-				i++;
-				continue;
-			}
-
-			// Pattern 2: Eliminate redundant MOVEs around arithmetic/logical operations
-			// Pattern A: MOVE tmp1, src1; MOVE tmp2, src2; OP dst, tmp1, tmp2; MOVE result, dst
-			//          -> OP result, src1, src2
-			// Pattern B/C: MOVE tmp, src; OP dst, ..., tmp; MOVE result, dst
-			//          -> OP result, ..., src
-			//
-			// Only apply if:
-			// - The temporary registers (tmp1, tmp2, dst) are never used elsewhere
-			// - No control flow boundaries between the instructions
-			if (!skip && !handled && i + 3 < func.instructions.size()) {
-				const auto& move1 = func.instructions[i];
-				const auto& move2 = func.instructions[i + 1];
-				const auto& op = func.instructions[i + 2];
-				const auto& move3 = func.instructions[i + 3];
-
-				// Check for Pattern A: MOVE; MOVE; OP; MOVE
-				if (move2.opcode == IROpcode::MOVE &&
-				    ir_has_effect(op.opcode, IR_ARITHMETIC) &&
-				    move3.opcode == IROpcode::MOVE &&
-				    op.operands.size() >= 3) {
-
-					int move1_dst = std::get<int>(move1.operands[0].value);
-					int move1_src = std::get<int>(move1.operands[1].value);
-					int move2_dst = std::get<int>(move2.operands[0].value);
-					int move2_src = std::get<int>(move2.operands[1].value);
-					int op_dst = std::get<int>(op.operands[0].value);
-					int move3_dst = std::get<int>(move3.operands[0].value);
-					int move3_src = std::get<int>(move3.operands[1].value);
-
-					// Check if operands match the pattern
-					if (op.operands[1].type == IRValue::Type::REGISTER &&
-					    op.operands[2].type == IRValue::Type::REGISTER) {
-						int op_lhs = std::get<int>(op.operands[1].value);
-						int op_rhs = std::get<int>(op.operands[2].value);
-
-						// Pattern A: tmp1=move1_dst, tmp2=move2_dst, result=move3_dst
-						if (move1_dst == op_lhs && move2_dst == op_rhs &&
-						    move3_src == op_dst) {
-							// The rewrite deletes the definitions of tmp1, tmp2 and
-							// dst, so nothing outside these four instructions may
-							// read any of them.
-							bool tmp1_safe = !is_reg_read_outside(func, move1_dst, i, i + 3);
-							bool tmp2_safe = !is_reg_read_outside(func, move2_dst, i, i + 3);
-							bool dst_safe = !is_reg_read_outside(func, op_dst, i, i + 3);
-
-							// The rewritten instruction reads the sources at i
-							// instead of at i+2, so nothing in between may have
-							// changed them.
-							bool sources_safe = move2_dst != move1_src &&
-								op_dst != move1_src && op_dst != move2_src;
-
-							if (tmp1_safe && tmp2_safe && dst_safe && sources_safe) {
-								// Emit optimized instruction
-								IRInstruction new_op = op;
-								new_op.operands[0] = IRValue::reg(move3_dst);
-								new_op.operands[1] = IRValue::reg(move1_src);
-								new_op.operands[2] = IRValue::reg(move2_src);
-								new_instructions.push_back(new_op);
-
-								i += 4;
-								skip = true;
-								handled = true;
-							}
-						}
-					}
-				}
-			}
-
-			// Pattern B/C: MOVE; OP; MOVE (only one move before op)
-			if (!skip && !handled && i + 2 < func.instructions.size()) {
-				const auto& move1 = func.instructions[i];
-				const auto& op = func.instructions[i + 1];
-				const auto& move2 = func.instructions[i + 2];
-
-				if (ir_has_effect(op.opcode, IR_ARITHMETIC) &&
-				    move2.opcode == IROpcode::MOVE &&
-				    op.operands.size() >= 3) {
-
-					int move1_dst = std::get<int>(move1.operands[0].value);
-					int move1_src = std::get<int>(move1.operands[1].value);
-					int op_dst = std::get<int>(op.operands[0].value);
-					int move2_dst = std::get<int>(move2.operands[0].value);
-					int move2_src = std::get<int>(move2.operands[1].value);
-
-					// Check for Pattern B: tmp is first operand
-					if (op.operands[1].type == IRValue::Type::REGISTER) {
-						int op_lhs = std::get<int>(op.operands[1].value);
-
-						if (move1_dst == op_lhs && move2_src == op_dst &&
-						    !is_reg_read_outside(func, move1_dst, i, i + 2) &&
-						    !is_reg_read_outside(func, op_dst, i, i + 2) &&
-						    op_dst != move1_src) {
-
-							// Emit optimized instruction
-							IRInstruction new_op = op;
-							new_op.operands[0] = IRValue::reg(move2_dst);
-							new_op.operands[1] = IRValue::reg(move1_src);
-							// operand 2 stays the same
-							new_instructions.push_back(new_op);
-
-							i += 3;
-							skip = true;
-							handled = true;
-						}
-					}
-
-					// Check for Pattern C: tmp is second operand
-					if (!handled && op.operands[2].type == IRValue::Type::REGISTER) {
-						int op_rhs = std::get<int>(op.operands[2].value);
-
-						if (move1_dst == op_rhs && move2_src == op_dst &&
-						    !is_reg_read_outside(func, move1_dst, i, i + 2) &&
-						    !is_reg_read_outside(func, op_dst, i, i + 2) &&
-						    op_dst != move1_src) {
-
-							// Emit optimized instruction
-							IRInstruction new_op = op;
-							new_op.operands[0] = IRValue::reg(move2_dst);
-							// operand 1 stays the same
-							new_op.operands[2] = IRValue::reg(move1_src);
-							new_instructions.push_back(new_op);
-
-							i += 3;
-							skip = true;
-							handled = true;
-						}
-					}
-				}
-			}
-
-			// Pattern E: MOVE tmp, var; LOAD_IMM/LOAD_FLOAT_IMM const; OP dst, tmp, const; MOVE var, dst
-			//          -> OP var, var, const
-			// This handles the common "count = count + 1" pattern efficiently
-			if (!skip && !handled && i + 3 < func.instructions.size()) {
-				const auto& move1 = func.instructions[i];
-				const auto& load = func.instructions[i + 1];
-				const auto& op = func.instructions[i + 2];
-				const auto& move2 = func.instructions[i + 3];
-
-				if (move1.opcode == IROpcode::MOVE &&
-				    (load.opcode == IROpcode::LOAD_IMM || load.opcode == IROpcode::LOAD_FLOAT_IMM) &&
-				    ir_has_effect(op.opcode, IR_ARITHMETIC) &&
-				    move2.opcode == IROpcode::MOVE &&
-				    op.operands.size() >= 3) {
-
-					int move1_dst = std::get<int>(move1.operands[0].value);
-					int move1_src = std::get<int>(move1.operands[1].value);
-					int load_dst = std::get<int>(load.operands[0].value);
-					int op_dst = std::get<int>(op.operands[0].value);
-					int move2_dst = std::get<int>(move2.operands[0].value);
-					int move2_src = std::get<int>(move2.operands[1].value);
-
-					// Check if operands match the pattern: MOVE tmp, var; LOAD const; OP dst, tmp, const; MOVE var, dst
-					if (op.operands[1].type == IRValue::Type::REGISTER &&
-					    op.operands[2].type == IRValue::Type::REGISTER) {
-						int op_lhs = std::get<int>(op.operands[1].value);
-						int op_rhs = std::get<int>(op.operands[2].value);
-
-						// Pattern E requires: tmp=move1_dst=op_lhs, const=load_dst=op_rhs, var=move1_src=move2_dst, dst=op_dst=move2_src
-						if (move1_dst == op_lhs && load_dst == op_rhs &&
-						    move1_src == move2_dst && move2_src == op_dst) {
-							// The rewrite deletes the definitions of tmp and dst,
-							// so nothing outside these four instructions may read
-							// either. The constant load survives, so load_dst may
-							// still be read anywhere.
-							bool tmp1_safe = !is_reg_read_outside(func, move1_dst, i, i + 3);
-							bool dst_safe = !is_reg_read_outside(func, op_dst, i, i + 3);
-
-							if (tmp1_safe && dst_safe) {
-								// Emit the LOAD_IMM instruction first (we still need the constant)
-								new_instructions.push_back(load);
-
-								// Emit optimized instruction: OP var, var, const
-								IRInstruction new_op = op;
-								new_op.operands[0] = IRValue::reg(move2_dst);  // var as destination
-								new_op.operands[1] = IRValue::reg(move1_src);  // var as first operand
-								// operand 2 (const) stays the same (load_dst)
-								new_instructions.push_back(new_op);
-
-								i += 4;
-								skip = true;
-								handled = true;
-							}
-						}
-					}
-				}
-			}
-		}
-
-		// Pattern F: Handle MOVE r10, r0; MOVE r0, r10 -> eliminate (redundant pair)
-		if (!skip && !handled && i + 1 < func.instructions.size()) {
-			if (func.instructions[i].opcode == IROpcode::MOVE &&
-			    func.instructions[i + 1].opcode == IROpcode::MOVE) {
-				const auto& move1 = func.instructions[i];
-				const auto& move2 = func.instructions[i + 1];
-
-				int move1_dst = std::get<int>(move1.operands[0].value);
-				int move1_src = std::get<int>(move1.operands[1].value);
-				int move2_dst = std::get<int>(move2.operands[0].value);
-				int move2_src = std::get<int>(move2.operands[1].value);
-
-				// Check for: MOVE tmp, src; MOVE src, tmp
-				// This is a redundant swap pattern - just eliminate both, which
-				// is only safe when nothing else reads the temporary.
-				if (move1_dst == move2_src && move1_src == move2_dst && move1_dst != move1_src &&
-				    !is_reg_read_outside(func, move1_dst, i, i + 1)) {
-					// Both moves are redundant - eliminate them
-					i += 2;
-					skip = true;
-					handled = true;
-					continue;
-				}
-			}
-		}
-
-		// Pattern D: OP dst, ...; MOVE result, dst (without preceding MOVE)
-		if (!skip && !handled && i + 1 < func.instructions.size()) {
-			if (ir_has_effect(func.instructions[i].opcode, IR_ARITHMETIC) &&
-			    func.instructions[i + 1].opcode == IROpcode::MOVE) {
-
-				const auto& op = func.instructions[i];
-				const auto& move = func.instructions[i + 1];
-
-				if (op.operands.size() >= 1 && move.operands.size() >= 2) {
-					int op_dst = std::get<int>(op.operands[0].value);
-					int move_dst = std::get<int>(move.operands[0].value);
-					int move_src = std::get<int>(move.operands[1].value);
-
-					// Folding the MOVE into the OP deletes the OP's own
-					// destination, so nothing else may read it.
-					if (move_src == op_dst &&
-					    !is_reg_read_outside(func, op_dst, i, i + 1)) {
-
-						// Emit optimized instruction
-						IRInstruction new_op = op;
-						new_op.operands[0] = IRValue::reg(move_dst);
-						new_instructions.push_back(new_op);
-
-						i += 2;
-						skip = true;
-						handled = true;
-					}
-				}
-			}
-		}
-
-		if (!skip && !handled) {
-			new_instructions.push_back(instr);
+		if (!matched) {
+			new_instructions.push_back(func.instructions[i]);
 			i++;
 		}
 	}

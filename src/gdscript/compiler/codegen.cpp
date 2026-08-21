@@ -1,4 +1,5 @@
 #include "codegen.h"
+#include "syscall_numbers.h"
 #include "compiler_exception.h"
 #include <map>
 #include <stdexcept>
@@ -1021,7 +1022,6 @@ bool CodeGenerator::emit_type_guard(int value_reg, IRInstruction::TypeHint type,
 }
 
 int CodeGenerator::gen_array_size(int array_reg, FunctionContext& func) {
-	constexpr int64_t ECALL_ARRAY_SIZE = 523;
 	int size_reg = alloc_register(func);
 	IRInstruction call(IROpcode::CALL_SYSCALL);
 	call.operands.push_back(IRValue::reg(size_reg));
@@ -1033,7 +1033,6 @@ int CodeGenerator::gen_array_size(int array_reg, FunctionContext& func) {
 }
 
 int CodeGenerator::gen_array_element(int array_reg, int index_reg, FunctionContext& func) {
-	constexpr int64_t ECALL_ARRAY_AT = 522;
 	int element_reg = alloc_register(func);
 	IRInstruction call(IROpcode::CALL_SYSCALL);
 	call.operands.push_back(IRValue::reg(element_reg));
@@ -1046,7 +1045,6 @@ int CodeGenerator::gen_array_element(int array_reg, int index_reg, FunctionConte
 
 int CodeGenerator::gen_dictionary_op(int64_t op, int dict_reg, int key_reg,
                                      IRInstruction::TypeHint result_type, FunctionContext& func) {
-	constexpr int64_t ECALL_DICTIONARY_OPS = 524;
 	int result_reg = alloc_register(func);
 	IRInstruction call(IROpcode::CALL_SYSCALL);
 	call.operands.push_back(IRValue::reg(result_reg));
@@ -1180,7 +1178,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		int size_reg = alloc_register(func);
 		IRInstruction size_syscall(IROpcode::CALL_SYSCALL);
 		size_syscall.operands.push_back(IRValue::reg(size_reg));  // result register
-		size_syscall.operands.push_back(IRValue::imm(523));         // ECALL_ARRAY_SIZE
+		size_syscall.operands.push_back(IRValue::imm(ECALL_ARRAY_SIZE));
 		size_syscall.operands.push_back(IRValue::reg(array_reg));   // array register
 		func.ir.instructions.push_back(size_syscall);
 		set_register_type(func, size_reg, Variant::INT);
@@ -1200,7 +1198,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		int elem_reg = alloc_register(func);
 		IRInstruction at_syscall(IROpcode::CALL_SYSCALL);
 		at_syscall.operands.push_back(IRValue::reg(elem_reg));    // result register (element)
-		at_syscall.operands.push_back(IRValue::imm(522));         // ECALL_ARRAY_AT
+		at_syscall.operands.push_back(IRValue::imm(ECALL_ARRAY_AT));
 		at_syscall.operands.push_back(IRValue::reg(array_reg));   // array register
 		at_syscall.operands.push_back(IRValue::reg(index_reg));   // index register
 		func.ir.instructions.push_back(at_syscall);
@@ -1283,7 +1281,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 
 	// Initialize loop variable with start value
 	int loop_var_reg = alloc_register(func);
-	auto& move_instr = func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(loop_var_reg), IRValue::reg(start_reg));
+	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(loop_var_reg), IRValue::reg(start_reg));
 	declare_variable(func, stmt->variable, loop_var_reg, false, stmt);
 
 	// The loop variable is `start`, then `start + step` repeatedly: INT exactly
@@ -1387,7 +1385,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 	auto& add_instr = func.ir.instructions.emplace_back(IROpcode::ADD, IRValue::reg(new_val_reg),
 	                               IRValue::reg(loop_var_reg), IRValue::reg(step_reg));
 	add_instr.type_hint = Variant::INT; // range() always produces integers
-	auto& move_instr2 = func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(loop_var_reg), IRValue::reg(new_val_reg));
+	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(loop_var_reg), IRValue::reg(new_val_reg));
 	free_register(func, new_val_reg);
 
 	// Jump back to loop start
@@ -1459,7 +1457,6 @@ int CodeGenerator::gen_expr(const Expr* expr, FunctionContext& func) {
 void CodeGenerator::gen_dictionary_keys_for_iteration(int iterable_reg, FunctionContext& func) {
 	// ECALL_DICTIONARY_OPS / Dictionary_Op::GET_KEYS: Dictionary in a1, result
 	// Array written through the pointer in a2 (no key argument, so not a3).
-	constexpr int64_t ECALL_DICTIONARY_OPS = 524;
 	constexpr int64_t DICT_OP_GET_KEYS = 4;
 
 	auto emit_get_keys = [&]() {
@@ -1599,7 +1596,7 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func)
 		// CALL_SYSCALL result_reg, ECALL_GET_NODE, 0
 		IRInstruction instr(IROpcode::CALL_SYSCALL);
 		instr.operands.push_back(IRValue::reg(result_reg));    // result register
-		instr.operands.push_back(IRValue::imm(507));            // ECALL_GET_NODE
+		instr.operands.push_back(IRValue::imm(ECALL_GET_NODE));
 		instr.operands.push_back(IRValue::imm(0));              // addr = 0 (owner node)
 		func.ir.instructions.push_back(instr);
 
@@ -1930,7 +1927,7 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 			// CALL_SYSCALL result_reg, ECALL_GET_NODE, 0
 			IRInstruction instr(IROpcode::CALL_SYSCALL);
 			instr.operands.push_back(IRValue::reg(result_reg));    // result register
-			instr.operands.push_back(IRValue::imm(507));            // ECALL_GET_NODE
+			instr.operands.push_back(IRValue::imm(ECALL_GET_NODE));
 			instr.operands.push_back(IRValue::imm(0));              // addr = 0 (owner node)
 			func.ir.instructions.push_back(instr);
 		} else {
@@ -1940,7 +1937,7 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 
 			IRInstruction instr(IROpcode::CALL_SYSCALL);
 			instr.operands.push_back(IRValue::reg(result_reg));    // result register
-			instr.operands.push_back(IRValue::imm(507));            // ECALL_GET_NODE
+			instr.operands.push_back(IRValue::imm(ECALL_GET_NODE));
 			instr.operands.push_back(IRValue::imm(0));              // addr = 0 (owner node)
 			instr.operands.push_back(IRValue::reg(path_reg));       // path register
 			func.ir.instructions.push_back(instr);
@@ -2022,7 +2019,7 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 	// CALL_SYSCALL self_reg, ECALL_GET_NODE, 0
 	IRInstruction get_self_instr(IROpcode::CALL_SYSCALL);
 	get_self_instr.operands.push_back(IRValue::reg(self_reg));     // result register
-	get_self_instr.operands.push_back(IRValue::imm(507));            // ECALL_GET_NODE
+	get_self_instr.operands.push_back(IRValue::imm(ECALL_GET_NODE));
 	get_self_instr.operands.push_back(IRValue::imm(0));              // addr = 0 (owner node)
 	func.ir.instructions.push_back(get_self_instr);
 
@@ -3624,7 +3621,7 @@ int CodeGenerator::gen_global_class_get(const std::string& class_name, FunctionC
 	// Format: CALL_SYSCALL result_reg, syscall_number, string_index, string_length
 	IRInstruction instr(IROpcode::CALL_SYSCALL);
 	instr.operands.push_back(IRValue::reg(result_reg));              // result register
-	instr.operands.push_back(IRValue::imm(504));                     // ECALL_GET_OBJ
+	instr.operands.push_back(IRValue::imm(ECALL_GET_OBJ));
 	instr.operands.push_back(IRValue::imm(str_idx));                 // string constant index
 	instr.operands.push_back(IRValue::imm(static_cast<int64_t>(class_name.length()))); // string length
 

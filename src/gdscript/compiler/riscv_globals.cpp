@@ -29,13 +29,9 @@
 // wide-offset load and store path and is never touched here.
 #include "compiler_exception.h"
 #include "riscv_codegen.h"
+#include "syscall_numbers.h"
 
 namespace gdscript {
-
-// ECALL_UTILITY, from src/syscalls.h. The backend spells its syscall numbers
-// out the same way everywhere else (507 for ECALL_GET_NODE, 500 for
-// ECALL_PRINT); this is that number for GAME_API_BASE + 49.
-static constexpr int ECALL_UTILITY = 549;
 
 void RISCVCodeGen::emit_global_call(const IRInstruction& instr) {
 	// GLOBAL_CALL result_reg, global_fn, args_are_typed, arg_count, arg_reg...

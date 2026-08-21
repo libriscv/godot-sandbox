@@ -82,6 +82,39 @@ private:
 	// Generate code for a single function
 	void gen_function(const IRFunction& func);
 
+	// gen_function() in three parts: what the frame has to look like, the
+	// prologue that establishes it, and one instruction at a time. All three
+	// talk to each other through m_fn, never through arguments.
+	void plan_frame(const IRFunction& func);
+	void emit_prologue(const IRFunction& func);
+	void gen_instruction(const IRInstruction& instr);
+	void gen_call(const IRInstruction& instr);
+	void gen_vset(const IRInstruction& instr);
+	void gen_fused_branch(const IRInstruction& instr);
+	void gen_comparison(const IRInstruction& instr);
+	void gen_make_packed_array(const IRInstruction& instr);
+	void gen_binary_op(const IRInstruction& instr);
+	void gen_print(const IRInstruction& instr);
+	void gen_switch(const IRInstruction& instr);
+	void gen_vget_inline(const IRInstruction& instr);
+	void gen_vget(const IRInstruction& instr);
+	void gen_store_global(const IRInstruction& instr);
+	void gen_make_array(const IRInstruction& instr);
+	void gen_make_dictionary(const IRInstruction& instr);
+	void gen_vcall(const IRInstruction& instr);
+	void gen_call_syscall(const IRInstruction& instr);
+	// CALL_SYSCALL dispatches to one of these; each syscall number has its own
+	// calling convention, so each gets its own expansion.
+	void gen_syscall_get_obj(const IRInstruction& instr, int result_vreg);
+	void gen_syscall_array_size(const IRInstruction& instr, int result_vreg);
+	void gen_syscall_array_at(const IRInstruction& instr, int result_vreg);
+	void gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg);
+	void gen_syscall_get_node(const IRInstruction& instr, int result_vreg);
+
+	// Base register and offset the instruction being generated should write
+	// its result to. See the definition: asking commits to return forwarding.
+	std::pair<uint8_t, int> value_destination(int vreg);
+
 	// Instruction emission
 	void emit_word(uint32_t word);  // Emit raw 32-bit word
 	void emit_r_type(uint8_t opcode, uint8_t rd, uint8_t funct3, uint8_t rs1, uint8_t rs2, uint8_t funct7);
@@ -380,6 +413,12 @@ private:
 	// past the instruction that wrote them.
 	int get_scratch_variant_offset(int index = 0);
 
+	// A syscall overwrites the argument registers, so any live value the
+	// allocator is holding in one has to move first. Every expansion that
+	// emits an `ecall` calls this immediately before setting up its arguments,
+	// naming the registers that call convention writes.
+	void spill_around_syscall(const std::vector<uint8_t>& clobbered_regs);
+
 	// Syscall result handling helpers
 	// Store syscall result from register to Variant, with optional register allocation
 	// result_vreg: virtual register for the result
@@ -436,6 +475,10 @@ private:
 		int next_variant_slot = 0;  // Next Variant slot to allocate
 		int scratch_slot_base = 0;  // First Variant slot of the scratch area
 		int current_instr_idx = 0;  // Current instruction index for register allocation
+
+		// forward_to_return for the instruction gen_instruction() is on, which
+		// is what value_destination() answers from.
+		bool forward_return = false;
 
 		// False outside gen_function(), where the entry stub and the export
 		// table are emitted without a frame and the questions below have no

@@ -75,6 +75,7 @@ int main(int argc, char** argv)
 		Compiler compiler;
 		CompilerOptions options;
 		options.output_elf = true;
+		options.optimize = !no_optimize;
 		options.double_precision = double_precision;
 		std::vector<uint8_t> elf = compiler.compile(source, options);
 

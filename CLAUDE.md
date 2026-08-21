@@ -306,8 +306,8 @@ These tools are essential for tracking down bugs in the compiler pipeline by sho
 ### Checking the compiler against itself
 
 These checks run from `src/gdscript/compiler/build` with `ctest .`, and exist so
-that a compiler bug fails a build rather than a user's program at run time. See
-`src/gdscript/compiler/REFACTOR.md` for why each one is there.
+that a compiler bug fails a build rather than a user's program at run time.
+What each one is for:
 
 - `test_ir_verifier` — the IR verifier (`ir_verifier.h`), which also runs
   between every optimizer pass in debug builds. It checks operand roles against

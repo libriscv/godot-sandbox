@@ -1031,17 +1031,9 @@ void test_auipc_addi_patching() {
 		std::vector<uint8_t> code = codegen_obj.generate(ir);
 		assert(code.size() > 0);
 
-		// Check that the code contains AUIPC instructions (opcode 0x17)
-		bool has_auipc = false;
-		for (size_t i = 0; i < code.size() - 3; i += 4) {
-			uint32_t instr = code[i] | (code[i+1] << 8) | (code[i+2] << 16) | (code[i+3] << 24);
-			if ((instr & 0x7F) == 0x17) {  // AUIPC opcode
-				has_auipc = true;
-				break;
-			}
-		}
-		// Should have AUIPC for loading large constants
-		// (Note: this might not always trigger depending on constant values, but we check the code gen doesn't crash)
+		// Whether an AUIPC appears depends on the constants, so there is
+		// nothing to assert about it; what this test pins down is that the
+		// AUIPC+ADDI pair is patched without generate() throwing.
 	} catch (const CompilerException& e) {
 		std::cerr << "    Note: AUIPC+ADDI test encountered issue: " << e.what() << std::endl;
 	}
@@ -1117,8 +1109,11 @@ void test_constant_fold_comparison_in_if() {
 	IROptimizer optimizer;
 	optimizer.optimize(ir);
 
-	// After optimization, the comparison should be replaced with LOAD_BOOL (true)
-	// and the BRANCH_ZERO should be removed (or replaced with unconditional branch)
+	// After optimization the comparison is a LOAD_BOOL of a known value. The
+	// BRANCH_ZERO that reads it stays: nothing folds a branch whose condition
+	// is a constant, so the arm it guards survives into codegen -- OPTIMIZATIONS.md
+	// entry 18. Asserted as it is rather than as it ought to be, so that
+	// implementing that folding fails here and gets the count updated deliberately.
 	int load_bool_count = 0;
 	int branch_zero_count = 0;
 	for (const auto& instr : ir.functions[0].instructions) {
@@ -1130,8 +1125,8 @@ void test_constant_fold_comparison_in_if() {
 		}
 	}
 
-	// The comparison should be folded to LOAD_BOOL
 	assert(load_bool_count > 0);
+	assert(branch_zero_count == 1);
 
 	std::cout << "  ✓ Constant fold comparison in if test passed" << std::endl;
 }
@@ -1184,8 +1179,11 @@ void test_copy_propagation_optimization() {
 		}
 	}
 
-	// We should have at least 1 LOAD_IMM
+	// We should have at least 1 LOAD_IMM, and copy propagation rewrites the
+	// readers of a MOVE rather than the constant that fed it, so it neither
+	// drops one nor introduces one.
 	assert(load_imm_count_after >= 1);
+	assert(load_imm_count_after == load_imm_count_before);
 
 	// The number of MOVEs should be reduced after optimization
 	// (The exact number depends on what the optimizer can eliminate)

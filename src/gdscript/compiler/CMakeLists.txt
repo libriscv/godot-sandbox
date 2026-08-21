@@ -45,6 +45,14 @@ target_include_directories(gdscript_compiler PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # convention. PRIVATE, so a project embedding this library is not held to it.
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
 	target_compile_options(gdscript_compiler PRIVATE -Wswitch -Werror=switch)
+
+	# -Wunused-variable is what catches an option parsed and then never passed
+	# on, which is how `gdscript_to_riscv --no-optimize` spent a while quietly
+	# optimizing. Warnings, not errors: the guest build uses a different
+	# compiler version and must not fail on one it words differently.
+	# Unused parameters are excluded -- several are there for an interface.
+	set(GDSC_WARNINGS -Wall -Wextra -Wno-unused-parameter)
+	target_compile_options(gdscript_compiler PRIVATE ${GDSC_WARNINGS})
 endif()
 
 if (DOUBLE_PRECISION OR GODOTCPP_PRECISION STREQUAL "double")
@@ -55,17 +63,20 @@ endif()
 
 # Build demo executable
 add_executable(gdscript_compiler_test test_compiler.cpp)
+target_compile_options(gdscript_compiler_test PRIVATE ${GDSC_WARNINGS})
 target_link_libraries(gdscript_compiler_test gdscript_compiler)
 
 function(add_gdscript_test test_name test_source)
 	add_executable(${test_name} ${test_source})
 	target_compile_options(${test_name} PUBLIC -fsanitize=address,undefined)
+	target_compile_options(${test_name} PRIVATE ${GDSC_WARNINGS})
 	target_link_libraries(${test_name} -fsanitize=address,undefined gdscript_compiler)
 	add_test(NAME ${test_name} COMMAND ${test_name})
 endfunction()
 
 # Dump IR utility
 add_executable(dump_ir dump_ir.cpp)
+target_compile_options(dump_ir PRIVATE ${GDSC_WARNINGS})
 if(APPLE)
 	target_link_libraries(dump_ir gdscript_compiler)
 else()
@@ -74,6 +85,7 @@ endif()
 
 # GDScript to RISC-V disassembly tool
 add_executable(gdscript_to_riscv gdscript_to_riscv.cpp)
+target_compile_options(gdscript_to_riscv PRIVATE ${GDSC_WARNINGS})
 if(APPLE)
 	target_link_libraries(gdscript_to_riscv gdscript_compiler)
 else()

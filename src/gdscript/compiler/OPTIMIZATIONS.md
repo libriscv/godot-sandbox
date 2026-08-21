@@ -344,6 +344,105 @@ Merge adjacent stack operations targeting the same Variant.
 
 **Already partially implemented** in `eliminate_redundant_stores()` but could be enhanced.
 
+## Gaps Found by Inspection
+
+Four things the optimizer leaves on the floor, found by dumping the IR of the
+79 corpus programs in `tests/test_corpus.h` and reading what came out. Each has
+a minimal reproduction and a count over that corpus, so the work can be
+prioritised against evidence rather than guessed at. They are listed in the
+order they should be done: 17 is what makes 18 fire, and 18 is what makes 19
+and 20 have anything to remove.
+
+### 17. Keep Constants Across a Label
+**Status:** 🔜 Planned
+**Safety:** Moderate (needs a real join-point rule)
+**Impact:** High
+**Priority:** High
+
+`constant_folding()` clears everything it knows at every `LABEL`. A label is a
+join point and a value arriving on two paths is genuinely unknown -- but the
+reset is unconditional, so a register no path writes loses its constant too.
+The effect is that constant folding stops at the first `if`, loop or `match` in
+a function, which in a real program is almost immediately.
+
+```gdscript
+func test():
+	var a = 4
+	var b = 9
+	return a + b          # LOAD_IMM r0, 13
+```
+```gdscript
+func test(n):
+	var a = 4
+	var b = 9
+	if n:                 # neither a nor b is touched here
+		pass
+	return a + b          # ADD r0, r1, r2 -- both operands still constant
+```
+
+The narrow fix is to keep an entry across a label when no instruction anywhere
+in the function writes that register. The general fix is to intersect the state
+over the label's actual predecessors.
+
+### 18. Fold a Branch on a Constant Condition
+**Status:** 🔜 Planned
+**Safety:** Very Safe
+**Impact:** High
+**Priority:** High
+
+`BRANCH_ZERO` and `BRANCH_NOT_ZERO` are on the never-folded list in
+`constant_folding()`, so a condition that folded to a constant still gets
+tested at run time and the arm it guards still gets emitted. 14 sites in 10 of
+the 79 corpus programs, all of them created by folding the comparison directly
+above:
+
+```
+2: LOAD_BOOL    r5, 0
+3: BRANCH_ZERO  r5, @ternary_else_0    # always taken; 4, 5 and the label are dead
+4: LOAD_IMM     r2, 4
+5: JUMP         @ternary_end_1
+6: LABEL        @ternary_else_0
+7: MOVE         r2, r1
+```
+
+A constant `BRANCH_*` becomes a `JUMP` or nothing at all. Entry 11 (Branch
+Simplification) is a different pattern -- it is about a comparison that
+materialises a bool; this is about a branch whose answer is already known.
+
+### 19. Drop Unreachable Code After RETURN and JUMP
+**Status:** 🔜 Planned
+**Safety:** Very Safe
+**Impact:** Low (code size), rises once 18 lands
+**Priority:** Medium
+
+Nothing removes the instructions between a `RETURN` or `JUMP` and the next
+`LABEL`. `if/return/else` produces one per arm, and they reach machine code:
+
+```
+15: RETURN
+16: JUMP  @endif_5              # nothing can execute this
+```
+```
+100ac:  00008067   ret
+100b0:  1580006f   j 10208      # and here it is in the ELF
+```
+
+27 sites in 7 corpus programs; `classify()` in `if_elif_else` carries three.
+`eliminate_dead_code()` works on registers nothing reads, which is a different
+question from code nothing reaches.
+
+### 20. Drop a Branch to the Next Instruction
+**Status:** 🔜 Planned
+**Safety:** Very Safe
+**Impact:** Low
+**Priority:** Low
+
+A `JUMP` or `BRANCH_*` whose target label is the instruction directly after it
+is a no-op. 11 sites in 9 corpus programs, mostly the last arm of a `match`
+jumping to the end label that immediately follows it. Cheap to spot in
+`peephole_optimization()`, and worth doing after 19 rather than before: 19
+creates more of them.
+
 ## Optimization Pipeline Order
 
 The optimizations run in this order (with iteration):

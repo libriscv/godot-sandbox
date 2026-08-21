@@ -1,6 +1,7 @@
 #include "riscv_codegen.h"
 #include "compiler_exception.h"
 #include "variant_types.h"
+#include "syscall_numbers.h"
 #include <algorithm>
 #include <stdexcept>
 #include <cstring>
@@ -189,7 +190,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 			emit_mv(REG_A3, REG_T1);
 
 			// a7 = ECALL_VCREATE (517)
-			emit_li(REG_A7, 517);
+			emit_li(REG_A7, ECALL_VCREATE);
 			emit_ecall();
 
 			// Restore stack pointer
@@ -209,7 +210,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 			emit_li(REG_A3, 0);
 
 			// a7 = ECALL_VCREATE (517)
-			emit_li(REG_A7, 517);
+			emit_li(REG_A7, ECALL_VCREATE);
 			emit_ecall();
 		} else if (global.init_type == IRGlobalVar::InitType::EMPTY_DICT) {
 			// Empty Dictionary initialization using VCREATE
@@ -226,7 +227,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 			emit_li(REG_A3, 0);
 
 			// a7 = ECALL_VCREATE (517)
-			emit_li(REG_A7, 517);
+			emit_li(REG_A7, ECALL_VCREATE);
 			emit_ecall();
 		} else if (global.init_type == IRGlobalVar::InitType::NULL_VAL) {
 			// Write type field: m_type = 0 (NIL)
@@ -295,7 +296,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		emit_address_of_global(REG_A6, i);
 
 		// A7 = ECALL_SANDBOX_ADD (547)
-		emit_li(REG_A7, 547);
+		emit_li(REG_A7, ECALL_SANDBOX_ADD);
 
 		// Make the syscall
 		emit_ecall();
@@ -410,14 +411,11 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	return m_code;
 }
 
-void RISCVCodeGen::gen_function(const IRFunction& func) {
-	// Godot Sandbox calling convention with Variants:
-	// a0 = pointer to return Variant (pre-allocated by caller)
-	// a1-a7 = pointers to argument Variants
-	//
-	// Everything this function keeps about itself lives in m_fn, which the
-	// guard resets on the way in and clears on the way out.
-	FunctionStateGuard function_state(*this);
+// The frame is decided before a single instruction is emitted: what the
+// prologue has to save, and where every virtual register's Variant lives.
+// Both are properties of the instructions about to be generated, so they are
+// read off them here rather than off the declaration.
+void RISCVCodeGen::plan_frame(const IRFunction& func) {
 	m_fn.num_params = func.parameters.size();
 
 	// Initialize register allocator
@@ -516,6 +514,12 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	// Align to 16 bytes (RISC-V ABI requirement)
 	m_fn.stack_frame_size = (m_fn.stack_frame_size + 15) & ~15;
 
+}
+
+// Moves the stack pointer down over the frame plan_frame() sized, saves what
+// the body will clobber, and copies in the parameter Variants that something
+// reads before anything overwrites them.
+void RISCVCodeGen::emit_prologue(const IRFunction& func) {
 	// Function prologue - allocate stack frame
 	// addi sp, sp, -frame_size
 	if (m_fn.stack_frame_size > 0) {
@@ -558,1915 +562,1872 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 		// Copy the whole Variant from the pointer in arg_reg to the stack
 		emit_variant_move(REG_SP, dst_offset, arg_reg, 0, REG_T0);
 	}
-
-	// Process each IR instruction
-	for (size_t instr_idx = 0; instr_idx < func.instructions.size(); instr_idx++) {
-		const auto& instr = func.instructions[instr_idx];
-		const bool forward_return = m_fn.forward_to_return[instr_idx];
-		m_fn.current_instr_idx++;
-
-		// Where this instruction's result goes: normally the destination
-		// register's slot in the frame, but for the last write before a RETURN,
-		// straight through the caller's pointer in a0 -- which is where the
-		// RETURN would have copied it from the slot anyway. Asking is what
-		// commits to the forwarding, so only the expansion that is about to do
-		// the writing may ask, and only once.
-		auto value_destination = [&](int vreg) -> std::pair<uint8_t, int> {
-			if (forward_return) {
-				emit_load_return_pointer();
-				m_fn.return_value_written = true;
-				return { REG_A0, 0 };
-			}
-			return { REG_SP, get_variant_stack_offset(vreg) };
-		};
-
-		switch (instr.opcode) {
-			case IROpcode::LABEL:
-				define_label(std::get<std::string>(instr.operands[0].value));
-				break;
-
-			case IROpcode::LOAD_IMM: {
-				int vreg = std::get<int>(instr.operands[0].value);
-				int64_t value = std::get<int64_t>(instr.operands[1].value);
-				auto [base, offset] = value_destination(vreg);
-				emit_variant_create_int(offset, value, base);
-				break;
-			}
-
-			case IROpcode::LOAD_FLOAT_IMM: {
-				int vreg = std::get<int>(instr.operands[0].value);
-				double value = std::get<double>(instr.operands[1].value);
-				auto [base, offset] = value_destination(vreg);
-				emit_variant_create_float(offset, value, base);
-				break;
-			}
-
-			case IROpcode::LOAD_BOOL: {
-				int vreg = std::get<int>(instr.operands[0].value);
-				int64_t value = std::get<int64_t>(instr.operands[1].value);
-				auto [base, offset] = value_destination(vreg);
-				emit_variant_create_bool(offset, value != 0, base);
-				break;
-			}
-
-			case IROpcode::LOAD_STRING: {
-				int vreg = std::get<int>(instr.operands[0].value);
-				int64_t string_idx = std::get<int64_t>(instr.operands[1].value);
-				int stack_offset = get_variant_stack_offset(vreg);
-				emit_variant_create_string(stack_offset, static_cast<int>(string_idx));
-				break;
-			}
-
-			case IROpcode::MOVE: {
-				int dst_vreg = std::get<int>(instr.operands[0].value);
-				int src_vreg = std::get<int>(instr.operands[1].value);
-
-				// Skip no-op moves
-				if (dst_vreg == src_vreg) {
-					break;
-				}
-
-				int dst_offset = get_variant_stack_offset(dst_vreg);
-				int src_offset = get_variant_stack_offset(src_vreg);
-
-				// Skip if source and destination are at same stack location
-				if (dst_offset == src_offset) {
-					break;
-				}
-
-				// Copy the whole Variant
-				auto [base, offset] = value_destination(dst_vreg);
-				emit_variant_move(base, offset, REG_SP, src_offset, REG_T0);
-				break;
-			}
-
-			case IROpcode::TYPE_TEST: {
-				// TYPE_TEST dst, src, variant_type
-				//
-				// The type tag is the first 4 bytes of every Variant, so the test
-				// is a load, an xor against the tag, and seqz: no syscall, and no
-				// dependence on the payload.
-				int dst_vreg = std::get<int>(instr.operands[0].value);
-				int src_vreg = std::get<int>(instr.operands[1].value);
-				const int64_t tested = std::get<int64_t>(instr.operands[2].value);
-				int src_offset = get_variant_stack_offset(src_vreg);
-
-				emit_load_variant_type(REG_T0, REG_SP, src_offset);
-				// Every Variant::Type fits the 12-bit immediate range.
-				emit_xori(REG_T0, REG_T0, static_cast<int32_t>(tested));
-				emit_seqz(REG_T0, REG_T0);
-
-				auto [base, offset] = value_destination(dst_vreg);
-				emit_store_variant_bool(REG_T0, base, offset);
-				emit_li(REG_T1, Variant::BOOL);
-				emit_store_variant_type(REG_T1, base, offset);
-				break;
-			}
-
-			case IROpcode::CONVERT: {
-				// CONVERT dst_reg, src_reg  with the target type in type_hint.
-				int dst_vreg = std::get<int>(instr.operands[0].value);
-				int src_vreg = std::get<int>(instr.operands[1].value);
-				int dst_offset = get_variant_stack_offset(dst_vreg);
-				int src_offset = get_variant_stack_offset(src_vreg);
-
-				const auto from = static_cast<IRInstruction::TypeHint>(std::get<int64_t>(instr.operands[2].value));
-
-				// The source type picks the load: a BOOL payload is one byte, an
-				// INT all eight. Nothing else differs -- both widen to the same
-				// 64-bit value.
-				if (from == Variant::BOOL) {
-					emit_lbu(REG_T0, REG_SP, src_offset + VARIANT_DATA_OFFSET);
-				} else if (from == Variant::INT) {
-					emit_ld(REG_T0, REG_SP, src_offset + VARIANT_DATA_OFFSET);
-				} else {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR,
-						std::string("CONVERT from ") + variant_type_name(from) + " is not implemented");
-				}
-
-				if (instr.type_hint == Variant::FLOAT) {
-					// Variant::FLOAT is always a 64-bit double, whatever real_t
-					// is, so this is fcvt.d.l and a plain 64-bit store.
-					emit_fcvt_d_l(REG_FA0, REG_T0);
-					emit_li(REG_T1, Variant::FLOAT);
-					emit_sw(REG_T1, REG_SP, dst_offset);
-					emit_fsd(REG_FA0, REG_SP, dst_offset + VARIANT_DATA_OFFSET);
-				} else if (instr.type_hint == Variant::INT) {
-					emit_li(REG_T1, Variant::INT);
-					emit_sw(REG_T1, REG_SP, dst_offset);
-					emit_sd(REG_T0, REG_SP, dst_offset + VARIANT_DATA_OFFSET);
-				} else {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR,
-						std::string("CONVERT to ") + variant_type_name(instr.type_hint) +
-						" is not implemented");
-				}
-				break;
-			}
-
-			case IROpcode::LOAD_GLOBAL: {
-				// LOAD_GLOBAL dst_reg, global_index
-				// Loads a global variable (Variant) from the global data area into a virtual register
-				int dst_vreg = std::get<int>(instr.operands[0].value);
-				int64_t global_idx = std::get<int64_t>(instr.operands[1].value);
-
-				// Load global base address into t0
-				// For now, we'll use a label to mark the global data section
-				emit_address_of_global(REG_T0, static_cast<size_t>(global_idx));
-
-				// Copy the whole Variant out of the global data area. The
-				// destination is addressed off its base register directly
-				// rather than through a second pointer register, which is one
-				// instruction the stores were already able to do themselves.
-				auto [base, offset] = value_destination(dst_vreg);
-				emit_variant_move(base, offset, REG_T0, 0, REG_T1);
-				break;
-			}
-
-			case IROpcode::STORE_GLOBAL: {
-				// STORE_GLOBAL global_index, src_reg
-				// Stores a virtual register (Variant) into a global variable
-				int64_t global_idx = std::get<int64_t>(instr.operands[0].value);
-				int src_vreg = std::get<int>(instr.operands[1].value);
-				int src_offset = get_variant_stack_offset(src_vreg);
-
-				// Get the global's type information
-				const IRGlobalVar& global = m_globals[global_idx];
-
-				// Determine if this is a complex type that needs VASSIGN
-				// Complex types: STRING, STRING_NAME, NODE_PATH, RID, OBJECT, CALLABLE,
-				//                SIGNAL, DICTIONARY, ARRAY, and all PACKED_*_ARRAY types
-				bool needs_vassign = false;
-
-				// The global's Variant type is derived once by the code
-				// generator, from the type hint when there is one and from the
-				// initializer otherwise, so this does not have to re-derive it
-				// from init_type (which cannot describe a RUNTIME initializer).
-				if (global.value_type != IRInstruction::TypeHint_NONE) {
-					// is_complex_variant_type() is the single definition of which
-					// Variant types are stored as a host-side index rather than
-					// inline. The previous open-coded test here read `type == 3 ||
-					// type >= 17`, which classified FLOAT as complex and Color,
-					// Basis and Transform3D on the wrong sides of the line.
-					needs_vassign = is_complex_variant_type(global.value_type);
-				} else {
-					// Type unknown at compile time. A raw copy of the Variant
-					// would duplicate a scoped-variant index rather than assign
-					// through it, so assign through VASSIGN, which is correct for
-					// both trivial and reference-counted types.
-					needs_vassign = true;
-				}
-
-				// Load address of global variable
-				int global_offset = global_idx * variant_size();
-				emit_address_of_global(REG_T0, static_cast<size_t>(global_idx));
-
-				// Load source address
-				emit_load_stack_offset(REG_T1, src_offset);
-
-				if (needs_vassign) {
-					// Complex type: Use VASSIGN to handle permanent indices
-					// VASSIGN takes: a0 = dest_index, a1 = src_index
-					// Returns: a0 = resulting index
-					std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A7};
-					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-
-					for (const auto& move : moves) {
-						emit_mv(move.second, move.first);
-					}
-
-					// Load indices (v.i at offset 8)
-					emit_lw(REG_A0, REG_T0, 8); // dest index
-					emit_lw(REG_A1, REG_T1, 8); // src index
-
-					// Carry the source's Variant type across. Storing only the
-					// index leaves a global that started out NIL claiming to be
-					// NIL while holding a live index, and prevents an untyped
-					// global from ever changing type - which GDScript allows.
-					emit_lw(REG_T2, REG_T1, 0);
-					emit_sw(REG_T2, REG_T0, 0);
-
-					// Call VASSIGN (syscall 503)
-					emit_li(REG_A7, 503);
-					emit_ecall();
-
-					// VASSIGN returns the new index in A0
-					// Store it back to the global's v.i field (offset 8)
-					emit_sd(REG_A0, REG_T0, 8);
-				} else {
-					// Simple type: copy the whole Variant
-					emit_variant_move(REG_T0, 0, REG_T1, 0, REG_T2);
-				}
-				break;
-			}
-
-
-			case IROpcode::ADD:
-			case IROpcode::SUB:
-			case IROpcode::MUL:
-			case IROpcode::DIV:
-			case IROpcode::MOD:
-			case IROpcode::BIT_AND:
-			case IROpcode::BIT_OR:
-			case IROpcode::BIT_XOR:
-			case IROpcode::SHL:
-			case IROpcode::SHR:
-			case IROpcode::POW:
-			case IROpcode::IN: {
-				// Check that all operands are valid before processing
-				if (instr.operands.size() < 3 ||
-					instr.operands[0].type != IRValue::Type::REGISTER) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Arithmetic operations require at least 3 operands with first being REGISTER");
-				}
-
-				int dst_vreg = std::get<int>(instr.operands[0].value);
-				int dst_offset = get_variant_stack_offset(dst_vreg);
-
-				// Check if operands are registers
-				bool lhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
-				bool rhs_is_reg = instr.operands.size() > 2 && instr.operands[2].type == IRValue::Type::REGISTER;
-
-				// Use optimized typed path if:
-				// 1. Instruction has a type hint (INT, FLOAT, or vector type)
-				// 2. Both operands are registers (not immediates)
-				// This is the common case for type-hinted arithmetic
-				//
-				// IMPORTANT: We ONLY optimize Variants with type hints.
-				// Untyped Variants fall back to VEVAL syscall, which also acts as
-				// deoptimization to find bugs (unknown types are unpredictable).
-				// POW and IN have no native expansion matching the host's answer
-				// for every type pair, so they always take the VEVAL path.
-				const bool host_only = instr.opcode == IROpcode::POW || instr.opcode == IROpcode::IN;
-
-				if (!host_only && instr.type_hint != IRInstruction::TypeHint_NONE && lhs_is_reg && rhs_is_reg) {
-					int lhs_vreg_local = std::get<int>(instr.operands[1].value);
-					int rhs_vreg_local = std::get<int>(instr.operands[2].value);
-					int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
-					int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
-
-					// Dispatch based on type hint
-					if (instr.type_hint == Variant::INT) {
-						// Scalar int: optimized 64-bit integer arithmetic
-						emit_typed_int_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
-						break;
-					} else if (instr.type_hint == Variant::FLOAT) {
-						// Scalar float: optimized 64-bit double arithmetic
-						emit_typed_float_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
-						break;
-					} else if (TypeHintUtils::is_vector(instr.type_hint)) {
-						// Vector types: element-wise arithmetic (2, 3, or 4 components)
-						emit_typed_vector_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode, instr.type_hint);
-						break;
-					}
-					// Other type hints (if any) fall through to VEVAL
-				}
-
-				// Fall back to generic Variant evaluation for:
-				// - Untyped operations (no type hint)
-				// - Unsupported type hints
-				// - Operations with immediate operands (handled via temporary Variants)
-
-				// Map IR opcode to Variant::Operator
-				int variant_op;
-				switch (instr.opcode) {
-					case IROpcode::ADD: variant_op = 6; break;  // OP_ADD
-					case IROpcode::SUB: variant_op = 7; break;  // OP_SUBTRACT
-					case IROpcode::MUL: variant_op = 8; break;  // OP_MULTIPLY
-					case IROpcode::DIV: variant_op = 9; break;  // OP_DIVIDE
-					case IROpcode::MOD: variant_op = 12; break; // OP_MODULE
-					case IROpcode::SHL: variant_op = 14; break; // OP_SHIFT_LEFT
-					case IROpcode::SHR: variant_op = 15; break; // OP_SHIFT_RIGHT
-					case IROpcode::BIT_AND: variant_op = 16; break; // OP_BIT_AND
-					case IROpcode::BIT_OR: variant_op = 17; break;  // OP_BIT_OR
-					case IROpcode::BIT_XOR: variant_op = 18; break; // OP_BIT_XOR
-					case IROpcode::POW: variant_op = 13; break; // OP_POWER
-					case IROpcode::IN: variant_op = 24; break;  // OP_IN
-					default: variant_op = 6; break;
-				}
-
-				if (lhs_is_reg && rhs_is_reg) {
-					int lhs_vreg_local = std::get<int>(instr.operands[1].value);
-					int rhs_vreg_local = std::get<int>(instr.operands[2].value);
-					int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
-					int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
-
-					// Untyped operands, but very often two integers at run time:
-					// everything an Array or a Dictionary hands back is untyped, and
-					// a fetch-decode-execute loop over one does all its arithmetic
-					// this way. Six instructions to test for it beat the syscall.
-					if (!host_only && has_int_fast_path(instr.opcode)) {
-						// The clobber moves go before the branch: they update the
-						// allocator's view of where a value lives, which has to
-						// hold on both paths, not just the VEVAL one.
-						std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-						for (const auto& move : m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx)) {
-							emit_mv(move.second, move.first);
-						}
-
-						const bool shift = instr.opcode == IROpcode::SHL || instr.opcode == IROpcode::SHR;
-						const std::string host = gen_local_label(".veval");
-						const std::string done = gen_local_label(".veval_done");
-						emit_branch_unless_both_int(lhs_offset, rhs_offset, host, shift);
-						emit_typed_int_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
-						mark_label_use(done, m_code.size());
-						emit_jal(REG_ZERO, 0);
-						define_label(host);
-						emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op, false);
-						define_label(done);
-						break;
-					}
-
-					emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
-				} else if (lhs_is_reg && !rhs_is_reg && instr.operands[2].type == IRValue::Type::IMMEDIATE) {
-					// Left operand is register, right is immediate
-					int lhs_vreg_local = std::get<int>(instr.operands[1].value);
-					int64_t imm_val = std::get<int64_t>(instr.operands[2].value);
-					int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
-
-					// Create a temporary Variant for the immediate value
-					int imm_offset = get_scratch_variant_offset();
-					emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
-					emit_variant_eval(dst_offset, lhs_offset, imm_offset, variant_op);
-				} else if (!lhs_is_reg && rhs_is_reg && instr.operands[1].type == IRValue::Type::IMMEDIATE) {
-					// Left operand is immediate, right is register
-					int64_t imm_val = std::get<int64_t>(instr.operands[1].value);
-					int rhs_vreg_local = std::get<int>(instr.operands[2].value);
-					int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
-
-					// Create a temporary Variant for the immediate value
-					int imm_offset = get_scratch_variant_offset();
-					emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
-					emit_variant_eval(dst_offset, imm_offset, rhs_offset, variant_op);
-				} else {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported operand types for arithmetic operation");
-				}
-				break;
-			}
-
-			case IROpcode::BIT_NOT: {
-				// ~x is x XOR -1
-				int dst_vreg = std::get<int>(instr.operands[0].value);
-				int src_vreg = std::get<int>(instr.operands[1].value);
-
-				int dst_offset = get_variant_stack_offset(dst_vreg);
-				int src_offset = get_variant_stack_offset(src_vreg);
-
-				if (instr.type_hint == Variant::INT) {
-					// Native path: load the int64, invert it, store it back
-					emit_load_variant_int(REG_T0, REG_SP, src_offset);
-					emit_xori(REG_T1, REG_T0, -1);
-					emit_li(REG_T0, Variant::INT);
-					emit_store_variant_type(REG_T0, REG_SP, dst_offset);
-					emit_store_variant_int(REG_T1, REG_SP, dst_offset);
-					break;
-				}
-
-				// Untyped: let the host evaluate x ^ -1, which also produces the
-				// correct type error for non-integer operands
-				int minus_one_offset = get_scratch_variant_offset();
-				emit_variant_create_int(minus_one_offset, -1);
-				emit_variant_eval(dst_offset, src_offset, minus_one_offset, 18); // OP_BIT_XOR
-				break;
-			}
-
-			case IROpcode::NEG: {
-				int dst_vreg = std::get<int>(instr.operands[0].value);
-				int src_vreg = std::get<int>(instr.operands[1].value);
-
-				int dst_offset = get_variant_stack_offset(dst_vreg);
-				int src_offset = get_variant_stack_offset(src_vreg);
-
-				// Use OP_NEGATE (unary operation - use veval with same operand twice)
-				// Actually for unary, we need a different approach - create a zero Variant
-				// For now, use subtract: 0 - src
-				// TODO: Add proper unary operation support
-				int zero_offset = get_scratch_variant_offset();
-				emit_variant_create_int(zero_offset, 0);
-				emit_variant_eval(dst_offset, zero_offset, src_offset, 7); // OP_SUBTRACT
-				break;
-			}
-
-			case IROpcode::CMP_EQ:
-			case IROpcode::CMP_NEQ:
-			case IROpcode::CMP_LT:
-			case IROpcode::CMP_LTE:
-			case IROpcode::CMP_GT:
-			case IROpcode::CMP_GTE: {
-				// Check that all operands are valid
-				if (instr.operands.size() < 3 ||
-					instr.operands[0].type != IRValue::Type::REGISTER) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Comparison operations require at least 3 operands with first being REGISTER");
-				}
-
-				int dst_vreg = std::get<int>(instr.operands[0].value);
-				int dst_offset = get_variant_stack_offset(dst_vreg);
-
-				// Check if operands are registers
-				bool lhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
-				bool rhs_is_reg = instr.operands.size() > 2 && instr.operands[2].type == IRValue::Type::REGISTER;
-
-				// Use optimized typed path for INT comparisons with register operands
-				// This is very common in loops: for i: int in range(N)
-				if (instr.type_hint == Variant::INT && lhs_is_reg && rhs_is_reg) {
-					int lhs_vreg = std::get<int>(instr.operands[1].value);
-					int rhs_vreg = std::get<int>(instr.operands[2].value);
-					int lhs_offset = get_variant_stack_offset(lhs_vreg);
-					int rhs_offset = get_variant_stack_offset(rhs_vreg);
-
-					// Use native RISC-V comparison instead of syscall
-					emit_typed_int_comparison(dst_offset, lhs_offset, rhs_offset, instr.opcode);
-					break;
-				}
-
-				// Fall back to generic Variant evaluation for untyped or non-INT comparisons
-
-				// Map IR opcode to Variant::Operator
-				int variant_op;
-				switch (instr.opcode) {
-					case IROpcode::CMP_EQ:  variant_op = 0; break; // OP_EQUAL
-					case IROpcode::CMP_NEQ: variant_op = 1; break; // OP_NOT_EQUAL
-					case IROpcode::CMP_LT:  variant_op = 2; break; // OP_LESS
-					case IROpcode::CMP_LTE: variant_op = 3; break; // OP_LESS_EQUAL
-					case IROpcode::CMP_GT:  variant_op = 4; break; // OP_GREATER
-					case IROpcode::CMP_GTE: variant_op = 5; break; // OP_GREATER_EQUAL
-					default: variant_op = 0; break;
-				}
-
-				if (lhs_is_reg && rhs_is_reg) {
-					int lhs_vreg = std::get<int>(instr.operands[1].value);
-					int rhs_vreg = std::get<int>(instr.operands[2].value);
-					int lhs_offset = get_variant_stack_offset(lhs_vreg);
-					int rhs_offset = get_variant_stack_offset(rhs_vreg);
-					emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
-				} else if (lhs_is_reg && !rhs_is_reg && instr.operands[2].type == IRValue::Type::IMMEDIATE) {
-					// Left is register, right is immediate integer
-					int lhs_vreg = std::get<int>(instr.operands[1].value);
-					int lhs_offset = get_variant_stack_offset(lhs_vreg);
-					int64_t imm_val = std::get<int64_t>(instr.operands[2].value);
-
-					int imm_offset = get_scratch_variant_offset();
-					emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
-					emit_variant_eval(dst_offset, lhs_offset, imm_offset, variant_op);
-				} else if (!lhs_is_reg && rhs_is_reg && instr.operands[1].type == IRValue::Type::IMMEDIATE) {
-					// Left is immediate integer, right is register
-					int rhs_vreg = std::get<int>(instr.operands[2].value);
-					int rhs_offset = get_variant_stack_offset(rhs_vreg);
-					int64_t imm_val = std::get<int64_t>(instr.operands[1].value);
-
-					int imm_offset = get_scratch_variant_offset();
-					emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
-					emit_variant_eval(dst_offset, imm_offset, rhs_offset, variant_op);
-				} else {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported operand types for comparison");
-				}
-				break;
-			}
-
-			case IROpcode::AND: {
-				int dst_vreg = std::get<int>(instr.operands[0].value);
-				int lhs_vreg = std::get<int>(instr.operands[1].value);
-				int rhs_vreg = std::get<int>(instr.operands[2].value);
-
-				int dst_offset = get_variant_stack_offset(dst_vreg);
-				int lhs_offset = get_variant_stack_offset(lhs_vreg);
-				int rhs_offset = get_variant_stack_offset(rhs_vreg);
-
-				emit_variant_eval(dst_offset, lhs_offset, rhs_offset, 20); // OP_AND
-				break;
-			}
-
-			case IROpcode::OR: {
-				int dst_vreg = std::get<int>(instr.operands[0].value);
-				int lhs_vreg = std::get<int>(instr.operands[1].value);
-				int rhs_vreg = std::get<int>(instr.operands[2].value);
-
-				int dst_offset = get_variant_stack_offset(dst_vreg);
-				int lhs_offset = get_variant_stack_offset(lhs_vreg);
-				int rhs_offset = get_variant_stack_offset(rhs_vreg);
-
-				emit_variant_eval(dst_offset, lhs_offset, rhs_offset, 21); // OP_OR
-				break;
-			}
-
-			case IROpcode::NOT: {
-				int dst_vreg = std::get<int>(instr.operands[0].value);
-				int src_vreg = std::get<int>(instr.operands[1].value);
-
-				int dst_offset = get_variant_stack_offset(dst_vreg);
-				int src_offset = get_variant_stack_offset(src_vreg);
-
-				// OP_NOT - use veval (unary operations need special handling)
-				// For now, use the same operand for both sides
-				emit_variant_eval_unary(dst_offset, src_offset, 23); // OP_NOT
-				break;
-			}
-
-			case IROpcode::BRANCH_ZERO: {
-				int vreg = std::get<int>(instr.operands[0].value);
-				int offset = get_variant_stack_offset(vreg);
-				emit_variant_truthy(REG_T2, offset, instr.type_hint);
-				mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
-				emit_beq(REG_T2, REG_ZERO, 0);
-				break;
-			}
-
-			case IROpcode::BRANCH_NOT_ZERO: {
-				int vreg = std::get<int>(instr.operands[0].value);
-				int offset = get_variant_stack_offset(vreg);
-				emit_variant_truthy(REG_T2, offset, instr.type_hint);
-				mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
-				emit_bne(REG_T2, REG_ZERO, 0);
-				break;
-			}
-
-			case IROpcode::BRANCH_EQ:
-			case IROpcode::BRANCH_NEQ:
-			case IROpcode::BRANCH_LT:
-			case IROpcode::BRANCH_LTE:
-			case IROpcode::BRANCH_GT:
-			case IROpcode::BRANCH_GTE: {
-				// Fused comparison + branch instructions
-				// Format: BRANCH_* lhs, rhs, label
-				// These directly emit BEQ/BNE/BLT/BGE without storing result
-				if (instr.operands.size() < 3) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Fused branch requires 3 operands: lhs, rhs, label");
-				}
-
-				// Check if operands are registers
-				bool lhs_is_reg = instr.operands[0].type == IRValue::Type::REGISTER;
-				bool rhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
-
-				// For now, only support register operands (can be extended later for immediates)
-				if (!lhs_is_reg || !rhs_is_reg) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Fused branch requires register operands");
-				}
-
-				int lhs_vreg = std::get<int>(instr.operands[0].value);
-				int rhs_vreg = std::get<int>(instr.operands[1].value);
-				std::string label = std::get<std::string>(instr.operands[2].value);
-
-				int lhs_offset = get_variant_stack_offset(lhs_vreg);
-				int rhs_offset = get_variant_stack_offset(rhs_vreg);
-
-				if (instr.type_hint == Variant::INT) {
-					emit_int_fused_branch(instr.opcode, lhs_offset, rhs_offset, label);
-					break;
-				}
-
-				// Map IR opcode to Variant::Operator
-				int variant_op;
-				switch (instr.opcode) {
-					case IROpcode::BRANCH_EQ:  variant_op = 0; break; // OP_EQUAL
-					case IROpcode::BRANCH_NEQ: variant_op = 1; break; // OP_NOT_EQUAL
-					case IROpcode::BRANCH_LT:  variant_op = 2; break; // OP_LESS
-					case IROpcode::BRANCH_LTE: variant_op = 3; break; // OP_LESS_EQUAL
-					case IROpcode::BRANCH_GT:  variant_op = 4; break; // OP_GREATER
-					case IROpcode::BRANCH_GTE: variant_op = 5; break; // OP_GREATER_EQUAL
-					default: variant_op = 0; break;
-				}
-
-				// Untyped operands. Two integers compare in registers, and
-				// everything an Array or a Dictionary hands back is untyped, so
-				// the test is worth its six instructions; anything else is a
-				// comparison only Godot knows how to make.
-				const int tmp_offset = get_scratch_variant_offset();
-				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-				for (const auto& move : m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx)) {
-					emit_mv(move.second, move.first);
-				}
-
-				const std::string host = gen_local_label(".vcmp");
-				const std::string done = gen_local_label(".vcmp_done");
-				emit_branch_unless_both_int(lhs_offset, rhs_offset, host, false);
-				emit_int_fused_branch(instr.opcode, lhs_offset, rhs_offset, label);
-				mark_label_use(done, m_code.size());
-				emit_jal(REG_ZERO, 0);
-
-				define_label(host);
-				emit_variant_eval(tmp_offset, lhs_offset, rhs_offset, variant_op, false);
-				emit_load_variant_bool(REG_T0, REG_SP, tmp_offset);
-				mark_label_use(label, m_code.size());
-				emit_bne(REG_T0, REG_ZERO, 0);
-				define_label(done);
-				break;
-			}
-
-			case IROpcode::JUMP:
-				mark_label_use(std::get<std::string>(instr.operands[0].value), m_code.size());
-				emit_jal(REG_ZERO, 0);
-				break;
-
-			case IROpcode::SWITCH: {
-				// SWITCH subject, base, count, label[0] .. label[count-1]
-				//
-				// Dense integer switch, dispatched through a table of `jal`
-				// instructions emitted inline here. The entries are ordinary
-				// jumps, so label resolution and branch relaxation treat them
-				// like any other jump and no .rodata relocation is needed. The
-				// entry for `v` is at table + (v - base) * 4.
-				//
-				// Falling through is the "none of the above" path, where the
-				// code generator puts the rest of the match.
-				const int subject_vreg = std::get<int>(instr.operands[0].value);
-				const int64_t base = std::get<int64_t>(instr.operands[1].value);
-				const int64_t count = std::get<int64_t>(instr.operands[2].value);
-				const int subject_offset = get_variant_stack_offset(subject_vreg);
-
-				const std::string past_table = ".switch" + std::to_string(m_switch_tables) + ".out";
-				m_switch_tables++;
-
-				// Only an integer indexes the table; any other type, including
-				// a float (`match 3.0` must still reach a `3:` arm), falls
-				// through. A type hint of INT skips the test entirely.
-				if (instr.type_hint != Variant::INT) {
-					emit_load_variant_type(REG_T0, REG_SP, subject_offset);
-					emit_li(REG_T1, Variant::INT);
-					mark_label_use(past_table, m_code.size());
-					emit_bne(REG_T0, REG_T1, 0);
-				}
-
-				emit_load_variant_int(REG_T0, REG_SP, subject_offset);
-				if (base != 0) {
-					if (fits_in_signed(-base, I_TYPE_IMM_BITS)) {
-						emit_addi(REG_T0, REG_T0, static_cast<int32_t>(-base));
-					} else {
-						emit_li(REG_T1, base);
-						emit_sub(REG_T0, REG_T0, REG_T1);
-					}
-				}
-
-				// One unsigned compare covers both ends: a subject below `base`
-				// wraps to a huge unsigned value and fails the same test.
-				emit_li(REG_T1, count);
-				mark_label_use(past_table, m_code.size());
-				emit_bgeu(REG_T0, REG_T1, 0);
-
-				// The table is three instructions past the AUIPC, so its address
-				// is this PC + 12, with no relocation: `auipc rd, 0` gives the
-				// current PC and the 12 rides in the jump's immediate. Loading
-				// the address instead would cost an ADDI and put a label use
-				// inside a sequence branch relaxation may move.
-				emit_u_type(0x17, REG_T1, 0);         // auipc t1, 0 -- t1 = here
-				emit_sh2add(REG_T0, REG_T0, REG_T1);  // t0 = here + index * 4
-				emit_jalr(REG_ZERO, REG_T0, 12);      // -> here + 12 + index * 4
-
-				for (int64_t entry = 0; entry < count; entry++) {
-					mark_label_use(std::get<std::string>(instr.operands[3 + entry].value), m_code.size());
-					emit_jal(REG_ZERO, 0);
-				}
-				define_label(past_table);
-				break;
-			}
-
-			case IROpcode::RETURN: {
-				// Godot Sandbox calling convention with Variants:
-				// a0 points to pre-allocated Variant for return value
-				// Copy the return Variant (virtual register 0) to *a0
-
-				// The instruction before this one may already have written the
-				// value through a0, in which case there is nothing left to copy.
-				if (m_fn.return_value_written) {
-					m_fn.return_value_written = false;
-				} else if (m_fn.variant_offsets.find(IRFunction::RETURN_REGISTER) != m_fn.variant_offsets.end()) {
-					int src_offset = get_variant_stack_offset(IRFunction::RETURN_REGISTER);
-
-					// Copy the return Variant from its slot to *a0, addressing
-					// the source off sp rather than through a pointer register.
-					emit_load_return_pointer();
-					emit_variant_move(REG_A0, 0, REG_SP, src_offset, REG_T0);
-				}
-
-				// Function epilogue - restore registers and deallocate stack
-				// Restore return address: ld ra, 0(sp)
-				if (m_fn.saves_return_address) {
-					emit_ld(REG_RA, REG_SP, SAVED_RA_OFFSET);
-				}
-
-				// Deallocate stack: addi sp, sp, frame_size
-				if (m_fn.stack_frame_size > 0) {
-					emit_add_offset(REG_SP, REG_SP, m_fn.stack_frame_size);
-				}
-
-				emit_ret();
-				break;
-			}
-
-			case IROpcode::ARRAY_APPEND: {
-				// ARRAY_APPEND dst, array, value -- ECALL_ARRAY_OPS with
-				// a0 = Array_Op::PUSH_BACK, a1 = the Array's scoped index,
-				// a2 = an unused element index, a3 = the Variant to append.
-				const int result_offset = get_variant_stack_offset(std::get<int>(instr.operands[0].value));
-				const int array_offset = get_variant_stack_offset(std::get<int>(instr.operands[1].value));
-				const int value_offset = get_variant_stack_offset(std::get<int>(instr.operands[2].value));
-
-				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-				for (const auto& move : m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx)) {
-					emit_mv(move.second, move.first);
-				}
-
-				emit_li(REG_A0, 1); // Array_Op::PUSH_BACK
-				emit_lw(REG_A1, REG_SP, array_offset + VARIANT_DATA_OFFSET);
-				emit_li(REG_A2, 0);
-				emit_add_offset(REG_A3, REG_SP, value_offset);
-				emit_li(REG_A7, 521); // ECALL_ARRAY_OPS
-				emit_ecall();
-
-				// Array.append() evaluates to null and the host writes nothing
-				// back, so the destination is stored here.
-				emit_li(REG_T0, Variant::NIL);
-				emit_store_variant_type(REG_T0, REG_SP, result_offset);
-				break;
-			}
-
-			case IROpcode::DICT_SET: {
-				// DICT_SET dict, key, value -- ECALL_DICTIONARY_OPS with
-				// a0 = Dictionary_Op::SET, a1 = the Dictionary's scoped index,
-				// a2 = the key and a3 = the value.
-				const int dict_offset = get_variant_stack_offset(std::get<int>(instr.operands[0].value));
-				const int key_offset = get_variant_stack_offset(std::get<int>(instr.operands[1].value));
-				const int value_offset = get_variant_stack_offset(std::get<int>(instr.operands[2].value));
-
-				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-				for (const auto& move : m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx)) {
-					emit_mv(move.second, move.first);
-				}
-
-				emit_li(REG_A0, 1); // Dictionary_Op::SET
-				emit_lw(REG_A1, REG_SP, dict_offset + VARIANT_DATA_OFFSET);
-				emit_add_offset(REG_A2, REG_SP, key_offset);
-				emit_add_offset(REG_A3, REG_SP, value_offset);
-				emit_li(REG_A7, 524); // ECALL_DICTIONARY_OPS
-				emit_ecall();
-				break;
-			}
-
-			case IROpcode::ARRAY_GET:
-			case IROpcode::ARRAY_SET: {
-				// ARRAY_GET dst, array, index   /   ARRAY_SET array, index, value
-				const bool is_set = instr.opcode == IROpcode::ARRAY_SET;
-				const int array_operand = is_set ? 0 : 1;
-				const int index_operand = is_set ? 1 : 2;
-				const int value_operand = is_set ? 2 : 0;
-
-				const int array_offset = get_variant_stack_offset(std::get<int>(instr.operands[array_operand].value));
-				const int index_offset = get_variant_stack_offset(std::get<int>(instr.operands[index_operand].value));
-				const int value_offset = get_variant_stack_offset(std::get<int>(instr.operands[value_operand].value));
-
-				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2};
-				for (const auto& move : m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx)) {
-					emit_mv(move.second, move.first);
-				}
-
-				emit_array_element_access(is_set, array_offset, index_offset, value_offset);
-				break;
-			}
-
-			case IROpcode::VCALL: {
-				// VCALL format: result_reg, obj_reg, method_name, arg_count, arg1_reg, arg2_reg, ...
-				if (instr.operands.size() < 4) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VCALL requires at least 4 operands");
-				}
-
-				int result_vreg = std::get<int>(instr.operands[0].value);
-				int obj_vreg = std::get<int>(instr.operands[1].value);
-				std::string method_name = std::get<std::string>(instr.operands[2].value);
-				int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
-
-				if (instr.operands.size() != static_cast<size_t>(4 + arg_count)) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VCALL argument count mismatch");
-				}
-
-				int result_offset = get_variant_stack_offset(result_vreg);
-				int obj_offset = get_variant_stack_offset(obj_vreg);
-
-				// VCALL clobbers a0-a7, handle register clobbering
-				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6, REG_A7};
-				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-
-				for (const auto& move : moves) {
-					emit_mv(move.second, move.first);
-				}
-
-				// If we have arguments, allocate stack space for argument array
-				int args_stack_offset = 0;
-				if (arg_count > 0) {
-					args_stack_offset = m_fn.stack_frame_size - (arg_count * variant_size());
-					// Expand stack if needed
-					int additional_space = arg_count * variant_size();
-					additional_space = (additional_space + 15) & ~15; // Align to 16 bytes
-
-					// Adjust stack pointer
-					emit_stack_adjust(-additional_space);
-
-					// Copy argument Variants to the new stack space
-					for (int i = 0; i < arg_count; i++) {
-						int arg_vreg = std::get<int>(instr.operands[4 + i].value);
-						int arg_src_offset = get_variant_stack_offset(arg_vreg) + additional_space; // Adjust for moved stack
-						int arg_dst_offset = i * variant_size();
-
-						// Copy the whole Variant from src to dst
-						emit_variant_move(REG_SP, arg_dst_offset, REG_SP, arg_src_offset, REG_T0);
-					}
-
-					// a3 = pointer to arguments array (sp + 0)
-					emit_mv(REG_A3, REG_SP);
-				} else {
-					// No arguments, a3 = 0
-					emit_mv(REG_A3, REG_ZERO);
-				}
-
-				// a0 = pointer to object Variant (sp + obj_offset + additional_space if we allocated stack)
-				int adjusted_obj_offset = obj_offset;
-				if (arg_count > 0) {
-					int additional_space = arg_count * variant_size();
-					additional_space = (additional_space + 15) & ~15;
-					adjusted_obj_offset += additional_space;
-				}
-
-				emit_load_stack_offset(REG_A0, adjusted_obj_offset);
-
-				// a1 = pointer to method name string (need to store in .rodata section)
-				// For now, we'll use a temporary approach: store the string on stack
-				// TODO: Better approach would be to use .rodata section
-				int method_len = method_name.length();
-				int str_space = ((method_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
-
-				// Allocate more stack space for the string
-				emit_stack_adjust(-str_space);
-
-				// Store method name on stack
-				for (size_t i = 0; i < method_name.length(); i++) {
-					emit_li(REG_T0, static_cast<unsigned char>(method_name[i]));
-					emit_sb(REG_T0, REG_SP, i); // SB (store byte)
-				}
-				// Store null terminator
-				emit_sb(REG_ZERO, REG_SP, method_len); // SB
-
-				// a1 = pointer to method name (sp)
-				emit_mv(REG_A1, REG_SP);
-
-				// a2 = method length
-				emit_li(REG_A2, method_len);
-
-				// a4 = argument count
-				emit_li(REG_A4, arg_count);
-
-				// a5 = pointer to result Variant
-				int adjusted_result_offset = result_offset;
-				if (arg_count > 0) {
-					int additional_space = arg_count * variant_size();
-					additional_space = (additional_space + 15) & ~15;
-					adjusted_result_offset += additional_space;
-				}
-				adjusted_result_offset += str_space;
-
-				emit_load_stack_offset(REG_A5, adjusted_result_offset);
-
-				// a7 = ECALL_VCALL (501)
-				emit_li(REG_A7, 501);
-				emit_ecall();
-
-				// Restore stack pointer
-				int total_stack_adjust = str_space;
-				if (arg_count > 0) {
-					int additional_space = arg_count * variant_size();
-					additional_space = (additional_space + 15) & ~15;
-					total_stack_adjust += additional_space;
-				}
-
-				emit_stack_adjust(total_stack_adjust);
-
-				// VCALL always writes the result as a full Variant on stack (via a5 pointer)
-				break;
-			}
-
-			case IROpcode::CALL: {
-				// CALL format: function_name, result_reg, arg_count, arg1_reg, arg2_reg, ...
-				if (instr.operands.size() < 3) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL requires at least 3 operands");
-				}
-
-				std::string func_name = std::get<std::string>(instr.operands[0].value);
-				int result_vreg = std::get<int>(instr.operands[1].value);
-				int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
-
-				if (instr.operands.size() != static_cast<size_t>(3 + arg_count)) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL argument count mismatch");
-				}
-
-				// Handle register clobbering (calls clobber a0-a7, ra, and temporaries)
-				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6, REG_A7, REG_RA};
-				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-
-				for (const auto& move : moves) {
-					emit_mv(move.second, move.first);
-				}
-
-				// Allocate stack space for return value Variant
-				int return_var_offset = get_variant_stack_offset(result_vreg);
-
-				// Set up arguments: a1-a7 point to Variant arguments on stack
-				// a0 points to return Variant
-				if (arg_count > static_cast<int>(IRFunction::MAX_PARAMETERS)) {
-					// Passing the first seven and dropping the rest leaves the
-					// callee reading slots nothing wrote for the others.
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR,
-						"Call passes " + std::to_string(arg_count) +
-						" arguments, but only " + std::to_string(IRFunction::MAX_PARAMETERS) +
-						" fit in registers");
-				}
-				for (int i = 0; i < arg_count; i++) {
-					int arg_vreg = std::get<int>(instr.operands[3 + i].value);
-					int arg_offset = get_variant_stack_offset(arg_vreg);
-					uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
-
-					// Load address of argument Variant
-					emit_add_offset(arg_reg, REG_SP, arg_offset);
-				}
-
-				// a0 = pointer to return Variant
-				emit_add_offset(REG_A0, REG_SP, return_var_offset);
-
-				// Call the function using JAL with label
-				// We'll use the function name as a label that will be resolved later
-				if (!m_fn.saves_return_address) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR,
-						"Call emitted in a function whose prologue did not save the return address");
-				}
-				mark_label_use(func_name, m_code.size());
-				emit_jal(REG_RA, 0); // JAL ra, func_name
-
-				// Return value is already in the Variant at result_vreg
-				break;
-			}
-
-			// Inline primitive construction (no syscalls!)
-			case IROpcode::MAKE_VECTOR2:
-			case IROpcode::MAKE_VECTOR3:
-			case IROpcode::MAKE_VECTOR4: {
-				// Format: MAKE_VECTORn result_reg, x_reg, y_reg, [z_reg], [w_reg]
-				int num_components = (instr.opcode == IROpcode::MAKE_VECTOR2) ? 2 :
-									 (instr.opcode == IROpcode::MAKE_VECTOR3) ? 3 : 4;
-
-				if (instr.operands.size() != static_cast<size_t>(1 + num_components)) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_VECTOR requires correct number of operands");
-				}
-
-				int result_vreg = std::get<int>(instr.operands[0].value);
-				int result_offset = get_variant_stack_offset(result_vreg);
-
-				// Set m_type field (offset 0)
-				int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2) ? Variant::VECTOR2 :
-								   (instr.opcode == IROpcode::MAKE_VECTOR3) ? Variant::VECTOR3 : Variant::VECTOR4;
-				emit_li(REG_T0, variant_type);
-				emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
-
-				// Store each component as a real_t in v.v4[]
-				for (int i = 0; i < num_components; i++) {
-					int comp_vreg = std::get<int>(instr.operands[1 + i].value);
-					int comp_offset = get_variant_stack_offset(comp_vreg);
-					emit_variant_component_to_real(comp_offset, result_offset, real_offset(i));
-				}
-
-				break;
-			}
-
-			case IROpcode::MAKE_VECTOR2I:
-			case IROpcode::MAKE_VECTOR3I:
-			case IROpcode::MAKE_VECTOR4I: {
-				// Format: MAKE_VECTORnI result_reg, x_reg, y_reg, [z_reg], [w_reg]
-				int num_components = (instr.opcode == IROpcode::MAKE_VECTOR2I) ? 2 :
-									 (instr.opcode == IROpcode::MAKE_VECTOR3I) ? 3 : 4;
-
-				if (instr.operands.size() != static_cast<size_t>(1 + num_components)) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_VECTORnI requires correct number of operands");
-				}
-
-				int result_vreg = std::get<int>(instr.operands[0].value);
-				int result_offset = get_variant_stack_offset(result_vreg);
-
-				// Set m_type field (offset 0)
-				int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2I) ? Variant::VECTOR2I :
-								   (instr.opcode == IROpcode::MAKE_VECTOR3I) ? Variant::VECTOR3I : Variant::VECTOR4I;
-				emit_li(REG_T0, variant_type);
-				emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
-
-				// Store each component in v.v4i[] (int32_t, same width in both builds)
-				for (int i = 0; i < num_components; i++) {
-					int comp_vreg = std::get<int>(instr.operands[1 + i].value);
-					int comp_offset = get_variant_stack_offset(comp_vreg);
-
-					// Load from stack Variant
-					emit_lw(REG_T0, REG_SP, comp_offset + VARIANT_DATA_OFFSET);
-					emit_sw(REG_T0, REG_SP, result_offset + int_offset(i));
-				}
-
-				break;
-			}
-
-			case IROpcode::MAKE_COLOR: {
-				// Format: MAKE_COLOR result_reg, r_reg, g_reg, b_reg, a_reg
-				if (instr.operands.size() != 5) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_COLOR requires 5 operands");
-				}
-
-				int result_vreg = std::get<int>(instr.operands[0].value);
-				int result_offset = get_variant_stack_offset(result_vreg);
-
-				// Set m_type field to COLOR
-				emit_li(REG_T0, Variant::COLOR);
-				emit_sw(REG_T0, REG_SP, result_offset);
-
-				// Store each component (r, g, b, a) as real_t: a Color inside a Variant
-				// shares the v.v4[] union with the vectors, so it follows real_t too.
-				// Color components need to be normalized (0-255 integers -> 0.0-1.0 floats)
-				for (int i = 0; i < 4; i++) {
-					int comp_vreg = std::get<int>(instr.operands[1 + i].value);
-					int comp_offset = get_variant_stack_offset(comp_vreg);
-					emit_variant_component_to_real(comp_offset, result_offset, real_offset(i), true); // normalize_by_255 = true
-				}
-
-				break;
-			}
-
-			case IROpcode::PRINT: {
-				// Format: PRINT result_reg, arg_count, [arg_reg1, arg_reg2, ...]
-				// sys_print(const Variant *array, size_t len): the host walks a
-				// contiguous array, so the arguments are copied out of their
-				// stack slots into one run below sp.
-				if (instr.operands.size() < 2) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "PRINT requires at least 2 operands");
-				}
-
-				int result_vreg = std::get<int>(instr.operands[0].value);
-				int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
-
-				if (instr.operands.size() != static_cast<size_t>(2 + arg_count)) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "PRINT argument count mismatch");
-				}
-
-				int result_offset = get_variant_stack_offset(result_vreg);
-
-				// ECALL_PRINT reads a0-a1 and a7; the register allocator has to
-				// evacuate anything live in them first.
-				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1};
-				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-				for (const auto& move : moves) {
-					emit_mv(move.second, move.first);
-				}
-
-				if (arg_count == 0) {
-					// print() with no arguments still prints a blank line, and
-					// the host reads no memory when len is 0.
-					emit_mv(REG_A0, REG_ZERO);
-					emit_li(REG_A1, 0);
-					emit_li(REG_A7, 500); // ECALL_PRINT
-					emit_ecall();
-				} else {
-					int args_space = arg_count * variant_size();
-					args_space = (args_space + 15) & ~15; // Align to 16 bytes
-
-					emit_add_offset(REG_SP, REG_SP, -args_space);
-
-					// Each argument lives at its own offset in the frame that sp
-					// just moved away from, so read it back at +args_space.
-					for (int i = 0; i < arg_count; i++) {
-						int arg_vreg = std::get<int>(instr.operands[2 + i].value);
-						int arg_src_offset = get_variant_stack_offset(arg_vreg) + args_space;
-						emit_variant_move(REG_SP, i * variant_size(), REG_SP, arg_src_offset, REG_T0);
-					}
-
-					// a0 = the argument array, a1 = its length
-					emit_mv(REG_A0, REG_SP);
-					emit_li(REG_A1, arg_count);
-					emit_li(REG_A7, 500); // ECALL_PRINT
-					emit_ecall();
-
-					emit_add_offset(REG_SP, REG_SP, args_space);
-				}
-
-				// print() evaluates to null. The host writes nothing back, so
-				// the destination is set here.
-				emit_li(REG_T0, Variant::NIL);
-				emit_store_variant_type(REG_T0, REG_SP, result_offset);
-				break;
-			}
-
-			case IROpcode::GLOBAL_CALL:
-				// Every global except print(). See riscv_globals.cpp.
-				emit_global_call(instr);
-				break;
-
-			case IROpcode::MAKE_ARRAY: {
-				// Format: MAKE_ARRAY result_reg, element_count, [element_reg1, element_reg2, ...]
-				// For empty arrays: element_count = 0, no element regs
-				if (instr.operands.size() < 2) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_ARRAY requires at least 2 operands");
-				}
-
-				int result_vreg = std::get<int>(instr.operands[0].value);
-				int element_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
-				int result_offset = get_variant_stack_offset(result_vreg);
-
-				// Handle register clobbering (VCREATE uses a0-a3)
-				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-				for (const auto& move : moves) {
-					emit_mv(move.second, move.first);
-				}
-
-				if (element_count == 0) {
-					// Empty Array: use the abstraction
-					emit_variant_create_empty_array(result_offset);
-				} else {
-					// Array with elements: sys_vcreate(&v, ARRAY, size, data_pointer)
-					// We need to copy the full Variant structures to stack
-					int args_space = element_count * variant_size();
-					args_space = (args_space + 15) & ~15; // Align to 16 bytes
-
-					// Adjust stack pointer
-					emit_add_offset(REG_SP, REG_SP, -args_space);
-
-					// Copy full GuestVariant structures to stack
-					for (int i = 0; i < element_count; i++) {
-						int elem_vreg = std::get<int>(instr.operands[2 + i].value);
-						int elem_offset = get_variant_stack_offset(elem_vreg);
-
-						// Destination address for this element
-						int dst_offset = i * variant_size();
-
-						// The element Variant is at elem_offset from the ORIGINAL stack frame
-						// After SP -= args_space, it's now at elem_offset + args_space from NEW SP
-						// So we load from (elem_offset + args_space) and store to dst_offset
-						emit_variant_move(REG_SP, dst_offset, REG_SP, elem_offset + args_space, REG_T0);
-					}
-
-					// a0 = pointer to destination Variant
-					// The result Variant is at result_offset from the ORIGINAL stack frame
-					// After SP -= args_space, it's now at result_offset + args_space from NEW SP
-					int adjusted_dst_offset = result_offset + args_space;
-					emit_add_offset(REG_A0, REG_SP, adjusted_dst_offset);
-
-					// a1 = Variant::ARRAY
-					emit_li(REG_A1, Variant::ARRAY);
-
-					// a2 = size (element_count)
-					emit_li(REG_A2, element_count);
-
-					// a3 = pointer to element array (sp + 0)
-					emit_mv(REG_A3, REG_SP);
-
-					// a7 = ECALL_VCREATE (517)
-					emit_li(REG_A7, 517);
-					emit_ecall();
-
-					// Restore stack pointer
-					emit_add_offset(REG_SP, REG_SP, args_space);
-				}
-
-				break;
-			}
-
-			case IROpcode::MAKE_DICTIONARY: {
-				// Format: MAKE_DICTIONARY result_reg, pair_count, [key1_reg, val1_reg, key2_reg, val2_reg, ...]
-				// For empty dictionaries via Dictionary() constructor: MAKE_DICTIONARY result_reg
-				// For empty dictionaries via literal {}: MAKE_DICTIONARY result_reg, 0
-				// For dictionaries with elements: pair_count > 0 with key/value regs
-				if (instr.operands.size() < 1) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_DICTIONARY requires at least 1 operand");
-				}
-
-				int result_vreg = std::get<int>(instr.operands[0].value);
-				int result_offset = get_variant_stack_offset(result_vreg);
-
-				// Check if this is the old Dictionary() constructor format (only 1 operand)
-				// or the new dictionary literal format (2+ operands)
-				bool is_constructor_format = (instr.operands.size() == 1);
-				int pair_count = is_constructor_format ? 0 : static_cast<int>(std::get<int64_t>(instr.operands[1].value));
-
-				// Handle register clobbering (VCREATE uses a0-a3)
-				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-				for (const auto& move : moves) {
-					emit_mv(move.second, move.first);
-				}
-
-				if (pair_count == 0) {
-					// Empty Dictionary: use the abstraction
-					emit_variant_create_empty_dictionary(result_offset);
-				} else {
-					// Dictionary with elements: sys_vcreate(&v, DICTIONARY, size, data_pointer)
-					// We need to copy the full Variant structures to stack
-					int total_variants = pair_count * 2; // Each pair has 2 variants (key and value)
-					int args_space = total_variants * variant_size();
-					args_space = (args_space + 15) & ~15; // Align to 16 bytes
-
-					// Adjust stack pointer
-					emit_add_offset(REG_SP, REG_SP, -args_space);
-
-					// Copy full GuestVariant structures to stack
-					// Operands are interleaved: key1, val1, key2, val2, ...
-					for (int i = 0; i < total_variants; i++) {
-						int variant_vreg = std::get<int>(instr.operands[2 + i].value);
-						int variant_offset = get_variant_stack_offset(variant_vreg);
-
-						// Destination address for this variant
-						int dst_offset = i * variant_size();
-
-						// The variant Variant is at variant_offset from the ORIGINAL stack frame
-						// After SP -= args_space, it's now at variant_offset + args_space from NEW SP
-						// So we load from (variant_offset + args_space) and store to dst_offset
-						emit_variant_move(REG_SP, dst_offset, REG_SP, variant_offset + args_space, REG_T0);
-					}
-
-					// a0 = pointer to destination Variant
-					// The result Variant is at result_offset from the ORIGINAL stack frame
-					// After SP -= args_space, it's now at result_offset + args_space from NEW SP
-					int adjusted_dst_offset = result_offset + args_space;
-					emit_add_offset(REG_A0, REG_SP, adjusted_dst_offset);
-
-					// a1 = Variant::DICTIONARY
-					emit_li(REG_A1, Variant::DICTIONARY);
-
-					// a2 = size (pair_count * 2 = total number of variants)
-					emit_li(REG_A2, total_variants);
-
-					// a3 = pointer to variant array (sp + 0)
-					emit_mv(REG_A3, REG_SP);
-
-					// a7 = ECALL_VCREATE (517)
-					emit_li(REG_A7, 517);
-					emit_ecall();
-
-					// Restore stack pointer
-					emit_add_offset(REG_SP, REG_SP, args_space);
-				}
-
-				break;
-			}
-
-			case IROpcode::MAKE_PACKED_BYTE_ARRAY:
-			case IROpcode::MAKE_PACKED_INT32_ARRAY:
-			case IROpcode::MAKE_PACKED_INT64_ARRAY:
-			case IROpcode::MAKE_PACKED_FLOAT32_ARRAY:
-			case IROpcode::MAKE_PACKED_FLOAT64_ARRAY:
-			case IROpcode::MAKE_PACKED_STRING_ARRAY:
-			case IROpcode::MAKE_PACKED_VECTOR2_ARRAY:
-			case IROpcode::MAKE_PACKED_VECTOR3_ARRAY:
-			case IROpcode::MAKE_PACKED_COLOR_ARRAY:
-			case IROpcode::MAKE_PACKED_VECTOR4_ARRAY: {
-				// Format: MAKE_PACKED_*_ARRAY result_reg, element_count, [element_reg1, element_reg2, ...]
-				// Works identically to MAKE_ARRAY but with different Variant type
-				if (instr.operands.size() < 2) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Packed array constructor requires at least 2 operands");
-				}
-
-				int result_vreg = std::get<int>(instr.operands[0].value);
-				int element_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
-				int result_offset = get_variant_stack_offset(result_vreg);
-
-				// Determine the Variant type based on opcode
-				int variant_type;
-				switch (instr.opcode) {
-					case IROpcode::MAKE_PACKED_BYTE_ARRAY:
-						variant_type = Variant::PACKED_BYTE_ARRAY;
-						break;
-					case IROpcode::MAKE_PACKED_INT32_ARRAY:
-						variant_type = Variant::PACKED_INT32_ARRAY;
-						break;
-					case IROpcode::MAKE_PACKED_INT64_ARRAY:
-						variant_type = Variant::PACKED_INT64_ARRAY;
-						break;
-					case IROpcode::MAKE_PACKED_FLOAT32_ARRAY:
-						variant_type = Variant::PACKED_FLOAT32_ARRAY;
-						break;
-					case IROpcode::MAKE_PACKED_FLOAT64_ARRAY:
-						variant_type = Variant::PACKED_FLOAT64_ARRAY;
-						break;
-					case IROpcode::MAKE_PACKED_STRING_ARRAY:
-						variant_type = Variant::PACKED_STRING_ARRAY;
-						break;
-					case IROpcode::MAKE_PACKED_VECTOR2_ARRAY:
-						variant_type = Variant::PACKED_VECTOR2_ARRAY;
-						break;
-					case IROpcode::MAKE_PACKED_VECTOR3_ARRAY:
-						variant_type = Variant::PACKED_VECTOR3_ARRAY;
-						break;
-					case IROpcode::MAKE_PACKED_COLOR_ARRAY:
-						variant_type = Variant::PACKED_COLOR_ARRAY;
-						break;
-					case IROpcode::MAKE_PACKED_VECTOR4_ARRAY:
-						variant_type = Variant::PACKED_VECTOR4_ARRAY;
-						break;
-					default:
-						variant_type = Variant::ARRAY; // Should not happen
-						break;
-				}
-
-				if (element_count == 0) {
-					// Empty packed array: sys_vcreate(&v, TYPE, 0, nullptr)
-					// a0 = pointer to destination Variant
-					emit_add_offset(REG_A0, REG_SP, result_offset);
-
-					// a1 = Variant type
-					emit_li(REG_A1, variant_type);
-
-					// a2 = method (0 for empty)
-					emit_li(REG_A2, 0);
-
-					// a3 = nullptr (0)
-					emit_li(REG_A3, 0);
-
-					// a7 = ECALL_VCREATE (517)
-					emit_li(REG_A7, 517);
-					emit_ecall();
-				} else {
-					// Packed array with elements: Use ECALL_PACKED_ARRAY_OPS (548)
-					// Signature: a0=op(type), a1=result_ptr, a2=array_ptr, a3=array_size
-					// The syscall converts an Array of Variants to a PackedArray
-					int args_space = element_count * variant_size();
-					args_space = (args_space + 15) & ~15; // Align to 16 bytes
-
-					// Allocate stack space
-					emit_stack_adjust(-args_space);
-
-					// Copy each element variant to the stack (as GuestVariant array)
-					for (int i = 0; i < element_count; i++) {
-						int elem_vreg = std::get<int>(instr.operands[2 + i].value);
-						int elem_offset = get_variant_stack_offset(elem_vreg);
-						int dst_offset = i * variant_size();
-
-						// Copy the whole Variant from source to destination
-						emit_variant_move(REG_SP, dst_offset, REG_SP, args_space + elem_offset, REG_T0);
-					}
-
-					// a0 = op (the packed array type, which also indicates CREATE_FROM_ARRAY)
-					emit_li(REG_A0, variant_type);
-
-					// a1 = pointer to destination Variant
-					// After SP -= args_space, it's now at result_offset + args_space from NEW SP
-					int adjusted_dst_offset = result_offset + args_space;
-					emit_add_offset(REG_A1, REG_SP, adjusted_dst_offset);
-
-					// a2 = pointer to element array (sp + 0)
-					emit_mv(REG_A2, REG_SP);
-
-					// a3 = element_count
-					emit_li(REG_A3, element_count);
-
-					// a7 = ECALL_PACKED_ARRAY_OPS (548)
-					emit_li(REG_A7, 548);
-					emit_ecall();
-
-					// Restore stack pointer
-					emit_add_offset(REG_SP, REG_SP, args_space);
-				}
-
-				break;
-			}
-
-			case IROpcode::VGET_INLINE: {
-				// Format: VGET_INLINE result_reg, obj_reg, member_name, obj_type_hint
-				if (instr.operands.size() != 4) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VGET_INLINE requires 4 operands");
-				}
-
-				int result_vreg = std::get<int>(instr.operands[0].value);
-				int obj_vreg = std::get<int>(instr.operands[1].value);
-				std::string member = std::get<std::string>(instr.operands[2].value);
-				int obj_type_hint = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
-
-				int result_offset = get_variant_stack_offset(result_vreg);
-				int obj_offset = get_variant_stack_offset(obj_vreg);
-
-				// Determine the offset within the object Variant. Float vectors store
-				// real_t components (4 or 8 bytes), integer vectors always int32_t.
-				bool is_int_type = false;
-
-				// Map member name to array index
-				int component_idx = 0;
-				if (member == "x" || member == "r") component_idx = 0;
-				else if (member == "y" || member == "g") component_idx = 1;
-				else if (member == "z" || member == "b") component_idx = 2;
-				else if (member == "w" || member == "a") component_idx = 3;
-
-				// Check if it's an integer vector type using helper function
-				IRInstruction::TypeHint hint = static_cast<IRInstruction::TypeHint>(obj_type_hint);
-				is_int_type = TypeHintUtils::is_int_vector(hint);
-
-				int member_offset = is_int_type ? int_offset(component_idx) : real_offset(component_idx);
-
-				if (is_int_type) {
-					// Load 32-bit integer from object
-					emit_lw(REG_T0, REG_SP, obj_offset + member_offset);
-
-					// Create result Variant with INT type (2)
-					emit_li(REG_T1, 2);
-					emit_sw(REG_T1, REG_SP, result_offset); // m_type = INT
-
-					// Sign-extend to 64-bit and store in v.i
-					emit_sext_w(REG_T0, REG_T0);
-					emit_sd(REG_T0, REG_SP, result_offset + VARIANT_DATA_OFFSET);
-				} else {
-					// For real_t components from Vector types: Variant::FLOAT is always a
-					// 64-bit double, so widen unless real_t already is one.
-
-					// Load the real_t component into an FP register
-					emit_flr(REG_FA0, REG_SP, obj_offset + member_offset);
-
-					// Widen real_t to double
-					emit_fcvt_d_r(REG_FA0, REG_FA0);
-
-					// Set result Variant type to FLOAT
-					emit_li(REG_T0, Variant::FLOAT);
-					emit_sw(REG_T0, REG_SP, result_offset); // m_type = FLOAT
-
-					// Store 8-byte double to v.f field
-					emit_fsd(REG_FA0, REG_SP, result_offset + VARIANT_DATA_OFFSET);
-				}
-
-				break;
-			}
-
-			case IROpcode::VGET: {
-				// VGET format: result_reg, obj_reg, string_idx, string_len
-				// Uses ECALL_OBJ_PROP_GET (545)
-				// Calling convention:
-				//   A0 = object address (v.i from object Variant)
-				//   A1 = property name pointer
-				//   A2 = property name length
-				//   A3 = pointer to result Variant
-
-				if (instr.operands.size() != 4) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VGET requires 4 operands (result_reg, obj_reg, string_idx, string_len)");
-				}
-
-				int result_vreg = std::get<int>(instr.operands[0].value);
-				int obj_vreg = std::get<int>(instr.operands[1].value);
-				int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
-				int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
-
-				// Get the string constant
-				if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
-				}
-				const std::string& str = (*m_string_constants)[string_idx];
-
-				int result_offset = get_variant_stack_offset(result_vreg);
-				int obj_offset = get_variant_stack_offset(obj_vreg);
-
-				// ECALL_OBJ_PROP_GET clobbers a0-a3
-				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-
-				for (const auto& move : moves) {
-					emit_mv(move.second, move.first);
-				}
-
-				// A0 = object address (load from Variant's v.i field at offset 8)
-				// IMPORTANT: Load this BEFORE adjusting the stack, so obj_offset is correct
-				emit_ld(REG_A0, REG_SP, obj_offset + 8);
-
-				// Allocate stack space for the string
-				int str_space = ((string_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
-
-				emit_stack_adjust(-str_space);
-
-				// Store string on stack
-				for (size_t i = 0; i < str.length(); i++) {
-					emit_li(REG_T0, static_cast<unsigned char>(str[i]));
-					emit_sb(REG_T0, REG_SP, i); // SB (store byte)
-				}
-				// Store null terminator
-				emit_sb(REG_ZERO, REG_SP, string_len); // SB
-
-				// A1 = pointer to property name string (sp)
-				emit_mv(REG_A1, REG_SP);
-
-				// A2 = string length
-				emit_li(REG_A2, string_len);
-
-				// A3 = pointer to result Variant
-				// IMPORTANT: Account for str_space since SP was adjusted
-				emit_load_stack_offset(REG_A3, result_offset + str_space);
-
-				// A7 = syscall number (545 for ECALL_OBJ_PROP_GET)
-				emit_li(REG_A7, 545);
-				emit_ecall();
-
-				// Restore stack pointer
-				emit_stack_adjust(str_space);
-
-				break;
-			}
-
-			case IROpcode::VSET: {
-				// VSET format: obj_reg, string_idx, string_len, value_reg
-				// Uses ECALL_OBJ_PROP_SET (546)
-				// Calling convention:
-				//   A0 = object address (v.i from object Variant)
-				//   A1 = property name pointer
-				//   A2 = property name length
-				//   A3 = pointer to value Variant
-
-				if (instr.operands.size() != 4) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VSET requires 4 operands (obj_reg, string_idx, string_len, value_reg)");
-				}
-
-				int obj_vreg = std::get<int>(instr.operands[0].value);
-				int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
-				int string_len = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
-				int value_vreg = std::get<int>(instr.operands[3].value);
-
-				// Get the string constant
-				if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
-				}
-				const std::string& str = (*m_string_constants)[string_idx];
-
-				int obj_offset = get_variant_stack_offset(obj_vreg);
-				int value_offset = get_variant_stack_offset(value_vreg);
-
-				// ECALL_OBJ_PROP_SET clobbers a0-a3
-				std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-				auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-
-				for (const auto& move : moves) {
-					emit_mv(move.second, move.first);
-				}
-
-				// A0 = object address (load from Variant's v.i field at offset 8)
-				// IMPORTANT: Load this BEFORE adjusting the stack, so obj_offset is correct
-				emit_ld(REG_A0, REG_SP, obj_offset + 8);
-
-				// Allocate stack space for the string
-				int str_space = ((string_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
-
-				emit_stack_adjust(-str_space);
-
-				// Store string on stack
-				for (size_t i = 0; i < str.length(); i++) {
-					emit_li(REG_T0, static_cast<unsigned char>(str[i]));
-					emit_sb(REG_T0, REG_SP, i); // SB (store byte)
-				}
-				// Store null terminator
-				emit_sb(REG_ZERO, REG_SP, string_len); // SB
-
-				// A1 = pointer to property name string (sp)
-				emit_mv(REG_A1, REG_SP);
-
-				// A2 = string length
-				emit_li(REG_A2, string_len);
-
-				// A3 = pointer to value Variant
-				// IMPORTANT: Calculate this AFTER adjusting the stack, and account for str_space
-				// emit_load_stack_offset does: addi a3, sp, offset, so we get the correct address directly
-				emit_load_stack_offset(REG_A3, value_offset + str_space);
-
-				// A7 = syscall number (546 for ECALL_OBJ_PROP_SET)
-				emit_li(REG_A7, 546);
-				emit_ecall();
-
-				// Restore stack pointer
-				emit_stack_adjust(str_space);
-
-				break;
-			}
-
-			// Not implementing these for now
-			case IROpcode::MAKE_RECT2:
-			case IROpcode::MAKE_RECT2I:
-			case IROpcode::MAKE_PLANE:
-			case IROpcode::VSET_INLINE:
-				throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Opcode not yet implemented in RISC-V codegen");
-
-			case IROpcode::CALL_SYSCALL: {
-				// CALL_SYSCALL format: result_reg, syscall_number, arg1, arg2, ...
-				// Different syscalls have different calling conventions:
-				// ECALL_GET_OBJ (504): result_reg, 504, string_index, string_length
-				// ECALL_ARRAY_SIZE (523): result_reg, 523, array_vreg
-				// ECALL_ARRAY_AT (522): result_reg, 522, array_vreg, index_vreg
-
-				if (instr.operands.size() < 2) {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL_SYSCALL requires at least 2 operands (result_reg, syscall_num)");
-				}
-
-				int result_vreg = std::get<int>(instr.operands[0].value);
-				int syscall_num = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
-
-				// Handle different syscalls based on their calling conventions
-				if (syscall_num == 504) {
-					// ECALL_GET_OBJ: result_reg, 504, string_index, string_length
-					if (instr.operands.size() != 4) {
-						throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_GET_OBJ requires 4 operands");
-					}
-
-					int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
-					int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
-
-					// Get the string constant
-					if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
-						throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
-					}
-					const std::string& str = (*m_string_constants)[string_idx];
-
-					int result_offset = get_variant_stack_offset(result_vreg);
-
-					// ECALL_GET_OBJ clobbers a0 and a1
-					std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1};
-					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-
-					for (const auto& move : moves) {
-						emit_mv(move.second, move.first);
-					}
-
-					// Allocate stack space for the string
-					int str_space = ((string_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
-
-					emit_stack_adjust(-str_space);
-
-					// Store string on stack
-					for (size_t i = 0; i < str.length(); i++) {
-						emit_li(REG_T0, static_cast<unsigned char>(str[i]));
-						emit_sb(REG_T0, REG_SP, i); // SB (store byte)
-					}
-					// Store null terminator
-					emit_sb(REG_ZERO, REG_SP, string_len); // SB
-
-					// a0 = pointer to class name string (sp) - FIRST ARGUMENT
-					emit_mv(REG_A0, REG_SP);
-
-					// a1 = string length - SECOND ARGUMENT
-					emit_li(REG_A1, string_len);
-
-					// a7 = syscall number (504 for ECALL_GET_OBJ)
-					emit_li(REG_A7, syscall_num);
-					emit_ecall();
-
-					// After ecall, a0 contains the object reference (32-bit int)
-					// First, restore stack pointer (before storing result)
-					emit_stack_adjust(str_space);
-
-					// Store syscall result
-					emit_syscall_result(result_vreg, REG_A0, result_offset, 24); // GDOBJECT type = 24
-
-				} else if (syscall_num == 523) {
-					// ECALL_ARRAY_SIZE: result_reg, 523, array_vreg
-					// Takes: a0 = array variant index (unsigned)
-					// Returns: a0 = array size (int)
-					if (instr.operands.size() != 3) {
-						throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_ARRAY_SIZE requires 3 operands");
-					}
-
-					int array_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
-
-					// Ensure result variant has a stack slot BEFORE handling clobbering
-					// This prevents the allocator from moving it during syscall setup
-					int result_offset = get_variant_stack_offset(result_vreg);
-					int array_offset = get_variant_stack_offset(array_vreg);
-
-					// ECALL_ARRAY_SIZE clobbers a0
-					std::vector<uint8_t> clobbered_regs = {REG_A0};
-					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-
-					for (const auto& move : moves) {
-						emit_mv(move.second, move.first);
-					}
-
-					// Load the array variant index from offset 8 of the array Variant
-					emit_lw(REG_A0, REG_SP, array_offset + 8); // Load 32-bit variant index
-
-					// a7 = syscall number (523 for ECALL_ARRAY_SIZE)
-					emit_li(REG_A7, syscall_num);
-					emit_ecall();
-
-					// After ecall, a0 contains the size (64-bit int)
-					// Store syscall result
-					emit_syscall_result(result_vreg, REG_A0, result_offset, 2); // INT type = 2
-
-				} else if (syscall_num == 522) {
-					// ECALL_ARRAY_AT: result_reg, 522, array_vreg, index_vreg
-					// Takes: a0 = array variant index (unsigned), a1 = index (int), a2 = result GuestVariant pointer
-					// Returns: result variant is filled with the element
-					if (instr.operands.size() != 4) {
-						throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_ARRAY_AT requires 4 operands");
-					}
-
-					int array_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
-					int index_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
-
-					// Ensure all variants have stack slots BEFORE handling clobbering
-					// This prevents the allocator from moving them during syscall setup
-					int result_offset = get_variant_stack_offset(result_vreg);
-					int array_offset = get_variant_stack_offset(array_vreg);
-					int index_offset = get_variant_stack_offset(index_vreg);
-
-					// ECALL_ARRAY_AT clobbers a0, a1, a2
-					std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2};
-					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-
-					for (const auto& move : moves) {
-						emit_mv(move.second, move.first);
-					}
-
-					// a0 = array variant index (load from offset 8 of array Variant)
-					emit_lw(REG_A0, REG_SP, array_offset + 8); // Load 32-bit variant index
-
-					// a1 = index (load from index_vreg)
-					// The index is stored as a Variant, we need to extract the integer value
-					// NOTE: Use emit_ld (64-bit) because integer Variants store 64-bit values, not 32-bit!
-					emit_ld(REG_A1, REG_SP, index_offset + 8); // Load 64-bit integer from offset 8
-
-					// a2 = pointer to result GuestVariant
-					emit_load_stack_offset(REG_A2, result_offset); // addi a2, sp, result_offset
-
-					// a7 = syscall number (522 for ECALL_ARRAY_AT)
-					emit_li(REG_A7, syscall_num);
-					emit_ecall();
-
-				} else if (syscall_num == 524) {
-					// ECALL_DICTIONARY_OPS: result_reg, 524, op, dict_vreg [, key_vreg]
-					// a0 = Dictionary_Op, a1 = dictionary variant index,
-					// a2 = key GuestVariant pointer, a3 = result pointer
-					//
-					// The host reads the arguments in that order with or without a
-					// key, so a keyless operation puts its result in a2, the slot
-					// the key would have used.
-					//
-					// HAS (bool) and GET_SIZE (count) answer through the return
-					// register instead of a pointer, as ECALL_ARRAY_SIZE does.
-					if (instr.operands.size() != 4 && instr.operands.size() != 5) {
-						throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_DICTIONARY_OPS requires 4 or 5 operands");
-					}
-
-					constexpr int64_t DICT_OP_HAS = 3;
-					constexpr int64_t DICT_OP_GET_SIZE = 6;
-
-					const int64_t dict_op = std::get<int64_t>(instr.operands[2].value);
-					int dict_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
-					const bool has_key = instr.operands.size() == 5;
-					const bool returns_in_register = dict_op == DICT_OP_HAS || dict_op == DICT_OP_GET_SIZE;
-
-					int result_offset = get_variant_stack_offset(result_vreg);
-					int dict_offset = get_variant_stack_offset(dict_vreg);
-					int key_offset = has_key
-						? get_variant_stack_offset(static_cast<int>(std::get<int>(instr.operands[4].value)))
-						: 0;
-
-					std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2};
-					if (has_key) {
-						clobbered_regs.push_back(REG_A3);
-					}
-					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-
-					for (const auto& move : moves) {
-						emit_mv(move.second, move.first);
-					}
-
-					emit_li(REG_A0, dict_op);
-					// The scoped index the host knows the Dictionary by is at
-					// offset 8 of the Variant, as for an Array.
-					emit_lw(REG_A1, REG_SP, dict_offset + 8);
-					if (has_key) {
-						emit_load_stack_offset(REG_A2, key_offset);    // addi a2, sp, key_offset
-						emit_load_stack_offset(REG_A3, result_offset); // addi a3, sp, result_offset
-					} else {
-						emit_load_stack_offset(REG_A2, result_offset); // addi a2, sp, result_offset
-					}
-
-					emit_li(REG_A7, syscall_num);
-					emit_ecall();
-
-					if (returns_in_register) {
-						emit_syscall_result(result_vreg, REG_A0,
-							result_offset, dict_op == DICT_OP_HAS ? Variant::BOOL : Variant::INT);
-					}
-
-				} else if (syscall_num == 507) {
-					// ECALL_GET_NODE: result_reg, 507, addr, [path_vreg]
-					// Takes: a0 = base node address (0 for owner), a1 = path string pointer, a2 = path length
-					// Returns: a0 = node object reference
-					if (instr.operands.size() < 3) {
-						throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_GET_NODE requires at least 3 operands");
-					}
-
-					int base_addr = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
-					bool has_path = instr.operands.size() >= 4;
-
-					// Ensure result variant has a stack slot BEFORE handling clobbering
-					int result_offset = get_variant_stack_offset(result_vreg);
-
-					// ECALL_GET_NODE clobbers a0, a1, a2
-					std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2};
-					auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-
-					for (const auto& move : moves) {
-						emit_mv(move.second, move.first);
-					}
-
-					if (has_path) {
-						// get_node(path) - load path from variant register
-						int path_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
-						int path_offset = get_variant_stack_offset(path_vreg);
-
-						// Load the String variant from path_vreg
-						// String variant structure: type(4) + padding(4) + data(16)
-						// For strings, we need to extract the pointer and length
-
-						// a0 = base node address (0 for owner)
-						emit_li(REG_A0, base_addr);
-
-						// Load string pointer from offset 8 of the String variant
-						emit_ld(REG_A1, REG_SP, path_offset + 8); // Load 64-bit pointer
-
-						// Load string length from offset 16 (assuming it's stored there)
-						// For now, we'll use a fixed approach - this may need adjustment
-						// String length might be at offset 16 or we may need to query it
-						emit_ld(REG_A2, REG_SP, path_offset + 16); // Load 64-bit length
-					} else {
-						// get_node() - no path argument, get the current node using "."
-						// Allocate space for the "." string (2 bytes: '.' + null terminator)
-						int dot_str_space = 8; // Align to 8 bytes
-						emit_stack_adjust(-dot_str_space);
-
-						// Store "." string on stack
-						emit_li(REG_T0, static_cast<uint8_t>('.'));
-						emit_sb(REG_T0, REG_SP, 0); // Store '.'
-						emit_sb(REG_ZERO, REG_SP, 1); // Store null terminator
-
-						// a0 = base node address (0 for owner)
-						emit_li(REG_A0, base_addr);
-
-						// a1 = pointer to "." string
-						emit_mv(REG_A1, REG_SP);
-
-						// a2 = string length (1)
-						emit_li(REG_A2, 1);
-					}
-
-					// a7 = syscall number (507 for ECALL_GET_NODE)
-					emit_li(REG_A7, syscall_num);
-					emit_ecall();
-
-					// After ecall, a0 contains the node object reference
-					// Restore stack if we allocated space for the "."
-					if (!has_path) {
-						emit_stack_adjust(8); // Restore the stack space for "."
-					}
-
-					// Store syscall result
-					emit_syscall_result(result_vreg, REG_A0, result_offset, 24); // OBJECT type = 24
-
-				} else {
-					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unknown syscall number: " + std::to_string(syscall_num));
-				}
-
-				break;
-			}
-
-			// No `default:` here on purpose: every opcode in ir_opcodes.def has
-			// to be listed, so adding one is a compile error here rather than a
-			// program that silently omits it.
+}
+
+// Where this instruction's result goes: normally the destination register's
+// slot in the frame, but for the last write before a RETURN, straight through
+// the caller's pointer in a0 -- which is where the RETURN would have copied it
+// from the slot anyway. Asking is what commits to the forwarding, so only the
+// expansion that is about to do the writing may ask, and only once.
+std::pair<uint8_t, int> RISCVCodeGen::value_destination(int vreg) {
+	if (m_fn.forward_return) {
+		emit_load_return_pointer();
+		m_fn.return_value_written = true;
+		return { REG_A0, 0 };
+	}
+	return { REG_SP, get_variant_stack_offset(vreg) };
+}
+
+// One IR instruction to RISC-V. Everything it needs about the function it
+// belongs to is in m_fn, which plan_frame() filled in.
+// CALL_SYSCALL is a raw syscall the frontend asked for by number, and each
+// number has its own calling convention: which operands it takes, which
+// registers carry them, and what comes back in a0.
+// ECALL_GET_OBJ: the class name goes on the stack as a C string, and the
+// object handle comes back in a0.
+void RISCVCodeGen::gen_syscall_get_obj(const IRInstruction& instr, int result_vreg) {
+	// ECALL_GET_OBJ: result_reg, 504, string_index, string_length
+	if (instr.operands.size() != 4) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_GET_OBJ requires 4 operands");
+	}
+
+	int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+	int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+
+	// Get the string constant
+	if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
+	}
+	const std::string& str = (*m_string_constants)[string_idx];
+
+	int result_offset = get_variant_stack_offset(result_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1});
+
+	// Allocate stack space for the string
+	int str_space = ((string_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
+
+	emit_stack_adjust(-str_space);
+
+	// Store string on stack
+	for (size_t i = 0; i < str.length(); i++) {
+		emit_li(REG_T0, static_cast<unsigned char>(str[i]));
+		emit_sb(REG_T0, REG_SP, i); // SB (store byte)
+	}
+	// Store null terminator
+	emit_sb(REG_ZERO, REG_SP, string_len); // SB
+
+	// a0 = pointer to class name string (sp) - FIRST ARGUMENT
+	emit_mv(REG_A0, REG_SP);
+
+	// a1 = string length - SECOND ARGUMENT
+	emit_li(REG_A1, string_len);
+
+	// a7 = syscall number (504 for ECALL_GET_OBJ)
+	emit_li(REG_A7, ECALL_GET_OBJ);
+	emit_ecall();
+
+	// After ecall, a0 contains the object reference (32-bit int)
+	// First, restore stack pointer (before storing result)
+	emit_stack_adjust(str_space);
+
+	// Store syscall result
+	emit_syscall_result(result_vreg, REG_A0, result_offset, 24); // GDOBJECT type = 24
+}
+// ECALL_ARRAY_SIZE: the Array's scoped index in a0, the count back in a0.
+void RISCVCodeGen::gen_syscall_array_size(const IRInstruction& instr, int result_vreg) {
+	// ECALL_ARRAY_SIZE: result_reg, 523, array_vreg
+	// Takes: a0 = array variant index (unsigned)
+	// Returns: a0 = array size (int)
+	if (instr.operands.size() != 3) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_ARRAY_SIZE requires 3 operands");
+	}
+
+	int array_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
+
+	// Ensure result variant has a stack slot BEFORE handling clobbering
+	// This prevents the allocator from moving it during syscall setup
+	int result_offset = get_variant_stack_offset(result_vreg);
+	int array_offset = get_variant_stack_offset(array_vreg);
+
+	spill_around_syscall({REG_A0});
+
+	// Load the array variant index from offset 8 of the array Variant
+	emit_lw(REG_A0, REG_SP, array_offset + 8); // Load 32-bit variant index
+
+	// a7 = syscall number (523 for ECALL_ARRAY_SIZE)
+	emit_li(REG_A7, ECALL_ARRAY_SIZE);
+	emit_ecall();
+
+	// After ecall, a0 contains the size (64-bit int)
+	// Store syscall result
+	emit_syscall_result(result_vreg, REG_A0, result_offset, 2); // INT type = 2
+}
+// ECALL_ARRAY_AT: Array index in a0, element position in a1, and the host
+// writes the element through the result pointer in a2.
+void RISCVCodeGen::gen_syscall_array_at(const IRInstruction& instr, int result_vreg) {
+	// ECALL_ARRAY_AT: result_reg, 522, array_vreg, index_vreg
+	// Takes: a0 = array variant index (unsigned), a1 = index (int), a2 = result GuestVariant pointer
+	// Returns: result variant is filled with the element
+	if (instr.operands.size() != 4) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_ARRAY_AT requires 4 operands");
+	}
+
+	int array_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
+	int index_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
+
+	// Ensure all variants have stack slots BEFORE handling clobbering
+	// This prevents the allocator from moving them during syscall setup
+	int result_offset = get_variant_stack_offset(result_vreg);
+	int array_offset = get_variant_stack_offset(array_vreg);
+	int index_offset = get_variant_stack_offset(index_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2});
+
+	// a0 = array variant index (load from offset 8 of array Variant)
+	emit_lw(REG_A0, REG_SP, array_offset + 8); // Load 32-bit variant index
+
+	// a1 = index (load from index_vreg)
+	// The index is stored as a Variant, we need to extract the integer value
+	// NOTE: Use emit_ld (64-bit) because integer Variants store 64-bit values, not 32-bit!
+	emit_ld(REG_A1, REG_SP, index_offset + 8); // Load 64-bit integer from offset 8
+
+	// a2 = pointer to result GuestVariant
+	emit_load_stack_offset(REG_A2, result_offset); // addi a2, sp, result_offset
+
+	// a7 = syscall number (522 for ECALL_ARRAY_AT)
+	emit_li(REG_A7, ECALL_ARRAY_AT);
+	emit_ecall();
+}
+// ECALL_DICTIONARY_OPS: the Dictionary_Op in a0 and the Dictionary in a1.
+// The keyed operations pass the key in a2 and take the result pointer in a3;
+// the keyless ones (GET_KEYS, GET_VALUES) have no key and take it in a2.
+void RISCVCodeGen::gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg) {
+	// ECALL_DICTIONARY_OPS: result_reg, 524, op, dict_vreg [, key_vreg]
+	// a0 = Dictionary_Op, a1 = dictionary variant index,
+	// a2 = key GuestVariant pointer, a3 = result pointer
+	//
+	// The host reads the arguments in that order with or without a
+	// key, so a keyless operation puts its result in a2, the slot
+	// the key would have used.
+	//
+	// HAS (bool) and GET_SIZE (count) answer through the return
+	// register instead of a pointer, as ECALL_ARRAY_SIZE does.
+	if (instr.operands.size() != 4 && instr.operands.size() != 5) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_DICTIONARY_OPS requires 4 or 5 operands");
+	}
+
+	constexpr int64_t DICT_OP_HAS = 3;
+	constexpr int64_t DICT_OP_GET_SIZE = 6;
+
+	const int64_t dict_op = std::get<int64_t>(instr.operands[2].value);
+	int dict_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
+	const bool has_key = instr.operands.size() == 5;
+	const bool returns_in_register = dict_op == DICT_OP_HAS || dict_op == DICT_OP_GET_SIZE;
+
+	int result_offset = get_variant_stack_offset(result_vreg);
+	int dict_offset = get_variant_stack_offset(dict_vreg);
+	int key_offset = has_key
+		? get_variant_stack_offset(static_cast<int>(std::get<int>(instr.operands[4].value)))
+		: 0;
+
+	std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2};
+	if (has_key) {
+		clobbered_regs.push_back(REG_A3);
+	}
+	spill_around_syscall(clobbered_regs);
+
+	emit_li(REG_A0, dict_op);
+	// The scoped index the host knows the Dictionary by is at
+	// offset 8 of the Variant, as for an Array.
+	emit_lw(REG_A1, REG_SP, dict_offset + 8);
+	if (has_key) {
+		emit_load_stack_offset(REG_A2, key_offset);    // addi a2, sp, key_offset
+		emit_load_stack_offset(REG_A3, result_offset); // addi a3, sp, result_offset
+	} else {
+		emit_load_stack_offset(REG_A2, result_offset); // addi a2, sp, result_offset
+	}
+
+	emit_li(REG_A7, ECALL_DICTIONARY_OPS);
+	emit_ecall();
+
+	if (returns_in_register) {
+		emit_syscall_result(result_vreg, REG_A0,
+			result_offset, dict_op == DICT_OP_HAS ? Variant::BOOL : Variant::INT);
+	}
+}
+// ECALL_GET_NODE: a base node in a0 and a path string in a1/a2. With no path
+// argument the path is "." -- the node the script is attached to.
+void RISCVCodeGen::gen_syscall_get_node(const IRInstruction& instr, int result_vreg) {
+	// ECALL_GET_NODE: result_reg, 507, addr, [path_vreg]
+	// Takes: a0 = base node address (0 for owner), a1 = path string pointer, a2 = path length
+	// Returns: a0 = node object reference
+	if (instr.operands.size() < 3) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_GET_NODE requires at least 3 operands");
+	}
+
+	int base_addr = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+	bool has_path = instr.operands.size() >= 4;
+
+	// Ensure result variant has a stack slot BEFORE handling clobbering
+	int result_offset = get_variant_stack_offset(result_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2});
+
+	if (has_path) {
+		// get_node(path) - load path from variant register
+		int path_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
+		int path_offset = get_variant_stack_offset(path_vreg);
+
+		// Load the String variant from path_vreg
+		// String variant structure: type(4) + padding(4) + data(16)
+		// For strings, we need to extract the pointer and length
+
+		// a0 = base node address (0 for owner)
+		emit_li(REG_A0, base_addr);
+
+		// Load string pointer from offset 8 of the String variant
+		emit_ld(REG_A1, REG_SP, path_offset + 8); // Load 64-bit pointer
+
+		// Load string length from offset 16 (assuming it's stored there)
+		// For now, we'll use a fixed approach - this may need adjustment
+		// String length might be at offset 16 or we may need to query it
+		emit_ld(REG_A2, REG_SP, path_offset + 16); // Load 64-bit length
+	} else {
+		// get_node() - no path argument, get the current node using "."
+		// Allocate space for the "." string (2 bytes: '.' + null terminator)
+		int dot_str_space = 8; // Align to 8 bytes
+		emit_stack_adjust(-dot_str_space);
+
+		// Store "." string on stack
+		emit_li(REG_T0, static_cast<uint8_t>('.'));
+		emit_sb(REG_T0, REG_SP, 0); // Store '.'
+		emit_sb(REG_ZERO, REG_SP, 1); // Store null terminator
+
+		// a0 = base node address (0 for owner)
+		emit_li(REG_A0, base_addr);
+
+		// a1 = pointer to "." string
+		emit_mv(REG_A1, REG_SP);
+
+		// a2 = string length (1)
+		emit_li(REG_A2, 1);
+	}
+
+	// a7 = syscall number (507 for ECALL_GET_NODE)
+	emit_li(REG_A7, ECALL_GET_NODE);
+	emit_ecall();
+
+	// After ecall, a0 contains the node object reference
+	// Restore stack if we allocated space for the "."
+	if (!has_path) {
+		emit_stack_adjust(8); // Restore the stack space for "."
+	}
+
+	// Store syscall result
+	emit_syscall_result(result_vreg, REG_A0, result_offset, 24); // OBJECT type = 24
+}
+
+void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
+	// CALL_SYSCALL format: result_reg, syscall_number, arg1, arg2, ...
+	// Different syscalls have different calling conventions:
+	// ECALL_GET_OBJ (504): result_reg, 504, string_index, string_length
+	// ECALL_ARRAY_SIZE (523): result_reg, 523, array_vreg
+	// ECALL_ARRAY_AT (522): result_reg, 522, array_vreg, index_vreg
+
+	if (instr.operands.size() < 2) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL_SYSCALL requires at least 2 operands (result_reg, syscall_num)");
+	}
+
+	int result_vreg = std::get<int>(instr.operands[0].value);
+	int syscall_num = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+
+	// Handle different syscalls based on their calling conventions
+	if (syscall_num == ECALL_GET_OBJ) {
+		gen_syscall_get_obj(instr, result_vreg);
+	} else if (syscall_num == ECALL_ARRAY_SIZE) {
+		gen_syscall_array_size(instr, result_vreg);
+	} else if (syscall_num == ECALL_ARRAY_AT) {
+		gen_syscall_array_at(instr, result_vreg);
+	} else if (syscall_num == ECALL_DICTIONARY_OPS) {
+		gen_syscall_dictionary_ops(instr, result_vreg);
+	} else if (syscall_num == ECALL_GET_NODE) {
+		gen_syscall_get_node(instr, result_vreg);
+	} else {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unknown syscall number: " + std::to_string(syscall_num));
+	}
+}
+
+// A method call on a Variant, through ECALL_VCALL: the arguments go into a
+// contiguous array on the stack, the method name after it, and the host writes
+// the result through the pointer in a5.
+void RISCVCodeGen::gen_vcall(const IRInstruction& instr) {
+	// VCALL format: result_reg, obj_reg, method_name, arg_count, arg1_reg, arg2_reg, ...
+	if (instr.operands.size() < 4) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VCALL requires at least 4 operands");
+	}
+
+	int result_vreg = std::get<int>(instr.operands[0].value);
+	int obj_vreg = std::get<int>(instr.operands[1].value);
+	std::string method_name = std::get<std::string>(instr.operands[2].value);
+	int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+
+	if (instr.operands.size() != static_cast<size_t>(4 + arg_count)) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VCALL argument count mismatch");
+	}
+
+	int result_offset = get_variant_stack_offset(result_vreg);
+	int obj_offset = get_variant_stack_offset(obj_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6, REG_A7});
+
+	// If we have arguments, allocate stack space for argument array.
+	// Everything addressed off sp below this point is shifted by it.
+	const int additional_space = arg_count > 0
+		? ((arg_count * variant_size()) + 15) & ~15 // Align to 16 bytes
+		: 0;
+	if (arg_count > 0) {
+		// Adjust stack pointer
+		emit_stack_adjust(-additional_space);
+
+		// Copy argument Variants to the new stack space
+		for (int i = 0; i < arg_count; i++) {
+			int arg_vreg = std::get<int>(instr.operands[4 + i].value);
+			int arg_src_offset = get_variant_stack_offset(arg_vreg) + additional_space; // Adjust for moved stack
+			int arg_dst_offset = i * variant_size();
+
+			// Copy the whole Variant from src to dst
+			emit_variant_move(REG_SP, arg_dst_offset, REG_SP, arg_src_offset, REG_T0);
 		}
+
+		// a3 = pointer to arguments array (sp + 0)
+		emit_mv(REG_A3, REG_SP);
+	} else {
+		// No arguments, a3 = 0
+		emit_mv(REG_A3, REG_ZERO);
+	}
+
+	// a0 = pointer to object Variant, past whatever the argument array took
+	emit_load_stack_offset(REG_A0, obj_offset + additional_space);
+
+	// a1 = pointer to method name string (need to store in .rodata section)
+	// For now, we'll use a temporary approach: store the string on stack
+	// TODO: Better approach would be to use .rodata section
+	int method_len = method_name.length();
+	int str_space = ((method_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
+
+	// Allocate more stack space for the string
+	emit_stack_adjust(-str_space);
+
+	// Store method name on stack
+	for (size_t i = 0; i < method_name.length(); i++) {
+		emit_li(REG_T0, static_cast<unsigned char>(method_name[i]));
+		emit_sb(REG_T0, REG_SP, i); // SB (store byte)
+	}
+	// Store null terminator
+	emit_sb(REG_ZERO, REG_SP, method_len); // SB
+
+	// a1 = pointer to method name (sp)
+	emit_mv(REG_A1, REG_SP);
+
+	// a2 = method length
+	emit_li(REG_A2, method_len);
+
+	// a4 = argument count
+	emit_li(REG_A4, arg_count);
+
+	// a5 = pointer to result Variant, past the argument array and the name
+	emit_load_stack_offset(REG_A5, result_offset + additional_space + str_space);
+
+	// a7 = ECALL_VCALL (501)
+	emit_li(REG_A7, ECALL_VCALL);
+	emit_ecall();
+
+	// Restore stack pointer
+	emit_stack_adjust(str_space + additional_space);
+
+	// VCALL always writes the result as a full Variant on stack (via a5 pointer)
+}
+
+void RISCVCodeGen::gen_make_dictionary(const IRInstruction& instr) {
+	// Format: MAKE_DICTIONARY result_reg, pair_count, [key1_reg, val1_reg, key2_reg, val2_reg, ...]
+	// For empty dictionaries via Dictionary() constructor: MAKE_DICTIONARY result_reg
+	// For empty dictionaries via literal {}: MAKE_DICTIONARY result_reg, 0
+	// For dictionaries with elements: pair_count > 0 with key/value regs
+	if (instr.operands.size() < 1) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_DICTIONARY requires at least 1 operand");
+	}
+
+	int result_vreg = std::get<int>(instr.operands[0].value);
+	int result_offset = get_variant_stack_offset(result_vreg);
+
+	// Check if this is the old Dictionary() constructor format (only 1 operand)
+	// or the new dictionary literal format (2+ operands)
+	bool is_constructor_format = (instr.operands.size() == 1);
+	int pair_count = is_constructor_format ? 0 : static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
+
+	if (pair_count == 0) {
+		// Empty Dictionary: use the abstraction
+		emit_variant_create_empty_dictionary(result_offset);
+	} else {
+		// Dictionary with elements: sys_vcreate(&v, DICTIONARY, size, data_pointer)
+		// We need to copy the full Variant structures to stack
+		int total_variants = pair_count * 2; // Each pair has 2 variants (key and value)
+		int args_space = total_variants * variant_size();
+		args_space = (args_space + 15) & ~15; // Align to 16 bytes
+
+		// Adjust stack pointer
+		emit_add_offset(REG_SP, REG_SP, -args_space);
+
+		// Copy full GuestVariant structures to stack
+		// Operands are interleaved: key1, val1, key2, val2, ...
+		for (int i = 0; i < total_variants; i++) {
+			int variant_vreg = std::get<int>(instr.operands[2 + i].value);
+			int variant_offset = get_variant_stack_offset(variant_vreg);
+
+			// Destination address for this variant
+			int dst_offset = i * variant_size();
+
+			// The variant Variant is at variant_offset from the ORIGINAL stack frame
+			// After SP -= args_space, it's now at variant_offset + args_space from NEW SP
+			// So we load from (variant_offset + args_space) and store to dst_offset
+			emit_variant_move(REG_SP, dst_offset, REG_SP, variant_offset + args_space, REG_T0);
+		}
+
+		// a0 = pointer to destination Variant
+		// The result Variant is at result_offset from the ORIGINAL stack frame
+		// After SP -= args_space, it's now at result_offset + args_space from NEW SP
+		int adjusted_dst_offset = result_offset + args_space;
+		emit_add_offset(REG_A0, REG_SP, adjusted_dst_offset);
+
+		// a1 = Variant::DICTIONARY
+		emit_li(REG_A1, Variant::DICTIONARY);
+
+		// a2 = size (pair_count * 2 = total number of variants)
+		emit_li(REG_A2, total_variants);
+
+		// a3 = pointer to variant array (sp + 0)
+		emit_mv(REG_A3, REG_SP);
+
+		// a7 = ECALL_VCREATE (517)
+		emit_li(REG_A7, ECALL_VCREATE);
+		emit_ecall();
+
+		// Restore stack pointer
+		emit_add_offset(REG_SP, REG_SP, args_space);
+	}
+}
+
+void RISCVCodeGen::gen_make_array(const IRInstruction& instr) {
+	// Format: MAKE_ARRAY result_reg, element_count, [element_reg1, element_reg2, ...]
+	// For empty arrays: element_count = 0, no element regs
+	if (instr.operands.size() < 2) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_ARRAY requires at least 2 operands");
+	}
+
+	int result_vreg = std::get<int>(instr.operands[0].value);
+	int element_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+	int result_offset = get_variant_stack_offset(result_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
+
+	if (element_count == 0) {
+		// Empty Array: use the abstraction
+		emit_variant_create_empty_array(result_offset);
+	} else {
+		// Array with elements: sys_vcreate(&v, ARRAY, size, data_pointer)
+		// We need to copy the full Variant structures to stack
+		int args_space = element_count * variant_size();
+		args_space = (args_space + 15) & ~15; // Align to 16 bytes
+
+		// Adjust stack pointer
+		emit_add_offset(REG_SP, REG_SP, -args_space);
+
+		// Copy full GuestVariant structures to stack
+		for (int i = 0; i < element_count; i++) {
+			int elem_vreg = std::get<int>(instr.operands[2 + i].value);
+			int elem_offset = get_variant_stack_offset(elem_vreg);
+
+			// Destination address for this element
+			int dst_offset = i * variant_size();
+
+			// The element Variant is at elem_offset from the ORIGINAL stack frame
+			// After SP -= args_space, it's now at elem_offset + args_space from NEW SP
+			// So we load from (elem_offset + args_space) and store to dst_offset
+			emit_variant_move(REG_SP, dst_offset, REG_SP, elem_offset + args_space, REG_T0);
+		}
+
+		// a0 = pointer to destination Variant
+		// The result Variant is at result_offset from the ORIGINAL stack frame
+		// After SP -= args_space, it's now at result_offset + args_space from NEW SP
+		int adjusted_dst_offset = result_offset + args_space;
+		emit_add_offset(REG_A0, REG_SP, adjusted_dst_offset);
+
+		// a1 = Variant::ARRAY
+		emit_li(REG_A1, Variant::ARRAY);
+
+		// a2 = size (element_count)
+		emit_li(REG_A2, element_count);
+
+		// a3 = pointer to element array (sp + 0)
+		emit_mv(REG_A3, REG_SP);
+
+		// a7 = ECALL_VCREATE (517)
+		emit_li(REG_A7, ECALL_VCREATE);
+		emit_ecall();
+
+		// Restore stack pointer
+		emit_add_offset(REG_SP, REG_SP, args_space);
+	}
+}
+
+void RISCVCodeGen::gen_store_global(const IRInstruction& instr) {
+	// STORE_GLOBAL global_index, src_reg
+	// Stores a virtual register (Variant) into a global variable
+	int64_t global_idx = std::get<int64_t>(instr.operands[0].value);
+	int src_vreg = std::get<int>(instr.operands[1].value);
+	int src_offset = get_variant_stack_offset(src_vreg);
+
+	// Get the global's type information
+	const IRGlobalVar& global = m_globals[global_idx];
+
+	// Determine if this is a complex type that needs VASSIGN
+	// Complex types: STRING, STRING_NAME, NODE_PATH, RID, OBJECT, CALLABLE,
+	//                SIGNAL, DICTIONARY, ARRAY, and all PACKED_*_ARRAY types
+	bool needs_vassign = false;
+
+	// The global's Variant type is derived once by the code
+	// generator, from the type hint when there is one and from the
+	// initializer otherwise, so this does not have to re-derive it
+	// from init_type (which cannot describe a RUNTIME initializer).
+	if (global.value_type != IRInstruction::TypeHint_NONE) {
+		// is_complex_variant_type() is the single definition of which
+		// Variant types are stored as a host-side index rather than
+		// inline. The previous open-coded test here read `type == 3 ||
+		// type >= 17`, which classified FLOAT as complex and Color,
+		// Basis and Transform3D on the wrong sides of the line.
+		needs_vassign = is_complex_variant_type(global.value_type);
+	} else {
+		// Type unknown at compile time. A raw copy of the Variant
+		// would duplicate a scoped-variant index rather than assign
+		// through it, so assign through VASSIGN, which is correct for
+		// both trivial and reference-counted types.
+		needs_vassign = true;
+	}
+
+	// Load address of global variable
+	emit_address_of_global(REG_T0, static_cast<size_t>(global_idx));
+
+	// Load source address
+	emit_load_stack_offset(REG_T1, src_offset);
+
+	if (needs_vassign) {
+		// Complex type: VASSIGN takes a0 = dest index, a1 = src
+		// index, and answers with the resulting index in a0. a7
+		// carries the syscall number, so it is clobbered too.
+		spill_around_syscall({REG_A0, REG_A1, REG_A7});
+
+		// Load indices (v.i at offset 8)
+		emit_lw(REG_A0, REG_T0, 8); // dest index
+		emit_lw(REG_A1, REG_T1, 8); // src index
+
+		// Carry the source's Variant type across. Storing only the
+		// index leaves a global that started out NIL claiming to be
+		// NIL while holding a live index, and prevents an untyped
+		// global from ever changing type - which GDScript allows.
+		emit_lw(REG_T2, REG_T1, 0);
+		emit_sw(REG_T2, REG_T0, 0);
+
+		// Call VASSIGN (syscall 503)
+		emit_li(REG_A7, ECALL_VASSIGN);
+		emit_ecall();
+
+		// VASSIGN returns the new index in A0
+		// Store it back to the global's v.i field (offset 8)
+		emit_sd(REG_A0, REG_T0, 8);
+	} else {
+		// Simple type: copy the whole Variant
+		emit_variant_move(REG_T0, 0, REG_T1, 0, REG_T2);
+	}
+}
+
+void RISCVCodeGen::gen_vget(const IRInstruction& instr) {
+	// VGET format: result_reg, obj_reg, string_idx, string_len
+	// Uses ECALL_OBJ_PROP_GET (545)
+	// Calling convention:
+	//   A0 = object address (v.i from object Variant)
+	//   A1 = property name pointer
+	//   A2 = property name length
+	//   A3 = pointer to result Variant
+
+	if (instr.operands.size() != 4) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VGET requires 4 operands (result_reg, obj_reg, string_idx, string_len)");
+	}
+
+	int result_vreg = std::get<int>(instr.operands[0].value);
+	int obj_vreg = std::get<int>(instr.operands[1].value);
+	int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+	int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+
+	// Get the string constant
+	if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
+	}
+	const std::string& str = (*m_string_constants)[string_idx];
+
+	int result_offset = get_variant_stack_offset(result_vreg);
+	int obj_offset = get_variant_stack_offset(obj_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
+
+	// A0 = object address (load from Variant's v.i field at offset 8)
+	// IMPORTANT: Load this BEFORE adjusting the stack, so obj_offset is correct
+	emit_ld(REG_A0, REG_SP, obj_offset + 8);
+
+	// Allocate stack space for the string
+	int str_space = ((string_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
+
+	emit_stack_adjust(-str_space);
+
+	// Store string on stack
+	for (size_t i = 0; i < str.length(); i++) {
+		emit_li(REG_T0, static_cast<unsigned char>(str[i]));
+		emit_sb(REG_T0, REG_SP, i); // SB (store byte)
+	}
+	// Store null terminator
+	emit_sb(REG_ZERO, REG_SP, string_len); // SB
+
+	// A1 = pointer to property name string (sp)
+	emit_mv(REG_A1, REG_SP);
+
+	// A2 = string length
+	emit_li(REG_A2, string_len);
+
+	// A3 = pointer to result Variant
+	// IMPORTANT: Account for str_space since SP was adjusted
+	emit_load_stack_offset(REG_A3, result_offset + str_space);
+
+	// A7 = syscall number (545 for ECALL_OBJ_PROP_GET)
+	emit_li(REG_A7, ECALL_OBJ_PROP_GET);
+	emit_ecall();
+
+	// Restore stack pointer
+	emit_stack_adjust(str_space);
+}
+
+void RISCVCodeGen::gen_vget_inline(const IRInstruction& instr) {
+	// Format: VGET_INLINE result_reg, obj_reg, member_name, obj_type_hint
+	if (instr.operands.size() != 4) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VGET_INLINE requires 4 operands");
+	}
+
+	int result_vreg = std::get<int>(instr.operands[0].value);
+	int obj_vreg = std::get<int>(instr.operands[1].value);
+	std::string member = std::get<std::string>(instr.operands[2].value);
+	int obj_type_hint = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+
+	int result_offset = get_variant_stack_offset(result_vreg);
+	int obj_offset = get_variant_stack_offset(obj_vreg);
+
+	// Determine the offset within the object Variant. Float vectors store
+	// real_t components (4 or 8 bytes), integer vectors always int32_t.
+	bool is_int_type = false;
+
+	// Map member name to array index
+	int component_idx = 0;
+	if (member == "x" || member == "r") component_idx = 0;
+	else if (member == "y" || member == "g") component_idx = 1;
+	else if (member == "z" || member == "b") component_idx = 2;
+	else if (member == "w" || member == "a") component_idx = 3;
+
+	// Check if it's an integer vector type using helper function
+	IRInstruction::TypeHint hint = static_cast<IRInstruction::TypeHint>(obj_type_hint);
+	is_int_type = TypeHintUtils::is_int_vector(hint);
+
+	int member_offset = is_int_type ? int_offset(component_idx) : real_offset(component_idx);
+
+	if (is_int_type) {
+		// Load 32-bit integer from object
+		emit_lw(REG_T0, REG_SP, obj_offset + member_offset);
+
+		// Create result Variant with INT type (2)
+		emit_li(REG_T1, 2);
+		emit_sw(REG_T1, REG_SP, result_offset); // m_type = INT
+
+		// Sign-extend to 64-bit and store in v.i
+		emit_sext_w(REG_T0, REG_T0);
+		emit_sd(REG_T0, REG_SP, result_offset + VARIANT_DATA_OFFSET);
+	} else {
+		// For real_t components from Vector types: Variant::FLOAT is always a
+		// 64-bit double, so widen unless real_t already is one.
+
+		// Load the real_t component into an FP register
+		emit_flr(REG_FA0, REG_SP, obj_offset + member_offset);
+
+		// Widen real_t to double
+		emit_fcvt_d_r(REG_FA0, REG_FA0);
+
+		// Set result Variant type to FLOAT
+		emit_li(REG_T0, Variant::FLOAT);
+		emit_sw(REG_T0, REG_SP, result_offset); // m_type = FLOAT
+
+		// Store 8-byte double to v.f field
+		emit_fsd(REG_FA0, REG_SP, result_offset + VARIANT_DATA_OFFSET);
+	}
+}
+
+void RISCVCodeGen::gen_switch(const IRInstruction& instr) {
+	// SWITCH subject, base, count, label[0] .. label[count-1]
+	//
+	// Dense integer switch, dispatched through a table of `jal`
+	// instructions emitted inline here. The entries are ordinary
+	// jumps, so label resolution and branch relaxation treat them
+	// like any other jump and no .rodata relocation is needed. The
+	// entry for `v` is at table + (v - base) * 4.
+	//
+	// Falling through is the "none of the above" path, where the
+	// code generator puts the rest of the match.
+	const int subject_vreg = std::get<int>(instr.operands[0].value);
+	const int64_t base = std::get<int64_t>(instr.operands[1].value);
+	const int64_t count = std::get<int64_t>(instr.operands[2].value);
+	const int subject_offset = get_variant_stack_offset(subject_vreg);
+
+	const std::string past_table = ".switch" + std::to_string(m_switch_tables) + ".out";
+	m_switch_tables++;
+
+	// Only an integer indexes the table; any other type, including
+	// a float (`match 3.0` must still reach a `3:` arm), falls
+	// through. A type hint of INT skips the test entirely.
+	if (instr.type_hint != Variant::INT) {
+		emit_load_variant_type(REG_T0, REG_SP, subject_offset);
+		emit_li(REG_T1, Variant::INT);
+		mark_label_use(past_table, m_code.size());
+		emit_bne(REG_T0, REG_T1, 0);
+	}
+
+	emit_load_variant_int(REG_T0, REG_SP, subject_offset);
+	if (base != 0) {
+		if (fits_in_signed(-base, I_TYPE_IMM_BITS)) {
+			emit_addi(REG_T0, REG_T0, static_cast<int32_t>(-base));
+		} else {
+			emit_li(REG_T1, base);
+			emit_sub(REG_T0, REG_T0, REG_T1);
+		}
+	}
+
+	// One unsigned compare covers both ends: a subject below `base`
+	// wraps to a huge unsigned value and fails the same test.
+	emit_li(REG_T1, count);
+	mark_label_use(past_table, m_code.size());
+	emit_bgeu(REG_T0, REG_T1, 0);
+
+	// The table is three instructions past the AUIPC, so its address
+	// is this PC + 12, with no relocation: `auipc rd, 0` gives the
+	// current PC and the 12 rides in the jump's immediate. Loading
+	// the address instead would cost an ADDI and put a label use
+	// inside a sequence branch relaxation may move.
+	emit_u_type(0x17, REG_T1, 0);         // auipc t1, 0 -- t1 = here
+	emit_sh2add(REG_T0, REG_T0, REG_T1);  // t0 = here + index * 4
+	emit_jalr(REG_ZERO, REG_T0, 12);      // -> here + 12 + index * 4
+
+	for (int64_t entry = 0; entry < count; entry++) {
+		mark_label_use(std::get<std::string>(instr.operands[3 + entry].value), m_code.size());
+		emit_jal(REG_ZERO, 0);
+	}
+	define_label(past_table);
+}
+
+void RISCVCodeGen::gen_print(const IRInstruction& instr) {
+	// Format: PRINT result_reg, arg_count, [arg_reg1, arg_reg2, ...]
+	// sys_print(const Variant *array, size_t len): the host walks a
+	// contiguous array, so the arguments are copied out of their
+	// stack slots into one run below sp.
+	if (instr.operands.size() < 2) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "PRINT requires at least 2 operands");
+	}
+
+	int result_vreg = std::get<int>(instr.operands[0].value);
+	int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+
+	if (instr.operands.size() != static_cast<size_t>(2 + arg_count)) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "PRINT argument count mismatch");
+	}
+
+	int result_offset = get_variant_stack_offset(result_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1});
+
+	if (arg_count == 0) {
+		// print() with no arguments still prints a blank line, and
+		// the host reads no memory when len is 0.
+		emit_mv(REG_A0, REG_ZERO);
+		emit_li(REG_A1, 0);
+		emit_li(REG_A7, ECALL_PRINT);
+		emit_ecall();
+	} else {
+		int args_space = arg_count * variant_size();
+		args_space = (args_space + 15) & ~15; // Align to 16 bytes
+
+		emit_add_offset(REG_SP, REG_SP, -args_space);
+
+		// Each argument lives at its own offset in the frame that sp
+		// just moved away from, so read it back at +args_space.
+		for (int i = 0; i < arg_count; i++) {
+			int arg_vreg = std::get<int>(instr.operands[2 + i].value);
+			int arg_src_offset = get_variant_stack_offset(arg_vreg) + args_space;
+			emit_variant_move(REG_SP, i * variant_size(), REG_SP, arg_src_offset, REG_T0);
+		}
+
+		// a0 = the argument array, a1 = its length
+		emit_mv(REG_A0, REG_SP);
+		emit_li(REG_A1, arg_count);
+		emit_li(REG_A7, ECALL_PRINT);
+		emit_ecall();
+
+		emit_add_offset(REG_SP, REG_SP, args_space);
+	}
+
+	// print() evaluates to null. The host writes nothing back, so
+	// the destination is set here.
+	emit_li(REG_T0, Variant::NIL);
+	emit_store_variant_type(REG_T0, REG_SP, result_offset);
+}
+
+// The arithmetic and bitwise operators. Two Variants in, one out: a native
+// sequence when the types are known to allow it, and the VEVAL syscall --
+// which is what `**` and `in` always take -- otherwise.
+void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
+	// Check that all operands are valid before processing
+	if (instr.operands.size() < 3 ||
+		instr.operands[0].type != IRValue::Type::REGISTER) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Arithmetic operations require at least 3 operands with first being REGISTER");
+	}
+
+	int dst_vreg = std::get<int>(instr.operands[0].value);
+	int dst_offset = get_variant_stack_offset(dst_vreg);
+
+	// Check if operands are registers
+	bool lhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
+	bool rhs_is_reg = instr.operands.size() > 2 && instr.operands[2].type == IRValue::Type::REGISTER;
+
+	// Use optimized typed path if:
+	// 1. Instruction has a type hint (INT, FLOAT, or vector type)
+	// 2. Both operands are registers (not immediates)
+	// This is the common case for type-hinted arithmetic
+	//
+	// IMPORTANT: We ONLY optimize Variants with type hints.
+	// Untyped Variants fall back to VEVAL syscall, which also acts as
+	// deoptimization to find bugs (unknown types are unpredictable).
+	// POW and IN have no native expansion matching the host's answer
+	// for every type pair, so they always take the VEVAL path.
+	const bool host_only = instr.opcode == IROpcode::POW || instr.opcode == IROpcode::IN;
+
+	if (!host_only && instr.type_hint != IRInstruction::TypeHint_NONE && lhs_is_reg && rhs_is_reg) {
+		int lhs_vreg_local = std::get<int>(instr.operands[1].value);
+		int rhs_vreg_local = std::get<int>(instr.operands[2].value);
+		int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
+		int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
+
+		// Dispatch based on type hint
+		if (instr.type_hint == Variant::INT) {
+			// Scalar int: optimized 64-bit integer arithmetic
+			emit_typed_int_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
+			return;
+		} else if (instr.type_hint == Variant::FLOAT) {
+			// Scalar float: optimized 64-bit double arithmetic
+			emit_typed_float_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
+			return;
+		} else if (TypeHintUtils::is_vector(instr.type_hint)) {
+			// Vector types: element-wise arithmetic (2, 3, or 4 components)
+			emit_typed_vector_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode, instr.type_hint);
+			return;
+		}
+		// Other type hints (if any) fall through to VEVAL
+	}
+
+	// Fall back to generic Variant evaluation for:
+	// - Untyped operations (no type hint)
+	// - Unsupported type hints
+	// - Operations with immediate operands (handled via temporary Variants)
+
+	// Map IR opcode to Variant::Operator
+	int variant_op;
+	switch (instr.opcode) {
+		case IROpcode::ADD: variant_op = 6; break;  // OP_ADD
+		case IROpcode::SUB: variant_op = 7; break;  // OP_SUBTRACT
+		case IROpcode::MUL: variant_op = 8; break;  // OP_MULTIPLY
+		case IROpcode::DIV: variant_op = 9; break;  // OP_DIVIDE
+		case IROpcode::MOD: variant_op = 12; break; // OP_MODULE
+		case IROpcode::SHL: variant_op = 14; break; // OP_SHIFT_LEFT
+		case IROpcode::SHR: variant_op = 15; break; // OP_SHIFT_RIGHT
+		case IROpcode::BIT_AND: variant_op = 16; break; // OP_BIT_AND
+		case IROpcode::BIT_OR: variant_op = 17; break;  // OP_BIT_OR
+		case IROpcode::BIT_XOR: variant_op = 18; break; // OP_BIT_XOR
+		case IROpcode::POW: variant_op = 13; break; // OP_POWER
+		case IROpcode::IN: variant_op = 24; break;  // OP_IN
+		default: variant_op = 6; break;
+	}
+
+	if (lhs_is_reg && rhs_is_reg) {
+		int lhs_vreg_local = std::get<int>(instr.operands[1].value);
+		int rhs_vreg_local = std::get<int>(instr.operands[2].value);
+		int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
+		int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
+
+		// Untyped operands, but very often two integers at run time:
+		// everything an Array or a Dictionary hands back is untyped, and
+		// a fetch-decode-execute loop over one does all its arithmetic
+		// this way. Six instructions to test for it beat the syscall.
+		if (!host_only && has_int_fast_path(instr.opcode)) {
+			// The clobber moves go before the branch: they update the
+			// allocator's view of where a value lives, which has to
+			// hold on both paths, not just the VEVAL one.
+			spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
+
+			const bool shift = instr.opcode == IROpcode::SHL || instr.opcode == IROpcode::SHR;
+			const std::string host = gen_local_label(".veval");
+			const std::string done = gen_local_label(".veval_done");
+			emit_branch_unless_both_int(lhs_offset, rhs_offset, host, shift);
+			emit_typed_int_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
+			mark_label_use(done, m_code.size());
+			emit_jal(REG_ZERO, 0);
+			define_label(host);
+			emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op, false);
+			define_label(done);
+			return;
+		}
+
+		emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
+	} else if (lhs_is_reg && !rhs_is_reg && instr.operands[2].type == IRValue::Type::IMMEDIATE) {
+		// Left operand is register, right is immediate
+		int lhs_vreg_local = std::get<int>(instr.operands[1].value);
+		int64_t imm_val = std::get<int64_t>(instr.operands[2].value);
+		int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
+
+		// Create a temporary Variant for the immediate value
+		int imm_offset = get_scratch_variant_offset();
+		emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
+		emit_variant_eval(dst_offset, lhs_offset, imm_offset, variant_op);
+	} else if (!lhs_is_reg && rhs_is_reg && instr.operands[1].type == IRValue::Type::IMMEDIATE) {
+		// Left operand is immediate, right is register
+		int64_t imm_val = std::get<int64_t>(instr.operands[1].value);
+		int rhs_vreg_local = std::get<int>(instr.operands[2].value);
+		int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
+
+		// Create a temporary Variant for the immediate value
+		int imm_offset = get_scratch_variant_offset();
+		emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
+		emit_variant_eval(dst_offset, imm_offset, rhs_offset, variant_op);
+	} else {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported operand types for arithmetic operation");
+	}
+}
+
+// The packed array literals. All ten build the same way and differ only in
+// which Variant type they ask the host to create and what an element is.
+void RISCVCodeGen::gen_make_packed_array(const IRInstruction& instr) {
+	// Format: MAKE_PACKED_*_ARRAY result_reg, element_count, [element_reg1, element_reg2, ...]
+	// Works identically to MAKE_ARRAY but with different Variant type
+	if (instr.operands.size() < 2) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Packed array constructor requires at least 2 operands");
+	}
+
+	int result_vreg = std::get<int>(instr.operands[0].value);
+	int element_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+	int result_offset = get_variant_stack_offset(result_vreg);
+
+	// Determine the Variant type based on opcode
+	int variant_type;
+	switch (instr.opcode) {
+		case IROpcode::MAKE_PACKED_BYTE_ARRAY:
+			variant_type = Variant::PACKED_BYTE_ARRAY;
+			break;
+		case IROpcode::MAKE_PACKED_INT32_ARRAY:
+			variant_type = Variant::PACKED_INT32_ARRAY;
+			break;
+		case IROpcode::MAKE_PACKED_INT64_ARRAY:
+			variant_type = Variant::PACKED_INT64_ARRAY;
+			break;
+		case IROpcode::MAKE_PACKED_FLOAT32_ARRAY:
+			variant_type = Variant::PACKED_FLOAT32_ARRAY;
+			break;
+		case IROpcode::MAKE_PACKED_FLOAT64_ARRAY:
+			variant_type = Variant::PACKED_FLOAT64_ARRAY;
+			break;
+		case IROpcode::MAKE_PACKED_STRING_ARRAY:
+			variant_type = Variant::PACKED_STRING_ARRAY;
+			break;
+		case IROpcode::MAKE_PACKED_VECTOR2_ARRAY:
+			variant_type = Variant::PACKED_VECTOR2_ARRAY;
+			break;
+		case IROpcode::MAKE_PACKED_VECTOR3_ARRAY:
+			variant_type = Variant::PACKED_VECTOR3_ARRAY;
+			break;
+		case IROpcode::MAKE_PACKED_COLOR_ARRAY:
+			variant_type = Variant::PACKED_COLOR_ARRAY;
+			break;
+		case IROpcode::MAKE_PACKED_VECTOR4_ARRAY:
+			variant_type = Variant::PACKED_VECTOR4_ARRAY;
+			break;
+		default:
+			variant_type = Variant::ARRAY; // Should not happen
+			break;
+	}
+
+	if (element_count == 0) {
+		// Empty packed array: sys_vcreate(&v, TYPE, 0, nullptr)
+		// a0 = pointer to destination Variant
+		emit_add_offset(REG_A0, REG_SP, result_offset);
+
+		// a1 = Variant type
+		emit_li(REG_A1, variant_type);
+
+		// a2 = method (0 for empty)
+		emit_li(REG_A2, 0);
+
+		// a3 = nullptr (0)
+		emit_li(REG_A3, 0);
+
+		// a7 = ECALL_VCREATE (517)
+		emit_li(REG_A7, ECALL_VCREATE);
+		emit_ecall();
+	} else {
+		// Packed array with elements: Use ECALL_PACKED_ARRAY_OPS (548)
+		// Signature: a0=op(type), a1=result_ptr, a2=array_ptr, a3=array_size
+		// The syscall converts an Array of Variants to a PackedArray
+		int args_space = element_count * variant_size();
+		args_space = (args_space + 15) & ~15; // Align to 16 bytes
+
+		// Allocate stack space
+		emit_stack_adjust(-args_space);
+
+		// Copy each element variant to the stack (as GuestVariant array)
+		for (int i = 0; i < element_count; i++) {
+			int elem_vreg = std::get<int>(instr.operands[2 + i].value);
+			int elem_offset = get_variant_stack_offset(elem_vreg);
+			int dst_offset = i * variant_size();
+
+			// Copy the whole Variant from source to destination
+			emit_variant_move(REG_SP, dst_offset, REG_SP, args_space + elem_offset, REG_T0);
+		}
+
+		// a0 = op (the packed array type, which also indicates CREATE_FROM_ARRAY)
+		emit_li(REG_A0, variant_type);
+
+		// a1 = pointer to destination Variant
+		// After SP -= args_space, it's now at result_offset + args_space from NEW SP
+		int adjusted_dst_offset = result_offset + args_space;
+		emit_add_offset(REG_A1, REG_SP, adjusted_dst_offset);
+
+		// a2 = pointer to element array (sp + 0)
+		emit_mv(REG_A2, REG_SP);
+
+		// a3 = element_count
+		emit_li(REG_A3, element_count);
+
+		// a7 = ECALL_PACKED_ARRAY_OPS (548)
+		emit_li(REG_A7, ECALL_PACKED_ARRAY_OPS);
+		emit_ecall();
+
+		// Restore stack pointer
+		emit_add_offset(REG_SP, REG_SP, args_space);
+	}
+}
+
+// The comparison operators, which produce a bool Variant rather than branch.
+void RISCVCodeGen::gen_comparison(const IRInstruction& instr) {
+	// Check that all operands are valid
+	if (instr.operands.size() < 3 ||
+		instr.operands[0].type != IRValue::Type::REGISTER) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Comparison operations require at least 3 operands with first being REGISTER");
+	}
+
+	int dst_vreg = std::get<int>(instr.operands[0].value);
+	int dst_offset = get_variant_stack_offset(dst_vreg);
+
+	// Check if operands are registers
+	bool lhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
+	bool rhs_is_reg = instr.operands.size() > 2 && instr.operands[2].type == IRValue::Type::REGISTER;
+
+	// Use optimized typed path for INT comparisons with register operands
+	// This is very common in loops: for i: int in range(N)
+	if (instr.type_hint == Variant::INT && lhs_is_reg && rhs_is_reg) {
+		int lhs_vreg = std::get<int>(instr.operands[1].value);
+		int rhs_vreg = std::get<int>(instr.operands[2].value);
+		int lhs_offset = get_variant_stack_offset(lhs_vreg);
+		int rhs_offset = get_variant_stack_offset(rhs_vreg);
+
+		// Use native RISC-V comparison instead of syscall
+		emit_typed_int_comparison(dst_offset, lhs_offset, rhs_offset, instr.opcode);
+		return;
+	}
+
+	// Fall back to generic Variant evaluation for untyped or non-INT comparisons
+
+	// Map IR opcode to Variant::Operator
+	int variant_op;
+	switch (instr.opcode) {
+		case IROpcode::CMP_EQ:  variant_op = 0; break; // OP_EQUAL
+		case IROpcode::CMP_NEQ: variant_op = 1; break; // OP_NOT_EQUAL
+		case IROpcode::CMP_LT:  variant_op = 2; break; // OP_LESS
+		case IROpcode::CMP_LTE: variant_op = 3; break; // OP_LESS_EQUAL
+		case IROpcode::CMP_GT:  variant_op = 4; break; // OP_GREATER
+		case IROpcode::CMP_GTE: variant_op = 5; break; // OP_GREATER_EQUAL
+		default: variant_op = 0; break;
+	}
+
+	if (lhs_is_reg && rhs_is_reg) {
+		int lhs_vreg = std::get<int>(instr.operands[1].value);
+		int rhs_vreg = std::get<int>(instr.operands[2].value);
+		int lhs_offset = get_variant_stack_offset(lhs_vreg);
+		int rhs_offset = get_variant_stack_offset(rhs_vreg);
+		emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
+	} else if (lhs_is_reg && !rhs_is_reg && instr.operands[2].type == IRValue::Type::IMMEDIATE) {
+		// Left is register, right is immediate integer
+		int lhs_vreg = std::get<int>(instr.operands[1].value);
+		int lhs_offset = get_variant_stack_offset(lhs_vreg);
+		int64_t imm_val = std::get<int64_t>(instr.operands[2].value);
+
+		int imm_offset = get_scratch_variant_offset();
+		emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
+		emit_variant_eval(dst_offset, lhs_offset, imm_offset, variant_op);
+	} else if (!lhs_is_reg && rhs_is_reg && instr.operands[1].type == IRValue::Type::IMMEDIATE) {
+		// Left is immediate integer, right is register
+		int rhs_vreg = std::get<int>(instr.operands[2].value);
+		int rhs_offset = get_variant_stack_offset(rhs_vreg);
+		int64_t imm_val = std::get<int64_t>(instr.operands[1].value);
+
+		int imm_offset = get_scratch_variant_offset();
+		emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
+		emit_variant_eval(dst_offset, imm_offset, rhs_offset, variant_op);
+	} else {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported operand types for comparison");
+	}
+}
+
+// A comparison fused with the branch that reads it, so no bool Variant is
+// ever materialised.
+void RISCVCodeGen::gen_fused_branch(const IRInstruction& instr) {
+	// Fused comparison + branch instructions
+	// Format: BRANCH_* lhs, rhs, label
+	// These directly emit BEQ/BNE/BLT/BGE without storing result
+	if (instr.operands.size() < 3) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Fused branch requires 3 operands: lhs, rhs, label");
+	}
+
+	// Check if operands are registers
+	bool lhs_is_reg = instr.operands[0].type == IRValue::Type::REGISTER;
+	bool rhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
+
+	// For now, only support register operands (can be extended later for immediates)
+	if (!lhs_is_reg || !rhs_is_reg) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Fused branch requires register operands");
+	}
+
+	int lhs_vreg = std::get<int>(instr.operands[0].value);
+	int rhs_vreg = std::get<int>(instr.operands[1].value);
+	std::string label = std::get<std::string>(instr.operands[2].value);
+
+	int lhs_offset = get_variant_stack_offset(lhs_vreg);
+	int rhs_offset = get_variant_stack_offset(rhs_vreg);
+
+	if (instr.type_hint == Variant::INT) {
+		emit_int_fused_branch(instr.opcode, lhs_offset, rhs_offset, label);
+		return;
+	}
+
+	// Map IR opcode to Variant::Operator
+	int variant_op;
+	switch (instr.opcode) {
+		case IROpcode::BRANCH_EQ:  variant_op = 0; break; // OP_EQUAL
+		case IROpcode::BRANCH_NEQ: variant_op = 1; break; // OP_NOT_EQUAL
+		case IROpcode::BRANCH_LT:  variant_op = 2; break; // OP_LESS
+		case IROpcode::BRANCH_LTE: variant_op = 3; break; // OP_LESS_EQUAL
+		case IROpcode::BRANCH_GT:  variant_op = 4; break; // OP_GREATER
+		case IROpcode::BRANCH_GTE: variant_op = 5; break; // OP_GREATER_EQUAL
+		default: variant_op = 0; break;
+	}
+
+	// Untyped operands. Two integers compare in registers, and
+	// everything an Array or a Dictionary hands back is untyped, so
+	// the test is worth its six instructions; anything else is a
+	// comparison only Godot knows how to make.
+	const int tmp_offset = get_scratch_variant_offset();
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
+
+	const std::string host = gen_local_label(".vcmp");
+	const std::string done = gen_local_label(".vcmp_done");
+	emit_branch_unless_both_int(lhs_offset, rhs_offset, host, false);
+	emit_int_fused_branch(instr.opcode, lhs_offset, rhs_offset, label);
+	mark_label_use(done, m_code.size());
+	emit_jal(REG_ZERO, 0);
+
+	define_label(host);
+	emit_variant_eval(tmp_offset, lhs_offset, rhs_offset, variant_op, false);
+	emit_load_variant_bool(REG_T0, REG_SP, tmp_offset);
+	mark_label_use(label, m_code.size());
+	emit_bne(REG_T0, REG_ZERO, 0);
+	define_label(done);
+}
+
+void RISCVCodeGen::gen_vset(const IRInstruction& instr) {
+	// VSET format: obj_reg, string_idx, string_len, value_reg
+	// Uses ECALL_OBJ_PROP_SET (546)
+	// Calling convention:
+	//   A0 = object address (v.i from object Variant)
+	//   A1 = property name pointer
+	//   A2 = property name length
+	//   A3 = pointer to value Variant
+
+	if (instr.operands.size() != 4) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VSET requires 4 operands (obj_reg, string_idx, string_len, value_reg)");
+	}
+
+	int obj_vreg = std::get<int>(instr.operands[0].value);
+	int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+	int string_len = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+	int value_vreg = std::get<int>(instr.operands[3].value);
+
+	// Get the string constant
+	if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
+	}
+	const std::string& str = (*m_string_constants)[string_idx];
+
+	int obj_offset = get_variant_stack_offset(obj_vreg);
+	int value_offset = get_variant_stack_offset(value_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
+
+	// A0 = object address (load from Variant's v.i field at offset 8)
+	// IMPORTANT: Load this BEFORE adjusting the stack, so obj_offset is correct
+	emit_ld(REG_A0, REG_SP, obj_offset + 8);
+
+	// Allocate stack space for the string
+	int str_space = ((string_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
+
+	emit_stack_adjust(-str_space);
+
+	// Store string on stack
+	for (size_t i = 0; i < str.length(); i++) {
+		emit_li(REG_T0, static_cast<unsigned char>(str[i]));
+		emit_sb(REG_T0, REG_SP, i); // SB (store byte)
+	}
+	// Store null terminator
+	emit_sb(REG_ZERO, REG_SP, string_len); // SB
+
+	// A1 = pointer to property name string (sp)
+	emit_mv(REG_A1, REG_SP);
+
+	// A2 = string length
+	emit_li(REG_A2, string_len);
+
+	// A3 = pointer to value Variant
+	// IMPORTANT: Calculate this AFTER adjusting the stack, and account for str_space
+	// emit_load_stack_offset does: addi a3, sp, offset, so we get the correct address directly
+	emit_load_stack_offset(REG_A3, value_offset + str_space);
+
+	// A7 = syscall number (546 for ECALL_OBJ_PROP_SET)
+	emit_li(REG_A7, ECALL_OBJ_PROP_SET);
+	emit_ecall();
+
+	// Restore stack pointer
+	emit_stack_adjust(str_space);
+}
+
+void RISCVCodeGen::gen_call(const IRInstruction& instr) {
+	// CALL format: function_name, result_reg, arg_count, arg1_reg, arg2_reg, ...
+	if (instr.operands.size() < 3) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL requires at least 3 operands");
+	}
+
+	std::string func_name = std::get<std::string>(instr.operands[0].value);
+	int result_vreg = std::get<int>(instr.operands[1].value);
+	int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+
+	if (instr.operands.size() != static_cast<size_t>(3 + arg_count)) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL argument count mismatch");
+	}
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6, REG_A7, REG_RA});
+
+	// Allocate stack space for return value Variant
+	int return_var_offset = get_variant_stack_offset(result_vreg);
+
+	// Set up arguments: a1-a7 point to Variant arguments on stack
+	// a0 points to return Variant
+	if (arg_count > static_cast<int>(IRFunction::MAX_PARAMETERS)) {
+		// Passing the first seven and dropping the rest leaves the
+		// callee reading slots nothing wrote for the others.
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"Call passes " + std::to_string(arg_count) +
+			" arguments, but only " + std::to_string(IRFunction::MAX_PARAMETERS) +
+			" fit in registers");
+	}
+	for (int i = 0; i < arg_count; i++) {
+		int arg_vreg = std::get<int>(instr.operands[3 + i].value);
+		int arg_offset = get_variant_stack_offset(arg_vreg);
+		uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
+
+		// Load address of argument Variant
+		emit_add_offset(arg_reg, REG_SP, arg_offset);
+	}
+
+	// a0 = pointer to return Variant
+	emit_add_offset(REG_A0, REG_SP, return_var_offset);
+
+	// Call the function using JAL with label
+	// We'll use the function name as a label that will be resolved later
+	if (!m_fn.saves_return_address) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"Call emitted in a function whose prologue did not save the return address");
+	}
+	mark_label_use(func_name, m_code.size());
+	emit_jal(REG_RA, 0); // JAL ra, func_name
+
+	// Return value is already in the Variant at result_vreg
+}
+
+void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
+	switch (instr.opcode) {
+		case IROpcode::LABEL:
+			define_label(std::get<std::string>(instr.operands[0].value));
+			break;
+
+		case IROpcode::LOAD_IMM: {
+			int vreg = std::get<int>(instr.operands[0].value);
+			int64_t value = std::get<int64_t>(instr.operands[1].value);
+			auto [base, offset] = value_destination(vreg);
+			emit_variant_create_int(offset, value, base);
+			break;
+		}
+
+		case IROpcode::LOAD_FLOAT_IMM: {
+			int vreg = std::get<int>(instr.operands[0].value);
+			double value = std::get<double>(instr.operands[1].value);
+			auto [base, offset] = value_destination(vreg);
+			emit_variant_create_float(offset, value, base);
+			break;
+		}
+
+		case IROpcode::LOAD_BOOL: {
+			int vreg = std::get<int>(instr.operands[0].value);
+			int64_t value = std::get<int64_t>(instr.operands[1].value);
+			auto [base, offset] = value_destination(vreg);
+			emit_variant_create_bool(offset, value != 0, base);
+			break;
+		}
+
+		case IROpcode::LOAD_STRING: {
+			int vreg = std::get<int>(instr.operands[0].value);
+			int64_t string_idx = std::get<int64_t>(instr.operands[1].value);
+			int stack_offset = get_variant_stack_offset(vreg);
+			emit_variant_create_string(stack_offset, static_cast<int>(string_idx));
+			break;
+		}
+
+		case IROpcode::MOVE: {
+			int dst_vreg = std::get<int>(instr.operands[0].value);
+			int src_vreg = std::get<int>(instr.operands[1].value);
+
+			// Skip no-op moves
+			if (dst_vreg == src_vreg) {
+				break;
+			}
+
+			int dst_offset = get_variant_stack_offset(dst_vreg);
+			int src_offset = get_variant_stack_offset(src_vreg);
+
+			// Skip if source and destination are at same stack location
+			if (dst_offset == src_offset) {
+				break;
+			}
+
+			// Copy the whole Variant
+			auto [base, offset] = value_destination(dst_vreg);
+			emit_variant_move(base, offset, REG_SP, src_offset, REG_T0);
+			break;
+		}
+
+		case IROpcode::TYPE_TEST: {
+			// TYPE_TEST dst, src, variant_type
+			//
+			// The type tag is the first 4 bytes of every Variant, so the test
+			// is a load, an xor against the tag, and seqz: no syscall, and no
+			// dependence on the payload.
+			int dst_vreg = std::get<int>(instr.operands[0].value);
+			int src_vreg = std::get<int>(instr.operands[1].value);
+			const int64_t tested = std::get<int64_t>(instr.operands[2].value);
+			int src_offset = get_variant_stack_offset(src_vreg);
+
+			emit_load_variant_type(REG_T0, REG_SP, src_offset);
+			// Every Variant::Type fits the 12-bit immediate range.
+			emit_xori(REG_T0, REG_T0, static_cast<int32_t>(tested));
+			emit_seqz(REG_T0, REG_T0);
+
+			auto [base, offset] = value_destination(dst_vreg);
+			emit_store_variant_bool(REG_T0, base, offset);
+			emit_li(REG_T1, Variant::BOOL);
+			emit_store_variant_type(REG_T1, base, offset);
+			break;
+		}
+
+		case IROpcode::CONVERT: {
+			// CONVERT dst_reg, src_reg  with the target type in type_hint.
+			int dst_vreg = std::get<int>(instr.operands[0].value);
+			int src_vreg = std::get<int>(instr.operands[1].value);
+			int dst_offset = get_variant_stack_offset(dst_vreg);
+			int src_offset = get_variant_stack_offset(src_vreg);
+
+			const auto from = static_cast<IRInstruction::TypeHint>(std::get<int64_t>(instr.operands[2].value));
+
+			// The source type picks the load: a BOOL payload is one byte, an
+			// INT all eight. Nothing else differs -- both widen to the same
+			// 64-bit value.
+			if (from == Variant::BOOL) {
+				emit_lbu(REG_T0, REG_SP, src_offset + VARIANT_DATA_OFFSET);
+			} else if (from == Variant::INT) {
+				emit_ld(REG_T0, REG_SP, src_offset + VARIANT_DATA_OFFSET);
+			} else {
+				throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+					std::string("CONVERT from ") + variant_type_name(from) + " is not implemented");
+			}
+
+			if (instr.type_hint == Variant::FLOAT) {
+				// Variant::FLOAT is always a 64-bit double, whatever real_t
+				// is, so this is fcvt.d.l and a plain 64-bit store.
+				emit_fcvt_d_l(REG_FA0, REG_T0);
+				emit_li(REG_T1, Variant::FLOAT);
+				emit_sw(REG_T1, REG_SP, dst_offset);
+				emit_fsd(REG_FA0, REG_SP, dst_offset + VARIANT_DATA_OFFSET);
+			} else if (instr.type_hint == Variant::INT) {
+				emit_li(REG_T1, Variant::INT);
+				emit_sw(REG_T1, REG_SP, dst_offset);
+				emit_sd(REG_T0, REG_SP, dst_offset + VARIANT_DATA_OFFSET);
+			} else {
+				throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+					std::string("CONVERT to ") + variant_type_name(instr.type_hint) +
+					" is not implemented");
+			}
+			break;
+		}
+
+		case IROpcode::LOAD_GLOBAL: {
+			// LOAD_GLOBAL dst_reg, global_index
+			// Loads a global variable (Variant) from the global data area into a virtual register
+			int dst_vreg = std::get<int>(instr.operands[0].value);
+			int64_t global_idx = std::get<int64_t>(instr.operands[1].value);
+
+			// Load global base address into t0
+			// For now, we'll use a label to mark the global data section
+			emit_address_of_global(REG_T0, static_cast<size_t>(global_idx));
+
+			// Copy the whole Variant out of the global data area. The
+			// destination is addressed off its base register directly
+			// rather than through a second pointer register, which is one
+			// instruction the stores were already able to do themselves.
+			auto [base, offset] = value_destination(dst_vreg);
+			emit_variant_move(base, offset, REG_T0, 0, REG_T1);
+			break;
+		}
+
+		case IROpcode::STORE_GLOBAL:
+			gen_store_global(instr);
+			break;
+		case IROpcode::ADD:
+		case IROpcode::SUB:
+		case IROpcode::MUL:
+		case IROpcode::DIV:
+		case IROpcode::MOD:
+		case IROpcode::BIT_AND:
+		case IROpcode::BIT_OR:
+		case IROpcode::BIT_XOR:
+		case IROpcode::SHL:
+		case IROpcode::SHR:
+		case IROpcode::POW:
+		case IROpcode::IN:
+			gen_binary_op(instr);
+			break;
+		case IROpcode::BIT_NOT: {
+			// ~x is x XOR -1
+			int dst_vreg = std::get<int>(instr.operands[0].value);
+			int src_vreg = std::get<int>(instr.operands[1].value);
+
+			int dst_offset = get_variant_stack_offset(dst_vreg);
+			int src_offset = get_variant_stack_offset(src_vreg);
+
+			if (instr.type_hint == Variant::INT) {
+				// Native path: load the int64, invert it, store it back
+				emit_load_variant_int(REG_T0, REG_SP, src_offset);
+				emit_xori(REG_T1, REG_T0, -1);
+				emit_li(REG_T0, Variant::INT);
+				emit_store_variant_type(REG_T0, REG_SP, dst_offset);
+				emit_store_variant_int(REG_T1, REG_SP, dst_offset);
+				break;
+			}
+
+			// Untyped: let the host evaluate x ^ -1, which also produces the
+			// correct type error for non-integer operands
+			int minus_one_offset = get_scratch_variant_offset();
+			emit_variant_create_int(minus_one_offset, -1);
+			emit_variant_eval(dst_offset, src_offset, minus_one_offset, 18); // OP_BIT_XOR
+			break;
+		}
+
+		case IROpcode::NEG: {
+			int dst_vreg = std::get<int>(instr.operands[0].value);
+			int src_vreg = std::get<int>(instr.operands[1].value);
+
+			int dst_offset = get_variant_stack_offset(dst_vreg);
+			int src_offset = get_variant_stack_offset(src_vreg);
+
+			// Use OP_NEGATE (unary operation - use veval with same operand twice)
+			// Actually for unary, we need a different approach - create a zero Variant
+			// For now, use subtract: 0 - src
+			// TODO: Add proper unary operation support
+			int zero_offset = get_scratch_variant_offset();
+			emit_variant_create_int(zero_offset, 0);
+			emit_variant_eval(dst_offset, zero_offset, src_offset, 7); // OP_SUBTRACT
+			break;
+		}
+
+		case IROpcode::CMP_EQ:
+		case IROpcode::CMP_NEQ:
+		case IROpcode::CMP_LT:
+		case IROpcode::CMP_LTE:
+		case IROpcode::CMP_GT:
+		case IROpcode::CMP_GTE:
+			gen_comparison(instr);
+			break;
+		case IROpcode::AND: {
+			int dst_vreg = std::get<int>(instr.operands[0].value);
+			int lhs_vreg = std::get<int>(instr.operands[1].value);
+			int rhs_vreg = std::get<int>(instr.operands[2].value);
+
+			int dst_offset = get_variant_stack_offset(dst_vreg);
+			int lhs_offset = get_variant_stack_offset(lhs_vreg);
+			int rhs_offset = get_variant_stack_offset(rhs_vreg);
+
+			emit_variant_eval(dst_offset, lhs_offset, rhs_offset, 20); // OP_AND
+			break;
+		}
+
+		case IROpcode::OR: {
+			int dst_vreg = std::get<int>(instr.operands[0].value);
+			int lhs_vreg = std::get<int>(instr.operands[1].value);
+			int rhs_vreg = std::get<int>(instr.operands[2].value);
+
+			int dst_offset = get_variant_stack_offset(dst_vreg);
+			int lhs_offset = get_variant_stack_offset(lhs_vreg);
+			int rhs_offset = get_variant_stack_offset(rhs_vreg);
+
+			emit_variant_eval(dst_offset, lhs_offset, rhs_offset, 21); // OP_OR
+			break;
+		}
+
+		case IROpcode::NOT: {
+			int dst_vreg = std::get<int>(instr.operands[0].value);
+			int src_vreg = std::get<int>(instr.operands[1].value);
+
+			int dst_offset = get_variant_stack_offset(dst_vreg);
+			int src_offset = get_variant_stack_offset(src_vreg);
+
+			// OP_NOT - use veval (unary operations need special handling)
+			// For now, use the same operand for both sides
+			emit_variant_eval_unary(dst_offset, src_offset, 23); // OP_NOT
+			break;
+		}
+
+		case IROpcode::BRANCH_ZERO: {
+			int vreg = std::get<int>(instr.operands[0].value);
+			int offset = get_variant_stack_offset(vreg);
+			emit_variant_truthy(REG_T2, offset, instr.type_hint);
+			mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
+			emit_beq(REG_T2, REG_ZERO, 0);
+			break;
+		}
+
+		case IROpcode::BRANCH_NOT_ZERO: {
+			int vreg = std::get<int>(instr.operands[0].value);
+			int offset = get_variant_stack_offset(vreg);
+			emit_variant_truthy(REG_T2, offset, instr.type_hint);
+			mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
+			emit_bne(REG_T2, REG_ZERO, 0);
+			break;
+		}
+
+		case IROpcode::BRANCH_EQ:
+		case IROpcode::BRANCH_NEQ:
+		case IROpcode::BRANCH_LT:
+		case IROpcode::BRANCH_LTE:
+		case IROpcode::BRANCH_GT:
+		case IROpcode::BRANCH_GTE:
+			gen_fused_branch(instr);
+			break;
+		case IROpcode::JUMP:
+			mark_label_use(std::get<std::string>(instr.operands[0].value), m_code.size());
+			emit_jal(REG_ZERO, 0);
+			break;
+
+		case IROpcode::SWITCH:
+			gen_switch(instr);
+			break;
+		case IROpcode::RETURN: {
+			// Godot Sandbox calling convention with Variants:
+			// a0 points to pre-allocated Variant for return value
+			// Copy the return Variant (virtual register 0) to *a0
+
+			// The instruction before this one may already have written the
+			// value through a0, in which case there is nothing left to copy.
+			if (m_fn.return_value_written) {
+				m_fn.return_value_written = false;
+			} else if (m_fn.variant_offsets.find(IRFunction::RETURN_REGISTER) != m_fn.variant_offsets.end()) {
+				int src_offset = get_variant_stack_offset(IRFunction::RETURN_REGISTER);
+
+				// Copy the return Variant from its slot to *a0, addressing
+				// the source off sp rather than through a pointer register.
+				emit_load_return_pointer();
+				emit_variant_move(REG_A0, 0, REG_SP, src_offset, REG_T0);
+			}
+
+			// Function epilogue - restore registers and deallocate stack
+			// Restore return address: ld ra, 0(sp)
+			if (m_fn.saves_return_address) {
+				emit_ld(REG_RA, REG_SP, SAVED_RA_OFFSET);
+			}
+
+			// Deallocate stack: addi sp, sp, frame_size
+			if (m_fn.stack_frame_size > 0) {
+				emit_add_offset(REG_SP, REG_SP, m_fn.stack_frame_size);
+			}
+
+			emit_ret();
+			break;
+		}
+
+		case IROpcode::ARRAY_APPEND: {
+			// ARRAY_APPEND dst, array, value -- ECALL_ARRAY_OPS with
+			// a0 = Array_Op::PUSH_BACK, a1 = the Array's scoped index,
+			// a2 = an unused element index, a3 = the Variant to append.
+			const int result_offset = get_variant_stack_offset(std::get<int>(instr.operands[0].value));
+			const int array_offset = get_variant_stack_offset(std::get<int>(instr.operands[1].value));
+			const int value_offset = get_variant_stack_offset(std::get<int>(instr.operands[2].value));
+
+			spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
+
+			emit_li(REG_A0, array_op(Array_Op::PUSH_BACK));
+			emit_lw(REG_A1, REG_SP, array_offset + VARIANT_DATA_OFFSET);
+			emit_li(REG_A2, 0);
+			emit_add_offset(REG_A3, REG_SP, value_offset);
+			emit_li(REG_A7, ECALL_ARRAY_OPS);
+			emit_ecall();
+
+			// Array.append() evaluates to null and the host writes nothing
+			// back, so the destination is stored here.
+			emit_li(REG_T0, Variant::NIL);
+			emit_store_variant_type(REG_T0, REG_SP, result_offset);
+			break;
+		}
+
+		case IROpcode::DICT_SET: {
+			// DICT_SET dict, key, value -- ECALL_DICTIONARY_OPS with
+			// a0 = Dictionary_Op::SET, a1 = the Dictionary's scoped index,
+			// a2 = the key and a3 = the value.
+			const int dict_offset = get_variant_stack_offset(std::get<int>(instr.operands[0].value));
+			const int key_offset = get_variant_stack_offset(std::get<int>(instr.operands[1].value));
+			const int value_offset = get_variant_stack_offset(std::get<int>(instr.operands[2].value));
+
+			spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
+
+			emit_li(REG_A0, dictionary_op(Dictionary_Op::SET));
+			emit_lw(REG_A1, REG_SP, dict_offset + VARIANT_DATA_OFFSET);
+			emit_add_offset(REG_A2, REG_SP, key_offset);
+			emit_add_offset(REG_A3, REG_SP, value_offset);
+			emit_li(REG_A7, ECALL_DICTIONARY_OPS);
+			emit_ecall();
+			break;
+		}
+
+		case IROpcode::ARRAY_GET:
+		case IROpcode::ARRAY_SET: {
+			// ARRAY_GET dst, array, index   /   ARRAY_SET array, index, value
+			const bool is_set = instr.opcode == IROpcode::ARRAY_SET;
+			const int array_operand = is_set ? 0 : 1;
+			const int index_operand = is_set ? 1 : 2;
+			const int value_operand = is_set ? 2 : 0;
+
+			const int array_offset = get_variant_stack_offset(std::get<int>(instr.operands[array_operand].value));
+			const int index_offset = get_variant_stack_offset(std::get<int>(instr.operands[index_operand].value));
+			const int value_offset = get_variant_stack_offset(std::get<int>(instr.operands[value_operand].value));
+
+			spill_around_syscall({REG_A0, REG_A1, REG_A2});
+
+			emit_array_element_access(is_set, array_offset, index_offset, value_offset);
+			break;
+		}
+
+		case IROpcode::VCALL:
+			gen_vcall(instr);
+			break;
+		case IROpcode::CALL:
+			gen_call(instr);
+			break;
+		case IROpcode::MAKE_VECTOR2:
+		case IROpcode::MAKE_VECTOR3:
+		case IROpcode::MAKE_VECTOR4: {
+			// Format: MAKE_VECTORn result_reg, x_reg, y_reg, [z_reg], [w_reg]
+			int num_components = (instr.opcode == IROpcode::MAKE_VECTOR2) ? 2 :
+								 (instr.opcode == IROpcode::MAKE_VECTOR3) ? 3 : 4;
+
+			if (instr.operands.size() != static_cast<size_t>(1 + num_components)) {
+				throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_VECTOR requires correct number of operands");
+			}
+
+			int result_vreg = std::get<int>(instr.operands[0].value);
+			int result_offset = get_variant_stack_offset(result_vreg);
+
+			// Set m_type field (offset 0)
+			int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2) ? Variant::VECTOR2 :
+							   (instr.opcode == IROpcode::MAKE_VECTOR3) ? Variant::VECTOR3 : Variant::VECTOR4;
+			emit_li(REG_T0, variant_type);
+			emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
+
+			// Store each component as a real_t in v.v4[]
+			for (int i = 0; i < num_components; i++) {
+				int comp_vreg = std::get<int>(instr.operands[1 + i].value);
+				int comp_offset = get_variant_stack_offset(comp_vreg);
+				emit_variant_component_to_real(comp_offset, result_offset, real_offset(i));
+			}
+
+			break;
+		}
+
+		case IROpcode::MAKE_VECTOR2I:
+		case IROpcode::MAKE_VECTOR3I:
+		case IROpcode::MAKE_VECTOR4I: {
+			// Format: MAKE_VECTORnI result_reg, x_reg, y_reg, [z_reg], [w_reg]
+			int num_components = (instr.opcode == IROpcode::MAKE_VECTOR2I) ? 2 :
+								 (instr.opcode == IROpcode::MAKE_VECTOR3I) ? 3 : 4;
+
+			if (instr.operands.size() != static_cast<size_t>(1 + num_components)) {
+				throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_VECTORnI requires correct number of operands");
+			}
+
+			int result_vreg = std::get<int>(instr.operands[0].value);
+			int result_offset = get_variant_stack_offset(result_vreg);
+
+			// Set m_type field (offset 0)
+			int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2I) ? Variant::VECTOR2I :
+							   (instr.opcode == IROpcode::MAKE_VECTOR3I) ? Variant::VECTOR3I : Variant::VECTOR4I;
+			emit_li(REG_T0, variant_type);
+			emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
+
+			// Store each component in v.v4i[] (int32_t, same width in both builds)
+			for (int i = 0; i < num_components; i++) {
+				int comp_vreg = std::get<int>(instr.operands[1 + i].value);
+				int comp_offset = get_variant_stack_offset(comp_vreg);
+
+				// Load from stack Variant
+				emit_lw(REG_T0, REG_SP, comp_offset + VARIANT_DATA_OFFSET);
+				emit_sw(REG_T0, REG_SP, result_offset + int_offset(i));
+			}
+
+			break;
+		}
+
+		case IROpcode::MAKE_COLOR: {
+			// Format: MAKE_COLOR result_reg, r_reg, g_reg, b_reg, a_reg
+			if (instr.operands.size() != 5) {
+				throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_COLOR requires 5 operands");
+			}
+
+			int result_vreg = std::get<int>(instr.operands[0].value);
+			int result_offset = get_variant_stack_offset(result_vreg);
+
+			// Set m_type field to COLOR
+			emit_li(REG_T0, Variant::COLOR);
+			emit_sw(REG_T0, REG_SP, result_offset);
+
+			// Store each component (r, g, b, a) as real_t: a Color inside a Variant
+			// shares the v.v4[] union with the vectors, so it follows real_t too.
+			// Color components need to be normalized (0-255 integers -> 0.0-1.0 floats)
+			for (int i = 0; i < 4; i++) {
+				int comp_vreg = std::get<int>(instr.operands[1 + i].value);
+				int comp_offset = get_variant_stack_offset(comp_vreg);
+				emit_variant_component_to_real(comp_offset, result_offset, real_offset(i), true); // normalize_by_255 = true
+			}
+
+			break;
+		}
+
+		case IROpcode::PRINT:
+			gen_print(instr);
+			break;
+		case IROpcode::GLOBAL_CALL:
+			// Every global except print(). See riscv_globals.cpp.
+			emit_global_call(instr);
+			break;
+
+		case IROpcode::MAKE_ARRAY:
+			gen_make_array(instr);
+			break;
+		case IROpcode::MAKE_DICTIONARY:
+			gen_make_dictionary(instr);
+			break;
+		case IROpcode::MAKE_PACKED_BYTE_ARRAY:
+		case IROpcode::MAKE_PACKED_INT32_ARRAY:
+		case IROpcode::MAKE_PACKED_INT64_ARRAY:
+		case IROpcode::MAKE_PACKED_FLOAT32_ARRAY:
+		case IROpcode::MAKE_PACKED_FLOAT64_ARRAY:
+		case IROpcode::MAKE_PACKED_STRING_ARRAY:
+		case IROpcode::MAKE_PACKED_VECTOR2_ARRAY:
+		case IROpcode::MAKE_PACKED_VECTOR3_ARRAY:
+		case IROpcode::MAKE_PACKED_COLOR_ARRAY:
+		case IROpcode::MAKE_PACKED_VECTOR4_ARRAY:
+			gen_make_packed_array(instr);
+			break;
+		case IROpcode::VGET_INLINE:
+			gen_vget_inline(instr);
+			break;
+		case IROpcode::VGET:
+			gen_vget(instr);
+			break;
+		case IROpcode::VSET:
+			gen_vset(instr);
+			break;
+		case IROpcode::MAKE_RECT2:
+		case IROpcode::MAKE_RECT2I:
+		case IROpcode::MAKE_PLANE:
+		case IROpcode::VSET_INLINE:
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Opcode not yet implemented in RISC-V codegen");
+
+		case IROpcode::CALL_SYSCALL:
+			gen_call_syscall(instr);
+			break;
+		// No `default:` here on purpose: every opcode in ir_opcodes.def has
+		// to be listed, so adding one is a compile error here rather than a
+		// program that silently omits it.
+	}
+}
+
+void RISCVCodeGen::gen_function(const IRFunction& func) {
+	// Godot Sandbox calling convention with Variants:
+	// a0 = pointer to return Variant (pre-allocated by caller)
+	// a1-a7 = pointers to argument Variants
+	//
+	// Everything this function keeps about itself lives in m_fn, which the
+	// guard resets on the way in and clears on the way out.
+	FunctionStateGuard function_state(*this);
+
+	plan_frame(func);
+	emit_prologue(func);
+
+	for (size_t instr_idx = 0; instr_idx < func.instructions.size(); instr_idx++) {
+		m_fn.forward_return = m_fn.forward_to_return[instr_idx];
+		m_fn.current_instr_idx++;
+		gen_instruction(func.instructions[instr_idx]);
 	}
 }
 
@@ -3340,12 +3301,7 @@ void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) 
 	const std::string& str = (*m_string_constants)[string_idx];
 	int str_len = static_cast<int>(str.length());
 
-	// Handle register clobbering (VCREATE uses a0-a3)
-	std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-	auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-	for (const auto& move : moves) {
-		emit_mv(move.second, move.first);
-	}
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 
 	// Allocate stack space for: string data + struct { char*, size_t }
 	int str_space = ((str_len + 1) + 7) & ~7; // String + null terminator, aligned to 8 bytes
@@ -3388,7 +3344,7 @@ void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) 
 	emit_add_offset(REG_A3, REG_SP, str_space);
 
 	// a7 = ECALL_VCREATE (517)
-	emit_li(REG_A7, 517);
+	emit_li(REG_A7, ECALL_VCREATE);
 	emit_ecall();
 
 	// Restore stack pointer
@@ -3400,12 +3356,7 @@ void RISCVCodeGen::emit_vcreate_syscall(int variant_type, int method, uint8_t da
 	// VCREATE signature: void vcreate(Variant* dst, Variant::Type type, int method, void* data)
 	// This handles register clobbering for a0-a3
 
-	// Handle register clobbering (VCREATE uses a0-a3)
-	std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-	auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-	for (const auto& move : moves) {
-		emit_mv(move.second, move.first);
-	}
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 
 	// a0 = pointer to destination Variant (result_offset from SP)
 	emit_add_offset(REG_A0, REG_SP, result_offset);
@@ -3422,7 +3373,7 @@ void RISCVCodeGen::emit_vcreate_syscall(int variant_type, int method, uint8_t da
 	}
 
 	// a7 = ECALL_VCREATE (517)
-	emit_li(REG_A7, 517);
+	emit_li(REG_A7, ECALL_VCREATE);
 	emit_ecall();
 }
 
@@ -3467,13 +3418,7 @@ void RISCVCodeGen::emit_variant_eval(int result_offset, int lhs_offset, int rhs_
 
 	// VEVAL clobbers a0-a3, so handle register clobbering first
 	if (handle_clobbering) {
-		std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2, REG_A3};
-		auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-
-		// Emit moves to save live values from clobbered registers
-		for (const auto& move : moves) {
-			emit_mv(move.second, move.first); // Move from clobbered reg to new reg
-		}
+		spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 	}
 
 	// Load operator into a0
@@ -3489,7 +3434,7 @@ void RISCVCodeGen::emit_variant_eval(int result_offset, int lhs_offset, int rhs_
 	emit_add_offset(REG_A3, REG_SP, result_offset);
 
 	// Make the ecall to sys_veval (ECALL_VEVAL = 502)
-	emit_li(REG_A7, 502); // ECALL_VEVAL
+	emit_li(REG_A7, ECALL_VEVAL);
 	emit_ecall();
 }
 
@@ -3586,7 +3531,7 @@ void RISCVCodeGen::emit_array_element_access(bool is_set, int array_offset, int 
 	// touching a1.
 	mark_label_use(in_range, m_code.size());
 	emit_bge(REG_A1, REG_ZERO, 0);
-	emit_li(REG_A7, 523); // ECALL_ARRAY_SIZE
+	emit_li(REG_A7, ECALL_ARRAY_SIZE);
 	emit_ecall();
 	emit_add(REG_A1, REG_A1, REG_A0);
 	emit_lw(REG_A0, REG_SP, array_offset + VARIANT_DATA_OFFSET);
@@ -3602,7 +3547,7 @@ void RISCVCodeGen::emit_array_element_access(bool is_set, int array_offset, int 
 		emit_xori(REG_A1, REG_A1, -1); // -index - 1
 	}
 	emit_add_offset(REG_A2, REG_SP, value_offset);
-	emit_li(REG_A7, 522); // ECALL_ARRAY_AT
+	emit_li(REG_A7, ECALL_ARRAY_AT);
 	emit_ecall();
 }
 
@@ -4253,6 +4198,15 @@ void RISCVCodeGen::emit_srai(uint8_t rd, uint8_t rs, uint8_t shamt) {
 void RISCVCodeGen::emit_sext_w(uint8_t rd, uint8_t rs) {
 	// ADDIW: opcode=0x1b, funct3=0
 	emit_i_type(0x1b, rd, 0, rs, 0);
+}
+
+void RISCVCodeGen::spill_around_syscall(const std::vector<uint8_t>& clobbered_regs) {
+	// The allocator answers with the moves that rescue whatever it still needs;
+	// for the common case where nothing lives in an argument register that is
+	// no moves at all.
+	for (const auto& move : m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx)) {
+		emit_mv(move.second, move.first);
+	}
 }
 
 void RISCVCodeGen::emit_syscall_result(int result_vreg, uint8_t result_reg, int result_offset, int variant_type) {

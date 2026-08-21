@@ -21,7 +21,6 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 	// Calculate offsets
 	size_t ehdr_size = sizeof(Elf64_Ehdr);
 	size_t phdr_size = sizeof(Elf64_Phdr);
-	size_t shdr_size = sizeof(Elf64_Shdr);
 
 	// Determine if we need separate .text and .data segments
 	// If we have global variables, we need two PT_LOAD segments:
@@ -125,7 +124,6 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 	size_t offset = 0;
 
 	// ELF header
-	size_t ehdr_offset = offset;
 	offset += ehdr_size;
 
 	// Program headers
