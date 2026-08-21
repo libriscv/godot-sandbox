@@ -1,0 +1,36 @@
+# Hostile mod. Each try_* attempts a forbidden operation. The game calls them
+# at startup and checks the exception counter. All must be refused.
+
+var api : Dictionary = {}
+
+func mod_init(a : Dictionary) -> void:
+	api = a
+
+func try_unwrap_callable() -> String:
+	var host = api["log"].get_object()
+	host.call("get_class")
+	return "reached the object behind a granted Callable"
+
+func try_rename_own_node() -> String:
+	set_name("pwned")
+	return "renamed its own node"
+
+func try_reach_parent() -> String:
+	var p = get_parent()
+	p.call("get_class")
+	return "called a method on its parent"
+
+# get_node() returns a handle, but every method/property on it is denied.
+func try_reach_scene_root() -> String:
+	var root = get_node("/root")
+	root.call("get_class")
+	return "called a method on the scene root"
+
+func try_read_root_property() -> String:
+	var root = get_node("/root")
+	return "read a property off the scene root: " + str(root.name)
+
+func try_write_root_property() -> String:
+	var root = get_node("/root")
+	root.name = "pwned"
+	return "wrote a property on the scene root"

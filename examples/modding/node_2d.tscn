@@ -1,0 +1,13 @@
+[gd_scene load_steps=2 format=3 uid="uid://bsr6ba1r66jpa"]
+
+[ext_resource type="Script" uid="uid://c0rqirutvx7ol" path="res://node_2d.gd" id="1_0e48y"]
+
+[node name="Node2D" type="Node2D"]
+script = ExtResource("1_0e48y")
+
+[node name="Status" type="Label" parent="."]
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 616.0
+offset_bottom = 216.0
+text = "loading mods..."
