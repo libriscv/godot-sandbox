@@ -25,3 +25,8 @@ src/gen/
 
 # Build files
 *.pyc
+
+# Benchmark results are machine-specific: a baseline from another CPU compares
+# two different things, and the harness says so when it sees one.
+tests/bench/results/
+tests/bench/baseline*.json
