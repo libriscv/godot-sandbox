@@ -226,6 +226,11 @@ struct IRFunction {
 	// RETURN names no operand, so every pass that has to know where the result
 	// of a function lives asks here.
 	static constexpr int RETURN_REGISTER = 0;
+
+	// The Sandbox ABI hands a0 to the return Variant and one argument pointer
+	// per register after it, so a1-a7 is the whole of it: an eighth parameter
+	// has nowhere to arrive from.
+	static constexpr size_t MAX_PARAMETERS = 7;
 };
 
 // Global variable declaration in IR

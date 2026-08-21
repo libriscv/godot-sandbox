@@ -151,6 +151,33 @@ paths Godot does not pre-check itself.
 - `tests/test_signatures.cpp` covers what the compiler publishes;
   `test_sgd_*` in `test_gdscript_compiler.gd` covers the arity Godot enforces.
 
+### What the editor reads
+
+A signature also carries the declaration's `line` and its `description`, which
+say nothing about how to place a call: they exist so that GDScript's editor,
+having completed a name, has somewhere to jump and something to show. The ELF
+carries neither -- its symbol table maps names to machine code, not to source.
+
+- `line` is 1-based, from the `func` token. `SafeGDScript::_get_member_line()`
+  hands it back and returns -1 for a name the script does not declare: a caller
+  that gets a line opens the script at it, so claiming 0 would send the editor
+  to the top of the wrong file instead of letting it look elsewhere.
+- `description` is the `##` block written directly above the declaration, a
+  blank line ending it. Comments are not tokens, so the lexer keeps doc comments
+  in `doc_comments()` and `Compiler::compile()` hands them to the parser.
+- `_get_documentation()` builds one `DocData::ClassDoc` from the method list,
+  keyed by `_get_doc_class_name()` -- the same global name the rest of the
+  editor knows the script by. `from_dict()` drops a key spelled differently
+  without complaint, which is how a help page comes out empty.
+
+Completion itself needs none of this: Godot reads `_get_script_method_list()`
+for `$Node.`, a typed variable and `preload(...)`, and `_get_method_info()` for
+the argument hint. `get_node("Node").` resolves for no script type at all,
+GDScript's own included -- only `$`/`%` node literals are resolved.
+
+None of these virtuals is callable from GDScript, so they have no integration
+test; verify them with a temporary `ClassDB::bind_method` in `_bind_methods()`.
+
 ### Dispatch
 
 A fetch-decode-execute loop whose execute step is one `match` on an opcode is

@@ -527,7 +527,16 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 	// Copy parameter Variants from argument registers to stack
 	// Parameters come in a1-a7 as POINTERS to Variants
-	for (size_t i = 0; i < m_fn.num_params && i < 7; i++) {
+	if (m_fn.num_params > IRFunction::MAX_PARAMETERS) {
+		// The frontend rejects this, so reaching it means the IR was built
+		// some other way. Dropping the extra parameters silently would leave
+		// their slots holding whatever the frame did.
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"Function '" + func.name + "' has " + std::to_string(m_fn.num_params) +
+			" parameters, but only " + std::to_string(IRFunction::MAX_PARAMETERS) +
+			" arrive in registers");
+	}
+	for (size_t i = 0; i < m_fn.num_params; i++) {
 		int param_vreg = static_cast<int>(i); // Parameters map to virtual registers 0-6
 		int dst_offset = get_variant_stack_offset(param_vreg);
 		uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
@@ -1389,7 +1398,15 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 				// Set up arguments: a1-a7 point to Variant arguments on stack
 				// a0 points to return Variant
-				for (int i = 0; i < arg_count && i < 7; i++) {
+				if (arg_count > static_cast<int>(IRFunction::MAX_PARAMETERS)) {
+					// Passing the first seven and dropping the rest leaves the
+					// callee reading slots nothing wrote for the others.
+					throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+						"Call passes " + std::to_string(arg_count) +
+						" arguments, but only " + std::to_string(IRFunction::MAX_PARAMETERS) +
+						" fit in registers");
+				}
+				for (int i = 0; i < arg_count; i++) {
 					int arg_vreg = std::get<int>(instr.operands[3 + i].value);
 					int arg_offset = get_variant_stack_offset(arg_vreg);
 					uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);

@@ -7,6 +7,37 @@ namespace gdscript {
 
 Parser::Parser(std::vector<Token> tokens) : m_tokens(std::move(tokens)) {}
 
+void Parser::set_doc_comments(std::vector<std::pair<int, std::string>> comments) {
+	m_doc_comments.clear();
+	m_doc_comments.reserve(comments.size());
+	for (auto &comment : comments) {
+		m_doc_comments.emplace(comment.first, std::move(comment.second));
+	}
+}
+
+std::string Parser::doc_comment_above(int p_line) const {
+	// The block is the contiguous run of doc-comment lines directly above the
+	// declaration; any other line, blank included, ends it. Collected bottom-up,
+	// then reversed into source order.
+	std::vector<const std::string *> lines;
+	for (int line = p_line - 1; line > 0; line--) {
+		auto it = m_doc_comments.find(line);
+		if (it == m_doc_comments.end()) {
+			break;
+		}
+		lines.push_back(&it->second);
+	}
+
+	std::string text;
+	for (size_t i = lines.size(); i-- > 0;) {
+		if (!text.empty()) {
+			text += '\n';
+		}
+		text += *lines[i];
+	}
+	return text;
+}
+
 Program Parser::parse() {
 	Program program;
 
@@ -94,6 +125,7 @@ FunctionDecl Parser::parse_function() {
 	Token func_token = consume(TokenType::FUNC, "Expected 'func'");
 	func.line = func_token.line;
 	func.column = func_token.column;
+	func.doc_comment = doc_comment_above(func_token.line);
 
 	Token name = consume(TokenType::IDENTIFIER, "Expected function name");
 	func.name = name.lexeme;

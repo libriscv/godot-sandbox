@@ -244,6 +244,15 @@ void test_max_registers() {
 		expect_rejected(func, "outside max_registers");
 	}
 
+	// A parameter is defined by the calling convention rather than by an
+	// instruction, so a count that covers every operand can still leave the
+	// last parameter without a stack slot for the prologue to copy it into.
+	{
+		IRFunction func = good_function();
+		func.parameters = { "a", "b", "c", "d" };
+		expect_rejected(func, "parameter registers");
+	}
+
 	std::cout << "  max_registers OK" << std::endl;
 }
 

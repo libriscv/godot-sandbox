@@ -1137,7 +1137,11 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 	return result;
 }
 Dictionary SafeGDScriptLanguage::_lookup_code(const String &p_code, const String &p_symbol, const String &p_path, Object *p_owner) const {
+	// "result" is mandatory: lookup_code() reads it back with ERR_FAIL_COND_V, so
+	// omitting it logs an error instead of reporting an unresolved symbol.
+	// Not-found is ERR_CANT_RESOLVE, as in GDScript's own lookup.
 	Dictionary result;
+	result["result"] = Error::ERR_CANT_RESOLVE;
 	const SourceSymbols symbols = scan_source(p_code);
 
 	// Something the file itself declares wins: ctrl-clicking a name in a script
@@ -1221,8 +1225,7 @@ Dictionary SafeGDScriptLanguage::_lookup_code(const String &p_code, const String
 		}
 	}
 
-	// An empty Dictionary is how this says it found nothing; lookup_code() turns
-	// a missing "result" into ERR_UNAVAILABLE and the editor moves on.
+	// No match: result still holds the initial ERR_CANT_RESOLVE.
 	return result;
 }
 String SafeGDScriptLanguage::_auto_indent_code(const String &p_code, int32_t p_from_line, int32_t p_to_line) const {

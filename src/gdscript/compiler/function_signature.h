@@ -55,6 +55,15 @@ struct FunctionSignature {
 	// Fewest arguments a caller must supply: every parameter up to the first
 	// one it is allowed to leave out.
 	size_t required_arguments = 0;
+
+	// -= Editor metadata =-
+	//
+	// Not call information, and absent from the ELF symbol table.
+
+	// 1-based line of the 'func' token; 0 when unknown.
+	int32_t line = 0;
+	// '##' block above the declaration, markers stripped, lines joined by '\n'.
+	std::string description;
 };
 
 // -= The wire format =-
@@ -72,6 +81,8 @@ struct FunctionSignature {
 //   per function:
 //     str  name                 (u32 byte count, then the bytes, no terminator)
 //     i32  return type          (Variant::Type, or ANY_TYPE)
+//     i32  declaration line     (1-based, 0 when unknown)
+//     str  description          (the '##' comment, empty when there is none)
 //     u32  required argument count
 //     u32  parameter count
 //     per parameter:

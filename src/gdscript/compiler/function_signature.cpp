@@ -58,6 +58,8 @@ std::vector<uint8_t> encode_function_signatures(const std::vector<FunctionSignat
 	for (const FunctionSignature &sig : signatures) {
 		write_string(out, sig.name);
 		write_scalar<int32_t>(out, sig.return_type);
+		write_scalar<int32_t>(out, sig.line);
+		write_string(out, sig.description);
 		write_scalar<uint32_t>(out, uint32_t(sig.required_arguments));
 		write_scalar<uint32_t>(out, uint32_t(sig.parameters.size()));
 
@@ -109,6 +111,8 @@ bool decode_function_signatures(const uint8_t *data, size_t size,
 		FunctionSignature sig;
 		sig.name = reader.string();
 		sig.return_type = reader.scalar<int32_t>();
+		sig.line = reader.scalar<int32_t>();
+		sig.description = reader.string();
 		sig.required_arguments = reader.scalar<uint32_t>();
 		const uint32_t parameter_count = reader.scalar<uint32_t>();
 		if (!reader.ok || parameter_count > size) {

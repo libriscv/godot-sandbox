@@ -115,6 +115,24 @@ bool is_call(uint32_t w) {
 	return opcode_of(w) == 0x6F && rd_of(w) == REG_RA;
 }
 
+// The byte offset an sp-relative load or store addresses.
+int frame_offset_of(uint32_t w) {
+	if (opcode_of(w) == 0x03) { // I-type load: imm[11:0] in the top 12 bits
+		return int32_t(w) >> 20;
+	}
+	// S-type store: imm[11:5] in the top 7 bits, imm[4:0] where rd would be
+	const int32_t imm = ((int32_t(w) >> 25) << 5) | int32_t(rd_of(w));
+	return imm;
+}
+
+// The frame size the opening instruction reserves, or 0 when there is no frame.
+int frame_size_of(const std::vector<uint32_t>& words) {
+	if (words.empty() || !is_stack_adjust(words[0])) {
+		return 0;
+	}
+	return -(int32_t(words[0]) >> 20);
+}
+
 size_t count(const std::vector<uint32_t>& words, bool (*pred)(uint32_t)) {
 	size_t n = 0;
 	for (uint32_t w : words) {
@@ -279,6 +297,41 @@ void test_forwarding_respects_later_reads() {
 	std::cout << "  ✓ Forwarding respects later reads" << std::endl;
 }
 
+// A parameter the body never mentions still arrives, and the prologue copies it
+// into its slot. The optimizer used to size the frame from the registers the
+// instructions named, so deleting the last read of a parameter shrank the frame
+// out from under the copy: `func g(a, b): return a` sized a frame for one
+// Variant and then wrote the second parameter past its end -- which the backend
+// caught, refusing the compile with "max_registers too low".
+void test_unused_parameter_still_has_a_slot() {
+	std::cout << "Testing that an unused parameter keeps its slot..." << std::endl;
+
+	const Compiled compiled = compile("func g(a, b):\n\treturn a\n");
+	const std::vector<uint32_t> words = function_words(compiled, "g");
+
+	const int frame_size = frame_size_of(words);
+	assert(frame_size > 0);
+
+	// Both parameters are copied in, and nothing the function does addresses
+	// memory the frame does not cover.
+	size_t frame_stores = 0;
+	for (uint32_t w : words) {
+		if (!touches_frame(w)) {
+			continue;
+		}
+		const int offset = frame_offset_of(w);
+		assert(offset >= 0 && offset < frame_size);
+		if (opcode_of(w) == 0x23) {
+			frame_stores++;
+		}
+	}
+	// One store per 8-byte word of each parameter Variant, and nothing else in
+	// this function writes to the frame.
+	assert(frame_stores == 2 * size_t(VariantLayout(false).variant_words()));
+
+	std::cout << "  ✓ An unused parameter keeps its slot" << std::endl;
+}
+
 } // namespace
 
 int main() {
@@ -291,6 +344,7 @@ int main() {
 	test_calling_function_saves_return_address();
 	test_no_frame_pointer_is_set_up();
 	test_forwarding_respects_later_reads();
+	test_unused_parameter_still_has_a_slot();
 
 	std::cout << std::endl << "All frame tests passed!" << std::endl;
 	return 0;

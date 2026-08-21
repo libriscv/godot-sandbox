@@ -3,12 +3,20 @@
 #include "ast.h"
 #include <vector>
 #include <memory>
+#include <string>
+#include <unordered_map>
+#include <utility>
 
 namespace gdscript {
 
 class Parser {
 public:
 	explicit Parser(std::vector<Token> tokens);
+
+	// The '##' comments the lexer retained, used to attach a block to the
+	// declaration below it. Optional: without them every doc comment is empty,
+	// as for a source that has none.
+	void set_doc_comments(std::vector<std::pair<int, std::string>> comments);
 
 	Program parse();
 
@@ -135,7 +143,13 @@ private:
 	// Attribute parsing
 	bool parse_attribute();  // Parse attribute (e.g., @export), returns true if @export
 
+	// Doc comment block ending on the line above p_line, lines joined by '\n';
+	// empty when there is none.
+	std::string doc_comment_above(int p_line) const;
+
 	std::vector<Token> m_tokens;
+	// Line -> the '##' comment on it. A block is a contiguous run of lines.
+	std::unordered_map<int, std::string> m_doc_comments;
 	size_t m_current = 0;
 };
 

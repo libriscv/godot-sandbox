@@ -338,6 +338,9 @@ struct FunctionDecl {
 	std::vector<StmtPtr> body;
 	int line = 0;
 	int column = 0;
+	// '##' block directly above the declaration, lines joined by '\n'. Not
+	// compiled; published in the signature as the editor description.
+	std::string doc_comment;
 };
 
 // -= Structs =-

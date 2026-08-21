@@ -57,6 +57,8 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 
 		// Step 2: Parsing
 		Parser parser(tokens);
+		// Comments are not tokens; doc comments travel beside the token stream.
+		parser.set_doc_comments(lexer.doc_comments());
 		Program program = parser.parse();
 
 		if (options.dump_ast) {

@@ -35,6 +35,7 @@ public:
 	virtual String _get_source_code() const override;
 	virtual void _set_source_code(const String &p_code) override;
 	virtual Error _reload(bool p_keep_state) override;
+	virtual StringName _get_doc_class_name() const override;
 	virtual TypedArray<Dictionary> _get_documentation() const override;
 	virtual String _get_class_icon_path() const override;
 	virtual bool _has_method(const StringName &p_method) const override;
@@ -89,5 +90,13 @@ private:
 	mutable HashSet<SafeGDScriptInstance *> instances;
 	PackedByteArray elf_data;
 	std::vector<godot::MethodInfo> methods_info;
+	// Per-function editor metadata: declaration line and '##' description. Godot
+	// requests both through separate virtuals rather than the method list, so
+	// they are kept beside methods_info, keyed by name.
+	struct MethodDocumentation {
+		int32_t line = 0;
+		String description;
+	};
+	HashMap<StringName, MethodDocumentation> methods_doc;
 	friend class SafeGDScriptInstance;
 };

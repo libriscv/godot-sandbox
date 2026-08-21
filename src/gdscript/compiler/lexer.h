@@ -2,6 +2,7 @@
 #include "token.h"
 #include <vector>
 #include <string>
+#include <utility>
 #include <unordered_map>
 
 namespace gdscript {
@@ -11,6 +12,12 @@ public:
 	explicit Lexer(std::string source);
 
 	std::vector<Token> tokenize();
+
+	// '##' doc comments in source order, each paired with its line. Comments are
+	// not tokens -- the grammar ignores them -- but a doc comment is the only
+	// description available for a function, so it is kept beside the token
+	// stream instead of discarded. Valid after tokenize().
+	const std::vector<std::pair<int, std::string>> &doc_comments() const { return m_doc_comments; }
 
 private:
 	void scan_token();
@@ -46,6 +53,7 @@ private:
 	std::string m_source;
 	std::vector<Token> m_tokens;
 	std::vector<int> m_indent_stack; // Track indentation levels
+	std::vector<std::pair<int, std::string>> m_doc_comments;
 
 	size_t m_start = 0;
 	size_t m_current = 0;

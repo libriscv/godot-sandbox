@@ -343,6 +343,16 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl) {
 
 	// Parameters are passed in registers a0-a7 (RISC-V convention)
 	// For simplicity, we'll store them as variables immediately
+	if (decl.parameters.size() > IRFunction::MAX_PARAMETERS) {
+		// The prologue can only copy in what the ABI delivers. Lowering the
+		// extra ones anyway would give them slots nothing ever writes, and the
+		// function would read whatever the frame happened to hold.
+		error_at("Function '" + decl.name + "' takes " +
+			std::to_string(decl.parameters.size()) + " parameters, but at most " +
+			std::to_string(IRFunction::MAX_PARAMETERS) + " can be passed",
+			decl.line, decl.column,
+			"Pass the extra values in an Array or Dictionary instead");
+	}
 	for (size_t i = 0; i < decl.parameters.size(); i++) {
 		const auto& param = decl.parameters[i];
 		func.ir.parameters.push_back(param.name);
@@ -2254,6 +2264,9 @@ const StructDecl* CodeGenerator::get_register_struct(const FunctionContext& func
 FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const {
 	FunctionSignature sig;
 	sig.name = decl.name;
+	// Editor metadata, never reaches the IR: only the source carries it.
+	sig.line = decl.line;
+	sig.description = decl.doc_comment;
 	sig.return_type = find_struct(decl.return_type) != nullptr
 		? int32_t(Variant::DICTIONARY)
 		: int32_t(type_hint_from_string(decl.return_type));

@@ -104,6 +104,13 @@ private:
 		if (m_func.max_registers < 0) {
 			fail("max_registers is negative");
 		}
+		// Parameter registers 0..N-1 have no defining instruction, but the
+		// prologue still copies each incoming Variant into one.
+		if (m_func.max_registers < static_cast<int>(m_func.parameters.size())) {
+			fail("max_registers (" + std::to_string(m_func.max_registers) +
+				") does not cover the " + std::to_string(m_func.parameters.size()) +
+				" parameter registers");
+		}
 		for (size_t i = 0; i < m_func.instructions.size(); i++) {
 			for (const auto& operand : m_func.instructions[i].operands) {
 				if (operand.type != IRValue::Type::REGISTER) {
@@ -268,6 +275,7 @@ private:
 		const size_t regs = register_count();
 
 		// The entry block starts with the parameters defined and nothing else.
+		// check_register_range() has established that regs covers them.
 		RegisterState entry(regs);
 		for (size_t i = 0; i < m_func.parameters.size() && i < regs; i++) {
 			entry.defined[i] = true;

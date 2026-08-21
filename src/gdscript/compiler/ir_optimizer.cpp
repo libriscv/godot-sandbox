@@ -139,7 +139,17 @@ void IROptimizer::optimize_function(IRFunction& func) {
 			}
 		}
 	}
-	func.max_registers = max_reg + 1;
+	// Parameters occupy registers 0..N-1 even when no instruction mentions them:
+	// the prologue copies every incoming Variant into its slot. Sizing the frame
+	// from instruction operands alone puts that copy out of frame.
+	func.max_registers = std::max(max_reg + 1, static_cast<int>(func.parameters.size()));
+
+	// The recomputation is the last thing that touches the function, and it is
+	// the one step no per-pass verification covers: every ir_verify() above ran
+	// against the count the previous round left behind.
+	if (verify) {
+		ir_verify(func, "max-registers");
+	}
 }
 
 void IROptimizer::constant_folding(IRFunction& func) {

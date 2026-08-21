@@ -123,10 +123,31 @@ void Lexer::scan_token() {
 			m_column = 1;
 			break;
 
-		case '#':
-			// Comment - skip to end of line
+		case '#': {
+			// Comment - skip to end of line. '##' is a doc comment, whose
+			// text is retained as the editor description of the declaration
+			// below it.
+			const int comment_line = m_line;
+			const bool is_doc = peek() == '#';
+			if (is_doc) {
+				advance();
+			}
+			const size_t text_start = m_current;
 			while (peek() != '\n' && !is_at_end()) advance();
+			if (is_doc) {
+				std::string text = m_source.substr(text_start, m_current - text_start);
+				// One space after the marker is spelling, not content;
+				// deeper indentation is content.
+				if (!text.empty() && text.front() == ' ') {
+					text.erase(text.begin());
+				}
+				while (!text.empty() && (text.back() == '\r' || text.back() == ' ' || text.back() == '\t')) {
+					text.pop_back();
+				}
+				m_doc_comments.emplace_back(comment_line, std::move(text));
+			}
 			break;
+		}
 
 		case '(': push_bracket(')'); add_token(TokenType::LPAREN); break;
 		case '[': push_bracket(']'); add_token(TokenType::LBRACKET); break;

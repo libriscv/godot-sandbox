@@ -25,6 +25,9 @@ using namespace gdscript;
 static IRProgram compile_to_ir(const std::string& source) {
 	Lexer lexer(source);
 	Parser parser(lexer.tokenize());
+	// Comments are not tokens; Compiler::compile() passes them separately.
+	// Omitting this leaves every doc comment empty.
+	parser.set_doc_comments(lexer.doc_comments());
 	Program program = parser.parse();
 	CodeGenerator codegen;
 	return codegen.generate(program);
@@ -203,6 +206,94 @@ static void test_compiler_publishes_signatures() {
 	std::cout << "  ✓ Compiler publishes the signatures of its last compile" << std::endl;
 }
 
+// -= Editor metadata =-
+//
+// line and description are not call information: they back jump-to-definition
+// and hover. The ELF carries neither -- its symbol table maps names to code
+// addresses, not to source lines.
+
+static void test_declaration_line() {
+	const IRProgram ir = compile_to_ir(
+		"\n"
+		"func first():\n"
+		"\treturn 1\n"
+		"\n"
+		"func second(a, b):\n"
+		"\treturn a\n");
+
+	// 1-based, and the 'func' line, not the body's.
+	assert(find_signature(ir, "first").line == 2);
+	assert(find_signature(ir, "second").line == 5);
+
+	std::cout << "  ✓ a signature carries the line its 'func' is on" << std::endl;
+}
+
+static void test_doc_comment() {
+	const IRProgram ir = compile_to_ir(
+		"## Adds two things.\n"
+		"##\n"
+		"## The second is optional.\n"
+		"func documented(a, b = 1):\n"
+		"\treturn a\n"
+		"\n"
+		"# An ordinary comment is not documentation.\n"
+		"func plain():\n"
+		"\treturn 2\n"
+		"\n"
+		"## Detached by a blank line, so it documents nothing.\n"
+		"\n"
+		"func detached():\n"
+		"\treturn 3\n");
+
+	// Marker and one following space stripped; block in source order.
+	assert(find_signature(ir, "documented").description ==
+		"Adds two things.\n\nThe second is optional.");
+	// One '#' is a plain comment.
+	assert(find_signature(ir, "plain").description.empty());
+	// A blank line ends the block.
+	assert(find_signature(ir, "detached").description.empty());
+
+	std::cout << "  ✓ a '##' block above a function becomes its description" << std::endl;
+}
+
+static void test_wire_format_round_trip() {
+	// Both sides of the sandbox boundary compile function_signature.cpp, so the
+	// format need only agree with itself -- but every field has to survive the
+	// round trip, not just the call information.
+	const IRProgram ir = compile_to_ir(
+		"## What it does.\n"
+		"func f(a: int, b := 2.5, c = \"x\") -> String:\n"
+		"\treturn c\n");
+
+	const std::vector<uint8_t> blob = encode_function_signatures(ir.signatures);
+	std::vector<FunctionSignature> decoded;
+	assert(decode_function_signatures(blob.data(), blob.size(), decoded));
+	assert(decoded.size() == 1);
+
+	const FunctionSignature& sig = decoded[0];
+	const FunctionSignature& original = find_signature(ir, "f");
+	assert(sig.name == original.name);
+	assert(sig.line == original.line);
+	assert(sig.description == "What it does.");
+	assert(sig.return_type == Variant::STRING);
+	assert(sig.required_arguments == 1);
+	assert(sig.parameters.size() == 3);
+	assert(sig.parameters[0].name == "a");
+	assert(sig.parameters[0].type == Variant::INT);
+	assert(sig.parameters[1].default_kind == FunctionParameter::DefaultKind::FLOAT);
+	assert(std::get<double>(sig.parameters[1].default_value) == 2.5);
+	assert(sig.parameters[2].default_kind == FunctionParameter::DefaultKind::STRING);
+	assert(std::get<std::string>(sig.parameters[2].default_value) == "x");
+
+	// The blob comes from a guest program: a truncated one must fail the decode,
+	// not be read past its end.
+	std::vector<FunctionSignature> truncated;
+	assert(!decode_function_signatures(blob.data(), blob.size() / 2, truncated));
+	assert(truncated.empty());
+
+	std::cout << "  ✓ the published table survives the wire format intact" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Function Signature Tests ===" << std::endl << std::endl;
 
@@ -215,6 +306,9 @@ int main() {
 	test_struct_parameter_is_a_dictionary();
 	test_return_type();
 	test_compiler_publishes_signatures();
+	test_declaration_line();
+	test_doc_comment();
+	test_wire_format_round_trip();
 
 	std::cout << std::endl << "All function signature tests passed!" << std::endl;
 	return 0;

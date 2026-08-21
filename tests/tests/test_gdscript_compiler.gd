@@ -188,6 +188,43 @@ func complex_expr(x, y, z):
 	s.queue_free()
 	ts.queue_free()
 
+func test_unused_parameters():
+	# Every parameter arrives whether or not the body reads it, and the prologue
+	# copies each one into its own stack slot. Sizing the frame from the
+	# registers the optimized instructions still name left the copy of an unused
+	# parameter writing past the end of the frame, and the compile was refused
+	# with "max_registers too low".
+	var gdscript_code = """
+func first_of_two(a, b):
+	return a
+
+func middle_of_three(a, b, c):
+	return b
+
+func last_of_seven(a, b, c, d, e, f, g):
+	return g
+
+func none_of_two(a, b):
+	return 7
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+
+	assert_eq(s.vmcallv("first_of_two", 11, 22), 11, "first_of_two(11, 22) should return 11")
+	assert_eq(s.vmcallv("middle_of_three", 1, 2, 3), 2, "middle_of_three(1, 2, 3) should return 2")
+	assert_eq(s.vmcallv("last_of_seven", 1, 2, 3, 4, 5, 6, 7), 7, "last_of_seven(..) should return the seventh")
+	assert_eq(s.vmcallv("none_of_two", 1, 2), 7, "none_of_two(1, 2) should return 7")
+
+	s.queue_free()
+	ts.queue_free()
+
 func test_ir_verification():
 	# Verify that register allocation avoids unnecessary stack spilling
 	# by checking max_registers in the IR

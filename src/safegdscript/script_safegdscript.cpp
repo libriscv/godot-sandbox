@@ -7,6 +7,7 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 #include "../gdscript/compiler/function_signature.h"
 #include "../sandbox.h"
 static constexpr bool VERBOSE_LOGGING = false;
@@ -56,8 +57,64 @@ Error SafeGDScript::_reload(bool p_keep_state) {
 	compile_source_to_elf();
 	return Error::OK;
 }
+StringName SafeGDScript::_get_doc_class_name() const {
+	// Help page key, and what lookup_code() reports for a member, so it must be
+	// the global name the rest of the editor knows the script by.
+	return StringName(PathToGlobalName(this->path));
+}
+
+// Documentation types are names, not Variant::Type: untyped is "Variant", and
+// no return type at all is "void" -- never emitted here, since every exported
+// function returns a Variant.
+static String doc_type_name(const godot::PropertyInfo &p_info) {
+	if (p_info.type == Variant::Type::NIL) {
+		return (p_info.usage & PROPERTY_USAGE_NIL_IS_VARIANT) ? String("Variant") : String("void");
+	}
+	return Variant::get_type_name(p_info.type);
+}
+
 TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
-	return TypedArray<Dictionary>();
+	// One page listing the exported functions. Keys are what
+	// DocData::ClassDoc::from_dict() reads back; an unrecognised key is dropped
+	// silently, yielding an empty page.
+	Dictionary class_doc;
+	class_doc["name"] = String(_get_doc_class_name());
+	class_doc["inherits"] = String(_get_instance_base_type());
+
+	Array method_docs;
+	for (const godot::MethodInfo &method_info : methods_info) {
+		Dictionary method_doc;
+		method_doc["name"] = method_info.name;
+		method_doc["return_type"] = doc_type_name(method_info.return_val);
+
+		// Godot convention: defaults cover the trailing N arguments.
+		const int64_t first_default = int64_t(method_info.arguments.size()) -
+				int64_t(method_info.default_arguments.size());
+		Array argument_docs;
+		for (int64_t i = 0; i < int64_t(method_info.arguments.size()); i++) {
+			const godot::PropertyInfo &argument = method_info.arguments[i];
+			Dictionary argument_doc;
+			argument_doc["name"] = argument.name;
+			argument_doc["type"] = doc_type_name(argument);
+			if (i >= first_default) {
+				// Source spelling: "x" stays quoted, 2.5 stays 2.5.
+				argument_doc["default_value"] = UtilityFunctions::var_to_str(
+						method_info.default_arguments[i - first_default]);
+			}
+			argument_docs.push_back(argument_doc);
+		}
+		method_doc["arguments"] = argument_docs;
+
+		if (const MethodDocumentation *documentation = methods_doc.getptr(method_info.name)) {
+			method_doc["description"] = documentation->description;
+		}
+		method_docs.push_back(method_doc);
+	}
+	class_doc["methods"] = method_docs;
+
+	TypedArray<Dictionary> documentation;
+	documentation.push_back(class_doc);
+	return documentation;
 }
 String SafeGDScript::_get_class_icon_path() const {
 	return String("res://addons/godot_sandbox/SafeGDScript.svg");
@@ -183,7 +240,13 @@ TypedArray<Dictionary> SafeGDScript::_get_script_property_list() const {
 	return {};
 }
 int32_t SafeGDScript::_get_member_line(const StringName &p_member) const {
-	return 0;
+	// 1-based, as the editor counts lines. Not-found is -1, not 0: a caller opens
+	// the script at the returned line, so 0 would jump to the top of the wrong
+	// file instead of letting the caller look elsewhere.
+	if (const MethodDocumentation *documentation = methods_doc.getptr(p_member)) {
+		return documentation->line;
+	}
+	return -1;
 }
 Dictionary SafeGDScript::_get_constants() const {
 	return Dictionary();
@@ -379,6 +442,7 @@ static Variant default_argument_value(const gdscript::FunctionParameter &p_param
 void SafeGDScript::update_methods_info() {
 	Sandbox::BinaryInfo info = Sandbox::get_program_info_from_binary(this->elf_data);
 	this->methods_info.clear();
+	this->methods_doc.clear();
 
 	// The symbol table names the functions; only the compiler knows what they
 	// take. Without the parameter list Godot has nothing to reject a call
@@ -419,6 +483,14 @@ void SafeGDScript::update_methods_info() {
 		for (size_t i = signature.required_arguments; i < signature.parameters.size(); i++) {
 			method.default_arguments.push_back(default_argument_value(signature.parameters[i]));
 		}
+
+		// Editor metadata, keyed by name. Only declared functions get an entry:
+		// a symbol without a signature has no source line here to point at.
+		MethodDocumentation documentation;
+		documentation.line = signature.line;
+		documentation.description = String::utf8(signature.description.c_str(), signature.description.size());
+		methods_doc.insert(method.name, std::move(documentation));
+
 		methods_info.push_back(std::move(method));
 	}
 
