@@ -75,7 +75,18 @@ private:
 	void gen_dictionary_keys_for_iteration(int iterable_reg, FunctionContext& func);
 
 
+	int gen_assert(const CallExpr* expr, FunctionContext& func);
+	int gen_get_node(const std::string& path, FunctionContext& func);
+	int gen_range(const CallExpr* expr, FunctionContext& func);
+	int gen_color8(const CallExpr* expr, FunctionContext& func);
+	int gen_class_test(int value_reg, const std::string& class_name, FunctionContext& func);
+	int gen_class_cast(const ClassCastExpr* expr, FunctionContext& func);
 	int gen_int_immediate(int64_t value, FunctionContext& func);
+	void gen_numeric_for(const ForStmt* stmt, int start_reg, int end_reg, int step_reg,
+		FunctionContext& func);
+	int gen_float_immediate(double value, FunctionContext& func);
+	// Returns -1 if `type` has no constant `name`.
+	int gen_builtin_constant(const std::string& type, const std::string& name, FunctionContext& func);
 	int gen_ternary(const TernaryExpr* expr, FunctionContext& func);
 	int gen_call(const CallExpr* expr, FunctionContext& func);
 	int gen_member_call(const MemberCallExpr* expr, FunctionContext& func);

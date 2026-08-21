@@ -135,6 +135,13 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			break;
 		}
 
+		case IROpcode::LOAD_NIL: {
+			// Integer zero; interpreter's Value has no NIL.
+			int reg = std::get<int>(instr.operands[0].value);
+			ctx.registers[reg] = int64_t(0);
+			break;
+		}
+
 		case IROpcode::LOAD_BOOL: {
 			int reg = std::get<int>(instr.operands[0].value);
 			int64_t imm = std::get<int64_t>(instr.operands[1].value);
@@ -446,13 +453,16 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 				info = &global_function(resolve_numeric_form(*info, all_integer));
 			}
 
-			if (info->kind == GlobalKind::INT_OP) {
+			if (info->kind == GlobalKind::INT_OP || info->kind == GlobalKind::SYSCALL_INT) {
 				std::vector<int64_t> int_args;
 				int_args.reserve(args.size());
 				for (const Value& value : args) {
 					int_args.push_back(get_int(value));
 				}
-				ctx.registers[result_reg] = eval_global_int(info->fn, int_args.data(), int_args.size());
+				// SYSCALL_INT throws: the answer is the host's to give.
+				ctx.registers[result_reg] = (info->kind == GlobalKind::INT_OP)
+					? eval_global_int(info->fn, int_args.data(), int_args.size())
+					: eval_global_int_syscall(info->fn, int_args.data(), int_args.size());
 				break;
 			}
 
@@ -474,6 +484,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 				case GlobalResult::FLOAT:
 				case GlobalResult::STRING:
 				case GlobalResult::NUMERIC:
+				case GlobalResult::VARIANT:
 					ctx.registers[result_reg] = result;
 					break;
 			}
@@ -495,7 +506,10 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::ARRAY_SET:
 		case IROpcode::DICT_SET:
 		case IROpcode::CALL_SYSCALL:
+		case IROpcode::GET_NODE:
+		case IROpcode::LOAD_STRING_AS:
 		case IROpcode::PRINT:
+		case IROpcode::THROW:
 		case IROpcode::VCALL:
 		case IROpcode::VGET:
 		case IROpcode::VSET:

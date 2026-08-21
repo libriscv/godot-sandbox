@@ -20,7 +20,10 @@ struct Expr {
 
 struct LiteralExpr : Expr {
 	enum class Type { INTEGER, FLOAT, STRING, BOOL, NULL_VAL };
+	// Variant type for &"..." and ^"..." string literals.
+	enum class StringType { PLAIN, STRING_NAME, NODE_PATH };
 	Type lit_type;
+	StringType string_type = StringType::PLAIN;
 	std::variant<int64_t, double, std::string, bool> value;
 
 	LiteralExpr(int64_t v) : lit_type(Type::INTEGER), value(v) {}
@@ -72,6 +75,15 @@ struct TypeTestExpr : Expr {
 
 	TypeTestExpr(ExprPtr v, std::string t)
 		: value(std::move(v)), type_name(std::move(t)) {}
+};
+
+// `x as SomeClass` — class cast via engine. Scalars parsed as constructor calls.
+struct ClassCastExpr : Expr {
+	ExprPtr value;
+	std::string class_name;
+
+	ClassCastExpr(ExprPtr v, std::string c)
+		: value(std::move(v)), class_name(std::move(c)) {}
 };
 
 struct TernaryExpr : Expr {

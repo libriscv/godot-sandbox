@@ -232,6 +232,36 @@ APICALL(api_print) {
 	emu.print(args, len);
 }
 
+// Channelled print: printerr, prints, printt, printraw, print_rich,
+// print_verbose, push_error, push_warning. ECALL_PRINT unchanged for ABI compat.
+APICALL(api_print_channel) {
+	auto [array, len, channel] = machine.sysargs<gaddr_t, unsigned, unsigned>();
+	Sandbox &emu = riscv::emu(machine);
+
+	if (len >= 64) {
+		ERR_PRINT("print(): Too many Variants to print");
+		throw std::runtime_error("print(): Too many Variants to print");
+	}
+	if (channel >= unsigned(Print_Channel::CHANNEL_COUNT)) {
+		ERR_PRINT("print(): Unknown output channel");
+		throw std::runtime_error("print(): Unknown output channel: " + std::to_string(channel));
+	}
+	const GuestVariant *array_ptr = machine.memory.memarray<GuestVariant>(array, len);
+
+	PENALIZE(10'000 + 10'000 * len);
+
+	VariantScratchN<64> scratch;
+	const Variant *args[64];
+	for (unsigned i = 0; i < len; i++) {
+		const GuestVariant &var = array_ptr[i];
+		if (var.is_scoped_variant())
+			args[i] = var.toVariantPtr(emu);
+		else
+			args[i] = scratch.emplace(var.toVariant(emu));
+	}
+	emu.print(args, len, Print_Channel(channel));
+}
+
 // -= @GlobalScope's utility functions =-
 //
 // ECALL_UTILITY performs the GDScript globals that a guest cannot compute for
@@ -322,6 +352,33 @@ static double utility_math_op(Utility_Op op, const double args[5]) {
 		case Utility_Op::IS_FINITE: return std::isfinite(a) ? 1.0 : 0.0;
 		case Utility_Op::IS_ZERO_APPROX: return utility_is_zero_approx(a) ? 1.0 : 0.0;
 
+		// Math::ease() and Math::step_decimals(). Must match globals.cpp
+		// (differential test compares both).
+		case Utility_Op::EASE: {
+			double x = a < 0.0 ? 0.0 : (a > 1.0 ? 1.0 : a);
+			if (b > 0.0) {
+				return (b < 1.0) ? 1.0 - std::pow(1.0 - x, 1.0 / b) : std::pow(x, b);
+			}
+			if (b < 0.0) {
+				return (x < 0.5)
+						? std::pow(x * 2.0, -b) * 0.5
+						: (1.0 - std::pow(1.0 - (x - 0.5) * 2.0, -b)) * 0.5 + 0.5;
+			}
+			return 0.0;
+		}
+		case Utility_Op::STEP_DECIMALS: {
+			static const double sd[] = { 0.9999, 0.09999, 0.009999, 0.0009999, 0.00009999,
+				0.000009999, 0.0000009999, 0.00000009999, 0.000000009999, 0.0000000009999 };
+			const double magnitude = std::fabs(a);
+			const double decimals = magnitude - std::floor(magnitude);
+			for (int i = 0; i < 10; i++) {
+				if (decimals >= sd[i]) {
+					return double(i);
+				}
+			}
+			return 0.0;
+		}
+
 		case Utility_Op::ATAN2: return std::atan2(a, b);
 		case Utility_Op::POW: return std::pow(a, b);
 		case Utility_Op::FMOD: return std::fmod(a, b);
@@ -411,8 +468,18 @@ static double utility_math_op(Utility_Op op, const double args[5]) {
 		case Utility_Op::TO_INT:
 		case Utility_Op::TO_FLOAT:
 		case Utility_Op::TO_BOOL:
+		case Utility_Op::HASH:
+		case Utility_Op::VAR_TO_STR:
+		case Utility_Op::STR_TO_VAR:
+		case Utility_Op::VAR_TO_BYTES:
+		case Utility_Op::BYTES_TO_VAR:
+		case Utility_Op::TYPE_STRING:
+		case Utility_Op::TYPE_CONVERT:
+		case Utility_Op::ERROR_STRING:
+		case Utility_Op::IS_SAME:
 		case Utility_Op::RANDI:
 		case Utility_Op::RANDI_RANGE:
+		case Utility_Op::NEAREST_PO2:
 			break;
 
 		// The random draws that *are* doubles. UtilityFunctions:: rather than
@@ -516,12 +583,22 @@ APICALL(api_utility) {
 		case Utility_Op::LEN:
 		case Utility_Op::TO_INT:
 		case Utility_Op::TO_FLOAT:
-		case Utility_Op::TO_BOOL: {
+		case Utility_Op::TO_BOOL:
+		case Utility_Op::HASH:
+		case Utility_Op::VAR_TO_STR:
+		case Utility_Op::STR_TO_VAR:
+		case Utility_Op::VAR_TO_BYTES:
+		case Utility_Op::BYTES_TO_VAR:
+		case Utility_Op::TYPE_STRING:
+		case Utility_Op::TYPE_CONVERT:
+		case Utility_Op::ERROR_STRING:
+		case Utility_Op::IS_SAME: {
 			Sandbox &emu = riscv::emu(machine);
 			// str() takes up to 63 arguments and String() takes none at all;
-			// every other op here takes exactly one.
-			const unsigned max_args = (op == Utility_Op::STR) ? 63 : 1;
-			const unsigned min_args = (op == Utility_Op::STR) ? 0 : 1;
+			// Binary: type_convert(), is_same(). Unary: the rest.
+			const bool binary = (op == Utility_Op::TYPE_CONVERT || op == Utility_Op::IS_SAME);
+			const unsigned max_args = (op == Utility_Op::STR) ? 63 : (binary ? 2 : 1);
+			const unsigned min_args = (op == Utility_Op::STR) ? 0 : (binary ? 2 : 1);
 			if (arg_count < min_args || arg_count > max_args) {
 				ERR_PRINT("utility(): Wrong number of arguments");
 				throw std::runtime_error("utility(): Wrong number of arguments: " + std::to_string(arg_count));
@@ -556,6 +633,47 @@ APICALL(api_utility) {
 					PENALIZE(10'000);
 					vres->create(emu, Variant(utility_to_float(args[0].toVariant(emu))));
 					break;
+
+				// Serialization and identity. Host-only: engine Variant encoding.
+				case Utility_Op::HASH:
+					PENALIZE(20'000);
+					vres->create(emu, UtilityFunctions::hash(args[0].toVariant(emu)));
+					break;
+				case Utility_Op::VAR_TO_STR:
+					PENALIZE(50'000);
+					vres->create(emu, UtilityFunctions::var_to_str(args[0].toVariant(emu)));
+					break;
+				case Utility_Op::STR_TO_VAR:
+					PENALIZE(50'000);
+					vres->create(emu, UtilityFunctions::str_to_var(args[0].toVariant(emu)));
+					break;
+				case Utility_Op::VAR_TO_BYTES:
+					PENALIZE(50'000);
+					vres->create(emu, UtilityFunctions::var_to_bytes(args[0].toVariant(emu)));
+					break;
+				case Utility_Op::BYTES_TO_VAR:
+					PENALIZE(50'000);
+					vres->create(emu, UtilityFunctions::bytes_to_var(args[0].toVariant(emu)));
+					break;
+				case Utility_Op::TYPE_STRING:
+					PENALIZE(10'000);
+					vres->create(emu, UtilityFunctions::type_string(args[0].toVariant(emu)));
+					break;
+				case Utility_Op::TYPE_CONVERT:
+					PENALIZE(20'000);
+					vres->create(emu, UtilityFunctions::type_convert(
+							args[0].toVariant(emu), args[1].toVariant(emu)));
+					break;
+				case Utility_Op::ERROR_STRING:
+					PENALIZE(10'000);
+					vres->create(emu, UtilityFunctions::error_string(args[0].toVariant(emu)));
+					break;
+				case Utility_Op::IS_SAME:
+					PENALIZE(10'000);
+					vres->create(emu, UtilityFunctions::is_same(
+							args[0].toVariant(emu), args[1].toVariant(emu)));
+					break;
+
 				default:
 					PENALIZE(10'000);
 					vres->create(emu, Variant(args[0].toVariant(emu).booleanize()));
@@ -577,6 +695,9 @@ APICALL(api_utility) {
 			machine.set_result(UtilityFunctions::randi_range(from, to));
 			return;
 		}
+		case Utility_Op::NEAREST_PO2:
+			machine.set_result(UtilityFunctions::nearest_po2(machine.sysarg<int64_t>(1)));
+			return;
 
 		default:
 			break;
@@ -715,8 +836,17 @@ APICALL(api_vcreate) {
 				ERR_PRINT("vcreate: Unsupported method for Variant::STRING");
 				throw std::runtime_error("vcreate: Unsupported method for Variant::STRING: " + std::to_string(method));
 			}
-			// Create a new Variant with the string, modify vp.
-			unsigned idx = emu.create_scoped_variant(Variant(std::move(godot_str)));
+			// Scope as the requested type; a String scoped as STRING_NAME
+			// would read back as String and lose the distinction.
+			Variant value;
+			if (type == Variant::STRING_NAME) {
+				value = StringName(godot_str);
+			} else if (type == Variant::NODE_PATH) {
+				value = NodePath(godot_str);
+			} else {
+				value = std::move(godot_str);
+			}
+			unsigned idx = emu.create_scoped_variant(std::move(value));
 			vp->type = type;
 			vp->v.i = idx;
 		} break;
@@ -2793,6 +2923,7 @@ void Sandbox::initialize_syscalls() {
 	// Add the Godot system calls.
 	machine_t::install_syscall_handlers({
 			{ ECALL_PRINT, api_print },
+			{ ECALL_PRINT_CHANNEL, api_print_channel },
 			{ ECALL_VCALL, api_vcall },
 			{ ECALL_VEVAL, api_veval },
 			{ ECALL_VASSIGN, api_vassign },

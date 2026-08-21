@@ -62,6 +62,7 @@ private:
 	ExprPtr parse_type_test();
 	ExprPtr parse_call();
 	ExprPtr parse_primary();
+	ExprPtr parse_node_path();
 
 	// Node positioned at `token`.
 	template <typename Node, typename... Args>
@@ -106,6 +107,8 @@ private:
 	std::string parse_return_type();
 	void skip_type_arguments();
 	bool parse_attribute();
+	void skip_attribute_arguments();
+	void parse_signal();
 	std::string doc_comment_above(int p_line) const;
 
 	std::vector<Token> m_tokens;

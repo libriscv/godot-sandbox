@@ -267,9 +267,8 @@ static void test_globals_do_not_become_self_calls() {
 	std::cout << "Testing that a global Godot resolves is never a self-call..." << std::endl;
 
 	// Unimplemented globals must be refused (self-call fallback is silently dropped).
-	assert(refuses("func test():\n\tpush_error(\"x\")\n"));
-	assert(refuses("func test(x):\n\treturn hash(x)\n"));
-	assert(refuses("func test():\n\treturn range(3)\n"));
+	assert(refuses("func test():\n\treturn print_debug(\"x\")\n"));
+	assert(refuses("func test(x):\n\treturn weakref(x)\n"));
 	assert(refuses("func test():\n\treturn Quaternion(0, 0, 0, 1)\n"));
 	assert(refuses("func test():\n\treturn preload(\"res://a.tscn\")\n"));
 	// Excluded: mutates shared RNG state.
@@ -281,7 +280,7 @@ static void test_globals_do_not_become_self_calls() {
 
 	// Local function shadows the global.
 	const IRProgram shadowed = compile_to_ir(
-		"func hash(x):\n\treturn x\nfunc test():\n\treturn hash(1)\n");
+		"func weakref(x):\n\treturn x\nfunc test():\n\treturn weakref(1)\n");
 	assert(count_opcode(find_function(shadowed, "test"), IROpcode::CALL) == 1);
 
 	// typeof(): guest-side tag read via TYPE_OF opcode.

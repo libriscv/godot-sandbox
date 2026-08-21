@@ -4,6 +4,7 @@
 #include "../riscv_codegen.h"
 #include "../ir_optimizer.h"
 #include "../compiler_exception.h"
+#include "../syscall_numbers.h"
 #include <cassert>
 #include <iostream>
 #include <algorithm>
@@ -383,12 +384,13 @@ func say():
 		assert(instr.opcode != IROpcode::VCALL);
 		if (instr.opcode == IROpcode::PRINT) {
 			has_print = true;
-			// PRINT dst, count, arg...
-			assert(instr.operands.size() == 4);
+			// PRINT dst, channel, count, arg...
+			assert(instr.operands.size() == 5);
 			assert(instr.operands[0].type == IRValue::Type::REGISTER);
-			assert(std::get<int64_t>(instr.operands[1].value) == 2);
-			assert(instr.operands[2].type == IRValue::Type::REGISTER);
+			assert(std::get<int64_t>(instr.operands[1].value) == int64_t(Print_Channel::PRINT));
+			assert(std::get<int64_t>(instr.operands[2].value) == 2);
 			assert(instr.operands[3].type == IRValue::Type::REGISTER);
+			assert(instr.operands[4].type == IRValue::Type::REGISTER);
 		}
 	}
 	assert(has_print);
@@ -410,8 +412,9 @@ func say():
 	for (const auto& instr : ir_empty.functions[0].instructions) {
 		if (instr.opcode == IROpcode::PRINT) {
 			has_empty_print = true;
-			assert(instr.operands.size() == 2);
-			assert(std::get<int64_t>(instr.operands[1].value) == 0);
+			assert(instr.operands.size() == 3);
+			assert(std::get<int64_t>(instr.operands[1].value) == int64_t(Print_Channel::PRINT));
+			assert(std::get<int64_t>(instr.operands[2].value) == 0);
 		}
 	}
 	assert(has_empty_print);

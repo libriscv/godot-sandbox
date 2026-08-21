@@ -72,6 +72,12 @@ int main(int argc, char** argv)
 		options.optimize = !no_optimize;
 		options.double_precision = double_precision;
 		std::vector<uint8_t> elf = compiler.compile(source, options);
+		if (elf.empty()) {
+			// Empty ELF = compile error.
+			std::cerr << "Error: " << compiler.get_error() << std::endl;
+			unlink(temp_elf.c_str());
+			return 1;
+		}
 
 		{
 			std::ofstream out(temp_elf, std::ios::binary);

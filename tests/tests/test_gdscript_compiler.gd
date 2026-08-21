@@ -1216,8 +1216,10 @@ func test_loopy_vector():
 
 	# Test Color with integer args (0, 128, 255, 255 = 0.0, 0.502, 1.0, 1.0)
 	result = s.vmcallv("test_color_int")
-	var expected = 0.0 + (128.0 / 255.0) + 1.0 + 1.0
-	assert_almost_eq(result, expected, 0.01, "Color with int args should work")
+	# Color() does not rescale integers; Color8() divides by 255.
+	var engine_color = Color(0, 128, 255, 255)
+	var expected = engine_color.r + engine_color.g + engine_color.b + engine_color.a
+	assert_almost_eq(result, expected, 0.01, "Color(int, ...) is not rescaled by 255")
 
 	# Test chained operations
 	result = s.vmcallv("test_chained_vectors")
@@ -1359,16 +1361,16 @@ func dict_size():
 	return dict.size()
 
 func make_array_single():
-	return Array(42)
+	return [42]
 
 func make_array_two():
-	return Array(1, 2)
+	return [1, 2]
 
 func make_array_with_values():
-	return Array(1, 2, 3, 4, 5)
+	return [1, 2, 3, 4, 5]
 
 func make_array_with_strings():
-	return Array("hello", "world", "test")
+	return ["hello", "world", "test"]
 """
 
 	var ts : Sandbox = Sandbox.new()
@@ -1421,14 +1423,14 @@ func make_array_with_strings():
 	# Test dictionary size
 	assert_eq(s.vmcallv("dict_size"), 3, "dict_size() should return 3")
 
-	# Test Array with single element
+	# Element list uses []; Array() takes one container to convert.
 	arr = s.vmcallv("make_array_single")
-	assert_eq(arr.size(), 1, "Array(42) should have size 1")
+	assert_eq(arr.size(), 1, "[42] should have size 1")
 	assert_eq(arr[0], 42, "First element should be 42")
 
 	# Test Array with two elements
 	arr = s.vmcallv("make_array_two")
-	assert_eq(arr.size(), 2, "Array(1,2) should have size 2")
+	assert_eq(arr.size(), 2, "[1, 2] should have size 2")
 	assert_eq(arr[0], 1, "First element should be 1")
 	assert_eq(arr[1], 2, "Second element should be 2")
 
@@ -1447,6 +1449,13 @@ func make_array_with_strings():
 	assert_eq(arr[0], "hello", "First string should be 'hello'")
 	assert_eq(arr[1], "world", "Second string should be 'world'")
 	assert_eq(arr[2], "test", "Third string should be 'test'")
+
+	# Array() converts one container; multi-arg and single-container forms
+	# are compile errors.
+	assert_true(ts.vmcall("compile_to_elf", "func f():\n\treturn Array(1, 2)\n").is_empty(),
+		"Array(1, 2) is refused")
+	assert_true(ts.vmcall("compile_to_elf", "func f():\n\treturn Array([1, 2])\n").is_empty(),
+		"Array([1, 2]) is refused")
 
 	s.queue_free()
 	ts.queue_free()
@@ -5543,7 +5552,7 @@ func vec4_write(w : float) -> Vector4:
 	if s == null:
 		return
 
-	# The engine's own answer for the same writes.
+	# Engine reference value.
 	var expected_vec2 := Vector2(0.0, 0.0)
 	expected_vec2.x = 5.0
 	expected_vec2.y = 7.0
@@ -5750,4 +5759,517 @@ func is_int(x) -> bool:
 	assert_eq(s.vmcallv("is_int", 7), true, "a typeof comparison should hold for an int")
 	assert_eq(s.vmcallv("is_int", 7.0), false, "and not for a float")
 
+	s.queue_free()
+
+
+# Built-in type constructors. Inline lowering, no CALL.
+func test_builtin_constructors():
+	var gdscript_code = """
+func rect_from_components():
+	var r = Rect2(1.0, 2.0, 3.0, 4.0)
+	return r
+
+func rect_from_vectors():
+	return Rect2(Vector2(1, 2), Vector2(3, 4))
+
+func recti():
+	return Rect2i(1, 2, 3, 4)
+
+func plane_from_components():
+	return Plane(0.0, 1.0, 0.0, 5.0)
+
+func plane_from_normal():
+	return Plane(Vector3(0, 1, 0), 5)
+
+func default_color():
+	return Color()
+
+func integer_color():
+	return Color(1, 0, 0)
+
+func color_with_alpha():
+	return Color(Color(1, 0, 0), 0.25)
+
+func default_vector2():
+	return Vector2()
+
+func default_rect():
+	var r : Rect2
+	return r
+
+func rescaled_color():
+	return Color8(255, 128, 0)
+
+func rescaled_color_alpha():
+	return Color8(255, 128, 0, 128)
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("rect_from_components"), Rect2(1.0, 2.0, 3.0, 4.0),
+		"Rect2(x, y, w, h) should match the engine")
+	assert_eq(s.vmcallv("rect_from_vectors"), Rect2(Vector2(1, 2), Vector2(3, 4)),
+		"Rect2(position, size) should match the engine")
+	assert_eq(s.vmcallv("recti"), Rect2i(1, 2, 3, 4), "Rect2i should match the engine")
+	assert_eq(s.vmcallv("plane_from_components"), Plane(0.0, 1.0, 0.0, 5.0),
+		"Plane(a, b, c, d) should match the engine")
+	assert_eq(s.vmcallv("plane_from_normal"), Plane(Vector3(0, 1, 0), 5),
+		"Plane(normal, d) should match the engine")
+	# Color() is opaque black; Color(int) is not rescaled. Color8() rescales.
+	assert_eq(s.vmcallv("default_color"), Color(), "Color() should be opaque black")
+	assert_eq(s.vmcallv("integer_color"), Color(1, 0, 0),
+		"Color with integer arguments should not be rescaled")
+	assert_eq(s.vmcallv("color_with_alpha"), Color(Color(1, 0, 0), 0.25),
+		"Color(from, alpha) should match the engine")
+	assert_eq(s.vmcallv("default_vector2"), Vector2(), "Vector2() should be zero")
+	assert_eq(s.vmcallv("default_rect"), Rect2(),
+		"a declared Rect2 with no initializer should be a Rect2")
+	# Color8: separate lowering, divides by 255.
+	assert_eq(s.vmcallv("rescaled_color"), Color8(255, 128, 0),
+		"Color8 should match the engine")
+	assert_eq(s.vmcallv("rescaled_color_alpha"), Color8(255, 128, 0, 128),
+		"Color8 with alpha should match the engine")
+
+	s.queue_free()
+
+
+# @GlobalScope and built-in type constants, folded to immediates.
+func test_global_constants():
+	var gdscript_code = """
+func pi():
+	return PI
+
+func tau():
+	return TAU
+
+func infinity():
+	return INF
+
+func not_a_number():
+	return NAN
+
+func ok():
+	return OK
+
+func file_not_found():
+	return ERR_FILE_NOT_FOUND
+
+func escape():
+	return KEY_ESCAPE
+
+func left_button():
+	return MOUSE_BUTTON_LEFT
+
+func is_int(x) -> bool:
+	return typeof(x) == TYPE_INT
+
+func is_array(x) -> bool:
+	return typeof(x) == TYPE_ARRAY
+
+func vector2_zero():
+	return Vector2.ZERO
+
+func vector3_forward():
+	return Vector3.FORWARD
+
+func vector2i_max():
+	return Vector2i.MAX
+
+func color_red():
+	return Color.RED
+
+func plane_xy():
+	return Plane.PLANE_XY
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("pi"), PI, "PI should match the engine")
+	assert_eq(s.vmcallv("tau"), TAU, "TAU should match the engine")
+	assert_eq(s.vmcallv("infinity"), INF, "INF should match the engine")
+	assert_true(is_nan(s.vmcallv("not_a_number")), "NAN should be a NaN")
+	assert_eq(s.vmcallv("ok"), OK, "OK should match the engine")
+	assert_eq(s.vmcallv("file_not_found"), ERR_FILE_NOT_FOUND,
+		"ERR_FILE_NOT_FOUND should match the engine")
+	assert_eq(s.vmcallv("escape"), KEY_ESCAPE, "KEY_ESCAPE should match the engine")
+	assert_eq(s.vmcallv("left_button"), MOUSE_BUTTON_LEFT,
+		"MOUSE_BUTTON_LEFT should match the engine")
+
+	assert_eq(s.vmcallv("is_int", 7), true, "typeof(x) == TYPE_INT for an int")
+	assert_eq(s.vmcallv("is_int", 7.0), false, "and not for a float")
+	assert_eq(s.vmcallv("is_array", [1]), true, "typeof(x) == TYPE_ARRAY for an Array")
+
+	assert_eq(s.vmcallv("vector2_zero"), Vector2.ZERO, "Vector2.ZERO should match the engine")
+	assert_eq(s.vmcallv("vector3_forward"), Vector3.FORWARD, "Vector3.FORWARD should match the engine")
+	assert_eq(s.vmcallv("vector2i_max"), Vector2i.MAX, "Vector2i.MAX should match the engine")
+	assert_eq(s.vmcallv("color_red"), Color.RED, "Color.RED should match the engine")
+	assert_eq(s.vmcallv("plane_xy"), Plane.PLANE_XY, "Plane.PLANE_XY should match the engine")
+
+	s.queue_free()
+
+
+# `for i in <int>` and `for i: int in ...`.
+func test_for_over_an_integer():
+	var gdscript_code = """
+func sum_to(n : int) -> int:
+	var total = 0
+	for i in n:
+		total += i
+	return total
+
+func sum_literal() -> int:
+	var total = 0
+	for i in 5:
+		total += i
+	return total
+
+func typed_loop_variable() -> int:
+	var total = 0
+	for i: int in range(4):
+		total += i
+	return total
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	# Engine reference.
+	var expected = 0
+	for i in 7:
+		expected += i
+	assert_eq(s.vmcallv("sum_to", 7), expected, "for i in <int> should match the engine")
+	assert_eq(s.vmcallv("sum_literal"), 0 + 1 + 2 + 3 + 4, "for i in 5 should walk 0..4")
+	assert_eq(s.vmcallv("typed_loop_variable"), 0 + 1 + 2 + 3, "for i: int in range(4)")
+
+	s.queue_free()
+
+
+# assert(): branch on pass, ECALL_THROW on fail.
+func test_assert():
+	var gdscript_code = """
+func checked(x : int) -> int:
+	assert(x > 0, "x must be positive")
+	return x * 2
+
+func bare(x) -> int:
+	assert(x)
+	return 1
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("checked", 21), 42, "a passing assert should not change the result")
+	assert_eq(s.vmcallv("bare", true), 1, "a passing bare assert")
+
+	# Failing assert throws; Sandbox reports twice (throw + unwind).
+	s.vmcallv("checked", -1)
+	assert_engine_error("Sandbox exception in assert: x must be positive")
+	assert_engine_error("x must be positive")
+
+	s.queue_free()
+
+
+# null -> NIL Variant, distinct from INT(0).
+func test_null_is_nil():
+	var gdscript_code = """
+func nothing():
+	return null
+
+func untyped_declaration():
+	var x
+	return x
+
+func object_declaration():
+	var n : Node
+	return n
+
+func is_null(x) -> bool:
+	return x == null
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	assert_eq(typeof(s.vmcallv("nothing")), TYPE_NIL, "null should be a NIL Variant")
+	assert_eq(typeof(s.vmcallv("untyped_declaration")), TYPE_NIL, "var x with no initializer is null")
+	assert_eq(typeof(s.vmcallv("object_declaration")), TYPE_NIL, "var n : Node is null")
+	assert_eq(s.vmcallv("is_null", null), true, "null == null")
+	assert_eq(s.vmcallv("is_null", 0), false, "0 is not null")
+
+	s.queue_free()
+
+
+# Script header syntax: attributes, signal, static var, &"" and ^"".
+# A parse failure in the header takes all functions with it.
+func test_script_header_syntax():
+	var gdscript_code = """
+@tool
+extends Node
+class_name Enemy
+
+signal died(who)
+signal healed
+
+@export_range(0, 100) var hp = 100
+@export var speed : float = 1.5
+static var counter = 0
+
+@warning_ignore("unused_variable")
+static func bump() -> int:
+	counter += 1
+	return counter
+
+func property_name():
+	return &"speed"
+
+func node_path():
+	return ^"a/b"
+
+func raw_string():
+	return r"a\\nb"
+
+func total() -> int:
+	return hp + bump()
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	assert_eq(typeof(s.vmcallv("property_name")), TYPE_STRING_NAME,
+		"&\"speed\" should be a StringName")
+	assert_eq(s.vmcallv("property_name"), &"speed", "and hold those characters")
+	assert_eq(typeof(s.vmcallv("node_path")), TYPE_NODE_PATH, "^\"a/b\" should be a NodePath")
+	assert_eq(s.vmcallv("node_path"), ^"a/b", "and hold that path")
+	assert_eq(s.vmcallv("raw_string"), r"a\nb", "a raw string keeps its backslash")
+	assert_eq(s.vmcallv("total"), 101, "@export var + static var + static func")
+	assert_eq(s.vmcallv("bump"), 2, "static var keeps its value between calls")
+
+	s.queue_free()
+
+
+# $Node and %Unique -> ECALL_GET_NODE.
+func test_node_path_sugar():
+	var gdscript_code = """
+func dollar_name():
+	return $Child.get_name()
+
+func dollar_quoted():
+	return $"Child".get_name()
+
+func percent_unique():
+	return %Special.get_name()
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	# Sandbox resolves node paths from itself; children added here.
+	add_child(s)
+	var child = Node.new()
+	child.name = "Child"
+	s.add_child(child)
+	var special = Node.new()
+	special.name = "Special"
+	s.add_child(special)
+	special.owner = s
+	special.unique_name_in_owner = true
+
+	assert_eq(str(s.vmcallv("dollar_name")), "Child", "$Child should reach the child node")
+	assert_eq(str(s.vmcallv("dollar_quoted")), "Child", "$\"Child\" should reach the same node")
+	assert_eq(str(s.vmcallv("percent_unique")), "Special", "%Special should reach the unique node")
+
+	s.queue_free()
+
+
+# Serialization and identity globals. Checked against engine.
+func test_serialization_and_identity_globals():
+	var gdscript_code = """
+func hash_of(x) -> int:
+	return hash(x)
+
+func to_str(x) -> String:
+	return var_to_str(x)
+
+func from_str(s):
+	return str_to_var(s)
+
+func to_bytes(x):
+	return var_to_bytes(x)
+
+func from_bytes(b):
+	return bytes_to_var(b)
+
+func name_of_type(t : int) -> String:
+	return type_string(t)
+
+func convert(x, t : int):
+	return type_convert(x, t)
+
+func name_of_error(e : int) -> String:
+	return error_string(e)
+
+func same(a, b) -> bool:
+	return is_same(a, b)
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("hash_of", 42), hash(42), "hash(int) should match the engine")
+	assert_eq(s.vmcallv("hash_of", "text"), hash("text"), "hash(String) should match the engine")
+	assert_eq(s.vmcallv("to_str", [1, 2]), var_to_str([1, 2]), "var_to_str should match the engine")
+	assert_eq(s.vmcallv("from_str", "[1, 2]"), str_to_var("[1, 2]"), "str_to_var should match the engine")
+	assert_eq(s.vmcallv("to_bytes", 7), var_to_bytes(7), "var_to_bytes should match the engine")
+	assert_eq(s.vmcallv("from_bytes", var_to_bytes(7)), 7, "bytes_to_var should round-trip")
+	assert_eq(s.vmcallv("name_of_type", TYPE_INT), type_string(TYPE_INT),
+		"type_string should match the engine")
+	assert_eq(s.vmcallv("convert", "5", TYPE_INT), type_convert("5", TYPE_INT),
+		"type_convert should match the engine")
+	assert_eq(s.vmcallv("name_of_error", ERR_FILE_NOT_FOUND), error_string(ERR_FILE_NOT_FOUND),
+		"error_string should match the engine")
+	var array = [1, 2]
+	assert_eq(s.vmcallv("same", array, array), true, "is_same should hold for one container")
+	assert_eq(s.vmcallv("same", [1, 2], [1, 2]), false, "and not for two equal ones")
+
+	s.queue_free()
+
+
+# ease(), step_decimals() and nearest_po2(), against the engine.
+func test_numeric_globals():
+	var gdscript_code = """
+func ease_of(x : float, curve : float) -> float:
+	return ease(x, curve)
+
+func decimals(step : float) -> int:
+	return step_decimals(step)
+
+func po2(value : int) -> int:
+	return nearest_po2(value)
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	for curve in [0.5, 1.0, 2.0, -2.0, 0.0]:
+		for x in [0.0, 0.25, 0.5, 0.75, 1.0]:
+			assert_almost_eq(s.vmcallv("ease_of", x, curve), ease(x, curve), 1e-9,
+				"ease(%f, %f) should match the engine" % [x, curve])
+
+	for step in [1.0, 0.5, 0.25, 0.1, 0.001, 12.34]:
+		assert_eq(s.vmcallv("decimals", step), step_decimals(step),
+			"step_decimals(%f) should match the engine" % step)
+
+	for value in [0, 1, 2, 3, 100, 1024, 1025]:
+		assert_eq(s.vmcallv("po2", value), nearest_po2(value),
+			"nearest_po2(%d) should match the engine" % value)
+
+	s.queue_free()
+
+
+# Output channels: push_error/push_warning reach Godot's error tracking.
+func test_output_channels():
+	var gdscript_code = """
+func say():
+	print("plain")
+	prints("a", "b")
+	printt("a", "b")
+	printraw("raw")
+	print_rich("[b]rich[/b]")
+	print_verbose("verbose")
+	return 1
+
+func complain():
+	push_error("a sandbox error")
+	return 1
+
+func warn():
+	push_warning("a sandbox warning")
+	return 1
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	# Stdout channels: verify they execute without error.
+	assert_eq(s.vmcallv("say"), 1, "the stdout channels should all return")
+
+	assert_eq(s.vmcallv("complain"), 1, "push_error should return")
+	assert_push_error("a sandbox error")
+
+	assert_eq(s.vmcallv("warn"), 1, "push_warning should return")
+	assert_push_warning("a sandbox warning")
+
+	s.queue_free()
+
+
+# range() as a value, `is ClassName` and `as ClassName` (engine inheritance walk).
+func test_range_value_and_class_casts():
+	var gdscript_code = """
+func up(n : int):
+	return range(n)
+
+func between(a : int, b : int):
+	return range(a, b)
+
+func stepped(a : int, b : int, s : int):
+	return range(a, b, s)
+
+func is_node(x) -> bool:
+	return x is Node
+
+func is_not_node(x) -> bool:
+	return x is not Node
+
+func as_node(x):
+	return x as Node
+
+func is_widget(x) -> bool:
+	return x is TestCompilerWidget
+
+func as_widget(x):
+	return x as TestCompilerWidget
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("up", 5), range(5), "range(n) should match the engine")
+	assert_eq(s.vmcallv("up", 0), range(0), "range(0) should be empty")
+	assert_eq(s.vmcallv("between", 2, 6), range(2, 6), "range(a, b) should match the engine")
+	assert_eq(s.vmcallv("stepped", 6, 0, -2), range(6, 0, -2), "a negative step should count down")
+	assert_eq(s.vmcallv("stepped", 0, 6, 2), range(0, 6, 2), "a positive step should count up")
+	# Zero step -> empty array. Engine raises on range(1,5,0) so we
+	# compare against [] directly.
+	assert_eq(s.vmcallv("stepped", 1, 5, 0), [], "a zero step should be empty")
+
+	var node = Node.new()
+	add_child(node)
+	assert_eq(s.vmcallv("is_node", node), true, "a Node is a Node")
+	assert_eq(s.vmcallv("is_node", 42), false, "an int is not a Node")
+	assert_eq(s.vmcallv("is_not_node", 42), true, "'is not' negates it")
+	assert_eq(s.vmcallv("as_node", 42), null, "a failed class cast is null")
+	assert_eq(s.vmcallv("as_node", node), node, "and a successful one is the value")
+
+	# A name a script declares with `class_name` is not in ClassDB, so
+	# Object.is_class() answers false for it and the script chain is walked.
+	var script = GDScript.new()
+	script.source_code = "extends Node\nclass_name TestCompilerWidget\n"
+	script.reload()
+	var widget = Node.new()
+	widget.set_script(script)
+	add_child(widget)
+
+	assert_eq(s.vmcallv("is_widget", widget), true, "a script's class_name answers 'is'")
+	assert_eq(s.vmcallv("as_widget", widget), widget, "and 'as' hands the value back")
+	# Chain ends at a null script.
+	assert_eq(s.vmcallv("is_widget", node), false, "a plain Node is not a TestCompilerWidget")
+	assert_eq(s.vmcallv("as_widget", node), null, "so the cast is null")
+	# The engine class it extends is still answered by ClassDB.
+	assert_eq(s.vmcallv("is_node", widget), true, "a scripted Node is still a Node")
+
+	widget.queue_free()
+	node.queue_free()
 	s.queue_free()

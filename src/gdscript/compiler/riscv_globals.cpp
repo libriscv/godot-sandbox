@@ -224,6 +224,7 @@ void RISCVCodeGen::emit_global_double_result(int result_offset, uint8_t fs, Glob
 		case GlobalResult::NIL:
 		case GlobalResult::STRING:
 		case GlobalResult::NUMERIC:
+		case GlobalResult::VARIANT:
 			break;
 	}
 	throw CompilerException(ErrorType::RISCV_codegen_ERROR,
@@ -246,6 +247,7 @@ void RISCVCodeGen::emit_global_int_result(int result_offset, uint8_t rs, GlobalR
 		case GlobalResult::FLOAT:
 		case GlobalResult::STRING:
 		case GlobalResult::NUMERIC:
+		case GlobalResult::VARIANT:
 			break;
 	}
 	throw CompilerException(ErrorType::RISCV_codegen_ERROR,

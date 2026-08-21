@@ -74,7 +74,10 @@
 // functions. See Utility_Op below.
 #define ECALL_UTILITY (GAME_API_BASE + 49)
 
-#define ECALL_LAST (GAME_API_BASE + 50)
+// Channelled print (printerr, prints, push_error, ...). See Print_Channel.
+#define ECALL_PRINT_CHANNEL (GAME_API_BASE + 50)
+
+#define ECALL_LAST (GAME_API_BASE + 51)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
@@ -312,6 +315,39 @@ enum class Utility_Op {
 	RANDFN = 52,
 	RANDI = 53,
 	RANDI_RANGE = 54,
+
+	// fa0-fa4 arithmetic. step_decimals() fits in a double.
+	EASE = 55,
+	STEP_DECIMALS = 56,
+
+	// int64 in a1, result in a0. Exceeds double range.
+	NEAREST_PO2 = 57,
+
+	// Variant in, Variant out. Same shape as STR/LEN.
+	HASH = 58,
+	VAR_TO_STR = 59,
+	STR_TO_VAR = 60,
+	VAR_TO_BYTES = 61,
+	BYTES_TO_VAR = 62,
+	TYPE_STRING = 63,
+	TYPE_CONVERT = 64,
+	ERROR_STRING = 65,
+	IS_SAME = 66,
+};
+
+// Output channel for ECALL_PRINT_CHANNEL.
+enum class Print_Channel {
+	PRINT = 0,          // print()
+	SPACED = 1,         // prints()
+	TABBED = 2,         // printt()
+	RAW = 3,            // printraw(), no trailing newline
+	RICH = 4,           // print_rich()
+	ERROR = 5,          // printerr()
+	VERBOSE = 6,        // print_verbose()
+	PUSH_ERROR = 7,     // push_error()
+	PUSH_WARNING = 8,   // push_warning()
+
+	CHANNEL_COUNT
 };
 
 enum class Vec2_Op {

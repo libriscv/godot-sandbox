@@ -32,6 +32,7 @@ const std::unordered_map<std::string, TokenType> Lexer::keywords = {
 	{"static", TokenType::STATIC},
 	{"enum", TokenType::ENUM},
 	{"class_name", TokenType::CLASS_NAME},
+	{"signal", TokenType::SIGNAL},
 	{"as", TokenType::AS},
 };
 
@@ -148,6 +149,7 @@ void Lexer::scan_token() {
 		case ';': add_token(TokenType::SEMICOLON); break;
 		case '.': add_token(match('.') ? TokenType::DOT_DOT : TokenType::DOT); break;
 		case '@': add_token(TokenType::AT); break;
+		case '$': add_token(TokenType::DOLLAR); break;
 		case '+': add_token(match('=') ? TokenType::PLUS_ASSIGN : TokenType::PLUS); break;
 		case '-': add_token(match('=') ? TokenType::MINUS_ASSIGN : TokenType::MINUS); break;
 		case '*':
@@ -186,7 +188,10 @@ void Lexer::scan_token() {
 			break;
 
 		case '&':
-			if (match('&')) {
+			if (peek() == '"' || peek() == '\'') {
+				advance();
+				scan_string(TokenType::STRING_NAME);
+			} else if (match('&')) {
 				add_token(TokenType::AND);
 			} else {
 				add_token(match('=') ? TokenType::BIT_AND_ASSIGN : TokenType::BIT_AND);
@@ -202,7 +207,12 @@ void Lexer::scan_token() {
 			break;
 
 		case '^':
-			add_token(match('=') ? TokenType::BIT_XOR_ASSIGN : TokenType::BIT_XOR);
+			if (peek() == '"' || peek() == '\'') {
+				advance();
+				scan_string(TokenType::NODE_PATH);
+			} else {
+				add_token(match('=') ? TokenType::BIT_XOR_ASSIGN : TokenType::BIT_XOR);
+			}
 			break;
 
 		case '~':
@@ -217,6 +227,10 @@ void Lexer::scan_token() {
 		default:
 			if (is_digit(c)) {
 				scan_number();
+			} else if (c == 'r' && (peek() == '"' || peek() == '\'')) {
+				// Raw string literal: no escape processing.
+				advance();
+				scan_string(TokenType::STRING, true);
 			} else if (is_alpha(c)) {
 				scan_identifier();
 			} else {
@@ -262,7 +276,9 @@ void Lexer::handle_indent() {
 	}
 }
 
-void Lexer::scan_string() {
+// `type`: STRING, STRING_NAME (&"..."), or NODE_PATH (^"...").
+// `raw`: r"..." — backslash literal, still escapes the quote terminator.
+void Lexer::scan_string(TokenType type, bool raw) {
 	const char quote = m_source[m_current - 1];
 	// Report unterminated strings at the opening quote, not at EOF.
 	const int open_line = m_line;
@@ -300,6 +316,11 @@ void Lexer::scan_string() {
 			if (is_at_end()) {
 				break;
 			}
+			if (raw) {
+				value += '\\';
+				value += advance();
+				continue;
+			}
 			const char escaped = advance();
 			switch (escaped) {
 				case 'n': value += '\n'; break;
@@ -329,7 +350,7 @@ void Lexer::scan_string() {
 		advance();
 		advance();
 	}
-	add_token(TokenType::STRING, value);
+	add_token(type, value);
 }
 
 void Lexer::scan_number() {

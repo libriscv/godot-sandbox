@@ -42,16 +42,27 @@ Program Parser::parse() {
 	skip_newlines();
 
 	while (!is_at_end()) {
+		// No instance — `static` is redundant; parsed and dropped.
+		match(TokenType::STATIC);
+
 		if (check(TokenType::EXTENDS)) {
 			advance();
 			consume(TokenType::IDENTIFIER, "Expected class name after 'extends'");
 			skip_newlines();
+		} else if (check(TokenType::SIGNAL)) {
+			parse_signal();
 		} else if (check(TokenType::AT)) {
-			bool is_export = parse_attribute();
-			skip_newlines();
-			if (check(TokenType::VAR)) {
+			// Stacked attributes: `@export_range(0, 10) @tool var x`.
+			bool is_export = false;
+			while (check(TokenType::AT)) {
+				is_export = parse_attribute() || is_export;
+				skip_newlines();
+			}
+			match(TokenType::STATIC);
+			if (check(TokenType::VAR) || check(TokenType::CONST)) {
+				const bool is_const = check(TokenType::CONST);
 				advance();
-				auto var_decl = parse_var_decl(false);
+				auto var_decl = parse_var_decl(is_const);
 				if (auto* decl = dynamic_cast<VarDeclStmt*>(var_decl.get())) {
 					VarDeclStmt global_decl(decl->name, std::move(decl->initializer), decl->is_const);
 					global_decl.type_hint = decl->type_hint;
@@ -60,10 +71,17 @@ Program Parser::parse() {
 					global_decl.column = decl->column;
 					program.globals.push_back(std::move(global_decl));
 				}
-			} else {
-				error("Expected variable declaration after attribute");
+			} else if (check(TokenType::FUNC)) {
+				// @export names a property; a function is not one.
+				if (is_export) {
+					error("Expected a variable declaration after '@export'");
+				}
+				program.functions.push_back(parse_function());
+			} else if (is_export) {
+				error("Expected a variable declaration after '@export'");
 				synchronize();
 			}
+			// File-level annotation (@tool etc.) — no declaration follows.
 		} else if (check(TokenType::VAR)) {
 			advance();
 			auto var_decl = parse_var_decl(false);
@@ -93,9 +111,7 @@ Program Parser::parse() {
 			advance();
 			consume(TokenType::IDENTIFIER, "Expected a class name after 'class_name'");
 			skip_newlines();
-		} else if (check(TokenType::STATIC) || check(TokenType::FUNC)) {
-			// No class instance; every function is already static.
-			match(TokenType::STATIC);
+		} else if (check(TokenType::FUNC)) {
 			program.functions.push_back(parse_function());
 		} else {
 			error("Expected function or variable declaration");
@@ -422,6 +438,8 @@ StmtPtr Parser::parse_while_stmt() {
 
 StmtPtr Parser::parse_for_stmt() {
 	Token var_name = consume(TokenType::IDENTIFIER, "Expected variable name in for loop");
+	// Loop-variable type hint: parsed and dropped.
+	parse_type_hint();
 	consume(TokenType::IN, "Expected 'in' after for loop variable");
 	ExprPtr iterable = parse_expression();
 	consume(TokenType::COLON, "Expected ':' after for loop iterable");
@@ -707,19 +725,20 @@ ExprPtr Parser::parse_expression() {
 	// `as` is the loosest operator: casts the entire preceding expression.
 	while (match(TokenType::AS)) {
 		const Token type_token = consume(TokenType::IDENTIFIER, "Expected a type name after 'as'");
-		// Only scalar types where cast == constructor; class casts need the engine.
-		if (type_token.lexeme != "int" && type_token.lexeme != "float" &&
-		    type_token.lexeme != "bool" && type_token.lexeme != "String") {
-			throw CompilerException::parser_error(
-				"'as " + type_token.lexeme + "' is not supported: 'as' is only available for"
-				" int, float, bool and String", type_token.line, type_token.column);
+		// Scalar types: lowered as constructor call.
+		// Class names: checked cast via engine (returns value or null).
+		if (type_token.lexeme == "int" || type_token.lexeme == "float" ||
+		    type_token.lexeme == "bool" || type_token.lexeme == "String") {
+			std::vector<ExprPtr> arguments;
+			arguments.push_back(std::move(expr));
+			const Token& at = type_token;
+			auto call = make_at<CallExpr>(at, type_token.lexeme, std::move(arguments));
+			call->argument_names.resize(1);
+			expr = std::move(call);
+		} else {
+			const Expr& start = *expr;
+			expr = make_like<ClassCastExpr>(start, std::move(expr), type_token.lexeme);
 		}
-		std::vector<ExprPtr> arguments;
-		arguments.push_back(std::move(expr));
-		const Token& at = type_token;
-		auto call = make_at<CallExpr>(at, type_token.lexeme, std::move(arguments));
-		call->argument_names.resize(1);
-		expr = std::move(call);
 	}
 
 	return expr;
@@ -1006,6 +1025,43 @@ ExprPtr Parser::parse_call() {
 	return expr;
 }
 
+// $Name, $Path/To/Node, $"quoted/path", $%Unique/Child, %Unique.
+// Segments after the first are IDENTIFIER / DIVIDE token pairs.
+ExprPtr Parser::parse_node_path() {
+	const Token marker = advance();
+	const bool unique = marker.type == TokenType::MODULO;
+
+	std::string path;
+	if (!unique && (check(TokenType::STRING) || check(TokenType::NODE_PATH))) {
+		path = std::get<std::string>(advance().value);
+	} else {
+		bool first = true;
+		do {
+			std::string prefix;
+			if (match(TokenType::MODULO)) {
+				prefix = "%";
+			} else if (first && unique) {
+				prefix = "%";
+			}
+			const Token name = consume(TokenType::IDENTIFIER,
+				std::string("Expected a node name after '") +
+				(first ? (unique ? "%" : "$") : "/") + "'");
+			if (!first) {
+				path += "/";
+			}
+			path += prefix + name.lexeme;
+			first = false;
+		} while (match(TokenType::DIVIDE));
+	}
+
+	std::vector<ExprPtr> arguments;
+	arguments.push_back(make_at<LiteralExpr>(marker, path));
+	auto call = std::make_unique<CallExpr>("get_node", std::move(arguments));
+	call->line = marker.line;
+	call->column = marker.column;
+	return call;
+}
+
 ExprPtr Parser::parse_primary() {
 	if (match(TokenType::TRUE)) {
 		return make_at<LiteralExpr>(previous(), true);
@@ -1034,6 +1090,20 @@ ExprPtr Parser::parse_primary() {
 	if (match(TokenType::STRING)) {
 		Token str = previous();
 		return make_at<LiteralExpr>(str, std::get<std::string>(str.value));
+	}
+
+	if (match(TokenType::STRING_NAME) || match(TokenType::NODE_PATH)) {
+		Token str = previous();
+		auto node = make_at<LiteralExpr>(str, std::get<std::string>(str.value));
+		node->string_type = str.type == TokenType::STRING_NAME
+			? LiteralExpr::StringType::STRING_NAME
+			: LiteralExpr::StringType::NODE_PATH;
+		return node;
+	}
+
+	// $Node, $"a/b", %Unique → get_node(). `%` unambiguous in expression position.
+	if (check(TokenType::DOLLAR) || check(TokenType::MODULO)) {
+		return parse_node_path();
 	}
 
 	if (match(TokenType::IDENTIFIER)) {
@@ -1238,21 +1308,59 @@ void Parser::skip_type_arguments() {
 	}
 }
 
+// Returns true if the attribute marks a property (@export_*).
+// @onready refused — no scene tree in sandbox. Other annotations dropped.
 bool Parser::parse_attribute() {
 	consume(TokenType::AT, "Expected '@' for attribute");
 
-	if (match(TokenType::IDENTIFIER)) {
-		Token attr_name = previous();
-		if (attr_name.lexeme == "export") {
-			return true;
-		} else {
-			error("Unknown attribute: @" + attr_name.lexeme);
-		}
-	} else {
-		error("Expected identifier after '@'");
+	const Token name = consume(TokenType::IDENTIFIER, "Expected an attribute name after '@'");
+	skip_attribute_arguments();
+
+	if (name.lexeme.rfind("export", 0) == 0) {
+		return true;
+	}
+	if (name.lexeme == "onready") {
+		error("@onready needs a scene tree, which a sandboxed program is not in; "
+			"assign the node in a function that runs after the scene is ready");
+	}
+	if (name.lexeme == "tool" || name.lexeme == "icon" || name.lexeme == "rpc" ||
+		name.lexeme == "warning_ignore" || name.lexeme == "warning_ignore_start" ||
+		name.lexeme == "warning_ignore_restore" || name.lexeme == "static_unload" ||
+		name.lexeme == "abstract")
+	{
+		return false;
 	}
 
+	error("Unknown attribute: @" + name.lexeme);
 	return false;
+}
+
+// Skip attribute argument list. Tracks nesting depth for nested parens.
+void Parser::skip_attribute_arguments() {
+	if (!match(TokenType::LPAREN)) {
+		return;
+	}
+	int depth = 1;
+	while (depth > 0 && !is_at_end()) {
+		if (match(TokenType::LPAREN)) {
+			depth++;
+		} else if (match(TokenType::RPAREN)) {
+			depth--;
+		} else {
+			advance();
+		}
+	}
+	if (depth != 0) {
+		error("Expected ')' to close the attribute arguments");
+	}
+}
+
+// Signal declaration: parsed and dropped. Sandbox publishes functions, not signals.
+void Parser::parse_signal() {
+	consume(TokenType::SIGNAL, "Expected 'signal'");
+	consume(TokenType::IDENTIFIER, "Expected a signal name after 'signal'");
+	skip_attribute_arguments();
+	consume_statement_end("Expected newline after signal declaration");
 }
 
 } // namespace gdscript

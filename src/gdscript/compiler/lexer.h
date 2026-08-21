@@ -18,7 +18,7 @@ public:
 
 private:
 	void scan_token();
-	void scan_string();
+	void scan_string(TokenType type = TokenType::STRING, bool raw = false);
 	void scan_number();
 	void scan_identifier();
 	void handle_indent();

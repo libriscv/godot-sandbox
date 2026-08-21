@@ -234,12 +234,34 @@ static void test_is_not() {
 	std::cout << "  ✓ 'is not' negates the type test" << std::endl;
 }
 
-// A class name cannot be decided from a Variant type tag; it needs an
-// inheritance walk in the engine, so it is rejected rather than answered false.
-static void test_is_rejects_a_class_name() {
-	assert(rejects("func f(a) -> bool:\n\treturn a is Node2D\n"));
+// `is ClassName`: TYPE_TEST for OBJECT, then Object.is_class() via VCALL.
+// Non-object -> false without the call. is_class() only knows ClassDB, so a
+// false answer walks the script chain for a `class_name` declaration.
+static void test_is_on_a_class_name_asks_the_engine() {
+	const IRProgram ir = compile_to_ir("func f(a) -> bool:\n\treturn a is Node2D\n", false);
+	const IRFunction& f = find_function(ir, "f");
+	// One for the subject, one per script in the chain.
+	assert(count_opcode(f, IROpcode::TYPE_TEST) == 2);
+	std::vector<std::string> called;
+	for (const auto& instr : f.instructions) {
+		if (instr.opcode == IROpcode::VCALL) {
+			called.push_back(std::get<std::string>(instr.operands[2].value));
+		}
+	}
+	assert((called == std::vector<std::string>{
+		"is_class", "get_script", "get_global_name", "get_base_script" }));
+	// The name is compared as a StringName: get_global_name() answers one.
+	assert(count_opcode(f, IROpcode::LOAD_STRING_AS) == 1);
+	assert(count_opcode(f, IROpcode::CMP_EQ) == 1);
 
-	std::cout << "  ✓ 'is' rejects a class name rather than guessing" << std::endl;
+	// Known non-object folds to false: no TYPE_TEST, no VCALL.
+	const IRProgram folded = compile_to_ir(
+		"func f() -> bool:\n\tvar i := 5\n\treturn i is Node2D\n", false);
+	assert(count_opcode(find_function(folded, "f"), IROpcode::VCALL) == 0);
+	assert(count_opcode(find_function(folded, "f"), IROpcode::TYPE_TEST) == 0);
+	assert(!run_bool("func f() -> bool:\n\tvar i := 5\n\treturn i is Node2D\n", "f"));
+
+	std::cout << "  ✓ 'is' on a class name asks the engine" << std::endl;
 }
 
 // `x as int` is the conversion the constructor performs, and shares its
@@ -250,9 +272,13 @@ static void test_as_is_the_matching_conversion() {
 	const IRProgram ctor = compile_to_ir("func f(a) -> int:\n\treturn int(a)\n", false);
 	assert(find_function(cast, "f").instructions.size() == find_function(ctor, "f").instructions.size());
 
-	assert(rejects("func f(a):\n\treturn a as Node2D\n"));
+	// `as ClassName`: returns value or null, over the same class test.
+	const IRProgram class_cast = compile_to_ir("func f(a):\n\treturn a as Node2D\n", false);
+	const IRFunction& class_f = find_function(class_cast, "f");
+	assert(count_opcode(class_f, IROpcode::LOAD_NIL) == 1);
+	assert(count_opcode(class_f, IROpcode::VCALL) == 4);
 
-	std::cout << "  ✓ 'as' is the matching conversion, and refuses class names" << std::endl;
+	std::cout << "  ✓ 'as' is the matching conversion, or a checked class cast" << std::endl;
 }
 
 // -= 'not' binds looser than a comparison =-
@@ -493,6 +519,21 @@ static void test_enum_member_is_a_typed_integer() {
 	std::cout << "  ✓ a comparison against an enum member is a typed compare" << std::endl;
 }
 
+// A declared enum shadows the built-in type of the same name: the built-in
+// constants used to be looked up first, so `Color.RED` answered with the
+// engine's colour and a member the engine has no name for failed to compile.
+static void test_enum_shadows_a_builtin_type_name() {
+	assert(run_int("enum Color { RED = 5, BLUE = 7 }\nfunc f() -> int:\n\treturn Color.RED\n",
+		"f") == 5);
+	assert(run_int("enum Vector2 { X = 3 }\nfunc f() -> int:\n\treturn Vector2.X\n", "f") == 3);
+
+	// Nothing shadowing it: the built-in constant is still what Color.RED means.
+	const IRProgram builtin = compile_to_ir("func f():\n\treturn Color.RED\n", false);
+	assert(count_opcode(find_function(builtin, "f"), IROpcode::MAKE_COLOR) == 1);
+
+	std::cout << "  ✓ an enum shadows the built-in type of the same name" << std::endl;
+}
+
 // Rejecting a misspelled member is what an enum buys over a bare integer: a
 // compile error, not a silent zero.
 static void test_enum_rejects_an_unknown_member() {
@@ -543,7 +584,7 @@ int main() {
 	test_is_lowers_to_a_tag_comparison();
 	test_is_on_a_known_type_is_decided_at_compile_time();
 	test_is_not();
-	test_is_rejects_a_class_name();
+	test_is_on_a_class_name_asks_the_engine();
 	test_as_is_the_matching_conversion();
 
 	test_not_binds_looser_than_comparison();
@@ -564,6 +605,7 @@ int main() {
 	test_enum_members_are_compile_time_integers();
 	test_unnamed_enum_members_are_reachable_unqualified();
 	test_enum_member_is_a_typed_integer();
+	test_enum_shadows_a_builtin_type_name();
 	test_enum_rejects_an_unknown_member();
 	test_a_local_shadows_an_enum();
 

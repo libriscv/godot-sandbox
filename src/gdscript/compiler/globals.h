@@ -103,6 +103,24 @@ enum UtilityOp : int16_t {
 	UTILITY_RANDI = 53,
 	UTILITY_RANDI_RANGE = 54,
 
+	// fa0-fa4 arithmetic. step_decimals() result fits in double.
+	UTILITY_EASE = 55,
+	UTILITY_STEP_DECIMALS = 56,
+
+	// int64 via a1/a0.
+	UTILITY_NEAREST_PO2 = 57,
+
+	// Variant in, Variant out (same shape as STR/LEN).
+	UTILITY_HASH = 58,
+	UTILITY_VAR_TO_STR = 59,
+	UTILITY_STR_TO_VAR = 60,
+	UTILITY_VAR_TO_BYTES = 61,
+	UTILITY_BYTES_TO_VAR = 62,
+	UTILITY_TYPE_STRING = 63,
+	UTILITY_TYPE_CONVERT = 64,
+	UTILITY_ERROR_STRING = 65,
+	UTILITY_IS_SAME = 66,
+
 	UTILITY_OP_COUNT,
 };
 
@@ -115,6 +133,16 @@ static constexpr size_t UTILITY_MAX_INT_ARGS = 3;
 // One global function — GDScript name + compilation metadata.
 enum class GlobalFn : int16_t {
 	PRINT,
+
+	// Other output channels. PRINT + Print_Channel in utility_op.
+	PRINTERR,
+	PRINTRAW,
+	PRINT_RICH,
+	PRINT_VERBOSE,
+	PRINTS,
+	PRINTT,
+	PUSH_ERROR,
+	PUSH_WARNING,
 
 	// NUMERIC dispatchers (type-preserving)
 	ABS,
@@ -198,10 +226,22 @@ enum class GlobalFn : int16_t {
 	IS_FINITE,
 	IS_ZERO_APPROX,
 	IS_EQUAL_APPROX,
+	EASE,
+	STEP_DECIMALS,
+	NEAREST_PO2,
 
 	// HOST forms (Variant API)
 	STR,
 	LEN,
+	HASH,
+	VAR_TO_STR,
+	STR_TO_VAR,
+	VAR_TO_BYTES,
+	BYTES_TO_VAR,
+	TYPE_STRING,
+	TYPE_CONVERT,
+	ERROR_STRING,
+	IS_SAME,
 
 	// Randomness (SYSCALL / SYSCALL_INT). Impure: advances the project's shared RNG.
 	RANDF,
@@ -243,6 +283,8 @@ enum class GlobalResult : uint8_t {
 	STRING,
 	// Follows chosen form (NUMERIC only).
 	NUMERIC,
+	// Untyped result; no type hint on the register.
+	VARIANT,
 };
 
 struct GlobalFunction {
@@ -265,6 +307,30 @@ struct GlobalFunction {
 // nullptr when `name` is not a known global (caller falls through to self-call).
 const GlobalFunction* find_global_function(const std::string& name);
 
+// @GlobalScope constant. Folds to immediate; no syscall.
+struct GlobalConstant {
+	const char* name;
+	bool is_float;
+	int64_t int_value;
+	double float_value;
+};
+
+// nullptr if not a @GlobalScope constant.
+const GlobalConstant* find_global_constant(const std::string& name);
+
+// Built-in type constant (Vector2.ZERO, Color.RED). Folded into MAKE_*.
+struct BuiltinConstant {
+	const char* type;
+	const char* name;
+	double components[4];
+};
+
+// nullptr if no such constant exists for `type`.
+const BuiltinConstant* find_builtin_constant(const std::string& type, const std::string& name);
+
+// True if `type` has any built-in constants (distinguishes typo from unknown type).
+bool has_builtin_constants(const std::string& type);
+
 // Unimplemented @GlobalScope name -> reason string, or nullptr if not a global.
 const char* unimplemented_global_reason(const std::string& name);
 
@@ -283,7 +349,7 @@ int64_t eval_global_int(GlobalFn fn, const int64_t* args, size_t count);
 // FLOAT_OP or SYSCALL form evaluation.
 double eval_global_float(GlobalFn fn, const double* args, size_t count);
 
-// SYSCALL_INT: always throws — needs host RNG.
+// SYSCALL_INT: always throws — the host answers these.
 int64_t eval_global_int_syscall(GlobalFn fn, const int64_t* args, size_t count);
 
 // NUMERIC dispatch: int_form when all_integer, float_form otherwise.

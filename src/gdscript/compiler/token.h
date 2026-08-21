@@ -10,6 +10,8 @@ enum class TokenType {
 	INTEGER,
 	FLOAT,
 	STRING,
+	STRING_NAME, // &"name"
+	NODE_PATH,   // ^"a/b"
 
 	// Keywords
 	FUNC,
@@ -36,6 +38,7 @@ enum class TokenType {
 	STATIC,
 	ENUM,
 	CLASS_NAME,
+	SIGNAL,
 
 	// Operators
 	PLUS,        // +
@@ -85,6 +88,7 @@ enum class TokenType {
 	DOT,         // .
 	DOT_DOT,     // .. (the rest of an array or dictionary pattern)
 	AT,          // @
+	DOLLAR,      // $ (node path sugar)
 	NEWLINE,
 	INDENT,
 	DEDENT,

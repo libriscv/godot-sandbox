@@ -104,6 +104,7 @@ const char* variant_type_name(IRInstruction::TypeHint hint) {
 		case Variant::PROJECTION: return "PROJECTION";
 		case Variant::ARRAY: return "ARRAY";
 		case Variant::DICTIONARY: return "DICTIONARY";
+		case Variant::OBJECT: return "OBJECT";
 		case Variant::RID: return "RID";
 		case Variant::CALLABLE: return "CALLABLE";
 		case Variant::SIGNAL: return "SIGNAL";

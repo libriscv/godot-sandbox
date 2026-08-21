@@ -57,6 +57,7 @@ private:
 	void gen_make_packed_array(const IRInstruction& instr);
 	void gen_binary_op(const IRInstruction& instr);
 	void gen_print(const IRInstruction& instr);
+	void gen_throw(const IRInstruction& instr);
 	void gen_switch(const IRInstruction& instr);
 	void gen_vget_inline(const IRInstruction& instr);
 	void gen_vset_inline(const IRInstruction& instr);
@@ -71,7 +72,7 @@ private:
 	void gen_syscall_array_size(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_array_at(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg);
-	void gen_syscall_get_node(const IRInstruction& instr, int result_vreg);
+	void gen_get_node(const IRInstruction& instr);
 
 	// Querying commits to return forwarding for this vreg.
 	std::pair<uint8_t, int> value_destination(int vreg);
@@ -216,7 +217,8 @@ private:
 	void emit_variant_create_int(int stack_offset, int64_t value, uint8_t base_reg = REG_SP);
 	void emit_variant_create_bool(int stack_offset, bool value, uint8_t base_reg = REG_SP);
 	void emit_variant_create_float(int stack_offset, double value, uint8_t base_reg = REG_SP);
-	void emit_variant_create_string(int stack_offset, int string_idx);
+	// variant_type: STRING, STRING_NAME (&""), or NODE_PATH (^"").
+	void emit_variant_create_string(int stack_offset, int string_idx, int variant_type = Variant::STRING);
 
 	// Both endpoints must be 8-byte aligned.
 	void emit_variant_move(uint8_t dst_base, int32_t dst_offset, uint8_t src_base, int32_t src_offset, uint8_t tmp_reg);
@@ -367,7 +369,7 @@ private:
 	std::string gen_local_label(const std::string& prefix);
 
 	// INT/FLOAT Variant -> real_t. normalize_by_255 for Color integer components.
-	void emit_variant_component_to_real(int comp_offset, int result_offset, int store_offset, bool normalize_by_255 = false);
+	void emit_variant_component_to_real(int comp_offset, int result_offset, int store_offset);
 	void emit_variant_component_to_int(int comp_offset, int result_offset, int store_offset);
 
 	int m_label_counter = 0;

@@ -11,6 +11,7 @@ using namespace godot;
 using gaddr_t = riscv::address_type<RISCV_ARCH>;
 using machine_t = riscv::Machine<RISCV_ARCH>;
 #include "elf/script_elf.h"
+#include "syscalls.h"
 #include "stringname_id.hpp"
 #include "vmcallable.h"
 #include "vmproperty.h"
@@ -768,7 +769,7 @@ public:
 	/// print() concatenates its arguments, and emitted as a single line. Both
 	/// the conversion and the output run under one non-reentrancy latch, and an
 	/// over-long line is truncated rather than allowed to grow.
-	void print(const Variant *const *args, unsigned count);
+	void print(const Variant *const *args, unsigned count, Print_Channel channel = Print_Channel::PRINT);
 	void print(const Variant &v);
 
 	/// @brief Generate the run-time API for the guest program, by iterating through all loaded classes.

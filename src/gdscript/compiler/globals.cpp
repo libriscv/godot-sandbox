@@ -1,6 +1,8 @@
 #include "globals.h"
+#include "../../syscalls.h"
 #include "compiler_exception.h"
 #include <cmath>
+#include <limits>
 #include <unordered_map>
 
 namespace gdscript {
@@ -18,8 +20,16 @@ static constexpr double CMP_EPSILON = 0.00001;
 static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 	// name, fn, kind, min, max, result, utility_op, float_args, int_form, float_form
 
-	// Side-effecting
-	{ "print", GlobalFn::PRINT, GlobalKind::PRINT, 0, 63, GlobalResult::NIL, NO_OP, 0, NO_FORM, NO_FORM },
+	// Side-effecting. Distinguished only by Print_Channel in utility_op.
+	{ "print", GlobalFn::PRINT, GlobalKind::PRINT, 0, 63, GlobalResult::NIL, int16_t(Print_Channel::PRINT), 0, NO_FORM, NO_FORM },
+	{ "prints", GlobalFn::PRINTS, GlobalKind::PRINT, 0, 63, GlobalResult::NIL, int16_t(Print_Channel::SPACED), 0, NO_FORM, NO_FORM },
+	{ "printt", GlobalFn::PRINTT, GlobalKind::PRINT, 0, 63, GlobalResult::NIL, int16_t(Print_Channel::TABBED), 0, NO_FORM, NO_FORM },
+	{ "printraw", GlobalFn::PRINTRAW, GlobalKind::PRINT, 0, 63, GlobalResult::NIL, int16_t(Print_Channel::RAW), 0, NO_FORM, NO_FORM },
+	{ "print_rich", GlobalFn::PRINT_RICH, GlobalKind::PRINT, 0, 63, GlobalResult::NIL, int16_t(Print_Channel::RICH), 0, NO_FORM, NO_FORM },
+	{ "printerr", GlobalFn::PRINTERR, GlobalKind::PRINT, 0, 63, GlobalResult::NIL, int16_t(Print_Channel::ERROR), 0, NO_FORM, NO_FORM },
+	{ "print_verbose", GlobalFn::PRINT_VERBOSE, GlobalKind::PRINT, 0, 63, GlobalResult::NIL, int16_t(Print_Channel::VERBOSE), 0, NO_FORM, NO_FORM },
+	{ "push_error", GlobalFn::PUSH_ERROR, GlobalKind::PRINT, 1, 63, GlobalResult::NIL, int16_t(Print_Channel::PUSH_ERROR), 0, NO_FORM, NO_FORM },
+	{ "push_warning", GlobalFn::PUSH_WARNING, GlobalKind::PRINT, 1, 63, GlobalResult::NIL, int16_t(Print_Channel::PUSH_WARNING), 0, NO_FORM, NO_FORM },
 
 	// Sign and magnitude
 	{ "abs", GlobalFn::ABS, GlobalKind::NUMERIC, 1, 1, GlobalResult::NUMERIC, NO_OP, 0, GlobalFn::ABSI, GlobalFn::ABSF },
@@ -111,9 +121,26 @@ static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 	{ "is_zero_approx", GlobalFn::IS_ZERO_APPROX, GlobalKind::SYSCALL, 1, 1, GlobalResult::BOOL, UTILITY_IS_ZERO_APPROX, 1, NO_FORM, NO_FORM },
 	{ "is_equal_approx", GlobalFn::IS_EQUAL_APPROX, GlobalKind::SYSCALL, 2, 2, GlobalResult::BOOL, UTILITY_IS_EQUAL_APPROX, 2, NO_FORM, NO_FORM },
 
+	// Curves and step sizes
+	{ "ease", GlobalFn::EASE, GlobalKind::SYSCALL, 2, 2, GlobalResult::FLOAT, UTILITY_EASE, 2, NO_FORM, NO_FORM },
+	{ "step_decimals", GlobalFn::STEP_DECIMALS, GlobalKind::SYSCALL, 1, 1, GlobalResult::INT, UTILITY_STEP_DECIMALS, 1, NO_FORM, NO_FORM },
+	// int64 result via a0; exceeds double range.
+	{ "nearest_po2", GlobalFn::NEAREST_PO2, GlobalKind::SYSCALL_INT, 1, 1, GlobalResult::INT, UTILITY_NEAREST_PO2, 0, NO_FORM, NO_FORM },
+
 	// Variant queries
 	{ "str", GlobalFn::STR, GlobalKind::HOST, 1, 63, GlobalResult::STRING, UTILITY_STR, 0, NO_FORM, NO_FORM },
 	{ "len", GlobalFn::LEN, GlobalKind::HOST, 1, 1, GlobalResult::INT, UTILITY_LEN, 0, NO_FORM, NO_FORM },
+
+	// Serialization and identity. Depend on host Variant encoding.
+	{ "hash", GlobalFn::HASH, GlobalKind::HOST, 1, 1, GlobalResult::INT, UTILITY_HASH, 0, NO_FORM, NO_FORM },
+	{ "var_to_str", GlobalFn::VAR_TO_STR, GlobalKind::HOST, 1, 1, GlobalResult::STRING, UTILITY_VAR_TO_STR, 0, NO_FORM, NO_FORM },
+	{ "str_to_var", GlobalFn::STR_TO_VAR, GlobalKind::HOST, 1, 1, GlobalResult::VARIANT, UTILITY_STR_TO_VAR, 0, NO_FORM, NO_FORM },
+	{ "var_to_bytes", GlobalFn::VAR_TO_BYTES, GlobalKind::HOST, 1, 1, GlobalResult::VARIANT, UTILITY_VAR_TO_BYTES, 0, NO_FORM, NO_FORM },
+	{ "bytes_to_var", GlobalFn::BYTES_TO_VAR, GlobalKind::HOST, 1, 1, GlobalResult::VARIANT, UTILITY_BYTES_TO_VAR, 0, NO_FORM, NO_FORM },
+	{ "type_string", GlobalFn::TYPE_STRING, GlobalKind::HOST, 1, 1, GlobalResult::STRING, UTILITY_TYPE_STRING, 0, NO_FORM, NO_FORM },
+	{ "type_convert", GlobalFn::TYPE_CONVERT, GlobalKind::HOST, 2, 2, GlobalResult::VARIANT, UTILITY_TYPE_CONVERT, 0, NO_FORM, NO_FORM },
+	{ "error_string", GlobalFn::ERROR_STRING, GlobalKind::HOST, 1, 1, GlobalResult::STRING, UTILITY_ERROR_STRING, 0, NO_FORM, NO_FORM },
+	{ "is_same", GlobalFn::IS_SAME, GlobalKind::HOST, 2, 2, GlobalResult::BOOL, UTILITY_IS_SAME, 0, NO_FORM, NO_FORM },
 
 	// Type constructors. Inline when argument is numeric/bool; host otherwise.
 	{ "int", GlobalFn::TO_INT, GlobalKind::CAST, 1, 1, GlobalResult::INT, UTILITY_TO_INT, 0, GlobalFn::INT_IDENTITY, NO_FORM },
@@ -150,37 +177,57 @@ const GlobalFunction* find_global_function(const std::string& name) {
 	return it == by_name.end() ? nullptr : it->second;
 }
 
+static const GlobalConstant GLOBAL_CONSTANTS[] = {
+#define GDSC_INT_CONSTANT(name, value) { #name, false, static_cast<int64_t>(value), 0.0 },
+#define GDSC_FLOAT_CONSTANT(name, value) { #name, true, 0, (value) },
+#include "global_constants.def"
+};
+
+const GlobalConstant* find_global_constant(const std::string& name) {
+	static const std::unordered_map<std::string, const GlobalConstant*> by_name = [] {
+		std::unordered_map<std::string, const GlobalConstant*> map;
+		for (const GlobalConstant& entry : GLOBAL_CONSTANTS) {
+			map[entry.name] = &entry;
+		}
+		return map;
+	}();
+
+	auto it = by_name.find(name);
+	return it == by_name.end() ? nullptr : it->second;
+}
+
+static const BuiltinConstant BUILTIN_CONSTANTS[] = {
+#define GDSC_BUILTIN_CONSTANT(type, name, c0, c1, c2, c3) { #type, #name, { c0, c1, c2, c3 } },
+#include "builtin_constants.def"
+};
+
+const BuiltinConstant* find_builtin_constant(const std::string& type, const std::string& name) {
+	for (const BuiltinConstant& entry : BUILTIN_CONSTANTS) {
+		if (type == entry.type && name == entry.name) {
+			return &entry;
+		}
+	}
+	return nullptr;
+}
+
+bool has_builtin_constants(const std::string& type) {
+	for (const BuiltinConstant& entry : BUILTIN_CONSTANTS) {
+		if (type == entry.type) {
+			return true;
+		}
+	}
+	return false;
+}
+
 // @GlobalScope names not yet lowered. Refused at compile time; the self-call
 // fallback would be silently dropped. Removed when a GLOBAL_FUNCTIONS row is added.
 static const struct { const char* name; const char* reason; } UNIMPLEMENTED_GLOBALS[] = {
-	// Output: ECALL_PRINT has no channel selector.
-	{ "printerr", "no host syscall for the error channel yet" },
-	{ "printraw", "no host syscall for the raw channel yet" },
-	{ "print_rich", "no host syscall for the rich channel yet" },
-	{ "print_debug", "no host syscall for the debug channel yet" },
-	{ "print_verbose", "no host syscall for the verbose channel yet" },
-	{ "printt", "no host syscall for tab-separated printing yet" },
-	{ "prints", "no host syscall for space-separated printing yet" },
-	{ "push_error", "no host syscall for the error channel yet" },
-	{ "push_warning", "no host syscall for the warning channel yet" },
+	// No guest script location to attach.
+	{ "print_debug", "there is no script location to attach; use print()" },
 
-	// Serialization and identity: need ECALL_UTILITY ops.
-	{ "hash", "no ECALL_UTILITY op yet" },
-	{ "var_to_str", "no ECALL_UTILITY op yet" },
-	{ "str_to_var", "no ECALL_UTILITY op yet" },
-	{ "var_to_bytes", "no ECALL_UTILITY op yet" },
-	{ "bytes_to_var", "no ECALL_UTILITY op yet" },
-	{ "var_to_bytes_with_objects", "no ECALL_UTILITY op yet" },
-	{ "bytes_to_var_with_objects", "no ECALL_UTILITY op yet" },
-	{ "type_string", "no ECALL_UTILITY op yet" },
-	{ "type_convert", "no ECALL_UTILITY op yet" },
-	{ "error_string", "no ECALL_UTILITY op yet" },
-	{ "is_same", "no ECALL_UTILITY op yet" },
-
-	// Numeric: missing ops.
-	{ "ease", "no ECALL_UTILITY op yet" },
-	{ "nearest_po2", "no ECALL_UTILITY op yet" },
-	{ "step_decimals", "no ECALL_UTILITY op yet" },
+	// Object references are process-local.
+	{ "var_to_bytes_with_objects", "object references cannot leave the sandbox" },
+	{ "bytes_to_var_with_objects", "object references cannot enter the sandbox" },
 
 	// Object lifetime: sandbox uses allowlist, not instance ids.
 	{ "instance_from_id", "objects are reached through the sandbox allowlist, not by instance id" },
@@ -196,8 +243,6 @@ static const struct { const char* name; const char* reason; } UNIMPLEMENTED_GLOB
 	{ "load", "resource loading is not available to the sandbox yet" },
 
 	// Containers and callables from global calls.
-	{ "range", "only 'for x in range(...)' is lowered; range() as a value needs an Array result" },
-	{ "assert", "not lowered yet; the condition would be evaluated and thrown away" },
 	{ "super", "there is no base script to forward to: the sandbox program is the whole script" },
 
 	// Built-in types: no inline constructor or ECALL_VCREATE lowering.
@@ -212,7 +257,6 @@ static const struct { const char* name; const char* reason; } UNIMPLEMENTED_GLOB
 	{ "StringName", "no constructor lowering yet" },
 	{ "NodePath", "no constructor lowering yet" },
 	{ "RID", "no constructor lowering yet" },
-	{ "Color8", "no constructor lowering yet" },
 };
 
 const char* unimplemented_global_reason(const std::string& name) {
@@ -368,6 +412,32 @@ double eval_utility_op(int16_t utility_op, const double args[UTILITY_MAX_FLOAT_A
 		case UTILITY_IS_FINITE: return std::isfinite(a) ? 1.0 : 0.0;
 		case UTILITY_IS_ZERO_APPROX: return eval_is_zero_approx(a) ? 1.0 : 0.0;
 
+		// Transcribed from Math::ease() / Math::step_decimals(); must match host utility_math_op().
+		case UTILITY_EASE: {
+			const double x = a < 0.0 ? 0.0 : (a > 1.0 ? 1.0 : a);
+			if (b > 0.0) {
+				return (b < 1.0) ? 1.0 - std::pow(1.0 - x, 1.0 / b) : std::pow(x, b);
+			}
+			if (b < 0.0) {
+				return (x < 0.5)
+						? std::pow(x * 2.0, -b) * 0.5
+						: (1.0 - std::pow(1.0 - (x - 0.5) * 2.0, -b)) * 0.5 + 0.5;
+			}
+			return 0.0;
+		}
+		case UTILITY_STEP_DECIMALS: {
+			static const double sd[] = { 0.9999, 0.09999, 0.009999, 0.0009999, 0.00009999,
+				0.000009999, 0.0000009999, 0.00000009999, 0.000000009999, 0.0000000009999 };
+			const double magnitude = std::fabs(a);
+			const double decimals = magnitude - std::floor(magnitude);
+			for (int i = 0; i < 10; i++) {
+				if (decimals >= sd[i]) {
+					return double(i);
+				}
+			}
+			return 0.0;
+		}
+
 		case UTILITY_ATAN2: return std::atan2(a, b);
 		case UTILITY_POW: return std::pow(a, b);
 		case UTILITY_FMOD: return std::fmod(a, b);
@@ -517,8 +587,10 @@ int64_t eval_global_int(GlobalFn fn, const int64_t* args, size_t count) {
 int64_t eval_global_int_syscall(GlobalFn fn, const int64_t* args, size_t count) {
 	(void)args;
 	(void)count;
-	throw CompilerException(ErrorType::CODEGEN_ERROR,
-		std::string(global_function(fn).name) + "() needs the host's random number generator"
+	// OPTIMIZER_ERROR, not CODEGEN_ERROR: the harnesses skip a program on this,
+	// the way they do for the other globals only the host can answer.
+	throw CompilerException(ErrorType::OPTIMIZER_ERROR,
+		std::string(global_function(fn).name) + "() is answered by the host"
 		" and cannot be evaluated here");
 }
 

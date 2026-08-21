@@ -355,7 +355,8 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 			break;
 		}
 
-		case IROpcode::LOAD_STRING: {
+		case IROpcode::LOAD_STRING:
+		case IROpcode::LOAD_STRING_AS: {
 			int reg = std::get<int>(instr.operands[0].value);
 			invalidate_register(reg);
 			emit(instr);
@@ -612,6 +613,7 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::VGET:
 		case IROpcode::VSET:
 		case IROpcode::CALL_SYSCALL:
+		case IROpcode::GET_NODE:
 		case IROpcode::CALL:
 			if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
 				invalidate_register(std::get<int>(instr.operands[0].value));
@@ -623,6 +625,8 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::BIT_NOT:
 		case IROpcode::CONVERT:
 		case IROpcode::JUMP:
+		case IROpcode::LOAD_NIL:
+		case IROpcode::THROW:
 		case IROpcode::LOAD_GLOBAL:
 		case IROpcode::MAKE_ARRAY:
 		case IROpcode::MAKE_COLOR:

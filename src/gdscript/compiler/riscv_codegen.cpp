@@ -28,8 +28,8 @@ std::string RISCVCodeGen::gen_local_label(const std::string& prefix) {
 	return prefix + std::to_string(m_label_counter++);
 }
 
-void RISCVCodeGen::emit_variant_component_to_real(int comp_offset, int result_offset, int store_offset, bool normalize_by_255) {
-	// INT or FLOAT Variant -> real_t. normalize_by_255 divides integers by 255.0 (Color).
+void RISCVCodeGen::emit_variant_component_to_real(int comp_offset, int result_offset, int store_offset) {
+	// INT or FLOAT Variant -> real_t.
 	std::string label_float = gen_local_label(".float");
 	std::string label_cont = gen_local_label(".cont");
 
@@ -41,20 +41,11 @@ void RISCVCodeGen::emit_variant_component_to_real(int comp_offset, int result_of
 	// INT path
 	emit_ld(REG_T0, REG_SP, comp_offset + 8);
 	emit_fcvt_d_l(REG_FA0, REG_T0);
-
-	if (normalize_by_255) {
-		size_t const_idx = add_constant(0x406FC00000000000LL); // 255.0 as double
-		std::string label_255 = ".LC" + std::to_string(const_idx);
-		emit_la(REG_T0, label_255);
-		emit_fld(REG_FA1, REG_T0, 0);
-		emit_fdiv_d(REG_FA0, REG_FA0, REG_FA1);
-	}
-
 	emit_fcvt_r_d(REG_FA0, REG_FA0);
 	mark_label_use(label_cont, m_code.size());
 	emit_jal(REG_ZERO, 0);
 
-	// FLOAT path: always 64-bit double, narrow to real_t. No normalization.
+	// FLOAT path: always 64-bit double, narrow to real_t.
 	define_label(label_float);
 	emit_fld(REG_FA0, REG_SP, comp_offset + VARIANT_DATA_OFFSET);
 	emit_fcvt_r_d(REG_FA0, REG_FA0);
@@ -325,6 +316,7 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 			case IROpcode::LOAD_IMM:
 			case IROpcode::LOAD_FLOAT_IMM:
 			case IROpcode::LOAD_BOOL:
+			case IROpcode::LOAD_NIL:
 			case IROpcode::LOAD_GLOBAL:
 				m_fn.omits_frame = m_fn.forward_to_return[i];
 				break;
@@ -518,44 +510,37 @@ void RISCVCodeGen::gen_syscall_dictionary_ops(const IRInstruction& instr, int re
 }
 
 // No path argument defaults to ".".
-void RISCVCodeGen::gen_syscall_get_node(const IRInstruction& instr, int result_vreg) {
-	if (instr.operands.size() < 3) {
-		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_GET_NODE requires at least 3 operands");
+// ECALL_GET_NODE(base, path_ptr, path_len). Path copied to stack for memview;
+// base zero = attached node.
+void RISCVCodeGen::gen_get_node(const IRInstruction& instr) {
+	if (instr.operands.size() != 2) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "GET_NODE requires 2 operands");
 	}
 
-	int base_addr = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
-	bool has_path = instr.operands.size() >= 4;
+	int result_vreg = std::get<int>(instr.operands[0].value);
+	const std::string& path = std::get<std::string>(instr.operands[1].value);
 
 	int result_offset = get_variant_stack_offset(result_vreg);
 	spill_around_syscall({REG_A0, REG_A1, REG_A2});
 
-	if (has_path) {
-		int path_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
-		int path_offset = get_variant_stack_offset(path_vreg);
+	const int path_space = (static_cast<int>(path.size()) + 1 + 15) & ~15;
+	emit_stack_adjust(-path_space);
 
-		emit_li(REG_A0, base_addr);
-		emit_ld(REG_A1, REG_SP, path_offset + 8);
-		emit_ld(REG_A2, REG_SP, path_offset + 16);
-	} else {
-		int dot_str_space = 8;
-		emit_stack_adjust(-dot_str_space);
-
-		emit_li(REG_T0, static_cast<uint8_t>('.'));
-		emit_sb(REG_T0, REG_SP, 0);
-		emit_sb(REG_ZERO, REG_SP, 1);
-		emit_li(REG_A0, base_addr);
-		emit_mv(REG_A1, REG_SP);
-		emit_li(REG_A2, 1);
+	for (size_t i = 0; i < path.size(); i++) {
+		emit_li(REG_T0, static_cast<unsigned char>(path[i]));
+		emit_sb(REG_T0, REG_SP, static_cast<int>(i));
 	}
+	emit_sb(REG_ZERO, REG_SP, static_cast<int>(path.size()));
 
+	emit_li(REG_A0, 0);
+	emit_mv(REG_A1, REG_SP);
+	emit_li(REG_A2, static_cast<int>(path.size()));
 	emit_li(REG_A7, ECALL_GET_NODE);
 	emit_ecall();
 
-	if (!has_path) {
-		emit_stack_adjust(8);
-	}
+	emit_stack_adjust(path_space);
 
-	emit_syscall_result(result_vreg, REG_A0, result_offset, 24); // OBJECT
+	emit_syscall_result(result_vreg, REG_A0, result_offset, Variant::OBJECT);
 }
 
 void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
@@ -574,8 +559,6 @@ void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
 		gen_syscall_array_at(instr, result_vreg);
 	} else if (syscall_num == ECALL_DICTIONARY_OPS) {
 		gen_syscall_dictionary_ops(instr, result_vreg);
-	} else if (syscall_num == ECALL_GET_NODE) {
-		gen_syscall_get_node(instr, result_vreg);
 	} else {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unknown syscall number: " + std::to_string(syscall_num));
 	}
@@ -1033,46 +1016,105 @@ void RISCVCodeGen::gen_switch(const IRInstruction& instr) {
 	define_label(past_table);
 }
 
+// ECALL_THROW(type_ptr, type_len, msg_ptr, msg_len, variant, function).
+// Strings copied to stack as raw bytes for memview. Does not return.
+void RISCVCodeGen::gen_throw(const IRInstruction& instr) {
+	if (instr.operands.size() != 2) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "THROW requires 2 operands");
+	}
+
+	const std::string& type = std::get<std::string>(instr.operands[0].value);
+	const std::string& message = std::get<std::string>(instr.operands[1].value);
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5});
+
+	const int type_space = (static_cast<int>(type.size()) + 1 + 7) & ~7;
+	const int message_space = (static_cast<int>(message.size()) + 1 + 7) & ~7;
+	const int total_space = (type_space + message_space + 15) & ~15;
+
+	emit_add_offset(REG_SP, REG_SP, -total_space);
+
+	for (size_t i = 0; i < type.size(); i++) {
+		emit_li(REG_T0, static_cast<unsigned char>(type[i]));
+		emit_sb(REG_T0, REG_SP, static_cast<int>(i));
+	}
+	emit_sb(REG_ZERO, REG_SP, static_cast<int>(type.size()));
+
+	for (size_t i = 0; i < message.size(); i++) {
+		emit_li(REG_T0, static_cast<unsigned char>(message[i]));
+		emit_sb(REG_T0, REG_SP, type_space + static_cast<int>(i));
+	}
+	emit_sb(REG_ZERO, REG_SP, type_space + static_cast<int>(message.size()));
+
+	emit_mv(REG_A0, REG_SP);
+	emit_li(REG_A1, static_cast<int>(type.size()));
+	emit_add_offset(REG_A2, REG_SP, type_space);
+	emit_li(REG_A3, static_cast<int>(message.size()));
+	emit_mv(REG_A4, REG_ZERO);  // variant = none
+	emit_mv(REG_A5, REG_ZERO);  // function = none
+	emit_li(REG_A7, ECALL_THROW);
+	emit_ecall();
+
+	// Unreachable; stack balance kept for verifier.
+	emit_add_offset(REG_SP, REG_SP, total_space);
+}
+
 void RISCVCodeGen::gen_print(const IRInstruction& instr) {
 	// Arguments copied into contiguous array below sp for sys_print
-	if (instr.operands.size() < 2) {
-		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "PRINT requires at least 2 operands");
+	if (instr.operands.size() < 3) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "PRINT requires at least 3 operands");
 	}
 
 	int result_vreg = std::get<int>(instr.operands[0].value);
-	int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+	const int channel = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+	int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
 
-	if (instr.operands.size() != static_cast<size_t>(2 + arg_count)) {
+	if (instr.operands.size() != static_cast<size_t>(3 + arg_count)) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "PRINT argument count mismatch");
 	}
 
+	// print() uses ECALL_PRINT (no channel); rest use ECALL_PRINT_CHANNEL.
+	const bool plain = channel == int(Print_Channel::PRINT);
+	const int syscall = plain ? ECALL_PRINT : ECALL_PRINT_CHANNEL;
+
 	int result_offset = get_variant_stack_offset(result_vreg);
 
-	spill_around_syscall({REG_A0, REG_A1});
+	spill_around_syscall({REG_A0, REG_A1, REG_A2});
 
 	if (arg_count == 0) {
 		emit_mv(REG_A0, REG_ZERO);
 		emit_li(REG_A1, 0);
-		emit_li(REG_A7, ECALL_PRINT);
-		emit_ecall();
 	} else {
 		int args_space = arg_count * variant_size();
 		args_space = (args_space + 15) & ~15;
 		emit_add_offset(REG_SP, REG_SP, -args_space);
 
 		for (int i = 0; i < arg_count; i++) {
-			int arg_vreg = std::get<int>(instr.operands[2 + i].value);
+			int arg_vreg = std::get<int>(instr.operands[3 + i].value);
 			int arg_src_offset = get_variant_stack_offset(arg_vreg) + args_space;
 			emit_variant_move(REG_SP, i * variant_size(), REG_SP, arg_src_offset, REG_T0);
 		}
 
 		emit_mv(REG_A0, REG_SP);
 		emit_li(REG_A1, arg_count);
-		emit_li(REG_A7, ECALL_PRINT);
+		if (!plain) {
+			emit_li(REG_A2, channel);
+		}
+		emit_li(REG_A7, syscall);
 		emit_ecall();
 
 		emit_add_offset(REG_SP, REG_SP, args_space);
+
+		emit_li(REG_T0, Variant::NIL);
+		emit_store_variant_type(REG_T0, REG_SP, result_offset);
+		return;
 	}
+
+	if (!plain) {
+		emit_li(REG_A2, channel);
+	}
+	emit_li(REG_A7, syscall);
+	emit_ecall();
 
 	// print() returns nil
 	emit_li(REG_T0, Variant::NIL);
@@ -1480,11 +1522,29 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			break;
 		}
 
+		case IROpcode::LOAD_NIL: {
+			// NIL: tag only, no payload.
+			int vreg = std::get<int>(instr.operands[0].value);
+			auto [base, offset] = value_destination(vreg);
+			emit_li(REG_T0, Variant::NIL);
+			emit_store_variant_type(REG_T0, base, offset);
+			break;
+		}
+
 		case IROpcode::LOAD_STRING: {
 			int vreg = std::get<int>(instr.operands[0].value);
 			int64_t string_idx = std::get<int64_t>(instr.operands[1].value);
 			int stack_offset = get_variant_stack_offset(vreg);
 			emit_variant_create_string(stack_offset, static_cast<int>(string_idx));
+			break;
+		}
+
+		case IROpcode::LOAD_STRING_AS: {
+			int vreg = std::get<int>(instr.operands[0].value);
+			int64_t string_idx = std::get<int64_t>(instr.operands[1].value);
+			int variant_type = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+			int stack_offset = get_variant_stack_offset(vreg);
+			emit_variant_create_string(stack_offset, static_cast<int>(string_idx), variant_type);
 			break;
 		}
 
@@ -1825,9 +1885,12 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::CALL:
 			gen_call(instr);
 			break;
+		// Rect2/Plane: four contiguous real_t, same payload as Vector4.
 		case IROpcode::MAKE_VECTOR2:
 		case IROpcode::MAKE_VECTOR3:
-		case IROpcode::MAKE_VECTOR4: {
+		case IROpcode::MAKE_VECTOR4:
+		case IROpcode::MAKE_RECT2:
+		case IROpcode::MAKE_PLANE: {
 			int num_components = (instr.opcode == IROpcode::MAKE_VECTOR2) ? 2 :
 								 (instr.opcode == IROpcode::MAKE_VECTOR3) ? 3 : 4;
 
@@ -1839,7 +1902,9 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			int result_offset = get_variant_stack_offset(result_vreg);
 
 			int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2) ? Variant::VECTOR2 :
-							   (instr.opcode == IROpcode::MAKE_VECTOR3) ? Variant::VECTOR3 : Variant::VECTOR4;
+							   (instr.opcode == IROpcode::MAKE_VECTOR3) ? Variant::VECTOR3 :
+							   (instr.opcode == IROpcode::MAKE_RECT2) ? Variant::RECT2 :
+							   (instr.opcode == IROpcode::MAKE_PLANE) ? Variant::PLANE : Variant::VECTOR4;
 			emit_li(REG_T0, variant_type);
 			emit_sw(REG_T0, REG_SP, result_offset);
 
@@ -1854,7 +1919,8 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 
 		case IROpcode::MAKE_VECTOR2I:
 		case IROpcode::MAKE_VECTOR3I:
-		case IROpcode::MAKE_VECTOR4I: {
+		case IROpcode::MAKE_VECTOR4I:
+		case IROpcode::MAKE_RECT2I: {
 			int num_components = (instr.opcode == IROpcode::MAKE_VECTOR2I) ? 2 :
 								 (instr.opcode == IROpcode::MAKE_VECTOR3I) ? 3 : 4;
 
@@ -1866,7 +1932,8 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			int result_offset = get_variant_stack_offset(result_vreg);
 
 			int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2I) ? Variant::VECTOR2I :
-							   (instr.opcode == IROpcode::MAKE_VECTOR3I) ? Variant::VECTOR3I : Variant::VECTOR4I;
+							   (instr.opcode == IROpcode::MAKE_VECTOR3I) ? Variant::VECTOR3I :
+							   (instr.opcode == IROpcode::MAKE_RECT2I) ? Variant::RECT2I : Variant::VECTOR4I;
 			emit_li(REG_T0, variant_type);
 			emit_sw(REG_T0, REG_SP, result_offset);
 
@@ -1895,7 +1962,7 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			for (int i = 0; i < 4; i++) {
 				int comp_vreg = std::get<int>(instr.operands[1 + i].value);
 				int comp_offset = get_variant_stack_offset(comp_vreg);
-				emit_variant_component_to_real(comp_offset, result_offset, real_offset(i), true);
+				emit_variant_component_to_real(comp_offset, result_offset, real_offset(i));
 			}
 
 			break;
@@ -1903,6 +1970,9 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 
 		case IROpcode::PRINT:
 			gen_print(instr);
+			break;
+		case IROpcode::THROW:
+			gen_throw(instr);
 			break;
 		case IROpcode::GLOBAL_CALL:
 			emit_global_call(instr);
@@ -1938,13 +2008,11 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::VSET_INLINE:
 			gen_vset_inline(instr);
 			break;
-		case IROpcode::MAKE_RECT2:
-		case IROpcode::MAKE_RECT2I:
-		case IROpcode::MAKE_PLANE:
-			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Opcode not yet implemented in RISC-V codegen");
-
 		case IROpcode::CALL_SYSCALL:
 			gen_call_syscall(instr);
+			break;
+		case IROpcode::GET_NODE:
+			gen_get_node(instr);
 			break;
 		// No default: new opcodes must be listed (compile error otherwise)
 	}
@@ -2140,6 +2208,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::LOAD_IMM:
 		case IROpcode::LOAD_FLOAT_IMM:
 		case IROpcode::LOAD_BOOL:
+		case IROpcode::LOAD_NIL:
 		case IROpcode::LOAD_GLOBAL:
 		case IROpcode::MOVE:
 		case IROpcode::TYPE_TEST:
@@ -2152,6 +2221,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 
 		// May syscall or call; must hold for the slow path too
 		case IROpcode::LOAD_STRING:
+		case IROpcode::LOAD_STRING_AS:
 		case IROpcode::STORE_GLOBAL:
 		case IROpcode::CONVERT:
 		case IROpcode::POW:
@@ -2191,10 +2261,12 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::DICT_SET:
 		case IROpcode::CALL:
 		case IROpcode::CALL_SYSCALL:
+		case IROpcode::GET_NODE:
 		case IROpcode::VCALL:
 		case IROpcode::VGET:
 		case IROpcode::VSET:
 		case IROpcode::PRINT:
+		case IROpcode::THROW:
 		case IROpcode::GLOBAL_CALL:
 		case IROpcode::MAKE_VECTOR2:
 		case IROpcode::MAKE_VECTOR3:
@@ -2319,6 +2391,7 @@ std::vector<bool> RISCVCodeGen::find_return_forwarding(const IRFunction& func) {
 			case IROpcode::LOAD_IMM:
 			case IROpcode::LOAD_FLOAT_IMM:
 			case IROpcode::LOAD_BOOL:
+			case IROpcode::LOAD_NIL:
 			case IROpcode::LOAD_GLOBAL:
 			case IROpcode::MOVE:
 				break;
@@ -2695,7 +2768,7 @@ void RISCVCodeGen::emit_variant_create_bool(int stack_offset, bool value, uint8_
 	emit_store_variant_bool(REG_T0, base_reg, stack_offset);
 }
 
-void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) {
+void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx, int variant_type) {
 
 	if (!m_string_constants || string_idx < 0 || string_idx >= static_cast<int>(m_string_constants->size())) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Invalid string constant index: " + std::to_string(string_idx));
@@ -2726,7 +2799,7 @@ void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) 
 
 	int adjusted_dst_offset = stack_offset + total_space;
 	emit_add_offset(REG_A0, REG_SP, adjusted_dst_offset);
-	emit_li(REG_A1, Variant::STRING);
+	emit_li(REG_A1, variant_type);
 	emit_li(REG_A2, 1);
 	emit_add_offset(REG_A3, REG_SP, str_space);
 	emit_li(REG_A7, ECALL_VCREATE);

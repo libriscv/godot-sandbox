@@ -1811,7 +1811,7 @@ int64_t Sandbox::get_heap_deallocation_counter() const {
 // buffer to whatever size the guest picked.
 static constexpr int PRINT_LINE_MAX_CHARS = 1 << 18;
 
-void Sandbox::print(const Variant *const *args, unsigned count) {
+void Sandbox::print(const Variant *const *args, unsigned count, Print_Channel channel) {
 	// The latch covers the conversion, not just the output. Stringifying an
 	// argument runs Variant::operator String(), which for an Object reaches
 	// Object::to_string() and from there a script's _to_string() - and when that
@@ -1833,8 +1833,15 @@ void Sandbox::print(const Variant *const *args, unsigned count) {
 		~LatchGuard() { flag = false; }
 	} latch_guard{ already_been_here };
 
+	// Separator: spaces for prints(), tabs for printt(), empty otherwise.
+	const char *separator = channel == Print_Channel::SPACED ? " "
+			: (channel == Print_Channel::TABBED ? "\t" : "");
+
 	String line;
 	for (unsigned i = 0; i < count; i++) {
+		if (i > 0) {
+			line += separator;
+		}
 		line += args[i]->stringify();
 		if (line.length() > PRINT_LINE_MAX_CHARS) {
 			ERR_PRINT("print(): Line too long, truncated");
@@ -1843,12 +1850,38 @@ void Sandbox::print(const Variant *const *args, unsigned count) {
 		}
 	}
 
+	// Redirect captures all channels.
 	if (this->m_redirect_stdout.is_valid()) {
-		// Redirect to a GDScript callback function
 		this->m_redirect_stdout.call(line);
-	} else {
-		// Print to the console
-		UtilityFunctions::print(line);
+		return;
+	}
+
+	switch (channel) {
+		case Print_Channel::PRINT:
+		case Print_Channel::SPACED:
+		case Print_Channel::TABBED:
+			UtilityFunctions::print(line);
+			break;
+		case Print_Channel::RAW:
+			UtilityFunctions::printraw(line);
+			break;
+		case Print_Channel::RICH:
+			UtilityFunctions::print_rich(line);
+			break;
+		case Print_Channel::ERROR:
+			UtilityFunctions::printerr(line);
+			break;
+		case Print_Channel::VERBOSE:
+			UtilityFunctions::print_verbose(line);
+			break;
+		case Print_Channel::PUSH_ERROR:
+			UtilityFunctions::push_error(line);
+			break;
+		case Print_Channel::PUSH_WARNING:
+			UtilityFunctions::push_warning(line);
+			break;
+		case Print_Channel::CHANNEL_COUNT:
+			break;
 	}
 }
 

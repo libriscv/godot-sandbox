@@ -20,6 +20,7 @@
 #include "../lexer.h"
 #include "../parser.h"
 #include "../riscv_codegen.h"
+#include "../syscall_numbers.h"
 #include "../variant_layout.h"
 #include <cassert>
 #include <cmath>
@@ -161,8 +162,13 @@ static void test_the_table_is_consistent() {
 		"cubic_interpolate", "bezier_interpolate", "bezier_derivative",
 		"is_nan", "is_inf", "is_finite", "is_zero_approx", "is_equal_approx",
 		"str", "len",
+		"hash", "var_to_str", "str_to_var", "var_to_bytes", "bytes_to_var",
+		"type_string", "type_convert", "error_string", "is_same",
+		"ease", "step_decimals", "nearest_po2",
 		"int", "float", "bool", "String",
 		"randi", "randf", "randi_range", "randf_range", "randfn",
+		"prints", "printt", "printraw", "print_rich", "printerr",
+		"print_verbose", "push_error", "push_warning",
 	};
 
 	for (const char* name : NAMES) {
@@ -187,6 +193,11 @@ static void test_the_table_is_consistent() {
 			assert(info->max_args <= UTILITY_MAX_INT_ARGS);
 			// The answer comes back in a0, as an integer or a boolean.
 			assert(info->result == GlobalResult::INT || info->result == GlobalResult::BOOL);
+		}
+		if (info->kind == GlobalKind::PRINT) {
+			// Each output global must have a valid, unique channel.
+			assert(info->utility_op >= 0 && info->utility_op < int16_t(Print_Channel::CHANNEL_COUNT));
+			assert(info->result == GlobalResult::NIL);
 		}
 		if (info->kind == GlobalKind::CAST) {
 			// One argument, a host op to perform it with, and an inline form
@@ -214,6 +225,19 @@ static void test_the_table_is_consistent() {
 			assert(as_float.result == GlobalResult::INT || as_float.result == GlobalResult::FLOAT);
 			assert(resolve_numeric_form(*info, true) == info->int_form);
 			assert(resolve_numeric_form(*info, false) == info->float_form);
+		}
+	}
+
+	// No two output globals share a channel.
+	{
+		bool seen[int(Print_Channel::CHANNEL_COUNT)] = {};
+		for (const char* name : NAMES) {
+			const GlobalFunction* info = find_global_function(name);
+			if (info->kind != GlobalKind::PRINT) {
+				continue;
+			}
+			assert(!seen[info->utility_op]);
+			seen[info->utility_op] = true;
 		}
 	}
 
@@ -249,6 +273,40 @@ static void test_print_is_still_print() {
 	assert(count_opcode(func, IROpcode::VCALL) == 0);
 
 	std::cout << "  ✓ print() is a PRINT and nothing else" << std::endl;
+}
+
+static void test_the_output_channels_are_one_opcode() {
+	// All output globals lower to PRINT with channel, never VCALL.
+	static const struct { const char* call; Print_Channel channel; } CASES[] = {
+		{ "print(1)",            Print_Channel::PRINT },
+		{ "prints(1, 2)",        Print_Channel::SPACED },
+		{ "printt(1, 2)",        Print_Channel::TABBED },
+		{ "printraw(1)",         Print_Channel::RAW },
+		{ "print_rich(1)",       Print_Channel::RICH },
+		{ "printerr(1)",         Print_Channel::ERROR },
+		{ "print_verbose(1)",    Print_Channel::VERBOSE },
+		{ "push_error(1)",       Print_Channel::PUSH_ERROR },
+		{ "push_warning(1)",     Print_Channel::PUSH_WARNING },
+	};
+
+	for (const auto& one : CASES) {
+		IRProgram ir = compile_to_ir(
+			std::string("func test():\n\t") + one.call + "\n\treturn 0\n");
+		const IRFunction& func = find_function(ir, "test");
+		assert(count_opcode(func, IROpcode::PRINT) == 1);
+		assert(count_opcode(func, IROpcode::VCALL) == 0);
+		for (const auto& instr : func.instructions) {
+			if (instr.opcode == IROpcode::PRINT) {
+				assert(std::get<int64_t>(instr.operands[1].value) == int64_t(one.channel));
+			}
+		}
+	}
+
+	// push_error() and push_warning() require an argument.
+	assert(!compile_error("func test():\n\tpush_error()\n").empty());
+	assert(!compile_error("func test():\n\tpush_warning()\n").empty());
+
+	std::cout << "  ✓ every output channel is one PRINT" << std::endl;
 }
 
 static void test_every_other_global_is_one_opcode() {
@@ -771,6 +829,20 @@ static void test_every_global_reaches_riscv() {
 		"\tif bool(x) and bool(1):\n"
 		"\t\tt = t + 1.0\n"
 		"\tt = t + randi() + randf() + randi_range(1, 6) + randf_range(1.0, 2.0) + randfn(0.0, 1.0)\n"
+		"\tt = t + ease(0.5, 2.0) + step_decimals(0.25) + nearest_po2(100)\n"
+		"\tt = t + hash(x) + len(var_to_str(x)) + len(type_string(1)) + len(error_string(1))\n"
+		"\tif is_same(x, y):\n"
+		"\t\tt = t + 1.0\n"
+		"\tt = t + int(type_convert(x, 2)) + len(str(str_to_var(\"1\")))\n"
+		"\tt = t + len(var_to_bytes(x)) + int(bytes_to_var(var_to_bytes(1)))\n"
+		"\tprints(x, y)\n"
+		"\tprintt(x, y)\n"
+		"\tprintraw(x)\n"
+		"\tprint_rich(x)\n"
+		"\tprinterr(x)\n"
+		"\tprint_verbose(x)\n"
+		"\tpush_error(x)\n"
+		"\tpush_warning(x)\n"
 		"\treturn t\n";
 
 	// Both Variant layouts: a global's arguments and result are Variants, and
@@ -791,6 +863,7 @@ int main() {
 
 	test_the_table_is_consistent();
 	test_print_is_still_print();
+	test_the_output_channels_are_one_opcode();
 	test_every_other_global_is_one_opcode();
 	test_numeric_dispatch_resolves_when_the_types_are_known();
 	test_numeric_dispatch_survives_to_the_backend();

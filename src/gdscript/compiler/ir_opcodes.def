@@ -39,6 +39,9 @@ IR_OPCODE(LOAD_IMM,        "LOAD_IMM",        SIG(DST, IMM),       IR_PURE | IR_
 IR_OPCODE(LOAD_FLOAT_IMM,  "LOAD_FLOAT_IMM",  SIG(DST, FIMM),      IR_PURE | IR_SIMPLE_LOAD)
 IR_OPCODE(LOAD_BOOL,       "LOAD_BOOL",       SIG(DST, IMM),       IR_PURE | IR_SIMPLE_LOAD)
 IR_OPCODE(LOAD_STRING,     "LOAD_STRING",     SIG(DST, IMM),       IR_PURE | IR_SIMPLE_LOAD)
+
+// LOAD_STRING + Variant type tag (STRING_NAME or NODE_PATH).
+IR_OPCODE(LOAD_STRING_AS,  "LOAD_STRING_AS",  SIG(DST, IMM, IMM),  IR_PURE | IR_SIMPLE_LOAD)
 IR_OPCODE(LOAD_GLOBAL,     "LOAD_GLOBAL",     SIG(DST, IMM),       IR_PURE | IR_READS_GLOBAL)
 IR_OPCODE(STORE_GLOBAL,    "STORE_GLOBAL",    SIG(IMM, SRC),       IR_SIDE_EFFECTS | IR_WRITES_GLOBAL)
 IR_OPCODE(MOVE,            "MOVE",            SIG(DST, SRC),       IR_PURE | IR_SIMPLE_LOAD)
@@ -55,6 +58,9 @@ IR_OPCODE(CONVERT,         "CONVERT",         SIG(DST, SRC, IMM),  IR_PURE)
 IR_OPCODE(TYPE_TEST,       "TYPE_TEST",       SIG(DST, SRC, IMM),  IR_PURE)
 // typeof(): tag as INT. Same load as TYPE_TEST, no compare.
 IR_OPCODE(TYPE_OF,         "TYPE_OF",         SIG(DST, SRC),       IR_PURE)
+
+// NIL Variant (distinct from INT 0).
+IR_OPCODE(LOAD_NIL,        "LOAD_NIL",        SIG(DST),            IR_PURE | IR_SIMPLE_LOAD)
 
 // -= Arithmetic =-
 
@@ -139,6 +145,10 @@ IR_OPCODE(SWITCH,          "SWITCH",          SIG(SRC, IMM, CNT, LBL_LIST), IR_S
 
 IR_OPCODE(CALL,            "CALL",            SIG(STR, DST, CNT, SRC_LIST), IR_SIDE_EFFECTS | IR_CALL)
 IR_OPCODE(CALL_SYSCALL,    "CALL_SYSCALL",    SIG(DST, IMM, ARG_LIST),      IR_SIDE_EFFECTS | IR_CALL)
+
+// get_node() with a compile-time path ($Name, %Unique, self).
+// ECALL_GET_NODE takes raw characters, not a Variant; run-time paths use VCALL.
+IR_OPCODE(GET_NODE,        "GET_NODE",        SIG(DST, STR),                IR_SIDE_EFFECTS | IR_CALL)
 IR_OPCODE(RETURN,          "RETURN",          SIG(),                        IR_SIDE_EFFECTS | IR_TERMINATOR)
 
 // -= Variant operations (through syscalls) =-
@@ -159,8 +169,15 @@ IR_OPCODE(VSET,            "VSET",            SIG(SRC, IMM, IMM, SRC),          
 //
 // PRINT's destination is the call's value. GDScript's print() returns null, so
 // codegen writes NIL there rather than reading anything back from the host.
+//
+// First immediate is Print_Channel. Channel PRINT uses ECALL_PRINT (no selector).
 
-IR_OPCODE(PRINT,           "PRINT",           SIG(DST, CNT, SRC_LIST),           IR_SIDE_EFFECTS | IR_CALL)
+IR_OPCODE(PRINT,           "PRINT",           SIG(DST, IMM, CNT, SRC_LIST),      IR_SIDE_EFFECTS | IR_CALL)
+
+// assert() failing arm. Calls ECALL_THROW (does not return).
+// Both strings are literal bytes read via memview.
+
+IR_OPCODE(THROW,           "THROW",           SIG(STR, STR),                     IR_SIDE_EFFECTS | IR_CALL)
 
 // Every other global -- abs, sin, clamp, str, len, the lot -- is one opcode
 // carrying a GlobalFn (see globals.h) as its first immediate. The table there

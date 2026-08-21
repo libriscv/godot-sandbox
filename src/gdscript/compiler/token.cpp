@@ -9,6 +9,8 @@ const char* token_type_name(TokenType type) {
 		case TokenType::INTEGER: return "INTEGER";
 		case TokenType::FLOAT: return "FLOAT";
 		case TokenType::STRING: return "STRING";
+		case TokenType::STRING_NAME: return "STRING_NAME";
+		case TokenType::NODE_PATH: return "NODE_PATH";
 		case TokenType::FUNC: return "FUNC";
 		case TokenType::VAR: return "VAR";
 		case TokenType::RETURN: return "RETURN";
@@ -31,6 +33,7 @@ const char* token_type_name(TokenType type) {
 		case TokenType::STATIC: return "STATIC";
 		case TokenType::ENUM: return "ENUM";
 		case TokenType::CLASS_NAME: return "CLASS_NAME";
+		case TokenType::SIGNAL: return "SIGNAL";
 		case TokenType::AS: return "AS";
 		case TokenType::PLUS: return "PLUS";
 		case TokenType::MINUS: return "MINUS";
@@ -77,6 +80,7 @@ const char* token_type_name(TokenType type) {
 		case TokenType::DOT: return "DOT";
 		case TokenType::DOT_DOT: return "DOT_DOT";
 		case TokenType::AT: return "AT";
+		case TokenType::DOLLAR: return "DOLLAR";
 		case TokenType::NEWLINE: return "NEWLINE";
 		case TokenType::INDENT: return "INDENT";
 		case TokenType::DEDENT: return "DEDENT";
@@ -93,6 +97,8 @@ std::string Token::describe() const {
 		case TokenType::DEDENT:    return "the end of a block";
 		case TokenType::EOF_TOKEN: return "end of file";
 		case TokenType::STRING:    return "a string";
+		case TokenType::STRING_NAME: return "a StringName";
+		case TokenType::NODE_PATH: return "a NodePath";
 		case TokenType::INVALID:   return "an unrecognized token";
 		default: break;
 	}
