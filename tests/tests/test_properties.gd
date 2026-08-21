@@ -60,3 +60,23 @@ func test_elfscript_properties():
 	assert_eq(n.get("player_name"), "Jump Knight", "Property player_name has value Jump Knight")
 
 	n.queue_free()
+
+func test_trivially_initialized_properties():
+	# GH #272: all-numeric defaults; LTO strips the array without used/retain.
+	var n = Sandbox.new()
+	n.set_program(load("res://tests/trivial_properties.elf"))
+
+	var prop_list = n.get_property_list()
+	assert_true(validate_property(prop_list, "speed"), "Property speed found")
+	assert_true(validate_property(prop_list, "lives"), "Property lives found")
+
+	assert_eq(n.get("speed"), 400.0, "Property speed has value 400")
+	assert_eq(n.get("lives"), 3, "Property lives has value 3")
+
+	n.set("speed", 250.0)
+	n.set("lives", 1)
+
+	assert_eq(n.get("speed"), 250.0, "Property speed has value 250")
+	assert_eq(n.get("lives"), 1, "Property lives has value 1")
+
+	n.queue_free()

@@ -5293,6 +5293,71 @@ func test_sgd_refuses_a_call_with_the_wrong_argument_count():
 
 	node.free()
 
+# -= Built-in scripts =-
+#
+# Scene sub-resource, no file. duplicate() and the scene saver carry STORAGE
+# properties only; source travels as "script/source".
+
+const BUILTIN_SOURCE = """
+func answer():
+	return 42
+"""
+
+func test_sgd_source_survives_make_unique():
+	var path = "user://temp_builtin.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(BUILTIN_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the built-in source should load as a SafeGDScript resource")
+	if script == null:
+		return
+
+	# "Make Unique" path.
+	var unique = script.duplicate()
+	assert_not_null(unique, "duplicate() should hand back a SafeGDScript")
+	assert_eq(unique.get_source_code(), script.get_source_code(),
+		"the duplicate should carry the source, not the empty template")
+
+	# Duplicate compiled on construction; verify it runs.
+	var node = Node.new()
+	node.set_script(unique)
+	node.set_instructions_max(100000)
+	assert_eq(node.call("answer"), 42, "the duplicate should run what it was given")
+	node.free()
+
+	# No file path => no global class; duplicates would collide otherwise.
+	assert_eq(unique.get_global_name(), &"", "a script with no file declares no global class")
+
+func test_sgd_embeds_into_a_scene():
+	var node = Node.new()
+	node.name = "Embedded"
+	var script = SafeGDScript.new()
+	script.set_source_code(BUILTIN_SOURCE)
+	node.set_script(script)
+
+	var packed = PackedScene.new()
+	assert_eq(packed.pack(node), OK, "the node should pack")
+	var scene_path = "user://temp_builtin_scene.tscn"
+	assert_eq(ResourceSaver.save(packed, scene_path), OK, "the scene should save")
+	node.free()
+
+	var text = FileAccess.get_file_as_string(scene_path)
+	assert_true(text.contains("script/source"),
+		"the saved scene should carry the script source")
+	assert_true(text.contains("func answer():"),
+		"the saved scene should carry the source verbatim")
+
+	# Bypass the resource cache the save left behind.
+	var reloaded = ResourceLoader.load(scene_path, "", ResourceLoader.CACHE_MODE_IGNORE)
+	assert_not_null(reloaded, "the scene should load back")
+	if reloaded == null:
+		return
+	var instance = reloaded.instantiate()
+	instance.set_instructions_max(100000)
+	assert_eq(instance.call("answer"), 42, "the embedded script should run after a round trip")
+	instance.free()
+
 func test_array_element_access():
 	# `a[i]` on a known Array is ECALL_ARRAY_AT rather than Variant::call("get"),
 	# and a negative index is normalised in the guest before the call. Array.get(),

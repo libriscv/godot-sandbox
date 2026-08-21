@@ -95,8 +95,10 @@ struct Property {
 	const setter_t setter;
 	const Variant default_value;
 };
+/// @note Host-only symbol; no program reference. LTO + --gc-sections discard
+/// it when every default is side-effect-free (no Variant ctor syscall).
 #define SANDBOXED_PROPERTIES(num, ...) \
-	extern "C" const Property properties[num+1] { __VA_ARGS__, {0} };
+	extern "C" __attribute__((used, retain)) const Property properties[num+1] { __VA_ARGS__, {0} };
 
 /// @brief Add a new property to the Sandbox class.
 /// @param name The name of the property.

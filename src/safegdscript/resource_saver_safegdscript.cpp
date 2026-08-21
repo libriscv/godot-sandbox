@@ -51,5 +51,10 @@ PackedStringArray ResourceFormatSaverSafeGDScript::_get_recognized_extensions(co
 }
 
 bool ResourceFormatSaverSafeGDScript::_recognize_path(const Ref<Resource> &p_resource, const String &p_path) const {
-	return fast_cast_to<SafeGDScript>(p_resource.ptr()) != nullptr;
+	if (fast_cast_to<SafeGDScript>(p_resource.ptr()) == nullptr) {
+		return false;
+	}
+	// Reject built-in paths ("res://s.tscn::id"); the scene saver owns those.
+	const String extension = p_path.get_extension().to_lower();
+	return extension == "sgd" || extension == "safegd";
 }

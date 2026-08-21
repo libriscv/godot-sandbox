@@ -6,6 +6,7 @@
 #include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/templates/hash_map.hpp>
 #include <godot_cpp/templates/hash_set.hpp>
+#include <godot_cpp/templates/list.hpp>
 #include <vector>
 
 using namespace godot;
@@ -18,6 +19,12 @@ class SafeGDScript : public ScriptExtension {
 
 protected:
 	static void _bind_methods() {}
+	// "script/source" STORAGE property: duplicate() and the scene saver
+	// carry STORAGE properties only. Name matches GDScript's .tscn convention.
+	bool _set(const StringName &p_name, const Variant &p_value);
+	bool _get(const StringName &p_name, Variant &r_ret) const;
+	void _get_property_list(List<PropertyInfo> *p_list) const;
+
 	String source_code;
 
 public:
@@ -69,6 +76,8 @@ public:
 	// does not export it.
 	const godot::MethodInfo *find_method_info(const StringName &p_method) const;
 	const String &get_path() const { return path; }
+	// No standalone file: unsaved or scene sub-resource (path contains "::").
+	bool is_built_in() const { return path.is_empty() || path.contains("::"); }
 	const PackedByteArray &get_content() const { return elf_data; }
 	bool compile_source_to_elf();
 	static String get_compiler_error_message();

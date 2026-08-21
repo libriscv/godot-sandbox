@@ -25,6 +25,7 @@ popd
 
 # Create a symbolic link to the unit test ELF file
 ln -fs ../.zig/unittests tests/tests.elf
+ln -fs ../.zig/trivial_properties tests/trivial_properties.elf
 
 # Import again for CI
 if [ -n "$CI" ]; then

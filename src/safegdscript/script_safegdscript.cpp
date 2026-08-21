@@ -24,6 +24,10 @@ Ref<Script> SafeGDScript::_get_base_script() const {
 	return Ref<Script>();
 }
 StringName SafeGDScript::_get_global_name() const {
+	// Built-in scripts share no file path; returning a name would collide.
+	if (is_built_in()) {
+		return StringName();
+	}
 	return PathToGlobalName(this->path);
 }
 bool SafeGDScript::_inherits_script(const Ref<Script> &p_script) const {
@@ -57,10 +61,33 @@ Error SafeGDScript::_reload(bool p_keep_state) {
 	compile_source_to_elf();
 	return Error::OK;
 }
+
+// STORAGE without EDITOR: serialised into .tscn, hidden from inspector.
+static const StringName &script_source_property() {
+	static const StringName name("script/source");
+	return name;
+}
+void SafeGDScript::_get_property_list(List<PropertyInfo> *p_list) const {
+	p_list->push_back(PropertyInfo(Variant::STRING, script_source_property(),
+			PROPERTY_HINT_NONE, String(), PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL));
+}
+bool SafeGDScript::_get(const StringName &p_name, Variant &r_ret) const {
+	if (p_name == script_source_property()) {
+		r_ret = this->source_code;
+		return true;
+	}
+	return false;
+}
+bool SafeGDScript::_set(const StringName &p_name, const Variant &p_value) {
+	if (p_name == script_source_property()) {
+		_set_source_code(p_value);
+		return true;
+	}
+	return false;
+}
 StringName SafeGDScript::_get_doc_class_name() const {
-	// Help page key, and what lookup_code() reports for a member, so it must be
-	// the global name the rest of the editor knows the script by.
-	return StringName(PathToGlobalName(this->path));
+	// Help-page key; must match the global name the editor indexes.
+	return _get_global_name();
 }
 
 // Documentation types are names, not Variant::Type: untyped is "Variant", and
@@ -281,7 +308,8 @@ void SafeGDScript::set_path(const String &p_path) {
 		return;
 	}
 	this->path = p_path;
-	if (!this->path.is_empty()) {
+	// Built-in path: no file to read; source arrived via _set().
+	if (!is_built_in()) {
 		this->source_code = FileAccess::get_file_as_string(p_path);
 	}
 	this->compile_source_to_elf();
