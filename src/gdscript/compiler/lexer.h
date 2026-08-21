@@ -13,10 +13,7 @@ public:
 
 	std::vector<Token> tokenize();
 
-	// '##' doc comments in source order, each paired with its line. Comments are
-	// not tokens -- the grammar ignores them -- but a doc comment is the only
-	// description available for a function, so it is kept beside the token
-	// stream instead of discarded. Valid after tokenize().
+	// ## doc comments paired with line numbers. Valid after tokenize().
 	const std::vector<std::pair<int, std::string>> &doc_comments() const { return m_doc_comments; }
 
 private:
@@ -26,7 +23,6 @@ private:
 	void scan_identifier();
 	void handle_indent();
 
-	// Bracket nesting, which decides whether a newline ends a statement.
 	void push_bracket(char closer);
 	void pop_bracket(char closer);
 	static char opener_for(char closer);
@@ -52,7 +48,7 @@ private:
 
 	std::string m_source;
 	std::vector<Token> m_tokens;
-	std::vector<int> m_indent_stack; // Track indentation levels
+	std::vector<int> m_indent_stack;
 	std::vector<std::pair<int, std::string>> m_doc_comments;
 
 	size_t m_start = 0;
@@ -60,9 +56,7 @@ private:
 	int m_line = 1;
 	int m_column = 1;
 	bool m_at_line_start = true;
-	// Unclosed (), [] and {}, innermost last. While non-empty, newlines are
-	// swallowed, which is what lets an argument list or literal span lines -- and
-	// what makes an unclosed bracket run to EOF, so each records where it opened.
+	// Unclosed brackets; while non-empty, newlines are swallowed.
 	struct OpenBracket {
 		char closer;
 		int line;

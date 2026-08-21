@@ -113,13 +113,8 @@ struct Token {
 		return type == first || is_one_of(rest...);
 	}
 
-	// A debug dump: name, text and position. For the token dump, not for errors.
 	std::string to_string() const;
-
-	// How to name this token in an error message someone reads: the text they
-	// wrote, or a description for the tokens that have no text of their own.
-	// A raw newline or an all-caps enum name in the editor's error bar is not
-	// something a user can act on.
+	// User-facing name for error messages; synthetic tokens get a description.
 	std::string describe() const;
 };
 

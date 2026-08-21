@@ -12,7 +12,6 @@
 namespace gdscript {
 
 namespace {
-// The 1-based line of source, for pinning a snippet under the error message.
 std::string source_line_at(const std::string& source, int line) {
 	if (line <= 0) {
 		return {};
@@ -29,8 +28,7 @@ std::string source_line_at(const std::string& source, int line) {
 	if (end == std::string::npos) {
 		end = source.size();
 	}
-	// Trailing \r, so a CRLF file does not put a stray carriage return in the
-	// caret line under the snippet.
+	// Strip trailing \r (CRLF files).
 	while (end > begin && source[end - 1] == '\r') {
 		end--;
 	}
@@ -43,7 +41,6 @@ Compiler::Compiler() {}
 std::vector<uint8_t> Compiler::compile(const std::string& source, const CompilerOptions& options) {
 	m_signatures.clear();
 	try {
-		// Step 1: Lexical analysis
 		Lexer lexer(source);
 		auto tokens = lexer.tokenize();
 
@@ -55,9 +52,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 			std::cout << std::endl;
 		}
 
-		// Step 2: Parsing
 		Parser parser(tokens);
-		// Comments are not tokens; doc comments travel beside the token stream.
 		parser.set_doc_comments(lexer.doc_comments());
 		Program program = parser.parse();
 
@@ -75,7 +70,6 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 			std::cout << std::endl;
 		}
 
-		// Step 3: Code generation (AST -> IR)
 		CodeGenerator codegen;
 		IRProgram ir_program = codegen.generate(program);
 		m_signatures = ir_program.signatures;
@@ -99,7 +93,6 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 			std::cout << std::endl;
 		}
 
-		// Step 3.5: Optimize IR
 		if (options.optimize) {
 			IROptimizer optimizer;
 			optimizer.optimize(ir_program);
@@ -118,8 +111,6 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 			}
 		}
 
-		// Step 4: RISC-V code generation (IR -> machine code)
-		// For now, we'll create a minimal stub ELF
 		std::vector<uint8_t> elf_data;
 
 		if (options.output_elf) {
@@ -132,9 +123,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 		return elf_data;
 
 	} catch (const CompilerException& e) {
-		// Every phase throws this one, so the location survives all the way out
-		// to whoever asked for the compile. Only compile() has the source text,
-		// so this is the one place that can quote the offending line.
+		// Only compile() has the source text, so attach the snippet here.
 		CompilerException located = e;
 		if (located.line() > 0 && located.source_line().empty()) {
 			located.set_source_line(source_line_at(source, located.line()));

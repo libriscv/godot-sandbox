@@ -8,9 +8,7 @@
 
 namespace gdscript {
 
-// Helper function to convert type hint string to Variant::Type
 static IRInstruction::TypeHint type_hint_from_string(const std::string& type_str) {
-	// Basic types
 	if (type_str == "int") {
 		return Variant::INT;
 	} else if (type_str == "float") {
@@ -24,8 +22,6 @@ static IRInstruction::TypeHint type_hint_from_string(const std::string& type_str
 	} else if (type_str == "NodePath") {
 		return Variant::NODE_PATH;
 	}
-
-	// Math types
 	else if (type_str == "Vector2") {
 		return Variant::VECTOR2;
 	} else if (type_str == "Vector2i") {
@@ -59,15 +55,11 @@ static IRInstruction::TypeHint type_hint_from_string(const std::string& type_str
 	} else if (type_str == "Color") {
 		return Variant::COLOR;
 	}
-
-	// Collection types
 	else if (type_str == "Array") {
 		return Variant::ARRAY;
 	} else if (type_str == "Dictionary") {
 		return Variant::DICTIONARY;
 	}
-
-	// Packed array types
 	else if (type_str == "PackedByteArray") {
 		return Variant::PACKED_BYTE_ARRAY;
 	} else if (type_str == "PackedInt32Array") {
@@ -89,8 +81,6 @@ static IRInstruction::TypeHint type_hint_from_string(const std::string& type_str
 	} else if (type_str == "PackedVector4Array") {
 		return Variant::PACKED_VECTOR4_ARRAY;
 	}
-
-	// Special types
 	else if (type_str == "RID") {
 		return Variant::RID;
 	} else if (type_str == "Callable") {
@@ -99,7 +89,6 @@ static IRInstruction::TypeHint type_hint_from_string(const std::string& type_str
 		return Variant::SIGNAL;
 	}
 
-	// Unknown type, return NONE
 	return IRInstruction::TypeHint_NONE;
 }
 
@@ -108,8 +97,7 @@ CodeGenerator::CodeGenerator() {}
 IRProgram CodeGenerator::generate(const Program& program) {
 	IRProgram ir_program;
 
-	// Collect all locally defined function names, and remember their
-	// signatures so that call sites can supply missing default arguments.
+	// Collect local function names and signatures for default-argument filling at call sites.
 	m_local_functions.clear();
 	m_local_signatures.clear();
 	for (const auto& func : program.functions) {
@@ -117,9 +105,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		m_local_signatures[func.name] = &func;
 	}
 
-	// Structs are visible everywhere: to every function body and to every global
-	// initializer. They are collected before anything is lowered so that
-	// declaration order does not matter.
+	// Collected before lowering so declaration order does not matter.
 	m_structs.clear();
 	m_struct_default_stack.clear();
 	for (const auto& decl : program.structs) {
@@ -138,8 +124,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		m_structs[decl.name] = &decl;
 	}
 
-	// Enums, collected like structs. Nothing of them reaches the IR: `Mode.IDLE`,
-	// and a bare `IDLE` from an unnamed enum, resolve here to their integer.
+	// Enums resolve to integers here; nothing reaches the IR.
 	m_enums.clear();
 	m_enum_members.clear();
 	for (const auto& decl : program.enums) {
@@ -151,9 +136,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			m_enums[decl.name] = &decl;
 		}
 		for (const auto& member : decl.members) {
-			// Unnamed enum members are file-scope names, so a clash with another
-			// enum's member is the user's to resolve. Named enum members are
-			// only reachable through the enum and never collide.
+			// Unnamed members are file-scope; named members only reachable through the enum.
 			if (decl.name.empty()) {
 				auto existing = m_enum_members.find(member.name);
 				if (existing != m_enum_members.end() && existing->second != member.value) {
@@ -165,17 +148,8 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		}
 	}
 
-	// Process global variables.
-	//
-	// An initializer is lowered in one of two ways. Anything that folds to a
-	// compile-time constant becomes an InitType that the backend writes straight
-	// into the .globals array, which costs nothing at startup. Everything else -
-	// array and dictionary literals, constructor calls, references to earlier
-	// globals - is evaluated by the synthetic global_init function through the
-	// ordinary expression path, so a global initializer supports exactly what a
-	// function body supports. Anything that reaches neither path is an error:
-	// leaving the global silently NIL is how initializer support used to
-	// regress unnoticed.
+	// Constants fold into InitType; everything else evaluates in global_init.
+	// Anything reaching neither path is an error: silent NIL caused regressions.
 	m_global_variables.clear();
 	m_global_consts.clear();
 	m_global_const_values.clear();
@@ -183,8 +157,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	m_global_structs.clear();
 	ir_program.globals.resize(program.globals.size());
 
-	// Every global name has to be known before any initializer is lowered, so
-	// that an initializer can name another global.
+	// All names registered before any initializer, so initializers can reference each other.
 	for (size_t i = 0; i < program.globals.size(); i++) {
 		const auto& global = program.globals[i];
 		if (m_global_variables.count(global.name)) {
@@ -201,9 +174,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			m_global_consts.insert(global.name);
 		}
 
-		// A global declared as a struct is a Dictionary as far as everything
-		// downstream is concerned; which struct is remembered alongside, so that
-		// a field access on the global is checked like one on a local.
+		// Struct-typed global: DICTIONARY downstream, struct tracked for field checking.
 		const StructDecl* global_struct = find_struct(global.type_hint);
 		m_global_structs.push_back(global_struct);
 		if (global_struct != nullptr) {
@@ -215,9 +186,6 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		}
 	}
 
-	// The init function is one straight-line block, generated with the same
-	// register and scope state that real function bodies use -- its own
-	// context, on the stack, like every other function.
 	FunctionContext init_func;
 	init_func.ir.name = "__init_globals";
 	m_current_function = "global initializers";
@@ -232,16 +200,11 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		ir_global.is_const = global.is_const;
 		ir_global.is_property = global.is_property;
 
-		// Convert type hint. A struct-typed global is a DICTIONARY, which
-		// m_global_types already holds.
 		if (!global.type_hint.empty()) {
 			ir_global.type_hint = m_global_types[i];
 		}
 
-		// Validate that global variables have either a type hint or an initializer
-		// This is necessary for complex types (String, Array, Dictionary, etc.) which
-		// require VASSIGN for proper reference counting. Without type information, we
-		// cannot determine at compile time whether VASSIGN is needed.
+		// Without a type or initializer, stores cannot determine whether VASSIGN is needed.
 		if (global.type_hint.empty() && !global.initializer) {
 			error_at("Global variable '" + global.name + "' requires either a type hint or an initializer",
 				global.line, global.column,
@@ -250,8 +213,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		}
 
 		if (!global.initializer) {
-			// `var a: BankAccount` is a fresh instance, built at startup like any
-			// other Dictionary.
+			// `var a: BankAccount` — fresh instance at startup.
 			if (const StructDecl* global_struct = m_global_structs[i]) {
 				int reg = gen_struct_construct(*global_struct, {}, NamedArguments{}, init_func, nullptr);
 				init_func.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
@@ -264,10 +226,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				continue;
 			}
 
-			// `var a: Array` is an empty Array in GDScript, not NIL. Give every
-			// type-hinted global without an initializer the default value of its
-			// type, so that an @export property is registered holding a value of
-			// the type it was declared with.
+			// `var a: Array` defaults to empty Array, not NIL.
 			apply_default_initializer(ir_global, init_func, i, ir_program.has_global_init);
 			m_globals_lowered = i + 1;
 			continue;
@@ -286,8 +245,6 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				ir_global.value_type = ir_global.type_hint != IRInstruction::TypeHint_NONE
 					? ir_global.type_hint
 					: get_register_type(init_func, reg);
-				// `var acct = BankAccount.new()` says which struct it is without
-				// a type hint, and that is the usual way to write one.
 				if (m_global_structs[i] == nullptr) {
 					m_global_structs[i] = get_register_struct(init_func, reg);
 				}
@@ -295,13 +252,11 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				ir_program.has_global_init = true;
 			}
 
-			// Remember const values so later initializers can fold references to them.
 			if (global.is_const && ir_global.init_type != IRGlobalVar::InitType::RUNTIME) {
 				m_global_const_values[global.name] = ir_global;
 			}
 		}
 
-		// Only globals lowered so far may be referenced by a later initializer.
 		m_globals_lowered = i + 1;
 	}
 
@@ -309,15 +264,12 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		init_func.ir.instructions.emplace_back(IROpcode::RETURN);
 		init_func.ir.max_registers = init_func.next_register;
 	} else {
-		// Nothing to run: drop whatever was generated for folded initializers.
 		init_func.ir.instructions.clear();
 		init_func.ir.max_registers = 0;
 	}
 	pop_scope(init_func);
 	ir_program.global_init = std::move(init_func.ir);
 
-	// Function bodies run after every global has been initialized, so all of
-	// them are visible regardless of declaration order.
 	m_globals_lowered = SIZE_MAX;
 
 	for (const auto& decl : program.functions) {
@@ -330,26 +282,15 @@ IRProgram CodeGenerator::generate(const Program& program) {
 }
 
 IRFunction CodeGenerator::generate_function(const FunctionDecl& decl) {
-	// One context, on the stack, for exactly as long as this function is being
-	// lowered. Nothing survives into the next function, so nothing has to be
-	// cleared: virtual register numbers restart at 0 here, and a register type
-	// left over from the previous function would put the backend on a native
-	// path for a Variant that is not of that type.
 	FunctionContext func;
 	func.ir.name = decl.name;
 	m_current_function = decl.name;
 
 	func.return_type = decl.return_type;
 
-	// Create root scope for function
 	push_scope(func);
 
-	// Parameters are passed in registers a0-a7 (RISC-V convention)
-	// For simplicity, we'll store them as variables immediately
 	if (decl.parameters.size() > IRFunction::MAX_PARAMETERS) {
-		// The prologue can only copy in what the ABI delivers. Lowering the
-		// extra ones anyway would give them slots nothing ever writes, and the
-		// function would read whatever the frame happened to hold.
 		error_at("Function '" + decl.name + "' takes " +
 			std::to_string(decl.parameters.size()) + " parameters, but at most " +
 			std::to_string(IRFunction::MAX_PARAMETERS) + " can be passed",
@@ -361,29 +302,21 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl) {
 		func.ir.parameters.push_back(param.name);
 
 		int reg = alloc_register(func);
-		// In real implementation, would load from parameter registers
-		// For now, assume parameters are already in variables
 		declare_variable(func, param.name, reg);
 
-		// Track parameter type if type hint is present. A struct name is a type
-		// hint too: it makes the parameter a Dictionary whose fields are known.
 		apply_declared_type(reg, param.type_hint, func);
 	}
 
-	// Generate code for function body
 	for (const auto& stmt : decl.body) {
 		gen_stmt(stmt.get(), func);
 	}
 
-	// Ensure function returns (add implicit return if needed)
 	if (func.ir.instructions.empty() ||
 	    func.ir.instructions.back().opcode != IROpcode::RETURN) {
 		func.ir.instructions.emplace_back(IROpcode::RETURN);
 	}
 
 	func.ir.max_registers = func.next_register;
-
-	// Pop root scope
 	pop_scope(func);
 
 	return std::move(func.ir);
@@ -428,13 +361,9 @@ void CodeGenerator::gen_stmt(const Stmt* stmt, FunctionContext& func) {
 	} else if (auto* match_stmt = dynamic_cast<const MatchStmt*>(stmt)) {
 		gen_match(match_stmt, func);
 	} else if (dynamic_cast<const PassStmt*>(stmt)) {
-		// No-op
 	} else if (auto* expr_stmt = dynamic_cast<const ExprStmt*>(stmt)) {
 		gen_expr_stmt(expr_stmt, func);
 	} else {
-		// A statement kind that reaches here has been added to the AST without
-		// being given a lowering. Falling through instead would generate a
-		// program that silently does not contain it.
 		error_at("This kind of statement is not supported by the compiler yet", stmt);
 	}
 }
@@ -446,18 +375,13 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 	if (stmt->initializer) {
 		reg = gen_expr(stmt->initializer.get(), func);
 	} else if (declared_struct != nullptr) {
-		// `var a: BankAccount` is a fresh instance, the way `var a: Array` is an
-		// empty Array rather than NIL.
 		reg = gen_struct_construct(*declared_struct, {}, NamedArguments{}, func, nullptr);
 	} else {
 		reg = alloc_register(func);
-		// Initialize to null/0
 		func.ir.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(reg), IRValue::imm(0));
 	}
 
 	if (declared_struct != nullptr) {
-		// The annotation says which struct this is; the initializer has to be
-		// able to be one.
 		const StructDecl* actual = get_register_struct(func, reg);
 		if (actual != nullptr && actual != declared_struct) {
 			error_at("Cannot assign a '" + actual->name + "' to variable '" + stmt->name +
@@ -474,18 +398,14 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 		return;
 	}
 
-	// Track type hint if provided
 	if (!stmt->type_hint.empty()) {
 		IRInstruction::TypeHint type = type_hint_from_string(stmt->type_hint);
 		if (type != IRInstruction::TypeHint_NONE) {
-			// The value has to actually become that type, not merely be labelled
-			// with it: `var f: float = 0` holds 0.0, and marking an INT Variant
-			// as FLOAT would have the backend read its payload as a double.
+			// Coerce so the Variant payload matches the declared type.
 			reg = coerce_to_declared_type(reg, type, func, "variable '" + stmt->name + "'", stmt);
 			set_register_type(func, reg, type);
 		}
 	} else if (stmt->initializer) {
-		// Infer type from initializer
 		IRInstruction::TypeHint init_type = get_register_type(func, reg);
 		if (init_type != IRInstruction::TypeHint_NONE) {
 			set_register_type(func, reg, init_type);
@@ -498,9 +418,7 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
 	int value_reg = gen_expr(stmt->value.get(), func);
 
-	// Check if this is an indexed assignment (arr[0] = value) or property assignment (obj.prop = value)
 	if (stmt->target) {
-		// Check for indexed assignment: arr[idx] = value
 		if (auto* index_expr = dynamic_cast<const IndexExpr*>(stmt->target.get())) {
 			int obj_reg = gen_expr(index_expr->object.get(), func);
 			int idx_reg = gen_expr(index_expr->index.get(), func);
@@ -523,8 +441,6 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
 				return;
 			}
 
-			// Use VCALL to call .set(index, value)
-			// Format: VCALL result_reg, obj_reg, method_name, arg_count, arg1_reg, arg2_reg
 			int result_reg = alloc_register(func);
 			IRInstruction vcall_instr(IROpcode::VCALL);
 			vcall_instr.operands.push_back(IRValue::reg(result_reg));
@@ -542,18 +458,14 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
 			return;
 		}
 
-		// Check for property assignment: obj.prop = value
 		if (auto* member_expr = dynamic_cast<const MemberCallExpr*>(stmt->target.get())) {
-			// Verify this is a property access (not a method call)
 			if (member_expr->is_method_call) {
 				error_at("Cannot assign to method call", stmt);
 			}
 
 			int obj_reg = gen_expr(member_expr->object.get(), func);
 
-			// A struct field, or a key of a Dictionary: both are element
-			// writes, not property writes. See the matching read in
-			// gen_member_call().
+			// Struct field or Dictionary key: element write, not property write.
 			if (const StructDecl* decl = get_register_struct(func, obj_reg)) {
 				const StructField& field = require_struct_field(*decl, member_expr->member_name,
 					member_expr->line, member_expr->column);
@@ -574,14 +486,7 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
 				return;
 			}
 
-			// Property set: obj.prop = value
-			// Use dedicated VSET instruction with ECALL_OBJ_PROP_SET syscall
-
-			// Get string index for property name
 			int str_idx = add_string_constant(member_expr->member_name);
-
-			// Emit VSET instruction
-			// Format: VSET obj_reg, string_idx, string_len, value_reg
 			IRInstruction vset_instr(IROpcode::VSET);
 			vset_instr.operands.push_back(IRValue::reg(obj_reg));
 			vset_instr.operands.push_back(IRValue::imm(str_idx));
@@ -597,9 +502,7 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
 		error_at("Invalid assignment target type", stmt);
 	}
 
-	// Simple variable assignment.
-	// Locals shadow globals, so the enclosing scopes are searched first and the
-	// global table is only consulted when no local of that name is in scope.
+	// Locals shadow globals.
 	Variable* var = find_variable(func, stmt->name);
 	if (!var) {
 		if (is_global_variable(stmt->name)) {
@@ -617,7 +520,6 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
 			"Declare it with 'var " + stmt->name + " = ...' before assigning to it");
 	}
 
-	// Check if variable is const
 	if (var->is_const) {
 		error_at("Cannot assign to const variable: " + stmt->name, stmt);
 	}
@@ -625,7 +527,6 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
 	value_reg = coerce_to_declared_type(value_reg, get_register_type(func, var->register_num), func,
 		"variable '" + stmt->name + "'", stmt);
 
-	// Store value into variable's register
 	if (var->register_num != value_reg) {
 		func.ir.instructions.emplace_back(IROpcode::MOVE,
 		                               IRValue::reg(var->register_num),
@@ -638,13 +539,9 @@ void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
 void CodeGenerator::gen_return(const ReturnStmt* stmt, FunctionContext& func) {
 	if (stmt->value) {
 		int reg = gen_expr(stmt->value.get(), func);
-		// The declared return type types the caller's result register, and typed
-		// float arithmetic reads the payload as a double. `-> float: return 1` has
-		// to widen here, or the caller reads an INT 1 as a denormal.
+		// Coerce to declared return type before moving to r0.
 		reg = coerce_to_declared_type(reg, type_hint_from_string(func.return_type), func,
 			"the return value of '" + m_current_function + "'", stmt);
-		// Move return value to register 0 (return register)
-		// Skip if already in register 0
 		if (reg != 0) {
 			func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(0), IRValue::reg(reg));
 		}
@@ -657,9 +554,7 @@ void CodeGenerator::gen_return(const ReturnStmt* stmt, FunctionContext& func) {
 void CodeGenerator::emit_conditional_branch(IROpcode opcode, int cond_reg,
 	const std::string& label, FunctionContext& func)
 {
-	// The tested register's type travels with the branch so that the backend can
-	// decide truthiness inline for the types it knows and only ask the host about
-	// the ones it does not.
+	// Type travels with the branch for inline truthiness in the backend.
 	IRInstruction branch(opcode, IRValue::reg(cond_reg), IRValue::label(label));
 	branch.type_hint = get_register_type(func, cond_reg);
 	func.ir.instructions.push_back(branch);
@@ -668,11 +563,7 @@ void CodeGenerator::emit_conditional_branch(IROpcode opcode, int cond_reg,
 void CodeGenerator::gen_if(const IfStmt* stmt, FunctionContext& func) {
 	std::string else_label = make_label("else");
 	std::string end_label = make_label("endif");
-
-	// Evaluate condition
 	int cond_reg = gen_expr(stmt->condition.get(), func);
-
-	// Branch to else if condition is zero (false)
 	if (!stmt->else_branch.empty()) {
 		emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, else_label, func);
 	} else {
@@ -681,7 +572,6 @@ void CodeGenerator::gen_if(const IfStmt* stmt, FunctionContext& func) {
 
 	free_register(func, cond_reg);
 
-	// Then branch (new scope)
 	push_scope(func);
 	for (const auto& s : stmt->then_branch) {
 		gen_stmt(s.get(), func);
@@ -691,7 +581,6 @@ void CodeGenerator::gen_if(const IfStmt* stmt, FunctionContext& func) {
 	if (!stmt->else_branch.empty()) {
 		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
 
-		// Else branch (new scope)
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(else_label));
 		push_scope(func);
 		for (const auto& s : stmt->else_branch) {
@@ -703,11 +592,6 @@ void CodeGenerator::gen_if(const IfStmt* stmt, FunctionContext& func) {
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
 }
 
-// Jump table density thresholds: at least MIN_SWITCH_CASES distinct values, and
-// a table no more than MAX_SWITCH_SPREAD times larger than the value count.
-// Below the first, the compare chain is as short as the table's setup; above the
-// second, the table is mostly holes. MAX_SWITCH_ENTRIES caps the absolute size,
-// so `match x: 0: ...; 1000000: ...` cannot request a megabyte of jumps.
 static constexpr size_t MIN_SWITCH_CASES = 4;
 static constexpr size_t MAX_SWITCH_SPREAD = 3;
 static constexpr int64_t MAX_SWITCH_ENTRIES = 4096;
@@ -716,25 +600,18 @@ bool CodeGenerator::gen_match_jump_table(const MatchStmt* stmt, int subject_reg,
                                          const std::vector<std::string>& body_labels,
                                          const std::string& default_label,
                                          FunctionContext& func) {
-	// Every pattern in the match must be an integer constant. A variable, string
-	// or float pattern can match a value the table also covers, and GDScript
-	// takes the arm written first, so a table entry could run the wrong body.
-	std::vector<std::pair<int64_t, size_t>> cases; // value -> branch index
+	// Every pattern must be an integer constant; non-integer patterns disqualify the table.
+	std::vector<std::pair<int64_t, size_t>> cases;
 	for (size_t i = 0; i < stmt->branches.size(); i++) {
 		const auto& branch = stmt->branches[i];
 		if (branch.is_catch_all()) {
-			continue; // The wildcard is the default, not an entry.
+			continue;
 		}
-		// The table cannot evaluate a guard: an entry jumping straight to the
-		// body would run an arm that had declined. One guard anywhere
-		// disqualifies the whole table.
+		// Guards disqualify: an entry jumping to the body would skip the guard.
 		if (branch.guard) {
 			return false;
 		}
 		for (const auto& pattern : branch.patterns) {
-			// Only a value pattern can be an entry: destructuring and binding
-			// patterns are not integers to index with, and a wildcard here is
-			// guarded or shared, so it is not the default either.
 			if (pattern->kind != MatchPattern::Kind::VALUE) {
 				return false;
 			}
@@ -750,7 +627,6 @@ bool CodeGenerator::gen_match_jump_table(const MatchStmt* stmt, int subject_reg,
 		return false;
 	}
 
-	// A duplicated value takes the first branch naming it, as the compare chain does.
 	std::map<int64_t, size_t> first_branch;
 	for (const auto& [value, branch] : cases) {
 		first_branch.emplace(value, branch);
@@ -758,8 +634,6 @@ bool CodeGenerator::gen_match_jump_table(const MatchStmt* stmt, int subject_reg,
 
 	const int64_t low = first_branch.begin()->first;
 	const int64_t high = first_branch.rbegin()->first;
-	// Unsigned: `high - low` overflows for a match spanning the integer range,
-	// which is not dense anyway.
 	const uint64_t span = static_cast<uint64_t>(high) - static_cast<uint64_t>(low) + 1;
 	if (span > static_cast<uint64_t>(MAX_SWITCH_ENTRIES) ||
 	    span > first_branch.size() * MAX_SWITCH_SPREAD) {
@@ -768,7 +642,6 @@ bool CodeGenerator::gen_match_jump_table(const MatchStmt* stmt, int subject_reg,
 
 	IRInstruction table(IROpcode::SWITCH, IRValue::reg(subject_reg), IRValue::imm(low),
 	                    IRValue::imm(static_cast<int64_t>(span)));
-	// A subject already known to be an integer needs no type test before the table.
 	if (get_register_type(func, subject_reg) == Variant::INT) {
 		table.type_hint = Variant::INT;
 	}
@@ -782,23 +655,12 @@ bool CodeGenerator::gen_match_jump_table(const MatchStmt* stmt, int subject_reg,
 }
 
 void CodeGenerator::gen_match(const MatchStmt* stmt, FunctionContext& func) {
-	// The subject is evaluated once, then dispatched on. Two lowerings, not
-	// mutually exclusive:
-	//
-	//   - a jump table, for dense integer constant patterns. Constant time,
-	//     versus one test per arm in the chain below.
-	//   - a chain of arms, each testing its patterns, then its guard, then
-	//     falling into its body or on to the next arm.
-	//
-	// The table falls through for a subject that is not an integer in range, so
-	// unless the subject is known to be an integer the chain is emitted after it
-	// to catch the rest: `match 3.0` must still reach the `3:` arm.
+	// Jump table for dense integer patterns, then a compare chain for the rest.
+	// The table falls through for non-integer or out-of-range subjects.
 	const std::string end_label = make_label("endmatch");
 
 	const int subject_reg = gen_expr(stmt->subject.get(), func);
 
-	// One test label and one body label per arm, allocated up front because the
-	// table jumps directly to body labels.
 	std::vector<std::string> test_labels;
 	std::vector<std::string> body_labels;
 	test_labels.reserve(stmt->branches.size());
@@ -808,9 +670,6 @@ void CodeGenerator::gen_match(const MatchStmt* stmt, FunctionContext& func) {
 		body_labels.push_back(make_label("match_body"));
 	}
 
-	// Destination for a subject that matches nothing: the first catch-all arm,
-	// normally the last one. Arms after it are unreachable and are emitted as
-	// such; GDScript warns about them rather than rejecting them.
 	size_t catch_all = stmt->branches.size();
 	for (size_t i = 0; i < stmt->branches.size(); i++) {
 		if (stmt->branches[i].is_catch_all()) {
@@ -822,8 +681,7 @@ void CodeGenerator::gen_match(const MatchStmt* stmt, FunctionContext& func) {
 		catch_all < stmt->branches.size() ? body_labels[catch_all] : end_label;
 
 	const bool has_table = gen_match_jump_table(stmt, subject_reg, body_labels, default_label, func);
-	// A table over a subject known to be an integer decides the whole match; the
-	// arms below are only bodies to jump to.
+	// Known INT subject: the table decides the whole match.
 	const bool table_is_complete = has_table && get_register_type(func, subject_reg) == Variant::INT;
 	if (table_is_complete) {
 		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(default_label));
@@ -832,8 +690,6 @@ void CodeGenerator::gen_match(const MatchStmt* stmt, FunctionContext& func) {
 	for (size_t i = 0; i < stmt->branches.size(); i++) {
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(test_labels[i]));
 
-		// The arm's scope covers test and body: a `var name` pattern is declared
-		// during the test and read by the guard and the body.
 		push_scope(func);
 		if (!table_is_complete) {
 			const std::string& next_label =
@@ -858,9 +714,6 @@ void CodeGenerator::gen_branch_test(const MatchStmt::Branch& branch, int subject
 	if (branch.patterns.size() == 1) {
 		gen_pattern_test(*branch.patterns[0], subject_reg, fail_label, func);
 	} else {
-		// Several patterns on one arm: the first match takes it, so all but the
-		// last jump over the rest on success. None of them binds (the parser
-		// rejects that), so the tests are the only cost.
 		const std::string matched_label = make_label("match_any");
 		for (size_t i = 0; i < branch.patterns.size(); i++) {
 			const bool last = i + 1 == branch.patterns.size();
@@ -876,7 +729,6 @@ void CodeGenerator::gen_branch_test(const MatchStmt::Branch& branch, int subject
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(matched_label));
 	}
 
-	// `when <condition>`, tested last: it may reference the pattern's bindings.
 	if (branch.guard) {
 		int guard_reg = gen_expr(branch.guard.get(), func);
 		emit_conditional_branch(IROpcode::BRANCH_ZERO, guard_reg, fail_label, func);
@@ -888,13 +740,10 @@ void CodeGenerator::gen_pattern_test(const MatchPattern& pattern, int subject_re
                                      const std::string& fail_label, FunctionContext& func) {
 	switch (pattern.kind) {
 		case MatchPattern::Kind::WILDCARD:
-			// Matches everything, tests nothing.
 			return;
 
 		case MatchPattern::Kind::BIND: {
-			// The binding gets its own register: an array pattern element is a
-			// temporary the test is done with, and assigning to the name in the
-			// body must not write back into the subject.
+			// Own register: assignment in the body must not write back into the subject.
 			int bound_reg = alloc_register(func);
 			func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(bound_reg),
 				IRValue::reg(subject_reg));
@@ -907,8 +756,6 @@ void CodeGenerator::gen_pattern_test(const MatchPattern& pattern, int subject_re
 			int pattern_reg = gen_expr(pattern.value.get(), func);
 			IRInstruction cmp(IROpcode::CMP_EQ, IRValue::reg(pattern_reg),
 			                  IRValue::reg(subject_reg), IRValue::reg(pattern_reg));
-			// As for a binary comparison: the native compare path needs both
-			// sides to be the same known type, anything else goes via VEVAL.
 			cmp.type_hint = fused_compare_type(get_register_type(func, subject_reg),
 			                                   get_register_type(func, pattern_reg));
 			func.ir.instructions.push_back(cmp);
@@ -930,16 +777,13 @@ void CodeGenerator::gen_pattern_test(const MatchPattern& pattern, int subject_re
 
 void CodeGenerator::gen_array_pattern_test(const MatchPattern& pattern, int subject_reg,
                                            const std::string& fail_label, FunctionContext& func) {
-	// Three tests: type is Array, length matches, elements match. The length is
-	// tested before any element is fetched, so a short array is never indexed
-	// past its end.
+	// Type, length, then elements. Length tested before any element fetch.
 	if (!emit_type_guard(subject_reg, Variant::ARRAY, fail_label, func)) {
 		return;
 	}
 
 	const int size_reg = gen_array_size(subject_reg, func);
 	const int wanted_reg = gen_int_immediate(static_cast<int64_t>(pattern.elements.size()), func);
-	// `..`: "exactly this long" becomes "at least this long".
 	const int fits_reg = gen_compare(pattern.open ? IROpcode::CMP_GTE : IROpcode::CMP_EQ,
 		size_reg, wanted_reg, func);
 	emit_conditional_branch(IROpcode::BRANCH_ZERO, fits_reg, fail_label, func);
@@ -958,8 +802,6 @@ void CodeGenerator::gen_array_pattern_test(const MatchPattern& pattern, int subj
 
 void CodeGenerator::gen_dictionary_pattern_test(const MatchPattern& pattern, int subject_reg,
                                                 const std::string& fail_label, FunctionContext& func) {
-	// `{"a": 1}` is a Dictionary with exactly one key "a" holding 1. Without `..`
-	// the size is part of the pattern, so a second key means no match.
 	constexpr int64_t DICT_OP_GET = 0;
 	constexpr int64_t DICT_OP_HAS = 3;
 	constexpr int64_t DICT_OP_GET_SIZE = 6;
@@ -985,8 +827,6 @@ void CodeGenerator::gen_dictionary_pattern_test(const MatchPattern& pattern, int
 		emit_conditional_branch(IROpcode::BRANCH_ZERO, has_reg, fail_label, func);
 		free_register(func, has_reg);
 
-		// `{"key"}` only tests presence. `{"key": <pattern>}` also tests the
-		// value, at the cost of a second syscall to fetch it.
 		if (entry.value) {
 			int value_reg = gen_dictionary_op(DICT_OP_GET, subject_reg, key_reg,
 				IRInstruction::TypeHint_NONE, func);
@@ -1002,12 +842,10 @@ bool CodeGenerator::emit_type_guard(int value_reg, IRInstruction::TypeHint type,
                                     const std::string& fail_label, FunctionContext& func) {
 	const IRInstruction::TypeHint known = get_register_type(func, value_reg);
 	if (known == type) {
-		return true; // Type already known: no test needed.
+		return true;
 	}
 	if (known != IRInstruction::TypeHint_NONE) {
-		// Known to be another type, so the pattern can never match: the jump is
-		// the whole test and the caller emits no destructuring, which could
-		// never run.
+		// Known different type: unconditional jump, no destructuring emitted.
 		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(fail_label));
 		return false;
 	}
@@ -1076,55 +914,27 @@ void CodeGenerator::gen_while(const WhileStmt* stmt, FunctionContext& func) {
 	std::string loop_label = make_label("loop");
 	std::string end_label = make_label("endloop");
 
-	// Push loop context for break/continue
 	func.loops.push_back({end_label, loop_label});
-
-	// Loop start
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
-
-	// Evaluate condition
 	int cond_reg = gen_expr(stmt->condition.get(), func);
 	emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, end_label, func);
 	free_register(func, cond_reg);
 
-	// Loop body (new scope)
 	push_scope(func);
 	for (const auto& s : stmt->body) {
 		gen_stmt(s.get(), func);
 	}
 	pop_scope(func);
-
-	// Jump back to loop start
 	func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(loop_label));
-
-	// Loop end
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
 
 	func.loops.pop_back();
 }
 
 void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
-	// Desugar: for variable in iterable: body
-	// Support range() calls and array iteration
-	// For range(): Convert to:
-	//   var _iter = iterable  (evaluate range())
-	//   var variable = 0
-	//   while variable < _iter:
-	//     body
-	//     variable = variable + 1
-	// For arrays: Convert to:
-	//   var _array = iterable
-	//   var _idx = 0
-	//   while _idx < _array.size():
-	//     var variable = _array[_idx]
-	//     body
-	//     _idx = _idx + 1
-
-	// Check if iterable is a range() call
 	auto* call_expr = dynamic_cast<const CallExpr*>(stmt->iterable.get());
 	bool is_range = call_expr && call_expr->function_name == "range";
 
-	// Check for obviously non-iterable types and give a proper error
 	auto* literal = dynamic_cast<const LiteralExpr*>(stmt->iterable.get());
 	if (literal) {
 		if (literal->lit_type == LiteralExpr::Type::INTEGER ||
@@ -1139,84 +949,62 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 	}
 
 	if (!is_range) {
-		// Array iteration
 		std::string loop_label = make_label("for_loop");
 		std::string continue_label = make_label("for_continue");
 		std::string end_label = make_label("for_end");
 
-		// Push loop context for break/continue
 		func.loops.push_back({end_label, continue_label});
-
-		// Create new scope for loop (includes loop variable)
 		push_scope(func);
 
 		int array_reg = gen_expr(stmt->iterable.get(), func);
 
-		// `for k in <dictionary>` walks its keys. The loop indexes by position,
-		// which only an Array supports, so a Dictionary is replaced by its keys
-		// here: once, before the loop, not per iteration.
+		// Dictionary: replaced by its keys array once before the loop.
 		gen_dictionary_keys_for_iteration(array_reg, func);
 
-		// Initialize index counter with 0
 		int index_reg = alloc_register(func);
 		auto& index_load = func.ir.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(index_reg), IRValue::imm(0));
 		index_load.type_hint = Variant::INT;
 		set_register_type(func, index_reg, Variant::INT);
 
-		// The step, hoisted out of the loop: ADD takes two registers, so the
-		// increment below needs a register holding 1.
 		int one_reg = alloc_register(func);
 		auto& one_load = func.ir.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(one_reg), IRValue::imm(1));
 		one_load.type_hint = Variant::INT;
 		set_register_type(func, one_reg, Variant::INT);
 
-		// Loop start
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
-
-		// Call ECALL_ARRAY_SIZE to get the array size
-		// ECALL_ARRAY_SIZE = GAME_API_BASE + 23 = 523
 		int size_reg = alloc_register(func);
 		IRInstruction size_syscall(IROpcode::CALL_SYSCALL);
-		size_syscall.operands.push_back(IRValue::reg(size_reg));  // result register
+		size_syscall.operands.push_back(IRValue::reg(size_reg));
 		size_syscall.operands.push_back(IRValue::imm(ECALL_ARRAY_SIZE));
-		size_syscall.operands.push_back(IRValue::reg(array_reg));   // array register
+		size_syscall.operands.push_back(IRValue::reg(array_reg));
 		func.ir.instructions.push_back(size_syscall);
 		set_register_type(func, size_reg, Variant::INT);
 
-		// Condition: index < size
 		int cond_reg = alloc_register(func);
 		auto& cmp_instr = func.ir.instructions.emplace_back(IROpcode::CMP_LT, IRValue::reg(cond_reg),
 		                               IRValue::reg(index_reg), IRValue::reg(size_reg));
-		cmp_instr.type_hint = Variant::INT; // position and length, both integers
+		cmp_instr.type_hint = Variant::INT;
 		set_register_type(func, cond_reg, Variant::BOOL);
 
 		emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, end_label, func);
 		free_register(func, cond_reg);
 
-		// Get element from array using ECALL_ARRAY_AT
-		// ECALL_ARRAY_AT = GAME_API_BASE + 22 = 522
 		int elem_reg = alloc_register(func);
 		IRInstruction at_syscall(IROpcode::CALL_SYSCALL);
-		at_syscall.operands.push_back(IRValue::reg(elem_reg));    // result register (element)
+		at_syscall.operands.push_back(IRValue::reg(elem_reg));
 		at_syscall.operands.push_back(IRValue::imm(ECALL_ARRAY_AT));
-		at_syscall.operands.push_back(IRValue::reg(array_reg));   // array register
-		at_syscall.operands.push_back(IRValue::reg(index_reg));   // index register
+		at_syscall.operands.push_back(IRValue::reg(array_reg));
+		at_syscall.operands.push_back(IRValue::reg(index_reg));
 		func.ir.instructions.push_back(at_syscall);
 
-		// Assign the element to the loop variable
 		declare_variable(func, stmt->variable, elem_reg, false, stmt);
-
-		// Loop body (new scope for body, separate from loop variable scope)
 		push_scope(func);
 		for (const auto& s : stmt->body) {
 			gen_stmt(s.get(), func);
 		}
 		pop_scope(func);
 
-		// Continue label - where continue jumps to
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(continue_label));
-
-		// Increment: index = index + 1
 		int new_idx_reg = alloc_register(func);
 		auto& add_instr = func.ir.instructions.emplace_back(IROpcode::ADD, IRValue::reg(new_idx_reg),
 		                               IRValue::reg(index_reg), IRValue::reg(one_reg));
@@ -1225,41 +1013,27 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(index_reg), IRValue::reg(new_idx_reg));
 		free_register(func, new_idx_reg);
 
-		// Jump back to loop start
 		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(loop_label));
-
-		// Loop end
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
-
-		// Clean up
 		pop_scope(func);
 		func.loops.pop_back();
-		// Note: array_reg and size_reg are allocated inside the loop, so they're freed each iteration
 		free_register(func, one_reg);
 		free_register(func, index_reg);
 		free_register(func, elem_reg);
 		return;
 	}
 
-	// Generate range() arguments
-	// range(n) -> 0 to n-1
-	// range(start, end) -> start to end-1
-	// range(start, end, step) -> start to end-1 by step
-
 	int start_reg = -1, end_reg = -1, step_reg = -1;
 
 	if (call_expr->arguments.size() == 1) {
-		// range(n): start=0, end=n, step=1
 		start_reg = gen_int_immediate(0, func);
 		end_reg = gen_expr(call_expr->arguments[0].get(), func);
 		step_reg = gen_int_immediate(1, func);
 	} else if (call_expr->arguments.size() == 2) {
-		// range(start, end): step=1
 		start_reg = gen_expr(call_expr->arguments[0].get(), func);
 		end_reg = gen_expr(call_expr->arguments[1].get(), func);
 		step_reg = gen_int_immediate(1, func);
 	} else if (call_expr->arguments.size() == 3) {
-		// range(start, end, step)
 		start_reg = gen_expr(call_expr->arguments[0].get(), func);
 		end_reg = gen_expr(call_expr->arguments[1].get(), func);
 		step_reg = gen_expr(call_expr->arguments[2].get(), func);
@@ -1272,44 +1046,23 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 	std::string continue_label = make_label("for_continue");
 	std::string end_label = make_label("for_end");
 
-	// Push loop context for break/continue
-	// Continue should jump to the increment step, not the condition check
 	func.loops.push_back({end_label, continue_label});
-
-	// Create new scope for loop (includes loop variable)
 	push_scope(func);
-
-	// Initialize loop variable with start value
 	int loop_var_reg = alloc_register(func);
 	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(loop_var_reg), IRValue::reg(start_reg));
 	declare_variable(func, stmt->variable, loop_var_reg, false, stmt);
 
-	// The loop variable is `start`, then `start + step` repeatedly: INT exactly
-	// when both of those are, `end` only bounding it. Untyped, every use of it in
-	// the body takes the run-time type test instead of the native path.
+	// INT when both start and step are INT; end only bounds the loop.
 	if (get_register_type(func, start_reg) == Variant::INT &&
 		get_register_type(func, step_reg) == Variant::INT) {
 		set_register_type(func, loop_var_reg, Variant::INT);
 	}
 
-	// Loop start
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
 
-	// Condition depends on step direction:
-	// - If step > 0: loop_var < end
-	// - If step < 0: loop_var > end
-	// - If step == 0: infinite loop (but that's a user error)
-	//
-	// For runtime step values, we need to check the sign dynamically.
-	// For now, we'll check if step is a compile-time constant to optimize.
-
 	int cond_reg = alloc_register(func);
-
-	// Check if step is a constant value
 	bool step_is_constant = false;
 	int64_t step_value = 0;
-
-	// Look back one instruction to see if step_reg was loaded with LOAD_IMM
 	if (func.ir.instructions.size() >= 3) {
 		auto& prev_instr = func.ir.instructions[func.ir.instructions.size() - 3];
 		if (prev_instr.opcode == IROpcode::LOAD_IMM &&
@@ -1320,22 +1073,16 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 	}
 
 	if (step_is_constant) {
-		// Optimize: use appropriate comparison based on constant step
 		if (step_value >= 0) {
-			// Forward iteration: loop_var < end
 			auto& cmp_instr = func.ir.instructions.emplace_back(IROpcode::CMP_LT, IRValue::reg(cond_reg),
 			                               IRValue::reg(loop_var_reg), IRValue::reg(end_reg));
-			cmp_instr.type_hint = Variant::INT; // range() always produces integers
+			cmp_instr.type_hint = Variant::INT;
 		} else {
-			// Backward iteration: loop_var > end
 			auto& cmp_instr = func.ir.instructions.emplace_back(IROpcode::CMP_GT, IRValue::reg(cond_reg),
 			                               IRValue::reg(loop_var_reg), IRValue::reg(end_reg));
-			cmp_instr.type_hint = Variant::INT; // range() always produces integers
+			cmp_instr.type_hint = Variant::INT;
 		}
 	} else {
-		// Runtime step: check sign dynamically
-		// if step >= 0: check loop_var < end
-		// else: check loop_var > end
 		std::string pos_step_label = make_label("for_pos_step");
 		std::string check_cond_label = make_label("for_check_cond");
 
@@ -1345,23 +1092,19 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		int step_sign_reg = alloc_register(func);
 		auto& step_cmp = func.ir.instructions.emplace_back(IROpcode::CMP_GTE, IRValue::reg(step_sign_reg),
 		                               IRValue::reg(step_reg), IRValue::reg(zero_reg));
-		step_cmp.type_hint = Variant::INT; // range() always produces integers
+		step_cmp.type_hint = Variant::INT;
 		free_register(func, zero_reg);
-
-		// If step >= 0, use loop_var < end
 		emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, step_sign_reg, pos_step_label, func);
 
-		// Negative step: loop_var > end
 		auto& neg_cmp = func.ir.instructions.emplace_back(IROpcode::CMP_GT, IRValue::reg(cond_reg),
 		                               IRValue::reg(loop_var_reg), IRValue::reg(end_reg));
-		neg_cmp.type_hint = Variant::INT; // range() always produces integers
+		neg_cmp.type_hint = Variant::INT;
 		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(check_cond_label));
 
-		// Positive step: loop_var < end
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(pos_step_label));
 		auto& pos_cmp = func.ir.instructions.emplace_back(IROpcode::CMP_LT, IRValue::reg(cond_reg),
 		                               IRValue::reg(loop_var_reg), IRValue::reg(end_reg));
-		pos_cmp.type_hint = Variant::INT; // range() always produces integers
+		pos_cmp.type_hint = Variant::INT;
 
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(check_cond_label));
 		free_register(func, step_sign_reg);
@@ -1370,31 +1113,24 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 	emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, end_label, func);
 	free_register(func, cond_reg);
 
-	// Loop body (new scope for body, separate from loop variable scope)
 	push_scope(func);
 	for (const auto& s : stmt->body) {
 		gen_stmt(s.get(), func);
 	}
 	pop_scope(func);
 
-	// Continue label - where continue jumps to
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(continue_label));
 
-	// Increment: loop_var = loop_var + step
 	int new_val_reg = alloc_register(func);
 	auto& add_instr = func.ir.instructions.emplace_back(IROpcode::ADD, IRValue::reg(new_val_reg),
 	                               IRValue::reg(loop_var_reg), IRValue::reg(step_reg));
-	add_instr.type_hint = Variant::INT; // range() always produces integers
+	add_instr.type_hint = Variant::INT;
 	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(loop_var_reg), IRValue::reg(new_val_reg));
 	free_register(func, new_val_reg);
 
-	// Jump back to loop start
 	func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(loop_label));
-
-	// Loop end
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
 
-	// Clean up
 	pop_scope(func);
 	func.loops.pop_back();
 	free_register(func, start_reg);
@@ -1447,16 +1183,13 @@ int CodeGenerator::gen_expr(const Expr* expr, FunctionContext& func) {
 	} else if (auto* dict_lit = dynamic_cast<const DictionaryLiteralExpr*>(expr)) {
 		return gen_dictionary_literal(dict_lit, func);
 	} else {
-		// Every expression kind has to be lowered by one of the branches above.
-		// Returning a default register here instead would compile an expression
-		// the program never evaluates.
+		// Every expression kind must be lowered above; a default register would silently mis-compile.
 		error_at("This kind of expression is not supported by the compiler yet", expr);
 	}
 }
 
 void CodeGenerator::gen_dictionary_keys_for_iteration(int iterable_reg, FunctionContext& func) {
-	// ECALL_DICTIONARY_OPS / Dictionary_Op::GET_KEYS: Dictionary in a1, result
-	// Array written through the pointer in a2 (no key argument, so not a3).
+	// GET_KEYS: result in a2, not a3 (no key argument).
 	constexpr int64_t DICT_OP_GET_KEYS = 4;
 
 	auto emit_get_keys = [&]() {
@@ -1496,8 +1229,7 @@ void CodeGenerator::gen_dictionary_keys_for_iteration(int iterable_reg, Function
 	emit_get_keys();
 
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(skip_label));
-	// Only one of the two merged paths made it an Array, so the type is unknown
-	// after the join.
+	// Join: only one path made it an Array, so type is unknown.
 	set_register_type(func, iterable_reg, IRInstruction::TypeHint_NONE);
 }
 
@@ -1560,9 +1292,7 @@ int CodeGenerator::gen_literal(const LiteralExpr* expr, FunctionContext& func) {
 }
 
 int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func) {
-	// Locals shadow everything else, so the enclosing scopes are searched before
-	// globals and global class names. 'self' is not a declarable name, so it is
-	// handled below rather than here.
+	// Locals shadow globals; 'self' is not declarable, handled below.
 	if (Variable* local = find_variable(func, expr->name)) {
 		int new_reg = alloc_register(func);
 		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(new_reg), IRValue::reg(local->register_num));
@@ -1571,53 +1301,39 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func)
 		if (type != IRInstruction::TypeHint_NONE) {
 			set_register_type(func, new_reg, type);
 		}
-		// A struct instance is a Dictionary, and a Dictionary is a handle: the
-		// copy refers to the same fields, so it knows the same struct.
+		// Dictionary handle: copy refers to the same fields, so propagate struct.
 		set_register_struct(func, new_reg, get_register_struct(func, local->register_num));
 		return new_reg;
 	}
 
-	// Unnamed enum member: a compile-time integer, materialised as an immediate.
-	// A local of the same name shadowed it above, as GDScript resolves.
+	// Unnamed enum member: compile-time integer. Local of same name shadows above.
 	if (auto member = m_enum_members.find(expr->name); member != m_enum_members.end()) {
 		return gen_int_immediate(member->second, func);
 	}
 
-	// Check if this is a global class reference
 	if (is_global_class(expr->name)) {
 		return gen_global_class_get(expr->name, func);
 	}
 
-	// Handle 'self' as an alias for get_node()
 	if (expr->name == "self") {
-		// Generate get_node() call
 		int result_reg = alloc_register(func);
-
-		// CALL_SYSCALL result_reg, ECALL_GET_NODE, 0
 		IRInstruction instr(IROpcode::CALL_SYSCALL);
-		instr.operands.push_back(IRValue::reg(result_reg));    // result register
+		instr.operands.push_back(IRValue::reg(result_reg));
 		instr.operands.push_back(IRValue::imm(ECALL_GET_NODE));
-		instr.operands.push_back(IRValue::imm(0));              // addr = 0 (owner node)
+		instr.operands.push_back(IRValue::imm(0));
 		func.ir.instructions.push_back(instr);
 
 		return result_reg;
 	}
 
-	// A `const` with a folded initializer is materialised as an immediate rather
-	// than loaded from the global data area. The type matters more than the
-	// saved load: LOAD_GLOBAL carries no type, so `match op: OP_ADD:` compared
-	// two untyped Variants and every arm became a VEVAL syscall. As an immediate
-	// the type is known and the arm is a `beq`.
+	// Folded const: immediate instead of LOAD_GLOBAL (carries type for match/arithmetic).
 	if (int const_reg = gen_const_global_value(expr->name, func); const_reg >= 0) {
 		return const_reg;
 	}
 
-	// Check if this is a global variable
 	if (is_global_variable(expr->name)) {
 		size_t global_idx = m_global_variables.at(expr->name);
-		// While the global initializers are being lowered, a global that has not
-		// been initialized yet still holds NIL. Reading it would silently produce
-		// the wrong value, so a forward reference is rejected instead.
+		// Forward reference: global not yet initialized, still NIL.
 		if (global_idx >= m_globals_lowered) {
 			error_at("Global variable '" + expr->name + "' is used in the initializer of a global "
 				"declared before it", expr,
@@ -1639,14 +1355,7 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func)
 }
 
 int CodeGenerator::gen_logical(const BinaryExpr* expr, FunctionContext& func) {
-	// GDScript's 'and' and 'or' short-circuit: the right-hand side is only
-	// evaluated when the left-hand side does not already decide the result, and
-	// the result is a bool rather than one of the operands. Lowering them to a
-	// plain binary IR op evaluates both sides unconditionally, which runs the
-	// right side's side effects even when it should never have been reached.
-	//
-	//     a and b   ->   r = false; if !a goto end; if !b goto end; r = true
-	//     a or b    ->   r = true;  if a  goto end; if b  goto end; r = false
+	// Short-circuit: only evaluate RHS when LHS doesn't decide the result.
 	const bool is_and = expr->op == BinaryExpr::Op::AND;
 	const std::string end_label = make_label(is_and ? "and_end" : "or_end");
 	const IROpcode short_circuit_branch = is_and ? IROpcode::BRANCH_ZERO : IROpcode::BRANCH_NOT_ZERO;
@@ -1658,8 +1367,7 @@ int CodeGenerator::gen_logical(const BinaryExpr* expr, FunctionContext& func) {
 
 	int left_reg = gen_expr(expr->left.get(), func);
 	IRInstruction left_branch(short_circuit_branch, IRValue::reg(left_reg), IRValue::label(end_label));
-	// The type hint lets the backend test truthiness inline instead of asking
-	// the host what the Variant booleanizes to.
+	// Type hint lets backend test truthiness inline.
 	left_branch.type_hint = get_register_type(func, left_reg);
 	func.ir.instructions.push_back(left_branch);
 	free_register(func, left_reg);
@@ -1670,8 +1378,6 @@ int CodeGenerator::gen_logical(const BinaryExpr* expr, FunctionContext& func) {
 	func.ir.instructions.push_back(right_branch);
 	free_register(func, right_reg);
 
-	// Neither test short-circuited, so the result is the opposite of the value
-	// the short circuit would have produced.
 	func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(result_reg),
 		IRValue::imm(is_and ? 1 : 0));
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
@@ -1688,11 +1394,9 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 	int right_reg = gen_expr(expr->right.get(), func);
 	int result_reg = alloc_register(func);
 
-	// Check type hints for operands to determine if result should be float
 	IRInstruction::TypeHint left_type = get_register_type(func, left_reg);
 	IRInstruction::TypeHint right_type = get_register_type(func, right_reg);
 
-	// Determine if this is an arithmetic operation (vs comparison or logical)
 	bool is_arithmetic = (expr->op == BinaryExpr::Op::ADD ||
 	                      expr->op == BinaryExpr::Op::SUB ||
 	                      expr->op == BinaryExpr::Op::MUL ||
@@ -1710,17 +1414,10 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 	                      expr->op == BinaryExpr::Op::GT ||
 	                      expr->op == BinaryExpr::Op::GTE);
 
-	// For arithmetic operations and comparisons:
-	// ONLY set type hint when BOTH operands have the SAME type
-	// This enables native RISC-V codegen optimizations
-	//
-	// When types don't match (e.g. INT + FLOAT), we leave result_type as NONE
-	// and fall back to VEVAL syscall which handles type coercion correctly
+	// Same-type operands enable native codegen; mixed types fall back to VEVAL.
 	IRInstruction::TypeHint result_type = IRInstruction::TypeHint_NONE;
 	if (is_bitwise) {
-		// Bitwise operators are integer-only in GDScript. Only take the native
-		// path when both operands are known to be integers; otherwise fall
-		// back to VEVAL, which reports the type error at runtime.
+		// Bitwise is integer-only; unknown types fall back to VEVAL for runtime error.
 		if (left_type == Variant::INT && right_type == Variant::INT) {
 			result_type = Variant::INT;
 		}
@@ -1733,10 +1430,8 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 		           right_type != IRInstruction::TypeHint_NONE &&
 		           left_type == right_type &&
 		           TypeHintUtils::is_vector(left_type)) {
-			// Both operands are the same vector type
 			result_type = left_type;
 		}
-		// Mixed types or unsupported types: leave as NONE for VEVAL fallback
 	}
 
 	IROpcode op;
@@ -1770,14 +1465,9 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 	func.ir.instructions.push_back(instr);
 
 	if (expr->op == BinaryExpr::Op::IN) {
-		// `in` is a bool for every container the host accepts, whatever the
-		// operand types are.
 		set_register_type(func, result_reg, Variant::BOOL);
 	} else if (is_comparison) {
-		// A comparison always produces a bool, whatever its operands were. The
-		// instruction's type hint describes the *operands* - it is what selects
-		// the backend's native compare path - so only the destination register's
-		// tracked type is corrected here.
+		// type_hint describes the operands (selects native compare); result is BOOL.
 		set_register_type(func, result_reg, Variant::BOOL);
 	} else if (result_type != IRInstruction::TypeHint_NONE) {
 		set_register_type(func, result_reg, result_type);
@@ -1792,9 +1482,7 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 int CodeGenerator::gen_type_test(const TypeTestExpr* expr, FunctionContext& func) {
 	const IRInstruction::TypeHint tested = type_hint_from_string(expr->type_name);
 	if (tested == IRInstruction::TypeHint_NONE) {
-		// A class name, or a typo. `x is Node2D` needs an inheritance walk in the
-		// engine; a Variant type tag cannot express it, and guessing would
-		// answer false for objects that really are of that class.
+		// Class names need an engine inheritance walk; type tag can't express it.
 		error_at("'is " + expr->type_name + "' is not supported: only the built-in"
 			" Variant types can be tested, not class names", expr);
 	}
@@ -1802,7 +1490,7 @@ int CodeGenerator::gen_type_test(const TypeTestExpr* expr, FunctionContext& func
 	int value_reg = gen_expr(expr->value.get(), func);
 	int result_reg = alloc_register(func);
 
-	// An already tracked type folds to a constant: `var i := 5; i is int` is true.
+	// Known type folds to a constant.
 	const IRInstruction::TypeHint known = get_register_type(func, value_reg);
 	if (known != IRInstruction::TypeHint_NONE) {
 		func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(result_reg),
@@ -1832,15 +1520,11 @@ int CodeGenerator::gen_unary(const UnaryExpr* expr, FunctionContext& func) {
 
 	IRInstruction instr(op, IRValue::reg(result_reg), IRValue::reg(operand_reg));
 	if (expr->op == UnaryExpr::Op::BIT_NOT && get_register_type(func, operand_reg) == Variant::INT) {
-		// ~int is always an int, so the native path can be used
 		instr.type_hint = Variant::INT;
 		set_register_type(func, result_reg, Variant::INT);
 	} else if (expr->op == UnaryExpr::Op::NOT) {
-		// 'not' booleanizes its operand, so the result is a bool for every
-		// operand type.
 		set_register_type(func, result_reg, Variant::BOOL);
 	} else if (expr->op == UnaryExpr::Op::NEG) {
-		// Negation preserves the numeric type.
 		const IRInstruction::TypeHint operand_type = get_register_type(func, operand_reg);
 		if (operand_type == Variant::INT || operand_type == Variant::FLOAT) {
 			instr.type_hint = operand_type;
@@ -1854,10 +1538,7 @@ int CodeGenerator::gen_unary(const UnaryExpr* expr, FunctionContext& func) {
 }
 
 int CodeGenerator::gen_ternary(const TernaryExpr* expr, FunctionContext& func) {
-	// <true_value> if <condition> else <false_value>
-	//
-	// Only the taken branch is evaluated, so this is lowered to real control
-	// flow rather than evaluating both sides.
+	// Only the taken branch is evaluated.
 	std::string else_label = make_label("ternary_else");
 	std::string end_label = make_label("ternary_end");
 
@@ -1881,7 +1562,6 @@ int CodeGenerator::gen_ternary(const TernaryExpr* expr, FunctionContext& func) {
 
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
 
-	// The result type is only known when both arms agree on it
 	if (true_type != IRInstruction::TypeHint_NONE && true_type == false_type) {
 		set_register_type(func, result_reg, true_type);
 	}
@@ -1890,21 +1570,17 @@ int CodeGenerator::gen_ternary(const TernaryExpr* expr, FunctionContext& func) {
 }
 
 int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
-	// A struct name used as a call constructs an instance: BankAccount(10, 50).
-	// Checked before the arguments are lowered, because a struct constructor is
-	// the one call that can name them.
+	// Struct constructor: checked before args are lowered (only call that names them).
 	if (const StructDecl* decl = find_struct(expr->function_name)) {
 		return gen_struct_construct(*decl, expr->arguments, *expr, func, expr);
 	}
 	reject_named_arguments(*expr, "'" + expr->function_name + "'", expr);
 
-	// Generate code for arguments
 	std::vector<int> arg_regs;
 	for (const auto& arg : expr->arguments) {
 		arg_regs.push_back(gen_expr(arg.get(), func));
 	}
 
-	// Check if this is an inline primitive constructor
 	if (is_inline_primitive_constructor(expr->function_name)) {
 		int result = gen_inline_constructor(expr->function_name, arg_regs, func, expr);
 		for (int reg : arg_regs) {
@@ -1913,9 +1589,7 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 		return result;
 	}
 
-	// Handle get_node() as a special syscall
 	if (expr->function_name == "get_node") {
-		// get_node() takes 0 or 1 argument (node path)
 		if (arg_regs.size() > 1) {
 			error_at("get_node() takes at most 1 argument", expr);
 		}
@@ -1923,23 +1597,18 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 		int result_reg = alloc_register(func);
 
 		if (arg_regs.empty()) {
-			// get_node() with no args - get the owner node
-			// CALL_SYSCALL result_reg, ECALL_GET_NODE, 0
 			IRInstruction instr(IROpcode::CALL_SYSCALL);
-			instr.operands.push_back(IRValue::reg(result_reg));    // result register
+			instr.operands.push_back(IRValue::reg(result_reg));
 			instr.operands.push_back(IRValue::imm(ECALL_GET_NODE));
-			instr.operands.push_back(IRValue::imm(0));              // addr = 0 (owner node)
+			instr.operands.push_back(IRValue::imm(0));
 			func.ir.instructions.push_back(instr);
 		} else {
-			// get_node(path) - will be handled in RISC-V codegen
-			// For now, convert to CALL_SYSCALL with the path argument
 			int path_reg = arg_regs[0];
-
 			IRInstruction instr(IROpcode::CALL_SYSCALL);
-			instr.operands.push_back(IRValue::reg(result_reg));    // result register
+			instr.operands.push_back(IRValue::reg(result_reg));
 			instr.operands.push_back(IRValue::imm(ECALL_GET_NODE));
-			instr.operands.push_back(IRValue::imm(0));              // addr = 0 (owner node)
-			instr.operands.push_back(IRValue::reg(path_reg));       // path register
+			instr.operands.push_back(IRValue::imm(0));
+			instr.operands.push_back(IRValue::reg(path_reg));
 			func.ir.instructions.push_back(instr);
 		}
 
@@ -1950,12 +1619,8 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 		return result_reg;
 	}
 
-	// Check if this is a call to a locally defined function
 	if (is_local_function(expr->function_name)) {
-		// Fill in default values for any arguments the call site omitted.
-		// The Sandbox ABI does not pass an argument count to the guest, so a
-		// callee cannot tell which arguments it actually received; defaults
-		// therefore have to be materialized here, at the call site.
+		// Defaults materialized here: ABI has no argument count, callee can't distinguish.
 		auto sig = m_local_signatures.find(expr->function_name);
 		if (sig != m_local_signatures.end()) {
 			const auto& params = sig->second->parameters;
@@ -1972,18 +1637,13 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 			}
 		}
 
-		// Local function call - use regular CALL instruction
 		int result_reg = alloc_register(func);
 
-		// The declared return type types the result register: `-> BankAccount`
-		// checks a field access at the call site, `-> int` keeps the arithmetic
-		// that reads it off the VEVAL path. gen_return() coerces to make it true.
+		// Return type on result register: enables field checks and native arithmetic.
 		if (sig != m_local_signatures.end()) {
 			apply_declared_type(result_reg, sig->second->return_type, func);
 		}
 
-		// Generate CALL instruction with function name, result register, and argument registers
-		// Format: CALL function_name, result_reg, arg_count, arg1_reg, arg2_reg, ...
 		IRInstruction call_instr(IROpcode::CALL);
 		call_instr.operands.push_back(IRValue::str(expr->function_name));
 		call_instr.operands.push_back(IRValue::reg(result_reg));
@@ -2000,9 +1660,7 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 		return result_reg;
 	}
 
-	// GDScript globals. Checked after local functions, so a script that defines
-	// its own print() still calls its own, and before the self-call fallback,
-	// which would turn print(x) into a Node.print(x) that does nothing.
+	// After local functions (user print() wins), before self-call fallback.
 	if (is_global_function(expr->function_name)) {
 		int result = gen_global_function(expr, arg_regs, func);
 		for (int reg : arg_regs) {
@@ -2011,22 +1669,16 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 		return result;
 	}
 
-	// Treat all other freestanding function calls as self-calls
-	// Convert foo(arg1, arg2) to self.foo(arg1, arg2)
+	// Unknown freestanding call -> self-call: foo(args) becomes self.foo(args).
 	int self_reg = alloc_register(func);
-
-	// Generate get_node() for self
-	// CALL_SYSCALL self_reg, ECALL_GET_NODE, 0
 	IRInstruction get_self_instr(IROpcode::CALL_SYSCALL);
-	get_self_instr.operands.push_back(IRValue::reg(self_reg));     // result register
+	get_self_instr.operands.push_back(IRValue::reg(self_reg));
 	get_self_instr.operands.push_back(IRValue::imm(ECALL_GET_NODE));
-	get_self_instr.operands.push_back(IRValue::imm(0));              // addr = 0 (owner node)
+	get_self_instr.operands.push_back(IRValue::imm(0));
 	func.ir.instructions.push_back(get_self_instr);
 
 	int result_reg = alloc_register(func);
 
-	// Generate VCALL instruction for self.method call
-	// Format: VCALL result_reg, self_reg, method_name, arg_count, arg1_reg, arg2_reg, ...
 	IRInstruction vcall_instr(IROpcode::VCALL);
 	vcall_instr.operands.push_back(IRValue::reg(result_reg));
 	vcall_instr.operands.push_back(IRValue::reg(self_reg));
@@ -2046,8 +1698,7 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 }
 
 int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& func) {
-	// BankAccount.new(...) constructs an instance. The object is a struct name
-	// rather than a value, so this comes before the object is lowered.
+	// Struct.new(): resolved before object is lowered (struct is a type, not a value).
 	if (expr->is_method_call && expr->member_name == "new") {
 		if (auto* object = dynamic_cast<const VariableExpr*>(expr->object.get())) {
 			if (const StructDecl* decl = find_struct(object->name)) {
@@ -2055,11 +1706,9 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 			}
 		}
 	}
-	// `Mode.IDLE`. An enum is a name, not a value, so there is no object to
-	// lower: resolve before the object would be generated.
+	// Enum member access: resolve before object generation (enum is a type).
 	if (!expr->is_method_call && expr->arguments.empty()) {
 		if (auto* object = dynamic_cast<const VariableExpr*>(expr->object.get())) {
-			// A local of the same name shadows the enum.
 			if (find_variable(func, object->name) == nullptr) {
 				if (auto found = m_enums.find(object->name); found != m_enums.end()) {
 					const EnumDecl* decl = found->second;
@@ -2078,13 +1727,11 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 
 	int obj_reg = gen_expr(expr->object.get(), func);
 
-	// Generate code for arguments
 	std::vector<int> arg_regs;
 	for (const auto& arg : expr->arguments) {
 		arg_regs.push_back(gen_expr(arg.get(), func));
 	}
 
-	// Check if this is inline member access (x, y, z, r, g, b, a on vectors)
 	if (!expr->is_method_call && arg_regs.empty()) {
 		IRInstruction::TypeHint obj_type = get_register_type(func, obj_reg);
 		if (is_inline_member_access(obj_type, expr->member_name)) {
@@ -2093,8 +1740,7 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 			return result;
 		}
 
-		// A struct field. The name has to be one the struct declares: catching
-		// the misspelling here is what a struct buys over a bare Dictionary.
+		// Struct field: checked against declared fields.
 		if (const StructDecl* decl = get_register_struct(func, obj_reg)) {
 			const StructField& field = require_struct_field(*decl, expr->member_name,
 				expr->line, expr->column);
@@ -2104,25 +1750,16 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 			return result_reg;
 		}
 
-		// A key of a Dictionary. The property-get syscall below reaches an
-		// Object's properties and nothing else, so a Dictionary -- which in
-		// GDScript answers d.key exactly as d["key"] does -- takes the element
-		// path instead of throwing at run time.
+		// d.key on Dictionary: element path, not VGET (which is Object-only).
 		if (obj_type == Variant::DICTIONARY) {
 			int result_reg = gen_dict_get(obj_reg, expr->member_name, func);
 			free_register(func, obj_reg);
 			return result_reg;
 		}
 
-		// Property access: obj.property (no parentheses)
-		// Use dedicated VGET instruction with ECALL_OBJ_PROP_GET syscall
 		int result_reg = alloc_register(func);
-
-		// Get string index for property name
 		int str_idx = add_string_constant(expr->member_name);
 
-		// Emit VGET instruction
-		// Format: VGET result_reg, obj_reg, string_idx, string_len
 		IRInstruction vget_instr(IROpcode::VGET);
 		vget_instr.operands.push_back(IRValue::reg(result_reg));
 		vget_instr.operands.push_back(IRValue::reg(obj_reg));
@@ -2136,8 +1773,7 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 
 	int result_reg = alloc_register(func);
 
-	// append/push_back on a known Array: one system call, against a StringName
-	// build and a builtin-method lookup per element on the VCALL path.
+	// Array.append: dedicated syscall, avoids StringName lookup per element.
 	if (expr->is_method_call && arg_regs.size() == 1 &&
 		(expr->member_name == "append" || expr->member_name == "push_back") &&
 		get_register_type(func, obj_reg) == Variant::ARRAY)
@@ -2149,8 +1785,6 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		return result_reg;
 	}
 
-	// Use VCALL for Variant method calls
-	// Format: VCALL result_reg, obj_reg, method_name, arg_count, arg1_reg, arg2_reg, ...
 	IRInstruction vcall_instr(IROpcode::VCALL);
 	vcall_instr.operands.push_back(IRValue::reg(result_reg));
 	vcall_instr.operands.push_back(IRValue::reg(obj_reg));
@@ -2169,9 +1803,7 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 	return result_reg;
 }
 
-// The backend reads the Array's scoped index and the element index straight
-// out of the Variants, with no type check, so both types have to be known.
-// Anything less certain keeps the VCALL, which asks the host instead.
+// Both ARRAY and INT types required: backend reads Variants directly, no check.
 bool CodeGenerator::is_array_element_access(int obj_reg, int idx_reg, FunctionContext& func) {
 	return get_register_type(func, obj_reg) == Variant::ARRAY &&
 		get_register_type(func, idx_reg) == Variant::INT;
@@ -2190,8 +1822,6 @@ int CodeGenerator::gen_index(const IndexExpr* expr, FunctionContext& func) {
 		return element_reg;
 	}
 
-	// A Dictionary is keyed by any Variant, so the key needs no type of its own:
-	// the host is handed a pointer either way.
 	if (get_register_type(func, obj_reg) == Variant::DICTIONARY) {
 		constexpr int64_t DICT_OP_GET = 0;
 		int value_reg = gen_dictionary_op(DICT_OP_GET, obj_reg, idx_reg,
@@ -2203,13 +1833,12 @@ int CodeGenerator::gen_index(const IndexExpr* expr, FunctionContext& func) {
 
 	int result_reg = alloc_register(func);
 
-	// Transform arr[x] to arr.get(x) using VCALL
-	// Format: VCALL result_reg, obj_reg, method_name, arg_count, arg1_reg
+	// Fallback: arr[x] -> VCALL("get", x)
 	IRInstruction vcall_instr(IROpcode::VCALL);
 	vcall_instr.operands.push_back(IRValue::reg(result_reg));
 	vcall_instr.operands.push_back(IRValue::reg(obj_reg));
 	vcall_instr.operands.push_back(IRValue::str("get"));
-	vcall_instr.operands.push_back(IRValue::imm(1)); // 1 argument
+	vcall_instr.operands.push_back(IRValue::imm(1));
 	vcall_instr.operands.push_back(IRValue::reg(idx_reg));
 	func.ir.instructions.push_back(vcall_instr);
 
@@ -2221,8 +1850,6 @@ int CodeGenerator::gen_index(const IndexExpr* expr, FunctionContext& func) {
 
 int CodeGenerator::gen_array_literal(const ArrayLiteralExpr* expr, FunctionContext& func) {
 	std::vector<int> elem_regs;
-
-	// Generate code for each element
 	for (const auto& elem : expr->elements) {
 		int reg = gen_expr(elem.get(), func);
 		elem_regs.push_back(reg);
@@ -2230,11 +1857,9 @@ int CodeGenerator::gen_array_literal(const ArrayLiteralExpr* expr, FunctionConte
 
 	int result_reg = alloc_register(func);
 
-	// Create MAKE_ARRAY instruction
-	// Format: MAKE_ARRAY result_reg, element_count, elem1_reg, elem2_reg, ...
 	IRInstruction instr(IROpcode::MAKE_ARRAY);
 	instr.operands.push_back(IRValue::reg(result_reg));
-	instr.operands.push_back(IRValue::imm(static_cast<int>(elem_regs.size()))); // element count
+	instr.operands.push_back(IRValue::imm(static_cast<int>(elem_regs.size())));
 	for (int reg : elem_regs) {
 		instr.operands.push_back(IRValue::reg(reg));
 	}
@@ -2242,7 +1867,6 @@ int CodeGenerator::gen_array_literal(const ArrayLiteralExpr* expr, FunctionConte
 	func.ir.instructions.push_back(instr);
 	set_register_type(func, result_reg, Variant::ARRAY);
 
-	// Free element registers
 	for (int reg : elem_regs) {
 		free_register(func, reg);
 	}
@@ -2253,8 +1877,6 @@ int CodeGenerator::gen_array_literal(const ArrayLiteralExpr* expr, FunctionConte
 int CodeGenerator::gen_dictionary_literal(const DictionaryLiteralExpr* expr, FunctionContext& func) {
 	std::vector<int> key_regs;
 	std::vector<int> value_regs;
-
-	// Generate code for each key-value pair
 	for (const auto& [key, value] : expr->elements) {
 		int key_reg = gen_expr(key.get(), func);
 		int value_reg = gen_expr(value.get(), func);
@@ -2264,13 +1886,9 @@ int CodeGenerator::gen_dictionary_literal(const DictionaryLiteralExpr* expr, Fun
 
 	int result_reg = alloc_register(func);
 
-	// Create MAKE_DICTIONARY instruction
-	// Format: MAKE_DICTIONARY result_reg, pair_count, key1_reg, val1_reg, key2_reg, val2_reg, ...
 	IRInstruction instr(IROpcode::MAKE_DICTIONARY);
 	instr.operands.push_back(IRValue::reg(result_reg));
-	instr.operands.push_back(IRValue::imm(static_cast<int>(key_regs.size()))); // pair count
-
-	// Interleave keys and values: key1, val1, key2, val2, ...
+	instr.operands.push_back(IRValue::imm(static_cast<int>(key_regs.size())));
 	for (size_t i = 0; i < key_regs.size(); i++) {
 		instr.operands.push_back(IRValue::reg(key_regs[i]));
 		instr.operands.push_back(IRValue::reg(value_regs[i]));
@@ -2279,7 +1897,6 @@ int CodeGenerator::gen_dictionary_literal(const DictionaryLiteralExpr* expr, Fun
 	func.ir.instructions.push_back(instr);
 	set_register_type(func, result_reg, Variant::DICTIONARY);
 
-	// Free key and value registers
 	for (int reg : key_regs) {
 		free_register(func, reg);
 	}
@@ -2289,13 +1906,6 @@ int CodeGenerator::gen_dictionary_literal(const DictionaryLiteralExpr* expr, Fun
 
 	return result_reg;
 }
-
-// -= Structs =-
-//
-// Nothing about a struct survives into the IR: an instance is a Dictionary, a
-// field read is Dictionary.get(), a field write is Dictionary.set(). What the
-// declaration buys is the set of keys, which is what lets a misspelled field
-// be a compile error instead of a silently added key.
 
 const StructDecl* CodeGenerator::find_struct(const std::string& name) const {
 	auto it = m_structs.find(name);
@@ -2318,8 +1928,6 @@ void CodeGenerator::set_register_struct(FunctionContext& func, int reg, const St
 		return;
 	}
 	func.register_structs[reg] = decl;
-	// An instance is a Dictionary and nothing else, so the two facts are set
-	// together and cannot disagree.
 	set_register_type(func, reg, Variant::DICTIONARY);
 }
 
@@ -2331,7 +1939,6 @@ const StructDecl* CodeGenerator::get_register_struct(const FunctionContext& func
 FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const {
 	FunctionSignature sig;
 	sig.name = decl.name;
-	// Editor metadata, never reaches the IR: only the source carries it.
 	sig.line = decl.line;
 	sig.description = decl.doc_comment;
 	sig.return_type = find_struct(decl.return_type) != nullptr
@@ -2341,8 +1948,6 @@ FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const
 	for (const Parameter& param : decl.parameters) {
 		FunctionParameter out;
 		out.name = param.name;
-		// A struct parameter is a Dictionary with a known key set, and a
-		// Dictionary is what the host would pass for one.
 		out.type = find_struct(param.type_hint) != nullptr
 			? int32_t(Variant::DICTIONARY)
 			: int32_t(type_hint_from_string(param.type_hint));
@@ -2367,9 +1972,6 @@ FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const
 		sig.parameters.push_back(std::move(out));
 	}
 
-	// The parser rejects a required parameter after an optional one, so the
-	// required ones are a prefix -- except where a default that did not fold
-	// made one required again, which the scan from the end handles.
 	sig.required_arguments = sig.parameters.size();
 	while (sig.required_arguments > 0 && sig.parameters[sig.required_arguments - 1].optional()) {
 		sig.required_arguments--;
@@ -2475,8 +2077,7 @@ int CodeGenerator::gen_default_value(const std::string& type_hint, FunctionConte
 			break;
 	}
 
-	// The types built from components: a zeroed one is the same instruction the
-	// constructor written out by hand would produce.
+	// Component-based types: zero-constructed.
 	static const struct { const char* name; int components; bool integer; } zero_constructors[] = {
 		{ "Vector2", 2, false }, { "Vector2i", 2, true },
 		{ "Vector3", 3, false }, { "Vector3i", 3, true },
@@ -2511,14 +2112,12 @@ int CodeGenerator::gen_default_value(const std::string& type_hint, FunctionConte
 		return result_reg;
 	}
 
-	// Color, Array, Dictionary and the packed arrays each have a zero-argument
-	// form already.
+	// Zero-argument constructors: Color, Array, Dictionary, packed arrays.
 	if (is_inline_primitive_constructor(type_hint)) {
 		return gen_inline_constructor(type_hint, {}, func, nullptr);
 	}
 
-	// Everything else (Object, Callable, Transform3D, a class name) has no
-	// default the guest can construct.
+	// No guest-constructible default.
 	return -1;
 }
 
@@ -2536,8 +2135,7 @@ int CodeGenerator::gen_field_default(const StructDecl& decl, const StructField& 
 		return reg;
 	}
 
-	// A field declared as another struct defaults to an instance of it, the way
-	// a field declared as an Array defaults to an empty Array.
+	// Nested struct: default to a fresh instance.
 	if (const StructDecl* nested = find_struct(field.type_hint)) {
 		for (const StructDecl* active : m_struct_default_stack) {
 			if (active != nested) {
@@ -2559,8 +2157,7 @@ int CodeGenerator::gen_field_default(const StructDecl& decl, const StructField& 
 		return reg;
 	}
 
-	// No declared type, or one with no constructible default: NIL, which is
-	// what `var x` alone means in GDScript.
+	// No constructible default; NIL.
 	reg = alloc_register(func);
 	func.ir.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(reg), IRValue::imm(0));
 	return reg;
@@ -2569,8 +2166,7 @@ int CodeGenerator::gen_field_default(const StructDecl& decl, const StructField& 
 int CodeGenerator::gen_struct_construct(const StructDecl& decl, const std::vector<ExprPtr>& arguments,
 	const NamedArguments& names, FunctionContext& func, const Expr* site)
 {
-	// Which field each argument supplies, resolved before anything is
-	// evaluated, so that a bad call site is reported rather than half-lowered.
+	// Resolve field indices before evaluation; report bad call sites before lowering.
 	std::vector<int> field_of_argument(arguments.size(), -1);
 	std::vector<bool> field_supplied(decl.fields.size(), false);
 
@@ -2600,8 +2196,7 @@ int CodeGenerator::gen_struct_construct(const StructDecl& decl, const std::vecto
 		field_of_argument[i] = field_index;
 	}
 
-	// The call site's expressions run in the order they were written, which is
-	// not the order the fields are declared in once names are involved.
+	// Evaluate in call-site order; named args may differ from field order.
 	std::vector<int> value_regs(decl.fields.size(), -1);
 	for (size_t i = 0; i < arguments.size(); i++) {
 		const StructField& field = decl.fields[field_of_argument[i]];
@@ -2615,9 +2210,7 @@ int CodeGenerator::gen_struct_construct(const StructDecl& decl, const std::vecto
 		value_regs[field_of_argument[i]] = reg;
 	}
 
-	// Everything the call site left out comes from the declaration. The struct
-	// stays on the stack for as long as its defaults are being built, so a
-	// struct that holds itself is reported instead of recursing forever.
+	// Unsupplied fields get declaration defaults; m_struct_default_stack guards recursion.
 	m_struct_default_stack.push_back(&decl);
 	for (size_t i = 0; i < decl.fields.size(); i++) {
 		if (value_regs[i] < 0) {
@@ -2663,8 +2256,6 @@ int CodeGenerator::alloc_register(FunctionContext& func) {
 }
 
 void CodeGenerator::free_register(FunctionContext& func, int reg) {
-	// In a more sophisticated version, would track free registers
-	// For now, registers are never reused within a function
 	(void) func;
 	(void) reg;
 }
@@ -2674,7 +2265,6 @@ std::string CodeGenerator::make_label(const std::string& prefix) {
 }
 
 int CodeGenerator::add_string_constant(const std::string& str) {
-	// Check if string already exists
 	for (size_t i = 0; i < m_string_constants.size(); i++) {
 		if (m_string_constants[i] == str) {
 			return static_cast<int>(i);
@@ -2688,7 +2278,7 @@ int CodeGenerator::add_string_constant(const std::string& str) {
 void CodeGenerator::push_scope(FunctionContext& func) {
 	Scope new_scope;
 	if (func.scopes.empty()) {
-		new_scope.parent_scope_idx = SIZE_MAX; // Root scope
+		new_scope.parent_scope_idx = SIZE_MAX;
 	} else {
 		new_scope.parent_scope_idx = func.scopes.size() - 1;
 	}
@@ -2703,14 +2293,13 @@ void CodeGenerator::pop_scope(FunctionContext& func) {
 }
 
 CodeGenerator::Variable* CodeGenerator::find_variable(FunctionContext& func, const std::string& name) {
-	// Search from innermost to outermost scope
 	for (int i = static_cast<int>(func.scopes.size()) - 1; i >= 0; i--) {
 		auto it = func.scopes[i].variables.find(name);
 		if (it != func.scopes[i].variables.end()) {
 			return &it->second;
 		}
 	}
-	return nullptr; // Not found
+	return nullptr;
 }
 
 void CodeGenerator::declare_variable(FunctionContext& func, const std::string& name, int register_num, bool is_const,
@@ -2720,7 +2309,6 @@ void CodeGenerator::declare_variable(FunctionContext& func, const std::string& n
 		throw CompilerException(ErrorType::CODEGEN_ERROR, "Cannot declare variable: no scope active");
 	}
 
-	// Check if variable already exists in current scope (shadowing is allowed, but redeclaration in same scope is not)
 	auto& current_scope = func.scopes.back();
 	if (current_scope.variables.find(name) != current_scope.variables.end()) {
 		error_at("Variable '" + name + "' is already declared in this scope", site);
@@ -2729,7 +2317,6 @@ void CodeGenerator::declare_variable(FunctionContext& func, const std::string& n
 	current_scope.variables[name] = {name, register_num, IRInstruction::TypeHint_NONE, is_const};
 }
 
-// Type tracking helpers
 void CodeGenerator::set_register_type(FunctionContext& func, int reg, IRInstruction::TypeHint type) {
 	func.register_types[reg] = type;
 }
@@ -2765,8 +2352,6 @@ int CodeGenerator::gen_global_function(const CallExpr* expr, std::vector<int>& a
 			"is_global_function() accepts '" + expr->function_name + "' but there is no table entry for it");
 	}
 
-	// The arity comes from the table, so the message names the function rather
-	// than failing later as a missing operand.
 	const size_t given = arg_regs.size();
 	if (given < info->min_args || given > info->max_args) {
 		std::string expected;
@@ -2783,9 +2368,6 @@ int CodeGenerator::gen_global_function(const CallExpr* expr, std::vector<int>& a
 	}
 
 	if (info->kind == GlobalKind::PRINT) {
-		// print(...) -> ECALL_PRINT. The host takes one contiguous array of
-		// Variants, so the count travels with the instruction and the backend
-		// does the gathering.
 		int result_reg = alloc_register(func);
 
 		IRInstruction instr(IROpcode::PRINT);
@@ -2796,22 +2378,17 @@ int CodeGenerator::gen_global_function(const CallExpr* expr, std::vector<int>& a
 		}
 		func.ir.instructions.push_back(instr);
 
-		// GDScript's print() evaluates to null.
 		set_register_type(func, result_reg, Variant::NIL);
 		return result_reg;
 	}
 
-	// min() and max() take any number of arguments; every other global takes a
-	// fixed number. Fold the tail into a chain of two-argument calls, so that
-	// the backend only ever sees two.
+	// min/max variadic: fold to chain of two-argument calls.
 	if ((info->fn == GlobalFn::MIN || info->fn == GlobalFn::MAX) && given > 2) {
 		int accumulated = arg_regs[0];
 		for (size_t i = 1; i < arg_regs.size(); i++) {
 			const std::vector<int> pair { accumulated, arg_regs[i] };
 			const int folded = gen_global_call(*info, pair, func, expr);
 			if (i > 1) {
-				// The register holding the running result of the previous pair
-				// is dead now. The arguments themselves belong to the caller.
 				free_register(func, accumulated);
 			}
 			accumulated = folded;
@@ -2827,11 +2404,7 @@ int CodeGenerator::gen_global_call(const GlobalFunction& info, const std::vector
 {
 	(void)site;
 
-	// A NUMERIC global follows its arguments: abs(2) is the integer 2 and
-	// abs(2.0) is the float 2.0. When every argument is a known integer the
-	// integer form is chosen here; when any is a known float, the float form;
-	// and when the types are not known the backend decides at run time, which
-	// is what leaving the dispatcher in the instruction means.
+	// NUMERIC: resolved to int or float form by operand types; unresolved stays runtime.
 	const GlobalFunction* chosen = &info;
 	if (info.kind == GlobalKind::NUMERIC) {
 		bool all_integer = true;
@@ -2851,11 +2424,7 @@ int CodeGenerator::gen_global_call(const GlobalFunction& info, const std::vector
 		}
 	}
 
-	// int(), float() and bool() convert whatever the Variant holds, which for a
-	// String is Godot's own parse and not something the guest can do. When the
-	// argument is already known to be a number or a bool the conversion is a
-	// load, and the inline form performs it; otherwise the call stays a CAST
-	// and the host performs it.
+	// CAST: inline when operand is a known numeric/bool, host otherwise (String parse).
 	if (info.kind == GlobalKind::CAST) {
 		const IRInstruction::TypeHint hint = arg_regs.empty()
 			? IRInstruction::TypeHint_NONE
@@ -2863,11 +2432,7 @@ int CodeGenerator::gen_global_call(const GlobalFunction& info, const std::vector
 		chosen = &global_function(resolve_cast_form(info, hint));
 	}
 
-	// The form works in integers or in doubles, and the backend can skip the
-	// run-time type test on an argument that already is one. Where the
-	// conversion is the one GDScript performs implicitly -- an integer where a
-	// float is wanted -- it happens here, as a CONVERT the optimizer can fold,
-	// rather than as a type test in the emitted code.
+	// Implicit INT->FLOAT widening emitted as CONVERT here, foldable by optimizer.
 	std::vector<int> call_args = arg_regs;
 	std::vector<int> converted;
 	IRInstruction::TypeHint wanted = IRInstruction::TypeHint_NONE;
@@ -2882,8 +2447,6 @@ int CodeGenerator::gen_global_call(const GlobalFunction& info, const std::vector
 			break;
 		case GlobalKind::PRINT:
 		case GlobalKind::NUMERIC:
-		// A CAST is handed the Variant as it is: knowing its type is what would
-		// have made it something other than a CAST.
 		case GlobalKind::CAST:
 		case GlobalKind::HOST:
 			break;
@@ -2923,9 +2486,6 @@ int CodeGenerator::gen_global_call(const GlobalFunction& info, const std::vector
 		instr.operands.push_back(IRValue::reg(arg_reg));
 	}
 
-	// The result type doubles as what the backend emits: a resolved NUMERIC
-	// entry has a concrete result, and an unresolved one does not, which is how
-	// the backend knows it has to test the argument types itself.
 	IRInstruction::TypeHint result_type = IRInstruction::TypeHint_NONE;
 	switch (chosen->result) {
 		case GlobalResult::NIL: result_type = Variant::NIL; break;
@@ -2966,13 +2526,9 @@ bool CodeGenerator::is_inline_member_access(IRInstruction::TypeHint type, const 
 
 		case Variant::RECT2:
 		case Variant::RECT2I:
-			// Rect2 has position and size, which are Vector2/Vector2i
-			// For now, don't optimize these - they're more complex
 			return false;
 
 		case Variant::PLANE:
-			// Plane has normal (Vector3) and d (float)
-			// For now, don't optimize these
 			return false;
 
 		default:
@@ -3030,11 +2586,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 		instr.operands.push_back(IRValue::reg(arg_regs[3])); // w
 		result_type = Variant::VECTOR4I;
 	} else if (name == "Color") {
-		// Color() with 0 args: white (1, 1, 1, 1)
-		// Color(r, g, b) with 3 args: default alpha to 1.0
-		// Color(r, g, b, a) with 4 args: full specification
 		if (arg_regs.size() == 0) {
-			// Color() - white with alpha 1.0
 			int r_reg = alloc_register(func);
 			int g_reg = alloc_register(func);
 			int b_reg = alloc_register(func);
@@ -3053,7 +2605,6 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 			instr.operands.push_back(IRValue::reg(a_reg));
 			result_type = Variant::COLOR;
 		} else if (arg_regs.size() == 3) {
-			// Color(r, g, b) - default alpha to 1.0
 			int a_reg = alloc_register(func);
 			func.ir.instructions.emplace_back(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(a_reg), IRValue::fimm(1.0));
 
@@ -3077,11 +2628,9 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 				std::to_string(arg_regs.size()), site);
 		}
 	} else if (name == "Array") {
-		// Array() - empty array or with initial elements
-		// For now, only support empty Array()
 		instr = IRInstruction(IROpcode::MAKE_ARRAY);
 		instr.operands.push_back(IRValue::reg(result_reg));
-		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size())));
 		for (int arg_reg : arg_regs) {
 			instr.operands.push_back(IRValue::reg(arg_reg));
 		}
@@ -3089,7 +2638,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 	} else if (name == "PackedByteArray") {
 		instr = IRInstruction(IROpcode::MAKE_PACKED_BYTE_ARRAY);
 		instr.operands.push_back(IRValue::reg(result_reg));
-		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size())));
 		for (int arg_reg : arg_regs) {
 			instr.operands.push_back(IRValue::reg(arg_reg));
 		}
@@ -3097,7 +2646,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 	} else if (name == "PackedInt32Array") {
 		instr = IRInstruction(IROpcode::MAKE_PACKED_INT32_ARRAY);
 		instr.operands.push_back(IRValue::reg(result_reg));
-		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size())));
 		for (int arg_reg : arg_regs) {
 			instr.operands.push_back(IRValue::reg(arg_reg));
 		}
@@ -3105,7 +2654,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 	} else if (name == "PackedInt64Array") {
 		instr = IRInstruction(IROpcode::MAKE_PACKED_INT64_ARRAY);
 		instr.operands.push_back(IRValue::reg(result_reg));
-		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size())));
 		for (int arg_reg : arg_regs) {
 			instr.operands.push_back(IRValue::reg(arg_reg));
 		}
@@ -3113,7 +2662,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 	} else if (name == "PackedFloat32Array") {
 		instr = IRInstruction(IROpcode::MAKE_PACKED_FLOAT32_ARRAY);
 		instr.operands.push_back(IRValue::reg(result_reg));
-		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size())));
 		for (int arg_reg : arg_regs) {
 			instr.operands.push_back(IRValue::reg(arg_reg));
 		}
@@ -3121,7 +2670,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 	} else if (name == "PackedFloat64Array") {
 		instr = IRInstruction(IROpcode::MAKE_PACKED_FLOAT64_ARRAY);
 		instr.operands.push_back(IRValue::reg(result_reg));
-		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size())));
 		for (int arg_reg : arg_regs) {
 			instr.operands.push_back(IRValue::reg(arg_reg));
 		}
@@ -3129,7 +2678,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 	} else if (name == "PackedStringArray") {
 		instr = IRInstruction(IROpcode::MAKE_PACKED_STRING_ARRAY);
 		instr.operands.push_back(IRValue::reg(result_reg));
-		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size())));
 		for (int arg_reg : arg_regs) {
 			instr.operands.push_back(IRValue::reg(arg_reg));
 		}
@@ -3137,7 +2686,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 	} else if (name == "PackedVector2Array") {
 		instr = IRInstruction(IROpcode::MAKE_PACKED_VECTOR2_ARRAY);
 		instr.operands.push_back(IRValue::reg(result_reg));
-		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size())));
 		for (int arg_reg : arg_regs) {
 			instr.operands.push_back(IRValue::reg(arg_reg));
 		}
@@ -3145,7 +2694,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 	} else if (name == "PackedVector3Array") {
 		instr = IRInstruction(IROpcode::MAKE_PACKED_VECTOR3_ARRAY);
 		instr.operands.push_back(IRValue::reg(result_reg));
-		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size())));
 		for (int arg_reg : arg_regs) {
 			instr.operands.push_back(IRValue::reg(arg_reg));
 		}
@@ -3153,7 +2702,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 	} else if (name == "PackedColorArray") {
 		instr = IRInstruction(IROpcode::MAKE_PACKED_COLOR_ARRAY);
 		instr.operands.push_back(IRValue::reg(result_reg));
-		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size())));
 		for (int arg_reg : arg_regs) {
 			instr.operands.push_back(IRValue::reg(arg_reg));
 		}
@@ -3161,18 +2710,16 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 	} else if (name == "PackedVector4Array") {
 		instr = IRInstruction(IROpcode::MAKE_PACKED_VECTOR4_ARRAY);
 		instr.operands.push_back(IRValue::reg(result_reg));
-		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size()))); // element count
+		instr.operands.push_back(IRValue::imm(static_cast<int>(arg_regs.size())));
 		for (int arg_reg : arg_regs) {
 			instr.operands.push_back(IRValue::reg(arg_reg));
 		}
 		result_type = Variant::PACKED_VECTOR4_ARRAY;
 	} else if (name == "Dictionary") {
-		// Dictionary() - empty dictionary
 		instr = IRInstruction(IROpcode::MAKE_DICTIONARY);
 		instr.operands.push_back(IRValue::reg(result_reg));
 		result_type = Variant::DICTIONARY;
 	} else {
-		// Fallback to regular CALL for unsupported constructors or wrong arg counts
 		instr.operands.push_back(IRValue::str(name));
 		instr.operands.push_back(IRValue::reg(result_reg));
 		instr.operands.push_back(IRValue::imm(arg_regs.size()));
@@ -3181,7 +2728,6 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 		}
 	}
 
-	// Set the instruction's type hint
 	if (result_type != IRInstruction::TypeHint_NONE) {
 		instr.type_hint = result_type;
 		set_register_type(func, result_reg, result_type);
@@ -3203,7 +2749,6 @@ int CodeGenerator::gen_inline_member_get(int obj_reg, IRInstruction::TypeHint ob
 
 	func.ir.instructions.push_back(instr);
 
-	// Result is always a float or int Variant
 	bool is_int_vector = (obj_type == Variant::VECTOR2I ||
 	                      obj_type == Variant::VECTOR3I ||
 	                      obj_type == Variant::VECTOR4I);
@@ -3214,7 +2759,6 @@ int CodeGenerator::gen_inline_member_get(int obj_reg, IRInstruction::TypeHint ob
 }
 
 std::unordered_set<std::string> CodeGenerator::get_global_classes() {
-	// Common Godot global classes
 	return {
 		"AudioServer",
 		"CameraServer",
@@ -3268,15 +2812,10 @@ int CodeGenerator::coerce_to_declared_type(int reg, IRInstruction::TypeHint decl
 	}
 	const IRInstruction::TypeHint actual = get_register_type(func, reg);
 	if (actual == IRInstruction::TypeHint_NONE || actual == declared) {
-		// Either already the right type, or not known until run time - in which
-		// case the host checks it on assignment.
 		return reg;
 	}
 
-	// The widening conversions: INT -> FLOAT, and BOOL -> INT/FLOAT, which is
-	// what `func f() -> int: return a < b` needs. Without them the register holds
-	// one type while the compiler assumes another, and the backend reads the
-	// payload as the assumed type: a BOOL payload is one byte, an INT eight.
+	// INT->FLOAT, BOOL->INT/FLOAT: payload size mismatch without explicit convert.
 	const bool widening = (declared == Variant::FLOAT && actual == Variant::INT) ||
 		(actual == Variant::BOOL && (declared == Variant::INT || declared == Variant::FLOAT));
 	if (widening) {
@@ -3290,8 +2829,6 @@ int CodeGenerator::coerce_to_declared_type(int reg, IRInstruction::TypeHint decl
 		return converted;
 	}
 
-	// Narrowing float to int, or any other mismatch between two types that are
-	// both known, is an error in GDScript rather than a silent reinterpretation.
 	error_at("Cannot assign a value of type " + std::string(variant_type_name(actual)) +
 		" to " + what + " of type " + std::string(variant_type_name(declared)), line, column);
 }
@@ -3302,8 +2839,7 @@ void CodeGenerator::coerce_folded_initializer(IRGlobalVar& global, int line, int
 		return;
 	}
 
-	// `var f: float = 0` declares a float, so the constant is folded to 0.0
-	// rather than stored as the integer 0 under a FLOAT label.
+	// `var f: float = 0` folds INT to FLOAT.
 	if (global.type_hint == Variant::FLOAT && global.init_type == IRGlobalVar::InitType::INT) {
 		global.init_type = IRGlobalVar::InitType::FLOAT;
 		global.init_value = static_cast<double>(std::get<int64_t>(global.init_value));
@@ -3326,7 +2862,6 @@ void CodeGenerator::apply_default_initializer(IRGlobalVar& global, FunctionConte
 {
 	global.value_type = global.type_hint;
 	if (global.type_hint == IRInstruction::TypeHint_NONE) {
-		// No type hint and no initializer is rejected before this point.
 		return;
 	}
 
@@ -3357,14 +2892,13 @@ void CodeGenerator::apply_default_initializer(IRGlobalVar& global, FunctionConte
 			break;
 	}
 
-	// Packed arrays have a construction opcode but no compile-time
-	// representation, so an empty one is built by the init function.
+	// Packed arrays: no compile-time representation, built by init function.
 	const IROpcode make_op = packed_array_opcode(global.type_hint);
 	if (make_op != IROpcode::LABEL) {
 		int reg = alloc_register(init_func);
 		IRInstruction make(make_op);
 		make.operands.push_back(IRValue::reg(reg));
-		make.operands.push_back(IRValue::imm(0)); // no elements
+		make.operands.push_back(IRValue::imm(0));
 		make.type_hint = global.type_hint;
 		init_func.ir.instructions.push_back(make);
 		init_func.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
@@ -3375,8 +2909,7 @@ void CodeGenerator::apply_default_initializer(IRGlobalVar& global, FunctionConte
 		return;
 	}
 
-	// Everything else (Object, Callable, Transform3D, ...) has no default the
-	// guest can construct, so it stays NIL until it is assigned.
+	// Object, Callable, Transform3D, etc.: no guest-constructible default; stays NIL.
 }
 
 IROpcode CodeGenerator::packed_array_opcode(IRInstruction::TypeHint type) {
@@ -3425,9 +2958,7 @@ bool CodeGenerator::fold_global_initializer(const Expr* expr, IRGlobalVar& out) 
 		return false;
 	}
 
-	// Unary operators over a constant. '-5' parses as a unary minus applied to a
-	// literal, not as a negative literal, so without this a negated constant is
-	// not a constant.
+	// '-5' parses as NEG(5); fold here so it remains a constant.
 	if (auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
 		IRGlobalVar inner;
 		if (!fold_global_initializer(unary->operand.get(), inner)) {
@@ -3436,8 +2967,7 @@ bool CodeGenerator::fold_global_initializer(const Expr* expr, IRGlobalVar& out) 
 		switch (unary->op) {
 			case UnaryExpr::Op::NEG:
 				if (inner.init_type == InitType::INT) {
-					// Negating INT64_MIN overflows a signed negate, so it is done
-					// in unsigned arithmetic and reinterpreted.
+					// Unsigned: signed negate of INT64_MIN overflows.
 					const uint64_t value = static_cast<uint64_t>(std::get<int64_t>(inner.init_value));
 					out.init_type = InitType::INT;
 					out.init_value = static_cast<int64_t>(0u - value);
@@ -3470,7 +3000,7 @@ bool CodeGenerator::fold_global_initializer(const Expr* expr, IRGlobalVar& out) 
 		return false;
 	}
 
-	// A reference to a global const that already folded to a constant.
+	// Folded global const.
 	if (auto* var = dynamic_cast<const VariableExpr*>(expr)) {
 		auto it = m_global_const_values.find(var->name);
 		if (it == m_global_const_values.end()) {
@@ -3481,8 +3011,7 @@ bool CodeGenerator::fold_global_initializer(const Expr* expr, IRGlobalVar& out) 
 		return true;
 	}
 
-	// Empty containers need no elements, so they are written directly by the
-	// backend rather than through the init function.
+	// Empty containers fold to InitType; backend writes directly.
 	if (auto* array_lit = dynamic_cast<const ArrayLiteralExpr*>(expr)) {
 		if (array_lit->elements.empty()) {
 			out.init_type = InitType::EMPTY_ARRAY;
@@ -3503,10 +3032,7 @@ bool CodeGenerator::fold_global_initializer(const Expr* expr, IRGlobalVar& out) 
 
 IRInstruction::TypeHint CodeGenerator::fused_compare_type(IRInstruction::TypeHint left,
                                                           IRInstruction::TypeHint right) {
-	// A comparison's type hint describes its operands, and selects the backend's
-	// register compare over a host call. Only safe when both sides are the same
-	// known type: that is the only case where the native compare and
-	// Variant::evaluate() agree.
+	// Native compare only when both operands share a known type.
 	if (left == IRInstruction::TypeHint_NONE || left != right) {
 		return IRInstruction::TypeHint_NONE;
 	}
@@ -3517,17 +3043,13 @@ IRInstruction::TypeHint CodeGenerator::fused_compare_type(IRInstruction::TypeHin
 }
 
 int CodeGenerator::gen_const_global_value(const std::string& name, FunctionContext& func) {
-	// The caller resolves locals and parameters first, so the name is the global.
 	auto it = m_global_const_values.find(name);
 	if (it == m_global_const_values.end()) {
 		return -1;
 	}
 	const IRGlobalVar& global = it->second;
 
-	// A container const is a handle: every read must yield the same container, so
-	// `const TABLE = []; TABLE.append(1)` appends to the one array. Materialising
-	// a fresh one per read is a different program, so containers stay on
-	// LOAD_GLOBAL.
+	// Container consts are shared handles; stays on LOAD_GLOBAL.
 	using InitType = IRGlobalVar::InitType;
 	switch (global.init_type) {
 		case InitType::INT: {
@@ -3577,7 +3099,7 @@ int CodeGenerator::gen_const_global_value(const std::string& name, FunctionConte
 }
 
 IRInstruction::TypeHint CodeGenerator::derive_global_value_type(const IRGlobalVar& global) {
-	// An explicit type hint always wins: it is what the declaration promised.
+	// Explicit type hint wins.
 	if (global.type_hint != IRInstruction::TypeHint_NONE) {
 		return global.type_hint;
 	}
@@ -3591,9 +3113,7 @@ IRInstruction::TypeHint CodeGenerator::derive_global_value_type(const IRGlobalVa
 		case IRGlobalVar::InitType::NULL_VAL:
 		case IRGlobalVar::InitType::NONE:
 		case IRGlobalVar::InitType::RUNTIME:
-			// RUNTIME globals carry the type of the value the init function
-			// produced, which the caller fills in; an untyped one is just a
-			// Variant of any type.
+			// RUNTIME: caller fills type; untyped stays any-Variant.
 			return IRInstruction::TypeHint_NONE;
 	}
 	return IRInstruction::TypeHint_NONE;
@@ -3608,27 +3128,17 @@ bool CodeGenerator::is_global_const(const std::string& name) const {
 }
 
 int CodeGenerator::gen_global_class_get(const std::string& class_name, FunctionContext& func) {
-	// Generate a CALL_SYSCALL instruction to get the global class object
-	// ECALL_GET_OBJ (504) takes: a0 = result pointer, a1 = class name pointer, a2 = class name length
-	// Returns: a0 contains the object data
-
 	int result_reg = alloc_register(func);
-
-	// Add the class name as a string constant
 	int str_idx = add_string_constant(class_name);
 
-	// Generate CALL_SYSCALL instruction
-	// Format: CALL_SYSCALL result_reg, syscall_number, string_index, string_length
 	IRInstruction instr(IROpcode::CALL_SYSCALL);
-	instr.operands.push_back(IRValue::reg(result_reg));              // result register
+	instr.operands.push_back(IRValue::reg(result_reg));
 	instr.operands.push_back(IRValue::imm(ECALL_GET_OBJ));
-	instr.operands.push_back(IRValue::imm(str_idx));                 // string constant index
-	instr.operands.push_back(IRValue::imm(static_cast<int64_t>(class_name.length()))); // string length
+	instr.operands.push_back(IRValue::imm(str_idx));
+	instr.operands.push_back(IRValue::imm(static_cast<int64_t>(class_name.length())));
 
 	func.ir.instructions.push_back(instr);
-
-	// The result is an OBJECT Variant
-	set_register_type(func, result_reg, IRInstruction::TypeHint_NONE); // Objects don't have a specific primitive type
+	set_register_type(func, result_reg, IRInstruction::TypeHint_NONE);
 
 	return result_reg;
 }

@@ -1,61 +1,29 @@
 #pragma once
-// -= GDScript's global functions, in one table =-
+// @GlobalScope functions (print, abs, sin, clamp, str, ...) in one table.
 //
-// `print`, `abs`, `sin`, `clamp`, `str` and the rest are not methods on the
-// owner node: a call to one cannot be lowered to `self.print(...)`, because the
-// Node has no such method and Godot drops the call without a word. They are
-// @GlobalScope functions, and the compiler has to know each one.
+// Each row declares name, arity, result type and lowering kind:
+//   PRINT       ECALL_PRINT, side-effecting
+//   INT_OP      inline 64-bit integer arithmetic
+//   FLOAT_OP    inline double arithmetic (single IEEE-754 primitives only)
+//   SYSCALL     ECALL_UTILITY with doubles in fa0-fa4, result in fa0
+//   SYSCALL_INT ECALL_UTILITY with int64s in a1-a3, result in a0
+//   NUMERIC     int_form or float_form chosen at run time by argument type
+//   CAST        inline when argument is numeric/bool, host otherwise
+//   HOST        needs host Variant API (str, len, String)
 //
-// Before this table there was one: `is_global_function()` returned true for
-// "print" and `gen_global_function()` had an `if` for it. Every function added
-// that way costs an entry in two places that must agree, a hand-written arity
-// check, a hand-written result type, and a new opcode. So instead every global
-// is one row here, saying what it is called, how many arguments it takes, what
-// it returns, and which of a handful of lowerings performs it:
+// All except PRINT lower to a single IR opcode: GLOBAL_CALL with GlobalFn.
+// Adding a function: one row here, one case in globals.cpp's evaluator,
+// and for SYSCALL one case in the host's api_utility().
 //
-//   PRINT       ECALL_PRINT, one of the two globals with a side effect
-//   INT_OP      integer arithmetic, emitted inline
-//   FLOAT_OP    double arithmetic, emitted inline
-//   SYSCALL     double arithmetic performed by the host (ECALL_UTILITY)
-//   SYSCALL_INT the same call with 64-bit integers in a1-a3 and the answer in
-//               a0, for the ops whose arguments are integers and must stay
-//               exact -- randi_range()'s bounds do not survive a double
-//   NUMERIC     int_form when every argument is an integer at run time,
-//               float_form otherwise -- GDScript's `abs(2)` is 2 and `abs(2.0)`
-//               is 2.0, and the two are different Variants
-//   CAST        int(), float() and bool(): inline when the argument is already
-//               a number or a bool, and the host's conversion otherwise,
-//               because int("42") is 42 and only Godot knows that
-//   HOST        needs the host's Variant API: str(), len() and String()
+// Only sandbox-safe functions: no scene tree, resources, or engine state.
+// randomize()/seed() excluded — they mutate the project's shared RNG.
 //
-// Everything except print lowers to a single opcode, GLOBAL_CALL, carrying the
-// GlobalFn as an immediate. Adding a function is a row here, a case in
-// globals.cpp's evaluator, and -- for a SYSCALL -- a case in the host's
-// api_utility(). It is never a new opcode.
+// Random draws are impure (DCE must not delete them) and refused by the
+// IR interpreter — both the differential and optimizer-invariance tests
+// require deterministic answers.
 //
-// -= What is in here and what is not =-
-//
-// Only functions that are safe to call and need no scrutiny: arithmetic on
-// numbers, the Variant queries str() and len(), the type constructors, and the
-// random draws. Nothing that reaches the scene tree, loads a resource, or
-// writes engine state -- a guest that can call it should not be able to reach
-// past the sandbox with it. That rules out randomize() and seed() as much as
-// it rules out load(): they set the seed of the generator the rest of the
-// project draws from, which is the host's state and not the guest's.
-//
-// The random draws are the one family whose result depends on host state, and
-// so the one family that the differential test and the optimizer-invariance
-// test cannot check: both rely on a program meaning one answer. They are
-// marked impure instead, which is what keeps a pass from deleting a call
-// nobody reads the result of, and the IR interpreter refuses to evaluate one
-// rather than inventing a number that the machine would not have produced.
-//
-// -= Where the compiler differs from Godot =-
-//
-// Godot's abs(), floor(), min() and friends also accept vectors, and raise a
-// call error on a Variant they do not accept. Here a non-numeric argument
-// converts the way Variant::operator double() would (a bool by its value, and
-// anything else as zero) instead of raising. Vectors are not supported.
+// Non-numeric arguments convert via Variant::operator double() (bool by
+// value, everything else as zero) rather than raising. Vectors unsupported.
 #include "variant_types.h"
 #include <cstddef>
 #include <cstdint>
@@ -63,23 +31,14 @@
 
 namespace gdscript {
 
-// -= ECALL_UTILITY, mirrored from src/syscalls.h =-
-//
-// The host performs a SYSCALL global through ECALL_UTILITY (500 + 49) with the
-// op below in a0. Floating-point arguments arrive in fa0-fa4 and the result
-// leaves in fa0; STR and LEN instead take a1 = result Variant, a2 = argument
-// array, a3 = argument count.
-//
-// These numbers are part of the guest ABI: an existing number may never change
-// its meaning, so a new op goes on the end. The compiler cannot include
-// src/syscalls.h -- it is also built standalone, and cross-compiled to run
-// inside the sandbox -- so the values are repeated here, the way the syscall
-// numbers already are elsewhere in the backend.
+// ECALL_UTILITY op numbers, mirrored from src/syscalls.h.
+// ABI-stable: existing values never change; new ops append.
+// Duplicated because this file also compiles standalone inside the sandbox.
 enum UtilityOp : int16_t {
 	UTILITY_STR = 0,
 	UTILITY_LEN = 1,
 
-	// Unary: fa0
+	// Unary (fa0)
 	UTILITY_FLOOR = 2,
 	UTILITY_CEIL = 3,
 	UTILITY_ROUND = 4,
@@ -107,7 +66,7 @@ enum UtilityOp : int16_t {
 	UTILITY_IS_FINITE = 26,
 	UTILITY_IS_ZERO_APPROX = 27,
 
-	// Binary: fa0, fa1
+	// Binary (fa0, fa1)
 	UTILITY_ATAN2 = 28,
 	UTILITY_POW = 29,
 	UTILITY_FMOD = 30,
@@ -117,7 +76,7 @@ enum UtilityOp : int16_t {
 	UTILITY_ANGLE_DIFFERENCE = 34,
 	UTILITY_PINGPONG = 35,
 
-	// Ternary: fa0, fa1, fa2
+	// Ternary (fa0, fa1, fa2)
 	UTILITY_LERP = 36,
 	UTILITY_INVERSE_LERP = 37,
 	UTILITY_SMOOTHSTEP = 38,
@@ -126,20 +85,18 @@ enum UtilityOp : int16_t {
 	UTILITY_ROTATE_TOWARD = 41,
 	UTILITY_WRAP = 42,
 
-	// Five arguments: fa0 - fa4
+	// Quinary (fa0-fa4)
 	UTILITY_REMAP = 43,
 	UTILITY_CUBIC_INTERPOLATE = 44,
 	UTILITY_BEZIER_INTERPOLATE = 45,
 	UTILITY_BEZIER_DERIVATIVE = 46,
 
-	// Variant in, Variant out, the shape STR and LEN use: the type
-	// constructors, which convert a String as readily as a number.
+	// Variant-in, Variant-out (same shape as STR/LEN): type constructors.
 	UTILITY_TO_INT = 47,
 	UTILITY_TO_FLOAT = 48,
 	UTILITY_TO_BOOL = 49,
 
-	// Randomness. RANDF's family is arithmetic on fa0-fa1; RANDI's takes
-	// 64-bit integers in a1-a2 and answers in a0.
+	// RANDF family: doubles in fa0-fa1. RANDI family: int64s in a1-a2, result in a0.
 	UTILITY_RANDF = 50,
 	UTILITY_RANDF_RANGE = 51,
 	UTILITY_RANDFN = 52,
@@ -149,20 +106,17 @@ enum UtilityOp : int16_t {
 	UTILITY_OP_COUNT,
 };
 
-// The most floating-point arguments any utility op takes. They travel in
-// fa0-fa4, which is why this is five and not more.
+// Max float args (fa0-fa4).
 static constexpr size_t UTILITY_MAX_FLOAT_ARGS = 5;
 
-// The most integer arguments any utility op takes. They travel in a1-a3, after
-// the op number in a0.
+// Max integer args (a1-a3; a0 holds the op number).
 static constexpr size_t UTILITY_MAX_INT_ARGS = 3;
 
-// One global function. The name is the GDScript spelling; everything else says
-// how to compile a call to it.
+// One global function — GDScript name + compilation metadata.
 enum class GlobalFn : int16_t {
 	PRINT,
 
-	// -= Type-preserving dispatchers (GlobalKind::NUMERIC) =-
+	// NUMERIC dispatchers (type-preserving)
 	ABS,
 	SIGN,
 	FLOOR,
@@ -174,7 +128,7 @@ enum class GlobalFn : int16_t {
 	SNAPPED,
 	WRAP,
 
-	// -= Integer forms (GlobalKind::INT_OP) =-
+	// INT_OP forms
 	ABSI,
 	SIGNI,
 	MINI,
@@ -182,23 +136,18 @@ enum class GlobalFn : int16_t {
 	CLAMPI,
 	WRAPI,
 	POSMOD,
-	// floor(), ceil() and round() of an integer are that integer.
+	// floor/ceil/round of an integer: identity.
 	INT_IDENTITY,
 
-	// -= Float forms emitted inline (GlobalKind::FLOAT_OP) =-
-	//
-	// Only operations that are a single exact IEEE-754 primitive live here.
-	// Anything that computes -- even `a + t * (b - a)` -- goes to the host
-	// instead, because the C++ the interpreter and the differential harness run
-	// is free to contract it into a fused multiply-add and the emitted RISC-V
-	// is not, and then the two disagree in the last bit.
+	// FLOAT_OP forms (inline). Only single IEEE-754 primitives — compound
+	// expressions risk FMA contraction disagreement between C++ and RISC-V.
 	ABSF,
 	MINF,
 	MAXF,
 	CLAMPF,
 	SQRT,
 
-	// -= Performed by the host (GlobalKind::SYSCALL) =-
+	// SYSCALL forms (host-performed)
 	SIGNF,
 	FLOORF,
 	CEILF,
@@ -250,34 +199,30 @@ enum class GlobalFn : int16_t {
 	IS_ZERO_APPROX,
 	IS_EQUAL_APPROX,
 
-	// -= The host's Variant API (GlobalKind::HOST) =-
+	// HOST forms (Variant API)
 	STR,
 	LEN,
 
-	// -= Randomness (GlobalKind::SYSCALL and SYSCALL_INT) =-
-	//
-	// The only globals here with a side effect other than print(): each one
-	// advances the generator the whole project shares.
+	// Randomness (SYSCALL / SYSCALL_INT). Impure: advances the project's shared RNG.
 	RANDF,
 	RANDF_RANGE,
 	RANDFN,
 	RANDI,
 	RANDI_RANGE,
 
-	// -= The type constructors (GlobalKind::CAST) =-
+	// CAST forms (type constructors)
 	TO_INT,
 	TO_FLOAT,
 	TO_BOOL,
 	TO_STRING,
 
-	// The inline forms a CAST resolves to when the argument is already a
-	// number or a bool. int() reuses INT_IDENTITY, which loads a Variant as an
-	// integer and is therefore already the conversion.
+	// Inline forms for CAST when argument is numeric/bool.
+	// int() reuses INT_IDENTITY — loading as int64 is the conversion.
 	FLOAT_IDENTITY,
 	BOOLEANIZE,
 };
 
-// How a call is performed. See the header comment.
+// How a call is performed.
 enum class GlobalKind : uint8_t {
 	PRINT,
 	NUMERIC,
@@ -289,14 +234,14 @@ enum class GlobalKind : uint8_t {
 	HOST,
 };
 
-// The Variant type a call evaluates to.
+// Result Variant type.
 enum class GlobalResult : uint8_t {
 	NIL,
 	BOOL,
 	INT,
 	FLOAT,
 	STRING,
-	// Follows the chosen form: NUMERIC entries only.
+	// Follows chosen form (NUMERIC only).
 	NUMERIC,
 };
 
@@ -307,62 +252,41 @@ struct GlobalFunction {
 	uint8_t min_args;
 	uint8_t max_args;
 	GlobalResult result;
-	// SYSCALL only: the ECALL_UTILITY op, and how many of fa0-fa4 it reads.
-	int16_t utility_op;
-	uint8_t float_args;
-	// NUMERIC only: the entry to use when every argument is an integer, and the
-	// entry to use otherwise.
-	//
-	// CAST reuses int_form for the inline form to use when the argument is
-	// already a number or a bool; float_form is unused there.
+	int16_t utility_op;  // SYSCALL: ECALL_UTILITY op number
+	uint8_t float_args;  // SYSCALL: count of fa0-fa4 args
+	// NUMERIC: forms for all-integer vs. mixed. CAST reuses int_form for
+	// numeric/bool inline path; float_form unused for CAST.
 	GlobalFn int_form;
 	GlobalFn float_form;
-	// Whether a call is something the program does, rather than only something
-	// it computes. The random family draws from a generator the whole project
-	// shares, so a call that nobody reads the result of still has to happen,
-	// and two calls are not one call. Everything else here is pure.
+	// Random family: must not be DCE'd or deduplicated.
 	bool impure = false;
 };
 
-// The global function `name`, or nullptr when GDScript has no such global (or
-// the compiler does not implement it, which is the same thing to a caller: the
-// call then goes through the normal self-call path).
+// nullptr when `name` is not a known global (caller falls through to self-call).
 const GlobalFunction* find_global_function(const std::string& name);
 
-// The row for a GlobalFn. Every GlobalFn has one, including the forms that no
-// GDScript name maps to directly (INT_IDENTITY).
+// Row for a GlobalFn. Every enum value has one, including internal forms.
 const GlobalFunction& global_function(GlobalFn fn);
 
-// -= Evaluation =-
-//
-// The meaning of every global, as C++, in one place. The IR interpreter
-// evaluates a GLOBAL_CALL through these, and so does the differential
-// harness's ECALL_UTILITY shim -- so the interpreter and the machine cannot
-// disagree about what `smoothstep` means. The host's api_utility() implements
-// the same formulas against Godot's Math:: for the SYSCALL ops.
+// Evaluation — shared by the IR interpreter and the differential harness's
+// ECALL_UTILITY shim, so the two cannot disagree.
 
-// A SYSCALL op, given fa0-fa4. Unused arguments are ignored, so a caller that
-// does not know the op's arity may pass all five.
+// SYSCALL op evaluation. Unused fa slots ignored.
 double eval_utility_op(int16_t utility_op, const double args[UTILITY_MAX_FLOAT_ARGS]);
 
-// An INT_OP form. `count` must be within the entry's arity.
+// INT_OP form evaluation.
 int64_t eval_global_int(GlobalFn fn, const int64_t* args, size_t count);
 
-// A FLOAT_OP or SYSCALL form.
+// FLOAT_OP or SYSCALL form evaluation.
 double eval_global_float(GlobalFn fn, const double* args, size_t count);
 
-// A SYSCALL_INT op, given a1-a3. Only the host can perform these -- they are
-// the ones that need its random number generator -- so this exists to say so
-// with the function's name, rather than to evaluate anything.
+// SYSCALL_INT: always throws — needs host RNG.
 int64_t eval_global_int_syscall(GlobalFn fn, const int64_t* args, size_t count);
 
-// Whether a call to `fn` with all-integer arguments produces an integer. Used
-// to resolve a NUMERIC entry: `min(1, 2)` is an int and `min(1, 2.0)` is not.
+// NUMERIC dispatch: int_form when all_integer, float_form otherwise.
 GlobalFn resolve_numeric_form(const GlobalFunction& info, bool all_integer);
 
-// The inline form a CAST resolves to for an argument already known to hold
-// `hint` (a Variant type), or the CAST itself when the host has to perform it
-// because the argument could be a String -- or anything else a Variant holds.
+// CAST dispatch: inline form when `hint` is INT/FLOAT/BOOL, host otherwise.
 GlobalFn resolve_cast_form(const GlobalFunction& info, int hint);
 
 } // namespace gdscript

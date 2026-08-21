@@ -13,40 +13,24 @@ class Parser {
 public:
 	explicit Parser(std::vector<Token> tokens);
 
-	// The '##' comments the lexer retained, used to attach a block to the
-	// declaration below it. Optional: without them every doc comment is empty,
-	// as for a source that has none.
+	// Optional; without doc comments every description is empty.
 	void set_doc_comments(std::vector<std::pair<int, std::string>> comments);
 
 	Program parse();
 
 private:
-	// Function parsing
 	FunctionDecl parse_function();
 	std::vector<Parameter> parse_parameters();
 
-	// Struct parsing
 	StructDecl parse_struct();
-
-	// Enum parsing
 	EnumDecl parse_enum();
 
-	// Match patterns. A pattern is not an expression: `[a, 1]` destructures an
-	// Array rather than building one, and `_` and `var name` mean nothing
-	// outside a match.
 	MatchPatternPtr parse_match_pattern();
 	MatchPatternPtr parse_match_array_pattern();
 	MatchPatternPtr parse_match_dictionary_pattern();
-	// Consume a trailing `..` if present. `what` names the construct in the error
-	// for a `..` in the middle.
 	bool parse_pattern_rest(const char* what);
-
-	// Argument list of a call, up to and including the closing ')'. Fills
-	// `names` in step with `arguments`: the name an argument was passed under,
-	// or an empty string when it was passed positionally.
 	void parse_argument_list(std::vector<ExprPtr>& arguments, std::vector<std::string>& names);
 
-	// Statement parsing
 	StmtPtr parse_statement();
 	StmtPtr parse_statement_impl();
 	StmtPtr parse_var_decl(bool is_const);
@@ -58,7 +42,7 @@ private:
 	StmtPtr parse_expr_or_assign_stmt();
 	std::vector<StmtPtr> parse_block();
 
-	// Expression parsing (precedence climbing)
+	// Precedence climbing, loosest to tightest.
 	ExprPtr parse_expression();
 	ExprPtr parse_ternary();
 	ExprPtr parse_or_expression();
@@ -79,13 +63,7 @@ private:
 	ExprPtr parse_call();
 	ExprPtr parse_primary();
 
-	// -= Source positions =-
-	//
-	// Every AST node carries the position it starts at. A diagnostic that says
-	// what is wrong but not where is only half a diagnostic, and every node
-	// built here is built through one of these so that none of them is missed.
-
-	// Build a node positioned at `token`.
+	// Node positioned at `token`.
 	template <typename Node, typename... Args>
 	static std::unique_ptr<Node> make_at(const Token& token, Args&&... args) {
 		auto node = std::make_unique<Node>(std::forward<Args>(args)...);
@@ -94,8 +72,7 @@ private:
 		return node;
 	}
 
-	// Build a node positioned where an existing node is: an expression built
-	// out of sub-expressions starts where its left-most operand starts.
+	// Node positioned where an existing expression starts.
 	template <typename Node, typename... Args>
 	static std::unique_ptr<Node> make_like(const Expr& like, Args&&... args) {
 		const int line = like.line;
@@ -106,17 +83,11 @@ private:
 		return node;
 	}
 
-	// A binary expression starts where its left operand does. Reading the
-	// position before the operand is moved into the node is why this is a
-	// function rather than an expression at each of the twelve call sites.
+	// Reads position before move; factored to avoid repeating at each call site.
 	static ExprPtr make_binary(ExprPtr left, BinaryExpr::Op op, ExprPtr right);
-
-	// A second copy of an assignment target, for rewriting `a op= b` into
-	// `a = a op b`. Null when the target cannot be read twice without changing
-	// the program's behaviour.
+	// Null when the target cannot be read twice without side effects.
 	static ExprPtr clone_lvalue(const Expr* expr);
 
-	// Utilities
 	bool match(TokenType type);
 	bool match_one_of(std::initializer_list<TokenType> types);
 	bool check(TokenType type) const;
@@ -129,27 +100,16 @@ private:
 	void synchronize();
 	void error(const std::string& message);
 	void skip_newlines();
-	// Consume a statement end: a newline, or a ';' before the next statement on
-	// the same line.
 	void consume_statement_end(const std::string& message);
 
-	// Type hint parsing
-	std::string parse_type_hint();  // Parse optional type hint (e.g., ": int", ": String")
-	// Optional return type, e.g. `-> void`.
+	std::string parse_type_hint();
 	std::string parse_return_type();
-	// Read past the element types of `Array[int]` / `Dictionary[K, V]`.
 	void skip_type_arguments();
-
-	// Attribute parsing
-	bool parse_attribute();  // Parse attribute (e.g., @export), returns true if @export
-
-	// Doc comment block ending on the line above p_line, lines joined by '\n';
-	// empty when there is none.
+	bool parse_attribute();
 	std::string doc_comment_above(int p_line) const;
 
 	std::vector<Token> m_tokens;
-	// Line -> the '##' comment on it. A block is a contiguous run of lines.
-	std::unordered_map<int, std::string> m_doc_comments;
+	std::unordered_map<int, std::string> m_doc_comments; // line -> ## text
 	size_t m_current = 0;
 };
 

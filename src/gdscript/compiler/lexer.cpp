@@ -36,7 +36,7 @@ const std::unordered_map<std::string, TokenType> Lexer::keywords = {
 };
 
 Lexer::Lexer(std::string source) : m_source(std::move(source)) {
-	m_indent_stack.push_back(0); // Start with zero indentation
+	m_indent_stack.push_back(0);
 }
 
 std::vector<Token> Lexer::tokenize() {
@@ -45,16 +45,13 @@ std::vector<Token> Lexer::tokenize() {
 		scan_token();
 	}
 
-	// An unclosed bracket swallowed every newline after it, so it has eaten the
-	// rest of the file. Report it at the bracket: EOF is the symptom, not the
-	// mistake.
+	// Report unclosed bracket at the opener, not at EOF.
 	if (!m_open_brackets.empty()) {
 		const OpenBracket& open = m_open_brackets.back();
 		error_at(std::string("Unclosed '") + opener_for(open.closer) + "', expected '" +
 			open.closer + "' before the end of the file", open.line, open.column);
 	}
 
-	// Add remaining dedents at end of file
 	while (m_indent_stack.size() > 1) {
 		m_indent_stack.pop_back();
 		add_token(TokenType::DEDENT);
@@ -83,7 +80,6 @@ void Lexer::pop_bracket(char closer) {
 }
 
 void Lexer::scan_token() {
-	// Handle indentation at line start
 	if (m_at_line_start) {
 		handle_indent();
 		return;
@@ -95,14 +91,10 @@ void Lexer::scan_token() {
 		case ' ':
 		case '\r':
 		case '\t':
-			// Skip whitespace (except at line start)
 			break;
 
 		case '\n':
-			// Inside (), [] or {} a newline is layout, not a statement end, so
-			// argument lists and literals may span lines. Suppressing the token
-			// also bypasses the indent machinery, so continuation lines may be
-			// indented freely.
+			// Inside brackets, newlines are layout, not statement ends.
 			if (m_open_brackets.empty()) {
 				add_token(TokenType::NEWLINE);
 				m_at_line_start = true;
@@ -112,21 +104,17 @@ void Lexer::scan_token() {
 			break;
 
 		case '\\':
-			// Explicit line continuation. The backslash must be last on the
-			// line; anything after it is a typo, reported rather than swallowed.
 			while (peek() == ' ' || peek() == '\r' || peek() == '\t') advance();
 			if (peek() != '\n') {
 				error("Expected end of line after '\\' line continuation");
 			}
-			advance(); // consume the newline without emitting one
+			advance();
 			m_line++;
 			m_column = 1;
 			break;
 
 		case '#': {
-			// Comment - skip to end of line. '##' is a doc comment, whose
-			// text is retained as the editor description of the declaration
-			// below it.
+			// '##' is a doc comment retained for editor descriptions.
 			const int comment_line = m_line;
 			const bool is_doc = peek() == '#';
 			if (is_doc) {
@@ -136,8 +124,7 @@ void Lexer::scan_token() {
 			while (peek() != '\n' && !is_at_end()) advance();
 			if (is_doc) {
 				std::string text = m_source.substr(text_start, m_current - text_start);
-				// One space after the marker is spelling, not content;
-				// deeper indentation is content.
+				// Strip one leading space (marker spelling, not content).
 				if (!text.empty() && text.front() == ' ') {
 					text.erase(text.begin());
 				}
@@ -152,23 +139,19 @@ void Lexer::scan_token() {
 		case '(': push_bracket(')'); add_token(TokenType::LPAREN); break;
 		case '[': push_bracket(']'); add_token(TokenType::LBRACKET); break;
 		case '{': push_bracket('}'); add_token(TokenType::LBRACE); break;
-		// A stray closer is a parse error, not a lexer one, so an unmatched one is
-		// passed on rather than unbalancing the stack and disabling newlines for
-		// the rest of the file.
+		// Stray closers passed through; the parser reports them.
 		case ')': pop_bracket(')'); add_token(TokenType::RPAREN); break;
 		case ']': pop_bracket(']'); add_token(TokenType::RBRACKET); break;
 		case '}': pop_bracket('}'); add_token(TokenType::RBRACE); break;
 		case ':': add_token(TokenType::COLON); break;
 		case ',': add_token(TokenType::COMMA); break;
 		case ';': add_token(TokenType::SEMICOLON); break;
-		// '..' only occurs as the rest of a match pattern.
 		case '.': add_token(match('.') ? TokenType::DOT_DOT : TokenType::DOT); break;
 		case '@': add_token(TokenType::AT); break;
 		case '+': add_token(match('=') ? TokenType::PLUS_ASSIGN : TokenType::PLUS); break;
 		case '-': add_token(match('=') ? TokenType::MINUS_ASSIGN : TokenType::MINUS); break;
 		case '*':
-			// '**' before '*=', so `a **= b` is a power-assign and not a multiply
-			// followed by a dangling '*='.
+			// '**' before '*=': `a **= b` is POWER_ASSIGN, not MULTIPLY + stray.
 			if (match('*')) {
 				add_token(match('=') ? TokenType::POWER_ASSIGN : TokenType::POWER);
 			} else {
@@ -183,7 +166,6 @@ void Lexer::scan_token() {
 			break;
 
 		case '!':
-			// '!' is an alias for 'not', '!=' is inequality
 			add_token(match('=') ? TokenType::NOT_EQUAL : TokenType::NOT);
 			break;
 
@@ -205,7 +187,7 @@ void Lexer::scan_token() {
 
 		case '&':
 			if (match('&')) {
-				add_token(TokenType::AND); // && is an alias for 'and'
+				add_token(TokenType::AND);
 			} else {
 				add_token(match('=') ? TokenType::BIT_AND_ASSIGN : TokenType::BIT_AND);
 			}
@@ -213,7 +195,7 @@ void Lexer::scan_token() {
 
 		case '|':
 			if (match('|')) {
-				add_token(TokenType::OR); // || is an alias for 'or'
+				add_token(TokenType::OR);
 			} else {
 				add_token(match('=') ? TokenType::BIT_OR_ASSIGN : TokenType::BIT_OR);
 			}
@@ -249,14 +231,13 @@ void Lexer::handle_indent() {
 
 	while (!is_at_end() && (peek() == ' ' || peek() == '\t')) {
 		if (peek() == '\t') {
-			indent_level += 4; // Tab counts as 4 spaces
+			indent_level += 4;
 		} else {
 			indent_level += 1;
 		}
 		advance();
 	}
 
-	// Skip blank lines and comments
 	if (is_at_end() || peek() == '\n' || peek() == '#') {
 		m_at_line_start = false;
 		return;
@@ -283,16 +264,11 @@ void Lexer::handle_indent() {
 
 void Lexer::scan_string() {
 	const char quote = m_source[m_current - 1];
-	// scan_token() has already consumed the opening quote, so back up one column
-	// to point at it: an unterminated string is reported where it starts, not
-	// where the file happened to run out.
+	// Report unterminated strings at the opening quote, not at EOF.
 	const int open_line = m_line;
 	const int open_column = m_column - 1;
 
-	// Three quotes open a string that may span lines, as in GDScript. A plain
-	// string may not, and ending one at its newline keeps a single stray quote
-	// from swallowing the rest of the file -- which is the difference between an
-	// editor underlining one line and underlining everything below it.
+	// Triple-quoted strings may span lines; single-quoted ones cannot.
 	bool triple = false;
 	if (peek() == quote && peek_next() == quote) {
 		advance();
@@ -322,7 +298,7 @@ void Lexer::scan_string() {
 		} else if (c == '\\') {
 			advance();
 			if (is_at_end()) {
-				break; // A backslash as the last character of the file.
+				break;
 			}
 			const char escaped = advance();
 			switch (escaped) {
@@ -333,7 +309,6 @@ void Lexer::scan_string() {
 				case '"': value += '"'; break;
 				case '\'': value += '\''; break;
 				case '\n':
-					// A line continuation inside a triple-quoted string.
 					m_line++;
 					m_column = 0;
 					value += '\n';
@@ -349,7 +324,7 @@ void Lexer::scan_string() {
 		error_at("Unterminated string", open_line, open_column);
 	}
 
-	advance(); // Closing quote
+	advance();
 	if (triple) {
 		advance();
 		advance();
@@ -358,17 +333,15 @@ void Lexer::scan_string() {
 }
 
 void Lexer::scan_number() {
-	// Radix prefixes: 0x/0X (hex) and 0b/0B (binary). The leading '0' has
-	// already been consumed by scan_token().
 	if (m_source[m_start] == '0' && (peek() == 'x' || peek() == 'X' ||
 	                                 peek() == 'b' || peek() == 'B')) {
 		const bool hex = (peek() == 'x' || peek() == 'X');
-		advance(); // Consume the radix character
+		advance();
 
 		std::string digits;
 		while (!is_at_end()) {
 			const char c = peek();
-			if (c == '_') { // Digit separator, e.g. 0xDEAD_BEEF
+			if (c == '_') {
 				advance();
 				continue;
 			}
@@ -385,8 +358,7 @@ void Lexer::scan_number() {
 			return;
 		}
 
-		// Parse as unsigned so that literals with the top bit set (e.g.
-		// 0xFFFFFFFFFFFFFFFF) wrap around instead of throwing out_of_range.
+		// Unsigned parse so top-bit-set literals wrap instead of throwing.
 		int64_t value = 0;
 		try {
 			value = static_cast<int64_t>(std::stoull(digits, nullptr, hex ? 16 : 2));
@@ -398,13 +370,12 @@ void Lexer::scan_number() {
 		return;
 	}
 
-	// Decimal literal, with optional '_' digit separators, fraction and exponent
 	std::string num_str(1, m_source[m_start]);
 	bool is_float = false;
 
 	auto consume_digits = [&]() {
 		while (!is_at_end()) {
-			if (peek() == '_') { // Digit separator, e.g. 1_000_000
+			if (peek() == '_') {
 				advance();
 				continue;
 			}
@@ -415,20 +386,18 @@ void Lexer::scan_number() {
 
 	consume_digits();
 
-	// Fractional part: only when a digit follows, so that "1.method()" and
-	// range syntax keep working
+	// Only when a digit follows '.', so `1.method()` stays a method call.
 	if (peek() == '.' && is_digit(peek_next())) {
 		is_float = true;
-		num_str += advance(); // Consume '.'
+		num_str += advance();
 		consume_digits();
 	}
 
-	// Exponent: 1e5, 2.5E-3
 	if ((peek() == 'e' || peek() == 'E') &&
 	    (is_digit(peek_next()) ||
 	     ((peek_next() == '+' || peek_next() == '-') && is_digit(peek_at(2))))) {
 		is_float = true;
-		num_str += advance(); // Consume 'e'
+		num_str += advance();
 		if (peek() == '+' || peek() == '-') {
 			num_str += advance();
 		}

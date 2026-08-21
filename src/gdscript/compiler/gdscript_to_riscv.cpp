@@ -8,7 +8,6 @@
 
 using namespace gdscript;
 
-// Helper to run a command and capture output
 std::string run_command(const char* cmd) {
 	FILE* pipe = popen(cmd, "r");
 	if (!pipe) {
@@ -36,10 +35,8 @@ int main(int argc, char** argv)
 	std::string temp_elf = "/tmp/gdscript_temp_XXXXXX";
 	bool no_optimize = false;
 	bool show_program_headers = false;
-	// Which real_t the generated code targets; defaults to this build's
 	bool double_precision = native_variant_layout().double_precision;
 
-	// Parse arguments
 	for (int i = 1; i < argc; i++) {
 		std::string arg = argv[i];
 		if (arg == "--no-opt" || arg == "--no-optimize") {
@@ -60,7 +57,6 @@ int main(int argc, char** argv)
 	}
 
 	if (source.empty()) {
-		// Read from stdin
 		std::string line;
 		while (std::getline(std::cin, line)) {
 			source += line + "\n";
@@ -68,10 +64,8 @@ int main(int argc, char** argv)
 	}
 
 	try {
-		// Create temporary file for ELF
 		mkstemp(temp_elf.data());
 
-		// Parse and compile to ELF
 		Compiler compiler;
 		CompilerOptions options;
 		options.output_elf = true;
@@ -79,13 +73,11 @@ int main(int argc, char** argv)
 		options.double_precision = double_precision;
 		std::vector<uint8_t> elf = compiler.compile(source, options);
 
-		// Write ELF to temp file
 		{
 			std::ofstream out(temp_elf, std::ios::binary);
 			out.write(reinterpret_cast<const char*>(elf.data()), elf.size());
 		}
 
-		// If user requested program headers, show them and exit
 		if (show_program_headers) {
 			std::ostringstream cmd;
 			cmd << "readelf -l " << temp_elf << " 2>&1";
@@ -95,19 +87,16 @@ int main(int argc, char** argv)
 			return 0;
 		}
 
-		// Run objdump to disassemble
 		std::ostringstream cmd;
 		cmd << "riscv64-linux-gnu-objdump -d " << temp_elf << " 2>&1";
 		std::string disasm = run_command(cmd.str().c_str());
 
-		// Find and print the relevant function
 		std::istringstream stream(disasm);
 		std::string line;
 		bool function_found = output_function.empty(); // If no function specified, print all
 		bool in_function = function_found;
 
 		while (std::getline(stream, line)) {
-			// Check for function start
 			if (line.find("<" + output_function + ">") != std::string::npos ||
 			    line.find("<" + output_function + ">") != std::string::npos) {
 				in_function = true;
@@ -116,9 +105,7 @@ int main(int argc, char** argv)
 				continue;
 			}
 
-			// Print lines while in the function
 			if (in_function) {
-				// Stop at next function
 				if (!output_function.empty() && !line.empty() && line[0] != ' ' && line.find("Disassembly") == std::string::npos) {
 					in_function = false;
 					break;
@@ -131,7 +118,6 @@ int main(int argc, char** argv)
 			std::cerr << "Warning: Function '" << output_function << "' not found in disassembly." << std::endl;
 			std::cerr << "Available functions:" << std::endl;
 
-			// Extract all function names
 			stream = std::istringstream(disasm);
 			while (std::getline(stream, line)) {
 				if (line.find("<") != std::string::npos && line.find(">:") != std::string::npos) {
@@ -144,7 +130,6 @@ int main(int argc, char** argv)
 			}
 		}
 
-		// Cleanup temp file
 		unlink(temp_elf.c_str());
 
 		return function_found ? 0 : 1;

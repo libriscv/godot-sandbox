@@ -4,9 +4,7 @@
 
 namespace gdscript {
 
-// The opcode metadata table, generated from ir_opcodes.def. Every accessor
-// below is a lookup into this one array, so a pass can never disagree with
-// another about what an opcode does.
+// Generated from ir_opcodes.def; single source of truth for all opcode queries.
 static constexpr IROpcodeInfo IR_OPCODE_TABLE[] = {
 #define DST       IROperandKind::DST
 #define SRC       IROperandKind::SRC
@@ -43,8 +41,7 @@ static_assert(sizeof(IR_OPCODE_TABLE) / sizeof(IR_OPCODE_TABLE[0]) == IR_OPCODE_
 
 const IROpcodeInfo& ir_opcode_info(IROpcode op) {
 	const size_t index = static_cast<size_t>(op);
-	// The table is generated from the same list as the enum, so an out-of-range
-	// opcode is a corrupt IRInstruction rather than a missing table entry.
+	// Out-of-range = corrupt IRInstruction, not a missing table entry.
 	if (index >= IR_OPCODE_COUNT) {
 		static constexpr IROpcodeInfo unknown { IROpcode::LABEL, "UNKNOWN", IROperandSignature(), IR_SIDE_EFFECTS };
 		return unknown;
@@ -78,7 +75,6 @@ const char* variant_type_name(IRInstruction::TypeHint hint) {
 	if (hint == IRInstruction::TypeHint_NONE) {
 		return "NONE";
 	}
-	// Use Variant::Type enum values directly
 	switch (hint) {
 		case Variant::NIL: return "NIL";
 		case Variant::BOOL: return "BOOL";
@@ -188,14 +184,13 @@ bool ir_reads_operand(const IRInstruction& instr, size_t index) {
 	if (instr.operands[index].type != IRValue::Type::REGISTER) {
 		return false;
 	}
-	// A register operand is read unless the signature says it is the one the
-	// instruction defines.
+	// Read unless the signature marks it DST.
 	const IROperandKind kind = ir_opcode_info(instr.opcode).signature.kind_at(index);
 	return kind != IROperandKind::DST;
 }
 
 void ir_collect_read_registers(const IRInstruction& instr, std::vector<int>& out) {
-	// A bare RETURN returns whatever is in the return register.
+	// Bare RETURN implicitly reads the return register.
 	if (instr.opcode == IROpcode::RETURN && instr.operands.empty()) {
 		out.push_back(IRFunction::RETURN_REGISTER);
 		return;
@@ -212,8 +207,7 @@ std::string IRInstruction::to_string() const {
 	oss << ir_opcode_name(opcode);
 
 	for (size_t i = 0; i < operands.size(); i++) {
-		// GLOBAL_CALL's first immediate is a GlobalFn. A dump saying "11" says
-		// nothing; a dump saying "absi" says which global was compiled.
+		// Print GlobalFn name instead of raw enum value.
 		if (opcode == IROpcode::GLOBAL_CALL && i == 1 &&
 			operands[i].type == IRValue::Type::IMMEDIATE) {
 			oss << " " << global_function(static_cast<GlobalFn>(std::get<int64_t>(operands[i].value))).name;

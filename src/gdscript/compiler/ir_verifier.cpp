@@ -10,27 +10,20 @@ namespace gdscript {
 
 namespace {
 
-// A register's type as the verifier tracks it. UNKNOWN is the top of the
-// lattice: it means "could be anything", and every check that consults a type
-// passes when it sees UNKNOWN. Two paths that disagree merge to UNKNOWN.
+// Top of the type lattice; disagreeing paths merge to this.
 constexpr IRInstruction::TypeHint TYPE_UNKNOWN = -2;
 
 static_assert(TYPE_UNKNOWN != IRInstruction::TypeHint_NONE,
 	"TypeHint_NONE is a real hint value and cannot double as 'unknown'");
 
-// The state of every register at a point in the function.
 struct RegisterState {
-	// Whether the register is defined on every path reaching this point.
 	std::vector<bool> defined;
-	// The Variant type the register is known to hold, or TYPE_UNKNOWN.
 	std::vector<IRInstruction::TypeHint> type;
 
 	explicit RegisterState(size_t count)
 		: defined(count, false), type(count, TYPE_UNKNOWN) {}
 
-	// Intersection: a register is defined here only if it was defined on every
-	// incoming path, and its type is known only if every path agreed on it.
-	// Returns whether anything changed.
+	// Intersect: defined only if all paths agree. Returns true if state changed.
 	bool merge_from(const RegisterState& other) {
 		bool changed = false;
 		for (size_t i = 0; i < defined.size(); i++) {
@@ -62,8 +55,7 @@ public:
 		: m_func(func), m_after_pass(after_pass) {}
 
 	void run() {
-		// max_registers has to cover everything before anything else can index
-		// by register number.
+		// max_registers must cover all registers before any index-based check.
 		check_register_range();
 		check_operands();
 		check_labels();
@@ -99,13 +91,11 @@ private:
 		return static_cast<size_t>(std::max(m_func.max_registers, 0));
 	}
 
-	// -= max_registers covers every register mentioned =-
 	void check_register_range() {
 		if (m_func.max_registers < 0) {
 			fail("max_registers is negative");
 		}
-		// Parameter registers 0..N-1 have no defining instruction, but the
-		// prologue still copies each incoming Variant into one.
+		// Parameter registers have no defining instruction but occupy r0..N-1.
 		if (m_func.max_registers < static_cast<int>(m_func.parameters.size())) {
 			fail("max_registers (" + std::to_string(m_func.max_registers) +
 				") does not cover the " + std::to_string(m_func.parameters.size()) +
@@ -128,15 +118,12 @@ private:
 		}
 	}
 
-	// -= Arity and operand kinds match the signature =-
 	void check_operands() {
 		for (size_t i = 0; i < m_func.instructions.size(); i++) {
 			const IRInstruction& instr = m_func.instructions[i];
 			const IROpcodeInfo& info = ir_opcode_info(instr.opcode);
 			const IROperandSignature& signature = info.signature;
 
-			// RETURN is written both bare (returning whatever is in r0) and,
-			// historically, with an operand. Everything else has to match.
 			const size_t fixed = signature.fixed_count();
 			if (instr.operands.size() < fixed) {
 				fail(std::string(info.mnemonic) + " needs at least " + std::to_string(fixed) +
@@ -178,8 +165,7 @@ private:
 			case IROperandKind::LBL_LIST:
 				return operand.type == IRValue::Type::LABEL;
 			case IROperandKind::ARG_LIST:
-				// A syscall's arguments are registers or immediates, depending
-				// on the syscall.
+				// Syscall args can be registers or immediates.
 				return operand.type == IRValue::Type::REGISTER ||
 					operand.type == IRValue::Type::IMMEDIATE;
 			case IROperandKind::NONE:
@@ -188,8 +174,7 @@ private:
 		return false;
 	}
 
-	// A CNT / CNT2 operand states how long the trailing list is; a list that
-	// does not match is a truncated or over-long instruction.
+	// CNT/CNT2 must match the actual trailing-list length.
 	void check_argument_count(const IRInstruction& instr, size_t instr_idx) {
 		const IROperandSignature& signature = ir_opcode_info(instr.opcode).signature;
 		for (size_t j = 0; j < signature.fixed_count(); j++) {
@@ -215,9 +200,7 @@ private:
 		}
 	}
 
-	// The register a call defines must not also be one of its arguments: the
-	// backend writes the result into it, so an argument sharing the register is
-	// read after it has already been overwritten.
+	// DST must not alias an argument register; the backend overwrites it first.
 	void check_call_destination(const IRInstruction& instr, size_t instr_idx) {
 		if (!ir_has_effect(instr.opcode, IR_CALL)) {
 			return;
@@ -236,7 +219,6 @@ private:
 		}
 	}
 
-	// -= Labels are defined exactly once, and every branch target exists =-
 	void check_labels() {
 		m_label_index.clear();
 		for (size_t i = 0; i < m_func.instructions.size(); i++) {
@@ -268,14 +250,12 @@ private:
 		}
 	}
 
-	// -= Every register read is defined on every path that reaches the read =-
 	void check_definedness_and_types() {
 		build_blocks();
 
 		const size_t regs = register_count();
 
-		// The entry block starts with the parameters defined and nothing else.
-		// check_register_range() has established that regs covers them.
+		// Parameters are pre-defined; check_register_range() guarantees coverage.
 		RegisterState entry(regs);
 		for (size_t i = 0; i < m_func.parameters.size() && i < regs; i++) {
 			entry.defined[i] = true;
@@ -289,8 +269,7 @@ private:
 		m_blocks[0].entry_initialized = true;
 		m_blocks[0].reachable = true;
 
-		// Forward dataflow to a fixpoint. Blocks are few and the lattice is
-		// short, so a simple worklist is enough.
+		// Forward dataflow to fixpoint.
 		std::vector<size_t> worklist { 0 };
 		while (!worklist.empty()) {
 			const size_t index = worklist.back();
@@ -316,12 +295,10 @@ private:
 			}
 		}
 
-		// Now walk each reachable block once more, reporting.
+		// Report pass.
 		for (auto& block : m_blocks) {
 			if (!block.reachable) {
-				// Unreachable code is not wrong on its own -- a pass can leave
-				// a block stranded -- and nothing in it can be executed, so
-				// there is nothing to check.
+				// Unreachable blocks are not errors; a pass can leave them stranded.
 				continue;
 			}
 			RegisterState state = block.entry;
@@ -336,8 +313,7 @@ private:
 			return;
 		}
 
-		// Leaders: the first instruction, every label, and everything that
-		// follows a branch or a jump.
+		// Leaders: first instruction, labels, and post-branch/jump positions.
 		std::vector<bool> is_leader(count, false);
 		is_leader[0] = true;
 		for (size_t i = 0; i < count; i++) {
@@ -368,14 +344,13 @@ private:
 			BasicBlock& block = m_blocks[b];
 			const IRInstruction& last = m_func.instructions[block.end - 1];
 
-			// A branch target is a successor, and so is the next block unless
-			// control cannot fall through.
+			// Branch targets and fall-through are successors.
 			for (const auto& operand : last.operands) {
 				if (operand.type != IRValue::Type::LABEL) {
 					continue;
 				}
 				if (ir_has_effect(last.opcode, IR_LABEL)) {
-					continue; // The label's own operand names itself.
+					continue;
 				}
 				auto it = m_label_index.find(std::get<std::string>(operand.value));
 				if (it != m_label_index.end()) {
@@ -394,7 +369,6 @@ private:
 		}
 	}
 
-	// Run one block's instructions over `state`, optionally reporting problems.
 	void transfer(const BasicBlock& block, RegisterState& state, bool report) {
 		const size_t regs = state.defined.size();
 		std::vector<int> reads;
@@ -402,9 +376,7 @@ private:
 		for (size_t i = block.begin; i < block.end; i++) {
 			const IRInstruction& instr = m_func.instructions[i];
 
-			// A bare RETURN returns whatever is in r0, including nothing at
-			// all in a function that returns no value, so its implicit read is
-			// not a read that has to be defined.
+			// Bare RETURN's implicit r0 read is not checked for definedness.
 			const bool implicit_return_read =
 				instr.opcode == IROpcode::RETURN && instr.operands.empty();
 
@@ -428,7 +400,6 @@ private:
 		}
 	}
 
-	// The type the instruction's destination is known to hold afterwards.
 	IRInstruction::TypeHint result_type(const IRInstruction& instr, const RegisterState& state) const {
 		switch (instr.opcode) {
 			case IROpcode::LOAD_IMM: return Variant::INT;
@@ -455,8 +426,7 @@ private:
 			default:
 				break;
 		}
-		// A comparison always produces a boolean; its type_hint describes the
-		// operands it compares, not its result.
+		// IR_COMPARISON result is always BOOL; type_hint describes the operands.
 		if (ir_has_effect(instr.opcode, IR_COMPARISON)) {
 			return Variant::BOOL;
 		}
@@ -466,7 +436,6 @@ private:
 		return TYPE_UNKNOWN;
 	}
 
-	// -= Type hints are consistent with the opcode =-
 	void check_type_hint(const IRInstruction& instr, const RegisterState& state, size_t instr_idx) {
 		if (instr.opcode == IROpcode::CONVERT) {
 			if (instr.type_hint == IRInstruction::TypeHint_NONE) {
@@ -475,12 +444,8 @@ private:
 			return;
 		}
 
-		// A hint on an arithmetic or comparison opcode is what puts the backend
-		// on a native path instead of a Variant one, so it is a claim about the
-		// operands. Register types leaking between functions is what made that
-		// claim false and picked an integer path for a Variant that was not an
-		// integer; here the claim is checked against what the operands are known
-		// to hold.
+		// Arithmetic type_hint is a claim about operand types; verify against
+		// the tracked register types to catch native-path mismatches.
 		if (instr.type_hint == IRInstruction::TypeHint_NONE) {
 			return;
 		}

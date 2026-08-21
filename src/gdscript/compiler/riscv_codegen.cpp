@@ -13,13 +13,11 @@ RISCVCodeGen::RISCVCodeGen(const VariantLayout& layout) :
 		m_layout(layout) {}
 
 size_t RISCVCodeGen::add_constant(int64_t value) {
-	// Check if constant already exists in pool
 	auto it = m_constant_pool_map.find(value);
 	if (it != m_constant_pool_map.end()) {
 		return it->second;
 	}
 
-	// Add new constant
 	size_t index = m_constant_pool.size();
 	m_constant_pool.push_back(value);
 	m_constant_pool_map[value] = index;
@@ -31,47 +29,38 @@ std::string RISCVCodeGen::gen_local_label(const std::string& prefix) {
 }
 
 void RISCVCodeGen::emit_variant_component_to_real(int comp_offset, int result_offset, int store_offset, bool normalize_by_255) {
-	// Convert a Variant component (at comp_offset) to real_t and store to result_offset + store_offset
-	// Handles both INT (type=2) and FLOAT (type=3) Variants
-	// If normalize_by_255 is true, divides INTEGER values by 255.0 (for Color components)
+	// INT or FLOAT Variant -> real_t. normalize_by_255 divides integers by 255.0 (Color).
 	std::string label_float = gen_local_label(".float");
 	std::string label_cont = gen_local_label(".cont");
 
-	// Load the component's type field
-	emit_lwu(REG_T0, REG_SP, comp_offset); // Load type (4 bytes, zero-extended)
-
-	// Check if type is INT (2) or FLOAT (3)
-	// Branch if INT (subtract 2, so 0 means INT, non-zero means FLOAT)
-	emit_addi(REG_T1, REG_T0, -2);
+	emit_lwu(REG_T0, REG_SP, comp_offset);
+	emit_addi(REG_T1, REG_T0, -2); // 0 = INT, nonzero = FLOAT
 	mark_label_use(label_float, m_code.size());
-	emit_bne(REG_T1, REG_ZERO, 0); // Branch if not INT (i.e., if FLOAT)
+	emit_bne(REG_T1, REG_ZERO, 0);
 
-	// INT case: Load integer and convert to float
-	emit_ld(REG_T0, REG_SP, comp_offset + 8); // Load int64_t
-	emit_fcvt_d_l(REG_FA0, REG_T0); // Convert int64 to double
+	// INT path
+	emit_ld(REG_T0, REG_SP, comp_offset + 8);
+	emit_fcvt_d_l(REG_FA0, REG_T0);
 
 	if (normalize_by_255) {
-		// For Color, normalize integer values by dividing by 255.0
-		// Load 255.0 from constant pool
 		size_t const_idx = add_constant(0x406FC00000000000LL); // 255.0 as double
 		std::string label_255 = ".LC" + std::to_string(const_idx);
 		emit_la(REG_T0, label_255);
-		emit_fld(REG_FA1, REG_T0, 0); // Load 255.0 into FA1
-		emit_fdiv_d(REG_FA0, REG_FA0, REG_FA1); // Divide by 255.0
+		emit_fld(REG_FA1, REG_T0, 0);
+		emit_fdiv_d(REG_FA0, REG_FA0, REG_FA1);
 	}
 
-	emit_fcvt_r_d(REG_FA0, REG_FA0); // Narrow to real_t (no-op in double-precision builds)
+	emit_fcvt_r_d(REG_FA0, REG_FA0);
 	mark_label_use(label_cont, m_code.size());
-	emit_jal(REG_ZERO, 0); // Skip to end
+	emit_jal(REG_ZERO, 0);
 
-	// FLOAT case: Load the double (Variant::FLOAT is always 64-bit) and narrow to real_t
+	// FLOAT path: always 64-bit double, narrow to real_t. No normalization.
 	define_label(label_float);
-	emit_fld(REG_FA0, REG_SP, comp_offset + VARIANT_DATA_OFFSET); // Load double
-	// Note: We do NOT normalize float values - they're already in the correct range
-	emit_fcvt_r_d(REG_FA0, REG_FA0); // Narrow to real_t (no-op in double-precision builds)
+	emit_fld(REG_FA0, REG_SP, comp_offset + VARIANT_DATA_OFFSET);
+	emit_fcvt_r_d(REG_FA0, REG_FA0);
 	define_label(label_cont);
 
-	emit_fsr(REG_FA0, REG_SP, result_offset + store_offset); // Store real_t
+	emit_fsr(REG_FA0, REG_SP, result_offset + store_offset);
 }
 
 std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
@@ -84,319 +73,189 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_constant_pool_map.clear();
 	m_string_constants = &program.string_constants;
 
-	// Entry point: Initialize global variables, then STOP
-	// Store globals info early so we can reference it during init
 	m_global_count = program.globals.size();
 	m_globals = program.globals;
 
-	// Generate initialization code for globals at entry point
-	// We'll calculate the .globals virtual address when we define it later
-	// For now, emit placeholder that will be resolved during label resolution
 	for (size_t i = 0; i < program.globals.size(); i++) {
 		const auto& global = program.globals[i];
 
-		// NONE stays NIL; RUNTIME is written by the global init function below.
 		if (global.init_type == IRGlobalVar::InitType::NONE ||
 		    global.init_type == IRGlobalVar::InitType::RUNTIME) {
 			continue;
 		}
 
-		// Load address of global variable into t0
-		// Address = .globals + (i * sizeof(Variant)). The index is folded into
-		// the relocation so that programs with many globals still address the
-		// tail of the array correctly.
 		emit_address_of_global(REG_T0, i);
 
-		// Initialize based on type
 		if (global.init_type == IRGlobalVar::InitType::INT) {
-			// Write type field: m_type = 2 (INT)
 			emit_li(REG_T1, Variant::INT);
 			emit_sw(REG_T1, REG_T0, 0);
 
-			// Write value: v.i at offset 8
 			int64_t value = std::get<int64_t>(global.init_value);
 			emit_li(REG_T1, value);
 			emit_sd(REG_T1, REG_T0, 8);
 		} else if (global.init_type == IRGlobalVar::InitType::FLOAT) {
-			// Write type field: m_type = 3 (FLOAT)
 			emit_li(REG_T1, Variant::FLOAT);
 			emit_sw(REG_T1, REG_T0, 0);
 
-			// Write value: v.f (64-bit double) at offset 8
 			double value = std::get<double>(global.init_value);
 			int64_t bits;
 			memcpy(&bits, &value, sizeof(double));
 			emit_li(REG_T1, bits);
 			emit_sd(REG_T1, REG_T0, 8);
 		} else if (global.init_type == IRGlobalVar::InitType::BOOL) {
-			// Write type field: m_type = 1 (BOOL)
 			emit_li(REG_T1, Variant::BOOL);
 			emit_sw(REG_T1, REG_T0, 0);
 
-			// Write value: v.b at offset 8
 			bool value = std::get<bool>(global.init_value);
 			emit_li(REG_T1, value ? 1 : 0);
 			emit_sd(REG_T1, REG_T0, 8);
 		} else if (global.init_type == IRGlobalVar::InitType::STRING) {
-			// String initialization using VCREATE
 			std::string str_value = std::get<std::string>(global.init_value);
 			int str_len = static_cast<int>(str_value.length());
 
-			// Allocate stack space for: string data + struct { char*, size_t }
-			int str_space = ((str_len + 1) + 7) & ~7; // String + null terminator, aligned to 8 bytes
-			int struct_space = 16; // Two 8-byte fields
-			int total_space = str_space + struct_space;
-			total_space = (total_space + 15) & ~15; // Align to 16 bytes
+			int str_space = ((str_len + 1) + 7) & ~7;
+			int struct_space = 16; // { char*, size_t }
+			int total_space = (str_space + struct_space + 15) & ~15;
 
-			// Adjust stack pointer
 			emit_add_offset(REG_SP, REG_SP, -total_space);
 
-			// Store string data on stack
 			for (size_t j = 0; j < str_value.length(); j++) {
 				emit_li(REG_T2, static_cast<unsigned char>(str_value[j]));
 				emit_sb(REG_T2, REG_SP, j);
 			}
-			// Store null terminator
 			emit_sb(REG_ZERO, REG_SP, str_len);
 
-			// Create struct at sp + str_space
-			// struct.str = sp (pointer to string data)
-			emit_mv(REG_T2, REG_SP); // T2 = pointer to the string data at sp
-			emit_sd(REG_T2, REG_SP, str_space); // Store pointer
-
-			// struct.length = str_len
+			emit_mv(REG_T2, REG_SP);
+			emit_sd(REG_T2, REG_SP, str_space);
 			emit_li(REG_T2, str_len);
-			emit_sd(REG_T2, REG_SP, str_space + 8); // Store length
-
-			// Prepare data pointer in T1 for VCREATE
+			emit_sd(REG_T2, REG_SP, str_space + 8);
 			emit_add_offset(REG_T1, REG_SP, str_space);
 
-			// Calculate the offset to the global Variant after stack adjustment
-			// T0 still points to the global Variant (loaded with la before stack adjustment)
-			// We need the offset from current SP to pass to emit_vcreate_syscall
-			// Since T0 is an absolute address, we can't use it directly with emit_vcreate_syscall
-			// We need to use VCREATE directly here
-
-			// a0 = T0 (pointer to destination Variant - already calculated)
+			// t0 is an absolute address from emit_address_of_global; VCREATE inline
 			emit_mv(REG_A0, REG_T0);
-
-			// a1 = Variant::STRING
 			emit_li(REG_A1, Variant::STRING);
-
-			// a2 = method (1 for const char* + size_t)
-			emit_li(REG_A2, 1);
-
-			// a3 = pointer to struct (T1)
+			emit_li(REG_A2, 1); // method 1: { char*, size_t }
 			emit_mv(REG_A3, REG_T1);
-
-			// a7 = ECALL_VCREATE (517)
 			emit_li(REG_A7, ECALL_VCREATE);
 			emit_ecall();
 
-			// Restore stack pointer
 			emit_add_offset(REG_SP, REG_SP, total_space);
 		} else if (global.init_type == IRGlobalVar::InitType::EMPTY_ARRAY) {
-			// Empty Array initialization using VCREATE
-			// a0 = pointer to destination Variant (T0 already points to it)
 			emit_mv(REG_A0, REG_T0);
-
-			// a1 = Variant::ARRAY
 			emit_li(REG_A1, Variant::ARRAY);
-
-			// a2 = method (0 for empty)
 			emit_li(REG_A2, 0);
-
-			// a3 = nullptr (0)
 			emit_li(REG_A3, 0);
-
-			// a7 = ECALL_VCREATE (517)
 			emit_li(REG_A7, ECALL_VCREATE);
 			emit_ecall();
 		} else if (global.init_type == IRGlobalVar::InitType::EMPTY_DICT) {
-			// Empty Dictionary initialization using VCREATE
-			// a0 = pointer to destination Variant (T0 already points to it)
 			emit_mv(REG_A0, REG_T0);
-
-			// a1 = Variant::DICTIONARY
 			emit_li(REG_A1, Variant::DICTIONARY);
-
-			// a2 = method (0 for empty)
 			emit_li(REG_A2, 0);
-
-			// a3 = nullptr (0)
 			emit_li(REG_A3, 0);
-
-			// a7 = ECALL_VCREATE (517)
 			emit_li(REG_A7, ECALL_VCREATE);
 			emit_ecall();
 		} else if (global.init_type == IRGlobalVar::InitType::NULL_VAL) {
-			// Write type field: m_type = 0 (NIL)
 			emit_li(REG_T1, Variant::NIL);
 			emit_sw(REG_T1, REG_T0, 0);
 		} else {
-			// Unknown initialization type
 			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Global variable '" + global.name + "': Unknown initialization type.");
 		}
 
 	}
 
-	// Evaluate the initializers that are not compile-time constants. This runs
-	// before any property is registered, so an @export property is registered
-	// with the value it was declared with.
-	//
-	// The init function follows the normal calling convention and writes a
-	// return Variant through a0, so a0 has to point at real storage: the
-	// scratch slot allocated past the end of the .globals array.
+	// Runs before properties are registered, so @export gets its declared value.
+	// a0 must point at real storage: the scratch slot past .globals.
 	if (program.has_global_init) {
 		emit_address_of_global(REG_A0, m_global_count);
 		mark_label_use(GLOBAL_INIT_LABEL, m_code.size());
-		emit_jal(REG_RA, 0); // JAL ra, .init_globals
+		emit_jal(REG_RA, 0);
 	}
 
-	// Register @export properties, after every global holds its initial value.
 	for (size_t i = 0; i < program.globals.size(); i++) {
 		const auto& global = program.globals[i];
 		if (!global.is_property) {
 			continue;
 		}
 
-		// ECALL_SANDBOX_ADD (547)
-		// A0 = 0 (add property)
-		// A1 = name pointer
-		// A2 = name length
-		// A3 = Variant type
-		// A4 = 0
-		// A5 = 0
-		// A6 = Variant pointer
-
-		// Store the property name for later emission into the code section
 		const std::string name_label = ".LPROP" + std::to_string(i);
 		m_property_name_strings.push_back({global.name, name_label});
 
-		// A0 = 0 (add property)
 		emit_li(REG_A0, 0);
-
-		// A1 = pointer to variable name string
 		emit_la(REG_A1, name_label);
-
-		// A2 = name length
 		emit_li(REG_A2, static_cast<int64_t>(global.name.length()));
-
-		// A3 = Variant type. The type is derived once, in the code generator,
-		// where the initializer expression is still available; NIL means the
-		// property holds an unconstrained Variant.
+		// NIL = unconstrained Variant
 		const int32_t variant_type = global.value_type != IRInstruction::TypeHint_NONE
 			? global.value_type
 			: static_cast<int32_t>(Variant::NIL);
 		emit_li(REG_A3, variant_type);
-		emit_li(REG_A4, 0); // A4 = 0
-		emit_li(REG_A5, 0); // A5 = 0
-
-		// A6 = pointer to the global's Variant
+		emit_li(REG_A4, 0);
+		emit_li(REG_A5, 0);
 		emit_address_of_global(REG_A6, i);
-
-		// A7 = ECALL_SANDBOX_ADD (547)
 		emit_li(REG_A7, ECALL_SANDBOX_ADD);
-
-		// Make the syscall
 		emit_ecall();
 	}
 
-	// Emit STOP instruction after initialization
-	// STOP is encoded as: SYSTEM instruction (I-type) with imm[11:0] = 0x7ff
-	// SYSTEM opcode = 0x73, funct3 = 0, rs1 = 0, rd = 0, imm = 0x7ff
+	// STOP: SYSTEM with imm = 0x7ff
 	emit_i_type(0x73, 0, 0, 0, 0x7ff);
 
-	// Emit the global init function. It is deliberately not registered in
-	// m_functions: it is internal and must not appear in the ELF's public
-	// function table.
+	// Internal function, not registered in m_functions or the ELF symbol table.
 	if (program.has_global_init) {
 		m_labels[GLOBAL_INIT_LABEL] = m_code.size();
 		gen_function(program.global_init);
 	}
 
-	// Generate code for each function
 	for (const auto& func : program.functions) {
 		m_functions[func.name] = m_code.size();
-		// Also register function name as a label for CALL instructions
 		m_labels[func.name] = m_code.size();
 		gen_function(func);
 	}
 
-	// Rewrite any conditional branch that cannot reach its target. This has to
-	// happen while the buffer still holds nothing but instructions: it inserts
-	// instructions, and everything appended below is placed relative to the
-	// final code size.
+	// Must run before constant pool / data is appended: relaxation inserts instructions.
 	relax_branches();
 
-	// Define constant pool labels at the end of code
-	// Constants are appended after the code section
 	size_t const_pool_base = m_code.size();
 	for (size_t i = 0; i < m_constant_pool.size(); i++) {
 		std::string label = ".LC" + std::to_string(i);
 		m_labels[label] = const_pool_base + (i * 8);
 	}
 
-	// Append constant pool data to code
 	for (int64_t constant : m_constant_pool) {
 		for (int i = 0; i < 8; i++) {
 			m_code.push_back(static_cast<uint8_t>((constant >> (i * 8)) & 0xFF));
 		}
 	}
 
-	// Emit property name strings for @export globals
 	for (const auto& [str, label] : m_property_name_strings) {
-		// Align to 1-byte (strings are byte sequences)
 		m_labels[label] = m_code.size();
-
-		// Emit string bytes
 		for (char c : str) {
 			m_code.push_back(static_cast<uint8_t>(c));
 		}
-
-		// Null terminator
 		m_code.push_back(0);
 	}
 
-	// Calculate global data size (m_global_count and m_globals already set earlier).
-	// When there is a global init function, one extra Variant is allocated past
-	// the end as its return slot: it follows the normal calling convention and
-	// writes a return Variant through a0.
+	// +1 for the global init function's return slot when present.
 	const size_t global_slots = m_global_count + (program.has_global_init ? 1 : 0);
 	m_global_data_size = global_slots * variant_size();
 
-	// Define .globals label and allocate global data area
-	// This will be placed in a separate R+W PT_LOAD segment by the ELF builder
+	// .globals goes in a separate R+W PT_LOAD segment.
 	if (m_global_count > 0) {
-		// Align to 8-byte boundary for proper Variant alignment
 		while (m_code.size() % 8 != 0) {
 			m_code.push_back(0);
 		}
 
-		// Calculate the virtual address for the .data segment
-		// The .data segment will be loaded at: BASE_ADDR + text_size, aligned to 4KB
-		size_t text_size = m_code.size();  // Current code size (before globals)
+		// .data vaddr = BASE_ADDR + text_size, page-aligned.
+		// Label stores vaddr - BASE_ADDR because resolve_labels() adds BASE_ADDR.
+		size_t text_size = m_code.size();
 		size_t globals_vaddr = 0x10000 + text_size;
-		globals_vaddr = (globals_vaddr + 0xFFF) & ~0xFFF;  // Align to 4KB page
-
-		// For label resolution, we need to store this as if it were a code offset
-		// Since BASE_ADDR (0x10000) is added during resolution, we store: vaddr - BASE_ADDR
+		globals_vaddr = (globals_vaddr + 0xFFF) & ~0xFFF;
 		m_labels[GLOBALS_LABEL] = globals_vaddr - 0x10000;
 
-		// Allocate global variables as empty Variants: type = NIL, payload =
-		// INT32_MIN.
-		//
-		// INT32_MIN rather than 0 is what makes the payload "empty": for a
-		// complex type the payload is a scoped-variant index, 0 is a perfectly
-		// valid one, and VASSIGN only takes its "destination is empty, adopt the
-		// source" path when the destination index is INT32_MIN. Leaving it 0
-		// makes the first assignment into an uninitialized complex global assign
-		// through whatever scoped variant happens to sit at index 0.
+		// Payload = INT32_MIN, not 0: VASSIGN's "adopt source" path requires
+		// INT32_MIN as the sentinel. 0 is a valid scoped-variant index.
 		for (size_t i = 0; i < global_slots; i++) {
 			for (int j = 0; j < variant_size(); j++) {
-				m_code.push_back(0); // type = NIL, and zero padding
+				m_code.push_back(0);
 			}
-			// Overwrite the payload with a sign-extended INT32_MIN.
 			const int64_t empty_index = static_cast<int64_t>(INT32_MIN);
 			const size_t payload = m_code.size() - variant_size() + VARIANT_DATA_OFFSET;
 			for (int j = 0; j < 8; j++) {
@@ -405,29 +264,18 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		}
 	}
 
-	// Resolve all label references
 	resolve_labels();
 
 	return m_code;
 }
 
-// The frame is decided before a single instruction is emitted: what the
-// prologue has to save, and where every virtual register's Variant lives.
-// Both are properties of the instructions about to be generated, so they are
-// read off them here rather than off the declaration.
+// Sizes the frame from the instructions, not the declaration.
 void RISCVCodeGen::plan_frame(const IRFunction& func) {
 	m_fn.num_params = func.parameters.size();
-
-	// Initialize register allocator
 	m_allocator.init(func);
-
 	m_fn.in_function = true;
 
-	// What has to be saved is a property of the instructions about to be
-	// generated, so read it off them before the prologue is emitted. A leaf
-	// function -- and every plain getter and setter is one -- keeps ra, and a
-	// function that makes no system call keeps the caller's return-value
-	// pointer in a0 for as long as it needs it.
+	// Leaf functions keep ra; functions with no syscall keep the return pointer in a0.
 	for (const auto& instr : func.instructions) {
 		if (opcode_clobbers_abi_registers(instr.opcode)) {
 			m_fn.spills_return_pointer = true;
@@ -441,31 +289,18 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 	const bool copies_a_parameter =
 		std::find(m_fn.live_params.begin(), m_fn.live_params.end(), true) != m_fn.live_params.end();
 
-	// A function that saves nothing, copies no parameter in and writes every
-	// value it produces through a0 never addresses anything off sp. Its frame is
-	// two instructions that move the stack pointer down and back over memory
-	// nothing touches, and every plain getter has exactly this shape.
-	//
-	// The question is what the prologue writes to the frame, not how the
-	// function was declared: a callback that ignores the arguments Godot passes
-	// it comes out the same shape as one that takes none.
-	//
-	// get_variant_stack_offset() and get_scratch_variant_offset() refuse to
-	// answer once this is decided, so an expansion that turns out to want a
-	// slot after all fails the compile rather than quietly addressing the
-	// caller's frame through an sp that was never moved.
+	// A function that saves nothing, copies no parameter and writes everything
+	// through a0 needs no frame. Determined by the prologue's writes, not the
+	// declaration. get_variant_stack_offset() refuses after this, so a missing
+	// frame is a compile error rather than a silent caller-frame corruption.
 	m_fn.omits_frame = !m_fn.saves_return_address && !m_fn.spills_return_pointer &&
 		!copies_a_parameter;
 	for (size_t i = 0; m_fn.omits_frame && i < func.instructions.size(); i++) {
 		switch (func.instructions[i].opcode) {
 			case IROpcode::LABEL:
 			case IROpcode::JUMP:
-				break; // Control flow only; touches no memory.
+				break;
 			case IROpcode::RETURN:
-				// RETURN copies the return register's slot into the caller's
-				// Variant unless the instruction before it already wrote
-				// through a0 -- or unless the function has no registers at all,
-				// in which case there is no slot to copy.
 				m_fn.omits_frame = func.max_registers == 0 ||
 					(i > 0 && m_fn.forward_to_return[i - 1]);
 				break;
@@ -473,8 +308,6 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 			case IROpcode::LOAD_FLOAT_IMM:
 			case IROpcode::LOAD_BOOL:
 			case IROpcode::LOAD_GLOBAL:
-				// These build their result through one base register, which is
-				// a0 when the result is being returned and a slot otherwise.
 				m_fn.omits_frame = m_fn.forward_to_return[i];
 				break;
 			default:
@@ -483,25 +316,13 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 		}
 	}
 
-	// Calculate stack frame size
-	// Need space for: saved registers + space for Variants
-	const int saved_reg_space = SAVED_REG_SPACE; // Save ra and a0 (return pointer)
+	const int saved_reg_space = SAVED_REG_SPACE;
 
-	// Pre-allocate stack offsets for ALL virtual registers in order
-	// Assign offsets deterministically based on virtual register number,
-	// not based on the order instructions are visited.
-	// Otherwise, optimizations that reorder or eliminate instructions will
-	// cause different virtual registers to get different offsets, breaking the code.
+	// Offsets are by vreg number, not visit order, so optimizer reordering is safe.
 	int max_variants = func.max_registers;
-	// Some instructions have to materialize a Variant that no virtual register owns:
-	// an immediate operand, or the result of a comparison the following branch reads.
-	// Those live only for the length of one instruction's expansion, so a small shared
-	// scratch area is enough -- but it has to be part of the frame. Allocating it after
-	// the prologue was emitted would place it past the end of the frame, where the
-	// stores land in the caller's frame instead.
+	// Scratch slots for temporaries (immediate operands, comparison results).
 	int variant_space = (max_variants + SCRATCH_VARIANT_SLOTS) * variant_size();
 
-	// Pre-assign all virtual register offsets
 	for (int vreg = 0; vreg < max_variants; vreg++) {
 		int offset = saved_reg_space + (vreg * variant_size());
 		m_fn.variant_offsets[vreg] = offset;
@@ -511,37 +332,25 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 
 	m_fn.stack_frame_size = m_fn.omits_frame ? 0 : saved_reg_space + variant_space;
 
-	// Align to 16 bytes (RISC-V ABI requirement)
-	m_fn.stack_frame_size = (m_fn.stack_frame_size + 15) & ~15;
+	m_fn.stack_frame_size = (m_fn.stack_frame_size + 15) & ~15; // RISC-V ABI: 16-byte aligned
 
 }
 
-// Moves the stack pointer down over the frame plan_frame() sized, saves what
-// the body will clobber, and copies in the parameter Variants that something
-// reads before anything overwrites them.
 void RISCVCodeGen::emit_prologue(const IRFunction& func) {
-	// Function prologue - allocate stack frame
-	// addi sp, sp, -frame_size
 	if (m_fn.stack_frame_size > 0) {
 		emit_add_offset(REG_SP, REG_SP, -m_fn.stack_frame_size);
 	}
 
-	// Save return address: sd ra, 0(sp)
 	if (m_fn.saves_return_address) {
 		emit_sd(REG_RA, REG_SP, SAVED_RA_OFFSET);
 	}
 
-	// Save a0 (return Variant pointer): sd a0, 8(sp)
 	if (m_fn.spills_return_pointer) {
 		emit_sd(REG_A0, REG_SP, SAVED_A0_OFFSET);
 	}
 
-	// Copy parameter Variants from argument registers to stack
-	// Parameters come in a1-a7 as POINTERS to Variants
+	// Parameters arrive in a1-a7 as pointers to Variants.
 	if (m_fn.num_params > IRFunction::MAX_PARAMETERS) {
-		// The frontend rejects this, so reaching it means the IR was built
-		// some other way. Dropping the extra parameters silently would leave
-		// their slots holding whatever the frame did.
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 			"Function '" + func.name + "' has " + std::to_string(m_fn.num_params) +
 			" parameters, but only " + std::to_string(IRFunction::MAX_PARAMETERS) +
@@ -549,26 +358,17 @@ void RISCVCodeGen::emit_prologue(const IRFunction& func) {
 	}
 	for (size_t i = 0; i < m_fn.num_params; i++) {
 		if (!m_fn.live_params[i]) {
-			// Dead on entry: nothing reads the slot before something else
-			// writes it, so the copy would be six memory accesses into a
-			// Variant nobody looks at. The slot stays reserved -- a later
-			// write to the parameter's register still needs somewhere to go.
-			continue;
+			continue; // Dead on entry; slot stays reserved for later writes.
 		}
-		int param_vreg = static_cast<int>(i); // Parameters map to virtual registers 0-6
+		int param_vreg = static_cast<int>(i);
 		int dst_offset = get_variant_stack_offset(param_vreg);
 		uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
-
-		// Copy the whole Variant from the pointer in arg_reg to the stack
 		emit_variant_move(REG_SP, dst_offset, arg_reg, 0, REG_T0);
 	}
 }
 
-// Where this instruction's result goes: normally the destination register's
-// slot in the frame, but for the last write before a RETURN, straight through
-// the caller's pointer in a0 -- which is where the RETURN would have copied it
-// from the slot anyway. Asking is what commits to the forwarding, so only the
-// expansion that is about to do the writing may ask, and only once.
+// Destination for a result: the vreg's frame slot, or *a0 when forwarding to RETURN.
+// Asking commits to forwarding; only the expansion about to write may ask.
 std::pair<uint8_t, int> RISCVCodeGen::value_destination(int vreg) {
 	if (m_fn.forward_return) {
 		emit_load_return_pointer();
@@ -578,15 +378,7 @@ std::pair<uint8_t, int> RISCVCodeGen::value_destination(int vreg) {
 	return { REG_SP, get_variant_stack_offset(vreg) };
 }
 
-// One IR instruction to RISC-V. Everything it needs about the function it
-// belongs to is in m_fn, which plan_frame() filled in.
-// CALL_SYSCALL is a raw syscall the frontend asked for by number, and each
-// number has its own calling convention: which operands it takes, which
-// registers carry them, and what comes back in a0.
-// ECALL_GET_OBJ: the class name goes on the stack as a C string, and the
-// object handle comes back in a0.
 void RISCVCodeGen::gen_syscall_get_obj(const IRInstruction& instr, int result_vreg) {
-	// ECALL_GET_OBJ: result_reg, 504, string_index, string_length
 	if (instr.operands.size() != 4) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_GET_OBJ requires 4 operands");
 	}
@@ -594,7 +386,6 @@ void RISCVCodeGen::gen_syscall_get_obj(const IRInstruction& instr, int result_vr
 	int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
 	int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
 
-	// Get the string constant
 	if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
 	}
@@ -604,71 +395,45 @@ void RISCVCodeGen::gen_syscall_get_obj(const IRInstruction& instr, int result_vr
 
 	spill_around_syscall({REG_A0, REG_A1});
 
-	// Allocate stack space for the string
-	int str_space = ((string_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
-
+	int str_space = ((string_len + 1) + 7) & ~7;
 	emit_stack_adjust(-str_space);
 
-	// Store string on stack
 	for (size_t i = 0; i < str.length(); i++) {
 		emit_li(REG_T0, static_cast<unsigned char>(str[i]));
-		emit_sb(REG_T0, REG_SP, i); // SB (store byte)
+		emit_sb(REG_T0, REG_SP, i);
 	}
-	// Store null terminator
-	emit_sb(REG_ZERO, REG_SP, string_len); // SB
+	emit_sb(REG_ZERO, REG_SP, string_len);
 
-	// a0 = pointer to class name string (sp) - FIRST ARGUMENT
 	emit_mv(REG_A0, REG_SP);
-
-	// a1 = string length - SECOND ARGUMENT
 	emit_li(REG_A1, string_len);
-
-	// a7 = syscall number (504 for ECALL_GET_OBJ)
 	emit_li(REG_A7, ECALL_GET_OBJ);
 	emit_ecall();
 
-	// After ecall, a0 contains the object reference (32-bit int)
-	// First, restore stack pointer (before storing result)
 	emit_stack_adjust(str_space);
-
-	// Store syscall result
-	emit_syscall_result(result_vreg, REG_A0, result_offset, 24); // GDOBJECT type = 24
+	emit_syscall_result(result_vreg, REG_A0, result_offset, 24); // OBJECT
 }
-// ECALL_ARRAY_SIZE: the Array's scoped index in a0, the count back in a0.
+
 void RISCVCodeGen::gen_syscall_array_size(const IRInstruction& instr, int result_vreg) {
-	// ECALL_ARRAY_SIZE: result_reg, 523, array_vreg
-	// Takes: a0 = array variant index (unsigned)
-	// Returns: a0 = array size (int)
 	if (instr.operands.size() != 3) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_ARRAY_SIZE requires 3 operands");
 	}
 
 	int array_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
 
-	// Ensure result variant has a stack slot BEFORE handling clobbering
-	// This prevents the allocator from moving it during syscall setup
+	// Slot allocation before spill_around_syscall to prevent allocator drift.
 	int result_offset = get_variant_stack_offset(result_vreg);
 	int array_offset = get_variant_stack_offset(array_vreg);
 
 	spill_around_syscall({REG_A0});
 
-	// Load the array variant index from offset 8 of the array Variant
-	emit_lw(REG_A0, REG_SP, array_offset + 8); // Load 32-bit variant index
-
-	// a7 = syscall number (523 for ECALL_ARRAY_SIZE)
+	emit_lw(REG_A0, REG_SP, array_offset + 8);
 	emit_li(REG_A7, ECALL_ARRAY_SIZE);
 	emit_ecall();
 
-	// After ecall, a0 contains the size (64-bit int)
-	// Store syscall result
-	emit_syscall_result(result_vreg, REG_A0, result_offset, 2); // INT type = 2
+	emit_syscall_result(result_vreg, REG_A0, result_offset, 2); // INT
 }
-// ECALL_ARRAY_AT: Array index in a0, element position in a1, and the host
-// writes the element through the result pointer in a2.
+
 void RISCVCodeGen::gen_syscall_array_at(const IRInstruction& instr, int result_vreg) {
-	// ECALL_ARRAY_AT: result_reg, 522, array_vreg, index_vreg
-	// Takes: a0 = array variant index (unsigned), a1 = index (int), a2 = result GuestVariant pointer
-	// Returns: result variant is filled with the element
 	if (instr.operands.size() != 4) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_ARRAY_AT requires 4 operands");
 	}
@@ -676,43 +441,22 @@ void RISCVCodeGen::gen_syscall_array_at(const IRInstruction& instr, int result_v
 	int array_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
 	int index_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
 
-	// Ensure all variants have stack slots BEFORE handling clobbering
-	// This prevents the allocator from moving them during syscall setup
 	int result_offset = get_variant_stack_offset(result_vreg);
 	int array_offset = get_variant_stack_offset(array_vreg);
 	int index_offset = get_variant_stack_offset(index_vreg);
 
 	spill_around_syscall({REG_A0, REG_A1, REG_A2});
 
-	// a0 = array variant index (load from offset 8 of array Variant)
-	emit_lw(REG_A0, REG_SP, array_offset + 8); // Load 32-bit variant index
-
-	// a1 = index (load from index_vreg)
-	// The index is stored as a Variant, we need to extract the integer value
-	// NOTE: Use emit_ld (64-bit) because integer Variants store 64-bit values, not 32-bit!
-	emit_ld(REG_A1, REG_SP, index_offset + 8); // Load 64-bit integer from offset 8
-
-	// a2 = pointer to result GuestVariant
-	emit_load_stack_offset(REG_A2, result_offset); // addi a2, sp, result_offset
-
-	// a7 = syscall number (522 for ECALL_ARRAY_AT)
+	emit_lw(REG_A0, REG_SP, array_offset + 8);
+	emit_ld(REG_A1, REG_SP, index_offset + 8); // int64, not int32
+	emit_load_stack_offset(REG_A2, result_offset);
 	emit_li(REG_A7, ECALL_ARRAY_AT);
 	emit_ecall();
 }
-// ECALL_DICTIONARY_OPS: the Dictionary_Op in a0 and the Dictionary in a1.
-// The keyed operations pass the key in a2 and take the result pointer in a3;
-// the keyless ones (GET_KEYS, GET_VALUES) have no key and take it in a2.
+
+// Keyed ops pass key in a2, result in a3; keyless (GET_KEYS, GET_VALUES) take result in a2.
+// HAS and GET_SIZE return in a0 instead of through a pointer.
 void RISCVCodeGen::gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg) {
-	// ECALL_DICTIONARY_OPS: result_reg, 524, op, dict_vreg [, key_vreg]
-	// a0 = Dictionary_Op, a1 = dictionary variant index,
-	// a2 = key GuestVariant pointer, a3 = result pointer
-	//
-	// The host reads the arguments in that order with or without a
-	// key, so a keyless operation puts its result in a2, the slot
-	// the key would have used.
-	//
-	// HAS (bool) and GET_SIZE (count) answer through the return
-	// register instead of a pointer, as ECALL_ARRAY_SIZE does.
 	if (instr.operands.size() != 4 && instr.operands.size() != 5) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_DICTIONARY_OPS requires 4 or 5 operands");
 	}
@@ -738,14 +482,12 @@ void RISCVCodeGen::gen_syscall_dictionary_ops(const IRInstruction& instr, int re
 	spill_around_syscall(clobbered_regs);
 
 	emit_li(REG_A0, dict_op);
-	// The scoped index the host knows the Dictionary by is at
-	// offset 8 of the Variant, as for an Array.
-	emit_lw(REG_A1, REG_SP, dict_offset + 8);
+	emit_lw(REG_A1, REG_SP, dict_offset + 8); // scoped index
 	if (has_key) {
-		emit_load_stack_offset(REG_A2, key_offset);    // addi a2, sp, key_offset
-		emit_load_stack_offset(REG_A3, result_offset); // addi a3, sp, result_offset
+		emit_load_stack_offset(REG_A2, key_offset);
+		emit_load_stack_offset(REG_A3, result_offset);
 	} else {
-		emit_load_stack_offset(REG_A2, result_offset); // addi a2, sp, result_offset
+		emit_load_stack_offset(REG_A2, result_offset);
 	}
 
 	emit_li(REG_A7, ECALL_DICTIONARY_OPS);
@@ -756,12 +498,9 @@ void RISCVCodeGen::gen_syscall_dictionary_ops(const IRInstruction& instr, int re
 			result_offset, dict_op == DICT_OP_HAS ? Variant::BOOL : Variant::INT);
 	}
 }
-// ECALL_GET_NODE: a base node in a0 and a path string in a1/a2. With no path
-// argument the path is "." -- the node the script is attached to.
+
+// No path argument defaults to ".".
 void RISCVCodeGen::gen_syscall_get_node(const IRInstruction& instr, int result_vreg) {
-	// ECALL_GET_NODE: result_reg, 507, addr, [path_vreg]
-	// Takes: a0 = base node address (0 for owner), a1 = path string pointer, a2 = path length
-	// Returns: a0 = node object reference
 	if (instr.operands.size() < 3) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_GET_NODE requires at least 3 operands");
 	}
@@ -769,72 +508,39 @@ void RISCVCodeGen::gen_syscall_get_node(const IRInstruction& instr, int result_v
 	int base_addr = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
 	bool has_path = instr.operands.size() >= 4;
 
-	// Ensure result variant has a stack slot BEFORE handling clobbering
 	int result_offset = get_variant_stack_offset(result_vreg);
-
 	spill_around_syscall({REG_A0, REG_A1, REG_A2});
 
 	if (has_path) {
-		// get_node(path) - load path from variant register
 		int path_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
 		int path_offset = get_variant_stack_offset(path_vreg);
 
-		// Load the String variant from path_vreg
-		// String variant structure: type(4) + padding(4) + data(16)
-		// For strings, we need to extract the pointer and length
-
-		// a0 = base node address (0 for owner)
 		emit_li(REG_A0, base_addr);
-
-		// Load string pointer from offset 8 of the String variant
-		emit_ld(REG_A1, REG_SP, path_offset + 8); // Load 64-bit pointer
-
-		// Load string length from offset 16 (assuming it's stored there)
-		// For now, we'll use a fixed approach - this may need adjustment
-		// String length might be at offset 16 or we may need to query it
-		emit_ld(REG_A2, REG_SP, path_offset + 16); // Load 64-bit length
+		emit_ld(REG_A1, REG_SP, path_offset + 8);
+		emit_ld(REG_A2, REG_SP, path_offset + 16);
 	} else {
-		// get_node() - no path argument, get the current node using "."
-		// Allocate space for the "." string (2 bytes: '.' + null terminator)
-		int dot_str_space = 8; // Align to 8 bytes
+		int dot_str_space = 8;
 		emit_stack_adjust(-dot_str_space);
 
-		// Store "." string on stack
 		emit_li(REG_T0, static_cast<uint8_t>('.'));
-		emit_sb(REG_T0, REG_SP, 0); // Store '.'
-		emit_sb(REG_ZERO, REG_SP, 1); // Store null terminator
-
-		// a0 = base node address (0 for owner)
+		emit_sb(REG_T0, REG_SP, 0);
+		emit_sb(REG_ZERO, REG_SP, 1);
 		emit_li(REG_A0, base_addr);
-
-		// a1 = pointer to "." string
 		emit_mv(REG_A1, REG_SP);
-
-		// a2 = string length (1)
 		emit_li(REG_A2, 1);
 	}
 
-	// a7 = syscall number (507 for ECALL_GET_NODE)
 	emit_li(REG_A7, ECALL_GET_NODE);
 	emit_ecall();
 
-	// After ecall, a0 contains the node object reference
-	// Restore stack if we allocated space for the "."
 	if (!has_path) {
-		emit_stack_adjust(8); // Restore the stack space for "."
+		emit_stack_adjust(8);
 	}
 
-	// Store syscall result
-	emit_syscall_result(result_vreg, REG_A0, result_offset, 24); // OBJECT type = 24
+	emit_syscall_result(result_vreg, REG_A0, result_offset, 24); // OBJECT
 }
 
 void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
-	// CALL_SYSCALL format: result_reg, syscall_number, arg1, arg2, ...
-	// Different syscalls have different calling conventions:
-	// ECALL_GET_OBJ (504): result_reg, 504, string_index, string_length
-	// ECALL_ARRAY_SIZE (523): result_reg, 523, array_vreg
-	// ECALL_ARRAY_AT (522): result_reg, 522, array_vreg, index_vreg
-
 	if (instr.operands.size() < 2) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL_SYSCALL requires at least 2 operands (result_reg, syscall_num)");
 	}
@@ -842,7 +548,6 @@ void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
 	int result_vreg = std::get<int>(instr.operands[0].value);
 	int syscall_num = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
 
-	// Handle different syscalls based on their calling conventions
 	if (syscall_num == ECALL_GET_OBJ) {
 		gen_syscall_get_obj(instr, result_vreg);
 	} else if (syscall_num == ECALL_ARRAY_SIZE) {
@@ -858,11 +563,8 @@ void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
 	}
 }
 
-// A method call on a Variant, through ECALL_VCALL: the arguments go into a
-// contiguous array on the stack, the method name after it, and the host writes
-// the result through the pointer in a5.
+// ECALL_VCALL: arguments as contiguous array on stack, method name after, result through a5.
 void RISCVCodeGen::gen_vcall(const IRInstruction& instr) {
-	// VCALL format: result_reg, obj_reg, method_name, arg_count, arg1_reg, arg2_reg, ...
 	if (instr.operands.size() < 4) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VCALL requires at least 4 operands");
 	}
@@ -1145,23 +847,13 @@ void RISCVCodeGen::gen_store_global(const IRInstruction& instr) {
 		emit_ecall();
 
 		// VASSIGN returns the new index in A0
-		// Store it back to the global's v.i field (offset 8)
 		emit_sd(REG_A0, REG_T0, 8);
 	} else {
-		// Simple type: copy the whole Variant
 		emit_variant_move(REG_T0, 0, REG_T1, 0, REG_T2);
 	}
 }
 
 void RISCVCodeGen::gen_vget(const IRInstruction& instr) {
-	// VGET format: result_reg, obj_reg, string_idx, string_len
-	// Uses ECALL_OBJ_PROP_GET (545)
-	// Calling convention:
-	//   A0 = object address (v.i from object Variant)
-	//   A1 = property name pointer
-	//   A2 = property name length
-	//   A3 = pointer to result Variant
-
 	if (instr.operands.size() != 4) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VGET requires 4 operands (result_reg, obj_reg, string_idx, string_len)");
 	}
@@ -1171,7 +863,6 @@ void RISCVCodeGen::gen_vget(const IRInstruction& instr) {
 	int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
 	int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
 
-	// Get the string constant
 	if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
 	}
@@ -1182,43 +873,28 @@ void RISCVCodeGen::gen_vget(const IRInstruction& instr) {
 
 	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 
-	// A0 = object address (load from Variant's v.i field at offset 8)
-	// IMPORTANT: Load this BEFORE adjusting the stack, so obj_offset is correct
+	// Load object address before SP adjustment
 	emit_ld(REG_A0, REG_SP, obj_offset + 8);
 
-	// Allocate stack space for the string
-	int str_space = ((string_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
-
+	int str_space = ((string_len + 1) + 7) & ~7;
 	emit_stack_adjust(-str_space);
 
-	// Store string on stack
 	for (size_t i = 0; i < str.length(); i++) {
 		emit_li(REG_T0, static_cast<unsigned char>(str[i]));
-		emit_sb(REG_T0, REG_SP, i); // SB (store byte)
+		emit_sb(REG_T0, REG_SP, i);
 	}
-	// Store null terminator
-	emit_sb(REG_ZERO, REG_SP, string_len); // SB
+	emit_sb(REG_ZERO, REG_SP, string_len);
 
-	// A1 = pointer to property name string (sp)
 	emit_mv(REG_A1, REG_SP);
-
-	// A2 = string length
 	emit_li(REG_A2, string_len);
-
-	// A3 = pointer to result Variant
-	// IMPORTANT: Account for str_space since SP was adjusted
 	emit_load_stack_offset(REG_A3, result_offset + str_space);
-
-	// A7 = syscall number (545 for ECALL_OBJ_PROP_GET)
 	emit_li(REG_A7, ECALL_OBJ_PROP_GET);
 	emit_ecall();
 
-	// Restore stack pointer
 	emit_stack_adjust(str_space);
 }
 
 void RISCVCodeGen::gen_vget_inline(const IRInstruction& instr) {
-	// Format: VGET_INLINE result_reg, obj_reg, member_name, obj_type_hint
 	if (instr.operands.size() != 4) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VGET_INLINE requires 4 operands");
 	}
@@ -1231,64 +907,38 @@ void RISCVCodeGen::gen_vget_inline(const IRInstruction& instr) {
 	int result_offset = get_variant_stack_offset(result_vreg);
 	int obj_offset = get_variant_stack_offset(obj_vreg);
 
-	// Determine the offset within the object Variant. Float vectors store
-	// real_t components (4 or 8 bytes), integer vectors always int32_t.
+	// Float vectors: real_t components; integer vectors: int32_t
 	bool is_int_type = false;
 
-	// Map member name to array index
 	int component_idx = 0;
 	if (member == "x" || member == "r") component_idx = 0;
 	else if (member == "y" || member == "g") component_idx = 1;
 	else if (member == "z" || member == "b") component_idx = 2;
 	else if (member == "w" || member == "a") component_idx = 3;
 
-	// Check if it's an integer vector type using helper function
 	IRInstruction::TypeHint hint = static_cast<IRInstruction::TypeHint>(obj_type_hint);
 	is_int_type = TypeHintUtils::is_int_vector(hint);
 
 	int member_offset = is_int_type ? int_offset(component_idx) : real_offset(component_idx);
 
 	if (is_int_type) {
-		// Load 32-bit integer from object
 		emit_lw(REG_T0, REG_SP, obj_offset + member_offset);
-
-		// Create result Variant with INT type (2)
 		emit_li(REG_T1, 2);
-		emit_sw(REG_T1, REG_SP, result_offset); // m_type = INT
-
-		// Sign-extend to 64-bit and store in v.i
+		emit_sw(REG_T1, REG_SP, result_offset);
 		emit_sext_w(REG_T0, REG_T0);
 		emit_sd(REG_T0, REG_SP, result_offset + VARIANT_DATA_OFFSET);
 	} else {
-		// For real_t components from Vector types: Variant::FLOAT is always a
-		// 64-bit double, so widen unless real_t already is one.
-
-		// Load the real_t component into an FP register
+		// Variant::FLOAT is always double; widen real_t if needed
 		emit_flr(REG_FA0, REG_SP, obj_offset + member_offset);
-
-		// Widen real_t to double
 		emit_fcvt_d_r(REG_FA0, REG_FA0);
-
-		// Set result Variant type to FLOAT
 		emit_li(REG_T0, Variant::FLOAT);
-		emit_sw(REG_T0, REG_SP, result_offset); // m_type = FLOAT
-
-		// Store 8-byte double to v.f field
+		emit_sw(REG_T0, REG_SP, result_offset);
 		emit_fsd(REG_FA0, REG_SP, result_offset + VARIANT_DATA_OFFSET);
 	}
 }
 
 void RISCVCodeGen::gen_switch(const IRInstruction& instr) {
-	// SWITCH subject, base, count, label[0] .. label[count-1]
-	//
-	// Dense integer switch, dispatched through a table of `jal`
-	// instructions emitted inline here. The entries are ordinary
-	// jumps, so label resolution and branch relaxation treat them
-	// like any other jump and no .rodata relocation is needed. The
-	// entry for `v` is at table + (v - base) * 4.
-	//
-	// Falling through is the "none of the above" path, where the
-	// code generator puts the rest of the match.
+	// Dense integer switch via inline jal table; fall-through = no match
 	const int subject_vreg = std::get<int>(instr.operands[0].value);
 	const int64_t base = std::get<int64_t>(instr.operands[1].value);
 	const int64_t count = std::get<int64_t>(instr.operands[2].value);
@@ -1297,9 +947,7 @@ void RISCVCodeGen::gen_switch(const IRInstruction& instr) {
 	const std::string past_table = ".switch" + std::to_string(m_switch_tables) + ".out";
 	m_switch_tables++;
 
-	// Only an integer indexes the table; any other type, including
-	// a float (`match 3.0` must still reach a `3:` arm), falls
-	// through. A type hint of INT skips the test entirely.
+	// Non-INT types (incl. float) fall through; INT hint skips the test
 	if (instr.type_hint != Variant::INT) {
 		emit_load_variant_type(REG_T0, REG_SP, subject_offset);
 		emit_li(REG_T1, Variant::INT);
@@ -1317,20 +965,15 @@ void RISCVCodeGen::gen_switch(const IRInstruction& instr) {
 		}
 	}
 
-	// One unsigned compare covers both ends: a subject below `base`
-	// wraps to a huge unsigned value and fails the same test.
+	// Unsigned compare covers both ends (below base wraps high)
 	emit_li(REG_T1, count);
 	mark_label_use(past_table, m_code.size());
 	emit_bgeu(REG_T0, REG_T1, 0);
 
-	// The table is three instructions past the AUIPC, so its address
-	// is this PC + 12, with no relocation: `auipc rd, 0` gives the
-	// current PC and the 12 rides in the jump's immediate. Loading
-	// the address instead would cost an ADDI and put a label use
-	// inside a sequence branch relaxation may move.
-	emit_u_type(0x17, REG_T1, 0);         // auipc t1, 0 -- t1 = here
-	emit_sh2add(REG_T0, REG_T0, REG_T1);  // t0 = here + index * 4
-	emit_jalr(REG_ZERO, REG_T0, 12);      // -> here + 12 + index * 4
+	// Table address = PC + 12; no relocation needed
+	emit_u_type(0x17, REG_T1, 0);         // auipc t1, 0
+	emit_sh2add(REG_T0, REG_T0, REG_T1);  // t1 + index*4
+	emit_jalr(REG_ZERO, REG_T0, 12);      // jump into table
 
 	for (int64_t entry = 0; entry < count; entry++) {
 		mark_label_use(std::get<std::string>(instr.operands[3 + entry].value), m_code.size());
@@ -1340,10 +983,7 @@ void RISCVCodeGen::gen_switch(const IRInstruction& instr) {
 }
 
 void RISCVCodeGen::gen_print(const IRInstruction& instr) {
-	// Format: PRINT result_reg, arg_count, [arg_reg1, arg_reg2, ...]
-	// sys_print(const Variant *array, size_t len): the host walks a
-	// contiguous array, so the arguments are copied out of their
-	// stack slots into one run below sp.
+	// Arguments copied into contiguous array below sp for sys_print
 	if (instr.operands.size() < 2) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "PRINT requires at least 2 operands");
 	}
@@ -1360,27 +1000,21 @@ void RISCVCodeGen::gen_print(const IRInstruction& instr) {
 	spill_around_syscall({REG_A0, REG_A1});
 
 	if (arg_count == 0) {
-		// print() with no arguments still prints a blank line, and
-		// the host reads no memory when len is 0.
 		emit_mv(REG_A0, REG_ZERO);
 		emit_li(REG_A1, 0);
 		emit_li(REG_A7, ECALL_PRINT);
 		emit_ecall();
 	} else {
 		int args_space = arg_count * variant_size();
-		args_space = (args_space + 15) & ~15; // Align to 16 bytes
-
+		args_space = (args_space + 15) & ~15;
 		emit_add_offset(REG_SP, REG_SP, -args_space);
 
-		// Each argument lives at its own offset in the frame that sp
-		// just moved away from, so read it back at +args_space.
 		for (int i = 0; i < arg_count; i++) {
 			int arg_vreg = std::get<int>(instr.operands[2 + i].value);
 			int arg_src_offset = get_variant_stack_offset(arg_vreg) + args_space;
 			emit_variant_move(REG_SP, i * variant_size(), REG_SP, arg_src_offset, REG_T0);
 		}
 
-		// a0 = the argument array, a1 = its length
 		emit_mv(REG_A0, REG_SP);
 		emit_li(REG_A1, arg_count);
 		emit_li(REG_A7, ECALL_PRINT);
@@ -1389,17 +1023,13 @@ void RISCVCodeGen::gen_print(const IRInstruction& instr) {
 		emit_add_offset(REG_SP, REG_SP, args_space);
 	}
 
-	// print() evaluates to null. The host writes nothing back, so
-	// the destination is set here.
+	// print() returns nil
 	emit_li(REG_T0, Variant::NIL);
 	emit_store_variant_type(REG_T0, REG_SP, result_offset);
 }
 
-// The arithmetic and bitwise operators. Two Variants in, one out: a native
-// sequence when the types are known to allow it, and the VEVAL syscall --
-// which is what `**` and `in` always take -- otherwise.
+// Native path when typed, VEVAL otherwise. POW and IN always use VEVAL.
 void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
-	// Check that all operands are valid before processing
 	if (instr.operands.size() < 3 ||
 		instr.operands[0].type != IRValue::Type::REGISTER) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Arithmetic operations require at least 3 operands with first being REGISTER");
@@ -1408,20 +1038,9 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 	int dst_vreg = std::get<int>(instr.operands[0].value);
 	int dst_offset = get_variant_stack_offset(dst_vreg);
 
-	// Check if operands are registers
 	bool lhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
 	bool rhs_is_reg = instr.operands.size() > 2 && instr.operands[2].type == IRValue::Type::REGISTER;
 
-	// Use optimized typed path if:
-	// 1. Instruction has a type hint (INT, FLOAT, or vector type)
-	// 2. Both operands are registers (not immediates)
-	// This is the common case for type-hinted arithmetic
-	//
-	// IMPORTANT: We ONLY optimize Variants with type hints.
-	// Untyped Variants fall back to VEVAL syscall, which also acts as
-	// deoptimization to find bugs (unknown types are unpredictable).
-	// POW and IN have no native expansion matching the host's answer
-	// for every type pair, so they always take the VEVAL path.
 	const bool host_only = instr.opcode == IROpcode::POW || instr.opcode == IROpcode::IN;
 
 	if (!host_only && instr.type_hint != IRInstruction::TypeHint_NONE && lhs_is_reg && rhs_is_reg) {
@@ -1430,29 +1049,18 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 		int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
 		int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
 
-		// Dispatch based on type hint
 		if (instr.type_hint == Variant::INT) {
-			// Scalar int: optimized 64-bit integer arithmetic
 			emit_typed_int_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
 			return;
 		} else if (instr.type_hint == Variant::FLOAT) {
-			// Scalar float: optimized 64-bit double arithmetic
 			emit_typed_float_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
 			return;
 		} else if (TypeHintUtils::is_vector(instr.type_hint)) {
-			// Vector types: element-wise arithmetic (2, 3, or 4 components)
 			emit_typed_vector_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode, instr.type_hint);
 			return;
 		}
-		// Other type hints (if any) fall through to VEVAL
 	}
 
-	// Fall back to generic Variant evaluation for:
-	// - Untyped operations (no type hint)
-	// - Unsupported type hints
-	// - Operations with immediate operands (handled via temporary Variants)
-
-	// Map IR opcode to Variant::Operator
 	int variant_op;
 	switch (instr.opcode) {
 		case IROpcode::ADD: variant_op = 6; break;  // OP_ADD
@@ -1476,14 +1084,9 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 		int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
 		int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
 
-		// Untyped operands, but very often two integers at run time:
-		// everything an Array or a Dictionary hands back is untyped, and
-		// a fetch-decode-execute loop over one does all its arithmetic
-		// this way. Six instructions to test for it beat the syscall.
+		// Speculative INT fast path for untyped operands
 		if (!host_only && has_int_fast_path(instr.opcode)) {
-			// The clobber moves go before the branch: they update the
-			// allocator's view of where a value lives, which has to
-			// hold on both paths, not just the VEVAL one.
+			// Spill before branch: allocator state must hold on both paths
 			spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 
 			const bool shift = instr.opcode == IROpcode::SHL || instr.opcode == IROpcode::SHR;
@@ -1501,22 +1104,18 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 
 		emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
 	} else if (lhs_is_reg && !rhs_is_reg && instr.operands[2].type == IRValue::Type::IMMEDIATE) {
-		// Left operand is register, right is immediate
 		int lhs_vreg_local = std::get<int>(instr.operands[1].value);
 		int64_t imm_val = std::get<int64_t>(instr.operands[2].value);
 		int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
 
-		// Create a temporary Variant for the immediate value
 		int imm_offset = get_scratch_variant_offset();
 		emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
 		emit_variant_eval(dst_offset, lhs_offset, imm_offset, variant_op);
 	} else if (!lhs_is_reg && rhs_is_reg && instr.operands[1].type == IRValue::Type::IMMEDIATE) {
-		// Left operand is immediate, right is register
 		int64_t imm_val = std::get<int64_t>(instr.operands[1].value);
 		int rhs_vreg_local = std::get<int>(instr.operands[2].value);
 		int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
 
-		// Create a temporary Variant for the immediate value
 		int imm_offset = get_scratch_variant_offset();
 		emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
 		emit_variant_eval(dst_offset, imm_offset, rhs_offset, variant_op);
@@ -1525,11 +1124,7 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 	}
 }
 
-// The packed array literals. All ten build the same way and differ only in
-// which Variant type they ask the host to create and what an element is.
 void RISCVCodeGen::gen_make_packed_array(const IRInstruction& instr) {
-	// Format: MAKE_PACKED_*_ARRAY result_reg, element_count, [element_reg1, element_reg2, ...]
-	// Works identically to MAKE_ARRAY but with different Variant type
 	if (instr.operands.size() < 2) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Packed array constructor requires at least 2 operands");
 	}
@@ -1538,7 +1133,6 @@ void RISCVCodeGen::gen_make_packed_array(const IRInstruction& instr) {
 	int element_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
 	int result_offset = get_variant_stack_offset(result_vreg);
 
-	// Determine the Variant type based on opcode
 	int variant_type;
 	switch (instr.opcode) {
 		case IROpcode::MAKE_PACKED_BYTE_ARRAY:
@@ -1572,73 +1166,43 @@ void RISCVCodeGen::gen_make_packed_array(const IRInstruction& instr) {
 			variant_type = Variant::PACKED_VECTOR4_ARRAY;
 			break;
 		default:
-			variant_type = Variant::ARRAY; // Should not happen
+			variant_type = Variant::ARRAY;
 			break;
 	}
 
 	if (element_count == 0) {
-		// Empty packed array: sys_vcreate(&v, TYPE, 0, nullptr)
-		// a0 = pointer to destination Variant
 		emit_add_offset(REG_A0, REG_SP, result_offset);
-
-		// a1 = Variant type
 		emit_li(REG_A1, variant_type);
-
-		// a2 = method (0 for empty)
 		emit_li(REG_A2, 0);
-
-		// a3 = nullptr (0)
 		emit_li(REG_A3, 0);
-
-		// a7 = ECALL_VCREATE (517)
 		emit_li(REG_A7, ECALL_VCREATE);
 		emit_ecall();
 	} else {
-		// Packed array with elements: Use ECALL_PACKED_ARRAY_OPS (548)
-		// Signature: a0=op(type), a1=result_ptr, a2=array_ptr, a3=array_size
-		// The syscall converts an Array of Variants to a PackedArray
+		// ECALL_PACKED_ARRAY_OPS converts a contiguous Variant array to packed
 		int args_space = element_count * variant_size();
-		args_space = (args_space + 15) & ~15; // Align to 16 bytes
-
-		// Allocate stack space
+		args_space = (args_space + 15) & ~15;
 		emit_stack_adjust(-args_space);
 
-		// Copy each element variant to the stack (as GuestVariant array)
 		for (int i = 0; i < element_count; i++) {
 			int elem_vreg = std::get<int>(instr.operands[2 + i].value);
 			int elem_offset = get_variant_stack_offset(elem_vreg);
 			int dst_offset = i * variant_size();
-
-			// Copy the whole Variant from source to destination
 			emit_variant_move(REG_SP, dst_offset, REG_SP, args_space + elem_offset, REG_T0);
 		}
 
-		// a0 = op (the packed array type, which also indicates CREATE_FROM_ARRAY)
 		emit_li(REG_A0, variant_type);
-
-		// a1 = pointer to destination Variant
-		// After SP -= args_space, it's now at result_offset + args_space from NEW SP
 		int adjusted_dst_offset = result_offset + args_space;
 		emit_add_offset(REG_A1, REG_SP, adjusted_dst_offset);
-
-		// a2 = pointer to element array (sp + 0)
 		emit_mv(REG_A2, REG_SP);
-
-		// a3 = element_count
 		emit_li(REG_A3, element_count);
-
-		// a7 = ECALL_PACKED_ARRAY_OPS (548)
 		emit_li(REG_A7, ECALL_PACKED_ARRAY_OPS);
 		emit_ecall();
 
-		// Restore stack pointer
 		emit_add_offset(REG_SP, REG_SP, args_space);
 	}
 }
 
-// The comparison operators, which produce a bool Variant rather than branch.
 void RISCVCodeGen::gen_comparison(const IRInstruction& instr) {
-	// Check that all operands are valid
 	if (instr.operands.size() < 3 ||
 		instr.operands[0].type != IRValue::Type::REGISTER) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Comparison operations require at least 3 operands with first being REGISTER");
@@ -1647,26 +1211,19 @@ void RISCVCodeGen::gen_comparison(const IRInstruction& instr) {
 	int dst_vreg = std::get<int>(instr.operands[0].value);
 	int dst_offset = get_variant_stack_offset(dst_vreg);
 
-	// Check if operands are registers
 	bool lhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
 	bool rhs_is_reg = instr.operands.size() > 2 && instr.operands[2].type == IRValue::Type::REGISTER;
 
-	// Use optimized typed path for INT comparisons with register operands
-	// This is very common in loops: for i: int in range(N)
 	if (instr.type_hint == Variant::INT && lhs_is_reg && rhs_is_reg) {
 		int lhs_vreg = std::get<int>(instr.operands[1].value);
 		int rhs_vreg = std::get<int>(instr.operands[2].value);
 		int lhs_offset = get_variant_stack_offset(lhs_vreg);
 		int rhs_offset = get_variant_stack_offset(rhs_vreg);
 
-		// Use native RISC-V comparison instead of syscall
 		emit_typed_int_comparison(dst_offset, lhs_offset, rhs_offset, instr.opcode);
 		return;
 	}
 
-	// Fall back to generic Variant evaluation for untyped or non-INT comparisons
-
-	// Map IR opcode to Variant::Operator
 	int variant_op;
 	switch (instr.opcode) {
 		case IROpcode::CMP_EQ:  variant_op = 0; break; // OP_EQUAL
@@ -1685,7 +1242,6 @@ void RISCVCodeGen::gen_comparison(const IRInstruction& instr) {
 		int rhs_offset = get_variant_stack_offset(rhs_vreg);
 		emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
 	} else if (lhs_is_reg && !rhs_is_reg && instr.operands[2].type == IRValue::Type::IMMEDIATE) {
-		// Left is register, right is immediate integer
 		int lhs_vreg = std::get<int>(instr.operands[1].value);
 		int lhs_offset = get_variant_stack_offset(lhs_vreg);
 		int64_t imm_val = std::get<int64_t>(instr.operands[2].value);
@@ -1694,7 +1250,6 @@ void RISCVCodeGen::gen_comparison(const IRInstruction& instr) {
 		emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
 		emit_variant_eval(dst_offset, lhs_offset, imm_offset, variant_op);
 	} else if (!lhs_is_reg && rhs_is_reg && instr.operands[1].type == IRValue::Type::IMMEDIATE) {
-		// Left is immediate integer, right is register
 		int rhs_vreg = std::get<int>(instr.operands[2].value);
 		int rhs_offset = get_variant_stack_offset(rhs_vreg);
 		int64_t imm_val = std::get<int64_t>(instr.operands[1].value);
@@ -1707,21 +1262,15 @@ void RISCVCodeGen::gen_comparison(const IRInstruction& instr) {
 	}
 }
 
-// A comparison fused with the branch that reads it, so no bool Variant is
-// ever materialised.
+// Fused comparison + branch: no intermediate bool Variant
 void RISCVCodeGen::gen_fused_branch(const IRInstruction& instr) {
-	// Fused comparison + branch instructions
-	// Format: BRANCH_* lhs, rhs, label
-	// These directly emit BEQ/BNE/BLT/BGE without storing result
 	if (instr.operands.size() < 3) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Fused branch requires 3 operands: lhs, rhs, label");
 	}
 
-	// Check if operands are registers
 	bool lhs_is_reg = instr.operands[0].type == IRValue::Type::REGISTER;
 	bool rhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
 
-	// For now, only support register operands (can be extended later for immediates)
 	if (!lhs_is_reg || !rhs_is_reg) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Fused branch requires register operands");
 	}
@@ -1738,22 +1287,18 @@ void RISCVCodeGen::gen_fused_branch(const IRInstruction& instr) {
 		return;
 	}
 
-	// Map IR opcode to Variant::Operator
 	int variant_op;
 	switch (instr.opcode) {
-		case IROpcode::BRANCH_EQ:  variant_op = 0; break; // OP_EQUAL
-		case IROpcode::BRANCH_NEQ: variant_op = 1; break; // OP_NOT_EQUAL
-		case IROpcode::BRANCH_LT:  variant_op = 2; break; // OP_LESS
-		case IROpcode::BRANCH_LTE: variant_op = 3; break; // OP_LESS_EQUAL
-		case IROpcode::BRANCH_GT:  variant_op = 4; break; // OP_GREATER
-		case IROpcode::BRANCH_GTE: variant_op = 5; break; // OP_GREATER_EQUAL
+		case IROpcode::BRANCH_EQ:  variant_op = 0; break;
+		case IROpcode::BRANCH_NEQ: variant_op = 1; break;
+		case IROpcode::BRANCH_LT:  variant_op = 2; break;
+		case IROpcode::BRANCH_LTE: variant_op = 3; break;
+		case IROpcode::BRANCH_GT:  variant_op = 4; break;
+		case IROpcode::BRANCH_GTE: variant_op = 5; break;
 		default: variant_op = 0; break;
 	}
 
-	// Untyped operands. Two integers compare in registers, and
-	// everything an Array or a Dictionary hands back is untyped, so
-	// the test is worth its six instructions; anything else is a
-	// comparison only Godot knows how to make.
+	// Speculative INT fast path for untyped operands
 	const int tmp_offset = get_scratch_variant_offset();
 	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 
@@ -1773,14 +1318,6 @@ void RISCVCodeGen::gen_fused_branch(const IRInstruction& instr) {
 }
 
 void RISCVCodeGen::gen_vset(const IRInstruction& instr) {
-	// VSET format: obj_reg, string_idx, string_len, value_reg
-	// Uses ECALL_OBJ_PROP_SET (546)
-	// Calling convention:
-	//   A0 = object address (v.i from object Variant)
-	//   A1 = property name pointer
-	//   A2 = property name length
-	//   A3 = pointer to value Variant
-
 	if (instr.operands.size() != 4) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VSET requires 4 operands (obj_reg, string_idx, string_len, value_reg)");
 	}
@@ -1790,7 +1327,6 @@ void RISCVCodeGen::gen_vset(const IRInstruction& instr) {
 	int string_len = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
 	int value_vreg = std::get<int>(instr.operands[3].value);
 
-	// Get the string constant
 	if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
 	}
@@ -1801,44 +1337,28 @@ void RISCVCodeGen::gen_vset(const IRInstruction& instr) {
 
 	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 
-	// A0 = object address (load from Variant's v.i field at offset 8)
-	// IMPORTANT: Load this BEFORE adjusting the stack, so obj_offset is correct
+	// Load object address before SP adjustment
 	emit_ld(REG_A0, REG_SP, obj_offset + 8);
 
-	// Allocate stack space for the string
-	int str_space = ((string_len + 1) + 7) & ~7; // Align to 8 bytes, +1 for null terminator
-
+	int str_space = ((string_len + 1) + 7) & ~7;
 	emit_stack_adjust(-str_space);
 
-	// Store string on stack
 	for (size_t i = 0; i < str.length(); i++) {
 		emit_li(REG_T0, static_cast<unsigned char>(str[i]));
-		emit_sb(REG_T0, REG_SP, i); // SB (store byte)
+		emit_sb(REG_T0, REG_SP, i);
 	}
-	// Store null terminator
-	emit_sb(REG_ZERO, REG_SP, string_len); // SB
+	emit_sb(REG_ZERO, REG_SP, string_len);
 
-	// A1 = pointer to property name string (sp)
 	emit_mv(REG_A1, REG_SP);
-
-	// A2 = string length
 	emit_li(REG_A2, string_len);
-
-	// A3 = pointer to value Variant
-	// IMPORTANT: Calculate this AFTER adjusting the stack, and account for str_space
-	// emit_load_stack_offset does: addi a3, sp, offset, so we get the correct address directly
 	emit_load_stack_offset(REG_A3, value_offset + str_space);
-
-	// A7 = syscall number (546 for ECALL_OBJ_PROP_SET)
 	emit_li(REG_A7, ECALL_OBJ_PROP_SET);
 	emit_ecall();
 
-	// Restore stack pointer
 	emit_stack_adjust(str_space);
 }
 
 void RISCVCodeGen::gen_call(const IRInstruction& instr) {
-	// CALL format: function_name, result_reg, arg_count, arg1_reg, arg2_reg, ...
 	if (instr.operands.size() < 3) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL requires at least 3 operands");
 	}
@@ -1853,14 +1373,9 @@ void RISCVCodeGen::gen_call(const IRInstruction& instr) {
 
 	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6, REG_A7, REG_RA});
 
-	// Allocate stack space for return value Variant
 	int return_var_offset = get_variant_stack_offset(result_vreg);
 
-	// Set up arguments: a1-a7 point to Variant arguments on stack
-	// a0 points to return Variant
 	if (arg_count > static_cast<int>(IRFunction::MAX_PARAMETERS)) {
-		// Passing the first seven and dropping the rest leaves the
-		// callee reading slots nothing wrote for the others.
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 			"Call passes " + std::to_string(arg_count) +
 			" arguments, but only " + std::to_string(IRFunction::MAX_PARAMETERS) +
@@ -1871,23 +1386,17 @@ void RISCVCodeGen::gen_call(const IRInstruction& instr) {
 		int arg_offset = get_variant_stack_offset(arg_vreg);
 		uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
 
-		// Load address of argument Variant
 		emit_add_offset(arg_reg, REG_SP, arg_offset);
 	}
 
-	// a0 = pointer to return Variant
 	emit_add_offset(REG_A0, REG_SP, return_var_offset);
 
-	// Call the function using JAL with label
-	// We'll use the function name as a label that will be resolved later
 	if (!m_fn.saves_return_address) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 			"Call emitted in a function whose prologue did not save the return address");
 	}
 	mark_label_use(func_name, m_code.size());
-	emit_jal(REG_RA, 0); // JAL ra, func_name
-
-	// Return value is already in the Variant at result_vreg
+	emit_jal(REG_RA, 0);
 }
 
 void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
@@ -1932,7 +1441,6 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			int dst_vreg = std::get<int>(instr.operands[0].value);
 			int src_vreg = std::get<int>(instr.operands[1].value);
 
-			// Skip no-op moves
 			if (dst_vreg == src_vreg) {
 				break;
 			}
@@ -1940,12 +1448,10 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			int dst_offset = get_variant_stack_offset(dst_vreg);
 			int src_offset = get_variant_stack_offset(src_vreg);
 
-			// Skip if source and destination are at same stack location
 			if (dst_offset == src_offset) {
 				break;
 			}
 
-			// Copy the whole Variant
 			auto [base, offset] = value_destination(dst_vreg);
 			emit_variant_move(base, offset, REG_SP, src_offset, REG_T0);
 			break;
@@ -2134,9 +1640,7 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			int dst_offset = get_variant_stack_offset(dst_vreg);
 			int src_offset = get_variant_stack_offset(src_vreg);
 
-			// OP_NOT - use veval (unary operations need special handling)
-			// For now, use the same operand for both sides
-			emit_variant_eval_unary(dst_offset, src_offset, 23); // OP_NOT
+			emit_variant_eval_unary(dst_offset, src_offset, 23);
 			break;
 		}
 
@@ -2175,30 +1679,19 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			gen_switch(instr);
 			break;
 		case IROpcode::RETURN: {
-			// Godot Sandbox calling convention with Variants:
-			// a0 points to pre-allocated Variant for return value
-			// Copy the return Variant (virtual register 0) to *a0
-
-			// The instruction before this one may already have written the
-			// value through a0, in which case there is nothing left to copy.
+			// Skip copy if return forwarding already wrote through a0
 			if (m_fn.return_value_written) {
 				m_fn.return_value_written = false;
 			} else if (m_fn.variant_offsets.find(IRFunction::RETURN_REGISTER) != m_fn.variant_offsets.end()) {
 				int src_offset = get_variant_stack_offset(IRFunction::RETURN_REGISTER);
-
-				// Copy the return Variant from its slot to *a0, addressing
-				// the source off sp rather than through a pointer register.
 				emit_load_return_pointer();
 				emit_variant_move(REG_A0, 0, REG_SP, src_offset, REG_T0);
 			}
 
-			// Function epilogue - restore registers and deallocate stack
-			// Restore return address: ld ra, 0(sp)
 			if (m_fn.saves_return_address) {
 				emit_ld(REG_RA, REG_SP, SAVED_RA_OFFSET);
 			}
 
-			// Deallocate stack: addi sp, sp, frame_size
 			if (m_fn.stack_frame_size > 0) {
 				emit_add_offset(REG_SP, REG_SP, m_fn.stack_frame_size);
 			}
@@ -2208,9 +1701,6 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		}
 
 		case IROpcode::ARRAY_APPEND: {
-			// ARRAY_APPEND dst, array, value -- ECALL_ARRAY_OPS with
-			// a0 = Array_Op::PUSH_BACK, a1 = the Array's scoped index,
-			// a2 = an unused element index, a3 = the Variant to append.
 			const int result_offset = get_variant_stack_offset(std::get<int>(instr.operands[0].value));
 			const int array_offset = get_variant_stack_offset(std::get<int>(instr.operands[1].value));
 			const int value_offset = get_variant_stack_offset(std::get<int>(instr.operands[2].value));
@@ -2224,17 +1714,13 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			emit_li(REG_A7, ECALL_ARRAY_OPS);
 			emit_ecall();
 
-			// Array.append() evaluates to null and the host writes nothing
-			// back, so the destination is stored here.
+			// append() returns nil
 			emit_li(REG_T0, Variant::NIL);
 			emit_store_variant_type(REG_T0, REG_SP, result_offset);
 			break;
 		}
 
 		case IROpcode::DICT_SET: {
-			// DICT_SET dict, key, value -- ECALL_DICTIONARY_OPS with
-			// a0 = Dictionary_Op::SET, a1 = the Dictionary's scoped index,
-			// a2 = the key and a3 = the value.
 			const int dict_offset = get_variant_stack_offset(std::get<int>(instr.operands[0].value));
 			const int key_offset = get_variant_stack_offset(std::get<int>(instr.operands[1].value));
 			const int value_offset = get_variant_stack_offset(std::get<int>(instr.operands[2].value));
@@ -2252,7 +1738,6 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 
 		case IROpcode::ARRAY_GET:
 		case IROpcode::ARRAY_SET: {
-			// ARRAY_GET dst, array, index   /   ARRAY_SET array, index, value
 			const bool is_set = instr.opcode == IROpcode::ARRAY_SET;
 			const int array_operand = is_set ? 0 : 1;
 			const int index_operand = is_set ? 1 : 2;
@@ -2277,7 +1762,6 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::MAKE_VECTOR2:
 		case IROpcode::MAKE_VECTOR3:
 		case IROpcode::MAKE_VECTOR4: {
-			// Format: MAKE_VECTORn result_reg, x_reg, y_reg, [z_reg], [w_reg]
 			int num_components = (instr.opcode == IROpcode::MAKE_VECTOR2) ? 2 :
 								 (instr.opcode == IROpcode::MAKE_VECTOR3) ? 3 : 4;
 
@@ -2288,13 +1772,11 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			int result_vreg = std::get<int>(instr.operands[0].value);
 			int result_offset = get_variant_stack_offset(result_vreg);
 
-			// Set m_type field (offset 0)
 			int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2) ? Variant::VECTOR2 :
 							   (instr.opcode == IROpcode::MAKE_VECTOR3) ? Variant::VECTOR3 : Variant::VECTOR4;
 			emit_li(REG_T0, variant_type);
-			emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
+			emit_sw(REG_T0, REG_SP, result_offset);
 
-			// Store each component as a real_t in v.v4[]
 			for (int i = 0; i < num_components; i++) {
 				int comp_vreg = std::get<int>(instr.operands[1 + i].value);
 				int comp_offset = get_variant_stack_offset(comp_vreg);
@@ -2307,7 +1789,6 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::MAKE_VECTOR2I:
 		case IROpcode::MAKE_VECTOR3I:
 		case IROpcode::MAKE_VECTOR4I: {
-			// Format: MAKE_VECTORnI result_reg, x_reg, y_reg, [z_reg], [w_reg]
 			int num_components = (instr.opcode == IROpcode::MAKE_VECTOR2I) ? 2 :
 								 (instr.opcode == IROpcode::MAKE_VECTOR3I) ? 3 : 4;
 
@@ -2318,18 +1799,15 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			int result_vreg = std::get<int>(instr.operands[0].value);
 			int result_offset = get_variant_stack_offset(result_vreg);
 
-			// Set m_type field (offset 0)
 			int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2I) ? Variant::VECTOR2I :
 							   (instr.opcode == IROpcode::MAKE_VECTOR3I) ? Variant::VECTOR3I : Variant::VECTOR4I;
 			emit_li(REG_T0, variant_type);
-			emit_sw(REG_T0, REG_SP, result_offset); // Store type at offset 0
+			emit_sw(REG_T0, REG_SP, result_offset);
 
-			// Store each component in v.v4i[] (int32_t, same width in both builds)
 			for (int i = 0; i < num_components; i++) {
 				int comp_vreg = std::get<int>(instr.operands[1 + i].value);
 				int comp_offset = get_variant_stack_offset(comp_vreg);
 
-				// Load from stack Variant
 				emit_lw(REG_T0, REG_SP, comp_offset + VARIANT_DATA_OFFSET);
 				emit_sw(REG_T0, REG_SP, result_offset + int_offset(i));
 			}
@@ -2338,7 +1816,6 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		}
 
 		case IROpcode::MAKE_COLOR: {
-			// Format: MAKE_COLOR result_reg, r_reg, g_reg, b_reg, a_reg
 			if (instr.operands.size() != 5) {
 				throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_COLOR requires 5 operands");
 			}
@@ -2346,17 +1823,13 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			int result_vreg = std::get<int>(instr.operands[0].value);
 			int result_offset = get_variant_stack_offset(result_vreg);
 
-			// Set m_type field to COLOR
 			emit_li(REG_T0, Variant::COLOR);
 			emit_sw(REG_T0, REG_SP, result_offset);
 
-			// Store each component (r, g, b, a) as real_t: a Color inside a Variant
-			// shares the v.v4[] union with the vectors, so it follows real_t too.
-			// Color components need to be normalized (0-255 integers -> 0.0-1.0 floats)
 			for (int i = 0; i < 4; i++) {
 				int comp_vreg = std::get<int>(instr.operands[1 + i].value);
 				int comp_offset = get_variant_stack_offset(comp_vreg);
-				emit_variant_component_to_real(comp_offset, result_offset, real_offset(i), true); // normalize_by_255 = true
+				emit_variant_component_to_real(comp_offset, result_offset, real_offset(i), true);
 			}
 
 			break;
@@ -2366,7 +1839,6 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			gen_print(instr);
 			break;
 		case IROpcode::GLOBAL_CALL:
-			// Every global except print(). See riscv_globals.cpp.
 			emit_global_call(instr);
 			break;
 
@@ -2406,19 +1878,11 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::CALL_SYSCALL:
 			gen_call_syscall(instr);
 			break;
-		// No `default:` here on purpose: every opcode in ir_opcodes.def has
-		// to be listed, so adding one is a compile error here rather than a
-		// program that silently omits it.
+		// No default: new opcodes must be listed (compile error otherwise)
 	}
 }
 
 void RISCVCodeGen::gen_function(const IRFunction& func) {
-	// Godot Sandbox calling convention with Variants:
-	// a0 = pointer to return Variant (pre-allocated by caller)
-	// a1-a7 = pointers to argument Variants
-	//
-	// Everything this function keeps about itself lives in m_fn, which the
-	// guard resets on the way in and clears on the way out.
 	FunctionStateGuard function_state(*this);
 
 	plan_frame(func);
@@ -2431,7 +1895,6 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	}
 }
 
-// Instruction encoding helpers
 void RISCVCodeGen::emit_word(uint32_t word) {
 	m_code.push_back(word & 0xFF);
 	m_code.push_back((word >> 8) & 0xFF);
@@ -2492,7 +1955,7 @@ void RISCVCodeGen::emit_s_type(uint8_t opcode, uint8_t funct3, uint8_t rs1, uint
 
 void RISCVCodeGen::emit_b_type(uint8_t opcode, uint8_t funct3, uint8_t rs1, uint8_t rs2, int32_t imm) {
 	check_displacement("B-type (branch)", imm, B_TYPE_IMM_BITS);
-	// B-type immediate encoding (weird layout)
+	// B-type immediate layout
 	uint32_t imm12 = (imm >> 12) & 1;
 	uint32_t imm10_5 = (imm >> 5) & 0x3F;
 	uint32_t imm4_1 = (imm >> 1) & 0xF;
@@ -2506,9 +1969,7 @@ void RISCVCodeGen::emit_b_type(uint8_t opcode, uint8_t funct3, uint8_t rs1, uint
 }
 
 void RISCVCodeGen::emit_u_type(uint8_t opcode, uint8_t rd, uint32_t imm) {
-	// A U-type immediate is the upper 20 bits, already shifted into place. Low
-	// bits would be silently dropped, so a caller that has them is confused
-	// about what this takes.
+	// Low 12 bits must be zero — U-type encodes only bits [31:12]
 	if ((imm & 0xFFF) != 0) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 			"U-type immediate " + std::to_string(imm) + " has bits below bit 12, which the "
@@ -2560,49 +2021,32 @@ void RISCVCodeGen::emit_r4_type(uint8_t opcode, uint8_t rd, uint8_t funct3, uint
 	emit_word(r4.value);
 }
 
-// Higher-level instructions
 void RISCVCodeGen::emit_li(uint8_t rd, int64_t imm) {
-	// Load immediate - handles 64-bit values
-	// For small values, use addi; for larger, build up the value
 	if (fits_in_signed(imm, I_TYPE_IMM_BITS)) {
-		// Small immediate: addi rd, x0, imm
 		emit_i_type(0x13, rd, 0, REG_ZERO, static_cast<int32_t>(imm));
 	} else if (imm >= INT32_MIN && imm <= INT32_MAX) {
-		// 32-bit immediate: lui + addi
 		int32_t imm32 = static_cast<int32_t>(imm);
-		int32_t upper = (imm32 + 0x800) >> 12; // Add 0x800 for rounding
+		int32_t upper = (imm32 + 0x800) >> 12;
 		emit_u_type(0x37, rd, upper << 12);
 
-		// The low 12 bits are the two's complement remainder after the rounded
-		// upper part, so they have to be sign-extended to be a valid I-type
-		// immediate rather than a raw 0..4095 bit pattern.
+		// Sign-extend the low 12 bits for a valid I-type immediate
 		int32_t lower = ((imm32 & 0xFFF) ^ 0x800) - 0x800;
 		if (lower != 0 || upper == 0) {
 			emit_i_type(0x13, rd, 0, rd, lower);
 		}
 	} else {
-		// Full 64-bit immediate: load from constant pool appended to .text
-		// This avoids using temporary registers and generates cleaner code
+		// 64-bit: auipc+ld from constant pool
 		size_t const_index = add_constant(imm);
-
-		// We'll use a label to refer to the constant pool entry
-		// The constant will be located at: code_end + (const_index * 8)
-		// We use AUIPC to get PC-relative address, then LD to load the value
 		std::string label = ".LC" + std::to_string(const_index);
 
-		// Mark this as a use of the constant label
-		// Only mark AUIPC since we'll patch both AUIPC and LD together
 		size_t auipc_offset = m_code.size();
 		mark_label_use(label, auipc_offset);
-		emit_u_type(0x17, rd, 0);  // auipc rd, 0 (will be patched)
-
-		// Emit LD instruction (offset will be patched when AUIPC is resolved)
-		emit_ld(rd, rd, 0);  // ld rd, 0(rd) (offset will be patched)
+		emit_u_type(0x17, rd, 0);
+		emit_ld(rd, rd, 0);
 	}
 }
 
 void RISCVCodeGen::emit_mv(uint8_t rd, uint8_t rs) {
-	// mv rd, rs = addi rd, rs, 0
 	emit_i_type(0x13, rd, 0, rs, 0);
 }
 
@@ -2616,9 +2060,7 @@ void RISCVCodeGen::emit_add_offset(uint8_t rd, uint8_t base, int32_t offset) {
 		return;
 	}
 
-	// Too wide for the immediate: materialise it and add. rd can hold it
-	// itself unless it is also the base, in which case the base would be
-	// destroyed before it is read; the reserved scratch covers that.
+	// rd == base would clobber the base before the add
 	const uint8_t temp = (rd == base) ? REG_WIDE_SCRATCH : rd;
 	emit_li(temp, offset);
 	emit_add(rd, base, temp);
@@ -2626,9 +2068,7 @@ void RISCVCodeGen::emit_add_offset(uint8_t rd, uint8_t base, int32_t offset) {
 
 bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 	switch (op) {
-		// Expansions that are nothing but loads, stores, arithmetic and
-		// branches over the frame. Nothing here reaches the host, so a0-a7 and
-		// ra survive across them.
+		// Frame-local only: no syscall, a0-a7 and ra survive
 		case IROpcode::LOAD_IMM:
 		case IROpcode::LOAD_FLOAT_IMM:
 		case IROpcode::LOAD_BOOL:
@@ -2641,11 +2081,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::RETURN:
 			return false;
 
-		// Everything else either makes a system call or calls another function
-		// in the program. Several of these have a faster inline path when the
-		// operand types are known -- typed integer arithmetic does not go
-		// through VEVAL -- but the answer here is per-opcode and has to hold
-		// for the slow path too.
+		// May syscall or call; must hold for the slow path too
 		case IROpcode::LOAD_STRING:
 		case IROpcode::STORE_GLOBAL:
 		case IROpcode::CONVERT:
@@ -2672,8 +2108,6 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::BIT_NOT:
 		case IROpcode::SHL:
 		case IROpcode::SHR:
-		// A branch on a Variant of unknown type asks the host to booleanize it:
-		// only Godot knows whether a String or an Array is empty.
 		case IROpcode::BRANCH_ZERO:
 		case IROpcode::BRANCH_NOT_ZERO:
 		case IROpcode::BRANCH_EQ:
@@ -2724,21 +2158,9 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 }
 
 std::vector<bool> RISCVCodeGen::find_live_parameters(const IRFunction& func) {
-	// The prologue copies each incoming Variant out of its argument register
-	// into the parameter's stack slot -- three loads and three stores each, and
-	// twice that in a double-precision build. A parameter the function never
-	// reads, or overwrites before reading, does not need the copy: what the
-	// slot holds until the first write is then something nothing observes.
-	//
-	// "Never reads" is not a scan for the register number. `func f(a): a = 1;
-	// return a` reads r0 at the RETURN, but reads the 1, not the argument, and
-	// a loop can carry a read backwards past the write that looks like it kills
-	// it. So this is liveness at entry, computed backwards to a fixed point,
-	// and a parameter is copied unless it is provably dead there.
-	//
-	// Registers are independent of each other here, so only the parameter
-	// registers are tracked, and the whole state is one bool per parameter per
-	// instruction.
+	// Backward liveness to a fixed point: a parameter is copied in the
+	// prologue only if it is live at entry. Loops can carry reads past
+	// writes, so a simple scan is not enough.
 	const size_t count = func.parameters.size();
 	std::vector<bool> live_at_entry(count, false);
 	if (count == 0 || func.instructions.empty()) {
@@ -2754,11 +2176,7 @@ std::vector<bool> RISCVCodeGen::find_live_parameters(const IRFunction& func) {
 		}
 	}
 
-	// The instructions control can reach from instruction i. A terminator
-	// reaches only what it names -- nothing, for RETURN -- and everything else
-	// falls through as well as branching. An edge too many only keeps a
-	// parameter live that could have been dropped, so an opcode this does not
-	// know about costs a copy rather than correctness.
+	// Over-approximation is safe: extra edges keep a parameter live
 	std::vector<std::vector<size_t>> successors(n);
 	for (size_t i = 0; i < n; i++) {
 		const IRInstruction& instr = func.instructions[i];
@@ -2776,8 +2194,7 @@ std::vector<bool> RISCVCodeGen::find_live_parameters(const IRFunction& func) {
 		}
 	}
 
-	// live_in[i][p]: on some path from instruction i, parameter p is read
-	// before it is written.
+	// live_in[i][p]: parameter p read before written on some path from i
 	std::vector<std::vector<bool>> live_in(n, std::vector<bool>(count, false));
 	std::vector<int> reads;
 	std::vector<bool> live_out(count, false);
@@ -2795,8 +2212,7 @@ std::vector<bool> RISCVCodeGen::find_live_parameters(const IRFunction& func) {
 				}
 			}
 
-			// A write kills what the register held; a read of it in the same
-			// instruction happens first, so the read wins.
+			// Read before write in the same instruction
 			const int dst = ir_destination_register(instr);
 			if (dst >= 0 && static_cast<size_t>(dst) < count) {
 				live_out[dst] = false;
@@ -2820,18 +2236,8 @@ std::vector<bool> RISCVCodeGen::find_live_parameters(const IRFunction& func) {
 }
 
 std::vector<bool> RISCVCodeGen::find_return_forwarding(const IRFunction& func) {
-	// A function that ends `MOVE r0, rN; RETURN` or `LOAD_GLOBAL r0, g; RETURN`
-	// copies a Variant into r0's stack slot and then copies the same Variant
-	// out of that slot into the caller's. The slot is a waypoint nobody reads,
-	// so the first copy can be made directly into *a0 and the second dropped --
-	// on a Variant that is six loads and six stores instead of twelve.
-	//
-	// Two things have to hold. The RETURN must be the very next instruction, so
-	// the two are in the same basic block and nothing can run between them. And
-	// nothing reachable afterwards may read r0, because its slot is left
-	// holding whatever it held before: RETURN is a terminator, so the code
-	// after it is only reachable through a label, and a backwards branch into a
-	// loop that reads r0 would read a stale value.
+	// Write directly through a0 instead of to r0's slot when the next
+	// instruction is RETURN and no later code reads r0.
 	std::vector<bool> forward(func.instructions.size(), false);
 
 	std::vector<int> reads;
@@ -2846,22 +2252,19 @@ std::vector<bool> RISCVCodeGen::find_return_forwarding(const IRFunction& func) {
 			case IROpcode::LOAD_BOOL:
 			case IROpcode::LOAD_GLOBAL:
 			case IROpcode::MOVE:
-				break; // Writes its result through one base register, so it can write through a0.
+				break;
 			default:
-				continue; // Everything else builds its result in the frame.
+				continue;
 		}
 		if (ir_destination_register(instr) != IRFunction::RETURN_REGISTER) {
 			continue;
 		}
-		// A self-move writes nothing, so there would be nothing to forward.
 		reads.clear();
 		ir_collect_read_registers(instr, reads);
 		if (std::find(reads.begin(), reads.end(), IRFunction::RETURN_REGISTER) != reads.end()) {
 			continue;
 		}
 
-		// The scan starts past the RETURN: RETURN's read of the return
-		// register is the one this forwards, not one that stops it.
 		bool read_later = false;
 		for (size_t j = i + 2; j < func.instructions.size() && !read_later; j++) {
 			reads.clear();
@@ -2875,9 +2278,6 @@ std::vector<bool> RISCVCodeGen::find_return_forwarding(const IRFunction& func) {
 }
 
 void RISCVCodeGen::emit_load_return_pointer() {
-	// a0 arrives holding the caller's return Variant and stays there unless
-	// something in this function goes through the host, which takes a0 as its
-	// first argument register.
 	if (m_fn.spills_return_pointer) {
 		emit_ld(REG_A0, REG_SP, SAVED_A0_OFFSET);
 	}
@@ -2889,27 +2289,16 @@ void RISCVCodeGen::emit_address_of_global(uint8_t rd, size_t index) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 			"Global variable " + std::to_string(index) + " is past the end of a 32-bit address space");
 	}
-	// The offset goes into the relocation, not into a following `addi`: an
-	// `addi` truncates to 12 signed bits, which a program stops fitting in at
-	// 85 globals.
+	// Offset in relocation, not a separate addi (12-bit limit = ~85 globals)
 	emit_la(rd, GLOBALS_LABEL, static_cast<int32_t>(byte_offset));
 }
 
 void RISCVCodeGen::emit_la(uint8_t rd, const std::string& label, int32_t addend) {
-	// Load address using AUIPC + ADDI
-	// auipc rd, 0  # Load PC-relative upper bits
-	// addi rd, rd, offset  # Add lower bits (will be patched)
-	//
-	// The addend is resolved together with the label, so `label + addend` is
-	// reachable for any 32-bit addend. Emitting a separate `addi rd, rd, addend`
-	// instead would truncate to a 12-bit signed immediate.
-
+	// auipc+addi; addend folded into relocation (not a separate addi)
 	size_t auipc_offset = m_code.size();
 	mark_label_use(label, auipc_offset, addend);
-	emit_u_type(0x17, rd, 0);  // auipc rd, 0 (will be patched)
-
-	// Emit ADDI instruction (offset will be patched when AUIPC is resolved)
-	emit_i_type(0x13, rd, 0, rd, 0);  // addi rd, rd, 0 (will be patched)
+	emit_u_type(0x17, rd, 0);
+	emit_i_type(0x13, rd, 0, rd, 0);
 }
 
 void RISCVCodeGen::emit_add(uint8_t rd, uint8_t rs1, uint8_t rs2) {
@@ -2921,15 +2310,15 @@ void RISCVCodeGen::emit_sub(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 }
 
 void RISCVCodeGen::emit_mul(uint8_t rd, uint8_t rs1, uint8_t rs2) {
-	emit_r_type(0x33, rd, 0, rs1, rs2, 1); // RV64M extension
+	emit_r_type(0x33, rd, 0, rs1, rs2, 1);
 }
 
 void RISCVCodeGen::emit_div(uint8_t rd, uint8_t rs1, uint8_t rs2) {
-	emit_r_type(0x33, rd, 4, rs1, rs2, 1); // RV64M extension - div
+	emit_r_type(0x33, rd, 4, rs1, rs2, 1);
 }
 
 void RISCVCodeGen::emit_rem(uint8_t rd, uint8_t rs1, uint8_t rs2) {
-	emit_r_type(0x33, rd, 6, rs1, rs2, 1); // RV64M extension - rem
+	emit_r_type(0x33, rd, 6, rs1, rs2, 1);
 }
 
 void RISCVCodeGen::emit_and(uint8_t rd, uint8_t rs1, uint8_t rs2) {
@@ -2961,17 +2350,15 @@ void RISCVCodeGen::emit_slt(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 }
 
 void RISCVCodeGen::emit_xori(uint8_t rd, uint8_t rs, int32_t imm) {
-	emit_i_type(0x13, rd, 4, rs, imm); // XORI
+	emit_i_type(0x13, rd, 4, rs, imm);
 }
 
 void RISCVCodeGen::emit_seqz(uint8_t rd, uint8_t rs) {
-	// seqz rd, rs is pseudo-instruction for sltiu rd, rs, 1
-	emit_i_type(0x13, rd, 3, rs, 1); // SLTIU rd, rs, 1
+	emit_i_type(0x13, rd, 3, rs, 1);
 }
 
 void RISCVCodeGen::emit_snez(uint8_t rd, uint8_t rs) {
-	// snez rd, rs is pseudo-instruction for sltu rd, x0, rs
-	emit_r_type(0x33, rd, 3, REG_ZERO, rs, 0); // SLTU rd, x0, rs
+	emit_r_type(0x33, rd, 3, REG_ZERO, rs, 0);
 }
 
 void RISCVCodeGen::emit_beq(uint8_t rs1, uint8_t rs2, int32_t offset) {
@@ -3007,26 +2394,18 @@ void RISCVCodeGen::emit_jalr(uint8_t rd, uint8_t rs1, int32_t offset) {
 }
 
 void RISCVCodeGen::emit_ecall() {
-	// The prologue skipped spilling the caller's return-value pointer because
-	// opcode_clobbers_abi_registers() said no instruction in this function
-	// reaches the host. A system call here says otherwise, and a0 is about to
-	// be overwritten with a syscall argument. Refusing to encode it turns a
-	// wrong row in that switch into a failed compile instead of a function that
-	// returns whatever the last system call left behind.
+	// Catch opcode_clobbers_abi_registers() misclassification at compile time
 	if (m_fn.in_function && !m_fn.spills_return_pointer) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 			"System call emitted in a function whose prologue did not save the return-value pointer");
 	}
-	// ecall instruction: opcode = 0x73, funct3 = 0, rs1 = 0, rd = 0, imm = 0
 	emit_i_type(0x73, 0, 0, 0, 0);
 }
 
 void RISCVCodeGen::emit_ret() {
-	// ret = jalr x0, x1, 0
 	emit_jalr(REG_ZERO, REG_RA, 0);
 }
 
-// Label management
 void RISCVCodeGen::define_label(const std::string& label) {
 	m_labels[label] = m_code.size();
 }
@@ -3036,8 +2415,7 @@ void RISCVCodeGen::mark_label_use(const std::string& label, size_t code_offset, 
 }
 
 void RISCVCodeGen::relax_branches() {
-	// B-type: funct3 0=beq 1=bne 4=blt 5=bge 6=bltu 7=bgeu. Flipping the low
-	// bit inverts every one of them.
+	// Invert B-type condition by flipping funct3 low bit
 	auto invert_condition = [](uint8_t funct3) -> uint8_t { return funct3 ^ 1; };
 
 	bool changed = true;
@@ -3053,12 +2431,12 @@ void RISCVCodeGen::relax_branches() {
 			uint32_t instr = 0;
 			std::memcpy(&instr, &m_code[use.code_offset], 4);
 			if ((instr & 0x7F) != 0x63) {
-				continue; // Not a conditional branch
+				continue;
 			}
 
 			auto label = m_labels.find(use.label);
 			if (label == m_labels.end()) {
-				continue; // resolve_labels() reports this
+				continue;
 			}
 			const int64_t displacement =
 				static_cast<int64_t>(label->second) - static_cast<int64_t>(use.code_offset) + use.addend;
@@ -3066,8 +2444,7 @@ void RISCVCodeGen::relax_branches() {
 				continue;
 			}
 
-			// Rewrite the branch in place to skip the jump that now follows it,
-			// and insert that jump.
+			// Rewrite as inverted branch over an inserted jal
 			const uint8_t funct3 = (instr >> 12) & 0x7;
 			const uint8_t rs1 = (instr >> 15) & 0x1F;
 			const uint8_t rs2 = (instr >> 20) & 0x1F;
@@ -3082,14 +2459,12 @@ void RISCVCodeGen::relax_branches() {
 				(imm10_5 << 25) | (imm12 << 31);
 			std::memcpy(&m_code[use.code_offset], &inverted, 4);
 
-			// jal x0, 0 -- the displacement is patched by resolve_labels().
 			const size_t insert_at = use.code_offset + 4;
 			const uint32_t jal = 0x6F;
 			uint8_t bytes[4];
 			std::memcpy(bytes, &jal, 4);
 			m_code.insert(m_code.begin() + static_cast<long>(insert_at), bytes, bytes + 4);
 
-			// Everything at or after the inserted instruction moved by 4.
 			for (auto& entry : m_labels) {
 				if (entry.second >= insert_at) {
 					entry.second += 4;
@@ -3106,12 +2481,10 @@ void RISCVCodeGen::relax_branches() {
 				}
 			}
 
-			// The branch no longer refers to a label -- its displacement is the
-			// fixed +8 written above -- and the jump does.
 			m_label_uses[use_index].code_offset = insert_at;
 
 			changed = true;
-			break; // Offsets moved; start again.
+			break;
 		}
 	}
 }
@@ -3129,20 +2502,13 @@ void RISCVCodeGen::resolve_labels() {
 		size_t target_offset = it->second;
 		int32_t offset = static_cast<int32_t>(target_offset - use_offset) + use.addend;
 
-		// Patch the instruction at use_offset with the correct offset
 		uint32_t instr;
 		memcpy(&instr, &m_code[use_offset], 4);
 
 		uint8_t opcode = instr & 0x7F;
 
-		if (opcode == 0x63) { // B-type (branch)
-			// Patching re-encodes by hand rather than going through
-			// emit_b_type(), so the range check has to be repeated here. A
-			// branch that cannot reach its target would otherwise wrap around
-			// and jump somewhere else entirely.
+		if (opcode == 0x63) {
 			check_displacement("B-type (branch) to '" + label + "'", offset, B_TYPE_IMM_BITS);
-
-			// Re-encode with correct offset
 			uint8_t funct3 = (instr >> 12) & 0x7;
 			uint8_t rs1 = (instr >> 15) & 0x1F;
 			uint8_t rs2 = (instr >> 20) & 0x1F;
@@ -3153,7 +2519,7 @@ void RISCVCodeGen::resolve_labels() {
 			uint32_t imm11 = (offset >> 11) & 1;
 
 			instr = opcode | (imm11 << 7) | (imm4_1 << 8) | (funct3 << 12) | (rs1 << 15) | (rs2 << 20) | (imm10_5 << 25) | (imm12 << 31);
-		} else if (opcode == 0x6F) { // J-type (jal)
+		} else if (opcode == 0x6F) {
 			check_displacement("J-type (jump) to '" + label + "'", offset, J_TYPE_IMM_BITS);
 			uint8_t rd = (instr >> 7) & 0x1F;
 
@@ -3163,57 +2529,41 @@ void RISCVCodeGen::resolve_labels() {
 			uint32_t imm19_12 = (offset >> 12) & 0xFF;
 
 			instr = opcode | (rd << 7) | (imm19_12 << 12) | (imm11 << 20) | (imm10_1 << 21) | (imm20 << 31);
-		} else if (opcode == 0x17) { // U-type (AUIPC) - for constant pool or address loading
+		} else if (opcode == 0x17) {
 			uint8_t rd = (instr >> 7) & 0x1F;
 
-			// Check if the next instruction is LD (for constant pool) or ADDI (for address)
 			uint32_t next_instr;
 			memcpy(&next_instr, &m_code[use_offset + 4], 4);
 			uint8_t next_opcode = next_instr & 0x7F;
 
-			if (next_opcode == 0x03) { // LD instruction (for constant pool access)
-				// Calculate PC-relative offset
-				// Split into upper 20 bits (for AUIPC) and lower 12 bits (for LD)
-				int32_t upper = (offset + 0x800) >> 12; // Add 0x800 for sign extension
+			if (next_opcode == 0x03) {
+				int32_t upper = (offset + 0x800) >> 12;
 				int32_t lower = offset & 0xFFF;
 
-				// Patch AUIPC with upper 20 bits
 				instr = opcode | (rd << 7) | ((upper & 0xFFFFF) << 12);
 				memcpy(&m_code[use_offset], &instr, 4);
 
-				// Patch the following LD instruction with lower 12 bits
-				// LD is at use_offset + 4
 				uint8_t ld_rd = (next_instr >> 7) & 0x1F;
 				uint8_t ld_rs1 = (next_instr >> 15) & 0x1F;
 				uint8_t ld_funct3 = (next_instr >> 12) & 0x7;
 				next_instr = 0x03 | (ld_rd << 7) | (ld_funct3 << 12) | (ld_rs1 << 15) | ((lower & 0xFFF) << 20);
 				memcpy(&m_code[use_offset + 4], &next_instr, 4);
 
-				// Skip the next use since we processed both AUIPC and LD together
 				continue;
-			} else if (next_opcode == 0x13) { // ADDI instruction (for load address)
-				// AUIPC + ADDI pattern for load address (emit_la)
+			} else if (next_opcode == 0x13) {
 				uint8_t addi_funct3 = (next_instr >> 12) & 0x7;
 				uint8_t addi_rs1 = (next_instr >> 15) & 0x1F;
 
-				// For AUIPC+ADDI, the offset is the full 32-bit value
-				// Split into upper 20 bits (for AUIPC) and lower 12 bits (for ADDI)
-				int32_t upper = (offset + 0x800) >> 12; // Add 0x800 for sign extension
+				int32_t upper = (offset + 0x800) >> 12;
 				int32_t lower = offset & 0xFFF;
 
-				// Verify ADDI is using the same register as rd (rs1 == rd)
-				// This is required for AUIPC+ADDI pattern
 				if (addi_rs1 == rd && addi_funct3 == 0) {
-					// Patch AUIPC with upper 20 bits
 					instr = opcode | (rd << 7) | ((upper & 0xFFFFF) << 12);
 					memcpy(&m_code[use_offset], &instr, 4);
 
-					// Patch the following ADDI instruction with lower 12 bits
 					uint8_t addi_rd = (next_instr >> 7) & 0x1F;
 					next_instr = 0x13 | (addi_rd << 7) | (addi_funct3 << 12) | (addi_rs1 << 15) | ((lower & 0xFFF) << 20);
 					memcpy(&m_code[use_offset + 4], &next_instr, 4);
-
-					// Skip the next use since we processed both AUIPC and ADDI together
 					continue;
 				}
 			}
@@ -3233,10 +2583,7 @@ int RISCVCodeGen::get_variant_stack_offset(int virtual_reg) {
 		return it->second;
 	}
 
-	// The frame was sized from IRFunction::max_registers before the body was emitted,
-	// so a virtual register that was never pre-assigned has no room in it. Growing the
-	// frame here is not possible any more, and handing out an offset past its end would
-	// silently corrupt the caller's frame, so fail the compilation instead.
+	// Frame already sized; growing it now would corrupt the caller
 	throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 			"Virtual register r" + std::to_string(virtual_reg) + " is outside the stack frame (max_registers too low)");
 }
@@ -3250,26 +2597,18 @@ int RISCVCodeGen::get_scratch_variant_offset(int index) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 				"Scratch Variant slot " + std::to_string(index) + " is out of range");
 	}
-	// Stack layout: [saved ra (8)] [saved fp (8)] [saved a0 (8)] [Variants...] [scratch...]
 	return SAVED_REG_SPACE + ((m_fn.scratch_slot_base + index) * variant_size());
 }
 
 void RISCVCodeGen::emit_variant_create_int(int stack_offset, int64_t value, uint8_t base_reg) {
-	// Create an integer Variant
-	// Variant layout: [uint32_t m_type (4 bytes)] [padding (4 bytes)] [int64_t v.i (8 bytes)]
-
-	// Store m_type = INT (2) at stack_offset
-	emit_li(REG_T0, 2); // INT type
+	emit_li(REG_T0, 2);
 	emit_store_variant_type(REG_T0, base_reg, stack_offset);
-
-	// Store value
 	emit_li(REG_T0, value);
 	emit_store_variant_int(REG_T0, base_reg, stack_offset);
 }
 
 void RISCVCodeGen::emit_variant_create_float(int stack_offset, double value, uint8_t base_reg) {
-	// v.f in a Variant is a 64-bit double whatever real_t is, so the bit
-	// pattern goes in whole and there is no rounding to think about.
+	// v.f is always 64-bit double regardless of real_t
 	int64_t bits;
 	memcpy(&bits, &value, sizeof(double));
 
@@ -3281,18 +2620,13 @@ void RISCVCodeGen::emit_variant_create_float(int stack_offset, double value, uin
 }
 
 void RISCVCodeGen::emit_variant_create_bool(int stack_offset, bool value, uint8_t base_reg) {
-	// Similar to create_int but with BOOL type (1)
-	emit_li(REG_T0, 1); // BOOL type
+	emit_li(REG_T0, 1);
 	emit_store_variant_type(REG_T0, base_reg, stack_offset);
-
 	emit_li(REG_T0, value ? 1 : 0);
 	emit_store_variant_bool(REG_T0, base_reg, stack_offset);
 }
 
 void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) {
-	// Create a string Variant using VCREATE syscall
-	// VCREATE signature: void vcreate(Variant* dst, Variant::Type type, int method, void* data)
-	// For strings with method==1: data = struct { const char* str; size_t length; }
 
 	if (!m_string_constants || string_idx < 0 || string_idx >= static_cast<int>(m_string_constants->size())) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Invalid string constant index: " + std::to_string(string_idx));
@@ -3303,94 +2637,56 @@ void RISCVCodeGen::emit_variant_create_string(int stack_offset, int string_idx) 
 
 	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 
-	// Allocate stack space for: string data + struct { char*, size_t }
-	int str_space = ((str_len + 1) + 7) & ~7; // String + null terminator, aligned to 8 bytes
-	int struct_space = 16; // Two 8-byte fields
-	int total_space = str_space + struct_space;
-	total_space = (total_space + 15) & ~15; // Align to 16 bytes
+	int str_space = ((str_len + 1) + 7) & ~7;
+	int struct_space = 16;
+	int total_space = (str_space + struct_space + 15) & ~15;
 
-	// Adjust stack pointer
 	emit_add_offset(REG_SP, REG_SP, -total_space);
 
-	// Store string data on stack
 	for (size_t i = 0; i < str.length(); i++) {
 		emit_li(REG_T0, static_cast<unsigned char>(str[i]));
-		emit_sb(REG_T0, REG_SP, i); // SB (store byte)
+		emit_sb(REG_T0, REG_SP, i);
 	}
-	// Store null terminator
-	emit_sb(REG_ZERO, REG_SP, str_len); // SB
+	emit_sb(REG_ZERO, REG_SP, str_len);
 
-	// Create struct at sp + str_space
-	// struct.str = sp (pointer to string data)
-	emit_mv(REG_T0, REG_SP); // T0 = pointer to the string data at sp
-	emit_sd(REG_T0, REG_SP, str_space); // SD (store pointer at sp + str_space)
-
-	// struct.length = str_len
+	// VCREATE method 1: struct { char*, size_t }
+	emit_mv(REG_T0, REG_SP);
+	emit_sd(REG_T0, REG_SP, str_space);
 	emit_li(REG_T0, str_len);
-	emit_sd(REG_T0, REG_SP, str_space + 8); // SD (store length)
+	emit_sd(REG_T0, REG_SP, str_space + 8);
 
-	// Call VCREATE
-	// a0 = pointer to destination Variant (stack_offset + total_space)
 	int adjusted_dst_offset = stack_offset + total_space;
 	emit_add_offset(REG_A0, REG_SP, adjusted_dst_offset);
-
-	// a1 = Variant::STRING
 	emit_li(REG_A1, Variant::STRING);
-
-	// a2 = method (1 for const char* + size_t)
 	emit_li(REG_A2, 1);
-
-	// a3 = pointer to struct (sp + str_space)
 	emit_add_offset(REG_A3, REG_SP, str_space);
-
-	// a7 = ECALL_VCREATE (517)
 	emit_li(REG_A7, ECALL_VCREATE);
 	emit_ecall();
 
-	// Restore stack pointer
 	emit_add_offset(REG_SP, REG_SP, total_space);
 }
 
 void RISCVCodeGen::emit_vcreate_syscall(int variant_type, int method, uint8_t data_ptr_reg, int result_offset) {
-	// Generic VCREATE syscall emission
-	// VCREATE signature: void vcreate(Variant* dst, Variant::Type type, int method, void* data)
-	// This handles register clobbering for a0-a3
-
 	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
-
-	// a0 = pointer to destination Variant (result_offset from SP)
 	emit_add_offset(REG_A0, REG_SP, result_offset);
-
-	// a1 = Variant::Type
 	emit_li(REG_A1, variant_type);
-
-	// a2 = method
 	emit_li(REG_A2, method);
-
-	// a3 = data pointer (already in data_ptr_reg, or REG_ZERO for null)
 	if (data_ptr_reg != REG_A3) {
 		emit_mv(REG_A3, data_ptr_reg);
 	}
-
-	// a7 = ECALL_VCREATE (517)
 	emit_li(REG_A7, ECALL_VCREATE);
 	emit_ecall();
 }
 
 void RISCVCodeGen::emit_variant_create_empty_array(int stack_offset) {
-	// Create empty Array using VCREATE syscall
-	// sys_vcreate(&v, ARRAY, 0, nullptr)
 	emit_vcreate_syscall(Variant::ARRAY, 0, REG_ZERO, stack_offset);
 }
 
 void RISCVCodeGen::emit_variant_create_empty_dictionary(int stack_offset) {
-	// Create empty Dictionary using VCREATE syscall
-	// sys_vcreate(&v, DICTIONARY, 0, nullptr)
 	emit_vcreate_syscall(Variant::DICTIONARY, 0, REG_ZERO, stack_offset);
 }
 
 void RISCVCodeGen::emit_variant_move(uint8_t dst_base, int32_t dst_offset, uint8_t src_base, int32_t src_offset, uint8_t tmp_reg) {
-	// A Variant is 3 doublewords with float real_t, 5 with double real_t
 	for (int i = 0; i < m_layout.variant_words(); i++) {
 		emit_ld(tmp_reg, src_base, src_offset + i * 8);
 		emit_sd(tmp_reg, dst_base, dst_offset + i * 8);
@@ -3398,12 +2694,8 @@ void RISCVCodeGen::emit_variant_move(uint8_t dst_base, int32_t dst_offset, uint8
 }
 
 void RISCVCodeGen::emit_variant_eval_unary(int result_offset, int operand_offset, int op) {
-	// Godot registers its unary operators (OP_NOT, OP_NEGATE, OP_POSITIVE,
-	// OP_BIT_NEGATE) with NIL as the right-hand type, and Variant::evaluate()
-	// indexes operator_evaluator_table[op][a_type][b_type] directly. Passing the
-	// operand as both sides - the obvious reading of "a unary op has no second
-	// operand" - lands on an unregistered [op][T][T] entry, so evaluate() reports
-	// the operation invalid and returns NIL. Every `not x` then came out false.
+	// Godot indexes operator_evaluator_table[op][a_type][b_type]; unary ops
+	// require b_type = NIL, not the operand's type
 	const int nil_offset = get_scratch_variant_offset(1);
 	emit_li(REG_T0, Variant::NIL);
 	emit_store_variant_type(REG_T0, REG_SP, nil_offset);
@@ -3413,36 +2705,20 @@ void RISCVCodeGen::emit_variant_eval_unary(int result_offset, int operand_offset
 void RISCVCodeGen::emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op,
 	bool handle_clobbering)
 {
-	// Call sys_veval(op, &lhs, &rhs, &result)
-	// Signature: bool sys_veval(int op, const Variant* a, const Variant* b, Variant* result)
-
-	// VEVAL clobbers a0-a3, so handle register clobbering first
 	if (handle_clobbering) {
 		spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 	}
-
-	// Load operator into a0
 	emit_li(REG_A0, op);
-
-	// Load address of lhs Variant into a1: addi a1, sp, lhs_offset
 	emit_add_offset(REG_A1, REG_SP, lhs_offset);
-
-	// Load address of rhs Variant into a2: addi a2, sp, rhs_offset
 	emit_add_offset(REG_A2, REG_SP, rhs_offset);
-
-	// Load address of result Variant into a3: addi a3, sp, result_offset
 	emit_add_offset(REG_A3, REG_SP, result_offset);
-
-	// Make the ecall to sys_veval (ECALL_VEVAL = 502)
 	emit_li(REG_A7, ECALL_VEVAL);
 	emit_ecall();
 }
 
 bool RISCVCodeGen::has_int_fast_path(IROpcode op) {
 	switch (op) {
-		// What the machine does directly on two integers. DIV and MOD are absent
-		// on purpose: a zero divisor traps natively but is a Godot error message
-		// on the host path, and there is no result to put in a register.
+		// DIV/MOD excluded: native trap vs Godot error on zero divisor
 		case IROpcode::ADD:
 		case IROpcode::SUB:
 		case IROpcode::MUL:
@@ -3460,8 +2736,6 @@ bool RISCVCodeGen::has_int_fast_path(IROpcode op) {
 void RISCVCodeGen::emit_branch_unless_both_int(int lhs_offset, int rhs_offset,
 	const std::string& slow_label, bool require_non_negative)
 {
-	// The type tag is the first field of a Variant, so this is two loads and a
-	// compare -- no host call.
 	emit_lwu(REG_T0, REG_SP, lhs_offset + VARIANT_TYPE_OFFSET);
 	emit_lwu(REG_T1, REG_SP, rhs_offset + VARIANT_TYPE_OFFSET);
 	emit_xori(REG_T0, REG_T0, Variant::INT);
@@ -3471,8 +2745,7 @@ void RISCVCodeGen::emit_branch_unless_both_int(int lhs_offset, int rhs_offset,
 	emit_bne(REG_T0, REG_ZERO, 0);
 
 	if (require_non_negative) {
-		// Godot errors on a negative shift operand rather than answering with a
-		// number. Only the host can raise that, so the native path declines it.
+		// Negative shift: only the host can raise Godot's error
 		emit_load_variant_int(REG_T0, REG_SP, lhs_offset);
 		emit_load_variant_int(REG_T1, REG_SP, rhs_offset);
 		emit_or(REG_T0, REG_T0, REG_T1);
@@ -3499,11 +2772,9 @@ void RISCVCodeGen::emit_int_fused_branch(IROpcode op, int lhs_offset, int rhs_of
 			emit_blt(REG_T0, REG_T1, 0);
 			break;
 		case IROpcode::BRANCH_LTE:
-			// t0 <= t1 is !(t1 < t0), i.e. t1 >= t0
 			emit_bge(REG_T1, REG_T0, 0);
 			break;
 		case IROpcode::BRANCH_GT:
-			// t0 > t1 is t1 < t0
 			emit_blt(REG_T1, REG_T0, 0);
 			break;
 		case IROpcode::BRANCH_GTE:
@@ -3515,20 +2786,13 @@ void RISCVCodeGen::emit_int_fused_branch(IROpcode op, int lhs_offset, int rhs_of
 }
 
 void RISCVCodeGen::emit_array_element_access(bool is_set, int array_offset, int index_offset, int value_offset) {
-	// ECALL_ARRAY_AT(a0 = the Array's scoped-variant index, a1 = the element
-	// index, a2 = a Variant). A negative a1 writes the Variant at a2 into element
-	// -a1 - 1, which is how the set form is spelled; a non-negative one reads that
-	// element into it.
-	//
-	// The caller has already moved live values out of a0-a2.
+	// ECALL_ARRAY_AT: negative a1 = set (-index-1), non-negative = get
 	const std::string in_range = gen_local_label(".array_index");
 
 	emit_lw(REG_A0, REG_SP, array_offset + VARIANT_DATA_OFFSET);
 	emit_load_variant_int(REG_A1, REG_SP, index_offset);
 
-	// A negative index counts from the end, as everywhere else in GDScript. Only
-	// that branch pays for the length, and ECALL_ARRAY_SIZE answers in a0 without
-	// touching a1.
+	// Negative index: wrap from end via ECALL_ARRAY_SIZE
 	mark_label_use(in_range, m_code.size());
 	emit_bge(REG_A1, REG_ZERO, 0);
 	emit_li(REG_A7, ECALL_ARRAY_SIZE);
@@ -3537,9 +2801,7 @@ void RISCVCodeGen::emit_array_element_access(bool is_set, int array_offset, int 
 	emit_lw(REG_A0, REG_SP, array_offset + VARIANT_DATA_OFFSET);
 	mark_label_use(in_range, m_code.size());
 	emit_bge(REG_A1, REG_ZERO, 0);
-	// Still negative: further from the end than the Array is long. Left as it is
-	// it would read as the set form, so substitute an index no Array can hold and
-	// let the host report the out-of-range access.
+	// Still negative after wrap: force out-of-range for the host to report
 	emit_li(REG_A1, 0x7fffffff);
 	define_label(in_range);
 
@@ -3552,24 +2814,9 @@ void RISCVCodeGen::emit_array_element_access(bool is_set, int array_offset, int 
 }
 
 void RISCVCodeGen::emit_typed_int_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op) {
-	// Optimized path for type-hinted integer arithmetic
-	// Instead of calling VEVAL syscall, we:
-	// 1. Load int64 values from Variants directly (from v.i field at offset +8)
-	// 2. Perform native RISC-V arithmetic in registers
-	// 3. Store result back as an INT Variant
-	//
-	// This is safe because:
-	// - Type hints are verified by the parser
-	// - Variant int64 field is well-defined at VARIANT_DATA_OFFSET
-	// - We maintain Variant structure for ABI compatibility
-
-	// Load lhs int64 value: ld t0, lhs_offset+8(sp)
 	emit_load_variant_int(REG_T0, REG_SP, lhs_offset);
-
-	// Load rhs int64 value: ld t1, rhs_offset+8(sp)
 	emit_load_variant_int(REG_T1, REG_SP, rhs_offset);
 
-	// Perform the operation in REG_T2
 	switch (op) {
 		case IROpcode::ADD:
 			emit_add(REG_T2, REG_T0, REG_T1);
@@ -3581,8 +2828,6 @@ void RISCVCodeGen::emit_typed_int_binary_op(int result_offset, int lhs_offset, i
 			emit_mul(REG_T2, REG_T0, REG_T1);
 			break;
 		case IROpcode::DIV:
-			// Note: RISC-V div by zero produces -1 (all bits set) for positive dividend
-			// This matches Variant behavior which should be checked at runtime
 			emit_div(REG_T2, REG_T0, REG_T1);
 			break;
 		case IROpcode::MOD:
@@ -3598,24 +2843,17 @@ void RISCVCodeGen::emit_typed_int_binary_op(int result_offset, int lhs_offset, i
 			emit_xor(REG_T2, REG_T0, REG_T1);
 			break;
 		case IROpcode::SHL:
-			// SLL/SRA use only the low 6 bits of the shift amount on RV64,
-			// which matches Godot's Variant shift behaviour
 			emit_sll(REG_T2, REG_T0, REG_T1);
 			break;
 		case IROpcode::SHR:
-			// GDScript's >> on integers is an arithmetic shift
 			emit_sra(REG_T2, REG_T0, REG_T1);
 			break;
 		default:
 			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported typed int binary op");
 	}
 
-	// Store result as INT Variant
-	// Set type to INT (2)
 	emit_li(REG_T0, Variant::INT);
 	emit_store_variant_type(REG_T0, REG_SP, result_offset);
-
-	// Store computed value to v.i field
 	emit_store_variant_int(REG_T2, REG_SP, result_offset);
 }
 
@@ -3802,14 +3040,11 @@ void RISCVCodeGen::emit_typed_vector_binary_op(int result_offset, int lhs_offset
 					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported vector int operation");
 			}
 
-			// Store result component
 			emit_sw(REG_T2, REG_SP, result_offset + component_offset);
 		} else {
-			// Float vector: load/store and compute at real_t width
 			emit_flr(REG_FA0, REG_SP, lhs_offset + component_offset);
 			emit_flr(REG_FA1, REG_SP, rhs_offset + component_offset);
 
-			// Perform the real_t-width FP operation
 			switch (op) {
 				case IROpcode::ADD:
 					emit_fadd_r(REG_FA2, REG_FA0, REG_FA1);
@@ -3827,34 +3062,24 @@ void RISCVCodeGen::emit_typed_vector_binary_op(int result_offset, int lhs_offset
 					throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported vector float operation");
 			}
 
-			// Store result component
 			emit_fsr(REG_FA2, REG_SP, result_offset + component_offset);
 		}
 	}
 
-	// Set result Variant type
 	emit_li(REG_T0, type_hint);
 	emit_store_variant_type(REG_T0, REG_SP, result_offset);
 }
 
-// Variant field access helpers
 void RISCVCodeGen::emit_load_variant_type(uint8_t rd, uint8_t base_reg, int32_t variant_offset) {
-	// Load m_type field (4 bytes at variant_offset + 0)
 	emit_lw(rd, base_reg, variant_offset + VARIANT_TYPE_OFFSET);
 }
 
 void RISCVCodeGen::emit_store_variant_type(uint8_t rs, uint8_t base_reg, int32_t variant_offset) {
-	// Store m_type field (4 bytes at variant_offset + 0)
 	emit_sw(rs, base_reg, variant_offset + VARIANT_TYPE_OFFSET);
 }
 
 void RISCVCodeGen::emit_variant_truthy(uint8_t rd, int variant_offset, int32_t type_hint) {
-	// Compute Godot's Variant::booleanize() for the Variant at variant_offset(sp)
-	// and leave 0 or 1 in rd.
-	//
-	// This used to be a single `lbu` of the payload's low byte, which is only
-	// correct for BOOL: it makes the integer 256 false, and makes any scoped
-	// index whose low byte happens to be zero false as well.
+	// lbu of the low byte is only correct for BOOL; INT 256 and scoped index 0x..00 would mis-booleanize.
 	switch (type_hint) {
 		case Variant::NIL:
 			emit_li(rd, 0);
@@ -3867,9 +3092,7 @@ void RISCVCodeGen::emit_variant_truthy(uint8_t rd, int variant_offset, int32_t t
 			emit_snez(rd, rd);
 			return;
 		case Variant::FLOAT:
-			// Variant::FLOAT is always a 64-bit double. Shifting the sign bit out
-			// makes -0.0 compare equal to +0.0 and leaves every NaN non-zero,
-			// which is what comparing against 0.0 would do.
+			// slli 1 clears the sign bit: -0.0 becomes 0, NaN stays non-zero.
 			emit_ld(rd, REG_SP, variant_offset + VARIANT_DATA_OFFSET);
 			emit_i_type(0x13, rd, 1, rd, 1); // slli rd, rd, 1
 			emit_snez(rd, rd);
@@ -3878,15 +3101,8 @@ void RISCVCodeGen::emit_variant_truthy(uint8_t rd, int variant_offset, int32_t t
 			break;
 	}
 
-	// The type is not known at compile time. Strings, arrays, dictionaries and
-	// packed arrays booleanize by emptiness and objects by validity, none of
-	// which the guest can see, so the host decides. OP_NOT yields
-	// !booleanize(x); inverting it gives the truth value.
-	//
-	// The call is emitted unconditionally rather than behind a type dispatch:
-	// emit_variant_eval() asks the register allocator to move live values out of
-	// the syscall's clobbered registers, and those moves must not sit on a path
-	// that is sometimes skipped.
+	// Unknown type: host decides via OP_NOT (!booleanize), then invert.
+	// Unconditional: the allocator's spill moves must not sit on a conditional path.
 	const int scratch_offset = get_scratch_variant_offset();
 	emit_variant_eval_unary(scratch_offset, variant_offset, 23); // OP_NOT
 	emit_lbu(rd, REG_SP, scratch_offset + VARIANT_DATA_OFFSET);
@@ -3894,39 +3110,28 @@ void RISCVCodeGen::emit_variant_truthy(uint8_t rd, int variant_offset, int32_t t
 }
 
 void RISCVCodeGen::emit_load_variant_bool(uint8_t rd, uint8_t base_reg, int32_t variant_offset) {
-	// Load boolean value (1 byte at variant_offset + 8)
-	// Use unsigned load to ensure proper zero-extension
 	emit_lbu(rd, base_reg, variant_offset + VARIANT_DATA_OFFSET);
 }
 
 void RISCVCodeGen::emit_store_variant_bool(uint8_t rs, uint8_t base_reg, int32_t variant_offset) {
-	// Store boolean value (1 byte at variant_offset + 8)
-	// Note: storing 8 bytes is fine too since bool is in a union, but byte is more precise
 	emit_sb(rs, base_reg, variant_offset + VARIANT_DATA_OFFSET);
 }
 
 void RISCVCodeGen::emit_load_variant_int(uint8_t rd, uint8_t base_reg, int32_t variant_offset) {
-	// Load int64 value (8 bytes at variant_offset + 8)
 	emit_ld(rd, base_reg, variant_offset + VARIANT_DATA_OFFSET);
 }
 
 void RISCVCodeGen::emit_store_variant_int(uint8_t rs, uint8_t base_reg, int32_t variant_offset) {
-	// Store int64 value (8 bytes at variant_offset + 8)
 	emit_sd(rs, base_reg, variant_offset + VARIANT_DATA_OFFSET);
 }
 
-// Load/Store helpers with automatic large offset handling.
-//
-// Every load and every store shares these two, so the decision about what fits
-// in a 12-bit immediate is made once. Fourteen inline copies of it is thirteen
-// chances for one to check `< 2048` and forget `>= -2048`.
+// Single point for the 12-bit immediate range check on every load/store.
 void RISCVCodeGen::emit_load_with_offset(uint8_t opcode, uint8_t funct3, uint8_t rd, uint8_t rs1, int32_t offset) {
 	if (fits_in_signed(offset, I_TYPE_IMM_BITS)) {
 		emit_i_type(opcode, rd, funct3, rs1, offset);
 		return;
 	}
-	// The address goes in the reserved scratch rather than in a temporary the
-	// surrounding expansion may be using.
+	// Wide path: address in REG_WIDE_SCRATCH to avoid clobbering live temporaries.
 	emit_add_offset(REG_WIDE_SCRATCH, rs1, offset);
 	emit_i_type(opcode, rd, funct3, REG_WIDE_SCRATCH, 0);
 }
@@ -3936,9 +3141,7 @@ void RISCVCodeGen::emit_store_with_offset(uint8_t opcode, uint8_t funct3, uint8_
 		emit_s_type(opcode, funct3, rs1, rs2, offset);
 		return;
 	}
-	// rs2 is the value being stored. Computing the address into a temporary
-	// that happened to be rs2 -- which is what `sd t2, 2048(sp)` did -- stores
-	// the address instead of the value.
+	// REG_WIDE_SCRATCH, not a temporary: using rs2 would overwrite the value being stored.
 	emit_add_offset(REG_WIDE_SCRATCH, rs1, offset);
 	emit_s_type(opcode, funct3, REG_WIDE_SCRATCH, rs2, 0);
 }
@@ -3952,10 +3155,7 @@ void RISCVCodeGen::emit_lw(uint8_t rd, uint8_t rs1, int32_t offset) {
 }
 
 void RISCVCodeGen::emit_lwu(uint8_t rd, uint8_t rs1, int32_t offset) {
-	// LWU (Load Word Unsigned) - RV64I specific, zero-extends to 64 bits. funct3
-	// is 6; this emitted 4, which is LBU -- correct only by accident for the two
-	// callers, both loading a Variant type tag that fits in the low byte on a
-	// little-endian machine.
+	// funct3=6; was 4 (LBU), which only worked by accident on LE.
 	emit_load_with_offset(0x03, 6, rd, rs1, offset);
 }
 
@@ -3987,128 +3187,99 @@ void RISCVCodeGen::emit_sb(uint8_t rs2, uint8_t rs1, int32_t offset) {
 	emit_store_with_offset(0x23, 0, rs2, rs1, offset);
 }
 
-// Floating-point load/store (RV64D extension)
 void RISCVCodeGen::emit_fld(uint8_t rd, uint8_t rs1, int32_t offset) {
-	// FLD: opcode=0x07, funct3=3
 	emit_load_with_offset(0x07, 3, rd, rs1, offset);
 }
 
 void RISCVCodeGen::emit_fsd(uint8_t rs2, uint8_t rs1, int32_t offset) {
-	// FSD: opcode=0x27, funct3=3
 	emit_store_with_offset(0x27, 3, rs2, rs1, offset);
 }
 
 void RISCVCodeGen::emit_flw(uint8_t rd, uint8_t rs1, int32_t offset) {
-	// FLW: opcode=0x07, funct3=2 (RV32F/RV64F)
 	emit_load_with_offset(0x07, 2, rd, rs1, offset);
 }
 
 void RISCVCodeGen::emit_fsw(uint8_t rs2, uint8_t rs1, int32_t offset) {
-	// FSW: opcode=0x27, funct3=2 (RV32F/RV64F)
 	emit_store_with_offset(0x27, 2, rs2, rs1, offset);
 }
 
 void RISCVCodeGen::emit_fcvt_d_s(uint8_t rd, uint8_t rs1) {
-	// FCVT.D.S: Convert float (32-bit) to double (64-bit)
 	emit_r4_type(0b1010011, rd, 0, rs1, 0, 0b01000, 1);
 }
 
 void RISCVCodeGen::emit_fcvt_s_d(uint8_t rd, uint8_t rs1) {
-	// FCVT.S.D: Convert double (64-bit) to float (32-bit)
 	emit_r4_type(0b1010011, rd, 0, rs1, 1, 0b01000, 0);
 }
 
 void RISCVCodeGen::emit_fcvt_d_l(uint8_t rd, uint8_t rs1) {
-	// FCVT.D.L: Convert signed 64-bit integer to double
 	emit_r4_type(0b1010011, rd, 0, rs1, 2, 0b11010, 1);
 }
 
 void RISCVCodeGen::emit_fadd_d(uint8_t rd, uint8_t rs1, uint8_t rs2) {
-	// FADD.D: Double-precision FP add
 	emit_r_type(0x53, rd, 0, rs1, rs2, 0x01);
 }
 
 void RISCVCodeGen::emit_fsub_d(uint8_t rd, uint8_t rs1, uint8_t rs2) {
-	// FSUB.D: Double-precision FP subtract
 	emit_r_type(0x53, rd, 0, rs1, rs2, 0x05);
 }
 
 void RISCVCodeGen::emit_fmul_d(uint8_t rd, uint8_t rs1, uint8_t rs2) {
-	// FMUL.D: Double-precision FP multiply
 	emit_r_type(0x53, rd, 0, rs1, rs2, 0x09);
 }
 
 void RISCVCodeGen::emit_fdiv_d(uint8_t rd, uint8_t rs1, uint8_t rs2) {
-	// FDIV.D: Double-precision FP divide
 	emit_r_type(0x53, rd, 0, rs1, rs2, 0x0D);
 }
 
 void RISCVCodeGen::emit_fmv_d(uint8_t rd, uint8_t rs) {
-	// FMV.D: Double-precision FP move
-	// FSGNJ.D with rs1=rs2 implements move
 	emit_r4_type(0x53, rd, 0x0, rs, rs, 0b00100, 1);
 }
 
 void RISCVCodeGen::emit_fsqrt_d(uint8_t rd, uint8_t rs1) {
-	// FSQRT.D: funct7=0b0101101, rs2 is unused and must be zero
 	emit_r_type(0x53, rd, 0, rs1, 0, 0b0101101);
 }
 
 void RISCVCodeGen::emit_fabs_d(uint8_t rd, uint8_t rs1) {
-	// FABS.D is FSGNJX.D rd, rs, rs: the sign becomes rs's sign XOR rs's sign,
-	// which is positive, and the rest of the value is untouched. Exact, and
-	// defined for every input including the NaNs.
+	// FSGNJX.D rd, rs, rs: sign XOR sign = positive, exact for all inputs including NaN.
 	emit_r_type(0x53, rd, 0b010, rs1, rs1, 0b0010001);
 }
 
 void RISCVCodeGen::emit_flt_d(uint8_t rd, uint8_t rs1, uint8_t rs2) {
-	// FLT.D: 1 or 0 into an *integer* register. Quiet on ordered operands and
-	// false whenever either is a NaN, which is what C++ `a < b` does.
+	// Result into integer register; quiet, false when either operand is NaN.
 	emit_r_type(0x53, rd, 0b001, rs1, rs2, 0b1010001);
 }
 
 void RISCVCodeGen::emit_feq_d(uint8_t rd, uint8_t rs1, uint8_t rs2) {
-	// FEQ.D: 1 or 0 into an *integer* register. Quiet, and false whenever
-	// either operand is a NaN, which is what C++ `a == b` does.
+	// Result into integer register; quiet, false when either operand is NaN.
 	emit_r_type(0x53, rd, 0b010, rs1, rs2, 0b1010001);
 }
 
 void RISCVCodeGen::emit_fcvt_l_d(uint8_t rd, uint8_t rs1) {
-	// FCVT.L.D, rounding toward zero (rm=001): the C++ (int64_t) cast.
+	// rm=001 (toward zero): the (int64_t) cast.
 	emit_r_type(0x53, rd, 0b001, rs1, 0b00010, 0b1100001);
 }
 
 void RISCVCodeGen::emit_fadd_s(uint8_t rd, uint8_t rs1, uint8_t rs2) {
-	// FADD.S: Single-precision FP add
-	// funct7=0x00 for single-precision (vs 0x01 for double)
 	emit_r_type(0x53, rd, 0, rs1, rs2, 0x00);
 }
 
 void RISCVCodeGen::emit_fsub_s(uint8_t rd, uint8_t rs1, uint8_t rs2) {
-	// FSUB.S: Single-precision FP subtract
 	emit_r_type(0x53, rd, 0, rs1, rs2, 0x04);
 }
 
 void RISCVCodeGen::emit_fmul_s(uint8_t rd, uint8_t rs1, uint8_t rs2) {
-	// FMUL.S: Single-precision FP multiply
 	emit_r_type(0x53, rd, 0, rs1, rs2, 0x08);
 }
 
 void RISCVCodeGen::emit_fdiv_s(uint8_t rd, uint8_t rs1, uint8_t rs2) {
-	// FDIV.S: Single-precision FP divide
 	emit_r_type(0x53, rd, 0, rs1, rs2, 0x0C);
 }
 
 void RISCVCodeGen::emit_fmv_s(uint8_t rd, uint8_t rs) {
-	// FMV.S: Single-precision FP move
-	// FSGNJ.S with rs1=rs2 implements move
 	emit_r4_type(0x53, rd, 0x0, rs, rs, 0b00100, 0);
 }
 
-// -= real_t-width floating point =-
-// One set of call sites, two instruction encodings. Everything that touches a
-// real_t component of a Variant (Vector2/3/4, Rect2, Plane, Quaternion, Color)
-// goes through these instead of picking flw/fld or fadd.s/fadd.d directly.
+// real_t-width FP: single set of call sites, dispatched to flw/fld or fadd.s/fadd.d by m_layout.
 
 void RISCVCodeGen::emit_flr(uint8_t rd, uint8_t rs1, int32_t offset) {
 	if (m_layout.double_precision) {
@@ -4127,8 +3298,7 @@ void RISCVCodeGen::emit_fsr(uint8_t rs2, uint8_t rs1, int32_t offset) {
 }
 
 void RISCVCodeGen::emit_fcvt_d_r(uint8_t rd, uint8_t rs1) {
-	// Widen real_t to the double that Variant::FLOAT always holds. When real_t
-	// already is a double this is at most a register move.
+	// Widen real_t to double (Variant::FLOAT is always 64-bit).
 	if (m_layout.double_precision) {
 		if (rd != rs1) {
 			emit_fmv_d(rd, rs1);
@@ -4139,7 +3309,7 @@ void RISCVCodeGen::emit_fcvt_d_r(uint8_t rd, uint8_t rs1) {
 }
 
 void RISCVCodeGen::emit_fcvt_r_d(uint8_t rd, uint8_t rs1) {
-	// Narrow a double down to real_t. No-op when real_t is a double.
+	// Narrow double to real_t; no-op when real_t is double.
 	if (m_layout.double_precision) {
 		if (rd != rs1) {
 			emit_fmv_d(rd, rs1);
@@ -4181,39 +3351,29 @@ void RISCVCodeGen::emit_fdiv_r(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 	}
 }
 
-// Sign-extend word to doubleword (addiw rd, rs, 0)
 void RISCVCodeGen::emit_sh2add(uint8_t rd, uint8_t rs1, uint8_t rs2) {
-	// Zba: rd = (rs1 << 2) + rs2 in one instruction. libriscv decodes all of Zba
-	// unconditionally and these ELFs run nowhere else, so a jump table's
-	// shift-and-add costs one instruction, not two.
+	// Zba: libriscv decodes unconditionally; jump table shift-and-add in one instruction.
 	emit_r_type(0x33, rd, 4, rs1, rs2, 0b0010000);
 }
 
 void RISCVCodeGen::emit_srai(uint8_t rd, uint8_t rs, uint8_t shamt) {
-	// SRAI on RV64: funct6=010000 and a six-bit shift amount, so the immediate
-	// field is (0b010000 << 6) | shamt.
 	emit_i_type(0x13, rd, 5, rs, (0b010000 << 6) | (shamt & 0x3F));
 }
 
 void RISCVCodeGen::emit_sext_w(uint8_t rd, uint8_t rs) {
-	// ADDIW: opcode=0x1b, funct3=0
 	emit_i_type(0x1b, rd, 0, rs, 0);
 }
 
 void RISCVCodeGen::spill_around_syscall(const std::vector<uint8_t>& clobbered_regs) {
-	// The allocator answers with the moves that rescue whatever it still needs;
-	// for the common case where nothing lives in an argument register that is
-	// no moves at all.
 	for (const auto& move : m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx)) {
 		emit_mv(move.second, move.first);
 	}
 }
 
 void RISCVCodeGen::emit_syscall_result(int result_vreg, uint8_t result_reg, int result_offset, int variant_type) {
-	// Always store to stack as Variant
 	emit_li(REG_T0, variant_type);
-	emit_sw(REG_T0, REG_SP, result_offset); // Store 4-byte type
-	emit_sd(result_reg, REG_SP, result_offset + 8); // Store 8-byte integer at offset 8
+	emit_sw(REG_T0, REG_SP, result_offset);
+	emit_sd(result_reg, REG_SP, result_offset + 8);
 }
 
 void RISCVCodeGen::emit_stack_adjust(int32_t amount) {
@@ -4225,9 +3385,7 @@ void RISCVCodeGen::emit_load_stack_offset(uint8_t rd, int32_t offset) {
 }
 
 bool RISCVCodeGen::is_complex_variant_type(int variant_type) {
-	// Simple/inline types that DON'T need permanent storage:
-	// NIL, BOOL, INT, FLOAT, Vector2/3/4, Vector2/3/4i, Color, Rect2/2i, Plane
-	// Everything else (String, Array, Dictionary, Object, packed arrays, etc.) needs permanent storage
+	// Inline types (no scoped-variant storage) vs complex types (String, Array, Object, ...).
 	switch (variant_type) {
 		case Variant::NIL:
 		case Variant::BOOL:
@@ -4243,9 +3401,9 @@ bool RISCVCodeGen::is_complex_variant_type(int variant_type) {
 		case Variant::RECT2I:
 		case Variant::PLANE:
 		case Variant::COLOR:
-			return false; // These are simple inline types
+			return false;
 		default:
-			return true; // Everything else is complex and needs permanent storage
+			return true;
 	}
 }
 

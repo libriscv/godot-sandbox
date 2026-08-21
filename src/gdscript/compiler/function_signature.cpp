@@ -17,8 +17,7 @@ void write_string(std::vector<uint8_t> &out, const std::string &value) {
 	out.insert(out.end(), value.begin(), value.end());
 }
 
-// A cursor over the blob that refuses to read past the end, so a truncated or
-// hostile blob fails the decode instead of reading whatever follows it.
+// Bounds-checked cursor; truncated/hostile blobs fail the decode.
 struct Reader {
 	const uint8_t *data;
 	size_t size;
@@ -84,7 +83,6 @@ std::vector<uint8_t> encode_function_signatures(const std::vector<FunctionSignat
 				case FunctionParameter::DefaultKind::NIL:
 				case FunctionParameter::DefaultKind::EMPTY_ARRAY:
 				case FunctionParameter::DefaultKind::EMPTY_DICT:
-					// The kind is the whole value.
 					break;
 			}
 		}
@@ -99,8 +97,7 @@ bool decode_function_signatures(const uint8_t *data, size_t size,
 	Reader reader{ data, size };
 
 	const uint32_t function_count = reader.scalar<uint32_t>();
-	// One function needs more than four bytes, so a count larger than the blob
-	// cannot be honest; checking it keeps a corrupt header from reserving.
+	// Count larger than blob size cannot be honest; prevents corrupt header from reserving.
 	if (!reader.ok || function_count > size) {
 		out.clear();
 		return false;
@@ -152,8 +149,7 @@ bool decode_function_signatures(const uint8_t *data, size_t size,
 			sig.parameters.push_back(std::move(param));
 		}
 
-		// A required count past the end would let a caller skip an argument the
-		// function really takes, so it is clamped rather than trusted.
+		// Clamp rather than trust: out-of-range would let callers skip arguments.
 		if (sig.required_arguments > sig.parameters.size()) {
 			sig.required_arguments = sig.parameters.size();
 		}

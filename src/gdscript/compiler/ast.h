@@ -6,21 +6,18 @@
 
 namespace gdscript {
 
-// Forward declarations
 struct Expr;
 struct Stmt;
 
 using ExprPtr = std::unique_ptr<Expr>;
 using StmtPtr = std::unique_ptr<Stmt>;
 
-// Expression base class
 struct Expr {
 	virtual ~Expr() = default;
 	int line = 0;
 	int column = 0;
 };
 
-// Literal expression: 42, 3.14, "hello", true, false, null
 struct LiteralExpr : Expr {
 	enum class Type { INTEGER, FLOAT, STRING, BOOL, NULL_VAL };
 	Type lit_type;
@@ -37,13 +34,11 @@ struct LiteralExpr : Expr {
 	}
 };
 
-// Variable reference: x
 struct VariableExpr : Expr {
 	std::string name;
 	explicit VariableExpr(std::string n) : name(std::move(n)) {}
 };
 
-// Binary operation: a + b, x * y
 struct BinaryExpr : Expr {
 	enum class Op {
 		ADD, SUB, MUL, DIV, MOD, POW,
@@ -61,7 +56,6 @@ struct BinaryExpr : Expr {
 		: left(std::move(l)), op(o), right(std::move(r)) {}
 };
 
-// Unary operation: -x, not y
 struct UnaryExpr : Expr {
 	enum class Op { NEG, NOT, BIT_NOT };
 
@@ -71,9 +65,7 @@ struct UnaryExpr : Expr {
 	UnaryExpr(Op o, ExprPtr e) : op(o), operand(std::move(e)) {}
 };
 
-// Type check: `x is int`. The type is kept as a name, not a Variant::Type: only
-// the code generator knows which names it can answer for (a built-in type is a
-// tag compare, a class name needs the engine and is rejected).
+// Type kept as name; codegen resolves to Variant::Type or rejects class names.
 struct TypeTestExpr : Expr {
 	ExprPtr value;
 	std::string type_name;
@@ -82,7 +74,6 @@ struct TypeTestExpr : Expr {
 		: value(std::move(v)), type_name(std::move(t)) {}
 };
 
-// Ternary conditional: true_value if condition else false_value
 struct TernaryExpr : Expr {
 	ExprPtr condition;
 	ExprPtr true_value;
@@ -92,13 +83,7 @@ struct TernaryExpr : Expr {
 		: condition(std::move(cond)), true_value(std::move(t)), false_value(std::move(f)) {}
 };
 
-// -= Named call arguments =-
-//
-// `BankAccount.new(balance = 10)` names the argument it passes. The name lives
-// beside the argument rather than inside it, so that everything which walks an
-// argument list keeps walking expressions. `argument_names` is either empty --
-// the call used no names at all -- or exactly as long as `arguments`, with an
-// empty string where an argument was passed positionally.
+// Empty or same length as arguments; empty string for positional entries.
 struct NamedArguments {
 	std::vector<std::string> argument_names;
 
@@ -116,7 +101,6 @@ struct NamedArguments {
 	}
 };
 
-// Function call: foo(1, 2, 3)
 struct CallExpr : Expr, NamedArguments {
 	std::string function_name;
 	std::vector<ExprPtr> arguments;
@@ -125,18 +109,16 @@ struct CallExpr : Expr, NamedArguments {
 		: function_name(std::move(name)), arguments(std::move(args)) {}
 };
 
-// Member access: obj.method(args) or obj.property
 struct MemberCallExpr : Expr, NamedArguments {
 	ExprPtr object;
 	std::string member_name;
-	std::vector<ExprPtr> arguments; // Empty if property access
-	bool is_method_call = false;    // true if this is obj.method(), false if obj.property
+	std::vector<ExprPtr> arguments;
+	bool is_method_call = false;
 
 	MemberCallExpr(ExprPtr obj, std::string name, std::vector<ExprPtr> args = {}, bool is_method = false)
 		: object(std::move(obj)), member_name(std::move(name)), arguments(std::move(args)), is_method_call(is_method) {}
 };
 
-// Array index: arr[0]
 struct IndexExpr : Expr {
 	ExprPtr object;
 	ExprPtr index;
@@ -145,7 +127,6 @@ struct IndexExpr : Expr {
 		: object(std::move(obj)), index(std::move(idx)) {}
 };
 
-// Array literal: [1, 2, 3]
 struct ArrayLiteralExpr : Expr {
 	std::vector<ExprPtr> elements;
 
@@ -153,73 +134,62 @@ struct ArrayLiteralExpr : Expr {
 		: elements(std::move(elems)) {}
 };
 
-// Dictionary literal: {"key": "value", "num": 42}
 struct DictionaryLiteralExpr : Expr {
-	// Key-value pairs
 	std::vector<std::pair<ExprPtr, ExprPtr>> elements;
 
 	explicit DictionaryLiteralExpr(std::vector<std::pair<ExprPtr, ExprPtr>> elems)
 		: elements(std::move(elems)) {}
 };
 
-// Statement base class
 struct Stmt {
 	virtual ~Stmt() = default;
 	int line = 0;
 	int column = 0;
 };
 
-// Expression statement: print("hello")
 struct ExprStmt : Stmt {
 	ExprPtr expression;
 	explicit ExprStmt(ExprPtr e) : expression(std::move(e)) {}
 };
 
-// Variable declaration: var x = 10 or const x = 10
 struct VarDeclStmt : Stmt {
 	std::string name;
-	std::string type_hint;  // Type annotation if present (e.g., "int", "float", "String")
-	ExprPtr initializer; // Can be null
-	bool is_const = false; // Whether this is a const declaration
-	bool is_property = false; // Whether this is an exported property (@export)
+	std::string type_hint;
+	ExprPtr initializer;
+	bool is_const = false;
+	bool is_property = false;
 
 	VarDeclStmt(std::string n, ExprPtr init = nullptr, bool const_flag = false)
 		: name(std::move(n)), initializer(std::move(init)), is_const(const_flag) {}
 };
 
-// Assignment: x = 42 or arr[0] = 42
 struct AssignStmt : Stmt {
-	std::string name;        // For simple variable assignment
-	ExprPtr target;          // For indexed assignment (IndexExpr)
+	std::string name;
+	ExprPtr target;
 	ExprPtr value;
 
-	// Simple variable assignment
 	AssignStmt(std::string n, ExprPtr v)
 		: name(std::move(n)), target(nullptr), value(std::move(v)) {}
 
-	// Indexed assignment (e.g., arr[0] = value)
 	AssignStmt(ExprPtr t, ExprPtr v)
 		: name(""), target(std::move(t)), value(std::move(v)) {}
 };
 
-// Return statement: return x
 struct ReturnStmt : Stmt {
-	ExprPtr value; // Can be null for bare return
+	ExprPtr value;
 
 	explicit ReturnStmt(ExprPtr v = nullptr) : value(std::move(v)) {}
 };
 
-// If statement
 struct IfStmt : Stmt {
 	ExprPtr condition;
 	std::vector<StmtPtr> then_branch;
-	std::vector<StmtPtr> else_branch; // Can be empty
+	std::vector<StmtPtr> else_branch;
 
 	IfStmt(ExprPtr cond, std::vector<StmtPtr> then_b, std::vector<StmtPtr> else_b = {})
 		: condition(std::move(cond)), then_branch(std::move(then_b)), else_branch(std::move(else_b)) {}
 };
 
-// While statement
 struct WhileStmt : Stmt {
 	ExprPtr condition;
 	std::vector<StmtPtr> body;
@@ -228,27 +198,19 @@ struct WhileStmt : Stmt {
 		: condition(std::move(cond)), body(std::move(b)) {}
 };
 
-// For statement: for variable in iterable:
 struct ForStmt : Stmt {
-	std::string variable;  // Loop variable name
-	ExprPtr iterable;      // Expression to iterate over (e.g., range(10))
+	std::string variable;
+	ExprPtr iterable;
 	std::vector<StmtPtr> body;
 
 	ForStmt(std::string var, ExprPtr iter, std::vector<StmtPtr> b)
 		: variable(std::move(var)), iterable(std::move(iter)), body(std::move(b)) {}
 };
 
-// Break statement
 struct BreakStmt : Stmt {};
-
-// Continue statement
 struct ContinueStmt : Stmt {};
-
-// Pass statement (no-op)
 struct PassStmt : Stmt {};
 
-// One pattern of a `match` arm. VALUE is an equality test; the other kinds test
-// shape and/or bind, which no expression can express.
 struct MatchPattern;
 using MatchPatternPtr = std::unique_ptr<MatchPattern>;
 
@@ -262,24 +224,20 @@ struct MatchPattern {
 	};
 
 	Kind kind = Kind::VALUE;
-	ExprPtr value;                    // VALUE
-	std::string name;                 // BIND
-	std::vector<MatchPatternPtr> elements; // ARRAY
-	// DICTIONARY. An entry with no value pattern is `{"key"}`: the key must be
-	// present, its value is unconstrained.
+	ExprPtr value;
+	std::string name;
+	std::vector<MatchPatternPtr> elements;
+	// Entry with no value pattern: key must be present, value unconstrained.
 	struct Entry {
 		ExprPtr key;
 		MatchPatternPtr value;
 	};
 	std::vector<Entry> entries;
-	// Trailing `..`: "exactly these" becomes "at least these".
-	bool open = false;
+	bool open = false; // trailing `..`
 	int line = 0;
 	int column = 0;
 
-	// True if this pattern, or any nested one, binds a name. A binding branch
-	// cannot share an arm with other patterns (they would leave the name
-	// undefined) and cannot be a jump table entry.
+	// Binding disqualifies jump table entries and multi-pattern arms.
 	bool binds() const {
 		if (kind == Kind::BIND) {
 			return true;
@@ -298,18 +256,13 @@ struct MatchPattern {
 	}
 };
 
-// Match statement: match value: <patterns>
 struct MatchStmt : Stmt {
 	struct Branch {
-		// The patterns this branch matches, any one of which is enough.
 		std::vector<MatchPatternPtr> patterns;
-		// `when <expr>`: evaluated after the pattern matched and its bindings
-		// exist, since a guard is normally about them. Null if absent.
 		ExprPtr guard;
 		std::vector<StmtPtr> body;
 
-		// The arm unmatched subjects fall to. A guard disqualifies it (a guarded
-		// `_` can decline), as does a second pattern, which would be dead.
+		// Guard or multiple patterns disqualify catch-all.
 		bool is_catch_all() const {
 			return !guard && patterns.size() == 1 &&
 				patterns[0]->kind == MatchPattern::Kind::WILDCARD;
@@ -323,44 +276,32 @@ struct MatchStmt : Stmt {
 		: subject(std::move(subj)), branches(std::move(b)) {}
 };
 
-// Function parameter
 struct Parameter {
 	std::string name;
-	std::string type_hint;  // Type annotation if present (e.g., "int", "float", "String")
-	ExprPtr default_value;  // Default value if present (e.g., "b = 5"), else nullptr
+	std::string type_hint;
+	ExprPtr default_value;
 };
 
-// Function declaration
 struct FunctionDecl {
 	std::string name;
 	std::vector<Parameter> parameters;
-	std::string return_type;  // Return type annotation if present (e.g., "void", "int")
+	std::string return_type;
 	std::vector<StmtPtr> body;
 	int line = 0;
 	int column = 0;
-	// '##' block directly above the declaration, lines joined by '\n'. Not
-	// compiled; published in the signature as the editor description.
+	// '##' block above declaration; published in the signature for the editor.
 	std::string doc_comment;
 };
 
-// -= Structs =-
-//
-// A struct is sugar for a Dictionary with a fixed set of keys: the declaration
-// names the keys and their defaults, and every instance is an ordinary
-// Dictionary Variant. The compiler keeps the declaration only so that it can
-// build that Dictionary and reject a field name the struct does not have --
-// nothing about a struct survives into the IR.
-
-// One field of a struct: var balance = 0
+// Sugar for a Dictionary with a fixed key set; nothing survives into IR.
 struct StructField {
 	std::string name;
-	std::string type_hint;   // Type annotation if present (e.g. "int")
-	ExprPtr default_value;   // Value when the instance does not supply one, or null
+	std::string type_hint;
+	ExprPtr default_value;
 	int line = 0;
 	int column = 0;
 };
 
-// Struct declaration: struct BankAccount: <fields>
 struct StructDecl {
 	std::string name;
 	std::vector<StructField> fields;
@@ -376,8 +317,7 @@ struct StructDecl {
 		return nullptr;
 	}
 
-	// Position of a field in the declaration, which is the position it takes in
-	// a positional constructor call. -1 when the struct has no such field.
+	// Position in the declaration; -1 if absent.
 	int field_index(const std::string& field_name) const {
 		for (size_t i = 0; i < fields.size(); i++) {
 			if (fields[i].name == field_name) {
@@ -387,7 +327,6 @@ struct StructDecl {
 		return -1;
 	}
 
-	// The field names, for the "fields are: ..." line of a diagnostic.
 	std::string field_list() const {
 		std::string list;
 		for (const auto& field : fields) {
@@ -400,10 +339,7 @@ struct StructDecl {
 	}
 };
 
-// Top-level program
-// Enum declaration. Members are compile-time integers, so nothing of an enum
-// reaches the IR: a member reference becomes its immediate. An unnamed enum
-// contributes its members to file scope.
+// Members are compile-time integers; nothing reaches IR. Unnamed enums export to file scope.
 struct EnumDecl {
 	struct Member {
 		std::string name;
@@ -412,7 +348,7 @@ struct EnumDecl {
 		int column = 0;
 	};
 
-	std::string name; // empty for an unnamed enum
+	std::string name;
 	std::vector<Member> members;
 	int line = 0;
 	int column = 0;
@@ -428,9 +364,9 @@ struct EnumDecl {
 };
 
 struct Program {
-	std::vector<VarDeclStmt> globals; // Global variable declarations
-	std::vector<StructDecl> structs;  // Struct declarations
-	std::vector<EnumDecl> enums;      // Enum declarations
+	std::vector<VarDeclStmt> globals;
+	std::vector<StructDecl> structs;
+	std::vector<EnumDecl> enums;
 	std::vector<FunctionDecl> functions;
 };
 

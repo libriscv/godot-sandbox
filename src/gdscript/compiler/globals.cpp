@@ -5,16 +5,12 @@
 
 namespace gdscript {
 
-// Godot's constants, spelled the way math_funcs.h spells them.
+// From Godot's math_funcs.h.
 static constexpr double MATH_PI = 3.1415926535897932384626433833;
 static constexpr double MATH_TAU = 6.2831853071795864769252867666;
 static constexpr double CMP_EPSILON = 0.00001;
 
-// -= The table =-
-//
-// One row per global. The columns after the result are only read by the kinds
-// that need them: utility_op / float_args by SYSCALL, int_form / float_form by
-// NUMERIC. A row that does not use a column leaves it at the placeholder.
+// One row per global. Unused columns use the NO_OP / NO_FORM placeholders.
 
 #define NO_OP (-1)
 #define NO_FORM GlobalFn::PRINT
@@ -22,10 +18,10 @@ static constexpr double CMP_EPSILON = 0.00001;
 static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 	// name, fn, kind, min, max, result, utility_op, float_args, int_form, float_form
 
-	// -= The one global with a side effect =-
+	// Side-effecting
 	{ "print", GlobalFn::PRINT, GlobalKind::PRINT, 0, 63, GlobalResult::NIL, NO_OP, 0, NO_FORM, NO_FORM },
 
-	// -= Sign and magnitude =-
+	// Sign and magnitude
 	{ "abs", GlobalFn::ABS, GlobalKind::NUMERIC, 1, 1, GlobalResult::NUMERIC, NO_OP, 0, GlobalFn::ABSI, GlobalFn::ABSF },
 	{ "absi", GlobalFn::ABSI, GlobalKind::INT_OP, 1, 1, GlobalResult::INT, NO_OP, 0, NO_FORM, NO_FORM },
 	{ "absf", GlobalFn::ABSF, GlobalKind::FLOAT_OP, 1, 1, GlobalResult::FLOAT, NO_OP, 0, NO_FORM, NO_FORM },
@@ -33,7 +29,7 @@ static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 	{ "signi", GlobalFn::SIGNI, GlobalKind::INT_OP, 1, 1, GlobalResult::INT, NO_OP, 0, NO_FORM, NO_FORM },
 	{ "signf", GlobalFn::SIGNF, GlobalKind::SYSCALL, 1, 1, GlobalResult::FLOAT, UTILITY_SIGN, 1, NO_FORM, NO_FORM },
 
-	// -= Rounding =-
+	// Rounding
 	{ "floor", GlobalFn::FLOOR, GlobalKind::NUMERIC, 1, 1, GlobalResult::NUMERIC, NO_OP, 0, GlobalFn::INT_IDENTITY, GlobalFn::FLOORF },
 	{ "floorf", GlobalFn::FLOORF, GlobalKind::SYSCALL, 1, 1, GlobalResult::FLOAT, UTILITY_FLOOR, 1, NO_FORM, NO_FORM },
 	{ "floori", GlobalFn::FLOORI, GlobalKind::SYSCALL, 1, 1, GlobalResult::INT, UTILITY_FLOOR, 1, NO_FORM, NO_FORM },
@@ -47,10 +43,7 @@ static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 	{ "snappedf", GlobalFn::SNAPPEDF, GlobalKind::SYSCALL, 2, 2, GlobalResult::FLOAT, UTILITY_SNAPPED, 2, NO_FORM, NO_FORM },
 	{ "snappedi", GlobalFn::SNAPPEDI, GlobalKind::SYSCALL, 2, 2, GlobalResult::INT, UTILITY_SNAPPED, 2, NO_FORM, NO_FORM },
 
-	// -= Selection =-
-	//
-	// min() and max() are variadic in GDScript. The code generator folds the
-	// tail into a chain of two-argument calls, so the forms below take two.
+	// Selection. Variadic min/max folded to pairwise by codegen.
 	{ "min", GlobalFn::MIN, GlobalKind::NUMERIC, 2, 63, GlobalResult::NUMERIC, NO_OP, 0, GlobalFn::MINI, GlobalFn::MINF },
 	{ "mini", GlobalFn::MINI, GlobalKind::INT_OP, 2, 2, GlobalResult::INT, NO_OP, 0, NO_FORM, NO_FORM },
 	{ "minf", GlobalFn::MINF, GlobalKind::FLOAT_OP, 2, 2, GlobalResult::FLOAT, NO_OP, 0, NO_FORM, NO_FORM },
@@ -61,7 +54,7 @@ static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 	{ "clampi", GlobalFn::CLAMPI, GlobalKind::INT_OP, 3, 3, GlobalResult::INT, NO_OP, 0, NO_FORM, NO_FORM },
 	{ "clampf", GlobalFn::CLAMPF, GlobalKind::FLOAT_OP, 3, 3, GlobalResult::FLOAT, NO_OP, 0, NO_FORM, NO_FORM },
 
-	// -= Modulo and wrapping =-
+	// Modulo and wrapping
 	{ "posmod", GlobalFn::POSMOD, GlobalKind::INT_OP, 2, 2, GlobalResult::INT, NO_OP, 0, NO_FORM, NO_FORM },
 	{ "fmod", GlobalFn::FMOD, GlobalKind::SYSCALL, 2, 2, GlobalResult::FLOAT, UTILITY_FMOD, 2, NO_FORM, NO_FORM },
 	{ "fposmod", GlobalFn::FPOSMOD, GlobalKind::SYSCALL, 2, 2, GlobalResult::FLOAT, UTILITY_FPOSMOD, 2, NO_FORM, NO_FORM },
@@ -69,13 +62,13 @@ static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 	{ "wrapi", GlobalFn::WRAPI, GlobalKind::INT_OP, 3, 3, GlobalResult::INT, NO_OP, 0, NO_FORM, NO_FORM },
 	{ "wrapf", GlobalFn::WRAPF, GlobalKind::SYSCALL, 3, 3, GlobalResult::FLOAT, UTILITY_WRAP, 3, NO_FORM, NO_FORM },
 
-	// -= Powers, roots and logarithms =-
+	// Powers, roots, logarithms
 	{ "sqrt", GlobalFn::SQRT, GlobalKind::FLOAT_OP, 1, 1, GlobalResult::FLOAT, NO_OP, 0, NO_FORM, NO_FORM },
 	{ "pow", GlobalFn::POW, GlobalKind::SYSCALL, 2, 2, GlobalResult::FLOAT, UTILITY_POW, 2, NO_FORM, NO_FORM },
 	{ "exp", GlobalFn::EXP, GlobalKind::SYSCALL, 1, 1, GlobalResult::FLOAT, UTILITY_EXP, 1, NO_FORM, NO_FORM },
 	{ "log", GlobalFn::LOG, GlobalKind::SYSCALL, 1, 1, GlobalResult::FLOAT, UTILITY_LOG, 1, NO_FORM, NO_FORM },
 
-	// -= Trigonometry =-
+	// Trigonometry
 	{ "sin", GlobalFn::SIN, GlobalKind::SYSCALL, 1, 1, GlobalResult::FLOAT, UTILITY_SIN, 1, NO_FORM, NO_FORM },
 	{ "cos", GlobalFn::COS, GlobalKind::SYSCALL, 1, 1, GlobalResult::FLOAT, UTILITY_COS, 1, NO_FORM, NO_FORM },
 	{ "tan", GlobalFn::TAN, GlobalKind::SYSCALL, 1, 1, GlobalResult::FLOAT, UTILITY_TAN, 1, NO_FORM, NO_FORM },
@@ -93,11 +86,11 @@ static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 	{ "rad_to_deg", GlobalFn::RAD_TO_DEG, GlobalKind::SYSCALL, 1, 1, GlobalResult::FLOAT, UTILITY_RAD_TO_DEG, 1, NO_FORM, NO_FORM },
 	{ "angle_difference", GlobalFn::ANGLE_DIFFERENCE, GlobalKind::SYSCALL, 2, 2, GlobalResult::FLOAT, UTILITY_ANGLE_DIFFERENCE, 2, NO_FORM, NO_FORM },
 
-	// -= Decibels =-
+	// Decibels
 	{ "linear_to_db", GlobalFn::LINEAR_TO_DB, GlobalKind::SYSCALL, 1, 1, GlobalResult::FLOAT, UTILITY_LINEAR_TO_DB, 1, NO_FORM, NO_FORM },
 	{ "db_to_linear", GlobalFn::DB_TO_LINEAR, GlobalKind::SYSCALL, 1, 1, GlobalResult::FLOAT, UTILITY_DB_TO_LINEAR, 1, NO_FORM, NO_FORM },
 
-	// -= Interpolation =-
+	// Interpolation
 	{ "lerp", GlobalFn::LERP, GlobalKind::SYSCALL, 3, 3, GlobalResult::FLOAT, UTILITY_LERP, 3, NO_FORM, NO_FORM },
 	{ "lerpf", GlobalFn::LERPF, GlobalKind::SYSCALL, 3, 3, GlobalResult::FLOAT, UTILITY_LERP, 3, NO_FORM, NO_FORM },
 	{ "lerp_angle", GlobalFn::LERP_ANGLE, GlobalKind::SYSCALL, 3, 3, GlobalResult::FLOAT, UTILITY_LERP_ANGLE, 3, NO_FORM, NO_FORM },
@@ -111,50 +104,32 @@ static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 	{ "bezier_interpolate", GlobalFn::BEZIER_INTERPOLATE, GlobalKind::SYSCALL, 5, 5, GlobalResult::FLOAT, UTILITY_BEZIER_INTERPOLATE, 5, NO_FORM, NO_FORM },
 	{ "bezier_derivative", GlobalFn::BEZIER_DERIVATIVE, GlobalKind::SYSCALL, 5, 5, GlobalResult::FLOAT, UTILITY_BEZIER_DERIVATIVE, 5, NO_FORM, NO_FORM },
 
-	// -= Predicates =-
+	// Predicates
 	{ "is_nan", GlobalFn::IS_NAN, GlobalKind::SYSCALL, 1, 1, GlobalResult::BOOL, UTILITY_IS_NAN, 1, NO_FORM, NO_FORM },
 	{ "is_inf", GlobalFn::IS_INF, GlobalKind::SYSCALL, 1, 1, GlobalResult::BOOL, UTILITY_IS_INF, 1, NO_FORM, NO_FORM },
 	{ "is_finite", GlobalFn::IS_FINITE, GlobalKind::SYSCALL, 1, 1, GlobalResult::BOOL, UTILITY_IS_FINITE, 1, NO_FORM, NO_FORM },
 	{ "is_zero_approx", GlobalFn::IS_ZERO_APPROX, GlobalKind::SYSCALL, 1, 1, GlobalResult::BOOL, UTILITY_IS_ZERO_APPROX, 1, NO_FORM, NO_FORM },
 	{ "is_equal_approx", GlobalFn::IS_EQUAL_APPROX, GlobalKind::SYSCALL, 2, 2, GlobalResult::BOOL, UTILITY_IS_EQUAL_APPROX, 2, NO_FORM, NO_FORM },
 
-	// -= Variant queries =-
+	// Variant queries
 	{ "str", GlobalFn::STR, GlobalKind::HOST, 1, 63, GlobalResult::STRING, UTILITY_STR, 0, NO_FORM, NO_FORM },
 	{ "len", GlobalFn::LEN, GlobalKind::HOST, 1, 1, GlobalResult::INT, UTILITY_LEN, 0, NO_FORM, NO_FORM },
 
-	// -= The type constructors =-
-	//
-	// int(x), float(x) and bool(x) convert anything a Variant can hold, so the
-	// host performs them -- except when the compiler already knows the
-	// argument is a number or a bool, which is what int_form is for. String(x)
-	// is str(x) of one argument, and has no inline form at all.
+	// Type constructors. Inline when argument is numeric/bool; host otherwise.
 	{ "int", GlobalFn::TO_INT, GlobalKind::CAST, 1, 1, GlobalResult::INT, UTILITY_TO_INT, 0, GlobalFn::INT_IDENTITY, NO_FORM },
 	{ "float", GlobalFn::TO_FLOAT, GlobalKind::CAST, 1, 1, GlobalResult::FLOAT, UTILITY_TO_FLOAT, 0, GlobalFn::FLOAT_IDENTITY, NO_FORM },
 	{ "bool", GlobalFn::TO_BOOL, GlobalKind::CAST, 1, 1, GlobalResult::BOOL, UTILITY_TO_BOOL, 0, GlobalFn::BOOLEANIZE, NO_FORM },
 	{ "String", GlobalFn::TO_STRING, GlobalKind::HOST, 0, 1, GlobalResult::STRING, UTILITY_STR, 0, NO_FORM, NO_FORM },
 
-	// -= Randomness =-
-	//
-	// The last column is what sets these apart from everything above: a call
-	// advances the generator the whole project draws from, so it is something
-	// the program does and not only something it computes. randomize() and
-	// seed() are deliberately absent -- they would let a guest decide what the
-	// rest of the project rolls next.
+	// Randomness (impure). randomize()/seed() excluded — mutate project RNG.
 	{ "randf", GlobalFn::RANDF, GlobalKind::SYSCALL, 0, 0, GlobalResult::FLOAT, UTILITY_RANDF, 0, NO_FORM, NO_FORM, true },
 	{ "randf_range", GlobalFn::RANDF_RANGE, GlobalKind::SYSCALL, 2, 2, GlobalResult::FLOAT, UTILITY_RANDF_RANGE, 2, NO_FORM, NO_FORM, true },
 	{ "randfn", GlobalFn::RANDFN, GlobalKind::SYSCALL, 2, 2, GlobalResult::FLOAT, UTILITY_RANDFN, 2, NO_FORM, NO_FORM, true },
 	{ "randi", GlobalFn::RANDI, GlobalKind::SYSCALL_INT, 0, 0, GlobalResult::INT, UTILITY_RANDI, 0, NO_FORM, NO_FORM, true },
 	{ "randi_range", GlobalFn::RANDI_RANGE, GlobalKind::SYSCALL_INT, 2, 2, GlobalResult::INT, UTILITY_RANDI_RANGE, 0, NO_FORM, NO_FORM, true },
 
-	// -= Forms with no GDScript name of their own =-
-	//
-	// floor(), ceil() and round() of an integer are that integer. The
-	// dispatchers above name this as their integer form; nothing can call it
-	// directly, which is why the name is not a valid identifier.
+	// Internal forms (not callable by name, hence invalid-identifier names).
 	{ ".int_identity", GlobalFn::INT_IDENTITY, GlobalKind::INT_OP, 1, 1, GlobalResult::INT, NO_OP, 0, NO_FORM, NO_FORM },
-	// float() of a number, and bool() of one. Loading a Variant as a double is
-	// already float()'s conversion, so the operation itself is the identity;
-	// booleanize() is the comparison against zero that follows it.
 	{ ".float_identity", GlobalFn::FLOAT_IDENTITY, GlobalKind::FLOAT_OP, 1, 1, GlobalResult::FLOAT, NO_OP, 0, NO_FORM, NO_FORM },
 	{ ".booleanize", GlobalFn::BOOLEANIZE, GlobalKind::FLOAT_OP, 1, 1, GlobalResult::BOOL, NO_OP, 0, NO_FORM, NO_FORM },
 };
@@ -186,8 +161,6 @@ const GlobalFunction& global_function(GlobalFn fn) {
 
 	auto it = by_fn.find(static_cast<int16_t>(fn));
 	if (it == by_fn.end()) {
-		// Every GlobalFn has a row; a missing one is a table that was not
-		// updated alongside the enum.
 		throw CompilerException(ErrorType::CODEGEN_ERROR,
 			"No table entry for global function id " + std::to_string(static_cast<int>(fn)));
 	}
@@ -205,11 +178,8 @@ GlobalFn resolve_cast_form(const GlobalFunction& info, int hint) {
 	if (info.kind != GlobalKind::CAST) {
 		return info.fn;
 	}
-	// A number or a bool converts inline: loading the Variant as an integer or
-	// as a double *is* the conversion, and the run-time type test the backend
-	// emits for an untyped argument already covers all three. Anything else --
-	// a String above all, where int("42") is 42 and not zero -- is Godot's
-	// conversion, which only Godot can perform.
+	// Numeric/bool: inline (the load is the conversion). Anything else
+	// (e.g. int("42") == 42) needs the host.
 	switch (hint) {
 		case Variant::INT:
 		case Variant::FLOAT:
@@ -220,20 +190,15 @@ GlobalFn resolve_cast_form(const GlobalFunction& info, int hint) {
 	}
 }
 
-// -= Evaluation =-
-//
-// Godot's math_funcs.h, transcribed. Where Godot's version is written against
-// real_t -- smoothstep's near-equality test, wrapf's -- this uses double, so
-// that a program means the same thing in a single- and a double-precision
-// build.
+// Godot's math_funcs.h transcribed in double (not real_t) for build-invariance.
 
 static double eval_sign(double x) {
-	// Godot's SIGN(): zero, and NaN, are neither positive nor negative.
+	// SIGN(): zero and NaN are neither positive nor negative.
 	return (x < 0.0) ? -1.0 : ((x > 0.0) ? 1.0 : 0.0);
 }
 
 static bool eval_is_equal_approx(double a, double b) {
-	// Exact equality first, so that infinities compare equal.
+	// Exact equality first: infinities must compare equal.
 	if (a == b) {
 		return true;
 	}
@@ -299,9 +264,7 @@ double eval_utility_op(int16_t utility_op, const double args[UTILITY_MAX_FLOAT_A
 	switch (utility_op) {
 		case UTILITY_FLOOR: return std::floor(a);
 		case UTILITY_CEIL: return std::ceil(a);
-		// Godot rounds half away from zero through floor(), not through
-		// ::round(), and the two differ for values where adding 0.5 is not
-		// exact.
+		// Godot rounds half away from zero via floor(), not ::round().
 		case UTILITY_ROUND: return (a >= 0) ? std::floor(a + 0.5) : -std::floor(-a + 0.5);
 		case UTILITY_SIGN: return eval_sign(a);
 		case UTILITY_SIN: return std::sin(a);
@@ -370,7 +333,6 @@ double eval_utility_op(int16_t utility_op, const double args[UTILITY_MAX_FLOAT_A
 		case UTILITY_REMAP:
 			return eval_lerp(d, e, eval_inverse_lerp(b, c, a));
 		case UTILITY_CUBIC_INTERPOLATE: {
-			// cubic_interpolate(from, to, pre, post, weight)
 			const double from = a, to = b, pre = c, post = d, weight = e;
 			return 0.5 *
 				((from * 2.0) +
@@ -407,9 +369,6 @@ double eval_utility_op(int16_t utility_op, const double args[UTILITY_MAX_FLOAT_A
 		case UTILITY_RANDFN:
 		case UTILITY_RANDI:
 		case UTILITY_RANDI_RANGE:
-			// There is no answer to give: the host's generator has the state
-			// these read, and inventing a number here would be a number the
-			// machine did not produce.
 			throw CompilerException(ErrorType::CODEGEN_ERROR,
 				"The random functions need the host's random number generator"
 				" and cannot be evaluated here");
@@ -433,8 +392,7 @@ int64_t eval_global_int(GlobalFn fn, const int64_t* args, size_t count) {
 			return args[0];
 		case GlobalFn::ABSI: {
 			need(1);
-			// The sign-mask form rather than std::abs(): the emitted RISC-V
-			// wraps on INT64_MIN, and std::abs() of INT64_MIN is undefined.
+			// Sign-mask form: wraps on INT64_MIN (matching RISC-V); std::abs(INT64_MIN) is UB.
 			const int64_t mask = args[0] >> 63;
 			return static_cast<int64_t>((static_cast<uint64_t>(args[0]) ^ static_cast<uint64_t>(mask)) - static_cast<uint64_t>(mask));
 		}
@@ -454,9 +412,7 @@ int64_t eval_global_int(GlobalFn fn, const int64_t* args, size_t count) {
 			return args[0];
 		case GlobalFn::POSMOD: {
 			need(2);
-			// Godot leaves a zero divisor to the C++ `%`, which traps. The
-			// backend cannot trap usefully inside the sandbox, so both sides
-			// answer zero -- the same thing integer division by zero does here.
+			// Zero divisor → 0 (C++ % traps; sandbox cannot trap usefully).
 			if (args[1] == 0) {
 				return 0;
 			}
@@ -525,12 +481,10 @@ double eval_global_float(GlobalFn fn, const double* args, size_t count) {
 			if (args[0] > args[2]) return args[2];
 			return args[0];
 		case GlobalFn::FLOAT_IDENTITY:
-			// float() of a number: the load already converted it.
 			need(1);
 			return args[0];
 		case GlobalFn::BOOLEANIZE:
-			// bool() of a number, which is Variant::booleanize(): anything but
-			// zero is true, and that includes NaN.
+			// Variant::booleanize(): NaN is true.
 			need(1);
 			return (args[0] != 0.0) ? 1.0 : 0.0;
 		default:

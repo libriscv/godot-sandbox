@@ -12,7 +12,6 @@
 
 using namespace gdscript;
 
-// RISC-V register names
 const char* reg_name(uint8_t reg) {
 	static const char* names[] = {
 		"x0", "ra", "sp", "gp", "tp",
@@ -25,10 +24,8 @@ const char* reg_name(uint8_t reg) {
 	return "?";
 }
 
-// Type names come from ir.cpp so that every tool prints the same spelling.
 static const char* type_hint_name(IRInstruction::TypeHint hint) { return variant_type_name(hint); }
 
-// Helper to format operand with detailed type info
 std::string format_operand_detailed(const IRValue& op) {
 	std::ostringstream oss;
 
@@ -66,10 +63,8 @@ int main(int argc, char** argv)
 	bool verbose = false;
 	bool no_optimize = false;
 	bool show_codegen = false;
-	// Which real_t the generated code targets; defaults to this build's
 	bool double_precision = native_variant_layout().double_precision;
 
-	// Parse arguments
 	for (int i = 1; i < argc; i++) {
 		std::string arg = argv[i];
 		if (arg == "-v" || arg == "--verbose") {
@@ -88,7 +83,6 @@ int main(int argc, char** argv)
 	}
 
 	if (source.empty()) {
-		// Read from stdin
 		std::string line;
 		while (std::getline(std::cin, line)) {
 			source += line + "\n";
@@ -127,13 +121,11 @@ int main(int argc, char** argv)
 		CodeGenerator codegen;
 		IRProgram ir = codegen.generate(program);
 
-		// Apply optimizations unless disabled
 		if (!no_optimize) {
 			IROptimizer optimizer;
 			optimizer.optimize(ir);
 		}
 
-		// Print global variables
 		if (!ir.globals.empty()) {
 			std::cout << "=== GLOBAL VARIABLES ===" << std::endl;
 			for (size_t i = 0; i < ir.globals.size(); i++) {
@@ -190,7 +182,6 @@ int main(int argc, char** argv)
 			std::cout << std::endl;
 		}
 
-		// Print string constants
 		if (!ir.string_constants.empty()) {
 			std::cout << "=== STRING CONSTANTS ===" << std::endl;
 			for (size_t i = 0; i < ir.string_constants.size(); i++) {
@@ -199,8 +190,6 @@ int main(int argc, char** argv)
 			std::cout << std::endl;
 		}
 
-		// Print functions. The global init function comes first: it runs before
-		// any of them.
 		std::vector<const IRFunction*> all_functions;
 		if (ir.has_global_init) {
 			all_functions.push_back(&ir.global_init);
@@ -225,11 +214,9 @@ int main(int argc, char** argv)
 			}
 			std::cout << std::endl;
 
-			// Initialize register allocator to simulate codegen
 			RegisterAllocator allocator;
 			allocator.init(func);
 
-			// Track value types like codegen does
 			enum class ValueType {
 				UNKNOWN,
 				VARIANT
@@ -238,7 +225,6 @@ int main(int argc, char** argv)
 			std::unordered_map<int, int> variant_offsets;
 			int next_variant_slot = func.parameters.size();
 
-			// Helper to get value type name
 			auto value_type_name = [](ValueType t) -> const char* {
 				switch (t) {
 					case ValueType::VARIANT: return "VARIANT";
@@ -246,11 +232,9 @@ int main(int argc, char** argv)
 				}
 			};
 
-			// Simulate type inference from instructions
 			for (size_t i = 0; i < func.instructions.size(); i++) {
 				const auto& instr = func.instructions[i];
 
-				// Collect all vregs used in this instruction
 				std::set<int> used_vregs;
 				for (const auto& op : instr.operands) {
 					if (op.type == IRValue::Type::REGISTER) {
@@ -258,7 +242,6 @@ int main(int argc, char** argv)
 					}
 				}
 
-				// Infer types from instruction
 				ValueType result_type = ValueType::UNKNOWN;
 
 				switch (instr.opcode) {
@@ -295,7 +278,6 @@ int main(int argc, char** argv)
 						break;
 				}
 
-				// Mark result register
 				if (result_type != ValueType::UNKNOWN && !instr.operands.empty() &&
 				    instr.operands[0].type == IRValue::Type::REGISTER) {
 					int result_vreg = std::get<int>(instr.operands[0].value);
@@ -305,13 +287,8 @@ int main(int argc, char** argv)
 					}
 				}
 
-				// Format instruction index
 				std::cout << std::setw(4) << i << ": ";
-
-				// Format opcode
 				std::cout << std::setw(20) << std::left << ir_opcode_name(instr.opcode);
-
-				// Format operands with register allocation info
 				for (size_t j = 0; j < instr.operands.size(); j++) {
 					if (j > 0) std::cout << ", ";
 					if (instr.opcode == IROpcode::GLOBAL_CALL && j == 1 &&
@@ -325,7 +302,6 @@ int main(int argc, char** argv)
 						std::cout << instr.operands[j].to_string();
 					}
 
-					// Show register allocation if codegen mode
 					if (show_codegen && instr.operands[j].type == IRValue::Type::REGISTER) {
 						int vreg = std::get<int>(instr.operands[j].value);
 						int preg = allocator.allocate_register(vreg, i);
@@ -338,7 +314,6 @@ int main(int argc, char** argv)
 						}
 						std::cout << ")";
 
-						// Show value type if known
 						if (vreg_types.count(vreg)) {
 							std::cout << "[" << value_type_name(vreg_types[vreg]) << "]";
 							if (vreg_types[vreg] == ValueType::VARIANT && variant_offsets.count(vreg)) {
@@ -348,12 +323,10 @@ int main(int argc, char** argv)
 					}
 				}
 
-				// Show type hint if present
 				if (instr.type_hint != IRInstruction::TypeHint_NONE) {
 					std::cout << "  [type: " << type_hint_name(instr.type_hint) << "]";
 				}
 
-				// Add semantic comments for certain instructions
 				if (!verbose) {
 					switch (instr.opcode) {
 						case IROpcode::MAKE_VECTOR2:

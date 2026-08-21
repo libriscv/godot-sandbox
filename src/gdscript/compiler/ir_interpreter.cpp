@@ -7,13 +7,11 @@
 
 namespace gdscript {
 
-// A runaway program is a compiler bug, not a hang. The interpreter is only ever
-// pointed at test programs, so any run this long is a lost loop.
+// Runaway detection; only test programs run here.
 static constexpr size_t MAX_STEPS = 20'000'000;
 static constexpr int MAX_CALL_DEPTH = 256;
 
 IRInterpreter::IRInterpreter(const IRProgram& program) : m_program(program) {
-	// Build function map
 	for (const auto& func : program.functions) {
 		m_function_map[func.name] = &func;
 	}
@@ -41,10 +39,7 @@ void IRInterpreter::initialize_globals() {
 			case IRGlobalVar::InitType::EMPTY_ARRAY:
 			case IRGlobalVar::InitType::EMPTY_DICT:
 			case IRGlobalVar::InitType::RUNTIME:
-				// NIL, containers and startup-evaluated initializers have no
-				// representation here. RUNTIME globals are overwritten by
-				// global_init below; the rest stay as an integer zero, which is
-				// what a NIL Variant booleanizes and compares to.
+				// No representation here; RUNTIME overwritten by global_init below.
 				m_globals.push_back(int64_t(0));
 				break;
 		}
@@ -66,12 +61,10 @@ IRInterpreter::Value IRInterpreter::call(const std::string& function_name, const
 	const IRFunction* func = it->second;
 	ExecutionContext ctx;
 
-	// Set up parameters in registers (first N registers)
 	for (size_t i = 0; i < args.size() && i < func->parameters.size(); i++) {
 		ctx.registers[static_cast<int>(i)] = args[i];
 	}
 
-	// Execute
 	execute_function(*func, ctx);
 
 	if (ctx.returned) {
@@ -88,7 +81,6 @@ void IRInterpreter::execute_function(const IRFunction& func, ExecutionContext& c
 			"IR interpreter call depth exceeded in function '" + func.name + "'");
 	}
 
-	// Build label map
 	for (size_t i = 0; i < func.instructions.size(); i++) {
 		const auto& instr = func.instructions[i];
 		if (instr.opcode == IROpcode::LABEL && !instr.operands.empty()) {
@@ -109,7 +101,7 @@ void IRInterpreter::execute_function(const IRFunction& func, ExecutionContext& c
 		}
 		const size_t pc = ctx.pc;
 		execute_instruction(func, func.instructions[pc], ctx);
-		// A branch that was taken already moved the pc; anything else advances.
+		// Taken branches already moved pc.
 		if (!ctx.returned && ctx.pc == pc) {
 			ctx.pc++;
 		}
@@ -205,7 +197,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::MOVE: {
 			int dst = std::get<int>(instr.operands[0].value);
 			int src = std::get<int>(instr.operands[1].value);
-			// Get src value first to avoid map iterator invalidation
+			// Copy before write to avoid iterator invalidation.
 			Value src_value = get_register(ctx, src);
 			ctx.registers[dst] = src_value;
 			break;
@@ -224,7 +216,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			int dst = std::get<int>(instr.operands[0].value);
 			int src1 = std::get<int>(instr.operands[1].value);
 			int src2 = std::get<int>(instr.operands[2].value);
-			// Get operands first to avoid map iterator invalidation
+			// Copy before write to avoid iterator invalidation.
 			Value val1 = get_register(ctx, src1);
 			Value val2 = get_register(ctx, src2);
 			ctx.registers[dst] = binary_op(val1, val2, instr.opcode);
@@ -236,8 +228,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			int src = std::get<int>(instr.operands[1].value);
 			const int64_t tested = std::get<int64_t>(instr.operands[2].value);
 			const Value& value = get_register(ctx, src);
-			// A Value is one of four Variant types; the backend compares the
-			// same tags against the same immediate.
+			// Mirror the backend's Variant type-tag comparison.
 			int64_t actual = Variant::NIL;
 			if (std::holds_alternative<bool>(value)) {
 				actual = Variant::BOOL;
@@ -253,17 +244,13 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		}
 
 		case IROpcode::POW:
-			// int ** int is Godot's `(int64_t)Math::pow(double, double)`; its
-			// truncation and rounding near the int64 limits are the host's to
-			// define. Answering here would be a second definition, free to
-			// disagree with the machine's, as with the random draws.
+			// Host-defined truncation/rounding; no second definition here.
 			throw CompilerException(ErrorType::OPTIMIZER_ERROR,
 				"'**' is evaluated by the host through Variant::evaluate() and is not"
 				" available in the IR interpreter (in function '" + func.name + "')");
 
 		case IROpcode::IN:
-			// `a in b` queries a container; this interpreter has none, only
-			// numbers, bools and strings.
+			// Requires host container API.
 			throw CompilerException(ErrorType::OPTIMIZER_ERROR,
 				"'in' needs the host Variant API and is not available in the IR"
 				" interpreter (in function '" + func.name + "')");
@@ -311,8 +298,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		}
 
 		case IROpcode::LABEL:
-			// No-op, handled during label resolution
-			break;
+				break;
 
 		case IROpcode::JUMP:
 			jump_to_label(instr, std::get<std::string>(instr.operands[0].value), ctx);
@@ -334,8 +320,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			break;
 		}
 
-		// Fused comparison + branch, produced by the peephole pass:
-		// "BRANCH_<cmp> lhs, rhs, @label".
+		// Fused comparison + branch (peephole output).
 		case IROpcode::BRANCH_EQ:
 		case IROpcode::BRANCH_NEQ:
 		case IROpcode::BRANCH_LT:
@@ -353,11 +338,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		}
 
 		case IROpcode::SWITCH: {
-			// SWITCH subject, base, count, label[0] .. label[count-1]
-			//
-			// Only an integer dispatches through the table. Anything else,
-			// including a whole-valued float (`match 3.0` must still reach the
-			// `3:` arm), falls through to the code emitted after it.
+			// Only integers dispatch; non-integers (incl. whole-valued floats) fall through.
 			const Value subject = get_register(ctx, std::get<int>(instr.operands[0].value));
 			if (!std::holds_alternative<int64_t>(subject)) {
 				break;
@@ -374,12 +355,10 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		}
 
 		case IROpcode::CALL: {
-			// CALL format: function_name, result_reg, arg_count, arg1_reg, arg2_reg, ...
 			std::string func_name = std::get<std::string>(instr.operands[0].value);
 			int result_reg = std::get<int>(instr.operands[1].value);
 			int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
 
-			// Collect arguments from registers
 			std::vector<Value> args;
 			for (int i = 0; i < arg_count; i++) {
 				int arg_reg = std::get<int>(instr.operands[3 + i].value);
@@ -397,12 +376,6 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		}
 
 		case IROpcode::GLOBAL_CALL: {
-			// GLOBAL_CALL result_reg, global_fn, typed, arg_count, arg1_reg, ...
-			//
-			// The meanings live in globals.cpp, which is also what the
-			// differential harness's ECALL_UTILITY shim evaluates, so the
-			// interpreter and the machine cannot disagree about what a global
-			// computes.
 			const int result_reg = std::get<int>(instr.operands[0].value);
 			const GlobalFn fn = static_cast<GlobalFn>(std::get<int64_t>(instr.operands[1].value));
 			const int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
@@ -420,20 +393,13 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 					" in the IR interpreter (in function '" + func.name + "')");
 			}
 			if (info->impure) {
-				// The random draws. Answering with a number of this
-				// interpreter's own choosing would be a number the machine
-				// never produced, and every test that compares the two reads
-				// that as a miscompilation.
+				// Impure globals (randi etc.) would diverge from the machine.
 				throw CompilerException(ErrorType::OPTIMIZER_ERROR,
 					std::string(info->name) + "() needs the host's random number generator"
 					" and is not available in the IR interpreter (in function '" + func.name + "')");
 			}
 
-			// int(), float() and bool() of something whose type the compiler
-			// did not know. Everything a Value can hold converts here except a
-			// String to a number: Godot's parse is the definition of what
-			// int("42") means, and guessing at it here would be a second
-			// definition to disagree with.
+			// CAST globals. String-to-number needs host Variant::parse.
 			if (info->kind == GlobalKind::CAST) {
 				const Value& value = args.at(0);
 				if (std::holds_alternative<std::string>(value) && fn != GlobalFn::TO_BOOL) {
@@ -444,14 +410,12 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 				switch (fn) {
 					case GlobalFn::TO_INT: ctx.registers[result_reg] = get_int(value); break;
 					case GlobalFn::TO_FLOAT: ctx.registers[result_reg] = get_double(value); break;
-					// Variant::booleanize(), which get_bool() already is.
-					default: ctx.registers[result_reg] = get_bool(value); break;
+						default: ctx.registers[result_reg] = get_bool(value); break;
 				}
 				break;
 			}
 
-			// An unresolved NUMERIC global follows the values it was handed,
-			// the same way the backend's run-time type test does.
+			// Resolve NUMERIC form based on argument types, mirroring the backend.
 			if (info->kind == GlobalKind::NUMERIC) {
 				bool all_integer = true;
 				for (const Value& value : args) {
@@ -499,7 +463,6 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 
 		case IROpcode::RETURN:
 			ctx.returned = true;
-			// Return value is in register 0 by convention
 			if (ctx.registers.find(0) != ctx.registers.end()) {
 				ctx.return_value = ctx.registers[0];
 			} else {
@@ -507,10 +470,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			}
 			break;
 
-		// Everything that needs the host Variant API. There is no `default:`
-		// here on purpose: an opcode added to ir_opcodes.def has to be either
-		// implemented above or listed here, so it cannot slip through as a
-		// silently unsupported instruction.
+		// Host Variant API required. No default: — new opcodes must be listed explicitly.
 		case IROpcode::ARRAY_APPEND:
 		case IROpcode::ARRAY_GET:
 		case IROpcode::ARRAY_SET:
@@ -581,7 +541,7 @@ bool IRInterpreter::get_bool(const Value& v) const {
 	} else if (std::holds_alternative<double>(v)) {
 		return std::get<double>(v) != 0.0;
 	} else if (std::holds_alternative<std::string>(v)) {
-		// Godot's Variant::booleanize() on a String is "not empty".
+		// Variant::booleanize(): String is true iff non-empty.
 		return !std::get<std::string>(v).empty();
 	}
 	return false;
@@ -603,8 +563,7 @@ bool IRInterpreter::is_string(const Value& v) {
 }
 
 IRInterpreter::Value IRInterpreter::binary_op(const Value& left, const Value& right, IROpcode op) {
-	// String concatenation is the one non-numeric binary operation GDScript has
-	// on these types.
+	// String + String is concatenation; other ops on strings are invalid.
 	if (is_string(left) || is_string(right)) {
 		if (op == IROpcode::ADD && is_string(left) && is_string(right)) {
 			return get_string(left) + get_string(right);
@@ -613,12 +572,12 @@ IRInterpreter::Value IRInterpreter::binary_op(const Value& left, const Value& ri
 			std::string("Operator ") + ir_opcode_name(op) + " is not defined on strings");
 	}
 
-	// Bitwise operations and shifts are integer-only in GDScript.
+	// Bitwise/shift: integer-only.
 	switch (op) {
 		case IROpcode::BIT_AND: return get_int(left) & get_int(right);
 		case IROpcode::BIT_OR: return get_int(left) | get_int(right);
 		case IROpcode::BIT_XOR: return get_int(left) ^ get_int(right);
-		// Shift counts are masked to 0-63, matching the RISC-V backend
+		// Shift masked to 0-63, matching the RISC-V backend.
 		case IROpcode::SHL:
 			return static_cast<int64_t>(static_cast<uint64_t>(get_int(left)) << (get_int(right) & 63));
 		case IROpcode::SHR:
@@ -627,7 +586,7 @@ IRInterpreter::Value IRInterpreter::binary_op(const Value& left, const Value& ri
 			break;
 	}
 
-	// int op int stays integer; anything involving a float becomes a float.
+	// int op int → int; any float operand → float result.
 	if (is_float(left) || is_float(right)) {
 		const double l = get_double(left);
 		const double r = get_double(right);
@@ -643,19 +602,14 @@ IRInterpreter::Value IRInterpreter::binary_op(const Value& left, const Value& ri
 			std::string("Operator ") + ir_opcode_name(op) + " is not a float binary operation");
 	}
 
-	// Integer arithmetic wraps, because that is what the machine the backend
-	// targets does: a RISC-V `add` is modulo 2^64. Computing it as signed
-	// int64_t would be undefined behaviour on overflow and, worse, would let
-	// the interpreter and the generated code disagree about a program that
-	// overflows.
+	// Wrapping arithmetic (uint64_t), matching RISC-V `add` semantics.
 	const uint64_t l = static_cast<uint64_t>(get_int(left));
 	const uint64_t r = static_cast<uint64_t>(get_int(right));
 	switch (op) {
 		case IROpcode::ADD: return static_cast<int64_t>(l + r);
 		case IROpcode::SUB: return static_cast<int64_t>(l - r);
 		case IROpcode::MUL: return static_cast<int64_t>(l * r);
-		// Godot returns 0 for integer division and modulo by zero (after an
-		// error), and INT64_MIN / -1 overflows rather than trapping.
+		// Godot: div/mod by zero → 0, INT64_MIN / -1 wraps.
 		case IROpcode::DIV:
 			if (r == 0) return int64_t(0);
 			if (r == UINT64_MAX && l == static_cast<uint64_t>(INT64_MIN)) return INT64_MIN;
@@ -676,10 +630,9 @@ IRInterpreter::Value IRInterpreter::unary_op(const Value& operand, IROpcode op) 
 			if (is_float(operand)) {
 				return -get_double(operand);
 			}
-			// Negating INT64_MIN wraps, as it does on the machine.
+			// INT64_MIN wraps, matching the machine.
 			return static_cast<int64_t>(0u - static_cast<uint64_t>(get_int(operand)));
 		case IROpcode::NOT:
-			// GDScript's 'not' produces a bool.
 			return !get_bool(operand);
 		case IROpcode::BIT_NOT:
 			return ~get_int(operand);
@@ -693,8 +646,7 @@ IRInterpreter::Value IRInterpreter::compare_op(const Value& left, const Value& r
 	bool result = false;
 
 	if (is_string(left) || is_string(right)) {
-		// Comparing a String against a non-String is only ever equal/unequal in
-		// Godot, and never equal.
+		// String vs non-String: never equal, ordered comparison is invalid.
 		if (!is_string(left) || !is_string(right)) {
 			if (op == IROpcode::CMP_EQ) return int64_t(0);
 			if (op == IROpcode::CMP_NEQ) return int64_t(1);

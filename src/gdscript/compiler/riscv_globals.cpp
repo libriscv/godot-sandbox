@@ -1,32 +1,7 @@
-// -= GDScript's global functions, in RISC-V =-
+// RISC-V emission for GLOBAL_CALL. See globals.h for the table.
 //
-// One IR opcode, GLOBAL_CALL, carrying a GlobalFn. globals.h's table says what
-// each one takes, returns, and is performed by; this file is the emission for
-// each of those shapes:
-//
-//   INT_OP    64-bit integer arithmetic, inline
-//   FLOAT_OP  double arithmetic, inline -- and only where the operation is a
-//             single exact IEEE-754 primitive, so that what the machine
-//             computes is what globals.cpp's evaluator computes, to the bit
-//   SYSCALL   ECALL_UTILITY: arguments in fa0-fa4, the answer in fa0
-//   SYSCALL_INT the same call with the arguments in a1-a3 and the answer in
-//             a0, for the ops whose arguments are integers that a double
-//             would not carry back unchanged
-//   NUMERIC   neither, until run time: `abs(x)` is an integer when x is one
-//             and a float otherwise, and when the compiler does not know which
-//             it emits the type test and both forms
-//   CAST      int(), float() and bool() of something whose type is not known:
-//             the host converts it, because a String is one of the things it
-//             might be
-//   HOST      str(), len() and String(), which need the host's Variant API
-//
-// -= Registers =-
-//
-// Every virtual register lives in a Variant on the stack, so nothing is live in
-// a physical register across an IR instruction and an expansion may use the
-// temporaries freely. Arguments are loaded into t3-t5 (integer forms) or
-// ft0-ft2 (floating-point forms), leaving t0-t2 as scratch. t6 belongs to the
-// wide-offset load and store path and is never touched here.
+// Register convention: arguments in t3-t5 (int) or ft0-ft2 (float),
+// t0-t2 scratch, t6 reserved for wide-offset paths.
 #include "compiler_exception.h"
 #include "riscv_codegen.h"
 #include "syscall_numbers.h"
@@ -61,11 +36,7 @@ void RISCVCodeGen::emit_global_call(const IRInstruction& instr) {
 			std::string(info.name) + " reached the backend with " + std::to_string(arg_count) + " arguments");
 	}
 
-	// ECALL_UTILITY reads a0-a3 and a7 and writes a0. Nothing else in this
-	// backend keeps a virtual register in a physical one, so this only ever has
-	// work to do if that changes -- but it has to be asked before the branch
-	// below, never on one side of it, because the moves it hands back must run
-	// on every path.
+	// Must run before the NUMERIC branch — clobber moves apply on every path.
 	const std::vector<uint8_t> clobbered_regs = { REG_A0, REG_A1, REG_A2, REG_A3 };
 	const auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
 	for (const auto& move : moves) {
@@ -77,7 +48,7 @@ void RISCVCodeGen::emit_global_call(const IRInstruction& instr) {
 		return;
 	}
 
-	// The type-preserving globals, with the types unknown until run time.
+	// NUMERIC dispatch: run-time type test.
 	const std::string label_float = gen_local_label(".global_float");
 	const std::string label_done = gen_local_label(".global_done");
 
@@ -85,8 +56,7 @@ void RISCVCodeGen::emit_global_call(const IRInstruction& instr) {
 	mark_label_use(label_float, m_code.size());
 	emit_beq(REG_T2, REG_ZERO, 0);
 
-	// Every argument is an INT Variant, so the integer form's loads need no
-	// type test of their own.
+	// All-INT path: skip type tests in the integer form.
 	emit_global_form(global_function(info.int_form), arg_offsets, result_offset, true);
 	mark_label_use(label_done, m_code.size());
 	emit_jal(REG_ZERO, 0);
@@ -112,10 +82,7 @@ void RISCVCodeGen::emit_global_form(const GlobalFunction& info, const std::vecto
 		case GlobalKind::SYSCALL_INT:
 			emit_global_int_syscall_form(info, arg_offsets, result_offset, typed);
 			return;
-		// A CAST that reached the backend is one the compiler could not resolve
-		// to an inline form, so the argument may be anything a Variant holds
-		// and the host performs the conversion -- over the Variant itself,
-		// which is the same way str() travels.
+		// Unresolved CAST: argument type unknown, host performs conversion.
 		case GlobalKind::CAST:
 		case GlobalKind::HOST:
 			emit_global_host_form(info, arg_offsets, result_offset);
@@ -128,20 +95,14 @@ void RISCVCodeGen::emit_global_form(const GlobalFunction& info, const std::vecto
 		std::string(info.name) + " has no concrete form to emit");
 }
 
-// -= Loading arguments =-
-
 void RISCVCodeGen::emit_variant_to_double(uint8_t fd, int variant_offset, bool known_float) {
 	if (known_float) {
-		// Variant::FLOAT is a 64-bit double whatever real_t is.
 		emit_fld(fd, REG_SP, variant_offset + VARIANT_DATA_OFFSET);
 		return;
 	}
 
-	// The type is not known, so the conversion is. INT and BOOL widen, FLOAT
-	// loads, and anything else -- a string, an array, NIL -- reads as zero,
-	// which is what Variant::operator double() does for the types it does not
-	// convert. Godot would raise a call error instead; the sandbox has nowhere
-	// to raise it to that would not also stop the program.
+	// Untyped: INT/BOOL widen, FLOAT loads, everything else → 0.0
+	// (matches Variant::operator double()).
 	const std::string label_int = gen_local_label(".to_double_int");
 	const std::string label_bool = gen_local_label(".to_double_bool");
 	const std::string label_float = gen_local_label(".to_double_float");
@@ -161,13 +122,11 @@ void RISCVCodeGen::emit_variant_to_double(uint8_t fd, int variant_offset, bool k
 	mark_label_use(label_bool, m_code.size());
 	emit_beq(REG_T1, REG_ZERO, 0);
 
-	// Not a number.
 	emit_fcvt_d_l(fd, REG_ZERO);
 	mark_label_use(label_done, m_code.size());
 	emit_jal(REG_ZERO, 0);
 
-	// A BOOL Variant is one byte; the seven above it are whatever the slot held
-	// before, so reading eight makes `false` read as some other number.
+	// BOOL payload is 1 byte; lbu to avoid reading stale upper bytes.
 	define_label(label_bool);
 	emit_lbu(REG_T0, REG_SP, variant_offset + VARIANT_DATA_OFFSET);
 	emit_fcvt_d_l(fd, REG_T0);
@@ -192,8 +151,7 @@ void RISCVCodeGen::emit_variant_to_int(uint8_t rd, int variant_offset, bool know
 		return;
 	}
 
-	// Same shape as emit_variant_to_double, the other way round: a FLOAT
-	// truncates toward zero, a BOOL is its low byte, and anything else is zero.
+	// Untyped: FLOAT truncates toward zero, BOOL is low byte, else 0.
 	const std::string label_int = gen_local_label(".to_int_int");
 	const std::string label_bool = gen_local_label(".to_int_bool");
 	const std::string label_float = gen_local_label(".to_int_float");
@@ -244,21 +202,15 @@ void RISCVCodeGen::emit_args_all_int(uint8_t rd, const std::vector<int>& arg_off
 	}
 }
 
-// -= Storing the result =-
-
 void RISCVCodeGen::emit_global_double_result(int result_offset, uint8_t fs, GlobalResult result) {
 	switch (result) {
 		case GlobalResult::INT:
-			// floori(), ceili(), roundi() and snappedi(): the host rounds, and
-			// the truncation that follows only drops a fractional part that is
-			// already zero.
 			emit_fcvt_l_d(REG_T1, fs);
 			emit_li(REG_T0, Variant::INT);
 			emit_store_variant_type(REG_T0, REG_SP, result_offset);
 			emit_store_variant_int(REG_T1, REG_SP, result_offset);
 			return;
 		case GlobalResult::BOOL:
-			// The predicates answer 0.0 or 1.0.
 			emit_fcvt_l_d(REG_T1, fs);
 			emit_li(REG_T0, Variant::BOOL);
 			emit_store_variant_type(REG_T0, REG_SP, result_offset);
@@ -300,13 +252,10 @@ void RISCVCodeGen::emit_global_int_result(int result_offset, uint8_t rs, GlobalR
 		"A global computing an integer cannot return that result type");
 }
 
-// -= Integer forms =-
-
 void RISCVCodeGen::emit_global_int_form(const GlobalFunction& info, const std::vector<int>& arg_offsets,
 	int result_offset, bool typed)
 {
-	// Where an integer form finds its arguments. Three is the widest one gets:
-	// clampi(value, min, max) and wrapi(value, min, max).
+	// Up to 3 args: clampi/wrapi are the widest.
 	const uint8_t INT_ARG_REGS[3] = { REG_T3, REG_T4, REG_T5 };
 	for (size_t i = 0; i < arg_offsets.size(); i++) {
 		emit_variant_to_int(INT_ARG_REGS[i], arg_offsets[i], typed);
@@ -315,16 +264,14 @@ void RISCVCodeGen::emit_global_int_form(const GlobalFunction& info, const std::v
 	const uint8_t b = INT_ARG_REGS[1];
 	const uint8_t c = INT_ARG_REGS[2];
 
-	// The answer is built in t0.
+	// Result in t0.
 	switch (info.fn) {
 		case GlobalFn::INT_IDENTITY:
-			// floor(), ceil() and round() of an integer.
 			emit_mv(REG_T0, a);
 			break;
 
 		case GlobalFn::ABSI: {
-			// (x ^ (x >> 63)) - (x >> 63): the sign-mask form, which wraps on
-			// INT64_MIN rather than being undefined the way std::abs() is.
+			// Sign-mask: wraps on INT64_MIN (std::abs is UB there).
 			emit_srai(REG_T1, a, 63);
 			emit_xor(REG_T0, a, REG_T1);
 			emit_sub(REG_T0, REG_T0, REG_T1);
@@ -332,7 +279,6 @@ void RISCVCodeGen::emit_global_int_form(const GlobalFunction& info, const std::v
 		}
 
 		case GlobalFn::SIGNI:
-			// (0 < x) - (x < 0)
 			emit_slt(REG_T0, REG_ZERO, a);
 			emit_slt(REG_T1, a, REG_ZERO);
 			emit_sub(REG_T0, REG_T0, REG_T1);
@@ -342,7 +288,6 @@ void RISCVCodeGen::emit_global_int_form(const GlobalFunction& info, const std::v
 		case GlobalFn::MAXI: {
 			const std::string label_first = gen_local_label(".pick_first");
 			const std::string label_done = gen_local_label(".pick_done");
-			// min: a < b takes a. max: b < a takes a.
 			mark_label_use(label_first, m_code.size());
 			if (info.fn == GlobalFn::MINI) {
 				emit_blt(a, b, 0);
@@ -359,7 +304,6 @@ void RISCVCodeGen::emit_global_int_form(const GlobalFunction& info, const std::v
 		}
 
 		case GlobalFn::CLAMPI: {
-			// if (x < min) min; else if (x > max) max; else x
 			const std::string label_low = gen_local_label(".clamp_low");
 			const std::string label_high = gen_local_label(".clamp_high");
 			const std::string label_done = gen_local_label(".clamp_done");
@@ -381,21 +325,16 @@ void RISCVCodeGen::emit_global_int_form(const GlobalFunction& info, const std::v
 		}
 
 		case GlobalFn::POSMOD: {
-			// value = x % y; if value and y have opposite signs, value += y.
-			//
-			// A zero divisor answers zero, the way integer division by zero
-			// does here. Godot leaves it to the C++ `%`, which traps; a trap
-			// inside the sandbox would stop the program.
+			// Zero divisor → 0 (C++ % traps; sandbox cannot trap usefully).
 			const std::string label_zero = gen_local_label(".posmod_zero");
 			const std::string label_done = gen_local_label(".posmod_done");
 			mark_label_use(label_zero, m_code.size());
 			emit_beq(b, REG_ZERO, 0);
 
 			emit_rem(REG_T0, a, b);
-			// Nothing to correct when the remainder is already zero.
 			mark_label_use(label_done, m_code.size());
 			emit_beq(REG_T0, REG_ZERO, 0);
-			// Same sign means the exclusive or is non-negative.
+			// Opposite signs: adjust remainder.
 			emit_xor(REG_T1, REG_T0, b);
 			mark_label_use(label_done, m_code.size());
 			emit_bge(REG_T1, REG_ZERO, 0);
@@ -410,8 +349,6 @@ void RISCVCodeGen::emit_global_int_form(const GlobalFunction& info, const std::v
 		}
 
 		case GlobalFn::WRAPI: {
-			// range = max - min
-			// range == 0 ? min : min + (((value - min) % range + range) % range)
 			const std::string label_empty = gen_local_label(".wrap_empty");
 			const std::string label_done = gen_local_label(".wrap_done");
 			emit_sub(REG_T1, c, b);
@@ -442,12 +379,9 @@ void RISCVCodeGen::emit_global_int_form(const GlobalFunction& info, const std::v
 	emit_store_variant_int(REG_T0, REG_SP, result_offset);
 }
 
-// -= Floating-point forms emitted inline =-
-
 void RISCVCodeGen::emit_global_float_form(const GlobalFunction& info, const std::vector<int>& arg_offsets,
 	int result_offset, bool typed)
 {
-	// ft0-ft2 hold the arguments and ft3 the answer.
 	for (size_t i = 0; i < arg_offsets.size(); i++) {
 		emit_variant_to_double(static_cast<uint8_t>(REG_FA0 + i), arg_offsets[i], typed);
 	}
@@ -466,15 +400,11 @@ void RISCVCodeGen::emit_global_float_form(const GlobalFunction& info, const std:
 			break;
 
 		case GlobalFn::FLOAT_IDENTITY:
-			// float() of a number: the load above is the conversion.
 			emit_fmv_d(out, a);
 			break;
 
 		case GlobalFn::BOOLEANIZE: {
-			// bool() of a number, which is Variant::booleanize(): true for
-			// anything but zero. FEQ.D is false on a NaN, so `not (x == 0)`
-			// makes bool(NAN) true the way Godot does; `x != 0` written as a
-			// comparison would make it false.
+			// !(x == 0.0): FEQ.D is false for NaN, so bool(NaN) == true.
 			emit_fcvt_d_l(REG_FA1, REG_ZERO);
 			emit_feq_d(REG_T0, a, REG_FA1);
 			emit_xori(REG_T0, REG_T0, 1);
@@ -484,8 +414,7 @@ void RISCVCodeGen::emit_global_float_form(const GlobalFunction& info, const std:
 
 		case GlobalFn::MINF:
 		case GlobalFn::MAXF: {
-			// `a < b ? a : b`, not FMIN.D: Godot's MIN() is the comparison, and
-			// the two disagree about NaN.
+			// Comparison, not FMIN.D — Godot's MIN/MAX and FMIN.D disagree on NaN.
 			const std::string label_first = gen_local_label(".fpick_first");
 			const std::string label_done = gen_local_label(".fpick_done");
 			if (info.fn == GlobalFn::MINF) {
@@ -535,8 +464,6 @@ void RISCVCodeGen::emit_global_float_form(const GlobalFunction& info, const std:
 	emit_global_double_result(result_offset, out, info.result);
 }
 
-// -= Forms the host performs =-
-
 void RISCVCodeGen::emit_global_syscall_form(const GlobalFunction& info, const std::vector<int>& arg_offsets,
 	int result_offset, bool typed)
 {
@@ -545,8 +472,6 @@ void RISCVCodeGen::emit_global_syscall_form(const GlobalFunction& info, const st
 			std::string(info.name) + " has the wrong number of floating-point arguments");
 	}
 
-	// The arguments go straight into the ABI's fa0-fa4. Each conversion writes
-	// only its own destination, so filling them in order is safe.
 	for (size_t i = 0; i < arg_offsets.size(); i++) {
 		emit_variant_to_double(static_cast<uint8_t>(REG_ABI_FA0 + i), arg_offsets[i], typed);
 	}
@@ -555,7 +480,6 @@ void RISCVCodeGen::emit_global_syscall_form(const GlobalFunction& info, const st
 	emit_li(REG_A7, ECALL_UTILITY);
 	emit_ecall();
 
-	// The host answers in fa0.
 	emit_global_double_result(result_offset, REG_ABI_FA0, info.result);
 }
 
@@ -567,9 +491,7 @@ void RISCVCodeGen::emit_global_int_syscall_form(const GlobalFunction& info, cons
 			std::string(info.name) + " has more integer arguments than a1-a3 can carry");
 	}
 
-	// a0 holds the op, so the arguments start at a1. Each conversion writes
-	// only its own destination and uses t0, t1 and fa0 as scratch, so filling
-	// them in order is safe.
+	// a0 = op, args in a1-a3.
 	const uint8_t INT_ARG_REGS[UTILITY_MAX_INT_ARGS] = { REG_A1, REG_A2, REG_A3 };
 	for (size_t i = 0; i < arg_offsets.size(); i++) {
 		emit_variant_to_int(INT_ARG_REGS[i], arg_offsets[i], typed);
@@ -579,24 +501,20 @@ void RISCVCodeGen::emit_global_int_syscall_form(const GlobalFunction& info, cons
 	emit_li(REG_A7, ECALL_UTILITY);
 	emit_ecall();
 
-	// The host answers in a0.
 	emit_global_int_result(result_offset, REG_A0, info.result);
 }
 
 void RISCVCodeGen::emit_global_host_form(const GlobalFunction& info, const std::vector<int>& arg_offsets,
 	int result_offset)
 {
-	// str() and len() take Variants, not numbers, so this passes the arguments
-	// the way print() does: copied into one contiguous run below sp, which the
-	// host walks.
+	// Variant args copied contiguously below sp, same as print().
 	const int arg_count = static_cast<int>(arg_offsets.size());
 	int args_space = arg_count * variant_size();
-	args_space = (args_space + 15) & ~15; // Keep sp 16-byte aligned
+	args_space = (args_space + 15) & ~15;
 
 	emit_add_offset(REG_SP, REG_SP, -args_space);
 
-	// Every offset below is into the frame sp just moved away from, so it reads
-	// back at +args_space.
+	// Original frame offsets shifted by args_space.
 	for (int i = 0; i < arg_count; i++) {
 		emit_variant_move(REG_SP, i * variant_size(), REG_SP, arg_offsets[i] + args_space, REG_T0);
 	}
