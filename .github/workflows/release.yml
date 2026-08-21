@@ -35,11 +35,15 @@ jobs:
       - name: Archive
         shell: sh
         run: |
-          ls
           mkdir -p godot-jit
           mv sandbox/libgodot_riscv.* godot-jit/
+          # SafeGDScript looks for the compiler at res://addons/godot_sandbox/gdscript.elf
+          mv godot-sandbox/gdscript.elf godot-sandbox/addons/godot_sandbox/gdscript.elf
+          # The asset store requires a license file in the artifact
+          cp LICENSE THIRDPARTY.txt godot-sandbox/
+          cp LICENSE THIRDPARTY.txt godot-sandbox/addons/godot_sandbox/
+          cp LICENSE THIRDPARTY.txt godot-jit/
           zip -r "godot-sandbox.zip" godot-sandbox
-          zip -r "sandbox.zip" sandbox
           zip -r "godot-sandbox-jit.zip" godot-jit
       - name: Release
         uses: softprops/action-gh-release@v2
@@ -48,7 +52,6 @@ jobs:
           files: |
             godot-sandbox.zip
             godot-sandbox-jit.zip
-            sandbox.zip
             gdscript.elf
           tag_name: nightly
           generate_release_notes: true
