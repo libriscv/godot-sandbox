@@ -294,6 +294,7 @@ TypedArray<Dictionary> CPPScriptLanguage::_get_public_annotations() const {
 }
 void CPPScriptLanguage::_profiling_start() {}
 void CPPScriptLanguage::_profiling_stop() {}
+void CPPScriptLanguage::_profiling_set_save_native_calls(bool p_enable) {}
 int32_t CPPScriptLanguage::_profiling_get_accumulated_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) {
 	return 0;
 }

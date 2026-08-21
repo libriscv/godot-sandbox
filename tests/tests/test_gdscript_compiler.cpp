@@ -56,6 +56,32 @@ PUBLIC Variant compile(String code)
 	return PackedByteArray(elf_data);
 }
 
+// The same compile with instrumentation emitted. A separate entry point rather
+// than an argument on compile(): the Sandbox ABI hands the guest one Variant
+// pointer per argument and no count, so widening a function Godot already calls
+// with one argument would have it read a second from a null pointer.
+PUBLIC Variant compile_profiled(String code)
+{
+	CompilerOptions options;
+	options.output_elf = true;
+	options.profiling = true;
+	// Wall clock, which is what a profiler reports. The host installs an
+	// rdtime that answers in nanoseconds before the program runs.
+	options.profiling_clock = ProfilingClock::TIME;
+
+	Compiler compiler;
+	auto elf_data = compiler.compile(code.utf8(), options);
+	gdscript_remember_signatures(compiler);
+
+	if (elf_data.empty()) {
+		last_error = String(compiler.get_error());
+		print("ERROR: Compilation failed: ", last_error);
+		return PackedByteArray(std::vector<uint8_t>{});
+	}
+
+	return PackedByteArray(elf_data);
+}
+
 // Compile far enough to know whether the program is well-formed, and report
 // what went wrong in a form an editor can point at. No ELF is built: the RISC-V
 // backend's errors are compiler bugs rather than anything the user wrote, and

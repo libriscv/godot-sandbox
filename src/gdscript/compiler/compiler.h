@@ -1,6 +1,7 @@
 #pragma once
 #include "compiler_exception.h"
 #include "function_signature.h"
+#include "profiling_layout.h"
 #include "variant_layout.h"
 #include <string>
 #include <vector>
@@ -17,6 +18,9 @@ struct CompilerOptions {
 	bool optimize = true;
 	std::string output_path;
 	bool double_precision = native_variant_layout().double_precision;
+	// Compile-time switch; off emits no instrumentation at all.
+	bool profiling = false;
+	ProfilingClock profiling_clock = ProfilingClock::TIME;
 };
 
 // Structured error for editor underlines; the formatted string is in get_error().

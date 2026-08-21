@@ -177,6 +177,7 @@ TypedArray<Dictionary> ZigScriptLanguage::_get_public_annotations() const {
 }
 void ZigScriptLanguage::_profiling_start() {}
 void ZigScriptLanguage::_profiling_stop() {}
+void ZigScriptLanguage::_profiling_set_save_native_calls(bool p_enable) {}
 int32_t ZigScriptLanguage::_profiling_get_accumulated_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) {
 	return 0;
 }

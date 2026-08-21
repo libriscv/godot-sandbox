@@ -27,6 +27,7 @@ set(COMPILER_SOURCES
     codegen.cpp
     riscv_codegen.cpp
     riscv_globals.cpp
+    riscv_profiling.cpp
     register_allocator.cpp
     elf_builder.cpp
     compiler.cpp
@@ -142,6 +143,12 @@ if (BUILD_TESTING)
 		add_executable(test_differential tests/test_differential.cpp)
 		target_link_libraries(test_differential gdscript_compiler riscv)
 		add_test(NAME test_differential COMMAND test_differential)
+
+		# Same reason for no sanitizers, and the same need for a real machine:
+		# the profiling accounting is only checkable by running the program.
+		add_executable(test_profiling tests/test_profiling.cpp)
+		target_link_libraries(test_profiling gdscript_compiler riscv)
+		add_test(NAME test_profiling COMMAND test_profiling)
 	else()
 		message(STATUS "libriscv not found: skipping the differential test")
 	endif()

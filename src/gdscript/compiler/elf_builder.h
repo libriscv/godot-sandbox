@@ -1,5 +1,6 @@
 #pragma once
 #include "ir.h"
+#include "profiling_layout.h"
 #include "variant_layout.h"
 #include <vector>
 #include <cstdint>
@@ -11,7 +12,8 @@ class ElfBuilder {
 public:
 	ElfBuilder();
 
-	std::vector<uint8_t> build(const IRProgram& program, const VariantLayout& layout = native_variant_layout());
+	std::vector<uint8_t> build(const IRProgram& program, const VariantLayout& layout = native_variant_layout(),
+		bool profiling = false, ProfilingClock profiling_clock = ProfilingClock::TIME);
 
 private:
 	struct Elf64_Ehdr {

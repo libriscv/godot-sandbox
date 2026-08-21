@@ -23,6 +23,7 @@ set(SOURCES
 	src/zig/resource_saver_zig.cpp
 	src/zig/script_zig.cpp
 	src/zig/script_language_zig.cpp
+	src/safegdscript/profiling_safegdscript.cpp
 	src/safegdscript/script_instance_safegdscript.cpp
 	src/safegdscript/script_language_safegdscript.cpp
 	src/safegdscript/script_safegdscript.cpp

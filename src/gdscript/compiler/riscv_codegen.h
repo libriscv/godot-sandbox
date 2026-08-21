@@ -1,6 +1,7 @@
 #pragma once
 #include "globals.h"
 #include "ir.h"
+#include "profiling_layout.h"
 #include "register_allocator.h"
 #include "variant_layout.h"
 #include <string>
@@ -11,7 +12,8 @@ namespace gdscript {
 
 class RISCVCodeGen {
 public:
-	explicit RISCVCodeGen(const VariantLayout& layout = native_variant_layout());
+	explicit RISCVCodeGen(const VariantLayout& layout = native_variant_layout(),
+		bool profiling = false, ProfilingClock profiling_clock = ProfilingClock::TIME);
 
 	std::vector<uint8_t> generate(const IRProgram& program);
 
@@ -21,6 +23,9 @@ public:
 	const std::vector<int64_t>& get_constant_pool() const { return m_constant_pool; }
 	const std::vector<IRGlobalVar>& get_globals() const { return m_globals; }
 	size_t get_global_data_size() const { return m_global_data_size; }
+
+	uint64_t get_profiling_address() const { return m_profiling_address; }
+	size_t get_profiling_size() const { return m_profiling_size; }
 
 	// Out-of-range immediates are trapped, not masked: masking silently emits a different instruction.
 	static constexpr int I_TYPE_IMM_BITS = 12;
@@ -109,6 +114,13 @@ private:
 	size_t m_switch_tables = 0;
 
 	static constexpr const char* GLOBALS_LABEL = ".globals";
+	static constexpr const char* PROFILING_LABEL = ".profiling";
+
+	// Uses t0-t5 only; dead at entry (args in a0-a7) and exit (retval written).
+	void emit_profiling_entry();
+	void emit_profiling_exit();
+	// CSR number is unsigned 12-bit; emit_i_type rejects it as signed.
+	void emit_csrr(uint8_t rd, uint32_t csr);
 	void emit_add(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_sub(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_mul(uint8_t rd, uint8_t rs1, uint8_t rs2);
@@ -187,6 +199,7 @@ private:
 
 	void emit_sext_w(uint8_t rd, uint8_t rs);               // addiw rd, rs, 0
 	void emit_srai(uint8_t rd, uint8_t rs, uint8_t shamt);
+	void emit_slli(uint8_t rd, uint8_t rs, uint8_t shamt);
 	void emit_sh2add(uint8_t rd, uint8_t rs1, uint8_t rs2); // Zba
 
 	void emit_call(const std::string& func_name);
@@ -377,6 +390,14 @@ private:
 	std::vector<IRGlobalVar> m_globals;
 	size_t m_global_count = 0;
 	size_t m_global_data_size = 0;
+
+	bool m_profiling = false;
+	ProfilingClock m_profiling_clock = ProfilingClock::TIME;
+	uint64_t m_profiling_address = 0;
+	size_t m_profiling_size = 0;
+	size_t m_profiling_count = 0;
+	// -1 outside a profiled function (.init_globals is uninstrumented).
+	int m_profiling_index = -1;
 
 	// {string_data, label_name} for @export property names.
 	std::vector<std::pair<std::string, std::string>> m_property_name_strings;

@@ -217,7 +217,7 @@ public:
 
 	/// @brief Get whether profiling of the guest program is enabled.
 	/// @return True if profiling is enabled, false otherwise.
-	bool get_profiling() const { return m_local_profiling_data != nullptr; }
+	bool get_profiling() const { return m_profiling_enabled; }
 
 	/// @brief  Check if the sandbox is currently initializing (running through main()).
 	/// @return True if the sandbox is initializing, false otherwise.
@@ -644,6 +644,13 @@ public:
 	/// is accumulated so that even if a function returns early, the interval is still counted.
 	void enable_profiling(bool enable, uint32_t interval = 500);
 
+	// Called from the profiling property setter to rebuild instrumented programs.
+	using ProfilingToggle = void (*)(Sandbox &sandbox, bool enabled);
+	static void set_profiling_toggle_callback(ProfilingToggle callback) { m_profiling_toggle = callback; }
+
+	// True when the loaded program exports its own profiling data area.
+	bool has_self_instrumentation() const;
+
 	// -= Self-testing, inspection and internal functions =-
 
 	/// @brief Get the current Callable set for redirecting stdout.
@@ -911,6 +918,9 @@ private:
 		uint32_t profiler_icounter_accumulator = 0;
 	};
 	std::unique_ptr<LocalProfilingData> m_local_profiling_data = nullptr;
+	bool m_profiling_enabled = false;
+	void update_profiling_sampler(uint32_t interval);
+	static inline ProfilingToggle m_profiling_toggle = nullptr;
 	static inline std::mutex profiling_mutex;
 	static inline std::mutex generate_hotspots_mutex;
 

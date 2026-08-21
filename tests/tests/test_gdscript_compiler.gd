@@ -121,6 +121,96 @@ func sum2(n):
 	ts.queue_free()
 
 
+func test_profiled_build():
+	var gdscript_code = """
+func leaf(x : int):
+	return x + 1
+
+func mid(x : int):
+	return leaf(x) + leaf(x)
+
+func run(x : int):
+	return mid(x) + mid(x)
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+
+	# The instrumentation is a compile-time choice, so the two builds come from
+	# two entry points rather than a flag on one.
+	var plain_elf = ts.vmcall("compile", gdscript_code)
+	assert_eq(plain_elf.is_empty(), false, "Plain ELF should not be empty")
+	var profiled_elf = ts.vmcall("compile_profiled", gdscript_code)
+	assert_eq(profiled_elf.is_empty(), false, "Profiled ELF should not be empty")
+
+	var plain = Sandbox.new()
+	plain.load_buffer(plain_elf)
+	assert_eq(plain.address_of("__gdsc_profiling"), 0,
+		"An unprofiled build carries no profiling area")
+
+	var profiled = Sandbox.new()
+	profiled.load_buffer(profiled_elf)
+	assert_true(profiled.address_of("__gdsc_profiling") != 0,
+		"A profiled build exports the profiling area")
+
+	# Instrumentation must not change what the program computes.
+	assert_eq(plain.vmcallv("run", 10), 44, "run(10) = 44 without instrumentation")
+	assert_eq(profiled.vmcallv("run", 10), 44, "run(10) = 44 with instrumentation")
+	assert_eq(plain.vmcallv("mid", 3), 8, "mid(3) = 8 without instrumentation")
+	assert_eq(profiled.vmcallv("mid", 3), 8, "mid(3) = 8 with instrumentation")
+
+	# It costs instructions, though, which is why it is not always emitted.
+	assert_true(profiled_elf.size() > plain_elf.size(),
+		"The profiled build is the larger of the two")
+
+
+func test_profiling_skips_self_instrumented():
+	var gdscript_code = """
+func spin(n : int):
+	var total = 0
+	var i = 0
+	while i < n:
+		total = total + i
+		i = i + 1
+	return total
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var plain_elf = ts.vmcall("compile", gdscript_code)
+	assert_eq(plain_elf.is_empty(), false, "Plain ELF should not be empty")
+	var profiled_elf = ts.vmcall("compile_profiled", gdscript_code)
+	assert_eq(profiled_elf.is_empty(), false, "Profiled ELF should not be empty")
+
+	# A program with no instrumentation of its own is interval-sampled.
+	var plain = Sandbox.new()
+	plain.load_buffer(plain_elf)
+	plain.set_instructions_max(64)
+	plain.profiling = true
+	Sandbox.clear_hotspots()
+	assert_eq(plain.vmcallv("spin", 20000), 199990000, "spin(20000) = 199990000")
+	var sampled = Sandbox.get_hotspots(10)
+	assert_true(sampled[sampled.size() - 1]["samples_total"] > 0,
+		"An uninstrumented program is sampled")
+
+	# One that times its own functions is not sampled on top of that: the
+	# sampler re-enters simulate() every few hundred instructions, which would
+	# distort the very timings the program is recording.
+	var profiled = Sandbox.new()
+	profiled.load_buffer(profiled_elf)
+	profiled.set_instructions_max(64)
+	profiled.profiling = true
+	assert_eq(profiled.profiling, true, "The property still reads as enabled")
+	Sandbox.clear_hotspots()
+	assert_eq(profiled.vmcallv("spin", 20000), 199990000, "spin(20000) = 199990000")
+	var unsampled = Sandbox.get_hotspots(10)
+	assert_eq(unsampled[unsampled.size() - 1]["samples_total"], 0,
+		"A self-instrumented program is not sampled")
+
+	plain.profiling = false
+	profiled.profiling = false
+
+
 func test_many_variables():
 	# Test register allocation with 15+ local variables
 	var gdscript_code = """

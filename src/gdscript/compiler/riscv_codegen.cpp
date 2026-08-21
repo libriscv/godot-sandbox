@@ -9,8 +9,8 @@
 
 namespace gdscript {
 
-RISCVCodeGen::RISCVCodeGen(const VariantLayout& layout) :
-		m_layout(layout) {}
+RISCVCodeGen::RISCVCodeGen(const VariantLayout& layout, bool profiling, ProfilingClock profiling_clock) :
+		m_layout(layout), m_profiling(profiling), m_profiling_clock(profiling_clock) {}
 
 size_t RISCVCodeGen::add_constant(int64_t value) {
 	auto it = m_constant_pool_map.find(value);
@@ -84,6 +84,10 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 
 	m_global_count = program.globals.size();
 	m_globals = program.globals;
+	m_profiling_count = program.functions.size();
+	m_profiling_address = 0;
+	m_profiling_size = 0;
+	m_profiling_index = -1;
 
 	for (size_t i = 0; i < program.globals.size(); i++) {
 		const auto& global = program.globals[i];
@@ -207,17 +211,21 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	// STOP: SYSTEM with imm = 0x7ff
 	emit_i_type(0x73, 0, 0, 0, 0x7ff);
 
-	// Internal function, not registered in m_functions or the ELF symbol table.
+	// Not exported; no signature, so uninstrumented.
 	if (program.has_global_init) {
 		m_labels[GLOBAL_INIT_LABEL] = m_code.size();
+		m_profiling_index = -1;
 		gen_function(program.global_init);
 	}
 
-	for (const auto& func : program.functions) {
+	for (size_t i = 0; i < program.functions.size(); i++) {
+		const auto& func = program.functions[i];
 		m_functions[func.name] = m_code.size();
 		m_labels[func.name] = m_code.size();
+		m_profiling_index = m_profiling ? int(i) : -1;
 		gen_function(func);
 	}
+	m_profiling_index = -1;
 
 	// Must run before constant pool / data is appended: relaxation inserts instructions.
 	relax_branches();
@@ -244,10 +252,11 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 
 	// +1 for the global init function's return slot when present.
 	const size_t global_slots = m_global_count + (program.has_global_init ? 1 : 0);
-	m_global_data_size = global_slots * variant_size();
+	const size_t globals_bytes = m_global_count > 0 ? global_slots * variant_size() : 0;
+	m_profiling_size = m_profiling ? size_t(ProfilingLayout::area_size(uint32_t(m_profiling_count))) : 0;
+	m_global_data_size = globals_bytes + m_profiling_size;
 
-	// .globals goes in a separate R+W PT_LOAD segment.
-	if (m_global_count > 0) {
+	if (m_global_data_size > 0) {
 		while (m_code.size() % 8 != 0) {
 			m_code.push_back(0);
 		}
@@ -255,21 +264,44 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		// .data vaddr = BASE_ADDR + text_size, page-aligned.
 		// Label stores vaddr - BASE_ADDR because resolve_labels() adds BASE_ADDR.
 		size_t text_size = m_code.size();
-		size_t globals_vaddr = 0x10000 + text_size;
-		globals_vaddr = (globals_vaddr + 0xFFF) & ~0xFFF;
-		m_labels[GLOBALS_LABEL] = globals_vaddr - 0x10000;
+		size_t data_vaddr = 0x10000 + text_size;
+		data_vaddr = (data_vaddr + 0xFFF) & ~0xFFF;
 
-		// Payload = INT32_MIN, not 0: VASSIGN's "adopt source" path requires
-		// INT32_MIN as the sentinel. 0 is a valid scoped-variant index.
-		for (size_t i = 0; i < global_slots; i++) {
-			for (int j = 0; j < variant_size(); j++) {
-				m_code.push_back(0);
+		if (m_global_count > 0) {
+			m_labels[GLOBALS_LABEL] = data_vaddr - 0x10000;
+
+			// Payload = INT32_MIN, not 0: VASSIGN's "adopt source" path requires
+			// INT32_MIN as the sentinel. 0 is a valid scoped-variant index.
+			for (size_t i = 0; i < global_slots; i++) {
+				for (int j = 0; j < variant_size(); j++) {
+					m_code.push_back(0);
+				}
+				const int64_t empty_index = static_cast<int64_t>(INT32_MIN);
+				const size_t payload = m_code.size() - variant_size() + VARIANT_DATA_OFFSET;
+				for (int j = 0; j < 8; j++) {
+					m_code[payload + j] = static_cast<uint8_t>((empty_index >> (j * 8)) & 0xFF);
+				}
 			}
-			const int64_t empty_index = static_cast<int64_t>(INT32_MIN);
-			const size_t payload = m_code.size() - variant_size() + VARIANT_DATA_OFFSET;
-			for (int j = 0; j < 8; j++) {
-				m_code[payload + j] = static_cast<uint8_t>((empty_index >> (j * 8)) & 0xFF);
-			}
+		}
+
+		if (m_profiling) {
+			m_profiling_address = data_vaddr + globals_bytes;
+			m_labels[PROFILING_LABEL] = m_profiling_address - 0x10000;
+
+			const size_t base = m_code.size();
+			m_code.resize(base + m_profiling_size, 0);
+
+			const auto put32 = [&](int32_t offset, uint32_t value) {
+				for (int j = 0; j < 4; j++) {
+					m_code[base + offset + j] = static_cast<uint8_t>((value >> (j * 8)) & 0xFF);
+				}
+			};
+			put32(ProfilingLayout::MAGIC_OFF, ProfilingLayout::MAGIC);
+			put32(ProfilingLayout::VERSION_OFF, ProfilingLayout::LAYOUT_VERSION);
+			put32(ProfilingLayout::FUNCTION_COUNT_OFF, uint32_t(m_profiling_count));
+			put32(ProfilingLayout::RECORD_SIZE_OFF, uint32_t(ProfilingLayout::RECORD_SIZE));
+			put32(ProfilingLayout::MAX_DEPTH_OFF, ProfilingLayout::MAX_DEPTH);
+			put32(ProfilingLayout::CLOCK_OFF, uint32_t(m_profiling_clock));
 		}
 	}
 
@@ -347,6 +379,11 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 }
 
 void RISCVCodeGen::emit_prologue(const IRFunction& func) {
+	// Before frame setup; uses no stack so frameless functions work.
+	if (m_profiling_index >= 0) {
+		emit_profiling_entry();
+	}
+
 	if (m_fn.stack_frame_size > 0) {
 		emit_add_offset(REG_SP, REG_SP, -m_fn.stack_frame_size);
 	}
@@ -1812,6 +1849,11 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 				int src_offset = get_variant_stack_offset(IRFunction::RETURN_REGISTER);
 				emit_load_return_pointer();
 				emit_variant_move(REG_A0, 0, REG_SP, src_offset, REG_T0);
+			}
+
+			// After retval written; t0-t5 free.
+			if (m_profiling_index >= 0) {
+				emit_profiling_exit();
 			}
 
 			if (m_fn.saves_return_address) {
@@ -3500,6 +3542,10 @@ void RISCVCodeGen::emit_sh2add(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 
 void RISCVCodeGen::emit_srai(uint8_t rd, uint8_t rs, uint8_t shamt) {
 	emit_i_type(0x13, rd, 5, rs, (0b010000 << 6) | (shamt & 0x3F));
+}
+
+void RISCVCodeGen::emit_slli(uint8_t rd, uint8_t rs, uint8_t shamt) {
+	emit_i_type(0x13, rd, 1, rs, shamt);
 }
 
 void RISCVCodeGen::emit_sext_w(uint8_t rd, uint8_t rs) {

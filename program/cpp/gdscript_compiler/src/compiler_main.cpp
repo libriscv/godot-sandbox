@@ -18,8 +18,7 @@ PUBLIC Variant compile(String code)
 
 	Compiler compiler;
 	auto elf_data = compiler.compile(code.utf8(), options);
-	// Kept for the get_function_signatures() the caller makes next: the ELF
-	// says which functions it exports, but not what they take.
+	// ELF carries names only; signatures are retrieved via get_function_signatures().
 	gdscript_remember_signatures(compiler);
 
 	if (elf_data.empty()) {
@@ -36,22 +35,37 @@ PUBLIC Variant compile_to_elf(String code)
 	return compile(code);
 }
 
-// Compile far enough to know whether the program is well-formed, and report
-// what went wrong in a form an editor can point at. No ELF is built: the RISC-V
-// backend's errors are compiler bugs rather than anything the user wrote, and
-// skipping that phase keeps validation cheap enough to run while typing.
-//
-// The .sgd script language extension calls this on every edit, so the shape of
-// the returned Dictionary is part of its contract: "valid" is always present,
-// and the rest describes the first error when it is false.
+// Separate entry point: the Sandbox ABI has no argument count, so adding a
+// parameter to compile() would dereference a null pointer on old callers.
+PUBLIC Variant compile_profiled(String code)
+{
+	CompilerOptions options;
+	options.output_elf = true;
+	options.profiling = true;
+	// Host installs a nanosecond rdtime before the program runs.
+	options.profiling_clock = ProfilingClock::TIME;
+
+	Compiler compiler;
+	auto elf_data = compiler.compile(code.utf8(), options);
+	gdscript_remember_signatures(compiler);
+
+	if (elf_data.empty()) {
+		last_error = String(compiler.get_error());
+		print("ERROR: Compilation failed: ", last_error);
+		return PackedByteArray(std::vector<uint8_t>{});
+	}
+
+	return PackedByteArray(elf_data);
+}
+
+// Frontend-only compile (no ELF). Returns a Dictionary with "valid" and error
+// location. Called on every edit by the .sgd language extension.
 PUBLIC Variant validate(String code)
 {
 	CompilerOptions options;
 	options.output_elf = false;
 
 	Compiler compiler;
-	// With output_elf off a successful compile also returns nothing, so the
-	// error record is the only thing that says whether it worked.
 	compiler.compile(code.utf8(), options);
 	const CompilerError &error = compiler.get_error_info();
 
@@ -71,8 +85,6 @@ PUBLIC Variant get_compiler_error()
 	return last_error;
 }
 
-// What compile() just produced, one Dictionary per exported function. See
-// function_signatures.hpp for the shape and for why the ELF cannot carry it.
 PUBLIC Variant get_function_signatures()
 {
 	return gdscript_signatures_to_variant();

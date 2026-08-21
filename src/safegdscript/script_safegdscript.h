@@ -79,7 +79,9 @@ public:
 	// No standalone file: unsaved or scene sub-resource (path contains "::").
 	bool is_built_in() const { return path.is_empty() || path.contains("::"); }
 	const PackedByteArray &get_content() const { return elf_data; }
-	bool compile_source_to_elf();
+	bool compile_source_to_elf(bool p_profiling = false);
+	bool is_profiled_build() const { return profiled_build; }
+	const std::vector<gdscript::FunctionSignature> &get_signatures() const { return signatures; }
 	static String get_compiler_error_message();
 	// The parameter lists of the last compile, which the ELF does not carry.
 	static std::vector<gdscript::FunctionSignature> get_compiler_function_signatures();
@@ -98,6 +100,9 @@ private:
 	String path;
 	mutable HashSet<SafeGDScriptInstance *> instances;
 	PackedByteArray elf_data;
+	bool profiled_build = false;
+	// IRProgram order; record i describes signatures[i].
+	std::vector<gdscript::FunctionSignature> signatures;
 	std::vector<godot::MethodInfo> methods_info;
 	// Per-function editor metadata: declaration line and '##' description. Godot
 	// requests both through separate virtuals rather than the method list, so

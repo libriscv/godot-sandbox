@@ -344,7 +344,7 @@ Sandbox *SafeGDScript::get_compiler_sandbox() {
 	return compiler;
 }
 
-bool SafeGDScript::compile_source_to_elf() {
+bool SafeGDScript::compile_source_to_elf(bool p_profiling) {
 	if (this->source_code.is_empty()) {
 		if constexpr (VERBOSE_LOGGING) {
 			ERR_PRINT("SafeGDScript::compile_source_to_elf: No source code to compile.");
@@ -357,11 +357,15 @@ bool SafeGDScript::compile_source_to_elf() {
 		return false;
 	}
 
-	// Compile the source code to ELF using the compiler sandbox
+	// Falls back to uninstrumented if compiler ELF predates compile_profiled.
+	const bool profiling = p_profiling && compiler->has_function("compile_profiled");
+	if (p_profiling && !profiling) {
+		ERR_PRINT("SafeGDScript: the GDScript compiler ELF is too old to build a profiled program.");
+	}
 	GDExtensionCallError error;
 	Variant src_code_var = this->source_code;
 	const Variant* args[] = { &src_code_var };
-	Variant result = compiler->vmcall_fn("compile", args, 1, error);
+	Variant result = compiler->vmcall_fn(profiling ? "compile_profiled" : "compile", args, 1, error);
 	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
 		ERR_PRINT("SafeGDScript::compile_source_to_elf: Compilation failed with error code " + itos(static_cast<int>(error.error)));
 		return false;
@@ -373,10 +377,9 @@ bool SafeGDScript::compile_source_to_elf() {
 	}
 
 	this->elf_data = result;
+	this->profiled_build = profiling;
 	if (elf_data.is_empty()) {
-		// The compiler kept the reason around; saying what is wrong with the
-		// script beats saying that the result was empty.
-		ERR_PRINT("SafeGDScript: " + this->path + ": " + get_compiler_error_message());
+			ERR_PRINT("SafeGDScript: " + this->path + ": " + get_compiler_error_message());
 		return false;
 	}
 
@@ -393,8 +396,6 @@ bool SafeGDScript::compile_source_to_elf() {
 	return true;
 }
 
-// The formatted message the compiler kept from the last failed compile, quoting
-// the offending line. Only meaningful right after one has failed.
 String SafeGDScript::get_compiler_error_message() {
 	Sandbox *compiler = get_compiler_sandbox();
 	if (compiler == nullptr || !compiler->has_function("get_compiler_error")) {
@@ -412,9 +413,6 @@ void SafeGDScript::remove_instance(SafeGDScriptInstance *p_instance) {
 	instances.erase(p_instance);
 }
 
-// The signatures compile() just published, decoded from the blob the compiler
-// hands out. Empty when the compiler predates the call, which leaves every
-// method a vararg, as it was before.
 std::vector<gdscript::FunctionSignature> SafeGDScript::get_compiler_function_signatures() {
 	std::vector<gdscript::FunctionSignature> signatures;
 	Sandbox *compiler = get_compiler_sandbox();
@@ -472,22 +470,19 @@ void SafeGDScript::update_methods_info() {
 	this->methods_info.clear();
 	this->methods_doc.clear();
 
-	// The symbol table names the functions; only the compiler knows what they
-	// take. Without the parameter list Godot has nothing to reject a call
-	// against, and a missing argument arrives in the guest as a null Variant
-	// pointer, which faults the moment the function reads it.
-	HashMap<String, const gdscript::FunctionSignature *> signatures;
-	const std::vector<gdscript::FunctionSignature> table = get_compiler_function_signatures();
-	for (const gdscript::FunctionSignature &signature : table) {
-		signatures.insert(String::utf8(signature.name.c_str(), signature.name.size()), &signature);
+	// Profiling records are indexed by position in this table.
+	this->signatures = get_compiler_function_signatures();
+	HashMap<String, const gdscript::FunctionSignature *> by_name;
+	for (const gdscript::FunctionSignature &signature : this->signatures) {
+		by_name.insert(String::utf8(signature.name.c_str(), signature.name.size()), &signature);
 	}
 
 	for (const String &func_name : info.functions) {
 		MethodInfo method(func_name);
 		method.return_val.usage = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NIL_IS_VARIANT;
 
-		HashMap<String, const gdscript::FunctionSignature *>::Iterator it = signatures.find(func_name);
-		if (it == signatures.end()) {
+		HashMap<String, const gdscript::FunctionSignature *>::Iterator it = by_name.find(func_name);
+		if (it == by_name.end()) {
 			// Not a function the compiler declared: a runtime helper linked
 			// into the program, say. Nothing is known about its arguments, so
 			// nothing is claimed about them.

@@ -1,4 +1,5 @@
 #include "script_instance_safegdscript.h"
+#include <functional>
 
 #include "../elf/script_elf.h"
 #include "../elf/script_instance.h"
@@ -312,6 +313,31 @@ struct SandboxAndCount {
 	unsigned count = 0;
 };
 static std::unordered_map<SafeGDScript *, SandboxAndCount> sandbox_instances;
+
+// One Sandbox per script, shared by every instance of it, so the profiling
+// toggle names a script rather than a node. Looked up from the toggle, which
+// only knows the Sandbox that was toggled.
+SafeGDScript *safegdscript_for_sandbox(const Sandbox *p_sandbox) {
+	for (const auto &[script, entry] : sandbox_instances) {
+		if (entry.sandbox == p_sandbox) {
+			return script;
+		}
+	}
+	return nullptr;
+}
+
+Sandbox *sandbox_for_safegdscript(const SafeGDScript *p_script) {
+	auto it = sandbox_instances.find(const_cast<SafeGDScript *>(p_script));
+	return it == sandbox_instances.end() ? nullptr : it->second.sandbox;
+}
+
+void safegdscript_for_each_sandbox(const std::function<void(SafeGDScript &, Sandbox &)> &p_callback) {
+	for (const auto &[script, entry] : sandbox_instances) {
+		if (script != nullptr && entry.sandbox != nullptr) {
+			p_callback(*script, *entry.sandbox);
+		}
+	}
+}
 
 static Sandbox *create_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_script) {
 	auto it = sandbox_instances.find(p_script.ptr());

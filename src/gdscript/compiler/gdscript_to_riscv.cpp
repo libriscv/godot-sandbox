@@ -36,6 +36,8 @@ int main(int argc, char** argv)
 	bool no_optimize = false;
 	bool show_program_headers = false;
 	bool double_precision = native_variant_layout().double_precision;
+	bool profiling = false;
+	ProfilingClock profiling_clock = ProfilingClock::TIME;
 
 	for (int i = 1; i < argc; i++) {
 		std::string arg = argv[i];
@@ -51,6 +53,11 @@ int main(int argc, char** argv)
 			double_precision = true;
 		} else if (arg == "--single-precision") {
 			double_precision = false;
+		} else if (arg == "--profiling") {
+			profiling = true;
+		} else if (arg == "--profiling-instructions") {
+			profiling = true;
+			profiling_clock = ProfilingClock::INSTRUCTIONS;
 		} else if (source.empty()) {
 			source = arg;
 		}
@@ -71,6 +78,8 @@ int main(int argc, char** argv)
 		options.output_elf = true;
 		options.optimize = !no_optimize;
 		options.double_precision = double_precision;
+		options.profiling = profiling;
+		options.profiling_clock = profiling_clock;
 		std::vector<uint8_t> elf = compiler.compile(source, options);
 		if (elf.empty()) {
 			// Empty ELF = compile error.

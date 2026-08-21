@@ -1015,7 +1015,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 					throw riscv::MachineTimeoutException(riscv::MAX_INSTRUCTIONS_REACHED,
 						"Instruction count limit reached", max_instr);
 				}
-			} else if (UNLIKELY(this->get_profiling())) {
+			} else if (UNLIKELY(this->m_local_profiling_data != nullptr)) {
 				LocalProfilingData &profdata = *this->m_local_profiling_data;
 				m_machine->cpu.jump(address);
 				do {

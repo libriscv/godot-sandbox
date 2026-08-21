@@ -1,0 +1,10 @@
+func busy(n):
+	var s = 0
+	var i = 0
+	while i < n:
+		s += i
+		i += 1
+	return s
+
+func outer(n):
+	return busy(n) + busy(n)

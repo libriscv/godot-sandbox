@@ -2,6 +2,8 @@
 #include "../script_language_common.h"
 #include "script_safegdscript.h"
 #include "../sandbox.h"
+
+void safegdscript_sandbox_profiling_toggled(Sandbox &p_sandbox, bool p_enabled);
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/control.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
@@ -794,9 +796,11 @@ StringName owner_class(Object *p_owner, const SourceSymbols &p_symbols) {
 void SafeGDScriptLanguage::init() {
 	safegdscript_language = memnew(SafeGDScriptLanguage);
 	Engine::get_singleton()->register_script_language(safegdscript_language);
+	Sandbox::set_profiling_toggle_callback(safegdscript_sandbox_profiling_toggled);
 }
 void SafeGDScriptLanguage::deinit() {
 	if (safegdscript_language) {
+		Sandbox::set_profiling_toggle_callback(nullptr);
 		Engine::get_singleton()->unregister_script_language(safegdscript_language);
 		memdelete(safegdscript_language);
 		safegdscript_language = nullptr;
@@ -1350,14 +1354,6 @@ TypedArray<Dictionary> SafeGDScriptLanguage::_get_public_annotations() const {
 	TypedArray<Dictionary> annotations;
 	annotations.push_back(export_info);
 	return annotations;
-}
-void SafeGDScriptLanguage::_profiling_start() {}
-void SafeGDScriptLanguage::_profiling_stop() {}
-int32_t SafeGDScriptLanguage::_profiling_get_accumulated_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) {
-	return 0;
-}
-int32_t SafeGDScriptLanguage::_profiling_get_frame_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) {
-	return 0;
 }
 void SafeGDScriptLanguage::_frame() {
 	static bool icon_registered = register_language_icons;

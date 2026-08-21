@@ -1,5 +1,7 @@
 #include "sandbox.h"
 
+#include "gdscript/compiler/profiling_layout.h"
+
 #include <algorithm>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -16,24 +18,46 @@ void Sandbox::set_profiling(bool enable) {
 	enable_profiling(enable);
 }
 
-void Sandbox::enable_profiling(bool enable, uint32_t interval) {
-	if (enable) {
-		if (!m_local_profiling_data) {
-			m_local_profiling_data = std::make_unique<LocalProfilingData>();
-		}
-		m_local_profiling_data->profiling_interval = interval;
+bool Sandbox::has_self_instrumentation() const {
+	return this->address_of(gdscript::PROFILING_SYMBOL) != 0;
+}
 
-		std::scoped_lock lock(profiling_mutex);
-		if (!m_profiling_data) {
-			m_profiling_data = std::make_unique<ProfilingData>();
-		}
-	} else {
+void Sandbox::update_profiling_sampler(uint32_t interval) {
+	// Self-instrumented programs are not interval-sampled.
+	if (!m_profiling_enabled || this->has_self_instrumentation()) {
+		m_local_profiling_data.reset();
+		return;
+	}
+	if (!m_local_profiling_data) {
+		m_local_profiling_data = std::make_unique<LocalProfilingData>();
+	}
+	m_local_profiling_data->profiling_interval = interval;
+
+	std::scoped_lock lock(profiling_mutex);
+	if (!m_profiling_data) {
+		m_profiling_data = std::make_unique<ProfilingData>();
+	}
+}
+
+void Sandbox::enable_profiling(bool enable, uint32_t interval) {
+	const bool was_enabled = m_profiling_enabled;
+	if (!enable && this->is_in_vmcall()) {
+		ERR_PRINT("Cannot disable profiling while a VM call is in progress.");
+		return;
+	}
+	m_profiling_enabled = enable;
+
+	// Runs before update_profiling_sampler: the rebuild determines self-instrumentation.
+	if (m_profiling_toggle != nullptr && was_enabled != enable) {
 		if (this->is_in_vmcall()) {
-			ERR_PRINT("Cannot disable profiling while a VM call is in progress.");
+			ERR_PRINT("Cannot rebuild an instrumented program while a VM call is in progress.");
+			m_profiling_enabled = was_enabled;
 			return;
 		}
-		m_local_profiling_data.reset();
+		m_profiling_toggle(*this, enable);
 	}
+
+	this->update_profiling_sampler(interval);
 }
 
 struct Result {

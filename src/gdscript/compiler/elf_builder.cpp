@@ -7,12 +7,15 @@ namespace gdscript {
 
 ElfBuilder::ElfBuilder() {}
 
-std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLayout& layout) {
-	RISCVCodeGen codegen(layout);
+std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLayout& layout,
+	bool profiling, ProfilingClock profiling_clock) {
+	RISCVCodeGen codegen(layout, profiling, profiling_clock);
 	std::vector<uint8_t> code = codegen.generate(program);
 	auto func_offsets = codegen.get_function_offsets();
 	auto const_pool = codegen.get_constant_pool();
 	auto global_data_size = codegen.get_global_data_size();
+	const uint64_t profiling_address = codegen.get_profiling_address();
+	const uint64_t profiling_size = codegen.get_profiling_size();
 
 	std::vector<uint8_t> elf_data;
 
@@ -59,6 +62,14 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 		strtab.push_back(0);
 	}
 
+	size_t profiling_name_offset = 0;
+	if (profiling_size > 0) {
+		profiling_name_offset = strtab.size();
+		const std::string name = PROFILING_SYMBOL;
+		strtab.insert(strtab.end(), name.begin(), name.end());
+		strtab.push_back(0);
+	}
+
 	// Defined locally to avoid alignment/packing issues.
 	struct alignas(8) Elf64_Sym {
 		uint32_t st_name;
@@ -96,6 +107,18 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 		sym.st_shndx = 1; // .text section
 		sym.st_value = BASE_ADDR + func_offset; // Actual function address
 		sym.st_size = func_size;
+		symtab.push_back(sym);
+	}
+
+	if (profiling_size > 0) {
+		Elf64_Sym sym = {};
+		memset(&sym, 0, sizeof(sym));
+		sym.st_name = static_cast<uint32_t>(profiling_name_offset);
+		sym.st_info = (1 << 4) | 1; // STB_GLOBAL | STT_OBJECT
+		sym.st_other = 0;
+		sym.st_shndx = 2; // .data
+		sym.st_value = profiling_address;
+		sym.st_size = profiling_size;
 		symtab.push_back(sym);
 	}
 

@@ -67,6 +67,7 @@ public:
 	virtual TypedArray<Dictionary> _get_public_annotations() const override;
 	virtual void _profiling_start() override;
 	virtual void _profiling_stop() override;
+	virtual void _profiling_set_save_native_calls(bool p_enable) override;
 	virtual int32_t _profiling_get_accumulated_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) override;
 	virtual int32_t _profiling_get_frame_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) override;
 	virtual void _frame() override;

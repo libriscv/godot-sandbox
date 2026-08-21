@@ -239,6 +239,7 @@ TypedArray<Dictionary> RustScriptLanguage::_get_public_annotations() const {
 }
 void RustScriptLanguage::_profiling_start() {}
 void RustScriptLanguage::_profiling_stop() {}
+void RustScriptLanguage::_profiling_set_save_native_calls(bool p_enable) {}
 int32_t RustScriptLanguage::_profiling_get_accumulated_data(ScriptLanguageExtensionProfilingInfo *p_info_array, int32_t p_info_max) {
 	return 0;
 }
