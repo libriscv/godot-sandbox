@@ -205,17 +205,6 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_static_method("Sandbox", D_METHOD("generate_api", "language", "header_extra", "use_argument_names"), &Sandbox::generate_api, DEFVAL("cpp"), DEFVAL(""), DEFVAL(false));
 	ClassDB::bind_static_method("Sandbox", D_METHOD("download_program", "program_name"), &Sandbox::download_program, DEFVAL("hello_world"));
 
-	// Shared memory.
-	ClassDB::bind_method(D_METHOD("share_byte_array", "allow_write", "array"), &Sandbox::share_byte_array);
-	ClassDB::bind_method(D_METHOD("share_float32_array", "allow_write", "array"), &Sandbox::share_float32_array);
-	ClassDB::bind_method(D_METHOD("share_float64_array", "allow_write", "array"), &Sandbox::share_float64_array);
-	ClassDB::bind_method(D_METHOD("share_int32_array", "allow_write", "array"), &Sandbox::share_int32_array);
-	ClassDB::bind_method(D_METHOD("share_int64_array", "allow_write", "array"), &Sandbox::share_int64_array);
-	ClassDB::bind_method(D_METHOD("share_vec2_array", "allow_write", "array"), &Sandbox::share_vec2_array);
-	ClassDB::bind_method(D_METHOD("share_vec3_array", "allow_write", "array"), &Sandbox::share_vec3_array);
-	ClassDB::bind_method(D_METHOD("share_vec4_array", "allow_write", "array"), &Sandbox::share_vec4_array);
-	ClassDB::bind_method(D_METHOD("unshare_array", "address"), &Sandbox::unshare_array);
-
 	// Profiling.
 	ClassDB::bind_static_method("Sandbox", D_METHOD("get_hotspots", "total", "callable"), &Sandbox::get_hotspots, DEFVAL(6), DEFVAL(Callable()));
 	ClassDB::bind_static_method("Sandbox", D_METHOD("clear_hotspots"), &Sandbox::clear_hotspots);
@@ -1916,16 +1905,6 @@ bool Sandbox::is_sandbox_function(const StringName &p_function) const {
 		"is_allowed_method",
 		"set_property_allowed_callback",
 		"is_allowed_property",
-
-		"share_byte_array",
-		"share_float32_array",
-		"share_float64_array",
-		"share_int32_array",
-		"share_int64_array",
-		"share_vec2_array",
-		"share_vec3_array",
-		"share_vec4_array",
-		"unshare_array",
 
 		"get_hotspots",
 		"clear_hotspots",
