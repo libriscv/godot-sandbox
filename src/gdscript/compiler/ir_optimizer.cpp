@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 
 namespace gdscript {
@@ -40,6 +41,10 @@ const std::vector<IRPass>& IROptimizer::pipeline() {
 	// patterns the previous peephole run could not see.
 	static const std::vector<IRPass> passes = {
 		{ "constant-folding", &IROptimizer::constant_folding },
+		// Folding a branch whose condition is known leaves the arm it guarded
+		// behind, so the pass that removes what nothing reaches runs directly
+		// after the pass that creates it.
+		{ "unreachable-code", &IROptimizer::eliminate_unreachable_code },
 		{ "copy-propagation", &IROptimizer::copy_propagation },
 		{ "enhanced-copy-propagation", &IROptimizer::enhanced_copy_propagation },
 		{ "licm", &IROptimizer::loop_invariant_code_motion },
@@ -152,364 +157,630 @@ void IROptimizer::optimize_function(IRFunction& func) {
 	}
 }
 
-void IROptimizer::constant_folding(IRFunction& func) {
-	m_constants.clear();
-	std::vector<IRInstruction> new_instructions;
-	new_instructions.reserve(func.instructions.size());
+bool IROptimizer::ConstantValue::same_as(const ConstantValue& other) const {
+	if (type != other.type) {
+		return false;
+	}
+	switch (type) {
+		case Type::NONE:   return true;
+		case Type::INT:    return int_value == other.int_value;
+		case Type::BOOL:   return bool_value == other.bool_value;
+		case Type::STRING: return string_value == other.string_value;
+		case Type::FLOAT:
+			// By the bits, not by ==: NaN is not equal to itself and -0.0 is
+			// equal to 0.0, and a join that accepted either would hand the
+			// folder a value it does not actually have on both paths.
+			return std::memcmp(&float_value, &other.float_value, sizeof(double)) == 0;
+	}
+	return false;
+}
 
-	for (const auto& instr : func.instructions) {
-		bool folded = false;
+bool IROptimizer::ConstantValue::truthiness(bool& truth) const {
+	switch (type) {
+		case Type::INT:
+			truth = (int_value != 0);
+			return true;
+		case Type::BOOL:
+			truth = bool_value;
+			return true;
+		case Type::FLOAT:
+			// Matches emit_variant_truthy() and the interpreter's get_bool():
+			// -0.0 is false and every NaN is true.
+			truth = (float_value != 0.0);
+			return true;
+		case Type::NONE:
+		case Type::STRING:
+			// No LOAD_STRING records a value, so a tracked string cannot
+			// happen; saying "unknown" costs a fold that never arises.
+			return false;
+	}
+	return false;
+}
 
-		// Important: invalidate all constants when we encounter control flow targets
-		// because we don't know what path we took to reach this point
-		if (instr.opcode == IROpcode::LABEL) {
-			m_constants.clear();
-			new_instructions.push_back(instr);
-			continue;
-		}
+std::vector<IROptimizer::ConstBlock> IROptimizer::build_blocks(const IRFunction& func) {
+	std::vector<ConstBlock> blocks;
+	const size_t count = func.instructions.size();
+	if (count == 0) {
+		return blocks;
+	}
 
-		switch (instr.opcode) {
-			case IROpcode::LOAD_IMM: {
-				int reg = std::get<int>(instr.operands[0].value);
-				int64_t val = std::get<int64_t>(instr.operands[1].value);
-				ConstantValue cv;
-				cv.type = ConstantValue::Type::INT;
-				cv.int_value = val;
-				set_register_constant(reg, cv);
-				new_instructions.push_back(instr);
-				break;
-			}
-
-			case IROpcode::LOAD_FLOAT_IMM: {
-				int reg = std::get<int>(instr.operands[0].value);
-				double val = std::get<double>(instr.operands[1].value);
-				ConstantValue cv;
-				cv.type = ConstantValue::Type::FLOAT;
-				cv.float_value = val;
-				set_register_constant(reg, cv);
-				new_instructions.push_back(instr);
-				break;
-			}
-
-			case IROpcode::LOAD_BOOL: {
-				int reg = std::get<int>(instr.operands[0].value);
-				int64_t val = std::get<int64_t>(instr.operands[1].value);
-				ConstantValue cv;
-				cv.type = ConstantValue::Type::BOOL;
-				cv.bool_value = (val != 0);
-				set_register_constant(reg, cv);
-				new_instructions.push_back(instr);
-				break;
-			}
-
-			case IROpcode::LOAD_STRING: {
-				int reg = std::get<int>(instr.operands[0].value);
-				invalidate_register(reg);
-				new_instructions.push_back(instr);
-				break;
-			}
-
-			case IROpcode::MOVE: {
-				int dst = std::get<int>(instr.operands[0].value);
-				int src = std::get<int>(instr.operands[1].value);
-
-				// Propagate constant value
-				if (m_constants.count(src)) {
-					m_constants[dst] = m_constants[src];
-				} else {
-					invalidate_register(dst);
-				}
-				new_instructions.push_back(instr);
-				break;
-			}
-
-			case IROpcode::ADD:
-			case IROpcode::SUB:
-			case IROpcode::MUL:
-			case IROpcode::DIV:
-			case IROpcode::MOD:
-			case IROpcode::BIT_AND:
-			case IROpcode::BIT_OR:
-			case IROpcode::BIT_XOR:
-			case IROpcode::SHL:
-			case IROpcode::SHR: {
-				// Check that all operands are registers before attempting constant folding
-				if (instr.operands.size() < 3 ||
-				    instr.operands[0].type != IRValue::Type::REGISTER ||
-				    instr.operands[1].type != IRValue::Type::REGISTER ||
-				    instr.operands[2].type != IRValue::Type::REGISTER) {
-					// Can't fold if operands aren't all registers
-					// Invalidate destination if it's a register
-					if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-						int dst = std::get<int>(instr.operands[0].value);
-						invalidate_register(dst);
-					}
-					new_instructions.push_back(instr);
-					break;
-				}
-
-				int dst = std::get<int>(instr.operands[0].value);
-				int lhs_reg = std::get<int>(instr.operands[1].value);
-				int rhs_reg = std::get<int>(instr.operands[2].value);
-
-				// Try to fold arithmetic operations
-				if (m_constants.count(lhs_reg) && m_constants.count(rhs_reg)) {
-					ConstantValue result;
-					if (try_fold_binary_op(instr.opcode, instr.type_hint, m_constants[lhs_reg], m_constants[rhs_reg], result)) {
-						// Replace with appropriate load instruction based on result type
-						if (result.type == ConstantValue::Type::FLOAT) {
-							new_instructions.emplace_back(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(dst), IRValue::fimm(result.float_value));
-							new_instructions.back().type_hint = Variant::FLOAT;
-						} else {
-							// Folding decided the result is an integer, so the load
-							// says so whatever the operation was hinted as: an untyped
-							// LOAD_IMM reads as unknown type to every later pass.
-							new_instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(dst), IRValue::imm(result.int_value));
-							new_instructions.back().type_hint = Variant::INT;
-						}
-						set_register_constant(dst, result);
-						folded = true;
-					}
-				}
-
-				if (!folded) {
-					invalidate_register(dst);
-					new_instructions.push_back(instr);
-				}
-				break;
-			}
-
-			case IROpcode::CMP_EQ:
-			case IROpcode::CMP_NEQ:
-			case IROpcode::CMP_LT:
-			case IROpcode::CMP_LTE:
-			case IROpcode::CMP_GT:
-			case IROpcode::CMP_GTE: {
-				// Check that all operands are registers before attempting constant folding
-				if (instr.operands.size() < 3 ||
-				    instr.operands[0].type != IRValue::Type::REGISTER ||
-				    instr.operands[1].type != IRValue::Type::REGISTER ||
-				    instr.operands[2].type != IRValue::Type::REGISTER) {
-					// Can't fold if operands aren't all registers
-					if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-						int dst = std::get<int>(instr.operands[0].value);
-						invalidate_register(dst);
-					}
-					new_instructions.push_back(instr);
-					break;
-				}
-
-				int dst = std::get<int>(instr.operands[0].value);
-				int lhs_reg = std::get<int>(instr.operands[1].value);
-				int rhs_reg = std::get<int>(instr.operands[2].value);
-
-				// Try to fold comparisons
-				if (m_constants.count(lhs_reg) && m_constants.count(rhs_reg)) {
-					ConstantValue result;
-					if (try_fold_binary_op(instr.opcode, instr.type_hint, m_constants[lhs_reg], m_constants[rhs_reg], result)) {
-						// Replace with LOAD_BOOL
-						new_instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(dst), IRValue::imm(result.bool_value ? 1 : 0));
-						set_register_constant(dst, result);
-						folded = true;
-					}
-				}
-
-				if (!folded) {
-					invalidate_register(dst);
-					new_instructions.push_back(instr);
-				}
-				break;
-			}
-
-			case IROpcode::NEG: {
-				int dst = std::get<int>(instr.operands[0].value);
-				int src = std::get<int>(instr.operands[1].value);
-
-				if (m_constants.count(src)) {
-					const auto& cv = m_constants[src];
-					ConstantValue result;
-
-					if (cv.type == ConstantValue::Type::INT) {
-						result.type = ConstantValue::Type::INT;
-						// Negating INT64_MIN wraps, as it does on the machine.
-						result.int_value = static_cast<int64_t>(0u - static_cast<uint64_t>(cv.int_value));
-						new_instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(dst), IRValue::imm(result.int_value));
-						new_instructions.back().type_hint = Variant::INT;
-						set_register_constant(dst, result);
-						folded = true;
-					} else if (cv.type == ConstantValue::Type::FLOAT) {
-						result.type = ConstantValue::Type::FLOAT;
-						result.float_value = -cv.float_value;
-						new_instructions.emplace_back(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(dst), IRValue::fimm(result.float_value));
-						new_instructions.back().type_hint = Variant::FLOAT;
-						set_register_constant(dst, result);
-						folded = true;
-					}
-				}
-
-				if (!folded) {
-					invalidate_register(dst);
-					new_instructions.push_back(instr);
-				}
-				break;
-			}
-
-			case IROpcode::NOT: {
-				int dst = std::get<int>(instr.operands[0].value);
-				int src = std::get<int>(instr.operands[1].value);
-
-				if (m_constants.count(src) && m_constants[src].type == ConstantValue::Type::BOOL) {
-					ConstantValue result;
-					result.type = ConstantValue::Type::BOOL;
-					result.bool_value = !m_constants[src].bool_value;
-					new_instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(dst), IRValue::imm(result.bool_value ? 1 : 0));
-					set_register_constant(dst, result);
-					folded = true;
-				}
-
-				if (!folded) {
-					invalidate_register(dst);
-					new_instructions.push_back(instr);
-				}
-				break;
-			}
-
-			case IROpcode::AND:
-			case IROpcode::OR: {
-				// Check that all operands are registers before attempting constant folding
-				if (instr.operands.size() < 3 ||
-				    instr.operands[0].type != IRValue::Type::REGISTER ||
-				    instr.operands[1].type != IRValue::Type::REGISTER ||
-				    instr.operands[2].type != IRValue::Type::REGISTER) {
-					// Can't fold if operands aren't all registers
-					if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-						int dst = std::get<int>(instr.operands[0].value);
-						invalidate_register(dst);
-					}
-					new_instructions.push_back(instr);
-					break;
-				}
-
-				int dst = std::get<int>(instr.operands[0].value);
-				int lhs_reg = std::get<int>(instr.operands[1].value);
-				int rhs_reg = std::get<int>(instr.operands[2].value);
-
-				// Try to fold logical operations
-				if (m_constants.count(lhs_reg) && m_constants.count(rhs_reg)) {
-					const auto& lhs_cv = m_constants[lhs_reg];
-					const auto& rhs_cv = m_constants[rhs_reg];
-
-					// Only fold if both are boolean constants
-					if (lhs_cv.type == ConstantValue::Type::BOOL && rhs_cv.type == ConstantValue::Type::BOOL) {
-						ConstantValue result;
-						result.type = ConstantValue::Type::BOOL;
-
-						if (instr.opcode == IROpcode::AND) {
-							result.bool_value = lhs_cv.bool_value && rhs_cv.bool_value;
-						} else {
-							result.bool_value = lhs_cv.bool_value || rhs_cv.bool_value;
-						}
-
-						new_instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(dst), IRValue::imm(result.bool_value ? 1 : 0));
-						set_register_constant(dst, result);
-						folded = true;
-					}
-				}
-
-				if (!folded) {
-					invalidate_register(dst);
-					new_instructions.push_back(instr);
-				}
-				break;
-			}
-
-			// An element write names no destination: operand 0 is the container
-			// it writes into, and invalidating it would drop a constant that is
-			// still exactly what it was.
-			case IROpcode::ARRAY_SET:
-			case IROpcode::DICT_SET:
-				new_instructions.push_back(instr);
-				break;
-
-			// System calls and variant operations - invalidate destination only
-			case IROpcode::ARRAY_APPEND:
-			case IROpcode::ARRAY_GET:
-			case IROpcode::PRINT:
-			case IROpcode::GLOBAL_CALL:
-			case IROpcode::VCALL:
-			case IROpcode::VGET:
-			case IROpcode::VSET:
-			case IROpcode::CALL_SYSCALL:
-			case IROpcode::CALL:
-				// These write to the first operand (destination register)
-				// but we shouldn't invalidate the input operands
-				if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-					invalidate_register(std::get<int>(instr.operands[0].value));
-				}
-				new_instructions.push_back(instr);
-				break;
-
-			// Opcodes this pass does not model. Every one of them is listed
-			// rather than caught by a `default:`, so that adding an opcode is a
-			// compile error here and has to be given an answer: fold it, or say
-			// out loud that folding across it is not safe.
-			case IROpcode::BIT_NOT:
-			case IROpcode::BRANCH_EQ:
-			case IROpcode::BRANCH_GT:
-			case IROpcode::BRANCH_GTE:
-			case IROpcode::BRANCH_LT:
-			case IROpcode::BRANCH_LTE:
-			case IROpcode::BRANCH_NEQ:
-			case IROpcode::BRANCH_NOT_ZERO:
-			case IROpcode::BRANCH_ZERO:
-			case IROpcode::CONVERT:
-			case IROpcode::JUMP:
-			case IROpcode::LABEL:
-			case IROpcode::LOAD_GLOBAL:
-			case IROpcode::MAKE_ARRAY:
-			case IROpcode::MAKE_COLOR:
-			case IROpcode::MAKE_DICTIONARY:
-			case IROpcode::MAKE_PACKED_BYTE_ARRAY:
-			case IROpcode::MAKE_PACKED_COLOR_ARRAY:
-			case IROpcode::MAKE_PACKED_FLOAT32_ARRAY:
-			case IROpcode::MAKE_PACKED_FLOAT64_ARRAY:
-			case IROpcode::MAKE_PACKED_INT32_ARRAY:
-			case IROpcode::MAKE_PACKED_INT64_ARRAY:
-			case IROpcode::MAKE_PACKED_STRING_ARRAY:
-			case IROpcode::MAKE_PACKED_VECTOR2_ARRAY:
-			case IROpcode::MAKE_PACKED_VECTOR3_ARRAY:
-			case IROpcode::MAKE_PACKED_VECTOR4_ARRAY:
-			case IROpcode::MAKE_PLANE:
-			case IROpcode::MAKE_RECT2:
-			case IROpcode::MAKE_RECT2I:
-			case IROpcode::MAKE_VECTOR2:
-			case IROpcode::MAKE_VECTOR2I:
-			case IROpcode::MAKE_VECTOR3:
-			case IROpcode::MAKE_VECTOR3I:
-			case IROpcode::MAKE_VECTOR4:
-			case IROpcode::MAKE_VECTOR4I:
-			case IROpcode::RETURN:
-			case IROpcode::STORE_GLOBAL:
-			// POW and IN are host-evaluated: nothing to fold, they only
-			// invalidate what they write.
-			case IROpcode::POW:
-			case IROpcode::IN:
-			case IROpcode::TYPE_TEST:
-			case IROpcode::SWITCH:
-			case IROpcode::VGET_INLINE:
-			case IROpcode::VSET_INLINE:
-				// Clear constant tracking for any instruction that might modify registers
-				for (const auto& op : instr.operands) {
-					if (op.type == IRValue::Type::REGISTER) {
-						int reg = std::get<int>(op.value);
-						invalidate_register(reg);
-					}
-				}
-				new_instructions.push_back(instr);
-				break;
+	std::unordered_map<std::string, size_t> label_index;
+	for (size_t i = 0; i < count; i++) {
+		const auto& instr = func.instructions[i];
+		if (ir_has_effect(instr.opcode, IR_LABEL) && !instr.operands.empty()) {
+			label_index.emplace(std::get<std::string>(instr.operands[0].value), i);
 		}
 	}
 
+	// Leaders: the first instruction, every label, and everything that follows
+	// a branch or a jump. The same rule the verifier's CFG uses.
+	std::vector<bool> is_leader(count, false);
+	is_leader[0] = true;
+	for (size_t i = 0; i < count; i++) {
+		const IROpcode op = func.instructions[i].opcode;
+		if (ir_has_effect(op, IR_LABEL)) {
+			is_leader[i] = true;
+		}
+		if ((ir_has_effect(op, IR_BRANCH) || ir_has_effect(op, IR_TERMINATOR)) && i + 1 < count) {
+			is_leader[i + 1] = true;
+		}
+	}
+
+	std::vector<size_t> block_of(count, 0);
+	for (size_t i = 0; i < count; i++) {
+		if (is_leader[i]) {
+			ConstBlock block;
+			block.begin = i;
+			blocks.push_back(block);
+		}
+		block_of[i] = blocks.size() - 1;
+		blocks.back().end = i + 1;
+	}
+
+	for (size_t b = 0; b < blocks.size(); b++) {
+		const IRInstruction& last = func.instructions[blocks[b].end - 1];
+		// A branch target is a successor -- but a LABEL's own operand names
+		// itself, not somewhere control goes.
+		if (!ir_has_effect(last.opcode, IR_LABEL)) {
+			for (const auto& operand : last.operands) {
+				if (operand.type != IRValue::Type::LABEL) {
+					continue;
+				}
+				auto it = label_index.find(std::get<std::string>(operand.value));
+				if (it != label_index.end()) {
+					blocks[b].successors.push_back(block_of[it->second]);
+				}
+			}
+		}
+		if (!ir_has_effect(last.opcode, IR_TERMINATOR) && b + 1 < blocks.size()) {
+			blocks[b].successors.push_back(b + 1);
+		}
+	}
+	return blocks;
+}
+
+bool IROptimizer::meet_constants(ConstantMap& into, const ConstantMap& from) {
+	bool changed = false;
+	for (auto it = into.begin(); it != into.end(); ) {
+		auto other = from.find(it->first);
+		if (other == from.end() || !it->second.same_as(other->second)) {
+			it = into.erase(it);
+			changed = true;
+		} else {
+			++it;
+		}
+	}
+	return changed;
+}
+
+void IROptimizer::constant_folding(IRFunction& func) {
+	std::vector<ConstBlock> blocks = build_blocks(func);
+	if (blocks.empty()) {
+		return;
+	}
+
+	// Forward dataflow to a fixpoint, meeting by intersection at every join.
+	// A block's entry state only ever loses entries once it has been given one,
+	// and the transfer function derives constants only from constants, so the
+	// iteration is monotone and terminates.
+	blocks[0].entry_initialized = true;   // the entry block knows nothing
+
+	// A cap on the iteration, so that a transfer function that stops being
+	// monotone -- a new opcode case that invents a constant, say -- degrades
+	// into the old label-clearing behaviour rather than hanging the compiler.
+	const size_t max_visits = blocks.size() * 16 + 1024;
+	size_t visits = 0;
+	bool converged = true;
+
+	std::vector<size_t> worklist { 0 };
+	while (!worklist.empty()) {
+		if (++visits > max_visits) {
+			converged = false;
+			break;
+		}
+		const size_t index = worklist.back();
+		worklist.pop_back();
+
+		m_constants = blocks[index].entry;
+		for (size_t i = blocks[index].begin; i < blocks[index].end; i++) {
+			fold_instruction(func.instructions[i], nullptr);
+		}
+
+		for (size_t successor : blocks[index].successors) {
+			ConstBlock& target = blocks[successor];
+			bool changed = false;
+			if (!target.entry_initialized) {
+				target.entry = m_constants;
+				target.entry_initialized = true;
+				changed = true;
+			} else {
+				changed = meet_constants(target.entry, m_constants);
+			}
+			if (changed) {
+				worklist.push_back(successor);
+			}
+		}
+	}
+
+	if (!converged) {
+		for (size_t b = 1; b < blocks.size(); b++) {
+			blocks[b].entry.clear();
+		}
+	}
+
+	std::vector<IRInstruction> new_instructions;
+	new_instructions.reserve(func.instructions.size());
+	for (const auto& block : blocks) {
+		// A block nothing reaches has no incoming state to speak of: fold
+		// nothing in it, and leave it to eliminate_unreachable_code().
+		m_constants = block.entry_initialized ? block.entry : ConstantMap {};
+		for (size_t i = block.begin; i < block.end; i++) {
+			fold_instruction(func.instructions[i], &new_instructions);
+		}
+	}
+	func.instructions = std::move(new_instructions);
+}
+
+void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRInstruction>* out) {
+	// Analysis mode (out == nullptr) runs the same state updates and emits
+	// nothing, so what the dataflow believes and what the rewrite does are the
+	// same decision made twice rather than two decisions kept in step by hand.
+	const auto emit = [out](const IRInstruction& produced) {
+		if (out != nullptr) {
+			out->push_back(produced);
+		}
+	};
+
+	bool folded = false;
+
+	switch (instr.opcode) {
+		// A label is a join point, and the state control arrives with was
+		// computed for it by constant_folding(): the label itself changes
+		// nothing.
+		case IROpcode::LABEL:
+			emit(instr);
+			break;
+
+		case IROpcode::LOAD_IMM: {
+			int reg = std::get<int>(instr.operands[0].value);
+			int64_t val = std::get<int64_t>(instr.operands[1].value);
+			ConstantValue cv;
+			cv.type = ConstantValue::Type::INT;
+			cv.int_value = val;
+			set_register_constant(reg, cv);
+			emit(instr);
+			break;
+		}
+
+		case IROpcode::LOAD_FLOAT_IMM: {
+			int reg = std::get<int>(instr.operands[0].value);
+			double val = std::get<double>(instr.operands[1].value);
+			ConstantValue cv;
+			cv.type = ConstantValue::Type::FLOAT;
+			cv.float_value = val;
+			set_register_constant(reg, cv);
+			emit(instr);
+			break;
+		}
+
+		case IROpcode::LOAD_BOOL: {
+			int reg = std::get<int>(instr.operands[0].value);
+			int64_t val = std::get<int64_t>(instr.operands[1].value);
+			ConstantValue cv;
+			cv.type = ConstantValue::Type::BOOL;
+			cv.bool_value = (val != 0);
+			set_register_constant(reg, cv);
+			emit(instr);
+			break;
+		}
+
+		case IROpcode::LOAD_STRING: {
+			int reg = std::get<int>(instr.operands[0].value);
+			invalidate_register(reg);
+			emit(instr);
+			break;
+		}
+
+		case IROpcode::MOVE: {
+			int dst = std::get<int>(instr.operands[0].value);
+			int src = std::get<int>(instr.operands[1].value);
+
+			// Propagate constant value
+			if (m_constants.count(src)) {
+				m_constants[dst] = m_constants[src];
+			} else {
+				invalidate_register(dst);
+			}
+			emit(instr);
+			break;
+		}
+
+		case IROpcode::ADD:
+		case IROpcode::SUB:
+		case IROpcode::MUL:
+		case IROpcode::DIV:
+		case IROpcode::MOD:
+		case IROpcode::BIT_AND:
+		case IROpcode::BIT_OR:
+		case IROpcode::BIT_XOR:
+		case IROpcode::SHL:
+		case IROpcode::SHR: {
+			// Check that all operands are registers before attempting constant folding
+			if (instr.operands.size() < 3 ||
+			    instr.operands[0].type != IRValue::Type::REGISTER ||
+			    instr.operands[1].type != IRValue::Type::REGISTER ||
+			    instr.operands[2].type != IRValue::Type::REGISTER) {
+				// Can't fold if operands aren't all registers
+				// Invalidate destination if it's a register
+				if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+					int dst = std::get<int>(instr.operands[0].value);
+					invalidate_register(dst);
+				}
+				emit(instr);
+				break;
+			}
+
+			int dst = std::get<int>(instr.operands[0].value);
+			int lhs_reg = std::get<int>(instr.operands[1].value);
+			int rhs_reg = std::get<int>(instr.operands[2].value);
+
+			// Try to fold arithmetic operations
+			if (m_constants.count(lhs_reg) && m_constants.count(rhs_reg)) {
+				ConstantValue result;
+				if (try_fold_binary_op(instr.opcode, instr.type_hint, m_constants[lhs_reg], m_constants[rhs_reg], result)) {
+					// Replace with appropriate load instruction based on result type
+					if (result.type == ConstantValue::Type::FLOAT) {
+						IRInstruction load(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(dst), IRValue::fimm(result.float_value));
+						load.type_hint = Variant::FLOAT;
+						emit(load);
+					} else {
+						// Folding decided the result is an integer, so the load
+						// says so whatever the operation was hinted as: an untyped
+						// LOAD_IMM reads as unknown type to every later pass.
+						IRInstruction load(IROpcode::LOAD_IMM, IRValue::reg(dst), IRValue::imm(result.int_value));
+						load.type_hint = Variant::INT;
+						emit(load);
+					}
+					set_register_constant(dst, result);
+					folded = true;
+				}
+			}
+
+			if (!folded) {
+				invalidate_register(dst);
+				emit(instr);
+			}
+			break;
+		}
+
+		case IROpcode::CMP_EQ:
+		case IROpcode::CMP_NEQ:
+		case IROpcode::CMP_LT:
+		case IROpcode::CMP_LTE:
+		case IROpcode::CMP_GT:
+		case IROpcode::CMP_GTE: {
+			// Check that all operands are registers before attempting constant folding
+			if (instr.operands.size() < 3 ||
+			    instr.operands[0].type != IRValue::Type::REGISTER ||
+			    instr.operands[1].type != IRValue::Type::REGISTER ||
+			    instr.operands[2].type != IRValue::Type::REGISTER) {
+				// Can't fold if operands aren't all registers
+				if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+					int dst = std::get<int>(instr.operands[0].value);
+					invalidate_register(dst);
+				}
+				emit(instr);
+				break;
+			}
+
+			int dst = std::get<int>(instr.operands[0].value);
+			int lhs_reg = std::get<int>(instr.operands[1].value);
+			int rhs_reg = std::get<int>(instr.operands[2].value);
+
+			// Try to fold comparisons
+			if (m_constants.count(lhs_reg) && m_constants.count(rhs_reg)) {
+				ConstantValue result;
+				if (try_fold_binary_op(instr.opcode, instr.type_hint, m_constants[lhs_reg], m_constants[rhs_reg], result)) {
+					// Replace with LOAD_BOOL
+					emit(IRInstruction(IROpcode::LOAD_BOOL, IRValue::reg(dst), IRValue::imm(result.bool_value ? 1 : 0)));
+					set_register_constant(dst, result);
+					folded = true;
+				}
+			}
+
+			if (!folded) {
+				invalidate_register(dst);
+				emit(instr);
+			}
+			break;
+		}
+
+		case IROpcode::NEG: {
+			int dst = std::get<int>(instr.operands[0].value);
+			int src = std::get<int>(instr.operands[1].value);
+
+			if (m_constants.count(src)) {
+				const auto& cv = m_constants[src];
+				ConstantValue result;
+
+				if (cv.type == ConstantValue::Type::INT) {
+					result.type = ConstantValue::Type::INT;
+					// Negating INT64_MIN wraps, as it does on the machine.
+					result.int_value = static_cast<int64_t>(0u - static_cast<uint64_t>(cv.int_value));
+					IRInstruction load(IROpcode::LOAD_IMM, IRValue::reg(dst), IRValue::imm(result.int_value));
+					load.type_hint = Variant::INT;
+					emit(load);
+					set_register_constant(dst, result);
+					folded = true;
+				} else if (cv.type == ConstantValue::Type::FLOAT) {
+					result.type = ConstantValue::Type::FLOAT;
+					result.float_value = -cv.float_value;
+					IRInstruction load(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(dst), IRValue::fimm(result.float_value));
+					load.type_hint = Variant::FLOAT;
+					emit(load);
+					set_register_constant(dst, result);
+					folded = true;
+				}
+			}
+
+			if (!folded) {
+				invalidate_register(dst);
+				emit(instr);
+			}
+			break;
+		}
+
+		case IROpcode::NOT: {
+			int dst = std::get<int>(instr.operands[0].value);
+			int src = std::get<int>(instr.operands[1].value);
+
+			if (m_constants.count(src) && m_constants[src].type == ConstantValue::Type::BOOL) {
+				ConstantValue result;
+				result.type = ConstantValue::Type::BOOL;
+				result.bool_value = !m_constants[src].bool_value;
+				emit(IRInstruction(IROpcode::LOAD_BOOL, IRValue::reg(dst), IRValue::imm(result.bool_value ? 1 : 0)));
+				set_register_constant(dst, result);
+				folded = true;
+			}
+
+			if (!folded) {
+				invalidate_register(dst);
+				emit(instr);
+			}
+			break;
+		}
+
+		case IROpcode::AND:
+		case IROpcode::OR: {
+			// Check that all operands are registers before attempting constant folding
+			if (instr.operands.size() < 3 ||
+			    instr.operands[0].type != IRValue::Type::REGISTER ||
+			    instr.operands[1].type != IRValue::Type::REGISTER ||
+			    instr.operands[2].type != IRValue::Type::REGISTER) {
+				// Can't fold if operands aren't all registers
+				if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+					int dst = std::get<int>(instr.operands[0].value);
+					invalidate_register(dst);
+				}
+				emit(instr);
+				break;
+			}
+
+			int dst = std::get<int>(instr.operands[0].value);
+			int lhs_reg = std::get<int>(instr.operands[1].value);
+			int rhs_reg = std::get<int>(instr.operands[2].value);
+
+			// Try to fold logical operations
+			if (m_constants.count(lhs_reg) && m_constants.count(rhs_reg)) {
+				const auto& lhs_cv = m_constants[lhs_reg];
+				const auto& rhs_cv = m_constants[rhs_reg];
+
+				// Only fold if both are boolean constants
+				if (lhs_cv.type == ConstantValue::Type::BOOL && rhs_cv.type == ConstantValue::Type::BOOL) {
+					ConstantValue result;
+					result.type = ConstantValue::Type::BOOL;
+
+					if (instr.opcode == IROpcode::AND) {
+						result.bool_value = lhs_cv.bool_value && rhs_cv.bool_value;
+					} else {
+						result.bool_value = lhs_cv.bool_value || rhs_cv.bool_value;
+					}
+
+					emit(IRInstruction(IROpcode::LOAD_BOOL, IRValue::reg(dst), IRValue::imm(result.bool_value ? 1 : 0)));
+					set_register_constant(dst, result);
+					folded = true;
+				}
+			}
+
+			if (!folded) {
+				invalidate_register(dst);
+				emit(instr);
+			}
+			break;
+		}
+
+		// A branch on a value that is already known is not a branch. The
+		// arm it guarded stops being reachable, which is what
+		// eliminate_unreachable_code() is for.
+		//
+		// These are also the one place a control-flow opcode must not
+		// invalidate what it reads: a branch defines nothing, and the
+		// register it tested is on the far side of it exactly as it was.
+		case IROpcode::BRANCH_ZERO:
+		case IROpcode::BRANCH_NOT_ZERO: {
+			if (instr.operands.size() >= 2 && instr.operands[0].type == IRValue::Type::REGISTER) {
+				const int cond = std::get<int>(instr.operands[0].value);
+				auto it = m_constants.find(cond);
+				bool truth = false;
+				if (it != m_constants.end() && it->second.truthiness(truth)) {
+					const bool taken = (instr.opcode == IROpcode::BRANCH_ZERO) ? !truth : truth;
+					if (taken) {
+						emit(IRInstruction(IROpcode::JUMP, instr.operands[1]));
+					}
+					// Not taken: the branch falls through, which is what
+					// removing it does.
+					folded = true;
+				}
+			}
+			if (!folded) {
+				emit(instr);
+			}
+			break;
+		}
+
+		// The fused forms compare two registers, and folding one needs the
+		// comparison semantics try_fold_binary_op() has. The peephole that
+		// creates them runs after this pass, so in practice none exists
+		// here; they still define nothing and must not invalidate.
+		case IROpcode::BRANCH_EQ:
+		case IROpcode::BRANCH_GT:
+		case IROpcode::BRANCH_GTE:
+		case IROpcode::BRANCH_LT:
+		case IROpcode::BRANCH_LTE:
+		case IROpcode::BRANCH_NEQ:
+			emit(instr);
+			break;
+
+		// An element write names no destination: operand 0 is the container
+		// it writes into, and invalidating it would drop a constant that is
+		// still exactly what it was.
+		case IROpcode::ARRAY_SET:
+		case IROpcode::DICT_SET:
+			emit(instr);
+			break;
+
+		// System calls and variant operations - invalidate destination only
+		case IROpcode::ARRAY_APPEND:
+		case IROpcode::ARRAY_GET:
+		case IROpcode::PRINT:
+		case IROpcode::GLOBAL_CALL:
+		case IROpcode::VCALL:
+		case IROpcode::VGET:
+		case IROpcode::VSET:
+		case IROpcode::CALL_SYSCALL:
+		case IROpcode::CALL:
+			// These write to the first operand (destination register)
+			// but we shouldn't invalidate the input operands
+			if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
+				invalidate_register(std::get<int>(instr.operands[0].value));
+			}
+			emit(instr);
+			break;
+
+		// Opcodes this pass does not model. Every one of them is listed
+		// rather than caught by a `default:`, so that adding an opcode is a
+		// compile error here and has to be given an answer: fold it, or say
+		// out loud that folding across it is not safe.
+		case IROpcode::BIT_NOT:
+		case IROpcode::CONVERT:
+		case IROpcode::JUMP:
+		case IROpcode::LOAD_GLOBAL:
+		case IROpcode::MAKE_ARRAY:
+		case IROpcode::MAKE_COLOR:
+		case IROpcode::MAKE_DICTIONARY:
+		case IROpcode::MAKE_PACKED_BYTE_ARRAY:
+		case IROpcode::MAKE_PACKED_COLOR_ARRAY:
+		case IROpcode::MAKE_PACKED_FLOAT32_ARRAY:
+		case IROpcode::MAKE_PACKED_FLOAT64_ARRAY:
+		case IROpcode::MAKE_PACKED_INT32_ARRAY:
+		case IROpcode::MAKE_PACKED_INT64_ARRAY:
+		case IROpcode::MAKE_PACKED_STRING_ARRAY:
+		case IROpcode::MAKE_PACKED_VECTOR2_ARRAY:
+		case IROpcode::MAKE_PACKED_VECTOR3_ARRAY:
+		case IROpcode::MAKE_PACKED_VECTOR4_ARRAY:
+		case IROpcode::MAKE_PLANE:
+		case IROpcode::MAKE_RECT2:
+		case IROpcode::MAKE_RECT2I:
+		case IROpcode::MAKE_VECTOR2:
+		case IROpcode::MAKE_VECTOR2I:
+		case IROpcode::MAKE_VECTOR3:
+		case IROpcode::MAKE_VECTOR3I:
+		case IROpcode::MAKE_VECTOR4:
+		case IROpcode::MAKE_VECTOR4I:
+		case IROpcode::RETURN:
+		case IROpcode::STORE_GLOBAL:
+		// POW and IN are host-evaluated: nothing to fold, they only
+		// invalidate what they write.
+		case IROpcode::POW:
+		case IROpcode::IN:
+		case IROpcode::TYPE_TEST:
+		case IROpcode::SWITCH:
+		case IROpcode::VGET_INLINE:
+		case IROpcode::VSET_INLINE:
+			// Clear constant tracking for any instruction that might modify registers
+			for (const auto& op : instr.operands) {
+				if (op.type == IRValue::Type::REGISTER) {
+					int reg = std::get<int>(op.value);
+					invalidate_register(reg);
+				}
+			}
+			emit(instr);
+			break;
+	}
+}
+
+// Nothing between an unconditional transfer of control and the next place
+// control can arrive is executed. This is a different question from the one
+// eliminate_dead_code() answers: that pass is about registers nothing reads,
+// this one about instructions nothing reaches.
+//
+// Reachability is over the CFG, not just the instruction stream, because
+// folding a branch on a known condition strands whole labelled blocks -- the
+// `else` arm of an `if` whose condition was decided keeps its label, and a
+// linear "skip to the next LABEL" rule would keep the arm with it.
+void IROptimizer::eliminate_unreachable_code(IRFunction& func) {
+	std::vector<ConstBlock> blocks = build_blocks(func);
+	if (blocks.empty()) {
+		return;
+	}
+
+	std::vector<bool> reachable(blocks.size(), false);
+	std::vector<size_t> worklist { 0 };
+	reachable[0] = true;
+	while (!worklist.empty()) {
+		const size_t index = worklist.back();
+		worklist.pop_back();
+		for (size_t successor : blocks[index].successors) {
+			if (!reachable[successor]) {
+				reachable[successor] = true;
+				worklist.push_back(successor);
+			}
+		}
+	}
+
+	// A surviving instruction can only name a label in a block reachable from
+	// it, and reachability is transitive, so dropping unreachable blocks cannot
+	// leave a branch pointing at a label that is gone.
+	std::vector<IRInstruction> new_instructions;
+	new_instructions.reserve(func.instructions.size());
+	for (size_t b = 0; b < blocks.size(); b++) {
+		if (!reachable[b]) {
+			continue;
+		}
+		for (size_t i = blocks[b].begin; i < blocks[b].end; i++) {
+			new_instructions.push_back(func.instructions[i]);
+		}
+	}
 	func.instructions = std::move(new_instructions);
 }
 
@@ -802,6 +1073,51 @@ bool IROptimizer::try_fuse_compare_and_branch(const IRFunction& func, size_t& i,
 
 // Everything that starts at a MOVE: the self-move, and the shapes where a
 // MOVE exists only to feed or to catch the arithmetic next to it.
+// A jump or a conditional branch whose target is the instruction that follows
+// it is a no-op: both answers land in the same place. Labels in between are
+// skipped, since a label is not an instruction control has to reach.
+//
+// This mostly cleans up after the last arm of a `match`, which jumps to an end
+// label that immediately follows it, and after eliminate_unreachable_code(),
+// which removes whatever used to sit in between.
+bool IROptimizer::try_remove_branch_to_next(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions) {
+	(void) new_instructions;   // the replacement is nothing at all
+	const auto& instr = func.instructions[i];
+
+	if (instr.opcode != IROpcode::JUMP && !ir_has_effect(instr.opcode, IR_BRANCH)) {
+		return false;
+	}
+	// SWITCH names a table of targets rather than one, and falling through is
+	// what it does for a subject out of range: it is not made redundant by
+	// where the next instruction happens to be.
+	if (instr.opcode == IROpcode::SWITCH) {
+		return false;
+	}
+
+	const IRValue* target = nullptr;
+	for (const auto& operand : instr.operands) {
+		if (operand.type == IRValue::Type::LABEL) {
+			target = &operand;
+		}
+	}
+	if (target == nullptr) {
+		return false;
+	}
+	const std::string& name = std::get<std::string>(target->value);
+
+	for (size_t j = i + 1; j < func.instructions.size(); j++) {
+		const auto& next = func.instructions[j];
+		if (!ir_has_effect(next.opcode, IR_LABEL)) {
+			return false;
+		}
+		if (!next.operands.empty() && std::get<std::string>(next.operands[0].value) == name) {
+			i++;
+			return true;
+		}
+	}
+	return false;
+}
+
 bool IROptimizer::try_eliminate_moves_around_op(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions) {
 	const auto& instr = func.instructions[i];
 	if (instr.opcode != IROpcode::MOVE) {
@@ -1071,6 +1387,7 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 		&IROptimizer::try_eliminate_moves_around_op,
 		&IROptimizer::try_eliminate_move_pair,
 		&IROptimizer::try_fold_move_after_op,
+		&IROptimizer::try_remove_branch_to_next,
 	};
 
 	std::vector<IRInstruction> new_instructions;

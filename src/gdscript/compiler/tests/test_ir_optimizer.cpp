@@ -3,6 +3,7 @@
 #include "../lexer.h"
 #include "../parser.h"
 #include "../codegen.h"
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <sstream>
@@ -523,6 +524,238 @@ func test(n):
 	std::cout << "  PASSED" << std::endl;
 }
 
+// Whether any instruction sits between an unconditional transfer of control and
+// the next label, which is code nothing can reach.
+bool has_unreachable_tail(const IRFunction& func) {
+	for (size_t i = 0; i + 1 < func.instructions.size(); i++) {
+		if (ir_has_effect(func.instructions[i].opcode, IR_TERMINATOR) &&
+		    !ir_has_effect(func.instructions[i + 1].opcode, IR_LABEL)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Whether any jump or branch targets the label that immediately follows it.
+bool has_branch_to_next(const IRFunction& func) {
+	for (size_t i = 0; i + 1 < func.instructions.size(); i++) {
+		const auto& instr = func.instructions[i];
+		if (instr.opcode == IROpcode::SWITCH) {
+			continue;
+		}
+		if (instr.opcode != IROpcode::JUMP && !ir_has_effect(instr.opcode, IR_BRANCH)) {
+			continue;
+		}
+		const IRValue* target = nullptr;
+		for (const auto& operand : instr.operands) {
+			if (operand.type == IRValue::Type::LABEL) {
+				target = &operand;
+			}
+		}
+		if (target == nullptr) {
+			continue;
+		}
+		for (size_t j = i + 1; j < func.instructions.size(); j++) {
+			if (!ir_has_effect(func.instructions[j].opcode, IR_LABEL)) {
+				break;
+			}
+			if (std::get<std::string>(func.instructions[j].operands[0].value) ==
+			    std::get<std::string>(target->value)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+// Whether the function loads `value` into some register as an integer immediate.
+bool loads_int_immediate(const IRFunction& func, int64_t value) {
+	for (const auto& instr : func.instructions) {
+		if (instr.opcode == IROpcode::LOAD_IMM &&
+		    std::get<int64_t>(instr.operands[1].value) == value) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Every label a jump or branch names has to exist: a pass that removes code
+// must not leave a target behind.
+void assert_labels_resolve(const IRFunction& func) {
+	std::vector<std::string> defined;
+	for (const auto& instr : func.instructions) {
+		if (ir_has_effect(instr.opcode, IR_LABEL)) {
+			defined.push_back(std::get<std::string>(instr.operands[0].value));
+		}
+	}
+	for (const auto& instr : func.instructions) {
+		if (ir_has_effect(instr.opcode, IR_LABEL)) {
+			continue;
+		}
+		for (const auto& operand : instr.operands) {
+			if (operand.type != IRValue::Type::LABEL) {
+				continue;
+			}
+			const std::string& name = std::get<std::string>(operand.value);
+			assert(std::find(defined.begin(), defined.end(), name) != defined.end() &&
+			       "branch target survived but its label did not");
+		}
+	}
+}
+
+// A label is a join point, and clearing the constant state at one used to end
+// constant folding at the first `if` in a function. Neither `a` nor `b` is
+// touched by the branch, so both are still known where they are added.
+void test_constants_survive_a_label() {
+	std::cout << "Testing constants kept across a label..." << std::endl;
+
+	std::string source = R"(
+func test(n):
+	var a = 4
+	var b = 9
+	if n:
+		pass
+	return a + b
+)";
+
+	IRFunction func = compile_to_ir(source);
+	IROptimizer optimizer;
+	optimizer.optimize_function(func);
+
+	std::cout << ir_to_string(func);
+
+	assert(count_instructions(func, IROpcode::ADD) == 0 &&
+	       "the addition is of two constants and should have folded");
+	assert(loads_int_immediate(func, 13) && "4 + 9 should have folded to 13");
+
+	std::cout << "  \u2713 Constants survive a label" << std::endl;
+}
+
+// A branch whose condition folded to a constant is not a branch, and the arm it
+// guarded is not code.
+void test_constant_branch_folds() {
+	std::cout << "Testing branch on a constant condition..." << std::endl;
+
+	std::string source = R"(
+func test(x):
+	var flag = false
+	if flag:
+		return 4
+	else:
+		return x
+)";
+
+	IRFunction func = compile_to_ir(source);
+	IROptimizer optimizer;
+	optimizer.optimize_function(func);
+
+	std::cout << ir_to_string(func);
+
+	for (const auto& instr : func.instructions) {
+		assert(!ir_has_effect(instr.opcode, IR_BRANCH) &&
+		       "a branch on a known condition should not survive");
+	}
+	assert(!loads_int_immediate(func, 4) &&
+	       "the arm the condition rules out should not be emitted");
+	assert_labels_resolve(func);
+
+	std::cout << "  \u2713 Constant branch folded away" << std::endl;
+}
+
+// The same, taken the other way: a condition that is true leaves the else arm
+// unreachable rather than the then arm.
+void test_constant_branch_folds_when_taken() {
+	std::cout << "Testing branch on a condition that is true..." << std::endl;
+
+	std::string source = R"(
+func test(x):
+	var flag = 7
+	if flag:
+		return 4
+	else:
+		return x
+)";
+
+	IRFunction func = compile_to_ir(source);
+	IROptimizer optimizer;
+	optimizer.optimize_function(func);
+
+	std::cout << ir_to_string(func);
+
+	for (const auto& instr : func.instructions) {
+		assert(!ir_has_effect(instr.opcode, IR_BRANCH) &&
+		       "a branch on a known condition should not survive");
+	}
+	assert(loads_int_immediate(func, 4) && "the arm the condition selects has to stay");
+	assert_labels_resolve(func);
+
+	std::cout << "  \u2713 Constant branch folded away, other arm dropped" << std::endl;
+}
+
+// `if/return/else` leaves a jump after every return, and the join at the end of
+// the chain is reached by nothing at all.
+void test_unreachable_code_removed() {
+	std::cout << "Testing unreachable code removal..." << std::endl;
+
+	std::string source = R"(
+func test(n):
+	if n < 0:
+		return 1
+	elif n == 0:
+		return 2
+	else:
+		return 3
+)";
+
+	IRFunction unoptimized = compile_to_ir(source);
+	assert(has_unreachable_tail(unoptimized) &&
+	       "the reproduction needs code after a terminator to remove");
+
+	IRFunction func = compile_to_ir(source);
+	IROptimizer optimizer;
+	optimizer.optimize_function(func);
+
+	std::cout << ir_to_string(func);
+
+	assert(!has_unreachable_tail(func) && "nothing may follow a terminator but a label");
+	assert_labels_resolve(func);
+
+	std::cout << "  \u2713 Unreachable code removed" << std::endl;
+}
+
+// The last arm of a match jumps to the end label that immediately follows it.
+void test_branch_to_next_removed() {
+	std::cout << "Testing removal of a branch to the next instruction..." << std::endl;
+
+	std::string source = R"(
+func test(op):
+	var r = 0
+	match op:
+		1:
+			r = 10
+		2:
+			r = 20
+		_:
+			r = 30
+	return r
+)";
+
+	IRFunction unoptimized = compile_to_ir(source);
+	assert(has_branch_to_next(unoptimized) &&
+	       "the reproduction needs a jump to the following label to remove");
+
+	IRFunction func = compile_to_ir(source);
+	IROptimizer optimizer;
+	optimizer.optimize_function(func);
+
+	std::cout << ir_to_string(func);
+
+	assert(!has_branch_to_next(func) && "a jump to the next instruction is a no-op");
+	assert_labels_resolve(func);
+
+	std::cout << "  \u2713 Branch to the next instruction removed" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== IR Optimizer Peephole Pattern Tests ===\n" << std::endl;
 
@@ -561,6 +794,21 @@ int main() {
 		std::cout << std::endl;
 
 		test_copy_chains_collapse();
+		std::cout << std::endl;
+
+		test_constants_survive_a_label();
+		std::cout << std::endl;
+
+		test_constant_branch_folds();
+		std::cout << std::endl;
+
+		test_constant_branch_folds_when_taken();
+		std::cout << std::endl;
+
+		test_unreachable_code_removed();
+		std::cout << std::endl;
+
+		test_branch_to_next_removed();
 		std::cout << std::endl;
 
 		test_combined_optimizations();

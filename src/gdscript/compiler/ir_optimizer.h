@@ -49,6 +49,7 @@ public:
 private:
 	// Optimization passes
 	void constant_folding(IRFunction& func);
+	void eliminate_unreachable_code(IRFunction& func);
 	void eliminate_dead_code(IRFunction& func);
 	void peephole_optimization(IRFunction& func);
 
@@ -62,6 +63,7 @@ private:
 	bool try_eliminate_moves_around_op(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions);
 	bool try_eliminate_move_pair(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions);
 	bool try_fold_move_after_op(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions);
+	bool try_remove_branch_to_next(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions);
 	void copy_propagation(IRFunction& func);
 	void eliminate_redundant_stores(IRFunction& func);
 	void reduce_register_pressure(IRFunction& func);
@@ -78,10 +80,46 @@ private:
 		std::string string_value;
 
 		bool is_constant() const { return type != Type::NONE; }
+
+		// Two states agree only when they name the same value. Doubles compare
+		// by their bits so that NaN equals itself and -0.0 does not equal 0.0:
+		// a join must not claim to know a value it would fold differently.
+		bool same_as(const ConstantValue& other) const;
+
+		// Godot's Variant::booleanize() for the kinds this pass tracks, which
+		// is what BRANCH_ZERO and BRANCH_NOT_ZERO test. False when the value
+		// is not one this pass can decide.
+		bool truthiness(bool& truth) const;
 	};
 
 	// Track known constant values for registers
-	std::unordered_map<int, ConstantValue> m_constants;
+	using ConstantMap = std::unordered_map<int, ConstantValue>;
+	ConstantMap m_constants;
+
+	// One basic block of a function, with the constant state control arrives
+	// with. Constant folding is a forward dataflow over these rather than a
+	// linear scan: a LABEL is a join point, and clearing the state at one --
+	// which is what this pass used to do -- throws away every constant that no
+	// path between its definition and the label touches. In a real program that
+	// ended constant folding at the first `if`.
+	struct ConstBlock {
+		size_t begin = 0;
+		size_t end = 0;
+		std::vector<size_t> successors;
+		ConstantMap entry;
+		bool entry_initialized = false;   // false means: nothing reaches it
+	};
+
+	static std::vector<ConstBlock> build_blocks(const IRFunction& func);
+
+	// Intersect `into` with `from`, keeping only registers both agree on.
+	// Returns whether anything was dropped.
+	static bool meet_constants(ConstantMap& into, const ConstantMap& from);
+
+	// The transfer function, shared by the analysis and the rewrite so the two
+	// cannot drift: it always updates m_constants, and appends the instruction
+	// -- folded, if it could be -- only when `out` is non-null.
+	void fold_instruction(const IRInstruction& instr, std::vector<IRInstruction>* out);
 
 	// Helper methods
 	ConstantValue get_constant(const IRValue& val);

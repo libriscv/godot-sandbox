@@ -1109,13 +1109,13 @@ void test_constant_fold_comparison_in_if() {
 	IROptimizer optimizer;
 	optimizer.optimize(ir);
 
-	// After optimization the comparison is a LOAD_BOOL of a known value. The
-	// BRANCH_ZERO that reads it stays: nothing folds a branch whose condition
-	// is a constant, so the arm it guards survives into codegen -- OPTIMIZATIONS.md
-	// entry 18. Asserted as it is rather than as it ought to be, so that
-	// implementing that folding fails here and gets the count updated deliberately.
+	// The comparison folds to a known bool, and the branch that reads it folds
+	// with it: `10 > 5` decides the `if`, so neither the test nor the arm it
+	// rules out reaches codegen. What is left is the taken arm.
 	int load_bool_count = 0;
 	int branch_zero_count = 0;
+	bool loads_100 = false;
+	bool loads_50 = false;
 	for (const auto& instr : ir.functions[0].instructions) {
 		if (instr.opcode == IROpcode::LOAD_BOOL) {
 			load_bool_count++;
@@ -1123,10 +1123,17 @@ void test_constant_fold_comparison_in_if() {
 		if (instr.opcode == IROpcode::BRANCH_ZERO) {
 			branch_zero_count++;
 		}
+		if (instr.opcode == IROpcode::LOAD_IMM) {
+			const int64_t value = std::get<int64_t>(instr.operands[1].value);
+			loads_100 = loads_100 || (value == 100);
+			loads_50 = loads_50 || (value == 50);
+		}
 	}
 
-	assert(load_bool_count > 0);
-	assert(branch_zero_count == 1);
+	assert(load_bool_count == 0);
+	assert(branch_zero_count == 0);
+	assert(loads_100);
+	assert(!loads_50);
 
 	std::cout << "  ✓ Constant fold comparison in if test passed" << std::endl;
 }
