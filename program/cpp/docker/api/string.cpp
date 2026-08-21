@@ -52,19 +52,26 @@ std::string String::utf8() const {
 	if constexpr (sizeof(std::string) == 32) {
 		sys_string_ops(String_Op::TO_STD_STRING, m_idx, 0, &str);
 	} else {
-		// Guesstimate that the string is less than 32 bytes.
-		str.resize_and_overwrite(32, [idx = m_idx](char *data, size_t size) -> std::size_t {
-			struct Buffer {
-				char *data;
-				size_t size;
-			} buffer;
-			buffer.data = data;
-			buffer.size = size;
-			// This syscall will either copy to the existing buffer or allocate a new one,
-			// and then update the buffer struct with the new data, freeing the old buffer.
-			sys_string_ops(String_Op::TO_STD_STRING, idx, 1, &buffer);
-			return buffer.size;
-		});
+		// If std::string is not GNU, resize len >= 32 until we have enough capacity to hold the string
+		size_t capacity = 32;
+		for (;;) {
+			size_t length = 0;
+			str.resize_and_overwrite(capacity, [idx = m_idx, &length](char *data, size_t size) -> std::size_t {
+				struct Buffer {
+					char *data;
+					size_t size;
+				} buffer;
+				buffer.data = data;
+				buffer.size = size;
+				// Copies at most size bytes, and reports the full UTF-8 length
+				sys_string_ops(String_Op::TO_STD_STRING, idx, 1, &buffer);
+				length = buffer.size;
+				return length < size ? length : size;
+			});
+			if (length <= capacity)
+				break;
+			capacity = length;
+		}
 	}
 	return str;
 }

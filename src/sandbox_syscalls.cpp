@@ -1,6 +1,8 @@
 #include "guest_datatypes.h"
 #include "syscalls.h"
 
+#include <algorithm>
+
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/node2d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
@@ -2372,24 +2374,18 @@ APICALL(api_string_ops) {
 				CharString utf8 = str.utf8();
 				CppString *gstr = machine.memory.memarray<CppString>(vaddr, 1);
 				gstr->set_string(machine, vaddr, utf8.ptr(), utf8.length());
-			} else if (index == 1) { // Get the string as a const char*, size_t struct.
+			} else if (index == 1) { // Fill a guest-provided char*, size_t buffer.
 				struct Buffer {
 					gaddr_t ptr;
 					gaddr_t size;
 				} *buffer = machine.memory.memarray<Buffer>(vaddr, 1);
 				CharString utf8 = str.utf8();
 				const size_t size = utf8.length();
-				// Allocate memory for the string in the guest memory.
-				if (buffer->size < size) {
-					if (buffer->ptr)
-						machine.arena().free(buffer->ptr);
-					buffer->ptr = machine.arena().malloc(size);
-				}
-				// The buffer size is always the length of the string, never the
-				// (guest-provided) capacity, as that would read past the host string.
+				const size_t copied = std::min<size_t>(buffer->size, size);
+				if (copied > 0)
+					machine.memory.memcpy(buffer->ptr, utf8.ptr(), copied);
+				// The reported size is always the real length of the string
 				buffer->size = size;
-				// Copy the string to the guest memory.
-				machine.memory.memcpy(buffer->ptr, utf8.ptr(), size);
 			} else if (index == 2) { // Get the string as a std::u32string.
 				GuestStdU32String *gstr = machine.memory.memarray<GuestStdU32String>(vaddr, 1);
 				gstr->set_string(machine, vaddr, str.ptr(), str.length());
