@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.9.4)
 project(riscv CXX)
 
-option(SANITIZE    "Enable sanitizers" OFF)
+option(SANITIZE    "Enable the undefined-behaviour sanitizer" OFF)
+option(ASAN        "Enable the address sanitizer" OFF)
 option(STATIC_BUILD "Build statically" OFF)
 
 set(SOURCES
@@ -91,11 +92,20 @@ endif()
 if (STATIC_BUILD)
 	target_link_libraries(godot-riscv PUBLIC -static)
 endif()
+# The addon is a shared library loaded by a Godot binary that was not built with any
+# sanitizer, so the runtime has to come from the compiler building this library and be
+# loaded before Godot's first allocation. For ASAN that means LD_PRELOAD of the matching
+# libasan; tests/fuzz_sanitize.sh works both out.
+#
+# -fno-sanitize=vptr throughout: godot-cpp hands back pointers to engine-side objects
+# this library never constructed, and vptr checking needs the RTTI of the definition.
 if (SANITIZE)
-	#target_compile_options(godot-riscv PUBLIC -fsanitize=scudo,undefined)
-	#target_link_libraries(godot-riscv PUBLIC -fsanitize=scudo,undefined -L/usr/lib/llvm-18/lib/clang/18/lib/linux -l:libclang_rt.ubsan_standalone-x86_64.so -l:libclang_rt.scudo_standalone-x86_64.so -Wl,-rpath=/usr/lib/llvm-18/lib/clang/18/lib/linux)
 	target_compile_options(godot-riscv PUBLIC -fsanitize=undefined -fno-sanitize=vptr)
-	target_link_libraries(godot-riscv PUBLIC -fsanitize=undefined -L/usr/lib/llvm-18/lib/clang/18/lib/linux -l:libclang_rt.ubsan_standalone-x86_64.a)
+	target_link_options(godot-riscv PUBLIC -fsanitize=undefined)
+endif()
+if (ASAN)
+	target_compile_options(godot-riscv PUBLIC -fsanitize=address -fno-omit-frame-pointer)
+	target_link_options(godot-riscv PUBLIC -fsanitize=address)
 endif()
 if (ANDROID_TOOLCHAIN)
 	target_link_libraries(godot-riscv PUBLIC android log)

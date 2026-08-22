@@ -2,6 +2,31 @@
 
 #include <libriscv/native_heap.hpp>
 
+#include <cstring>
+
+#ifndef __has_feature
+#define __has_feature(x) 0
+#endif
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__) || __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+#define GUEST_SANITIZER_ACTIVE 1
+#endif
+
+inline void guest_memcpy(void *dst, const void *src, std::size_t bytes) noexcept {
+#ifdef GUEST_SANITIZER_ACTIVE
+	if (bytes != 0)
+#endif
+		std::memcpy(dst, src, bytes);
+}
+inline int guest_memcmp(const void *a, const void *b, std::size_t bytes) noexcept {
+#ifdef GUEST_SANITIZER_ACTIVE
+	if (bytes != 0)
+		return std::memcmp(a, b, bytes);
+	return 0;
+#else
+	return std::memcmp(a, b, bytes);
+#endif
+}
+
 // -= Fast-path Variant Arguments =-
 
 struct GDNativeVariant {
@@ -93,7 +118,7 @@ struct GuestStdU32String {
 		this->capacity = len;
 		// Copy the string to guest memory
 		char32_t *guest_ptr = machine.memory.memarray<char32_t>(this->ptr, len);
-		std::memcpy(guest_ptr, str, len * sizeof(char32_t));
+		guest_memcpy(guest_ptr, str, len * sizeof(char32_t));
 	}
 
 	void free(machine_t &machine) {
@@ -172,10 +197,11 @@ struct GuestVariant {
 	 */
 	bool is_scoped_variant() const noexcept;
 
-	Variant::Type type = Variant::NIL;
+	int32_t type = Variant::NIL;
 	union alignas(8) {
 		int64_t i = 0;
 		bool b;
+		uint8_t b_bits;
 		double f;
 		std::array<real_t, 2> v2f;
 		std::array<real_t, 3> v3f;

@@ -53,6 +53,92 @@ static constexpr uint64_t INTERESTING_FLOATS[] = {
 	0xC630000000000000ull, // -2^100
 };
 
+/// @brief What a system call expects to find in one argument register.
+///
+/// Every handler validates its arguments before it does anything, and several of them
+/// validate three at once: api_vcall wants a Variant pointer, a name, and the length of
+/// that name, all agreeing. Registers filled independently satisfy that combination
+/// essentially never, which is why a run with no shape at all reports thousands of
+/// invocations of api_vcall and not one that got past the argument decoding.
+///
+/// A shape says what each register would hold if the guest were calling the system call
+/// correctly. The generator starts from that and then corrupts part of it, so the code
+/// past the validation is reached while the validation itself still gets hostile input.
+enum class Arg : uint8_t {
+	ANY = 0, // Whatever argument() makes of it.
+	OP, // A small operation selector.
+	SMALL, // A count, size or element index.
+	VPTR, // Pointer to a well-formed GuestVariant.
+	OUT, // Pointer to writable guest memory, to receive a result.
+	NAME, // Pointer to a null-terminated name.
+	NAMELEN, // The length of the name NAME picked this iteration.
+	ADDR, // The scoped object handle.
+	OP_PACKED, // A Variant type tag in the Packed*Array range, which is how
+	// api_packed_array_ops spells its operation.
+	IDX_ANY, // Index of a scoped Variant, any type.
+	IDX_ARRAY,
+	IDX_DICT,
+	IDX_STRING,
+	IDX_PACKED,
+	IDX_T2D,
+	IDX_T3D,
+	IDX_BASIS,
+	IDX_QUAT,
+};
+
+/// @brief The shape of a0-a7 for one system call, in register order.
+struct Shape {
+	int syscall;
+	Arg args[8];
+};
+
+// Only the system calls whose arguments have to agree with each other are listed. One
+// left out is driven with hostile registers throughout, which is all it needs: a handler
+// taking a single index or a single pointer is reached often enough by chance.
+static constexpr Shape SHAPES[] = {
+	{ ECALL_PRINT, { Arg::VPTR, Arg::SMALL } },
+	{ ECALL_PRINT_CHANNEL, { Arg::VPTR, Arg::SMALL, Arg::SMALL } },
+	{ ECALL_UTILITY, { Arg::OP, Arg::OUT, Arg::VPTR, Arg::SMALL } },
+	{ ECALL_VCALL, { Arg::VPTR, Arg::NAME, Arg::NAMELEN, Arg::VPTR, Arg::SMALL, Arg::OUT } },
+	{ ECALL_VEVAL, { Arg::OP, Arg::VPTR, Arg::VPTR, Arg::OUT } },
+	{ ECALL_VCREATE, { Arg::OUT, Arg::OP, Arg::OP, Arg::VPTR } },
+	{ ECALL_VFETCH, { Arg::IDX_ANY, Arg::OUT, Arg::OP } },
+	{ ECALL_VCLONE, { Arg::VPTR, Arg::OUT } },
+	{ ECALL_VSTORE, { Arg::OUT, Arg::OP, Arg::VPTR, Arg::SMALL } },
+	{ ECALL_VASSIGN, { Arg::IDX_ANY, Arg::IDX_ANY } },
+	{ ECALL_OBJ, { Arg::OP, Arg::ADDR, Arg::VPTR } },
+	{ ECALL_OBJ_PROP_GET, { Arg::ADDR, Arg::NAME, Arg::NAMELEN, Arg::OUT } },
+	{ ECALL_OBJ_PROP_SET, { Arg::ADDR, Arg::NAME, Arg::NAMELEN, Arg::VPTR } },
+	{ ECALL_OBJ_CALLP, { Arg::ADDR, Arg::NAME, Arg::NAMELEN, Arg::OP, Arg::OUT, Arg::VPTR, Arg::SMALL } },
+	{ ECALL_GET_NODE, { Arg::ADDR, Arg::NAME, Arg::NAMELEN } },
+	{ ECALL_NODE_CREATE, { Arg::OP, Arg::NAME, Arg::NAMELEN, Arg::NAME, Arg::NAMELEN } },
+	{ ECALL_NODE, { Arg::OP, Arg::ADDR, Arg::VPTR } },
+	{ ECALL_NODE2D, { Arg::OP, Arg::ADDR, Arg::VPTR } },
+	{ ECALL_NODE3D, { Arg::OP, Arg::ADDR, Arg::VPTR } },
+	{ ECALL_THROW, { Arg::NAME, Arg::NAMELEN, Arg::NAME, Arg::NAMELEN, Arg::VPTR, Arg::VPTR } },
+	{ ECALL_ARRAY_OPS, { Arg::OP, Arg::IDX_ARRAY, Arg::SMALL, Arg::VPTR } },
+	{ ECALL_ARRAY_AT, { Arg::IDX_ARRAY, Arg::SMALL, Arg::OUT } },
+	{ ECALL_ARRAY_SIZE, { Arg::IDX_ARRAY } },
+	{ ECALL_DICTIONARY_OPS, { Arg::OP, Arg::IDX_DICT, Arg::VPTR, Arg::VPTR, Arg::VPTR } },
+	{ ECALL_STRING_CREATE, { Arg::NAME, Arg::NAMELEN } },
+	{ ECALL_STRING_OPS, { Arg::OP, Arg::IDX_STRING, Arg::SMALL, Arg::VPTR } },
+	{ ECALL_STRING_AT, { Arg::IDX_STRING, Arg::SMALL } },
+	{ ECALL_STRING_SIZE, { Arg::IDX_STRING } },
+	{ ECALL_STRING_APPEND, { Arg::IDX_STRING, Arg::NAME, Arg::NAMELEN } },
+	{ ECALL_TIMER_PERIODIC, { Arg::ANY, Arg::OP, Arg::OUT, Arg::OUT, Arg::OUT } },
+	{ ECALL_CALLABLE_CREATE, { Arg::OUT, Arg::VPTR } },
+	{ ECALL_LOAD, { Arg::NAME, Arg::NAMELEN, Arg::OUT } },
+	{ ECALL_SANDBOX_ADD, { Arg::OP, Arg::NAME, Arg::NAMELEN, Arg::OP, Arg::OUT, Arg::OUT, Arg::VPTR } },
+	{ ECALL_PACKED_ARRAY_OPS, { Arg::OP_PACKED, Arg::OUT, Arg::VPTR } },
+	{ ECALL_TRANSFORM_2D_OPS, { Arg::IDX_T2D, Arg::OP, Arg::VPTR, Arg::VPTR } },
+	{ ECALL_TRANSFORM_3D_OPS, { Arg::IDX_T3D, Arg::OP, Arg::VPTR, Arg::VPTR } },
+	{ ECALL_BASIS_OPS, { Arg::IDX_BASIS, Arg::OP, Arg::VPTR, Arg::VPTR } },
+	{ ECALL_QUAT_OPS, { Arg::IDX_QUAT, Arg::OP, Arg::VPTR, Arg::VPTR } },
+	{ ECALL_VEC2_OPS, { Arg::OP, Arg::OUT } },
+	{ ECALL_VEC3_OPS, { Arg::OUT, Arg::OUT, Arg::OP } },
+	{ ECALL_GET_OBJ, { Arg::NAME, Arg::NAMELEN } },
+};
+
 struct SyscallFuzzer {
 	Sandbox &emu;
 	machine_t &machine;
@@ -70,7 +156,18 @@ struct SyscallFuzzer {
 	gaddr_t variants_zone = 0x0; // An array of plausible GuestVariants
 	unsigned variant_slots = 0;
 	std::vector<gaddr_t> name_addresses; // Null-terminated method and property names
+	std::vector<unsigned> name_lengths; // Parallel to name_addresses, so NAMELEN agrees
 	unsigned scoped_variant_count = 0;
+	// Scoped-Variant indices grouped by the type of the Variant they refer to. A handler
+	// keyed on "the index of a Dictionary" leaves its switch immediately unless the index
+	// really is a Dictionary's, and an index drawn out of the whole table is one about
+	// one time in twenty-five.
+	std::map<int, std::vector<unsigned>> indices_by_type;
+	// api_sandbox_add refuses every call made outside program initialization, which is
+	// precisely when a hostile ELF is running. Part of the run is spent with it set.
+	bool *initialization_flag = nullptr;
+	// The name this iteration's NAME registers point at, so that NAMELEN can be its length.
+	unsigned current_name = 0;
 	/// @brief The guest-visible handle of the one object the fuzzer scopes.
 	uint64_t scoped_object_handle = 0;
 
@@ -165,8 +262,42 @@ struct SyscallFuzzer {
 	/// @brief Give the scoped-Variant table one of every type the API can hand back, so
 	/// that index-based handlers reach their real work instead of stopping at "no such
 	/// index". Also scopes the sandbox node itself, as the one object to aim at.
+	/// @brief Scope a Variant and remember its index under its type.
+	void scope(Variant &&v) {
+		const int type = int(v.get_type());
+		indices_by_type[type].push_back(emu.create_scoped_variant(std::move(v)));
+	}
+
+	/// @brief An index whose scoped Variant really is of this type, or a hostile integer
+	/// when the table has none. Handlers reject the latter, which is a path worth taking.
+	uint64_t index_of_type(int type) {
+		auto it = indices_by_type.find(type);
+		if (it == indices_by_type.end() || it->second.empty())
+			return argument();
+		return it->second[pick(it->second.size())];
+	}
+
+	/// @brief An index of any of these types; the packed arrays share one handler.
+	uint64_t index_of_types(const int *types, size_t count) {
+		// Collect only the ones actually present, so a miss is not silently a hostile value
+		// most of the time.
+		unsigned candidates[16];
+		size_t n = 0;
+		for (size_t i = 0; i < count && n < std::size(candidates); i++) {
+			auto it = indices_by_type.find(types[i]);
+			if (it != indices_by_type.end())
+				for (unsigned idx : it->second)
+					if (n < std::size(candidates))
+						candidates[n++] = idx;
+		}
+		if (n == 0)
+			return argument();
+		return candidates[pick(n)];
+	}
+
 	void seed_state() {
 		emu.state().reset();
+		indices_by_type.clear();
 
 		Array array;
 		array.push_back(1);
@@ -187,31 +318,50 @@ struct SyscallFuzzer {
 		PackedVector3Array v3;
 		v3.resize(4);
 
-		emu.create_scoped_variant(Variant());
-		emu.create_scoped_variant(Variant(true));
-		emu.create_scoped_variant(Variant(int64_t(42)));
-		emu.create_scoped_variant(Variant(3.14));
-		emu.create_scoped_variant(Variant(String("fuzzing string")));
-		emu.create_scoped_variant(Variant(StringName("fuzz")));
-		emu.create_scoped_variant(Variant(NodePath("../fuzz")));
-		emu.create_scoped_variant(Variant(std::move(array)));
-		emu.create_scoped_variant(Variant(std::move(dict)));
-		emu.create_scoped_variant(Variant(Transform2D()));
-		emu.create_scoped_variant(Variant(Transform3D()));
-		emu.create_scoped_variant(Variant(Basis()));
-		emu.create_scoped_variant(Variant(Quaternion()));
-		emu.create_scoped_variant(Variant(AABB()));
-		emu.create_scoped_variant(Variant(Projection()));
-		emu.create_scoped_variant(Variant(Plane()));
-		emu.create_scoped_variant(Variant(Color(1, 1, 1, 1)));
-		emu.create_scoped_variant(Variant(RID()));
-		emu.create_scoped_variant(Variant(std::move(bytes)));
-		emu.create_scoped_variant(Variant(std::move(f32)));
-		emu.create_scoped_variant(Variant(std::move(i32)));
-		emu.create_scoped_variant(Variant(std::move(strings)));
-		emu.create_scoped_variant(Variant(std::move(v3)));
-		emu.create_scoped_variant(Variant(Callable()));
-		emu.create_scoped_variant(Variant(&emu));
+		// The shape the modding advice produces: everything restricted, and the whole API
+		// handed over as one Dictionary of Callables. That Dictionary and the Callables in
+		// it are the only host-side objects a mod can reach, so they are what the run has
+		// to spend its time on.
+		Dictionary modding_api;
+		modding_api["get_name"] = Callable(&emu, "get_name");
+		modding_api["has_function"] = Callable(&emu, "has_function");
+		modding_api["vmcall"] = Callable(&emu, "vmcall");
+		modding_api["nested"] = dict.duplicate();
+		modding_api["values"] = array.duplicate();
+
+		scope(Variant());
+		scope(Variant(true));
+		scope(Variant(int64_t(42)));
+		scope(Variant(3.14));
+		scope(Variant(String("fuzzing string")));
+		// A second String, so an index that resolved once is not the only one that does.
+		scope(Variant(String("")));
+		scope(Variant(StringName("fuzz")));
+		scope(Variant(NodePath("../fuzz")));
+		scope(Variant(array.duplicate()));
+		scope(Variant(std::move(array)));
+		scope(Variant(dict.duplicate()));
+		scope(Variant(std::move(dict)));
+		scope(Variant(std::move(modding_api)));
+		scope(Variant(Transform2D()));
+		scope(Variant(Transform3D()));
+		scope(Variant(Basis()));
+		scope(Variant(Quaternion()));
+		scope(Variant(AABB()));
+		scope(Variant(Projection()));
+		scope(Variant(Plane()));
+		scope(Variant(Color(1, 1, 1, 1)));
+		scope(Variant(RID()));
+		scope(Variant(std::move(bytes)));
+		scope(Variant(std::move(f32)));
+		scope(Variant(std::move(i32)));
+		scope(Variant(std::move(strings)));
+		scope(Variant(std::move(v3)));
+		scope(Variant(Callable()));
+		// A Callable that resolves, so calling one through the API is not only ever the
+		// null case. This is the edge a mod is actually handed.
+		scope(Variant(Callable(&emu, "get_name")));
+		scope(Variant(&emu));
 
 		// One real, scoped object to aim the Object/Node system calls at. With
 		// restrictions on, every operation on it is supposed to be refused.
@@ -235,6 +385,17 @@ struct SyscallFuzzer {
 			const gaddr_t addr = scratch_address();
 			std::memcpy(&scratch_bytes[at], &addr, sizeof(addr));
 		}
+		// Whole {pointer, length} descriptors, the shape api_vcreate and the CppString
+		// paths read out of guest memory. The length beside a random address is a random
+		// 64-bit number, which memview() refuses every time, so the struct has to be laid
+		// down as a pair or those paths stop at their first read.
+		for (unsigned i = 0; i < scratch_bytes.size() / 128; i++) {
+			const size_t at = (rng() % (scratch_bytes.size() / 16)) * 16;
+			const gaddr_t addr = scratch + gaddr_t((rng() % (scratch_size / 2)) & ~gaddr_t(7));
+			const gaddr_t len = pick(8) ? gaddr_t(rng() % 64) : gaddr_t(argument());
+			std::memcpy(&scratch_bytes[at], &addr, sizeof(addr));
+			std::memcpy(&scratch_bytes[at + sizeof(addr)], &len, sizeof(len));
+		}
 
 		build_variant_zone();
 		build_name_zone();
@@ -252,16 +413,30 @@ struct SyscallFuzzer {
 
 		for (unsigned slot = 0; slot < variant_slots; slot++) {
 			GuestVariant gv;
-			gv.type = static_cast<Variant::Type>(rng() % (Variant::VARIANT_MAX + 4));
-			if (gv.type == Variant::OBJECT) {
-				// The one object the fuzzer has scoped. Everything done to it should be
-				// refused, which is exactly what the run is checking.
-				gv.v.i = int64_t(scoped_object_handle);
-			} else if (scoped_variant_count != 0 && pick(4) != 0) {
-				// An index that resolves, so the handler gets to its real work.
-				gv.v.i = int64_t(rng() % scoped_variant_count);
+			// Half of them coherent: the type tag and the scoped Variant the index refers
+			// to are the same type, which is the only shape a guest that is not lying ever
+			// produces. A tag drawn independently of the index disagrees with it about
+			// twenty-four times in twenty-five, and a handler that checks one against the
+			// other then never gets past the check.
+			if (!indices_by_type.empty() && pick(2)) {
+				auto it = indices_by_type.begin();
+				std::advance(it, pick(indices_by_type.size()));
+				gv.type = static_cast<Variant::Type>(it->first);
+				gv.v.i = int64_t(it->second[pick(it->second.size())]);
+				if (gv.type == Variant::OBJECT)
+					gv.v.i = int64_t(scoped_object_handle);
 			} else {
-				gv.v.i = int64_t(argument());
+				gv.type = static_cast<Variant::Type>(rng() % (Variant::VARIANT_MAX + 4));
+				if (gv.type == Variant::OBJECT) {
+					// The one object the fuzzer has scoped. Everything done to it should be
+					// refused, which is exactly what the run is checking.
+					gv.v.i = int64_t(scoped_object_handle);
+				} else if (scoped_variant_count != 0 && pick(4) != 0) {
+					// An index that resolves, so the handler gets to its real work.
+					gv.v.i = int64_t(rng() % scoped_variant_count);
+				} else {
+					gv.v.i = int64_t(argument());
+				}
 			}
 			std::memcpy(&scratch_bytes[zone_offset + slot * sizeof(GuestVariant)], &gv, sizeof(gv));
 		}
@@ -282,6 +457,7 @@ struct SyscallFuzzer {
 		const size_t zone_offset = scratch_bytes.size() / 2;
 		size_t at = zone_offset;
 		name_addresses.clear();
+		name_lengths.clear();
 
 		for (const char *name : NAMES) {
 			const size_t len = std::strlen(name) + 1;
@@ -289,7 +465,104 @@ struct SyscallFuzzer {
 				break;
 			std::memcpy(&scratch_bytes[at], name, len);
 			name_addresses.push_back(scratch + at);
+			name_lengths.push_back(unsigned(len - 1));
 			at += len;
+		}
+	}
+
+	/// @brief The shape declared for this system call, or nullptr when it has none.
+	static const Shape *shape_for(int syscall) {
+		for (const Shape &s : SHAPES)
+			if (s.syscall == syscall)
+				return &s;
+		return nullptr;
+	}
+
+	/// @brief One register filled the way a correct guest would fill it.
+	uint64_t shaped_argument(Arg kind) {
+		// Packed arrays all reach the same handler, and any of them gets it past the check.
+		static constexpr int PACKED[] = {
+			Variant::PACKED_BYTE_ARRAY, Variant::PACKED_INT32_ARRAY, Variant::PACKED_INT64_ARRAY,
+			Variant::PACKED_FLOAT32_ARRAY, Variant::PACKED_FLOAT64_ARRAY,
+			Variant::PACKED_STRING_ARRAY, Variant::PACKED_VECTOR2_ARRAY,
+			Variant::PACKED_VECTOR3_ARRAY, Variant::PACKED_COLOR_ARRAY,
+		};
+		switch (kind) {
+			case Arg::ANY:
+				return argument();
+			case Arg::OP:
+				// Mostly in range for every operation enum the API has, sometimes past the
+				// end of one: an operation selector the handler does not know is its own case.
+				return pick(8) ? rng() % 24 : rng() % 64;
+			case Arg::SMALL:
+				return pick(4) ? rng() % 16 : argument();
+			case Arg::VPTR:
+				return variant_address();
+			case Arg::OUT:
+				// memarray() rejects an unaligned or out-of-range address before the handler
+				// runs, so a result pointer is mostly a real slot. The rejection itself is
+				// worth reaching, which is what the other quarter is for.
+				return pick(4) ? variant_address() : scratch_address();
+			case Arg::NAME:
+				return name_addresses.empty() ? scratch_address() : name_addresses[current_name];
+			case Arg::NAMELEN:
+				return name_lengths.empty() ? argument() : name_lengths[current_name];
+			case Arg::ADDR:
+				return scoped_object_handle;
+			case Arg::OP_PACKED:
+				// api_packed_array_ops takes a Variant type tag as its operation, so the
+				// range that means anything to it starts at PACKED_BYTE_ARRAY.
+				return pick(8) ? uint64_t(Variant::PACKED_BYTE_ARRAY) + pick(10) : rng() % 64;
+			case Arg::IDX_ANY:
+				return scoped_variant_count ? rng() % scoped_variant_count : argument();
+			case Arg::IDX_ARRAY:
+				return index_of_type(Variant::ARRAY);
+			case Arg::IDX_DICT:
+				return index_of_type(Variant::DICTIONARY);
+			case Arg::IDX_STRING:
+				return index_of_type(Variant::STRING);
+			case Arg::IDX_PACKED:
+				return index_of_types(PACKED, std::size(PACKED));
+			case Arg::IDX_T2D:
+				return index_of_type(Variant::TRANSFORM2D);
+			case Arg::IDX_T3D:
+				return index_of_type(Variant::TRANSFORM3D);
+			case Arg::IDX_BASIS:
+				return index_of_type(Variant::BASIS);
+			case Arg::IDX_QUAT:
+				return index_of_type(Variant::QUATERNION);
+		}
+		return argument();
+	}
+
+	/// @brief Fill a0-a7 for one system call.
+	///
+	/// Three shapes of register file, and the run needs all three. Unshaped is what a
+	/// handler sees from a guest that is not even trying, and is the only one that reaches
+	/// the early bounds checks. Shaped-and-corrupted is the interesting one: the arguments
+	/// agree well enough to get past the validation, and then one of them is a lie. Shaped
+	/// alone is what proves the handler can be reached at all, and is what the coverage
+	/// counters are measuring.
+	void build_registers(int syscall) {
+		if (!name_addresses.empty())
+			current_name = pick(name_addresses.size());
+
+		const Shape *shape = shape_for(syscall);
+		if (shape == nullptr || pick(4) == 0) {
+			for (int reg = riscv::REG_ARG0; reg < riscv::REG_ARG0 + 8; reg++)
+				machine.cpu.reg(reg) = argument();
+			return;
+		}
+
+		for (unsigned i = 0; i < 8; i++)
+			machine.cpu.reg(riscv::REG_ARG0 + i) = shaped_argument(shape->args[i]);
+
+		// Corrupt part of it. A handler that only ever sees arguments that agree is being
+		// tested for what it does, not for what it does when lied to.
+		if (pick(4) != 0) {
+			const unsigned corrupt = 1 + pick(2);
+			for (unsigned c = 0; c < corrupt; c++)
+				machine.cpu.reg(riscv::REG_ARG0 + pick(8)) = argument();
 		}
 	}
 
@@ -314,12 +587,19 @@ struct SyscallFuzzer {
 			static constexpr unsigned WEIGHTS[] = { 1, 3, 5, 8, 9 };
 			pointer_weight = WEIGHTS[pick(std::size(WEIGHTS))];
 
-			for (int reg = riscv::REG_ARG0; reg < riscv::REG_ARG0 + 8; reg++)
-				machine.cpu.reg(reg) = argument();
+			const int syscall = (only >= 0) ? only : first_syscall + int(rng() % range);
+
+			// api_sandbox_add throws on everything outside initialization, so a run that is
+			// never initializing never sees the property and method registration it parses
+			// -- which is the one part of the API a program reaches before it has done
+			// anything else. Part of the run is spent there.
+			if (initialization_flag != nullptr)
+				*initialization_flag = (pick(3) == 0);
+
+			build_registers(syscall);
 			for (int freg = 10; freg < 18; freg++)
 				machine.cpu.registers().getfl(freg).load_u64(float_bits());
 
-			const int syscall = (only >= 0) ? only : first_syscall + int(rng() % range);
 			machine.cpu.reg(riscv::REG_ECALL) = syscall;
 
 			auto &covered = coverage[syscall];
@@ -336,6 +616,8 @@ struct SyscallFuzzer {
 			}
 			iterations++;
 		}
+		if (initialization_flag != nullptr)
+			*initialization_flag = false;
 	}
 };
 
@@ -364,6 +646,34 @@ static uint64_t fuzz_guest_variants(Sandbox &emu, uint64_t seed, int64_t iterati
 		}
 	}
 	return exceptions;
+}
+
+/// @brief Break the reference cycles a run leaves behind.
+///
+/// Godot's Arrays and Dictionaries are reference counted with nothing to collect a cycle,
+/// so a container the fuzzer stored inside itself keeps itself alive after the scoped
+/// table has let go of it -- exactly the leak `var d = {}; d.self = d` produces in
+/// ordinary GDScript, and not something the sandbox can prevent. Clearing them on the way
+/// out keeps a fuzzing run from leaving the process reporting leaked Variant pages at exit.
+static void break_container_cycles(Variant &value, int depth = 0) {
+	if (depth > 8)
+		return;
+	if (value.get_type() == Variant::ARRAY) {
+		Array array = value.operator Array();
+		for (int i = 0; i < array.size(); i++) {
+			Variant element = array[i];
+			break_container_cycles(element, depth + 1);
+		}
+		array.clear();
+	} else if (value.get_type() == Variant::DICTIONARY) {
+		Dictionary dict = value.operator Dictionary();
+		Array keys = dict.keys();
+		for (int i = 0; i < keys.size(); i++) {
+			Variant element = dict[keys[i]];
+			break_container_cycles(element, depth + 1);
+		}
+		dict.clear();
+	}
 }
 
 /// @brief Silence ERR_PRINT for as long as it is in scope.
@@ -468,6 +778,7 @@ Dictionary Sandbox::assault(const String &test, int64_t iterations) {
 			this->m_current_state = &this->m_states[1];
 
 			SyscallFuzzer fuzzer(*this, seed);
+			fuzzer.initialization_flag = &this->m_is_initialization;
 			// Guest memory for the handlers to read structs out of. Taken from the
 			// guest heap so that it is real, mapped, writable memory.
 			fuzzer.scratch_size = 64 * 1024;
@@ -500,6 +811,8 @@ Dictionary Sandbox::assault(const String &test, int64_t iterations) {
 			}
 			result["coverage"] = coverage;
 
+			for (Variant &v : this->m_states[1].variants)
+				break_container_cycles(v);
 			this->m_states[1].reset();
 			this->m_current_state = saved_state;
 			machine().cpu.registers() = saved_registers;

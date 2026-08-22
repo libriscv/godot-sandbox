@@ -799,7 +799,7 @@ APICALL(api_veval) {
 /// is then sized from the same count, never from size_bytes(), which need not be a
 /// whole number of elements.
 APICALL(api_vcreate) {
-	auto [vp, type, method, gdata] = machine.sysargs<GuestVariant *, Variant::Type, int, gaddr_t>();
+	auto [vp, type, method, gdata] = machine.sysargs<GuestVariant *, int32_t, int, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
 	PENALIZE(10'000);
 	SYS_TRACE("vcreate", vp, type, method, gdata);
@@ -912,12 +912,12 @@ APICALL(api_vcreate) {
 					const uint8_t *elements = gvec->as_array(machine);
 					const size_t count = gvec->size();
 					a.resize(count);
-					std::memcpy(a.ptrw(), elements, count * sizeof(uint8_t));
+					guest_memcpy(a.ptrw(), elements, count * sizeof(uint8_t));
 				} else {
 					// Method is the buffer length. View before resize; see api_vcreate().
 					const uint8_t *ptr = machine.memory.memarray<const uint8_t>(gdata, method);
 					a.resize(method);
-					std::memcpy(a.ptrw(), ptr, method);
+					guest_memcpy(a.ptrw(), ptr, method);
 				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
@@ -934,12 +934,12 @@ APICALL(api_vcreate) {
 					const float *elements = gvec->as_array(machine);
 					const size_t count = gvec->size();
 					a.resize(count);
-					std::memcpy(a.ptrw(), elements, count * sizeof(float));
+					guest_memcpy(a.ptrw(), elements, count * sizeof(float));
 				} else {
 					// Method is the buffer length. View before resize; see api_vcreate().
 					const float *ptr = machine.memory.memarray<const float>(gdata, method);
 					a.resize(method);
-					std::memcpy(a.ptrw(), ptr, method * sizeof(float));
+					guest_memcpy(a.ptrw(), ptr, method * sizeof(float));
 				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
@@ -956,12 +956,12 @@ APICALL(api_vcreate) {
 					const double *elements = gvec->as_array(machine);
 					const size_t count = gvec->size();
 					a.resize(count);
-					std::memcpy(a.ptrw(), elements, count * sizeof(double));
+					guest_memcpy(a.ptrw(), elements, count * sizeof(double));
 				} else {
 					// Method is the buffer length. View before resize; see api_vcreate().
 					const double *ptr = machine.memory.memarray<const double>(gdata, method);
 					a.resize(method);
-					std::memcpy(a.ptrw(), ptr, method * sizeof(double));
+					guest_memcpy(a.ptrw(), ptr, method * sizeof(double));
 				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
@@ -978,12 +978,12 @@ APICALL(api_vcreate) {
 					const int32_t *elements = gvec->as_array(machine);
 					const size_t count = gvec->size();
 					a.resize(count);
-					std::memcpy(a.ptrw(), elements, count * sizeof(int32_t));
+					guest_memcpy(a.ptrw(), elements, count * sizeof(int32_t));
 				} else {
 					// Method is the buffer length. View before resize; see api_vcreate().
 					const int32_t *ptr = machine.memory.memarray<const int32_t>(gdata, method);
 					a.resize(method);
-					std::memcpy(a.ptrw(), ptr, method * sizeof(int32_t));
+					guest_memcpy(a.ptrw(), ptr, method * sizeof(int32_t));
 				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
@@ -1000,12 +1000,12 @@ APICALL(api_vcreate) {
 					const int64_t *elements = gvec->as_array(machine);
 					const size_t count = gvec->size();
 					a.resize(count);
-					std::memcpy(a.ptrw(), elements, count * sizeof(int64_t));
+					guest_memcpy(a.ptrw(), elements, count * sizeof(int64_t));
 				} else {
 					// Method is the buffer length. View before resize; see api_vcreate().
 					const int64_t *ptr = machine.memory.memarray<const int64_t>(gdata, method);
 					a.resize(method);
-					std::memcpy(a.ptrw(), ptr, method * sizeof(int64_t));
+					guest_memcpy(a.ptrw(), ptr, method * sizeof(int64_t));
 				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
@@ -1022,12 +1022,12 @@ APICALL(api_vcreate) {
 					const Vector2 *elements = gvec->as_array(machine);
 					const size_t count = gvec->size();
 					a.resize(count);
-					std::memcpy(a.ptrw(), elements, count * sizeof(Vector2));
+					guest_memcpy(a.ptrw(), elements, count * sizeof(Vector2));
 				} else {
 					// Method is the buffer length. View before resize; see api_vcreate().
 					const Vector2 *ptr = machine.memory.memarray<const Vector2>(gdata, method);
 					a.resize(method);
-					std::memcpy(a.ptrw(), ptr, method * sizeof(Vector2));
+					guest_memcpy(a.ptrw(), ptr, method * sizeof(Vector2));
 				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
@@ -1044,12 +1044,12 @@ APICALL(api_vcreate) {
 					const Vector3 *elements = gvec->as_array(machine);
 					const size_t count = gvec->size();
 					a.resize(count);
-					std::memcpy(a.ptrw(), elements, count * sizeof(Vector3));
+					guest_memcpy(a.ptrw(), elements, count * sizeof(Vector3));
 				} else {
 					// Method is the buffer length. View before resize; see api_vcreate().
 					const Vector3 *ptr = machine.memory.memarray<const Vector3>(gdata, method);
 					a.resize(method);
-					std::memcpy(a.ptrw(), ptr, method * sizeof(Vector3));
+					guest_memcpy(a.ptrw(), ptr, method * sizeof(Vector3));
 				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
@@ -1066,12 +1066,12 @@ APICALL(api_vcreate) {
 					const Vector4 *elements = gvec->as_array(machine);
 					const size_t count = gvec->size();
 					a.resize(count);
-					std::memcpy(a.ptrw(), elements, count * sizeof(Vector4));
+					guest_memcpy(a.ptrw(), elements, count * sizeof(Vector4));
 				} else {
 					// Method is the buffer length. View before resize; see api_vcreate().
 					const Vector4 *ptr = machine.memory.memarray<const Vector4>(gdata, method);
 					a.resize(method);
-					std::memcpy(a.ptrw(), ptr, method * sizeof(Vector4));
+					guest_memcpy(a.ptrw(), ptr, method * sizeof(Vector4));
 				}
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
@@ -1087,7 +1087,7 @@ APICALL(api_vcreate) {
 				const Color *elements = gvec->as_array(machine);
 				const size_t count = gvec->size();
 				a.resize(count);
-				std::memcpy(a.ptrw(), elements, count * sizeof(Color));
+				guest_memcpy(a.ptrw(), elements, count * sizeof(Color));
 			}
 			unsigned idx = emu.create_scoped_variant(Variant(std::move(a)));
 			vp->type = type;
@@ -1282,7 +1282,7 @@ APICALL(api_vclone) {
 }
 
 APICALL(api_vstore) {
-	auto [vidx, type, gdata, gsize] = machine.sysargs<unsigned *, Variant::Type, gaddr_t, gaddr_t>();
+	auto [vidx, type, gdata, gsize] = machine.sysargs<unsigned *, int32_t, gaddr_t, gaddr_t>();
 	auto &emu = riscv::emu(machine);
 	PENALIZE(10'000);
 	SYS_TRACE("vstore", vidx, type, gdata, gsize);
@@ -1305,7 +1305,7 @@ APICALL(api_vstore) {
 			// Copy the array from guest memory into the Variant.
 			uint8_t *data = machine.memory.memarray<uint8_t>(gdata, gsize);
 			arr.resize(gsize);
-			std::memcpy(arr.ptrw(), data, gsize);
+			guest_memcpy(arr.ptrw(), data, gsize);
 			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
@@ -1314,7 +1314,7 @@ APICALL(api_vstore) {
 			// Copy the array from guest memory into the Variant.
 			float *data = machine.memory.memarray<float>(gdata, gsize);
 			arr.resize(gsize);
-			std::memcpy(arr.ptrw(), data, gsize * sizeof(float));
+			guest_memcpy(arr.ptrw(), data, gsize * sizeof(float));
 			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
@@ -1323,7 +1323,7 @@ APICALL(api_vstore) {
 			// Copy the array from guest memory into the Variant.
 			double *data = machine.memory.memarray<double>(gdata, gsize);
 			arr.resize(gsize);
-			std::memcpy(arr.ptrw(), data, gsize * sizeof(double));
+			guest_memcpy(arr.ptrw(), data, gsize * sizeof(double));
 			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
@@ -1332,7 +1332,7 @@ APICALL(api_vstore) {
 			// Copy the array from guest memory into the Variant.
 			int32_t *data = machine.memory.memarray<int32_t>(gdata, gsize);
 			arr.resize(gsize);
-			std::memcpy(arr.ptrw(), data, gsize * sizeof(int32_t));
+			guest_memcpy(arr.ptrw(), data, gsize * sizeof(int32_t));
 			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
@@ -1341,7 +1341,7 @@ APICALL(api_vstore) {
 			// Copy the array from guest memory into the Variant.
 			int64_t *data = machine.memory.memarray<int64_t>(gdata, gsize);
 			arr.resize(gsize);
-			std::memcpy(arr.ptrw(), data, gsize * sizeof(int64_t));
+			guest_memcpy(arr.ptrw(), data, gsize * sizeof(int64_t));
 			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
@@ -1350,7 +1350,7 @@ APICALL(api_vstore) {
 			// Copy the array from guest memory into the Variant.
 			auto *data = machine.memory.memarray<Vector2>(gdata, gsize);
 			arr.resize(gsize);
-			std::memcpy(arr.ptrw(), data, gsize * sizeof(Vector2));
+			guest_memcpy(arr.ptrw(), data, gsize * sizeof(Vector2));
 			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
@@ -1359,7 +1359,7 @@ APICALL(api_vstore) {
 			// Copy the array from guest memory into the Variant.
 			auto *data = machine.memory.memarray<Vector3>(gdata, gsize);
 			arr.resize(gsize);
-			std::memcpy(arr.ptrw(), data, gsize * sizeof(Vector3));
+			guest_memcpy(arr.ptrw(), data, gsize * sizeof(Vector3));
 			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
@@ -1368,7 +1368,7 @@ APICALL(api_vstore) {
 			// Copy the array from guest memory into the Variant.
 			auto *data = machine.memory.memarray<Vector4>(gdata, gsize);
 			arr.resize(gsize);
-			std::memcpy(arr.ptrw(), data, gsize * sizeof(Vector4));
+			guest_memcpy(arr.ptrw(), data, gsize * sizeof(Vector4));
 			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
@@ -1377,7 +1377,7 @@ APICALL(api_vstore) {
 			// Copy the array from guest memory into the Variant.
 			auto *data = machine.memory.memarray<Color>(gdata, gsize);
 			arr.resize(gsize);
-			std::memcpy(arr.ptrw(), data, gsize * sizeof(Color));
+			guest_memcpy(arr.ptrw(), data, gsize * sizeof(Color));
 			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
@@ -2735,7 +2735,7 @@ APICALL(api_sandbox_add) {
 	switch (method) {
 		case 0: {
 			// Add a new sandboxed property.
-			auto [method, name, type, setter, getter, defval] = machine.sysargs<int, std::string_view, Variant::Type, gaddr_t, gaddr_t, GuestVariant *>();
+			auto [method, name, type, setter, getter, defval] = machine.sysargs<int, std::string_view, int32_t, gaddr_t, gaddr_t, GuestVariant *>();
 			String utf8_name = String::utf8(name.data(), name.size());
 			SYS_TRACE("sandbox_add", "property", utf8_name, int(type), setter, getter, defval->toVariant(emu));
 			if (type <= 0) {
@@ -2746,14 +2746,16 @@ APICALL(api_sandbox_add) {
 				ERR_PRINT("Invalid property type for sandbox property: " + itos(type));
 				throw std::runtime_error("Invalid property type for sandbox property: " + std::to_string(type));
 			}
+			// In range as of the two checks above, so it may become the enum here.
+			const Variant::Type property_type = static_cast<Variant::Type>(type);
 			if (getter == 0 && setter == 0) {
 				// Treat as a guest-side variable, where the "default" value is
 				// the address of the Variant, and the current value is the default.
 				const gaddr_t address = machine.cpu.reg(REG_ARG6);
-				emu.add_property(utf8_name, type, address, defval->toVariant(emu));
+				emu.add_property(utf8_name, property_type, address, defval->toVariant(emu));
 			} else {
 				// If the setter is zero, it is a read-only property.
-				emu.add_property(utf8_name, type, setter, getter, defval->toVariant(emu));
+				emu.add_property(utf8_name, property_type, setter, getter, defval->toVariant(emu));
 			}
 			break;
 		}

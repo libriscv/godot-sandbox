@@ -12,7 +12,7 @@ Variant GuestVariant::toVariant(const Sandbox &emu) const {
 		case Variant::NIL:
 			return Variant();
 		case Variant::BOOL:
-			return v.b;
+			return v.b_bits != 0;
 		case Variant::INT:
 			return v.i;
 		case Variant::FLOAT:

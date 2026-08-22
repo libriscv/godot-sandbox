@@ -11,7 +11,7 @@ extends GutTest
 
 var Sandbox_TestsTests = load("res://tests/tests.elf")
 
-const ITERATIONS := 20000
+const ITERATIONS := 50000
 
 # Restrictions are enabled for the duration of a run and every callback answers "no", so
 # these are the system calls that are supposed to be refused every single time. A handler
@@ -55,8 +55,27 @@ func test_fuzz_syscalls():
 	gut.p("fuzzing seed: %s" % r["seed"])
 
 	# Every handler has to be reached, or the run proves nothing about it.
-	for syscall in range(500, 549):
+	for syscall in range(500, 551):
 		assert_true(coverage.has(syscall), "system call %d was invoked" % syscall)
+
+	# Being invoked is not the same as being tested. A handler validates its arguments
+	# before it does anything, and a fuzzer whose arguments never agree with each other
+	# spends the whole run in the first three lines of every one of them -- thousands of
+	# invocations, nothing reached. So the run also has to show that each handler returned
+	# at least once, which it only does when the arguments got past the validation.
+	#
+	# The exceptions are the handlers that are supposed to refuse everything here:
+	# ALWAYS_REFUSED is refused by the restrictions, THROW throws by definition, and
+	# TIMER_STOP is not implemented.
+	var never_returns := ALWAYS_REFUSED.keys()
+	never_returns.append(511) # THROW
+	never_returns.append(531) # TIMER_STOP
+	for syscall in range(500, 551):
+		if syscall in never_returns:
+			continue
+		var counts: Array = coverage.get(syscall, [0, 0])
+		assert_gt(counts[1], 0,
+			"system call %d was reached past its argument validation" % syscall)
 
 func test_fuzz_syscalls_respect_restrictions():
 	var s := _make_sandbox()

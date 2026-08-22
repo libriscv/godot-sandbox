@@ -1249,7 +1249,7 @@ const Sandbox::CachedName &Sandbox::cached_guest_name(gaddr_t address, std::stri
 	const unsigned index = ((address * 2654435761u) >> 8) & (GuestNameCache::SIZE - 1);
 	GuestNameCache::Entry &entry = m_guest_names.entries[index];
 
-	if (entry.address == address && entry.terminated == terminated && entry.text.size() == name.size() && std::memcmp(entry.text.data(), name.data(), name.size()) == 0) {
+	if (entry.address == address && entry.terminated == terminated && entry.text.size() == name.size() && guest_memcmp(entry.text.data(), name.data(), name.size()) == 0) {
 		return entry.name;
 	}
 
