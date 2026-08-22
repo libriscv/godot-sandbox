@@ -3367,11 +3367,29 @@ void CodeGenerator::gen_vset(int obj_reg, const std::string& member, int value_r
 	func.ir.instructions.push_back(instr);
 }
 
-// Untyped `.x`: branch on tag to inline payload or VGET (Object-only).
+// Untyped `.x`: branch on tag to element read, inline payload or VGET (Object-only).
 int CodeGenerator::gen_dynamic_member_get(int obj_reg, const std::string& member, FunctionContext& func) {
 	const std::vector<IRInstruction::TypeHint> types = inline_member_types(member);
 	const std::string end_label = make_label("member_get_end");
 	int result_reg = alloc_register(func);
+
+	// Dictionary: element read, not VGET.
+	{
+		const std::string next_label = make_label("member_get_next");
+		int test_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(test_reg),
+			IRValue::reg(obj_reg), IRValue::imm(static_cast<int64_t>(Variant::DICTIONARY)));
+		set_register_type(func, test_reg, Variant::BOOL);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, test_reg, next_label, func);
+		free_register(func, test_reg);
+
+		int element_reg = gen_dict_get(obj_reg, member, func);
+		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg),
+			IRValue::reg(element_reg));
+		free_register(func, element_reg);
+		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(next_label));
+	}
 
 	for (IRInstruction::TypeHint type : types) {
 		const std::string next_label = make_label("member_get_next");
@@ -3405,6 +3423,21 @@ void CodeGenerator::gen_dynamic_member_set(int obj_reg, const std::string& membe
 {
 	const std::vector<IRInstruction::TypeHint> types = inline_member_types(member);
 	const std::string end_label = make_label("member_set_end");
+
+	// Dictionary: element write, not VSET.
+	{
+		const std::string next_label = make_label("member_set_next");
+		int test_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(test_reg),
+			IRValue::reg(obj_reg), IRValue::imm(static_cast<int64_t>(Variant::DICTIONARY)));
+		set_register_type(func, test_reg, Variant::BOOL);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, test_reg, next_label, func);
+		free_register(func, test_reg);
+
+		gen_dict_set(obj_reg, member, value_reg, func);
+		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(next_label));
+	}
 
 	for (IRInstruction::TypeHint type : types) {
 		const std::string next_label = make_label("member_set_next");
@@ -3447,7 +3480,8 @@ int CodeGenerator::gen_member_read(int obj_reg, const std::string& member, Funct
 		return gen_dict_get(obj_reg, member, func);
 	}
 
-	if (obj_type == IRInstruction::TypeHint_NONE && !inline_member_types(member).empty()) {
+	// Unknown tag: decide at run time. A Dictionary reaching VGET throws.
+	if (obj_type == IRInstruction::TypeHint_NONE) {
 		return gen_dynamic_member_get(obj_reg, member, func);
 	}
 
@@ -3472,7 +3506,8 @@ bool CodeGenerator::gen_member_store(int obj_reg, const std::string& member, int
 		return true;
 	}
 
-	if (obj_type == IRInstruction::TypeHint_NONE && !inline_member_types(member).empty()) {
+	// Unknown tag: decide at run time. A Dictionary reaching VSET throws.
+	if (obj_type == IRInstruction::TypeHint_NONE) {
 		gen_dynamic_member_set(obj_reg, member, value_reg, func);
 		return true;
 	}

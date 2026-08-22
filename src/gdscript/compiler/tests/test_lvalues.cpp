@@ -8,6 +8,7 @@
 #include "../ir_verifier.h"
 #include "../riscv_codegen.h"
 #include "../compiler_exception.h"
+#include "../syscall_numbers.h"
 #include <cassert>
 #include <iostream>
 #include <string>
@@ -42,6 +43,19 @@ static int count_opcode(const IRFunction& func, IROpcode opcode) {
 	int count = 0;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == opcode) {
+			count++;
+		}
+	}
+	return count;
+}
+
+// Count ECALL_DICTIONARY_OPS with GET.
+static int count_dict_gets(const IRFunction& func) {
+	int count = 0;
+	for (const auto& instr : func.instructions) {
+		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 3 &&
+			std::get<int64_t>(instr.operands[1].value) == ECALL_DICTIONARY_OPS &&
+			std::get<int64_t>(instr.operands[2].value) == 0) {
 			count++;
 		}
 	}
@@ -154,27 +168,34 @@ static void test_unknown_member_write_tests_the_tag() {
 		"func test(n):\n\tn.position.x = 5\n");
 	const IRFunction& f = find_function(chained, "test");
 
-	// One VSET_INLINE per inline type carrying `.x`, each guarded by TYPE_TEST.
+	// One VSET_INLINE per inline type + three Dictionary arms (read, write, write-back).
 	const int arms = count_opcode(f, IROpcode::VSET_INLINE);
 	assert(arms > 0);
-	assert(count_opcode(f, IROpcode::TYPE_TEST) == arms);
+	assert(count_opcode(f, IROpcode::TYPE_TEST) == arms + 3);
 	// One VSET for the Object fallback, one to write `position` back.
 	assert(count_opcode(f, IROpcode::VSET) == 2);
 	// Chain evaluated once: one VGET for `position`.
 	assert(count_opcode(f, IROpcode::VGET) == 1);
+	// Dictionary arms: one element read, two element writes.
+	assert(count_dict_gets(f) == 1);
+	assert(count_opcode(f, IROpcode::DICT_SET) == 2);
 
 	// Read path: VGET_INLINE branches, same issue (VGET throws on Vector2).
 	const IRProgram read = compile_to_ir("func test(n):\n\treturn n.position.x\n");
 	const IRFunction& r = find_function(read, "test");
 	assert(count_opcode(r, IROpcode::VGET_INLINE) > 0);
-	assert(count_opcode(r, IROpcode::TYPE_TEST) == count_opcode(r, IROpcode::VGET_INLINE));
+	assert(count_opcode(r, IROpcode::TYPE_TEST) == count_opcode(r, IROpcode::VGET_INLINE) + 2);
 	// VGET fallback for Objects that carry `.x` as a property.
 	assert(count_opcode(r, IROpcode::VGET) == 2);
+	assert(count_dict_gets(r) == 2);
 
-	// Non-inline member: plain VSET, no TYPE_TEST.
-	const IRProgram plain = compile_to_ir("func test(n):\n\tn.visible = true\n");
-	assert(count_opcode(find_function(plain, "test"), IROpcode::TYPE_TEST) == 0);
-	assert(count_opcode(find_function(plain, "test"), IROpcode::VSET) == 1);
+	// Non-inline member: Dictionary arm + VSET fallback only.
+	const IRProgram plain_ir = compile_to_ir("func test(n):\n\tn.visible = true\n");
+	const IRFunction& plain = find_function(plain_ir, "test");
+	assert(count_opcode(plain, IROpcode::TYPE_TEST) == 1);
+	assert(count_opcode(plain, IROpcode::DICT_SET) == 1);
+	assert(count_opcode(plain, IROpcode::VSET) == 1);
+	assert(count_opcode(plain, IROpcode::VSET_INLINE) == 0);
 
 	std::cout << "  ✓ an unknown member write picks its store at run time" << std::endl;
 }
@@ -191,10 +212,10 @@ static void test_the_copy_travels_back() {
 	assert(count_opcode(e, IROpcode::ARRAY_GET) == 1);
 	assert(count_opcode(e, IROpcode::ARRAY_SET) == 1);
 
-	// Dictionary value: DICT_SET.
+	// Dictionary value: DICT_SET for the element store + DICT_SET for the write-back.
 	const IRProgram entry = compile_to_ir(
 		"func test():\n\tvar d : Dictionary = {}\n\td[\"p\"].x = 1.0\n");
-	assert(count_opcode(find_function(entry, "test"), IROpcode::DICT_SET) == 1);
+	assert(count_opcode(find_function(entry, "test"), IROpcode::DICT_SET) == 2);
 
 	// Global inline type: write-back via STORE_GLOBAL.
 	const IRProgram global = compile_to_ir(

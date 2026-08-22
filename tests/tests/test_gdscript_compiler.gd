@@ -4508,6 +4508,43 @@ func literal_key():
 
 	s.queue_free()
 
+func test_member_access_on_an_untyped_value():
+	# Untracked struct instance: tag decides element read vs VGET at run time.
+	var gdscript_code = """
+struct Account:
+	var balance = 0
+
+func read(account):
+	return account.balance
+
+func write(account):
+	account.balance = 42
+	return account
+
+func walk(accounts):
+	var total = 0
+	for account in accounts:
+		total += account.balance
+	return total
+
+func local_walk():
+	var total = 0
+	for account in [Account.new(100), Account.new(50)]:
+		total += account.balance
+	return total
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("read", {"balance": 7}), 7, "Reading a field of an untyped value")
+	assert_eq(s.vmcallv("write", {"balance": 0}), {"balance": 42}, "Writing a field of an untyped value")
+	assert_eq(s.vmcallv("walk", [{"balance": 1}, {"balance": 2}]), 3, "Fields of Array elements")
+	assert_eq(s.vmcallv("local_walk"), 150, "Fields of instances built in the program")
+
+	s.queue_free()
+
+
 # -= Diagnostics =-
 #
 # The .sgd script language extension underlines errors in the Godot editor, and

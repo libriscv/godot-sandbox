@@ -602,6 +602,45 @@ static void test_dictionary_member_access() {
 	std::cout << "  ✓ member access on a plain Dictionary" << std::endl;
 }
 
+static void test_an_untracked_instance_still_reaches_its_fields() {
+	std::cout << "Testing member access on a value of unknown type..." << std::endl;
+
+	// Untracked struct: tag branches to element read/write, VGET/VSET fallback for Objects.
+	const IRProgram ir = compile_to_ir(BANK_ACCOUNT +
+		"func test(account):\n"
+		"\treturn account.balance\n");
+	const IRFunction& test = find_function(ir, "test");
+	assert(count_opcode(test, IROpcode::TYPE_TEST) == 1);
+	assert(count_dict_gets(test) == 1);
+	// Object fallback survives: type unknown, could be either.
+	assert(count_opcode(test, IROpcode::VGET) == 1);
+
+	// The same for a write.
+	const IRProgram write = compile_to_ir(BANK_ACCOUNT +
+		"func test(account):\n"
+		"\taccount.balance = 5\n");
+	const IRFunction& w = find_function(write, "test");
+	assert(count_opcode(w, IROpcode::TYPE_TEST) == 1);
+	assert(count_opcode(w, IROpcode::DICT_SET) == 1);
+	assert(count_opcode(w, IROpcode::VSET) == 1);
+
+	// Out of an Array, which carries no element type.
+	const IRProgram walked = compile_to_ir(BANK_ACCOUNT +
+		"func test():\n"
+		"\tvar total = 0\n"
+		"\tfor account in [BankAccount.new(100), BankAccount.new(50)]:\n"
+		"\t\ttotal += account.balance\n"
+		"\treturn total\n");
+	const IRFunction& walk = find_function(walked, "test");
+	assert(count_dict_gets(walk) == 1);
+	assert(count_opcode(walk, IROpcode::TYPE_TEST) == 1);
+
+	// Unknown type: no struct to validate against, same as bare Dictionary.
+	compile_to_ir(BANK_ACCOUNT + "func test(account):\n\treturn account.blance\n");
+
+	std::cout << "  ✓ member access on a value of unknown type" << std::endl;
+}
+
 static void test_struct_program_reaches_riscv() {
 	std::cout << "Testing that a struct program compiles to RISC-V..." << std::endl;
 
@@ -646,6 +685,7 @@ int main() {
 	test_struct_globals();
 	test_compound_assignment_to_a_field();
 	test_dictionary_member_access();
+	test_an_untracked_instance_still_reaches_its_fields();
 	test_struct_program_reaches_riscv();
 
 	std::cout << std::endl << "All struct tests passed!" << std::endl;

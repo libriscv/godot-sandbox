@@ -31,7 +31,7 @@ func add_item(item_name : String, item_value : int) -> bool:
 	for item in inventory:
 		match item:
 			{"name": var n, "stackable": true, ..} when n == item_name:
-				item["value"] += item_value
+				item.value += item_value
 				return true
 	inventory.append(Item.new(item_name, item_value))
 	return false
@@ -39,7 +39,7 @@ func add_item(item_name : String, item_value : int) -> bool:
 func get_total_value() -> int:
 	var total = 0
 	for item in inventory:
-		total += item["value"]
+		total += item.value
 	return total
 """
 	var s = _compile_and_load(gdscript_code, 400000)
