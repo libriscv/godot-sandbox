@@ -137,8 +137,9 @@ APICALL(api_transform2d_ops) {
 
 	if (op == Transform2D_Op::IDENTITY) {
 		const gaddr_t vaddr = machine.cpu.reg(12); // A2
-		GuestVariant *vres = machine.memory.memarray<GuestVariant>(vaddr, 1);
-		vres->create(emu, Transform2D());
+		// A2 is the guest's Variant index.
+		unsigned *vres = machine.memory.memarray<unsigned>(vaddr, 1);
+		*vres = emu.try_reuse_assign_variant(*vres, Variant(Transform2D()));
 		return;
 	}
 

@@ -1286,6 +1286,7 @@ APICALL(api_vstore) {
 	auto &emu = riscv::emu(machine);
 	PENALIZE(10'000);
 	SYS_TRACE("vstore", vidx, type, gdata, gsize);
+	// Reuse the guest's Variant slot to avoid consuming one per iteration.
 	// PACKED_STRING_ARRAY encodes "use the libc++ std::string layout" in the high bit of
 	// the size, so it has to be stripped before the size is validated below.
 	const bool libcpp_string_layout = type == Variant::PACKED_STRING_ARRAY && (gsize & 0x80000000);
@@ -1305,7 +1306,7 @@ APICALL(api_vstore) {
 			uint8_t *data = machine.memory.memarray<uint8_t>(gdata, gsize);
 			arr.resize(gsize);
 			std::memcpy(arr.ptrw(), data, gsize);
-			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
 		case Variant::PACKED_FLOAT32_ARRAY: {
@@ -1314,7 +1315,7 @@ APICALL(api_vstore) {
 			float *data = machine.memory.memarray<float>(gdata, gsize);
 			arr.resize(gsize);
 			std::memcpy(arr.ptrw(), data, gsize * sizeof(float));
-			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
 		case Variant::PACKED_FLOAT64_ARRAY: {
@@ -1323,7 +1324,7 @@ APICALL(api_vstore) {
 			double *data = machine.memory.memarray<double>(gdata, gsize);
 			arr.resize(gsize);
 			std::memcpy(arr.ptrw(), data, gsize * sizeof(double));
-			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
 		case Variant::PACKED_INT32_ARRAY: {
@@ -1332,7 +1333,7 @@ APICALL(api_vstore) {
 			int32_t *data = machine.memory.memarray<int32_t>(gdata, gsize);
 			arr.resize(gsize);
 			std::memcpy(arr.ptrw(), data, gsize * sizeof(int32_t));
-			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
 		case Variant::PACKED_INT64_ARRAY: {
@@ -1341,7 +1342,7 @@ APICALL(api_vstore) {
 			int64_t *data = machine.memory.memarray<int64_t>(gdata, gsize);
 			arr.resize(gsize);
 			std::memcpy(arr.ptrw(), data, gsize * sizeof(int64_t));
-			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
 		case Variant::PACKED_VECTOR2_ARRAY: {
@@ -1350,7 +1351,7 @@ APICALL(api_vstore) {
 			auto *data = machine.memory.memarray<Vector2>(gdata, gsize);
 			arr.resize(gsize);
 			std::memcpy(arr.ptrw(), data, gsize * sizeof(Vector2));
-			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
 		case Variant::PACKED_VECTOR3_ARRAY: {
@@ -1359,7 +1360,7 @@ APICALL(api_vstore) {
 			auto *data = machine.memory.memarray<Vector3>(gdata, gsize);
 			arr.resize(gsize);
 			std::memcpy(arr.ptrw(), data, gsize * sizeof(Vector3));
-			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
 		case Variant::PACKED_VECTOR4_ARRAY: {
@@ -1368,7 +1369,7 @@ APICALL(api_vstore) {
 			auto *data = machine.memory.memarray<Vector4>(gdata, gsize);
 			arr.resize(gsize);
 			std::memcpy(arr.ptrw(), data, gsize * sizeof(Vector4));
-			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
 		case Variant::PACKED_COLOR_ARRAY: {
@@ -1377,7 +1378,7 @@ APICALL(api_vstore) {
 			auto *data = machine.memory.memarray<Color>(gdata, gsize);
 			arr.resize(gsize);
 			std::memcpy(arr.ptrw(), data, gsize * sizeof(Color));
-			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
 		case Variant::PACKED_STRING_ARRAY: {
@@ -1402,7 +1403,7 @@ APICALL(api_vstore) {
 					arr.set(i, to_godot_string(&data[i], machine));
 				}
 			}
-			*vidx = emu.create_scoped_variant(Variant(std::move(arr)));
+			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(std::move(arr)));
 			break;
 		}
 		default:
@@ -2476,6 +2477,18 @@ APICALL(api_string_create) {
 	machine.set_result(idx);
 }
 
+// Preserve the guest's original Variant type (StringName, NodePath) after mutation.
+static Variant string_variant_of_type(Variant::Type type, godot::String &&str) {
+	switch (type) {
+		case Variant::STRING_NAME:
+			return Variant(StringName(str));
+		case Variant::NODE_PATH:
+			return Variant(NodePath(str));
+		default:
+			return Variant(std::move(str));
+	}
+}
+
 APICALL(api_string_ops) {
 	auto [op, str_idx, index, vaddr] = machine.sysargs<String_Op, unsigned, int, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
@@ -2492,8 +2505,10 @@ APICALL(api_string_ops) {
 
 	switch (op) {
 		case String_Op::APPEND: {
-			GuestVariant *gvar = machine.memory.memarray<GuestVariant>(vaddr, 1);
-			str += gvar->toVariant(emu).operator String();
+			const unsigned *vother = machine.memory.memarray<const unsigned>(vaddr, 1);
+			str += get_scoped_variant_or_throw(emu, *vother, "String::append").operator String();
+			// str is a detached copy; assign back through a mutable slot.
+			emu.get_mutable_scoped_variant(str_idx) = string_variant_of_type(type, std::move(str));
 			break;
 		}
 		case String_Op::GET_LENGTH:
@@ -2586,9 +2601,10 @@ APICALL(api_string_append) {
 
 	Variant &var = emu.get_mutable_scoped_variant(str_idx);
 
+	const Variant::Type type = var.get_type();
 	godot::String str = var.operator String();
 	str += String::utf8(strview.data(), strview.size());
-	var = Variant(std::move(str));
+	var = string_variant_of_type(type, std::move(str));
 }
 
 APICALL(api_timer_periodic) {

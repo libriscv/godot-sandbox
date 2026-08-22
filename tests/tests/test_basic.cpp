@@ -389,6 +389,60 @@ PUBLIC Variant test_create_pa_string() {
 	return arr;
 }
 
+PUBLIC Variant test_string_append(String s) {
+	s.append(String(" from"));
+	s.append(std::string_view(" the other side"));
+	return s;
+}
+
+PUBLIC Variant test_nodepath_append(NodePath p) {
+	p.append(String("/Child"));
+	return p;
+}
+
+static String permanent_appendable = "perm";
+PUBLIC Variant test_permanent_string_append() {
+	permanent_appendable.append(String("+"));
+	return permanent_appendable;
+}
+
+PUBLIC Variant test_pa_store_reuse() {
+	PackedArray<int64_t> pa({ 0, 0, 0 });
+	const unsigned idx = pa.get_variant_index();
+	for (int64_t i = 0; i < 500; i++) {
+		pa.store(std::vector<int64_t>{ i, i + 1, i + 2 });
+		if (pa.get_variant_index() != idx) {
+			return "Fail: store() did not re-use the Variant slot";
+		}
+	}
+	return pa;
+}
+
+PUBLIC Variant test_transform2d_rotate_reuse() {
+	Transform2D t = Transform2D::identity();
+	const unsigned idx = t.get_variant_index();
+	for (int i = 0; i < 500; i++) {
+		t.rotate(0.001);
+		if (t.get_variant_index() != idx) {
+			return "Fail: rotate() did not re-use the Variant slot";
+		}
+	}
+	return "OK";
+}
+
+PUBLIC Variant test_transform2d_identity() {
+	return Transform2D::identity();
+}
+PUBLIC Variant test_transform3d_identity() {
+	return Transform3D::identity();
+}
+PUBLIC Variant test_basis_identity() {
+	return Basis::identity();
+}
+PUBLIC Variant test_quaternion_identity() {
+	return Quaternion::identity();
+}
+
 PUBLIC Variant test_assign_pa_to_array(PackedArray<int64_t> pa) {
 	Array arr = Array::Create();
 	arr.push_back(pa);

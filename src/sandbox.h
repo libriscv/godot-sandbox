@@ -368,13 +368,16 @@ public:
 	/// @param var The new variant to move-assign.
 	void assign_permanent_variant(int32_t idx, Variant &&var);
 
-	/// @brief Try to reuse a variant index for a new variant.
-	/// If the index is permanent, assign the new variant directly to it.
-	/// If the index is scoped, check if it is mutable (local to the current state) and assign the new variant to it.
-	/// If the index immutable, unknown or invalid, create a new scoped variant.
-	/// @param idx The index of the variant to assign.
-	/// @param var The new variant to move-assign.
-	/// @return The index of the assigned variant, passed to and used by the guest.
+	/// @brief Assign a value to the guest's Variant slot, reusing it when owned,
+	/// allocating a new scoped Variant otherwise. Owned = permanent state or
+	/// current state's vector. Non-owned slots (eg. caller arguments) are never
+	/// written through.
+	/// @return The index the guest uses from here on (assign_to_idx when reused).
+	unsigned try_reuse_assign_variant(int32_t assign_to_idx, Variant &&var);
+
+	/// @brief Read-then-write overload: reuses the slot only when assign_to_idx
+	/// is src_idx and the Variant is owned. Falls through to the overload above.
+	/// @return The index the guest uses from here on.
 	unsigned try_reuse_assign_variant(int32_t src_idx, const Variant &src_var, int32_t assign_to_idx, const Variant &var);
 
 	/// @brief The engine-side pointer that identifies an object, which is also the

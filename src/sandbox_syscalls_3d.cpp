@@ -96,18 +96,14 @@ APICALL(api_transform3d_ops) {
 		const Vector3 *v3 = machine.memory.memarray<Vector3>(machine.cpu.reg(13), 1); // A3
 		unsigned b_idx = machine.cpu.reg(14); // A4 (Basis index)
 
-		// Get the basis from the given index.
 		const Basis basis = get_scoped_variant_or_throw(emu, b_idx, "Transform3D::create").operator Basis();
-
-		// Create a new scoped Variant with the transform.
-		*vidx = emu.create_scoped_variant(Variant(Transform3D(basis, *v3)));
+		*vidx = emu.try_reuse_assign_variant(*vidx, Variant(Transform3D(basis, *v3)));
 		return;
 	} else if (op == Transform3D_Op::IDENTITY) {
 		const gaddr_t vaddr = machine.cpu.reg(12); // A2
 		unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
 
-		// Create a new scoped Variant with the identity transform.
-		*vidx = emu.create_scoped_variant(Variant(Transform3D()));
+		*vidx = emu.try_reuse_assign_variant(*vidx, Variant(Transform3D()));
 		return;
 	}
 
@@ -125,7 +121,6 @@ APICALL(api_transform3d_ops) {
 			const unsigned t2_idx = machine.cpu.reg(13); // A3
 			const Variant *t2 = &get_scoped_variant_or_throw(emu, t2_idx, "Transform3D::assign");
 
-			// Smart-assign the given transform to the current Variant.
 			*new_idx = emu.try_reuse_assign_variant(idx, *t_variant, *new_idx, *t2);
 			break;
 		}
@@ -134,16 +129,13 @@ APICALL(api_transform3d_ops) {
 			unsigned *vidx = machine.memory.memarray<unsigned>(vaddr, 1);
 			const Basis &basis = t.basis;
 
-			// Create a new scoped Variant with the basis.
-			*vidx = emu.create_scoped_variant(Variant(basis));
+			*vidx = emu.try_reuse_assign_variant(*vidx, Variant(basis));
 			break;
 		}
 		case Transform3D_Op::SET_BASIS: {
 			unsigned *new_idx = machine.memory.memarray<unsigned>(machine.cpu.reg(12), 1); // A2
 			const unsigned b_idx = machine.cpu.reg(13); // A3
 			const Variant *vbasis = &get_scoped_variant_or_throw(emu, b_idx, "Transform3D::set_basis");
-
-			// Set the basis of the current transform.
 			t.basis = vbasis->operator Basis();
 			*new_idx = emu.try_reuse_assign_variant(idx, *t_variant, *new_idx, Variant(t));
 			break;
@@ -287,7 +279,7 @@ APICALL(api_basis_ops) {
 		const gaddr_t vaddr = machine.cpu.reg(12); // A2
 		unsigned *tres = machine.memory.memarray<unsigned>(vaddr, 1);
 
-		*tres = emu.create_scoped_variant(Variant(Basis()));
+		*tres = emu.try_reuse_assign_variant(*tres, Variant(Basis()));
 		return;
 	} else if (op == Basis_Op::CREATE) {
 		const gaddr_t vaddr = machine.cpu.reg(12); // A2
@@ -296,8 +288,7 @@ APICALL(api_basis_ops) {
 		const Vector3 *v2 = machine.memory.memarray<Vector3>(machine.cpu.reg(14), 1); // A4
 		const Vector3 *v3 = machine.memory.memarray<Vector3>(machine.cpu.reg(15), 1); // A5
 
-		// Create a new scoped Variant with the given vectors.
-		*vidx = emu.create_scoped_variant(Variant(Basis(*v1, *v2, *v3)));
+		*vidx = emu.try_reuse_assign_variant(*vidx, Variant(Basis(*v1, *v2, *v3)));
 		return;
 	}
 
@@ -448,9 +439,10 @@ APICALL(api_quat_ops) {
 		switch (idx) {
 			case 0: { // IDENTITY
 				const gaddr_t vaddr = machine.cpu.reg(12); // A2
-				GuestVariant *vres = machine.memory.memarray<GuestVariant>(vaddr, 1);
+				// A2 is the guest's Variant index.
+				unsigned *vres = machine.memory.memarray<unsigned>(vaddr, 1);
 
-				vres->create(emu, Quaternion());
+				*vres = emu.try_reuse_assign_variant(*vres, Variant(Quaternion()));
 				return;
 			}
 			case 1: { // FROM_AXIS_ANGLE
@@ -459,7 +451,6 @@ APICALL(api_quat_ops) {
 				const Vector3 *axis = machine.memory.memarray<Vector3>(machine.cpu.reg(13), 1); // A3
 				const double angle = machine.cpu.registers().getfl(10).get<double>(); // fa0
 
-				// Create a new scoped Variant with the given axis and angle.
 				*vidx = emu.create_scoped_variant(Variant(Quaternion(*axis, angle)));
 				return;
 			}

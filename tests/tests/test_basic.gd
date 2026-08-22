@@ -726,3 +726,29 @@ func test_reused_name_buffer():
 
 	n.queue_free()
 	s.queue_free()
+
+func test_variant_slot_reuse():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	assert_eq_deep(s.vmcall("test_pa_store_reuse"), PackedInt64Array([499, 500, 501]))
+	assert_eq(s.vmcall("test_transform2d_rotate_reuse"), "OK")
+
+	assert_eq(s.vmcall("test_transform2d_identity"), Transform2D.IDENTITY)
+	assert_eq(s.vmcall("test_transform3d_identity"), Transform3D.IDENTITY)
+	assert_eq(s.vmcall("test_basis_identity"), Basis.IDENTITY)
+	assert_eq(s.vmcall("test_quaternion_identity"), Quaternion.IDENTITY)
+
+	s.queue_free()
+
+func test_string_mutation():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	assert_eq(s.vmcall("test_string_append", "Hello"), "Hello from the other side")
+	assert_same(s.vmcall("test_nodepath_append", NodePath("Node")), NodePath("Node/Child"))
+
+	assert_eq(s.vmcall("test_permanent_string_append"), "perm+")
+	assert_eq(s.vmcall("test_permanent_string_append"), "perm++")
+
+	s.queue_free()

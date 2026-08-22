@@ -1315,26 +1315,29 @@ std::optional<const Variant *> Sandbox::get_scoped_variant(int32_t index) const 
 	return std::nullopt;
 }
 Variant &Sandbox::get_mutable_scoped_variant(int32_t index) {
-	std::optional<const Variant *> var_opt = get_scoped_variant(index);
-	if (!var_opt.has_value()) {
-		ERR_PRINT("Invalid scoped variant index.");
-		throw std::runtime_error("Invalid scoped variant index.");
+	// Resolve permanent indices in the permanent state.
+	CurrentState *st = &this->state();
+	int32_t slot = index;
+	if (is_permanent_variant(index)) {
+		st = &this->m_states[0];
+		slot = -index - 1;
 	}
-	const Variant *var = var_opt.value();
-	// Find the variant in the variants list
-	auto it = std::find_if(state().variants.begin(), state().variants.end(), [var](const Variant &v) {
-		return &v == var;
-	});
-	if (it == state().variants.end()) {
-		// Create a new variant in the list using the existing one, and return it
-		if (state().variants.size() >= state().variants.capacity()) {
-			ERR_PRINT("Maximum number of scoped variants reached.");
-			throw std::runtime_error("Maximum number of scoped variants reached.");
-		}
-		state().append(Variant(*var));
-		return state().variants.back();
+	if (slot < 0 || size_t(slot) >= st->scoped_variants.size()) {
+		ERR_PRINT("Invalid scoped variant index: " + itos(index));
+		throw std::runtime_error("Invalid scoped variant index: " + std::to_string(index));
 	}
-	return *it;
+	const Variant *var = st->scoped_variants[slot];
+	if (st->is_mutable_variant(*var)) {
+		return const_cast<Variant &>(*var);
+	}
+	// Non-owned Variant (eg. caller argument): copy into this state and re-point the slot.
+	if (st->variants.size() >= st->variants.capacity()) {
+		ERR_PRINT("Maximum number of scoped variants reached.");
+		throw std::runtime_error("Maximum number of scoped variants reached.");
+	}
+	st->variants.push_back(Variant(*var));
+	st->scoped_variants[slot] = &st->variants.back();
+	return st->variants.back();
 }
 unsigned Sandbox::create_permanent_variant(unsigned idx) {
 	if (int32_t(idx) < 0) {
@@ -1383,20 +1386,31 @@ void Sandbox::assign_permanent_variant(int32_t idx, Variant &&val) {
 	ERR_PRINT("Invalid permanent variant index.");
 	throw std::runtime_error("Invalid permanent variant index: " + std::to_string(idx));
 }
-unsigned Sandbox::try_reuse_assign_variant(int32_t src_idx, const Variant &src_var, int32_t assign_to_idx, const Variant &new_value) {
+unsigned Sandbox::try_reuse_assign_variant(int32_t assign_to_idx, Variant &&new_value) {
 	if (this->is_permanent_variant(assign_to_idx)) {
-		// The Variant is permanent, so we need to assign it directly.
-		// Permanent Variants are scarce and should not be duplicated.
-		this->assign_permanent_variant(assign_to_idx, Variant(new_value));
+		// Permanent: assign directly, never duplicate.
+		this->assign_permanent_variant(assign_to_idx, std::move(new_value));
 		return assign_to_idx;
-	} else if (assign_to_idx == src_idx && this->state().is_mutable_variant(src_var)) {
-		// They are the same, and the Variant belongs to the current state, so we can modify it directly.
+	}
+	CurrentState &st = this->state();
+	if (assign_to_idx >= 0 && size_t(assign_to_idx) < st.scoped_variants.size()) {
+		const Variant *var = st.scoped_variants[assign_to_idx];
+		// Only write through Variants this state owns.
+		if (st.is_mutable_variant(*var)) {
+			const_cast<Variant &>(*var) = std::move(new_value);
+			return assign_to_idx;
+		}
+	}
+	// Slot unset, out of range or non-owned: allocate a new scoped Variant.
+	return this->create_scoped_variant(std::move(new_value));
+}
+unsigned Sandbox::try_reuse_assign_variant(int32_t src_idx, const Variant &src_var, int32_t assign_to_idx, const Variant &new_value) {
+	if (!this->is_permanent_variant(assign_to_idx) && assign_to_idx == src_idx && this->state().is_mutable_variant(src_var)) {
+		// Same owned slot the operation read from: modify in place.
 		const_cast<Variant &>(src_var) = new_value;
 		return assign_to_idx;
-	} else {
-		// The Variant is either temporary or invalid, so we can replace it directly.
-		return this->create_scoped_variant(Variant(new_value));
 	}
+	return this->try_reuse_assign_variant(assign_to_idx, Variant(new_value));
 }
 
 uint64_t Sandbox::engine_object_id(const godot::Object *obj) noexcept {
