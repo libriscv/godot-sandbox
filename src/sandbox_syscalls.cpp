@@ -2674,15 +2674,35 @@ APICALL(api_callable_create) {
 }
 
 APICALL(api_load) {
-	auto [path, g_result] = machine.sysargs<std::string_view, GuestVariant *>();
 	Sandbox &emu = riscv::emu(machine);
-	const String godot_path = String::utf8(path.data(), path.size());
+	const gaddr_t g_path = machine.cpu.reg(10); // A0
+	const gaddr_t path_len = machine.cpu.reg(11); // A1
+	GuestVariant *g_result = machine.memory.memarray<GuestVariant>(machine.cpu.reg(12), 1); // A2
+
+	// A1 = ECALL_LOAD_PATH_IS_VARIANT: A0 is a Variant, not a character buffer.
+	String godot_path;
+	if (path_len == ECALL_LOAD_PATH_IS_VARIANT) {
+		const GuestVariant *g_var = machine.memory.memarray<GuestVariant>(g_path, 1);
+		switch (g_var->type) {
+			case Variant::STRING:
+			case Variant::STRING_NAME:
+			case Variant::NODE_PATH:
+				godot_path = g_var->toVariant(emu).operator String();
+				break;
+			default:
+				ERR_PRINT("Resource path is not a string");
+				throw std::runtime_error("Resource path is not a string");
+		}
+	} else {
+		const std::string_view path = machine.memory.memview(g_path, path_len);
+		godot_path = String::utf8(path.data(), path.size());
+	}
 	SYS_TRACE("load", godot_path, g_result);
 
 	// Check if the path is allowed.
 	if (!emu.is_allowed_resource(godot_path)) {
 		ERR_PRINT("Resource path is not allowed: " + godot_path);
-		throw std::runtime_error("Resource path is not allowed: " + std::string(path));
+		throw std::runtime_error("Resource path is not allowed: " + std::string(godot_path.utf8().get_data()));
 	}
 
 	// Preload the resource from the given path.

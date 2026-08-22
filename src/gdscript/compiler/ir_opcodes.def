@@ -149,6 +149,17 @@ IR_OPCODE(CALL_SYSCALL,    "CALL_SYSCALL",    SIG(DST, IMM, ARG_LIST),      IR_S
 // get_node() with a compile-time path ($Name, %Unique, self).
 // ECALL_GET_NODE takes raw characters, not a Variant; run-time paths use VCALL.
 IR_OPCODE(GET_NODE,        "GET_NODE",        SIG(DST, STR),                IR_SIDE_EFFECTS | IR_CALL)
+
+// load(): ECALL_LOAD, answering an Object the host has scoped. The host puts
+// the path to the project's resource-allowed callback first and refuses one it
+// declines, so this is a call with side effects and is never folded away.
+//
+// Two forms, for the reason GET_NODE embeds its path: a literal path is
+// characters in the instruction and costs no String Variant, while a path
+// computed at run time is a Variant already and is handed over as one
+// (ECALL_LOAD_PATH_IS_VARIANT).
+IR_OPCODE(LOAD_RESOURCE,     "LOAD_RESOURCE",     SIG(DST, STR),            IR_SIDE_EFFECTS | IR_CALL)
+IR_OPCODE(LOAD_RESOURCE_VAR, "LOAD_RESOURCE_VAR", SIG(DST, SRC),            IR_SIDE_EFFECTS | IR_CALL)
 IR_OPCODE(RETURN,          "RETURN",          SIG(),                        IR_SIDE_EFFECTS | IR_TERMINATOR)
 
 // -= Variant operations (through syscalls) =-

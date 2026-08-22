@@ -1601,6 +1601,36 @@ int CodeGenerator::gen_get_node(const std::string& path, FunctionContext& func) 
 	return result_reg;
 }
 
+// Compile-time string path, or nullptr. A shadowing local returns nullptr.
+const std::string* CodeGenerator::constant_resource_path(const Expr* expr, FunctionContext& func) {
+	if (auto* literal = dynamic_cast<const LiteralExpr*>(expr)) {
+		if (literal->lit_type == LiteralExpr::Type::STRING) {
+			return &std::get<std::string>(literal->value);
+		}
+		return nullptr;
+	}
+	auto* var = dynamic_cast<const VariableExpr*>(expr);
+	if (var == nullptr || find_variable(func, var->name) != nullptr) {
+		return nullptr;
+	}
+	auto it = m_global_const_values.find(var->name);
+	if (it == m_global_const_values.end() || !it->second.is_const ||
+		it->second.init_type != IRGlobalVar::InitType::STRING) {
+		return nullptr;
+	}
+	return &std::get<std::string>(it->second.init_value);
+}
+
+// Compile-time path: characters embedded in the instruction, no String Variant.
+int CodeGenerator::gen_load_resource(const std::string& path, FunctionContext& func) {
+	int result_reg = alloc_register(func);
+	IRInstruction instr(IROpcode::LOAD_RESOURCE, IRValue::reg(result_reg), IRValue::str(path));
+	instr.type_hint = Variant::OBJECT;
+	func.ir.instructions.push_back(instr);
+	set_register_type(func, result_reg, Variant::OBJECT);
+	return result_reg;
+}
+
 int CodeGenerator::gen_int_immediate(int64_t value, FunctionContext& func) {
 	int reg = alloc_register(func);
 	IRInstruction instr(IROpcode::LOAD_IMM, IRValue::reg(reg), IRValue::imm(value));
@@ -2135,6 +2165,12 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 	if (expr->function_name == "Color8" && !is_local_function("Color8")) {
 		return gen_color8(expr, func);
 	}
+	// Constant path: embed characters directly. Run-time path handled below.
+	if (expr->function_name == "load" && !is_local_function("load") && expr->arguments.size() == 1) {
+		if (const std::string* path = constant_resource_path(expr->arguments[0].get(), func)) {
+			return gen_load_resource(*path, func);
+		}
+	}
 	reject_named_arguments(*expr, "'" + expr->function_name + "'", expr);
 
 	std::vector<int> arg_regs;
@@ -2234,6 +2270,22 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 			free_register(func, reg);
 		}
 
+		return result_reg;
+	}
+
+	// Run-time path: passed as Variant, same resource-allowed callback as literal.
+	if (expr->function_name == "load") {
+		if (arg_regs.size() != 1) {
+			error_at("load() takes exactly 1 argument", expr);
+		}
+
+		int result_reg = alloc_register(func);
+		IRInstruction instr(IROpcode::LOAD_RESOURCE_VAR, IRValue::reg(result_reg),
+			IRValue::reg(arg_regs[0]));
+		instr.type_hint = Variant::OBJECT;
+		func.ir.instructions.push_back(instr);
+		set_register_type(func, result_reg, Variant::OBJECT);
+		free_register(func, arg_regs[0]);
 		return result_reg;
 	}
 

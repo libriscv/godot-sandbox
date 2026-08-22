@@ -580,6 +580,57 @@ void RISCVCodeGen::gen_get_node(const IRInstruction& instr) {
 	emit_syscall_result(result_vreg, REG_A0, result_offset, Variant::OBJECT);
 }
 
+// Path copied to stack as characters, same shape as ECALL_GET_NODE.
+void RISCVCodeGen::gen_load_resource(const IRInstruction& instr) {
+	if (instr.operands.size() != 2) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "LOAD_RESOURCE requires 2 operands");
+	}
+
+	int result_vreg = std::get<int>(instr.operands[0].value);
+	const std::string& path = std::get<std::string>(instr.operands[1].value);
+
+	int result_offset = get_variant_stack_offset(result_vreg);
+	spill_around_syscall({ REG_A0, REG_A1, REG_A2 });
+
+	const int path_space = (static_cast<int>(path.size()) + 1 + 15) & ~15;
+	emit_stack_adjust(-path_space);
+
+	for (size_t i = 0; i < path.size(); i++) {
+		emit_li(REG_T0, static_cast<unsigned char>(path[i]));
+		emit_sb(REG_T0, REG_SP, static_cast<int>(i));
+	}
+	emit_sb(REG_ZERO, REG_SP, static_cast<int>(path.size()));
+
+	emit_mv(REG_A0, REG_SP);
+	emit_li(REG_A1, static_cast<int>(path.size()));
+	emit_load_stack_offset(REG_A2, result_offset + path_space);
+	emit_li(REG_A7, ECALL_LOAD);
+	emit_ecall();
+
+	emit_stack_adjust(path_space);
+}
+
+// A1 = ECALL_LOAD_PATH_IS_VARIANT: A0 is a Variant, not characters.
+void RISCVCodeGen::gen_load_resource_var(const IRInstruction& instr) {
+	if (instr.operands.size() != 2) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "LOAD_RESOURCE_VAR requires 2 operands");
+	}
+
+	int result_vreg = std::get<int>(instr.operands[0].value);
+	int path_vreg = std::get<int>(instr.operands[1].value);
+
+	int result_offset = get_variant_stack_offset(result_vreg);
+	int path_offset = get_variant_stack_offset(path_vreg);
+
+	spill_around_syscall({ REG_A0, REG_A1, REG_A2 });
+
+	emit_load_stack_offset(REG_A0, path_offset);
+	emit_li(REG_A1, -1);
+	emit_load_stack_offset(REG_A2, result_offset);
+	emit_li(REG_A7, ECALL_LOAD);
+	emit_ecall();
+}
+
 void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
 	if (instr.operands.size() < 2) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL_SYSCALL requires at least 2 operands (result_reg, syscall_num)");
@@ -2056,6 +2107,12 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::GET_NODE:
 			gen_get_node(instr);
 			break;
+		case IROpcode::LOAD_RESOURCE:
+			gen_load_resource(instr);
+			break;
+		case IROpcode::LOAD_RESOURCE_VAR:
+			gen_load_resource_var(instr);
+			break;
 		// No default: new opcodes must be listed (compile error otherwise)
 	}
 }
@@ -2304,6 +2361,8 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::CALL:
 		case IROpcode::CALL_SYSCALL:
 		case IROpcode::GET_NODE:
+		case IROpcode::LOAD_RESOURCE:
+		case IROpcode::LOAD_RESOURCE_VAR:
 		case IROpcode::VCALL:
 		case IROpcode::VGET:
 		case IROpcode::VSET:

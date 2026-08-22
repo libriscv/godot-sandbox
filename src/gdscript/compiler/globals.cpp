@@ -258,8 +258,8 @@ static const struct { const char* name; const char* reason; } UNIMPLEMENTED_GLOB
 	{ "randomize", "mutates the project's shared RNG state" },
 	{ "seed", "mutates the project's shared RNG state" },
 	{ "rand_from_seed", "no ECALL_UTILITY op yet" },
-	{ "preload", "resource loading is not available to the sandbox yet" },
-	{ "load", "resource loading is not available to the sandbox yet" },
+	// preload() is a compile-time constant; load() is lowered to LOAD_RESOURCE.
+	{ "preload", "the resource would have to be loaded before the program runs; use load()" },
 
 	// Containers and callables from global calls.
 	{ "super", "there is no base script to forward to: the sandbox program is the whole script" },

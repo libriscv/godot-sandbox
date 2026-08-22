@@ -6592,3 +6592,50 @@ func as_widget(x):
 	widget.queue_free()
 	node.queue_free()
 	s.queue_free()
+
+
+# load(): both ECALL_LOAD forms, and the resource-allowed callback that stands
+# between a compiled program and the project's files.
+func test_load_resource():
+	var gdscript_code = """
+const ELF = "res://tests/tests.elf"
+
+func literal():
+	return load("res://tests/tests.elf")
+
+func from_const():
+	return load(ELF)
+
+func computed(dir, name):
+	return load(dir + name)
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	var expected = load("res://tests/tests.elf")
+	assert_eq(s.vmcallv("literal"), expected, "a literal path loads the resource")
+	assert_eq(s.vmcallv("from_const"), expected, "a const path loads the same resource")
+	assert_eq(s.vmcallv("computed", "res://tests/", "tests.elf"), expected,
+		"a path built at run time loads the same resource")
+
+	# Every path reaches the project's callback, whichever form carried it.
+	var seen : Array = []
+	s.restrictions = true
+	s.set_resource_allowed_callback(func(sandbox, path):
+		seen.append(path)
+		return path == "res://tests/tests.elf")
+
+	assert_eq(s.vmcallv("literal"), expected, "an allowed path still loads")
+	assert_eq(s.vmcallv("computed", "res://tests/", "tests.elf"), expected,
+		"and so does an allowed path built at run time")
+	assert_eq(seen, ["res://tests/tests.elf", "res://tests/tests.elf"],
+		"the callback should have seen the path both forms carried")
+
+	var exceptions = s.get_exceptions()
+	s.vmcallv("computed", "res://tests/", "vec.elf")
+	assert_engine_error("Resource path is not allowed: res://tests/vec.elf")
+	assert_engine_error("Exception: Resource path is not allowed: res://tests/vec.elf")
+	assert_eq(s.get_exceptions(), exceptions + 1, "a refused path should throw")
+
+	s.queue_free()

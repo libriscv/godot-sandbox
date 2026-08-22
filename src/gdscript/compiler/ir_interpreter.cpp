@@ -507,6 +507,8 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::DICT_SET:
 		case IROpcode::CALL_SYSCALL:
 		case IROpcode::GET_NODE:
+		case IROpcode::LOAD_RESOURCE:
+		case IROpcode::LOAD_RESOURCE_VAR:
 		case IROpcode::LOAD_STRING_AS:
 		case IROpcode::PRINT:
 		case IROpcode::THROW:

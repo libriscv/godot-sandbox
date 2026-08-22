@@ -53,7 +53,9 @@
 
 #define ECALL_CALLABLE_CREATE (GAME_API_BASE + 38)
 
+// load(path, len, result). len == ECALL_LOAD_PATH_IS_VARIANT: path is a Variant.
 #define ECALL_LOAD (GAME_API_BASE + 39)
+#define ECALL_LOAD_PATH_IS_VARIANT (~0ULL)
 
 #define ECALL_TRANSFORM_2D_OPS (GAME_API_BASE + 40)
 #define ECALL_TRANSFORM_3D_OPS (GAME_API_BASE + 41)

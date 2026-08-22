@@ -77,6 +77,8 @@ private:
 
 	int gen_assert(const CallExpr* expr, FunctionContext& func);
 	int gen_get_node(const std::string& path, FunctionContext& func);
+	const std::string* constant_resource_path(const Expr* expr, FunctionContext& func);
+	int gen_load_resource(const std::string& path, FunctionContext& func);
 	int gen_range(const CallExpr* expr, FunctionContext& func);
 	int gen_color8(const CallExpr* expr, FunctionContext& func);
 	int gen_class_test(int value_reg, const std::string& class_name, FunctionContext& func);

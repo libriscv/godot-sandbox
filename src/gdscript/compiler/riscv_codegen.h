@@ -78,6 +78,8 @@ private:
 	void gen_syscall_array_at(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg);
 	void gen_get_node(const IRInstruction& instr);
+	void gen_load_resource(const IRInstruction& instr);
+	void gen_load_resource_var(const IRInstruction& instr);
 
 	// Querying commits to return forwarding for this vreg.
 	std::pair<uint8_t, int> value_destination(int vreg);
