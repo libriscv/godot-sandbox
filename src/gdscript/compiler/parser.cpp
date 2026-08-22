@@ -362,7 +362,10 @@ StmtPtr Parser::parse_statement_impl() {
 		return parse_for_stmt();
 	}
 	if (match(TokenType::MATCH)) {
-		return parse_match_stmt();
+		return parse_match_stmt(false);
+	}
+	if (match(TokenType::SWITCH)) {
+		return parse_match_stmt(true);
 	}
 	if (match(TokenType::RETURN)) {
 		return parse_return_stmt();
@@ -450,13 +453,16 @@ StmtPtr Parser::parse_for_stmt() {
 	return std::make_unique<ForStmt>(var_name.lexeme, std::move(iterable), std::move(body));
 }
 
-StmtPtr Parser::parse_match_stmt() {
+StmtPtr Parser::parse_match_stmt(bool is_switch) {
+	const Token keyword = previous();
+	const std::string kw = is_switch ? "switch" : "match";
+
 	ExprPtr subject = parse_expression();
-	consume(TokenType::COLON, "Expected ':' after match subject");
+	consume(TokenType::COLON, "Expected ':' after " + kw + " subject");
 	consume(TokenType::NEWLINE, "Expected newline after ':'");
 
 	skip_newlines();
-	consume(TokenType::INDENT, "Expected indented block after 'match'");
+	consume(TokenType::INDENT, "Expected indented block after '" + kw + "'");
 
 	std::vector<MatchStmt::Branch> branches;
 
@@ -489,7 +495,7 @@ StmtPtr Parser::parse_match_stmt() {
 			branch.guard = parse_expression();
 		}
 
-		consume(TokenType::COLON, "Expected ':' after match pattern");
+		consume(TokenType::COLON, "Expected ':' after " + kw + " pattern");
 		consume(TokenType::NEWLINE, "Expected newline after ':'");
 		branch.body = parse_block();
 
@@ -497,13 +503,16 @@ StmtPtr Parser::parse_match_stmt() {
 	}
 
 	skip_newlines();
-	consume(TokenType::DEDENT, "Expected dedent after match block");
+	consume(TokenType::DEDENT, "Expected dedent after " + kw + " block");
 
 	if (branches.empty()) {
-		error("'match' requires at least one pattern");
+		error("'" + kw + "' requires at least one pattern");
 	}
 
-	return std::make_unique<MatchStmt>(std::move(subject), std::move(branches));
+	auto stmt = std::make_unique<MatchStmt>(std::move(subject), std::move(branches), is_switch);
+	stmt->line = keyword.line;
+	stmt->column = keyword.column;
+	return stmt;
 }
 
 MatchPatternPtr Parser::parse_match_pattern() {

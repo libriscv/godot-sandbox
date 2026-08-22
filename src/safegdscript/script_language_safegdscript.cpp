@@ -888,6 +888,7 @@ PackedStringArray SafeGDScriptLanguage::_get_reserved_words() const {
 		"match",
 		"pass",
 		"return",
+		"switch",
 		"when",
 		"while",
 		// Declarations
@@ -974,7 +975,8 @@ PackedStringArray SafeGDScriptLanguage::_get_reserved_words() const {
 }
 bool SafeGDScriptLanguage::_is_control_flow_keyword(const String &p_keyword) const {
 	static const std::unordered_set<std::string> control_flow_keywords{
-		"break", "continue", "elif", "else", "if", "for", "match", "pass", "return", "when", "while"
+		"break", "continue", "elif", "else", "if", "for", "match", "pass", "return", "switch", "when",
+		"while"
 	};
 	return control_flow_keywords.find(p_keyword.utf8().get_data()) != control_flow_keywords.end();
 }

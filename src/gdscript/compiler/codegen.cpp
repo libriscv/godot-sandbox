@@ -679,12 +679,39 @@ static constexpr size_t MIN_SWITCH_CASES = 4;
 static constexpr size_t MAX_SWITCH_SPREAD = 3;
 static constexpr int64_t MAX_SWITCH_ENTRIES = 4096;
 
+// Pattern kind noun for diagnostics.
+static const char* pattern_kind_noun(MatchPattern::Kind kind) {
+	switch (kind) {
+		case MatchPattern::Kind::WILDCARD:    return "a wildcard";
+		case MatchPattern::Kind::BIND:        return "a binding";
+		case MatchPattern::Kind::ARRAY:       return "an array pattern";
+		case MatchPattern::Kind::DICTIONARY:  return "a dictionary pattern";
+		case MatchPattern::Kind::VALUE:       return "a value pattern";
+	}
+	return "a pattern";
+}
+
 bool CodeGenerator::gen_match_jump_table(const MatchStmt* stmt, int subject_reg,
                                          const std::vector<std::string>& body_labels,
                                          const std::string& default_label,
-                                         FunctionContext& func) {
+                                         FunctionContext& func,
+                                         JumpTableReject* reject) {
+	auto decline = [&](const std::string& reason, const std::string& hint,
+	                   int line, int column) {
+		if (reject != nullptr) {
+			*reject = JumpTableReject{reason, hint, line, column};
+		}
+		return false;
+	};
+
 	// Every pattern must be an integer constant; non-integer patterns disqualify the table.
-	std::vector<std::pair<int64_t, size_t>> cases;
+	struct Case {
+		int64_t value;
+		size_t branch;
+		int line;
+		int column;
+	};
+	std::vector<Case> cases;
 	for (size_t i = 0; i < stmt->branches.size(); i++) {
 		const auto& branch = stmt->branches[i];
 		if (branch.is_catch_all()) {
@@ -692,27 +719,58 @@ bool CodeGenerator::gen_match_jump_table(const MatchStmt* stmt, int subject_reg,
 		}
 		// Guards disqualify: an entry jumping to the body would skip the guard.
 		if (branch.guard) {
-			return false;
+			return decline("A 'switch' arm cannot have a 'when' guard",
+				"A guard has to run before the arm is taken, which a jump into the "
+				"body skips. Use 'match' when arms need guards.",
+				branch.guard->line, branch.guard->column);
 		}
 		for (const auto& pattern : branch.patterns) {
 			if (pattern->kind != MatchPattern::Kind::VALUE) {
-				return false;
+				const bool lone_wildcard = pattern->kind == MatchPattern::Kind::WILDCARD;
+				return decline(
+					std::string("A 'switch' pattern has to be an integer constant, but this is ")
+						+ pattern_kind_noun(pattern->kind),
+					lone_wildcard
+						? "'_' is the default arm of a 'switch' and cannot share an arm "
+						  "with other patterns."
+						: "Use 'match' for patterns that have to be tested at run time.",
+					pattern->line, pattern->column);
 			}
 			IRGlobalVar folded;
-			if (!fold_global_initializer(pattern->value.get(), folded) ||
-			    folded.init_type != IRGlobalVar::InitType::INT) {
-				return false;
+			if (!fold_global_initializer(pattern->value.get(), folded)) {
+				return decline("A 'switch' pattern has to be an integer constant the compiler can fold",
+					"Only literals, 'const' values and enum members can index a jump table. "
+					"Use 'match' to compare against a run-time value.",
+					pattern->line, pattern->column);
 			}
-			cases.emplace_back(std::get<int64_t>(folded.init_value), i);
+			if (folded.init_type != IRGlobalVar::InitType::INT) {
+				return decline("A 'switch' pattern has to be an integer constant",
+					"A jump table is indexed by an integer. Use 'match' to compare "
+					"against a value of another type.",
+					pattern->line, pattern->column);
+			}
+			cases.push_back(Case{std::get<int64_t>(folded.init_value), i,
+				pattern->line, pattern->column});
 		}
 	}
-	if (cases.size() < MIN_SWITCH_CASES) {
+	// match: MIN_SWITCH_CASES floor applies. switch: any count above zero.
+	if (cases.empty()) {
+		return decline("A 'switch' needs at least one integer pattern",
+			"An arm list of nothing but '_' is an 'if' with extra steps.",
+			stmt->line, stmt->column);
+	}
+	if (!stmt->is_switch && cases.size() < MIN_SWITCH_CASES) {
 		return false;
 	}
 
 	std::map<int64_t, size_t> first_branch;
-	for (const auto& [value, branch] : cases) {
-		first_branch.emplace(value, branch);
+	for (const auto& entry : cases) {
+		// match keeps the first arm silently; switch rejects duplicates.
+		if (!first_branch.emplace(entry.value, entry.branch).second && stmt->is_switch) {
+			return decline("Duplicate 'switch' pattern " + std::to_string(entry.value),
+				"An earlier arm already covers this value, so this one can never run.",
+				entry.line, entry.column);
+		}
 	}
 
 	const int64_t low = first_branch.begin()->first;
@@ -720,7 +778,15 @@ bool CodeGenerator::gen_match_jump_table(const MatchStmt* stmt, int subject_reg,
 	const uint64_t span = static_cast<uint64_t>(high) - static_cast<uint64_t>(low) + 1;
 	if (span > static_cast<uint64_t>(MAX_SWITCH_ENTRIES) ||
 	    span > first_branch.size() * MAX_SWITCH_SPREAD) {
-		return false;
+		return decline("The patterns of this 'switch' are too sparse for a jump table: "
+			+ std::to_string(first_branch.size()) + " arms spanning "
+			+ std::to_string(span) + " entries, from " + std::to_string(low)
+			+ " to " + std::to_string(high),
+			"A jump table holds one entry per value in the range, so it is bounded "
+			"at " + std::to_string(MAX_SWITCH_ENTRIES) + " entries and "
+			+ std::to_string(MAX_SWITCH_SPREAD) + "x the arm count. Use 'match' "
+			"for a sparse set of values.",
+			stmt->line, stmt->column);
 	}
 
 	IRInstruction table(IROpcode::SWITCH, IRValue::reg(subject_reg), IRValue::imm(low),
@@ -763,7 +829,25 @@ void CodeGenerator::gen_match(const MatchStmt* stmt, FunctionContext& func) {
 	const std::string& default_label =
 		catch_all < stmt->branches.size() ? body_labels[catch_all] : end_label;
 
-	const bool has_table = gen_match_jump_table(stmt, subject_reg, body_labels, default_label, func);
+	// switch requires a compile-time int subject; a type test defeats O(1) dispatch.
+	if (stmt->is_switch && get_register_type(func, subject_reg) != Variant::INT) {
+		const IRInstruction::TypeHint actual = get_register_type(func, subject_reg);
+		error_at(std::string("The subject of a 'switch' has to be a known integer, but this is ")
+				+ (actual == IRInstruction::TypeHint_NONE
+					? "of no type the compiler can determine"
+					: std::string("a ") + variant_type_name(actual)),
+			stmt->subject.get(),
+			"A jump table is entered on the integer itself. Add a type hint that "
+			"makes the subject an 'int', or use 'match', which tests the type at "
+			"run time.");
+	}
+
+	JumpTableReject reject;
+	const bool has_table = gen_match_jump_table(stmt, subject_reg, body_labels,
+		default_label, func, stmt->is_switch ? &reject : nullptr);
+	if (stmt->is_switch && !has_table) {
+		error_at(reject.reason, reject.line, reject.column, reject.hint);
+	}
 	// Known INT subject: the table decides the whole match.
 	const bool table_is_complete = has_table && get_register_type(func, subject_reg) == Variant::INT;
 	if (table_is_complete) {

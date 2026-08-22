@@ -37,7 +37,7 @@ private:
 	StmtPtr parse_if_stmt();
 	StmtPtr parse_while_stmt();
 	StmtPtr parse_for_stmt();
-	StmtPtr parse_match_stmt();
+	StmtPtr parse_match_stmt(bool is_switch);
 	StmtPtr parse_return_stmt();
 	StmtPtr parse_expr_or_assign_stmt();
 	std::vector<StmtPtr> parse_block();

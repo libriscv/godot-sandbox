@@ -475,6 +475,73 @@ func run(seed : int, steps : int) -> int:
 func test():
 	return run(7, 64) + run(1234, 33)
 )" },
+		// Same machine with mandatory jump table; differential confirms identical answers.
+		{ "switch_opcode_machine", R"(
+const OP_HALT = 0
+const OP_PUSH = 1
+const OP_ADD  = 2
+const OP_SUB  = 3
+const OP_MUL  = 4
+const OP_DUP  = 5
+const OP_SWAP = 6
+const OP_DROP = 7
+
+func run(seed : int, steps : int) -> int:
+	var a : int = seed
+	var b : int = 1
+	var word : int = seed
+	while steps > 0:
+		steps = steps - 1
+		word = (word * 1103515245 + 12345) & 65535
+		switch word & 7:
+			OP_HALT:
+				return a
+			OP_PUSH:
+				b = b + 1
+			OP_ADD:
+				a = a + b
+			OP_SUB:
+				a = a - b
+			OP_MUL:
+				a = (a * 3) & 262143
+			OP_DUP:
+				b = a
+			OP_SWAP:
+				var t = a
+				a = b
+				b = t
+			OP_DROP:
+				b = 1
+	return a * 31 + b
+
+func test():
+	return run(7, 64) + run(1234, 33)
+)" },
+		// Out-of-range and negative-base dispatch; wildcard must catch both.
+		{ "switch_negative_base_and_holes", R"(
+func classify(n : int) -> int:
+	switch n:
+		-3:
+			return 10
+		-1:
+			return 20
+		0:
+			return 30
+		2:
+			return 40
+		3:
+			return 50
+		_:
+			return -1
+
+func test():
+	var total = 0
+	var i = -6
+	while i < 8:
+		total = total * 3 + classify(i)
+		i = i + 1
+	return total
+)" },
 		// -= Patterns beyond a value =-
 		//
 		// Bindings and guards are the pattern kinds the IR interpreter can execute, so

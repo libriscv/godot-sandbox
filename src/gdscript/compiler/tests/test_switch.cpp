@@ -650,6 +650,223 @@ func test():
 	std::cout << "  ✓ No table, and no megabyte of jumps" << std::endl;
 }
 
+// -= switch =-
+//
+// Mandatory jump table: compiles to SWITCH or fails. Everything switch
+// rejects, match still accepts.
+
+// Returns CompilerException message, or "" on success.
+static std::string compile_error(const std::string& source) {
+	try {
+		compile_to_ir(source);
+	} catch (const CompilerException& e) {
+		return e.what();
+	}
+	return "";
+}
+
+static bool mentions(const std::string& haystack, const std::string& needle) {
+	return haystack.find(needle) != std::string::npos;
+}
+
+// 16-arm int dispatch, parameterised by keyword.
+static std::string dispatch_source(const std::string& keyword) {
+	std::string source = "func pick(op : int) -> int:\n\t" + keyword + " op:\n";
+	for (int i = 0; i < 16; i++) {
+		source += "\t\t" + std::to_string(i) + ":\n\t\t\treturn " +
+			std::to_string(100 + i) + "\n";
+	}
+	source += "\t\t_:\n\t\t\treturn -1\n";
+	source += "\nfunc test():\n\treturn pick(0) + pick(15) + pick(99)\n";
+	return source;
+}
+
+static void test_switch_is_dispatch_and_nothing_else() {
+	std::cout << "Testing that a switch is a table and no compares..." << std::endl;
+
+	const std::string source = dispatch_source("switch");
+	const IRProgram ir = compile_to_ir(source);
+	const IRFunction& pick = find_function(ir, "pick");
+
+	const IRInstruction& sw = only_switch(pick);
+	assert(sw.type_hint == Variant::INT);  // no type test emitted
+	// No CMP_EQ: every arm is a table entry, none becomes a VEVAL.
+	assert(count_opcode(pick, IROpcode::CMP_EQ) == 0);
+
+	assert(switch_target(sw, 0) != switch_target(sw, 15));
+	assert(switch_target(sw, 16) == "");  // out-of-range -> wildcard
+
+	assert(call_int(ir, "test") == 100 + 115 - 1);
+	verify_through_the_pipeline(source);
+
+	std::cout << "  ✓ One table, zero compares" << std::endl;
+}
+
+static void test_switch_and_a_typed_match_are_the_same_machine_code() {
+	std::cout << "Testing that switch is exactly the typed match lowering..." << std::endl;
+
+	// Typed match already emits SWITCH; switch adds only the compile-time
+	// guarantee. Byte-identical ELF confirms zero overhead.
+	auto machine_code = [](const std::string& keyword) {
+		IRProgram ir = compile_to_ir(dispatch_source(keyword), /*optimize=*/true);
+		RISCVCodeGen codegen;
+		return codegen.generate(ir);
+	};
+
+	const std::vector<uint8_t> from_switch = machine_code("switch");
+	const std::vector<uint8_t> from_match = machine_code("match");
+	assert(!from_switch.empty());
+	assert(from_switch == from_match);
+
+	std::cout << "  ✓ Identical RISC-V, so switch costs nothing extra" << std::endl;
+}
+
+static void test_switch_takes_the_table_below_the_match_floor() {
+	std::cout << "Testing that a small switch still gets its table..." << std::endl;
+
+	// MIN_SWITCH_CASES blocks match below the threshold; switch bypasses the floor.
+	const std::string arms = R"( op:
+		0:
+			return 10
+		1:
+			return 20
+		_:
+			return -1
+
+func test():
+	return pick(0) * 100 + pick(1) * 10 + pick(9)
+)";
+
+	const IRProgram from_switch = compile_to_ir("func pick(op : int) -> int:\n\tswitch" + arms);
+	const IRProgram from_match = compile_to_ir("func pick(op : int) -> int:\n\tmatch" + arms);
+
+	assert(count_opcode(find_function(from_switch, "pick"), IROpcode::SWITCH) == 1);
+	assert(count_opcode(find_function(from_match, "pick"), IROpcode::SWITCH) == 0);
+
+	// Same result; only dispatch shape differs.
+	assert(call_int(from_switch, "test") == 1200 - 1);
+	assert(call_int(from_match, "test") == 1200 - 1);
+
+	std::cout << "  ✓ Two arms are enough when the table was asked for" << std::endl;
+}
+
+static void test_switch_refuses_what_a_table_cannot_do() {
+	std::cout << "Testing that every non-dispatch switch is a compile error..." << std::endl;
+
+	// Each case: a switch the table rejects, with expected diagnostic substring.
+	// Same source under match must still compile.
+	const struct {
+		const char* what;
+		const char* body;
+		const char* expected;
+	} cases[] = {
+		{"an untyped subject",
+		 "func pick(op):\n\tKEYWORD op:\n\t\t0:\n\t\t\treturn 1\n\t\t1:\n\t\t\treturn 2\n",
+		 "has to be a known integer"},
+		{"a float subject",
+		 "func pick(op : float):\n\tKEYWORD op:\n\t\t0:\n\t\t\treturn 1\n\t\t1:\n\t\t\treturn 2\n",
+		 "but this is a FLOAT"},
+		{"a guard",
+		 "func pick(op : int):\n\tKEYWORD op:\n\t\t0 when op > 1:\n\t\t\treturn 1\n\t\t1:\n\t\t\treturn 2\n",
+		 "cannot have a 'when' guard"},
+		{"a binding",
+		 "func pick(op : int):\n\tKEYWORD op:\n\t\t0:\n\t\t\treturn 1\n\t\tvar v:\n\t\t\treturn v\n",
+		 "this is a binding"},
+		{"an array pattern",
+		 "func pick(op : int):\n\tKEYWORD op:\n\t\t0:\n\t\t\treturn 1\n\t\t[1, 2]:\n\t\t\treturn 2\n",
+		 "this is an array pattern"},
+		{"a dictionary pattern",
+		 "func pick(op : int):\n\tKEYWORD op:\n\t\t0:\n\t\t\treturn 1\n\t\t{\"k\": 1}:\n\t\t\treturn 2\n",
+		 "this is a dictionary pattern"},
+		{"a wildcard sharing an arm",
+		 "func pick(op : int):\n\tKEYWORD op:\n\t\t0, _:\n\t\t\treturn 1\n",
+		 "this is a wildcard"},
+		{"a non-integer constant",
+		 "func pick(op : int):\n\tKEYWORD op:\n\t\t0:\n\t\t\treturn 1\n\t\t\"x\":\n\t\t\treturn 2\n",
+		 "has to be an integer constant"},
+		{"a pattern that does not fold",
+		 "func pick(op : int):\n\tKEYWORD op:\n\t\t0:\n\t\t\treturn 1\n\t\top:\n\t\t\treturn 2\n",
+		 "the compiler can fold"},
+		{"no integer pattern at all",
+		 "func pick(op : int):\n\tKEYWORD op:\n\t\t_:\n\t\t\treturn 1\n",
+		 "needs at least one integer pattern"},
+		{"a duplicate",
+		 "func pick(op : int):\n\tKEYWORD op:\n\t\t0:\n\t\t\treturn 1\n\t\t1, 0:\n\t\t\treturn 2\n",
+		 "Duplicate 'switch' pattern 0"},
+		{"a spread too wide to index",
+		 "func pick(op : int):\n\tKEYWORD op:\n\t\t0:\n\t\t\treturn 1\n\t\t100000:\n\t\t\treturn 2\n",
+		 "too sparse for a jump table"},
+	};
+
+	for (const auto& entry : cases) {
+		std::string source = entry.body;
+		const std::string with_switch =
+			source.replace(source.find("KEYWORD"), 7, "switch");
+		const std::string error = compile_error(with_switch);
+		assert(!error.empty() && "a switch that cannot be a table has to be refused");
+		if (!mentions(error, entry.expected)) {
+			std::cerr << "  " << entry.what << ": expected \"" << entry.expected
+			          << "\" in:\n    " << error << std::endl;
+			assert(false && "wrong diagnostic");
+		}
+
+		// Same source under match must compile.
+		source = entry.body;
+		const std::string with_match =
+			source.replace(source.find("KEYWORD"), 7, "match");
+		assert(compile_error(with_match).empty() &&
+			"switch must not make anything illegal that match accepts");
+
+		std::cout << "  ✓ " << entry.what << std::endl;
+	}
+}
+
+static void test_switch_dispatches_a_real_loop() {
+	std::cout << "Testing a fetch-decode-execute loop built on switch..." << std::endl;
+
+	// Inferred int subject from bitwise extraction; table still holds.
+	const std::string source = R"(
+func step(word : int, acc : int) -> int:
+	var op = (word >> 4) & 7
+	switch op:
+		0:
+			return acc + (word & 15)
+		1:
+			return acc - (word & 15)
+		2:
+			return acc * (word & 15)
+		3:
+			return acc << (word & 7)
+		4:
+			return acc >> (word & 7)
+		5:
+			return acc ^ (word & 15)
+		_:
+			return acc
+
+func test():
+	var acc = 0
+	acc = step(3, acc)
+	acc = step(19, acc)
+	acc = step(34, acc)
+	acc = step(51, acc)
+	acc = step(112, acc)
+	return acc
+)";
+
+	const IRProgram ir = compile_to_ir(source);
+	const IRFunction& step = find_function(ir, "step");
+	assert(only_switch(step).type_hint == Variant::INT);
+	assert(count_opcode(step, IROpcode::CMP_EQ) == 0);
+
+	// (((0+3)-3)*2)<<3 == 0; unmapped opcode is identity.
+	assert(call_int(ir, "test") == call_int(compile_to_ir(source, true), "test"));
+
+	verify_through_the_pipeline(source);
+
+	std::cout << "  ✓ An inferred int subject keeps the table" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Dispatch Tests ===" << std::endl << std::endl;
 
@@ -670,6 +887,12 @@ int main() {
 
 	test_the_table_reaches_riscv();
 	test_a_huge_range_is_refused();
+
+	test_switch_is_dispatch_and_nothing_else();
+	test_switch_and_a_typed_match_are_the_same_machine_code();
+	test_switch_takes_the_table_below_the_match_floor();
+	test_switch_refuses_what_a_table_cannot_do();
+	test_switch_dispatches_a_real_loop();
 
 	std::cout << std::endl << "All dispatch tests passed!" << std::endl;
 	return 0;

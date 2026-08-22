@@ -224,10 +224,19 @@ private:
 
 	bool fold_global_initializer(const Expr* expr, IRGlobalVar& out) const;
 
-	// SWITCH for dense integer-constant match arms; returns false if not dense enough.
+	// Decline reason; match ignores it, switch promotes it to a compile error.
+	struct JumpTableReject {
+		std::string reason;
+		std::string hint;
+		int line = 0;
+		int column = 0;
+	};
+
+	// SWITCH for dense integer-constant arms; false if declined, reason in reject.
 	bool gen_match_jump_table(const MatchStmt* stmt, int subject_reg,
 	                          const std::vector<std::string>& body_labels,
-	                          const std::string& default_label, FunctionContext& func);
+	                          const std::string& default_label, FunctionContext& func,
+	                          JumpTableReject* reject = nullptr);
 
 	// Match patterns: fall through on match, jump to fail_label otherwise.
 	void gen_branch_test(const MatchStmt::Branch& branch, int subject_reg,

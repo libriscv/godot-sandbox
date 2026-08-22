@@ -283,9 +283,11 @@ struct MatchStmt : Stmt {
 
 	ExprPtr subject;
 	std::vector<Branch> branches;
+	// When true, the jump table is mandatory; decline is a compile error.
+	bool is_switch = false;
 
-	MatchStmt(ExprPtr subj, std::vector<Branch> b)
-		: subject(std::move(subj)), branches(std::move(b)) {}
+	MatchStmt(ExprPtr subj, std::vector<Branch> b, bool sw = false)
+		: subject(std::move(subj)), branches(std::move(b)), is_switch(sw) {}
 };
 
 struct Parameter {

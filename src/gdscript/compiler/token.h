@@ -33,6 +33,7 @@ enum class TokenType {
 	FALSE,
 	NULL_VAL,
 	MATCH,
+	SWITCH,
 	IS,
 	AS,
 	STATIC,

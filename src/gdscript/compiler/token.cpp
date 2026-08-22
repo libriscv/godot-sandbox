@@ -29,6 +29,7 @@ const char* token_type_name(TokenType type) {
 		case TokenType::FALSE: return "FALSE";
 		case TokenType::NULL_VAL: return "NULL";
 		case TokenType::MATCH: return "MATCH";
+		case TokenType::SWITCH: return "SWITCH";
 		case TokenType::IS: return "IS";
 		case TokenType::STATIC: return "STATIC";
 		case TokenType::ENUM: return "ENUM";

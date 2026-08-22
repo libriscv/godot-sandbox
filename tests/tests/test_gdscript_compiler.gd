@@ -5195,6 +5195,170 @@ func _engine_describe(d):
 		_:
 			return "not a dictionary"
 
+func test_switch_dispatch():
+	# Mandatory jump table: int subject, int-constant patterns, no guards/destructuring.
+	var gdscript_code = """
+const OP_HALT = 0
+const OP_LOADI = 1
+const OP_ADD = 2
+const OP_SUB = 3
+const OP_MUL = 4
+const OP_NEG = 5
+
+func step(op : int, acc : int, imm : int) -> int:
+	switch op:
+		OP_HALT:
+			return acc
+		OP_LOADI:
+			return imm
+		OP_ADD:
+			return acc + imm
+		OP_SUB:
+			return acc - imm
+		OP_MUL:
+			return acc * imm
+		OP_NEG:
+			return -acc
+		_:
+			return -9999
+
+func decoded(word : int) -> int:
+	# Inferred int subject; annotation not required.
+	var op = (word >> 8) & 7
+	switch op:
+		0:
+			return 100
+		1:
+			return 101
+		2:
+			return 102
+		3:
+			return 103
+		_:
+			return -1
+
+func negative_and_holes(n : int) -> int:
+	switch n:
+		-3:
+			return 10
+		-1:
+			return 20
+		0:
+			return 30
+		2:
+			return 40
+		_:
+			return -1
+
+func run(steps : int) -> int:
+	var acc = 0
+	var i = 0
+	while i < steps:
+		acc = step(i % 6, acc, 3)
+		i += 1
+	return acc
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("step", 0, 7, 3), 7, "The first arm of a switch is reachable")
+	assert_eq(s.vmcallv("step", 1, 7, 3), 3, "Each table entry reaches its own arm")
+	assert_eq(s.vmcallv("step", 2, 7, 3), 10, "An arm should see the arguments")
+	assert_eq(s.vmcallv("step", 3, 7, 3), 4, "An arm should see the arguments")
+	assert_eq(s.vmcallv("step", 4, 7, 3), 21, "An arm should see the arguments")
+	assert_eq(s.vmcallv("step", 5, 7, 3), -7, "The last table entry is reachable")
+	assert_eq(s.vmcallv("step", 6, 7, 3), -9999, "A subject past the table reaches the wildcard")
+	assert_eq(s.vmcallv("step", -1, 7, 3), -9999, "A subject below the table reaches the wildcard")
+
+	assert_eq(s.vmcallv("decoded", 0), 100, "An inferred int subject keeps the table")
+	assert_eq(s.vmcallv("decoded", 3 << 8), 103, "An inferred int subject keeps the table")
+	assert_eq(s.vmcallv("decoded", 5 << 8), -1, "A hole in the range reaches the wildcard")
+
+	assert_eq(s.vmcallv("negative_and_holes", -3), 10, "A negative base is scaled from the right place")
+	assert_eq(s.vmcallv("negative_and_holes", -1), 20, "A negative base is scaled from the right place")
+	assert_eq(s.vmcallv("negative_and_holes", 0), 30, "Zero is an ordinary table entry")
+	assert_eq(s.vmcallv("negative_and_holes", 2), 40, "The top of the range is reachable")
+	assert_eq(s.vmcallv("negative_and_holes", 1), -1, "A hole reaches the wildcard")
+	assert_eq(s.vmcallv("negative_and_holes", -4), -1, "Below the range reaches the wildcard")
+
+	assert_eq(s.vmcallv("run", 24), _engine_run(24), "A dispatch loop should answer as the engine does")
+
+	# Differential against engine match.
+	for n in range(-5, 5):
+		assert_eq(s.vmcallv("negative_and_holes", n), _engine_negative_and_holes(n),
+			"switch and the engine's match should agree on " + str(n))
+
+	s.queue_free()
+
+func test_switch_refuses_what_it_cannot_dispatch():
+	# Each case compiles under match but is refused under switch.
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+
+	var refused = {
+		"an untyped subject": "func f(op):\n\tswitch op:\n\t\t0:\n\t\t\treturn 1\n\t\t1:\n\t\t\treturn 2\n",
+		"a float subject": "func f(op : float):\n\tswitch op:\n\t\t0:\n\t\t\treturn 1\n\t\t1:\n\t\t\treturn 2\n",
+		"a String subject": "func f(op : String):\n\tswitch op:\n\t\t0:\n\t\t\treturn 1\n\t\t1:\n\t\t\treturn 2\n",
+		"a when guard": "func f(op : int):\n\tswitch op:\n\t\t0 when op > 1:\n\t\t\treturn 1\n\t\t1:\n\t\t\treturn 2\n",
+		"a binding": "func f(op : int):\n\tswitch op:\n\t\t0:\n\t\t\treturn 1\n\t\tvar v:\n\t\t\treturn v\n",
+		"an array pattern": "func f(op : int):\n\tswitch op:\n\t\t0:\n\t\t\treturn 1\n\t\t[1, 2]:\n\t\t\treturn 2\n",
+		"a String pattern": "func f(op : int):\n\tswitch op:\n\t\t0:\n\t\t\treturn 1\n\t\t\"x\":\n\t\t\treturn 2\n",
+		"a run-time pattern": "func f(op : int):\n\tswitch op:\n\t\t0:\n\t\t\treturn 1\n\t\top:\n\t\t\treturn 2\n",
+		"a duplicated value": "func f(op : int):\n\tswitch op:\n\t\t0:\n\t\t\treturn 1\n\t\t1, 0:\n\t\t\treturn 2\n",
+		"nothing but a wildcard": "func f(op : int):\n\tswitch op:\n\t\t_:\n\t\t\treturn 1\n",
+		"a spread too wide to index": "func f(op : int):\n\tswitch op:\n\t\t0:\n\t\t\treturn 1\n\t\t100000:\n\t\t\treturn 2\n",
+	}
+
+	for what in refused:
+		var source : String = refused[what]
+		assert_true(ts.vmcall("compile_to_elf", source).is_empty(),
+			"switch should refuse " + what)
+		# Same source under match must compile.
+		assert_false(ts.vmcall("compile_to_elf", source.replace("switch op:", "match op:")).is_empty(),
+			"match should still accept " + what)
+
+	ts.queue_free()
+
+func _engine_negative_and_holes(n):
+	match n:
+		-3:
+			return 10
+		-1:
+			return 20
+		0:
+			return 30
+		2:
+			return 40
+		_:
+			return -1
+
+func _engine_step(op, acc, imm):
+	match op:
+		0:
+			return acc
+		1:
+			return imm
+		2:
+			return acc + imm
+		3:
+			return acc - imm
+		4:
+			return acc * imm
+		5:
+			return -acc
+		_:
+			return -9999
+
+func _engine_run(steps):
+	var acc = 0
+	var i = 0
+	while i < steps:
+		acc = _engine_step(i % 6, acc, 3)
+		i += 1
+	return acc
+
 func test_cpu_runs_its_programs():
 	var source = _load_cpu_source()
 	if source == "":
