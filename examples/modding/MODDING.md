@@ -35,6 +35,15 @@ Standard callbacks (`_ready`, `_process`, `_physics_process`) work normally.
 calls; a bare Callable global does not. Write `api["log"].call(x)`, not
 `var log = api["log"]` at file scope.
 
+**Resource loading.** `load()` compiles and works, but `restrictions = true`
+denies all paths by default. A game that wants mods to load specific assets can
+install a selective callback:
+
+```gdscript
+node.call("set_resource_allowed_callback", func(_sandbox, path):
+    return path.begins_with("res://mods/shared/"))
+```
+
 ## API surface
 
 `_build_api()` in `node_2d.gd` defines the entire host surface:
@@ -51,7 +60,7 @@ No game nodes are exposed. Callables can be called, not unwrapped.
 ## Denied operations
 
 `mods/breakout` is a hostile mod shipped with the game. Each `try_*` function
-attempts one forbidden operation. All six are refused:
+attempts one forbidden operation. All seven are refused:
 
 | Attempt                            | Blocked by              |
 | ---------------------------------- | ----------------------- |
@@ -61,9 +70,10 @@ attempts one forbidden operation. All six are refused:
 | `get_node("/root").call(...)`      | Method denied           |
 | Read `get_node("/root").name`      | Property denied         |
 | Write `get_node("/root").name`     | Property denied         |
+| `load("res://project.godot")`     | Resource denied         |
 
 `get_node()` returns a handle, but every method and property on it is denied.
-`load("res://...")` is a compile error: no program is produced.
+`load()` compiles and runs, but restrictions deny all resource paths by default.
 
 A refused call raises inside the guest and unwinds that call. The mod stays
 loaded.

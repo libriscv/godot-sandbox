@@ -34,3 +34,7 @@ func try_write_root_property() -> String:
 	var root = get_node("/root")
 	root.name = "pwned"
 	return "wrote a property on the scene root"
+
+func try_load_resource() -> String:
+	var res = load("res://project.godot")
+	return "loaded a project resource: " + str(res)
