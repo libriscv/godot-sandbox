@@ -1174,9 +1174,9 @@ gaddr_t Sandbox::cached_address_of_variant(const Variant &name) const {
 	// Read the String in place: copying it out of the Variant is two calls into the engine
 	// and two atomic refcount updates, all to look at a pointer.
 	const String &str = *(const String *)&inner->value;
-	const uintptr_t id = reinterpret_cast<uintptr_t>(string_id(str));
+	const uintptr_t id = string_cache_key(str);
 	NameAddressCache::Entry &entry = m_name_addresses.entries[(id * 0x9E3779B97F4A7C15ull >> 32) & (NameAddressCache::SIZE - 1)];
-	if (entry.valid && string_id(entry.name) == (const void *)id) {
+	if (entry.valid && string_cache_hit(entry.name, str)) {
 		return entry.address;
 	}
 
