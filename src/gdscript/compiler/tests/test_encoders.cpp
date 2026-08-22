@@ -258,11 +258,11 @@ void test_far_branches_are_relaxed() {
 	// A loop whose body is thousands of instructions long, so the exit branch
 	// cannot reach the end of the loop.
 	std::string source = "func test():\n\tvar total = 0\n\tvar i = 0\n\twhile i < 3:\n";
-	for (int k = 0; k < 60; k++) {
+	for (int k = 0; k < 240; k++) {
 		source += "\t\tvar a" + std::to_string(k) + " = i + " + std::to_string(k) + "\n";
 	}
 	source += "\t\ttotal = total";
-	for (int k = 0; k < 60; k++) {
+	for (int k = 0; k < 240; k++) {
 		source += " + a" + std::to_string(k);
 	}
 	source += "\n\t\ti = i + 1\n\treturn total\n";

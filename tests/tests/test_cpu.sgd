@@ -29,6 +29,90 @@ const OP_OUT   = 15
 func encode(op : int, dst : int, src : int, imm : int) -> int:
 	return op | (dst << 8) | (src << 16) | (imm << 24)
 
+# Persistent machine state for per-call stepping.
+var mem : Array = []
+var reg : Array = [0, 0, 0, 0, 0, 0]
+var out : Array = []
+var pc : int = 0
+var halted : bool = false
+
+func reset(program : Array) -> void:
+	mem = program
+	reg = [0, 0, 0, 0, 0, 0]
+	out = []
+	pc = 0
+	halted = false
+
+func trace() -> Array:
+	return out
+
+func is_halted() -> bool:
+	return halted
+
+func registers() -> Array:
+	return reg
+
+# Execute one instruction. Returns next pc, or -1 when halted.
+func step() -> int:
+	if halted:
+		return -1
+	var word : int = mem[pc]
+	pc += 1
+	var op : int = word & 255
+	var dst : int = (word >> 8) & 255
+	var src : int = (word >> 16) & 255
+	var imm : int = (word >> 24) & 255
+	match op:
+		OP_HALT:
+			halted = true
+			return -1
+		OP_LOADI:
+			reg[dst] = imm
+		OP_MOV:
+			reg[dst] = reg[src]
+		OP_ADD:
+			reg[dst] = reg[dst] + reg[src]
+		OP_SUB:
+			reg[dst] = reg[dst] - reg[src]
+		OP_MUL:
+			reg[dst] = reg[dst] * reg[src]
+		OP_AND:
+			reg[dst] = reg[dst] & reg[src]
+		OP_OR:
+			reg[dst] = reg[dst] | reg[src]
+		OP_XOR:
+			reg[dst] = reg[dst] ^ reg[src]
+		OP_SHL:
+			reg[dst] = reg[dst] << imm
+		OP_SHR:
+			reg[dst] = reg[dst] >> imm
+		OP_LT:
+			if reg[dst] < reg[src]:
+				reg[dst] = 1
+			else:
+				reg[dst] = 0
+		OP_JMP:
+			pc = imm
+		OP_JZ:
+			if reg[dst] == 0:
+				pc = imm
+		OP_JNZ:
+			if reg[dst] != 0:
+				pc = imm
+		OP_OUT:
+			out.append(reg[dst])
+		_:
+			halted = true
+			return -1
+	return pc
+
+func step_until_halted(fuel : int) -> Array:
+	while fuel > 0:
+		fuel -= 1
+		if step() < 0:
+			break
+	return out
+
 # Run `program` until it halts or `fuel` runs out. Returns everything OP_OUT
 # produced, i.e. the whole trace rather than the last value.
 func run(program : Array, fuel : int) -> Array:
@@ -87,8 +171,8 @@ func run(program : Array, fuel : int) -> Array:
 				return out
 	return out
 
-# 1 + 2 + ... + n, computed by the machine above. Returns [sum].
-func sum_to(n : int) -> Array:
+# The program 1 + 2 + ... + n, as instruction words.
+func sum_to_program(n : int) -> Array:
 	var program : Array = []
 	program.append(encode(OP_LOADI, 0, 0, 0))     #  0: acc   = 0
 	program.append(encode(OP_LOADI, 1, 0, 1))     #  1: i     = 1
@@ -102,7 +186,16 @@ func sum_to(n : int) -> Array:
 	program.append(encode(OP_JMP,   0, 0, 4))     #  9: goto 4
 	program.append(encode(OP_OUT,   0, 0, 0))     # 10: emit acc
 	program.append(encode(OP_HALT,  0, 0, 0))     # 11: stop
-	return run(program, 4096)
+	return program
+
+# 1 + 2 + ... + n, computed by the machine above. Returns [sum].
+func sum_to(n : int) -> Array:
+	return run(sum_to_program(n), 4096)
+
+# The same sum, one step() per instruction instead of one call for the run.
+func sum_to_stepped(n : int) -> Array:
+	reset(sum_to_program(n))
+	return step_until_halted(4096)
 
 # Exercises the arms the summing program never reaches. Emits, in order:
 # a-b, a*b, a&b, a|b, a^b, a<<1, a>>2, then a JNZ countdown 3, 2, 1.

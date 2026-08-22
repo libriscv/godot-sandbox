@@ -140,6 +140,49 @@ func test_bench_cpu_dispatch():
 	node.free()
 	sandbox.free()
 
+func test_bench_cpu_single_step():
+	# Per-call step: measures entry/decode/dispatch/exit overhead.
+	if _elf.is_empty():
+		return
+	var sandbox := _load_elf(_elf)
+	var gds := _as_gdscript(_source)
+	if gds == null:
+		sandbox.free()
+		return
+
+	var program := _make_program()
+	var steps := 20000
+
+	# Sanity check: both machines must agree.
+	sandbox.vmcallv("reset", program)
+	gds.call("reset", program)
+	for i in range(64):
+		assert_eq(sandbox.vmcallv("step"), gds.call("step"),
+			"stepping should agree with the engine at step " + str(i))
+
+	var stepped_in_sandbox := func():
+		sandbox.vmcallv("reset", program)
+		for i in range(steps):
+			sandbox.vmcallv("step")
+	var stepped_in_engine := func():
+		gds.call("reset", program)
+		for i in range(steps):
+			gds.call("step")
+
+	# Loop inside the guest, for comparison.
+	var looped_in_sandbox := func():
+		sandbox.vmcallv("reset", program)
+		sandbox.vmcallv("step_until_halted", steps)
+
+	_bench("single-instruction step", "SafeGDScript (sandbox)", steps, stepped_in_sandbox, "emulated instr")
+	_bench("single-instruction step", "GDScript (engine)", steps, stepped_in_engine, "emulated instr")
+	_bench("single-instruction step", "SafeGDScript (loop in guest)", steps, looped_in_sandbox, "emulated instr")
+
+	_note("single-instruction step", "mode", _mode(sandbox))
+	_report("single-instruction step", "GDScript (engine)")
+
+	sandbox.free()
+
 func test_bench_cpu_call_overhead():
 	# encode() is four shifts and three ors: near enough to nothing that the
 	# number is the cost of getting into the callee and back. It is the floor

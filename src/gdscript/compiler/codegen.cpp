@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "codegen.h"
 #include "syscall_numbers.h"
 #include "compiler_exception.h"
@@ -313,10 +314,13 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl) {
 
 	if (func.ir.instructions.empty() ||
 	    func.ir.instructions.back().opcode != IROpcode::RETURN) {
+		// Bare RETURN reads r0, which aliases the first parameter.
+		func.ir.instructions.emplace_back(IROpcode::LOAD_NIL, IRValue::reg(0));
 		func.ir.instructions.emplace_back(IROpcode::RETURN);
 	}
 
-	func.ir.max_registers = func.next_register;
+	// r0 exists even when the body declares no registers.
+	func.ir.max_registers = std::max(func.next_register, 1);
 	pop_scope(func);
 
 	return std::move(func.ir);
@@ -629,6 +633,9 @@ void CodeGenerator::gen_return(const ReturnStmt* stmt, FunctionContext& func) {
 			func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(0), IRValue::reg(reg));
 		}
 		free_register(func, reg);
+	} else {
+		// r0 aliases the first parameter; explicit null needed.
+		func.ir.instructions.emplace_back(IROpcode::LOAD_NIL, IRValue::reg(0));
 	}
 
 	func.ir.instructions.emplace_back(IROpcode::RETURN);

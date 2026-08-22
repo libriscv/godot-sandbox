@@ -132,6 +132,8 @@ private:
 	void emit_or(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_xor(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_xori(uint8_t rd, uint8_t rs, int32_t imm);
+	void emit_andi(uint8_t rd, uint8_t rs, int32_t imm);
+	void emit_ori(uint8_t rd, uint8_t rs, int32_t imm);
 	void emit_sll(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_srl(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_sra(uint8_t rd, uint8_t rs1, uint8_t rs2);
@@ -219,7 +221,7 @@ private:
 	void emit_load_variant_type(uint8_t rd, uint8_t base_reg, int32_t variant_offset);
 	void emit_store_variant_type(uint8_t rs, uint8_t base_reg, int32_t variant_offset);
 	// Variant::booleanize(). type_hint == TypeHint_NONE skips the fast path.
-	void emit_variant_truthy(uint8_t rd, int variant_offset, int32_t type_hint);
+	void emit_variant_truthy(uint8_t rd, int variant_offset, int32_t type_hint, uint8_t base_reg = REG_SP);
 
 	// Unary Variant::evaluate(). Scratch slot 1 holds the NIL rhs Godot expects.
 	void emit_variant_eval_unary(int result_offset, int operand_offset, int op);
@@ -250,8 +252,9 @@ private:
 	// Integer-typed BRANCH_EQ..BRANCH_GTE on int64 payloads.
 	void emit_int_fused_branch(IROpcode op, int lhs_offset, int rhs_offset, const std::string& label);
 
-	// ECALL_ARRAY_AT for typed Array[int-index] access.
-	void emit_array_element_access(bool is_set, int array_offset, int index_offset, int value_offset);
+	// ECALL_ARRAY_AT; index_nonnegative elides the negative-index wrap.
+	void emit_array_element_access(bool is_set, int array_offset, int index_offset, int value_offset,
+		bool index_nonnegative = false, int array_vreg = -1, int index_vreg = -1);
 
 	// Caller sets up data_ptr_reg (or REG_ZERO for nullptr) before calling.
 	void emit_vcreate_syscall(int variant_type, int method, uint8_t data_ptr_reg, int result_offset);
@@ -259,8 +262,9 @@ private:
 	void emit_variant_create_empty_array(int stack_offset);
 	void emit_variant_create_empty_dictionary(int stack_offset);
 
-	// Native RISC-V paths when type hints are available; no syscalls.
-	void emit_typed_int_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op);
+	// Native int arithmetic; vreg != -1 may resolve to REG_T2 via chaining.
+	void emit_typed_int_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op,
+		int lhs_vreg = -1, int rhs_vreg = -1);
 	void emit_typed_int_comparison(int result_offset, int lhs_offset, int rhs_offset, IROpcode cmp_op);
 	void emit_typed_float_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op);
 	void emit_typed_vector_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op, IRInstruction::TypeHint type_hint);
@@ -292,6 +296,27 @@ private:
 	void emit_global_int_result(int result_offset, uint8_t rs, GlobalResult result);
 
 	int get_variant_stack_offset(int virtual_reg);
+
+	// Immediate folding; folds_to_immediate() is the single decision point.
+	void plan_constants(const IRFunction& func);
+	bool constant_int(int vreg, int64_t& value) const;
+	bool folds_to_immediate(const IRInstruction& instr, size_t operand_index) const;
+	static bool int_op_takes_immediate(IROpcode op, int64_t value);
+	static bool int_op_is_commutative(IROpcode op);
+	void emit_typed_int_binary_op_imm(int result_offset, int lhs_offset, int64_t imm, IROpcode op,
+		int lhs_vreg = -1);
+	void plan_int_chaining(const IRFunction& func);
+	void plan_nonnegative(const IRFunction& func);
+	void plan_global_handles(const IRFunction& func);
+	static std::vector<std::vector<size_t>> build_successors(const IRFunction& func);
+	// Scoped index into rd from the frame slot or global data area.
+	void emit_container_handle(uint8_t rd, int vreg, int offset);
+	std::pair<uint8_t, int> variant_source(int vreg, int offset, uint8_t scratch);
+	static bool is_typed_int_binary(const IRInstruction& instr);
+	// Int payload into rd; REG_T2 when chained.
+	uint8_t emit_int_operand(uint8_t rd, int vreg, int offset);
+	// Materialise INT Variant unless chaining keeps the value in REG_T2.
+	void emit_typed_int_result(int result_offset);
 
 	// Per-instruction temporaries; do not survive past the emitting instruction.
 	int get_scratch_variant_offset(int index = 0);
@@ -346,6 +371,28 @@ private:
 
 		// Per-parameter: incoming Variant read before its register is overwritten.
 		std::vector<bool> live_params;
+
+		// vreg -> value for singly-defined int LOAD_IMMs.
+		std::unordered_map<int, int64_t> const_ints;
+
+		// Per-instruction: all uses folded; the Variant is never built.
+		std::vector<bool> unmaterialized_imm;
+
+		// Per-instruction: result stays in REG_T2 for the next instruction.
+		std::vector<bool> int_kept_in_reg;
+
+		// Destination vreg kept in REG_T2 this instruction, or -1.
+		int keep_int_in_reg = -1;
+
+		// vreg left in REG_T2 by the previous instruction, or -1.
+		int chained_vreg = -1;
+		int next_chained_vreg = -1;
+
+		// Proven non-negative vregs; subscripts skip the wrap.
+		std::unordered_set<int> nonnegative;
+
+		// vreg -> global index; reads go to the data area, no frame copy.
+		std::unordered_map<int, size_t> global_handles;
 	};
 
 	FunctionState m_fn;

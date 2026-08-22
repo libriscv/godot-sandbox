@@ -1,4 +1,5 @@
 #include "riscv_codegen.h"
+#include <unordered_set>
 #include "compiler_exception.h"
 #include "variant_types.h"
 #include "syscall_numbers.h"
@@ -327,6 +328,10 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 	}
 	m_fn.forward_to_return = find_return_forwarding(func);
 	m_fn.live_params = find_live_parameters(func);
+	plan_constants(func);
+	plan_int_chaining(func);
+	plan_nonnegative(func);
+	plan_global_handles(func);
 	const bool copies_a_parameter =
 		std::find(m_fn.live_params.begin(), m_fn.live_params.end(), true) != m_fn.live_params.end();
 
@@ -473,7 +478,7 @@ void RISCVCodeGen::gen_syscall_array_size(const IRInstruction& instr, int result
 
 	spill_around_syscall({REG_A0});
 
-	emit_lw(REG_A0, REG_SP, array_offset + 8);
+	emit_container_handle(REG_A0, array_vreg, array_offset);
 	emit_li(REG_A7, ECALL_ARRAY_SIZE);
 	emit_ecall();
 
@@ -494,7 +499,7 @@ void RISCVCodeGen::gen_syscall_array_at(const IRInstruction& instr, int result_v
 
 	spill_around_syscall({REG_A0, REG_A1, REG_A2});
 
-	emit_lw(REG_A0, REG_SP, array_offset + 8);
+	emit_container_handle(REG_A0, array_vreg, array_offset);
 	emit_ld(REG_A1, REG_SP, index_offset + 8); // int64, not int32
 	emit_load_stack_offset(REG_A2, result_offset);
 	emit_li(REG_A7, ECALL_ARRAY_AT);
@@ -529,7 +534,7 @@ void RISCVCodeGen::gen_syscall_dictionary_ops(const IRInstruction& instr, int re
 	spill_around_syscall(clobbered_regs);
 
 	emit_li(REG_A0, dict_op);
-	emit_lw(REG_A1, REG_SP, dict_offset + 8); // scoped index
+	emit_container_handle(REG_A1, dict_vreg, dict_offset); // scoped index
 	if (has_key) {
 		emit_load_stack_offset(REG_A2, key_offset);
 		emit_load_stack_offset(REG_A3, result_offset);
@@ -911,6 +916,13 @@ void RISCVCodeGen::gen_store_global(const IRInstruction& instr) {
 	// Load address of global variable
 	emit_address_of_global(REG_T0, static_cast<size_t>(global_idx));
 
+	if (global.value_type == Variant::INT && !needs_vassign && src_vreg == m_fn.chained_vreg) {
+		emit_li(REG_T1, Variant::INT);
+		emit_store_variant_type(REG_T1, REG_T0, 0);
+		emit_store_variant_int(REG_T2, REG_T0, 0);
+		return;
+	}
+
 	// Load source address
 	emit_load_stack_offset(REG_T1, src_offset);
 
@@ -1231,7 +1243,20 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 		int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
 
 		if (instr.type_hint == Variant::INT) {
-			emit_typed_int_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
+			int64_t imm;
+			if (folds_to_immediate(instr, 2) &&
+				constant_int(rhs_vreg_local, imm)) {
+				emit_typed_int_binary_op_imm(dst_offset, lhs_offset, imm, instr.opcode, lhs_vreg_local);
+				return;
+			}
+			// Commutative: try the left operand.
+			if (folds_to_immediate(instr, 1) &&
+				constant_int(lhs_vreg_local, imm)) {
+				emit_typed_int_binary_op_imm(dst_offset, rhs_offset, imm, instr.opcode, rhs_vreg_local);
+				return;
+			}
+			emit_typed_int_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode,
+				lhs_vreg_local, rhs_vreg_local);
 			return;
 		} else if (instr.type_hint == Variant::FLOAT) {
 			emit_typed_float_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
@@ -1740,6 +1765,17 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			int dst_vreg = std::get<int>(instr.operands[0].value);
 			int64_t global_idx = std::get<int64_t>(instr.operands[1].value);
 
+			if (m_fn.keep_int_in_reg >= 0) {
+				emit_address_of_global(REG_T0, static_cast<size_t>(global_idx));
+				emit_load_variant_int(REG_T2, REG_T0, 0);
+				m_fn.next_chained_vreg = m_fn.keep_int_in_reg;
+				break;
+			}
+
+			if (m_fn.global_handles.count(dst_vreg)) {
+				break;
+			}
+
 			// Load global base address into t0
 			// For now, we'll use a label to mark the global data section
 			emit_address_of_global(REG_T0, static_cast<size_t>(global_idx));
@@ -1861,7 +1897,8 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::BRANCH_ZERO: {
 			int vreg = std::get<int>(instr.operands[0].value);
 			int offset = get_variant_stack_offset(vreg);
-			emit_variant_truthy(REG_T2, offset, instr.type_hint);
+			auto [base, off] = variant_source(vreg, offset, REG_T0);
+			emit_variant_truthy(REG_T2, off, instr.type_hint, base);
 			mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
 			emit_beq(REG_T2, REG_ZERO, 0);
 			break;
@@ -1870,7 +1907,8 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::BRANCH_NOT_ZERO: {
 			int vreg = std::get<int>(instr.operands[0].value);
 			int offset = get_variant_stack_offset(vreg);
-			emit_variant_truthy(REG_T2, offset, instr.type_hint);
+			auto [base, off] = variant_source(vreg, offset, REG_T0);
+			emit_variant_truthy(REG_T2, off, instr.type_hint, base);
 			mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
 			emit_bne(REG_T2, REG_ZERO, 0);
 			break;
@@ -1927,7 +1965,7 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 
 			emit_li(REG_A0, array_op(Array_Op::PUSH_BACK));
-			emit_lw(REG_A1, REG_SP, array_offset + VARIANT_DATA_OFFSET);
+			emit_container_handle(REG_A1, std::get<int>(instr.operands[1].value), array_offset);
 			emit_li(REG_A2, 0);
 			emit_add_offset(REG_A3, REG_SP, value_offset);
 			emit_li(REG_A7, ECALL_ARRAY_OPS);
@@ -1947,7 +1985,7 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 
 			emit_li(REG_A0, dictionary_op(Dictionary_Op::SET));
-			emit_lw(REG_A1, REG_SP, dict_offset + VARIANT_DATA_OFFSET);
+			emit_container_handle(REG_A1, std::get<int>(instr.operands[0].value), dict_offset);
 			emit_add_offset(REG_A2, REG_SP, key_offset);
 			emit_add_offset(REG_A3, REG_SP, value_offset);
 			emit_li(REG_A7, ECALL_DICTIONARY_OPS);
@@ -1968,7 +2006,10 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 
 			spill_around_syscall({REG_A0, REG_A1, REG_A2});
 
-			emit_array_element_access(is_set, array_offset, index_offset, value_offset);
+			const int index_vreg = std::get<int>(instr.operands[index_operand].value);
+			emit_array_element_access(is_set, array_offset, index_offset, value_offset,
+				m_fn.nonnegative.count(index_vreg) != 0,
+				std::get<int>(instr.operands[array_operand].value), index_vreg);
 			break;
 		}
 
@@ -2124,6 +2165,16 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	emit_prologue(func);
 
 	for (size_t instr_idx = 0; instr_idx < func.instructions.size(); instr_idx++) {
+		if (m_fn.unmaterialized_imm[instr_idx]) {
+			m_fn.current_instr_idx++;
+			continue;
+		}
+
+		m_fn.chained_vreg = m_fn.next_chained_vreg;
+		m_fn.next_chained_vreg = -1;
+		m_fn.keep_int_in_reg = m_fn.int_kept_in_reg[instr_idx]
+			? std::get<int>(func.instructions[instr_idx].operands[0].value) : -1;
+
 		m_fn.forward_return = m_fn.forward_to_return[instr_idx];
 		m_fn.current_instr_idx++;
 		gen_instruction(func.instructions[instr_idx]);
@@ -2399,18 +2450,9 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		"Unknown IR opcode in ABI clobber analysis");
 }
 
-std::vector<bool> RISCVCodeGen::find_live_parameters(const IRFunction& func) {
-	// Backward liveness to a fixed point: a parameter is copied in the
-	// prologue only if it is live at entry. Loops can carry reads past
-	// writes, so a simple scan is not enough.
-	const size_t count = func.parameters.size();
-	std::vector<bool> live_at_entry(count, false);
-	if (count == 0 || func.instructions.empty()) {
-		return live_at_entry;
-	}
-
+// CFG successors; over-approximation is safe (extra edges only add conservatism).
+std::vector<std::vector<size_t>> RISCVCodeGen::build_successors(const IRFunction& func) {
 	const size_t n = func.instructions.size();
-
 	std::unordered_map<std::string, size_t> label_index;
 	for (size_t i = 0; i < n; i++) {
 		if (ir_has_effect(func.instructions[i].opcode, IR_LABEL)) {
@@ -2418,7 +2460,6 @@ std::vector<bool> RISCVCodeGen::find_live_parameters(const IRFunction& func) {
 		}
 	}
 
-	// Over-approximation is safe: extra edges keep a parameter live
 	std::vector<std::vector<size_t>> successors(n);
 	for (size_t i = 0; i < n; i++) {
 		const IRInstruction& instr = func.instructions[i];
@@ -2435,6 +2476,20 @@ std::vector<bool> RISCVCodeGen::find_live_parameters(const IRFunction& func) {
 			successors[i].push_back(i + 1);
 		}
 	}
+	return successors;
+}
+
+std::vector<bool> RISCVCodeGen::find_live_parameters(const IRFunction& func) {
+	// Backward liveness to a fixed point; loops can carry reads past writes.
+	const size_t count = func.parameters.size();
+	std::vector<bool> live_at_entry(count, false);
+	if (count == 0 || func.instructions.empty()) {
+		return live_at_entry;
+	}
+
+	const size_t n = func.instructions.size();
+
+	const std::vector<std::vector<size_t>> successors = build_successors(func);
 
 	// live_in[i][p]: parameter p read before written on some path from i
 	std::vector<std::vector<bool>> live_in(n, std::vector<bool>(count, false));
@@ -2477,6 +2532,484 @@ std::vector<bool> RISCVCodeGen::find_live_parameters(const IRFunction& func) {
 	return live_in[0];
 }
 
+bool RISCVCodeGen::int_op_is_commutative(IROpcode op) {
+	switch (op) {
+		case IROpcode::ADD:
+		case IROpcode::BIT_AND:
+		case IROpcode::BIT_OR:
+		case IROpcode::BIT_XOR:
+			return true;
+		default:
+			return false;
+	}
+}
+
+// True when op(_, value) has an exact I-type encoding.
+bool RISCVCodeGen::int_op_takes_immediate(IROpcode op, int64_t value) {
+	switch (op) {
+		case IROpcode::ADD:
+		case IROpcode::BIT_AND:
+		case IROpcode::BIT_OR:
+		case IROpcode::BIT_XOR:
+			return fits_in_signed(value, I_TYPE_IMM_BITS);
+		case IROpcode::SUB:
+			return fits_in_signed(-value, I_TYPE_IMM_BITS);
+		case IROpcode::SHL:
+		case IROpcode::SHR:
+			return value >= 0 && value < 64;
+		default:
+			return false;
+	}
+}
+
+bool RISCVCodeGen::constant_int(int vreg, int64_t& value) const {
+	auto it = m_fn.const_ints.find(vreg);
+	if (it == m_fn.const_ints.end()) {
+		return false;
+	}
+	value = it->second;
+	return true;
+}
+
+// Whether operand_index of a typed-INT binary op is a foldable constant.
+bool RISCVCodeGen::folds_to_immediate(const IRInstruction& instr, size_t operand_index) const {
+	if (instr.type_hint != Variant::INT) {
+		return false;
+	}
+	if (operand_index != 1 && operand_index != 2) {
+		return false;
+	}
+	if (instr.operands.size() < 3) {
+		return false;
+	}
+	for (size_t i = 0; i < 3; i++) {
+		if (instr.operands[i].type != IRValue::Type::REGISTER) {
+			return false;
+		}
+	}
+	switch (instr.opcode) {
+		case IROpcode::ADD:
+		case IROpcode::SUB:
+		case IROpcode::BIT_AND:
+		case IROpcode::BIT_OR:
+		case IROpcode::BIT_XOR:
+		case IROpcode::SHL:
+		case IROpcode::SHR:
+			break;
+		default:
+			return false;
+	}
+	// Left operand folds only for commutative ops.
+	if (operand_index == 1 && !int_op_is_commutative(instr.opcode)) {
+		return false;
+	}
+	int64_t value;
+	if (!constant_int(std::get<int>(instr.operands[operand_index].value), value)) {
+		return false;
+	}
+	// Same vreg on both sides: the slot is still read by the other operand.
+	const int other = std::get<int>(instr.operands[operand_index == 1 ? 2 : 1].value);
+	if (other == std::get<int>(instr.operands[operand_index].value)) {
+		return false;
+	}
+	return int_op_takes_immediate(instr.opcode, value);
+}
+
+void RISCVCodeGen::plan_constants(const IRFunction& func) {
+	m_fn.const_ints.clear();
+	m_fn.unmaterialized_imm.assign(func.instructions.size(), false);
+
+	// Parameters count as a prior definition.
+	std::unordered_map<int, size_t> def_count;
+	for (size_t i = 0; i < func.parameters.size(); i++) {
+		def_count[static_cast<int>(i)] = 1;
+	}
+	for (const auto& instr : func.instructions) {
+		const int dst = ir_destination_register(instr);
+		if (dst >= 0) {
+			def_count[dst]++;
+		}
+	}
+
+	std::unordered_map<int, size_t> defining_instruction;
+	for (size_t i = 0; i < func.instructions.size(); i++) {
+		const IRInstruction& instr = func.instructions[i];
+		if (instr.opcode != IROpcode::LOAD_IMM || instr.operands.size() < 2) {
+			continue;
+		}
+		if (instr.operands[0].type != IRValue::Type::REGISTER ||
+			instr.operands[1].type != IRValue::Type::IMMEDIATE) {
+			continue;
+		}
+		if (!std::holds_alternative<int64_t>(instr.operands[1].value)) {
+			continue;
+		}
+		const int dst = std::get<int>(instr.operands[0].value);
+		if (def_count[dst] != 1) {
+			continue;
+		}
+		m_fn.const_ints[dst] = std::get<int64_t>(instr.operands[1].value);
+		defining_instruction[dst] = i;
+	}
+
+	if (m_fn.const_ints.empty()) {
+		return;
+	}
+
+	// Keep the Variant if any read does not fold.
+	std::unordered_set<int> materialized;
+	std::vector<int> reads;
+	for (const auto& instr : func.instructions) {
+		reads.clear();
+		ir_collect_read_registers(instr, reads);
+		for (size_t index = 0; index < instr.operands.size(); index++) {
+			if (instr.operands[index].type != IRValue::Type::REGISTER ||
+				!ir_reads_operand(instr, index)) {
+				continue;
+			}
+			const int vreg = std::get<int>(instr.operands[index].value);
+			if (m_fn.const_ints.count(vreg) && !folds_to_immediate(instr, index)) {
+				materialized.insert(vreg);
+			}
+		}
+		// Bare RETURN reads r0 implicitly.
+		for (int vreg : reads) {
+			if (m_fn.const_ints.count(vreg) && instr.operands.empty()) {
+				materialized.insert(vreg);
+			}
+		}
+	}
+
+	for (const auto& entry : defining_instruction) {
+		if (!materialized.count(entry.first)) {
+			m_fn.unmaterialized_imm[entry.second] = true;
+		}
+	}
+}
+
+// Elide the frame copy when every read of a global takes only its handle or
+// payload directly from the data area.
+void RISCVCodeGen::plan_global_handles(const IRFunction& func) {
+	m_fn.global_handles.clear();
+
+	// Operand positions that have a variant_source() call at the emit site.
+	// Unlisted positions read the frame slot, so the copy must stay.
+	const auto direct_operands = [](const IRInstruction& instr) -> std::pair<int, int> {
+		if (is_typed_int_binary(instr)) {
+			return { 1, 2 };
+		}
+		switch (instr.opcode) {
+			case IROpcode::BRANCH_ZERO:
+			case IROpcode::BRANCH_NOT_ZERO:
+				return { 0, -1 };
+			case IROpcode::ARRAY_SET:
+				return { 0, 1 };  // container, index
+			case IROpcode::ARRAY_GET:
+				return { 1, 2 };
+			case IROpcode::DICT_SET:
+				return { 0, -1 };
+			case IROpcode::ARRAY_APPEND:
+				return { 1, -1 };
+			case IROpcode::CALL_SYSCALL: {
+				if (instr.operands.size() < 2 ||
+					instr.operands[1].type != IRValue::Type::IMMEDIATE) {
+					return { -1, -1 };
+				}
+				switch (std::get<int64_t>(instr.operands[1].value)) {
+					case ECALL_ARRAY_SIZE:
+						return { 2, -1 };
+					case ECALL_ARRAY_AT:
+					case ECALL_DICTIONARY_OPS:
+						return { 3, -1 };
+					default:
+						return { -1, -1 };
+				}
+			}
+			default:
+				return { -1, -1 };
+		}
+	};
+
+	const size_t n = func.instructions.size();
+	std::unordered_map<int, size_t> candidates;
+	std::unordered_map<int, size_t> def_count;
+	for (size_t i = 0; i < func.parameters.size(); i++) {
+		def_count[static_cast<int>(i)]++;
+	}
+	for (const auto& instr : func.instructions) {
+		const int dst = ir_destination_register(instr);
+		if (dst >= 0) {
+			def_count[dst]++;
+		}
+	}
+
+	const std::vector<std::vector<size_t>> successors = build_successors(func);
+
+	// Marks nodes reachable through a STORE_GLOBAL to `index` (or a CALL).
+	const auto assigned_before = [&](size_t from, int64_t index) {
+		const auto stores = [&](size_t node) {
+			const IRInstruction& instr = func.instructions[node];
+			if (instr.opcode == IROpcode::CALL) {
+				return true;
+			}
+			return instr.opcode == IROpcode::STORE_GLOBAL && !instr.operands.empty() &&
+				instr.operands[0].type == IRValue::Type::IMMEDIATE &&
+				std::get<int64_t>(instr.operands[0].value) == index;
+		};
+
+		std::vector<bool> reachable(n, false);
+		std::vector<bool> tainted(n, false);
+		reachable[from] = true;
+		for (bool changed = true; changed; ) {
+			changed = false;
+			for (size_t node = 0; node < n; node++) {
+				if (!reachable[node]) {
+					continue;
+				}
+				const bool out = tainted[node] || stores(node);
+				for (size_t succ : successors[node]) {
+					if (!reachable[succ]) {
+						reachable[succ] = true;
+						changed = true;
+					}
+					if (out && !tainted[succ]) {
+						tainted[succ] = true;
+						changed = true;
+					}
+				}
+			}
+		}
+		return tainted;
+	};
+
+	for (size_t i = 0; i < n; i++) {
+		const IRInstruction& instr = func.instructions[i];
+		if (instr.opcode != IROpcode::LOAD_GLOBAL || instr.operands.size() < 2 ||
+			instr.operands[0].type != IRValue::Type::REGISTER ||
+			instr.operands[1].type != IRValue::Type::IMMEDIATE) {
+			continue;
+		}
+		const int64_t index = std::get<int64_t>(instr.operands[1].value);
+		if (index < 0 || static_cast<size_t>(index) >= m_globals.size()) {
+			continue;
+		}
+		const int dst = std::get<int>(instr.operands[0].value);
+		if (dst == IRFunction::RETURN_REGISTER || def_count[dst] != 1) {
+			continue;
+		}
+		const std::vector<bool> tainted = assigned_before(i, index);
+		bool safe = true;
+		std::vector<int> dst_reads;
+		for (size_t j = 0; j < n && safe; j++) {
+			if (!tainted[j]) {
+				continue;
+			}
+			dst_reads.clear();
+			ir_collect_read_registers(func.instructions[j], dst_reads);
+			safe = std::find(dst_reads.begin(), dst_reads.end(), dst) == dst_reads.end();
+		}
+		if (safe) {
+			candidates[dst] = static_cast<size_t>(index);
+		}
+	}
+
+	if (candidates.empty()) {
+		return;
+	}
+
+	// Any non-direct read disqualifies the candidate.
+	std::vector<int> reads;
+	for (const auto& instr : func.instructions) {
+		const auto [direct_a, direct_b] = direct_operands(instr);
+		reads.clear();
+		ir_collect_read_registers(instr, reads);
+		for (size_t index = 0; index < instr.operands.size(); index++) {
+			if (instr.operands[index].type != IRValue::Type::REGISTER ||
+				!ir_reads_operand(instr, index)) {
+				continue;
+			}
+			if (static_cast<int>(index) == direct_a || static_cast<int>(index) == direct_b) {
+				continue;
+			}
+			candidates.erase(std::get<int>(instr.operands[index].value));
+		}
+		if (instr.operands.empty()) {
+			for (int vreg : reads) {
+				candidates.erase(vreg);
+			}
+		}
+	}
+
+	m_fn.global_handles = std::move(candidates);
+}
+
+// Prove which vregs are non-negative so array subscripts can skip the wrap.
+void RISCVCodeGen::plan_nonnegative(const IRFunction& func) {
+	m_fn.nonnegative.clear();
+
+	std::unordered_map<int, size_t> def_count;
+	for (size_t i = 0; i < func.parameters.size(); i++) {
+		def_count[static_cast<int>(i)]++;
+	}
+	for (const auto& instr : func.instructions) {
+		const int dst = ir_destination_register(instr);
+		if (dst >= 0) {
+			def_count[dst]++;
+		}
+	}
+
+	const auto known_nonnegative = [&](const IRValue& operand) {
+		if (operand.type == IRValue::Type::IMMEDIATE &&
+			std::holds_alternative<int64_t>(operand.value)) {
+			return std::get<int64_t>(operand.value) >= 0;
+		}
+		if (operand.type != IRValue::Type::REGISTER) {
+			return false;
+		}
+		return m_fn.nonnegative.count(std::get<int>(operand.value)) != 0;
+	};
+
+	// Fixed point: a mask may be built from another mask.
+	for (bool changed = true; changed; ) {
+		changed = false;
+		for (const auto& instr : func.instructions) {
+			const int dst = ir_destination_register(instr);
+			if (dst < 0 || def_count[dst] != 1 || m_fn.nonnegative.count(dst)) {
+				continue;
+			}
+			bool nonneg = false;
+			switch (instr.opcode) {
+				case IROpcode::LOAD_IMM:
+					nonneg = instr.operands.size() >= 2 && known_nonnegative(instr.operands[1]);
+					break;
+				case IROpcode::BIT_AND:
+					nonneg = instr.type_hint == Variant::INT && instr.operands.size() >= 3 &&
+						(known_nonnegative(instr.operands[1]) || known_nonnegative(instr.operands[2]));
+					break;
+				case IROpcode::SHR:
+					nonneg = instr.type_hint == Variant::INT && instr.operands.size() >= 3 &&
+						known_nonnegative(instr.operands[1]);
+					break;
+				default:
+					break;
+			}
+			if (nonneg) {
+				m_fn.nonnegative.insert(dst);
+				changed = true;
+			}
+		}
+	}
+}
+
+// Three-register int arithmetic: dst = op(lhs, rhs), payload-only.
+bool RISCVCodeGen::is_typed_int_binary(const IRInstruction& instr) {
+	if (instr.type_hint != Variant::INT || instr.operands.size() < 3) {
+		return false;
+	}
+	for (size_t i = 0; i < 3; i++) {
+		if (instr.operands[i].type != IRValue::Type::REGISTER) {
+			return false;
+		}
+	}
+	switch (instr.opcode) {
+		case IROpcode::ADD:
+		case IROpcode::SUB:
+		case IROpcode::MUL:
+		case IROpcode::DIV:
+		case IROpcode::MOD:
+		case IROpcode::BIT_AND:
+		case IROpcode::BIT_OR:
+		case IROpcode::BIT_XOR:
+		case IROpcode::SHL:
+		case IROpcode::SHR:
+			return true;
+		default:
+			return false;
+	}
+}
+
+// Keep a typed int result in REG_T2 when the sole reader is the next
+// instruction and also wants an int.
+void RISCVCodeGen::plan_int_chaining(const IRFunction& func) {
+	const size_t n = func.instructions.size();
+	m_fn.int_kept_in_reg.assign(n, false);
+
+	std::unordered_map<int, size_t> def_count;
+	std::unordered_map<int, size_t> read_count;
+	for (size_t i = 0; i < func.parameters.size(); i++) {
+		def_count[static_cast<int>(i)]++;
+	}
+	std::vector<int> reads;
+	for (const auto& instr : func.instructions) {
+		const int dst = ir_destination_register(instr);
+		if (dst >= 0) {
+			def_count[dst]++;
+		}
+		reads.clear();
+		ir_collect_read_registers(instr, reads);
+		for (int vreg : reads) {
+			read_count[vreg]++;
+		}
+	}
+
+	// A declared-int global produces an int without copying the Variant.
+	const auto int_global = [&](int64_t index) {
+		return index >= 0 && static_cast<size_t>(index) < m_globals.size() &&
+			m_globals[index].value_type == Variant::INT;
+	};
+	const auto produces_int = [&](const IRInstruction& instr) {
+		if (is_typed_int_binary(instr)) {
+			return true;
+		}
+		return instr.opcode == IROpcode::LOAD_GLOBAL && instr.operands.size() >= 2 &&
+			instr.operands[0].type == IRValue::Type::REGISTER &&
+			instr.operands[1].type == IRValue::Type::IMMEDIATE &&
+			int_global(std::get<int64_t>(instr.operands[1].value));
+	};
+
+	for (size_t i = 0; i + 1 < n; i++) {
+		if (!produces_int(func.instructions[i])) {
+			continue;
+		}
+		const int dst = std::get<int>(func.instructions[i].operands[0].value);
+		// ABI-visible slots cannot be elided.
+		if (dst < static_cast<int>(func.parameters.size()) || dst == IRFunction::RETURN_REGISTER) {
+			continue;
+		}
+		if (def_count[dst] != 1 || read_count[dst] != 1) {
+			continue;
+		}
+		// Skip unmaterialised LOAD_IMMs; they emit nothing.
+		size_t j = i + 1;
+		while (j < n && m_fn.unmaterialized_imm[j]) {
+			j++;
+		}
+		if (j >= n) {
+			continue;
+		}
+		const IRInstruction& next = func.instructions[j];
+		if (next.opcode == IROpcode::STORE_GLOBAL) {
+			if (next.operands.size() >= 2 &&
+				next.operands[0].type == IRValue::Type::IMMEDIATE &&
+				next.operands[1].type == IRValue::Type::REGISTER &&
+				int_global(std::get<int64_t>(next.operands[0].value)) &&
+				std::get<int>(next.operands[1].value) == dst) {
+				m_fn.int_kept_in_reg[i] = true;
+			}
+			continue;
+		}
+		if (!is_typed_int_binary(next)) {
+			continue;
+		}
+		const int next_lhs = std::get<int>(next.operands[1].value);
+		const int next_rhs = std::get<int>(next.operands[2].value);
+		if (next_lhs != dst && next_rhs != dst) {
+			continue;
+		}
+		m_fn.int_kept_in_reg[i] = true;
+	}
+}
+
 std::vector<bool> RISCVCodeGen::find_return_forwarding(const IRFunction& func) {
 	// Write directly through a0 instead of to r0's slot when the next
 	// instruction is RETURN and no later code reads r0.
@@ -2508,13 +3041,8 @@ std::vector<bool> RISCVCodeGen::find_return_forwarding(const IRFunction& func) {
 			continue;
 		}
 
-		bool read_later = false;
-		for (size_t j = i + 2; j < func.instructions.size() && !read_later; j++) {
-			reads.clear();
-			ir_collect_read_registers(func.instructions[j], reads);
-			read_later = std::find(reads.begin(), reads.end(), IRFunction::RETURN_REGISTER) != reads.end();
-		}
-		forward[i] = !read_later;
+		// RETURN follows immediately; later reads of r0 are on other paths.
+		forward[i] = true;
 	}
 
 	return forward;
@@ -2594,6 +3122,14 @@ void RISCVCodeGen::emit_slt(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 
 void RISCVCodeGen::emit_xori(uint8_t rd, uint8_t rs, int32_t imm) {
 	emit_i_type(0x13, rd, 4, rs, imm);
+}
+
+void RISCVCodeGen::emit_andi(uint8_t rd, uint8_t rs, int32_t imm) {
+	emit_i_type(0x13, rd, 7, rs, imm);
+}
+
+void RISCVCodeGen::emit_ori(uint8_t rd, uint8_t rs, int32_t imm) {
+	emit_i_type(0x13, rd, 6, rs, imm);
 }
 
 void RISCVCodeGen::emit_seqz(uint8_t rd, uint8_t rs) {
@@ -3028,25 +3564,30 @@ void RISCVCodeGen::emit_int_fused_branch(IROpcode op, int lhs_offset, int rhs_of
 	}
 }
 
-void RISCVCodeGen::emit_array_element_access(bool is_set, int array_offset, int index_offset, int value_offset) {
+void RISCVCodeGen::emit_array_element_access(bool is_set, int array_offset, int index_offset, int value_offset,
+	bool index_nonnegative, int array_vreg, int index_vreg) {
 	// ECALL_ARRAY_AT: negative a1 = set (-index-1), non-negative = get
-	const std::string in_range = gen_local_label(".array_index");
+	emit_container_handle(REG_A0, array_vreg, array_offset);
+	{
+		auto [base, off] = variant_source(index_vreg, index_offset, REG_T0);
+		emit_load_variant_int(REG_A1, base, off);
+	}
 
-	emit_lw(REG_A0, REG_SP, array_offset + VARIANT_DATA_OFFSET);
-	emit_load_variant_int(REG_A1, REG_SP, index_offset);
-
-	// Negative index: wrap from end via ECALL_ARRAY_SIZE
-	mark_label_use(in_range, m_code.size());
-	emit_bge(REG_A1, REG_ZERO, 0);
-	emit_li(REG_A7, ECALL_ARRAY_SIZE);
-	emit_ecall();
-	emit_add(REG_A1, REG_A1, REG_A0);
-	emit_lw(REG_A0, REG_SP, array_offset + VARIANT_DATA_OFFSET);
-	mark_label_use(in_range, m_code.size());
-	emit_bge(REG_A1, REG_ZERO, 0);
-	// Still negative after wrap: force out-of-range for the host to report
-	emit_li(REG_A1, 0x7fffffff);
-	define_label(in_range);
+	if (!index_nonnegative) {
+		// Negative index: wrap from end via ECALL_ARRAY_SIZE
+		const std::string in_range = gen_local_label(".array_index");
+		mark_label_use(in_range, m_code.size());
+		emit_bge(REG_A1, REG_ZERO, 0);
+		emit_li(REG_A7, ECALL_ARRAY_SIZE);
+		emit_ecall();
+		emit_add(REG_A1, REG_A1, REG_A0);
+		emit_container_handle(REG_A0, array_vreg, array_offset);
+		mark_label_use(in_range, m_code.size());
+		emit_bge(REG_A1, REG_ZERO, 0);
+		// Still negative after wrap: force out-of-range for the host to report
+		emit_li(REG_A1, 0x7fffffff);
+		define_label(in_range);
+	}
 
 	if (is_set) {
 		emit_xori(REG_A1, REG_A1, -1); // -index - 1
@@ -3056,48 +3597,117 @@ void RISCVCodeGen::emit_array_element_access(bool is_set, int array_offset, int 
 	emit_ecall();
 }
 
-void RISCVCodeGen::emit_typed_int_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op) {
-	emit_load_variant_int(REG_T0, REG_SP, lhs_offset);
-	emit_load_variant_int(REG_T1, REG_SP, rhs_offset);
+// Frame slot or global data area, depending on whether the copy was elided.
+std::pair<uint8_t, int> RISCVCodeGen::variant_source(int vreg, int offset, uint8_t scratch) {
+	auto it = m_fn.global_handles.find(vreg);
+	if (it == m_fn.global_handles.end()) {
+		return { REG_SP, offset };
+	}
+	emit_address_of_global(scratch, it->second);
+	return { scratch, 0 };
+}
+
+void RISCVCodeGen::emit_container_handle(uint8_t rd, int vreg, int offset) {
+	auto [base, off] = variant_source(vreg, offset, rd);
+	emit_lw(rd, base, off + VARIANT_DATA_OFFSET);
+}
+
+// Int payload into rd, or REG_T2 when chained from the previous instruction.
+uint8_t RISCVCodeGen::emit_int_operand(uint8_t rd, int vreg, int offset) {
+	if (vreg >= 0 && vreg == m_fn.chained_vreg) {
+		return REG_T2;
+	}
+	auto [base, off] = variant_source(vreg, offset, rd);
+	emit_load_variant_int(rd, base, off);
+	return rd;
+}
+
+void RISCVCodeGen::emit_typed_int_result(int result_offset) {
+	if (m_fn.keep_int_in_reg >= 0) {
+		m_fn.next_chained_vreg = m_fn.keep_int_in_reg;
+		return;
+	}
+	emit_li(REG_T0, Variant::INT);
+	emit_store_variant_type(REG_T0, REG_SP, result_offset);
+	emit_store_variant_int(REG_T2, REG_SP, result_offset);
+}
+
+// I-type form: the constant is the instruction's immediate, no Variant built.
+void RISCVCodeGen::emit_typed_int_binary_op_imm(int result_offset, int lhs_offset, int64_t imm, IROpcode op,
+	int lhs_vreg) {
+	const uint8_t lhs = emit_int_operand(REG_T0, lhs_vreg, lhs_offset);
 
 	switch (op) {
 		case IROpcode::ADD:
-			emit_add(REG_T2, REG_T0, REG_T1);
+			emit_addi(REG_T2, lhs, static_cast<int32_t>(imm));
 			break;
 		case IROpcode::SUB:
-			emit_sub(REG_T2, REG_T0, REG_T1);
-			break;
-		case IROpcode::MUL:
-			emit_mul(REG_T2, REG_T0, REG_T1);
-			break;
-		case IROpcode::DIV:
-			emit_div(REG_T2, REG_T0, REG_T1);
-			break;
-		case IROpcode::MOD:
-			emit_rem(REG_T2, REG_T0, REG_T1);
+			emit_addi(REG_T2, lhs, static_cast<int32_t>(-imm));
 			break;
 		case IROpcode::BIT_AND:
-			emit_and(REG_T2, REG_T0, REG_T1);
+			emit_andi(REG_T2, lhs, static_cast<int32_t>(imm));
 			break;
 		case IROpcode::BIT_OR:
-			emit_or(REG_T2, REG_T0, REG_T1);
+			emit_ori(REG_T2, lhs, static_cast<int32_t>(imm));
 			break;
 		case IROpcode::BIT_XOR:
-			emit_xor(REG_T2, REG_T0, REG_T1);
+			emit_xori(REG_T2, lhs, static_cast<int32_t>(imm));
 			break;
 		case IROpcode::SHL:
-			emit_sll(REG_T2, REG_T0, REG_T1);
+			emit_slli(REG_T2, lhs, static_cast<uint8_t>(imm));
 			break;
 		case IROpcode::SHR:
-			emit_sra(REG_T2, REG_T0, REG_T1);
+			emit_srai(REG_T2, lhs, static_cast<uint8_t>(imm));
+			break;
+		default:
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+				"Unsupported typed int binary op with an immediate operand");
+	}
+
+	emit_typed_int_result(result_offset);
+}
+
+void RISCVCodeGen::emit_typed_int_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op,
+	int lhs_vreg, int rhs_vreg) {
+	const uint8_t lhs = emit_int_operand(REG_T0, lhs_vreg, lhs_offset);
+	const uint8_t rhs = emit_int_operand(REG_T1, rhs_vreg, rhs_offset);
+
+	switch (op) {
+		case IROpcode::ADD:
+			emit_add(REG_T2, lhs, rhs);
+			break;
+		case IROpcode::SUB:
+			emit_sub(REG_T2, lhs, rhs);
+			break;
+		case IROpcode::MUL:
+			emit_mul(REG_T2, lhs, rhs);
+			break;
+		case IROpcode::DIV:
+			emit_div(REG_T2, lhs, rhs);
+			break;
+		case IROpcode::MOD:
+			emit_rem(REG_T2, lhs, rhs);
+			break;
+		case IROpcode::BIT_AND:
+			emit_and(REG_T2, lhs, rhs);
+			break;
+		case IROpcode::BIT_OR:
+			emit_or(REG_T2, lhs, rhs);
+			break;
+		case IROpcode::BIT_XOR:
+			emit_xor(REG_T2, lhs, rhs);
+			break;
+		case IROpcode::SHL:
+			emit_sll(REG_T2, lhs, rhs);
+			break;
+		case IROpcode::SHR:
+			emit_sra(REG_T2, lhs, rhs);
 			break;
 		default:
 			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported typed int binary op");
 	}
 
-	emit_li(REG_T0, Variant::INT);
-	emit_store_variant_type(REG_T0, REG_SP, result_offset);
-	emit_store_variant_int(REG_T2, REG_SP, result_offset);
+	emit_typed_int_result(result_offset);
 }
 
 void RISCVCodeGen::emit_typed_int_comparison(int result_offset, int lhs_offset, int rhs_offset, IROpcode cmp_op) {
@@ -3321,22 +3931,22 @@ void RISCVCodeGen::emit_store_variant_type(uint8_t rs, uint8_t base_reg, int32_t
 	emit_sw(rs, base_reg, variant_offset + VARIANT_TYPE_OFFSET);
 }
 
-void RISCVCodeGen::emit_variant_truthy(uint8_t rd, int variant_offset, int32_t type_hint) {
+void RISCVCodeGen::emit_variant_truthy(uint8_t rd, int variant_offset, int32_t type_hint, uint8_t base_reg) {
 	// lbu of the low byte is only correct for BOOL; INT 256 and scoped index 0x..00 would mis-booleanize.
 	switch (type_hint) {
 		case Variant::NIL:
 			emit_li(rd, 0);
 			return;
 		case Variant::BOOL:
-			emit_lbu(rd, REG_SP, variant_offset + VARIANT_DATA_OFFSET);
+			emit_lbu(rd, base_reg, variant_offset + VARIANT_DATA_OFFSET);
 			return;
 		case Variant::INT:
-			emit_ld(rd, REG_SP, variant_offset + VARIANT_DATA_OFFSET);
+			emit_ld(rd, base_reg, variant_offset + VARIANT_DATA_OFFSET);
 			emit_snez(rd, rd);
 			return;
 		case Variant::FLOAT:
 			// slli 1 clears the sign bit: -0.0 becomes 0, NaN stays non-zero.
-			emit_ld(rd, REG_SP, variant_offset + VARIANT_DATA_OFFSET);
+			emit_ld(rd, base_reg, variant_offset + VARIANT_DATA_OFFSET);
 			emit_i_type(0x13, rd, 1, rd, 1); // slli rd, rd, 1
 			emit_snez(rd, rd);
 			return;

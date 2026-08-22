@@ -108,6 +108,7 @@ if (BUILD_TESTING)
 	add_gdscript_test(test_regressions tests/test_regressions.cpp)
 	add_gdscript_test(test_operators tests/test_operators.cpp)
 	add_gdscript_test(test_frames tests/test_frames.cpp)
+	add_gdscript_test(test_call_overhead tests/test_call_overhead.cpp)
 	add_gdscript_test(test_structs tests/test_structs.cpp)
 	add_gdscript_test(test_globals tests/test_globals.cpp)
 	add_gdscript_test(test_switch tests/test_switch.cpp)
@@ -157,12 +158,12 @@ if (BUILD_TESTING)
 	# Run all tests target
 	add_custom_target(run_tests
 		COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-		DEPENDS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_containers test_lvalues test_signatures
+		DEPENDS test_lexer test_parser test_codegen test_call_overhead test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_containers test_lvalues test_signatures
 		COMMENT "Running all GDScript compiler tests"
 	)
 
 	# Install test targets (only when BUILD_TESTING is ON)
-	install(TARGETS test_lexer test_parser test_codegen test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_containers test_lvalues test_signatures
+	install(TARGETS test_lexer test_parser test_codegen test_call_overhead test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_containers test_lvalues test_signatures
 	        RUNTIME DESTINATION bin)
 endif()
 

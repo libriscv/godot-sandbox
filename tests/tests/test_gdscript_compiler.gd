@@ -5427,6 +5427,63 @@ func test_cpu_stops_on_what_it_does_not_know():
 
 	s.queue_free()
 
+func test_cpu_steps_one_instruction_at_a_time():
+	# Per-call stepping with state held in script globals.
+	var source = _load_cpu_source()
+	if source == "":
+		return
+	var s = _compile_and_load(source, 200000000)
+	if s == null:
+		return
+
+	# LOADI 5 into r0, OUT it, HALT.
+	var program = [
+		s.vmcallv("encode", 1, 0, 0, 5),
+		s.vmcallv("encode", 15, 0, 0, 0),
+		s.vmcallv("encode", 0, 0, 0, 0),
+	]
+	s.vmcallv("reset", program)
+
+	assert_eq(s.vmcallv("step"), 1, "the first step should leave the machine at pc 1")
+	assert_eq(s.vmcallv("registers"), [5, 0, 0, 0, 0, 0], "LOADI should have written r0")
+	assert_eq(s.vmcallv("trace"), [], "nothing has been emitted yet")
+
+	assert_eq(s.vmcallv("step"), 2, "the second step should leave the machine at pc 2")
+	assert_eq(s.vmcallv("trace"), [5], "OUT should have emitted r0")
+
+	assert_eq(s.vmcallv("step"), -1, "HALT should answer -1")
+	assert_true(s.vmcallv("is_halted"), "the machine should be halted")
+	assert_eq(s.vmcallv("step"), -1, "stepping a halted machine should answer -1")
+	assert_eq(s.vmcallv("trace"), [5], "a halted machine should emit nothing more")
+
+	s.queue_free()
+
+func test_cpu_stepped_matches_the_loop():
+	# step() must agree with run() on the same program.
+	var source = _load_cpu_source()
+	if source == "":
+		return
+	var s = _compile_and_load(source, 200000000)
+	if s == null:
+		return
+
+	for n in [0, 1, 10, 100]:
+		assert_eq(s.vmcallv("sum_to_stepped", n), s.vmcallv("sum_to", n),
+			"stepping should compute what running computes, for n = " + str(n))
+
+	# Unknown opcode halts the stepped machine too.
+	s.vmcallv("reset", [
+		s.vmcallv("encode", 1, 0, 0, 7),
+		s.vmcallv("encode", 15, 0, 0, 0),
+		s.vmcallv("encode", 99, 0, 0, 0),
+		s.vmcallv("encode", 15, 0, 0, 0),
+	])
+	assert_eq(s.vmcallv("step_until_halted", 64), [7],
+		"an unknown opcode should stop the stepped machine too")
+	assert_true(s.vmcallv("is_halted"), "an unknown opcode should halt the machine")
+
+	s.queue_free()
+
 func test_cpu_loads_as_a_safegdscript_resource():
 	# The same file reached as a user reaches it: attached to a node as a script,
 	# compiled by the .sgd loader.

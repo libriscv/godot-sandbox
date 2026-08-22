@@ -988,6 +988,102 @@ func test():
 		+ maybe_overwrites(3, 0) * 10 \
 		+ maybe_overwrites(3, 2)
 )" },
+		{ "immediate_operands", R"(
+# I-type immediate folding and the 12-bit boundary.
+func decode(word):
+	var op : int = word & 255
+	var dst : int = (word >> 8) & 255
+	var src : int = (word >> 16) & 255
+	var imm : int = (word >> 24) & 255
+	return op + dst * 2 + src * 4 + imm * 8
+
+func edges(n : int):
+	return (n + 2047) + (n - 2048) + (n & 2047) + (n | 1) + (n ^ -1) \
+		+ (n + 2048) + (n - 2049) + (n & -2048) + (n << 3) + (n >> 2)
+
+func test():
+	var total = 0
+	var i = 0
+	while i < 5:
+		total = total + decode(i * 1234567 + 89) + edges(i * 7 - 3)
+		i = i + 1
+	return total
+)" },
+		{ "returns_without_a_value", R"(
+# Bare return and fall-off-end produce null, not the first parameter.
+func nothing(a, b):
+	var unused = a + b
+
+func early(a):
+	if a > 10:
+		return
+	return a * 2
+
+func conditional(a):
+	if a > 10:
+		return 1
+
+func test():
+	var total = 0
+	if nothing(4, 5) == null:
+		total = total + 1
+	if early(11) == null:
+		total = total + 10
+	total = total + early(3)
+	if conditional(4) == null:
+		total = total + 1000
+	return total + conditional(11)
+)" },
+		{ "returns_before_the_last_use", R"(
+# Early return must not clobber r0 reads on other paths.
+func pick(a, b):
+	if b == 0:
+		return -1
+	if a > 100:
+		return a
+	if a < 0:
+		return b
+	return a + b
+
+func loop(n):
+	var total = 0
+	var i = 0
+	while i < 8:
+		total = total + pick(n - i * 30, i)
+		i = i + 1
+	return total
+
+func test():
+	return loop(120) * 100 + loop(-5)
+)" },
+		{ "global_state_stepped", R"(
+# Globals as persistent machine state across per-call steps.
+var counter : int = 0
+var limit : int = 0
+var running : bool = false
+
+func start(n : int) -> void:
+	counter = 0
+	limit = n
+	running = true
+
+func step() -> int:
+	if not running:
+		return -1
+	counter = counter + 1
+	if counter >= limit:
+		running = false
+	return counter
+
+func test():
+	start(5)
+	var total = 0
+	var i = 0
+	while i < 8:
+		total = total * 10 + step() + 1
+		i = i + 1
+	return total
+)" },
 	};
 	return programs;
 }
