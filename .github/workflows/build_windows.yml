@@ -9,9 +9,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 32-bit targets disabled: rvv_instr.cpp requires __uint128_t
-          #- {arch: x86_32, precision: single}
-          #- {arch: x86_32, precision: double}
+          - {arch: x86_32, precision: single}
+          - {arch: x86_32, precision: double}
           - {arch: x86_64, precision: single}
           - {arch: x86_64, precision: double}
           - {arch: arm64, precision: single}
