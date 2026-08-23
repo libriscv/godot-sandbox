@@ -15,6 +15,7 @@ using machine_t = riscv::Machine<RISCV_ARCH>;
 #include "stringname_id.hpp"
 #include "vmcallable.h"
 #include "vmproperty.h"
+#include "sandbox_function_state.h"
 
 /**
  * @brief The Sandbox class is a Godot node that provides a safe environment for running untrusted code.
@@ -44,9 +45,13 @@ public:
 	static constexpr unsigned MAX_VMEM = 20ul; // MBs
 	static constexpr unsigned MAX_HEAP_ALLOCS = 4000; // Max guest heap allocations
 	static constexpr unsigned MAX_LEVEL = 4; // Maximum call recursion depth
+	// Shared across MAX_LEVEL recursion levels.
+	static constexpr unsigned GUEST_STACK_SIZE = 2u << 20; // 2MB
 	static constexpr unsigned MAX_REFS = 100; // Default maximum number of references
 	static constexpr unsigned EDITOR_THROTTLE = 8; // Throttle VM calls from the editor
 	static constexpr unsigned MAX_PROPERTIES = 32; // Maximum number of sandboxed properties
+	static constexpr unsigned MAX_COROUTINES = 32; // Default cap on live suspended frames
+	static constexpr unsigned MAX_COROUTINE_LIMIT = 65536; // Ceiling for the setter, not a budget
 	static constexpr unsigned MAX_PUBLIC_FUNCTIONS = 128; // Maximum number of public functions
 
 	struct CurrentState {
@@ -71,7 +76,8 @@ public:
 		std::vector<Ref<RefCounted>> scoped_refs;
 
 		void append(Variant &&value);
-		void initialize(unsigned level, unsigned max_refs);
+		/// Reserve for max_refs and drop what the previous program scoped. No reserve-only
+		/// variant: growing the reservation reallocates variants, dangling scoped_variants.
 		void reinitialize(unsigned level, unsigned max_refs);
 		void reset();
 		bool is_mutable_variant(const Variant &var) const;
@@ -358,6 +364,12 @@ public:
 	/// @return The index of the new permanent variant, passed to and used by the guest.
 	unsigned create_permanent_variant(unsigned idx);
 
+	/// Create a permanent variant from a value. Returns 0 when full.
+	int32_t create_permanent_variant_from(Variant &&var);
+
+	/// Release a permanent variant, recycling its slot.
+	void release_permanent_variant(int32_t idx);
+
 	/// @brief Check if a variant index is a permanent variant.
 	/// @param idx The index of the variant to check.
 	/// @return True if the variant is permanent, false otherwise.
@@ -367,6 +379,44 @@ public:
 	/// @param idx The index of the permanent variant to assign.
 	/// @param var The new variant to move-assign.
 	void assign_permanent_variant(int32_t idx, Variant &&var);
+
+	// -= Coroutines =-
+
+	/// A suspended guest coroutine. Level-independent.
+	struct Coroutine {
+		uint64_t id = 0;
+		uint64_t generation = 0; // Stale generation → drop on resume.
+		gaddr_t resume_address = 0;
+		std::vector<uint8_t> frame; // Variant slot array, copied out of guest memory.
+		std::vector<int32_t> promoted; // Permanent Variant indices, released on completion.
+		struct FrameObject {
+			uint32_t offset = 0;
+			uint64_t object_id = 0; // ObjectID; re-resolved on resume.
+		};
+		std::vector<FrameObject> objects;
+		std::vector<Ref<RefCounted>> refs;
+		int32_t state_index = 0;
+		int32_t result_offset = -1;
+		Variant sent;
+		bool running = false; // Guards against self-resume.
+		Ref<SandboxFunctionState> state_object;
+	};
+
+	bool coroutine_resume(uint64_t id, const Variant &sent);
+	Coroutine *find_coroutine(uint64_t id) noexcept;
+	int64_t get_coroutine_count() const noexcept { return int64_t(m_coroutines.size()); }
+	/// Clamped, not truncated: 1 << 32 would narrow to 0 and fail every await.
+	void set_max_coroutines(int64_t max) { m_max_coroutines = uint32_t(std::clamp<int64_t>(max, 0, MAX_COROUTINE_LIMIT)); }
+	int64_t get_max_coroutines() const noexcept { return int64_t(m_max_coroutines); }
+	/// Reap all coroutines. Called on reset, program load, and node teardown.
+	void reap_coroutines() { this->reap_coroutines_internal(true); }
+
+	/// ECALL_AWAIT handler. Returns true if suspended.
+	bool coroutine_suspend(gaddr_t operand_addr, gaddr_t frame_base, uint32_t frame_size,
+			int32_t state_index, gaddr_t resume_address, int32_t result_offset);
+
+	/// ECALL_AWAIT_RESTORE handler. Returns state index.
+	int32_t coroutine_restore(gaddr_t frame_base, uint32_t frame_size);
 
 	/// @brief Assign a value to the guest's Variant slot, reusing it when owned,
 	/// allocating a new scoped Variant otherwise. Owned = permanent state or
@@ -863,6 +913,47 @@ private:
 	// That means eg. static Variant values are held stored in the state at index 0,
 	// so that they can be accessed by future VM calls, and not lost when a call ends.
 	std::array<CurrentState, MAX_LEVEL> m_states;
+
+	// -= Permanent Variant slots =-
+	// Per-slot generation enables recycling; stale indices are refused.
+	struct PermanentSlot {
+		uint32_t generation = 0;
+		int32_t variant_index = -1; // Into m_states[0].variants; -1 = non-owned.
+		bool free = false;
+	};
+	std::vector<PermanentSlot> m_perm_slots;
+	std::vector<uint32_t> m_perm_free_slots;
+
+	static constexpr uint32_t PERM_SLOT_BITS = 16;
+	static constexpr uint32_t PERM_SLOT_MASK = (1u << PERM_SLOT_BITS) - 1u;
+	static constexpr uint32_t PERM_MAX_SLOTS = PERM_SLOT_MASK - 1u;
+
+	// Generation 0 encodes as the old -(slot + 1).
+	static constexpr int32_t encode_permanent_index(uint32_t slot, uint32_t generation) noexcept {
+		return -int32_t(((generation & 0x7FFFu) << PERM_SLOT_BITS) | ((slot + 1u) & PERM_SLOT_MASK));
+	}
+	static constexpr uint32_t decode_permanent_slot(int32_t idx) noexcept {
+		return (uint32_t(-idx) & PERM_SLOT_MASK) - 1u;
+	}
+	static constexpr uint32_t decode_permanent_generation(int32_t idx) noexcept {
+		return uint32_t(-idx) >> PERM_SLOT_BITS;
+	}
+	bool permanent_index_valid(int32_t idx) const noexcept;
+	int32_t track_permanent_slot(int32_t variant_index);
+
+	void promote_frame_handles(Coroutine &co);
+	void retire_coroutine(uint64_t id, bool invalidate_state);
+	// notify=false suppresses completed emission (used by ~Sandbox).
+	void reap_coroutines_internal(bool notify);
+
+	// -= Coroutines =-
+	std::vector<std::unique_ptr<Coroutine>> m_coroutines;
+	uint64_t m_next_coroutine_id = 1;
+	uint32_t m_max_coroutines = MAX_COROUTINES;
+	uint64_t m_program_generation = 1; // Bumped on machine replacement.
+	uint64_t m_pending_suspend = 0; // Set by ECALL_AWAIT, consumed by vmcall_internal.
+	uint64_t m_resuming_coroutine_id = 0; // Id, not pointer: survives reap_coroutines().
+	uint64_t m_resume_entry_id = 0; // Names which frame the next vmcall may adopt.
 
 	// Properties
 	mutable std::vector<SandboxProperty> m_properties;

@@ -301,6 +301,22 @@ PUBLIC Variant test_callable(Callable callable) {
 	return callable.call(1, 2, "3");
 }
 
+// Stack-per-level probes. A nested call must run on a stack of its own, not on
+// what the call it interrupted had left over.
+PUBLIC Variant stack_probe() {
+	volatile int local = 0;
+	return int64_t(uintptr_t(&local));
+}
+
+// Reports this frame's stack address and the one the re-entrant call ran on.
+PUBLIC Variant nested_stack_probe(Callable reenter) {
+	volatile int local = 0;
+	Array result = Array::Create();
+	result.push_back(int64_t(uintptr_t(&local)));
+	result.push_back(reenter.call());
+	return result;
+}
+
 // clang-format off
 PUBLIC Variant test_create_callable() {
 	Array array = Array::Create();
@@ -601,4 +617,121 @@ PUBLIC Variant test_many_unboxed_arguments2(int a1, int a2, int a3, int a4, int 
 
 PUBLIC Variant get_tree_base_parent() {
 	return get_parent();
+}
+
+// -= Coroutines, written out by hand =-
+// What the compiler will emit for an `await`, spelled as C++ so the host side can be
+// tested on its own: a frame of Variant slots, an ECALL_AWAIT that hands it over, and a
+// resume entry that asks for it back and dispatches on the state it is given.
+MAKE_SYSCALL(ECALL_AWAIT, long, sys_await, const Variant *, void *, unsigned, int, void *, int);
+MAKE_SYSCALL(ECALL_AWAIT_RESTORE, long, sys_await_restore, void *, unsigned);
+
+extern "C" Variant await_probe_resume();
+
+// Awaits its argument and answers 100 more than the value it was resumed with. The
+// frame is three slots: the parameter, the await's result, and one spare.
+PUBLIC Variant await_probe(Variant awaited) {
+	Variant frame[3];
+	frame[0] = awaited; // A coroutine copies its parameters in before it can suspend.
+	if (sys_await(&frame[0], frame, sizeof(frame), 1,
+				(void *)&await_probe_resume, 1 * sizeof(Variant))) {
+		return Variant(); // Suspend epilogue: the host answers the caller, not this.
+	}
+	// Not awaitable, so the result slot is already written and nothing suspended.
+	return int64_t(frame[1]) + 100;
+}
+
+// The resume entry supplies its own frame; the host checks the length against the one
+// the suspension recorded and does the copy itself.
+extern "C" PUBLIC Variant await_probe_resume() {
+	Variant frame[3];
+	const long state = sys_await_restore(frame, sizeof(frame));
+	switch (state) {
+		case 1:
+			return int64_t(frame[1]) + 100;
+		default:
+			return Variant();
+	}
+}
+
+// Same shape, but suspends twice, to pin that a frame surviving several resumes keeps
+// working and that what it held between them comes back.
+extern "C" Variant await_twice_resume();
+
+PUBLIC Variant await_twice(Variant awaited) {
+	Variant frame[4];
+	frame[0] = awaited;
+	frame[2] = Variant(1000); // Carried across both suspensions.
+	if (sys_await(&frame[0], frame, sizeof(frame), 1,
+				(void *)&await_twice_resume, 1 * sizeof(Variant))) {
+		return Variant();
+	}
+	return int64_t(frame[1]) + int64_t(frame[2]);
+}
+
+extern "C" PUBLIC Variant await_twice_resume() {
+	Variant frame[4];
+	const long state = sys_await_restore(frame, sizeof(frame));
+	if (state == 1) {
+		// Accumulate and go around again on the same signal.
+		frame[2] = int64_t(frame[2]) + int64_t(frame[1]);
+		if (sys_await(&frame[0], frame, sizeof(frame), 2,
+					(void *)&await_twice_resume, 1 * sizeof(Variant))) {
+			return Variant();
+		}
+	}
+	return int64_t(frame[1]) + int64_t(frame[2]);
+}
+
+// A resume that re-enters the Sandbox through the host: the Callable it is handed calls
+// another exported coroutine on this same Sandbox. That nested invocation must get a
+// frame of its own -- adopting the one being resumed would overwrite it mid-flight.
+extern "C" Variant await_nested_resume();
+
+PUBLIC Variant await_nested(Variant awaited, Variant callback) {
+	Variant frame[4];
+	frame[0] = awaited;
+	frame[2] = callback;
+	frame[3] = Variant(1000); // Must still read back as 1000 after the nested call.
+	if (sys_await(&frame[0], frame, sizeof(frame), 1,
+				(void *)&await_nested_resume, 1 * sizeof(Variant))) {
+		return Variant();
+	}
+	return int64_t(frame[1]) + int64_t(frame[3]);
+}
+
+extern "C" PUBLIC Variant await_nested_resume() {
+	Variant frame[4];
+	const long state = sys_await_restore(frame, sizeof(frame));
+	if (state == 1) {
+		frame[2].as_callable().call();
+		return int64_t(frame[1]) + int64_t(frame[3]);
+	}
+	return Variant();
+}
+
+// A frame holding a String: a non-inlined Variant is an index into the *call's* scoped
+// variants, so this only survives a suspension if the host promoted it.
+extern "C" Variant await_handle_resume();
+
+PUBLIC Variant await_handle(Variant awaited, Variant text) {
+	Variant frame[3];
+	frame[0] = awaited;
+	frame[2] = text;
+	if (sys_await(&frame[0], frame, sizeof(frame), 1,
+				(void *)&await_handle_resume, 1 * sizeof(Variant))) {
+		return Variant();
+	}
+	return frame[2];
+}
+
+extern "C" PUBLIC Variant await_handle_resume() {
+	Variant frame[3];
+	const long state = sys_await_restore(frame, sizeof(frame));
+	if (state == 1) {
+		String text = frame[2].as_string();
+		text += frame[1].as_string();
+		return text;
+	}
+	return Variant();
 }

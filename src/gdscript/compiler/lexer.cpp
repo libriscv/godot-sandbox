@@ -34,6 +34,7 @@ const std::unordered_map<std::string, TokenType> Lexer::keywords = {
 	{"enum", TokenType::ENUM},
 	{"class_name", TokenType::CLASS_NAME},
 	{"signal", TokenType::SIGNAL},
+	{"await", TokenType::AWAIT},
 	{"as", TokenType::AS},
 };
 

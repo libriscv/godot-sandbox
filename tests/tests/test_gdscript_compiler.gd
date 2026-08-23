@@ -7219,3 +7219,169 @@ func computed(dir, name):
 	assert_eq(s.get_exceptions(), exceptions + 1, "a refused path should throw")
 
 	s.queue_free()
+
+# -= await =-
+#
+# A .sgd coroutine suspends by handing its whole Variant slot array to the host and
+# answering the caller with a Signal to await; a resume asks for the frame back and
+# carries on. What these pin is the part only a real sandbox can show: that the frame
+# comes back intact across calls that reset the scoped state it was captured in.
+
+const AWAIT_SOURCE := """
+func wait_for(sig, base):
+	var got = await sig
+	return base + got
+
+func wait_twice(sig):
+	var total = 0
+	total = total + await sig
+	total = total + await sig
+	return total
+
+func wait_ready(sig):
+	await sig
+	return 42
+
+func hold_a_string(sig, text):
+	var got = await sig
+	return text + str(got)
+
+func hold_an_array(sig):
+	var values = [1, 2]
+	values.append(await sig)
+	return values
+
+func no_signal(value):
+	return await value
+"""
+
+signal sgd_ping(value)
+
+func _await_script(name : String):
+	var path = "user://temp_%s.sgd" % name
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(AWAIT_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the await script should load as a SafeGDScript resource")
+	return script
+
+func _await_node(script) -> Node:
+	var node = Node.new()
+	node.set_script(script)
+	node.set_instructions_max(100000)
+	return node
+
+func test_sgd_await_suspends_and_resumes():
+	var script = _await_script("await_basic")
+	if script == null:
+		return
+	var node = _await_node(script)
+
+	var awaitable = node.call("wait_for", sgd_ping, 100)
+	assert_eq(typeof(awaitable), TYPE_SIGNAL,
+		"a suspended coroutine answers with something Godot's await accepts")
+
+	# Connected rather than awaited: the emission below resumes the guest on this stack,
+	# which keeps the test synchronous.
+	var completed := [null]
+	(awaitable as Signal).connect(func(value): completed[0] = value)
+
+	sgd_ping.emit(7)
+	assert_eq(completed[0], 107, "the resumed body computed with the value the signal carried")
+
+	node.free()
+
+func test_sgd_await_two_suspensions():
+	var script = _await_script("await_twice")
+	if script == null:
+		return
+	var node = _await_node(script)
+
+	var completed := [null]
+	(node.call("wait_twice", sgd_ping) as Signal).connect(func(value): completed[0] = value)
+
+	sgd_ping.emit(5)
+	assert_eq(completed[0], null, "still suspended at the second await")
+	sgd_ping.emit(11)
+	assert_eq(completed[0], 16, "the accumulator survived both suspensions")
+
+	node.free()
+
+func test_sgd_await_holds_a_string():
+	var script = _await_script("await_string")
+	if script == null:
+		return
+	var node = _await_node(script)
+
+	# The String in the frame is an index into the scoped variants of the call that
+	# suspended, and every call resets those. It only reads back as "held" because the
+	# host promoted it to permanent storage at the suspension.
+	var completed := [null]
+	(node.call("hold_a_string", sgd_ping, "held") as Signal).connect(func(value): completed[0] = value)
+
+	sgd_ping.emit(7)
+	assert_eq(completed[0], "held7")
+
+	node.free()
+
+func test_sgd_await_holds_an_array():
+	var script = _await_script("await_array")
+	if script == null:
+		return
+	var node = _await_node(script)
+
+	# Same again, and stricter: an Array is a reference, so the promotion has to keep the
+	# same container rather than a copy of it, or the append lands somewhere else.
+	var completed := [null]
+	(node.call("hold_an_array", sgd_ping) as Signal).connect(func(value): completed[0] = value)
+
+	sgd_ping.emit(3)
+	assert_eq(completed[0], [1, 2, 3])
+
+	node.free()
+
+func test_sgd_await_on_a_plain_value_does_not_suspend():
+	var script = _await_script("await_plain")
+	if script == null:
+		return
+	var node = _await_node(script)
+
+	# Godot's own await hands a non-Signal straight back, so a coroutine that only ever
+	# awaits one never suspends and answers with its return value.
+	assert_eq(node.call("no_signal", 42), 42)
+
+	node.free()
+
+func test_sgd_await_a_timer():
+	var script = _await_script("await_timer")
+	if script == null:
+		return
+	var node = _await_node(script)
+
+	# The signal a real game awaits: emitted by the engine, from outside this stack, and
+	# carrying no arguments.
+	var timer := get_tree().create_timer(0.05)
+	var awaitable = node.call("wait_ready", timer.timeout)
+	assert_eq(typeof(awaitable), TYPE_SIGNAL, "the call came back with something to await")
+
+	var result = await awaitable
+	assert_eq(result, 42, "the coroutine ran to its return once the timer fired")
+
+	node.free()
+
+func test_sgd_await_publishes_a_variant_return():
+	var script = _await_script("await_methods")
+	if script == null:
+		return
+
+	# A coroutine returns a Signal when it suspends and its value when it does not, so
+	# the MethodInfo Godot checks calls against cannot claim the declared type.
+	var found := false
+	for method in script.get_script_method_list():
+		if method["name"] == "wait_for":
+			found = true
+			assert_eq(method["return"]["type"], TYPE_NIL,
+				"a coroutine publishes no concrete return type")
+			assert_eq(method["args"].size(), 2, "and still publishes its arity")
+	assert_true(found, "wait_for should be in the published method list")

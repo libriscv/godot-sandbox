@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SandboxFunctionState" inherits="RefCounted" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/godotengine/godot/master/doc/class.xsd">
+	<brief_description>
+		A sandboxed function suspended at an [code]await[/code].
+	</brief_description>
+	<description>
+		A guest function that reaches an [code]await[/code] does not return a value: it suspends, and the call answers with a [Signal] to await instead. This object owns that signal.
+		Awaiting the call is all a caller normally has to do; the state object stays behind it.
+		[codeblock]
+		# waits_for_hit() is a .sgd function containing an await
+		var damage = await $Enemy.waits_for_hit()
+		[/codeblock]
+		One object is made per invocation and lives for as long as the coroutine does, however many times it suspends. It becomes invalid once the coroutine returns, and also if the program is reset, reloaded, or freed while the coroutine is still suspended — a frame belonging to code that is no longer there is dropped rather than resumed.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="is_valid" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] while the coroutine is suspended and can still be resumed, and [code]false[/code] once it has completed or been dropped.
+			</description>
+		</method>
+		<method name="get_coroutine_id" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the coroutine's id in its [Sandbox], or [code]0[/code] once the coroutine is gone.
+			</description>
+		</method>
+	</methods>
+	<signals>
+		<signal name="completed">
+			<param index="0" name="result" type="Variant" />
+			<description>
+				Emitted once, when the coroutine finally returns, carrying its return value.
+				This is the signal [code]await[/code] waits on, so connecting to it by hand is only needed when the result is wanted somewhere other than at the call site.
+			</description>
+		</signal>
+	</signals>
+</class>

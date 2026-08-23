@@ -108,6 +108,20 @@
 				Retrieves the value of a property by its name from the Sandbox.
 			</description>
 		</method>
+		<method name="get_coroutine_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of coroutines the program currently has suspended at an [code]await[/code].
+				A suspended coroutine holds a copy of the guest function's local state until the signal it is waiting on is emitted.
+			</description>
+		</method>
+		<method name="reap_coroutines">
+			<return type="void" />
+			<description>
+				Drops every suspended coroutine, so that none of them can be resumed and everything they were holding is released.
+				This also happens on its own whenever the program's code may have moved: a reset, a program load, or the node being freed.
+			</description>
+		</method>
 		<method name="get_current_instruction" qualifiers="const">
 			<return type="String" />
 			<description>
@@ -469,6 +483,10 @@
 			sandbox.set_program(Sandbox_TestTest)
 			[/gdscript]
 			[/codeblocks]
+		</member>
+		<member name="coroutines_max" type="int" setter="set_max_coroutines" getter="get_max_coroutines" default="32">
+			The maximum number of coroutines the sandboxed program may have suspended at once.
+			Each one pins a copy of a guest function's local state, so an [code]await[/code] past this limit fails instead of growing the table without bound.
 		</member>
 		<member name="references_max" type="int" setter="set_max_refs" getter="get_max_refs" default="100">
 			The maximum number of object references that can be held in the sandboxed program.

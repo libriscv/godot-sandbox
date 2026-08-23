@@ -76,6 +76,7 @@ private:
 		int& left_reg, int& right_reg);
 	int gen_logical(const BinaryExpr* expr, FunctionContext& func);
 	int gen_unary(const UnaryExpr* expr, FunctionContext& func);
+	int gen_await(const AwaitExpr* expr, FunctionContext& func);
 	int gen_type_test(const TypeTestExpr* expr, FunctionContext& func);
 	// Replace Dictionary with its keys Array for position-based iteration.
 	void gen_dictionary_keys_for_iteration(int iterable_reg, FunctionContext& func);

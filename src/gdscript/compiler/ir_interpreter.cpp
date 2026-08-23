@@ -282,6 +282,12 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 				"'in' needs the host Variant API and is not available in the IR"
 				" interpreter (in function '" + func.name + "')");
 
+		case IROpcode::AWAIT:
+			// Host-only; excluded from differential/invariance corpora like '**' and 'in'.
+			throw CompilerException(ErrorType::OPTIMIZER_ERROR,
+				"'await' suspends into the host and is not available in the IR"
+				" interpreter (in function '" + func.name + "')");
+
 		case IROpcode::NEG:
 		case IROpcode::NOT:
 		case IROpcode::BIT_NOT: {

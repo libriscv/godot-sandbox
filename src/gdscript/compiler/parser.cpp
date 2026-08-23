@@ -142,7 +142,12 @@ FunctionDecl Parser::parse_function() {
 	consume(TokenType::COLON, "Expected ':' after function signature");
 	consume(TokenType::NEWLINE, "Expected newline after function signature");
 
+	// Track `await` during body parse to set is_coroutine.
+	const bool enclosing_saw_await = m_saw_await;
+	m_saw_await = false;
 	func.body = parse_block();
+	func.is_coroutine = m_saw_await;
+	m_saw_await = enclosing_saw_await;
 
 	return func;
 }
@@ -626,6 +631,13 @@ StmtPtr Parser::parse_return_stmt() {
 }
 
 StmtPtr Parser::parse_expr_or_assign_stmt() {
+	// `await` is an expression statement; not an lvalue, so handle before parse_call().
+	if (check(TokenType::AWAIT)) {
+		ExprPtr expr = parse_expression();
+		consume_statement_end("Expected newline after expression");
+		return std::make_unique<ExprStmt>(std::move(expr));
+	}
+
 	ExprPtr lhs = parse_call();
 
 	if (match(TokenType::ASSIGN)) {
@@ -942,6 +954,12 @@ ExprPtr Parser::parse_factor() {
 }
 
 ExprPtr Parser::parse_unary() {
+	// `await` at unary precedence, matching GDScript.
+	if (check(TokenType::AWAIT)) {
+		Token op = advance();
+		m_saw_await = true;
+		return make_at<AwaitExpr>(op, parse_unary());
+	}
 	if (match_one_of({TokenType::MINUS, TokenType::BIT_NOT, TokenType::PLUS})) {
 		Token op = previous();
 		ExprPtr operand = parse_unary();

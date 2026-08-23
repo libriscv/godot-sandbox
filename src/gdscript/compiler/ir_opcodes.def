@@ -265,6 +265,11 @@ IR_OPCODE(MAKE_PACKED_VECTOR3_ARRAY, "MAKE_PACKED_VECTOR3_ARRAY", SIG(DST, CNT, 
 IR_OPCODE(MAKE_PACKED_COLOR_ARRAY,   "MAKE_PACKED_COLOR_ARRAY",   SIG(DST, CNT, SRC_LIST), IR_PURE)
 IR_OPCODE(MAKE_PACKED_VECTOR4_ARRAY, "MAKE_PACKED_VECTOR4_ARRAY", SIG(DST, CNT, SRC_LIST), IR_PURE)
 
+// Suspend at `await src`, copy the slot array to host, resume via second entry.
+// Full clobber barrier: vreg slots are authoritative, no liveness analysis needed.
+// Non-Signal operand writes dst immediately and falls through without suspending.
+IR_OPCODE(AWAIT,           "AWAIT",           SIG(DST, SRC),      IR_SIDE_EFFECTS | IR_CALL)
+
 // -= Inline member access (no syscalls) =-
 
 IR_OPCODE(VGET_INLINE,     "VGET_INLINE",     SIG(DST, SRC, STR, IMM),      IR_PURE)

@@ -200,6 +200,24 @@ static inline void variant_or_object_call(Sandbox &emu, Variant *vcall,
 	variant_callp(vcall, method_sn, argptrs, argc, result, error);
 }
 
+// a0 = awaited GuestVariant, a1 = frame base, a2 = frame size, a3 = state index,
+// a4 = resume entry, a5 = result slot offset (or -1). Returns 1 when it suspended.
+APICALL(api_await) {
+	auto [operand, frame_base, frame_size, state_index, resume, result_offset] =
+			machine.sysargs<gaddr_t, gaddr_t, unsigned, int, gaddr_t, int>();
+	Sandbox &emu = riscv::emu(machine);
+	const bool suspended = emu.coroutine_suspend(operand, frame_base, frame_size,
+			state_index, resume, result_offset);
+	machine.set_result(suspended ? 1 : 0);
+}
+
+// a0 = frame base, a1 = frame size. Returns the state index to dispatch to.
+APICALL(api_await_restore) {
+	auto [frame_base, frame_size] = machine.sysargs<gaddr_t, unsigned>();
+	Sandbox &emu = riscv::emu(machine);
+	machine.set_result(emu.coroutine_restore(frame_base, frame_size));
+}
+
 // a0 = source line. Handler cross-checks against line table. No writeback.
 APICALL(api_breakpoint) {
 	safegdscript_breakpoint(riscv::emu(machine), uint32_t(machine.cpu.reg(riscv::REG_ARG0)));
@@ -3027,6 +3045,9 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_UTILITY, api_utility },
 
 			{ ECALL_BREAKPOINT, api_breakpoint },
+
+			{ ECALL_AWAIT, api_await },
+			{ ECALL_AWAIT_RESTORE, api_await_restore },
 	});
 
 	// Add system calls from other modules.

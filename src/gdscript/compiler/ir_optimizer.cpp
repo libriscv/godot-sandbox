@@ -616,6 +616,8 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::GET_NODE:
 		case IROpcode::LOAD_RESOURCE:
 		case IROpcode::LOAD_RESOURCE_VAR:
+		case IROpcode::AWAIT: // Host-provided result; not foldable, not a block boundary.
+
 		case IROpcode::CALL:
 			if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
 				invalidate_register(std::get<int>(instr.operands[0].value));

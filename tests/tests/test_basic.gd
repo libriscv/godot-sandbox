@@ -752,3 +752,271 @@ func test_string_mutation():
 	assert_eq(s.vmcall("test_permanent_string_append"), "perm++")
 
 	s.queue_free()
+
+func test_nested_call_stacks():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	# All recursion levels share one stack: a nested call continues below the frame
+	# of the call it interrupts. This pins that contract, so that a change to how a
+	# re-entrant call is set up has to be a deliberate one.
+	var depth1 : int = s.vmcall("stack_probe")
+	var probe := func(): return s.vmcall("stack_probe")
+	var result : Array = s.vmcall("nested_stack_probe", Callable(probe))
+	var outer : int = result[0]
+	var inner : int = result[1]
+
+	assert_almost_eq(outer, depth1, 4096,
+		"An outermost call starts from the same place every time")
+	assert_true(inner < outer and outer - inner < 4096,
+		"The nested call runs just below the frame it interrupted, %d bytes down" % [outer - inner])
+
+	s.queue_free()
+
+signal await_ping(value)
+
+# The project runs with native types on, so vmcall() hands an integer over in a register
+# rather than as a Variant. vmcallv() is the all-Variants form, which is what a coroutine
+# frame is made of.
+func test_await_host_not_awaitable():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	# Godot's own await hands a non-Signal straight back and keeps going, so a coroutine
+	# that awaits one never suspends and answers with its return value.
+	assert_eq(s.vmcallv("await_probe", 42), 142)
+	assert_eq(s.get_coroutine_count(), 0)
+
+	s.queue_free()
+
+func test_await_host_suspend_and_resume():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	var awaitable = s.vmcallv("await_probe", await_ping)
+	assert_eq(typeof(awaitable), TYPE_SIGNAL,
+		"A suspended coroutine hands back something Godot's await accepts")
+	assert_eq(s.get_coroutine_count(), 1)
+
+	# Connect rather than await: the emission below is what resumes the guest, and it
+	# happens on this same stack.
+	var completed := [null]
+	(awaitable as Signal).connect(func(value): completed[0] = value)
+
+	await_ping.emit(7)
+	assert_eq(completed[0], 107, "The resume ran and its return value completed the call")
+	assert_eq(s.get_coroutine_count(), 0, "A completed coroutine leaves the table")
+
+	s.queue_free()
+
+func test_await_host_two_suspensions():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	var awaitable = s.vmcallv("await_twice", await_ping)
+	var completed := [null]
+	(awaitable as Signal).connect(func(value): completed[0] = value)
+
+	await_ping.emit(5)
+	assert_eq(completed[0], null, "Still suspended after the first resume")
+	assert_eq(s.get_coroutine_count(), 1)
+
+	await_ping.emit(11)
+	# 1000 carried across both suspensions, plus 5 from the first, plus 11 from the second.
+	assert_eq(completed[0], 1016)
+	assert_eq(s.get_coroutine_count(), 0)
+
+	s.queue_free()
+
+func test_await_host_promotes_handles():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	# The String in the frame is an index into the scoped variants of the call that
+	# suspended, and every call resets those. It only reads back as "held" if the host
+	# moved it to permanent storage at the suspension.
+	var awaitable = s.vmcallv("await_handle", await_ping, "held")
+	var completed := [null]
+	(awaitable as Signal).connect(func(value): completed[0] = value)
+
+	await_ping.emit("+resumed")
+	assert_eq(completed[0], "held+resumed")
+
+	s.queue_free()
+
+func test_await_host_reset_drops_frames():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	var awaitable = s.vmcallv("await_probe", await_ping)
+	assert_eq(s.get_coroutine_count(), 1)
+	var completed := [null]
+	(awaitable as Signal).connect(func(value): completed[0] = value)
+
+	# Reloading the program moves the code the frame would resume into, so the frame goes.
+	var fired := [false]
+	(awaitable as Signal).connect(func(_v): fired[0] = true)
+	s.reset()
+	assert_eq(s.get_coroutine_count(), 0)
+	# Dropping the frame completes it with null rather than leaving it hanging: whoever
+	# wrote `await sandbox.foo()` is parked on this signal and has nothing else to wake it.
+	assert_true(fired[0], "Teardown completes the caller")
+	assert_eq(completed[0], null)
+
+	await_ping.emit(7)
+	assert_eq(completed[0], null, "A dropped frame is never resumed")
+
+	s.queue_free()
+
+func test_await_host_changing_max_refs_drops_frames():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	# A suspended frame holds indices into the permanent state, and references_max clears
+	# it -- along with the slot records that describe it. The frames go with it, or a
+	# later promotion reuses a record for a state that is no longer there.
+	var awaitable = s.vmcallv("await_handle", await_ping, "held")
+	assert_eq(s.get_coroutine_count(), 1)
+	var completed := [null]
+	var fired := [false]
+	(awaitable as Signal).connect(func(value): completed[0] = value)
+	(awaitable as Signal).connect(func(_v): fired[0] = true)
+
+	s.references_max = 64
+	assert_eq(s.get_coroutine_count(), 0)
+	assert_true(fired[0], "Teardown completes the caller")
+	assert_eq(completed[0], null)
+
+	# Promotion starts over against the state as it is now.
+	var again = s.vmcallv("await_handle", await_ping, "held")
+	assert_eq(typeof(again), TYPE_SIGNAL)
+	var second := [null]
+	(again as Signal).connect(func(value): second[0] = value)
+	await_ping.emit("+resumed")
+	assert_eq(second[0], "held+resumed")
+
+	s.queue_free()
+
+func test_await_host_nested_call_gets_its_own_frame():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	# Called from inside the resume below, on the same Sandbox. Only the resume itself may
+	# enter the frame it is resuming; this call has to suspend into one of its own.
+	var nested := [null]
+	var reenter := func(): nested[0] = s.vmcallv("await_probe", await_ping)
+
+	var awaitable = s.vmcallv("await_nested", await_ping, Callable(reenter))
+	assert_eq(s.get_coroutine_count(), 1)
+	var completed := [null]
+	(awaitable as Signal).connect(func(value): completed[0] = value)
+
+	await_ping.emit(3)
+	assert_eq(typeof(nested[0]), TYPE_SIGNAL,
+		"The nested call suspended into a frame of its own")
+	assert_eq(completed[0], 1003,
+		"and the resumed frame was not overwritten underneath it")
+	assert_eq(s.get_coroutine_count(), 1, "the nested frame is what is left")
+
+	s.reap_coroutines()
+	s.queue_free()
+
+func test_await_host_respects_the_limit():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+	s.set_max_coroutines(2)
+
+	s.vmcallv("await_probe", await_ping)
+	s.vmcallv("await_probe", await_ping)
+	assert_eq(s.get_coroutine_count(), 2)
+
+	# The third await has nowhere to go: it fails the call rather than growing the table.
+	s.vmcallv("await_probe", await_ping)
+	assert_eq(s.get_coroutine_count(), 2, "The cap holds")
+	assert_engine_error("too many live coroutines")
+	assert_engine_error("too many live coroutines")
+
+	s.reap_coroutines()
+	assert_eq(s.get_coroutine_count(), 0)
+
+	s.queue_free()
+
+func test_await_host_pool_exhaustion_fails_the_await():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+	s.set_max_coroutines(128)
+
+	# A suspension promotes the frame's non-inlined values -- here the Signal and the
+	# String -- into the permanent pool, which references_max bounds and everything
+	# permanent shares. So the pool runs out first, and it must fail the await rather
+	# than suspend with a local silently replaced by null.
+	var live := 0
+	for i in range(128):
+		var a = s.vmcallv("await_handle", await_ping, "held")
+		if typeof(a) != TYPE_SIGNAL:
+			break
+		live += 1
+	assert_engine_error("Maximum number of scoped variants in permanent state reached")
+	assert_engine_error("permanent Variant pool full")
+	assert_engine_error("Exception: await: permanent Variant pool full")
+
+	assert_gt(live, 0, "some frames did suspend")
+	assert_lt(live, 128, "the pool ran out before coroutines_max did")
+	assert_eq(s.get_coroutine_count(), live,
+		"the failed await left no half-promoted frame behind")
+
+	# The frames that did suspend are undamaged: the failure released only its own slots.
+	await_ping.emit("+resumed")
+	assert_eq(s.get_coroutine_count(), 0, "every surviving frame resumed and completed")
+
+	s.queue_free()
+
+func test_await_host_nonexistent_signal_fails_the_await():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	# connect() reports a nonexistent signal with the same error code as an already-
+	# connected one, which is tolerated: read that way, this would suspend forever.
+	var exceptions : int = s.get_exceptions()
+	s.vmcallv("await_probe", Signal(self, "no_such_signal"))
+	assert_engine_error("has no signal no_such_signal")
+	assert_engine_error("Exception: await: the awaited Signal does not exist")
+	assert_eq(s.get_coroutine_count(), 0, "nothing was suspended")
+	assert_eq(s.get_exceptions(), exceptions + 1, "and the call threw")
+
+	s.queue_free()
+
+func test_await_host_coroutine_limit_is_clamped():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	# The cap is a uint32: truncating 1 << 32 to zero would fail every await instead.
+	s.set_max_coroutines(1 << 40)
+	assert_gt(s.get_max_coroutines(), 0, "a huge cap does not wrap to zero")
+
+	assert_eq(typeof(s.vmcallv("await_probe", await_ping)), TYPE_SIGNAL,
+		"and awaits still suspend under it")
+	assert_eq(s.get_coroutine_count(), 1)
+
+	s.set_max_coroutines(-1)
+	assert_eq(s.get_max_coroutines(), 0, "a negative cap clamps to zero")
+
+	s.reap_coroutines()
+	s.queue_free()
+
+func test_await_host_respects_restrictions():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+	s.restrictions = true
+
+	# Awaiting a signal connects a Callable to a host object, which is as outward-facing
+	# as any other call on one. A refused object fails the await rather than quietly
+	# leaving the coroutine suspended on a signal it was never connected to.
+	var exceptions : int = s.get_exceptions()
+	s.vmcallv("await_probe", await_ping)
+	assert_engine_error("not allowed to await a signal")
+	assert_engine_error("Exception: await: object is not allowed")
+	assert_eq(s.get_coroutine_count(), 0, "nothing was suspended")
+	assert_eq(s.get_exceptions(), exceptions + 1, "and the call threw")
+
+	s.queue_free()

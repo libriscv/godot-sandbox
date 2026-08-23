@@ -13,6 +13,7 @@
 #include "elf/script_elf.h"
 #include "elf/script_language_elf.h"
 #include "sandbox.h"
+#include "sandbox_function_state.h"
 #include "sandbox_project_settings.h"
 #include "cpp/resource_loader_cpp.h"
 #include "cpp/resource_saver_cpp.h"
@@ -49,6 +50,7 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 	ClassDB::register_class<Sandbox>();
+	ClassDB::register_class<SandboxFunctionState>();
 	ClassDB::register_class<ELFScript>();
 	ClassDB::register_class<ELFScriptLanguage>();
 	ClassDB::register_class<ResourceFormatLoaderELF>();

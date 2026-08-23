@@ -83,7 +83,16 @@
 // Emitted only at requested lines; changing the set recompiles.
 #define ECALL_BREAKPOINT (GAME_API_BASE + 51)
 
-#define ECALL_LAST (GAME_API_BASE + 52)
+// a0 = operand GuestVariant*, a1 = frame base, a2 = frame size (bytes),
+// a3 = state index, a4 = resume entry address, a5 = result slot offset (-1 = none).
+// Returns a0 = 1 (suspended) or 0 (not awaitable; result slot already written).
+#define ECALL_AWAIT (GAME_API_BASE + 52)
+
+// a0 = frame base, a1 = frame size (checked against suspend).
+// Returns a0 = state index. Result slot holds the awaited value.
+#define ECALL_AWAIT_RESTORE (GAME_API_BASE + 53)
+
+#define ECALL_LAST (GAME_API_BASE + 54)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)

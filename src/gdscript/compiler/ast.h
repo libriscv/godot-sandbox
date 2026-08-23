@@ -59,6 +59,13 @@ struct BinaryExpr : Expr {
 		: left(std::move(l)), op(o), right(std::move(r)) {}
 };
 
+// Suspension point; makes the enclosing function a coroutine.
+struct AwaitExpr : Expr {
+	ExprPtr operand;
+
+	explicit AwaitExpr(ExprPtr e) : operand(std::move(e)) {}
+};
+
 struct UnaryExpr : Expr {
 	enum class Op { NEG, NOT, BIT_NOT };
 
@@ -305,6 +312,8 @@ struct FunctionDecl {
 	int column = 0;
 	// '##' block above declaration; published in the signature for the editor.
 	std::string doc_comment;
+	// Has AWAIT; gets a resume entry and returns an awaitable.
+	bool is_coroutine = false;
 };
 
 // Sugar for a Dictionary with a fixed key set; nothing survives into IR.

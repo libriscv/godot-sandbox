@@ -171,6 +171,15 @@ void RegisterAllocator::force_register_mapping(int vreg, uint8_t preg) {
 	m_preg_to_vreg[preg] = vreg;
 }
 
+std::vector<int> RegisterAllocator::mapped_vregs() const {
+	std::vector<int> vregs;
+	vregs.reserve(m_vreg_to_preg.size());
+	for (const auto& [vreg, preg] : m_vreg_to_preg) {
+		vregs.push_back(vreg);
+	}
+	return vregs;
+}
+
 int RegisterAllocator::get_vreg_for_preg(uint8_t preg) const {
 	std::unordered_map<uint8_t, int>::const_iterator it = m_preg_to_vreg.find(preg);
 	if (it != m_preg_to_vreg.end()) {

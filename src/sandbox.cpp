@@ -231,6 +231,13 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_max_refs"), &Sandbox::get_max_refs);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "references_max", PROPERTY_HINT_NONE, "Maximum objects and variants referenced by a sandbox call"), "set_max_refs", "get_max_refs");
 
+	// Coroutines
+	ClassDB::bind_method(D_METHOD("set_max_coroutines", "max"), &Sandbox::set_max_coroutines, DEFVAL(MAX_COROUTINES));
+	ClassDB::bind_method(D_METHOD("get_max_coroutines"), &Sandbox::get_max_coroutines);
+	ClassDB::bind_method(D_METHOD("get_coroutine_count"), &Sandbox::get_coroutine_count);
+	ClassDB::bind_method(D_METHOD("reap_coroutines"), &Sandbox::reap_coroutines);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "coroutines_max", PROPERTY_HINT_NONE, "Maximum number of suspended coroutines"), "set_max_coroutines", "get_max_coroutines");
+
 	ClassDB::bind_method(D_METHOD("set_memory_max", "max"), &Sandbox::set_memory_max, DEFVAL(MAX_VMEM));
 	ClassDB::bind_method(D_METHOD("get_memory_max"), &Sandbox::get_memory_max);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "memory_max", PROPERTY_HINT_NONE, "Maximum memory (in MiB) used by the sandboxed program"), "set_memory_max", "get_memory_max");
@@ -351,12 +358,17 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() {
 }
 
 void Sandbox::constructor_initialize() {
+	// Reap coroutines before clearing the states their frames reference.
+	this->reap_coroutines();
+	this->m_program_generation += 1;
 	this->m_current_state = &this->m_states[0];
 	this->m_use_unboxed_arguments = SandboxProjectSettings::use_native_types();
 	// For each call state, reset the state
 	for (size_t i = 0; i < this->m_states.size(); i++) {
 		this->m_states[i].reinitialize(i, this->m_max_refs);
 	}
+	this->m_perm_slots.clear();
+	this->m_perm_free_slots.clear();
 }
 void Sandbox::reset_machine() {
 	try {
@@ -380,18 +392,13 @@ void Sandbox::full_reset() {
 	this->m_sname_lookup.clear();
 	this->m_name_addresses.clear();
 	this->m_guest_names.clear();
-	// The allowed-objects list deliberately survives: it describes what the host is
-	// willing to expose to this Sandbox, not anything about the program in it. Loading a
-	// program used to silently drop it, leaving the sandbox unrestricted. Use
-	// clear_allowed_objects() to actually clear it.
+	// Allowed-objects list survives: it describes the host policy, not the program.
 }
 Sandbox::Sandbox() {
 	this->constructor_initialize();
 	this->m_tree_base = this;
 	this->m_global_instances_current += 1;
 	this->m_global_instances_seen += 1;
-	// In order to reduce checks we guarantee that this
-	// class is well-formed at all times.
 	this->reset_machine();
 }
 Sandbox::Sandbox(const PackedByteArray &buffer) : Sandbox() {
@@ -406,6 +413,8 @@ Sandbox::~Sandbox() {
 		ERR_PRINT("Sandbox instance destroyed while a VM call is in progress.");
 	}
 	this->m_global_instances_current -= 1;
+	// Quietly: completed signal would run against a node under destruction.
+	this->reap_coroutines_internal(false);
 	this->set_program_data_internal(nullptr);
 	try {
 		if (this->m_machine != &dummy_machine)
@@ -565,6 +574,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 
 		auto options = std::make_shared<riscv::MachineOptions<RISCV_ARCH>>(riscv::MachineOptions<RISCV_ARCH>{
 				.memory_max = uint64_t(get_memory_max()) << 20, // in MiB
+				.stack_size = GUEST_STACK_SIZE,
 				//.verbose_loader = true,
 #ifdef RISCV_BINARY_TRANSLATION
 				.translate_enabled = riscv::libtcc_enabled && m_bintr_jit,
@@ -974,6 +984,16 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 	return &v[overflow_args];
 }
 Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc) {
+	// Cleared per call; nested calls must not inherit the resumed frame.
+	const uint64_t entering_coroutine = this->m_resume_entry_id;
+	this->m_resume_entry_id = 0;
+	struct ResumeScope {
+		Sandbox &self;
+		uint64_t previous;
+		~ResumeScope() { self.m_resuming_coroutine_id = previous; }
+	} resume_scope{ *this, this->m_resuming_coroutine_id };
+	this->m_resuming_coroutine_id = entering_coroutine;
+
 	this->m_current_state += 1;
 	const auto *beginptr = this->m_states.data();
 	const auto *endptr = this->m_states.data() + this->m_states.size();
@@ -1068,13 +1088,31 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			regs = cpu.registers();
 			// we are in a recursive call, so wait before setting exit address
 			cpu.reg(riscv::REG_RA) = m_machine->memory.exit_address();
-			// we need to make some stack room
+			// Nested calls share one guest stack; preempt restores the outer SP.
 			sp -= 16u;
 			// set up each argument, and return value
 			retvar = this->setup_arguments(sp, args, argc);
 			// execute preemption! (precise simulation not supported)
 			uint64_t max_instr = get_instructions_max() << 20;
 			cpu.preempt_internal(regs, true, true, address, max_instr ? max_instr : ~0ULL);
+		}
+
+		// Suspended coroutine: return the Signal to await, not the function result.
+		if (UNLIKELY(this->m_pending_suspend != 0)) {
+			const uint64_t suspended = this->m_pending_suspend;
+			this->m_current_state -= 1;
+			// Leave the flag for coroutine_resume() to distinguish re-suspension from return.
+			if (this->m_resuming_coroutine_id == suspended) {
+				return Variant();
+			}
+			this->m_pending_suspend = 0;
+			Coroutine *co = this->find_coroutine(suspended);
+			if (co == nullptr || co->state_object.is_null()) {
+				return Variant();
+			}
+			// Signal(state, "completed"): VM rejects GDExtension objects in place of
+			// GDScriptFunctionState, but accepts a Signal on one natively.
+			return Signal(co->state_object.ptr(), "completed");
 		}
 
 		// Treat return value as pointer to Variant
@@ -1091,6 +1129,12 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 		this->handle_exception(address);
 		// TODO: Free the function arguments and return value? Will help keep guest memory clean
 
+		// Fault unwound past suspend: no frame to resume.
+		if (this->m_pending_suspend != 0) {
+			const uint64_t suspended = this->m_pending_suspend;
+			this->m_pending_suspend = 0;
+			this->retire_coroutine(suspended, true);
+		}
 		this->m_current_state -= 1;
 		return Variant();
 	}
@@ -1269,6 +1313,41 @@ const Sandbox::CachedName &Sandbox::cached_guest_name(gaddr_t address, std::stri
 
 //-- Scoped objects and variants --//
 
+static inline bool permanent_slot_untracked(size_t slot, size_t tracked) noexcept {
+	return slot >= tracked;
+}
+
+int32_t Sandbox::track_permanent_slot(int32_t variant_index) {
+	CurrentState &perm = this->m_states[0];
+	// Pad for slots pushed outside track_permanent_slot; records must stay in step.
+	while (m_perm_slots.size() + 1 < perm.scoped_variants.size()) {
+		m_perm_slots.push_back(PermanentSlot{});
+	}
+	const uint32_t slot = uint32_t(perm.scoped_variants.size()) - 1u;
+	if (m_perm_slots.size() <= slot) {
+		m_perm_slots.resize(slot + 1);
+	}
+	m_perm_slots[slot].variant_index = variant_index;
+	m_perm_slots[slot].free = false;
+	return encode_permanent_index(slot, m_perm_slots[slot].generation);
+}
+
+bool Sandbox::permanent_index_valid(int32_t index) const noexcept {
+	if (!is_permanent_variant(index)) {
+		return false;
+	}
+	const uint32_t slot = decode_permanent_slot(index);
+	if (slot >= m_states[0].scoped_variants.size()) {
+		return false;
+	}
+	if (permanent_slot_untracked(slot, m_perm_slots.size())) {
+		return decode_permanent_generation(index) == 0;
+	}
+	const PermanentSlot &rec = m_perm_slots[slot];
+	return !rec.free && rec.generation == decode_permanent_generation(index);
+}
+
+
 unsigned Sandbox::add_scoped_variant(const Variant *value) const {
 	CurrentState &st = this->state();
 	if (st.scoped_variants.size() >= st.variants.capacity()) {
@@ -1278,8 +1357,8 @@ unsigned Sandbox::add_scoped_variant(const Variant *value) const {
 	st.scoped_variants.push_back(value);
 	if (&st != &this->m_states[0])
 		return int32_t(st.scoped_variants.size()) - 1;
-	else
-		return -int32_t(st.scoped_variants.size());
+	// Non-owned: slot is never recycled (variant_index -1).
+	return const_cast<Sandbox *>(this)->track_permanent_slot(-1);
 }
 unsigned Sandbox::create_scoped_variant(Variant &&value) const {
 	CurrentState &st = this->state();
@@ -1290,23 +1369,19 @@ unsigned Sandbox::create_scoped_variant(Variant &&value) const {
 	st.append(std::move(value));
 	if (&st != &this->m_states[0])
 		return int32_t(st.scoped_variants.size()) - 1;
-	else
-		return -int32_t(st.scoped_variants.size());
+	return const_cast<Sandbox *>(this)->track_permanent_slot(int32_t(st.variants.size()) - 1);
 }
 std::optional<const Variant *> Sandbox::get_scoped_variant(int32_t index) const noexcept {
 	if (index >= 0 && index < state().scoped_variants.size()) {
 		return state().scoped_variants[index];
 	} else if (index < 0) {
-		// Negative index is access into initialization state. INT32_MIN has no positive
-		// counterpart, so negating it is undefined behaviour rather than an invalid index.
+		// INT32_MIN: -INT32_MIN is UB.
 		if (UNLIKELY(index == INT32_MIN)) {
 			ERR_PRINT("Invalid permanent variant index: " + itos(index));
 			return std::nullopt;
 		}
-		index = -index - 1;
-		auto &init_state = this->m_states[0];
-		if (index < init_state.scoped_variants.size()) {
-			return init_state.scoped_variants[index];
+		if (this->permanent_index_valid(index)) {
+			return this->m_states[0].scoped_variants[decode_permanent_slot(index)];
 		}
 		ERR_PRINT("Invalid permanent variant index: " + itos(index));
 		return std::nullopt;
@@ -1315,12 +1390,15 @@ std::optional<const Variant *> Sandbox::get_scoped_variant(int32_t index) const 
 	return std::nullopt;
 }
 Variant &Sandbox::get_mutable_scoped_variant(int32_t index) {
-	// Resolve permanent indices in the permanent state.
 	CurrentState *st = &this->state();
 	int32_t slot = index;
 	if (is_permanent_variant(index)) {
 		st = &this->m_states[0];
-		slot = -index - 1;
+		if (!permanent_index_valid(index)) {
+			ERR_PRINT("Stale or invalid permanent variant index: " + itos(index));
+			throw std::runtime_error("Stale or invalid permanent variant index: " + std::to_string(index));
+		}
+		slot = int32_t(decode_permanent_slot(index));
 	}
 	if (slot < 0 || size_t(slot) >= st->scoped_variants.size()) {
 		ERR_PRINT("Invalid scoped variant index: " + itos(index));
@@ -1355,47 +1433,97 @@ unsigned Sandbox::create_permanent_variant(unsigned idx) {
 		return &v == var;
 	});
 
-	CurrentState &perm_state = this->m_states[0];
-	if (perm_state.variants.size() >= perm_state.variants.capacity()) {
-		ERR_PRINT("Maximum number of scoped variants in permanent state reached.");
-		// Just return the old scoped variant
+	Variant value = (it == state().variants.end()) ? var->duplicate() : std::move(*it);
+	const int32_t perm_idx = this->create_permanent_variant_from(std::move(value));
+	if (perm_idx == 0) {
 		return idx;
 	}
+	return unsigned(perm_idx);
+}
+int32_t Sandbox::create_permanent_variant_from(Variant &&value) {
+	CurrentState &perm_state = this->m_states[0];
 
-	if (it == state().variants.end()) {
-		// Create a new variant in the permanent list
-		perm_state.append(var->duplicate());
-	} else {
-		// Move the variant to the permanent list, leave the old one in the scoped list
-		perm_state.append(std::move(*it));
+	// Recycle a released slot first; stale entries are dropped.
+	while (!m_perm_free_slots.empty()) {
+		const uint32_t slot = m_perm_free_slots.back();
+		m_perm_free_slots.pop_back();
+		if (slot >= m_perm_slots.size() || slot >= perm_state.scoped_variants.size()) {
+			continue;
+		}
+		PermanentSlot &rec = m_perm_slots[slot];
+		if (!rec.free) {
+			continue;
+		}
+		if (rec.variant_index < 0 || size_t(rec.variant_index) >= perm_state.variants.size()) {
+			continue;
+		}
+		perm_state.variants[rec.variant_index] = std::move(value);
+		perm_state.scoped_variants[slot] = &perm_state.variants[rec.variant_index];
+		rec.free = false;
+		return encode_permanent_index(slot, rec.generation);
 	}
-	unsigned perm_idx = perm_state.variants.size() - 1;
-	// Return the index of the new permanent variant converted to negative
-	return -int32_t(perm_idx) - 1;
+
+	if (perm_state.variants.size() >= perm_state.variants.capacity() ||
+		perm_state.scoped_variants.size() >= PERM_MAX_SLOTS) {
+		ERR_PRINT("Maximum number of scoped variants in permanent state reached.");
+		return 0;
+	}
+	perm_state.append(std::move(value));
+	return this->track_permanent_slot(int32_t(perm_state.variants.size()) - 1);
+}
+void Sandbox::release_permanent_variant(int32_t idx) {
+	if (!this->permanent_index_valid(idx)) {
+		return;
+	}
+	const uint32_t slot = decode_permanent_slot(idx);
+	if (slot >= m_perm_slots.size()) {
+		return;
+	}
+	PermanentSlot &rec = m_perm_slots[slot];
+	if (rec.variant_index < 0) {
+		return;
+	}
+	CurrentState &perm_state = this->m_states[0];
+	perm_state.variants[rec.variant_index] = Variant();
+	perm_state.scoped_variants[slot] = &perm_state.variants[rec.variant_index];
+	// 15-bit generation; wraps after 32768 recycles of the same slot.
+	rec.generation = (rec.generation + 1u) & 0x7FFFu;
+	rec.free = true;
+	m_perm_free_slots.push_back(slot);
 }
 void Sandbox::assign_permanent_variant(int32_t idx, Variant &&val) {
-	if (idx < 0) {
-		// It's a permanent variant, verify the index
-		idx = -idx - 1;
-		if (idx < this->m_states[0].variants.size()) {
-			this->m_states[0].variants[idx] = std::move(val);
+	if (this->permanent_index_valid(idx)) {
+		const uint32_t slot = decode_permanent_slot(idx);
+		CurrentState &perm_state = this->m_states[0];
+		const int32_t vi = slot < m_perm_slots.size() ? m_perm_slots[slot].variant_index : -1;
+		if (vi >= 0 && size_t(vi) < perm_state.variants.size()) {
+			perm_state.variants[vi] = std::move(val);
+			perm_state.scoped_variants[slot] = &perm_state.variants[vi];
+			return;
+		}
+		// Untracked or non-owned: take ownership.
+		if (perm_state.variants.size() < perm_state.variants.capacity()) {
+			perm_state.variants.push_back(std::move(val));
+			perm_state.scoped_variants[slot] = &perm_state.variants.back();
+			if (slot >= m_perm_slots.size()) {
+				m_perm_slots.resize(slot + 1);
+			}
+			m_perm_slots[slot].variant_index = int32_t(perm_state.variants.size()) - 1;
 			return;
 		}
 	}
-	// It's either a scoped (temporary) variant, or invalid
+	// It's either a scoped (temporary) variant, a stale index, or invalid
 	ERR_PRINT("Invalid permanent variant index.");
 	throw std::runtime_error("Invalid permanent variant index: " + std::to_string(idx));
 }
 unsigned Sandbox::try_reuse_assign_variant(int32_t assign_to_idx, Variant &&new_value) {
 	if (this->is_permanent_variant(assign_to_idx)) {
-		// Permanent: assign directly, never duplicate.
 		this->assign_permanent_variant(assign_to_idx, std::move(new_value));
 		return assign_to_idx;
 	}
 	CurrentState &st = this->state();
 	if (assign_to_idx >= 0 && size_t(assign_to_idx) < st.scoped_variants.size()) {
 		const Variant *var = st.scoped_variants[assign_to_idx];
-		// Only write through Variants this state owns.
 		if (st.is_mutable_variant(*var)) {
 			const_cast<Variant &>(*var) = std::move(new_value);
 			return assign_to_idx;
@@ -1782,10 +1910,6 @@ Variant SandboxProperty::get(const Sandbox &sandbox) const {
 	return const_cast<Sandbox &>(sandbox).vmcall_internal(m_getter_address, nullptr, 0);
 }
 
-void Sandbox::CurrentState::initialize(unsigned level, unsigned max_refs) {
-	(void)level;
-	this->variants.reserve(max_refs);
-}
 void Sandbox::CurrentState::reinitialize(unsigned level, unsigned max_refs) {
 	(void)level;
 	this->variants.reserve(max_refs);
@@ -1807,9 +1931,15 @@ void Sandbox::set_max_refs(uint32_t max) {
 	this->m_max_refs = max;
 	// If we are not in a call, reset the states
 	if (!this->is_in_vmcall()) {
+		// Coroutine frames hold permanent indices into m_states[0].
+		this->reap_coroutines();
+		// Must clear, not just reserve: the m_perm_slots clear below makes any surviving
+		// permanent index read as untracked, and untracked is accepted at generation 0.
 		for (size_t i = 0; i < this->m_states.size(); i++) {
-			this->m_states[i].initialize(i, max);
+			this->m_states[i].reinitialize(i, max);
 		}
+		this->m_perm_slots.clear();
+		this->m_perm_free_slots.clear();
 	} else {
 		ERR_PRINT("Sandbox: Cannot change max references during a Sandbox call.");
 	}

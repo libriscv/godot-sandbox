@@ -59,6 +59,7 @@ public:
 		check_register_range();
 		check_operands();
 		check_labels();
+		check_coroutine();
 		check_definedness_and_types();
 	}
 
@@ -89,6 +90,18 @@ private:
 
 	size_t register_count() const {
 		return static_cast<size_t>(std::max(m_func.max_registers, 0));
+	}
+
+	// AWAIT requires is_coroutine; the converse is allowed (optimizer may remove all AWAITs).
+	void check_coroutine() {
+		if (m_func.is_coroutine) {
+			return;
+		}
+		for (size_t i = 0; i < m_func.instructions.size(); i++) {
+			if (m_func.instructions[i].opcode == IROpcode::AWAIT) {
+				fail("AWAIT in a function that is not marked as a coroutine", i);
+			}
+		}
 	}
 
 	void check_register_range() {

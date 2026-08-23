@@ -35,6 +35,7 @@ const char* token_type_name(TokenType type) {
 		case TokenType::ENUM: return "ENUM";
 		case TokenType::CLASS_NAME: return "CLASS_NAME";
 		case TokenType::SIGNAL: return "SIGNAL";
+		case TokenType::AWAIT: return "AWAIT";
 		case TokenType::AS: return "AS";
 		case TokenType::PLUS: return "PLUS";
 		case TokenType::MINUS: return "MINUS";

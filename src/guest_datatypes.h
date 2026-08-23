@@ -229,6 +229,7 @@ inline bool GuestVariant::is_scoped_variant() const noexcept {
 		case Variant::DICTIONARY:
 		case Variant::ARRAY:
 		case Variant::CALLABLE:
+		case Variant::SIGNAL:
 		case Variant::STRING_NAME:
 		case Variant::NODE_PATH:
 		case Variant::RID:

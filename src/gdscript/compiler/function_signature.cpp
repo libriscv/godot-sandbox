@@ -60,6 +60,7 @@ std::vector<uint8_t> encode_function_signatures(const std::vector<FunctionSignat
 		write_scalar<int32_t>(out, sig.line);
 		write_string(out, sig.description);
 		write_scalar<uint32_t>(out, uint32_t(sig.required_arguments));
+		write_scalar<uint8_t>(out, sig.is_coroutine ? 1 : 0);
 		write_scalar<uint32_t>(out, uint32_t(sig.parameters.size()));
 
 		for (const FunctionParameter &param : sig.parameters) {
@@ -111,6 +112,7 @@ bool decode_function_signatures(const uint8_t *data, size_t size,
 		sig.line = reader.scalar<int32_t>();
 		sig.description = reader.string();
 		sig.required_arguments = reader.scalar<uint32_t>();
+		sig.is_coroutine = reader.scalar<uint8_t>() != 0;
 		const uint32_t parameter_count = reader.scalar<uint32_t>();
 		if (!reader.ok || parameter_count > size) {
 			out.clear();

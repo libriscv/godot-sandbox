@@ -48,6 +48,9 @@ public:
 	// Reverse lookup: vreg occupying preg, or -1.
 	int get_vreg_for_preg(uint8_t preg) const;
 
+	// All vregs in physical registers. AWAIT requires full spill.
+	std::vector<int> mapped_vregs() const;
+
 	// Whether preg is in the free pool.
 	bool is_register_available(uint8_t preg) const;
 

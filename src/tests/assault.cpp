@@ -84,6 +84,8 @@ enum class Arg : uint8_t {
 	IDX_T3D,
 	IDX_BASIS,
 	IDX_QUAT,
+	FRAME, // Base of a coroutine frame: an aligned run of GuestVariants.
+	FRAME_SIZE, // Its length, mostly a whole number of Variant slots.
 };
 
 /// @brief The shape of a0-a7 for one system call, in register order.
@@ -137,6 +139,12 @@ static constexpr Shape SHAPES[] = {
 	{ ECALL_VEC2_OPS, { Arg::OP, Arg::OUT } },
 	{ ECALL_VEC3_OPS, { Arg::OUT, Arg::OUT, Arg::OP } },
 	{ ECALL_GET_OBJ, { Arg::NAME, Arg::NAMELEN } },
+	// A suspension hands the host a frame of GuestVariants the guest wrote, and the host
+	// walks it promoting every handle in it. That walk is the one place in the API where
+	// getting it wrong is a hole rather than a bug, so it is worth reaching: the operand
+	// has to be a Signal, and the frame has to be a plausible run of slots.
+	{ ECALL_AWAIT, { Arg::VPTR, Arg::FRAME, Arg::FRAME_SIZE, Arg::SMALL, Arg::ANY, Arg::SMALL } },
+	{ ECALL_AWAIT_RESTORE, { Arg::FRAME, Arg::FRAME_SIZE } },
 };
 
 struct SyscallFuzzer {
@@ -296,6 +304,9 @@ struct SyscallFuzzer {
 	}
 
 	void seed_state() {
+		// Every suspension that got through pins a frame and its promoted Variants, and
+		// the cap would otherwise turn the rest of the run into one refusal after another.
+		emu.reap_coroutines();
 		emu.state().reset();
 		indices_by_type.clear();
 
@@ -361,6 +372,9 @@ struct SyscallFuzzer {
 		// A Callable that resolves, so calling one through the API is not only ever the
 		// null case. This is the edge a mod is actually handed.
 		scope(Variant(Callable(&emu, "get_name")));
+		// A Signal that resolves: without one, every await stops at "not awaitable" and
+		// the frame walk behind it is never reached.
+		scope(Variant(Signal(&emu, "tree_entered")));
 		scope(Variant(&emu));
 
 		// One real, scoped object to aim the Object/Node system calls at. With
@@ -531,6 +545,16 @@ struct SyscallFuzzer {
 				return index_of_type(Variant::BASIS);
 			case Arg::IDX_QUAT:
 				return index_of_type(Variant::QUATERNION);
+			case Arg::FRAME:
+				// The Variant zone itself, slot-aligned: what the guest hands over is
+				// supposed to be its own array of Variant slots.
+				if (variant_slots == 0)
+					return scratch_address();
+				return variants_zone + gaddr_t(pick(std::max(1u, variant_slots / 2))) * sizeof(GuestVariant);
+			case Arg::FRAME_SIZE:
+				// Mostly a whole number of slots, which is the only thing the host accepts;
+				// the rest reaches the rejection.
+				return pick(4) ? uint64_t(1 + pick(8)) * sizeof(GuestVariant) : argument();
 		}
 		return argument();
 	}

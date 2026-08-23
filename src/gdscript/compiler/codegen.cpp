@@ -285,6 +285,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 IRFunction CodeGenerator::generate_function(const FunctionDecl& decl) {
 	FunctionContext func;
 	func.ir.name = decl.name;
+	func.ir.is_coroutine = decl.is_coroutine;
 	m_current_function = decl.name;
 
 	func.return_type = decl.return_type;
@@ -1405,6 +1406,8 @@ int CodeGenerator::gen_expr(const Expr* expr, FunctionContext& func) {
 		return gen_binary(bin, func);
 	} else if (auto* un = dynamic_cast<const UnaryExpr*>(expr)) {
 		return gen_unary(un, func);
+	} else if (auto* await_expr = dynamic_cast<const AwaitExpr*>(expr)) {
+		return gen_await(await_expr, func);
 	} else if (auto* ternary = dynamic_cast<const TernaryExpr*>(expr)) {
 		return gen_ternary(ternary, func);
 	} else if (auto* type_test = dynamic_cast<const TypeTestExpr*>(expr)) {
@@ -2279,6 +2282,22 @@ int CodeGenerator::gen_unary(const UnaryExpr* expr, FunctionContext& func) {
 	return result_reg;
 }
 
+int CodeGenerator::gen_await(const AwaitExpr* expr, FunctionContext& func) {
+	if (!func.ir.is_coroutine) {
+		// Parser/codegen coroutine flag mismatch.
+		error_at("'await' outside a coroutine", expr);
+	}
+	const int operand_reg = gen_expr(expr->operand.get(), func);
+	const int result_reg = alloc_register(func);
+
+	// Awaited value type unknown; no hint propagated.
+	func.ir.instructions.emplace_back(IROpcode::AWAIT,
+		IRValue::reg(result_reg), IRValue::reg(operand_reg));
+
+	free_register(func, operand_reg);
+	return result_reg;
+}
+
 int CodeGenerator::gen_ternary(const TernaryExpr* expr, FunctionContext& func) {
 	// Only the taken branch is evaluated.
 	std::string else_label = make_label("ternary_else");
@@ -2397,6 +2416,13 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 		// Defaults materialized here: ABI has no argument count, callee can't distinguish.
 		auto sig = m_local_signatures.find(expr->function_name);
 		if (sig != m_local_signatures.end()) {
+			if (sig->second->is_coroutine) {
+				// Intra-program calls are jal; a suspension unwinds past them.
+				// Composing coroutines requires host-mediated entry (not yet implemented).
+				error_at("'" + expr->function_name + "' contains an await, so it can only be "
+					"called from outside the program", expr,
+					"Awaiting one .sgd coroutine from another is not supported yet");
+			}
 			const auto& params = sig->second->parameters;
 			if (arg_regs.size() > params.size()) {
 				error_at("Too many arguments to '" + expr->function_name + "': expected at most " +
@@ -2697,9 +2723,13 @@ FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const
 	sig.name = decl.name;
 	sig.line = decl.line;
 	sig.description = decl.doc_comment;
-	sig.return_type = find_struct(decl.return_type) != nullptr
-		? int32_t(Variant::DICTIONARY)
-		: int32_t(type_hint_from_string(decl.return_type));
+	sig.is_coroutine = decl.is_coroutine;
+	// Coroutine return type is Variant (may be Signal or declared type).
+	sig.return_type = decl.is_coroutine
+		? int32_t(FunctionParameter::ANY_TYPE)
+		: (find_struct(decl.return_type) != nullptr
+			? int32_t(Variant::DICTIONARY)
+			: int32_t(type_hint_from_string(decl.return_type)));
 
 	for (const Parameter& param : decl.parameters) {
 		FunctionParameter out;

@@ -363,8 +363,20 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 			m_fn.saves_return_address = true;
 		}
 	}
+	m_fn.is_coroutine = func.is_coroutine;
+	if (m_fn.is_coroutine) {
+		// Suspension clobbers a0; resume needs ra. Frame mandatory.
+		m_fn.spills_return_pointer = true;
+		m_fn.saves_return_address = true;
+		m_fn.resume_label = ".resume$" + func.name;
+		m_fn.await_states.clear();
+	}
 	m_fn.forward_to_return = find_return_forwarding(func);
 	m_fn.live_params = find_live_parameters(func);
+	if (m_fn.is_coroutine) {
+		// Parameters are caller pointers; force all live so they are in the frame before suspension.
+		m_fn.live_params.assign(func.parameters.size(), true);
+	}
 	plan_constants(func);
 	plan_int_chaining(func);
 	plan_nonnegative(func);
@@ -377,7 +389,7 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 	// declaration. get_variant_stack_offset() refuses after this, so a missing
 	// frame is a compile error rather than a silent caller-frame corruption.
 	m_fn.omits_frame = !m_fn.saves_return_address && !m_fn.spills_return_pointer &&
-		!copies_a_parameter;
+		!copies_a_parameter && !m_fn.is_coroutine;
 	for (size_t i = 0; m_fn.omits_frame && i < func.instructions.size(); i++) {
 		switch (func.instructions[i].opcode) {
 			case IROpcode::LABEL:
@@ -413,6 +425,7 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 	}
 	m_fn.scratch_slot_base = max_variants;
 	m_fn.next_variant_slot = max_variants + SCRATCH_VARIANT_SLOTS;
+	m_fn.variant_space = variant_space;
 
 	m_fn.stack_frame_size = m_fn.omits_frame ? 0 : saved_reg_space + variant_space;
 
@@ -443,6 +456,11 @@ void RISCVCodeGen::emit_prologue(const IRFunction& func) {
 		emit_sd(REG_A0, REG_SP, SAVED_A0_OFFSET);
 	}
 
+	// Zero slots before parameters: uninitialized stack would leak into a suspended frame.
+	if (m_fn.is_coroutine) {
+		emit_zero_variant_slots();
+	}
+
 	// Parameters arrive in a1-a7 as pointers to Variants.
 	if (m_fn.num_params > IRFunction::MAX_PARAMETERS) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
@@ -458,6 +476,31 @@ void RISCVCodeGen::emit_prologue(const IRFunction& func) {
 		int dst_offset = get_variant_stack_offset(param_vreg);
 		uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
 		emit_variant_move(REG_SP, dst_offset, arg_reg, 0, REG_T0);
+	}
+}
+
+// Zero the type tag of every slot; promote_frame_handles reads the whole array.
+void RISCVCodeGen::emit_zero_variant_slots() {
+	const int slots = m_fn.next_variant_slot;
+	if (slots <= 0 || m_fn.stack_frame_size == 0) {
+		return;
+	}
+	const int vsize = variant_size();
+	// sp-relative while within 12-bit range; t0-based past that.
+	int base = 0;
+	bool based = false;
+	for (int i = 0; i < slots; i++) {
+		const int offset = SAVED_REG_SPACE + i * vsize;
+		if (!based && offset <= 2047) {
+			emit_sw(REG_ZERO, REG_SP, offset);
+			continue;
+		}
+		if (!based || offset - base > 2047) {
+			base = offset;
+			emit_add_offset(REG_T0, REG_SP, base);
+			based = true;
+		}
+		emit_sw(REG_ZERO, REG_T0, offset - base);
 	}
 }
 
@@ -1164,21 +1207,124 @@ void RISCVCodeGen::gen_switch(const IRInstruction& instr) {
 		}
 	}
 
+	std::vector<std::string> targets;
+	targets.reserve(size_t(count));
+	for (int64_t entry = 0; entry < count; entry++) {
+		targets.push_back(std::get<std::string>(instr.operands[3 + entry].value));
+	}
+	emit_dense_jump_table(REG_T0, targets, past_table);
+	define_label(past_table);
+}
+
+// Clobbers t0, t1. index_reg must not be t1; consumed.
+void RISCVCodeGen::emit_dense_jump_table(uint8_t index_reg, const std::vector<std::string>& labels,
+		const std::string& past_label) {
 	// Unsigned compare covers both ends (below base wraps high)
-	emit_li(REG_T1, count);
-	mark_label_use(past_table, m_code.size());
-	emit_bgeu(REG_T0, REG_T1, 0);
+	emit_li(REG_T1, int64_t(labels.size()));
+	mark_label_use(past_label, m_code.size());
+	emit_bgeu(index_reg, REG_T1, 0);
 
 	// Table address = PC + 12; no relocation needed
-	emit_u_type(0x17, REG_T1, 0);         // auipc t1, 0
-	emit_sh2add(REG_T0, REG_T0, REG_T1);  // t1 + index*4
-	emit_jalr(REG_ZERO, REG_T0, 12);      // jump into table
+	emit_u_type(0x17, REG_T1, 0);           // auipc t1, 0
+	emit_sh2add(REG_T0, index_reg, REG_T1); // t1 + index*4
+	emit_jalr(REG_ZERO, REG_T0, 12);        // jump into table
 
-	for (int64_t entry = 0; entry < count; entry++) {
-		mark_label_use(std::get<std::string>(instr.operands[3 + entry].value), m_code.size());
+	for (const std::string& label : labels) {
+		mark_label_use(label, m_code.size());
 		emit_jal(REG_ZERO, 0);
 	}
+}
+
+// AWAIT: hands the Variant slot array to the host as the coroutine frame.
+void RISCVCodeGen::gen_await(const IRInstruction& instr) {
+	if (instr.operands.size() != 2) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "AWAIT requires 2 operands");
+	}
+	if (!m_fn.is_coroutine) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"AWAIT emitted in a function that was not planned as a coroutine");
+	}
+
+	const int result_vreg = std::get<int>(instr.operands[0].value);
+	const int operand_vreg = std::get<int>(instr.operands[1].value);
+
+	// Offsets before spill barrier to prevent allocator drift.
+	const int result_offset = get_variant_stack_offset(result_vreg);
+	const int operand_offset = get_variant_stack_offset(operand_vreg);
+
+	// Full clobber: frame slots must be authoritative before the host copies them out.
+	spill_all_registers();
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5});
+
+	const std::string state_label = m_fn.resume_label + "." + std::to_string(m_fn.await_states.size());
+	m_fn.await_states.push_back(state_label);
+
+	emit_add_offset(REG_A0, REG_SP, operand_offset);
+	emit_add_offset(REG_A1, REG_SP, SAVED_REG_SPACE);
+	emit_li(REG_A2, m_fn.variant_space);
+	emit_li(REG_A3, int64_t(m_fn.await_states.size()) - 1);
+	emit_la(REG_A4, m_fn.resume_label);
+	emit_li(REG_A5, result_offset - SAVED_REG_SPACE);
+	emit_li(REG_A7, ECALL_AWAIT);
+	emit_ecall();
+
+	// a0 == 0: not awaitable, result slot already written. Fall through.
+	mark_label_use(state_label, m_code.size());
+	emit_beq(REG_A0, REG_ZERO, 0);
+
+	emit_suspend_epilogue();
+
+	// Fall-through and resume both continue here.
+	define_label(state_label);
+}
+
+void RISCVCodeGen::emit_suspend_epilogue() {
+	if (m_profiling_index >= 0) {
+		emit_profiling_exit();
+	}
+	if (m_debug_index >= 0) {
+		emit_debug_exit();
+	}
+	if (m_fn.saves_return_address) {
+		emit_ld(REG_RA, REG_SP, SAVED_RA_OFFSET);
+	}
+	if (m_fn.stack_frame_size > 0) {
+		emit_add_offset(REG_SP, REG_SP, m_fn.stack_frame_size);
+	}
+	emit_ret();
+}
+
+void RISCVCodeGen::emit_coroutine_resume_entry(const IRFunction& func) {
+	define_label(m_fn.resume_label);
+	m_functions[m_fn.resume_label] = m_code.size();
+
+	// Prologue without parameter copy; the restored frame already holds them.
+	if (m_profiling_index >= 0) {
+		emit_profiling_entry();
+	}
+	if (m_fn.stack_frame_size > 0) {
+		emit_add_offset(REG_SP, REG_SP, -m_fn.stack_frame_size);
+	}
+	if (m_debug_index >= 0) {
+		emit_debug_entry();
+	}
+	emit_sd(REG_RA, REG_SP, SAVED_RA_OFFSET);
+	emit_sd(REG_A0, REG_SP, SAVED_A0_OFFSET);
+
+	// ECALL_AWAIT_RESTORE: host copies frame back, length-checked against suspension.
+	emit_add_offset(REG_A0, REG_SP, SAVED_REG_SPACE);
+	emit_li(REG_A1, m_fn.variant_space);
+	emit_li(REG_A7, ECALL_AWAIT_RESTORE);
+	emit_ecall();
+
+	// a0 = state index (0..N-1). Dispatch via dense jump table.
+	const std::string past_table = m_fn.resume_label + ".bad_state";
+	emit_mv(REG_T0, REG_A0);
+	emit_dense_jump_table(REG_T0, m_fn.await_states, past_table);
+
+	// Invalid state index: return without resuming.
 	define_label(past_table);
+	emit_suspend_epilogue();
 }
 
 // ECALL_THROW(type_ptr, type_len, msg_ptr, msg_len, variant, function).
@@ -1992,6 +2138,10 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			emit_jal(REG_ZERO, 0);
 			break;
 
+		case IROpcode::AWAIT:
+			gen_await(instr);
+			break;
+
 		case IROpcode::SWITCH:
 			gen_switch(instr);
 			break;
@@ -2265,6 +2415,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 		gen_instruction(instr);
 	}
+
+	// Emitted after body; skipped if optimizer removed all awaits.
+	if (m_fn.is_coroutine && !m_fn.await_states.empty()) {
+		emit_coroutine_resume_entry(func);
+	}
 }
 
 void RISCVCodeGen::emit_word(uint32_t word) {
@@ -2495,6 +2650,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::ARRAY_GET:
 		case IROpcode::ARRAY_SET:
 		case IROpcode::DICT_SET:
+		case IROpcode::AWAIT:
 		case IROpcode::CALL:
 		case IROpcode::CALL_SYSCALL:
 		case IROpcode::GET_NODE:
@@ -4311,6 +4467,13 @@ void RISCVCodeGen::emit_slli(uint8_t rd, uint8_t rs, uint8_t shamt) {
 
 void RISCVCodeGen::emit_sext_w(uint8_t rd, uint8_t rs) {
 	emit_i_type(0x1b, rd, 0, rs, 0);
+}
+
+void RISCVCodeGen::spill_all_registers() {
+	// Frame slots are authoritative; drop all vreg→preg mappings.
+	for (int vreg : m_allocator.mapped_vregs()) {
+		m_allocator.spill_register(vreg);
+	}
 }
 
 void RISCVCodeGen::spill_around_syscall(const std::vector<uint8_t>& clobbered_regs) {

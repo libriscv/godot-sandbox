@@ -166,6 +166,12 @@ if (BUILD_TESTING)
 		add_executable(test_breakpoints tests/test_breakpoints.cpp)
 		target_link_libraries(test_breakpoints gdscript_compiler riscv)
 		add_test(NAME test_breakpoints COMMAND test_breakpoints)
+
+		# And so is a suspension: what `await` compiles to is only really pinned
+		# by running it against a host that answers the two syscalls.
+		add_executable(test_await tests/test_await.cpp)
+		target_link_libraries(test_await gdscript_compiler riscv)
+		add_test(NAME test_await COMMAND test_await)
 	else()
 		message(STATUS "libriscv not found: skipping the differential test")
 	endif()

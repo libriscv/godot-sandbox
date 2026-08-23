@@ -55,7 +55,7 @@ func test_fuzz_syscalls():
 	gut.p("fuzzing seed: %s" % r["seed"])
 
 	# Every handler has to be reached, or the run proves nothing about it.
-	for syscall in range(500, 551):
+	for syscall in range(500, 554):
 		assert_true(coverage.has(syscall), "system call %d was invoked" % syscall)
 
 	# Being invoked is not the same as being tested. A handler validates its arguments
@@ -70,7 +70,13 @@ func test_fuzz_syscalls():
 	var never_returns := ALWAYS_REFUSED.keys()
 	never_returns.append(511) # THROW
 	never_returns.append(531) # TIMER_STOP
-	for syscall in range(500, 551):
+	# AWAIT_RESTORE only means anything inside a resume, which is a call the host makes
+	# and not something a guest can ask for. Its guest-controlled arguments -- where to
+	# put the frame and how big it is -- are refused here every time, which is the point;
+	# the blob it copies is the host's own, and the guest bytes that become one are
+	# consumed by AWAIT, which this run does reach.
+	never_returns.append(553) # AWAIT_RESTORE
+	for syscall in range(500, 554):
 		if syscall in never_returns:
 			continue
 		var counts: Array = coverage.get(syscall, [0, 0])

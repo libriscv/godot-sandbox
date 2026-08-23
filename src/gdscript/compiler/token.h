@@ -40,6 +40,7 @@ enum class TokenType {
 	ENUM,
 	CLASS_NAME,
 	SIGNAL,
+	AWAIT,
 
 	// Operators
 	PLUS,        // +

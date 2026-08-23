@@ -114,6 +114,8 @@ private:
 	std::vector<Token> m_tokens;
 	std::unordered_map<int, std::string> m_doc_comments; // line -> ## text
 	size_t m_current = 0;
+	// Tracks `await` in the current function body.
+	bool m_saw_await = false;
 };
 
 } // namespace gdscript

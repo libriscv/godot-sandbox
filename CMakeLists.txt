@@ -44,6 +44,7 @@ set(SOURCES
 	src/register_types.cpp
 	src/sandbox.cpp
 	src/sandbox_bintr.cpp
+	src/sandbox_coroutines.cpp
 	src/sandbox_debug.cpp
 	src/sandbox_exception.cpp
 	src/sandbox_functions.cpp

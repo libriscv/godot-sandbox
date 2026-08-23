@@ -67,6 +67,8 @@ private:
 	// Three phases sharing state through m_fn: frame layout, prologue, per-instruction.
 	void plan_frame(const IRFunction& func);
 	void emit_prologue(const IRFunction& func);
+	// Zero all slot type tags; promote_frame_handles reads the whole array.
+	void emit_zero_variant_slots();
 	void gen_instruction(const IRInstruction& instr);
 	void gen_call(const IRInstruction& instr);
 	void gen_vset(const IRInstruction& instr);
@@ -77,6 +79,7 @@ private:
 	void gen_print(const IRInstruction& instr);
 	void gen_throw(const IRInstruction& instr);
 	void gen_switch(const IRInstruction& instr);
+	void gen_await(const IRInstruction& instr);
 	void gen_vget_inline(const IRInstruction& instr);
 	void gen_vset_inline(const IRInstruction& instr);
 	void gen_vget(const IRInstruction& instr);
@@ -143,6 +146,16 @@ private:
 
 	// Saves/restores the two regs it uses; safe between arbitrary IR instructions.
 	void emit_breakpoint(int32_t line);
+
+	// Coroutine resume entry: restores frame, dispatches on state index. No ELF symbol.
+	void emit_coroutine_resume_entry(const IRFunction& func);
+	// Unwind frame and return; the host hands back the awaitable, not the return value.
+	void emit_suspend_epilogue();
+	// Zba jump table indexed by index_reg; falls to past_label on out-of-range.
+	void emit_dense_jump_table(uint8_t index_reg, const std::vector<std::string>& labels,
+		const std::string& past_label);
+	// Invalidate all vreg→preg mappings. Frame slots are authoritative.
+	void spill_all_registers();
 
 	// Appends a line-table row. `force` emits line 0 (function entry only).
 	void record_line(int32_t line, bool force = false);
@@ -418,6 +431,13 @@ private:
 
 		// vreg -> global index; reads go to the data area, no frame copy.
 		std::unordered_map<int, size_t> global_handles;
+
+		bool is_coroutine = false;
+		// Frame size in bytes from SAVED_REG_SPACE; checked at resume.
+		int variant_space = 0;
+		// Per-suspension labels, state-ordered; resume dispatches on the index.
+		std::vector<std::string> await_states;
+		std::string resume_label;
 	};
 
 	FunctionState m_fn;

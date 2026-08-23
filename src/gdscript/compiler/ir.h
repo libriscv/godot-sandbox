@@ -202,6 +202,8 @@ struct IRFunction {
 	std::vector<std::string> parameters;
 	std::vector<IRInstruction> instructions;
 	int max_registers = 0;
+	// Has AWAIT; gets a resume entry, all parameters forced live.
+	bool is_coroutine = false;
 
 	// Parameters in r0..N-1, return value in r0.
 	static constexpr int RETURN_REGISTER = 0;

@@ -39,6 +39,9 @@ struct FunctionSignature {
 
 	int32_t line = 0; // 1-based line of 'func' token; 0 when unknown
 	std::string description; // '##' doc comment, lines joined by '\n'
+
+	// Coroutine; MethodInfo return type forced to Variant.
+	bool is_coroutine = false;
 };
 
 // Encoded as a single blob (one scoped variant) rather than Array of Dictionaries
