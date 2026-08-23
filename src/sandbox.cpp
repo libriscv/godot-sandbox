@@ -1928,20 +1928,30 @@ bool Sandbox::CurrentState::is_mutable_variant(const Variant &var) const {
 }
 
 void Sandbox::set_max_refs(uint32_t max) {
-	this->m_max_refs = max;
-	// If we are not in a call, reset the states
-	if (!this->is_in_vmcall()) {
-		// Coroutine frames hold permanent indices into m_states[0].
-		this->reap_coroutines();
-		// Must clear, not just reserve: the m_perm_slots clear below makes any surviving
-		// permanent index read as untracked, and untracked is accepted at generation 0.
-		for (size_t i = 0; i < this->m_states.size(); i++) {
-			this->m_states[i].reinitialize(i, max);
-		}
-		this->m_perm_slots.clear();
-		this->m_perm_free_slots.clear();
-	} else {
+	if (this->is_in_vmcall()) {
 		ERR_PRINT("Sandbox: Cannot change max references during a Sandbox call.");
+		return;
+	}
+	this->m_max_refs = max;
+	for (size_t i = 1; i < this->m_states.size(); i++) {
+		this->m_states[i].reinitialize(i, max);
+	}
+	// Permanent state (m_states[0]) holds guest globals; grow without clearing.
+	this->reserve_permanent_state(max);
+}
+
+void Sandbox::reserve_permanent_state(uint32_t max_refs) {
+	CurrentState &perm = this->m_states[0];
+	if (max_refs <= perm.variants.capacity()) {
+		return;
+	}
+	perm.variants.reserve(max_refs);
+	// Reallocation invalidated scoped_variant pointers; rebuild from m_perm_slots.
+	for (size_t slot = 0; slot < perm.scoped_variants.size() && slot < m_perm_slots.size(); slot++) {
+		const int32_t vi = m_perm_slots[slot].variant_index;
+		if (vi >= 0 && size_t(vi) < perm.variants.size()) {
+			perm.scoped_variants[slot] = &perm.variants[vi];
+		}
 	}
 }
 

@@ -688,6 +688,37 @@ func test_static_storage():
 
 	s.queue_free()
 
+func test_static_storage_survives_references_max():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	# Below the default: no reallocation.
+	var exceptions = s.get_exceptions()
+	s.references_max = 64
+	assert_eq_deep(s.vmcallv("test_static_storage", "key", "value"), {"key": "value"})
+	assert_eq(s.get_exceptions(), exceptions, "A global outlives a lowered limit")
+
+	# Above default capacity: reallocation moves Variants, scoped_variant pointers must follow.
+	s.references_max = 4096
+	assert_eq_deep(s.vmcallv("test_static_storage", "key2", "value2"),
+		{"key": "value", "key2": "value2"})
+	assert_eq(s.get_exceptions(), exceptions, "A global outlives a raised limit")
+
+	# Write-through via a permanent slot index.
+	assert_eq_deep(s.vmcall("test_permanent_dict", {"key": "value"}), {"key": "value"})
+	s.references_max = 8192
+	assert_eq_deep(s.vmcall("test_permanent_dict", {"key2": "value2"}), {"key2": "value2"})
+	assert_true(s.vmcall("test_check_if_permanent", "dict"),
+		"and the global is still permanent afterwards")
+
+	# Permanent Variants allocated after init use the same slot path.
+	assert_eq_deep(s.vmcallv("test_permanent_storage", "pk", "pv"), {"pk": "pv"})
+	s.references_max = 16384
+	assert_eq_deep(s.vmcallv("test_permanent_storage", "pk", "pv"), {"pk": "pv"})
+	assert_eq(s.get_exceptions(), exceptions, "No exceptions thrown")
+
+	s.queue_free()
+
 func callable_function():
 	return
 
@@ -868,32 +899,23 @@ func test_await_host_reset_drops_frames():
 
 	s.queue_free()
 
-func test_await_host_changing_max_refs_drops_frames():
+func test_await_host_changing_max_refs_keeps_frames():
 	var s : Sandbox = Sandbox.new()
 	s.set_program(Sandbox_TestsTests)
 
-	# A suspended frame holds indices into the permanent state, and references_max clears
-	# it -- along with the slot records that describe it. The frames go with it, or a
-	# later promotion reuses a record for a state that is no longer there.
+	# Changing references_max must not drop a suspended coroutine frame.
 	var awaitable = s.vmcallv("await_handle", await_ping, "held")
 	assert_eq(s.get_coroutine_count(), 1)
 	var completed := [null]
-	var fired := [false]
 	(awaitable as Signal).connect(func(value): completed[0] = value)
-	(awaitable as Signal).connect(func(_v): fired[0] = true)
 
-	s.references_max = 64
-	assert_eq(s.get_coroutine_count(), 0)
-	assert_true(fired[0], "Teardown completes the caller")
-	assert_eq(completed[0], null)
+	s.references_max = 4096
+	assert_eq(s.get_coroutine_count(), 1, "The limit did not drop the frame")
+	assert_eq(completed[0], null, "and did not complete it either")
 
-	# Promotion starts over against the state as it is now.
-	var again = s.vmcallv("await_handle", await_ping, "held")
-	assert_eq(typeof(again), TYPE_SIGNAL)
-	var second := [null]
-	(again as Signal).connect(func(value): second[0] = value)
 	await_ping.emit("+resumed")
-	assert_eq(second[0], "held+resumed")
+	assert_eq(completed[0], "held+resumed")
+	assert_eq(s.get_coroutine_count(), 0)
 
 	s.queue_free()
 

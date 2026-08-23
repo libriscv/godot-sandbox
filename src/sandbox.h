@@ -940,6 +940,7 @@ private:
 	}
 	bool permanent_index_valid(int32_t idx) const noexcept;
 	int32_t track_permanent_slot(int32_t variant_index);
+	void reserve_permanent_state(uint32_t max_refs);
 
 	void promote_frame_handles(Coroutine &co);
 	void retire_coroutine(uint64_t id, bool invalidate_state);
