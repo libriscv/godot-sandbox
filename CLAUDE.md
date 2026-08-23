@@ -265,6 +265,67 @@ optimizer-invariance corpus, as `**` and `in` are.
 each pattern in a real sandbox and against the engine's own `match` on the same
 values.
 
+### Debugging a .sgd program
+
+Three pieces; only the first is free.
+
+**Line table** (`line_table.h`): address-to-source-line map, no runtime cost,
+produced by every compile. Ascending by address; a row covers up to the next.
+Crosses to host as one blob via `get_line_table()` / `SafeGDScript::get_line_table()`.
+
+**Shadow stack** (`debug_layout.h`, `riscv_debug.cpp`): push/pop per call,
+emitted only with `CompilerOptions::debug_info`. Frames record the return
+address, so an outer frame's line is the call site (address minus `jal`). Only
+the innermost frame needs the PC. `debug_safegdscript.cpp` reads both together;
+`Sandbox::handle_exception` prefers them over symbol+offset.
+
+**Breakpoints** are compile-time, not runtime. `ECALL_BREAKPOINT` is emitted at
+requested lines only — zero cost when none are set. Changing the set recompiles
+and reloads all instances. Non-empty set implies `debug_info`.
+
+- Stop sequence saves/restores `a0`/`a7` around the syscall, transparent to
+  regalloc. `emit_ecall()`'s return-value-pointer guard is waived for it.
+- Emitted below labels, never above (loop back edges would skip it).
+- A line owns a stop wherever it owns code: `for` stops on entry and per-pass.
+- Optimized-away code has no stop. `get_installed_breakpoints()` is the subset
+  that got one; `SafeGDScript.get_active_breakpoints()` publishes it.
+
+The break is a non-returning syscall. Guest burns no instructions, no timeout.
+Continue = return. Host thread blocks, so:
+
+- Global state: one program stopped at a time (`is_stopped()`,
+  `get_stopped_line()`, `get_stopped_backtrace()`, `debug_continue()`).
+- Reentrant: `vmcall_internal` preempts into a stopped program safely via
+  `preempt_internal`.
+- Nested stops don't re-break (no one to continue).
+- No `breakpoint_hit` listener and no debugger → not stopped, just reported.
+- Stopped script refuses rebuild.
+
+**Editor integration** (no plugin needed, no callbacks — GDExtension languages
+get neither toggle notifications nor engine-stop control):
+
+- **In:** `_frame()` polls `EngineDebugger` line-by-line, every 6th frame, only
+  while debugger is active (inactive calls error → GUT failure). Delta-applied:
+  editor changes don't overwrite script-set breakpoints.
+  `compile_source_to_elf()` reads the set at first build, avoiding a
+  post-startup rebuild that would reset mod/node state. Toggling mid-run still
+  recompiles and resets.
+- Runtime-built scripts must call `take_over_path()` *before* setting source
+  (source assignment triggers compile). Keyed by resource path.
+- **Out:** `EngineDebugger::script_debug()` replaces the wait. Stack from
+  `_debug_get_stack_level_*`, answered from shadow stack. Locals/members empty.
+  Step Into/Over = next breakpoint (no per-line engine loop).
+- `breakpoint_hit` listeners keep the stop; editor gets it only when nobody
+  listens; neither → report and continue.
+
+Script API: `set_breakpoint()`, `set_breakpoints()`, `clear_breakpoints()`,
+signal `breakpoint_hit(script, line)` on `SafeGDScript`.
+
+Tests: `test_breakpoints.cpp` (lowering on libriscv), `test_sgd_breakpoint_*`
+in `test_gdscript_compiler.gd` (break/continue in Godot).
+`tests/run_debugger_test.sh` drives the editor path with `godot -d` against
+`tests/tests/test_debugger.sgd`.
+
 ## Compiler Debugging Tools
 
 Two debugging tools are available in the compiler build folder:

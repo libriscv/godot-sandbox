@@ -53,6 +53,7 @@ public:
 	virtual int32_t _debug_get_stack_level_count() const override;
 	virtual int32_t _debug_get_stack_level_line(int32_t p_level) const override;
 	virtual String _debug_get_stack_level_function(int32_t p_level) const override;
+	virtual String _debug_get_stack_level_source(int32_t p_level) const override;
 	virtual Dictionary _debug_get_stack_level_locals(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) override;
 	virtual Dictionary _debug_get_stack_level_members(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) override;
 	virtual void *_debug_get_stack_level_instance(int32_t p_level) override;

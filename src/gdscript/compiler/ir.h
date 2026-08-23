@@ -186,6 +186,9 @@ struct IRInstruction {
 	std::vector<IRValue> operands;
 	TypeHint type_hint = TypeHint_NONE;
 
+	// 1-based source line; 0 for prologue/synthesised. Metadata only.
+	int32_t line = 0;
+
 	IRInstruction(IROpcode op) : opcode(op) {}
 	IRInstruction(IROpcode op, IRValue a) : opcode(op), operands{a} {}
 	IRInstruction(IROpcode op, IRValue a, IRValue b) : opcode(op), operands{a, b} {}

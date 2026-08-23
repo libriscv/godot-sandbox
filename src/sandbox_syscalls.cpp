@@ -21,6 +21,9 @@
 		machine.penalize(x); \
 	}
 
+// Break state in debug_safegdscript.cpp. No-op for non-.sgd guests.
+void safegdscript_breakpoint(Sandbox &p_sandbox, uint32_t p_reported_line);
+
 namespace riscv {
 extern std::unordered_map<std::string, std::function<uint64_t()>> global_singleton_list;
 
@@ -195,6 +198,11 @@ static inline void variant_or_object_call(Sandbox &emu, Variant *vcall,
 
 	GDExtensionCallError error;
 	variant_callp(vcall, method_sn, argptrs, argc, result, error);
+}
+
+// a0 = source line. Handler cross-checks against line table. No writeback.
+APICALL(api_breakpoint) {
+	safegdscript_breakpoint(riscv::emu(machine), uint32_t(machine.cpu.reg(riscv::REG_ARG0)));
 }
 
 APICALL(api_print) {
@@ -3017,6 +3025,8 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_PACKED_ARRAY_OPS, api_packed_array_ops },
 
 			{ ECALL_UTILITY, api_utility },
+
+			{ ECALL_BREAKPOINT, api_breakpoint },
 	});
 
 	// Add system calls from other modules.

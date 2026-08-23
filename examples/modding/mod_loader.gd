@@ -77,6 +77,13 @@ func load_mod(dir: String) -> Node:
 		return null
 
 	var script := SafeGDScript.new()
+	# Built here, not loaded, so the script has no resource path of its own.
+	# Name the file it came from: the editor's breakpoint gutter is keyed by
+	# path, and a stop needs a file for the editor to open. Before the source,
+	# because setting the source is what compiles, and the breakpoints have to
+	# be in that first build -- adding them later reloads the program, and a mod
+	# comes back with its mod_init() undone.
+	script.take_over_path(entry_path)
 	script.set_source_code(source)
 
 	var node := Node.new()

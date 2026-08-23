@@ -40,6 +40,8 @@ Compiler::Compiler() {}
 
 std::vector<uint8_t> Compiler::compile(const std::string& source, const CompilerOptions& options) {
 	m_signatures.clear();
+	m_line_table.entries.clear();
+	m_installed_breakpoints.clear();
 	try {
 		Lexer lexer(source);
 		auto tokens = lexer.tokenize();
@@ -115,8 +117,12 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 
 		if (options.output_elf) {
 			ElfBuilder elf_builder;
+			// Breakpoints imply debug_info: the break needs the shadow stack.
+			const bool debug_info = options.debug_info || !options.breakpoint_lines.empty();
 			elf_data = elf_builder.build(ir_program, VariantLayout(options.double_precision),
-				options.profiling, options.profiling_clock);
+				options.profiling, options.profiling_clock, debug_info, options.breakpoint_lines);
+			m_line_table = elf_builder.get_line_table();
+			m_installed_breakpoints = elf_builder.get_installed_breakpoints();
 		}
 
 		m_error.clear();

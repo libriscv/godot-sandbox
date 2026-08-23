@@ -79,7 +79,11 @@
 // Channelled print (printerr, prints, push_error, ...). See Print_Channel.
 #define ECALL_PRINT_CHANNEL (GAME_API_BASE + 50)
 
-#define ECALL_LAST (GAME_API_BASE + 51)
+// a0 = 1-based source line (cross-checked against line table + PC).
+// Emitted only at requested lines; changing the set recompiles.
+#define ECALL_BREAKPOINT (GAME_API_BASE + 51)
+
+#define ECALL_LAST (GAME_API_BASE + 52)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)

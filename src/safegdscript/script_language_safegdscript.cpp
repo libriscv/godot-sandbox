@@ -4,6 +4,7 @@
 #include "../sandbox.h"
 
 void safegdscript_sandbox_profiling_toggled(Sandbox &p_sandbox, bool p_enabled);
+void safegdscript_sync_engine_breakpoints();
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/control.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
@@ -1347,36 +1348,6 @@ void SafeGDScriptLanguage::_add_named_global_constant(const StringName &p_name, 
 void SafeGDScriptLanguage::_remove_named_global_constant(const StringName &p_name) {}
 void SafeGDScriptLanguage::_thread_enter() {}
 void SafeGDScriptLanguage::_thread_exit() {}
-String SafeGDScriptLanguage::_debug_get_error() const {
-	return String();
-}
-int32_t SafeGDScriptLanguage::_debug_get_stack_level_count() const {
-	return 0;
-}
-int32_t SafeGDScriptLanguage::_debug_get_stack_level_line(int32_t p_level) const {
-	return 0;
-}
-String SafeGDScriptLanguage::_debug_get_stack_level_function(int32_t p_level) const {
-	return String();
-}
-Dictionary SafeGDScriptLanguage::_debug_get_stack_level_locals(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) {
-	return Dictionary();
-}
-Dictionary SafeGDScriptLanguage::_debug_get_stack_level_members(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) {
-	return Dictionary();
-}
-void *SafeGDScriptLanguage::_debug_get_stack_level_instance(int32_t p_level) {
-	return nullptr;
-}
-Dictionary SafeGDScriptLanguage::_debug_get_globals(int32_t p_max_subitems, int32_t p_max_depth) {
-	return Dictionary();
-}
-String SafeGDScriptLanguage::_debug_parse_stack_level_expression(int32_t p_level, const String &p_expression, int32_t p_max_subitems, int32_t p_max_depth) {
-	return String();
-}
-TypedArray<Dictionary> SafeGDScriptLanguage::_debug_get_current_stack_info() {
-	return TypedArray<Dictionary>();
-}
 void SafeGDScriptLanguage::_reload_all_scripts() {}
 void SafeGDScriptLanguage::_reload_tool_script(const Ref<Script> &p_script, bool p_soft_reload) {}
 PackedStringArray SafeGDScriptLanguage::_get_recognized_extensions() const {
@@ -1433,6 +1404,8 @@ void SafeGDScriptLanguage::_frame() {
 		load_icon();
 		EditorInterface::get_singleton()->get_base_control()->connect("theme_changed", callable_mp(this, &SafeGDScriptLanguage::load_icon));
 	}
+	// Poll editor breakpoints (no GDExtension callback for toggle).
+	safegdscript_sync_engine_breakpoints();
 }
 void SafeGDScriptLanguage::load_icon() {
 	static bool reenter = false;

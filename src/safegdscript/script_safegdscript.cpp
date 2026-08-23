@@ -13,6 +13,13 @@
 static constexpr bool VERBOSE_LOGGING = false;
 static Sandbox* compiler = nullptr;
 
+bool safegdscript_is_stopped();
+const SafeGDScript *safegdscript_stopped_script();
+int64_t safegdscript_stopped_line();
+PackedStringArray safegdscript_stopped_backtrace();
+void safegdscript_debug_continue();
+PackedInt32Array safegdscript_engine_breakpoints(const SafeGDScript &p_script);
+
 bool SafeGDScript::_editor_can_reload_from_file() {
 	return true;
 }
@@ -344,7 +351,13 @@ Sandbox *SafeGDScript::get_compiler_sandbox() {
 	return compiler;
 }
 
-bool SafeGDScript::compile_source_to_elf(bool p_profiling) {
+bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
+	// Refuse rebuild while stopped at a breakpoint in this program.
+	if (safegdscript_stopped_script() == this) {
+		ERR_PRINT("SafeGDScript: " + this->path + " is stopped at a breakpoint and cannot be "
+				  "rebuilt until it continues.");
+		return false;
+	}
 	if (this->source_code.is_empty()) {
 		if constexpr (VERBOSE_LOGGING) {
 			ERR_PRINT("SafeGDScript::compile_source_to_elf: No source code to compile.");
@@ -362,10 +375,28 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling) {
 	if (p_profiling && !profiling) {
 		ERR_PRINT("SafeGDScript: the GDScript compiler ELF is too old to build a profiled program.");
 	}
+	// Merge editor breakpoints into this build (adds only, never removes).
+	for (const int32_t line : safegdscript_engine_breakpoints(*this)) {
+		const int64_t at = this->breakpoints.bsearch(line, true);
+		if (at >= this->breakpoints.size() || this->breakpoints[at] != line) {
+			this->breakpoints.insert(at, line);
+		}
+	}
+	// Non-empty breakpoints force a debug build.
+	const bool wants_debug = p_debug || !this->breakpoints.is_empty();
+	// Profiling and debug are mutually exclusive instrumentations.
+	const bool debug = !profiling && wants_debug && compiler->has_function("compile_debug");
+	if (wants_debug && !profiling && !debug) {
+		ERR_PRINT("SafeGDScript: the GDScript compiler ELF is too old to build a debuggable program.");
+	}
+	const char *entry_point = profiling ? "compile_profiled" : (debug ? "compile_debug" : "compile");
+
 	GDExtensionCallError error;
 	Variant src_code_var = this->source_code;
-	const Variant* args[] = { &src_code_var };
-	Variant result = compiler->vmcall_fn(profiling ? "compile_profiled" : "compile", args, 1, error);
+	// compile_debug() takes breakpoints as a second arg; others take source only.
+	Variant breakpoints_var = this->breakpoints;
+	const Variant* args[] = { &src_code_var, &breakpoints_var };
+	Variant result = compiler->vmcall_fn(entry_point, args, debug ? 2 : 1, error);
 	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
 		ERR_PRINT("SafeGDScript::compile_source_to_elf: Compilation failed with error code " + itos(static_cast<int>(error.error)));
 		return false;
@@ -378,6 +409,7 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling) {
 
 	this->elf_data = result;
 	this->profiled_build = profiling;
+	this->debug_build = debug;
 	if (elf_data.is_empty()) {
 			ERR_PRINT("SafeGDScript: " + this->path + ": " + get_compiler_error_message());
 		return false;
@@ -396,6 +428,115 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling) {
 	return true;
 }
 
+// -= Breakpoints =-
+//
+// Setting/clearing recompiles. Set kept on failed rebuild; refused while stopped.
+bool SafeGDScript::refuse_while_stopped() const {
+	if (safegdscript_stopped_script() != this) {
+		return false;
+	}
+	ERR_PRINT("SafeGDScript: " + this->path + " is stopped at a breakpoint; continue before "
+			  "changing its breakpoints.");
+	return true;
+}
+
+bool SafeGDScript::set_breakpoint(int32_t p_line, bool p_enabled) {
+	if (refuse_while_stopped()) {
+		return false;
+	}
+	if (p_line <= 0) {
+		ERR_PRINT("SafeGDScript::set_breakpoint: a source line is 1-based.");
+		return false;
+	}
+	const int64_t at = this->breakpoints.bsearch(p_line, true);
+	const bool present = at < this->breakpoints.size() && this->breakpoints[at] == p_line;
+	if (present == p_enabled) {
+		return true;
+	}
+	if (p_enabled) {
+		this->breakpoints.insert(at, p_line);
+	} else {
+		this->breakpoints.remove_at(at);
+	}
+	return compile_source_to_elf();
+}
+
+bool SafeGDScript::set_breakpoints(const PackedInt32Array &p_lines) {
+	if (refuse_while_stopped()) {
+		return false;
+	}
+	PackedInt32Array wanted;
+	for (int i = 0; i < p_lines.size(); i++) {
+		const int32_t line = p_lines[i];
+		if (line <= 0) {
+			continue;
+		}
+		const int64_t at = wanted.bsearch(line, true);
+		if (at >= wanted.size() || wanted[at] != line) {
+			wanted.insert(at, line);
+		}
+	}
+	if (wanted == this->breakpoints) {
+		return true;
+	}
+	this->breakpoints = wanted;
+	return compile_source_to_elf();
+}
+
+bool SafeGDScript::clear_breakpoints() {
+	if (refuse_while_stopped()) {
+		return false;
+	}
+	if (this->breakpoints.is_empty()) {
+		return true;
+	}
+	this->breakpoints.clear();
+	return compile_source_to_elf();
+}
+
+PackedInt32Array SafeGDScript::get_breakpoints() const {
+	return this->breakpoints;
+}
+
+PackedInt32Array SafeGDScript::get_active_breakpoints() const {
+	return this->active_breakpoints;
+}
+
+bool SafeGDScript::is_stopped() {
+	return safegdscript_is_stopped();
+}
+
+int64_t SafeGDScript::get_stopped_line() {
+	return safegdscript_stopped_line();
+}
+
+PackedStringArray SafeGDScript::get_stopped_backtrace() {
+	return safegdscript_stopped_backtrace();
+}
+
+void SafeGDScript::debug_continue() {
+	safegdscript_debug_continue();
+}
+
+void SafeGDScript::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_breakpoint", "line", "enabled"), &SafeGDScript::set_breakpoint);
+	ClassDB::bind_method(D_METHOD("set_breakpoints", "lines"), &SafeGDScript::set_breakpoints);
+	ClassDB::bind_method(D_METHOD("clear_breakpoints"), &SafeGDScript::clear_breakpoints);
+	ClassDB::bind_method(D_METHOD("get_breakpoints"), &SafeGDScript::get_breakpoints);
+	ClassDB::bind_method(D_METHOD("get_active_breakpoints"), &SafeGDScript::get_active_breakpoints);
+	ClassDB::bind_method(D_METHOD("is_debug_build"), &SafeGDScript::is_debug_build);
+
+	ClassDB::bind_static_method("SafeGDScript", D_METHOD("is_stopped"), &SafeGDScript::is_stopped);
+	ClassDB::bind_static_method("SafeGDScript", D_METHOD("get_stopped_line"), &SafeGDScript::get_stopped_line);
+	ClassDB::bind_static_method("SafeGDScript", D_METHOD("get_stopped_backtrace"), &SafeGDScript::get_stopped_backtrace);
+	ClassDB::bind_static_method("SafeGDScript", D_METHOD("debug_continue"), &SafeGDScript::debug_continue);
+
+	// Handler calls debug_continue() to resume; no listeners = no stop.
+	ADD_SIGNAL(MethodInfo("breakpoint_hit",
+			PropertyInfo(Variant::OBJECT, "script", PROPERTY_HINT_RESOURCE_TYPE, "SafeGDScript"),
+			PropertyInfo(Variant::INT, "line")));
+}
+
 String SafeGDScript::get_compiler_error_message() {
 	Sandbox *compiler = get_compiler_sandbox();
 	if (compiler == nullptr || !compiler->has_function("get_compiler_error")) {
@@ -411,6 +552,39 @@ String SafeGDScript::get_compiler_error_message() {
 
 void SafeGDScript::remove_instance(SafeGDScriptInstance *p_instance) {
 	instances.erase(p_instance);
+}
+
+// Crosses as a blob (one scoped variant) to stay within MAX_REFS.
+gdscript::LineTable SafeGDScript::get_compiler_line_table() {
+	gdscript::LineTable table;
+	Sandbox *compiler = get_compiler_sandbox();
+	// Absent from older compiler ELFs.
+	if (compiler == nullptr || !compiler->has_function("get_line_table")) {
+		return table;
+	}
+	GDExtensionCallError error;
+	const Variant blob = compiler->vmcall_fn("get_line_table", nullptr, 0, error);
+	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK || blob.get_type() != Variant::Type::PACKED_BYTE_ARRAY) {
+		return table;
+	}
+	const PackedByteArray bytes = blob;
+	if (!gdscript::decode_line_table(bytes.ptr(), size_t(bytes.size()), table)) {
+		ERR_PRINT("SafeGDScript: the compiler returned a malformed line table.");
+	}
+	return table;
+}
+
+PackedInt32Array SafeGDScript::get_compiler_breakpoint_lines() {
+	Sandbox *compiler = get_compiler_sandbox();
+	if (compiler == nullptr || !compiler->has_function("get_breakpoint_lines")) {
+		return PackedInt32Array();
+	}
+	GDExtensionCallError error;
+	const Variant lines = compiler->vmcall_fn("get_breakpoint_lines", nullptr, 0, error);
+	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK || lines.get_type() != Variant::Type::PACKED_INT32_ARRAY) {
+		return PackedInt32Array();
+	}
+	return lines;
 }
 
 std::vector<gdscript::FunctionSignature> SafeGDScript::get_compiler_function_signatures() {
@@ -472,6 +646,8 @@ void SafeGDScript::update_methods_info() {
 
 	// Profiling records are indexed by position in this table.
 	this->signatures = get_compiler_function_signatures();
+	this->line_table = get_compiler_line_table();
+	this->active_breakpoints = this->debug_build ? get_compiler_breakpoint_lines() : PackedInt32Array();
 	HashMap<String, const gdscript::FunctionSignature *> by_name;
 	for (const gdscript::FunctionSignature &signature : this->signatures) {
 		by_name.insert(String::utf8(signature.name.c_str(), signature.name.size()), &signature);

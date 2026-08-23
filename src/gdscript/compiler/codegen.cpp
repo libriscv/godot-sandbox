@@ -346,6 +346,17 @@ void CodeGenerator::error_at(const std::string& message, const Stmt* stmt,
 }
 
 void CodeGenerator::gen_stmt(const Stmt* stmt, FunctionContext& func) {
+	// Nested statements stamp first; unstamped remainder belongs to the outer.
+	const size_t first_instruction = func.ir.instructions.size();
+	gen_stmt_dispatch(stmt, func);
+	for (size_t i = first_instruction; i < func.ir.instructions.size(); i++) {
+		if (func.ir.instructions[i].line == 0) {
+			func.ir.instructions[i].line = stmt->line;
+		}
+	}
+}
+
+void CodeGenerator::gen_stmt_dispatch(const Stmt* stmt, FunctionContext& func) {
 	if (auto* var_decl = dynamic_cast<const VarDeclStmt*>(stmt)) {
 		gen_var_decl(var_decl, func);
 	} else if (auto* assign = dynamic_cast<const AssignStmt*>(stmt)) {

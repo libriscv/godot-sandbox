@@ -1,0 +1,24 @@
+# Line numbers here are the test. run_debugger_test.sh and debugger_test.gd name
+# lines 9, 11 and 15 by number, so a line inserted above one moves it.
+const OP_ADD = 0
+const OP_SUB = 1
+
+func alu(op, a, b):
+	match op:
+		OP_ADD:
+			return a + b
+		OP_SUB:
+			return a - b
+	return 0
+
+func outer(a, b):
+	return alu(OP_ADD, a, b)
+
+# Appended below line 15 on purpose: the lines above are named by number.
+var initialised = 0
+
+func init_state():
+	initialised = 7
+
+func state() -> int:
+	return initialised

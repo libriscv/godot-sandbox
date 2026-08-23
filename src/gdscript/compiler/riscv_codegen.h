@@ -1,9 +1,12 @@
 #pragma once
+#include "debug_layout.h"
 #include "globals.h"
 #include "ir.h"
+#include "line_table.h"
 #include "profiling_layout.h"
 #include "register_allocator.h"
 #include "variant_layout.h"
+#include <set>
 #include <string>
 #include <unordered_set>
 #include <cstdint>
@@ -13,7 +16,8 @@ namespace gdscript {
 class RISCVCodeGen {
 public:
 	explicit RISCVCodeGen(const VariantLayout& layout = native_variant_layout(),
-		bool profiling = false, ProfilingClock profiling_clock = ProfilingClock::TIME);
+		bool profiling = false, ProfilingClock profiling_clock = ProfilingClock::TIME,
+		bool debug_info = false, const std::vector<uint32_t>& breakpoint_lines = {});
 
 	std::vector<uint8_t> generate(const IRProgram& program);
 
@@ -26,6 +30,15 @@ public:
 
 	uint64_t get_profiling_address() const { return m_profiling_address; }
 	size_t get_profiling_size() const { return m_profiling_size; }
+
+	uint64_t get_debug_address() const { return m_debug_address; }
+	size_t get_debug_size() const { return m_debug_size; }
+
+	// Metadata; produced by every generate(), costs no instructions.
+	const LineTable& get_line_table() const { return m_line_table; }
+
+	// Subset of requested breakpoints that got emitted.
+	const std::vector<uint32_t>& get_installed_breakpoints() const { return m_installed_breakpoints; }
 
 	// Out-of-range immediates are trapped, not masked: masking silently emits a different instruction.
 	static constexpr int I_TYPE_IMM_BITS = 12;
@@ -118,10 +131,21 @@ private:
 
 	static constexpr const char* GLOBALS_LABEL = ".globals";
 	static constexpr const char* PROFILING_LABEL = ".profiling";
+	static constexpr const char* DEBUG_LABEL = ".debug";
 
 	// Uses t0-t5 only; dead at entry (args in a0-a7) and exit (retval written).
 	void emit_profiling_entry();
 	void emit_profiling_exit();
+
+	// Shadow-stack push/pop. Entry runs before ra is spilled.
+	void emit_debug_entry();
+	void emit_debug_exit();
+
+	// Saves/restores the two regs it uses; safe between arbitrary IR instructions.
+	void emit_breakpoint(int32_t line);
+
+	// Appends a line-table row. `force` emits line 0 (function entry only).
+	void record_line(int32_t line, bool force = false);
 	// CSR number is unsigned 12-bit; emit_i_type rejects it as signed.
 	void emit_csrr(uint8_t rd, uint32_t csr);
 	void emit_add(uint8_t rd, uint8_t rs1, uint8_t rs2);
@@ -448,6 +472,19 @@ private:
 	size_t m_profiling_count = 0;
 	// -1 outside a profiled function (.init_globals is uninstrumented).
 	int m_profiling_index = -1;
+
+	bool m_debug = false;
+	uint64_t m_debug_address = 0;
+	size_t m_debug_size = 0;
+	int m_debug_index = -1; // -1 outside instrumented function
+
+	std::set<uint32_t> m_breakpoints; // requested breakpoint lines
+	int32_t m_break_line = 0; // current line; reset per function
+	bool m_break_pending = false;
+	bool m_emitting_breakpoint = false; // suppresses a0-spill check in emit_ecall
+	std::vector<uint32_t> m_installed_breakpoints; // subset actually emitted
+
+	LineTable m_line_table;
 
 	// {string_data, label_name} for @export property names.
 	std::vector<std::pair<std::string, std::string>> m_property_name_strings;

@@ -18,6 +18,7 @@ option(DOUBLE_PRECISION "Enable double precision real_t" OFF)
 set(COMPILER_SOURCES
     compiler_exception.cpp
     function_signature.cpp
+    line_table.cpp
     token.cpp
     lexer.cpp
     parser.cpp
@@ -28,6 +29,7 @@ set(COMPILER_SOURCES
     riscv_codegen.cpp
     riscv_globals.cpp
     riscv_profiling.cpp
+    riscv_debug.cpp
     register_allocator.cpp
     elf_builder.cpp
     compiler.cpp
@@ -120,6 +122,7 @@ if (BUILD_TESTING)
 	add_gdscript_test(test_constructors tests/test_constructors.cpp)
 	add_gdscript_test(test_syntax tests/test_syntax.cpp)
 	add_gdscript_test(test_signatures tests/test_signatures.cpp)
+	add_gdscript_test(test_line_table tests/test_line_table.cpp)
 	add_gdscript_test(test_diagnostics tests/test_diagnostics.cpp)
 	add_gdscript_test(test_opt_invariance tests/test_opt_invariance.cpp)
 	add_gdscript_test(test_ir_verifier tests/test_ir_verifier.cpp)
@@ -152,6 +155,17 @@ if (BUILD_TESTING)
 		add_executable(test_profiling tests/test_profiling.cpp)
 		target_link_libraries(test_profiling gdscript_compiler riscv)
 		add_test(NAME test_profiling COMMAND test_profiling)
+
+		# The shadow stack is only checkable by running a program and reading
+		# the area back out of the machine it ran on.
+		add_executable(test_debug_info tests/test_debug_info.cpp)
+		target_link_libraries(test_debug_info gdscript_compiler riscv)
+		add_test(NAME test_debug_info COMMAND test_debug_info)
+
+		# So is a breakpoint: whether it stopped is a fact about a run.
+		add_executable(test_breakpoints tests/test_breakpoints.cpp)
+		target_link_libraries(test_breakpoints gdscript_compiler riscv)
+		add_test(NAME test_breakpoints COMMAND test_breakpoints)
 	else()
 		message(STATUS "libriscv not found: skipping the differential test")
 	endif()

@@ -2,6 +2,7 @@
 
 #include "../docker.h"
 #include "../gdscript/compiler/function_signature.h"
+#include "../gdscript/compiler/line_table.h"
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/templates/hash_map.hpp>
@@ -18,7 +19,9 @@ class SafeGDScript : public ScriptExtension {
 	GDCLASS(SafeGDScript, ScriptExtension);
 
 protected:
-	static void _bind_methods() {}
+	// Breakpoints and break state. No GDExtension breakpoint callback from the
+	// editor; a .sgd debugger drives this from script.
+	static void _bind_methods();
 	// "script/source" STORAGE property: duplicate() and the scene saver
 	// carry STORAGE properties only. Name matches GDScript's .tscn convention.
 	bool _set(const StringName &p_name, const Variant &p_value);
@@ -79,12 +82,40 @@ public:
 	// No standalone file: unsaved or scene sub-resource (path contains "::").
 	bool is_built_in() const { return path.is_empty() || path.contains("::"); }
 	const PackedByteArray &get_content() const { return elf_data; }
-	bool compile_source_to_elf(bool p_profiling = false);
+	bool compile_source_to_elf(bool p_profiling = false, bool p_debug = false);
 	bool is_profiled_build() const { return profiled_build; }
+
+	// -= Breakpoints =-
+	// Compile-time: setting/clearing recompiles. Returns false on failed
+	// recompile; the requested set is kept either way.
+	bool set_breakpoint(int32_t p_line, bool p_enabled);
+	bool set_breakpoints(const PackedInt32Array &p_lines);
+	bool clear_breakpoints();
+	// What was asked for, ascending.
+	PackedInt32Array get_breakpoints() const;
+	// Subset the last compile could place; dead lines have no instructions.
+	PackedInt32Array get_active_breakpoints() const;
+
+	// -= Break state =-
+	// Global: a break blocks the guest's thread; only one program stops at a time.
+	static bool is_stopped();
+	static int64_t get_stopped_line();
+	static PackedStringArray get_stopped_backtrace();
+	// Safe to call from the breakpoint_hit handler (same thread).
+	static void debug_continue();
+
+	// Shadow stack emitted; faults get a call stack. Compile-time, not a switch.
+	bool is_debug_build() const { return debug_build; }
 	const std::vector<gdscript::FunctionSignature> &get_signatures() const { return signatures; }
+	// Addresses are the loaded ELF's. Present in every build: it costs no code.
+	const gdscript::LineTable &get_line_table() const { return line_table; }
 	static String get_compiler_error_message();
 	// The parameter lists of the last compile, which the ELF does not carry.
 	static std::vector<gdscript::FunctionSignature> get_compiler_function_signatures();
+	// Address-to-line table from the last compile.
+	static gdscript::LineTable get_compiler_line_table();
+	// Breakpoint lines the last compile placed (may differ from requested).
+	static PackedInt32Array get_compiler_breakpoint_lines();
 	void remove_instance(SafeGDScriptInstance *p_instance);
 
 	static String PathToGlobalName(const String &p_path) {
@@ -96,13 +127,21 @@ public:
 
 private:
 	void update_methods_info();
+	// Rejects rebuild while this script is stopped at a breakpoint.
+	bool refuse_while_stopped() const;
 
 	String path;
 	mutable HashSet<SafeGDScriptInstance *> instances;
 	PackedByteArray elf_data;
 	bool profiled_build = false;
-	// IRProgram order; record i describes signatures[i].
+	bool debug_build = false;
+	// Ascending, no repeats. Non-empty enables shadow stack + stops.
+	PackedInt32Array breakpoints;
+	// What the last compile placed, a subset of the above.
+	PackedInt32Array active_breakpoints;
+	// IRProgram order; index i matches shadow-stack frame function_index.
 	std::vector<gdscript::FunctionSignature> signatures;
+	gdscript::LineTable line_table;
 	std::vector<godot::MethodInfo> methods_info;
 	// Per-function editor metadata: declaration line and '##' description. Godot
 	// requests both through separate virtuals rather than the method list, so

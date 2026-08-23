@@ -211,6 +211,94 @@ func spin(n : int):
 	profiled.profiling = false
 
 
+func test_debug_build_shadow_stack():
+	# Debug info is the same kind of compile-time choice profiling is, and for
+	# the same reason gets its own entry point: the Sandbox ABI has no argument
+	# count, so an added parameter would reach an old caller as a null pointer.
+	var gdscript_code = """
+func c():
+	return 3
+
+func b():
+	return c()
+
+func a():
+	return b()
+
+func run():
+	return a()
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+
+	var plain_elf = ts.vmcall("compile", gdscript_code)
+	assert_eq(plain_elf.is_empty(), false, "Plain ELF should not be empty")
+	# compile_debug() takes the breakpoint lines alongside the source; an empty
+	# list is the debuggable build with nothing to stop on.
+	var debug_elf = ts.vmcall("compile_debug", gdscript_code, PackedInt32Array())
+	assert_eq(debug_elf.is_empty(), false, "Debug ELF should not be empty")
+
+	var plain = Sandbox.new()
+	plain.load_buffer(plain_elf)
+	assert_eq(plain.address_of("__gdsc_debug"), 0,
+		"An ordinary build carries no shadow stack")
+
+	var debug = Sandbox.new()
+	debug.load_buffer(debug_elf)
+	assert_true(debug.address_of("__gdsc_debug") != 0,
+		"A debug build exports the shadow stack")
+
+	# A call stack is not an answer, so recording one must not change any.
+	assert_eq(plain.vmcallv("run"), 3, "run() = 3 without the shadow stack")
+	assert_eq(debug.vmcallv("run"), 3, "run() = 3 with the shadow stack")
+
+	# Only a call carries instrumentation, so the cost is there but bounded;
+	# a statement costs nothing at all.
+	assert_true(debug_elf.size() > plain_elf.size(),
+		"The debug build is the larger of the two")
+
+
+func test_line_table_is_published_by_every_build():
+	# The table maps a code address to a source line. It costs no instructions,
+	# so unlike the shadow stack it is published by an ordinary compile too --
+	# which is what lets a fault in a shipped program still name a line.
+	var gdscript_code = """
+func add(x, y):
+	var total = x + y
+	return total
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+
+	var elf = ts.vmcall("compile", gdscript_code)
+	assert_eq(elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var blob : PackedByteArray = ts.vmcall("get_line_table")
+	assert_true(blob.size() >= 12, "The line table blob carries at least a header")
+	# 'GDSL', little-endian, then the layout version.
+	assert_eq(blob.decode_u32(0), 0x4C534447, "Line table magic")
+	assert_eq(blob.decode_u32(4), 1, "Line table version")
+
+	var rows = blob.decode_u32(8)
+	assert_true(rows > 0, "A compiled program has rows in its line table")
+	assert_eq(blob.size(), 12 + rows * 8, "The blob is exactly its rows")
+
+	# Ordering is what makes a lookup meaningful: a row covers everything up to
+	# the next one, so an out-of-order table would answer with an arbitrary row.
+	var previous_address = -1
+	for i in range(rows):
+		var address = blob.decode_u32(12 + i * 8)
+		var line = blob.decode_u32(16 + i * 8)
+		assert_true(address > previous_address,
+			"Row %d ascends (address %d after %d)" % [i, address, previous_address])
+		previous_address = address
+		assert_true(address >= 0x10000, "Row %d is an ELF address, not a text offset" % i)
+		# The source above is four lines including the leading newline.
+		assert_true(line >= 1 and line <= 4, "Row %d names a line of the source" % i)
+
+
 func test_many_variables():
 	# Test register allocation with 15+ local variables
 	var gdscript_code = """
@@ -5800,6 +5888,309 @@ func test_sgd_embeds_into_a_scene():
 	instance.set_instructions_max(100000)
 	assert_eq(instance.call("answer"), 42, "the embedded script should run after a round trip")
 	instance.free()
+
+# -= Breakpoints =-
+#
+# A breakpoint is compiled in, not switched on: the backend emits a stop at the
+# lines it was given and nothing anywhere else, so setting one recompiles the
+# program and reloads every instance of it. That is what makes a program with no
+# breakpoints cost nothing, and it is affordable because .sgd programs are small.
+#
+# The stop itself is a system call that has not returned yet. Nothing about the
+# guest is suspended -- it burns no instructions and cannot time out on the count
+# -- and returning from the call is what "continue" means.
+const BREAKPOINT_SOURCE = """
+func seed():
+	return 10
+
+func work():
+	var a = seed()
+	var b = a * 3
+	return b - a
+
+func loop():
+	var total = 0
+	for i in range(4):
+		total += i
+	return total
+"""
+#  1 blank            8 return b - a
+#  2 func seed():       9 blank
+#  3 return 10         10 func loop():
+#  4 blank             11 var total = 0
+#  5 func work():      12 for i in range(4):
+#  6 var a = seed()    13 total += i
+#  7 var b = a * 3     14 return total
+
+var _break_lines : Array = []
+var _break_stopped : Array = []
+var _break_reported_line : Array = []
+var _break_backtrace : Array = []
+var _break_reentrant_result = null
+var _break_reenter_node : Node = null
+# Set to have the handler try to rebuild the program it is stopped inside.
+var _break_rebuild_script = null
+var _break_rebuild_result = null
+
+func _on_breakpoint(script, line):
+	# Everything below runs with the guest standing on the breakpoint: the host
+	# thread is inside the system call the break made, and the call has not
+	# returned. That is the only window in which the break state says anything.
+	_break_lines.append(line)
+	_break_stopped.append(SafeGDScript.is_stopped())
+	_break_reported_line.append(SafeGDScript.get_stopped_line())
+	_break_backtrace.append(SafeGDScript.get_stopped_backtrace())
+	if _break_reenter_node != null:
+		# The question this whole design was uncertain about: Godot calling into
+		# the VM while it is stopped. vmcall sees a call already in progress and
+		# preempts instead of restarting, and libriscv restores the registers the
+		# break was standing on, so the stopped call resumes where it was.
+		_break_reentrant_result = _break_reenter_node.call("seed")
+	if _break_rebuild_script != null:
+		# A rebuild reloads every instance from the new ELF, and the guest is
+		# standing in the old one. Refused, not done.
+		_break_rebuild_result = _break_rebuild_script.set_breakpoint(6, true)
+	SafeGDScript.debug_continue()
+
+func _breakpoint_script(name : String):
+	var path = "user://temp_%s.sgd" % name
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(BREAKPOINT_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the breakpoint script should load as a SafeGDScript resource")
+	return script
+
+func _breakpoint_node(script) -> Node:
+	var node = Node.new()
+	node.set_script(script)
+	node.set_instructions_max(100000)
+	return node
+
+func _reset_break_capture():
+	_break_lines = []
+	_break_stopped = []
+	_break_reported_line = []
+	_break_backtrace = []
+	_break_reentrant_result = null
+	_break_reenter_node = null
+	_break_rebuild_script = null
+	_break_rebuild_result = null
+
+func test_sgd_breakpoint_stops_and_continues():
+	var script = _breakpoint_script("break_basic")
+	if script == null:
+		return
+	var node = _breakpoint_node(script)
+
+	# Nothing is compiled in until a breakpoint asks for it.
+	assert_false(script.is_debug_build(), "an ordinary build carries no debug info")
+	assert_eq(script.get_breakpoints(), PackedInt32Array(), "and no breakpoints")
+	assert_eq(node.call("work"), 20, "work() = 20 before any of this")
+
+	script.breakpoint_hit.connect(_on_breakpoint)
+	_reset_break_capture()
+
+	assert_true(script.set_breakpoint(7, true), "setting a breakpoint recompiles the program")
+	assert_eq(script.get_breakpoints(), PackedInt32Array([7]), "the line was taken")
+	assert_eq(script.get_active_breakpoints(), PackedInt32Array([7]),
+		"and the compile could place it")
+	assert_true(script.is_debug_build(),
+		"a breakpoint asks for the shadow stack whether or not the caller did")
+
+	# The answer is the point: a stop that changes one is not a breakpoint.
+	assert_eq(node.call("work"), 20, "work() = 20 across the break")
+	assert_eq(_break_lines, [7], "the guest stopped once, on the line asked for")
+	assert_eq(_break_stopped, [true], "and it was stopped while the handler ran")
+	assert_eq(_break_reported_line, [7], "the break state names the same line")
+
+	# Innermost first: the break is inside work(), which nothing called.
+	assert_eq(_break_backtrace.size(), 1, "one stop, one backtrace")
+	if _break_backtrace.size() == 1:
+		var frames : PackedStringArray = _break_backtrace[0]
+		assert_eq(frames.size(), 1, "work() was the only frame standing")
+		if frames.size() >= 1:
+			assert_true(frames[0].contains(":7"), "the innermost frame is line 7: " + frames[0])
+			assert_true(frames[0].contains("work"), "and it is work(): " + frames[0])
+
+	# Nothing is stopped once the call has returned.
+	assert_false(SafeGDScript.is_stopped(), "the guest is running again")
+	assert_eq(SafeGDScript.get_stopped_line(), -1, "and no line is stopped on")
+
+	# Clearing recompiles back to a program with no instrumentation at all.
+	_reset_break_capture()
+	assert_true(script.clear_breakpoints(), "clearing recompiles too")
+	assert_false(script.is_debug_build(), "and leaves an ordinary build")
+	assert_eq(node.call("work"), 20, "work() = 20 with the breakpoint gone")
+	assert_eq(_break_lines, [], "and nothing stopped")
+
+	script.breakpoint_hit.disconnect(_on_breakpoint)
+	node.free()
+
+func test_sgd_breakpoint_survives_a_call_from_the_handler():
+	# The uncertainty this design was built around: while the guest is stopped
+	# the host thread is inside its system call, and Godot is free to call into
+	# the same program. It must not clobber the call that is standing still.
+	var script = _breakpoint_script("break_reentrant")
+	if script == null:
+		return
+	var node = _breakpoint_node(script)
+	script.breakpoint_hit.connect(_on_breakpoint)
+	_reset_break_capture()
+	_break_reenter_node = node
+
+	assert_true(script.set_breakpoint(7, true), "the breakpoint should compile in")
+	assert_eq(node.call("work"), 20,
+		"the stopped call answers 20 even after another call ran inside it")
+	assert_eq(_break_reentrant_result, 10, "and the call made from the handler answered")
+	assert_eq(_break_lines, [7], "the break happened once")
+
+	script.breakpoint_hit.disconnect(_on_breakpoint)
+	node.free()
+
+func test_sgd_breakpoint_in_a_loop_stops_every_pass():
+	# Says the stop is emitted below the loop label rather than above it: above,
+	# the back edge would skip it and the loop would stop once.
+	var script = _breakpoint_script("break_loop")
+	if script == null:
+		return
+	var node = _breakpoint_node(script)
+	script.breakpoint_hit.connect(_on_breakpoint)
+	_reset_break_capture()
+
+	assert_true(script.set_breakpoint(13, true), "the loop body line should compile in")
+	assert_eq(node.call("loop"), 6, "loop() = 0+1+2+3")
+	assert_eq(_break_lines, [13, 13, 13, 13], "the body line stopped once per pass")
+
+	script.breakpoint_hit.disconnect(_on_breakpoint)
+	node.free()
+
+func test_sgd_breakpoint_on_a_for_header_stops_at_setup_and_each_pass():
+	# A `for` line owns code in two places -- the setup before the loop and the
+	# increment the back edge runs through -- and a break is emitted wherever the
+	# line has code. So it stops once on the way in and once per pass, not once
+	# per pass. Nothing here is special-cased; this is what the line owns.
+	var script = _breakpoint_script("break_for_header")
+	if script == null:
+		return
+	var node = _breakpoint_node(script)
+	script.breakpoint_hit.connect(_on_breakpoint)
+	_reset_break_capture()
+
+	assert_true(script.set_breakpoint(12, true), "the for header should compile in")
+	assert_eq(node.call("loop"), 6, "loop() = 0+1+2+3")
+	assert_eq(_break_lines, [12, 12, 12, 12, 12],
+		"once entering the loop, then once per pass")
+
+	script.breakpoint_hit.disconnect(_on_breakpoint)
+	node.free()
+
+func test_sgd_breakpoints_on_several_lines():
+	var script = _breakpoint_script("break_several")
+	if script == null:
+		return
+	var node = _breakpoint_node(script)
+	script.breakpoint_hit.connect(_on_breakpoint)
+	_reset_break_capture()
+
+	assert_true(script.set_breakpoints(PackedInt32Array([8, 3, 6, 6])),
+		"a set is taken whole, deduplicated and sorted")
+	assert_eq(script.get_breakpoints(), PackedInt32Array([3, 6, 8]),
+		"ascending, without the repeat")
+
+	assert_eq(node.call("work"), 20, "work() = 20 across three breaks")
+	# Execution order, not source order: work() reaches line 6 before the call it
+	# makes there reaches line 3.
+	assert_eq(_break_lines, [6, 3, 8], "the stops are in the order they were reached")
+
+	# The call stack is what makes a stop more than a line: at line 3 the guest
+	# is inside seed(), which work() called.
+	if _break_backtrace.size() == 3:
+		var inside_seed : PackedStringArray = _break_backtrace[1]
+		assert_eq(inside_seed.size(), 2, "seed() runs one frame below work()")
+		if inside_seed.size() == 2:
+			assert_true(inside_seed[0].contains("seed"), "innermost is seed(): " + inside_seed[0])
+			assert_true(inside_seed[1].contains("work"), "and below it work(): " + inside_seed[1])
+			assert_true(inside_seed[1].contains(":6"),
+				"work() is sitting on the line it made the call from: " + inside_seed[1])
+
+	script.breakpoint_hit.disconnect(_on_breakpoint)
+	node.free()
+
+func test_sgd_breakpoint_on_a_line_with_no_code():
+	# An editor lets a breakpoint sit anywhere, including a blank line and a line
+	# the optimizer left no instructions on. Neither may fail the compile, and
+	# both have to be visible as taken-but-dead rather than silently ignored.
+	var script = _breakpoint_script("break_dead")
+	if script == null:
+		return
+	var node = _breakpoint_node(script)
+	script.breakpoint_hit.connect(_on_breakpoint)
+	_reset_break_capture()
+
+	assert_true(script.set_breakpoints(PackedInt32Array([1, 4, 7])),
+		"a blank line and a real one should compile")
+	assert_eq(script.get_breakpoints(), PackedInt32Array([1, 4, 7]),
+		"all three were taken")
+	assert_eq(script.get_active_breakpoints(), PackedInt32Array([7]),
+		"but only the one with code behind it can stop the program")
+
+	assert_eq(node.call("work"), 20, "work() = 20")
+	assert_eq(_break_lines, [7], "and only the live breakpoint stopped it")
+
+	script.breakpoint_hit.disconnect(_on_breakpoint)
+	node.free()
+
+func test_sgd_breakpoint_with_nothing_listening_does_not_block():
+	# The safety valve. A break blocks the thread that would have delivered the
+	# continue, so with no debugger connected there is nobody who could send one:
+	# it reports where it stopped and lets the guest go.
+	var script = _breakpoint_script("break_unattended")
+	if script == null:
+		return
+	var node = _breakpoint_node(script)
+
+	assert_true(script.set_breakpoint(7, true), "the breakpoint should compile in")
+	assert_eq(node.call("work"), 20, "work() = 20, and the call returned at all")
+	assert_false(SafeGDScript.is_stopped(), "nothing is left stopped")
+
+	node.free()
+
+func test_sgd_breakpoint_cannot_rebuild_a_stopped_program():
+	# Toggling a breakpoint from the handler is the natural thing to try, and it
+	# is the one thing that must not happen: setting one recompiles, and the
+	# guest is standing in the ELF that would be replaced.
+	var script = _breakpoint_script("break_rebuild")
+	if script == null:
+		return
+	var node = _breakpoint_node(script)
+	script.breakpoint_hit.connect(_on_breakpoint)
+	_reset_break_capture()
+
+	assert_true(script.set_breakpoint(7, true), "the breakpoint should compile in")
+	_break_rebuild_script = script
+
+	assert_eq(node.call("work"), 20, "the stopped call still answers 20")
+	assert_eq(_break_rebuild_result, false, "the rebuild from inside the break was refused")
+	assert_engine_error("SafeGDScript: %s is stopped at a breakpoint; continue before changing its breakpoints." % script.resource_path)
+	assert_eq(script.get_breakpoints(), PackedInt32Array([7]),
+		"and the breakpoint set is unchanged")
+
+	# Once it has continued, the same call is taken.
+	_break_rebuild_script = null
+	assert_true(script.set_breakpoint(6, true), "the same change is taken once it is running")
+	assert_eq(script.get_breakpoints(), PackedInt32Array([6, 7]), "both lines are set")
+
+	script.breakpoint_hit.disconnect(_on_breakpoint)
+	node.free()
+
+func test_sgd_breakpoint_line_must_be_one_based() :
+	var script = _breakpoint_script("break_zero")
+	if script == null:
+		return
+	assert_false(script.set_breakpoint(0, true), "line 0 is not a source line")
+	assert_engine_error("SafeGDScript::set_breakpoint: a source line is 1-based.")
+	assert_eq(script.get_breakpoints(), PackedInt32Array(), "and nothing was taken")
 
 func test_array_element_access():
 	# `a[i]` on a known Array is ECALL_ARRAY_AT rather than Variant::call("get"),

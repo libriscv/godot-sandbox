@@ -51,7 +51,9 @@ private:
 
 	IRFunction generate_function(const FunctionDecl& func);
 
+	// Stamps IRInstruction::line over everything the dispatch emits.
 	void gen_stmt(const Stmt* stmt, FunctionContext& func);
+	void gen_stmt_dispatch(const Stmt* stmt, FunctionContext& func);
 	void gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func);
 	void gen_assign(const AssignStmt* stmt, FunctionContext& func);
 	void gen_return(const ReturnStmt* stmt, FunctionContext& func);

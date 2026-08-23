@@ -1,6 +1,7 @@
 #pragma once
 #include "compiler_exception.h"
 #include "function_signature.h"
+#include "line_table.h"
 #include "profiling_layout.h"
 #include "variant_layout.h"
 #include <string>
@@ -21,6 +22,10 @@ struct CompilerOptions {
 	// Compile-time switch; off emits no instrumentation at all.
 	bool profiling = false;
 	ProfilingClock profiling_clock = ProfilingClock::TIME;
+	// Emits DebugLayout shadow stack (push/pop per call). Line table either way.
+	bool debug_info = false;
+	// 1-based lines to break on. Non-empty implies debug_info.
+	std::vector<uint32_t> breakpoint_lines;
 };
 
 // Structured error for editor underlines; the formatted string is in get_error().
@@ -44,11 +49,16 @@ public:
 	const CompilerError &get_error_info() const { return m_error_info; }
 	// Populated by every compile that reaches codegen, including output_elf=false.
 	const std::vector<FunctionSignature> &get_function_signatures() const { return m_signatures; }
+	const LineTable &get_line_table() const { return m_line_table; }
+	// Subset of breakpoint_lines that got a stop emitted.
+	const std::vector<uint32_t> &get_installed_breakpoints() const { return m_installed_breakpoints; }
 
 private:
 	std::string m_error;
 	CompilerError m_error_info;
 	std::vector<FunctionSignature> m_signatures;
+	LineTable m_line_table;
+	std::vector<uint32_t> m_installed_breakpoints;
 };
 
 } // namespace gdscript

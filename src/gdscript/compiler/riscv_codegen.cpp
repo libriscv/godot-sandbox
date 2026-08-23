@@ -10,8 +10,14 @@
 
 namespace gdscript {
 
-RISCVCodeGen::RISCVCodeGen(const VariantLayout& layout, bool profiling, ProfilingClock profiling_clock) :
-		m_layout(layout), m_profiling(profiling), m_profiling_clock(profiling_clock) {}
+RISCVCodeGen::RISCVCodeGen(const VariantLayout& layout, bool profiling, ProfilingClock profiling_clock,
+		bool debug_info, const std::vector<uint32_t>& breakpoint_lines) :
+		m_layout(layout), m_profiling(profiling), m_profiling_clock(profiling_clock),
+		m_debug(debug_info),
+		m_breakpoints(breakpoint_lines.begin(), breakpoint_lines.end()) {
+	// Line 0 = unstamped; a breakpoint on it would fire everywhere.
+	m_breakpoints.erase(0);
+}
 
 size_t RISCVCodeGen::add_constant(int64_t value) {
 	auto it = m_constant_pool_map.find(value);
@@ -89,6 +95,11 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_profiling_address = 0;
 	m_profiling_size = 0;
 	m_profiling_index = -1;
+	m_debug_address = 0;
+	m_debug_size = 0;
+	m_debug_index = -1;
+	m_line_table.entries.clear();
+	m_installed_breakpoints.clear();
 
 	for (size_t i = 0; i < program.globals.size(); i++) {
 		const auto& global = program.globals[i];
@@ -212,10 +223,12 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	// STOP: SYSTEM with imm = 0x7ff
 	emit_i_type(0x73, 0, 0, 0, 0x7ff);
 
-	// Not exported; no signature, so uninstrumented.
+	// Not exported; no signature. Forced line-0 row caps the previous function.
 	if (program.has_global_init) {
 		m_labels[GLOBAL_INIT_LABEL] = m_code.size();
 		m_profiling_index = -1;
+		m_debug_index = -1;
+		record_line(0, true);
 		gen_function(program.global_init);
 	}
 
@@ -224,9 +237,13 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		m_functions[func.name] = m_code.size();
 		m_labels[func.name] = m_code.size();
 		m_profiling_index = m_profiling ? int(i) : -1;
+		m_debug_index = m_debug ? int(i) : -1;
+		// Prologue line = declaration, not the first statement.
+		record_line(i < program.signatures.size() ? program.signatures[i].line : 0, true);
 		gen_function(func);
 	}
 	m_profiling_index = -1;
+	m_debug_index = -1;
 
 	// Must run before constant pool / data is appended: relaxation inserts instructions.
 	relax_branches();
@@ -255,7 +272,8 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	const size_t global_slots = m_global_count + (program.has_global_init ? 1 : 0);
 	const size_t globals_bytes = m_global_count > 0 ? global_slots * variant_size() : 0;
 	m_profiling_size = m_profiling ? size_t(ProfilingLayout::area_size(uint32_t(m_profiling_count))) : 0;
-	m_global_data_size = globals_bytes + m_profiling_size;
+	m_debug_size = m_debug ? size_t(DebugLayout::area_size()) : 0;
+	m_global_data_size = globals_bytes + m_profiling_size + m_debug_size;
 
 	if (m_global_data_size > 0) {
 		while (m_code.size() % 8 != 0) {
@@ -303,6 +321,25 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 			put32(ProfilingLayout::RECORD_SIZE_OFF, uint32_t(ProfilingLayout::RECORD_SIZE));
 			put32(ProfilingLayout::MAX_DEPTH_OFF, ProfilingLayout::MAX_DEPTH);
 			put32(ProfilingLayout::CLOCK_OFF, uint32_t(m_profiling_clock));
+		}
+
+		if (m_debug) {
+			m_debug_address = data_vaddr + globals_bytes + m_profiling_size;
+			m_labels[DEBUG_LABEL] = m_debug_address - 0x10000;
+
+			const size_t base = m_code.size();
+			m_code.resize(base + m_debug_size, 0);
+
+			const auto put32 = [&](int32_t offset, uint32_t value) {
+				for (int j = 0; j < 4; j++) {
+					m_code[base + offset + j] = static_cast<uint8_t>((value >> (j * 8)) & 0xFF);
+				}
+			};
+			put32(DebugLayout::MAGIC_OFF, DebugLayout::MAGIC);
+			put32(DebugLayout::VERSION_OFF, DebugLayout::LAYOUT_VERSION);
+			put32(DebugLayout::FUNCTION_COUNT_OFF, uint32_t(program.functions.size()));
+			put32(DebugLayout::FRAME_SIZE_OFF, uint32_t(DebugLayout::FRAME_SIZE));
+			put32(DebugLayout::MAX_DEPTH_OFF, DebugLayout::MAX_DEPTH);
 		}
 	}
 
@@ -391,6 +428,11 @@ void RISCVCodeGen::emit_prologue(const IRFunction& func) {
 
 	if (m_fn.stack_frame_size > 0) {
 		emit_add_offset(REG_SP, REG_SP, -m_fn.stack_frame_size);
+	}
+
+	// After frame setup (sp valid for locals), before ra is spilled.
+	if (m_debug_index >= 0) {
+		emit_debug_entry();
 	}
 
 	if (m_fn.saves_return_address) {
@@ -1967,6 +2009,9 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			if (m_profiling_index >= 0) {
 				emit_profiling_exit();
 			}
+			if (m_debug_index >= 0) {
+				emit_debug_exit();
+			}
 
 			if (m_fn.saves_return_address) {
 				emit_ld(REG_RA, REG_SP, SAVED_RA_OFFSET);
@@ -2184,6 +2229,10 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 void RISCVCodeGen::gen_function(const IRFunction& func) {
 	FunctionStateGuard function_state(*this);
 
+	// Reset per function; first body line always owes a break.
+	m_break_line = 0;
+	m_break_pending = false;
+
 	plan_frame(func);
 	emit_prologue(func);
 
@@ -2200,7 +2249,21 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 		m_fn.forward_return = m_fn.forward_to_return[instr_idx];
 		m_fn.current_instr_idx++;
-		gen_instruction(func.instructions[instr_idx]);
+
+		const IRInstruction& instr = func.instructions[instr_idx];
+		record_line(instr.line);
+
+		// Break deferred past LABELs: above a label, a loop back-edge skips it.
+		if (instr.line > 0 && instr.line != m_break_line) {
+			m_break_line = instr.line;
+			m_break_pending = m_breakpoints.count(uint32_t(instr.line)) != 0;
+		}
+		if (m_break_pending && instr.opcode != IROpcode::LABEL) {
+			m_break_pending = false;
+			emit_breakpoint(m_break_line);
+		}
+
+		gen_instruction(instr);
 	}
 }
 
@@ -3197,8 +3260,8 @@ void RISCVCodeGen::emit_jalr(uint8_t rd, uint8_t rs1, int32_t offset) {
 }
 
 void RISCVCodeGen::emit_ecall() {
-	// Catch opcode_clobbers_abi_registers() misclassification at compile time
-	if (m_fn.in_function && !m_fn.spills_return_pointer) {
+	// Breakpoint saves/restores a0 itself; all others need the prologue spill.
+	if (m_fn.in_function && !m_fn.spills_return_pointer && !m_emitting_breakpoint) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 			"System call emitted in a function whose prologue did not save the return-value pointer");
 	}
@@ -3281,6 +3344,11 @@ void RISCVCodeGen::relax_branches() {
 			for (auto& other : m_label_uses) {
 				if (other.code_offset >= insert_at) {
 					other.code_offset += 4;
+				}
+			}
+			for (auto& entry : m_line_table.entries) {
+				if (entry.address >= insert_at) {
+					entry.address += 4;
 				}
 			}
 

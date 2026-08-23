@@ -18,6 +18,9 @@ static const char *getenv_with_default(const char *str, const char *defval) {
 
 static constexpr bool VERBOSE_EXCEPTIONS = false;
 
+// False for non-.sgd programs; falls back to machine-level backtrace.
+bool safegdscript_print_backtrace(Sandbox &p_sandbox, gaddr_t p_pc);
+
 static inline String to_hex(gaddr_t value) {
 	char str[20] = { 0 };
 	char *end = std::to_chars(std::begin(str), std::end(str), value, 16).ptr;
@@ -52,7 +55,10 @@ void Sandbox::handle_exception(gaddr_t address) {
 		return;
 	}
 
-	this->print_backtrace(address);
+	// Prefer .sgd line table / shadow stack over symbol + offset.
+	if (!safegdscript_print_backtrace(*this, machine().cpu.pc())) {
+		this->print_backtrace(address);
+	}
 
 	try {
 		throw; // re-throw
