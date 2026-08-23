@@ -1,0 +1,51 @@
+## The cutscene, running inside the sandbox.
+##
+## An `await` suspends this function: locals are copied out, the caller receives a
+## Signal, and the frame is restored when the awaited signal fires. While suspended,
+## the sandbox consumes no instructions or timeout budget.
+
+const TRACK_START : float = 32.0
+const TRACK_END : float = 560.0
+const PIXELS_PER_FRAME : float = 6.0
+
+var runs : int = 0
+
+func say(text : String) -> void:
+	$"../Log".text = text
+	print("[director] ", text)
+
+## The cutscene as one function. `advance` is a host signal emitted when the
+## player presses the button.
+func cutscene(advance : Signal) -> String:
+	runs += 1
+	var suspensions : int = 0
+
+	say("Run " + str(runs) + ". The gate is sealed.")
+	# A plain sleep. In a .gd script this is the same line.
+	await get_tree().create_timer(0.8).timeout
+	suspensions += 1
+
+	say("Press Knock to wake whatever is behind it.")
+	# Wait for the player. The guest suspends on the host signal; `answer`
+	# receives the emitted value.
+	var answer = await advance
+	suspensions += 1
+	say("You knocked: " + str(answer))
+	await get_tree().create_timer(0.4).timeout
+	suspensions += 1
+
+	# A per-frame loop. `x` is an ordinary local and survives every suspension.
+	var runner = $"../Runner"
+	var x : float = TRACK_START
+	while x < TRACK_END:
+		x += PIXELS_PER_FRAME
+		runner.position = Vector2(x, 232.0)
+		await get_tree().process_frame
+		suspensions += 1
+
+	say("It reached the other side.")
+	await get_tree().create_timer(0.6).timeout
+	suspensions += 1
+
+	runner.position = Vector2(TRACK_START, 232.0)
+	return "run " + str(runs) + " finished after " + str(suspensions) + " suspensions"

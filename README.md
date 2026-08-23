@@ -72,6 +72,18 @@ func _ready():
 	add_item("coin", 1)
 ```
 
+SafeGDScript also supports `await`:
+
+```gdscript
+func cutscene(player_knocked : Signal) -> String:
+	$Gate.text = "The gate is sealed."
+	await get_tree().create_timer(0.8).timeout
+	await player_knocked
+	return "opened"
+```
+
+The host receives a Signal and awaits it like any other coroutine: `var result = await $Director.cutscene(knocked)`. See [examples/async](examples/async) for a complete example.
+
 ### Modding and user-generated content
 
 A restricted sandbox denies all host access by default: methods, properties, classes and resource loading. Gamedevs decide what a mod can reach by passing an explicit API:

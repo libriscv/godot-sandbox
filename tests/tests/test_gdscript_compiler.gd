@@ -7385,3 +7385,29 @@ func test_sgd_await_publishes_a_variant_return():
 				"a coroutine publishes no concrete return type")
 			assert_eq(method["args"].size(), 2, "and still publishes its arity")
 	assert_true(found, "wait_for should be in the published method list")
+
+func test_sgd_await_coroutine_api_is_reachable():
+	var script = _await_script("await_api")
+	if script == null:
+		return
+	var node = _await_node(script)
+
+	# The coroutine accessors are Sandbox methods, and a scripted node forwards a call
+	# to one only if is_sandbox_function() lists it.
+	assert_eq(node.call("get_coroutine_count"), 0, "nothing suspended yet")
+	assert_eq(node.call("get_max_coroutines"), 32, "the default cap")
+
+	var awaitable = node.call("wait_for", sgd_ping, 100)
+	assert_eq(typeof(awaitable), TYPE_SIGNAL, "the call suspended")
+	assert_eq(node.call("get_coroutine_count"), 1, "one frame is held")
+
+	node.call("set_max_coroutines", 8)
+	assert_eq(node.call("get_max_coroutines"), 8)
+
+	var dropped = [false]
+	(awaitable as Signal).connect(func(_v): dropped[0] = true)
+	node.call("reap_coroutines")
+	assert_eq(node.call("get_coroutine_count"), 0, "the frame was dropped")
+	assert_true(dropped[0], "a dropped frame completes with null rather than hanging its caller")
+
+	node.free()
