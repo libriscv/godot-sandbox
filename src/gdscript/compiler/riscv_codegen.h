@@ -75,6 +75,7 @@ private:
 	// Per-syscall expansions; each has its own calling convention.
 	void gen_syscall_get_obj(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_array_size(const IRInstruction& instr, int result_vreg);
+	void gen_syscall_string_size(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_array_at(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg);
 	void gen_get_node(const IRInstruction& instr);

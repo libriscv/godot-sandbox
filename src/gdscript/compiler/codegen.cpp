@@ -1816,13 +1816,152 @@ int CodeGenerator::gen_logical(const BinaryExpr* expr, FunctionContext& func) {
 	return result_reg;
 }
 
+// Emit GLOBAL_CALL to str() over `args`.
+int CodeGenerator::gen_str_call(const std::vector<int>& args, FunctionContext& func) {
+	const int result_reg = alloc_register(func);
+	IRInstruction instr(IROpcode::GLOBAL_CALL);
+	instr.operands.push_back(IRValue::reg(result_reg));
+	instr.operands.push_back(IRValue::imm(static_cast<int64_t>(GlobalFn::STR)));
+	instr.operands.push_back(IRValue::imm(0)); // untyped: str() is a host call
+	instr.operands.push_back(IRValue::imm(static_cast<int64_t>(args.size())));
+	for (int reg : args) {
+		instr.operands.push_back(IRValue::reg(reg));
+	}
+	instr.type_hint = Variant::STRING;
+	func.ir.instructions.push_back(instr);
+	set_register_type(func, result_reg, Variant::STRING);
+	return result_reg;
+}
+
+// Erase the str() that produced `reg` and collect its argument registers into `args`.
+// Bails if any intervening instruction reads the result, clobbers an argument, or
+// crosses control flow.
+bool CodeGenerator::absorb_str_call(FunctionContext& func, int reg, size_t since,
+	std::vector<int>& args)
+{
+	std::vector<IRInstruction>& code = func.ir.instructions;
+	size_t at = code.size();
+	for (;;) {
+		if (at <= since) {
+			return false;
+		}
+		at--;
+		if (ir_destination_register(code[at]) == reg) {
+			break;
+		}
+	}
+
+	const IRInstruction& call = code[at];
+	if (call.opcode != IROpcode::GLOBAL_CALL || call.operands.size() < 4 ||
+	    !std::holds_alternative<int64_t>(call.operands[1].value) ||
+	    std::get<int64_t>(call.operands[1].value) != static_cast<int64_t>(GlobalFn::STR)) {
+		return false;
+	}
+	if (!std::holds_alternative<int64_t>(call.operands[3].value)) {
+		return false;
+	}
+	const size_t count = static_cast<size_t>(std::get<int64_t>(call.operands[3].value));
+	if (call.operands.size() != 4 + count) {
+		return false;
+	}
+	std::vector<int> call_args;
+	for (size_t i = 0; i < count; i++) {
+		if (call.operands[4 + i].type != IRValue::Type::REGISTER) {
+			return false;
+		}
+		call_args.push_back(std::get<int>(call.operands[4 + i].value));
+	}
+
+	std::vector<int> reads;
+	for (size_t i = at + 1; i < code.size(); i++) {
+		const IRInstruction& later = code[i];
+		if (ir_is_control_flow(later.opcode)) {
+			return false;
+		}
+		reads.clear();
+		ir_collect_read_registers(later, reads);
+		if (std::find(reads.begin(), reads.end(), reg) != reads.end()) {
+			return false;
+		}
+		const int dst = ir_destination_register(later);
+		if (dst >= 0 && std::find(call_args.begin(), call_args.end(), dst) != call_args.end()) {
+			return false;
+		}
+	}
+
+	args.insert(args.end(), call_args.begin(), call_args.end());
+	code.erase(code.begin() + at);
+	return true;
+}
+
+// Fold String + str(...) chains into a single str() call. Two plain Strings
+// stay on the VEVAL path. Returns -1 when nothing folds.
+int CodeGenerator::gen_string_concat(const BinaryExpr* expr, FunctionContext& func,
+	int& left_reg, int& right_reg)
+{
+	const size_t left_start = func.ir.instructions.size();
+	left_reg = gen_expr(expr->left.get(), func);
+	if (get_register_type(func, left_reg) != Variant::STRING) {
+		return -1;
+	}
+	size_t right_start = func.ir.instructions.size();
+	right_reg = gen_expr(expr->right.get(), func);
+	if (get_register_type(func, right_reg) != Variant::STRING) {
+		return -1;
+	}
+
+	std::vector<int> args;
+	const bool left_folded = absorb_str_call(func, left_reg, left_start, args);
+	if (!left_folded) {
+		args.push_back(left_reg);
+	} else {
+		// Erased instruction was before right_start.
+		right_start--;
+	}
+	std::vector<int> right_args;
+	const bool right_folded = absorb_str_call(func, right_reg, right_start, right_args);
+	if (!right_folded) {
+		right_args.push_back(right_reg);
+	}
+	if (!left_folded && !right_folded) {
+		return -1; // Two Strings that are already Strings: VEVAL concatenates them.
+	}
+
+	// Matches the host str() argument limit.
+	constexpr size_t MAX_STR_ARGS = 63;
+	if (args.size() + right_args.size() > MAX_STR_ARGS) {
+		if (left_folded) {
+			left_reg = gen_str_call(args, func);
+		}
+		if (right_folded) {
+			right_reg = gen_str_call(right_args, func);
+		}
+		return -1;
+	}
+
+	args.insert(args.end(), right_args.begin(), right_args.end());
+	return gen_str_call(args, func);
+}
+
 int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 	if (expr->op == BinaryExpr::Op::AND || expr->op == BinaryExpr::Op::OR) {
 		return gen_logical(expr, func);
 	}
 
-	int left_reg = gen_expr(expr->left.get(), func);
-	int right_reg = gen_expr(expr->right.get(), func);
+	int left_reg = -1;
+	int right_reg = -1;
+	if (expr->op == BinaryExpr::Op::ADD) {
+		const int concatenated = gen_string_concat(expr, func, left_reg, right_reg);
+		if (concatenated >= 0) {
+			return concatenated;
+		}
+	}
+	if (left_reg < 0) {
+		left_reg = gen_expr(expr->left.get(), func);
+	}
+	if (right_reg < 0) {
+		right_reg = gen_expr(expr->right.get(), func);
+	}
 	int result_reg = alloc_register(func);
 
 	IRInstruction::TypeHint left_type = get_register_type(func, left_reg);
@@ -1902,6 +2041,10 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 		set_register_type(func, result_reg, Variant::BOOL);
 	} else if (result_type != IRInstruction::TypeHint_NONE) {
 		set_register_type(func, result_reg, result_type);
+	} else if (expr->op == BinaryExpr::Op::ADD &&
+	           left_type == Variant::STRING && right_type == Variant::STRING) {
+		// VEVAL carries no type hint; propagate String so length() etc. lower.
+		set_register_type(func, result_reg, Variant::STRING);
 	}
 
 	free_register(func, left_reg);
@@ -2386,6 +2529,21 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 	}
 
 	int result_reg = alloc_register(func);
+
+	// String.length() -> ECALL_STRING_SIZE, typed receivers only.
+	if (expr->is_method_call && arg_regs.empty() &&
+		expr->member_name == "length" &&
+		get_register_type(func, obj_reg) == Variant::STRING)
+	{
+		IRInstruction call(IROpcode::CALL_SYSCALL);
+		call.operands.push_back(IRValue::reg(result_reg));
+		call.operands.push_back(IRValue::imm(ECALL_STRING_SIZE));
+		call.operands.push_back(IRValue::reg(obj_reg));
+		func.ir.instructions.push_back(call);
+		set_register_type(func, result_reg, Variant::INT);
+		free_register(func, obj_reg);
+		return result_reg;
+	}
 
 	// Array.append: dedicated syscall, avoids StringName lookup per element.
 	if (expr->is_method_call && arg_regs.size() == 1 &&

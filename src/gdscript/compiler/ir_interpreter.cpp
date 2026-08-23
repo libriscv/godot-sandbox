@@ -1,6 +1,7 @@
 #include "ir_interpreter.h"
 #include "compiler_exception.h"
 #include "globals.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <sstream>
@@ -413,6 +414,18 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			}
 
 			const GlobalFunction* info = &global_function(fn);
+			// All-String str(): plain concatenation, no host formatting needed.
+			if (fn == GlobalFn::STR && !args.empty() &&
+			    std::all_of(args.begin(), args.end(), [](const Value& v) {
+					return std::holds_alternative<std::string>(v);
+				})) {
+				std::string joined;
+				for (const Value& v : args) {
+					joined += std::get<std::string>(v);
+				}
+				ctx.registers[result_reg] = std::move(joined);
+				break;
+			}
 			if (info->kind == GlobalKind::HOST) {
 				throw CompilerException(ErrorType::OPTIMIZER_ERROR,
 					std::string(info->name) + "() needs the host Variant API and is not available"

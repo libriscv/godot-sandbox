@@ -485,6 +485,27 @@ void RISCVCodeGen::gen_syscall_array_size(const IRInstruction& instr, int result
 	emit_syscall_result(result_vreg, REG_A0, result_offset, 2); // INT
 }
 
+// ECALL_STRING_SIZE: handle in a0, length returned in a0.
+void RISCVCodeGen::gen_syscall_string_size(const IRInstruction& instr, int result_vreg) {
+	if (instr.operands.size() != 3) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_STRING_SIZE requires 3 operands");
+	}
+
+	int string_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
+
+	// Slot allocation before spill_around_syscall to prevent allocator drift.
+	int result_offset = get_variant_stack_offset(result_vreg);
+	int string_offset = get_variant_stack_offset(string_vreg);
+
+	spill_around_syscall({REG_A0});
+
+	emit_container_handle(REG_A0, string_vreg, string_offset);
+	emit_li(REG_A7, ECALL_STRING_SIZE);
+	emit_ecall();
+
+	emit_syscall_result(result_vreg, REG_A0, result_offset, 2); // INT
+}
+
 void RISCVCodeGen::gen_syscall_array_at(const IRInstruction& instr, int result_vreg) {
 	if (instr.operands.size() != 4) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_ARRAY_AT requires 4 operands");
@@ -648,6 +669,8 @@ void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
 		gen_syscall_get_obj(instr, result_vreg);
 	} else if (syscall_num == ECALL_ARRAY_SIZE) {
 		gen_syscall_array_size(instr, result_vreg);
+	} else if (syscall_num == ECALL_STRING_SIZE) {
+		gen_syscall_string_size(instr, result_vreg);
 	} else if (syscall_num == ECALL_ARRAY_AT) {
 		gen_syscall_array_at(instr, result_vreg);
 	} else if (syscall_num == ECALL_DICTIONARY_OPS) {
@@ -2717,6 +2740,7 @@ void RISCVCodeGen::plan_global_handles(const IRFunction& func) {
 				}
 				switch (std::get<int64_t>(instr.operands[1].value)) {
 					case ECALL_ARRAY_SIZE:
+					case ECALL_STRING_SIZE:
 						return { 2, -1 };
 					case ECALL_ARRAY_AT:
 					case ECALL_DICTIONARY_OPS:

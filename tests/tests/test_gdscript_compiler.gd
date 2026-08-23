@@ -2252,6 +2252,101 @@ func test_or_with_result():
 #
 # 	s.queue_free()
 
+# String concatenation folding and ECALL_STRING_SIZE, differential against GDScript.
+func test_string_building():
+	var gdscript_code = """
+func plain(a : String, b : String):
+	return a + b
+
+func literals():
+	return "Hello" + " " + "World!"
+
+func with_number(n):
+	return "Count" + str(n)
+
+func leading(n):
+	return str(n) + " items"
+
+func chain(a, b, c):
+	return "[" + str(a) + ", " + str(b) + ", " + str(c) + "]"
+
+func both_sides(a, b):
+	return str(a) + str(b)
+
+func of_a_string(s : String):
+	return "<" + str(s) + ">"
+
+func containers(a, d):
+	return "a=" + str(a) + " d=" + str(d)
+
+func conditional(flag, n):
+	return ("yes " if flag else "no ") + str(n)
+
+func measured(n):
+	return ("value " + str(n)).length()
+
+func measured_plain(a : String, b : String):
+	return (a + b).length()
+
+func measured_literal():
+	var s = "hello"
+	return s.length()
+
+func built_in_a_loop(n : int):
+	var acc : int = 0
+	var i : int = 0
+	while i < n:
+		var s : String = "value " + str(i)
+		acc += s.length()
+		i += 1
+	return acc
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	var script := GDScript.new()
+	script.source_code = gdscript_code
+	assert_eq(script.reload(), OK, "the same source should compile as GDScript")
+	var engine = script.new()
+
+	var cases := [
+		["plain", ["Hello", " World"]],
+		["literals", []],
+		["with_number", [42]],
+		["with_number", [-1]],
+		["with_number", [1.5]],
+		["leading", [7]],
+		["chain", [1, 2.5, "x"]],
+		["both_sides", [1, 2]],
+		["both_sides", ["a", "b"]],
+		["of_a_string", ["inner"]],
+		["containers", [[1, 2], {"k": 1}]],
+		["conditional", [true, 3]],
+		["conditional", [false, 3]],
+		["measured", [1234]],
+		["measured_plain", ["ab", "cde"]],
+		["measured_literal", []],
+		["built_in_a_loop", [20]],
+	]
+	for case in cases:
+		var name : String = case[0]
+		var args : Array = case[1]
+		var expected = engine.callv(name, args)
+		var actual = _call_with(s, name, args)
+		assert_eq(actual, expected, "%s%s should answer what GDScript answers" % [name, args])
+		assert_eq(typeof(actual), typeof(expected), "%s%s should answer the same type" % [name, args])
+
+	s.queue_free()
+
+# vmcallv() is variadic; expand manually.
+func _call_with(s: Sandbox, name: String, args: Array):
+	match args.size():
+		0: return s.vmcallv(name)
+		1: return s.vmcallv(name, args[0])
+		2: return s.vmcallv(name, args[0], args[1])
+		_: return s.vmcallv(name, args[0], args[1], args[2])
+
 # Modulo operator edge cases
 func test_modulo_operator():
 	var gdscript_code = """

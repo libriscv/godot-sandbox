@@ -68,6 +68,10 @@ private:
 	int gen_literal(const LiteralExpr* expr, FunctionContext& func);
 	int gen_variable(const VariableExpr* expr, FunctionContext& func);
 	int gen_binary(const BinaryExpr* expr, FunctionContext& func);
+	bool absorb_str_call(FunctionContext& func, int reg, size_t since, std::vector<int>& args);
+	int gen_str_call(const std::vector<int>& args, FunctionContext& func);
+	int gen_string_concat(const BinaryExpr* expr, FunctionContext& func,
+		int& left_reg, int& right_reg);
 	int gen_logical(const BinaryExpr* expr, FunctionContext& func);
 	int gen_unary(const UnaryExpr* expr, FunctionContext& func);
 	int gen_type_test(const TypeTestExpr* expr, FunctionContext& func);

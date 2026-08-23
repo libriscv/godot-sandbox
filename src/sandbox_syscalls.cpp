@@ -571,6 +571,13 @@ static double utility_to_float(const Variant &value) {
 	}
 }
 
+// Stringify one argument, avoiding the copy when it is already a scoped variant.
+static inline String utility_stringify(const Sandbox &emu, const GuestVariant &gv) {
+	if (gv.is_scoped_variant())
+		return gv.toVariantPtr(emu)->operator String();
+	return gv.toVariant(emu).operator String();
+}
+
 APICALL(api_utility) {
 	auto [op, vres_addr, args_addr, arg_count] = machine.sysargs<Utility_Op, gaddr_t, gaddr_t, unsigned>();
 	SYS_TRACE("utility", int(op), vres_addr, args_addr, arg_count);
@@ -614,9 +621,14 @@ APICALL(api_utility) {
 					// as it is in print(), and there can be up to 63 arguments
 					// in one call.
 					PENALIZE(10'000 + 10'000 * arg_count);
-					String result;
-					for (unsigned i = 0; i < arg_count; i++) {
-						result += args[i].toVariant(emu).operator String();
+					if (UNLIKELY(arg_count == 0)) {
+						vres->create(emu, Variant(String()));
+						break;
+					}
+					// Start from args[0] to avoid an empty-string realloc.
+					String result = utility_stringify(emu, args[0]);
+					for (unsigned i = 1; i < arg_count; i++) {
+						result += utility_stringify(emu, args[i]);
 					}
 					vres->create(emu, Variant(std::move(result)));
 					break;
@@ -781,13 +793,20 @@ APICALL(api_veval) {
 		return;
 	}
 
-	bool valid = false;
-	Variant ret;
-	Variant::evaluate(static_cast<Variant::Operator>(op), ap->toVariant(emu), bp->toVariant(emu), ret, valid);
-	//WARN_PRINT(String("veval: ") + String(ap->toVariant(emu)) + " " + itos(op) + " " + String(bp->toVariant(emu)) + " = " + String(ret));
+	// Scoped variants are already Variants; skip the copy for evaluate()'s read-only operands.
+	VariantScratchN<2> scratch;
+	const Variant *a = ap->is_scoped_variant() ? ap->toVariantPtr(emu) : scratch.emplace(ap->toVariant(emu));
+	const Variant *b = bp->is_scoped_variant() ? bp->toVariantPtr(emu) : scratch.emplace(bp->toVariant(emu));
 
-	machine.set_result(valid);
-	retp->create(emu, std::move(ret));
+	// Uninitialized storage; Godot placement-constructs the result.
+	CallResult result;
+	GDExtensionBool valid = false;
+	internal::gdextension_interface_variant_evaluate(static_cast<GDExtensionVariantOperator>(op),
+			a->_native_ptr(), b->_native_ptr(), &result.get(), &valid);
+	result.mark_constructed();
+
+	machine.set_result(bool(valid));
+	retp->create(emu, std::move(result.get()));
 }
 
 /// @brief Construct a Variant from data the guest describes.
@@ -2585,9 +2604,11 @@ APICALL(api_string_size) {
 	SYS_TRACE("string_size", str_idx);
 
 	const Variant &var_str = get_scoped_variant_or_throw(emu, str_idx, "String::size");
-	if (var_str.get_type() != Variant::STRING) {
-		ERR_PRINT("Invalid String object, type = " + String(GuestVariant::type_name(var_str.get_type())));
-		throw std::runtime_error("Invalid String object, idx = " + std::to_string(str_idx) + " type = " + GuestVariant::type_name(var_str.get_type()));
+	// String, StringName and NodePath all answer length().
+	const Variant::Type type = var_str.get_type();
+	if (type != Variant::STRING && type != Variant::STRING_NAME && type != Variant::NODE_PATH) {
+		ERR_PRINT("Invalid String object, type = " + String(GuestVariant::type_name(type)));
+		throw std::runtime_error("Invalid String object, idx = " + std::to_string(str_idx) + " type = " + GuestVariant::type_name(type));
 	}
 	godot::String str = var_str.operator String();
 	machine.set_result(str.length());
