@@ -13,6 +13,10 @@ var Sandbox_TestsTests = load("res://tests/tests.elf")
 
 const ITERATIONS := 50000
 
+# ECALL_LAST. Every handler below it is driven and checked; raising the syscall
+# range without raising this leaves the new one unchecked.
+const SYSCALL_LAST := 555
+
 # Restrictions are enabled for the duration of a run and every callback answers "no", so
 # these are the system calls that are supposed to be refused every single time. A handler
 # that starts returning from this list has lost its restriction check.
@@ -54,8 +58,10 @@ func test_fuzz_syscalls():
 	# Seed %s is printed so a failure below can be replayed with "syscalls:<seed>".
 	gut.p("fuzzing seed: %s" % r["seed"])
 
-	# Every handler has to be reached, or the run proves nothing about it.
-	for syscall in range(500, 554):
+	# Every handler has to be reached, or the run proves nothing about it. The
+	# bound is ECALL_LAST: a system call added without extending it here is one
+	# the fuzzer drives and nothing checks.
+	for syscall in range(500, SYSCALL_LAST):
 		assert_true(coverage.has(syscall), "system call %d was invoked" % syscall)
 
 	# Being invoked is not the same as being tested. A handler validates its arguments
@@ -76,7 +82,7 @@ func test_fuzz_syscalls():
 	# the blob it copies is the host's own, and the guest bytes that become one are
 	# consumed by AWAIT, which this run does reach.
 	never_returns.append(553) # AWAIT_RESTORE
-	for syscall in range(500, 554):
+	for syscall in range(500, SYSCALL_LAST):
 		if syscall in never_returns:
 			continue
 		var counts: Array = coverage.get(syscall, [0, 0])

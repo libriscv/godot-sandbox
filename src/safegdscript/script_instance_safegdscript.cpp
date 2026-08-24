@@ -180,9 +180,18 @@ const GDExtensionPropertyInfo *SafeGDScriptInstance::get_property_list(uint32_t 
 		list->name = stringname_alloc(property.name());
 		list->class_name = stringname_alloc("Variant");
 		list->type = (GDExtensionVariantType)property.type();
-		list->hint = 0;
-		list->hint_string = string_alloc("");
-		list->usage = PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_SCRIPT_VARIABLE | PROPERTY_USAGE_NIL_IS_VARIANT;
+		list->hint = property.hint();
+		list->hint_string = string_alloc(property.hint_string());
+		// NIL_IS_VARIANT goes by type, not by annotation: without it NIL reads as void.
+		uint32_t usage = property.usage() != 0
+			? property.usage()
+			: uint32_t(PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_SCRIPT_VARIABLE);
+		if (property.type() == Variant::NIL) {
+			usage |= uint32_t(PROPERTY_USAGE_NIL_IS_VARIANT);
+		} else {
+			usage &= ~uint32_t(PROPERTY_USAGE_NIL_IS_VARIANT);
+		}
+		list->usage = usage;
 		list++;
 	}
 	for (int i = 0; i < prop_list.size(); i++) {

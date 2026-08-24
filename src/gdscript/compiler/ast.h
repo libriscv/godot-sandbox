@@ -1,4 +1,5 @@
 #pragma once
+#include "export_hints.h"
 #include <memory>
 #include <vector>
 #include <string>
@@ -188,6 +189,7 @@ struct VarDeclStmt : Stmt {
 	bool is_const = false;
 	bool is_property = false;
 	bool is_static = false;
+	ExportHint export_hint;
 
 	std::unique_ptr<FunctionDecl> setter_body;
 	std::unique_ptr<FunctionDecl> getter_body;
@@ -371,6 +373,20 @@ struct StructDecl {
 	std::vector<StructField> fields;
 	int line = 0;
 	int column = 0;
+
+	bool is_class = false;
+	std::string base_name;
+	std::vector<FunctionDecl> methods;
+	size_t inherited_fields = 0;
+
+	const FunctionDecl* find_method(const std::string& method_name) const {
+		for (const FunctionDecl& method : methods) {
+			if (method.name == method_name) {
+				return &method;
+			}
+		}
+		return nullptr;
+	}
 
 	const StructField* find_field(const std::string& field_name) const {
 		for (const auto& field : fields) {

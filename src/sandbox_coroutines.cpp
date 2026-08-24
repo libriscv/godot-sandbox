@@ -229,13 +229,23 @@ bool Sandbox::coroutine_suspend(gaddr_t operand_addr, gaddr_t frame_base, uint32
 		ERR_PRINT("await: the awaited Signal has no object");
 		return hand_the_operand_back();
 	}
-	if (!this->is_allowed_object(target)) {
-		ERR_PRINT("await: not allowed to await a signal on " + target->get_class());
-		throw std::runtime_error("await: object is not allowed");
+	// Own coroutine state: no engine object reached, allowlists don't apply.
+	bool own_frame = false;
+	for (const std::unique_ptr<Coroutine> &other : m_coroutines) {
+		if (other->state_object.ptr() == target) {
+			own_frame = true;
+			break;
+		}
 	}
-	if (!this->is_allowed_class(target->get_class())) {
-		ERR_PRINT("await: not allowed to await a signal on class " + target->get_class());
-		throw std::runtime_error("await: class is not allowed");
+	if (!own_frame) {
+		if (!this->is_allowed_object(target)) {
+			ERR_PRINT("await: not allowed to await a signal on " + target->get_class());
+			throw std::runtime_error("await: object is not allowed");
+		}
+		if (!this->is_allowed_class(target->get_class())) {
+			ERR_PRINT("await: not allowed to await a signal on class " + target->get_class());
+			throw std::runtime_error("await: class is not allowed");
+		}
 	}
 	// Before a frame is taken. connect() reports this as ERR_INVALID_PARAMETER, which the
 	// already-connected case below tolerates.

@@ -35,6 +35,7 @@ set(COMPILER_SOURCES
     compiler.cpp
     ir_interpreter.cpp
     globals.cpp
+    export_hints.cpp
 )
 
 # Build as library
@@ -124,6 +125,8 @@ if (BUILD_TESTING)
 	add_gdscript_test(test_inline_suites tests/test_inline_suites.cpp)
 	add_gdscript_test(test_signatures tests/test_signatures.cpp)
 	add_gdscript_test(test_properties tests/test_properties.cpp)
+	add_gdscript_test(test_export_hints tests/test_export_hints.cpp)
+	add_gdscript_test(test_classes tests/test_classes.cpp)
 	add_gdscript_test(test_signals tests/test_signals.cpp)
 	add_gdscript_test(test_line_table tests/test_line_table.cpp)
 	add_gdscript_test(test_diagnostics tests/test_diagnostics.cpp)

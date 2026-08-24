@@ -133,7 +133,17 @@ int main(int argc, char** argv)
 				std::cout << "  [" << i << "] " << global.name;
 
 				if (global.is_property) {
-					std::cout << " (@export)";
+					std::cout << " (@export";
+					if (!global.export_hint.is_default()) {
+						std::cout << " hint=" << global.export_hint.hint;
+						if (!global.export_hint.hint_string.empty()) {
+							std::cout << " \"" << global.export_hint.hint_string << "\"";
+						}
+						if (global.export_hint.usage != 0) {
+							std::cout << " usage=" << global.export_hint.usage;
+						}
+					}
+					std::cout << ")";
 				}
 
 				if (global.is_const) {

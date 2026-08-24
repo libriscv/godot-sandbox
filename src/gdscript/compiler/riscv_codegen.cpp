@@ -254,6 +254,20 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		emit_address_of_global(REG_A6, i);
 		emit_li(REG_A7, ECALL_SANDBOX_ADD);
 		emit_ecall();
+		if (!global.export_hint.is_default()) {
+			const std::string hint_label = ".LHINT" + std::to_string(i);
+			m_property_name_strings.push_back({global.export_hint.hint_string, hint_label});
+
+			emit_li(REG_A0, SANDBOX_ADD_PROPERTY_HINT);
+			emit_la(REG_A1, name_label);
+			emit_li(REG_A2, static_cast<int64_t>(global.name.length()));
+			emit_li(REG_A3, global.export_hint.hint);
+			emit_la(REG_A4, hint_label);
+			emit_li(REG_A5, static_cast<int64_t>(global.export_hint.hint_string.length()));
+			emit_li(REG_A6, global.export_hint.usage);
+			emit_li(REG_A7, ECALL_SANDBOX_ADD);
+			emit_ecall();
+		}
 	}
 
 	// STOP: SYSTEM with imm = 0x7ff
@@ -833,7 +847,11 @@ void RISCVCodeGen::gen_make_callable(const IRInstruction& instr) {
 
 	spill_around_syscall({ REG_A0, REG_A1, REG_A2, REG_A3 });
 
-	emit_la(REG_A0, function_name);
+	if (function_name.empty()) {
+		emit_li(REG_A0, 0);
+	} else {
+		emit_la(REG_A0, function_name);
+	}
 	emit_load_stack_offset(REG_A1, bound_offset);
 	emit_li(REG_A2, 0);
 	emit_li(REG_A3, ECALL_CALLABLE_VARIANT_ARGS);
@@ -1940,6 +1958,47 @@ void RISCVCodeGen::gen_call(const IRInstruction& instr) {
 	emit_jal(REG_RA, 0);
 }
 
+void RISCVCodeGen::gen_call_hosted(const IRInstruction& instr) {
+	if (instr.operands.size() < 3) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL_HOSTED requires at least 3 operands");
+	}
+
+	const std::string& func_name = std::get<std::string>(instr.operands[0].value);
+	const int result_vreg = std::get<int>(instr.operands[1].value);
+	const int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+
+	if (instr.operands.size() != static_cast<size_t>(3 + arg_count)) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL_HOSTED argument count mismatch");
+	}
+
+	const int result_offset = get_variant_stack_offset(result_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3, REG_A7});
+
+	const int additional_space = arg_count > 0
+		? ((arg_count * variant_size()) + 15) & ~15
+		: 0;
+	if (arg_count > 0) {
+		emit_stack_adjust(-additional_space);
+		for (int i = 0; i < arg_count; i++) {
+			const int arg_vreg = std::get<int>(instr.operands[3 + i].value);
+			const int arg_src_offset = get_variant_stack_offset(arg_vreg) + additional_space;
+			emit_variant_move(REG_SP, i * variant_size(), REG_SP, arg_src_offset, REG_T0);
+		}
+		emit_mv(REG_A1, REG_SP);
+	} else {
+		emit_mv(REG_A1, REG_ZERO);
+	}
+
+	emit_la(REG_A0, func_name);
+	emit_li(REG_A2, arg_count);
+	emit_load_stack_offset(REG_A3, result_offset + additional_space);
+	emit_li(REG_A7, ECALL_CALL_GUEST);
+	emit_ecall();
+
+	emit_stack_adjust(additional_space);
+}
+
 void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 	switch (instr.opcode) {
 		case IROpcode::LABEL:
@@ -2370,6 +2429,9 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::CALL:
 			gen_call(instr);
 			break;
+		case IROpcode::CALL_HOSTED:
+			gen_call_hosted(instr);
+			break;
 		// Rect2/Plane: four contiguous real_t, same payload as Vector4.
 		case IROpcode::MAKE_VECTOR2:
 		case IROpcode::MAKE_VECTOR3:
@@ -2797,6 +2859,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::DICT_SET:
 		case IROpcode::AWAIT:
 		case IROpcode::CALL:
+		case IROpcode::CALL_HOSTED:
 		case IROpcode::CALL_SYSCALL:
 		case IROpcode::GET_NODE:
 		case IROpcode::LOAD_RESOURCE:
@@ -3135,11 +3198,11 @@ void RISCVCodeGen::plan_global_handles(const IRFunction& func) {
 
 	const std::vector<std::vector<size_t>> successors = build_successors(func);
 
-	// Marks nodes reachable through a STORE_GLOBAL to `index` (or a CALL).
 	const auto assigned_before = [&](size_t from, int64_t index) {
 		const auto stores = [&](size_t node) {
 			const IRInstruction& instr = func.instructions[node];
-			if (instr.opcode == IROpcode::CALL) {
+			if (instr.opcode == IROpcode::CALL || instr.opcode == IROpcode::CALL_HOSTED ||
+				instr.opcode == IROpcode::AWAIT) {
 				return true;
 			}
 			return instr.opcode == IROpcode::STORE_GLOBAL && !instr.operands.empty() &&

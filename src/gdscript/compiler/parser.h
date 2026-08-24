@@ -1,6 +1,7 @@
 #pragma once
 #include "token.h"
 #include "ast.h"
+#include "export_hints.h"
 #include <vector>
 #include <memory>
 #include <string>
@@ -23,6 +24,7 @@ private:
 	std::vector<Parameter> parse_parameters();
 
 	StructDecl parse_struct();
+	StructDecl parse_class();
 	EnumDecl parse_enum();
 
 	MatchPatternPtr parse_match_pattern();
@@ -116,8 +118,8 @@ private:
 	std::string parse_type_name();
 	std::string parse_return_type();
 	void skip_type_arguments();
-	bool parse_attribute();
-	void skip_attribute_arguments();
+	bool parse_attribute(ExportHint& hint);
+	std::vector<ExportArgument> parse_attribute_arguments();
 	SignalDecl parse_signal();
 	std::string doc_comment_above(int p_line) const;
 

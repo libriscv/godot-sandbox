@@ -123,21 +123,24 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	m_structs.clear();
 	m_struct_default_stack.clear();
 	for (const auto& decl : program.structs) {
+		const char* kind = decl.is_class ? "Class" : "Struct";
 		if (m_structs.count(decl.name)) {
-			error_at("Struct '" + decl.name + "' is declared more than once", decl.line, decl.column);
+			error_at(std::string(kind) + " '" + decl.name + "' is declared more than once",
+				decl.line, decl.column);
 		}
 		if (is_global_class(decl.name)) {
-			error_at("Struct '" + decl.name + "' has the name of a Godot singleton",
+			error_at(std::string(kind) + " '" + decl.name + "' has the name of a Godot singleton",
 				decl.line, decl.column,
 				"Pick another name, so that '" + decl.name + "' still reaches the singleton");
 		}
 		if (m_local_functions.count(decl.name)) {
-			error_at("Struct '" + decl.name + "' has the name of a function in this script",
+			error_at(std::string(kind) + " '" + decl.name + "' has the name of a function in this script",
 				decl.line, decl.column);
 		}
-		reject_signal_collision("Struct", decl.name, decl.line, decl.column);
+		reject_signal_collision(decl.is_class ? "Class" : "Struct", decl.name, decl.line, decl.column);
 		m_structs[decl.name] = &decl;
 	}
+	register_classes(program);
 
 	// Enums resolve to integers here; nothing reaches the IR.
 	m_enums.clear();
@@ -229,6 +232,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		ir_global.name = global.name;
 		ir_global.is_const = global.is_const;
 		ir_global.is_property = global.is_property;
+		ir_global.export_hint = global.export_hint;
 		ir_global.setter_function = m_global_setters[i];
 		ir_global.getter_function = m_global_getters[i];
 		ir_global.storage = (global.is_const || global.is_static)
@@ -286,7 +290,18 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				ir_global.value_type = derive_global_value_type(ir_global);
 			} else {
 				// Not a compile-time constant: evaluate it at startup.
+				const size_t before = target.ir.instructions.size();
 				int reg = gen_expr(global.initializer.get(), target);
+				// ECALL_CALL_GUEST would reset SP/RA on the level-0 state.
+				for (size_t k = before; k < target.ir.instructions.size(); k++) {
+					if (target.ir.instructions[k].opcode == IROpcode::CALL_HOSTED) {
+						error_at("Cannot call the coroutine '" +
+							std::get<std::string>(target.ir.instructions[k].operands[0].value) +
+							"' while initializing '" + global.name + "'",
+							global.line, global.column,
+							"a coroutine can only be called from a function Godot invoked");
+					}
+				}
 				target.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
 					IRValue::imm(static_cast<int64_t>(i)), IRValue::reg(reg));
 				ir_global.init_type = IRGlobalVar::InitType::RUNTIME;
@@ -354,6 +369,19 @@ IRProgram CodeGenerator::generate(const Program& program) {
 
 	emit_missing_export_accessors(ir_program);
 
+	for (const StructDecl& decl : program.structs) {
+		if (!decl.is_class) {
+			continue;
+		}
+		for (const FunctionDecl& method : decl.methods) {
+			FunctionSignature signature;
+			signature.name = lifted_method_name(decl, method.name);
+			signature.line = method.line;
+			ir_program.signatures.push_back(std::move(signature));
+			ir_program.functions.push_back(generate_function(method, &decl));
+		}
+	}
+
 	// Queue grows while iterating (nested lambdas append).
 	for (size_t i = 0; i < m_pending_lambdas.size(); i++) {
 		const PendingLambda pending = m_pending_lambdas[i];
@@ -364,7 +392,9 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		signature.line = pending.decl->line;
 		ir_program.signatures.push_back(std::move(signature));
 
+		m_current_class = pending.owner;
 		IRFunction lifted = generate_lambda_function(*pending.decl, pending.captures);
+		m_current_class = nullptr;
 		lifted.name = pending.lifted_name;
 		ir_program.functions.push_back(std::move(lifted));
 	}
@@ -375,23 +405,34 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	return ir_program;
 }
 
-IRFunction CodeGenerator::generate_function(const FunctionDecl& decl) {
+IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const StructDecl* owner) {
 	FunctionContext func;
-	func.ir.name = decl.name;
+	func.ir.name = owner != nullptr ? lifted_method_name(*owner, decl.name) : decl.name;
 	func.ir.is_coroutine = decl.is_coroutine;
-	m_current_function = decl.name;
+	m_current_function = func.ir.name;
 	enter_accessor_scope(decl.name);
 
 	func.return_type = decl.return_type;
+	m_current_class = owner;
 
 	push_scope(func);
 
-	if (decl.parameters.size() > IRFunction::MAX_PARAMETERS) {
-		error_at("Function '" + decl.name + "' takes " +
-			std::to_string(decl.parameters.size()) + " parameters, but at most " +
-			std::to_string(IRFunction::MAX_PARAMETERS) + " can be passed",
+	const size_t slots = decl.parameters.size() + (owner != nullptr ? 1 : 0);
+	if (slots > IRFunction::MAX_PARAMETERS) {
+		error_at((owner != nullptr ? "Method '" + owner->name + "." : "Function '") + decl.name +
+			"' takes " + std::to_string(decl.parameters.size()) +
+			" parameters, but at most " +
+			std::to_string(IRFunction::MAX_PARAMETERS - (owner != nullptr ? 1 : 0)) +
+			" can be passed",
 			decl.line, decl.column,
 			"Pass the extra values in an Array or Dictionary instead");
+	}
+	if (owner != nullptr) {
+		func.ir.parameters.push_back("self");
+		int self_reg = alloc_register(func);
+		declare_variable(func, "self", self_reg);
+		set_register_type(func, self_reg, Variant::DICTIONARY);
+		set_register_struct(func, self_reg, owner);
 	}
 	for (size_t i = 0; i < decl.parameters.size(); i++) {
 		const auto& param = decl.parameters[i];
@@ -417,6 +458,7 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl) {
 	// r0 exists even when the body declares no registers.
 	func.ir.max_registers = std::max(func.next_register, 1);
 	pop_scope(func);
+	m_current_class = nullptr;
 
 	return std::move(func.ir);
 }
@@ -553,6 +595,11 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 	// Locals shadow globals.
 	Variable* var = find_variable(func, name);
 	if (!var) {
+		if (int self_reg = class_field_self(name, func); self_reg >= 0) {
+			gen_member_store(self_reg, name, value_reg, func);
+			free_register(func, value_reg);
+			return;
+		}
 		if (is_global_variable(name)) {
 			if (is_global_const(name)) {
 				error_at("Cannot assign to const variable: " + name, site);
@@ -2017,6 +2064,10 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func)
 		return new_reg;
 	}
 
+	if (int self_reg = class_field_self(expr->name, func); self_reg >= 0) {
+		return gen_member_read(self_reg, expr->name, func, expr);
+	}
+
 	// Declared signal; locals shadow it (checked above).
 	if (find_signal(expr->name) != nullptr) {
 		return gen_signal_value(expr->name, func, expr);
@@ -2302,6 +2353,28 @@ std::vector<std::string> CodeGenerator::collect_captures(const FunctionDecl& dec
 			captures.push_back(name);
 		}
 	}
+
+	// Capture `self` when the lambda body references a class field or method.
+	if (m_current_class != nullptr) {
+		bool needs_self = false;
+		for (const auto& name : collector.names) {
+			if (find_struct_field(*m_current_class, name) != nullptr) {
+				needs_self = true;
+				break;
+			}
+		}
+		for (const auto& name : collector.callees) {
+			if (needs_self) {
+				break;
+			}
+			needs_self = find_class_method(*m_current_class, name) != nullptr;
+		}
+		if (needs_self &&
+			const_cast<CodeGenerator*>(this)->find_variable(enclosing, "self") != nullptr &&
+			std::find(captures.begin(), captures.end(), "self") == captures.end()) {
+			captures.push_back("self");
+		}
+	}
 	return captures;
 }
 
@@ -2324,6 +2397,34 @@ int CodeGenerator::gen_make_callable(const std::string& function_name, int bound
 		free_register(func, argument_reg);
 	}
 	return result_reg;
+}
+
+int CodeGenerator::gen_callable_constructor(const CallExpr* expr, FunctionContext& func) {
+	reject_named_arguments(*expr, "'Callable'", expr);
+	if (expr->arguments.empty()) {
+		return gen_make_callable("", -1, func);
+	}
+	if (expr->arguments.size() != 2) {
+		error_at("Callable() takes 0 or 2 arguments, got " +
+			std::to_string(expr->arguments.size()), expr);
+	}
+
+	auto* object = dynamic_cast<const VariableExpr*>(expr->arguments[0].get());
+	if (object == nullptr || object->name != "self" || find_variable(func, object->name) != nullptr) {
+		error_at("The object of a Callable() must be 'self'", expr,
+			"A sandboxed program can only make a Callable over its own functions");
+	}
+
+	const std::string* name = constant_string(expr->arguments[1].get(), func);
+	if (name == nullptr) {
+		error_at("The method of a Callable() must be a compile-time string", expr,
+			"The guest resolves the name while it compiles, not while it runs");
+	}
+	if (!is_local_function(*name)) {
+		error_at("This program declares no function named '" + *name + "'", expr,
+			"Callable(self, \"" + *name + "\") would never be valid");
+	}
+	return gen_make_callable(*name, -1, func);
 }
 
 int CodeGenerator::gen_lambda(const LambdaExpr* expr, FunctionContext& func) {
@@ -2365,7 +2466,7 @@ int CodeGenerator::gen_lambda(const LambdaExpr* expr, FunctionContext& func) {
 		set_register_type(func, bound_reg, Variant::ARRAY);
 	}
 
-	m_pending_lambdas.push_back({ &decl, lifted_name, captures });
+	m_pending_lambdas.push_back({ &decl, lifted_name, captures, m_current_class });
 
 	int result_reg = gen_make_callable(lifted_name, bound_reg, func);
 	if (bound_reg >= 0) {
@@ -2999,6 +3100,24 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 	if (expr->function_name == "Color8" && !is_local_function("Color8")) {
 		return gen_color8(expr, func);
 	}
+	if (expr->function_name == "Callable" && !is_local_function("Callable")) {
+		return gen_callable_constructor(expr, func);
+	}
+	if (expr->function_name == "super" && find_variable(func, "super") == nullptr) {
+		return gen_super_init(expr, func);
+	}
+	if (m_current_class != nullptr && find_variable(func, expr->function_name) == nullptr) {
+		const StructDecl* owner = nullptr;
+		if (const FunctionDecl* method =
+			find_class_method(*m_current_class, expr->function_name, &owner))
+		{
+			Variable* self = find_variable(func, "self");
+			if (self != nullptr) {
+				return gen_class_method_call(*m_current_class, *method, *owner,
+					self->register_num, expr->arguments, *expr, func, expr);
+			}
+		}
+	}
 	// Constant path: embed characters directly. Run-time path handled below.
 	if (expr->function_name == "load" && !is_local_function("load") && expr->arguments.size() == 1) {
 		if (const std::string* path = constant_string(expr->arguments[0].get(), func)) {
@@ -3070,13 +3189,6 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 		// Defaults materialized here: ABI has no argument count, callee can't distinguish.
 		auto sig = m_local_signatures.find(expr->function_name);
 		if (sig != m_local_signatures.end()) {
-			if (sig->second->is_coroutine) {
-				// Intra-program calls are jal; a suspension unwinds past them.
-				// Composing coroutines requires host-mediated entry (not yet implemented).
-				error_at("'" + expr->function_name + "' contains an await, so it can only be "
-					"called from outside the program", expr,
-					"Awaiting one .sgd coroutine from another is not supported yet");
-			}
 			const auto& params = sig->second->parameters;
 			if (arg_regs.size() > params.size()) {
 				error_at("Too many arguments to '" + expr->function_name + "': expected at most " +
@@ -3093,12 +3205,14 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 
 		int result_reg = alloc_register(func);
 
+		const bool hosted = sig != m_local_signatures.end() && sig->second->is_coroutine;
+
 		// Return type on result register: enables field checks and native arithmetic.
-		if (sig != m_local_signatures.end()) {
+		if (sig != m_local_signatures.end() && !hosted) {
 			apply_declared_type(result_reg, sig->second->return_type, func);
 		}
 
-		IRInstruction call_instr(IROpcode::CALL);
+		IRInstruction call_instr(hosted ? IROpcode::CALL_HOSTED : IROpcode::CALL);
 		call_instr.operands.push_back(IRValue::str(expr->function_name));
 		call_instr.operands.push_back(IRValue::reg(result_reg));
 		call_instr.operands.push_back(IRValue::imm(arg_regs.size()));
@@ -3194,6 +3308,12 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 			}
 		}
 	}
+
+	if (is_super(expr->object.get(), func)) {
+		if (int result = gen_super_call(expr, func); result >= 0) {
+			return result;
+		}
+	}
 	// Enum member or built-in type constant: the left-hand name is a type.
 	// A declared enum is checked first, so `enum Color { RED = 5 }` shadows the
 	// built-in Color rather than silently answering with the engine's constant.
@@ -3231,7 +3351,21 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		}
 	}
 
-	int obj_reg = gen_expr(expr->object.get(), func);
+	int obj_reg = is_super(expr->object.get(), func)
+		? gen_get_node(".", func)
+		: gen_expr(expr->object.get(), func);
+
+	if (expr->is_method_call) {
+		if (const StructDecl* decl = get_register_struct(func, obj_reg); decl != nullptr && decl->is_class) {
+			const StructDecl* owner = nullptr;
+			if (const FunctionDecl* method = find_class_method(*decl, expr->member_name, &owner)) {
+				int result = gen_class_method_call(*decl, *method, *owner, obj_reg,
+					expr->arguments, *expr, func, expr);
+				free_register(func, obj_reg);
+				return result;
+			}
+		}
+	}
 
 	std::vector<int> arg_regs;
 	for (const auto& arg : expr->arguments) {
@@ -3503,14 +3637,123 @@ const StructDecl* CodeGenerator::find_struct(const std::string& name) const {
 	return it == m_structs.end() ? nullptr : it->second;
 }
 
+const StructDecl* CodeGenerator::class_base(const StructDecl& decl) const {
+	if (!decl.is_class || decl.base_name.empty()) {
+		return nullptr;
+	}
+	return find_struct(decl.base_name);
+}
+
+std::vector<const StructField*> CodeGenerator::struct_fields(const StructDecl& decl) const {
+	std::vector<const StructField*> out;
+	if (const StructDecl* base = class_base(decl)) {
+		out = struct_fields(*base);
+	}
+	for (const StructField& field : decl.fields) {
+		out.push_back(&field);
+	}
+	return out;
+}
+
+const StructField* CodeGenerator::find_struct_field(const StructDecl& decl,
+	const std::string& name) const
+{
+	for (const StructField* field : struct_fields(decl)) {
+		if (field->name == name) {
+			return field;
+		}
+	}
+	return nullptr;
+}
+
+int CodeGenerator::struct_field_index(const StructDecl& decl, const std::string& name) const {
+	const std::vector<const StructField*> fields = struct_fields(decl);
+	for (size_t i = 0; i < fields.size(); i++) {
+		if (fields[i]->name == name) {
+			return int(i);
+		}
+	}
+	return -1;
+}
+
+std::string CodeGenerator::struct_field_list(const StructDecl& decl) const {
+	std::string list;
+	for (const StructField* field : struct_fields(decl)) {
+		if (!list.empty()) {
+			list += ", ";
+		}
+		list += field->name;
+	}
+	return list.empty() ? "(none)" : list;
+}
+
+const FunctionDecl* CodeGenerator::find_class_method(const StructDecl& decl,
+	const std::string& name, const StructDecl** owner) const
+{
+	for (const StructDecl* at = &decl; at != nullptr; at = class_base(*at)) {
+		if (const FunctionDecl* method = at->find_method(name)) {
+			if (owner != nullptr) {
+				*owner = at;
+			}
+			return method;
+		}
+	}
+	return nullptr;
+}
+
+std::string CodeGenerator::lifted_method_name(const StructDecl& decl, const std::string& method) {
+	return "@" + decl.name + "." + method;
+}
+
+void CodeGenerator::register_classes(const Program& program) {
+	for (const StructDecl& decl : program.structs) {
+		if (!decl.is_class || decl.base_name.empty()) {
+			continue;
+		}
+		const StructDecl* base = find_struct(decl.base_name);
+		if (base == nullptr) {
+			error_at("Class '" + decl.name + "' extends '" + decl.base_name +
+				"', which this script does not declare", decl.line, decl.column,
+				"A sandboxed program can only extend a class written in the same file");
+		}
+		if (!base->is_class) {
+			error_at("Class '" + decl.name + "' extends struct '" + decl.base_name + "'",
+				decl.line, decl.column, "A struct declares no methods to inherit");
+		}
+		const StructDecl* at = base;
+		for (size_t steps = 0; at != nullptr; steps++) {
+			if (at == &decl || steps > program.structs.size()) {
+				error_at("Class '" + decl.name + "' extends itself through '" +
+					decl.base_name + "'", decl.line, decl.column);
+			}
+			at = (at->is_class && !at->base_name.empty()) ? find_struct(at->base_name) : nullptr;
+		}
+	}
+
+	for (const StructDecl& decl : program.structs) {
+		const StructDecl* base = class_base(decl);
+		if (base == nullptr) {
+			continue;
+		}
+		for (const StructField& field : decl.fields) {
+			if (find_struct_field(*base, field.name) != nullptr) {
+				error_at("Class '" + decl.name + "' redeclares field '" + field.name +
+					"', which it inherits from '" + base->name + "'",
+					field.line, field.column);
+			}
+		}
+	}
+}
+
 const StructField& CodeGenerator::require_struct_field(const StructDecl& decl,
 	const std::string& field_name, int line, int column) const
 {
-	if (const StructField* field = decl.find_field(field_name)) {
+	if (const StructField* field = find_struct_field(decl, field_name)) {
 		return *field;
 	}
-	error_at("Struct '" + decl.name + "' has no field '" + field_name + "'", line, column,
-		"Fields of '" + decl.name + "' are: " + decl.field_list());
+	error_at((decl.is_class ? "Class '" : "Struct '") + decl.name + "' has no field '" +
+		field_name + "'", line, column,
+		"Fields of '" + decl.name + "' are: " + struct_field_list(decl));
 }
 
 void CodeGenerator::check_struct_subscript(int obj_reg, const Expr* index, FunctionContext& func) {
@@ -3604,6 +3847,19 @@ std::string CodeGenerator::signal_name_of(const Expr* expr, FunctionContext& fun
 		}
 	}
 	return {};
+}
+
+int CodeGenerator::class_field_self(const std::string& name, FunctionContext& func) {
+	if (m_current_class == nullptr || find_struct_field(*m_current_class, name) == nullptr) {
+		return -1;
+	}
+	Variable* self = find_variable(func, "self");
+	return self != nullptr ? self->register_num : -1;
+}
+
+bool CodeGenerator::is_super(const Expr* expr, FunctionContext& func) {
+	auto* var = dynamic_cast<const VariableExpr*>(expr);
+	return var != nullptr && var->name == "super" && find_variable(func, "super") == nullptr;
 }
 
 // The Object equivalent, taking the signal name first and the same arguments after.
@@ -3859,12 +4115,176 @@ int CodeGenerator::gen_field_default(const StructDecl& decl, const StructField& 
 	return reg;
 }
 
+int CodeGenerator::gen_class_construct(const StructDecl& decl, const std::vector<ExprPtr>& arguments,
+	const NamedArguments& names, FunctionContext& func, const Expr* site)
+{
+	const std::vector<const StructField*> fields = struct_fields(decl);
+
+	m_struct_default_stack.push_back(&decl);
+	std::vector<int> value_regs;
+	value_regs.reserve(fields.size());
+	for (const StructField* field : fields) {
+		value_regs.push_back(gen_field_default(decl, *field, func));
+	}
+	m_struct_default_stack.pop_back();
+
+	int result_reg = alloc_register(func);
+	IRInstruction make(IROpcode::MAKE_DICTIONARY);
+	make.operands.push_back(IRValue::reg(result_reg));
+	make.operands.push_back(IRValue::imm(static_cast<int>(fields.size())));
+
+	std::vector<int> key_regs;
+	for (size_t i = 0; i < fields.size(); i++) {
+		int key_reg = alloc_register(func);
+		IRInstruction load_key(IROpcode::LOAD_STRING, IRValue::reg(key_reg),
+			IRValue::imm(add_string_constant(fields[i]->name)));
+		load_key.type_hint = Variant::STRING;
+		func.ir.instructions.push_back(load_key);
+		set_register_type(func, key_reg, Variant::STRING);
+		key_regs.push_back(key_reg);
+
+		make.operands.push_back(IRValue::reg(key_reg));
+		make.operands.push_back(IRValue::reg(value_regs[i]));
+	}
+
+	make.type_hint = Variant::DICTIONARY;
+	func.ir.instructions.push_back(make);
+	set_register_type(func, result_reg, Variant::DICTIONARY);
+	set_register_struct(func, result_reg, &decl);
+
+	for (int reg : key_regs) {
+		free_register(func, reg);
+	}
+	for (int reg : value_regs) {
+		free_register(func, reg);
+	}
+
+	const StructDecl* owner = nullptr;
+	const FunctionDecl* init = find_class_method(decl, "_init", &owner);
+	if (init == nullptr) {
+		if (!arguments.empty()) {
+			error_at("Class '" + decl.name + "' declares no _init(), so new() takes no arguments",
+				site);
+		}
+		return result_reg;
+	}
+
+	int discarded = gen_class_method_call(decl, *init, *owner, result_reg, arguments, names,
+		func, site);
+	free_register(func, discarded);
+	return result_reg;
+}
+
+int CodeGenerator::gen_class_method_call(const StructDecl& decl, const FunctionDecl& method,
+	const StructDecl& owner, int self_reg, const std::vector<ExprPtr>& arguments,
+	const NamedArguments& names, FunctionContext& func, const Expr* site)
+{
+	for (size_t i = 0; i < arguments.size(); i++) {
+		if (!names.argument_name(i).empty()) {
+			error_at("'" + decl.name + "." + method.name + "()' takes no named arguments", site,
+				"Only a struct names its arguments");
+		}
+	}
+	if (arguments.size() > method.parameters.size()) {
+		error_at("Too many arguments to '" + decl.name + "." + method.name + "()': expected at most " +
+			std::to_string(method.parameters.size()) + ", got " + std::to_string(arguments.size()),
+			site);
+	}
+
+	std::vector<int> arg_regs{ self_reg };
+	for (const auto& argument : arguments) {
+		arg_regs.push_back(gen_expr(argument.get(), func));
+	}
+	for (size_t i = arguments.size(); i < method.parameters.size(); i++) {
+		if (!method.parameters[i].default_value) {
+			error_at("Missing argument '" + method.parameters[i].name + "' in call to '" +
+				decl.name + "." + method.name + "()'", site);
+		}
+		arg_regs.push_back(gen_expr(method.parameters[i].default_value.get(), func));
+	}
+
+	int result_reg = alloc_register(func);
+	if (!method.is_coroutine) {
+		apply_declared_type(result_reg, method.return_type, func);
+	}
+
+	IRInstruction call(method.is_coroutine ? IROpcode::CALL_HOSTED : IROpcode::CALL);
+	call.operands.push_back(IRValue::str(lifted_method_name(owner, method.name)));
+	call.operands.push_back(IRValue::reg(result_reg));
+	call.operands.push_back(IRValue::imm(int64_t(arg_regs.size())));
+	for (int reg : arg_regs) {
+		call.operands.push_back(IRValue::reg(reg));
+	}
+	func.ir.instructions.push_back(call);
+
+	for (size_t i = 1; i < arg_regs.size(); i++) {
+		free_register(func, arg_regs[i]);
+	}
+	return result_reg;
+}
+
+int CodeGenerator::gen_super_call(const MemberCallExpr* expr, FunctionContext& func) {
+	if (m_current_class == nullptr) {
+		return -1;
+	}
+	const StructDecl* base = class_base(*m_current_class);
+	if (base == nullptr) {
+		error_at("Class '" + m_current_class->name + "' extends nothing, so it has no super", expr,
+			"Call '" + expr->member_name + "()' on self instead");
+	}
+	if (!expr->is_method_call) {
+		error_at("'super." + expr->member_name + "' is the field 'self." + expr->member_name +
+			"'", expr, "A class instance holds one value per field, base and derived alike");
+	}
+
+	const StructDecl* owner = nullptr;
+	const FunctionDecl* method = find_class_method(*base, expr->member_name, &owner);
+	if (method == nullptr) {
+		error_at("'" + base->name + "' declares no '" + expr->member_name + "()'", expr);
+	}
+
+	Variable* self = find_variable(func, "self");
+	if (self == nullptr) {
+		error_at("super is only reachable from a class method", expr);
+	}
+	return gen_class_method_call(*base, *method, *owner, self->register_num, expr->arguments,
+		*expr, func, expr);
+}
+
+int CodeGenerator::gen_super_init(const CallExpr* expr, FunctionContext& func) {
+	if (m_current_class == nullptr) {
+		error_at("super() has no base to call: a sandboxed program is the whole script", expr,
+			"Only a class declared in this file has one");
+	}
+	const StructDecl* base = class_base(*m_current_class);
+	if (base == nullptr) {
+		error_at("Class '" + m_current_class->name + "' extends nothing, so it has no super()", expr);
+	}
+	const StructDecl* owner = nullptr;
+	const FunctionDecl* init = find_class_method(*base, "_init", &owner);
+	if (init == nullptr) {
+		error_at("'" + base->name + "' declares no _init(), so there is no super() to call", expr);
+	}
+	Variable* self = find_variable(func, "self");
+	if (self == nullptr) {
+		error_at("super() is only reachable from a class method", expr);
+	}
+	return gen_class_method_call(*base, *init, *owner, self->register_num, expr->arguments,
+		*expr, func, expr);
+}
+
 int CodeGenerator::gen_struct_construct(const StructDecl& decl, const std::vector<ExprPtr>& arguments,
 	const NamedArguments& names, FunctionContext& func, const Expr* site)
 {
+	if (decl.is_class) {
+		return gen_class_construct(decl, arguments, names, func, site);
+	}
+
+	const std::vector<const StructField*> fields = struct_fields(decl);
+
 	// Resolve field indices before evaluation; report bad call sites before lowering.
 	std::vector<int> field_of_argument(arguments.size(), -1);
-	std::vector<bool> field_supplied(decl.fields.size(), false);
+	std::vector<bool> field_supplied(fields.size(), false);
 
 	for (size_t i = 0; i < arguments.size(); i++) {
 		const Expr* argument = arguments[i].get();
@@ -3872,20 +4292,20 @@ int CodeGenerator::gen_struct_construct(const StructDecl& decl, const std::vecto
 		int field_index = -1;
 
 		if (name.empty()) {
-			if (i >= decl.fields.size()) {
+			if (i >= fields.size()) {
 				error_at("Too many values constructing '" + decl.name + "': it has " +
-					std::to_string(decl.fields.size()) +
-					(decl.fields.size() == 1 ? " field" : " fields"), site,
-					"Fields of '" + decl.name + "' are: " + decl.field_list());
+					std::to_string(fields.size()) +
+					(fields.size() == 1 ? " field" : " fields"), site,
+					"Fields of '" + decl.name + "' are: " + struct_field_list(decl));
 			}
 			field_index = static_cast<int>(i);
 		} else {
 			require_struct_field(decl, name, argument->line, argument->column);
-			field_index = decl.field_index(name);
+			field_index = struct_field_index(decl, name);
 		}
 
 		if (field_supplied[field_index]) {
-			error_at("Field '" + decl.fields[field_index].name + "' of '" + decl.name +
+			error_at("Field '" + fields[field_index]->name + "' of '" + decl.name +
 				"' is given a value twice", argument);
 		}
 		field_supplied[field_index] = true;
@@ -3893,9 +4313,9 @@ int CodeGenerator::gen_struct_construct(const StructDecl& decl, const std::vecto
 	}
 
 	// Evaluate in call-site order; named args may differ from field order.
-	std::vector<int> value_regs(decl.fields.size(), -1);
+	std::vector<int> value_regs(fields.size(), -1);
 	for (size_t i = 0; i < arguments.size(); i++) {
-		const StructField& field = decl.fields[field_of_argument[i]];
+		const StructField& field = *fields[field_of_argument[i]];
 		int reg = gen_expr(arguments[i].get(), func);
 		if (!field.type_hint.empty()) {
 			reg = coerce_to_declared_type(reg, type_hint_from_string(field.type_hint), func,
@@ -3908,9 +4328,9 @@ int CodeGenerator::gen_struct_construct(const StructDecl& decl, const std::vecto
 
 	// Unsupplied fields get declaration defaults; m_struct_default_stack guards recursion.
 	m_struct_default_stack.push_back(&decl);
-	for (size_t i = 0; i < decl.fields.size(); i++) {
+	for (size_t i = 0; i < fields.size(); i++) {
 		if (value_regs[i] < 0) {
-			value_regs[i] = gen_field_default(decl, decl.fields[i], func);
+			value_regs[i] = gen_field_default(decl, *fields[i], func);
 		}
 	}
 	m_struct_default_stack.pop_back();
@@ -3918,13 +4338,13 @@ int CodeGenerator::gen_struct_construct(const StructDecl& decl, const std::vecto
 	int result_reg = alloc_register(func);
 	IRInstruction make(IROpcode::MAKE_DICTIONARY);
 	make.operands.push_back(IRValue::reg(result_reg));
-	make.operands.push_back(IRValue::imm(static_cast<int>(decl.fields.size())));
+	make.operands.push_back(IRValue::imm(static_cast<int>(fields.size())));
 
 	std::vector<int> key_regs;
-	for (size_t i = 0; i < decl.fields.size(); i++) {
+	for (size_t i = 0; i < fields.size(); i++) {
 		int key_reg = alloc_register(func);
 		IRInstruction load_key(IROpcode::LOAD_STRING, IRValue::reg(key_reg),
-			IRValue::imm(add_string_constant(decl.fields[i].name)));
+			IRValue::imm(add_string_constant(fields[i]->name)));
 		load_key.type_hint = Variant::STRING;
 		func.ir.instructions.push_back(load_key);
 		set_register_type(func, key_reg, Variant::STRING);

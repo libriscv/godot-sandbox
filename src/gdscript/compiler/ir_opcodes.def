@@ -148,6 +148,8 @@ IR_OPCODE(SWITCH,          "SWITCH",          SIG(SRC, IMM, CNT, LBL_LIST), IR_S
 // occupies operand 0, so the destination register is operand 1.
 
 IR_OPCODE(CALL,            "CALL",            SIG(STR, DST, CNT, SRC_LIST), IR_SIDE_EFFECTS | IR_CALL)
+
+IR_OPCODE(CALL_HOSTED,     "CALL_HOSTED",     SIG(STR, DST, CNT, SRC_LIST), IR_SIDE_EFFECTS | IR_CALL)
 IR_OPCODE(CALL_SYSCALL,    "CALL_SYSCALL",    SIG(DST, IMM, ARG_LIST),      IR_SIDE_EFFECTS | IR_CALL)
 
 // get_node() with a compile-time path ($Name, %Unique, self).

@@ -3,6 +3,7 @@
 
 #include <godot_cpp/classes/engine.hpp>
 #include <cstring>
+#include <iterator>
 #include <map>
 #include <random>
 
@@ -86,12 +87,15 @@ enum class Arg : uint8_t {
 	IDX_QUAT,
 	FRAME, // Base of a coroutine frame: an aligned run of GuestVariants.
 	FRAME_SIZE, // Its length, mostly a whole number of Variant slots.
+	FUNC,
+	ARGC,
 };
 
 /// @brief The shape of a0-a7 for one system call, in register order.
 struct Shape {
 	int syscall;
 	Arg args[8];
+	int sub_op = -1;
 };
 
 // Only the system calls whose arguments have to agree with each other are listed. One
@@ -131,6 +135,8 @@ static constexpr Shape SHAPES[] = {
 	{ ECALL_CALLABLE_CREATE, { Arg::OUT, Arg::VPTR } },
 	{ ECALL_LOAD, { Arg::NAME, Arg::NAMELEN, Arg::OUT } },
 	{ ECALL_SANDBOX_ADD, { Arg::OP, Arg::NAME, Arg::NAMELEN, Arg::OP, Arg::OUT, Arg::OUT, Arg::VPTR } },
+	{ ECALL_SANDBOX_ADD, { Arg::OP, Arg::NAME, Arg::NAMELEN, Arg::OP, Arg::NAME, Arg::NAMELEN, Arg::OP },
+		SANDBOX_ADD_PROPERTY_HINT },
 	{ ECALL_PACKED_ARRAY_OPS, { Arg::OP_PACKED, Arg::OUT, Arg::VPTR } },
 	{ ECALL_TRANSFORM_2D_OPS, { Arg::IDX_T2D, Arg::OP, Arg::VPTR, Arg::VPTR } },
 	{ ECALL_TRANSFORM_3D_OPS, { Arg::IDX_T3D, Arg::OP, Arg::VPTR, Arg::VPTR } },
@@ -145,6 +151,7 @@ static constexpr Shape SHAPES[] = {
 	// has to be a Signal, and the frame has to be a plausible run of slots.
 	{ ECALL_AWAIT, { Arg::VPTR, Arg::FRAME, Arg::FRAME_SIZE, Arg::SMALL, Arg::ANY, Arg::SMALL } },
 	{ ECALL_AWAIT_RESTORE, { Arg::FRAME, Arg::FRAME_SIZE } },
+	{ ECALL_CALL_GUEST, { Arg::FUNC, Arg::VPTR, Arg::ARGC, Arg::OUT } },
 };
 
 struct SyscallFuzzer {
@@ -165,6 +172,9 @@ struct SyscallFuzzer {
 	unsigned variant_slots = 0;
 	std::vector<gaddr_t> name_addresses; // Null-terminated method and property names
 	std::vector<unsigned> name_lengths; // Parallel to name_addresses, so NAMELEN agrees
+	gaddr_t exec_begin = 0x0;
+	gaddr_t exec_end = 0x0;
+	std::vector<gaddr_t> function_addresses;
 	unsigned scoped_variant_count = 0;
 	// Scoped-Variant indices grouped by the type of the Variant they refer to. A handler
 	// keyed on "the index of a Dictionary" leaves its switch immediately unless the index
@@ -484,12 +494,15 @@ struct SyscallFuzzer {
 		}
 	}
 
-	/// @brief The shape declared for this system call, or nullptr when it has none.
-	static const Shape *shape_for(int syscall) {
+	const Shape *shape_for(int syscall) {
+		const Shape *found[4];
+		size_t n = 0;
 		for (const Shape &s : SHAPES)
-			if (s.syscall == syscall)
-				return &s;
-		return nullptr;
+			if (s.syscall == syscall && n < std::size(found))
+				found[n++] = &s;
+		if (n == 0)
+			return nullptr;
+		return found[pick(unsigned(n))];
 	}
 
 	/// @brief One register filled the way a correct guest would fill it.
@@ -555,6 +568,17 @@ struct SyscallFuzzer {
 				// Mostly a whole number of slots, which is the only thing the host accepts;
 				// the rest reaches the rejection.
 				return pick(4) ? uint64_t(1 + pick(8)) * sizeof(GuestVariant) : argument();
+			case Arg::FUNC: {
+				if (pick(4) == 0)
+					return argument();
+				if (!function_addresses.empty() && pick(2))
+					return function_addresses[pick(function_addresses.size())];
+				if (exec_end <= exec_begin)
+					return argument();
+				return (exec_begin + gaddr_t(rng() % (exec_end - exec_begin))) & ~gaddr_t(1);
+			}
+			case Arg::ARGC:
+				return pick(4) ? pick(9) : argument();
 		}
 		return argument();
 	}
@@ -580,6 +604,8 @@ struct SyscallFuzzer {
 
 		for (unsigned i = 0; i < 8; i++)
 			machine.cpu.reg(riscv::REG_ARG0 + i) = shaped_argument(shape->args[i]);
+		if (shape->sub_op >= 0)
+			machine.cpu.reg(riscv::REG_ARG0) = uint64_t(shape->sub_op);
 
 		// Corrupt part of it. A handler that only ever sees arguments that agree is being
 		// tested for what it does, not for what it does when lied to.
@@ -780,6 +806,10 @@ Dictionary Sandbox::assault(const String &test, int64_t iterations) {
 	const bool had_restrictions = this->get_restrictions();
 	this->set_restrictions(true);
 
+	// api_call_guest can land inside a loop; cap instructions to avoid hangs.
+	const int64_t had_instructions_max = this->get_instructions_max();
+	this->set_instructions_max(1);
+
 	uint64_t exceptions = 0;
 	uint64_t completed = 0;
 
@@ -805,6 +835,16 @@ Dictionary Sandbox::assault(const String &test, int64_t iterations) {
 			fuzzer.initialization_flag = &this->m_is_initialization;
 			// Guest memory for the handlers to read structs out of. Taken from the
 			// guest heap so that it is real, mapped, writable memory.
+			const auto &exec = machine().memory.exec_segment_for(machine().memory.start_address());
+			fuzzer.exec_begin = exec->exec_begin();
+			fuzzer.exec_end = exec->exec_end();
+			fuzzer.function_addresses.push_back(machine().memory.start_address());
+			for (const String &name : this->get_functions()) {
+				const gaddr_t address = this->address_of(name);
+				if (address != 0x0) {
+					fuzzer.function_addresses.push_back(address);
+				}
+			}
 			fuzzer.scratch_size = 64 * 1024;
 			fuzzer.scratch = machine().arena().malloc(fuzzer.scratch_size);
 			if (fuzzer.scratch == 0x0) {
@@ -835,14 +875,18 @@ Dictionary Sandbox::assault(const String &test, int64_t iterations) {
 			}
 			result["coverage"] = coverage;
 
-			for (Variant &v : this->m_states[1].variants)
-				break_container_cycles(v);
-			this->m_states[1].reset();
+			// api_call_guest re-enters, so all levels may hold scoped Variants.
+			for (size_t level = 1; level < this->m_states.size(); level++) {
+				for (Variant &v : this->m_states[level].variants)
+					break_container_cycles(v);
+				this->m_states[level].reset();
+			}
 			this->m_current_state = saved_state;
 			machine().cpu.registers() = saved_registers;
 		}
 	}
 
+	this->set_instructions_max(had_instructions_max);
 	if (!had_restrictions)
 		this->set_restrictions(false);
 

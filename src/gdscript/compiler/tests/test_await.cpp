@@ -78,6 +78,8 @@ struct Host {
 	bool awaitable = true;
 	bool size_mismatch_refused = false;
 	int restores = 0;
+	int resuming = -1;
+	int guest_calls = 0;
 };
 
 Host g_host;
@@ -116,7 +118,9 @@ void await_restore_syscall(machine_t& machine) {
 		machine.set_result(0);
 		return;
 	}
-	Suspension& s = g_host.suspensions.back();
+	Suspension& s = g_host.resuming >= 0
+		? g_host.suspensions[size_t(g_host.resuming)]
+		: g_host.suspensions.back();
 	if (frame_size != s.frame.size()) {
 		g_host.size_mismatch_refused = true;
 		machine.set_result(0);
@@ -136,6 +140,42 @@ void await_restore_syscall(machine_t& machine) {
 	machine.set_result(s.state);
 }
 
+void call_guest_syscall(machine_t& machine) {
+	const uint64_t address = machine.cpu.reg(riscv::REG_ARG0);
+	const uint64_t args_ptr = machine.cpu.reg(riscv::REG_ARG1);
+	const unsigned argc = unsigned(machine.cpu.reg(riscv::REG_ARG2));
+	const uint64_t result_ptr = machine.cpu.reg(riscv::REG_ARG0 + 3);
+	g_host.guest_calls++;
+
+	const size_t before = g_host.suspensions.size();
+
+	auto& cpu = machine.cpu;
+	riscv::Registers<riscv::RISCV64> regs = cpu.registers();
+	auto& sp = cpu.reg(riscv::REG_SP);
+
+	sp -= 64;
+	const uint64_t retvar = sp;
+	sp -= 32;
+
+	cpu.reg(riscv::REG_ARG0) = retvar;
+	for (unsigned i = 0; i < argc; i++) {
+		cpu.reg(riscv::REG_ARG1 + i) = args_ptr + uint64_t(i) * uint64_t(LAYOUT.variant_size());
+	}
+	cpu.reg(riscv::REG_RA) = machine.memory.exit_address();
+	cpu.preempt_internal(regs, true, true, address, 200'000'000ull);
+
+	std::vector<uint8_t> value(size_t(LAYOUT.variant_size()), 0);
+	if (g_host.suspensions.size() > before) {
+		const int32_t type = int32_t(Variant::SIGNAL);
+		const int64_t which = int64_t(g_host.suspensions.size() - 1);
+		std::memcpy(value.data() + VariantLayout::TYPE_OFFSET, &type, sizeof(type));
+		std::memcpy(value.data() + VariantLayout::DATA_OFFSET, &which, sizeof(which));
+	} else {
+		machine.copy_from_guest(value.data(), retvar, value.size());
+	}
+	machine.copy_to_guest(result_ptr, value.data(), value.size());
+}
+
 void fail_on_syscall(machine_t& machine) {
 	std::cerr << "FAILED: the test program made syscall "
 		<< machine.cpu.reg(riscv::REG_ARG7) << std::endl;
@@ -153,12 +193,12 @@ std::unique_ptr<machine_t> boot(const Program& program) {
 	}
 	machine_t::install_syscall_handler(ECALL_AWAIT, await_syscall);
 	machine_t::install_syscall_handler(ECALL_AWAIT_RESTORE, await_restore_syscall);
+	machine_t::install_syscall_handler(ECALL_CALL_GUEST, call_guest_syscall);
 	g_host = Host {};
 	machine->simulate(50'000'000ull);
 	return machine;
 }
 
-// Sandbox ABI: a0 = return Variant pointer, a1.. = argument Variant pointers.
 struct Call {
 	int64_t value = 0;
 	int32_t type = 0;
@@ -520,38 +560,96 @@ void test_an_unused_await_is_kept() {
 	std::cout << "  ✓ An await with an unused result is kept" << std::endl;
 }
 
-// Calling a coroutine from the same program is a compile error.
-void test_calling_a_coroutine_from_the_program_is_refused() {
-	std::cout << "Testing that one coroutine cannot call another..." << std::endl;
+int64_t resume_suspension(machine_t& machine, int index, int64_t sent) {
+	const int previous = g_host.resuming;
+	g_host.resuming = index;
+	g_host.sent = sent;
+	const int64_t value = run_at(machine, g_host.suspensions[size_t(index)].resume, {}).value;
+	g_host.resuming = previous;
+	return value;
+}
 
-	const auto refused = [](const std::string& source) {
-		Compiler compiler;
-		CompilerOptions options;
-		const std::vector<uint8_t> elf = compiler.compile(source, options);
-		if (!elf.empty()) {
-			std::cerr << "FAILED: the program compiled: " << source << std::endl;
-			failures++;
-			return;
-		}
-		const std::string error = compiler.get_error();
-		check(error.find("contains an await") != std::string::npos,
-			"the error names the reason, not just a failure: " + error);
-	};
+void test_awaiting_another_coroutine() {
+	std::cout << "Testing one coroutine awaiting another..." << std::endl;
 
-	refused(
+	const Program program = compile(
+		"func inner(sig, n):\n"
+		"\tvar got = await sig\n"
+		"\treturn got + n\n"
+		"func outer(sig, n):\n"
+		"\tvar v = await inner(sig, n)\n"
+		"\treturn v + 1\n");
+	if (program.elf.empty()) {
+		return;
+	}
+
+	auto machine = boot(program);
+	const Call first = run(*machine, "outer", { 0, 10 });
+	check_eq(g_host.guest_calls, 1, "the call to the coroutine went through the host");
+	check_eq<size_t>(g_host.suspensions.size(), 2,
+		"both frames suspended: the callee's, then the caller's on its Signal");
+	check_eq<int32_t>(first.type, int32_t(Variant::NIL), "the entry call answered nothing yet");
+
+	const int64_t inner_result = resume_suspension(*machine, 0, 32);
+	check_eq<int64_t>(inner_result, 42, "the callee saw its own await's value and its argument");
+
+	check_eq<int64_t>(resume_suspension(*machine, 1, inner_result), 43,
+		"the caller resumed with what the callee returned");
+
+	std::cout << "  ✓ A coroutine can await another one in the same program" << std::endl;
+}
+
+void test_calling_a_coroutine_without_awaiting_it() {
+	std::cout << "Testing a coroutine called without await..." << std::endl;
+
+	const Program program = compile(
 		"func inner(sig):\n"
 		"\treturn await sig\n"
 		"func outer(sig):\n"
-		"\treturn await inner(sig)\n");
+		"\tvar handle = inner(sig)\n"
+		"\treturn typeof(handle)\n");
+	if (program.elf.empty()) {
+		return;
+	}
 
-	// Not only when awaited: a plain call has the same problem.
-	refused(
+	auto machine = boot(program);
+	const Call result = run(*machine, "outer", { 0 });
+	check_eq<int64_t>(result.value, int64_t(Variant::SIGNAL),
+		"a call with no await answers the Signal to await later");
+	check_eq<size_t>(g_host.suspensions.size(), 1, "only the callee suspended");
+
+	std::cout << "  ✓ A call with no await answers the Signal, and the caller runs on"
+		<< std::endl;
+}
+
+void test_a_global_read_is_not_hoisted_across_a_hosted_call() {
+	std::cout << "Testing a global read across a call to a coroutine..." << std::endl;
+
+	const Program program = compile(
+		"var g: int = 1\n"
 		"func inner(sig):\n"
+		"\tg = 9\n"
 		"\treturn await sig\n"
-		"func outer(sig):\n"
-		"\treturn inner(sig)\n");
+		"func outer(sig, k: int):\n"
+		"\tvar a: int = g\n"
+		"\tinner(sig)\n"
+		"\treturn a + k\n");
+	if (program.elf.empty()) {
+		return;
+	}
 
-	// Calling a non-coroutine from a coroutine is fine.
+	auto machine = boot(program);
+	const Call result = run(*machine, "outer", { 0, 0 });
+	check_eq(g_host.guest_calls, 1, "the coroutine was reached through the host");
+	check_eq<int64_t>(result.value, 1,
+		"the read happened before the coroutine stored to the global");
+
+	std::cout << "  ✓ A hosted call counts as a store to every global" << std::endl;
+}
+
+void test_an_ordinary_call_stays_a_jal() {
+	std::cout << "Testing that only a coroutine leaves the program..." << std::endl;
+
 	const Program program = compile(
 		"func plain(x):\n"
 		"\treturn x + 1\n"
@@ -570,8 +668,9 @@ void test_calling_a_coroutine_from_the_program_is_refused() {
 	g_host.sent = 41;
 	check_eq<int64_t>(run_at(*machine, g_host.suspensions.back().resume, {}).value, 42,
 		"and the call runs after the resume");
+	check_eq(g_host.guest_calls, 0, "an ordinary call did not go through the host");
 
-	std::cout << "  ✓ A coroutine is only callable from outside the program" << std::endl;
+	std::cout << "  ✓ Only a call to a coroutine costs a trip through the host" << std::endl;
 }
 
 // Coroutine prologue NILs all slots; no inherited stack bytes survive.
@@ -630,7 +729,10 @@ int main() {
 	test_the_signature_says_coroutine();
 	test_awaiting_in_a_loop();
 	test_an_unused_await_is_kept();
-	test_calling_a_coroutine_from_the_program_is_refused();
+	test_awaiting_another_coroutine();
+	test_calling_a_coroutine_without_awaiting_it();
+	test_a_global_read_is_not_hoisted_across_a_hosted_call();
+	test_an_ordinary_call_stays_a_jal();
 	test_the_frame_starts_out_nil();
 
 	if (failures != 0) {

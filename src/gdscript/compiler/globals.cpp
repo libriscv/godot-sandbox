@@ -261,9 +261,6 @@ static const struct { const char* name; const char* reason; } UNIMPLEMENTED_GLOB
 	// preload() is a compile-time constant; load() is lowered to LOAD_RESOURCE.
 	{ "preload", "the resource would have to be loaded before the program runs; use load()" },
 
-	// Containers and callables from global calls.
-	{ "super", "there is no base script to forward to: the sandbox program is the whole script" },
-
 	// Built-in types: no inline constructor or ECALL_VCREATE lowering.
 	{ "Quaternion", "no constructor lowering yet" },
 	{ "Transform2D", "no constructor lowering yet" },
@@ -271,7 +268,6 @@ static const struct { const char* name; const char* reason; } UNIMPLEMENTED_GLOB
 	{ "Basis", "no constructor lowering yet" },
 	{ "AABB", "no constructor lowering yet" },
 	{ "Projection", "no constructor lowering yet" },
-	{ "Callable", "no constructor lowering yet" },
 	{ "Signal", "no constructor lowering yet" },
 	{ "StringName", "no constructor lowering yet" },
 	{ "NodePath", "no constructor lowering yet" },

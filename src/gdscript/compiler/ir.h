@@ -1,4 +1,5 @@
 #pragma once
+#include "export_hints.h"
 #include <vector>
 #include <string>
 #include <cstdint>
@@ -245,6 +246,8 @@ struct IRGlobalVar {
 
 	std::string setter_function;
 	std::string getter_function;
+
+	ExportHint export_hint;
 };
 
 struct IRProgram {

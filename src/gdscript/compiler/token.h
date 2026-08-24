@@ -39,6 +39,7 @@ enum class TokenType {
 	AS,
 	STATIC,
 	ENUM,
+	CLASS,
 	CLASS_NAME,
 	SIGNAL,
 	AWAIT,

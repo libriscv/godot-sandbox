@@ -1937,6 +1937,15 @@ void Sandbox::add_property(const String &name, Variant::Type vtype, gaddr_t addr
 	}
 	m_properties.emplace_back(name, vtype, address, def);
 }
+void Sandbox::set_property_hint(const String &name, uint32_t hint, const String &hint_string, uint32_t usage) const {
+	for (SandboxProperty &prop : m_properties) {
+		if (prop.name() == name) {
+			prop.set_hint(hint, hint_string, usage);
+			return;
+		}
+	}
+	ERR_PRINT("Sandbox: No property to hint: " + name);
+}
 
 bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	for (SandboxProperty &prop : m_properties) {
@@ -2113,7 +2122,17 @@ Array Sandbox::get_property_list() const {
 		Dictionary d;
 		d["name"] = prop.name();
 		d["type"] = prop.type();
-		d["usage"] = PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_SCRIPT_VARIABLE;
+		d["hint"] = prop.hint();
+		d["hint_string"] = prop.hint_string();
+		uint32_t usage = prop.usage() != 0
+			? prop.usage()
+			: uint32_t(PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_SCRIPT_VARIABLE);
+		if (prop.type() == Variant::NIL) {
+			usage |= uint32_t(PROPERTY_USAGE_NIL_IS_VARIANT);
+		} else {
+			usage &= ~uint32_t(PROPERTY_USAGE_NIL_IS_VARIANT);
+		}
+		d["usage"] = usage;
 		arr.push_back(d);
 	}
 	// Our properties

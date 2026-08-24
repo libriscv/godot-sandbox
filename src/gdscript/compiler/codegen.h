@@ -49,7 +49,7 @@ private:
 		int next_register = 0;
 	};
 
-	IRFunction generate_function(const FunctionDecl& func);
+	IRFunction generate_function(const FunctionDecl& func, const StructDecl* owner = nullptr);
 	IRFunction generate_lambda_function(const FunctionDecl& decl,
 		const std::vector<std::string>& captures);
 
@@ -103,6 +103,7 @@ private:
 	int gen_lambda(const LambdaExpr* expr, FunctionContext& func);
 	int gen_make_callable(const std::string& function_name, int bound_reg,
 		FunctionContext& func);
+	int gen_callable_constructor(const CallExpr* expr, FunctionContext& func);
 	int gen_callable_variable_call(const CallExpr* expr, int callable_reg,
 		std::vector<int>& arg_regs, FunctionContext& func);
 	int gen_member_call(const MemberCallExpr* expr, FunctionContext& func);
@@ -125,6 +126,8 @@ private:
 		const FunctionDecl* decl;
 		std::string lifted_name;
 		std::vector<std::string> captures;
+		// m_current_class is cleared before lambda lowering; this preserves scope.
+		const StructDecl* owner = nullptr;
 	};
 	std::vector<PendingLambda> m_pending_lambdas;
 	int m_next_lambda = 0;
@@ -207,6 +210,25 @@ private:
 	// Structs: Dictionary with a fixed key set, field-checked at compile time.
 
 	const StructDecl* find_struct(const std::string& name) const;
+	const StructDecl* class_base(const StructDecl& decl) const;
+	std::vector<const StructField*> struct_fields(const StructDecl& decl) const;
+	const StructField* find_struct_field(const StructDecl& decl, const std::string& name) const;
+	int struct_field_index(const StructDecl& decl, const std::string& name) const;
+	std::string struct_field_list(const StructDecl& decl) const;
+	const FunctionDecl* find_class_method(const StructDecl& decl, const std::string& name,
+		const StructDecl** owner = nullptr) const;
+	// '@' prefix avoids collision with script-declared identifiers.
+	static std::string lifted_method_name(const StructDecl& decl, const std::string& method);
+	void register_classes(const Program& program);
+	int gen_class_construct(const StructDecl& decl, const std::vector<ExprPtr>& arguments,
+		const NamedArguments& names, FunctionContext& func, const Expr* site);
+	int gen_class_method_call(const StructDecl& decl, const FunctionDecl& method,
+		const StructDecl& owner, int self_reg, const std::vector<ExprPtr>& arguments,
+		const NamedArguments& names, FunctionContext& func, const Expr* site);
+	int class_field_self(const std::string& name, FunctionContext& func);
+	bool is_super(const Expr* expr, FunctionContext& func);
+	int gen_super_call(const MemberCallExpr* expr, FunctionContext& func);
+	int gen_super_init(const CallExpr* expr, FunctionContext& func);
 
 	const StructField& require_struct_field(const StructDecl& decl, const std::string& field_name,
 		int line, int column) const;
@@ -243,6 +265,7 @@ private:
 		int line, int column) const;
 
 	std::unordered_map<std::string, const StructDecl*> m_structs;
+	const StructDecl* m_current_class = nullptr;
 	std::unordered_map<std::string, const EnumDecl*> m_enums;
 	std::unordered_map<std::string, int64_t> m_enum_members;
 	std::unordered_map<std::string, const SignalDecl*> m_signals;

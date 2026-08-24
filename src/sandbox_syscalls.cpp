@@ -218,6 +218,49 @@ APICALL(api_await_restore) {
 	machine.set_result(emu.coroutine_restore(frame_base, frame_size));
 }
 
+APICALL(api_call_guest) {
+	auto [address, args_addr, argc, result_addr] =
+			machine.sysargs<gaddr_t, gaddr_t, unsigned, gaddr_t>();
+	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("call_guest", address, argc);
+
+	if (argc > 8) {
+		ERR_PRINT("call_guest: too many arguments");
+		throw std::runtime_error("call_guest: too many arguments");
+	}
+	// Level-0 state: vmcall_internal would reset SP/RA, destroying the initializer frame.
+	if (!emu.is_in_vmcall()) {
+		ERR_PRINT("call_guest: cannot call into the program outside a host call");
+		throw std::runtime_error("call_guest: not inside a host call");
+	}
+	if (address == 0 || (address & 0x1) != 0) {
+		ERR_PRINT("call_guest: address is not executable");
+		throw std::runtime_error("call_guest: address is not executable");
+	}
+	const auto &exec = machine.memory.exec_segment_for(address);
+	if (!exec->is_within(address)) {
+		ERR_PRINT("call_guest: address is not executable");
+		throw std::runtime_error("call_guest: address is not executable");
+	}
+
+	std::array<Variant, 8> values;
+	std::array<const Variant *, 8> argv;
+	if (argc > 0) {
+		const GuestVariant *guest_args = machine.memory.memarray<GuestVariant>(args_addr, argc);
+		for (unsigned i = 0; i < argc; i++) {
+			values[i] = guest_args[i].toVariant(emu);
+			argv[i] = &values[i];
+		}
+	}
+
+	Variant result = emu.vmcall_internal(address, argv.data(), int(argc));
+
+	// create() owns the value; set() would alias a local that's about to die.
+	GuestVariant *g_result = machine.memory.memarray<GuestVariant>(result_addr, 1);
+	*g_result = GuestVariant{};
+	g_result->create(emu, std::move(result));
+}
+
 // a0 = source line. Handler cross-checks against line table. No writeback.
 APICALL(api_breakpoint) {
 	safegdscript_breakpoint(riscv::emu(machine), uint32_t(machine.cpu.reg(riscv::REG_ARG0)));
@@ -2711,6 +2754,12 @@ APICALL(api_callable_create) {
 	SYS_TRACE("callable_create", address, vargs);
 	(void)reserved;
 
+	if (address == 0) {
+		auto idx = emu.create_scoped_variant(Variant(Callable()));
+		machine.set_result(idx);
+		return;
+	}
+
 	// Create a new callable object, using emu.vmcallable_address() to get the callable function.
 	Array arguments;
 	if (vargs->type != Variant::NIL) {
@@ -2839,6 +2888,15 @@ APICALL(api_sandbox_add) {
 				emu.add_cached_address(String::utf8(name.data(), name.size()), address);
 			}
 		} break;
+		case 3: {
+			auto [method, name, hint, hint_string, usage] =
+				machine.sysargs<int, std::string_view, uint32_t, std::string_view, uint32_t>();
+			const String utf8_name = String::utf8(name.data(), name.size());
+			const String utf8_hint = String::utf8(hint_string.data(), hint_string.size());
+			SYS_TRACE("sandbox_add", "hint", utf8_name, int(hint), utf8_hint, int(usage));
+			emu.set_property_hint(utf8_name, hint, utf8_hint, usage);
+			break;
+		}
 		case 2: { // Set new exit address.
 			SYS_TRACE("sandbox_add", "exit", machine.cpu.reg(11));
 			const gaddr_t exit_address = machine.cpu.reg(11); // A1
@@ -3046,6 +3104,8 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_OBJ_PROP_SET, api_obj_property_set },
 
 			{ ECALL_SANDBOX_ADD, api_sandbox_add },
+
+			{ ECALL_CALL_GUEST, api_call_guest },
 
 			{ ECALL_PACKED_ARRAY_OPS, api_packed_array_ops },
 

@@ -668,6 +668,76 @@ void test_shapes_of_lambda_syntax() {
 	std::cout << "  ✓ Every spelling of a lambda parses" << std::endl;
 }
 
+void test_the_callable_constructor() {
+	std::cout << "Testing Callable(self, \"name\")..." << std::endl;
+
+	const std::vector<uint8_t> constructed = compile(
+		"func double(x):\n"
+		"\treturn x * 2\n"
+		"func f(n):\n"
+		"\tvar c = Callable(self, \"double\")\n"
+		"\treturn c.call(n)\n");
+	const std::vector<uint8_t> bare_name = compile(
+		"func double(x):\n"
+		"\treturn x * 2\n"
+		"func f(n):\n"
+		"\tvar c = double\n"
+		"\treturn c.call(n)\n");
+	check(!constructed.empty() && constructed == bare_name,
+		"Callable(self, \"f\") and f compile alike");
+
+	if (!constructed.empty()) {
+		auto machine = boot(constructed);
+		check_eq<int64_t>(run(*machine, "f", { 21 }).value, 42, "the constructed Callable called f");
+	}
+
+	const std::vector<uint8_t> empty = compile(
+		"func f():\n"
+		"\treturn Callable()\n");
+	if (!empty.empty()) {
+		auto machine = boot(empty);
+		run(*machine, "f");
+		check_eq(g_host.callables_created, 1, "one Callable created");
+		check(!g_host.scoped.empty() && g_host.scoped.back().type == Variant::CALLABLE,
+			"Callable() is a CALLABLE");
+		check(!g_host.scoped.empty() && g_host.scoped.back().address == 0,
+			"Callable() names no guest function");
+	}
+
+	const std::string missing = compile_error(
+		"func f():\n"
+		"\treturn Callable(self, \"nope\")\n");
+	check(missing.find("no function named") != std::string::npos,
+		"an undeclared method name is refused: " + missing);
+
+	const std::string not_self = compile_error(
+		"func f(n):\n"
+		"\treturn Callable(n, \"f\")\n");
+	check(not_self.find("must be 'self'") != std::string::npos,
+		"a Callable over another object is refused: " + not_self);
+
+	const std::string computed = compile_error(
+		"func f(n):\n"
+		"\treturn Callable(self, n)\n");
+	check(computed.find("compile-time string") != std::string::npos,
+		"a run-time method name is refused: " + computed);
+
+	const std::string arity = compile_error(
+		"func f():\n"
+		"\treturn Callable(self)\n");
+	check(arity.find("0 or 2 arguments") != std::string::npos,
+		"Callable(self) is refused: " + arity);
+
+	check(compile_error(
+		"func Callable(a, b):\n"
+		"\treturn a\n"
+		"func f():\n"
+		"\treturn Callable(1, 2)\n").empty(),
+		"a script function named Callable wins over the constructor");
+
+	std::cout << "  \u2713 Callable(self, \"name\") is the name it stands for" << std::endl;
+}
+
 void test_what_is_refused() {
 	std::cout << "Testing the refusals..." << std::endl;
 
@@ -768,6 +838,7 @@ int main() {
 	test_calling_an_expression();
 	test_a_lambda_inside_a_lambda();
 	test_shapes_of_lambda_syntax();
+	test_the_callable_constructor();
 	test_what_is_refused();
 	test_resolution_order();
 	test_lifted_names_stay_out_of_the_way();

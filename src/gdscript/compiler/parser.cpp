@@ -58,8 +58,9 @@ Program Parser::parse() {
 		} else if (check(TokenType::AT)) {
 			// Stacked attributes: `@export_range(0, 10) @tool var x`.
 			bool is_export = false;
+			ExportHint export_hint;
 			while (check(TokenType::AT)) {
-				is_export = parse_attribute() || is_export;
+				is_export = parse_attribute(export_hint) || is_export;
 				skip_newlines();
 			}
 			is_static = match(TokenType::STATIC) || is_static;
@@ -70,6 +71,7 @@ Program Parser::parse() {
 				if (auto* decl = dynamic_cast<VarDeclStmt*>(var_decl.get())) {
 					decl->is_property = is_export;
 					decl->is_static = is_static;
+					decl->export_hint = export_hint;
 					program.globals.push_back(std::move(*decl));
 				}
 			} else if (check(TokenType::FUNC)) {
@@ -98,6 +100,8 @@ Program Parser::parse() {
 			}
 		} else if (check(TokenType::STRUCT)) {
 			program.structs.push_back(parse_struct());
+		} else if (check(TokenType::CLASS)) {
+			program.structs.push_back(parse_class());
 		} else if (check(TokenType::ENUM)) {
 			program.enums.push_back(parse_enum());
 		} else if (check(TokenType::CLASS_NAME)) {
@@ -254,6 +258,89 @@ StructDecl Parser::parse_struct() {
 	return decl;
 }
 
+StructDecl Parser::parse_class() {
+	StructDecl decl;
+	decl.is_class = true;
+	const Token class_token = consume(TokenType::CLASS, "Expected 'class'");
+	decl.line = class_token.line;
+	decl.column = class_token.column;
+
+	const Token name = consume(TokenType::IDENTIFIER, "Expected a class name after 'class'");
+	decl.name = name.lexeme;
+
+	if (match(TokenType::EXTENDS)) {
+		const Token base = consume(TokenType::IDENTIFIER,
+			"Expected a class name after 'extends'");
+		decl.base_name = base.lexeme;
+		if (check(TokenType::DOT)) {
+			std::string qualified = decl.base_name;
+			while (match(TokenType::DOT)) {
+				qualified += '.';
+				qualified += consume(TokenType::IDENTIFIER,
+					"Expected a class name after '.'").lexeme;
+			}
+			error("Class '" + decl.name + "' cannot extend '" + qualified +
+				"': a base class has to be one declared in this file",
+				base.line, base.column);
+		}
+	}
+
+	consume(TokenType::COLON, "Expected ':' after the class name");
+	consume(TokenType::NEWLINE, "Expected newline after the class declaration");
+
+	skip_newlines();
+	consume(TokenType::INDENT, "Expected indented block after 'class " + decl.name + ":'");
+
+	while (!check(TokenType::DEDENT) && !is_at_end()) {
+		skip_newlines();
+		if (check(TokenType::DEDENT) || is_at_end()) {
+			break;
+		}
+
+		if (match(TokenType::PASS)) {
+			consume_statement_end("Expected newline after 'pass'");
+			continue;
+		}
+
+		if (check(TokenType::FUNC)) {
+			FunctionDecl method = parse_function();
+			if (decl.find_method(method.name) != nullptr) {
+				throw CompilerException::parser_error(
+					"Class '" + decl.name + "' declares '" + method.name + "()' more than once",
+					method.line, method.column);
+			}
+			decl.methods.push_back(std::move(method));
+			continue;
+		}
+
+		const Token var_token = consume(TokenType::VAR,
+			"A class body holds field and function declarations");
+
+		StructField field;
+		field.line = var_token.line;
+		field.column = var_token.column;
+
+		const Token field_name = consume(TokenType::IDENTIFIER, "Expected a field name");
+		field.name = field_name.lexeme;
+		field.type_hint = parse_type_hint();
+
+		if (match(TokenType::ASSIGN)) {
+			field.default_value = parse_expression();
+		}
+		consume_statement_end("Expected newline after the field declaration");
+
+		if (decl.find_field(field.name) != nullptr) {
+			throw CompilerException::parser_error(
+				"Class '" + decl.name + "' declares field '" + field.name + "' more than once",
+				field.line, field.column);
+		}
+		decl.fields.push_back(std::move(field));
+	}
+
+	consume(TokenType::DEDENT, "Expected dedent after the class body");
+	return decl;
+}
+
 void Parser::parse_argument_list(std::vector<ExprPtr>& arguments, std::vector<std::string>& names) {
 	if (!check(TokenType::RPAREN)) {
 		bool seen_named = false;
@@ -392,6 +479,9 @@ StmtPtr Parser::parse_statement_impl() {
 	}
 	if (match(TokenType::CONST)) {
 		return parse_var_decl(true);
+	}
+	if (check(TokenType::CLASS)) {
+		error("A class can only be declared at the top level of the file");
 	}
 	if (match(TokenType::IF)) {
 		return parse_if_stmt();
@@ -1575,13 +1665,11 @@ void Parser::skip_type_arguments() {
 	}
 }
 
-// Returns true if the attribute marks a property (@export_*).
-// @onready refused — no scene tree in sandbox. Other annotations dropped.
-bool Parser::parse_attribute() {
+bool Parser::parse_attribute(ExportHint& hint) {
 	consume(TokenType::AT, "Expected '@' for attribute");
 
 	const Token name = consume(TokenType::IDENTIFIER, "Expected an attribute name after '@'");
-	skip_attribute_arguments();
+	const std::vector<ExportArgument> arguments = parse_attribute_arguments();
 
 	// Inspector-section annotations; not tied to a declaration.
 	if (name.lexeme == "export_group" || name.lexeme == "export_subgroup" ||
@@ -1590,6 +1678,15 @@ bool Parser::parse_attribute() {
 		return false;
 	}
 	if (name.lexeme.rfind("export", 0) == 0) {
+		std::string error;
+		ExportHint parsed;
+		if (build_export_hint(name.lexeme, arguments, parsed, error)) {
+			if (!error.empty()) {
+				this->error(error, name.line, name.column);
+			} else if (!parsed.is_default()) {
+				hint = parsed;
+			}
+		}
 		return true;
 	}
 	if (name.lexeme == "onready") {
@@ -1608,24 +1705,75 @@ bool Parser::parse_attribute() {
 	return false;
 }
 
-// Skip attribute argument list. Tracks nesting depth for nested parens.
-void Parser::skip_attribute_arguments() {
+std::vector<ExportArgument> Parser::parse_attribute_arguments() {
+	std::vector<ExportArgument> arguments;
 	if (!match(TokenType::LPAREN)) {
-		return;
+		return arguments;
 	}
+
 	int depth = 1;
+	std::vector<Token> chunk;
+	const auto end_chunk = [&]() {
+		if (chunk.empty()) {
+			return;
+		}
+		ExportArgument arg;
+		arg.line = chunk.front().line;
+		arg.column = chunk.front().column;
+		arg.kind = ExportArgument::Kind::OTHER;
+
+		size_t at = 0;
+		double sign = 1.0;
+		if (chunk.size() == 2 && chunk[0].is_one_of(TokenType::MINUS, TokenType::PLUS)) {
+			sign = chunk[0].type == TokenType::MINUS ? -1.0 : 1.0;
+			at = 1;
+		}
+		if (chunk.size() - at == 1) {
+			const Token& token = chunk[at];
+			if (token.type == TokenType::INTEGER) {
+				arg.kind = ExportArgument::Kind::NUMBER;
+				arg.number = sign * double(std::get<int64_t>(token.value));
+			} else if (token.type == TokenType::FLOAT) {
+				arg.kind = ExportArgument::Kind::NUMBER;
+				arg.number = sign * std::get<double>(token.value);
+			} else if (token.type == TokenType::STRING && at == 0) {
+				arg.kind = ExportArgument::Kind::STRING;
+				arg.text = std::get<std::string>(token.value);
+			} else if (token.type == TokenType::IDENTIFIER && at == 0) {
+				arg.kind = ExportArgument::Kind::NAME;
+				arg.text = token.lexeme;
+			}
+		}
+		arguments.push_back(std::move(arg));
+		chunk.clear();
+	};
+
 	while (depth > 0 && !is_at_end()) {
-		if (match(TokenType::LPAREN)) {
+		if (check(TokenType::LPAREN)) {
 			depth++;
-		} else if (match(TokenType::RPAREN)) {
+			chunk.push_back(advance());
+		} else if (check(TokenType::RPAREN)) {
 			depth--;
-		} else {
+			if (depth == 0) {
+				advance();
+				break;
+			}
+			chunk.push_back(advance());
+		} else if (depth == 1 && check(TokenType::COMMA)) {
 			advance();
+			end_chunk();
+		} else if (check(TokenType::NEWLINE) || check(TokenType::INDENT) || check(TokenType::DEDENT)) {
+			advance();
+		} else {
+			chunk.push_back(advance());
 		}
 	}
+	end_chunk();
+
 	if (depth != 0) {
 		error("Expected ')' to close the attribute arguments");
 	}
+	return arguments;
 }
 
 SignalDecl Parser::parse_signal() {

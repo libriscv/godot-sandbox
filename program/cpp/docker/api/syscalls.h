@@ -72,6 +72,10 @@
 #define ECALL_OBJ_PROP_SET (GAME_API_BASE + 46)
 
 #define ECALL_SANDBOX_ADD (GAME_API_BASE + 47)
+#define SANDBOX_ADD_PROPERTY 0
+#define SANDBOX_ADD_METHOD 1
+#define SANDBOX_ADD_EXIT_ADDRESS 2
+#define SANDBOX_ADD_PROPERTY_HINT 3
 
 #define ECALL_PACKED_ARRAY_OPS (GAME_API_BASE + 48)
 
@@ -95,7 +99,9 @@
 // Returns a0 = state index. Result slot holds the awaited value.
 #define ECALL_AWAIT_RESTORE (GAME_API_BASE + 53)
 
-#define ECALL_LAST (GAME_API_BASE + 54)
+#define ECALL_CALL_GUEST (GAME_API_BASE + 54)
+
+#define ECALL_LAST (GAME_API_BASE + 55)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)

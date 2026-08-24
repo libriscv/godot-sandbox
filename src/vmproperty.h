@@ -12,6 +12,9 @@ class SandboxProperty {
 	uint64_t m_getter_address = 0;
 	uint64_t m_address = 0;
 	Variant m_def_val;
+	uint32_t m_hint = 0;
+	String m_hint_string;
+	uint32_t m_usage = 0;
 
 public:
 	SandboxProperty(const StringName &name, Variant::Type type, uint64_t setter, uint64_t getter, const Variant &def = "") :
@@ -39,6 +42,15 @@ public:
 
 	// Get the default value of the property.
 	const Variant &default_value() const { return m_def_val; }
+
+	uint32_t hint() const { return m_hint; }
+	const String &hint_string() const { return m_hint_string; }
+	uint32_t usage() const { return m_usage; }
+	void set_hint(uint32_t hint, const String &hint_string, uint32_t usage) {
+		m_hint = hint;
+		m_hint_string = hint_string;
+		m_usage = usage;
+	}
 
 	// Call the setter function.
 	void set(Sandbox &sandbox, const Variant &value);

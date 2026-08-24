@@ -7257,6 +7257,18 @@ func no_signal(value):
 func wait_then_self(sig):
 	await sig
 	return get_name()
+
+func inner_wait(sig, base):
+	var got = await sig
+	return base + got
+
+func outer_wait(sig, base):
+	var v = await inner_wait(sig, base)
+	return v * 2
+
+func call_without_awaiting(sig):
+	var handle = inner_wait(sig, 0)
+	return typeof(handle)
 """
 
 signal sgd_ping(value)
@@ -7293,6 +7305,43 @@ func test_sgd_await_suspends_and_resumes():
 
 	sgd_ping.emit(7)
 	assert_eq(completed[0], 107, "the resumed body computed with the value the signal carried")
+
+	node.free()
+
+func test_sgd_await_another_coroutine():
+	# A call inside the program is a jal, and a suspension unwinds past it, so a
+	# call to a coroutine leaves the program and comes back in: the suspension
+	# stops at that boundary, and the answer is the Signal the caller awaits --
+	# the same Signal a call from Godot gets.
+	var script = _await_script("await_nested")
+	if script == null:
+		return
+	var node = _await_node(script)
+
+	var awaitable = node.call("outer_wait", sgd_ping, 100)
+	assert_eq(typeof(awaitable), TYPE_SIGNAL,
+		"the outer coroutine suspended on the inner one's Signal")
+
+	var completed := [null]
+	(awaitable as Signal).connect(func(value): completed[0] = value)
+
+	# One emission resumes the inner frame, whose completion resumes the outer.
+	sgd_ping.emit(7)
+	assert_eq(completed[0], 214, "the caller resumed with what the callee returned")
+
+	node.free()
+
+func test_sgd_call_a_coroutine_without_awaiting_it():
+	# GDScript answers a GDScriptFunctionState here. A sandboxed program gets the
+	# Signal that the same suspension produced, which is what await takes -- and
+	# the caller runs on rather than suspending.
+	var script = _await_script("await_unawaited")
+	if script == null:
+		return
+	var node = _await_node(script)
+
+	assert_eq(node.call("call_without_awaiting", sgd_ping), TYPE_SIGNAL,
+		"a call with no await answers something the caller can await later")
 
 	node.free()
 
@@ -9106,3 +9155,297 @@ func test_sgd_an_instance_made_during_a_call():
 	_nested_instance = null
 	_nested_script = null
 	a.free()
+
+
+# -= Callable(self, "name") =-
+
+func _cc_named(x):
+	return x * 2
+
+func test_sgd_callable_constructor():
+	# The engine looks the method name up when the Callable is built. Here the
+	# name has to name a function the program declares, so the constructor is the
+	# lowering the bare name already has: a Callable over the guest address.
+	var gdscript_code = """
+func doubled(x):
+	return x * 2
+
+func from_constructor(n):
+	var c = Callable(self, "doubled")
+	return c.call(n)
+
+func from_name(n):
+	var c = doubled
+	return c.call(n)
+
+func null_callable():
+	return Callable()
+
+func is_null():
+	return Callable().is_null()
+
+func handed_out():
+	return Callable(self, "doubled")
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("from_constructor", 21), 42,
+		"Callable(self, \"doubled\") should call the function it names")
+	assert_eq(s.vmcallv("from_constructor", 21), s.vmcallv("from_name", 21),
+		"and answer what the bare name answers")
+
+	# Callable() is the null Callable, as it is in the engine.
+	assert_eq(typeof(s.vmcallv("null_callable")), TYPE_CALLABLE,
+		"Callable() should still be a Callable")
+	assert_eq(s.vmcallv("is_null"), Callable().is_null(),
+		"and be null the way the engine's is")
+
+	# One handed to Godot works from this side too.
+	var c : Callable = s.vmcallv("handed_out")
+	assert_eq(c.call(4), 8, "a Callable the guest built should be callable from Godot")
+
+	s.queue_free()
+
+# -= @export hints =-
+
+func _hint_of(list : Array, name : String) -> Array:
+	for p in list:
+		if p["name"] == name:
+			return [int(p["hint"]), String(p["hint_string"])]
+	return []
+
+@export_range(1, 5) var _eh_r := 1
+@export_range(-1.5, 5.25, 0.25, "or_greater") var _eh_rf := 0.0
+@export_enum("A", "B:5") var _eh_enum := 0
+@export_flags("F:1", "W:2") var _eh_flags := 0
+@export_multiline var _eh_multi := ""
+@export_file("*.png", "*.jpg") var _eh_file := ""
+@export_placeholder("hint text") var _eh_ph := ""
+@export_node_path("Node2D", "Control") var _eh_np : NodePath
+@export_exp_easing var _eh_ee := 1.0
+@export var _eh_plain := 1
+
+func test_sgd_export_hints():
+	# An @export_* argument list is what the inspector needs to draw the property,
+	# and the ELF carries none of it: the hint crosses beside the registration.
+	# Every expectation here is the engine's own PropertyInfo for the same
+	# declaration, read off this script.
+	var gdscript_code = """
+@export_range(1, 5) var r := 1
+@export_range(-1.5, 5.25, 0.25, "or_greater") var rf := 0.0
+@export_enum("A", "B:5") var en := 0
+@export_flags("F:1", "W:2") var fl := 0
+@export_multiline var multi := ""
+@export_file("*.png", "*.jpg") var f := ""
+@export_placeholder("hint text") var ph := ""
+@export_node_path("Node2D", "Control") var np := ""
+@export_exp_easing var ee := 1.0
+@export var plain := 1
+
+func read_r():
+	return r
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	var guest = s.get_property_list()
+	var mine = get_property_list()
+
+	assert_eq(_hint_of(guest, "r"), _hint_of(mine, "_eh_r"),
+		"@export_range over two integers should publish the engine's hint")
+	assert_eq(_hint_of(guest, "rf"), _hint_of(mine, "_eh_rf"),
+		"a step and a flag should reach the hint string too")
+	assert_eq(_hint_of(guest, "en"), _hint_of(mine, "_eh_enum"),
+		"@export_enum should publish its names")
+	assert_eq(_hint_of(guest, "fl"), _hint_of(mine, "_eh_flags"),
+		"and @export_flags its bits")
+	assert_eq(_hint_of(guest, "multi"), _hint_of(mine, "_eh_multi"),
+		"an annotation with no arguments should still carry its hint")
+	assert_eq(_hint_of(guest, "f"), _hint_of(mine, "_eh_file"),
+		"@export_file should publish its filters")
+	assert_eq(_hint_of(guest, "ph"), _hint_of(mine, "_eh_ph"),
+		"@export_placeholder should publish its text")
+	assert_eq(_hint_of(guest, "np"), _hint_of(mine, "_eh_np"),
+		"@export_node_path should publish its classes")
+	assert_eq(_hint_of(guest, "ee"), _hint_of(mine, "_eh_ee"),
+		"@export_exp_easing should publish its hint")
+	assert_eq(_hint_of(guest, "plain"), _hint_of(mine, "_eh_plain"),
+		"and a plain @export should stay unconstrained")
+
+	# The property still works: a hint says how to draw it, not what it holds.
+	s.set("r", 3)
+	assert_eq(s.vmcallv("read_r"), 3, "a hinted property is still a property")
+
+	s.queue_free()
+
+func _usage_of(list : Array, name : String) -> int:
+	for p in list:
+		if p["name"] == name:
+			return int(p["usage"])
+	return 0
+
+func _type_of(list : Array, name : String) -> int:
+	for p in list:
+		if p["name"] == name:
+			return int(p["type"])
+	return -1
+
+@export_storage var _eh_store_typed : int = 0
+
+func test_sgd_export_usage_flags():
+	# @export_storage is the one annotation that changes the usage mask, and it
+	# only takes PROPERTY_USAGE_EDITOR away. NIL_IS_VARIANT is not part of what it
+	# changes: the flag says a NIL-typed property means Variant rather than void,
+	# so it follows the type. The engine publishes it on no typed property, and a
+	# sandboxed property is always typed -- api_sandbox_add refuses NIL.
+	var gdscript_code = """
+@export_storage var st : int = 0
+@export var sp := 1
+
+func read_st():
+	return st
+"""
+	# Through the Script path, which is the one that publishes the mask to Godot.
+	var node = Node.new()
+	var script = SafeGDScript.new()
+	script.set_source_code(gdscript_code)
+	node.set_script(script)
+	add_child_autofree(node)
+
+	var guest = node.get_property_list()
+	var mine = get_property_list()
+
+	for name in ["st", "sp"]:
+		assert_ne(_type_of(guest, name), TYPE_NIL,
+			"%s should be registered with a type" % name)
+		assert_eq(_usage_of(guest, name) & PROPERTY_USAGE_NIL_IS_VARIANT, 0,
+			"%s is typed, so it should not claim NIL_IS_VARIANT" % name)
+
+	# Against the engine's own mask for the same declaration.
+	assert_eq(_usage_of(guest, "st"), _usage_of(mine, "_eh_store_typed"),
+		"@export_storage should publish the engine's usage mask")
+	assert_eq(_usage_of(guest, "sp"), _usage_of(mine, "_eh_plain"),
+		"a plain @export should publish the engine's usage mask")
+	assert_eq(_usage_of(guest, "st") & PROPERTY_USAGE_EDITOR, 0,
+		"@export_storage should take the inspector away")
+
+	# The property still round-trips, which is what the mask has to keep working.
+	node.set("st", 7)
+	assert_eq(node.call("read_st"), 7, "a storage-only property is still a property")
+
+# -= Inner classes =-
+
+class _IcBase:
+	var v := 1
+	func _init(a := 10):
+		v = a
+	func greet(x):
+		return x + v
+	func who():
+		return "Base"
+
+class _IcDerived extends _IcBase:
+	var extra := 5
+	func _init():
+		super(42)
+	func greet(x):
+		return super.greet(x) * 2
+
+func test_sgd_inner_classes():
+	# A class is a struct that also declares methods: the instance is the same
+	# Dictionary, and a method is a lifted function taking it first. The answers
+	# come from the engine's own inner classes above, declared the same way.
+	var gdscript_code = """
+class Base:
+	var v := 1
+	func _init(a := 10):
+		v = a
+	func greet(x):
+		return x + v
+	func who():
+		return "Base"
+
+class Derived extends Base:
+	var extra := 5
+	func _init():
+		super(42)
+	func greet(x):
+		return super.greet(x) * 2
+
+func from_base(n):
+	var b = Base.new()
+	return b.greet(n)
+
+func base_with_argument(a, n):
+	return Base.new(a).greet(n)
+
+func from_derived(n):
+	var d = Derived.new()
+	return d.greet(n)
+
+func inherited():
+	return Derived.new().who()
+
+func fields():
+	var d = Derived.new()
+	return [d.v, d.extra]
+
+func written():
+	var d = Derived.new()
+	d.v = 3
+	d.extra = 4
+	return d.greet(1)
+
+func typed(d: Derived):
+	return d.greet(2)
+
+func is_a_dictionary():
+	return typeof(Derived.new())
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("from_base", 5), _IcBase.new().greet(5),
+		"a class with a default _init should construct the way the engine's does")
+	assert_eq(s.vmcallv("base_with_argument", 3, 5), _IcBase.new(3).greet(5),
+		"and take the arguments _init declares")
+	assert_eq(s.vmcallv("from_derived", 5), _IcDerived.new().greet(5),
+		"super() and super.method() should reach the base")
+	assert_eq(s.vmcallv("inherited"), _IcDerived.new().who(),
+		"a method the class does not declare should come from the base")
+	assert_eq(s.vmcallv("fields"), [_IcDerived.new().v, _IcDerived.new().extra],
+		"the instance should hold the base's fields and its own")
+	assert_eq(s.vmcallv("written"), 8, "a field written from outside should reach the method")
+	assert_eq(s.vmcallv("typed", {"v": 1, "extra": 0}), 6,
+		"a Dictionary from Godot works where the class is declared")
+
+	# The one divergence, and it is the struct's: an instance is a Dictionary,
+	# not a RefCounted with a script, so this is what Godot sees.
+	assert_eq(s.vmcallv("is_a_dictionary"), TYPE_DICTIONARY,
+		"an instance is the Dictionary a struct instance is")
+
+	s.queue_free()
+
+func test_sgd_super_at_script_level():
+	# The base of the script itself is a native class, and the engine refuses
+	# both of the things that would make super.m() differ from self.m(): a
+	# method that overrides a native one, and a base virtual with no definition.
+	var gdscript_code = """
+func through_super():
+	return super.get_class()
+
+func through_self():
+	return self.get_class()
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("through_super"), s.vmcallv("through_self"),
+		"super.m() at script level is the self-call it stands for")
+
+	s.queue_free()

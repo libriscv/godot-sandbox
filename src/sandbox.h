@@ -635,6 +635,7 @@ public:
 	/// @param def The default value of the property.
 	void add_property(const String &name, Variant::Type vtype, gaddr_t setter, gaddr_t getter, const Variant &def = "") const;
 	void add_property(const String &name, Variant::Type vtype, gaddr_t address, const Variant &def = "") const;
+	void set_property_hint(const String &name, uint32_t hint, const String &hint_string, uint32_t usage) const;
 
 	/// @brief Set a property in the sandbox.
 	/// @param name The name of the property.
@@ -860,6 +861,8 @@ public:
 	/// @warning Leaves guest memory and the Variant state arbitrary. Reset afterwards.
 	Dictionary assault(const String &test, int64_t iterations);
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc);
+	// False on level-0 state: vmcall_internal there would reset SP/RA under the initializer.
+	bool is_in_vmcall() const noexcept { return m_current_state != &m_states[0]; }
 	machine_t &machine() { return *m_machine; }
 	const machine_t &machine() const { return *m_machine; }
 	/// @brief Print one line to the console, or to the redirect callback.
@@ -895,7 +898,6 @@ public:
 
 private:
 	static void generate_runtime_cpp_api(bool use_argument_names = false);
-	bool is_in_vmcall() const noexcept { return m_current_state != &m_states[0]; }
 
 	void read_instance_layout();
 	void run_instance_initializer(gaddr_t address, gaddr_t base);

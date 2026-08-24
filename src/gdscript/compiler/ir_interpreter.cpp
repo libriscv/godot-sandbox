@@ -292,6 +292,11 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 				"'await' suspends into the host and is not available in the IR"
 				" interpreter (in function '" + func.name + "')");
 
+		case IROpcode::CALL_HOSTED:
+			throw CompilerException(ErrorType::OPTIMIZER_ERROR,
+				"a call to a coroutine re-enters through the host and is not available"
+				" in the IR interpreter (in function '" + func.name + "')");
+
 		case IROpcode::NEG:
 		case IROpcode::NOT:
 		case IROpcode::BIT_NOT: {
