@@ -50,6 +50,8 @@ private:
 	};
 
 	IRFunction generate_function(const FunctionDecl& func);
+	IRFunction generate_lambda_function(const FunctionDecl& decl,
+		const std::vector<std::string>& captures);
 
 	// Stamps IRInstruction::line over everything the dispatch emits.
 	void gen_stmt(const Stmt* stmt, FunctionContext& func);
@@ -98,6 +100,11 @@ private:
 	int gen_builtin_constant(const std::string& type, const std::string& name, FunctionContext& func);
 	int gen_ternary(const TernaryExpr* expr, FunctionContext& func);
 	int gen_call(const CallExpr* expr, FunctionContext& func);
+	int gen_lambda(const LambdaExpr* expr, FunctionContext& func);
+	int gen_make_callable(const std::string& function_name, int bound_reg,
+		FunctionContext& func);
+	int gen_callable_variable_call(const CallExpr* expr, int callable_reg,
+		std::vector<int>& arg_regs, FunctionContext& func);
 	int gen_member_call(const MemberCallExpr* expr, FunctionContext& func);
 	int gen_index(const IndexExpr* expr, FunctionContext& func);
 	int gen_array_literal(const ArrayLiteralExpr* expr, FunctionContext& func);
@@ -112,6 +119,18 @@ private:
 		const std::string& hint = "") const;
 
 	std::string m_current_function;
+
+	// Queue grows while iterating (nested lambdas append).
+	struct PendingLambda {
+		const FunctionDecl* decl;
+		std::string lifted_name;
+		std::vector<std::string> captures;
+	};
+	std::vector<PendingLambda> m_pending_lambdas;
+	int m_next_lambda = 0;
+
+	std::vector<std::string> collect_captures(const FunctionDecl& decl,
+		FunctionContext& enclosing) const;
 
 	int alloc_register(FunctionContext& func);
 	void free_register(FunctionContext& func, int reg);

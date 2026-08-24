@@ -41,6 +41,9 @@ private:
 	StmtPtr parse_return_stmt();
 	StmtPtr parse_expr_or_assign_stmt();
 	std::vector<StmtPtr> parse_block();
+	std::vector<StmtPtr> parse_suite();
+	std::vector<StmtPtr> parse_inline_suite();
+	bool at_inline_suite_end() const;
 
 	// Precedence climbing, loosest to tightest.
 	ExprPtr parse_expression();
@@ -63,6 +66,7 @@ private:
 	ExprPtr parse_call();
 	ExprPtr parse_primary();
 	ExprPtr parse_node_path();
+	ExprPtr parse_lambda();
 
 	// Node positioned at `token`.
 	template <typename Node, typename... Args>
@@ -116,6 +120,7 @@ private:
 	size_t m_current = 0;
 	// Tracks `await` in the current function body.
 	bool m_saw_await = false;
+	int m_inline_suite_depth = 0;
 };
 
 } // namespace gdscript

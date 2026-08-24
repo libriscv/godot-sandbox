@@ -1156,9 +1156,9 @@ Variant Sandbox::vmcallable_address(gaddr_t address, Array args) {
 	return Callable(call);
 }
 void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const {
-	if (m_varargs_base_count > 0) {
-		// We may be receiving extra arguments, so we will fill at the end of m_varargs_ptrs array
-		const int total_args = m_varargs_base_count + p_argcount;
+	const bool varargs = m_varargs_base_count > 0;
+	const int total_args = m_varargs_base_count + p_argcount;
+	if (varargs) {
 		if (size_t(total_args) > m_varargs_ptrs.size()) {
 			ERR_PRINT("Too many arguments for VM function call");
 			r_call_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
@@ -1169,10 +1169,18 @@ void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r
 		for (int i = 0; i < p_argcount; i++) {
 			m_varargs_ptrs[m_varargs_base_count + i] = p_arguments[i];
 		}
+	}
+
+	const bool previous_unboxed = self->get_unboxed_arguments();
+	self->set_unboxed_arguments(!m_variant_arguments);
+
+	if (varargs) {
 		r_return_value = self->vmcall_internal(address, m_varargs_ptrs.data(), total_args);
 	} else {
 		r_return_value = self->vmcall_internal(address, p_arguments, p_argcount);
 	}
+
+	self->set_unboxed_arguments(previous_unboxed);
 	r_call_error.error = GDEXTENSION_CALL_OK;
 }
 

@@ -7,6 +7,7 @@
 #include "../lexer.h"
 #include "../parser.h"
 #include "../codegen.h"
+#include "../syscall_numbers.h"
 #include "../ir_optimizer.h"
 #include "../ir_interpreter.h"
 #include "../ir_verifier.h"
@@ -45,6 +46,18 @@ static const IRFunction& find_function(const IRProgram& ir, const std::string& n
 		}
 	}
 	throw std::runtime_error("Function not found: " + name);
+}
+
+// Syscalls emitted by a loop arm, counted by number.
+static int count_syscall(const IRFunction& func, int64_t number) {
+	int count = 0;
+	for (const auto& instr : func.instructions) {
+		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 2 &&
+			std::get<int64_t>(instr.operands[1].value) == number) {
+			count++;
+		}
+	}
+	return count;
 }
 
 static int count_opcode(const IRFunction& func, IROpcode opcode) {
@@ -363,23 +376,28 @@ static void test_dictionary_iteration_takes_the_keys() {
 		"\t\tpass\n", false);
 	assert(count_opcode(find_function(typed, "f"), IROpcode::TYPE_TEST) == 0);
 
-	// Unknown type: one type-tag test, outside the loop.
+	// Unknown type: three type-tag tests, all outside the loop -- the Dictionary
+	// that becomes its keys, then the integer and the Array the loop's arms are
+	// picked by.
 	const IRProgram untyped = compile_to_ir(
 		"func f(d):\n"
 		"\tfor k in d:\n"
 		"\t\tpass\n", false);
 	const IRFunction& func = find_function(untyped, "f");
-	assert(count_opcode(func, IROpcode::TYPE_TEST) == 1);
+	assert(count_opcode(func, IROpcode::TYPE_TEST) == 3);
+	bool tested_dictionary = false;
 	for (size_t i = 0; i < func.instructions.size(); i++) {
-		if (func.instructions[i].opcode == IROpcode::TYPE_TEST) {
-			assert(std::get<int64_t>(func.instructions[i].operands.at(2).value) == Variant::DICTIONARY);
-			// Before the loop body, so one test per loop, not per iteration.
-			for (size_t j = 0; j < i; j++) {
-				assert(func.instructions[j].opcode != IROpcode::LABEL ||
-					std::get<std::string>(func.instructions[j].operands[0].value).find("for_loop") == std::string::npos);
-			}
+		if (func.instructions[i].opcode != IROpcode::TYPE_TEST) {
+			continue;
+		}
+		tested_dictionary |= std::get<int64_t>(func.instructions[i].operands.at(2).value) == Variant::DICTIONARY;
+		// Before the loop body, so one test per loop, not per iteration.
+		for (size_t j = 0; j < i; j++) {
+			assert(func.instructions[j].opcode != IROpcode::LABEL ||
+				std::get<std::string>(func.instructions[j].operands[0].value).find("for_loop") == std::string::npos);
 		}
 	}
+	assert(tested_dictionary);
 
 	// Known Array: nothing is emitted for the Dictionary case.
 	const IRProgram array = compile_to_ir(
@@ -389,6 +407,71 @@ static void test_dictionary_iteration_takes_the_keys() {
 	assert(count_opcode(find_function(array, "f"), IROpcode::TYPE_TEST) == 0);
 
 	std::cout << "  ✓ iterating a Dictionary walks its keys" << std::endl;
+}
+
+// `for i in n` counts to an integer. The compiler only knows it is one when a
+// literal or a `: int` hint says so; otherwise the count and the container walk
+// share one loop, chosen per iteration by a tag test hoisted out of it. The
+// alternative -- a whole second copy of the body -- squares with nesting.
+static void test_integer_iteration_is_guarded_at_run_time() {
+	// Known integer: counted, and no container syscall in sight.
+	const IRProgram typed = compile_to_ir(
+		"func f(n: int):\n"
+		"\tvar s = 0\n"
+		"\tfor i in n:\n"
+		"\t\ts += i\n"
+		"\treturn s\n", false);
+	const IRFunction& typed_func = find_function(typed, "f");
+	assert(count_opcode(typed_func, IROpcode::TYPE_TEST) == 0);
+	assert(count_opcode(typed_func, IROpcode::CALL_SYSCALL) == 0);
+
+	// Known Array: no integer test either, since it cannot be one.
+	const IRProgram array = compile_to_ir(
+		"func f(a: Array):\n"
+		"\tfor v in a:\n"
+		"\t\tpass\n", false);
+	assert(count_opcode(find_function(array, "f"), IROpcode::TYPE_TEST) == 0);
+
+	// Unknown: one body, both paths through it.
+	const IRProgram untyped = compile_to_ir(
+		"func f(n):\n"
+		"\tvar s = 0\n"
+		"\tfor i in n:\n"
+		"\t\ts += i\n"
+		"\treturn s\n", false);
+	const IRFunction& func = find_function(untyped, "f");
+
+	size_t int_test = func.instructions.size();
+	size_t loop_label = func.instructions.size();
+	int adds = 0;
+	for (size_t i = 0; i < func.instructions.size(); i++) {
+		const IRInstruction& instr = func.instructions[i];
+		if (instr.opcode == IROpcode::TYPE_TEST &&
+			std::get<int64_t>(instr.operands.at(2).value) == Variant::INT) {
+			int_test = i;
+		}
+		if (instr.opcode == IROpcode::LABEL && loop_label == func.instructions.size() &&
+			std::get<std::string>(instr.operands[0].value).find("for_loop") != std::string::npos) {
+			loop_label = i;
+		}
+		if (instr.opcode == IROpcode::ADD) {
+			adds++;
+		}
+	}
+	assert(int_test < func.instructions.size() && "an untyped iterable needs the integer test");
+	assert(int_test < loop_label && "the tag test belongs outside the loop");
+
+	// The body is emitted once: `s += i` and the index increment, not one of
+	// each per arm.
+	assert(adds == 2 && "the loop body was duplicated");
+
+	// The Array fast path keeps its dedicated syscalls, and the arm below it
+	// reaches size()/get(), which is what a Packed*Array answers to.
+	assert(count_syscall(func, ECALL_ARRAY_SIZE) == 1);
+	assert(count_syscall(func, ECALL_ARRAY_AT) == 1);
+	assert(count_opcode(func, IROpcode::VCALL) == 2);
+
+	std::cout << "  ✓ 'for i in n' counts to an untyped integer at run time" << std::endl;
 }
 
 // -= Statement layout =-
@@ -592,6 +675,7 @@ int main() {
 	test_container_loop_emits_valid_ir();
 	test_container_loop_counter_is_typed();
 	test_dictionary_iteration_takes_the_keys();
+	test_integer_iteration_is_guarded_at_run_time();
 
 	test_semicolon_separates_statements();
 	test_explicit_line_continuation();

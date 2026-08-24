@@ -51,7 +51,10 @@
 
 #define ECALL_VEC3_OPS (GAME_API_BASE + 37)
 
+// callable_create(address, bound_variant, reserved, flags).
 #define ECALL_CALLABLE_CREATE (GAME_API_BASE + 38)
+// A3 flags. Bit 0: force Variant-pointer calling convention on this Callable.
+#define ECALL_CALLABLE_VARIANT_ARGS 0x1
 
 // load(path, len, result). len == ECALL_LOAD_PATH_IS_VARIANT: path is a Variant.
 #define ECALL_LOAD (GAME_API_BASE + 39)

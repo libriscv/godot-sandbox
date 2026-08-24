@@ -7411,3 +7411,302 @@ func test_sgd_await_coroutine_api_is_reachable():
 	assert_true(dropped[0], "a dropped frame completes with null rather than hanging its caller")
 
 	node.free()
+
+func test_sgd_lambdas():
+	# A lambda is lifted to a function of its own and the expression is a
+	# Callable over it. Captures are by value at the point the lambda is built,
+	# which is checked here against the engine's own lambda on the same values.
+	var gdscript_code = """
+func doubled(n):
+	var f = func(x): return x * 2
+	return f.call(n)
+
+func captured(n):
+	var scale = 10
+	var offset = 3
+	var f = func(v): return v * scale + offset
+	return f.call(n)
+
+func capture_is_a_snapshot():
+	var n = 1
+	var f = func(): return n
+	n = 50
+	return [f.call(), n]
+
+func write_stays_inside():
+	var n = 1
+	var f = func():
+		n = 9
+		return n
+	var inner = f.call()
+	return [inner, n]
+
+func nested(n):
+	var base = 7
+	var outer = func(x):
+		var inner = func(y): return y + base
+		return inner.call(x)
+	return outer.call(n)
+
+func block_bodied(n):
+	var f = func(x):
+		var doubled = x * 2
+		return doubled + 1
+	return f.call(n)
+
+func called_through_its_name(n):
+	var add = func(x): return x + 100
+	return add(n)
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("doubled", 21), 42, "A lambda runs when the guest calls it")
+	assert_eq(s.vmcallv("captured", 4), 43, "Both captures arrive, in order")
+
+	# The engine, on the same program.
+	var engine_snapshot = func():
+		var n = 1
+		var f = func(): return n
+		n = 50
+		return [f.call(), n]
+	assert_eq(s.vmcallv("capture_is_a_snapshot"), engine_snapshot.call(),
+		"A capture is the value the local had when the lambda was built")
+
+	var engine_write = func():
+		var n = 1
+		var f = func():
+			n = 9
+			return n
+		var inner = f.call()
+		return [inner, n]
+	assert_eq(s.vmcallv("write_stays_inside"), engine_write.call(),
+		"Assigning to a captured name must not reach the outer local")
+
+	assert_eq(s.vmcallv("nested", 5), 12, "A nested lambda reaches through the lambda around it")
+	assert_eq(s.vmcallv("block_bodied", 20), 41, "An indented lambda body runs")
+	assert_eq(s.vmcallv("called_through_its_name", 5), 105,
+		"A Callable in a variable can be called as c(x)")
+
+	s.queue_free()
+
+func test_sgd_callable_round_trip():
+	# The point of a Callable: Godot calls back into the guest. Array.map() and
+	# sort_custom() run on the host, one call into the sandbox per element, which
+	# also pins the capture contract end to end -- RiscvCallable::call puts the
+	# bound arguments before the ones Godot passes.
+	var gdscript_code = """
+func doubled(a):
+	return a.map(func(x): return x * 2)
+
+func scaled(a, k):
+	return a.map(func(x): return x * k)
+
+func kept(a, limit):
+	return a.filter(func(x): return x < limit)
+
+func sorted_desc(a):
+	a.sort_custom(func(x, y): return x > y)
+	return a
+
+func make_adder(n):
+	return func(x): return x + n
+
+func helper(x):
+	return x + 1
+
+func get_helper():
+	return helper
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("doubled", [1, 2, 3]), [2, 4, 6],
+		"Array.map() should call the guest lambda once per element")
+	assert_eq(s.vmcallv("scaled", [1, 2, 3], 10), [10, 20, 30],
+		"A captured value must not be mistaken for the element Godot passes")
+	assert_eq(s.vmcallv("kept", [1, 5, 2, 9], 5), [1, 2],
+		"Array.filter() should see what the lambda answers")
+	assert_eq(s.vmcallv("sorted_desc", [2, 9, 1]), [9, 2, 1],
+		"sort_custom() should order by the guest's comparison")
+
+	# A Callable that outlives the call that made it.
+	var add5 = s.vmcallv("make_adder", 5)
+	assert_eq(typeof(add5), TYPE_CALLABLE, "The guest should hand back a Callable")
+	assert_eq(add5.call(10), 15, "A returned Callable keeps its capture")
+
+	var helper = s.vmcallv("get_helper")
+	assert_eq(typeof(helper), TYPE_CALLABLE, "A function name is a Callable")
+	assert_eq(helper.call(41), 42, "Calling it should reach that function")
+
+	s.queue_free()
+
+func test_sgd_lambdas_are_not_published_as_methods():
+	# A lifted lambda is named `@lambda_N`, which no GDScript identifier can be,
+	# and it is not a method of the script: the editor is never offered a name
+	# nobody can write.
+	var script = SafeGDScript.new()
+	script.source_code = """
+func visible(n):
+	var f = func(x): return x + 1
+	return f.call(n)
+"""
+	var names = []
+	for method in script.get_script_method_list():
+		names.append(method["name"])
+
+	assert_true(names.has("visible"), "A declared function is a method")
+	for name in names:
+		assert_false(name.begins_with("@"), "A lifted lambda is not published: " + str(name))
+
+func test_sgd_inline_suites():
+	# A body written on the line of its ':'. The engine accepts the same
+	# spelling, so every answer below is checked against GDScript's own -- the
+	# guest functions and the `_inline_*` helpers underneath are the same source.
+	var gdscript_code = """
+func classify(n):
+	if n < 0: return "neg"
+	elif n == 0: return "zero"
+	else: return "pos"
+
+func sum_to(n):
+	var total = 0
+	for i in n: total += i
+	return total
+
+func countdown(n):
+	while n > 0: n -= 1
+	return n
+
+func spell(op):
+	match op:
+		0: return "add"
+		1, 2: return "mul"
+		var v when v > 9: return "big"
+		_: return "other"
+
+func one(): return 1
+
+func semicolons(n):
+	var a = 0
+	if n > 0: a = 1; a += 10
+	return a
+
+func nested(a, b):
+	if a > 0: if b > 0: return 3
+	return 0
+
+func evens(n):
+	var total = 0
+	for i in n: if i % 2 == 0: total += i
+	return total
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	for n in [-3, 0, 5]:
+		assert_eq(s.vmcallv("classify", n), _inline_classify(n),
+			"A one-line if/elif/else should answer what the engine answers")
+	assert_eq(s.vmcallv("sum_to", 5), _inline_sum_to(5), "A one-line for body should run per pass")
+	assert_eq(s.vmcallv("countdown", 4), _inline_countdown(4), "A one-line while body should run per pass")
+	for op in [0, 1, 2, 50, 4]:
+		assert_eq(s.vmcallv("spell", op), _inline_spell(op), "A one-line match arm should take its arm")
+	assert_eq(s.vmcallv("one"), 1, "A one-line func body should return")
+
+	# Both statements after the ':' belong to the if, so a false condition runs
+	# neither -- the ';' does not end the body.
+	assert_eq(s.vmcallv("semicolons", 1), _inline_semicolons(1), "';' should continue the one-line body")
+	assert_eq(s.vmcallv("semicolons", 0), _inline_semicolons(0), "A declined one-line body runs nothing after ';'")
+
+	assert_eq(s.vmcallv("nested", 1, 1), 3, "A one-line body may hold another one")
+	assert_eq(s.vmcallv("nested", 1, 0), 0, "The inner one-line body ends at the line")
+	assert_eq(s.vmcallv("evens", 6), _inline_evens(6), "A one-line if inside a one-line for")
+
+	s.queue_free()
+
+func _inline_classify(n):
+	if n < 0: return "neg"
+	elif n == 0: return "zero"
+	else: return "pos"
+
+func _inline_sum_to(n):
+	var total = 0
+	for i in n: total += i
+	return total
+
+func _inline_countdown(n):
+	while n > 0: n -= 1
+	return n
+
+func _inline_spell(op):
+	match op:
+		0: return "add"
+		1, 2: return "mul"
+		var v when v > 9: return "big"
+		_: return "other"
+
+func _inline_semicolons(n):
+	var a = 0
+	if n > 0: a = 1; a += 10
+	return a
+
+func _inline_evens(n):
+	var total = 0
+	for i in n: if i % 2 == 0: total += i
+	return total
+
+func test_sgd_iterating_an_untyped_value():
+	# `for i in n` counts when `n` is an integer and walks when it is a
+	# container, and the compiler learns which only at run time. One function
+	# takes all three, so both paths through the one loop body are exercised.
+	var gdscript_code = """
+func total(it):
+	var sum = 0
+	for v in it: sum += v
+	return sum
+
+func collect(it):
+	var out = []
+	for v in it: out.append(v)
+	return out
+
+func nested(n):
+	var sum = 0
+	for a in n:
+		for b in n:
+			sum += a * b
+	return sum
+
+func counted(n):
+	var seen = 0
+	for i in n:
+		if i == 0: continue
+		if i > 3: break
+		seen += i
+	return seen
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	# An integer counts from 0, exactly as the engine does.
+	assert_eq(s.vmcallv("total", 5), 10, "'for v in 5' should count 0..4")
+	assert_eq(s.vmcallv("total", 0), 0, "Counting to 0 should not run the body")
+	assert_eq(s.vmcallv("collect", 4), [0, 1, 2, 3], "The loop variable is the counter")
+
+	# The same untyped function, given containers.
+	assert_eq(s.vmcallv("total", [10, 20, 30]), 60, "An Array should still be walked")
+	assert_eq(s.vmcallv("collect", ["a", "b"]), ["a", "b"], "Array elements, in order")
+	assert_eq(s.vmcallv("collect", {"x": 1, "y": 2}), ["x", "y"], "A Dictionary still yields its keys")
+	assert_eq(s.vmcallv("total", PackedInt32Array([1, 2, 3])), 6, "A packed array should still be walked")
+
+	# Nesting: the guard is per loop, and the body is emitted once per loop.
+	assert_eq(s.vmcallv("nested", 4), 36, "Nested untyped counts should agree with (0+1+2+3)^2")
+
+	# `break` and `continue` reach the same labels on either path.
+	assert_eq(s.vmcallv("counted", 6), 6, "break/continue should work in a guarded loop")
+
+	s.queue_free()

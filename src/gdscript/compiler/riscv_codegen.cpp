@@ -721,6 +721,31 @@ void RISCVCodeGen::gen_load_resource(const IRInstruction& instr) {
 	emit_stack_adjust(path_space);
 }
 
+// A0=address, A1=bound Variant, A3=flags. Result is a scoped variant index.
+void RISCVCodeGen::gen_make_callable(const IRInstruction& instr) {
+	if (instr.operands.size() != 3) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_CALLABLE requires 3 operands");
+	}
+
+	int result_vreg = std::get<int>(instr.operands[0].value);
+	const std::string& function_name = std::get<std::string>(instr.operands[1].value);
+	int bound_vreg = std::get<int>(instr.operands[2].value);
+
+	int result_offset = get_variant_stack_offset(result_vreg);
+	int bound_offset = get_variant_stack_offset(bound_vreg);
+
+	spill_around_syscall({ REG_A0, REG_A1, REG_A2, REG_A3 });
+
+	emit_la(REG_A0, function_name);
+	emit_load_stack_offset(REG_A1, bound_offset);
+	emit_li(REG_A2, 0);
+	emit_li(REG_A3, ECALL_CALLABLE_VARIANT_ARGS);
+	emit_li(REG_A7, ECALL_CALLABLE_CREATE);
+	emit_ecall();
+
+	emit_syscall_result(result_vreg, REG_A0, result_offset, Variant::CALLABLE);
+}
+
 // A1 = ECALL_LOAD_PATH_IS_VARIANT: A0 is a Variant, not characters.
 void RISCVCodeGen::gen_load_resource_var(const IRInstruction& instr) {
 	if (instr.operands.size() != 2) {
@@ -2366,6 +2391,9 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::GET_NODE:
 			gen_get_node(instr);
 			break;
+		case IROpcode::MAKE_CALLABLE:
+			gen_make_callable(instr);
+			break;
 		case IROpcode::LOAD_RESOURCE:
 			gen_load_resource(instr);
 			break;
@@ -2656,6 +2684,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::GET_NODE:
 		case IROpcode::LOAD_RESOURCE:
 		case IROpcode::LOAD_RESOURCE_VAR:
+		case IROpcode::MAKE_CALLABLE:
 		case IROpcode::VCALL:
 		case IROpcode::VGET:
 		case IROpcode::VSET:

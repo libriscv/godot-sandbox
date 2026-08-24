@@ -37,9 +37,10 @@ public:
 
 	void call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const override;
 
-	void init(Sandbox *self, gaddr_t address, Array args) {
+	void init(Sandbox *self, gaddr_t address, Array args, bool variant_arguments = false) {
 		this->self = self;
 		this->address = address;
+		this->m_variant_arguments = variant_arguments;
 
 		for (int i = 0; i < args.size(); i++) {
 			m_varargs[i] = args[i];
@@ -51,6 +52,7 @@ public:
 private:
 	Sandbox *self = nullptr;
 	gaddr_t address = 0x0;
+	bool m_variant_arguments = false;
 
 	std::array<Variant, 8> m_varargs;
 	mutable std::array<const Variant *, 8> m_varargs_ptrs;

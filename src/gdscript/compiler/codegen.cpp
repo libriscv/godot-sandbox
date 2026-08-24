@@ -2,6 +2,7 @@
 #include "codegen.h"
 #include "syscall_numbers.h"
 #include "compiler_exception.h"
+#include <functional>
 #include <map>
 #include <stdexcept>
 #include <sstream>
@@ -273,10 +274,29 @@ IRProgram CodeGenerator::generate(const Program& program) {
 
 	m_globals_lowered = SIZE_MAX;
 
+	m_pending_lambdas.clear();
+	m_next_lambda = 0;
+
 	for (const auto& decl : program.functions) {
 		ir_program.signatures.push_back(build_signature(decl));
 		ir_program.functions.push_back(generate_function(decl));
 	}
+
+	// Queue grows while iterating (nested lambdas append).
+	for (size_t i = 0; i < m_pending_lambdas.size(); i++) {
+		const PendingLambda pending = m_pending_lambdas[i];
+		m_current_function = pending.lifted_name;
+
+		FunctionSignature signature;
+		signature.name = pending.lifted_name;
+		signature.line = pending.decl->line;
+		ir_program.signatures.push_back(std::move(signature));
+
+		IRFunction lifted = generate_lambda_function(*pending.decl, pending.captures);
+		lifted.name = pending.lifted_name;
+		ir_program.functions.push_back(std::move(lifted));
+	}
+	m_pending_lambdas.clear();
 
 	ir_program.string_constants = m_string_constants;
 	return ir_program;
@@ -1162,9 +1182,27 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 				" its characters");
 		}
 
-		// Dictionary: replaced by its keys array once before the loop.
+		// Untyped iterable: three-way branch per iteration (int / Array / VCALL).
+		const bool unknown_iterable = get_register_type(func, array_reg) == IRInstruction::TypeHint_NONE;
+		int is_int_reg = -1;
+		if (unknown_iterable) {
+			is_int_reg = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_int_reg),
+				IRValue::reg(array_reg), IRValue::imm(static_cast<int64_t>(Variant::INT)));
+			set_register_type(func, is_int_reg, Variant::BOOL);
+		}
+
+		// Dictionary → keys conversion (no-op on int/Array).
 		if (!packed_walk) {
 			gen_dictionary_keys_for_iteration(array_reg, func);
+		}
+
+		int is_array_reg = -1;
+		if (unknown_iterable) {
+			is_array_reg = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_array_reg),
+				IRValue::reg(array_reg), IRValue::imm(static_cast<int64_t>(Variant::ARRAY)));
+			set_register_type(func, is_array_reg, Variant::BOOL);
 		}
 
 		int index_reg = alloc_register(func);
@@ -1177,21 +1215,70 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		one_load.type_hint = Variant::INT;
 		set_register_type(func, one_reg, Variant::INT);
 
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
-		int size_reg = alloc_register(func);
-		if (packed_walk) {
+		auto emit_array_size = [&](int dest) {
+			IRInstruction size_syscall(IROpcode::CALL_SYSCALL);
+			size_syscall.operands.push_back(IRValue::reg(dest));
+			size_syscall.operands.push_back(IRValue::imm(ECALL_ARRAY_SIZE));
+			size_syscall.operands.push_back(IRValue::reg(array_reg));
+			func.ir.instructions.push_back(size_syscall);
+		};
+		auto emit_vcall_size = [&](int dest) {
 			IRInstruction size_call(IROpcode::VCALL);
-			size_call.operands.push_back(IRValue::reg(size_reg));
+			size_call.operands.push_back(IRValue::reg(dest));
 			size_call.operands.push_back(IRValue::reg(array_reg));
 			size_call.operands.push_back(IRValue::str("size"));
 			size_call.operands.push_back(IRValue::imm(0));
 			func.ir.instructions.push_back(size_call);
+		};
+		auto emit_array_at = [&](int dest) {
+			IRInstruction at_syscall(IROpcode::CALL_SYSCALL);
+			at_syscall.operands.push_back(IRValue::reg(dest));
+			at_syscall.operands.push_back(IRValue::imm(ECALL_ARRAY_AT));
+			at_syscall.operands.push_back(IRValue::reg(array_reg));
+			at_syscall.operands.push_back(IRValue::reg(index_reg));
+			func.ir.instructions.push_back(at_syscall);
+		};
+		auto emit_vcall_get = [&](int dest) {
+			IRInstruction at_call(IROpcode::VCALL);
+			at_call.operands.push_back(IRValue::reg(dest));
+			at_call.operands.push_back(IRValue::reg(array_reg));
+			at_call.operands.push_back(IRValue::str("get"));
+			at_call.operands.push_back(IRValue::imm(1));
+			at_call.operands.push_back(IRValue::reg(index_reg));
+			func.ir.instructions.push_back(at_call);
+		};
+
+		auto emit_three_way = [&](const char* what, int dest, int int_arm_source,
+			const std::function<void(int)>& array_arm, const std::function<void(int)>& generic_arm)
+		{
+			const std::string join_label = make_label(std::string("for_") + what + "_done");
+			const std::string not_int_label = make_label(std::string("for_") + what + "_not_int");
+			const std::string generic_label = make_label(std::string("for_") + what + "_generic");
+
+			emit_conditional_branch(IROpcode::BRANCH_ZERO, is_int_reg, not_int_label, func);
+			func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(dest),
+				IRValue::reg(int_arm_source));
+			func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(join_label));
+
+			func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(not_int_label));
+			emit_conditional_branch(IROpcode::BRANCH_ZERO, is_array_reg, generic_label, func);
+			array_arm(dest);
+			func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(join_label));
+
+			func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(generic_label));
+			generic_arm(dest);
+
+			func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(join_label));
+		};
+
+		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
+		int size_reg = alloc_register(func);
+		if (unknown_iterable) {
+			emit_three_way("size", size_reg, array_reg, emit_array_size, emit_vcall_size);
+		} else if (packed_walk) {
+			emit_vcall_size(size_reg);
 		} else {
-			IRInstruction size_syscall(IROpcode::CALL_SYSCALL);
-			size_syscall.operands.push_back(IRValue::reg(size_reg));
-			size_syscall.operands.push_back(IRValue::imm(ECALL_ARRAY_SIZE));
-			size_syscall.operands.push_back(IRValue::reg(array_reg));
-			func.ir.instructions.push_back(size_syscall);
+			emit_array_size(size_reg);
 		}
 		set_register_type(func, size_reg, Variant::INT);
 
@@ -1205,21 +1292,13 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		free_register(func, cond_reg);
 
 		int elem_reg = alloc_register(func);
-		if (packed_walk) {
-			IRInstruction at_call(IROpcode::VCALL);
-			at_call.operands.push_back(IRValue::reg(elem_reg));
-			at_call.operands.push_back(IRValue::reg(array_reg));
-			at_call.operands.push_back(IRValue::str("get"));
-			at_call.operands.push_back(IRValue::imm(1));
-			at_call.operands.push_back(IRValue::reg(index_reg));
-			func.ir.instructions.push_back(at_call);
+		if (unknown_iterable) {
+			emit_three_way("elem", elem_reg, index_reg, emit_array_at, emit_vcall_get);
+			set_register_type(func, elem_reg, IRInstruction::TypeHint_NONE);
+		} else if (packed_walk) {
+			emit_vcall_get(elem_reg);
 		} else {
-			IRInstruction at_syscall(IROpcode::CALL_SYSCALL);
-			at_syscall.operands.push_back(IRValue::reg(elem_reg));
-			at_syscall.operands.push_back(IRValue::imm(ECALL_ARRAY_AT));
-			at_syscall.operands.push_back(IRValue::reg(array_reg));
-			at_syscall.operands.push_back(IRValue::reg(index_reg));
-			func.ir.instructions.push_back(at_syscall);
+			emit_array_at(elem_reg);
 		}
 
 		declare_variable(func, stmt->variable, elem_reg, false, stmt);
@@ -1242,6 +1321,10 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
 		pop_scope(func);
 		func.loops.pop_back();
+		if (unknown_iterable) {
+			free_register(func, is_int_reg);
+			free_register(func, is_array_reg);
+		}
 		free_register(func, one_reg);
 		free_register(func, index_reg);
 		free_register(func, elem_reg);
@@ -1424,6 +1507,8 @@ int CodeGenerator::gen_expr(const Expr* expr, FunctionContext& func) {
 		return gen_array_literal(array_lit, func);
 	} else if (auto* dict_lit = dynamic_cast<const DictionaryLiteralExpr*>(expr)) {
 		return gen_dictionary_literal(dict_lit, func);
+	} else if (auto* lambda = dynamic_cast<const LambdaExpr*>(expr)) {
+		return gen_lambda(lambda, func);
 	} else {
 		// Every expression kind must be lowered above; a default register would silently mis-compile.
 		error_at("This kind of expression is not supported by the compiler yet", expr);
@@ -1795,8 +1880,374 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func)
 			: gen_int_immediate(constant->int_value, func);
 	}
 
+	// Script function used as a Callable value (e.g. `pressed.connect(f)`).
+	if (is_local_function(expr->name)) {
+		return gen_make_callable(expr->name, -1, func);
+	}
+
 	error_at("Undefined variable: " + expr->name, expr,
 		"Make sure '" + expr->name + "' is declared before use");
+}
+
+namespace {
+
+// Collects names free in a lambda body (reads without a matching declaration).
+// Nested lambdas open a new scope so a name free in the inner one propagates.
+class FreeNameCollector {
+public:
+	std::vector<std::string> names;
+	std::vector<std::string> callees;
+
+	void collect(const FunctionDecl& decl) {
+		enter(decl);
+		for (const auto& stmt : decl.body) {
+			visit(stmt.get());
+		}
+		m_scopes.pop_back();
+	}
+
+private:
+	std::vector<std::unordered_set<std::string>> m_scopes;
+
+	void enter(const FunctionDecl& decl) {
+		std::unordered_set<std::string> scope;
+		for (const auto& param : decl.parameters) {
+			scope.insert(param.name);
+		}
+		for (const auto& stmt : decl.body) {
+			declared(stmt.get(), scope);
+		}
+		m_scopes.push_back(std::move(scope));
+	}
+
+	bool bound(const std::string& name) const {
+		for (const auto& scope : m_scopes) {
+			if (scope.count(name)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	void use(const std::string& name, std::vector<std::string>& into) {
+		if (bound(name)) {
+			return;
+		}
+		for (const auto& seen : into) {
+			if (seen == name) {
+				return;
+			}
+		}
+		into.push_back(name);
+	}
+
+	static void declared(const Stmt* stmt, std::unordered_set<std::string>& scope) {
+		if (auto* var = dynamic_cast<const VarDeclStmt*>(stmt)) {
+			scope.insert(var->name);
+		} else if (auto* if_stmt = dynamic_cast<const IfStmt*>(stmt)) {
+			for (const auto& s : if_stmt->then_branch) declared(s.get(), scope);
+			for (const auto& s : if_stmt->else_branch) declared(s.get(), scope);
+		} else if (auto* while_stmt = dynamic_cast<const WhileStmt*>(stmt)) {
+			for (const auto& s : while_stmt->body) declared(s.get(), scope);
+		} else if (auto* for_stmt = dynamic_cast<const ForStmt*>(stmt)) {
+			scope.insert(for_stmt->variable);
+			for (const auto& s : for_stmt->body) declared(s.get(), scope);
+		} else if (auto* match_stmt = dynamic_cast<const MatchStmt*>(stmt)) {
+			for (const auto& branch : match_stmt->branches) {
+				for (const auto& pattern : branch.patterns) {
+					declared_in_pattern(*pattern, scope);
+				}
+				for (const auto& s : branch.body) declared(s.get(), scope);
+			}
+		}
+	}
+
+	static void declared_in_pattern(const MatchPattern& pattern, std::unordered_set<std::string>& scope) {
+		if (pattern.kind == MatchPattern::Kind::BIND) {
+			scope.insert(pattern.name);
+		}
+		for (const auto& element : pattern.elements) {
+			declared_in_pattern(*element, scope);
+		}
+		for (const auto& entry : pattern.entries) {
+			if (entry.value) {
+				declared_in_pattern(*entry.value, scope);
+			}
+		}
+	}
+
+	void visit(const Stmt* stmt) {
+		if (stmt == nullptr) {
+			return;
+		}
+		if (auto* expr_stmt = dynamic_cast<const ExprStmt*>(stmt)) {
+			visit(expr_stmt->expression.get());
+		} else if (auto* var = dynamic_cast<const VarDeclStmt*>(stmt)) {
+			visit(var->initializer.get());
+		} else if (auto* assign = dynamic_cast<const AssignStmt*>(stmt)) {
+			// Assignment target is a use: the lifted function needs a local for it.
+			if (!assign->name.empty()) {
+				use(assign->name, names);
+			}
+			visit(assign->target.get());
+			visit(assign->value.get());
+		} else if (auto* ret = dynamic_cast<const ReturnStmt*>(stmt)) {
+			visit(ret->value.get());
+		} else if (auto* if_stmt = dynamic_cast<const IfStmt*>(stmt)) {
+			visit(if_stmt->condition.get());
+			for (const auto& s : if_stmt->then_branch) visit(s.get());
+			for (const auto& s : if_stmt->else_branch) visit(s.get());
+		} else if (auto* while_stmt = dynamic_cast<const WhileStmt*>(stmt)) {
+			visit(while_stmt->condition.get());
+			for (const auto& s : while_stmt->body) visit(s.get());
+		} else if (auto* for_stmt = dynamic_cast<const ForStmt*>(stmt)) {
+			visit(for_stmt->iterable.get());
+			for (const auto& s : for_stmt->body) visit(s.get());
+		} else if (auto* match_stmt = dynamic_cast<const MatchStmt*>(stmt)) {
+			visit(match_stmt->subject.get());
+			for (const auto& branch : match_stmt->branches) {
+				for (const auto& pattern : branch.patterns) {
+					visit_pattern(*pattern);
+				}
+				visit(branch.guard.get());
+				for (const auto& s : branch.body) visit(s.get());
+			}
+		}
+	}
+
+	void visit_pattern(const MatchPattern& pattern) {
+		visit(pattern.value.get());
+		for (const auto& element : pattern.elements) {
+			visit_pattern(*element);
+		}
+		for (const auto& entry : pattern.entries) {
+			visit(entry.key.get());
+			if (entry.value) {
+				visit_pattern(*entry.value);
+			}
+		}
+	}
+
+	void visit(const Expr* expr) {
+		if (expr == nullptr) {
+			return;
+		}
+		if (auto* var = dynamic_cast<const VariableExpr*>(expr)) {
+			use(var->name, names);
+		} else if (auto* bin = dynamic_cast<const BinaryExpr*>(expr)) {
+			visit(bin->left.get());
+			visit(bin->right.get());
+		} else if (auto* un = dynamic_cast<const UnaryExpr*>(expr)) {
+			visit(un->operand.get());
+		} else if (auto* await_expr = dynamic_cast<const AwaitExpr*>(expr)) {
+			visit(await_expr->operand.get());
+		} else if (auto* ternary = dynamic_cast<const TernaryExpr*>(expr)) {
+			visit(ternary->condition.get());
+			visit(ternary->true_value.get());
+			visit(ternary->false_value.get());
+		} else if (auto* type_test = dynamic_cast<const TypeTestExpr*>(expr)) {
+			visit(type_test->value.get());
+		} else if (auto* class_cast = dynamic_cast<const ClassCastExpr*>(expr)) {
+			visit(class_cast->value.get());
+		} else if (auto* call = dynamic_cast<const CallExpr*>(expr)) {
+			use(call->function_name, callees);
+			for (const auto& arg : call->arguments) visit(arg.get());
+		} else if (auto* member = dynamic_cast<const MemberCallExpr*>(expr)) {
+			visit(member->object.get());
+			for (const auto& arg : member->arguments) visit(arg.get());
+		} else if (auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+			visit(index->object.get());
+			visit(index->index.get());
+		} else if (auto* array_lit = dynamic_cast<const ArrayLiteralExpr*>(expr)) {
+			for (const auto& element : array_lit->elements) visit(element.get());
+		} else if (auto* dict_lit = dynamic_cast<const DictionaryLiteralExpr*>(expr)) {
+			for (const auto& entry : dict_lit->elements) {
+				visit(entry.first.get());
+				visit(entry.second.get());
+			}
+		} else if (auto* lambda = dynamic_cast<const LambdaExpr*>(expr)) {
+			enter(*lambda->decl);
+			for (const auto& stmt : lambda->decl->body) {
+				visit(stmt.get());
+			}
+			m_scopes.pop_back();
+		}
+	}
+};
+
+} // namespace
+
+std::vector<std::string> CodeGenerator::collect_captures(const FunctionDecl& decl,
+		FunctionContext& enclosing) const {
+	FreeNameCollector collector;
+	collector.collect(decl);
+
+	std::vector<std::string> captures;
+	for (const auto& name : collector.names) {
+		// Only locals are captured; globals are read live via LOAD_GLOBAL.
+		if (const_cast<CodeGenerator*>(this)->find_variable(enclosing, name) != nullptr) {
+			captures.push_back(name);
+		}
+	}
+	for (const auto& name : collector.callees) {
+		// Script/global functions resolve by name; only capture unresolved callees.
+		if (is_local_function(name) || is_global_function(name)) {
+			continue;
+		}
+		if (const_cast<CodeGenerator*>(this)->find_variable(enclosing, name) == nullptr) {
+			continue;
+		}
+		if (std::find(captures.begin(), captures.end(), name) == captures.end()) {
+			captures.push_back(name);
+		}
+	}
+	return captures;
+}
+
+int CodeGenerator::gen_make_callable(const std::string& function_name, int bound_reg,
+		FunctionContext& func) {
+	int argument_reg = bound_reg;
+	if (argument_reg < 0) {
+		argument_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::LOAD_NIL, IRValue::reg(argument_reg));
+	}
+
+	int result_reg = alloc_register(func);
+	IRInstruction instr(IROpcode::MAKE_CALLABLE, IRValue::reg(result_reg),
+		IRValue::str(function_name), IRValue::reg(argument_reg));
+	instr.type_hint = Variant::CALLABLE;
+	func.ir.instructions.push_back(instr);
+	set_register_type(func, result_reg, Variant::CALLABLE);
+
+	if (bound_reg < 0) {
+		free_register(func, argument_reg);
+	}
+	return result_reg;
+}
+
+int CodeGenerator::gen_lambda(const LambdaExpr* expr, FunctionContext& func) {
+	const FunctionDecl& decl = *expr->decl;
+
+	const std::vector<std::string> captures = collect_captures(decl, func);
+
+	const size_t slots = decl.parameters.size() + (captures.empty() ? 0 : 1);
+	if (slots > IRFunction::MAX_PARAMETERS) {
+		error_at("This lambda needs " + std::to_string(slots) + " parameter slots, but at most " +
+			std::to_string(IRFunction::MAX_PARAMETERS) + " can be passed", expr,
+			captures.empty()
+				? "Pass the extra values in an Array or Dictionary instead"
+				: "It captures " + std::to_string(captures.size()) +
+					" name(s), which travel in one further slot");
+	}
+
+	std::string lifted_name = "@lambda_" + std::to_string(m_next_lambda++);
+	if (!decl.name.empty()) {
+		lifted_name += "_" + decl.name;
+	}
+
+	int bound_reg = -1;
+	if (!captures.empty()) {
+		std::vector<int> capture_regs;
+		for (const auto& name : captures) {
+			Variable* variable = find_variable(func, name);
+			capture_regs.push_back(variable->register_num);
+		}
+
+		bound_reg = alloc_register(func);
+		IRInstruction make_array(IROpcode::MAKE_ARRAY, IRValue::reg(bound_reg),
+			IRValue::imm(static_cast<int64_t>(capture_regs.size())));
+		for (int reg : capture_regs) {
+			make_array.operands.push_back(IRValue::reg(reg));
+		}
+		make_array.type_hint = Variant::ARRAY;
+		func.ir.instructions.push_back(make_array);
+		set_register_type(func, bound_reg, Variant::ARRAY);
+	}
+
+	m_pending_lambdas.push_back({ &decl, lifted_name, captures });
+
+	int result_reg = gen_make_callable(lifted_name, bound_reg, func);
+	if (bound_reg >= 0) {
+		free_register(func, bound_reg);
+	}
+	return result_reg;
+}
+
+IRFunction CodeGenerator::generate_lambda_function(const FunctionDecl& decl,
+		const std::vector<std::string>& captures) {
+	FunctionContext func;
+	func.ir.name = decl.name.empty() ? std::string("lambda") : decl.name;
+	func.ir.is_coroutine = decl.is_coroutine;
+	func.return_type = decl.return_type;
+
+	push_scope(func);
+
+	// Captures Array prepended by the host, followed by declared parameters.
+	int captures_reg = -1;
+	if (!captures.empty()) {
+		captures_reg = alloc_register(func);
+		func.ir.parameters.push_back("@captures");
+		set_register_type(func, captures_reg, Variant::ARRAY);
+	}
+
+	for (const auto& param : decl.parameters) {
+		func.ir.parameters.push_back(param.name);
+		int reg = alloc_register(func);
+		declare_variable(func, param.name, reg);
+		apply_declared_type(reg, param.type_hint, func);
+	}
+
+	for (size_t i = 0; i < captures.size(); i++) {
+		int index_reg = gen_int_immediate(static_cast<int64_t>(i), func);
+		int value_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::ARRAY_GET, IRValue::reg(value_reg),
+			IRValue::reg(captures_reg), IRValue::reg(index_reg));
+		free_register(func, index_reg);
+		declare_variable(func, captures[i], value_reg);
+	}
+
+	for (const auto& stmt : decl.body) {
+		gen_stmt(stmt.get(), func);
+	}
+
+	if (func.ir.instructions.empty() ||
+	    func.ir.instructions.back().opcode != IROpcode::RETURN) {
+		func.ir.instructions.emplace_back(IROpcode::LOAD_NIL, IRValue::reg(0));
+		func.ir.instructions.emplace_back(IROpcode::RETURN);
+	}
+
+	func.ir.max_registers = std::max(func.next_register, 1);
+	pop_scope(func);
+
+	return std::move(func.ir);
+}
+
+// `c(args)` on a variable: lowers to `c.call(args)`.
+int CodeGenerator::gen_callable_variable_call(const CallExpr* expr, int callable_reg,
+		std::vector<int>& arg_regs, FunctionContext& func) {
+	const IRInstruction::TypeHint type = get_register_type(func, callable_reg);
+	if (type != IRInstruction::TypeHint_NONE && type != Variant::CALLABLE) {
+		error_at("'" + expr->function_name + "' holds " +
+			std::string(variant_type_name(type)) + ", which cannot be called", expr,
+			"Only a Callable can be called through a variable");
+	}
+
+	int result_reg = alloc_register(func);
+	IRInstruction vcall(IROpcode::VCALL);
+	vcall.operands.push_back(IRValue::reg(result_reg));
+	vcall.operands.push_back(IRValue::reg(callable_reg));
+	vcall.operands.push_back(IRValue::str("call"));
+	vcall.operands.push_back(IRValue::imm(static_cast<int64_t>(arg_regs.size())));
+	for (int arg_reg : arg_regs) {
+		vcall.operands.push_back(IRValue::reg(arg_reg));
+	}
+	func.ir.instructions.push_back(vcall);
+
+	free_register(func, callable_reg);
+	for (int reg : arg_regs) {
+		free_register(func, reg);
+	}
+	return result_reg;
 }
 
 int CodeGenerator::gen_logical(const BinaryExpr* expr, FunctionContext& func) {
@@ -2483,6 +2934,16 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 			free_register(func, reg);
 		}
 		return result;
+	}
+
+	// Callable variable call (after script functions and @GlobalScope).
+	if (find_variable(func, expr->function_name) != nullptr ||
+	    is_global_variable(expr->function_name)) {
+		VariableExpr name_expr(expr->function_name);
+		name_expr.line = expr->line;
+		name_expr.column = expr->column;
+		int callable_reg = gen_variable(&name_expr, func);
+		return gen_callable_variable_call(expr, callable_reg, arg_regs, func);
 	}
 
 	// Refuse unimplemented globals; the self-call fallback would be silently dropped.

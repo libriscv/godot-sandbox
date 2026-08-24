@@ -2703,9 +2703,10 @@ APICALL(api_timer_stop) {
 }
 
 APICALL(api_callable_create) {
-	auto [address, vargs] = machine.sysargs<gaddr_t, GuestVariant *>();
+	auto [address, vargs, reserved, flags] = machine.sysargs<gaddr_t, GuestVariant *, gaddr_t, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
 	SYS_TRACE("callable_create", address, vargs);
+	(void)reserved;
 
 	// Create a new callable object, using emu.vmcallable_address() to get the callable function.
 	Array arguments;
@@ -2713,7 +2714,10 @@ APICALL(api_callable_create) {
 		// The argument idx is a Variant of another type.
 		arguments.push_back(vargs->toVariant(emu));
 	}
-	Callable callable = emu.vmcallable_address(address, std::move(arguments));
+	RiscvCallable *custom = memnew(RiscvCallable);
+	custom->init(&emu, address, std::move(arguments),
+			(flags & ECALL_CALLABLE_VARIANT_ARGS) != 0);
+	Callable callable(custom);
 
 	// Return the callable object to the guest.
 	auto idx = emu.create_scoped_variant(Variant(std::move(callable)));

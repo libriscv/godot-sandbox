@@ -158,6 +158,9 @@ IR_OPCODE(GET_NODE,        "GET_NODE",        SIG(DST, STR),                IR_S
 // characters in the instruction and costs no String Variant, while a path
 // computed at run time is a Variant already and is handed over as one
 // (ECALL_LOAD_PATH_IS_VARIANT).
+// ECALL_CALLABLE_CREATE over STR function address; SRC is the bound Array (or NIL).
+IR_OPCODE(MAKE_CALLABLE,   "MAKE_CALLABLE",   SIG(DST, STR, SRC),           IR_SIDE_EFFECTS | IR_CALL)
+
 IR_OPCODE(LOAD_RESOURCE,     "LOAD_RESOURCE",     SIG(DST, STR),            IR_SIDE_EFFECTS | IR_CALL)
 IR_OPCODE(LOAD_RESOURCE_VAR, "LOAD_RESOURCE_VAR", SIG(DST, SRC),            IR_SIDE_EFFECTS | IR_CALL)
 IR_OPCODE(RETURN,          "RETURN",          SIG(),                        IR_SIDE_EFFECTS | IR_TERMINATOR)

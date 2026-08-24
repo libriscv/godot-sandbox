@@ -654,6 +654,11 @@ void SafeGDScript::update_methods_info() {
 	}
 
 	for (const String &func_name : info.functions) {
+		// Lifted lambdas (`@lambda_N`) are internal, not script methods.
+		if (func_name.begins_with("@")) {
+			continue;
+		}
+
 		MethodInfo method(func_name);
 		method.return_val.usage = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NIL_IS_VARIANT;
 

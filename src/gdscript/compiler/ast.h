@@ -8,6 +8,7 @@ namespace gdscript {
 
 struct Expr;
 struct Stmt;
+struct FunctionDecl;
 
 using ExprPtr = std::unique_ptr<Expr>;
 using StmtPtr = std::unique_ptr<Stmt>;
@@ -64,6 +65,15 @@ struct AwaitExpr : Expr {
 	ExprPtr operand;
 
 	explicit AwaitExpr(ExprPtr e) : operand(std::move(e)) {}
+};
+
+// Forward-declared: FunctionDecl is only complete further down this file.
+struct LambdaExpr : Expr {
+	std::unique_ptr<FunctionDecl> decl;
+	std::string lifted_name;
+
+	explicit LambdaExpr(std::unique_ptr<FunctionDecl> d) : decl(std::move(d)) {}
+	~LambdaExpr();
 };
 
 struct UnaryExpr : Expr {
@@ -315,6 +325,8 @@ struct FunctionDecl {
 	// Has AWAIT; gets a resume entry and returns an awaitable.
 	bool is_coroutine = false;
 };
+
+inline LambdaExpr::~LambdaExpr() = default;
 
 // Sugar for a Dictionary with a fixed key set; nothing survives into IR.
 struct StructField {

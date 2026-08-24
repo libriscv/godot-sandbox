@@ -121,6 +121,7 @@ if (BUILD_TESTING)
 	add_gdscript_test(test_lvalues tests/test_lvalues.cpp)
 	add_gdscript_test(test_constructors tests/test_constructors.cpp)
 	add_gdscript_test(test_syntax tests/test_syntax.cpp)
+	add_gdscript_test(test_inline_suites tests/test_inline_suites.cpp)
 	add_gdscript_test(test_signatures tests/test_signatures.cpp)
 	add_gdscript_test(test_line_table tests/test_line_table.cpp)
 	add_gdscript_test(test_diagnostics tests/test_diagnostics.cpp)
@@ -172,6 +173,13 @@ if (BUILD_TESTING)
 		add_executable(test_await tests/test_await.cpp)
 		target_link_libraries(test_await gdscript_compiler riscv)
 		add_test(NAME test_await COMMAND test_await)
+
+		# A Callable is the same kind of fact: the capture contract is that the
+		# host prepends what ECALL_CALLABLE_CREATE was given, which only a run
+		# against a host answering that syscall can pin down.
+		add_executable(test_callables tests/test_callables.cpp)
+		target_link_libraries(test_callables gdscript_compiler riscv)
+		add_test(NAME test_callables COMMAND test_callables)
 	else()
 		message(STATUS "libriscv not found: skipping the differential test")
 	endif()

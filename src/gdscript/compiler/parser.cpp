@@ -140,12 +140,11 @@ FunctionDecl Parser::parse_function() {
 	func.return_type = parse_return_type();
 
 	consume(TokenType::COLON, "Expected ':' after function signature");
-	consume(TokenType::NEWLINE, "Expected newline after function signature");
 
 	// Track `await` during body parse to set is_coroutine.
 	const bool enclosing_saw_await = m_saw_await;
 	m_saw_await = false;
-	func.body = parse_block();
+	func.body = parse_suite();
 	func.is_coroutine = m_saw_await;
 	m_saw_await = enclosing_saw_await;
 
@@ -337,6 +336,47 @@ std::vector<StmtPtr> Parser::parse_block() {
 	return statements;
 }
 
+std::vector<StmtPtr> Parser::parse_suite() {
+	if (check(TokenType::NEWLINE)) {
+		advance();
+		return parse_block();
+	}
+	return parse_inline_suite();
+}
+
+std::vector<StmtPtr> Parser::parse_inline_suite() {
+	std::vector<StmtPtr> statements;
+
+	m_inline_suite_depth++;
+	do {
+		if (at_inline_suite_end()) {
+			break;
+		}
+		statements.push_back(parse_statement());
+	} while (previous().type == TokenType::SEMICOLON);
+	m_inline_suite_depth--;
+
+	if (statements.empty()) {
+		error("Expected a statement after ':'");
+	}
+	return statements;
+}
+
+bool Parser::at_inline_suite_end() const {
+	switch (peek().type) {
+		case TokenType::NEWLINE:
+		case TokenType::DEDENT:
+		case TokenType::RPAREN:
+		case TokenType::RBRACKET:
+		case TokenType::RBRACE:
+		case TokenType::COMMA:
+		case TokenType::EOF_TOKEN:
+			return true;
+		default:
+			return false;
+	}
+}
+
 StmtPtr Parser::parse_statement() {
 	// Central source-position assignment; adding a statement kind cannot forget.
 	const Token start = peek();
@@ -415,9 +455,8 @@ StmtPtr Parser::parse_var_decl(bool is_const) {
 StmtPtr Parser::parse_if_stmt() {
 	ExprPtr condition = parse_expression();
 	consume(TokenType::COLON, "Expected ':' after if condition");
-	consume(TokenType::NEWLINE, "Expected newline after ':'");
 
-	std::vector<StmtPtr> then_branch = parse_block();
+	std::vector<StmtPtr> then_branch = parse_suite();
 	std::vector<StmtPtr> else_branch;
 
 	skip_newlines();
@@ -427,8 +466,7 @@ StmtPtr Parser::parse_if_stmt() {
 		else_branch.push_back(std::move(elif_stmt));
 	} else if (match(TokenType::ELSE)) {
 		consume(TokenType::COLON, "Expected ':' after else");
-		consume(TokenType::NEWLINE, "Expected newline after ':'");
-		else_branch = parse_block();
+		else_branch = parse_suite();
 	}
 
 	return std::make_unique<IfStmt>(std::move(condition), std::move(then_branch), std::move(else_branch));
@@ -437,9 +475,8 @@ StmtPtr Parser::parse_if_stmt() {
 StmtPtr Parser::parse_while_stmt() {
 	ExprPtr condition = parse_expression();
 	consume(TokenType::COLON, "Expected ':' after while condition");
-	consume(TokenType::NEWLINE, "Expected newline after ':'");
 
-	std::vector<StmtPtr> body = parse_block();
+	std::vector<StmtPtr> body = parse_suite();
 
 	return std::make_unique<WhileStmt>(std::move(condition), std::move(body));
 }
@@ -451,9 +488,8 @@ StmtPtr Parser::parse_for_stmt() {
 	consume(TokenType::IN, "Expected 'in' after for loop variable");
 	ExprPtr iterable = parse_expression();
 	consume(TokenType::COLON, "Expected ':' after for loop iterable");
-	consume(TokenType::NEWLINE, "Expected newline after ':'");
 
-	std::vector<StmtPtr> body = parse_block();
+	std::vector<StmtPtr> body = parse_suite();
 
 	return std::make_unique<ForStmt>(var_name.lexeme, std::move(iterable), std::move(body));
 }
@@ -501,8 +537,7 @@ StmtPtr Parser::parse_match_stmt(bool is_switch) {
 		}
 
 		consume(TokenType::COLON, "Expected ':' after " + kw + " pattern");
-		consume(TokenType::NEWLINE, "Expected newline after ':'");
-		branch.body = parse_block();
+		branch.body = parse_suite();
 
 		branches.push_back(std::move(branch));
 	}
@@ -1089,7 +1124,38 @@ ExprPtr Parser::parse_node_path() {
 	return call;
 }
 
+ExprPtr Parser::parse_lambda() {
+	const Token func_token = consume(TokenType::FUNC, "Expected 'func'");
+
+	auto decl = std::make_unique<FunctionDecl>();
+	decl->line = func_token.line;
+	decl->column = func_token.column;
+	if (check(TokenType::IDENTIFIER)) {
+		decl->name = advance().lexeme;
+	}
+
+	consume(TokenType::LPAREN, "Expected '(' after 'func' in a lambda");
+	decl->parameters = parse_parameters();
+	consume(TokenType::RPAREN, "Expected ')' after lambda parameters");
+
+	decl->return_type = parse_return_type();
+	consume(TokenType::COLON, "Expected ':' after lambda signature");
+
+	// Scope await tracking to the lambda body.
+	const bool enclosing_saw_await = m_saw_await;
+	m_saw_await = false;
+	decl->body = parse_suite();
+	decl->is_coroutine = m_saw_await;
+	m_saw_await = enclosing_saw_await;
+
+	return make_at<LambdaExpr>(func_token, std::move(decl));
+}
+
 ExprPtr Parser::parse_primary() {
+	if (check(TokenType::FUNC)) {
+		return parse_lambda();
+	}
+
 	if (match(TokenType::TRUE)) {
 		return make_at<LiteralExpr>(previous(), true);
 	}
@@ -1280,6 +1346,12 @@ void Parser::skip_newlines() {
 
 void Parser::consume_statement_end(const std::string& message) {
 	if (match(TokenType::SEMICOLON)) {
+		return;
+	}
+	if (m_inline_suite_depth > 0 && at_inline_suite_end()) {
+		return;
+	}
+	if (previous().type == TokenType::DEDENT) {
 		return;
 	}
 	consume(TokenType::NEWLINE, message);
