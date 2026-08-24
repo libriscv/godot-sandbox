@@ -34,6 +34,20 @@ inline Variant gdscript_signatures_to_variant() {
 	return PackedByteArray(gdscript::encode_function_signatures(gdscript_last_signatures()));
 }
 
+// Declared signals. Encoded as FunctionSignatures in a separate blob.
+inline std::vector<gdscript::FunctionSignature> &gdscript_last_signals() {
+	static std::vector<gdscript::FunctionSignature> signals;
+	return signals;
+}
+
+inline void gdscript_remember_signals(const gdscript::Compiler &compiler) {
+	gdscript_last_signals() = compiler.get_signal_signatures();
+}
+
+inline Variant gdscript_signals_to_variant() {
+	return PackedByteArray(gdscript::encode_function_signatures(gdscript_last_signals()));
+}
+
 // Address-to-line table. Metadata only; every compile produces one.
 inline gdscript::LineTable &gdscript_last_line_table() {
 	static gdscript::LineTable table;

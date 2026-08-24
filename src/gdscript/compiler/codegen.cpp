@@ -99,10 +99,21 @@ CodeGenerator::CodeGenerator() {}
 IRProgram CodeGenerator::generate(const Program& program) {
 	IRProgram ir_program;
 
+	// Signals are members; collected first so name collisions are caught below.
+	m_signals.clear();
+	for (const auto& decl : program.signals) {
+		if (m_signals.count(decl.name)) {
+			error_at("Signal '" + decl.name + "' is declared more than once",
+				decl.line, decl.column);
+		}
+		m_signals[decl.name] = &decl;
+	}
+
 	// Collect local function names and signatures for default-argument filling at call sites.
 	m_local_functions.clear();
 	m_local_signatures.clear();
 	for (const auto& func : program.functions) {
+		reject_signal_collision("Function", func.name, func.line, func.column);
 		m_local_functions.insert(func.name);
 		m_local_signatures[func.name] = &func;
 	}
@@ -124,6 +135,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			error_at("Struct '" + decl.name + "' has the name of a function in this script",
 				decl.line, decl.column);
 		}
+		reject_signal_collision("Struct", decl.name, decl.line, decl.column);
 		m_structs[decl.name] = &decl;
 	}
 
@@ -136,11 +148,13 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				error_at("Enum '" + decl.name + "' has a name that is already taken",
 					decl.line, decl.column);
 			}
+			reject_signal_collision("Enum", decl.name, decl.line, decl.column);
 			m_enums[decl.name] = &decl;
 		}
 		for (const auto& member : decl.members) {
 			// Unnamed members are file-scope; named members only reachable through the enum.
 			if (decl.name.empty()) {
+				reject_signal_collision("Enum member", member.name, member.line, member.column);
 				auto existing = m_enum_members.find(member.name);
 				if (existing != m_enum_members.end() && existing->second != member.value) {
 					error_at("Enum member '" + member.name + "' is declared more than once"
@@ -149,6 +163,11 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				m_enum_members[member.name] = member.value;
 			}
 		}
+	}
+
+	// After structs, so a struct parameter type resolves to Dictionary.
+	for (const auto& decl : program.signals) {
+		ir_program.signals.push_back(build_signal_signature(decl));
 	}
 
 	// Constants fold into InitType; everything else evaluates in global_init.
@@ -172,6 +191,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				global.line, global.column,
 				"'" + global.name + "' would no longer name the struct in this script");
 		}
+		reject_signal_collision("Variable", global.name, global.line, global.column);
 		m_global_variables[global.name] = i;
 		if (global.is_const) {
 			m_global_consts.insert(global.name);
@@ -524,6 +544,10 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 			func.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL, IRValue::imm(global_idx), IRValue::reg(value_reg));
 			free_register(func, value_reg);
 			return;
+		}
+		if (find_signal(name) != nullptr) {
+			error_at("Cannot assign to signal '" + name + "'", site,
+				"A signal is emitted with '" + name + ".emit(...)', not assigned to");
 		}
 		error_at("Undefined variable: " + name, site,
 			"Declare it with 'var " + name + " = ...' before assigning to it");
@@ -1967,6 +1991,11 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func)
 		return new_reg;
 	}
 
+	// Declared signal; locals shadow it (checked above).
+	if (find_signal(expr->name) != nullptr) {
+		return gen_signal_value(expr->name, func, expr);
+	}
+
 	// Unnamed enum member: compile-time integer. Local of same name shadows above.
 	if (auto member = m_enum_members.find(expr->name); member != m_enum_members.end()) {
 		return gen_int_immediate(member->second, func);
@@ -3086,6 +3115,12 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 		return gen_callable_variable_call(expr, callable_reg, arg_regs, func);
 	}
 
+	// A signal is not callable; the self-call fallback would be silently dropped.
+	if (find_signal(expr->function_name) != nullptr) {
+		error_at("'" + expr->function_name + "' is a signal, which cannot be called", expr,
+			"Emit it with '" + expr->function_name + ".emit(...)'");
+	}
+
 	// Refuse unimplemented globals; the self-call fallback would be silently dropped.
 	if (const char* reason = unimplemented_global_reason(expr->function_name)) {
 		error_at("'" + expr->function_name + "' is not supported: " + reason, expr,
@@ -3152,6 +3187,15 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 	}
 
 	reject_named_arguments(*expr, "'" + expr->member_name + "'", expr);
+
+	if (expr->is_method_call) {
+		if (const char* owner_method = signal_owner_method(expr->member_name)) {
+			const std::string signal_name = signal_name_of(expr->object.get(), func);
+			if (!signal_name.empty()) {
+				return gen_signal_owner_call(signal_name, owner_method, expr, func);
+			}
+		}
+	}
 
 	int obj_reg = gen_expr(expr->object.get(), func);
 
@@ -3446,6 +3490,132 @@ void CodeGenerator::set_register_struct(FunctionContext& func, int reg, const St
 const StructDecl* CodeGenerator::get_register_struct(const FunctionContext& func, int reg) const {
 	auto it = func.register_structs.find(reg);
 	return it == func.register_structs.end() ? nullptr : it->second;
+}
+
+const SignalDecl* CodeGenerator::find_signal(const std::string& name) const {
+	auto it = m_signals.find(name);
+	return it == m_signals.end() ? nullptr : it->second;
+}
+
+void CodeGenerator::reject_signal_collision(const std::string& what, const std::string& name,
+	int line, int column) const
+{
+	if (m_signals.count(name) == 0) {
+		return;
+	}
+	error_at(what + " '" + name + "' has the same name as a signal in this script", line, column,
+		"'" + name + "' already names the signal declared in this script");
+}
+
+// All parameters required; an emitter supplies every argument.
+FunctionSignature CodeGenerator::build_signal_signature(const SignalDecl& decl) const {
+	FunctionSignature sig;
+	sig.name = decl.name;
+	sig.line = decl.line;
+	sig.description = decl.doc_comment;
+	sig.return_type = int32_t(FunctionParameter::ANY_TYPE);
+
+	for (const Parameter& param : decl.parameters) {
+		FunctionParameter out;
+		out.name = param.name;
+		out.type = find_struct(param.type_hint) != nullptr
+			? int32_t(Variant::DICTIONARY)
+			: int32_t(type_hint_from_string(param.type_hint));
+		sig.parameters.push_back(std::move(out));
+	}
+
+	sig.required_arguments = sig.parameters.size();
+	return sig;
+}
+
+// Lowers to self.get(name), for the uses that need the Signal itself: await, or
+// passing it on. One scoped variant per use.
+int CodeGenerator::gen_signal_value(const std::string& name, FunctionContext& func,
+	const Expr* site)
+{
+	int self_reg = gen_get_node(".", func);
+	int result_reg = gen_member_read(self_reg, name, func, site);
+	free_register(func, self_reg);
+	set_register_type(func, result_reg, Variant::SIGNAL);
+	return result_reg;
+}
+
+// `sig` and `self.sig`, where sig is a declared signal that no local shadows.
+std::string CodeGenerator::signal_name_of(const Expr* expr, FunctionContext& func) {
+	if (auto* var = dynamic_cast<const VariableExpr*>(expr)) {
+		if (find_variable(func, var->name) == nullptr && find_signal(var->name) != nullptr) {
+			return var->name;
+		}
+		return {};
+	}
+	if (auto* member = dynamic_cast<const MemberCallExpr*>(expr)) {
+		auto* object = dynamic_cast<const VariableExpr*>(member->object.get());
+		if (!member->is_method_call && member->arguments.empty() &&
+			object != nullptr && object->name == "self" &&
+			find_variable(func, object->name) == nullptr &&
+			find_signal(member->member_name) != nullptr)
+		{
+			return member->member_name;
+		}
+	}
+	return {};
+}
+
+// The Object equivalent, taking the signal name first and the same arguments after.
+const char* CodeGenerator::signal_owner_method(const std::string& member) {
+	if (member == "emit") return "emit_signal";
+	if (member == "connect") return "connect";
+	if (member == "disconnect") return "disconnect";
+	if (member == "is_connected") return "is_connected";
+	return nullptr;
+}
+
+// sig.emit(a) becomes self.emit_signal("sig", a). Variant::SIGNAL is not inlined into
+// a GuestVariant, so a materialised Signal costs a scoped variant, capped per call at
+// Sandbox::MAX_REFS and never recycled; the read is a host call, so nothing hoists it
+// out of a loop. Also moves the restriction check from is_allowed_property on each
+// signal name to is_allowed_method on emit_signal/connect.
+int CodeGenerator::gen_signal_owner_call(const std::string& signal_name,
+	const char* owner_method, const MemberCallExpr* expr, FunctionContext& func)
+{
+	int self_reg = gen_get_node(".", func);
+
+	int name_reg = alloc_register(func);
+	IRInstruction load_name(IROpcode::LOAD_STRING, IRValue::reg(name_reg),
+		IRValue::imm(add_string_constant(signal_name)));
+	load_name.type_hint = Variant::STRING;
+	func.ir.instructions.push_back(load_name);
+	set_register_type(func, name_reg, Variant::STRING);
+
+	std::vector<int> arg_regs{ name_reg };
+	for (const auto& arg : expr->arguments) {
+		arg_regs.push_back(gen_expr(arg.get(), func));
+	}
+
+	int result_reg = alloc_register(func);
+	IRInstruction vcall(IROpcode::VCALL);
+	vcall.operands.push_back(IRValue::reg(result_reg));
+	vcall.operands.push_back(IRValue::reg(self_reg));
+	vcall.operands.push_back(IRValue::str(owner_method));
+	vcall.operands.push_back(IRValue::imm(int64_t(arg_regs.size())));
+	for (int reg : arg_regs) {
+		vcall.operands.push_back(IRValue::reg(reg));
+	}
+	func.ir.instructions.push_back(vcall);
+
+	free_register(func, self_reg);
+	for (int reg : arg_regs) {
+		free_register(func, reg);
+	}
+
+	// Signal.emit() answers null; Object.emit_signal() answers an error code.
+	if (owner_method == std::string_view("emit_signal")) {
+		IRInstruction nil(IROpcode::LOAD_NIL, IRValue::reg(result_reg));
+		nil.type_hint = Variant::NIL;
+		func.ir.instructions.push_back(nil);
+		set_register_type(func, result_reg, Variant::NIL);
+	}
+	return result_reg;
 }
 
 FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const {

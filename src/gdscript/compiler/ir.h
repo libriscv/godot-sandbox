@@ -247,6 +247,8 @@ struct IRProgram {
 	// One entry per function, same order.
 	std::vector<FunctionSignature> signatures;
 
+	std::vector<FunctionSignature> signals;
+
 	// Evaluates non-constant global initializers at startup, before @export registration.
 	IRFunction global_init;
 	bool has_global_init = false;

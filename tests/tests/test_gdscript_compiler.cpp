@@ -44,6 +44,7 @@ PUBLIC Variant compile(String code)
 	auto elf_data = compiler.compile(code.utf8(), options);
 	// ELF carries symbols but not signatures, line tables, or breakpoint info.
 	gdscript_remember_signatures(compiler);
+	gdscript_remember_signals(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 
@@ -73,6 +74,7 @@ PUBLIC Variant compile_profiled(String code)
 	Compiler compiler;
 	auto elf_data = compiler.compile(code.utf8(), options);
 	gdscript_remember_signatures(compiler);
+	gdscript_remember_signals(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 
@@ -101,6 +103,7 @@ PUBLIC Variant compile_debug(String code, PackedInt32Array breakpoints)
 	Compiler compiler;
 	auto elf_data = compiler.compile(code.utf8(), options);
 	gdscript_remember_signatures(compiler);
+	gdscript_remember_signals(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 
@@ -153,6 +156,11 @@ PUBLIC Variant get_compiler_error()
 PUBLIC Variant get_function_signatures()
 {
 	return gdscript_signatures_to_variant();
+}
+
+PUBLIC Variant get_signal_signatures()
+{
+	return gdscript_signals_to_variant();
 }
 
 // Address-to-line table. Metadata (no code cost); every compile publishes one.

@@ -49,6 +49,7 @@ public:
 	const CompilerError &get_error_info() const { return m_error_info; }
 	// Populated by every compile that reaches codegen, including output_elf=false.
 	const std::vector<FunctionSignature> &get_function_signatures() const { return m_signatures; }
+	const std::vector<FunctionSignature> &get_signal_signatures() const { return m_signals; }
 	const LineTable &get_line_table() const { return m_line_table; }
 	// Subset of breakpoint_lines that got a stop emitted.
 	const std::vector<uint32_t> &get_installed_breakpoints() const { return m_installed_breakpoints; }
@@ -57,6 +58,7 @@ private:
 	std::string m_error;
 	CompilerError m_error_info;
 	std::vector<FunctionSignature> m_signatures;
+	std::vector<FunctionSignature> m_signals;
 	LineTable m_line_table;
 	std::vector<uint32_t> m_installed_breakpoints;
 };

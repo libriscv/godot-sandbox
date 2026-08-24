@@ -230,9 +230,20 @@ private:
 	void reject_named_arguments(const NamedArguments& names, const std::string& what,
 		const Expr* site) const;
 
+	const SignalDecl* find_signal(const std::string& name) const;
+	int gen_signal_value(const std::string& name, FunctionContext& func, const Expr* site);
+	std::string signal_name_of(const Expr* expr, FunctionContext& func);
+	static const char* signal_owner_method(const std::string& member);
+	int gen_signal_owner_call(const std::string& signal_name, const char* owner_method,
+		const MemberCallExpr* expr, FunctionContext& func);
+	FunctionSignature build_signal_signature(const SignalDecl& decl) const;
+	void reject_signal_collision(const std::string& what, const std::string& name,
+		int line, int column) const;
+
 	std::unordered_map<std::string, const StructDecl*> m_structs;
 	std::unordered_map<std::string, const EnumDecl*> m_enums;
 	std::unordered_map<std::string, int64_t> m_enum_members;
+	std::unordered_map<std::string, const SignalDecl*> m_signals;
 
 	// Recursion guard for struct defaults that contain themselves.
 	std::vector<const StructDecl*> m_struct_default_stack;

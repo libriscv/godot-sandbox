@@ -55,7 +55,7 @@ Program Parser::parse() {
 			}
 			skip_newlines();
 		} else if (check(TokenType::SIGNAL)) {
-			parse_signal();
+			program.signals.push_back(parse_signal());
 		} else if (check(TokenType::AT)) {
 			// Stacked attributes: `@export_range(0, 10) @tool var x`.
 			bool is_export = false;
@@ -289,6 +289,8 @@ std::vector<Parameter> Parser::parse_parameters() {
 		Token param_name = consume(TokenType::IDENTIFIER, "Expected parameter name");
 		Parameter param;
 		param.name = param_name.lexeme;
+		param.line = param_name.line;
+		param.column = param_name.column;
 
 		param.type_hint = parse_type_hint();
 
@@ -552,6 +554,8 @@ void Parser::parse_one_property_accessor(VarDeclStmt& decl) {
 				"Expected the assigned value's name in 'set(...)'");
 			Parameter parameter;
 			parameter.name = param.lexeme;
+			parameter.line = param.line;
+			parameter.column = param.column;
 			parameter.type_hint = parse_type_hint();
 			body->parameters.push_back(std::move(parameter));
 		}
@@ -1489,6 +1493,10 @@ void Parser::error(const std::string& message) {
 	throw CompilerException(ErrorType::PARSER_ERROR, message, token.line, token.column);
 }
 
+void Parser::error(const std::string& message, int line, int column) {
+	throw CompilerException(ErrorType::PARSER_ERROR, message, line, column);
+}
+
 void Parser::skip_newlines() {
 	while (match(TokenType::NEWLINE) || match(TokenType::SEMICOLON)) {
 		// Skip
@@ -1619,12 +1627,28 @@ void Parser::skip_attribute_arguments() {
 	}
 }
 
-// Signal declaration: parsed and dropped. Sandbox publishes functions, not signals.
-void Parser::parse_signal() {
-	consume(TokenType::SIGNAL, "Expected 'signal'");
-	consume(TokenType::IDENTIFIER, "Expected a signal name after 'signal'");
-	skip_attribute_arguments();
+SignalDecl Parser::parse_signal() {
+	SignalDecl decl;
+	const Token signal_token = consume(TokenType::SIGNAL, "Expected 'signal'");
+	decl.line = signal_token.line;
+	decl.column = signal_token.column;
+	decl.doc_comment = doc_comment_above(signal_token.line);
+
+	const Token name = consume(TokenType::IDENTIFIER, "Expected a signal name after 'signal'");
+	decl.name = name.lexeme;
+
+	if (match(TokenType::LPAREN)) {
+		decl.parameters = parse_parameters();
+		consume(TokenType::RPAREN, "Expected ')' after the signal parameters");
+		for (const Parameter& param : decl.parameters) {
+			if (param.default_value) {
+				error("Signal parameters cannot have a default value", param.line, param.column);
+			}
+		}
+	}
+
 	consume_statement_end("Expected newline after signal declaration");
+	return decl;
 }
 
 } // namespace gdscript

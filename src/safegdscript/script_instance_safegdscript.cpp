@@ -11,6 +11,7 @@
 #include "script_language_safegdscript.h"
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/templates/local_vector.hpp>
+#include <godot_cpp/variant/signal.hpp>
 static constexpr bool VERBOSE_LOGGING = false;
 
 bool SafeGDScriptInstance::set(const StringName &p_name, const Variant &p_value) {
@@ -37,6 +38,10 @@ bool SafeGDScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 	Sandbox *sandbox = current_sandbox;
 	ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
 	if (sandbox->get_property(p_name, r_ret)) {
+		return true;
+	}
+	if (script.is_valid() && script->_has_script_signal(p_name)) {
+		r_ret = Signal(this->owner, p_name);
 		return true;
 	}
 	return false;

@@ -107,6 +107,8 @@ private:
 	Token consume(TokenType type, const std::string& message);
 	void synchronize();
 	void error(const std::string& message);
+	// Reports at a position already consumed, rather than at peek().
+	void error(const std::string& message, int line, int column);
 	void skip_newlines();
 	void consume_statement_end(const std::string& message);
 
@@ -116,7 +118,7 @@ private:
 	void skip_type_arguments();
 	bool parse_attribute();
 	void skip_attribute_arguments();
-	void parse_signal();
+	SignalDecl parse_signal();
 	std::string doc_comment_above(int p_line) const;
 
 	std::vector<Token> m_tokens;

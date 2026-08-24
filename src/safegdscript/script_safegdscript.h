@@ -116,6 +116,7 @@ public:
 	static gdscript::LineTable get_compiler_line_table();
 	// Breakpoint lines the last compile placed (may differ from requested).
 	static PackedInt32Array get_compiler_breakpoint_lines();
+	static std::vector<gdscript::FunctionSignature> get_compiler_signal_signatures();
 	void remove_instance(SafeGDScriptInstance *p_instance);
 
 	static String PathToGlobalName(const String &p_path) {
@@ -143,9 +144,8 @@ private:
 	std::vector<gdscript::FunctionSignature> signatures;
 	gdscript::LineTable line_table;
 	std::vector<godot::MethodInfo> methods_info;
-	// Per-function editor metadata: declaration line and '##' description. Godot
-	// requests both through separate virtuals rather than the method list, so
-	// they are kept beside methods_info, keyed by name.
+	std::vector<godot::MethodInfo> signals_info;
+	// Declaration line and '##' description, keyed by member name.
 	struct MethodDocumentation {
 		int32_t line = 0;
 		String description;

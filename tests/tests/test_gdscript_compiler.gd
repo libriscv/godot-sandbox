@@ -8571,3 +8571,193 @@ func nested(a: A.B.C):
 		var elf = ts.vmcall("compile_to_elf", source)
 		assert_eq(elf.is_empty(), true, "should not compile: " + source)
 	ts.queue_free()
+
+# -= Signals =-
+
+signal sgd_hit(damage: int, cause)
+signal sgd_done
+
+const SIGNAL_SOURCE = """
+signal sgd_hit(damage: int, cause)
+signal sgd_done
+
+var seen = []
+
+func fire(n):
+	sgd_hit.emit(n, "guest")
+	sgd_done.emit()
+
+func fire_by_name(n):
+	emit_signal("sgd_hit", n, "by name")
+
+func fire_many(n):
+	for i in range(n):
+		sgd_hit.emit(i, "many")
+
+func wait_for_hit():
+	return await sgd_hit
+
+func hook(c):
+	sgd_hit.connect(c)
+	return sgd_hit.is_connected(c)
+
+func unhook(c):
+	sgd_hit.disconnect(c)
+	return sgd_hit.is_connected(c)
+
+func kind():
+	return typeof(sgd_hit)
+
+func name_of():
+	return str(sgd_hit.get_name())
+
+func shadowed():
+	var sgd_hit = 5
+	return sgd_hit
+"""
+
+func _signal_node() -> Node:
+	var path = "user://temp_signals.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(SIGNAL_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the signal script should load as a SafeGDScript resource")
+	if script == null:
+		return null
+	var node = Node.new()
+	node.set_script(script)
+	node.set_instructions_max(200000)
+	return node
+
+func _signal_info(object: Object, name: String) -> Dictionary:
+	for entry in object.get_signal_list():
+		if entry["name"] == name:
+			return entry
+	return {}
+
+func test_sgd_publishes_declared_signals():
+	var node = _signal_node()
+	if node == null:
+		return
+
+	assert_true(node.has_signal("sgd_hit"), "a declared signal reaches the host")
+	assert_true(node.has_signal("sgd_done"), "including one with no parameters")
+	assert_false(node.has_signal("sgd_never"), "and nothing else does")
+
+	assert_eq(_signal_info(node, "sgd_hit"), _signal_info(self, "sgd_hit"),
+		"the published signal should match the engine's own")
+	assert_eq(_signal_info(node, "sgd_done"), _signal_info(self, "sgd_done"),
+		"and so should one with no parameters")
+
+	node.free()
+
+func test_sgd_emits_to_a_connected_handler():
+	var node = _signal_node()
+	if node == null:
+		return
+
+	var hits := []
+	var dones := [0]
+	node.sgd_hit.connect(func(damage, cause): hits.append([damage, cause]))
+	node.connect("sgd_done", func(): dones[0] += 1)
+
+	node.call("fire", 7)
+	assert_eq(hits, [[7, "guest"]], "emit reached the handler with both arguments")
+	assert_eq(dones[0], 1, "and a parameterless signal reached its own")
+
+	node.call("fire", 8)
+	assert_eq(hits.size(), 2, "the connection outlives the call that emitted")
+
+	node.call("fire_by_name", 9)
+	assert_eq(hits[2], [9, "by name"], "emit_signal() by name reaches the same signal")
+
+	node.free()
+
+func test_sgd_emits_more_often_than_a_call_has_scoped_variants():
+	var node = _signal_node()
+	if node == null:
+		return
+
+	# A materialised Signal would cost a scoped variant per pass, capped at MAX_REFS = 100.
+	var count := [0]
+	node.connect("sgd_hit", func(_damage, _cause): count[0] += 1)
+
+	node.call("fire_many", 250)
+	assert_eq(count[0], 250, "every emission in the loop reached the handler")
+
+	node.free()
+
+func test_sgd_awaits_its_own_signal():
+	var node = _signal_node()
+	if node == null:
+		return
+
+	var awaitable = node.call("wait_for_hit")
+	assert_eq(typeof(awaitable), TYPE_SIGNAL,
+		"the suspended coroutine answers with something Godot's await accepts")
+
+	# Connected (not awaited) so the test stays synchronous.
+	var completed := [null]
+	(awaitable as Signal).connect(func(value): completed[0] = value)
+
+	node.sgd_hit.emit(2, "host")
+	assert_eq(completed[0], [2, "host"],
+		"a two-argument signal yields both, the way the engine's await does")
+
+	node.free()
+
+func test_sgd_connects_from_inside_the_program():
+	var node = _signal_node()
+	if node == null:
+		return
+
+	var seen := []
+	var callback := func(damage, cause): seen.append(damage)
+
+	assert_true(node.call("hook", callback), "the guest connected the Callable it was handed")
+	node.call("fire", 3)
+	assert_eq(seen, [3], "and the emission reached it")
+
+	assert_false(node.call("unhook", callback), "the guest disconnected it again")
+	node.call("fire", 4)
+	assert_eq(seen, [3], "so a later emission reaches nobody")
+
+	node.free()
+
+func test_sgd_a_signal_is_a_value():
+	var node = _signal_node()
+	if node == null:
+		return
+
+	assert_eq(node.call("kind"), TYPE_SIGNAL, "a signal name is a Signal")
+	assert_eq(node.call("kind"), typeof(sgd_hit), "which is what the engine calls it")
+	assert_eq(node.call("name_of"), "sgd_hit", "and it knows its own name")
+	assert_eq(node.call("name_of"), str(sgd_hit.get_name()), "as the engine's does")
+
+	var from_host = node.get("sgd_hit")
+	assert_eq(typeof(from_host), TYPE_SIGNAL, "reading the name from Godot gives a Signal")
+	assert_eq((from_host as Signal).get_object(), node, "bound to the node the script is on")
+
+	assert_eq(node.call("shadowed"), _sgd_shadowed(), "a local shadows the signal")
+
+	node.free()
+
+func _sgd_shadowed():
+	var sgd_hit = 5
+	return sgd_hit
+
+func test_sgd_signal_refusals():
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	for source in [
+			"signal s(a = 1)\nfunc f():\n\treturn 1\n",
+			"signal s(a)\nvar s = 3\nfunc f():\n\treturn s\n",
+			"signal s(a)\nfunc s():\n\treturn 1\n",
+			"signal s(a)\nsignal s(a)\nfunc f():\n\treturn 1\n",
+			"signal s(a)\nfunc f():\n\ts = 1\n",
+			"signal s(a)\nfunc f():\n\ts(1)\n"]:
+		var elf = ts.vmcall("compile_to_elf", source)
+		assert_eq(elf.is_empty(), true, "should not compile: " + source)
+	ts.queue_free()

@@ -146,6 +146,25 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 	}
 	class_doc["methods"] = method_docs;
 
+	Array signal_docs;
+	for (const godot::MethodInfo &signal_info : signals_info) {
+		Dictionary signal_doc;
+		signal_doc["name"] = signal_info.name;
+		Array argument_docs;
+		for (const godot::PropertyInfo &argument : signal_info.arguments) {
+			Dictionary argument_doc;
+			argument_doc["name"] = argument.name;
+			argument_doc["type"] = doc_type_name(argument);
+			argument_docs.push_back(argument_doc);
+		}
+		signal_doc["arguments"] = argument_docs;
+		if (const MethodDocumentation *documentation = methods_doc.getptr(signal_info.name)) {
+			signal_doc["description"] = documentation->description;
+		}
+		signal_docs.push_back(signal_doc);
+	}
+	class_doc["signals"] = signal_docs;
+
 	TypedArray<Dictionary> documentation;
 	documentation.push_back(class_doc);
 	return documentation;
@@ -168,7 +187,8 @@ static Dictionary property_dict(const godot::PropertyInfo &p_info) {
 	return type;
 }
 
-static Dictionary method_dict(const godot::MethodInfo &p_method) {
+// Godot spells a method's return name as "type" and a signal's as empty.
+static Dictionary method_dict(const godot::MethodInfo &p_method, const String &p_return_name = "type") {
 	Dictionary method;
 	method["name"] = p_method.name;
 	method["flags"] = p_method.flags;
@@ -189,7 +209,7 @@ static Dictionary method_dict(const godot::MethodInfo &p_method) {
 	method["default_args"] = default_args;
 
 	godot::PropertyInfo return_val = p_method.return_val;
-	return_val.name = "type";
+	return_val.name = p_return_name;
 	method["return"] = property_dict(return_val);
 	return method;
 }
@@ -238,10 +258,19 @@ ScriptLanguage *SafeGDScript::_get_language() const {
 	return SafeGDScriptLanguage::get_singleton();
 }
 bool SafeGDScript::_has_script_signal(const StringName &p_signal) const {
+	for (const godot::MethodInfo &signal_info : signals_info) {
+		if (signal_info.name == p_signal) {
+			return true;
+		}
+	}
 	return false;
 }
 TypedArray<Dictionary> SafeGDScript::_get_script_signal_list() const {
-	return TypedArray<Dictionary>();
+	TypedArray<Dictionary> signals_array;
+	for (const godot::MethodInfo &signal_info : signals_info) {
+		signals_array.push_back(method_dict(signal_info, String()));
+	}
+	return signals_array;
 }
 bool SafeGDScript::_has_property_default_value(const StringName &p_property) const {
 	return false;
@@ -587,6 +616,24 @@ PackedInt32Array SafeGDScript::get_compiler_breakpoint_lines() {
 	return lines;
 }
 
+std::vector<gdscript::FunctionSignature> SafeGDScript::get_compiler_signal_signatures() {
+	std::vector<gdscript::FunctionSignature> signals;
+	Sandbox *compiler = get_compiler_sandbox();
+	if (compiler == nullptr || !compiler->has_function("get_signal_signatures")) {
+		return signals;
+	}
+	GDExtensionCallError error;
+	const Variant blob = compiler->vmcall_fn("get_signal_signatures", nullptr, 0, error);
+	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK || blob.get_type() != Variant::Type::PACKED_BYTE_ARRAY) {
+		return signals;
+	}
+	const PackedByteArray bytes = blob;
+	if (!gdscript::decode_function_signatures(bytes.ptr(), size_t(bytes.size()), signals)) {
+		ERR_PRINT("SafeGDScript: the compiler returned a malformed signal table.");
+	}
+	return signals;
+}
+
 std::vector<gdscript::FunctionSignature> SafeGDScript::get_compiler_function_signatures() {
 	std::vector<gdscript::FunctionSignature> signatures;
 	Sandbox *compiler = get_compiler_sandbox();
@@ -643,6 +690,29 @@ void SafeGDScript::update_methods_info() {
 	Sandbox::BinaryInfo info = Sandbox::get_program_info_from_binary(this->elf_data);
 	this->methods_info.clear();
 	this->methods_doc.clear();
+	this->signals_info.clear();
+
+	// Untyped parameter: NIL + NIL_IS_VARIANT; typed: no usage flags.
+	for (const gdscript::FunctionSignature &declared : get_compiler_signal_signatures()) {
+		MethodInfo signal_info(String::utf8(declared.name.c_str(), declared.name.size()));
+		signal_info.flags = METHOD_FLAG_NORMAL;
+		signal_info.return_val.usage = PROPERTY_USAGE_DEFAULT;
+		for (const gdscript::FunctionParameter &param : declared.parameters) {
+			PropertyInfo argument;
+			argument.name = String::utf8(param.name.c_str(), param.name.size());
+			argument.type = variant_type_or_nil(param.type);
+			argument.usage = argument.type == Variant::Type::NIL
+					? PROPERTY_USAGE_NIL_IS_VARIANT
+					: PROPERTY_USAGE_NONE;
+			signal_info.arguments.push_back(std::move(argument));
+		}
+		MethodDocumentation documentation;
+		documentation.line = declared.line;
+		documentation.description = String::utf8(declared.description.c_str(), declared.description.size());
+		methods_doc.insert(signal_info.name, std::move(documentation));
+
+		signals_info.push_back(std::move(signal_info));
+	}
 
 	// Profiling records are indexed by position in this table.
 	this->signatures = get_compiler_function_signatures();

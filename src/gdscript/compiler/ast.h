@@ -325,6 +325,8 @@ struct Parameter {
 	std::string name;
 	std::string type_hint;
 	ExprPtr default_value;
+	int line = 0;
+	int column = 0;
 };
 
 struct FunctionDecl {
@@ -338,6 +340,15 @@ struct FunctionDecl {
 	std::string doc_comment;
 	// Has AWAIT; gets a resume entry and returns an awaitable.
 	bool is_coroutine = false;
+};
+
+// Published beside the ELF; nothing reaches the IR.
+struct SignalDecl {
+	std::string name;
+	std::vector<Parameter> parameters;
+	int line = 0;
+	int column = 0;
+	std::string doc_comment;
 };
 
 inline LambdaExpr::~LambdaExpr() = default;
@@ -419,6 +430,7 @@ struct Program {
 	std::vector<VarDeclStmt> globals;
 	std::vector<StructDecl> structs;
 	std::vector<EnumDecl> enums;
+	std::vector<SignalDecl> signals;
 	std::vector<FunctionDecl> functions;
 };
 
