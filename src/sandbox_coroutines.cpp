@@ -227,8 +227,7 @@ bool Sandbox::coroutine_suspend(gaddr_t operand_addr, gaddr_t frame_base, uint32
 	Coroutine *co = this->find_coroutine(m_resuming_coroutine_id);
 	if (co == nullptr) {
 		if (m_coroutines.size() >= m_max_coroutines) {
-			ERR_PRINT("await: too many live coroutines (" + itos(int64_t(m_max_coroutines)) +
-					"); raise max_coroutines or let some complete");
+			ERR_PRINT("await: too many live coroutines (" + itos(int64_t(m_max_coroutines)) + ")");
 			throw std::runtime_error("await: too many live coroutines");
 		}
 		auto fresh = std::make_unique<Coroutine>();

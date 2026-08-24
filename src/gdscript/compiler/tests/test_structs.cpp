@@ -387,6 +387,43 @@ static void test_unknown_field_is_rejected() {
 	std::cout << "  ✓ an unknown field is rejected" << std::endl;
 }
 
+static void test_subscript_answers_for_the_name() {
+	std::cout << "Testing that a constant subscript is field-checked..." << std::endl;
+
+	assert(rejects(BANK_ACCOUNT +
+		"func test():\n\tvar a = BankAccount.new()\n\treturn a[\"blance\"]\n"));
+	assert(rejects(BANK_ACCOUNT +
+		"func test():\n\tvar a = BankAccount.new()\n\ta[\"blance\"] = 1\n\treturn a\n"));
+	assert(rejects(BANK_ACCOUNT +
+		"func test():\n\tvar a = BankAccount.new()\n\ta[\"blance\"] += 1\n\treturn a\n"));
+	assert(rejects(BANK_ACCOUNT +
+		"func test(a: BankAccount):\n\treturn a[\"blance\"]\n"));
+	assert(rejects(BANK_ACCOUNT +
+		"var vault: BankAccount\n\nfunc test():\n\treturn vault[\"blance\"]\n"));
+	assert(rejects(BANK_ACCOUNT +
+		"func make() -> BankAccount:\n\treturn BankAccount.new()\n"
+		"\nfunc test():\n\treturn make()[\"blance\"]\n"));
+
+	assert(rejects("const K = \"blance\"\n\n" + BANK_ACCOUNT +
+		"func test():\n\tvar a = BankAccount.new()\n\treturn a[K]\n"));
+	const IRProgram const_key = compile_to_ir("const K = \"balance\"\n\n" + BANK_ACCOUNT +
+		"func test():\n\tvar a = BankAccount.new()\n\treturn a[K]\n");
+	assert(count_dict_gets(find_function(const_key, "test")) == 1);
+	const IRProgram shadowed = compile_to_ir("const K = \"blance\"\n\n" + BANK_ACCOUNT +
+		"func test():\n\tvar K = \"balance\"\n\tvar a = BankAccount.new()\n\treturn a[K]\n");
+	assert(count_dict_gets(find_function(shadowed, "test")) == 1);
+
+	const IRProgram computed = compile_to_ir(BANK_ACCOUNT +
+		"func test(k):\n\tvar a = BankAccount.new()\n\ta[k] = 1\n\treturn a\n");
+	assert(count_opcode(find_function(computed, "test"), IROpcode::DICT_SET) == 1);
+
+	const IRProgram plain = compile_to_ir(
+		"func test():\n\tvar d = {}\n\td[\"anything\"] = 1\n\treturn d[\"anything\"]\n");
+	assert(count_dict_gets(find_function(plain, "test")) == 1);
+
+	std::cout << "  ✓ a constant subscript is field-checked" << std::endl;
+}
+
 static void test_struct_is_a_type_not_a_value() {
 	std::cout << "Testing that a struct name is a type, not a value..." << std::endl;
 
@@ -678,6 +715,7 @@ int main() {
 	test_named_arguments();
 	test_field_access_is_dictionary_access();
 	test_unknown_field_is_rejected();
+	test_subscript_answers_for_the_name();
 	test_struct_is_a_type_not_a_value();
 	test_declared_field_types();
 	test_nested_structs();

@@ -29,6 +29,7 @@ static const std::vector<std::string> program_arguments = { "program" };
 static riscv::Machine<RISCV_ARCH> dummy_machine;
 enum SandboxPropertyNameIndex : int {
 	PROP_REFERENCES_MAX,
+	PROP_COROUTINES_MAX,
 	PROP_MEMORY_MAX,
 	PROP_EXECUTION_TIMEOUT,
 	PROP_ALLOCATIONS_MAX,
@@ -120,6 +121,7 @@ void Sandbox::Initialize()
 
 	property_names = {
 		"references_max",
+		"coroutines_max",
 		"memory_max",
 		"execution_timeout",
 		"allocations_max",
@@ -329,6 +331,7 @@ std::vector<PropertyInfo> Sandbox::create_sandbox_property_list() {
 
 	// Group for sandbox restrictions.
 	list.push_back(PropertyInfo(Variant::INT, "references_max", PROPERTY_HINT_NONE));
+	list.push_back(PropertyInfo(Variant::INT, "coroutines_max", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::INT, "memory_max", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::INT, "execution_timeout", PROPERTY_HINT_NONE));
 	list.push_back(PropertyInfo(Variant::INT, "allocations_max", PROPERTY_HINT_NONE));
@@ -1712,6 +1715,9 @@ bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	if (stringname_equals(name, property_names[PROP_REFERENCES_MAX])) {
 		set_max_refs(value);
 		return true;
+	} else if (stringname_equals(name, property_names[PROP_COROUTINES_MAX])) {
+		set_max_coroutines(value);
+		return true;
 	} else if (stringname_equals(name, property_names[PROP_MEMORY_MAX])) {
 		set_memory_max(value);
 		return true;
@@ -1760,6 +1766,9 @@ bool Sandbox::get_property(const StringName &name, Variant &r_ret) {
 	// Not the most efficient way to do this, but it's (currently) a small list
 	if (stringname_equals(name, property_names[PROP_REFERENCES_MAX])) {
 		r_ret = get_max_refs();
+		return true;
+	} else if (stringname_equals(name, property_names[PROP_COROUTINES_MAX])) {
+		r_ret = get_max_coroutines();
 		return true;
 	} else if (stringname_equals(name, property_names[PROP_MEMORY_MAX])) {
 		r_ret = get_memory_max();

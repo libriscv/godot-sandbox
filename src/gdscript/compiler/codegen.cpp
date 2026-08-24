@@ -580,6 +580,7 @@ void CodeGenerator::gen_store_to(const Expr* target, int value_reg, FunctionCont
 	if (auto* index_expr = dynamic_cast<const IndexExpr*>(target)) {
 		// Handles need no write-back, but the container may be a copy: resolve as lvalue.
 		LValue base = resolve_lvalue(index_expr->object.get(), func);
+		check_struct_subscript(base.reg, index_expr->index.get(), func);
 		int idx_reg = gen_expr(index_expr->index.get(), func);
 		gen_element_store(base.reg, idx_reg, value_reg, func);
 		free_register(func, idx_reg);
@@ -657,6 +658,7 @@ CodeGenerator::LValue CodeGenerator::resolve_lvalue(const Expr* expr, FunctionCo
 
 	if (auto* index_expr = dynamic_cast<const IndexExpr*>(expr)) {
 		auto container = std::make_shared<LValue>(resolve_lvalue(index_expr->object.get(), func));
+		check_struct_subscript(container->reg, index_expr->index.get(), func);
 		lvalue.kind = LValue::Kind::INDEX;
 		lvalue.index_reg = gen_expr(index_expr->index.get(), func);
 		lvalue.reg = gen_element_read(container->reg, lvalue.index_reg, func);
@@ -1867,7 +1869,7 @@ int CodeGenerator::gen_get_node(const std::string& path, FunctionContext& func) 
 }
 
 // Compile-time string path, or nullptr. A shadowing local returns nullptr.
-const std::string* CodeGenerator::constant_resource_path(const Expr* expr, FunctionContext& func) {
+const std::string* CodeGenerator::constant_string(const Expr* expr, FunctionContext& func) {
 	if (auto* literal = dynamic_cast<const LiteralExpr*>(expr)) {
 		if (literal->lit_type == LiteralExpr::Type::STRING) {
 			return &std::get<std::string>(literal->value);
@@ -2967,7 +2969,7 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 	}
 	// Constant path: embed characters directly. Run-time path handled below.
 	if (expr->function_name == "load" && !is_local_function("load") && expr->arguments.size() == 1) {
-		if (const std::string* path = constant_resource_path(expr->arguments[0].get(), func)) {
+		if (const std::string* path = constant_string(expr->arguments[0].get(), func)) {
 			return gen_load_resource(*path, func);
 		}
 	}
@@ -3265,6 +3267,7 @@ bool CodeGenerator::is_array_element_access(int obj_reg, int idx_reg, FunctionCo
 
 int CodeGenerator::gen_index(const IndexExpr* expr, FunctionContext& func) {
 	int obj_reg = gen_expr(expr->object.get(), func);
+	check_struct_subscript(obj_reg, expr->index.get(), func);
 	int idx_reg = gen_expr(expr->index.get(), func);
 
 	int result_reg = gen_element_read(obj_reg, idx_reg, func, expr);
@@ -3476,6 +3479,16 @@ const StructField& CodeGenerator::require_struct_field(const StructDecl& decl,
 	}
 	error_at("Struct '" + decl.name + "' has no field '" + field_name + "'", line, column,
 		"Fields of '" + decl.name + "' are: " + decl.field_list());
+}
+
+void CodeGenerator::check_struct_subscript(int obj_reg, const Expr* index, FunctionContext& func) {
+	const StructDecl* decl = get_register_struct(func, obj_reg);
+	if (decl == nullptr) {
+		return;
+	}
+	if (const std::string* key = constant_string(index, func)) {
+		require_struct_field(*decl, *key, index->line, index->column);
+	}
 }
 
 void CodeGenerator::set_register_struct(FunctionContext& func, int reg, const StructDecl* decl) {

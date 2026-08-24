@@ -7404,6 +7404,15 @@ func test_sgd_await_coroutine_api_is_reachable():
 	node.call("set_max_coroutines", 8)
 	assert_eq(node.call("get_max_coroutines"), 8)
 
+	assert_eq(node.get("coroutines_max"), 8, "the property reads the same cap")
+	node.set("coroutines_max", 4)
+	assert_eq(node.call("get_max_coroutines"), 4, "and setting it reaches the Sandbox")
+	var listed := false
+	for property in node.get_property_list():
+		if property["name"] == "coroutines_max":
+			listed = true
+	assert_true(listed, "and it is listed alongside the other limits")
+
 	var dropped = [false]
 	(awaitable as Signal).connect(func(_v): dropped[0] = true)
 	node.call("reap_coroutines")
