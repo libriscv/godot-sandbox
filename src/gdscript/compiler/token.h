@@ -25,6 +25,7 @@ enum class TokenType {
 	IN,
 	WHILE,
 	BREAK,
+	BREAKPOINT,
 	CONTINUE,
 	PASS,
 	EXTENDS,

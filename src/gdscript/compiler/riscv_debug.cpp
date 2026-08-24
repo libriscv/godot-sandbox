@@ -61,12 +61,14 @@ void RISCVCodeGen::emit_debug_entry() {
 }
 
 // Saves/restores a0 and a7 around ECALL_BREAKPOINT. 16B keeps sp aligned.
-void RISCVCodeGen::emit_breakpoint(int32_t line) {
+void RISCVCodeGen::emit_breakpoint(int32_t line, bool installed) {
 	// Maintain ascending, deduplicated installed-breakpoint list.
-	const auto at = std::lower_bound(m_installed_breakpoints.begin(),
-		m_installed_breakpoints.end(), uint32_t(line));
-	if (at == m_installed_breakpoints.end() || *at != uint32_t(line)) {
-		m_installed_breakpoints.insert(at, uint32_t(line));
+	if (installed) {
+		const auto at = std::lower_bound(m_installed_breakpoints.begin(),
+			m_installed_breakpoints.end(), uint32_t(line));
+		if (at == m_installed_breakpoints.end() || *at != uint32_t(line)) {
+			m_installed_breakpoints.insert(at, uint32_t(line));
+		}
 	}
 
 	m_emitting_breakpoint = true;

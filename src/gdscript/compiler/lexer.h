@@ -2,6 +2,7 @@
 #include "token.h"
 #include <vector>
 #include <string>
+#include <cstdint>
 #include <utility>
 #include <unordered_map>
 
@@ -19,6 +20,8 @@ public:
 private:
 	void scan_token();
 	void scan_string(TokenType type = TokenType::STRING, bool raw = false);
+	uint32_t scan_hex_escape(int hex_len);
+	void append_unicode_escape(std::string& value, int hex_len);
 	void scan_number();
 	void scan_identifier();
 	void handle_indent();

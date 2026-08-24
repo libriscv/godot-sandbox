@@ -156,6 +156,33 @@ int64_t run(machine_t& machine, const std::string& function) {
 	return value;
 }
 
+// One integer argument, as a Variant beside the return slot.
+int64_t run_with_arg(machine_t& machine, const std::string& function, int64_t argument) {
+	const uint64_t address = machine.address_of(function);
+	if (address == 0) {
+		std::cerr << "FAILED: no symbol for " << function << "()" << std::endl;
+		failures++;
+		return 0;
+	}
+	auto& sp = machine.cpu.reg(riscv::REG_SP);
+	sp = machine.memory.stack_initial();
+	sp -= 128;
+	const uint64_t retvar = sp;
+	const uint64_t argvar = retvar + 64;
+	const int32_t int_type = 2; // Variant::INT
+	machine.copy_to_guest(argvar, &int_type, sizeof(int_type));
+	machine.copy_to_guest(argvar + 8, &argument, sizeof(argument));
+	machine.cpu.reg(riscv::REG_RA) = machine.memory.exit_address();
+	machine.cpu.reg(riscv::REG_ARG0) = retvar;
+	machine.cpu.reg(riscv::REG_ARG1) = argvar;
+	machine.cpu.jump(address);
+	machine.simulate(200'000'000ull);
+
+	int64_t value = 0;
+	machine.copy_from_guest(&value, retvar + 8, sizeof(value));
+	return value;
+}
+
 int64_t compile_and_run(const std::string& source, const std::string& function,
 		const std::vector<uint32_t>& breakpoints) {
 	const Program program = compile(source, breakpoints);
@@ -393,6 +420,54 @@ void test_a_break_carries_a_call_stack() {
 		"the innermost frame is the function the break is in");
 }
 
+void test_the_breakpoint_statement() {
+	const std::string source =
+		"func test(n):\n"          // 1
+		"\tvar total = 0\n"        // 2
+		"\tif n > 0:\n"            // 3
+		"\t\tbreakpoint\n"         // 4
+		"\t\ttotal = n * 2\n"      // 5
+		"\tbreakpoint\n"           // 6
+		"\treturn total\n";        // 7
+
+	const Program program = compile(source, {});
+	check_eq(count_break_sites(program), size_t(2),
+		"two `breakpoint` statements are two break sites");
+	check(program.installed.empty(),
+		"a `breakpoint` statement is not a requested breakpoint");
+
+	auto machine = boot(program);
+	check_eq(run_with_arg(*machine, "test", 5), int64_t(10),
+		"the program computes the same answer across its own stops");
+	check_eq(g_stops.size(), size_t(2), "both statements stopped");
+	if (g_stops.size() == 2) {
+		check_eq(g_stops[0].reported_line, uint32_t(4), "the first stop names line 4");
+		check_eq(g_stops[1].reported_line, uint32_t(6), "the second names line 6");
+		check_eq(g_stops[0].pc_line, uint32_t(4), "and the line table agrees");
+		// Statement alone does not enable debug_info.
+		check_eq(g_stops[0].depth, uint64_t(0), "and no shadow stack was added");
+	}
+
+	auto skipped = boot(program);
+	check_eq(run_with_arg(*skipped, "test", 0), int64_t(0), "a declined branch skips its stop");
+	check_eq(g_stops.size(), size_t(1), "only the unconditional statement stopped");
+
+	// Coalesce: same line requested + statement = one stop, reported as installed.
+	const Program both = compile(source, { 4 });
+	check_eq(count_break_sites(both), size_t(2), "the same line does not stop twice");
+	check_lines(both.installed, { 4 }, "the requested line is still reported");
+
+	auto with_request = boot(both);
+	check_eq(run_with_arg(*with_request, "test", 5), int64_t(10), "and it still answers 10");
+	check_eq(g_stops.size(), size_t(2), "two stops, not three");
+	if (g_stops.size() == 2) {
+		check_eq(g_stops[0].reported_line, uint32_t(4), "the shared line stopped once");
+		check(g_stops[0].depth > 0, "a requested breakpoint does bring the shadow stack");
+	}
+
+	std::cout << "  breakpoint statement OK" << std::endl;
+}
+
 void test_breakpoints_in_more_than_one_function() {
 	const std::string source =
 		"func left():\n" // 1
@@ -432,6 +507,7 @@ int main() {
 	test_a_break_is_transparent_to_the_allocator();
 	test_registers_survive_the_break();
 	test_a_break_carries_a_call_stack();
+	test_the_breakpoint_statement();
 	test_breakpoints_in_more_than_one_function();
 
 	if (failures != 0) {

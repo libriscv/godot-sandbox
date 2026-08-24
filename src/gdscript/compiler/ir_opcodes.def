@@ -56,6 +56,10 @@ IR_OPCODE(CONVERT,         "CONVERT",         SIG(DST, SRC, IMM),  IR_PURE)
 // this is a 4-byte load and a compare, never a host call. Exact tag compare, not
 // convertibility: 1.0 is not an int.
 IR_OPCODE(TYPE_TEST,       "TYPE_TEST",       SIG(DST, SRC, IMM),  IR_PURE)
+
+// `breakpoint`: an unconditional ECALL_BREAKPOINT at the line it was written on.
+// Carries no operands -- the line is the instruction's own.
+IR_OPCODE(BREAKPOINT,      "BREAKPOINT",      SIG(),               IR_SIDE_EFFECTS)
 // typeof(): tag as INT. Same load as TYPE_TEST, no compare.
 IR_OPCODE(TYPE_OF,         "TYPE_OF",         SIG(DST, SRC),       IR_PURE)
 

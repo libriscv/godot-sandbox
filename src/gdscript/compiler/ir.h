@@ -234,6 +234,9 @@ struct IRGlobalVar {
 
 	// Drives @export registration and VASSIGN decisions. TypeHint_NONE = any Variant.
 	IRInstruction::TypeHint value_type = IRInstruction::TypeHint_NONE;
+
+	std::string setter_function;
+	std::string getter_function;
 };
 
 struct IRProgram {
@@ -247,6 +250,8 @@ struct IRProgram {
 	// Evaluates non-constant global initializers at startup, before @export registration.
 	IRFunction global_init;
 	bool has_global_init = false;
+
+	bool has_breakpoint_statement = false;
 };
 
 const char* ir_opcode_name(IROpcode op);

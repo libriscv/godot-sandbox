@@ -123,6 +123,7 @@ if (BUILD_TESTING)
 	add_gdscript_test(test_syntax tests/test_syntax.cpp)
 	add_gdscript_test(test_inline_suites tests/test_inline_suites.cpp)
 	add_gdscript_test(test_signatures tests/test_signatures.cpp)
+	add_gdscript_test(test_properties tests/test_properties.cpp)
 	add_gdscript_test(test_line_table tests/test_line_table.cpp)
 	add_gdscript_test(test_diagnostics tests/test_diagnostics.cpp)
 	add_gdscript_test(test_opt_invariance tests/test_opt_invariance.cpp)
@@ -187,12 +188,12 @@ if (BUILD_TESTING)
 	# Run all tests target
 	add_custom_target(run_tests
 		COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-		DEPENDS test_lexer test_parser test_codegen test_call_overhead test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_containers test_strings test_lvalues test_signatures
+		DEPENDS test_lexer test_parser test_codegen test_call_overhead test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_containers test_strings test_lvalues test_signatures test_properties
 		COMMENT "Running all GDScript compiler tests"
 	)
 
 	# Install test targets (only when BUILD_TESTING is ON)
-	install(TARGETS test_lexer test_parser test_codegen test_call_overhead test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_containers test_strings test_lvalues test_signatures
+	install(TARGETS test_lexer test_parser test_codegen test_call_overhead test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_containers test_strings test_lvalues test_signatures test_properties
 	        RUNTIME DESTINATION bin)
 endif()
 

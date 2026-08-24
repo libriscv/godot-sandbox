@@ -163,14 +163,10 @@ static void test_unknown_container_keeps_the_vcall() {
 	assert(count_opcode(find_function(packed_index, "test"), IROpcode::ARRAY_GET) == 0);
 	assert(count_vcalls(find_function(packed_index, "test"), "get") == 1);
 
-	// String: no get(), refused at compile time.
-	bool refused = false;
-	try {
-		compile_to_ir("func test(s : String, i : int):\n\treturn s[i]\n");
-	} catch (const CompilerException&) {
-		refused = true;
-	}
-	assert(refused);
+	// String: own syscall, no get(). See test_strings.cpp.
+	const IRProgram string_index = compile_to_ir(
+		"func test(s : String, i : int):\n\treturn s[i]\n");
+	assert(count_vcalls(find_function(string_index, "test"), "get") == 0);
 
 	// And a write to an unknown container.
 	const IRProgram untyped_write = compile_to_ir(
@@ -275,6 +271,83 @@ static void test_element_access_survives_the_optimizer() {
 	std::cout << "  ✓ an element access is never optimized away" << std::endl;
 }
 
+// `{k: v}` evaluates k; `{k = v}` is Lua-style (key is the string "k").
+static void test_dictionary_literal_keys() {
+	std::cout << "Testing dictionary literal keys..." << std::endl;
+
+	// `{k: 2}` evaluates k; "k" not in the string pool.
+	{
+		const IRProgram ir = compile_to_ir(
+			"func f():\n"
+			"\tvar k = 7\n"
+			"\treturn {k: 2}\n");
+		const IRFunction& f = find_function(ir, "f");
+		assert(count_opcode(f, IROpcode::MAKE_DICTIONARY) == 1);
+		for (const auto& str : ir.string_constants) {
+			assert(str != "k");
+		}
+	}
+
+	// `{k = 2}` is Lua-style; "k" is in the string pool.
+	{
+		const IRProgram ir = compile_to_ir(
+			"func f():\n"
+			"\tvar k = 7\n"
+			"\treturn {k = 2}\n");
+		const IRFunction& f = find_function(ir, "f");
+		assert(count_opcode(f, IROpcode::MAKE_DICTIONARY) == 1);
+		assert(count_opcode(f, IROpcode::LOAD_STRING) == 1);
+		bool found = false;
+		for (const auto& str : ir.string_constants) {
+			found = found || str == "k";
+		}
+		assert(found);
+	}
+
+	// Expression keys (not just identifiers).
+	compile_to_machine_code(
+		"func f():\n"
+		"\tvar k = 7\n"
+		"\treturn {k: 1, \"s\": 2, 1 + 1: 3, Vector2.ZERO: 4}\n");
+
+	// String Lua-style key + trailing comma.
+	compile_to_machine_code(
+		"func f():\n"
+		"\treturn {a = 1, \"b c\" = 2,}\n");
+
+	// Mixing styles is refused.
+	{
+		bool refused = false;
+		try {
+			compile_to_ir("func f():\n\tvar v = 1\n\treturn {a = 1, v: 2}\n");
+		} catch (const CompilerException&) {
+			refused = true;
+		}
+		assert(refused);
+	}
+	{
+		bool refused = false;
+		try {
+			compile_to_ir("func f():\n\tvar v = 1\n\treturn {v: 2, a = 1}\n");
+		} catch (const CompilerException&) {
+			refused = true;
+		}
+		assert(refused);
+	}
+	// A Lua-style key has to be a name, not any expression.
+	{
+		bool refused = false;
+		try {
+			compile_to_ir("func f():\n\treturn {1 = 2}\n");
+		} catch (const CompilerException&) {
+			refused = true;
+		}
+		assert(refused);
+	}
+
+	std::cout << "  dictionary literal keys OK" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Container Element Access Tests ===" << std::endl << std::endl;
 
@@ -283,6 +356,7 @@ int main() {
 		test_unknown_container_keeps_the_vcall();
 		test_array_append();
 		test_dictionary_element_access();
+		test_dictionary_literal_keys();
 		test_element_access_survives_the_optimizer();
 	} catch (const CompilerException& e) {
 		std::cerr << "Unexpected compiler error: " << e.what() << std::endl;

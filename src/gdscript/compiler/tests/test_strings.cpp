@@ -1,4 +1,4 @@
-// String concatenation folding and ECALL_STRING_SIZE lowering.
+// String concatenation folding, ECALL_STRING_SIZE, ECALL_STRING_AT, and `for c in s`.
 #include "../lexer.h"
 #include "../parser.h"
 #include "../codegen.h"
@@ -276,6 +276,240 @@ static void test_unknown_receiver_keeps_the_vcall() {
 	std::cout << "  ✓ length() on an unknown value keeps the VCALL" << std::endl;
 }
 
+static void test_subscript_is_a_syscall() {
+	std::cout << "Testing that s[i] on a known String is a syscall..." << std::endl;
+
+	const std::string source =
+		"func first(s : String):\n"
+		"\treturn s[0]\n"
+		"\n"
+		"func at(s : String, i : int):\n"
+		"\treturn s[i]\n"
+		"\n"
+		"func last(s : String):\n"
+		"\treturn s[-1]\n"
+		"\n"
+		"func literal():\n"
+		"\treturn \"hello\"[1]\n";
+
+	const IRProgram ir = compile_to_ir(source);
+
+	for (const char* name : { "first", "at", "last", "literal" }) {
+		const IRFunction& func = find_function(ir, name);
+		assert(count_syscalls(func, ECALL_STRING_AT) == 1);
+		assert(count_vcalls(func, "get") == 0);
+		assert(count_opcode(func, IROpcode::ARRAY_GET) == 0);
+	}
+
+	// Negative index normalised by host; no guest-side ECALL_ARRAY_SIZE needed.
+	assert(count_syscalls(find_function(ir, "last"), ECALL_ARRAY_SIZE) == 0);
+
+	compile_to_machine_code(source);
+
+	std::cout << "  ✓ s[i] on a known String is a syscall" << std::endl;
+}
+
+static void test_a_non_integer_subscript_goes_through_int() {
+	std::cout << "Testing that s[1.0] is the character at 1..." << std::endl;
+
+	// Non-integer index goes through int() first.
+	const IRProgram ir = compile_to_ir(
+		"func f(s : String):\n"
+		"\treturn s[1.0]\n"
+		"\n"
+		"func g(s : String, i):\n"
+		"\treturn s[i]\n");
+
+	for (const char* name : { "f", "g" }) {
+		const IRFunction& func = find_function(ir, name);
+		assert(count_syscalls(func, ECALL_STRING_AT) == 1);
+		bool converted = false;
+		for (const auto& instr : func.instructions) {
+			converted |= instr.opcode == IROpcode::CONVERT || instr.opcode == IROpcode::GLOBAL_CALL;
+		}
+		assert(converted);
+	}
+
+	std::cout << "  ✓ a non-integer subscript is converted first" << std::endl;
+}
+
+static void test_an_unknown_subscript_tests_the_tag() {
+	std::cout << "Testing that an untyped subscript tests for a String..." << std::endl;
+
+	// One TYPE_TEST dispatches between ECALL_STRING_AT and the VCALL path.
+	const IRProgram ir = compile_to_ir("func f(x, i : int):\n\treturn x[i]\n");
+	const IRFunction& func = find_function(ir, "f");
+	assert(count_syscalls(func, ECALL_STRING_AT) == 1);
+	assert(count_vcalls(func, "get") == 1);
+
+	int string_tests = 0;
+	for (const auto& instr : func.instructions) {
+		if (instr.opcode == IROpcode::TYPE_TEST &&
+			std::get<int64_t>(instr.operands.at(2).value) == Variant::STRING) {
+			string_tests++;
+		}
+	}
+	assert(string_tests == 1);
+
+	// Known Array/Dictionary: no tag test.
+	for (const char* hint : { "Array", "Dictionary" }) {
+		const IRProgram known = compile_to_ir(
+			std::string("func f(c : ") + hint + ", i : int):\n\treturn c[i]\n");
+		assert(count_syscalls(find_function(known, "f"), ECALL_STRING_AT) == 0);
+		assert(count_opcode(find_function(known, "f"), IROpcode::TYPE_TEST) == 0);
+	}
+
+	compile_to_machine_code("func f(x, i : int):\n\treturn x[i]\n");
+
+	std::cout << "  ✓ an untyped subscript tests for a String" << std::endl;
+}
+
+static void test_walking_a_string() {
+	std::cout << "Testing 'for c in s'..." << std::endl;
+
+	const IRProgram known = compile_to_ir(
+		"func f(s : String):\n"
+		"\tvar n = 0\n"
+		"\tfor c in s:\n"
+		"\t\tn += 1\n"
+		"\treturn n\n");
+	const IRFunction& f = find_function(known, "f");
+	assert(count_syscalls(f, ECALL_STRING_SIZE) == 1);
+	assert(count_syscalls(f, ECALL_STRING_AT) == 1);
+	assert(count_syscalls(f, ECALL_ARRAY_SIZE) == 0);
+	assert(count_syscalls(f, ECALL_ARRAY_AT) == 0);
+	assert(count_vcalls(f, "size") == 0);
+	assert(count_vcalls(f, "get") == 0);
+	assert(count_opcode(f, IROpcode::TYPE_TEST) == 0);
+
+	// A literal is a known String too.
+	const IRProgram literal = compile_to_ir(
+		"func f():\n"
+		"\tfor c in \"hello\":\n"
+		"\t\tpass\n");
+	assert(count_syscalls(find_function(literal, "f"), ECALL_STRING_AT) == 1);
+
+	// Untyped: all four arms present (int, Array, String, VCALL).
+	const IRProgram untyped = compile_to_ir(
+		"func f(it):\n"
+		"\tvar n = 0\n"
+		"\tfor c in it:\n"
+		"\t\tn += 1\n"
+		"\treturn n\n");
+	const IRFunction& u = find_function(untyped, "f");
+	assert(count_syscalls(u, ECALL_STRING_SIZE) == 1);
+	assert(count_syscalls(u, ECALL_STRING_AT) == 1);
+	assert(count_syscalls(u, ECALL_ARRAY_SIZE) == 1);
+	assert(count_syscalls(u, ECALL_ARRAY_AT) == 1);
+	assert(count_vcalls(u, "size") == 1);
+	assert(count_vcalls(u, "get") == 1);
+
+	compile_to_machine_code(
+		"func f(it, s : String):\n"
+		"\tvar out = []\n"
+		"\tfor c in s:\n"
+		"\t\tout.append(c)\n"
+		"\tfor c in it:\n"
+		"\t\tout.append(c)\n"
+		"\treturn out\n");
+
+	std::cout << "  ✓ 'for c in s' walks on the String syscalls" << std::endl;
+}
+
+// `for i in 2.5`: float counter, counts 0.0, 1.0, 2.0.
+static void test_iterating_a_float() {
+	std::cout << "Testing 'for i in 2.5'..." << std::endl;
+
+	// Known float: counted loop with float compare and step, no syscall.
+	const IRProgram known = compile_to_ir(
+		"func f():\n"
+		"\tvar n = 0\n"
+		"\tfor i in 2.5:\n"
+		"\t\tn += 1\n"
+		"\treturn n\n"
+		"\n"
+		"func g(x : float):\n"
+		"\tvar n = 0\n"
+		"\tfor i in x:\n"
+		"\t\tn += 1\n"
+		"\treturn n\n");
+
+	for (const char* name : { "f", "g" }) {
+		const IRFunction& func = find_function(known, name);
+		assert(count_opcode(func, IROpcode::CALL_SYSCALL) == 0);
+		assert(count_opcode(func, IROpcode::TYPE_TEST) == 0);
+		bool float_bound = false;
+		bool float_step = false;
+		for (const auto& instr : func.instructions) {
+			const bool compare = ir_has_effect(instr.opcode, IR_COMPARISON) ||
+				ir_has_effect(instr.opcode, IR_FUSED_BRANCH);
+			if (compare && instr.type_hint == Variant::FLOAT) {
+				float_bound = true;
+			}
+			if (instr.opcode == IROpcode::ADD && instr.type_hint == Variant::FLOAT) {
+				float_step = true;
+			}
+		}
+		assert(float_bound && "the bound compare was not a float compare");
+		assert(float_step && "the step was not a float add");
+	}
+
+	// Untyped: float detected via TYPE_TEST, ceil'd into the integer arm.
+	const IRProgram untyped = compile_to_ir("func f(it):\n\tfor i in it:\n\t\tpass\n");
+	const IRFunction& u = find_function(untyped, "f");
+	int float_tests = 0;
+	for (const auto& instr : u.instructions) {
+		if (instr.opcode == IROpcode::TYPE_TEST &&
+			std::get<int64_t>(instr.operands.at(2).value) == Variant::FLOAT) {
+			float_tests++;
+		}
+	}
+	assert(float_tests == 1);
+	// ceil() hoisted outside the loop.
+	int ceil_calls = 0;
+	size_t loop_header = u.instructions.size();
+	for (size_t i = 0; i < u.instructions.size(); i++) {
+		if (u.instructions[i].opcode == IROpcode::LABEL &&
+			std::get<std::string>(u.instructions[i].operands[0].value).find("for_loop") !=
+				std::string::npos) {
+			loop_header = std::min(loop_header, i);
+		}
+		if (u.instructions[i].opcode == IROpcode::GLOBAL_CALL) {
+			ceil_calls++;
+			assert(i < loop_header || loop_header == u.instructions.size());
+		}
+	}
+	assert(ceil_calls == 1);
+
+	compile_to_machine_code(
+		"func f(it, x : float):\n"
+		"\tvar out = []\n"
+		"\tfor i in 2.5:\n"
+		"\t\tout.append(i)\n"
+		"\tfor i in x:\n"
+		"\t\tout.append(i)\n"
+		"\tfor i in it:\n"
+		"\t\tout.append(i)\n"
+		"\treturn out\n");
+
+	std::cout << "  ✓ a float bound counts in floats" << std::endl;
+}
+
+static void test_writing_a_character_is_refused() {
+	std::cout << "Testing that s[0] = c is refused..." << std::endl;
+
+	// String is a scoped handle; per-character write would alias.
+	bool refused = false;
+	try {
+		compile_to_ir("func f(s : String):\n\ts[0] = \"x\"\n");
+	} catch (const CompilerException&) {
+		refused = true;
+	}
+	assert(refused);
+
+	std::cout << "  ✓ assigning to a character is refused" << std::endl;
+}
+
 static void test_string_ops_survive_the_optimizer() {
 	std::cout << "Testing that the folded calls survive the optimizer..." << std::endl;
 
@@ -318,6 +552,12 @@ int main() {
 		test_folding_does_not_cross_control_flow();
 		test_string_length_is_a_syscall();
 		test_unknown_receiver_keeps_the_vcall();
+		test_subscript_is_a_syscall();
+		test_a_non_integer_subscript_goes_through_int();
+		test_an_unknown_subscript_tests_the_tag();
+		test_walking_a_string();
+		test_iterating_a_float();
+		test_writing_a_character_is_refused();
 		test_string_ops_survive_the_optimizer();
 	} catch (const CompilerException& e) {
 		std::cerr << "Unexpected compiler error: " << e.what() << std::endl;

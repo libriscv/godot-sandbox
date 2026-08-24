@@ -17,6 +17,7 @@ const std::unordered_map<std::string, TokenType> Lexer::keywords = {
 	{"in", TokenType::IN},
 	{"while", TokenType::WHILE},
 	{"break", TokenType::BREAK},
+	{"breakpoint", TokenType::BREAKPOINT},
 	{"continue", TokenType::CONTINUE},
 	{"pass", TokenType::PASS},
 	{"extends", TokenType::EXTENDS},
@@ -278,6 +279,69 @@ void Lexer::handle_indent() {
 	}
 }
 
+static void append_utf8(std::string& out, uint32_t cp) {
+	if (cp < 0x80) {
+		out += static_cast<char>(cp);
+	} else if (cp < 0x800) {
+		out += static_cast<char>(0xC0 | (cp >> 6));
+		out += static_cast<char>(0x80 | (cp & 0x3F));
+	} else if (cp < 0x10000) {
+		out += static_cast<char>(0xE0 | (cp >> 12));
+		out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+		out += static_cast<char>(0x80 | (cp & 0x3F));
+	} else {
+		out += static_cast<char>(0xF0 | (cp >> 18));
+		out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+		out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+		out += static_cast<char>(0x80 | (cp & 0x3F));
+	}
+}
+
+// Caller has consumed the backslash and letter.
+uint32_t Lexer::scan_hex_escape(int hex_len) {
+	uint32_t value = 0;
+	for (int i = 0; i < hex_len; i++) {
+		if (is_at_end()) {
+			error("Unterminated string");
+		}
+		const char c = peek();
+		if (!is_hex_digit(c)) {
+			error("Invalid hexadecimal digit in unicode escape sequence");
+		}
+		advance();
+		const uint32_t digit = (c >= '0' && c <= '9')   ? uint32_t(c - '0')
+		                       : (c >= 'a' && c <= 'f') ? uint32_t(c - 'a' + 10)
+		                                                : uint32_t(c - 'A' + 10);
+		value = (value << 4) | digit;
+	}
+	return value;
+}
+
+void Lexer::append_unicode_escape(std::string& value, int hex_len) {
+	uint32_t cp = scan_hex_escape(hex_len);
+
+	if (cp >= 0xD800 && cp <= 0xDBFF) {
+		if (peek() != '\\' || (peek_next() != 'u' && peek_next() != 'U')) {
+			error("Invalid UTF-16 sequence in string, unpaired lead surrogate");
+		}
+		advance();
+		const char letter = advance();
+		const uint32_t trail = scan_hex_escape(letter == 'u' ? 4 : 6);
+		if (trail < 0xDC00 || trail > 0xDFFF) {
+			error("Invalid UTF-16 sequence in string, unpaired lead surrogate");
+		}
+		cp = 0x10000 + ((cp - 0xD800) << 10) + (trail - 0xDC00);
+	} else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+		error("Invalid UTF-16 sequence in string, unpaired trail surrogate");
+	}
+
+	// Godot silently substitutes U+FFFD; reject at compile time instead.
+	if (cp > 0x10FFFF) {
+		error("Invalid unicode codepoint in escape sequence");
+	}
+	append_utf8(value, cp);
+}
+
 // `type`: STRING, STRING_NAME (&"..."), or NODE_PATH (^"...").
 // `raw`: r"..." — backslash literal, still escapes the quote terminator.
 void Lexer::scan_string(TokenType type, bool raw) {
@@ -325,18 +389,35 @@ void Lexer::scan_string(TokenType type, bool raw) {
 			}
 			const char escaped = advance();
 			switch (escaped) {
+				case 'a': value += '\a'; break;
+				case 'b': value += '\b'; break;
+				case 'f': value += '\f'; break;
 				case 'n': value += '\n'; break;
-				case 't': value += '\t'; break;
 				case 'r': value += '\r'; break;
+				case 't': value += '\t'; break;
+				case 'v': value += '\v'; break;
 				case '\\': value += '\\'; break;
 				case '"': value += '"'; break;
 				case '\'': value += '\''; break;
-				case '\n':
+				case 'u':
+				case 'U':
+					append_unicode_escape(value, escaped == 'u' ? 4 : 6);
+					break;
+				case '\r':
+					// CRLF continuation; a lone CR is not one.
+					if (peek() != '\n') {
+						error("Invalid escape in string");
+					}
+					advance();
 					m_line++;
 					m_column = 0;
-					value += '\n';
 					break;
-				default: value += escaped; break;
+				case '\n':
+					// Line continuation; nothing emitted.
+					m_line++;
+					m_column = 0;
+					break;
+				default: error("Invalid escape in string"); break;
 			}
 			continue;
 		}

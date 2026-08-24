@@ -100,6 +100,10 @@ HostVariant read_variant(uint64_t address) {
 
 	HostVariant out;
 	out.type = type;
+	// NIL carries no payload; the data bytes may be uninitialised.
+	if (type == Variant::NIL) {
+		return out;
+	}
 	if (type == Variant::INT || type == Variant::BOOL) {
 		out.integer = data;
 		return out;
@@ -227,6 +231,48 @@ void array_size_syscall(machine_t& machine) {
 		? int64_t(g_host.scoped[handle].array.size()) : 0);
 }
 
+// ECALL_VEVAL stub: integer-only, enough for untyped-parameter tests.
+void veval_syscall(machine_t& machine) {
+	enum { OP_EQUAL = 0, OP_NOT_EQUAL, OP_LESS, OP_LESS_EQUAL, OP_GREATER, OP_GREATER_EQUAL,
+		OP_ADD, OP_SUBTRACT, OP_MULTIPLY, OP_DIVIDE };
+
+	const int op = int(machine.cpu.reg(riscv::REG_ARG0));
+	const HostVariant a = read_variant(machine.cpu.reg(riscv::REG_ARG1));
+	const HostVariant b = read_variant(machine.cpu.reg(riscv::REG_ARG0 + 2));
+	const uint64_t result_ptr = machine.cpu.reg(riscv::REG_ARG0 + 3);
+
+	const bool integers = (a.type == Variant::INT || a.type == Variant::BOOL) &&
+		(b.type == Variant::INT || b.type == Variant::BOOL);
+	if (!integers) {
+		std::cerr << "FAILED: veval " << op << " on types " << a.type << " and "
+			<< b.type << std::endl;
+		failures++;
+		machine.stop();
+		return;
+	}
+
+	HostVariant out;
+	out.type = Variant::INT;
+	switch (op) {
+		case OP_ADD:      out.integer = a.integer + b.integer; break;
+		case OP_SUBTRACT: out.integer = a.integer - b.integer; break;
+		case OP_MULTIPLY: out.integer = a.integer * b.integer; break;
+		case OP_DIVIDE:   out.integer = b.integer != 0 ? a.integer / b.integer : 0; break;
+		case OP_EQUAL:    out.type = Variant::BOOL; out.integer = a.integer == b.integer; break;
+		case OP_NOT_EQUAL: out.type = Variant::BOOL; out.integer = a.integer != b.integer; break;
+		case OP_LESS:     out.type = Variant::BOOL; out.integer = a.integer < b.integer; break;
+		default:
+			std::cerr << "FAILED: veval operator " << op << " is not stubbed" << std::endl;
+			failures++;
+			machine.stop();
+			return;
+	}
+	machine.set_result(1); // valid
+	if (result_ptr != 0) {
+		write_variant(result_ptr, out);
+	}
+}
+
 void fail_on_syscall(machine_t& machine) {
 	std::cerr << "FAILED: the test program made syscall "
 		<< machine.cpu.reg(riscv::REG_ARG7) << std::endl;
@@ -247,6 +293,7 @@ std::unique_ptr<machine_t> boot(const std::vector<uint8_t>& elf) {
 	machine_t::install_syscall_handler(ECALL_VCREATE, vcreate_syscall);
 	machine_t::install_syscall_handler(ECALL_ARRAY_AT, array_at_syscall);
 	machine_t::install_syscall_handler(ECALL_ARRAY_SIZE, array_size_syscall);
+	machine_t::install_syscall_handler(ECALL_VEVAL, veval_syscall);
 
 	g_host = Host {};
 	machine->simulate(50'000'000ull);
@@ -510,6 +557,60 @@ void test_a_lambda_called_through_its_variable() {
 	std::cout << "  ✓ A captured lambda answers to f(x) as well as f.call(x)" << std::endl;
 }
 
+// `a[0]()` / `get_f()()`: lowered as `.call()`, same as `c(1)`.
+void test_calling_an_expression() {
+	std::cout << "Testing a call on an expression..." << std::endl;
+
+	const std::vector<uint8_t> elf = compile(
+		"func double(x):\n"
+		"\treturn x * 2\n"
+		"func get_f():\n"
+		"\treturn double\n"
+		"func from_array(n):\n"
+		"\tvar a = [double]\n"
+		"\treturn a[0](n)\n"
+		"func from_call(n):\n"
+		"\treturn get_f()(n)\n"
+		"func from_lambda(n):\n"
+		"\tvar a = [func(x): return x + 1]\n"
+		"\treturn a[0](n)\n"
+		"func chained(n):\n"
+		"\treturn get_f()(get_f()(n))\n");
+	if (elf.empty()) {
+		return;
+	}
+
+	auto machine = boot(elf);
+	check_eq<int64_t>(run(*machine, "from_array", { 4 }).value, 8, "a[0](n) called the element");
+	check_eq<int64_t>(run(*machine, "from_call", { 5 }).value, 10, "get_f()(n) called the result");
+	check_eq<int64_t>(run(*machine, "from_lambda", { 6 }).value, 7, "a lambda in an Array is callable");
+	check_eq<int64_t>(run(*machine, "chained", { 3 }).value, 12, "two calls on expressions compose");
+
+	// Must produce identical ELF to the explicit `.call()` spelling.
+	const std::vector<uint8_t> spelled_out = compile(
+		"func double(x):\n"
+		"\treturn x * 2\n"
+		"func get_f():\n"
+		"\treturn double\n"
+		"func from_array(n):\n"
+		"\tvar a = [double]\n"
+		"\treturn a[0].call(n)\n"
+		"func from_call(n):\n"
+		"\treturn get_f().call(n)\n"
+		"func from_lambda(n):\n"
+		"\tvar a = [func(x): return x + 1]\n"
+		"\treturn a[0].call(n)\n"
+		"func chained(n):\n"
+		"\treturn get_f().call(get_f().call(n))\n");
+	check(spelled_out == elf, "f(x) and f.call(x) on an expression compile alike");
+
+	// Named arguments have no meaning on a Callable.
+	check(!compile_error("func f(a):\n\treturn a[0](x = 1)\n").empty(),
+		"a named argument in a call on an expression is refused");
+
+	std::cout << "  ✓ A call on an expression is the .call() it stands for" << std::endl;
+}
+
 void test_a_lambda_inside_a_lambda() {
 	std::cout << "Testing a lambda inside a lambda..." << std::endl;
 
@@ -664,6 +765,7 @@ int main() {
 	test_a_function_name_is_a_callable();
 	test_calling_a_callable_variable();
 	test_a_lambda_called_through_its_variable();
+	test_calling_an_expression();
 	test_a_lambda_inside_a_lambda();
 	test_shapes_of_lambda_syntax();
 	test_what_is_refused();

@@ -213,8 +213,16 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 			? global.value_type
 			: static_cast<int32_t>(Variant::NIL);
 		emit_li(REG_A3, variant_type);
-		emit_li(REG_A4, 0);
-		emit_li(REG_A5, 0);
+		if (global.setter_function.empty()) {
+			emit_li(REG_A4, 0);
+		} else {
+			emit_la(REG_A4, global.setter_function);
+		}
+		if (global.getter_function.empty()) {
+			emit_li(REG_A5, 0);
+		} else {
+			emit_la(REG_A5, global.getter_function);
+		}
 		emit_address_of_global(REG_A6, i);
 		emit_li(REG_A7, ECALL_SANDBOX_ADD);
 		emit_ecall();
@@ -612,6 +620,28 @@ void RISCVCodeGen::gen_syscall_array_at(const IRInstruction& instr, int result_v
 	emit_ecall();
 }
 
+void RISCVCodeGen::gen_syscall_string_at(const IRInstruction& instr, int result_vreg) {
+	if (instr.operands.size() != 4) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_STRING_AT requires 4 operands");
+	}
+
+	int string_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
+	int index_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
+
+	int result_offset = get_variant_stack_offset(result_vreg);
+	int string_offset = get_variant_stack_offset(string_vreg);
+	int index_offset = get_variant_stack_offset(index_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1});
+
+	emit_container_handle(REG_A0, string_vreg, string_offset);
+	emit_ld(REG_A1, REG_SP, index_offset + 8); // int64, not int32
+	emit_li(REG_A7, ECALL_STRING_AT);
+	emit_ecall();
+
+	emit_syscall_result(result_vreg, REG_A0, result_offset, Variant::STRING);
+}
+
 // Keyed ops pass key in a2, result in a3; keyless (GET_KEYS, GET_VALUES) take result in a2.
 // HAS and GET_SIZE return in a0 instead of through a pointer.
 void RISCVCodeGen::gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg) {
@@ -783,6 +813,8 @@ void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
 		gen_syscall_string_size(instr, result_vreg);
 	} else if (syscall_num == ECALL_ARRAY_AT) {
 		gen_syscall_array_at(instr, result_vreg);
+	} else if (syscall_num == ECALL_STRING_AT) {
+		gen_syscall_string_at(instr, result_vreg);
 	} else if (syscall_num == ECALL_DICTIONARY_OPS) {
 		gen_syscall_dictionary_ops(instr, result_vreg);
 	} else {
@@ -1847,6 +1879,11 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			define_label(std::get<std::string>(instr.operands[0].value));
 			break;
 
+		// Source-requested stop; not added to the host's installed list.
+		case IROpcode::BREAKPOINT:
+			emit_breakpoint(instr.line, false);
+			break;
+
 		case IROpcode::LOAD_IMM: {
 			int vreg = std::get<int>(instr.operands[0].value);
 			int64_t value = std::get<int64_t>(instr.operands[1].value);
@@ -1971,6 +2008,10 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 				emit_lbu(REG_T0, REG_SP, src_offset + VARIANT_DATA_OFFSET);
 			} else if (from == Variant::INT) {
 				emit_ld(REG_T0, REG_SP, src_offset + VARIANT_DATA_OFFSET);
+			} else if (from == Variant::FLOAT) {
+				// fcvt.l.d: truncate-toward-zero, matching int() semantics.
+				emit_fld(REG_FA0, REG_SP, src_offset + VARIANT_DATA_OFFSET);
+				emit_fcvt_l_d(REG_T0, REG_FA0);
 			} else {
 				throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 					std::string("CONVERT from ") + variant_type_name(from) + " is not implemented");
@@ -2438,6 +2479,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 		}
 		if (m_break_pending && instr.opcode != IROpcode::LABEL) {
 			m_break_pending = false;
+			if (instr.opcode == IROpcode::BREAKPOINT) {
+				// Coalesce: one stop, reported as installed.
+				emit_breakpoint(m_break_line, true);
+				continue;
+			}
 			emit_breakpoint(m_break_line);
 		}
 
@@ -2636,6 +2682,10 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::SWITCH:
 		case IROpcode::JUMP:
 		case IROpcode::RETURN:
+			return false;
+
+		case IROpcode::BREAKPOINT: // saves/restores a0/a7 around the ecall
+
 			return false;
 
 		// May syscall or call; must hold for the slow path too
@@ -2991,6 +3041,7 @@ void RISCVCodeGen::plan_global_handles(const IRFunction& func) {
 					case ECALL_STRING_SIZE:
 						return { 2, -1 };
 					case ECALL_ARRAY_AT:
+					case ECALL_STRING_AT:
 					case ECALL_DICTIONARY_OPS:
 						return { 3, -1 };
 					default:

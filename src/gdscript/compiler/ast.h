@@ -188,9 +188,23 @@ struct VarDeclStmt : Stmt {
 	bool is_const = false;
 	bool is_property = false;
 
+	std::unique_ptr<FunctionDecl> setter_body;
+	std::unique_ptr<FunctionDecl> getter_body;
+	std::string setter_name;
+	std::string getter_name;
+
 	VarDeclStmt(std::string n, ExprPtr init = nullptr, bool const_flag = false)
 		: name(std::move(n)), initializer(std::move(init)), is_const(const_flag) {}
+	VarDeclStmt(VarDeclStmt&&) noexcept;
+	VarDeclStmt& operator=(VarDeclStmt&&) noexcept;
+	~VarDeclStmt();
+
+	bool has_accessors() const {
+		return setter_body || getter_body || !setter_name.empty() || !getter_name.empty();
+	}
 };
+
+struct BreakpointStmt : Stmt {};
 
 struct AssignStmt : Stmt {
 	std::string name;
@@ -327,6 +341,9 @@ struct FunctionDecl {
 };
 
 inline LambdaExpr::~LambdaExpr() = default;
+inline VarDeclStmt::VarDeclStmt(VarDeclStmt&&) noexcept = default;
+inline VarDeclStmt& VarDeclStmt::operator=(VarDeclStmt&&) noexcept = default;
+inline VarDeclStmt::~VarDeclStmt() = default;
 
 // Sugar for a Dictionary with a fixed key set; nothing survives into IR.
 struct StructField {

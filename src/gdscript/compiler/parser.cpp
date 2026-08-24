@@ -47,7 +47,12 @@ Program Parser::parse() {
 
 		if (check(TokenType::EXTENDS)) {
 			advance();
-			consume(TokenType::IDENTIFIER, "Expected class name after 'extends'");
+			if (!match(TokenType::STRING)) {
+				consume(TokenType::IDENTIFIER, "Expected a class name or a path after 'extends'");
+				while (match(TokenType::DOT)) {
+					consume(TokenType::IDENTIFIER, "Expected a class name after '.'");
+				}
+			}
 			skip_newlines();
 		} else if (check(TokenType::SIGNAL)) {
 			parse_signal();
@@ -64,12 +69,8 @@ Program Parser::parse() {
 				advance();
 				auto var_decl = parse_var_decl(is_const);
 				if (auto* decl = dynamic_cast<VarDeclStmt*>(var_decl.get())) {
-					VarDeclStmt global_decl(decl->name, std::move(decl->initializer), decl->is_const);
-					global_decl.type_hint = decl->type_hint;
-					global_decl.is_property = is_export;
-					global_decl.line = decl->line;
-					global_decl.column = decl->column;
-					program.globals.push_back(std::move(global_decl));
+					decl->is_property = is_export;
+					program.globals.push_back(std::move(*decl));
 				}
 			} else if (check(TokenType::FUNC)) {
 				// @export names a property; a function is not one.
@@ -86,21 +87,13 @@ Program Parser::parse() {
 			advance();
 			auto var_decl = parse_var_decl(false);
 			if (auto* decl = dynamic_cast<VarDeclStmt*>(var_decl.get())) {
-				VarDeclStmt global_decl(decl->name, std::move(decl->initializer), decl->is_const);
-				global_decl.type_hint = decl->type_hint;
-				global_decl.line = decl->line;
-				global_decl.column = decl->column;
-				program.globals.push_back(std::move(global_decl));
+				program.globals.push_back(std::move(*decl));
 			}
 		} else if (check(TokenType::CONST)) {
 			advance();
 			auto const_decl = parse_var_decl(true);
 			if (auto* decl = dynamic_cast<VarDeclStmt*>(const_decl.get())) {
-				VarDeclStmt global_decl(decl->name, std::move(decl->initializer), decl->is_const);
-				global_decl.type_hint = decl->type_hint;
-				global_decl.line = decl->line;
-				global_decl.column = decl->column;
-				program.globals.push_back(std::move(global_decl));
+				program.globals.push_back(std::move(*decl));
 			}
 		} else if (check(TokenType::STRUCT)) {
 			program.structs.push_back(parse_struct());
@@ -430,26 +423,157 @@ StmtPtr Parser::parse_statement_impl() {
 		consume_statement_end("Expected newline after 'pass'");
 		return stmt;
 	}
+	if (check(TokenType::BREAKPOINT)) {
+		auto stmt = make_at<BreakpointStmt>(advance());
+		consume_statement_end("Expected newline after 'breakpoint'");
+		return stmt;
+	}
 
 	return parse_expr_or_assign_stmt();
+}
+
+bool Parser::at_property_accessor() const {
+	if (!check(TokenType::IDENTIFIER)) {
+		return false;
+	}
+	const TokenType next = peek_ahead(1).type;
+	if (peek().lexeme == "set") {
+		return next == TokenType::ASSIGN || next == TokenType::LPAREN ||
+			next == TokenType::COLON;
+	}
+	if (peek().lexeme == "get") {
+		return next == TokenType::ASSIGN || next == TokenType::LPAREN ||
+			next == TokenType::COLON;
+	}
+	return false;
 }
 
 StmtPtr Parser::parse_var_decl(bool is_const) {
 	Token name = consume(TokenType::IDENTIFIER, "Expected variable name");
 
-	std::string type_hint = parse_type_hint();
+	// ':' is ambiguous: type hint, accessor block, or bare `var x:`.
+	std::string type_hint;
+	bool accessors_follow = false;
+	if (match(TokenType::COLON)) {
+		if (at_property_accessor() || check(TokenType::NEWLINE)) {
+			accessors_follow = true;
+		} else if (check(TokenType::IDENTIFIER)) {
+			type_hint = parse_type_name();
+		}
+	}
 
 	ExprPtr initializer = nullptr;
-	if (match(TokenType::ASSIGN)) {
-		initializer = parse_expression();
-	} else if (is_const) {
-		error("Const variables must have an initializer");
+	if (!accessors_follow) {
+		if (match(TokenType::ASSIGN)) {
+			initializer = parse_expression();
+		} else if (is_const) {
+			error("Const variables must have an initializer");
+		}
+		// Accessors may follow the initializer: `var x: int = 3: set(v): ...`
+		accessors_follow = match(TokenType::COLON);
+	}
+
+	auto stmt = make_at<VarDeclStmt>(name, name.lexeme, std::move(initializer), is_const);
+	stmt->type_hint = type_hint;
+
+	if (accessors_follow) {
+		if (is_const) {
+			error("A const cannot have a setter or a getter");
+		}
+		parse_property_accessors(*stmt);
+		return stmt;
 	}
 
 	consume_statement_end("Expected newline after variable declaration");
-	auto stmt = make_at<VarDeclStmt>(name, name.lexeme, std::move(initializer), is_const);
-	stmt->type_hint = type_hint;
 	return stmt;
+}
+
+void Parser::parse_property_accessors(VarDeclStmt& decl) {
+	const bool block = check(TokenType::NEWLINE);
+	if (block) {
+		advance();
+		consume(TokenType::INDENT, "Expected an indented block of property accessors");
+	}
+
+	while (true) {
+		if (block) {
+			skip_newlines();
+			if (check(TokenType::DEDENT)) {
+				break;
+			}
+		}
+		parse_one_property_accessor(decl);
+		const bool comma = match(TokenType::COMMA);
+		if (!block && !comma) {
+			break;
+		}
+	}
+
+	if (block) {
+		skip_newlines();
+		consume(TokenType::DEDENT, "Expected the property accessors to end");
+	} else {
+		consume_statement_end("Expected newline after the property accessors");
+	}
+
+	if (!decl.has_accessors()) {
+		error("Expected 'set' or 'get' after ':'");
+	}
+}
+
+void Parser::parse_one_property_accessor(VarDeclStmt& decl) {
+	if (!at_property_accessor()) {
+		error("Expected 'set' or 'get' in a property declaration");
+	}
+	const Token keyword = advance();
+	const bool is_setter = keyword.lexeme == "set";
+
+	if (is_setter ? (!decl.setter_name.empty() || decl.setter_body)
+	              : (!decl.getter_name.empty() || decl.getter_body)) {
+		error("Property '" + decl.name + "' already has a '" + keyword.lexeme + "'");
+	}
+
+	if (match(TokenType::ASSIGN)) {
+		const Token target = consume(TokenType::IDENTIFIER,
+			"Expected a function name after '" + keyword.lexeme + " ='");
+		(is_setter ? decl.setter_name : decl.getter_name) = target.lexeme;
+		return;
+	}
+
+	auto body = std::make_unique<FunctionDecl>();
+	// '@' prefix avoids collision with user-declared functions.
+	body->name = "@" + decl.name + (is_setter ? "_setter" : "_getter");
+	body->line = keyword.line;
+	body->column = keyword.column;
+
+	if (match(TokenType::LPAREN)) {
+		if (is_setter || !check(TokenType::RPAREN)) {
+			const Token param = consume(TokenType::IDENTIFIER,
+				"Expected the assigned value's name in 'set(...)'");
+			Parameter parameter;
+			parameter.name = param.lexeme;
+			parameter.type_hint = parse_type_hint();
+			body->parameters.push_back(std::move(parameter));
+		}
+		consume(TokenType::RPAREN, "Expected ')' after the accessor's parameter");
+	} else if (is_setter) {
+		error("Expected '(' after 'set': a setter body names the assigned value, "
+			"as in 'set(value):'");
+	}
+
+	consume(TokenType::COLON, "Expected ':' after '" + keyword.lexeme + "'");
+
+	const bool was_coroutine = m_saw_await;
+	m_saw_await = false;
+	body->body = parse_suite();
+	body->is_coroutine = m_saw_await;
+	m_saw_await = was_coroutine;
+
+	if (body->is_coroutine) {
+		error("A property accessor cannot await");
+	}
+
+	(is_setter ? decl.setter_body : decl.getter_body) = std::move(body);
 }
 
 StmtPtr Parser::parse_if_stmt() {
@@ -1058,7 +1182,14 @@ ExprPtr Parser::parse_call() {
 				call->argument_names = std::move(names);
 				expr = std::move(call);
 			} else {
-				error("Invalid call expression");
+				// Non-identifier callee: lower to `.call()` (Callable VCALL).
+				for (const std::string& name : names) {
+					if (!name.empty()) {
+						error("A call on an expression cannot name its arguments");
+					}
+				}
+				expr = make_like<MemberCallExpr>(*expr, std::move(expr), "call",
+					std::move(arguments), true);
 			}
 		} else if (match(TokenType::DOT)) {
 			Token member = consume(TokenType::IDENTIFIER, "Expected property or method name after '.'");
@@ -1231,20 +1362,40 @@ ExprPtr Parser::parse_primary() {
 		const Token brace = previous();
 		std::vector<std::pair<ExprPtr, ExprPtr>> elements;
 
+		enum class DictStyle { UNKNOWN, LUA, PYTHON };
+		DictStyle style = DictStyle::UNKNOWN;
+
 		if (!check(TokenType::RBRACE)) {
 			do {
-				ExprPtr key;
-				if (match(TokenType::IDENTIFIER)) {
-					// Lua-style `{key = value}`: identifier becomes string literal.
-					Token identifier = previous();
-					key = make_at<LiteralExpr>(identifier, identifier.lexeme);
-				} else {
-					key = parse_expression();
+				const bool lua_here =
+					(check(TokenType::IDENTIFIER) || check(TokenType::STRING)) &&
+					peek_ahead(1).type == TokenType::ASSIGN;
+				const bool first = elements.empty();
+				if (first) {
+					style = lua_here ? DictStyle::LUA : DictStyle::PYTHON;
 				}
 
-				// `{k = v}` (Lua-style) or `{"k": v}`.
-				if (!match(TokenType::ASSIGN)) {
-					consume(TokenType::COLON, "Expected ':' or '=' after dictionary key");
+				ExprPtr key;
+				if (style == DictStyle::LUA) {
+					if (!lua_here) {
+						error("Expected '=' after dictionary key. "
+							"Mixing dictionary styles is not allowed");
+					}
+					const Token name = advance();
+					key = name.type == TokenType::IDENTIFIER
+						? make_at<LiteralExpr>(name, name.lexeme)
+						: make_at<LiteralExpr>(name, std::get<std::string>(name.value));
+					advance(); // the `=`
+				} else {
+					key = parse_expression();
+					if (check(TokenType::ASSIGN)) {
+						error(first
+							? "Expected an identifier or a string as a Lua-style "
+								"dictionary key (e.g. '{ key = value }')"
+							: "Expected ':' after dictionary key. "
+								"Mixing dictionary styles is not allowed");
+					}
+					consume(TokenType::COLON, "Expected ':' after dictionary key");
 				}
 				ExprPtr value = parse_expression();
 				elements.push_back({std::move(key), std::move(value)});
@@ -1360,12 +1511,22 @@ void Parser::consume_statement_end(const std::string& message) {
 std::string Parser::parse_type_hint() {
 	if (match(TokenType::COLON)) {
 		if (check(TokenType::IDENTIFIER)) {
-			Token type_token = consume(TokenType::IDENTIFIER, "Expected type name");
-			skip_type_arguments();
-			return type_token.lexeme;
+			return parse_type_name();
 		}
 	}
 	return "";
+}
+
+// Qualified names (A.B) are dropped; only the engine can resolve them.
+std::string Parser::parse_type_name() {
+	Token type_token = consume(TokenType::IDENTIFIER, "Expected type name");
+	bool qualified = false;
+	while (match(TokenType::DOT)) {
+		consume(TokenType::IDENTIFIER, "Expected a type name after '.'");
+		qualified = true;
+	}
+	skip_type_arguments();
+	return qualified ? std::string() : type_token.lexeme;
 }
 
 std::string Parser::parse_return_type() {
@@ -1375,9 +1536,7 @@ std::string Parser::parse_return_type() {
 	if (match(TokenType::MINUS)) {
 		if (match(TokenType::GREATER)) {
 			if (check(TokenType::IDENTIFIER)) {
-				Token type_token = consume(TokenType::IDENTIFIER, "Expected return type");
-				skip_type_arguments();
-				return type_token.lexeme;
+				return parse_type_name();
 			}
 			return "";
 		}
@@ -1415,6 +1574,12 @@ bool Parser::parse_attribute() {
 	const Token name = consume(TokenType::IDENTIFIER, "Expected an attribute name after '@'");
 	skip_attribute_arguments();
 
+	// Inspector-section annotations; not tied to a declaration.
+	if (name.lexeme == "export_group" || name.lexeme == "export_subgroup" ||
+		name.lexeme == "export_category")
+	{
+		return false;
+	}
 	if (name.lexeme.rfind("export", 0) == 0) {
 		return true;
 	}

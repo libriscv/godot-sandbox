@@ -93,6 +93,7 @@ private:
 	void gen_syscall_array_size(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_string_size(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_array_at(const IRInstruction& instr, int result_vreg);
+	void gen_syscall_string_at(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg);
 	void gen_get_node(const IRInstruction& instr);
 	void gen_load_resource(const IRInstruction& instr);
@@ -146,7 +147,7 @@ private:
 	void emit_debug_exit();
 
 	// Saves/restores the two regs it uses; safe between arbitrary IR instructions.
-	void emit_breakpoint(int32_t line);
+	void emit_breakpoint(int32_t line, bool installed = true);
 
 	// Coroutine resume entry: restores frame, dispatches on state index. No ELF symbol.
 	void emit_coroutine_resume_entry(const IRFunction& func);

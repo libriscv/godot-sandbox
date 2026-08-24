@@ -212,7 +212,57 @@ static void test_declarations() {
 	// A file-level annotation before a function is still fine.
 	compile_to_ir("@tool\nfunc test():\n\treturn 1\n");
 
+	// Grouping annotations stand alone (not attached to a declaration).
+	for (const char* grouping : { "export_group", "export_subgroup", "export_category" }) {
+		compile_to_ir(std::string("@") + grouping + "(\"Stats\")\nfunc test():\n\treturn 1\n");
+		const IRProgram grouped = compile_to_ir(std::string("@") + grouping +
+			"(\"Stats\")\n@export var hp = 1\nfunc test():\n\treturn hp\n");
+		assert(grouped.globals.size() == 1);
+		assert(grouped.globals[0].is_property);
+	}
+	compile_to_ir("@export_category(\"A\")\n@export_subgroup(\"B\")\n"
+		"@export var hp = 1\nfunc test():\n\treturn hp\n");
+
 	std::cout << "  ✓ signal, static var and @export_* parse" << std::endl;
+}
+
+// Qualified type names (`A.B`) parse and drop; only the engine can resolve them.
+static void test_qualified_type_names() {
+	std::cout << "Testing qualified type names..." << std::endl;
+
+	// Parameter, return type, variable, and inside a container's element type.
+	compile_to_ir("func test(a : Node.Inner):\n\treturn a\n");
+	compile_to_ir("func test() -> Node.Inner:\n\treturn null\n");
+	compile_to_ir("var a : Node.Inner = null\nfunc test():\n\treturn a\n");
+	compile_to_ir("func test(a : Array[Node.Inner]):\n\treturn a\n");
+	compile_to_ir("func test(a : A.B.C):\n\treturn a\n");
+
+	// Dropped entirely, not misread as the first segment.
+	const IRProgram ir = compile_to_ir(
+		"var qualified : Node.Inner = null\n"
+		"var plain : Array = []\n");
+	assert(ir.globals[0].type_hint == IRInstruction::TypeHint_NONE);
+	assert(ir.globals[1].type_hint == Variant::ARRAY);
+
+	// Unresolvable qualified type leaves the local untyped.
+	const IRProgram local = compile_to_ir(
+		"func test():\n"
+		"\tvar a : Node.Inner = null\n"
+		"\treturn a\n");
+	find_function(local, "test");
+
+	// `extends` with dotted name and path.
+	compile_to_ir("extends Node.Inner\nfunc test():\n\treturn 1\n");
+	compile_to_ir("extends \"res://other.gd\"\nfunc test():\n\treturn 1\n");
+	compile_to_ir("extends Node\nfunc test():\n\treturn 1\n");
+
+	// A dangling '.' is still a syntax error.
+	assert(refuses("func test(a : Node.):\n\treturn a\n"));
+	assert(refuses("extends Node.\nfunc test():\n\treturn 1\n"));
+
+	assert(machine_code_builds("func test(a : Node.Inner) -> Node.Inner:\n\treturn a\n"));
+
+	std::cout << "  ✓ a qualified type name parses and drops" << std::endl;
 }
 
 // -= for i in <int> =-
@@ -238,9 +288,16 @@ static void test_for_over_an_integer() {
 		"func test(n):\n\tfor i in n:\n\t\tpass\n");
 	assert(count_opcode(find_function(untyped, "test"), IROpcode::CALL_SYSCALL) > 0);
 
-	// A float bound is refused: range() wants integers.
-	assert(refuses("func test():\n\tfor i in 2.5:\n\t\tpass\n"));
-	assert(refuses("func test():\n\tvar f : float = 3.0\n\tfor i in f:\n\t\tpass\n"));
+	// Float bound: counted loop, no syscall.
+	for (const char* source : { "func test():\n\tfor i in 2.5:\n\t\tpass\n",
+			"func test():\n\tvar f : float = 3.0\n\tfor i in f:\n\t\tpass\n" }) {
+		const IRProgram floated = compile_to_ir(source);
+		assert(count_opcode(find_function(floated, "test"), IROpcode::CALL_SYSCALL) == 0);
+	}
+
+	// A bool or null is not iterable in the engine either.
+	assert(refuses("func test():\n\tfor i in true:\n\t\tpass\n"));
+	assert(refuses("func test():\n\tfor i in null:\n\t\tpass\n"));
 
 	// `for i: int in ...` parses; the type is the loop's, not the hint's.
 	compile_to_ir("func test():\n\tfor i: int in range(3):\n\t\tpass\n");
@@ -375,6 +432,7 @@ int main() {
 		test_node_path_sugar();
 		test_string_literals();
 		test_declarations();
+		test_qualified_type_names();
 		test_for_over_an_integer();
 		test_assert();
 		test_null_is_not_zero();

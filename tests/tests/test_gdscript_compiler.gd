@@ -1517,11 +1517,11 @@ func make_dict():
 	return dict
 
 func dict_literal():
-	var dict = {key1: "value", key2: 42}
+	var dict = {key1 = "value", key2 = 42}
 	return dict
 
 func nested_dict_literal():
-	var dict = {key1: "value", key2: 42, key3: {nested_key: "nested_value", number: 99}}
+	var dict = {key1 = "value", key2 = 42, key3 = {nested_key = "nested_value", number = 99}}
 	return dict
 
 func array_size():
@@ -7710,3 +7710,864 @@ func counted(n):
 	assert_eq(s.vmcallv("counted", 6), 6, "break/continue should work in a guarded loop")
 
 	s.queue_free()
+
+func test_sgd_dictionary_literal_keys():
+	# A dictionary key is an expression. Only an identifier written directly
+	# before '=' is the Lua-style spelling of a string key: Godot 4.6.3 prints
+	# `{ 7: 2 }` for `{k: 2}` with k == 7. The engine accepts every literal
+	# below unchanged, so the `_dict_*` helpers underneath are the same source.
+	var gdscript_code = """
+const M = 5
+
+func by_local(k):
+	return {k: 2}
+
+func by_name(k):
+	return {k = 2}
+
+func by_const():
+	return {M: 1}
+
+func by_expression(a, b):
+	return {a + b: "sum", -a: "neg"}
+
+func by_builtin():
+	return {Vector2.ZERO: 3}
+
+func named_string():
+	return {a = 1, "b c" = 2,}
+
+func nested(k):
+	return {k: {k: k}}
+"""
+	var s = _compile_and_load(gdscript_code, 100000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("by_local", 7), _dict_by_local(7), "'{k: 2}' should key by k's value")
+	assert_eq(s.vmcallv("by_local", "s"), _dict_by_local("s"), "A String local keys by its value too")
+	assert_eq(s.vmcallv("by_name", 7), _dict_by_name(7), "'{k = 2}' should key by the name 'k'")
+	assert_eq(s.vmcallv("by_const"), _dict_by_const(), "A const key is its value, not its name")
+	assert_eq(s.vmcallv("by_expression", 2, 3), _dict_by_expression(2, 3), "An arbitrary key expression should compile")
+	assert_eq(s.vmcallv("by_builtin"), _dict_by_builtin(), "A builtin constant should key a literal")
+	assert_eq(s.vmcallv("named_string"), _dict_named_string(), "A string is a Lua-style key too")
+	assert_eq(s.vmcallv("nested", 4), _dict_nested(4), "Key expressions should nest")
+
+	# The name spelling reaches the same entry a String subscript does, which is
+	# what makes it usable as sugar for a record.
+	var named = s.vmcallv("by_name", 7)
+	assert_eq(named["k"], 2, "The Lua-style key should answer to its own name")
+
+	s.queue_free()
+
+	# The first entry fixes the spelling. The engine refuses a literal that
+	# mixes them ("Mixing dictionary styles is not allowed"), so we do too --
+	# otherwise a program that compiles here fails to parse there.
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	for source in ["func f(v):\n\treturn {a = 1, v: 2}\n",
+			"func f(v):\n\treturn {v: 2, a = 1}\n",
+			"func f():\n\treturn {1 = 2}\n"]:
+		var elf = ts.vmcall("compile_to_elf", source)
+		assert_eq(elf.is_empty(), true, "A mixed dictionary literal should not compile: " + source)
+	ts.queue_free()
+
+func _dict_by_local(k):
+	return {k: 2}
+
+func _dict_by_name(k):
+	return {k = 2}
+
+const _DICT_M = 5
+
+func _dict_by_const():
+	return {_DICT_M: 1}
+
+func _dict_by_expression(a, b):
+	return {a + b: "sum", -a: "neg"}
+
+func _dict_by_builtin():
+	return {Vector2.ZERO: 3}
+
+func _dict_named_string():
+	return {a = 1, "b c" = 2,}
+
+func _dict_nested(k):
+	return {k: {k: k}}
+
+func test_sgd_string_escapes():
+	# Every escape the engine accepts, and nothing else. The guest strings and
+	# the `_escape_*` helpers underneath are the same source, so each answer is
+	# checked against GDScript's own reading of the same literal.
+	var gdscript_code = """
+func controls():
+	return "\\a\\b\\f\\v\\r\\n\\t"
+
+func quotes():
+	return "\\"q\\'\\\\"
+
+func bmp():
+	return "\\u00e9"
+
+func astral():
+	return "\\U01F600"
+
+func surrogate_pair():
+	return "\\ud83d\\ude00"
+
+func mixed():
+	return "a\\u00e9b\\U01F600c"
+
+func lengths():
+	return [bmp().length(), astral().length(), mixed().length()]
+
+func code_points():
+	return [bmp().unicode_at(0), astral().unicode_at(0), surrogate_pair().unicode_at(0)]
+
+func continued():
+	return "a\\
+	b"
+"""
+	var s = _compile_and_load(gdscript_code, 100000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("controls"), _escape_controls(), "\\a \\b \\f \\v should be the C control characters")
+	assert_eq(s.vmcallv("quotes"), _escape_quotes(), "Quote and backslash escapes should be unchanged")
+	assert_eq(s.vmcallv("bmp"), _escape_bmp(), "\\uXXXX should be one code point")
+	assert_eq(s.vmcallv("astral"), _escape_astral(), "\\UXXXXXX should be one code point")
+	assert_eq(s.vmcallv("surrogate_pair"), _escape_astral(), "A UTF-16 pair should be one code point")
+	assert_eq(s.vmcallv("mixed"), _escape_mixed(), "Escapes should compose with the rest of the string")
+
+	# Character counts, not byte counts: the guest hands over UTF-8 and Godot
+	# reads it as a String.
+	assert_eq(s.vmcallv("lengths"), [1, 1, 5], "An escaped code point is one character")
+	assert_eq(s.vmcallv("code_points"), [233, 128512, 128512], "The code points should be the ones written")
+
+	# A backslash before a newline joins the lines and leaves nothing behind.
+	assert_eq(s.vmcallv("continued"), _escape_continued(), "A string line continuation should vanish")
+
+	s.queue_free()
+
+func _escape_controls():
+	return "\a\b\f\v\r\n\t"
+
+func _escape_quotes():
+	return "\"q\'\\"
+
+func _escape_bmp():
+	return "\u00e9"
+
+func _escape_astral():
+	return "\U01F600"
+
+func _escape_mixed():
+	return "a\u00e9b\U01F600c"
+
+func _escape_continued():
+	return "a\
+	b"
+
+func test_sgd_invalid_escape_is_refused():
+	# The engine rejects an escape it does not know -- "\\x41" is a parse error
+	# there -- so a program that used to compile to the letter and drop the
+	# backslash has to be refused instead of quietly meaning something else.
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var cases = {
+		"func f():\n\treturn \"\\x41\"\n": "Invalid escape",
+		"func f():\n\treturn \"\\0\"\n": "Invalid escape",
+		"func f():\n\treturn \"\\u00e\"\n": "Invalid hexadecimal digit",
+		"func f():\n\treturn \"\\ud83d\"\n": "unpaired lead surrogate",
+		"func f():\n\treturn \"\\ude00\"\n": "unpaired trail surrogate",
+	}
+	for source in cases:
+		var elf = ts.vmcall("compile_to_elf", source)
+		assert_eq(elf.is_empty(), true, "An invalid escape should not compile: " + source)
+		var error_msg = ts.vmcall("get_compiler_error", "")
+		assert_true(error_msg.find(cases[source]) != -1,
+			"The error should say what is wrong with the escape, got: " + error_msg)
+	ts.queue_free()
+
+func test_sgd_property_accessors():
+	# A script-level var is a global in the data area, so an accessor changes
+	# what the name means: a read becomes a call to the getter and a write a
+	# call to the setter -- everywhere except inside the accessors, where the
+	# name is the storage again, which is what keeps a setter from calling
+	# itself. Every function below is declared twice, once for the sandbox and
+	# once for the engine, from the same source, so each answer is the engine's.
+	var gdscript_code = """
+var _pm_log = []
+var _pm_store = 10
+
+var _pm_hp = 10:
+	set(v):
+		_pm_log.append("set")
+		_pm_store = v
+	get:
+		_pm_log.append("get")
+		return _pm_store
+
+var _pm_mp = 5:
+	set = _pm_set_mp,
+	get = _pm_get_mp
+
+func _pm_set_mp(v):
+	_pm_store = v * 2
+
+func _pm_get_mp():
+	return _pm_store
+
+var _pm_direct = 7:
+	set(v):
+		_pm_direct = v * 3
+
+var _pm_lazy:
+	get:
+		return _pm_store + 1
+
+var _pm_wo = 2:
+	set(v):
+		_pm_wo = v * 3
+
+var _pm_ro = 1:
+	get:
+		return 99
+
+func _pm_exercise():
+	_pm_log.clear()
+	_pm_hp = 3
+	var a = _pm_hp
+	_pm_mp = 4
+	_pm_direct = 5
+	return [a, _pm_mp, _pm_direct, _pm_log]
+
+func _pm_compound():
+	_pm_store = 1
+	_pm_log.clear()
+	_pm_hp += 1
+	return [_pm_hp, _pm_log]
+
+func _pm_one_sided():
+	_pm_wo = 4
+	_pm_ro = 5
+	_pm_store = 20
+	return [_pm_wo, _pm_ro, _pm_lazy]
+
+func _pm_shadowed():
+	var _pm_hp = 2
+	_pm_hp = 3
+	return _pm_hp
+"""
+	var s = _compile_and_load(gdscript_code, 200000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("_pm_exercise"), _pm_exercise(),
+		"A read should call the getter and a write the setter")
+	assert_eq(s.vmcallv("_pm_compound"), _pm_compound(),
+		"'hp += 1' should read through the getter and write through the setter")
+	assert_eq(s.vmcallv("_pm_one_sided"), _pm_one_sided(),
+		"A property with one accessor should fall back to its storage")
+	assert_eq(s.vmcallv("_pm_shadowed"), _pm_shadowed(),
+		"A local of the same name should shadow the property")
+
+	# Spelled out as well, so the two copies cannot drift the same way. Godot
+	# 4.6.3 prints exactly these for the source above.
+	assert_eq(s.vmcallv("_pm_exercise"), [3, 8, 15, ["set", "get"]],
+		"The setter, the getter and the direct write each ran once")
+	assert_eq(s.vmcallv("_pm_compound"), [2, ["get", "set", "get"]],
+		"A compound assignment gets, sets, and the return gets again")
+	assert_eq(s.vmcallv("_pm_one_sided"), [12, 99, 21],
+		"A missing setter writes the storage; a missing getter reads it")
+
+	s.queue_free()
+
+var _pm_log = []
+var _pm_store = 10
+
+var _pm_hp = 10:
+	set(v):
+		_pm_log.append("set")
+		_pm_store = v
+	get:
+		_pm_log.append("get")
+		return _pm_store
+
+var _pm_mp = 5:
+	set = _pm_set_mp,
+	get = _pm_get_mp
+
+func _pm_set_mp(v):
+	_pm_store = v * 2
+
+func _pm_get_mp():
+	return _pm_store
+
+var _pm_direct = 7:
+	set(v):
+		_pm_direct = v * 3
+
+var _pm_lazy:
+	get:
+		return _pm_store + 1
+
+var _pm_wo = 2:
+	set(v):
+		_pm_wo = v * 3
+
+var _pm_ro = 1:
+	get:
+		return 99
+
+func _pm_exercise():
+	_pm_log.clear()
+	_pm_hp = 3
+	var a = _pm_hp
+	_pm_mp = 4
+	_pm_direct = 5
+	return [a, _pm_mp, _pm_direct, _pm_log]
+
+func _pm_compound():
+	_pm_store = 1
+	_pm_log.clear()
+	_pm_hp += 1
+	return [_pm_hp, _pm_log]
+
+func _pm_one_sided():
+	_pm_wo = 4
+	_pm_ro = 5
+	_pm_store = 20
+	return [_pm_wo, _pm_ro, _pm_lazy]
+
+func _pm_shadowed():
+	var _pm_hp = 2
+	_pm_hp = 3
+	return _pm_hp
+
+func test_sgd_exported_property_accessors():
+	# Godot reaches a guest property through the setter and getter addresses the
+	# ELF registers, so an @export with an accessor runs it on set and get from
+	# the editor too -- and a property with only one accessor still answers both
+	# ways, because the engine's answer for the missing half is the storage.
+	var gdscript_code = """
+@export var hp: int = 10:
+	set(v):
+		hp = v if v > 0 else 0
+	get:
+		return hp
+
+@export var doubled = 1:
+	set(v):
+		doubled = v * 2
+
+@export var fixed = 1:
+	get:
+		return 99
+
+func read_hp():
+	return hp
+
+func read_doubled():
+	return doubled
+"""
+	var s = _compile_and_load(gdscript_code, 200000)
+	if s == null:
+		return
+
+	# The declaration's own value never runs the setter, in the guest or here.
+	assert_eq(s.get("hp"), 10, "The initializer should reach the storage untouched")
+	assert_eq(s.get("doubled"), 1, "A setter should not run on the declaration")
+
+	# A set from Godot runs the guest setter.
+	s.set("hp", -5)
+	assert_eq(s.get("hp"), 0, "The setter should clamp what Godot assigns")
+	assert_eq(s.vmcallv("read_hp"), 0, "The guest should see the same value")
+	s.set("hp", 7)
+	assert_eq(s.get("hp"), 7, "A value the setter accepts should arrive unchanged")
+
+	# Setter only: Godot reads the storage, which is what the engine does.
+	s.set("doubled", 4)
+	assert_eq(s.get("doubled"), 8, "A setter-only property should still read back")
+	assert_eq(s.vmcallv("read_doubled"), 8, "The guest reads the same storage")
+
+	# Getter only: a set reaches the storage, a get runs the getter.
+	assert_eq(s.get("fixed"), 99, "A getter-only property should answer its getter")
+	s.set("fixed", 5)
+	assert_eq(s.get("fixed"), 99, "The getter still decides what a read answers")
+
+	s.queue_free()
+
+func test_sgd_string_indexing_and_iteration():
+	# A String is the one indexable value in Godot with no get(), so the VCALL
+	# every other container falls back to cannot serve it: `s[i]` and `for c in s`
+	# each go to their own host syscall, and an untyped subscript costs one tag
+	# test to find out which. Every function is declared twice, once for the
+	# sandbox and once for the engine, from the same source.
+	var gdscript_code = """
+func first(s):
+	return s[0]
+
+func at(s, i):
+	return s[i]
+
+func last(s):
+	return s[-1]
+
+func typed_at(s: String, i: int):
+	return s[i]
+
+func truncated(s: String):
+	return s[1.0]
+
+func chars(s):
+	var out = []
+	for c in s:
+		out.append(c)
+	return out
+
+func typed_chars(s: String):
+	var out = []
+	for c in s:
+		out.append(c)
+	return out
+
+func joined(s: String):
+	var acc = ""
+	for c in s:
+		acc = c + acc
+	return acc
+
+func counted(s):
+	var n = 0
+	for c in s:
+		n += 1
+	return n
+
+func widths(s: String):
+	var out = []
+	for c in s:
+		out.append(c.length())
+	return out
+
+func nested(s: String):
+	var out = []
+	for a in s:
+		for b in s:
+			out.append(a + b)
+	return out
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	# One character, as a String -- not the code point.
+	assert_eq(s.vmcallv("first", "abc"), _si_first("abc"), "s[0] should be a one-character String")
+	assert_eq(s.vmcallv("first", "abc"), "a", "s[0] should be the first character")
+	assert_true(s.vmcallv("first", "abc") is String, "The character should be a String, not an int")
+
+	# A multi-byte character is one character, not one byte.
+	assert_eq(s.vmcallv("at", "aéb", 1), _si_at("aéb", 1), "An index counts characters")
+	assert_eq(s.vmcallv("at", "aéb", 1), "é", "The character at 1 is é")
+	assert_eq(s.vmcallv("chars", "aéb"), _si_chars("aéb"), "Walking should yield characters")
+	assert_eq(s.vmcallv("chars", "aéb"), ["a", "é", "b"], "Three characters, not four bytes")
+
+	# A negative index counts from the end, as it does in the engine.
+	assert_eq(s.vmcallv("last", "abc"), _si_last("abc"), "s[-1] should be the last character")
+	assert_eq(s.vmcallv("last", "abc"), "c", "s[-1] is 'c' in 'abc'")
+
+	# A type hint changes what is emitted, not what it answers.
+	assert_eq(s.vmcallv("typed_at", "hello", 3), _si_typed_at("hello", 3),
+		"A ': String' hint should answer the same")
+	assert_eq(s.vmcallv("truncated", "abc"), _si_truncated("abc"),
+		"A float index should be truncated, as the engine truncates it")
+	assert_eq(s.vmcallv("truncated", "abc"), "b", "s[1.0] is the character at 1")
+
+	# The same subscript over an Array and a Dictionary, through the untyped
+	# path that now carries the String test.
+	assert_eq(s.vmcallv("at", [10, 20, 30], 1), 20, "The tag test should not disturb an Array")
+	assert_eq(s.vmcallv("at", {"k": 5}, "k"), 5, "or a Dictionary")
+	assert_eq(s.vmcallv("at", PackedInt32Array([7, 8]), 1), 8, "or a packed array")
+
+	# Iterating, typed and untyped, and the arms beside the String one.
+	assert_eq(s.vmcallv("typed_chars", "hey"), _si_typed_chars("hey"), "A typed walk yields characters")
+	assert_eq(s.vmcallv("joined", "abc"), _si_joined("abc"), "The characters concatenate")
+	assert_eq(s.vmcallv("joined", "abc"), "cba", "Reversed, one character at a time")
+	assert_eq(s.vmcallv("counted", "hello"), 5, "A String walk runs once per character")
+	assert_eq(s.vmcallv("counted", [1, 2]), 2, "An Array still walks")
+	assert_eq(s.vmcallv("counted", 3), 3, "An integer still counts")
+	assert_eq(s.vmcallv("counted", {"a": 1}), 1, "A Dictionary still yields its keys")
+	assert_eq(s.vmcallv("counted", PackedFloat32Array([1.0, 2.0, 3.0])), 3,
+		"A packed array still walks")
+	assert_eq(s.vmcallv("chars", ""), [], "An empty String runs the body no times")
+
+	# Each character is a String in its own right.
+	assert_eq(s.vmcallv("widths", "aéb"), _si_widths("aéb"), "Every character has length 1")
+	assert_eq(s.vmcallv("nested", "ab"), _si_nested("ab"), "Two String walks may nest")
+
+	s.queue_free()
+
+func _si_first(s):
+	return s[0]
+
+func _si_at(s, i):
+	return s[i]
+
+func _si_last(s):
+	return s[-1]
+
+func _si_typed_at(s: String, i: int):
+	return s[i]
+
+func _si_truncated(s: String):
+	return s[1.0]
+
+func _si_chars(s):
+	var out = []
+	for c in s:
+		out.append(c)
+	return out
+
+func _si_typed_chars(s: String):
+	var out = []
+	for c in s:
+		out.append(c)
+	return out
+
+func _si_joined(s: String):
+	var acc = ""
+	for c in s:
+		acc = c + acc
+	return acc
+
+func _si_counted(s):
+	var n = 0
+	for c in s:
+		n += 1
+	return n
+
+func _si_widths(s: String):
+	var out = []
+	for c in s:
+		out.append(c.length())
+	return out
+
+func _si_nested(s: String):
+	var out = []
+	for a in s:
+		for b in s:
+			out.append(a + b)
+	return out
+
+func test_sgd_iterating_a_float():
+	# `for i in 2.5` counts 0.0, 1.0, 2.0 -- one pass per whole number strictly
+	# below the bound, and the counter is a float, not an int. The untyped path
+	# turns the float into its own bound before the loop, so it shares the
+	# integer arm; the arms beside it must still answer what they answered.
+	var gdscript_code = """
+func literal():
+	var out = []
+	for i in 2.5:
+		out.append(i)
+	return out
+
+func whole():
+	var out = []
+	for i in 3.0:
+		out.append(i)
+	return out
+
+func typed(x: float):
+	var out = []
+	for i in x:
+		out.append(i)
+	return out
+
+func negative():
+	var out = []
+	for i in -1.0:
+		out.append(i)
+	return out
+
+func untyped(x):
+	var out = []
+	for i in x:
+		out.append(i)
+	return out
+
+func summed(x):
+	var total = 0.0
+	for i in x:
+		total += i
+	return total
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("literal"), _fi_literal(), "'for i in 2.5' should count 0.0, 1.0, 2.0")
+	assert_eq(s.vmcallv("literal"), [0.0, 1.0, 2.0], "The counter is a float, not an int")
+	assert_true(s.vmcallv("literal")[0] is float, "The loop variable should be a float")
+	assert_eq(s.vmcallv("whole"), _fi_whole(), "A whole float stops one below itself")
+	assert_eq(s.vmcallv("whole"), [0.0, 1.0, 2.0], "'for i in 3.0' is 0.0, 1.0, 2.0")
+	assert_eq(s.vmcallv("typed", 2.5), _fi_typed(2.5), "A ': float' hint should answer the same")
+	assert_eq(s.vmcallv("negative"), _fi_negative(), "A negative bound runs the body no times")
+
+	# The same function, given a float only at run time.
+	assert_eq(s.vmcallv("untyped", 2.5), _fi_untyped(2.5), "An untyped float should count too")
+	assert_eq(s.vmcallv("untyped", 2.5), [0.0, 1.0, 2.0], "and count in floats")
+	assert_eq(s.vmcallv("untyped", 0.5), _fi_untyped(0.5), "A bound below 1 runs the body once")
+	assert_eq(s.vmcallv("untyped", -2.0), _fi_untyped(-2.0), "A negative bound still runs nothing")
+
+	# The arms beside the float one, through the same untyped loop.
+	assert_eq(s.vmcallv("untyped", 3), [0, 1, 2], "An integer still counts, in ints")
+	assert_eq(s.vmcallv("untyped", [7, 8]), [7, 8], "An Array still walks")
+	assert_eq(s.vmcallv("untyped", "ab"), ["a", "b"], "A String still yields characters")
+	assert_eq(s.vmcallv("untyped", {"k": 1}), ["k"], "A Dictionary still yields its keys")
+	assert_eq(s.vmcallv("untyped", PackedInt32Array([4, 5])), [4, 5], "A packed array still walks")
+
+	assert_almost_eq(s.vmcallv("summed", 4.0), _fi_summed(4.0), 0.0001,
+		"The float counters should add up to what the engine adds up to")
+
+	s.queue_free()
+
+func _fi_literal():
+	var out = []
+	for i in 2.5:
+		out.append(i)
+	return out
+
+func _fi_whole():
+	var out = []
+	for i in 3.0:
+		out.append(i)
+	return out
+
+func _fi_typed(x: float):
+	var out = []
+	for i in x:
+		out.append(i)
+	return out
+
+func _fi_negative():
+	var out = []
+	for i in -1.0:
+		out.append(i)
+	return out
+
+func _fi_untyped(x):
+	var out = []
+	for i in x:
+		out.append(i)
+	return out
+
+func _fi_summed(x):
+	var total = 0.0
+	for i in x:
+		total += i
+	return total
+
+func test_sgd_calling_an_expression():
+	# `a[0]()` and `get_f()()`: the callee is a value, not a name. Ours, on the
+	# same grounds as `c(1)` -- the engine says "Cannot call on an expression.
+	# Use \".call()\" if it's a Callable" -- and it is the .call() it stands for,
+	# so the written-out spelling has to answer identically.
+	var gdscript_code = """
+func double(x: int):
+	return x * 2
+
+func get_f():
+	return double
+
+func from_array(n: int):
+	var a = [double]
+	return a[0](n)
+
+func from_call(n: int):
+	return get_f()(n)
+
+func from_lambda(n: int):
+	var a = [func(x): return x + 1]
+	return a[0](n)
+
+func chained(n: int):
+	return get_f()(get_f()(n))
+
+func from_dictionary(n: int):
+	var d = {"f": double}
+	return d["f"](n)
+
+func with_capture(n: int):
+	var base = 10
+	var a = [func(x): return x + base]
+	return a[0](n)
+
+func spelled_out(n: int):
+	return get_f().call(n)
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("from_array", 4), 8, "a[0](n) should call the element")
+	assert_eq(s.vmcallv("from_call", 5), 10, "get_f()(n) should call the returned Callable")
+	assert_eq(s.vmcallv("from_lambda", 6), 7, "a lambda in an Array should be callable")
+	assert_eq(s.vmcallv("chained", 3), 12, "two calls on expressions should compose")
+	assert_eq(s.vmcallv("from_dictionary", 7), 14, "d[\"f\"](n) should call the value")
+	assert_eq(s.vmcallv("with_capture", 5), 15, "the lambda should still see its capture")
+
+	# The same thing, written the way the engine insists on.
+	assert_eq(s.vmcallv("spelled_out", 5), s.vmcallv("from_call", 5),
+		"f(x) on an expression is the f.call(x) it stands for")
+
+	s.queue_free()
+
+const BREAKPOINT_STATEMENT_SOURCE = """
+func seed():
+	return 10
+
+func work(n):
+	var total = 0
+	if n > 0:
+		breakpoint
+		total = seed() * 2
+	breakpoint
+	return total
+"""
+#  1 blank              7 if n > 0:
+#  2 func seed():       8 breakpoint
+#  3 return 10          9 total = seed() * 2
+#  4 blank             10 breakpoint
+#  5 func work(n):     11 return total
+#  6 var total = 0
+
+func test_sgd_breakpoint_statement():
+	# `breakpoint` is the source asking for a stop, not the host. So it needs no
+	# set_breakpoint() call, it turns on the debug build by itself, and it is not
+	# part of get_active_breakpoints() -- which answers what was *requested*, and
+	# which the editor applies its own set to as a delta.
+	var path = "user://temp_break_statement.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(BREAKPOINT_STATEMENT_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the script should load as a SafeGDScript resource")
+	if script == null:
+		return
+	var node = _breakpoint_node(script)
+
+	# A statement is not a request, so it buys neither the debug build nor a row
+	# in the list of breakpoints that were placed: a push and a pop per call is
+	# not something a keyword in a mod should decide for the whole program.
+	assert_false(script.is_debug_build(), "a statement does not ask for a debug build")
+	assert_eq(script.get_breakpoints(), PackedInt32Array(),
+		"no breakpoint was requested from the host")
+	assert_eq(script.get_active_breakpoints(), PackedInt32Array(),
+		"and a statement is not a requested breakpoint")
+
+	script.breakpoint_hit.connect(_on_breakpoint)
+	_reset_break_capture()
+
+	# The answer is the point: a stop that changes one is not a breakpoint.
+	assert_eq(node.call("work", 5), 20, "work(5) = 20 across two stops")
+	assert_eq(_break_lines, [8, 10], "both statements stopped, in order")
+	assert_eq(_break_stopped, [true, true], "and the guest was stopped for each")
+	assert_eq(_break_reported_line, [8, 10], "the break state names the same lines")
+
+
+	# The branch it sits in still decides whether it runs.
+	_reset_break_capture()
+	assert_eq(node.call("work", 0), 0, "work(0) = 0")
+	assert_eq(_break_lines, [10], "a declined branch skips the stop inside it")
+
+	# A requested breakpoint on the statement's own line is one stop, not two,
+	# and that request is reported as placed.
+	_reset_break_capture()
+	assert_true(script.set_breakpoint(8, true), "the line can also be requested")
+	assert_eq(script.get_active_breakpoints(), PackedInt32Array([8]),
+		"the request is answered by the statement's own stop")
+	assert_true(script.is_debug_build(), "and asking is what brings the debug build")
+	assert_eq(node.call("work", 5), 20, "work(5) = 20 still")
+	assert_eq(_break_lines, [8, 10], "line 8 stopped once, not twice")
+
+	# Which is where the backtrace comes from.
+	if _break_backtrace.size() == 2:
+		var frames : PackedStringArray = _break_backtrace[0]
+		assert_eq(frames.size(), 1, "work() was the only frame standing")
+		if frames.size() >= 1:
+			assert_true(frames[0].contains(":8"), "the frame is line 8: " + frames[0])
+			assert_true(frames[0].contains("work"), "and it is work(): " + frames[0])
+
+	script.breakpoint_hit.disconnect(_on_breakpoint)
+	node.free()
+
+func test_sgd_breakpoint_statement_with_nothing_listening():
+	# No listener and no debugger: reported and stepped over, not stopped, so a
+	# stray `breakpoint` in a mod cannot wedge the host thread.
+	var gdscript_code = """
+func work():
+	breakpoint
+	return 7
+"""
+	var s = _compile_and_load(gdscript_code, 100000)
+	if s == null:
+		return
+	assert_eq(s.vmcallv("work"), 7, "the program runs past a stop nobody is waiting on")
+	assert_false(SafeGDScript.is_stopped(), "and nothing is left stopped")
+	s.queue_free()
+
+func test_sgd_qualified_types_and_grouping_annotations():
+	# `A.B` names something only the engine's analyzer can resolve, so it parses
+	# and drops: the program still compiles and still answers. The three @export
+	# annotations that name a section of the inspector stand alone, so a function
+	# may follow one -- which is how a real script is laid out.
+	var gdscript_code = """
+extends Node.Inner
+
+@export_category("Stats")
+@export_group("Combat")
+@export_range(0, 100) var hp: int = 100
+@export var speed: float = 1.5
+
+@export_subgroup("Internal")
+@export var tag = "x"
+
+@export_group("Nothing here")
+
+func hurt(amount: Node.Damage) -> Node.Result:
+	hp -= amount
+	return hp
+
+func typed_container(values: Array[Node.Inner]) -> Array[Node.Inner]:
+	return values
+
+func nested(a: A.B.C):
+	return a
+"""
+	var s = _compile_and_load(gdscript_code, 200000)
+	if s == null:
+		return
+
+	# The dropped type hints changed nothing about what runs.
+	assert_eq(s.vmcallv("hurt", 30), 70, "a qualified parameter and return type still run")
+	assert_eq(s.vmcallv("typed_container", [1, 2]), [1, 2], "and inside a container's element type")
+	assert_eq(s.vmcallv("nested", 5), 5, "and however many segments it has")
+
+	# The properties around the grouping annotations are still published.
+	assert_eq(s.get("hp"), 70, "@export_group did not swallow the property after it")
+	assert_almost_eq(s.get("speed"), 1.5, 0.0001, "nor the one after that")
+	assert_eq(s.get("tag"), "x", "nor one after an @export_subgroup")
+
+	s.queue_free()
+
+	# What the engine refuses, we refuse: an annotation neither of us knows.
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	for source in ["@bogus var n = 1\nfunc f():\n\treturn n\n",
+			"func f(a: Node.):\n\treturn a\n"]:
+		var elf = ts.vmcall("compile_to_elf", source)
+		assert_eq(elf.is_empty(), true, "should not compile: " + source)
+	ts.queue_free()

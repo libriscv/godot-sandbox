@@ -190,7 +190,11 @@ private:
 		const Expr* site = nullptr);
 	// Returns true when the store mutated a value-type copy (caller must write back).
 	bool gen_member_store(int obj_reg, const std::string& member, int value_reg, FunctionContext& func);
-	void gen_element_store(int obj_reg, int idx_reg, int value_reg, FunctionContext& func);
+	void gen_element_store(int obj_reg, int idx_reg, int value_reg, FunctionContext& func,
+		const Expr* site = nullptr);
+	void gen_string_at(int dest, int obj_reg, int idx_reg, FunctionContext& func,
+		const Expr* site);
+	void gen_vcall_get(int dest, int obj_reg, int idx_reg, FunctionContext& func);
 
 	// Global functions: must not fall through to self-call (Godot drops the VCALL).
 	bool is_global_function(const std::string& name) const;
@@ -309,6 +313,23 @@ private:
 	std::vector<IRInstruction::TypeHint> m_global_types;
 	// Struct per global, for field-name checking on load.
 	std::vector<const StructDecl*> m_global_structs;
+
+	std::vector<std::string> m_global_setters;
+	std::vector<std::string> m_global_getters;
+	// function name -> global indices it is an accessor for
+	std::unordered_map<std::string, std::vector<size_t>> m_accessor_properties;
+	// Globals accessed as raw storage (inside their own accessor).
+	std::unordered_set<size_t> m_direct_globals;
+
+	bool m_saw_breakpoint_statement = false;
+
+	void collect_property_accessors(const Program& program);
+	void emit_missing_export_accessors(IRProgram& ir_program);
+	void enter_accessor_scope(const std::string& function_name);
+	const std::string& global_setter(size_t index) const;
+	const std::string& global_getter(size_t index) const;
+	int gen_property_get(size_t index, FunctionContext& func);
+	void gen_property_set(size_t index, int value_reg, FunctionContext& func);
 };
 
 } // namespace gdscript

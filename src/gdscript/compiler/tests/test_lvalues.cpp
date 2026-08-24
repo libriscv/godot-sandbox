@@ -317,7 +317,7 @@ static void test_globals_do_not_become_self_calls() {
 // -= Containers the Array walk cannot reach =-
 
 static void test_iterating_a_non_array() {
-	std::cout << "Testing that a packed array is walked and a String is refused..." << std::endl;
+	std::cout << "Testing that a packed array and a String each walk their own way..." << std::endl;
 
 	// Packed array: VCALL size()/get(), not ECALL_ARRAY_SIZE/AT (Array-only).
 	const IRProgram packed = compile_to_ir(
@@ -334,12 +334,13 @@ static void test_iterating_a_non_array() {
 		"func test():\n\tvar a : Array = [1, 2]\n\tfor v in a:\n\t\tpass\n");
 	assert(count_vcalls(find_function(array, "test"), "size") == 0);
 
-	// String: no size()/get(), refused at compile time.
-	assert(refuses("func test():\n\tfor c in \"hello\":\n\t\tpass\n"));
-	assert(refuses("func test():\n\tvar s : String = \"hi\"\n\tfor c in s:\n\t\tpass\n"));
-	assert(refuses("func test():\n\tvar s : String = \"hi\"\n\treturn s[0]\n"));
+	// String: own syscalls, no VCALL. See test_strings.cpp.
+	const IRProgram walked = compile_to_ir(
+		"func test():\n\tvar s : String = \"hi\"\n\tfor c in s:\n\t\tpass\n");
+	assert(count_vcalls(find_function(walked, "test"), "size") == 0);
+	assert(count_vcalls(find_function(walked, "test"), "get") == 0);
 
-	std::cout << "  ✓ a packed array is walked and a String is refused" << std::endl;
+	std::cout << "  ✓ a packed array and a String each walk their own way" << std::endl;
 }
 
 int main() {

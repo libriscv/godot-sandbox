@@ -319,6 +319,7 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 	switch (instr.opcode) {
 		// Join point; entry state computed by constant_folding(), not changed here.
 		case IROpcode::LABEL:
+		case IROpcode::BREAKPOINT:
 			emit(instr);
 			break;
 

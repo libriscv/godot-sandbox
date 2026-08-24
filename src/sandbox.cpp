@@ -1147,12 +1147,12 @@ Variant Sandbox::vmcallable(String function, Array args) {
 	}
 
 	RiscvCallable *call = memnew(RiscvCallable);
-	call->init(this, address, std::move(args));
+	call->init(this, address, std::move(args), !this->get_unboxed_arguments());
 	return Callable(call);
 }
 Variant Sandbox::vmcallable_address(gaddr_t address, Array args) {
 	RiscvCallable *call = memnew(RiscvCallable);
-	call->init(this, address, std::move(args));
+	call->init(this, address, std::move(args), !this->get_unboxed_arguments());
 	return Callable(call);
 }
 void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const {

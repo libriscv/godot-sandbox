@@ -376,15 +376,14 @@ static void test_dictionary_iteration_takes_the_keys() {
 		"\t\tpass\n", false);
 	assert(count_opcode(find_function(typed, "f"), IROpcode::TYPE_TEST) == 0);
 
-	// Unknown type: three type-tag tests, all outside the loop -- the Dictionary
-	// that becomes its keys, then the integer and the Array the loop's arms are
-	// picked by.
+	// Unknown type: five tag tests (float, Dictionary, int, Array, String),
+	// all hoisted outside the loop.
 	const IRProgram untyped = compile_to_ir(
 		"func f(d):\n"
 		"\tfor k in d:\n"
 		"\t\tpass\n", false);
 	const IRFunction& func = find_function(untyped, "f");
-	assert(count_opcode(func, IROpcode::TYPE_TEST) == 3);
+	assert(count_opcode(func, IROpcode::TYPE_TEST) == 5);
 	bool tested_dictionary = false;
 	for (size_t i = 0; i < func.instructions.size(); i++) {
 		if (func.instructions[i].opcode != IROpcode::TYPE_TEST) {

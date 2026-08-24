@@ -331,6 +331,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		}
 
 		case IROpcode::LABEL:
+		case IROpcode::BREAKPOINT:
 				break;
 
 		case IROpcode::JUMP:

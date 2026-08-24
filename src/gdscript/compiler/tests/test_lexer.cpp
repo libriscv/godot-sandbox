@@ -169,6 +169,76 @@ void test_string_escapes() {
 	std::cout << "  ✓ String escapes test passed" << std::endl;
 }
 
+static std::string lex_string(const std::string& source) {
+	Lexer lexer(source);
+	auto tokens = lexer.tokenize();
+	assert(tokens[0].type == TokenType::STRING);
+	return std::get<std::string>(tokens[0].value);
+}
+
+void test_control_escapes() {
+	std::cout << "Testing control escapes..." << std::endl;
+
+	assert(lex_string(R"("\a")") == "\a");
+	assert(lex_string(R"("\b")") == "\b");
+	assert(lex_string(R"("\f")") == "\f");
+	assert(lex_string(R"("\v")") == "\v");
+	assert(lex_string(R"("\r")") == "\r");
+
+	// Unknown escapes are rejected.
+	assert(lex_failure(R"("\x41")").error_type() == ErrorType::LEXER_ERROR);
+	lex_failure(R"("\0")");
+	lex_failure(R"("\q")");
+
+	// r"..." keeps the backslash it is written with, escape or not.
+	assert(lex_string(R"(r"\x41")") == "\\x41");
+
+	std::cout << "  ✓ Control escapes test passed" << std::endl;
+}
+
+void test_line_continuation_in_string() {
+	std::cout << "Testing string line continuation..." << std::endl;
+
+	// Backslash-newline joins lines; indentation of the continuation is kept.
+	assert(lex_string("\"a\\\n\tb\"") == "a\tb");
+	assert(lex_string("\"a\\\r\n b\"") == "a b");
+	// A lone CR is not a continuation.
+	lex_failure("\"a\\\rb\"");
+
+	std::cout << "  ✓ String line continuation test passed" << std::endl;
+}
+
+void test_unicode_escapes() {
+	std::cout << "Testing unicode escapes..." << std::endl;
+
+	assert(lex_string(R"("é")") == "\xc3\xa9");
+	assert(lex_string(R"("\U0000e9")") == "\xc3\xa9");
+	assert(lex_string(R"("A")") == "A");
+	assert(lex_string(R"("\U01F600")") == "\xf0\x9f\x98\x80");
+
+	// Surrogate pair via two \u escapes.
+	assert(lex_string(R"("😀")") == "\xf0\x9f\x98\x80");
+
+	// Incomplete/misordered surrogates are rejected.
+	lex_failure(R"("\ud83d")");
+	lex_failure(R"("\ud83dx")");
+	lex_failure(R"("\ud83dA")");
+	lex_failure(R"("\ude00")");
+
+	// Exactly 4 / 6 hex digits consumed.
+	assert(lex_string(R"("\u00e941")") == "\xc3\xa9" "41");
+	assert(lex_string(R"("\U0000e941")") == "\xc3\xa9" "41");
+	lex_failure(R"("\u00e")");
+	lex_failure(R"("\U00e9")");
+
+	// Out of range.
+	lex_failure(R"("\U110000")");
+
+	assert(lex_string(R"("aéb")") == "a\xc3\xa9" "b");
+
+	std::cout << "  ✓ Unicode escapes test passed" << std::endl;
+}
+
 void test_comments() {
 	std::cout << "Testing comments..." << std::endl;
 
@@ -322,6 +392,9 @@ int main() {
 		test_literals();
 		test_keywords();
 		test_string_escapes();
+		test_control_escapes();
+		test_line_continuation_in_string();
+		test_unicode_escapes();
 		test_comments();
 		test_bitwise_operators();
 		test_bitwise_compound_assignment();

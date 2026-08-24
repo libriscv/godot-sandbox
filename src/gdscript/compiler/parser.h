@@ -34,6 +34,9 @@ private:
 	StmtPtr parse_statement();
 	StmtPtr parse_statement_impl();
 	StmtPtr parse_var_decl(bool is_const);
+	bool at_property_accessor() const;
+	void parse_property_accessors(VarDeclStmt& decl);
+	void parse_one_property_accessor(VarDeclStmt& decl);
 	StmtPtr parse_if_stmt();
 	StmtPtr parse_while_stmt();
 	StmtPtr parse_for_stmt();
@@ -108,6 +111,7 @@ private:
 	void consume_statement_end(const std::string& message);
 
 	std::string parse_type_hint();
+	std::string parse_type_name();
 	std::string parse_return_type();
 	void skip_type_arguments();
 	bool parse_attribute();

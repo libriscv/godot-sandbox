@@ -2614,13 +2614,16 @@ APICALL(api_string_at) {
 	}
 	godot::String str = var_str.operator String();
 
+	if (index < 0) {
+		index += str.length();
+	}
 	if (index < 0 || index >= str.length()) {
 		ERR_PRINT("String index out of bounds");
 		throw std::runtime_error("String index out of bounds");
 	}
 
-	char32_t new_string = str[index];
-	unsigned int new_varidx = emu.create_scoped_variant(Variant(std::move(new_string)));
+	// String::chr, not bare char32_t (which picks Variant(uint32_t)).
+	unsigned int new_varidx = emu.create_scoped_variant(Variant(String::chr(str[index])));
 	machine.set_result(new_varidx);
 }
 
