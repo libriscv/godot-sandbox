@@ -4681,32 +4681,10 @@ int CodeGenerator::gen_global_call(const GlobalFunction& info, const std::vector
 }
 
 bool CodeGenerator::is_inline_member_access(IRInstruction::TypeHint type, const std::string& member) const {
-	switch (type) {
-		case Variant::VECTOR2:
-		case Variant::VECTOR2I:
-			return member == "x" || member == "y";
-
-		case Variant::VECTOR3:
-		case Variant::VECTOR3I:
-			return member == "x" || member == "y" || member == "z";
-
-		case Variant::VECTOR4:
-		case Variant::VECTOR4I:
-			return member == "x" || member == "y" || member == "z" || member == "w";
-
-		case Variant::COLOR:
-			return member == "r" || member == "g" || member == "b" || member == "a";
-
-		case Variant::RECT2:
-		case Variant::RECT2I:
-			return false;
-
-		case Variant::PLANE:
-			return false;
-
-		default:
-			return false;
+	if (type == IRInstruction::TypeHint_NONE) {
+		return false;
 	}
+	return find_builtin_member(static_cast<uint32_t>(type), member).valid();
 }
 
 int CodeGenerator::gen_builtin_constant(const std::string& type, const std::string& name,
@@ -4849,11 +4827,8 @@ int CodeGenerator::gen_inline_member_get(int obj_reg, IRInstruction::TypeHint ob
 
 	func.ir.instructions.push_back(instr);
 
-	bool is_int_vector = (obj_type == Variant::VECTOR2I ||
-	                      obj_type == Variant::VECTOR3I ||
-	                      obj_type == Variant::VECTOR4I);
-
-	set_register_type(func, result_reg, is_int_vector ? Variant::INT : Variant::FLOAT);
+	const BuiltinMember layout = find_builtin_member(static_cast<uint32_t>(obj_type), member);
+	set_register_type(func, result_reg, static_cast<IRInstruction::TypeHint>(layout.result_type));
 
 	return result_reg;
 }
@@ -4889,16 +4864,12 @@ bool CodeGenerator::is_packed_array_type(IRInstruction::TypeHint type) {
 }
 
 std::vector<IRInstruction::TypeHint> CodeGenerator::inline_member_types(const std::string& member) const {
-	// Kept in sync with is_inline_member_access.
-	static constexpr IRInstruction::TypeHint candidates[] = {
-		Variant::VECTOR2, Variant::VECTOR2I,
-		Variant::VECTOR3, Variant::VECTOR3I,
-		Variant::VECTOR4, Variant::VECTOR4I,
-		Variant::COLOR,
-	};
+	size_t count = 0;
+	const uint32_t* candidates = builtin_member_candidates(count);
 
 	std::vector<IRInstruction::TypeHint> types;
-	for (IRInstruction::TypeHint type : candidates) {
+	for (size_t i = 0; i < count; i++) {
+		const auto type = static_cast<IRInstruction::TypeHint>(candidates[i]);
 		if (is_inline_member_access(type, member)) {
 			types.push_back(type);
 		}

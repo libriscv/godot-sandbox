@@ -226,6 +226,27 @@ static void test_declarations() {
 	std::cout << "  ✓ signal, static var and @export_* parse" << std::endl;
 }
 
+static void test_statement_annotations() {
+	std::cout << "Testing statement-level annotations..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"func test():\n"
+		"\t@warning_ignore(\"unused_variable\")\n"
+		"\tvar unused = 1\n"
+		"\treturn 2\n");
+	find_function(ir, "test");
+
+	compile_to_ir("func test():\n\t@warning_ignore(\"a\")\n\t@warning_ignore(\"b\")\n\treturn 1\n");
+	compile_to_ir("func test():\n\tif true:\n\t\t@warning_ignore(\"a\")\n\t\treturn 1\n\treturn 0\n");
+	compile_to_ir("func test():\n\t@warning_ignore_start(\"a\")\n\tvar x = 1\n"
+		"\t@warning_ignore_restore(\"a\")\n\treturn x\n");
+
+	assert(refuses("func test():\n\t@export var x = 1\n\treturn x\n"));
+	assert(refuses("func test():\n\t@bogus var x = 1\n\treturn x\n"));
+
+	std::cout << "  ✓ statement-level annotations parse and drop" << std::endl;
+}
+
 // Qualified type names (`A.B`) parse and drop; only the engine can resolve them.
 static void test_qualified_type_names() {
 	std::cout << "Testing qualified type names..." << std::endl;
@@ -432,6 +453,7 @@ int main() {
 		test_node_path_sugar();
 		test_string_literals();
 		test_declarations();
+		test_statement_annotations();
 		test_qualified_type_names();
 		test_for_over_an_integer();
 		test_assert();

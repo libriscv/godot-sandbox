@@ -143,6 +143,9 @@ static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 	{ "error_string", GlobalFn::ERROR_STRING, GlobalKind::HOST, 1, 1, GlobalResult::STRING, UTILITY_ERROR_STRING, 0, NO_FORM, NO_FORM },
 	{ "is_same", GlobalFn::IS_SAME, GlobalKind::HOST, 2, 2, GlobalResult::BOOL, UTILITY_IS_SAME, 0, NO_FORM, NO_FORM },
 
+	{ "char", GlobalFn::CHAR, GlobalKind::HOST, 1, 1, GlobalResult::STRING, UTILITY_CHAR, 0, NO_FORM, NO_FORM },
+	{ "ord", GlobalFn::ORD, GlobalKind::HOST, 1, 1, GlobalResult::INT, UTILITY_ORD, 0, NO_FORM, NO_FORM },
+
 	// Type constructors. Inline when argument is numeric/bool; host otherwise.
 	{ "int", GlobalFn::TO_INT, GlobalKind::CAST, 1, 1, GlobalResult::INT, UTILITY_TO_INT, 0, GlobalFn::INT_IDENTITY, NO_FORM },
 	{ "float", GlobalFn::TO_FLOAT, GlobalKind::CAST, 1, 1, GlobalResult::FLOAT, UTILITY_TO_FLOAT, 0, GlobalFn::FLOAT_IDENTITY, NO_FORM },
@@ -253,6 +256,13 @@ static const struct { const char* name; const char* reason; } UNIMPLEMENTED_GLOB
 	{ "is_instance_id_valid", "objects are reached through the sandbox allowlist, not by instance id" },
 	{ "is_instance_valid", "no ECALL_UTILITY op yet" },
 	{ "weakref", "no host syscall for weak references yet" },
+
+	{ "cubic_interpolate_in_time", "takes eight arguments; ECALL_UTILITY carries five" },
+	{ "cubic_interpolate_angle_in_time", "takes eight arguments; ECALL_UTILITY carries five" },
+	{ "cubic_interpolate_angle", "no ECALL_UTILITY op yet" },
+
+	{ "rid_allocate_id", "RIDs name engine resources the sandbox cannot reach" },
+	{ "rid_from_int64", "RIDs name engine resources the sandbox cannot reach" },
 
 	// Engine/project state: deliberately unreachable from sandbox.
 	{ "randomize", "mutates the project's shared RNG state" },

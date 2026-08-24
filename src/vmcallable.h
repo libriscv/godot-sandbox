@@ -7,23 +7,69 @@ struct GuestVariant;
 
 class RiscvCallable : public CallableCustom {
 public:
+	// Identity is what the callable names, not the object holding it: connect()
+	// makes a new RiscvCallable every time, so comparing addresses would leave
+	// disconnect() and is_connected() unable to find a connection that is there.
 	uint32_t hash() const override {
-		return address;
+		uint32_t value = uint32_t(uint64_t(address)) ^ uint32_t(uint64_t(address) >> 32);
+		value = value * 31 + (uint32_t(uint64_t(instance_base)) ^ uint32_t(uint64_t(instance_base) >> 32));
+		value = value * 31 + uint32_t(uint64_t(sandbox_id));
+		return value * 31 + uint32_t(m_varargs_base_count);
 	}
 
 	String get_as_text() const override {
 		return "<RiscvCallable>";
 	}
 
+	// Same sandbox, same script instance, same guest function, same bound
+	// arguments. Godot compares the two functions before calling one, so both
+	// sides are RiscvCallable here.
+	bool equals(const RiscvCallable &other) const {
+		if (sandbox_id != other.sandbox_id || instance_base != other.instance_base ||
+				address != other.address || m_varargs_base_count != other.m_varargs_base_count) {
+			return false;
+		}
+		for (int i = 0; i < m_varargs_base_count; i++) {
+			if (m_varargs[i] != other.m_varargs[i]) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	// Ordering over the same fields, so that "not less either way" is "equal".
+	bool less_than(const RiscvCallable &other) const {
+		if (sandbox_id != other.sandbox_id) {
+			return uint64_t(sandbox_id) < uint64_t(other.sandbox_id);
+		}
+		if (instance_base != other.instance_base) {
+			return instance_base < other.instance_base;
+		}
+		if (address != other.address) {
+			return address < other.address;
+		}
+		if (m_varargs_base_count != other.m_varargs_base_count) {
+			return m_varargs_base_count < other.m_varargs_base_count;
+		}
+		for (int i = 0; i < m_varargs_base_count; i++) {
+			if (m_varargs[i] != other.m_varargs[i]) {
+				return m_varargs[i] < other.m_varargs[i];
+			}
+		}
+		return false;
+	}
+
 	CompareEqualFunc get_compare_equal_func() const override {
 		return [](const CallableCustom *p_a, const CallableCustom *p_b) {
-			return p_a == p_b;
+			return static_cast<const RiscvCallable *>(p_a)->equals(
+					*static_cast<const RiscvCallable *>(p_b));
 		};
 	}
 
 	CompareLessFunc get_compare_less_func() const override {
 		return [](const CallableCustom *p_a, const CallableCustom *p_b) {
-			return p_a < p_b;
+			return static_cast<const RiscvCallable *>(p_a)->less_than(
+					*static_cast<const RiscvCallable *>(p_b));
 		};
 	}
 

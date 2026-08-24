@@ -8692,6 +8692,7 @@ signal sgd_hit(damage: int, cause)
 signal sgd_done
 
 var seen = []
+var own_hits = 0
 
 func fire(n):
 	sgd_hit.emit(n, "guest")
@@ -8714,6 +8715,20 @@ func hook(c):
 func unhook(c):
 	sgd_hit.disconnect(c)
 	return sgd_hit.is_connected(c)
+
+func on_hit(damage, cause):
+	own_hits += damage
+
+func hook_own():
+	sgd_hit.connect(Callable(self, "on_hit"))
+	return sgd_hit.is_connected(Callable(self, "on_hit"))
+
+func unhook_own():
+	sgd_hit.disconnect(Callable(self, "on_hit"))
+	return sgd_hit.is_connected(Callable(self, "on_hit"))
+
+func own_total():
+	return own_hits
 
 func kind():
 	return typeof(sgd_hit)
@@ -8832,6 +8847,25 @@ func test_sgd_connects_from_inside_the_program():
 	assert_false(node.call("unhook", callback), "the guest disconnected it again")
 	node.call("fire", 4)
 	assert_eq(seen, [3], "so a later emission reaches nobody")
+
+	node.free()
+
+func test_sgd_disconnects_a_callable_of_its_own():
+	# Every Callable the guest makes is a fresh RiscvCallable, so a connection
+	# has to be found by what the callable names -- sandbox, script instance,
+	# guest function and bound arguments -- and not by the object holding it.
+	var node = _signal_node()
+	if node == null:
+		return
+
+	assert_true(node.call("hook_own"), "the guest connected a Callable of its own")
+	node.call("fire", 3)
+	assert_eq(node.call("own_total"), 3, "and the emission reached it")
+
+	# A different Callable object naming the same function finds the connection.
+	assert_false(node.call("unhook_own"), "and disconnected it again")
+	node.call("fire", 4)
+	assert_eq(node.call("own_total"), 3, "so a later emission reaches nobody")
 
 	node.free()
 
@@ -9447,5 +9481,207 @@ func through_self():
 
 	assert_eq(s.vmcallv("through_super"), s.vmcallv("through_self"),
 		"super.m() at script level is the self-call it stands for")
+
+	s.queue_free()
+
+# -= Syntax the engine accepts and this used to refuse =-
+
+func test_sgd_multiline_strings_and_unicode_names():
+	# A raw newline inside a plain string is part of the text in the engine's
+	# lexer, and a name may be spelled in any script. Both used to be lexer
+	# errors, which took the whole file down.
+	var gdscript_code = """
+func dialogue():
+	return "line one
+line two"
+
+func single_quoted():
+	return 'a
+b'
+
+func triple():
+	return \"\"\"x
+y\"\"\"
+
+func accented():
+	var café = 4
+	var naïve = 3
+	return café + naïve
+
+func annotated():
+	@warning_ignore("unused_variable")
+	var unused = 1
+	@warning_ignore_start("shadowed_variable")
+	var used = 2
+	@warning_ignore_restore("shadowed_variable")
+	return used
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("dialogue"), "line one\nline two", "a plain string may span lines")
+	assert_eq(s.vmcallv("single_quoted"), "a\nb", "and so may a single-quoted one")
+	assert_eq(s.vmcallv("triple"), "x\ny", "a triple-quoted string is unchanged")
+	assert_eq(s.vmcallv("accented"), 7, "a unicode identifier is one name")
+	assert_eq(s.vmcallv("annotated"), 2, "an annotation above a statement parses and drops")
+
+	s.queue_free()
+
+func test_sgd_enum_constant_expressions():
+	# The engine folds any integer constant expression at parse time, earlier
+	# members of the same enum included. So does this.
+	var gdscript_code = """
+enum Flags { A = 1 << 2, B = A + 1, C }
+enum Signs { NEG = -1 * 3, ZERO = 0 }
+enum FromGlobal { INT_TYPE = TYPE_INT }
+
+func flags():
+	return [Flags.A, Flags.B, Flags.C]
+
+func signs():
+	return Signs.NEG
+
+func from_global():
+	return FromGlobal.INT_TYPE
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("flags"), [4, 5, 6], "shifts, earlier members and the count after one")
+	assert_eq(s.vmcallv("signs"), -3, "a negative constant expression")
+	assert_eq(s.vmcallv("from_global"), TYPE_INT, "a @GlobalScope integer constant")
+
+	s.queue_free()
+
+	# A value the parser cannot evaluate is refused, not silently zero.
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	for source in ["func side():\n\treturn 1\nenum E { A = side() }\nfunc f():\n\treturn E.A\n",
+			"enum E { A = 1.5 }\nfunc f():\n\treturn E.A\n"]:
+		var elf = ts.vmcall("compile_to_elf", source)
+		assert_eq(elf.is_empty(), true, "should not compile: " + source)
+	ts.queue_free()
+
+func test_sgd_char_and_ord():
+	# char() and ord() are @GlobalScope functions, so a call must never fall
+	# through to the owner node: Godot drops the resulting VCALL and answers null.
+	var gdscript_code = """
+func character(code):
+	return char(code)
+
+func code_of(text):
+	return ord(text)
+
+func round_trip(code):
+	return ord(char(code))
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("character", 65), char(65), "char(65) is what the engine answers")
+	assert_eq(s.vmcallv("character", 9731), char(9731), "a codepoint outside ASCII too")
+	assert_eq(s.vmcallv("code_of", "A"), ord("A"), "ord() answers the codepoint")
+	assert_eq(s.vmcallv("round_trip", 955), 955, "one is the other's inverse")
+
+	s.queue_free()
+
+func test_sgd_shifting_a_negative_operand():
+	# Variant::evaluate() refuses a negative shift operand, but that is not the
+	# path the engine runs: `-16 >> 2` is -4 in GDScript, typed or not.
+	var gdscript_code = """
+func untyped_right(a, b):
+	return a >> b
+
+func untyped_left(a, b):
+	return a << b
+
+func typed_right(a: int, b: int):
+	return a >> b
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	# Written out: the engine's parser refuses `-16 >> 2` as a constant
+	# expression, though it answers -4 for the same shift at run time.
+	assert_eq(s.vmcallv("untyped_right", -16, 2), -4, "an untyped negative right shift")
+	assert_eq(s.vmcallv("untyped_left", -16, 2), -64, "and an untyped left shift")
+	assert_eq(s.vmcallv("typed_right", -16, 2), -4, "the typed path is unchanged")
+	assert_eq(s.vmcallv("untyped_right", 16, 2), 4, "positive operands still work")
+
+	s.queue_free()
+
+func test_sgd_rect_and_plane_members():
+	# Rect2.position is payload, not an Object property: routing it through
+	# ECALL_OBJ_PROP_GET threw "Object is not scoped" on the float bits.
+	var gdscript_code = """
+func rect_parts():
+	var r: Rect2 = Rect2(1, 2, 3, 4)
+	return [r.position, r.size, r.size.x]
+
+func rect_write():
+	var r: Rect2 = Rect2(1, 2, 3, 4)
+	r.position = Vector2(9, 8)
+	r.size.y = 7
+	return r
+
+func recti_parts():
+	var r: Rect2i = Rect2i(1, 2, 3, 4)
+	return [r.position, r.size]
+
+func plane_parts():
+	var p: Plane = Plane(0, 1, 0, 2)
+	return [p.normal, p.d, p.y]
+
+func plane_write():
+	var p: Plane = Plane(0, 1, 0, 2)
+	p.normal = Vector3(1, 0, 0)
+	p.d = 5.0
+	return p
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	var r := Rect2(1, 2, 3, 4)
+	assert_eq(s.vmcallv("rect_parts"), [r.position, r.size, r.size.x], "Rect2 members read as the engine reads them")
+	var written := Rect2(1, 2, 3, 4)
+	written.position = Vector2(9, 8)
+	written.size.y = 7
+	assert_eq(s.vmcallv("rect_write"), written, "and write back into the rect")
+	var ri := Rect2i(1, 2, 3, 4)
+	assert_eq(s.vmcallv("recti_parts"), [ri.position, ri.size], "Rect2i keeps integer components")
+	var p := Plane(0, 1, 0, 2)
+	assert_eq(s.vmcallv("plane_parts"), [p.normal, p.d, p.y], "Plane's normal, d and component spellings")
+	var pw := Plane(1, 0, 0, 5)
+	assert_eq(s.vmcallv("plane_write"), pw, "and a normal written whole")
+
+	s.queue_free()
+
+func test_sgd_get_node_or_null_answers_null():
+	# The whole point of the _or_null form. A null object came back from the
+	# host as an exception instead.
+	var gdscript_code = """
+func missing():
+	return get_node_or_null("Nothing")
+
+func present():
+	return get_node_or_null("Child") != null
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	add_child(s)
+	var child = Node.new()
+	child.name = "Child"
+	s.add_child(child)
+
+	assert_eq(s.vmcallv("missing"), null, "a missing node is null, not an exception")
+	assert_eq(s.vmcallv("present"), true, "and a node that is there is still found")
 
 	s.queue_free()

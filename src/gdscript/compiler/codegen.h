@@ -1,5 +1,6 @@
 #pragma once
 #include "ast.h"
+#include "builtin_members.h"
 #include "globals.h"
 #include "ir.h"
 #include <memory>

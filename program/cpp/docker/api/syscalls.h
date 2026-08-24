@@ -357,6 +357,9 @@ enum class Utility_Op {
 	TYPE_CONVERT = 64,
 	ERROR_STRING = 65,
 	IS_SAME = 66,
+
+	CHAR = 67,
+	ORD = 68,
 };
 
 // Output channel for ECALL_PRINT_CHANNEL.

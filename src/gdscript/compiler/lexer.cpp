@@ -351,7 +351,6 @@ void Lexer::scan_string(TokenType type, bool raw) {
 	const int open_line = m_line;
 	const int open_column = m_column - 1;
 
-	// Triple-quoted strings may span lines; single-quoted ones cannot.
 	bool triple = false;
 	if (peek() == quote && peek_next() == quote) {
 		advance();
@@ -373,9 +372,6 @@ void Lexer::scan_string(TokenType type, bool raw) {
 				break;
 			}
 		} else if (c == '\n') {
-			if (!triple) {
-				break;
-			}
 			m_line++;
 			m_column = 0;
 		} else if (c == '\\') {
@@ -574,7 +570,8 @@ bool Lexer::is_hex_digit(char c) const {
 bool Lexer::is_alpha(char c) const {
 	return (c >= 'a' && c <= 'z') ||
 	       (c >= 'A' && c <= 'Z') ||
-	       c == '_';
+	       c == '_' ||
+	       static_cast<unsigned char>(c) >= 0x80;
 }
 
 bool Lexer::is_alphanumeric(char c) const {

@@ -2,6 +2,7 @@
 #include <unordered_set>
 #include "compiler_exception.h"
 #include "variant_types.h"
+#include "builtin_members.h"
 #include "instance_layout.h"
 #include "syscall_numbers.h"
 #include <algorithm>
@@ -1258,18 +1259,29 @@ void RISCVCodeGen::gen_vget_inline(const IRInstruction& instr) {
 	int result_offset = get_variant_stack_offset(result_vreg);
 	int obj_offset = get_variant_stack_offset(obj_vreg);
 
-	// Float vectors: real_t components; integer vectors: int32_t
-	bool is_int_type = false;
+	const BuiltinMember layout = find_builtin_member(uint32_t(obj_type_hint), member);
+	if (!layout.valid()) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"VGET_INLINE on a type with no inline member '" + member + "'");
+	}
 
-	int component_idx = 0;
-	if (member == "x" || member == "r") component_idx = 0;
-	else if (member == "y" || member == "g") component_idx = 1;
-	else if (member == "z" || member == "b") component_idx = 2;
-	else if (member == "w" || member == "a") component_idx = 3;
+	if (layout.count > 1) {
+		emit_li(REG_T0, int32_t(layout.result_type));
+		emit_sw(REG_T0, REG_SP, result_offset);
+		for (int i = 0; i < layout.count; i++) {
+			if (layout.integer) {
+				emit_lw(REG_T0, REG_SP, obj_offset + int_offset(layout.first_component + i));
+				emit_sw(REG_T0, REG_SP, result_offset + int_offset(i));
+			} else {
+				emit_flr(REG_FA0, REG_SP, obj_offset + real_offset(layout.first_component + i));
+				emit_fsr(REG_FA0, REG_SP, result_offset + real_offset(i));
+			}
+		}
+		return;
+	}
 
-	IRInstruction::TypeHint hint = static_cast<IRInstruction::TypeHint>(obj_type_hint);
-	is_int_type = TypeHintUtils::is_int_vector(hint);
-
+	const bool is_int_type = layout.integer;
+	const int component_idx = layout.first_component;
 	int member_offset = is_int_type ? int_offset(component_idx) : real_offset(component_idx);
 
 	if (is_int_type) {
@@ -1301,23 +1313,34 @@ void RISCVCodeGen::gen_vset_inline(const IRInstruction& instr) {
 	int obj_offset = get_variant_stack_offset(obj_vreg);
 	int value_offset = get_variant_stack_offset(value_vreg);
 
-	int component_idx = 0;
-	if (member == "x" || member == "r") component_idx = 0;
-	else if (member == "y" || member == "g") component_idx = 1;
-	else if (member == "z" || member == "b") component_idx = 2;
-	else if (member == "w" || member == "a") component_idx = 3;
-
-	IRInstruction::TypeHint hint = static_cast<IRInstruction::TypeHint>(obj_type_hint);
+	const BuiltinMember layout = find_builtin_member(uint32_t(obj_type_hint), member);
+	if (!layout.valid()) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"VSET_INLINE on a type with no inline member '" + member + "'");
+	}
 
 	// Stamp tag unconditionally; dynamic stores arrive with an unknown tag.
 	emit_li(REG_T0, obj_type_hint);
 	emit_sw(REG_T0, REG_SP, obj_offset);
 
-	if (TypeHintUtils::is_int_vector(hint)) {
-		emit_variant_component_to_int(value_offset, obj_offset, int_offset(component_idx));
+	if (layout.count > 1) {
+		for (int i = 0; i < layout.count; i++) {
+			if (layout.integer) {
+				emit_lw(REG_T0, REG_SP, value_offset + int_offset(i));
+				emit_sw(REG_T0, REG_SP, obj_offset + int_offset(layout.first_component + i));
+			} else {
+				emit_flr(REG_FA0, REG_SP, value_offset + real_offset(i));
+				emit_fsr(REG_FA0, REG_SP, obj_offset + real_offset(layout.first_component + i));
+			}
+		}
+		return;
+	}
+
+	if (layout.integer) {
+		emit_variant_component_to_int(value_offset, obj_offset, int_offset(layout.first_component));
 	} else {
 		// Color channels are reals; integer stores convert, not scale by 255.
-		emit_variant_component_to_real(value_offset, obj_offset, real_offset(component_idx));
+		emit_variant_component_to_real(value_offset, obj_offset, real_offset(layout.first_component));
 	}
 }
 

@@ -251,8 +251,15 @@ void GuestVariant::create(Sandbox &emu, Variant &&value) {
 		case Variant::OBJECT: {
 			// Validated through the instance id, for the reason given in set() above.
 			godot::Object *obj = value.get_validated_object();
-			if (obj == nullptr)
-				throw std::runtime_error("GuestVariant::create(): Object no longer exists");
+			if (obj == nullptr) {
+				// A null object is an answer, not a fault: it is what
+				// get_node_or_null() and every other _or_null form returns, and
+				// what a Variant left over from a freed object reads as. The
+				// guest gets null, which is what GDScript sees.
+				this->type = Variant::NIL;
+				this->v.i = 0;
+				return;
+			}
 			if (!emu.is_allowed_object(obj))
 				throw std::runtime_error("GuestVariant::create(): Object is not allowed");
 			// value is an rvalue and dies right after this; add_scoped_object() takes a

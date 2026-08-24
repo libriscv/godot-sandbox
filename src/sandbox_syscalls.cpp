@@ -549,6 +549,8 @@ static double utility_math_op(Utility_Op op, const double args[5]) {
 		case Utility_Op::RANDI:
 		case Utility_Op::RANDI_RANGE:
 		case Utility_Op::NEAREST_PO2:
+		case Utility_Op::CHAR:
+		case Utility_Op::ORD:
 			break;
 
 		// The random draws that *are* doubles. UtilityFunctions:: rather than
@@ -668,7 +670,9 @@ APICALL(api_utility) {
 		case Utility_Op::TYPE_STRING:
 		case Utility_Op::TYPE_CONVERT:
 		case Utility_Op::ERROR_STRING:
-		case Utility_Op::IS_SAME: {
+		case Utility_Op::IS_SAME:
+		case Utility_Op::CHAR:
+		case Utility_Op::ORD: {
 			Sandbox &emu = riscv::emu(machine);
 			// str() takes up to 63 arguments and String() takes none at all;
 			// Binary: type_convert(), is_same(). Unary: the rest.
@@ -754,6 +758,25 @@ APICALL(api_utility) {
 					vres->create(emu, UtilityFunctions::is_same(
 							args[0].toVariant(emu), args[1].toVariant(emu)));
 					break;
+
+				// char() and ord(). godot-cpp binds neither -- `char` is a C++
+				// keyword -- so these are the String operations they are made of.
+				case Utility_Op::CHAR:
+					PENALIZE(10'000);
+					vres->create(emu, Variant(String::chr(args[0].toVariant(emu).operator int64_t())));
+					break;
+				case Utility_Op::ORD: {
+					PENALIZE(10'000);
+					// Godot refuses anything but a single character and answers 0.
+					const String text = args[0].toVariant(emu).operator String();
+					if (text.length() != 1) {
+						ERR_PRINT("ord(): Expected a string of length 1 (a character)");
+						vres->create(emu, Variant(int64_t(0)));
+						break;
+					}
+					vres->create(emu, Variant(text.unicode_at(0)));
+					break;
+				}
 
 				default:
 					PENALIZE(10'000);
@@ -866,6 +889,23 @@ APICALL(api_veval) {
 	VariantScratchN<2> scratch;
 	const Variant *a = ap->is_scoped_variant() ? ap->toVariantPtr(emu) : scratch.emplace(ap->toVariant(emu));
 	const Variant *b = bp->is_scoped_variant() ? bp->toVariantPtr(emu) : scratch.emplace(bp->toVariant(emu));
+
+	// Shifting two integers. Variant::evaluate() refuses a negative operand,
+	// but it is not the path GDScript runs: with the types known the engine
+	// takes the validated evaluator, a native int64 shift with the count
+	// masked to six bits, and `-16 >> 2` is -4 there. Match that, which is
+	// also what the compiler emits when it knows both operands are integers.
+	if ((op == Variant::OP_SHIFT_LEFT || op == Variant::OP_SHIFT_RIGHT) &&
+			a->get_type() == Variant::INT && b->get_type() == Variant::INT) {
+		const int64_t lhs = a->operator int64_t();
+		const int shift = int(b->operator int64_t() & 63);
+		const int64_t answer = (op == Variant::OP_SHIFT_LEFT)
+				? int64_t(uint64_t(lhs) << shift)
+				: (lhs >> shift);
+		machine.set_result(true);
+		retp->set(emu, Variant(answer));
+		return;
+	}
 
 	// Uninitialized storage; Godot placement-constructs the result.
 	CallResult result;

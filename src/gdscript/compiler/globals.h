@@ -121,6 +121,9 @@ enum UtilityOp : int16_t {
 	UTILITY_ERROR_STRING = 65,
 	UTILITY_IS_SAME = 66,
 
+	UTILITY_CHAR = 67,
+	UTILITY_ORD = 68,
+
 	UTILITY_OP_COUNT,
 };
 
@@ -242,6 +245,8 @@ enum class GlobalFn : int16_t {
 	TYPE_CONVERT,
 	ERROR_STRING,
 	IS_SAME,
+	CHAR,
+	ORD,
 
 	// Randomness (SYSCALL / SYSCALL_INT). Impure: advances the project's shared RNG.
 	RANDF,

@@ -121,6 +121,7 @@ private:
 	bool parse_attribute(ExportHint& hint);
 	std::vector<ExportArgument> parse_attribute_arguments();
 	SignalDecl parse_signal();
+	int64_t fold_enum_value(const Expr* expr, const EnumDecl& decl, const Token& start);
 	std::string doc_comment_above(int p_line) const;
 
 	std::vector<Token> m_tokens;

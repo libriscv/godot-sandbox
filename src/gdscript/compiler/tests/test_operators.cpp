@@ -575,6 +575,23 @@ static void test_enum_members_are_compile_time_integers() {
 	std::cout << "  ✓ enum members are compile-time integers" << std::endl;
 }
 
+static void test_enum_initializers_are_constant_expressions() {
+	assert(run_int("enum Flags { A = 1 << 2, B = A + 1 }\nfunc f() -> int:\n\treturn Flags.B\n", "f") == 5);
+	assert(run_int("enum E { A = 2, B = A * 2, C }\nfunc f() -> int:\n\treturn E.B + E.C\n", "f") == 9);
+	assert(run_int("enum E { A = -1 * 3 }\nfunc f() -> int:\n\treturn E.A\n", "f") == -3);
+	assert(run_int("enum E { A = (1 + 2) * 4 - 1 }\nfunc f() -> int:\n\treturn E.A\n", "f") == 11);
+	assert(run_int("enum E { A = ~0 }\nfunc f() -> int:\n\treturn E.A\n", "f") == -1);
+	assert(run_int("enum E { A = 2 ** 3 }\nfunc f() -> int:\n\treturn E.A\n", "f") == 8);
+	assert(run_int("enum E { A = TYPE_INT }\nfunc f() -> int:\n\treturn E.A\n", "f") == 2);
+
+	assert(rejects("func side() -> int:\n\treturn 1\nenum E { A = side() }\nfunc f() -> int:\n\treturn E.A\n"));
+	assert(rejects("enum E { A = 1.5 }\nfunc f() -> int:\n\treturn E.A\n"));
+	assert(rejects("enum E { A = 1 / 0 }\nfunc f() -> int:\n\treturn E.A\n"));
+	assert(rejects("enum E { A = B, B = 1 }\nfunc f() -> int:\n\treturn E.A\n"));
+
+	std::cout << "  ✓ enum initializers are integer constant expressions" << std::endl;
+}
+
 // An unnamed enum puts its members in file scope.
 static void test_unnamed_enum_members_are_reachable_unqualified() {
 	assert(run_int("enum { LEFT, RIGHT }\nfunc f() -> int:\n\treturn RIGHT\n", "f") == 1);
@@ -686,6 +703,7 @@ int main() {
 	test_compound_assignment_refuses_an_impure_target();
 
 	test_enum_members_are_compile_time_integers();
+	test_enum_initializers_are_constant_expressions();
 	test_unnamed_enum_members_are_reachable_unqualified();
 	test_enum_member_is_a_typed_integer();
 	test_enum_shadows_a_builtin_type_name();

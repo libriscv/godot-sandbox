@@ -1,5 +1,6 @@
 #include "parser.h"
 #include "compiler_exception.h"
+#include "globals.h"
 #include <stdexcept>
 #include <sstream>
 
@@ -149,6 +150,95 @@ FunctionDecl Parser::parse_function() {
 	return func;
 }
 
+int64_t Parser::fold_enum_value(const Expr* expr, const EnumDecl& decl, const Token& start) {
+	const auto refuse = [&](const std::string& what) -> int64_t {
+		const int line = expr->line ? expr->line : start.line;
+		const int column = expr->line ? expr->column : start.column;
+		error("An enum member's value has to be an integer constant expression; " + what,
+			line, column);
+		return 0;
+	};
+
+	if (auto* literal = dynamic_cast<const LiteralExpr*>(expr)) {
+		switch (literal->lit_type) {
+			case LiteralExpr::Type::INTEGER: return std::get<int64_t>(literal->value);
+			case LiteralExpr::Type::BOOL: return std::get<bool>(literal->value) ? 1 : 0;
+			default: return refuse("this literal is not an integer");
+		}
+	}
+
+	if (auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+		const int64_t operand = fold_enum_value(unary->operand.get(), decl, start);
+		switch (unary->op) {
+			case UnaryExpr::Op::NEG: return int64_t(0u - uint64_t(operand));
+			case UnaryExpr::Op::BIT_NOT: return ~operand;
+			case UnaryExpr::Op::NOT: return operand == 0 ? 1 : 0;
+		}
+		return refuse("this operator is not an integer operator");
+	}
+
+	if (auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+		const int64_t left = fold_enum_value(binary->left.get(), decl, start);
+		const int64_t right = fold_enum_value(binary->right.get(), decl, start);
+		const uint64_t ul = uint64_t(left);
+		const uint64_t ur = uint64_t(right);
+		switch (binary->op) {
+			case BinaryExpr::Op::ADD: return int64_t(ul + ur);
+			case BinaryExpr::Op::SUB: return int64_t(ul - ur);
+			case BinaryExpr::Op::MUL: return int64_t(ul * ur);
+			case BinaryExpr::Op::DIV:
+				if (right == 0) {
+					return refuse("it divides by zero");
+				}
+				return (left == INT64_MIN && right == -1) ? INT64_MIN : left / right;
+			case BinaryExpr::Op::MOD:
+				if (right == 0) {
+					return refuse("it divides by zero");
+				}
+				return (left == INT64_MIN && right == -1) ? 0 : left % right;
+			case BinaryExpr::Op::POW: {
+				if (right < 0) {
+					return refuse("a negative exponent is not an integer");
+				}
+				int64_t result = 1;
+				for (int64_t i = 0; i < right; i++) {
+					result = int64_t(uint64_t(result) * ul);
+				}
+				return result;
+			}
+			case BinaryExpr::Op::SHL: return int64_t(ul << (ur & 63));
+			case BinaryExpr::Op::SHR: return left >> (ur & 63);
+			case BinaryExpr::Op::BIT_AND: return left & right;
+			case BinaryExpr::Op::BIT_OR: return left | right;
+			case BinaryExpr::Op::BIT_XOR: return left ^ right;
+			case BinaryExpr::Op::EQ: return left == right;
+			case BinaryExpr::Op::NEQ: return left != right;
+			case BinaryExpr::Op::LT: return left < right;
+			case BinaryExpr::Op::LTE: return left <= right;
+			case BinaryExpr::Op::GT: return left > right;
+			case BinaryExpr::Op::GTE: return left >= right;
+			case BinaryExpr::Op::AND: return (left != 0 && right != 0) ? 1 : 0;
+			case BinaryExpr::Op::OR: return (left != 0 || right != 0) ? 1 : 0;
+			case BinaryExpr::Op::IN: break;
+		}
+		return refuse("this operator is not an integer operator");
+	}
+
+	if (auto* variable = dynamic_cast<const VariableExpr*>(expr)) {
+		if (const EnumDecl::Member* member = decl.find_member(variable->name)) {
+			return member->value;
+		}
+		if (const GlobalConstant* constant = find_global_constant(variable->name)) {
+			if (!constant->is_float) {
+				return constant->int_value;
+			}
+		}
+		return refuse("'" + variable->name + "' is not one of this enum's earlier members");
+	}
+
+	return refuse("only literals, operators over them and earlier members are");
+}
+
 EnumDecl Parser::parse_enum() {
 	EnumDecl decl;
 	Token enum_token = consume(TokenType::ENUM, "Expected 'enum'");
@@ -173,15 +263,9 @@ EnumDecl Parser::parse_enum() {
 		member.column = member_name.column;
 
 		if (match(TokenType::ASSIGN)) {
-			// Only literal integers; non-constant expressions cannot exist at enum time.
-			const bool negative = match(TokenType::MINUS);
-			if (!negative) {
-				match(TokenType::PLUS);
-			}
-			Token value_token = consume(TokenType::INTEGER,
-				"An enum member's value has to be an integer literal");
-			const int64_t magnitude = std::get<int64_t>(value_token.value);
-			next_value = negative ? -magnitude : magnitude;
+			const Token start = peek();
+			ExprPtr initializer = parse_expression();
+			next_value = fold_enum_value(initializer.get(), decl, start);
 		}
 
 		member.value = next_value;
@@ -473,6 +557,14 @@ StmtPtr Parser::parse_statement() {
 
 StmtPtr Parser::parse_statement_impl() {
 	skip_newlines();
+
+	while (check(TokenType::AT)) {
+		ExportHint discarded;
+		if (parse_attribute(discarded)) {
+			error("@export names a script property; a local variable is not one");
+		}
+		skip_newlines();
+	}
 
 	if (match(TokenType::VAR)) {
 		return parse_var_decl(false);

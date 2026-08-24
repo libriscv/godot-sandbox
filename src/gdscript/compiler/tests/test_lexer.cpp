@@ -329,11 +329,28 @@ void test_match_keyword() {
 	std::cout << "  ✓ Match keyword test passed" << std::endl;
 }
 
+void test_unicode_identifiers() {
+	std::cout << "Testing unicode identifiers..." << std::endl;
+
+	Lexer lexer("var caf\xc3\xa9 = 4\n");
+	auto tokens = lexer.tokenize();
+
+	assert(tokens[0].type == TokenType::VAR);
+	assert(tokens[1].type == TokenType::IDENTIFIER);
+	assert(tokens[1].lexeme == "caf\xc3\xa9");
+	assert(tokens[2].type == TokenType::ASSIGN);
+
+	Lexer leading("\xc3\xa9t\xc3\xa9 = 1\n");
+	auto led = leading.tokenize();
+	assert(led[0].type == TokenType::IDENTIFIER);
+	assert(led[0].lexeme == "\xc3\xa9t\xc3\xa9");
+
+	std::cout << "  ✓ Unicode identifiers test passed" << std::endl;
+}
+
 void test_triple_quoted_strings() {
 	std::cout << "Testing triple-quoted strings..." << std::endl;
 
-	// A triple quote is the one string that may hold a raw newline, which is
-	// what the .sgd editor's string delimiters have always advertised.
 	Lexer lexer("\"\"\"one\ntwo\"\"\"\n");
 	auto tokens = lexer.tokenize();
 
@@ -362,12 +379,31 @@ void test_triple_quoted_strings() {
 	std::cout << "  ✓ Triple-quoted strings test passed" << std::endl;
 }
 
+void test_plain_strings_span_lines() {
+	std::cout << "Testing multi-line plain strings..." << std::endl;
+
+	Lexer lexer("\"one\ntwo\"\n");
+	auto tokens = lexer.tokenize();
+	assert(tokens[0].type == TokenType::STRING);
+	assert(std::get<std::string>(tokens[0].value) == "one\ntwo");
+
+	Lexer counting("'one\ntwo'\nx\n");
+	auto counted = counting.tokenize();
+	bool found_x = false;
+	for (const auto& tok : counted) {
+		if (tok.type == TokenType::IDENTIFIER && tok.lexeme == "x") {
+			assert(tok.line == 3);
+			found_x = true;
+		}
+	}
+	assert(found_x);
+
+	std::cout << "  ✓ Multi-line plain strings test passed" << std::endl;
+}
+
 void test_unterminated_string_stops_at_the_line() {
 	std::cout << "Testing unterminated strings..." << std::endl;
 
-	// A plain string ends at its own line, so one stray quote does not swallow
-	// the rest of the file, and the error points at the quote that opened it
-	// rather than at the end of input.
 	const CompilerException error = lex_failure("func f():\n\tvar s = \"oops\n\treturn s\n");
 	assert(error.error_type() == ErrorType::LEXER_ERROR);
 	assert(error.line() == 2);
@@ -402,7 +438,9 @@ int main() {
 		test_radix_literals();
 		test_numeric_separators_and_exponents();
 		test_match_keyword();
+		test_unicode_identifiers();
 		test_triple_quoted_strings();
+		test_plain_strings_span_lines();
 		test_unterminated_string_stops_at_the_line();
 
 		std::cout << "\n✅ All lexer tests passed!" << std::endl;

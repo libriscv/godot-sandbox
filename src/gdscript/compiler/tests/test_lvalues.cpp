@@ -159,6 +159,56 @@ static void test_known_inline_member_write() {
 	std::cout << "  ✓ a component of a known inline type is a payload write" << std::endl;
 }
 
+static void test_rect_and_plane_members() {
+	std::cout << "Testing that Rect2 and Plane members stay in the payload..." << std::endl;
+
+	const IRProgram rect = compile_to_ir(
+		"func test():\n\tvar r : Rect2 = Rect2(1, 2, 3, 4)\n\treturn r.size.x\n");
+	const IRFunction& r = find_function(rect, "test");
+	assert(count_opcode(r, IROpcode::VGET_INLINE) == 2);
+	assert(count_opcode(r, IROpcode::VGET) == 0);
+
+	const IRProgram plane = compile_to_ir(
+		"func test():\n\tvar p : Plane = Plane(0, 1, 0, 2)\n\treturn p.normal.z + p.d\n");
+	const IRFunction& p = find_function(plane, "test");
+	assert(count_opcode(p, IROpcode::VGET_INLINE) == 3);
+	assert(count_opcode(p, IROpcode::VGET) == 0);
+
+	const IRProgram write = compile_to_ir(
+		"func test():\n\tvar r : Rect2 = Rect2(1, 2, 3, 4)\n\tr.position = Vector2(9, 9)\n\treturn r\n");
+	const IRFunction& w = find_function(write, "test");
+	assert(count_opcode(w, IROpcode::VSET_INLINE) == 1);
+	assert(count_opcode(w, IROpcode::VSET) == 0);
+	assert(inline_set_type(w) == Variant::RECT2);
+
+	const IRProgram chained = compile_to_ir(
+		"func test():\n\tvar r : Rect2i = Rect2i(1, 2, 3, 4)\n\tr.size.y = 7\n\treturn r\n");
+	const IRFunction& c = find_function(chained, "test");
+	assert(count_opcode(c, IROpcode::VGET_INLINE) == 1);
+	assert(count_opcode(c, IROpcode::VSET_INLINE) == 2);
+	assert(count_opcode(c, IROpcode::VSET) == 0);
+
+	const IRProgram spelled = compile_to_ir(
+		"func test():\n\tvar p : Plane = Plane(0, 1, 0, 2)\n\tp.y = 0.5\n\treturn p.y\n");
+	assert(count_opcode(find_function(spelled, "test"), IROpcode::VSET) == 0);
+	assert(count_opcode(find_function(spelled, "test"), IROpcode::VGET) == 0);
+
+	assert(count_opcode(find_function(compile_to_ir(
+		"func test():\n\tvar r : Rect2 = Rect2(1, 2, 3, 4)\n\treturn r.end\n"), "test"),
+		IROpcode::VGET) == 1);
+
+	assert(!compile_to_riscv(
+		"func test():\n\tvar r : Rect2 = Rect2(1, 2, 3, 4)\n\tr.position = Vector2(9, 9)\n"
+		"\treturn r.size.x + r.position.y\n").empty());
+	assert(!compile_to_riscv(
+		"func test():\n\tvar p : Plane = Plane(0, 1, 0, 2)\n\tp.normal = Vector3(1, 0, 0)\n"
+		"\treturn p.normal.x\n").empty());
+	assert(!compile_to_riscv(
+		"func test():\n\tvar r : Rect2i = Rect2i(1, 2, 3, 4)\n\tr.size.y = 7\n\treturn r.size\n").empty());
+
+	std::cout << "  ✓ Rect2 and Plane members stay in the payload" << std::endl;
+}
+
 // -= An unknown type =-
 
 static void test_unknown_member_write_tests_the_tag() {
@@ -168,9 +218,8 @@ static void test_unknown_member_write_tests_the_tag() {
 		"func test(n):\n\tn.position.x = 5\n");
 	const IRFunction& f = find_function(chained, "test");
 
-	// One VSET_INLINE per inline type + three Dictionary arms (read, write, write-back).
-	const int arms = count_opcode(f, IROpcode::VSET_INLINE);
-	assert(arms > 0);
+	const int arms = count_opcode(f, IROpcode::VSET_INLINE) + count_opcode(f, IROpcode::VGET_INLINE);
+	assert(count_opcode(f, IROpcode::VSET_INLINE) > 0);
 	assert(count_opcode(f, IROpcode::TYPE_TEST) == arms + 3);
 	// One VSET for the Object fallback, one to write `position` back.
 	assert(count_opcode(f, IROpcode::VSET) == 2);
@@ -348,6 +397,7 @@ int main() {
 
 	try {
 		test_known_inline_member_write();
+		test_rect_and_plane_members();
 		test_unknown_member_write_tests_the_tag();
 		test_the_copy_travels_back();
 		test_the_optimizer_keeps_the_copy();
