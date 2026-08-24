@@ -5,15 +5,15 @@
 
 struct ScopedTreeBase {
 	Sandbox *sandbox = nullptr;
-	godot::Node *old_tree_base = nullptr;
+	godot::ObjectID previous;
 
-	ScopedTreeBase(Sandbox *sandbox, godot::Node *old_tree_base) :
+	ScopedTreeBase(Sandbox *sandbox, godot::Node *tree_base) :
 			sandbox(sandbox),
-			old_tree_base(sandbox->get_tree_base()) {
-		sandbox->set_tree_base(old_tree_base);
+			previous(sandbox->get_tree_base_id()) {
+		sandbox->set_tree_base(tree_base);
 	}
 
 	~ScopedTreeBase() {
-		sandbox->set_tree_base(old_tree_base);
+		sandbox->set_tree_base_id(previous);
 	}
 };

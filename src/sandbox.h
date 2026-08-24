@@ -334,8 +334,11 @@ public:
 	/// @param tree_base The tree base node.
 	/// @note The tree base is the owner node that the sandbox will use to access the node tree. When scripts
 	/// try to access the node path ".", they will be accessing this node, and navigating relative to it.
-	void set_tree_base(godot::Node *tree_base) { this->m_tree_base = tree_base; }
-	godot::Node *get_tree_base() const { return this->m_tree_base; }
+	void set_tree_base(godot::Node *tree_base);
+	godot::Node *get_tree_base() const;
+
+	godot::ObjectID get_tree_base_id() const noexcept { return this->m_tree_base; }
+	void set_tree_base_id(godot::ObjectID tree_base) noexcept { this->m_tree_base = tree_base; }
 
 	// -= Scoped objects and variants =-
 
@@ -886,7 +889,7 @@ private:
 	void setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, const Variant **args, int argc);
 
 	machine_t *m_machine = nullptr;
-	godot::Node *m_tree_base = nullptr;
+	godot::ObjectID m_tree_base;
 	uint32_t m_max_refs = MAX_REFS;
 	uint32_t m_memory_max = MAX_VMEM;
 	int64_t m_insn_max = MAX_INSTRUCTIONS;

@@ -397,9 +397,19 @@ void Sandbox::full_reset() {
 	this->m_guest_names.clear();
 	// Allowed-objects list survives: it describes the host policy, not the program.
 }
+void Sandbox::set_tree_base(godot::Node *tree_base) {
+	this->m_tree_base = tree_base != nullptr ? tree_base->get_instance_id() : godot::ObjectID();
+}
+godot::Node *Sandbox::get_tree_base() const {
+	if (this->m_tree_base.is_null()) {
+		return nullptr;
+	}
+	return Object::cast_to<Node>(ObjectDB::get_instance(this->m_tree_base));
+}
+
 Sandbox::Sandbox() {
 	this->constructor_initialize();
-	this->m_tree_base = this;
+	this->set_tree_base(this);
 	this->m_global_instances_current += 1;
 	this->m_global_instances_seen += 1;
 	this->reset_machine();
@@ -1158,7 +1168,32 @@ Variant Sandbox::vmcallable_address(gaddr_t address, Array args) {
 	call->init(this, address, std::move(args), !this->get_unboxed_arguments());
 	return Callable(call);
 }
+void RiscvCallable::init(Sandbox *self, gaddr_t address, Array args, bool variant_arguments) {
+	this->sandbox_id = self != nullptr ? self->get_instance_id() : ObjectID();
+	this->address = address;
+	this->m_variant_arguments = variant_arguments;
+
+	for (int i = 0; i < args.size(); i++) {
+		m_varargs[i] = args[i];
+		m_varargs_ptrs[i] = &m_varargs[i];
+	}
+	this->m_varargs_base_count = args.size();
+}
+
+Sandbox *RiscvCallable::sandbox() const {
+	if (sandbox_id.is_null()) {
+		return nullptr;
+	}
+	return Object::cast_to<Sandbox>(ObjectDB::get_instance(sandbox_id));
+}
+
 void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const {
+	Sandbox *self = this->sandbox();
+	if (self == nullptr) {
+		ERR_PRINT("Callable: the Sandbox it belongs to no longer exists");
+		r_call_error.error = GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;
+		return;
+	}
 	const bool varargs = m_varargs_base_count > 0;
 	const int total_args = m_varargs_base_count + p_argcount;
 	if (varargs) {

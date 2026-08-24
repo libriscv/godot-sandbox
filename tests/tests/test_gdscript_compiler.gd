@@ -7253,6 +7253,10 @@ func hold_an_array(sig):
 
 func no_signal(value):
 	return await value
+
+func wait_then_self(sig):
+	await sig
+	return get_name()
 """
 
 signal sgd_ping(value)
@@ -7291,6 +7295,32 @@ func test_sgd_await_suspends_and_resumes():
 	assert_eq(completed[0], 107, "the resumed body computed with the value the signal carried")
 
 	node.free()
+
+func test_sgd_await_resume_after_the_named_owner_is_freed():
+	var script = _await_script("await_shared_owner")
+	if script == null:
+		return
+
+	var first = _await_node(script)
+	var second = _await_node(script)
+	add_child(first)
+	add_child(second)
+
+	var completed := [false]
+	(first.call("wait_then_self", sgd_ping) as Signal).connect(func(_v): completed[0] = true)
+	assert_eq(first.call("get_coroutine_count"), 1, "the frame is held")
+
+	second.free()
+	sgd_ping.emit(1)
+
+	assert_true(completed[0], "the resumed frame finished rather than taking the process down")
+	assert_eq(first.call("get_coroutine_count"), 0, "and it was retired")
+
+	assert_engine_error("Sandbox has no parent Node")
+	assert_engine_error("Object is Null")
+	assert_engine_error("Object is Null")
+
+	first.free()
 
 func test_sgd_await_two_suspensions():
 	var script = _await_script("await_twice")

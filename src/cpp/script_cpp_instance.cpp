@@ -390,6 +390,10 @@ CPPScriptInstance::~CPPScriptInstance() {
 		if (it->second.count == 0) {
 			it->second.sandbox->queue_free();
 			sandbox_instances.erase(it);
+		} else if (Node *owner_node = fast_cast_to<Node>(this->owner)) {
+			if (it->second.sandbox->get_tree_base_id() == godot::ObjectID(owner_node->get_instance_id())) {
+				it->second.sandbox->set_tree_base(nullptr);
+			}
 		}
 	}
 	this->current_sandbox = nullptr;

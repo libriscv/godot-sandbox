@@ -943,6 +943,37 @@ func test_await_host_nested_call_gets_its_own_frame():
 	s.reap_coroutines()
 	s.queue_free()
 
+func test_vmcallable_does_not_outlive_its_sandbox():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+	add_child(s)
+
+	var cb : Callable = s.vmcallable("public_function")
+	assert_true(cb.is_valid(), "valid while the Sandbox is alive")
+	assert_eq(cb.get_object(), s, "and it names the Sandbox it calls into")
+
+	s.free()
+	assert_false(cb.is_valid(), "and invalid once the Sandbox is gone")
+	assert_eq(cb.get_object(), null, "with nothing left to resolve")
+
+func test_vmcallable_connection_dies_with_its_sandbox():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+	add_child(s)
+
+	var emitter := Node.new()
+	add_child(emitter)
+	emitter.add_user_signal("host_event")
+	emitter.connect("host_event", s.vmcallable("public_function"))
+	assert_eq(emitter.get_signal_connection_list("host_event").size(), 1,
+		"connected while the Sandbox is alive")
+
+	s.free()
+	assert_eq(emitter.get_signal_connection_list("host_event").size(), 0,
+		"and Godot dropped the connection with the Sandbox")
+	emitter.emit_signal("host_event")
+	emitter.free()
+
 func test_await_host_respects_the_limit():
 	var s : Sandbox = Sandbox.new()
 	s.set_program(Sandbox_TestsTests)
