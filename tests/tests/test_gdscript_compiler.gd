@@ -7296,6 +7296,28 @@ func test_sgd_await_suspends_and_resumes():
 
 	node.free()
 
+func test_sgd_await_resume_runs_as_the_node_that_suspended():
+	var script = _await_script("await_owner")
+	if script == null:
+		return
+
+	var first = _await_node(script)
+	var second = _await_node(script)
+	first.name = "FirstOwner"
+	second.name = "SecondOwner"
+	add_child(first)
+	add_child(second)
+
+	var completed := [null]
+	(first.call("wait_then_self", sgd_ping) as Signal).connect(func(value): completed[0] = value)
+
+	sgd_ping.emit(1)
+	assert_eq(completed[0], "FirstOwner",
+		"the resumed frame ran as the node that suspended it, not the newest instance")
+
+	first.free()
+	second.free()
+
 func test_sgd_await_resume_after_the_named_owner_is_freed():
 	var script = _await_script("await_shared_owner")
 	if script == null:
@@ -7308,19 +7330,19 @@ func test_sgd_await_resume_after_the_named_owner_is_freed():
 
 	var completed := [false]
 	(first.call("wait_then_self", sgd_ping) as Signal).connect(func(_v): completed[0] = true)
-	assert_eq(first.call("get_coroutine_count"), 1, "the frame is held")
+	assert_eq(second.call("get_coroutine_count"), 1, "the frame is held")
 
-	second.free()
+	first.free()
 	sgd_ping.emit(1)
 
 	assert_true(completed[0], "the resumed frame finished rather than taking the process down")
-	assert_eq(first.call("get_coroutine_count"), 0, "and it was retired")
+	assert_eq(second.call("get_coroutine_count"), 0, "and it was retired")
 
 	assert_engine_error("Sandbox has no parent Node")
 	assert_engine_error("Object is Null")
 	assert_engine_error("Object is Null")
 
-	first.free()
+	second.free()
 
 func test_sgd_await_two_suspensions():
 	var script = _await_script("await_twice")

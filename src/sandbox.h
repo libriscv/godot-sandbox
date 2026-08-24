@@ -390,6 +390,7 @@ public:
 		uint64_t id = 0;
 		uint64_t generation = 0; // Stale generation → drop on resume.
 		gaddr_t resume_address = 0;
+		godot::ObjectID owner;
 		std::vector<uint8_t> frame; // Variant slot array, copied out of guest memory.
 		std::vector<int32_t> promoted; // Permanent Variant indices, released on completion.
 		struct FrameObject {

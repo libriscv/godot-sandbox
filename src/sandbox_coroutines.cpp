@@ -1,5 +1,6 @@
 #include "guest_datatypes.h"
 #include "sandbox_function_state.h"
+#include "scoped_tree_base.h"
 
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -240,6 +241,7 @@ bool Sandbox::coroutine_suspend(gaddr_t operand_addr, gaddr_t frame_base, uint32
 	}
 
 	co->resume_address = resume_address;
+	co->owner = this->get_tree_base_id();
 	co->state_index = state_index;
 	co->result_offset = result_offset;
 	co->sent = Variant();
@@ -322,8 +324,13 @@ bool Sandbox::coroutine_resume(uint64_t id, const Variant &sent) {
 	co->running = true;
 
 	const gaddr_t resume_address = co->resume_address;
+	const godot::ObjectID owner = co->owner;
 	m_resume_entry_id = id;
-	Variant result = this->vmcall_internal(resume_address, nullptr, 0);
+	Variant result;
+	{
+		ScopedTreeBase stb(this, owner);
+		result = this->vmcall_internal(resume_address, nullptr, 0);
+	}
 
 	co = this->find_coroutine(id);
 	if (co == nullptr) {

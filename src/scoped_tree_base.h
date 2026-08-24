@@ -13,6 +13,12 @@ struct ScopedTreeBase {
 		sandbox->set_tree_base(tree_base);
 	}
 
+	ScopedTreeBase(Sandbox *sandbox, godot::ObjectID tree_base) :
+			sandbox(sandbox),
+			previous(sandbox->get_tree_base_id()) {
+		sandbox->set_tree_base_id(tree_base);
+	}
+
 	~ScopedTreeBase() {
 		sandbox->set_tree_base_id(previous);
 	}
