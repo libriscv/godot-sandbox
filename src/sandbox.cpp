@@ -2,7 +2,9 @@
 
 #include "fast_cast.hpp"
 #include "guest_datatypes.h"
+#include "gdscript/compiler/instance_layout.h"
 #include "sandbox_project_settings.h"
+#include "scoped_tree_base.h"
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -374,6 +376,14 @@ void Sandbox::constructor_initialize() {
 	this->m_perm_free_slots.clear();
 }
 void Sandbox::reset_machine() {
+	// Records live in the machine being torn down.
+	this->m_instance_base = 0;
+	this->m_default_instance_base = 0;
+	this->m_instance_record_size = 0;
+	this->m_instance_init_address = 0;
+	this->m_live_instance_records.clear();
+	// The heap they would be returned to goes with the machine.
+	this->m_deferred_instance_records.clear();
 	try {
 		if (this->m_machine != &dummy_machine) {
 			delete this->m_machine;
@@ -405,6 +415,164 @@ godot::Node *Sandbox::get_tree_base() const {
 		return nullptr;
 	}
 	return Object::cast_to<Node>(ObjectDB::get_instance(this->m_tree_base));
+}
+
+void Sandbox::read_instance_layout() {
+	this->m_instance_base = 0;
+	this->m_default_instance_base = 0;
+	this->m_instance_record_size = 0;
+	this->m_instance_init_address = 0;
+
+	const gaddr_t blob = this->address_of(String(gdscript::INSTANCE_SYMBOL));
+	if (blob == 0) {
+		return;
+	}
+	uint32_t magic = 0;
+	uint32_t version = 0;
+	uint32_t record_size = 0;
+	uint64_t default_base = 0;
+	try {
+		machine().copy_from_guest(&magic, blob + gdscript::InstanceLayout::MAGIC_OFF, sizeof(magic));
+		machine().copy_from_guest(&version, blob + gdscript::InstanceLayout::VERSION_OFF, sizeof(version));
+		machine().copy_from_guest(&default_base, blob + gdscript::InstanceLayout::DEFAULT_BASE_OFF, sizeof(default_base));
+		machine().copy_from_guest(&record_size, blob + gdscript::InstanceLayout::RECORD_SIZE_OFF, sizeof(record_size));
+	} catch (const std::exception &e) {
+		ERR_PRINT("Sandbox: unreadable instance layout: " + String(e.what()));
+		return;
+	}
+	if (magic != gdscript::InstanceLayout::MAGIC || version != gdscript::InstanceLayout::LAYOUT_VERSION) {
+		ERR_PRINT("Sandbox: the program's instance layout is not one this build knows.");
+		return;
+	}
+	this->m_default_instance_base = gaddr_t(default_base);
+	this->m_instance_record_size = gaddr_t(record_size);
+	this->m_instance_base = gaddr_t(default_base);
+	this->m_instance_init_address = this->address_of(String(gdscript::INSTANCE_INIT_SYMBOL));
+}
+
+void Sandbox::run_instance_initializer(gaddr_t address, gaddr_t base) {
+	const bool reentrant = this->is_in_vmcall();
+	CurrentState *const previous_state = this->m_current_state;
+	this->m_current_state = &this->m_states[0];
+
+	const gaddr_t previous_base = this->m_instance_base;
+	this->m_instance_base = base;
+
+	riscv::CPU<RISCV_ARCH> &cpu = machine().cpu;
+	auto &sp = cpu.reg(riscv::REG_SP);
+	const uint64_t max_instr = get_instructions_max() << 20;
+
+	try {
+		if (!reentrant) {
+			cpu.reg(riscv::REG_RA) = machine().memory.exit_address();
+			sp = machine().memory.stack_initial();
+			cpu.reg(riscv::REG_ARG0) = base;
+			cpu.reg(riscv::REG_TP) = base;
+			cpu.jump(address);
+			machine().simulate(max_instr ? max_instr : ~0ULL);
+		} else {
+			riscv::Registers<RISCV_ARCH> regs = cpu.registers();
+			cpu.reg(riscv::REG_RA) = machine().memory.exit_address();
+			sp -= 16u;
+			cpu.reg(riscv::REG_ARG0) = base;
+			cpu.reg(riscv::REG_TP) = base;
+			cpu.preempt_internal(regs, true, true, address, max_instr ? max_instr : ~0ULL);
+		}
+	} catch (const std::exception &e) {
+		this->handle_exception(address);
+	}
+
+	this->m_instance_base = previous_base;
+	this->m_current_state = previous_state;
+}
+
+gaddr_t Sandbox::create_instance_record() {
+	if (!this->has_instance_records()) {
+		return this->m_default_instance_base;
+	}
+	if (!machine().has_arena()) {
+		ERR_PRINT("Sandbox: no guest heap to allocate an instance record from.");
+		return this->m_default_instance_base;
+	}
+	const gaddr_t base = gaddr_t(machine().arena().malloc(size_t(this->m_instance_record_size)));
+	if (base == 0) {
+		ERR_PRINT("Sandbox: out of guest memory for an instance record.");
+		return this->m_default_instance_base;
+	}
+	// INT32_MIN: VASSIGN sentinel, distinct from valid scoped-variant indices.
+	const size_t slots = size_t(this->m_instance_record_size) / sizeof(GuestVariant);
+	std::vector<uint8_t> blank(size_t(this->m_instance_record_size), 0);
+	for (size_t i = 0; i < slots; i++) {
+		const int64_t empty_index = int64_t(INT32_MIN);
+		std::memcpy(blank.data() + i * sizeof(GuestVariant) + offsetof(GuestVariant, v),
+				&empty_index, sizeof(empty_index));
+	}
+	machine().copy_to_guest(base, blank.data(), blank.size());
+
+	this->m_live_instance_records.insert(base);
+
+	if (this->m_instance_init_address != 0) {
+		const size_t live = this->m_live_instance_records.size();
+		this->reserve_permanent_state(uint32_t(this->m_max_refs + live * slots));
+		this->run_instance_initializer(this->m_instance_init_address, base);
+	}
+	return base;
+}
+
+void Sandbox::destroy_instance_record(gaddr_t base) {
+	if (!this->has_instance_records() || base == 0 || base == this->m_default_instance_base) {
+		return;
+	}
+	this->m_live_instance_records.erase(base);
+	this->reap_coroutines_for_instance(base);
+
+	if (this->is_in_vmcall()) {
+		this->m_deferred_instance_records.push_back(base);
+		return;
+	}
+	this->release_instance_record(base);
+}
+
+void Sandbox::release_instance_record(gaddr_t base) {
+	const size_t slots = size_t(this->m_instance_record_size) / sizeof(GuestVariant);
+	try {
+		for (size_t i = 0; i < slots; i++) {
+			GuestVariant *gvar = machine().memory.memarray<GuestVariant>(
+					base + gaddr_t(i * sizeof(GuestVariant)), 1);
+			if (gvar->is_scoped_variant() && Sandbox::is_permanent_variant(gvar->v.i)) {
+				this->release_permanent_variant(gvar->v.i);
+			}
+		}
+		if (machine().has_arena()) {
+			machine().arena().free(base);
+		}
+	} catch (const std::exception &e) {
+		ERR_PRINT("Sandbox: could not release an instance record: " + String(e.what()));
+	}
+	if (this->m_instance_base == base) {
+		this->m_instance_base = this->m_default_instance_base;
+	}
+}
+
+void Sandbox::drain_deferred_instance_records() {
+	while (!this->m_deferred_instance_records.empty()) {
+		std::vector<gaddr_t> pending = std::move(this->m_deferred_instance_records);
+		this->m_deferred_instance_records.clear();
+		for (gaddr_t base : pending) {
+			this->release_instance_record(base);
+		}
+	}
+}
+
+gaddr_t Sandbox::rebase_instance_address(gaddr_t address) const noexcept {
+	if (!this->has_instance_records() || this->m_instance_base == this->m_default_instance_base) {
+		return address;
+	}
+	if (address < this->m_default_instance_base ||
+		address >= this->m_default_instance_base + this->m_instance_record_size) {
+		return address;
+	}
+	return this->m_instance_base + (address - this->m_default_instance_base);
 }
 
 Sandbox::Sandbox() {
@@ -692,6 +860,8 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		this->m_is_initialization = false;
 		this->handle_exception(machine().cpu.pc());
 	}
+
+	this->read_instance_layout();
 
 	// Read the program's custom properties, if any
 	this->read_program_properties(true);
@@ -997,6 +1167,15 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 	return &v[overflow_args];
 }
 Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc) {
+	struct DeferredRecords {
+		Sandbox &self;
+		~DeferredRecords() {
+			if (!self.is_in_vmcall() && !self.m_deferred_instance_records.empty()) {
+				self.drain_deferred_instance_records();
+			}
+		}
+	} deferred_records{ *this };
+
 	// Cleared per call; nested calls must not inherit the resumed frame.
 	const uint64_t entering_coroutine = this->m_resume_entry_id;
 	this->m_resume_entry_id = 0;
@@ -1031,7 +1210,11 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 		riscv::CPU<RISCV_ARCH> &cpu = m_machine->cpu;
 		auto &sp = cpu.reg(riscv::REG_SP);
 		// execute guest function
+		const bool writes_instance_base = this->m_instance_record_size != 0;
 		if (!is_reentrant_call) {
+			if (writes_instance_base) {
+				cpu.reg(riscv::REG_TP) = this->m_instance_base;
+			}
 			cpu.reg(riscv::REG_RA) = m_machine->memory.exit_address();
 			// reset the stack pointer to its initial location
 			sp = m_machine->memory.stack_initial();
@@ -1100,6 +1283,9 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			riscv::Registers<RISCV_ARCH> regs;
 			regs = cpu.registers();
 			// we are in a recursive call, so wait before setting exit address
+			if (writes_instance_base) {
+				cpu.reg(riscv::REG_TP) = this->m_instance_base;
+			}
 			cpu.reg(riscv::REG_RA) = m_machine->memory.exit_address();
 			// Nested calls share one guest stack; preempt restores the outer SP.
 			sp -= 16u;
@@ -1170,6 +1356,7 @@ Variant Sandbox::vmcallable_address(gaddr_t address, Array args) {
 }
 void RiscvCallable::init(Sandbox *self, gaddr_t address, Array args, bool variant_arguments) {
 	this->sandbox_id = self != nullptr ? self->get_instance_id() : ObjectID();
+	this->instance_base = self != nullptr ? self->get_instance_base() : gaddr_t(0);
 	this->address = address;
 	this->m_variant_arguments = variant_arguments;
 
@@ -1178,6 +1365,11 @@ void RiscvCallable::init(Sandbox *self, gaddr_t address, Array args, bool varian
 		m_varargs_ptrs[i] = &m_varargs[i];
 	}
 	this->m_varargs_base_count = args.size();
+}
+
+bool RiscvCallable::is_valid() const {
+	Sandbox *self = this->sandbox();
+	return self != nullptr && self->is_live_instance_base(this->instance_base);
 }
 
 Sandbox *RiscvCallable::sandbox() const {
@@ -1191,6 +1383,11 @@ void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r
 	Sandbox *self = this->sandbox();
 	if (self == nullptr) {
 		ERR_PRINT("Callable: the Sandbox it belongs to no longer exists");
+		r_call_error.error = GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;
+		return;
+	}
+	if (!self->is_live_instance_base(this->instance_base)) {
+		ERR_PRINT("Callable: the script instance it belongs to no longer exists");
 		r_call_error.error = GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;
 		return;
 	}
@@ -1212,10 +1409,13 @@ void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r
 	const bool previous_unboxed = self->get_unboxed_arguments();
 	self->set_unboxed_arguments(!m_variant_arguments);
 
-	if (varargs) {
-		r_return_value = self->vmcall_internal(address, m_varargs_ptrs.data(), total_args);
-	} else {
-		r_return_value = self->vmcall_internal(address, p_arguments, p_argcount);
+	{
+		ScopedInstanceBase sib(self, this->instance_base);
+		if (varargs) {
+			r_return_value = self->vmcall_internal(address, m_varargs_ptrs.data(), total_args);
+		} else {
+			r_return_value = self->vmcall_internal(address, p_arguments, p_argcount);
+		}
 	}
 
 	self->set_unboxed_arguments(previous_unboxed);
@@ -1932,8 +2132,8 @@ Array Sandbox::get_property_list() const {
 void SandboxProperty::set(Sandbox &sandbox, const Variant &value) {
 	if (m_setter_address == 0) {
 		if (m_address != 0) {
-			// Direct property access
-			GuestVariant *g_prop = sandbox.machine().memory.memarray<GuestVariant>(m_address, 1);
+			const uint64_t address = sandbox.rebase_instance_address(m_address);
+			GuestVariant *g_prop = sandbox.machine().memory.memarray<GuestVariant>(address, 1);
 			g_prop->create(sandbox, Variant(value));
 			return;
 		}
@@ -1952,8 +2152,8 @@ void SandboxProperty::set(Sandbox &sandbox, const Variant &value) {
 Variant SandboxProperty::get(const Sandbox &sandbox) const {
 	if (m_getter_address == 0) {
 		if (m_address != 0) {
-			// Direct property access
-			GuestVariant *g_prop = sandbox.machine().memory.memarray<GuestVariant>(m_address, 1);
+			const uint64_t address = sandbox.rebase_instance_address(m_address);
+			GuestVariant *g_prop = sandbox.machine().memory.memarray<GuestVariant>(address, 1);
 			return g_prop->toVariant(sandbox);
 		}
 		ERR_PRINT("Sandbox: Getter was invalid for property: " + m_name);

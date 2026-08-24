@@ -266,6 +266,8 @@ private:
 	std::unordered_map<std::string, IRGlobalVar> m_global_const_values;
 	// Forward references read NIL; rejected at this boundary.
 	size_t m_globals_lowered = 0;
+	bool m_members_in_scope = true;
+	std::vector<bool> m_global_is_member;
 
 	bool fold_global_initializer(const Expr* expr, IRGlobalVar& out) const;
 

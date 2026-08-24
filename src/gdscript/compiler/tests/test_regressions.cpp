@@ -10,6 +10,7 @@
 #include "../ir_interpreter.h"
 #include "../riscv_codegen.h"
 #include "../compiler_exception.h"
+#include "../instance_layout.h"
 #include "../variant_layout.h"
 #include <cassert>
 #include <climits>
@@ -298,14 +299,16 @@ static void test_large_global_offsets() {
 	std::string source;
 	const int global_count = 200;
 	for (int i = 0; i < global_count; i++) {
-		source += "var g" + std::to_string(i) + " = " + std::to_string(i) + "\n";
+		source += "static var g" + std::to_string(i) + " = " + std::to_string(i) + "\n";
 	}
 	source += "func test():\n\treturn g199\n";
 
 	const std::vector<uint8_t> code = compile_to_code(source);
 
 	// No ADDI may carry a truncated global offset: every offset is folded into
-	// the AUIPC/ADDI pair by the relocation instead.
+	// the AUIPC/ADDI pair by the relocation instead. `static var` so the slots
+	// are in the data area; a member is addressed off the base register, where
+	// a wide offset is materialized by LUI + ADDI and 680 is a legitimate half.
 	for (size_t off = 0; off + 4 <= code.size(); off += 4) {
 		const uint32_t instr = word_at(code, off);
 		if ((instr & 0x7F) != 0x13 || ((instr >> 12) & 7) != 0) {
@@ -316,6 +319,27 @@ static void test_large_global_offsets() {
 		// 4776 - 4096 = 680. Finding that as an ADDI immediate would mean a
 		// global offset had been silently truncated.
 		assert(imm != 680);
+	}
+
+	// The same for members: no ADDI off the base register may carry the wrap.
+	{
+		std::string members;
+		for (int i = 0; i < global_count; i++) {
+			members += "var g" + std::to_string(i) + " = " + std::to_string(i) + "\n";
+		}
+		members += "func test():\n\treturn g199\n";
+		const std::vector<uint8_t> member_code = compile_to_code(members);
+		constexpr uint8_t REG_TP = 4;
+		for (size_t off = 0; off + 4 <= member_code.size(); off += 4) {
+			const uint32_t instr = word_at(member_code, off);
+			if ((instr & 0x7F) != 0x13 || ((instr >> 12) & 7) != 0) {
+				continue;
+			}
+			if (((instr >> 15) & 0x1F) != REG_TP) {
+				continue;
+			}
+			assert((int32_t(instr) >> 20) != 680);
+		}
 	}
 
 	// The data area covers all 200 Variants.
@@ -365,7 +389,9 @@ static void test_global_initializer_forms() {
 			"var p = PackedInt32Array()\n"
 			"func test():\n"
 			"\treturn a\n");
-		assert(ir.has_global_init);
+		// Members, so they are built per instance rather than at startup.
+		assert(ir.has_member_init);
+		assert(!ir.has_global_init);
 		for (const char* name : { "a", "d", "n", "p" }) {
 			assert(find_global(ir, name).init_type == IRGlobalVar::InitType::RUNTIME);
 		}
@@ -373,7 +399,7 @@ static void test_global_initializer_forms() {
 		assert(find_global(ir, "a").value_type == Variant::ARRAY);
 		assert(find_global(ir, "d").value_type == Variant::DICTIONARY);
 		assert(find_global(ir, "p").value_type == Variant::PACKED_INT32_ARRAY);
-		assert(count_opcode(ir.global_init, IROpcode::STORE_GLOBAL) == 4);
+		assert(count_opcode(ir.member_init, IROpcode::STORE_GLOBAL) == 4);
 	}
 
 	// Empty containers stay compile-time constants: no startup code for them.
@@ -382,6 +408,7 @@ static void test_global_initializer_forms() {
 		assert(find_global(ir, "a").init_type == IRGlobalVar::InitType::EMPTY_ARRAY);
 		assert(find_global(ir, "d").init_type == IRGlobalVar::InitType::EMPTY_DICT);
 		assert(!ir.has_global_init);
+		assert(!ir.has_member_init);
 	}
 
 	// A type-hinted global with no initializer gets its type's default value,
@@ -414,7 +441,7 @@ static void test_global_init_runs_before_property_registration() {
 		"\treturn items\n";
 
 	const IRProgram ir = compile_to_ir(source);
-	assert(ir.has_global_init);
+	assert(ir.has_member_init);
 	assert(find_global(ir, "items").is_property);
 	assert(find_global(ir, "items").value_type == Variant::ARRAY);
 
@@ -423,9 +450,11 @@ static void test_global_init_runs_before_property_registration() {
 	riscv.generate(ir);
 	assert(riscv.get_function_offsets().count("__init_globals") == 0);
 	assert(riscv.get_function_offsets().count(".init_globals") == 0);
+	assert(riscv.get_function_offsets().count("__init_members") == 0);
 
-	// It needs a return slot of its own past the end of the globals array.
-	assert(riscv.get_global_data_size() == 2 * 24);
+	// One member, the shared return slot the initializers write into, and the
+	// blob describing the record.
+	assert(riscv.get_global_data_size() == 2 * 24 + size_t(InstanceLayout::BLOB_SIZE));
 
 	std::cout << "  ✓ Global init ordering against property registration" << std::endl;
 }

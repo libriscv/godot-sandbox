@@ -558,8 +558,9 @@ static void test_struct_globals() {
 		"var account: BankAccount\n"
 		"\n"
 		"func test():\n\taccount.balance = 1\n\treturn account.balance\n");
-	assert(typed.has_global_init);
-	assert(count_opcode(typed.global_init, IROpcode::MAKE_DICTIONARY) == 1);
+	// A plain `var` is a member, so its initializer runs per instance.
+	assert(typed.has_member_init);
+	assert(count_opcode(typed.member_init, IROpcode::MAKE_DICTIONARY) == 1);
 	assert(typed.globals.at(0).type_hint == Variant::DICTIONARY);
 
 	const IRFunction& test = find_function(typed, "test");

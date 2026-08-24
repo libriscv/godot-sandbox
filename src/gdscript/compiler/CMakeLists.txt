@@ -176,6 +176,12 @@ if (BUILD_TESTING)
 		target_link_libraries(test_await gdscript_compiler riscv)
 		add_test(NAME test_await COMMAND test_await)
 
+		# Two instance records only differ when a machine runs them: the
+		# addressing is a fact about what tp held on each call.
+		add_executable(test_instances tests/test_instances.cpp)
+		target_link_libraries(test_instances gdscript_compiler riscv)
+		add_test(NAME test_instances COMMAND test_instances)
+
 		# A Callable is the same kind of fact: the capture contract is that the
 		# host prepends what ECALL_CALLABLE_CREATE was given, which only a run
 		# against a host answering that syscall can pin down.

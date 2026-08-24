@@ -169,7 +169,9 @@ int main(int argc, char** argv)
 							std::cout << "null";
 							break;
 						case IRGlobalVar::InitType::RUNTIME:
-							std::cout << "<evaluated by " << ir.global_init.name << ">";
+							std::cout << "<evaluated by "
+								<< (global.is_member() ? ir.member_init.name : ir.global_init.name)
+								<< ">";
 							break;
 						default:
 							std::cout << "?";
@@ -191,6 +193,9 @@ int main(int argc, char** argv)
 		}
 
 		std::vector<const IRFunction*> all_functions;
+		if (ir.has_member_init) {
+			all_functions.push_back(&ir.member_init);
+		}
 		if (ir.has_global_init) {
 			all_functions.push_back(&ir.global_init);
 		}

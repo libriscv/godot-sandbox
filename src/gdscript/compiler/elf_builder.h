@@ -1,6 +1,7 @@
 #pragma once
 #include "ir.h"
 #include "line_table.h"
+#include "instance_layout.h"
 #include "profiling_layout.h"
 #include "variant_layout.h"
 #include <vector>

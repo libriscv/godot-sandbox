@@ -177,6 +177,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	m_global_const_values.clear();
 	m_global_types.clear();
 	m_global_structs.clear();
+	m_global_is_member.clear();
 	ir_program.globals.resize(program.globals.size());
 
 	// All names registered before any initializer, so initializers can reference each other.
@@ -196,6 +197,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		if (global.is_const) {
 			m_global_consts.insert(global.name);
 		}
+		m_global_is_member.push_back(!global.is_const && !global.is_static);
 
 		// Struct-typed global: DICTIONARY downstream, struct tracked for field checking.
 		const StructDecl* global_struct = find_struct(global.type_hint);
@@ -213,9 +215,12 @@ IRProgram CodeGenerator::generate(const Program& program) {
 
 	FunctionContext init_func;
 	init_func.ir.name = "__init_globals";
+	FunctionContext member_func;
+	member_func.ir.name = "__init_members";
 	m_current_function = "global initializers";
 	m_globals_lowered = 0;
 	push_scope(init_func);
+	push_scope(member_func);
 
 	for (size_t i = 0; i < program.globals.size(); i++) {
 		const auto& global = program.globals[i];
@@ -226,6 +231,15 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		ir_global.is_property = global.is_property;
 		ir_global.setter_function = m_global_setters[i];
 		ir_global.getter_function = m_global_getters[i];
+		ir_global.storage = (global.is_const || global.is_static)
+			? IRGlobalVar::Storage::Data
+			: IRGlobalVar::Storage::Instance;
+
+		FunctionContext& target = ir_global.is_member() ? member_func : init_func;
+		bool& target_has_init = ir_global.is_member()
+			? ir_program.has_member_init
+			: ir_program.has_global_init;
+		m_members_in_scope = ir_global.is_member();
 
 		if (!global.type_hint.empty()) {
 			ir_global.type_hint = m_global_types[i];
@@ -249,19 +263,19 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		if (!global.initializer) {
 			// `var a: BankAccount` — fresh instance at startup.
 			if (const StructDecl* global_struct = m_global_structs[i]) {
-				int reg = gen_struct_construct(*global_struct, {}, NamedArguments{}, init_func, nullptr);
-				init_func.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
+				int reg = gen_struct_construct(*global_struct, {}, NamedArguments{}, target, nullptr);
+				target.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
 					IRValue::imm(static_cast<int64_t>(i)), IRValue::reg(reg));
-				free_register(init_func, reg);
+				free_register(target, reg);
 				ir_global.init_type = IRGlobalVar::InitType::RUNTIME;
 				ir_global.value_type = Variant::DICTIONARY;
-				ir_program.has_global_init = true;
+				target_has_init = true;
 				m_globals_lowered = i + 1;
 				continue;
 			}
 
 			// `var a: Array` defaults to empty Array, not NIL.
-			apply_default_initializer(ir_global, init_func, i, ir_program.has_global_init);
+			apply_default_initializer(ir_global, target, i, target_has_init);
 			m_globals_lowered = i + 1;
 			continue;
 		}
@@ -272,18 +286,18 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				ir_global.value_type = derive_global_value_type(ir_global);
 			} else {
 				// Not a compile-time constant: evaluate it at startup.
-				int reg = gen_expr(global.initializer.get(), init_func);
-				init_func.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
+				int reg = gen_expr(global.initializer.get(), target);
+				target.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
 					IRValue::imm(static_cast<int64_t>(i)), IRValue::reg(reg));
 				ir_global.init_type = IRGlobalVar::InitType::RUNTIME;
 				ir_global.value_type = ir_global.type_hint != IRInstruction::TypeHint_NONE
 					? ir_global.type_hint
-					: get_register_type(init_func, reg);
+					: get_register_type(target, reg);
 				if (m_global_structs[i] == nullptr) {
-					m_global_structs[i] = get_register_struct(init_func, reg);
+					m_global_structs[i] = get_register_struct(target, reg);
 				}
-				free_register(init_func, reg);
-				ir_program.has_global_init = true;
+				free_register(target, reg);
+				target_has_init = true;
 			}
 
 			if (global.is_const && ir_global.init_type != IRGlobalVar::InitType::RUNTIME) {
@@ -301,8 +315,18 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		init_func.ir.instructions.clear();
 		init_func.ir.max_registers = 0;
 	}
+	if (ir_program.has_member_init) {
+		member_func.ir.instructions.emplace_back(IROpcode::RETURN);
+		member_func.ir.max_registers = member_func.next_register;
+	} else {
+		member_func.ir.instructions.clear();
+		member_func.ir.max_registers = 0;
+	}
 	pop_scope(init_func);
+	pop_scope(member_func);
+	m_members_in_scope = true;
 	ir_program.global_init = std::move(init_func.ir);
+	ir_program.member_init = std::move(member_func.ir);
 
 	m_globals_lowered = SIZE_MAX;
 
@@ -2023,6 +2047,14 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func)
 			error_at("Global variable '" + expr->name + "' is used in the initializer of a global "
 				"declared before it", expr,
 				"Move the declaration of '" + expr->name + "' above that global");
+		}
+		if (!m_members_in_scope && global_idx < m_global_is_member.size()
+			&& m_global_is_member[global_idx]) {
+			error_at("Cannot read the member variable '" + expr->name + "' from the initializer "
+				"of a 'const' or 'static var'", expr,
+				"'" + expr->name + "' is one per instance and does not exist yet when a shared "
+				"initializer runs. Make '" + expr->name + "' a 'static var', or move the "
+				"expression into a function");
 		}
 		if (!global_getter(global_idx).empty()) {
 			return gen_property_get(global_idx, func);

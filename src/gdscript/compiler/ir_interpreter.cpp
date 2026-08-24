@@ -50,6 +50,10 @@ void IRInterpreter::initialize_globals() {
 		ExecutionContext ctx;
 		execute_function(m_program.global_init, ctx);
 	}
+	if (m_program.has_member_init) {
+		ExecutionContext ctx;
+		execute_function(m_program.member_init, ctx);
+	}
 }
 
 IRInterpreter::Value IRInterpreter::call(const std::string& function_name, const std::vector<Value>& args) {

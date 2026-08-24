@@ -26,6 +26,9 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 	const uint64_t profiling_size = codegen.get_profiling_size();
 	const uint64_t debug_address = codegen.get_debug_address();
 	const uint64_t debug_size = codegen.get_debug_size();
+	const uint64_t instance_blob_address = codegen.get_instance_blob_address();
+	const uint64_t instance_blob_size = codegen.get_instance_blob_size();
+	const uint64_t instance_init_offset = codegen.get_instance_init_offset();
 
 	std::vector<uint8_t> elf_data;
 
@@ -85,6 +88,20 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 		debug_name_offset = strtab.size();
 		const std::string name = DEBUG_SYMBOL;
 		strtab.insert(strtab.end(), name.begin(), name.end());
+		strtab.push_back(0);
+	}
+
+	size_t instance_name_offset = 0;
+	size_t instance_init_name_offset = 0;
+	if (instance_blob_size > 0) {
+		instance_name_offset = strtab.size();
+		const std::string name = INSTANCE_SYMBOL;
+		strtab.insert(strtab.end(), name.begin(), name.end());
+		strtab.push_back(0);
+
+		instance_init_name_offset = strtab.size();
+		const std::string init_name = INSTANCE_INIT_SYMBOL;
+		strtab.insert(strtab.end(), init_name.begin(), init_name.end());
 		strtab.push_back(0);
 	}
 
@@ -150,6 +167,28 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 		sym.st_value = debug_address;
 		sym.st_size = debug_size;
 		symtab.push_back(sym);
+	}
+
+	if (instance_blob_size > 0) {
+		Elf64_Sym blob = {};
+		memset(&blob, 0, sizeof(blob));
+		blob.st_name = static_cast<uint32_t>(instance_name_offset);
+		blob.st_info = (1 << 4) | 1;
+		blob.st_other = 0;
+		blob.st_shndx = 2;
+		blob.st_value = instance_blob_address;
+		blob.st_size = instance_blob_size;
+		symtab.push_back(blob);
+
+		Elf64_Sym init = {};
+		memset(&init, 0, sizeof(init));
+		init.st_name = static_cast<uint32_t>(instance_init_name_offset);
+		init.st_info = (1 << 4) | 2;
+		init.st_other = 0;
+		init.st_shndx = 1;
+		init.st_value = BASE_ADDR + instance_init_offset;
+		init.st_size = 0;
+		symtab.push_back(init);
 	}
 
 	size_t symtab_size = symtab.size() * sizeof(Elf64_Sym);

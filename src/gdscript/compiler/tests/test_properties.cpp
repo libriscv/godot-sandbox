@@ -244,7 +244,7 @@ static void test_the_initializer_does_not_run_the_setter() {
 		"\t\tseen += 1\n"
 		"\t\thp = v\n");
 	assert(find_global(ir, "hp").init_type == IRGlobalVar::InitType::INT);
-	assert(count_calls(ir.global_init, "@hp_setter") == 0);
+	assert(count_calls(ir.member_init, "@hp_setter") == 0);
 
 	const IRProgram runtime = compile_to_ir(
 		"var base = 4\n"
@@ -252,8 +252,8 @@ static void test_the_initializer_does_not_run_the_setter() {
 		"\tset(v):\n"
 		"\t\thp = v\n");
 	assert(find_global(runtime, "hp").init_type == IRGlobalVar::InitType::RUNTIME);
-	assert(count_calls(runtime.global_init, "@hp_setter") == 0);
-	assert(count_opcode(runtime.global_init, IROpcode::STORE_GLOBAL) == 1);
+	assert(count_calls(runtime.member_init, "@hp_setter") == 0);
+	assert(count_opcode(runtime.member_init, IROpcode::STORE_GLOBAL) == 1);
 
 	std::cout << "  the declaration's own value is written, not set" << std::endl;
 }

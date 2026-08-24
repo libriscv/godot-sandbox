@@ -187,6 +187,7 @@ struct VarDeclStmt : Stmt {
 	ExprPtr initializer;
 	bool is_const = false;
 	bool is_property = false;
+	bool is_static = false;
 
 	std::unique_ptr<FunctionDecl> setter_body;
 	std::unique_ptr<FunctionDecl> getter_body;

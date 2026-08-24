@@ -8822,3 +8822,287 @@ func test_sgd_signal_refusals():
 		var elf = ts.vmcall("compile_to_elf", source)
 		assert_eq(elf.is_empty(), true, "should not compile: " + source)
 	ts.queue_free()
+
+# -= Instances =-
+#
+# A script-level `var` is a member: two nodes on one .sgd have two of it, the way
+# GDScript does. They still share one Sandbox -- the member record is per instance,
+# addressed off a base register the host writes on every entry. `const` and
+# `static var` stay shared, which is what those words mean.
+
+const INSTANCE_SOURCE := """
+@export var speed = 1
+var bump = 0
+var items = []
+static var shared = 0
+const LIMIT = 10
+
+func step():
+	bump += 1
+	shared += 1
+	items.append(bump)
+	return bump
+
+func read_speed():
+	return speed
+
+func through_the_host(cb):
+	bump += 10
+	var answer = cb.call()
+	return [bump, answer]
+
+func read_items():
+	return items
+
+func read_shared():
+	return shared
+
+func read_limit():
+	return LIMIT
+
+func hand_out_a_callable():
+	return step
+
+func wait_then_step(sig):
+	await sig
+	return step()
+"""
+
+func _instance_script(name : String):
+	var path = "user://temp_%s.sgd" % name
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(INSTANCE_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the instance script should load as a SafeGDScript resource")
+	return script
+
+func _instance_node(script) -> Node:
+	var node = Node.new()
+	node.set_script(script)
+	node.set_instructions_max(100000)
+	return node
+
+func test_sgd_members_are_per_instance():
+	var script = _instance_script("instance_members")
+	if script == null:
+		return
+	var a = _instance_node(script)
+	var b = _instance_node(script)
+
+	assert_eq(a.call("step"), 1, "the first instance counts from its own zero")
+	assert_eq(b.call("step"), 1, "and so does the second")
+	assert_eq(a.call("step"), 2, "the first one kept its own count")
+
+	# A container member holds a permanent Variant of its own, not a shared handle.
+	assert_eq(a.call("read_items"), [1, 2], "the first instance's array")
+	assert_eq(b.call("read_items"), [1], "the second instance's own array")
+
+	a.free()
+	b.free()
+
+func test_sgd_exported_values_are_per_instance():
+	var script = _instance_script("instance_exports")
+	if script == null:
+		return
+	var a = _instance_node(script)
+	var b = _instance_node(script)
+
+	a.set("speed", 42)
+	assert_eq(a.get("speed"), 42, "the property was set on the instance it names")
+	assert_eq(b.get("speed"), 1, "and the other instance kept its declared value")
+	assert_eq(b.call("read_speed"), 1, "which is what the guest reads too")
+
+	b.set("speed", 7)
+	assert_eq(a.call("read_speed"), 42, "setting the other one changed nothing here")
+	assert_eq(b.call("read_speed"), 7, "and landed where it was aimed")
+
+	a.free()
+	b.free()
+
+func test_sgd_static_and_const_are_shared():
+	var script = _instance_script("instance_shared")
+	if script == null:
+		return
+	var a = _instance_node(script)
+	var b = _instance_node(script)
+
+	a.call("step")
+	b.call("step")
+	a.call("step")
+	assert_eq(a.call("read_shared"), 3, "a static var counts every instance's steps")
+	assert_eq(b.call("read_shared"), 3, "and reads the same from either")
+	assert_eq(a.call("read_limit"), 10, "a const is the same value everywhere")
+
+	a.free()
+	b.free()
+
+func test_sgd_freeing_an_instance_leaves_the_others_alone():
+	var script = _instance_script("instance_free")
+	if script == null:
+		return
+	var a = _instance_node(script)
+	var b = _instance_node(script)
+
+	a.call("step")
+	a.call("step")
+	b.call("step")
+	a.free()
+
+	# The freed instance's record went back to the guest heap; the survivor's
+	# members and its container are untouched by that.
+	assert_eq(b.call("step"), 2, "the surviving instance kept counting")
+	assert_eq(b.call("read_items"), [1, 2], "and still holds its own array")
+
+	b.free()
+
+func test_sgd_a_callable_runs_as_the_instance_that_made_it():
+	var script = _instance_script("instance_callable")
+	if script == null:
+		return
+	var a = _instance_node(script)
+	var b = _instance_node(script)
+
+	b.call("step")
+	b.call("step")
+	var from_a = a.call("hand_out_a_callable") as Callable
+	assert_eq(from_a.call(), 1, "the Callable stepped the instance that handed it out")
+	assert_eq(b.call("step"), 3, "not the one that was called most recently")
+
+	a.free()
+	b.free()
+
+func test_sgd_await_resumes_against_its_own_members():
+	var script = _instance_script("instance_await")
+	if script == null:
+		return
+	var a = _instance_node(script)
+	var b = _instance_node(script)
+	add_child(a)
+	add_child(b)
+
+	b.call("step")
+	b.call("step")
+
+	var completed := [null]
+	(a.call("wait_then_step", sgd_ping) as Signal).connect(func(value): completed[0] = value)
+	sgd_ping.emit(1)
+
+	assert_eq(completed[0], 1, "the resumed frame stepped the instance that suspended")
+	assert_eq(b.call("step"), 3, "and left the other instance's count alone")
+
+	a.free()
+	b.free()
+
+func test_sgd_a_callable_dies_with_its_instance():
+	var script = _instance_script("instance_callable_free")
+	if script == null:
+		return
+	var a = _instance_node(script)
+	var b = _instance_node(script)
+
+	var from_a = a.call("hand_out_a_callable") as Callable
+	assert_true(from_a.is_valid(), "the Callable is valid while the instance is")
+	a.free()
+
+	# Its record went back to the guest heap: calling it would step members that
+	# are not there any more, so it stops being valid rather than reading them.
+	assert_false(from_a.is_valid(), "and stops being valid when the instance goes")
+	assert_eq(b.call("step"), 1, "the other instance is untouched by any of it")
+
+	b.free()
+
+func test_sgd_a_suspended_frame_dies_with_its_instance():
+	var script = _instance_script("instance_await_free")
+	if script == null:
+		return
+	var a = _instance_node(script)
+	var b = _instance_node(script)
+	add_child(a)
+	add_child(b)
+
+	# Counted, not flagged: retiring the frame must tell the awaiter once. A second
+	# `completed` is a doubled continuation, not a harmless repeat.
+	var completed := [0]
+	(a.call("wait_then_step", sgd_ping) as Signal).connect(func(_v): completed[0] += 1)
+	assert_eq(b.call("get_coroutine_count"), 1, "the frame is held by the shared Sandbox")
+
+	a.free()
+	assert_eq(b.call("get_coroutine_count"), 0,
+		"freeing the instance retired the frame suspended against its record")
+	assert_eq(completed[0], 1, "and told the awaiter it was over, once")
+
+	sgd_ping.emit(1)
+	assert_eq(b.call("step"), 1, "the emission reached nothing, and the survivor is intact")
+
+	b.free()
+
+var _self_freeing_node : Node = null
+
+var _reused_instance : Node = null
+
+func _free_the_running_instance():
+	# Node.free() is refused by the engine here ("Attempted to free a locked
+	# object"), so the route to the same destructor is dropping the script.
+	_self_freeing_node.set_script(null)
+	_self_freeing_node = null
+	# And then ask for a record of exactly the same size, so a chunk returned to
+	# the guest heap too early is handed straight back out and initialized over.
+	_reused_instance = _instance_node(_nested_script)
+	_reused_instance.call("step")
+	return 1
+
+func test_sgd_an_instance_freed_during_its_own_call():
+	# A guest call reaches the host, and the host frees the very node it is
+	# running as. Godot destroys the script instance synchronously, so the record
+	# tp still points at is released mid-call: returning its chunk to the guest
+	# heap there would hand those bytes to the next malloc while the rest of the
+	# method is still reading and writing them.
+	var script = _instance_script("instance_free_during_call")
+	if script == null:
+		return
+	var a = _instance_node(script)
+	var b = _instance_node(script)
+
+	_nested_script = script
+	a.call("step")
+	_self_freeing_node = a
+	var answer = a.call("through_the_host", Callable(self, "_free_the_running_instance"))
+
+	assert_eq(answer, [11, 1], "the call finished against the record it started on")
+	assert_eq(_reused_instance.call("step"), 2, "and the new instance has its own")
+	_reused_instance.free()
+	_reused_instance = null
+	assert_eq(b.call("step"), 1, "and the survivor's record was not handed out from under it")
+	assert_eq(b.call("read_items"), [1], "nor its container member overwritten")
+
+	b.free()
+
+var _nested_instance : Node = null
+var _nested_script = null
+
+func _make_a_nested_instance():
+	_nested_instance = _instance_node(_nested_script)
+	return _nested_instance.call("step")
+
+func test_sgd_an_instance_made_during_a_call():
+	# Godot instantiates a scene the guest asked for: a second instance is built,
+	# and its members initialized, while the first one is still on the stack.
+	var script = _instance_script("instance_nested")
+	if script == null:
+		return
+	_nested_script = script
+	var a = _instance_node(script)
+
+	a.call("step")
+	var answer = a.call("through_the_host", Callable(self, "_make_a_nested_instance"))
+
+	assert_eq(answer[0], 11, "the outer instance came back to its own members")
+	assert_eq(answer[1], 1, "and the one made mid-call started from its own zero")
+	assert_eq(_nested_instance.call("step"), 2, "which it kept afterwards")
+	assert_eq(a.call("step"), 12, "as did the outer one")
+
+	_nested_instance.free()
+	_nested_instance = null
+	_nested_script = null
+	a.free()

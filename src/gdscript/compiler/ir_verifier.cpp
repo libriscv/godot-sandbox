@@ -517,6 +517,9 @@ void ir_verify(const IRProgram& program, const char* after_pass) {
 	for (const auto& func : program.functions) {
 		ir_verify(func, after_pass);
 	}
+	if (program.has_member_init) {
+		ir_verify(program.member_init, after_pass);
+	}
 	if (program.has_global_init) {
 		ir_verify(program.global_init, after_pass);
 	}

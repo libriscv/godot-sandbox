@@ -216,6 +216,14 @@ struct IRGlobalVar {
 	std::string name;
 	bool is_const = false;
 	bool is_property = false;
+
+	enum class Storage : uint8_t {
+		Data,
+		Instance,
+	};
+	Storage storage = Storage::Data;
+	bool is_member() const { return storage == Storage::Instance; }
+
 	IRInstruction::TypeHint type_hint = IRInstruction::TypeHint_NONE;
 
 	enum class InitType {
@@ -252,6 +260,9 @@ struct IRProgram {
 	// Evaluates non-constant global initializers at startup, before @export registration.
 	IRFunction global_init;
 	bool has_global_init = false;
+
+	IRFunction member_init;
+	bool has_member_init = false;
 
 	bool has_breakpoint_statement = false;
 };

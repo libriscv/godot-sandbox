@@ -27,9 +27,7 @@ public:
 		};
 	}
 
-	bool is_valid() const override {
-		return sandbox() != nullptr;
-	}
+	bool is_valid() const override;
 
 	ObjectID get_object() const override {
 		return sandbox_id;
@@ -37,12 +35,14 @@ public:
 
 	void call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const override;
 
+
 	void init(Sandbox *self, gaddr_t address, Array args, bool variant_arguments = false);
 
 private:
 	Sandbox *sandbox() const;
 
 	ObjectID sandbox_id;
+	gaddr_t instance_base = 0x0;
 	gaddr_t address = 0x0;
 	bool m_variant_arguments = false;
 

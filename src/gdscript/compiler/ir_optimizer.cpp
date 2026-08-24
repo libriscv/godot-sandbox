@@ -91,6 +91,9 @@ void IROptimizer::optimize(IRProgram& program) {
 		optimize_function(func);
 	}
 	// global_init is a normal IR function; the backend needs it optimized too.
+	if (program.has_member_init) {
+		optimize_function(program.member_init);
+	}
 	if (program.has_global_init) {
 		optimize_function(program.global_init);
 	}

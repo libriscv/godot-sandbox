@@ -34,6 +34,11 @@ public:
 	uint64_t get_debug_address() const { return m_debug_address; }
 	size_t get_debug_size() const { return m_debug_size; }
 
+	uint64_t get_instance_blob_address() const { return m_instance_blob_address; }
+	size_t get_instance_blob_size() const { return m_instance_blob_size; }
+	size_t get_instance_init_offset() const { return m_instance_init_offset; }
+	size_t get_instance_member_count() const { return m_instance_count; }
+
 	// Metadata; produced by every generate(), costs no instructions.
 	const LineTable& get_line_table() const { return m_line_table; }
 
@@ -122,6 +127,10 @@ private:
 
 	// Index folded into relocation; a post-la addi truncates at 85 globals.
 	void emit_address_of_global(uint8_t rd, size_t index);
+	void emit_address_of_init_scratch(uint8_t rd);
+	void emit_instance_init(const IRProgram& program);
+	bool emits_instance_init(const IRProgram& program) const;
+	void emit_folded_initializers(const IRProgram& program, bool members);
 
 	void emit_load_return_pointer();
 
@@ -135,6 +144,10 @@ private:
 	size_t m_switch_tables = 0;
 
 	static constexpr const char* GLOBALS_LABEL = ".globals";
+	static constexpr const char* INSTANCE_LABEL = ".instance";
+	static constexpr const char* INSTANCE_BLOB_LABEL = ".instance_blob";
+	static constexpr const char* INSTANCE_INIT_LABEL = ".instance_init";
+	static constexpr const char* MEMBER_INIT_LABEL = ".init_members";
 	static constexpr const char* PROFILING_LABEL = ".profiling";
 	static constexpr const char* DEBUG_LABEL = ".debug";
 
@@ -486,6 +499,13 @@ private:
 	std::vector<IRGlobalVar> m_globals;
 	size_t m_global_count = 0;
 	size_t m_global_data_size = 0;
+
+	std::vector<size_t> m_global_slots;
+	size_t m_data_global_count = 0;
+	size_t m_instance_count = 0;
+	uint64_t m_instance_blob_address = 0;
+	size_t m_instance_blob_size = 0;
+	size_t m_instance_init_offset = 0;
 
 	bool m_profiling = false;
 	ProfilingClock m_profiling_clock = ProfilingClock::TIME;

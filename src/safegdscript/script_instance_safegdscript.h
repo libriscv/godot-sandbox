@@ -23,6 +23,16 @@ class SafeGDScriptInstance : public ScriptInstanceExtension {
 	Object *owner;
 	Ref<SafeGDScript> script;
 	Sandbox *current_sandbox = nullptr;
+	// This instance's members, in the shared Sandbox's guest memory. Zero when
+	// the program keeps none. A guest address (gaddr_t), spelled uint64_t here
+	// because this header only forward-declares Sandbox.
+	// See Sandbox::create_instance_record(). Taken on first use after a reload,
+	// which is why it is mutable: reading a property is a const operation that
+	// still has to run against this instance's own members.
+	mutable uint64_t instance_base = 0;
+	// Which machine the record above lives in. A reload replaces the machine and
+	// with it the record, so the base is renewed rather than reused.
+	mutable uint64_t instance_generation = 0;
 
 	friend class SafeGDScript;
 
@@ -53,6 +63,9 @@ public:
 	ScriptLanguage *_get_language() override;
 
 	void reset_to(const PackedByteArray &p_elf_data);
+	// This instance's record in the machine that is running now, allocated if the
+	// machine has been replaced since it was last asked for.
+	uint64_t current_instance_base() const;
 	SafeGDScriptInstance(Object *p_owner, const Ref<SafeGDScript> p_script);
 	~SafeGDScriptInstance();
 };

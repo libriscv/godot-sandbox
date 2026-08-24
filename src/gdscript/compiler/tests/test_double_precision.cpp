@@ -11,6 +11,7 @@
 #include "../riscv_codegen.h"
 #include "../ir_optimizer.h"
 #include "../compiler.h"
+#include "../instance_layout.h"
 #include "../variant_layout.h"
 #include <cassert>
 #include <iostream>
@@ -291,8 +292,9 @@ func test():
 	return counter
 )";
 
-	assert(compile_to_code(source, VariantLayout(false)).global_data_size == 2 * 24);
-	assert(compile_to_code(source, VariantLayout(true)).global_data_size == 2 * 40);
+	const size_t blob = size_t(InstanceLayout::BLOB_SIZE);
+	assert(compile_to_code(source, VariantLayout(false)).global_data_size == 2 * 24 + blob);
+	assert(compile_to_code(source, VariantLayout(true)).global_data_size == 2 * 40 + blob);
 
 	std::cout << "  ✓ Globals area scaling test passed" << std::endl;
 }

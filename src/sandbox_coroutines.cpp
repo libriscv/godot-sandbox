@@ -85,6 +85,25 @@ void Sandbox::reap_coroutines_internal(bool notify) {
 	}
 }
 
+void Sandbox::reap_coroutines_for_instance(gaddr_t instance_base) {
+	if (instance_base == 0) {
+		return;
+	}
+	std::vector<uint64_t> dying;
+	for (const std::unique_ptr<Coroutine> &co : m_coroutines) {
+		if (co->instance_base == instance_base) {
+			dying.push_back(co->id);
+		}
+	}
+	for (uint64_t id : dying) {
+		Coroutine *co = this->find_coroutine(id);
+		if (co == nullptr || co->running) {
+			continue;
+		}
+		this->retire_coroutine(id, true);
+	}
+}
+
 // Promote scoped handles to permanent so they survive across calls.
 void Sandbox::promote_frame_handles(Coroutine &co) {
 	const size_t slot_size = sizeof(GuestVariant);
@@ -242,6 +261,7 @@ bool Sandbox::coroutine_suspend(gaddr_t operand_addr, gaddr_t frame_base, uint32
 
 	co->resume_address = resume_address;
 	co->owner = this->get_tree_base_id();
+	co->instance_base = this->get_instance_base();
 	co->state_index = state_index;
 	co->result_offset = result_offset;
 	co->sent = Variant();
@@ -325,10 +345,12 @@ bool Sandbox::coroutine_resume(uint64_t id, const Variant &sent) {
 
 	const gaddr_t resume_address = co->resume_address;
 	const godot::ObjectID owner = co->owner;
+	const gaddr_t instance_base = co->instance_base;
 	m_resume_entry_id = id;
 	Variant result;
 	{
 		ScopedTreeBase stb(this, owner);
+		ScopedInstanceBase sib(this, instance_base);
 		result = this->vmcall_internal(resume_address, nullptr, 0);
 	}
 

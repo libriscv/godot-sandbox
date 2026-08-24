@@ -42,8 +42,7 @@ Program Parser::parse() {
 	skip_newlines();
 
 	while (!is_at_end()) {
-		// No instance — `static` is redundant; parsed and dropped.
-		match(TokenType::STATIC);
+		bool is_static = match(TokenType::STATIC);
 
 		if (check(TokenType::EXTENDS)) {
 			advance();
@@ -63,13 +62,14 @@ Program Parser::parse() {
 				is_export = parse_attribute() || is_export;
 				skip_newlines();
 			}
-			match(TokenType::STATIC);
+			is_static = match(TokenType::STATIC) || is_static;
 			if (check(TokenType::VAR) || check(TokenType::CONST)) {
 				const bool is_const = check(TokenType::CONST);
 				advance();
 				auto var_decl = parse_var_decl(is_const);
 				if (auto* decl = dynamic_cast<VarDeclStmt*>(var_decl.get())) {
 					decl->is_property = is_export;
+					decl->is_static = is_static;
 					program.globals.push_back(std::move(*decl));
 				}
 			} else if (check(TokenType::FUNC)) {
@@ -87,6 +87,7 @@ Program Parser::parse() {
 			advance();
 			auto var_decl = parse_var_decl(false);
 			if (auto* decl = dynamic_cast<VarDeclStmt*>(var_decl.get())) {
+				decl->is_static = is_static;
 				program.globals.push_back(std::move(*decl));
 			}
 		} else if (check(TokenType::CONST)) {

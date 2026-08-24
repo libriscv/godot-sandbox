@@ -106,13 +106,48 @@ void test_out_of_range_is_an_error() {
 // Build a program with `count` globals whose `test()` reads the first and the
 // last one. The addresses of those two globals have to be exactly
 // (count - 1) * variant_size() apart, however many globals there are.
-std::string program_with_globals(int count) {
+std::string program_with_globals(int count, bool shared) {
+	const std::string keyword = shared ? "static var g" : "var g";
 	std::string source;
 	for (int i = 0; i < count; i++) {
-		source += "var g" + std::to_string(i) + " = " + std::to_string(i) + "\n";
+		source += keyword + std::to_string(i) + " = " + std::to_string(i) + "\n";
 	}
 	source += "\nfunc test():\n\treturn g0 + g" + std::to_string(count - 1) + "\n";
 	return source;
+}
+
+std::vector<int64_t> decode_base_offsets(const std::vector<uint8_t>& code, size_t from, size_t limit) {
+	constexpr uint8_t REG_TP = 4;
+	std::vector<int64_t> offsets;
+	int64_t pending_li = 0;
+	bool have_li = false;
+	for (size_t offset = from; offset + 4 <= code.size() && offsets.size() < limit; offset += 4) {
+		const uint32_t instr = word_at(code, offset);
+		const uint8_t opcode = instr & 0x7F;
+		const uint8_t funct3 = (instr >> 12) & 0x7;
+		const uint8_t rs1 = (instr >> 15) & 0x1F;
+		const uint8_t rs2 = (instr >> 20) & 0x1F;
+		if (opcode == 0x13 && funct3 == 0 && rs1 == REG_TP) {
+			offsets.push_back(static_cast<int32_t>(instr) >> 20);
+			have_li = false;
+			continue;
+		}
+		if (opcode == 0x33 && funct3 == 0 && (instr >> 25) == 0 && (rs1 == REG_TP || rs2 == REG_TP) && have_li) {
+			offsets.push_back(pending_li);
+			have_li = false;
+			continue;
+		}
+		if (opcode == 0x37) {
+			pending_li = static_cast<int32_t>(instr & 0xFFFFF000);
+			have_li = true;
+			continue;
+		}
+		if (opcode == 0x13 && funct3 == 0 && have_li) {
+			pending_li += static_cast<int32_t>(instr) >> 20;
+			continue;
+		}
+	}
+	return offsets;
 }
 
 // Decode an AUIPC + ADDI pair at `offset` into the address it computes,
@@ -149,7 +184,7 @@ void test_global_addressing_does_not_truncate() {
 	// immediate, which is where the original bug started producing wrong code.
 	for (int count : { 4, 85, 86, 200 }) {
 		RISCVCodeGen codegen;
-		const std::vector<uint8_t> code = compile_to_code(program_with_globals(count), codegen);
+		const std::vector<uint8_t> code = compile_to_code(program_with_globals(count, true), codegen);
 		assert(!code.empty());
 
 		const auto& functions = codegen.get_function_offsets();
@@ -175,6 +210,25 @@ void test_global_addressing_does_not_truncate() {
 			std::cerr << "With " << count << " globals: g0 and g" << (count - 1)
 				<< " are " << actual << " bytes apart, expected " << expected << std::endl;
 			assert(false && "global address truncated");
+		}
+	}
+
+	for (int count : { 4, 85, 86, 200 }) {
+		RISCVCodeGen codegen;
+		const std::vector<uint8_t> code = compile_to_code(program_with_globals(count, false), codegen);
+		const auto& functions = codegen.get_function_offsets();
+		auto it = functions.find("test");
+		assert(it != functions.end());
+
+		const std::vector<int64_t> offsets = decode_base_offsets(code, it->second, 2);
+		assert(offsets.size() == 2 && "test() should compute two member addresses");
+		const int64_t stride = codegen.get_layout().variant_size();
+		const int64_t expected = static_cast<int64_t>(count - 1) * stride;
+		const int64_t actual = offsets[1] - offsets[0];
+		if (actual != expected) {
+			std::cerr << "With " << count << " members: g0 and g" << (count - 1)
+				<< " are " << actual << " bytes apart, expected " << expected << std::endl;
+			assert(false && "member offset truncated");
 		}
 	}
 

@@ -446,8 +446,11 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 
 	this->update_methods_info();
 
-	for (SafeGDScriptInstance *instance : instances) {
-		instance->reset_to(this->elf_data);
+	// One reload for the Sandbox they share: reloading per instance would replace
+	// the machine again under the instances that had already taken a record in
+	// it. Each takes a fresh one on its next call.
+	if (!instances.is_empty()) {
+		(*instances.begin())->reset_to(this->elf_data);
 	}
 
 	if constexpr (VERBOSE_LOGGING) {

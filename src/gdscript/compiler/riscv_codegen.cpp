@@ -2,6 +2,7 @@
 #include <unordered_set>
 #include "compiler_exception.h"
 #include "variant_types.h"
+#include "instance_layout.h"
 #include "syscall_numbers.h"
 #include <algorithm>
 #include <stdexcept>
@@ -79,33 +80,15 @@ void RISCVCodeGen::emit_variant_component_to_int(int comp_offset, int result_off
 	emit_sw(REG_T1, REG_SP, result_offset + store_offset);
 }
 
-std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
-	m_code.clear();
-	m_labels.clear();
-	m_label_uses.clear();
-	m_functions.clear();
-	m_fn = FunctionState {};
-	m_constant_pool.clear();
-	m_constant_pool_map.clear();
-	m_string_constants = &program.string_constants;
-
-	m_global_count = program.globals.size();
-	m_globals = program.globals;
-	m_profiling_count = program.functions.size();
-	m_profiling_address = 0;
-	m_profiling_size = 0;
-	m_profiling_index = -1;
-	m_debug_address = 0;
-	m_debug_size = 0;
-	m_debug_index = -1;
-	m_line_table.entries.clear();
-	m_installed_breakpoints.clear();
-
+void RISCVCodeGen::emit_folded_initializers(const IRProgram& program, bool members) {
 	for (size_t i = 0; i < program.globals.size(); i++) {
 		const auto& global = program.globals[i];
 
 		if (global.init_type == IRGlobalVar::InitType::NONE ||
 		    global.init_type == IRGlobalVar::InitType::RUNTIME) {
+			continue;
+		}
+		if (global.is_member() != members) {
 			continue;
 		}
 
@@ -187,12 +170,57 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		}
 
 	}
+}
+
+std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
+	m_code.clear();
+	m_labels.clear();
+	m_label_uses.clear();
+	m_functions.clear();
+	m_fn = FunctionState {};
+	m_constant_pool.clear();
+	m_constant_pool_map.clear();
+	m_string_constants = &program.string_constants;
+
+	m_global_count = program.globals.size();
+	m_globals = program.globals;
+
+	m_global_slots.assign(m_global_count, 0);
+	m_data_global_count = 0;
+	m_instance_count = 0;
+	for (size_t i = 0; i < m_global_count; i++) {
+		m_global_slots[i] = m_globals[i].is_member() ? m_instance_count++ : m_data_global_count++;
+	}
+	m_instance_blob_address = 0;
+	m_instance_blob_size = 0;
+	m_instance_init_offset = 0;
+	m_profiling_count = program.functions.size();
+	m_profiling_address = 0;
+	m_profiling_size = 0;
+	m_profiling_index = -1;
+	m_debug_address = 0;
+	m_debug_size = 0;
+	m_debug_index = -1;
+	m_line_table.entries.clear();
+	m_installed_breakpoints.clear();
+
+	if (m_instance_count > 0) {
+		emit_la(REG_TP, INSTANCE_LABEL);
+	}
+
+	emit_folded_initializers(program, false);
 
 	// Runs before properties are registered, so @export gets its declared value.
 	// a0 must point at real storage: the scratch slot past .globals.
 	if (program.has_global_init) {
-		emit_address_of_global(REG_A0, m_global_count);
+		emit_address_of_init_scratch(REG_A0);
 		mark_label_use(GLOBAL_INIT_LABEL, m_code.size());
+		emit_jal(REG_RA, 0);
+	}
+
+	if (emits_instance_init(program)) {
+		emit_mv(REG_A0, REG_TP);
+		mark_label_use(INSTANCE_INIT_LABEL, m_code.size());
 		emit_jal(REG_RA, 0);
 	}
 
@@ -240,6 +268,18 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		gen_function(program.global_init);
 	}
 
+	if (emits_instance_init(program)) {
+		emit_instance_init(program);
+	}
+
+	if (program.has_member_init) {
+		m_labels[MEMBER_INIT_LABEL] = m_code.size();
+		m_profiling_index = -1;
+		m_debug_index = -1;
+		record_line(0, true);
+		gen_function(program.member_init);
+	}
+
 	for (size_t i = 0; i < program.functions.size(); i++) {
 		const auto& func = program.functions[i];
 		m_functions[func.name] = m_code.size();
@@ -276,12 +316,14 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		m_code.push_back(0);
 	}
 
-	// +1 for the global init function's return slot when present.
-	const size_t global_slots = m_global_count + (program.has_global_init ? 1 : 0);
-	const size_t globals_bytes = m_global_count > 0 ? global_slots * variant_size() : 0;
+	const bool wants_scratch = program.has_global_init || program.has_member_init;
+	const size_t data_slots = m_data_global_count + (wants_scratch ? 1 : 0);
+	const size_t global_slots = data_slots + m_instance_count;
+	const size_t globals_bytes = global_slots > 0 ? global_slots * variant_size() : 0;
+	m_instance_blob_size = m_instance_count > 0 ? size_t(InstanceLayout::BLOB_SIZE) : 0;
 	m_profiling_size = m_profiling ? size_t(ProfilingLayout::area_size(uint32_t(m_profiling_count))) : 0;
 	m_debug_size = m_debug ? size_t(DebugLayout::area_size()) : 0;
-	m_global_data_size = globals_bytes + m_profiling_size + m_debug_size;
+	m_global_data_size = globals_bytes + m_instance_blob_size + m_profiling_size + m_debug_size;
 
 	if (m_global_data_size > 0) {
 		while (m_code.size() % 8 != 0) {
@@ -294,8 +336,9 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		size_t data_vaddr = 0x10000 + text_size;
 		data_vaddr = (data_vaddr + 0xFFF) & ~0xFFF;
 
-		if (m_global_count > 0) {
+		if (global_slots > 0) {
 			m_labels[GLOBALS_LABEL] = data_vaddr - 0x10000;
+			m_labels[INSTANCE_LABEL] = data_vaddr - 0x10000 + data_slots * variant_size();
 
 			// Payload = INT32_MIN, not 0: VASSIGN's "adopt source" path requires
 			// INT32_MIN as the sentinel. 0 is a valid scoped-variant index.
@@ -311,8 +354,32 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 			}
 		}
 
+		if (m_instance_blob_size > 0) {
+			m_instance_blob_address = data_vaddr + globals_bytes;
+			m_labels[INSTANCE_BLOB_LABEL] = m_instance_blob_address - 0x10000;
+
+			const size_t base = m_code.size();
+			m_code.resize(base + m_instance_blob_size, 0);
+
+			const auto put32 = [&](int32_t offset, uint32_t value) {
+				for (int j = 0; j < 4; j++) {
+					m_code[base + offset + j] = static_cast<uint8_t>((value >> (j * 8)) & 0xFF);
+				}
+			};
+			const auto put64 = [&](int32_t offset, uint64_t value) {
+				for (int j = 0; j < 8; j++) {
+					m_code[base + offset + j] = static_cast<uint8_t>((value >> (j * 8)) & 0xFF);
+				}
+			};
+			put32(InstanceLayout::MAGIC_OFF, InstanceLayout::MAGIC);
+			put32(InstanceLayout::VERSION_OFF, InstanceLayout::LAYOUT_VERSION);
+			put64(InstanceLayout::DEFAULT_BASE_OFF, data_vaddr + data_slots * variant_size());
+			put32(InstanceLayout::RECORD_SIZE_OFF, uint32_t(m_instance_count * variant_size()));
+			put32(InstanceLayout::MEMBER_COUNT_OFF, uint32_t(m_instance_count));
+		}
+
 		if (m_profiling) {
-			m_profiling_address = data_vaddr + globals_bytes;
+			m_profiling_address = data_vaddr + globals_bytes + m_instance_blob_size;
 			m_labels[PROFILING_LABEL] = m_profiling_address - 0x10000;
 
 			const size_t base = m_code.size();
@@ -332,7 +399,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		}
 
 		if (m_debug) {
-			m_debug_address = data_vaddr + globals_bytes + m_profiling_size;
+			m_debug_address = data_vaddr + globals_bytes + m_instance_blob_size + m_profiling_size;
 			m_labels[DEBUG_LABEL] = m_debug_address - 0x10000;
 
 			const size_t base = m_code.size();
@@ -3378,13 +3445,54 @@ void RISCVCodeGen::emit_load_return_pointer() {
 }
 
 void RISCVCodeGen::emit_address_of_global(uint8_t rd, size_t index) {
-	const int64_t byte_offset = static_cast<int64_t>(index) * variant_size();
+	if (index >= m_global_count) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"Global variable " + std::to_string(index) + " is out of range");
+	}
+	const int64_t byte_offset = static_cast<int64_t>(m_global_slots[index]) * variant_size();
 	if (byte_offset > INT32_MAX) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 			"Global variable " + std::to_string(index) + " is past the end of a 32-bit address space");
 	}
+	if (m_globals[index].is_member()) {
+		emit_add_offset(rd, REG_TP, static_cast<int32_t>(byte_offset));
+		return;
+	}
 	// Offset in relocation, not a separate addi (12-bit limit = ~85 globals)
 	emit_la(rd, GLOBALS_LABEL, static_cast<int32_t>(byte_offset));
+}
+
+void RISCVCodeGen::emit_address_of_init_scratch(uint8_t rd) {
+	const int64_t byte_offset = static_cast<int64_t>(m_data_global_count) * variant_size();
+	emit_la(rd, GLOBALS_LABEL, static_cast<int32_t>(byte_offset));
+}
+
+bool RISCVCodeGen::emits_instance_init(const IRProgram& program) const {
+	return m_instance_count > 0 || program.has_member_init;
+}
+
+void RISCVCodeGen::emit_instance_init(const IRProgram& program) {
+	m_profiling_index = -1;
+	m_debug_index = -1;
+	record_line(0, true);
+	m_labels[INSTANCE_INIT_LABEL] = m_code.size();
+	m_instance_init_offset = m_code.size();
+
+	emit_add_offset(REG_SP, REG_SP, -16);
+	emit_sd(REG_RA, REG_SP, 0);
+	emit_mv(REG_TP, REG_A0);
+
+	emit_folded_initializers(program, true);
+
+	if (program.has_member_init) {
+		emit_address_of_init_scratch(REG_A0);
+		mark_label_use(MEMBER_INIT_LABEL, m_code.size());
+		emit_jal(REG_RA, 0);
+	}
+
+	emit_ld(REG_RA, REG_SP, 0);
+	emit_add_offset(REG_SP, REG_SP, 16);
+	emit_jalr(REG_ZERO, REG_RA, 0);
 }
 
 void RISCVCodeGen::emit_la(uint8_t rd, const std::string& label, int32_t addend) {

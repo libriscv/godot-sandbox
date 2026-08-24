@@ -5,6 +5,7 @@
 #include <godot_cpp/core/binder_common.hpp>
 #include <libriscv/machine.hpp>
 #include <optional>
+#include <unordered_set>
 
 using namespace godot;
 #define RISCV_ARCH riscv::RISCV64
@@ -340,6 +341,26 @@ public:
 	godot::ObjectID get_tree_base_id() const noexcept { return this->m_tree_base; }
 	void set_tree_base_id(godot::ObjectID tree_base) noexcept { this->m_tree_base = tree_base; }
 
+	bool has_instance_records() const noexcept { return m_instance_record_size != 0; }
+	gaddr_t get_instance_record_size() const noexcept { return m_instance_record_size; }
+	gaddr_t get_default_instance_base() const noexcept { return m_default_instance_base; }
+
+	gaddr_t get_instance_base() const noexcept { return m_instance_base; }
+	void set_instance_base(gaddr_t base) noexcept { this->m_instance_base = base; }
+
+	uint64_t get_program_generation() const noexcept { return m_program_generation; }
+
+	gaddr_t create_instance_record();
+
+	void destroy_instance_record(gaddr_t base);
+
+	bool is_live_instance_base(gaddr_t base) const noexcept {
+		return base == 0 || base == m_default_instance_base ||
+				m_live_instance_records.count(base) != 0;
+	}
+
+	gaddr_t rebase_instance_address(gaddr_t address) const noexcept;
+
 	// -= Scoped objects and variants =-
 
 	/// @brief Add a scoped variant to the current state.
@@ -391,6 +412,7 @@ public:
 		uint64_t generation = 0; // Stale generation → drop on resume.
 		gaddr_t resume_address = 0;
 		godot::ObjectID owner;
+		gaddr_t instance_base = 0;
 		std::vector<uint8_t> frame; // Variant slot array, copied out of guest memory.
 		std::vector<int32_t> promoted; // Permanent Variant indices, released on completion.
 		struct FrameObject {
@@ -414,6 +436,8 @@ public:
 	int64_t get_max_coroutines() const noexcept { return int64_t(m_max_coroutines); }
 	/// Reap all coroutines. Called on reset, program load, and node teardown.
 	void reap_coroutines() { this->reap_coroutines_internal(true); }
+
+	void reap_coroutines_for_instance(gaddr_t instance_base);
 
 	/// ECALL_AWAIT handler. Returns true if suspended.
 	bool coroutine_suspend(gaddr_t operand_addr, gaddr_t frame_base, uint32_t frame_size,
@@ -872,6 +896,11 @@ public:
 private:
 	static void generate_runtime_cpp_api(bool use_argument_names = false);
 	bool is_in_vmcall() const noexcept { return m_current_state != &m_states[0]; }
+
+	void read_instance_layout();
+	void run_instance_initializer(gaddr_t address, gaddr_t base);
+	void release_instance_record(gaddr_t base);
+	void drain_deferred_instance_records();
 	void constructor_initialize();
 	void full_reset();
 	void reset_machine();
@@ -893,6 +922,12 @@ private:
 	godot::ObjectID m_tree_base;
 	uint32_t m_max_refs = MAX_REFS;
 	uint32_t m_memory_max = MAX_VMEM;
+	gaddr_t m_instance_base = 0;
+	gaddr_t m_default_instance_base = 0;
+	gaddr_t m_instance_record_size = 0;
+	gaddr_t m_instance_init_address = 0;
+	std::unordered_set<gaddr_t> m_live_instance_records;
+	std::vector<gaddr_t> m_deferred_instance_records;
 	int64_t m_insn_max = MAX_INSTRUCTIONS;
 	uint32_t m_allocations_max = MAX_HEAP_ALLOCS;
 
