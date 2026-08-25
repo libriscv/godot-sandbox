@@ -131,9 +131,26 @@ func try_write_root_property() -> String:
 func try_load_resource() -> String:
 	var res = load("res://project.godot")
 	return "loaded a project resource: " + str(res)
+
+func try_smuggle_into_api() -> String:
+	api["smuggled"] = "payload"
+	return "added a key to the API the host is holding"
+
+func try_replace_api_callable() -> String:
+	api["log"] = func(x): return x
+	return "replaced a granted Callable with its own"
+
+func try_erase_api_key() -> String:
+	api.erase("log")
+	return "erased a key from the API"
+
+func try_clear_api() -> String:
+	api.clear()
+	return "emptied the API Dictionary"
 """
 
 var _hostile_sandbox : Sandbox = null
+var _hostile_api : Dictionary = {}
 
 func _setup_hostile_mod() -> Sandbox:
 	if _hostile_sandbox != null:
@@ -146,7 +163,9 @@ func _setup_hostile_mod() -> Sandbox:
 	var api := {
 		"log": func(msg): pass,
 	}
+	api.make_read_only()
 	s.vmcallv("mod_init", api)
+	_hostile_api = api
 	_hostile_sandbox = s
 	return s
 
@@ -228,3 +247,197 @@ func test_hostile_try_load_resource():
 	assert_engine_error("Resource path is not allowed: res://project.godot")
 	assert_engine_error("Exception: Resource path is not allowed: res://project.godot")
 	assert_gt(s.get_exceptions(), before, "try_load_resource should be denied")
+
+func test_hostile_try_smuggle_into_api():
+	var s = _setup_hostile_mod()
+	if s == null:
+		return
+	var before := s.get_exceptions()
+	s.vmcallv("try_smuggle_into_api")
+	assert_engine_error("Exception: Dictionary::operation: the container is read-only")
+	assert_gt(s.get_exceptions(), before, "try_smuggle_into_api should be denied")
+	assert_eq(_hostile_api.has("smuggled"), false, "no key was added to the API")
+
+func test_hostile_try_replace_api_callable():
+	var s = _setup_hostile_mod()
+	if s == null:
+		return
+	var before := s.get_exceptions()
+	s.vmcallv("try_replace_api_callable")
+	assert_engine_error("Exception: Dictionary::operation: the container is read-only")
+	assert_gt(s.get_exceptions(), before, "try_replace_api_callable should be denied")
+
+func test_hostile_try_erase_api_key():
+	var s = _setup_hostile_mod()
+	if s == null:
+		return
+	var before := s.get_exceptions()
+	s.vmcallv("try_erase_api_key")
+	assert_engine_error("Exception: Variant::call: the container is read-only")
+	assert_gt(s.get_exceptions(), before, "try_erase_api_key should be denied")
+	assert_eq(_hostile_api.has("log"), true, "the granted Callable is still there")
+
+func test_hostile_try_clear_api():
+	var s = _setup_hostile_mod()
+	if s == null:
+		return
+	var before := s.get_exceptions()
+	s.vmcallv("try_clear_api")
+	assert_engine_error("Exception: Variant::call: the container is read-only")
+	assert_gt(s.get_exceptions(), before, "try_clear_api should be denied")
+	assert_eq(_hostile_api.size(), 1, "the API Dictionary was not emptied")
+
+
+# Mirrors ModLoader.freeze().
+static func _freeze(value: Variant) -> void:
+	if value is Dictionary:
+		if value.is_read_only():
+			return
+		value.make_read_only()
+		for key in value:
+			_freeze(value[key])
+	elif value is Array:
+		if value.is_read_only():
+			return
+		value.make_read_only()
+		for element in value:
+			_freeze(element)
+
+static func _detach(value: Variant) -> Variant:
+	if value is Dictionary or value is Array:
+		return value.duplicate(true)
+	return value
+
+func _mod_node(source: String) -> Node:
+	var script := SafeGDScript.new()
+	script.set_source_code(source)
+	var n := Node.new()
+	n.set_script(script)
+	n.set("restrictions", true)
+	n.set("instructions_max", 400000)
+	return n
+
+func test_modding_mod_init_runs_before_the_node_enters_the_tree():
+	var source := """
+var api : Dictionary = {}
+var order : Array = []
+
+func _enter_tree():
+	order.append("_enter_tree:" + str(api.size()))
+
+func _ready():
+	order.append("_ready:" + str(api.size()))
+
+func mod_init(granted : Dictionary) -> void:
+	api = granted
+	order.append("mod_init:" + str(api.size()))
+
+func get_order() -> Array:
+	return order
+"""
+	var api := {"log": 1, "report": 2}
+	_freeze(api)
+
+	var good := _mod_node(source)
+	good.call("mod_init", api)
+	add_child(good)
+	assert_eq(good.call("get_order"), ["mod_init:2", "_enter_tree:2", "_ready:2"],
+		"_enter_tree and _ready must already have the API")
+	good.queue_free()
+
+	var bad := _mod_node(source)
+	add_child(bad)
+	bad.call("mod_init", api)
+	assert_eq(bad.call("get_order"), ["_enter_tree:0", "_ready:0", "mod_init:2"],
+		"adding first runs the mod's callbacks against an empty API")
+	bad.queue_free()
+
+func test_modding_a_container_from_a_mod_must_be_detached():
+	var source := """
+var mine : Dictionary = {}
+var api : Dictionary = {}
+
+func mod_init(granted : Dictionary) -> void:
+	api = granted
+	mine["score"] = 10
+
+func report():
+	api["report"].call("stats", mine)
+
+func tamper():
+	mine["score"] = 999999
+"""
+	var kept := {}
+	var detached := {}
+	var api := {"report": func(k, v):
+		kept[k] = v
+		detached[k] = _detach(v)}
+	_freeze(api)
+
+	var n := _mod_node(source)
+	add_child(n)
+	n.call("mod_init", api)
+	n.call("report")
+	assert_eq(kept["stats"], {"score": 10})
+	assert_eq(detached["stats"], {"score": 10})
+
+	n.call("tamper")
+	assert_eq(kept["stats"]["score"], 999999,
+		"the handle the mod handed over is still the mod's to rewrite")
+	assert_eq(detached["stats"]["score"], 10,
+		"detach() is what the game keeps")
+	n.queue_free()
+
+func test_modding_compile_error_is_reported():
+	var broken := SafeGDScript.new()
+	broken.set_source_code("func mod_init(a):\n\treturn undefined_name_here\n")
+	assert_engine_error("SafeGDScript: : [Code Generation Error] Undefined variable: undefined_name_here (line 2, column 28)")
+	var message : String = broken.get_compile_error()
+	assert_true(message.contains("Undefined variable: undefined_name_here"),
+		"the compiler's diagnostic reaches the loader, got: " + message)
+
+	var fine := SafeGDScript.new()
+	fine.set_source_code("func mod_init(a):\n\tpass\n")
+	assert_eq(fine.get_compile_error(), "",
+		"a script that compiled reports no error, even though the shared compiler kept the last one")
+
+	var not_a_mod := SafeGDScript.new()
+	not_a_mod.set_source_code("func something():\n\treturn 1\n")
+	assert_eq(not_a_mod.get_compile_error(), "",
+		"a script with no mod_init still compiled")
+
+func test_modding_freeze_handles_a_cyclic_api():
+	var api := {"name": "world"}
+	api["self"] = api
+	var a := []
+	a.append(a)
+	api["ring"] = a
+
+	_freeze(api)
+
+	assert_true(api.is_read_only(), "the api is frozen")
+	assert_true(a.is_read_only(), "the self-referential Array is frozen")
+	assert_true((api["self"] as Dictionary).is_read_only(), "the cycle is frozen once")
+
+func test_modding_compile_error_belongs_to_its_own_script():
+	var broken := SafeGDScript.new()
+	broken.set_source_code("func mod_init(a):\n\treturn undefined_name_here\n")
+	assert_engine_error("SafeGDScript: : [Code Generation Error] Undefined variable: undefined_name_here (line 2, column 28)")
+	assert_ne(broken.get_compile_error(), "", "the broken script reports its own error")
+
+	var untouched := SafeGDScript.new()
+	assert_eq(untouched.get_compile_error(), "",
+		"a script that was never compiled has no error, not the last one someone else hit")
+
+func test_modding_failed_rebuild_is_not_reported_as_success():
+	var script := SafeGDScript.new()
+	script.set_source_code("func mod_init(a):\n\treturn 1\n")
+	assert_eq(script.get_compile_error(), "", "the first build succeeded")
+
+	script.set_source_code("func mod_init(a):\n\treturn undefined_name_here\n")
+	assert_engine_error("SafeGDScript: : [Code Generation Error] Undefined variable: undefined_name_here (line 2, column 28)")
+	assert_ne(script.get_compile_error(), "",
+		"the failed rebuild is reported, even though the previous ELF is still there")
+
+	script.set_source_code("func mod_init(a):\n\treturn 2\n")
+	assert_eq(script.get_compile_error(), "", "a build that works clears the error again")

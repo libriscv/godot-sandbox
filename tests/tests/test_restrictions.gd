@@ -134,8 +134,7 @@ func test_insanity():
 
 	# access_an_invalid_child_resource
 	assert_true(s.has_function("access_an_invalid_child_resource"), "access_an_invalid_child_resource should exist")
-	# allow instantiate method
-	s.set_method_allowed_callback(func(sandbox, obj, method): return method == "instantiate")
+	s.set_method_allowed_callback(func(sandbox, obj, method): return method == "get_class")
 
 	# allow a resource that can be loaded and instantiated
 	s.set_resource_allowed_callback(func(sandbox, name): return name == "res://tests/test.elf")
@@ -145,15 +144,13 @@ func test_insanity():
 	var inst = s.vmcall("access_an_invalid_child_resource", "res://tests/test.elf")
 	# The function should *NOT* have thrown an exception, as we allowed the resource
 	assert_eq(s.get_exceptions(), exceptions)
+	assert_eq(inst, "ELFScript", "the allowed resource loaded and answered the call")
 
 	s.vmcall("access_an_invalid_child_resource", "res://other.tscn")
 	# The function should have thrown an exception, as we didn't allow the resource
 	assert_engine_error("Resource path is not allowed: res://other.tscn")
 	assert_engine_error("Exception: Resource path is not allowed: res://other.tscn")
 	assert_eq(s.get_exceptions(), exceptions + 1)
-
-	if inst is Node:
-		inst.queue_free()
 
 	# disable_restrictions
 	assert_true(s.has_function("disable_restrictions"), "disable_restrictions should exist")

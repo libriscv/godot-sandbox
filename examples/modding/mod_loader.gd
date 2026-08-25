@@ -6,7 +6,7 @@ extends Node
 ## A mod folder has a mod.cfg manifest and a .sgd entry file. The entry is
 ## compiled to RISC-V at load time and runs with all host access denied.
 ## The mod can only reach what the host puts in the Dictionary passed to
-## mod_init().
+## mod_init(). The Dictionary is frozen before it crosses.
 
 signal mod_loaded(id: String)
 signal mod_failed(id: String, reason: String)
@@ -21,7 +21,7 @@ const MAX_REFERENCES := 100
 const MAX_SOURCE_BYTES := 256 * 1024
 
 # Called as api_provider.call(id, manifest) -> Dictionary.
-# Returns the entire host surface one mod can reach.
+# The returned Dictionary is frozen; build a fresh one per mod.
 var api_provider := Callable()
 
 var _mods := {}
@@ -55,15 +55,19 @@ func load_mod(dir: String) -> Node:
 		mod_failed.emit(dir.get_file(), "no readable mod.cfg in " + dir)
 		return null
 
+	# Godot silently rewrites node names with special characters.
 	var id: String = str(cfg.get_value("mod", "id", dir.get_file()))
+	if not id.is_valid_ascii_identifier():
+		mod_failed.emit(dir.get_file(), "mod.cfg 'id' must be a plain name: letters, digits and "
+			+ "underscore, not starting with a digit: " + id)
+		return null
 	if _mods.has(id):
 		mod_failed.emit(id, "a mod with this id is already loaded")
 		return null
 
 	var entry: String = str(cfg.get_value("mod", "entry", ""))
-	# Entry must be a .sgd inside the mod folder. A .gd would run on the host.
-	if entry.is_empty() or entry.get_extension() != "sgd" or entry.contains(".."):
-		mod_failed.emit(id, "mod.cfg needs an 'entry' naming a .sgd file inside the mod folder")
+	if entry.is_empty() or entry.get_extension() != "sgd" or not entry.get_base_dir().is_empty():
+		mod_failed.emit(id, "mod.cfg needs an 'entry' naming a .sgd file directly in the mod folder")
 		return null
 
 	var entry_path := dir.path_join(entry)
@@ -74,6 +78,9 @@ func load_mod(dir: String) -> Node:
 	var source := FileAccess.get_file_as_string(entry_path)
 	if source.length() > MAX_SOURCE_BYTES:
 		mod_failed.emit(id, "entry script is larger than %d bytes" % MAX_SOURCE_BYTES)
+		return null
+	if source.strip_edges().is_empty():
+		mod_failed.emit(id, "entry script is empty: " + entry_path)
 		return null
 
 	var script := SafeGDScript.new()
@@ -86,18 +93,21 @@ func load_mod(dir: String) -> Node:
 	script.take_over_path(entry_path)
 	script.set_source_code(source)
 
+	var compile_error := script.get_compile_error()
+	if not compile_error.is_empty():
+		mod_failed.emit(id, "did not compile: " + compile_error)
+		return null
+
 	var node := Node.new()
 	node.name = id
 	# Attach before add_child: Godot queries callbacks at tree entry.
 	node.set_script(script)
 	_restrict(node, cfg)
 
-	if not node.has_method("mod_init"):
+	if not _declares_mod_init(node):
 		node.free()
-		mod_failed.emit(id, "no mod_init(api) function (or the script did not compile)")
+		mod_failed.emit(id, "no mod_init(api) function taking exactly one argument")
 		return null
-
-	add_child(node)
 
 	var manifest := {
 		"id": id,
@@ -110,7 +120,17 @@ func load_mod(dir: String) -> Node:
 	var api := {}
 	if api_provider.is_valid():
 		api = api_provider.call(id, manifest)
+	freeze(api)
+
+	# Before add_child: Godot runs _enter_tree/_ready during it.
+	var exceptions := int(node.get("monitor_exceptions"))
 	node.call("mod_init", api)
+	if int(node.get("monitor_exceptions")) > exceptions:
+		node.free()
+		mod_failed.emit(id, "mod_init() raised inside the sandbox")
+		return null
+
+	add_child(node)
 
 	_mods[id] = node
 	mod_loaded.emit(id)
@@ -125,3 +145,31 @@ func _restrict(node: Node, cfg: ConfigFile) -> void:
 
 func _limit(cfg: ConfigFile, key: String, ceiling: int) -> int:
 	return clampi(int(cfg.get_value("limits", key, ceiling)), 1, ceiling)
+
+func _declares_mod_init(node: Node) -> bool:
+	for method in node.get_method_list():
+		if method["name"] == "mod_init":
+			return method["args"].size() == 1
+	return false
+
+## Deep make_read_only(). Marks before descending, so the read-only test is also
+## the cycle guard.
+static func freeze(value: Variant) -> void:
+	if value is Dictionary:
+		if value.is_read_only():
+			return
+		value.make_read_only()
+		for key in value:
+			freeze(value[key])
+	elif value is Array:
+		if value.is_read_only():
+			return
+		value.make_read_only()
+		for element in value:
+			freeze(element)
+
+## Deep-copies a container so the game holds an independent value.
+static func detach(value: Variant) -> Variant:
+	if value is Dictionary or value is Array:
+		return value.duplicate(true)
+	return value

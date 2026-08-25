@@ -38,3 +38,19 @@ func try_write_root_property() -> String:
 func try_load_resource() -> String:
 	var res = load("res://project.godot")
 	return "loaded a project resource: " + str(res)
+
+func try_smuggle_into_api() -> String:
+	api["smuggled"] = "payload"
+	return "added a key to the API the host is holding"
+
+func try_replace_api_callable() -> String:
+	api["log"] = func(x): return x
+	return "replaced a granted Callable with its own"
+
+func try_erase_api_key() -> String:
+	api.erase("log")
+	return "erased a key from the API"
+
+func try_clear_api() -> String:
+	api.clear()
+	return "emptied the API Dictionary"

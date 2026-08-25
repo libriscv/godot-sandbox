@@ -9905,3 +9905,221 @@ func present():
 	assert_eq(s.vmcallv("present"), true, "and a node that is there is still found")
 
 	s.queue_free()
+
+func test_sgd_read_only_containers_are_read_only_in_the_guest():
+	var gdscript_code = """
+var api : Dictionary = {}
+
+func take(granted : Dictionary) -> void:
+	api = granted
+
+func write_new_key():
+	api["smuggled"] = 1
+
+func overwrite_key():
+	api["cycles"] = 999
+
+func erase_key():
+	api.erase("cycles")
+
+func clear_all():
+	api.clear()
+
+func merge_in():
+	api.merge({"smuggled": 1})
+
+func nested_write():
+	api["nested"]["deep"] = "tampered"
+
+func array_write():
+	api["arr"][0] = "tampered"
+
+func array_push():
+	api["arr"].push_back("tampered")
+
+func array_clear():
+	api["arr"].clear()
+
+func read_key():
+	return api["cycles"]
+
+func read_nested():
+	return api["nested"]["deep"]
+
+func call_granted():
+	return api["log"].call(7)
+
+func size_of():
+	return api.size()
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var nested := {"deep": "original"}
+	var arr := ["original"]
+	var api := {
+		"cycles": 2000,
+		"log": func(x): return x * 2,
+		"nested": nested,
+		"arr": arr,
+	}
+	nested.make_read_only()
+	arr.make_read_only()
+	api.make_read_only()
+
+	s.vmcallv("take", api)
+
+	var denied := [
+		["write_new_key", "Dictionary::operation: the container is read-only"],
+		["overwrite_key", "Dictionary::operation: the container is read-only"],
+		["erase_key", "Variant::call: the container is read-only"],
+		["clear_all", "Variant::call: the container is read-only"],
+		["merge_in", "Variant::call: the container is read-only"],
+		["nested_write", "Variant::call: the container is read-only"],
+		["array_write", "Variant::call: the container is read-only"],
+		["array_push", "Variant::call: the container is read-only"],
+		["array_clear", "Variant::call: the container is read-only"],
+	]
+	for entry in denied:
+		var before := s.get_exceptions()
+		s.vmcallv(entry[0])
+		assert_engine_error("Exception: " + entry[1])
+		assert_eq(s.get_exceptions(), before + 1,
+			"%s must raise in the guest, not silently do nothing" % entry[0])
+
+	assert_eq(api.size(), 4, "no key was added or erased")
+	assert_eq(api["cycles"], 2000, "a granted value was not overwritten")
+	assert_eq(api.has("log"), true, "a granted Callable was not erased")
+	assert_eq(nested["deep"], "original", "a nested Dictionary was not written to")
+	assert_eq(arr[0], "original", "a nested Array was not written to")
+	assert_eq(arr.size(), 1, "a nested Array was not grown")
+
+	var before_reads := s.get_exceptions()
+	assert_eq(s.vmcallv("read_key"), 2000)
+	assert_eq(s.vmcallv("read_nested"), "original")
+	assert_eq(s.vmcallv("call_granted"), 14)
+	assert_eq(s.vmcallv("size_of"), 4)
+	assert_eq(s.get_exceptions(), before_reads, "reads and granted calls are not denied")
+
+	s.queue_free()
+
+func test_sgd_writable_containers_are_still_writable():
+	var gdscript_code = """
+func mutate(d : Dictionary, a : Array):
+	d["added"] = 1
+	d.erase("gone")
+	a.push_back("added")
+	a[0] = "changed"
+	return d.size()
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var d := {"keep": 1, "gone": 2}
+	var a := ["original"]
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("mutate", d, a), 2)
+	assert_eq(s.get_exceptions(), before, "a writable container is not denied")
+	assert_eq(d.has("added"), true)
+	assert_eq(d.has("gone"), false)
+	assert_eq(a, ["changed", "added"])
+
+	s.queue_free()
+
+func test_sgd_a_failed_compile_does_not_exhaust_the_compiler():
+	var broken := SafeGDScript.new()
+	broken.set_source_code("func oops():\n\treturn undefined_name_here\n")
+	assert_engine_error("SafeGDScript: : [Code Generation Error] Undefined variable: undefined_name_here (line 2, column 28)")
+	assert_ne(broken.get_compile_error(), "", "the broken script should report an error")
+
+	var source := FileAccess.get_file_as_string("res://tests/test_cpu.sgd")
+	assert_false(source.is_empty(), "test_cpu.sgd should be readable")
+	for attempt in 3:
+		var script := SafeGDScript.new()
+		script.set_source_code(source)
+		assert_eq(script.get_compile_error(), "",
+			"compile #%d after a failed one must still succeed" % attempt)
+		var node := Node.new()
+		node.set_script(script)
+		node.set("instructions_max", 4000000)
+		assert_true(node.has_method("run"), "the compiled program should have its methods")
+		node.free()
+
+func test_sgd_a_call_godot_cannot_make_raises():
+	var gdscript_code = """
+var nothing = null
+
+func nil_method():
+	return nothing.call("x")
+
+func nil_from_a_dictionary(d : Dictionary):
+	return d["missing"].some_method()
+
+func no_such_method():
+	var s = "hello"
+	return s.no_such_method()
+
+func too_few_arguments():
+	var s = "hello"
+	return s.substr()
+
+func too_many_arguments():
+	var s = "hello"
+	return s.to_upper(1, 2, 3)
+
+func wrong_argument_type():
+	var a = [1, 2, 3]
+	return a.resize("not a number")
+
+func missing_method_on_a_node():
+	return get_node("Child").missing_method()
+
+func missing_method_via_call():
+	return get_node("Child").call("missing_method")
+
+func a_call_that_works():
+	var s = "hello"
+	return s.to_upper()
+
+func a_node_call_that_works():
+	return get_node("Child").get_name()
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+	add_child(s)
+	var child := Node.new()
+	child.name = "Child"
+	s.add_child(child)
+
+	var refused := [
+		["nil_method", "Invalid call. Nonexistent function 'call' in base 'Nil'."],
+		["no_such_method", "Invalid call. Nonexistent function 'no_such_method' in base 'String'."],
+		["too_few_arguments", "Invalid call to function 'substr' in base 'String'. Expected 2 argument(s)."],
+		["too_many_arguments", "Invalid call to function 'to_upper' in base 'String'. Expected 0 argument(s)."],
+		["wrong_argument_type", "Invalid type in function 'resize' in base 'Array'. Cannot convert argument 1 from String to int."],
+		["missing_method_on_a_node", "Invalid call. Nonexistent function 'missing_method' in base 'Node'."],
+		["missing_method_via_call", "Invalid call. Nonexistent function 'missing_method (via call)' in base 'Node'."],
+	]
+	for entry in refused:
+		var before := s.get_exceptions()
+		s.vmcallv(entry[0])
+		assert_engine_error("Exception: Variant::call(): " + entry[1])
+		assert_eq(s.get_exceptions(), before + 1,
+			"%s must raise, not return a silent null" % entry[0])
+
+	var before_nil := s.get_exceptions()
+	s.vmcallv("nil_from_a_dictionary", {})
+	assert_engine_error("Exception: Variant::call(): Invalid call. Nonexistent function 'some_method' in base 'Nil'.")
+	assert_eq(s.get_exceptions(), before_nil + 1, "a method on a key that is not there raises")
+
+	var before_ok := s.get_exceptions()
+	assert_eq(s.vmcallv("a_call_that_works"), "HELLO")
+	assert_eq(s.vmcallv("a_node_call_that_works"), "Child")
+	assert_eq(s.get_exceptions(), before_ok, "a valid call is not affected")
+
+	s.queue_free()

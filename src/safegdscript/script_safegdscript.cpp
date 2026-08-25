@@ -351,6 +351,9 @@ void SafeGDScript::set_path(const String &p_path) {
 	this->compile_source_to_elf();
 }
 
+static constexpr uint32_t COMPILER_MEMORY_MAX = 256;
+static constexpr uint32_t COMPILER_ALLOCATIONS_MAX = 64000;
+
 Sandbox *SafeGDScript::get_compiler_sandbox() {
 	if (compiler != nullptr) {
 		return compiler;
@@ -369,6 +372,10 @@ Sandbox *SafeGDScript::get_compiler_sandbox() {
 		memdelete(sandbox);
 		return nullptr;
 	}
+	// Must be set before set_program(). Default arena is too small for the compiler
+	// once the C++ unwinder has been set up (first error path).
+	sandbox->set_memory_max(COMPILER_MEMORY_MAX);
+	sandbox->set_allocations_max(COMPILER_ALLOCATIONS_MAX);
 	sandbox->set_program(compiler_script);
 	if (!sandbox->has_program_loaded()) {
 		ERR_PRINT("SafeGDScript: Failed to initialize GDScript compiler sandbox.");
@@ -383,20 +390,20 @@ Sandbox *SafeGDScript::get_compiler_sandbox() {
 bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	// Refuse rebuild while stopped at a breakpoint in this program.
 	if (safegdscript_stopped_script() == this) {
-		ERR_PRINT("SafeGDScript: " + this->path + " is stopped at a breakpoint and cannot be "
-				  "rebuilt until it continues.");
-		return false;
+		return fail_compile(this->path + " is stopped at a breakpoint and cannot be "
+											"rebuilt until it continues.");
 	}
 	if (this->source_code.is_empty()) {
 		if constexpr (VERBOSE_LOGGING) {
 			ERR_PRINT("SafeGDScript::compile_source_to_elf: No source code to compile.");
 		}
+		this->last_error = String();
 		return false;
 	}
 
 	Sandbox *compiler = get_compiler_sandbox();
 	if (compiler == nullptr) {
-		return false;
+		return fail_compile("failed to initialize the GDScript compiler sandbox");
 	}
 
 	// Falls back to uninstrumented if compiler ELF predates compile_profiled.
@@ -427,22 +434,21 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	const Variant* args[] = { &src_code_var, &breakpoints_var };
 	Variant result = compiler->vmcall_fn(entry_point, args, debug ? 2 : 1, error);
 	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
-		ERR_PRINT("SafeGDScript::compile_source_to_elf: Compilation failed with error code " + itos(static_cast<int>(error.error)));
-		return false;
+		return fail_compile("the GDScript compiler sandbox failed with call error " + itos(static_cast<int>(error.error)));
 	}
 	// Expecting the result to be a PackedByteArray containing the ELF binary
 	if (result.get_type() != Variant::Type::PACKED_BYTE_ARRAY) {
-		ERR_PRINT("SafeGDScript::compile_source_to_elf: Compilation did not return a PackedByteArray.");
-		return false;
+		return fail_compile("the GDScript compiler did not return a PackedByteArray");
+	}
+	const PackedByteArray new_elf = result;
+	if (new_elf.is_empty()) {
+		return fail_compile(get_compiler_error_message());
 	}
 
-	this->elf_data = result;
+	this->elf_data = new_elf;
 	this->profiled_build = profiling;
 	this->debug_build = debug;
-	if (elf_data.is_empty()) {
-			ERR_PRINT("SafeGDScript: " + this->path + ": " + get_compiler_error_message());
-		return false;
-	}
+	this->last_error = String();
 
 	this->update_methods_info();
 
@@ -558,6 +564,8 @@ void SafeGDScript::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_active_breakpoints"), &SafeGDScript::get_active_breakpoints);
 	ClassDB::bind_method(D_METHOD("is_debug_build"), &SafeGDScript::is_debug_build);
 
+	ClassDB::bind_method(D_METHOD("get_compile_error"), &SafeGDScript::get_compile_error);
+
 	ClassDB::bind_static_method("SafeGDScript", D_METHOD("is_stopped"), &SafeGDScript::is_stopped);
 	ClassDB::bind_static_method("SafeGDScript", D_METHOD("get_stopped_line"), &SafeGDScript::get_stopped_line);
 	ClassDB::bind_static_method("SafeGDScript", D_METHOD("get_stopped_backtrace"), &SafeGDScript::get_stopped_backtrace);
@@ -567,6 +575,16 @@ void SafeGDScript::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("breakpoint_hit",
 			PropertyInfo(Variant::OBJECT, "script", PROPERTY_HINT_RESOURCE_TYPE, "SafeGDScript"),
 			PropertyInfo(Variant::INT, "line")));
+}
+
+String SafeGDScript::get_compile_error() const {
+	return last_error;
+}
+
+bool SafeGDScript::fail_compile(const String &p_message) {
+	this->last_error = p_message;
+	ERR_PRINT("SafeGDScript: " + this->path + ": " + p_message);
+	return false;
 }
 
 String SafeGDScript::get_compiler_error_message() {

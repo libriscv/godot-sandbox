@@ -100,10 +100,24 @@ private:
 	bool m_constructed = false;
 };
 
+// Throws on any call error: a failed call answers Nil, indistinguishable from a method
+// that returned nothing. Probe with has_method(), not by reading the result back.
 static inline void object_callp(godot::Object *obj, const Variant **args, int argc, CallResult &result) {
 	GDExtensionCallError error;
 	internal::gdextension_interface_object_method_bind_call(object_call_mtd, obj->_owner, reinterpret_cast<GDExtensionConstVariantPtr *>(args), argc, &result.get(), &error);
 	result.mark_constructed();
+	if (UNLIKELY(error.error != GDEXTENSION_CALL_OK)) {
+		// Object::call("call", "name", ...) wraps the real name in args[1].
+		const bool via_call = argc >= 2 && args[0]->operator String() == "call" &&
+				(args[1]->get_type() == Variant::STRING || args[1]->get_type() == Variant::STRING_NAME);
+		const String failed = via_call
+				? args[1]->operator String() + " (via call)"
+				: args[0]->operator String();
+		const CharString method = failed.utf8();
+		const int skip = via_call ? 2 : 1;
+		throw_on_call_error(error, std::string_view(method.get_data(), method.length()),
+				obj->get_class(), args + skip, argc - skip);
+	}
 }
 
 // Scratch space for arguments that have to be materialized as real Variants.
@@ -198,6 +212,7 @@ static inline void variant_or_object_call(Sandbox &emu, Variant *vcall,
 
 	GDExtensionCallError error;
 	variant_callp(vcall, method_sn, argptrs, argc, result, error);
+	throw_on_call_error(error, method_name, GuestVariant::type_name(vcall->get_type()), argptrs, argc);
 }
 
 // a0 = awaited GuestVariant, a1 = frame base, a2 = frame size, a3 = state index,
@@ -859,6 +874,15 @@ APICALL(api_vcall) {
 		object_call_checked(emu, obj, cached_method, method_name, args, args_size, result);
 	} else if (vp->is_scoped_variant()) {
 		Variant *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
+		// Godot's read-only enforcement only prints and no-ops; throw so the guest unwinds.
+		// Keyed on the resolved Variant: vp->type is the guest's, and every scoped type
+		// reaches this one branch.
+		const Variant::Type vtype = vcall->get_type();
+		if (UNLIKELY(vtype == Variant::ARRAY || vtype == Variant::DICTIONARY)) {
+			if (is_container_mutator(method_name)) {
+				throw_if_read_only(*vcall, "Variant::call");
+			}
+		}
 		variant_or_object_call(emu, vcall, cached_method, method_name, args, args_size, result);
 	} else {
 		Variant vcall = vp->toVariant(emu);
@@ -1970,6 +1994,12 @@ APICALL(api_obj_callp) {
 			vret->create(emu, std::move(result.get()));
 		}
 	} else {
+		// The call itself runs after this syscall returns, with no frame left to throw
+		// from; a missing method is still decidable here.
+		if (UNLIKELY(!obj->has_method(method))) {
+			ERR_PRINT("Nonexistent method deferred: " + method.operator String());
+			throw std::runtime_error("Nonexistent method deferred: " + std::string(method_view.substr(0, g_method_len)));
+		}
 		// Call deferred unfortunately takes a parameter pack, so we have to manually
 		// check the number of arguments, and call the correct function.
 		if (args_size == 0) {
@@ -2543,6 +2573,15 @@ APICALL(api_array_ops) {
 		ERR_PRINT("Invalid Array object, type = " + String(GuestVariant::type_name(var_array.get_type())));
 		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx) + " type = " + GuestVariant::type_name(var_array.get_type()));
 	}
+
+	switch (op) {
+		case Array_Op::FETCH_TO_VECTOR:
+		case Array_Op::HAS:
+			break;
+		default:
+			throw_if_read_only(var_array, "Array::operation");
+			break;
+	}
 	godot::Array array = var_array.operator Array();
 
 	switch (op) {
@@ -2619,6 +2658,7 @@ APICALL(api_array_at) {
 	GDExtensionBool oob = false;
 
 	if (set_mode) {
+		throw_if_read_only(var_array, "Array::at (assignment)");
 		const Variant value = vret->toVariant(emu);
 		internal::gdextension_interface_variant_set_indexed(
 				const_cast<Variant &>(var_array)._native_ptr(), index,
@@ -2663,6 +2703,18 @@ APICALL(api_dict_ops) {
 	if (var_dict.get_type() != Variant::DICTIONARY) {
 		ERR_PRINT("Invalid Dictionary object, type = " + String(GuestVariant::type_name(var_dict.get_type())));
 		throw std::runtime_error("Invalid Dictionary object, idx = " + std::to_string(dict_idx) + " type = " + GuestVariant::type_name(var_dict.get_type()));
+	}
+
+	switch (op) {
+		case Dictionary_Op::SET:
+		case Dictionary_Op::ERASE:
+		case Dictionary_Op::CLEAR:
+		case Dictionary_Op::MERGE:
+		case Dictionary_Op::GET_OR_ADD:
+			throw_if_read_only(var_dict, "Dictionary::operation");
+			break;
+		default:
+			break;
 	}
 
 	switch (op) {

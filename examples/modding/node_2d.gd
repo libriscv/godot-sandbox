@@ -1,9 +1,12 @@
 extends Node2D
 
-## The game. Ships no gameplay: the CPU mod under mods/ is compiled and run
-## in a sandbox, reaching the game only through _build_api().
+## The game. Ships no gameplay: the mods under mods/ are compiled and run in
+## sandboxes, reaching the game only through _build_api().
 
 const CYCLES_PER_FRAME := 2000
+
+const MAX_STATS_PER_MOD := 8
+const MAX_TEXT := 64
 
 @onready var status: Label = $Status
 
@@ -25,7 +28,6 @@ func _on_mod_loaded(id: String) -> void:
 	print("[game] loaded mod '%s': restrictions=%s timeout=%dM instructions memory=%dMB" % [
 			id, mod.get("restrictions"), mod.get("execution_timeout"), mod.get("memory_max")])
 
-# The entire host surface one mod can reach.
 func _build_api(id: String, manifest: Dictionary) -> Dictionary:
 	return {
 		"id": id,
@@ -37,19 +39,23 @@ func _build_api(id: String, manifest: Dictionary) -> Dictionary:
 
 # Callable.bind() appends: the bound id arrives last.
 func _mod_log(message: Variant, id: String) -> void:
-	print("[%s] %s" % [id, str(message)])
+	print("[%s] %s" % [id, str(message).left(MAX_TEXT)])
 
 func _mod_report(key: Variant, value: Variant, id: String) -> void:
 	if not stats.has(id):
 		stats[id] = {}
-	stats[id][str(key)] = value
+	var mod_stats: Dictionary = stats[id]
+	var name := str(key).left(MAX_TEXT)
+	if not mod_stats.has(name) and mod_stats.size() >= MAX_STATS_PER_MOD:
+		return
+	mod_stats[name] = ModLoader.detach(value)
 
 func _process(_delta: float) -> void:
 	var lines := PackedStringArray()
 	for id in loader.get_mod_ids():
 		var line : String = str(id)
 		for key in stats.get(id, {}):
-			line += "  %s=%s" % [key, str(stats[id][key])]
+			line += "  %s=%s" % [key, str(stats[id][key]).left(MAX_TEXT)]
 		lines.append(line)
 	status.text = "\n".join(lines)
 

@@ -89,6 +89,7 @@ enum class Arg : uint8_t {
 	FRAME_SIZE, // Its length, mostly a whole number of Variant slots.
 	FUNC,
 	ARGC,
+	NOARGS,
 };
 
 /// @brief The shape of a0-a7 for one system call, in register order.
@@ -106,6 +107,8 @@ static constexpr Shape SHAPES[] = {
 	{ ECALL_PRINT_CHANNEL, { Arg::VPTR, Arg::SMALL, Arg::SMALL } },
 	{ ECALL_UTILITY, { Arg::OP, Arg::OUT, Arg::VPTR, Arg::SMALL } },
 	{ ECALL_VCALL, { Arg::VPTR, Arg::NAME, Arg::NAMELEN, Arg::VPTR, Arg::SMALL, Arg::OUT } },
+	// Pins argc=0 so nullary names (hash, size, duplicate) reach the call itself.
+	{ ECALL_VCALL, { Arg::VPTR, Arg::NAME, Arg::NAMELEN, Arg::VPTR, Arg::NOARGS, Arg::OUT } },
 	{ ECALL_VEVAL, { Arg::OP, Arg::VPTR, Arg::VPTR, Arg::OUT } },
 	{ ECALL_VCREATE, { Arg::OUT, Arg::OP, Arg::OP, Arg::VPTR } },
 	{ ECALL_VFETCH, { Arg::IDX_ANY, Arg::OUT, Arg::OP } },
@@ -579,6 +582,8 @@ struct SyscallFuzzer {
 			}
 			case Arg::ARGC:
 				return pick(4) ? pick(9) : argument();
+			case Arg::NOARGS:
+				return 0;
 		}
 		return argument();
 	}

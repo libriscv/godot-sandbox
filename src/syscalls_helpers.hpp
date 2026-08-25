@@ -81,6 +81,76 @@ static inline void sys_trace(const String &name, Result result, Args &&...args) 
 		return *opt.value();
 	}
 
+	static inline void throw_on_call_error(const GDExtensionCallError &error,
+			std::string_view method, const String &base_name, const Variant **args, int argc) {
+		if (LIKELY(error.error == GDEXTENSION_CALL_OK)) {
+			return;
+		}
+		const String name = String::utf8(method.data(), method.size());
+		const String base = (error.error == GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL)
+				? String("Nil")
+				: base_name;
+		String message;
+		switch (error.error) {
+			case GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT: {
+					const char *from = (error.argument >= 0 && error.argument < argc)
+						? GuestVariant::type_name(args[error.argument]->get_type())
+						: "Variant";
+				message = "Invalid type in function '" + name + "' in base '" + base +
+						"'. Cannot convert argument " + itos(error.argument + 1) + " from " +
+						from + " to " + Variant::get_type_name(Variant::Type(error.expected)) + ".";
+				break;
+			}
+			case GDEXTENSION_CALL_ERROR_TOO_MANY_ARGUMENTS:
+			case GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS:
+				message = "Invalid call to function '" + name + "' in base '" + base +
+						"'. Expected " + itos(error.expected) + " argument(s).";
+				break;
+			case GDEXTENSION_CALL_ERROR_INVALID_METHOD:
+			case GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL:
+			default:
+				message = "Invalid call. Nonexistent function '" + name + "' in base '" +
+						String(base) + "'.";
+				break;
+		}
+		throw std::runtime_error(std::string("Variant::call(): ") + message.utf8().get_data());
+	}
+
+	// No GDExtension const-ness flag for builtin methods; closed set.
+	static inline bool is_container_mutator(std::string_view method) {
+		static constexpr std::string_view mutators[] = {
+			"append", "append_array", "assign", "clear", "erase", "fill", "insert",
+			"make_read_only", "pop_at", "pop_back", "pop_front", "push_back",
+			"push_front", "remove_at", "resize", "reverse", "set", "shuffle", "sort",
+			"sort_custom",
+			"get_or_add", "merge",
+		};
+		for (const std::string_view m : mutators) {
+			if (m == method)
+				return true;
+		}
+		return false;
+	}
+
+	/// @note Only Array and Dictionary carry the flag. Converting any other type
+	/// yields a fresh empty container, which always reports writable.
+	static inline void throw_if_read_only(const Variant &var, const char *what) {
+		bool read_only;
+		switch (var.get_type()) {
+			case Variant::ARRAY:
+				read_only = var.operator Array().is_read_only();
+				break;
+			case Variant::DICTIONARY:
+				read_only = var.operator Dictionary().is_read_only();
+				break;
+			default:
+				return;
+		}
+		if (UNLIKELY(read_only)) {
+			throw std::runtime_error(std::string(what) + ": the container is read-only");
+		}
+	}
+
 	/// @brief View a guest string of len bytes, plus the byte that follows it, so that
 	/// the caller can check whether the string is already null-terminated.
 	/// @note The length is widened to size_t before the increment, as guests pass 32-bit

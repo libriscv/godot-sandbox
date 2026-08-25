@@ -1073,3 +1073,25 @@ func test_await_host_respects_restrictions():
 	assert_eq(s.get_exceptions(), exceptions + 1, "and the call threw")
 
 	s.queue_free()
+
+func test_read_only_containers_survive_a_forged_type_tag():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	var d := {"key": "original"}
+	var a := ["original"]
+	d.make_read_only()
+	a.make_read_only()
+
+	var denied := [[d, "clear"], [d, "erase"], [d, "merge"], [a, "clear"], [a, "push_back"]]
+	for entry in denied:
+		var before := s.get_exceptions()
+		s.vmcallv("readonly_tag_spoof", entry[0], entry[1])
+		assert_engine_error("Exception: Variant::call: the container is read-only")
+		assert_eq(s.get_exceptions(), before + 1,
+			"%s through a forged tag must raise, not silently do nothing" % entry[1])
+
+	assert_eq(d, {"key": "original"}, "the Dictionary was left alone")
+	assert_eq(a, ["original"], "the Array was left alone")
+
+	s.queue_free()

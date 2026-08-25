@@ -573,7 +573,7 @@ PUBLIC Variant access_an_invalid_child_node() {
 
 PUBLIC Variant access_an_invalid_child_resource(String path) {
 	Variant resource = loadv(path.utf8());
-	return resource.method_call("instantiate");
+	return resource.method_call("get_class");
 }
 
 PUBLIC Variant disable_restrictions() {
@@ -734,4 +734,14 @@ extern "C" PUBLIC Variant await_handle_resume() {
 		return text;
 	}
 	return Variant();
+}
+
+// Mislabelled tag, real scoped container: the host must deny on what it resolved.
+PUBLIC Variant readonly_tag_spoof(Variant container, Variant method) {
+	Variant spoofed;
+	__builtin_memcpy(&spoofed, &container, sizeof(Variant));
+	const int32_t tag = int32_t(Variant::STRING);
+	__builtin_memcpy(&spoofed, &tag, sizeof(tag));
+	spoofed.method_call(method.operator std::string());
+	return "the mutation was not denied";
 }

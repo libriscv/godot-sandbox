@@ -110,6 +110,7 @@ public:
 	// Addresses are the loaded ELF's. Present in every build: it costs no code.
 	const gdscript::LineTable &get_line_table() const { return line_table; }
 	static String get_compiler_error_message();
+	String get_compile_error() const;
 	// The parameter lists of the last compile, which the ELF does not carry.
 	static std::vector<gdscript::FunctionSignature> get_compiler_function_signatures();
 	// Address-to-line table from the last compile.
@@ -131,10 +132,14 @@ private:
 	void update_methods_info();
 	// Rejects rebuild while this script is stopped at a breakpoint.
 	bool refuse_while_stopped() const;
+	bool fail_compile(const String &p_message);
 
 	String path;
 	mutable HashSet<SafeGDScriptInstance *> instances;
 	PackedByteArray elf_data;
+	// Last compile failure, empty on success. Per script: the shared compiler
+	// sandbox keeps one message, belonging to whichever script compiled last.
+	String last_error;
 	bool profiled_build = false;
 	bool debug_build = false;
 	// Ascending, no repeats. Non-empty enables shadow stack + stops.
