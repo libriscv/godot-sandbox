@@ -502,14 +502,7 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 		}
 	}
 
-	m_fn.scope_slot_count = 0;
-	for (const IRInstruction& instr : func.instructions) {
-		if (instr.opcode != IROpcode::SCOPE_MARK && instr.opcode != IROpcode::SCOPE_RELEASE) {
-			continue;
-		}
-		const int scope_id = int(std::get<int64_t>(instr.operands[0].value));
-		m_fn.scope_slot_count = std::max(m_fn.scope_slot_count, scope_id + 1);
-	}
+	plan_scopes(func);
 	if (m_fn.scope_slot_count > 0) {
 		m_fn.omits_frame = false;
 	}
@@ -2679,6 +2672,9 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	plan_frame(func);
 	emit_prologue(func);
 
+	const bool elision_in_effect = std::find(m_fn.elided_scopes.begin(),
+		m_fn.elided_scopes.end(), true) != m_fn.elided_scopes.end();
+
 	for (size_t instr_idx = 0; instr_idx < func.instructions.size(); instr_idx++) {
 		if (m_fn.unmaterialized_imm[instr_idx]) {
 			m_fn.current_instr_idx++;
@@ -2711,7 +2707,9 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			emit_breakpoint(m_break_line);
 		}
 
+		m_fn.ecall_refused = elision_in_effect && !instruction_may_ecall(instr);
 		gen_instruction(instr);
+		m_fn.ecall_refused = false;
 	}
 
 	// Emitted after body; skipped if optimizer removed all awaits.
@@ -3775,6 +3773,12 @@ void RISCVCodeGen::emit_ecall() {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 			"System call emitted in a function whose prologue did not save the return-value pointer");
 	}
+	// Scope elision depends on this predicate; a false negative leaks scoped variants.
+	if (m_fn.ecall_refused) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"System call emitted by an instruction that instruction_may_ecall() "
+			"reported as frame-local");
+	}
 	emit_i_type(0x73, 0, 0, 0, 0);
 }
 
@@ -4830,6 +4834,161 @@ void RISCVCodeGen::spill_all_registers() {
 	}
 }
 
+// Refines opcode_clobbers_abi_registers for typed arithmetic that stays in-frame.
+bool RISCVCodeGen::instruction_may_ecall(const IRInstruction& instr) const {
+	if (!opcode_clobbers_abi_registers(instr.opcode)) {
+		return instr.opcode == IROpcode::BREAKPOINT; // ecalls despite !clobbers_abi
+	}
+
+	const bool both_reg = instr.operands.size() >= 3 &&
+		instr.operands[1].type == IRValue::Type::REGISTER &&
+		instr.operands[2].type == IRValue::Type::REGISTER;
+	const auto hint = instr.type_hint;
+
+	switch (instr.opcode) {
+		// Native for INT, FLOAT, vectors. POW/IN always host.
+		case IROpcode::ADD:
+		case IROpcode::SUB:
+		case IROpcode::MUL:
+		case IROpcode::DIV:
+		case IROpcode::MOD:
+		case IROpcode::BIT_AND:
+		case IROpcode::BIT_OR:
+		case IROpcode::BIT_XOR:
+		case IROpcode::SHL:
+		case IROpcode::SHR:
+			return !(both_reg && (hint == Variant::INT || hint == Variant::FLOAT ||
+				TypeHintUtils::is_vector(hint)));
+
+		// Native for INT only.
+		case IROpcode::CMP_EQ:
+		case IROpcode::CMP_NEQ:
+		case IROpcode::CMP_LT:
+		case IROpcode::CMP_LTE:
+		case IROpcode::CMP_GT:
+		case IROpcode::CMP_GTE:
+			return !(both_reg && hint == Variant::INT);
+
+		case IROpcode::BRANCH_EQ:
+		case IROpcode::BRANCH_NEQ:
+		case IROpcode::BRANCH_LT:
+		case IROpcode::BRANCH_LTE:
+		case IROpcode::BRANCH_GT:
+		case IROpcode::BRANCH_GTE:
+			return hint != Variant::INT;
+
+		// Inline for NIL, BOOL, INT, FLOAT.
+		case IROpcode::BRANCH_ZERO:
+		case IROpcode::BRANCH_NOT_ZERO:
+			return !(hint == Variant::NIL || hint == Variant::BOOL ||
+				hint == Variant::INT || hint == Variant::FLOAT);
+
+		case IROpcode::BIT_NOT:
+			return hint != Variant::INT;
+
+		case IROpcode::CONVERT:
+			return false;
+
+		case IROpcode::GLOBAL_CALL: {
+			const GlobalFn fn = static_cast<GlobalFn>(std::get<int64_t>(instr.operands[1].value));
+			return global_call_may_ecall(fn);
+		}
+
+		default:
+			return true;
+	}
+}
+
+// NUMERIC dispatches to int_form/float_form; inline only if both are.
+bool RISCVCodeGen::global_call_may_ecall(GlobalFn fn) {
+	const GlobalFunction& info = global_function(fn);
+	auto is_inline = [](GlobalKind kind) {
+		return kind == GlobalKind::INT_OP || kind == GlobalKind::FLOAT_OP;
+	};
+	if (info.kind == GlobalKind::NUMERIC) {
+		return !(is_inline(global_function(info.int_form).kind) &&
+			is_inline(global_function(info.float_form).kind));
+	}
+	return !is_inline(info.kind);
+}
+
+// Scans mark..last-back-edge; nested SCOPE_MARK/RELEASE do not count.
+bool RISCVCodeGen::scope_body_may_ecall(const IRFunction& func, size_t mark_index) const {
+	const size_t count = func.instructions.size();
+	// Expects mark immediately before its label (tighten_scope_marks).
+	const size_t label_index = mark_index + 1;
+	if (label_index >= count || func.instructions[label_index].opcode != IROpcode::LABEL) {
+		return true;
+	}
+	const std::string& label = std::get<std::string>(func.instructions[label_index].operands.at(0).value);
+
+	size_t last = label_index;
+	for (size_t i = label_index + 1; i < count; i++) {
+		const IRInstruction& instr = func.instructions[i];
+		const IROperandSignature& sig = ir_opcode_info(instr.opcode).signature;
+		for (size_t op = 0; op < instr.operands.size(); op++) {
+			if (sig.kind_at(op) != IROperandKind::LBL && sig.kind_at(op) != IROperandKind::LBL_LIST) {
+				continue;
+			}
+			if (instr.operands[op].type == IRValue::Type::LABEL &&
+				std::get<std::string>(instr.operands[op].value) == label)
+			{
+				last = i;
+			}
+		}
+	}
+
+	for (size_t i = label_index + 1; i <= last; i++) {
+		const IROpcode op = func.instructions[i].opcode;
+		if (op == IROpcode::SCOPE_MARK || op == IROpcode::SCOPE_RELEASE) {
+			continue;
+		}
+		if (instruction_may_ecall(func.instructions[i])) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void RISCVCodeGen::plan_scopes(const IRFunction& func) {
+	m_fn.elided_scopes.clear();
+	m_fn.scope_slot_count = 0;
+
+	int max_scope_id = -1;
+	for (const IRInstruction& instr : func.instructions) {
+		if (instr.opcode == IROpcode::SCOPE_MARK || instr.opcode == IROpcode::SCOPE_RELEASE) {
+			max_scope_id = std::max(max_scope_id,
+				int(std::get<int64_t>(instr.operands[0].value)));
+		}
+	}
+	if (max_scope_id < 0) {
+		return;
+	}
+
+	// Default kept: a release whose mark was removed must read a zeroed slot.
+	m_fn.elided_scopes.assign(size_t(max_scope_id) + 1, false);
+	for (size_t i = 0; i < func.instructions.size(); i++) {
+		if (func.instructions[i].opcode != IROpcode::SCOPE_MARK) {
+			continue;
+		}
+		const int scope_id = int(std::get<int64_t>(func.instructions[i].operands[0].value));
+		m_fn.elided_scopes[size_t(scope_id)] = !scope_body_may_ecall(func, i);
+	}
+
+	// Slots stay addressed by scope id, so the count is the highest survivor.
+	for (int scope_id = max_scope_id; scope_id >= 0; scope_id--) {
+		if (!m_fn.elided_scopes[size_t(scope_id)]) {
+			m_fn.scope_slot_count = scope_id + 1;
+			break;
+		}
+	}
+}
+
+bool RISCVCodeGen::scope_is_elided(int scope_id) const {
+	return scope_id >= 0 && size_t(scope_id) < m_fn.elided_scopes.size() &&
+		m_fn.elided_scopes[size_t(scope_id)];
+}
+
 int RISCVCodeGen::scope_slot_offset(int scope_id) const {
 	if (scope_id < 0 || scope_id >= m_fn.scope_slot_count) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
@@ -4840,6 +4999,9 @@ int RISCVCodeGen::scope_slot_offset(int scope_id) const {
 
 void RISCVCodeGen::gen_scope_mark(const IRInstruction& instr) {
 	const int scope_id = int(std::get<int64_t>(instr.operands[0].value));
+	if (scope_is_elided(scope_id)) {
+		return;
+	}
 	const int offset = scope_slot_offset(scope_id);
 
 	spill_around_syscall({ REG_A0, REG_A7 });
@@ -4851,6 +5013,9 @@ void RISCVCodeGen::gen_scope_mark(const IRInstruction& instr) {
 
 void RISCVCodeGen::gen_scope_release(const IRInstruction& instr) {
 	const int scope_id = int(std::get<int64_t>(instr.operands[0].value));
+	if (scope_is_elided(scope_id)) {
+		return;
+	}
 	const int offset = scope_slot_offset(scope_id);
 
 	// Host reads the frame as Variants; registers must be spilled first.

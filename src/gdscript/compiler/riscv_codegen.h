@@ -77,6 +77,11 @@ private:
 	void gen_scope_mark(const IRInstruction& instr);
 	void gen_scope_release(const IRInstruction& instr);
 	int scope_slot_offset(int scope_id) const;
+	bool scope_is_elided(int scope_id) const;
+	void plan_scopes(const IRFunction& func);
+	bool scope_body_may_ecall(const IRFunction& func, size_t mark_index) const;
+	bool instruction_may_ecall(const IRInstruction& instr) const;
+	static bool global_call_may_ecall(GlobalFn fn);
 	void gen_instruction(const IRInstruction& instr);
 	void gen_call(const IRInstruction& instr);
 	void gen_call_hosted(const IRInstruction& instr);
@@ -462,6 +467,9 @@ private:
 		// no scoped loop.
 		int scope_slot_base = 0;
 		int scope_slot_count = 0;
+		std::vector<bool> elided_scopes;
+		// emit_ecall() asserts false; catches predicate drift.
+		bool ecall_refused = false;
 		// Per-suspension labels, state-ordered; resume dispatches on the index.
 		std::vector<std::string> await_states;
 		std::string resume_label;

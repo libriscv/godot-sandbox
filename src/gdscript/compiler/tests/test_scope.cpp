@@ -246,23 +246,72 @@ static uint32_t sw_zero_sp(int offset) {
 }
 
 static void test_the_backend_emits_the_syscall_and_zeroes_the_frame() {
+	// Append keeps the Dictionary alive; an unread one gets DCE'd.
 	const std::vector<uint8_t> elf = compile_to_elf(
 		"func test():\n"
-		"\tvar n = 0\n"
+		"\tvar n = []\n"
 		"\tfor i in range(8):\n"
-		"\t\tvar d = {\"a\": i}\n"
-		"\t\tn += 1\n"
+		"\t\tn.append({\"a\": i})\n"
 		"\treturn n\n");
 	check(contains_word(elf, li_a7_vscope()), "the loop reaches ECALL_VSCOPE");
 	check(contains_word(elf, sw_zero_sp(16)),
 		"the frame is zeroed, so an untouched slot cannot read as a handle");
 
 	const std::vector<uint8_t> loopless = compile_to_elf(
-		"func test():\n\tvar d = {\"a\": 1}\n\treturn 1\n");
+		"func test():\n\tvar d = {\"a\": 1}\n\treturn d\n");
 	check(!contains_word(loopless, li_a7_vscope()),
 		"a function with no loop makes no scope syscall");
 	check(!contains_word(loopless, sw_zero_sp(16)),
 		"a function with no loop is not zeroed for one");
+}
+
+static void test_a_host_free_loop_is_not_scoped() {
+	const std::vector<uint8_t> ints = compile_to_elf(
+		"func test(n : int) -> int:\n"
+		"\tvar acc : int = 0\n"
+		"\tvar i : int = 0\n"
+		"\twhile i < n:\n"
+		"\t\tacc += i * 3 - (i >> 2)\n"
+		"\t\ti += 1\n"
+		"\treturn acc\n");
+	check(!contains_word(ints, li_a7_vscope()), "a typed int loop makes no scope syscall");
+	check(!contains_word(ints, sw_zero_sp(16)), "a typed int loop is not zeroed for one");
+
+	const std::vector<uint8_t> floats = compile_to_elf(
+		"func test(n : int) -> float:\n"
+		"\tvar acc : float = 0.0\n"
+		"\tvar i : int = 0\n"
+		"\twhile i < n:\n"
+		"\t\tacc += float(i) * 0.5 - 0.25\n"
+		"\t\ti += 1\n"
+		"\treturn acc\n");
+	check(!contains_word(floats, li_a7_vscope()), "a typed float loop makes no scope syscall");
+
+	// Untyped arithmetic reaches Variant::evaluate; scope stays.
+	const std::vector<uint8_t> untyped = compile_to_elf(
+		"func test(n, step):\n"
+		"\tvar acc = 0\n"
+		"\tvar i = 0\n"
+		"\twhile i < n:\n"
+		"\t\tacc += step\n"
+		"\t\ti += 1\n"
+		"\treturn acc\n");
+	check(contains_word(untyped, li_a7_vscope()), "an untyped loop keeps its scope");
+
+	const std::vector<uint8_t> nested = compile_to_elf(
+		"func test(n : int) -> Array:\n"
+		"\tvar out : Array = []\n"
+		"\tvar i : int = 0\n"
+		"\twhile i < n:\n"
+		"\t\tvar acc : int = 0\n"
+		"\t\tvar j : int = 0\n"
+		"\t\twhile j < 4:\n"
+		"\t\t\tacc += j\n"
+		"\t\t\tj += 1\n"
+		"\t\tout.append(acc)\n"
+		"\t\ti += 1\n"
+		"\treturn out\n");
+	check(contains_word(nested, li_a7_vscope()), "the allocating outer loop keeps its scope");
 }
 
 int main() {
@@ -275,6 +324,7 @@ int main() {
 		test_a_loopless_function_is_untouched();
 		test_the_ir_verifies();
 		test_the_backend_emits_the_syscall_and_zeroes_the_frame();
+		test_a_host_free_loop_is_not_scoped();
 	} catch (const CompilerException& e) {
 		std::cerr << "FAILED: compiler exception: " << e.what() << std::endl;
 		failures++;
