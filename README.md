@@ -111,6 +111,17 @@ For maximum performance, you can also write sandboxed programs in C++ or Rust. T
 - Enable [full binary translation](https://libriscv.no/docs/host_langs/godot_integration/godot_docs/bintr) for maximum performance on all platforms (including locked down iOS, Web, Switch etc.)
 - JIT builds are available in the Releases section for Windows, macOS, Android and Linux
 
+```
+Using typed variables in SafeGDScript will help the compiler optimize:
+
+--- int loop ---
+case                               ns/iteration     vs ref    vs base
+SafeGDScript (sandbox)                      3.5     10.21x      -0.3%
+GDScript (engine)                          35.7      1.00x      +7.8%
+```
+
+In this specific case we gained 10x over GDScript by making our loop variable an integer.
+
 ## Usage
 
 - [Assign an ELF script resource directly to a node](https://libriscv.no/docs/host_langs/godot_integration/godot_intro/sandbox#using-programs-directly-as-scripts). Constructs a shared sandbox among all instances with that script, maximum scalability, call functions and attach signals like GDScript
