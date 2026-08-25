@@ -340,7 +340,7 @@ static void test_globals_do_not_become_self_calls() {
 	assert(refuses("func test():\n\treturn print_debug(\"x\")\n"));
 	assert(refuses("func test(x):\n\treturn weakref(x)\n"));
 	assert(refuses("func test():\n\treturn Quaternion(0, 0, 0, 1)\n"));
-	assert(refuses("func test():\n\treturn preload(\"res://a.tscn\")\n"));
+	assert(refuses("func test(p):\n\treturn preload(p)\n"));
 	// Excluded: mutates shared RNG state.
 	assert(refuses("func test():\n\trandomize()\n"));
 

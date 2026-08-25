@@ -211,7 +211,11 @@ static void test_refusals() {
 	assert(refuses("func test():\n\treturn load()\n"));
 	assert(refuses("func test():\n\treturn load(\"res://a.tscn\", \"res://b.tscn\")\n"));
 
-	assert(refuses("func test():\n\treturn preload(\"res://a.tscn\")\n"));
+	const IRProgram preloaded = compile_to_ir(
+		"func test():\n\treturn preload(\"res://a.tscn\")\n");
+	assert(count_opcode(find_function(preloaded, "test"), IROpcode::LOAD_RESOURCE) == 1);
+	assert(refuses("func test(p):\n\treturn preload(p)\n"));
+	assert(refuses("func test():\n\treturn preload()\n"));
 
 	// Local function shadows the global.
 	const IRProgram own = compile_to_ir(

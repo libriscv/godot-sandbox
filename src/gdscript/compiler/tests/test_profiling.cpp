@@ -2,6 +2,7 @@
 // self excludes callees, total includes them, entry/exit balance across
 // recursion past MAX_DEPTH. INSTRUCTIONS clock throughout for determinism.
 #include "../compiler.h"
+#include "scope_stub.h"
 #include "../profiling_layout.h"
 #include <cstdint>
 #include <cstring>
@@ -139,6 +140,7 @@ std::unique_ptr<machine_t> boot(const std::vector<uint8_t>& elf) {
 	for (int number = 500; number < 560; number++) {
 		machine_t::install_syscall_handler(number, fail_on_syscall);
 	}
+	install_scope_stub<machine_t>();
 	// The entry point initializes globals and stops.
 	machine->simulate(50'000'000ull);
 	return machine;

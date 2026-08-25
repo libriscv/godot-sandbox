@@ -59,22 +59,33 @@ Program Parser::parse() {
 		} else if (check(TokenType::AT)) {
 			// Stacked attributes: `@export_range(0, 10) @tool var x`.
 			bool is_export = false;
+			bool is_onready = false;
 			ExportHint export_hint;
 			while (check(TokenType::AT)) {
-				is_export = parse_attribute(export_hint) || is_export;
+				is_export = parse_attribute(export_hint, &is_onready) || is_export;
 				skip_newlines();
 			}
 			is_static = match(TokenType::STATIC) || is_static;
 			if (check(TokenType::VAR) || check(TokenType::CONST)) {
 				const bool is_const = check(TokenType::CONST);
 				advance();
+				if (is_onready && is_const) {
+					error("@onready cannot be applied to a 'const'");
+				}
+				if (is_onready && is_static) {
+					error("@onready is per instance, and a 'static var' is shared");
+				}
 				auto var_decl = parse_var_decl(is_const);
 				if (auto* decl = dynamic_cast<VarDeclStmt*>(var_decl.get())) {
 					decl->is_property = is_export;
 					decl->is_static = is_static;
+					decl->is_onready = is_onready;
 					decl->export_hint = export_hint;
 					program.globals.push_back(std::move(*decl));
 				}
+			} else if (is_onready) {
+				error("Expected a variable declaration after '@onready'");
+				synchronize();
 			} else if (check(TokenType::FUNC)) {
 				// @export names a property; a function is not one.
 				if (is_export) {
@@ -119,7 +130,52 @@ Program Parser::parse() {
 		skip_newlines();
 	}
 
+	hoist_onready_initializers(program);
+	program.is_tool = m_saw_tool;
 	return program;
+}
+
+void Parser::hoist_onready_initializers(Program& program) {
+	std::vector<StmtPtr> prologue;
+	for (VarDeclStmt& global : program.globals) {
+		if (!global.is_onready || !global.initializer) {
+			continue;
+		}
+		auto assign = std::make_unique<AssignStmt>(global.name, std::move(global.initializer));
+		assign->line = global.line;
+		assign->column = global.column;
+		prologue.push_back(std::move(assign));
+		global.initializer = nullptr;
+	}
+	if (prologue.empty()) {
+		return;
+	}
+
+	FunctionDecl* ready = nullptr;
+	for (FunctionDecl& func : program.functions) {
+		if (func.name == "_ready") {
+			ready = &func;
+			break;
+		}
+	}
+	if (ready == nullptr) {
+		FunctionDecl created;
+		created.name = "_ready";
+		created.line = prologue.front()->line;
+		created.column = prologue.front()->column;
+		program.functions.push_back(std::move(created));
+		ready = &program.functions.back();
+	}
+
+	std::vector<StmtPtr> body;
+	body.reserve(prologue.size() + ready->body.size());
+	for (auto& stmt : prologue) {
+		body.push_back(std::move(stmt));
+	}
+	for (auto& stmt : ready->body) {
+		body.push_back(std::move(stmt));
+	}
+	ready->body = std::move(body);
 }
 
 FunctionDecl Parser::parse_function() {
@@ -1757,7 +1813,7 @@ void Parser::skip_type_arguments() {
 	}
 }
 
-bool Parser::parse_attribute(ExportHint& hint) {
+bool Parser::parse_attribute(ExportHint& hint, bool* is_onready) {
 	consume(TokenType::AT, "Expected '@' for attribute");
 
 	const Token name = consume(TokenType::IDENTIFIER, "Expected an attribute name after '@'");
@@ -1782,10 +1838,19 @@ bool Parser::parse_attribute(ExportHint& hint) {
 		return true;
 	}
 	if (name.lexeme == "onready") {
-		error("@onready needs a scene tree, which a sandboxed program is not in; "
-			"assign the node in a function that runs after the scene is ready");
+		if (is_onready == nullptr) {
+			error("@onready is for a member variable; a local is assigned where it is declared",
+				name.line, name.column);
+		} else {
+			*is_onready = true;
+		}
+		return false;
 	}
-	if (name.lexeme == "tool" || name.lexeme == "icon" || name.lexeme == "rpc" ||
+	if (name.lexeme == "tool") {
+		m_saw_tool = true;
+		return false;
+	}
+	if (name.lexeme == "icon" || name.lexeme == "rpc" ||
 		name.lexeme == "warning_ignore" || name.lexeme == "warning_ignore_start" ||
 		name.lexeme == "warning_ignore_restore" || name.lexeme == "static_unload" ||
 		name.lexeme == "abstract")

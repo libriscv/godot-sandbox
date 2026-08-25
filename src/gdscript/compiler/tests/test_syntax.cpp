@@ -168,6 +168,49 @@ static void test_string_literals() {
 	std::cout << "  ✓ raw, StringName and NodePath literals" << std::endl;
 }
 
+static void test_tool_annotation() {
+	std::cout << "Testing @tool..." << std::endl;
+
+	const IRProgram tool = compile_to_ir("@tool\nfunc test():\n\treturn 1\n");
+	assert(tool.is_tool);
+	const IRProgram late = compile_to_ir("func test():\n\treturn 1\n@tool\n");
+	assert(late.is_tool);
+	const IRProgram plain = compile_to_ir("func test():\n\treturn 1\n");
+	assert(!plain.is_tool);
+
+	std::cout << "  \u2713 @tool reaches the host and nothing else" << std::endl;
+}
+
+static void test_engine_class_new() {
+	std::cout << "Testing Type.new()..." << std::endl;
+
+	const IRProgram ir = compile_to_ir("func test():\n\treturn Timer.new()\n");
+	const IRFunction& test = find_function(ir, "test");
+	int creates = 0;
+	for (const auto& instr : test.instructions) {
+		if (instr.opcode != IROpcode::CALL_SYSCALL) {
+			continue;
+		}
+		if (std::get<int64_t>(instr.operands[1].value) == ECALL_NODE_CREATE) {
+			creates++;
+		}
+	}
+	assert(creates == 1);
+
+	const IRProgram shadowed = compile_to_ir(
+		"struct Timer:\n\tvar a = 1\n"
+		"func test():\n\treturn Timer.new()\n");
+	const IRFunction& shadow_test = find_function(shadowed, "test");
+	for (const auto& instr : shadow_test.instructions) {
+		assert(instr.opcode != IROpcode::CALL_SYSCALL ||
+			std::get<int64_t>(instr.operands[1].value) != ECALL_NODE_CREATE);
+	}
+
+	assert(refuses("func test():\n\treturn Timer.new(1)\n"));
+
+	std::cout << "  \u2713 Type.new() reaches ClassDB through the class allowlist" << std::endl;
+}
+
 // -= Declarations that used to take the whole file down =-
 
 static void test_declarations() {
@@ -200,8 +243,13 @@ static void test_declarations() {
 	find_function(ir, "test");
 	assert(machine_code_builds(script));
 
-	// @onready refused; load time is not available.
-	assert(refuses("@onready var n = 1\nfunc test():\n\treturn n\n"));
+	const IRProgram onready = compile_to_ir(
+		"@onready var n = 1\nfunc test():\n\treturn n\n");
+	assert(onready.globals.size() == 1 && onready.globals[0].name == "n");
+	const IRFunction& ready = find_function(onready, "_ready");
+	assert(count_opcode(ready, IROpcode::STORE_GLOBAL) == 1);
+	assert(refuses("func test():\n\t@onready var n = 1\n\treturn n\n"));
+	assert(refuses("@onready const K = 1\nfunc test():\n\treturn K\n"));
 	// Unknown attribute -> error.
 	assert(refuses("@bogus var n = 1\nfunc test():\n\treturn n\n"));
 	// Unterminated argument list -> error.
@@ -452,6 +500,8 @@ int main() {
 	try {
 		test_node_path_sugar();
 		test_string_literals();
+		test_tool_annotation();
+		test_engine_class_new();
 		test_declarations();
 		test_statement_annotations();
 		test_qualified_type_names();

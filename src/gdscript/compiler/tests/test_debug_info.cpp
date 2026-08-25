@@ -1,6 +1,7 @@
 // DebugLayout shadow stack on a real libriscv machine. Outer frame lines
 // resolved from return addresses via the line table; nothing per statement.
 #include "../compiler.h"
+#include "scope_stub.h"
 #include "../debug_layout.h"
 #include "../line_table.h"
 #include <cstdint>
@@ -165,6 +166,7 @@ std::unique_ptr<machine_t> boot(const std::vector<uint8_t>& elf) {
 	for (int number = 500; number < 560; number++) {
 		machine_t::install_syscall_handler(number, fail_on_syscall);
 	}
+	install_scope_stub<machine_t>();
 	machine_t::install_syscall_handler(500, capture_syscall); // ECALL_PRINT
 	machine->simulate(50'000'000ull);
 	return machine;

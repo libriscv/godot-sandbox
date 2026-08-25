@@ -98,6 +98,7 @@ CodeGenerator::CodeGenerator() {}
 
 IRProgram CodeGenerator::generate(const Program& program) {
 	IRProgram ir_program;
+	ir_program.is_tool = program.is_tool;
 
 	// Signals are members; collected first so name collisions are caught below.
 	m_signals.clear();
@@ -247,6 +248,12 @@ IRProgram CodeGenerator::generate(const Program& program) {
 
 		if (!global.type_hint.empty()) {
 			ir_global.type_hint = m_global_types[i];
+		}
+
+		if (global.is_onready && global.type_hint.empty() && !global.initializer) {
+			ir_global.init_type = IRGlobalVar::InitType::NULL_VAL;
+			m_globals_lowered = i + 1;
+			continue;
 		}
 
 		// Accessor-only property: NIL storage, no type/initializer needed.
@@ -561,7 +568,16 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 		return;
 	}
 
-	if (!stmt->type_hint.empty()) {
+	const bool declared_variant = stmt->type_hint == "Variant";
+	if (declared_variant) {
+		// Fresh register: clearing type on the initializer's would reach other uses.
+		int untyped_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(untyped_reg),
+			IRValue::reg(reg));
+		free_register(func, reg);
+		reg = untyped_reg;
+		set_register_type(func, reg, IRInstruction::TypeHint_NONE);
+	} else if (!stmt->type_hint.empty()) {
 		IRInstruction::TypeHint type = type_hint_from_string(stmt->type_hint);
 		if (type != IRInstruction::TypeHint_NONE) {
 			// Coerce so the Variant payload matches the declared type.
@@ -575,7 +591,7 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 		}
 	}
 
-	declare_variable(func, stmt->name, reg, stmt->is_const, stmt);
+	declare_variable(func, stmt->name, reg, stmt->is_const, stmt, declared_variant);
 }
 
 void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
@@ -628,8 +644,13 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 		error_at("Cannot assign to const variable: " + name, site);
 	}
 
-	value_reg = coerce_to_declared_type(value_reg, get_register_type(func, var->register_num), func,
-		"variable '" + name + "'", site);
+	if (var->is_variant) {
+		set_register_type(func, var->register_num, IRInstruction::TypeHint_NONE);
+	} else {
+		reject_reclassification(*var, value_reg, func, site);
+		value_reg = coerce_to_declared_type(value_reg, get_register_type(func, var->register_num), func,
+			"variable '" + name + "'", site);
+	}
 
 	if (var->register_num != value_reg) {
 		func.ir.instructions.emplace_back(IROpcode::MOVE,
@@ -1256,12 +1277,31 @@ int CodeGenerator::gen_compare(IROpcode opcode, int left_reg, int right_reg, Fun
 	return result_reg;
 }
 
+// Skipped in coroutines: suspension restores slots but not the mark.
+int CodeGenerator::open_loop_scope(FunctionContext& func) {
+	if (func.ir.is_coroutine) {
+		return -1;
+	}
+	const int scope_id = func.next_scope_id++;
+	func.ir.instructions.emplace_back(IROpcode::SCOPE_MARK, IRValue::imm(scope_id));
+	return scope_id;
+}
+
+void CodeGenerator::emit_loop_scope_release(int scope_id, FunctionContext& func) {
+	if (scope_id < 0) {
+		return;
+	}
+	func.ir.instructions.emplace_back(IROpcode::SCOPE_RELEASE, IRValue::imm(scope_id));
+}
+
 void CodeGenerator::gen_while(const WhileStmt* stmt, FunctionContext& func) {
 	std::string loop_label = make_label("loop");
 	std::string end_label = make_label("endloop");
 
 	func.loops.push_back({end_label, loop_label});
+	const int scope_id = open_loop_scope(func);
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
+	emit_loop_scope_release(scope_id, func);
 	int cond_reg = gen_expr(stmt->condition.get(), func);
 	emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, end_label, func);
 	free_register(func, cond_reg);
@@ -1468,7 +1508,9 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(join_label));
 		};
 
+		const int scope_id = open_loop_scope(func);
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
+		emit_loop_scope_release(scope_id, func);
 		int size_reg = alloc_register(func);
 		if (unknown_iterable) {
 			emit_four_way("size", size_reg,
@@ -1605,7 +1647,9 @@ void CodeGenerator::gen_numeric_for(const ForStmt* stmt, int start_reg, int end_
 	}
 	const IRInstruction::TypeHint numeric = float_loop ? Variant::FLOAT : Variant::INT;
 
+	const int scope_id = open_loop_scope(func);
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
+	emit_loop_scope_release(scope_id, func);
 
 	int cond_reg = alloc_register(func);
 
@@ -3118,11 +3162,21 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 			}
 		}
 	}
-	// Constant path: embed characters directly. Run-time path handled below.
-	if (expr->function_name == "load" && !is_local_function("load") && expr->arguments.size() == 1) {
+	// preload() lowers to the same LOAD_RESOURCE as a constant-path load().
+	const bool is_preload = expr->function_name == "preload" && !is_local_function("preload");
+	const bool is_load = expr->function_name == "load" && !is_local_function("load");
+	if ((is_load || is_preload) && expr->arguments.size() == 1)
+	{
 		if (const std::string* path = constant_string(expr->arguments[0].get(), func)) {
 			return gen_load_resource(*path, func);
 		}
+		if (is_preload) {
+			error_at("preload() needs a constant path", expr,
+				"The engine requires one too. Use load() for a path the program computes");
+		}
+	}
+	if (is_preload && expr->arguments.size() != 1) {
+		error_at("preload() takes exactly 1 argument", expr);
 	}
 	reject_named_arguments(*expr, "'" + expr->function_name + "'", expr);
 
@@ -3305,6 +3359,14 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		if (auto* object = dynamic_cast<const VariableExpr*>(expr->object.get())) {
 			if (const StructDecl* decl = find_struct(object->name)) {
 				return gen_struct_construct(*decl, expr->arguments, *expr, func, expr);
+			}
+			const bool names_a_type = !object->name.empty() &&
+				object->name[0] >= 'A' && object->name[0] <= 'Z';
+			if (names_a_type && find_variable(func, object->name) == nullptr &&
+				!is_global_variable(object->name) && !m_enums.count(object->name) &&
+				!is_global_class(object->name) && !is_local_function(object->name))
+			{
+				return gen_engine_class_new(object->name, expr, func);
 			}
 		}
 	}
@@ -4418,8 +4480,34 @@ CodeGenerator::Variable* CodeGenerator::find_variable(FunctionContext& func, con
 	return nullptr;
 }
 
+void CodeGenerator::reject_reclassification(const Variable& var, int value_reg,
+	const FunctionContext& func, const Stmt* site)
+{
+	const IRInstruction::TypeHint held = get_register_type(func, var.register_num);
+	const IRInstruction::TypeHint incoming = get_register_type(func, value_reg);
+	if (held == IRInstruction::TypeHint_NONE || incoming == IRInstruction::TypeHint_NONE ||
+		held == incoming)
+	{
+		return;
+	}
+	// Widenings (int->float, bool->int/float) are not reclassifications.
+	if ((held == Variant::FLOAT && incoming == Variant::INT) ||
+		(incoming == Variant::BOOL && (held == Variant::INT || held == Variant::FLOAT)))
+	{
+		return;
+	}
+	error_at("Variable '" + var.name + "' has type " + std::string(variant_type_name(held)) +
+		" and is being assigned a value of type " + std::string(variant_type_name(incoming)) +
+		". Reclassification is disabled in SafeGDScript", site,
+		"A variable keeps the type it was declared with. GDScript would allow this -- an "
+		"untyped 'var' is a Variant there -- but that type is what makes arithmetic, "
+		"comparison and 'match' on '" + var.name + "' compile to instructions instead of "
+		"host calls. Use a second variable, or declare 'var " + var.name + ": Variant' to "
+		"ask for a slot that holds anything");
+}
+
 void CodeGenerator::declare_variable(FunctionContext& func, const std::string& name, int register_num, bool is_const,
-	const Stmt* site)
+	const Stmt* site, bool is_variant)
 {
 	if (func.scopes.empty()) {
 		throw CompilerException(ErrorType::CODEGEN_ERROR, "Cannot declare variable: no scope active");
@@ -4430,7 +4518,7 @@ void CodeGenerator::declare_variable(FunctionContext& func, const std::string& n
 		error_at("Variable '" + name + "' is already declared in this scope", site);
 	}
 
-	current_scope.variables[name] = {name, register_num, IRInstruction::TypeHint_NONE, is_const};
+	current_scope.variables[name] = {name, register_num, IRInstruction::TypeHint_NONE, is_const, is_variant};
 }
 
 void CodeGenerator::set_register_type(FunctionContext& func, int reg, IRInstruction::TypeHint type) {
@@ -5542,6 +5630,28 @@ bool CodeGenerator::is_global_variable(const std::string& name) const {
 
 bool CodeGenerator::is_global_const(const std::string& name) const {
 	return m_global_consts.find(name) != m_global_consts.end();
+}
+
+int CodeGenerator::gen_engine_class_new(const std::string& class_name, const MemberCallExpr* expr,
+	FunctionContext& func)
+{
+	if (!expr->arguments.empty()) {
+		error_at("'" + class_name + ".new()' takes no arguments", expr,
+			"An engine class is constructed empty and configured afterwards, as in GDScript");
+	}
+	int result_reg = alloc_register(func);
+	int str_idx = add_string_constant(class_name);
+
+	IRInstruction instr(IROpcode::CALL_SYSCALL);
+	instr.operands.push_back(IRValue::reg(result_reg));
+	instr.operands.push_back(IRValue::imm(ECALL_NODE_CREATE));
+	instr.operands.push_back(IRValue::imm(str_idx));
+	instr.operands.push_back(IRValue::imm(static_cast<int64_t>(class_name.length())));
+
+	func.ir.instructions.push_back(instr);
+	set_register_type(func, result_reg, Variant::OBJECT);
+
+	return result_reg;
 }
 
 int CodeGenerator::gen_global_class_get(const std::string& class_name, FunctionContext& func) {

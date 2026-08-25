@@ -74,6 +74,9 @@ private:
 	void emit_prologue(const IRFunction& func);
 	// Zero all slot type tags; promote_frame_handles reads the whole array.
 	void emit_zero_variant_slots();
+	void gen_scope_mark(const IRInstruction& instr);
+	void gen_scope_release(const IRInstruction& instr);
+	int scope_slot_offset(int scope_id) const;
 	void gen_instruction(const IRInstruction& instr);
 	void gen_call(const IRInstruction& instr);
 	void gen_call_hosted(const IRInstruction& instr);
@@ -96,6 +99,7 @@ private:
 	void gen_call_syscall(const IRInstruction& instr);
 	// Per-syscall expansions; each has its own calling convention.
 	void gen_syscall_get_obj(const IRInstruction& instr, int result_vreg);
+	void gen_syscall_node_create(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_array_size(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_string_size(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_array_at(const IRInstruction& instr, int result_vreg);
@@ -128,6 +132,7 @@ private:
 
 	// Index folded into relocation; a post-la addi truncates at 85 globals.
 	void emit_address_of_global(uint8_t rd, size_t index);
+	void emit_address_of_global_area(uint8_t rd);
 	void emit_address_of_init_scratch(uint8_t rd);
 	void emit_instance_init(const IRProgram& program);
 	bool emits_instance_init(const IRProgram& program) const;
@@ -451,6 +456,12 @@ private:
 		bool is_coroutine = false;
 		// Frame size in bytes from SAVED_REG_SPACE; checked at resume.
 		int variant_space = 0;
+
+		// One 8-byte mark slot per SCOPE_MARK id, above the Variant slots so the
+		// release walk never reads a mark as a handle. Zero when the function has
+		// no scoped loop.
+		int scope_slot_base = 0;
+		int scope_slot_count = 0;
 		// Per-suspension labels, state-ordered; resume dispatches on the index.
 		std::vector<std::string> await_states;
 		std::string resume_label;

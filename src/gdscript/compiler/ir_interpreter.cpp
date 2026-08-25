@@ -140,6 +140,10 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			break;
 		}
 
+		case IROpcode::SCOPE_MARK:
+		case IROpcode::SCOPE_RELEASE:
+			break;
+
 		case IROpcode::LOAD_NIL: {
 			// Integer zero; interpreter's Value has no NIL.
 			int reg = std::get<int>(instr.operands[0].value);

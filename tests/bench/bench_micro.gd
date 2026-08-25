@@ -63,6 +63,13 @@ func string_ops(n : int) -> int:
 		acc += s.length()
 		i += 1
 	return acc
+
+func string_iterate(n : int) -> int:
+	var text : String = "x".repeat(n)
+	var acc : int = 0
+	for c in text:
+		acc += c.length()
+	return acc
 """
 
 # One row per kernel: the work unit is what `n` counts, except for fib, whose
@@ -70,19 +77,17 @@ func string_ops(n : int) -> int:
 # many times the kernel is called per sample, for kernels that cannot be given a
 # large n.
 #
-# string_ops is one of those: every String a guest builds is a scoped variant on
-# the host side, and Sandbox::MAX_REFS caps those at 100 for the duration of a
-# call -- its iteration spends three, on str(i), the concatenation and the
-# length. A guest loop that builds more than the cap aborts, so the loop is kept
-# well under it and the call is repeated instead. This is a property of the
-# sandbox, not of the compiler: raising it is set_max_refs().
+# Loop scope release reclaims scoped variants per pass, so large n is safe now.
+# Op count kept comparable to pre-release baselines.
+# `string iterate` n is the character count.
 const KERNELS := [
 	{"group": "int loop", "fn": "loop_int", "n": 100000, "reps": 1, "unit": "iteration"},
 	{"group": "float loop", "fn": "loop_float", "n": 100000, "reps": 1, "unit": "iteration"},
 	{"group": "recursion", "fn": "fib", "n": 20, "reps": 1, "unit": "call"},
 	{"group": "array append + index", "fn": "array_sum", "n": 20000, "reps": 1, "unit": "element"},
 	{"group": "dictionary set + get", "fn": "dict_ops", "n": 20000, "reps": 1, "unit": "op"},
-	{"group": "string build", "fn": "string_ops", "n": 20, "reps": 500, "unit": "string"},
+	{"group": "string build", "fn": "string_ops", "n": 2000, "reps": 5, "unit": "string"},
+	{"group": "string iterate", "fn": "string_iterate", "n": 8000, "reps": 1, "unit": "character"},
 ]
 
 var _elf : PackedByteArray = PackedByteArray()

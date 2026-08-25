@@ -246,7 +246,7 @@ Dictionary SafeGDScript::_get_method_info(const StringName &p_method) const {
 	return Dictionary();
 }
 bool SafeGDScript::_is_tool() const {
-	return true;
+	return tool_script;
 }
 bool SafeGDScript::_is_valid() const {
 	return !elf_data.is_empty();
@@ -606,6 +606,19 @@ gdscript::LineTable SafeGDScript::get_compiler_line_table() {
 	return table;
 }
 
+bool SafeGDScript::get_compiler_is_tool() {
+	Sandbox *compiler = get_compiler_sandbox();
+	if (compiler == nullptr || !compiler->has_function("is_tool")) {
+		return true;
+	}
+	GDExtensionCallError error;
+	const Variant answer = compiler->vmcall_fn("is_tool", nullptr, 0, error);
+	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
+		return true;
+	}
+	return bool(answer);
+}
+
 PackedInt32Array SafeGDScript::get_compiler_breakpoint_lines() {
 	Sandbox *compiler = get_compiler_sandbox();
 	if (compiler == nullptr || !compiler->has_function("get_breakpoint_lines")) {
@@ -716,6 +729,8 @@ void SafeGDScript::update_methods_info() {
 
 		signals_info.push_back(std::move(signal_info));
 	}
+
+	this->tool_script = get_compiler_is_tool();
 
 	// Profiling records are indexed by position in this table.
 	this->signatures = get_compiler_function_signatures();

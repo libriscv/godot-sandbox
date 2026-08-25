@@ -101,7 +101,9 @@
 
 #define ECALL_CALL_GUEST (GAME_API_BASE + 54)
 
-#define ECALL_LAST (GAME_API_BASE + 55)
+#define ECALL_VSCOPE (GAME_API_BASE + 55)
+
+#define ECALL_LAST (GAME_API_BASE + 56)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)
@@ -119,6 +121,11 @@
 
 #define EXTERN_SYSCALL(rval, name, ...) \
 	extern "C" rval name(__VA_ARGS__);
+
+enum class Scope_Op {
+	MARK = 0,
+	RELEASE = 1,
+};
 
 enum class Object_Op {
 	GET_METHOD_LIST,
@@ -360,6 +367,8 @@ enum class Utility_Op {
 
 	CHAR = 67,
 	ORD = 68,
+
+	IS_INSTANCE_VALID = 69,
 };
 
 // Output channel for ECALL_PRINT_CHANNEL.

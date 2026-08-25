@@ -116,6 +116,7 @@ public:
 	static gdscript::LineTable get_compiler_line_table();
 	// Breakpoint lines the last compile placed (may differ from requested).
 	static PackedInt32Array get_compiler_breakpoint_lines();
+	static bool get_compiler_is_tool();
 	static std::vector<gdscript::FunctionSignature> get_compiler_signal_signatures();
 	void remove_instance(SafeGDScriptInstance *p_instance);
 
@@ -140,6 +141,7 @@ private:
 	PackedInt32Array breakpoints;
 	// What the last compile placed, a subset of the above.
 	PackedInt32Array active_breakpoints;
+	bool tool_script = true;
 	// IRProgram order; index i matches shadow-stack frame function_index.
 	std::vector<gdscript::FunctionSignature> signatures;
 	gdscript::LineTable line_table;

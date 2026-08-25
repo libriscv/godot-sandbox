@@ -51,6 +51,7 @@ public:
 	const std::vector<FunctionSignature> &get_function_signatures() const { return m_signatures; }
 	const std::vector<FunctionSignature> &get_signal_signatures() const { return m_signals; }
 	const LineTable &get_line_table() const { return m_line_table; }
+	bool is_tool() const { return m_is_tool; }
 	// Subset of breakpoint_lines that got a stop emitted.
 	const std::vector<uint32_t> &get_installed_breakpoints() const { return m_installed_breakpoints; }
 
@@ -60,6 +61,7 @@ private:
 	std::vector<FunctionSignature> m_signatures;
 	std::vector<FunctionSignature> m_signals;
 	LineTable m_line_table;
+	bool m_is_tool = false;
 	std::vector<uint32_t> m_installed_breakpoints;
 };
 

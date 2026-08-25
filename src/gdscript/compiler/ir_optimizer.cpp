@@ -34,6 +34,35 @@ IROptimizer::IROptimizer() {
 	}
 }
 
+// LICM can hoist code below the mark; slide it back to the loop label.
+void IROptimizer::tighten_scope_marks(IRFunction& func) {
+	for (size_t i = 0; i + 1 < func.instructions.size(); i++) {
+		if (func.instructions[i].opcode != IROpcode::SCOPE_MARK) {
+			continue;
+		}
+		size_t label = i + 1;
+		while (label < func.instructions.size() &&
+			func.instructions[label].opcode != IROpcode::LABEL)
+		{
+				const IROpcode op = func.instructions[label].opcode;
+			if (op == IROpcode::SCOPE_MARK || op == IROpcode::SCOPE_RELEASE ||
+				ir_is_control_flow(op))
+			{
+				break;
+			}
+			label++;
+		}
+		if (label >= func.instructions.size() ||
+			func.instructions[label].opcode != IROpcode::LABEL || label == i + 1)
+		{
+			continue;
+		}
+		IRInstruction mark = func.instructions[i];
+		func.instructions.erase(func.instructions.begin() + i);
+		func.instructions.insert(func.instructions.begin() + (label - 1), std::move(mark));
+	}
+}
+
 const std::vector<IRPass>& IROptimizer::pipeline() {
 	// Peephole appears three times: each earlier pass exposes new patterns.
 	static const std::vector<IRPass> passes = {
@@ -48,6 +77,7 @@ const std::vector<IRPass>& IROptimizer::pipeline() {
 		{ "redundant-stores", &IROptimizer::eliminate_redundant_stores },
 		{ "peephole", &IROptimizer::peephole_optimization },
 		{ "dead-code", &IROptimizer::eliminate_dead_code },
+		{ "scope-marks", &IROptimizer::tighten_scope_marks },
 	};
 	return passes;
 }
@@ -323,6 +353,8 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		// Join point; entry state computed by constant_folding(), not changed here.
 		case IROpcode::LABEL:
 		case IROpcode::BREAKPOINT:
+		case IROpcode::SCOPE_MARK:
+		case IROpcode::SCOPE_RELEASE:
 			emit(instr);
 			break;
 

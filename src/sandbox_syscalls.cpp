@@ -672,7 +672,8 @@ APICALL(api_utility) {
 		case Utility_Op::ERROR_STRING:
 		case Utility_Op::IS_SAME:
 		case Utility_Op::CHAR:
-		case Utility_Op::ORD: {
+		case Utility_Op::ORD:
+		case Utility_Op::IS_INSTANCE_VALID: {
 			Sandbox &emu = riscv::emu(machine);
 			// str() takes up to 63 arguments and String() takes none at all;
 			// Binary: type_convert(), is_same(). Unary: the rest.
@@ -710,6 +711,22 @@ APICALL(api_utility) {
 					PENALIZE(10'000);
 					vres->create(emu, Variant(utility_len(args[0].toVariant(emu))));
 					break;
+				case Utility_Op::IS_INSTANCE_VALID: {
+					PENALIZE(10'000);
+					bool valid = false;
+					if (args[0].type == Variant::OBJECT) {
+						const uintptr_t handle = uintptr_t(args[0].v.i);
+						godot::Object *obj = nullptr;
+						if (Sandbox::CurrentState::ScopedObject *so = emu.find_scoped_object(handle)) {
+							obj = Sandbox::resolve_scoped_object(*so);
+						} else {
+							obj = emu.get_explicitly_allowed_object(handle);
+						}
+						valid = Sandbox::engine_object_id(obj) != 0;
+					}
+					vres->create(emu, Variant(valid));
+					break;
+				}
 				case Utility_Op::TO_INT:
 					PENALIZE(10'000);
 					vres->create(emu, Variant(utility_to_int(args[0].toVariant(emu))));
@@ -1407,6 +1424,150 @@ APICALL(api_vclone) {
 		// Update the Variant with the new index.
 		vp->v.i = new_idx;
 	}
+}
+
+struct ScopeRescue {
+	struct Entry {
+		const godot::Variant *addr;
+		godot::Variant value;
+		bool dying;
+		int32_t reindexed;
+	};
+	std::vector<Entry> entries;
+	std::vector<std::pair<GuestVariant *, uint32_t>> handle_fixups;
+	std::vector<std::pair<uint32_t, uint32_t>> slot_fixups;
+
+	void clear() {
+		entries.clear();
+		handle_fixups.clear();
+		slot_fixups.clear();
+	}
+	uint32_t entry_for(const godot::Variant *addr, bool dying) {
+		for (size_t i = 0; i < entries.size(); i++) {
+			if (entries[i].addr == addr) {
+				return uint32_t(i);
+			}
+		}
+		Entry &e = entries.emplace_back();
+		e.addr = addr;
+		e.dying = dying;
+		e.reindexed = -1;
+		if (dying) {
+			e.value = std::move(const_cast<godot::Variant &>(*addr));
+		}
+		return uint32_t(entries.size() - 1);
+	}
+};
+
+static inline int32_t scope_owned_index(const Sandbox::CurrentState &st, const godot::Variant *ptr) {
+	const godot::Variant *begin = st.variants.data();
+	if (ptr >= begin && ptr < begin + st.variants.size()) {
+		return int32_t(ptr - begin);
+	}
+	return -1;
+}
+
+static void scope_rescue_range(machine_t &machine, Sandbox &emu, Sandbox::CurrentState &st,
+		gaddr_t base, gaddr_t size, uint32_t scoped_mark, uint32_t variant_mark, ScopeRescue &rescue) {
+	if (base == 0 || size < sizeof(GuestVariant)) {
+		return;
+	}
+	const size_t count = size / sizeof(GuestVariant);
+	GuestVariant *slots = machine.memory.memarray<GuestVariant>(base, count);
+	for (size_t i = 0; i < count; i++) {
+		GuestVariant *gv = &slots[i];
+		if (!gv->is_scoped_variant()) {
+			continue;
+		}
+		const int32_t idx = int32_t(gv->v.i);
+		if (Sandbox::is_permanent_variant(idx) || idx < int32_t(scoped_mark)) {
+			continue;
+		}
+		std::optional<const godot::Variant *> var = emu.get_scoped_variant(idx);
+		if (!var.has_value()) {
+			gv->type = godot::Variant::NIL;
+			gv->v.i = 0;
+			continue;
+		}
+		const godot::Variant *addr = var.value();
+		const int32_t owned = scope_owned_index(st, addr);
+		const bool dying = owned >= 0 && uint32_t(owned) >= variant_mark;
+		rescue.handle_fixups.emplace_back(gv, rescue.entry_for(addr, dying));
+	}
+}
+
+APICALL(api_vscope) {
+	auto [op, mark, frame_base, frame_size, globals_base, globals_size, members_size] =
+			machine.sysargs<int, uint64_t, gaddr_t, gaddr_t, gaddr_t, gaddr_t, gaddr_t>();
+	auto &emu = riscv::emu(machine);
+	SYS_TRACE("vscope", op, mark, frame_base, frame_size);
+
+	Sandbox::CurrentState &st = emu.state();
+
+	static constexpr uint64_t SCOPE_MARK_TAG = uint64_t(1) << 63;
+
+	if (Scope_Op(op) == Scope_Op::MARK) {
+		machine.set_result(SCOPE_MARK_TAG | (uint64_t(st.scoped_variants.size()) << 32) |
+				uint64_t(uint32_t(st.variants.size())));
+		return;
+	}
+	if (Scope_Op(op) != Scope_Op::RELEASE) {
+		ERR_PRINT("Unknown scope operation");
+		throw std::runtime_error("Unknown scope operation");
+	}
+	if (!emu.is_in_vmcall()) {
+		return;
+	}
+	if ((mark & SCOPE_MARK_TAG) == 0) {
+		return;
+	}
+	const uint32_t scoped_mark = uint32_t((mark & ~SCOPE_MARK_TAG) >> 32);
+	const uint32_t variant_mark = uint32_t(mark);
+	if (scoped_mark > st.scoped_variants.size() || variant_mark > st.variants.size()) {
+		return;
+	}
+	if (scoped_mark == st.scoped_variants.size() && variant_mark == st.variants.size()) {
+		return;
+	}
+	PENALIZE(500);
+
+	static thread_local ScopeRescue rescue;
+	rescue.clear();
+	scope_rescue_range(machine, emu, st, frame_base, frame_size, scoped_mark, variant_mark, rescue);
+	scope_rescue_range(machine, emu, st, globals_base, globals_size, scoped_mark, variant_mark, rescue);
+	const gaddr_t members_base = gaddr_t(machine.cpu.reg(riscv::REG_TP));
+	scope_rescue_range(machine, emu, st, members_base, members_size, scoped_mark, variant_mark, rescue);
+
+	// Slots below the mark can point above it after get_mutable_scoped_variant().
+	for (uint32_t slot = 0; slot < scoped_mark; slot++) {
+		const godot::Variant *addr = st.scoped_variants[slot];
+		const int32_t owned = scope_owned_index(st, addr);
+		if (owned < 0 || uint32_t(owned) < variant_mark) {
+			continue;
+		}
+		rescue.slot_fixups.emplace_back(slot, rescue.entry_for(addr, true));
+	}
+
+	st.scoped_variants.resize(scoped_mark);
+	st.variants.resize(variant_mark);
+
+	for (auto &e : rescue.entries) {
+		if (e.dying) {
+			st.variants.push_back(std::move(e.value));
+			e.addr = &st.variants.back();
+		}
+	}
+	for (auto &[gv, index] : rescue.handle_fixups) {
+		ScopeRescue::Entry &e = rescue.entries[index];
+		if (e.reindexed < 0) {
+			e.reindexed = int32_t(emu.add_scoped_variant(e.addr));
+		}
+		gv->v.i = e.reindexed;
+	}
+	for (auto &[slot, index] : rescue.slot_fixups) {
+		st.scoped_variants[slot] = rescue.entries[index].addr;
+	}
+	rescue.clear();
 }
 
 APICALL(api_vstore) {
@@ -2695,7 +2856,8 @@ APICALL(api_string_at) {
 		ERR_PRINT("Invalid String object, type = " + String(GuestVariant::type_name(var_str.get_type())));
 		throw std::runtime_error("Invalid String object, idx = " + std::to_string(str_idx) + " type = " + GuestVariant::type_name(var_str.get_type()));
 	}
-	godot::String str = var_str.operator String();
+	// const avoids CowData::ptrw() copy on each index.
+	const godot::String str = var_str.operator String();
 
 	if (index < 0) {
 		index += str.length();
@@ -3146,6 +3308,8 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_SANDBOX_ADD, api_sandbox_add },
 
 			{ ECALL_CALL_GUEST, api_call_guest },
+
+			{ ECALL_VSCOPE, api_vscope },
 
 			{ ECALL_PACKED_ARRAY_OPS, api_packed_array_ops },
 

@@ -2,6 +2,7 @@
 // Runs compiled coroutines on libriscv against a minimal host stub.
 // Handle promotion covered by test_await_host_* in tests/test_basic.gd.
 #include "../compiler.h"
+#include "scope_stub.h"
 #include "../syscall_numbers.h"
 #include "../variant_layout.h"
 #include "../variant_types.h"
@@ -191,6 +192,7 @@ std::unique_ptr<machine_t> boot(const Program& program) {
 	for (int number = GAME_API_BASE; number < ECALL_LAST; number++) {
 		machine_t::install_syscall_handler(number, fail_on_syscall);
 	}
+	install_scope_stub<machine_t>();
 	machine_t::install_syscall_handler(ECALL_AWAIT, await_syscall);
 	machine_t::install_syscall_handler(ECALL_AWAIT_RESTORE, await_restore_syscall);
 	machine_t::install_syscall_handler(ECALL_CALL_GUEST, call_guest_syscall);

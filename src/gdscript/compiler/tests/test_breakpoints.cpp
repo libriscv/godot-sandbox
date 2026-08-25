@@ -1,6 +1,7 @@
 // ECALL_BREAKPOINT on a real libriscv machine: placement, register
 // transparency, line-table/a0 agreement, and shadow-stack presence.
 #include "../compiler.h"
+#include "scope_stub.h"
 #include "../debug_layout.h"
 #include "../line_table.h"
 #include "../syscall_numbers.h"
@@ -127,6 +128,7 @@ std::unique_ptr<machine_t> boot(const Program& program) {
 	for (int number = GAME_API_BASE; number < ECALL_LAST; number++) {
 		machine_t::install_syscall_handler(number, fail_on_syscall);
 	}
+	install_scope_stub<machine_t>();
 	machine_t::install_syscall_handler(ECALL_BREAKPOINT, breakpoint_syscall);
 	g_lines = &program.lines;
 	g_stops.clear();

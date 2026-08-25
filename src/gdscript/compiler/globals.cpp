@@ -142,6 +142,7 @@ static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 	{ "type_convert", GlobalFn::TYPE_CONVERT, GlobalKind::HOST, 2, 2, GlobalResult::VARIANT, UTILITY_TYPE_CONVERT, 0, NO_FORM, NO_FORM },
 	{ "error_string", GlobalFn::ERROR_STRING, GlobalKind::HOST, 1, 1, GlobalResult::STRING, UTILITY_ERROR_STRING, 0, NO_FORM, NO_FORM },
 	{ "is_same", GlobalFn::IS_SAME, GlobalKind::HOST, 2, 2, GlobalResult::BOOL, UTILITY_IS_SAME, 0, NO_FORM, NO_FORM },
+	{ "is_instance_valid", GlobalFn::IS_INSTANCE_VALID, GlobalKind::HOST, 1, 1, GlobalResult::BOOL, UTILITY_IS_INSTANCE_VALID, 0, NO_FORM, NO_FORM },
 
 	{ "char", GlobalFn::CHAR, GlobalKind::HOST, 1, 1, GlobalResult::STRING, UTILITY_CHAR, 0, NO_FORM, NO_FORM },
 	{ "ord", GlobalFn::ORD, GlobalKind::HOST, 1, 1, GlobalResult::INT, UTILITY_ORD, 0, NO_FORM, NO_FORM },
@@ -254,7 +255,6 @@ static const struct { const char* name; const char* reason; } UNIMPLEMENTED_GLOB
 	// Object lifetime: sandbox uses allowlist, not instance ids.
 	{ "instance_from_id", "objects are reached through the sandbox allowlist, not by instance id" },
 	{ "is_instance_id_valid", "objects are reached through the sandbox allowlist, not by instance id" },
-	{ "is_instance_valid", "no ECALL_UTILITY op yet" },
 	{ "weakref", "no host syscall for weak references yet" },
 
 	{ "cubic_interpolate_in_time", "takes eight arguments; ECALL_UTILITY carries five" },
@@ -268,8 +268,6 @@ static const struct { const char* name; const char* reason; } UNIMPLEMENTED_GLOB
 	{ "randomize", "mutates the project's shared RNG state" },
 	{ "seed", "mutates the project's shared RNG state" },
 	{ "rand_from_seed", "no ECALL_UTILITY op yet" },
-	// preload() is a compile-time constant; load() is lowered to LOAD_RESOURCE.
-	{ "preload", "the resource would have to be loaded before the program runs; use load()" },
 
 	// Built-in types: no inline constructor or ECALL_VCREATE lowering.
 	{ "Quaternion", "no constructor lowering yet" },

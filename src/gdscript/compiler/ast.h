@@ -189,6 +189,7 @@ struct VarDeclStmt : Stmt {
 	bool is_const = false;
 	bool is_property = false;
 	bool is_static = false;
+	bool is_onready = false;
 	ExportHint export_hint;
 
 	std::unique_ptr<FunctionDecl> setter_body;
@@ -444,6 +445,7 @@ struct EnumDecl {
 };
 
 struct Program {
+	bool is_tool = false;
 	std::vector<VarDeclStmt> globals;
 	std::vector<StructDecl> structs;
 	std::vector<EnumDecl> enums;

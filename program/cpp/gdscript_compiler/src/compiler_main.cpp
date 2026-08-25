@@ -22,6 +22,7 @@ PUBLIC Variant compile(String code)
 	gdscript_remember_signals(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
+	gdscript_remember_is_tool(compiler);
 
 	if (elf_data.empty()) {
 		last_error = String(compiler.get_error());
@@ -53,6 +54,7 @@ PUBLIC Variant compile_profiled(String code)
 	gdscript_remember_signals(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
+	gdscript_remember_is_tool(compiler);
 
 	if (elf_data.empty()) {
 		last_error = String(compiler.get_error());
@@ -82,6 +84,7 @@ PUBLIC Variant compile_debug(String code, PackedInt32Array breakpoints)
 	gdscript_remember_signals(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
+	gdscript_remember_is_tool(compiler);
 
 	if (elf_data.empty()) {
 		last_error = String(compiler.get_error());
@@ -138,4 +141,9 @@ PUBLIC Variant get_line_table()
 PUBLIC Variant get_breakpoint_lines()
 {
 	return gdscript_breakpoints_to_variant();
+}
+
+PUBLIC Variant is_tool()
+{
+	return gdscript_last_is_tool();
 }

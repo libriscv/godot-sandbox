@@ -47,6 +47,7 @@ PUBLIC Variant compile(String code)
 	gdscript_remember_signals(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
+	gdscript_remember_is_tool(compiler);
 
 	if (elf_data.empty()) {
 		print("ERROR: Compilation failed: ", compiler.get_error());
@@ -77,6 +78,7 @@ PUBLIC Variant compile_profiled(String code)
 	gdscript_remember_signals(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
+	gdscript_remember_is_tool(compiler);
 
 	if (elf_data.empty()) {
 		last_error = String(compiler.get_error());
@@ -106,6 +108,7 @@ PUBLIC Variant compile_debug(String code, PackedInt32Array breakpoints)
 	gdscript_remember_signals(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
+	gdscript_remember_is_tool(compiler);
 
 	if (elf_data.empty()) {
 		last_error = String(compiler.get_error());
@@ -175,6 +178,11 @@ PUBLIC Variant get_breakpoint_lines()
 	return gdscript_breakpoints_to_variant();
 }
 
+PUBLIC Variant is_tool()
+{
+	return gdscript_last_is_tool();
+}
+
 // The generated code hard-codes the Variant layout, so the compiler's idea of it
 // has to match the sandbox API it is running inside. They are derived from the
 // same DOUBLE_PRECISION_REAL_T flag, but only a check ties them together: a
@@ -192,4 +200,18 @@ PUBLIC Variant compiler_variant_layout()
 	d["guest_real_size"] = (int64_t)sizeof(real_t);
 	d["double_precision"] = layout.double_precision;
 	return d;
+}
+
+MAKE_SYSCALL(ECALL_VSCOPE, unsigned long, sys_vscope, int op, unsigned long mark,
+	void *frame, unsigned long frame_size, void *globals, unsigned long globals_size,
+	unsigned long members_size);
+
+PUBLIC Variant scope_release_keeps_a_mutated_argument(String s, int passes)
+{
+	const unsigned long mark = sys_vscope(int(Scope_Op::MARK), 0, nullptr, 0, nullptr, 0, 0);
+	for (int i = 0; i < passes; i++) {
+		s += std::string_view("x");
+		sys_vscope(int(Scope_Op::RELEASE), mark, nullptr, 0, nullptr, 0, 0);
+	}
+	return s.size();
 }

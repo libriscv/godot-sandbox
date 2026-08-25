@@ -6,6 +6,7 @@
 // contract is that ECALL_CALLABLE_CREATE's bound Variant is *prepended* to
 // every call (RiscvCallable::call), which no amount of reading the IR proves.
 #include "../compiler.h"
+#include "scope_stub.h"
 #include "../syscall_numbers.h"
 #include "../variant_layout.h"
 #include "../variant_types.h"
@@ -288,6 +289,7 @@ std::unique_ptr<machine_t> boot(const std::vector<uint8_t>& elf) {
 	for (int number = GAME_API_BASE; number < ECALL_LAST; number++) {
 		machine_t::install_syscall_handler(number, fail_on_syscall);
 	}
+	install_scope_stub<machine_t>();
 	machine_t::install_syscall_handler(ECALL_CALLABLE_CREATE, callable_create_syscall);
 	machine_t::install_syscall_handler(ECALL_VCALL, vcall_syscall);
 	machine_t::install_syscall_handler(ECALL_VCREATE, vcreate_syscall);

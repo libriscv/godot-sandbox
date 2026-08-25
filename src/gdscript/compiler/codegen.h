@@ -27,6 +27,7 @@ private:
 		int register_num;
 		IRInstruction::TypeHint type_hint = IRInstruction::TypeHint_NONE;
 		bool is_const = false;
+		bool is_variant = false;
 	};
 
 	struct Scope {
@@ -48,6 +49,7 @@ private:
 		std::vector<LoopContext> loops;
 		std::string return_type;
 		int next_register = 0;
+		int next_scope_id = 0;
 	};
 
 	IRFunction generate_function(const FunctionDecl& func, const StructDecl* owner = nullptr);
@@ -62,6 +64,9 @@ private:
 	void gen_return(const ReturnStmt* stmt, FunctionContext& func);
 	void gen_if(const IfStmt* stmt, FunctionContext& func);
 	void gen_match(const MatchStmt* stmt, FunctionContext& func);
+	int open_loop_scope(FunctionContext& func);
+	void emit_loop_scope_release(int scope_id, FunctionContext& func);
+
 	void gen_while(const WhileStmt* stmt, FunctionContext& func);
 	void gen_for(const ForStmt* stmt, FunctionContext& func);
 	void gen_break(const BreakStmt* stmt, FunctionContext& func);
@@ -149,7 +154,9 @@ private:
 	void pop_scope(FunctionContext& func);
 	Variable* find_variable(FunctionContext& func, const std::string& name);
 	void declare_variable(FunctionContext& func, const std::string& name, int register_num,
-		bool is_const = false, const Stmt* site = nullptr);
+		bool is_const = false, const Stmt* site = nullptr, bool is_variant = false);
+	void reject_reclassification(const Variable& var, int value_reg,
+		const FunctionContext& func, const Stmt* site);
 
 	void set_register_type(FunctionContext& func, int reg, IRInstruction::TypeHint type);
 	IRInstruction::TypeHint get_register_type(const FunctionContext& func, int reg) const;
@@ -277,6 +284,8 @@ private:
 
 	bool is_global_class(const std::string& name) const;
 	int gen_global_class_get(const std::string& class_name, FunctionContext& func);
+	int gen_engine_class_new(const std::string& class_name, const MemberCallExpr* expr,
+		FunctionContext& func);
 
 	bool is_local_function(const std::string& name) const;
 	static std::unordered_set<std::string> get_global_classes();

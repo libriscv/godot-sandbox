@@ -115,6 +115,8 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 			}
 		}
 
+		m_is_tool = ir_program.is_tool;
+
 		std::vector<uint8_t> elf_data;
 
 		if (options.output_elf) {

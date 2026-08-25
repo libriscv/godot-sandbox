@@ -9484,12 +9484,232 @@ func through_self():
 
 	s.queue_free()
 
-# -= Syntax the engine accepts and this used to refuse =-
+func test_sgd_tool_annotation_decides_is_tool():
+	var tool_script = SafeGDScript.new()
+	tool_script.set_source_code("@tool\nfunc answer():\n\treturn 1\n")
+	assert_true(tool_script.is_tool(), "@tool makes a tool script")
+
+	var plain = SafeGDScript.new()
+	plain.set_source_code("func answer():\n\treturn 1\n")
+	assert_false(plain.is_tool(), "a script that did not ask is not one")
+
+func test_sgd_onready_assigns_when_the_node_is_ready():
+	var node = Node.new()
+	var script = SafeGDScript.new()
+	script.set_source_code("""
+@onready var lazy = 40 + 2
+@onready var doubled = lazy * 2
+
+func _ready():
+	lazy += 1
+
+func get_lazy():
+	return lazy
+
+func get_doubled():
+	return doubled
+""")
+	node.name = "Ready"
+	node.set_script(script)
+	assert_eq(node.get_lazy(), null, "an @onready member is null before _ready()")
+	assert_eq(node.get_doubled(), null, "and so is one that reads it")
+
+	add_child(node)
+	await get_tree().process_frame
+
+	assert_eq(node.get_lazy(), 43,
+		"the initializer runs first, then the body of _ready()")
+	assert_eq(node.get_doubled(), 84,
+		"declaration order is kept, so the second initializer sees the first")
+
+	node.queue_free()
+
+func test_sgd_engine_class_new():
+	var gdscript_code = """
+func make():
+	var t = Timer.new()
+	t.wait_time = 2.5
+	var seen = t.wait_time
+	t.free()
+	return seen
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	s.set_class_allowed_callback(func(sandbox, name): return name == "Timer")
+	assert_eq(s.vmcallv("make"), 2.5, "Timer.new() builds a Timer")
+
+	s.set_class_allowed_callback(func(sandbox, name): return false)
+	assert_eq(s.vmcallv("make"), null, "a class the host refuses is not built")
+	assert_engine_error("Class name is not allowed")
+	assert_engine_error("Exception: Class name is not allowed")
+
+	s.queue_free()
+
+func test_sgd_is_instance_valid():
+	var gdscript_code = """
+func checks():
+	return [is_instance_valid(self), is_instance_valid(42), is_instance_valid(null)]
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	add_child(s)
+	assert_eq(s.vmcallv("checks"), [true, false, false],
+		"a live object is valid; a number and a null are not")
+
+	s.queue_free()
+
+func test_sgd_preload_is_load_with_a_constant_path():
+	var gdscript_code = """
+func by_preload():
+	return preload("res://icon.svg") != null
+
+func by_load():
+	return load("res://icon.svg") != null
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("by_preload"), true, "preload() resolves a constant path")
+	assert_eq(s.vmcallv("by_load"), true, "and load() still does the same")
+
+	s.queue_free()
+
+func test_sgd_an_untyped_global_may_change_type():
+	var gdscript_code = """
+var g = null
+
+func steps():
+	var out = []
+	g = 42
+	out.append(g)
+	g = g + 1
+	out.append(g)
+	g = "text"
+	out.append(g)
+	g = {"a": 1}
+	out.append(g["a"])
+	return out
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("steps"), [42, 43, "text", 1],
+		"an untyped global holds whatever it was last given")
+
+	s.queue_free()
+
+func test_sgd_a_loop_may_allocate_past_the_reference_cap():
+	var gdscript_code = """
+func dict_loop(n):
+	var total = 0
+	for i in range(n):
+		var d = {"a": i}
+		total += d["a"]
+	return total
+
+func string_loop(n):
+	var total = 0
+	for i in range(n):
+		var s = "row-" + str(i)
+		total += s.length()
+	return total
+
+func walk_a_string(text):
+	var total = 0
+	for c in text:
+		total += 1
+	return total
+
+func accumulate(n):
+	var acc = ""
+	for i in range(n):
+		acc = acc + "x"
+	return acc.length()
+
+func into_an_array(n):
+	var rows = []
+	for i in range(n):
+		rows.append({"i": i})
+	return rows.size()
+
+func while_loop(n):
+	var i = 0
+	var total = 0
+	while i < n:
+		var d = {"k": i}
+		total += d["k"]
+		i += 1
+	return total
+
+func nested(n):
+	var total = 0
+	for i in range(n):
+		for j in range(n):
+			var d = {"a": j}
+			total += d["a"]
+	return total
+
+func skips_a_pass(n):
+	var total = 0
+	for i in range(n):
+		var d = {"a": i}
+		if d["a"] % 2 == 0:
+			continue
+		total += 1
+	return total
+
+func appends_to_a_given_string(s, n):
+	for i in range(n):
+		s += "x"
+	return s.length()
+
+func grows_a_given_array(a, n):
+	for i in range(n):
+		a.append(i)
+	return a.size()
+"""
+	var s = _compile_and_load(gdscript_code, 2000000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("dict_loop", 1000), 499500,
+		"a thousand dictionaries, one per pass")
+	assert_eq(s.vmcallv("string_loop", 1000), 6890,
+		"a thousand strings, two per pass")
+	assert_eq(s.vmcallv("walk_a_string", "y".repeat(1000)), 1000,
+		"walking a String yields one scoped Variant per character")
+	assert_eq(s.vmcallv("accumulate", 1000), 1000,
+		"a value assigned to an outer local survives the release")
+	assert_eq(s.vmcallv("into_an_array", 1000), 1000,
+		"a container the host holds keeps its own copy")
+	assert_eq(s.vmcallv("while_loop", 1000), 499500,
+		"a while loop releases like a for loop")
+	assert_eq(s.vmcallv("nested", 60), 106200,
+		"nested loops release independently")
+	assert_eq(s.vmcallv("skips_a_pass", 1000), 500,
+		"a pass that continues still releases")
+	assert_eq(s.vmcallv("appends_to_a_given_string", "", 1000), 1000,
+		"a caller's String mutated once per pass survives every release")
+	assert_eq(s.vmcallv("grows_a_given_array", [], 1000), 1000,
+		"a caller's Array mutated once per pass survives every release")
+
+	s.queue_free()
+
+func test_sgd_a_release_keeps_a_mutated_argument():
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	assert_eq(ts.vmcall("scope_release_keeps_a_mutated_argument", "", 200), 200,
+		"a release keeps the Variant a handle below the mark still names")
+	ts.queue_free()
 
 func test_sgd_multiline_strings_and_unicode_names():
-	# A raw newline inside a plain string is part of the text in the engine's
-	# lexer, and a name may be spelled in any script. Both used to be lexer
-	# errors, which took the whole file down.
 	var gdscript_code = """
 func dialogue():
 	return "line one

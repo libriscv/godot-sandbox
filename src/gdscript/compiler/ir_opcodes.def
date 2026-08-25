@@ -57,6 +57,10 @@ IR_OPCODE(CONVERT,         "CONVERT",         SIG(DST, SRC, IMM),  IR_PURE)
 // convertibility: 1.0 is not an int.
 IR_OPCODE(TYPE_TEST,       "TYPE_TEST",       SIG(DST, SRC, IMM),  IR_PURE)
 
+// Immediate is a scope id (frame slot index), not a register.
+IR_OPCODE(SCOPE_MARK,      "SCOPE_MARK",      SIG(IMM),            IR_SIDE_EFFECTS)
+IR_OPCODE(SCOPE_RELEASE,   "SCOPE_RELEASE",   SIG(IMM),            IR_SIDE_EFFECTS)
+
 // `breakpoint`: an unconditional ECALL_BREAKPOINT at the line it was written on.
 // Carries no operands -- the line is the instruction's own.
 IR_OPCODE(BREAKPOINT,      "BREAKPOINT",      SIG(),               IR_SIDE_EFFECTS)

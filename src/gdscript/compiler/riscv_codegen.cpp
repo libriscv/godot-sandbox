@@ -502,6 +502,18 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 		}
 	}
 
+	m_fn.scope_slot_count = 0;
+	for (const IRInstruction& instr : func.instructions) {
+		if (instr.opcode != IROpcode::SCOPE_MARK && instr.opcode != IROpcode::SCOPE_RELEASE) {
+			continue;
+		}
+		const int scope_id = int(std::get<int64_t>(instr.operands[0].value));
+		m_fn.scope_slot_count = std::max(m_fn.scope_slot_count, scope_id + 1);
+	}
+	if (m_fn.scope_slot_count > 0) {
+		m_fn.omits_frame = false;
+	}
+
 	const int saved_reg_space = SAVED_REG_SPACE;
 
 	// Offsets are by vreg number, not visit order, so optimizer reordering is safe.
@@ -517,7 +529,11 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 	m_fn.next_variant_slot = max_variants + SCRATCH_VARIANT_SLOTS;
 	m_fn.variant_space = variant_space;
 
-	m_fn.stack_frame_size = m_fn.omits_frame ? 0 : saved_reg_space + variant_space;
+	m_fn.scope_slot_base = saved_reg_space + variant_space;
+
+	m_fn.stack_frame_size = m_fn.omits_frame
+		? 0
+		: saved_reg_space + variant_space + m_fn.scope_slot_count * 8;
 
 	m_fn.stack_frame_size = (m_fn.stack_frame_size + 15) & ~15; // RISC-V ABI: 16-byte aligned
 
@@ -546,8 +562,7 @@ void RISCVCodeGen::emit_prologue(const IRFunction& func) {
 		emit_sd(REG_A0, REG_SP, SAVED_A0_OFFSET);
 	}
 
-	// Zero slots before parameters: uninitialized stack would leak into a suspended frame.
-	if (m_fn.is_coroutine) {
+	if (m_fn.is_coroutine || m_fn.scope_slot_count > 0) {
 		emit_zero_variant_slots();
 	}
 
@@ -569,28 +584,39 @@ void RISCVCodeGen::emit_prologue(const IRFunction& func) {
 	}
 }
 
-// Zero the type tag of every slot; promote_frame_handles reads the whole array.
 void RISCVCodeGen::emit_zero_variant_slots() {
-	const int slots = m_fn.next_variant_slot;
-	if (slots <= 0 || m_fn.stack_frame_size == 0) {
+	if (m_fn.stack_frame_size == 0) {
 		return;
 	}
 	const int vsize = variant_size();
 	// sp-relative while within 12-bit range; t0-based past that.
 	int base = 0;
 	bool based = false;
-	for (int i = 0; i < slots; i++) {
-		const int offset = SAVED_REG_SPACE + i * vsize;
+	auto store_zero = [&](int offset, bool wide) {
 		if (!based && offset <= 2047) {
-			emit_sw(REG_ZERO, REG_SP, offset);
-			continue;
+			if (wide) {
+				emit_sd(REG_ZERO, REG_SP, offset);
+			} else {
+				emit_sw(REG_ZERO, REG_SP, offset);
+			}
+			return;
 		}
 		if (!based || offset - base > 2047) {
 			base = offset;
 			emit_add_offset(REG_T0, REG_SP, base);
 			based = true;
 		}
-		emit_sw(REG_ZERO, REG_T0, offset - base);
+		if (wide) {
+			emit_sd(REG_ZERO, REG_T0, offset - base);
+		} else {
+			emit_sw(REG_ZERO, REG_T0, offset - base);
+		}
+	};
+	for (int i = 0; i < m_fn.next_variant_slot; i++) {
+		store_zero(SAVED_REG_SPACE + i * vsize, false);
+	}
+	for (int i = 0; i < m_fn.scope_slot_count; i++) {
+		store_zero(m_fn.scope_slot_base + i * 8, true);
 	}
 }
 
@@ -634,6 +660,44 @@ void RISCVCodeGen::gen_syscall_get_obj(const IRInstruction& instr, int result_vr
 	emit_mv(REG_A0, REG_SP);
 	emit_li(REG_A1, string_len);
 	emit_li(REG_A7, ECALL_GET_OBJ);
+	emit_ecall();
+
+	emit_stack_adjust(str_space);
+	emit_syscall_result(result_vreg, REG_A0, result_offset, 24); // OBJECT
+}
+
+void RISCVCodeGen::gen_syscall_node_create(const IRInstruction& instr, int result_vreg) {
+	if (instr.operands.size() != 4) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_NODE_CREATE requires 4 operands");
+	}
+
+	const int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+	const int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+
+	if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
+	}
+	const std::string& str = (*m_string_constants)[string_idx];
+
+	const int result_offset = get_variant_stack_offset(result_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3, REG_A4});
+
+	const int str_space = ((string_len + 1) + 7) & ~7;
+	emit_stack_adjust(-str_space);
+
+	for (size_t i = 0; i < str.length(); i++) {
+		emit_li(REG_T0, static_cast<unsigned char>(str[i]));
+		emit_sb(REG_T0, REG_SP, i);
+	}
+	emit_sb(REG_ZERO, REG_SP, string_len);
+
+	emit_li(REG_A0, static_cast<int64_t>(Node_Create_Shortlist::CREATE_CLASSDB));
+	emit_mv(REG_A1, REG_SP);
+	emit_li(REG_A2, string_len);
+	emit_li(REG_A3, 0);
+	emit_li(REG_A4, 0);
+	emit_li(REG_A7, ECALL_NODE_CREATE);
 	emit_ecall();
 
 	emit_stack_adjust(str_space);
@@ -893,6 +957,8 @@ void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
 
 	if (syscall_num == ECALL_GET_OBJ) {
 		gen_syscall_get_obj(instr, result_vreg);
+	} else if (syscall_num == ECALL_NODE_CREATE) {
+		gen_syscall_node_create(instr, result_vreg);
 	} else if (syscall_num == ECALL_ARRAY_SIZE) {
 		gen_syscall_array_size(instr, result_vreg);
 	} else if (syscall_num == ECALL_STRING_SIZE) {
@@ -1157,11 +1223,9 @@ void RISCVCodeGen::gen_store_global(const IRInstruction& instr) {
 		// Basis and Transform3D on the wrong sides of the line.
 		needs_vassign = is_complex_variant_type(global.value_type);
 	} else {
-		// Type unknown at compile time. A raw copy of the Variant
-		// would duplicate a scoped-variant index rather than assign
-		// through it, so assign through VASSIGN, which is correct for
-		// both trivial and reference-counted types.
-		needs_vassign = true;
+		// VASSIGN reads the payload as a scoped-variant index; a null or int
+		// payload is not one. Raw copy matches MOVE for unknown-typed locals.
+		needs_vassign = false;
 	}
 
 	// Load address of global variable
@@ -2028,6 +2092,14 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			define_label(std::get<std::string>(instr.operands[0].value));
 			break;
 
+		case IROpcode::SCOPE_MARK:
+			gen_scope_mark(instr);
+			break;
+
+		case IROpcode::SCOPE_RELEASE:
+			gen_scope_release(instr);
+			break;
+
 		// Source-requested stop; not added to the host's installed list.
 		case IROpcode::BREAKPOINT:
 			emit_breakpoint(instr.line, false);
@@ -2840,6 +2912,10 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 
 			return false;
 
+		case IROpcode::SCOPE_MARK:
+		case IROpcode::SCOPE_RELEASE:
+			return true;
+
 		// May syscall or call; must hold for the slow path too
 		case IROpcode::LOAD_STRING:
 		case IROpcode::LOAD_STRING_AS:
@@ -3546,6 +3622,10 @@ void RISCVCodeGen::emit_address_of_global(uint8_t rd, size_t index) {
 	}
 	// Offset in relocation, not a separate addi (12-bit limit = ~85 globals)
 	emit_la(rd, GLOBALS_LABEL, static_cast<int32_t>(byte_offset));
+}
+
+void RISCVCodeGen::emit_address_of_global_area(uint8_t rd) {
+	emit_la(rd, GLOBALS_LABEL, 0);
 }
 
 void RISCVCodeGen::emit_address_of_init_scratch(uint8_t rd) {
@@ -4748,6 +4828,49 @@ void RISCVCodeGen::spill_all_registers() {
 	for (int vreg : m_allocator.mapped_vregs()) {
 		m_allocator.spill_register(vreg);
 	}
+}
+
+int RISCVCodeGen::scope_slot_offset(int scope_id) const {
+	if (scope_id < 0 || scope_id >= m_fn.scope_slot_count) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"Scope id " + std::to_string(scope_id) + " was not planned into the frame");
+	}
+	return m_fn.scope_slot_base + scope_id * 8;
+}
+
+void RISCVCodeGen::gen_scope_mark(const IRInstruction& instr) {
+	const int scope_id = int(std::get<int64_t>(instr.operands[0].value));
+	const int offset = scope_slot_offset(scope_id);
+
+	spill_around_syscall({ REG_A0, REG_A7 });
+	emit_li(REG_A0, int64_t(Scope_Op::MARK));
+	emit_li(REG_A7, ECALL_VSCOPE);
+	emit_ecall();
+	emit_sd(REG_A0, REG_SP, offset);
+}
+
+void RISCVCodeGen::gen_scope_release(const IRInstruction& instr) {
+	const int scope_id = int(std::get<int64_t>(instr.operands[0].value));
+	const int offset = scope_slot_offset(scope_id);
+
+	// Host reads the frame as Variants; registers must be spilled first.
+	spill_all_registers();
+	spill_around_syscall({ REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6, REG_A7 });
+
+	emit_ld(REG_A1, REG_SP, offset);
+	emit_add_offset(REG_A2, REG_SP, SAVED_REG_SPACE);
+	emit_li(REG_A3, m_fn.variant_space);
+	if (m_data_global_count > 0) {
+		emit_address_of_global_area(REG_A4);
+		emit_li(REG_A5, int64_t(m_data_global_count) * variant_size());
+	} else {
+		emit_li(REG_A4, 0);
+		emit_li(REG_A5, 0);
+	}
+	emit_li(REG_A6, int64_t(m_instance_count) * variant_size());
+	emit_li(REG_A0, int64_t(Scope_Op::RELEASE));
+	emit_li(REG_A7, ECALL_VSCOPE);
+	emit_ecall();
 }
 
 void RISCVCodeGen::spill_around_syscall(const std::vector<uint8_t>& clobbered_regs) {

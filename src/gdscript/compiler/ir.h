@@ -251,6 +251,7 @@ struct IRGlobalVar {
 };
 
 struct IRProgram {
+	bool is_tool = false;
 	std::vector<IRGlobalVar> globals;
 	std::vector<IRFunction> functions;
 	std::vector<std::string> string_constants;

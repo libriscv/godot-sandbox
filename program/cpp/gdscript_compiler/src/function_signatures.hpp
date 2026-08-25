@@ -62,6 +62,15 @@ inline Variant gdscript_line_table_to_variant() {
 	return PackedByteArray(gdscript::encode_line_table(gdscript_last_line_table()));
 }
 
+inline bool &gdscript_last_is_tool() {
+	static bool is_tool = false;
+	return is_tool;
+}
+
+inline void gdscript_remember_is_tool(const gdscript::Compiler &compiler) {
+	gdscript_last_is_tool() = compiler.is_tool();
+}
+
 // Subset of requested breakpoint lines that got a stop emitted.
 // Reset by every compile; a no-breakpoint build reports none.
 inline std::vector<uint32_t> &gdscript_last_breakpoints() {

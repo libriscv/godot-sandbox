@@ -1,4 +1,5 @@
 #include "../compiler.h"
+#include "scope_stub.h"
 #include "../codegen.h"
 #include "../instance_layout.h"
 #include "../ir_optimizer.h"
@@ -213,6 +214,7 @@ Booted boot(const std::string& source) {
 	for (int number = 500; number < 560; number++) {
 		machine_t::install_syscall_handler(number, unexpected_syscall);
 	}
+	install_scope_stub<machine_t>();
 	out.machine->simulate(50'000'000ull);
 
 	const uint64_t blob = out.machine->address_of(INSTANCE_SYMBOL);

@@ -118,7 +118,9 @@ private:
 	std::string parse_type_name();
 	std::string parse_return_type();
 	void skip_type_arguments();
-	bool parse_attribute(ExportHint& hint);
+	bool parse_attribute(ExportHint& hint, bool* is_onready = nullptr);
+	bool m_saw_tool = false;
+	void hoist_onready_initializers(Program& program);
 	std::vector<ExportArgument> parse_attribute_arguments();
 	SignalDecl parse_signal();
 	int64_t fold_enum_value(const Expr* expr, const EnumDecl& decl, const Token& start);

@@ -1066,7 +1066,7 @@ bool SafeGDScriptLanguage::_supports_builtin_mode() const {
 	return true;
 }
 bool SafeGDScriptLanguage::_supports_documentation() const {
-	return false;
+	return true;
 }
 bool SafeGDScriptLanguage::_can_inherit_from_file() const {
 	return false;

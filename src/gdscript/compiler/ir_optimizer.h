@@ -35,6 +35,7 @@ private:
 	void constant_folding(IRFunction& func);
 	void eliminate_unreachable_code(IRFunction& func);
 	void eliminate_dead_code(IRFunction& func);
+	void tighten_scope_marks(IRFunction& func);
 	void peephole_optimization(IRFunction& func);
 
 	// On match: appends replacement, advances i, returns true. On miss: no side effects.
