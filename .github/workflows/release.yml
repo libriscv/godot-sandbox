@@ -39,11 +39,13 @@ jobs:
           mv sandbox/libgodot_riscv.* godot-jit/
           # SafeGDScript looks for the compiler at res://addons/godot_sandbox/gdscript.elf
           mv godot-sandbox/gdscript.elf godot-sandbox/addons/godot_sandbox/gdscript.elf
-          # The asset store requires a license file in the artifact
-          cp LICENSE THIRDPARTY.txt godot-sandbox/
+          # The asset store requires the license inside the addon directory,
+          # not at the zip root: a root-level copy is what got v0.50 denied
           cp LICENSE THIRDPARTY.txt godot-sandbox/addons/godot_sandbox/
           cp LICENSE THIRDPARTY.txt godot-jit/
-          zip -r "godot-sandbox.zip" godot-sandbox
+          # addons/ at the zip root, nothing above it: bin/ doubles as a test
+          # project, and naming addons explicitly leaves its scaffolding behind
+          (cd godot-sandbox && zip -r ../godot-sandbox.zip addons)
           zip -r "godot-sandbox-jit.zip" godot-jit
       - name: Release
         uses: softprops/action-gh-release@v2

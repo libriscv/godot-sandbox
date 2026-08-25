@@ -13,9 +13,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: godot-sandbox-gdextension
+          # Only the addon itself ships; bin/ is also a test project, and
+          # everything else in it (cmake/, src/, project.godot, ...) is scaffolding.
           path: |
             bin
             !bin/.godot
+            !bin/.godot/**
+            !bin/cmake
+            !bin/cmake/**
+            !bin/src
+            !bin/src/**
             !bin/.gitattributes
             !bin/.gitignore
             !bin/icon.svg
@@ -25,7 +32,6 @@ jobs:
             !bin/project.godot
             !bin/test.gd
             !bin/test.tscn
-            !bin/src/main.cpp
             !bin/icon.png
             !bin/icon.png.import
           if-no-files-found: error
