@@ -1723,18 +1723,32 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 		int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
 		int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
 
-		// Speculative INT fast path for untyped operands
-		if (!host_only && has_int_fast_path(instr.opcode)) {
+		const bool int_path = !host_only && has_int_fast_path(instr.opcode);
+		const bool float_path = !host_only && has_float_fast_path(instr.opcode);
+		if (int_path || float_path) {
 			// Spill before branch: allocator state must hold on both paths
 			spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 
 			const bool shift = instr.opcode == IROpcode::SHL || instr.opcode == IROpcode::SHR;
 			const std::string host = gen_local_label(".veval");
 			const std::string done = gen_local_label(".veval_done");
-			emit_branch_unless_both_int(lhs_offset, rhs_offset, host, shift);
-			emit_typed_int_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
-			mark_label_use(done, m_code.size());
-			emit_jal(REG_ZERO, 0);
+			const std::string floats = float_path ? gen_local_label(".veval_float") : host;
+
+			if (int_path) {
+				emit_branch_unless_both_int(lhs_offset, rhs_offset, floats, shift);
+				emit_typed_int_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
+				mark_label_use(done, m_code.size());
+				emit_jal(REG_ZERO, 0);
+			}
+			if (float_path) {
+				if (int_path) {
+					define_label(floats);
+				}
+				emit_branch_unless_float_pair(lhs_offset, rhs_offset, host);
+				emit_float_pair_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
+				mark_label_use(done, m_code.size());
+				emit_jal(REG_ZERO, 0);
+			}
 			define_label(host);
 			emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op, false);
 			define_label(done);
@@ -1879,7 +1893,26 @@ void RISCVCodeGen::gen_comparison(const IRInstruction& instr) {
 		int rhs_vreg = std::get<int>(instr.operands[2].value);
 		int lhs_offset = get_variant_stack_offset(lhs_vreg);
 		int rhs_offset = get_variant_stack_offset(rhs_vreg);
-		emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
+
+		spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
+		const std::string floats = gen_local_label(".vcmp_float");
+		const std::string host = gen_local_label(".vcmp");
+		const std::string done = gen_local_label(".vcmp_done");
+
+		emit_branch_unless_both_int(lhs_offset, rhs_offset, floats, false);
+		emit_typed_int_comparison(dst_offset, lhs_offset, rhs_offset, instr.opcode);
+		mark_label_use(done, m_code.size());
+		emit_jal(REG_ZERO, 0);
+
+		define_label(floats);
+		emit_branch_unless_float_pair(lhs_offset, rhs_offset, host);
+		emit_float_pair_comparison(dst_offset, lhs_offset, rhs_offset, instr.opcode);
+		mark_label_use(done, m_code.size());
+		emit_jal(REG_ZERO, 0);
+
+		define_label(host);
+		emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op, false);
+		define_label(done);
 	} else if (lhs_is_reg && !rhs_is_reg && instr.operands[2].type == IRValue::Type::IMMEDIATE) {
 		int lhs_vreg = std::get<int>(instr.operands[1].value);
 		int lhs_offset = get_variant_stack_offset(lhs_vreg);
@@ -1943,8 +1976,15 @@ void RISCVCodeGen::gen_fused_branch(const IRInstruction& instr) {
 
 	const std::string host = gen_local_label(".vcmp");
 	const std::string done = gen_local_label(".vcmp_done");
-	emit_branch_unless_both_int(lhs_offset, rhs_offset, host, false);
+	const std::string floats = gen_local_label(".vcmp_float");
+	emit_branch_unless_both_int(lhs_offset, rhs_offset, floats, false);
 	emit_int_fused_branch(instr.opcode, lhs_offset, rhs_offset, label);
+	mark_label_use(done, m_code.size());
+	emit_jal(REG_ZERO, 0);
+
+	define_label(floats);
+	emit_branch_unless_float_pair(lhs_offset, rhs_offset, host);
+	emit_float_pair_fused_branch(instr.opcode, lhs_offset, rhs_offset, label);
 	mark_label_use(done, m_code.size());
 	emit_jal(REG_ZERO, 0);
 
@@ -4137,6 +4177,138 @@ void RISCVCodeGen::emit_branch_unless_both_int(int lhs_offset, int rhs_offset,
 		mark_label_use(slow_label, m_code.size());
 		emit_blt(REG_T0, REG_ZERO, 0);
 	}
+}
+
+bool RISCVCodeGen::has_float_fast_path(IROpcode op) {
+	switch (op) {
+		// DIV: int/int zero-division is an error; the guard rejects that pair.
+		case IROpcode::ADD:
+		case IROpcode::SUB:
+		case IROpcode::MUL:
+		case IROpcode::DIV:
+			return true;
+		default:
+			return false;
+	}
+}
+
+void RISCVCodeGen::emit_branch_unless_float_pair(int lhs_offset, int rhs_offset,
+	const std::string& slow_label)
+{
+	emit_lwu(REG_T0, REG_SP, lhs_offset + VARIANT_TYPE_OFFSET);
+	emit_lwu(REG_T1, REG_SP, rhs_offset + VARIANT_TYPE_OFFSET);
+
+	emit_addi(REG_T2, REG_T0, -Variant::INT);
+	emit_i_type(0x13, REG_T2, 0x3, REG_T2, 2); // sltiu t2, t2, 2
+	mark_label_use(slow_label, m_code.size());
+	emit_beq(REG_T2, REG_ZERO, 0);
+
+	emit_addi(REG_T2, REG_T1, -Variant::INT);
+	emit_i_type(0x13, REG_T2, 0x3, REG_T2, 2); // sltiu t2, t2, 2
+	mark_label_use(slow_label, m_code.size());
+	emit_beq(REG_T2, REG_ZERO, 0);
+
+	// Reject int/int: the int path already declined, or it's int/int division.
+	emit_or(REG_T2, REG_T0, REG_T1);
+	emit_andi(REG_T2, REG_T2, 1);
+	mark_label_use(slow_label, m_code.size());
+	emit_beq(REG_T2, REG_ZERO, 0);
+}
+
+void RISCVCodeGen::emit_numeric_to_double(uint8_t fd, int variant_offset) {
+	const std::string is_float = gen_local_label(".num_float");
+	const std::string done = gen_local_label(".num_done");
+
+	emit_lwu(REG_T0, REG_SP, variant_offset + VARIANT_TYPE_OFFSET);
+	emit_addi(REG_T0, REG_T0, -Variant::FLOAT);
+	mark_label_use(is_float, m_code.size());
+	emit_beq(REG_T0, REG_ZERO, 0);
+
+	emit_load_variant_int(REG_T0, REG_SP, variant_offset);
+	emit_fcvt_d_l(fd, REG_T0);
+	mark_label_use(done, m_code.size());
+	emit_jal(REG_ZERO, 0);
+
+	define_label(is_float);
+	emit_fld(fd, REG_SP, variant_offset + VARIANT_DATA_OFFSET);
+	define_label(done);
+}
+
+void RISCVCodeGen::emit_float_pair_binary_op(int result_offset, int lhs_offset, int rhs_offset,
+	IROpcode op)
+{
+	emit_numeric_to_double(REG_FA0, lhs_offset);
+	emit_numeric_to_double(REG_FA1, rhs_offset);
+
+	switch (op) {
+		case IROpcode::ADD: emit_fadd_d(REG_FA2, REG_FA0, REG_FA1); break;
+		case IROpcode::SUB: emit_fsub_d(REG_FA2, REG_FA0, REG_FA1); break;
+		case IROpcode::MUL: emit_fmul_d(REG_FA2, REG_FA0, REG_FA1); break;
+		case IROpcode::DIV: emit_fdiv_d(REG_FA2, REG_FA0, REG_FA1); break;
+		default:
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported float pair binary op");
+	}
+
+	emit_li(REG_T0, Variant::FLOAT);
+	emit_store_variant_type(REG_T0, REG_SP, result_offset);
+	emit_fsd(REG_FA2, REG_SP, result_offset + VARIANT_DATA_OFFSET);
+}
+
+void RISCVCodeGen::emit_double_compare(uint8_t rd, IROpcode cmp_op) {
+	switch (cmp_op) {
+		case IROpcode::CMP_EQ:
+		case IROpcode::BRANCH_EQ:
+			emit_feq_d(rd, REG_FA0, REG_FA1);
+			break;
+		case IROpcode::CMP_NEQ:
+		case IROpcode::BRANCH_NEQ:
+			// feq(NaN,NaN)==0, so inverting feq is the correct !=.
+			emit_feq_d(rd, REG_FA0, REG_FA1);
+			emit_xori(rd, rd, 1);
+			break;
+		case IROpcode::CMP_LT:
+		case IROpcode::BRANCH_LT:
+			emit_flt_d(rd, REG_FA0, REG_FA1);
+			break;
+		case IROpcode::CMP_LTE:
+		case IROpcode::BRANCH_LTE:
+			// fle.d, not swapped flt.d: unordered pairs must be false.
+			emit_r_type(0x53, rd, 0x0, REG_FA0, REG_FA1, 0x51); // fle.d
+			break;
+		case IROpcode::CMP_GT:
+		case IROpcode::BRANCH_GT:
+			emit_flt_d(rd, REG_FA1, REG_FA0);
+			break;
+		case IROpcode::CMP_GTE:
+		case IROpcode::BRANCH_GTE:
+			emit_r_type(0x53, rd, 0x0, REG_FA1, REG_FA0, 0x51); // fle.d
+			break;
+		default:
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unknown double comparison");
+	}
+}
+
+void RISCVCodeGen::emit_float_pair_comparison(int result_offset, int lhs_offset, int rhs_offset,
+	IROpcode cmp_op)
+{
+	emit_numeric_to_double(REG_FA0, lhs_offset);
+	emit_numeric_to_double(REG_FA1, rhs_offset);
+	emit_double_compare(REG_T2, cmp_op);
+
+	emit_li(REG_T0, Variant::BOOL);
+	emit_store_variant_type(REG_T0, REG_SP, result_offset);
+	emit_store_variant_bool(REG_T2, REG_SP, result_offset);
+}
+
+void RISCVCodeGen::emit_float_pair_fused_branch(IROpcode op, int lhs_offset, int rhs_offset,
+	const std::string& label)
+{
+	emit_numeric_to_double(REG_FA0, lhs_offset);
+	emit_numeric_to_double(REG_FA1, rhs_offset);
+	emit_double_compare(REG_T2, op);
+
+	mark_label_use(label, m_code.size());
+	emit_bne(REG_T2, REG_ZERO, 0);
 }
 
 void RISCVCodeGen::emit_int_fused_branch(IROpcode op, int lhs_offset, int rhs_offset,

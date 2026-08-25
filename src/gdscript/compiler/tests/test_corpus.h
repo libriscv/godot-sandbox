@@ -86,6 +86,92 @@ func test():
 		total = total + 32
 	return total
 )" },
+		{ "untyped_float_arithmetic", R"(
+func value(pick):
+	if pick == 0:
+		return 1.5
+	if pick == 1:
+		return 0.25
+	return 3
+func test():
+	var a = value(0)
+	var b = value(1)
+	return a + b - a * b + a / b
+)" },
+		{ "untyped_mixed_int_float", R"(
+func value(pick):
+	if pick == 0:
+		return 2.5
+	return 4
+func test():
+	var f = value(0)
+	var i = value(1)
+	return f + i + (i + f) + (f - i) + (i - f) + f * i + i / f + f / i
+)" },
+		{ "untyped_int_arithmetic_stays_int", R"(
+func value(pick):
+	if pick == 0:
+		return 1.5
+	return 7
+func test():
+	var a = value(1)
+	var b = value(1)
+	return a + b - a * b
+)" },
+		{ "untyped_numeric_comparisons", R"(
+func value(pick):
+	if pick == 0:
+		return 2.5
+	if pick == 1:
+		return 4
+	return 2.5
+func test():
+	var f = value(0)
+	var i = value(1)
+	var g = value(2)
+	var total = 0
+	if f < i:
+		total = total + 1
+	if i > f:
+		total = total + 2
+	if f <= g:
+		total = total + 4
+	if f >= g:
+		total = total + 8
+	if f == g:
+		total = total + 16
+	if f != i:
+		total = total + 32
+	var kept = f < i
+	if kept:
+		total = total + 64
+	if (i == 4) != (f == 2.5):
+		total = total + 128
+	return total
+)" },
+		{ "untyped_float_division_by_zero", R"(
+func value(pick):
+	if pick == 0:
+		return 0.0
+	return 5
+func test():
+	var zero = value(0)
+	var five = value(1)
+	var inf = five / zero
+	if inf > 1.0e308:
+		return 1
+	return 0
+)" },
+		{ "untyped_large_int_widens_like_godot", R"(
+func value(pick):
+	if pick == 0:
+		return 0.5
+	return 9007199254740993
+func test():
+	var big = value(1)
+	var half = value(0)
+	return big + half
+)" },
 		{ "float_comparison", R"(
 func test():
 	var a = 0.1 + 0.2

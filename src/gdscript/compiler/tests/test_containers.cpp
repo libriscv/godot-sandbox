@@ -85,6 +85,17 @@ static int count_dict_ops(const IRFunction& func, int64_t op) {
 	return count;
 }
 
+static int count_syscalls(const IRFunction& func, int64_t number) {
+	int count = 0;
+	for (const auto& instr : func.instructions) {
+		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 2 &&
+			std::get<int64_t>(instr.operands[1].value) == number) {
+			count++;
+		}
+	}
+	return count;
+}
+
 // The whole pipeline, so an opcode the backend cannot expand fails here rather
 // than in a Godot project.
 static void compile_to_machine_code(const std::string& source) {
@@ -348,6 +359,75 @@ static void test_dictionary_literal_keys() {
 	std::cout << "  dictionary literal keys OK" << std::endl;
 }
 
+static void test_known_container_methods_lower_to_syscalls() {
+	std::cout << "Testing that known container methods skip the VCALL..." << std::endl;
+
+	const std::string source =
+		"func sizes(a : Array, d : Dictionary, s : String):\n"
+		"\treturn a.size() + d.size() + s.length()\n";
+	const IRProgram sizes_ir = compile_to_ir(source);
+	const IRFunction& sizes = find_function(sizes_ir, "sizes");
+	assert(count_vcalls(sizes, "size") == 0);
+	assert(count_vcalls(sizes, "length") == 0);
+	assert(count_syscalls(sizes, ECALL_ARRAY_SIZE) == 1);
+	assert(count_syscalls(sizes, ECALL_STRING_SIZE) == 1);
+	assert(count_dict_ops(sizes, dictionary_op(Dictionary_Op::GET_SIZE)) == 1);
+
+	const std::string dict_source =
+		"func query(d : Dictionary):\n"
+		"\tif d.has(1):\n"
+		"\t\treturn d.get(1)\n"
+		"\tvar n = d.keys().size() + d.values().size()\n"
+		"\td.clear()\n"
+		"\treturn n\n";
+	const IRProgram query_ir = compile_to_ir(dict_source);
+	const IRFunction& query = find_function(query_ir, "query");
+	assert(count_opcode(query, IROpcode::VCALL) == 0);
+	assert(count_dict_ops(query, dictionary_op(Dictionary_Op::HAS)) == 1);
+	assert(count_dict_ops(query, dictionary_op(Dictionary_Op::GET)) == 1);
+	assert(count_dict_ops(query, dictionary_op(Dictionary_Op::GET_KEYS)) == 1);
+	assert(count_dict_ops(query, dictionary_op(Dictionary_Op::GET_VALUES)) == 1);
+	assert(count_dict_ops(query, dictionary_op(Dictionary_Op::CLEAR)) == 1);
+	assert(count_syscalls(query, ECALL_ARRAY_SIZE) == 2);
+
+	const std::string empty_source =
+		"func empty(a : Array, d : Dictionary, s : String):\n"
+		"\treturn a.is_empty() and d.is_empty() and s.is_empty()\n";
+	const IRProgram empty_ir = compile_to_ir(empty_source);
+	const IRFunction& empty = find_function(empty_ir, "empty");
+	assert(count_vcalls(empty, "is_empty") == 0);
+	assert(count_syscalls(empty, ECALL_ARRAY_SIZE) == 1);
+	assert(count_syscalls(empty, ECALL_STRING_SIZE) == 1);
+	assert(count_dict_ops(empty, dictionary_op(Dictionary_Op::GET_SIZE)) == 1);
+	assert(count_opcode(empty, IROpcode::CMP_EQ) == 3);
+
+	compile_to_machine_code(source);
+	compile_to_machine_code(dict_source);
+	compile_to_machine_code(empty_source);
+
+	std::cout << "  \u2713 known container methods skip the VCALL" << std::endl;
+}
+
+static void test_unknown_receiver_keeps_the_vcall() {
+	std::cout << "Testing that an untyped receiver keeps the VCALL..." << std::endl;
+
+	const IRProgram untyped_ir = compile_to_ir("func size_of(a):\n\treturn a.size()\n");
+	const IRFunction& untyped = find_function(untyped_ir, "size_of");
+	assert(count_vcalls(untyped, "size") == 1);
+	assert(count_syscalls(untyped, ECALL_ARRAY_SIZE) == 0);
+
+	const IRProgram defaulted_ir = compile_to_ir("func get_or(d : Dictionary):\n\treturn d.get(1, 0)\n");
+	const IRFunction& defaulted = find_function(defaulted_ir, "get_or");
+	assert(count_vcalls(defaulted, "get") == 1);
+	assert(count_dict_ops(defaulted, dictionary_op(Dictionary_Op::GET)) == 0);
+
+	const IRProgram popped_ir = compile_to_ir("func pop(a : Array):\n\treturn a.pop_back()\n");
+	const IRFunction& popped = find_function(popped_ir, "pop");
+	assert(count_vcalls(popped, "pop_back") == 1);
+
+	std::cout << "  \u2713 an untyped receiver keeps the VCALL" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Container Element Access Tests ===" << std::endl << std::endl;
 
@@ -358,6 +438,8 @@ int main() {
 		test_dictionary_element_access();
 		test_dictionary_literal_keys();
 		test_element_access_survives_the_optimizer();
+		test_known_container_methods_lower_to_syscalls();
+		test_unknown_receiver_keeps_the_vcall();
 	} catch (const CompilerException& e) {
 		std::cerr << "Unexpected compiler error: " << e.what() << std::endl;
 		return 1;

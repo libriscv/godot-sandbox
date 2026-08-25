@@ -283,7 +283,7 @@ func test_hostile_try_clear_api():
 		return
 	var before := s.get_exceptions()
 	s.vmcallv("try_clear_api")
-	assert_engine_error("Exception: Variant::call: the container is read-only")
+	assert_engine_error("Exception: Dictionary::operation: the container is read-only")
 	assert_gt(s.get_exceptions(), before, "try_clear_api should be denied")
 	assert_eq(_hostile_api.size(), 1, "the API Dictionary was not emptied")
 

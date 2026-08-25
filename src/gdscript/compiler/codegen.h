@@ -1,6 +1,7 @@
 #pragma once
 #include "ast.h"
 #include "builtin_members.h"
+#include "builtin_methods.h"
 #include "globals.h"
 #include "ir.h"
 #include <memory>
@@ -113,6 +114,8 @@ private:
 	int gen_callable_variable_call(const CallExpr* expr, int callable_reg,
 		std::vector<int>& arg_regs, FunctionContext& func);
 	int gen_member_call(const MemberCallExpr* expr, FunctionContext& func);
+	void gen_builtin_method(const BuiltinMethod& method, int result_reg, int obj_reg,
+		const std::vector<int>& arg_regs, FunctionContext& func);
 	int gen_index(const IndexExpr* expr, FunctionContext& func);
 	int gen_array_literal(const ArrayLiteralExpr* expr, FunctionContext& func);
 	int gen_dictionary_literal(const DictionaryLiteralExpr* expr, FunctionContext& func);

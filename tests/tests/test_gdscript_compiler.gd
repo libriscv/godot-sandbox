@@ -9975,7 +9975,7 @@ func size_of():
 		["write_new_key", "Dictionary::operation: the container is read-only"],
 		["overwrite_key", "Dictionary::operation: the container is read-only"],
 		["erase_key", "Variant::call: the container is read-only"],
-		["clear_all", "Variant::call: the container is read-only"],
+		["clear_all", "Dictionary::operation: the container is read-only"],
 		["merge_in", "Variant::call: the container is read-only"],
 		["nested_write", "Variant::call: the container is read-only"],
 		["array_write", "Variant::call: the container is read-only"],

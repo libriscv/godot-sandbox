@@ -80,16 +80,20 @@ static int count_vcalls(const IRFunction& func, const std::string& method) {
 
 // Dictionary element accesses, by Dictionary_Op. A field read is
 // ECALL_DICTIONARY_OPS with GET; a field write is the DICT_SET opcode.
-static int count_dict_gets(const IRFunction& func) {
+static int count_dict_ops(const IRFunction& func, int64_t op) {
 	int count = 0;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 3 &&
 			std::get<int64_t>(instr.operands[1].value) == 524 &&
-			std::get<int64_t>(instr.operands[2].value) == 0) {
+			std::get<int64_t>(instr.operands[2].value) == op) {
 			count++;
 		}
 	}
 	return count;
+}
+
+static int count_dict_gets(const IRFunction& func) {
+	return count_dict_ops(func, 0);
 }
 
 // The string a register was last loaded with before instruction `before`.
@@ -374,10 +378,10 @@ static void test_unknown_field_is_rejected() {
 	assert(rejects(BANK_ACCOUNT +
 		"func test(a: BankAccount):\n\treturn a.blance\n"));
 
-	// A method call on an instance is still a Dictionary method, not a field.
 	const IRProgram methods = compile_to_ir(BANK_ACCOUNT +
 		"func test():\n\tvar a = BankAccount.new()\n\treturn a.size()\n");
-	assert(count_vcalls(find_function(methods, "test"), "size") == 1);
+	assert(count_vcalls(find_function(methods, "test"), "size") == 0);
+	assert(count_dict_ops(find_function(methods, "test"), 6) == 1);
 
 	// The declared fields are still reachable through the Dictionary itself.
 	const IRProgram by_key = compile_to_ir(BANK_ACCOUNT +

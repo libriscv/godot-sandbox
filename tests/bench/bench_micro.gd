@@ -70,6 +70,41 @@ func string_iterate(n : int) -> int:
 	for c in text:
 		acc += c.length()
 	return acc
+
+func _number(pick : int):
+	if pick == 0:
+		return 1.5
+	return 3
+
+func untyped_float(n : int) -> float:
+	var acc = _number(0)
+	var step = _number(0)
+	var i : int = 0
+	while i < n:
+		acc = acc + step
+		i += 1
+	return acc
+
+func untyped_float_compare(n : int) -> int:
+	var a = _number(0)
+	var b = _number(1)
+	var acc : int = 0
+	var i : int = 0
+	while i < n:
+		if a < b:
+			acc += 1
+		i += 1
+	return acc
+
+func container_size(n : int) -> int:
+	var a : Array = [1, 2, 3]
+	var d : Dictionary = {"a": 1}
+	var acc : int = 0
+	var i : int = 0
+	while i < n:
+		acc += a.size() + d.size()
+		i += 1
+	return acc
 """
 
 # One row per kernel: the work unit is what `n` counts, except for fib, whose
@@ -88,6 +123,9 @@ const KERNELS := [
 	{"group": "dictionary set + get", "fn": "dict_ops", "n": 20000, "reps": 1, "unit": "op"},
 	{"group": "string build", "fn": "string_ops", "n": 2000, "reps": 5, "unit": "string"},
 	{"group": "string iterate", "fn": "string_iterate", "n": 8000, "reps": 1, "unit": "character"},
+	{"group": "untyped float math", "fn": "untyped_float", "n": 100000, "reps": 1, "unit": "operation"},
+	{"group": "untyped float compare", "fn": "untyped_float_compare", "n": 100000, "reps": 1, "unit": "comparison"},
+	{"group": "container size", "fn": "container_size", "n": 100000, "reps": 1, "unit": "size call pair"},
 ]
 
 var _elf : PackedByteArray = PackedByteArray()

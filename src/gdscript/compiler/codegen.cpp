@@ -3353,6 +3353,58 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 	return result_reg;
 }
 
+void CodeGenerator::gen_builtin_method(const BuiltinMethod& method, int result_reg,
+	int obj_reg, const std::vector<int>& arg_regs, FunctionContext& func)
+{
+	const int size_reg = method.empty_test ? alloc_register(func) : result_reg;
+
+	switch (method.lowering) {
+		case MethodLowering::ARRAY_SIZE:
+		case MethodLowering::STRING_SIZE: {
+			IRInstruction call(IROpcode::CALL_SYSCALL);
+			call.operands.push_back(IRValue::reg(size_reg));
+			call.operands.push_back(IRValue::imm(
+				method.lowering == MethodLowering::ARRAY_SIZE ? ECALL_ARRAY_SIZE : ECALL_STRING_SIZE));
+			call.operands.push_back(IRValue::reg(obj_reg));
+			func.ir.instructions.push_back(call);
+			break;
+		}
+		case MethodLowering::DICT_OP: {
+			IRInstruction call(IROpcode::CALL_SYSCALL);
+			call.operands.push_back(IRValue::reg(size_reg));
+			call.operands.push_back(IRValue::imm(ECALL_DICTIONARY_OPS));
+			call.operands.push_back(IRValue::imm(method.op));
+			call.operands.push_back(IRValue::reg(obj_reg));
+			for (int reg : arg_regs) {
+				call.operands.push_back(IRValue::reg(reg));
+			}
+			func.ir.instructions.push_back(call);
+			break;
+		}
+		case MethodLowering::NONE:
+			break;
+	}
+
+	if (method.empty_test) {
+		set_register_type(func, size_reg, Variant::INT);
+		int zero_reg = gen_int_immediate(0, func);
+		auto& cmp = func.ir.instructions.emplace_back(IROpcode::CMP_EQ, IRValue::reg(result_reg),
+			IRValue::reg(size_reg), IRValue::reg(zero_reg));
+		cmp.type_hint = Variant::INT;
+		free_register(func, zero_reg);
+		free_register(func, size_reg);
+	}
+
+	if (!method.has_result) {
+		// VCALL answers nil for void methods; match that so the slot is not stale.
+		func.ir.instructions.emplace_back(IROpcode::LOAD_NIL, IRValue::reg(result_reg));
+		return;
+	}
+	if (method.result_type != Variant::NIL) {
+		set_register_type(func, result_reg, method.result_type);
+	}
+}
+
 int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& func) {
 	// Struct.new(): resolved before object is lowered (struct is a type, not a value).
 	if (expr->is_method_call && expr->member_name == "new") {
@@ -3442,19 +3494,17 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 
 	int result_reg = alloc_register(func);
 
-	// String.length() -> ECALL_STRING_SIZE, typed receivers only.
-	if (expr->is_method_call && arg_regs.empty() &&
-		expr->member_name == "length" &&
-		get_register_type(func, obj_reg) == Variant::STRING)
-	{
-		IRInstruction call(IROpcode::CALL_SYSCALL);
-		call.operands.push_back(IRValue::reg(result_reg));
-		call.operands.push_back(IRValue::imm(ECALL_STRING_SIZE));
-		call.operands.push_back(IRValue::reg(obj_reg));
-		func.ir.instructions.push_back(call);
-		set_register_type(func, result_reg, Variant::INT);
-		free_register(func, obj_reg);
-		return result_reg;
+	if (expr->is_method_call) {
+		const BuiltinMethod method = find_builtin_method(
+			get_register_type(func, obj_reg), expr->member_name, arg_regs.size());
+		if (method.valid()) {
+			gen_builtin_method(method, result_reg, obj_reg, arg_regs, func);
+			free_register(func, obj_reg);
+			for (int reg : arg_regs) {
+				free_register(func, reg);
+			}
+			return result_reg;
+		}
 	}
 
 	// Array.append: dedicated syscall, avoids StringName lookup per element.

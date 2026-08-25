@@ -313,6 +313,14 @@ private:
 
 	static bool has_int_fast_path(IROpcode op);
 
+	static bool has_float_fast_path(IROpcode op);
+	void emit_branch_unless_float_pair(int lhs_offset, int rhs_offset, const std::string& slow_label);
+	void emit_numeric_to_double(uint8_t fd, int variant_offset);
+	void emit_float_pair_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op);
+	void emit_float_pair_comparison(int result_offset, int lhs_offset, int rhs_offset, IROpcode cmp_op);
+	void emit_float_pair_fused_branch(IROpcode op, int lhs_offset, int rhs_offset, const std::string& label);
+	void emit_double_compare(uint8_t rd, IROpcode cmp_op);
+
 	// Integer-typed BRANCH_EQ..BRANCH_GTE on int64 payloads.
 	void emit_int_fused_branch(IROpcode op, int lhs_offset, int rhs_offset, const std::string& label);
 
