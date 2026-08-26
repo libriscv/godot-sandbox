@@ -100,8 +100,12 @@ private:
 	int gen_range(const CallExpr* expr, FunctionContext& func);
 	int gen_color8(const CallExpr* expr, FunctionContext& func);
 	int gen_class_test(int value_reg, const std::string& class_name, FunctionContext& func);
+	int gen_instance_class_test(int value_reg, const std::string& class_name, int result_reg,
+		FunctionContext& func);
 	int gen_class_cast(const ClassCastExpr* expr, FunctionContext& func);
 	int gen_int_immediate(int64_t value, FunctionContext& func);
+	// `for c in <String>`: batched character walk, see codegen.cpp.
+	void gen_string_walk(const ForStmt* stmt, int string_reg, FunctionContext& func);
 	void gen_numeric_for(const ForStmt* stmt, int start_reg, int end_reg, int step_reg,
 		FunctionContext& func);
 	int gen_float_immediate(double value, FunctionContext& func);
@@ -226,6 +230,12 @@ private:
 	const StructDecl* class_base(const StructDecl& decl) const;
 	const std::string* native_base(const StructDecl& decl) const;
 	int gen_native_base_load(int self_reg, FunctionContext& func);
+	// True when the script declares a class extending an engine class, and a
+	// Dictionary reaching an untyped `.x` may therefore be one of its instances.
+	bool has_engine_based_classes() const { return !m_native_bases.empty(); }
+	int gen_dict_has(int obj_reg, const std::string& key, FunctionContext& func);
+	// The object a bare name falls through to, or -1 when there is none.
+	int gen_implicit_base_load(FunctionContext& func);
 	std::vector<const StructField*> struct_fields(const StructDecl& decl) const;
 	const StructField* find_struct_field(const StructDecl& decl, const std::string& name) const;
 	int struct_field_index(const StructDecl& decl, const std::string& name) const;
@@ -282,6 +292,9 @@ private:
 	std::unordered_map<std::string, const StructDecl*> m_structs;
 	std::unordered_map<const StructDecl*, std::string> m_native_bases;
 	const StructDecl* m_current_class = nullptr;
+	// The script's own `extends`, so a top-level function can reach the owner's
+	// properties by bare name the way a lifted class method reaches its base.
+	std::string m_script_base_class;
 	bool m_restricted = false;
 	std::unordered_map<std::string, const EnumDecl*> m_enums;
 	std::unordered_map<std::string, int64_t> m_enum_members;
@@ -306,6 +319,8 @@ private:
 	bool is_global_const(const std::string& name) const;
 
 	std::unordered_map<std::string, IRGlobalVar> m_global_const_values;
+	// 'Class.NAME' -> its folded value; a class constant never reaches the IR.
+	std::unordered_map<std::string, IRGlobalVar> m_class_constants;
 	// Forward references read NIL; rejected at this boundary.
 	size_t m_globals_lowered = 0;
 	bool m_members_in_scope = true;
@@ -353,6 +368,10 @@ private:
 
 	// Returns -1 for non-const or container globals (those stay on LOAD_GLOBAL).
 	int gen_const_global_value(const std::string& name, FunctionContext& func);
+	int gen_folded_const(const IRGlobalVar& global, FunctionContext& func);
+	void register_class_constants(const Program& program);
+	int gen_class_constant(const StructDecl& decl, const std::string& name,
+		FunctionContext& func);
 
 	static IRInstruction::TypeHint derive_global_value_type(const IRGlobalVar& global);
 

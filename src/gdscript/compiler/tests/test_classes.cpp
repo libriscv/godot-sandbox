@@ -159,8 +159,8 @@ void test_the_instance_is_a_dictionary() {
 		if (instr.opcode != IROpcode::MAKE_DICTIONARY) {
 			continue;
 		}
-		check(std::get<int64_t>(instr.operands[1].value) == 2,
-			"an instance of Derived holds both v and extra");
+		check(std::get<int64_t>(instr.operands[1].value) == 3,
+			"an instance of Derived holds v, extra and the class it was made from");
 	}
 
 	const std::vector<std::string> calls = called_names(*test);
@@ -392,10 +392,10 @@ void test_what_is_refused() {
 
 	const std::string body = compile_error(
 		"class A:\n"
-		"\tconst X = 1\n"
+		"\tsignal boom\n"
 		"func test():\n\treturn 1\n");
-	check(body.find("field and function") != std::string::npos,
-		"a const in a class body is refused: " + body);
+	check(body.find("constant, field and function") != std::string::npos,
+		"what a class body does not hold is refused: " + body);
 
 	std::cout << "  ✓ What cannot work is refused at compile time" << std::endl;
 }
@@ -571,8 +571,8 @@ void test_a_native_base_is_constructed_with_the_instance() {
 
 	for (const IRInstruction& instr : test->instructions) {
 		if (instr.opcode == IROpcode::MAKE_DICTIONARY) {
-			check(std::get<int64_t>(instr.operands[1].value) == 2,
-				"the instance Dictionary holds the declared field and the base");
+			check(std::get<int64_t>(instr.operands[1].value) == 3,
+				"the instance Dictionary holds the declared field, the base and the class");
 		}
 	}
 
@@ -714,6 +714,17 @@ void test_class_name_and_extends_are_published() {
 		.find("extends one base") != std::string::npos,
 		"a second extends is refused");
 
+	// Godot answers "Unexpected \"extends\" in class body" to either keyword once
+	// anything else has been declared. A var, a const, a class and a func all count.
+	check(compile_error("func test():\n\treturn 1\nextends Node\n")
+		.find("comes before every other declaration") != std::string::npos,
+		"an extends below a function is refused");
+	check(compile_error("var x = 1\nclass_name A\nfunc test():\n\treturn 1\n")
+		.find("comes before every other declaration") != std::string::npos,
+		"and so is a class_name below a global");
+	check(compile_error("@tool\nextends Node\nclass_name A\nfunc test():\n\treturn 1\n").empty(),
+		"a file-level annotation is not a declaration, and the two head in either order");
+
 	std::cout << "  ✓ Neither reaches the machine code; both reach the host" << std::endl;
 }
 
@@ -759,6 +770,372 @@ void test_restrictions_refuse_what_needs_a_class() {
 	std::cout << "  ✓ What can only work by reaching a class is refused" << std::endl;
 }
 
+
+void test_a_top_level_extends_reaches_the_owner() {
+	std::cout << "Testing a bare name under a top-level extends..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"extends Node2D\n"
+		"func test():\n"
+		"\tposition = Vector2(1, 2)\n"
+		"\treturn position\n");
+	const IRFunction* test = find_function(ir, "test");
+	check(test != nullptr, "test() is lowered");
+	if (test != nullptr) {
+		check(count_opcode(*test, IROpcode::VSET) == 1,
+			"a bare name the script does not declare is written to the owner");
+		check(count_opcode(*test, IROpcode::VGET) == 1, "and read from it");
+		check(count_opcode(*test, IROpcode::GET_NODE) == 2,
+			"the owner is reached the way a bare call reaches it");
+	}
+
+	check(!compile_error("func test():\n\tposition = 1\n").empty(),
+		"without an extends there is nothing to fall through to");
+	check(compile_error(
+			"extends \"res://base.gd\"\n"
+			"func test():\n"
+			"\treturn speed\n").empty(),
+		"a path base is still a base");
+
+	// A class of its own has a base of its own; the script's is not it.
+	const IRProgram nested = compile_to_ir(
+		"extends Node2D\n"
+		"class Plain:\n"
+		"\tfunc f():\n"
+		"\t\treturn 1\n"
+		"func test():\n"
+		"\treturn Plain.new().f()\n");
+	const IRFunction* f = find_function(nested, "@Plain.f");
+	check(f != nullptr && count_opcode(*f, IROpcode::VGET) == 0,
+		"a class without a base does not borrow the script's owner");
+
+	std::cout << "  ✓ A bare name falls through to what the script extends" << std::endl;
+}
+
+void test_an_instance_answers_is_and_as() {
+	std::cout << "Testing 'is' and 'as' on a class instance..." << std::endl;
+
+	const IRProgram own = compile_to_ir(
+		"class Sprite extends Node2D:\n"
+		"\tvar hp = 3\n"
+		"class Other extends Node2D:\n"
+		"\tvar hp = 3\n"
+		"func test():\n"
+		"\treturn Sprite.new() is Sprite\n");
+	const IRFunction* own_test = find_function(own, "test");
+	check(own_test != nullptr && !vcalls(*own_test, "is_class"),
+		"an instance answers its own class name without asking the engine");
+
+	const IRProgram other = compile_to_ir(
+		"class Sprite extends Node2D:\n"
+		"\tvar hp = 3\n"
+		"class Other extends Node2D:\n"
+		"\tvar hp = 3\n"
+		"func test():\n"
+		"\treturn Sprite.new() is Other\n");
+	const IRFunction* other_test = find_function(other, "test");
+	check(other_test != nullptr && !vcalls(*other_test, "is_class"),
+		"and answers a sibling class without asking either");
+
+	const IRProgram base = compile_to_ir(
+		"class Sprite extends Node2D:\n"
+		"\tvar hp = 3\n"
+		"func test():\n"
+		"\treturn Sprite.new() is Node\n");
+	const IRFunction* base_test = find_function(base, "test");
+	check(base_test != nullptr && vcalls(*base_test, "is_class"),
+		"what the engine knows is asked of the engine");
+	check(base_test != nullptr && count_syscall(*base_test, ECALL_DICTIONARY_OPS) >= 1,
+		"and it is asked of the object the instance holds, not of the Dictionary");
+
+	const IRProgram inherited = compile_to_ir(
+		"class Base extends Node2D:\n"
+		"\tvar hp = 3\n"
+		"class Derived extends Base:\n"
+		"\tvar extra = 1\n"
+		"func test():\n"
+		"\treturn Derived.new() is Base\n");
+	const IRFunction* inherited_test = find_function(inherited, "test");
+	check(inherited_test != nullptr && !vcalls(*inherited_test, "is_class"),
+		"a class it derives from is settled by the declaration too");
+
+	// The cast answers the same instance, so what worked before it works after.
+	const IRProgram cast = compile_to_ir(
+		"class Sprite extends Node2D:\n"
+		"\tvar hp = 3\n"
+		"func test():\n"
+		"\tvar s = Sprite.new() as Node2D\n"
+		"\treturn s.hp\n");
+	const IRFunction* cast_test = find_function(cast, "test");
+	check(cast_test != nullptr && count_opcode(*cast_test, IROpcode::VGET) == 0,
+		"a field read after a cast is still the instance Dictionary");
+
+	std::cout << "  ✓ An instance answers for its class and for its base" << std::endl;
+}
+
+void test_an_untyped_instance_reaches_the_base() {
+	std::cout << "Testing an instance whose type is not tracked..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"class Sprite extends Node2D:\n"
+		"\tvar hp = 3\n"
+		"func poke(m):\n"
+		"\tm.position = Vector2(1, 2)\n"
+		"\treturn m.position\n"
+		"func test():\n"
+		"\treturn poke(Sprite.new())\n");
+	const IRFunction* poke = find_function(ir, "poke");
+	check(poke != nullptr, "poke() is lowered");
+	if (poke != nullptr) {
+		check(count_opcode(*poke, IROpcode::VGET) >= 1 && count_opcode(*poke, IROpcode::VSET) >= 1,
+			"a Dictionary reaching an untyped '.x' can be an instance, so the base is tried");
+	}
+
+	// Nothing to reach means nothing to emit: a script with no such class pays nothing.
+	const IRProgram plain = compile_to_ir(
+		"func poke(m):\n"
+		"\tm.position = Vector2(1, 2)\n"
+		"\treturn m.position\n"
+		"func test():\n"
+		"\treturn poke({})\n");
+	const IRFunction* plain_poke = find_function(plain, "poke");
+	check(plain_poke != nullptr, "poke() is lowered");
+	if (plain_poke != nullptr && poke != nullptr) {
+		check(plain_poke->instructions.size() < poke->instructions.size(),
+			"a script that declares no engine-based class emits no fallthrough");
+	}
+
+	std::cout << "  ✓ An untyped instance still reaches its base" << std::endl;
+}
+
+void test_a_class_body_holds_constants_and_static_methods() {
+	std::cout << "Testing 'const' and 'static func' in a class body..." << std::endl;
+
+	// A class holds no storage of its own, so a constant folds at the use site and
+	// nothing of it reaches the IR -- the same deal the file's own consts get.
+	const IRProgram folded = compile_to_ir(
+		"class Limits:\n"
+		"\tconst MAX = 40\n"
+		"\tvar v = MAX\n"
+		"func test():\n"
+		"\treturn [Limits.MAX, Limits.new().v]\n");
+	const IRFunction* folded_test = find_function(folded, "test");
+	check(folded_test != nullptr, "test() is lowered");
+	if (folded_test != nullptr) {
+		int immediates = 0;
+		for (const IRInstruction& instr : folded_test->instructions) {
+			if (instr.opcode == IROpcode::LOAD_IMM
+				&& std::get<int64_t>(instr.operands[1].value) == 40) {
+				immediates++;
+			}
+		}
+		check(immediates == 2,
+			"both the qualified name and the field default are the immediate");
+		check(count_opcode(*folded_test, IROpcode::LOAD_GLOBAL) == 0,
+			"a class constant needs no global slot");
+	}
+
+	// A base's constant is inherited, and reached by a bare name in the body.
+	const IRProgram inherited = compile_to_ir(
+		"class Base:\n"
+		"\tconst STEP = 7\n"
+		"class Derived extends Base:\n"
+		"\tfunc f():\n"
+		"\t\treturn STEP\n"
+		"func test():\n"
+		"\treturn [Derived.STEP, Derived.new().f()]\n");
+	const IRFunction* derived_f = find_function(inherited, "@Derived.f");
+	check(derived_f != nullptr && count_opcode(*derived_f, IROpcode::LOAD_IMM) == 1,
+		"a bare name in the body finds the base's constant");
+
+	// A static method is the lifted function without the instance parameter.
+	const IRProgram statics = compile_to_ir(
+		"class Math:\n"
+		"\tstatic func twice(x):\n"
+		"\t\treturn x * 2\n"
+		"func test():\n"
+		"\treturn Math.twice(21)\n");
+	const IRFunction* twice = find_function(statics, "@Math.twice");
+	check(twice != nullptr && twice->parameters.size() == 1 && twice->parameters[0] == "x",
+		"a static method takes its declared parameters and nothing else");
+	const IRFunction* statics_test = find_function(statics, "test");
+	if (statics_test != nullptr) {
+		check(count_opcode(*statics_test, IROpcode::VCALL) == 0,
+			"and the call site names it directly");
+		const std::vector<std::string> names = called_names(*statics_test);
+		check(std::find(names.begin(), names.end(), "@Math.twice") != names.end(),
+			"by its lifted name");
+	}
+
+	// What has no instance cannot reach one.
+	check(compile_error("class A:\n\tvar v = 1\n\tstatic func f():\n\t\treturn v\n"
+		"func test():\n\treturn A.f()\n")
+		.find("one per instance") != std::string::npos,
+		"a field is out of reach from a static method");
+	check(compile_error("class A:\n\tstatic func f():\n\t\treturn self\n"
+		"func test():\n\treturn A.f()\n")
+		.find("runs without one") != std::string::npos,
+		"and so is self");
+	check(compile_error("class A:\n\tvar v = 1\n\tfunc f():\n\t\treturn v\n"
+		"func test():\n\treturn A.f()\n")
+		.find("one per instance") != std::string::npos,
+		"an instance method is not callable on the class");
+	check(compile_error("class A:\n\tconst X = [1, 2]\n"
+		"func test():\n\treturn A.X\n")
+		.find("not a compile-time value") != std::string::npos,
+		"a constant that cannot fold is refused, not given a slot");
+	check(compile_error("class A:\n\tconst X = 1\n"
+		"func test():\n\treturn A.Y\n")
+		.find("no constant named") != std::string::npos,
+		"a name the class does not declare is a diagnostic");
+
+	std::cout << "  ✓ A class body holds constants and static methods" << std::endl;
+}
+
+void test_an_untracked_instance_answers_is() {
+	std::cout << "Testing 'is' on an instance the compiler stopped tracking..." << std::endl;
+
+	// Out of a container the value is a Dictionary and nothing more, so the
+	// answer has to come from what new() wrote into it.
+	const IRProgram ir = compile_to_ir(
+		"class Base:\n"
+		"\tvar v = 1\n"
+		"class Derived extends Base:\n"
+		"\tvar w = 2\n"
+		"class Other:\n"
+		"\tvar u = 3\n"
+		"func take(x):\n"
+		"\treturn x is Base\n"
+		"func test():\n"
+		"\treturn take(Derived.new())\n");
+	const IRFunction* take = find_function(ir, "take");
+	check(take != nullptr, "take() is lowered");
+	if (take != nullptr) {
+		check(!vcalls(*take, "is_class") && !vcalls(*take, "get_script"),
+			"the file declares the chain, so the engine is not asked");
+		check(count_syscall(*take, ECALL_DICTIONARY_OPS) == 1,
+			"one get answers it, whatever the chain's length");
+		check(count_opcode(*take, IROpcode::CMP_EQ) == 2,
+			"Base and Derived answer true, Other is not compared against");
+	}
+
+	const auto& names = ir.string_constants;
+	check(std::find(names.begin(), names.end(), std::string("@class")) != names.end(),
+		"the instance carries the class under a key no field can spell");
+
+	// A struct is a plain Dictionary: it carries no name, so nothing to compare.
+	const IRProgram plain = compile_to_ir(
+		"struct Point:\n"
+		"\tvar x = 0\n"
+		"func take(p):\n"
+		"\treturn p is Point\n"
+		"func test():\n"
+		"\treturn take(Point.new())\n");
+	check(std::find(plain.string_constants.begin(), plain.string_constants.end(),
+		std::string("@class")) == plain.string_constants.end(),
+		"a struct is not tagged");
+
+	std::cout << "  ✓ An instance answers 'is' after the compiler loses its type" << std::endl;
+}
+
+void test_a_class_without_a_base_is_still_refcounted() {
+	std::cout << "Testing 'is Object' on a class that extends nothing..." << std::endl;
+
+	// GDScript gives a class with no `extends` an implicit RefCounted base, so
+	// both names answer true. The Dictionary holds no object to ask.
+	const IRProgram ir = compile_to_ir(
+		"class Plain:\n"
+		"\tvar v = 1\n"
+		"func test():\n"
+		"\treturn [Plain.new() is RefCounted, Plain.new() is Object, Plain.new() is Node]\n");
+	const IRFunction* test = find_function(ir, "test");
+	check(test != nullptr && !vcalls(*test, "is_class"),
+		"the declaration settles it without asking the engine");
+	if (test != nullptr) {
+		std::vector<int64_t> answers;
+		for (const IRInstruction& instr : test->instructions) {
+			if (instr.opcode == IROpcode::LOAD_BOOL) {
+				answers.push_back(std::get<int64_t>(instr.operands[1].value));
+			}
+		}
+		check(answers == std::vector<int64_t>{1, 1, 0},
+			"RefCounted and Object answer true, an unrelated engine class false");
+	}
+
+	// A struct is a Dictionary and nothing more: it is not an Object.
+	const IRProgram plain = compile_to_ir(
+		"struct Point:\n"
+		"\tvar x = 0\n"
+		"func test():\n"
+		"\treturn Point.new() is Object\n");
+	const IRFunction* plain_test = find_function(plain, "test");
+	if (plain_test != nullptr) {
+		bool answered_true = false;
+		for (const IRInstruction& instr : plain_test->instructions) {
+			if (instr.opcode == IROpcode::LOAD_BOOL
+				&& std::get<int64_t>(instr.operands[1].value) == 1) {
+				answered_true = true;
+			}
+		}
+		check(!answered_true, "a struct does not borrow the implicit base");
+	}
+
+	std::cout << "  \u2713 A class with no base is a RefCounted" << std::endl;
+}
+
+void test_a_method_that_returns_self_keeps_the_type() {
+	std::cout << "Testing a method that answers 'self'..." << std::endl;
+
+	// Without this the second call is a VCALL on a Dictionary, which is the
+	// retarget-to-@base path, and a class with no base has none.
+	const IRProgram ir = compile_to_ir(
+		"class Builder:\n"
+		"\tvar v = 0\n"
+		"\tfunc bump():\n"
+		"\t\tv += 1\n"
+		"\t\treturn self\n"
+		"func test():\n"
+		"\treturn Builder.new().bump().bump().v\n");
+	const IRFunction* test = find_function(ir, "test");
+	check(test != nullptr && count_opcode(*test, IROpcode::VCALL) == 0,
+		"chaining stays a direct call");
+	if (test != nullptr) {
+		const std::vector<std::string> names = called_names(*test);
+		check(std::count(names.begin(), names.end(), "@Builder.bump") == 2,
+			"both calls are the lifted method");
+	}
+
+	// A method that can answer something else keeps the instance untracked:
+	// the value is not known to be one.
+	const IRProgram mixed = compile_to_ir(
+		"class Builder:\n"
+		"\tvar v = 0\n"
+		"\tfunc bump(stop):\n"
+		"\t\tif stop:\n"
+		"\t\t\treturn null\n"
+		"\t\treturn self\n"
+		"func test():\n"
+		"\treturn Builder.new().bump(false).bump(false).v\n");
+	const IRFunction* mixed_test = find_function(mixed, "test");
+	check(mixed_test != nullptr && count_opcode(*mixed_test, IROpcode::VCALL) >= 1,
+		"a method that can answer null does not settle the type");
+
+	// Falling off the end answers null, so the last statement has to be the return.
+	const IRProgram falls_off = compile_to_ir(
+		"class Builder:\n"
+		"\tvar v = 0\n"
+		"\tfunc bump(stop):\n"
+		"\t\tif not stop:\n"
+		"\t\t\treturn self\n"
+		"func test():\n"
+		"\treturn Builder.new().bump(false).bump(false).v\n");
+	const IRFunction* falls_off_test = find_function(falls_off, "test");
+	check(falls_off_test != nullptr && count_opcode(*falls_off_test, IROpcode::VCALL) >= 1,
+		"a path that falls off the end does not settle the type either");
+
+	std::cout << "  \u2713 A self-returning method answers the receiver" << std::endl;
+}
+
 } // namespace
 
 int main() {
@@ -779,6 +1156,13 @@ int main() {
 	test_super_reaches_the_native_base();
 	test_class_name_and_extends_are_published();
 	test_restrictions_refuse_what_needs_a_class();
+	test_a_top_level_extends_reaches_the_owner();
+	test_an_instance_answers_is_and_as();
+	test_an_untyped_instance_reaches_the_base();
+	test_a_class_body_holds_constants_and_static_methods();
+	test_an_untracked_instance_answers_is();
+	test_a_class_without_a_base_is_still_refcounted();
+	test_a_method_that_returns_self_keeps_the_type();
 
 	if (failures != 0) {
 		std::cerr << std::endl << failures << " class test(s) failed" << std::endl;

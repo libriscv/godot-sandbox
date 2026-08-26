@@ -96,6 +96,10 @@ func untyped_float_compare(n : int) -> int:
 		i += 1
 	return acc
 
+# The append never runs -- acc only grows -- but neither compiler can know that,
+# and without something in the loop that could touch the Array the sandbox hoists
+# both size calls out of it and the kernel measures an empty loop. Both sides pay
+# the same compare and branch for it.
 func container_size(n : int) -> int:
 	var a : Array = [1, 2, 3]
 	var d : Dictionary = {"a": 1}
@@ -103,6 +107,8 @@ func container_size(n : int) -> int:
 	var i : int = 0
 	while i < n:
 		acc += a.size() + d.size()
+		if acc < 0:
+			a.append(i)
 		i += 1
 	return acc
 """

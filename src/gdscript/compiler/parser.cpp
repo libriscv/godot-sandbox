@@ -40,6 +40,17 @@ std::string Parser::doc_comment_above(int p_line) const {
 Program Parser::parse() {
 	Program program;
 
+	// Godot answers "Unexpected \"extends\" in class body" to either keyword once
+	// a declaration has been parsed: both head the file, and only each other and
+	// file-level annotations may come first.
+	bool saw_declaration = false;
+	const auto heads_the_file = [&](const char* keyword, const Token& token) {
+		if (saw_declaration) {
+			error(std::string("'") + keyword + "' comes before every other declaration"
+				" in the file", token.line, token.column);
+		}
+	};
+
 	skip_newlines();
 
 	while (!is_at_end()) {
@@ -47,6 +58,7 @@ Program Parser::parse() {
 
 		if (check(TokenType::EXTENDS)) {
 			const Token extends_token = advance();
+			heads_the_file("extends", extends_token);
 			if (!program.base_class.empty()) {
 				error("A script extends one base", extends_token.line, extends_token.column);
 			}
@@ -68,6 +80,7 @@ Program Parser::parse() {
 			skip_newlines();
 		} else if (check(TokenType::SIGNAL)) {
 			program.signals.push_back(parse_signal());
+			saw_declaration = true;
 		} else if (check(TokenType::AT)) {
 			// Stacked attributes: `@export_range(0, 10) @tool var x`.
 			bool is_export = false;
@@ -95,6 +108,7 @@ Program Parser::parse() {
 					decl->export_hint = export_hint;
 					program.globals.push_back(std::move(*decl));
 				}
+				saw_declaration = true;
 			} else if (is_onready) {
 				error("Expected a variable declaration after '@onready'");
 				synchronize();
@@ -104,6 +118,7 @@ Program Parser::parse() {
 					error("Expected a variable declaration after '@export'");
 				}
 				program.functions.push_back(parse_function());
+				saw_declaration = true;
 			} else if (is_export) {
 				error("Expected a variable declaration after '@export'");
 				synchronize();
@@ -116,20 +131,26 @@ Program Parser::parse() {
 				decl->is_static = is_static;
 				program.globals.push_back(std::move(*decl));
 			}
+			saw_declaration = true;
 		} else if (check(TokenType::CONST)) {
 			advance();
 			auto const_decl = parse_var_decl(true);
 			if (auto* decl = dynamic_cast<VarDeclStmt*>(const_decl.get())) {
 				program.globals.push_back(std::move(*decl));
 			}
+			saw_declaration = true;
 		} else if (check(TokenType::STRUCT)) {
 			program.structs.push_back(parse_struct());
+			saw_declaration = true;
 		} else if (check(TokenType::CLASS)) {
 			program.structs.push_back(parse_class());
+			saw_declaration = true;
 		} else if (check(TokenType::ENUM)) {
 			program.enums.push_back(parse_enum());
+			saw_declaration = true;
 		} else if (check(TokenType::CLASS_NAME)) {
 			const Token class_name_token = advance();
+			heads_the_file("class_name", class_name_token);
 			if (!program.class_name.empty()) {
 				error("A script declares one class_name",
 					class_name_token.line, class_name_token.column);
@@ -141,6 +162,7 @@ Program Parser::parse() {
 			skip_newlines();
 		} else if (check(TokenType::FUNC)) {
 			program.functions.push_back(parse_function());
+			saw_declaration = true;
 		} else {
 			error("Expected function or variable declaration");
 			synchronize();
@@ -460,8 +482,11 @@ StructDecl Parser::parse_class() {
 			continue;
 		}
 
+		const bool is_static = match(TokenType::STATIC);
+
 		if (check(TokenType::FUNC)) {
 			FunctionDecl method = parse_function();
+			method.is_static = is_static;
 			if (decl.find_method(method.name) != nullptr) {
 				throw CompilerException::parser_error(
 					"Class '" + decl.name + "' declares '" + method.name + "()' more than once",
@@ -471,8 +496,40 @@ StructDecl Parser::parse_class() {
 			continue;
 		}
 
+		if (check(TokenType::CONST)) {
+			const Token const_token = advance();
+			if (is_static) {
+				error("'static' says one per class, and a 'const' is already that",
+					const_token.line, const_token.column);
+			}
+			StructField constant;
+			constant.line = const_token.line;
+			constant.column = const_token.column;
+			constant.name = consume(TokenType::IDENTIFIER,
+				"Expected a name after 'const'").lexeme;
+			constant.type_hint = parse_type_hint();
+			consume(TokenType::ASSIGN, "A 'const' is given its value where it is declared");
+			constant.default_value = parse_expression();
+			consume_statement_end("Expected newline after the constant declaration");
+
+			if (decl.find_constant(constant.name) != nullptr
+				|| decl.find_field(constant.name) != nullptr) {
+				throw CompilerException::parser_error(
+					"Class '" + decl.name + "' declares '" + constant.name + "' more than once",
+					constant.line, constant.column);
+			}
+			decl.constants.push_back(std::move(constant));
+			continue;
+		}
+
 		const Token var_token = consume(TokenType::VAR,
-			"A class body holds field and function declarations");
+			"A class body holds constant, field and function declarations");
+		if (is_static) {
+			// A static var is one slot shared by every instance; the class has no
+			// storage of its own, only the Dictionary each new() builds.
+			error("A class field is one per instance, so it cannot be 'static'",
+				var_token.line, var_token.column);
+		}
 
 		StructField field;
 		field.line = var_token.line;
@@ -487,7 +544,7 @@ StructDecl Parser::parse_class() {
 		}
 		consume_statement_end("Expected newline after the field declaration");
 
-		if (decl.find_field(field.name) != nullptr) {
+		if (decl.find_field(field.name) != nullptr || decl.find_constant(field.name) != nullptr) {
 			throw CompilerException::parser_error(
 				"Class '" + decl.name + "' declares field '" + field.name + "' more than once",
 				field.line, field.column);

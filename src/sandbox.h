@@ -43,7 +43,9 @@ protected:
 public:
 	static constexpr unsigned MAX_INSTRUCTIONS = 8000; // Millions
 	static constexpr unsigned MAX_HEAP = 20ul; // MBs
-	static constexpr unsigned MAX_VMEM = 20ul; // MBs
+	// Power of two: the binary translator can only use the AND-masked arena on a
+	// Po2 arena, and that mask is what the default relies on for its guard.
+	static constexpr unsigned MAX_VMEM = 32ul; // MBs
 	static constexpr unsigned MAX_HEAP_ALLOCS = 4000; // Max guest heap allocations
 	static constexpr unsigned MAX_LEVEL = 4; // Maximum call recursion depth
 	// Shared across MAX_LEVEL recursion levels.
@@ -578,6 +580,14 @@ public:
 		return m_allowed_objects.empty() && !m_just_in_time_allowed_objects.is_valid();
 	}
 
+	bool is_fully_unrestricted() const noexcept {
+		return !m_just_in_time_allowed_classes.is_valid()
+				&& !m_just_in_time_allowed_methods.is_valid()
+				&& !m_just_in_time_allowed_properties.is_valid()
+				&& !m_just_in_time_allowed_resources.is_valid()
+				&& is_object_access_unrestricted();
+	}
+
 	/// @brief Check if an ObjectID is on the allowed-objects list.
 	bool is_allowed_object_id(uint64_t object_id) const noexcept { return m_allowed_objects.find(object_id) != m_allowed_objects.end(); }
 
@@ -868,6 +878,23 @@ public:
 		return this->m_bintr_bg_compilation;
 	}
 
+	/// @brief Opt an unrestricted JIT-enabled sandbox back into bounds-checked memory.
+	/// @note Unrestricted guests are unchecked by default, this is the opt-out.
+	/// Takes effect at next load. Not script-bound.
+	void set_unchecked_memory(bool unchecked) {
+		this->m_unchecked_memory = unchecked;
+	}
+	bool get_unchecked_memory() const noexcept {
+		return this->m_unchecked_memory_active;
+	}
+	// An unrestricted guest runs without bounds checks, when JIT is enabled.
+	bool unchecked_memory_wanted() const noexcept {
+		return this->m_unchecked_memory && this->is_fully_unrestricted();
+	}
+	bool unchecked_memory_is_stale() const noexcept {
+		return this->m_unchecked_memory_active != this->unchecked_memory_wanted();
+	}
+
 	/// @brief Enable or disable the use of JIT-compilation.
 	/// @param enable If true, enable JIT-compilation, false to disable it.
 	/// @note Ignored when no JIT backend is compiled in. See has_feature_jit().
@@ -905,9 +932,7 @@ public:
 	/// @param args The Variants making up the line.
 	/// @param count How many there are.
 	/// The arguments are concatenated with no separator, the way Godot's own
-	/// print() concatenates its arguments, and emitted as a single line. Both
-	/// the conversion and the output run under one non-reentrancy latch, and an
-	/// over-long line is truncated rather than allowed to grow.
+	/// print() concatenates its arguments, and emitted as a single line.
 	void print(const Variant *const *args, unsigned count, Print_Channel channel = Print_Channel::PRINT);
 	void print(const Variant &v);
 
@@ -977,9 +1002,16 @@ private:
 	// These are always present, even when the active binary translation backend
 	// has no equivalent option, so that scripts can set them without having to
 	// know how the extension was built.
-	bool m_bintr_automatic_nbit_as = false; // Automatic n-bit address space for binary translation
+	// On by default: an AND-masked arena confines a stray guest address instead of
+	// letting it reach the host, which is what keeps a mistake in a project under
+	// development from taking the editor down with it. Unrestricted, it costs ~24%
+	// against a wholly unchecked arena; restricted, it is a ~65% speedup over the
+	// bounds check it replaces. Requires a Po2 memory_max (see MAX_VMEM).
+	bool m_bintr_automatic_nbit_as = true; // Automatic n-bit address space for binary translation
 	bool m_bintr_register_caching = true; // Use register caching for binary translation
 	bool m_bintr_bg_compilation = true; // Perform binary translation in the background
+	bool m_unchecked_memory = true; // Only ever reached while fully unrestricted
+	bool m_unchecked_memory_active = false;
 
 	bool add_scoped_entry(uint64_t object_id, uintptr_t engine_object, godot::Object *binding);
 	bool hold_unrestricted_object(uint64_t object_id, godot::Object *obj);

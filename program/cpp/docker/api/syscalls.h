@@ -105,7 +105,15 @@
 
 #define ECALL_OBJ_RETAIN (GAME_API_BASE + 56)
 
-#define ECALL_LAST (GAME_API_BASE + 57)
+// Characters of a String in bulk, so walking one pays an ecall per batch and
+// not per character. a0 = String variant index, a1 = index of the first
+// character, a2 = how many at most. Returns (first scoped index << 32) | count:
+// the characters occupy that many consecutive scoped slots. count is what was
+// actually made -- short of the request near the end of the string, or when the
+// reference budget leaves no room -- and 0 once the string is exhausted.
+#define ECALL_STRING_BATCH (GAME_API_BASE + 57)
+
+#define ECALL_LAST (GAME_API_BASE + 58)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)

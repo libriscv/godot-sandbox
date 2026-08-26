@@ -115,6 +115,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	ir_program.class_name = program.class_name;
 	ir_program.base_class = program.base_class;
 	ir_program.base_is_path = program.base_is_path;
+	m_script_base_class = program.base_class;
 
 	// Signals are members; collected first so name collisions are caught below.
 	m_signals.clear();
@@ -373,6 +374,9 @@ IRProgram CodeGenerator::generate(const Program& program) {
 
 	m_globals_lowered = SIZE_MAX;
 
+	// After the globals, so a class constant may be written in terms of one.
+	register_class_constants(program);
+
 	m_pending_lambdas.clear();
 	m_next_lambda = 0;
 
@@ -449,17 +453,19 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const Stru
 
 	push_scope(func);
 
-	const size_t slots = decl.parameters.size() + (owner != nullptr ? 1 : 0);
+	// A static method belongs to the class, not to an instance: no `self` slot.
+	const bool takes_self = owner != nullptr && !decl.is_static;
+	const size_t slots = decl.parameters.size() + (takes_self ? 1 : 0);
 	if (slots > IRFunction::MAX_PARAMETERS) {
 		error_at((owner != nullptr ? "Method '" + owner->name + "." : "Function '") + decl.name +
 			"' takes " + std::to_string(decl.parameters.size()) +
 			" parameters, but at most " +
-			std::to_string(IRFunction::MAX_PARAMETERS - (owner != nullptr ? 1 : 0)) +
+			std::to_string(IRFunction::MAX_PARAMETERS - (takes_self ? 1 : 0)) +
 			" can be passed",
 			decl.line, decl.column,
 			"Pass the extra values in an Array or Dictionary instead");
 	}
-	if (owner != nullptr) {
+	if (takes_self) {
 		func.ir.parameters.push_back("self");
 		int self_reg = alloc_register(func);
 		declare_variable(func, "self", self_reg);
@@ -664,14 +670,11 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 			error_at("Cannot assign to signal '" + name + "'", site,
 				"A signal is emitted with '" + name + ".emit(...)', not assigned to");
 		}
-		if (m_current_class != nullptr && native_base(*m_current_class) != nullptr) {
-			if (Variable* self = find_variable(func, "self")) {
-				int base_reg = gen_native_base_load(self->register_num, func);
-				gen_vset(base_reg, name, value_reg, func);
-				free_register(func, base_reg);
-				free_register(func, value_reg);
-				return;
-			}
+		if (int base_reg = gen_implicit_base_load(func); base_reg >= 0) {
+			gen_vset(base_reg, name, value_reg, func);
+			free_register(func, base_reg);
+			free_register(func, value_reg);
+			return;
 		}
 		error_at("Undefined variable: " + name, site,
 			"Declare it with 'var " + name + " = ...' before assigning to it");
@@ -1405,6 +1408,18 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 
 		const bool unknown_iterable = get_register_type(func, array_reg) == IRInstruction::TypeHint_NONE;
 
+		// String is a value type: the walk is over the value the loop began
+		// with, so it takes its own copy and reassigning the source variable in
+		// the body cannot move the walk.
+		if (string_walk) {
+			int snapshot_reg = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(snapshot_reg),
+				IRValue::reg(array_reg));
+			set_register_type(func, snapshot_reg, Variant::STRING);
+			gen_string_walk(stmt, snapshot_reg, func);
+			return;
+		}
+
 		// Float joins the int arm: ceil(f) replaces the bound before the loop.
 		int is_float_reg = -1;
 		if (unknown_iterable) {
@@ -1562,8 +1577,6 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 						IRValue::reg(array_reg));
 				},
 				emit_array_size, emit_string_size, emit_vcall_size);
-		} else if (string_walk) {
-			emit_string_size(size_reg);
 		} else if (packed_walk) {
 			emit_vcall_size(size_reg);
 		} else {
@@ -1604,9 +1617,6 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 				},
 				emit_array_at, emit_string_at, emit_vcall_get);
 			set_register_type(func, elem_reg, IRInstruction::TypeHint_NONE);
-		} else if (string_walk) {
-			emit_string_at(elem_reg);
-			set_register_type(func, elem_reg, Variant::STRING);
 		} else if (packed_walk) {
 			emit_vcall_get(elem_reg);
 		} else {
@@ -1663,6 +1673,115 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 	}
 
 	gen_numeric_for(stmt, start_reg, end_reg, step_reg, func);
+}
+
+// `for c in <String>`: the characters come in batches, so the walk costs one
+// syscall per batch instead of one per character -- and a syscall is what these
+// loops are made of. ECALL_STRING_BATCH answers with the first scoped index and
+// how many it made, the run being consecutive, so handing out the next character
+// is arithmetic on an index and a store of a type tag.
+//
+// Two scopes. The outer one holds the batch and is released only when it runs
+// out. The inner one is marked after each refill and released every pass, so
+// what the body makes cannot pile up between refills -- and since its body spans
+// exactly the loop, the backend elides it outright when the body makes nothing,
+// which leaves a walk like `for c in text: n += c.length()` with one syscall per
+// character rather than three.
+void CodeGenerator::gen_string_walk(const ForStmt* stmt, int string_reg, FunctionContext& func) {
+	// Big enough that the refill disappears into the loop, small enough to leave
+	// a restricted sandbox's reference budget room for the body. The host clamps
+	// it further against what is actually left.
+	constexpr int64_t BATCH_SIZE = 16;
+
+	const std::string refill_label = make_label("for_refill");
+	const std::string have_label = make_label("for_have");
+	const std::string continue_label = make_label("for_continue");
+	const std::string end_label = make_label("for_end");
+
+	func.loops.push_back({ end_label, continue_label });
+	push_scope(func);
+
+	auto int_const = [&](int64_t value) {
+		int reg = alloc_register(func);
+		auto& load = func.ir.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(reg),
+			IRValue::imm(value));
+		load.type_hint = Variant::INT;
+		set_register_type(func, reg, Variant::INT);
+		return reg;
+	};
+	auto int_binop = [&](IROpcode op, int dest, int lhs, int rhs) {
+		auto& instr = func.ir.instructions.emplace_back(op, IRValue::reg(dest),
+			IRValue::reg(lhs), IRValue::reg(rhs));
+		instr.type_hint = Variant::INT;
+		set_register_type(func, dest, Variant::INT);
+	};
+
+	int index_reg = int_const(0);
+	int one_reg = int_const(1);
+	int shift_reg = int_const(32);
+	int mask_reg = int_const(0xffffffff);
+
+	// Written by the refill before anything reads them.
+	int handle_reg = alloc_register(func);
+	int left_reg = alloc_register(func);
+	set_register_type(func, handle_reg, Variant::INT);
+	set_register_type(func, left_reg, Variant::INT);
+
+	const int batch_scope = open_loop_scope(func);
+	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(refill_label));
+	emit_loop_scope_release(batch_scope, func);
+
+	int packed_reg = alloc_register(func);
+	IRInstruction refill(IROpcode::CALL_SYSCALL);
+	refill.operands.push_back(IRValue::reg(packed_reg));
+	refill.operands.push_back(IRValue::imm(ECALL_STRING_BATCH));
+	refill.operands.push_back(IRValue::reg(string_reg));
+	refill.operands.push_back(IRValue::reg(index_reg));
+	refill.operands.push_back(IRValue::imm(BATCH_SIZE));
+	func.ir.instructions.push_back(refill);
+	set_register_type(func, packed_reg, Variant::INT);
+
+	// (first scoped index << 32) | count. The index is signed: a permanent slot
+	// is negative, so the shift has to keep its sign.
+	int_binop(IROpcode::SHR, handle_reg, packed_reg, shift_reg);
+	int_binop(IROpcode::BIT_AND, left_reg, packed_reg, mask_reg);
+	free_register(func, packed_reg);
+	emit_conditional_branch(IROpcode::BRANCH_ZERO, left_reg, end_label, func);
+
+	// Marked after the batch exists, so releasing it never takes the batch.
+	const int body_scope = open_loop_scope(func);
+	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(have_label));
+	emit_loop_scope_release(body_scope, func);
+
+	int elem_reg = alloc_register(func);
+	func.ir.instructions.emplace_back(IROpcode::MAKE_SCOPED, IRValue::reg(elem_reg),
+		IRValue::reg(handle_reg), IRValue::imm(static_cast<int64_t>(Variant::STRING)));
+	set_register_type(func, elem_reg, Variant::STRING);
+
+	declare_variable(func, stmt->variable, elem_reg, false, stmt);
+	push_scope(func);
+	for (const auto& s : stmt->body) {
+		gen_stmt(s.get(), func);
+	}
+	pop_scope(func);
+
+	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(continue_label));
+	int_binop(IROpcode::ADD, index_reg, index_reg, one_reg);
+	int_binop(IROpcode::ADD, handle_reg, handle_reg, one_reg);
+	int_binop(IROpcode::SUB, left_reg, left_reg, one_reg);
+	emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, left_reg, have_label, func);
+	func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(refill_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+
+	pop_scope(func);
+	func.loops.pop_back();
+	free_register(func, elem_reg);
+	free_register(func, left_reg);
+	free_register(func, handle_reg);
+	free_register(func, mask_reg);
+	free_register(func, shift_reg);
+	free_register(func, one_reg);
+	free_register(func, index_reg);
 }
 
 // Counted loop: `for i in range(...)` and `for i in <int>`.
@@ -2155,6 +2274,28 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func)
 		return gen_member_read(self_reg, expr->name, func, expr);
 	}
 
+	// A field with no instance to read it from: a static method saw it.
+	if (m_current_class != nullptr && find_variable(func, "self") == nullptr
+		&& find_struct_field(*m_current_class, expr->name) != nullptr) {
+		error_at("'" + expr->name + "' is one per instance, and a 'static func' has none", expr,
+			"Pass the instance as an argument, or make '" + expr->name + "' a 'const'");
+	}
+
+	// A class constant shadows a file-level one of the same name, as it does in
+	// GDScript. Reachable from a static method too: it needs no instance. A field
+	// default is generated at the new() site, so the class it belongs to is the
+	// one being constructed, not the one whose body encloses the call.
+	{
+		const StructDecl* enclosing = !m_struct_default_stack.empty()
+			? m_struct_default_stack.back()
+			: m_current_class;
+		if (enclosing != nullptr && enclosing->is_class) {
+			if (int reg = gen_class_constant(*enclosing, expr->name, func); reg >= 0) {
+				return reg;
+			}
+		}
+	}
+
 	// Declared signal; locals shadow it (checked above).
 	if (find_signal(expr->name) != nullptr) {
 		return gen_signal_value(expr->name, func, expr);
@@ -2170,6 +2311,12 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func)
 	}
 
 	if (expr->name == "self") {
+		// In a class method `self` is a parameter, declared above. Reaching here
+		// from inside one means the method is static, and there is no instance;
+		// answering the owner node instead would be a different object entirely.
+		if (m_current_class != nullptr) {
+			error_at("'self' is the instance, and a 'static func' runs without one", expr);
+		}
 		return gen_get_node(".", func);
 	}
 
@@ -2224,13 +2371,10 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func)
 		return gen_make_callable(expr->name, -1, func);
 	}
 
-	if (m_current_class != nullptr && native_base(*m_current_class) != nullptr) {
-		if (Variable* self = find_variable(func, "self")) {
-			int base_reg = gen_native_base_load(self->register_num, func);
-			int result_reg = gen_vget(base_reg, expr->name, func);
-			free_register(func, base_reg);
-			return result_reg;
-		}
+	if (int base_reg = gen_implicit_base_load(func); base_reg >= 0) {
+		int result_reg = gen_vget(base_reg, expr->name, func);
+		free_register(func, base_reg);
+		return result_reg;
 	}
 
 	error_at("Undefined variable: " + expr->name, expr,
@@ -2926,16 +3070,128 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 // it: get_script(), then get_global_name() against the name and
 // get_base_script() until one matches or the chain runs out. Without that,
 // `node is Enemy` is quietly false and `node as Enemy` quietly null.
+// The name a class instance was made from, so a Dictionary can answer `is`.
+static constexpr const char* CLASS_NAME_KEY = "@class";
+
+// `x is Declared` where x is a Dictionary of unknown provenance: compare the
+// `@class` the constructor wrote against every class in the file that derives
+// from the one asked about. Answers -1 when the name is not one of them, which
+// leaves the engine walk in gen_class_test to run.
+int CodeGenerator::gen_instance_class_test(int value_reg, const std::string& class_name,
+	int result_reg, FunctionContext& func)
+{
+	const StructDecl* target = find_struct(class_name);
+	if (target == nullptr || !target->is_class) {
+		return -1;
+	}
+	const IRInstruction::TypeHint known = get_register_type(func, value_reg);
+	if (known != IRInstruction::TypeHint_NONE && known != Variant::DICTIONARY) {
+		return -1;
+	}
+
+	std::vector<std::string> names;
+	for (const auto& [name, decl] : m_structs) {
+		if (!decl->is_class) {
+			continue;
+		}
+		for (const StructDecl* at = decl; at != nullptr; at = class_base(*at)) {
+			if (at->name == class_name) {
+				names.push_back(name);
+				break;
+			}
+		}
+	}
+	if (names.empty()) {
+		return -1;
+	}
+	// m_structs is a hash map: sort so the same source gives the same machine code.
+	std::sort(names.begin(), names.end());
+
+	const std::string end_label = make_label("is_instance_end");
+	if (known != Variant::DICTIONARY) {
+		int is_dict_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_dict_reg),
+			IRValue::reg(value_reg), IRValue::imm(static_cast<int64_t>(Variant::DICTIONARY)));
+		set_register_type(func, is_dict_reg, Variant::BOOL);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, is_dict_reg, end_label, func);
+		free_register(func, is_dict_reg);
+	}
+
+	// One get: a missing key answers null, which matches no name.
+	int tag_reg = gen_dict_get(value_reg, CLASS_NAME_KEY, func);
+	for (const std::string& name : names) {
+		int name_reg = alloc_register(func);
+		IRInstruction load_name(IROpcode::LOAD_STRING, IRValue::reg(name_reg),
+			IRValue::imm(add_string_constant(name)));
+		load_name.type_hint = Variant::STRING;
+		func.ir.instructions.push_back(load_name);
+		set_register_type(func, name_reg, Variant::STRING);
+
+		func.ir.instructions.emplace_back(IROpcode::CMP_EQ, IRValue::reg(result_reg),
+			IRValue::reg(tag_reg), IRValue::reg(name_reg));
+		set_register_type(func, result_reg, Variant::BOOL);
+		free_register(func, name_reg);
+		emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, result_reg, end_label, func);
+	}
+	free_register(func, tag_reg);
+
+	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	return result_reg;
+}
+
 int CodeGenerator::gen_class_test(int value_reg, const std::string& class_name,
 	FunctionContext& func)
 {
+	// A class instance is a Dictionary, so the tag test below would answer false
+	// for its own name and for everything it extends. The declaration settles the
+	// script side of the chain; the engine side is the same run-time walk, run on
+	// the object the instance holds rather than on the Dictionary.
+	int object_reg = value_reg;
+	bool owns_object_reg = false;
+	if (const StructDecl* decl = get_register_struct(func, value_reg)) {
+		bool declares_it = false;
+		for (const StructDecl* at = decl; at != nullptr && !declares_it; at = class_base(*at)) {
+			declares_it = at->name == class_name;
+		}
+		// A class the file declares but that is not in this chain is settled here:
+		// only an engine name is left for the run-time walk.
+		const bool script_class = find_struct(class_name) != nullptr;
+		// A class without `extends` still derives from RefCounted, and so from
+		// Object: the two names GDScript answers true for without a base.
+		const bool implicit_base = decl->is_class && native_base(*decl) == nullptr
+			&& (class_name == "RefCounted" || class_name == "Object");
+		if (declares_it || script_class || native_base(*decl) == nullptr) {
+			int folded_reg = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(folded_reg),
+				IRValue::imm(declares_it || implicit_base ? 1 : 0));
+			set_register_type(func, folded_reg, Variant::BOOL);
+			return folded_reg;
+		}
+		object_reg = gen_native_base_load(value_reg, func);
+		owns_object_reg = true;
+	}
+
 	int result_reg = alloc_register(func);
 	func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(result_reg),
 		IRValue::imm(0));
 	set_register_type(func, result_reg, Variant::BOOL);
 
-	const IRInstruction::TypeHint known = get_register_type(func, value_reg);
+	// A value the compiler no longer tracks -- one read back out of a container, an
+	// untyped parameter -- is still an instance at run time, and carries the name
+	// it was made from. The file declares the whole chain, so which names answer
+	// true for this one is known here.
+	if (object_reg == value_reg) {
+		if (int tagged = gen_instance_class_test(value_reg, class_name, result_reg, func);
+			tagged >= 0) {
+			return tagged;
+		}
+	}
+
+	const IRInstruction::TypeHint known = get_register_type(func, object_reg);
 	if (known != IRInstruction::TypeHint_NONE && known != Variant::OBJECT) {
+		if (owns_object_reg) {
+			free_register(func, object_reg);
+		}
 		return result_reg;
 	}
 
@@ -2961,7 +3217,7 @@ int CodeGenerator::gen_class_test(int value_reg, const std::string& class_name,
 
 	const std::string end_label = make_label("is_class_end");
 	if (known != Variant::OBJECT) {
-		emit_is_object(value_reg, end_label);
+		emit_is_object(object_reg, end_label);
 	}
 
 	const int name_index = add_string_constant(class_name);
@@ -2973,7 +3229,7 @@ int CodeGenerator::gen_class_test(int value_reg, const std::string& class_name,
 	func.ir.instructions.push_back(load_name);
 	set_register_type(func, name_reg, Variant::STRING);
 
-	emit_vcall(result_reg, value_reg, "is_class", name_reg);
+	emit_vcall(result_reg, object_reg, "is_class", name_reg);
 	free_register(func, name_reg);
 
 	// An engine class is settled; only a script class needs the walk.
@@ -2989,7 +3245,7 @@ int CodeGenerator::gen_class_test(int value_reg, const std::string& class_name,
 	set_register_type(func, global_name_reg, Variant::STRING_NAME);
 
 	int script_reg = alloc_register(func);
-	emit_vcall(script_reg, value_reg, "get_script", -1);
+	emit_vcall(script_reg, object_reg, "get_script", -1);
 
 	const std::string loop_label = make_label("is_class_script");
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
@@ -3016,6 +3272,9 @@ int CodeGenerator::gen_class_test(int value_reg, const std::string& class_name,
 	free_register(func, global_name_reg);
 
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	if (owns_object_reg) {
+		free_register(func, object_reg);
+	}
 	return result_reg;
 }
 
@@ -3032,6 +3291,8 @@ int CodeGenerator::gen_class_cast(const ClassCastExpr* expr, FunctionContext& fu
 
 	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg),
 		IRValue::reg(value_reg));
+	// The cast answers the same instance, so it stays as usable as the original.
+	set_register_struct(func, result_reg, get_register_struct(func, value_reg));
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
 
 	free_register(func, value_reg);
@@ -3208,10 +3469,17 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 			find_class_method(*m_current_class, expr->function_name, &owner))
 		{
 			Variable* self = find_variable(func, "self");
+			if (method->is_static) {
+				return gen_class_method_call(*m_current_class, *method, *owner,
+					-1, expr->arguments, *expr, func, expr);
+			}
 			if (self != nullptr) {
 				return gen_class_method_call(*m_current_class, *method, *owner,
 					self->register_num, expr->arguments, *expr, func, expr);
 			}
+			error_at("'" + m_current_class->name + "." + method->name +
+				"()' needs an instance, and a 'static func' has none", expr,
+				"Make '" + method->name + "()' static too, or pass the instance as an argument");
 		}
 	}
 	// preload() lowers to the same LOAD_RESOURCE as a constant-path load().
@@ -3478,6 +3746,35 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 				!is_global_class(object->name) && !is_local_function(object->name))
 			{
 				return gen_engine_class_new(object->name, expr, func);
+			}
+		}
+	}
+
+	// `Class.f()` and `Class.CONST`: the left-hand name is a type, not a value, so
+	// neither reaches gen_expr. A static method has no receiver to pass.
+	if (auto* object = dynamic_cast<const VariableExpr*>(expr->object.get())) {
+		const StructDecl* decl = find_struct(object->name);
+		if (decl != nullptr && decl->is_class && find_variable(func, object->name) == nullptr) {
+			if (expr->is_method_call) {
+				const StructDecl* owner = nullptr;
+				if (const FunctionDecl* method =
+					find_class_method(*decl, expr->member_name, &owner))
+				{
+					if (!method->is_static) {
+						error_at("'" + decl->name + "." + expr->member_name +
+							"()' is one per instance", expr,
+							"Call it on one: '" + decl->name + ".new()." +
+							expr->member_name + "()'");
+					}
+					return gen_class_method_call(*decl, *method, *owner, -1, expr->arguments,
+						*expr, func, expr);
+				}
+			} else if (expr->arguments.empty()) {
+				if (int reg = gen_class_constant(*decl, expr->member_name, func); reg >= 0) {
+					return reg;
+				}
+				error_at("Class '" + decl->name + "' declares no constant named '" +
+					expr->member_name + "'", expr);
 			}
 		}
 	}
@@ -3853,6 +4150,25 @@ int CodeGenerator::gen_native_base_load(int self_reg, FunctionContext& func) {
 	return base_reg;
 }
 
+// A bare name that resolves to nothing in the script is a property of whatever
+// the script extends, as it is in GDScript. Inside a lifted class method that
+// is the class's `@base`; in a top-level function it is the owner, which the
+// script's own `extends` names. Without an `extends` there is nothing to reach
+// and the caller reports the name as undefined.
+int CodeGenerator::gen_implicit_base_load(FunctionContext& func) {
+	if (m_current_class != nullptr) {
+		if (native_base(*m_current_class) == nullptr) {
+			return -1;
+		}
+		Variable* self = find_variable(func, "self");
+		return self == nullptr ? -1 : gen_native_base_load(self->register_num, func);
+	}
+	if (m_script_base_class.empty()) {
+		return -1;
+	}
+	return gen_get_node(".", func);
+}
+
 std::vector<const StructField*> CodeGenerator::struct_fields(const StructDecl& decl) const {
 	std::vector<const StructField*> out;
 	if (const StructDecl* base = class_base(decl)) {
@@ -3908,6 +4224,48 @@ const FunctionDecl* CodeGenerator::find_class_method(const StructDecl& decl,
 		}
 	}
 	return nullptr;
+}
+
+// A class constant is compile-time only, like the file's own consts: it folds at
+// the use site and nothing of it reaches the IR. Keyed under 'Class.NAME', which
+// no source-level name can spell.
+void CodeGenerator::register_class_constants(const Program& program) {
+	for (const StructDecl& decl : program.structs) {
+		if (!decl.is_class) {
+			continue;
+		}
+		for (const StructField& constant : decl.constants) {
+			IRGlobalVar folded;
+			folded.name = decl.name + "." + constant.name;
+			folded.is_const = true;
+			if (!constant.type_hint.empty()) {
+				folded.type_hint = type_hint_from_string(constant.type_hint);
+			}
+			if (!fold_global_initializer(constant.default_value.get(), folded)
+				|| folded.init_type == IRGlobalVar::InitType::RUNTIME) {
+				error_at("The constant '" + decl.name + "." + constant.name +
+					"' is not a compile-time value", constant.line, constant.column,
+					"A class holds no storage of its own, so its constants have to fold. "
+					"Move it to a file-level 'const', or make it a field with a default");
+			}
+			coerce_folded_initializer(folded, constant.line, constant.column);
+			folded.value_type = derive_global_value_type(folded);
+			m_class_constants[folded.name] = std::move(folded);
+		}
+	}
+}
+
+// Walks the declared chain, so a constant is inherited like a field.
+int CodeGenerator::gen_class_constant(const StructDecl& decl, const std::string& name,
+	FunctionContext& func)
+{
+	for (const StructDecl* at = &decl; at != nullptr; at = class_base(*at)) {
+		auto it = m_class_constants.find(at->name + "." + name);
+		if (it != m_class_constants.end()) {
+			return gen_folded_const(it->second, func);
+		}
+	}
+	return -1;
 }
 
 std::string CodeGenerator::lifted_method_name(const StructDecl& decl, const std::string& method) {
@@ -4228,6 +4586,21 @@ int CodeGenerator::gen_dict_get(int obj_reg, const std::string& key, FunctionCon
 	return result_reg;
 }
 
+int CodeGenerator::gen_dict_has(int obj_reg, const std::string& key, FunctionContext& func) {
+	int key_reg = alloc_register(func);
+	IRInstruction load_key(IROpcode::LOAD_STRING, IRValue::reg(key_reg),
+		IRValue::imm(add_string_constant(key)));
+	load_key.type_hint = Variant::STRING;
+	func.ir.instructions.push_back(load_key);
+	set_register_type(func, key_reg, Variant::STRING);
+
+	constexpr int64_t DICT_OP_HAS = 3;
+	int result_reg = gen_dictionary_op(DICT_OP_HAS, obj_reg, key_reg, Variant::BOOL, func);
+
+	free_register(func, key_reg);
+	return result_reg;
+}
+
 void CodeGenerator::gen_dict_set(int obj_reg, const std::string& key, int value_reg,
 	FunctionContext& func)
 {
@@ -4361,13 +4734,39 @@ int CodeGenerator::gen_class_construct(const StructDecl& decl, const std::vector
 		set_register_type(func, base_reg, Variant::OBJECT);
 	}
 
-	const size_t entries = fields.size() + (base_class != nullptr ? 1 : 0);
+	// A class instance carries the name it was made from, so a value the compiler
+	// no longer tracks -- one read back out of a container, an untyped parameter --
+	// still answers `is`. A struct is a plain Dictionary and carries nothing.
+	int class_reg = -1;
+	int class_key_reg = -1;
+	if (decl.is_class) {
+		class_key_reg = alloc_register(func);
+		IRInstruction load_key(IROpcode::LOAD_STRING, IRValue::reg(class_key_reg),
+			IRValue::imm(add_string_constant(CLASS_NAME_KEY)));
+		load_key.type_hint = Variant::STRING;
+		func.ir.instructions.push_back(load_key);
+		set_register_type(func, class_key_reg, Variant::STRING);
+
+		class_reg = alloc_register(func);
+		IRInstruction load_name(IROpcode::LOAD_STRING, IRValue::reg(class_reg),
+			IRValue::imm(add_string_constant(decl.name)));
+		load_name.type_hint = Variant::STRING;
+		func.ir.instructions.push_back(load_name);
+		set_register_type(func, class_reg, Variant::STRING);
+	}
+
+	const size_t entries = fields.size() + (base_class != nullptr ? 1 : 0)
+		+ (class_reg >= 0 ? 1 : 0);
 	int result_reg = alloc_register(func);
 	IRInstruction make(IROpcode::MAKE_DICTIONARY);
 	make.operands.push_back(IRValue::reg(result_reg));
 	make.operands.push_back(IRValue::imm(static_cast<int>(entries)));
 
 	std::vector<int> key_regs;
+	if (class_reg >= 0) {
+		make.operands.push_back(IRValue::reg(class_key_reg));
+		make.operands.push_back(IRValue::reg(class_reg));
+	}
 	if (base_class != nullptr) {
 		base_key_reg = alloc_register(func);
 		IRInstruction load_key(IROpcode::LOAD_STRING, IRValue::reg(base_key_reg),
@@ -4408,6 +4807,12 @@ int CodeGenerator::gen_class_construct(const StructDecl& decl, const std::vector
 	if (base_reg >= 0) {
 		free_register(func, base_reg);
 	}
+	if (class_key_reg >= 0) {
+		free_register(func, class_key_reg);
+	}
+	if (class_reg >= 0) {
+		free_register(func, class_reg);
+	}
 
 	const StructDecl* owner = nullptr;
 	const FunctionDecl* init = find_class_method(decl, "_init", &owner);
@@ -4423,6 +4828,51 @@ int CodeGenerator::gen_class_construct(const StructDecl& decl, const std::vector
 		func, site);
 	free_register(func, discarded);
 	return result_reg;
+}
+
+// True when every `return` in the body is a bare `self` and the body ends in
+// one, so no path answers anything else. Falling off the end answers null,
+// which is why the last statement has to be one of the returns.
+static bool every_return_is_self(const std::vector<StmtPtr>& body) {
+	for (const StmtPtr& stmt : body) {
+		if (auto* ret = dynamic_cast<const ReturnStmt*>(stmt.get())) {
+			auto* value = dynamic_cast<const VariableExpr*>(ret->value.get());
+			if (value == nullptr || value->name != "self") {
+				return false;
+			}
+		} else if (auto* if_stmt = dynamic_cast<const IfStmt*>(stmt.get())) {
+			if (!every_return_is_self(if_stmt->then_branch)
+				|| !every_return_is_self(if_stmt->else_branch)) {
+				return false;
+			}
+		} else if (auto* while_stmt = dynamic_cast<const WhileStmt*>(stmt.get())) {
+			if (!every_return_is_self(while_stmt->body)) {
+				return false;
+			}
+		} else if (auto* for_stmt = dynamic_cast<const ForStmt*>(stmt.get())) {
+			if (!every_return_is_self(for_stmt->body)) {
+				return false;
+			}
+		} else if (auto* match_stmt = dynamic_cast<const MatchStmt*>(stmt.get())) {
+			for (const auto& branch : match_stmt->branches) {
+				if (!every_return_is_self(branch.body)) {
+					return false;
+				}
+			}
+		}
+	}
+	return true;
+}
+
+static bool returns_only_self(const std::vector<StmtPtr>& body) {
+	if (body.empty()) {
+		return false;
+	}
+	auto* last = dynamic_cast<const ReturnStmt*>(body.back().get());
+	if (last == nullptr) {
+		return false;
+	}
+	return every_return_is_self(body);
 }
 
 int CodeGenerator::gen_class_method_call(const StructDecl& decl, const FunctionDecl& method,
@@ -4441,7 +4891,10 @@ int CodeGenerator::gen_class_method_call(const StructDecl& decl, const FunctionD
 			site);
 	}
 
-	std::vector<int> arg_regs{ self_reg };
+	std::vector<int> arg_regs;
+	if (self_reg >= 0) {
+		arg_regs.push_back(self_reg);
+	}
 	for (const auto& argument : arguments) {
 		arg_regs.push_back(gen_expr(argument.get(), func));
 	}
@@ -4456,6 +4909,12 @@ int CodeGenerator::gen_class_method_call(const StructDecl& decl, const FunctionD
 	int result_reg = alloc_register(func);
 	if (!method.is_coroutine) {
 		apply_declared_type(result_reg, method.return_type, func);
+		// A method that only ever returns `self` answers the receiver, so the call
+		// site keeps tracking the instance and `a.bump().bump()` stays a pair of
+		// direct calls instead of a VCALL on a Dictionary.
+		if (self_reg >= 0 && method.return_type.empty() && returns_only_self(method.body)) {
+			set_register_struct(func, result_reg, get_register_struct(func, self_reg));
+		}
 	}
 
 	IRInstruction call(method.is_coroutine ? IROpcode::CALL_HOSTED : IROpcode::CALL);
@@ -5239,6 +5698,37 @@ int CodeGenerator::gen_dynamic_member_get(int obj_reg, const std::string& member
 		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg),
 			IRValue::reg(element_reg));
 		free_register(func, element_reg);
+
+		// A class instance holds its own fields as keys and the engine object it
+		// extends under `@base`. A name that is not a key is a property of that
+		// object. Only emitted when the script declares such a class; a plain
+		// Dictionary then pays one lookup, and only for a key it does not have.
+		if (has_engine_based_classes()) {
+			const std::string base_label = make_label("member_get_base_done");
+			int found_reg = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(found_reg),
+				IRValue::reg(result_reg), IRValue::imm(static_cast<int64_t>(Variant::NIL)));
+			set_register_type(func, found_reg, Variant::BOOL);
+			emit_conditional_branch(IROpcode::BRANCH_ZERO, found_reg, base_label, func);
+			free_register(func, found_reg);
+
+			int base_reg = gen_dict_get(obj_reg, NATIVE_BASE_KEY, func);
+			int is_object_reg = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_object_reg),
+				IRValue::reg(base_reg), IRValue::imm(static_cast<int64_t>(Variant::OBJECT)));
+			set_register_type(func, is_object_reg, Variant::BOOL);
+			emit_conditional_branch(IROpcode::BRANCH_ZERO, is_object_reg, base_label, func);
+			free_register(func, is_object_reg);
+
+			set_register_type(func, base_reg, Variant::OBJECT);
+			int property_reg = gen_vget(base_reg, member, func);
+			func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg),
+				IRValue::reg(property_reg));
+			free_register(func, property_reg);
+
+			func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(base_label));
+			free_register(func, base_reg);
+		}
 		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(next_label));
 	}
@@ -5286,6 +5776,29 @@ void CodeGenerator::gen_dynamic_member_set(int obj_reg, const std::string& membe
 		emit_conditional_branch(IROpcode::BRANCH_ZERO, test_reg, next_label, func);
 		free_register(func, test_reg);
 
+		// The read's mirror: a name the instance does not declare is written to the
+		// engine object it extends, not added as a key.
+		if (has_engine_based_classes()) {
+			const std::string element_label = make_label("member_set_element");
+			int base_reg = gen_dict_get(obj_reg, NATIVE_BASE_KEY, func);
+			int is_object_reg = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_object_reg),
+				IRValue::reg(base_reg), IRValue::imm(static_cast<int64_t>(Variant::OBJECT)));
+			set_register_type(func, is_object_reg, Variant::BOOL);
+			emit_conditional_branch(IROpcode::BRANCH_ZERO, is_object_reg, element_label, func);
+			free_register(func, is_object_reg);
+
+			int has_reg = gen_dict_has(obj_reg, member, func);
+			emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, has_reg, element_label, func);
+			free_register(func, has_reg);
+
+			set_register_type(func, base_reg, Variant::OBJECT);
+			gen_vset(base_reg, member, value_reg, func);
+			func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
+
+			func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(element_label));
+			free_register(func, base_reg);
+		}
 		gen_dict_set(obj_reg, member, value_reg, func);
 		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(next_label));
@@ -5795,8 +6308,10 @@ int CodeGenerator::gen_const_global_value(const std::string& name, FunctionConte
 	if (it == m_global_const_values.end()) {
 		return -1;
 	}
-	const IRGlobalVar& global = it->second;
+	return gen_folded_const(it->second, func);
+}
 
+int CodeGenerator::gen_folded_const(const IRGlobalVar& global, FunctionContext& func) {
 	// Container consts are shared handles; stays on LOAD_GLOBAL.
 	using InitType = IRGlobalVar::InitType;
 	switch (global.init_type) {

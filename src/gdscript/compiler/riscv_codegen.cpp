@@ -503,6 +503,7 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 	}
 
 	plan_scopes(func);
+	plan_release_clears(func);
 	if (m_fn.scope_slot_count > 0) {
 		m_fn.omits_frame = false;
 	}
@@ -781,6 +782,33 @@ void RISCVCodeGen::gen_syscall_string_at(const IRInstruction& instr, int result_
 	emit_syscall_result(result_vreg, REG_A0, result_offset, Variant::STRING);
 }
 
+// a0 = string, a1 = first character, a2 = how many at most (an immediate: the
+// batch size is fixed at the call site). The answer is one register, packing the
+// first scoped index and the count, so nothing is written through a pointer.
+void RISCVCodeGen::gen_syscall_string_batch(const IRInstruction& instr, int result_vreg) {
+	if (instr.operands.size() != 5) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_STRING_BATCH requires 5 operands");
+	}
+
+	int string_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
+	int index_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
+	const int64_t max_count = std::get<int64_t>(instr.operands[4].value);
+
+	int result_offset = get_variant_stack_offset(result_vreg);
+	int string_offset = get_variant_stack_offset(string_vreg);
+	int index_offset = get_variant_stack_offset(index_vreg);
+
+	spill_around_syscall({ REG_A0, REG_A1, REG_A2 });
+
+	emit_container_handle(REG_A0, string_vreg, string_offset);
+	emit_ld(REG_A1, REG_SP, index_offset + 8); // int64, not int32
+	emit_li(REG_A2, max_count);
+	emit_li(REG_A7, ECALL_STRING_BATCH);
+	emit_ecall();
+
+	emit_syscall_result(result_vreg, REG_A0, result_offset, Variant::INT);
+}
+
 // Keyed ops pass key in a2, result in a3; keyless (GET_KEYS, GET_VALUES) take result in a2.
 // HAS and GET_SIZE return in a0 instead of through a pointer.
 void RISCVCodeGen::gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg) {
@@ -960,6 +988,8 @@ void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
 		gen_syscall_array_at(instr, result_vreg);
 	} else if (syscall_num == ECALL_STRING_AT) {
 		gen_syscall_string_at(instr, result_vreg);
+	} else if (syscall_num == ECALL_STRING_BATCH) {
+		gen_syscall_string_batch(instr, result_vreg);
 	} else if (syscall_num == ECALL_DICTIONARY_OPS) {
 		gen_syscall_dictionary_ops(instr, result_vreg);
 	} else {
@@ -2238,6 +2268,24 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			break;
 		}
 
+		case IROpcode::MAKE_SCOPED: {
+			// MAKE_SCOPED dst, src, variant_type
+			//
+			// The handle a syscall answered with, boxed: the tag from the
+			// immediate and the index from src's integer payload.
+			int dst_vreg = std::get<int>(instr.operands[0].value);
+			int src_vreg = std::get<int>(instr.operands[1].value);
+			const int64_t tag = std::get<int64_t>(instr.operands[2].value);
+			int src_offset = get_variant_stack_offset(src_vreg);
+
+			emit_ld(REG_T0, REG_SP, src_offset + VARIANT_DATA_OFFSET);
+			auto [base, offset] = value_destination(dst_vreg);
+			emit_sd(REG_T0, base, offset + VARIANT_DATA_OFFSET);
+			emit_li(REG_T1, static_cast<int32_t>(tag));
+			emit_store_variant_type(REG_T1, base, offset);
+			break;
+		}
+
 		case IROpcode::TYPE_OF: {
 			// typeof(): load tag (first 4 bytes), box as INT.
 			int dst_vreg = std::get<int>(instr.operands[0].value);
@@ -2947,6 +2995,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::MOVE:
 		case IROpcode::TYPE_TEST:
 		case IROpcode::TYPE_OF:
+		case IROpcode::MAKE_SCOPED:
 		case IROpcode::LABEL:
 		case IROpcode::SWITCH:
 		case IROpcode::JUMP:
@@ -5091,8 +5140,38 @@ bool RISCVCodeGen::global_call_may_ecall(GlobalFn fn) {
 	return !is_inline(info.kind);
 }
 
+// A syscall whose whole answer arrives in a0 leaves nothing behind on the host:
+// no scoped variant is created, so nothing accumulates across a loop and the
+// scope has nothing to release. Everything else -- a Variant result, a VCALL, a
+// guest call -- is assumed to allocate.
+static bool syscall_answers_in_register(const IRInstruction& instr) {
+	if (instr.opcode != IROpcode::CALL_SYSCALL || instr.operands.size() < 2 ||
+		!std::holds_alternative<int64_t>(instr.operands[1].value)) {
+		return false;
+	}
+	switch (std::get<int64_t>(instr.operands[1].value)) {
+		case ECALL_ARRAY_SIZE:
+		case ECALL_STRING_SIZE:
+			return true;
+		case ECALL_DICTIONARY_OPS: {
+			if (instr.operands.size() < 3 || !std::holds_alternative<int64_t>(instr.operands[2].value)) {
+				return false;
+			}
+			const int64_t op = std::get<int64_t>(instr.operands[2].value);
+			return op == dictionary_op(Dictionary_Op::GET_SIZE) ||
+				op == dictionary_op(Dictionary_Op::HAS);
+		}
+		default:
+			return false;
+	}
+}
+
+bool RISCVCodeGen::instruction_may_allocate_scoped(const IRInstruction& instr) const {
+	return instruction_may_ecall(instr) && !syscall_answers_in_register(instr);
+}
+
 // Scans mark..last-back-edge; nested SCOPE_MARK/RELEASE do not count.
-bool RISCVCodeGen::scope_body_may_ecall(const IRFunction& func, size_t mark_index) const {
+bool RISCVCodeGen::scope_body_may_allocate(const IRFunction& func, size_t mark_index) const {
 	const size_t count = func.instructions.size();
 	// Expects mark immediately before its label (tighten_scope_marks).
 	const size_t label_index = mark_index + 1;
@@ -5122,11 +5201,164 @@ bool RISCVCodeGen::scope_body_may_ecall(const IRFunction& func, size_t mark_inde
 		if (op == IROpcode::SCOPE_MARK || op == IROpcode::SCOPE_RELEASE) {
 			continue;
 		}
-		if (instruction_may_ecall(func.instructions[i])) {
+		if (instruction_may_allocate_scoped(func.instructions[i])) {
 			return true;
 		}
 	}
 	return false;
+}
+
+// Registers nothing will read again at each SCOPE_RELEASE.
+//
+// The host's release walk reads the whole frame looking for handles to rescue,
+// and a slot the program is done with still holds the one it last had. In a
+// container walk that is the loop variable: every pass rescues the previous
+// element -- a Variant move, a re-registration and a write back through guest
+// memory -- for a value no instruction will ever look at. Storing NIL over the
+// dead slots first is one instruction each, and guest instructions are not what
+// these loops cost.
+void RISCVCodeGen::plan_release_clears(const IRFunction& func) {
+	m_fn.release_clears.clear();
+
+
+	const size_t count = func.instructions.size();
+	const size_t nregs = size_t(std::max(func.max_registers, 0));
+	if (nregs == 0) {
+		return;
+	}
+	bool has_release = false;
+	for (const auto& instr : func.instructions) {
+		if (instr.opcode == IROpcode::SCOPE_RELEASE) {
+			has_release = true;
+			break;
+		}
+	}
+	if (!has_release) {
+		return;
+	}
+
+	// Only slots that can hold a handle are worth an instruction. A register
+	// every write to which leaves a number, a bool or nothing behind carries
+	// none, whatever else the loop does with it.
+	std::vector<bool> carries_handle(nregs, false);
+	for (const auto& instr : func.instructions) {
+		const int dst = ir_destination_register(instr);
+		if (dst < 0 || size_t(dst) >= nregs) {
+			continue;
+		}
+		switch (instr.opcode) {
+			case IROpcode::LOAD_IMM:
+			case IROpcode::LOAD_FLOAT_IMM:
+			case IROpcode::LOAD_BOOL:
+			case IROpcode::LOAD_NIL:
+			case IROpcode::TYPE_TEST:
+			case IROpcode::TYPE_OF:
+				continue;
+			default:
+				break;
+		}
+		// A comparison answers a bool; its type hint describes its operands.
+		if (ir_has_effect(instr.opcode, IR_COMPARISON)) {
+			continue;
+		}
+		if (instr.type_hint == Variant::INT || instr.type_hint == Variant::FLOAT ||
+			instr.type_hint == Variant::BOOL) {
+			continue;
+		}
+		if (syscall_answers_in_register(instr)) {
+			continue;
+		}
+		carries_handle[size_t(dst)] = true;
+	}
+
+	std::unordered_map<std::string, size_t> label_positions;
+	for (size_t i = 0; i < count; i++) {
+		if (func.instructions[i].opcode == IROpcode::LABEL) {
+			label_positions[std::get<std::string>(func.instructions[i].operands[0].value)] = i;
+		}
+	}
+
+	std::vector<std::vector<size_t>> successors(count);
+	for (size_t i = 0; i < count; i++) {
+		const IRInstruction& instr = func.instructions[i];
+		if (!ir_has_effect(instr.opcode, IR_TERMINATOR) && i + 1 < count) {
+			successors[i].push_back(i + 1);
+		}
+		for (const auto& op : instr.operands) {
+			if (op.type != IRValue::Type::LABEL) {
+				continue;
+			}
+			auto it = label_positions.find(std::get<std::string>(op.value));
+			if (it != label_positions.end()) {
+				successors[i].push_back(it->second);
+			}
+		}
+	}
+
+	// Backward liveness to a fixed point. A slot counts as live wherever the
+	// analysis cannot see: an unresolved label operand leaves the successor
+	// list short, which is the one direction that would be unsafe, so
+	// AWAIT and CALL_GUEST -- which resume through the host -- keep everything.
+	std::vector<std::vector<bool>> live_in(count, std::vector<bool>(nregs, false));
+	std::vector<int> reads;
+	bool changed = true;
+	while (changed) {
+		changed = false;
+		for (size_t k = count; k-- > 0;) {
+			const IRInstruction& instr = func.instructions[k];
+			std::vector<bool> live(nregs, false);
+			for (size_t s : successors[k]) {
+				for (size_t r = 0; r < nregs; r++) {
+					live[r] = live[r] || live_in[s][r];
+				}
+			}
+			if (instr.opcode == IROpcode::AWAIT) {
+				live.assign(nregs, true);
+			} else {
+				// A full write kills; INOUT reads its own slot first.
+				const int dst_index = ir_destination_operand_index(instr.opcode);
+				if (dst_index >= 0 && size_t(dst_index) < instr.operands.size() &&
+					ir_opcode_info(instr.opcode).signature.kind_at(size_t(dst_index)) == IROperandKind::DST) {
+					const int dst = ir_destination_register(instr);
+					if (dst >= 0 && size_t(dst) < nregs) {
+						live[size_t(dst)] = false;
+					}
+				}
+				reads.clear();
+				ir_collect_read_registers(instr, reads);
+				for (int reg : reads) {
+					if (reg >= 0 && size_t(reg) < nregs) {
+						live[size_t(reg)] = true;
+					}
+				}
+			}
+			if (live != live_in[k]) {
+				live_in[k] = std::move(live);
+				changed = true;
+			}
+		}
+	}
+
+	for (size_t k = 0; k < count; k++) {
+		if (func.instructions[k].opcode != IROpcode::SCOPE_RELEASE) {
+			continue;
+		}
+		std::vector<bool> live_out(nregs, false);
+		for (size_t s : successors[k]) {
+			for (size_t r = 0; r < nregs; r++) {
+				live_out[r] = live_out[r] || live_in[s][r];
+			}
+		}
+		std::vector<int> dead;
+		for (size_t r = 0; r < nregs; r++) {
+			if (!live_out[r] && carries_handle[r] && m_fn.global_handles.count(int(r)) == 0) {
+				dead.push_back(int(r));
+			}
+		}
+		if (!dead.empty()) {
+			m_fn.release_clears.emplace(int(k), std::move(dead));
+		}
+	}
 }
 
 void RISCVCodeGen::plan_scopes(const IRFunction& func) {
@@ -5151,7 +5383,7 @@ void RISCVCodeGen::plan_scopes(const IRFunction& func) {
 			continue;
 		}
 		const int scope_id = int(std::get<int64_t>(func.instructions[i].operands[0].value));
-		m_fn.elided_scopes[size_t(scope_id)] = !scope_body_may_ecall(func, i);
+		m_fn.elided_scopes[size_t(scope_id)] = !scope_body_may_allocate(func, i);
 	}
 
 	// Slots stay addressed by scope id, so the count is the highest survivor.
@@ -5200,6 +5432,18 @@ void RISCVCodeGen::gen_scope_release(const IRInstruction& instr) {
 	// Host reads the frame as Variants; registers must be spilled first.
 	spill_all_registers();
 	spill_around_syscall({ REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5, REG_A6, REG_A7 });
+
+	// After the spill, so a dead register's stale value cannot land back on top.
+	// current_instr_idx is bumped before the instruction is generated.
+	auto clears = m_fn.release_clears.find(m_fn.current_instr_idx - 1);
+	if (clears != m_fn.release_clears.end()) {
+		for (int vreg : clears->second) {
+			auto slot = m_fn.variant_offsets.find(vreg);
+			if (slot != m_fn.variant_offsets.end()) {
+				emit_sw(REG_ZERO, REG_SP, slot->second + VARIANT_TYPE_OFFSET);
+			}
+		}
+	}
 
 	emit_ld(REG_A1, REG_SP, offset);
 	emit_add_offset(REG_A2, REG_SP, SAVED_REG_SPACE);

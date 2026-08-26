@@ -8268,6 +8268,45 @@ func nested(s: String):
 		for b in s:
 			out.append(a + b)
 	return out
+
+func long_walk(s: String, times: int):
+	var text = s.repeat(times)
+	var acc = 0
+	for c in text:
+		acc += c.length()
+	return acc
+
+func stopped(s: String, at: String):
+	var out = ""
+	for c in s:
+		if c == at:
+			break
+		out += c
+	return out
+
+func skipped(s: String, drop: String):
+	var out = ""
+	for c in s:
+		if c == drop:
+			continue
+		out += c
+	return out
+
+func kept(s: String):
+	var seen = []
+	var last = ""
+	for c in s:
+		last = c
+		seen.append(last)
+	return [last, seen]
+
+func reassigned(s: String):
+	var text = s
+	var out = ""
+	for c in text:
+		out += c
+		text = "!"
+	return [out, text]
 """
 	var s = _compile_and_load(gdscript_code, 400000)
 	if s == null:
@@ -8316,6 +8355,24 @@ func nested(s: String):
 	# Each character is a String in its own right.
 	assert_eq(s.vmcallv("widths", "aéb"), _si_widths("aéb"), "Every character has length 1")
 	assert_eq(s.vmcallv("nested", "ab"), _si_nested("ab"), "Two String walks may nest")
+
+	# Characters arrive in batches, so a walk longer than one batch has to hand
+	# out every character across every refill, and leaving early has to leave
+	# from the middle of a batch.
+	assert_eq(s.vmcallv("long_walk", "abcde", 100), _si_long_walk("abcde", 100),
+		"A walk should not stop at a batch boundary")
+	assert_eq(s.vmcallv("long_walk", "x", 1), 1, "Nor should a one-character walk")
+	assert_eq(s.vmcallv("stopped", "abcdefghijklmnopqrstuvwxyz", "u"),
+		_si_stopped("abcdefghijklmnopqrstuvwxyz", "u"), "break should leave mid-batch")
+	assert_eq(s.vmcallv("skipped", "abcabcabcabcabcabcabcabc", "b"),
+		_si_skipped("abcabcabcabcabcabcabcabc", "b"), "continue should resume mid-batch")
+
+	# A character held past the refill that produced it: the batch it belonged
+	# to is released, and what the body kept has to survive that.
+	assert_eq(s.vmcallv("kept", "abcdefghijklmnopqrst"), _si_kept("abcdefghijklmnopqrst"),
+		"A character kept across a refill should still read as itself")
+	assert_eq(s.vmcallv("reassigned", "abcdef"), _si_reassigned("abcdef"),
+		"Reassigning the source should not move the walk")
 
 	s.queue_free()
 
@@ -8370,6 +8427,45 @@ func _si_nested(s: String):
 		for b in s:
 			out.append(a + b)
 	return out
+
+func _si_long_walk(s: String, times: int):
+	var text = s.repeat(times)
+	var acc = 0
+	for c in text:
+		acc += c.length()
+	return acc
+
+func _si_stopped(s: String, at: String):
+	var out = ""
+	for c in s:
+		if c == at:
+			break
+		out += c
+	return out
+
+func _si_skipped(s: String, drop: String):
+	var out = ""
+	for c in s:
+		if c == drop:
+			continue
+		out += c
+	return out
+
+func _si_kept(s: String):
+	var seen = []
+	var last = ""
+	for c in s:
+		last = c
+		seen.append(last)
+	return [last, seen]
+
+func _si_reassigned(s: String):
+	var text = s
+	var out = ""
+	for c in text:
+		out += c
+		text = "!"
+	return [out, text]
 
 func test_sgd_iterating_a_float():
 	# `for i in 2.5` counts 0.0, 1.0, 2.0 -- one pass per whole number strictly
@@ -10226,6 +10322,99 @@ func run():
 
 	s.queue_free()
 
+func test_sgd_an_instance_answers_is_after_the_type_is_lost():
+	var gdscript_code = """
+class Base:
+	var v = 1
+
+class Derived extends Base:
+	var w = 2
+
+class Other:
+	var u = 3
+
+func kind(x):
+	return [x is Base, x is Derived, x is Other]
+
+func run():
+	var bag = [Derived.new(), Base.new(), Other.new(), {}, 5]
+	var out = []
+	for item in bag:
+		out.append(kind(item))
+	return out
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("run"), [
+		[true, true, false],
+		[true, false, false],
+		[false, false, true],
+		[false, false, false],
+		[false, false, false],
+	], "an instance out of a container still answers for its class and its base")
+	assert_eq(s.get_exceptions(), before, "asking is not a call")
+
+	s.queue_free()
+
+func test_sgd_a_class_holds_constants_and_static_methods():
+	var gdscript_code = """
+class Limits:
+	const MAX = 40
+	var v = MAX
+
+	static func clamped(x):
+		if x > MAX:
+			return MAX
+		return x
+
+class Wider extends Limits:
+	static func double_max():
+		return MAX * 2
+
+func run():
+	return [Limits.MAX, Limits.new().v, Limits.clamped(99), Limits.clamped(7), Wider.double_max()]
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("run"), [40, 40, 40, 7, 80],
+		"a class constant folds and a static method runs without an instance")
+	assert_eq(s.get_exceptions(), before, "neither should raise")
+
+	s.queue_free()
+
+func test_sgd_a_method_can_answer_itself():
+	var gdscript_code = """
+class Builder:
+	var parts = []
+
+	func add(part):
+		parts.append(part)
+		return self
+
+func run():
+	var b = Builder.new().add("a").add("b").add("c")
+	return b.parts
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("run"), ["a", "b", "c"],
+		"chaining on a self-returning method should reach the same instance")
+	assert_eq(s.get_exceptions(), before, "the chain should not raise")
+
+	s.queue_free()
+
 func test_sgd_a_class_method_falls_through_to_its_base():
 	var gdscript_code = """
 class Timer2 extends Node2D:
@@ -10311,6 +10500,176 @@ func inspect(m : Dictionary):
 	if base != null:
 		base.free()
 	s.queue_free()
+
+func test_sgd_an_instance_reaches_an_engine_method():
+	var gdscript_code = """
+extends Node
+class Marker extends Node2D:
+	var label = "hello"
+
+func run():
+	var m = Marker.new()
+	m.set_name("marker")
+	add_child(m)
+	var out = [get_child_count(), m.label, str(get_node("marker").get_name())]
+	remove_child(m)
+	m.free()
+	return out
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var before := s.get_exceptions()
+	var out = s.vmcallv("run")
+	assert_eq(s.get_exceptions(), before, "handing an instance to the engine should not raise")
+	assert_eq(out, [1, "hello", "marker"],
+		"an engine method is given the object the class extends, not the Dictionary")
+
+	s.queue_free()
+
+func test_sgd_an_untyped_instance_still_reaches_its_base():
+	var gdscript_code = """
+class Marker extends Node2D:
+	var hits = 7
+
+func poke(m):
+	m.set_name("poked")
+	m.position = Vector2(3, 4)
+	return [str(m.get_name()), m.position, m.hits]
+
+func run():
+	var m = Marker.new()
+	var direct = poke(m)
+	var boxed = []
+	boxed.append(m)
+	var viacontainer = poke(boxed[0])
+	m.free()
+	return [direct, viacontainer]
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var before := s.get_exceptions()
+	var out = s.vmcallv("run")
+	assert_eq(s.get_exceptions(), before, "losing the type should not raise")
+	var expected = ["poked", Vector2(3, 4), 7]
+	assert_eq(out, [expected, expected],
+		"an instance the compiler no longer tracks still answers for both halves")
+
+	s.queue_free()
+
+func test_sgd_a_plain_dictionary_is_not_an_instance():
+	var gdscript_code = """
+class Marker extends Node2D:
+	var hits = 7
+
+func poke(d):
+	d.fresh = 1
+	return [d.missing, d.fresh, d.size()]
+
+func run():
+	return poke({})
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("run"), [null, 1, 1],
+		"a Dictionary with no base keeps plain Dictionary behaviour")
+	assert_eq(s.get_exceptions(), before, "and raises nothing on the way")
+
+	s.queue_free()
+
+func test_sgd_an_instance_answers_is_and_as():
+	var gdscript_code = """
+class Marker extends Node2D:
+	var hits = 5
+
+class Other extends Node2D:
+	var hits = 5
+
+func run():
+	var m = Marker.new()
+	var tests = [m is Marker, m is Other, m is Node2D, m is Node, m is Node3D]
+	var cast = m as Node2D
+	cast.position = Vector2(1, 1)
+	tests.append(cast.position)
+	tests.append(cast.hits)
+	m.free()
+	return tests
+
+func unknown(x):
+	return [x is Node2D, x is Node3D]
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("run"), [true, false, true, true, false, Vector2(1, 1), 5],
+		"an instance answers for its own class, for its base, and stays usable after a cast")
+	assert_eq(s.get_exceptions(), before, "neither test should raise")
+
+	var node := Node2D.new()
+	assert_eq(s.vmcallv("unknown", node), [true, false],
+		"a value the compiler cannot type is still walked at run time")
+	node.free()
+
+	s.queue_free()
+
+func test_sgd_a_bare_name_reaches_what_the_script_extends():
+	var script := SafeGDScript.new()
+	script.set_source_code("""
+extends Node2D
+
+var health = 3
+
+func run():
+	position = Vector2(4, 5)
+	rotation = 0.25
+	set_name("owned")
+	return [position, rotation, str(get_name()), health]
+""")
+	assert_eq(script.get_compile_error(), "",
+		"a property of the base is not an undefined variable")
+
+	var owner := Node2D.new()
+	owner.set_script(script)
+	owner.set("instructions_max", 4000000)
+	add_child(owner)
+	assert_eq(owner.call("run"), [Vector2(4, 5), 0.25, "owned", 3],
+		"a bare name the script does not declare is the owner's property")
+	owner.queue_free()
+
+	var plain := SafeGDScript.new()
+	plain.set_source_code("func run():\n\tposition = 1\n")
+	assert_ne(plain.get_compile_error(), "",
+		"without an extends there is nothing for a bare name to reach")
+	assert_engine_error("Undefined variable: position")
+
+func test_sgd_an_owner_must_be_what_the_script_extends():
+	var script := SafeGDScript.new()
+	script.set_source_code("extends Node2D\nfunc run():\n\treturn position\n")
+	assert_eq(script.get_compile_error(), "", "the script itself compiles")
+
+	var wrong := Node.new()
+	wrong.set_script(script)
+	assert_false(wrong.has_method("run"),
+		"a script is refused by an owner that is not what it extends")
+	assert_engine_error("can't be assigned to an object of type 'Node'")
+	wrong.free()
+
+	var right := Node2D.new()
+	right.set_script(script)
+	assert_true(right.has_method("run"), "and accepted by one that is")
+	right.free()
 
 func _restricted_compile_error(source: String) -> String:
 	var script := SafeGDScript.new()
@@ -10449,6 +10808,41 @@ func forget():
 
 	s.queue_free()
 
+
+func test_sgd_walking_a_string_longer_than_references_max():
+	# Characters come in batches and the batch is only released when it runs
+	# out, so a walk holds several at once against the same reference budget the
+	# body allocates from. The walk has to stay inside it however long the string
+	# is and however much the body makes per character.
+	var source := """
+func walk(text : String):
+	var n = 0
+	for c in text:
+		var piece = c + "!" + str(n)
+		n += piece.length()
+	return n
+"""
+	var s = _compile_and_load(source, 40000000)
+	if s == null:
+		return
+
+	var text := "abcdefghij".repeat(40)
+	assert_true(text.length() > s.references_max,
+		"the test only means something above the cap")
+
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("walk", text), _si_walk(text),
+		"a walk longer than the reference cap should answer what the engine answers")
+	assert_eq(s.get_exceptions(), before, "and should not run out of references")
+
+	s.queue_free()
+
+func _si_walk(text : String):
+	var n = 0
+	for c in text:
+		var piece = c + "!" + str(n)
+		n += piece.length()
+	return n
 
 func test_sgd_touching_more_objects_than_references_max():
 	var source := """

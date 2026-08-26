@@ -315,8 +315,12 @@ func _load_elf(elf: PackedByteArray) -> Sandbox:
 	# translated code and leaves a bimodal tail in the numbers. It also makes
 	# is_jit() true for a segment that is merely on its way to being compiled.
 	s.set_binary_translation_bg_compilation(false)
+	# Memory defaults are left alone on purpose: unrestricted means unchecked, and
+	# the masked arena is on, which is where a project and the .sgd loader also
+	# land. Touching either would make these rows measure a configuration nobody
+	# runs. Set before load_buffer(), which is what translates.
+	s.set_instructions_max(0)
 	s.load_buffer(elf)
-	s.set_instructions_max(0)  # unlimited: a benchmark is not a timeout test
 	# The compiler emits the Variant ABI: every argument arrives as a pointer to
 	# a Variant, and a guest handed an unboxed integer faults reading it. vmcallv()
 	# forces this per call; vmcallable() and a Callable bound from it do not, so

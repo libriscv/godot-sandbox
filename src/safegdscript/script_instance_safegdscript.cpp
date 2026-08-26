@@ -340,6 +340,8 @@ uint64_t SafeGDScriptInstance::current_instance_base() const {
 	return this->instance_base;
 }
 
+static constexpr uint32_t SGD_MEMORY_MAX = 32;
+
 struct SandboxAndCount {
 	Sandbox *sandbox = nullptr;
 	unsigned count = 0;
@@ -366,6 +368,9 @@ Sandbox *sandbox_for_safegdscript(const SafeGDScript *p_script) {
 void safegdscript_class_restrictions_changed(const Sandbox &p_sandbox) {
 	static bool in_progress = false;
 	if (in_progress) {
+		return;
+	}
+	if (p_sandbox.is_in_vmcall()) {
 		return;
 	}
 	in_progress = true;
@@ -399,6 +404,7 @@ static Sandbox *create_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_scrip
 	Sandbox *sandbox_ptr = memnew(Sandbox());
 	sandbox_ptr->set_tree_base(fast_cast_to<Node>(p_owner));
 	sandbox_ptr->set_unboxed_arguments(false);
+	sandbox_ptr->set_memory_max(SGD_MEMORY_MAX);
 	sandbox_ptr->load_buffer(p_script->get_content());
 	sandbox_instances.insert_or_assign(p_script.ptr(), SandboxAndCount{sandbox_ptr, 1});
 

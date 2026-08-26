@@ -24,7 +24,7 @@ runs of Godot, which is why the tables are built afterwards, by
 
 ## Reading the output
 
-The report has three parts. The summary is one row per benchmark:
+The report has four parts. The summary is one row per benchmark:
 
 ```
 | benchmark  | unit      | GDScript |  JIT | no JIT | JIT vs GDScript | no JIT vs GDScript |
@@ -40,6 +40,12 @@ The report has three parts. The summary is one row per benchmark:
 The per-benchmark tables add min, P50 and P90 per mode, and every case the
 group measured rather than only the sandbox — the `.sgd` script path, the guest
 loop, `vmcallable()`.
+
+The overview at the end is the whole suite as one ASCII table, benchmarks
+grouped, with a geometric mean per group -- small enough to paste whole. Groups
+are `CATEGORIES` in `bench_report.py`; a benchmark not listed there shows up
+under `other`. Past 2000 characters it drops to one line per group, so adding
+benchmarks shortens the table rather than overflowing it.
 
 Measurement quality is the part to read before quoting anything. It reports how
 far apart the runs of one mode put the same case, whether the two modes agree

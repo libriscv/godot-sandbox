@@ -374,8 +374,12 @@ static void test_walking_a_string() {
 		"\t\tn += 1\n"
 		"\treturn n\n");
 	const IRFunction& f = find_function(known, "f");
-	assert(count_syscalls(f, ECALL_STRING_SIZE) == 1);
-	assert(count_syscalls(f, ECALL_STRING_AT) == 1);
+	// One refill in the loop and nothing per character: the batch drives the
+	// walk, so neither its length nor its characters are asked for one at a time.
+	assert(count_syscalls(f, ECALL_STRING_BATCH) == 1);
+	assert(count_syscalls(f, ECALL_STRING_SIZE) == 0);
+	assert(count_syscalls(f, ECALL_STRING_AT) == 0);
+	assert(count_opcode(f, IROpcode::MAKE_SCOPED) == 1);
 	assert(count_syscalls(f, ECALL_ARRAY_SIZE) == 0);
 	assert(count_syscalls(f, ECALL_ARRAY_AT) == 0);
 	assert(count_vcalls(f, "size") == 0);
@@ -387,7 +391,7 @@ static void test_walking_a_string() {
 		"func f():\n"
 		"\tfor c in \"hello\":\n"
 		"\t\tpass\n");
-	assert(count_syscalls(find_function(literal, "f"), ECALL_STRING_AT) == 1);
+	assert(count_syscalls(find_function(literal, "f"), ECALL_STRING_BATCH) == 1);
 
 	// Untyped: all four arms present (int, Array, String, VCALL).
 	const IRProgram untyped = compile_to_ir(

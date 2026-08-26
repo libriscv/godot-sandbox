@@ -274,6 +274,8 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_binary_translation_bg_compilation", "bg_compilation"), &Sandbox::set_binary_translation_bg_compilation);
 	ClassDB::bind_method(D_METHOD("get_binary_translation_bg_compilation"), &Sandbox::get_binary_translation_bg_compilation);
 
+	ClassDB::bind_method(D_METHOD("get_unchecked_memory"), &Sandbox::get_unchecked_memory);
+
 	ClassDB::bind_method(D_METHOD("set_profiling", "enable"), &Sandbox::set_profiling, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("get_profiling"), &Sandbox::get_profiling);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "profiling", PROPERTY_HINT_NONE, "Enable profiling of VM calls"), "set_profiling", "get_profiling");
@@ -740,6 +742,7 @@ bool Sandbox::has_program_loaded() const {
 bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string> *argv_ptr) {
 	if (buffer == nullptr || buffer->is_empty()) {
 		ERR_PRINT("Empty binary, cannot load program.");
+		this->m_unchecked_memory_active = false;
 		this->reset_machine();
 		return false;
 	}
@@ -768,10 +771,16 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				.translate_invoke_compiler = riscv::libtcc_enabled && m_bintr_jit,
 				//.translate_trace = true,
 				//.translate_timing = true,
-#  ifdef RISCV_LIBTCC
+#endif // RISCV_BINARY_TRANSLATION
 				.translate_ignore_instruction_limit = get_instructions_max() <= 0,
+#ifdef RISCV_BINARY_TRANSLATION
+#  ifdef RISCV_LIBTCC
 				.translate_use_register_caching = this->m_bintr_register_caching,
+#  endif // RISCV_LIBTCC
+#endif
 				.translate_automatic_nbit_address_space = this->m_bintr_automatic_nbit_as,
+#ifdef RISCV_BINARY_TRANSLATION
+#  ifdef RISCV_LIBTCC
 				.translate_live_patching = false, // Don't meddle with instruction stream
 #  endif // RISCV_LIBTCC
 #endif
@@ -779,6 +788,8 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				.asmjit_enabled = m_bintr_jit,
 #endif
 		});
+		this->m_unchecked_memory_active = this->unchecked_memory_wanted();
+		options->translate_unsafe_remove_checks = this->m_unchecked_memory_active;
 #if defined(RISCV_BINARY_TRANSLATION) || defined(RISCV_ASMJIT)
 		// Background compilation, if enabled, will run the compilation in a separate thread
 		// and live-patch the results into the decoder cache after the compilation is done.
@@ -2458,6 +2469,7 @@ bool Sandbox::is_sandbox_function(const StringName &p_function) const {
 		"set_profiling",
 		"get_restrictions",
 		"set_restrictions",
+		"get_unchecked_memory",
 		"get_exceptions",
 		"get_timeouts",
 		"get_calls_made",

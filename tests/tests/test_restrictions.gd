@@ -394,3 +394,34 @@ func test_a_grant_from_inside_the_allow_callback():
 	assert_eq(s.get_exceptions(), exceptions, "the promoted entry outlives the callback")
 
 	s.queue_free()
+
+
+# The memory-check mode is decided at load: an unrestricted guest runs unchecked,
+# a restricted one is bounds-checked. This went unnoticed once already because
+# nothing asserted it -- the gate additionally demanded a flag nobody set, so
+# every sandbox silently ran checked.
+func test_an_unrestricted_sandbox_runs_unchecked():
+	var s = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+	assert_true(s.get_unchecked_memory(), "an unrestricted guest is unchecked")
+
+	# Restrictions are consulted at load, not per call.
+	s.restrictions = true
+	s.load_buffer(Sandbox_TestsTests.get_content())
+	assert_false(s.get_unchecked_memory(), "a restricted guest is bounds-checked")
+
+	s.restrictions = false
+	s.load_buffer(Sandbox_TestsTests.get_content())
+	assert_true(s.get_unchecked_memory(), "and unchecked again once released")
+	s.queue_free()
+
+
+# The mask is the guard: it wraps a stray guest address back into the arena
+# instead of letting it reach the host. It needs a power-of-two arena, so the
+# default memory_max has to stay one.
+func test_the_masked_arena_is_on_by_default():
+	var s = Sandbox.new()
+	assert_true(s.binary_translation_nbit_as, "the masked arena is the default")
+	var mb = s.memory_max
+	assert_eq(mb & (mb - 1), 0, "memory_max must be a power of two for the mask")
+	s.queue_free()

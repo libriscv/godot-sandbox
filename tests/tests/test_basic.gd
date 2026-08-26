@@ -146,10 +146,12 @@ func test_binary_translation_properties():
 	var s = Sandbox.new()
 	s.set_program(Sandbox_TestsTests)
 
-	assert_eq(s.binary_translation_nbit_as, false)
-	s.binary_translation_nbit_as = true
+	# On by default: the masked arena is what keeps a stray guest address from
+	# reaching the host. See test_the_masked_arena_is_on_by_default.
 	assert_eq(s.binary_translation_nbit_as, true)
 	s.binary_translation_nbit_as = false
+	assert_eq(s.binary_translation_nbit_as, false)
+	s.binary_translation_nbit_as = true
 
 	assert_eq(s.binary_translation_register_caching, true)
 	s.binary_translation_register_caching = false

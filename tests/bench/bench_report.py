@@ -42,6 +42,21 @@ SPREAD_WARN = 0.15
 # spread of their medians. This is layout and placement, not the code.
 RUN_SPREAD_WARN = 0.08
 
+# The grouped overview is meant to be pasted whole, so it is kept small enough
+# to survive a message box: over this, it drops to one line per group.
+OVERVIEW_MAX_CHARS = 2000
+
+# Which benchmarks are one thing. Unlisted names land in `other`.
+CATEGORIES = (
+    ("loops and math", ("int loop", "float loop",
+                        "untyped float math", "untyped float compare")),
+    ("calls", ("call overhead", "recursion")),
+    ("containers", ("array append + index", "dictionary set + get",
+                    "container size")),
+    ("strings", ("string build", "string iterate")),
+    ("guest dispatch", ("logic CPU dispatch", "single-instruction step")),
+)
+
 
 def percentile(values, p):
     """Linear interpolation between ranks, matching the harness."""
@@ -159,11 +174,19 @@ def ns(value):
     return "%.3f" % value
 
 
-def ratio(reference, value):
-    """How many times faster `value` is than `reference`. Below 1.00x is slower."""
+def ratio_value(reference, value):
+    """How many times faster `value` is than `reference`. Below 1.0 is slower."""
     if not reference or not value:
-        return "-"
-    return "%.2fx" % (reference / value)
+        return None
+    return reference / value
+
+
+def fmt_ratio(value):
+    return "-" if value is None else "%.2fx" % value
+
+
+def ratio(reference, value):
+    return fmt_ratio(ratio_value(reference, value))
 
 
 def pct(value):
@@ -214,6 +237,107 @@ def meta(modes, group, key, default=None):
         if value not in (None, {}, []):
             return value
     return default
+
+
+def ascii_table(rows, header, align=None):
+    """+--+ borders rather than the Markdown pipes above: this one is quoted into
+    a terminal, a commit message or a chat window as often as into the docs."""
+    widths = [len(h) for h in header]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(str(cell)))
+    align = align or ["left"] * len(header)
+    rule = "+" + "+".join("-" * (w + 2) for w in widths) + "+"
+
+    def line(cells):
+        out = []
+        for i, cell in enumerate(cells):
+            text = str(cell)
+            out.append(text.rjust(widths[i]) if align[i] == "right" else text.ljust(widths[i]))
+        return "| " + " | ".join(out) + " |"
+
+    return "\n".join([rule, line(header), rule] + [line(r) for r in rows] + [rule])
+
+
+def geomean(values):
+    """Speedups are ratios, so they average multiplicatively: an arithmetic mean
+    of 10x and 0.5x claims a win where there is none."""
+    values = [v for v in values if v and v > 0]
+    if not values:
+        return None
+    product = 1.0
+    for v in values:
+        product *= v
+    return product ** (1.0 / len(values))
+
+
+def categorise(names):
+    """Group the benchmarks so the overview stays short. A benchmark not listed
+    here still appears, under `other` -- a new group must show up unbidden."""
+    seen = set()
+    out = []
+    for title, members in CATEGORIES:
+        rows = [n for n in names if n in members]
+        seen.update(rows)
+        if rows:
+            out.append((title, rows))
+    rest = [n for n in names if n not in seen]
+    if rest:
+        out.append(("other", rest))
+    return out
+
+
+def overview_section(modes, names):
+    """The last thing the suite prints: every benchmark in one ASCII table,
+    grouped, with a geometric mean per group. Held under OVERVIEW_MAX_CHARS by
+    dropping the per-benchmark rows -- the group lines are the summary, and the
+    Markdown tables above are where the detail already lives."""
+    jit, nojit = modes
+
+    def speedups(group):
+        return (ratio_value(jit.stat(group, meta(modes, group, "reference", REFERENCE_DEFAULT)),
+                            jit.stat(group, GUEST)),
+                ratio_value(nojit.stat(group, meta(modes, group, "reference", REFERENCE_DEFAULT)),
+                            nojit.stat(group, GUEST)))
+
+    def render(detail):
+        # Without the per-benchmark rows there is nothing left to put in the ns
+        # columns: a group spans units, and 34 ns/iteration next to 646 ns per
+        # emulated instruction is not a number anyone should average.
+        header = ["benchmark"] + (["GDScript", "JIT", "no JIT"] if detail else [])
+        header += ["JIT x", "no JIT x"]
+        rows = []
+        for title, members in categorise(names):
+            pairs = [speedups(g) for g in members]
+            rows.append([title] + ([""] * 3 if detail else []) +
+                        [fmt_ratio(geomean([p[0] for p in pairs])),
+                         fmt_ratio(geomean([p[1] for p in pairs]))])
+            if not detail:
+                continue
+            for group in members:
+                reference = meta(modes, group, "reference", REFERENCE_DEFAULT)
+                j, n = speedups(group)
+                rows.append([
+                    "  " + group,
+                    ns(jit.stat(group, reference) or nojit.stat(group, reference)),
+                    ns(jit.stat(group, GUEST)),
+                    ns(nojit.stat(group, GUEST)),
+                    fmt_ratio(j), fmt_ratio(n),
+                ])
+        return ascii_table(rows, header, ["left"] + ["right"] * (len(header) - 1))
+
+    def section(detail):
+        return ["## Overview", "",
+                "ns per work unit; `x` is SafeGDScript against GDScript, above 1.00x",
+                "faster. Group lines are the geometric mean of their benchmarks.",
+                "", "```", render(detail), "```", ""]
+
+    # The limit is on the whole section, prose included: what gets pasted is the
+    # block, not the table alone.
+    out = section(True)
+    if len("\n".join(out)) > OVERVIEW_MAX_CHARS:
+        out = section(False)
+    return out
 
 
 def summary_section(modes, names):
@@ -422,6 +546,7 @@ def build(modes):
     out += detail_sections(modes, names)
     out += quality_section(modes, names)
     out += environment_section(modes)
+    out += overview_section(modes, names)
     return "\n".join(out).rstrip() + "\n"
 
 

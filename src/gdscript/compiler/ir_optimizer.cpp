@@ -1,4 +1,5 @@
 #include "ir_optimizer.h"
+#include "syscall_numbers.h"
 #include "compiler_exception.h"
 #include "ir_verifier.h"
 #include <algorithm>
@@ -699,6 +700,7 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::IN:
 		case IROpcode::TYPE_TEST:
 		case IROpcode::TYPE_OF:
+		case IROpcode::MAKE_SCOPED:
 		case IROpcode::SWITCH:
 		case IROpcode::VGET_INLINE:
 		case IROpcode::VSET_INLINE:
@@ -1693,8 +1695,90 @@ std::vector<IROptimizer::LoopInfo> IROptimizer::identify_loops(const IRFunction&
 	return loops;
 }
 
+// A syscall that only reads host state. It cannot change what another query in
+// the loop answers, so its presence in the body does not block a hoist.
+// Deliberately narrow: ECALL_ARRAY_AT is absent because a negative index turns
+// it into a store.
+static bool syscall_only_reads(const IRInstruction& instr) {
+	if (instr.opcode != IROpcode::CALL_SYSCALL || instr.operands.size() < 2 ||
+		!std::holds_alternative<int64_t>(instr.operands[1].value)) {
+		return false;
+	}
+	switch (std::get<int64_t>(instr.operands[1].value)) {
+		case ECALL_ARRAY_SIZE:
+		case ECALL_STRING_SIZE:
+			return true;
+		case ECALL_DICTIONARY_OPS: {
+			if (instr.operands.size() < 3 || !std::holds_alternative<int64_t>(instr.operands[2].value)) {
+				return false;
+			}
+			const int64_t op = std::get<int64_t>(instr.operands[2].value);
+			return op == dictionary_op(Dictionary_Op::GET_SIZE) ||
+				op == dictionary_op(Dictionary_Op::HAS) ||
+				op == dictionary_op(Dictionary_Op::GET) ||
+				op == dictionary_op(Dictionary_Op::GET_KEYS) ||
+				op == dictionary_op(Dictionary_Op::GET_VALUES);
+		}
+		default:
+			return false;
+	}
+}
+
+// The subset of the above whose answer arrives in a register. A query that
+// creates a scoped variant may not be hoisted: the loop's SCOPE_RELEASE would
+// free it out from under the register that now holds it, since the hoist lands
+// below the SCOPE_MARK and not above it.
+static bool syscall_is_hoistable_query(const IRInstruction& instr) {
+	if (!syscall_only_reads(instr)) {
+		return false;
+	}
+	switch (std::get<int64_t>(instr.operands[1].value)) {
+		case ECALL_ARRAY_SIZE:
+		case ECALL_STRING_SIZE:
+			return true;
+		case ECALL_DICTIONARY_OPS: {
+			const int64_t op = std::get<int64_t>(instr.operands[2].value);
+			return op == dictionary_op(Dictionary_Op::GET_SIZE) ||
+				op == dictionary_op(Dictionary_Op::HAS);
+		}
+		default:
+			return false;
+	}
+}
+
+bool IROptimizer::loop_only_reads_host(const LoopInfo& loop, const IRFunction& func) {
+	for (size_t i = loop.header_idx; i < loop.end_idx && i < func.instructions.size(); i++) {
+		const IRInstruction& instr = func.instructions[i];
+		// Control flow and scope bookkeeping reach the host but touch no container.
+		if (ir_is_control_flow(instr.opcode) || instr.opcode == IROpcode::SCOPE_MARK ||
+			instr.opcode == IROpcode::SCOPE_RELEASE || syscall_only_reads(instr)) {
+			continue;
+		}
+		if (!ir_instruction_is_pure(instr)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 bool IROptimizer::is_loop_invariant(const IRInstruction& instr, const LoopInfo& loop,
-                                    const IRFunction& func, const std::unordered_set<int>& invariant_regs) {
+                                    const IRFunction& func, const std::unordered_set<int>& invariant_regs,
+                                    bool loop_reads_only) {
+	// `while i < a.size():` and the size read a container walk makes per pass
+	// are the same instruction, and neither has to repeat when the loop cannot
+	// reach the container.
+	if (loop_reads_only && syscall_is_hoistable_query(instr)) {
+		for (size_t i = 2; i < instr.operands.size(); i++) {
+			if (instr.operands[i].type != IRValue::Type::REGISTER) {
+				continue;
+			}
+			if (invariant_regs.count(std::get<int>(instr.operands[i].value)) == 0) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	if (!ir_has_effect(instr.opcode, IR_SIMPLE_LOAD)) {
 		return false;
 	}
@@ -1823,8 +1907,15 @@ void IROptimizer::loop_invariant_code_motion(IRFunction& func) {
 	}
 
 	for (const auto& loop : loops) {
-			// Seed with registers defined before the loop.
+			const bool loop_reads_only = loop_only_reads_host(loop, func);
+
+			// Seed with registers defined before the loop. Parameters arrive in
+			// r0..rN-1 with no instruction defining them, so they are seeded too;
+			// one reassigned inside the loop is caught by can_safely_hoist().
 			std::unordered_set<int> invariant_regs;
+			for (size_t i = 0; i < func.parameters.size(); i++) {
+				invariant_regs.insert(int(i));
+			}
 
 			for (size_t i = 0; i < loop.header_idx; i++) {
 				const auto& instr = func.instructions[i];
@@ -1850,7 +1941,7 @@ void IROptimizer::loop_invariant_code_motion(IRFunction& func) {
 						continue;
 					}
 
-					if (is_loop_invariant(instr, loop, func, invariant_regs) &&
+					if (is_loop_invariant(instr, loop, func, invariant_regs, loop_reads_only) &&
 					    can_safely_hoist(instr, i, loop, func)) {
 						invariant_instrs.insert(i);
 

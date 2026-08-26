@@ -114,8 +114,12 @@ private:
 	};
 	std::vector<LoopInfo> identify_loops(const IRFunction& func);
 	bool is_loop_invariant(const IRInstruction& instr, const LoopInfo& loop,
-	                       const IRFunction& func, const std::unordered_set<int>& invariant_regs);
+	                       const IRFunction& func, const std::unordered_set<int>& invariant_regs,
+	                       bool loop_reads_only);
 	bool can_safely_hoist(const IRInstruction& instr, size_t instr_idx, const LoopInfo& loop, const IRFunction& func);
+	// True when no instruction in the loop can change what a container query
+	// answers. Aliasing is not tracked, so any host write at all disqualifies it.
+	static bool loop_only_reads_host(const LoopInfo& loop, const IRFunction& func);
 	// False if the instruction sits inside an `if` within the loop body.
 	static bool is_unconditional_in_loop(size_t instr_idx, const LoopInfo& loop, const IRFunction& func);
 

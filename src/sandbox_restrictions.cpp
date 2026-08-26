@@ -64,6 +64,7 @@ void Sandbox::add_allowed_object(godot::Object *obj) {
 	m_allowed_objects.insert(id);
 	if (RefCounted *ref = fast_cast_to<RefCounted>(obj))
 		m_allowed_object_refs.insert_or_assign(id, Ref<RefCounted>(ref));
+	safegdscript_class_restrictions_changed(*this);
 }
 
 // Permitted mid-vmcall; scoped handles remain valid for the rest of the call.
@@ -73,6 +74,7 @@ void Sandbox::remove_allowed_object(godot::Object *obj) {
 		return;
 	m_allowed_objects.erase(id);
 	m_allowed_object_refs.erase(id);
+	safegdscript_class_restrictions_changed(*this);
 }
 
 void Sandbox::clear_allowed_objects() {
@@ -82,6 +84,7 @@ void Sandbox::clear_allowed_objects() {
 	}
 	m_allowed_objects.clear();
 	m_allowed_object_refs.clear();
+	safegdscript_class_restrictions_changed(*this);
 }
 
 godot::Object *Sandbox::get_explicitly_allowed_object(uint64_t object_id) const {
@@ -96,6 +99,7 @@ void Sandbox::set_object_allowed_callback(const Callable &callback) {
 		return;
 	}
 	m_just_in_time_allowed_objects = callback;
+	safegdscript_class_restrictions_changed(*this);
 }
 
 void Sandbox::set_class_allowed_callback(const Callable &callback) {
@@ -127,6 +131,7 @@ void Sandbox::set_resource_allowed_callback(const Callable &callback) {
 		return;
 	}
 	this->m_just_in_time_allowed_resources = callback;
+	safegdscript_class_restrictions_changed(*this);
 }
 
 bool Sandbox::is_allowed_resource(const String &path) const {
@@ -144,6 +149,7 @@ void Sandbox::set_method_allowed_callback(const Callable &callback) {
 		return;
 	}
 	m_just_in_time_allowed_methods = callback;
+	safegdscript_class_restrictions_changed(*this);
 }
 
 void Sandbox::set_property_allowed_callback(const Callable &callback) {
@@ -152,4 +158,5 @@ void Sandbox::set_property_allowed_callback(const Callable &callback) {
 		return;
 	}
 	m_just_in_time_allowed_properties = callback;
+	safegdscript_class_restrictions_changed(*this);
 }

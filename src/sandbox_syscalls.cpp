@@ -157,17 +157,48 @@ static inline void variant_callp(Variant *self, const StringName &method, const 
 	result.mark_constructed();
 }
 
+// A guest class that extends an engine class is a Dictionary holding that engine
+// object under `@base`, alongside the class's own fields. The guest keeps the
+// Dictionary, but Godot only knows the object: an engine method takes it as an
+// argument, and answers a method the Dictionary does not have.
+static constexpr const char *CLASS_INSTANCE_BASE_KEY = "@base";
+
+static inline godot::Object *class_instance_base(Sandbox &emu, const Variant &v) {
+	if (LIKELY(v.get_type() != Variant::DICTIONARY)) {
+		return nullptr;
+	}
+	const Dictionary dict = v;
+	if (!dict.has(CLASS_INSTANCE_BASE_KEY)) {
+		return nullptr;
+	}
+	const Variant base = dict[CLASS_INSTANCE_BASE_KEY];
+	if (base.get_type() != Variant::OBJECT) {
+		return nullptr;
+	}
+	// Resolved the way an OBJECT argument is, so a restricted Sandbox still decides.
+	return get_object_from_address(emu,
+			Sandbox::object_handle_from_id(Sandbox::engine_object_id(base.operator godot::Object *())));
+}
+
 static inline void object_call(Sandbox &emu, godot::Object *obj, const Variant &method, const GuestVariant *args, int argc, CallResult &result) {
 	SYS_TRACE("object_call", method, argc);
-	VariantScratch scratch;
+	// Two slots per argument: a class instance is replaced by the object it extends.
+	VariantScratchN<16> scratch;
 	const Variant *vargs[9]; // 8 is the maximum number of arguments we will accept.
 	vargs[0] = &method;
 	for (int i = 0; i < argc; i++) {
-		if (args[i].is_scoped_variant()) {
-			vargs[i + 1] = args[i].toVariantPtr(emu);
-		} else {
-			vargs[i + 1] = scratch.emplace(args[i].toVariant(emu));
+		const Variant *arg = args[i].is_scoped_variant()
+				? args[i].toVariantPtr(emu)
+				: scratch.emplace(args[i].toVariant(emu));
+		// The guest's own tag gates this: it costs nothing to read, and a wrong one
+		// only means an instance is passed along whole, which class_instance_base()
+		// re-checks against the resolved Variant anyway.
+		if (UNLIKELY(args[i].type == Variant::DICTIONARY)) {
+			if (godot::Object *base = class_instance_base(emu, *arg)) {
+				arg = scratch.emplace(Variant(base));
+			}
 		}
+		vargs[i + 1] = arg;
 	}
 	// Constructed last: the result's destructor assumes the call below has run.
 	object_callp(obj, vargs, argc + 1, result);
@@ -196,7 +227,8 @@ static inline void variant_or_object_call(Sandbox &emu, Variant *vcall,
 	// need not agree. An Object reached through a non-OBJECT tag still has to take the
 	// object path: calling it as a built-in Variant would reach every method on it
 	// without ever asking is_allowed_method().
-	if (UNLIKELY(vcall->get_type() == Variant::OBJECT)) {
+	const Variant::Type vtype = vcall->get_type();
+	if (UNLIKELY(vtype == Variant::OBJECT)) {
 		godot::Object *obj = get_object_from_address(emu,
 				Sandbox::object_handle_from_id(Sandbox::engine_object_id(vcall->operator godot::Object *())));
 		object_call_checked(emu, obj, cached_method, method_name, args, argc, result);
@@ -204,6 +236,16 @@ static inline void variant_or_object_call(Sandbox &emu, Variant *vcall,
 	}
 
 	const StringName method_sn = cached_method.sname; // Held by value, see above.
+
+	// A class instance is a Dictionary. Dictionary's own methods answer first, the
+	// way a class answers before its base does in GDScript; everything else belongs
+	// to the engine class it extends.
+	if (UNLIKELY(vtype == Variant::DICTIONARY) && !vcall->has_method(method_sn)) {
+		if (godot::Object *base = class_instance_base(emu, *vcall)) {
+			object_call_checked(emu, base, cached_method, method_name, args, argc, result);
+			return;
+		}
+	}
 
 	VariantScratch scratch;
 	const Variant *argptrs[8];
@@ -2925,20 +2967,80 @@ APICALL(api_string_at) {
 		ERR_PRINT("Invalid String object, type = " + String(GuestVariant::type_name(var_str.get_type())));
 		throw std::runtime_error("Invalid String object, idx = " + std::to_string(str_idx) + " type = " + GuestVariant::type_name(var_str.get_type()));
 	}
-	// const avoids CowData::ptrw() copy on each index.
-	const godot::String str = var_str.operator String();
 
-	if (index < 0) {
-		index += str.length();
-	}
-	if (index < 0 || index >= str.length()) {
+	// Indexing the Variant hands back the one-character String already boxed,
+	// negative indices wrapped and the bound checked -- one engine call where
+	// unboxing the String, indexing it and calling String::chr() is four. This
+	// is the per-character cost of `for c in text`, so the difference shows.
+	CallResult result;
+	GDExtensionBool valid = false;
+	GDExtensionBool oob = false;
+	internal::gdextension_interface_variant_get_indexed(
+			var_str._native_ptr(), index, &result.get(), &valid, &oob);
+	result.mark_constructed();
+	if (UNLIKELY(!valid || oob)) {
 		ERR_PRINT("String index out of bounds");
 		throw std::runtime_error("String index out of bounds");
 	}
 
-	// String::chr, not bare char32_t (which picks Variant(uint32_t)).
-	unsigned int new_varidx = emu.create_scoped_variant(Variant(String::chr(str[index])));
-	machine.set_result(new_varidx);
+	machine.set_result(emu.create_scoped_variant(std::move(result.get())));
+}
+
+// The per-character cost of `for c in text`. One call fills a run of scoped
+// slots, so the walk's ecall count is its length divided by the batch size
+// rather than its length.
+APICALL(api_string_batch) {
+	auto [str_idx, start, max_count] = machine.sysargs<unsigned, int64_t, unsigned>();
+	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("string_batch", str_idx, start, max_count);
+
+	const Variant &var_str = get_scoped_variant_or_throw(emu, str_idx, "String::batch");
+	if (var_str.get_type() != Variant::STRING) {
+		ERR_PRINT("Invalid String object, type = " + String(GuestVariant::type_name(var_str.get_type())));
+		throw std::runtime_error("Invalid String object, idx = " + std::to_string(str_idx) + " type = " + GuestVariant::type_name(var_str.get_type()));
+	}
+
+	const int64_t length = var_str.operator String().length();
+	if (start < 0 || start >= length || max_count == 0) {
+		machine.set_result(0);
+		return;
+	}
+	int64_t count = std::min<int64_t>(max_count, length - start);
+
+	// The batch is released when it runs out, not once per character, so the
+	// loop body allocates against what is left here. Take a quarter of it.
+	const Sandbox::CurrentState &st = emu.state();
+	const int64_t headroom = int64_t(st.variants.capacity()) - int64_t(st.scoped_variants.size());
+	count = std::min(count, std::max<int64_t>(1, headroom / 4));
+
+	// Outside a vmcall the slots are permanent ones, handed out by a scheme that
+	// does not promise consecutive indices. One character is always safe.
+	if (!emu.is_in_vmcall()) {
+		count = 1;
+	}
+
+	int32_t base = 0;
+	for (int64_t i = 0; i < count; i++) {
+		CallResult result;
+		GDExtensionBool valid = false;
+		GDExtensionBool oob = false;
+		internal::gdextension_interface_variant_get_indexed(
+				var_str._native_ptr(), start + i, &result.get(), &valid, &oob);
+		result.mark_constructed();
+		if (UNLIKELY(!valid || oob)) {
+			ERR_PRINT("String index out of bounds: " + itos(start + i));
+			throw std::runtime_error("String index out of bounds");
+		}
+		const int32_t idx = int32_t(emu.create_scoped_variant(std::move(result.get())));
+		if (i == 0) {
+			base = idx;
+		} else if (idx != base + int32_t(i)) {
+			// Never seen in a vmcall, but the guest indexes by base + n.
+			count = i;
+			break;
+		}
+	}
+	machine.set_result((uint64_t(uint32_t(base)) << 32) | uint64_t(uint32_t(count)));
 }
 
 APICALL(api_string_size) {
@@ -3360,6 +3462,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_STRING_OPS, api_string_ops },
 			{ ECALL_STRING_AT, api_string_at },
 			{ ECALL_STRING_SIZE, api_string_size },
+			{ ECALL_STRING_BATCH, api_string_batch },
 			{ ECALL_STRING_APPEND, api_string_append },
 
 			{ ECALL_TIMER_PERIODIC, api_timer_periodic },

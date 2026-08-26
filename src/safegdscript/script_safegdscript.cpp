@@ -53,6 +53,18 @@ StringName SafeGDScript::_get_instance_base_type() const {
 	return StringName("Sandbox");
 }
 void *SafeGDScript::_instance_create(Object *p_for_object) const {
+	// GDScript refuses an owner that is not the declared base, and so must this:
+	// every bare name the script did not declare is a property of that base, and
+	// on the wrong owner they would all quietly answer null.
+	if (p_for_object != nullptr && !this->base_class.is_empty() && !this->base_is_path) {
+		const StringName base(this->base_class);
+		const StringName owner_class = p_for_object->get_class();
+		if (ClassDB::class_exists(base) && !ClassDB::is_parent_class(owner_class, base)) {
+			ERR_PRINT("SafeGDScript: script inherits from native type '" + this->base_class +
+					"', so it can't be assigned to an object of type '" + String(owner_class) + "'.");
+			return nullptr;
+		}
+	}
 	SafeGDScriptInstance *instance = memnew(SafeGDScriptInstance(p_for_object, Ref<SafeGDScript>(this)));
 	instances.insert(instance);
 	return ScriptInstanceExtension::create_native_instance(instance);
@@ -435,8 +447,8 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 		ERR_PRINT("SafeGDScript: the GDScript compiler ELF is too old to build a debuggable program.");
 	}
 	const char *entry_point = profiling ? "compile_profiled" : (debug ? "compile_debug" : "compile");
-	this->compiled_restricted = this->class_access_restricted();
-	set_compiler_restricted(this->compiled_restricted);
+	const bool restricted = this->class_access_restricted();
+	set_compiler_restricted(restricted);
 
 	GDExtensionCallError error;
 	Variant src_code_var = this->source_code;
@@ -457,6 +469,7 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	}
 
 	this->elf_data = new_elf;
+	this->compiled_restricted = restricted;
 	this->profiled_build = profiling;
 	this->debug_build = debug;
 	this->last_error = String();
@@ -706,10 +719,14 @@ bool SafeGDScript::class_access_restricted() const {
 }
 
 void SafeGDScript::class_restrictions_changed() {
-	if (this->class_access_restricted() == this->compiled_restricted) {
-		return;
+	if (this->class_access_restricted() != this->compiled_restricted || !this->last_error.is_empty()) {
+		this->compile_source_to_elf(this->profiled_build, this->debug_build);
 	}
-	this->compile_source_to_elf(this->profiled_build, this->debug_build);
+	Sandbox *sandbox = sandbox_for_safegdscript(this);
+	if (sandbox != nullptr && sandbox->unchecked_memory_is_stale() &&
+			!instances.is_empty() && !this->elf_data.is_empty()) {
+		(*instances.begin())->reset_to(this->elf_data);
+	}
 }
 
 PackedInt32Array SafeGDScript::get_compiler_breakpoint_lines() {

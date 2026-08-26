@@ -68,20 +68,23 @@ static void test_every_loop_form_takes_a_scope() {
 	struct Case {
 		const char* what;
 		const char* source;
+		int scopes;
 	};
 	const Case cases[] = {
-		{ "for over range", "func test():\n\tfor i in range(4):\n\t\tvar d = {\"a\": i}\n\treturn 1\n" },
-		{ "for over an array", "func test():\n\tfor v in [1, 2, 3]:\n\t\tvar d = {\"a\": v}\n\treturn 1\n" },
-		{ "for over a string", "func test():\n\tfor c in \"abc\":\n\t\tvar s = c + \"!\"\n\treturn 1\n" },
-		{ "while", "func test():\n\tvar i = 0\n\twhile i < 4:\n\t\tvar d = {\"a\": i}\n\t\ti += 1\n\treturn 1\n" },
+		{ "for over range", "func test():\n\tfor i in range(4):\n\t\tvar d = {\"a\": i}\n\treturn 1\n", 1 },
+		{ "for over an array", "func test():\n\tfor v in [1, 2, 3]:\n\t\tvar d = {\"a\": v}\n\treturn 1\n", 1 },
+		// A string walk takes two: one holding the batch of characters, one
+		// holding what the body makes from each of them.
+		{ "for over a string", "func test():\n\tfor c in \"abc\":\n\t\tvar s = c + \"!\"\n\treturn 1\n", 2 },
+		{ "while", "func test():\n\tvar i = 0\n\twhile i < 4:\n\t\tvar d = {\"a\": i}\n\t\ti += 1\n\treturn 1\n", 1 },
 	};
 	for (const Case& c : cases) {
 		const IRProgram ir = compile_to_ir(c.source, /*optimize=*/true);
 		const IRFunction& func = find_function(ir, "test");
-		check(count_opcode(func, IROpcode::SCOPE_MARK) == 1,
-			std::string(c.what) + ": one mark");
-		check(count_opcode(func, IROpcode::SCOPE_RELEASE) == 1,
-			std::string(c.what) + ": one release");
+		check(count_opcode(func, IROpcode::SCOPE_MARK) == c.scopes,
+			std::string(c.what) + ": marks");
+		check(count_opcode(func, IROpcode::SCOPE_RELEASE) == c.scopes,
+			std::string(c.what) + ": releases");
 	}
 }
 

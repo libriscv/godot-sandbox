@@ -79,8 +79,13 @@ private:
 	int scope_slot_offset(int scope_id) const;
 	bool scope_is_elided(int scope_id) const;
 	void plan_scopes(const IRFunction& func);
-	bool scope_body_may_ecall(const IRFunction& func, size_t mark_index) const;
+	// Frame slots holding nothing anyone will read again at each SCOPE_RELEASE.
+	void plan_release_clears(const IRFunction& func);
+	bool scope_body_may_allocate(const IRFunction& func, size_t mark_index) const;
 	bool instruction_may_ecall(const IRInstruction& instr) const;
+	// Narrower: an ecall whose answer is a register value leaves no scoped
+	// variant behind, so a loop body made only of those needs no release.
+	bool instruction_may_allocate_scoped(const IRInstruction& instr) const;
 	static bool global_call_may_ecall(GlobalFn fn);
 	void gen_instruction(const IRInstruction& instr);
 	void gen_call(const IRInstruction& instr);
@@ -109,6 +114,7 @@ private:
 	void gen_syscall_string_size(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_array_at(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_string_at(const IRInstruction& instr, int result_vreg);
+	void gen_syscall_string_batch(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg);
 	void gen_get_node(const IRInstruction& instr);
 	void gen_load_resource(const IRInstruction& instr);
@@ -476,6 +482,8 @@ private:
 		int scope_slot_base = 0;
 		int scope_slot_count = 0;
 		std::vector<bool> elided_scopes;
+		// Instruction index of a SCOPE_RELEASE -> frame slots that are dead there.
+		std::unordered_map<int, std::vector<int>> release_clears;
 		// emit_ecall() asserts false; catches predicate drift.
 		bool ecall_refused = false;
 		// Per-suspension labels, state-ordered; resume dispatches on the index.

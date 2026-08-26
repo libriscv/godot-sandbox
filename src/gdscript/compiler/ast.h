@@ -344,6 +344,8 @@ struct FunctionDecl {
 	std::string doc_comment;
 	// Has AWAIT; gets a resume entry and returns an awaitable.
 	bool is_coroutine = false;
+	// `static func` in a class body: lifted without the instance parameter.
+	bool is_static = false;
 };
 
 // Published beside the ELF; nothing reaches the IR.
@@ -378,7 +380,18 @@ struct StructDecl {
 	bool is_class = false;
 	std::string base_name;
 	std::vector<FunctionDecl> methods;
+	// `const` in a class body: compile-time only, like the file's own consts.
+	std::vector<StructField> constants;
 	size_t inherited_fields = 0;
+
+	const StructField* find_constant(const std::string& constant_name) const {
+		for (const StructField& constant : constants) {
+			if (constant.name == constant_name) {
+				return &constant;
+			}
+		}
+		return nullptr;
+	}
 
 	const FunctionDecl* find_method(const std::string& method_name) const {
 		for (const FunctionDecl& method : methods) {
