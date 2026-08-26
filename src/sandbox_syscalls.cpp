@@ -9,6 +9,7 @@
 #include <godot_cpp/classes/packed_scene.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
+#include <godot_cpp/classes/window.hpp>
 #include <godot_cpp/classes/timer.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/variant.hpp>
@@ -1009,6 +1010,57 @@ APICALL(api_veval) {
 	retp->create(emu, std::move(result.get()));
 }
 
+APICALL(api_vconstruct) {
+	auto [vp, type, gargs, argc] = machine.sysargs<GuestVariant *, int32_t, gaddr_t, int32_t>();
+	Sandbox &emu = riscv::emu(machine);
+	PENALIZE(20'000);
+	SYS_TRACE("vconstruct", vp, type, gargs, argc);
+
+	if (UNLIKELY(type < 0 || type >= Variant::VARIANT_MAX)) {
+		ERR_PRINT("vconstruct: Invalid Variant type " + itos(type));
+		throw std::runtime_error("vconstruct: Invalid Variant type " + std::to_string(type));
+	}
+	if (UNLIKELY(argc < 0 || unsigned(argc) > VariantScratch::MAX)) {
+		ERR_PRINT("vconstruct: Invalid argument count " + itos(argc));
+		throw std::runtime_error("vconstruct: Invalid argument count " + std::to_string(argc));
+	}
+
+	VariantScratch scratch;
+	const Variant *argptrs[VariantScratch::MAX];
+	if (argc > 0) {
+		const GuestVariant *args = machine.memory.memarray<const GuestVariant>(gargs, argc);
+		for (int i = 0; i < argc; i++) {
+			if (args[i].is_scoped_variant()) {
+				argptrs[i] = args[i].toVariantPtr(emu);
+			} else {
+				argptrs[i] = scratch.emplace(args[i].toVariant(emu));
+			}
+		}
+	}
+
+	CallResult result;
+	GDExtensionCallError error;
+	internal::gdextension_interface_variant_construct(static_cast<GDExtensionVariantType>(type),
+			&result.get(), reinterpret_cast<GDExtensionConstVariantPtr *>(argptrs), argc, &error);
+	result.mark_constructed();
+	if (UNLIKELY(error.error != GDEXTENSION_CALL_OK)) {
+		const String type_name = Variant::get_type_name(Variant::Type(type));
+		String message;
+		if (error.error == GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT &&
+			error.argument >= 0 && error.argument < argc) {
+			message = type_name + String("(): argument ") + itos(error.argument + 1) +
+					" is " + String::utf8(GuestVariant::type_name(argptrs[error.argument]->get_type())) +
+					", not " + Variant::get_type_name(Variant::Type(error.expected));
+		} else {
+			message = type_name + String("(): no constructor takes ") + itos(argc) + " argument(s)";
+		}
+		ERR_PRINT(message);
+		throw std::runtime_error(std::string(message.utf8().get_data()));
+	}
+
+	vp->create(emu, std::move(result.get()));
+}
+
 /// @brief Construct a Variant from data the guest describes.
 /// @note The Packed*Array branches take their element count from the guest, either as
 /// the method argument or out of a guest-side std::vector header. That count is only
@@ -1809,6 +1861,47 @@ APICALL(api_obj_retain) {
 	emu.retain_global_object(slot_addr);
 }
 
+APICALL(api_vstore_global) {
+	auto [dst_addr, src_addr] = machine.sysargs<gaddr_t, gaddr_t>();
+	Sandbox &emu = riscv::emu(machine);
+	PENALIZE(10'000);
+	SYS_TRACE("vstore_global", dst_addr, src_addr);
+
+	GuestVariant *dst = machine.memory.memarray<GuestVariant>(dst_addr, 1);
+	const GuestVariant *src = machine.memory.memarray<const GuestVariant>(src_addr, 1);
+
+	const int32_t held = dst->is_scoped_variant() ? int32_t(dst->v.i) : 0;
+	const bool holds_permanent = Sandbox::is_permanent_variant(held);
+	const int32_t previous_type = dst->type;
+
+	if (!src->is_scoped_variant()) {
+		if (holds_permanent) {
+			emu.release_permanent_variant(held);
+		}
+		*dst = *src;
+	} else if (holds_permanent && int32_t(src->v.i) == held) {
+			dst->type = src->type;
+	} else {
+		Variant value = get_scoped_variant_or_throw(emu, int32_t(src->v.i),
+				"assignment to a member");
+		if (holds_permanent) {
+			emu.release_permanent_variant(held);
+		}
+		const int32_t stored = emu.create_permanent_variant_from(std::move(value));
+		if (UNLIKELY(stored == 0)) {
+			dst->type = Variant::NIL;
+			dst->v.i = 0;
+		} else {
+			dst->type = src->type;
+			dst->v.i = stored;
+		}
+	}
+
+	if (dst->type == Variant::OBJECT || previous_type == Variant::OBJECT) {
+		emu.retain_global_object(dst_addr);
+	}
+}
+
 APICALL(api_get_obj) {
 	auto [name] = machine.sysargs<std::string>();
 	auto &emu = riscv::emu(machine);
@@ -1842,10 +1935,24 @@ APICALL(api_get_obj) {
 		}
 		SceneTree *tree = owner_node->get_tree();
 		machine.set_result(emu.add_scoped_object(tree));
-	} else {
-		ERR_PRINT(("Unknown or inaccessible object: " + name).c_str());
-		machine.set_result(0);
+		return;
 	}
+
+	// Tree from main loop: _init() runs before the owner enters the tree.
+	if (name.find('/') == std::string::npos) {
+		SceneTree *tree = Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop());
+		Window *root = tree != nullptr ? tree->get_root() : nullptr;
+		Node *autoload = root != nullptr
+				? root->get_node_or_null(NodePath(String::utf8(name.c_str(), name.size())))
+				: nullptr;
+		if (autoload != nullptr) {
+			machine.set_result(emu.add_scoped_object(autoload));
+			return;
+		}
+	}
+
+	ERR_PRINT(("Unknown or inaccessible object: " + name).c_str());
+	machine.set_result(0);
 }
 
 APICALL(api_obj) {
@@ -2582,27 +2689,29 @@ APICALL(api_throw) {
 	auto [type, msg, vaddr, vfunc] = machine.sysargs<std::string_view, std::string_view, gaddr_t, gaddr_t>();
 	SYS_TRACE("throw", String::utf8(type.data(), type.size()), String::utf8(msg.data(), msg.size()), vaddr);
 
-	if (vaddr != 0) {
-		GuestVariant *var = machine.memory.memarray<GuestVariant>(vaddr, 1);
-		String error_string = "Sandbox exception of type " + String::utf8(type.data(), type.size()) + ": " + String::utf8(msg.data(), msg.size()) + " for Variant of type " + itos(var->type);
+	const String exception_type = String::utf8(type.data(), type.size());
+	String error_string;
+	GuestVariant *var = vaddr != 0 ? machine.memory.memarray<GuestVariant>(vaddr, 1) : nullptr;
+
+	if (var != nullptr && (var->type == Variant::STRING || var->type == Variant::STRING_NAME)) {
+		error_string = "Sandbox exception in " + exception_type + ": " +
+				var->toVariant(riscv::emu(machine)).operator String();
+	} else if (var != nullptr) {
+		error_string = "Sandbox exception of type " + exception_type + ": " +
+				String::utf8(msg.data(), msg.size()) + " for Variant of type " + itos(var->type);
 		if (var->type >= 0 && var->type < Variant::VARIANT_MAX) {
-			const char *type_hint = GuestVariant::type_name(var->type);
-			error_string += " (" + String::utf8(type_hint) + ")";
+			error_string += " (" + String::utf8(GuestVariant::type_name(var->type)) + ")";
 		}
-		if (vfunc != 0x0) {
-			error_string += " in function " + String::utf8(machine.memory.memstring(vfunc).c_str());
-		}
-		ERR_PRINT(error_string);
-		const std::string cpp_error = error_string.utf8().ptr();
-		throw std::runtime_error(cpp_error);
 	} else {
-		String error_string = "Sandbox exception in " + String::utf8(type.data(), type.size()) + ": " + String::utf8(msg.data(), msg.size());
-		if (vfunc != 0x0) {
-			error_string += " in function " + String::utf8(machine.memory.memstring(vfunc).c_str());
-		}
-		ERR_PRINT(error_string);
-		throw std::runtime_error(error_string.utf8().ptr());
+		error_string = "Sandbox exception in " + exception_type + ": " +
+				String::utf8(msg.data(), msg.size());
 	}
+
+	if (vfunc != 0x0) {
+		error_string += " in function " + String::utf8(machine.memory.memstring(vfunc).c_str());
+	}
+	ERR_PRINT(error_string);
+	throw std::runtime_error(error_string.utf8().get_data());
 }
 
 APICALL(api_array_ops) {
@@ -3221,8 +3330,8 @@ APICALL(api_sandbox_add) {
 			auto [method, name, type, setter, getter, defval] = machine.sysargs<int, std::string_view, int32_t, gaddr_t, gaddr_t, GuestVariant *>();
 			String utf8_name = String::utf8(name.data(), name.size());
 			SYS_TRACE("sandbox_add", "property", utf8_name, int(type), setter, getter, defval->toVariant(emu));
-			if (type <= 0) {
-				ERR_PRINT("Invalid property type for sandbox property" + itos(type));
+			if (type < 0) {
+				ERR_PRINT("Invalid property type for sandbox property: " + itos(type));
 				throw std::runtime_error("Invalid property type for sandbox property");
 			}
 			if (type >= Variant::VARIANT_MAX) {
@@ -3455,6 +3564,8 @@ void Sandbox::initialize_syscalls() {
 			 } },
 
 			{ ECALL_VCREATE, api_vcreate },
+			{ ECALL_VCONSTRUCT, api_vconstruct },
+			{ ECALL_VSTORE_GLOBAL, api_vstore_global },
 			{ ECALL_VFETCH, api_vfetch },
 			{ ECALL_VCLONE, api_vclone },
 			{ ECALL_VSTORE, api_vstore },

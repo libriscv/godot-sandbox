@@ -78,6 +78,8 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 
 		CodeGenerator codegen;
 		codegen.set_restricted(options.restricted);
+		codegen.set_autoloads(options.autoloads);
+		codegen.set_global_script_classes(options.global_script_classes);
 		IRProgram ir_program = codegen.generate(program);
 		m_signatures = ir_program.signatures;
 		m_signals = ir_program.signals;

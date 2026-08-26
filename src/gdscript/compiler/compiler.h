@@ -5,6 +5,7 @@
 #include "profiling_layout.h"
 #include "variant_layout.h"
 #include <string>
+#include <utility>
 #include <vector>
 #include <cstdint>
 
@@ -27,6 +28,8 @@ struct CompilerOptions {
 	// 1-based lines to break on. Non-empty implies debug_info.
 	std::vector<uint32_t> breakpoint_lines;
 	bool restricted = false;
+	std::vector<std::string> autoloads;
+	std::vector<std::pair<std::string, std::string>> global_script_classes;
 };
 
 // Structured error for editor underlines; the formatted string is in get_error().

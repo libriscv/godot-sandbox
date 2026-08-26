@@ -446,6 +446,28 @@ SafeGDScriptInstance::SafeGDScriptInstance(Object *p_owner, const Ref<SafeGDScri
 	// the way the program initialized its own at startup.
 	this->instance_base = this->current_sandbox->create_instance_record();
 	this->instance_generation = this->current_sandbox->get_program_generation();
+	this->call_init();
+}
+
+void SafeGDScriptInstance::call_init() {
+	static const StringName init_name("_init");
+	Sandbox *sandbox = this->current_sandbox;
+	if (sandbox == nullptr || sandbox->cached_address_of(init_name.hash(), init_name) == 0) {
+		return;
+	}
+	if (const MethodInfo *method = script->find_method_info(init_name)) {
+		if (method->arguments.size() != method->default_arguments.size()) {
+			ERR_PRINT("SafeGDScript: " + script->get_path() + ": _init() takes arguments, so it "
+					"cannot run for a script attached to a node.");
+			return;
+		}
+	}
+	GDExtensionCallError error;
+	this->callp(init_name, nullptr, 0, error);
+	if (error.error != GDEXTENSION_CALL_OK) {
+		ERR_PRINT("SafeGDScript: " + script->get_path() + ": _init() failed with call error " +
+				itos(int(error.error)));
+	}
 }
 
 SafeGDScriptInstance::~SafeGDScriptInstance() {

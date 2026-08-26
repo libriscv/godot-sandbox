@@ -6,6 +6,7 @@
 #include "script_language_safegdscript.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include "../gdscript/compiler/function_signature.h"
@@ -449,6 +450,7 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	const char *entry_point = profiling ? "compile_profiled" : (debug ? "compile_debug" : "compile");
 	const bool restricted = this->class_access_restricted();
 	set_compiler_restricted(restricted);
+	set_compiler_project_context();
 
 	GDExtensionCallError error;
 	Variant src_code_var = this->source_code;
@@ -697,6 +699,67 @@ bool SafeGDScript::get_compiler_base_is_path() {
 		return false;
 	}
 	return bool(answer);
+}
+
+static PackedStringArray project_autoload_names() {
+	PackedStringArray names;
+	ProjectSettings *settings = ProjectSettings::get_singleton();
+	if (settings == nullptr) {
+		return names;
+	}
+	const TypedArray<Dictionary> properties = settings->get_property_list();
+	for (int i = 0; i < properties.size(); i++) {
+		const Dictionary property = properties[i];
+		const String name = property.get("name", String());
+		if (name.begins_with("autoload/")) {
+			names.push_back(name.substr(strlen("autoload/")));
+		}
+	}
+	return names;
+}
+
+static PackedStringArray project_global_classes() {
+	PackedStringArray pairs;
+	ProjectSettings *settings = ProjectSettings::get_singleton();
+	if (settings == nullptr) {
+		return pairs;
+	}
+	const TypedArray<Dictionary> classes = settings->get_global_class_list();
+	for (int i = 0; i < classes.size(); i++) {
+		const Dictionary entry = classes[i];
+		const String class_name = entry.get("class", String());
+		const String path = entry.get("path", String());
+		if (class_name.is_empty() || path.is_empty()) {
+			continue;
+		}
+		pairs.push_back(class_name);
+		pairs.push_back(path);
+	}
+	return pairs;
+}
+
+void SafeGDScript::set_compiler_project_context() {
+	Sandbox *compiler = get_compiler_sandbox();
+	if (compiler == nullptr) {
+		return;
+	}
+	GDExtensionCallError error;
+	if (compiler->has_function("set_autoloads")) {
+		Variant names = project_autoload_names();
+		const Variant *args[] = { &names };
+		compiler->vmcall_fn("set_autoloads", args, 1, error);
+		if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
+			ERR_PRINT("SafeGDScript: the compiler refused the autoload list.");
+		}
+	}
+	if (compiler->has_function("set_global_classes")) {
+		Variant pairs = project_global_classes();
+		const Variant *args[] = { &pairs };
+		compiler->vmcall_fn("set_global_classes", args, 1, error);
+		if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
+			ERR_PRINT("SafeGDScript: the compiler refused the global class list.");
+		}
+	}
 }
 
 void SafeGDScript::set_compiler_restricted(bool p_restricted) {

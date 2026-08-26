@@ -124,6 +124,7 @@ private:
 	std::vector<ExportArgument> parse_attribute_arguments();
 	SignalDecl parse_signal();
 	int64_t fold_enum_value(const Expr* expr, const EnumDecl& decl, const Token& start);
+	static bool holds_engine_constant(const Expr* expr);
 	std::string doc_comment_above(int p_line) const;
 
 	std::vector<Token> m_tokens;

@@ -52,6 +52,23 @@ refused while restricted; release always permitted.
 Object Variant store is raw 24B move, never `VASSIGN`. Compiler emits retain for
 globals with `IRGlobalVar::holds_object`.
 
+## Script members
+
+`SafeGDScriptInstance` runs `_init()` on creation, after
+`create_instance_record()` lays down member defaults. `_init()` with arguments
+belongs to `Class.new(args)` and is refused on a node.
+
+Member lifetime follows Variant type. Typed complex members → `ECALL_VASSIGN`;
+compiler-typed OBJECT → `ECALL_OBJ_RETAIN`. Untyped members (or class-name
+declared, which is not a Variant type) can hold either across calls, so storage
+moves to the host: `ECALL_VSTORE_GLOBAL` reads both tags, releases the old
+value, copies scoped value into its own permanent slot (distinct index — shared
+slots would dangle on release), retains objects, copies inline payload verbatim.
+
+`var x = null` declares no type — NIL is the held value, not the slot type —
+so the slot stays untyped and the first real assignment is not a
+reclassification.
+
 ## Native backends
 
 Two of them, and by default only one is built:
@@ -136,10 +153,29 @@ Lowering:
 - `as <type>` → constructor for builtins; `is` + value-or-null for classes,
   preserving instance declaration.
 
+### Built-in constructors
+
+`INLINE_CONSTRUCTORS` (codegen.cpp): types whose payload fits inline Variant
+bytes — `MAKE_VECTOR2` etc., no syscall. `HOST_CONSTRUCTORS`: Transform2D/3D,
+Basis, Quaternion, AABB, Projection, StringName, NodePath, RID, Signal —
+delegates to `gdextension_interface_variant_construct` via `ECALL_VCONSTRUCT`.
+Resolves overloads and conversions, max 8 arguments.
+
+Inline types with no component-wise form (`Vector2(Vector2i)`, `Color(String)`)
+fall through to `ECALL_VCONSTRUCT`. `Vector2(1)` is a compile error (no
+single-scalar ctor). Array assigned to declared `Packed*Array` converts through
+that type's constructor.
+
 ### Enums
 
 Compiler-only. Members fold to integer immediates, typed `int`. Nothing reaches
 IR. Undeclared member = compile error; local shadows.
+
+Exception: engine-constant initializers (`PhysicsServer2D.SHAPE_CAPSULE`) have
+no compile-time value. `Parser::holds_engine_constant` keeps the initializer in
+`EnumDecl::owned_values`; `Member::value_expr` points at it, `value` becomes
+auto-increment offset. `gen_enum_member` re-evaluates per use. Folding refused;
+bad literal (`A = "hi"`) still a compile error.
 
 ### Container iteration
 
@@ -162,7 +198,10 @@ Newline inside `(`/`[`/`{` is continuation, not statement end. `\` = explicit
 continuation; `;` = statement separator. Trailing commas allowed. `{key = value}`
 = Lua-style `{"key": value}`. Unclosed bracket swallows file; reported at open
 position. `static` parsed and dropped (no class instance). Typed containers
-(`Array[int]`) parsed and dropped (Variant-only; Godot enforces at boundary).
+(`Array[int]`) parsed and dropped (Variant-only; Godot enforces at boundary),
+after `as` as well as on a declaration. `.5` is a float literal (`..` and `a.b`
+are not). A nested `class X:` takes `extends` from its own line or the body's
+first line, not both.
 
 ### Structs
 
@@ -172,6 +211,29 @@ mixed. Field access → Dictionary get/set (never `VGET`/`VSET` — those target
 Object properties). Undeclared field = compile error when struct type known.
 `d.key` ≡ `d["key"]` for plain Dictionaries too. Nothing survives into IR.
 Tests: `tests/test_structs.cpp`.
+
+### Project context
+
+Autoloads and `class_name` scripts are unavailable from source.
+`SafeGDScript::set_compiler_project_context()` reads ProjectSettings before each
+compile (`set_autoloads`/`set_global_classes`, guarded by `has_function` for
+older compiler ELFs). Stored in `CompilerOptions::autoloads`/`global_script_classes`.
+
+- Autoload → `ECALL_GET_OBJ` on bare name. Resolves `/root/<name>` via
+  `Engine::get_main_loop()`, not the owner's tree (`_init()` runs before tree
+  entry).
+- Script class `.new(args)` → `LOAD_RESOURCE` of path + `VCALL "new"`. No
+  ClassDB entry; `ECALL_NODE_CREATE` takes no args. Both checked:
+  `is_allowed_resource`, then `is_allowed_method`.
+
+Unresolved capitalized name → type. `Class.CONSTANT` →
+`ClassDB.class_get_integer_constant`, `Class.method(args)` →
+`ClassDB.class_call_static`. No object involved — `ClassDB`/`OS` are in
+`global_singleton_list`. Trade-off: misspelled class name → run-time null, not
+compile error.
+
+`self.method` as value → Callable (same as bare `method`); without it, reads as
+owner property → null.
 
 ### Classes and engine interop
 
@@ -272,6 +334,10 @@ Tests: `tests/test_switch.cpp`, `tests/test_match.cpp`.
 
 ### Debugging
 
+`assert(cond, msg)`: literal message baked into `THROW`. Non-literal evaluated
+on failing arm, passed as Variant in the syscall's spare slot; `api_throw`
+prints String payload as message. Trailing count on `THROW` distinguishes form.
+
 **Line table** (`line_table.h`): address→line map, always produced. Ascending by
 address.
 
@@ -308,6 +374,9 @@ cat script.gd | ./dump_ir --codegen        # with register allocation
 cat script.gd | ./dump_ir -v --codegen     # verbose operands
 ```
 
+Both tools take the project context the host would supply:
+`--autoload Global`, `--global-class Runner=res://runner.gd` (repeatable).
+
 `gdscript_to_riscv`: GDScript → RV64 ELF → disassembly.
 ```
 cat script.gd | ./gdscript_to_riscv            # all functions
@@ -334,6 +403,10 @@ cat script.gd | ./gdscript_to_riscv -f test    # specific function
 
 Adding an opcode to `ir_opcodes.def` is a compile error at every `IROpcode`
 switch — no `default:`, built with `-Werror=switch`.
+
+`STRIPPED=ON` links with `--strip-debug`, not `-s`: the Sandbox reads a guest
+program's public API out of `.symtab`, and `--strip-all` leaves it unable to find
+a single function.
 
 ### Integration tests
 

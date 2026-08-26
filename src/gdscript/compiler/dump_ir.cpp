@@ -64,6 +64,8 @@ int main(int argc, char** argv)
 	bool no_optimize = false;
 	bool show_codegen = false;
 	bool double_precision = native_variant_layout().double_precision;
+	std::vector<std::string> autoloads;
+	std::vector<std::pair<std::string, std::string>> global_classes;
 
 	for (int i = 1; i < argc; i++) {
 		std::string arg = argv[i];
@@ -73,6 +75,18 @@ int main(int argc, char** argv)
 			no_optimize = true;
 		} else if (arg == "--codegen" || arg == "-c") {
 			show_codegen = true;
+		} else if (arg == "--autoload") {
+			if (i + 1 < argc) {
+				autoloads.push_back(argv[++i]);
+			}
+		} else if (arg == "--global-class") {
+			if (i + 1 < argc) {
+				const std::string pair = argv[++i];
+				const size_t eq = pair.find('=');
+				if (eq != std::string::npos) {
+					global_classes.emplace_back(pair.substr(0, eq), pair.substr(eq + 1));
+				}
+			}
 		} else if (arg == "--double-precision") {
 			double_precision = true;
 		} else if (arg == "--single-precision") {
@@ -119,6 +133,8 @@ int main(int argc, char** argv)
 		}
 
 		CodeGenerator codegen;
+		codegen.set_autoloads(autoloads);
+		codegen.set_global_script_classes(global_classes);
 		IRProgram ir = codegen.generate(program);
 
 		if (!no_optimize) {

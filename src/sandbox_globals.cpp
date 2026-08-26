@@ -1,6 +1,7 @@
 #include "sandbox.h"
 
 #include <godot_cpp/classes/audio_server.hpp>
+#include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/display_server.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
 #include <godot_cpp/classes/engine.hpp>
@@ -15,6 +16,7 @@
 #include <godot_cpp/classes/navigation_mesh_generator.hpp>
 #include <godot_cpp/classes/navigation_server2d.hpp>
 #include <godot_cpp/classes/navigation_server3d.hpp>
+#include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/performance.hpp>
 #include <godot_cpp/classes/physics_server2d.hpp>
 #include <godot_cpp/classes/physics_server2d_manager.hpp>
@@ -35,6 +37,7 @@
 namespace riscv {
 std::unordered_map<std::string, std::function<uint64_t()>> global_singleton_list = {
 	{ "AudioServer", [] { return uint64_t(uintptr_t(AudioServer::get_singleton())); } },
+	{ "ClassDB", [] { return uint64_t(uintptr_t(ClassDBSingleton::get_singleton())); } },
 	{ "EditorInterface", [] { return uint64_t(uintptr_t(EditorInterface::get_singleton())); } },
 	{ "DisplayServer", [] { return uint64_t(uintptr_t(DisplayServer::get_singleton())); } },
 	{ "GDExtensionManager", [] { return uint64_t(uintptr_t(GDExtensionManager::get_singleton())); } },
@@ -49,7 +52,7 @@ std::unordered_map<std::string, std::function<uint64_t()>> global_singleton_list
 	{ "NavigationMeshGenerator", [] { return uint64_t(uintptr_t(NavigationMeshGenerator::get_singleton())); } },
 	{ "NavigationServer2D", [] { return uint64_t(uintptr_t(NavigationServer2D::get_singleton())); } },
 	{ "NavigationServer3D", [] { return uint64_t(uintptr_t(NavigationServer3D::get_singleton())); } },
-//	{ "OS", [] { return uint64_t(uintptr_t(OS::get_singleton())); } },
+	{ "OS", [] { return uint64_t(uintptr_t(OS::get_singleton())); } },
 	{ "Performance", [] { return uint64_t(uintptr_t(Performance::get_singleton())); } },
 	{ "PhysicsServer2D", [] { return uint64_t(uintptr_t(PhysicsServer2D::get_singleton())); } },
 	{ "PhysicsServer3D", [] { return uint64_t(uintptr_t(PhysicsServer3D::get_singleton())); } },

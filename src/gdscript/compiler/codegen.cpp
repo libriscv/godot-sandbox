@@ -177,11 +177,13 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			if (decl.name.empty()) {
 				reject_signal_collision("Enum member", member.name, member.line, member.column);
 				auto existing = m_enum_members.find(member.name);
-				if (existing != m_enum_members.end() && existing->second != member.value) {
+				if (existing != m_enum_members.end() &&
+					(existing->second->value != member.value ||
+					 existing->second->value_expr != member.value_expr)) {
 					error_at("Enum member '" + member.name + "' is declared more than once"
 						" with different values", member.line, member.column);
 				}
-				m_enum_members[member.name] = member.value;
+				m_enum_members[member.name] = &member;
 			}
 		}
 	}
@@ -599,7 +601,10 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 		return;
 	}
 
-	const bool declared_variant = stmt->type_hint == "Variant";
+	const bool untyped_null = stmt->type_hint.empty() && stmt->initializer != nullptr &&
+		get_register_type(func, reg) == Variant::NIL;
+
+	const bool declared_variant = stmt->type_hint == "Variant" || untyped_null;
 	if (declared_variant) {
 		// Fresh register: clearing type on the initializer's would reach other uses.
 		int untyped_reg = alloc_register(func);
@@ -2184,6 +2189,25 @@ int CodeGenerator::gen_int_immediate(int64_t value, FunctionContext& func) {
 	return reg;
 }
 
+int CodeGenerator::gen_enum_member(const EnumDecl::Member& member, FunctionContext& func) {
+	if (member.value_expr == nullptr) {
+		return gen_int_immediate(member.value, func);
+	}
+	int reg = gen_expr(member.value_expr, func);
+	if (member.value == 0) {
+		return reg;
+	}
+	int offset_reg = gen_int_immediate(member.value, func);
+	int result_reg = alloc_register(func);
+	auto& add = func.ir.instructions.emplace_back(IROpcode::ADD, IRValue::reg(result_reg),
+		IRValue::reg(reg), IRValue::reg(offset_reg));
+	add.type_hint = Variant::INT;
+	set_register_type(func, result_reg, Variant::INT);
+	free_register(func, offset_reg);
+	free_register(func, reg);
+	return result_reg;
+}
+
 int CodeGenerator::gen_float_immediate(double value, FunctionContext& func) {
 	int reg = alloc_register(func);
 	IRInstruction instr(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(reg), IRValue::fimm(value));
@@ -2303,10 +2327,14 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func)
 
 	// Unnamed enum member: compile-time integer. Local of same name shadows above.
 	if (auto member = m_enum_members.find(expr->name); member != m_enum_members.end()) {
-		return gen_int_immediate(member->second, func);
+		return gen_enum_member(*member->second, func);
 	}
 
 	if (is_global_class(expr->name)) {
+		return gen_global_class_get(expr->name, func);
+	}
+
+	if (is_autoload(expr->name)) {
 		return gen_global_class_get(expr->name, func);
 	}
 
@@ -3336,13 +3364,14 @@ int CodeGenerator::gen_assert(const CallExpr* expr, FunctionContext& func) {
 	}
 
 	std::string message = "assertion failed";
+	const Expr* computed_message = nullptr;
 	if (expr->arguments.size() == 2) {
 		auto* literal = dynamic_cast<const LiteralExpr*>(expr->arguments[1].get());
-		if (literal == nullptr || literal->lit_type != LiteralExpr::Type::STRING) {
-			error_at("assert() message must be a string literal", expr->arguments[1].get(),
-				"The host reads the message out of guest memory as bytes, not as a Variant");
+		if (literal != nullptr && literal->lit_type == LiteralExpr::Type::STRING) {
+			message = std::get<std::string>(literal->value);
+		} else {
+			computed_message = expr->arguments[1].get();
 		}
-		message = std::get<std::string>(literal->value);
 	}
 
 	const std::string passed_label = make_label("assert_passed");
@@ -3351,8 +3380,17 @@ int CodeGenerator::gen_assert(const CallExpr* expr, FunctionContext& func) {
 	emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, cond_reg, passed_label, func);
 	free_register(func, cond_reg);
 
-	func.ir.instructions.emplace_back(IROpcode::THROW, IRValue::str("assert"),
-		IRValue::str(message));
+	IRInstruction throw_instr(IROpcode::THROW, IRValue::str("assert"), IRValue::str(message));
+	if (computed_message != nullptr) {
+		const int message_reg = gen_expr(computed_message, func);
+		throw_instr.operands.push_back(IRValue::imm(1));
+		throw_instr.operands.push_back(IRValue::reg(message_reg));
+		func.ir.instructions.push_back(throw_instr);
+		free_register(func, message_reg);
+	} else {
+		throw_instr.operands.push_back(IRValue::imm(0));
+		func.ir.instructions.push_back(throw_instr);
+	}
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(passed_label));
 
 	// Parsed as a call: must leave a value. Returns NIL.
@@ -3507,6 +3545,14 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 
 	if (is_inline_primitive_constructor(expr->function_name)) {
 		int result = gen_inline_constructor(expr->function_name, arg_regs, func, expr);
+		for (int reg : arg_regs) {
+			free_register(func, reg);
+		}
+		return result;
+	}
+
+	if (is_host_constructor(expr->function_name)) {
+		int result = gen_host_constructor(expr->function_name, arg_regs, func, expr);
 		for (int reg : arg_regs) {
 			free_register(func, reg);
 		}
@@ -3745,6 +3791,9 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 				!is_global_variable(object->name) && !m_enums.count(object->name) &&
 				!is_global_class(object->name) && !is_local_function(object->name))
 			{
+				if (const std::string* path = global_script_class_path(object->name)) {
+					return gen_script_class_new(object->name, *path, expr, func);
+				}
 				return gen_engine_class_new(object->name, expr, func);
 			}
 		}
@@ -3797,7 +3846,7 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 						error_at("Enum '" + decl->name + "' has no member named '"
 							+ expr->member_name + "'", expr);
 					}
-					return gen_int_immediate(member->value, func);
+					return gen_enum_member(*member, func);
 				}
 				if (!is_global_variable(object->name) && has_builtin_constants(object->name)) {
 					int reg = gen_builtin_constant(object->name, expr->member_name, func);
@@ -3806,6 +3855,25 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 					}
 					error_at(object->name + " has no constant named '" + expr->member_name + "'", expr);
 				}
+			}
+		}
+	}
+
+	if (!expr->is_method_call && expr->arguments.empty() && is_local_function(expr->member_name)) {
+		if (auto* object = dynamic_cast<const VariableExpr*>(expr->object.get())) {
+			if (object->name == "self" && find_variable(func, "self") == nullptr) {
+				return gen_make_callable(expr->member_name, -1, func);
+			}
+		}
+	}
+
+	if (auto* object = dynamic_cast<const VariableExpr*>(expr->object.get())) {
+		if (names_an_engine_type(object->name, func)) {
+			if (!expr->is_method_call) {
+				return gen_engine_class_constant(object->name, expr->member_name, func);
+			}
+			if (expr->member_name != "new") {
+				return gen_engine_class_static_call(object->name, expr, func);
 			}
 		}
 	}
@@ -4660,6 +4728,9 @@ int CodeGenerator::gen_default_value(const std::string& type_hint, FunctionConte
 	if (is_inline_primitive_constructor(type_hint)) {
 		return gen_inline_constructor(type_hint, {}, func, nullptr);
 	}
+	if (is_host_constructor(type_hint)) {
+		return gen_host_constructor(type_hint, {}, func, nullptr);
+	}
 
 	// No guest-constructible default.
 	return -1;
@@ -4956,7 +5027,7 @@ int CodeGenerator::gen_super_call(const MemberCallExpr* expr, FunctionContext& f
 
 	Variable* self = find_variable(func, "self");
 	if (self == nullptr) {
-		error_at("super is only reachable from a class method", expr);
+		error_at("super is only reachable from a class method", expr, script_level_super_hint());
 	}
 	if (method != nullptr) {
 		return gen_class_method_call(*base, *method, *owner, self->register_num, expr->arguments,
@@ -4994,7 +5065,7 @@ int CodeGenerator::gen_super_call(const MemberCallExpr* expr, FunctionContext& f
 int CodeGenerator::gen_super_init(const CallExpr* expr, FunctionContext& func) {
 	if (m_current_class == nullptr) {
 		error_at("super() has no base to call: a sandboxed program is the whole script", expr,
-			"Only a class declared in this file has one");
+			script_level_super_hint());
 	}
 	const StructDecl* base = class_base(*m_current_class);
 	if (base == nullptr) {
@@ -5273,6 +5344,53 @@ std::string accepted_constructor_arities(const std::string& name, int components
 	return "0 or " + std::to_string(components) + " arguments";
 }
 
+bool is_numeric_scalar(IRInstruction::TypeHint type) {
+	return type == Variant::INT || type == Variant::FLOAT || type == Variant::BOOL;
+}
+
+const char* packed_array_constructor_name(IRInstruction::TypeHint type) {
+	switch (type) {
+		case Variant::PACKED_BYTE_ARRAY: return "PackedByteArray";
+		case Variant::PACKED_INT32_ARRAY: return "PackedInt32Array";
+		case Variant::PACKED_INT64_ARRAY: return "PackedInt64Array";
+		case Variant::PACKED_FLOAT32_ARRAY: return "PackedFloat32Array";
+		case Variant::PACKED_FLOAT64_ARRAY: return "PackedFloat64Array";
+		case Variant::PACKED_STRING_ARRAY: return "PackedStringArray";
+		case Variant::PACKED_VECTOR2_ARRAY: return "PackedVector2Array";
+		case Variant::PACKED_VECTOR3_ARRAY: return "PackedVector3Array";
+		case Variant::PACKED_VECTOR4_ARRAY: return "PackedVector4Array";
+		case Variant::PACKED_COLOR_ARRAY: return "PackedColorArray";
+		default: return nullptr;
+	}
+}
+
+struct HostConstructor {
+	const char* name;
+	IRInstruction::TypeHint variant_type;
+};
+
+const HostConstructor HOST_CONSTRUCTORS[] = {
+	{ "Transform2D", Variant::TRANSFORM2D },
+	{ "Transform3D", Variant::TRANSFORM3D },
+	{ "Basis",       Variant::BASIS },
+	{ "Quaternion",  Variant::QUATERNION },
+	{ "AABB",        Variant::AABB },
+	{ "Projection",  Variant::PROJECTION },
+	{ "StringName",  Variant::STRING_NAME },
+	{ "NodePath",    Variant::NODE_PATH },
+	{ "RID",         Variant::RID },
+	{ "Signal",      Variant::SIGNAL },
+};
+
+const HostConstructor* find_host_constructor(const std::string& name) {
+	for (const HostConstructor& entry : HOST_CONSTRUCTORS) {
+		if (name == entry.name) {
+			return &entry;
+		}
+	}
+	return nullptr;
+}
+
 const InlineConstructor* find_inline_constructor(const std::string& name) {
 	for (const InlineConstructor& entry : INLINE_CONSTRUCTORS) {
 		if (name == entry.name) {
@@ -5285,6 +5403,44 @@ const InlineConstructor* find_inline_constructor(const std::string& name) {
 
 bool CodeGenerator::is_inline_primitive_constructor(const std::string& name) const {
 	return find_inline_constructor(name) != nullptr;
+}
+
+bool CodeGenerator::is_host_constructor(const std::string& name) const {
+	return find_host_constructor(name) != nullptr;
+}
+
+int CodeGenerator::gen_host_constructor(const std::string& name, const std::vector<int>& arg_regs,
+	FunctionContext& func, const Expr* site)
+{
+	const HostConstructor* info = find_host_constructor(name);
+	if (info == nullptr) {
+		throw CompilerException(ErrorType::CODEGEN_ERROR,
+			"is_host_constructor() accepts '" + name + "' but there is no table entry for it");
+	}
+	return gen_host_constructor_typed(name, info->variant_type, arg_regs, func, site);
+}
+
+int CodeGenerator::gen_host_constructor_typed(const std::string& name,
+	IRInstruction::TypeHint variant_type, const std::vector<int>& arg_regs,
+	FunctionContext& func, const Expr* site)
+{
+	if (arg_regs.size() > MAX_HOST_CONSTRUCTOR_ARGS) {
+		error_at(name + "() takes at most " + std::to_string(MAX_HOST_CONSTRUCTOR_ARGS) +
+			" arguments, got " + std::to_string(arg_regs.size()), site);
+	}
+
+	int result_reg = alloc_register(func);
+	IRInstruction instr(IROpcode::CONSTRUCT);
+	instr.operands.push_back(IRValue::reg(result_reg));
+	instr.operands.push_back(IRValue::imm(static_cast<int64_t>(variant_type)));
+	instr.operands.push_back(IRValue::imm(static_cast<int64_t>(arg_regs.size())));
+	for (int arg_reg : arg_regs) {
+		instr.operands.push_back(IRValue::reg(arg_reg));
+	}
+	instr.type_hint = variant_type;
+	func.ir.instructions.push_back(instr);
+	set_register_type(func, result_reg, variant_type);
+	return result_reg;
 }
 
 bool CodeGenerator::is_global_function(const std::string& name) const {
@@ -5571,6 +5727,12 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 		// Plane(normal) / Plane(normal, d)
 		components = { read_member(arg_regs[0], "x"), read_member(arg_regs[0], "y"),
 			read_member(arg_regs[0], "z"), given == 2 ? arg_regs[1] : load_default(3) };
+	} else if (given == 1 && !is_numeric_scalar(get_register_type(func, arg_regs[0]))) {
+		for (int reg : owned) {
+			free_register(func, reg);
+		}
+		free_register(func, result_reg);
+		return gen_host_constructor_typed(name, info->variant_type, arg_regs, func, site);
 	} else {
 		error_at(name + "() takes " + accepted_constructor_arities(name, info->components) +
 			", got " + std::to_string(given), site);
@@ -6015,6 +6177,15 @@ void CodeGenerator::gen_element_store(int obj_reg, int idx_reg, int value_reg, F
 	free_register(func, result_reg);
 }
 
+std::string CodeGenerator::script_level_super_hint() const {
+	if (!m_script_base_class.empty() && global_script_class_path(m_script_base_class) != nullptr) {
+		return "'" + m_script_base_class + "' is a script in another file, and none of its "
+			"body is compiled into this program. Only a class declared in this file has a "
+			"super(); call into '" + m_script_base_class + "' through an instance of it instead";
+	}
+	return "Only a class declared in this file has one";
+}
+
 std::unordered_set<std::string> CodeGenerator::get_global_classes() {
 	return {
 		"AudioServer",
@@ -6048,6 +6219,29 @@ std::unordered_set<std::string> CodeGenerator::get_global_classes() {
 bool CodeGenerator::is_global_class(const std::string& name) const {
 	static const auto global_classes = get_global_classes();
 	return global_classes.find(name) != global_classes.end();
+}
+
+bool CodeGenerator::names_an_engine_type(const std::string& name, FunctionContext& func) {
+	if (name.empty() || name[0] < 'A' || name[0] > 'Z') {
+		return false;
+	}
+	return find_variable(func, name) == nullptr &&
+		m_enums.count(name) == 0 && !has_builtin_constants(name) &&
+		!is_global_variable(name) && !is_global_class(name) &&
+		!is_autoload(name) && !is_local_function(name) &&
+		find_struct(name) == nullptr &&
+		global_script_class_path(name) == nullptr &&
+		!is_inline_primitive_constructor(name) &&
+		!is_host_constructor(name) && find_signal(name) == nullptr;
+}
+
+bool CodeGenerator::is_autoload(const std::string& name) const {
+	return m_autoloads.find(name) != m_autoloads.end();
+}
+
+const std::string* CodeGenerator::global_script_class_path(const std::string& name) const {
+	const auto it = m_global_script_classes.find(name);
+	return it != m_global_script_classes.end() ? &it->second : nullptr;
 }
 
 bool CodeGenerator::is_local_function(const std::string& name) const {
@@ -6084,6 +6278,14 @@ int CodeGenerator::coerce_to_declared_type(int reg, IRInstruction::TypeHint decl
 		set_register_type(func, converted, declared);
 		free_register(func, reg);
 		return converted;
+	}
+
+	if (actual == Variant::ARRAY) {
+		if (const char* packed = packed_array_constructor_name(declared)) {
+			const int converted = gen_inline_constructor(packed, { reg }, func, nullptr);
+			free_register(func, reg);
+			return converted;
+		}
 	}
 
 	error_at("Cannot assign a value of type " + std::string(variant_type_name(actual)) +
@@ -6388,6 +6590,107 @@ bool CodeGenerator::is_global_variable(const std::string& name) const {
 
 bool CodeGenerator::is_global_const(const std::string& name) const {
 	return m_global_consts.find(name) != m_global_consts.end();
+}
+
+int CodeGenerator::gen_string_value(const std::string& text, FunctionContext& func) {
+	const int reg = alloc_register(func);
+	IRInstruction load(IROpcode::LOAD_STRING, IRValue::reg(reg),
+		IRValue::imm(add_string_constant(text)));
+	load.type_hint = Variant::STRING;
+	func.ir.instructions.push_back(load);
+	set_register_type(func, reg, Variant::STRING);
+	return reg;
+}
+
+int CodeGenerator::gen_engine_class_constant(const std::string& class_name,
+	const std::string& constant_name, FunctionContext& func)
+{
+	const int class_db_reg = gen_global_class_get("ClassDB", func);
+	const int class_reg = gen_string_value(class_name, func);
+	const int name_reg = gen_string_value(constant_name, func);
+
+	const int result_reg = alloc_register(func);
+	IRInstruction vcall(IROpcode::VCALL);
+	vcall.operands.push_back(IRValue::reg(result_reg));
+	vcall.operands.push_back(IRValue::reg(class_db_reg));
+	vcall.operands.push_back(IRValue::str("class_get_integer_constant"));
+	vcall.operands.push_back(IRValue::imm(2));
+	vcall.operands.push_back(IRValue::reg(class_reg));
+	vcall.operands.push_back(IRValue::reg(name_reg));
+	vcall.type_hint = Variant::INT;
+	func.ir.instructions.push_back(vcall);
+
+	free_register(func, name_reg);
+	free_register(func, class_reg);
+	free_register(func, class_db_reg);
+	set_register_type(func, result_reg, Variant::INT);
+	return result_reg;
+}
+
+int CodeGenerator::gen_engine_class_static_call(const std::string& class_name,
+	const MemberCallExpr* expr, FunctionContext& func)
+{
+	reject_named_arguments(*expr, "'" + expr->member_name + "'", expr);
+
+	const int class_db_reg = gen_global_class_get("ClassDB", func);
+	const int class_reg = gen_string_value(class_name, func);
+	const int name_reg = gen_string_value(expr->member_name, func);
+
+	std::vector<int> arg_regs;
+	for (const auto& argument : expr->arguments) {
+		arg_regs.push_back(gen_expr(argument.get(), func));
+	}
+
+	const int result_reg = alloc_register(func);
+	IRInstruction vcall(IROpcode::VCALL);
+	vcall.operands.push_back(IRValue::reg(result_reg));
+	vcall.operands.push_back(IRValue::reg(class_db_reg));
+	vcall.operands.push_back(IRValue::str("class_call_static"));
+	vcall.operands.push_back(IRValue::imm(static_cast<int64_t>(2 + arg_regs.size())));
+	vcall.operands.push_back(IRValue::reg(class_reg));
+	vcall.operands.push_back(IRValue::reg(name_reg));
+	for (int arg_reg : arg_regs) {
+		vcall.operands.push_back(IRValue::reg(arg_reg));
+	}
+	func.ir.instructions.push_back(vcall);
+
+	for (int reg : arg_regs) {
+		free_register(func, reg);
+	}
+	free_register(func, name_reg);
+	free_register(func, class_reg);
+	free_register(func, class_db_reg);
+	return result_reg;
+}
+
+int CodeGenerator::gen_script_class_new(const std::string& class_name, const std::string& path,
+	const MemberCallExpr* expr, FunctionContext& func)
+{
+	std::vector<int> arg_regs;
+	for (const auto& argument : expr->arguments) {
+		arg_regs.push_back(gen_expr(argument.get(), func));
+	}
+
+	const int script_reg = gen_load_resource(path, func);
+	const int result_reg = alloc_register(func);
+
+	IRInstruction vcall(IROpcode::VCALL);
+	vcall.operands.push_back(IRValue::reg(result_reg));
+	vcall.operands.push_back(IRValue::reg(script_reg));
+	vcall.operands.push_back(IRValue::str("new"));
+	vcall.operands.push_back(IRValue::imm(static_cast<int64_t>(arg_regs.size())));
+	for (int arg_reg : arg_regs) {
+		vcall.operands.push_back(IRValue::reg(arg_reg));
+	}
+	vcall.type_hint = Variant::OBJECT;
+	func.ir.instructions.push_back(vcall);
+
+	free_register(func, script_reg);
+	for (int reg : arg_regs) {
+		free_register(func, reg);
+	}
+	set_register_type(func, result_reg, Variant::OBJECT);
+	return result_reg;
 }
 
 int CodeGenerator::gen_engine_class_new(const std::string& class_name, const MemberCallExpr* expr,

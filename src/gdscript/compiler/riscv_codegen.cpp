@@ -997,6 +997,47 @@ void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
 	}
 }
 
+void RISCVCodeGen::gen_construct(const IRInstruction& instr) {
+	if (instr.operands.size() < 3) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CONSTRUCT requires at least 3 operands");
+	}
+
+	const int result_vreg = std::get<int>(instr.operands[0].value);
+	const int variant_type = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+	const int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+
+	if (instr.operands.size() != static_cast<size_t>(3 + arg_count)) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CONSTRUCT argument count mismatch");
+	}
+
+	const int result_offset = get_variant_stack_offset(result_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3, REG_A7});
+
+	const int additional_space = arg_count > 0
+		? ((arg_count * variant_size()) + 15) & ~15 // Align to 16 bytes
+		: 0;
+	if (arg_count > 0) {
+		emit_stack_adjust(-additional_space);
+		for (int i = 0; i < arg_count; i++) {
+			const int arg_vreg = std::get<int>(instr.operands[3 + i].value);
+			const int arg_src_offset = get_variant_stack_offset(arg_vreg) + additional_space;
+			emit_variant_move(REG_SP, i * variant_size(), REG_SP, arg_src_offset, REG_T0);
+		}
+		emit_mv(REG_A2, REG_SP);
+	} else {
+		emit_mv(REG_A2, REG_ZERO);
+	}
+
+	emit_load_stack_offset(REG_A0, result_offset + additional_space);
+	emit_li(REG_A1, variant_type);
+	emit_li(REG_A3, arg_count);
+	emit_li(REG_A7, ECALL_VCONSTRUCT);
+	emit_ecall();
+
+	emit_stack_adjust(additional_space);
+}
+
 // ECALL_VCALL: arguments as contiguous array on stack, method name after, result through a5.
 void RISCVCodeGen::gen_vcall(const IRInstruction& instr) {
 	if (instr.operands.size() < 4) {
@@ -1229,27 +1270,16 @@ void RISCVCodeGen::gen_store_global(const IRInstruction& instr) {
 	// Get the global's type information
 	const IRGlobalVar& global = m_globals[global_idx];
 
-	// Determine if this is a complex type that needs VASSIGN
-	// Complex types: STRING, STRING_NAME, NODE_PATH, RID, CALLABLE, SIGNAL,
-	//                DICTIONARY, ARRAY, and all PACKED_*_ARRAY types
-	bool needs_vassign = false;
-
-	// The global's Variant type is derived once by the code
-	// generator, from the type hint when there is one and from the
-	// initializer otherwise, so this does not have to re-derive it
-	// from init_type (which cannot describe a RUNTIME initializer).
-	if (global.value_type != IRInstruction::TypeHint_NONE) {
-		// is_complex_variant_type() is the single definition of which
-		// Variant types are stored as a host-side index rather than
-		// inline. The previous open-coded test here read `type == 3 ||
-		// type >= 17`, which classified FLOAT as complex and Color,
-		// Basis and Transform3D on the wrong sides of the line.
-		needs_vassign = is_complex_variant_type(global.value_type);
-	} else {
-		// VASSIGN reads the payload as a scoped-variant index; a null or int
-		// payload is not one. Raw copy matches MOVE for unknown-typed locals.
-		needs_vassign = false;
+	if (global.value_type == IRInstruction::TypeHint_NONE) {
+		spill_around_syscall({ REG_A0, REG_A1, REG_A7 });
+		emit_address_of_global(REG_A0, static_cast<size_t>(global_idx));
+		emit_load_stack_offset(REG_A1, src_offset);
+		emit_li(REG_A7, ECALL_VSTORE_GLOBAL);
+		emit_ecall();
+		return;
 	}
+
+	const bool needs_vassign = is_complex_variant_type(global.value_type);
 
 	// Load address of global variable
 	emit_address_of_global(REG_T0, static_cast<size_t>(global_idx));
@@ -1589,12 +1619,19 @@ void RISCVCodeGen::emit_coroutine_resume_entry(const IRFunction& func) {
 // ECALL_THROW(type_ptr, type_len, msg_ptr, msg_len, variant, function).
 // Strings copied to stack as raw bytes for memview. Does not return.
 void RISCVCodeGen::gen_throw(const IRInstruction& instr) {
-	if (instr.operands.size() != 2) {
-		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "THROW requires 2 operands");
+	if (instr.operands.size() < 3) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "THROW requires at least 3 operands");
 	}
 
 	const std::string& type = std::get<std::string>(instr.operands[0].value);
 	const std::string& message = std::get<std::string>(instr.operands[1].value);
+	const int message_regs = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+	if (instr.operands.size() != static_cast<size_t>(3 + message_regs)) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "THROW argument count mismatch");
+	}
+	const int message_offset = message_regs == 1
+		? get_variant_stack_offset(std::get<int>(instr.operands[3].value))
+		: -1;
 
 	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5});
 
@@ -1620,7 +1657,11 @@ void RISCVCodeGen::gen_throw(const IRInstruction& instr) {
 	emit_li(REG_A1, static_cast<int>(type.size()));
 	emit_add_offset(REG_A2, REG_SP, type_space);
 	emit_li(REG_A3, static_cast<int>(message.size()));
-	emit_mv(REG_A4, REG_ZERO);  // variant = none
+	if (message_offset >= 0) {
+		emit_load_stack_offset(REG_A4, message_offset + total_space);
+	} else {
+		emit_mv(REG_A4, REG_ZERO);  // variant = none
+	}
 	emit_mv(REG_A5, REG_ZERO);  // function = none
 	emit_li(REG_A7, ECALL_THROW);
 	emit_ecall();
@@ -2609,6 +2650,9 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::VCALL:
 			gen_vcall(instr);
 			break;
+		case IROpcode::CONSTRUCT:
+			gen_construct(instr);
+			break;
 		case IROpcode::CALL:
 			gen_call(instr);
 			break;
@@ -3058,6 +3102,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::LOAD_RESOURCE:
 		case IROpcode::LOAD_RESOURCE_VAR:
 		case IROpcode::MAKE_CALLABLE:
+		case IROpcode::CONSTRUCT:
 		case IROpcode::VCALL:
 		case IROpcode::VGET:
 		case IROpcode::VSET:

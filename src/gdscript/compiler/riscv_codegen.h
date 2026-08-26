@@ -106,6 +106,7 @@ private:
 	void gen_make_array(const IRInstruction& instr);
 	void gen_make_dictionary(const IRInstruction& instr);
 	void gen_vcall(const IRInstruction& instr);
+	void gen_construct(const IRInstruction& instr);
 	void gen_call_syscall(const IRInstruction& instr);
 	// Per-syscall expansions; each has its own calling convention.
 	void gen_syscall_get_obj(const IRInstruction& instr, int result_vreg);

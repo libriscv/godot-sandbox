@@ -592,6 +592,31 @@ static void test_enum_initializers_are_constant_expressions() {
 	std::cout << "  ✓ enum initializers are integer constant expressions" << std::endl;
 }
 
+static void test_enum_member_from_an_engine_constant() {
+	const IRProgram ir = compile_to_ir(
+		"enum Shape { CAPSULE = PhysicsServer2D.SHAPE_CAPSULE, NEXT }\n"
+		"func f() -> int:\n"
+		"\treturn Shape.CAPSULE\n");
+	const IRFunction& fn = find_function(ir, "f");
+	assert(count_opcode(fn, IROpcode::VGET) + count_opcode(fn, IROpcode::VCALL) >= 1);
+
+	const IRProgram next = compile_to_ir(
+		"enum Shape { CAPSULE = PhysicsServer2D.SHAPE_CAPSULE, NEXT }\n"
+		"func f() -> int:\n"
+		"\treturn Shape.NEXT\n");
+	assert(count_opcode(find_function(next, "f"), IROpcode::ADD) == 1);
+
+	assert(!rejects("enum { CAPSULE = PhysicsServer2D.SHAPE_CAPSULE }\n"
+		"func f() -> int:\n\treturn CAPSULE\n"));
+
+	assert(rejects("enum E { A = \"hi\" }\nfunc f() -> int:\n\treturn E.A\n"));
+	assert(rejects("enum E { A = PhysicsServer2D.SHAPE_CAPSULE, B = A + 1 }\n"
+		"func f() -> int:\n\treturn E.B\n"));
+
+	std::cout << "  \u2713 an enum member from an engine constant defers to run time"
+		<< std::endl;
+}
+
 // An unnamed enum puts its members in file scope.
 static void test_unnamed_enum_members_are_reachable_unqualified() {
 	assert(run_int("enum { LEFT, RIGHT }\nfunc f() -> int:\n\treturn RIGHT\n", "f") == 1);
@@ -704,6 +729,7 @@ int main() {
 
 	test_enum_members_are_compile_time_integers();
 	test_enum_initializers_are_constant_expressions();
+	test_enum_member_from_an_engine_constant();
 	test_unnamed_enum_members_are_reachable_unqualified();
 	test_enum_member_is_a_typed_integer();
 	test_enum_shadows_a_builtin_type_name();

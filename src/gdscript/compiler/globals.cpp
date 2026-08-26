@@ -268,18 +268,6 @@ static const struct { const char* name; const char* reason; } UNIMPLEMENTED_GLOB
 	{ "randomize", "mutates the project's shared RNG state" },
 	{ "seed", "mutates the project's shared RNG state" },
 	{ "rand_from_seed", "no ECALL_UTILITY op yet" },
-
-	// Built-in types: no inline constructor or ECALL_VCREATE lowering.
-	{ "Quaternion", "no constructor lowering yet" },
-	{ "Transform2D", "no constructor lowering yet" },
-	{ "Transform3D", "no constructor lowering yet" },
-	{ "Basis", "no constructor lowering yet" },
-	{ "AABB", "no constructor lowering yet" },
-	{ "Projection", "no constructor lowering yet" },
-	{ "Signal", "no constructor lowering yet" },
-	{ "StringName", "no constructor lowering yet" },
-	{ "NodePath", "no constructor lowering yet" },
-	{ "RID", "no constructor lowering yet" },
 };
 
 size_t builtin_constant_count() {

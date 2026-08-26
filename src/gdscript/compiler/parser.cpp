@@ -246,6 +246,23 @@ FunctionDecl Parser::parse_function() {
 	return func;
 }
 
+bool Parser::holds_engine_constant(const Expr* expr) {
+	if (expr == nullptr) {
+		return false;
+	}
+	if (auto* member = dynamic_cast<const MemberCallExpr*>(expr)) {
+		return !member->is_method_call;
+	}
+	if (auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+		return holds_engine_constant(unary->operand.get());
+	}
+	if (auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+		return holds_engine_constant(binary->left.get()) ||
+			holds_engine_constant(binary->right.get());
+	}
+	return false;
+}
+
 int64_t Parser::fold_enum_value(const Expr* expr, const EnumDecl& decl, const Token& start) {
 	const auto refuse = [&](const std::string& what) -> int64_t {
 		const int line = expr->line ? expr->line : start.line;
@@ -322,6 +339,10 @@ int64_t Parser::fold_enum_value(const Expr* expr, const EnumDecl& decl, const To
 
 	if (auto* variable = dynamic_cast<const VariableExpr*>(expr)) {
 		if (const EnumDecl::Member* member = decl.find_member(variable->name)) {
+			if (member->value_expr != nullptr) {
+				return refuse("'" + variable->name + "' is an engine constant, "
+					"which has no value until the program runs");
+			}
 			return member->value;
 		}
 		if (const GlobalConstant* constant = find_global_constant(variable->name)) {
@@ -350,6 +371,7 @@ EnumDecl Parser::parse_enum() {
 
 	// Newlines inside braces are swallowed by the lexer.
 	int64_t next_value = 0;
+	const Expr* next_value_expr = nullptr;
 	while (!check(TokenType::RBRACE) && !is_at_end()) {
 		Token member_name = consume(TokenType::IDENTIFIER, "Expected an enum member name");
 
@@ -361,10 +383,18 @@ EnumDecl Parser::parse_enum() {
 		if (match(TokenType::ASSIGN)) {
 			const Token start = peek();
 			ExprPtr initializer = parse_expression();
-			next_value = fold_enum_value(initializer.get(), decl, start);
+			if (holds_engine_constant(initializer.get())) {
+				next_value = 0;
+				next_value_expr = initializer.get();
+				decl.owned_values.push_back(std::move(initializer));
+			} else {
+				next_value = fold_enum_value(initializer.get(), decl, start);
+				next_value_expr = nullptr;
+			}
 		}
 
 		member.value = next_value;
+		member.value_expr = next_value_expr;
 		next_value++;
 
 		if (decl.find_member(member.name) != nullptr) {
@@ -448,7 +478,7 @@ StructDecl Parser::parse_class() {
 	const Token name = consume(TokenType::IDENTIFIER, "Expected a class name after 'class'");
 	decl.name = name.lexeme;
 
-	if (match(TokenType::EXTENDS)) {
+	auto parse_extends = [&]() {
 		const Token base = consume(TokenType::IDENTIFIER,
 			"Expected a class name after 'extends'");
 		decl.base_name = base.lexeme;
@@ -463,6 +493,10 @@ StructDecl Parser::parse_class() {
 				"': a base class has to be one declared in this file",
 				base.line, base.column);
 		}
+	};
+
+	if (match(TokenType::EXTENDS)) {
+		parse_extends();
 	}
 
 	consume(TokenType::COLON, "Expected ':' after the class name");
@@ -470,6 +504,17 @@ StructDecl Parser::parse_class() {
 
 	skip_newlines();
 	consume(TokenType::INDENT, "Expected indented block after 'class " + decl.name + ":'");
+
+	skip_newlines();
+	if (check(TokenType::EXTENDS)) {
+		const Token extends_token = advance();
+		if (!decl.base_name.empty()) {
+			error("Class '" + decl.name + "' already declares a base class",
+				extends_token.line, extends_token.column);
+		}
+		parse_extends();
+		consume_statement_end("Expected newline after 'extends'");
+	}
 
 	while (!check(TokenType::DEDENT) && !is_at_end()) {
 		skip_newlines();
@@ -1223,6 +1268,7 @@ ExprPtr Parser::parse_expression() {
 	// `as` is the loosest operator: casts the entire preceding expression.
 	while (match(TokenType::AS)) {
 		const Token type_token = consume(TokenType::IDENTIFIER, "Expected a type name after 'as'");
+		skip_type_arguments();
 		// Scalar types: lowered as constructor call.
 		// Class names: checked cast via engine (returns value or null).
 		if (type_token.lexeme == "int" || type_token.lexeme == "float" ||

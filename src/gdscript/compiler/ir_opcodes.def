@@ -207,7 +207,9 @@ IR_OPCODE(PRINT,           "PRINT",           SIG(DST, IMM, CNT, SRC_LIST),     
 // assert() failing arm. Calls ECALL_THROW (does not return).
 // Both strings are literal bytes read via memview.
 
-IR_OPCODE(THROW,           "THROW",           SIG(STR, STR),                     IR_SIDE_EFFECTS | IR_CALL)
+// The trailing register, when there is one, is a computed message: the literal
+// second operand stays as the fallback the host reports if it is not a String.
+IR_OPCODE(THROW,           "THROW",           SIG(STR, STR, CNT, SRC_LIST),      IR_SIDE_EFFECTS | IR_CALL)
 
 // Every other global -- abs, sin, clamp, str, len, the lot -- is one opcode
 // carrying a GlobalFn (see globals.h) as its first immediate. The table there
@@ -237,6 +239,14 @@ IR_OPCODE(MAKE_COLOR,      "MAKE_COLOR",      SIG(DST, SRC, SRC, SRC, SRC),  IR_
 IR_OPCODE(MAKE_RECT2,      "MAKE_RECT2",      SIG(DST, SRC, SRC, SRC, SRC),  IR_PURE)
 IR_OPCODE(MAKE_RECT2I,     "MAKE_RECT2I",     SIG(DST, SRC, SRC, SRC, SRC),  IR_PURE)
 IR_OPCODE(MAKE_PLANE,      "MAKE_PLANE",      SIG(DST, SRC, SRC, SRC, SRC),  IR_PURE)
+
+// -= Host-side construction (ECALL_VCONSTRUCT) =-
+//
+// Transform2D, Basis, Quaternion and the rest hold more than a Variant's 16
+// inline bytes, so there is nothing to build in guest memory. One syscall hands
+// the arguments to the engine's own constructor table, which settles overload
+// choice and conversion. IMM is the Variant type.
+IR_OPCODE(CONSTRUCT,       "CONSTRUCT",       SIG(DST, IMM, CNT, SRC_LIST),  IR_PURE)
 
 // -= Array element access =-
 //

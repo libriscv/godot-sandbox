@@ -438,12 +438,14 @@ struct EnumDecl {
 	struct Member {
 		std::string name;
 		int64_t value = 0;
+		const Expr* value_expr = nullptr; // non-foldable engine constant; value is the auto-increment offset
 		int line = 0;
 		int column = 0;
 	};
 
 	std::string name;
 	std::vector<Member> members;
+	std::vector<ExprPtr> owned_values;
 	int line = 0;
 	int column = 0;
 

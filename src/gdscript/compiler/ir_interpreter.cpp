@@ -545,6 +545,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::LOAD_RESOURCE_VAR:
 		case IROpcode::LOAD_STRING_AS:
 		case IROpcode::MAKE_CALLABLE:
+		case IROpcode::CONSTRUCT:
 		case IROpcode::PRINT:
 		case IROpcode::THROW:
 		case IROpcode::VCALL:

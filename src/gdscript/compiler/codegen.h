@@ -19,6 +19,14 @@ public:
 	IRProgram generate(const Program& program);
 
 	void set_restricted(bool restricted) { m_restricted = restricted; }
+	void set_autoloads(const std::vector<std::string>& autoloads) {
+		m_autoloads.clear();
+		m_autoloads.insert(autoloads.begin(), autoloads.end());
+	}
+	void set_global_script_classes(const std::vector<std::pair<std::string, std::string>>& classes) {
+		m_global_script_classes.clear();
+		m_global_script_classes.insert(classes.begin(), classes.end());
+	}
 
 private:
 	// Per-function state. Value type: lives on the stack for one function's
@@ -104,6 +112,7 @@ private:
 		FunctionContext& func);
 	int gen_class_cast(const ClassCastExpr* expr, FunctionContext& func);
 	int gen_int_immediate(int64_t value, FunctionContext& func);
+	int gen_enum_member(const EnumDecl::Member& member, FunctionContext& func);
 	// `for c in <String>`: batched character walk, see codegen.cpp.
 	void gen_string_walk(const ForStmt* stmt, int string_reg, FunctionContext& func);
 	void gen_numeric_for(const ForStmt* stmt, int start_reg, int end_reg, int step_reg,
@@ -170,6 +179,12 @@ private:
 	void set_register_type(FunctionContext& func, int reg, IRInstruction::TypeHint type);
 	IRInstruction::TypeHint get_register_type(const FunctionContext& func, int reg) const;
 	bool is_inline_primitive_constructor(const std::string& name) const;
+	bool is_host_constructor(const std::string& name) const;
+	int gen_host_constructor(const std::string& name, const std::vector<int>& arg_regs,
+		FunctionContext& func, const Expr* site);
+	int gen_host_constructor_typed(const std::string& name, IRInstruction::TypeHint variant_type,
+		const std::vector<int>& arg_regs, FunctionContext& func, const Expr* site);
+	static constexpr size_t MAX_HOST_CONSTRUCTOR_ARGS = 8;
 	bool is_inline_member_access(IRInstruction::TypeHint type, const std::string& member) const;
 	int gen_inline_constructor(const std::string& name, const std::vector<int>& arg_regs,
 		FunctionContext& func, const Expr* site);
@@ -296,8 +311,10 @@ private:
 	// properties by bare name the way a lifted class method reaches its base.
 	std::string m_script_base_class;
 	bool m_restricted = false;
+	std::unordered_set<std::string> m_autoloads;
+	std::unordered_map<std::string, std::string> m_global_script_classes;
 	std::unordered_map<std::string, const EnumDecl*> m_enums;
-	std::unordered_map<std::string, int64_t> m_enum_members;
+	std::unordered_map<std::string, const EnumDecl::Member*> m_enum_members;
 	std::unordered_map<std::string, const SignalDecl*> m_signals;
 
 	// Recursion guard for struct defaults that contain themselves.
@@ -305,7 +322,18 @@ private:
 
 
 	bool is_global_class(const std::string& name) const;
+	bool is_autoload(const std::string& name) const;
+	bool names_an_engine_type(const std::string& name, FunctionContext& func);
+	std::string script_level_super_hint() const;
+	const std::string* global_script_class_path(const std::string& name) const;
 	int gen_global_class_get(const std::string& class_name, FunctionContext& func);
+	int gen_string_value(const std::string& text, FunctionContext& func);
+	int gen_engine_class_static_call(const std::string& class_name,
+		const MemberCallExpr* expr, FunctionContext& func);
+	int gen_engine_class_constant(const std::string& class_name,
+		const std::string& constant_name, FunctionContext& func);
+	int gen_script_class_new(const std::string& class_name, const std::string& path,
+		const MemberCallExpr* expr, FunctionContext& func);
 	int gen_engine_class_new(const std::string& class_name, const MemberCallExpr* expr,
 		FunctionContext& func);
 

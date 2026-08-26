@@ -58,6 +58,31 @@ static int count_opcode(const IRFunction& func, IROpcode opcode) {
 	return count;
 }
 
+static const IRInstruction& only(const IRFunction& func, IROpcode opcode) {
+	const IRInstruction* found = nullptr;
+	for (const auto& instr : func.instructions) {
+		if (instr.opcode == opcode) {
+			assert(found == nullptr && "expected exactly one");
+			found = &instr;
+		}
+	}
+	assert(found != nullptr);
+	return *found;
+}
+
+static IRProgram compile_with_project(const std::string& source,
+	std::vector<std::string> autoloads,
+	std::vector<std::pair<std::string, std::string>> classes)
+{
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+	CodeGenerator codegen;
+	codegen.set_autoloads(std::move(autoloads));
+	codegen.set_global_script_classes(std::move(classes));
+	return codegen.generate(program);
+}
+
 static bool machine_code_builds(const std::string& source) {
 	IRProgram ir = compile_to_ir(source, true);
 	RISCVCodeGen backend;
@@ -209,6 +234,122 @@ static void test_engine_class_new() {
 	assert(refuses("func test():\n\treturn Timer.new(1)\n"));
 
 	std::cout << "  \u2713 Type.new() reaches ClassDB through the class allowlist" << std::endl;
+}
+
+static void test_leading_dot_float() {
+	std::cout << "Testing `.5`..." << std::endl;
+
+	assert(machine_code_builds("func test():\n\tvar a := .5\n\treturn a\n"));
+	assert(machine_code_builds("func test():\n\treturn .5e2\n"));
+	assert(machine_code_builds("func test():\n\tfor i in range(1, 5):\n\t\tprint(i)\n"));
+
+	std::cout << "  \u2713 a float literal may start at the point" << std::endl;
+}
+
+static void test_typed_container_cast() {
+	std::cout << "Testing `as Array[T]`..." << std::endl;
+
+	assert(machine_code_builds("func test(a):\n\tvar b = a as Array[int]\n\treturn b\n"));
+	assert(machine_code_builds("func test(a):\n\tfor x in a as Array[int]:\n\t\tprint(x)\n"));
+
+	std::cout << "  \u2713 a cast carries element types the same way a declaration does"
+		<< std::endl;
+}
+
+static void test_nested_class_extends_on_its_own_line() {
+	std::cout << "Testing `class X:` with `extends` below it..." << std::endl;
+
+	assert(machine_code_builds(
+		"class Foo:\n\textends Node\n\n\tvar x := 1\n"
+		"func test():\n\treturn 1\n"));
+	assert(machine_code_builds("class Foo extends Node:\n\tvar x := 1\nfunc test():\n\treturn 1\n"));
+	assert(refuses("class Foo extends Node:\n\textends Node2D\n\tvar x := 1\n"
+		"func test():\n\treturn 1\n"));
+
+	std::cout << "  \u2713 a nested class takes its base from either line" << std::endl;
+}
+
+static void test_null_initializer_leaves_the_slot_untyped() {
+	std::cout << "Testing `var x = null`..." << std::endl;
+
+	assert(machine_code_builds(
+		"func test():\n\tvar col = null\n\tcol = Timer.new()\n\treturn col\n"));
+	assert(machine_code_builds("func test():\n\tvar x = null\n\tx = 5\n\treturn x\n"));
+	assert(refuses("func test():\n\tvar x = 5\n\tx = \"hi\"\n\treturn x\n"));
+
+	std::cout << "  \u2713 a null initializer asks for a slot that holds anything" << std::endl;
+}
+
+static void test_array_literal_becomes_a_packed_array() {
+	std::cout << "Testing `var p: PackedVector2Array = []`..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"func test():\n\tvar p: PackedVector2Array = []\n\treturn p\n");
+	assert(count_opcode(find_function(ir, "test"), IROpcode::MAKE_PACKED_VECTOR2_ARRAY) == 1);
+	assert(machine_code_builds(
+		"func test() -> PackedVector3Array:\n\treturn [Vector3(1, 2, 3)]\n"));
+	assert(refuses("func test():\n\tvar p: PackedVector2Array = 5\n\treturn p\n"));
+
+	std::cout << "  \u2713 an Array literal converts to the packed type declared" << std::endl;
+}
+
+static void test_autoload_resolves_to_a_named_object() {
+	std::cout << "Testing autoloads..." << std::endl;
+
+	const IRProgram ir = compile_with_project(
+		"func test():\n\treturn Global.SPEED\n", { "Global" }, {});
+	const IRFunction& test = find_function(ir, "test");
+	int gets = 0;
+	for (const auto& instr : test.instructions) {
+		if (instr.opcode == IROpcode::CALL_SYSCALL &&
+			std::get<int64_t>(instr.operands[1].value) == ECALL_GET_OBJ) {
+			gets++;
+		}
+	}
+	assert(gets == 1);
+
+	const IRProgram unregistered = compile_to_ir("func test():\n\treturn Global.SPEED\n");
+	const IRFunction& plain = find_function(unregistered, "test");
+	const IRInstruction& lookup = only(plain, IROpcode::VCALL);
+	assert(std::get<std::string>(lookup.operands[2].value) == "class_get_integer_constant");
+
+	std::cout << "  \u2713 an autoload resolves to the node the project registered" << std::endl;
+}
+
+static void test_script_class_new_takes_arguments() {
+	std::cout << "Testing Class.new() on a script in another file..." << std::endl;
+
+	const IRProgram ir = compile_with_project(
+		"func test(s):\n\treturn Runner.new(s, true)\n", {},
+		{ { "Runner", "res://runner.gd" } });
+	const IRFunction& test = find_function(ir, "test");
+	assert(count_opcode(test, IROpcode::LOAD_RESOURCE) == 1);
+	const IRInstruction& call = only(test, IROpcode::VCALL);
+	assert(std::get<std::string>(call.operands[2].value) == "new");
+	assert(std::get<int64_t>(call.operands[3].value) == 2);
+	for (const auto& instr : test.instructions) {
+		assert(instr.opcode != IROpcode::CALL_SYSCALL ||
+			std::get<int64_t>(instr.operands[1].value) != ECALL_NODE_CREATE);
+	}
+
+	assert(refuses("func test():\n\treturn Timer.new(1)\n"));
+
+	std::cout << "  \u2713 a script class constructs through its own script" << std::endl;
+}
+
+static void test_engine_class_constant() {
+	std::cout << "Testing Class.CONSTANT on a non-singleton..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"func test():\n\treturn ScrollContainer.SCROLL_MODE_DISABLED\n");
+	const IRFunction& test = find_function(ir, "test");
+	const IRInstruction& call = only(test, IROpcode::VCALL);
+	assert(std::get<std::string>(call.operands[2].value) == "class_get_integer_constant");
+
+	const IRProgram folded = compile_to_ir("func test():\n\treturn Vector2.ZERO\n");
+	assert(count_opcode(find_function(folded, "test"), IROpcode::VCALL) == 0);
+
+	std::cout << "  \u2713 an engine class constant is read from ClassDB" << std::endl;
 }
 
 // -= Declarations that used to take the whole file down =-
@@ -404,8 +545,17 @@ static void test_assert() {
 	assert(count_opcode(find_function(optimized, "test"), IROpcode::THROW) == 1);
 	assert(machine_code_builds("func test(x):\n\tassert(x, \"no\")\n\treturn 1\n"));
 
-	// The host reads the message as bytes, so it has to be a literal.
-	assert(refuses("func test(x):\n\tassert(x, x)\n"));
+	const IRProgram literal_msg = compile_to_ir("func test(x):\n\tassert(x, \"no\")\n");
+	const IRInstruction& baked = only(find_function(literal_msg, "test"), IROpcode::THROW);
+	assert(baked.operands.size() == 3);
+	assert(std::get<int64_t>(baked.operands[2].value) == 0);
+
+	const IRProgram computed_msg = compile_to_ir("func test(x):\n\tassert(x, x)\n");
+	const IRInstruction& computed = only(find_function(computed_msg, "test"), IROpcode::THROW);
+	assert(computed.operands.size() == 4);
+	assert(std::get<int64_t>(computed.operands[2].value) == 1);
+	assert(machine_code_builds("func test(x, n):\n\tassert(x, \"[%s]\" % n)\n"));
+
 	assert(refuses("func test(x):\n\tassert()\n"));
 	assert(refuses("func test(x):\n\tassert(x, \"a\", \"b\")\n"));
 
@@ -502,6 +652,14 @@ int main() {
 		test_string_literals();
 		test_tool_annotation();
 		test_engine_class_new();
+		test_leading_dot_float();
+		test_typed_container_cast();
+		test_nested_class_extends_on_its_own_line();
+		test_null_initializer_leaves_the_slot_untyped();
+		test_array_literal_becomes_a_packed_array();
+		test_autoload_resolves_to_a_named_object();
+		test_script_class_new_takes_arguments();
+		test_engine_class_constant();
 		test_declarations();
 		test_statement_annotations();
 		test_qualified_type_names();

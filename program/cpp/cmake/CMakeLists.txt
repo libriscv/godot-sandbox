@@ -170,7 +170,9 @@ function (add_sandbox_program name)
 		target_link_options(${name} PRIVATE -Oz)
 	endif()
 	if (STRIPPED)
-		target_link_options(${name} PRIVATE -s)
+		# --strip-debug, not -s: the public API is discovered from .symtab, and
+		# --strip-all leaves the Sandbox unable to find a single guest function.
+		target_link_options(${name} PRIVATE -Wl,--strip-debug)
 	endif()
 	target_include_directories(${name} PRIVATE
 		${CMAKE_CURRENT_SOURCE_DIR}

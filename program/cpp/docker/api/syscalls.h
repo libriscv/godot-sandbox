@@ -113,7 +113,10 @@
 // reference budget leaves no room -- and 0 once the string is exhausted.
 #define ECALL_STRING_BATCH (GAME_API_BASE + 57)
 
-#define ECALL_LAST (GAME_API_BASE + 58)
+#define ECALL_VCONSTRUCT (GAME_API_BASE + 58)
+#define ECALL_VSTORE_GLOBAL (GAME_API_BASE + 59)
+
+#define ECALL_LAST (GAME_API_BASE + 60)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)

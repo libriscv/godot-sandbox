@@ -151,7 +151,13 @@ void Lexer::scan_token() {
 		case ':': add_token(TokenType::COLON); break;
 		case ',': add_token(TokenType::COMMA); break;
 		case ';': add_token(TokenType::SEMICOLON); break;
-		case '.': add_token(match('.') ? TokenType::DOT_DOT : TokenType::DOT); break;
+		case '.':
+			if (is_digit(peek())) {
+				scan_number();
+				break;
+			}
+			add_token(match('.') ? TokenType::DOT_DOT : TokenType::DOT);
+			break;
 		case '@': add_token(TokenType::AT); break;
 		case '$': add_token(TokenType::DOLLAR); break;
 		case '+': add_token(match('=') ? TokenType::PLUS_ASSIGN : TokenType::PLUS); break;
@@ -472,7 +478,7 @@ void Lexer::scan_number() {
 	}
 
 	std::string num_str(1, m_source[m_start]);
-	bool is_float = false;
+	bool is_float = m_source[m_start] == '.';
 
 	auto consume_digits = [&]() {
 		while (!is_at_end()) {

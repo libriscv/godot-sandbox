@@ -339,10 +339,15 @@ static void test_globals_do_not_become_self_calls() {
 	// Unimplemented globals must be refused (self-call fallback is silently dropped).
 	assert(refuses("func test():\n\treturn print_debug(\"x\")\n"));
 	assert(refuses("func test(x):\n\treturn weakref(x)\n"));
-	assert(refuses("func test():\n\treturn Quaternion(0, 0, 0, 1)\n"));
 	assert(refuses("func test(p):\n\treturn preload(p)\n"));
 	// Excluded: mutates shared RNG state.
 	assert(refuses("func test():\n\trandomize()\n"));
+
+	const IRProgram quat = compile_to_ir("func test():\n\treturn Quaternion(0, 0, 0, 1)\n");
+	const IRFunction& quat_fn = find_function(quat, "test");
+	assert(count_opcode(quat_fn, IROpcode::CONSTRUCT) == 1);
+	assert(count_vcalls(quat_fn, "Quaternion") == 0);
+	assert(count_opcode(quat_fn, IROpcode::CALL) == 0);
 
 	// Non-global name: legitimate self-call on the owner node.
 	const IRProgram self_call = compile_to_ir("func test():\n\tqueue_free()\n");

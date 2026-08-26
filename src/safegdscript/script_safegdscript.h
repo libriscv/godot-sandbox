@@ -123,6 +123,7 @@ public:
 	static String get_compiler_base_class();
 	static bool get_compiler_base_is_path();
 	static void set_compiler_restricted(bool p_restricted);
+	static void set_compiler_project_context();
 	const String &get_script_class_name() const { return class_name; }
 	const String &get_script_base_class() const { return base_class; }
 	void class_restrictions_changed();

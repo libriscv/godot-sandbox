@@ -164,6 +164,23 @@ PUBLIC Variant set_restricted(bool restricted)
 	return Nil;
 }
 
+PUBLIC Variant set_autoloads(PackedStringArray names)
+{
+	gdscript_autoloads() = names.fetch();
+	return Nil;
+}
+
+PUBLIC Variant set_global_classes(PackedStringArray pairs)
+{
+	std::vector<std::pair<std::string, std::string>> classes;
+	const std::vector<std::string> entries = pairs.fetch();
+	for (size_t i = 0; i + 1 < entries.size(); i += 2) {
+		classes.emplace_back(entries[i], entries[i + 1]);
+	}
+	gdscript_global_classes() = std::move(classes);
+	return Nil;
+}
+
 PUBLIC Variant get_script_class_name()
 {
 	return String(gdscript_last_class_name());

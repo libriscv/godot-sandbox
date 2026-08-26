@@ -10966,3 +10966,271 @@ func count(node):
 
 	parent.queue_free()
 	s.queue_free()
+
+
+# -= Project context: _init(), autoloads and engine statics =-
+
+func test_sgd_init_runs_when_the_instance_is_created():
+	var script := SafeGDScript.new()
+	script.set_source_code("""
+extends Node2D
+
+var started = null
+
+func _init():
+	started = "yes"
+
+func run():
+	return started
+""")
+	assert_eq(script.get_compile_error(), "", "the script compiles")
+
+	var node := Node2D.new()
+	node.set_script(script)
+	assert_eq(node.call("run"), "yes",
+		"_init() should run at construction, the way GDScript runs it")
+	node.free()
+
+func test_sgd_init_with_arguments_is_refused_on_a_node():
+	var script := SafeGDScript.new()
+	script.set_source_code("""
+extends Node2D
+
+var started = null
+
+func _init(who):
+	started = who
+
+func run():
+	return started
+""")
+	assert_eq(script.get_compile_error(), "", "the script compiles")
+
+	var node := Node2D.new()
+	node.set_script(script)
+	assert_engine_error("_init() takes arguments, so it cannot run for a script attached to a node.")
+	assert_eq(node.call("run"), null, "and the member keeps its declared default")
+	node.free()
+
+func test_sgd_an_engine_class_constant_is_read_from_classdb():
+	var source := """
+func mode():
+	return ScrollContainer.SCROLL_MODE_DISABLED
+
+func shape():
+	return PhysicsServer2D.SHAPE_CIRCLE
+"""
+	var s = _compile_and_load(source, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	assert_eq(s.vmcallv("mode"), ScrollContainer.SCROLL_MODE_DISABLED,
+		"a constant on a non-singleton class comes from ClassDB")
+	assert_eq(s.vmcallv("shape"), PhysicsServer2D.SHAPE_CIRCLE,
+		"a constant on a singleton still reads off the singleton")
+	s.queue_free()
+
+func test_sgd_a_static_method_on_an_engine_class():
+	var source := """
+func exists(path):
+	return DirAccess.dir_exists_absolute(path)
+"""
+	var s = _compile_and_load(source, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	assert_true(s.vmcallv("exists", "res://"), "a static method dispatches through ClassDB")
+	assert_false(s.vmcallv("exists", "res://no_such_directory_here"),
+		"and answers the engine's own result")
+	s.queue_free()
+
+func test_sgd_a_method_reference_through_self_is_a_callable():
+	var source := """
+var seen = 0
+
+func on_done(value):
+	seen = value
+	return value * 2
+
+func through_self():
+	var c = self.on_done
+	return typeof(c) == TYPE_CALLABLE
+
+func invoke():
+	var c = self.on_done
+	return c.call(7)
+
+func recall():
+	return seen
+"""
+	var s = _compile_and_load(source, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	assert_true(s.vmcallv("through_self"),
+		"self.method should make a Callable, not read a property off the owner")
+	assert_eq(s.vmcallv("invoke"), 14, "and calling it should reach the method")
+	assert_eq(s.vmcallv("recall"), 7, "which ran with the argument it was given")
+	s.queue_free()
+
+func test_sgd_a_variant_property_declares_itself_as_one():
+	var source := """
+@export var anything = null
+
+func run():
+	return anything
+"""
+	var s = _compile_and_load(source, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	# An @export with no knowable type is a NIL property, which the property list
+	# reports as PROPERTY_USAGE_NIL_IS_VARIANT rather than refusing at startup.
+	var found := false
+	for property in s.get_property_list():
+		if property["name"] == "anything":
+			found = true
+			assert_eq(property["type"], TYPE_NIL, "an untyped export is a Variant property")
+	assert_true(found, "the property should be registered")
+
+	s.set("anything", "text")
+	assert_eq(s.vmcallv("run"), "text", "and it should hold whatever it is given")
+	s.queue_free()
+
+func test_sgd_an_untyped_member_survives_the_call_that_set_it():
+	var source := """
+var text = null
+var container = null
+var number = null
+
+func remember():
+	text = "kept"
+	container = {"n": 1}
+	number = 7
+	return true
+
+func recall():
+	return [text, container, number]
+
+func churn(rounds):
+	var i = 0
+	while i < rounds:
+		text = "value-%d" % i
+		container = [i]
+		i += 1
+	return text
+"""
+	var s = _compile_and_load(source, 40000000)
+	if s == null:
+		return
+	add_child(s)
+
+	# A String or Dictionary reaches the guest as a scoped index, which dies with the
+	# call that made it. An untyped member has to outlive that, the way a typed one does.
+	var before := s.get_exceptions()
+	s.vmcallv("remember")
+	assert_eq(s.vmcallv("recall"), ["kept", {"n": 1}, 7],
+		"an untyped member should hold its value into the next call")
+	assert_eq(s.get_exceptions(), before, "reading it back should not raise")
+
+	# Reassignment recycles the slot rather than accumulating one per store.
+	assert_eq(s.vmcallv("churn", 300), "value-299", "reassignment keeps working")
+	assert_eq(s.vmcallv("recall")[1], [299], "and the last value is the one kept")
+	assert_eq(s.get_exceptions(), before, "no store along the way should raise")
+	s.queue_free()
+
+func test_sgd_an_untyped_member_does_not_share_another_members_storage():
+	var source := """
+var a = null
+var b = null
+
+func seed_them():
+	a = ["one"]
+	b = a
+	return true
+
+func drop_a():
+	a = 0
+	return true
+
+func append_through_a():
+	a.append("two")
+	return true
+
+func read():
+	return [a, b]
+"""
+	var s = _compile_and_load(source, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var before := s.get_exceptions()
+	s.vmcallv("seed_them")
+
+	# An Array is a reference: both members should see the same one.
+	s.vmcallv("append_through_a")
+	assert_eq(s.vmcallv("read"), [["one", "two"], ["one", "two"]],
+		"copying an untyped member should copy the Variant, not the value behind it")
+
+	# ...but each member owns its own storage, so overwriting one must not take
+	# the other's value with it.
+	s.vmcallv("drop_a")
+	assert_eq(s.vmcallv("read"), [0, ["one", "two"]],
+		"overwriting one untyped member should leave the other's value alone")
+	assert_eq(s.get_exceptions(), before, "and neither read should raise")
+	s.queue_free()
+
+func test_sgd_the_engine_builds_the_types_that_have_no_inline_payload():
+	var source := """
+func transform():
+	return Transform2D(0.0, Vector2(3, 4))
+
+func quaternion():
+	return Quaternion(0, 0, 0, 1)
+
+func basis():
+	return Basis()
+
+func path():
+	return NodePath("Foo/Bar")
+
+func name_of(s):
+	return StringName(s)
+
+func narrow(v):
+	return Vector2(v)
+
+func bad_arity():
+	return Quaternion(1, 2)
+"""
+	var s = _compile_and_load(source, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	# One ECALL_VCONSTRUCT each: the engine's own constructor table settles which
+	# overload applies and converts the arguments.
+	assert_eq(s.vmcallv("transform"), Transform2D(0.0, Vector2(3, 4)),
+		"a Transform2D is built by the engine")
+	assert_eq(s.vmcallv("quaternion"), Quaternion(0, 0, 0, 1), "so is a Quaternion")
+	assert_eq(s.vmcallv("basis"), Basis(), "and a default Basis")
+	assert_eq(s.vmcallv("path"), NodePath("Foo/Bar"), "and a NodePath")
+	assert_eq(s.vmcallv("name_of", "hello"), StringName("hello"), "and a StringName")
+
+	# A one-argument conversion on an inline type takes the same path.
+	assert_eq(s.vmcallv("narrow", Vector2i(1, 2)), Vector2(1, 2),
+		"Vector2(Vector2i) is a conversion, not a component list")
+
+	# An arity no constructor accepts is the engine's to refuse, at run time.
+	var before := s.get_exceptions()
+	s.vmcallv("bad_arity")
+	assert_engine_error("Quaternion(): no constructor takes 2 argument(s)")
+	assert_engine_error("Exception: Quaternion(): no constructor takes 2 argument(s)")
+	assert_eq(s.get_exceptions(), before + 1, "a refused construction should throw")
+
+	s.queue_free()

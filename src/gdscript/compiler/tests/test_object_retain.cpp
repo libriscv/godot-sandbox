@@ -77,7 +77,10 @@ int syscalls_in(const std::string& source, int syscall) {
 }
 
 int retains_in(const std::string& source) {
-	return syscalls_in(source, ECALL_OBJ_RETAIN);
+	IRProgram ir = compile_to_ir(source);
+	RISCVCodeGen backend;
+	const std::vector<uint8_t> code = backend.generate(ir);
+	return count_syscalls(code, ECALL_OBJ_RETAIN) + count_syscalls(code, ECALL_VSTORE_GLOBAL);
 }
 
 void test_a_class_typed_global_holds_an_object() {
@@ -201,6 +204,39 @@ void test_an_object_store_is_a_raw_move() {
 	std::cout << "  ✓ Object stores are raw moves" << std::endl;
 }
 
+void test_an_untyped_slot_stores_through_the_host() {
+	std::cout << "Testing which stores go through ECALL_VSTORE_GLOBAL..." << std::endl;
+
+	check(syscalls_in(
+			  "var player: Node\n"
+			  "func setup():\n"
+			  "\tplayer = get_node(\"Player\")\n",
+			  ECALL_VSTORE_GLOBAL) == 1,
+			"a class-typed slot is untyped as far as the Variant tag goes");
+
+	check(syscalls_in(
+			  "var anything = null\n"
+			  "func setup():\n"
+			  "\tanything = 1\n"
+			  "func other():\n"
+			  "\tanything = \"text\"\n",
+			  ECALL_VSTORE_GLOBAL) == 2,
+			"one per store into a slot whose type can change between calls");
+
+	check(syscalls_in(
+			  "var count: int = 0\n"
+			  "var text: String = \"\"\n"
+			  "var items: Array = []\n"
+			  "func tick():\n"
+			  "\tcount += 1\n"
+			  "\ttext = \"hello\"\n"
+			  "\titems.append(1)\n",
+			  ECALL_VSTORE_GLOBAL) == 0,
+			"a typed slot never needs the host to look at the tags");
+
+	std::cout << "  \u2713 Untyped stores" << std::endl;
+}
+
 void test_a_local_holding_an_object_is_not_retained() {
 	std::cout << "Testing that a local is not retained..." << std::endl;
 
@@ -222,6 +258,7 @@ int main() {
 	test_an_untyped_global_is_learned_from_its_stores();
 	test_the_retain_reaches_the_instruction_stream();
 	test_an_object_store_is_a_raw_move();
+	test_an_untyped_slot_stores_through_the_host();
 	test_a_local_holding_an_object_is_not_retained();
 
 	if (failures > 0) {

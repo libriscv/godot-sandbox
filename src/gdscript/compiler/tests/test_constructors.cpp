@@ -258,10 +258,31 @@ static void test_wrong_arity_is_refused() {
 	assert(refuses("func test():\n\treturn Rect2(1, 2, 3)\n"));
 	assert(refuses("func test():\n\treturn Color(1)\n"));
 	assert(refuses("func test():\n\treturn Color(1, 2, 3, 4, 5)\n"));
-	// Vector2(Vector2i) is a conversion; no inline lowering.
-	assert(refuses("func test():\n\treturn Vector2(Vector2i(1, 2))\n"));
 
 	std::cout << "  ✓ every accepted form is in the table, and nothing else is"
+		<< std::endl;
+}
+
+static void test_conversions_reach_the_engine() {
+	std::cout << "Testing the one-argument conversions..." << std::endl;
+
+	const IRProgram narrow = compile_to_ir("func test():\n\treturn Vector2(Vector2i(1, 2))\n");
+	const IRFunction& narrow_fn = find_function(narrow, "test");
+	const IRInstruction& construct = only(narrow_fn, IROpcode::CONSTRUCT);
+	assert(std::get<int64_t>(construct.operands[1].value) == Variant::VECTOR2);
+	assert(std::get<int64_t>(construct.operands[2].value) == 1);
+
+	const IRProgram transform = compile_to_ir(
+		"func test():\n\treturn Transform2D(0.5, Vector2(1, 2))\n");
+	const IRInstruction& t2d = only(find_function(transform, "test"), IROpcode::CONSTRUCT);
+	assert(std::get<int64_t>(t2d.operands[1].value) == Variant::TRANSFORM2D);
+	assert(std::get<int64_t>(t2d.operands[2].value) == 2);
+
+	assert(machine_code_builds("func test():\n\treturn Quaternion(0, 0, 0, 1)\n"));
+	assert(machine_code_builds("func test():\n\treturn RID()\n"));
+	assert(machine_code_builds("func test():\n\treturn Basis()\n"));
+
+	std::cout << "  ✓ conversions and payload-less types construct on the host"
 		<< std::endl;
 }
 
@@ -350,6 +371,7 @@ int main() {
 		test_rect_and_plane();
 		test_container_constructors();
 		test_wrong_arity_is_refused();
+		test_conversions_reach_the_engine();
 		test_builtin_constants();
 		test_color8_rescales();
 	} catch (const CompilerException& e) {

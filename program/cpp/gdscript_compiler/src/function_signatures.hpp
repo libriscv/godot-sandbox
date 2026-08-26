@@ -3,6 +3,8 @@
 #include <compiler.h>
 #include <function_signature.h>
 #include <line_table.h>
+#include <string>
+#include <utility>
 #include <vector>
 
 // Signatures and line table from the last compile, cached for the .sgd host.
@@ -118,6 +120,18 @@ inline bool &gdscript_restricted() {
 	return restricted;
 }
 
+inline std::vector<std::string> &gdscript_autoloads() {
+	static std::vector<std::string> autoloads;
+	return autoloads;
+}
+
+inline std::vector<std::pair<std::string, std::string>> &gdscript_global_classes() {
+	static std::vector<std::pair<std::string, std::string>> classes;
+	return classes;
+}
+
 inline void gdscript_apply_restrictions(gdscript::CompilerOptions &options) {
 	options.restricted = gdscript_restricted();
+	options.autoloads = gdscript_autoloads();
+	options.global_script_classes = gdscript_global_classes();
 }
