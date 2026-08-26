@@ -87,8 +87,7 @@ undeclared member is a compile error; a local of the same name shadows it.
 - `{key = value}` is the Lua-style spelling of `{"key": value}`.
 - An unclosed bracket swallows the rest of the file, so the lexer reports it at
   the position it was opened, not at EOF.
-- `static` and `class_name` are parsed and dropped: there is no class instance,
-  and the registered script name is a project fact.
+- `static` is parsed and dropped: there is no class instance.
 - Container element types (`Array[int]`, `Dictionary[String, int]`) are parsed
   and dropped: every value the compiler moves is a Variant, and Godot enforces
   typed containers at the boundary.
@@ -118,213 +117,197 @@ struct BankAccount:
 - Nothing of a struct survives into the IR. `tests/test_structs.cpp` covers the
   lowering.
 
+### Reaching the engine
+
+`class_name`, `extends`, nested classes with engine bases, and
+`preload()`/`load()` reach past the program. Two restriction gates:
+
+- **Per-use** -- `Class.new()` and `load()` checked at run time by
+  `is_allowed_class`/`is_allowed_resource` callbacks. Always emitted by the
+  compiler.
+- **Structural** -- `class_name`, `extends`, native-base nested class refused at
+  compile time when `CompilerOptions::restricted` is set. `SafeGDScript` reads
+  `Sandbox::is_class_access_restricted()`. Changing restrictions
+  (`set_restrictions()`, `set_class_allowed_callback()`) triggers
+  `safegdscript_class_restrictions_changed()`, recompiling any `.sgd` whose
+  `compiled_restricted` disagrees.
+
+`class_name`/`extends` never reach machine code. Carried as metadata through
+`IRProgram` → `Compiler` → `get_script_class_name()`/`get_script_base_class()`
+→ `SafeGDScript::_get_global_name()`/`_get_instance_base_type()`. Path-based
+extends (`extends "res://base.gd"`) kept verbatim, does not answer
+`_get_instance_base_type()`.
+
+Nested `class X extends <EngineClass>`: Dictionary instance with `"@base"` entry
+holding the engine object. Resolution: class chain → script → base. Unresolved
+access becomes `VGET`/`VSET`/`VCALL` on `@base`. Handle reloaded from Dictionary
+per access. Handle lifetime follows **Object handles** rules.
+
+Tests: `tests/test_classes.cpp`; `test_sgd_a_class_can_extend_an_engine_class`
+and neighbours in Godot.
+
+### Object handles
+
+Guest Object handle = ObjectID | `Sandbox::OBJECT_HANDLE_TAG` (bit 62). Tag
+disambiguates from scoped-variant indices. Resolved via
+`gdextension_interface_object_get_instance_from_id()` (total function, null for
+invalid ids).
+
+Mode decided by `is_object_access_unrestricted()` (empty allowed-objects list
+AND no JIT callback). Cannot switch from unrestricted to restricted mid-call.
+
+- **Unrestricted** -- `get_object_from_address()` resolves directly via object
+  database. Handles persist across calls. `ObjectBindingCache` (direct-mapped by
+  id) skips mutex. `references_max` not enforced.
+- **Restricted** -- `state().scoped_objects` is the capability set, capped at
+  `references_max`. `m_allowed_objects` (ObjectID hash set) extends it.
+
+RefCounted lifetime:
+- Intra-call: `state().scoped_refs` with dedup via `ref_dedup` table. Bounded by
+  `MAX_UNRESTRICTED_REFS`.
+- Cross-call: `ECALL_OBJ_RETAIN` on globals. `retain_global_object()` reads the
+  guest slot; reassigning the slot releases the previous ref. Retain refused
+  while restricted; release always permitted.
+
+Object Variant store is a raw 24-byte move, never `VASSIGN` (`OBJECT` is not a
+complex variant type). Compiler emits retain for globals with
+`IRGlobalVar::holds_object` (set by class type hint or observed `OBJECT` store).
+
+Tests: `tests/test_object_retain.cpp`;
+`test_sgd_a_node_member_survives_the_call_that_set_it`,
+`test_sgd_a_refcounted_member_is_kept_alive`,
+`test_sgd_touching_more_objects_than_references_max` in Godot.
+
 ### Function signatures
 
-Godot calls an exported function through its symbol, and the Sandbox ABI hands
-the guest one Variant pointer per argument and no count. An argument the caller
-left out is therefore a null pointer, and the guest faults reading a Variant out
-of it -- so the arity has to reach Godot, and the ELF cannot carry it: the
-symbol table has names alone.
+ELF symbols carry names only, not arity. Missing arguments are null pointers →
+guest fault. `IRProgram::signatures` (`function_signature.h`) publishes param
+names, types, return type, and count alongside the ELF.
 
-`IRProgram::signatures` (`function_signature.h`) is what the compiler publishes
-beside the ELF: parameter names, declared types, return type, and the count a
-caller must supply. `Compiler::get_function_signatures()` holds the last
-compile's, `get_function_signatures()` in `gdscript.elf` hands them out, and
-`SafeGDScript::update_methods_info()` turns them into the `MethodInfo` list
-Godot checks calls against. `SafeGDScriptInstance::callp` re-checks, for the
-paths Godot does not pre-check itself.
+Path: `Compiler::get_function_signatures()` → `get_function_signatures()` in
+`gdscript.elf` → `SafeGDScript::update_methods_info()` → `MethodInfo`.
+`SafeGDScriptInstance::callp` re-checks arity.
 
-- The table crosses the boundary as one `PackedByteArray`, not an Array of
-  Dictionaries. Everything a guest hands out that is not inlined in a Variant
-  costs a scoped variant, and `Sandbox::MAX_REFS` is 100: containers per
-  function run any real script into the cap. The format is documented in
-  `function_signature.h` and encoded/decoded by the one file both sides compile,
+- Serialized as one `PackedByteArray` (not Array of Dictionaries) to stay under
+  `Sandbox::MAX_REFS`. Format in `function_signature.h`, codec in
   `function_signature.cpp`.
-- Defaults are the same problem seen from the callee, which cannot fill one in
-  either, having no way to tell whether it was given the argument. A default
-  that folds to a constant travels with the signature and the host appends it;
-  one that does not fold leaves the parameter required for a call from Godot,
-  which is refused rather than guessed at. A call inside the program is
-  unaffected: `gen_call` materialises the full expression at the call site.
-- Despite the `GDExtensionVariantPtr *` in `GDExtensionMethodInfo`, the engine
-  reads `default_arguments` back as one contiguous array of `Variant`.
-- `tests/test_signatures.cpp` covers what the compiler publishes;
-  `test_sgd_*` in `test_gdscript_compiler.gd` covers the arity Godot enforces.
+- Constant-foldable defaults travel with the signature; non-foldable defaults
+  leave the parameter required from Godot. Internal calls unaffected: `gen_call`
+  materialises defaults at the call site.
+- Engine reads `default_arguments` as contiguous `Variant` array despite the
+  `GDExtensionVariantPtr *` in `GDExtensionMethodInfo`.
+- Tests: `tests/test_signatures.cpp`; `test_sgd_*` in
+  `test_gdscript_compiler.gd`.
 
 ### What the editor reads
 
-A signature also carries the declaration's `line` and its `description`, which
-say nothing about how to place a call: they exist so that GDScript's editor,
-having completed a name, has somewhere to jump and something to show. The ELF
-carries neither -- its symbol table maps names to machine code, not to source.
+Signatures also carry `line` (1-based, from `func` token) and `description`
+(`##` doc-comment block above declaration).
 
-- `line` is 1-based, from the `func` token. `SafeGDScript::_get_member_line()`
-  hands it back and returns -1 for a name the script does not declare: a caller
-  that gets a line opens the script at it, so claiming 0 would send the editor
-  to the top of the wrong file instead of letting it look elsewhere.
-- `description` is the `##` block written directly above the declaration, a
-  blank line ending it. Comments are not tokens, so the lexer keeps doc comments
-  in `doc_comments()` and `Compiler::compile()` hands them to the parser.
-- `_get_documentation()` builds one `DocData::ClassDoc` from the method list,
-  keyed by `_get_doc_class_name()` -- the same global name the rest of the
-  editor knows the script by. `from_dict()` drops a key spelled differently
-  without complaint, which is how a help page comes out empty.
-
-Completion itself needs none of this: Godot reads `_get_script_method_list()`
-for `$Node.`, a typed variable and `preload(...)`, and `_get_method_info()` for
-the argument hint. `get_node("Node").` resolves for no script type at all,
-GDScript's own included -- only `$`/`%` node literals are resolved.
-
-None of these virtuals is callable from GDScript, so they have no integration
-test; verify them with a temporary `ClassDB::bind_method` in `_bind_methods()`.
+- `_get_member_line()` returns -1 for unknown names (not 0).
+- `_get_documentation()` builds `DocData::ClassDoc` keyed by
+  `_get_doc_class_name()`. Key mismatch silently drops the entry.
+- Completion: `_get_script_method_list()` for `$Node.`/typed-var/`preload(...)`;
+  `_get_method_info()` for argument hints. `get_node("Node").` resolves for no
+  script type (only `$`/`%` literals resolve).
+- These virtuals are not GDScript-callable; verify with temporary
+  `ClassDB::bind_method`.
 
 ### Dispatch
 
-A fetch-decode-execute loop whose execute step is one `match` on an opcode is
-the hot path for the logic CPUs people build with this, so `match` has two
-lowerings. `tests/test_switch.cpp` covers both; `tests/tests/test_cpu.sgd` is a
-sixteen-opcode machine the Godot tests run end to end.
+`match` on integer constants has two lowerings. `tests/test_switch.cpp` covers
+both; `tests/tests/test_cpu.sgd` runs a 16-opcode machine end-to-end.
 
-A `const` whose initializer folds is materialised at its use as an immediate,
-not loaded from the global data area. The point is the type, not the saved load:
-`LOAD_GLOBAL` carries no type, so `match op: OP_ADD:` compared an untyped
-Variant against an untyped Variant and every arm became a `VEVAL` syscall. A
-container const is exempt — it is a handle, and every read must yield the same
-container.
+Folded `const` materialised as immediate at use site (not `LOAD_GLOBAL`), giving
+the match typed operands that avoid `VEVAL`. Container consts exempt (handle
+identity).
 
-Dense integer constant patterns lower to `SWITCH`: a table of `jal`
-instructions in the instruction stream, entered with
+Dense integer patterns → `SWITCH` jump table:
 
 ```
-ld     t0, subject          # the integer out of its Variant
+ld     t0, subject
 li     t1, count
-bgeu   t0, t1, past         # one unsigned compare covers both ends
-auipc  t1, 0                # t1 = here; the table starts here + 12
-sh2add t0, t0, t1           # Zba, which libriscv decodes unconditionally
+bgeu   t0, t1, past
+auipc  t1, 0
+sh2add t0, t0, t1           # Zba
 jr     12(t0)
 ```
 
-Dispatch is constant time in the opcode count and needs no relocation.
-`MIN_SWITCH_CASES`, `MAX_SWITCH_SPREAD` and `MAX_SWITCH_ENTRIES` in
-`codegen.cpp` set the density threshold.
+O(1) dispatch, no relocation. Density thresholds: `MIN_SWITCH_CASES`,
+`MAX_SWITCH_SPREAD`, `MAX_SWITCH_ENTRIES` in `codegen.cpp`.
 
-The table is a fast path, not a replacement. It falls through when the subject
-is not an integer or is out of range. What follows it depends on what the
-compiler knows: a `JUMP` to the wildcard when the subject is typed `int`,
-otherwise the full chain of equality tests, since `match 3.0` must still reach
-the `3:` arm and `match true` the `1:` arm. One pattern the compiler cannot
-evaluate disqualifies the whole match: a variable pattern may cover a value the
-table also covers, and GDScript takes the arm written first.
+Table is a fast path: falls through on non-integer or out-of-range. Typed `int`
+subject → `JUMP` to wildcard; otherwise full equality chain (e.g. `match 3.0`
+must reach `3:` arm). Any variable pattern disqualifies the table.
 
 ### Match patterns
 
-An arm is a list of patterns, any one of which takes it, optionally followed by
-`when <condition>`. Five kinds; only the first is an equality test:
+Five pattern kinds: value (equality), Array destructure, Dictionary destructure,
+binding (`var x`), wildcard (`_`). Optional `when` guard per arm.
 
 ```gdscript
 match value:
-	1, 2:                       # value: subject == pattern
-		...
-	[1, var rest, ..]:          # Array of that shape, elementwise
-		...
-	{"kind": "circle", "r": var r}:  # Dictionary with those keys
-		...
-	var v when v < 0:           # binds what it matched; the guard may decline
-		...
-	_:                          # wildcard, binds nothing
-		...
+	1, 2:                       # value
+	[1, var rest, ..]:          # Array shape
+	{"kind": "circle", "r": var r}:  # Dictionary keys
+	var v when v < 0:           # binding + guard
+	_:                          # wildcard
 ```
 
-Arms form a chain: each tests its patterns, then its guard, then falls into its
-body or on to the next arm. Three properties the tests pin down:
+- Guards run after pattern match; declining guard continues chain (does not exit
+  match). Any guard disqualifies the jump table. Guarded `_` is not a catch-all.
+- Bindings are copies, scoped to the arm.
+- Container patterns: `TYPE_TEST` (no syscall) → length → elements. Known
+  type mismatch → skip (one jump, no destructuring).
+- Array syscalls: `ECALL_ARRAY_SIZE`, `ECALL_ARRAY_AT`. Dictionary:
+  `ECALL_DICTIONARY_OPS` with `GET_SIZE`/`HAS`/`GET` (key in a2, result in a3).
+- Without trailing `..`, size is part of the pattern.
+- Container patterns excluded from differential/optimizer-invariance corpus.
 
-- A guard runs after the pattern matched and its bindings exist, and a declining
-  guard continues the chain instead of leaving the match, so two arms may bind
-  the same name and be told apart by their guards. Any guard disqualifies the
-  jump table (an entry jumping straight to a body would run a declined arm), and
-  a guarded `_` is not a catch-all.
-- A binding is a copy: assigning to the name in the body must not reach the
-  subject. It is declared in the arm's scope, which covers both test and body,
-  so arms may reuse the name.
-- A container pattern tests the type tag first (`TYPE_TEST`, no syscall), then
-  the length, then the elements: a short Array is never indexed past its end,
-  and an integer subject is never asked for a length. When the subject's type is
-  known not to be the container's, the whole arm is one jump and no
-  destructuring is emitted.
-
-Syscalls: Arrays use `ECALL_ARRAY_SIZE` and `ECALL_ARRAY_AT`; Dictionaries use
-`ECALL_DICTIONARY_OPS` with `GET_SIZE`, `HAS` and `GET`, where the keyed
-operations pass the key in a2 and the result in a3. Without a trailing `..` the
-size is part of the pattern — `{"kind": var k}` does not match a Dictionary that
-also has `"r"` — which is why the size is queried at all. The IR interpreter has
-no containers, so container patterns are excluded from the differential and
-optimizer-invariance corpus, as `**` and `in` are.
-
-`tests/test_match.cpp` covers the lowering. `test_match_bindings_and_guards` and
-`test_match_container_patterns` in `tests/tests/test_gdscript_compiler.gd` run
-each pattern in a real sandbox and against the engine's own `match` on the same
-values.
+Tests: `tests/test_match.cpp`; `test_match_bindings_and_guards`,
+`test_match_container_patterns` in `test_gdscript_compiler.gd`.
 
 ### Debugging a .sgd program
 
-Three pieces; only the first is free.
+Three components; only the line table is zero-cost.
 
-**Line table** (`line_table.h`): address-to-source-line map, no runtime cost,
-produced by every compile. Ascending by address; a row covers up to the next.
-Crosses to host as one blob via `get_line_table()` / `SafeGDScript::get_line_table()`.
+**Line table** (`line_table.h`): address→line map, always produced. Ascending by
+address. Host access: `get_line_table()` / `SafeGDScript::get_line_table()`.
 
 **Shadow stack** (`debug_layout.h`, `riscv_debug.cpp`): push/pop per call,
-emitted only with `CompilerOptions::debug_info`. Frames record the return
-address, so an outer frame's line is the call site (address minus `jal`). Only
-the innermost frame needs the PC. `debug_safegdscript.cpp` reads both together;
-`Sandbox::handle_exception` prefers them over symbol+offset.
+requires `CompilerOptions::debug_info`. Frames record return address (outer
+frame line = call site). Read by `debug_safegdscript.cpp`;
+`Sandbox::handle_exception` prefers it over symbol+offset.
 
-**Breakpoints** are compile-time, not runtime. `ECALL_BREAKPOINT` is emitted at
-requested lines only — zero cost when none are set. Changing the set recompiles
-and reloads all instances. Non-empty set implies `debug_info`.
+**Breakpoints**: compile-time only. `ECALL_BREAKPOINT` emitted at requested
+lines; zero cost when unset. Changing set recompiles all instances. Non-empty
+set implies `debug_info`.
 
-- Stop sequence saves/restores `a0`/`a7` around the syscall, transparent to
-  regalloc. `emit_ecall()`'s return-value-pointer guard is waived for it.
-- Emitted below labels, never above (loop back edges would skip it).
-- A line owns a stop wherever it owns code: `for` stops on entry and per-pass.
-- Optimized-away code has no stop. `get_installed_breakpoints()` is the subset
-  that got one; `SafeGDScript.get_active_breakpoints()` publishes it.
+- Saves/restores `a0`/`a7` around syscall; `emit_ecall()` return-value guard
+  waived.
+- Emitted below labels (not above — back edges would skip).
+- Optimized-away code gets no stop. `get_installed_breakpoints()` returns the
+  surviving subset.
+- Break = non-returning syscall. No guest instructions burned. Continue =
+  return from syscall. Host thread blocks.
+- One program stopped at a time. `vmcall_internal` preempts via
+  `preempt_internal`. Stopped script refuses rebuild.
 
-The break is a non-returning syscall. Guest burns no instructions, no timeout.
-Continue = return. Host thread blocks, so:
+**Editor integration** (GDExtension — no toggle notifications, no engine-stop
+control):
 
-- Global state: one program stopped at a time (`is_stopped()`,
-  `get_stopped_line()`, `get_stopped_backtrace()`, `debug_continue()`).
-- Reentrant: `vmcall_internal` preempts into a stopped program safely via
-  `preempt_internal`.
-- Nested stops don't re-break (no one to continue).
-- No `breakpoint_hit` listener and no debugger → not stopped, just reported.
-- Stopped script refuses rebuild.
+- `_frame()` polls `EngineDebugger` every 6th frame (only while active).
+  Delta-applied. `compile_source_to_elf()` reads breakpoints at first build.
+- Runtime-built scripts: `take_over_path()` before setting source.
+- `EngineDebugger::script_debug()` replaces the wait loop. Step Into/Over = next
+  breakpoint. Locals/members empty.
+- `breakpoint_hit` listeners take priority over editor stop.
 
-**Editor integration** (no plugin needed, no callbacks — GDExtension languages
-get neither toggle notifications nor engine-stop control):
+API: `set_breakpoint()`, `set_breakpoints()`, `clear_breakpoints()`, signal
+`breakpoint_hit(script, line)` on `SafeGDScript`.
 
-- **In:** `_frame()` polls `EngineDebugger` line-by-line, every 6th frame, only
-  while debugger is active (inactive calls error → GUT failure). Delta-applied:
-  editor changes don't overwrite script-set breakpoints.
-  `compile_source_to_elf()` reads the set at first build, avoiding a
-  post-startup rebuild that would reset mod/node state. Toggling mid-run still
-  recompiles and resets.
-- Runtime-built scripts must call `take_over_path()` *before* setting source
-  (source assignment triggers compile). Keyed by resource path.
-- **Out:** `EngineDebugger::script_debug()` replaces the wait. Stack from
-  `_debug_get_stack_level_*`, answered from shadow stack. Locals/members empty.
-  Step Into/Over = next breakpoint (no per-line engine loop).
-- `breakpoint_hit` listeners keep the stop; editor gets it only when nobody
-  listens; neither → report and continue.
-
-Script API: `set_breakpoint()`, `set_breakpoints()`, `clear_breakpoints()`,
-signal `breakpoint_hit(script, line)` on `SafeGDScript`.
-
-Tests: `test_breakpoints.cpp` (lowering on libriscv), `test_sgd_breakpoint_*`
-in `test_gdscript_compiler.gd` (break/continue in Godot).
-`tests/run_debugger_test.sh` drives the editor path with `godot -d` against
-`tests/tests/test_debugger.sgd`.
+Tests: `test_breakpoints.cpp`, `test_sgd_breakpoint_*` in
+`test_gdscript_compiler.gd`. `tests/run_debugger_test.sh` drives editor path.
 
 ## Compiler Debugging Tools
 

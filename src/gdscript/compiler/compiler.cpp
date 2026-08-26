@@ -43,6 +43,9 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 	m_signals.clear();
 	m_line_table.entries.clear();
 	m_installed_breakpoints.clear();
+	m_class_name.clear();
+	m_base_class.clear();
+	m_base_is_path = false;
 	try {
 		Lexer lexer(source);
 		auto tokens = lexer.tokenize();
@@ -74,6 +77,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 		}
 
 		CodeGenerator codegen;
+		codegen.set_restricted(options.restricted);
 		IRProgram ir_program = codegen.generate(program);
 		m_signatures = ir_program.signatures;
 		m_signals = ir_program.signals;
@@ -116,6 +120,9 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 		}
 
 		m_is_tool = ir_program.is_tool;
+		m_class_name = ir_program.class_name;
+		m_base_class = ir_program.base_class;
+		m_base_is_path = ir_program.base_is_path;
 
 		std::vector<uint8_t> elf_data;
 

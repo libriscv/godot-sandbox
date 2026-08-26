@@ -119,6 +119,13 @@ public:
 	static PackedInt32Array get_compiler_breakpoint_lines();
 	static bool get_compiler_is_tool();
 	static std::vector<gdscript::FunctionSignature> get_compiler_signal_signatures();
+	static String get_compiler_class_name();
+	static String get_compiler_base_class();
+	static bool get_compiler_base_is_path();
+	static void set_compiler_restricted(bool p_restricted);
+	const String &get_script_class_name() const { return class_name; }
+	const String &get_script_base_class() const { return base_class; }
+	void class_restrictions_changed();
 	void remove_instance(SafeGDScriptInstance *p_instance);
 
 	static String PathToGlobalName(const String &p_path) {
@@ -142,6 +149,11 @@ private:
 	String last_error;
 	bool profiled_build = false;
 	bool debug_build = false;
+	String class_name;
+	String base_class;
+	bool base_is_path = false;
+	bool compiled_restricted = false;
+	bool class_access_restricted() const;
 	// Ascending, no repeats. Non-empty enables shadow stack + stops.
 	PackedInt32Array breakpoints;
 	// What the last compile placed, a subset of the above.

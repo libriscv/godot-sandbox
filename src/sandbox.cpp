@@ -184,6 +184,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_property_allowed_callback", "instance"), &Sandbox::set_property_allowed_callback);
 	ClassDB::bind_method(D_METHOD("set_resource_allowed_callback", "instance"), &Sandbox::set_resource_allowed_callback);
 	ClassDB::bind_method(D_METHOD("is_allowed_class", "name"), &Sandbox::is_allowed_class);
+	ClassDB::bind_method(D_METHOD("is_class_access_restricted"), &Sandbox::is_class_access_restricted);
 	ClassDB::bind_method(D_METHOD("is_allowed_object", "instance"), &Sandbox::is_allowed_object);
 	// Disambiguated from the const char* overloads, which exist purely for internal call sites.
 	ClassDB::bind_method(D_METHOD("is_allowed_method", "instance", "method"),
@@ -405,6 +406,8 @@ void Sandbox::full_reset() {
 	this->m_sname_lookup.clear();
 	this->m_name_addresses.clear();
 	this->m_guest_names.clear();
+	this->m_object_bindings.clear();
+	this->m_retained_objects.clear();
 	// Allowed-objects list survives: it describes the host policy, not the program.
 }
 void Sandbox::set_tree_base(godot::Node *tree_base) {
@@ -549,6 +552,7 @@ void Sandbox::release_instance_record(gaddr_t base) {
 	} catch (const std::exception &e) {
 		ERR_PRINT("Sandbox: could not release an instance record: " + String(e.what()));
 	}
+	this->release_retained_objects(base, gaddr_t(this->m_instance_record_size));
 	if (this->m_instance_base == base) {
 		this->m_instance_base = this->m_default_instance_base;
 	}
@@ -1793,11 +1797,17 @@ uint64_t Sandbox::engine_object_id(const godot::Object *obj) noexcept {
 	return internal::gdextension_interface_object_get_instance_id(obj->_owner);
 }
 
+uint64_t Sandbox::engine_ptr_object_id(uintptr_t engine_object) noexcept {
+	if (engine_object == 0)
+		return 0;
+	return internal::gdextension_interface_object_get_instance_id(reinterpret_cast<GDExtensionObjectPtr>(engine_object));
+}
+
 void Sandbox::rem_scoped_object(const godot::Object *obj) {
-	const uintptr_t engine_object = engine_ptr(obj);
+	const uint64_t object_id = engine_object_id(obj);
 	auto &objects = state().scoped_objects;
 	objects.erase(std::remove_if(objects.begin(), objects.end(),
-						  [engine_object](const CurrentState::ScopedObject &so) { return so.engine_object == engine_object; }),
+						  [object_id](const CurrentState::ScopedObject &so) { return so.object_id == object_id; }),
 			objects.end());
 }
 
@@ -1807,10 +1817,25 @@ godot::Object *Sandbox::resolve_scoped_object(CurrentState::ScopedObject &so) {
 	return so.binding;
 }
 
-bool Sandbox::add_scoped_entry(uintptr_t engine_object, godot::Object *binding) {
+godot::Object *Sandbox::resolve_live_object(uint64_t object_id) const noexcept {
+	if (object_id == 0)
+		return nullptr;
+	GDExtensionObjectPtr live = internal::gdextension_interface_object_get_instance_from_id(object_id);
+	if (live == nullptr)
+		return nullptr;
+	ObjectBindingCache::Entry &entry = m_object_bindings.slot(object_id);
+	if (entry.object_id == object_id)
+		return entry.binding;
+	godot::Object *binding = internal::get_object_instance_binding(static_cast<GodotObject *>(live));
+	entry.object_id = object_id;
+	entry.binding = binding;
+	return binding;
+}
+
+bool Sandbox::add_scoped_entry(uint64_t object_id, uintptr_t engine_object, godot::Object *binding) {
 	// The same object is commonly handed to the guest more than once in a call, eg. when
 	// it walks the tree. Scoping it again would burn one of the max_refs slots each time.
-	if (CurrentState::ScopedObject *so = this->find_scoped_object(engine_object)) {
+	if (CurrentState::ScopedObject *so = this->find_scoped_object(object_id)) {
 		if (so->binding == nullptr)
 			so->binding = binding;
 		return false;
@@ -1819,29 +1844,82 @@ bool Sandbox::add_scoped_entry(uintptr_t engine_object, godot::Object *binding) 
 		ERR_PRINT("Maximum number of scoped objects reached.");
 		throw std::runtime_error("Maximum number of scoped objects reached.");
 	}
-	state().scoped_objects.push_back(CurrentState::ScopedObject{ engine_object, binding });
+	state().scoped_objects.push_back(CurrentState::ScopedObject{ object_id, engine_object, binding });
+	return true;
+}
+
+bool Sandbox::hold_unrestricted_object(uint64_t object_id, godot::Object *obj) {
+	RefCounted *ref = fast_cast_to<RefCounted>(obj);
+	if (ref == nullptr)
+		return false;
+	if (!state().mark_referenced(object_id))
+		return false;
+	if (state().scoped_refs.size() >= MAX_UNRESTRICTED_REFS) {
+		ERR_PRINT("Maximum number of referenced objects reached in a single call.");
+		throw std::runtime_error("Maximum number of referenced objects reached in a single call.");
+	}
+	state().scoped_refs.push_back(Ref<RefCounted>(ref));
 	return true;
 }
 
 uint64_t Sandbox::add_scoped_engine_object(uintptr_t engine_object) {
-	if (engine_object == 0)
+	const uint64_t object_id = engine_ptr_object_id(engine_object);
+	if (object_id == 0)
 		return 0;
-	this->add_scoped_entry(engine_object, nullptr);
-	return engine_object;
+	if (!this->is_object_access_unrestricted())
+		this->add_scoped_entry(object_id, engine_object, nullptr);
+	return object_handle_from_id(object_id);
+}
+
+void Sandbox::retain_global_object(gaddr_t slot_address) {
+	uint64_t object_id = 0;
+	try {
+		const GuestVariant *slot = machine().memory.memarray<GuestVariant>(slot_address, 1);
+		if (slot->type == Variant::OBJECT) {
+			object_id = object_id_from_handle(uint64_t(slot->v.i));
+		}
+	} catch (const std::exception &e) {
+		ERR_PRINT("Sandbox: could not read a retained object slot: " + String(e.what()));
+		return;
+	}
+	godot::Object *obj = object_id != 0 ? this->resolve_live_object(object_id) : nullptr;
+	RefCounted *ref = obj != nullptr ? fast_cast_to<RefCounted>(obj) : nullptr;
+	// Release side is unconditional: a ref taken while unrestricted must drop even if
+	// restrictions were enabled since.
+	if (ref == nullptr || !this->is_object_access_unrestricted()) {
+		m_retained_objects.erase(slot_address);
+		return;
+	}
+	m_retained_objects.insert_or_assign(slot_address, Ref<RefCounted>(ref));
+}
+
+void Sandbox::release_retained_objects(gaddr_t base, gaddr_t size) {
+	if (m_retained_objects.empty()) {
+		return;
+	}
+	for (auto it = m_retained_objects.begin(); it != m_retained_objects.end();) {
+		if (it->first >= base && it->first < base + size) {
+			it = m_retained_objects.erase(it);
+		} else {
+			++it;
+		}
+	}
 }
 
 uint64_t Sandbox::add_scoped_object(godot::Object *obj) {
-	const uintptr_t engine_object = engine_ptr(obj);
-	if (engine_object == 0)
+	const uint64_t object_id = engine_object_id(obj);
+	if (object_id == 0)
 		return 0;
 	// A RefCounted often reaches the guest through a temporary Variant, eg. the return
 	// value of a method call, which is destroyed as soon as the pointer has been written
 	// out. Hold a reference of our own so the guest's handle stays valid for the call.
-	if (this->add_scoped_entry(engine_object, obj)) {
+	if (this->is_object_access_unrestricted()) {
+		this->hold_unrestricted_object(object_id, obj);
+	} else if (this->add_scoped_entry(object_id, engine_ptr(obj), obj)) {
 		if (RefCounted *ref = fast_cast_to<RefCounted>(obj))
 			state().scoped_refs.push_back(Ref<RefCounted>(ref));
 	}
-	return engine_object;
+	return object_handle_from_id(object_id);
 }
 
 //-- Properties --//
@@ -2188,6 +2266,7 @@ void Sandbox::CurrentState::reinitialize(unsigned level, unsigned max_refs) {
 	this->scoped_objects.clear();
 	this->scoped_variants.clear();
 	this->scoped_refs.clear();
+	this->clear_referenced();
 }
 bool Sandbox::CurrentState::is_mutable_variant(const Variant &var) const {
 	// Check if the address of the variant is within the range of the current state std::vector.
@@ -2397,6 +2476,7 @@ bool Sandbox::is_sandbox_function(const StringName &p_function) const {
 		"is_allowed_object",
 		"set_class_allowed_callback",
 		"is_allowed_class",
+		"is_class_access_restricted",
 		"set_resource_allowed_callback",
 		"is_allowed_resource",
 		"set_method_allowed_callback",

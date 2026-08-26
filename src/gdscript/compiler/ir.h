@@ -244,6 +244,8 @@ struct IRGlobalVar {
 	// Drives @export registration and VASSIGN decisions. TypeHint_NONE = any Variant.
 	IRInstruction::TypeHint value_type = IRInstruction::TypeHint_NONE;
 
+	bool holds_object = false;
+
 	std::string setter_function;
 	std::string getter_function;
 
@@ -252,6 +254,9 @@ struct IRGlobalVar {
 
 struct IRProgram {
 	bool is_tool = false;
+	std::string class_name;
+	std::string base_class;
+	bool base_is_path = false;
 	std::vector<IRGlobalVar> globals;
 	std::vector<IRFunction> functions;
 	std::vector<std::string> string_constants;

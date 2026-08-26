@@ -19,6 +19,7 @@ int64_t safegdscript_stopped_line();
 PackedStringArray safegdscript_stopped_backtrace();
 void safegdscript_debug_continue();
 PackedInt32Array safegdscript_engine_breakpoints(const SafeGDScript &p_script);
+Sandbox *sandbox_for_safegdscript(const SafeGDScript *p_script);
 
 bool SafeGDScript::_editor_can_reload_from_file() {
 	return true;
@@ -31,6 +32,9 @@ Ref<Script> SafeGDScript::_get_base_script() const {
 	return Ref<Script>();
 }
 StringName SafeGDScript::_get_global_name() const {
+	if (!this->class_name.is_empty()) {
+		return StringName(this->class_name);
+	}
 	// Built-in scripts share no file path; returning a name would collide.
 	if (is_built_in()) {
 		return StringName();
@@ -41,6 +45,11 @@ bool SafeGDScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
 }
 StringName SafeGDScript::_get_instance_base_type() const {
+	// Only return native types ClassDB can verify.
+	if (!this->base_class.is_empty() && !this->base_is_path &&
+			ClassDB::class_exists(StringName(this->base_class))) {
+		return StringName(this->base_class);
+	}
 	return StringName("Sandbox");
 }
 void *SafeGDScript::_instance_create(Object *p_for_object) const {
@@ -426,6 +435,8 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 		ERR_PRINT("SafeGDScript: the GDScript compiler ELF is too old to build a debuggable program.");
 	}
 	const char *entry_point = profiling ? "compile_profiled" : (debug ? "compile_debug" : "compile");
+	this->compiled_restricted = this->class_access_restricted();
+	set_compiler_restricted(this->compiled_restricted);
 
 	GDExtensionCallError error;
 	Variant src_code_var = this->source_code;
@@ -449,6 +460,9 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	this->profiled_build = profiling;
 	this->debug_build = debug;
 	this->last_error = String();
+	this->class_name = get_compiler_class_name();
+	this->base_class = get_compiler_base_class();
+	this->base_is_path = get_compiler_base_is_path();
 
 	this->update_methods_info();
 
@@ -635,6 +649,67 @@ bool SafeGDScript::get_compiler_is_tool() {
 		return true;
 	}
 	return bool(answer);
+}
+
+static String compiler_string(const char *p_function) {
+	Sandbox *compiler = SafeGDScript::get_compiler_sandbox();
+	if (compiler == nullptr || !compiler->has_function(p_function)) {
+		return String();
+	}
+	GDExtensionCallError error;
+	const Variant answer = compiler->vmcall_fn(p_function, nullptr, 0, error);
+	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK ||
+			answer.get_type() != Variant::Type::STRING) {
+		return String();
+	}
+	return answer;
+}
+
+String SafeGDScript::get_compiler_class_name() {
+	return compiler_string("get_script_class_name");
+}
+
+String SafeGDScript::get_compiler_base_class() {
+	return compiler_string("get_script_base_class");
+}
+
+bool SafeGDScript::get_compiler_base_is_path() {
+	Sandbox *compiler = get_compiler_sandbox();
+	if (compiler == nullptr || !compiler->has_function("get_script_base_is_path")) {
+		return false;
+	}
+	GDExtensionCallError error;
+	const Variant answer = compiler->vmcall_fn("get_script_base_is_path", nullptr, 0, error);
+	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
+		return false;
+	}
+	return bool(answer);
+}
+
+void SafeGDScript::set_compiler_restricted(bool p_restricted) {
+	Sandbox *compiler = get_compiler_sandbox();
+	if (compiler == nullptr || !compiler->has_function("set_restricted")) {
+		return;
+	}
+	GDExtensionCallError error;
+	Variant restricted = p_restricted;
+	const Variant *args[] = { &restricted };
+	compiler->vmcall_fn("set_restricted", args, 1, error);
+	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
+		ERR_PRINT("SafeGDScript: the compiler refused the restriction flag.");
+	}
+}
+
+bool SafeGDScript::class_access_restricted() const {
+	const Sandbox *sandbox = sandbox_for_safegdscript(this);
+	return sandbox != nullptr && sandbox->is_class_access_restricted();
+}
+
+void SafeGDScript::class_restrictions_changed() {
+	if (this->class_access_restricted() == this->compiled_restricted) {
+		return;
+	}
+	this->compile_source_to_elf(this->profiled_build, this->debug_build);
 }
 
 PackedInt32Array SafeGDScript::get_compiler_breakpoint_lines() {

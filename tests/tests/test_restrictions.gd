@@ -222,16 +222,46 @@ func test_allowed_refcounted_is_kept_alive():
 
 
 func test_object_handle_kept_across_calls():
-	# The guest may store an Object handle and use it in a later call, where nothing scopes
-	# it any more. An empty allowed-objects list means "unrestricted", which says nothing
-	# about an address the guest is holding, so that has to be refused until the host has
-	# actually named the object.
+	# The guest may store an Object handle and use it in a later call, where nothing
+	# scopes it any more. With nothing restricting which objects it may reach there is
+	# no rule to apply, so the handle resolves the way a Node held in a GDScript member
+	# does -- the handle is an ObjectID, and the engine answers for it.
 	var s = Sandbox.new()
 	s.set_program(Sandbox_TestsTests)
 	assert_true(s.has_function("store_object"), "store_object should exist")
 
 	var n = Node.new()
 	n.name = "Remembered"
+	s.vmcall("store_object", n)
+
+	var exceptions = s.get_exceptions()
+	assert_eq(s.vmcall("use_stored_object"), "Node", "an unrestricted sandbox resolves a stored handle")
+	assert_eq(s.get_exceptions(), exceptions)
+
+	# A freed object is gone, not forbidden: the id names nothing, which is what
+	# is_instance_valid() reports for the same object in GDScript.
+	n.free()
+	s.vmcall("use_stored_object")
+	assert_engine_error("Object no longer exists")
+	assert_engine_error("Exception: Object no longer exists")
+	assert_eq(s.get_exceptions(), exceptions + 1)
+
+	s.queue_free()
+
+
+func test_a_restricted_sandbox_refuses_a_kept_object_handle():
+	# The same stored handle, with restrictions in force. Now the absence of a rule says
+	# nothing about whether the guest was ever given that object, so it takes the host
+	# naming it before the handle means anything.
+	var s = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	var n = Node.new()
+	n.name = "Remembered"
+
+	var other = Node.new()
+	s.add_allowed_object(other)  # Anything on the list turns the check on.
+
 	s.vmcall("store_object", n)
 
 	var exceptions = s.get_exceptions()
@@ -246,8 +276,59 @@ func test_object_handle_kept_across_calls():
 	assert_eq(s.get_exceptions(), exceptions + 1)
 
 	n.queue_free()
+	other.queue_free()
 	s.queue_free()
 
+
+func test_turning_restrictions_on_during_a_call_is_refused():
+	# Enabling mid-call would switch the object checks from "there is no rule to
+	# enforce" to the per-call scoped list, which a call that began unrestricted
+	# never filled -- so every handle the guest is already holding would stop
+	# resolving halfway through. The change belongs outside the call.
+	var s = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	var n = Node.new()
+	n.name = "Node"
+	var flip := func():
+		s.set_restrictions(true)
+		return n
+
+	var exceptions = s.get_exceptions()
+	assert_eq(s.vmcall("granted_mid_call", flip), "Node",
+		"the object still crosses, because nothing was restricted")
+	assert_engine_error("Cannot change restrictions during a VM call.")
+	assert_eq(s.get_exceptions(), exceptions)
+	assert_false(s.get_restrictions(), "restrictions must not have been turned on mid-call")
+
+	# Outside a call it takes, as before.
+	s.set_restrictions(true)
+	assert_true(s.get_restrictions(), "the same call outside a VM call is honoured")
+
+	n.queue_free()
+	s.queue_free()
+
+func test_granting_the_first_object_during_a_call_is_refused():
+	# The first allowed object is what turns object checking on at all, which is the
+	# same mid-call transition -- adding to a list that is already non-empty grants
+	# one more object and takes nothing away, which is what the test below covers.
+	var s = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	var n = Node.new()
+	n.name = "Node"
+	var grant := func():
+		s.add_allowed_object(n)
+		return n
+
+	var exceptions = s.get_exceptions()
+	assert_eq(s.vmcall("granted_mid_call", grant), "Node",
+		"the object still crosses, because nothing was restricted")
+	assert_engine_error("Cannot begin restricting objects during a VM call")
+	assert_eq(s.get_exceptions(), exceptions)
+
+	n.queue_free()
+	s.queue_free()
 
 func test_a_grant_during_a_vm_call_takes_effect():
 	var s = Sandbox.new()

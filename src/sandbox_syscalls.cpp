@@ -34,29 +34,33 @@ static constexpr int64_t MAX_ARRAY_ELEMENTS = 16'777'216;
 
 godot::Object *get_object_from_address(const Sandbox &emu, uint64_t addr) {
 	SYS_TRACE("get_object_from_address", addr);
-	// The guest's handle is the engine object pointer. It is an opaque number until it has
-	// been recognized here, so nothing may dereference it before then.
-	const uintptr_t engine_object = uintptr_t(addr);
-	if (UNLIKELY(engine_object == 0)) {
+	if (UNLIKELY(addr == 0)) {
 		ERR_PRINT("Object is Null");
 		throw std::runtime_error("Object is Null");
 	}
-	if (Sandbox::CurrentState::ScopedObject *so = emu.find_scoped_object(engine_object))
-		return Sandbox::resolve_scoped_object(*so);
-
-	// Not scoped by this call. A handle the guest kept from an earlier call is only
-	// honoured when the host explicitly allowed that object; an empty allowed-objects
-	// list means "unrestricted", which says nothing about an address the guest invented.
-	if (godot::Object *allowed = emu.get_explicitly_allowed_object(engine_object))
-		return allowed;
-
+	const uint64_t object_id = Sandbox::object_id_from_handle(addr);
 	char buffer[256];
-	if (engine_object < 0x1000) {
-		snprintf(buffer, sizeof(buffer), "Object is not found, but likely a Variant with index: %lu", long(engine_object));
+	if (UNLIKELY(object_id == 0)) {
+		snprintf(buffer, sizeof(buffer), "Object is not found, but likely a Variant with index: %ld", long(int32_t(addr)));
 		ERR_PRINT(buffer);
 		throw std::runtime_error(buffer);
 	}
-	snprintf(buffer, sizeof(buffer), "Object is not scoped: %p", (void *)engine_object);
+
+	if (emu.is_object_access_unrestricted()) {
+		if (godot::Object *live = emu.resolve_live_object(object_id))
+			return live;
+		snprintf(buffer, sizeof(buffer), "Object no longer exists: %lu", (unsigned long)object_id);
+		ERR_PRINT(buffer);
+		throw std::runtime_error(buffer);
+	}
+
+	if (Sandbox::CurrentState::ScopedObject *so = emu.find_scoped_object(object_id))
+		return Sandbox::resolve_scoped_object(*so);
+
+	if (godot::Object *allowed = emu.get_explicitly_allowed_object(object_id))
+		return allowed;
+
+	snprintf(buffer, sizeof(buffer), "Object is not scoped: %lu", (unsigned long)object_id);
 	ERR_PRINT(buffer);
 	throw std::runtime_error(buffer);
 }
@@ -193,7 +197,8 @@ static inline void variant_or_object_call(Sandbox &emu, Variant *vcall,
 	// object path: calling it as a built-in Variant would reach every method on it
 	// without ever asking is_allowed_method().
 	if (UNLIKELY(vcall->get_type() == Variant::OBJECT)) {
-		godot::Object *obj = get_object_from_address(emu, Sandbox::engine_ptr(vcall->operator godot::Object *()));
+		godot::Object *obj = get_object_from_address(emu,
+				Sandbox::object_handle_from_id(Sandbox::engine_object_id(vcall->operator godot::Object *())));
 		object_call_checked(emu, obj, cached_method, method_name, args, argc, result);
 		return;
 	}
@@ -730,12 +735,15 @@ APICALL(api_utility) {
 					PENALIZE(10'000);
 					bool valid = false;
 					if (args[0].type == Variant::OBJECT) {
-						const uintptr_t handle = uintptr_t(args[0].v.i);
+						const uint64_t object_id = Sandbox::object_id_from_handle(uint64_t(args[0].v.i));
 						godot::Object *obj = nullptr;
-						if (Sandbox::CurrentState::ScopedObject *so = emu.find_scoped_object(handle)) {
+						if (object_id == 0) {
+						} else if (emu.is_object_access_unrestricted()) {
+							obj = emu.resolve_live_object(object_id);
+						} else if (Sandbox::CurrentState::ScopedObject *so = emu.find_scoped_object(object_id)) {
 							obj = Sandbox::resolve_scoped_object(*so);
 						} else {
-							obj = emu.get_explicitly_allowed_object(handle);
+							obj = emu.get_explicitly_allowed_object(object_id);
 						}
 						valid = Sandbox::engine_object_id(obj) != 0;
 					}
@@ -1748,6 +1756,15 @@ APICALL(api_vassign) {
 	// Try assigning the value of b to a.
 	unsigned res_idx = emu.try_reuse_assign_variant(b_idx, va, a_idx, vb);
 	machine.set_result(res_idx);
+}
+
+APICALL(api_obj_retain) {
+	auto [slot_addr] = machine.sysargs<gaddr_t>();
+	auto &emu = riscv::emu(machine);
+	PENALIZE(10'000);
+	SYS_TRACE("obj_retain", slot_addr);
+
+	emu.retain_global_object(slot_addr);
 }
 
 APICALL(api_get_obj) {
@@ -3362,6 +3379,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_CALL_GUEST, api_call_guest },
 
 			{ ECALL_VSCOPE, api_vscope },
+			{ ECALL_OBJ_RETAIN, api_obj_retain },
 
 			{ ECALL_PACKED_ARRAY_OPS, api_packed_array_ops },
 

@@ -192,6 +192,12 @@ if (BUILD_TESTING)
 		add_executable(test_callables tests/test_callables.cpp)
 		target_link_libraries(test_callables gdscript_compiler riscv)
 		add_test(NAME test_callables COMMAND test_callables)
+
+		# Which globals are known to name an object, and where the retain that
+		# keeps a RefCounted alive between calls is emitted.
+		add_executable(test_object_retain tests/test_object_retain.cpp)
+		target_link_libraries(test_object_retain gdscript_compiler riscv)
+		add_test(NAME test_object_retain COMMAND test_object_retain)
 	else()
 		message(STATUS "libriscv not found: skipping the differential test")
 	endif()

@@ -49,6 +49,7 @@ public:
 	// Shared across MAX_LEVEL recursion levels.
 	static constexpr unsigned GUEST_STACK_SIZE = 2u << 20; // 2MB
 	static constexpr unsigned MAX_REFS = 100; // Default maximum number of references
+	static constexpr unsigned MAX_UNRESTRICTED_REFS = 65536;
 	static constexpr unsigned EDITOR_THROTTLE = 8; // Throttle VM calls from the editor
 	static constexpr unsigned MAX_PROPERTIES = 32; // Maximum number of sandboxed properties
 	static constexpr unsigned MAX_COROUTINES = 32; // Default cap on live suspended frames
@@ -61,9 +62,7 @@ public:
 		/// @brief An object the guest may refer to during this call, and the godot-cpp
 		/// binding for it once someone has needed one.
 		struct ScopedObject {
-			/// The engine-side pointer (Object::_owner), which is also the handle the guest
-			/// sees. The binding wrapper is deliberately not the key: it is freed with the
-			/// object it belongs to, and the address is then reused.
+			uint64_t object_id;
 			uintptr_t engine_object;
 			/// Resolving a binding locks a per-object mutex in Godot, so it is done at most
 			/// once per object per call: on the way in when the caller already had one, and
@@ -75,6 +74,21 @@ public:
 		/// call. Without it a Ref returned by value dies with the temporary Variant it
 		/// arrived in, and the guest is left with a pointer to freed memory.
 		std::vector<Ref<RefCounted>> scoped_refs;
+		// Lossy dedup: eviction costs a harmless duplicate ref, never a missed one.
+		static constexpr unsigned REF_DEDUP_SIZE = 64; // Must be a power of two
+		uint64_t ref_dedup[REF_DEDUP_SIZE] = {};
+
+		bool mark_referenced(uint64_t object_id) noexcept {
+			uint64_t &slot = ref_dedup[object_id & (REF_DEDUP_SIZE - 1)];
+			if (slot == object_id)
+				return false;
+			slot = object_id;
+			return true;
+		}
+		void clear_referenced() noexcept {
+			for (uint64_t &slot : ref_dedup)
+				slot = 0;
+		}
 
 		void append(Variant &&value);
 		/// Reserve for max_refs and drop what the previous program scoped. No reserve-only
@@ -121,6 +135,21 @@ public:
 			CachedName name;
 		};
 		Entry entries[SIZE];
+
+		void clear() {
+			for (Entry &entry : entries)
+				entry = Entry{};
+		}
+	};
+	struct ObjectBindingCache {
+		static constexpr unsigned SIZE = 32; // Must be a power of two
+		struct Entry {
+			uint64_t object_id = 0;
+			godot::Object *binding = nullptr;
+		};
+		Entry entries[SIZE];
+
+		Entry &slot(uint64_t object_id) noexcept { return entries[object_id & (SIZE - 1)]; }
 
 		void clear() {
 			for (Entry &entry : entries)
@@ -458,9 +487,6 @@ public:
 	/// @return The index the guest uses from here on.
 	unsigned try_reuse_assign_variant(int32_t src_idx, const Variant &src_var, int32_t assign_to_idx, const Variant &var);
 
-	/// @brief The engine-side pointer that identifies an object, which is also the
-	/// handle the guest is given for it. Nothing else is stable: the godot-cpp binding
-	/// wrapper is created on demand and destroyed with the object.
 	static uintptr_t engine_ptr(const godot::Object *obj) noexcept { return obj != nullptr ? uintptr_t(obj->_owner) : 0u; }
 
 	/// @brief The ObjectID Godot assigned to an object. Unlike an address it is never
@@ -468,6 +494,19 @@ public:
 	/// @note Taken straight from the engine rather than through Object::get_instance_id(),
 	/// which is a bound method call and cannot be asked about an object that is already gone.
 	static uint64_t engine_object_id(const godot::Object *obj) noexcept;
+
+	static uint64_t engine_ptr_object_id(uintptr_t engine_object) noexcept;
+
+	// Bit 62 tag distinguishes handles from variant indices. Change if Godot claims it.
+	static constexpr uint64_t OBJECT_HANDLE_TAG = uint64_t(1) << 62;
+
+	static constexpr uint64_t object_handle_from_id(uint64_t object_id) noexcept {
+		return object_id != 0 ? (object_id | OBJECT_HANDLE_TAG) : 0u;
+	}
+
+	static constexpr uint64_t object_id_from_handle(uint64_t handle) noexcept {
+		return (handle & OBJECT_HANDLE_TAG) != 0 ? (handle & ~OBJECT_HANDLE_TAG) : 0u;
+	}
 
 	/// @brief Scope an object for the duration of the current call, keeping it alive if
 	/// it is RefCounted.
@@ -485,25 +524,24 @@ public:
 	void rem_scoped_object(const godot::Object *obj);
 
 	/// @brief Find a scoped object in the current state.
-	/// @param engine_object The guest-visible handle (an engine object pointer).
-	/// @return The entry, or nullptr if the object is not scoped by this call.
-	CurrentState::ScopedObject *find_scoped_object(uintptr_t engine_object) const noexcept {
+	CurrentState::ScopedObject *find_scoped_object(uint64_t object_id) const noexcept {
 		for (CurrentState::ScopedObject &so : state().scoped_objects)
-			if (so.engine_object == engine_object)
+			if (so.object_id == object_id)
 				return &so;
 		return nullptr;
 	}
 
 	/// @brief Check if an object is scoped in the current state.
-	bool is_scoped_object(uintptr_t engine_object) const noexcept { return find_scoped_object(engine_object) != nullptr; }
-
-	/// @brief Check if an object is scoped in the current state.
-	bool is_scoped_object(const godot::Object *obj) const noexcept { return is_scoped_object(engine_ptr(obj)); }
+	bool is_scoped_object(const godot::Object *obj) const noexcept { return find_scoped_object(engine_object_id(obj)) != nullptr; }
 
 	/// @brief Resolve a guest handle to a usable object, for a handle already known to be
 	/// scoped by this call.
 	/// @return The godot-cpp object, resolving and remembering the binding if needed.
 	static godot::Object *resolve_scoped_object(CurrentState::ScopedObject &so);
+
+	void retain_global_object(gaddr_t slot_address);
+	void release_retained_objects(gaddr_t base, gaddr_t size);
+	godot::Object *resolve_live_object(uint64_t object_id) const noexcept;
 
 	// -= Sandbox Restrictions =-
 
@@ -533,23 +571,18 @@ public:
 	/// @brief Check if an object is allowed in the sandbox.
 	/// @note An empty allowed-objects list with no callback set means unrestricted, so
 	/// this answers true for anything. Only use it on an object the host handed us; for
-	/// an address that came from the guest, see is_explicitly_allowed_object().
+	/// an id that came from the guest, see is_explicitly_allowed_object().
 	bool is_allowed_object(godot::Object *obj) const;
+
+	bool is_object_access_unrestricted() const noexcept {
+		return m_allowed_objects.empty() && !m_just_in_time_allowed_objects.is_valid();
+	}
 
 	/// @brief Check if an ObjectID is on the allowed-objects list.
 	bool is_allowed_object_id(uint64_t object_id) const noexcept { return m_allowed_objects.find(object_id) != m_allowed_objects.end(); }
 
-	/// @brief Check if an object was explicitly allowed, either by being on the
-	/// allowed-objects list or by the just-in-time callback admitting it.
-	/// @note Unlike is_allowed_object() an empty list is not taken to mean "anything
-	/// goes": this is what a guest-supplied object has to pass, and there the absence of
-	/// a rule says nothing about whether the guest was ever given that object.
 	bool is_explicitly_allowed_object(godot::Object *obj) const;
-
-	/// @brief Resolve a guest-supplied engine object pointer against the allowed-objects
-	/// list, without dereferencing it.
-	/// @return The object, or nullptr if it is not allowed or no longer exists.
-	godot::Object *get_explicitly_allowed_object(uintptr_t engine_object) const;
+	godot::Object *get_explicitly_allowed_object(uint64_t object_id) const;
 
 	/// @brief Set a callback to check if an object is allowed in the sandbox.
 	/// @param callback The callable to check if an object is allowed.
@@ -557,6 +590,9 @@ public:
 
 	/// @brief Check if a class name is allowed in the sandbox.
 	bool is_allowed_class(const String &name) const;
+
+	// True when set_restrictions()'s blanket refusal is in effect (not a per-name callback).
+	bool is_class_access_restricted() const;
 
 	/// @brief Set a callback to check if a class is allowed in the sandbox.
 	/// @param callback The callable to check if a class is allowed.
@@ -945,9 +981,8 @@ private:
 	bool m_bintr_register_caching = true; // Use register caching for binary translation
 	bool m_bintr_bg_compilation = true; // Perform binary translation in the background
 
-	/// @brief Scope an object, unless it already is.
-	/// @return True if the object was not scoped by this call before.
-	bool add_scoped_entry(uintptr_t engine_object, godot::Object *binding);
+	bool add_scoped_entry(uint64_t object_id, uintptr_t engine_object, godot::Object *binding);
+	bool hold_unrestricted_object(uint64_t object_id, godot::Object *obj);
 
 	CurrentState *m_current_state = nullptr;
 	// State stack, with the permanent (initial) state at index 0.
@@ -1005,12 +1040,11 @@ private:
 	mutable StringNameMap<gaddr_t> m_sname_lookup;
 	mutable NameAddressCache m_name_addresses;
 	mutable GuestNameCache m_guest_names;
+	mutable ObjectBindingCache m_object_bindings;
+	std::unordered_map<gaddr_t, Ref<RefCounted>> m_retained_objects;
 
 	// Restrictions
-	// Keyed by ObjectID -> engine object pointer. An ObjectID is never reused, while the
-	// address of a freed object is, so an address alone cannot say whether the object on
-	// the list is still the object at that address.
-	std::unordered_map<uint64_t, uintptr_t> m_allowed_objects;
+	std::unordered_set<uint64_t> m_allowed_objects;
 	// A RefCounted on the allowed list is held here for as long as it is on the list.
 	// Nothing else keeps it alive, and once freed its address is free to be reused.
 	std::unordered_map<uint64_t, Ref<RefCounted>> m_allowed_object_refs;
@@ -1080,6 +1114,7 @@ inline void Sandbox::CurrentState::reset() {
 	scoped_variants.clear();
 	scoped_objects.clear();
 	scoped_refs.clear();
+	clear_referenced();
 }
 
 inline bool Sandbox::is_explicitly_allowed_object(godot::Object *obj) const {
@@ -1097,7 +1132,7 @@ inline bool Sandbox::is_explicitly_allowed_object(godot::Object *obj) const {
 
 inline bool Sandbox::is_allowed_object(godot::Object *obj) const {
 	// If the allowed list is empty, and the allowed-object callback is not set, all objects are allowed
-	if (m_allowed_objects.empty() && !m_just_in_time_allowed_objects.is_valid())
+	if (is_object_access_unrestricted())
 		return true;
 	return is_explicitly_allowed_object(obj);
 }

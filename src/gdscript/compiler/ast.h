@@ -446,6 +446,13 @@ struct EnumDecl {
 
 struct Program {
 	bool is_tool = false;
+	std::string class_name;
+	int class_name_line = 0;
+	int class_name_column = 0;
+	std::string base_class;
+	bool base_is_path = false;
+	int base_class_line = 0;
+	int base_class_column = 0;
 	std::vector<VarDeclStmt> globals;
 	std::vector<StructDecl> structs;
 	std::vector<EnumDecl> enums;

@@ -16,6 +16,8 @@ PUBLIC Variant compile(String code)
 	options.dump_ir = false;
 	options.output_elf = true;
 
+	gdscript_apply_restrictions(options);
+
 	Compiler compiler;
 	auto elf_data = compiler.compile(code.utf8(), options);
 	gdscript_remember_signatures(compiler);
@@ -23,6 +25,7 @@ PUBLIC Variant compile(String code)
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
+	gdscript_remember_script_class(compiler);
 
 	if (elf_data.empty()) {
 		last_error = String(compiler.get_error());
@@ -48,6 +51,8 @@ PUBLIC Variant compile_profiled(String code)
 	// Host installs a nanosecond rdtime before the program runs.
 	options.profiling_clock = ProfilingClock::TIME;
 
+	gdscript_apply_restrictions(options);
+
 	Compiler compiler;
 	auto elf_data = compiler.compile(code.utf8(), options);
 	gdscript_remember_signatures(compiler);
@@ -55,6 +60,7 @@ PUBLIC Variant compile_profiled(String code)
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
+	gdscript_remember_script_class(compiler);
 
 	if (elf_data.empty()) {
 		last_error = String(compiler.get_error());
@@ -78,6 +84,8 @@ PUBLIC Variant compile_debug(String code, PackedInt32Array breakpoints)
 		}
 	}
 
+	gdscript_apply_restrictions(options);
+
 	Compiler compiler;
 	auto elf_data = compiler.compile(code.utf8(), options);
 	gdscript_remember_signatures(compiler);
@@ -85,6 +93,7 @@ PUBLIC Variant compile_debug(String code, PackedInt32Array breakpoints)
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
+	gdscript_remember_script_class(compiler);
 
 	if (elf_data.empty()) {
 		last_error = String(compiler.get_error());
@@ -101,6 +110,7 @@ PUBLIC Variant validate(String code)
 {
 	CompilerOptions options;
 	options.output_elf = false;
+	gdscript_apply_restrictions(options);
 
 	Compiler compiler;
 	compiler.compile(code.utf8(), options);
@@ -146,4 +156,25 @@ PUBLIC Variant get_breakpoint_lines()
 PUBLIC Variant is_tool()
 {
 	return gdscript_last_is_tool();
+}
+
+PUBLIC Variant set_restricted(bool restricted)
+{
+	gdscript_restricted() = restricted;
+	return Nil;
+}
+
+PUBLIC Variant get_script_class_name()
+{
+	return String(gdscript_last_class_name());
+}
+
+PUBLIC Variant get_script_base_class()
+{
+	return String(gdscript_last_base_class());
+}
+
+PUBLIC Variant get_script_base_is_path()
+{
+	return gdscript_last_base_is_path();
 }

@@ -1200,8 +1200,8 @@ void RISCVCodeGen::gen_store_global(const IRInstruction& instr) {
 	const IRGlobalVar& global = m_globals[global_idx];
 
 	// Determine if this is a complex type that needs VASSIGN
-	// Complex types: STRING, STRING_NAME, NODE_PATH, RID, OBJECT, CALLABLE,
-	//                SIGNAL, DICTIONARY, ARRAY, and all PACKED_*_ARRAY types
+	// Complex types: STRING, STRING_NAME, NODE_PATH, RID, CALLABLE, SIGNAL,
+	//                DICTIONARY, ARRAY, and all PACKED_*_ARRAY types
 	bool needs_vassign = false;
 
 	// The global's Variant type is derived once by the code
@@ -1259,6 +1259,13 @@ void RISCVCodeGen::gen_store_global(const IRInstruction& instr) {
 		emit_sd(REG_A0, REG_T0, 8);
 	} else {
 		emit_variant_move(REG_T0, 0, REG_T1, 0, REG_T2);
+	}
+
+	if (global.holds_object) {
+		spill_around_syscall({ REG_A0, REG_A7 });
+		emit_address_of_global(REG_A0, static_cast<size_t>(global_idx));
+		emit_li(REG_A7, ECALL_OBJ_RETAIN);
+		emit_ecall();
 	}
 }
 
@@ -5231,7 +5238,7 @@ void RISCVCodeGen::emit_load_stack_offset(uint8_t rd, int32_t offset) {
 }
 
 bool RISCVCodeGen::is_complex_variant_type(int variant_type) {
-	// Inline types (no scoped-variant storage) vs complex types (String, Array, Object, ...).
+	// Inline types (no scoped-variant storage) vs complex types (String, Array, Dictionary, ...).
 	switch (variant_type) {
 		case Variant::NIL:
 		case Variant::BOOL:
@@ -5247,6 +5254,8 @@ bool RISCVCodeGen::is_complex_variant_type(int variant_type) {
 		case Variant::RECT2I:
 		case Variant::PLANE:
 		case Variant::COLOR:
+		// Object payload is a handle (tagged ObjectID), not a scoped-variant index.
+		case Variant::OBJECT:
 			return false;
 		default:
 			return true;

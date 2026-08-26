@@ -363,6 +363,24 @@ Sandbox *sandbox_for_safegdscript(const SafeGDScript *p_script) {
 	return it == sandbox_instances.end() ? nullptr : it->second.sandbox;
 }
 
+void safegdscript_class_restrictions_changed(const Sandbox &p_sandbox) {
+	static bool in_progress = false;
+	if (in_progress) {
+		return;
+	}
+	in_progress = true;
+	std::vector<SafeGDScript *> affected;
+	for (const auto &[script, entry] : sandbox_instances) {
+		if (script != nullptr && entry.sandbox == &p_sandbox) {
+			affected.push_back(script);
+		}
+	}
+	for (SafeGDScript *script : affected) {
+		script->class_restrictions_changed();
+	}
+	in_progress = false;
+}
+
 void safegdscript_for_each_sandbox(const std::function<void(SafeGDScript &, Sandbox &)> &p_callback) {
 	for (const auto &[script, entry] : sandbox_instances) {
 		if (script != nullptr && entry.sandbox != nullptr) {

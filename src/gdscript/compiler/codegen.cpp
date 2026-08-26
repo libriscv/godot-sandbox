@@ -100,6 +100,22 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	IRProgram ir_program;
 	ir_program.is_tool = program.is_tool;
 
+	if (!program.class_name.empty() && m_restricted) {
+		error_at("'class_name " + program.class_name + "' needs a Sandbox that allows engine classes",
+			program.class_name_line, program.class_name_column,
+			"Registering a global class puts the script in the project's class list, which a "
+			"restricted Sandbox has no way to undo. Drop the class_name.");
+	}
+	if (!program.base_class.empty() && m_restricted) {
+		error_at("'extends " + program.base_class + "' needs a Sandbox that allows engine classes",
+			program.base_class_line, program.base_class_column,
+			"A restricted Sandbox refuses every class, so the base could never be instantiated. "
+			"A script with no 'extends' runs under any owner.");
+	}
+	ir_program.class_name = program.class_name;
+	ir_program.base_class = program.base_class;
+	ir_program.base_is_path = program.base_is_path;
+
 	// Signals are members; collected first so name collisions are caught below.
 	m_signals.clear();
 	for (const auto& decl : program.signals) {
@@ -182,6 +198,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	m_global_types.clear();
 	m_global_structs.clear();
 	m_global_is_member.clear();
+	m_global_holds_object.clear();
 	ir_program.globals.resize(program.globals.size());
 
 	// All names registered before any initializer, so initializers can reference each other.
@@ -213,6 +230,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				? IRInstruction::TypeHint_NONE
 				: type_hint_from_string(global.type_hint));
 		}
+		m_global_holds_object.push_back(type_hint_names_a_class(global.type_hint));
 	}
 
 	collect_property_accessors(program);
@@ -315,6 +333,9 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				ir_global.value_type = ir_global.type_hint != IRInstruction::TypeHint_NONE
 					? ir_global.type_hint
 					: get_register_type(target, reg);
+				if (get_register_type(target, reg) == Variant::OBJECT) {
+					mark_global_holds_object(static_cast<int64_t>(i));
+				}
 				if (m_global_structs[i] == nullptr) {
 					m_global_structs[i] = get_register_struct(target, reg);
 				}
@@ -406,6 +427,10 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		ir_program.functions.push_back(std::move(lifted));
 	}
 	m_pending_lambdas.clear();
+
+	for (size_t i = 0; i < ir_program.globals.size() && i < m_global_holds_object.size(); i++) {
+		ir_program.globals[i].holds_object = m_global_holds_object[i];
+	}
 
 	ir_program.string_constants = m_string_constants;
 	ir_program.has_breakpoint_statement = m_saw_breakpoint_statement;
@@ -628,6 +653,9 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 			}
 			value_reg = coerce_to_declared_type(value_reg, m_global_types[global_idx], func,
 				"global '" + name + "'", site);
+			if (get_register_type(func, value_reg) == Variant::OBJECT) {
+				mark_global_holds_object(static_cast<int64_t>(global_idx));
+			}
 			func.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL, IRValue::imm(global_idx), IRValue::reg(value_reg));
 			free_register(func, value_reg);
 			return;
@@ -635,6 +663,15 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 		if (find_signal(name) != nullptr) {
 			error_at("Cannot assign to signal '" + name + "'", site,
 				"A signal is emitted with '" + name + ".emit(...)', not assigned to");
+		}
+		if (m_current_class != nullptr && native_base(*m_current_class) != nullptr) {
+			if (Variable* self = find_variable(func, "self")) {
+				int base_reg = gen_native_base_load(self->register_num, func);
+				gen_vset(base_reg, name, value_reg, func);
+				free_register(func, base_reg);
+				free_register(func, value_reg);
+				return;
+			}
 		}
 		error_at("Undefined variable: " + name, site,
 			"Declare it with 'var " + name + " = ...' before assigning to it");
@@ -689,7 +726,10 @@ void CodeGenerator::gen_store_to(const Expr* target, int value_reg, FunctionCont
 		LValue base = resolve_lvalue(member_expr->object.get(), func);
 
 		// Struct field: coerce to declared type.
-		if (const StructDecl* decl = get_register_struct(func, base.reg)) {
+		if (const StructDecl* decl = get_register_struct(func, base.reg);
+			decl != nullptr && !(find_struct_field(*decl, member_expr->member_name) == nullptr &&
+				native_base(*decl) != nullptr))
+		{
 			const StructField& field = require_struct_field(*decl, member_expr->member_name,
 				member_expr->line, member_expr->column);
 			if (!field.type_hint.empty()) {
@@ -780,6 +820,9 @@ void CodeGenerator::store_lvalue(const LValue& target, int value_reg, FunctionCo
 			if (!global_setter(global_idx).empty()) {
 				gen_property_set(global_idx, value_reg, func);
 				return;
+			}
+			if (get_register_type(func, value_reg) == Variant::OBJECT) {
+				mark_global_holds_object(static_cast<int64_t>(global_idx));
 			}
 			func.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
 				IRValue::imm(global_idx), IRValue::reg(value_reg));
@@ -2181,6 +2224,15 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func)
 		return gen_make_callable(expr->name, -1, func);
 	}
 
+	if (m_current_class != nullptr && native_base(*m_current_class) != nullptr) {
+		if (Variable* self = find_variable(func, "self")) {
+			int base_reg = gen_native_base_load(self->register_num, func);
+			int result_reg = gen_vget(base_reg, expr->name, func);
+			free_register(func, base_reg);
+			return result_reg;
+		}
+	}
+
 	error_at("Undefined variable: " + expr->name, expr,
 		"Make sure '" + expr->name + "' is declared before use");
 }
@@ -3330,8 +3382,15 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 			"(), which Godot accepts and silently ignores");
 	}
 
-	// Unknown freestanding call -> self-call: foo(args) becomes self.foo(args).
-	int self_reg = gen_get_node(".", func);
+	int self_reg = -1;
+	if (m_current_class != nullptr && native_base(*m_current_class) != nullptr) {
+		if (Variable* self = find_variable(func, "self")) {
+			self_reg = gen_native_base_load(self->register_num, func);
+		}
+	}
+	if (self_reg < 0) {
+		self_reg = gen_get_node(".", func);
+	}
 
 	int result_reg = alloc_register(func);
 
@@ -3477,6 +3536,11 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 					expr->arguments, *expr, func, expr);
 				free_register(func, obj_reg);
 				return result;
+			}
+			if (native_base(*decl) != nullptr) {
+				int base_reg = gen_native_base_load(obj_reg, func);
+				free_register(func, obj_reg);
+				obj_reg = base_reg;
 			}
 		}
 	}
@@ -3744,6 +3808,22 @@ void CodeGenerator::gen_property_set(size_t index, int value_reg, FunctionContex
 	free_register(func, result_reg);
 }
 
+bool CodeGenerator::type_hint_names_a_class(const std::string& type_hint) const {
+	if (type_hint.empty()) {
+		return false;
+	}
+	if (type_hint_from_string(type_hint) != IRInstruction::TypeHint_NONE) {
+		return false;
+	}
+	return find_struct(type_hint) == nullptr && m_enums.find(type_hint) == m_enums.end();
+}
+
+void CodeGenerator::mark_global_holds_object(int64_t global_idx) {
+	if (global_idx >= 0 && size_t(global_idx) < m_global_holds_object.size()) {
+		m_global_holds_object[size_t(global_idx)] = true;
+	}
+}
+
 const StructDecl* CodeGenerator::find_struct(const std::string& name) const {
 	auto it = m_structs.find(name);
 	return it == m_structs.end() ? nullptr : it->second;
@@ -3754,6 +3834,23 @@ const StructDecl* CodeGenerator::class_base(const StructDecl& decl) const {
 		return nullptr;
 	}
 	return find_struct(decl.base_name);
+}
+
+const std::string* CodeGenerator::native_base(const StructDecl& decl) const {
+	for (const StructDecl* at = &decl; at != nullptr; at = class_base(*at)) {
+		if (auto found = m_native_bases.find(at); found != m_native_bases.end()) {
+			return &found->second;
+		}
+	}
+	return nullptr;
+}
+
+static constexpr const char* NATIVE_BASE_KEY = "@base";
+
+int CodeGenerator::gen_native_base_load(int self_reg, FunctionContext& func) {
+	int base_reg = gen_dict_get(self_reg, NATIVE_BASE_KEY, func);
+	set_register_type(func, base_reg, Variant::OBJECT);
+	return base_reg;
 }
 
 std::vector<const StructField*> CodeGenerator::struct_fields(const StructDecl& decl) const {
@@ -3818,15 +3915,25 @@ std::string CodeGenerator::lifted_method_name(const StructDecl& decl, const std:
 }
 
 void CodeGenerator::register_classes(const Program& program) {
+	m_native_bases.clear();
 	for (const StructDecl& decl : program.structs) {
 		if (!decl.is_class || decl.base_name.empty()) {
 			continue;
 		}
 		const StructDecl* base = find_struct(decl.base_name);
 		if (base == nullptr) {
-			error_at("Class '" + decl.name + "' extends '" + decl.base_name +
-				"', which this script does not declare", decl.line, decl.column,
-				"A sandboxed program can only extend a class written in the same file");
+			if (m_restricted) {
+				error_at("Class '" + decl.name + "' extends '" + decl.base_name +
+					"', which needs a Sandbox that allows engine classes", decl.line, decl.column,
+					"A restricted Sandbox refuses every class. Either declare '" + decl.base_name +
+					"' in this file or drop the 'extends'.");
+			}
+			if (is_global_class(decl.base_name)) {
+				error_at("Class '" + decl.name + "' extends the singleton '" + decl.base_name + "'",
+					decl.line, decl.column, "A singleton is one object, not a class to derive from");
+			}
+			m_native_bases[&decl] = decl.base_name;
+			continue;
 		}
 		if (!base->is_class) {
 			error_at("Class '" + decl.name + "' extends struct '" + decl.base_name + "'",
@@ -3870,7 +3977,7 @@ const StructField& CodeGenerator::require_struct_field(const StructDecl& decl,
 
 void CodeGenerator::check_struct_subscript(int obj_reg, const Expr* index, FunctionContext& func) {
 	const StructDecl* decl = get_register_struct(func, obj_reg);
-	if (decl == nullptr) {
+	if (decl == nullptr || native_base(*decl) != nullptr) {
 		return;
 	}
 	if (const std::string* key = constant_string(index, func)) {
@@ -4240,12 +4347,37 @@ int CodeGenerator::gen_class_construct(const StructDecl& decl, const std::vector
 	}
 	m_struct_default_stack.pop_back();
 
+	const std::string* base_class = native_base(decl);
+	int base_reg = -1;
+	int base_key_reg = -1;
+	if (base_class != nullptr) {
+		base_reg = alloc_register(func);
+		IRInstruction create(IROpcode::CALL_SYSCALL);
+		create.operands.push_back(IRValue::reg(base_reg));
+		create.operands.push_back(IRValue::imm(ECALL_NODE_CREATE));
+		create.operands.push_back(IRValue::imm(add_string_constant(*base_class)));
+		create.operands.push_back(IRValue::imm(static_cast<int64_t>(base_class->length())));
+		func.ir.instructions.push_back(create);
+		set_register_type(func, base_reg, Variant::OBJECT);
+	}
+
+	const size_t entries = fields.size() + (base_class != nullptr ? 1 : 0);
 	int result_reg = alloc_register(func);
 	IRInstruction make(IROpcode::MAKE_DICTIONARY);
 	make.operands.push_back(IRValue::reg(result_reg));
-	make.operands.push_back(IRValue::imm(static_cast<int>(fields.size())));
+	make.operands.push_back(IRValue::imm(static_cast<int>(entries)));
 
 	std::vector<int> key_regs;
+	if (base_class != nullptr) {
+		base_key_reg = alloc_register(func);
+		IRInstruction load_key(IROpcode::LOAD_STRING, IRValue::reg(base_key_reg),
+			IRValue::imm(add_string_constant(NATIVE_BASE_KEY)));
+		load_key.type_hint = Variant::STRING;
+		func.ir.instructions.push_back(load_key);
+		set_register_type(func, base_key_reg, Variant::STRING);
+		make.operands.push_back(IRValue::reg(base_key_reg));
+		make.operands.push_back(IRValue::reg(base_reg));
+	}
 	for (size_t i = 0; i < fields.size(); i++) {
 		int key_reg = alloc_register(func);
 		IRInstruction load_key(IROpcode::LOAD_STRING, IRValue::reg(key_reg),
@@ -4269,6 +4401,12 @@ int CodeGenerator::gen_class_construct(const StructDecl& decl, const std::vector
 	}
 	for (int reg : value_regs) {
 		free_register(func, reg);
+	}
+	if (base_key_reg >= 0) {
+		free_register(func, base_key_reg);
+	}
+	if (base_reg >= 0) {
+		free_register(func, base_reg);
 	}
 
 	const StructDecl* owner = nullptr;
@@ -4340,18 +4478,20 @@ int CodeGenerator::gen_super_call(const MemberCallExpr* expr, FunctionContext& f
 		return -1;
 	}
 	const StructDecl* base = class_base(*m_current_class);
-	if (base == nullptr) {
+	const std::string* engine_base = native_base(*m_current_class);
+	if (base == nullptr && engine_base == nullptr) {
 		error_at("Class '" + m_current_class->name + "' extends nothing, so it has no super", expr,
 			"Call '" + expr->member_name + "()' on self instead");
 	}
-	if (!expr->is_method_call) {
+	if (!expr->is_method_call && base != nullptr) {
 		error_at("'super." + expr->member_name + "' is the field 'self." + expr->member_name +
 			"'", expr, "A class instance holds one value per field, base and derived alike");
 	}
 
 	const StructDecl* owner = nullptr;
-	const FunctionDecl* method = find_class_method(*base, expr->member_name, &owner);
-	if (method == nullptr) {
+	const FunctionDecl* method = base != nullptr
+		? find_class_method(*base, expr->member_name, &owner) : nullptr;
+	if (method == nullptr && engine_base == nullptr) {
 		error_at("'" + base->name + "' declares no '" + expr->member_name + "()'", expr);
 	}
 
@@ -4359,8 +4499,37 @@ int CodeGenerator::gen_super_call(const MemberCallExpr* expr, FunctionContext& f
 	if (self == nullptr) {
 		error_at("super is only reachable from a class method", expr);
 	}
-	return gen_class_method_call(*base, *method, *owner, self->register_num, expr->arguments,
-		*expr, func, expr);
+	if (method != nullptr) {
+		return gen_class_method_call(*base, *method, *owner, self->register_num, expr->arguments,
+			*expr, func, expr);
+	}
+
+	int base_reg = gen_native_base_load(self->register_num, func);
+	if (!expr->is_method_call) {
+		int result_reg = gen_vget(base_reg, expr->member_name, func);
+		free_register(func, base_reg);
+		return result_reg;
+	}
+	reject_named_arguments(*expr, "'" + expr->member_name + "'", expr);
+	std::vector<int> arg_regs;
+	for (const auto& argument : expr->arguments) {
+		arg_regs.push_back(gen_expr(argument.get(), func));
+	}
+	int result_reg = alloc_register(func);
+	IRInstruction vcall(IROpcode::VCALL);
+	vcall.operands.push_back(IRValue::reg(result_reg));
+	vcall.operands.push_back(IRValue::reg(base_reg));
+	vcall.operands.push_back(IRValue::str(expr->member_name));
+	vcall.operands.push_back(IRValue::imm(arg_regs.size()));
+	for (int arg_reg : arg_regs) {
+		vcall.operands.push_back(IRValue::reg(arg_reg));
+	}
+	func.ir.instructions.push_back(vcall);
+	free_register(func, base_reg);
+	for (int reg : arg_regs) {
+		free_register(func, reg);
+	}
+	return result_reg;
 }
 
 int CodeGenerator::gen_super_init(const CallExpr* expr, FunctionContext& func) {
@@ -4370,6 +4539,16 @@ int CodeGenerator::gen_super_init(const CallExpr* expr, FunctionContext& func) {
 	}
 	const StructDecl* base = class_base(*m_current_class);
 	if (base == nullptr) {
+		if (native_base(*m_current_class) != nullptr) {
+			if (!expr->arguments.empty()) {
+				error_at("super() takes no arguments: '" + *native_base(*m_current_class) +
+					"' is constructed empty", expr);
+			}
+			int result_reg = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::LOAD_NIL, IRValue::reg(result_reg));
+			set_register_type(func, result_reg, Variant::NIL);
+			return result_reg;
+		}
 		error_at("Class '" + m_current_class->name + "' extends nothing, so it has no super()", expr);
 	}
 	const StructDecl* owner = nullptr;
@@ -5141,6 +5320,12 @@ int CodeGenerator::gen_member_read(int obj_reg, const std::string& member, Funct
 
 	// Struct field: validate and apply declared type.
 	if (const StructDecl* decl = get_register_struct(func, obj_reg)) {
+		if (find_struct_field(*decl, member) == nullptr && native_base(*decl) != nullptr) {
+			int base_reg = gen_native_base_load(obj_reg, func);
+			int result_reg = gen_vget(base_reg, member, func);
+			free_register(func, base_reg);
+			return result_reg;
+		}
 		const StructField& field = require_struct_field(*decl, member,
 			site ? site->line : 0, site ? site->column : 0);
 		int result_reg = gen_dict_get(obj_reg, member, func);
@@ -5165,9 +5350,17 @@ bool CodeGenerator::gen_member_store(int obj_reg, const std::string& member, int
 	FunctionContext& func)
 {
 	// Struct/Dictionary: element write, no write-back needed.
-	if (get_register_struct(func, obj_reg) != nullptr ||
-		get_register_type(func, obj_reg) == Variant::DICTIONARY)
-	{
+	if (const StructDecl* decl = get_register_struct(func, obj_reg)) {
+		if (find_struct_field(*decl, member) == nullptr && native_base(*decl) != nullptr) {
+			int base_reg = gen_native_base_load(obj_reg, func);
+			gen_vset(base_reg, member, value_reg, func);
+			free_register(func, base_reg);
+			return false;
+		}
+		gen_dict_set(obj_reg, member, value_reg, func);
+		return false;
+	}
+	if (get_register_type(func, obj_reg) == Variant::DICTIONARY) {
 		gen_dict_set(obj_reg, member, value_reg, func);
 		return false;
 	}

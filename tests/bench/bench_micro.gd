@@ -108,24 +108,24 @@ func container_size(n : int) -> int:
 """
 
 # One row per kernel: the work unit is what `n` counts, except for fib, whose
-# unit is a call and whose count is the size of the recursion tree. `reps` is how
-# many times the kernel is called per sample, for kernels that cannot be given a
-# large n.
+# unit is a call and whose count is the size of the recursion tree. How many
+# times a kernel is called per sample is the harness's business -- it repeats
+# each case until a sample is long enough to be worth timing -- so `n` is chosen
+# only for what the kernel should exercise.
 #
-# Loop scope release reclaims scoped variants per pass, so large n is safe now.
-# Op count kept comparable to pre-release baselines.
+# Loop scope release reclaims scoped variants per pass, so large n is safe.
 # `string iterate` n is the character count.
 const KERNELS := [
-	{"group": "int loop", "fn": "loop_int", "n": 100000, "reps": 1, "unit": "iteration"},
-	{"group": "float loop", "fn": "loop_float", "n": 100000, "reps": 1, "unit": "iteration"},
-	{"group": "recursion", "fn": "fib", "n": 20, "reps": 1, "unit": "call"},
-	{"group": "array append + index", "fn": "array_sum", "n": 20000, "reps": 1, "unit": "element"},
-	{"group": "dictionary set + get", "fn": "dict_ops", "n": 20000, "reps": 1, "unit": "op"},
-	{"group": "string build", "fn": "string_ops", "n": 2000, "reps": 5, "unit": "string"},
-	{"group": "string iterate", "fn": "string_iterate", "n": 8000, "reps": 1, "unit": "character"},
-	{"group": "untyped float math", "fn": "untyped_float", "n": 100000, "reps": 1, "unit": "operation"},
-	{"group": "untyped float compare", "fn": "untyped_float_compare", "n": 100000, "reps": 1, "unit": "comparison"},
-	{"group": "container size", "fn": "container_size", "n": 100000, "reps": 1, "unit": "size call pair"},
+	{"group": "int loop", "fn": "loop_int", "n": 100000, "unit": "iteration"},
+	{"group": "float loop", "fn": "loop_float", "n": 100000, "unit": "iteration"},
+	{"group": "recursion", "fn": "fib", "n": 20, "unit": "call"},
+	{"group": "array append + index", "fn": "array_sum", "n": 20000, "unit": "element"},
+	{"group": "dictionary set + get", "fn": "dict_ops", "n": 20000, "unit": "op"},
+	{"group": "string build", "fn": "string_ops", "n": 2000, "unit": "string"},
+	{"group": "string iterate", "fn": "string_iterate", "n": 8000, "unit": "character"},
+	{"group": "untyped float math", "fn": "untyped_float", "n": 100000, "unit": "operation"},
+	{"group": "untyped float compare", "fn": "untyped_float_compare", "n": 100000, "unit": "comparison"},
+	{"group": "container size", "fn": "container_size", "n": 100000, "unit": "size call pair"},
 ]
 
 var _elf : PackedByteArray = PackedByteArray()
@@ -156,26 +156,20 @@ func test_bench_micro_kernels():
 		var name : String = kernel["fn"]
 		var n : int = kernel["n"]
 		var group : String = kernel["group"]
-		var reps : int = kernel["reps"]
-		var per_call : int = _fib_calls(n) if name == "fib" else n
-		var ops : int = per_call * reps
+		var ops : int = _fib_calls(n) if name == "fib" else n
 
 		var guest = sandbox.vmcallv(name, n)
 		var engine = gds.call(name, n)
 		assert_eq(guest, engine, "%s should return the same value in both" % name)
 
-		var in_sandbox := func():
-			for r in range(reps):
-				sandbox.vmcallv(name, n)
-		var in_engine := func():
-			for r in range(reps):
-				gds.call(name, n)
-		_bench(group, "SafeGDScript (sandbox)", ops, in_sandbox, kernel["unit"])
-		_bench(group, "GDScript (engine)", ops, in_engine, kernel["unit"])
-		_note(group, "mode", _mode(sandbox))
+		var in_sandbox := func(): sandbox.vmcallv(name, n)
+		var in_engine := func(): gds.call(name, n)
+		_case(group, "SafeGDScript (sandbox)", ops, in_sandbox, kernel["unit"])
+		_case(group, "GDScript (engine)", ops, in_engine, kernel["unit"])
+		_measure(group)
+		_mode(sandbox)
 		_note(group, "n", n)
-		_note(group, "reps", reps)
-		_report(group, "GDScript (engine)")
+		_report(group)
 
 	sandbox.free()
 

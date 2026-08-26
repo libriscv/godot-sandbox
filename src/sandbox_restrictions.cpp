@@ -2,8 +2,13 @@
 
 #include "fast_cast.hpp"
 
+void safegdscript_class_restrictions_changed(const Sandbox &p_sandbox);
+
 void Sandbox::set_restrictions(bool enable) {
-	// It is allowed to enable restrictions during a VM call, but not to disable them.
+	if (this->is_in_vmcall()) {
+		ERR_PRINT("Cannot change restrictions during a VM call.");
+		return;
+	}
 	if (enable) {
 		if (!m_just_in_time_allowed_classes.is_valid()) {
 			m_just_in_time_allowed_classes = Callable(this, "restrictive_callback_function");
@@ -21,18 +26,13 @@ void Sandbox::set_restrictions(bool enable) {
 			m_just_in_time_allowed_resources = Callable(this, "restrictive_callback_function");
 		}
 	} else {
-		if (this->is_in_vmcall()) {
-			// Somehow a VM call is being made to disable restrictions, directly or indirectly.
-			// That is a security risk, so we will not allow it.
-			ERR_PRINT("Cannot disable restrictions during a VM call.");
-			return;
-		}
 		m_just_in_time_allowed_classes = Callable();
 		m_just_in_time_allowed_objects = Callable();
 		m_just_in_time_allowed_methods = Callable();
 		m_just_in_time_allowed_properties = Callable();
 		m_just_in_time_allowed_resources = Callable();
 	}
+	safegdscript_class_restrictions_changed(*this);
 }
 
 // clang-format off
@@ -56,10 +56,12 @@ void Sandbox::add_allowed_object(godot::Object *obj) {
 		ERR_PRINT("Cannot allow an object with no engine instance.");
 		return;
 	}
-	m_allowed_objects.insert_or_assign(id, engine_ptr(obj));
-	// Keep RefCounted entries alive. The list only stores an id and an address, neither of
-	// which owns anything, so a Resource the caller stops holding would be freed and the
-	// next object allocated could land on the same address.
+	// First entry turns checking on; same mid-call transition set_restrictions() refuses.
+	if (this->is_object_access_unrestricted() && this->is_in_vmcall()) {
+		ERR_PRINT("Cannot begin restricting objects during a VM call: allow the first object before the call.");
+		return;
+	}
+	m_allowed_objects.insert(id);
 	if (RefCounted *ref = fast_cast_to<RefCounted>(obj))
 		m_allowed_object_refs.insert_or_assign(id, Ref<RefCounted>(ref));
 }
@@ -82,22 +84,10 @@ void Sandbox::clear_allowed_objects() {
 	m_allowed_object_refs.clear();
 }
 
-godot::Object *Sandbox::get_explicitly_allowed_object(uintptr_t engine_object) const {
-	if (engine_object == 0)
+godot::Object *Sandbox::get_explicitly_allowed_object(uint64_t object_id) const {
+	if (!this->is_allowed_object_id(object_id))
 		return nullptr;
-	for (const auto &[id, ptr] : m_allowed_objects) {
-		if (ptr != engine_object)
-			continue;
-		// The address matched, but an address is only as good as the object that still
-		// occupies it. Ask the engine for the object the id names: it answers null once
-		// the object is gone, without anyone having to dereference a stale pointer. Keep
-		// looking on a miss -- a freed entry can share its address with a live one.
-		GDExtensionObjectPtr live = internal::gdextension_interface_object_get_instance_from_id(id);
-		if (live == nullptr || uintptr_t(live) != engine_object)
-			continue;
-		return internal::get_object_instance_binding(static_cast<GodotObject *>(live));
-	}
-	return nullptr;
+	return this->resolve_live_object(object_id);
 }
 
 void Sandbox::set_object_allowed_callback(const Callable &callback) {
@@ -114,6 +104,7 @@ void Sandbox::set_class_allowed_callback(const Callable &callback) {
 		return;
 	}
 	m_just_in_time_allowed_classes = callback;
+	safegdscript_class_restrictions_changed(*this);
 }
 
 bool Sandbox::is_allowed_class(const String &name) const {
@@ -123,6 +114,11 @@ bool Sandbox::is_allowed_class(const String &name) const {
 	}
 	// If the callable is not valid, allow all classes
 	return true;
+}
+
+bool Sandbox::is_class_access_restricted() const {
+	return m_just_in_time_allowed_classes.callable ==
+			Callable(const_cast<Sandbox *>(this), "restrictive_callback_function");
 }
 
 void Sandbox::set_resource_allowed_callback(const Callable &callback) {

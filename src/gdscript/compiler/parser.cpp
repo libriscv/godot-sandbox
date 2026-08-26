@@ -46,11 +46,23 @@ Program Parser::parse() {
 		bool is_static = match(TokenType::STATIC);
 
 		if (check(TokenType::EXTENDS)) {
-			advance();
-			if (!match(TokenType::STRING)) {
-				consume(TokenType::IDENTIFIER, "Expected a class name or a path after 'extends'");
+			const Token extends_token = advance();
+			if (!program.base_class.empty()) {
+				error("A script extends one base", extends_token.line, extends_token.column);
+			}
+			program.base_class_line = extends_token.line;
+			program.base_class_column = extends_token.column;
+			if (check(TokenType::STRING)) {
+				const Token path = advance();
+				program.base_class = std::get<std::string>(path.value);
+				program.base_is_path = true;
+			} else {
+				program.base_class = consume(TokenType::IDENTIFIER,
+					"Expected a class name or a path after 'extends'").lexeme;
 				while (match(TokenType::DOT)) {
-					consume(TokenType::IDENTIFIER, "Expected a class name after '.'");
+					program.base_class += '.';
+					program.base_class += consume(TokenType::IDENTIFIER,
+						"Expected a class name after '.'").lexeme;
 				}
 			}
 			skip_newlines();
@@ -117,9 +129,15 @@ Program Parser::parse() {
 		} else if (check(TokenType::ENUM)) {
 			program.enums.push_back(parse_enum());
 		} else if (check(TokenType::CLASS_NAME)) {
-			// Project fact, not code; parsed and dropped like `extends`.
-			advance();
-			consume(TokenType::IDENTIFIER, "Expected a class name after 'class_name'");
+			const Token class_name_token = advance();
+			if (!program.class_name.empty()) {
+				error("A script declares one class_name",
+					class_name_token.line, class_name_token.column);
+			}
+			program.class_name_line = class_name_token.line;
+			program.class_name_column = class_name_token.column;
+			program.class_name = consume(TokenType::IDENTIFIER,
+				"Expected a class name after 'class_name'").lexeme;
 			skip_newlines();
 		} else if (check(TokenType::FUNC)) {
 			program.functions.push_back(parse_function());

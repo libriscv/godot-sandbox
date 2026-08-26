@@ -9579,6 +9579,28 @@ func by_load():
 
 	s.queue_free()
 
+func test_sgd_load_is_decided_by_the_resource_callback():
+	var gdscript_code = """
+func by_load():
+	return load("res://icon.svg") != null
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	s.restrictions = true
+	var before := s.get_exceptions()
+	s.vmcallv("by_load")
+	assert_eq(s.get_exceptions(), before + 1, "a restricted Sandbox refuses the path")
+	assert_engine_error("Resource path is not allowed: res://icon.svg")
+	assert_engine_error("Exception: Resource path is not allowed: res://icon.svg")
+
+	s.set_resource_allowed_callback(func(_sandbox, path): return path == "res://icon.svg")
+	assert_eq(s.vmcallv("by_load"), true, "an admitted path still loads")
+	assert_eq(s.get_exceptions(), before + 1, "and raises nothing")
+
+	s.queue_free()
+
 func test_sgd_an_untyped_global_may_change_type():
 	var gdscript_code = """
 var g = null
@@ -10122,4 +10144,339 @@ func a_node_call_that_works():
 	assert_eq(s.vmcallv("a_node_call_that_works"), "Child")
 	assert_eq(s.get_exceptions(), before_ok, "a valid call is not affected")
 
+	s.queue_free()
+
+const CLASS_KEYWORD_SOURCE = """
+class_name TurretScript
+extends Node2D
+
+func answer():
+	return 42
+"""
+
+func _class_keyword_script() -> Script:
+	var path := "user://temp_class_keywords.sgd"
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(CLASS_KEYWORD_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the script should load as a SafeGDScript resource")
+	return script
+
+func test_sgd_class_name_is_the_global_name():
+	var script := _class_keyword_script()
+	if script == null:
+		return
+	assert_eq(String(script.get_global_name()), "TurretScript",
+		"class_name should be the script's global name")
+
+	var plain := SafeGDScript.new()
+	plain.set_source_code("func answer():\n\treturn 1\n")
+	assert_eq(plain.get_compile_error(), "", "a script without class_name should compile")
+	assert_ne(String(plain.get_global_name()), "TurretScript",
+		"a script that declares no class_name should not borrow one")
+
+func test_sgd_extends_names_the_instance_base_type():
+	var script := _class_keyword_script()
+	if script == null:
+		return
+	assert_eq(String(script.get_instance_base_type()), "Node2D",
+		"'extends Node2D' should be the type Godot checks an owner against")
+
+	var plain := SafeGDScript.new()
+	plain.set_source_code("func answer():\n\treturn 1\n")
+	assert_eq(String(plain.get_instance_base_type()), "Sandbox",
+		"a script with no 'extends' keeps the Sandbox base type")
+
+	var node := Node2D.new()
+	node.set_script(script)
+	node.set("instructions_max", 4000000)
+	assert_eq(node.call("answer"), 42, "the program should run as it did before")
+	node.free()
+
+func test_sgd_a_class_can_extend_an_engine_class():
+	var gdscript_code = """
+class Marker extends Node2D:
+	var hits = 0
+
+	func hit(by):
+		hits += by
+		position = Vector2(hits, hits * 2)
+		set_name("marker")
+		return [hits, position.x, str(get_name())]
+
+func run():
+	var m = Marker.new()
+	m.hit(1)
+	var out = m.hit(2)
+	out.append(m.hits)
+	m.free()
+	return out
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var before := s.get_exceptions()
+	var out = s.vmcallv("run")
+	assert_eq(s.get_exceptions(), before, "reaching the base should not raise")
+	assert_eq(out, [3, 3.0, "marker", 3],
+		"the class's own field and the base's property and method should both work")
+
+	s.queue_free()
+
+func test_sgd_a_class_method_falls_through_to_its_base():
+	var gdscript_code = """
+class Timer2 extends Node2D:
+	func describe():
+		return "%s/%s/%.1f" % [get_class(), label(), rotation]
+
+	func label():
+		return "mine"
+
+func run():
+	var t = Timer2.new()
+	var out = t.describe()
+	t.free()
+	return out
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("run"), "Node2D/mine/0.0",
+		"a declared method wins; an undeclared one is the base's")
+	assert_eq(s.get_exceptions(), before, "neither call should raise")
+
+	s.queue_free()
+
+func test_sgd_super_reaches_the_engine_base():
+	var gdscript_code = """
+class Named extends Node2D:
+	func get_class():
+		return "wrapped:" + super.get_class()
+
+func run():
+	var n = Named.new()
+	var out = n.get_class()
+	n.free()
+	return out
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("run"), "wrapped:Node2D",
+		"super should reach the base rather than recurse into the override")
+	assert_eq(s.get_exceptions(), before, "the super call should not raise")
+
+	s.queue_free()
+
+func test_sgd_the_base_object_is_a_real_engine_object():
+	var gdscript_code = """
+class Marker extends Node2D:
+	var hits = 0
+
+func run():
+	var m = Marker.new()
+	m.hits = 7
+	return m
+
+func inspect(m : Dictionary):
+	return [m["@base"].get_class(), m["hits"]]
+"""
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var before := s.get_exceptions()
+	var instance = s.vmcallv("run")
+	assert_typeof(instance, TYPE_DICTIONARY, "a class instance crosses as a Dictionary")
+	assert_eq(instance.get("hits"), 7, "a declared field is one key of it")
+
+	var base = instance.get("@base")
+	assert_true(base is Node2D, "the hidden key holds the engine object it extends")
+	assert_eq(s.get_exceptions(), before, "building and returning it should not raise")
+
+	assert_eq(s.vmcallv("inspect", instance), ["Node2D", 7],
+		"the instance survives a round trip through Godot")
+	assert_eq(s.get_exceptions(), before, "the round trip should not raise")
+
+	if base != null:
+		base.free()
+	s.queue_free()
+
+func _restricted_compile_error(source: String) -> String:
+	var script := SafeGDScript.new()
+	script.set_source_code("func __bootstrap():\n\tpass\n")
+	var node := Node.new()
+	node.set_script(script)
+	node.set("restrictions", true)
+	script.set_source_code(source)
+	var message: String = script.get_compile_error()
+	node.free()
+	return message
+
+func test_sgd_restrictions_refuse_the_class_keywords():
+	var refused := [
+		"class_name Turret\nfunc answer():\n\treturn 1\n",
+		"extends Node2D\nfunc answer():\n\treturn 1\n",
+		"class C extends Node2D:\n\tvar x = 1\nfunc answer():\n\treturn 1\n",
+	]
+	for source in refused:
+		var message := _restricted_compile_error(source)
+		assert_true(message.contains("allows engine classes"),
+			"a restricted Sandbox should refuse '%s', got: %s" % [source.split("\n")[0], message])
+		assert_engine_error("SafeGDScript: : " + message)
+
+	for source in refused:
+		var script := SafeGDScript.new()
+		script.set_source_code(source)
+		assert_eq(script.get_compile_error(), "",
+			"an unrestricted Sandbox should accept: " + source.split("\n")[0])
+
+func test_sgd_restrictions_leave_a_local_class_alone():
+	var source := """
+class Counter:
+	var n = 0
+	func bump():
+		n += 1
+		return n
+
+func answer():
+	var c = Counter.new()
+	c.bump()
+	return c.bump()
+"""
+	assert_eq(_restricted_compile_error(source), "",
+		"a class extending one declared in the file should still compile")
+
+func test_sgd_restricting_after_the_build_rebuilds_the_program():
+	var script := SafeGDScript.new()
+	script.set_source_code("class_name Turret\nfunc answer():\n\treturn 1\n")
+	assert_eq(script.get_compile_error(), "",
+		"nothing refuses a script that has no Sandbox yet")
+
+	var node := Node.new()
+	node.set_script(script)
+	node.set("restrictions", true)
+	var message: String = script.get_compile_error()
+	assert_true(message.contains("allows engine classes"),
+		"restricting the Sandbox should rebuild and refuse class_name, got: " + message)
+	assert_engine_error("SafeGDScript: : " + message)
+
+	node.set("restrictions", false)
+	assert_eq(script.get_compile_error(), "",
+		"lifting the restriction should build the program once more")
+	assert_eq(node.call("answer"), 1, "and the rebuilt program runs")
+	node.free()
+
+func test_sgd_a_node_member_survives_the_call_that_set_it():
+	var source := """
+var target: Node
+
+func remember(n):
+	target = n
+	return true
+
+func recall():
+	return str(target.get_name())
+
+func forget():
+	target = null
+	return true
+"""
+	var s = _compile_and_load(source, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var n := Node.new()
+	n.name = "Kept"
+	add_child(n)
+
+	var before := s.get_exceptions()
+	s.vmcallv("remember", n)
+	assert_eq(s.vmcallv("recall"), "Kept", "a node kept in a member resolves in a later call")
+	assert_eq(s.get_exceptions(), before, "reaching it should not raise")
+
+	s.vmcallv("forget")
+	n.queue_free()
+	s.queue_free()
+
+
+func test_sgd_a_refcounted_member_is_kept_alive():
+	var source := """
+var res: Resource
+
+func make():
+	res = Resource.new()
+	res.resource_name = "kept"
+	return res.get_instance_id()
+
+func recall():
+	return str(res.resource_name)
+
+func forget():
+	res = null
+	return true
+"""
+	var s = _compile_and_load(source, 4000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var before := s.get_exceptions()
+	var id = s.vmcallv("make")
+	assert_true(id is int and id != 0, "the script should hand back an instance id")
+
+	# Must be a second call: the producing call's own ref keeps it alive regardless.
+	assert_eq(s.vmcallv("recall"), "kept",
+		"a RefCounted held only by a member is still reachable in a later call")
+	assert_true(is_instance_id_valid(id),
+		"and is alive because the host owns a reference for the member")
+	assert_eq(s.get_exceptions(), before, "reaching it should not raise")
+
+	s.vmcallv("forget")
+	assert_false(is_instance_id_valid(id),
+		"assigning the member releases what it named")
+
+	s.queue_free()
+
+
+func test_sgd_touching_more_objects_than_references_max():
+	var source := """
+func count(node):
+	var n = 0
+	for c in node.get_children():
+		n += 1
+	return n
+"""
+	var s = _compile_and_load(source, 40000000)
+	if s == null:
+		return
+	add_child(s)
+
+	var parent := Node.new()
+	add_child(parent)
+	var children := 250
+	assert_true(children > s.references_max,
+		"the test only means something above the cap")
+	for i in range(children):
+		var c := Node.new()
+		c.name = "Child%d" % i
+		parent.add_child(c)
+
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("count", parent), children,
+		"every child should be reachable, not just the first references_max")
+	assert_eq(s.get_exceptions(), before, "walking the children should not raise")
+
+	parent.queue_free()
 	s.queue_free()

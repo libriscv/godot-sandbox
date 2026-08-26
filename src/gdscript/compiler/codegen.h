@@ -18,6 +18,8 @@ public:
 
 	IRProgram generate(const Program& program);
 
+	void set_restricted(bool restricted) { m_restricted = restricted; }
+
 private:
 	// Per-function state. Value type: lives on the stack for one function's
 	// lowering, so new fields are automatically fresh. Program-wide state
@@ -222,6 +224,8 @@ private:
 
 	const StructDecl* find_struct(const std::string& name) const;
 	const StructDecl* class_base(const StructDecl& decl) const;
+	const std::string* native_base(const StructDecl& decl) const;
+	int gen_native_base_load(int self_reg, FunctionContext& func);
 	std::vector<const StructField*> struct_fields(const StructDecl& decl) const;
 	const StructField* find_struct_field(const StructDecl& decl, const std::string& name) const;
 	int struct_field_index(const StructDecl& decl, const std::string& name) const;
@@ -276,7 +280,9 @@ private:
 		int line, int column) const;
 
 	std::unordered_map<std::string, const StructDecl*> m_structs;
+	std::unordered_map<const StructDecl*, std::string> m_native_bases;
 	const StructDecl* m_current_class = nullptr;
+	bool m_restricted = false;
 	std::unordered_map<std::string, const EnumDecl*> m_enums;
 	std::unordered_map<std::string, int64_t> m_enum_members;
 	std::unordered_map<std::string, const SignalDecl*> m_signals;
@@ -364,6 +370,10 @@ private:
 	std::vector<IRInstruction::TypeHint> m_global_types;
 	// Struct per global, for field-name checking on load.
 	std::vector<const StructDecl*> m_global_structs;
+	std::vector<bool> m_global_holds_object;
+
+	bool type_hint_names_a_class(const std::string& type_hint) const;
+	void mark_global_holds_object(int64_t global_idx);
 
 	std::vector<std::string> m_global_setters;
 	std::vector<std::string> m_global_getters;

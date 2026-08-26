@@ -534,9 +534,6 @@ PUBLIC Variant test_refcounted_in_array(Object maker) {
 	return first.method_call("get_meta", "marker");
 }
 
-// An Object handle the guest keeps is no longer scoped once the call that produced it
-// ends. Reaching it again is only allowed for an object the host put on the
-// allowed-objects list -- an address the guest remembered is not proof of anything.
 static Object stored_object{ uint64_t(0) };
 
 PUBLIC Variant store_object(Object obj) {

@@ -91,3 +91,33 @@ inline Variant gdscript_breakpoints_to_variant() {
 	}
 	return PackedInt32Array(out);
 }
+
+inline std::string &gdscript_last_class_name() {
+	static std::string class_name;
+	return class_name;
+}
+
+inline std::string &gdscript_last_base_class() {
+	static std::string base_class;
+	return base_class;
+}
+
+inline bool &gdscript_last_base_is_path() {
+	static bool is_path = false;
+	return is_path;
+}
+
+inline void gdscript_remember_script_class(const gdscript::Compiler &compiler) {
+	gdscript_last_class_name() = compiler.get_class_name();
+	gdscript_last_base_class() = compiler.get_base_class();
+	gdscript_last_base_is_path() = compiler.base_is_path();
+}
+
+inline bool &gdscript_restricted() {
+	static bool restricted = false;
+	return restricted;
+}
+
+inline void gdscript_apply_restrictions(gdscript::CompilerOptions &options) {
+	options.restricted = gdscript_restricted();
+}

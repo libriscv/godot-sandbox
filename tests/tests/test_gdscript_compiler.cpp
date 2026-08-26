@@ -18,6 +18,7 @@ PUBLIC Variant compile_to_elf(String code)
 	options.dump_ast = false;
 	options.dump_ir = false;
 	options.output_elf = true;
+	gdscript_apply_restrictions(options);
 
 	Compiler compiler;
 	auto elf_data = compiler.compile(code.utf8(), options);
@@ -40,6 +41,8 @@ PUBLIC Variant compile(String code)
 	options.dump_ir = false;
 	options.output_elf = true;
 
+	gdscript_apply_restrictions(options);
+
 	Compiler compiler;
 	auto elf_data = compiler.compile(code.utf8(), options);
 	// ELF carries symbols but not signatures, line tables, or breakpoint info.
@@ -48,6 +51,7 @@ PUBLIC Variant compile(String code)
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
+	gdscript_remember_script_class(compiler);
 
 	if (elf_data.empty()) {
 		print("ERROR: Compilation failed: ", compiler.get_error());
@@ -72,6 +76,8 @@ PUBLIC Variant compile_profiled(String code)
 	// rdtime that answers in nanoseconds before the program runs.
 	options.profiling_clock = ProfilingClock::TIME;
 
+	gdscript_apply_restrictions(options);
+
 	Compiler compiler;
 	auto elf_data = compiler.compile(code.utf8(), options);
 	gdscript_remember_signatures(compiler);
@@ -79,6 +85,7 @@ PUBLIC Variant compile_profiled(String code)
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
+	gdscript_remember_script_class(compiler);
 
 	if (elf_data.empty()) {
 		last_error = String(compiler.get_error());
@@ -102,6 +109,8 @@ PUBLIC Variant compile_debug(String code, PackedInt32Array breakpoints)
 		}
 	}
 
+	gdscript_apply_restrictions(options);
+
 	Compiler compiler;
 	auto elf_data = compiler.compile(code.utf8(), options);
 	gdscript_remember_signatures(compiler);
@@ -109,6 +118,7 @@ PUBLIC Variant compile_debug(String code, PackedInt32Array breakpoints)
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
+	gdscript_remember_script_class(compiler);
 
 	if (elf_data.empty()) {
 		last_error = String(compiler.get_error());
@@ -131,6 +141,7 @@ PUBLIC Variant validate(String code)
 {
 	CompilerOptions options;
 	options.output_elf = false;
+	gdscript_apply_restrictions(options);
 
 	Compiler compiler;
 	// With output_elf off a successful compile also returns nothing, so the
@@ -214,4 +225,25 @@ PUBLIC Variant scope_release_keeps_a_mutated_argument(String s, int passes)
 		sys_vscope(int(Scope_Op::RELEASE), mark, nullptr, 0, nullptr, 0, 0);
 	}
 	return s.size();
+}
+
+PUBLIC Variant set_restricted(bool restricted)
+{
+	gdscript_restricted() = restricted;
+	return Nil;
+}
+
+PUBLIC Variant get_script_class_name()
+{
+	return String(gdscript_last_class_name());
+}
+
+PUBLIC Variant get_script_base_class()
+{
+	return String(gdscript_last_base_class());
+}
+
+PUBLIC Variant get_script_base_is_path()
+{
+	return gdscript_last_base_is_path();
 }

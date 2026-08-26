@@ -797,6 +797,9 @@ bool validate_with_compiler(const String &p_source, ValidationResult &r_result) 
 		return false;
 	}
 
+	// Sticky flag; reset so validation doesn't inherit a prior compile's restrictions.
+	SafeGDScript::set_compiler_restricted(false);
+
 	GDExtensionCallError error;
 	Variant source = p_source;
 	const Variant *args[] = { &source };

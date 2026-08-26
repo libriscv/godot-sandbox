@@ -119,8 +119,8 @@ func test_bench_cpu_dispatch():
 
 	var in_sandbox := func(): sandbox.vmcallv("run", program, fuel)
 	var in_engine := func(): gds.call("run", program, fuel)
-	_bench("logic CPU dispatch", "SafeGDScript (sandbox)", ops, in_sandbox, "emulated instr")
-	_bench("logic CPU dispatch", "GDScript (engine)", ops, in_engine, "emulated instr")
+	_case("logic CPU dispatch", "SafeGDScript (sandbox)", ops, in_sandbox, "emulated instr")
+	_case("logic CPU dispatch", "GDScript (engine)", ops, in_engine, "emulated instr")
 
 	# The same guest through the .sgd loader: a Node with the script attached,
 	# which is how the file is reached in a project, and which adds the script
@@ -131,11 +131,11 @@ func test_bench_cpu_dispatch():
 	assert_eq(node.call("run", program, fuel), expected,
 		"the .sgd loader should reach the same guest")
 	var in_script := func(): node.call("run", program, fuel)
-	_bench("logic CPU dispatch", "SafeGDScript (.sgd script)", ops, in_script, "emulated instr")
+	_case("logic CPU dispatch", "SafeGDScript (.sgd script)", ops, in_script, "emulated instr")
 
-	_note("logic CPU dispatch", "mode", _mode(sandbox))
+	_measure("logic CPU dispatch")
 	print("guest execution mode: %s" % _mode(sandbox))
-	_report("logic CPU dispatch", "GDScript (engine)")
+	_report("logic CPU dispatch")
 
 	node.free()
 	sandbox.free()
@@ -174,12 +174,13 @@ func test_bench_cpu_single_step():
 		sandbox.vmcallv("reset", program)
 		sandbox.vmcallv("step_until_halted", steps)
 
-	_bench("single-instruction step", "SafeGDScript (sandbox)", steps, stepped_in_sandbox, "emulated instr")
-	_bench("single-instruction step", "GDScript (engine)", steps, stepped_in_engine, "emulated instr")
-	_bench("single-instruction step", "SafeGDScript (loop in guest)", steps, looped_in_sandbox, "emulated instr")
+	_case("single-instruction step", "SafeGDScript (sandbox)", steps, stepped_in_sandbox, "emulated instr")
+	_case("single-instruction step", "GDScript (engine)", steps, stepped_in_engine, "emulated instr")
+	_case("single-instruction step", "SafeGDScript (loop in guest)", steps, looped_in_sandbox, "emulated instr")
 
-	_note("single-instruction step", "mode", _mode(sandbox))
-	_report("single-instruction step", "GDScript (engine)")
+	_measure("single-instruction step")
+	_mode(sandbox)
+	_report("single-instruction step")
 
 	sandbox.free()
 
@@ -212,12 +213,13 @@ func test_bench_cpu_call_overhead():
 		for i in range(calls):
 			bound.call(3, 1, 2, 7)
 
-	_bench("call overhead", "SafeGDScript (sandbox)", calls, via_vmcallv, "call")
-	_bench("call overhead", "GDScript (engine)", calls, via_gdscript, "call")
-	_bench("call overhead", "SafeGDScript (vmcallable)", calls, via_callable, "call")
+	_case("call overhead", "SafeGDScript (sandbox)", calls, via_vmcallv, "call")
+	_case("call overhead", "GDScript (engine)", calls, via_gdscript, "call")
+	_case("call overhead", "SafeGDScript (vmcallable)", calls, via_callable, "call")
 
-	_note("call overhead", "mode", _mode(sandbox))
-	_report("call overhead", "GDScript (engine)")
+	_measure("call overhead")
+	_mode(sandbox)
+	_report("call overhead")
 
 	sandbox.free()
 

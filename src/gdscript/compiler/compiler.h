@@ -26,6 +26,7 @@ struct CompilerOptions {
 	bool debug_info = false;
 	// 1-based lines to break on. Non-empty implies debug_info.
 	std::vector<uint32_t> breakpoint_lines;
+	bool restricted = false;
 };
 
 // Structured error for editor underlines; the formatted string is in get_error().
@@ -52,6 +53,9 @@ public:
 	const std::vector<FunctionSignature> &get_signal_signatures() const { return m_signals; }
 	const LineTable &get_line_table() const { return m_line_table; }
 	bool is_tool() const { return m_is_tool; }
+	const std::string &get_class_name() const { return m_class_name; }
+	const std::string &get_base_class() const { return m_base_class; }
+	bool base_is_path() const { return m_base_is_path; }
 	// Subset of breakpoint_lines that got a stop emitted.
 	const std::vector<uint32_t> &get_installed_breakpoints() const { return m_installed_breakpoints; }
 
@@ -62,6 +66,9 @@ private:
 	std::vector<FunctionSignature> m_signals;
 	LineTable m_line_table;
 	bool m_is_tool = false;
+	std::string m_class_name;
+	std::string m_base_class;
+	bool m_base_is_path = false;
 	std::vector<uint32_t> m_installed_breakpoints;
 };
 

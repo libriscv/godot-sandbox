@@ -155,18 +155,11 @@ void Sandbox::promote_frame_handles(Coroutine &co) {
 		}
 
 		if (gv->type == Variant::OBJECT) {
-			// Preserve as ObjectID; addresses can be reused across calls.
-			const uintptr_t handle = uintptr_t(gv->v.i);
-			godot::Object *obj = nullptr;
-			if (CurrentState::ScopedObject *so = this->find_scoped_object(handle)) {
-				obj = Sandbox::resolve_scoped_object(*so);
-			}
-			const uint64_t object_id = Sandbox::engine_object_id(obj);
-			gv->v.i = 0;
-			if (object_id == 0) {
-				// Not recorded in objects, so restore never revisits it: NIL rather than
-				// an OBJECT tag on handle 0.
+			const uint64_t object_id = Sandbox::object_id_from_handle(uint64_t(gv->v.i));
+			godot::Object *obj = this->resolve_live_object(object_id);
+			if (obj == nullptr) {
 				gv->type = Variant::NIL;
+				gv->v.i = 0;
 				continue;
 			}
 			objects.push_back(Coroutine::FrameObject{ uint32_t(offset), object_id });
@@ -311,7 +304,7 @@ int32_t Sandbox::coroutine_restore(gaddr_t frame_base, uint32_t frame_size) {
 		throw std::runtime_error("await: coroutine frame size mismatch");
 	}
 
-	// Re-resolve ObjectIDs into this call's scoped objects; freed objects become null.
+	// Re-scope suspended objects into this call; freed objects become null.
 	for (const Coroutine::FrameObject &fo : co->objects) {
 		GuestVariant *gv = frame_slot(co->frame, fo.offset);
 		GDExtensionObjectPtr live = internal::gdextension_interface_object_get_instance_from_id(fo.object_id);
