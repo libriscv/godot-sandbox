@@ -548,6 +548,12 @@ PUBLIC Variant use_stored_object() {
 	return stored_object.get_class();
 }
 
+PUBLIC Variant granted_mid_call(Callable grant) {
+	Object obj = grant.call();
+	stored_object = obj;
+	return obj.get_class();
+}
+
 PUBLIC Variant access_a_parent(Node n) {
 	Node p = n.get_parent();
 	return p;

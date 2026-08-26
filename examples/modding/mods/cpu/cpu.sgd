@@ -1,7 +1,5 @@
-# A register machine, as a mod.
-#
-# Compiled to RISC-V at load time, runs in a sandbox with all host access
-# denied. Reaches the game only through the Dictionary from mod_init().
+# Register-machine mod. The loader compiles it to RISC-V and provides its game
+# access through the Dictionary passed to mod_init().
 #
 # Instruction encoding (one 32-bit word):
 #   bits  0-7   opcode
@@ -39,9 +37,11 @@ var pc : int = 0
 var cycles : int = 0
 var frames : int = 0
 
-# A Dictionary containing the API that we are allowed to use.
+# Read-only API from the game.
 var api : Dictionary = {}
 var cycles_per_frame : int = 1000
+
+var marker = null
 
 func encode(op : int, dst : int, src : int, imm : int) -> int:
 	return op | (dst << 8) | (src << 16) | (imm << 24)
@@ -160,7 +160,14 @@ func mod_init(granted : Dictionary) -> void:
 	api = granted
 	cycles_per_frame = api["cycles_per_frame"]
 	program = build_program()
-	api["log"].call("register machine ready, " + str(program.size()) + " words")
+	marker = api["spawn"].call("cpu")
+	var icon = api["load"].call("icon.svg")
+	api["log"].call("register machine ready, " + str(program.size()) + " words, icon " + str(icon != null))
+
+func mod_deinit() -> void:
+	if marker != null:
+		api["despawn"].call(marker)
+		marker = null
 
 func _physics_process(_delta):
 	if program.size() == 0:
@@ -170,6 +177,9 @@ func _physics_process(_delta):
 	api["report"].call("cycles", cycles)
 	api["report"].call("pc", pc)
 	api["report"].call("acc", reg[7])
+	if marker != null:
+		marker.position = Vector2(16 + (reg[7] & 255), 64)
+		marker.text = "r7=" + str(reg[7])
 	if frames % 120 == 0:
 		api["log"].call("frame " + str(frames) + " cycles " + str(cycles) + " pc " + str(pc) + " r7 " + str(reg[7]))
 

@@ -2389,6 +2389,10 @@ bool Sandbox::is_sandbox_function(const StringName &p_function) const {
 		"get_accumulated_startup_time",
 		"get_global_instance_count",
 
+		"add_allowed_object",
+		"remove_allowed_object",
+		"clear_allowed_objects",
+
 		"set_object_allowed_callback",
 		"is_allowed_object",
 		"set_class_allowed_callback",

@@ -1,0 +1,7 @@
+var api : Dictionary = {}
+
+func mod_init(a : Dictionary) -> void:
+	api = a
+
+func _physics_process(_delta):
+	api["no_such_function"].call("tick")

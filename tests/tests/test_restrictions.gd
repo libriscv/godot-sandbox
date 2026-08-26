@@ -247,3 +247,69 @@ func test_object_handle_kept_across_calls():
 
 	n.queue_free()
 	s.queue_free()
+
+
+func test_a_grant_during_a_vm_call_takes_effect():
+	var s = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+	assert_true(s.has_function("granted_mid_call"), "granted_mid_call should exist")
+
+	var anchor = Node.new()
+	s.add_allowed_object(anchor)
+
+	var granted = Node.new()
+	granted.name = "Granted"
+	var exceptions = s.get_exceptions()
+	var grant := func():
+		s.add_allowed_object(granted)
+		return granted
+	assert_eq(s.vmcall("granted_mid_call", grant), "Node", "a mid-call grant crosses back to the guest")
+	assert_eq(s.get_exceptions(), exceptions)
+
+	assert_eq(s.vmcall("use_stored_object"), "Node", "the granted object resolves in a later call")
+	assert_eq(s.get_exceptions(), exceptions)
+
+	granted.queue_free()
+	anchor.queue_free()
+	s.queue_free()
+
+
+func test_without_the_grant_the_object_does_not_cross():
+	var s = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	var anchor = Node.new()
+	s.add_allowed_object(anchor)
+
+	var ungranted = Node.new()
+	ungranted.name = "Ungranted"
+	var exceptions = s.get_exceptions()
+	s.vmcall("granted_mid_call", func(): return ungranted)
+	assert_engine_error("Exception: GuestVariant::create(): Object is not allowed")
+	assert_true(s.get_exceptions() > exceptions, "an ungranted object must not cross")
+
+	ungranted.queue_free()
+	anchor.queue_free()
+	s.queue_free()
+
+
+func test_a_grant_from_inside_the_allow_callback():
+	var s = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+
+	var n = Node.new()
+	n.name = "Node"
+	s.add_child(n)
+	s.set_object_allowed_callback(func(sandbox, obj):
+		sandbox.add_allowed_object(obj)
+		return true)
+
+	var exceptions = s.get_exceptions()
+	s.vmcall("access_a_parent", n)
+	assert_eq(s.get_exceptions(), exceptions, "granting from inside the allow callback is safe")
+
+	s.set_object_allowed_callback(Callable())
+	s.vmcall("access_a_parent", n)
+	assert_eq(s.get_exceptions(), exceptions, "the promoted entry outlives the callback")
+
+	s.queue_free()

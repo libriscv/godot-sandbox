@@ -39,6 +39,19 @@ func try_load_resource() -> String:
 	var res = load("res://project.godot")
 	return "loaded a project resource: " + str(res)
 
+func try_load_another_mods_file() -> String:
+	var res = load("res://mods/cpu/icon.svg")
+	return "loaded another mod's file: " + str(res)
+
+func try_write_ungranted_property() -> String:
+	var m = api["spawn"].call("breakout")
+	m.name = "pwned"
+	return "wrote a property the policy does not allow"
+
+func try_read_ungranted_property() -> String:
+	var m = api["spawn"].call("breakout")
+	return "read a property the policy does not allow: " + str(m.tooltip_text)
+
 func try_smuggle_into_api() -> String:
 	api["smuggled"] = "payload"
 	return "added a key to the API the host is holding"

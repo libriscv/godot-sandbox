@@ -111,16 +111,16 @@ For maximum performance, you can also write sandboxed programs in C++ or Rust. T
 - Enable [full binary translation](https://libriscv.no/docs/host_langs/godot_integration/godot_docs/bintr) for maximum performance on all platforms (including locked down iOS, Web, Switch etc.)
 - JIT builds are available in the Releases section for Windows, macOS, Android and Linux
 
-```
 Using typed variables in SafeGDScript will help the compiler optimize:
 
---- int loop ---
-case                               ns/iteration     vs ref    vs base
-SafeGDScript (sandbox)                      3.5     10.21x      -0.3%
-GDScript (engine)                          35.7      1.00x      +7.8%
+```
+--- logic CPU dispatch ---
+case                               ns/emulated instr     vs ref    vs base
+SafeGDScript (sandbox)                         115.4      5.36x      -4.1%
+GDScript (engine)                              618.0      1.00x      -7.2%
 ```
 
-In this specific case we gained 10x over GDScript by making our loop variable an integer.
+In the modding example that implements a virtual CPU, we gained 5x over GDScript by using typed variables.
 
 ## Usage
 

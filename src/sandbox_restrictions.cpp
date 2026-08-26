@@ -45,11 +45,8 @@ bool Sandbox::get_restrictions() const {
 }
 // clang-format on
 
+// Permitted mid-vmcall: monotone, host-only, no iterator held across re-entrance.
 void Sandbox::add_allowed_object(godot::Object *obj) {
-	if (is_in_vmcall()) {
-		ERR_PRINT("Cannot add allowed objects during a VM call.");
-		return;
-	}
 	if (obj == nullptr) {
 		ERR_PRINT("Cannot allow a null object.");
 		return;
@@ -67,6 +64,7 @@ void Sandbox::add_allowed_object(godot::Object *obj) {
 		m_allowed_object_refs.insert_or_assign(id, Ref<RefCounted>(ref));
 }
 
+// Permitted mid-vmcall; scoped handles remain valid for the rest of the call.
 void Sandbox::remove_allowed_object(godot::Object *obj) {
 	const uint64_t id = engine_object_id(obj);
 	if (id == 0)
@@ -76,8 +74,6 @@ void Sandbox::remove_allowed_object(godot::Object *obj) {
 }
 
 void Sandbox::clear_allowed_objects() {
-	// Clearing all allowed objects effectively disables the allowed objects list.
-	// This is not allowed during a VM call.
 	if (is_in_vmcall()) {
 		ERR_PRINT("Cannot clear allowed objects during a VM call.");
 		return;
