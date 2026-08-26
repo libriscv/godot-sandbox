@@ -5141,8 +5141,7 @@ bool RISCVCodeGen::global_call_may_ecall(GlobalFn fn) {
 }
 
 // A syscall whose whole answer arrives in a0 leaves nothing behind on the host:
-// no scoped variant is created, so nothing accumulates across a loop and the
-// scope has nothing to release. Everything else -- a Variant result, a VCALL, a
+// no scoped variant is created. Everything else -- a Variant result, a VCALL, a
 // guest call -- is assumed to allocate.
 static bool syscall_answers_in_register(const IRInstruction& instr) {
 	if (instr.opcode != IROpcode::CALL_SYSCALL || instr.operands.size() < 2 ||
@@ -5166,8 +5165,19 @@ static bool syscall_answers_in_register(const IRInstruction& instr) {
 	}
 }
 
+static bool leaves_nothing_scoped(const IRInstruction& instr) {
+	switch (instr.opcode) {
+		case IROpcode::ARRAY_SET:
+		case IROpcode::ARRAY_APPEND:
+		case IROpcode::DICT_SET:
+			return true;
+		default:
+			return syscall_answers_in_register(instr);
+	}
+}
+
 bool RISCVCodeGen::instruction_may_allocate_scoped(const IRInstruction& instr) const {
-	return instruction_may_ecall(instr) && !syscall_answers_in_register(instr);
+	return instruction_may_ecall(instr) && !leaves_nothing_scoped(instr);
 }
 
 // Scans mark..last-back-edge; nested SCOPE_MARK/RELEASE do not count.

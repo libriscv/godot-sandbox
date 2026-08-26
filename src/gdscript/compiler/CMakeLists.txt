@@ -19,6 +19,7 @@ set(COMPILER_SOURCES
     compiler_exception.cpp
     function_signature.cpp
     line_table.cpp
+    gdsmeta.cpp
     token.cpp
     lexer.cpp
     parser.cpp
@@ -134,6 +135,7 @@ if (BUILD_TESTING)
 	add_gdscript_test(test_opt_invariance tests/test_opt_invariance.cpp)
 	add_gdscript_test(test_ir_verifier tests/test_ir_verifier.cpp)
 	add_gdscript_test(test_encoders tests/test_encoders.cpp)
+	add_gdscript_test(test_gdsmeta tests/test_gdsmeta.cpp)
 	add_gdscript_test(test_fuzz tests/test_fuzz.cpp)
 
 	# Differential testing: the same programs through the IR interpreter and

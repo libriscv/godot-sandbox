@@ -35,6 +35,7 @@ set(SOURCES
 	# the guest side of both lives inside gdscript.elf.
 	src/gdscript/compiler/function_signature.cpp
 	src/gdscript/compiler/line_table.cpp
+	src/gdscript/compiler/gdsmeta.cpp
 	# Compiler symbol tables; editor completion and lookup resolve from these.
 	src/gdscript/compiler/globals.cpp
 	src/gdscript/compiler/compiler_exception.cpp

@@ -35,6 +35,7 @@ int main(int argc, char** argv)
 	std::string temp_elf = "/tmp/gdscript_temp_XXXXXX";
 	bool no_optimize = false;
 	bool show_program_headers = false;
+	std::string output_elf_path;
 	bool double_precision = native_variant_layout().double_precision;
 	bool profiling = false;
 	ProfilingClock profiling_clock = ProfilingClock::TIME;
@@ -49,6 +50,10 @@ int main(int argc, char** argv)
 			}
 		} else if (arg == "-l" || arg == "--program-headers") {
 			show_program_headers = true;
+		} else if (arg == "-o" || arg == "--output") {
+			if (i + 1 < argc) {
+				output_elf_path = argv[++i];
+			}
 		} else if (arg == "--double-precision") {
 			double_precision = true;
 		} else if (arg == "--single-precision") {
@@ -86,6 +91,18 @@ int main(int argc, char** argv)
 			std::cerr << "Error: " << compiler.get_error() << std::endl;
 			unlink(temp_elf.c_str());
 			return 1;
+		}
+
+		if (!output_elf_path.empty()) {
+			std::ofstream out(output_elf_path, std::ios::binary);
+			if (!out) {
+				std::cerr << "Error: cannot write " << output_elf_path << std::endl;
+				unlink(temp_elf.c_str());
+				return 1;
+			}
+			out.write(reinterpret_cast<const char*>(elf.data()), elf.size());
+			unlink(temp_elf.c_str());
+			return 0;
 		}
 
 		{

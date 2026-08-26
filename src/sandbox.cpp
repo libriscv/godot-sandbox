@@ -5,6 +5,7 @@
 #include "gdscript/compiler/instance_layout.h"
 #include "sandbox_project_settings.h"
 #include "scoped_tree_base.h"
+#include "variant_coerce.h"
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -156,6 +157,7 @@ String Sandbox::_to_string() const {
 
 void Sandbox::_bind_methods() {
 	// Constructors.
+	ClassDB::bind_static_method("Sandbox", D_METHOD("get_program_metadata", "binary"), &Sandbox::get_program_metadata);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("FromBuffer", "buffer"), &Sandbox::FromBuffer);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("FromProgram", "program"), &Sandbox::FromProgram);
 	// Methods.
@@ -1632,8 +1634,8 @@ unsigned Sandbox::create_scoped_variant(Variant &&value) const {
 		return int32_t(st.scoped_variants.size()) - 1;
 	return const_cast<Sandbox *>(this)->track_permanent_slot(int32_t(st.variants.size()) - 1);
 }
-std::optional<const Variant *> Sandbox::get_scoped_variant(int32_t index) const noexcept {
-	if (index >= 0 && index < state().scoped_variants.size()) {
+std::optional<const Variant *> Sandbox::get_scoped_variant_uncommon(int32_t index) const noexcept {
+	if (index >= 0 && size_t(index) < state().scoped_variants.size()) {
 		return state().scoped_variants[index];
 	} else if (index < 0) {
 		// INT32_MIN: -INT32_MIN is UB.
@@ -2039,9 +2041,8 @@ void Sandbox::set_property_hint(const String &name, uint32_t hint, const String 
 bool Sandbox::set_property(const StringName &name, const Variant &value) {
 	for (SandboxProperty &prop : m_properties) {
 		if (stringname_equals(prop.name(), name)) {
-			prop.set(*this, value);
 			//ERR_PRINT("Sandbox: SetProperty *found*: " + name);
-			return true;
+			return prop.set(*this, value);
 		}
 	}
 	// Not the most efficient way to do this, but it's (currently) a small list
@@ -2237,24 +2238,30 @@ Array Sandbox::get_property_list() const {
 	return arr;
 }
 
-void SandboxProperty::set(Sandbox &sandbox, const Variant &value) {
+bool SandboxProperty::set(Sandbox &sandbox, const Variant &value) {
+	Variant narrowed = value;
+	if (!coerce_variant_to(narrowed, m_type)) {
+		return false;
+	}
+
 	if (m_setter_address == 0) {
 		if (m_address != 0) {
 			const uint64_t address = sandbox.rebase_instance_address(m_address);
 			GuestVariant *g_prop = sandbox.machine().memory.memarray<GuestVariant>(address, 1);
-			g_prop->create(sandbox, Variant(value));
-			return;
+			g_prop->create(sandbox, std::move(narrowed));
+			return true;
 		}
 		ERR_PRINT("Sandbox: Setter was invalid for property: " + m_name);
-		return;
+		return false;
 	}
-	const Variant *args[] = { &value };
+	const Variant *args[] = { &narrowed };
 	// Store unboxed_arguments state and restore it after the call
 	// It's much more convenient to use Variant arguments for properties
 	auto old_unboxed_arguments = sandbox.get_unboxed_arguments();
 	sandbox.set_unboxed_arguments(false);
 	sandbox.vmcall_internal(m_setter_address, args, 1);
 	sandbox.set_unboxed_arguments(old_unboxed_arguments);
+	return true;
 }
 
 Variant SandboxProperty::get(const Sandbox &sandbox) const {

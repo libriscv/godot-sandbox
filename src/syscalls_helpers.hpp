@@ -132,16 +132,26 @@ static inline void sys_trace(const String &name, Result result, Args &&...args) 
 		return false;
 	}
 
-	/// @note Only Array and Dictionary carry the flag. Converting any other type
-	/// yields a fresh empty container, which always reports writable.
+	static inline Variant::Type variant_type(const Variant &var) noexcept {
+		return Variant::Type(((const GDNativeVariant *)var._native_ptr())->type);
+	}
+
+	// Caller must have verified the Variant's type.
+	template <typename T>
+	static inline T &variant_container(const Variant &var) noexcept {
+		static_assert(sizeof(T) == sizeof(void *), "Container wrapper is not the engine's pointer");
+		GDNativeVariant *inner = (GDNativeVariant *)var._native_ptr();
+		return *reinterpret_cast<T *>(&inner->value);
+	}
+
 	static inline void throw_if_read_only(const Variant &var, const char *what) {
 		bool read_only;
-		switch (var.get_type()) {
+		switch (variant_type(var)) {
 			case Variant::ARRAY:
-				read_only = var.operator Array().is_read_only();
+				read_only = variant_container<Array>(var).is_read_only();
 				break;
 			case Variant::DICTIONARY:
-				read_only = var.operator Dictionary().is_read_only();
+				read_only = variant_container<Dictionary>(var).is_read_only();
 				break;
 			default:
 				return;

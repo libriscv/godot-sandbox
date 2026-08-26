@@ -67,6 +67,16 @@ const Variant *GuestVariant::toVariantPtr(const Sandbox &emu) const {
 	throw std::runtime_error(buffer);
 }
 
+void BorrowedVariant::borrow_uncommon(const Sandbox &emu, const GuestVariant &gv) {
+	if (gv.type == Variant::OBJECT) {
+		new (m_storage) Variant(riscv::get_object_from_address(emu, gv.v.i));
+		m_constructed = true;
+		m_ptr = (const Variant *)m_storage;
+		return;
+	}
+	m_ptr = gv.toVariantPtr(emu);
+}
+
 void GuestVariant::set_object(Sandbox &emu, godot::Object *obj) {
 	this->type = Variant::OBJECT;
 	this->v.i = emu.add_scoped_object(obj);
@@ -83,38 +93,12 @@ bool GuestVariant::set_inlined(const Variant &value) noexcept {
 		// Only the bytes that actually belong to the value are copied. Godot leaves the
 		// remainder of the payload holding whatever the Variant used to contain, and that
 		// must never be handed to the guest.
-		unsigned bytes;
-		switch (inner->type) {
-			case Variant::NIL:
-				this->type = Variant::NIL;
-				return true;
-			case Variant::BOOL:
-				bytes = sizeof(bool);
-				break;
-			case Variant::INT:
-			case Variant::FLOAT:
-			case Variant::VECTOR2:
-			case Variant::VECTOR2I:
-				bytes = 8;
-				break;
-			case Variant::VECTOR3:
-			case Variant::VECTOR3I:
-				bytes = 12;
-				break;
-			case Variant::RECT2:
-			case Variant::RECT2I:
-			case Variant::VECTOR4:
-			case Variant::VECTOR4I:
-			case Variant::COLOR:
-			case Variant::PLANE:
-				bytes = 16;
-				break;
-			default:
-				return false; // Not stored inline: the caller has to scope it instead
-		}
+		const int bytes = variant_inline_payload_bytes(inner->type);
+		if (bytes < 0)
+			return false; // Not stored inline: the caller has to scope it instead
 		this->type = Variant::Type(inner->type);
 		std::memset(&this->v, 0, sizeof(this->v));
-		std::memcpy(&this->v, &inner->value, bytes);
+		guest_memcpy(&this->v, &inner->value, bytes);
 		return true;
 	}
 }

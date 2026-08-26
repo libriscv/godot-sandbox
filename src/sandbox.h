@@ -12,6 +12,7 @@ using namespace godot;
 using gaddr_t = riscv::address_type<RISCV_ARCH>;
 using machine_t = riscv::Machine<RISCV_ARCH>;
 #include "elf/script_elf.h"
+#include "gdscript/compiler/gdsmeta.h"
 #include "syscalls.h"
 #include "stringname_id.hpp"
 #include "vmcallable.h"
@@ -407,7 +408,12 @@ public:
 	/// @brief Get a scoped variant by its index.
 	/// @param idx The index of the variant to get.
 	/// @return The variant, or an empty optional if the index is invalid.
-	std::optional<const Variant *> get_scoped_variant(int32_t idx) const noexcept;
+	inline std::optional<const Variant *> get_scoped_variant(int32_t idx) const noexcept {
+		if (LIKELY(idx >= 0 && size_t(idx) < state().scoped_variants.size()))
+			return state().scoped_variants[idx];
+		return get_scoped_variant_uncommon(idx);
+	}
+	std::optional<const Variant *> get_scoped_variant_uncommon(int32_t idx) const noexcept;
 
 	/// @brief Get a mutable scoped variant by its index.
 	/// @param idx The index of the variant to get.
@@ -744,11 +750,16 @@ public:
 		String language;
 		PackedStringArray functions;
 		int version = 0;
+		bool has_script_metadata = false;
+		gdscript::ScriptMetadata script_metadata;
 	};
 	/// @brief Get information about the program from the binary.
 	/// @param binary The binary data.
 	/// @return An array of public callable functions and programming language.
 	static BinaryInfo get_program_info_from_binary(const PackedByteArray &binary);
+
+	/// @brief Decode the ".gdsmeta" section of a program binary into a Dictionary.
+	static Dictionary get_program_metadata(const PackedByteArray &binary);
 
 	/// @brief Check if a function is Sandbox-specific (and public API).
 	/// @param p_function The name of the function to check.

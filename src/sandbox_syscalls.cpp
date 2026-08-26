@@ -2628,7 +2628,7 @@ APICALL(api_array_ops) {
 	}
 
 	const Variant &var_array = get_scoped_variant_or_throw(emu, arr_idx, "Array::operation");
-	if (var_array.get_type() != Variant::ARRAY) {
+	if (variant_type(var_array) != Variant::ARRAY) {
 		ERR_PRINT("Invalid Array object, type = " + String(GuestVariant::type_name(var_array.get_type())));
 		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx) + " type = " + GuestVariant::type_name(var_array.get_type()));
 	}
@@ -2641,14 +2641,18 @@ APICALL(api_array_ops) {
 			throw_if_read_only(var_array, "Array::operation");
 			break;
 	}
-	godot::Array array = var_array.operator Array();
+	godot::Array &array = variant_container<Array>(var_array);
+
+	auto operand = [&]() -> BorrowedVariant {
+		return BorrowedVariant(emu, *machine.memory.memarray<GuestVariant>(vaddr, 1));
+	};
 
 	switch (op) {
 		case Array_Op::PUSH_BACK:
-			array.push_back(machine.memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
+			array.push_back(*operand());
 			break;
 		case Array_Op::PUSH_FRONT:
-			array.push_front(machine.memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
+			array.push_front(*operand());
 			break;
 		case Array_Op::POP_AT:
 			array.pop_at(idx);
@@ -2660,11 +2664,10 @@ APICALL(api_array_ops) {
 			array.pop_front();
 			break;
 		case Array_Op::INSERT:
-			array.insert(idx, machine.memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
+			array.insert(idx, *operand());
 			break;
 		case Array_Op::ERASE:
-			// TODO: Check if we can use pointer to Variant to avoid copying.
-			array.erase(machine.memory.memarray<GuestVariant>(vaddr, 1)->toVariant(emu));
+			array.erase(*operand());
 			break;
 		case Array_Op::RESIZE:
 			if (UNLIKELY(idx < 0 || idx > MAX_ARRAY_ELEMENTS)) {
@@ -2689,7 +2692,7 @@ APICALL(api_array_ops) {
 		}
 		case Array_Op::HAS: {
 			auto *vp = machine.memory.memarray<GuestVariant>(vaddr, 1);
-			const bool result = array.has(vp->toVariant(emu));
+			const bool result = array.has(*BorrowedVariant(emu, *vp));
 			vp->set(emu, result);
 			break;
 		}
@@ -2706,7 +2709,7 @@ APICALL(api_array_at) {
 	SYS_TRACE("array_at", arr_idx, idx, vret);
 
 	const Variant &var_array = get_scoped_variant_or_throw(emu, arr_idx, "Array::at");
-	if (var_array.get_type() != Variant::ARRAY) {
+	if (variant_type(var_array) != Variant::ARRAY) {
 		ERR_PRINT("Invalid Array object, type = " + String(GuestVariant::type_name(var_array.get_type())));
 		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx) + " type = " + GuestVariant::type_name(var_array.get_type()));
 	}
@@ -2718,10 +2721,10 @@ APICALL(api_array_at) {
 
 	if (set_mode) {
 		throw_if_read_only(var_array, "Array::at (assignment)");
-		const Variant value = vret->toVariant(emu);
+		const BorrowedVariant value(emu, *vret);
 		internal::gdextension_interface_variant_set_indexed(
 				const_cast<Variant &>(var_array)._native_ptr(), index,
-				value._native_ptr(), &valid, &oob);
+				value->_native_ptr(), &valid, &oob);
 	} else {
 		CallResult result;
 		internal::gdextension_interface_variant_get_indexed(
@@ -2743,13 +2746,12 @@ APICALL(api_array_size) {
 	Sandbox &emu = riscv::emu(machine);
 
 	const Variant &var_array = get_scoped_variant_or_throw(emu, arr_idx, "Array::size");
-	if (var_array.get_type() != Variant::ARRAY) {
+	if (variant_type(var_array) != Variant::ARRAY) {
 		ERR_PRINT("Invalid Array object, type = " + String(GuestVariant::type_name(var_array.get_type())));
 		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx) + " type = " + GuestVariant::type_name(var_array.get_type()));
 	}
 
-	godot::Array array = var_array.operator Array();
-	machine.set_result(array.size());
+	machine.set_result(variant_container<Array>(var_array).size());
 }
 
 APICALL(api_dict_ops) {
@@ -2759,7 +2761,7 @@ APICALL(api_dict_ops) {
 	SYS_TRACE("dict_ops", int(op), dict_idx, vkey, vaddr);
 
 	const Variant &var_dict = get_scoped_variant_or_throw(emu, dict_idx, "Dictionary::operation");
-	if (var_dict.get_type() != Variant::DICTIONARY) {
+	if (variant_type(var_dict) != Variant::DICTIONARY) {
 		ERR_PRINT("Invalid Dictionary object, type = " + String(GuestVariant::type_name(var_dict.get_type())));
 		throw std::runtime_error("Invalid Dictionary object, idx = " + std::to_string(dict_idx) + " type = " + GuestVariant::type_name(var_dict.get_type()));
 	}
@@ -2780,24 +2782,29 @@ APICALL(api_dict_ops) {
 		case Dictionary_Op::GET: {
 			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
 			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vaddr, 1);
-			const Variant key_variant = key->toVariant(emu);
+			const BorrowedVariant key_variant(emu, *key);
 			CallResult value;
 			GDExtensionBool valid = false;
 			internal::gdextension_interface_variant_get_keyed(
-					var_dict._native_ptr(), key_variant._native_ptr(), &value.get(), &valid);
+					var_dict._native_ptr(), key_variant->_native_ptr(), &value.get(), &valid);
 			value.mark_constructed();
-			vp->create(emu, valid ? std::move(value.get()) : Variant());
+			if (LIKELY(valid)) {
+				vp->create(emu, std::move(value.get()));
+			} else {
+				vp->type = Variant::NIL;
+				vp->v.i = 0;
+			}
 			return;
 		}
 		case Dictionary_Op::SET: {
 			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
 			GuestVariant *value = machine.memory.memarray<GuestVariant>(vaddr, 1);
-			const Variant key_variant = key->toVariant(emu);
-			const Variant value_variant = value->toVariant(emu);
+			const BorrowedVariant key_variant(emu, *key);
+			const BorrowedVariant value_variant(emu, *value);
 			GDExtensionBool valid = false;
 			internal::gdextension_interface_variant_set_keyed(
-					const_cast<Variant &>(var_dict)._native_ptr(), key_variant._native_ptr(),
-					value_variant._native_ptr(), &valid);
+					const_cast<Variant &>(var_dict)._native_ptr(), key_variant->_native_ptr(),
+					value_variant->_native_ptr(), &valid);
 			if (UNLIKELY(!valid)) {
 				ERR_PRINT("Dictionary::set(): the key could not be assigned");
 				throw std::runtime_error("Dictionary::set(): the key could not be assigned");
@@ -2808,7 +2815,7 @@ APICALL(api_dict_ops) {
 			break;
 	}
 
-	godot::Dictionary dict = var_dict.operator Dictionary();
+	godot::Dictionary &dict = variant_container<Dictionary>(var_dict);
 
 	switch (op) {
 		case Dictionary_Op::GET:
@@ -2816,12 +2823,12 @@ APICALL(api_dict_ops) {
 			break; // Handled above
 		case Dictionary_Op::ERASE: {
 			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
-			dict.erase(key->toVariant(emu));
+			dict.erase(*BorrowedVariant(emu, *key));
 			break;
 		}
 		case Dictionary_Op::HAS: {
 			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
-			machine.set_result(dict.has(key->toVariant(emu)));
+			machine.set_result(dict.has(*BorrowedVariant(emu, *key)));
 			break;
 		}
 		case Dictionary_Op::GET_KEYS: {
@@ -2848,7 +2855,7 @@ APICALL(api_dict_ops) {
 		case Dictionary_Op::GET_OR_ADD: {
 			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
 			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vaddr, 1);
-			Variant &v = dict[key->toVariant(emu)];
+			Variant &v = dict[*BorrowedVariant(emu, *key)];
 			if (v.get_type() == Variant::NIL) {
 				const gaddr_t vdefaddr = machine.cpu.reg(14); // A4
 				const GuestVariant *vdef = machine.memory.memarray<GuestVariant>(vdefaddr, 1);

@@ -12,6 +12,96 @@
 #include <godot_cpp/classes/resource_loader.hpp>
 static constexpr bool VERBOSE_ELFSCRIPT = false;
 
+static Variant::Type elf_variant_type_or_nil(int32_t p_type) {
+	if (p_type < 0 || p_type >= Variant::Type::VARIANT_MAX) {
+		return Variant::Type::NIL;
+	}
+	return Variant::Type(p_type);
+}
+
+static Variant elf_default_argument_value(const gdscript::FunctionParameter &p_param) {
+	using DefaultKind = gdscript::FunctionParameter::DefaultKind;
+	switch (p_param.default_kind) {
+		case DefaultKind::INT:
+			return std::get<int64_t>(p_param.default_value);
+		case DefaultKind::FLOAT:
+			return std::get<double>(p_param.default_value);
+		case DefaultKind::BOOL:
+			return std::get<bool>(p_param.default_value);
+		case DefaultKind::STRING: {
+			const std::string &s = std::get<std::string>(p_param.default_value);
+			return String::utf8(s.c_str(), s.size());
+		}
+		case DefaultKind::EMPTY_ARRAY:
+			return Array();
+		case DefaultKind::EMPTY_DICT:
+			return Dictionary();
+		case DefaultKind::NONE:
+		case DefaultKind::NIL:
+			break;
+	}
+	return Variant();
+}
+
+static Dictionary elf_arg_to_dict(const gdscript::FunctionParameter &p_param) {
+	Dictionary arg;
+	arg["name"] = String::utf8(p_param.name.c_str(), p_param.name.size());
+	const Variant::Type type = elf_variant_type_or_nil(p_param.type);
+	arg["type"] = type;
+	arg["class_name"] = StringName();
+	arg["hint"] = PropertyHint::PROPERTY_HINT_NONE;
+	arg["hint_string"] = String();
+	arg["usage"] = type == Variant::Type::NIL
+			? PROPERTY_USAGE_NIL_IS_VARIANT
+			: PROPERTY_USAGE_DEFAULT;
+	return arg;
+}
+
+static Dictionary elf_signature_to_method_dict(const gdscript::FunctionSignature &p_sig) {
+	Dictionary method;
+	method["name"] = String::utf8(p_sig.name.c_str(), p_sig.name.size());
+	method["flags"] = METHOD_FLAG_NORMAL;
+
+	Array args;
+	for (const gdscript::FunctionParameter &param : p_sig.parameters) {
+		args.push_back(elf_arg_to_dict(param));
+	}
+	method["args"] = args;
+
+	Array default_args;
+	for (size_t i = p_sig.required_arguments; i < p_sig.parameters.size(); i++) {
+		default_args.push_back(elf_default_argument_value(p_sig.parameters[i]));
+	}
+	method["default_args"] = default_args;
+
+	Dictionary ret;
+	const Variant::Type ret_type = elf_variant_type_or_nil(p_sig.return_type);
+	ret["name"] = String();
+	ret["type"] = ret_type;
+	ret["class_name"] = StringName();
+	ret["hint"] = PropertyHint::PROPERTY_HINT_NONE;
+	ret["hint_string"] = String();
+	ret["usage"] = ret_type == Variant::Type::NIL
+			? PROPERTY_USAGE_NIL_IS_VARIANT
+			: PROPERTY_USAGE_DEFAULT;
+	method["return"] = ret;
+	return method;
+}
+
+const gdscript::FunctionSignature *ELFScript::find_signature(const StringName &p_name) const {
+	if (!has_script_metadata) {
+		return nullptr;
+	}
+	const CharString utf8 = String(p_name).utf8();
+	const std::string name(utf8.ptr(), utf8.length());
+	for (const gdscript::FunctionSignature &sig : script_metadata.functions) {
+		if (sig.name == name) {
+			return &sig;
+		}
+	}
+	return nullptr;
+}
+
 void ELFScript::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sandbox_for", "for_object"), &ELFScript::get_sandbox_for);
 	ClassDB::bind_method(D_METHOD("get_sandbox_objects"), &ELFScript::get_sandbox_objects);
@@ -58,6 +148,9 @@ Ref<Script> ELFScript::_get_base_script() const {
 	return Ref<Script>();
 }
 StringName ELFScript::_get_global_name() const {
+	if (has_script_metadata && !script_metadata.class_name.empty()) {
+		return StringName(String::utf8(script_metadata.class_name.c_str(), script_metadata.class_name.size()));
+	}
 	if (SandboxProjectSettings::use_global_sandbox_names()) {
 		return global_name;
 	}
@@ -67,6 +160,12 @@ bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
 }
 StringName ELFScript::_get_instance_base_type() const {
+	if (has_script_metadata && !script_metadata.base_is_path && !script_metadata.base_class.empty()) {
+		const StringName base(String::utf8(script_metadata.base_class.c_str(), script_metadata.base_class.size()));
+		if (ClassDB::class_exists(base)) {
+			return base;
+		}
+	}
 	return StringName("Sandbox");
 }
 void *ELFScript::_instance_create(Object *p_for_object) const {
@@ -101,7 +200,40 @@ Error ELFScript::_reload(bool p_keep_state) {
 	return Error::OK;
 }
 TypedArray<Dictionary> ELFScript::_get_documentation() const {
-	return TypedArray<Dictionary>();
+	if (!has_script_metadata || script_metadata.functions.empty()) {
+		return TypedArray<Dictionary>();
+	}
+
+	Dictionary class_doc;
+	class_doc["name"] = String(_get_global_name());
+	class_doc["inherits"] = String(_get_instance_base_type());
+
+	auto doc_type_name = [](Variant::Type type) -> String {
+		return type == Variant::Type::NIL ? String("Variant") : Variant::get_type_name(type);
+	};
+	Array method_docs;
+	for (const gdscript::FunctionSignature &sig : script_metadata.functions) {
+		Dictionary method_doc;
+		method_doc["name"] = String::utf8(sig.name.c_str(), sig.name.size());
+		method_doc["return_type"] = doc_type_name(elf_variant_type_or_nil(sig.return_type));
+		if (!sig.description.empty()) {
+			method_doc["description"] = String::utf8(sig.description.c_str(), sig.description.size());
+		}
+		Array argument_docs;
+		for (const gdscript::FunctionParameter &param : sig.parameters) {
+			Dictionary argument_doc;
+			argument_doc["name"] = String::utf8(param.name.c_str(), param.name.size());
+			argument_doc["type"] = doc_type_name(elf_variant_type_or_nil(param.type));
+			argument_docs.push_back(argument_doc);
+		}
+		method_doc["arguments"] = argument_docs;
+		method_docs.push_back(method_doc);
+	}
+	class_doc["methods"] = method_docs;
+
+	TypedArray<Dictionary> docs;
+	docs.push_back(class_doc);
+	return docs;
 }
 String ELFScript::_get_class_icon_path() const {
 	return String("res://addons/godot_sandbox/Sandbox.svg");
@@ -123,6 +255,9 @@ bool ELFScript::_has_static_method(const StringName &p_method) const {
 	return false;
 }
 Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
+	if (const gdscript::FunctionSignature *sig = find_signature(p_method)) {
+		return elf_signature_to_method_dict(*sig);
+	}
 	for (int i = 0; i < functions.size(); i++) {
 		Dictionary function = functions[i];
 		if (StringName(function.get("name", "")) == p_method) {
@@ -153,6 +288,9 @@ Dictionary ELFScript::_get_method_info(const StringName &p_method) const {
 	return Dictionary();
 }
 bool ELFScript::_is_tool() const {
+	if (has_script_metadata) {
+		return script_metadata.is_tool;
+	}
 	return true;
 }
 bool ELFScript::_is_valid() const {
@@ -187,6 +325,13 @@ TypedArray<Dictionary> ELFScript::_get_script_property_list() const {
 
 void ELFScript::_update_exports() {}
 TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
+	if (has_script_metadata && !script_metadata.functions.empty()) {
+		TypedArray<Dictionary> methods;
+		for (const gdscript::FunctionSignature &sig : script_metadata.functions) {
+			methods.push_back(elf_signature_to_method_dict(sig));
+		}
+		return methods;
+	}
 	if (!this->functions.is_empty()) {
 		return functions;
 	}
@@ -210,6 +355,11 @@ TypedArray<Dictionary> ELFScript::_get_script_method_list() const {
 	return functions_array;
 }
 int32_t ELFScript::_get_member_line(const StringName &p_member) const {
+	if (const gdscript::FunctionSignature *sig = find_signature(p_member)) {
+		if (sig->line > 0) {
+			return sig->line;
+		}
+	}
 	PackedStringArray formatted_functions = _get_source_code().split("\n");
 	for (int i = 0; i < formatted_functions.size(); i++) {
 		if (formatted_functions[i].find(p_member) != -1) {
@@ -272,6 +422,8 @@ void ELFScript::set_file(const String &p_path) {
 
 	this->elf_programming_language = info.language;
 	this->elf_api_version = info.version;
+	this->has_script_metadata = info.has_script_metadata;
+	this->script_metadata = std::move(info.script_metadata);
 
 	if constexpr (VERBOSE_ELFSCRIPT) {
 		printf("ELFScript::set_file: %s Sandbox instances: %u\n", std_path.c_str(), sandbox_map[path].size());

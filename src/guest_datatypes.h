@@ -76,6 +76,42 @@ struct GDNativeVariant {
 
 } __attribute__((packed));
 
+// Inline payload size for types Godot stores by value. -1 for pointer-backed types.
+inline constexpr int variant_inline_payload_bytes(int type) noexcept {
+	switch (type) {
+		case Variant::NIL:
+			return 0;
+		case Variant::BOOL:
+			return sizeof(bool);
+		case Variant::INT:
+		case Variant::FLOAT:
+			return 8;
+		default:
+			break;
+	}
+	if constexpr (sizeof(real_t) != sizeof(float)) {
+		return -1;
+	} else {
+		switch (type) {
+			case Variant::VECTOR2:
+			case Variant::VECTOR2I:
+				return 8;
+			case Variant::VECTOR3:
+			case Variant::VECTOR3I:
+				return 12;
+			case Variant::RECT2:
+			case Variant::RECT2I:
+			case Variant::VECTOR4:
+			case Variant::VECTOR4I:
+			case Variant::COLOR:
+			case Variant::PLANE:
+				return 16;
+			default:
+				return -1;
+		}
+	}
+}
+
 // -= Guest Data Types =-
 struct GuestStdU32String {
 	gaddr_t ptr;
@@ -250,6 +286,45 @@ inline bool GuestVariant::is_scoped_variant() const noexcept {
 			return false;
 	}
 }
+
+// Read-only Variant view valid for the duration of one syscall. Inline types
+// are built in place; pointer-backed types borrow the scoped Variant directly.
+class BorrowedVariant {
+public:
+	BorrowedVariant(const Sandbox &emu, const GuestVariant &gv) {
+		const int bytes = variant_inline_payload_bytes(gv.type);
+		if (LIKELY(bytes >= 0)) {
+			std::memset(m_storage, 0, sizeof(m_storage));
+			GDNativeVariant *inner = (GDNativeVariant *)m_storage;
+			inner->type = uint8_t(gv.type);
+			if (UNLIKELY(gv.type == Variant::BOOL)) {
+				inner->value = (gv.v.b_bits != 0);
+			} else {
+				guest_memcpy(&inner->value, &gv.v, bytes);
+			}
+			m_ptr = (const Variant *)m_storage;
+			return;
+		}
+		borrow_uncommon(emu, gv);
+	}
+	~BorrowedVariant() {
+		if (UNLIKELY(m_constructed))
+			reinterpret_cast<Variant *>(m_storage)->~Variant();
+	}
+	BorrowedVariant(const BorrowedVariant &) = delete;
+	BorrowedVariant(BorrowedVariant &&) = delete;
+	BorrowedVariant &operator=(const BorrowedVariant &) = delete;
+
+	const Variant &operator*() const noexcept { return *m_ptr; }
+	const Variant *operator->() const noexcept { return m_ptr; }
+
+private:
+	void borrow_uncommon(const Sandbox &emu, const GuestVariant &gv);
+
+	const Variant *m_ptr = nullptr;
+	bool m_constructed = false;
+	alignas(8) uint8_t m_storage[sizeof(Variant)];
+};
 
 static inline void hash_combine(gaddr_t &seed, gaddr_t hash) {
 	hash += 0x9e3779b9 + (seed << 6) + (seed >> 2);

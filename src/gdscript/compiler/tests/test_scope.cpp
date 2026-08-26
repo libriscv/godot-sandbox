@@ -301,6 +301,19 @@ static void test_a_host_free_loop_is_not_scoped() {
 		"\treturn acc\n");
 	check(contains_word(untyped, li_a7_vscope()), "an untyped loop keeps its scope");
 
+	const std::vector<uint8_t> stores = compile_to_elf(
+		"func test(n : int) -> Dictionary:\n"
+		"\tvar d : Dictionary = {}\n"
+		"\tvar a : Array = []\n"
+		"\tvar i : int = 0\n"
+		"\twhile i < n:\n"
+		"\t\td[i] = i\n"
+		"\t\ta.append(i)\n"
+		"\t\ta[0] = i\n"
+		"\t\ti += 1\n"
+		"\treturn d\n");
+	check(!contains_word(stores, li_a7_vscope()), "a loop that only stores makes no scope syscall");
+
 	const std::vector<uint8_t> nested = compile_to_elf(
 		"func test(n : int) -> Array:\n"
 		"\tvar out : Array = []\n"
@@ -311,7 +324,7 @@ static void test_a_host_free_loop_is_not_scoped() {
 		"\t\twhile j < 4:\n"
 		"\t\t\tacc += j\n"
 		"\t\t\tj += 1\n"
-		"\t\tout.append(acc)\n"
+		"\t\tout.append(str(acc))\n"
 		"\t\ti += 1\n"
 		"\treturn out\n");
 	check(contains_word(nested, li_a7_vscope()), "the allocating outer loop keeps its scope");

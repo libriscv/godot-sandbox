@@ -5824,6 +5824,98 @@ func test_sgd_refuses_a_call_with_the_wrong_argument_count():
 
 	node.free()
 
+# -= Argument and property narrowing =-
+
+const NARROWING_SOURCE = """
+@export var speed: float = 1.0
+@export var count: int = 0
+
+func take_int(a: int) -> int:
+	return a + 1
+
+func take_float(a: float) -> float:
+	return a * 2.0
+
+func take_string(a: String) -> String:
+	return a + "!"
+
+func mixed(a: int, b: float) -> float:
+	return a + b
+
+func untyped(a) -> int:
+	return typeof(a)
+
+func scaled() -> float:
+	return speed * 2.0
+"""
+
+func _narrowing_node() -> Node:
+	var path = "user://temp_narrowing.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(NARROWING_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the narrowing script should load as a SafeGDScript resource")
+	if script == null:
+		return null
+	var node = Node.new()
+	node.set_script(script)
+	node.set_instructions_max(100000)
+	return node
+
+func test_sgd_narrows_arguments_to_the_declared_type():
+	var node = _narrowing_node()
+	if node == null:
+		return
+
+	var i: int = 5
+	assert_eq(node.call("take_float", i), 10.0, "an int at a float parameter should narrow")
+	assert_eq(node.call("take_int", 3.9), 4, "a float at an int parameter should truncate")
+	assert_eq(node.call("take_int", true), 2, "a bool at an int parameter should narrow")
+	assert_eq(node.call("mixed", 1, 2), 3.0, "only the mismatched argument should be touched")
+	assert_eq(node.call("take_string", StringName("sn")), "sn!",
+		"a StringName at a String parameter should narrow")
+
+	assert_eq(node.call("take_float", 2.5), 5.0, "a matching argument should pass through")
+	assert_eq(node.call("untyped", "hi"), TYPE_STRING, "an untyped parameter should not narrow")
+
+	node.free()
+
+func test_sgd_refuses_an_argument_the_declared_type_rejects():
+	var node = _narrowing_node()
+	if node == null:
+		return
+
+	_refused_call(node, "take_int", ["hello"])
+	assert_engine_error("Cannot convert argument 1 from String to int.")
+
+	_refused_call(node, "take_float", [[]])
+	assert_engine_error("Cannot convert argument 1 from Array to float.")
+
+	_refused_call(node, "take_int", [null])
+	assert_engine_error("Cannot convert argument 1 from Nil to int.")
+
+	node.free()
+
+func test_sgd_narrows_a_property_to_the_declared_type():
+	var node = _narrowing_node()
+	if node == null:
+		return
+
+	var i: int = 5
+	node.set("speed", i)
+	assert_eq(typeof(node.get("speed")), TYPE_FLOAT, "the member should keep its declared type")
+	assert_eq(node.call("scaled"), 10.0, "the guest should see a float it can compute with")
+
+	node.set("count", 3.7)
+	assert_eq(node.get("count"), 3, "a float stored into an int member should truncate")
+	assert_eq(typeof(node.get("count")), TYPE_INT, "the member should keep its declared type")
+
+	node.set("speed", [])
+	assert_eq(node.get("speed"), 5.0, "a refused assignment should leave the member alone")
+
+	node.free()
+
 # -= Built-in scripts =-
 #
 # Scene sub-resource, no file. duplicate() and the scene saver carry STORAGE

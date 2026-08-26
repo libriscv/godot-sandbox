@@ -1,4 +1,5 @@
 #include "elf_builder.h"
+#include "gdsmeta.h"
 #include "riscv_codegen.h"
 #include <cstring>
 #include <stdexcept>
@@ -38,17 +39,42 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 	// Two PT_LOAD segments when globals exist: .text (R+X) and .data (R+W).
 	bool has_globals = global_data_size > 0;
 	size_t num_phdrs = has_globals ? 2 : 1;
-	size_t num_sections = has_globals ? 6 : 5;
 
 	size_t text_size = code.size() - global_data_size;
 	size_t data_size = global_data_size;
 
-	std::vector<std::string> section_names;
+	// .text is index 1, .data index 2: symtab st_shndx references these by number.
+	std::vector<std::string> section_names = { "", ".text" };
 	if (has_globals) {
-		section_names = {"", ".text", ".data", ".symtab", ".strtab", ".shstrtab"};
-	} else {
-		section_names = {"", ".text", ".symtab", ".strtab", ".shstrtab"};
+		section_names.push_back(".data");
 	}
+	section_names.push_back(".symtab");
+	section_names.push_back(".strtab");
+	section_names.push_back(".comment");
+	section_names.push_back(GDSMETA_SECTION);
+	section_names.push_back(".shstrtab");
+
+	const size_t idx_symtab = has_globals ? 3 : 2;
+	const size_t idx_strtab = idx_symtab + 1;
+	const size_t idx_comment = idx_strtab + 1;
+	const size_t idx_gdsmeta = idx_comment + 1;
+	const size_t idx_shstrtab = idx_gdsmeta + 1;
+	const size_t num_sections = section_names.size();
+
+	const std::string comment_string = "Godot GDScript API v1";
+	std::vector<uint8_t> comment_bytes(comment_string.begin(), comment_string.end());
+	comment_bytes.push_back(0);
+
+	ScriptMetadata meta;
+	meta.double_precision = layout.double_precision;
+	meta.is_tool = program.is_tool;
+	meta.base_is_path = program.base_is_path;
+	meta.class_name = program.class_name;
+	meta.base_class = program.base_class;
+	meta.functions = program.signatures;
+	meta.signals = program.signals;
+	meta.line_table = m_line_table;
+	const std::vector<uint8_t> gdsmeta_bytes = encode_script_metadata(meta);
 	std::vector<uint8_t> shstrtab;
 	shstrtab.reserve(1 + (1 + section_names.size()) * 10); // Rough estimate
 	std::vector<size_t> section_name_offsets;
@@ -216,6 +242,13 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 	size_t strtab_offset = offset;
 	offset += strtab.size();
 
+	size_t comment_offset = offset;
+	offset += comment_bytes.size();
+
+	offset = (offset + 7) & ~7;
+	size_t gdsmeta_offset = offset;
+	offset += gdsmeta_bytes.size();
+
 	size_t shstrtab_offset = offset;
 	offset += shstrtab.size();
 
@@ -245,7 +278,7 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 	ehdr.e_phnum = static_cast<uint16_t>(num_phdrs);
 	ehdr.e_shentsize = sizeof(Elf64_Shdr);
 	ehdr.e_shnum = static_cast<uint16_t>(num_sections);
-	ehdr.e_shstrndx = has_globals ? 5 : 4;
+	ehdr.e_shstrndx = static_cast<uint16_t>(idx_shstrtab);
 
 	write_value(elf_data, ehdr);
 
@@ -304,6 +337,20 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 	}
 
 	elf_data.insert(elf_data.end(), strtab.begin(), strtab.end());
+
+	while (elf_data.size() < comment_offset) {
+		elf_data.push_back(0);
+	}
+	elf_data.insert(elf_data.end(), comment_bytes.begin(), comment_bytes.end());
+
+	while (elf_data.size() < gdsmeta_offset) {
+		elf_data.push_back(0);
+	}
+	elf_data.insert(elf_data.end(), gdsmeta_bytes.begin(), gdsmeta_bytes.end());
+
+	while (elf_data.size() < shstrtab_offset) {
+		elf_data.push_back(0);
+	}
 	elf_data.insert(elf_data.end(), shstrtab.begin(), shstrtab.end());
 
 	while (elf_data.size() < shdr_offset) {
@@ -338,30 +385,43 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 		write_value(elf_data, shdr_data);
 	}
 
-	size_t symtab_idx = has_globals ? 3 : 2;
-	size_t strtab_idx = has_globals ? 4 : 3;
 	Elf64_Shdr shdr_symtab = {};
-	shdr_symtab.sh_name = static_cast<uint32_t>(section_name_offsets[symtab_idx]);
+	shdr_symtab.sh_name = static_cast<uint32_t>(section_name_offsets[idx_symtab]);
 	shdr_symtab.sh_type = 2;
 	shdr_symtab.sh_offset = static_cast<uint64_t>(symtab_offset);
 	shdr_symtab.sh_size = static_cast<uint64_t>(symtab_size);
-	shdr_symtab.sh_link = static_cast<uint32_t>(strtab_idx);
+	shdr_symtab.sh_link = static_cast<uint32_t>(idx_strtab);
 	shdr_symtab.sh_info = 1;
 	shdr_symtab.sh_addralign = 8;
 	shdr_symtab.sh_entsize = sizeof(Elf64_Sym);
 	write_value(elf_data, shdr_symtab);
 
 	Elf64_Shdr shdr_strtab = {};
-	shdr_strtab.sh_name = static_cast<uint32_t>(section_name_offsets[strtab_idx]);
+	shdr_strtab.sh_name = static_cast<uint32_t>(section_name_offsets[idx_strtab]);
 	shdr_strtab.sh_type = 3;
 	shdr_strtab.sh_offset = static_cast<uint64_t>(strtab_offset);
 	shdr_strtab.sh_size = static_cast<uint64_t>(strtab.size());
 	shdr_strtab.sh_addralign = 1;
 	write_value(elf_data, shdr_strtab);
 
-	size_t shstrtab_idx = has_globals ? 5 : 4;
+	Elf64_Shdr shdr_comment = {};
+	shdr_comment.sh_name = static_cast<uint32_t>(section_name_offsets[idx_comment]);
+	shdr_comment.sh_type = 1;
+	shdr_comment.sh_offset = static_cast<uint64_t>(comment_offset);
+	shdr_comment.sh_size = static_cast<uint64_t>(comment_bytes.size());
+	shdr_comment.sh_addralign = 1;
+	write_value(elf_data, shdr_comment);
+
+	Elf64_Shdr shdr_gdsmeta = {};
+	shdr_gdsmeta.sh_name = static_cast<uint32_t>(section_name_offsets[idx_gdsmeta]);
+	shdr_gdsmeta.sh_type = 1;
+	shdr_gdsmeta.sh_offset = static_cast<uint64_t>(gdsmeta_offset);
+	shdr_gdsmeta.sh_size = static_cast<uint64_t>(gdsmeta_bytes.size());
+	shdr_gdsmeta.sh_addralign = 8;
+	write_value(elf_data, shdr_gdsmeta);
+
 	Elf64_Shdr shdr_shstrtab = {};
-	shdr_shstrtab.sh_name = static_cast<uint32_t>(section_name_offsets[shstrtab_idx]);
+	shdr_shstrtab.sh_name = static_cast<uint32_t>(section_name_offsets[idx_shstrtab]);
 	shdr_shstrtab.sh_type = 3;
 	shdr_shstrtab.sh_offset = static_cast<uint64_t>(shstrtab_offset);
 	shdr_shstrtab.sh_size = static_cast<uint64_t>(shstrtab.size());

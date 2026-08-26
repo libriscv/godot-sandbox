@@ -52,8 +52,8 @@ public:
 		m_usage = usage;
 	}
 
-	// Call the setter function.
-	void set(Sandbox &sandbox, const Variant &value);
+	// False if the value cannot narrow to the declared type.
+	bool set(Sandbox &sandbox, const Variant &value);
 	// Call the getter function.
 	Variant get(const Sandbox &sandbox) const;
 };

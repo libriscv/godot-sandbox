@@ -1,5 +1,6 @@
 #include "sandbox.h"
 
+#include <cstring>
 #include <unordered_set>
 
 using namespace godot;
@@ -1454,6 +1455,74 @@ PackedStringArray Sandbox::get_public_functions(const machine_t &machine) {
 	return result;
 }
 
+static std::string_view elf_section_bytes(std::string_view elf, const char *name) {
+	auto read = [&](size_t off, size_t len) -> const uint8_t * {
+		if (off + len < off || off + len > elf.size()) {
+			return nullptr;
+		}
+		return reinterpret_cast<const uint8_t *>(elf.data()) + off;
+	};
+	auto u16 = [&](size_t off) -> uint16_t {
+		const uint8_t *p = read(off, 2);
+		return p ? uint16_t(p[0] | (uint16_t(p[1]) << 8)) : 0;
+	};
+	auto u32 = [&](size_t off) -> uint32_t {
+		const uint8_t *p = read(off, 4);
+		return p ? uint32_t(p[0] | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24)) : 0;
+	};
+	auto u64 = [&](size_t off) -> uint64_t {
+		const uint8_t *p = read(off, 8);
+		if (!p) {
+			return 0;
+		}
+		uint64_t v = 0;
+		for (int i = 0; i < 8; i++) {
+			v |= uint64_t(p[i]) << (8 * i);
+		}
+		return v;
+	};
+
+	if (elf.size() < 64 || !read(0, 4) || elf[0] != 0x7f || elf[1] != 'E' || elf[2] != 'L' || elf[3] != 'F') {
+		return {};
+	}
+	const uint64_t shoff = u64(0x28);
+	const uint16_t shentsize = u16(0x3a);
+	const uint16_t shnum = u16(0x3c);
+	const uint16_t shstrndx = u16(0x3e);
+	if (shoff == 0 || shentsize < 0x40 || shnum == 0 || shstrndx >= shnum) {
+		return {};
+	}
+	const uint64_t shstr_hdr = shoff + uint64_t(shstrndx) * shentsize;
+	const uint64_t shstr_off = u64(shstr_hdr + 0x18);
+	const uint64_t shstr_size = u64(shstr_hdr + 0x20);
+	if (shstr_off == 0 || !read(shstr_off, shstr_size)) {
+		return {};
+	}
+	const size_t name_len = std::strlen(name);
+	for (uint16_t i = 0; i < shnum; i++) {
+		const uint64_t hdr = shoff + uint64_t(i) * shentsize;
+		if (!read(hdr, 0x40)) {
+			return {};
+		}
+		const uint32_t sh_name = u32(hdr + 0x00);
+		if (sh_name >= shstr_size) {
+			continue;
+		}
+		const char *sname = reinterpret_cast<const char *>(elf.data()) + shstr_off + sh_name;
+		const size_t avail = shstr_size - sh_name;
+		if (strnlen(sname, avail) != name_len || std::memcmp(sname, name, name_len) != 0) {
+			continue;
+		}
+		const uint64_t off = u64(hdr + 0x18);
+		const uint64_t size = u64(hdr + 0x20);
+		if (!read(off, size)) {
+			return {};
+		}
+		return std::string_view(elf.data() + off, size);
+	}
+	return {};
+}
+
 Sandbox::BinaryInfo Sandbox::get_program_info_from_binary(const PackedByteArray &binary) {
 	BinaryInfo result;
 	if (binary.is_empty()) {
@@ -1495,14 +1564,82 @@ Sandbox::BinaryInfo Sandbox::get_program_info_from_binary(const PackedByteArray 
 					result.version = std::stoi(std::string(comment.substr(version + 5)));
 				}
 				break;
+			} else if (comment.find("Godot GDScript") != std::string::npos) {
+				result.language = "GDScript";
+				auto version = comment.find("API v");
+				if (version != std::string::npos) {
+					result.version = std::stoi(std::string(comment.substr(version + 5)));
+				}
+				break;
 			}
 		}
 		//printf("Detected language: %s, version: %d\n", result.language.utf8().ptr(), result.version);
 
 		result.functions = Sandbox::get_public_functions(machine);
 
+		const std::string_view meta = elf_section_bytes(binary_view, gdscript::GDSMETA_SECTION);
+		if (!meta.empty()) {
+			result.has_script_metadata = gdscript::decode_script_metadata(
+				reinterpret_cast<const uint8_t *>(meta.data()), meta.size(), result.script_metadata);
+		}
+
 	} catch (const std::exception &e) {
 		ERR_PRINT("Failed to get functions from binary. " + String(e.what()));
 	}
+	return result;
+}
+
+static Variant::Type meta_variant_type_or_nil(int32_t p_type) {
+	if (p_type < 0 || p_type >= Variant::Type::VARIANT_MAX) {
+		return Variant::Type::NIL;
+	}
+	return Variant::Type(p_type);
+}
+
+static Array meta_signatures_to_array(const std::vector<gdscript::FunctionSignature> &p_sigs) {
+	Array out;
+	for (const gdscript::FunctionSignature &sig : p_sigs) {
+		Dictionary method;
+		method["name"] = String::utf8(sig.name.c_str(), sig.name.size());
+		method["line"] = sig.line;
+		method["return_type"] = meta_variant_type_or_nil(sig.return_type);
+		method["required_arguments"] = int64_t(sig.required_arguments);
+		if (!sig.description.empty()) {
+			method["description"] = String::utf8(sig.description.c_str(), sig.description.size());
+		}
+		Array args;
+		for (const gdscript::FunctionParameter &param : sig.parameters) {
+			Dictionary arg;
+			arg["name"] = String::utf8(param.name.c_str(), param.name.size());
+			arg["type"] = meta_variant_type_or_nil(param.type);
+			arg["optional"] = param.optional();
+			args.push_back(arg);
+		}
+		method["args"] = args;
+		out.push_back(method);
+	}
+	return out;
+}
+
+Dictionary Sandbox::get_program_metadata(const PackedByteArray &binary) {
+	Dictionary result;
+	const BinaryInfo info = get_program_info_from_binary(binary);
+	result["language"] = info.language;
+	result["version"] = info.version;
+	result["functions"] = info.functions;
+	result["has_metadata"] = info.has_script_metadata;
+	if (!info.has_script_metadata) {
+		return result;
+	}
+
+	const gdscript::ScriptMetadata &meta = info.script_metadata;
+	result["class_name"] = String::utf8(meta.class_name.c_str(), meta.class_name.size());
+	result["base_class"] = String::utf8(meta.base_class.c_str(), meta.base_class.size());
+	result["base_is_path"] = meta.base_is_path;
+	result["is_tool"] = meta.is_tool;
+	result["double_precision"] = meta.double_precision;
+	result["methods"] = meta_signatures_to_array(meta.functions);
+	result["signals"] = meta_signatures_to_array(meta.signals);
+	result["line_table_size"] = int64_t(meta.line_table.entries.size());
 	return result;
 }

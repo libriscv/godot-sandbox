@@ -7,6 +7,7 @@
 #include "../fast_cast.hpp"
 #include "../sandbox.h"
 #include "../scoped_tree_base.h"
+#include "../variant_coerce.h"
 #include "script_safegdscript.h"
 #include "script_language_safegdscript.h"
 #include <godot_cpp/core/object.hpp>
@@ -91,6 +92,7 @@ Variant SafeGDScriptInstance::callp(
 	// compiler hands the constant ones over with the signature, and they are
 	// appended here exactly as Godot appends its own.
 	LocalVector<const Variant *> completed;
+	LocalVector<Variant> narrowed;
 	if (const MethodInfo *method = script->find_method_info(p_method)) {
 		if (!(method->flags & METHOD_FLAG_VARARG)) {
 			const int expected = int(method->arguments.size());
@@ -107,15 +109,39 @@ Variant SafeGDScriptInstance::callp(
 				r_error.expected = expected;
 				return Variant();
 			}
+			for (int i = 0; i < p_argument_count; i++) {
+				const Variant::Type declared = method->arguments[i].type;
+				if (declared == Variant::NIL || p_args[i]->get_type() == declared) {
+					continue;
+				}
+				if (completed.is_empty()) {
+					narrowed.resize(p_argument_count);
+					completed.reserve(expected);
+					for (int j = 0; j < p_argument_count; j++) {
+						narrowed[j] = *p_args[j];
+						completed.push_back(&narrowed[j]);
+					}
+				}
+				if (!coerce_variant_to(narrowed[i], declared)) {
+					r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
+					r_error.argument = i;
+					r_error.expected = declared;
+					return Variant();
+				}
+			}
 			if (p_argument_count < expected) {
-				completed.reserve(expected);
-				for (int i = 0; i < p_argument_count; i++) {
-					completed.push_back(p_args[i]);
+				if (completed.is_empty()) {
+					completed.reserve(expected);
+					for (int i = 0; i < p_argument_count; i++) {
+						completed.push_back(p_args[i]);
+					}
 				}
 				const int first_default = int(method->default_arguments.size()) - (expected - p_argument_count);
 				for (int i = first_default; i < int(method->default_arguments.size()); i++) {
 					completed.push_back(&method->default_arguments[i]);
 				}
+			}
+			if (!completed.is_empty()) {
 				p_args = completed.ptr();
 			}
 		}

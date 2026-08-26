@@ -5,6 +5,7 @@
 #include <godot_cpp/templates/hash_set.hpp>
 #include <string>
 
+#include "../gdscript/compiler/gdsmeta.h"
 #include "../stringname_id.hpp"
 
 using namespace godot;
@@ -26,6 +27,10 @@ protected:
 	int source_version = 0;
 	int elf_api_version;
 	String elf_programming_language;
+
+	bool has_script_metadata = false;
+	gdscript::ScriptMetadata script_metadata;
+	const gdscript::FunctionSignature *find_signature(const StringName &p_name) const;
 
 	mutable HashSet<ELFScriptInstance *> instances;
 	friend class ELFScriptInstance;
