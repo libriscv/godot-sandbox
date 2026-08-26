@@ -139,7 +139,10 @@ static inline void sys_trace(const String &name, Result result, Args &&...args) 
 	// Caller must have verified the Variant's type.
 	template <typename T>
 	static inline T &variant_container(const Variant &var) noexcept {
-		static_assert(sizeof(T) == sizeof(void *), "Container wrapper is not the engine's pointer");
+		// The wrapper is the engine's opaque handle, sized by the API build configuration
+		// (4 bytes for float_32/double_32), not by the host pointer. It sits at the front
+		// of the Variant's inline data, so a narrower handle still starts at &value.
+		static_assert(sizeof(T) <= sizeof(GDNativeVariant::value), "Container wrapper exceeds the Variant payload");
 		GDNativeVariant *inner = (GDNativeVariant *)var._native_ptr();
 		return *reinterpret_cast<T *>(&inner->value);
 	}
