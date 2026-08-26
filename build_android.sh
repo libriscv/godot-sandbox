@@ -30,7 +30,7 @@ elif [ "$1" == "--cmake" ]; then
 	      -DANDROID_NDK=$ANDROID_NDK_ROOT \
 	      -DANDROID_NATIVE_API_LEVEL=24 \
 	      -DCMAKE_BUILD_TYPE=Release \
-		  -DRISCV_LIBTCC=ON -DANDROID_TOOLCHAIN=ON \
+		  -DRISCV_ASMJIT=ON -DANDROID_TOOLCHAIN=ON \
 		  ..
 	make -j$(nproc)
 	popd

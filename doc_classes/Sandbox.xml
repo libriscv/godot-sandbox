@@ -88,6 +88,7 @@
 				resulting shared library will allow the sandboxed program to run closer to native performance.
 				If `ignore_instruction_limit` is true, the instruction limit will not be enforced, improving performance. Having an execution limit is only really recommended while building programs, as the worst case scenario is that the program or game appears to hang, which is not a security issue in most cases.
 				If `automatic_nbit_address_space` is true, the translation will automatically use an n-bit (masked) address space, which can greatly improve performance for certain programs. It is however, somewhat experimental and may not work with all programs.
+				Only the C99 binary translator can emit source. A JIT build compiles to machine code in-process and has nothing to hand out, so this returns an empty string there. Check [code]has_feature_binary_translation()[/code] before relying on it.
 			</description>
 		</method>
 		<method name="generate_api" qualifiers="static">
@@ -242,6 +243,7 @@
 			<description>
 				Loads a binary translation of the sandboxed program from a shared library.
 				This allows the sandboxed program to run closer to native performance by executing pre-compiled code.
+				A JIT build has no C99 binary translator to register the library with, so this returns false there. Check [code]has_feature_binary_translation()[/code] first.
 			</description>
 		</method>
 		<method name="load_buffer">
@@ -374,6 +376,7 @@
 			<param index="4" name="automatic_nbit_as" type="bool" default="false" />
 			<description>
 				Attempts to generate and then compile a binary translation of the sandboxed program into a shared library. This allows the sandboxed program to run closer to native performance by executing pre-compiled code. If the compilation is successful, the shared library will be loaded automatically on platforms that support loading shared libraries.
+				A JIT build has nothing to emit and no external compiler to invoke, so this returns false there. Check [code]has_feature_binary_translation()[/code] first.
 			</description>
 		</method>
 		<method name="vmcall" qualifiers="const vararg">

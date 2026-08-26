@@ -50,7 +50,7 @@ jobs:
             -DANDROID_NDK=$ANDROID_NDK_ROOT \
             -DANDROID_NATIVE_API_LEVEL=26 \
             -DCMAKE_BUILD_TYPE=Release \
-            -DRISCV_LIBTCC=ON \
+            -DRISCV_ASMJIT=ON \
             -DANDROID_TOOLCHAIN=ON
 
       - name: Build the addon

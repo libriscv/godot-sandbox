@@ -48,7 +48,7 @@ jobs:
       env:
         CC: ccache gcc
         CXX: ccache g++
-      run: cmake -B .build -DCMAKE_BUILD_TYPE=Release -DRISCV_LIBTCC=ON
+      run: cmake -B .build -DCMAKE_BUILD_TYPE=Release -DRISCV_ASMJIT=ON
 
     - name: Build the addon
       run: |

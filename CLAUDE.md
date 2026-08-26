@@ -52,6 +52,29 @@ refused while restricted; release always permitted.
 Object Variant store is raw 24B move, never `VASSIGN`. Compiler emits retain for
 globals with `IRGlobalVar::holds_object`.
 
+## Native backends
+
+Two of them, and by default only one is built:
+
+- **asmjit** (`RISCV_ASMJIT`) — in-process JIT to x86-64/AArch64. Default ON
+  wherever asmjit has a ujit code generator; `ext/CMakeLists.txt` then defaults
+  `RISCV_BINARY_TRANSLATION` (and libtcc) OFF, which no-ops
+  `emit_binary_translation()`, `try_compile_binary_translation()` and
+  `load_binary_translation()`. Gate on `has_feature_binary_translation()`.
+- **C99 binary translator** (`RISCV_BINARY_TRANSLATION`) — emits C, compiles it
+  out of process. What the SCons addon ships, and the only path for iOS/Web/
+  Switch. Still the default where asmjit has no code generator (x86-32, 32-bit
+  ARM).
+
+`has_feature_jit()` covers either JIT. `is_jit()` is already true for a segment
+that is only on its way to being compiled, so poll `is_binary_translated()` to
+learn the code landed.
+
+Windows cross-build: `mingw_toolchain.cmake`. `CMAKE_SYSTEM_NAME` is load-bearing
+— without it CMake still describes a Linux host, `CMAKE_SIZEOF_VOID_P` comes back
+empty and godot-cpp's bit-width `math(EXPR)` fails the configure, while asmjit
+selects its mmap/shm_open backend for a PE target.
+
 ## Guest memory checks
 
 Decided at load by `unchecked_memory_wanted()` (`sandbox.h`), reported by

@@ -33,7 +33,7 @@ jobs:
         env:
           CC: ccache clang
           CXX: ccache clang++
-        run: cmake -B ${{github.workspace}}/.build -DCMAKE_BUILD_TYPE=Release -DRISCV_LIBTCC=ON
+        run: cmake -B ${{github.workspace}}/.build -DCMAKE_BUILD_TYPE=Release -DRISCV_ASMJIT=ON
 
       - name: Build the addon
         working-directory: ${{github.workspace}}/.build
