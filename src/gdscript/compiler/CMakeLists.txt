@@ -23,6 +23,7 @@ set(COMPILER_SOURCES
     token.cpp
     lexer.cpp
     parser.cpp
+    chain.cpp
     ir.cpp
     ir_optimizer.cpp
     ir_verifier.cpp

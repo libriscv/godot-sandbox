@@ -2078,8 +2078,18 @@ APICALL(api_obj_property_get) {
 		// It's likely a Variant index
 		const Variant &var = get_scoped_variant_or_throw(emu, uint32_t(addr), "Object::get_property");
 		if (var.get_type() != Variant::OBJECT) {
-			ERR_PRINT("api_obj_property_get: Variant is not an Object, but " + String(GuestVariant::type_name(var.get_type())));
-			throw std::runtime_error("api_obj_property_get: Variant is not an Object, but " + std::string(GuestVariant::type_name(var.get_type())));
+			bool valid = false;
+			const StringName member = emu.cached_guest_name(g_property, method, false).sname;
+			Variant value = var.get_named(member, valid);
+			if (!valid) {
+				ERR_PRINT("api_obj_property_get: " + String(GuestVariant::type_name(var.get_type())) +
+						" has no member " + member);
+				throw std::runtime_error("api_obj_property_get: " +
+						std::string(GuestVariant::type_name(var.get_type())) + " has no member " +
+						std::string(method));
+			}
+			vret->create(emu, std::move(value));
+			return;
 		}
 		obj = var.operator godot::Object *();
 	}
@@ -2109,8 +2119,19 @@ APICALL(api_obj_property_set) {
 		// It's likely a Variant index
 		const Variant &var = get_scoped_variant_or_throw(emu, uint32_t(addr), "Object::set_property");
 		if (var.get_type() != Variant::OBJECT) {
-			ERR_PRINT("api_obj_property_set: Variant is not an Object, but " + String(GuestVariant::type_name(var.get_type())));
-			throw std::runtime_error("api_obj_property_set: Variant is not an Object, but " + std::string(GuestVariant::type_name(var.get_type())));
+			// Built-in member set: get_mutable copies a borrowed Variant first.
+			Variant &target = emu.get_mutable_scoped_variant(int32_t(uint32_t(addr)));
+			bool valid = false;
+			const StringName member = emu.cached_guest_name(g_property, method, false).sname;
+			target.set_named(member, g_value->toVariant(emu), valid);
+			if (!valid) {
+				ERR_PRINT("api_obj_property_set: " + String(GuestVariant::type_name(target.get_type())) +
+						" has no member " + member);
+				throw std::runtime_error("api_obj_property_set: " +
+						std::string(GuestVariant::type_name(target.get_type())) + " has no member " +
+						std::string(method));
+			}
+			return;
 		}
 		obj = var.operator godot::Object *();
 	}

@@ -38,7 +38,11 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	ir_program.class_name = program.class_name;
 	ir_program.base_class = program.base_class;
 	ir_program.base_is_path = program.base_is_path;
-	m_script_base_class = program.base_class;
+	ir_program.native_base_class = program.native_base_class;
+	ir_program.native_base_is_path = program.native_base_is_path;
+	m_script_base_class = program.native_base_class;
+	m_chain = program.chain;
+	m_current_chain_link = 0;
 
 	// Signals are members; collected first so name collisions are caught below.
 	m_signals.clear();
@@ -184,6 +188,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			? IRGlobalVar::Storage::Data
 			: IRGlobalVar::Storage::Instance;
 
+		m_current_chain_link = global.chain_link;
 		FunctionContext& target = ir_global.is_member() ? member_func : init_func;
 		bool& target_has_init = ir_global.is_member()
 			? ir_program.has_member_init
@@ -277,6 +282,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		m_globals_lowered = i + 1;
 	}
 
+	m_current_chain_link = 0;
 	if (ir_program.has_global_init) {
 		init_func.ir.instructions.emplace_back(IROpcode::RETURN);
 		init_func.ir.max_registers = init_func.next_register;
@@ -350,8 +356,12 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		ir_program.signatures.push_back(std::move(signature));
 
 		m_current_class = pending.owner;
+		m_current_chain_link = pending.chain_link;
+		m_current_chain_function = pending.chain_function;
 		IRFunction lifted = generate_lambda_function(*pending.decl, pending.captures);
 		m_current_class = nullptr;
+		m_current_chain_link = 0;
+		m_current_chain_function.clear();
 		lifted.name = pending.lifted_name;
 		ir_program.functions.push_back(std::move(lifted));
 	}
@@ -371,6 +381,8 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const Stru
 	func.ir.name = owner != nullptr ? lifted_method_name(*owner, decl.name) : decl.name;
 	func.ir.is_coroutine = decl.is_coroutine;
 	m_current_function = func.ir.name;
+	m_current_chain_link = decl.chain_link;
+	m_current_chain_function = decl.declared_name();
 	enter_accessor_scope(decl.name);
 
 	func.return_type = decl.return_type;
@@ -429,8 +441,12 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const Stru
 void CodeGenerator::error_at(const std::string& message, int line, int column,
 	const std::string& hint) const
 {
+	std::string file;
+	if (size_t(m_current_chain_link) < m_chain.paths.size()) {
+		file = m_chain.paths[size_t(m_current_chain_link)];
+	}
 	throw CompilerException(ErrorType::CODEGEN_ERROR, message, line, column,
-		m_current_function, "", "", hint);
+		m_current_function, file, "", hint);
 }
 
 void CodeGenerator::error_at(const std::string& message, const Expr* expr,
@@ -719,6 +735,14 @@ CodeGenerator::LValue CodeGenerator::resolve_lvalue(const Expr* expr, FunctionCo
 
 	if (auto* member_expr = dynamic_cast<const MemberCallExpr*>(expr)) {
 		if (!member_expr->is_method_call && member_expr->arguments.empty()) {
+			if (auto* object = dynamic_cast<const VariableExpr*>(member_expr->object.get())) {
+				if (names_a_chain_class(object->name, func)) {
+					VariableExpr member(member_expr->member_name);
+					member.line = member_expr->line;
+					member.column = member_expr->column;
+					return resolve_lvalue(&member, func);
+				}
+			}
 			auto container = std::make_shared<LValue>(resolve_lvalue(member_expr->object.get(), func));
 			lvalue.kind = LValue::Kind::MEMBER;
 			lvalue.name = member_expr->member_name;
@@ -838,21 +862,21 @@ void CodeGenerator::gen_if(const IfStmt* stmt, FunctionContext& func) {
 
 	free_register(func, cond_reg);
 
-	push_scope(func);
+	const int then_scope = push_block_scope(func);
 	for (const auto& s : stmt->then_branch) {
 		gen_stmt(s.get(), func);
 	}
-	pop_scope(func);
+	pop_block_scope(then_scope, func);
 
 	if (!stmt->else_branch.empty()) {
 		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
 
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(else_label));
-		push_scope(func);
+		const int else_scope = push_block_scope(func);
 		for (const auto& s : stmt->else_branch) {
 			gen_stmt(s.get(), func);
 		}
-		pop_scope(func);
+		pop_block_scope(else_scope, func);
 	}
 
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
@@ -1040,7 +1064,7 @@ void CodeGenerator::gen_match(const MatchStmt* stmt, FunctionContext& func) {
 	for (size_t i = 0; i < stmt->branches.size(); i++) {
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(test_labels[i]));
 
-		push_scope(func);
+		const int arm_scope = push_block_scope(func);
 		if (!table_is_complete) {
 			const std::string& next_label =
 				i + 1 < stmt->branches.size() ? test_labels[i + 1] : end_label;
@@ -1051,7 +1075,7 @@ void CodeGenerator::gen_match(const MatchStmt* stmt, FunctionContext& func) {
 		for (const auto& body_stmt : stmt->branches[i].body) {
 			gen_stmt(body_stmt.get(), func);
 		}
-		pop_scope(func);
+		pop_block_scope(arm_scope, func);
 		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
 	}
 
@@ -1261,7 +1285,7 @@ int CodeGenerator::gen_compare(IROpcode opcode, int left_reg, int right_reg, Fun
 }
 
 // Skipped in coroutines: suspension restores slots but not the mark.
-int CodeGenerator::open_loop_scope(FunctionContext& func) {
+int CodeGenerator::open_scope(FunctionContext& func) {
 	if (func.ir.is_coroutine) {
 		return -1;
 	}
@@ -1270,11 +1294,22 @@ int CodeGenerator::open_loop_scope(FunctionContext& func) {
 	return scope_id;
 }
 
-void CodeGenerator::emit_loop_scope_release(int scope_id, FunctionContext& func) {
+void CodeGenerator::emit_scope_release(int scope_id, FunctionContext& func) {
 	if (scope_id < 0) {
 		return;
 	}
 	func.ir.instructions.emplace_back(IROpcode::SCOPE_RELEASE, IRValue::imm(scope_id));
+}
+
+int CodeGenerator::push_block_scope(FunctionContext& func) {
+	const int scope_id = open_scope(func);
+	push_scope(func);
+	return scope_id;
+}
+
+void CodeGenerator::pop_block_scope(int scope_id, FunctionContext& func) {
+	pop_scope(func);
+	emit_scope_release(scope_id, func);
 }
 
 void CodeGenerator::gen_while(const WhileStmt* stmt, FunctionContext& func) {
@@ -1282,9 +1317,9 @@ void CodeGenerator::gen_while(const WhileStmt* stmt, FunctionContext& func) {
 	std::string end_label = make_label("endloop");
 
 	func.loops.push_back({end_label, loop_label});
-	const int scope_id = open_loop_scope(func);
+	const int scope_id = open_scope(func);
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
-	emit_loop_scope_release(scope_id, func);
+	emit_scope_release(scope_id, func);
 	int cond_reg = gen_expr(stmt->condition.get(), func);
 	emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, end_label, func);
 	free_register(func, cond_reg);
@@ -1503,9 +1538,9 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(join_label));
 		};
 
-		const int scope_id = open_loop_scope(func);
+		const int scope_id = open_scope(func);
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
-		emit_loop_scope_release(scope_id, func);
+		emit_scope_release(scope_id, func);
 		int size_reg = alloc_register(func);
 		if (unknown_iterable) {
 			emit_four_way("size", size_reg,
@@ -1664,9 +1699,9 @@ void CodeGenerator::gen_string_walk(const ForStmt* stmt, int string_reg, Functio
 	set_register_type(func, handle_reg, Variant::INT);
 	set_register_type(func, left_reg, Variant::INT);
 
-	const int batch_scope = open_loop_scope(func);
+	const int batch_scope = open_scope(func);
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(refill_label));
-	emit_loop_scope_release(batch_scope, func);
+	emit_scope_release(batch_scope, func);
 
 	int packed_reg = alloc_register(func);
 	IRInstruction refill(IROpcode::CALL_SYSCALL);
@@ -1686,9 +1721,9 @@ void CodeGenerator::gen_string_walk(const ForStmt* stmt, int string_reg, Functio
 	emit_conditional_branch(IROpcode::BRANCH_ZERO, left_reg, end_label, func);
 
 	// Marked after the batch exists, so releasing it never takes the batch.
-	const int body_scope = open_loop_scope(func);
+	const int body_scope = open_scope(func);
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(have_label));
-	emit_loop_scope_release(body_scope, func);
+	emit_scope_release(body_scope, func);
 
 	int elem_reg = alloc_register(func);
 	func.ir.instructions.emplace_back(IROpcode::MAKE_SCOPED, IRValue::reg(elem_reg),
@@ -1746,9 +1781,9 @@ void CodeGenerator::gen_numeric_for(const ForStmt* stmt, int start_reg, int end_
 	}
 	const IRInstruction::TypeHint numeric = float_loop ? Variant::FLOAT : Variant::INT;
 
-	const int scope_id = open_loop_scope(func);
+	const int scope_id = open_scope(func);
 	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
-	emit_loop_scope_release(scope_id, func);
+	emit_scope_release(scope_id, func);
 
 	int cond_reg = alloc_register(func);
 
@@ -2140,6 +2175,37 @@ int CodeGenerator::gen_enum_member(const EnumDecl::Member& member, FunctionConte
 	return result_reg;
 }
 
+int CodeGenerator::gen_enum_dictionary(const EnumDecl& decl, FunctionContext& func) {
+	std::vector<int> key_regs;
+	std::vector<int> value_regs;
+	key_regs.reserve(decl.members.size());
+	value_regs.reserve(decl.members.size());
+	for (const auto& member : decl.members) {
+		key_regs.push_back(gen_string_value(member.name, func));
+		value_regs.push_back(gen_enum_member(member, func));
+	}
+
+	const int result_reg = alloc_register(func);
+	IRInstruction make(IROpcode::MAKE_DICTIONARY);
+	make.operands.push_back(IRValue::reg(result_reg));
+	make.operands.push_back(IRValue::imm(static_cast<int>(key_regs.size())));
+	for (size_t i = 0; i < key_regs.size(); i++) {
+		make.operands.push_back(IRValue::reg(key_regs[i]));
+		make.operands.push_back(IRValue::reg(value_regs[i]));
+	}
+	make.type_hint = Variant::DICTIONARY;
+	func.ir.instructions.push_back(make);
+	set_register_type(func, result_reg, Variant::DICTIONARY);
+
+	for (int reg : key_regs) {
+		free_register(func, reg);
+	}
+	for (int reg : value_regs) {
+		free_register(func, reg);
+	}
+	return result_reg;
+}
+
 int CodeGenerator::gen_float_immediate(double value, FunctionContext& func) {
 	int reg = alloc_register(func);
 	IRInstruction instr(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(reg), IRValue::fimm(value));
@@ -2268,6 +2334,10 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 		return gen_enum_member(*member->second, func);
 	}
 
+	if (auto found = m_enums.find(expr->name); found != m_enums.end()) {
+		return gen_enum_dictionary(*found->second, func);
+	}
+
 	if (is_global_class(expr->name)) {
 		return gen_global_class_get(expr->name, func);
 	}
@@ -2335,6 +2405,17 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 	// Script function used as a Callable value (e.g. `pressed.connect(f)`).
 	if (is_local_function(expr->name)) {
 		return gen_make_callable(expr->name, -1, func);
+	}
+
+	// Without this, an unknown script class falls through to VGET and silently answers null.
+	if (global_script_class_path(expr->name) != nullptr) {
+		error_at("'" + expr->name + "' is a script in another file, and none of its body is "
+			"compiled into this program", expr,
+			m_chain.merged()
+				? "Only the scripts this one extends are merged in. Reach '" + expr->name +
+					"' through an instance: '" + expr->name + ".new()'"
+				: "A sandboxed program is one binary built from one file. Reach '" + expr->name +
+					"' through an instance ('" + expr->name + ".new()'), or extend it");
 	}
 
 	if (int base_reg = gen_implicit_base_load(func); base_reg >= 0) {
@@ -2676,7 +2757,8 @@ int CodeGenerator::gen_lambda(const LambdaExpr* expr, FunctionContext& func) {
 		set_register_type(func, bound_reg, Variant::ARRAY);
 	}
 
-	m_pending_lambdas.push_back({ &decl, lifted_name, captures, m_current_class });
+	m_pending_lambdas.push_back({ &decl, lifted_name, captures, m_current_class,
+		m_current_chain_link, m_current_chain_function });
 
 	int result_reg = gen_make_callable(lifted_name, bound_reg, func);
 	if (bound_reg >= 0) {
@@ -3458,6 +3540,49 @@ int CodeGenerator::gen_ternary(const TernaryExpr* expr, FunctionContext& func) {
 	return result_reg;
 }
 
+int CodeGenerator::emit_local_call(const std::string& name, std::vector<int> arg_regs,
+	FunctionContext& func, const Expr* site)
+{
+	auto sig = m_local_signatures.find(name);
+	if (sig != m_local_signatures.end()) {
+		const auto& params = sig->second->parameters;
+		if (arg_regs.size() > params.size()) {
+			error_at("Too many arguments to '" + name + "': expected at most " +
+				std::to_string(params.size()) + ", got " + std::to_string(arg_regs.size()), site);
+		}
+		for (size_t i = arg_regs.size(); i < params.size(); i++) {
+			if (!params[i].default_value) {
+				error_at("Missing argument '" + params[i].name + "' in call to '" +
+					name + "'", site);
+			}
+			arg_regs.push_back(gen_expr(params[i].default_value.get(), func));
+		}
+	}
+
+	int result_reg = alloc_register(func);
+
+	const bool hosted = sig != m_local_signatures.end() && sig->second->is_coroutine;
+
+	if (sig != m_local_signatures.end() && !hosted) {
+		apply_declared_type(result_reg, sig->second->return_type, func);
+	}
+
+	IRInstruction call_instr(hosted ? IROpcode::CALL_HOSTED : IROpcode::CALL);
+	call_instr.operands.push_back(IRValue::str(name));
+	call_instr.operands.push_back(IRValue::reg(result_reg));
+	call_instr.operands.push_back(IRValue::imm(arg_regs.size()));
+	for (int arg_reg : arg_regs) {
+		call_instr.operands.push_back(IRValue::reg(arg_reg));
+	}
+	func.ir.instructions.push_back(call_instr);
+
+	for (int reg : arg_regs) {
+		free_register(func, reg);
+	}
+
+	return result_reg;
+}
+
 int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 	// Struct constructor: checked before args are lowered (only call that names them).
 	if (const StructDecl* decl = find_struct(expr->function_name)) {
@@ -3584,46 +3709,7 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 	}
 
 	if (is_local_function(expr->function_name)) {
-		// Defaults materialized here: ABI has no argument count, callee can't distinguish.
-		auto sig = m_local_signatures.find(expr->function_name);
-		if (sig != m_local_signatures.end()) {
-			const auto& params = sig->second->parameters;
-			if (arg_regs.size() > params.size()) {
-				error_at("Too many arguments to '" + expr->function_name + "': expected at most " +
-					std::to_string(params.size()) + ", got " + std::to_string(arg_regs.size()), expr);
-			}
-			for (size_t i = arg_regs.size(); i < params.size(); i++) {
-				if (!params[i].default_value) {
-					error_at("Missing argument '" + params[i].name + "' in call to '" +
-						expr->function_name + "'", expr);
-				}
-				arg_regs.push_back(gen_expr(params[i].default_value.get(), func));
-			}
-		}
-
-		int result_reg = alloc_register(func);
-
-		const bool hosted = sig != m_local_signatures.end() && sig->second->is_coroutine;
-
-		// Return type on result register: enables field checks and native arithmetic.
-		if (sig != m_local_signatures.end() && !hosted) {
-			apply_declared_type(result_reg, sig->second->return_type, func);
-		}
-
-		IRInstruction call_instr(hosted ? IROpcode::CALL_HOSTED : IROpcode::CALL);
-		call_instr.operands.push_back(IRValue::str(expr->function_name));
-		call_instr.operands.push_back(IRValue::reg(result_reg));
-		call_instr.operands.push_back(IRValue::imm(arg_regs.size()));
-		for (int arg_reg : arg_regs) {
-			call_instr.operands.push_back(IRValue::reg(arg_reg));
-		}
-		func.ir.instructions.push_back(call_instr);
-
-		for (int reg : arg_regs) {
-			free_register(func, reg);
-		}
-
-		return result_reg;
+		return emit_local_call(expr->function_name, std::move(arg_regs), func, expr);
 	}
 
 	// Run-time path: passed as Variant, same resource-allowed callback as literal.
@@ -3757,9 +3843,18 @@ void CodeGenerator::gen_builtin_method(const BuiltinMethod& method, int result_r
 }
 
 int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& func) {
+	VariableExpr chain_object("");
+	const Expr* object_expr = expr->object.get();
+	if (const std::string* member = chain_qualified_member(object_expr, func)) {
+		chain_object.name = *member;
+		chain_object.line = object_expr->line;
+		chain_object.column = object_expr->column;
+		object_expr = &chain_object;
+	}
+
 	// Struct.new(): resolved before object is lowered (struct is a type, not a value).
 	if (expr->is_method_call && expr->member_name == "new") {
-		if (auto* object = dynamic_cast<const VariableExpr*>(expr->object.get())) {
+		if (auto* object = dynamic_cast<const VariableExpr*>(object_expr)) {
 			if (const StructDecl* decl = find_struct(object->name)) {
 				return gen_struct_construct(*decl, expr->arguments, *expr, func, expr);
 			}
@@ -3777,9 +3872,33 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		}
 	}
 
+	if (auto* object = dynamic_cast<const VariableExpr*>(object_expr)) {
+		if (names_a_chain_class(object->name, func)) {
+			if (expr->is_method_call) {
+				if (!is_local_function(expr->member_name)) {
+					error_at("'" + object->name + "' declares no '" + expr->member_name + "()'",
+						expr, "Its body is merged into this program, so '" + expr->member_name +
+						"()' would be a function here");
+				}
+				reject_named_arguments(*expr, "'" + expr->member_name + "'", expr);
+				std::vector<int> arg_regs;
+				for (const auto& argument : expr->arguments) {
+					arg_regs.push_back(gen_expr(argument.get(), func));
+				}
+				return emit_local_call(expr->member_name, std::move(arg_regs), func, expr);
+			}
+			if (expr->arguments.empty()) {
+				VariableExpr member(expr->member_name);
+				member.line = expr->line;
+				member.column = expr->column;
+				return gen_variable(&member, func);
+			}
+		}
+	}
+
 	// `Class.f()` and `Class.CONST`: the left-hand name is a type, not a value, so
 	// neither reaches gen_expr. A static method has no receiver to pass.
-	if (auto* object = dynamic_cast<const VariableExpr*>(expr->object.get())) {
+	if (auto* object = dynamic_cast<const VariableExpr*>(object_expr)) {
 		const StructDecl* decl = find_struct(object->name);
 		if (decl != nullptr && decl->is_class && find_variable(func, object->name) == nullptr) {
 			if (expr->is_method_call) {
@@ -3806,7 +3925,7 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		}
 	}
 
-	if (is_super(expr->object.get(), func)) {
+	if (is_super(object_expr, func)) {
 		if (int result = gen_super_call(expr, func); result >= 0) {
 			return result;
 		}
@@ -3815,7 +3934,7 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 	// A declared enum is checked first, so `enum Color { RED = 5 }` shadows the
 	// built-in Color rather than silently answering with the engine's constant.
 	if (!expr->is_method_call && expr->arguments.empty()) {
-		if (auto* object = dynamic_cast<const VariableExpr*>(expr->object.get())) {
+		if (auto* object = dynamic_cast<const VariableExpr*>(object_expr)) {
 			if (find_variable(func, object->name) == nullptr) {
 				if (auto found = m_enums.find(object->name); found != m_enums.end()) {
 					const EnumDecl* decl = found->second;
@@ -3838,14 +3957,14 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 	}
 
 	if (!expr->is_method_call && expr->arguments.empty() && is_local_function(expr->member_name)) {
-		if (auto* object = dynamic_cast<const VariableExpr*>(expr->object.get())) {
+		if (auto* object = dynamic_cast<const VariableExpr*>(object_expr)) {
 			if (object->name == "self" && find_variable(func, "self") == nullptr) {
 				return gen_make_callable(expr->member_name, -1, func);
 			}
 		}
 	}
 
-	if (auto* object = dynamic_cast<const VariableExpr*>(expr->object.get())) {
+	if (auto* object = dynamic_cast<const VariableExpr*>(object_expr)) {
 		if (names_an_engine_type(object->name, func)) {
 			if (!expr->is_method_call) {
 				return gen_engine_class_constant(object->name, expr->member_name, func);
@@ -3860,16 +3979,16 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 
 	if (expr->is_method_call) {
 		if (const char* owner_method = signal_owner_method(expr->member_name)) {
-			const std::string signal_name = signal_name_of(expr->object.get(), func);
+			const std::string signal_name = signal_name_of(object_expr, func);
 			if (!signal_name.empty()) {
 				return gen_signal_owner_call(signal_name, owner_method, expr, func);
 			}
 		}
 	}
 
-	int obj_reg = is_super(expr->object.get(), func)
+	int obj_reg = is_super(object_expr, func)
 		? gen_get_node(".", func)
-		: gen_expr(expr->object.get(), func);
+		: gen_expr(object_expr, func);
 
 	if (expr->is_method_call) {
 		if (const StructDecl* decl = get_register_struct(func, obj_reg); decl != nullptr && decl->is_class) {
@@ -4026,7 +4145,7 @@ int CodeGenerator::gen_dictionary_literal(const DictionaryLiteralExpr* expr, Fun
 void CodeGenerator::emit_missing_export_accessors(IRProgram& ir_program) {
 	for (size_t i = 0; i < ir_program.globals.size(); i++) {
 		IRGlobalVar& global = ir_program.globals[i];
-		if (!global.is_property) {
+		if (!global.publishes_to_host()) {
 			continue;
 		}
 		const bool has_setter = !global.setter_function.empty();
@@ -4981,9 +5100,34 @@ int CodeGenerator::gen_class_method_call(const StructDecl& decl, const FunctionD
 	return result_reg;
 }
 
+int CodeGenerator::gen_chain_super_call(const std::string& name,
+	const std::vector<ExprPtr>& arguments, const NamedArguments& names,
+	FunctionContext& func, const Expr* site)
+{
+	const ChainInfo::Origin* origin = m_chain.super_of(name, m_current_chain_link);
+	if (origin == nullptr) {
+		return -1;
+	}
+	reject_named_arguments(names, "'" + name + "'", site);
+	std::vector<int> arg_regs;
+	for (const auto& argument : arguments) {
+		arg_regs.push_back(gen_expr(argument.get(), func));
+	}
+	return emit_local_call(origin->symbol, std::move(arg_regs), func, site);
+}
+
 int CodeGenerator::gen_super_call(const MemberCallExpr* expr, FunctionContext& func) {
 	if (m_current_class == nullptr) {
-		return -1;
+		if (!expr->is_method_call) {
+			if (m_chain.merged() && is_global_variable(expr->member_name)) {
+				VariableExpr member(expr->member_name);
+				member.line = expr->line;
+				member.column = expr->column;
+				return gen_variable(&member, func);
+			}
+			return -1;
+		}
+		return gen_chain_super_call(expr->member_name, expr->arguments, *expr, func, expr);
 	}
 	const StructDecl* base = class_base(*m_current_class);
 	const std::string* engine_base = native_base(*m_current_class);
@@ -5042,6 +5186,19 @@ int CodeGenerator::gen_super_call(const MemberCallExpr* expr, FunctionContext& f
 
 int CodeGenerator::gen_super_init(const CallExpr* expr, FunctionContext& func) {
 	if (m_current_class == nullptr) {
+		if (m_chain.merged()) {
+			if (int result = gen_chain_super_call(m_current_chain_function, expr->arguments,
+				*expr, func, expr); result >= 0)
+			{
+				return result;
+			}
+			if (!m_script_base_class.empty()) {
+				int result_reg = alloc_register(func);
+				func.ir.instructions.emplace_back(IROpcode::LOAD_NIL, IRValue::reg(result_reg));
+				set_register_type(func, result_reg, Variant::NIL);
+				return result_reg;
+			}
+		}
 		error_at("super() has no base to call: a sandboxed program is the whole script", expr,
 			script_level_super_hint());
 	}
@@ -6217,6 +6374,23 @@ bool CodeGenerator::is_autoload(const std::string& name) const {
 	return m_autoloads.find(name) != m_autoloads.end();
 }
 
+bool CodeGenerator::names_a_chain_class(const std::string& name, FunctionContext& func) {
+	return m_chain.merged() && !name.empty() && m_chain.names_a_link(name) &&
+		find_variable(func, name) == nullptr && !is_global_variable(name);
+}
+
+const std::string* CodeGenerator::chain_qualified_member(const Expr* expr, FunctionContext& func) {
+	auto* member = dynamic_cast<const MemberCallExpr*>(expr);
+	if (member == nullptr || member->is_method_call || !member->arguments.empty()) {
+		return nullptr;
+	}
+	auto* object = dynamic_cast<const VariableExpr*>(member->object.get());
+	if (object == nullptr || !names_a_chain_class(object->name, func)) {
+		return nullptr;
+	}
+	return &member->member_name;
+}
+
 const std::string* CodeGenerator::global_script_class_path(const std::string& name) const {
 	const auto it = m_global_script_classes.find(name);
 	return it != m_global_script_classes.end() ? &it->second : nullptr;
@@ -6346,7 +6520,23 @@ void CodeGenerator::apply_default_initializer(IRGlobalVar& global, FunctionConte
 		return;
 	}
 
-	// Object, Callable, Transform3D, etc.: no guest-constructible default; stays NIL.
+	if (global.type_hint == Variant::OBJECT || global.type_hint == Variant::NIL) {
+		return;
+	}
+
+	// Empty slot carries VASSIGN's INT32_MIN sentinel; first assignment would
+	// adopt a scoped index that dies with the call.
+	int reg = alloc_register(init_func);
+	IRInstruction construct(IROpcode::CONSTRUCT, IRValue::reg(reg),
+		IRValue::imm(static_cast<int64_t>(global.type_hint)), IRValue::imm(0));
+	construct.type_hint = global.type_hint;
+	init_func.ir.instructions.push_back(construct);
+	set_register_type(init_func, reg, global.type_hint);
+	init_func.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
+		IRValue::imm(static_cast<int64_t>(global_index)), IRValue::reg(reg));
+	free_register(init_func, reg);
+	global.init_type = IRGlobalVar::InitType::RUNTIME;
+	has_global_init = true;
 }
 
 IROpcode CodeGenerator::packed_array_opcode(IRInstruction::TypeHint type) {

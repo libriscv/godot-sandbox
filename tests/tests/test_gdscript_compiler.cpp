@@ -247,3 +247,42 @@ PUBLIC Variant get_script_base_is_path()
 {
 	return gdscript_last_base_is_path();
 }
+// The `extends` chain's bodies, nearest base first, as (name, path, source)
+// triples. A sandboxed program is one binary built from one file, so a base is
+// only reachable by being compiled in; the host resolves the chain because only
+// it can read the project's files.
+PUBLIC Variant set_base_sources(PackedStringArray triples)
+{
+	gdscript_set_base_sources(triples.fetch());
+	return Nil;
+}
+
+// The engine class the chain bottoms out at, which is what the owner Object has
+// to be. get_script_base_class() stays the declared base, which may be a script.
+PUBLIC Variant get_script_native_base_class()
+{
+	return String(gdscript_last_native_base_class());
+}
+
+PUBLIC Variant get_script_native_base_is_path()
+{
+	return gdscript_last_native_base_is_path();
+}
+
+PUBLIC Variant set_autoloads(PackedStringArray names)
+{
+	gdscript_autoloads() = names.fetch();
+	return Nil;
+}
+
+PUBLIC Variant set_global_classes(PackedStringArray pairs)
+{
+	std::vector<std::pair<std::string, std::string>> classes;
+	const std::vector<std::string> entries = pairs.fetch();
+	for (size_t i = 0; i + 1 < entries.size(); i += 2) {
+		classes.emplace_back(entries[i], entries[i + 1]);
+	}
+	gdscript_global_classes() = std::move(classes);
+	return Nil;
+}
+

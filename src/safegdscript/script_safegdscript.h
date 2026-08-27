@@ -122,10 +122,17 @@ public:
 	static String get_compiler_class_name();
 	static String get_compiler_base_class();
 	static bool get_compiler_base_is_path();
+	static String get_compiler_native_base_class();
+	static bool get_compiler_native_base_is_path();
 	static void set_compiler_restricted(bool p_restricted);
 	static void set_compiler_project_context();
+	static PackedStringArray resolve_base_sources(const String &p_source,
+			const String &p_self_path = String(), String *r_error = nullptr);
+	static void set_compiler_base_sources(const PackedStringArray &p_triples);
+	static void poll_base_sources();
 	const String &get_script_class_name() const { return class_name; }
 	const String &get_script_base_class() const { return base_class; }
+	const String &get_script_native_base_class() const { return native_base_class; }
 	void class_restrictions_changed();
 	void remove_instance(SafeGDScriptInstance *p_instance);
 	Variant new_instance(const Variant **p_args, GDExtensionInt p_argcount, GDExtensionCallError &r_error);
@@ -141,6 +148,7 @@ public:
 
 private:
 	void update_methods_info();
+	void rebuild_if_a_base_changed();
 	// Rejects rebuild while this script is stopped at a breakpoint.
 	bool refuse_while_stopped() const;
 	bool fail_compile(const String &p_message);
@@ -156,6 +164,13 @@ private:
 	String class_name;
 	String base_class;
 	bool base_is_path = false;
+	String native_base_class;
+	bool native_base_is_path = false;
+	// Loaded on demand: compile-time load would recurse through the resource loader.
+	mutable Ref<Script> base_script;
+	mutable bool base_script_resolved = false;
+	PackedStringArray base_paths;
+	Vector<uint64_t> base_stamps;
 	bool compiled_restricted = false;
 	bool class_access_restricted() const;
 	// Ascending, no repeats. Non-empty enables shadow stack + stops.

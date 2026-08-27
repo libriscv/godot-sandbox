@@ -799,6 +799,8 @@ bool validate_with_compiler(const String &p_source, ValidationResult &r_result) 
 
 	// Sticky flag; reset so validation doesn't inherit a prior compile's restrictions.
 	SafeGDScript::set_compiler_restricted(false);
+	SafeGDScript::set_compiler_project_context();
+	SafeGDScript::set_compiler_base_sources(SafeGDScript::resolve_base_sources(p_source));
 
 	GDExtensionCallError error;
 	Variant source = p_source;
@@ -1409,6 +1411,11 @@ void SafeGDScriptLanguage::_frame() {
 	}
 	// Poll editor breakpoints (no GDExtension callback for toggle).
 	safegdscript_sync_engine_breakpoints();
+
+	static uint32_t base_poll = 0;
+	if (Engine::get_singleton()->is_editor_hint() && ++base_poll % 30 == 0) {
+		SafeGDScript::poll_base_sources();
+	}
 }
 void SafeGDScriptLanguage::load_icon() {
 	static bool reenter = false;

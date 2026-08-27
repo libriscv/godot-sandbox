@@ -238,6 +238,18 @@ static bool contains_word(const std::vector<uint8_t>& elf, uint32_t word) {
 	return false;
 }
 
+static int count_word(const std::vector<uint8_t>& elf, uint32_t word) {
+	int count = 0;
+	for (size_t i = 0; i + 4 <= elf.size(); i++) {
+		const uint32_t at = uint32_t(elf[i]) | (uint32_t(elf[i + 1]) << 8) |
+			(uint32_t(elf[i + 2]) << 16) | (uint32_t(elf[i + 3]) << 24);
+		if (at == word) {
+			count++;
+		}
+	}
+	return count;
+}
+
 static uint32_t li_a7_vscope() {
 	return (uint32_t(ECALL_VSCOPE) << 20) | (0u << 15) | (0u << 12) | (17u << 7) | 0x13u;
 }
@@ -330,6 +342,166 @@ static void test_a_host_free_loop_is_not_scoped() {
 	check(contains_word(nested, li_a7_vscope()), "the allocating outer loop keeps its scope");
 }
 
+
+static void test_a_block_takes_a_scope() {
+	struct Case {
+		const char* what;
+		const char* source;
+		int scopes;
+	};
+	const Case cases[] = {
+		{ "an if body",
+		  "func test(c):\n\tvar out = []\n\tif c:\n\t\tout.append(str({\"a\": 1}))\n\treturn out\n", 1 },
+		{ "if and else",
+		  "func test(c):\n\tvar out = []\n\tif c:\n\t\tout.append(str({\"a\": 1}))\n"
+		  "\telse:\n\t\tout.append(str({\"b\": 2}))\n\treturn out\n", 2 },
+		{ "a match arm",
+		  "func test(c):\n\tvar out = []\n\tmatch c:\n\t\t1:\n\t\t\tout.append(str({\"a\": 1}))\n"
+		  "\t\t_:\n\t\t\tout.append(str({\"b\": 2}))\n\treturn out\n", 2 },
+		{ "a block inside a loop",
+		  "func test(n : int):\n\tvar out = []\n\tfor i in range(n):\n\t\tif i > 1:\n"
+		  "\t\t\tout.append(str({\"a\": i}))\n\treturn out\n", 2 },
+	};
+	for (const Case& c : cases) {
+		const IRProgram ir = compile_to_ir(c.source, /*optimize=*/true);
+		const IRFunction& func = find_function(ir, "test");
+		check(count_opcode(func, IROpcode::SCOPE_MARK) == c.scopes,
+			std::string(c.what) + ": marks");
+		check(count_opcode(func, IROpcode::SCOPE_RELEASE) == c.scopes,
+			std::string(c.what) + ": releases");
+		std::set<int64_t> ids;
+		for (const auto& instr : func.instructions) {
+			if (instr.opcode == IROpcode::SCOPE_MARK) {
+				ids.insert(std::get<int64_t>(instr.operands[0].value));
+			}
+		}
+		check(int(ids.size()) == c.scopes, std::string(c.what) + ": distinct ids");
+	}
+}
+
+// The release stands at the end of the block, not after the join label: an
+// arm that falls through to the label must not release the other arm's work.
+static void test_the_block_release_precedes_the_join() {
+	const IRProgram ir = compile_to_ir(
+		"func test(c):\n"
+		"\tvar out = []\n"
+		"\tif c:\n"
+		"\t\tout.append(str({\"a\": 1}))\n"
+		"\treturn out\n", /*optimize=*/true);
+	const IRFunction& func = find_function(ir, "test");
+	const size_t mark = index_of(func, IROpcode::SCOPE_MARK);
+	const size_t release = index_of(func, IROpcode::SCOPE_RELEASE);
+	check(mark < release && release < func.instructions.size(),
+		"the mark opens the block and the release closes it");
+	if (release + 1 >= func.instructions.size()) {
+		check(false, "the release is not the last instruction");
+		return;
+	}
+	check(func.instructions[release + 1].opcode == IROpcode::LABEL,
+		"the join label follows the release");
+	for (size_t i = mark + 1; i < release; i++) {
+		check(!ir_has_effect(func.instructions[i].opcode, IR_TERMINATOR),
+			"nothing jumps out from under the mark");
+	}
+}
+
+static void test_a_coroutine_block_takes_no_scope() {
+	const IRProgram ir = compile_to_ir(
+		"signal ready\n"
+		"func test(c):\n"
+		"\tvar out = []\n"
+		"\tif c:\n"
+		"\t\tout.append(str({\"a\": 1}))\n"
+		"\t\tawait ready\n"
+		"\treturn out\n", /*optimize=*/true);
+	const IRFunction& func = find_function(ir, "test");
+	check(func.is_coroutine, "the function is a coroutine");
+	check(count_opcode(func, IROpcode::SCOPE_MARK) == 0, "a coroutine block takes no mark");
+	check(count_opcode(func, IROpcode::SCOPE_RELEASE) == 0, "a coroutine block takes no release");
+}
+
+static void test_the_block_ir_verifies() {
+	const std::string source =
+		"var total = 0\n"
+		"func test(c):\n"
+		"\tif c:\n"
+		"\t\tvar d = {\"a\": 1}\n"
+		"\t\ttotal += d[\"a\"]\n"
+		"\telse:\n"
+		"\t\tmatch c:\n"
+		"\t\t\t0:\n"
+		"\t\t\t\ttotal += len(str({\"b\": 2}))\n"
+		"\t\t\t_:\n"
+		"\t\t\t\ttotal += 1\n"
+		"\treturn total\n";
+	IRProgram ir = compile_to_ir(source, /*optimize=*/false);
+	for (const auto& func : ir.functions) {
+		ir_verify(func, "codegen");
+	}
+	IROptimizer optimizer;
+	optimizer.optimize(ir);
+	for (const auto& func : ir.functions) {
+		ir_verify(func, "the optimizer");
+	}
+	check(true, "block scopes verify before and after the optimizer");
+}
+
+static void test_a_host_free_block_is_not_scoped() {
+	const std::vector<uint8_t> ints = compile_to_elf(
+		"func test(n : int) -> int:\n"
+		"\tvar acc : int = 0\n"
+		"\tif n > 3:\n"
+		"\t\tacc += n * 2\n"
+		"\telse:\n"
+		"\t\tacc -= n\n"
+		"\treturn acc\n");
+	check(!contains_word(ints, li_a7_vscope()), "a typed int block makes no scope syscall");
+	check(!contains_word(ints, sw_zero_sp(16)), "a typed int block is not zeroed for one");
+
+	const std::vector<uint8_t> stores = compile_to_elf(
+		"func test(n : int) -> Dictionary:\n"
+		"\tvar d : Dictionary = {}\n"
+		"\tif n > 3:\n"
+		"\t\td[n] = n\n"
+		"\treturn d\n");
+	check(!contains_word(stores, li_a7_vscope()), "a block that only stores makes no scope syscall");
+
+	const std::vector<uint8_t> allocates = compile_to_elf(
+		"func test(n : int) -> Array:\n"
+		"\tvar out : Array = []\n"
+		"\tif n > 3:\n"
+		"\t\tout.append(str({\"a\": n}))\n"
+		"\treturn out\n");
+	check(contains_word(allocates, li_a7_vscope()), "an allocating block keeps its scope");
+}
+
+// Most blocks allocate nothing, and one that does not must emit nothing: no
+// syscall of its own, and no mark slot ahead of the scope that survives.
+static void test_elided_blocks_emit_nothing() {
+	const std::string prefix =
+		"func test(n : int) -> Array:\n"
+		"\tvar out : Array = []\n"
+		"\tvar acc : int = 0\n";
+	const std::string loop =
+		"\tfor i in range(n):\n"
+		"\t\tout.append(str(i))\n"
+		"\treturn out\n";
+	std::string blocks;
+	for (int i = 0; i < 8; i++) {
+		blocks += "\tif n > " + std::to_string(i) + ":\n\t\tacc += n\n";
+	}
+	const std::vector<uint8_t> bare = compile_to_elf(prefix + loop);
+	const std::vector<uint8_t> padded = compile_to_elf(prefix + blocks + loop);
+	check(count_word(bare, li_a7_vscope()) == 2, "the loop makes a mark and a release");
+	check(count_word(padded, li_a7_vscope()) == count_word(bare, li_a7_vscope()),
+		"eight non-allocating blocks add no scope syscall");
+
+	// Nothing survives, so the function reserves no mark slot and is not zeroed.
+	const std::vector<uint8_t> loopless = compile_to_elf(prefix + blocks + "\treturn out\n");
+	check(count_word(loopless, li_a7_vscope()) == 0, "blocks alone make no scope syscall");
+	check(!contains_word(loopless, sw_zero_sp(16)), "and the frame is not zeroed for one");
+}
+
 int main() {
 	try {
 		test_every_loop_form_takes_a_scope();
@@ -341,6 +513,12 @@ int main() {
 		test_the_ir_verifies();
 		test_the_backend_emits_the_syscall_and_zeroes_the_frame();
 		test_a_host_free_loop_is_not_scoped();
+		test_a_block_takes_a_scope();
+		test_the_block_release_precedes_the_join();
+		test_a_coroutine_block_takes_no_scope();
+		test_the_block_ir_verifies();
+		test_a_host_free_block_is_not_scoped();
+		test_elided_blocks_emit_nothing();
 	} catch (const CompilerException& e) {
 		std::cerr << "FAILED: compiler exception: " << e.what() << std::endl;
 		failures++;

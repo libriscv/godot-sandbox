@@ -12,6 +12,7 @@
 #include "../compiler_exception.h"
 #include "../instance_layout.h"
 #include "../variant_layout.h"
+#include "../syscall_numbers.h"
 #include <cassert>
 #include <climits>
 #include <unordered_map>
@@ -536,6 +537,62 @@ static void test_truthiness() {
 	std::cout << "  ✓ Variant truthiness" << std::endl;
 }
 
+// A global whose every read takes its address directly has no frame copy. The
+// branch's truthiness test dropped that base register and handed the host an
+// SP-relative pointer anyway, so `if platform:` booleanized whatever sat at the
+// bottom of the frame -- reliably false for an object member.
+static void test_truthiness_of_a_global_read_in_place() {
+	std::cout << "Testing truthiness of a global read in place..." << std::endl;
+
+	// Declared by class name, so the slot carries no Variant type and the branch
+	// has to ask the host. `r` keeps the branch off the return register, which is
+	// excluded from the frame-copy elision.
+	const std::string source =
+		"var platform: Sprite2D\n"
+		"func test(a):\n"
+		"\tvar r = a\n"
+		"\tif platform:\n"
+		"\t\tr = 1\n"
+		"\treturn r\n";
+
+	assert(count_opcode(find_function(compile_to_ir(source), "test"), IROpcode::BRANCH_ZERO) == 1);
+
+	constexpr uint8_t REG_SP = 2;
+	constexpr uint8_t REG_A1 = 11;
+	constexpr uint8_t REG_A7 = 17;
+	const auto is_addi = [](uint32_t instr) {
+		return (instr & 0x7F) == 0x13 && ((instr >> 12) & 7) == 0;
+	};
+	const auto rd_of = [](uint32_t instr) { return uint8_t((instr >> 7) & 0x1F); };
+	const auto rs1_of = [](uint32_t instr) { return uint8_t((instr >> 15) & 0x1F); };
+
+	const std::vector<uint8_t> code = compile_to_code(source);
+	bool checked = false;
+	for (size_t off = 0; off + 4 <= code.size(); off += 4) {
+		const uint32_t instr = word_at(code, off);
+		// li a7, ECALL_VEVAL
+		if (!is_addi(instr) || rd_of(instr) != REG_A7 || rs1_of(instr) != 0 ||
+			(int32_t(instr) >> 20) != ECALL_VEVAL) {
+			continue;
+		}
+		// a1 is the operand pointer: the last write of it before the syscall.
+		bool found = false;
+		for (size_t back = off; back >= 4 && !found; back -= 4) {
+			const uint32_t prev = word_at(code, back - 4);
+			if (!is_addi(prev) || rd_of(prev) != REG_A1) {
+				continue;
+			}
+			assert(rs1_of(prev) != REG_SP);
+			found = true;
+		}
+		assert(found);
+		checked = true;
+	}
+	assert(checked);
+
+	std::cout << "  ✓ truthiness of a global read in place" << std::endl;
+}
+
 // A declared type is a promise about the value, not just a label on it.
 static void test_declared_type_coercion() {
 	std::cout << "Testing coercion to declared types..." << std::endl;
@@ -706,6 +763,7 @@ int main() {
 	test_global_init_runs_before_property_registration();
 	test_logical_short_circuit();
 	test_truthiness();
+	test_truthiness_of_a_global_read_in_place();
 	test_declared_type_coercion();
 	test_bitwise_and_shifts();
 	test_globals_start_empty();

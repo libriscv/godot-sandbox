@@ -12,6 +12,8 @@
 
 namespace gdscript {
 
+static constexpr int32_t USAGE_SCRIPT_VARIABLE = 4096;
+
 RISCVCodeGen::RISCVCodeGen(const VariantLayout& layout, bool profiling, ProfilingClock profiling_clock,
 		bool debug_info, const std::vector<uint32_t>& breakpoint_lines) :
 		m_layout(layout), m_profiling(profiling), m_profiling_clock(profiling_clock),
@@ -227,9 +229,10 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 
 	for (size_t i = 0; i < program.globals.size(); i++) {
 		const auto& global = program.globals[i];
-		if (!global.is_property) {
+		if (!global.publishes_to_host()) {
 			continue;
 		}
+		const bool script_variable = !global.is_property;
 
 		const std::string name_label = ".LPROP" + std::to_string(i);
 		m_property_name_strings.push_back({global.name, name_label});
@@ -266,6 +269,16 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 			emit_la(REG_A4, hint_label);
 			emit_li(REG_A5, static_cast<int64_t>(global.export_hint.hint_string.length()));
 			emit_li(REG_A6, global.export_hint.usage);
+			emit_li(REG_A7, ECALL_SANDBOX_ADD);
+			emit_ecall();
+		} else if (script_variable) {
+			emit_li(REG_A0, SANDBOX_ADD_PROPERTY_HINT);
+			emit_la(REG_A1, name_label);
+			emit_li(REG_A2, static_cast<int64_t>(global.name.length()));
+			emit_li(REG_A3, 0);
+			emit_la(REG_A4, name_label);
+			emit_li(REG_A5, 0);
+			emit_li(REG_A6, USAGE_SCRIPT_VARIABLE);
 			emit_li(REG_A7, ECALL_SANDBOX_ADD);
 			emit_ecall();
 		}
@@ -2466,13 +2479,28 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			int dst_offset = get_variant_stack_offset(dst_vreg);
 			int src_offset = get_variant_stack_offset(src_vreg);
 
-			// Use OP_NEGATE (unary operation - use veval with same operand twice)
-			// Actually for unary, we need a different approach - create a zero Variant
-			// For now, use subtract: 0 - src
-			// TODO: Add proper unary operation support
-			int zero_offset = get_scratch_variant_offset();
-			emit_variant_create_int(zero_offset, 0);
-			emit_variant_eval(dst_offset, zero_offset, src_offset, 7); // OP_SUBTRACT
+			if (instr.type_hint == Variant::INT) {
+				emit_load_variant_int(REG_T0, REG_SP, src_offset);
+				emit_sub(REG_T1, REG_ZERO, REG_T0);
+				emit_li(REG_T0, Variant::INT);
+				emit_store_variant_type(REG_T0, REG_SP, dst_offset);
+				emit_store_variant_int(REG_T1, REG_SP, dst_offset);
+				break;
+			}
+
+			if (instr.type_hint == Variant::FLOAT) {
+				// Sign-bit flip, not `0.0 - x`: preserves -0.0 and NaN payloads.
+				emit_load_variant_int(REG_T0, REG_SP, src_offset);
+				emit_li(REG_T1, 1);
+				emit_slli(REG_T1, REG_T1, 63);
+				emit_xor(REG_T1, REG_T0, REG_T1);
+				emit_li(REG_T0, Variant::FLOAT);
+				emit_store_variant_type(REG_T0, REG_SP, dst_offset);
+				emit_store_variant_int(REG_T1, REG_SP, dst_offset);
+				break;
+			}
+
+			emit_variant_eval_unary(dst_offset, src_offset, 10); // OP_NEGATE
 			break;
 		}
 
@@ -4220,12 +4248,26 @@ void RISCVCodeGen::emit_variant_move(uint8_t dst_base, int32_t dst_offset, uint8
 }
 
 void RISCVCodeGen::emit_variant_eval_unary(int result_offset, int operand_offset, int op) {
+	emit_variant_eval_unary(result_offset, REG_SP, operand_offset, op);
+}
+
+void RISCVCodeGen::emit_variant_eval_unary(int result_offset, uint8_t operand_base, int operand_offset,
+	int op)
+{
+	// A1 before NIL setup: operand_base may alias REG_T0.
+	emit_add_offset(REG_A1, operand_base, operand_offset);
+
 	// Godot indexes operator_evaluator_table[op][a_type][b_type]; unary ops
 	// require b_type = NIL, not the operand's type
 	const int nil_offset = get_scratch_variant_offset(1);
 	emit_li(REG_T0, Variant::NIL);
 	emit_store_variant_type(REG_T0, REG_SP, nil_offset);
-	emit_variant_eval(result_offset, operand_offset, nil_offset, op);
+
+	emit_li(REG_A0, op);
+	emit_add_offset(REG_A2, REG_SP, nil_offset);
+	emit_add_offset(REG_A3, REG_SP, result_offset);
+	emit_li(REG_A7, ECALL_VEVAL);
+	emit_ecall();
 }
 
 void RISCVCodeGen::emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op,
@@ -4836,7 +4878,7 @@ void RISCVCodeGen::emit_variant_truthy(uint8_t rd, int variant_offset, int32_t t
 	// Unknown type: host decides via OP_NOT (!booleanize), then invert.
 	// Unconditional: the allocator's spill moves must not sit on a conditional path.
 	const int scratch_offset = get_scratch_variant_offset();
-	emit_variant_eval_unary(scratch_offset, variant_offset, 23); // OP_NOT
+	emit_variant_eval_unary(scratch_offset, base_reg, variant_offset, 23); // OP_NOT
 	emit_lbu(rd, REG_SP, scratch_offset + VARIANT_DATA_OFFSET);
 	emit_seqz(rd, rd);
 }
@@ -5225,33 +5267,49 @@ bool RISCVCodeGen::instruction_may_allocate_scoped(const IRInstruction& instr) c
 	return instruction_may_ecall(instr) && !leaves_nothing_scoped(instr);
 }
 
-// Scans mark..last-back-edge; nested SCOPE_MARK/RELEASE do not count.
 bool RISCVCodeGen::scope_body_may_allocate(const IRFunction& func, size_t mark_index) const {
 	const size_t count = func.instructions.size();
-	// Expects mark immediately before its label (tighten_scope_marks).
-	const size_t label_index = mark_index + 1;
-	if (label_index >= count || func.instructions[label_index].opcode != IROpcode::LABEL) {
-		return true;
-	}
-	const std::string& label = std::get<std::string>(func.instructions[label_index].operands.at(0).value);
+	const int scope_id = int(std::get<int64_t>(func.instructions[mark_index].operands.at(0).value));
 
-	size_t last = label_index;
-	for (size_t i = label_index + 1; i < count; i++) {
+	size_t last = mark_index;
+	bool bounded = false;
+
+	for (size_t i = mark_index + 1; i < count; i++) {
 		const IRInstruction& instr = func.instructions[i];
-		const IROperandSignature& sig = ir_opcode_info(instr.opcode).signature;
-		for (size_t op = 0; op < instr.operands.size(); op++) {
-			if (sig.kind_at(op) != IROperandKind::LBL && sig.kind_at(op) != IROperandKind::LBL_LIST) {
-				continue;
-			}
-			if (instr.operands[op].type == IRValue::Type::LABEL &&
-				std::get<std::string>(instr.operands[op].value) == label)
-			{
-				last = i;
+		if (instr.opcode == IROpcode::SCOPE_RELEASE &&
+			int(std::get<int64_t>(instr.operands.at(0).value)) == scope_id)
+		{
+			last = std::max(last, i);
+			bounded = true;
+		}
+	}
+
+	const size_t label_index = mark_index + 1;
+	if (label_index < count && func.instructions[label_index].opcode == IROpcode::LABEL) {
+		const std::string& label =
+			std::get<std::string>(func.instructions[label_index].operands.at(0).value);
+		for (size_t i = label_index + 1; i < count; i++) {
+			const IRInstruction& instr = func.instructions[i];
+			const IROperandSignature& sig = ir_opcode_info(instr.opcode).signature;
+			for (size_t op = 0; op < instr.operands.size(); op++) {
+				if (sig.kind_at(op) != IROperandKind::LBL && sig.kind_at(op) != IROperandKind::LBL_LIST) {
+					continue;
+				}
+				if (instr.operands[op].type == IRValue::Type::LABEL &&
+					std::get<std::string>(instr.operands[op].value) == label)
+				{
+					last = std::max(last, i);
+					bounded = true;
+				}
 			}
 		}
 	}
 
-	for (size_t i = label_index + 1; i <= last; i++) {
+	if (!bounded) {
+		return false;
+	}
+
+	for (size_t i = mark_index + 1; i <= last; i++) {
 		const IROpcode op = func.instructions[i].opcode;
 		if (op == IROpcode::SCOPE_MARK || op == IROpcode::SCOPE_RELEASE) {
 			continue;
@@ -5418,6 +5476,7 @@ void RISCVCodeGen::plan_release_clears(const IRFunction& func) {
 
 void RISCVCodeGen::plan_scopes(const IRFunction& func) {
 	m_fn.elided_scopes.clear();
+	m_fn.scope_slots.clear();
 	m_fn.scope_slot_count = 0;
 
 	int max_scope_id = -1;
@@ -5441,11 +5500,10 @@ void RISCVCodeGen::plan_scopes(const IRFunction& func) {
 		m_fn.elided_scopes[size_t(scope_id)] = !scope_body_may_allocate(func, i);
 	}
 
-	// Slots stay addressed by scope id, so the count is the highest survivor.
-	for (int scope_id = max_scope_id; scope_id >= 0; scope_id--) {
+	m_fn.scope_slots.assign(size_t(max_scope_id) + 1, -1);
+	for (int scope_id = 0; scope_id <= max_scope_id; scope_id++) {
 		if (!m_fn.elided_scopes[size_t(scope_id)]) {
-			m_fn.scope_slot_count = scope_id + 1;
-			break;
+			m_fn.scope_slots[size_t(scope_id)] = m_fn.scope_slot_count++;
 		}
 	}
 }
@@ -5456,11 +5514,13 @@ bool RISCVCodeGen::scope_is_elided(int scope_id) const {
 }
 
 int RISCVCodeGen::scope_slot_offset(int scope_id) const {
-	if (scope_id < 0 || scope_id >= m_fn.scope_slot_count) {
+	if (scope_id < 0 || size_t(scope_id) >= m_fn.scope_slots.size() ||
+		m_fn.scope_slots[size_t(scope_id)] < 0)
+	{
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 			"Scope id " + std::to_string(scope_id) + " was not planned into the frame");
 	}
-	return m_fn.scope_slot_base + scope_id * 8;
+	return m_fn.scope_slot_base + m_fn.scope_slots[size_t(scope_id)] * 8;
 }
 
 void RISCVCodeGen::gen_scope_mark(const IRInstruction& instr) {

@@ -30,6 +30,13 @@ struct CompilerOptions {
 	bool restricted = false;
 	std::vector<std::string> autoloads;
 	std::vector<std::pair<std::string, std::string>> global_script_classes;
+
+	struct BaseSource {
+		std::string name;
+		std::string path;
+		std::string source;
+	};
+	std::vector<BaseSource> base_sources; // nearest base first
 };
 
 // Structured error for editor underlines; the formatted string is in get_error().
@@ -59,6 +66,8 @@ public:
 	const std::string &get_class_name() const { return m_class_name; }
 	const std::string &get_base_class() const { return m_base_class; }
 	bool base_is_path() const { return m_base_is_path; }
+	const std::string &get_native_base_class() const { return m_native_base_class; }
+	bool native_base_is_path() const { return m_native_base_is_path; }
 	// Subset of breakpoint_lines that got a stop emitted.
 	const std::vector<uint32_t> &get_installed_breakpoints() const { return m_installed_breakpoints; }
 
@@ -72,6 +81,8 @@ private:
 	std::string m_class_name;
 	std::string m_base_class;
 	bool m_base_is_path = false;
+	std::string m_native_base_class;
+	bool m_native_base_is_path = false;
 	std::vector<uint32_t> m_installed_breakpoints;
 };
 

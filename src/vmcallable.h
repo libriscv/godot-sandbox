@@ -88,6 +88,8 @@ private:
 	Sandbox *sandbox() const;
 
 	ObjectID sandbox_id;
+	// Not part of identity: does not distinguish callables naming the same thing.
+	ObjectID tree_base_id;
 	gaddr_t instance_base = 0x0;
 	gaddr_t address = 0x0;
 	bool m_variant_arguments = false;

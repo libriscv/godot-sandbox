@@ -1373,6 +1373,7 @@ Variant Sandbox::vmcallable_address(gaddr_t address, Array args) {
 }
 void RiscvCallable::init(Sandbox *self, gaddr_t address, Array args, bool variant_arguments) {
 	this->sandbox_id = self != nullptr ? self->get_instance_id() : ObjectID();
+	this->tree_base_id = self != nullptr ? self->get_tree_base_id() : ObjectID();
 	this->instance_base = self != nullptr ? self->get_instance_base() : gaddr_t(0);
 	this->address = address;
 	this->m_variant_arguments = variant_arguments;
@@ -1427,6 +1428,7 @@ void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r
 	self->set_unboxed_arguments(!m_variant_arguments);
 
 	{
+		ScopedTreeBase stb(self, this->tree_base_id.is_valid() ? this->tree_base_id : self->get_tree_base_id());
 		ScopedInstanceBase sib(self, this->instance_base);
 		if (varargs) {
 			r_return_value = self->vmcall_internal(address, m_varargs_ptrs.data(), total_args);
@@ -1956,9 +1958,9 @@ void Sandbox::read_program_properties(bool editor) const {
 			gaddr_t setter;
 			GuestVariant def_val;
 		};
-		auto *props = machine().memory.memarray<GuestProperty>(prop_addr, MAX_PROPERTIES);
+		auto *props = machine().memory.memarray<GuestProperty>(prop_addr, MAX_GUEST_PROPERTY_SLOTS);
 
-		for (int i = 0; i < MAX_PROPERTIES; i++) {
+		for (int i = 0; i < MAX_GUEST_PROPERTY_SLOTS; i++) {
 			const GuestProperty *prop = &props[i];
 			// Invalid property: stop reading
 			if (prop->g_name == 0)

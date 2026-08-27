@@ -29,9 +29,16 @@ const ALWAYS_REFUSED := {
 	530: "TIMER_PERIODIC",
 	532: "NODE_CREATE",
 	539: "LOAD",
-	545: "OBJ_PROP_GET",
-	546: "OBJ_PROP_SET",
 }
+
+# OBJ_PROP_GET/SET are not in the list above, and the distinction is the point:
+# they carry two things. On an object handle they are an object capability, and
+# a restricted guest never gets a handle to begin with -- every syscall that
+# hands one out is in ALWAYS_REFUSED. On anything else they are a built-in's own
+# member (`transform.origin`, `basis.x`), which is value arithmetic: no object,
+# no engine state, nothing the allowlist has an opinion about. So under
+# restrictions these two do reach Godot, for the half that was never a
+# capability.
 
 func _make_sandbox() -> Sandbox:
 	var s := Sandbox.new()
@@ -82,12 +89,73 @@ func test_fuzz_syscalls():
 	# the blob it copies is the host's own, and the guest bytes that become one are
 	# consumed by AWAIT, which this run does reach.
 	never_returns.append(553) # AWAIT_RESTORE
+	# OBJ_PROP_GET/SET reach Godot only for the built-in-member half (see below),
+	# and only when a random name happens to be a member the random type has.
+	# That is a coin the fuzzer flips, not something a run can be asked to hit.
+	never_returns.append(545) # OBJ_PROP_GET
+	never_returns.append(546) # OBJ_PROP_SET
 	for syscall in range(500, SYSCALL_LAST):
 		if syscall in never_returns:
 			continue
 		var counts: Array = coverage.get(syscall, [0, 0])
 		assert_gt(counts[1], 0,
 			"system call %d was reached past its argument validation" % syscall)
+
+# The assault cannot tell the two halves of OBJ_PROP_GET/SET apart -- it drives
+# raw registers and counts returns -- so the half that is a capability is pinned
+# here instead, deterministically: a restricted guest holding a legitimate handle
+# still cannot read or write a property through it, and the built-in half it
+# shares a system call with keeps working.
+func test_object_properties_stay_refused_under_restrictions():
+	var source := """
+func builtin_member():
+	var t = Transform2D()
+	t.origin = Vector2(3, 4)
+	return t.origin
+
+func read(n):
+	return n.name
+
+func write(n):
+	n.name = "Renamed"
+"""
+	var compiler := _make_sandbox()
+	var elf: PackedByteArray = compiler.vmcall("compile_to_elf", source)
+	assert_false(elf.is_empty(), "the probe program should compile")
+	if elf.is_empty():
+		return
+
+	var target := Node.new()
+	target.name = "Target"
+	add_child_autofree(target)
+
+	var s := Sandbox.new()
+	s.load_buffer(elf)
+	s.set_instructions_max(40000000)
+	add_child_autofree(s)
+
+	# Unrestricted first, so a refusal below is the restrictions and not the program.
+	assert_eq(s.vmcallv("read", target), "Target", "the property reads before restrictions")
+
+	s.restrictions = true
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("builtin_member"), Vector2(3, 4),
+		"a built-in's own member is value arithmetic and stays reachable")
+	assert_eq(s.get_exceptions(), before, "and raises nothing")
+
+	before = s.get_exceptions()
+	assert_eq(s.vmcallv("read", target), null,
+		"reading an object property is refused however the guest got the handle")
+	assert_eq(s.get_exceptions(), before + 1, "the read raised")
+	assert_engine_error("Banned property accessed: name")
+	assert_engine_error("Exception: Banned property accessed: name")
+
+	before = s.get_exceptions()
+	s.vmcallv("write", target)
+	assert_eq(s.get_exceptions(), before + 1, "the write raised")
+	assert_engine_error("Banned property set: name")
+	assert_engine_error("Exception: Banned property set: name")
+	assert_eq(target.name, "Target", "and the property never changed")
 
 func test_fuzz_syscalls_respect_restrictions():
 	var s := _make_sandbox()

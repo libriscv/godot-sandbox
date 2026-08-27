@@ -1,3 +1,4 @@
+#include "../chain.h"
 #include "../codegen.h"
 #include "../compiler.h"
 #include "../compiler_exception.h"
@@ -1136,6 +1137,281 @@ void test_a_method_that_returns_self_keeps_the_type() {
 	std::cout << "  \u2713 A self-returning method answers the receiver" << std::endl;
 }
 
+
+// -= `extends <ScriptClass>` chains =-
+//
+// The host reads the base sources and hands them over; the compiler folds them
+// into one program. Root first here matches CompilerOptions: nearest base first.
+// Bases are listed root first here, which is how a chain reads; the option is
+// nearest base first, which is the order the host walks them in.
+struct Link {
+	std::string name;
+	std::string source;
+};
+
+std::string link_path(const Link& base) {
+	return "res://" + base.name + ".gd";
+}
+
+std::vector<std::pair<std::string, std::string>> project_classes(const std::vector<Link>& bases) {
+	std::vector<std::pair<std::string, std::string>> classes;
+	for (const Link& base : bases) {
+		classes.emplace_back(base.name, link_path(base));
+	}
+	// A class_name script the chain does not contain, to pin down that reaching
+	// into one is an error rather than a property read on the owner.
+	classes.emplace_back("Elsewhere", "res://elsewhere.gd");
+	return classes;
+}
+
+CompilerOptions chain_options(const std::vector<Link>& bases) {
+	CompilerOptions options;
+	for (size_t i = bases.size(); i-- > 0;) {
+		options.base_sources.push_back(CompilerOptions::BaseSource{
+			bases[i].name, link_path(bases[i]), bases[i].source });
+	}
+	options.global_script_classes = project_classes(bases);
+	return options;
+}
+
+IRProgram compile_chain_to_ir(const std::string& source, const std::vector<Link>& bases) {
+	// Same path the Compiler takes, stopping at the IR so the tests can read it.
+	std::vector<ChainLink> links;
+	for (const Link& base : bases) {
+		Lexer base_lexer(base.source);
+		Parser base_parser(base_lexer.tokenize());
+		ChainLink link;
+		link.name = base.name;
+		link.path = link_path(base);
+		link.program = base_parser.parse();
+		links.push_back(std::move(link));
+	}
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	ChainLink leaf;
+	leaf.program = parser.parse();
+	links.push_back(std::move(leaf));
+
+	CodeGenerator codegen;
+	codegen.set_global_script_classes(project_classes(bases));
+	return codegen.generate(merge_chain(std::move(links)));
+}
+
+std::string chain_error(const std::string& source, const std::vector<Link>& bases) {
+	Compiler compiler;
+	if (!compiler.compile(source, chain_options(bases)).empty()) {
+		return "";
+	}
+	return compiler.get_error();
+}
+
+std::vector<uint8_t> compile_chain(const std::string& source, const std::vector<Link>& bases) {
+	Compiler compiler;
+	std::vector<uint8_t> elf = compiler.compile(source, chain_options(bases));
+	if (elf.empty()) {
+		std::cerr << "FAILED to compile chain: " << compiler.get_error() << std::endl;
+		failures++;
+	}
+	return elf;
+}
+
+const char* PHYSICS_TEST = // root: the only link that extends an engine class
+	"extends Node2D\n"
+	"class_name PhysicsTest2D\n"
+	"enum TestCollisionShape { RECTANGLE, CIRCLE }\n"
+	"const CENTER = 320\n"
+	"var output = 0\n"
+	"static func get_collision_shape(kind):\n"
+	"\treturn kind + 1\n"
+	"func test_name():\n"
+	"\treturn \"physics\"\n"
+	"func describe():\n"
+	"\treturn test_name()\n";
+
+const char* UNIT_TEST =
+	"extends PhysicsTest2D\n"
+	"class_name PhysicsUnitTest2D\n"
+	"var monitors = 0\n"
+	"func register_monitors(n):\n"
+	"\tmonitors = n\n"
+	"\treturn monitors\n"
+	"func test_name():\n"
+	"\treturn \"unit:\" + super.test_name()\n";
+
+void test_a_chain_merges_into_one_program() {
+	std::cout << "Testing what a merged extends chain produces..." << std::endl;
+
+	const IRProgram ir = compile_chain_to_ir(
+		"extends PhysicsUnitTest2D\n"
+		"func test_start():\n"
+		"\treturn register_monitors(CENTER)\n",
+		{ { "PhysicsTest2D", PHYSICS_TEST }, { "PhysicsUnitTest2D", UNIT_TEST } });
+
+	check(ir.base_class == "PhysicsUnitTest2D", "the declared base stays the script class");
+	check(ir.native_base_class == "Node2D",
+		"the native base is what the chain bottoms out at, not '" + ir.native_base_class + "'");
+
+	const IRFunction* start = find_function(ir, "test_start");
+	check(start != nullptr, "the leaf's own function is there");
+	if (start != nullptr) {
+		const std::vector<std::string> calls = called_names(*start);
+		check(std::find(calls.begin(), calls.end(), "register_monitors") != calls.end(),
+			"an inherited method is a direct call, not a VCALL on the owner");
+		check(count_opcode(*start, IROpcode::VCALL) == 0,
+			"nothing falls through to the owner Node2D");
+	}
+
+	check(find_function(ir, "register_monitors") != nullptr, "the base's body is compiled in");
+
+	// Members concatenate base first, so __init_members runs them in chain order.
+	check(ir.globals.size() == 3 && ir.globals[0].name == "CENTER" &&
+		ir.globals[1].name == "output" && ir.globals[2].name == "monitors",
+		"members initialize base first");
+
+	std::cout << "  \u2713 A chain becomes one flat program" << std::endl;
+}
+
+void test_an_override_keeps_the_base_copy() {
+	std::cout << "Testing override and super across a 3-level chain..." << std::endl;
+
+	const IRProgram ir = compile_chain_to_ir(
+		"extends PhysicsUnitTest2D\n"
+		"func test_name():\n"
+		"\treturn \"leaf:\" + super.test_name()\n"
+		"func run():\n"
+		"\treturn describe()\n",
+		{ { "PhysicsTest2D", PHYSICS_TEST }, { "PhysicsUnitTest2D", UNIT_TEST } });
+
+	// Three declarations of one name: the leaf keeps it, the two it displaced
+	// move to symbols only super names.
+	check(find_function(ir, "test_name") != nullptr, "the leaf owns the plain name");
+	check(find_function(ir, "@super0.test_name") != nullptr, "the root copy survives");
+	check(find_function(ir, "@super1.test_name") != nullptr, "the middle copy survives too");
+
+	// Resolved per link: the middle link's super is the root's, not the middle's.
+	const IRFunction* middle = find_function(ir, "@super1.test_name");
+	if (middle != nullptr) {
+		const std::vector<std::string> calls = called_names(*middle);
+		check(std::find(calls.begin(), calls.end(), "@super0.test_name") != calls.end(),
+			"super in the middle link reaches the root copy");
+	}
+	const IRFunction* leaf = find_function(ir, "test_name");
+	if (leaf != nullptr) {
+		const std::vector<std::string> calls = called_names(*leaf);
+		check(std::find(calls.begin(), calls.end(), "@super1.test_name") != calls.end(),
+			"super in the leaf reaches the middle copy, not the root's");
+	}
+
+	// Virtual dispatch falls out of the one flat table: the root's describe()
+	// calls test_name(), which is now the leaf's override.
+	const IRFunction* describe = find_function(ir, "describe");
+	if (describe != nullptr) {
+		const std::vector<std::string> calls = called_names(*describe);
+		check(std::find(calls.begin(), calls.end(), "test_name") != calls.end(),
+			"a base body calling an overridden name reaches the override");
+	}
+
+	std::cout << "  \u2713 Overrides displace, they do not erase" << std::endl;
+}
+
+void test_super_of_the_enclosing_function() {
+	std::cout << "Testing super() in a merged chain..." << std::endl;
+
+	// super() is the base copy of the function it is written in, not of _init.
+	const IRProgram ir = compile_chain_to_ir(
+		"extends Base\n"
+		"func step(n):\n"
+		"\treturn super(n) + 1\n",
+		{ { "Base",
+			"extends Node\n"
+			"class_name Base\n"
+			"func step(n):\n"
+			"\treturn n * 2\n" } });
+
+	const IRFunction* step = find_function(ir, "step");
+	check(step != nullptr, "the override is there");
+	if (step != nullptr) {
+		const std::vector<std::string> calls = called_names(*step);
+		check(std::find(calls.begin(), calls.end(), "@super0.step") != calls.end(),
+			"super() calls the base copy of the enclosing function");
+	}
+
+	std::cout << "  \u2713 super() answers the enclosing function's base copy" << std::endl;
+}
+
+void test_a_base_static_and_enum_are_reachable() {
+	std::cout << "Testing base statics, consts and enums..." << std::endl;
+
+	// Qualified by the link's own class_name, which qualifies nothing once the
+	// bodies are one program, and unqualified.
+	const std::vector<Link> bases = { { "PhysicsTest2D", PHYSICS_TEST },
+		{ "PhysicsUnitTest2D", UNIT_TEST } };
+
+	const IRProgram ir = compile_chain_to_ir(
+		"extends PhysicsUnitTest2D\n"
+		"func f():\n"
+		"\treturn PhysicsTest2D.get_collision_shape(PhysicsTest2D.TestCollisionShape.RECTANGLE)\n"
+		"func g():\n"
+		"\treturn get_collision_shape(TestCollisionShape.CIRCLE) + CENTER\n",
+		bases);
+
+	const IRFunction* f = find_function(ir, "f");
+	check(f != nullptr, "the qualified form compiles");
+	if (f != nullptr) {
+		const std::vector<std::string> calls = called_names(*f);
+		check(std::find(calls.begin(), calls.end(), "get_collision_shape") != calls.end(),
+			"Base.static() is a direct call to the merged function");
+		check(count_opcode(*f, IROpcode::VGET) == 0,
+			"the qualifier produces no property read on the owner");
+	}
+	check(!compile_chain(
+		"extends PhysicsUnitTest2D\n"
+		"func f():\n"
+		"\treturn PhysicsTest2D.CENTER + PhysicsTest2D.get_collision_shape(0)\n", bases).empty(),
+		"a base constant is reachable through the link name too");
+
+	std::cout << "  \u2713 Base statics, constants and enums resolve unqualified" << std::endl;
+}
+
+void test_what_a_chain_refuses() {
+	std::cout << "Testing what a merged chain refuses..." << std::endl;
+
+	const std::string collision = chain_error(
+		"extends Base\n"
+		"var v = 2\n",
+		{ { "Base", "extends Node\nclass_name Base\nvar v = 1\n" } });
+	check(collision.find("already declared") != std::string::npos,
+		"a member declared in both links is refused: " + collision);
+
+	const std::string cycle = chain_error(
+		"extends Base\n"
+		"func f():\n"
+		"\treturn 1\n",
+		{ { "Base", "extends Node\nclass_name Base\n" },
+			{ "Base", "extends Node\nclass_name Base\n" } });
+	check(cycle.find("twice in the 'extends' chain") != std::string::npos,
+		"a repeated link is refused rather than merged twice: " + cycle);
+
+	Compiler restricted_compiler;
+	CompilerOptions restricted = chain_options({ { "Base", "extends Node\nclass_name Base\n" } });
+	restricted.restricted = true;
+	check(restricted_compiler.compile("extends Base\nfunc f():\n\treturn 1\n",
+		restricted).empty(), "a restricted Sandbox refuses a base body");
+	check(restricted_compiler.get_error().find("restricted") != std::string::npos,
+		"and says so: " + restricted_compiler.get_error());
+
+	// The chain is what makes a script class reachable; anything else is not.
+	const std::string outside = chain_error(
+		"extends Base\n"
+		"func f():\n"
+		"\treturn Elsewhere.helper()\n",
+		{ { "Base", "extends Node\nclass_name Base\n" } });
+	check(outside.find("none of its body is compiled into this program") != std::string::npos,
+		"a script class outside the chain is a compile error: " + outside);
+
+	std::cout << "  \u2713 Collisions, cycles and outsiders are refused" << std::endl;
+}
+
 } // namespace
 
 int main() {
@@ -1163,6 +1439,11 @@ int main() {
 	test_an_untracked_instance_answers_is();
 	test_a_class_without_a_base_is_still_refcounted();
 	test_a_method_that_returns_self_keeps_the_type();
+	test_a_chain_merges_into_one_program();
+	test_an_override_keeps_the_base_copy();
+	test_super_of_the_enclosing_function();
+	test_a_base_static_and_enum_are_reachable();
+	test_what_a_chain_refuses();
 
 	if (failures != 0) {
 		std::cerr << std::endl << failures << " class test(s) failed" << std::endl;

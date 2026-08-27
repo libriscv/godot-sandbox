@@ -3963,7 +3963,24 @@ func get_non_exported():
 	assert_almost_eq(s.get("exported_float"), 3.14, 0.001, "exported_float property should be 3.14")
 	assert_eq(s.get("exported_string"), "test", "exported_string property should be 'test'")
 	assert_eq_deep(s.get("exported_array"), [])
-	assert_eq(s.get("non_exported"), null, "non_exported is not exported, should be nil")
+	# A plain member answers get()/set() the way GDScript's own script variables
+	# do. What @export adds is the inspector, not reachability.
+	assert_eq(s.get("non_exported"), 100, "a plain member should be readable")
+	s.set("non_exported", 7)
+	assert_eq(s.vmcallv("get_non_exported"), 7, "and writable, from the guest's side too")
+	s.set("non_exported", 100)
+
+	var usage := {}
+	for property in s.get_property_list():
+		usage[property["name"]] = int(property["usage"])
+	assert_true(usage.has("exported_int"), "an @export should be in the property list")
+	assert_true(usage.has("non_exported"), "and so should a plain member")
+	assert_true((usage["exported_int"] & PROPERTY_USAGE_EDITOR) != 0,
+		"an @export should reach the inspector")
+	assert_eq(usage["non_exported"] & (PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE), 0,
+		"a plain member should reach neither the inspector nor a saved scene")
+	assert_true((usage["non_exported"] & PROPERTY_USAGE_SCRIPT_VARIABLE) != 0,
+		"a plain member should be a script variable")
 
 	s.set("exported_int", 100)
 	assert_eq(s.get("exported_int"), 100, "exported_int property should be updated to 100")
@@ -11032,6 +11049,232 @@ func count(node):
 	s.queue_free()
 
 
+# -= Block scopes: what a block makes dies with the block =-
+
+func test_sgd_a_block_releases_what_it_made():
+	# A block's temporaries are released where the block ends, so references_max
+	# bounds what is live at once rather than everything the function ever made.
+	# Thirty blocks of three values each is ninety, and four are live.
+	var body := "func run():\n\tvar made = 0\n"
+	for i in range(30):
+		body += "\tif true:\n"
+		body += "\t\tvar d = {\"k\": %d}\n" % i
+		body += "\t\tvar arr = [d, str(d)]\n"
+		body += "\t\tmade += arr.size()\n"
+	body += "\treturn made\n"
+
+	var s = _compile_and_load(body, 40000000)
+	if s == null:
+		return
+	s.references_max = 24
+
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("run"), 60, "every one of the thirty blocks should run")
+	assert_eq(s.get_exceptions(), before,
+		"ninety values through a budget of twenty-four should not run out")
+
+	s.queue_free()
+
+func test_sgd_a_value_leaving_a_block_survives_the_release():
+	# Everything the block hands outward -- an enclosing local, a member, the
+	# return value, an element appended to an outer container -- has to read
+	# the same after the release as before it.
+	var source := """
+var member = null
+
+func escapes(c):
+	var out = []
+	var kept = null
+	if c:
+		var d = {"a": 1, "b": 2}
+		kept = d
+		member = [d, "tail"]
+		out.append(d.duplicate())
+	if c:
+		out.append(kept["b"])
+		out.append(member[1])
+	return out
+
+func returned(c):
+	if c:
+		var d = {"a": 1}
+		d["b"] = 2
+		return d
+	return null
+"""
+	var s = _compile_and_load(source, 40000000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("escapes", true), [{"a": 1, "b": 2}, 2, "tail"],
+		"a local, a member and an appended copy all outlive the block")
+	assert_eq(s.vmcallv("escapes", false), [], "and the untaken block makes nothing")
+	assert_eq(s.vmcallv("returned", true), {"a": 1, "b": 2},
+		"a value returned out of a block is not released under it")
+	assert_eq(s.vmcallv("returned", false), null, "and the untaken block returns nothing")
+
+	s.queue_free()
+
+func test_sgd_a_lambda_made_in_a_block_outlives_it():
+	# Captures are copied into an Array at creation, so the release cannot
+	# reach them -- but the Callable itself leaves the block.
+	var source := """
+func make(n):
+	var f = null
+	if n > 0:
+		var prefix = "n=" + str(n)
+		var parts = [prefix, "!"]
+		f = func(extra): return parts[0] + parts[1] + str(extra)
+	return f.call(7)
+"""
+	var s = _compile_and_load(source, 40000000)
+	if s == null:
+		return
+	assert_eq(s.vmcallv("make", 3), "n=3!7",
+		"the captures a block made are still readable after it")
+	s.queue_free()
+
+func test_sgd_leaving_a_block_early_releases_nothing_live():
+	# break, continue and return jump past the release; the enclosing loop --
+	# or the end of the call -- reclaims those slots instead.
+	var source := """
+func run(n : int):
+	var out = []
+	var i = 0
+	while i < n:
+		i += 1
+		if i == 2:
+			var skipped = {"skip": i}
+			out.append(str(skipped.size()))
+			continue
+		if i == 5:
+			var stop = [i, "last"]
+			out.append(stop[1])
+			break
+		var kept = {"i": i}
+		out.append(kept["i"])
+	return out
+"""
+	var s = _compile_and_load(source, 40000000)
+	if s == null:
+		return
+	assert_eq(s.vmcallv("run", 9), _si_early_exit(9),
+		"an early exit out of a block should answer what the engine answers")
+	s.queue_free()
+
+func _si_early_exit(n : int):
+	var out = []
+	var i = 0
+	while i < n:
+		i += 1
+		if i == 2:
+			var skipped = {"skip": i}
+			out.append(str(skipped.size()))
+			continue
+		if i == 5:
+			var stop = [i, "last"]
+			out.append(stop[1])
+			break
+		var kept = {"i": i}
+		out.append(kept["i"])
+	return out
+
+func test_sgd_a_match_arm_releases_what_it_made():
+	# Every arm is a block. A binding is a copy scoped to the arm, and the arm's
+	# answer has to leave it intact.
+	var source := """
+func pick(v):
+	var out = []
+	match v:
+		[var a, var b]:
+			var joined = [a, b, "pair"]
+			out.append(joined[2])
+			out.append(a + b)
+		{"tag": var t}:
+			var s = str(t) + "!"
+			out.append(s)
+		var other:
+			var s = str(other) + "?"
+			out.append(s)
+	return out
+
+func many(n : int):
+	var made = 0
+	for i in range(n):
+		match i % 3:
+			0:
+				made += [i, str(i)].size()
+			1:
+				made += {"k": str(i)}.size()
+			_:
+				made += len(str(i) + "x")
+	return made
+"""
+	var s = _compile_and_load(source, 40000000)
+	if s == null:
+		return
+	assert_eq(s.vmcallv("pick", [3, 4]), ["pair", 7], "a binding survives its arm")
+	assert_eq(s.vmcallv("pick", {"tag": 9}), ["9!"], "so does one a Dictionary pattern took")
+	assert_eq(s.vmcallv("pick", "z"), ["z?"], "the wildcard arm binds a copy")
+
+	s.references_max = 24
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("many", 60), _si_many(60), "sixty arms should run")
+	assert_eq(s.get_exceptions(), before, "and should not run out of references")
+	s.queue_free()
+
+func _si_many(n : int):
+	var made = 0
+	for i in range(n):
+		match i % 3:
+			0:
+				made += [i, str(i)].size()
+			1:
+				made += {"k": str(i)}.size()
+			_:
+				made += len(str(i) + "x")
+	return made
+
+func test_sgd_a_coroutine_block_keeps_its_values_across_a_suspension():
+	# A suspension restores the frame but not the mark, so a coroutine takes no
+	# block scope at all -- and everything a block made stays readable after the
+	# await that ran under it.
+	var source := """
+func run(sig, n):
+	var out = []
+	if n > 0:
+		var d = {"a": n}
+		var tail = str(n) + "!"
+		var v = await sig
+		out.append(d["a"] + v)
+		out.append(tail)
+	return out
+"""
+	var path := "user://temp_await_block.sgd"
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(source)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the coroutine script should load")
+	if script == null:
+		return
+	var node := Node.new()
+	node.set_script(script)
+	node.set_instructions_max(1000000)
+
+	var awaitable = node.call("run", sgd_ping, 4)
+	assert_eq(typeof(awaitable), TYPE_SIGNAL, "the block suspended on the signal")
+
+	var completed := [null]
+	(awaitable as Signal).connect(func(value): completed[0] = value)
+
+	sgd_ping.emit(7)
+	assert_eq(completed[0], [11, "4!"],
+		"the values the block made before the await are still there after it")
+
+	node.free()
+
+
 # -= Project context: _init(), autoloads and engine statics =-
 
 func test_sgd_init_runs_when_the_instance_is_created():
@@ -11371,3 +11614,520 @@ func make() -> Node2D:
 		return
 	assert_eq(instance.call("scaled", 5), 10, "with the arguments it was given")
 	instance.free()
+
+
+# -= `extends <ScriptClass>` =-
+#
+# A .sgd compiles to one standalone RISC-V program from one source file, and
+# Godot gives one Object one script instance, so neither side can chain at run
+# time. The base's body is therefore compiled in: the host resolves the chain
+# through the project's class list, reads the sources, and the compiler folds
+# them into one flat program. res://tests/chain_base.gd is the base.
+
+const CHAIN_LEAF_SOURCE = """
+extends SgdChainBase
+
+func chain_kind():
+	return "leaf(" + super.chain_kind() + ")"
+
+func run():
+	base_calls += 1
+	return [describe(), CHAIN_CENTER, SgdChainBase.doubled(ChainShape.CIRCLE), base_calls]
+"""
+
+func _chain_leaf_script() -> Script:
+	var path = "user://temp_chain_leaf.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(CHAIN_LEAF_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the leaf script should load as a SafeGDScript resource")
+	if script != null:
+		assert_eq(script.get_compile_error(), "",
+			"the leaf should compile with its base merged in")
+	return script
+
+func test_sgd_inherits_members_and_methods_from_a_gd_base():
+	var script = _chain_leaf_script()
+	if script == null:
+		return
+	var node = Node.new()
+	node.set_script(script)
+	# describe() is declared in the base and calls chain_kind(), which the leaf
+	# overrides: one flat name table, so the override wins. CHAIN_CENTER and
+	# ChainShape are the base's const and enum, base_calls its member, and
+	# doubled() its static func reached through the base's own class name.
+	assert_eq(node.call("run"), ["base:leaf(base)", 320, 2, 1],
+		"every inherited name should resolve into the merged program")
+	assert_eq(node.call("run"), ["base:leaf(base)", 320, 2, 2],
+		"and an inherited member should keep its value across calls")
+	node.free()
+
+func test_sgd_reports_the_native_base_and_the_declared_base():
+	var script = _chain_leaf_script()
+	if script == null:
+		return
+	# Two consumers want different answers: instancing wants the engine class the
+	# chain bottoms out at, identity wants the script the leaf declared.
+	assert_eq(script.get_instance_base_type(), &"Node",
+		"the native base is what the chain bottoms out at")
+	var base_script = script.get_base_script()
+	assert_not_null(base_script, "the declared base should be the base script itself")
+	if base_script == null:
+		return
+	assert_eq(base_script.resource_path, "res://tests/chain_base.gd",
+		"and it should be the file the class list names")
+	assert_eq(base_script.get_instance_base_type(), &"Node",
+		"and the chain should bottom out at the base's own engine class")
+
+func test_sgd_instance_answers_is_for_its_script_base():
+	var script = _chain_leaf_script()
+	if script == null:
+		return
+	var node = Node.new()
+	node.set_script(script)
+	# The runner in a converted project filters its scene list with exactly this,
+	# so a leaf that does not answer would drop out of the run entirely.
+	assert_true(node is SgdChainBase, "an instance should answer for its script base")
+	assert_true(node is Node, "and still for the engine class underneath it")
+	node.free()
+
+func test_sgd_refuses_a_script_class_it_does_not_contain():
+	# A project class_name script is not an engine singleton, so this used to
+	# lower to a property read on the owner Node and answer null at run time.
+	var path = "user://temp_chain_outsider.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string("""
+func f():
+	return SgdChainBase.doubled(2)
+""")
+	file.close()
+	var script = SafeGDScript.new()
+	script.take_over_path(path)
+	script.source_code = FileAccess.get_file_as_string(path)
+	assert_ne(script.get_compile_error(), "",
+		"reaching into a script class outside the chain should be a compile error")
+	assert_true(script.get_compile_error().contains("none of its body is compiled"),
+		"and should say why: " + script.get_compile_error())
+	assert_engine_error("none of its body is compiled into this program",
+		"the failed compile is reported, not swallowed")
+
+
+func test_sgd_rebuilds_when_its_base_changes():
+	# Editing a base arrives through no callback at all, so the merged program
+	# would otherwise keep the old body and say nothing about it. Extended by
+	# path here: a user:// file is not in the project's class list.
+	var base_path = "user://temp_chain_mutable_base.gd"
+	var base = FileAccess.open(base_path, FileAccess.WRITE)
+	base.store_string("extends Node\n\nfunc answer():\n\treturn 1\n")
+	base.close()
+
+	var leaf_path = "user://temp_chain_dependent.sgd"
+	var leaf = FileAccess.open(leaf_path, FileAccess.WRITE)
+	leaf.store_string("extends \"%s\"\n\nfunc run():\n\treturn answer()\n" % base_path)
+	leaf.close()
+
+	var script = load(leaf_path)
+	assert_not_null(script, "the dependent script should load")
+	if script == null:
+		return
+	var node = Node.new()
+	node.set_script(script)
+	assert_eq(node.call("run"), 1, "the base body should be compiled in")
+
+	# Rewritten within the same second, which is all the resolution a modified
+	# time has: the length is what makes this visible.
+	base = FileAccess.open(base_path, FileAccess.WRITE)
+	base.store_string("extends Node\n\nfunc answer():\n\treturn 1 + 1\n")
+	base.close()
+	SafeGDScript.poll_base_sources()
+
+	assert_eq(node.call("run"), 2, "editing the base should rebuild the dependent")
+	node.free()
+
+# -= Enums as values =-
+#
+# An enum is compiler-only: every member folds to an integer immediate and
+# nothing of it reaches the IR. GDScript still exposes the enum itself as a
+# Dictionary, so `E.values()` used to lower to a property read on the owner and
+# fail with "Nonexistent function 'values' in base 'Nil'".
+
+func test_an_enum_used_as_a_value_is_a_dictionary():
+	var gdscript_code = """
+enum E { A, B = 5, C }
+
+func values():
+	return E.values()
+
+func keys():
+	return E.keys()
+
+func size():
+	return E.size()
+
+func has_b():
+	return E.has("B")
+
+func subscript():
+	return E["C"]
+
+func member():
+	return E.B
+
+func find():
+	return E.find_key(5)
+
+func walk():
+	var total = 0
+	for v in E.values():
+		total += v
+	return total
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_false(compiled_elf.is_empty(), "the enum script should compile")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(100000)
+
+	# Matches the engine: implicit numbering continues from the explicit value.
+	assert_eq(s.vmcallv("values"), [0, 5, 6], "values() should answer the member values in order")
+	assert_eq(s.vmcallv("keys"), ["A", "B", "C"], "keys() should answer the member names as Strings")
+	assert_eq(s.vmcallv("size"), 3, "size() should count the members")
+	assert_eq(s.vmcallv("has_b"), true, "has() should find a member by name")
+	assert_eq(s.vmcallv("subscript"), 6, "a subscript should answer the member's value")
+	assert_eq(s.vmcallv("find"), "B", "find_key() should answer the name holding a value")
+	assert_eq(s.vmcallv("walk"), 11, "iterating values() should walk the member values")
+
+	# A member reference still folds; the Dictionary is only for the enum itself.
+	assert_eq(s.vmcallv("member"), 5, "a member reference should be its integer")
+
+	s.queue_free()
+	ts.queue_free()
+
+# -= Object members across calls =-
+#
+# A global whose every read takes its address in place has no frame copy. The
+# branch's truthiness test dropped that base register and asked the host about
+# the bottom of the frame instead, so `if platform:` answered false for a live
+# object -- while typeof() and `== null` both answered correctly.
+
+const OBJECT_MEMBER_SOURCE = """
+extends Node2D
+
+var platform: Sprite2D
+var moving := false
+
+func setup():
+	platform = Sprite2D.new()
+	platform.position = Vector2(1, 2)
+	add_child(platform)
+	moving = true
+
+func member_is_truthy():
+	if platform:
+		return 1
+	return 0
+
+func local_copy_is_truthy():
+	var local = platform
+	if local:
+		return 1
+	return 0
+
+func guarded_step(delta: float):
+	if moving and platform:
+		platform.position.x += 10.0 * delta
+		return platform.position.x
+	return -1.0
+"""
+
+func test_an_object_member_is_truthy_across_calls():
+	var path = "user://temp_object_member.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(OBJECT_MEMBER_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the object-member script should load as a SafeGDScript resource")
+	if script == null:
+		return
+
+	# Not added to the tree: nothing here needs a frame, and the guest's own
+	# add_child() parents the Sprite2D to the owner either way.
+	var node = Node2D.new()
+	node.set_script(script)
+	node.set_instructions_max(100000)
+	node.call("setup")
+
+	assert_eq(node.call("member_is_truthy"), 1, "a live object in a member should be truthy")
+	assert_eq(node.call("local_copy_is_truthy"), 1, "and so should a local copy of it")
+
+	# The member survives the call that assigned it, so the guard holds every pass.
+	assert_eq(node.call("guarded_step", 0.1), 2.0, "the guarded branch should run")
+	assert_eq(node.call("guarded_step", 0.1), 3.0, "and again on the next call")
+
+	node.free()
+
+# -= Unary minus =-
+#
+# `-x` lowered to `0 - x`, and Godot has no `int - Vector2` operator: every
+# non-numeric negation evaluated to NIL with no diagnostic. OP_NEGATE is the
+# only form Godot defines for a Vector, a Color or a Quaternion.
+
+func test_unary_minus_negates_every_type_godot_defines():
+	var gdscript_code = """
+func neg(v):
+	return -v
+
+func neg_typed(v: Vector2):
+	return -v
+
+func neg_int(v: int):
+	return -v
+
+func neg_float(v: float):
+	return -v
+
+func neg_literal():
+	return -Vector2(1, 2)
+
+func neg_in_ternary(v, b):
+	return v if b else -v
+"""
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_false(compiled_elf.is_empty(), "the negation script should compile")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+	s.set_instructions_max(100000)
+
+	assert_eq(s.vmcallv("neg", Vector2(1, 2)), Vector2(-1, -2), "Vector2 should negate")
+	assert_eq(s.vmcallv("neg", Vector3(1, 2, 3)), Vector3(-1, -2, -3), "Vector3 should negate")
+	assert_eq(s.vmcallv("neg", Vector2i(1, 2)), Vector2i(-1, -2), "Vector2i should negate")
+	# Godot's OP_NEGATE on a Color inverts it rather than negating components.
+	assert_eq(s.vmcallv("neg", Color(0.25, 0.5, 0.75, 1.0)), Color(0.75, 0.5, 0.25, 0.0),
+		"Color should answer what the engine's operator answers")
+	assert_eq(s.vmcallv("neg_typed", Vector2(3, 4)), Vector2(-3, -4),
+		"a declared Vector2 should negate")
+
+	# The numeric fast paths still answer what they always did.
+	assert_eq(s.vmcallv("neg", 5), -5, "an untyped int should negate")
+	assert_eq(s.vmcallv("neg", 2.5), -2.5, "an untyped float should negate")
+	assert_eq(s.vmcallv("neg_int", 5), -5, "a declared int should negate")
+	assert_eq(s.vmcallv("neg_float", 2.5), -2.5, "a declared float should negate")
+	# Sign-bit flip, not 0.0 - x, so -0.0 keeps its sign the way Godot's does.
+	assert_eq(str(s.vmcallv("neg_float", 0.0)), str(-0.0), "negating 0.0 should give -0.0")
+	assert_eq(s.vmcallv("neg_literal"), Vector2(-1, -2), "a constructed Vector2 should negate")
+
+	# The else arm of a ternary is where this first showed up.
+	assert_eq(s.vmcallv("neg_in_ternary", Vector2(1, 2), false), Vector2(-1, -2),
+		"the else arm of a ternary should negate")
+	assert_eq(s.vmcallv("neg_in_ternary", Vector2(1, 2), true), Vector2(1, 2),
+		"and the then arm should pass the value through")
+
+	s.queue_free()
+	ts.queue_free()
+
+# -= Members through the host =-
+#
+# GDScript answers Object::get/set for every member a script declares; a .sgd
+# answered only for @export. Anything holding the node as a plain Node -- a
+# lambda reaching `p_target.bodies`, a tool script, the remote inspector -- read
+# null and got no diagnostic.
+
+const HOST_MEMBER_SOURCE = """
+extends Node2D
+
+@export var speed := 1.5
+var bodies: Array[int] = []
+var label := "idle"
+var counter := 0
+const LIMIT := 9
+
+func fill():
+	bodies.append(1)
+	bodies.append(2)
+	label = "ready"
+
+func seen():
+	return [bodies, label, counter]
+"""
+
+func test_sgd_members_answer_the_host():
+	var path = "user://temp_host_members.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(HOST_MEMBER_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the member script should load as a SafeGDScript resource")
+	if script == null:
+		return
+
+	var node = Node2D.new()
+	node.set_script(script)
+	node.set_instructions_max(100000)
+	node.call("fill")
+
+	assert_eq(node.get("bodies"), [1, 2], "a plain Array member should read back")
+	assert_eq(node.get("label"), "ready", "a plain String member should read back")
+	assert_eq(node.get("speed"), 1.5, "an @export should still read back")
+
+	node.set("counter", 4)
+	assert_eq(node.get("counter"), 4, "a plain member should take a write")
+	assert_eq(node.call("seen"), [[1, 2], "ready", 4], "and the guest should see it")
+
+	# A const is not per-instance storage, so it is not a property.
+	assert_eq(node.get("LIMIT"), null, "a const is not a member")
+
+	# @export is the inspector; a plain member is only a script variable.
+	var usage := {}
+	for property in node.get_property_list():
+		usage[property["name"]] = int(property["usage"])
+	assert_true((usage.get("speed", 0) & PROPERTY_USAGE_EDITOR) != 0,
+		"an @export should reach the inspector")
+	assert_eq(usage.get("bodies", 0) & (PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE), 0,
+		"a plain member should reach neither the inspector nor a saved scene")
+
+	node.free()
+
+# -= Declared types start at their default =-
+#
+# `var t: Transform2D` is IDENTITY in GDScript, not null. Only a declared Object
+# starts null. Leaving the rest NIL was also a lifetime bug: an empty slot holds
+# VASSIGN's INT32_MIN sentinel, so the first assignment adopted the source's
+# scoped index and the member dangled the moment the call returned.
+
+const TYPED_DEFAULT_SOURCE = """
+extends Node2D
+
+var v2: Vector2
+var v3i: Vector3i
+var col: Color
+var t2: Transform2D
+var quat: Quaternion
+var rid: RID
+var call_: Callable
+var sn: StringName
+var obj: Object
+
+func types():
+	return [typeof(v2), typeof(col), typeof(t2), typeof(quat), typeof(rid),
+		typeof(call_), typeof(sn), typeof(obj)]
+
+func values():
+	return [v2, v3i, col, t2, quat, sn]
+
+func keep_a_rid():
+	rid = PhysicsServer2D.body_create()
+	return typeof(rid)
+
+func use_the_rid():
+	PhysicsServer2D.body_set_mode(rid, PhysicsServer2D.BODY_MODE_RIGID)
+	var mode = PhysicsServer2D.body_get_mode(rid)
+	PhysicsServer2D.free_rid(rid)
+	return mode
+"""
+
+func test_a_declared_type_starts_at_its_default():
+	var path = "user://temp_typed_defaults.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(TYPED_DEFAULT_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the typed-default script should load")
+	if script == null:
+		return
+
+	var node = Node2D.new()
+	node.set_script(script)
+	node.set_instructions_max(100000)
+
+	assert_eq(node.call("types"),
+		[TYPE_VECTOR2, TYPE_COLOR, TYPE_TRANSFORM2D, TYPE_QUATERNION, TYPE_RID,
+			TYPE_CALLABLE, TYPE_STRING_NAME, TYPE_NIL],
+		"every declared type but Object should hold a value of that type")
+
+	# The engine's own defaults, not zeroed bytes: Color is opaque black and
+	# Transform2D is IDENTITY.
+	assert_eq(node.call("values"),
+		[Vector2(), Vector3i(), Color(), Transform2D(), Quaternion(), StringName()],
+		"and the value should be what the engine constructs")
+
+	# A complex type has to hold a real value for the first assignment to land in
+	# a permanent slot instead of adopting a scoped index that dies with the call.
+	assert_eq(node.call("keep_a_rid"), TYPE_RID, "a RID should be assignable to a member")
+	assert_eq(node.call("use_the_rid"), PhysicsServer2D.BODY_MODE_RIGID,
+		"and should still be usable in a later call")
+
+	node.free()
+
+# -= Members of a built-in that is not inline =-
+#
+# Transform2D, Basis, AABB and friends live in a scoped Variant, so `t.origin`
+# reaches the host as a property read. It used to insist on an Object and threw
+# "Variant is not an Object, but Transform2D"; the host now answers with the
+# built-in's own member. No object is involved, so no allowlist applies.
+
+const BUILTIN_MEMBER_SOURCE = """
+extends Node2D
+
+func origin_of(t: Transform2D):
+	return t.origin
+
+func axes_of(t: Transform2D):
+	return [t.x, t.y]
+
+func moved(t: Transform2D, v: Vector2):
+	t.origin = v
+	return t
+
+func basis_x(b: Basis):
+	return b.x
+
+func aabb_size(a: AABB):
+	return a.size
+
+func quat_w(q: Quaternion):
+	return q.w
+
+func untyped_origin(t):
+	return t.origin
+"""
+
+func test_a_builtin_member_does_not_need_an_object():
+	var path = "user://temp_builtin_members.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(BUILTIN_MEMBER_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the built-in member script should load")
+	if script == null:
+		return
+
+	var node = Node2D.new()
+	node.set_script(script)
+	node.set_instructions_max(100000)
+
+	var t := Transform2D(0.0, Vector2(2, 3))
+	assert_eq(node.call("origin_of", t), Vector2(2, 3), "Transform2D.origin should read")
+	assert_eq(node.call("axes_of", t), [t.x, t.y], "so should its axes")
+	assert_eq(node.call("moved", t, Vector2(9, 9)).origin, Vector2(9, 9),
+		"and a member write should land on the guest's own copy")
+	assert_eq(t.origin, Vector2(2, 3), "without touching the caller's Transform2D")
+
+	assert_eq(node.call("basis_x", Basis()), Basis().x, "Basis.x should read")
+	assert_eq(node.call("aabb_size", AABB(Vector3(), Vector3(1, 2, 3))), Vector3(1, 2, 3),
+		"AABB.size should read")
+	assert_eq(node.call("quat_w", Quaternion()), 1.0, "Quaternion.w should read")
+
+	# The same path with nothing declared about the value.
+	assert_eq(node.call("untyped_origin", t), Vector2(2, 3),
+		"an untyped receiver should reach the same member")
+
+	node.free()

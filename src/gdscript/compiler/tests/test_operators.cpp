@@ -701,6 +701,40 @@ static void test_enum_shadows_a_builtin_type_name() {
 
 // Rejecting a misspelled member is what an enum buys over a bare integer: a
 // compile error, not a silent zero.
+// GDScript exposes an enum as a Dictionary of name -> value, so the whole
+// Dictionary surface works on it. Members still fold; the Dictionary is only
+// built where the enum itself is the value.
+static void test_enum_as_a_dictionary_value() {
+	const IRProgram values = compile_to_ir(
+		"enum E { A, B = 5, C }\n"
+		"func f():\n"
+		"\treturn E.values()\n");
+	const IRFunction& fn = find_function(values, "f");
+	int pairs = -1;
+	for (const auto& instr : fn.instructions) {
+		if (instr.opcode == IROpcode::MAKE_DICTIONARY) {
+			pairs = int(std::get<int64_t>(instr.operands[1].value));
+		}
+	}
+	assert(pairs == 3);
+	assert(count_opcode(fn, IROpcode::CALL_SYSCALL) == 1);
+
+	// keys(), size(), has() and a subscript all reach the same Dictionary.
+	for (const char* form : { "E.keys()", "E.size()", "E.has(\"B\")", "E[\"C\"]", "E.find_key(5)" }) {
+		const IRProgram ir = compile_to_ir(
+			"enum E { A, B = 5, C }\nfunc f():\n\treturn " + std::string(form) + "\n");
+		assert(count_opcode(find_function(ir, "f"), IROpcode::MAKE_DICTIONARY) == 1);
+	}
+
+	// A member reference is still an immediate: no Dictionary is built for it.
+	const IRProgram member = compile_to_ir(
+		"enum E { A, B = 5, C }\nfunc f() -> int:\n\treturn E.B\n");
+	assert(count_opcode(find_function(member, "f"), IROpcode::MAKE_DICTIONARY) == 0);
+	assert(run_int("enum E { A, B = 5, C }\nfunc f() -> int:\n\treturn E.B\n", "f") == 5);
+
+	std::cout << "  ✓ an enum used as a value is a Dictionary" << std::endl;
+}
+
 static void test_enum_rejects_an_unknown_member() {
 	assert(rejects("enum Mode { IDLE }\nfunc f() -> int:\n\treturn Mode.RUNN\n"));
 	assert(rejects("enum Mode { IDLE, IDLE }\nfunc f() -> int:\n\treturn 0\n"));
@@ -775,6 +809,7 @@ int main() {
 	test_unnamed_enum_members_are_reachable_unqualified();
 	test_enum_member_is_a_typed_integer();
 	test_enum_shadows_a_builtin_type_name();
+	test_enum_as_a_dictionary_value();
 	test_enum_rejects_an_unknown_member();
 	test_a_local_shadows_an_enum();
 

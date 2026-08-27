@@ -109,10 +109,22 @@ inline bool &gdscript_last_base_is_path() {
 	return is_path;
 }
 
+inline std::string &gdscript_last_native_base_class() {
+	static std::string native_base;
+	return native_base;
+}
+
+inline bool &gdscript_last_native_base_is_path() {
+	static bool is_path = false;
+	return is_path;
+}
+
 inline void gdscript_remember_script_class(const gdscript::Compiler &compiler) {
 	gdscript_last_class_name() = compiler.get_class_name();
 	gdscript_last_base_class() = compiler.get_base_class();
 	gdscript_last_base_is_path() = compiler.base_is_path();
+	gdscript_last_native_base_class() = compiler.get_native_base_class();
+	gdscript_last_native_base_is_path() = compiler.native_base_is_path();
 }
 
 inline bool &gdscript_restricted() {
@@ -130,8 +142,23 @@ inline std::vector<std::pair<std::string, std::string>> &gdscript_global_classes
 	return classes;
 }
 
+inline std::vector<gdscript::CompilerOptions::BaseSource> &gdscript_base_sources() {
+	static std::vector<gdscript::CompilerOptions::BaseSource> sources;
+	return sources;
+}
+
+inline void gdscript_set_base_sources(const std::vector<std::string> &triples) {
+	std::vector<gdscript::CompilerOptions::BaseSource> sources;
+	for (size_t i = 0; i + 2 < triples.size(); i += 3) {
+		sources.push_back(gdscript::CompilerOptions::BaseSource{
+				triples[i], triples[i + 1], triples[i + 2] });
+	}
+	gdscript_base_sources() = std::move(sources);
+}
+
 inline void gdscript_apply_restrictions(gdscript::CompilerOptions &options) {
 	options.restricted = gdscript_restricted();
 	options.autoloads = gdscript_autoloads();
 	options.global_script_classes = gdscript_global_classes();
+	options.base_sources = gdscript_base_sources();
 }

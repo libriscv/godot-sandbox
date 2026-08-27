@@ -54,7 +54,8 @@ public:
 	static constexpr unsigned MAX_REFS = 100; // Default maximum number of references
 	static constexpr unsigned MAX_UNRESTRICTED_REFS = 65536;
 	static constexpr unsigned EDITOR_THROTTLE = 8; // Throttle VM calls from the editor
-	static constexpr unsigned MAX_PROPERTIES = 32; // Maximum number of sandboxed properties
+	static constexpr unsigned MAX_PROPERTIES = 256; // Maximum number of sandboxed properties
+	static constexpr unsigned MAX_GUEST_PROPERTY_SLOTS = 32; // ABI-fixed guest property array length
 	static constexpr unsigned MAX_COROUTINES = 32; // Default cap on live suspended frames
 	static constexpr unsigned MAX_COROUTINE_LIMIT = 65536; // Ceiling for the setter, not a budget
 	static constexpr unsigned MAX_PUBLIC_FUNCTIONS = 128; // Maximum number of public functions

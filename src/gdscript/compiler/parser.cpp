@@ -172,6 +172,10 @@ Program Parser::parse() {
 
 	hoist_onready_initializers(program);
 	program.is_tool = m_saw_tool;
+	program.native_base_class = program.base_class;
+	program.native_base_is_path = program.base_is_path;
+	program.chain.class_names.push_back(program.class_name);
+	program.chain.paths.emplace_back();
 	return program;
 }
 

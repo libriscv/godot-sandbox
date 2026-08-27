@@ -1,5 +1,6 @@
 #pragma once
 #include "export_hints.h"
+#include <map>
 #include <memory>
 #include <vector>
 #include <string>
@@ -189,6 +190,7 @@ struct VarDeclStmt : Stmt {
 	bool is_property = false;
 	bool is_static = false;
 	bool is_onready = false;
+	int chain_link = 0;
 	ExportHint export_hint;
 
 	std::unique_ptr<FunctionDecl> setter_body;
@@ -345,6 +347,13 @@ struct FunctionDecl {
 	bool is_coroutine = false;
 	// `static func` in a class body: lifted without the instance parameter.
 	bool is_static = false;
+	int chain_link = 0;
+	// Non-empty when an override displaced this copy onto a mangled symbol.
+	std::string chain_name;
+
+	const std::string& declared_name() const {
+		return chain_name.empty() ? name : chain_name;
+	}
 };
 
 // Published beside the ELF; nothing reaches the IR.
@@ -458,6 +467,42 @@ struct EnumDecl {
 	}
 };
 
+struct ChainInfo {
+	std::vector<std::string> class_names; // root first
+	std::vector<std::string> paths;       // same order, diagnostics only
+
+	struct Origin {
+		int link = 0;
+		std::string symbol; // mangled '@' name when an override displaced this copy
+	};
+	std::map<std::string, std::vector<Origin>> functions;
+
+	bool merged() const { return class_names.size() > 1; }
+
+	bool names_a_link(const std::string& name) const {
+		for (const std::string& link : class_names) {
+			if (!link.empty() && link == name) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	const Origin* super_of(const std::string& name, int link) const {
+		const auto it = functions.find(name);
+		if (it == functions.end()) {
+			return nullptr;
+		}
+		const Origin* found = nullptr;
+		for (const Origin& origin : it->second) {
+			if (origin.link < link) {
+				found = &origin;
+			}
+		}
+		return found;
+	}
+};
+
 struct Program {
 	bool is_tool = false;
 	std::string class_name;
@@ -467,6 +512,9 @@ struct Program {
 	bool base_is_path = false;
 	int base_class_line = 0;
 	int base_class_column = 0;
+	std::string native_base_class;
+	bool native_base_is_path = false;
+	ChainInfo chain;
 	std::vector<VarDeclStmt> globals;
 	std::vector<StructDecl> structs;
 	std::vector<EnumDecl> enums;

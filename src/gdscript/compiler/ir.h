@@ -225,6 +225,8 @@ struct IRGlobalVar {
 	Storage storage = Storage::Data;
 	bool is_member() const { return storage == Storage::Instance; }
 
+	bool publishes_to_host() const { return is_property || (is_member() && !is_const); }
+
 	IRInstruction::TypeHint type_hint = IRInstruction::TypeHint_NONE;
 
 	enum class InitType {
@@ -257,6 +259,8 @@ struct IRProgram {
 	std::string class_name;
 	std::string base_class;
 	bool base_is_path = false;
+	std::string native_base_class;
+	bool native_base_is_path = false;
 	std::vector<IRGlobalVar> globals;
 	std::vector<IRFunction> functions;
 	std::vector<std::string> string_constants;

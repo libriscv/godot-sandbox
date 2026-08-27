@@ -13,6 +13,7 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 #include "../gdscript/compiler/function_signature.h"
 #include "../sandbox.h"
+#include <unordered_set>
 static constexpr bool VERBOSE_LOGGING = false;
 static Sandbox* compiler = nullptr;
 
@@ -31,8 +32,45 @@ void SafeGDScript::_placeholder_erased(void *p_placeholder) {}
 bool SafeGDScript::_can_instantiate() const {
 	return true;
 }
+static String script_class_path(const String &p_class_name) {
+	ProjectSettings *settings = ProjectSettings::get_singleton();
+	if (settings == nullptr || p_class_name.is_empty()) {
+		return String();
+	}
+	const TypedArray<Dictionary> classes = settings->get_global_class_list();
+	for (int i = 0; i < classes.size(); i++) {
+		const Dictionary entry = classes[i];
+		if (String(entry.get("class", String())) == p_class_name) {
+			return entry.get("path", String());
+		}
+	}
+	return String();
+}
+
+// mtime has 1s resolution; length catches same-second rewrites.
+static uint64_t file_stamp(const String &p_path) {
+	uint64_t length = 0;
+	const Ref<FileAccess> file = FileAccess::open(p_path, FileAccess::READ);
+	if (file.is_valid()) {
+		length = file->get_length();
+	}
+	return FileAccess::get_modified_time(p_path) * 1000003ull + length;
+}
+
 Ref<Script> SafeGDScript::_get_base_script() const {
-	return Ref<Script>();
+	if (base_script_resolved) {
+		return base_script;
+	}
+	base_script_resolved = true;
+	if (base_class.is_empty() || base_class == native_base_class) {
+		return base_script;
+	}
+	const String path = base_is_path ? base_class : script_class_path(base_class);
+	if (path.is_empty() || !FileAccess::file_exists(path)) {
+		return base_script;
+	}
+	base_script = ResourceLoader::get_singleton()->load(path, "Script");
+	return base_script;
 }
 StringName SafeGDScript::_get_global_name() const {
 	if (!this->class_name.is_empty()) {
@@ -45,25 +83,32 @@ StringName SafeGDScript::_get_global_name() const {
 	return PathToGlobalName(this->path);
 }
 bool SafeGDScript::_inherits_script(const Ref<Script> &p_script) const {
+	if (p_script.is_null()) {
+		return false;
+	}
+	Ref<Script> base = _get_base_script();
+	for (int depth = 0; base.is_valid() && depth < 64; depth++) {
+		if (base == p_script) {
+			return true;
+		}
+		base = base->get_base_script();
+	}
 	return false;
 }
 StringName SafeGDScript::_get_instance_base_type() const {
-	// Only return native types ClassDB can verify.
-	if (!this->base_class.is_empty() && !this->base_is_path &&
-			ClassDB::class_exists(StringName(this->base_class))) {
-		return StringName(this->base_class);
+	if (!this->native_base_class.is_empty() && !this->native_base_is_path &&
+			ClassDB::class_exists(StringName(this->native_base_class))) {
+		return StringName(this->native_base_class);
 	}
 	return StringName("Sandbox");
 }
 void *SafeGDScript::_instance_create(Object *p_for_object) const {
-	// GDScript refuses an owner that is not the declared base, and so must this:
-	// every bare name the script did not declare is a property of that base, and
-	// on the wrong owner they would all quietly answer null.
-	if (p_for_object != nullptr && !this->base_class.is_empty() && !this->base_is_path) {
-		const StringName base(this->base_class);
+	// Wrong owner type → every unresolved bare name silently answers null.
+	if (p_for_object != nullptr && !this->native_base_class.is_empty() && !this->native_base_is_path) {
+		const StringName base(this->native_base_class);
 		const StringName owner_class = p_for_object->get_class();
 		if (ClassDB::class_exists(base) && !ClassDB::is_parent_class(owner_class, base)) {
-			ERR_PRINT("SafeGDScript: script inherits from native type '" + this->base_class +
+			ERR_PRINT("SafeGDScript: script inherits from native type '" + this->native_base_class +
 					"', so it can't be assigned to an object of type '" + String(owner_class) + "'.");
 			return nullptr;
 		}
@@ -354,7 +399,10 @@ Variant SafeGDScript::_get_rpc_config() const {
 	return Variant();
 }
 
+static std::unordered_set<SafeGDScript *> live_scripts;
+
 SafeGDScript::SafeGDScript() {
+	live_scripts.insert(this);
 	source_code = R"GDScript(# SafeGDScript example
 
 func somefunction():
@@ -366,6 +414,7 @@ func somefunction():
 )GDScript";
 }
 SafeGDScript::~SafeGDScript() {
+	live_scripts.erase(this);
 }
 
 void SafeGDScript::set_path(const String &p_path) {
@@ -460,6 +509,23 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	set_compiler_restricted(restricted);
 	set_compiler_project_context();
 
+	this->base_paths.clear();
+	this->base_stamps.clear();
+	PackedStringArray base_sources;
+	if (!restricted) {
+		String chain_error;
+		base_sources = resolve_base_sources(this->source_code, this->path, &chain_error);
+		if (!chain_error.is_empty()) {
+			set_compiler_base_sources(PackedStringArray());
+			return fail_compile(chain_error);
+		}
+		for (int64_t i = 0; i + 1 < base_sources.size(); i += 3) {
+			this->base_paths.push_back(base_sources[i + 1]);
+			this->base_stamps.push_back(file_stamp(base_sources[i + 1]));
+		}
+	}
+	set_compiler_base_sources(base_sources);
+
 	GDExtensionCallError error;
 	Variant src_code_var = this->source_code;
 	// compile_debug() takes breakpoints as a second arg; others take source only.
@@ -486,6 +552,14 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	this->class_name = get_compiler_class_name();
 	this->base_class = get_compiler_base_class();
 	this->base_is_path = get_compiler_base_is_path();
+	this->native_base_class = get_compiler_native_base_class();
+	this->native_base_is_path = get_compiler_native_base_is_path();
+	if (this->native_base_class.is_empty()) {
+		this->native_base_class = this->base_class;
+		this->native_base_is_path = this->base_is_path;
+	}
+	this->base_script = Ref<Script>();
+	this->base_script_resolved = false;
 
 	this->update_methods_info();
 
@@ -610,6 +684,8 @@ void SafeGDScript::_bind_methods() {
 	ClassDB::bind_static_method("SafeGDScript", D_METHOD("get_stopped_line"), &SafeGDScript::get_stopped_line);
 	ClassDB::bind_static_method("SafeGDScript", D_METHOD("get_stopped_backtrace"), &SafeGDScript::get_stopped_backtrace);
 	ClassDB::bind_static_method("SafeGDScript", D_METHOD("debug_continue"), &SafeGDScript::debug_continue);
+	ClassDB::bind_static_method("SafeGDScript", D_METHOD("poll_base_sources"),
+			&SafeGDScript::poll_base_sources);
 
 	// Handler calls debug_continue() to resume; no listeners = no stop.
 	ADD_SIGNAL(MethodInfo("breakpoint_hit",
@@ -728,17 +804,29 @@ String SafeGDScript::get_compiler_base_class() {
 	return compiler_string("get_script_base_class");
 }
 
-bool SafeGDScript::get_compiler_base_is_path() {
-	Sandbox *compiler = get_compiler_sandbox();
-	if (compiler == nullptr || !compiler->has_function("get_script_base_is_path")) {
+static bool compiler_flag(const char *p_function) {
+	Sandbox *compiler = SafeGDScript::get_compiler_sandbox();
+	if (compiler == nullptr || !compiler->has_function(p_function)) {
 		return false;
 	}
 	GDExtensionCallError error;
-	const Variant answer = compiler->vmcall_fn("get_script_base_is_path", nullptr, 0, error);
+	const Variant answer = compiler->vmcall_fn(p_function, nullptr, 0, error);
 	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
 		return false;
 	}
 	return bool(answer);
+}
+
+bool SafeGDScript::get_compiler_base_is_path() {
+	return compiler_flag("get_script_base_is_path");
+}
+
+String SafeGDScript::get_compiler_native_base_class() {
+	return compiler_string("get_script_native_base_class");
+}
+
+bool SafeGDScript::get_compiler_native_base_is_path() {
+	return compiler_flag("get_script_native_base_is_path");
 }
 
 static PackedStringArray project_autoload_names() {
@@ -776,6 +864,157 @@ static PackedStringArray project_global_classes() {
 		pairs.push_back(path);
 	}
 	return pairs;
+}
+
+static constexpr int MAX_BASE_CHAIN = 16;
+
+static bool header_keyword(const String &p_line, const char *p_keyword) {
+	const int length = int(strlen(p_keyword));
+	if (!p_line.begins_with(p_keyword)) {
+		return false;
+	}
+	if (p_line.length() == length) {
+		return true;
+	}
+	const char32_t next = p_line[length];
+	return next == ' ' || next == '\t' || next == '"';
+}
+
+static String scan_extends(const String &p_source) {
+	const PackedStringArray lines = p_source.split("\n");
+	for (int i = 0; i < lines.size(); i++) {
+		const String line = lines[i].strip_edges();
+		if (line.is_empty() || line.begins_with("#") || line.begins_with("@")) {
+			continue;
+		}
+		if (header_keyword(line, "class_name")) {
+			continue;
+		}
+		if (!header_keyword(line, "extends")) {
+			break;
+		}
+		String rest = line.substr(strlen("extends")).strip_edges();
+		if (rest.begins_with("\"")) {
+			const int end = rest.find("\"", 1);
+			return end < 0 ? String() : rest.substr(1, end - 1);
+		}
+		for (const char *stop : { "#", " ", "\t" }) {
+			const int at = rest.find(stop);
+			if (at >= 0) {
+				rest = rest.substr(0, at);
+			}
+		}
+		return rest;
+	}
+	return String();
+}
+
+PackedStringArray SafeGDScript::resolve_base_sources(const String &p_source,
+		const String &p_self_path, String *r_error) {
+	PackedStringArray triples;
+	HashMap<String, String> classes;
+	ProjectSettings *settings = ProjectSettings::get_singleton();
+	if (settings == nullptr) {
+		return triples;
+	}
+	const TypedArray<Dictionary> global_classes = settings->get_global_class_list();
+	for (int i = 0; i < global_classes.size(); i++) {
+		const Dictionary entry = global_classes[i];
+		const String name = entry.get("class", String());
+		const String path = entry.get("path", String());
+		if (!name.is_empty() && !path.is_empty()) {
+			classes.insert(name, path);
+		}
+	}
+
+	HashSet<String> visited;
+	if (!p_self_path.is_empty()) {
+		visited.insert(p_self_path);
+	}
+	String next = scan_extends(p_source);
+	while (!next.is_empty()) {
+		String path;
+		if (next.begins_with("res://") || next.begins_with("user://")) {
+			path = next;
+		} else if (HashMap<String, String>::Iterator it = classes.find(next); it != classes.end()) {
+			path = it->value;
+		} else {
+			break;
+		}
+		if (visited.has(path)) {
+			if (r_error != nullptr) {
+				*r_error = "'" + path + "' appears twice in the 'extends' chain: a script "
+						"cannot extend itself, directly or through a base.";
+			}
+			break;
+		}
+		if (!FileAccess::file_exists(path)) {
+			if (r_error != nullptr) {
+				*r_error = "'" + next + "' extends a script at '" + path +
+						"', which does not exist.";
+			}
+			break;
+		}
+		visited.insert(path);
+		const String source = FileAccess::get_file_as_string(path);
+		triples.push_back(next);
+		triples.push_back(path);
+		triples.push_back(source);
+		if (triples.size() / 3 >= MAX_BASE_CHAIN) {
+			if (r_error != nullptr) {
+				*r_error = "the 'extends' chain below '" + path + "' is deeper than " +
+						itos(MAX_BASE_CHAIN) + " scripts, and every one of them is compiled "
+						"into this program.";
+			}
+			break;
+		}
+		next = scan_extends(source);
+	}
+	return triples;
+}
+
+void SafeGDScript::set_compiler_base_sources(const PackedStringArray &p_triples) {
+	Sandbox *compiler = get_compiler_sandbox();
+	if (compiler == nullptr || !compiler->has_function("set_base_sources")) {
+		if (!p_triples.is_empty()) {
+			ERR_PRINT("SafeGDScript: the GDScript compiler ELF is too old to compile a base "
+					  "script into a program; inherited members will be missing.");
+		}
+		return;
+	}
+	GDExtensionCallError error;
+	Variant triples = p_triples;
+	const Variant *args[] = { &triples };
+	compiler->vmcall_fn("set_base_sources", args, 1, error);
+	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
+		ERR_PRINT("SafeGDScript: the compiler refused the base sources.");
+	}
+}
+
+void SafeGDScript::poll_base_sources() {
+	std::vector<SafeGDScript *> scripts(live_scripts.begin(), live_scripts.end());
+	for (SafeGDScript *script : scripts) {
+		if (live_scripts.count(script) != 0) {
+			script->rebuild_if_a_base_changed();
+		}
+	}
+}
+
+void SafeGDScript::rebuild_if_a_base_changed() {
+	if (this->base_paths.is_empty()) {
+		return;
+	}
+	bool changed = false;
+	for (int64_t i = 0; i < this->base_paths.size() && i < this->base_stamps.size(); i++) {
+		if (file_stamp(this->base_paths[i]) != this->base_stamps[i]) {
+			changed = true;
+			break;
+		}
+	}
+	if (!changed) {
+		return;
+	}
+	this->compile_source_to_elf(this->profiled_build, this->debug_build);
 }
 
 void SafeGDScript::set_compiler_project_context() {

@@ -1,4 +1,5 @@
 #include "compiler.h"
+#include "chain.h"
 #include "compiler_exception.h"
 #include "lexer.h"
 #include "parser.h"
@@ -46,7 +47,16 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 	m_class_name.clear();
 	m_base_class.clear();
 	m_base_is_path = false;
+	m_native_base_class.clear();
+	m_native_base_is_path = false;
 	try {
+		if (!options.base_sources.empty() && options.restricted) {
+			throw CompilerException(ErrorType::SEMANTIC_ERROR,
+				"A restricted Sandbox refuses 'extends', so no base script is compiled in",
+				0, 0, "", "", "",
+				"The same gate that refuses 'extends' outright refuses a base body");
+		}
+
 		Lexer lexer(source);
 		auto tokens = lexer.tokenize();
 
@@ -61,6 +71,34 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 		Parser parser(tokens);
 		parser.set_doc_comments(lexer.doc_comments());
 		Program program = parser.parse();
+
+		if (!options.base_sources.empty()) {
+			std::vector<ChainLink> links;
+			links.reserve(options.base_sources.size() + 1);
+			for (size_t i = options.base_sources.size(); i-- > 0;) {
+				const CompilerOptions::BaseSource& base = options.base_sources[i];
+				Lexer base_lexer(base.source);
+				Parser base_parser(base_lexer.tokenize());
+				base_parser.set_doc_comments(base_lexer.doc_comments());
+				ChainLink link;
+				link.name = base.name;
+				link.path = base.path;
+				try {
+					link.program = base_parser.parse();
+				} catch (CompilerException& e) {
+					if (e.line() > 0 && e.source_line().empty()) {
+						e.set_source_line(source_line_at(base.source, e.line()));
+					}
+					e.set_file(base.path);
+					throw;
+				}
+				links.push_back(std::move(link));
+			}
+			ChainLink leaf;
+			leaf.program = std::move(program);
+			links.push_back(std::move(leaf));
+			program = merge_chain(std::move(links));
+		}
 
 		if (options.dump_ast) {
 			std::cout << "=== AST ===" << std::endl;
@@ -125,6 +163,8 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 		m_class_name = ir_program.class_name;
 		m_base_class = ir_program.base_class;
 		m_base_is_path = ir_program.base_is_path;
+		m_native_base_class = ir_program.native_base_class;
+		m_native_base_is_path = ir_program.native_base_is_path;
 
 		std::vector<uint8_t> elf_data;
 
@@ -145,7 +185,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 	} catch (const CompilerException& e) {
 		// Only compile() has the source text, so attach the snippet here.
 		CompilerException located = e;
-		if (located.line() > 0 && located.source_line().empty()) {
+		if (located.line() > 0 && located.source_line().empty() && located.file().empty()) {
 			located.set_source_line(source_line_at(source, located.line()));
 		}
 		m_error = located.what();

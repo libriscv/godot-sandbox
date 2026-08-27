@@ -195,3 +195,19 @@ PUBLIC Variant get_script_base_is_path()
 {
 	return gdscript_last_base_is_path();
 }
+PUBLIC Variant set_base_sources(PackedStringArray triples)
+{
+	gdscript_set_base_sources(triples.fetch());
+	return Nil;
+}
+
+PUBLIC Variant get_script_native_base_class()
+{
+	return String(gdscript_last_native_base_class());
+}
+
+PUBLIC Variant get_script_native_base_is_path()
+{
+	return gdscript_last_native_base_is_path();
+}
+

@@ -296,6 +296,7 @@ private:
 
 	// Unary Variant::evaluate(). Scratch slot 1 holds the NIL rhs Godot expects.
 	void emit_variant_eval_unary(int result_offset, int operand_offset, int op);
+	void emit_variant_eval_unary(int result_offset, uint8_t operand_base, int operand_offset, int op);
 	void emit_load_variant_bool(uint8_t rd, uint8_t base_reg, int32_t variant_offset);
 	void emit_store_variant_bool(uint8_t rs, uint8_t base_reg, int32_t variant_offset);
 	void emit_load_variant_int(uint8_t rd, uint8_t base_reg, int32_t variant_offset);
@@ -477,12 +478,11 @@ private:
 		// Frame size in bytes from SAVED_REG_SPACE; checked at resume.
 		int variant_space = 0;
 
-		// One 8-byte mark slot per SCOPE_MARK id, above the Variant slots so the
-		// release walk never reads a mark as a handle. Zero when the function has
-		// no scoped loop.
+		// Above Variant slots so release never reads a mark as a handle.
 		int scope_slot_base = 0;
 		int scope_slot_count = 0;
 		std::vector<bool> elided_scopes;
+		std::vector<int> scope_slots;
 		// Instruction index of a SCOPE_RELEASE -> frame slots that are dead there.
 		std::unordered_map<int, std::vector<int>> release_clears;
 		// emit_ecall() asserts false; catches predicate drift.

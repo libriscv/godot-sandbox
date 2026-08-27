@@ -75,8 +75,10 @@ private:
 	void gen_return(const ReturnStmt* stmt, FunctionContext& func);
 	void gen_if(const IfStmt* stmt, FunctionContext& func);
 	void gen_match(const MatchStmt* stmt, FunctionContext& func);
-	int open_loop_scope(FunctionContext& func);
-	void emit_loop_scope_release(int scope_id, FunctionContext& func);
+	int open_scope(FunctionContext& func);
+	void emit_scope_release(int scope_id, FunctionContext& func);
+	int push_block_scope(FunctionContext& func);
+	void pop_block_scope(int scope_id, FunctionContext& func);
 
 	void gen_while(const WhileStmt* stmt, FunctionContext& func);
 	void gen_for(const ForStmt* stmt, FunctionContext& func);
@@ -121,6 +123,7 @@ private:
 	int gen_class_cast(const CastExpr* expr, FunctionContext& func);
 	int gen_int_immediate(int64_t value, FunctionContext& func);
 	int gen_enum_member(const EnumDecl::Member& member, FunctionContext& func);
+	int gen_enum_dictionary(const EnumDecl& decl, FunctionContext& func);
 	// `for c in <String>`: batched character walk, see codegen.cpp.
 	void gen_string_walk(const ForStmt* stmt, int string_reg, FunctionContext& func);
 	void gen_numeric_for(const ForStmt* stmt, int start_reg, int end_reg, int step_reg,
@@ -160,6 +163,8 @@ private:
 		std::vector<std::string> captures;
 		// m_current_class is cleared before lambda lowering; this preserves scope.
 		const StructDecl* owner = nullptr;
+		int chain_link = 0;
+		std::string chain_function;
 	};
 	std::vector<PendingLambda> m_pending_lambdas;
 	int m_next_lambda = 0;
@@ -277,6 +282,8 @@ private:
 	bool is_super(const Expr* expr, FunctionContext& func);
 	int gen_super_call(const MemberCallExpr* expr, FunctionContext& func);
 	int gen_super_init(const CallExpr* expr, FunctionContext& func);
+	int gen_chain_super_call(const std::string& name, const std::vector<ExprPtr>& arguments,
+		const NamedArguments& names, FunctionContext& func, const Expr* site);
 
 	const StructField& require_struct_field(const StructDecl& decl, const std::string& field_name,
 		int line, int column) const;
@@ -315,9 +322,10 @@ private:
 	std::unordered_map<std::string, const StructDecl*> m_structs;
 	std::unordered_map<const StructDecl*, std::string> m_native_bases;
 	const StructDecl* m_current_class = nullptr;
-	// The script's own `extends`, so a top-level function can reach the owner's
-	// properties by bare name the way a lifted class method reaches its base.
 	std::string m_script_base_class;
+	ChainInfo m_chain;
+	int m_current_chain_link = 0;
+	std::string m_current_chain_function;
 	bool m_restricted = false;
 	std::unordered_set<std::string> m_autoloads;
 	std::unordered_map<std::string, std::string> m_global_script_classes;
@@ -331,6 +339,10 @@ private:
 
 	bool is_global_class(const std::string& name) const;
 	bool is_autoload(const std::string& name) const;
+	bool names_a_chain_class(const std::string& name, FunctionContext& func);
+	const std::string* chain_qualified_member(const Expr* expr, FunctionContext& func);
+	int emit_local_call(const std::string& name, std::vector<int> arg_regs,
+		FunctionContext& func, const Expr* site);
 	bool names_an_engine_type(const std::string& name, FunctionContext& func);
 	std::string script_level_super_hint() const;
 	const std::string* global_script_class_path(const std::string& name) const;
