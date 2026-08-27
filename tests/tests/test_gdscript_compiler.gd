@@ -11193,6 +11193,25 @@ func test_sgd_restrictions_refuse_the_class_keywords():
 		assert_eq(script.get_compile_error(), "",
 			"an unrestricted Sandbox should accept: " + source.split("\n")[0])
 
+# A restricted Sandbox compiles through gdscript.elf rather than in process, so
+# the constant table has to survive the guest boundary as well as the direct one.
+func test_sgd_restricted_compiles_publish_constants():
+	var script := SafeGDScript.new()
+	script.set_source_code("func __bootstrap():\n\tpass\n")
+	var node := Node.new()
+	node.set_script(script)
+	node.set("restrictions", true)
+	script.set_source_code("enum State { IDLE, RUN }\nconst LIMIT := 42\nfunc answer():\n\treturn State.RUN\n")
+	assert_eq(script.get_compile_error(), "", "the restricted script should compile")
+
+	var constants := script.get_script_constant_map()
+	assert_eq(constants.get("State"), {"IDLE": 0, "RUN": 1},
+		"a restricted compile should publish its enum")
+	assert_eq(constants.get("LIMIT"), 42,
+		"a restricted compile should publish its const")
+	assert_eq(node.get("LIMIT"), 42, "and the instance should answer for it")
+	node.free()
+
 func test_sgd_restrictions_leave_a_local_class_alone():
 	var source := """
 class Counter:
@@ -12302,8 +12321,9 @@ func test_sgd_members_answer_the_host():
 	assert_eq(node.get("counter"), 4, "a plain member should take a write")
 	assert_eq(node.call("seen"), [[1, 2], "ready", 4], "and the guest should see it")
 
-	# A const is not per-instance storage, so it is not a property.
-	assert_eq(node.get("LIMIT"), null, "a const is not a member")
+	# A const is not per-instance storage, so it is not a property -- but get()
+	# still answers it, the way GDScript answers out of Script::constants.
+	assert_eq(node.get("LIMIT"), 9, "a const should answer get()")
 
 	# @export is the inspector; a plain member is only a script variable.
 	var usage := {}
@@ -12313,8 +12333,80 @@ func test_sgd_members_answer_the_host():
 		"an @export should reach the inspector")
 	assert_eq(usage.get("bodies", 0) & (PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE), 0,
 		"a plain member should reach neither the inspector nor a saved scene")
+	assert_false(usage.has("LIMIT"), "a const is not a property")
 
 	node.free()
+
+# -= Constants and enums answer a reader outside the script =-
+#
+# Both are compiler-only: they fold at their use sites and the guest keeps no
+# storage for them. A reader outside the script -- most often an autoload,
+# `Global.State.RUN` -- goes through Object::get, which found nothing and
+# answered null. GDScript answers the same read out of Script::constants; the
+# compiler now publishes a table beside the ELF so a .sgd does too.
+
+const CONSTANT_HOLDER_SOURCE = """
+extends Node
+
+enum State { IDLE, RUN, DONE }
+enum Sparse { A = 5, B = 9 }
+enum { LOOSE_A, LOOSE_B }
+const LIMIT := 42
+const LABEL := "holder"
+const RATIO := 0.5
+const FLAG := true
+
+func own_view():
+	return [State.RUN, Sparse.B, LOOSE_B, LIMIT]
+"""
+
+const CONSTANT_READER_SOURCE = """
+extends Node
+
+func read_from(holder):
+	return [holder.State, holder.State.RUN, holder.Sparse.B, holder.LOOSE_B,
+		holder.LIMIT, holder.LABEL, holder.RATIO, holder.FLAG]
+"""
+
+func test_sgd_constants_and_enums_answer_another_script():
+	var holder_path = "user://temp_constant_holder.sgd"
+	var file = FileAccess.open(holder_path, FileAccess.WRITE)
+	file.store_string(CONSTANT_HOLDER_SOURCE)
+	file.close()
+	var reader_path = "user://temp_constant_reader.sgd"
+	file = FileAccess.open(reader_path, FileAccess.WRITE)
+	file.store_string(CONSTANT_READER_SOURCE)
+	file.close()
+
+	var holder_script = load(holder_path)
+	var reader_script = load(reader_path)
+	assert_not_null(holder_script, "the holder script should load")
+	assert_not_null(reader_script, "the reader script should load")
+	if holder_script == null or reader_script == null:
+		return
+
+	var holder = Node.new()
+	holder.set_script(holder_script)
+	holder.set_instructions_max(100000)
+	var reader = Node.new()
+	reader.set_script(reader_script)
+	reader.set_instructions_max(100000)
+
+	# The guest still folds its own; publishing must not change that.
+	assert_eq(holder.call("own_view"), [1, 9, 1, 42],
+		"the script should still fold its own constants")
+
+	assert_eq(reader.call("read_from", holder),
+		[{"IDLE": 0, "RUN": 1, "DONE": 2}, 1, 9, 1, 42, "holder", 0.5, true],
+		"another script should read the constants and enums")
+
+	# Same table the editor and Script.get_script_constant_map() read.
+	assert_eq(holder_script.get_script_constant_map().get("State"),
+		{"IDLE": 0, "RUN": 1, "DONE": 2},
+		"the script should publish its enum as a constant")
+
+	reader.free()
+	holder.free()
 
 # -= Declared types start at their default =-
 #

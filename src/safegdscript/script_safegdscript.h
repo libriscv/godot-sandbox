@@ -134,6 +134,7 @@ public:
 
 private:
 	void update_methods_info(GDScriptCompilerBackend &p_compiler);
+	void update_constants(GDScriptCompilerBackend &p_compiler);
 	void rebuild_nested_classes(GDScriptCompilerBackend &p_compiler);
 	void rebuild_if_a_base_changed();
 	// Rejects rebuild while this script is stopped at a breakpoint.
@@ -176,5 +177,9 @@ private:
 		String description;
 	};
 	HashMap<StringName, MethodDocumentation> methods_doc;
+	// File-scope `const` and `enum`, folded at compile time. The guest keeps no
+	// storage for them, so a reader outside the script -- `Autoload.SOME_ENUM` --
+	// is answered from here, the way GDScript answers out of Script::constants.
+	HashMap<StringName, Variant> constants;
 	friend class SafeGDScriptInstance;
 };

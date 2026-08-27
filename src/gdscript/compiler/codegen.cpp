@@ -19,6 +19,42 @@ static IRInstruction::TypeHint type_hint_from_string(const std::string& type_str
 
 CodeGenerator::CodeGenerator() {}
 
+namespace {
+
+// A folded const the host can answer with. Containers are deliberately absent:
+// GDScript gives a const Array or Dictionary handle identity, and a copy built
+// host-side would be a different container than the one the guest sees. NIL and
+// RUNTIME initializers stay unpublished too -- null is the answer either way.
+void publish_constant(IRProgram& ir_program, const std::string& name,
+	const IRGlobalVar& global)
+{
+	ScriptConstant constant;
+	constant.name = name;
+	switch (global.init_type) {
+		case IRGlobalVar::InitType::INT:
+			constant.kind = ScriptConstant::Kind::INT;
+			constant.value = std::get<int64_t>(global.init_value);
+			break;
+		case IRGlobalVar::InitType::FLOAT:
+			constant.kind = ScriptConstant::Kind::FLOAT;
+			constant.value = std::get<double>(global.init_value);
+			break;
+		case IRGlobalVar::InitType::BOOL:
+			constant.kind = ScriptConstant::Kind::BOOL;
+			constant.value = std::get<bool>(global.init_value);
+			break;
+		case IRGlobalVar::InitType::STRING:
+			constant.kind = ScriptConstant::Kind::STRING;
+			constant.value = std::get<std::string>(global.init_value);
+			break;
+		default:
+			return;
+	}
+	ir_program.constants.push_back(std::move(constant));
+}
+
+} // namespace
+
 IRProgram CodeGenerator::generate(const Program& program) {
 	IRProgram ir_program;
 	ir_program.is_tool = program.is_tool;
@@ -113,6 +149,41 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				m_enum_members[member.name] = &member;
 			}
 		}
+	}
+
+	// The host reads these off a script instance; the guest folds them and keeps
+	// no storage. An engine-constant initializer has no compile-time value
+	// (gen_enum_member re-evaluates it per use), so an enum holding one is left
+	// unpublished rather than published with a wrong member.
+	for (const auto& decl : program.enums) {
+		bool foldable = true;
+		for (const auto& member : decl.members) {
+			if (member.value_expr != nullptr) {
+				foldable = false;
+				break;
+			}
+		}
+		if (!foldable) {
+			continue;
+		}
+		if (decl.name.empty()) {
+			// File-scope members; the enum itself has no name to answer to.
+			for (const auto& member : decl.members) {
+				ScriptConstant constant;
+				constant.name = member.name;
+				constant.kind = ScriptConstant::Kind::INT;
+				constant.value = member.value;
+				ir_program.constants.push_back(std::move(constant));
+			}
+			continue;
+		}
+		ScriptConstant constant;
+		constant.name = decl.name;
+		constant.kind = ScriptConstant::Kind::ENUM;
+		for (const auto& member : decl.members) {
+			constant.members.push_back({ member.name, member.value });
+		}
+		ir_program.constants.push_back(std::move(constant));
 	}
 
 	// After structs, so a struct parameter type resolves to Dictionary.
@@ -280,6 +351,10 @@ IRProgram CodeGenerator::generate(const Program& program) {
 
 			if (global.is_const && ir_global.init_type != IRGlobalVar::InitType::RUNTIME) {
 				m_global_const_values[global.name] = ir_global;
+			}
+
+			if (global.is_const) {
+				publish_constant(ir_program, global.name, ir_global);
 			}
 		}
 

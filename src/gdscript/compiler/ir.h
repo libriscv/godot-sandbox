@@ -358,6 +358,10 @@ struct IRProgram {
 	// One per nested class with an engine base; the host attaches a Script to each.
 	std::vector<ClassSignature> class_signatures;
 
+	// File-scope `const` and `enum`. Compile-time only in the guest; published so
+	// the host can answer `Autoload.NAME` the way GDScript's Script::constants does.
+	std::vector<ScriptConstant> constants;
+
 	// Evaluates non-constant global initializers at startup, before @export registration.
 	IRFunction global_init;
 	bool has_global_init = false;

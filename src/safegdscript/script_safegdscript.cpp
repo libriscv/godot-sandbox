@@ -1,6 +1,7 @@
 #include "script_safegdscript.h"
 
 #include "compiler_backend.h"
+#include "sgd_timing.h"
 #include "../elf/script_instance.h"
 #include "script_class_safegdscript.h"
 #include "script_instance_safegdscript.h"
@@ -347,7 +348,11 @@ int32_t SafeGDScript::_get_member_line(const StringName &p_member) const {
 	return -1;
 }
 Dictionary SafeGDScript::_get_constants() const {
-	return Dictionary();
+	Dictionary out;
+	for (const KeyValue<StringName, Variant> &constant : this->constants) {
+		out[constant.key] = constant.value;
+	}
+	return out;
 }
 TypedArray<StringName> SafeGDScript::_get_members() const {
 	return TypedArray<StringName>();
@@ -450,12 +455,19 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	options.profiling = profiling;
 	options.debug = debug;
 	options.breakpoints = this->breakpoints;
-	const PackedByteArray new_elf = compiler.compile(this->source_code, options);
+	PackedByteArray new_elf;
+	{
+		SGD_TIME_COMPILE();
+		new_elf = compiler.compile(this->source_code, options);
+	}
 	if (new_elf.is_empty()) {
 		return fail_compile(compiler.error_message());
 	}
 
 	this->elf_data = new_elf;
+	if (sgd_timing::enabled()) {
+		sgd_timing::totals().elf_bytes += new_elf.size();
+	}
 	this->compiled_restricted = restricted;
 	this->profiled_build = profiling;
 	this->debug_build = debug;
@@ -905,10 +917,46 @@ void SafeGDScript::update_methods_info(GDScriptCompilerBackend &p_compiler) {
 		methods_info.push_back(std::move(method));
 	}
 
+	update_constants(p_compiler);
 	rebuild_nested_classes(p_compiler);
 
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("SafeGDScript::update_methods_info: Updated methods info with " + itos(methods_info.size()) + " methods.");
+	}
+}
+
+// An enum arrives as its members; the Dictionary GDScript exposes is rebuilt
+// here in declaration order, matching the one gen_enum_dictionary builds in the
+// guest. A compiler that predates the table publishes nothing and the script
+// keeps none, which is what every release before this one did.
+void SafeGDScript::update_constants(GDScriptCompilerBackend &p_compiler) {
+	this->constants.clear();
+	for (const gdscript::ScriptConstant &declared : p_compiler.script_constants()) {
+		const StringName name = String::utf8(declared.name.c_str(), declared.name.size());
+		switch (declared.kind) {
+			case gdscript::ScriptConstant::Kind::INT:
+				this->constants.insert(name, std::get<int64_t>(declared.value));
+				break;
+			case gdscript::ScriptConstant::Kind::FLOAT:
+				this->constants.insert(name, std::get<double>(declared.value));
+				break;
+			case gdscript::ScriptConstant::Kind::BOOL:
+				this->constants.insert(name, std::get<bool>(declared.value));
+				break;
+			case gdscript::ScriptConstant::Kind::STRING: {
+				const std::string &text = std::get<std::string>(declared.value);
+				this->constants.insert(name, String::utf8(text.c_str(), text.size()));
+				break;
+			}
+			case gdscript::ScriptConstant::Kind::ENUM: {
+				Dictionary members;
+				for (const gdscript::ScriptConstant::EnumMember &member : declared.members) {
+					members[String::utf8(member.name.c_str(), member.name.size())] = member.value;
+				}
+				this->constants.insert(name, members);
+				break;
+			}
+		}
 	}
 }
 

@@ -139,6 +139,18 @@ public:
 		return classes;
 	}
 
+	std::vector<gdscript::ScriptConstant> script_constants() override {
+		std::vector<gdscript::ScriptConstant> constants;
+		const PackedByteArray bytes = blob("get_script_constants");
+		if (bytes.is_empty()) {
+			return constants;
+		}
+		if (!gdscript::decode_script_constants(bytes.ptr(), size_t(bytes.size()), constants)) {
+			ERR_PRINT("SafeGDScript: the compiler returned a malformed constant table.");
+		}
+		return constants;
+	}
+
 	gdscript::LineTable line_table() override {
 		gdscript::LineTable table;
 		const PackedByteArray bytes = blob("get_line_table");

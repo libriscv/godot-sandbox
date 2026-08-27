@@ -49,6 +49,7 @@ PUBLIC Variant compile(String code)
 	gdscript_remember_signatures(compiler);
 	gdscript_remember_signals(compiler);
 	gdscript_remember_classes(compiler);
+	gdscript_remember_constants(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
@@ -84,6 +85,7 @@ PUBLIC Variant compile_profiled(String code)
 	gdscript_remember_signatures(compiler);
 	gdscript_remember_signals(compiler);
 	gdscript_remember_classes(compiler);
+	gdscript_remember_constants(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
@@ -118,6 +120,7 @@ PUBLIC Variant compile_debug(String code, PackedInt32Array breakpoints)
 	gdscript_remember_signatures(compiler);
 	gdscript_remember_signals(compiler);
 	gdscript_remember_classes(compiler);
+	gdscript_remember_constants(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
@@ -185,6 +188,13 @@ PUBLIC Variant get_signal_signatures()
 PUBLIC Variant get_class_signatures()
 {
 	return gdscript_classes_to_variant();
+}
+
+// File-scope `const` and `enum` of the last compile. The host answers
+// `Autoload.NAME` out of these; the guest folded them and kept no storage.
+PUBLIC Variant get_script_constants()
+{
+	return gdscript_constants_to_variant();
 }
 
 // Address-to-line table. Metadata (no code cost); every compile publishes one.

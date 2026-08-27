@@ -39,6 +39,8 @@ public:
 	virtual std::vector<gdscript::FunctionSignature> signal_signatures() = 0;
 	// Nested classes with an engine base; empty from a compiler that predates them.
 	virtual std::vector<gdscript::ClassSignature> class_signatures() = 0;
+	// File-scope `const` and `enum`; empty from a compiler that predates them.
+	virtual std::vector<gdscript::ScriptConstant> script_constants() = 0;
 	virtual gdscript::LineTable line_table() = 0;
 	virtual PackedInt32Array installed_breakpoints() = 0;
 	virtual bool is_tool() = 0;

@@ -66,6 +66,20 @@ inline Variant gdscript_classes_to_variant() {
 	return PackedByteArray(gdscript::encode_class_signatures(gdscript_last_classes()));
 }
 
+// File-scope `const` and `enum`. Own blob, own entry point, same reason as above.
+inline std::vector<gdscript::ScriptConstant> &gdscript_last_constants() {
+	static std::vector<gdscript::ScriptConstant> constants;
+	return constants;
+}
+
+inline void gdscript_remember_constants(const gdscript::Compiler &compiler) {
+	gdscript_last_constants() = compiler.get_script_constants();
+}
+
+inline Variant gdscript_constants_to_variant() {
+	return PackedByteArray(gdscript::encode_script_constants(gdscript_last_constants()));
+}
+
 // Address-to-line table. Metadata only; every compile produces one.
 inline gdscript::LineTable &gdscript_last_line_table() {
 	static gdscript::LineTable table;

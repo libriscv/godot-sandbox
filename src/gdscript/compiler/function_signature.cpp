@@ -239,4 +239,96 @@ bool decode_class_signatures(const uint8_t *data, size_t size,
 	return true;
 }
 
+std::vector<uint8_t> encode_script_constants(const std::vector<ScriptConstant> &constants) {
+	std::vector<uint8_t> out;
+	write_scalar<uint32_t>(out, uint32_t(constants.size()));
+
+	for (const ScriptConstant &constant : constants) {
+		write_string(out, constant.name);
+		write_scalar<uint8_t>(out, uint8_t(constant.kind));
+		switch (constant.kind) {
+			case ScriptConstant::Kind::INT:
+				write_scalar<int64_t>(out, std::get<int64_t>(constant.value));
+				break;
+			case ScriptConstant::Kind::FLOAT:
+				write_scalar<double>(out, std::get<double>(constant.value));
+				break;
+			case ScriptConstant::Kind::BOOL:
+				write_scalar<uint8_t>(out, std::get<bool>(constant.value) ? 1 : 0);
+				break;
+			case ScriptConstant::Kind::STRING:
+				write_string(out, std::get<std::string>(constant.value));
+				break;
+			case ScriptConstant::Kind::ENUM:
+				write_scalar<uint32_t>(out, uint32_t(constant.members.size()));
+				for (const ScriptConstant::EnumMember &member : constant.members) {
+					write_string(out, member.name);
+					write_scalar<int64_t>(out, member.value);
+				}
+				break;
+		}
+	}
+	return out;
+}
+
+bool decode_script_constants(const uint8_t *data, size_t size,
+	std::vector<ScriptConstant> &out)
+{
+	out.clear();
+	Reader reader{ data, size };
+
+	const uint32_t count = reader.scalar<uint32_t>();
+	if (!reader.ok || count > size) {
+		out.clear();
+		return false;
+	}
+	out.reserve(count);
+
+	for (uint32_t i = 0; i < count; i++) {
+		ScriptConstant constant;
+		constant.name = reader.string();
+		const uint8_t kind = reader.scalar<uint8_t>();
+		if (!reader.ok || kind > uint8_t(ScriptConstant::Kind::ENUM)) {
+			out.clear();
+			return false;
+		}
+		constant.kind = ScriptConstant::Kind(kind);
+		switch (constant.kind) {
+			case ScriptConstant::Kind::INT:
+				constant.value = reader.scalar<int64_t>();
+				break;
+			case ScriptConstant::Kind::FLOAT:
+				constant.value = reader.scalar<double>();
+				break;
+			case ScriptConstant::Kind::BOOL:
+				constant.value = reader.scalar<uint8_t>() != 0;
+				break;
+			case ScriptConstant::Kind::STRING:
+				constant.value = reader.string();
+				break;
+			case ScriptConstant::Kind::ENUM: {
+				const uint32_t member_count = reader.scalar<uint32_t>();
+				if (!reader.ok || member_count > size) {
+					out.clear();
+					return false;
+				}
+				for (uint32_t m = 0; m < member_count; m++) {
+					ScriptConstant::EnumMember member;
+					member.name = reader.string();
+					member.value = reader.scalar<int64_t>();
+					constant.members.push_back(std::move(member));
+				}
+				break;
+			}
+		}
+		out.push_back(std::move(constant));
+	}
+
+	if (!reader.ok) {
+		out.clear();
+		return false;
+	}
+	return true;
+}
+
 } // namespace gdscript

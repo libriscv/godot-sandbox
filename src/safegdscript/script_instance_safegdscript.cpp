@@ -1,4 +1,5 @@
 #include "script_instance_safegdscript.h"
+#include "sgd_timing.h"
 #include <functional>
 
 #include "../elf/script_elf.h"
@@ -47,6 +48,16 @@ bool SafeGDScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 	if (script.is_valid() && script->_has_script_signal(p_name)) {
 		r_ret = Signal(this->owner, p_name);
 		return true;
+	}
+	// Folded `const` and `enum`: no guest storage backs them, so they are answered
+	// off the script. Last, so a member of the same name still wins -- the guest
+	// resolves its own names at compile time and never reaches here.
+	if (script.is_valid()) {
+		const Variant *constant = script->constants.getptr(p_name);
+		if (constant != nullptr) {
+			r_ret = *constant;
+			return true;
+		}
 	}
 	return false;
 }
@@ -300,7 +311,10 @@ ScriptLanguage *SafeGDScriptInstance::_get_language() {
 
 void SafeGDScriptInstance::reset_to(const PackedByteArray &p_elf_data) {
 	Sandbox *sandbox = current_sandbox;
-	sandbox->load_buffer(p_elf_data);
+	{
+		SGD_TIME_LOAD();
+		sandbox->load_buffer(p_elf_data);
+	}
 	// The records went with the old machine. Nothing is released -- that memory
 	// is gone -- and every instance takes a fresh one on its next call.
 }
@@ -387,7 +401,10 @@ static Sandbox *create_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_scrip
 	// type is constructed at startup, and the bind that follows has to find this
 	// machine rather than build a second one -- which would run startup again.
 	sandbox_instances.insert_or_assign(p_script.ptr(), SandboxAndCount{sandbox_ptr, 1});
-	sandbox_ptr->load_buffer(p_script->get_content());
+	{
+		SGD_TIME_LOAD();
+		sandbox_ptr->load_buffer(p_script->get_content());
+	}
 
 	return sandbox_ptr;
 }
