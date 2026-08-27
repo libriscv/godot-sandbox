@@ -74,11 +74,11 @@ static int count_syscall(const IRFunction& func, int64_t number, int64_t op = -1
 		if (instr.opcode != IROpcode::CALL_SYSCALL || instr.operands.size() < 2) {
 			continue;
 		}
-		if (std::get<int64_t>(instr.operands[1].value) != number) {
+		if (instr.operands[1].immediate() != number) {
 			continue;
 		}
 		if (op >= 0 && (instr.operands.size() < 3 ||
-		                std::get<int64_t>(instr.operands[2].value) != op)) {
+		                instr.operands[2].immediate() != op)) {
 			continue;
 		}
 		count++;

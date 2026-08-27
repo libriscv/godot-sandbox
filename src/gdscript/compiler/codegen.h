@@ -181,6 +181,13 @@ private:
 	int m_next_label = 0;
 	std::vector<std::string> m_string_constants;
 
+	// Interned operand names; moved into the IRProgram at the end of generate().
+	IRStringTable m_strings;
+	IRValue ir_label(const std::string& name) { return IRValue::label(m_strings.intern(name)); }
+	IRValue ir_var(const std::string& name) { return IRValue::var(m_strings.intern(name)); }
+	IRValue ir_str(const std::string& text) { return IRValue::str(m_strings.intern(text)); }
+	const std::string& operand_text(const IRValue& value) const { return m_strings[value.string_id]; }
+
 	void push_scope(FunctionContext& func);
 	void pop_scope(FunctionContext& func);
 	Variable* find_variable(FunctionContext& func, const std::string& name);

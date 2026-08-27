@@ -8,7 +8,9 @@ namespace gdscript {
 // Verifies: signature arity/kinds, register definedness, label uniqueness,
 // max_registers coverage, type-hint consistency, CALL DST/arg disjointness.
 // Throws CompilerException naming function, instruction index and pass.
-void ir_verify(const IRFunction& func, const char* after_pass = nullptr);
+// Without a string table, names in diagnostics render as their interned id.
+void ir_verify(const IRFunction& func, const char* after_pass = nullptr,
+	const IRStringTable* strings = nullptr);
 
 void ir_verify(const IRProgram& program, const char* after_pass = nullptr);
 

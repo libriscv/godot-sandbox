@@ -864,13 +864,7 @@ func test():
 				for (size_t j = 0; j < instr.operands.size(); j++) {
 					const auto& op = instr.operands[j];
 					std::cout << " op" << j << "=";
-					if (std::holds_alternative<int>(op.value)) {
-						std::cout << "r" << std::get<int>(op.value);
-					} else if (std::holds_alternative<int64_t>(op.value)) {
-						std::cout << "#" << std::get<int64_t>(op.value);
-					} else if (std::holds_alternative<std::string>(op.value)) {
-						std::cout << "\"" << std::get<std::string>(op.value) << "\"";
-					}
+					std::cout << op.to_string();
 				}
 				std::cout << std::endl;
 			}

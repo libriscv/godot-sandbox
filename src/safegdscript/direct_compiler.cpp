@@ -94,6 +94,8 @@ public:
 	bool validate(const String &p_source, Validation &r_result) override {
 		gdscript::CompilerOptions options = m_options;
 		options.output_elf = false;
+		// Editor validation: no optimizer, every diagnostic comes from the frontend.
+		options.optimize = false;
 
 		gdscript::Compiler compiler;
 		compiler.compile(to_utf8(p_source), options);

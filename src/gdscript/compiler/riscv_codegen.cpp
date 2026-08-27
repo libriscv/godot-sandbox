@@ -245,7 +245,8 @@ void RISCVCodeGen::emit_folded_initializers(const IRProgram& program, bool membe
 
 std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_code.clear();
-	m_labels.clear();
+	m_label_names = program.strings;
+	m_label_offsets.assign(m_label_names.size(), NO_LABEL);
 	m_label_uses.clear();
 	m_functions.clear();
 	m_fn = FunctionState {};
@@ -254,6 +255,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_rodata_strings.clear();
 	m_rodata_string_labels.clear();
 	m_string_constants = &program.string_constants;
+	m_strings = &program.strings;
 
 	m_global_count = program.globals.size();
 	m_globals = program.globals;
@@ -359,7 +361,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 
 	// Not exported; no signature. Forced line-0 row caps the previous function.
 	if (program.has_global_init) {
-		m_labels[GLOBAL_INIT_LABEL] = m_code.size();
+		set_label(label_id(GLOBAL_INIT_LABEL), m_code.size());
 		m_profiling_index = -1;
 		m_debug_index = -1;
 		record_line(0, true);
@@ -371,7 +373,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	}
 
 	if (program.has_member_init) {
-		m_labels[MEMBER_INIT_LABEL] = m_code.size();
+		set_label(label_id(MEMBER_INIT_LABEL), m_code.size());
 		m_profiling_index = -1;
 		m_debug_index = -1;
 		record_line(0, true);
@@ -381,7 +383,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	for (size_t i = 0; i < program.functions.size(); i++) {
 		const auto& func = program.functions[i];
 		m_functions[func.name] = m_code.size();
-		m_labels[func.name] = m_code.size();
+		set_label(label_id(func.name), m_code.size());
 		m_profiling_index = m_profiling ? int(i) : -1;
 		m_debug_index = m_debug ? int(i) : -1;
 		// Prologue line = declaration, not the first statement.
@@ -397,7 +399,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	size_t const_pool_base = m_code.size();
 	for (size_t i = 0; i < m_constant_pool.size(); i++) {
 		std::string label = ".LC" + std::to_string(i);
-		m_labels[label] = const_pool_base + (i * 8);
+		set_label(label_id(label), const_pool_base + (i * 8));
 	}
 
 	for (int64_t constant : m_constant_pool) {
@@ -407,7 +409,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	}
 
 	for (const auto& [str, label] : m_rodata_strings) {
-		m_labels[label] = m_code.size();
+		set_label(label_id(label), m_code.size());
 		for (char c : str) {
 			m_code.push_back(static_cast<uint8_t>(c));
 		}
@@ -438,8 +440,8 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		data_vaddr = (data_vaddr + 0xFFF) & ~0xFFF;
 
 		if (global_slots > 0) {
-			m_labels[GLOBALS_LABEL] = data_vaddr - 0x10000;
-			m_labels[INSTANCE_LABEL] = data_vaddr - 0x10000 + data_slots * variant_size();
+			set_label(label_id(GLOBALS_LABEL), data_vaddr - 0x10000);
+			set_label(label_id(INSTANCE_LABEL), data_vaddr - 0x10000 + data_slots * variant_size());
 
 			// Payload = INT32_MIN, not 0: VASSIGN's "adopt source" path requires
 			// INT32_MIN as the sentinel. 0 is a valid scoped-variant index.
@@ -457,7 +459,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 
 		if (m_instance_blob_size > 0) {
 			m_instance_blob_address = data_vaddr + globals_bytes;
-			m_labels[INSTANCE_BLOB_LABEL] = m_instance_blob_address - 0x10000;
+			set_label(label_id(INSTANCE_BLOB_LABEL), m_instance_blob_address - 0x10000);
 
 			const size_t base = m_code.size();
 			m_code.resize(base + m_instance_blob_size, 0);
@@ -481,7 +483,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 
 		if (m_profiling) {
 			m_profiling_address = data_vaddr + globals_bytes + m_instance_blob_size;
-			m_labels[PROFILING_LABEL] = m_profiling_address - 0x10000;
+			set_label(label_id(PROFILING_LABEL), m_profiling_address - 0x10000);
 
 			const size_t base = m_code.size();
 			m_code.resize(base + m_profiling_size, 0);
@@ -501,7 +503,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 
 		if (m_debug) {
 			m_debug_address = data_vaddr + globals_bytes + m_instance_blob_size + m_profiling_size;
-			m_labels[DEBUG_LABEL] = m_debug_address - 0x10000;
+			set_label(label_id(DEBUG_LABEL), m_debug_address - 0x10000);
 
 			const size_t base = m_code.size();
 			m_code.resize(base + m_debug_size, 0);
@@ -716,8 +718,8 @@ void RISCVCodeGen::gen_syscall_get_obj(const IRInstruction& instr, int result_vr
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_GET_OBJ requires 4 operands");
 	}
 
-	int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
-	int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+	int string_idx = static_cast<int>(instr.operands[2].immediate());
+	int string_len = static_cast<int>(instr.operands[3].immediate());
 
 	if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
@@ -741,8 +743,8 @@ void RISCVCodeGen::gen_syscall_node_create(const IRInstruction& instr, int resul
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_NODE_CREATE requires 4 operands");
 	}
 
-	const int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
-	const int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+	const int string_idx = static_cast<int>(instr.operands[2].immediate());
+	const int string_len = static_cast<int>(instr.operands[3].immediate());
 
 	if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
@@ -772,9 +774,9 @@ void RISCVCodeGen::gen_syscall_class_bind(const IRInstruction& instr, int result
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_CLASS_BIND requires 5 operands");
 	}
 
-	const int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
-	const int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
-	const int dict_vreg = std::get<int>(instr.operands[4].value);
+	const int string_idx = static_cast<int>(instr.operands[2].immediate());
+	const int string_len = static_cast<int>(instr.operands[3].immediate());
+	const int dict_vreg = instr.operands[4].reg_index();
 
 	if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
@@ -801,7 +803,7 @@ void RISCVCodeGen::gen_syscall_array_size(const IRInstruction& instr, int result
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_ARRAY_SIZE requires 3 operands");
 	}
 
-	int array_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
+	int array_vreg = static_cast<int>(instr.operands[2].reg_index());
 
 	// Slot allocation before spill_around_syscall to prevent allocator drift.
 	int result_offset = get_variant_stack_offset(result_vreg);
@@ -822,7 +824,7 @@ void RISCVCodeGen::gen_syscall_string_size(const IRInstruction& instr, int resul
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_STRING_SIZE requires 3 operands");
 	}
 
-	int string_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
+	int string_vreg = static_cast<int>(instr.operands[2].reg_index());
 
 	// Slot allocation before spill_around_syscall to prevent allocator drift.
 	int result_offset = get_variant_stack_offset(result_vreg);
@@ -842,8 +844,8 @@ void RISCVCodeGen::gen_syscall_array_at(const IRInstruction& instr, int result_v
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_ARRAY_AT requires 4 operands");
 	}
 
-	int array_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
-	int index_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
+	int array_vreg = static_cast<int>(instr.operands[2].reg_index());
+	int index_vreg = static_cast<int>(instr.operands[3].reg_index());
 
 	int result_offset = get_variant_stack_offset(result_vreg);
 	int array_offset = get_variant_stack_offset(array_vreg);
@@ -863,8 +865,8 @@ void RISCVCodeGen::gen_syscall_string_at(const IRInstruction& instr, int result_
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_STRING_AT requires 4 operands");
 	}
 
-	int string_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
-	int index_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
+	int string_vreg = static_cast<int>(instr.operands[2].reg_index());
+	int index_vreg = static_cast<int>(instr.operands[3].reg_index());
 
 	int result_offset = get_variant_stack_offset(result_vreg);
 	int string_offset = get_variant_stack_offset(string_vreg);
@@ -888,9 +890,9 @@ void RISCVCodeGen::gen_syscall_string_batch(const IRInstruction& instr, int resu
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_STRING_BATCH requires 5 operands");
 	}
 
-	int string_vreg = static_cast<int>(std::get<int>(instr.operands[2].value));
-	int index_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
-	const int64_t max_count = std::get<int64_t>(instr.operands[4].value);
+	int string_vreg = static_cast<int>(instr.operands[2].reg_index());
+	int index_vreg = static_cast<int>(instr.operands[3].reg_index());
+	const int64_t max_count = instr.operands[4].immediate();
 
 	int result_offset = get_variant_stack_offset(result_vreg);
 	int string_offset = get_variant_stack_offset(string_vreg);
@@ -917,15 +919,15 @@ void RISCVCodeGen::gen_syscall_dictionary_ops(const IRInstruction& instr, int re
 	constexpr int64_t DICT_OP_HAS = 3;
 	constexpr int64_t DICT_OP_GET_SIZE = 6;
 
-	const int64_t dict_op = std::get<int64_t>(instr.operands[2].value);
-	int dict_vreg = static_cast<int>(std::get<int>(instr.operands[3].value));
+	const int64_t dict_op = instr.operands[2].immediate();
+	int dict_vreg = static_cast<int>(instr.operands[3].reg_index());
 	const bool has_key = instr.operands.size() == 5;
 	const bool returns_in_register = dict_op == DICT_OP_HAS || dict_op == DICT_OP_GET_SIZE;
 
 	int result_offset = get_variant_stack_offset(result_vreg);
 	int dict_offset = get_variant_stack_offset(dict_vreg);
 	int key_offset = has_key
-		? get_variant_stack_offset(static_cast<int>(std::get<int>(instr.operands[4].value)))
+		? get_variant_stack_offset(static_cast<int>(instr.operands[4].reg_index()))
 		: 0;
 
 	std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2};
@@ -960,8 +962,8 @@ void RISCVCodeGen::gen_get_node(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "GET_NODE requires 2 operands");
 	}
 
-	int result_vreg = std::get<int>(instr.operands[0].value);
-	const std::string& path = std::get<std::string>(instr.operands[1].value);
+	int result_vreg = instr.operands[0].reg_index();
+	const std::string& path = text(instr.operands[1]);
 
 	int result_offset = get_variant_stack_offset(result_vreg);
 	spill_around_syscall({REG_A0, REG_A1, REG_A2});
@@ -981,8 +983,8 @@ void RISCVCodeGen::gen_load_resource(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "LOAD_RESOURCE requires 2 operands");
 	}
 
-	int result_vreg = std::get<int>(instr.operands[0].value);
-	const std::string& path = std::get<std::string>(instr.operands[1].value);
+	int result_vreg = instr.operands[0].reg_index();
+	const std::string& path = text(instr.operands[1]);
 
 	int result_offset = get_variant_stack_offset(result_vreg);
 	spill_around_syscall({ REG_A0, REG_A1, REG_A2 });
@@ -1000,9 +1002,9 @@ void RISCVCodeGen::gen_make_callable(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_CALLABLE requires 3 operands");
 	}
 
-	int result_vreg = std::get<int>(instr.operands[0].value);
-	const std::string& function_name = std::get<std::string>(instr.operands[1].value);
-	int bound_vreg = std::get<int>(instr.operands[2].value);
+	int result_vreg = instr.operands[0].reg_index();
+	const std::string& function_name = text(instr.operands[1]);
+	int bound_vreg = instr.operands[2].reg_index();
 
 	int result_offset = get_variant_stack_offset(result_vreg);
 	int bound_offset = get_variant_stack_offset(bound_vreg);
@@ -1029,8 +1031,8 @@ void RISCVCodeGen::gen_load_resource_var(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "LOAD_RESOURCE_VAR requires 2 operands");
 	}
 
-	int result_vreg = std::get<int>(instr.operands[0].value);
-	int path_vreg = std::get<int>(instr.operands[1].value);
+	int result_vreg = instr.operands[0].reg_index();
+	int path_vreg = instr.operands[1].reg_index();
 
 	int result_offset = get_variant_stack_offset(result_vreg);
 	int path_offset = get_variant_stack_offset(path_vreg);
@@ -1049,8 +1051,8 @@ void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL_SYSCALL requires at least 2 operands (result_reg, syscall_num)");
 	}
 
-	int result_vreg = std::get<int>(instr.operands[0].value);
-	int syscall_num = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+	int result_vreg = instr.operands[0].reg_index();
+	int syscall_num = static_cast<int>(instr.operands[1].immediate());
 
 	if (syscall_num == ECALL_GET_OBJ) {
 		gen_syscall_get_obj(instr, result_vreg);
@@ -1080,9 +1082,9 @@ void RISCVCodeGen::gen_construct(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CONSTRUCT requires at least 3 operands");
 	}
 
-	const int result_vreg = std::get<int>(instr.operands[0].value);
-	const int variant_type = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
-	const int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+	const int result_vreg = instr.operands[0].reg_index();
+	const int variant_type = static_cast<int>(instr.operands[1].immediate());
+	const int arg_count = static_cast<int>(instr.operands[2].immediate());
 
 	if (instr.operands.size() != static_cast<size_t>(3 + arg_count)) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CONSTRUCT argument count mismatch");
@@ -1098,7 +1100,7 @@ void RISCVCodeGen::gen_construct(const IRInstruction& instr) {
 	if (arg_count > 0) {
 		emit_stack_adjust(-additional_space);
 		for (int i = 0; i < arg_count; i++) {
-			const int arg_vreg = std::get<int>(instr.operands[3 + i].value);
+			const int arg_vreg = instr.operands[3 + i].reg_index();
 			const int arg_src_offset = get_variant_stack_offset(arg_vreg) + additional_space;
 			emit_variant_move(REG_SP, i * variant_size(), REG_SP, arg_src_offset, REG_T0);
 		}
@@ -1122,10 +1124,10 @@ void RISCVCodeGen::gen_vcall(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VCALL requires at least 4 operands");
 	}
 
-	int result_vreg = std::get<int>(instr.operands[0].value);
-	int obj_vreg = std::get<int>(instr.operands[1].value);
-	std::string method_name = std::get<std::string>(instr.operands[2].value);
-	int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+	int result_vreg = instr.operands[0].reg_index();
+	int obj_vreg = instr.operands[1].reg_index();
+	std::string method_name = text(instr.operands[2]);
+	int arg_count = static_cast<int>(instr.operands[3].immediate());
 
 	if (instr.operands.size() != static_cast<size_t>(4 + arg_count)) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VCALL argument count mismatch");
@@ -1147,7 +1149,7 @@ void RISCVCodeGen::gen_vcall(const IRInstruction& instr) {
 
 		// Copy argument Variants to the new stack space
 		for (int i = 0; i < arg_count; i++) {
-			int arg_vreg = std::get<int>(instr.operands[4 + i].value);
+			int arg_vreg = instr.operands[4 + i].reg_index();
 			int arg_src_offset = get_variant_stack_offset(arg_vreg) + additional_space; // Adjust for moved stack
 			int arg_dst_offset = i * variant_size();
 
@@ -1195,13 +1197,13 @@ void RISCVCodeGen::gen_make_dictionary(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_DICTIONARY requires at least 1 operand");
 	}
 
-	int result_vreg = std::get<int>(instr.operands[0].value);
+	int result_vreg = instr.operands[0].reg_index();
 	int result_offset = get_variant_stack_offset(result_vreg);
 
 	// Check if this is the old Dictionary() constructor format (only 1 operand)
 	// or the new dictionary literal format (2+ operands)
 	bool is_constructor_format = (instr.operands.size() == 1);
-	int pair_count = is_constructor_format ? 0 : static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+	int pair_count = is_constructor_format ? 0 : static_cast<int>(instr.operands[1].immediate());
 
 	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 
@@ -1221,7 +1223,7 @@ void RISCVCodeGen::gen_make_dictionary(const IRInstruction& instr) {
 		// Copy full GuestVariant structures to stack
 		// Operands are interleaved: key1, val1, key2, val2, ...
 		for (int i = 0; i < total_variants; i++) {
-			int variant_vreg = std::get<int>(instr.operands[2 + i].value);
+			int variant_vreg = instr.operands[2 + i].reg_index();
 			int variant_offset = get_variant_stack_offset(variant_vreg);
 
 			// Destination address for this variant
@@ -1264,8 +1266,8 @@ void RISCVCodeGen::gen_make_array(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_ARRAY requires at least 2 operands");
 	}
 
-	int result_vreg = std::get<int>(instr.operands[0].value);
-	int element_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+	int result_vreg = instr.operands[0].reg_index();
+	int element_count = static_cast<int>(instr.operands[1].immediate());
 	int result_offset = get_variant_stack_offset(result_vreg);
 
 	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
@@ -1284,7 +1286,7 @@ void RISCVCodeGen::gen_make_array(const IRInstruction& instr) {
 
 		// Copy full GuestVariant structures to stack
 		for (int i = 0; i < element_count; i++) {
-			int elem_vreg = std::get<int>(instr.operands[2 + i].value);
+			int elem_vreg = instr.operands[2 + i].reg_index();
 			int elem_offset = get_variant_stack_offset(elem_vreg);
 
 			// Destination address for this element
@@ -1323,8 +1325,8 @@ void RISCVCodeGen::gen_make_array(const IRInstruction& instr) {
 void RISCVCodeGen::gen_store_global(const IRInstruction& instr) {
 	// STORE_GLOBAL global_index, src_reg
 	// Stores a virtual register (Variant) into a global variable
-	int64_t global_idx = std::get<int64_t>(instr.operands[0].value);
-	int src_vreg = std::get<int>(instr.operands[1].value);
+	int64_t global_idx = instr.operands[0].immediate();
+	int src_vreg = instr.operands[1].reg_index();
 	int src_offset = get_variant_stack_offset(src_vreg);
 
 	// Get the global's type information
@@ -1394,10 +1396,10 @@ void RISCVCodeGen::gen_vget(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VGET requires 4 operands (result_reg, obj_reg, string_idx, string_len)");
 	}
 
-	int result_vreg = std::get<int>(instr.operands[0].value);
-	int obj_vreg = std::get<int>(instr.operands[1].value);
-	int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
-	int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+	int result_vreg = instr.operands[0].reg_index();
+	int obj_vreg = instr.operands[1].reg_index();
+	int string_idx = static_cast<int>(instr.operands[2].immediate());
+	int string_len = static_cast<int>(instr.operands[3].immediate());
 
 	if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
@@ -1423,10 +1425,10 @@ void RISCVCodeGen::gen_vget_inline(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VGET_INLINE requires 4 operands");
 	}
 
-	int result_vreg = std::get<int>(instr.operands[0].value);
-	int obj_vreg = std::get<int>(instr.operands[1].value);
-	std::string member = std::get<std::string>(instr.operands[2].value);
-	int obj_type_hint = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+	int result_vreg = instr.operands[0].reg_index();
+	int obj_vreg = instr.operands[1].reg_index();
+	std::string member = text(instr.operands[2]);
+	int obj_type_hint = static_cast<int>(instr.operands[3].immediate());
 
 	int result_offset = get_variant_stack_offset(result_vreg);
 	int obj_offset = get_variant_stack_offset(obj_vreg);
@@ -1477,11 +1479,11 @@ void RISCVCodeGen::gen_vset_inline(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VSET_INLINE requires 5 operands");
 	}
 
-	int obj_vreg = std::get<int>(instr.operands[0].value);
-	std::string member = std::get<std::string>(instr.operands[1].value);
-	int obj_type_hint = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
-	int value_vreg = std::get<int>(instr.operands[3].value);
-	const bool stamp_type = std::get<int64_t>(instr.operands[4].value) != 0;
+	int obj_vreg = instr.operands[0].reg_index();
+	std::string member = text(instr.operands[1]);
+	int obj_type_hint = static_cast<int>(instr.operands[2].immediate());
+	int value_vreg = instr.operands[3].reg_index();
+	const bool stamp_type = instr.operands[4].immediate() != 0;
 
 	int obj_offset = get_variant_stack_offset(obj_vreg);
 	int value_offset = get_variant_stack_offset(value_vreg);
@@ -1521,9 +1523,9 @@ void RISCVCodeGen::gen_vset_inline(const IRInstruction& instr) {
 
 void RISCVCodeGen::gen_switch(const IRInstruction& instr) {
 	// Dense integer switch via inline jal table; fall-through = no match
-	const int subject_vreg = std::get<int>(instr.operands[0].value);
-	const int64_t base = std::get<int64_t>(instr.operands[1].value);
-	const int64_t count = std::get<int64_t>(instr.operands[2].value);
+	const int subject_vreg = instr.operands[0].reg_index();
+	const int64_t base = instr.operands[1].immediate();
+	const int64_t count = instr.operands[2].immediate();
 	const int subject_offset = get_variant_stack_offset(subject_vreg);
 
 	const std::string past_table = ".switch" + std::to_string(m_switch_tables) + ".out";
@@ -1550,7 +1552,7 @@ void RISCVCodeGen::gen_switch(const IRInstruction& instr) {
 	std::vector<std::string> targets;
 	targets.reserve(size_t(count));
 	for (int64_t entry = 0; entry < count; entry++) {
-		targets.push_back(std::get<std::string>(instr.operands[3 + entry].value));
+		targets.push_back(text(instr.operands[3 + entry]));
 	}
 	emit_dense_jump_table(REG_T0, targets, past_table);
 	define_label(past_table);
@@ -1585,8 +1587,8 @@ void RISCVCodeGen::gen_await(const IRInstruction& instr) {
 			"AWAIT emitted in a function that was not planned as a coroutine");
 	}
 
-	const int result_vreg = std::get<int>(instr.operands[0].value);
-	const int operand_vreg = std::get<int>(instr.operands[1].value);
+	const int result_vreg = instr.operands[0].reg_index();
+	const int operand_vreg = instr.operands[1].reg_index();
 
 	// Offsets before spill barrier to prevent allocator drift.
 	const int result_offset = get_variant_stack_offset(result_vreg);
@@ -1674,14 +1676,14 @@ void RISCVCodeGen::gen_throw(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "THROW requires at least 3 operands");
 	}
 
-	const std::string& type = std::get<std::string>(instr.operands[0].value);
-	const std::string& message = std::get<std::string>(instr.operands[1].value);
-	const int message_regs = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+	const std::string& type = text(instr.operands[0]);
+	const std::string& message = text(instr.operands[1]);
+	const int message_regs = static_cast<int>(instr.operands[2].immediate());
 	if (instr.operands.size() != static_cast<size_t>(3 + message_regs)) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "THROW argument count mismatch");
 	}
 	const int message_offset = message_regs == 1
-		? get_variant_stack_offset(std::get<int>(instr.operands[3].value))
+		? get_variant_stack_offset(instr.operands[3].reg_index())
 		: -1;
 
 	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3, REG_A4, REG_A5});
@@ -1706,9 +1708,9 @@ void RISCVCodeGen::gen_print(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "PRINT requires at least 3 operands");
 	}
 
-	int result_vreg = std::get<int>(instr.operands[0].value);
-	const int channel = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
-	int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+	int result_vreg = instr.operands[0].reg_index();
+	const int channel = static_cast<int>(instr.operands[1].immediate());
+	int arg_count = static_cast<int>(instr.operands[2].immediate());
 
 	if (instr.operands.size() != static_cast<size_t>(3 + arg_count)) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "PRINT argument count mismatch");
@@ -1731,7 +1733,7 @@ void RISCVCodeGen::gen_print(const IRInstruction& instr) {
 		emit_add_offset(REG_SP, REG_SP, -args_space);
 
 		for (int i = 0; i < arg_count; i++) {
-			int arg_vreg = std::get<int>(instr.operands[3 + i].value);
+			int arg_vreg = instr.operands[3 + i].reg_index();
 			int arg_src_offset = get_variant_stack_offset(arg_vreg) + args_space;
 			emit_variant_move(REG_SP, i * variant_size(), REG_SP, arg_src_offset, REG_T0);
 		}
@@ -1769,7 +1771,7 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Arithmetic operations require at least 3 operands with first being REGISTER");
 	}
 
-	int dst_vreg = std::get<int>(instr.operands[0].value);
+	int dst_vreg = instr.operands[0].reg_index();
 	int dst_offset = get_variant_stack_offset(dst_vreg);
 
 	bool lhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
@@ -1778,8 +1780,8 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 	const bool host_only = instr.opcode == IROpcode::POW || instr.opcode == IROpcode::IN;
 
 	if (!host_only && instr.type_hint != IRInstruction::TypeHint_NONE && lhs_is_reg && rhs_is_reg) {
-		int lhs_vreg_local = std::get<int>(instr.operands[1].value);
-		int rhs_vreg_local = std::get<int>(instr.operands[2].value);
+		int lhs_vreg_local = instr.operands[1].reg_index();
+		int rhs_vreg_local = instr.operands[2].reg_index();
 		int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
 		int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
 
@@ -1826,8 +1828,8 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 	}
 
 	if (lhs_is_reg && rhs_is_reg) {
-		int lhs_vreg_local = std::get<int>(instr.operands[1].value);
-		int rhs_vreg_local = std::get<int>(instr.operands[2].value);
+		int lhs_vreg_local = instr.operands[1].reg_index();
+		int rhs_vreg_local = instr.operands[2].reg_index();
 		int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
 		int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
 
@@ -1865,16 +1867,16 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 
 		emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op);
 	} else if (lhs_is_reg && !rhs_is_reg && instr.operands[2].type == IRValue::Type::IMMEDIATE) {
-		int lhs_vreg_local = std::get<int>(instr.operands[1].value);
-		int64_t imm_val = std::get<int64_t>(instr.operands[2].value);
+		int lhs_vreg_local = instr.operands[1].reg_index();
+		int64_t imm_val = instr.operands[2].immediate();
 		int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
 
 		int imm_offset = get_scratch_variant_offset();
 		emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
 		emit_variant_eval(dst_offset, lhs_offset, imm_offset, variant_op);
 	} else if (!lhs_is_reg && rhs_is_reg && instr.operands[1].type == IRValue::Type::IMMEDIATE) {
-		int64_t imm_val = std::get<int64_t>(instr.operands[1].value);
-		int rhs_vreg_local = std::get<int>(instr.operands[2].value);
+		int64_t imm_val = instr.operands[1].immediate();
+		int rhs_vreg_local = instr.operands[2].reg_index();
 		int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
 
 		int imm_offset = get_scratch_variant_offset();
@@ -1890,8 +1892,8 @@ void RISCVCodeGen::gen_make_packed_array(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Packed array constructor requires at least 2 operands");
 	}
 
-	int result_vreg = std::get<int>(instr.operands[0].value);
-	int element_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+	int result_vreg = instr.operands[0].reg_index();
+	int element_count = static_cast<int>(instr.operands[1].immediate());
 	int result_offset = get_variant_stack_offset(result_vreg);
 
 	int variant_type;
@@ -1945,7 +1947,7 @@ void RISCVCodeGen::gen_make_packed_array(const IRInstruction& instr) {
 		emit_stack_adjust(-args_space);
 
 		for (int i = 0; i < element_count; i++) {
-			int elem_vreg = std::get<int>(instr.operands[2 + i].value);
+			int elem_vreg = instr.operands[2 + i].reg_index();
 			int elem_offset = get_variant_stack_offset(elem_vreg);
 			int dst_offset = i * variant_size();
 			emit_variant_move(REG_SP, dst_offset, REG_SP, args_space + elem_offset, REG_T0);
@@ -1969,15 +1971,15 @@ void RISCVCodeGen::gen_comparison(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Comparison operations require at least 3 operands with first being REGISTER");
 	}
 
-	int dst_vreg = std::get<int>(instr.operands[0].value);
+	int dst_vreg = instr.operands[0].reg_index();
 	int dst_offset = get_variant_stack_offset(dst_vreg);
 
 	bool lhs_is_reg = instr.operands[1].type == IRValue::Type::REGISTER;
 	bool rhs_is_reg = instr.operands.size() > 2 && instr.operands[2].type == IRValue::Type::REGISTER;
 
 	if (instr.type_hint == Variant::INT && lhs_is_reg && rhs_is_reg) {
-		int lhs_vreg = std::get<int>(instr.operands[1].value);
-		int rhs_vreg = std::get<int>(instr.operands[2].value);
+		int lhs_vreg = instr.operands[1].reg_index();
+		int rhs_vreg = instr.operands[2].reg_index();
 		int lhs_offset = get_variant_stack_offset(lhs_vreg);
 		int rhs_offset = get_variant_stack_offset(rhs_vreg);
 
@@ -1997,8 +1999,8 @@ void RISCVCodeGen::gen_comparison(const IRInstruction& instr) {
 	}
 
 	if (lhs_is_reg && rhs_is_reg) {
-		int lhs_vreg = std::get<int>(instr.operands[1].value);
-		int rhs_vreg = std::get<int>(instr.operands[2].value);
+		int lhs_vreg = instr.operands[1].reg_index();
+		int rhs_vreg = instr.operands[2].reg_index();
 		int lhs_offset = get_variant_stack_offset(lhs_vreg);
 		int rhs_offset = get_variant_stack_offset(rhs_vreg);
 
@@ -2022,17 +2024,17 @@ void RISCVCodeGen::gen_comparison(const IRInstruction& instr) {
 		emit_variant_eval(dst_offset, lhs_offset, rhs_offset, variant_op, false);
 		define_label(done);
 	} else if (lhs_is_reg && !rhs_is_reg && instr.operands[2].type == IRValue::Type::IMMEDIATE) {
-		int lhs_vreg = std::get<int>(instr.operands[1].value);
+		int lhs_vreg = instr.operands[1].reg_index();
 		int lhs_offset = get_variant_stack_offset(lhs_vreg);
-		int64_t imm_val = std::get<int64_t>(instr.operands[2].value);
+		int64_t imm_val = instr.operands[2].immediate();
 
 		int imm_offset = get_scratch_variant_offset();
 		emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
 		emit_variant_eval(dst_offset, lhs_offset, imm_offset, variant_op);
 	} else if (!lhs_is_reg && rhs_is_reg && instr.operands[1].type == IRValue::Type::IMMEDIATE) {
-		int rhs_vreg = std::get<int>(instr.operands[2].value);
+		int rhs_vreg = instr.operands[2].reg_index();
 		int rhs_offset = get_variant_stack_offset(rhs_vreg);
-		int64_t imm_val = std::get<int64_t>(instr.operands[1].value);
+		int64_t imm_val = instr.operands[1].immediate();
 
 		int imm_offset = get_scratch_variant_offset();
 		emit_variant_create_int(imm_offset, static_cast<int>(imm_val));
@@ -2055,9 +2057,9 @@ void RISCVCodeGen::gen_fused_branch(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Fused branch requires register operands");
 	}
 
-	int lhs_vreg = std::get<int>(instr.operands[0].value);
-	int rhs_vreg = std::get<int>(instr.operands[1].value);
-	std::string label = std::get<std::string>(instr.operands[2].value);
+	int lhs_vreg = instr.operands[0].reg_index();
+	int rhs_vreg = instr.operands[1].reg_index();
+	std::string label = text(instr.operands[2]);
 
 	int lhs_offset = get_variant_stack_offset(lhs_vreg);
 	int rhs_offset = get_variant_stack_offset(rhs_vreg);
@@ -2109,10 +2111,10 @@ void RISCVCodeGen::gen_vset(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "VSET requires 4 operands (obj_reg, string_idx, string_len, value_reg)");
 	}
 
-	int obj_vreg = std::get<int>(instr.operands[0].value);
-	int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
-	int string_len = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
-	int value_vreg = std::get<int>(instr.operands[3].value);
+	int obj_vreg = instr.operands[0].reg_index();
+	int string_idx = static_cast<int>(instr.operands[1].immediate());
+	int string_len = static_cast<int>(instr.operands[2].immediate());
+	int value_vreg = instr.operands[3].reg_index();
 
 	if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
@@ -2138,9 +2140,9 @@ void RISCVCodeGen::gen_call(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL requires at least 3 operands");
 	}
 
-	std::string func_name = std::get<std::string>(instr.operands[0].value);
-	int result_vreg = std::get<int>(instr.operands[1].value);
-	int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+	std::string func_name = text(instr.operands[0]);
+	int result_vreg = instr.operands[1].reg_index();
+	int arg_count = static_cast<int>(instr.operands[2].immediate());
 
 	if (instr.operands.size() != static_cast<size_t>(3 + arg_count)) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL argument count mismatch");
@@ -2157,7 +2159,7 @@ void RISCVCodeGen::gen_call(const IRInstruction& instr) {
 			" fit in registers");
 	}
 	for (int i = 0; i < arg_count; i++) {
-		int arg_vreg = std::get<int>(instr.operands[3 + i].value);
+		int arg_vreg = instr.operands[3 + i].reg_index();
 		int arg_offset = get_variant_stack_offset(arg_vreg);
 		uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
 
@@ -2179,9 +2181,9 @@ void RISCVCodeGen::gen_call_hosted(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL_HOSTED requires at least 3 operands");
 	}
 
-	const std::string& func_name = std::get<std::string>(instr.operands[0].value);
-	const int result_vreg = std::get<int>(instr.operands[1].value);
-	const int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+	const std::string& func_name = text(instr.operands[0]);
+	const int result_vreg = instr.operands[1].reg_index();
+	const int arg_count = static_cast<int>(instr.operands[2].immediate());
 
 	if (instr.operands.size() != static_cast<size_t>(3 + arg_count)) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL_HOSTED argument count mismatch");
@@ -2197,7 +2199,7 @@ void RISCVCodeGen::gen_call_hosted(const IRInstruction& instr) {
 	if (arg_count > 0) {
 		emit_stack_adjust(-additional_space);
 		for (int i = 0; i < arg_count; i++) {
-			const int arg_vreg = std::get<int>(instr.operands[3 + i].value);
+			const int arg_vreg = instr.operands[3 + i].reg_index();
 			const int arg_src_offset = get_variant_stack_offset(arg_vreg) + additional_space;
 			emit_variant_move(REG_SP, i * variant_size(), REG_SP, arg_src_offset, REG_T0);
 		}
@@ -2218,7 +2220,7 @@ void RISCVCodeGen::gen_call_hosted(const IRInstruction& instr) {
 void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 	switch (instr.opcode) {
 		case IROpcode::LABEL:
-			define_label(std::get<std::string>(instr.operands[0].value));
+			define_label(text(instr.operands[0]));
 			break;
 
 		case IROpcode::SCOPE_MARK:
@@ -2235,24 +2237,24 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			break;
 
 		case IROpcode::LOAD_IMM: {
-			int vreg = std::get<int>(instr.operands[0].value);
-			int64_t value = std::get<int64_t>(instr.operands[1].value);
+			int vreg = instr.operands[0].reg_index();
+			int64_t value = instr.operands[1].immediate();
 			auto [base, offset] = value_destination(vreg);
 			emit_variant_create_int(offset, value, base);
 			break;
 		}
 
 		case IROpcode::LOAD_FLOAT_IMM: {
-			int vreg = std::get<int>(instr.operands[0].value);
-			double value = std::get<double>(instr.operands[1].value);
+			int vreg = instr.operands[0].reg_index();
+			double value = instr.operands[1].float_number();
 			auto [base, offset] = value_destination(vreg);
 			emit_variant_create_float(offset, value, base);
 			break;
 		}
 
 		case IROpcode::LOAD_BOOL: {
-			int vreg = std::get<int>(instr.operands[0].value);
-			int64_t value = std::get<int64_t>(instr.operands[1].value);
+			int vreg = instr.operands[0].reg_index();
+			int64_t value = instr.operands[1].immediate();
 			auto [base, offset] = value_destination(vreg);
 			emit_variant_create_bool(offset, value != 0, base);
 			break;
@@ -2260,7 +2262,7 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 
 		case IROpcode::LOAD_NIL: {
 			// NIL: tag only, no payload.
-			int vreg = std::get<int>(instr.operands[0].value);
+			int vreg = instr.operands[0].reg_index();
 			auto [base, offset] = value_destination(vreg);
 			emit_li(REG_T0, Variant::NIL);
 			emit_store_variant_type(REG_T0, base, offset);
@@ -2268,25 +2270,25 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		}
 
 		case IROpcode::LOAD_STRING: {
-			int vreg = std::get<int>(instr.operands[0].value);
-			int64_t string_idx = std::get<int64_t>(instr.operands[1].value);
+			int vreg = instr.operands[0].reg_index();
+			int64_t string_idx = instr.operands[1].immediate();
 			int stack_offset = get_variant_stack_offset(vreg);
 			emit_variant_create_string(stack_offset, static_cast<int>(string_idx));
 			break;
 		}
 
 		case IROpcode::LOAD_STRING_AS: {
-			int vreg = std::get<int>(instr.operands[0].value);
-			int64_t string_idx = std::get<int64_t>(instr.operands[1].value);
-			int variant_type = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+			int vreg = instr.operands[0].reg_index();
+			int64_t string_idx = instr.operands[1].immediate();
+			int variant_type = static_cast<int>(instr.operands[2].immediate());
 			int stack_offset = get_variant_stack_offset(vreg);
 			emit_variant_create_string(stack_offset, static_cast<int>(string_idx), variant_type);
 			break;
 		}
 
 		case IROpcode::MOVE: {
-			int dst_vreg = std::get<int>(instr.operands[0].value);
-			int src_vreg = std::get<int>(instr.operands[1].value);
+			int dst_vreg = instr.operands[0].reg_index();
+			int src_vreg = instr.operands[1].reg_index();
 
 			if (dst_vreg == src_vreg) {
 				break;
@@ -2305,9 +2307,9 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		}
 
 		case IROpcode::TYPE_TEST_MASK: {
-			const int dst_vreg = std::get<int>(instr.operands[0].value);
-			const int src_vreg = std::get<int>(instr.operands[1].value);
-			const int64_t mask = std::get<int64_t>(instr.operands[2].value);
+			const int dst_vreg = instr.operands[0].reg_index();
+			const int src_vreg = instr.operands[1].reg_index();
+			const int64_t mask = instr.operands[2].immediate();
 			const int src_offset = get_variant_stack_offset(src_vreg);
 
 			emit_load_variant_type(REG_T0, REG_SP, src_offset);
@@ -2328,9 +2330,9 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			// The type tag is the first 4 bytes of every Variant, so the test
 			// is a load, an xor against the tag, and seqz: no syscall, and no
 			// dependence on the payload.
-			int dst_vreg = std::get<int>(instr.operands[0].value);
-			int src_vreg = std::get<int>(instr.operands[1].value);
-			const int64_t tested = std::get<int64_t>(instr.operands[2].value);
+			int dst_vreg = instr.operands[0].reg_index();
+			int src_vreg = instr.operands[1].reg_index();
+			const int64_t tested = instr.operands[2].immediate();
 			int src_offset = get_variant_stack_offset(src_vreg);
 
 			emit_load_variant_type(REG_T0, REG_SP, src_offset);
@@ -2350,9 +2352,9 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			//
 			// The handle a syscall answered with, boxed: the tag from the
 			// immediate and the index from src's integer payload.
-			int dst_vreg = std::get<int>(instr.operands[0].value);
-			int src_vreg = std::get<int>(instr.operands[1].value);
-			const int64_t tag = std::get<int64_t>(instr.operands[2].value);
+			int dst_vreg = instr.operands[0].reg_index();
+			int src_vreg = instr.operands[1].reg_index();
+			const int64_t tag = instr.operands[2].immediate();
 			int src_offset = get_variant_stack_offset(src_vreg);
 
 			emit_ld(REG_T0, REG_SP, src_offset + VARIANT_DATA_OFFSET);
@@ -2365,8 +2367,8 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 
 		case IROpcode::TYPE_OF: {
 			// typeof(): load tag (first 4 bytes), box as INT.
-			int dst_vreg = std::get<int>(instr.operands[0].value);
-			int src_vreg = std::get<int>(instr.operands[1].value);
+			int dst_vreg = instr.operands[0].reg_index();
+			int src_vreg = instr.operands[1].reg_index();
 			int src_offset = get_variant_stack_offset(src_vreg);
 
 			emit_load_variant_type(REG_T0, REG_SP, src_offset);
@@ -2380,12 +2382,12 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 
 		case IROpcode::CONVERT: {
 			// CONVERT dst_reg, src_reg  with the target type in type_hint.
-			int dst_vreg = std::get<int>(instr.operands[0].value);
-			int src_vreg = std::get<int>(instr.operands[1].value);
+			int dst_vreg = instr.operands[0].reg_index();
+			int src_vreg = instr.operands[1].reg_index();
 			int dst_offset = get_variant_stack_offset(dst_vreg);
 			int src_offset = get_variant_stack_offset(src_vreg);
 
-			const auto from = static_cast<IRInstruction::TypeHint>(std::get<int64_t>(instr.operands[2].value));
+			const auto from = static_cast<IRInstruction::TypeHint>(instr.operands[2].immediate());
 
 			// The source type picks the load: a BOOL payload is one byte, an
 			// INT all eight. Nothing else differs -- both widen to the same
@@ -2423,8 +2425,8 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		}
 
 		case IROpcode::COERCE: {
-			const int dst_vreg = std::get<int>(instr.operands[0].value);
-			const int src_vreg = std::get<int>(instr.operands[1].value);
+			const int dst_vreg = instr.operands[0].reg_index();
+			const int src_vreg = instr.operands[1].reg_index();
 			gen_coerce(dst_vreg, src_vreg, instr.type_hint);
 			break;
 		}
@@ -2432,8 +2434,8 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::LOAD_GLOBAL: {
 			// LOAD_GLOBAL dst_reg, global_index
 			// Loads a global variable (Variant) from the global data area into a virtual register
-			int dst_vreg = std::get<int>(instr.operands[0].value);
-			int64_t global_idx = std::get<int64_t>(instr.operands[1].value);
+			int dst_vreg = instr.operands[0].reg_index();
+			int64_t global_idx = instr.operands[1].immediate();
 
 			if (m_fn.keep_int_in_reg >= 0) {
 				emit_address_of_global(REG_T0, static_cast<size_t>(global_idx));
@@ -2478,8 +2480,8 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			break;
 		case IROpcode::BIT_NOT: {
 			// ~x is x XOR -1
-			int dst_vreg = std::get<int>(instr.operands[0].value);
-			int src_vreg = std::get<int>(instr.operands[1].value);
+			int dst_vreg = instr.operands[0].reg_index();
+			int src_vreg = instr.operands[1].reg_index();
 
 			int dst_offset = get_variant_stack_offset(dst_vreg);
 			int src_offset = get_variant_stack_offset(src_vreg);
@@ -2503,8 +2505,8 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		}
 
 		case IROpcode::NEG: {
-			int dst_vreg = std::get<int>(instr.operands[0].value);
-			int src_vreg = std::get<int>(instr.operands[1].value);
+			int dst_vreg = instr.operands[0].reg_index();
+			int src_vreg = instr.operands[1].reg_index();
 
 			int dst_offset = get_variant_stack_offset(dst_vreg);
 			int src_offset = get_variant_stack_offset(src_vreg);
@@ -2543,9 +2545,9 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			gen_comparison(instr);
 			break;
 		case IROpcode::AND: {
-			int dst_vreg = std::get<int>(instr.operands[0].value);
-			int lhs_vreg = std::get<int>(instr.operands[1].value);
-			int rhs_vreg = std::get<int>(instr.operands[2].value);
+			int dst_vreg = instr.operands[0].reg_index();
+			int lhs_vreg = instr.operands[1].reg_index();
+			int rhs_vreg = instr.operands[2].reg_index();
 
 			int dst_offset = get_variant_stack_offset(dst_vreg);
 			int lhs_offset = get_variant_stack_offset(lhs_vreg);
@@ -2556,9 +2558,9 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		}
 
 		case IROpcode::OR: {
-			int dst_vreg = std::get<int>(instr.operands[0].value);
-			int lhs_vreg = std::get<int>(instr.operands[1].value);
-			int rhs_vreg = std::get<int>(instr.operands[2].value);
+			int dst_vreg = instr.operands[0].reg_index();
+			int lhs_vreg = instr.operands[1].reg_index();
+			int rhs_vreg = instr.operands[2].reg_index();
 
 			int dst_offset = get_variant_stack_offset(dst_vreg);
 			int lhs_offset = get_variant_stack_offset(lhs_vreg);
@@ -2569,8 +2571,8 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		}
 
 		case IROpcode::NOT: {
-			int dst_vreg = std::get<int>(instr.operands[0].value);
-			int src_vreg = std::get<int>(instr.operands[1].value);
+			int dst_vreg = instr.operands[0].reg_index();
+			int src_vreg = instr.operands[1].reg_index();
 
 			int dst_offset = get_variant_stack_offset(dst_vreg);
 			int src_offset = get_variant_stack_offset(src_vreg);
@@ -2580,21 +2582,21 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		}
 
 		case IROpcode::BRANCH_ZERO: {
-			int vreg = std::get<int>(instr.operands[0].value);
+			int vreg = instr.operands[0].reg_index();
 			int offset = get_variant_stack_offset(vreg);
 			auto [base, off] = variant_source(vreg, offset, REG_T0);
 			emit_variant_truthy(REG_T2, off, instr.type_hint, base);
-			mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
+			mark_label_use(text(instr.operands[1]), m_code.size());
 			emit_beq(REG_T2, REG_ZERO, 0);
 			break;
 		}
 
 		case IROpcode::BRANCH_NOT_ZERO: {
-			int vreg = std::get<int>(instr.operands[0].value);
+			int vreg = instr.operands[0].reg_index();
 			int offset = get_variant_stack_offset(vreg);
 			auto [base, off] = variant_source(vreg, offset, REG_T0);
 			emit_variant_truthy(REG_T2, off, instr.type_hint, base);
-			mark_label_use(std::get<std::string>(instr.operands[1].value), m_code.size());
+			mark_label_use(text(instr.operands[1]), m_code.size());
 			emit_bne(REG_T2, REG_ZERO, 0);
 			break;
 		}
@@ -2608,7 +2610,7 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			gen_fused_branch(instr);
 			break;
 		case IROpcode::JUMP:
-			mark_label_use(std::get<std::string>(instr.operands[0].value), m_code.size());
+			mark_label_use(text(instr.operands[0]), m_code.size());
 			emit_jal(REG_ZERO, 0);
 			break;
 
@@ -2650,14 +2652,14 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		}
 
 		case IROpcode::ARRAY_APPEND: {
-			const int result_offset = get_variant_stack_offset(std::get<int>(instr.operands[0].value));
-			const int array_offset = get_variant_stack_offset(std::get<int>(instr.operands[1].value));
-			const int value_offset = get_variant_stack_offset(std::get<int>(instr.operands[2].value));
+			const int result_offset = get_variant_stack_offset(instr.operands[0].reg_index());
+			const int array_offset = get_variant_stack_offset(instr.operands[1].reg_index());
+			const int value_offset = get_variant_stack_offset(instr.operands[2].reg_index());
 
 			spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 
 			emit_li(REG_A0, array_op(Array_Op::PUSH_BACK));
-			emit_container_handle(REG_A1, std::get<int>(instr.operands[1].value), array_offset);
+			emit_container_handle(REG_A1, instr.operands[1].reg_index(), array_offset);
 			emit_li(REG_A2, 0);
 			emit_add_offset(REG_A3, REG_SP, value_offset);
 			emit_li(REG_A7, ECALL_ARRAY_OPS);
@@ -2670,14 +2672,14 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		}
 
 		case IROpcode::DICT_SET: {
-			const int dict_offset = get_variant_stack_offset(std::get<int>(instr.operands[0].value));
-			const int key_offset = get_variant_stack_offset(std::get<int>(instr.operands[1].value));
-			const int value_offset = get_variant_stack_offset(std::get<int>(instr.operands[2].value));
+			const int dict_offset = get_variant_stack_offset(instr.operands[0].reg_index());
+			const int key_offset = get_variant_stack_offset(instr.operands[1].reg_index());
+			const int value_offset = get_variant_stack_offset(instr.operands[2].reg_index());
 
 			spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 
 			emit_li(REG_A0, dictionary_op(Dictionary_Op::SET));
-			emit_container_handle(REG_A1, std::get<int>(instr.operands[0].value), dict_offset);
+			emit_container_handle(REG_A1, instr.operands[0].reg_index(), dict_offset);
 			emit_add_offset(REG_A2, REG_SP, key_offset);
 			emit_add_offset(REG_A3, REG_SP, value_offset);
 			emit_li(REG_A7, ECALL_DICTIONARY_OPS);
@@ -2692,16 +2694,16 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			const int index_operand = is_set ? 1 : 2;
 			const int value_operand = is_set ? 2 : 0;
 
-			const int array_offset = get_variant_stack_offset(std::get<int>(instr.operands[array_operand].value));
-			const int index_offset = get_variant_stack_offset(std::get<int>(instr.operands[index_operand].value));
-			const int value_offset = get_variant_stack_offset(std::get<int>(instr.operands[value_operand].value));
+			const int array_offset = get_variant_stack_offset(instr.operands[array_operand].reg_index());
+			const int index_offset = get_variant_stack_offset(instr.operands[index_operand].reg_index());
+			const int value_offset = get_variant_stack_offset(instr.operands[value_operand].reg_index());
 
 			spill_around_syscall({REG_A0, REG_A1, REG_A2});
 
-			const int index_vreg = std::get<int>(instr.operands[index_operand].value);
+			const int index_vreg = instr.operands[index_operand].reg_index();
 			emit_array_element_access(is_set, array_offset, index_offset, value_offset,
 				m_fn.nonnegative.count(index_vreg) != 0,
-				std::get<int>(instr.operands[array_operand].value), index_vreg);
+				instr.operands[array_operand].reg_index(), index_vreg);
 			break;
 		}
 
@@ -2730,7 +2732,7 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 				throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_VECTOR requires correct number of operands");
 			}
 
-			int result_vreg = std::get<int>(instr.operands[0].value);
+			int result_vreg = instr.operands[0].reg_index();
 			int result_offset = get_variant_stack_offset(result_vreg);
 
 			int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2) ? Variant::VECTOR2 :
@@ -2741,7 +2743,7 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			emit_sw(REG_T0, REG_SP, result_offset);
 
 			for (int i = 0; i < num_components; i++) {
-				int comp_vreg = std::get<int>(instr.operands[1 + i].value);
+				int comp_vreg = instr.operands[1 + i].reg_index();
 				int comp_offset = get_variant_stack_offset(comp_vreg);
 				emit_variant_component_to_real(comp_offset, result_offset, real_offset(i));
 			}
@@ -2760,7 +2762,7 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 				throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_VECTORnI requires correct number of operands");
 			}
 
-			int result_vreg = std::get<int>(instr.operands[0].value);
+			int result_vreg = instr.operands[0].reg_index();
 			int result_offset = get_variant_stack_offset(result_vreg);
 
 			int variant_type = (instr.opcode == IROpcode::MAKE_VECTOR2I) ? Variant::VECTOR2I :
@@ -2770,7 +2772,7 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			emit_sw(REG_T0, REG_SP, result_offset);
 
 			for (int i = 0; i < num_components; i++) {
-				int comp_vreg = std::get<int>(instr.operands[1 + i].value);
+				int comp_vreg = instr.operands[1 + i].reg_index();
 				int comp_offset = get_variant_stack_offset(comp_vreg);
 
 				emit_variant_component_to_int(comp_offset, result_offset, int_offset(i));
@@ -2784,14 +2786,14 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 				throw CompilerException(ErrorType::RISCV_codegen_ERROR, "MAKE_COLOR requires 5 operands");
 			}
 
-			int result_vreg = std::get<int>(instr.operands[0].value);
+			int result_vreg = instr.operands[0].reg_index();
 			int result_offset = get_variant_stack_offset(result_vreg);
 
 			emit_li(REG_T0, Variant::COLOR);
 			emit_sw(REG_T0, REG_SP, result_offset);
 
 			for (int i = 0; i < 4; i++) {
-				int comp_vreg = std::get<int>(instr.operands[1 + i].value);
+				int comp_vreg = instr.operands[1 + i].reg_index();
 				int comp_offset = get_variant_stack_offset(comp_vreg);
 				emit_variant_component_to_real(comp_offset, result_offset, real_offset(i));
 			}
@@ -2880,7 +2882,7 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 		m_fn.chained_vreg = m_fn.next_chained_vreg;
 		m_fn.next_chained_vreg = -1;
 		m_fn.keep_int_in_reg = m_fn.int_kept_in_reg[instr_idx]
-			? std::get<int>(func.instructions[instr_idx].operands[0].value) : -1;
+			? func.instructions[instr_idx].operands[0].reg_index() : -1;
 
 		m_fn.forward_return = m_fn.forward_to_return[instr_idx];
 		m_fn.current_instr_idx++;
@@ -3201,10 +3203,10 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 // CFG successors; over-approximation is safe (extra edges only add conservatism).
 std::vector<std::vector<size_t>> RISCVCodeGen::build_successors(const IRFunction& func) {
 	const size_t n = func.instructions.size();
-	std::unordered_map<std::string, size_t> label_index;
+	std::unordered_map<uint32_t, size_t> label_index;
 	for (size_t i = 0; i < n; i++) {
 		if (ir_has_effect(func.instructions[i].opcode, IR_LABEL)) {
-			label_index[std::get<std::string>(func.instructions[i].operands.at(0).value)] = i;
+			label_index[func.instructions[i].operands.at(0).string_id] = i;
 		}
 	}
 
@@ -3215,7 +3217,7 @@ std::vector<std::vector<size_t>> RISCVCodeGen::build_successors(const IRFunction
 			if (operand.type != IRValue::Type::LABEL || ir_has_effect(instr.opcode, IR_LABEL)) {
 				continue;
 			}
-			auto it = label_index.find(std::get<std::string>(operand.value));
+			auto it = label_index.find(operand.string_id);
 			if (it != label_index.end()) {
 				successors[i].push_back(it->second);
 			}
@@ -3352,12 +3354,12 @@ bool RISCVCodeGen::folds_to_immediate(const IRInstruction& instr, size_t operand
 		return false;
 	}
 	int64_t value;
-	if (!constant_int(std::get<int>(instr.operands[operand_index].value), value)) {
+	if (!constant_int(instr.operands[operand_index].reg_index(), value)) {
 		return false;
 	}
 	// Same vreg on both sides: the slot is still read by the other operand.
-	const int other = std::get<int>(instr.operands[operand_index == 1 ? 2 : 1].value);
-	if (other == std::get<int>(instr.operands[operand_index].value)) {
+	const int other = instr.operands[operand_index == 1 ? 2 : 1].reg_index();
+	if (other == instr.operands[operand_index].reg_index()) {
 		return false;
 	}
 	if (!int_op_takes_immediate(instr.opcode, value)) {
@@ -3399,14 +3401,14 @@ void RISCVCodeGen::plan_constants(const IRFunction& func) {
 			instr.operands[1].type != IRValue::Type::IMMEDIATE) {
 			continue;
 		}
-		if (!std::holds_alternative<int64_t>(instr.operands[1].value)) {
+		if (instr.operands[1].type != IRValue::Type::IMMEDIATE) {
 			continue;
 		}
-		const int dst = std::get<int>(instr.operands[0].value);
+		const int dst = instr.operands[0].reg_index();
 		if (def_count[dst] != 1) {
 			continue;
 		}
-		m_fn.const_ints[dst] = std::get<int64_t>(instr.operands[1].value);
+		m_fn.const_ints[dst] = instr.operands[1].immediate();
 		defining_instruction[dst] = i;
 	}
 
@@ -3425,7 +3427,7 @@ void RISCVCodeGen::plan_constants(const IRFunction& func) {
 				!ir_reads_operand(instr, index)) {
 				continue;
 			}
-			const int vreg = std::get<int>(instr.operands[index].value);
+			const int vreg = instr.operands[index].reg_index();
 			if (m_fn.const_ints.count(vreg) && !folds_to_immediate(instr, index)) {
 				materialized.insert(vreg);
 			}
@@ -3473,7 +3475,7 @@ void RISCVCodeGen::plan_global_handles(const IRFunction& func) {
 					instr.operands[1].type != IRValue::Type::IMMEDIATE) {
 					return { -1, -1 };
 				}
-				switch (std::get<int64_t>(instr.operands[1].value)) {
+				switch (instr.operands[1].immediate()) {
 					case ECALL_ARRAY_SIZE:
 					case ECALL_STRING_SIZE:
 						return { 2, -1 };
@@ -3514,7 +3516,7 @@ void RISCVCodeGen::plan_global_handles(const IRFunction& func) {
 			}
 			return instr.opcode == IROpcode::STORE_GLOBAL && !instr.operands.empty() &&
 				instr.operands[0].type == IRValue::Type::IMMEDIATE &&
-				std::get<int64_t>(instr.operands[0].value) == index;
+				instr.operands[0].immediate() == index;
 		};
 
 		std::vector<bool> reachable(n, false);
@@ -3549,11 +3551,11 @@ void RISCVCodeGen::plan_global_handles(const IRFunction& func) {
 			instr.operands[1].type != IRValue::Type::IMMEDIATE) {
 			continue;
 		}
-		const int64_t index = std::get<int64_t>(instr.operands[1].value);
+		const int64_t index = instr.operands[1].immediate();
 		if (index < 0 || static_cast<size_t>(index) >= m_globals.size()) {
 			continue;
 		}
-		const int dst = std::get<int>(instr.operands[0].value);
+		const int dst = instr.operands[0].reg_index();
 		if (dst == IRFunction::RETURN_REGISTER || def_count[dst] != 1) {
 			continue;
 		}
@@ -3591,7 +3593,7 @@ void RISCVCodeGen::plan_global_handles(const IRFunction& func) {
 			if (static_cast<int>(index) == direct_a || static_cast<int>(index) == direct_b) {
 				continue;
 			}
-			candidates.erase(std::get<int>(instr.operands[index].value));
+			candidates.erase(instr.operands[index].reg_index());
 		}
 		if (instr.operands.empty()) {
 			for (int vreg : reads) {
@@ -3620,13 +3622,13 @@ void RISCVCodeGen::plan_nonnegative(const IRFunction& func) {
 
 	const auto known_nonnegative = [&](const IRValue& operand) {
 		if (operand.type == IRValue::Type::IMMEDIATE &&
-			std::holds_alternative<int64_t>(operand.value)) {
-			return std::get<int64_t>(operand.value) >= 0;
+			operand.type == IRValue::Type::IMMEDIATE) {
+			return operand.immediate() >= 0;
 		}
 		if (operand.type != IRValue::Type::REGISTER) {
 			return false;
 		}
-		return m_fn.nonnegative.count(std::get<int>(operand.value)) != 0;
+		return m_fn.nonnegative.count(operand.reg_index()) != 0;
 	};
 
 	// Fixed point: a mask may be built from another mask.
@@ -3724,14 +3726,14 @@ void RISCVCodeGen::plan_int_chaining(const IRFunction& func) {
 		return instr.opcode == IROpcode::LOAD_GLOBAL && instr.operands.size() >= 2 &&
 			instr.operands[0].type == IRValue::Type::REGISTER &&
 			instr.operands[1].type == IRValue::Type::IMMEDIATE &&
-			int_global(std::get<int64_t>(instr.operands[1].value));
+			int_global(instr.operands[1].immediate());
 	};
 
 	for (size_t i = 0; i + 1 < n; i++) {
 		if (!produces_int(func.instructions[i])) {
 			continue;
 		}
-		const int dst = std::get<int>(func.instructions[i].operands[0].value);
+		const int dst = func.instructions[i].operands[0].reg_index();
 		// ABI-visible slots cannot be elided.
 		if (dst < static_cast<int>(func.parameters.size()) || dst == IRFunction::RETURN_REGISTER) {
 			continue;
@@ -3752,8 +3754,8 @@ void RISCVCodeGen::plan_int_chaining(const IRFunction& func) {
 			if (next.operands.size() >= 2 &&
 				next.operands[0].type == IRValue::Type::IMMEDIATE &&
 				next.operands[1].type == IRValue::Type::REGISTER &&
-				int_global(std::get<int64_t>(next.operands[0].value)) &&
-				std::get<int>(next.operands[1].value) == dst) {
+				int_global(next.operands[0].immediate()) &&
+				next.operands[1].reg_index() == dst) {
 				m_fn.int_kept_in_reg[i] = true;
 			}
 			continue;
@@ -3761,8 +3763,8 @@ void RISCVCodeGen::plan_int_chaining(const IRFunction& func) {
 		if (!is_typed_int_binary(next)) {
 			continue;
 		}
-		const int next_lhs = std::get<int>(next.operands[1].value);
-		const int next_rhs = std::get<int>(next.operands[2].value);
+		const int next_lhs = next.operands[1].reg_index();
+		const int next_rhs = next.operands[2].reg_index();
 		if (next_lhs != dst && next_rhs != dst) {
 			continue;
 		}
@@ -3849,7 +3851,7 @@ void RISCVCodeGen::emit_instance_init(const IRProgram& program) {
 	m_profiling_index = -1;
 	m_debug_index = -1;
 	record_line(0, true);
-	m_labels[INSTANCE_INIT_LABEL] = m_code.size();
+	set_label(label_id(INSTANCE_INIT_LABEL), m_code.size());
 	m_instance_init_offset = m_code.size();
 
 	emit_add_offset(REG_SP, REG_SP, -16);
@@ -3996,24 +3998,57 @@ void RISCVCodeGen::emit_ret() {
 	emit_jalr(REG_ZERO, REG_RA, 0);
 }
 
+const std::string& RISCVCodeGen::text(const IRValue& value) const {
+	static const std::string missing;
+	return m_strings ? (*m_strings)[value.string_id] : missing;
+}
+
+uint32_t RISCVCodeGen::label_id(const std::string& name) {
+	return m_label_names.intern(name);
+}
+
+void RISCVCodeGen::set_label(uint32_t id, size_t offset) {
+	if (id >= m_label_offsets.size()) {
+		m_label_offsets.resize(size_t(id) + 1, NO_LABEL);
+	}
+	m_label_offsets[id] = offset;
+}
+
 void RISCVCodeGen::define_label(const std::string& label) {
-	m_labels[label] = m_code.size();
+	set_label(label_id(label), m_code.size());
+}
+
+void RISCVCodeGen::define_label(const IRValue& label) {
+	set_label(label.string_id, m_code.size());
 }
 
 void RISCVCodeGen::mark_label_use(const std::string& label, size_t code_offset, int32_t addend) {
-	m_label_uses.push_back({label, code_offset, addend});
+	m_label_uses.push_back({ label_id(label), code_offset, addend });
+}
+
+void RISCVCodeGen::mark_label_use(const IRValue& label, size_t code_offset, int32_t addend) {
+	m_label_uses.push_back({ label.string_id, code_offset, addend });
 }
 
 void RISCVCodeGen::relax_branches() {
 	// Invert B-type condition by flipping funct3 low bit
 	auto invert_condition = [](uint8_t funct3) -> uint8_t { return funct3 ^ 1; };
 
-	bool changed = true;
-	while (changed) {
-		changed = false;
+	// One scan collects every out-of-range branch, one rebuild applies them all.
+	// An inserted jal only lengthens spans, so out-of-range is monotone in the
+	// relaxed set: the batch converges on the same least fixed point the
+	// restart-per-insert loop did. Encodings depend on that set, not on
+	// discovery order. The outer loop covers neighbours pushed out of range by
+	// an insertion -- two rounds in practice.
+	std::vector<size_t> relaxed_uses;
+	std::vector<size_t> insert_points;
+
+	while (true) {
+		relaxed_uses.clear();
+		insert_points.clear();
 
 		for (size_t use_index = 0; use_index < m_label_uses.size(); use_index++) {
-			const LabelUse use = m_label_uses[use_index];
+			const LabelUse& use = m_label_uses[use_index];
 			if (use.code_offset + 4 > m_code.size()) {
 				continue;
 			}
@@ -4024,17 +4059,26 @@ void RISCVCodeGen::relax_branches() {
 				continue;
 			}
 
-			auto label = m_labels.find(use.label);
-			if (label == m_labels.end()) {
+			if (use.label >= m_label_offsets.size() || m_label_offsets[use.label] == NO_LABEL) {
 				continue;
 			}
 			const int64_t displacement =
-				static_cast<int64_t>(label->second) - static_cast<int64_t>(use.code_offset) + use.addend;
+				static_cast<int64_t>(m_label_offsets[use.label]) - static_cast<int64_t>(use.code_offset) + use.addend;
 			if (fits_in_signed(displacement, B_TYPE_IMM_BITS)) {
 				continue;
 			}
+			relaxed_uses.push_back(use_index);
+		}
 
-			// Rewrite as inverted branch over an inserted jal
+		if (relaxed_uses.empty()) {
+			return;
+		}
+
+		// Rewrite as inverted branch over an inserted jal
+		for (size_t use_index : relaxed_uses) {
+			const size_t code_offset = m_label_uses[use_index].code_offset;
+			uint32_t instr = 0;
+			std::memcpy(&instr, &m_code[code_offset], 4);
 			const uint8_t funct3 = (instr >> 12) & 0x7;
 			const uint8_t rs1 = (instr >> 15) & 0x1F;
 			const uint8_t rs2 = (instr >> 20) & 0x1F;
@@ -4047,54 +4091,65 @@ void RISCVCodeGen::relax_branches() {
 			const uint32_t inverted = 0x63 | (imm11 << 7) | (imm4_1 << 8) |
 				(invert_condition(funct3) << 12) | (rs1 << 15) | (rs2 << 20) |
 				(imm10_5 << 25) | (imm12 << 31);
-			std::memcpy(&m_code[use.code_offset], &inverted, 4);
+			std::memcpy(&m_code[code_offset], &inverted, 4);
 
-			const size_t insert_at = use.code_offset + 4;
+			insert_points.push_back(code_offset + 4);
+		}
+		std::sort(insert_points.begin(), insert_points.end());
+
+		std::vector<uint8_t> rebuilt;
+		rebuilt.reserve(m_code.size() + insert_points.size() * 4);
+		size_t copied = 0;
+		for (size_t point : insert_points) {
+			rebuilt.insert(rebuilt.end(), m_code.begin() + static_cast<long>(copied),
+				m_code.begin() + static_cast<long>(point));
 			const uint32_t jal = 0x6F;
 			uint8_t bytes[4];
 			std::memcpy(bytes, &jal, 4);
-			m_code.insert(m_code.begin() + static_cast<long>(insert_at), bytes, bytes + 4);
+			rebuilt.insert(rebuilt.end(), bytes, bytes + 4);
+			copied = point;
+		}
+		rebuilt.insert(rebuilt.end(), m_code.begin() + static_cast<long>(copied), m_code.end());
+		m_code = std::move(rebuilt);
 
-			for (auto& entry : m_labels) {
-				if (entry.second >= insert_at) {
-					entry.second += 4;
-				}
-			}
-			for (auto& entry : m_functions) {
-				if (entry.second >= insert_at) {
-					entry.second += 4;
-				}
-			}
-			for (auto& other : m_label_uses) {
-				if (other.code_offset >= insert_at) {
-					other.code_offset += 4;
-				}
-			}
-			for (auto& entry : m_line_table.entries) {
-				if (entry.address >= insert_at) {
-					entry.address += 4;
-				}
-			}
+		auto shift = [&insert_points](size_t offset) -> size_t {
+			const size_t before = size_t(std::upper_bound(insert_points.begin(), insert_points.end(), offset)
+				- insert_points.begin());
+			return offset + before * 4;
+		};
 
-			m_label_uses[use_index].code_offset = insert_at;
-
-			changed = true;
-			break;
+		for (size_t& offset : m_label_offsets) {
+			if (offset != NO_LABEL) {
+				offset = shift(offset);
+			}
+		}
+		for (auto& entry : m_functions) {
+			entry.second = shift(entry.second);
+		}
+		for (auto& entry : m_line_table.entries) {
+			entry.address = uint32_t(shift(entry.address));
+		}
+		for (auto& use : m_label_uses) {
+			use.code_offset = shift(use.code_offset);
+		}
+		// The relaxed use now names the jal, one instruction on.
+		for (size_t use_index : relaxed_uses) {
+			m_label_uses[use_index].code_offset += 4;
 		}
 	}
 }
 
 void RISCVCodeGen::resolve_labels() {
 	for (const auto& use : m_label_uses) {
-		const std::string& label = use.label;
 		size_t use_offset = use.code_offset;
 
-		auto it = m_labels.find(label);
-		if (it == m_labels.end()) {
-			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Undefined label: " + label);
+		if (use.label >= m_label_offsets.size() || m_label_offsets[use.label] == NO_LABEL) {
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+				"Undefined label: " + m_label_names[use.label]);
 		}
 
-		size_t target_offset = it->second;
+		const std::string& label = m_label_names[use.label];
+		size_t target_offset = m_label_offsets[use.label];
 		int32_t offset = static_cast<int32_t>(target_offset - use_offset) + use.addend;
 
 		uint32_t instr;
@@ -5239,7 +5294,7 @@ bool RISCVCodeGen::instruction_may_ecall(const IRInstruction& instr) const {
 			return false;
 
 		case IROpcode::GLOBAL_CALL: {
-			const GlobalFn fn = static_cast<GlobalFn>(std::get<int64_t>(instr.operands[1].value));
+			const GlobalFn fn = static_cast<GlobalFn>(instr.operands[1].immediate());
 			return global_call_may_ecall(fn);
 		}
 
@@ -5266,10 +5321,10 @@ bool RISCVCodeGen::global_call_may_ecall(GlobalFn fn) {
 // guest call -- is assumed to allocate.
 static bool syscall_answers_in_register(const IRInstruction& instr) {
 	if (instr.opcode != IROpcode::CALL_SYSCALL || instr.operands.size() < 2 ||
-		!std::holds_alternative<int64_t>(instr.operands[1].value)) {
+		instr.operands[1].type != IRValue::Type::IMMEDIATE) {
 		return false;
 	}
-	switch (std::get<int64_t>(instr.operands[1].value)) {
+	switch (instr.operands[1].immediate()) {
 		case ECALL_ARRAY_SIZE:
 		case ECALL_STRING_SIZE:
 		// Attaches a script to an object the caller already holds; nothing new
@@ -5277,10 +5332,10 @@ static bool syscall_answers_in_register(const IRInstruction& instr) {
 		case ECALL_CLASS_BIND:
 			return true;
 		case ECALL_DICTIONARY_OPS: {
-			if (instr.operands.size() < 3 || !std::holds_alternative<int64_t>(instr.operands[2].value)) {
+			if (instr.operands.size() < 3 || instr.operands[2].type != IRValue::Type::IMMEDIATE) {
 				return false;
 			}
-			const int64_t op = std::get<int64_t>(instr.operands[2].value);
+			const int64_t op = instr.operands[2].immediate();
 			return op == dictionary_op(Dictionary_Op::GET_SIZE) ||
 				op == dictionary_op(Dictionary_Op::HAS);
 		}
@@ -5306,7 +5361,7 @@ bool RISCVCodeGen::instruction_may_allocate_scoped(const IRInstruction& instr) c
 
 bool RISCVCodeGen::scope_body_may_allocate(const IRFunction& func, size_t mark_index) const {
 	const size_t count = func.instructions.size();
-	const int scope_id = int(std::get<int64_t>(func.instructions[mark_index].operands.at(0).value));
+	const int scope_id = int(func.instructions[mark_index].operands.at(0).immediate());
 
 	size_t last = mark_index;
 	bool bounded = false;
@@ -5314,7 +5369,7 @@ bool RISCVCodeGen::scope_body_may_allocate(const IRFunction& func, size_t mark_i
 	for (size_t i = mark_index + 1; i < count; i++) {
 		const IRInstruction& instr = func.instructions[i];
 		if (instr.opcode == IROpcode::SCOPE_RELEASE &&
-			int(std::get<int64_t>(instr.operands.at(0).value)) == scope_id)
+			int(instr.operands.at(0).immediate()) == scope_id)
 		{
 			last = std::max(last, i);
 			bounded = true;
@@ -5323,8 +5378,7 @@ bool RISCVCodeGen::scope_body_may_allocate(const IRFunction& func, size_t mark_i
 
 	const size_t label_index = mark_index + 1;
 	if (label_index < count && func.instructions[label_index].opcode == IROpcode::LABEL) {
-		const std::string& label =
-			std::get<std::string>(func.instructions[label_index].operands.at(0).value);
+		const uint32_t label = func.instructions[label_index].operands.at(0).string_id;
 		for (size_t i = label_index + 1; i < count; i++) {
 			const IRInstruction& instr = func.instructions[i];
 			const IROperandSignature& sig = ir_opcode_info(instr.opcode).signature;
@@ -5333,7 +5387,7 @@ bool RISCVCodeGen::scope_body_may_allocate(const IRFunction& func, size_t mark_i
 					continue;
 				}
 				if (instr.operands[op].type == IRValue::Type::LABEL &&
-					std::get<std::string>(instr.operands[op].value) == label)
+					instr.operands[op].string_id == label)
 				{
 					last = std::max(last, i);
 					bounded = true;
@@ -5422,26 +5476,31 @@ void RISCVCodeGen::plan_release_clears(const IRFunction& func) {
 		carries_handle[size_t(dst)] = true;
 	}
 
-	std::unordered_map<std::string, size_t> label_positions;
-	for (size_t i = 0; i < count; i++) {
-		if (func.instructions[i].opcode == IROpcode::LABEL) {
-			label_positions[std::get<std::string>(func.instructions[i].operands[0].value)] = i;
-		}
-	}
+	const std::vector<std::vector<size_t>> successors = build_successors(func);
 
-	std::vector<std::vector<size_t>> successors(count);
-	for (size_t i = 0; i < count; i++) {
-		const IRInstruction& instr = func.instructions[i];
-		if (!ir_has_effect(instr.opcode, IR_TERMINATOR) && i + 1 < count) {
-			successors[i].push_back(i + 1);
+	// def/use once, before the fixpoint: a full write kills, INOUT reads first.
+	std::vector<int> defs(count, -1);
+	std::vector<RegisterSet> uses(count);
+	std::vector<int> reads;
+	for (size_t k = 0; k < count; k++) {
+		const IRInstruction& instr = func.instructions[k];
+		uses[k].resize(nregs);
+		if (instr.opcode == IROpcode::AWAIT) {
+			continue;
 		}
-		for (const auto& op : instr.operands) {
-			if (op.type != IRValue::Type::LABEL) {
-				continue;
+		const int dst_index = ir_destination_operand_index(instr.opcode);
+		if (dst_index >= 0 && size_t(dst_index) < instr.operands.size() &&
+			ir_opcode_info(instr.opcode).signature.kind_at(size_t(dst_index)) == IROperandKind::DST) {
+			const int dst = ir_destination_register(instr);
+			if (dst >= 0 && size_t(dst) < nregs) {
+				defs[k] = dst;
 			}
-			auto it = label_positions.find(std::get<std::string>(op.value));
-			if (it != label_positions.end()) {
-				successors[i].push_back(it->second);
+		}
+		reads.clear();
+		ir_collect_read_registers(instr, reads);
+		for (int reg : reads) {
+			if (reg >= 0 && size_t(reg) < nregs) {
+				uses[k].set(size_t(reg));
 			}
 		}
 	}
@@ -5450,59 +5509,43 @@ void RISCVCodeGen::plan_release_clears(const IRFunction& func) {
 	// analysis cannot see: an unresolved label operand leaves the successor
 	// list short, which is the one direction that would be unsafe, so
 	// AWAIT and CALL_GUEST -- which resume through the host -- keep everything.
-	std::vector<std::vector<bool>> live_in(count, std::vector<bool>(nregs, false));
-	std::vector<int> reads;
+	std::vector<RegisterSet> live_in(count, RegisterSet(nregs));
+	RegisterSet live(nregs);
 	bool changed = true;
 	while (changed) {
 		changed = false;
 		for (size_t k = count; k-- > 0;) {
-			const IRInstruction& instr = func.instructions[k];
-			std::vector<bool> live(nregs, false);
+			live.clear();
 			for (size_t s : successors[k]) {
-				for (size_t r = 0; r < nregs; r++) {
-					live[r] = live[r] || live_in[s][r];
-				}
+				live |= live_in[s];
 			}
-			if (instr.opcode == IROpcode::AWAIT) {
-				live.assign(nregs, true);
+			if (func.instructions[k].opcode == IROpcode::AWAIT) {
+				live.set_all();
 			} else {
-				// A full write kills; INOUT reads its own slot first.
-				const int dst_index = ir_destination_operand_index(instr.opcode);
-				if (dst_index >= 0 && size_t(dst_index) < instr.operands.size() &&
-					ir_opcode_info(instr.opcode).signature.kind_at(size_t(dst_index)) == IROperandKind::DST) {
-					const int dst = ir_destination_register(instr);
-					if (dst >= 0 && size_t(dst) < nregs) {
-						live[size_t(dst)] = false;
-					}
+				if (defs[k] >= 0) {
+					live.reset(size_t(defs[k]));
 				}
-				reads.clear();
-				ir_collect_read_registers(instr, reads);
-				for (int reg : reads) {
-					if (reg >= 0 && size_t(reg) < nregs) {
-						live[size_t(reg)] = true;
-					}
-				}
+				live |= uses[k];
 			}
 			if (live != live_in[k]) {
-				live_in[k] = std::move(live);
+				live_in[k] = live;
 				changed = true;
 			}
 		}
 	}
 
+	RegisterSet live_out(nregs);
 	for (size_t k = 0; k < count; k++) {
 		if (func.instructions[k].opcode != IROpcode::SCOPE_RELEASE) {
 			continue;
 		}
-		std::vector<bool> live_out(nregs, false);
+		live_out.clear();
 		for (size_t s : successors[k]) {
-			for (size_t r = 0; r < nregs; r++) {
-				live_out[r] = live_out[r] || live_in[s][r];
-			}
+			live_out |= live_in[s];
 		}
 		std::vector<int> dead;
 		for (size_t r = 0; r < nregs; r++) {
-			if (!live_out[r] && carries_handle[r] && m_fn.global_handles.count(int(r)) == 0) {
+			if (!live_out.test(r) && carries_handle[r] && m_fn.global_handles.count(int(r)) == 0) {
 				dead.push_back(int(r));
 			}
 		}
@@ -5521,7 +5564,7 @@ void RISCVCodeGen::plan_scopes(const IRFunction& func) {
 	for (const IRInstruction& instr : func.instructions) {
 		if (instr.opcode == IROpcode::SCOPE_MARK || instr.opcode == IROpcode::SCOPE_RELEASE) {
 			max_scope_id = std::max(max_scope_id,
-				int(std::get<int64_t>(instr.operands[0].value)));
+				int(instr.operands[0].immediate()));
 		}
 	}
 	if (max_scope_id < 0) {
@@ -5534,7 +5577,7 @@ void RISCVCodeGen::plan_scopes(const IRFunction& func) {
 		if (func.instructions[i].opcode != IROpcode::SCOPE_MARK) {
 			continue;
 		}
-		const int scope_id = int(std::get<int64_t>(func.instructions[i].operands[0].value));
+		const int scope_id = int(func.instructions[i].operands[0].immediate());
 		m_fn.elided_scopes[size_t(scope_id)] = !scope_body_may_allocate(func, i);
 	}
 
@@ -5562,7 +5605,7 @@ int RISCVCodeGen::scope_slot_offset(int scope_id) const {
 }
 
 void RISCVCodeGen::gen_scope_mark(const IRInstruction& instr) {
-	const int scope_id = int(std::get<int64_t>(instr.operands[0].value));
+	const int scope_id = int(instr.operands[0].immediate());
 	if (scope_is_elided(scope_id)) {
 		return;
 	}
@@ -5576,7 +5619,7 @@ void RISCVCodeGen::gen_scope_mark(const IRInstruction& instr) {
 }
 
 void RISCVCodeGen::gen_scope_release(const IRInstruction& instr) {
-	const int scope_id = int(std::get<int64_t>(instr.operands[0].value));
+	const int scope_id = int(instr.operands[0].immediate());
 	if (scope_is_elided(scope_id)) {
 		return;
 	}

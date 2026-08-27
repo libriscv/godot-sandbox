@@ -14,10 +14,10 @@ void RISCVCodeGen::emit_global_call(const IRInstruction& instr) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "GLOBAL_CALL requires at least 4 operands");
 	}
 
-	const int result_vreg = std::get<int>(instr.operands[0].value);
-	const GlobalFn fn = static_cast<GlobalFn>(std::get<int64_t>(instr.operands[1].value));
-	const bool typed = std::get<int64_t>(instr.operands[2].value) != 0;
-	const int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+	const int result_vreg = instr.operands[0].reg_index();
+	const GlobalFn fn = static_cast<GlobalFn>(instr.operands[1].immediate());
+	const bool typed = instr.operands[2].immediate() != 0;
+	const int arg_count = static_cast<int>(instr.operands[3].immediate());
 
 	if (instr.operands.size() != static_cast<size_t>(4 + arg_count)) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "GLOBAL_CALL argument count mismatch");
@@ -26,7 +26,7 @@ void RISCVCodeGen::emit_global_call(const IRInstruction& instr) {
 	std::vector<int> arg_offsets;
 	arg_offsets.reserve(arg_count);
 	for (int i = 0; i < arg_count; i++) {
-		arg_offsets.push_back(get_variant_stack_offset(std::get<int>(instr.operands[4 + i].value)));
+		arg_offsets.push_back(get_variant_stack_offset(instr.operands[4 + i].reg_index()));
 	}
 	const int result_offset = get_variant_stack_offset(result_vreg);
 

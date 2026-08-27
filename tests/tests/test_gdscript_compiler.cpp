@@ -144,6 +144,8 @@ PUBLIC Variant validate(String code)
 {
 	CompilerOptions options;
 	options.output_elf = false;
+	// Editor validation: no optimizer, every diagnostic comes from the frontend.
+	options.optimize = false;
 	gdscript_apply_restrictions(options);
 
 	Compiler compiler;

@@ -58,19 +58,19 @@ static int count_opcode(const IRFunction& func, IROpcode opcode) {
 }
 
 // The method names of every VCALL in a function, in order.
-static std::vector<std::string> vcall_methods(const IRFunction& func) {
+static std::vector<std::string> vcall_methods(const IRProgram& ir, const IRFunction& func) {
 	std::vector<std::string> methods;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::VCALL) {
-			methods.push_back(std::get<std::string>(instr.operands.at(2).value));
+			methods.push_back(ir.strings[instr.operands.at(2).string_id]);
 		}
 	}
 	return methods;
 }
 
-static int count_vcalls(const IRFunction& func, const std::string& method) {
+static int count_vcalls(const IRProgram& ir, const IRFunction& func, const std::string& method) {
 	int count = 0;
-	for (const auto& name : vcall_methods(func)) {
+	for (const auto& name : vcall_methods(ir, func)) {
 		if (name == method) {
 			count++;
 		}
@@ -84,8 +84,8 @@ static int count_dict_ops(const IRFunction& func, int64_t op) {
 	int count = 0;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 3 &&
-			std::get<int64_t>(instr.operands[1].value) == 524 &&
-			std::get<int64_t>(instr.operands[2].value) == op) {
+			instr.operands[1].immediate() == 524 &&
+			instr.operands[2].immediate() == op) {
 			count++;
 		}
 	}
@@ -105,10 +105,10 @@ static std::string string_in_register(const IRProgram& ir, const IRFunction& fun
 		if (instr.opcode != IROpcode::LOAD_STRING) {
 			continue;
 		}
-		if (std::get<int>(instr.operands.at(0).value) != reg) {
+		if (instr.operands.at(0).reg_index() != reg) {
 			continue;
 		}
-		return ir.string_constants.at(std::get<int64_t>(instr.operands.at(1).value));
+		return ir.string_constants.at(instr.operands.at(1).immediate());
 	}
 	throw std::runtime_error("no LOAD_STRING for register " + std::to_string(reg));
 }
@@ -121,10 +121,10 @@ static std::vector<std::string> dictionary_keys(const IRProgram& ir, const IRFun
 		if (instr.opcode != IROpcode::MAKE_DICTIONARY) {
 			continue;
 		}
-		const int64_t pairs = std::get<int64_t>(instr.operands.at(1).value);
+		const int64_t pairs = instr.operands.at(1).immediate();
 		std::vector<std::string> keys;
 		for (int64_t pair = 0; pair < pairs; pair++) {
-			const int key_reg = std::get<int>(instr.operands.at(2 + pair * 2).value);
+			const int key_reg = instr.operands.at(2 + pair * 2).reg_index();
 			keys.push_back(string_in_register(ir, func, i, key_reg));
 		}
 		return keys;
@@ -139,10 +139,10 @@ static int64_t int_in_register(const IRFunction& func, size_t before, int reg) {
 		if (instr.opcode != IROpcode::LOAD_IMM) {
 			continue;
 		}
-		if (std::get<int>(instr.operands.at(0).value) != reg) {
+		if (instr.operands.at(0).reg_index() != reg) {
 			continue;
 		}
-		return std::get<int64_t>(instr.operands.at(1).value);
+		return instr.operands.at(1).immediate();
 	}
 	throw std::runtime_error("no LOAD_IMM for register " + std::to_string(reg));
 }
@@ -154,10 +154,10 @@ static std::vector<int64_t> dictionary_int_values(const IRFunction& func) {
 		if (instr.opcode != IROpcode::MAKE_DICTIONARY) {
 			continue;
 		}
-		const int64_t pairs = std::get<int64_t>(instr.operands.at(1).value);
+		const int64_t pairs = instr.operands.at(1).immediate();
 		std::vector<int64_t> values;
 		for (int64_t pair = 0; pair < pairs; pair++) {
-			const int value_reg = std::get<int>(instr.operands.at(3 + pair * 2).value);
+			const int value_reg = instr.operands.at(3 + pair * 2).reg_index();
 			values.push_back(int_in_register(func, i, value_reg));
 		}
 		return values;
@@ -380,7 +380,7 @@ static void test_unknown_field_is_rejected() {
 
 	const IRProgram methods = compile_to_ir(BANK_ACCOUNT +
 		"func test():\n\tvar a = BankAccount.new()\n\treturn a.size()\n");
-	assert(count_vcalls(find_function(methods, "test"), "size") == 0);
+	assert(count_vcalls(methods, find_function(methods, "test"), "size") == 0);
 	assert(count_dict_ops(find_function(methods, "test"), 6) == 1);
 
 	// The declared fields are still reachable through the Dictionary itself.

@@ -13,7 +13,8 @@ class IROptimizer;
 // Listed so test_opt_invariance can run a prefix to bisect a miscompile.
 struct IRPass {
 	const char* name;
-	void (IROptimizer::*run)(IRFunction&);
+	// Answers whether it changed func; drives the repeat-pass skip.
+	bool (IROptimizer::*run)(IRFunction&);
 };
 
 class IROptimizer {
@@ -23,8 +24,13 @@ public:
 	void optimize(IRProgram& program);
 	void optimize_function(IRFunction& func);
 
+	// Verifier diagnostics; unset when a test optimizes a bare IRFunction.
+	void set_string_table(const IRStringTable* strings) { m_strings = strings; }
+
 	// A pass name may appear more than once (peephole runs three times).
 	static const std::vector<IRPass>& pipeline();
+
+	const IRStringTable* m_strings = nullptr;
 
 	void set_pass_limit(size_t count) { m_pass_limit = count; }
 	void set_enabled_passes(const std::vector<std::string>& names);
@@ -32,11 +38,11 @@ public:
 	void disable_all_passes() { set_enabled_passes({"none"}); }
 
 private:
-	void constant_folding(IRFunction& func);
-	void eliminate_unreachable_code(IRFunction& func);
-	void eliminate_dead_code(IRFunction& func);
-	void tighten_scope_marks(IRFunction& func);
-	void peephole_optimization(IRFunction& func);
+	bool constant_folding(IRFunction& func);
+	bool eliminate_unreachable_code(IRFunction& func);
+	bool eliminate_dead_code(IRFunction& func);
+	bool tighten_scope_marks(IRFunction& func);
+	bool peephole_optimization(IRFunction& func);
 
 	// On match: appends replacement, advances i, returns true. On miss: no side effects.
 	using PeepholePattern = bool (IROptimizer::*)(const IRFunction& func, size_t& i,
@@ -47,11 +53,11 @@ private:
 	bool try_eliminate_move_pair(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions);
 	bool try_fold_move_after_op(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions);
 	bool try_remove_branch_to_next(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions);
-	void copy_propagation(IRFunction& func);
-	void eliminate_redundant_stores(IRFunction& func);
+	bool copy_propagation(IRFunction& func);
+	bool eliminate_redundant_stores(IRFunction& func);
 	void reduce_register_pressure(IRFunction& func);
-	void loop_invariant_code_motion(IRFunction& func);
-	void enhanced_copy_propagation(IRFunction& func);
+	bool loop_invariant_code_motion(IRFunction& func);
+	bool enhanced_copy_propagation(IRFunction& func);
 
 	struct ConstantValue {
 		enum class Type { NONE, INT, FLOAT, BOOL, STRING };
@@ -73,16 +79,32 @@ private:
 	using ConstantMap = std::unordered_map<int, ConstantValue>;
 	ConstantMap m_constants;
 
-	// Forward dataflow block. Clearing state at every LABEL kills constants across any `if`.
-	struct ConstBlock {
+	// Forward dataflow block; state cleared at every LABEL, so constants do not
+	// cross an `if`. Shape only: per-pass state (constants in, reachability)
+	// rides in the pass's own parallel array, so the shape is shareable.
+	struct Block {
 		size_t begin = 0;
 		size_t end = 0;
 		std::vector<size_t> successors;
-		ConstantMap entry;
-		bool entry_initialized = false;   // false: unreachable
 	};
 
-	static std::vector<ConstBlock> build_blocks(const IRFunction& func);
+	// Control flow shared by the passes that read it. Invalidated by any
+	// instruction move; label names are unique by construction (gen_label
+	// counter, enforced by the verifier), so first- and last-seen index agree.
+	struct FunctionAnalysis {
+		bool valid = false;
+		const IRFunction* func = nullptr;
+		size_t instruction_count = 0;
+		std::unordered_map<uint32_t, size_t> label_index;
+		std::vector<Block> blocks;
+	};
+	FunctionAnalysis m_analysis;
+
+	const FunctionAnalysis& analysis(const IRFunction& func);
+	void invalidate_analysis() { m_analysis.valid = false; }
+
+	// Assigns; answers whether the result differs. Invalidates on difference.
+	bool replace_instructions(IRFunction& func, std::vector<IRInstruction>&& fresh);
 
 	// Intersect: keeps only registers both agree on. Returns true if anything was dropped.
 	static bool meet_constants(ConstantMap& into, const ConstantMap& from);
@@ -95,7 +117,6 @@ private:
 	void set_register_constant(int reg, const ConstantValue& value);
 	void invalidate_register(int reg);
 
-	std::unordered_set<int> find_live_registers(const IRFunction& func);
 	bool is_register_used_after(const IRFunction& func, int reg, size_t instr_idx);
 
 	// Opcode classification comes from ir_opcodes.def, not a list here.
@@ -108,8 +129,8 @@ private:
 	struct LoopInfo {
 		size_t header_idx;
 		size_t end_idx;
-		std::string header_label;
-		std::string end_label;
+		uint32_t header_label = IRStringTable::INVALID_ID;
+		uint32_t end_label = IRStringTable::INVALID_ID;
 		std::vector<size_t> back_edges;
 	};
 	std::vector<LoopInfo> identify_loops(const IRFunction& func);
@@ -121,7 +142,7 @@ private:
 	// answers. Aliasing is not tracked, so any host write at all disqualifies it.
 	static bool loop_only_reads_host(const LoopInfo& loop, const IRFunction& func);
 	// False if the instruction sits inside an `if` within the loop body.
-	static bool is_unconditional_in_loop(size_t instr_idx, const LoopInfo& loop, const IRFunction& func);
+	bool is_unconditional_in_loop(size_t instr_idx, const LoopInfo& loop, const IRFunction& func);
 
 	struct CopyInfo {
 		int source_reg;

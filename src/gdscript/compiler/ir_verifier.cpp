@@ -51,8 +51,12 @@ struct BasicBlock {
 
 class Verifier {
 public:
-	Verifier(const IRFunction& func, const char* after_pass)
-		: m_func(func), m_after_pass(after_pass) {}
+	Verifier(const IRFunction& func, const char* after_pass, const IRStringTable* strings)
+		: m_func(func), m_after_pass(after_pass), m_strings(strings) {}
+
+	std::string name_of(const IRValue& value) const {
+		return m_strings ? (*m_strings)[value.string_id] : "#" + std::to_string(value.string_id);
+	}
 
 	void run() {
 		// max_registers must cover all registers before any index-based check.
@@ -119,7 +123,7 @@ private:
 				if (operand.type != IRValue::Type::REGISTER) {
 					continue;
 				}
-				const int reg = std::get<int>(operand.value);
+				const int reg = operand.reg_index();
 				if (reg < 0) {
 					fail("negative register number r" + std::to_string(reg), i);
 				}
@@ -199,7 +203,7 @@ private:
 			if (j >= instr.operands.size()) {
 				return;
 			}
-			const int64_t declared = std::get<int64_t>(instr.operands[j].value);
+			const int64_t declared = instr.operands[j].immediate();
 			if (declared < 0) {
 				fail("negative argument count " + std::to_string(declared), instr_idx);
 			}
@@ -240,7 +244,7 @@ private:
 			if (!ir_has_effect(instr.opcode, IR_LABEL)) {
 				continue;
 			}
-			const std::string& name = std::get<std::string>(instr.operands.at(0).value);
+			const std::string& name = name_of(instr.operands.at(0));
 			if (m_label_index.count(name) != 0) {
 				fail("label '" + name + "' is defined more than once", i);
 			}
@@ -256,7 +260,7 @@ private:
 				if (operand.type != IRValue::Type::LABEL) {
 					continue;
 				}
-				const std::string& name = std::get<std::string>(operand.value);
+				const std::string& name = name_of(operand);
 				if (m_label_index.count(name) == 0) {
 					fail("branch target '" + name + "' has no label", i);
 				}
@@ -366,7 +370,7 @@ private:
 				if (ir_has_effect(last.opcode, IR_LABEL)) {
 					continue;
 				}
-				auto it = m_label_index.find(std::get<std::string>(operand.value));
+				auto it = m_label_index.find(name_of(operand));
 				if (it != m_label_index.end()) {
 					block.successors.push_back(block_of_instruction[it->second]);
 				}
@@ -423,7 +427,7 @@ private:
 			case IROpcode::CONVERT: return instr.type_hint;
 			case IROpcode::COERCE: return instr.type_hint;
 			case IROpcode::MOVE: {
-				const int src = std::get<int>(instr.operands.at(1).value);
+				const int src = instr.operands.at(1).reg_index();
 				if (src >= 0 && static_cast<size_t>(src) < state.type.size()) {
 					return state.type[src];
 				}
@@ -494,6 +498,7 @@ private:
 
 	const IRFunction& m_func;
 	const char* m_after_pass;
+	const IRStringTable* m_strings;
 	std::unordered_map<std::string, size_t> m_label_index;
 	std::vector<BasicBlock> m_blocks;
 };
@@ -515,20 +520,20 @@ void set_ir_verification_enabled(bool enabled) {
 	g_verification_enabled = enabled;
 }
 
-void ir_verify(const IRFunction& func, const char* after_pass) {
-	Verifier verifier(func, after_pass);
+void ir_verify(const IRFunction& func, const char* after_pass, const IRStringTable* strings) {
+	Verifier verifier(func, after_pass, strings);
 	verifier.run();
 }
 
 void ir_verify(const IRProgram& program, const char* after_pass) {
 	for (const auto& func : program.functions) {
-		ir_verify(func, after_pass);
+		ir_verify(func, after_pass, &program.strings);
 	}
 	if (program.has_member_init) {
-		ir_verify(program.member_init, after_pass);
+		ir_verify(program.member_init, after_pass, &program.strings);
 	}
 	if (program.has_global_init) {
-		ir_verify(program.global_init, after_pass);
+		ir_verify(program.global_init, after_pass, &program.strings);
 	}
 }
 

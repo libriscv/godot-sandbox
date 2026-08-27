@@ -89,6 +89,19 @@ else()
 	target_link_libraries(dump_ir -static gdscript_compiler)
 endif()
 
+# Compile-speed harness, host only: the cross build that puts this library
+# inside gdscript.elf does not use either and pays for both.
+# bench_phases needs a Release directory -- an -O0 build reports timings ~20x off.
+if (NOT CMAKE_CROSSCOMPILING)
+	add_executable(bench_phases tests/bench/bench_phases.cpp)
+	target_compile_options(bench_phases PRIVATE ${GDSC_WARNINGS})
+	target_link_libraries(bench_phases gdscript_compiler)
+
+	add_executable(corpus_hash tests/bench/corpus_hash.cpp)
+	target_compile_options(corpus_hash PRIVATE ${GDSC_WARNINGS})
+	target_link_libraries(corpus_hash gdscript_compiler)
+endif()
+
 # GDScript to RISC-V disassembly tool
 add_executable(gdscript_to_riscv gdscript_to_riscv.cpp)
 target_compile_options(gdscript_to_riscv PRIVATE ${GDSC_WARNINGS})

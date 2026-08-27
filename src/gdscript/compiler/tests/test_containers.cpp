@@ -61,11 +61,11 @@ static int count_opcode(const IRFunction& func, IROpcode opcode) {
 	return count;
 }
 
-static int count_vcalls(const IRFunction& func, const std::string& method) {
+static int count_vcalls(const IRProgram& ir, const IRFunction& func, const std::string& method) {
 	int count = 0;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::VCALL && instr.operands.size() >= 3 &&
-			std::get<std::string>(instr.operands[2].value) == method) {
+			ir.strings[instr.operands[2].string_id] == method) {
 			count++;
 		}
 	}
@@ -77,8 +77,8 @@ static int count_dict_ops(const IRFunction& func, int64_t op) {
 	int count = 0;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 3 &&
-			std::get<int64_t>(instr.operands[1].value) == 524 &&
-			std::get<int64_t>(instr.operands[2].value) == op) {
+			instr.operands[1].immediate() == 524 &&
+			instr.operands[2].immediate() == op) {
 			count++;
 		}
 	}
@@ -89,7 +89,7 @@ static int count_syscalls(const IRFunction& func, int64_t number) {
 	int count = 0;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 2 &&
-			std::get<int64_t>(instr.operands[1].value) == number) {
+			instr.operands[1].immediate() == number) {
 			count++;
 		}
 	}
@@ -130,10 +130,10 @@ static void test_array_element_access() {
 	const IRProgram ir = compile_to_ir(source);
 
 	assert(count_opcode(find_function(ir, "read"), IROpcode::ARRAY_GET) == 1);
-	assert(count_vcalls(find_function(ir, "read"), "get") == 0);
+	assert(count_vcalls(ir, find_function(ir, "read"), "get") == 0);
 
 	assert(count_opcode(find_function(ir, "write"), IROpcode::ARRAY_SET) == 1);
-	assert(count_vcalls(find_function(ir, "write"), "set") == 0);
+	assert(count_vcalls(ir, find_function(ir, "write"), "set") == 0);
 
 	const IRFunction& both = find_function(ir, "both");
 	assert(count_opcode(both, IROpcode::ARRAY_GET) == 1);
@@ -160,30 +160,30 @@ static void test_unknown_container_keeps_the_vcall() {
 	const IRProgram untyped_object = compile_to_ir(
 		"func test(a, i : int):\n\treturn a[i]\n");
 	assert(count_opcode(find_function(untyped_object, "test"), IROpcode::ARRAY_GET) == 0);
-	assert(count_vcalls(find_function(untyped_object, "test"), "get") == 1);
+	assert(count_vcalls(untyped_object, find_function(untyped_object, "test"), "get") == 1);
 
 	// Same for the index, which is read as an int64 out of its payload.
 	const IRProgram untyped_index = compile_to_ir(
 		"func test(a : Array, i):\n\treturn a[i]\n");
 	assert(count_opcode(find_function(untyped_index, "test"), IROpcode::ARRAY_GET) == 0);
-	assert(count_vcalls(find_function(untyped_index, "test"), "get") == 1);
+	assert(count_vcalls(untyped_index, find_function(untyped_index, "test"), "get") == 1);
 
 	// Packed array: has get(), falls through to VCALL.
 	const IRProgram packed_index = compile_to_ir(
 		"func test(p : PackedInt32Array, i : int):\n\treturn p[i]\n");
 	assert(count_opcode(find_function(packed_index, "test"), IROpcode::ARRAY_GET) == 0);
-	assert(count_vcalls(find_function(packed_index, "test"), "get") == 1);
+	assert(count_vcalls(packed_index, find_function(packed_index, "test"), "get") == 1);
 
 	// String: own syscall, no get(). See test_strings.cpp.
 	const IRProgram string_index = compile_to_ir(
 		"func test(s : String, i : int):\n\treturn s[i]\n");
-	assert(count_vcalls(find_function(string_index, "test"), "get") == 0);
+	assert(count_vcalls(string_index, find_function(string_index, "test"), "get") == 0);
 
 	// And a write to an unknown container.
 	const IRProgram untyped_write = compile_to_ir(
 		"func test(a, i : int, v):\n\ta[i] = v\n");
 	assert(count_opcode(find_function(untyped_write, "test"), IROpcode::ARRAY_SET) == 0);
-	assert(count_vcalls(find_function(untyped_write, "test"), "set") == 1);
+	assert(count_vcalls(untyped_write, find_function(untyped_write, "test"), "set") == 1);
 
 	std::cout << "  ✓ an unknown container keeps the VCALL" << std::endl;
 }
@@ -201,8 +201,8 @@ static void test_array_append() {
 	const IRProgram ir = compile_to_ir(source);
 	const IRFunction& test = find_function(ir, "test");
 	assert(count_opcode(test, IROpcode::ARRAY_APPEND) == 2);
-	assert(count_vcalls(test, "append") == 0);
-	assert(count_vcalls(test, "push_back") == 0);
+	assert(count_vcalls(ir, test, "append") == 0);
+	assert(count_vcalls(ir, test, "push_back") == 0);
 
 	// Any other method, and any receiver that is not a known Array, is a VCALL.
 	const IRProgram mixed = compile_to_ir(
@@ -211,8 +211,8 @@ static void test_array_append() {
 		"\tb.append(v)\n");
 	const IRFunction& other = find_function(mixed, "test");
 	assert(count_opcode(other, IROpcode::ARRAY_APPEND) == 0);
-	assert(count_vcalls(other, "sort") == 1);
-	assert(count_vcalls(other, "append") == 1);
+	assert(count_vcalls(mixed, other, "sort") == 1);
+	assert(count_vcalls(mixed, other, "append") == 1);
 
 	compile_to_machine_code(source);
 
@@ -240,10 +240,10 @@ static void test_dictionary_element_access() {
 	// A Dictionary is keyed by any Variant, so unlike an Array index the key
 	// needs no type of its own: the host is handed a pointer either way.
 	assert(count_dict_ops(find_function(ir, "read"), DICT_OP_GET) == 1);
-	assert(count_vcalls(find_function(ir, "read"), "get") == 0);
+	assert(count_vcalls(ir, find_function(ir, "read"), "get") == 0);
 
 	assert(count_opcode(find_function(ir, "write"), IROpcode::DICT_SET) == 1);
-	assert(count_vcalls(find_function(ir, "write"), "set") == 0);
+	assert(count_vcalls(ir, find_function(ir, "write"), "set") == 0);
 
 	// `d.key` means `d["key"]` in GDScript, and takes the same path.
 	const IRFunction& by_name = find_function(ir, "by_name");
@@ -367,8 +367,8 @@ static void test_known_container_methods_lower_to_syscalls() {
 		"\treturn a.size() + d.size() + s.length()\n";
 	const IRProgram sizes_ir = compile_to_ir(source);
 	const IRFunction& sizes = find_function(sizes_ir, "sizes");
-	assert(count_vcalls(sizes, "size") == 0);
-	assert(count_vcalls(sizes, "length") == 0);
+	assert(count_vcalls(sizes_ir, sizes, "size") == 0);
+	assert(count_vcalls(sizes_ir, sizes, "length") == 0);
 	assert(count_syscalls(sizes, ECALL_ARRAY_SIZE) == 1);
 	assert(count_syscalls(sizes, ECALL_STRING_SIZE) == 1);
 	assert(count_dict_ops(sizes, dictionary_op(Dictionary_Op::GET_SIZE)) == 1);
@@ -395,7 +395,7 @@ static void test_known_container_methods_lower_to_syscalls() {
 		"\treturn a.is_empty() and d.is_empty() and s.is_empty()\n";
 	const IRProgram empty_ir = compile_to_ir(empty_source);
 	const IRFunction& empty = find_function(empty_ir, "empty");
-	assert(count_vcalls(empty, "is_empty") == 0);
+	assert(count_vcalls(empty_ir, empty, "is_empty") == 0);
 	assert(count_syscalls(empty, ECALL_ARRAY_SIZE) == 1);
 	assert(count_syscalls(empty, ECALL_STRING_SIZE) == 1);
 	assert(count_dict_ops(empty, dictionary_op(Dictionary_Op::GET_SIZE)) == 1);
@@ -413,17 +413,17 @@ static void test_unknown_receiver_keeps_the_vcall() {
 
 	const IRProgram untyped_ir = compile_to_ir("func size_of(a):\n\treturn a.size()\n");
 	const IRFunction& untyped = find_function(untyped_ir, "size_of");
-	assert(count_vcalls(untyped, "size") == 1);
+	assert(count_vcalls(untyped_ir, untyped, "size") == 1);
 	assert(count_syscalls(untyped, ECALL_ARRAY_SIZE) == 0);
 
 	const IRProgram defaulted_ir = compile_to_ir("func get_or(d : Dictionary):\n\treturn d.get(1, 0)\n");
 	const IRFunction& defaulted = find_function(defaulted_ir, "get_or");
-	assert(count_vcalls(defaulted, "get") == 1);
+	assert(count_vcalls(defaulted_ir, defaulted, "get") == 1);
 	assert(count_dict_ops(defaulted, dictionary_op(Dictionary_Op::GET)) == 0);
 
 	const IRProgram popped_ir = compile_to_ir("func pop(a : Array):\n\treturn a.pop_back()\n");
 	const IRFunction& popped = find_function(popped_ir, "pop");
-	assert(count_vcalls(popped, "pop_back") == 1);
+	assert(count_vcalls(popped_ir, popped, "pop_back") == 1);
 
 	std::cout << "  \u2713 an untyped receiver keeps the VCALL" << std::endl;
 }

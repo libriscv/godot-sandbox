@@ -81,11 +81,11 @@ const IRFunction* find_function(const IRProgram& ir, const std::string& name) {
 	return nullptr;
 }
 
-std::vector<std::string> called_names(const IRFunction& func) {
+std::vector<std::string> called_names(const IRProgram& ir, const IRFunction& func) {
 	std::vector<std::string> names;
 	for (const IRInstruction& instr : func.instructions) {
 		if (instr.opcode == IROpcode::CALL) {
-			names.push_back(std::get<std::string>(instr.operands[0].value));
+			names.push_back(ir.strings[instr.operands[0].string_id]);
 		}
 	}
 	return names;
@@ -160,11 +160,11 @@ void test_the_instance_is_a_dictionary() {
 		if (instr.opcode != IROpcode::MAKE_DICTIONARY) {
 			continue;
 		}
-		check(std::get<int64_t>(instr.operands[1].value) == 3,
+		check(instr.operands[1].immediate() == 3,
 			"an instance of Derived holds v, extra and the class it was made from");
 	}
 
-	const std::vector<std::string> calls = called_names(*test);
+	const std::vector<std::string> calls = called_names(ir, *test);
 	check(calls.size() == 2 && calls[0] == "@Derived._init" && calls[1] == "@Derived.greet",
 		"new() calls _init, then the method the call site names");
 
@@ -184,14 +184,14 @@ void test_a_method_call_is_a_direct_call() {
 	const IRFunction* derived_greet = find_function(inherited, "@Derived.greet");
 	check(derived_greet != nullptr, "Derived declares its own greet");
 	if (derived_greet != nullptr) {
-		const std::vector<std::string> calls = called_names(*derived_greet);
+		const std::vector<std::string> calls = called_names(inherited, *derived_greet);
 		check(calls.size() == 1 && calls[0] == "@Base.greet",
 			"super.greet() calls the base's greet");
 	}
 
 	const IRFunction* derived_init = find_function(inherited, "@Derived._init");
 	if (derived_init != nullptr) {
-		const std::vector<std::string> calls = called_names(*derived_init);
+		const std::vector<std::string> calls = called_names(inherited, *derived_init);
 		check(calls.size() == 1 && calls[0] == "@Base._init",
 			"super(42) calls the base's _init");
 	}
@@ -203,7 +203,7 @@ void test_a_method_call_is_a_direct_call() {
 		std::string(CHAIN) + "func other():\n\tvar d = Derived.new()\n\treturn d.who()\n");
 	const IRFunction* other = find_function(calls_who, "other");
 	if (other != nullptr) {
-		const std::vector<std::string> calls = called_names(*other);
+		const std::vector<std::string> calls = called_names(calls_who, *other);
 		check(calls.size() == 2 && calls[1] == "@Base.who",
 			"an inherited method is called on the class that declares it");
 	}
@@ -425,7 +425,7 @@ void test_a_class_type_travels() {
 		if (func == nullptr) {
 			continue;
 		}
-		const std::vector<std::string> calls = called_names(*func);
+		const std::vector<std::string> calls = called_names(ir, *func);
 		check(std::find(calls.begin(), calls.end(), "@C.get_n") != calls.end(),
 			std::string(name) + " reaches the method directly");
 		check(count_opcode(*func, IROpcode::VCALL) == 0,
@@ -533,7 +533,7 @@ int count_syscall(const IRFunction& func, int number) {
 	int count = 0;
 	for (const IRInstruction& instr : func.instructions) {
 		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() > 1 &&
-			std::get<int64_t>(instr.operands[1].value) == number)
+			instr.operands[1].immediate() == number)
 		{
 			count++;
 		}
@@ -541,10 +541,10 @@ int count_syscall(const IRFunction& func, int number) {
 	return count;
 }
 
-bool vcalls(const IRFunction& func, const std::string& name) {
+bool vcalls(const IRProgram& ir, const IRFunction& func, const std::string& name) {
 	for (const IRInstruction& instr : func.instructions) {
 		if (instr.opcode == IROpcode::VCALL &&
-			std::get<std::string>(instr.operands[2].value) == name)
+			ir.strings[instr.operands[2].string_id] == name)
 		{
 			return true;
 		}
@@ -572,7 +572,7 @@ void test_a_native_base_is_constructed_with_the_instance() {
 
 	for (const IRInstruction& instr : test->instructions) {
 		if (instr.opcode == IROpcode::MAKE_DICTIONARY) {
-			check(std::get<int64_t>(instr.operands[1].value) == 3,
+			check(instr.operands[1].immediate() == 3,
 				"the instance Dictionary holds the declared field, the base and the class");
 		}
 	}
@@ -640,12 +640,12 @@ void test_the_bind_syscall_is_emitted_for_an_engine_base() {
 			dict_at = i;
 		}
 		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() > 1 &&
-			std::get<int64_t>(instr.operands[1].value) == ECALL_CLASS_BIND)
+			instr.operands[1].immediate() == ECALL_CLASS_BIND)
 		{
 			bind_at = i;
 		}
 		if (instr.opcode == IROpcode::CALL &&
-			std::get<std::string>(instr.operands[0].value) == "@Marker._init")
+			ir.strings[instr.operands[0].string_id] == "@Marker._init")
 		{
 			init_at = i;
 		}
@@ -807,9 +807,9 @@ void test_what_the_class_does_not_declare_reaches_the_base() {
 		"'position' is a property set on the base");
 	check(count_opcode(*hurt, IROpcode::VGET) == 1,
 		"'rotation' is a property get on the base");
-	check(vcalls(*hurt, "move_local_x"), "an undeclared call goes to the base");
-	check(vcalls(*hurt, "get_index"), "so does one whose value is used");
-	check(called_names(*hurt).empty(), "neither became a call to a lifted method");
+	check(vcalls(ir, *hurt, "move_local_x"), "an undeclared call goes to the base");
+	check(vcalls(ir, *hurt, "get_index"), "so does one whose value is used");
+	check(called_names(ir, *hurt).empty(), "neither became a call to a lifted method");
 
 	std::cout << "  ✓ Names the class does not declare are the base's" << std::endl;
 }
@@ -826,7 +826,7 @@ void test_the_script_still_wins_over_the_base() {
 		"func test():\n"
 		"\treturn C.new().f()\n");
 	const IRFunction* f = find_function(ir, "@C.f");
-	check(f != nullptr && called_names(*f) == std::vector<std::string>{ "helper" },
+	check(f != nullptr && called_names(ir, *f) == std::vector<std::string>{ "helper" },
 		"a script function shadows a base method of the same name");
 
 	const IRProgram globals = compile_to_ir(
@@ -857,7 +857,7 @@ void test_super_reaches_the_native_base() {
 		"func test():\n"
 		"\treturn C.new().get_index()\n");
 	const IRFunction* method = find_function(ir, "@C.get_index");
-	check(method != nullptr && vcalls(*method, "get_index"),
+	check(method != nullptr && vcalls(ir, *method, "get_index"),
 		"super.get_index() reaches the base rather than recursing");
 
 	const IRFunction* init = find_function(ir, "@C._init");
@@ -881,7 +881,7 @@ void test_super_reaches_the_native_base() {
 		"func test():\n"
 		"\treturn B.new().f()\n");
 	const IRFunction* bf = find_function(chain, "@B.f");
-	check(bf != nullptr && vcalls(*bf, "get_index"),
+	check(bf != nullptr && vcalls(chain, *bf, "get_index"),
 		"a class inherits the native base of the class it extends");
 
 	std::cout << "  ✓ super walks the file's chain, then the engine's" << std::endl;
@@ -1033,7 +1033,7 @@ void test_an_instance_answers_is_and_as() {
 		"func test():\n"
 		"\treturn Sprite.new() is Sprite\n");
 	const IRFunction* own_test = find_function(own, "test");
-	check(own_test != nullptr && !vcalls(*own_test, "is_class"),
+	check(own_test != nullptr && !vcalls(own, *own_test, "is_class"),
 		"an instance answers its own class name without asking the engine");
 
 	const IRProgram other = compile_to_ir(
@@ -1044,7 +1044,7 @@ void test_an_instance_answers_is_and_as() {
 		"func test():\n"
 		"\treturn Sprite.new() is Other\n");
 	const IRFunction* other_test = find_function(other, "test");
-	check(other_test != nullptr && !vcalls(*other_test, "is_class"),
+	check(other_test != nullptr && !vcalls(other, *other_test, "is_class"),
 		"and answers a sibling class without asking either");
 
 	const IRProgram base = compile_to_ir(
@@ -1053,7 +1053,7 @@ void test_an_instance_answers_is_and_as() {
 		"func test():\n"
 		"\treturn Sprite.new() is Node\n");
 	const IRFunction* base_test = find_function(base, "test");
-	check(base_test != nullptr && vcalls(*base_test, "is_class"),
+	check(base_test != nullptr && vcalls(base, *base_test, "is_class"),
 		"what the engine knows is asked of the engine");
 	check(base_test != nullptr && count_syscall(*base_test, ECALL_DICTIONARY_OPS) >= 1,
 		"and it is asked of the object the instance holds, not of the Dictionary");
@@ -1066,7 +1066,7 @@ void test_an_instance_answers_is_and_as() {
 		"func test():\n"
 		"\treturn Derived.new() is Base\n");
 	const IRFunction* inherited_test = find_function(inherited, "test");
-	check(inherited_test != nullptr && !vcalls(*inherited_test, "is_class"),
+	check(inherited_test != nullptr && !vcalls(inherited, *inherited_test, "is_class"),
 		"a class it derives from is settled by the declaration too");
 
 	// The cast answers the same instance, so what worked before it works after.
@@ -1135,7 +1135,7 @@ void test_a_class_body_holds_constants_and_static_methods() {
 		int immediates = 0;
 		for (const IRInstruction& instr : folded_test->instructions) {
 			if (instr.opcode == IROpcode::LOAD_IMM
-				&& std::get<int64_t>(instr.operands[1].value) == 40) {
+				&& instr.operands[1].immediate() == 40) {
 				immediates++;
 			}
 		}
@@ -1172,7 +1172,7 @@ void test_a_class_body_holds_constants_and_static_methods() {
 	if (statics_test != nullptr) {
 		check(count_opcode(*statics_test, IROpcode::VCALL) == 0,
 			"and the call site names it directly");
-		const std::vector<std::string> names = called_names(*statics_test);
+		const std::vector<std::string> names = called_names(statics, *statics_test);
 		check(std::find(names.begin(), names.end(), "@Math.twice") != names.end(),
 			"by its lifted name");
 	}
@@ -1221,7 +1221,7 @@ void test_an_untracked_instance_answers_is() {
 	const IRFunction* take = find_function(ir, "take");
 	check(take != nullptr, "take() is lowered");
 	if (take != nullptr) {
-		check(!vcalls(*take, "is_class") && !vcalls(*take, "get_script"),
+		check(!vcalls(ir, *take, "is_class") && !vcalls(ir, *take, "get_script"),
 			"the file declares the chain, so the engine is not asked");
 		check(count_syscall(*take, ECALL_DICTIONARY_OPS) == 1,
 			"one get answers it, whatever the chain's length");
@@ -1259,13 +1259,13 @@ void test_a_class_without_a_base_is_still_refcounted() {
 		"func test():\n"
 		"\treturn [Plain.new() is RefCounted, Plain.new() is Object, Plain.new() is Node]\n");
 	const IRFunction* test = find_function(ir, "test");
-	check(test != nullptr && !vcalls(*test, "is_class"),
+	check(test != nullptr && !vcalls(ir, *test, "is_class"),
 		"the declaration settles it without asking the engine");
 	if (test != nullptr) {
 		std::vector<int64_t> answers;
 		for (const IRInstruction& instr : test->instructions) {
 			if (instr.opcode == IROpcode::LOAD_BOOL) {
-				answers.push_back(std::get<int64_t>(instr.operands[1].value));
+				answers.push_back(instr.operands[1].immediate());
 			}
 		}
 		check(answers == std::vector<int64_t>{1, 1, 0},
@@ -1283,7 +1283,7 @@ void test_a_class_without_a_base_is_still_refcounted() {
 		bool answered_true = false;
 		for (const IRInstruction& instr : plain_test->instructions) {
 			if (instr.opcode == IROpcode::LOAD_BOOL
-				&& std::get<int64_t>(instr.operands[1].value) == 1) {
+				&& instr.operands[1].immediate() == 1) {
 				answered_true = true;
 			}
 		}
@@ -1310,7 +1310,7 @@ void test_a_method_that_returns_self_keeps_the_type() {
 	check(test != nullptr && count_opcode(*test, IROpcode::VCALL) == 0,
 		"chaining stays a direct call");
 	if (test != nullptr) {
-		const std::vector<std::string> names = called_names(*test);
+		const std::vector<std::string> names = called_names(ir, *test);
 		check(std::count(names.begin(), names.end(), "@Builder.bump") == 2,
 			"both calls are the lifted method");
 	}
@@ -1463,7 +1463,7 @@ void test_a_chain_merges_into_one_program() {
 	const IRFunction* start = find_function(ir, "test_start");
 	check(start != nullptr, "the leaf's own function is there");
 	if (start != nullptr) {
-		const std::vector<std::string> calls = called_names(*start);
+		const std::vector<std::string> calls = called_names(ir, *start);
 		check(std::find(calls.begin(), calls.end(), "register_monitors") != calls.end(),
 			"an inherited method is a direct call, not a VCALL on the owner");
 		check(count_opcode(*start, IROpcode::VCALL) == 0,
@@ -1500,13 +1500,13 @@ void test_an_override_keeps_the_base_copy() {
 	// Resolved per link: the middle link's super is the root's, not the middle's.
 	const IRFunction* middle = find_function(ir, "@super1.test_name");
 	if (middle != nullptr) {
-		const std::vector<std::string> calls = called_names(*middle);
+		const std::vector<std::string> calls = called_names(ir, *middle);
 		check(std::find(calls.begin(), calls.end(), "@super0.test_name") != calls.end(),
 			"super in the middle link reaches the root copy");
 	}
 	const IRFunction* leaf = find_function(ir, "test_name");
 	if (leaf != nullptr) {
-		const std::vector<std::string> calls = called_names(*leaf);
+		const std::vector<std::string> calls = called_names(ir, *leaf);
 		check(std::find(calls.begin(), calls.end(), "@super1.test_name") != calls.end(),
 			"super in the leaf reaches the middle copy, not the root's");
 	}
@@ -1515,7 +1515,7 @@ void test_an_override_keeps_the_base_copy() {
 	// calls test_name(), which is now the leaf's override.
 	const IRFunction* describe = find_function(ir, "describe");
 	if (describe != nullptr) {
-		const std::vector<std::string> calls = called_names(*describe);
+		const std::vector<std::string> calls = called_names(ir, *describe);
 		check(std::find(calls.begin(), calls.end(), "test_name") != calls.end(),
 			"a base body calling an overridden name reaches the override");
 	}
@@ -1540,7 +1540,7 @@ void test_super_of_the_enclosing_function() {
 	const IRFunction* step = find_function(ir, "step");
 	check(step != nullptr, "the override is there");
 	if (step != nullptr) {
-		const std::vector<std::string> calls = called_names(*step);
+		const std::vector<std::string> calls = called_names(ir, *step);
 		check(std::find(calls.begin(), calls.end(), "@super0.step") != calls.end(),
 			"super() calls the base copy of the enclosing function");
 	}
@@ -1567,7 +1567,7 @@ void test_a_base_static_and_enum_are_reachable() {
 	const IRFunction* f = find_function(ir, "f");
 	check(f != nullptr, "the qualified form compiles");
 	if (f != nullptr) {
-		const std::vector<std::string> calls = called_names(*f);
+		const std::vector<std::string> calls = called_names(ir, *f);
 		check(std::find(calls.begin(), calls.end(), "get_collision_shape") != calls.end(),
 			"Base.static() is a direct call to the merged function");
 		check(count_opcode(*f, IROpcode::VGET) == 0,

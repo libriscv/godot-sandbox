@@ -122,26 +122,29 @@ const char* variant_type_name(IRInstruction::TypeHint hint) {
 	}
 }
 
-std::string IRValue::to_string() const {
+std::string IRValue::to_string(const IRStringTable* strings) const {
 	std::ostringstream oss;
+	const auto name = [&]() -> std::string {
+		return strings ? (*strings)[string_id] : "#" + std::to_string(string_id);
+	};
 	switch (type) {
 		case Type::REGISTER:
-			oss << "r" << std::get<int>(value);
+			oss << "r" << reg_value;
 			break;
 		case Type::IMMEDIATE:
-			oss << std::get<int64_t>(value);
+			oss << imm_value;
 			break;
 		case Type::FLOAT:
-			oss << std::get<double>(value);
+			oss << float_value;
 			break;
 		case Type::LABEL:
-			oss << "@" << std::get<std::string>(value);
+			oss << "@" << name();
 			break;
 		case Type::VARIABLE:
-			oss << "$" << std::get<std::string>(value);
+			oss << "$" << name();
 			break;
 		case Type::STRING:
-			oss << "\"" << std::get<std::string>(value) << "\"";
+			oss << "\"" << name() << "\"";
 			break;
 	}
 	return oss.str();
@@ -152,11 +155,11 @@ bool ir_instruction_is_pure(const IRInstruction& instr) {
 		return false;
 	}
 	if (instr.opcode != IROpcode::GLOBAL_CALL || instr.operands.size() < 2 ||
-		!std::holds_alternative<int64_t>(instr.operands[1].value)) {
+		instr.operands[1].type != IRValue::Type::IMMEDIATE) {
 		return true;
 	}
 	// GLOBAL_CALL result, global_fn, ...
-	return !global_function(static_cast<GlobalFn>(std::get<int64_t>(instr.operands[1].value))).impure;
+	return !global_function(static_cast<GlobalFn>(instr.operands[1].immediate())).impure;
 }
 
 int ir_destination_operand_index(IROpcode op) {
@@ -179,7 +182,7 @@ int ir_destination_register(const IRInstruction& instr) {
 	if (operand.type != IRValue::Type::REGISTER) {
 		return -1;
 	}
-	return std::get<int>(operand.value);
+	return operand.reg_index();
 }
 
 bool ir_reads_operand(const IRInstruction& instr, size_t index) {
@@ -213,12 +216,12 @@ void ir_collect_read_registers(const IRInstruction& instr, std::vector<int>& out
 	}
 	for (size_t i = 0; i < instr.operands.size(); i++) {
 		if (ir_reads_operand(instr, i)) {
-			out.push_back(std::get<int>(instr.operands[i].value));
+			out.push_back(instr.operands[i].reg_index());
 		}
 	}
 }
 
-std::string IRInstruction::to_string() const {
+std::string IRInstruction::to_string(const IRStringTable* strings) const {
 	std::ostringstream oss;
 	oss << ir_opcode_name(opcode);
 
@@ -226,10 +229,10 @@ std::string IRInstruction::to_string() const {
 		// Print GlobalFn name instead of raw enum value.
 		if (opcode == IROpcode::GLOBAL_CALL && i == 1 &&
 			operands[i].type == IRValue::Type::IMMEDIATE) {
-			oss << " " << global_function(static_cast<GlobalFn>(std::get<int64_t>(operands[i].value))).name;
+			oss << " " << global_function(static_cast<GlobalFn>(operands[i].immediate())).name;
 			continue;
 		}
-		oss << " " << operands[i].to_string();
+		oss << " " << operands[i].to_string(strings);
 	}
 
 	return oss.str();

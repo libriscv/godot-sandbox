@@ -57,7 +57,7 @@ Program Parser::parse() {
 		bool is_static = match(TokenType::STATIC);
 
 		if (check(TokenType::EXTENDS)) {
-			const Token extends_token = advance();
+			const Token& extends_token = advance();
 			heads_the_file("extends", extends_token);
 			if (!program.base_class.empty()) {
 				error("A script extends one base", extends_token.line, extends_token.column);
@@ -65,7 +65,7 @@ Program Parser::parse() {
 			program.base_class_line = extends_token.line;
 			program.base_class_column = extends_token.column;
 			if (check(TokenType::STRING)) {
-				const Token path = advance();
+				const Token& path = advance();
 				program.base_class = std::get<std::string>(path.value);
 				program.base_is_path = true;
 			} else {
@@ -149,7 +149,7 @@ Program Parser::parse() {
 			program.enums.push_back(parse_enum());
 			saw_declaration = true;
 		} else if (check(TokenType::CLASS_NAME)) {
-			const Token class_name_token = advance();
+			const Token& class_name_token = advance();
 			heads_the_file("class_name", class_name_token);
 			if (!program.class_name.empty()) {
 				error("A script declares one class_name",
@@ -224,12 +224,12 @@ void Parser::hoist_onready_initializers(Program& program) {
 
 FunctionDecl Parser::parse_function() {
 	FunctionDecl func;
-	Token func_token = consume(TokenType::FUNC, "Expected 'func'");
+	const Token& func_token = consume(TokenType::FUNC, "Expected 'func'");
 	func.line = func_token.line;
 	func.column = func_token.column;
 	func.doc_comment = doc_comment_above(func_token.line);
 
-	Token name = consume(TokenType::IDENTIFIER, "Expected function name");
+	const Token& name = consume(TokenType::IDENTIFIER, "Expected function name");
 	func.name = name.lexeme;
 
 	consume(TokenType::LPAREN, "Expected '(' after function name");
@@ -362,7 +362,7 @@ int64_t Parser::fold_enum_value(const Expr* expr, const EnumDecl& decl, const To
 
 EnumDecl Parser::parse_enum() {
 	EnumDecl decl;
-	Token enum_token = consume(TokenType::ENUM, "Expected 'enum'");
+	const Token& enum_token = consume(TokenType::ENUM, "Expected 'enum'");
 	decl.line = enum_token.line;
 	decl.column = enum_token.column;
 
@@ -377,7 +377,7 @@ EnumDecl Parser::parse_enum() {
 	int64_t next_value = 0;
 	const Expr* next_value_expr = nullptr;
 	while (!check(TokenType::RBRACE) && !is_at_end()) {
-		Token member_name = consume(TokenType::IDENTIFIER, "Expected an enum member name");
+		const Token& member_name = consume(TokenType::IDENTIFIER, "Expected an enum member name");
 
 		EnumDecl::Member member;
 		member.name = member_name.lexeme;
@@ -385,7 +385,7 @@ EnumDecl Parser::parse_enum() {
 		member.column = member_name.column;
 
 		if (match(TokenType::ASSIGN)) {
-			const Token start = peek();
+			const Token& start = peek();
 			ExprPtr initializer = parse_expression();
 			if (holds_engine_constant(initializer.get())) {
 				next_value = 0;
@@ -419,11 +419,11 @@ EnumDecl Parser::parse_enum() {
 
 StructDecl Parser::parse_struct() {
 	StructDecl decl;
-	Token struct_token = consume(TokenType::STRUCT, "Expected 'struct'");
+	const Token& struct_token = consume(TokenType::STRUCT, "Expected 'struct'");
 	decl.line = struct_token.line;
 	decl.column = struct_token.column;
 
-	Token name = consume(TokenType::IDENTIFIER, "Expected struct name");
+	const Token& name = consume(TokenType::IDENTIFIER, "Expected struct name");
 	decl.name = name.lexeme;
 
 	consume(TokenType::COLON, "Expected ':' after struct name");
@@ -444,14 +444,14 @@ StructDecl Parser::parse_struct() {
 		}
 
 		// Only fields; anything else would silently not be part of the Dictionary.
-		Token var_token = consume(TokenType::VAR,
+		const Token& var_token = consume(TokenType::VAR,
 			"A struct body holds only field declarations");
 
 		StructField field;
 		field.line = var_token.line;
 		field.column = var_token.column;
 
-		Token field_name = consume(TokenType::IDENTIFIER, "Expected field name");
+		const Token& field_name = consume(TokenType::IDENTIFIER, "Expected field name");
 		field.name = field_name.lexeme;
 		field.type_hint = parse_type_hint();
 
@@ -475,15 +475,15 @@ StructDecl Parser::parse_struct() {
 StructDecl Parser::parse_class() {
 	StructDecl decl;
 	decl.is_class = true;
-	const Token class_token = consume(TokenType::CLASS, "Expected 'class'");
+	const Token& class_token = consume(TokenType::CLASS, "Expected 'class'");
 	decl.line = class_token.line;
 	decl.column = class_token.column;
 
-	const Token name = consume(TokenType::IDENTIFIER, "Expected a class name after 'class'");
+	const Token& name = consume(TokenType::IDENTIFIER, "Expected a class name after 'class'");
 	decl.name = name.lexeme;
 
 	auto parse_extends = [&]() {
-		const Token base = consume(TokenType::IDENTIFIER,
+		const Token& base = consume(TokenType::IDENTIFIER,
 			"Expected a class name after 'extends'");
 		decl.base_name = base.lexeme;
 		if (check(TokenType::DOT)) {
@@ -511,7 +511,7 @@ StructDecl Parser::parse_class() {
 
 	skip_newlines();
 	if (check(TokenType::EXTENDS)) {
-		const Token extends_token = advance();
+		const Token& extends_token = advance();
 		if (!decl.base_name.empty()) {
 			error("Class '" + decl.name + "' already declares a base class",
 				extends_token.line, extends_token.column);
@@ -546,7 +546,7 @@ StructDecl Parser::parse_class() {
 		}
 
 		if (check(TokenType::CONST)) {
-			const Token const_token = advance();
+			const Token& const_token = advance();
 			if (is_static) {
 				error("'static' says one per class, and a 'const' is already that",
 					const_token.line, const_token.column);
@@ -571,7 +571,7 @@ StructDecl Parser::parse_class() {
 			continue;
 		}
 
-		const Token var_token = consume(TokenType::VAR,
+		const Token& var_token = consume(TokenType::VAR,
 			"A class body holds constant, field and function declarations");
 		if (is_static) {
 			// A static var is one slot shared by every instance; the class has no
@@ -584,7 +584,7 @@ StructDecl Parser::parse_class() {
 		field.line = var_token.line;
 		field.column = var_token.column;
 
-		const Token field_name = consume(TokenType::IDENTIFIER, "Expected a field name");
+		const Token& field_name = consume(TokenType::IDENTIFIER, "Expected a field name");
 		field.name = field_name.lexeme;
 		field.type_hint = parse_type_hint();
 
@@ -638,7 +638,7 @@ std::vector<Parameter> Parser::parse_parameters() {
 
 	bool seen_default = false;
 	do {
-		Token param_name = consume(TokenType::IDENTIFIER, "Expected parameter name");
+		const Token& param_name = consume(TokenType::IDENTIFIER, "Expected parameter name");
 		Parameter param;
 		param.name = param_name.lexeme;
 		param.line = param_name.line;
@@ -726,7 +726,7 @@ bool Parser::at_inline_suite_end() const {
 
 StmtPtr Parser::parse_statement() {
 	// Central source-position assignment; adding a statement kind cannot forget.
-	const Token start = peek();
+	const Token& start = peek();
 	StmtPtr stmt = parse_statement_impl();
 	if (stmt && stmt->line == 0) {
 		stmt->line = start.line;
@@ -814,7 +814,7 @@ bool Parser::at_property_accessor() const {
 }
 
 StmtPtr Parser::parse_var_decl(bool is_const) {
-	Token name = consume(TokenType::IDENTIFIER, "Expected variable name");
+	const Token& name = consume(TokenType::IDENTIFIER, "Expected variable name");
 
 	// ':' is ambiguous: type hint, accessor block, or bare `var x:`.
 	std::string type_hint;
@@ -890,7 +890,7 @@ void Parser::parse_one_property_accessor(VarDeclStmt& decl) {
 	if (!at_property_accessor()) {
 		error("Expected 'set' or 'get' in a property declaration");
 	}
-	const Token keyword = advance();
+	const Token& keyword = advance();
 	const bool is_setter = keyword.lexeme == "set";
 
 	if (is_setter ? (!decl.setter_name.empty() || decl.setter_body)
@@ -899,7 +899,7 @@ void Parser::parse_one_property_accessor(VarDeclStmt& decl) {
 	}
 
 	if (match(TokenType::ASSIGN)) {
-		const Token target = consume(TokenType::IDENTIFIER,
+		const Token& target = consume(TokenType::IDENTIFIER,
 			"Expected a function name after '" + keyword.lexeme + " ='");
 		(is_setter ? decl.setter_name : decl.getter_name) = target.lexeme;
 		return;
@@ -913,7 +913,7 @@ void Parser::parse_one_property_accessor(VarDeclStmt& decl) {
 
 	if (match(TokenType::LPAREN)) {
 		if (is_setter || !check(TokenType::RPAREN)) {
-			const Token param = consume(TokenType::IDENTIFIER,
+			const Token& param = consume(TokenType::IDENTIFIER,
 				"Expected the assigned value's name in 'set(...)'");
 			Parameter parameter;
 			parameter.name = param.lexeme;
@@ -973,7 +973,7 @@ StmtPtr Parser::parse_while_stmt() {
 }
 
 StmtPtr Parser::parse_for_stmt() {
-	Token var_name = consume(TokenType::IDENTIFIER, "Expected variable name in for loop");
+	const Token& var_name = consume(TokenType::IDENTIFIER, "Expected variable name in for loop");
 	// Loop-variable type hint: parsed and dropped.
 	parse_type_hint();
 	consume(TokenType::IN, "Expected 'in' after for loop variable");
@@ -986,7 +986,7 @@ StmtPtr Parser::parse_for_stmt() {
 }
 
 StmtPtr Parser::parse_match_stmt(bool is_switch) {
-	const Token keyword = previous();
+	const Token& keyword = previous();
 	const std::string kw = is_switch ? "switch" : "match";
 
 	ExprPtr subject = parse_expression();
@@ -1059,7 +1059,7 @@ MatchPatternPtr Parser::parse_match_pattern() {
 	}
 
 	if (match(TokenType::VAR)) {
-		Token name = consume(TokenType::IDENTIFIER, "Expected a name after 'var' in a pattern");
+		const Token& name = consume(TokenType::IDENTIFIER, "Expected a name after 'var' in a pattern");
 		pattern->kind = MatchPattern::Kind::BIND;
 		pattern->name = name.lexeme;
 		return pattern;
@@ -1086,7 +1086,7 @@ bool Parser::parse_pattern_rest(const char* what) {
 	}
 	match(TokenType::COMMA);
 	if (!check(TokenType::RBRACKET) && !check(TokenType::RBRACE)) {
-		Token at = peek();
+		const Token& at = peek();
 		throw CompilerException::parser_error(
 			std::string("'..' has to be the last entry of ") + what, at.line, at.column);
 	}
@@ -1095,7 +1095,7 @@ bool Parser::parse_pattern_rest(const char* what) {
 
 MatchPatternPtr Parser::parse_match_array_pattern() {
 	auto pattern = std::make_unique<MatchPattern>();
-	Token open_bracket = consume(TokenType::LBRACKET, "Expected '[' to start an array pattern");
+	const Token& open_bracket = consume(TokenType::LBRACKET, "Expected '[' to start an array pattern");
 	pattern->kind = MatchPattern::Kind::ARRAY;
 	pattern->line = open_bracket.line;
 	pattern->column = open_bracket.column;
@@ -1117,7 +1117,7 @@ MatchPatternPtr Parser::parse_match_array_pattern() {
 
 MatchPatternPtr Parser::parse_match_dictionary_pattern() {
 	auto pattern = std::make_unique<MatchPattern>();
-	Token open_brace = consume(TokenType::LBRACE, "Expected '{' to start a dictionary pattern");
+	const Token& open_brace = consume(TokenType::LBRACE, "Expected '{' to start a dictionary pattern");
 	pattern->kind = MatchPattern::Kind::DICTIONARY;
 	pattern->line = open_brace.line;
 	pattern->column = open_brace.column;
@@ -1271,7 +1271,7 @@ ExprPtr Parser::parse_expression() {
 
 	// `as` is the loosest operator: casts the entire preceding expression.
 	while (match(TokenType::AS)) {
-		const Token type_token = consume(TokenType::IDENTIFIER, "Expected a type name after 'as'");
+		const Token& type_token = consume(TokenType::IDENTIFIER, "Expected a type name after 'as'");
 		skip_type_arguments();
 		const Expr& start = *expr;
 		expr = make_like<CastExpr>(start, std::move(expr), type_token.lexeme);
@@ -1319,7 +1319,7 @@ ExprPtr Parser::parse_and_expression() {
 ExprPtr Parser::parse_not() {
 	// `not` binds looser than comparison: `not a == b` is `not (a == b)`.
 	if (match(TokenType::NOT)) {
-		Token op = previous();
+		const Token& op = previous();
 		return make_at<UnaryExpr>(op, UnaryExpr::Op::NOT, parse_not());
 	}
 	return parse_inclusion();
@@ -1354,7 +1354,7 @@ ExprPtr Parser::parse_equality() {
 	ExprPtr left = parse_comparison();
 
 	while (match_one_of({TokenType::EQUAL, TokenType::NOT_EQUAL})) {
-		Token op = previous();
+		const Token& op = previous();
 		ExprPtr right = parse_comparison();
 
 		BinaryExpr::Op bin_op = (op.type == TokenType::EQUAL) ? BinaryExpr::Op::EQ : BinaryExpr::Op::NEQ;
@@ -1368,7 +1368,7 @@ ExprPtr Parser::parse_comparison() {
 	ExprPtr left = parse_bit_or();
 
 	while (match_one_of({TokenType::LESS, TokenType::LESS_EQUAL, TokenType::GREATER, TokenType::GREATER_EQUAL})) {
-		Token op = previous();
+		const Token& op = previous();
 		ExprPtr right = parse_bit_or();
 
 		BinaryExpr::Op bin_op;
@@ -1423,7 +1423,7 @@ ExprPtr Parser::parse_shift() {
 	ExprPtr left = parse_term();
 
 	while (match_one_of({TokenType::SHIFT_LEFT, TokenType::SHIFT_RIGHT})) {
-		Token op = previous();
+		const Token& op = previous();
 		ExprPtr right = parse_term();
 
 		BinaryExpr::Op bin_op = (op.type == TokenType::SHIFT_LEFT) ? BinaryExpr::Op::SHL : BinaryExpr::Op::SHR;
@@ -1437,7 +1437,7 @@ ExprPtr Parser::parse_term() {
 	ExprPtr left = parse_factor();
 
 	while (match_one_of({TokenType::PLUS, TokenType::MINUS})) {
-		Token op = previous();
+		const Token& op = previous();
 		ExprPtr right = parse_factor();
 
 		BinaryExpr::Op bin_op = (op.type == TokenType::PLUS) ? BinaryExpr::Op::ADD : BinaryExpr::Op::SUB;
@@ -1451,7 +1451,7 @@ ExprPtr Parser::parse_factor() {
 	ExprPtr left = parse_type_test();
 
 	while (match_one_of({TokenType::MULTIPLY, TokenType::DIVIDE, TokenType::MODULO})) {
-		Token op = previous();
+		const Token& op = previous();
 		ExprPtr right = parse_type_test();
 
 		BinaryExpr::Op bin_op;
@@ -1471,12 +1471,12 @@ ExprPtr Parser::parse_factor() {
 ExprPtr Parser::parse_unary() {
 	// `await` at unary precedence, matching GDScript.
 	if (check(TokenType::AWAIT)) {
-		Token op = advance();
+		const Token& op = advance();
 		m_saw_await = true;
 		return make_at<AwaitExpr>(op, parse_unary());
 	}
 	if (match_one_of({TokenType::MINUS, TokenType::BIT_NOT, TokenType::PLUS})) {
-		Token op = previous();
+		const Token& op = previous();
 		ExprPtr operand = parse_unary();
 
 		switch (op.type) {
@@ -1511,7 +1511,7 @@ ExprPtr Parser::parse_type_test() {
 	while (check(TokenType::IS)) {
 		advance();
 		const bool negated = match(TokenType::NOT);
-		const Token type_token = consume(TokenType::IDENTIFIER, "Expected a type name after 'is'");
+		const Token& type_token = consume(TokenType::IDENTIFIER, "Expected a type name after 'is'");
 		const Expr& start = *left;
 		left = make_like<TypeTestExpr>(start, std::move(left), type_token.lexeme);
 		if (negated) {
@@ -1548,7 +1548,7 @@ ExprPtr Parser::parse_call() {
 					std::move(arguments), true);
 			}
 		} else if (match(TokenType::DOT)) {
-			Token member = consume(TokenType::IDENTIFIER, "Expected property or method name after '.'");
+			const Token& member = consume(TokenType::IDENTIFIER, "Expected property or method name after '.'");
 
 			if (match(TokenType::LPAREN)) {
 				std::vector<ExprPtr> arguments;
@@ -1577,7 +1577,7 @@ ExprPtr Parser::parse_call() {
 // $Name, $Path/To/Node, $"quoted/path", $%Unique/Child, %Unique.
 // Segments after the first are IDENTIFIER / DIVIDE token pairs.
 ExprPtr Parser::parse_node_path() {
-	const Token marker = advance();
+	const Token& marker = advance();
 	const bool unique = marker.type == TokenType::MODULO;
 
 	std::string path;
@@ -1592,7 +1592,7 @@ ExprPtr Parser::parse_node_path() {
 			} else if (first && unique) {
 				prefix = "%";
 			}
-			const Token name = consume(TokenType::IDENTIFIER,
+			const Token& name = consume(TokenType::IDENTIFIER,
 				std::string("Expected a node name after '") +
 				(first ? (unique ? "%" : "$") : "/") + "'");
 			if (!first) {
@@ -1612,7 +1612,7 @@ ExprPtr Parser::parse_node_path() {
 }
 
 ExprPtr Parser::parse_lambda() {
-	const Token func_token = consume(TokenType::FUNC, "Expected 'func'");
+	const Token& func_token = consume(TokenType::FUNC, "Expected 'func'");
 
 	auto decl = std::make_unique<FunctionDecl>();
 	decl->line = func_token.line;
@@ -1650,7 +1650,7 @@ ExprPtr Parser::parse_primary() {
 		return make_at<LiteralExpr>(previous(), false);
 	}
 	if (match(TokenType::NULL_VAL)) {
-		const Token token = previous();
+		const Token& token = previous();
 		auto node = LiteralExpr::null();
 		node->line = token.line;
 		node->column = token.column;
@@ -1658,22 +1658,22 @@ ExprPtr Parser::parse_primary() {
 	}
 
 	if (match(TokenType::INTEGER)) {
-		Token num = previous();
+		const Token& num = previous();
 		return make_at<LiteralExpr>(num, std::get<int64_t>(num.value));
 	}
 
 	if (match(TokenType::FLOAT)) {
-		Token num = previous();
+		const Token& num = previous();
 		return make_at<LiteralExpr>(num, std::get<double>(num.value));
 	}
 
 	if (match(TokenType::STRING)) {
-		Token str = previous();
+		const Token& str = previous();
 		return make_at<LiteralExpr>(str, std::get<std::string>(str.value));
 	}
 
 	if (match(TokenType::STRING_NAME) || match(TokenType::NODE_PATH)) {
-		Token str = previous();
+		const Token& str = previous();
 		auto node = make_at<LiteralExpr>(str, std::get<std::string>(str.value));
 		node->string_type = str.type == TokenType::STRING_NAME
 			? LiteralExpr::StringType::STRING_NAME
@@ -1687,7 +1687,7 @@ ExprPtr Parser::parse_primary() {
 	}
 
 	if (match(TokenType::IDENTIFIER)) {
-		Token name = previous();
+		const Token& name = previous();
 		return make_at<VariableExpr>(name, name.lexeme);
 	}
 
@@ -1698,7 +1698,7 @@ ExprPtr Parser::parse_primary() {
 	}
 
 	if (match(TokenType::LBRACKET)) {
-		const Token bracket = previous();
+		const Token& bracket = previous();
 		std::vector<ExprPtr> elements;
 
 		if (!check(TokenType::RBRACKET)) {
@@ -1715,7 +1715,7 @@ ExprPtr Parser::parse_primary() {
 	}
 
 	if (match(TokenType::LBRACE)) {
-		const Token brace = previous();
+		const Token& brace = previous();
 		std::vector<std::pair<ExprPtr, ExprPtr>> elements;
 
 		enum class DictStyle { UNKNOWN, LUA, PYTHON };
@@ -1737,7 +1737,7 @@ ExprPtr Parser::parse_primary() {
 						error("Expected '=' after dictionary key. "
 							"Mixing dictionary styles is not allowed");
 					}
-					const Token name = advance();
+					const Token& name = advance();
 					key = name.type == TokenType::IDENTIFIER
 						? make_at<LiteralExpr>(name, name.lexeme)
 						: make_at<LiteralExpr>(name, std::get<std::string>(name.value));
@@ -1791,22 +1791,22 @@ bool Parser::check(TokenType type) const {
 	return peek().type == type;
 }
 
-Token Parser::advance() {
+const Token& Parser::advance() {
 	if (!is_at_end()) m_current++;
 	return previous();
 }
 
-Token Parser::peek() const {
+const Token& Parser::peek() const {
 	return m_tokens[m_current];
 }
 
-Token Parser::peek_ahead(size_t offset) const {
+const Token& Parser::peek_ahead(size_t offset) const {
 	const size_t index = m_current + offset;
 	// Clamp to EOF; stream always ends in EOF_TOKEN.
 	return m_tokens[index < m_tokens.size() ? index : m_tokens.size() - 1];
 }
 
-Token Parser::previous() const {
+const Token& Parser::previous() const {
 	return m_tokens[m_current - 1];
 }
 
@@ -1814,7 +1814,7 @@ bool Parser::is_at_end() const {
 	return peek().type == TokenType::EOF_TOKEN;
 }
 
-Token Parser::consume(TokenType type, const std::string& message) {
+const Token& Parser::consume(TokenType type, const std::string& message) {
 	if (check(type)) return advance();
 
 	error(message + ", but found " + peek().describe());
@@ -1841,7 +1841,7 @@ void Parser::synchronize() {
 }
 
 void Parser::error(const std::string& message) {
-	Token token = peek();
+	const Token& token = peek();
 	throw CompilerException(ErrorType::PARSER_ERROR, message, token.line, token.column);
 }
 
@@ -1879,7 +1879,7 @@ std::string Parser::parse_type_hint() {
 
 // Qualified names (A.B) are dropped; only the engine can resolve them.
 std::string Parser::parse_type_name() {
-	Token type_token = consume(TokenType::IDENTIFIER, "Expected type name");
+	const Token& type_token = consume(TokenType::IDENTIFIER, "Expected type name");
 	bool qualified = false;
 	while (match(TokenType::DOT)) {
 		consume(TokenType::IDENTIFIER, "Expected a type name after '.'");
@@ -1929,7 +1929,7 @@ void Parser::skip_type_arguments() {
 bool Parser::parse_attribute(ExportHint& hint, bool* is_onready) {
 	consume(TokenType::AT, "Expected '@' for attribute");
 
-	const Token name = consume(TokenType::IDENTIFIER, "Expected an attribute name after '@'");
+	const Token& name = consume(TokenType::IDENTIFIER, "Expected an attribute name after '@'");
 	const std::vector<ExportArgument> arguments = parse_attribute_arguments();
 
 	// Inspector-section annotations; not tied to a declaration.
@@ -2048,12 +2048,12 @@ std::vector<ExportArgument> Parser::parse_attribute_arguments() {
 
 SignalDecl Parser::parse_signal() {
 	SignalDecl decl;
-	const Token signal_token = consume(TokenType::SIGNAL, "Expected 'signal'");
+	const Token& signal_token = consume(TokenType::SIGNAL, "Expected 'signal'");
 	decl.line = signal_token.line;
 	decl.column = signal_token.column;
 	decl.doc_comment = doc_comment_above(signal_token.line);
 
-	const Token name = consume(TokenType::IDENTIFIER, "Expected a signal name after 'signal'");
+	const Token& name = consume(TokenType::IDENTIFIER, "Expected a signal name after 'signal'");
 	decl.name = name.lexeme;
 
 	if (match(TokenType::LPAREN)) {

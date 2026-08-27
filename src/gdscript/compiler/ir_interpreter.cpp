@@ -90,7 +90,7 @@ void IRInterpreter::execute_function(const IRFunction& func, ExecutionContext& c
 		const auto& instr = func.instructions[i];
 		if (instr.opcode == IROpcode::LABEL && !instr.operands.empty()) {
 			if (instr.operands[0].type == IRValue::Type::LABEL) {
-				ctx.labels[std::get<std::string>(instr.operands[0].value)] = i;
+				ctx.labels[label_text(instr.operands[0])] = i;
 			}
 		}
 	}
@@ -134,8 +134,8 @@ void IRInterpreter::jump_to_label(const IRInstruction& instr, const std::string&
 void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruction& instr, ExecutionContext& ctx) {
 	switch (instr.opcode) {
 		case IROpcode::LOAD_IMM: {
-			int reg = std::get<int>(instr.operands[0].value);
-			int64_t imm = std::get<int64_t>(instr.operands[1].value);
+			int reg = instr.operands[0].reg_index();
+			int64_t imm = instr.operands[1].immediate();
 			ctx.registers[reg] = imm;
 			break;
 		}
@@ -146,27 +146,27 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 
 		case IROpcode::LOAD_NIL: {
 			// Integer zero; interpreter's Value has no NIL.
-			int reg = std::get<int>(instr.operands[0].value);
+			int reg = instr.operands[0].reg_index();
 			ctx.registers[reg] = int64_t(0);
 			break;
 		}
 
 		case IROpcode::LOAD_BOOL: {
-			int reg = std::get<int>(instr.operands[0].value);
-			int64_t imm = std::get<int64_t>(instr.operands[1].value);
+			int reg = instr.operands[0].reg_index();
+			int64_t imm = instr.operands[1].immediate();
 			ctx.registers[reg] = (imm != 0);
 			break;
 		}
 
 		case IROpcode::LOAD_FLOAT_IMM: {
-			int reg = std::get<int>(instr.operands[0].value);
-			ctx.registers[reg] = std::get<double>(instr.operands[1].value);
+			int reg = instr.operands[0].reg_index();
+			ctx.registers[reg] = instr.operands[1].float_number();
 			break;
 		}
 
 		case IROpcode::LOAD_STRING: {
-			int reg = std::get<int>(instr.operands[0].value);
-			const int64_t index = std::get<int64_t>(instr.operands[1].value);
+			int reg = instr.operands[0].reg_index();
+			const int64_t index = instr.operands[1].immediate();
 			if (index < 0 || static_cast<size_t>(index) >= m_program.string_constants.size()) {
 				throw CompilerException(ErrorType::OPTIMIZER_ERROR, "String constant index out of range");
 			}
@@ -175,8 +175,8 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		}
 
 		case IROpcode::LOAD_GLOBAL: {
-			int reg = std::get<int>(instr.operands[0].value);
-			const int64_t index = std::get<int64_t>(instr.operands[1].value);
+			int reg = instr.operands[0].reg_index();
+			const int64_t index = instr.operands[1].immediate();
 			if (index < 0 || static_cast<size_t>(index) >= m_globals.size()) {
 				throw CompilerException(ErrorType::OPTIMIZER_ERROR, "Global index out of range");
 			}
@@ -185,8 +185,8 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		}
 
 		case IROpcode::STORE_GLOBAL: {
-			const int64_t index = std::get<int64_t>(instr.operands[0].value);
-			int reg = std::get<int>(instr.operands[1].value);
+			const int64_t index = instr.operands[0].immediate();
+			int reg = instr.operands[1].reg_index();
 			if (index < 0 || static_cast<size_t>(index) >= m_globals.size()) {
 				throw CompilerException(ErrorType::OPTIMIZER_ERROR, "Global index out of range");
 			}
@@ -195,8 +195,8 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		}
 
 		case IROpcode::CONVERT: {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src = std::get<int>(instr.operands[1].value);
+			int dst = instr.operands[0].reg_index();
+			int src = instr.operands[1].reg_index();
 			Value src_value = get_register(ctx, src);
 			if (instr.type_hint == Variant::FLOAT) {
 				ctx.registers[dst] = get_double(src_value);
@@ -211,8 +211,8 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		}
 
 		case IROpcode::COERCE: {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src = std::get<int>(instr.operands[1].value);
+			int dst = instr.operands[0].reg_index();
+			int src = instr.operands[1].reg_index();
 			Value src_value = get_register(ctx, src);
 			if (instr.type_hint == Variant::FLOAT) {
 				ctx.registers[dst] = get_double(src_value);
@@ -229,8 +229,8 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		}
 
 		case IROpcode::MOVE: {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src = std::get<int>(instr.operands[1].value);
+			int dst = instr.operands[0].reg_index();
+			int src = instr.operands[1].reg_index();
 			// Copy before write to avoid iterator invalidation.
 			Value src_value = get_register(ctx, src);
 			ctx.registers[dst] = src_value;
@@ -247,9 +247,9 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::BIT_XOR:
 		case IROpcode::SHL:
 		case IROpcode::SHR: {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src1 = std::get<int>(instr.operands[1].value);
-			int src2 = std::get<int>(instr.operands[2].value);
+			int dst = instr.operands[0].reg_index();
+			int src1 = instr.operands[1].reg_index();
+			int src2 = instr.operands[2].reg_index();
 			// Copy before write to avoid iterator invalidation.
 			Value val1 = get_register(ctx, src1);
 			Value val2 = get_register(ctx, src2);
@@ -259,9 +259,9 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 
 		case IROpcode::TYPE_TEST:
 		case IROpcode::TYPE_TEST_MASK: {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src = std::get<int>(instr.operands[1].value);
-			const int64_t tested = std::get<int64_t>(instr.operands[2].value);
+			int dst = instr.operands[0].reg_index();
+			int src = instr.operands[1].reg_index();
+			const int64_t tested = instr.operands[2].immediate();
 			const Value& value = get_register(ctx, src);
 			// Mirror the backend's Variant type-tag comparison.
 			int64_t actual = Variant::NIL;
@@ -281,8 +281,8 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		}
 
 		case IROpcode::TYPE_OF: {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src = std::get<int>(instr.operands[1].value);
+			int dst = instr.operands[0].reg_index();
+			int src = instr.operands[1].reg_index();
 			const Value& value = get_register(ctx, src);
 			// Match the backend's Variant type-tag read.
 			int64_t tag = Variant::NIL;
@@ -325,8 +325,8 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::NEG:
 		case IROpcode::NOT:
 		case IROpcode::BIT_NOT: {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src = std::get<int>(instr.operands[1].value);
+			int dst = instr.operands[0].reg_index();
+			int src = instr.operands[1].reg_index();
 			ctx.registers[dst] = unary_op(get_register(ctx, src), instr.opcode);
 			break;
 		}
@@ -337,9 +337,9 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::CMP_LTE:
 		case IROpcode::CMP_GT:
 		case IROpcode::CMP_GTE: {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src1 = std::get<int>(instr.operands[1].value);
-			int src2 = std::get<int>(instr.operands[2].value);
+			int dst = instr.operands[0].reg_index();
+			int src1 = instr.operands[1].reg_index();
+			int src2 = instr.operands[2].reg_index();
 			Value val1 = get_register(ctx, src1);
 			Value val2 = get_register(ctx, src2);
 			ctx.registers[dst] = compare_op(val1, val2, instr.opcode);
@@ -347,18 +347,18 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		}
 
 		case IROpcode::AND: {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src1 = std::get<int>(instr.operands[1].value);
-			int src2 = std::get<int>(instr.operands[2].value);
+			int dst = instr.operands[0].reg_index();
+			int src1 = instr.operands[1].reg_index();
+			int src2 = instr.operands[2].reg_index();
 			bool result = get_bool(get_register(ctx, src1)) && get_bool(get_register(ctx, src2));
 			ctx.registers[dst] = result ? int64_t(1) : int64_t(0);
 			break;
 		}
 
 		case IROpcode::OR: {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src1 = std::get<int>(instr.operands[1].value);
-			int src2 = std::get<int>(instr.operands[2].value);
+			int dst = instr.operands[0].reg_index();
+			int src1 = instr.operands[1].reg_index();
+			int src2 = instr.operands[2].reg_index();
 			bool result = get_bool(get_register(ctx, src1)) || get_bool(get_register(ctx, src2));
 			ctx.registers[dst] = result ? int64_t(1) : int64_t(0);
 			break;
@@ -369,21 +369,21 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 				break;
 
 		case IROpcode::JUMP:
-			jump_to_label(instr, std::get<std::string>(instr.operands[0].value), ctx);
+			jump_to_label(instr, label_text(instr.operands[0]), ctx);
 			break;
 
 		case IROpcode::BRANCH_ZERO: {
-			int reg = std::get<int>(instr.operands[0].value);
+			int reg = instr.operands[0].reg_index();
 			if (!get_bool(get_register(ctx, reg))) {
-				jump_to_label(instr, std::get<std::string>(instr.operands[1].value), ctx);
+				jump_to_label(instr, label_text(instr.operands[1]), ctx);
 			}
 			break;
 		}
 
 		case IROpcode::BRANCH_NOT_ZERO: {
-			int reg = std::get<int>(instr.operands[0].value);
+			int reg = instr.operands[0].reg_index();
 			if (get_bool(get_register(ctx, reg))) {
-				jump_to_label(instr, std::get<std::string>(instr.operands[1].value), ctx);
+				jump_to_label(instr, label_text(instr.operands[1]), ctx);
 			}
 			break;
 		}
@@ -395,41 +395,41 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::BRANCH_LTE:
 		case IROpcode::BRANCH_GT:
 		case IROpcode::BRANCH_GTE: {
-			int lhs = std::get<int>(instr.operands[0].value);
-			int rhs = std::get<int>(instr.operands[1].value);
+			int lhs = instr.operands[0].reg_index();
+			int rhs = instr.operands[1].reg_index();
 			Value left = get_register(ctx, lhs);
 			Value right = get_register(ctx, rhs);
 			if (fused_branch_taken(left, right, instr.opcode)) {
-				jump_to_label(instr, std::get<std::string>(instr.operands[2].value), ctx);
+				jump_to_label(instr, label_text(instr.operands[2]), ctx);
 			}
 			break;
 		}
 
 		case IROpcode::SWITCH: {
 			// Only integers dispatch; non-integers (incl. whole-valued floats) fall through.
-			const Value subject = get_register(ctx, std::get<int>(instr.operands[0].value));
+			const Value subject = get_register(ctx, instr.operands[0].reg_index());
 			if (!std::holds_alternative<int64_t>(subject)) {
 				break;
 			}
-			const int64_t base = std::get<int64_t>(instr.operands[1].value);
-			const int64_t count = std::get<int64_t>(instr.operands[2].value);
+			const int64_t base = instr.operands[1].immediate();
+			const int64_t count = instr.operands[2].immediate();
 			const int64_t value = std::get<int64_t>(subject);
 			if (value < base || value >= base + count) {
 				break;
 			}
 			const size_t entry = 3 + static_cast<size_t>(value - base);
-			jump_to_label(instr, std::get<std::string>(instr.operands[entry].value), ctx);
+			jump_to_label(instr, label_text(instr.operands[entry]), ctx);
 			break;
 		}
 
 		case IROpcode::CALL: {
-			std::string func_name = std::get<std::string>(instr.operands[0].value);
-			int result_reg = std::get<int>(instr.operands[1].value);
-			int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+			std::string func_name = label_text(instr.operands[0]);
+			int result_reg = instr.operands[1].reg_index();
+			int arg_count = static_cast<int>(instr.operands[2].immediate());
 
 			std::vector<Value> args;
 			for (int i = 0; i < arg_count; i++) {
-				int arg_reg = std::get<int>(instr.operands[3 + i].value);
+				int arg_reg = instr.operands[3 + i].reg_index();
 				args.push_back(get_register(ctx, arg_reg));
 			}
 
@@ -444,14 +444,14 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		}
 
 		case IROpcode::GLOBAL_CALL: {
-			const int result_reg = std::get<int>(instr.operands[0].value);
-			const GlobalFn fn = static_cast<GlobalFn>(std::get<int64_t>(instr.operands[1].value));
-			const int arg_count = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+			const int result_reg = instr.operands[0].reg_index();
+			const GlobalFn fn = static_cast<GlobalFn>(instr.operands[1].immediate());
+			const int arg_count = static_cast<int>(instr.operands[3].immediate());
 
 			std::vector<Value> args;
 			args.reserve(arg_count);
 			for (int i = 0; i < arg_count; i++) {
-				args.push_back(get_register(ctx, std::get<int>(instr.operands[4 + i].value)));
+				args.push_back(get_register(ctx, instr.operands[4 + i].reg_index()));
 			}
 
 			const GlobalFunction* info = &global_function(fn);

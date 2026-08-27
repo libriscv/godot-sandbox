@@ -34,7 +34,7 @@ void RegisterAllocator::compute_next_use(const IRFunction& func) {
 
 		for (const IRValue& operand : instr.operands) {
 			if (operand.type == IRValue::Type::REGISTER) {
-				int vreg = std::get<int>(operand.value);
+				int vreg = operand.reg_index();
 				m_vreg_all_uses[vreg].push_back(instr_idx);
 			}
 		}

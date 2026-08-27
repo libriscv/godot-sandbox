@@ -38,6 +38,8 @@ private:
 
 	// Throws on missing label (broken IR, not a fallthrough).
 	void jump_to_label(const IRInstruction& instr, const std::string& label, ExecutionContext& ctx);
+	// Resolves an operand's interned name.
+	const std::string& label_text(const IRValue& value) const { return m_program.strings[value.string_id]; }
 
 	int64_t get_int(const Value& v) const;
 	double get_double(const Value& v) const;

@@ -101,12 +101,12 @@ private:
 	bool match(TokenType type);
 	bool match_one_of(std::initializer_list<TokenType> types);
 	bool check(TokenType type) const;
-	Token advance();
-	Token peek() const;
-	Token peek_ahead(size_t offset) const;
-	Token previous() const;
+	const Token& advance();
+	const Token& peek() const;
+	const Token& peek_ahead(size_t offset) const;
+	const Token& previous() const;
 	bool is_at_end() const;
-	Token consume(TokenType type, const std::string& message);
+	const Token& consume(TokenType type, const std::string& message);
 	void synchronize();
 	void error(const std::string& message);
 	// Reports at a position already consumed, rather than at peek().

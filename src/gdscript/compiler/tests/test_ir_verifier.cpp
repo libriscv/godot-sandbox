@@ -71,11 +71,14 @@ void test_corpus_verifies() {
 
 // -= Broken IR has to be rejected =-
 
+// Hand-built IR has no IRProgram to intern into.
+IRStringTable test_strings;
+
 // Runs the verifier and requires it to reject, with `expected` appearing in the
 // message so a check cannot pass for the wrong reason.
 void expect_rejected(const IRFunction& func, const std::string& expected) {
 	try {
-		ir_verify(func, "a test");
+		ir_verify(func, "a test", &test_strings);
 	} catch (const CompilerException& e) {
 		const std::string message = e.what();
 		if (message.find(expected) == std::string::npos) {
@@ -172,9 +175,9 @@ void test_undefined_register() {
 		func.name = "one_path";
 		func.max_registers = 3;
 		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(1), IRValue::imm(0));
-		func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(1), IRValue::label("skip"));
+		func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(1), IRValue::label(test_strings.intern("skip")));
 		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(2), IRValue::imm(5));
-		func.instructions.emplace_back(IROpcode::LABEL, IRValue::label("skip"));
+		func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(test_strings.intern("skip")));
 		func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(0), IRValue::reg(2));
 		func.instructions.emplace_back(IROpcode::RETURN);
 		expect_rejected(func, "r2 is read but is not defined on every path");
@@ -187,9 +190,9 @@ void test_undefined_register() {
 		func.max_registers = 3;
 		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(1), IRValue::imm(0));
 		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(2), IRValue::imm(1));
-		func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(1), IRValue::label("skip"));
+		func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(1), IRValue::label(test_strings.intern("skip")));
 		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(2), IRValue::imm(5));
-		func.instructions.emplace_back(IROpcode::LABEL, IRValue::label("skip"));
+		func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(test_strings.intern("skip")));
 		func.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(0), IRValue::reg(2));
 		func.instructions.emplace_back(IROpcode::RETURN);
 		ir_verify(func, "a test");
@@ -218,7 +221,7 @@ void test_labels() {
 	{
 		IRFunction func = good_function();
 		func.instructions.insert(func.instructions.begin() + 2,
-			IRInstruction(IROpcode::JUMP, IRValue::label("nowhere")));
+			IRInstruction(IROpcode::JUMP, IRValue::label(test_strings.intern("nowhere"))));
 		expect_rejected(func, "branch target 'nowhere' has no label");
 	}
 
@@ -226,9 +229,9 @@ void test_labels() {
 	{
 		IRFunction func = good_function();
 		func.instructions.insert(func.instructions.begin(),
-			IRInstruction(IROpcode::LABEL, IRValue::label("twice")));
+			IRInstruction(IROpcode::LABEL, IRValue::label(test_strings.intern("twice"))));
 		func.instructions.insert(func.instructions.begin() + 2,
-			IRInstruction(IROpcode::LABEL, IRValue::label("twice")));
+			IRInstruction(IROpcode::LABEL, IRValue::label(test_strings.intern("twice"))));
 		expect_rejected(func, "defined more than once");
 	}
 
@@ -284,7 +287,7 @@ void test_call_shape() {
 		func.max_registers = 2;
 		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(1), IRValue::imm(1));
 		IRInstruction call(IROpcode::CALL);
-		call.operands.push_back(IRValue::str("other"));
+		call.operands.push_back(IRValue::str(test_strings.intern("other")));
 		call.operands.push_back(IRValue::reg(0));
 		call.operands.push_back(IRValue::imm(2)); // says two, passes one
 		call.operands.push_back(IRValue::reg(1));
@@ -301,7 +304,7 @@ void test_call_shape() {
 		func.max_registers = 2;
 		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(1), IRValue::imm(1));
 		IRInstruction call(IROpcode::CALL);
-		call.operands.push_back(IRValue::str("other"));
+		call.operands.push_back(IRValue::str(test_strings.intern("other")));
 		call.operands.push_back(IRValue::reg(1));
 		call.operands.push_back(IRValue::imm(1));
 		call.operands.push_back(IRValue::reg(1));
@@ -317,7 +320,7 @@ void test_call_shape() {
 		func.max_registers = 2;
 		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(1), IRValue::imm(1));
 		IRInstruction call(IROpcode::CALL);
-		call.operands.push_back(IRValue::str("other"));
+		call.operands.push_back(IRValue::str(test_strings.intern("other")));
 		call.operands.push_back(IRValue::reg(0));
 		call.operands.push_back(IRValue::imm(1));
 		call.operands.push_back(IRValue::reg(1));
@@ -408,9 +411,9 @@ void test_type_hints() {
 		func.max_registers = 4;
 		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(3), IRValue::imm(0));
 		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(1), IRValue::imm(1));
-		func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(3), IRValue::label("skip"));
+		func.instructions.emplace_back(IROpcode::BRANCH_ZERO, IRValue::reg(3), IRValue::label(test_strings.intern("skip")));
 		func.instructions.emplace_back(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(1), IRValue::fimm(1.5));
-		func.instructions.emplace_back(IROpcode::LABEL, IRValue::label("skip"));
+		func.instructions.emplace_back(IROpcode::LABEL, IRValue::label(test_strings.intern("skip")));
 		func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(2), IRValue::imm(2));
 		auto& add = func.instructions.emplace_back(IROpcode::ADD, IRValue::reg(0), IRValue::reg(1), IRValue::reg(2));
 		add.type_hint = Variant::INT;

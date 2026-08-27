@@ -50,16 +50,16 @@ std::string ir_to_string(const IRFunction& func) {
 		ss << "  " << i << ": ";
 		switch (instr.opcode) {
 			case IROpcode::LOAD_IMM:
-				ss << "LOAD_IMM r" << std::get<int>(instr.operands[0].value)
-				   << ", " << std::get<int64_t>(instr.operands[1].value);
+				ss << "LOAD_IMM r" << instr.operands[0].reg_index()
+				   << ", " << instr.operands[1].immediate();
 				break;
 			case IROpcode::LOAD_FLOAT_IMM:
-				ss << "LOAD_FLOAT_IMM r" << std::get<int>(instr.operands[0].value)
-				   << ", " << std::get<double>(instr.operands[1].value);
+				ss << "LOAD_FLOAT_IMM r" << instr.operands[0].reg_index()
+				   << ", " << instr.operands[1].float_number();
 				break;
 			case IROpcode::MOVE:
-				ss << "MOVE r" << std::get<int>(instr.operands[0].value)
-				   << ", r" << std::get<int>(instr.operands[1].value);
+				ss << "MOVE r" << instr.operands[0].reg_index()
+				   << ", r" << instr.operands[1].reg_index();
 				break;
 			case IROpcode::ADD:
 			case IROpcode::SUB:
@@ -75,9 +75,9 @@ std::string ir_to_string(const IRFunction& func) {
 					case IROpcode::MOD: op_name = "MOD"; break;
 					default: break;
 				}
-				ss << op_name << " r" << std::get<int>(instr.operands[0].value)
-				   << ", r" << std::get<int>(instr.operands[1].value)
-				   << ", r" << std::get<int>(instr.operands[2].value);
+				ss << op_name << " r" << instr.operands[0].reg_index()
+				   << ", r" << instr.operands[1].reg_index()
+				   << ", r" << instr.operands[2].reg_index();
 				break;
 			}
 			default:
@@ -451,7 +451,7 @@ func test():
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::STORE_GLOBAL && instr.operands.size() > 1 &&
 		    instr.operands[1].type == IRValue::Type::REGISTER) {
-			stored_regs.push_back(std::get<int>(instr.operands[1].value));
+			stored_regs.push_back(instr.operands[1].reg_index());
 		}
 	}
 	assert(stored_regs.size() == 2);
@@ -464,7 +464,7 @@ func test():
 				continue;
 			}
 			if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER &&
-			    std::get<int>(instr.operands[0].value) == reg) {
+			    instr.operands[0].reg_index() == reg) {
 				defined = true;
 				break;
 			}
@@ -559,8 +559,7 @@ bool has_branch_to_next(const IRFunction& func) {
 			if (!ir_has_effect(func.instructions[j].opcode, IR_LABEL)) {
 				break;
 			}
-			if (std::get<std::string>(func.instructions[j].operands[0].value) ==
-			    std::get<std::string>(target->value)) {
+			if (func.instructions[j].operands[0].string_id == target->string_id) {
 				return true;
 			}
 		}
@@ -572,7 +571,7 @@ bool has_branch_to_next(const IRFunction& func) {
 bool loads_int_immediate(const IRFunction& func, int64_t value) {
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::LOAD_IMM &&
-		    std::get<int64_t>(instr.operands[1].value) == value) {
+		    instr.operands[1].immediate() == value) {
 			return true;
 		}
 	}
@@ -582,10 +581,10 @@ bool loads_int_immediate(const IRFunction& func, int64_t value) {
 // Every label a jump or branch names has to exist: a pass that removes code
 // must not leave a target behind.
 void assert_labels_resolve(const IRFunction& func) {
-	std::vector<std::string> defined;
+	std::vector<uint32_t> defined;
 	for (const auto& instr : func.instructions) {
 		if (ir_has_effect(instr.opcode, IR_LABEL)) {
-			defined.push_back(std::get<std::string>(instr.operands[0].value));
+			defined.push_back(instr.operands[0].string_id);
 		}
 	}
 	for (const auto& instr : func.instructions) {
@@ -596,8 +595,7 @@ void assert_labels_resolve(const IRFunction& func) {
 			if (operand.type != IRValue::Type::LABEL) {
 				continue;
 			}
-			const std::string& name = std::get<std::string>(operand.value);
-			assert(std::find(defined.begin(), defined.end(), name) != defined.end() &&
+			assert(std::find(defined.begin(), defined.end(), operand.string_id) != defined.end() &&
 			       "branch target survived but its label did not");
 		}
 	}

@@ -111,13 +111,13 @@ static void test_release_is_the_first_thing_in_the_loop() {
 		"the mark sits directly above the loop label");
 	check(release == mark + 2, "the release is the first instruction after the label");
 
-	const std::string loop_label = std::get<std::string>(func.instructions[mark + 1].operands[0].value);
+	const uint32_t loop_label = func.instructions[mark + 1].operands[0].string_id;
 	bool jumps_back = false;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode != IROpcode::JUMP) {
 			continue;
 		}
-		if (std::get<std::string>(instr.operands[0].value) == loop_label) {
+		if (instr.operands[0].string_id == loop_label) {
 			jumps_back = true;
 		}
 	}
@@ -163,7 +163,7 @@ static void test_nested_loops_take_distinct_ids() {
 	std::set<int64_t> ids;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::SCOPE_MARK) {
-			ids.insert(std::get<int64_t>(instr.operands[0].value));
+			ids.insert(instr.operands[0].immediate());
 		}
 	}
 	check(ids.size() == 2, "two loops, two mark slots");
@@ -372,7 +372,7 @@ static void test_a_block_takes_a_scope() {
 		std::set<int64_t> ids;
 		for (const auto& instr : func.instructions) {
 			if (instr.opcode == IROpcode::SCOPE_MARK) {
-				ids.insert(std::get<int64_t>(instr.operands[0].value));
+				ids.insert(instr.operands[0].immediate());
 			}
 		}
 		check(int(ids.size()) == c.scopes, std::string(c.what) + ": distinct ids");

@@ -57,10 +57,10 @@ static int count_opcode(const IRFunction& func, IROpcode opcode) {
 	return count;
 }
 
-static std::string embedded_path(const IRFunction& func) {
+static std::string embedded_path(const IRProgram& ir, const IRFunction& func) {
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::LOAD_RESOURCE) {
-			return std::get<std::string>(instr.operands[1].value);
+			return ir.strings[instr.operands[1].string_id];
 		}
 	}
 	throw std::runtime_error("No LOAD_RESOURCE in " + func.name);

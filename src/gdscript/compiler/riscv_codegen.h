@@ -282,8 +282,11 @@ private:
 	void emit_jump(const std::string& label);
 
 	void define_label(const std::string& label);
+	// IR label operand: already interned, no name lookup.
+	void define_label(const IRValue& label);
 	// Addend folded into AUIPC+ADDI; a separate addi truncates outside 12-bit range.
 	void mark_label_use(const std::string& label, size_t code_offset, int32_t addend = 0);
+	void mark_label_use(const IRValue& label, size_t code_offset, int32_t addend = 0);
 
 	// Out-of-range B-type branches become b<inv>+8 / jal x0,target (+-1MB). Runs to fixpoint.
 	void relax_branches();
@@ -411,9 +414,18 @@ private:
 	static bool is_complex_variant_type(int variant_type);
 
 	std::vector<uint8_t> m_code;
-	std::unordered_map<std::string, size_t> m_labels;
+
+	// Label offsets by id, not by name. The id space is seeded from the IR's own
+	// table, so an IR label operand already carries its id; backend-synthetic
+	// names (.LC0, .LSTR0, function symbols) intern past the end of it.
+	// resolve_labels() and relax_branches() then index instead of hashing.
+	static constexpr size_t NO_LABEL = SIZE_MAX;
+	IRStringTable m_label_names;
+	std::vector<size_t> m_label_offsets;
+	uint32_t label_id(const std::string& name);
+	void set_label(uint32_t id, size_t offset);
 	struct LabelUse {
-		std::string label;
+		uint32_t label;
 		size_t code_offset;
 		int32_t addend;
 	};
@@ -521,6 +533,9 @@ private:
 	static constexpr int SAVED_REG_SPACE = 16;
 
 	const std::vector<std::string>* m_string_constants = nullptr;
+	const IRStringTable* m_strings = nullptr;
+	// Resolves an operand's interned name.
+	const std::string& text(const IRValue& value) const;
 
 	std::vector<int64_t> m_constant_pool;
 	std::unordered_map<int64_t, size_t> m_constant_pool_map;

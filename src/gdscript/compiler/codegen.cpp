@@ -256,7 +256,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				for (size_t k = before; k < target.ir.instructions.size(); k++) {
 					if (target.ir.instructions[k].opcode == IROpcode::CALL_HOSTED) {
 						error_at("Cannot call the coroutine '" +
-							std::get<std::string>(target.ir.instructions[k].operands[0].value) +
+							operand_text(target.ir.instructions[k].operands[0]) +
 							"' while initializing '" + global.name + "'",
 							global.line, global.column,
 							"a coroutine can only be called from a function Godot invoked");
@@ -380,6 +380,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	}
 
 	ir_program.string_constants = m_string_constants;
+	ir_program.strings = std::move(m_strings);
 	ir_program.has_breakpoint_statement = m_saw_breakpoint_statement;
 	return ir_program;
 }
@@ -856,7 +857,7 @@ void CodeGenerator::emit_conditional_branch(IROpcode opcode, int cond_reg,
 	const std::string& label, FunctionContext& func)
 {
 	// Type travels with the branch for inline truthiness in the backend.
-	IRInstruction branch(opcode, IRValue::reg(cond_reg), IRValue::label(label));
+	IRInstruction branch(opcode, IRValue::reg(cond_reg), ir_label(label));
 	branch.type_hint = get_register_type(func, cond_reg);
 	func.ir.instructions.push_back(branch);
 }
@@ -880,9 +881,9 @@ void CodeGenerator::gen_if(const IfStmt* stmt, FunctionContext& func) {
 	pop_block_scope(then_scope, func);
 
 	if (!stmt->else_branch.empty()) {
-		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
 
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(else_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(else_label));
 		const int else_scope = push_block_scope(func);
 		for (const auto& s : stmt->else_branch) {
 			gen_stmt(s.get(), func);
@@ -890,7 +891,7 @@ void CodeGenerator::gen_if(const IfStmt* stmt, FunctionContext& func) {
 		pop_block_scope(else_scope, func);
 	}
 
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 }
 
 static constexpr size_t MIN_SWITCH_CASES = 4;
@@ -1014,7 +1015,7 @@ bool CodeGenerator::gen_match_jump_table(const MatchStmt* stmt, int subject_reg,
 	}
 	for (uint64_t i = 0; i < span; i++) {
 		auto it = first_branch.find(low + static_cast<int64_t>(i));
-		table.operands.push_back(IRValue::label(
+		table.operands.push_back(ir_label(
 			it == first_branch.end() ? default_label : body_labels[it->second]));
 	}
 	func.ir.instructions.push_back(table);
@@ -1069,11 +1070,11 @@ void CodeGenerator::gen_match(const MatchStmt* stmt, FunctionContext& func) {
 	// Known INT subject: the table decides the whole match.
 	const bool table_is_complete = has_table && get_register_type(func, subject_reg) == Variant::INT;
 	if (table_is_complete) {
-		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(default_label));
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(default_label));
 	}
 
 	for (size_t i = 0; i < stmt->branches.size(); i++) {
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(test_labels[i]));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(test_labels[i]));
 
 		const int arm_scope = push_block_scope(func);
 		if (!table_is_complete) {
@@ -1082,15 +1083,15 @@ void CodeGenerator::gen_match(const MatchStmt* stmt, FunctionContext& func) {
 			gen_branch_test(stmt->branches[i], subject_reg, next_label, func);
 		}
 
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(body_labels[i]));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(body_labels[i]));
 		for (const auto& body_stmt : stmt->branches[i].body) {
 			gen_stmt(body_stmt.get(), func);
 		}
 		pop_block_scope(arm_scope, func);
-		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
 	}
 
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 	free_register(func, subject_reg);
 }
 
@@ -1108,10 +1109,10 @@ void CodeGenerator::gen_branch_test(const MatchStmt::Branch& branch, int subject
 			}
 			const std::string next_pattern = make_label("match_or");
 			gen_pattern_test(*branch.patterns[i], subject_reg, next_pattern, func);
-			func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(matched_label));
-			func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(next_pattern));
+			func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(matched_label));
+			func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(next_pattern));
 		}
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(matched_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(matched_label));
 	}
 
 	if (branch.guard) {
@@ -1231,7 +1232,7 @@ bool CodeGenerator::emit_type_guard(int value_reg, IRInstruction::TypeHint type,
 	}
 	if (known != IRInstruction::TypeHint_NONE) {
 		// Known different type: unconditional jump, no destructuring emitted.
-		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(fail_label));
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(fail_label));
 		return false;
 	}
 
@@ -1329,7 +1330,7 @@ void CodeGenerator::gen_while(const WhileStmt* stmt, FunctionContext& func) {
 
 	func.loops.push_back({end_label, loop_label});
 	const int scope_id = open_scope(func);
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(loop_label));
 	emit_scope_release(scope_id, func);
 	int cond_reg = gen_expr(stmt->condition.get(), func);
 	emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, end_label, func);
@@ -1340,8 +1341,8 @@ void CodeGenerator::gen_while(const WhileStmt* stmt, FunctionContext& func) {
 		gen_stmt(s.get(), func);
 	}
 	pop_scope(func);
-	func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(loop_label));
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(loop_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 
 	func.loops.pop_back();
 }
@@ -1430,7 +1431,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			free_register(func, ceiled_reg);
 			free_register(func, as_float_reg);
 
-			func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(not_float_label));
+			func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(not_float_label));
 		}
 
 		int is_int_reg = -1;
@@ -1481,7 +1482,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			IRInstruction size_call(IROpcode::VCALL);
 			size_call.operands.push_back(IRValue::reg(dest));
 			size_call.operands.push_back(IRValue::reg(array_reg));
-			size_call.operands.push_back(IRValue::str("size"));
+			size_call.operands.push_back(ir_str("size"));
 			size_call.operands.push_back(IRValue::imm(0));
 			func.ir.instructions.push_back(size_call);
 		};
@@ -1497,7 +1498,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			IRInstruction at_call(IROpcode::VCALL);
 			at_call.operands.push_back(IRValue::reg(dest));
 			at_call.operands.push_back(IRValue::reg(array_reg));
-			at_call.operands.push_back(IRValue::str("get"));
+			at_call.operands.push_back(ir_str("get"));
 			at_call.operands.push_back(IRValue::imm(1));
 			at_call.operands.push_back(IRValue::reg(index_reg));
 			func.ir.instructions.push_back(at_call);
@@ -1531,26 +1532,26 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 
 			emit_conditional_branch(IROpcode::BRANCH_ZERO, is_int_reg, not_int_label, func);
 			int_arm(dest);
-			func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(join_label));
+			func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(join_label));
 
-			func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(not_int_label));
+			func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(not_int_label));
 			emit_conditional_branch(IROpcode::BRANCH_ZERO, is_array_reg, not_array_label, func);
 			array_arm(dest);
-			func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(join_label));
+			func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(join_label));
 
-			func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(not_array_label));
+			func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(not_array_label));
 			emit_conditional_branch(IROpcode::BRANCH_ZERO, is_string_reg, generic_label, func);
 			string_arm(dest);
-			func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(join_label));
+			func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(join_label));
 
-			func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(generic_label));
+			func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(generic_label));
 			generic_arm(dest);
 
-			func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(join_label));
+			func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(join_label));
 		};
 
 		const int scope_id = open_scope(func);
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(loop_label));
 		emit_scope_release(scope_id, func);
 		int size_reg = alloc_register(func);
 		if (unknown_iterable) {
@@ -1588,15 +1589,15 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 					func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(dest),
 						IRValue::reg(index_reg));
 					func.ir.instructions.emplace_back(IROpcode::JUMP,
-						IRValue::label(counter_done_label));
+						ir_label(counter_done_label));
 					func.ir.instructions.emplace_back(IROpcode::LABEL,
-						IRValue::label(float_counter_label));
+						ir_label(float_counter_label));
 					auto& widen = func.ir.instructions.emplace_back(IROpcode::CONVERT,
 						IRValue::reg(dest), IRValue::reg(index_reg),
 						IRValue::imm(static_cast<int64_t>(Variant::INT)));
 					widen.type_hint = Variant::FLOAT;
 					func.ir.instructions.emplace_back(IROpcode::LABEL,
-						IRValue::label(counter_done_label));
+						ir_label(counter_done_label));
 				},
 				emit_array_at, emit_string_at, emit_vcall_get);
 			set_register_type(func, elem_reg, IRInstruction::TypeHint_NONE);
@@ -1613,7 +1614,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		}
 		pop_scope(func);
 
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(continue_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(continue_label));
 		int new_idx_reg = alloc_register(func);
 		auto& add_instr = func.ir.instructions.emplace_back(IROpcode::ADD, IRValue::reg(new_idx_reg),
 		                               IRValue::reg(index_reg), IRValue::reg(one_reg));
@@ -1622,8 +1623,8 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(index_reg), IRValue::reg(new_idx_reg));
 		free_register(func, new_idx_reg);
 
-		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(loop_label));
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(loop_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 		pop_scope(func);
 		func.loops.pop_back();
 		if (unknown_iterable) {
@@ -1711,7 +1712,7 @@ void CodeGenerator::gen_string_walk(const ForStmt* stmt, int string_reg, Functio
 	set_register_type(func, left_reg, Variant::INT);
 
 	const int batch_scope = open_scope(func);
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(refill_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(refill_label));
 	emit_scope_release(batch_scope, func);
 
 	int packed_reg = alloc_register(func);
@@ -1733,7 +1734,7 @@ void CodeGenerator::gen_string_walk(const ForStmt* stmt, int string_reg, Functio
 
 	// Marked after the batch exists, so releasing it never takes the batch.
 	const int body_scope = open_scope(func);
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(have_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(have_label));
 	emit_scope_release(body_scope, func);
 
 	int elem_reg = alloc_register(func);
@@ -1748,13 +1749,13 @@ void CodeGenerator::gen_string_walk(const ForStmt* stmt, int string_reg, Functio
 	}
 	pop_scope(func);
 
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(continue_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(continue_label));
 	int_binop(IROpcode::ADD, index_reg, index_reg, one_reg);
 	int_binop(IROpcode::ADD, handle_reg, handle_reg, one_reg);
 	int_binop(IROpcode::SUB, left_reg, left_reg, one_reg);
 	emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, left_reg, have_label, func);
-	func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(refill_label));
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(refill_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 
 	pop_scope(func);
 	func.loops.pop_back();
@@ -1793,7 +1794,7 @@ void CodeGenerator::gen_numeric_for(const ForStmt* stmt, int start_reg, int end_
 	const IRInstruction::TypeHint numeric = float_loop ? Variant::FLOAT : Variant::INT;
 
 	const int scope_id = open_scope(func);
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(loop_label));
 	emit_scope_release(scope_id, func);
 
 	int cond_reg = alloc_register(func);
@@ -1809,10 +1810,10 @@ void CodeGenerator::gen_numeric_for(const ForStmt* stmt, int start_reg, int end_
 		}
 		if (previous.opcode == IROpcode::LOAD_IMM) {
 			step_is_constant = true;
-			step_is_positive = std::get<int64_t>(previous.operands[1].value) >= 0;
+			step_is_positive = previous.operands[1].immediate() >= 0;
 		} else if (previous.opcode == IROpcode::LOAD_FLOAT_IMM) {
 			step_is_constant = true;
-			step_is_positive = std::get<double>(previous.operands[1].value) >= 0.0;
+			step_is_positive = previous.operands[1].float_number() >= 0.0;
 		}
 		break;
 	}
@@ -1841,14 +1842,14 @@ void CodeGenerator::gen_numeric_for(const ForStmt* stmt, int start_reg, int end_
 		auto& neg_cmp = func.ir.instructions.emplace_back(IROpcode::CMP_GT, IRValue::reg(cond_reg),
 		                               IRValue::reg(loop_var_reg), IRValue::reg(end_reg));
 		neg_cmp.type_hint = numeric;
-		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(check_cond_label));
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(check_cond_label));
 
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(pos_step_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(pos_step_label));
 		auto& pos_cmp = func.ir.instructions.emplace_back(IROpcode::CMP_LT, IRValue::reg(cond_reg),
 		                               IRValue::reg(loop_var_reg), IRValue::reg(end_reg));
 		pos_cmp.type_hint = numeric;
 
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(check_cond_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(check_cond_label));
 		free_register(func, step_sign_reg);
 	}
 
@@ -1861,7 +1862,7 @@ void CodeGenerator::gen_numeric_for(const ForStmt* stmt, int start_reg, int end_
 	}
 	pop_scope(func);
 
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(continue_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(continue_label));
 
 	int new_val_reg = alloc_register(func);
 	auto& add_instr = func.ir.instructions.emplace_back(IROpcode::ADD, IRValue::reg(new_val_reg),
@@ -1870,8 +1871,8 @@ void CodeGenerator::gen_numeric_for(const ForStmt* stmt, int start_reg, int end_
 	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(loop_var_reg), IRValue::reg(new_val_reg));
 	free_register(func, new_val_reg);
 
-	func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(loop_label));
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(loop_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 
 	pop_scope(func);
 	func.loops.pop_back();
@@ -1885,7 +1886,7 @@ void CodeGenerator::gen_break(const BreakStmt* stmt, FunctionContext& func) {
 		error_at("'break' outside of loop", stmt);
 	}
 
-	func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(func.loops.back().break_label));
+	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(func.loops.back().break_label));
 }
 
 void CodeGenerator::gen_continue(const ContinueStmt* stmt, FunctionContext& func) {
@@ -1893,7 +1894,7 @@ void CodeGenerator::gen_continue(const ContinueStmt* stmt, FunctionContext& func
 		error_at("'continue' outside of loop", stmt);
 	}
 
-	func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(func.loops.back().continue_label));
+	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(func.loops.back().continue_label));
 }
 
 void CodeGenerator::gen_expr_stmt(const ExprStmt* stmt, FunctionContext& func) {
@@ -1976,7 +1977,7 @@ void CodeGenerator::gen_dictionary_keys_for_iteration(int iterable_reg, Function
 
 	emit_get_keys();
 
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(skip_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(skip_label));
 	// Join: only one path made it an Array, so type is unknown.
 	set_register_type(func, iterable_reg, IRInstruction::TypeHint_NONE);
 }
@@ -2063,7 +2064,7 @@ int CodeGenerator::gen_range(const CallExpr* expr, FunctionContext& func) {
 	int zero_reg = gen_int_immediate(0, func);
 	int cond_reg = alloc_register(func);
 
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(loop_label));
 
 	// Run-time step sign test: determines loop direction per iteration.
 	auto& sign_cmp = func.ir.instructions.emplace_back(IROpcode::CMP_GT, IRValue::reg(cond_reg),
@@ -2076,9 +2077,9 @@ int CodeGenerator::gen_range(const CallExpr* expr, FunctionContext& func) {
 		IRValue::reg(value_reg), IRValue::reg(end_reg));
 	up_cmp.type_hint = bound_hint;
 	emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, cond_reg, body_label, func);
-	func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
 
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(down_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(down_label));
 	// Step zero fails both comparisons: empty array.
 	auto& down_cmp = func.ir.instructions.emplace_back(IROpcode::CMP_LT, IRValue::reg(cond_reg),
 		IRValue::reg(step_reg), IRValue::reg(zero_reg));
@@ -2089,7 +2090,7 @@ int CodeGenerator::gen_range(const CallExpr* expr, FunctionContext& func) {
 	down_bound.type_hint = bound_hint;
 	emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, end_label, func);
 
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(body_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(body_label));
 	int appended_reg = alloc_register(func);
 	func.ir.instructions.emplace_back(IROpcode::ARRAY_APPEND, IRValue::reg(appended_reg),
 		IRValue::reg(result_reg), IRValue::reg(value_reg));
@@ -2105,9 +2106,9 @@ int CodeGenerator::gen_range(const CallExpr* expr, FunctionContext& func) {
 	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(value_reg),
 		IRValue::reg(next_reg));
 	free_register(func, next_reg);
-	func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(loop_label));
+	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(loop_label));
 
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 
 	free_register(func, cond_reg);
 	free_register(func, zero_reg);
@@ -2121,7 +2122,7 @@ int CodeGenerator::gen_range(const CallExpr* expr, FunctionContext& func) {
 // get_node() with a compile-time path. "." resolves to the attached node.
 int CodeGenerator::gen_get_node(const std::string& path, FunctionContext& func) {
 	int result_reg = alloc_register(func);
-	IRInstruction instr(IROpcode::GET_NODE, IRValue::reg(result_reg), IRValue::str(path));
+	IRInstruction instr(IROpcode::GET_NODE, IRValue::reg(result_reg), ir_str(path));
 	instr.type_hint = Variant::OBJECT;
 	func.ir.instructions.push_back(instr);
 	set_register_type(func, result_reg, Variant::OBJECT);
@@ -2151,7 +2152,7 @@ const std::string* CodeGenerator::constant_string(const Expr* expr, FunctionCont
 // Compile-time path: characters embedded in the instruction, no String Variant.
 int CodeGenerator::gen_load_resource(const std::string& path, FunctionContext& func) {
 	int result_reg = alloc_register(func);
-	IRInstruction instr(IROpcode::LOAD_RESOURCE, IRValue::reg(result_reg), IRValue::str(path));
+	IRInstruction instr(IROpcode::LOAD_RESOURCE, IRValue::reg(result_reg), ir_str(path));
 	instr.type_hint = Variant::OBJECT;
 	func.ir.instructions.push_back(instr);
 	set_register_type(func, result_reg, Variant::OBJECT);
@@ -2690,7 +2691,7 @@ int CodeGenerator::gen_make_callable(const std::string& function_name, int bound
 
 	int result_reg = alloc_register(func);
 	IRInstruction instr(IROpcode::MAKE_CALLABLE, IRValue::reg(result_reg),
-		IRValue::str(function_name), IRValue::reg(argument_reg));
+		ir_str(function_name), IRValue::reg(argument_reg));
 	instr.type_hint = Variant::CALLABLE;
 	func.ir.instructions.push_back(instr);
 	set_register_type(func, result_reg, Variant::CALLABLE);
@@ -2844,7 +2845,7 @@ int CodeGenerator::gen_callable_variable_call(const CallExpr* expr, int callable
 	IRInstruction vcall(IROpcode::VCALL);
 	vcall.operands.push_back(IRValue::reg(result_reg));
 	vcall.operands.push_back(IRValue::reg(callable_reg));
-	vcall.operands.push_back(IRValue::str("call"));
+	vcall.operands.push_back(ir_str("call"));
 	vcall.operands.push_back(IRValue::imm(static_cast<int64_t>(arg_regs.size())));
 	for (int arg_reg : arg_regs) {
 		vcall.operands.push_back(IRValue::reg(arg_reg));
@@ -2870,21 +2871,21 @@ int CodeGenerator::gen_logical(const BinaryExpr* expr, FunctionContext& func) {
 	set_register_type(func, result_reg, Variant::BOOL);
 
 	int left_reg = gen_expr(expr->left.get(), func);
-	IRInstruction left_branch(short_circuit_branch, IRValue::reg(left_reg), IRValue::label(end_label));
+	IRInstruction left_branch(short_circuit_branch, IRValue::reg(left_reg), ir_label(end_label));
 	// Type hint lets backend test truthiness inline.
 	left_branch.type_hint = get_register_type(func, left_reg);
 	func.ir.instructions.push_back(left_branch);
 	free_register(func, left_reg);
 
 	int right_reg = gen_expr(expr->right.get(), func);
-	IRInstruction right_branch(short_circuit_branch, IRValue::reg(right_reg), IRValue::label(end_label));
+	IRInstruction right_branch(short_circuit_branch, IRValue::reg(right_reg), ir_label(end_label));
 	right_branch.type_hint = get_register_type(func, right_reg);
 	func.ir.instructions.push_back(right_branch);
 	free_register(func, right_reg);
 
 	func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(result_reg),
 		IRValue::imm(is_and ? 1 : 0));
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 
 	return result_reg;
 }
@@ -2926,14 +2927,14 @@ bool CodeGenerator::absorb_str_call(FunctionContext& func, int reg, size_t since
 
 	const IRInstruction& call = code[at];
 	if (call.opcode != IROpcode::GLOBAL_CALL || call.operands.size() < 4 ||
-	    !std::holds_alternative<int64_t>(call.operands[1].value) ||
-	    std::get<int64_t>(call.operands[1].value) != static_cast<int64_t>(GlobalFn::STR)) {
+	    call.operands[1].type != IRValue::Type::IMMEDIATE ||
+	    call.operands[1].immediate() != static_cast<int64_t>(GlobalFn::STR)) {
 		return false;
 	}
-	if (!std::holds_alternative<int64_t>(call.operands[3].value)) {
+	if (call.operands[3].type != IRValue::Type::IMMEDIATE) {
 		return false;
 	}
-	const size_t count = static_cast<size_t>(std::get<int64_t>(call.operands[3].value));
+	const size_t count = static_cast<size_t>(call.operands[3].immediate());
 	if (call.operands.size() != 4 + count) {
 		return false;
 	}
@@ -2942,7 +2943,7 @@ bool CodeGenerator::absorb_str_call(FunctionContext& func, int reg, size_t since
 		if (call.operands[4 + i].type != IRValue::Type::REGISTER) {
 			return false;
 		}
-		call_args.push_back(std::get<int>(call.operands[4 + i].value));
+		call_args.push_back(call.operands[4 + i].reg_index());
 	}
 
 	std::vector<int> reads;
@@ -3199,7 +3200,7 @@ int CodeGenerator::gen_instance_class_test(int value_reg, const std::string& cla
 	}
 	free_register(func, tag_reg);
 
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 	return result_reg;
 }
 
@@ -3263,7 +3264,7 @@ int CodeGenerator::gen_class_test(int value_reg, const std::string& class_name,
 		IRInstruction vcall(IROpcode::VCALL);
 		vcall.operands.push_back(IRValue::reg(dst_reg));
 		vcall.operands.push_back(IRValue::reg(object_reg));
-		vcall.operands.push_back(IRValue::str(method));
+		vcall.operands.push_back(ir_str(method));
 		vcall.operands.push_back(IRValue::imm(arg_reg >= 0 ? 1 : 0));
 		if (arg_reg >= 0) {
 			vcall.operands.push_back(IRValue::reg(arg_reg));
@@ -3312,7 +3313,7 @@ int CodeGenerator::gen_class_test(int value_reg, const std::string& class_name,
 	emit_vcall(script_reg, object_reg, "get_script", -1);
 
 	const std::string loop_label = make_label("is_class_script");
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(loop_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(loop_label));
 
 	// A null script ends the chain.
 	emit_is_object(script_reg, end_label);
@@ -3330,12 +3331,12 @@ int CodeGenerator::gen_class_test(int value_reg, const std::string& class_name,
 	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(script_reg),
 		IRValue::reg(base_reg));
 	free_register(func, base_reg);
-	func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(loop_label));
+	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(loop_label));
 
 	free_register(func, script_reg);
 	free_register(func, global_name_reg);
 
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 	if (owns_object_reg) {
 		free_register(func, object_reg);
 	}
@@ -3393,7 +3394,7 @@ int CodeGenerator::gen_class_cast(const CastExpr* expr, FunctionContext& func) {
 		IRValue::reg(value_reg));
 	// The cast answers the same instance, so it stays as usable as the original.
 	set_register_struct(func, result_reg, get_register_struct(func, value_reg));
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 
 	free_register(func, value_reg);
 	// Result is NIL or OBJECT: no type hint.
@@ -3452,7 +3453,7 @@ int CodeGenerator::gen_assert(const CallExpr* expr, FunctionContext& func) {
 	emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, cond_reg, passed_label, func);
 	free_register(func, cond_reg);
 
-	IRInstruction throw_instr(IROpcode::THROW, IRValue::str("assert"), IRValue::str(message));
+	IRInstruction throw_instr(IROpcode::THROW, ir_str("assert"), ir_str(message));
 	if (computed_message != nullptr) {
 		const int message_reg = gen_expr(computed_message, func);
 		throw_instr.operands.push_back(IRValue::imm(1));
@@ -3463,7 +3464,7 @@ int CodeGenerator::gen_assert(const CallExpr* expr, FunctionContext& func) {
 		throw_instr.operands.push_back(IRValue::imm(0));
 		func.ir.instructions.push_back(throw_instr);
 	}
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(passed_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(passed_label));
 
 	// Parsed as a call: must leave a value. Returns NIL.
 	int result_reg = alloc_register(func);
@@ -3535,15 +3536,15 @@ int CodeGenerator::gen_ternary(const TernaryExpr* expr, FunctionContext& func) {
 	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg), IRValue::reg(true_reg));
 	IRInstruction::TypeHint true_type = get_register_type(func, true_reg);
 	free_register(func, true_reg);
-	func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
 
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(else_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(else_label));
 	int false_reg = gen_expr(expr->false_value.get(), func);
 	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg), IRValue::reg(false_reg));
 	IRInstruction::TypeHint false_type = get_register_type(func, false_reg);
 	free_register(func, false_reg);
 
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 
 	if (true_type != IRInstruction::TypeHint_NONE && true_type == false_type) {
 		set_register_type(func, result_reg, true_type);
@@ -3580,7 +3581,7 @@ int CodeGenerator::emit_local_call(const std::string& name, std::vector<int> arg
 	}
 
 	IRInstruction call_instr(hosted ? IROpcode::CALL_HOSTED : IROpcode::CALL);
-	call_instr.operands.push_back(IRValue::str(name));
+	call_instr.operands.push_back(ir_str(name));
 	call_instr.operands.push_back(IRValue::reg(result_reg));
 	call_instr.operands.push_back(IRValue::imm(arg_regs.size()));
 	for (int arg_reg : arg_regs) {
@@ -3705,7 +3706,7 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 				IRInstruction vcall(IROpcode::VCALL);
 				vcall.operands.push_back(IRValue::reg(result_reg));
 				vcall.operands.push_back(IRValue::reg(self_reg));
-				vcall.operands.push_back(IRValue::str("get_node"));
+				vcall.operands.push_back(ir_str("get_node"));
 				vcall.operands.push_back(IRValue::imm(1));
 				vcall.operands.push_back(IRValue::reg(arg_regs[0]));
 				func.ir.instructions.push_back(vcall);
@@ -3787,7 +3788,7 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 	IRInstruction vcall_instr(IROpcode::VCALL);
 	vcall_instr.operands.push_back(IRValue::reg(result_reg));
 	vcall_instr.operands.push_back(IRValue::reg(self_reg));
-	vcall_instr.operands.push_back(IRValue::str(expr->function_name));
+	vcall_instr.operands.push_back(ir_str(expr->function_name));
 	vcall_instr.operands.push_back(IRValue::imm(arg_regs.size()));
 	for (int arg_reg : arg_regs) {
 		vcall_instr.operands.push_back(IRValue::reg(arg_reg));
@@ -4068,7 +4069,7 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 	IRInstruction vcall_instr(IROpcode::VCALL);
 	vcall_instr.operands.push_back(IRValue::reg(result_reg));
 	vcall_instr.operands.push_back(IRValue::reg(obj_reg));
-	vcall_instr.operands.push_back(IRValue::str(expr->member_name));
+	vcall_instr.operands.push_back(ir_str(expr->member_name));
 	vcall_instr.operands.push_back(IRValue::imm(arg_regs.size()));
 	for (int arg_reg : arg_regs) {
 		vcall_instr.operands.push_back(IRValue::reg(arg_reg));
@@ -4272,7 +4273,7 @@ int CodeGenerator::gen_property_get(size_t index, FunctionContext& func) {
 	// Untyped: getter return may differ from declared type.
 	const int result_reg = alloc_register(func);
 	IRInstruction call(IROpcode::CALL);
-	call.operands.push_back(IRValue::str(m_global_getters[index]));
+	call.operands.push_back(ir_str(m_global_getters[index]));
 	call.operands.push_back(IRValue::reg(result_reg));
 	call.operands.push_back(IRValue::imm(0));
 	func.ir.instructions.push_back(call);
@@ -4282,7 +4283,7 @@ int CodeGenerator::gen_property_get(size_t index, FunctionContext& func) {
 void CodeGenerator::gen_property_set(size_t index, int value_reg, FunctionContext& func) {
 	const int result_reg = alloc_register(func);
 	IRInstruction call(IROpcode::CALL);
-	call.operands.push_back(IRValue::str(m_global_setters[index]));
+	call.operands.push_back(ir_str(m_global_setters[index]));
 	call.operands.push_back(IRValue::reg(result_reg));
 	call.operands.push_back(IRValue::imm(1));
 	call.operands.push_back(IRValue::reg(value_reg));
@@ -4659,7 +4660,7 @@ int CodeGenerator::gen_signal_owner_call(const std::string& signal_name,
 	IRInstruction vcall(IROpcode::VCALL);
 	vcall.operands.push_back(IRValue::reg(result_reg));
 	vcall.operands.push_back(IRValue::reg(self_reg));
-	vcall.operands.push_back(IRValue::str(owner_method));
+	vcall.operands.push_back(ir_str(owner_method));
 	vcall.operands.push_back(IRValue::imm(int64_t(arg_regs.size())));
 	for (int reg : arg_regs) {
 		vcall.operands.push_back(IRValue::reg(reg));
@@ -5165,7 +5166,7 @@ int CodeGenerator::gen_class_method_call(const StructDecl& decl, const FunctionD
 	}
 
 	IRInstruction call(method.is_coroutine ? IROpcode::CALL_HOSTED : IROpcode::CALL);
-	call.operands.push_back(IRValue::str(lifted_method_name(owner, method.name)));
+	call.operands.push_back(ir_str(lifted_method_name(owner, method.name)));
 	call.operands.push_back(IRValue::reg(result_reg));
 	call.operands.push_back(IRValue::imm(int64_t(arg_regs.size())));
 	for (int reg : arg_regs) {
@@ -5251,7 +5252,7 @@ int CodeGenerator::gen_super_call(const MemberCallExpr* expr, FunctionContext& f
 	vcall.super_call = true;
 	vcall.operands.push_back(IRValue::reg(result_reg));
 	vcall.operands.push_back(IRValue::reg(base_reg));
-	vcall.operands.push_back(IRValue::str(expr->member_name));
+	vcall.operands.push_back(ir_str(expr->member_name));
 	vcall.operands.push_back(IRValue::imm(arg_regs.size()));
 	for (int arg_reg : arg_regs) {
 		vcall.operands.push_back(IRValue::reg(arg_reg));
@@ -5975,7 +5976,7 @@ int CodeGenerator::gen_inline_member_get(int obj_reg, IRInstruction::TypeHint ob
 	IRInstruction instr(IROpcode::VGET_INLINE);
 	instr.operands.push_back(IRValue::reg(result_reg));
 	instr.operands.push_back(IRValue::reg(obj_reg));
-	instr.operands.push_back(IRValue::str(member));
+	instr.operands.push_back(ir_str(member));
 	instr.operands.push_back(IRValue::imm(static_cast<int>(obj_type)));
 
 	func.ir.instructions.push_back(instr);
@@ -5991,7 +5992,7 @@ void CodeGenerator::gen_inline_member_set(int obj_reg, IRInstruction::TypeHint o
 {
 	IRInstruction instr(IROpcode::VSET_INLINE);
 	instr.operands.push_back(IRValue::reg(obj_reg));
-	instr.operands.push_back(IRValue::str(member));
+	instr.operands.push_back(ir_str(member));
 	instr.operands.push_back(IRValue::imm(static_cast<int>(obj_type)));
 	instr.operands.push_back(IRValue::reg(value_reg));
 	instr.operands.push_back(IRValue::imm(stamp_type ? 1 : 0));
@@ -6147,11 +6148,11 @@ int CodeGenerator::gen_dynamic_member_get(int obj_reg, const std::string& member
 				IRValue::reg(property_reg));
 			free_register(func, property_reg);
 
-			func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(base_label));
+			func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(base_label));
 			free_register(func, base_reg);
 		}
-		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(next_label));
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(next_label));
 	}
 
 	for (const InlineMemberGroup& group : groups) {
@@ -6162,15 +6163,15 @@ int CodeGenerator::gen_dynamic_member_get(int obj_reg, const std::string& member
 		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg),
 			IRValue::reg(inline_reg));
 		free_register(func, inline_reg);
-		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(next_label));
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(next_label));
 	}
 
 	int property_reg = gen_vget(obj_reg, member, func);
 	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg),
 		IRValue::reg(property_reg));
 	free_register(func, property_reg);
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 
 	// Result type unknown: paths yield int, float or property.
 	return result_reg;
@@ -6210,14 +6211,14 @@ void CodeGenerator::gen_dynamic_member_set(int obj_reg, const std::string& membe
 
 			set_register_type(func, base_reg, Variant::OBJECT);
 			gen_vset(base_reg, member, value_reg, func);
-			func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
+			func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
 
-			func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(element_label));
+			func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(element_label));
 			free_register(func, base_reg);
 		}
 		gen_dict_set(obj_reg, member, value_reg, func);
-		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(next_label));
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(next_label));
 	}
 
 	for (const InlineMemberGroup& group : groups) {
@@ -6226,12 +6227,12 @@ void CodeGenerator::gen_dynamic_member_set(int obj_reg, const std::string& membe
 
 		gen_inline_member_set(obj_reg, group.types.front(), member, value_reg, func,
 			group.types.size() == 1);
-		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(next_label));
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(next_label));
 	}
 
 	gen_vset(obj_reg, member, value_reg, func);
-	func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 }
 
 int CodeGenerator::gen_member_read(int obj_reg, const std::string& member, FunctionContext& func,
@@ -6334,7 +6335,7 @@ void CodeGenerator::gen_vcall_get(int dest, int obj_reg, int idx_reg, FunctionCo
 	IRInstruction instr(IROpcode::VCALL);
 	instr.operands.push_back(IRValue::reg(dest));
 	instr.operands.push_back(IRValue::reg(obj_reg));
-	instr.operands.push_back(IRValue::str("get"));
+	instr.operands.push_back(ir_str("get"));
 	instr.operands.push_back(IRValue::imm(1));
 	instr.operands.push_back(IRValue::reg(idx_reg));
 	func.ir.instructions.push_back(instr);
@@ -6377,12 +6378,12 @@ int CodeGenerator::gen_element_read(int obj_reg, int idx_reg, FunctionContext& f
 		free_register(func, is_string_reg);
 
 		gen_string_at(result_reg, obj_reg, idx_reg, func, site);
-		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(join_label));
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(join_label));
 
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(generic_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(generic_label));
 		gen_vcall_get(result_reg, obj_reg, idx_reg, func);
 
-		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(join_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(join_label));
 		set_register_type(func, result_reg, IRInstruction::TypeHint_NONE);
 		return result_reg;
 	}
@@ -6419,7 +6420,7 @@ void CodeGenerator::gen_element_store(int obj_reg, int idx_reg, int value_reg, F
 	IRInstruction instr(IROpcode::VCALL);
 	instr.operands.push_back(IRValue::reg(result_reg));
 	instr.operands.push_back(IRValue::reg(obj_reg));
-	instr.operands.push_back(IRValue::str("set"));
+	instr.operands.push_back(ir_str("set"));
 	instr.operands.push_back(IRValue::imm(2));
 	instr.operands.push_back(IRValue::reg(idx_reg));
 	instr.operands.push_back(IRValue::reg(value_reg));
@@ -6918,7 +6919,7 @@ int CodeGenerator::gen_engine_class_constant(const std::string& class_name,
 	IRInstruction vcall(IROpcode::VCALL);
 	vcall.operands.push_back(IRValue::reg(result_reg));
 	vcall.operands.push_back(IRValue::reg(class_db_reg));
-	vcall.operands.push_back(IRValue::str("class_get_integer_constant"));
+	vcall.operands.push_back(ir_str("class_get_integer_constant"));
 	vcall.operands.push_back(IRValue::imm(2));
 	vcall.operands.push_back(IRValue::reg(class_reg));
 	vcall.operands.push_back(IRValue::reg(name_reg));
@@ -6950,7 +6951,7 @@ int CodeGenerator::gen_engine_class_static_call(const std::string& class_name,
 	IRInstruction vcall(IROpcode::VCALL);
 	vcall.operands.push_back(IRValue::reg(result_reg));
 	vcall.operands.push_back(IRValue::reg(class_db_reg));
-	vcall.operands.push_back(IRValue::str("class_call_static"));
+	vcall.operands.push_back(ir_str("class_call_static"));
 	vcall.operands.push_back(IRValue::imm(static_cast<int64_t>(2 + arg_regs.size())));
 	vcall.operands.push_back(IRValue::reg(class_reg));
 	vcall.operands.push_back(IRValue::reg(name_reg));
@@ -6982,7 +6983,7 @@ int CodeGenerator::gen_script_class_new(const std::string& class_name, const std
 	IRInstruction vcall(IROpcode::VCALL);
 	vcall.operands.push_back(IRValue::reg(result_reg));
 	vcall.operands.push_back(IRValue::reg(script_reg));
-	vcall.operands.push_back(IRValue::str("new"));
+	vcall.operands.push_back(ir_str("new"));
 	vcall.operands.push_back(IRValue::imm(static_cast<int64_t>(arg_regs.size())));
 	for (int arg_reg : arg_regs) {
 		vcall.operands.push_back(IRValue::reg(arg_reg));

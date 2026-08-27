@@ -152,10 +152,12 @@ static void test_locals_shadow_globals() {
 static void test_operand_roles() {
 	std::cout << "Testing IR operand roles..." << std::endl;
 
+	IRStringTable strings;
+
 	{
 		// CALL name, dst, argc, args...
 		IRInstruction call(IROpcode::CALL);
-		call.operands.push_back(IRValue::str("f"));
+		call.operands.push_back(IRValue::str(strings.intern("f")));
 		call.operands.push_back(IRValue::reg(3)); // destination
 		call.operands.push_back(IRValue::imm(1));
 		call.operands.push_back(IRValue::reg(7)); // argument
@@ -240,11 +242,12 @@ static void test_store_not_delayed_past_vset() {
 static void test_call_result_kills_constant() {
 	std::cout << "Testing that a call result invalidates a tracked constant..." << std::endl;
 
+	IRStringTable strings;
 	IRFunction func;
 	func.name = "test";
 	func.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(1), IRValue::imm(42));
 	IRInstruction call(IROpcode::CALL);
-	call.operands.push_back(IRValue::str("side"));
+	call.operands.push_back(IRValue::str(strings.intern("side")));
 	call.operands.push_back(IRValue::reg(1)); // overwrites r1 with the call result
 	call.operands.push_back(IRValue::imm(0));
 	func.instructions.push_back(call);
@@ -732,11 +735,11 @@ func test():
 	// And the pass did still run: the loop's unconditional invariants -- the
 	// comparison's 0 and the decrement's 1 -- are hoisted, so this is a test of
 	// LICM being selective rather than of LICM being off.
-	auto instructions_before_loop = [](const IRFunction& func) {
+	auto instructions_before_loop = [&hoisted](const IRFunction& func) {
 		for (size_t i = 0; i < func.instructions.size(); i++) {
 			const auto& instr = func.instructions[i];
 			if (instr.opcode == IROpcode::LABEL &&
-			    std::get<std::string>(instr.operands.at(0).value).rfind("loop_", 0) == 0) {
+			    hoisted.strings[instr.operands.at(0).string_id].rfind("loop_", 0) == 0) {
 				return i;
 			}
 		}

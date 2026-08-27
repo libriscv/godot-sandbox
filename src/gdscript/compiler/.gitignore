@@ -2,3 +2,5 @@ dump_ir
 build/
 build-rel/
 build-test/
+tests/bench/big_cpu.sgd
+tests/bench/baseline_hashes.txt

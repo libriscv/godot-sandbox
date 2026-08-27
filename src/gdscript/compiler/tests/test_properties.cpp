@@ -58,11 +58,11 @@ static int count_opcode(const IRFunction& func, IROpcode opcode) {
 }
 
 // Direct calls to `name`, by the callee in operand 0.
-static int count_calls(const IRFunction& func, const std::string& name) {
+static int count_calls(const IRProgram& ir, const IRFunction& func, const std::string& name) {
 	int count = 0;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::CALL && !instr.operands.empty() &&
-			std::get<std::string>(instr.operands[0].value) == name) {
+			ir.strings[instr.operands[0].string_id] == name) {
 			count++;
 		}
 	}
@@ -71,11 +71,11 @@ static int count_calls(const IRFunction& func, const std::string& name) {
 
 // The callees of `func`, in order, so a get-then-set can be told from a
 // set-then-get.
-static std::vector<std::string> call_sequence(const IRFunction& func) {
+static std::vector<std::string> call_sequence(const IRProgram& ir, const IRFunction& func) {
 	std::vector<std::string> names;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::CALL && !instr.operands.empty()) {
-			names.push_back(std::get<std::string>(instr.operands[0].value));
+			names.push_back(ir.strings[instr.operands[0].string_id]);
 		}
 	}
 	return names;
@@ -136,8 +136,8 @@ static void test_inline_bodies_are_lifted() {
 	assert(has_function(ir, "@hp_getter"));
 
 	const IRFunction& test = find_function(ir, "test");
-	assert(count_calls(test, "@hp_setter") == 1);
-	assert(count_calls(test, "@hp_getter") == 1);
+	assert(count_calls(ir, test, "@hp_setter") == 1);
+	assert(count_calls(ir, test, "@hp_getter") == 1);
 	assert(count_opcode(test, IROpcode::LOAD_GLOBAL) == 0);
 	assert(count_opcode(test, IROpcode::STORE_GLOBAL) == 0);
 
@@ -167,8 +167,8 @@ static void test_named_accessors() {
 	assert(!has_function(ir, "@mp_getter"));
 
 	const IRFunction& test = find_function(ir, "test");
-	assert(count_calls(test, "_set_mp") == 1);
-	assert(count_calls(test, "_get_mp") == 1);
+	assert(count_calls(ir, test, "_set_mp") == 1);
+	assert(count_calls(ir, test, "_get_mp") == 1);
 
 	// One-line spelling.
 	const IRProgram one_line = compile_to_ir(
@@ -182,8 +182,8 @@ static void test_named_accessors() {
 		"\tmp = 4\n"
 		"\treturn mp\n");
 	const IRFunction& one_line_test = find_function(one_line, "test");
-	assert(count_calls(one_line_test, "_set_mp") == 1);
-	assert(count_calls(one_line_test, "_get_mp") == 1);
+	assert(count_calls(one_line, one_line_test, "_set_mp") == 1);
+	assert(count_calls(one_line, one_line_test, "_get_mp") == 1);
 
 	std::cout << "  named accessors are called as written" << std::endl;
 }
@@ -203,11 +203,11 @@ static void test_a_property_means_its_storage_inside_its_own_accessor() {
 
 	const IRFunction& setter = find_function(ir, "@hp_setter");
 	assert(count_opcode(setter, IROpcode::STORE_GLOBAL) == 1);
-	assert(count_calls(setter, "@hp_setter") == 0);
+	assert(count_calls(ir, setter, "@hp_setter") == 0);
 
 	const IRFunction& getter = find_function(ir, "@hp_getter");
 	assert(count_opcode(getter, IROpcode::LOAD_GLOBAL) == 1);
-	assert(count_calls(getter, "@hp_getter") == 0);
+	assert(count_calls(ir, getter, "@hp_getter") == 0);
 
 	// `set = f` also gets direct storage access.
 	const IRProgram named = compile_to_ir(
@@ -219,7 +219,7 @@ static void test_a_property_means_its_storage_inside_its_own_accessor() {
 		"\tind = 1\n");
 	const IRFunction& si = find_function(named, "_si");
 	assert(count_opcode(si, IROpcode::STORE_GLOBAL) == 1);
-	assert(count_calls(si, "_si") == 0);
+	assert(count_calls(named, si, "_si") == 0);
 
 	// Cross-property access goes through the accessor.
 	const IRProgram other = compile_to_ir(
@@ -229,7 +229,7 @@ static void test_a_property_means_its_storage_inside_its_own_accessor() {
 		"var b = 2:\n"
 		"\tget:\n"
 		"\t\treturn a\n");
-	assert(count_calls(find_function(other, "@b_getter"), "@a_getter") == 1);
+	assert(count_calls(other, find_function(other, "@b_getter"), "@a_getter") == 1);
 
 	std::cout << "  an accessor reaches the storage behind its own property" << std::endl;
 }
@@ -244,7 +244,7 @@ static void test_the_initializer_does_not_run_the_setter() {
 		"\t\tseen += 1\n"
 		"\t\thp = v\n");
 	assert(find_global(ir, "hp").init_type == IRGlobalVar::InitType::INT);
-	assert(count_calls(ir.member_init, "@hp_setter") == 0);
+	assert(count_calls(ir, ir.member_init, "@hp_setter") == 0);
 
 	const IRProgram runtime = compile_to_ir(
 		"var base = 4\n"
@@ -252,7 +252,7 @@ static void test_the_initializer_does_not_run_the_setter() {
 		"\tset(v):\n"
 		"\t\thp = v\n");
 	assert(find_global(runtime, "hp").init_type == IRGlobalVar::InitType::RUNTIME);
-	assert(count_calls(runtime.member_init, "@hp_setter") == 0);
+	assert(count_calls(runtime, runtime.member_init, "@hp_setter") == 0);
 	assert(count_opcode(runtime.member_init, IROpcode::STORE_GLOBAL) == 1);
 
 	std::cout << "  the declaration's own value is written, not set" << std::endl;
@@ -271,7 +271,7 @@ static void test_compound_assignment_gets_then_sets() {
 		"func test():\n"
 		"\thp += 5\n");
 
-	const std::vector<std::string> calls = call_sequence(find_function(ir, "test"));
+	const std::vector<std::string> calls = call_sequence(ir, find_function(ir, "test"));
 	assert(calls.size() == 2);
 	assert(calls[0] == "@hp_getter");
 	assert(calls[1] == "@hp_setter");
@@ -292,7 +292,7 @@ static void test_one_sided_properties() {
 		"\treturn ro\n");
 	const IRFunction& ro_test = find_function(getter_only, "test");
 	assert(count_opcode(ro_test, IROpcode::STORE_GLOBAL) == 1);
-	assert(count_calls(ro_test, "@ro_getter") == 1);
+	assert(count_calls(getter_only, ro_test, "@ro_getter") == 1);
 
 	// Setter only: reads come from storage.
 	const IRProgram setter_only = compile_to_ir(
@@ -304,7 +304,7 @@ static void test_one_sided_properties() {
 		"\treturn wo\n");
 	const IRFunction& wo_test = find_function(setter_only, "test");
 	assert(count_opcode(wo_test, IROpcode::LOAD_GLOBAL) == 1);
-	assert(count_calls(wo_test, "@wo_setter") == 1);
+	assert(count_calls(setter_only, wo_test, "@wo_setter") == 1);
 
 	std::cout << "  the missing half falls back to the storage" << std::endl;
 }
@@ -328,7 +328,7 @@ static void test_an_export_publishes_both_accessors() {
 
 	// Guest still reads storage directly (no getter of its own).
 	assert(count_opcode(find_function(ir, "test"), IROpcode::LOAD_GLOBAL) == 1);
-	assert(count_calls(find_function(ir, "test"), "@hp_getter") == 0);
+	assert(count_calls(ir, find_function(ir, "test"), "@hp_getter") == 0);
 
 	// No accessors: empty names, host uses direct path.
 	const IRProgram plain = compile_to_ir("@export var speed = 1.0\n");
@@ -446,7 +446,7 @@ static void test_a_local_shadows_the_property() {
 		"\treturn hp\n");
 
 	const IRFunction& test = find_function(ir, "test");
-	assert(call_sequence(test).empty());
+	assert(call_sequence(ir, test).empty());
 
 	std::cout << "  a local of the same name is a local" << std::endl;
 }

@@ -131,7 +131,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 				std::cout << "  Max registers: " << func.max_registers << std::endl;
 				std::cout << "  Instructions:" << std::endl;
 				for (const auto& instr : func.instructions) {
-					std::cout << "    " << instr.to_string() << std::endl;
+					std::cout << "    " << instr.to_string(&ir_program.strings) << std::endl;
 				}
 				std::cout << std::endl;
 			}
@@ -155,7 +155,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 				std::cout << "  Max registers: " << func.max_registers << std::endl;
 				std::cout << "  Instructions:" << std::endl;
 				for (const auto& instr : func.instructions) {
-					std::cout << "    " << instr.to_string() << std::endl;
+					std::cout << "    " << instr.to_string(&ir_program.strings) << std::endl;
 				}
 				std::cout << std::endl;
 			}

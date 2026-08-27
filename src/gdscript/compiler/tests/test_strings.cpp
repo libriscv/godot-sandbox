@@ -48,11 +48,11 @@ static int count_opcode(const IRFunction& func, IROpcode opcode) {
 	return count;
 }
 
-static int count_vcalls(const IRFunction& func, const std::string& method) {
+static int count_vcalls(const IRProgram& ir, const IRFunction& func, const std::string& method) {
 	int count = 0;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::VCALL && instr.operands.size() >= 3 &&
-			std::get<std::string>(instr.operands[2].value) == method) {
+			ir.strings[instr.operands[2].string_id] == method) {
 			count++;
 		}
 	}
@@ -63,7 +63,7 @@ static int count_syscalls(const IRFunction& func, int64_t number) {
 	int count = 0;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 2 &&
-			std::get<int64_t>(instr.operands[1].value) == number) {
+			instr.operands[1].immediate() == number) {
 			count++;
 		}
 	}
@@ -74,8 +74,8 @@ static std::vector<int> str_call_arities(const IRFunction& func) {
 	std::vector<int> arities;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::GLOBAL_CALL && instr.operands.size() >= 4 &&
-			std::get<int64_t>(instr.operands[1].value) == static_cast<int64_t>(GlobalFn::STR)) {
-			arities.push_back(static_cast<int>(std::get<int64_t>(instr.operands[3].value)));
+			instr.operands[1].immediate() == static_cast<int64_t>(GlobalFn::STR)) {
+			arities.push_back(static_cast<int>(instr.operands[3].immediate()));
 		}
 	}
 	return arities;
@@ -244,7 +244,7 @@ static void test_string_length_is_a_syscall() {
 	for (const char* name : { "declared", "literal", "built", "concatenated" }) {
 		const IRFunction& func = find_function(ir, name);
 		assert(count_syscalls(func, ECALL_STRING_SIZE) == 1);
-		assert(count_vcalls(func, "length") == 0);
+		assert(count_vcalls(ir, func, "length") == 0);
 	}
 
 	compile_to_machine_code(source);
@@ -266,7 +266,7 @@ static void test_unknown_receiver_keeps_the_vcall() {
 
 	const IRFunction& untyped = find_function(ir, "untyped");
 	assert(count_syscalls(untyped, ECALL_STRING_SIZE) == 0);
-	assert(count_vcalls(untyped, "length") == 1);
+	assert(count_vcalls(ir, untyped, "length") == 1);
 
 	const IRFunction& an_array = find_function(ir, "an_array");
 	assert(count_syscalls(an_array, ECALL_STRING_SIZE) == 0);
@@ -297,7 +297,7 @@ static void test_subscript_is_a_syscall() {
 	for (const char* name : { "first", "at", "last", "literal" }) {
 		const IRFunction& func = find_function(ir, name);
 		assert(count_syscalls(func, ECALL_STRING_AT) == 1);
-		assert(count_vcalls(func, "get") == 0);
+		assert(count_vcalls(ir, func, "get") == 0);
 		assert(count_opcode(func, IROpcode::ARRAY_GET) == 0);
 	}
 
@@ -340,12 +340,12 @@ static void test_an_unknown_subscript_tests_the_tag() {
 	const IRProgram ir = compile_to_ir("func f(x, i : int):\n\treturn x[i]\n");
 	const IRFunction& func = find_function(ir, "f");
 	assert(count_syscalls(func, ECALL_STRING_AT) == 1);
-	assert(count_vcalls(func, "get") == 1);
+	assert(count_vcalls(ir, func, "get") == 1);
 
 	int string_tests = 0;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::TYPE_TEST &&
-			std::get<int64_t>(instr.operands.at(2).value) == Variant::STRING) {
+			instr.operands.at(2).immediate() == Variant::STRING) {
 			string_tests++;
 		}
 	}
@@ -382,8 +382,8 @@ static void test_walking_a_string() {
 	assert(count_opcode(f, IROpcode::MAKE_SCOPED) == 1);
 	assert(count_syscalls(f, ECALL_ARRAY_SIZE) == 0);
 	assert(count_syscalls(f, ECALL_ARRAY_AT) == 0);
-	assert(count_vcalls(f, "size") == 0);
-	assert(count_vcalls(f, "get") == 0);
+	assert(count_vcalls(known, f, "size") == 0);
+	assert(count_vcalls(known, f, "get") == 0);
 	assert(count_opcode(f, IROpcode::TYPE_TEST) == 0);
 
 	// A literal is a known String too.
@@ -405,8 +405,8 @@ static void test_walking_a_string() {
 	assert(count_syscalls(u, ECALL_STRING_AT) == 1);
 	assert(count_syscalls(u, ECALL_ARRAY_SIZE) == 1);
 	assert(count_syscalls(u, ECALL_ARRAY_AT) == 1);
-	assert(count_vcalls(u, "size") == 1);
-	assert(count_vcalls(u, "get") == 1);
+	assert(count_vcalls(untyped, u, "size") == 1);
+	assert(count_vcalls(untyped, u, "get") == 1);
 
 	compile_to_machine_code(
 		"func f(it, s : String):\n"
@@ -464,7 +464,7 @@ static void test_iterating_a_float() {
 	int float_tests = 0;
 	for (const auto& instr : u.instructions) {
 		if (instr.opcode == IROpcode::TYPE_TEST &&
-			std::get<int64_t>(instr.operands.at(2).value) == Variant::FLOAT) {
+			instr.operands.at(2).immediate() == Variant::FLOAT) {
 			float_tests++;
 		}
 	}
@@ -474,7 +474,7 @@ static void test_iterating_a_float() {
 	size_t loop_header = u.instructions.size();
 	for (size_t i = 0; i < u.instructions.size(); i++) {
 		if (u.instructions[i].opcode == IROpcode::LABEL &&
-			std::get<std::string>(u.instructions[i].operands[0].value).find("for_loop") !=
+			untyped.strings[u.instructions[i].operands[0].string_id].find("for_loop") !=
 				std::string::npos) {
 			loop_header = std::min(loop_header, i);
 		}
@@ -532,7 +532,7 @@ static void test_string_ops_survive_the_optimizer() {
 
 	assert(str_call_arities(test) == std::vector<int>{ 2 });
 	assert(count_syscalls(test, ECALL_STRING_SIZE) == 1);
-	assert(count_vcalls(test, "length") == 0);
+	assert(count_vcalls(ir, test, "length") == 0);
 	// Every remaining ADD is typed-int (no VEVAL fallback).
 	for (const auto& instr : test.instructions) {
 		if (instr.opcode == IROpcode::ADD) {

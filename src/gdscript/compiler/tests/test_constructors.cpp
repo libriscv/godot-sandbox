@@ -73,8 +73,8 @@ static double float_immediate(const IRFunction& func, int reg) {
 	for (size_t i = func.instructions.size(); i-- > 0; ) {
 		const IRInstruction& instr = func.instructions[i];
 		if (instr.opcode == IROpcode::LOAD_FLOAT_IMM &&
-			std::get<int>(instr.operands[0].value) == reg) {
-			return std::get<double>(instr.operands[1].value);
+			instr.operands[0].reg_index() == reg) {
+			return instr.operands[1].float_number();
 		}
 	}
 	assert(false && "no LOAD_FLOAT_IMM for that register");
@@ -85,8 +85,8 @@ static int64_t int_immediate(const IRFunction& func, int reg) {
 	for (size_t i = func.instructions.size(); i-- > 0; ) {
 		const IRInstruction& instr = func.instructions[i];
 		if (instr.opcode == IROpcode::LOAD_IMM &&
-			std::get<int>(instr.operands[0].value) == reg) {
-			return std::get<int64_t>(instr.operands[1].value);
+			instr.operands[0].reg_index() == reg) {
+			return instr.operands[1].immediate();
 		}
 	}
 	assert(false && "no LOAD_IMM for that register");
@@ -150,7 +150,7 @@ static void test_zero_argument_forms() {
 	assert(make_v2.operands.size() == 3);
 	for (int i = 1; i <= 2; i++) {
 		assert(float_immediate(find_function(v2, "test"),
-			std::get<int>(make_v2.operands[i].value)) == 0.0);
+			make_v2.operands[i].reg_index()) == 0.0);
 	}
 
 	// Color() defaults to opaque black (0, 0, 0, 1).
@@ -158,22 +158,22 @@ static void test_zero_argument_forms() {
 	const IRFunction& color_fn = find_function(color, "test");
 	const IRInstruction& make_color = only(color_fn, IROpcode::MAKE_COLOR);
 	assert(make_color.operands.size() == 5);
-	assert(float_immediate(color_fn, std::get<int>(make_color.operands[1].value)) == 0.0);
-	assert(float_immediate(color_fn, std::get<int>(make_color.operands[2].value)) == 0.0);
-	assert(float_immediate(color_fn, std::get<int>(make_color.operands[3].value)) == 0.0);
-	assert(float_immediate(color_fn, std::get<int>(make_color.operands[4].value)) == 1.0);
+	assert(float_immediate(color_fn, make_color.operands[1].reg_index()) == 0.0);
+	assert(float_immediate(color_fn, make_color.operands[2].reg_index()) == 0.0);
+	assert(float_immediate(color_fn, make_color.operands[3].reg_index()) == 0.0);
+	assert(float_immediate(color_fn, make_color.operands[4].reg_index()) == 1.0);
 
 	// Color(r, g, b) defaults alpha to 1.
 	const IRProgram rgb = compile_to_ir("func test():\n\treturn Color(0.5, 0.5, 0.5)\n");
 	const IRFunction& rgb_fn = find_function(rgb, "test");
 	const IRInstruction& make_rgb = only(rgb_fn, IROpcode::MAKE_COLOR);
-	assert(float_immediate(rgb_fn, std::get<int>(make_rgb.operands[4].value)) == 1.0);
+	assert(float_immediate(rgb_fn, make_rgb.operands[4].reg_index()) == 1.0);
 
 	// Integer types zero-construct with int components.
 	const IRProgram v2i = compile_to_ir("func test():\n\treturn Vector2i()\n");
 	const IRFunction& v2i_fn = find_function(v2i, "test");
 	const IRInstruction& make_v2i = only(v2i_fn, IROpcode::MAKE_VECTOR2I);
-	assert(int_immediate(v2i_fn, std::get<int>(make_v2i.operands[1].value)) == 0);
+	assert(int_immediate(v2i_fn, make_v2i.operands[1].reg_index()) == 0);
 
 	// Typed var without initializer -> same default constructor.
 	const IRProgram declared = compile_to_ir(
@@ -212,7 +212,7 @@ static void test_rect_and_plane() {
 	const IRFunction& plane_fn = find_function(plane, "test");
 	assert(count_opcode(plane_fn, IROpcode::VGET_INLINE) == 3);
 	const IRInstruction& make_plane = only(plane_fn, IROpcode::MAKE_PLANE);
-	assert(float_immediate(plane_fn, std::get<int>(make_plane.operands[4].value)) == 0.0);
+	assert(float_immediate(plane_fn, make_plane.operands[4].reg_index()) == 0.0);
 
 	std::cout << "  ✓ Rect2, Rect2i and Plane construct inline" << std::endl;
 }
@@ -226,7 +226,7 @@ static void test_container_constructors() {
 	const IRProgram dict = compile_to_ir("func test():\n\treturn Dictionary()\n");
 	const IRInstruction& make_dict = only(find_function(dict, "test"), IROpcode::MAKE_DICTIONARY);
 	assert(make_dict.operands.size() == 2);
-	assert(std::get<int64_t>(make_dict.operands[1].value) == 0);
+	assert(make_dict.operands[1].immediate() == 0);
 	ir_verify(dict, "constructor test");
 
 	// Packed array from one Array; host converts.
@@ -234,7 +234,7 @@ static void test_container_constructors() {
 		"func test():\n\treturn PackedInt32Array([1, 2])\n");
 	const IRInstruction& make_packed =
 		only(find_function(packed, "test"), IROpcode::MAKE_PACKED_INT32_ARRAY);
-	assert(std::get<int64_t>(make_packed.operands[1].value) == 1);
+	assert(make_packed.operands[1].immediate() == 1);
 
 	// Element list not accepted; host expects one Array Variant in a2.
 	assert(refuses("func test():\n\treturn PackedInt32Array(1, 2)\n"));
@@ -269,14 +269,14 @@ static void test_conversions_reach_the_engine() {
 	const IRProgram narrow = compile_to_ir("func test():\n\treturn Vector2(Vector2i(1, 2))\n");
 	const IRFunction& narrow_fn = find_function(narrow, "test");
 	const IRInstruction& construct = only(narrow_fn, IROpcode::CONSTRUCT);
-	assert(std::get<int64_t>(construct.operands[1].value) == Variant::VECTOR2);
-	assert(std::get<int64_t>(construct.operands[2].value) == 1);
+	assert(construct.operands[1].immediate() == Variant::VECTOR2);
+	assert(construct.operands[2].immediate() == 1);
 
 	const IRProgram transform = compile_to_ir(
 		"func test():\n\treturn Transform2D(0.5, Vector2(1, 2))\n");
 	const IRInstruction& t2d = only(find_function(transform, "test"), IROpcode::CONSTRUCT);
-	assert(std::get<int64_t>(t2d.operands[1].value) == Variant::TRANSFORM2D);
-	assert(std::get<int64_t>(t2d.operands[2].value) == 2);
+	assert(t2d.operands[1].immediate() == Variant::TRANSFORM2D);
+	assert(t2d.operands[2].immediate() == 2);
 
 	assert(machine_code_builds("func test():\n\treturn Quaternion(0, 0, 0, 1)\n"));
 	assert(machine_code_builds("func test():\n\treturn RID()\n"));
@@ -302,15 +302,15 @@ static void test_builtin_constants() {
 	const IRProgram forward = compile_to_ir("func test():\n\treturn Vector3.FORWARD\n");
 	const IRFunction& forward_fn = find_function(forward, "test");
 	const IRInstruction& make_forward = only(forward_fn, IROpcode::MAKE_VECTOR3);
-	assert(float_immediate(forward_fn, std::get<int>(make_forward.operands[1].value)) == 0.0);
-	assert(float_immediate(forward_fn, std::get<int>(make_forward.operands[2].value)) == 0.0);
-	assert(float_immediate(forward_fn, std::get<int>(make_forward.operands[3].value)) == -1.0);
+	assert(float_immediate(forward_fn, make_forward.operands[1].reg_index()) == 0.0);
+	assert(float_immediate(forward_fn, make_forward.operands[2].reg_index()) == 0.0);
+	assert(float_immediate(forward_fn, make_forward.operands[3].reg_index()) == -1.0);
 
 	// Integer type constants load as integers.
 	const IRProgram max = compile_to_ir("func test():\n\treturn Vector2i.MAX\n");
 	const IRFunction& max_fn = find_function(max, "test");
 	const IRInstruction& make_max = only(max_fn, IROpcode::MAKE_VECTOR2I);
-	assert(int_immediate(max_fn, std::get<int>(make_max.operands[1].value)) == 2147483647);
+	assert(int_immediate(max_fn, make_max.operands[1].reg_index()) == 2147483647);
 
 	assert(count_opcode(find_function(
 		compile_to_ir("func test():\n\treturn Color.RED\n"), "test"),
@@ -351,9 +351,9 @@ static void test_color8_rescales() {
 	const IRProgram folded = compile_to_ir("func test():\n\treturn Color8(255, 0, 0)\n", true);
 	const IRFunction& folded_fn = find_function(folded, "test");
 	const IRInstruction& make = only(folded_fn, IROpcode::MAKE_COLOR);
-	assert(float_immediate(folded_fn, std::get<int>(make.operands[1].value)) == 1.0);
-	assert(float_immediate(folded_fn, std::get<int>(make.operands[2].value)) == 0.0);
-	assert(float_immediate(folded_fn, std::get<int>(make.operands[4].value)) == 1.0);
+	assert(float_immediate(folded_fn, make.operands[1].reg_index()) == 1.0);
+	assert(float_immediate(folded_fn, make.operands[2].reg_index()) == 0.0);
+	assert(float_immediate(folded_fn, make.operands[4].reg_index()) == 1.0);
 
 	assert(refuses("func test():\n\treturn Color8(1, 2)\n"));
 	assert(refuses("func test():\n\treturn Color8(1, 2, 3, 4, 5)\n"));

@@ -54,19 +54,19 @@ static int count_dict_gets(const IRFunction& func) {
 	int count = 0;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 3 &&
-			std::get<int64_t>(instr.operands[1].value) == ECALL_DICTIONARY_OPS &&
-			std::get<int64_t>(instr.operands[2].value) == 0) {
+			instr.operands[1].immediate() == ECALL_DICTIONARY_OPS &&
+			instr.operands[2].immediate() == 0) {
 			count++;
 		}
 	}
 	return count;
 }
 
-static int count_vcalls(const IRFunction& func, const std::string& method) {
+static int count_vcalls(const IRProgram& ir, const IRFunction& func, const std::string& method) {
 	int count = 0;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::VCALL && instr.operands.size() >= 3 &&
-			std::get<std::string>(instr.operands[2].value) == method) {
+			ir.strings[instr.operands[2].string_id] == method) {
 			count++;
 		}
 	}
@@ -86,7 +86,7 @@ static bool refuses(const std::string& source) {
 static int inline_set_target(const IRFunction& func) {
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::VSET_INLINE) {
-			return std::get<int>(instr.operands[0].value);
+			return instr.operands[0].reg_index();
 		}
 	}
 	return -1;
@@ -96,7 +96,7 @@ static int inline_set_target(const IRFunction& func) {
 static int64_t inline_set_type(const IRFunction& func) {
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::VSET_INLINE) {
-			return std::get<int64_t>(instr.operands[2].value);
+			return instr.operands[2].immediate();
 		}
 	}
 	return -1;
@@ -134,7 +134,7 @@ static void test_known_inline_member_write() {
 	bool target_is_the_variable = false;
 	for (const auto& instr : f.instructions) {
 		if (instr.opcode == IROpcode::MAKE_VECTOR2 &&
-			std::get<int>(instr.operands[0].value) == target) {
+			instr.operands[0].reg_index() == target) {
 			target_is_the_variable = true;
 		}
 	}
@@ -325,7 +325,7 @@ static void test_the_optimizer_keeps_the_copy() {
 	int source = -1;
 	for (const auto& instr : f.instructions) {
 		if (instr.opcode == IROpcode::MAKE_VECTOR2) {
-			source = std::get<int>(instr.operands[0].value);
+			source = instr.operands[0].reg_index();
 		}
 	}
 	assert(source >= 0);
@@ -374,12 +374,12 @@ static void test_globals_do_not_become_self_calls() {
 	const IRProgram quat = compile_to_ir("func test():\n\treturn Quaternion(0, 0, 0, 1)\n");
 	const IRFunction& quat_fn = find_function(quat, "test");
 	assert(count_opcode(quat_fn, IROpcode::CONSTRUCT) == 1);
-	assert(count_vcalls(quat_fn, "Quaternion") == 0);
+	assert(count_vcalls(quat, quat_fn, "Quaternion") == 0);
 	assert(count_opcode(quat_fn, IROpcode::CALL) == 0);
 
 	// Non-global name: legitimate self-call on the owner node.
 	const IRProgram self_call = compile_to_ir("func test():\n\tqueue_free()\n");
-	assert(count_vcalls(find_function(self_call, "test"), "queue_free") == 1);
+	assert(count_vcalls(self_call, find_function(self_call, "test"), "queue_free") == 1);
 
 	// Local function shadows the global.
 	const IRProgram shadowed = compile_to_ir(
@@ -390,7 +390,7 @@ static void test_globals_do_not_become_self_calls() {
 	const IRProgram type_of = compile_to_ir("func test(x):\n\treturn typeof(x)\n");
 	const IRFunction& t = find_function(type_of, "test");
 	assert(count_opcode(t, IROpcode::TYPE_OF) == 1);
-	assert(count_vcalls(t, "typeof") == 0);
+	assert(count_vcalls(type_of, t, "typeof") == 0);
 	assert(refuses("func test(x):\n\treturn typeof(x, 1)\n"));
 
 	std::cout << "  ✓ a global Godot resolves is never a self-call" << std::endl;
@@ -406,21 +406,21 @@ static void test_iterating_a_non_array() {
 		"func test():\n\tvar p = PackedInt32Array([1, 2])\n\tvar t = 0\n"
 		"\tfor v in p:\n\t\tt += v\n\treturn t\n");
 	const IRFunction& p = find_function(packed, "test");
-	assert(count_vcalls(p, "size") == 1);
-	assert(count_vcalls(p, "get") == 1);
+	assert(count_vcalls(packed, p, "size") == 1);
+	assert(count_vcalls(packed, p, "get") == 1);
 	// No CALL_SYSCALL: Array-only syscalls would throw.
 	assert(count_opcode(p, IROpcode::CALL_SYSCALL) == 0);
 
 	// Array uses syscalls, not VCALL.
 	const IRProgram array = compile_to_ir(
 		"func test():\n\tvar a : Array = [1, 2]\n\tfor v in a:\n\t\tpass\n");
-	assert(count_vcalls(find_function(array, "test"), "size") == 0);
+	assert(count_vcalls(array, find_function(array, "test"), "size") == 0);
 
 	// String: own syscalls, no VCALL. See test_strings.cpp.
 	const IRProgram walked = compile_to_ir(
 		"func test():\n\tvar s : String = \"hi\"\n\tfor c in s:\n\t\tpass\n");
-	assert(count_vcalls(find_function(walked, "test"), "size") == 0);
-	assert(count_vcalls(find_function(walked, "test"), "get") == 0);
+	assert(count_vcalls(walked, find_function(walked, "test"), "size") == 0);
+	assert(count_vcalls(walked, find_function(walked, "test"), "get") == 0);
 
 	std::cout << "  ✓ a packed array and a String each walk their own way" << std::endl;
 }

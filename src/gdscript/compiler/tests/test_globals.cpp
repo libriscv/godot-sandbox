@@ -69,7 +69,7 @@ static std::vector<GlobalFn> called_globals(const IRFunction& func) {
 	std::vector<GlobalFn> names;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::GLOBAL_CALL) {
-			names.push_back(static_cast<GlobalFn>(std::get<int64_t>(instr.operands.at(1).value)));
+			names.push_back(static_cast<GlobalFn>(instr.operands.at(1).immediate()));
 		}
 	}
 	return names;
@@ -79,7 +79,7 @@ static std::vector<GlobalFn> called_globals(const IRFunction& func) {
 // works in, which is what lets the backend skip the run-time type test.
 static bool all_calls_typed(const IRFunction& func) {
 	for (const auto& instr : func.instructions) {
-		if (instr.opcode == IROpcode::GLOBAL_CALL && std::get<int64_t>(instr.operands.at(2).value) == 0) {
+		if (instr.opcode == IROpcode::GLOBAL_CALL && instr.operands.at(2).immediate() == 0) {
 			return false;
 		}
 	}
@@ -297,7 +297,7 @@ static void test_the_output_channels_are_one_opcode() {
 		assert(count_opcode(func, IROpcode::VCALL) == 0);
 		for (const auto& instr : func.instructions) {
 			if (instr.opcode == IROpcode::PRINT) {
-				assert(std::get<int64_t>(instr.operands[1].value) == int64_t(one.channel));
+				assert(instr.operands[1].immediate() == int64_t(one.channel));
 			}
 		}
 	}
@@ -491,7 +491,7 @@ static void test_random_calls_survive_the_optimizer() {
 	// did nothing.
 	int dead_loads = 0;
 	for (const auto& instr : optimized.instructions) {
-		if (instr.opcode == IROpcode::LOAD_IMM && std::get<int>(instr.operands.at(0).value) == 1) {
+		if (instr.opcode == IROpcode::LOAD_IMM && instr.operands.at(0).reg_index() == 1) {
 			dead_loads++;
 		}
 	}

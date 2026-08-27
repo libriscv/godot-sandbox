@@ -53,7 +53,7 @@ static int count_syscall(const IRFunction& func, int64_t number) {
 	int count = 0;
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 2 &&
-			std::get<int64_t>(instr.operands[1].value) == number) {
+			instr.operands[1].immediate() == number) {
 			count++;
 		}
 	}
@@ -218,7 +218,7 @@ static void test_in_still_heads_a_for_loop() {
 static void test_is_lowers_to_a_tag_comparison() {
 	const IRProgram ir = compile_to_ir("func f(a) -> bool:\n\treturn a is int\n", false);
 	const IRInstruction& test = only(find_function(ir, "f"), IROpcode::TYPE_TEST);
-	assert(std::get<int64_t>(test.operands.at(2).value) == Variant::INT);
+	assert(test.operands.at(2).immediate() == Variant::INT);
 
 	// Nothing in the emitted code reaches the host.
 	const std::vector<uint8_t> code = compile_to_code("func f(a) -> bool:\n\treturn a is int\n");
@@ -258,7 +258,7 @@ static void test_is_on_a_class_name_asks_the_engine() {
 	std::vector<std::string> called;
 	for (const auto& instr : f.instructions) {
 		if (instr.opcode == IROpcode::VCALL) {
-			called.push_back(std::get<std::string>(instr.operands[2].value));
+			called.push_back(ir.strings[instr.operands[2].string_id]);
 		}
 	}
 	assert((called == std::vector<std::string>{
@@ -313,9 +313,9 @@ static void test_as_covers_every_builtin_type() {
 		assert(count_opcode(f, IROpcode::LOAD_NIL) == 0);
 		assert(count_opcode(f, IROpcode::VCALL) == 0);
 		const IRInstruction& construct = only(f, IROpcode::CONSTRUCT);
-		assert(std::get<int64_t>(construct.operands[1].value) ==
+		assert(construct.operands[1].immediate() ==
 			int64_t(Variant::type_from_name(type)));
-		assert(std::get<int64_t>(construct.operands[2].value) == 1);
+		assert(construct.operands[2].immediate() == 1);
 	}
 
 	const IRProgram folded = compile_to_ir(
@@ -430,7 +430,7 @@ static void test_dictionary_iteration_takes_the_keys() {
 		if (func.instructions[i].opcode != IROpcode::TYPE_TEST) {
 			continue;
 		}
-		tested_dictionary |= std::get<int64_t>(func.instructions[i].operands.at(2).value) == Variant::DICTIONARY;
+		tested_dictionary |= func.instructions[i].operands.at(2).immediate() == Variant::DICTIONARY;
 		// Before the loop body, so one test per loop, not per iteration.
 		for (size_t j = 0; j < i; j++) {
 			assert(func.instructions[j].opcode != IROpcode::LABEL ||
@@ -487,11 +487,11 @@ static void test_integer_iteration_is_guarded_at_run_time() {
 	for (size_t i = 0; i < func.instructions.size(); i++) {
 		const IRInstruction& instr = func.instructions[i];
 		if (instr.opcode == IROpcode::TYPE_TEST &&
-			std::get<int64_t>(instr.operands.at(2).value) == Variant::INT) {
+			instr.operands.at(2).immediate() == Variant::INT) {
 			int_test = i;
 		}
 		if (instr.opcode == IROpcode::LABEL && loop_label == func.instructions.size() &&
-			std::get<std::string>(instr.operands[0].value).find("for_loop") != std::string::npos) {
+			untyped.strings[instr.operands[0].string_id].find("for_loop") != std::string::npos) {
 			loop_label = i;
 		}
 		if (instr.opcode == IROpcode::ADD) {
@@ -713,7 +713,7 @@ static void test_enum_as_a_dictionary_value() {
 	int pairs = -1;
 	for (const auto& instr : fn.instructions) {
 		if (instr.opcode == IROpcode::MAKE_DICTIONARY) {
-			pairs = int(std::get<int64_t>(instr.operands[1].value));
+			pairs = int(instr.operands[1].immediate());
 		}
 	}
 	assert(pairs == 3);

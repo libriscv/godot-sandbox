@@ -319,7 +319,7 @@ void test_subscript_operations() {
 	for (const auto& instr : ir_read.functions[0].instructions) {
 		if (instr.opcode == IROpcode::VCALL) {
 			if (instr.operands.size() >= 3 && instr.operands[2].type == IRValue::Type::STRING) {
-				if (std::get<std::string>(instr.operands[2].value) == "get") {
+				if (ir_read.strings[instr.operands[2].string_id] == "get") {
 					has_get_vcall = true;
 					break;
 				}
@@ -346,7 +346,7 @@ void test_subscript_operations() {
 	for (const auto& instr : ir_write.functions[0].instructions) {
 		if (instr.opcode == IROpcode::VCALL) {
 			if (instr.operands.size() >= 3 && instr.operands[2].type == IRValue::Type::STRING) {
-				if (std::get<std::string>(instr.operands[2].value) == "set") {
+				if (ir_write.strings[instr.operands[2].string_id] == "set") {
 					has_set_vcall = true;
 					break;
 				}
@@ -387,8 +387,8 @@ func say():
 			// PRINT dst, channel, count, arg...
 			assert(instr.operands.size() == 5);
 			assert(instr.operands[0].type == IRValue::Type::REGISTER);
-			assert(std::get<int64_t>(instr.operands[1].value) == int64_t(Print_Channel::PRINT));
-			assert(std::get<int64_t>(instr.operands[2].value) == 2);
+			assert(instr.operands[1].immediate() == int64_t(Print_Channel::PRINT));
+			assert(instr.operands[2].immediate() == 2);
 			assert(instr.operands[3].type == IRValue::Type::REGISTER);
 			assert(instr.operands[4].type == IRValue::Type::REGISTER);
 		}
@@ -413,8 +413,8 @@ func say():
 		if (instr.opcode == IROpcode::PRINT) {
 			has_empty_print = true;
 			assert(instr.operands.size() == 3);
-			assert(std::get<int64_t>(instr.operands[1].value) == int64_t(Print_Channel::PRINT));
-			assert(std::get<int64_t>(instr.operands[2].value) == 0);
+			assert(instr.operands[1].immediate() == int64_t(Print_Channel::PRINT));
+			assert(instr.operands[2].immediate() == 0);
 		}
 	}
 	assert(has_empty_print);
@@ -448,7 +448,7 @@ func say():
 	for (const auto& instr : say->instructions) {
 		assert(instr.opcode != IROpcode::PRINT);
 		if (instr.opcode == IROpcode::CALL &&
-			std::get<std::string>(instr.operands[0].value) == "print") {
+			ir_shadow.strings[instr.operands[0].string_id] == "print") {
 			has_local_call = true;
 		}
 	}
@@ -480,7 +480,7 @@ func make_array():
 			has_make_array = true;
 			// Check that element count is 0
 			if (instr.operands.size() >= 2) {
-				int count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+				int count = static_cast<int>(instr.operands[1].immediate());
 				assert(count == 0);
 			}
 			break;
@@ -1127,7 +1127,7 @@ void test_constant_fold_comparison_in_if() {
 			branch_zero_count++;
 		}
 		if (instr.opcode == IROpcode::LOAD_IMM) {
-			const int64_t value = std::get<int64_t>(instr.operands[1].value);
+			const int64_t value = instr.operands[1].immediate();
 			loads_100 = loads_100 || (value == 100);
 			loads_50 = loads_50 || (value == 50);
 		}
@@ -1383,7 +1383,7 @@ func make_empty_dict():
 		if (instr.opcode == IROpcode::MAKE_DICTIONARY) {
 			has_make_dict_empty = true;
 			if (instr.operands.size() >= 2) {
-				int pair_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+				int pair_count = static_cast<int>(instr.operands[1].immediate());
 				assert(pair_count == 0);
 			}
 			break;
@@ -1412,7 +1412,7 @@ func make_dict():
 			has_make_dict = true;
 			// Check pair count
 			if (instr.operands.size() >= 2) {
-				int pair_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+				int pair_count = static_cast<int>(instr.operands[1].immediate());
 				assert(pair_count == 3);
 				// Should have 6 more operands (3 key-value pairs = 6 variants)
 				assert(instr.operands.size() == 2 + 6);
@@ -1446,7 +1446,7 @@ func make_nested_dict():
 		if (instr.opcode == IROpcode::MAKE_DICTIONARY) {
 			has_make_dict_nested = true;
 			if (instr.operands.size() >= 2) {
-				int pair_count = static_cast<int>(std::get<int64_t>(instr.operands[1].value));
+				int pair_count = static_cast<int>(instr.operands[1].immediate());
 				assert(pair_count == 3); // 3 key-value pairs
 			}
 		}

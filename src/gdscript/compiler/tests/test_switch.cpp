@@ -79,14 +79,14 @@ static const IRInstruction& only_switch(const IRFunction& func) {
 	return *found;
 }
 
-// The label a SWITCH sends `value` to, or "" if the value is out of range.
-static std::string switch_target(const IRInstruction& sw, int64_t value) {
-	const int64_t base = std::get<int64_t>(sw.operands.at(1).value);
-	const int64_t count = std::get<int64_t>(sw.operands.at(2).value);
+// The label a SWITCH sends `value` to, or INVALID_ID if the value is out of range.
+static uint32_t switch_target(const IRInstruction& sw, int64_t value) {
+	const int64_t base = sw.operands.at(1).immediate();
+	const int64_t count = sw.operands.at(2).immediate();
 	if (value < base || value >= base + count) {
-		return "";
+		return IRStringTable::INVALID_ID;
 	}
-	return std::get<std::string>(sw.operands.at(3 + (value - base)).value);
+	return sw.operands.at(3 + (value - base)).string_id;
 }
 
 static int64_t call_int(const IRProgram& ir, const std::string& function,
@@ -134,7 +134,7 @@ func test():
 	assert(count_opcode(func, IROpcode::LOAD_IMM) == 1);
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::LOAD_IMM) {
-			assert(std::get<int64_t>(instr.operands.at(1).value) == 42);
+			assert(instr.operands.at(1).immediate() == 42);
 			assert(instr.type_hint == Variant::INT);
 		}
 	}
@@ -254,8 +254,8 @@ static void test_dense_match_becomes_a_jump_table() {
 	const IRFunction& step = find_function(ir, "step");
 	const IRInstruction& sw = only_switch(step);
 
-	assert(std::get<int64_t>(sw.operands.at(1).value) == 0);   // base
-	assert(std::get<int64_t>(sw.operands.at(2).value) == 16);  // one entry per opcode
+	assert(sw.operands.at(1).immediate() == 0);   // base
+	assert(sw.operands.at(2).immediate() == 16);  // one entry per opcode
 	assert(sw.operands.size() == 3 + 16);
 
 	// The subject is declared `int`, so the table decides the whole match and no
@@ -264,7 +264,7 @@ static void test_dense_match_becomes_a_jump_table() {
 	assert(count_opcode(step, IROpcode::CMP_EQ) == 0);
 
 	// Sixteen distinct arms, all reachable, none the wildcard.
-	std::set<std::string> targets;
+	std::set<uint32_t> targets;
 	for (int64_t op = 0; op < 16; op++) {
 		targets.insert(switch_target(sw, op));
 	}
@@ -464,8 +464,8 @@ func test():
 	const IRProgram ir = compile_to_ir(source);
 	const IRInstruction& sw = only_switch(find_function(ir, "classify"));
 
-	assert(std::get<int64_t>(sw.operands.at(1).value) == -4);
-	assert(std::get<int64_t>(sw.operands.at(2).value) == 8); // -4 .. 3
+	assert(sw.operands.at(1).immediate() == -4);
+	assert(sw.operands.at(2).immediate() == 8); // -4 .. 3
 
 	// -2 and -1 share an arm; -3, 0 and 2 are holes and go where falling out of
 	// the match goes; the second LOWEST is unreachable, as in the compare chain.
@@ -474,7 +474,7 @@ func test():
 	assert(switch_target(sw, 0) == switch_target(sw, 2));
 	assert(switch_target(sw, -4) != switch_target(sw, -3));
 	assert(switch_target(sw, -4) != switch_target(sw, 3));
-	assert(switch_target(sw, 4) == ""); // past the end of the table
+	assert(switch_target(sw, 4) == IRStringTable::INVALID_ID); // past the end of the table
 
 	IRProgram optimized = compile_to_ir(source, /*optimize=*/true);
 	for (int64_t v = -6; v < 6; v++) {
@@ -511,10 +511,10 @@ func test():
 
 	const IRProgram ir = compile_to_ir(source);
 	const IRInstruction& sw = only_switch(find_function(ir, "pick"));
-	assert(std::get<int64_t>(sw.operands.at(2).value) == 5); // 0 .. 4
+	assert(sw.operands.at(2).immediate() == 5); // 0 .. 4
 
 	// The hole at 2 targets the wildcard's body, not an arm of its own.
-	const std::string hole = switch_target(sw, 2);
+	const uint32_t hole = switch_target(sw, 2);
 	assert(!hole.empty());
 	assert(hole != switch_target(sw, 0));
 	assert(hole != switch_target(sw, 4));
@@ -694,7 +694,7 @@ static void test_switch_is_dispatch_and_nothing_else() {
 	assert(count_opcode(pick, IROpcode::CMP_EQ) == 0);
 
 	assert(switch_target(sw, 0) != switch_target(sw, 15));
-	assert(switch_target(sw, 16) == "");  // out-of-range -> wildcard
+	assert(switch_target(sw, 16) == IRStringTable::INVALID_ID);  // out-of-range -> wildcard
 
 	assert(call_int(ir, "test") == 100 + 115 - 1);
 	verify_through_the_pipeline(source);

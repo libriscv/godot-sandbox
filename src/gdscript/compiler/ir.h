@@ -1,9 +1,11 @@
 #pragma once
 #include "export_hints.h"
+#include "small_vector.h"
 #include <vector>
 #include <string>
 #include <cstdint>
 #include <variant>
+#include <unordered_map>
 #include <memory>
 #include "function_signature.h"
 #include "variant_types.h"
@@ -120,8 +122,41 @@ inline bool ir_is_control_flow(IROpcode op) {
 	return (ir_opcode_info(op).effects & (IR_LABEL | IR_BRANCH | IR_TERMINATOR)) != 0;
 }
 
+// LABEL/VARIABLE/STRING operand names, interned. Keeps IRValue a 16-byte POD:
+// no allocation per operand, integer compare and hash on labels.
+//
+// Not IRProgram::string_constants -- that one's indices are the guest constant
+// pool's ELF layout, and only LOAD_STRING operands belong in it.
+class IRStringTable {
+public:
+	// No operand carries it; identify_loops() uses it for "no exit label".
+	static constexpr uint32_t INVALID_ID = UINT32_MAX;
+
+	uint32_t intern(const std::string& text) {
+		auto it = m_ids.find(text);
+		if (it != m_ids.end()) {
+			return it->second;
+		}
+		const uint32_t id = static_cast<uint32_t>(m_strings.size());
+		m_strings.push_back(text);
+		m_ids.emplace(text, id);
+		return id;
+	}
+
+	const std::string& operator[](uint32_t id) const {
+		static const std::string missing;
+		return id < m_strings.size() ? m_strings[id] : missing;
+	}
+
+	size_t size() const { return m_strings.size(); }
+
+private:
+	std::vector<std::string> m_strings;
+	std::unordered_map<std::string, uint32_t> m_ids;
+};
+
 struct IRValue {
-	enum class Type {
+	enum class Type : uint8_t {
 		REGISTER,
 		IMMEDIATE,
 		FLOAT,
@@ -131,51 +166,78 @@ struct IRValue {
 	};
 
 	Type type = Type::IMMEDIATE;
-	std::variant<int, int64_t, double, std::string> value;
+	union {
+		int reg_value;
+		int64_t imm_value;
+		double float_value;
+		// LABEL, VARIABLE, STRING: IRStringTable id.
+		uint32_t string_id;
+	};
+
+	IRValue() : type(Type::IMMEDIATE), imm_value(0) {}
 
 	static IRValue reg(int r) {
-		IRValue v {};
+		IRValue v;
 		v.type = Type::REGISTER;
-		v.value = r;
+		v.reg_value = r;
 		return v;
 	}
 
 	static IRValue imm(int64_t i) {
-		IRValue v {};
+		IRValue v;
 		v.type = Type::IMMEDIATE;
-		v.value = i;
+		v.imm_value = i;
 		return v;
 	}
 
 	static IRValue fimm(double d) {
-		IRValue v {};
+		IRValue v;
 		v.type = Type::FLOAT;
-		v.value = d;
+		v.float_value = d;
 		return v;
 	}
 
-	static IRValue label(const std::string& l) {
-		IRValue v {};
+	static IRValue label(uint32_t id) {
+		IRValue v;
 		v.type = Type::LABEL;
-		v.value = l;
+		v.string_id = id;
 		return v;
 	}
 
-	static IRValue var(const std::string& name) {
-		IRValue v {};
+	static IRValue var(uint32_t id) {
+		IRValue v;
 		v.type = Type::VARIABLE;
-		v.value = name;
+		v.string_id = id;
 		return v;
 	}
 
-	static IRValue str(const std::string& s) {
-		IRValue v {};
+	static IRValue str(uint32_t id) {
+		IRValue v;
 		v.type = Type::STRING;
-		v.value = s;
+		v.string_id = id;
 		return v;
 	}
 
-	std::string to_string() const;
+	int reg_index() const { return reg_value; }
+	int64_t immediate() const { return imm_value; }
+	double float_number() const { return float_value; }
+
+	bool operator==(const IRValue& other) const {
+		if (type != other.type) {
+			return false;
+		}
+		switch (type) {
+			case Type::REGISTER: return reg_value == other.reg_value;
+			case Type::IMMEDIATE: return imm_value == other.imm_value;
+			case Type::FLOAT: return float_value == other.float_value;
+			case Type::LABEL:
+			case Type::VARIABLE:
+			case Type::STRING: return string_id == other.string_id;
+		}
+		return false;
+	}
+
+	std::string to_string(const IRStringTable* strings = nullptr) const;
 };
 
 struct IRInstruction {
@@ -184,7 +246,8 @@ struct IRInstruction {
 	using TypeHint = int32_t;
 
 	IROpcode opcode {};
-	std::vector<IRValue> operands;
+	// 3 operands or fewer covers 92% of instructions; those allocate nothing.
+	SmallVector<IRValue, 3> operands;
 	TypeHint type_hint = TypeHint_NONE;
 
 	// 1-based source line; 0 for prologue/synthesised. Metadata only.
@@ -200,7 +263,21 @@ struct IRInstruction {
 	IRInstruction(IROpcode op, IRValue a, IRValue b) : opcode(op), operands{a, b} {}
 	IRInstruction(IROpcode op, IRValue a, IRValue b, IRValue c) : opcode(op), operands{a, b, c} {}
 
-	std::string to_string() const;
+	// Without a table, names render as their id.
+	std::string to_string(const IRStringTable* strings = nullptr) const;
+
+	bool operator==(const IRInstruction& other) const {
+		if (opcode != other.opcode || type_hint != other.type_hint || line != other.line ||
+			super_call != other.super_call || operands.size() != other.operands.size()) {
+			return false;
+		}
+		for (size_t i = 0; i < operands.size(); i++) {
+			if (!(operands[i] == other.operands[i])) {
+				return false;
+			}
+		}
+		return true;
+	}
 };
 
 struct IRFunction {
@@ -270,6 +347,9 @@ struct IRProgram {
 	std::vector<IRFunction> functions;
 	std::vector<std::string> string_constants;
 
+	// Label, variable and operand names.
+	IRStringTable strings;
+
 	// One entry per function, same order.
 	std::vector<FunctionSignature> signatures;
 
@@ -295,6 +375,68 @@ const char* ir_operand_kind_name(IROperandKind kind);
 
 // For diagnostics and dumps.
 const char* variant_type_name(IRInstruction::TypeHint hint);
+
+// Fixed-width register bitset for the liveness analyses. Sized once from
+// max_registers; merges word-wide, allocates nothing per instruction visit.
+class RegisterSet {
+public:
+	RegisterSet() = default;
+	explicit RegisterSet(size_t bits) { resize(bits); }
+
+	void resize(size_t bits) {
+		m_bits = bits;
+		m_words.assign((bits + 63) / 64, 0);
+	}
+
+	size_t size() const { return m_bits; }
+
+	void set(size_t bit) { m_words[bit >> 6] |= uint64_t(1) << (bit & 63); }
+	void reset(size_t bit) { m_words[bit >> 6] &= ~(uint64_t(1) << (bit & 63)); }
+	bool test(size_t bit) const { return (m_words[bit >> 6] >> (bit & 63)) & 1; }
+
+	void clear() {
+		for (uint64_t& word : m_words) {
+			word = 0;
+		}
+	}
+
+	void set_all() {
+		for (uint64_t& word : m_words) {
+			word = ~uint64_t(0);
+		}
+		trim();
+	}
+
+	bool any() const {
+		for (uint64_t word : m_words) {
+			if (word != 0) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	RegisterSet& operator|=(const RegisterSet& other) {
+		for (size_t i = 0; i < m_words.size(); i++) {
+			m_words[i] |= other.m_words[i];
+		}
+		return *this;
+	}
+
+	bool operator==(const RegisterSet& other) const { return m_words == other.m_words; }
+	bool operator!=(const RegisterSet& other) const { return m_words != other.m_words; }
+
+private:
+	void trim() {
+		const size_t tail = m_bits & 63;
+		if (tail != 0 && !m_words.empty()) {
+			m_words.back() &= (uint64_t(1) << tail) - 1;
+		}
+	}
+
+	std::vector<uint64_t> m_words;
+	size_t m_bits = 0;
+};
 
 // Operand role queries. All are ir_opcodes.def lookups.
 // DST position varies by opcode (CALL uses operand 1, VSET has none);

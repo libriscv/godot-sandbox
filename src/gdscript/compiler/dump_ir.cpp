@@ -28,31 +28,31 @@ const char* reg_name(uint8_t reg) {
 
 static const char* type_hint_name(IRInstruction::TypeHint hint) { return variant_type_name(hint); }
 
-std::string format_operand_detailed(const IRValue& op) {
+std::string format_operand_detailed(const IRValue& op, const IRStringTable& strings) {
 	std::ostringstream oss;
 
 	switch (op.type) {
 		case IRValue::Type::REGISTER:
-			oss << "r" << std::get<int>(op.value);
+			oss << "r" << op.reg_index();
 			break;
 		case IRValue::Type::IMMEDIATE: {
-			int64_t val = std::get<int64_t>(op.value);
+			int64_t val = op.immediate();
 			oss << val << " (0x" << std::hex << val << std::dec << ")";
 			break;
 		}
 		case IRValue::Type::FLOAT: {
-			double val = std::get<double>(op.value);
+			double val = op.float_number();
 			oss << std::setprecision(std::numeric_limits<double>::max_digits10) << val;
 			break;
 		}
 		case IRValue::Type::LABEL:
-			oss << "@" << std::get<std::string>(op.value);
+			oss << "@" << strings[op.string_id];
 			break;
 		case IRValue::Type::VARIABLE:
-			oss << "$" << std::get<std::string>(op.value);
+			oss << "$" << strings[op.string_id];
 			break;
 		case IRValue::Type::STRING:
-			oss << "\"" << std::get<std::string>(op.value) << "\"";
+			oss << "\"" << strings[op.string_id] << "\"";
 			break;
 	}
 
@@ -309,7 +309,7 @@ int main(int argc, char** argv)
 				std::set<int> used_vregs;
 				for (const auto& op : instr.operands) {
 					if (op.type == IRValue::Type::REGISTER) {
-						used_vregs.insert(std::get<int>(op.value));
+						used_vregs.insert(op.reg_index());
 					}
 				}
 
@@ -351,7 +351,7 @@ int main(int argc, char** argv)
 
 				if (result_type != ValueType::UNKNOWN && !instr.operands.empty() &&
 				    instr.operands[0].type == IRValue::Type::REGISTER) {
-					int result_vreg = std::get<int>(instr.operands[0].value);
+					int result_vreg = instr.operands[0].reg_index();
 					vreg_types[result_vreg] = result_type;
 					if (result_type == ValueType::VARIANT) {
 						variant_offsets[result_vreg] = next_variant_slot++;
@@ -366,15 +366,15 @@ int main(int argc, char** argv)
 						instr.operands[j].type == IRValue::Type::IMMEDIATE) {
 						// The GlobalFn, by name rather than by number.
 						std::cout << global_function(
-							static_cast<GlobalFn>(std::get<int64_t>(instr.operands[j].value))).name;
+							static_cast<GlobalFn>(instr.operands[j].immediate())).name;
 					} else if (verbose) {
-						std::cout << format_operand_detailed(instr.operands[j]);
+						std::cout << format_operand_detailed(instr.operands[j], ir.strings);
 					} else {
-						std::cout << instr.operands[j].to_string();
+						std::cout << instr.operands[j].to_string(&ir.strings);
 					}
 
 					if (show_codegen && instr.operands[j].type == IRValue::Type::REGISTER) {
-						int vreg = std::get<int>(instr.operands[j].value);
+						int vreg = instr.operands[j].reg_index();
 						int preg = allocator.allocate_register(vreg, i);
 
 						std::cout << "(";

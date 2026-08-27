@@ -119,7 +119,7 @@ static void test_node_path_sugar() {
 		// Path embedded in instruction; ECALL_GET_NODE reads raw characters.
 		for (const auto& instr : test.instructions) {
 			if (instr.opcode == IROpcode::GET_NODE) {
-				const std::string& got = std::get<std::string>(instr.operands[1].value);
+				const std::string& got = ir.strings[instr.operands[1].string_id];
 				if (got != one.path) {
 					std::cerr << "  " << one.source << " -> \"" << got << "\"" << std::endl;
 					assert(false);
@@ -173,13 +173,13 @@ static void test_string_literals() {
 	assert(count_opcode(string_name_fn, IROpcode::LOAD_STRING) == 0);
 	for (const auto& instr : string_name_fn.instructions) {
 		if (instr.opcode == IROpcode::LOAD_STRING_AS) {
-			assert(std::get<int64_t>(instr.operands[2].value) == Variant::STRING_NAME);
+			assert(instr.operands[2].immediate() == Variant::STRING_NAME);
 		}
 	}
 	const IRProgram node_path = compile_to_ir("func test():\n\treturn ^\"a/b\"\n");
 	for (const auto& instr : find_function(node_path, "test").instructions) {
 		if (instr.opcode == IROpcode::LOAD_STRING_AS) {
-			assert(std::get<int64_t>(instr.operands[2].value) == Variant::NODE_PATH);
+			assert(instr.operands[2].immediate() == Variant::NODE_PATH);
 		}
 	}
 	assert(machine_code_builds("func test():\n\treturn &\"speed\"\n"));
@@ -216,7 +216,7 @@ static void test_engine_class_new() {
 		if (instr.opcode != IROpcode::CALL_SYSCALL) {
 			continue;
 		}
-		if (std::get<int64_t>(instr.operands[1].value) == ECALL_NODE_CREATE) {
+		if (instr.operands[1].immediate() == ECALL_NODE_CREATE) {
 			creates++;
 		}
 	}
@@ -228,7 +228,7 @@ static void test_engine_class_new() {
 	const IRFunction& shadow_test = find_function(shadowed, "test");
 	for (const auto& instr : shadow_test.instructions) {
 		assert(instr.opcode != IROpcode::CALL_SYSCALL ||
-			std::get<int64_t>(instr.operands[1].value) != ECALL_NODE_CREATE);
+			instr.operands[1].immediate() != ECALL_NODE_CREATE);
 	}
 
 	assert(refuses("func test():\n\treturn Timer.new(1)\n"));
@@ -302,7 +302,7 @@ static void test_autoload_resolves_to_a_named_object() {
 	int gets = 0;
 	for (const auto& instr : test.instructions) {
 		if (instr.opcode == IROpcode::CALL_SYSCALL &&
-			std::get<int64_t>(instr.operands[1].value) == ECALL_GET_OBJ) {
+			instr.operands[1].immediate() == ECALL_GET_OBJ) {
 			gets++;
 		}
 	}
@@ -326,10 +326,10 @@ static void test_script_class_new_takes_arguments() {
 	assert(count_opcode(test, IROpcode::LOAD_RESOURCE) == 1);
 	const IRInstruction& call = only(test, IROpcode::VCALL);
 	assert(std::get<std::string>(call.operands[2].value) == "new");
-	assert(std::get<int64_t>(call.operands[3].value) == 2);
+	assert(call.operands[3].immediate() == 2);
 	for (const auto& instr : test.instructions) {
 		assert(instr.opcode != IROpcode::CALL_SYSCALL ||
-			std::get<int64_t>(instr.operands[1].value) != ECALL_NODE_CREATE);
+			instr.operands[1].immediate() != ECALL_NODE_CREATE);
 	}
 
 	assert(refuses("func test():\n\treturn Timer.new(1)\n"));
@@ -548,12 +548,12 @@ static void test_assert() {
 	const IRProgram literal_msg = compile_to_ir("func test(x):\n\tassert(x, \"no\")\n");
 	const IRInstruction& baked = only(find_function(literal_msg, "test"), IROpcode::THROW);
 	assert(baked.operands.size() == 3);
-	assert(std::get<int64_t>(baked.operands[2].value) == 0);
+	assert(baked.operands[2].immediate() == 0);
 
 	const IRProgram computed_msg = compile_to_ir("func test(x):\n\tassert(x, x)\n");
 	const IRInstruction& computed = only(find_function(computed_msg, "test"), IROpcode::THROW);
 	assert(computed.operands.size() == 4);
-	assert(std::get<int64_t>(computed.operands[2].value) == 1);
+	assert(computed.operands[2].immediate() == 1);
 	assert(machine_code_builds("func test(x, n):\n\tassert(x, \"[%s]\" % n)\n"));
 
 	assert(refuses("func test(x):\n\tassert()\n"));
@@ -616,7 +616,7 @@ static void test_global_constants() {
 	assert(count_opcode(tags_fn, IROpcode::TYPE_OF) == 1);
 	for (const auto& instr : tags_fn.instructions) {
 		if (instr.opcode == IROpcode::LOAD_IMM) {
-			assert(std::get<int64_t>(instr.operands[1].value) == Variant::INT);
+			assert(instr.operands[1].immediate() == Variant::INT);
 		}
 	}
 

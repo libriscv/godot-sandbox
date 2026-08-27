@@ -36,7 +36,8 @@ IROptimizer::IROptimizer() {
 }
 
 // LICM can hoist code below the mark; slide it back to the loop label.
-void IROptimizer::tighten_scope_marks(IRFunction& func) {
+bool IROptimizer::tighten_scope_marks(IRFunction& func) {
+	bool changed = false;
 	for (size_t i = 0; i + 1 < func.instructions.size(); i++) {
 		if (func.instructions[i].opcode != IROpcode::SCOPE_MARK) {
 			continue;
@@ -61,7 +62,10 @@ void IROptimizer::tighten_scope_marks(IRFunction& func) {
 		IRInstruction mark = func.instructions[i];
 		func.instructions.erase(func.instructions.begin() + i);
 		func.instructions.insert(func.instructions.begin() + (label - 1), std::move(mark));
+		invalidate_analysis();
+		changed = true;
 	}
+	return changed;
 }
 
 const std::vector<IRPass>& IROptimizer::pipeline() {
@@ -118,6 +122,7 @@ bool IROptimizer::is_pass_enabled(const char* name) const {
 }
 
 void IROptimizer::optimize(IRProgram& program) {
+	m_strings = &program.strings;
 	for (auto& func : program.functions) {
 		optimize_function(func);
 	}
@@ -131,6 +136,7 @@ void IROptimizer::optimize(IRProgram& program) {
 }
 
 void IROptimizer::optimize_function(IRFunction& func) {
+	invalidate_analysis();
 	// reduce_register_pressure() excluded: it renumbers r0-r6, breaking the ABI.
 	const auto& passes = pipeline();
 	const size_t limit = std::min(m_pass_limit, passes.size());
@@ -138,16 +144,34 @@ void IROptimizer::optimize_function(IRFunction& func) {
 
 	// Verify pre-pass IR so a corruption can be blamed on the right pass.
 	if (verify) {
-		ir_verify(func, "codegen");
+		ir_verify(func, "codegen", m_strings);
 	}
+
+	// A pass is a function of the IR: one that reported no change cannot change
+	// anything until another pass does. Skips the repeat peephole runs.
+	std::vector<const char*> settled;
 
 	for (size_t i = 0; i < limit; i++) {
 		if (!is_pass_enabled(passes[i].name)) {
 			continue;
 		}
-		(this->*passes[i].run)(func);
+		bool at_fixed_point = false;
+		for (const char* name : settled) {
+			if (std::strcmp(name, passes[i].name) == 0) {
+				at_fixed_point = true;
+				break;
+			}
+		}
+		if (at_fixed_point) {
+			continue;
+		}
+		if ((this->*passes[i].run)(func)) {
+			settled.clear();
+		} else {
+			settled.push_back(passes[i].name);
+		}
 		if (verify) {
-			ir_verify(func, passes[i].name);
+			ir_verify(func, passes[i].name, m_strings);
 		}
 	}
 
@@ -156,7 +180,7 @@ void IROptimizer::optimize_function(IRFunction& func) {
 	for (const auto& instr : func.instructions) {
 		for (const auto& op : instr.operands) {
 			if (op.type == IRValue::Type::REGISTER) {
-				int reg = std::get<int>(op.value);
+				int reg = op.reg_index();
 				max_reg = std::max(max_reg, reg);
 			}
 		}
@@ -166,7 +190,7 @@ void IROptimizer::optimize_function(IRFunction& func) {
 
 	// Verify after max_registers recomputation; per-pass checks ran against the old count.
 	if (verify) {
-		ir_verify(func, "max-registers");
+		ir_verify(func, "max-registers", m_strings);
 	}
 }
 
@@ -205,18 +229,29 @@ bool IROptimizer::ConstantValue::truthiness(bool& truth) const {
 	return false;
 }
 
-std::vector<IROptimizer::ConstBlock> IROptimizer::build_blocks(const IRFunction& func) {
-	std::vector<ConstBlock> blocks;
-	const size_t count = func.instructions.size();
-	if (count == 0) {
-		return blocks;
+const IROptimizer::FunctionAnalysis& IROptimizer::analysis(const IRFunction& func) {
+	if (m_analysis.valid && m_analysis.func == &func &&
+		m_analysis.instruction_count == func.instructions.size()) {
+		return m_analysis;
 	}
 
-	std::unordered_map<std::string, size_t> label_index;
+	m_analysis.valid = true;
+	m_analysis.func = &func;
+	m_analysis.instruction_count = func.instructions.size();
+	m_analysis.label_index.clear();
+	m_analysis.blocks.clear();
+
+	std::vector<Block>& blocks = m_analysis.blocks;
+	const size_t count = func.instructions.size();
+	if (count == 0) {
+		return m_analysis;
+	}
+
+	std::unordered_map<uint32_t, size_t>& label_index = m_analysis.label_index;
 	for (size_t i = 0; i < count; i++) {
 		const auto& instr = func.instructions[i];
 		if (ir_has_effect(instr.opcode, IR_LABEL) && !instr.operands.empty()) {
-			label_index.emplace(std::get<std::string>(instr.operands[0].value), i);
+			label_index.emplace(instr.operands[0].string_id, i);
 		}
 	}
 
@@ -235,7 +270,7 @@ std::vector<IROptimizer::ConstBlock> IROptimizer::build_blocks(const IRFunction&
 	std::vector<size_t> block_of(count, 0);
 	for (size_t i = 0; i < count; i++) {
 		if (is_leader[i]) {
-			ConstBlock block;
+			Block block;
 			block.begin = i;
 			blocks.push_back(block);
 		}
@@ -252,7 +287,7 @@ std::vector<IROptimizer::ConstBlock> IROptimizer::build_blocks(const IRFunction&
 				if (operand.type != IRValue::Type::LABEL) {
 					continue;
 				}
-				auto it = label_index.find(std::get<std::string>(operand.value));
+				auto it = label_index.find(operand.string_id);
 				if (it != label_index.end()) {
 					blocks[b].successors.push_back(block_of[it->second]);
 				}
@@ -262,7 +297,19 @@ std::vector<IROptimizer::ConstBlock> IROptimizer::build_blocks(const IRFunction&
 			blocks[b].successors.push_back(b + 1);
 		}
 	}
-	return blocks;
+	return m_analysis;
+}
+
+bool IROptimizer::replace_instructions(IRFunction& func, std::vector<IRInstruction>&& fresh) {
+	bool changed = fresh.size() != func.instructions.size();
+	for (size_t i = 0; !changed && i < fresh.size(); i++) {
+		changed = !(fresh[i] == func.instructions[i]);
+	}
+	func.instructions = std::move(fresh);
+	if (changed) {
+		invalidate_analysis();
+	}
+	return changed;
 }
 
 bool IROptimizer::meet_constants(ConstantMap& into, const ConstantMap& from) {
@@ -279,14 +326,18 @@ bool IROptimizer::meet_constants(ConstantMap& into, const ConstantMap& from) {
 	return changed;
 }
 
-void IROptimizer::constant_folding(IRFunction& func) {
-	std::vector<ConstBlock> blocks = build_blocks(func);
+bool IROptimizer::constant_folding(IRFunction& func) {
+	const std::vector<Block>& blocks = analysis(func).blocks;
 	if (blocks.empty()) {
-		return;
+		return false;
 	}
 
+	// Entry state parallel to the shared block shape. Uninitialized = unreachable.
+	std::vector<ConstantMap> entry(blocks.size());
+	std::vector<char> entry_initialized(blocks.size(), 0);
+
 	// Forward dataflow to fixpoint; monotone by construction (entries only shrink).
-	blocks[0].entry_initialized = true;
+	entry_initialized[0] = 1;
 
 	// Cap: non-monotone transfer degrades to label-clearing instead of hanging.
 	const size_t max_visits = blocks.size() * 16 + 1024;
@@ -302,20 +353,19 @@ void IROptimizer::constant_folding(IRFunction& func) {
 		const size_t index = worklist.back();
 		worklist.pop_back();
 
-		m_constants = blocks[index].entry;
+		m_constants = entry[index];
 		for (size_t i = blocks[index].begin; i < blocks[index].end; i++) {
 			fold_instruction(func.instructions[i], nullptr);
 		}
 
 		for (size_t successor : blocks[index].successors) {
-			ConstBlock& target = blocks[successor];
 			bool changed = false;
-			if (!target.entry_initialized) {
-				target.entry = m_constants;
-				target.entry_initialized = true;
+			if (!entry_initialized[successor]) {
+				entry[successor] = m_constants;
+				entry_initialized[successor] = 1;
 				changed = true;
 			} else {
-				changed = meet_constants(target.entry, m_constants);
+				changed = meet_constants(entry[successor], m_constants);
 			}
 			if (changed) {
 				worklist.push_back(successor);
@@ -325,20 +375,21 @@ void IROptimizer::constant_folding(IRFunction& func) {
 
 	if (!converged) {
 		for (size_t b = 1; b < blocks.size(); b++) {
-			blocks[b].entry.clear();
+			entry[b].clear();
 		}
 	}
 
 	std::vector<IRInstruction> new_instructions;
 	new_instructions.reserve(func.instructions.size());
-	for (const auto& block : blocks) {
+	for (size_t b = 0; b < blocks.size(); b++) {
+		const Block& block = blocks[b];
 		// Unreachable blocks: no state, leave for eliminate_unreachable_code().
-		m_constants = block.entry_initialized ? block.entry : ConstantMap {};
+		m_constants = entry_initialized[b] ? entry[b] : ConstantMap {};
 		for (size_t i = block.begin; i < block.end; i++) {
 			fold_instruction(func.instructions[i], &new_instructions);
 		}
 	}
-	func.instructions = std::move(new_instructions);
+	return replace_instructions(func, std::move(new_instructions));
 }
 
 void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRInstruction>* out) {
@@ -360,8 +411,8 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 			break;
 
 		case IROpcode::LOAD_IMM: {
-			int reg = std::get<int>(instr.operands[0].value);
-			int64_t val = std::get<int64_t>(instr.operands[1].value);
+			int reg = instr.operands[0].reg_index();
+			int64_t val = instr.operands[1].immediate();
 			ConstantValue cv;
 			cv.type = ConstantValue::Type::INT;
 			cv.int_value = val;
@@ -371,8 +422,8 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		}
 
 		case IROpcode::LOAD_FLOAT_IMM: {
-			int reg = std::get<int>(instr.operands[0].value);
-			double val = std::get<double>(instr.operands[1].value);
+			int reg = instr.operands[0].reg_index();
+			double val = instr.operands[1].float_number();
 			ConstantValue cv;
 			cv.type = ConstantValue::Type::FLOAT;
 			cv.float_value = val;
@@ -382,8 +433,8 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		}
 
 		case IROpcode::LOAD_BOOL: {
-			int reg = std::get<int>(instr.operands[0].value);
-			int64_t val = std::get<int64_t>(instr.operands[1].value);
+			int reg = instr.operands[0].reg_index();
+			int64_t val = instr.operands[1].immediate();
 			ConstantValue cv;
 			cv.type = ConstantValue::Type::BOOL;
 			cv.bool_value = (val != 0);
@@ -394,15 +445,15 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 
 		case IROpcode::LOAD_STRING:
 		case IROpcode::LOAD_STRING_AS: {
-			int reg = std::get<int>(instr.operands[0].value);
+			int reg = instr.operands[0].reg_index();
 			invalidate_register(reg);
 			emit(instr);
 			break;
 		}
 
 		case IROpcode::MOVE: {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src = std::get<int>(instr.operands[1].value);
+			int dst = instr.operands[0].reg_index();
+			int src = instr.operands[1].reg_index();
 
 			// Propagate constant value
 			if (m_constants.count(src)) {
@@ -429,16 +480,16 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 			    instr.operands[1].type != IRValue::Type::REGISTER ||
 			    instr.operands[2].type != IRValue::Type::REGISTER) {
 				if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-					int dst = std::get<int>(instr.operands[0].value);
+					int dst = instr.operands[0].reg_index();
 					invalidate_register(dst);
 				}
 				emit(instr);
 				break;
 			}
 
-			int dst = std::get<int>(instr.operands[0].value);
-			int lhs_reg = std::get<int>(instr.operands[1].value);
-			int rhs_reg = std::get<int>(instr.operands[2].value);
+			int dst = instr.operands[0].reg_index();
+			int lhs_reg = instr.operands[1].reg_index();
+			int rhs_reg = instr.operands[2].reg_index();
 
 			if (m_constants.count(lhs_reg) && m_constants.count(rhs_reg)) {
 				ConstantValue result;
@@ -476,16 +527,16 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 			    instr.operands[1].type != IRValue::Type::REGISTER ||
 			    instr.operands[2].type != IRValue::Type::REGISTER) {
 				if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-					int dst = std::get<int>(instr.operands[0].value);
+					int dst = instr.operands[0].reg_index();
 					invalidate_register(dst);
 				}
 				emit(instr);
 				break;
 			}
 
-			int dst = std::get<int>(instr.operands[0].value);
-			int lhs_reg = std::get<int>(instr.operands[1].value);
-			int rhs_reg = std::get<int>(instr.operands[2].value);
+			int dst = instr.operands[0].reg_index();
+			int lhs_reg = instr.operands[1].reg_index();
+			int rhs_reg = instr.operands[2].reg_index();
 
 			if (m_constants.count(lhs_reg) && m_constants.count(rhs_reg)) {
 				ConstantValue result;
@@ -504,8 +555,8 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		}
 
 		case IROpcode::NEG: {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src = std::get<int>(instr.operands[1].value);
+			int dst = instr.operands[0].reg_index();
+			int src = instr.operands[1].reg_index();
 
 			if (m_constants.count(src)) {
 				const auto& cv = m_constants[src];
@@ -539,8 +590,8 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		}
 
 		case IROpcode::NOT: {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src = std::get<int>(instr.operands[1].value);
+			int dst = instr.operands[0].reg_index();
+			int src = instr.operands[1].reg_index();
 
 			if (m_constants.count(src) && m_constants[src].type == ConstantValue::Type::BOOL) {
 				ConstantValue result;
@@ -565,16 +616,16 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 			    instr.operands[1].type != IRValue::Type::REGISTER ||
 			    instr.operands[2].type != IRValue::Type::REGISTER) {
 				if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-					int dst = std::get<int>(instr.operands[0].value);
+					int dst = instr.operands[0].reg_index();
 					invalidate_register(dst);
 				}
 				emit(instr);
 				break;
 			}
 
-			int dst = std::get<int>(instr.operands[0].value);
-			int lhs_reg = std::get<int>(instr.operands[1].value);
-			int rhs_reg = std::get<int>(instr.operands[2].value);
+			int dst = instr.operands[0].reg_index();
+			int lhs_reg = instr.operands[1].reg_index();
+			int rhs_reg = instr.operands[2].reg_index();
 
 			if (m_constants.count(lhs_reg) && m_constants.count(rhs_reg)) {
 				const auto& lhs_cv = m_constants[lhs_reg];
@@ -608,7 +659,7 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::BRANCH_ZERO:
 		case IROpcode::BRANCH_NOT_ZERO: {
 			if (instr.operands.size() >= 2 && instr.operands[0].type == IRValue::Type::REGISTER) {
-				const int cond = std::get<int>(instr.operands[0].value);
+				const int cond = instr.operands[0].reg_index();
 				auto it = m_constants.find(cond);
 				bool truth = false;
 				if (it != m_constants.end() && it->second.truthiness(truth)) {
@@ -660,7 +711,7 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::CALL:
 		case IROpcode::CALL_HOSTED:
 			if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-				invalidate_register(std::get<int>(instr.operands[0].value));
+				invalidate_register(instr.operands[0].reg_index());
 			}
 			emit(instr);
 			break;
@@ -709,7 +760,7 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::VSET_INLINE:
 			for (const auto& op : instr.operands) {
 				if (op.type == IRValue::Type::REGISTER) {
-					int reg = std::get<int>(op.value);
+					int reg = op.reg_index();
 					invalidate_register(reg);
 				}
 			}
@@ -720,10 +771,10 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 
 // CFG reachability, not linear scan: folded branches strand labelled blocks.
 // Distinct from DCE, which removes instructions defining unread registers.
-void IROptimizer::eliminate_unreachable_code(IRFunction& func) {
-	std::vector<ConstBlock> blocks = build_blocks(func);
+bool IROptimizer::eliminate_unreachable_code(IRFunction& func) {
+	const std::vector<Block>& blocks = analysis(func).blocks;
 	if (blocks.empty()) {
-		return;
+		return false;
 	}
 
 	std::vector<bool> reachable(blocks.size(), false);
@@ -750,7 +801,7 @@ void IROptimizer::eliminate_unreachable_code(IRFunction& func) {
 			new_instructions.push_back(func.instructions[i]);
 		}
 	}
-	func.instructions = std::move(new_instructions);
+	return replace_instructions(func, std::move(new_instructions));
 }
 
 bool IROptimizer::try_fold_binary_op(IROpcode op, IRInstruction::TypeHint type_hint, const ConstantValue& lhs, const ConstantValue& rhs, ConstantValue& result) {
@@ -973,8 +1024,8 @@ bool IROptimizer::try_fuse_compare_and_branch(const IRFunction& func, size_t& i,
 	                          branch_instr.opcode == IROpcode::BRANCH_NOT_ZERO);
 
 	if (is_cmp && is_branch_on_cmp && cmp_instr.operands.size() >= 3 && branch_instr.operands.size() >= 2) {
-		int cmp_dst = std::get<int>(cmp_instr.operands[0].value);
-		int branch_reg = std::get<int>(branch_instr.operands[0].value);
+		int cmp_dst = cmp_instr.operands[0].reg_index();
+		int branch_reg = branch_instr.operands[0].reg_index();
 
 		// cmp_dst must be dead outside the pair (whole-function check, not just forward).
 		bool reg_not_used_after = !is_reg_read_outside(func, cmp_dst, i, i + 1);
@@ -1043,14 +1094,14 @@ bool IROptimizer::try_remove_branch_to_next(const IRFunction& func, size_t& i, s
 	if (target == nullptr) {
 		return false;
 	}
-	const std::string& name = std::get<std::string>(target->value);
+	const uint32_t name = target->string_id;
 
 	for (size_t j = i + 1; j < func.instructions.size(); j++) {
 		const auto& next = func.instructions[j];
 		if (!ir_has_effect(next.opcode, IR_LABEL)) {
 			return false;
 		}
-		if (!next.operands.empty() && std::get<std::string>(next.operands[0].value) == name) {
+		if (!next.operands.empty() && next.operands[0].string_id == name) {
 			i++;
 			return true;
 		}
@@ -1063,8 +1114,8 @@ bool IROptimizer::try_eliminate_moves_around_op(const IRFunction& func, size_t& 
 	if (instr.opcode != IROpcode::MOVE) {
 		return false;
 	}
-	int dst = std::get<int>(instr.operands[0].value);
-	int src = std::get<int>(instr.operands[1].value);
+	int dst = instr.operands[0].reg_index();
+	int src = instr.operands[1].reg_index();
 	if (dst == src) {
 		i++;
 		return true;
@@ -1085,18 +1136,18 @@ bool IROptimizer::try_eliminate_moves_around_op(const IRFunction& func, size_t& 
 		    move3.opcode == IROpcode::MOVE &&
 		    op.operands.size() >= 3) {
 
-			int move1_dst = std::get<int>(move1.operands[0].value);
-			int move1_src = std::get<int>(move1.operands[1].value);
-			int move2_dst = std::get<int>(move2.operands[0].value);
-			int move2_src = std::get<int>(move2.operands[1].value);
-			int op_dst = std::get<int>(op.operands[0].value);
-			int move3_dst = std::get<int>(move3.operands[0].value);
-			int move3_src = std::get<int>(move3.operands[1].value);
+			int move1_dst = move1.operands[0].reg_index();
+			int move1_src = move1.operands[1].reg_index();
+			int move2_dst = move2.operands[0].reg_index();
+			int move2_src = move2.operands[1].reg_index();
+			int op_dst = op.operands[0].reg_index();
+			int move3_dst = move3.operands[0].reg_index();
+			int move3_src = move3.operands[1].reg_index();
 
 			if (op.operands[1].type == IRValue::Type::REGISTER &&
 			    op.operands[2].type == IRValue::Type::REGISTER) {
-				int op_lhs = std::get<int>(op.operands[1].value);
-				int op_rhs = std::get<int>(op.operands[2].value);
+				int op_lhs = op.operands[1].reg_index();
+				int op_rhs = op.operands[2].reg_index();
 
 				if (move1_dst == op_lhs && move2_dst == op_rhs &&
 				    move3_src == op_dst) {
@@ -1132,14 +1183,14 @@ bool IROptimizer::try_eliminate_moves_around_op(const IRFunction& func, size_t& 
 		    move2.opcode == IROpcode::MOVE &&
 		    op.operands.size() >= 3) {
 
-			int move1_dst = std::get<int>(move1.operands[0].value);
-			int move1_src = std::get<int>(move1.operands[1].value);
-			int op_dst = std::get<int>(op.operands[0].value);
-			int move2_dst = std::get<int>(move2.operands[0].value);
-			int move2_src = std::get<int>(move2.operands[1].value);
+			int move1_dst = move1.operands[0].reg_index();
+			int move1_src = move1.operands[1].reg_index();
+			int op_dst = op.operands[0].reg_index();
+			int move2_dst = move2.operands[0].reg_index();
+			int move2_src = move2.operands[1].reg_index();
 
 			if (op.operands[1].type == IRValue::Type::REGISTER) {
-				int op_lhs = std::get<int>(op.operands[1].value);
+				int op_lhs = op.operands[1].reg_index();
 
 				if (move1_dst == op_lhs && move2_src == op_dst &&
 				    !is_reg_read_outside(func, move1_dst, i, i + 2) &&
@@ -1157,7 +1208,7 @@ bool IROptimizer::try_eliminate_moves_around_op(const IRFunction& func, size_t& 
 			}
 
 			if (op.operands[2].type == IRValue::Type::REGISTER) {
-				int op_rhs = std::get<int>(op.operands[2].value);
+				int op_rhs = op.operands[2].reg_index();
 
 				if (move1_dst == op_rhs && move2_src == op_dst &&
 				    !is_reg_read_outside(func, move1_dst, i, i + 2) &&
@@ -1189,17 +1240,17 @@ bool IROptimizer::try_eliminate_moves_around_op(const IRFunction& func, size_t& 
 		    move2.opcode == IROpcode::MOVE &&
 		    op.operands.size() >= 3) {
 
-			int move1_dst = std::get<int>(move1.operands[0].value);
-			int move1_src = std::get<int>(move1.operands[1].value);
-			int load_dst = std::get<int>(load.operands[0].value);
-			int op_dst = std::get<int>(op.operands[0].value);
-			int move2_dst = std::get<int>(move2.operands[0].value);
-			int move2_src = std::get<int>(move2.operands[1].value);
+			int move1_dst = move1.operands[0].reg_index();
+			int move1_src = move1.operands[1].reg_index();
+			int load_dst = load.operands[0].reg_index();
+			int op_dst = op.operands[0].reg_index();
+			int move2_dst = move2.operands[0].reg_index();
+			int move2_src = move2.operands[1].reg_index();
 
 			if (op.operands[1].type == IRValue::Type::REGISTER &&
 			    op.operands[2].type == IRValue::Type::REGISTER) {
-				int op_lhs = std::get<int>(op.operands[1].value);
-				int op_rhs = std::get<int>(op.operands[2].value);
+				int op_lhs = op.operands[1].reg_index();
+				int op_rhs = op.operands[2].reg_index();
 
 				if (move1_dst == op_lhs && load_dst == op_rhs &&
 				    move1_src == move2_dst && move2_src == op_dst) {
@@ -1235,10 +1286,10 @@ bool IROptimizer::try_eliminate_move_pair(const IRFunction& func, size_t& i, std
 		const auto& move1 = func.instructions[i];
 		const auto& move2 = func.instructions[i + 1];
 
-		int move1_dst = std::get<int>(move1.operands[0].value);
-		int move1_src = std::get<int>(move1.operands[1].value);
-		int move2_dst = std::get<int>(move2.operands[0].value);
-		int move2_src = std::get<int>(move2.operands[1].value);
+		int move1_dst = move1.operands[0].reg_index();
+		int move1_src = move1.operands[1].reg_index();
+		int move2_dst = move2.operands[0].reg_index();
+		int move2_src = move2.operands[1].reg_index();
 
 		if (move1_dst == move2_src && move1_src == move2_dst && move1_dst != move1_src &&
 		    !is_reg_read_outside(func, move1_dst, i, i + 1)) {
@@ -1261,9 +1312,9 @@ bool IROptimizer::try_fold_move_after_op(const IRFunction& func, size_t& i, std:
 		const auto& move = func.instructions[i + 1];
 
 		if (op.operands.size() >= 1 && move.operands.size() >= 2) {
-			int op_dst = std::get<int>(op.operands[0].value);
-			int move_dst = std::get<int>(move.operands[0].value);
-			int move_src = std::get<int>(move.operands[1].value);
+			int op_dst = op.operands[0].reg_index();
+			int move_dst = move.operands[0].reg_index();
+			int move_src = move.operands[1].reg_index();
 
 			if (move_src == op_dst &&
 			    !is_reg_read_outside(func, op_dst, i, i + 1)) {
@@ -1280,7 +1331,7 @@ bool IROptimizer::try_fold_move_after_op(const IRFunction& func, size_t& i, std:
 	return false;
 }
 
-void IROptimizer::peephole_optimization(IRFunction& func) {
+bool IROptimizer::peephole_optimization(IRFunction& func) {
 	static const std::vector<PeepholePattern> patterns = {
 		&IROptimizer::try_fuse_compare_and_branch,
 		&IROptimizer::try_eliminate_moves_around_op,
@@ -1307,10 +1358,10 @@ void IROptimizer::peephole_optimization(IRFunction& func) {
 		}
 	}
 
-	func.instructions = std::move(new_instructions);
+	return replace_instructions(func, std::move(new_instructions));
 }
 
-void IROptimizer::copy_propagation(IRFunction& func) {
+bool IROptimizer::copy_propagation(IRFunction& func) {
 	// LOAD_IMM rN, K; MOVE rM, rN -> LOAD_IMM rM, K (when rN is dead).
 	struct ConstantInfo {
 		IROpcode opcode;
@@ -1339,14 +1390,14 @@ void IROptimizer::copy_propagation(IRFunction& func) {
 		if (instr.opcode == IROpcode::LOAD_IMM || instr.opcode == IROpcode::LOAD_FLOAT_IMM) {
 			if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER &&
 			    instr.operands.size() >= 2) {
-				int dst = std::get<int>(instr.operands[0].value);
+				int dst = instr.operands[0].reg_index();
 				constant_regs[dst] = {instr.opcode, instr.operands[1], instr.type_hint};
 			}
 		}
 
 		if (instr.opcode == IROpcode::MOVE) {
-			int dst = std::get<int>(instr.operands[0].value);
-			int src = std::get<int>(instr.operands[1].value);
+			int dst = instr.operands[0].reg_index();
+			int src = instr.operands[1].reg_index();
 
 			if (constant_regs.count(src)) {
 				const auto& info = constant_regs[src];
@@ -1361,48 +1412,107 @@ void IROptimizer::copy_propagation(IRFunction& func) {
 		}
 	}
 
-	func.instructions = std::move(new_instructions);
+	return replace_instructions(func, std::move(new_instructions));
 }
 
-void IROptimizer::eliminate_dead_code(IRFunction& func) {
-	// Delete pure instructions defining unread registers. Iterates to fixpoint:
-	// deleting an instruction can make its inputs' definitions dead in turn.
-	// Correctness depends on find_live_registers() catching every read.
-	for (size_t round = 0; round < func.instructions.size() + 1; round++) {
-		const auto live_regs = find_live_registers(func);
-
-		std::vector<IRInstruction> new_instructions;
-		new_instructions.reserve(func.instructions.size());
-
-		for (const auto& instr : func.instructions) {
-			const int dst = ir_destination_register(instr);
-			if (dst >= 0 && live_regs.count(dst) == 0 && ir_instruction_is_pure(instr)) {
-				continue;
-			}
-			new_instructions.push_back(instr);
-		}
-
-		if (new_instructions.size() == func.instructions.size()) {
-			return;
-		}
-		func.instructions = std::move(new_instructions);
+bool IROptimizer::eliminate_dead_code(IRFunction& func) {
+	// Deletes pure instructions whose destination nothing reads. A deletion can
+	// drop the last read of one of its inputs, so those inputs' definitions go
+	// back on the worklist: same fixpoint as the per-round scan-and-rebuild,
+	// without the rebuild.
+	const size_t count = func.instructions.size();
+	if (count == 0) {
+		return false;
 	}
-}
 
-std::unordered_set<int> IROptimizer::find_live_registers(const IRFunction& func) {
-	std::unordered_set<int> live;
-
-	// Conservative: a missed read lets DCE delete a live definition.
 	std::vector<int> reads;
+	int max_reg = -1;
 	for (const auto& instr : func.instructions) {
+		max_reg = std::max(max_reg, ir_destination_register(instr));
 		reads.clear();
 		ir_collect_read_registers(instr, reads);
-		live.insert(reads.begin(), reads.end());
+		for (int reg : reads) {
+			max_reg = std::max(max_reg, reg);
+		}
+	}
+	if (max_reg < 0) {
+		return false;
 	}
 
-	return live;
-}
+	const size_t nregs = size_t(max_reg) + 1;
+	// Read count per register, and its definitions as a newest-first chain --
+	// two flat arrays instead of a vector per register.
+	std::vector<uint32_t> use_count(nregs, 0);
+	std::vector<size_t> def_head(nregs, count);
+	std::vector<size_t> def_next(count, count);
 
+	for (size_t i = 0; i < count; i++) {
+		const IRInstruction& instr = func.instructions[i];
+		reads.clear();
+		ir_collect_read_registers(instr, reads);
+		for (int reg : reads) {
+			if (reg >= 0) {
+				use_count[size_t(reg)]++;
+			}
+		}
+		const int dst = ir_destination_register(instr);
+		if (dst >= 0) {
+			def_next[i] = def_head[size_t(dst)];
+			def_head[size_t(dst)] = i;
+		}
+	}
+
+	std::vector<bool> deleted(count, false);
+	std::vector<size_t> worklist;
+	worklist.reserve(count);
+	for (size_t i = count; i-- > 0;) {
+		worklist.push_back(i);
+	}
+
+	size_t deletions = 0;
+	while (!worklist.empty()) {
+		const size_t i = worklist.back();
+		worklist.pop_back();
+		if (deleted[i]) {
+			continue;
+		}
+		const IRInstruction& instr = func.instructions[i];
+		const int dst = ir_destination_register(instr);
+		if (dst < 0 || use_count[size_t(dst)] != 0 || !ir_instruction_is_pure(instr)) {
+			continue;
+		}
+		deleted[i] = true;
+		deletions++;
+
+		reads.clear();
+		ir_collect_read_registers(instr, reads);
+		for (int reg : reads) {
+			if (reg < 0 || --use_count[size_t(reg)] != 0) {
+				continue;
+			}
+			for (size_t def = def_head[size_t(reg)]; def != count; def = def_next[def]) {
+				if (!deleted[def]) {
+					worklist.push_back(def);
+				}
+			}
+		}
+	}
+
+	if (deletions == 0) {
+		return false;
+	}
+
+	std::vector<IRInstruction> survivors;
+	survivors.reserve(count - deletions);
+	for (size_t i = 0; i < count; i++) {
+		if (!deleted[i]) {
+			survivors.push_back(func.instructions[i]);
+		}
+	}
+	func.instructions = std::move(survivors);
+	invalidate_analysis();
+	return true;
+}
 
 bool IROptimizer::is_register_used_after(const IRFunction& func, int reg, size_t instr_idx) {
 	std::vector<int> reads;
@@ -1439,7 +1549,7 @@ void IROptimizer::reduce_register_pressure(IRFunction& func) {
 	for (const auto& instr : func.instructions) {
 		for (const auto& op : instr.operands) {
 			if (op.type == IRValue::Type::REGISTER) {
-				int old_reg = std::get<int>(op.value);
+				int old_reg = op.reg_index();
 				if (reg_map.find(old_reg) == reg_map.end()) {
 					reg_map[old_reg] = next_reg++;
 				}
@@ -1450,8 +1560,8 @@ void IROptimizer::reduce_register_pressure(IRFunction& func) {
 	for (auto& instr : func.instructions) {
 		for (auto& op : instr.operands) {
 			if (op.type == IRValue::Type::REGISTER) {
-				int old_reg = std::get<int>(op.value);
-				op.value = reg_map[old_reg];
+				int old_reg = op.reg_index();
+				op.reg_value = reg_map[old_reg];
 			}
 		}
 	}
@@ -1469,7 +1579,7 @@ IROptimizer::ConstantValue IROptimizer::get_constant(const IRValue& val) {
 	ConstantValue cv;
 	if (val.type == IRValue::Type::IMMEDIATE) {
 		cv.type = ConstantValue::Type::INT;
-		cv.int_value = std::get<int64_t>(val.value);
+		cv.int_value = val.immediate();
 	}
 	return cv;
 }
@@ -1544,10 +1654,10 @@ static bool reads_pending_store(const IRInstruction& instr,
 	return false;
 }
 
-void IROptimizer::eliminate_redundant_stores(IRFunction& func) {
+bool IROptimizer::eliminate_redundant_stores(IRFunction& func) {
 	// Delays pure loads; drops dead (overwritten without read) and identical consecutive ones.
 	if (func.instructions.empty()) {
-		return;
+		return false;
 	}
 
 	std::vector<IRInstruction> new_instructions;
@@ -1571,7 +1681,7 @@ void IROptimizer::eliminate_redundant_stores(IRFunction& func) {
 
 		if (ir_has_effect(instr.opcode, IR_SIMPLE_LOAD) && !instr.operands.empty() &&
 		    instr.operands[0].type == IRValue::Type::REGISTER) {
-			int dst = std::get<int>(instr.operands[0].value);
+			int dst = instr.operands[0].reg_index();
 
 			if (pending_stores.count(dst)) {
 				size_t prev_idx = pending_stores[dst];
@@ -1587,15 +1697,15 @@ void IROptimizer::eliminate_redundant_stores(IRFunction& func) {
 					if (curr_val.type != prev_val.type) {
 						is_identical = false;
 					} else if (curr_val.type == IRValue::Type::IMMEDIATE) {
-						is_identical = (std::get<int64_t>(curr_val.value) ==
-						                std::get<int64_t>(prev_val.value));
+						is_identical = (curr_val.immediate() ==
+						                prev_val.immediate());
 					} else if (curr_val.type == IRValue::Type::FLOAT) {
-						is_identical = (std::get<double>(curr_val.value) ==
-						                std::get<double>(prev_val.value));
+						is_identical = (curr_val.float_number() ==
+						                prev_val.float_number());
 					} else if (curr_val.type == IRValue::Type::REGISTER) {
 						// For MOVE: compare source register
-						is_identical = (std::get<int>(curr_val.value) ==
-						                std::get<int>(prev_val.value));
+						is_identical = (curr_val.reg_index() ==
+						                prev_val.reg_index());
 					} else {
 						is_identical = false;
 					}
@@ -1624,34 +1734,26 @@ void IROptimizer::eliminate_redundant_stores(IRFunction& func) {
 
 	flush_pending(new_instructions, pending_stores, func);
 
-	func.instructions = std::move(new_instructions);
+	return replace_instructions(func, std::move(new_instructions));
 }
 
 std::vector<IROptimizer::LoopInfo> IROptimizer::identify_loops(const IRFunction& func) {
 	std::vector<LoopInfo> loops;
 
-	std::unordered_map<std::string, size_t> label_positions;
-	for (size_t i = 0; i < func.instructions.size(); i++) {
-		if (func.instructions[i].opcode == IROpcode::LABEL) {
-			std::string label = std::get<std::string>(func.instructions[i].operands[0].value);
-			label_positions[label] = i;
-		}
-	}
-
-	std::unordered_map<std::string, std::string> loop_to_exit;
+	const std::unordered_map<uint32_t, size_t>& label_positions = analysis(func).label_index;
 
 	for (size_t i = 0; i < func.instructions.size(); i++) {
 		const auto& instr = func.instructions[i];
 
 		if (instr.opcode == IROpcode::JUMP && !instr.operands.empty() &&
 		    instr.operands[0].type == IRValue::Type::LABEL) {
-			std::string target_label = std::get<std::string>(instr.operands[0].value);
+			const uint32_t target_label = instr.operands[0].string_id;
 
 			auto it = label_positions.find(target_label);
 			if (it != label_positions.end() && it->second <= i) {
 				size_t header_idx = it->second;
 
-				std::string exit_label;
+				uint32_t exit_label = IRStringTable::INVALID_ID;
 				for (size_t j = header_idx; j < i; j++) {
 					const auto& loop_instr = func.instructions[j];
 					if (ir_has_effect(loop_instr.opcode, IR_BRANCH)) {
@@ -1659,14 +1761,14 @@ std::vector<IROptimizer::LoopInfo> IROptimizer::identify_loops(const IRFunction&
 						size_t label_idx = loop_instr.operands.size() - 1;
 						if (label_idx < loop_instr.operands.size() &&
 						    loop_instr.operands[label_idx].type == IRValue::Type::LABEL) {
-							exit_label = std::get<std::string>(loop_instr.operands[label_idx].value);
+							exit_label = loop_instr.operands[label_idx].string_id;
 							break;
 						}
 					}
 				}
 
 				size_t exit_idx = i + 1;
-				if (!exit_label.empty()) {
+				if (exit_label != IRStringTable::INVALID_ID) {
 					auto exit_it = label_positions.find(exit_label);
 					if (exit_it != label_positions.end()) {
 						exit_idx = exit_it->second;
@@ -1704,18 +1806,18 @@ std::vector<IROptimizer::LoopInfo> IROptimizer::identify_loops(const IRFunction&
 // it into a store.
 static bool syscall_only_reads(const IRInstruction& instr) {
 	if (instr.opcode != IROpcode::CALL_SYSCALL || instr.operands.size() < 2 ||
-		!std::holds_alternative<int64_t>(instr.operands[1].value)) {
+		instr.operands[1].type != IRValue::Type::IMMEDIATE) {
 		return false;
 	}
-	switch (std::get<int64_t>(instr.operands[1].value)) {
+	switch (instr.operands[1].immediate()) {
 		case ECALL_ARRAY_SIZE:
 		case ECALL_STRING_SIZE:
 			return true;
 		case ECALL_DICTIONARY_OPS: {
-			if (instr.operands.size() < 3 || !std::holds_alternative<int64_t>(instr.operands[2].value)) {
+			if (instr.operands.size() < 3 || instr.operands[2].type != IRValue::Type::IMMEDIATE) {
 				return false;
 			}
-			const int64_t op = std::get<int64_t>(instr.operands[2].value);
+			const int64_t op = instr.operands[2].immediate();
 			return op == dictionary_op(Dictionary_Op::GET_SIZE) ||
 				op == dictionary_op(Dictionary_Op::HAS) ||
 				op == dictionary_op(Dictionary_Op::GET) ||
@@ -1735,12 +1837,12 @@ static bool syscall_is_hoistable_query(const IRInstruction& instr) {
 	if (!syscall_only_reads(instr)) {
 		return false;
 	}
-	switch (std::get<int64_t>(instr.operands[1].value)) {
+	switch (instr.operands[1].immediate()) {
 		case ECALL_ARRAY_SIZE:
 		case ECALL_STRING_SIZE:
 			return true;
 		case ECALL_DICTIONARY_OPS: {
-			const int64_t op = std::get<int64_t>(instr.operands[2].value);
+			const int64_t op = instr.operands[2].immediate();
 			return op == dictionary_op(Dictionary_Op::GET_SIZE) ||
 				op == dictionary_op(Dictionary_Op::HAS);
 		}
@@ -1775,7 +1877,7 @@ bool IROptimizer::is_loop_invariant(const IRInstruction& instr, const LoopInfo& 
 			if (instr.operands[i].type != IRValue::Type::REGISTER) {
 				continue;
 			}
-			if (invariant_regs.count(std::get<int>(instr.operands[i].value)) == 0) {
+			if (invariant_regs.count(instr.operands[i].reg_index()) == 0) {
 				return false;
 			}
 		}
@@ -1795,7 +1897,7 @@ bool IROptimizer::is_loop_invariant(const IRInstruction& instr, const LoopInfo& 
 
 	if (instr.opcode == IROpcode::MOVE && instr.operands.size() >= 2 &&
 	    instr.operands[1].type == IRValue::Type::REGISTER) {
-		int src_reg = std::get<int>(instr.operands[1].value);
+		int src_reg = instr.operands[1].reg_index();
 		return invariant_regs.count(src_reg) > 0;
 	}
 
@@ -1850,13 +1952,7 @@ bool IROptimizer::can_safely_hoist(const IRInstruction& instr, size_t instr_idx,
 bool IROptimizer::is_unconditional_in_loop(size_t instr_idx, const LoopInfo& loop, const IRFunction& func) {
 	// Between header and instr_idx: any LABEL (join), JUMP, or intra-loop branch
 	// means instr_idx may be skipped. Branches exiting the loop don't count.
-	std::unordered_map<std::string, size_t> label_positions;
-	for (size_t i = 0; i < func.instructions.size(); i++) {
-		const auto& candidate = func.instructions[i];
-		if (ir_has_effect(candidate.opcode, IR_LABEL) && !candidate.operands.empty()) {
-			label_positions[std::get<std::string>(candidate.operands[0].value)] = i;
-		}
-	}
+	const std::unordered_map<uint32_t, size_t>& label_positions = analysis(func).label_index;
 
 	for (size_t i = loop.header_idx + 1; i < instr_idx && i < func.instructions.size(); i++) {
 		const auto& between = func.instructions[i];
@@ -1878,7 +1974,7 @@ bool IROptimizer::is_unconditional_in_loop(size_t instr_idx, const LoopInfo& loo
 		if (target.type != IRValue::Type::LABEL) {
 			return false;
 		}
-		auto it = label_positions.find(std::get<std::string>(target.value));
+		auto it = label_positions.find(target.string_id);
 		if (it == label_positions.end()) {
 			return false;
 		}
@@ -1892,11 +1988,12 @@ bool IROptimizer::is_unconditional_in_loop(size_t instr_idx, const LoopInfo& loo
 	return true;
 }
 
-void IROptimizer::loop_invariant_code_motion(IRFunction& func) {
+bool IROptimizer::loop_invariant_code_motion(IRFunction& func) {
+	bool changed = false;
 	auto loops = identify_loops(func);
 
 	if (loops.empty()) {
-		return;
+		return false;
 	}
 
 	// Skip LICM entirely for nested loops.
@@ -1904,7 +2001,7 @@ void IROptimizer::loop_invariant_code_motion(IRFunction& func) {
 		for (const auto& other : loops) {
 			if (&loop == &other) continue;
 			if (loop.header_idx > other.header_idx && loop.header_idx < other.end_idx) {
-				return;
+				return false;
 			}
 		}
 	}
@@ -1923,7 +2020,7 @@ void IROptimizer::loop_invariant_code_motion(IRFunction& func) {
 			for (size_t i = 0; i < loop.header_idx; i++) {
 				const auto& instr = func.instructions[i];
 				if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-					invariant_regs.insert(std::get<int>(instr.operands[0].value));
+					invariant_regs.insert(instr.operands[0].reg_index());
 				}
 			}
 
@@ -1949,7 +2046,7 @@ void IROptimizer::loop_invariant_code_motion(IRFunction& func) {
 						invariant_instrs.insert(i);
 
 						if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-							invariant_regs.insert(std::get<int>(instr.operands[0].value));
+							invariant_regs.insert(instr.operands[0].reg_index());
 						}
 
 						loop_changed = true;
@@ -1972,15 +2069,16 @@ void IROptimizer::loop_invariant_code_motion(IRFunction& func) {
 			std::vector<IRInstruction> new_instructions;
 			for (size_t i = 0; i < remaining.size(); i++) {
 				if (remaining[i].opcode == IROpcode::LABEL && i < remaining.size() &&
-				    std::get<std::string>(remaining[i].operands[0].value) == loop.header_label) {
+				    remaining[i].operands[0].string_id == loop.header_label) {
 					new_instructions.insert(new_instructions.end(), hoisted.begin(), hoisted.end());
 				}
 				new_instructions.push_back(remaining[i]);
 			}
 
-			func.instructions = std::move(new_instructions);
+			changed = replace_instructions(func, std::move(new_instructions)) || changed;
 		}
 	}
+	return changed;
 }
 
 bool IROptimizer::register_unmodified_between(const IRFunction& func, int reg,
@@ -2000,7 +2098,7 @@ bool IROptimizer::register_unmodified_between(const IRFunction& func, int reg,
 	return true;
 }
 
-void IROptimizer::enhanced_copy_propagation(IRFunction& func) {
+bool IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 	std::unordered_map<int, CopyInfo> copies;
 	std::vector<IRInstruction> new_instructions;
 	new_instructions.reserve(func.instructions.size());
@@ -2021,13 +2119,13 @@ void IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 			if (ir_writes_operand(instr, j)) {
 				continue;
 			}
-			int reg = std::get<int>(instr.operands[j].value);
+			int reg = instr.operands[j].reg_index();
 
 			if (copies.count(reg)) {
 				const auto& copy_info = copies[reg];
 
 				if (register_unmodified_between(func, copy_info.source_reg, copy_info.def_idx, i)) {
-					instr.operands[j].value = copy_info.source_reg;
+					instr.operands[j].reg_value = copy_info.source_reg;
 				}
 			}
 		}
@@ -2054,8 +2152,8 @@ void IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 		if (instr.opcode == IROpcode::MOVE && instr.operands.size() >= 2 &&
 		    instr.operands[0].type == IRValue::Type::REGISTER &&
 		    instr.operands[1].type == IRValue::Type::REGISTER) {
-			const int dst = std::get<int>(instr.operands[0].value);
-			const int src = std::get<int>(instr.operands[1].value);
+			const int dst = instr.operands[0].reg_index();
+			const int src = instr.operands[1].reg_index();
 			if (dst != src) {
 				copies[dst] = {src, i};
 			}
@@ -2064,7 +2162,7 @@ void IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 		new_instructions.push_back(instr);
 	}
 
-	func.instructions = std::move(new_instructions);
+	return replace_instructions(func, std::move(new_instructions));
 }
 
 } // namespace gdscript
