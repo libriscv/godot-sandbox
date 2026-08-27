@@ -51,11 +51,15 @@ IR_OPCODE(MOVE,            "MOVE",            SIG(DST, SRC),       IR_PURE | IR_
 // is one byte, an INT eight.
 IR_OPCODE(CONVERT,         "CONVERT",         SIG(DST, SRC, IMM),  IR_PURE)
 
+IR_OPCODE(COERCE,          "COERCE",          SIG(DST, SRC),       IR_PURE)
+
 // `x is int`: dst is true when the Variant in `src` carries the type tag in the
 // immediate (a Variant::Type). The tag is the first field of every Variant, so
 // this is a 4-byte load and a compare, never a host call. Exact tag compare, not
 // convertibility: 1.0 is not an int.
 IR_OPCODE(TYPE_TEST,       "TYPE_TEST",       SIG(DST, SRC, IMM),  IR_PURE)
+
+IR_OPCODE(TYPE_TEST_MASK,  "TYPE_TEST_MASK",  SIG(DST, SRC, IMM),  IR_PURE)
 
 // Builds the Variant that refers to a host-side scoped variant: type tag from
 // the immediate (a Variant::Type), payload the index in `src`. The counterpart
@@ -303,4 +307,4 @@ IR_OPCODE(AWAIT,           "AWAIT",           SIG(DST, SRC),      IR_SIDE_EFFECT
 
 IR_OPCODE(VGET_INLINE,     "VGET_INLINE",     SIG(DST, SRC, STR, IMM),      IR_PURE)
 // Object operand is read-modify-write: replaces one component, keeps the Variant.
-IR_OPCODE(VSET_INLINE,     "VSET_INLINE",     SIG(INOUT, STR, IMM, SRC),    IR_SIDE_EFFECTS)
+IR_OPCODE(VSET_INLINE,     "VSET_INLINE",     SIG(INOUT, STR, IMM, SRC, IMM), IR_SIDE_EFFECTS)

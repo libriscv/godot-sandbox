@@ -203,10 +203,16 @@ private:
 		FunctionContext& func, const Expr* site);
 	int gen_inline_member_get(int obj_reg, IRInstruction::TypeHint obj_type, const std::string& member, FunctionContext& func);
 	void gen_inline_member_set(int obj_reg, IRInstruction::TypeHint obj_type, const std::string& member,
-		int value_reg, FunctionContext& func);
+		int value_reg, FunctionContext& func, bool stamp_type = true);
 
 	// Types with `member` inline; non-empty means VGET/VSET (Object-only) is wrong.
 	std::vector<IRInstruction::TypeHint> inline_member_types(const std::string& member) const;
+	struct InlineMemberGroup {
+		std::vector<IRInstruction::TypeHint> types;
+	};
+	std::vector<InlineMemberGroup> inline_member_groups(const std::string& member) const;
+	void emit_group_type_test(int obj_reg, const InlineMemberGroup& group,
+		const std::string& next_label, FunctionContext& func);
 	// Has own size()/get(); ECALL_ARRAY_SIZE/AT throw on these.
 	static bool is_packed_array_type(IRInstruction::TypeHint type);
 	int gen_vget(int obj_reg, const std::string& member, FunctionContext& func);
@@ -301,6 +307,7 @@ private:
 	void gen_dict_set(int obj_reg, const std::string& key, int value_reg, FunctionContext& func);
 
 	void apply_declared_type(int reg, const std::string& type_hint, FunctionContext& func);
+	void coerce_parameters(const std::vector<Parameter>& parameters, FunctionContext& func);
 	FunctionSignature build_signature(const FunctionDecl& decl) const;
 
 	void set_register_struct(FunctionContext& func, int reg, const StructDecl* decl);
@@ -340,6 +347,7 @@ private:
 	bool is_global_class(const std::string& name) const;
 	bool is_autoload(const std::string& name) const;
 	bool names_a_chain_class(const std::string& name, FunctionContext& func);
+	const VariableExpr* engine_enum_qualifier(const Expr* expr, FunctionContext& func);
 	const std::string* chain_qualified_member(const Expr* expr, FunctionContext& func);
 	int emit_local_call(const std::string& name, std::vector<int> arg_regs,
 		FunctionContext& func, const Expr* site);

@@ -1886,6 +1886,37 @@ uint64_t Sandbox::add_scoped_engine_object(uintptr_t engine_object) {
 	return object_handle_from_id(object_id);
 }
 
+void Sandbox::store_into_guest_slot(gaddr_t slot_address, Variant &&value) {
+	GuestVariant *dst = machine().memory.memarray<GuestVariant>(slot_address, 1);
+
+	const int32_t held = dst->is_scoped_variant() ? int32_t(dst->v.i) : 0;
+	const bool holds_permanent = Sandbox::is_permanent_variant(held);
+	const int32_t previous_type = dst->type;
+
+	GuestVariant next;
+	next.type = value.get_type();
+	next.v.i = 0;
+	if (next.is_scoped_variant()) {
+		const int32_t stored = this->create_permanent_variant_from(std::move(value));
+		if (UNLIKELY(stored == 0)) {
+			next.type = Variant::NIL;
+		} else {
+			next.v.i = stored;
+		}
+	} else {
+		next.create(*this, std::move(value));
+	}
+
+	if (holds_permanent) {
+		this->release_permanent_variant(held);
+	}
+	*dst = next;
+
+	if (dst->type == Variant::OBJECT || previous_type == Variant::OBJECT) {
+		this->retain_global_object(slot_address);
+	}
+}
+
 void Sandbox::retain_global_object(gaddr_t slot_address) {
 	uint64_t object_id = 0;
 	try {
@@ -2248,9 +2279,8 @@ bool SandboxProperty::set(Sandbox &sandbox, const Variant &value) {
 
 	if (m_setter_address == 0) {
 		if (m_address != 0) {
-			const uint64_t address = sandbox.rebase_instance_address(m_address);
-			GuestVariant *g_prop = sandbox.machine().memory.memarray<GuestVariant>(address, 1);
-			g_prop->create(sandbox, std::move(narrowed));
+			sandbox.store_into_guest_slot(sandbox.rebase_instance_address(m_address),
+					std::move(narrowed));
 			return true;
 		}
 		ERR_PRINT("Sandbox: Setter was invalid for property: " + m_name);

@@ -549,6 +549,7 @@ public:
 	static godot::Object *resolve_scoped_object(CurrentState::ScopedObject &so);
 
 	void retain_global_object(gaddr_t slot_address);
+	void store_into_guest_slot(gaddr_t slot_address, godot::Variant &&value);
 	void release_retained_objects(gaddr_t base, gaddr_t size);
 	godot::Object *resolve_live_object(uint64_t object_id) const noexcept;
 

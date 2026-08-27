@@ -210,6 +210,24 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			break;
 		}
 
+		case IROpcode::COERCE: {
+			int dst = std::get<int>(instr.operands[0].value);
+			int src = std::get<int>(instr.operands[1].value);
+			Value src_value = get_register(ctx, src);
+			if (instr.type_hint == Variant::FLOAT) {
+				ctx.registers[dst] = get_double(src_value);
+			} else if (instr.type_hint == Variant::INT) {
+				ctx.registers[dst] = get_int(src_value);
+			} else if (instr.type_hint == Variant::BOOL) {
+				ctx.registers[dst] = get_bool(src_value);
+			} else {
+				throw CompilerException(ErrorType::OPTIMIZER_ERROR,
+					std::string("COERCE to ") + variant_type_name(instr.type_hint) +
+					" is not implemented in the interpreter");
+			}
+			break;
+		}
+
 		case IROpcode::MOVE: {
 			int dst = std::get<int>(instr.operands[0].value);
 			int src = std::get<int>(instr.operands[1].value);
@@ -239,7 +257,8 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			break;
 		}
 
-		case IROpcode::TYPE_TEST: {
+		case IROpcode::TYPE_TEST:
+		case IROpcode::TYPE_TEST_MASK: {
 			int dst = std::get<int>(instr.operands[0].value);
 			int src = std::get<int>(instr.operands[1].value);
 			const int64_t tested = std::get<int64_t>(instr.operands[2].value);
@@ -255,7 +274,9 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			} else {
 				actual = Variant::STRING;
 			}
-			ctx.registers[dst] = (actual == tested);
+			ctx.registers[dst] = instr.opcode == IROpcode::TYPE_TEST
+				? (actual == tested)
+				: ((tested >> actual) & 1) != 0;
 			break;
 		}
 

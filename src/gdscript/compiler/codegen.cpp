@@ -418,6 +418,7 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const Stru
 
 		apply_declared_type(reg, param.type_hint, func);
 	}
+	coerce_parameters(decl.parameters, func);
 
 	for (const auto& stmt : decl.body) {
 		gen_stmt(stmt.get(), func);
@@ -2792,6 +2793,7 @@ IRFunction CodeGenerator::generate_lambda_function(const FunctionDecl& decl,
 		declare_variable(func, param.name, reg);
 		apply_declared_type(reg, param.type_hint, func);
 	}
+	coerce_parameters(decl.parameters, func);
 
 	for (size_t i = 0; i < captures.size(); i++) {
 		int index_reg = gen_int_immediate(static_cast<int64_t>(i), func);
@@ -3851,6 +3853,11 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		chain_object.column = object_expr->column;
 		object_expr = &chain_object;
 	}
+	if (!expr->is_method_call && expr->arguments.empty()) {
+		if (const VariableExpr* owner = engine_enum_qualifier(object_expr, func)) {
+			object_expr = owner;
+		}
+	}
 
 	// Struct.new(): resolved before object is lowered (struct is a type, not a value).
 	if (expr->is_method_call && expr->member_name == "new") {
@@ -3877,8 +3884,11 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 			if (expr->is_method_call) {
 				if (!is_local_function(expr->member_name)) {
 					error_at("'" + object->name + "' declares no '" + expr->member_name + "()'",
-						expr, "Its body is merged into this program, so '" + expr->member_name +
-						"()' would be a function here");
+						expr, m_chain.merged()
+							? "Its body is merged into this program, so '" + expr->member_name +
+								"()' would be a function here"
+							: "'" + object->name + "' is this script, so '" + expr->member_name +
+								"()' would be a function here");
 				}
 				reject_named_arguments(*expr, "'" + expr->member_name + "'", expr);
 				std::vector<int> arg_regs;
@@ -4719,6 +4729,28 @@ void CodeGenerator::apply_declared_type(int reg, const std::string& type_hint, F
 	const IRInstruction::TypeHint type = type_hint_from_string(type_hint);
 	if (type != IRInstruction::TypeHint_NONE) {
 		set_register_type(func, reg, type);
+	}
+}
+
+void CodeGenerator::coerce_parameters(const std::vector<Parameter>& parameters,
+	FunctionContext& func)
+{
+	for (const auto& param : parameters) {
+		const IRInstruction::TypeHint declared = type_hint_from_string(param.type_hint);
+		if (declared != Variant::INT && declared != Variant::FLOAT && declared != Variant::BOOL) {
+			continue;
+		}
+		Variable* var = find_variable(func, param.name);
+		if (var == nullptr) {
+			continue;
+		}
+		const int src = var->register_num;
+		const int dst = alloc_register(func);
+		IRInstruction coerce(IROpcode::COERCE, IRValue::reg(dst), IRValue::reg(src));
+		coerce.type_hint = declared;
+		func.ir.instructions.push_back(coerce);
+		set_register_type(func, dst, declared);
+		var->register_num = dst;
 	}
 }
 
@@ -5907,13 +5939,14 @@ int CodeGenerator::gen_inline_member_get(int obj_reg, IRInstruction::TypeHint ob
 }
 
 void CodeGenerator::gen_inline_member_set(int obj_reg, IRInstruction::TypeHint obj_type,
-	const std::string& member, int value_reg, FunctionContext& func)
+	const std::string& member, int value_reg, FunctionContext& func, bool stamp_type)
 {
 	IRInstruction instr(IROpcode::VSET_INLINE);
 	instr.operands.push_back(IRValue::reg(obj_reg));
 	instr.operands.push_back(IRValue::str(member));
 	instr.operands.push_back(IRValue::imm(static_cast<int>(obj_type)));
 	instr.operands.push_back(IRValue::reg(value_reg));
+	instr.operands.push_back(IRValue::imm(stamp_type ? 1 : 0));
 	func.ir.instructions.push_back(instr);
 }
 
@@ -5950,6 +5983,49 @@ std::vector<IRInstruction::TypeHint> CodeGenerator::inline_member_types(const st
 	return types;
 }
 
+std::vector<CodeGenerator::InlineMemberGroup> CodeGenerator::inline_member_groups(
+	const std::string& member) const
+{
+	std::vector<InlineMemberGroup> groups;
+	std::vector<BuiltinMember> layouts;
+	for (IRInstruction::TypeHint type : inline_member_types(member)) {
+		const BuiltinMember layout = find_builtin_member(uint32_t(type), member);
+		size_t slot = 0;
+		for (; slot < layouts.size(); slot++) {
+			const BuiltinMember& seen = layouts[slot];
+			if (seen.first_component == layout.first_component && seen.count == layout.count &&
+				seen.result_type == layout.result_type && seen.integer == layout.integer)
+			{
+				break;
+			}
+		}
+		if (slot == layouts.size()) {
+			layouts.push_back(layout);
+			groups.push_back(InlineMemberGroup{});
+		}
+		groups[slot].types.push_back(type);
+	}
+	return groups;
+}
+
+void CodeGenerator::emit_group_type_test(int obj_reg, const InlineMemberGroup& group,
+	const std::string& next_label, FunctionContext& func)
+{
+	int64_t mask = 0;
+	for (IRInstruction::TypeHint type : group.types) {
+		mask |= int64_t(1) << static_cast<int>(type);
+	}
+	const int test_reg = alloc_register(func);
+	func.ir.instructions.emplace_back(group.types.size() == 1
+			? IROpcode::TYPE_TEST : IROpcode::TYPE_TEST_MASK,
+		IRValue::reg(test_reg), IRValue::reg(obj_reg),
+		IRValue::imm(group.types.size() == 1
+			? static_cast<int64_t>(group.types.front()) : mask));
+	set_register_type(func, test_reg, Variant::BOOL);
+	emit_conditional_branch(IROpcode::BRANCH_ZERO, test_reg, next_label, func);
+	free_register(func, test_reg);
+}
+
 int CodeGenerator::gen_vget(int obj_reg, const std::string& member, FunctionContext& func) {
 	int result_reg = alloc_register(func);
 	int str_idx = add_string_constant(member);
@@ -5977,7 +6053,7 @@ void CodeGenerator::gen_vset(int obj_reg, const std::string& member, int value_r
 
 // Untyped `.x`: branch on tag to element read, inline payload or VGET (Object-only).
 int CodeGenerator::gen_dynamic_member_get(int obj_reg, const std::string& member, FunctionContext& func) {
-	const std::vector<IRInstruction::TypeHint> types = inline_member_types(member);
+	const std::vector<InlineMemberGroup> groups = inline_member_groups(member);
 	const std::string end_label = make_label("member_get_end");
 	int result_reg = alloc_register(func);
 
@@ -6030,16 +6106,11 @@ int CodeGenerator::gen_dynamic_member_get(int obj_reg, const std::string& member
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(next_label));
 	}
 
-	for (IRInstruction::TypeHint type : types) {
+	for (const InlineMemberGroup& group : groups) {
 		const std::string next_label = make_label("member_get_next");
-		int test_reg = alloc_register(func);
-		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(test_reg),
-			IRValue::reg(obj_reg), IRValue::imm(static_cast<int64_t>(type)));
-		set_register_type(func, test_reg, Variant::BOOL);
-		emit_conditional_branch(IROpcode::BRANCH_ZERO, test_reg, next_label, func);
-		free_register(func, test_reg);
+		emit_group_type_test(obj_reg, group, next_label, func);
 
-		int inline_reg = gen_inline_member_get(obj_reg, type, member, func);
+		int inline_reg = gen_inline_member_get(obj_reg, group.types.front(), member, func);
 		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg),
 			IRValue::reg(inline_reg));
 		free_register(func, inline_reg);
@@ -6060,7 +6131,7 @@ int CodeGenerator::gen_dynamic_member_get(int obj_reg, const std::string& member
 void CodeGenerator::gen_dynamic_member_set(int obj_reg, const std::string& member, int value_reg,
 	FunctionContext& func)
 {
-	const std::vector<IRInstruction::TypeHint> types = inline_member_types(member);
+	const std::vector<InlineMemberGroup> groups = inline_member_groups(member);
 	const std::string end_label = make_label("member_set_end");
 
 	// Dictionary: element write, not VSET.
@@ -6101,16 +6172,12 @@ void CodeGenerator::gen_dynamic_member_set(int obj_reg, const std::string& membe
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(next_label));
 	}
 
-	for (IRInstruction::TypeHint type : types) {
+	for (const InlineMemberGroup& group : groups) {
 		const std::string next_label = make_label("member_set_next");
-		int test_reg = alloc_register(func);
-		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(test_reg),
-			IRValue::reg(obj_reg), IRValue::imm(static_cast<int64_t>(type)));
-		set_register_type(func, test_reg, Variant::BOOL);
-		emit_conditional_branch(IROpcode::BRANCH_ZERO, test_reg, next_label, func);
-		free_register(func, test_reg);
+		emit_group_type_test(obj_reg, group, next_label, func);
 
-		gen_inline_member_set(obj_reg, type, member, value_reg, func);
+		gen_inline_member_set(obj_reg, group.types.front(), member, value_reg, func,
+			group.types.size() == 1);
 		func.ir.instructions.emplace_back(IROpcode::JUMP, IRValue::label(end_label));
 		func.ir.instructions.emplace_back(IROpcode::LABEL, IRValue::label(next_label));
 	}
@@ -6375,8 +6442,30 @@ bool CodeGenerator::is_autoload(const std::string& name) const {
 }
 
 bool CodeGenerator::names_a_chain_class(const std::string& name, FunctionContext& func) {
-	return m_chain.merged() && !name.empty() && m_chain.names_a_link(name) &&
+	return !name.empty() && m_chain.names_a_link(name) &&
 		find_variable(func, name) == nullptr && !is_global_variable(name);
+}
+
+const VariableExpr* CodeGenerator::engine_enum_qualifier(const Expr* expr, FunctionContext& func) {
+	auto* member = dynamic_cast<const MemberCallExpr*>(expr);
+	if (member == nullptr || member->is_method_call || !member->arguments.empty()) {
+		return nullptr;
+	}
+	const std::string& enum_name = member->member_name;
+	if (enum_name.empty() || enum_name[0] < 'A' || enum_name[0] > 'Z') {
+		return nullptr;
+	}
+	if (enum_name.find_first_of("abcdefghijklmnopqrstuvwxyz") == std::string::npos) {
+		return nullptr;
+	}
+	auto* owner = dynamic_cast<const VariableExpr*>(member->object.get());
+	if (owner == nullptr || find_variable(func, owner->name) != nullptr) {
+		return nullptr;
+	}
+	if (!is_global_class(owner->name) && !names_an_engine_type(owner->name, func)) {
+		return nullptr;
+	}
+	return owner;
 }
 
 const std::string* CodeGenerator::chain_qualified_member(const Expr* expr, FunctionContext& func) {

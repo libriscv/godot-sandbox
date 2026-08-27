@@ -1,3 +1,4 @@
 dump_ir
 build/
 build-rel/
+build-test/

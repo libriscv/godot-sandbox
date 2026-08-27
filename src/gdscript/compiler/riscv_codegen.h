@@ -530,6 +530,7 @@ private:
 	// INT/FLOAT Variant -> real_t. normalize_by_255 for Color integer components.
 	void emit_variant_component_to_real(int comp_offset, int result_offset, int store_offset);
 	void emit_variant_component_to_int(int comp_offset, int result_offset, int store_offset);
+	void gen_coerce(int dst_vreg, int src_vreg, int target);
 
 	int m_label_counter = 0;
 
@@ -565,8 +566,9 @@ private:
 
 	LineTable m_line_table;
 
-	// {string_data, label_name} for @export property names.
-	std::vector<std::pair<std::string, std::string>> m_property_name_strings;
+	std::vector<std::pair<std::string, std::string>> m_rodata_strings;
+	std::unordered_map<std::string, std::string> m_rodata_string_labels;
+	std::string rodata_string(const std::string& text);
 
 	static constexpr uint8_t REG_ZERO = 0;
 	static constexpr uint8_t REG_RA = 1;

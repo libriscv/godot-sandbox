@@ -421,6 +421,7 @@ private:
 			case IROpcode::LOAD_BOOL: return Variant::BOOL;
 			case IROpcode::LOAD_STRING: return Variant::STRING;
 			case IROpcode::CONVERT: return instr.type_hint;
+			case IROpcode::COERCE: return instr.type_hint;
 			case IROpcode::MOVE: {
 				const int src = std::get<int>(instr.operands.at(1).value);
 				if (src >= 0 && static_cast<size_t>(src) < state.type.size()) {
@@ -454,6 +455,12 @@ private:
 		if (instr.opcode == IROpcode::CONVERT) {
 			if (instr.type_hint == IRInstruction::TypeHint_NONE) {
 				fail("CONVERT does not say what it converts to", instr_idx);
+			}
+			return;
+		}
+		if (instr.opcode == IROpcode::COERCE) {
+			if (instr.type_hint == IRInstruction::TypeHint_NONE) {
+				fail("COERCE does not say what it coerces to", instr_idx);
 			}
 			return;
 		}

@@ -668,6 +668,7 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		// No default: new opcodes must be listed explicitly (compile error otherwise).
 		case IROpcode::BIT_NOT:
 		case IROpcode::CONVERT:
+		case IROpcode::COERCE:
 		case IROpcode::JUMP:
 		case IROpcode::LOAD_NIL:
 		case IROpcode::THROW:
@@ -700,6 +701,7 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::POW:
 		case IROpcode::IN:
 		case IROpcode::TYPE_TEST:
+		case IROpcode::TYPE_TEST_MASK:
 		case IROpcode::TYPE_OF:
 		case IROpcode::MAKE_SCOPED:
 		case IROpcode::SWITCH:
