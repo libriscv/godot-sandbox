@@ -38,6 +38,7 @@ set(SOURCES
 	src/safegdscript/direct_compiler.cpp
 	src/safegdscript/sandboxed_compiler.cpp
 	src/safegdscript/profiling_safegdscript.cpp
+	src/safegdscript/script_class_safegdscript.cpp
 	src/safegdscript/script_instance_safegdscript.cpp
 	src/safegdscript/script_language_safegdscript.cpp
 	src/safegdscript/script_safegdscript.cpp

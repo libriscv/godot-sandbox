@@ -44,6 +44,33 @@ struct FunctionSignature {
 	bool is_coroutine = false;
 };
 
+// One nested class with an engine base. The host makes a Script resource out of
+// it and attaches an instance of that to the object the guest built.
+struct ClassField {
+	std::string name;
+	int32_t type = FunctionParameter::ANY_TYPE;
+};
+
+// A lifted method of the class. Its parameters live in the FunctionSignature
+// table under '@Class.name'; a static one has no synthetic self slot.
+struct ClassMethod {
+	std::string name;
+	bool is_static = false;
+};
+
+struct ClassSignature {
+	std::string name;
+	// Declared parent class; empty when the class extends the engine directly.
+	std::string base_name;
+	// Engine class the declared chain bottoms out in.
+	std::string native_base;
+	// Inherited fields included, base's first, in declaration order.
+	std::vector<ClassField> fields;
+	// Declared here only; inherited ones are reached through base_name.
+	std::vector<ClassMethod> methods;
+	int32_t line = 0;
+};
+
 // Encoded as a single blob (one scoped variant) rather than Array of Dictionaries
 // to stay under Sandbox::MAX_REFS. Little-endian; layout documented in
 // function_signature.cpp.
@@ -52,5 +79,11 @@ std::vector<uint8_t> encode_function_signatures(const std::vector<FunctionSignat
 // Returns false on truncated or invalid blobs; output left empty.
 bool decode_function_signatures(const uint8_t *data, size_t size,
 	std::vector<FunctionSignature> &out);
+
+// Separate blob, separate entry point: a section appended to the one above would
+// fail to decode against every ELF built before it existed.
+std::vector<uint8_t> encode_class_signatures(const std::vector<ClassSignature> &classes);
+bool decode_class_signatures(const uint8_t *data, size_t size,
+	std::vector<ClassSignature> &out);
 
 } // namespace gdscript

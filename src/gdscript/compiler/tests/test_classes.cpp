@@ -581,6 +581,215 @@ void test_a_native_base_is_constructed_with_the_instance() {
 		<< std::endl;
 }
 
+const char* PUBLISHED =
+	"class Marker extends Node2D:\n"
+	"\tvar hits = 0\n"
+	"\tvar tag : String = \"\"\n"
+	"\tfunc _init():\n"
+	"\t\thits = 1\n"
+	"\tfunc launch(by : int, twice = false) -> int:\n"
+	"\t\treturn by\n"
+	"\tstatic func origin():\n"
+	"\t\treturn 0\n"
+	"class Plain:\n"
+	"\tvar v = 1\n"
+	"func test():\n"
+	"\tvar m = Marker.new()\n"
+	"\tvar p = Plain.new()\n"
+	"\treturn m.launch(1)\n";
+
+const gdscript::ClassSignature* find_class(const IRProgram& ir, const std::string& name) {
+	for (const ClassSignature& cls : ir.class_signatures) {
+		if (cls.name == name) {
+			return &cls;
+		}
+	}
+	return nullptr;
+}
+
+const FunctionSignature* find_signature(const IRProgram& ir, const std::string& name) {
+	for (const FunctionSignature& sig : ir.signatures) {
+		if (sig.name == name) {
+			return &sig;
+		}
+	}
+	return nullptr;
+}
+
+void test_the_bind_syscall_is_emitted_for_an_engine_base() {
+	std::cout << "Testing the nested-class bind syscall..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(PUBLISHED);
+	const IRFunction* test = find_function(ir, "test");
+	check(test != nullptr, "test() is lowered");
+	if (test == nullptr) {
+		return;
+	}
+
+	check(count_syscall(*test, ECALL_CLASS_BIND) == 1,
+		"only the class with an engine base is bound");
+
+	// A class is a script instance before its _init() runs, the way add_child(self)
+	// inside GDScript's _init() already works.
+	size_t bind_at = SIZE_MAX;
+	size_t init_at = SIZE_MAX;
+	size_t dict_at = SIZE_MAX;
+	for (size_t i = 0; i < test->instructions.size(); i++) {
+		const IRInstruction& instr = test->instructions[i];
+		if (instr.opcode == IROpcode::MAKE_DICTIONARY && dict_at == SIZE_MAX) {
+			dict_at = i;
+		}
+		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() > 1 &&
+			std::get<int64_t>(instr.operands[1].value) == ECALL_CLASS_BIND)
+		{
+			bind_at = i;
+		}
+		if (instr.opcode == IROpcode::CALL &&
+			std::get<std::string>(instr.operands[0].value) == "@Marker._init")
+		{
+			init_at = i;
+		}
+	}
+	check(dict_at != SIZE_MAX && bind_at != SIZE_MAX && init_at != SIZE_MAX,
+		"the dictionary, the bind and _init are all emitted");
+	check(dict_at < bind_at && bind_at < init_at,
+		"the bind lands after the instance is built and before its _init");
+
+	std::cout << "  \u2713 Only an engine-based class binds, before its _init" << std::endl;
+}
+
+// A struct is a value, so declaring one is an instance. A class is an object,
+// and GDScript leaves `var a: Inner` null -- checked against the engine.
+// Constructing one eagerly also ran its bind while the machine was still loading.
+void test_a_class_typed_declaration_constructs_nothing() {
+	std::cout << "Testing what a class-typed declaration defaults to..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"class Marker extends Node2D:\n"
+		"\tvar hits = 0\n"
+		"struct Point:\n"
+		"\tvar x = 0\n"
+		"var member : Marker\n"
+		"func test():\n"
+		"\tvar local : Marker\n"
+		"\tvar value : Point\n"
+		"\treturn 1\n");
+
+	check(ir.has_member_init == false || count_syscall(ir.member_init, ECALL_NODE_CREATE) == 0,
+		"a class-typed member builds no engine object at startup");
+	check(ir.has_member_init == false || count_syscall(ir.member_init, ECALL_CLASS_BIND) == 0,
+		"and asks for no bind while the machine is still loading");
+
+	const IRFunction* test = find_function(ir, "test");
+	check(test != nullptr, "test() is lowered");
+	if (test == nullptr) {
+		return;
+	}
+	check(count_syscall(*test, ECALL_NODE_CREATE) == 0,
+		"a class-typed local constructs nothing either");
+	check(count_opcode(*test, IROpcode::MAKE_DICTIONARY) == 1,
+		"the struct-typed local is still an instance");
+
+	std::cout << "  \u2713 A class-typed declaration is null; a struct-typed one is an instance"
+		<< std::endl;
+}
+
+void test_class_signatures_are_published() {
+	std::cout << "Testing the published class table..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(PUBLISHED);
+	check(ir.class_signatures.size() == 1,
+		"a class with no engine base has nothing for the host to attach");
+
+	const ClassSignature* marker = find_class(ir, "Marker");
+	check(marker != nullptr, "the engine-based class is published");
+	if (marker == nullptr) {
+		return;
+	}
+	check(marker->native_base == "Node2D", "the engine class the chain bottoms out in");
+	check(marker->base_name.empty(), "no declared parent class");
+	check(marker->fields.size() == 2, "both fields travel");
+	check(marker->fields[0].name == "hits" && marker->fields[1].name == "tag",
+		"fields keep their declaration order");
+	check(marker->fields[1].type == int32_t(Variant::STRING), "a declared field type travels");
+	check(marker->methods.size() == 3, "every declared method travels");
+	check(find_class(ir, "Plain") == nullptr, "a class without an engine base does not");
+
+	bool saw_static = false;
+	for (const ClassMethod& method : marker->methods) {
+		if (method.name == "origin") {
+			saw_static = method.is_static;
+		}
+	}
+	check(saw_static, "a static method is marked, so the host passes it no self");
+
+	// The synthetic self slot is not part of the declaration, so the signature
+	// the host checks arity against never mentions it.
+	const FunctionSignature* launch = find_signature(ir, "@Marker.launch");
+	check(launch != nullptr, "the lifted method has a full signature");
+	if (launch == nullptr) {
+		return;
+	}
+	check(launch->parameters.size() == 2, "self is not a declared parameter");
+	check(launch->parameters[0].name == "by", "the first parameter is the first declared one");
+	check(launch->parameters[0].type == int32_t(Variant::INT), "a declared parameter type travels");
+	check(launch->return_type == int32_t(Variant::INT), "the return type travels");
+	check(launch->required_arguments == 1, "the parameter with a default is optional");
+
+	// One blob, one entry point: appending a section to the function table would
+	// fail to decode against every host built before it existed.
+	const std::vector<uint8_t> blob = encode_class_signatures(ir.class_signatures);
+	std::vector<ClassSignature> decoded;
+	check(decode_class_signatures(blob.data(), blob.size(), decoded),
+		"the class table round-trips through its blob");
+	check(decoded.size() == 1 && decoded[0].name == "Marker" &&
+		decoded[0].native_base == "Node2D" && decoded[0].fields.size() == 2 &&
+		decoded[0].methods.size() == 3,
+		"the decoded table is what was encoded");
+
+	std::cout << "  \u2713 The host learns the class, its fields and its methods" << std::endl;
+}
+
+void test_super_on_a_native_base_is_marked() {
+	std::cout << "Testing the super marker on a native base..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"class Marker extends Node2D:\n"
+		"\tfunc get_name():\n"
+		"\t\treturn super.get_name()\n"
+		"\tfunc plain():\n"
+		"\t\treturn move_local_x(1.0)\n"
+		"func test():\n"
+		"\treturn Marker.new()\n");
+
+	const IRFunction* shadowed = find_function(ir, "@Marker.get_name");
+	const IRFunction* plain = find_function(ir, "@Marker.plain");
+	check(shadowed != nullptr && plain != nullptr, "both methods are lifted");
+	if (shadowed == nullptr || plain == nullptr) {
+		return;
+	}
+
+	// Without the marker the object's own script instance answers first and
+	// re-enters the very method that made the call.
+	int marked = 0;
+	int unmarked = 0;
+	for (const IRInstruction& instr : shadowed->instructions) {
+		if (instr.opcode == IROpcode::VCALL) {
+			instr.super_call ? marked++ : unmarked++;
+		}
+	}
+	check(marked == 1 && unmarked == 0, "super. on the native base is marked");
+
+	for (const IRInstruction& instr : plain->instructions) {
+		if (instr.opcode == IROpcode::VCALL) {
+			check(!instr.super_call, "a name the class does not declare needs no bypass");
+		}
+	}
+
+	std::cout << "  \u2713 Only a super call on the native base asks for the bypass"
+		<< std::endl;
+}
+
 void test_what_the_class_does_not_declare_reaches_the_base() {
 	std::cout << "Testing fallthrough to the native base..." << std::endl;
 
@@ -1427,6 +1636,10 @@ int main() {
 	test_a_lambda_in_a_method_sees_the_class();
 	test_a_qualified_base_is_refused();
 	test_a_native_base_is_constructed_with_the_instance();
+	test_the_bind_syscall_is_emitted_for_an_engine_base();
+	test_class_signatures_are_published();
+	test_a_class_typed_declaration_constructs_nothing();
+	test_super_on_a_native_base_is_marked();
 	test_what_the_class_does_not_declare_reaches_the_base();
 	test_the_script_still_wins_over_the_base();
 	test_super_reaches_the_native_base();

@@ -89,6 +89,13 @@ untouched slots carry VASSIGN's INT32_MIN sentinel, and `api_vassign` returns
 the *source's* index — scoped, so a complex member assigned into an empty slot
 dangled on call return.
 
+A **struct**-typed declaration (`var p: Point`, member, local or field) is a
+fresh instance: a struct is a value. A **class**-typed one is not — a class is
+an object and GDScript leaves it null. It gets DICTIONARY's empty default rather
+than NIL, because the slot is typed DICTIONARY and an empty complex slot has to
+carry the sentinel above. Constructing one eagerly also ran the class's
+`ECALL_CLASS_BIND` during `load_buffer` and leaked the engine object it built.
+
 ## Native backends
 
 Two backends; only one built per target:
@@ -136,6 +143,38 @@ Tests: `test_an_unrestricted_sandbox_runs_unchecked`,
 
 `src/gdscript/compiler/`. GDScript → AST → IR → RV64 ELF targeting Godot
 Sandbox.
+
+### Where the compiler runs
+
+`GDScriptCompilerBackend` (`src/safegdscript/compiler_backend.h`) is the one
+interface the `.sgd` host drives. Two implementations:
+
+- **sandboxed** (`sandboxed_compiler.cpp`) — `gdscript.elf` in its own Sandbox,
+  reached by vmcall. A compiler bug faults that machine, not the process. Every
+  entry point a previous release lacked is guarded by `has_function()`.
+- **direct** (`direct_compiler.cpp`) — the same compiler linked into the
+  extension, called in process. Faster (no guest machine, no ecall per answer)
+  and gdb sees the compiler's own frames; a crash in it is a Godot crash.
+
+`gdscript_compiler::Policy` picks per script, from the build setting
+`SAFEGDSCRIPT_COMPILER` (CMake) / `safegdscript_compiler=` (SCons):
+
+| value | policy |
+| --- | --- |
+| `sandboxed` | `gdscript.elf` for everything |
+| `restricted` | direct, except a restricted Sandbox's scripts. **Default** |
+| `direct` | direct for everything, restricted source included |
+
+`restricted` means the source is a mod, not the project's: hostile input keeps
+the machine between it and Godot. A policy wanting direct falls back to
+sandboxed when the build linked no compiler in — `sandboxed` is also the only
+value that does not link the compiler library into the addon.
+
+`backend_for(restricted)` chooses; `prepare()` writes every input (restriction,
+autoloads, global classes, base sources) so nothing survives from the last
+build. Backends are stateful — the answers about a build are read back one
+question at a time — so a compile and the questions after it must use the same
+one.
 
 ### @GlobalScope functions
 
@@ -337,6 +376,54 @@ through to `VGET`/`VSET` on owner. `SafeGDScript::_instance_create()` refuses
 owner not matching declared base.
 
 Tests: `tests/test_classes.cpp`.
+
+### Nested-class script instances
+
+A nested class with an engine base is also a Script resource of its own
+(`SafeGDScriptClass`), and its `@base` object carries a script instance of that
+(`SafeGDScriptClassInstance`) — `src/safegdscript/script_class_safegdscript.cpp`.
+The Dictionary stays the guest-side identity; the instance is the host-side one
+and holds that same Dictionary, so `obj.get("field")` and the guest see one set
+of values (Godot's Dictionary is a handle). Without it Godot only ever saw a bare
+`CanvasGroup`: no `_ready`/`_process`/`_input`, no `has_method`, no `get_script`.
+
+`gen_class_construct` emits `ECALL_CLASS_BIND` after `MAKE_DICTIONARY` and before
+the class's `_init`, so `_init` already runs with the script attached. The IR
+interpreter refuses `CALL_SYSCALL`, so the corpus is unaffected.
+
+- `ClassSignature` (`function_signature.h`) publishes name, declared base,
+  `native_base()`, inherited fields and declared methods; its own blob and its
+  own `class_signatures` entry point, because a section appended to the function
+  blob would not decode against an older `gdscript.elf`. Lifted methods now carry
+  full signatures under `@Class.method`, minus the synthetic `self`.
+- Dispatch: `callp` resolves `@Class.name` up the declared chain via
+  `cached_address_of`, checks arity with the same helper the outer instance uses
+  (`call_arguments.h`), and passes the Dictionary in the first slot.
+- `_can_instantiate()` is **true**: `Object::set_script()` only builds an
+  instance when the Script says so. Attaching one by hand is refused in
+  `_instance_create()` instead, where `pending_self` is empty.
+- `super.method()` on a native base becomes `ECALL_VCALL_SUPER`
+  (`IRInstruction::super_call`). The handler arms `bypass_once()`, `callp`
+  answers `INVALID_METHOD` once, and `Object::callp` falls through to the
+  engine's `MethodBind`. Only a name the class *shadows* needs it; anything it
+  does not declare already falls through. Engine virtuals with no `MethodBind`
+  (`super._ready()`) fail — GDScript refuses those at parse time.
+- **RefCounted bases get no script.** `@base` is a strong reference, the object
+  owns the instance, the instance holds the Dictionary: a cycle whose only exit
+  is `refcount_decremented()`, which would mean dropping the last reference from
+  inside the object's own `unreference()`. `extends Resource` stays what it was.
+- A member declared with a nested class type (`var l: Launcher2D`) is
+  constructed by `__init_members`, so its bind runs during `load_buffer`.
+  `create_sandbox()` registers the machine in `sandbox_instances` *before*
+  loading for that reason.
+- Classes are rebuilt in place on recompile (`rebuild_nested_classes`), so
+  `get_script()` is identity-stable across a reload; a class dropped from the
+  source is invalidated and its instances answer `INVALID_METHOD`.
+- `_notification` now dispatches on the outer `SafeGDScriptInstance` too.
+
+Tests: `test_sgd_a_nested_class_*` in `tests/tests/test_gdscript_compiler.gd`,
+`test_the_bind_syscall_is_emitted_for_an_engine_base` and
+`test_class_signatures_are_published` in `tests/test_classes.cpp`.
 
 ### Function signatures
 

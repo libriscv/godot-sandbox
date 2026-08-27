@@ -190,6 +190,11 @@ struct IRInstruction {
 	// 1-based source line; 0 for prologue/synthesised. Metadata only.
 	int32_t line = 0;
 
+	// VCALL only: `super.method()` on a native base. The object carries the
+	// class's own script instance, which would answer the call and recurse back
+	// into the method that made it, so the host bypasses it for this one call.
+	bool super_call = false;
+
 	IRInstruction(IROpcode op) : opcode(op) {}
 	IRInstruction(IROpcode op, IRValue a) : opcode(op), operands{a} {}
 	IRInstruction(IROpcode op, IRValue a, IRValue b) : opcode(op), operands{a, b} {}
@@ -269,6 +274,9 @@ struct IRProgram {
 	std::vector<FunctionSignature> signatures;
 
 	std::vector<FunctionSignature> signals;
+
+	// One per nested class with an engine base; the host attaches a Script to each.
+	std::vector<ClassSignature> class_signatures;
 
 	// Evaluates non-constant global initializers at startup, before @export registration.
 	IRFunction global_init;

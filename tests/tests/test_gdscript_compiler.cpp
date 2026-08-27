@@ -48,6 +48,7 @@ PUBLIC Variant compile(String code)
 	// ELF carries symbols but not signatures, line tables, or breakpoint info.
 	gdscript_remember_signatures(compiler);
 	gdscript_remember_signals(compiler);
+	gdscript_remember_classes(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
@@ -82,6 +83,7 @@ PUBLIC Variant compile_profiled(String code)
 	auto elf_data = compiler.compile(code.utf8(), options);
 	gdscript_remember_signatures(compiler);
 	gdscript_remember_signals(compiler);
+	gdscript_remember_classes(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
@@ -115,6 +117,7 @@ PUBLIC Variant compile_debug(String code, PackedInt32Array breakpoints)
 	auto elf_data = compiler.compile(code.utf8(), options);
 	gdscript_remember_signatures(compiler);
 	gdscript_remember_signals(compiler);
+	gdscript_remember_classes(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
@@ -177,6 +180,11 @@ PUBLIC Variant get_signal_signatures()
 	return gdscript_signals_to_variant();
 }
 
+PUBLIC Variant get_class_signatures()
+{
+	return gdscript_classes_to_variant();
+}
+
 // Address-to-line table. Metadata (no code cost); every compile publishes one.
 PUBLIC Variant get_line_table()
 {
@@ -225,6 +233,19 @@ PUBLIC Variant scope_release_keeps_a_mutated_argument(String s, int passes)
 		sys_vscope(int(Scope_Op::RELEASE), mark, nullptr, 0, nullptr, 0, 0);
 	}
 	return s.size();
+}
+
+MAKE_SYSCALL(ECALL_CLASS_BIND, void, sys_class_bind, unsigned index, const char *name,
+	unsigned len);
+
+// A hand-written guest reaching for the nested-class bind. The compiler already
+// refuses an engine base under restrictions, so this is the same gate seen from
+// the side that gate does not cover.
+PUBLIC Variant class_bind_under_restrictions()
+{
+	Dictionary d = Dictionary::Create();
+	sys_class_bind(d.get_variant_index(), "Marker", 6);
+	return Nil;
 }
 
 PUBLIC Variant set_restricted(bool restricted)

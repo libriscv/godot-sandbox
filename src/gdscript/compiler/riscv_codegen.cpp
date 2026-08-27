@@ -764,6 +764,38 @@ void RISCVCodeGen::gen_syscall_node_create(const IRInstruction& instr, int resul
 	emit_syscall_result(result_vreg, REG_A0, result_offset, 24); // OBJECT
 }
 
+// ECALL_CLASS_BIND: a0 = the instance Dictionary's scoped index, a1/a2 = class
+// name. Answers nothing; the result slot is only defined so a later spill of it
+// reads a Variant rather than whatever the frame held.
+void RISCVCodeGen::gen_syscall_class_bind(const IRInstruction& instr, int result_vreg) {
+	if (instr.operands.size() != 5) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_CLASS_BIND requires 5 operands");
+	}
+
+	const int string_idx = static_cast<int>(std::get<int64_t>(instr.operands[2].value));
+	const int string_len = static_cast<int>(std::get<int64_t>(instr.operands[3].value));
+	const int dict_vreg = std::get<int>(instr.operands[4].value);
+
+	if (string_idx < 0 || static_cast<size_t>(string_idx) >= m_string_constants->size()) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "String constant index out of range");
+	}
+	const std::string& str = (*m_string_constants)[string_idx];
+
+	const int result_offset = get_variant_stack_offset(result_vreg);
+	const int dict_offset = get_variant_stack_offset(dict_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2});
+
+	emit_container_handle(REG_A0, dict_vreg, dict_offset);
+	emit_la(REG_A1, rodata_string(str));
+	emit_li(REG_A2, string_len);
+	emit_li(REG_A7, ECALL_CLASS_BIND);
+	emit_ecall();
+
+	emit_li(REG_T0, Variant::NIL);
+	emit_store_variant_type(REG_T0, REG_SP, result_offset);
+}
+
 void RISCVCodeGen::gen_syscall_array_size(const IRInstruction& instr, int result_vreg) {
 	if (instr.operands.size() != 3) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_ARRAY_SIZE requires 3 operands");
@@ -1024,6 +1056,8 @@ void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
 		gen_syscall_get_obj(instr, result_vreg);
 	} else if (syscall_num == ECALL_NODE_CREATE) {
 		gen_syscall_node_create(instr, result_vreg);
+	} else if (syscall_num == ECALL_CLASS_BIND) {
+		gen_syscall_class_bind(instr, result_vreg);
 	} else if (syscall_num == ECALL_ARRAY_SIZE) {
 		gen_syscall_array_size(instr, result_vreg);
 	} else if (syscall_num == ECALL_STRING_SIZE) {
@@ -1143,8 +1177,7 @@ void RISCVCodeGen::gen_vcall(const IRInstruction& instr) {
 	// a5 = pointer to result Variant, past the argument array
 	emit_load_stack_offset(REG_A5, result_offset + additional_space);
 
-	// a7 = ECALL_VCALL (501)
-	emit_li(REG_A7, ECALL_VCALL);
+	emit_li(REG_A7, instr.super_call ? ECALL_VCALL_SUPER : ECALL_VCALL);
 	emit_ecall();
 
 	// Restore stack pointer
@@ -5239,6 +5272,9 @@ static bool syscall_answers_in_register(const IRInstruction& instr) {
 	switch (std::get<int64_t>(instr.operands[1].value)) {
 		case ECALL_ARRAY_SIZE:
 		case ECALL_STRING_SIZE:
+		// Attaches a script to an object the caller already holds; nothing new
+		// is handed back, so no scoped variant is made.
+		case ECALL_CLASS_BIND:
 			return true;
 		case ECALL_DICTIONARY_OPS: {
 			if (instr.operands.size() < 3 || !std::holds_alternative<int64_t>(instr.operands[2].value)) {

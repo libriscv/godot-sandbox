@@ -127,6 +127,18 @@ public:
 		return decode_signatures("get_signal_signatures", "signal table");
 	}
 
+	std::vector<gdscript::ClassSignature> class_signatures() override {
+		std::vector<gdscript::ClassSignature> classes;
+		const PackedByteArray bytes = blob("get_class_signatures");
+		if (bytes.is_empty()) {
+			return classes;
+		}
+		if (!gdscript::decode_class_signatures(bytes.ptr(), size_t(bytes.size()), classes)) {
+			ERR_PRINT("SafeGDScript: the compiler returned a malformed class table.");
+		}
+		return classes;
+	}
+
 	gdscript::LineTable line_table() override {
 		gdscript::LineTable table;
 		const PackedByteArray bytes = blob("get_line_table");

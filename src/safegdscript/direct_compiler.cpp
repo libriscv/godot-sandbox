@@ -121,6 +121,7 @@ public:
 
 	std::vector<gdscript::FunctionSignature> function_signatures() override { return m_signatures; }
 	std::vector<gdscript::FunctionSignature> signal_signatures() override { return m_signals; }
+	std::vector<gdscript::ClassSignature> class_signatures() override { return m_classes; }
 	gdscript::LineTable line_table() override { return m_line_table; }
 	PackedInt32Array installed_breakpoints() override { return m_breakpoints; }
 	bool is_tool() override { return m_is_tool; }
@@ -131,6 +132,7 @@ private:
 		m_error = from_utf8(p_compiler.get_error());
 		m_signatures = p_compiler.get_function_signatures();
 		m_signals = p_compiler.get_signal_signatures();
+		m_classes = p_compiler.get_class_signatures();
 		m_line_table = p_compiler.get_line_table();
 		m_is_tool = p_compiler.is_tool();
 
@@ -152,6 +154,7 @@ private:
 	String m_error;
 	std::vector<gdscript::FunctionSignature> m_signatures;
 	std::vector<gdscript::FunctionSignature> m_signals;
+	std::vector<gdscript::ClassSignature> m_classes;
 	gdscript::LineTable m_line_table;
 	PackedInt32Array m_breakpoints;
 	bool m_is_tool = false;

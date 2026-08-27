@@ -50,6 +50,22 @@ inline Variant gdscript_signals_to_variant() {
 	return PackedByteArray(gdscript::encode_function_signatures(gdscript_last_signals()));
 }
 
+// Nested classes with an engine base. Own blob, own entry point: appending a
+// section to the signature blob above would fail to decode for every host built
+// against an older format.
+inline std::vector<gdscript::ClassSignature> &gdscript_last_classes() {
+	static std::vector<gdscript::ClassSignature> classes;
+	return classes;
+}
+
+inline void gdscript_remember_classes(const gdscript::Compiler &compiler) {
+	gdscript_last_classes() = compiler.get_class_signatures();
+}
+
+inline Variant gdscript_classes_to_variant() {
+	return PackedByteArray(gdscript::encode_class_signatures(gdscript_last_classes()));
+}
+
 // Address-to-line table. Metadata only; every compile produces one.
 inline gdscript::LineTable &gdscript_last_line_table() {
 	static gdscript::LineTable table;

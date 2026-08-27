@@ -309,6 +309,8 @@ private:
 	void apply_declared_type(int reg, const std::string& type_hint, FunctionContext& func);
 	void coerce_parameters(const std::vector<Parameter>& parameters, FunctionContext& func);
 	FunctionSignature build_signature(const FunctionDecl& decl) const;
+	ClassSignature build_class_signature(const StructDecl& decl,
+		const std::string& engine_base) const;
 
 	void set_register_struct(FunctionContext& func, int reg, const StructDecl* decl);
 	const StructDecl* get_register_struct(const FunctionContext& func, int reg) const;

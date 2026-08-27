@@ -8,6 +8,7 @@
 #include "../sandbox.h"
 #include "../scoped_tree_base.h"
 #include "../variant_coerce.h"
+#include "call_arguments.h"
 #include "script_safegdscript.h"
 #include "script_language_safegdscript.h"
 #include <godot_cpp/core/object.hpp>
@@ -55,6 +56,16 @@ godot::String SafeGDScriptInstance::to_string(bool *r_is_valid) {
 }
 
 void SafeGDScriptInstance::notification(int32_t p_what, bool p_reversed) {
+	static const StringName s_notification("_notification");
+	// Called for every NOTIFICATION_*, so the script that declares none pays a
+	// name comparison per notification and nothing else.
+	if (script->find_method_info(s_notification) == nullptr) {
+		return;
+	}
+	Variant what = int64_t(p_what);
+	const Variant *args[] = { &what };
+	GDExtensionCallError error;
+	this->callp(s_notification, args, 1, error);
 }
 
 Variant SafeGDScriptInstance::callp(
@@ -80,77 +91,15 @@ Variant SafeGDScriptInstance::callp(
 		return sandbox->callv(p_method, args);
 	}
 
-	// The Sandbox ABI passes one Variant pointer per argument and no count, so
-	// an argument the caller left out is a null pointer the guest dereferences
-	// as soon as it reads the parameter. Nothing downstream can recover from
-	// that, and Godot cannot check the arity itself: through a statically-typed
-	// Node it has no idea a .sgd script is on the other side. So the call is
-	// completed, or refused, here.
-	//
-	// Defaults are the same problem seen from the callee: it cannot fill one in
-	// either, having no way to tell whether it was given the argument. The
-	// compiler hands the constant ones over with the signature, and they are
-	// appended here exactly as Godot appends its own.
-	LocalVector<const Variant *> completed;
-	LocalVector<Variant> narrowed;
-	if (const MethodInfo *method = script->find_method_info(p_method)) {
-		if (!(method->flags & METHOD_FLAG_VARARG)) {
-			const int expected = int(method->arguments.size());
-			const int required = expected - int(method->default_arguments.size());
-			if (p_argument_count < required) {
-				r_error.error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
-				r_error.argument = p_argument_count;
-				r_error.expected = required;
-				return Variant();
-			}
-			if (p_argument_count > expected) {
-				r_error.error = GDEXTENSION_CALL_ERROR_TOO_MANY_ARGUMENTS;
-				r_error.argument = p_argument_count;
-				r_error.expected = expected;
-				return Variant();
-			}
-			for (int i = 0; i < p_argument_count; i++) {
-				const Variant::Type declared = method->arguments[i].type;
-				if (declared == Variant::NIL || p_args[i]->get_type() == declared) {
-					continue;
-				}
-				if (completed.is_empty()) {
-					narrowed.resize(p_argument_count);
-					completed.reserve(expected);
-					for (int j = 0; j < p_argument_count; j++) {
-						narrowed[j] = *p_args[j];
-						completed.push_back(&narrowed[j]);
-					}
-				}
-				if (!coerce_variant_to(narrowed[i], declared)) {
-					r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
-					r_error.argument = i;
-					r_error.expected = declared;
-					return Variant();
-				}
-			}
-			if (p_argument_count < expected) {
-				if (completed.is_empty()) {
-					completed.reserve(expected);
-					for (int i = 0; i < p_argument_count; i++) {
-						completed.push_back(p_args[i]);
-					}
-				}
-				const int first_default = int(method->default_arguments.size()) - (expected - p_argument_count);
-				for (int i = first_default; i < int(method->default_arguments.size()); i++) {
-					completed.push_back(&method->default_arguments[i]);
-				}
-			}
-			if (!completed.is_empty()) {
-				p_args = completed.ptr();
-			}
-		}
+	CompletedArguments completed;
+	if (!completed.complete(script->find_method_info(p_method), p_args, p_argument_count, r_error)) {
+		return Variant();
 	}
 
 	//WARN_PRINT("SafeGDScriptInstance::callp: Calling method " + p_method + " at address " + itos(address) + " with " + itos(p_argument_count) + " arguments.");
 	ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
 	ScopedInstanceBase sib(sandbox, this->current_instance_base());
-	return sandbox->vmcall_address(address, p_args, completed.is_empty() ? p_argument_count : int(completed.size()), r_error);
+	return sandbox->vmcall_address(address, completed.args(), completed.argcount(), r_error);
 }
 
 const GDExtensionMethodInfo *SafeGDScriptInstance::get_method_list(uint32_t *r_count) const {
@@ -431,10 +380,38 @@ static Sandbox *create_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_scrip
 	sandbox_ptr->set_tree_base(fast_cast_to<Node>(p_owner));
 	sandbox_ptr->set_unboxed_arguments(false);
 	sandbox_ptr->set_memory_max(SGD_MEMORY_MAX);
-	sandbox_ptr->load_buffer(p_script->get_content());
+	// Set before the program runs: a nested class binds during a guest call, and
+	// the bind syscall reaches its Script resources through this.
+	sandbox_ptr->set_script_owner_id(godot::ObjectID(p_script->get_instance_id()));
+	// Registered before the program runs: a member declared with a nested class
+	// type is constructed at startup, and the bind that follows has to find this
+	// machine rather than build a second one -- which would run startup again.
 	sandbox_instances.insert_or_assign(p_script.ptr(), SandboxAndCount{sandbox_ptr, 1});
+	sandbox_ptr->load_buffer(p_script->get_content());
 
 	return sandbox_ptr;
+}
+
+// A nested class's instance keeps the same shared machine alive as an outer one:
+// it counts here, and the last instance out -- nested or outer -- frees it.
+Sandbox *safegdscript_acquire_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_script) {
+	return create_sandbox(p_owner, p_script);
+}
+
+void safegdscript_release_sandbox(SafeGDScript *p_script, Object *p_owner) {
+	auto it = sandbox_instances.find(p_script);
+	if (it == sandbox_instances.end()) {
+		return;
+	}
+	it->second.count--;
+	if (it->second.count == 0) {
+		it->second.sandbox->queue_free();
+		sandbox_instances.erase(it);
+	} else if (Node *owner_node = fast_cast_to<Node>(p_owner)) {
+		if (it->second.sandbox->get_tree_base_id() == godot::ObjectID(owner_node->get_instance_id())) {
+			it->second.sandbox->set_tree_base(nullptr);
+		}
+	}
 }
 
 SafeGDScriptInstance::SafeGDScriptInstance(Object *p_owner, const Ref<SafeGDScript> p_script) :

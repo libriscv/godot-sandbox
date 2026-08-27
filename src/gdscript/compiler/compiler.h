@@ -61,6 +61,7 @@ public:
 	// Populated by every compile that reaches codegen, including output_elf=false.
 	const std::vector<FunctionSignature> &get_function_signatures() const { return m_signatures; }
 	const std::vector<FunctionSignature> &get_signal_signatures() const { return m_signals; }
+	const std::vector<ClassSignature> &get_class_signatures() const { return m_class_signatures; }
 	const LineTable &get_line_table() const { return m_line_table; }
 	bool is_tool() const { return m_is_tool; }
 	const std::string &get_class_name() const { return m_class_name; }
@@ -76,6 +77,7 @@ private:
 	CompilerError m_error_info;
 	std::vector<FunctionSignature> m_signatures;
 	std::vector<FunctionSignature> m_signals;
+	std::vector<ClassSignature> m_class_signatures;
 	LineTable m_line_table;
 	bool m_is_tool = false;
 	std::string m_class_name;

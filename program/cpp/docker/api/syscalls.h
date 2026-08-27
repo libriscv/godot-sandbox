@@ -116,7 +116,18 @@
 #define ECALL_VCONSTRUCT (GAME_API_BASE + 58)
 #define ECALL_VSTORE_GLOBAL (GAME_API_BASE + 59)
 
-#define ECALL_LAST (GAME_API_BASE + 60)
+// Attaches the nested class's script instance to the engine object the guest
+// Dictionary holds under "@base", so Godot calls _ready/_process/_input on it.
+// a0 = scoped index of the instance Dictionary, a1/a2 = class name pointer/length.
+// No return value; throws when refused.
+#define ECALL_CLASS_BIND (GAME_API_BASE + 60)
+
+// ECALL_VCALL's arguments exactly, for a `super.method()` on a native base: the
+// object's script instance would otherwise answer first and recurse into the
+// lifted method that made the call.
+#define ECALL_VCALL_SUPER (GAME_API_BASE + 61)
+
+#define ECALL_LAST (GAME_API_BASE + 62)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)

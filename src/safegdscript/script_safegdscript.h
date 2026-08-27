@@ -4,6 +4,7 @@
 #include "../gdscript/compiler/function_signature.h"
 #include "../gdscript/compiler/line_table.h"
 #include <godot_cpp/classes/script_extension.hpp>
+#include <godot_cpp/classes/ref.hpp>
 #include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/templates/hash_map.hpp>
 #include <godot_cpp/templates/hash_set.hpp>
@@ -14,6 +15,7 @@ using namespace godot;
 class Sandbox;
 class GDScriptCompilerBackend;
 class SafeGDScriptInstance;
+class SafeGDScriptClass;
 class ELFScript;
 
 class SafeGDScript : public ScriptExtension {
@@ -109,6 +111,9 @@ public:
 	static PackedStringArray resolve_base_sources(const String &p_source,
 			const String &p_self_path = String(), String *r_error = nullptr);
 	static void poll_base_sources();
+	// The nested class of that name, or null. One per class whose declared chain
+	// reaches an engine class; the rest stay plain Dictionaries in the guest.
+	Ref<SafeGDScriptClass> find_nested_class(const StringName &p_name) const;
 	const String &get_script_class_name() const { return class_name; }
 	const String &get_script_base_class() const { return base_class; }
 	const String &get_script_native_base_class() const { return native_base_class; }
@@ -129,6 +134,7 @@ public:
 
 private:
 	void update_methods_info(GDScriptCompilerBackend &p_compiler);
+	void rebuild_nested_classes(GDScriptCompilerBackend &p_compiler);
 	void rebuild_if_a_base_changed();
 	// Rejects rebuild while this script is stopped at a breakpoint.
 	bool refuse_while_stopped() const;
@@ -162,6 +168,7 @@ private:
 	std::vector<gdscript::FunctionSignature> signatures;
 	gdscript::LineTable line_table;
 	std::vector<godot::MethodInfo> methods_info;
+	HashMap<StringName, Ref<SafeGDScriptClass>> nested_classes;
 	std::vector<godot::MethodInfo> signals_info;
 	// Declaration line and '##' description, keyed by member name.
 	struct MethodDocumentation {

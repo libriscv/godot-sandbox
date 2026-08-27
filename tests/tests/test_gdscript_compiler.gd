@@ -10541,6 +10541,280 @@ func run():
 
 	s.queue_free()
 
+# A nested class with an engine base is a Script resource of its own, and an
+# instance of it is a script instance attached to the engine object. The guest
+# keeps its Dictionary; the two share one set of fields, because Godot's
+# Dictionary is a handle rather than a value.
+
+const NESTED_CLASS_SOURCE = """
+class Marker extends Node2D:
+	var hits = 0
+	var frames = 0
+	var notified = 0
+	func _notification(what):
+		if what == 13:
+			notified = what
+	func _ready():
+		hits += 100
+	func _process(_delta):
+		frames += 1
+	func launch(by: int) -> int:
+		hits += by
+		return hits
+	func get_name():
+		return "M/" + str(super.get_name())
+
+class Held extends Resource:
+	var v = 1
+
+var made = null
+var held = null
+
+func make():
+	made = Marker.new()
+	return made["@base"]
+
+func guest_hits():
+	return made["hits"]
+
+func make_resource():
+	held = Held.new()
+	return held["@base"]
+"""
+
+func _nested_node(source: String = NESTED_CLASS_SOURCE) -> Node:
+	var path = "user://temp_nested_classes.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(source)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the nested-class script should load as a SafeGDScript resource")
+	if script == null:
+		return null
+	var node = Node.new()
+	node.set_script(script)
+	node.set_instructions_max(4000000)
+	return node
+
+func test_sgd_a_nested_class_instance_has_a_script():
+	var node = _nested_node()
+	if node == null:
+		return
+	var obj = node.call("make")
+	assert_true(obj is Node2D, "the class's base should reach Godot as the engine object")
+	if not (obj is Node2D):
+		node.free()
+		return
+
+	var nested = obj.get_script()
+	assert_not_null(nested, "a nested class with an engine base should carry a script")
+	assert_eq(str(nested.get_instance_base_type()), "Node2D",
+		"the script's base type should be the engine class the chain bottoms out in")
+	assert_true(obj.has_method("launch"), "a declared method should answer has_method")
+	assert_true(obj.has_method("_ready"), "an engine callback should answer has_method")
+	assert_false(obj.has_method("nothing_declared"), "an undeclared method should not")
+
+	assert_eq(obj.get("hits"), 0, "a field should read through the script instance")
+	assert_eq(obj.call("launch", 3), 3, "a declared method should be callable from the host")
+	assert_eq(obj.get("hits"), 3, "the call should be visible in the field")
+
+	obj.set("hits", 10)
+	assert_eq(node.call("guest_hits"), 10,
+		"the host and the guest should share one Dictionary, not a copy")
+
+	obj.set("nope", 1)
+	assert_eq(obj.get("nope"), null, "a set of an undeclared name should not grow the Dictionary")
+
+	obj.free()
+	node.free()
+
+func test_sgd_a_nested_class_gets_engine_callbacks():
+	var node = _nested_node()
+	if node == null:
+		return
+	add_child(node)
+	var obj = node.call("make")
+	if not (obj is Node2D):
+		node.free()
+		return
+	add_child(obj)
+
+	assert_eq(obj.get("hits"), 100, "_ready should reach the nested class")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	assert_gt(obj.get("frames"), 0, "_process should reach the nested class")
+
+	obj.queue_free()
+	node.queue_free()
+
+func test_sgd_super_on_a_native_base_does_not_recurse():
+	var node = _nested_node()
+	if node == null:
+		return
+	var obj = node.call("make")
+	if not (obj is Node2D):
+		node.free()
+		return
+	obj.set_name("m")
+
+	# Without the bypass the script instance answers first and re-enters the
+	# very method that made the call, until the machine runs out of stack.
+	assert_eq(str(obj.call("get_name")), "M/m",
+		"super on a native base should reach the engine's own method")
+	assert_eq(str(obj.call("get_name")), "M/m", "the bypass should be armed per call")
+
+	obj.free()
+	node.free()
+
+func test_sgd_a_nested_instance_dies_with_its_node():
+	var node = _nested_node()
+	if node == null:
+		return
+	var obj = node.call("make")
+	if not (obj is Node2D):
+		node.free()
+		return
+	obj.free()
+	assert_false(is_instance_valid(obj), "freeing the node should take its script instance with it")
+	node.free()
+
+# A RefCounted base would be a cycle nothing can break: '@base' is a strong
+# reference to the object, the object owns the instance, and the instance holds
+# the Dictionary. Such a class stays the plain Dictionary it has always been.
+func test_sgd_a_nested_refcounted_class_keeps_no_script():
+	var node = _nested_node()
+	if node == null:
+		return
+	var res = node.call("make_resource")
+	assert_true(res is Resource, "the class's base should still be the engine object")
+	if res is Resource:
+		assert_null(res.get_script(), "a RefCounted base gets no host-side script")
+	node.free()
+
+# A member declared with a nested class type is constructed by the program's
+# startup, so its bind runs while the machine is still being loaded. The shared
+# Sandbox has to be reachable by then, or the bind builds a second machine and
+# runs startup again, forever.
+func test_sgd_a_nested_class_member_binds_during_startup():
+	var source = """
+class Launcher extends Node2D:
+	var balls = []
+	func _input(_event):
+		launch()
+	func launch():
+		var b = Node2D.new()
+		add_child(b)
+		balls.append(b)
+
+var declared: Launcher
+var launcher = null
+
+func start():
+	launcher = Launcher.new()
+	launcher.set_process_input(true)
+	add_child(launcher)
+	return 1
+
+func count():
+	return launcher["balls"].size()
+"""
+	var path = "user://temp_startup_launcher.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(source)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the script should load")
+	if script == null:
+		return
+	var node = Node2D.new()
+	node.set_script(script)
+	node.set_instructions_max(4000000)
+	add_child(node)
+	assert_eq(node.call("start"), 1, "the launcher should be added")
+
+	var event := InputEventMouseButton.new()
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = true
+	get_viewport().push_input(event, true)
+	await get_tree().process_frame
+	assert_gt(node.call("count"), 0, "_input should have reached the nested class")
+	node.queue_free()
+
+func test_sgd_a_notification_reaches_the_script():
+	var source = """
+var seen = 0
+
+func _notification(what):
+	if what == 13:
+		seen += 1
+
+func read():
+	return seen
+"""
+	var path = "user://temp_notification.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(source)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the script should load")
+	if script == null:
+		return
+	var node = Node.new()
+	node.set_script(script)
+	node.set_instructions_max(1000000)
+	add_child(node)
+	# NOTIFICATION_READY == 13, and _notification() is called alongside _ready().
+	assert_eq(node.call("read"), 1, "_notification should reach the script")
+	node.queue_free()
+
+func test_sgd_a_nested_class_gets_a_notification():
+	var node = _nested_node()
+	if node == null:
+		return
+	add_child(node)
+	var obj = node.call("make")
+	if not (obj is Node2D):
+		node.free()
+		return
+	add_child(obj)
+	assert_eq(obj.get("notified"), 13, "_notification should reach the nested class")
+	obj.queue_free()
+	node.queue_free()
+
+# The compile that produces the bind already refuses an engine base under
+# restrictions, so this is the same gate seen from the side that gate does not
+# cover: a hand-written guest issuing the syscall itself.
+func test_sgd_the_bind_syscall_is_refused_while_restricted():
+	var s : Sandbox = Sandbox.new()
+	s.set_program(Sandbox_TestsTests)
+	s.restrictions = true
+	var before := s.get_exceptions()
+	s.vmcallv("class_bind_under_restrictions")
+	assert_eq(s.get_exceptions(), before + 1, "a restricted Sandbox refuses the bind")
+	assert_engine_error("Sandbox: a restricted program cannot attach a script to an engine object.")
+	assert_engine_error("Exception: class_bind: refused while restricted")
+	s.queue_free()
+
+func test_sgd_a_nested_class_survives_a_reload():
+	var node = _nested_node()
+	if node == null:
+		return
+	var obj = node.call("make")
+	if not (obj is Node2D):
+		node.free()
+		return
+	var before = obj.get_script()
+	assert_eq(obj.call("launch", 1), 1, "the first build should answer")
+
+	node.get_script().source_code = NESTED_CLASS_SOURCE.replace("hits += by", "hits += by * 10")
+	node.get_script().reload()
+
+	assert_eq(obj.get_script(), before, "get_script() should stay identity-stable across a reload")
+	assert_eq(obj.call("launch", 1), 11, "the instance should call the new body")
+
+	obj.free()
+	node.free()
+
 func test_sgd_an_instance_answers_is_after_the_type_is_lost():
 	var gdscript_code = """
 class Base:

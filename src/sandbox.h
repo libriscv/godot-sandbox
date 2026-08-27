@@ -374,6 +374,11 @@ public:
 	godot::ObjectID get_tree_base_id() const noexcept { return this->m_tree_base; }
 	void set_tree_base_id(godot::ObjectID tree_base) noexcept { this->m_tree_base = tree_base; }
 
+	/// @brief The SafeGDScript this machine was made for, when one was. Zero for
+	/// a plain Sandbox node running an ELF: nothing there owns Script resources.
+	godot::ObjectID get_script_owner_id() const noexcept { return this->m_script_owner; }
+	void set_script_owner_id(godot::ObjectID script) noexcept { this->m_script_owner = script; }
+
 	bool has_instance_records() const noexcept { return m_instance_record_size != 0; }
 	gaddr_t get_instance_record_size() const noexcept { return m_instance_record_size; }
 	gaddr_t get_default_instance_base() const noexcept { return m_default_instance_base; }
@@ -996,6 +1001,7 @@ private:
 
 	machine_t *m_machine = nullptr;
 	godot::ObjectID m_tree_base;
+	godot::ObjectID m_script_owner;
 	uint32_t m_max_refs = MAX_REFS;
 	uint32_t m_memory_max = MAX_VMEM;
 	gaddr_t m_instance_base = 0;

@@ -22,6 +22,7 @@ PUBLIC Variant compile(String code)
 	auto elf_data = compiler.compile(code.utf8(), options);
 	gdscript_remember_signatures(compiler);
 	gdscript_remember_signals(compiler);
+	gdscript_remember_classes(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
@@ -57,6 +58,7 @@ PUBLIC Variant compile_profiled(String code)
 	auto elf_data = compiler.compile(code.utf8(), options);
 	gdscript_remember_signatures(compiler);
 	gdscript_remember_signals(compiler);
+	gdscript_remember_classes(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
@@ -90,6 +92,7 @@ PUBLIC Variant compile_debug(String code, PackedInt32Array breakpoints)
 	auto elf_data = compiler.compile(code.utf8(), options);
 	gdscript_remember_signatures(compiler);
 	gdscript_remember_signals(compiler);
+	gdscript_remember_classes(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
@@ -140,6 +143,11 @@ PUBLIC Variant get_function_signatures()
 PUBLIC Variant get_signal_signatures()
 {
 	return gdscript_signals_to_variant();
+}
+
+PUBLIC Variant get_class_signatures()
+{
+	return gdscript_classes_to_variant();
 }
 
 PUBLIC Variant get_line_table()

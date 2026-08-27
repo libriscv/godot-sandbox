@@ -42,6 +42,7 @@ Compiler::Compiler() {}
 std::vector<uint8_t> Compiler::compile(const std::string& source, const CompilerOptions& options) {
 	m_signatures.clear();
 	m_signals.clear();
+	m_class_signatures.clear();
 	m_line_table.entries.clear();
 	m_installed_breakpoints.clear();
 	m_class_name.clear();
@@ -121,6 +122,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 		IRProgram ir_program = codegen.generate(program);
 		m_signatures = ir_program.signatures;
 		m_signals = ir_program.signals;
+		m_class_signatures = ir_program.class_signatures;
 
 		if (options.dump_ir) {
 			std::cout << "=== IR (unoptimized) ===" << std::endl;

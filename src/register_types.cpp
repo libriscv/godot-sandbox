@@ -19,6 +19,7 @@
 #include "cpp/resource_saver_cpp.h"
 #include "cpp/script_cpp.h"
 #include "cpp/script_language_cpp.h"
+#include "safegdscript/script_class_safegdscript.h"
 #include "safegdscript/script_safegdscript.h"
 #include "safegdscript/script_language_safegdscript.h"
 #include "safegdscript/resource_loader_safegdscript.h"
@@ -60,6 +61,7 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ClassDB::register_class<ResourceFormatLoaderCPP>();
 	ClassDB::register_class<ResourceFormatSaverCPP>();
 	ClassDB::register_class<SafeGDScript>();
+	ClassDB::register_internal_class<SafeGDScriptClass>();
 	ClassDB::register_class<SafeGDScriptLanguage>();
 	ClassDB::register_class<ResourceFormatLoaderSafeGDScript>();
 	ClassDB::register_class<ResourceFormatSaverSafeGDScript>();

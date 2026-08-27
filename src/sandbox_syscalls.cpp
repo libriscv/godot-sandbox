@@ -25,6 +25,12 @@
 // Break state in debug_safegdscript.cpp. No-op for non-.sgd guests.
 void safegdscript_breakpoint(Sandbox &p_sandbox, uint32_t p_reported_line);
 
+// Nested-class script instances, in script_class_safegdscript.cpp. A Sandbox
+// with no SafeGDScript behind it owns no Script resources; both are no-ops there.
+void safegdscript_bind_nested_class(Sandbox &p_sandbox, godot::Object *p_base,
+		const godot::Dictionary &p_instance, const godot::String &p_class_name);
+void safegdscript_bypass_super(godot::Object *p_object, const godot::StringName &p_method);
+
 namespace riscv {
 extern std::unordered_map<std::string, std::function<uint64_t()>> global_singleton_list;
 
@@ -898,7 +904,7 @@ APICALL(api_utility) {
 	machine.set_result(utility_math_op(op, args));
 }
 
-APICALL(api_vcall) {
+static void vcall_impl(machine_t &machine, bool super) {
 	auto [vp, method, mlen, args_ptr, args_size, vret_addr] = machine.sysargs<GuestVariant *, gaddr_t, unsigned, gaddr_t, gaddr_t, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
 	SYS_TRACE("vcall", method, mlen, args_ptr, args_size, vret_addr);
@@ -922,6 +928,12 @@ APICALL(api_vcall) {
 
 	if (vp->type == Variant::OBJECT) {
 		godot::Object *obj = get_object_from_address(emu, vp->v.i);
+		// `super.method()` on a native base. The object carries the class's own
+		// script instance, which answers before the engine does and would
+		// re-enter the very method that made this call.
+		if (UNLIKELY(super)) {
+			safegdscript_bypass_super(obj, cached_method.sname);
+		}
 		object_call_checked(emu, obj, cached_method, method_name, args, args_size, result);
 	} else if (vp->is_scoped_variant()) {
 		Variant *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
@@ -944,6 +956,38 @@ APICALL(api_vcall) {
 		GuestVariant *vret = machine.memory.memarray<GuestVariant>(vret_addr, 1);
 		vret->create(emu, std::move(result.get()));
 	}
+}
+
+APICALL(api_vcall) {
+	vcall_impl(machine, false);
+}
+
+APICALL(api_vcall_super) {
+	vcall_impl(machine, true);
+}
+
+APICALL(api_class_bind) {
+	auto [dict_idx, name] = machine.sysargs<int32_t, std::string>();
+	Sandbox &emu = riscv::emu(machine);
+	PENALIZE(150'000);
+	SYS_TRACE("class_bind", dict_idx, String::utf8(name.c_str(), name.size()));
+
+	// The compile that produces this syscall already refuses an engine base
+	// under restrictions; this is the same gate seen from the other side, for a
+	// guest program that was not built by that compiler.
+	if (UNLIKELY(emu.is_class_access_restricted())) {
+		ERR_PRINT("Sandbox: a restricted program cannot attach a script to an engine object.");
+		throw std::runtime_error("class_bind: refused while restricted");
+	}
+
+	const Variant &instance = get_scoped_variant_or_throw(emu, dict_idx, "class_bind");
+	godot::Object *base = class_instance_base(emu, instance);
+	if (UNLIKELY(base == nullptr)) {
+		ERR_PRINT("Sandbox: class_bind was given something that is not a class instance.");
+		throw std::runtime_error("class_bind: no engine object under '@base'");
+	}
+	safegdscript_bind_nested_class(emu, base, Dictionary(instance),
+			String::utf8(name.c_str(), int64_t(name.size())));
 }
 
 APICALL(api_veval) {
@@ -3628,6 +3672,9 @@ void Sandbox::initialize_syscalls() {
 
 			{ ECALL_VSCOPE, api_vscope },
 			{ ECALL_OBJ_RETAIN, api_obj_retain },
+
+			{ ECALL_CLASS_BIND, api_class_bind },
+			{ ECALL_VCALL_SUPER, api_vcall_super },
 
 			{ ECALL_PACKED_ARRAY_OPS, api_packed_array_ops },
 

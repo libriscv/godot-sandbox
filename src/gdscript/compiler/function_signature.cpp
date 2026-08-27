@@ -165,4 +165,78 @@ bool decode_function_signatures(const uint8_t *data, size_t size,
 	return true;
 }
 
+std::vector<uint8_t> encode_class_signatures(const std::vector<ClassSignature> &classes) {
+	std::vector<uint8_t> out;
+	write_scalar<uint32_t>(out, uint32_t(classes.size()));
+
+	for (const ClassSignature &cls : classes) {
+		write_string(out, cls.name);
+		write_string(out, cls.base_name);
+		write_string(out, cls.native_base);
+		write_scalar<int32_t>(out, cls.line);
+		write_scalar<uint32_t>(out, uint32_t(cls.fields.size()));
+		for (const ClassField &field : cls.fields) {
+			write_string(out, field.name);
+			write_scalar<int32_t>(out, field.type);
+		}
+		write_scalar<uint32_t>(out, uint32_t(cls.methods.size()));
+		for (const ClassMethod &method : cls.methods) {
+			write_string(out, method.name);
+			write_scalar<uint8_t>(out, method.is_static ? 1 : 0);
+		}
+	}
+	return out;
+}
+
+bool decode_class_signatures(const uint8_t *data, size_t size,
+	std::vector<ClassSignature> &out)
+{
+	out.clear();
+	Reader reader{ data, size };
+
+	const uint32_t class_count = reader.scalar<uint32_t>();
+	if (!reader.ok || class_count > size) {
+		out.clear();
+		return false;
+	}
+	out.reserve(class_count);
+
+	for (uint32_t i = 0; i < class_count; i++) {
+		ClassSignature cls;
+		cls.name = reader.string();
+		cls.base_name = reader.string();
+		cls.native_base = reader.string();
+		cls.line = reader.scalar<int32_t>();
+		const uint32_t field_count = reader.scalar<uint32_t>();
+		if (!reader.ok || field_count > size) {
+			out.clear();
+			return false;
+		}
+		for (uint32_t f = 0; f < field_count; f++) {
+			ClassField field;
+			field.name = reader.string();
+			field.type = reader.scalar<int32_t>();
+			cls.fields.push_back(std::move(field));
+		}
+		const uint32_t method_count = reader.scalar<uint32_t>();
+		if (!reader.ok || method_count > size) {
+			out.clear();
+			return false;
+		}
+		for (uint32_t m = 0; m < method_count; m++) {
+			ClassMethod method;
+			method.name = reader.string();
+			method.is_static = reader.scalar<uint8_t>() != 0;
+			cls.methods.push_back(std::move(method));
+		}
+		out.push_back(std::move(cls));
+	}
+
+	if (!reader.ok) {
+		out.clear();
+		return false;
+	}
+	return true;
+}
+
 } // namespace gdscript

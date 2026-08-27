@@ -2,7 +2,10 @@
 
 #include "compiler_backend.h"
 #include "../elf/script_instance.h"
+#include "script_class_safegdscript.h"
 #include "script_instance_safegdscript.h"
+#include "script_dicts.h"
+#include "signature_info.h"
 #include "script_language_safegdscript.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/class_db_singleton.hpp>
@@ -240,48 +243,6 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 String SafeGDScript::_get_class_icon_path() const {
 	return String("res://addons/godot_sandbox/SafeGDScript.svg");
 }
-// A property, then a method, in the shape Godot reads them back in:
-// PropertyInfo::from_dict() and MethodInfo::from_dict() look for these exact
-// keys, and quietly leave out anything spelled differently -- which is how a
-// method list can look complete and still report no arguments.
-static Dictionary property_dict(const godot::PropertyInfo &p_info) {
-	Dictionary type;
-	type["name"] = p_info.name;
-	type["class_name"] = p_info.class_name;
-	type["type"] = p_info.type;
-	type["hint"] = PropertyHint::PROPERTY_HINT_NONE;
-	type["hint_string"] = String();
-	type["usage"] = p_info.usage;
-	return type;
-}
-
-// Godot spells a method's return name as "type" and a signal's as empty.
-static Dictionary method_dict(const godot::MethodInfo &p_method, const String &p_return_name = "type") {
-	Dictionary method;
-	method["name"] = p_method.name;
-	method["flags"] = p_method.flags;
-	method["id"] = p_method.id;
-
-	// The argument list is what lets Godot refuse a call with the wrong number
-	// of arguments -- the editor's analyzer statically, the runtime on the way
-	// into the script instance.
-	Array args;
-	for (const godot::PropertyInfo &argument : p_method.arguments) {
-		args.push_back(property_dict(argument));
-	}
-	method["args"] = args;
-	Array default_args;
-	for (const Variant &value : p_method.default_arguments) {
-		default_args.push_back(value);
-	}
-	method["default_args"] = default_args;
-
-	godot::PropertyInfo return_val = p_method.return_val;
-	return_val.name = p_return_name;
-	method["return"] = property_dict(return_val);
-	return method;
-}
-
 const godot::MethodInfo *SafeGDScript::find_method_info(const StringName &p_method) const {
 	for (const godot::MethodInfo &method_info : methods_info) {
 		if (method_info.name == p_method) {
@@ -874,39 +835,6 @@ void SafeGDScript::class_restrictions_changed() {
 	}
 }
 
-// Variant::Type. Godot spells "any Variant" as NIL plus NIL_IS_VARIANT.
-static Variant::Type variant_type_or_nil(int32_t p_type) {
-	if (p_type < 0 || p_type >= Variant::Type::VARIANT_MAX) {
-		return Variant::Type::NIL;
-	}
-	return Variant::Type(p_type);
-}
-
-// The value the host passes for an argument the caller left out. Only the kinds
-// the compiler folds appear here; a parameter it could not fold is required, so
-// nothing ever asks for its default.
-static Variant default_argument_value(const gdscript::FunctionParameter &p_param) {
-	using DefaultKind = gdscript::FunctionParameter::DefaultKind;
-	switch (p_param.default_kind) {
-		case DefaultKind::INT:
-			return std::get<int64_t>(p_param.default_value);
-		case DefaultKind::FLOAT:
-			return std::get<double>(p_param.default_value);
-		case DefaultKind::BOOL:
-			return std::get<bool>(p_param.default_value);
-		case DefaultKind::STRING:
-			return String::utf8(std::get<std::string>(p_param.default_value).c_str(), std::get<std::string>(p_param.default_value).size());
-		case DefaultKind::EMPTY_ARRAY:
-			return Array();
-		case DefaultKind::EMPTY_DICT:
-			return Dictionary();
-		case DefaultKind::NONE:
-		case DefaultKind::NIL:
-			break;
-	}
-	return Variant();
-}
-
 void SafeGDScript::update_methods_info(GDScriptCompilerBackend &p_compiler) {
 	Sandbox::BinaryInfo info = Sandbox::get_program_info_from_binary(this->elf_data);
 	this->methods_info.clear();
@@ -965,20 +893,7 @@ void SafeGDScript::update_methods_info(GDScriptCompilerBackend &p_compiler) {
 		}
 
 		const gdscript::FunctionSignature &signature = *it->value;
-		method.flags = METHOD_FLAG_NORMAL;
-		method.return_val.type = variant_type_or_nil(signature.return_type);
-		for (const gdscript::FunctionParameter &param : signature.parameters) {
-			PropertyInfo argument;
-			argument.name = String::utf8(param.name.c_str(), param.name.size());
-			argument.type = variant_type_or_nil(param.type);
-			argument.usage = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NIL_IS_VARIANT;
-			method.arguments.push_back(std::move(argument));
-		}
-		// Godot's convention: the defaults cover the last N arguments, which is
-		// exactly the run of parameters past the required ones.
-		for (size_t i = signature.required_arguments; i < signature.parameters.size(); i++) {
-			method.default_arguments.push_back(default_argument_value(signature.parameters[i]));
-		}
+		method = method_info_from_signature(signature, func_name);
 
 		// Editor metadata, keyed by name. Only declared functions get an entry:
 		// a symbol without a signature has no source line here to point at.
@@ -990,7 +905,54 @@ void SafeGDScript::update_methods_info(GDScriptCompilerBackend &p_compiler) {
 		methods_info.push_back(std::move(method));
 	}
 
+	rebuild_nested_classes(p_compiler);
+
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("SafeGDScript::update_methods_info: Updated methods info with " + itos(methods_info.size()) + " methods.");
 	}
+}
+
+// Updated in place rather than replaced: a live instance holds a Ref to its
+// class and get_script() has to answer the same object across a reload.
+void SafeGDScript::rebuild_nested_classes(GDScriptCompilerBackend &p_compiler) {
+	const std::vector<gdscript::ClassSignature> declared = p_compiler.class_signatures();
+
+	HashMap<StringName, Ref<SafeGDScriptClass>> rebuilt;
+	for (const gdscript::ClassSignature &signature : declared) {
+		const StringName name(String::utf8(signature.name.c_str(), signature.name.size()));
+		Ref<SafeGDScriptClass> nested;
+		if (Ref<SafeGDScriptClass> *existing = nested_classes.getptr(name)) {
+			nested = *existing;
+		} else {
+			nested = Ref<SafeGDScriptClass>(memnew(SafeGDScriptClass));
+		}
+		nested->configure(this, signature, this->signatures);
+		rebuilt.insert(name, nested);
+	}
+	// After every class exists: a base may be declared below its derived class.
+	for (const gdscript::ClassSignature &signature : declared) {
+		if (signature.base_name.empty()) {
+			continue;
+		}
+		const StringName name(String::utf8(signature.name.c_str(), signature.name.size()));
+		const StringName base(String::utf8(signature.base_name.c_str(), signature.base_name.size()));
+		if (Ref<SafeGDScriptClass> *found = rebuilt.getptr(base)) {
+			rebuilt[name]->set_base_class(*found);
+		}
+	}
+	// A class the source no longer declares leaves its instances answering
+	// INVALID_METHOD for everything, the way a removed top-level function does.
+	for (const KeyValue<StringName, Ref<SafeGDScriptClass>> &entry : nested_classes) {
+		if (!rebuilt.has(entry.key)) {
+			entry.value->invalidate();
+		}
+	}
+	nested_classes = rebuilt;
+}
+
+Ref<SafeGDScriptClass> SafeGDScript::find_nested_class(const StringName &p_name) const {
+	if (const Ref<SafeGDScriptClass> *found = nested_classes.getptr(p_name)) {
+		return *found;
+	}
+	return Ref<SafeGDScriptClass>();
 }

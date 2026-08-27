@@ -221,8 +221,12 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		}
 
 		if (!global.initializer) {
-			// `var a: BankAccount` — fresh instance at startup.
-			if (const StructDecl* global_struct = m_global_structs[i]) {
+			// `var a: BankAccount` — a struct is a value, so the declaration is a
+			// fresh instance at startup. A class is an object and stays null, as
+			// it does in GDScript; constructing one here would also run its bind
+			// while the machine is still loading.
+			if (const StructDecl* global_struct = m_global_structs[i];
+				global_struct != nullptr && !global_struct->is_class) {
 				int reg = gen_struct_construct(*global_struct, {}, NamedArguments{}, target, nullptr);
 				target.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
 					IRValue::imm(static_cast<int64_t>(i)), IRValue::reg(reg));
@@ -337,11 +341,15 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			continue;
 		}
 		for (const FunctionDecl& method : decl.methods) {
-			FunctionSignature signature;
+			// The synthetic self slot is not part of the declaration, so the
+			// signature the host checks arity against never mentions it.
+			FunctionSignature signature = build_signature(method);
 			signature.name = lifted_method_name(decl, method.name);
-			signature.line = method.line;
 			ir_program.signatures.push_back(std::move(signature));
 			ir_program.functions.push_back(generate_function(method, &decl));
+		}
+		if (const std::string* engine_base = native_base(decl)) {
+			ir_program.class_signatures.push_back(build_class_signature(decl, *engine_base));
 		}
 	}
 
@@ -510,7 +518,9 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 
 	if (stmt->initializer) {
 		reg = gen_expr(stmt->initializer.get(), func);
-	} else if (declared_struct != nullptr) {
+	} else if (declared_struct != nullptr && !declared_struct->is_class) {
+		// A struct is a value, so a declaration is an instance. A class is an
+		// object, and GDScript leaves 'var a: Inner' null.
 		reg = gen_struct_construct(*declared_struct, {}, NamedArguments{}, func, nullptr);
 	} else {
 		// No initializer: emit the declared type's default value.
@@ -4718,6 +4728,28 @@ FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const
 	return sig;
 }
 
+ClassSignature CodeGenerator::build_class_signature(const StructDecl& decl,
+	const std::string& engine_base) const
+{
+	ClassSignature out;
+	out.name = decl.name;
+	out.base_name = class_base(decl) != nullptr ? decl.base_name : std::string();
+	out.native_base = engine_base;
+	out.line = decl.line;
+	for (const StructField* field : struct_fields(decl)) {
+		ClassField published;
+		published.name = field->name;
+		published.type = find_struct(field->type_hint) != nullptr
+			? int32_t(Variant::DICTIONARY)
+			: int32_t(type_hint_from_string(field->type_hint));
+		out.fields.push_back(std::move(published));
+	}
+	for (const FunctionDecl& method : decl.methods) {
+		out.methods.push_back(ClassMethod{ method.name, method.is_static });
+	}
+	return out;
+}
+
 void CodeGenerator::apply_declared_type(int reg, const std::string& type_hint, FunctionContext& func) {
 	if (type_hint.empty()) {
 		return;
@@ -4879,8 +4911,9 @@ int CodeGenerator::gen_field_default(const StructDecl& decl, const StructField& 
 		return reg;
 	}
 
-	// Nested struct: default to a fresh instance.
-	if (const StructDecl* nested = find_struct(field.type_hint)) {
+	// Nested struct: default to a fresh instance. A field declared with a class
+	// type holds an object, and GDScript leaves that null.
+	if (const StructDecl* nested = find_struct(field.type_hint); nested != nullptr && !nested->is_class) {
 		for (const StructDecl* active : m_struct_default_stack) {
 			if (active != nested) {
 				continue;
@@ -5012,6 +5045,20 @@ int CodeGenerator::gen_class_construct(const StructDecl& decl, const std::vector
 	}
 	if (class_reg >= 0) {
 		free_register(func, class_reg);
+	}
+
+	// Before _init(), so the class is a script instance while _init() runs, the
+	// way add_child(self) inside GDScript's _init() already works.
+	if (base_class != nullptr) {
+		int bind_reg = alloc_register(func);
+		IRInstruction bind(IROpcode::CALL_SYSCALL);
+		bind.operands.push_back(IRValue::reg(bind_reg));
+		bind.operands.push_back(IRValue::imm(ECALL_CLASS_BIND));
+		bind.operands.push_back(IRValue::imm(add_string_constant(decl.name)));
+		bind.operands.push_back(IRValue::imm(static_cast<int64_t>(decl.name.length())));
+		bind.operands.push_back(IRValue::reg(result_reg));
+		func.ir.instructions.push_back(bind);
+		free_register(func, bind_reg);
 	}
 
 	const StructDecl* owner = nullptr;
@@ -5201,6 +5248,7 @@ int CodeGenerator::gen_super_call(const MemberCallExpr* expr, FunctionContext& f
 	}
 	int result_reg = alloc_register(func);
 	IRInstruction vcall(IROpcode::VCALL);
+	vcall.super_call = true;
 	vcall.operands.push_back(IRValue::reg(result_reg));
 	vcall.operands.push_back(IRValue::reg(base_reg));
 	vcall.operands.push_back(IRValue::str(expr->member_name));
