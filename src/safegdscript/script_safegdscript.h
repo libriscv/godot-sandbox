@@ -128,6 +128,9 @@ public:
 	const String &get_script_base_class() const { return base_class; }
 	void class_restrictions_changed();
 	void remove_instance(SafeGDScriptInstance *p_instance);
+	Variant new_instance(const Variant **p_args, GDExtensionInt p_argcount, GDExtensionCallError &r_error);
+	const Variant **pending_init_args = nullptr;
+	int pending_init_argcount = 0;
 
 	static String PathToGlobalName(const String &p_path) {
 		return "SafeGDScript_" + p_path.get_basename().replace("res://", "").replace("/", "_").replace("-", "_").capitalize().replace(" ", "");

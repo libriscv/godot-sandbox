@@ -455,15 +455,19 @@ void SafeGDScriptInstance::call_init() {
 	if (sandbox == nullptr || sandbox->cached_address_of(init_name.hash(), init_name) == 0) {
 		return;
 	}
-	if (const MethodInfo *method = script->find_method_info(init_name)) {
-		if (method->arguments.size() != method->default_arguments.size()) {
-			ERR_PRINT("SafeGDScript: " + script->get_path() + ": _init() takes arguments, so it "
-					"cannot run for a script attached to a node.");
-			return;
+	const Variant **args = script->pending_init_args;
+	const int argcount = script->pending_init_argcount;
+	if (args == nullptr) {
+		if (const MethodInfo *method = script->find_method_info(init_name)) {
+			if (method->arguments.size() != method->default_arguments.size()) {
+				ERR_PRINT("SafeGDScript: " + script->get_path() + ": _init() takes arguments, so it "
+						"cannot run for a script attached to a node.");
+				return;
+			}
 		}
 	}
 	GDExtensionCallError error;
-	this->callp(init_name, nullptr, 0, error);
+	this->callp(init_name, args, argcount, error);
 	if (error.error != GDEXTENSION_CALL_OK) {
 		ERR_PRINT("SafeGDScript: " + script->get_path() + ": _init() failed with call error " +
 				itos(int(error.error)));

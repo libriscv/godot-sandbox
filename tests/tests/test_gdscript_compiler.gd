@@ -11234,3 +11234,76 @@ func bad_arity():
 	assert_eq(s.get_exceptions(), before + 1, "a refused construction should throw")
 
 	s.queue_free()
+
+const CONSTRUCTIBLE_SOURCE = """
+class_name Constructible
+extends Node2D
+
+var greeting := "unset"
+var scale_factor := 0
+
+func _init(p_greeting: String = "hello", p_scale: int = 1) -> void:
+	greeting = p_greeting
+	scale_factor = p_scale
+
+func greet() -> String:
+	return greeting
+
+func scaled(n: int) -> int:
+	return n * scale_factor
+"""
+
+func _constructible_script() -> Script:
+	var path = "user://temp_constructible.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(CONSTRUCTIBLE_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the constructible script should load as a SafeGDScript resource")
+	return script
+
+func test_sgd_class_constructs_with_no_arguments():
+	var script = _constructible_script()
+	if script == null:
+		return
+	var instance = script.call("new")
+	assert_not_null(instance, "new() should produce an instance")
+	if instance == null:
+		return
+	assert_true(instance is Node2D, "the instance should be of the declared base type")
+	assert_eq(instance.get_script(), script, "the script should be attached to it")
+	assert_eq(instance.call("greet"), "hello", "_init() should have run with its defaults")
+	instance.free()
+
+func test_sgd_class_constructs_with_arguments():
+	var script = _constructible_script()
+	if script == null:
+		return
+	var instance = script.call("new", "hi", 3)
+	assert_not_null(instance, "new(args) should produce an instance")
+	if instance == null:
+		return
+	assert_eq(instance.call("greet"), "hi", "_init() should have run with the given arguments")
+	assert_eq(instance.call("scaled", 4), 12, "and kept them in its members")
+	instance.free()
+
+func test_gdscript_types_new_on_an_sgd_class():
+	var script = _constructible_script()
+	if script == null:
+		return
+	var caller := GDScript.new()
+	caller.source_code = """
+extends RefCounted
+
+func make() -> Node2D:
+	return preload("user://temp_constructible.sgd").new("typed", 2)
+"""
+	assert_eq(caller.reload(), OK, "`Class.new()` on a .sgd should type as a constructor")
+	if caller.reload() != OK:
+		return
+	var instance = caller.new().make()
+	assert_not_null(instance, "and construct at run time")
+	if instance == null:
+		return
+	assert_eq(instance.call("scaled", 5), 10, "with the arguments it was given")
+	instance.free()

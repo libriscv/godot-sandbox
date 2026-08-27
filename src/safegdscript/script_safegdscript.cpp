@@ -5,6 +5,8 @@
 #include "script_instance_safegdscript.h"
 #include "script_language_safegdscript.h"
 #include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/class_db_singleton.hpp>
+#include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -260,6 +262,12 @@ bool SafeGDScript::_has_static_method(const StringName &p_method) const {
 }
 Dictionary SafeGDScript::_get_method_info(const StringName &p_method) const {
 	if (const godot::MethodInfo *method_info = find_method_info(p_method)) {
+		// Analyzer reads _init flags verbatim; force STATIC or Class.new() is refused.
+		if (p_method == StringName("_init")) {
+			godot::MethodInfo constructor = *method_info;
+			constructor.flags |= METHOD_FLAG_STATIC;
+			return method_dict(constructor);
+		}
 		return method_dict(*method_info);
 	}
 	if constexpr (VERBOSE_LOGGING) {
@@ -595,6 +603,9 @@ void SafeGDScript::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("get_compile_error"), &SafeGDScript::get_compile_error);
 
+	ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "new", &SafeGDScript::new_instance,
+			MethodInfo("new"));
+
 	ClassDB::bind_static_method("SafeGDScript", D_METHOD("is_stopped"), &SafeGDScript::is_stopped);
 	ClassDB::bind_static_method("SafeGDScript", D_METHOD("get_stopped_line"), &SafeGDScript::get_stopped_line);
 	ClassDB::bind_static_method("SafeGDScript", D_METHOD("get_stopped_backtrace"), &SafeGDScript::get_stopped_backtrace);
@@ -604,6 +615,35 @@ void SafeGDScript::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("breakpoint_hit",
 			PropertyInfo(Variant::OBJECT, "script", PROPERTY_HINT_RESOURCE_TYPE, "SafeGDScript"),
 			PropertyInfo(Variant::INT, "line")));
+}
+
+Variant SafeGDScript::new_instance(const Variant **p_args, GDExtensionInt p_argcount, GDExtensionCallError &r_error) {
+	r_error.error = GDEXTENSION_CALL_OK;
+
+	// Declared base, not RefCounted -- guest reaches self through get_tree_base().
+	const StringName base_type = _get_instance_base_type();
+	ClassDBSingleton *class_db = ClassDBSingleton::get_singleton();
+	if (!class_db->can_instantiate(base_type)) {
+		ERR_PRINT("SafeGDScript: " + this->path + ": cannot construct '" + String(base_type) + "'.");
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+		return Variant();
+	}
+
+	Variant instance = class_db->instantiate(base_type);
+	Object *obj = instance.operator Object *();
+	if (obj == nullptr) {
+		ERR_PRINT("SafeGDScript: " + this->path + ": failed to construct '" + String(base_type) + "'.");
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+		return Variant();
+	}
+
+	this->pending_init_args = p_args;
+	this->pending_init_argcount = int(p_argcount);
+	obj->set_script(Variant(Ref<Script>(this)));
+	this->pending_init_args = nullptr;
+	this->pending_init_argcount = 0;
+
+	return instance;
 }
 
 String SafeGDScript::get_compile_error() const {

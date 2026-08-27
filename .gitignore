@@ -1,9 +1,7 @@
 build/
 .build/
-.build_android/
-.build_mingw/
-.build_ubsan/
-.build_asan/
+.build_*/
+.build-*/
 .zig/
 .godot/
 .mingw/
