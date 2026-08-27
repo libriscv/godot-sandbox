@@ -12,6 +12,7 @@
 
 using namespace godot;
 class Sandbox;
+class GDScriptCompilerBackend;
 class SafeGDScriptInstance;
 class ELFScript;
 
@@ -68,11 +69,6 @@ public:
 	virtual bool _is_placeholder_fallback_enabled() const override;
 	virtual Variant _get_rpc_config() const override;
 
-	// The Sandbox running gdscript.elf, which everything that needs the compiler
-	// shares: compiling a script when it is saved, and validating one while it
-	// is being typed. Null when the compiler ELF is missing or fails to load.
-	static Sandbox *get_compiler_sandbox();
-
 	void set_path(const String &p_path);
 	SafeGDScriptInstance *get_safegdscript_script_instance() const;
 	// The declared signature of one exported function, or null when the script
@@ -109,26 +105,9 @@ public:
 	const std::vector<gdscript::FunctionSignature> &get_signatures() const { return signatures; }
 	// Addresses are the loaded ELF's. Present in every build: it costs no code.
 	const gdscript::LineTable &get_line_table() const { return line_table; }
-	static String get_compiler_error_message();
 	String get_compile_error() const;
-	// The parameter lists of the last compile, which the ELF does not carry.
-	static std::vector<gdscript::FunctionSignature> get_compiler_function_signatures();
-	// Address-to-line table from the last compile.
-	static gdscript::LineTable get_compiler_line_table();
-	// Breakpoint lines the last compile placed (may differ from requested).
-	static PackedInt32Array get_compiler_breakpoint_lines();
-	static bool get_compiler_is_tool();
-	static std::vector<gdscript::FunctionSignature> get_compiler_signal_signatures();
-	static String get_compiler_class_name();
-	static String get_compiler_base_class();
-	static bool get_compiler_base_is_path();
-	static String get_compiler_native_base_class();
-	static bool get_compiler_native_base_is_path();
-	static void set_compiler_restricted(bool p_restricted);
-	static void set_compiler_project_context();
 	static PackedStringArray resolve_base_sources(const String &p_source,
 			const String &p_self_path = String(), String *r_error = nullptr);
-	static void set_compiler_base_sources(const PackedStringArray &p_triples);
 	static void poll_base_sources();
 	const String &get_script_class_name() const { return class_name; }
 	const String &get_script_base_class() const { return base_class; }
@@ -139,6 +118,8 @@ public:
 	const Variant **pending_init_args = nullptr;
 	int pending_init_argcount = 0;
 
+	static void scan_class_header(const String &p_source, String *r_class_name, String *r_base);
+
 	static String PathToGlobalName(const String &p_path) {
 		return "SafeGDScript_" + p_path.get_basename().replace("res://", "").replace("/", "_").replace("-", "_").capitalize().replace(" ", "");
 	}
@@ -147,7 +128,7 @@ public:
 	~SafeGDScript();
 
 private:
-	void update_methods_info();
+	void update_methods_info(GDScriptCompilerBackend &p_compiler);
 	void rebuild_if_a_base_changed();
 	// Rejects rebuild while this script is stopped at a breakpoint.
 	bool refuse_while_stopped() const;
@@ -156,8 +137,7 @@ private:
 	String path;
 	mutable HashSet<SafeGDScriptInstance *> instances;
 	PackedByteArray elf_data;
-	// Last compile failure, empty on success. Per script: the shared compiler
-	// sandbox keeps one message, belonging to whichever script compiled last.
+	// Per-script copy; the compiler's own message belongs to the last caller.
 	String last_error;
 	bool profiled_build = false;
 	bool debug_build = false;

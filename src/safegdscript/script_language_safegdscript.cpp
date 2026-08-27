@@ -1,4 +1,5 @@
 #include "script_language_safegdscript.h"
+#include "compiler_backend.h"
 #include "../script_language_common.h"
 #include "script_safegdscript.h"
 #include "../sandbox.h"
@@ -761,23 +762,8 @@ void add_virtual_methods(Array &r_options, const StringName &p_class, const Comp
 	}
 }
 
-// -= Diagnostics =-
-//
-// The real parser lives inside the compiler sandbox, so the only way to know
-// whether a .sgd file is well-formed is to ask it. validate() there compiles
-// the source without emitting an ELF and reports the first error with its
-// location, which is what the editor needs to underline the offending line.
+using ValidationResult = GDScriptCompilerBackend::Validation;
 
-struct ValidationResult {
-	bool valid = true;
-	int line = 0; // 1-based; 0 when the error carries no location.
-	int column = 0;
-	String message;
-};
-
-// Ask the compiler sandbox about this exact source. False when there is no
-// compiler to ask, which leaves the editor with no errors rather than wrong
-// ones.
 bool validate_with_compiler(const String &p_source, ValidationResult &r_result) {
 	// The editor validates on every idle tick and asks about identical text
 	// more than once, so one remembered answer keeps the compiler from running
@@ -790,40 +776,16 @@ bool validate_with_compiler(const String &p_source, ValidationResult &r_result) 
 		return true;
 	}
 
-	Sandbox *compiler = SafeGDScript::get_compiler_sandbox();
-	// An older gdscript.elf has no validate(), and guessing from a failed
-	// compile() would put the error on a line we do not know.
-	if (compiler == nullptr || !compiler->has_function("validate")) {
+	GDScriptCompilerBackend &compiler = gdscript_compiler::backend_for(false);
+	if (!compiler.available()) {
 		return false;
 	}
+	// prepare() resets sticky inputs so validation inherits nothing from a prior compile.
+	gdscript_compiler::prepare(compiler, false, SafeGDScript::resolve_base_sources(p_source));
 
-	// Sticky flag; reset so validation doesn't inherit a prior compile's restrictions.
-	SafeGDScript::set_compiler_restricted(false);
-	SafeGDScript::set_compiler_project_context();
-	SafeGDScript::set_compiler_base_sources(SafeGDScript::resolve_base_sources(p_source));
-
-	GDExtensionCallError error;
-	Variant source = p_source;
-	const Variant *args[] = { &source };
-	const Variant answer = compiler->vmcall_fn("validate", args, 1, error);
-	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK || answer.get_type() != Variant::DICTIONARY) {
-		return false;
-	}
-
-	const Dictionary reply = answer;
 	ValidationResult result;
-	result.valid = reply.get("valid", true);
-	if (!result.valid) {
-		result.line = reply.get("line", 0);
-		result.column = reply.get("column", 0);
-		result.message = reply.get("message", String());
-		const String hint = reply.get("hint", String());
-		if (!hint.is_empty()) {
-			result.message += String(" (") + hint + String(")");
-		}
-		if (result.message.is_empty()) {
-			result.message = "Compilation failed";
-		}
+	if (!compiler.validate(p_source, result)) {
+		return false;
 	}
 
 	cached_source = p_source;
@@ -1438,10 +1400,24 @@ bool SafeGDScriptLanguage::_handles_global_class_type(const String &p_type) cons
 }
 Dictionary SafeGDScriptLanguage::_get_global_class_name(const String &p_path) const {
 	Dictionary dict;
-	if (!p_path.is_empty()) {
-		dict["name"] = SafeGDScript::PathToGlobalName(p_path);
-		dict["base_type"] = "Sandbox";
-		dict["icon_path"] = String(icon_path);
+	if (p_path.is_empty()) {
+		return dict;
 	}
+	// Godot queries this before anything is compiled, so class_name
+	// comes from a text scan, not from SafeGDScript::class_name.
+	String declared_name;
+	String declared_base;
+	if (FileAccess::file_exists(p_path)) {
+		SafeGDScript::scan_class_header(FileAccess::get_file_as_string(p_path),
+				&declared_name, &declared_base);
+	}
+	dict["name"] = declared_name.is_empty() ? SafeGDScript::PathToGlobalName(p_path) : declared_name;
+	if (declared_base.is_empty() || declared_base.begins_with("res://") ||
+			declared_base.begins_with("user://")) {
+		dict["base_type"] = "Sandbox";
+	} else {
+		dict["base_type"] = declared_base;
+	}
+	dict["icon_path"] = String(icon_path);
 	return dict;
 }

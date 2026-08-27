@@ -1,6 +1,6 @@
 #include "script_safegdscript.h"
 
-#include "../elf/script_elf.h"
+#include "compiler_backend.h"
 #include "../elf/script_instance.h"
 #include "script_instance_safegdscript.h"
 #include "script_language_safegdscript.h"
@@ -15,7 +15,6 @@
 #include "../sandbox.h"
 #include <unordered_set>
 static constexpr bool VERBOSE_LOGGING = false;
-static Sandbox* compiler = nullptr;
 
 bool safegdscript_is_stopped();
 const SafeGDScript *safegdscript_stopped_script();
@@ -430,42 +429,6 @@ void SafeGDScript::set_path(const String &p_path) {
 	this->compile_source_to_elf();
 }
 
-static constexpr uint32_t COMPILER_MEMORY_MAX = 256;
-static constexpr uint32_t COMPILER_ALLOCATIONS_MAX = 64000;
-
-Sandbox *SafeGDScript::get_compiler_sandbox() {
-	if (compiler != nullptr) {
-		return compiler;
-	}
-
-	// Check if "gdscript.elf" exists in the addons/godot_sandbox/ directory
-	const String compiler_path = "res://addons/godot_sandbox/gdscript.elf";
-	if (!FileAccess::file_exists(compiler_path)) {
-		ERR_PRINT("SafeGDScript: GDScript compiler ELF not found at " + compiler_path);
-		return nullptr;
-	}
-	Sandbox *sandbox = memnew(Sandbox);
-	Ref<ELFScript> compiler_script = ResourceLoader::get_singleton()->load(compiler_path);
-	if (!compiler_script.is_valid()) {
-		ERR_PRINT("SafeGDScript: Failed to load GDScript compiler ELF resource.");
-		memdelete(sandbox);
-		return nullptr;
-	}
-	// Must be set before set_program(). Default arena is too small for the compiler
-	// once the C++ unwinder has been set up (first error path).
-	sandbox->set_memory_max(COMPILER_MEMORY_MAX);
-	sandbox->set_allocations_max(COMPILER_ALLOCATIONS_MAX);
-	sandbox->set_program(compiler_script);
-	if (!sandbox->has_program_loaded()) {
-		ERR_PRINT("SafeGDScript: Failed to initialize GDScript compiler sandbox.");
-		memdelete(sandbox);
-		return nullptr;
-	}
-
-	compiler = sandbox;
-	return compiler;
-}
-
 bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	// Refuse rebuild while stopped at a breakpoint in this program.
 	if (safegdscript_stopped_script() == this) {
@@ -480,13 +443,14 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 		return false;
 	}
 
-	Sandbox *compiler = get_compiler_sandbox();
-	if (compiler == nullptr) {
-		return fail_compile("failed to initialize the GDScript compiler sandbox");
+	const bool restricted = this->class_access_restricted();
+	GDScriptCompilerBackend &compiler = gdscript_compiler::backend_for(restricted);
+	if (!compiler.available()) {
+		return fail_compile(String("failed to initialize the ") + compiler.name() +
+				" GDScript compiler");
 	}
 
-	// Falls back to uninstrumented if compiler ELF predates compile_profiled.
-	const bool profiling = p_profiling && compiler->has_function("compile_profiled");
+	const bool profiling = p_profiling && compiler.can_build_profiled();
 	if (p_profiling && !profiling) {
 		ERR_PRINT("SafeGDScript: the GDScript compiler ELF is too old to build a profiled program.");
 	}
@@ -500,14 +464,10 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	// Non-empty breakpoints force a debug build.
 	const bool wants_debug = p_debug || !this->breakpoints.is_empty();
 	// Profiling and debug are mutually exclusive instrumentations.
-	const bool debug = !profiling && wants_debug && compiler->has_function("compile_debug");
+	const bool debug = !profiling && wants_debug && compiler.can_build_debug();
 	if (wants_debug && !profiling && !debug) {
 		ERR_PRINT("SafeGDScript: the GDScript compiler ELF is too old to build a debuggable program.");
 	}
-	const char *entry_point = profiling ? "compile_profiled" : (debug ? "compile_debug" : "compile");
-	const bool restricted = this->class_access_restricted();
-	set_compiler_restricted(restricted);
-	set_compiler_project_context();
 
 	this->base_paths.clear();
 	this->base_stamps.clear();
@@ -516,7 +476,6 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 		String chain_error;
 		base_sources = resolve_base_sources(this->source_code, this->path, &chain_error);
 		if (!chain_error.is_empty()) {
-			set_compiler_base_sources(PackedStringArray());
 			return fail_compile(chain_error);
 		}
 		for (int64_t i = 0; i + 1 < base_sources.size(); i += 3) {
@@ -524,24 +483,15 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 			this->base_stamps.push_back(file_stamp(base_sources[i + 1]));
 		}
 	}
-	set_compiler_base_sources(base_sources);
+	gdscript_compiler::prepare(compiler, restricted, base_sources);
 
-	GDExtensionCallError error;
-	Variant src_code_var = this->source_code;
-	// compile_debug() takes breakpoints as a second arg; others take source only.
-	Variant breakpoints_var = this->breakpoints;
-	const Variant* args[] = { &src_code_var, &breakpoints_var };
-	Variant result = compiler->vmcall_fn(entry_point, args, debug ? 2 : 1, error);
-	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
-		return fail_compile("the GDScript compiler sandbox failed with call error " + itos(static_cast<int>(error.error)));
-	}
-	// Expecting the result to be a PackedByteArray containing the ELF binary
-	if (result.get_type() != Variant::Type::PACKED_BYTE_ARRAY) {
-		return fail_compile("the GDScript compiler did not return a PackedByteArray");
-	}
-	const PackedByteArray new_elf = result;
+	GDScriptCompilerBackend::BuildOptions options;
+	options.profiling = profiling;
+	options.debug = debug;
+	options.breakpoints = this->breakpoints;
+	const PackedByteArray new_elf = compiler.compile(this->source_code, options);
 	if (new_elf.is_empty()) {
-		return fail_compile(get_compiler_error_message());
+		return fail_compile(compiler.error_message());
 	}
 
 	this->elf_data = new_elf;
@@ -549,11 +499,12 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	this->profiled_build = profiling;
 	this->debug_build = debug;
 	this->last_error = String();
-	this->class_name = get_compiler_class_name();
-	this->base_class = get_compiler_base_class();
-	this->base_is_path = get_compiler_base_is_path();
-	this->native_base_class = get_compiler_native_base_class();
-	this->native_base_is_path = get_compiler_native_base_is_path();
+	const GDScriptCompilerBackend::ScriptClass declared = compiler.script_class();
+	this->class_name = declared.class_name;
+	this->base_class = declared.base_class;
+	this->base_is_path = declared.base_is_path;
+	this->native_base_class = declared.native_base_class;
+	this->native_base_is_path = declared.native_base_is_path;
 	if (this->native_base_class.is_empty()) {
 		this->native_base_class = this->base_class;
 		this->native_base_is_path = this->base_is_path;
@@ -561,7 +512,7 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	this->base_script = Ref<Script>();
 	this->base_script_resolved = false;
 
-	this->update_methods_info();
+	this->update_methods_info(compiler);
 
 	// One reload for the Sandbox they share: reloading per instance would replace
 	// the machine again under the instances that had already taken a record in
@@ -732,138 +683,8 @@ bool SafeGDScript::fail_compile(const String &p_message) {
 	return false;
 }
 
-String SafeGDScript::get_compiler_error_message() {
-	Sandbox *compiler = get_compiler_sandbox();
-	if (compiler == nullptr || !compiler->has_function("get_compiler_error")) {
-		return String("compilation failed");
-	}
-	GDExtensionCallError error;
-	const Variant message = compiler->vmcall_fn("get_compiler_error", nullptr, 0, error);
-	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK || message.get_type() != Variant::Type::STRING) {
-		return String("compilation failed");
-	}
-	return message;
-}
-
 void SafeGDScript::remove_instance(SafeGDScriptInstance *p_instance) {
 	instances.erase(p_instance);
-}
-
-// Crosses as a blob (one scoped variant) to stay within MAX_REFS.
-gdscript::LineTable SafeGDScript::get_compiler_line_table() {
-	gdscript::LineTable table;
-	Sandbox *compiler = get_compiler_sandbox();
-	// Absent from older compiler ELFs.
-	if (compiler == nullptr || !compiler->has_function("get_line_table")) {
-		return table;
-	}
-	GDExtensionCallError error;
-	const Variant blob = compiler->vmcall_fn("get_line_table", nullptr, 0, error);
-	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK || blob.get_type() != Variant::Type::PACKED_BYTE_ARRAY) {
-		return table;
-	}
-	const PackedByteArray bytes = blob;
-	if (!gdscript::decode_line_table(bytes.ptr(), size_t(bytes.size()), table)) {
-		ERR_PRINT("SafeGDScript: the compiler returned a malformed line table.");
-	}
-	return table;
-}
-
-bool SafeGDScript::get_compiler_is_tool() {
-	Sandbox *compiler = get_compiler_sandbox();
-	if (compiler == nullptr || !compiler->has_function("is_tool")) {
-		return true;
-	}
-	GDExtensionCallError error;
-	const Variant answer = compiler->vmcall_fn("is_tool", nullptr, 0, error);
-	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
-		return true;
-	}
-	return bool(answer);
-}
-
-static String compiler_string(const char *p_function) {
-	Sandbox *compiler = SafeGDScript::get_compiler_sandbox();
-	if (compiler == nullptr || !compiler->has_function(p_function)) {
-		return String();
-	}
-	GDExtensionCallError error;
-	const Variant answer = compiler->vmcall_fn(p_function, nullptr, 0, error);
-	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK ||
-			answer.get_type() != Variant::Type::STRING) {
-		return String();
-	}
-	return answer;
-}
-
-String SafeGDScript::get_compiler_class_name() {
-	return compiler_string("get_script_class_name");
-}
-
-String SafeGDScript::get_compiler_base_class() {
-	return compiler_string("get_script_base_class");
-}
-
-static bool compiler_flag(const char *p_function) {
-	Sandbox *compiler = SafeGDScript::get_compiler_sandbox();
-	if (compiler == nullptr || !compiler->has_function(p_function)) {
-		return false;
-	}
-	GDExtensionCallError error;
-	const Variant answer = compiler->vmcall_fn(p_function, nullptr, 0, error);
-	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
-		return false;
-	}
-	return bool(answer);
-}
-
-bool SafeGDScript::get_compiler_base_is_path() {
-	return compiler_flag("get_script_base_is_path");
-}
-
-String SafeGDScript::get_compiler_native_base_class() {
-	return compiler_string("get_script_native_base_class");
-}
-
-bool SafeGDScript::get_compiler_native_base_is_path() {
-	return compiler_flag("get_script_native_base_is_path");
-}
-
-static PackedStringArray project_autoload_names() {
-	PackedStringArray names;
-	ProjectSettings *settings = ProjectSettings::get_singleton();
-	if (settings == nullptr) {
-		return names;
-	}
-	const TypedArray<Dictionary> properties = settings->get_property_list();
-	for (int i = 0; i < properties.size(); i++) {
-		const Dictionary property = properties[i];
-		const String name = property.get("name", String());
-		if (name.begins_with("autoload/")) {
-			names.push_back(name.substr(strlen("autoload/")));
-		}
-	}
-	return names;
-}
-
-static PackedStringArray project_global_classes() {
-	PackedStringArray pairs;
-	ProjectSettings *settings = ProjectSettings::get_singleton();
-	if (settings == nullptr) {
-		return pairs;
-	}
-	const TypedArray<Dictionary> classes = settings->get_global_class_list();
-	for (int i = 0; i < classes.size(); i++) {
-		const Dictionary entry = classes[i];
-		const String class_name = entry.get("class", String());
-		const String path = entry.get("path", String());
-		if (class_name.is_empty() || path.is_empty()) {
-			continue;
-		}
-		pairs.push_back(class_name);
-		pairs.push_back(path);
-	}
-	return pairs;
 }
 
 static constexpr int MAX_BASE_CHAIN = 16;
@@ -907,6 +728,44 @@ static String scan_extends(const String &p_source) {
 		return rest;
 	}
 	return String();
+}
+
+// Compiler unavailable when Godot builds the global class list.
+void SafeGDScript::scan_class_header(const String &p_source, String *r_class_name,
+		String *r_base) {
+	if (r_class_name != nullptr) {
+		*r_class_name = String();
+	}
+	if (r_base != nullptr) {
+		*r_base = String();
+	}
+	const PackedStringArray lines = p_source.split("\n");
+	for (int i = 0; i < lines.size(); i++) {
+		const String line = lines[i].strip_edges();
+		if (line.is_empty() || line.begins_with("#") || line.begins_with("@")) {
+			continue;
+		}
+		if (header_keyword(line, "class_name")) {
+			if (r_class_name != nullptr) {
+				String rest = line.substr(strlen("class_name")).strip_edges();
+				for (const char *stop : { "#", " ", "\t", ":" }) {
+					const int at = rest.find(stop);
+					if (at >= 0) {
+						rest = rest.substr(0, at);
+					}
+				}
+				*r_class_name = rest;
+			}
+			continue;
+		}
+		if (header_keyword(line, "extends")) {
+			if (r_base != nullptr) {
+				*r_base = scan_extends(p_source);
+			}
+			continue;
+		}
+		break;
+	}
 }
 
 PackedStringArray SafeGDScript::resolve_base_sources(const String &p_source,
@@ -973,24 +832,6 @@ PackedStringArray SafeGDScript::resolve_base_sources(const String &p_source,
 	return triples;
 }
 
-void SafeGDScript::set_compiler_base_sources(const PackedStringArray &p_triples) {
-	Sandbox *compiler = get_compiler_sandbox();
-	if (compiler == nullptr || !compiler->has_function("set_base_sources")) {
-		if (!p_triples.is_empty()) {
-			ERR_PRINT("SafeGDScript: the GDScript compiler ELF is too old to compile a base "
-					  "script into a program; inherited members will be missing.");
-		}
-		return;
-	}
-	GDExtensionCallError error;
-	Variant triples = p_triples;
-	const Variant *args[] = { &triples };
-	compiler->vmcall_fn("set_base_sources", args, 1, error);
-	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
-		ERR_PRINT("SafeGDScript: the compiler refused the base sources.");
-	}
-}
-
 void SafeGDScript::poll_base_sources() {
 	std::vector<SafeGDScript *> scripts(live_scripts.begin(), live_scripts.end());
 	for (SafeGDScript *script : scripts) {
@@ -1017,44 +858,6 @@ void SafeGDScript::rebuild_if_a_base_changed() {
 	this->compile_source_to_elf(this->profiled_build, this->debug_build);
 }
 
-void SafeGDScript::set_compiler_project_context() {
-	Sandbox *compiler = get_compiler_sandbox();
-	if (compiler == nullptr) {
-		return;
-	}
-	GDExtensionCallError error;
-	if (compiler->has_function("set_autoloads")) {
-		Variant names = project_autoload_names();
-		const Variant *args[] = { &names };
-		compiler->vmcall_fn("set_autoloads", args, 1, error);
-		if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
-			ERR_PRINT("SafeGDScript: the compiler refused the autoload list.");
-		}
-	}
-	if (compiler->has_function("set_global_classes")) {
-		Variant pairs = project_global_classes();
-		const Variant *args[] = { &pairs };
-		compiler->vmcall_fn("set_global_classes", args, 1, error);
-		if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
-			ERR_PRINT("SafeGDScript: the compiler refused the global class list.");
-		}
-	}
-}
-
-void SafeGDScript::set_compiler_restricted(bool p_restricted) {
-	Sandbox *compiler = get_compiler_sandbox();
-	if (compiler == nullptr || !compiler->has_function("set_restricted")) {
-		return;
-	}
-	GDExtensionCallError error;
-	Variant restricted = p_restricted;
-	const Variant *args[] = { &restricted };
-	compiler->vmcall_fn("set_restricted", args, 1, error);
-	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK) {
-		ERR_PRINT("SafeGDScript: the compiler refused the restriction flag.");
-	}
-}
-
 bool SafeGDScript::class_access_restricted() const {
 	const Sandbox *sandbox = sandbox_for_safegdscript(this);
 	return sandbox != nullptr && sandbox->is_class_access_restricted();
@@ -1071,56 +874,6 @@ void SafeGDScript::class_restrictions_changed() {
 	}
 }
 
-PackedInt32Array SafeGDScript::get_compiler_breakpoint_lines() {
-	Sandbox *compiler = get_compiler_sandbox();
-	if (compiler == nullptr || !compiler->has_function("get_breakpoint_lines")) {
-		return PackedInt32Array();
-	}
-	GDExtensionCallError error;
-	const Variant lines = compiler->vmcall_fn("get_breakpoint_lines", nullptr, 0, error);
-	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK || lines.get_type() != Variant::Type::PACKED_INT32_ARRAY) {
-		return PackedInt32Array();
-	}
-	return lines;
-}
-
-std::vector<gdscript::FunctionSignature> SafeGDScript::get_compiler_signal_signatures() {
-	std::vector<gdscript::FunctionSignature> signals;
-	Sandbox *compiler = get_compiler_sandbox();
-	if (compiler == nullptr || !compiler->has_function("get_signal_signatures")) {
-		return signals;
-	}
-	GDExtensionCallError error;
-	const Variant blob = compiler->vmcall_fn("get_signal_signatures", nullptr, 0, error);
-	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK || blob.get_type() != Variant::Type::PACKED_BYTE_ARRAY) {
-		return signals;
-	}
-	const PackedByteArray bytes = blob;
-	if (!gdscript::decode_function_signatures(bytes.ptr(), size_t(bytes.size()), signals)) {
-		ERR_PRINT("SafeGDScript: the compiler returned a malformed signal table.");
-	}
-	return signals;
-}
-
-std::vector<gdscript::FunctionSignature> SafeGDScript::get_compiler_function_signatures() {
-	std::vector<gdscript::FunctionSignature> signatures;
-	Sandbox *compiler = get_compiler_sandbox();
-	if (compiler == nullptr || !compiler->has_function("get_function_signatures")) {
-		return signatures;
-	}
-	GDExtensionCallError error;
-	const Variant blob = compiler->vmcall_fn("get_function_signatures", nullptr, 0, error);
-	if (error.error != GDExtensionCallErrorType::GDEXTENSION_CALL_OK || blob.get_type() != Variant::Type::PACKED_BYTE_ARRAY) {
-		return signatures;
-	}
-	const PackedByteArray bytes = blob;
-	if (!gdscript::decode_function_signatures(bytes.ptr(), size_t(bytes.size()), signatures)) {
-		ERR_PRINT("SafeGDScript: the compiler returned a malformed function signature table.");
-	}
-	return signatures;
-}
-
-// The compiler reports an undeclared type as ANY_TYPE, which is not a
 // Variant::Type. Godot spells "any Variant" as NIL plus NIL_IS_VARIANT.
 static Variant::Type variant_type_or_nil(int32_t p_type) {
 	if (p_type < 0 || p_type >= Variant::Type::VARIANT_MAX) {
@@ -1154,14 +907,14 @@ static Variant default_argument_value(const gdscript::FunctionParameter &p_param
 	return Variant();
 }
 
-void SafeGDScript::update_methods_info() {
+void SafeGDScript::update_methods_info(GDScriptCompilerBackend &p_compiler) {
 	Sandbox::BinaryInfo info = Sandbox::get_program_info_from_binary(this->elf_data);
 	this->methods_info.clear();
 	this->methods_doc.clear();
 	this->signals_info.clear();
 
 	// Untyped parameter: NIL + NIL_IS_VARIANT; typed: no usage flags.
-	for (const gdscript::FunctionSignature &declared : get_compiler_signal_signatures()) {
+	for (const gdscript::FunctionSignature &declared : p_compiler.signal_signatures()) {
 		MethodInfo signal_info(String::utf8(declared.name.c_str(), declared.name.size()));
 		signal_info.flags = METHOD_FLAG_NORMAL;
 		signal_info.return_val.usage = PROPERTY_USAGE_DEFAULT;
@@ -1182,12 +935,12 @@ void SafeGDScript::update_methods_info() {
 		signals_info.push_back(std::move(signal_info));
 	}
 
-	this->tool_script = get_compiler_is_tool();
+	this->tool_script = p_compiler.is_tool();
 
 	// Profiling records are indexed by position in this table.
-	this->signatures = get_compiler_function_signatures();
-	this->line_table = get_compiler_line_table();
-	this->active_breakpoints = this->debug_build ? get_compiler_breakpoint_lines() : PackedInt32Array();
+	this->signatures = p_compiler.function_signatures();
+	this->line_table = p_compiler.line_table();
+	this->active_breakpoints = this->debug_build ? p_compiler.installed_breakpoints() : PackedInt32Array();
 	HashMap<String, const gdscript::FunctionSignature *> by_name;
 	for (const gdscript::FunctionSignature &signature : this->signatures) {
 		by_name.insert(String::utf8(signature.name.c_str(), signature.name.size()), &signature);

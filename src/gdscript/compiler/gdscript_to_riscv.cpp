@@ -42,6 +42,7 @@ int main(int argc, char** argv)
 	ProfilingClock profiling_clock = ProfilingClock::TIME;
 	std::vector<std::string> autoloads;
 	std::vector<std::pair<std::string, std::string>> global_classes;
+	std::vector<CompilerOptions::BaseSource> base_sources;
 
 	for (int i = 1; i < argc; i++) {
 		std::string arg = argv[i];
@@ -73,6 +74,26 @@ int main(int argc, char** argv)
 					global_classes.emplace_back(pair.substr(0, eq), pair.substr(eq + 1));
 				}
 			}
+		} else if (arg == "--base") {
+			if (i + 1 < argc) {
+				const std::string pair = argv[++i];
+				const size_t eq = pair.find('=');
+				if (eq == std::string::npos) {
+					std::cerr << "Error: --base wants Name=path" << std::endl;
+					return 1;
+				}
+				CompilerOptions::BaseSource base;
+				base.name = pair.substr(0, eq);
+				base.path = pair.substr(eq + 1);
+				std::ifstream in(base.path);
+				if (!in) {
+					std::cerr << "Error: cannot read base script " << base.path << std::endl;
+					return 1;
+				}
+				base.source.assign(std::istreambuf_iterator<char>(in),
+					std::istreambuf_iterator<char>());
+				base_sources.push_back(std::move(base));
+			}
 		} else if (arg == "--profiling") {
 			profiling = true;
 		} else if (arg == "--profiling-instructions") {
@@ -102,6 +123,7 @@ int main(int argc, char** argv)
 		options.profiling_clock = profiling_clock;
 		options.autoloads = autoloads;
 		options.global_script_classes = global_classes;
+		options.base_sources = base_sources;
 		std::vector<uint8_t> elf = compiler.compile(source, options);
 		if (elf.empty()) {
 			// Empty ELF = compile error.

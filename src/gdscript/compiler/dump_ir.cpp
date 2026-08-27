@@ -3,6 +3,8 @@
 #include "codegen.h"
 #include "ir_optimizer.h"
 #include "riscv_codegen.h"
+#include "chain.h"
+#include <fstream>
 #include <iostream>
 #include <variant>
 #include <iomanip>
@@ -66,6 +68,7 @@ int main(int argc, char** argv)
 	bool double_precision = native_variant_layout().double_precision;
 	std::vector<std::string> autoloads;
 	std::vector<std::pair<std::string, std::string>> global_classes;
+	std::vector<std::pair<std::string, std::string>> base_specs;
 
 	for (int i = 1; i < argc; i++) {
 		std::string arg = argv[i];
@@ -86,6 +89,16 @@ int main(int argc, char** argv)
 				if (eq != std::string::npos) {
 					global_classes.emplace_back(pair.substr(0, eq), pair.substr(eq + 1));
 				}
+			}
+		} else if (arg == "--base") {
+			if (i + 1 < argc) {
+				const std::string pair = argv[++i];
+				const size_t eq = pair.find('=');
+				if (eq == std::string::npos) {
+					std::cerr << "Error: --base wants Name=path" << std::endl;
+					return 1;
+				}
+				base_specs.emplace_back(pair.substr(0, eq), pair.substr(eq + 1));
 			}
 		} else if (arg == "--double-precision") {
 			double_precision = true;
@@ -116,7 +129,34 @@ int main(int argc, char** argv)
 		}
 
 		Parser parser(tokens);
+		parser.set_doc_comments(lexer.doc_comments());
 		Program program = parser.parse();
+
+		if (!base_specs.empty()) {
+			std::vector<ChainLink> links;
+			links.reserve(base_specs.size() + 1);
+			for (size_t i = base_specs.size(); i-- > 0;) {
+				std::ifstream in(base_specs[i].second);
+				if (!in) {
+					std::cerr << "Error: cannot read base script " << base_specs[i].second << std::endl;
+					return 1;
+				}
+				const std::string base_source((std::istreambuf_iterator<char>(in)),
+					std::istreambuf_iterator<char>());
+				Lexer base_lexer(base_source);
+				Parser base_parser(base_lexer.tokenize());
+				base_parser.set_doc_comments(base_lexer.doc_comments());
+				ChainLink link;
+				link.name = base_specs[i].first;
+				link.path = base_specs[i].second;
+				link.program = base_parser.parse();
+				links.push_back(std::move(link));
+			}
+			ChainLink leaf;
+			leaf.program = std::move(program);
+			links.push_back(std::move(leaf));
+			program = merge_chain(std::move(links));
+		}
 
 		if (verbose) {
 			std::cout << "=== AST ===" << std::endl;
