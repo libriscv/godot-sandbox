@@ -95,13 +95,12 @@ struct TypeTestExpr : Expr {
 		: value(std::move(v)), type_name(std::move(t)) {}
 };
 
-// `x as SomeClass` — class cast via engine. Scalars parsed as constructor calls.
-struct ClassCastExpr : Expr {
+struct CastExpr : Expr {
 	ExprPtr value;
-	std::string class_name;
+	std::string type_name;
 
-	ClassCastExpr(ExprPtr v, std::string c)
-		: value(std::move(v)), class_name(std::move(c)) {}
+	CastExpr(ExprPtr v, std::string t)
+		: value(std::move(v)), type_name(std::move(t)) {}
 };
 
 struct TernaryExpr : Expr {

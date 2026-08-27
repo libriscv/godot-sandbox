@@ -87,7 +87,13 @@ private:
 
 	int gen_expr(const Expr* expr, FunctionContext& func);
 	int gen_literal(const LiteralExpr* expr, FunctionContext& func);
-	int gen_variable(const VariableExpr* expr, FunctionContext& func);
+	// Lvalue writeback: the read yields a copy; the caller needs the container.
+	struct VariableOrigin {
+		int container_reg = -1;
+		bool borrowed = false;
+	};
+	int gen_variable(const VariableExpr* expr, FunctionContext& func,
+		VariableOrigin* origin = nullptr);
 	int gen_binary(const BinaryExpr* expr, FunctionContext& func);
 	bool absorb_str_call(FunctionContext& func, int reg, size_t since, std::vector<int>& args);
 	int gen_str_call(const std::vector<int>& args, FunctionContext& func);
@@ -110,7 +116,9 @@ private:
 	int gen_class_test(int value_reg, const std::string& class_name, FunctionContext& func);
 	int gen_instance_class_test(int value_reg, const std::string& class_name, int result_reg,
 		FunctionContext& func);
-	int gen_class_cast(const ClassCastExpr* expr, FunctionContext& func);
+	int gen_cast(const CastExpr* expr, FunctionContext& func);
+	int gen_builtin_cast(const CastExpr* expr, IRInstruction::TypeHint target, FunctionContext& func);
+	int gen_class_cast(const CastExpr* expr, FunctionContext& func);
 	int gen_int_immediate(int64_t value, FunctionContext& func);
 	int gen_enum_member(const EnumDecl::Member& member, FunctionContext& func);
 	// `for c in <String>`: batched character walk, see codegen.cpp.

@@ -150,8 +150,13 @@ Lowering:
   `get_script()`/`get_global_name()`/`get_base_script()` script chain.
   Non-object → false. On tracked class instances: own name/ancestors fold to
   true, sibling classes fold to false, engine names run the walk on `@base`.
-- `as <type>` → constructor for builtins; `is` + value-or-null for classes,
-  preserving instance declaration.
+- `as <builtin>` → one-argument constructor. int/float/bool/String via globals
+  rows (inline when numeric); rest via `ECALL_VCONSTRUCT`. Tracked match folds;
+  mismatch is run-time error, never null. `as Variant` = identity.
+  `Variant::type_from_name` (variant_types.h) resolves name → type, shared with
+  `is` and type hints.
+- `as <class_name>` → `is` + value-or-null, preserving instance declaration.
+  Both forms parse to `CastExpr`; codegen discriminates via `type_from_name`.
 
 ### Built-in constructors
 

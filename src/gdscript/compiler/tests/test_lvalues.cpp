@@ -281,6 +281,34 @@ static void test_the_copy_travels_back() {
 	std::cout << "  ✓ a mutated copy is written back to its container" << std::endl;
 }
 
+// -= Through what the script extends =-
+
+static void test_a_base_property_travels_back() {
+	std::cout << "Testing that a mutated base property is written back..." << std::endl;
+
+	const IRProgram owned = compile_to_ir(
+		"extends Node2D\nfunc test():\n\tvelocity.y = 1.0\n");
+	const IRFunction& o = find_function(owned, "test");
+	assert(count_opcode(o, IROpcode::GET_NODE) == 1);
+	assert(count_opcode(o, IROpcode::VGET) == 1);
+	assert(count_opcode(o, IROpcode::VSET) == 2);
+
+	const IRProgram plain = compile_to_ir(
+		"extends Node2D\nfunc test():\n\tvisible = true\n");
+	const IRFunction& p = find_function(plain, "test");
+	assert(count_opcode(p, IROpcode::VGET) == 0);
+	assert(count_opcode(p, IROpcode::VSET) == 1);
+
+	const IRProgram field = compile_to_ir(
+		"class Foo:\n\tvar v : Vector2 = Vector2(0, 0)\n\tfunc bump():\n\t\tv.x = 1.0\n"
+		"func test():\n\tFoo.new().bump()\n");
+	const IRFunction& b = find_function(field, "@Foo.bump");
+	assert(count_opcode(b, IROpcode::VSET_INLINE) == 1);
+	assert(count_opcode(b, IROpcode::DICT_SET) == 1);
+
+	std::cout << "  ✓ a mutated base property is written back" << std::endl;
+}
+
 // -= The optimizer =-
 
 static void test_the_optimizer_keeps_the_copy() {
@@ -405,6 +433,7 @@ int main() {
 		test_rect_and_plane_members();
 		test_unknown_member_write_tests_the_tag();
 		test_the_copy_travels_back();
+		test_a_base_property_travels_back();
 		test_the_optimizer_keeps_the_copy();
 		test_the_backend_emits_the_store();
 		test_globals_do_not_become_self_calls();

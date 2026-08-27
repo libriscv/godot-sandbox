@@ -11,87 +11,10 @@
 namespace gdscript {
 
 static IRInstruction::TypeHint type_hint_from_string(const std::string& type_str) {
-	if (type_str == "int") {
-		return Variant::INT;
-	} else if (type_str == "float") {
-		return Variant::FLOAT;
-	} else if (type_str == "bool") {
-		return Variant::BOOL;
-	} else if (type_str == "String") {
-		return Variant::STRING;
-	} else if (type_str == "StringName") {
-		return Variant::STRING_NAME;
-	} else if (type_str == "NodePath") {
-		return Variant::NODE_PATH;
-	}
-	else if (type_str == "Vector2") {
-		return Variant::VECTOR2;
-	} else if (type_str == "Vector2i") {
-		return Variant::VECTOR2I;
-	} else if (type_str == "Vector3") {
-		return Variant::VECTOR3;
-	} else if (type_str == "Vector3i") {
-		return Variant::VECTOR3I;
-	} else if (type_str == "Vector4") {
-		return Variant::VECTOR4;
-	} else if (type_str == "Vector4i") {
-		return Variant::VECTOR4I;
-	} else if (type_str == "Rect2") {
-		return Variant::RECT2;
-	} else if (type_str == "Rect2i") {
-		return Variant::RECT2I;
-	} else if (type_str == "Transform2D") {
-		return Variant::TRANSFORM2D;
-	} else if (type_str == "Transform3D") {
-		return Variant::TRANSFORM3D;
-	} else if (type_str == "Basis") {
-		return Variant::BASIS;
-	} else if (type_str == "Quaternion") {
-		return Variant::QUATERNION;
-	} else if (type_str == "Plane") {
-		return Variant::PLANE;
-	} else if (type_str == "AABB") {
-		return Variant::AABB;
-	} else if (type_str == "Projection") {
-		return Variant::PROJECTION;
-	} else if (type_str == "Color") {
-		return Variant::COLOR;
-	}
-	else if (type_str == "Array") {
-		return Variant::ARRAY;
-	} else if (type_str == "Dictionary") {
-		return Variant::DICTIONARY;
-	}
-	else if (type_str == "PackedByteArray") {
-		return Variant::PACKED_BYTE_ARRAY;
-	} else if (type_str == "PackedInt32Array") {
-		return Variant::PACKED_INT32_ARRAY;
-	} else if (type_str == "PackedInt64Array") {
-		return Variant::PACKED_INT64_ARRAY;
-	} else if (type_str == "PackedFloat32Array") {
-		return Variant::PACKED_FLOAT32_ARRAY;
-	} else if (type_str == "PackedFloat64Array") {
-		return Variant::PACKED_FLOAT64_ARRAY;
-	} else if (type_str == "PackedStringArray") {
-		return Variant::PACKED_STRING_ARRAY;
-	} else if (type_str == "PackedVector2Array") {
-		return Variant::PACKED_VECTOR2_ARRAY;
-	} else if (type_str == "PackedVector3Array") {
-		return Variant::PACKED_VECTOR3_ARRAY;
-	} else if (type_str == "PackedColorArray") {
-		return Variant::PACKED_COLOR_ARRAY;
-	} else if (type_str == "PackedVector4Array") {
-		return Variant::PACKED_VECTOR4_ARRAY;
-	}
-	else if (type_str == "RID") {
-		return Variant::RID;
-	} else if (type_str == "Callable") {
-		return Variant::CALLABLE;
-	} else if (type_str == "Signal") {
-		return Variant::SIGNAL;
-	}
-
-	return IRInstruction::TypeHint_NONE;
+	const Variant::Type type = Variant::type_from_name(type_str);
+	return type == Variant::VARIANT_MAX
+		? IRInstruction::TypeHint_NONE
+		: static_cast<IRInstruction::TypeHint>(type);
 }
 
 CodeGenerator::CodeGenerator() {}
@@ -781,7 +704,16 @@ CodeGenerator::LValue CodeGenerator::resolve_lvalue(const Expr* expr, FunctionCo
 			lvalue.name = var_expr->name;
 			return lvalue;
 		}
-		lvalue.reg = gen_expr(expr, func);
+		VariableOrigin origin;
+		lvalue.reg = gen_variable(var_expr, func, &origin);
+		if (origin.container_reg >= 0) {
+			auto container = std::make_shared<LValue>();
+			container->reg = origin.container_reg;
+			container->borrowed = origin.borrowed;
+			lvalue.kind = LValue::Kind::MEMBER;
+			lvalue.name = var_expr->name;
+			lvalue.container = std::move(container);
+		}
 		return lvalue;
 	}
 
@@ -1938,8 +1870,8 @@ int CodeGenerator::gen_expr(const Expr* expr, FunctionContext& func) {
 		return gen_ternary(ternary, func);
 	} else if (auto* type_test = dynamic_cast<const TypeTestExpr*>(expr)) {
 		return gen_type_test(type_test, func);
-	} else if (auto* class_cast = dynamic_cast<const ClassCastExpr*>(expr)) {
-		return gen_class_cast(class_cast, func);
+	} else if (auto* cast = dynamic_cast<const CastExpr*>(expr)) {
+		return gen_cast(cast, func);
 	} else if (auto* call = dynamic_cast<const CallExpr*>(expr)) {
 		return gen_call(call, func);
 	} else if (auto* member = dynamic_cast<const MemberCallExpr*>(expr)) {
@@ -2279,7 +2211,9 @@ int CodeGenerator::gen_literal(const LiteralExpr* expr, FunctionContext& func) {
 	return reg;
 }
 
-int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func) {
+int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
+	VariableOrigin* origin)
+{
 	// Locals shadow globals; 'self' is not declarable, handled below.
 	if (Variable* local = find_variable(func, expr->name)) {
 		int new_reg = alloc_register(func);
@@ -2295,6 +2229,10 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func)
 	}
 
 	if (int self_reg = class_field_self(expr->name, func); self_reg >= 0) {
+		if (origin != nullptr) {
+			origin->container_reg = self_reg;
+			origin->borrowed = true;
+		}
 		return gen_member_read(self_reg, expr->name, func, expr);
 	}
 
@@ -2401,7 +2339,11 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func)
 
 	if (int base_reg = gen_implicit_base_load(func); base_reg >= 0) {
 		int result_reg = gen_vget(base_reg, expr->name, func);
-		free_register(func, base_reg);
+		if (origin != nullptr) {
+			origin->container_reg = base_reg;
+		} else {
+			free_register(func, base_reg);
+		}
 		return result_reg;
 	}
 
@@ -2567,8 +2509,8 @@ private:
 			visit(ternary->false_value.get());
 		} else if (auto* type_test = dynamic_cast<const TypeTestExpr*>(expr)) {
 			visit(type_test->value.get());
-		} else if (auto* class_cast = dynamic_cast<const ClassCastExpr*>(expr)) {
-			visit(class_cast->value.get());
+		} else if (auto* cast = dynamic_cast<const CastExpr*>(expr)) {
+			visit(cast->value.get());
 		} else if (auto* call = dynamic_cast<const CallExpr*>(expr)) {
 			use(call->function_name, callees);
 			for (const auto& arg : call->arguments) visit(arg.get());
@@ -3306,13 +3248,49 @@ int CodeGenerator::gen_class_test(int value_reg, const std::string& class_name,
 	return result_reg;
 }
 
-// `x as SomeClass`: returns the value or null. Run-time class check required.
-int CodeGenerator::gen_class_cast(const ClassCastExpr* expr, FunctionContext& func) {
+int CodeGenerator::gen_cast(const CastExpr* expr, FunctionContext& func) {
+	if (expr->type_name == "Variant") {
+		return gen_expr(expr->value.get(), func);
+	}
+	const IRInstruction::TypeHint target = type_hint_from_string(expr->type_name);
+	if (target != IRInstruction::TypeHint_NONE) {
+		return gen_builtin_cast(expr, target, func);
+	}
+	return gen_class_cast(expr, func);
+}
+
+int CodeGenerator::gen_builtin_cast(const CastExpr* expr, IRInstruction::TypeHint target,
+	FunctionContext& func)
+{
+	const int value_reg = gen_expr(expr->value.get(), func);
+
+	if (get_register_type(func, value_reg) == target) {
+		return value_reg;
+	}
+
+	switch (target) {
+		case Variant::INT:
+		case Variant::FLOAT:
+		case Variant::BOOL:
+		case Variant::STRING: {
+			const GlobalFunction* info = find_global_function(expr->type_name);
+			if (info == nullptr) {
+				throw CompilerException(ErrorType::CODEGEN_ERROR,
+					"'" + expr->type_name + "' is a Variant type but has no globals table row");
+			}
+			return gen_global_call(*info, { value_reg }, func, expr);
+		}
+		default:
+			return gen_host_constructor_typed(expr->type_name, target, { value_reg }, func, expr);
+	}
+}
+
+int CodeGenerator::gen_class_cast(const CastExpr* expr, FunctionContext& func) {
 	int value_reg = gen_expr(expr->value.get(), func);
 	int result_reg = alloc_register(func);
 	func.ir.instructions.emplace_back(IROpcode::LOAD_NIL, IRValue::reg(result_reg));
 
-	int test_reg = gen_class_test(value_reg, expr->class_name, func);
+	int test_reg = gen_class_test(value_reg, expr->type_name, func);
 	const std::string end_label = make_label("as_class_end");
 	emit_conditional_branch(IROpcode::BRANCH_ZERO, test_reg, end_label, func);
 	free_register(func, test_reg);

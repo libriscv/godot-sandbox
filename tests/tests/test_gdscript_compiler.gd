@@ -121,6 +121,70 @@ func sum2(n):
 	ts.queue_free()
 
 
+func test_as_builtin_casts():
+	var gdscript_code = """
+func to_vector2(v):
+	return v as Vector2
+
+func to_vector2i(v):
+	return v as Vector2i
+
+func to_packed(v):
+	return v as PackedInt32Array
+
+func to_stringname(v):
+	return v as StringName
+
+func to_nodepath(v):
+	return v as NodePath
+
+func to_dictionary(v):
+	return v as Dictionary
+
+func to_color(v):
+	return v as Color
+
+func to_transform(v):
+	return v as Transform2D
+
+func identity(v : Vector2):
+	return v as Vector2
+
+func to_variant(v):
+	return v as Variant
+
+func literal_vector2():
+	return Vector2i(3, 4) as Vector2
+"""
+
+	var ts : Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	ts.restrictions = true
+	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	assert_eq(compiled_elf.is_empty(), false, "Compiled ELF should not be empty")
+
+	var s = Sandbox.new()
+	s.load_buffer(compiled_elf)
+
+	assert_eq(s.vmcallv("to_vector2", Vector2i(3, 4)), Vector2(3, 4), "Vector2i converts to Vector2")
+	assert_eq(s.vmcallv("to_vector2i", Vector2(1.7, 2.2)), Vector2i(1, 2), "Vector2 truncates to Vector2i")
+	assert_eq(s.vmcallv("to_packed", [1, 2, 3]), PackedInt32Array([1, 2, 3]), "Array converts to PackedInt32Array")
+	assert_eq(typeof(s.vmcallv("to_stringname", "hi")), TYPE_STRING_NAME, "String converts to StringName")
+	assert_eq(typeof(s.vmcallv("to_nodepath", "a/b")), TYPE_NODE_PATH, "String converts to NodePath")
+	assert_eq(s.vmcallv("to_color", Color(1, 0, 0)), Color(1, 0, 0), "Color casts to itself")
+	assert_eq(s.vmcallv("to_transform", Transform2D()), Transform2D(), "Transform2D casts to itself")
+
+	assert_eq(s.vmcallv("to_dictionary", {"a": 1}), {"a": 1}, "Dictionary casts to itself")
+	assert_eq(s.vmcallv("identity", Vector2(5, 6)), Vector2(5, 6), "A typed value is its own cast")
+	assert_eq(s.vmcallv("literal_vector2"), Vector2(3, 4), "A literal converts at the same rules")
+
+	assert_eq(s.vmcallv("to_variant", 42), 42, "'as Variant' is an identity")
+	assert_eq(s.vmcallv("to_variant", "text"), "text", "'as Variant' keeps a String")
+
+	s.queue_free()
+	ts.queue_free()
+
+
 func test_profiled_build():
 	var gdscript_code = """
 func leaf(x : int):

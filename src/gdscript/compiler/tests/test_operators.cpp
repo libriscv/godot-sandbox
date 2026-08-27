@@ -294,6 +294,47 @@ static void test_as_is_the_matching_conversion() {
 	std::cout << "  ✓ 'as' is the matching conversion, or a checked class cast" << std::endl;
 }
 
+static void test_as_covers_every_builtin_type() {
+	static const char* const TYPES[] = {
+		"Vector2", "Vector2i", "Rect2", "Rect2i", "Vector3", "Vector3i",
+		"Transform2D", "Vector4", "Vector4i", "Plane", "Quaternion", "AABB",
+		"Basis", "Transform3D", "Projection", "Color", "StringName", "NodePath",
+		"RID", "Callable", "Signal", "Dictionary", "Array",
+		"PackedByteArray", "PackedInt32Array", "PackedInt64Array",
+		"PackedFloat32Array", "PackedFloat64Array", "PackedStringArray",
+		"PackedVector2Array", "PackedVector3Array", "PackedColorArray",
+		"PackedVector4Array",
+	};
+	for (const char* type : TYPES) {
+		const IRProgram ir = compile_to_ir(
+			std::string("func f(a):\n\treturn a as ") + type + "\n", false);
+		const IRFunction& f = find_function(ir, "f");
+		assert(count_opcode(f, IROpcode::CONSTRUCT) == 1);
+		assert(count_opcode(f, IROpcode::LOAD_NIL) == 0);
+		assert(count_opcode(f, IROpcode::VCALL) == 0);
+		const IRInstruction& construct = only(f, IROpcode::CONSTRUCT);
+		assert(std::get<int64_t>(construct.operands[1].value) ==
+			int64_t(Variant::type_from_name(type)));
+		assert(std::get<int64_t>(construct.operands[2].value) == 1);
+	}
+
+	const IRProgram folded = compile_to_ir(
+		"func f():\n\tvar v := Vector2(1, 2)\n\treturn v as Vector2\n", false);
+	assert(count_opcode(find_function(folded, "f"), IROpcode::CONSTRUCT) == 0);
+
+	const IRProgram typed = compile_to_ir(
+		"func f(a):\n\treturn (a as Vector2).x\n", false);
+	assert(count_opcode(find_function(typed, "f"), IROpcode::VGET_INLINE) == 1);
+
+	const IRProgram variant = compile_to_ir("func f(a):\n\treturn a as Variant\n", false);
+	const IRFunction& variant_f = find_function(variant, "f");
+	assert(count_opcode(variant_f, IROpcode::CONSTRUCT) == 0);
+	assert(count_opcode(variant_f, IROpcode::LOAD_NIL) == 0);
+	assert(count_opcode(variant_f, IROpcode::VCALL) == 0);
+
+	std::cout << "  ✓ 'as' converts to every built-in type" << std::endl;
+}
+
 // -= 'not' binds looser than a comparison =-
 
 // `not a == b` is `not (a == b)`. It used to parse as `(not a) == b`, a
@@ -710,6 +751,7 @@ int main() {
 	test_is_not();
 	test_is_on_a_class_name_asks_the_engine();
 	test_as_is_the_matching_conversion();
+	test_as_covers_every_builtin_type();
 
 	test_not_binds_looser_than_comparison();
 

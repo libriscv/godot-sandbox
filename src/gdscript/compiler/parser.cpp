@@ -1269,20 +1269,8 @@ ExprPtr Parser::parse_expression() {
 	while (match(TokenType::AS)) {
 		const Token type_token = consume(TokenType::IDENTIFIER, "Expected a type name after 'as'");
 		skip_type_arguments();
-		// Scalar types: lowered as constructor call.
-		// Class names: checked cast via engine (returns value or null).
-		if (type_token.lexeme == "int" || type_token.lexeme == "float" ||
-		    type_token.lexeme == "bool" || type_token.lexeme == "String") {
-			std::vector<ExprPtr> arguments;
-			arguments.push_back(std::move(expr));
-			const Token& at = type_token;
-			auto call = make_at<CallExpr>(at, type_token.lexeme, std::move(arguments));
-			call->argument_names.resize(1);
-			expr = std::move(call);
-		} else {
-			const Expr& start = *expr;
-			expr = make_like<ClassCastExpr>(start, std::move(expr), type_token.lexeme);
-		}
+		const Expr& start = *expr;
+		expr = make_like<CastExpr>(start, std::move(expr), type_token.lexeme);
 	}
 
 	return expr;
