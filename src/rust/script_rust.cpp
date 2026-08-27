@@ -18,7 +18,7 @@ StringName RustScript::_get_global_name() const {
 	return StringName();
 }
 bool RustScript::_inherits_script(const Ref<Script> &p_script) const {
-	return false;
+	return p_script.ptr() == static_cast<const Script *>(this);
 }
 StringName RustScript::_get_instance_base_type() const {
 	return StringName();

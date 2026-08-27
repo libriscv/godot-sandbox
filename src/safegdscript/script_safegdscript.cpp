@@ -89,6 +89,12 @@ bool SafeGDScript::_inherits_script(const Ref<Script> &p_script) const {
 	if (p_script.is_null()) {
 		return false;
 	}
+	// The script itself counts, as it does for GDScript: typed containers
+	// validate every element with inherits_script(), so a script that answers
+	// false for itself cannot go into an Array of its own class_name.
+	if (p_script.ptr() == static_cast<const Script *>(this)) {
+		return true;
+	}
 	Ref<Script> base = _get_base_script();
 	for (int depth = 0; base.is_valid() && depth < 64; depth++) {
 		if (base == p_script) {

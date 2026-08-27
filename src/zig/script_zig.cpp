@@ -18,7 +18,7 @@ StringName ZigScript::_get_global_name() const {
 	return StringName();
 }
 bool ZigScript::_inherits_script(const Ref<Script> &p_script) const {
-	return false;
+	return p_script.ptr() == static_cast<const Script *>(this);
 }
 StringName ZigScript::_get_instance_base_type() const {
 	return StringName();

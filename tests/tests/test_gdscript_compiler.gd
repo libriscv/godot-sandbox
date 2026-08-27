@@ -12031,6 +12031,30 @@ func test_sgd_instance_answers_is_for_its_script_base():
 	assert_true(node is Node, "and still for the engine class underneath it")
 	node.free()
 
+func test_sgd_instance_belongs_in_a_container_typed_by_its_script():
+	var script = _chain_leaf_script()
+	if script == null:
+		return
+	var node = Node.new()
+	node.set_script(script)
+
+	# A typed container validates every element with Script::inherits_script(),
+	# and a script is its own type there, as GDScript's is: answering false for
+	# itself kept an instance out of an Array typed by its own class_name, which
+	# is what `Array[Monitor]` in a converted project compiles to.
+	var by_own_script = Array([], TYPE_OBJECT, &"Node", script)
+	by_own_script.append(node)
+	assert_eq(by_own_script.size(), 1,
+		"an instance belongs in a container typed by its own script")
+
+	# And by the base it declares, which the chain above walks to.
+	var by_base_script = Array([], TYPE_OBJECT, &"Node", script.get_base_script())
+	by_base_script.append(node)
+	assert_eq(by_base_script.size(), 1,
+		"and in one typed by the base it extends")
+
+	node.free()
+
 func test_sgd_refuses_a_script_class_it_does_not_contain():
 	# A project class_name script is not an engine singleton, so this used to
 	# lower to a property read on the owner Node and answer null at run time.

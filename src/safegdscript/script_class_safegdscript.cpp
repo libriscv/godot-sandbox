@@ -85,6 +85,9 @@ Ref<Script> SafeGDScriptClass::_get_base_script() const {
 }
 
 bool SafeGDScriptClass::_inherits_script(const Ref<Script> &p_script) const {
+	if (p_script.ptr() == static_cast<const Script *>(this)) {
+		return true;
+	}
 	for (Ref<SafeGDScriptClass> at = base; at.is_valid(); at = at->base) {
 		if (at == p_script) {
 			return true;

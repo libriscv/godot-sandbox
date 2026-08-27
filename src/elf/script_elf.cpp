@@ -157,7 +157,7 @@ StringName ELFScript::_get_global_name() const {
 	return "ELFScript";
 }
 bool ELFScript::_inherits_script(const Ref<Script> &p_script) const {
-	return false;
+	return p_script.ptr() == static_cast<const Script *>(this);
 }
 StringName ELFScript::_get_instance_base_type() const {
 	if (has_script_metadata && !script_metadata.base_is_path && !script_metadata.base_class.empty()) {

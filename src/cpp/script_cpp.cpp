@@ -57,7 +57,7 @@ StringName CPPScript::_get_global_name() const {
 	return PathToGlobalName(this->path);
 }
 bool CPPScript::_inherits_script(const Ref<Script> &p_script) const {
-	return false;
+	return p_script.ptr() == static_cast<const Script *>(this);
 }
 StringName CPPScript::_get_instance_base_type() const {
 	return StringName("Sandbox");
