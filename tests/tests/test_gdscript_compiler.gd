@@ -5386,6 +5386,52 @@ func _engine_classify(n):
 		var v:
 			return "large " + str(v)
 
+func test_cross_type_equality():
+	# Godot registers no operator for `Array == int`, and evaluate() leaves NIL
+	# behind. NIL is a zero payload, which the fused branch read as `false`, so
+	# `v != 1` fell through into the equal arm. Values of different types are
+	# never equal, the answer the engine's own Variant comparison gives.
+	var gdscript_code = """
+func branch(v):
+	if v == 1:
+		return "one"
+	return "other"
+
+func equals(v):
+	return v == 1
+
+func differs(v):
+	return v != 1
+
+func matched(v):
+	match v:
+		1:
+			return "one"
+		_:
+			return "other"
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	for v in [[3, 4], "z", {"a": 1}, Vector2(1, 1), StringName("z")]:
+		assert_eq(s.vmcallv("branch", v), "other", "A subject of another type should take the else arm")
+		assert_eq(s.vmcallv("equals", v), false, "Cross-type == should answer false, not null")
+		assert_eq(s.vmcallv("differs", v), true, "Cross-type != should answer true, not null")
+		assert_eq(s.vmcallv("matched", v), "other", "A value pattern should decline another type")
+
+	# null compares against anything without an operator of its own.
+	assert_eq(s.vmcallv("equals", null), false, "null == 1 should be false")
+	assert_eq(s.vmcallv("differs", null), true, "null != 1 should be true")
+
+	# The equal case still answers equal.
+	assert_eq(s.vmcallv("branch", 1), "one", "An equal subject should take the then arm")
+	assert_eq(s.vmcallv("equals", 1), true, "1 == 1 should be true")
+	assert_eq(s.vmcallv("differs", 1), false, "1 != 1 should be false")
+	assert_eq(s.vmcallv("matched", 1), "one", "A value pattern should match an equal subject")
+
+	s.queue_free()
+
 func test_match_container_patterns():
 	# Array and dictionary patterns test a value's shape, which only the host can
 	# answer: type tag, then length, then elements or keys.

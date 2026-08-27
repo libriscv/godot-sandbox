@@ -3329,7 +3329,17 @@ bool RISCVCodeGen::folds_to_immediate(const IRInstruction& instr, size_t operand
 	if (other == std::get<int>(instr.operands[operand_index].value)) {
 		return false;
 	}
-	return int_op_takes_immediate(instr.opcode, value);
+	if (!int_op_takes_immediate(instr.opcode, value)) {
+		return false;
+	}
+	// RHS wins when both operands fold; LHS stays in its frame slot.
+	if (operand_index == 1) {
+		int64_t rhs_value;
+		if (constant_int(other, rhs_value) && int_op_takes_immediate(instr.opcode, rhs_value)) {
+			return false;
+		}
+	}
+	return true;
 }
 
 void RISCVCodeGen::plan_constants(const IRFunction& func) {

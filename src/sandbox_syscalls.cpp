@@ -1007,6 +1007,12 @@ APICALL(api_veval) {
 	result.mark_constructed();
 
 	machine.set_result(bool(valid));
+	if (UNLIKELY(!valid) && (op == Variant::OP_EQUAL || op == Variant::OP_NOT_EQUAL)) {
+		// No evaluator → NIL result; fused branches read NIL as false/equal.
+		// Different types are never equal (matches engine Variant comparison).
+		retp->set(emu, Variant(op == Variant::OP_NOT_EQUAL));
+		return;
+	}
 	retp->create(emu, std::move(result.get()));
 }
 

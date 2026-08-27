@@ -393,6 +393,11 @@ func test():
 	var m = a if a > b else b
 	return m * 10 + (1 if a < b else 0)
 )" },
+		{ "ternary_between_two_constants", R"(
+func test():
+	var v0 = ((20 if false else 0) >= (0 + 17))
+	return (((19 * 15) + (1 % 15)) + ((3 * 8) if (20 >= 18) else (6 if v0 else 12)))
+)" },
 		{ "deep_expression", R"(
 func test():
 	var a = 2
