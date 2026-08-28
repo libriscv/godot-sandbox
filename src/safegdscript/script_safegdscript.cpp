@@ -367,7 +367,14 @@ bool SafeGDScript::_is_placeholder_fallback_enabled() const {
 	return false;
 }
 Variant SafeGDScript::_get_rpc_config() const {
-	return Variant();
+	const Sandbox *sandbox = sandbox_for_safegdscript(this);
+	// RPC is an external, remotely-triggered entry into the guest. Publishing it
+	// for a sandbox with any restriction would bypass the host's intended trust
+	// boundary, so restricted instances expose no RPC methods at all.
+	if (sandbox == nullptr || !sandbox->is_fully_unrestricted()) {
+		return Variant();
+	}
+	return rpc_config;
 }
 
 static std::unordered_set<SafeGDScript *> live_scripts;
@@ -858,6 +865,15 @@ void SafeGDScript::update_methods_info(GDScriptCompilerBackend &p_compiler) {
 	this->methods_info.clear();
 	this->methods_doc.clear();
 	this->signals_info.clear();
+	this->rpc_config.clear();
+	for (const gdscript::RPCConfig &declared : p_compiler.rpc_configs()) {
+		Dictionary method;
+		method["rpc_mode"] = declared.rpc_mode;
+		method["transfer_mode"] = declared.transfer_mode;
+		method["call_local"] = declared.call_local;
+		method["channel"] = declared.channel;
+		this->rpc_config[StringName(String::utf8(declared.name.c_str(), declared.name.size()))] = method;
+	}
 
 	// Untyped parameter: NIL + NIL_IS_VARIANT; typed: no usage flags.
 	for (const gdscript::FunctionSignature &declared : p_compiler.signal_signatures()) {

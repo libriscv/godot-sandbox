@@ -61,6 +61,7 @@ public:
 	// Populated by every compile that reaches codegen, including output_elf=false.
 	const std::vector<FunctionSignature> &get_function_signatures() const { return m_signatures; }
 	const std::vector<FunctionSignature> &get_signal_signatures() const { return m_signals; }
+	const std::vector<RPCConfig> &get_rpc_configs() const { return m_rpc_configs; }
 	const std::vector<ClassSignature> &get_class_signatures() const { return m_class_signatures; }
 	const std::vector<ScriptConstant> &get_script_constants() const { return m_constants; }
 	const LineTable &get_line_table() const { return m_line_table; }
@@ -78,6 +79,7 @@ private:
 	CompilerError m_error_info;
 	std::vector<FunctionSignature> m_signatures;
 	std::vector<FunctionSignature> m_signals;
+	std::vector<RPCConfig> m_rpc_configs;
 	std::vector<ClassSignature> m_class_signatures;
 	std::vector<ScriptConstant> m_constants;
 	LineTable m_line_table;

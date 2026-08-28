@@ -6,6 +6,7 @@
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/ref.hpp>
 #include <godot_cpp/classes/script_language.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/templates/hash_map.hpp>
 #include <godot_cpp/templates/hash_set.hpp>
 #include <godot_cpp/templates/list.hpp>
@@ -169,6 +170,7 @@ private:
 	std::vector<gdscript::FunctionSignature> signatures;
 	gdscript::LineTable line_table;
 	std::vector<godot::MethodInfo> methods_info;
+	Dictionary rpc_config;
 	HashMap<StringName, Ref<SafeGDScriptClass>> nested_classes;
 	std::vector<godot::MethodInfo> signals_info;
 	// Declaration line and '##' description, keyed by member name.

@@ -37,6 +37,8 @@ public:
 	virtual String error_message() = 0;
 	virtual std::vector<gdscript::FunctionSignature> function_signatures() = 0;
 	virtual std::vector<gdscript::FunctionSignature> signal_signatures() = 0;
+	// Top-level @rpc methods; empty from a compiler that predates RPC metadata.
+	virtual std::vector<gdscript::RPCConfig> rpc_configs() = 0;
 	// Nested classes with an engine base; empty from a compiler that predates them.
 	virtual std::vector<gdscript::ClassSignature> class_signatures() = 0;
 	// File-scope `const` and `enum`; empty from a compiler that predates them.

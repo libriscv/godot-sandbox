@@ -123,6 +123,7 @@ public:
 
 	std::vector<gdscript::FunctionSignature> function_signatures() override { return m_signatures; }
 	std::vector<gdscript::FunctionSignature> signal_signatures() override { return m_signals; }
+	std::vector<gdscript::RPCConfig> rpc_configs() override { return m_rpc_configs; }
 	std::vector<gdscript::ClassSignature> class_signatures() override { return m_classes; }
 	std::vector<gdscript::ScriptConstant> script_constants() override { return m_constants; }
 	gdscript::LineTable line_table() override { return m_line_table; }
@@ -135,6 +136,7 @@ private:
 		m_error = from_utf8(p_compiler.get_error());
 		m_signatures = p_compiler.get_function_signatures();
 		m_signals = p_compiler.get_signal_signatures();
+		m_rpc_configs = p_compiler.get_rpc_configs();
 		m_classes = p_compiler.get_class_signatures();
 		m_constants = p_compiler.get_script_constants();
 		m_line_table = p_compiler.get_line_table();
@@ -158,6 +160,7 @@ private:
 	String m_error;
 	std::vector<gdscript::FunctionSignature> m_signatures;
 	std::vector<gdscript::FunctionSignature> m_signals;
+	std::vector<gdscript::RPCConfig> m_rpc_configs;
 	std::vector<gdscript::ClassSignature> m_classes;
 	std::vector<gdscript::ScriptConstant> m_constants;
 	gdscript::LineTable m_line_table;

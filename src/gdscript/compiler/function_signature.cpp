@@ -165,6 +165,47 @@ bool decode_function_signatures(const uint8_t *data, size_t size,
 	return true;
 }
 
+std::vector<uint8_t> encode_rpc_configs(const std::vector<RPCConfig> &configs) {
+	std::vector<uint8_t> out;
+	write_scalar<uint32_t>(out, uint32_t(configs.size()));
+	for (const RPCConfig &config : configs) {
+		write_string(out, config.name);
+		write_scalar<int32_t>(out, config.rpc_mode);
+		write_scalar<int32_t>(out, config.transfer_mode);
+		write_scalar<uint8_t>(out, config.call_local ? 1 : 0);
+		write_scalar<int32_t>(out, config.channel);
+	}
+	return out;
+}
+
+bool decode_rpc_configs(const uint8_t *data, size_t size,
+		std::vector<RPCConfig> &out) {
+	out.clear();
+	Reader reader{ data, size };
+	const uint32_t count = reader.scalar<uint32_t>();
+	if (!reader.ok || count > size) {
+		return false;
+	}
+	out.reserve(count);
+	for (uint32_t i = 0; i < count; i++) {
+		RPCConfig config;
+		config.name = reader.string();
+		config.rpc_mode = reader.scalar<int32_t>();
+		config.transfer_mode = reader.scalar<int32_t>();
+		config.call_local = reader.scalar<uint8_t>() != 0;
+		config.channel = reader.scalar<int32_t>();
+		if (!reader.ok || config.name.empty() ||
+				(config.rpc_mode != 1 && config.rpc_mode != 2) ||
+				(config.transfer_mode < 0 || config.transfer_mode > 2) ||
+				config.channel < 0) {
+			out.clear();
+			return false;
+		}
+		out.push_back(std::move(config));
+	}
+	return reader.ok && reader.offset == size;
+}
+
 std::vector<uint8_t> encode_class_signatures(const std::vector<ClassSignature> &classes) {
 	std::vector<uint8_t> out;
 	write_scalar<uint32_t>(out, uint32_t(classes.size()));

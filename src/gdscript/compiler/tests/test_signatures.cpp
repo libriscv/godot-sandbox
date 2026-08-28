@@ -294,6 +294,27 @@ static void test_wire_format_round_trip() {
 	std::cout << "  ✓ the published table survives the wire format intact" << std::endl;
 }
 
+static void test_rpc_wire_format_round_trip() {
+	const std::vector<RPCConfig> original = {
+		{ "default_rpc", 2, 2, false, 0 },
+		{ "custom_rpc", 1, 0, true, 9 },
+	};
+	const std::vector<uint8_t> blob = encode_rpc_configs(original);
+	std::vector<RPCConfig> decoded;
+	assert(decode_rpc_configs(blob.data(), blob.size(), decoded));
+	assert(decoded.size() == original.size());
+	assert(decoded[0].name == "default_rpc" && decoded[0].rpc_mode == 2);
+	assert(decoded[1].name == "custom_rpc" && decoded[1].rpc_mode == 1);
+	assert(decoded[1].transfer_mode == 0 && decoded[1].call_local);
+	assert(decoded[1].channel == 9);
+
+	std::vector<RPCConfig> truncated;
+	assert(!decode_rpc_configs(blob.data(), blob.size() - 1, truncated));
+	assert(truncated.empty());
+
+	std::cout << "  ✓ the RPC table survives the wire format intact" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Function Signature Tests ===" << std::endl << std::endl;
 
@@ -309,6 +330,7 @@ int main() {
 	test_declaration_line();
 	test_doc_comment();
 	test_wire_format_round_trip();
+	test_rpc_wire_format_round_trip();
 
 	std::cout << std::endl << "All function signature tests passed!" << std::endl;
 	return 0;

@@ -85,13 +85,17 @@ Program Parser::parse() {
 			// Stacked attributes: `@export_range(0, 10) @tool var x`.
 			bool is_export = false;
 			bool is_onready = false;
+			std::optional<RPCConfig> rpc_config;
 			ExportHint export_hint;
 			while (check(TokenType::AT)) {
-				is_export = parse_attribute(export_hint, &is_onready) || is_export;
+				is_export = parse_attribute(export_hint, &is_onready, &rpc_config) || is_export;
 				skip_newlines();
 			}
 			is_static = match(TokenType::STATIC) || is_static;
 			if (check(TokenType::VAR) || check(TokenType::CONST)) {
+				if (rpc_config.has_value()) {
+					error("@rpc can only be applied to a function");
+				}
 				const bool is_const = check(TokenType::CONST);
 				advance();
 				if (is_onready && is_const) {
@@ -117,10 +121,21 @@ Program Parser::parse() {
 				if (is_export) {
 					error("Expected a variable declaration after '@export'");
 				}
-				program.functions.push_back(parse_function());
+				if (rpc_config.has_value() && is_static) {
+					error("@rpc cannot be applied to a static function");
+				}
+				FunctionDecl function = parse_function();
+				if (rpc_config.has_value()) {
+					rpc_config->name = function.name;
+					function.rpc_config = std::move(rpc_config);
+				}
+				program.functions.push_back(std::move(function));
 				saw_declaration = true;
 			} else if (is_export) {
 				error("Expected a variable declaration after '@export'");
+				synchronize();
+			} else if (rpc_config.has_value()) {
+				error("@rpc can only be applied to a function");
 				synchronize();
 			}
 			// File-level annotation (@tool etc.) — no declaration follows.
@@ -1926,7 +1941,8 @@ void Parser::skip_type_arguments() {
 	}
 }
 
-bool Parser::parse_attribute(ExportHint& hint, bool* is_onready) {
+bool Parser::parse_attribute(ExportHint& hint, bool* is_onready,
+	std::optional<RPCConfig>* rpc_config) {
 	consume(TokenType::AT, "Expected '@' for attribute");
 
 	const Token& name = consume(TokenType::IDENTIFIER, "Expected an attribute name after '@'");
@@ -1963,7 +1979,76 @@ bool Parser::parse_attribute(ExportHint& hint, bool* is_onready) {
 		m_saw_tool = true;
 		return false;
 	}
-	if (name.lexeme == "icon" || name.lexeme == "rpc" ||
+	if (name.lexeme == "rpc") {
+		if (rpc_config == nullptr) {
+			error("@rpc can only be applied to a function", name.line, name.column);
+			return false;
+		}
+		if (rpc_config->has_value()) {
+			error("@rpc can only be used once per function", name.line, name.column);
+			return false;
+		}
+		if (arguments.size() > 4) {
+			error("@rpc accepts at most four arguments", name.line, name.column);
+			return false;
+		}
+
+		RPCConfig config;
+		unsigned locality_args = 0;
+		unsigned permission_args = 0;
+		unsigned transfer_args = 0;
+		for (size_t i = 0; i < arguments.size(); i++) {
+			const ExportArgument& argument = arguments[i];
+			if (i == 3) {
+				const double channel = argument.number;
+				if (argument.kind != ExportArgument::Kind::NUMBER || channel < 0.0 ||
+						channel > double(INT32_MAX) || channel != double(int32_t(channel))) {
+					error("The fourth @rpc argument must be a non-negative integer channel",
+						argument.line, argument.column);
+					return false;
+				}
+				config.channel = int32_t(channel);
+				continue;
+			}
+			if (argument.kind != ExportArgument::Kind::STRING) {
+				error("The first three @rpc arguments must be string options",
+					argument.line, argument.column);
+				return false;
+			}
+			if (argument.text == "call_local") {
+				locality_args++;
+				config.call_local = true;
+			} else if (argument.text == "call_remote") {
+				locality_args++;
+				config.call_local = false;
+			} else if (argument.text == "any_peer") {
+				permission_args++;
+				config.rpc_mode = 1;
+			} else if (argument.text == "authority") {
+				permission_args++;
+				config.rpc_mode = 2;
+			} else if (argument.text == "unreliable") {
+				transfer_args++;
+				config.transfer_mode = 0;
+			} else if (argument.text == "unreliable_ordered") {
+				transfer_args++;
+				config.transfer_mode = 1;
+			} else if (argument.text == "reliable") {
+				transfer_args++;
+				config.transfer_mode = 2;
+			} else {
+				error("Invalid @rpc option: " + argument.text, argument.line, argument.column);
+				return false;
+			}
+		}
+		if (locality_args > 1 || permission_args > 1 || transfer_args > 1) {
+			error("Each @rpc option category can be specified only once", name.line, name.column);
+			return false;
+		}
+		*rpc_config = std::move(config);
+		return false;
+	}
+	if (name.lexeme == "icon" ||
 		name.lexeme == "warning_ignore" || name.lexeme == "warning_ignore_start" ||
 		name.lexeme == "warning_ignore_restore" || name.lexeme == "static_unload" ||
 		name.lexeme == "abstract")

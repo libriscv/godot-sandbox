@@ -4075,6 +4075,49 @@ func _compile_and_load(gdscript_code: String, instructions_max: int = 4000) -> S
 	s.set_instructions_max(instructions_max)
 	return s
 
+func test_sgd_rpc_is_published_only_while_unrestricted():
+	var script := SafeGDScript.new()
+	script.set_source_code("""
+@rpc
+func authority_default():
+	return 1
+
+@rpc("any_peer", "call_local", "unreliable_ordered", 7)
+func customized(value):
+	return value
+""")
+	assert_eq(script.get_compile_error(), "")
+
+	var node := Node.new()
+	node.set_script(script)
+	var config: Dictionary = script.get_rpc_config()
+	assert_eq(config.size(), 2)
+	assert_eq(config["authority_default"], {
+		"rpc_mode": MultiplayerAPI.RPC_MODE_AUTHORITY,
+		"transfer_mode": MultiplayerPeer.TRANSFER_MODE_RELIABLE,
+		"call_local": false,
+		"channel": 0,
+	})
+	assert_eq(config["customized"], {
+		"rpc_mode": MultiplayerAPI.RPC_MODE_ANY_PEER,
+		"transfer_mode": MultiplayerPeer.TRANSFER_MODE_UNRELIABLE_ORDERED,
+		"call_local": true,
+		"channel": 7,
+	})
+
+	node.call("add_allowed_object", node)
+	assert_null(script.get_rpc_config(), "a partial restriction also suppresses RPCs")
+	node.call("clear_allowed_objects")
+	assert_eq((script.get_rpc_config() as Dictionary).size(), 2)
+
+	node.set("restrictions", true)
+	assert_null(script.get_rpc_config(), "restricted SafeGDScript instances publish no RPCs")
+	node.set("restrictions", false)
+	assert_eq((script.get_rpc_config() as Dictionary).size(), 2,
+		"removing every restriction restores the declared RPCs")
+	node.free()
+	await get_tree().process_frame
+
 func test_bitwise_operators():
 	var gdscript_code = """
 func bit_and(a : int, b : int):

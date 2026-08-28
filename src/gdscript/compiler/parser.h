@@ -118,7 +118,8 @@ private:
 	std::string parse_type_name();
 	std::string parse_return_type();
 	void skip_type_arguments();
-	bool parse_attribute(ExportHint& hint, bool* is_onready = nullptr);
+	bool parse_attribute(ExportHint& hint, bool* is_onready = nullptr,
+		std::optional<RPCConfig>* rpc_config = nullptr);
 	bool m_saw_tool = false;
 	void hoist_onready_initializers(Program& program);
 	std::vector<ExportArgument> parse_attribute_arguments();

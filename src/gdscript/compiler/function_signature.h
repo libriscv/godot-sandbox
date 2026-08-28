@@ -44,6 +44,18 @@ struct FunctionSignature {
 	bool is_coroutine = false;
 };
 
+// One method exposed through Godot's high-level multiplayer API. The numeric
+// values deliberately match MultiplayerAPI::RPCMode and
+// MultiplayerPeer::TransferMode without making the standalone compiler depend
+// on Godot headers.
+struct RPCConfig {
+	std::string name;
+	int32_t rpc_mode = 2; // RPC_MODE_AUTHORITY
+	int32_t transfer_mode = 2; // TRANSFER_MODE_RELIABLE
+	bool call_local = false;
+	int32_t channel = 0;
+};
+
 // One nested class with an engine base. The host makes a Script resource out of
 // it and attaches an instance of that to the object the guest built.
 struct ClassField {
@@ -117,5 +129,11 @@ bool decode_class_signatures(const uint8_t *data, size_t size,
 std::vector<uint8_t> encode_script_constants(const std::vector<ScriptConstant> &constants);
 bool decode_script_constants(const uint8_t *data, size_t size,
 	std::vector<ScriptConstant> &out);
+
+// Own blob and compiler entry point, so older compiler ELFs simply publish no
+// RPCs instead of making an existing metadata format undecodable.
+std::vector<uint8_t> encode_rpc_configs(const std::vector<RPCConfig> &configs);
+bool decode_rpc_configs(const uint8_t *data, size_t size,
+	std::vector<RPCConfig> &out);
 
 } // namespace gdscript

@@ -1,7 +1,9 @@
 #pragma once
 #include "export_hints.h"
+#include "function_signature.h"
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 #include <string>
 #include <variant>
@@ -347,6 +349,7 @@ struct FunctionDecl {
 	bool is_coroutine = false;
 	// `static func` in a class body: lifted without the instance parameter.
 	bool is_static = false;
+	std::optional<RPCConfig> rpc_config;
 	int chain_link = 0;
 	// Non-empty when an override displaced this copy onto a mangled symbol.
 	std::string chain_name;

@@ -127,6 +127,18 @@ public:
 		return decode_signatures("get_signal_signatures", "signal table");
 	}
 
+	std::vector<gdscript::RPCConfig> rpc_configs() override {
+		std::vector<gdscript::RPCConfig> configs;
+		const PackedByteArray bytes = blob("get_rpc_configs");
+		if (bytes.is_empty()) {
+			return configs;
+		}
+		if (!gdscript::decode_rpc_configs(bytes.ptr(), size_t(bytes.size()), configs)) {
+			ERR_PRINT("SafeGDScript: the compiler returned a malformed RPC configuration table.");
+		}
+		return configs;
+	}
+
 	std::vector<gdscript::ClassSignature> class_signatures() override {
 		std::vector<gdscript::ClassSignature> classes;
 		const PackedByteArray bytes = blob("get_class_signatures");

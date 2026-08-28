@@ -436,6 +436,37 @@ static void test_statement_annotations() {
 	std::cout << "  ✓ statement-level annotations parse and drop" << std::endl;
 }
 
+static void test_rpc_annotations() {
+	std::cout << "Testing @rpc annotations..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"@rpc\n"
+		"func authority_default():\n\treturn 1\n"
+		"@rpc(\"unreliable_ordered\", \"any_peer\", \"call_local\", 7)\n"
+		"func customized(value):\n\treturn value\n");
+	assert(ir.rpc_configs.size() == 2);
+	assert(ir.rpc_configs[0].name == "authority_default");
+	assert(ir.rpc_configs[0].rpc_mode == 2);
+	assert(ir.rpc_configs[0].transfer_mode == 2);
+	assert(!ir.rpc_configs[0].call_local);
+	assert(ir.rpc_configs[0].channel == 0);
+	assert(ir.rpc_configs[1].name == "customized");
+	assert(ir.rpc_configs[1].rpc_mode == 1);
+	assert(ir.rpc_configs[1].transfer_mode == 1);
+	assert(ir.rpc_configs[1].call_local);
+	assert(ir.rpc_configs[1].channel == 7);
+
+	assert(refuses("@rpc(\"unknown\")\nfunc f():\n\tpass\n"));
+	assert(refuses("@rpc(any_peer)\nfunc f():\n\tpass\n"));
+	assert(refuses("@rpc(\"authority\", \"any_peer\")\nfunc f():\n\tpass\n"));
+	assert(refuses("@rpc(\"authority\", \"call_remote\", \"reliable\", -1)\n"
+		"func f():\n\tpass\n"));
+	assert(refuses("@rpc\nvar value = 1\n"));
+	assert(refuses("func f():\n\t@rpc\n\treturn 1\n"));
+
+	std::cout << "  ✓ @rpc publishes validated method configuration" << std::endl;
+}
+
 // Qualified type names (`A.B`) parse and drop; only the engine can resolve them.
 static void test_qualified_type_names() {
 	std::cout << "Testing qualified type names..." << std::endl;
@@ -662,6 +693,7 @@ int main() {
 		test_engine_class_constant();
 		test_declarations();
 		test_statement_annotations();
+		test_rpc_annotations();
 		test_qualified_type_names();
 		test_for_over_an_integer();
 		test_assert();

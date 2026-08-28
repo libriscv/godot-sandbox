@@ -355,6 +355,10 @@ struct IRProgram {
 
 	std::vector<FunctionSignature> signals;
 
+	// Top-level methods marked @rpc. Displaced base implementations are omitted;
+	// only the method visible on the final script can be remotely invoked.
+	std::vector<RPCConfig> rpc_configs;
+
 	// One per nested class with an engine base; the host attaches a Script to each.
 	std::vector<ClassSignature> class_signatures;
 

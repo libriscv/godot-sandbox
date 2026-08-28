@@ -22,6 +22,7 @@ PUBLIC Variant compile(String code)
 	auto elf_data = compiler.compile(code.utf8(), options);
 	gdscript_remember_signatures(compiler);
 	gdscript_remember_signals(compiler);
+	gdscript_remember_rpc_configs(compiler);
 	gdscript_remember_classes(compiler);
 	gdscript_remember_constants(compiler);
 	gdscript_remember_line_table(compiler);
@@ -59,6 +60,7 @@ PUBLIC Variant compile_profiled(String code)
 	auto elf_data = compiler.compile(code.utf8(), options);
 	gdscript_remember_signatures(compiler);
 	gdscript_remember_signals(compiler);
+	gdscript_remember_rpc_configs(compiler);
 	gdscript_remember_classes(compiler);
 	gdscript_remember_constants(compiler);
 	gdscript_remember_line_table(compiler);
@@ -94,6 +96,7 @@ PUBLIC Variant compile_debug(String code, PackedInt32Array breakpoints)
 	auto elf_data = compiler.compile(code.utf8(), options);
 	gdscript_remember_signatures(compiler);
 	gdscript_remember_signals(compiler);
+	gdscript_remember_rpc_configs(compiler);
 	gdscript_remember_classes(compiler);
 	gdscript_remember_constants(compiler);
 	gdscript_remember_line_table(compiler);
@@ -148,6 +151,11 @@ PUBLIC Variant get_function_signatures()
 PUBLIC Variant get_signal_signatures()
 {
 	return gdscript_signals_to_variant();
+}
+
+PUBLIC Variant get_rpc_configs()
+{
+	return gdscript_rpc_configs_to_variant();
 }
 
 PUBLIC Variant get_class_signatures()
@@ -230,4 +238,3 @@ PUBLIC Variant get_script_native_base_is_path()
 {
 	return gdscript_last_native_base_is_path();
 }
-

@@ -50,6 +50,21 @@ inline Variant gdscript_signals_to_variant() {
 	return PackedByteArray(gdscript::encode_function_signatures(gdscript_last_signals()));
 }
 
+// @rpc methods. Kept in an independent blob so old hosts and compiler ELFs
+// remain compatible in both directions.
+inline std::vector<gdscript::RPCConfig> &gdscript_last_rpc_configs() {
+	static std::vector<gdscript::RPCConfig> configs;
+	return configs;
+}
+
+inline void gdscript_remember_rpc_configs(const gdscript::Compiler &compiler) {
+	gdscript_last_rpc_configs() = compiler.get_rpc_configs();
+}
+
+inline Variant gdscript_rpc_configs_to_variant() {
+	return PackedByteArray(gdscript::encode_rpc_configs(gdscript_last_rpc_configs()));
+}
+
 // Nested classes with an engine base. Own blob, own entry point: appending a
 // section to the signature blob above would fail to decode for every host built
 // against an older format.

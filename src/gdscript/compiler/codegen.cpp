@@ -399,6 +399,11 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	for (const auto& decl : program.functions) {
 		ir_program.signatures.push_back(build_signature(decl));
 		ir_program.functions.push_back(generate_function(decl));
+		if (decl.rpc_config.has_value() && decl.chain_name.empty()) {
+			RPCConfig config = *decl.rpc_config;
+			config.name = decl.name;
+			ir_program.rpc_configs.push_back(std::move(config));
+		}
 	}
 
 	// Inline accessor bodies (`@x_setter`/`@x_getter`, hidden from method list).
