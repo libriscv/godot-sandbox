@@ -56,12 +56,14 @@ void RISCVCodeGen::emit_debug_entry() {
 	emit_sd(REG_T2, REG_T1, frames + DebugLayout::FUNCTION_INDEX_OFF);
 	emit_sd(REG_RA, REG_T1, frames + DebugLayout::RETURN_ADDRESS_OFF);
 	emit_sd(REG_SP, REG_T1, frames + DebugLayout::FRAME_SP_OFF);
+	emit_sd(REG_TP, REG_T1, frames + DebugLayout::INSTANCE_BASE_OFF);
 
 	define_label(label_over);
 }
 
-// Saves/restores a0 and a7 around ECALL_BREAKPOINT. 16B keeps sp aligned.
-void RISCVCodeGen::emit_breakpoint(int32_t line, bool installed) {
+// Saves/restores a0-a2 and a7 around ECALL_BREAKPOINT.
+void RISCVCodeGen::emit_breakpoint(int32_t line, bool installed, bool user_stop,
+		bool source_stop) {
 	// Maintain ascending, deduplicated installed-breakpoint list.
 	if (installed) {
 		const auto at = std::lower_bound(m_installed_breakpoints.begin(),
@@ -72,17 +74,25 @@ void RISCVCodeGen::emit_breakpoint(int32_t line, bool installed) {
 	}
 
 	m_emitting_breakpoint = true;
-	emit_addi(REG_SP, REG_SP, -16);
+	// The debugger reads named values from their canonical frame slots.
+	spill_all_registers();
+	emit_addi(REG_SP, REG_SP, -32);
 	emit_sd(REG_A0, REG_SP, 0);
-	emit_sd(REG_A7, REG_SP, 8);
+	emit_sd(REG_A1, REG_SP, 8);
+	emit_sd(REG_A2, REG_SP, 16);
+	emit_sd(REG_A7, REG_SP, 24);
 
 	emit_li(REG_A0, line);
+	emit_li(REG_A1, user_stop ? 1 : 0);
+	emit_li(REG_A2, source_stop ? 1 : 0);
 	emit_li(REG_A7, ECALL_BREAKPOINT);
 	emit_ecall();
 
 	emit_ld(REG_A0, REG_SP, 0);
-	emit_ld(REG_A7, REG_SP, 8);
-	emit_addi(REG_SP, REG_SP, 16);
+	emit_ld(REG_A1, REG_SP, 8);
+	emit_ld(REG_A2, REG_SP, 16);
+	emit_ld(REG_A7, REG_SP, 24);
+	emit_addi(REG_SP, REG_SP, 32);
 	m_emitting_breakpoint = false;
 }
 

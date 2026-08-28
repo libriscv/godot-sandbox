@@ -1,5 +1,6 @@
 #include "script_language_safegdscript.h"
 #include "compiler_backend.h"
+#include "editor_analysis_safegdscript.h"
 #include "../script_language_common.h"
 #include "script_safegdscript.h"
 #include "../sandbox.h"
@@ -12,10 +13,15 @@ void safegdscript_sync_engine_breakpoints();
 #include <godot_cpp/classes/editor_settings.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/dir_access.hpp>
+#include <godot_cpp/classes/input_map.hpp>
+#include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/classes/theme.hpp>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -42,6 +48,37 @@ bool is_global_enum(const std::string &name);
 static constexpr const char *icon_path = "res://addons/godot_sandbox/SafeGDScript.svg";
 
 static SafeGDScriptLanguage *safegdscript_language;
+
+void SafeGDScriptLanguage::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("editor_validate", "script", "path", "functions", "errors",
+			"warnings", "safe_lines"), &SafeGDScriptLanguage::editor_validate,
+			DEFVAL(true), DEFVAL(true), DEFVAL(true), DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("editor_complete", "code", "path", "owner"),
+			&SafeGDScriptLanguage::editor_complete, DEFVAL(nullptr));
+	ClassDB::bind_method(D_METHOD("editor_lookup", "code", "symbol", "path", "owner"),
+			&SafeGDScriptLanguage::editor_lookup, DEFVAL(nullptr));
+}
+
+Dictionary SafeGDScriptLanguage::editor_validate(const String &p_script, const String &p_path,
+		bool p_functions, bool p_errors, bool p_warnings, bool p_safe_lines) const {
+	ERR_FAIL_COND_V_MSG(!Engine::get_singleton()->is_editor_hint(), Dictionary(),
+			"SafeGDScript.editor_validate() is available only in editor mode.");
+	return _validate(p_script, p_path, p_functions, p_errors, p_warnings, p_safe_lines);
+}
+
+Dictionary SafeGDScriptLanguage::editor_complete(const String &p_code, const String &p_path,
+		Object *p_owner) const {
+	ERR_FAIL_COND_V_MSG(!Engine::get_singleton()->is_editor_hint(), Dictionary(),
+			"SafeGDScript.editor_complete() is available only in editor mode.");
+	return _complete_code(p_code, p_path, p_owner);
+}
+
+Dictionary SafeGDScriptLanguage::editor_lookup(const String &p_code, const String &p_symbol,
+		const String &p_path, Object *p_owner) const {
+	ERR_FAIL_COND_V_MSG(!Engine::get_singleton()->is_editor_hint(), Dictionary(),
+			"SafeGDScript.editor_lookup() is available only in editor mode.");
+	return _lookup_code(p_code, p_symbol, p_path, p_owner);
+}
 
 namespace {
 
@@ -116,6 +153,7 @@ struct SourceStruct {
 
 struct SourceSymbols {
 	std::vector<SourceSymbol> functions;
+	std::vector<SourceSymbol> signals;
 	std::vector<SourceSymbol> variables;
 	std::vector<SourceSymbol> constants;
 	std::vector<SourceStruct> structs;
@@ -225,6 +263,14 @@ SourceSymbols scan_source(const String &p_code) {
 			}
 		} else if (line.begins_with("extends ")) {
 			symbols.base_class = identifier_at(line, skip_spaces(line, 8));
+		} else if (line.begins_with("signal ")) {
+			const int name_start = skip_spaces(line, 7);
+			const String name = identifier_at(line, name_start);
+			PackedStringArray parameters;
+			scan_parameters(line, parameters, symbols.declared_types);
+			if (!name.is_empty()) {
+				symbols.signals.push_back({ name, i + 1, parameters });
+			}
 		} else if (line.begins_with("var ")) {
 			const int name_start = skip_spaces(line, 4);
 			const String name = identifier_at(line, name_start);
@@ -274,6 +320,10 @@ struct CompletionContext {
 	bool member = false; // Completing after a '.'.
 	bool annotation = false; // Completing after a '@'.
 	bool func_definition = false; // Completing the name in a 'func ' line.
+	bool type_position = false; // After ':', '->', 'is', 'as', or 'extends'.
+	char32_t scene_sugar = 0; // '$' or '%' immediately before the path prefix.
+	String string_call; // Recognized call whose string argument owns the caret.
+	String string_prefix;
 	bool valid = true; // False inside a comment or a string literal.
 	// The call the caret sits inside, for the signature shown above the caret
 	// while its arguments are typed. Empty name when it sits inside none.
@@ -282,9 +332,7 @@ struct CompletionContext {
 	int call_argument = 0; // Which argument the caret is on, counting from zero.
 };
 
-// Fill in the call the caret sits inside. Only the caret's own line is
-// considered: a call split across lines is rare enough not to be worth
-// guessing at, and guessing wrong puts the wrong signature on screen.
+// Fill in the call the caret sits inside, including calls split across lines.
 void find_enclosing_call(const String &p_code, int p_line_start, int p_caret, CompletionContext &r_ctx) {
 	struct OpenBracket {
 		int offset; // Where the '(' is, or -1 for a bracket that opens no call.
@@ -293,8 +341,13 @@ void find_enclosing_call(const String &p_code, int p_line_start, int p_caret, Co
 	std::vector<OpenBracket> open;
 	bool in_string = false;
 	char32_t quote = 0;
-	for (int i = p_line_start; i < p_caret; i++) {
+	bool in_comment = false;
+	for (int i = 0; i < p_caret; i++) {
 		const char32_t c = p_code[i];
+		if (in_comment) {
+			if (c == '\n') in_comment = false;
+			continue;
+		}
 		if (in_string) {
 			if (c == '\\') {
 				i++;
@@ -306,10 +359,12 @@ void find_enclosing_call(const String &p_code, int p_line_start, int p_caret, Co
 		if (c == '"' || c == '\'') {
 			in_string = true;
 			quote = c;
+		} else if (c == '#') {
+			in_comment = true;
 		} else if (c == '(') {
 			// A '(' straight after an identifier opens a call; one after an
 			// operator only groups an expression.
-			const bool is_call = i > p_line_start && is_identifier_char(p_code[i - 1]);
+			const bool is_call = i > 0 && is_identifier_char(p_code[i - 1]);
 			open.push_back({ is_call ? i : -1, 0 });
 		} else if (c == '[' || c == '{') {
 			open.push_back({ -1, 0 });
@@ -328,15 +383,15 @@ void find_enclosing_call(const String &p_code, int p_line_start, int p_caret, Co
 		}
 		const int name_end = open[size_t(i)].offset;
 		int name_start = name_end;
-		while (name_start > p_line_start && is_identifier_char(p_code[name_start - 1])) {
+		while (name_start > 0 && is_identifier_char(p_code[name_start - 1])) {
 			name_start--;
 		}
 		r_ctx.call_name = p_code.substr(name_start, name_end - name_start);
 		r_ctx.call_argument = open[size_t(i)].argument;
-		if (name_start > p_line_start && p_code[name_start - 1] == '.') {
+		if (name_start > 0 && p_code[name_start - 1] == '.') {
 			int receiver_end = name_start - 1;
 			int receiver_start = receiver_end;
-			while (receiver_start > p_line_start && is_identifier_char(p_code[receiver_start - 1])) {
+			while (receiver_start > 0 && is_identifier_char(p_code[receiver_start - 1])) {
 				receiver_start--;
 			}
 			r_ctx.call_receiver = p_code.substr(receiver_start, receiver_end - receiver_start);
@@ -367,6 +422,7 @@ CompletionContext analyze_completion(const String &p_code) {
 	// Never complete inside a comment or an unterminated string literal.
 	bool in_string = false;
 	char32_t quote = 0;
+	int quote_start = -1;
 	for (int i = line_start; i < caret; i++) {
 		const char32_t c = p_code[i];
 		if (in_string) {
@@ -378,13 +434,23 @@ CompletionContext analyze_completion(const String &p_code) {
 		} else if (c == '"' || c == '\'') {
 			in_string = true;
 			quote = c;
+			quote_start = i;
 		} else if (c == '#') {
 			ctx.valid = false;
 			return ctx;
 		}
 	}
 	if (in_string) {
-		ctx.valid = false;
+		ctx.string_prefix = p_code.substr(quote_start + 1, caret - quote_start - 1);
+		int at = quote_start - 1;
+		while (at >= line_start && (p_code[at] == ' ' || p_code[at] == '\t')) at--;
+		if (at >= line_start && p_code[at] == '(') {
+			int end = at--;
+			while (at >= line_start && is_identifier_char(p_code[at])) at--;
+			ctx.string_call = p_code.substr(at + 1, end - at - 1);
+		}
+		find_enclosing_call(p_code, line_start, caret, ctx);
+		ctx.valid = !ctx.string_call.is_empty();
 		return ctx;
 	}
 
@@ -394,6 +460,10 @@ CompletionContext analyze_completion(const String &p_code) {
 	}
 	ctx.prefix = p_code.substr(start, caret - start);
 	find_enclosing_call(p_code, line_start, caret, ctx);
+	if (start > line_start && (p_code[start - 1] == '$' || p_code[start - 1] == '%')) {
+		ctx.scene_sugar = p_code[start - 1];
+		return ctx;
+	}
 
 	if (start > line_start && p_code[start - 1] == '@') {
 		ctx.annotation = true;
@@ -413,6 +483,8 @@ CompletionContext analyze_completion(const String &p_code) {
 	// "func <caret>" means the user is naming a function: offer overridable ones.
 	const String head = p_code.substr(line_start, start - line_start).strip_edges();
 	ctx.func_definition = (head == "func" || head == "static func");
+	ctx.type_position = head.ends_with(":") || head.ends_with("->") ||
+			head.ends_with(" is") || head.ends_with(" as") || head == "extends";
 	return ctx;
 }
 
@@ -465,6 +537,186 @@ void add_option(Array &r_options, int p_kind, const String &p_display, const Str
 	option["default_value"] = Variant();
 	option["location"] = p_location;
 	r_options.push_back(option);
+}
+
+void add_resource_paths(Array &r_options, const String &p_directory, const String &p_prefix,
+		const CompletionColors &p_colors, int p_depth = 0) {
+	if (p_depth > 16 || r_options.size() >= 512) return;
+	for (const String &file : DirAccess::get_files_at(p_directory)) {
+		if (file.ends_with(".import") || file.begins_with(".")) continue;
+		const String path = p_directory.path_join(file);
+		if (path.begins_with(p_prefix)) {
+			add_option(r_options, ScriptLanguageExtension::CODE_COMPLETION_KIND_FILE_PATH,
+					path, path, p_colors.text);
+		}
+	}
+	for (const String &directory : DirAccess::get_directories_at(p_directory)) {
+		if (directory.begins_with(".")) continue;
+		add_resource_paths(r_options, p_directory.path_join(directory), p_prefix, p_colors, p_depth + 1);
+	}
+}
+
+void add_node_paths(Array &r_options, Node *p_root, Node *p_node, const String &p_prefix,
+		const CompletionColors &p_colors, int p_depth = 0) {
+	if (p_root == nullptr || p_node == nullptr || p_depth > 64 || r_options.size() >= 512) return;
+	if (p_node != p_root) {
+		const String path = String(p_root->get_path_to(p_node));
+		if (path.begins_with(p_prefix)) {
+			add_option(r_options, ScriptLanguageExtension::CODE_COMPLETION_KIND_NODE_PATH,
+					path, path, p_colors.member);
+		}
+		if (p_node->is_unique_name_in_owner()) {
+			const String unique = "%" + String(p_node->get_name());
+			if (unique.begins_with(p_prefix)) {
+				add_option(r_options, ScriptLanguageExtension::CODE_COMPLETION_KIND_NODE_PATH,
+						unique, unique, p_colors.member);
+			}
+		}
+	}
+	const TypedArray<Node> children = p_node->get_children();
+	for (int64_t i = 0; i < children.size(); i++) {
+		add_node_paths(r_options, p_root, Object::cast_to<Node>(children[i]), p_prefix, p_colors,
+				p_depth + 1);
+	}
+}
+
+void add_scene_sugar_options(Array &r_options, Node *p_root, Node *p_node,
+		char32_t p_sugar, const String &p_prefix, const CompletionColors &p_colors,
+		int p_depth = 0) {
+	if (p_root == nullptr || p_node == nullptr || p_depth > 64 || r_options.size() >= 512) return;
+	if (p_node != p_root) {
+		if (p_sugar == '$') {
+			const String path = String(p_root->get_path_to(p_node));
+			if (path.begins_with(p_prefix)) add_option(r_options,
+					ScriptLanguageExtension::CODE_COMPLETION_KIND_NODE_PATH,
+					String("$") + path, path, p_colors.member);
+		} else if (p_sugar == '%' && p_node->is_unique_name_in_owner()) {
+			const String name = String(p_node->get_name());
+			if (name.begins_with(p_prefix)) add_option(r_options,
+					ScriptLanguageExtension::CODE_COMPLETION_KIND_NODE_PATH,
+					String("%") + name, name, p_colors.member);
+		}
+	}
+	const TypedArray<Node> children = p_node->get_children();
+	for (int64_t i = 0; i < children.size(); i++) {
+		add_scene_sugar_options(r_options, p_root, Object::cast_to<Node>(children[i]),
+				p_sugar, p_prefix, p_colors, p_depth + 1);
+	}
+}
+
+void add_string_context_options(Array &r_options, const CompletionContext &p_ctx,
+		const SourceSymbols &p_symbols, const StringName &p_owner_class, Object *p_owner,
+		const CompletionColors &p_colors) {
+	const String call = p_ctx.string_call;
+	if (call == "preload" || call == "load" || call == "icon") {
+		add_resource_paths(r_options, "res://", p_ctx.string_prefix, p_colors);
+		return;
+	}
+	if (call == "export_file" || call == "export_global_file") {
+		static const char *filters[] = { "*.tscn", "*.tres", "*.gd", "*.sgd", "*.png",
+			"*.svg", "*.wav", "*.ogg", "*.json", "*.*", nullptr };
+		for (const char **filter = filters; *filter != nullptr; filter++) {
+			const String value(*filter);
+			if (value.begins_with(p_ctx.string_prefix)) add_option(r_options,
+					ScriptLanguageExtension::CODE_COMPLETION_KIND_PLAIN_TEXT,
+					value, value, p_colors.text);
+		}
+		return;
+	}
+	if (call == "rpc") {
+		static const char *rpc_options[] = { "authority", "any_peer", "call_local", "call_remote",
+			"reliable", "unreliable", "unreliable_ordered", nullptr };
+		for (const char **option = rpc_options; *option != nullptr; option++) {
+			const String value(*option);
+			if (value.begins_with(p_ctx.string_prefix)) add_option(r_options,
+					ScriptLanguageExtension::CODE_COMPLETION_KIND_CONSTANT,
+					value, value, p_colors.text);
+		}
+		return;
+	}
+	if (call.begins_with("warning_ignore")) {
+		static const char *warning_codes[] = { "unused_variable", "unused_local_constant",
+			"unused_parameter", "unused_signal", "shadowed_variable", "unreachable_code",
+			"standalone_expression", "unassigned_variable", "discarded_return_value",
+			"integer_division", "narrowing_conversion", "unsafe_method_access",
+			"unsafe_property_access", "redundant_await", "constant_assert", nullptr };
+		for (const char **code = warning_codes; *code != nullptr; code++) {
+			const String value(*code);
+			if (value.begins_with(p_ctx.string_prefix)) add_option(r_options,
+					ScriptLanguageExtension::CODE_COMPLETION_KIND_CONSTANT,
+					value, value, p_colors.text);
+		}
+		return;
+	}
+	if (call == "export_node_path") {
+		if (ClassDBSingleton *class_db = ClassDBSingleton::get_singleton()) {
+			for (const String &name : class_db->get_class_list()) {
+				if (class_db->is_parent_class(name, "Node") && name.begins_with(p_ctx.string_prefix)) {
+					add_option(r_options, ScriptLanguageExtension::CODE_COMPLETION_KIND_CLASS,
+							name, name, p_colors.type);
+				}
+			}
+		}
+		return;
+	}
+	if (call == "get_node" || call == "has_node") {
+		Node *owner = Object::cast_to<Node>(p_owner);
+		add_node_paths(r_options, owner, owner, p_ctx.string_prefix, p_colors);
+		return;
+	}
+	if (call.begins_with("is_action_") || call == "get_action_strength" ||
+			call == "get_axis" || call == "get_vector") {
+		if (InputMap::get_singleton() != nullptr) {
+			for (const StringName &action : InputMap::get_singleton()->get_actions()) {
+				const String name(action);
+				if (name.begins_with(p_ctx.string_prefix)) {
+					add_option(r_options, ScriptLanguageExtension::CODE_COMPLETION_KIND_CONSTANT,
+							name, name, p_colors.text);
+				}
+			}
+		}
+		return;
+	}
+	ClassDBSingleton *class_db = ClassDBSingleton::get_singleton();
+	if (class_db == nullptr || !class_db->class_exists(p_owner_class)) return;
+	if (call == "connect" || call == "emit_signal") {
+		for (const SourceSymbol &source_signal : p_symbols.signals) {
+			if (source_signal.name.begins_with(p_ctx.string_prefix)) add_option(r_options,
+					ScriptLanguageExtension::CODE_COMPLETION_KIND_SIGNAL, source_signal.name,
+					source_signal.name, p_colors.function, ScriptLanguageExtension::LOCATION_LOCAL);
+		}
+		for (const Dictionary &signal : class_db->class_get_signal_list(p_owner_class, false)) {
+			const String name = signal["name"];
+			if (name.begins_with(p_ctx.string_prefix)) add_option(r_options,
+					ScriptLanguageExtension::CODE_COMPLETION_KIND_SIGNAL, name, name, p_colors.function);
+		}
+		return;
+	}
+	if (call == "call" || call == "has_method") {
+		for (const Dictionary &method : class_db->class_get_method_list(p_owner_class, false)) {
+			const String name = method["name"];
+			if (name.begins_with(p_ctx.string_prefix)) add_option(r_options,
+					ScriptLanguageExtension::CODE_COMPLETION_KIND_FUNCTION, name, name, p_colors.function);
+		}
+		for (const SourceSymbol &function : p_symbols.functions) {
+			if (function.name.begins_with(p_ctx.string_prefix)) add_option(r_options,
+					ScriptLanguageExtension::CODE_COMPLETION_KIND_FUNCTION, function.name,
+					function.name, p_colors.function, ScriptLanguageExtension::LOCATION_LOCAL);
+		}
+		return;
+	}
+	if (call == "get" || call == "set") {
+		for (const Dictionary &property : class_db->class_get_property_list(p_owner_class, false)) {
+			const String name = property["name"];
+			if (name.begins_with(p_ctx.string_prefix)) add_option(r_options,
+					ScriptLanguageExtension::CODE_COMPLETION_KIND_MEMBER, name, name, p_colors.member);
+		}
+		for (const SourceSymbol &variable : p_symbols.variables) {
+			if (variable.name.begins_with(p_ctx.string_prefix)) add_option(r_options,
+					ScriptLanguageExtension::CODE_COMPLETION_KIND_MEMBER, variable.name,
+					variable.name, p_colors.member, ScriptLanguageExtension::LOCATION_LOCAL);
+		}
+	}
 }
 
 // Variant types the compiler can construct inline, plus the rest of the type
@@ -834,6 +1086,57 @@ bool validate_with_compiler(const String &p_source, const String &p_path,
 	return true;
 }
 
+bool analyze_with_compiler(const String &p_source, const String &p_path, uint32_t p_flags,
+		int32_t p_caret_line, int32_t p_caret_column, gdscript::SourceModel &r_model) {
+	const String canonical_path = p_path.simplify_path();
+	const PackedStringArray base_sources = SafeGDScript::resolve_base_sources(p_source, canonical_path);
+	const CharString source_utf8 = p_source.utf8();
+	const std::string source_key(source_utf8.get_data(), size_t(source_utf8.length()));
+	String context;
+	for (const String &entry : base_sources) context += entry + String("\n");
+	if (ProjectSettings *project = ProjectSettings::get_singleton()) {
+		for (const Dictionary &entry : project->get_global_class_list()) {
+			context += String(entry.get("class", String())) + ":" +
+					String(entry.get("path", String())) + "\n";
+		}
+		for (const Dictionary &entry : project->get_property_list()) {
+			const String setting = entry.get("name", String());
+			if (setting.begins_with("autoload/")) context += setting + String("=") +
+					String(project->get_setting(setting, String())) + String("\n");
+		}
+	}
+	const CharString context_utf8 = context.utf8();
+	const std::string key = std::string(canonical_path.utf8().get_data()) + "\n" + source_key +
+			"\nctx=" + std::string(context_utf8.get_data(), size_t(context_utf8.length())) +
+			"\n" + std::to_string(p_flags) + ":" + std::to_string(p_caret_line) + ":" +
+			std::to_string(p_caret_column) + ":" + gdscript_compiler::policy_name();
+	static std::unordered_map<std::string, std::vector<uint8_t>> cache;
+	if (const auto it = cache.find(key); it != cache.end()) {
+		return gdscript::decode_source_model(it->second.data(), it->second.size(), r_model);
+	}
+	GDScriptCompilerBackend &compiler = gdscript_compiler::backend_for(false);
+	if (!compiler.available() || !compiler.can_analyze()) {
+		return false;
+	}
+	gdscript_compiler::prepare(compiler, false,
+			base_sources, canonical_path);
+	GDScriptCompilerBackend::AnalysisRequest request;
+	request.source = p_source;
+	request.path = canonical_path;
+	request.flags = p_flags;
+	request.caret_line = p_caret_line;
+	request.caret_column = p_caret_column;
+	const PackedByteArray bytes = compiler.analyze(request);
+	if (bytes.is_empty() || !gdscript::decode_source_model(bytes.ptr(), size_t(bytes.size()), r_model)) {
+		return false;
+	}
+	if (cache.size() >= 64) {
+		cache.erase(cache.begin());
+	}
+	cache.emplace(key, std::vector<uint8_t>(bytes.ptr(), bytes.ptr() + bytes.size()));
+	return true;
+}
+
 // The class free-standing calls end up on: every unqualified call in a
 // SafeGDScript compiles to self.<name>() on the node the script is attached to.
 StringName owner_class(Object *p_owner, const SourceSymbols &p_symbols) {
@@ -1026,32 +1329,102 @@ bool SafeGDScriptLanguage::_is_using_templates() {
 }
 Dictionary SafeGDScriptLanguage::_validate(const String &p_script, const String &p_path, bool p_validate_functions, bool p_validate_errors, bool p_validate_warnings, bool p_validate_safe_lines) const {
 	Dictionary result;
-
-	// The compiler sandbox is the only thing that can parse SafeGDScript, so a
-	// missing one means no errors rather than false ones.
-	ValidationResult validation;
-	result["valid"] = !validate_with_compiler(p_script, p_path, validation) || validation.valid;
-
-	if (p_validate_errors && !validation.valid) {
-		Dictionary error;
-		// The editor indexes lines and columns from 1, and an error the
-		// compiler could not place would otherwise land outside the file.
-		error["line"] = validation.line > 0 ? validation.line : 1;
-		error["column"] = validation.column > 0 ? validation.column : 1;
-		error["message"] = validation.message;
-		error["path"] = p_path;
-		Array errors;
-		errors.push_back(error);
-		result["errors"] = errors;
+	uint32_t flags = 0;
+	if (p_validate_errors || p_validate_warnings) flags |= gdscript::ANALYZE_DIAGNOSTICS;
+	if (p_validate_functions || p_validate_warnings) flags |= gdscript::ANALYZE_DECLARATIONS;
+	if (p_validate_safe_lines) flags |= gdscript::ANALYZE_SAFE_LINES;
+	gdscript::SourceModel model;
+	const bool analyzed = analyze_with_compiler(p_script, p_path, flags, 0, 0, model);
+	if (!analyzed) {
+		const CharString source = p_script.utf8();
+		const CharString path = p_path.utf8();
+		model = gdscript::analyze_source(std::string(source.get_data(), source.length()),
+				std::string(path.get_data(), path.length()), flags);
 	}
 
+	// Retain full compiler semantic validation while old and new compiler ELFs
+	// coexist. The tolerant model contributes every recoverable syntax error;
+	// this adds a semantic/codegen error the lightweight recovery pass cannot.
+	ValidationResult validation;
+	const bool validated = validate_with_compiler(p_script, p_path, validation);
+	if (validated && !validation.valid) {
+		bool duplicate = false;
+		for (const gdscript::SourceDiagnostic &diagnostic : model.diagnostics) {
+			duplicate |= int32_t(diagnostic.range.start_line) == validation.line &&
+					int32_t(diagnostic.range.start_column) == validation.column;
+		}
+		if (!duplicate) {
+			gdscript::SourceDiagnostic diagnostic;
+			diagnostic.severity = gdscript::DiagnosticSeverity::ERROR;
+			diagnostic.code = "COMPILER_ERROR";
+			diagnostic.message = std::string(validation.message.utf8().get_data());
+			diagnostic.path = std::string(p_path.utf8().get_data());
+			diagnostic.range = {uint32_t(std::max(validation.line, 1)),
+					uint32_t(std::max(validation.column, 1)), uint32_t(std::max(validation.line, 1)),
+					uint32_t(std::max(validation.column + 1, 2))};
+			model.diagnostics.push_back(std::move(diagnostic));
+		}
+	}
+
+	bool valid = true;
+	Array errors;
+	Array warnings;
+	for (const gdscript::SourceDiagnostic &diagnostic : model.diagnostics) {
+		const String message = String::utf8(diagnostic.message.c_str(), diagnostic.message.size());
+		if (diagnostic.severity == gdscript::DiagnosticSeverity::ERROR) {
+			valid = false;
+			if (p_validate_errors) {
+				Dictionary error;
+				error["line"] = int64_t(std::max(diagnostic.range.start_line, 1u));
+				error["column"] = int64_t(std::max(diagnostic.range.start_column, 1u));
+				error["message"] = message;
+				error["path"] = diagnostic.path.empty() ? p_path :
+						String::utf8(diagnostic.path.c_str(), diagnostic.path.size());
+				errors.push_back(error);
+			}
+		} else if (diagnostic.severity == gdscript::DiagnosticSeverity::WARNING && p_validate_warnings) {
+			const String code = String::utf8(diagnostic.code.c_str(), diagnostic.code.size());
+			const StringName setting = String("debug/gdscript/warnings/") + code.to_lower();
+			int32_t warning_mode = 1;
+			if (ProjectSettings::get_singleton()->has_setting(setting)) {
+				warning_mode = int32_t(ProjectSettings::get_singleton()->get_setting(setting));
+			}
+			if (warning_mode <= 0) continue;
+			if (warning_mode >= 2) {
+				valid = false;
+				if (p_validate_errors) {
+					Dictionary error;
+					error["line"] = int64_t(std::max(diagnostic.range.start_line, 1u));
+					error["column"] = int64_t(std::max(diagnostic.range.start_column, 1u));
+					error["message"] = message;
+					error["path"] = diagnostic.path.empty() ? p_path :
+							String::utf8(diagnostic.path.c_str(), diagnostic.path.size());
+					errors.push_back(error);
+				}
+				continue;
+			}
+			Dictionary warning;
+			warning["line"] = int64_t(std::max(diagnostic.range.start_line, 1u));
+			warning["code"] = code;
+			warning["string"] = message;
+			warnings.push_back(warning);
+		}
+	}
+	result["valid"] = valid;
+	if (p_validate_errors) result["errors"] = errors;
+	if (p_validate_warnings) result["warnings"] = warnings;
+	if (p_validate_safe_lines) {
+		PackedInt32Array safe_lines;
+		for (uint32_t line : model.safe_lines) safe_lines.push_back(int32_t(line));
+		result["safe_lines"] = safe_lines;
+	}
 	if (p_validate_functions) {
-		// The members overview, which stays useful while the file is mid-edit
-		// and does not parse, so it is scanned from the text rather than asked
-		// of the compiler.
 		PackedStringArray functions;
-		for (const SourceSymbol &function : scan_source(p_script).functions) {
-			functions.push_back(function.name + String(":") + itos(function.line));
+		for (const gdscript::SourceDeclaration &declaration : model.declarations) {
+			if (declaration.kind == gdscript::DeclarationKind::FUNCTION) {
+				functions.push_back(String::utf8(declaration.name.c_str(), declaration.name.size()) +
+						":" + itos(declaration.declaration.start_line));
+			}
 		}
 		result["functions"] = functions;
 	}
@@ -1122,6 +1495,14 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 		return result;
 	}
 	const CompletionColors colors = completion_colors();
+	const int marker_at = p_code.find(String::chr(COMPLETION_MARKER));
+	const int32_t caret_line = marker_at < 0 ? int32_t(p_code.count("\n") + 1)
+			: int32_t(p_code.substr(0, marker_at).count("\n") + 1);
+	gdscript::SourceModel semantic_model;
+	const String semantic_source = p_code.replace(String::chr(COMPLETION_MARKER), String());
+	const bool semantic = analyze_with_compiler(semantic_source, p_path,
+			gdscript::ANALYZE_DECLARATIONS | gdscript::ANALYZE_CARET,
+			caret_line, 0, semantic_model);
 
 	// Symbols declared by the script itself. The caret marker is dropped so the
 	// word being typed is not scanned as a declaration.
@@ -1131,10 +1512,35 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 	// The signature of the call being written, shown above the caret whether or
 	// not there is anything to complete inside it.
 	result["call_hint"] = call_hint_for(ctx, symbols, owner);
+	if (ctx.scene_sugar != 0) {
+		Node *scene_owner = Object::cast_to<Node>(p_owner);
+		add_scene_sugar_options(options, scene_owner, scene_owner, ctx.scene_sugar,
+				ctx.prefix, colors);
+		result["force"] = true;
+		result["options"] = options;
+		return result;
+	}
+	if (!ctx.string_call.is_empty()) {
+		add_string_context_options(options, ctx, symbols, owner, p_owner, colors);
+		result["force"] = true;
+		result["options"] = options;
+		return result;
+	}
 
 	if (ctx.annotation) {
-		// @export is the only annotation the compiler understands (parser.cpp).
-		add_option(options, CODE_COMPLETION_KIND_PLAIN_TEXT, "export", "export", colors.keyword);
+		static const char *annotations[] = {
+			"export", "export_range", "export_enum", "export_exp_easing", "export_flags",
+			"export_flags_2d_render", "export_flags_2d_physics", "export_flags_2d_navigation",
+			"export_flags_3d_render", "export_flags_3d_physics", "export_flags_3d_navigation",
+			"export_flags_avoidance", "export_file", "export_dir", "export_global_file",
+			"export_global_dir", "export_multiline", "export_placeholder", "export_color_no_alpha",
+			"export_node_path", "export_storage", "export_custom", "export_group", "export_subgroup",
+			"export_category", "onready", "tool", "rpc", "icon", "warning_ignore",
+			"warning_ignore_start", "warning_ignore_restore", "static_unload", "abstract", nullptr
+		};
+		for (const char **annotation = annotations; *annotation != nullptr; annotation++) {
+			add_option(options, CODE_COMPLETION_KIND_PLAIN_TEXT, *annotation, *annotation, colors.keyword);
+		}
 		result["force"] = true;
 	} else if (ctx.member) {
 		if (ctx.receiver == "self" || ctx.receiver.is_empty()) {
@@ -1163,6 +1569,22 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 	} else if (ctx.func_definition) {
 		add_virtual_methods(options, owner, colors);
 		result["force"] = true;
+	} else if (ctx.type_position) {
+		for (const char *const *name = builtin_types; *name != nullptr; name++) {
+			add_option(options, CODE_COMPLETION_KIND_CLASS, *name, *name, colors.type);
+		}
+		ClassDBSingleton *class_db = ClassDBSingleton::get_singleton();
+		if (class_db != nullptr) {
+			const PackedStringArray classes = class_db->get_class_list();
+			for (const String &name : classes) {
+				add_option(options, CODE_COMPLETION_KIND_CLASS, name, name, colors.type);
+			}
+		}
+		for (const SourceStruct &declaration : symbols.structs) {
+			add_option(options, CODE_COMPLETION_KIND_CLASS, declaration.name, declaration.name,
+					colors.type, LOCATION_LOCAL);
+		}
+		result["force"] = true;
 	} else {
 		for (const String &keyword : _get_reserved_words()) {
 			const bool control_flow = _is_control_flow_keyword(keyword);
@@ -1178,6 +1600,20 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 		add_global_constants(options, colors);
 		add_global_enum_names(options, colors);
 		add_global_functions(options, colors);
+		ProjectSettings *project = ProjectSettings::get_singleton();
+		if (project != nullptr) {
+			for (const Dictionary &entry : project->get_global_class_list()) {
+				const String name = entry.get("class", String());
+				if (!name.is_empty()) add_option(options, CODE_COMPLETION_KIND_CLASS,
+						name, name, colors.type);
+			}
+			for (const Dictionary &entry : project->get_property_list()) {
+				const String setting = entry.get("name", String());
+				if (!setting.begins_with("autoload/")) continue;
+				const String name = setting.trim_prefix("autoload/");
+				add_option(options, CODE_COMPLETION_KIND_VARIABLE, name, name, colors.member);
+			}
+		}
 
 		// A struct name is both a type hint and its own constructor.
 		for (const SourceStruct &declaration : symbols.structs) {
@@ -1185,11 +1621,24 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 			add_option(options, CODE_COMPLETION_KIND_CLASS, declaration.name + String("("), declaration.name + String("("), colors.type, LOCATION_LOCAL);
 		}
 		add_script_functions(options, symbols, colors);
-		for (const SourceSymbol &variable : symbols.variables) {
-			add_option(options, CODE_COMPLETION_KIND_VARIABLE, variable.name, variable.name, colors.member, LOCATION_LOCAL);
-		}
-		for (const SourceSymbol &constant : symbols.constants) {
-			add_option(options, CODE_COMPLETION_KIND_CONSTANT, constant.name, constant.name, colors.member, LOCATION_LOCAL);
+		if (semantic) {
+			EditorSymbolResolver resolver(semantic_model, p_path, p_owner);
+			for (const gdscript::SourceDeclaration *declaration : resolver.visible_declarations(caret_line)) {
+				const String name = String::utf8(declaration->name.c_str(), declaration->name.size());
+				if (declaration->kind == gdscript::DeclarationKind::VARIABLE ||
+						declaration->kind == gdscript::DeclarationKind::PARAMETER) {
+					add_option(options, CODE_COMPLETION_KIND_VARIABLE, name, name, colors.member, LOCATION_LOCAL);
+				} else if (declaration->kind == gdscript::DeclarationKind::CONSTANT) {
+					add_option(options, CODE_COMPLETION_KIND_CONSTANT, name, name, colors.member, LOCATION_LOCAL);
+				}
+			}
+		} else {
+			for (const SourceSymbol &variable : symbols.variables) {
+				add_option(options, CODE_COMPLETION_KIND_VARIABLE, variable.name, variable.name, colors.member, LOCATION_LOCAL);
+			}
+			for (const SourceSymbol &constant : symbols.constants) {
+				add_option(options, CODE_COMPLETION_KIND_CONSTANT, constant.name, constant.name, colors.member, LOCATION_LOCAL);
+			}
 		}
 
 		// Unqualified calls compile to self.<name>(), so the base class members
@@ -1207,6 +1656,20 @@ Dictionary SafeGDScriptLanguage::_lookup_code(const String &p_code, const String
 	result["result"] = Error::ERR_CANT_RESOLVE;
 	result["type"] = LOOKUP_RESULT_MAX;
 	const SourceSymbols symbols = scan_source(p_code);
+	gdscript::SourceModel semantic_model;
+	if (analyze_with_compiler(p_code, p_path, gdscript::ANALYZE_DECLARATIONS,
+			int32_t(p_code.count("\n") + 1), 0, semantic_model)) {
+		EditorSymbolResolver resolver(semantic_model, p_path, p_owner);
+		const EditorResolvedSymbol resolved = resolver.resolve(p_symbol,
+				uint32_t(p_code.count("\n") + 1));
+		if (resolved.declaration != nullptr) {
+			result["result"] = Error::OK;
+			result["type"] = LOOKUP_RESULT_SCRIPT_LOCATION;
+			result["location"] = resolved.line;
+			result["script_path"] = resolved.script_path;
+			return result;
+		}
+	}
 
 	// Something the file itself declares wins: ctrl-clicking a name in a script
 	// should land on the line that declares it, not on the engine class that
@@ -1365,8 +1828,37 @@ void SafeGDScriptLanguage::_add_named_global_constant(const StringName &p_name, 
 void SafeGDScriptLanguage::_remove_named_global_constant(const StringName &p_name) {}
 void SafeGDScriptLanguage::_thread_enter() {}
 void SafeGDScriptLanguage::_thread_exit() {}
-void SafeGDScriptLanguage::_reload_all_scripts() {}
-void SafeGDScriptLanguage::_reload_tool_script(const Ref<Script> &p_script, bool p_soft_reload) {}
+void SafeGDScriptLanguage::_reload_all_scripts() {
+	const std::vector<SafeGDScript *> scripts = SafeGDScript::live_script_snapshot();
+	for (SafeGDScript *script : scripts) {
+		if (script != nullptr) {
+			script->_reload(true);
+		}
+	}
+}
+
+void SafeGDScriptLanguage::_reload_scripts(const Array &p_scripts, bool p_soft_reload) {
+	HashSet<uint64_t> seen;
+	for (int64_t i = 0; i < p_scripts.size(); i++) {
+		const Variant value = p_scripts[i];
+		if (value.get_type() != Variant::OBJECT) {
+			continue;
+		}
+		SafeGDScript *script = Object::cast_to<SafeGDScript>(value.operator Object *());
+		if (script == nullptr || seen.has(script->get_instance_id())) {
+			continue;
+		}
+		seen.insert(script->get_instance_id());
+		script->_reload(p_soft_reload);
+	}
+}
+
+void SafeGDScriptLanguage::_reload_tool_script(const Ref<Script> &p_script, bool p_soft_reload) {
+	Ref<SafeGDScript> script = p_script;
+	if (script.is_valid()) {
+		script->_reload(p_soft_reload);
+	}
+}
 PackedStringArray SafeGDScriptLanguage::_get_recognized_extensions() const {
 	PackedStringArray array;
 	array.push_back("sgd");

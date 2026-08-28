@@ -10,19 +10,23 @@ ElfBuilder::ElfBuilder() {}
 
 std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLayout& layout,
 	bool profiling, ProfilingClock profiling_clock, bool debug_info,
-	const std::vector<uint32_t>& breakpoint_lines) {
-	RISCVCodeGen codegen(layout, profiling, profiling_clock, debug_info, breakpoint_lines);
+	const std::vector<uint32_t>& breakpoint_lines, bool debug_step_points) {
+	RISCVCodeGen codegen(layout, profiling, profiling_clock, debug_info, breakpoint_lines,
+		debug_step_points);
 	std::vector<uint8_t> code = codegen.generate(program);
 
 	// Rebase addresses from .text-relative to virtual.
 	m_line_table = codegen.get_line_table();
 	m_installed_breakpoints = codegen.get_installed_breakpoints();
+	m_debug_variables = codegen.get_debug_variables();
 	for (LineTableEntry& entry : m_line_table.entries) {
 		entry.address += uint32_t(BASE_ADDR);
 	}
 	auto func_offsets = codegen.get_function_offsets();
 	auto const_pool = codegen.get_constant_pool();
 	auto global_data_size = codegen.get_global_data_size();
+	const uint64_t global_address = codegen.get_global_address();
+	const size_t global_area_size = codegen.get_global_area_size();
 	const uint64_t profiling_address = codegen.get_profiling_address();
 	const uint64_t profiling_size = codegen.get_profiling_size();
 	const uint64_t debug_address = codegen.get_debug_address();
@@ -117,6 +121,14 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 		strtab.push_back(0);
 	}
 
+	size_t globals_name_offset = 0;
+	if (global_area_size > 0) {
+		globals_name_offset = strtab.size();
+		const std::string name = DEBUG_GLOBALS_SYMBOL;
+		strtab.insert(strtab.end(), name.begin(), name.end());
+		strtab.push_back(0);
+	}
+
 	size_t instance_name_offset = 0;
 	size_t instance_init_name_offset = 0;
 	if (instance_blob_size > 0) {
@@ -192,6 +204,16 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 		sym.st_shndx = 2; // .data
 		sym.st_value = debug_address;
 		sym.st_size = debug_size;
+		symtab.push_back(sym);
+	}
+
+	if (global_area_size > 0) {
+		Elf64_Sym sym = {};
+		sym.st_name = static_cast<uint32_t>(globals_name_offset);
+		sym.st_info = (1 << 4) | 1;
+		sym.st_shndx = 2;
+		sym.st_value = global_address;
+		sym.st_size = global_area_size;
 		symtab.push_back(sym);
 	}
 

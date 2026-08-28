@@ -62,6 +62,7 @@ public:
 
 	PackedByteArray compile(const String &p_source, const BuildOptions &p_options) override {
 		m_call_error = String();
+		m_metadata_valid = true;
 		const char *entry_point = p_options.profiling
 				? "compile_profiled"
 				: (p_options.debug ? "compile_debug" : "compile");
@@ -114,6 +115,31 @@ public:
 		return true;
 	}
 
+	bool can_analyze() override { return has("analyze"); }
+	PackedByteArray analyze(const AnalysisRequest &p_request) override {
+		if (!can_analyze()) {
+			return PackedByteArray();
+		}
+		Variant source = p_request.source;
+		Variant line = int64_t(p_request.caret_line);
+		Variant column = int64_t(p_request.caret_column);
+		Variant flags = int64_t(p_request.flags);
+		const Variant *args[] = {&source, &line, &column, &flags};
+		GDExtensionCallError error;
+		const Variant answer = vmcall("analyze", args, 4, error);
+		if (error.error != GDEXTENSION_CALL_OK || answer.get_type() != Variant::PACKED_BYTE_ARRAY) {
+			return PackedByteArray();
+		}
+		const PackedByteArray bytes = answer;
+		gdscript::SourceModel decoded;
+		if (!gdscript::decode_source_model(bytes.ptr(), size_t(bytes.size()), decoded)) {
+			m_metadata_valid = false;
+			ERR_PRINT("SafeGDScript: the compiler returned a malformed source model.");
+			return PackedByteArray();
+		}
+		return bytes;
+	}
+
 	String error_message() override {
 		if (!m_call_error.is_empty()) {
 			return m_call_error;
@@ -144,6 +170,7 @@ public:
 			return configs;
 		}
 		if (!gdscript::decode_rpc_configs(bytes.ptr(), size_t(bytes.size()), configs)) {
+			m_metadata_valid = false;
 			ERR_PRINT("SafeGDScript: the compiler returned a malformed RPC configuration table.");
 		}
 		return configs;
@@ -156,6 +183,7 @@ public:
 			return classes;
 		}
 		if (!gdscript::decode_class_signatures(bytes.ptr(), size_t(bytes.size()), classes)) {
+			m_metadata_valid = false;
 			ERR_PRINT("SafeGDScript: the compiler returned a malformed class table.");
 		}
 		return classes;
@@ -168,9 +196,38 @@ public:
 			return constants;
 		}
 		if (!gdscript::decode_script_constants(bytes.ptr(), size_t(bytes.size()), constants)) {
+			m_metadata_valid = false;
 			ERR_PRINT("SafeGDScript: the compiler returned a malformed constant table.");
 		}
 		return constants;
+	}
+
+	std::vector<gdscript::PropertySignature> property_signatures() override {
+		std::vector<gdscript::PropertySignature> properties;
+		const PackedByteArray bytes = blob("get_property_signatures");
+		if (bytes.is_empty()) {
+			return properties;
+		}
+		if (!gdscript::decode_property_signatures(bytes.ptr(), size_t(bytes.size()), properties)) {
+			m_metadata_valid = false;
+			properties.clear();
+			ERR_PRINT("SafeGDScript: the compiler returned a malformed property signature table.");
+		}
+		return properties;
+	}
+
+	std::vector<gdscript::DebugVariableRecord> debug_variables() override {
+		std::vector<gdscript::DebugVariableRecord> variables;
+		const PackedByteArray bytes = blob("get_debug_variables");
+		if (bytes.is_empty()) {
+			return variables;
+		}
+		if (!gdscript::decode_debug_variables(bytes.ptr(), size_t(bytes.size()), variables)) {
+			m_metadata_valid = false;
+			variables.clear();
+			ERR_PRINT("SafeGDScript: the compiler returned a malformed debug variable table.");
+		}
+		return variables;
 	}
 
 	gdscript::LineTable line_table() override {
@@ -180,10 +237,13 @@ public:
 			return table;
 		}
 		if (!gdscript::decode_line_table(bytes.ptr(), size_t(bytes.size()), table)) {
+			m_metadata_valid = false;
 			ERR_PRINT("SafeGDScript: the compiler returned a malformed line table.");
 		}
 		return table;
 	}
+
+	bool metadata_valid() const override { return m_metadata_valid; }
 
 	PackedInt32Array installed_breakpoints() override {
 		if (!has("get_breakpoint_lines")) {
@@ -192,6 +252,7 @@ public:
 		GDExtensionCallError error;
 		const Variant lines = vmcall("get_breakpoint_lines", nullptr, 0, error);
 		if (error.error != GDEXTENSION_CALL_OK || lines.get_type() != Variant::PACKED_INT32_ARRAY) {
+			m_metadata_valid = false;
 			return PackedInt32Array();
 		}
 		return lines;
@@ -272,6 +333,7 @@ private:
 		GDExtensionCallError error;
 		const Variant answer = vmcall(p_function, nullptr, 0, error);
 		if (error.error != GDEXTENSION_CALL_OK || answer.get_type() != Variant::PACKED_BYTE_ARRAY) {
+			m_metadata_valid = false;
 			return PackedByteArray();
 		}
 		return answer;
@@ -285,6 +347,7 @@ private:
 			return signatures;
 		}
 		if (!gdscript::decode_function_signatures(bytes.ptr(), size_t(bytes.size()), signatures)) {
+			m_metadata_valid = false;
 			ERR_PRINT(String("SafeGDScript: the compiler returned a malformed ") + p_what + ".");
 		}
 		return signatures;
@@ -316,6 +379,7 @@ private:
 
 	Sandbox *m_sandbox = nullptr;
 	String m_call_error;
+	bool m_metadata_valid = true;
 };
 
 } // namespace

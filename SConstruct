@@ -21,10 +21,13 @@ env.Append(CPPPATH=["src/", "."])
 # symbol tables editor completion and lookup resolve from.
 compiler_host_sources = [
     "src/gdscript/compiler/function_signature.cpp",
+	"src/gdscript/compiler/property_signature.cpp",
+	"src/gdscript/compiler/source_model.cpp",
     "src/gdscript/compiler/line_table.cpp",
     "src/gdscript/compiler/gdsmeta.cpp",
     "src/gdscript/compiler/globals.cpp",
     "src/gdscript/compiler/compiler_exception.cpp",
+	"src/gdscript/compiler/debug_layout.cpp",
 ]
 
 # The rest of the compiler, linked in when SafeGDScript compiles in process.

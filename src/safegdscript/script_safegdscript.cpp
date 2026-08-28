@@ -5,6 +5,7 @@
 #include "../elf/script_instance.h"
 #include "script_class_safegdscript.h"
 #include "script_instance_safegdscript.h"
+#include "placeholder_instance_safegdscript.h"
 #include "script_dicts.h"
 #include "signature_info.h"
 #include "script_language_safegdscript.h"
@@ -31,9 +32,13 @@ Sandbox *sandbox_for_safegdscript(const SafeGDScript *p_script);
 bool SafeGDScript::_editor_can_reload_from_file() {
 	return true;
 }
-void SafeGDScript::_placeholder_erased(void *p_placeholder) {}
+void SafeGDScript::_placeholder_erased(void *p_placeholder) {
+	// The engine owns and frees the native instance through ScriptInstanceInfo's
+	// free callback. This hook only removes stale bookkeeping if it arrives first.
+	placeholders.erase(static_cast<SafeGDScriptPlaceholderInstance *>(p_placeholder));
+}
 bool SafeGDScript::_can_instantiate() const {
-	return true;
+	return !_is_abstract() && _is_valid();
 }
 static String script_class_path(const String &p_class_name) {
 	ProjectSettings *settings = ProjectSettings::get_singleton();
@@ -148,9 +153,22 @@ void *SafeGDScript::_instance_create(Object *p_for_object) const {
 	return ScriptInstanceExtension::create_native_instance(instance);
 }
 void *SafeGDScript::_placeholder_instance_create(Object *p_for_object) const {
-	return _instance_create(p_for_object);
+	SafeGDScriptPlaceholderInstance *placeholder = memnew(
+			SafeGDScriptPlaceholderInstance(p_for_object, Ref<SafeGDScript>(this)));
+	placeholders.insert(placeholder);
+	return ScriptInstanceExtension::create_native_instance(placeholder);
 }
 bool SafeGDScript::_instance_has(Object *p_object) const {
+	for (SafeGDScriptInstance *instance : instances) {
+		if (instance != nullptr && instance->get_owner() == p_object) {
+			return true;
+		}
+	}
+	for (SafeGDScriptPlaceholderInstance *placeholder : placeholders) {
+		if (placeholder != nullptr && placeholder->get_owner() == p_object) {
+			return true;
+		}
+	}
 	return false;
 }
 bool SafeGDScript::_has_source_code() const {
@@ -161,11 +179,21 @@ String SafeGDScript::_get_source_code() const {
 }
 void SafeGDScript::_set_source_code(const String &p_code) {
 	source_code = p_code;
-	compile_source_to_elf();
+	// Keep the immediate compile expected by Resource/Script callers, but use
+	// the soft transaction so editing a live resource does not discard state.
+	source_compile_succeeded = compile_source_to_elf(this->profiled_build, this->debug_build,
+			ReloadPolicy::KEEP_STATE);
+	source_compile_pending_reload = source_compile_succeeded;
 }
 Error SafeGDScript::_reload(bool p_keep_state) {
-	compile_source_to_elf();
-	return Error::OK;
+	if (p_keep_state && source_compile_pending_reload) {
+		source_compile_pending_reload = false;
+		return source_compile_succeeded ? Error::OK : Error::ERR_PARSE_ERROR;
+	}
+	source_compile_pending_reload = false;
+	return compile_source_to_elf(this->profiled_build, this->debug_build,
+			p_keep_state ? ReloadPolicy::KEEP_STATE : ReloadPolicy::DISCARD_STATE)
+			? Error::OK : Error::ERR_PARSE_ERROR;
 }
 
 // STORAGE without EDITOR: serialised into .tscn, hidden from inspector.
@@ -206,6 +234,23 @@ static String doc_type_name(const godot::PropertyInfo &p_info) {
 	return Variant::get_type_name(p_info.type);
 }
 
+static void apply_documentation_tags(Dictionary &r_doc, const String &p_description) {
+	PackedStringArray kept;
+	for (const String &raw : p_description.split("\n")) {
+		const String line = raw.strip_edges();
+		if (line.begins_with("@deprecated")) {
+			r_doc["is_deprecated"] = true;
+			r_doc["deprecated_message"] = line.trim_prefix("@deprecated").strip_edges();
+		} else if (line.begins_with("@experimental")) {
+			r_doc["is_experimental"] = true;
+			r_doc["experimental_message"] = line.trim_prefix("@experimental").strip_edges();
+		} else {
+			kept.push_back(raw);
+		}
+	}
+	r_doc["description"] = String("\n").join(kept);
+}
+
 TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 	// One page listing the exported functions. Keys are what
 	// DocData::ClassDoc::from_dict() reads back; an unrecognised key is dropped
@@ -213,6 +258,8 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 	Dictionary class_doc;
 	class_doc["name"] = String(_get_doc_class_name());
 	class_doc["inherits"] = String(_get_instance_base_type());
+	class_doc["is_script_doc"] = true;
+	class_doc["script_path"] = path;
 
 	Array method_docs;
 	for (const godot::MethodInfo &method_info : methods_info) {
@@ -239,7 +286,7 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 		method_doc["arguments"] = argument_docs;
 
 		if (const MethodDocumentation *documentation = methods_doc.getptr(method_info.name)) {
-			method_doc["description"] = documentation->description;
+			apply_documentation_tags(method_doc, documentation->description);
 		}
 		method_docs.push_back(method_doc);
 	}
@@ -258,18 +305,68 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 		}
 		signal_doc["arguments"] = argument_docs;
 		if (const MethodDocumentation *documentation = methods_doc.getptr(signal_info.name)) {
-			signal_doc["description"] = documentation->description;
+			apply_documentation_tags(signal_doc, documentation->description);
 		}
 		signal_docs.push_back(signal_doc);
 	}
 	class_doc["signals"] = signal_docs;
+
+	Array property_docs;
+	Array constant_docs;
+	Array enum_docs;
+	Array nested_class_docs;
+	for (const gdscript::SourceDeclaration &declaration : source_model.declarations) {
+		const String name = String::utf8(declaration.name.c_str(), declaration.name.size());
+		const String description = String::utf8(declaration.documentation.c_str(), declaration.documentation.size());
+		if (declaration.kind == gdscript::DeclarationKind::CLASS) {
+			apply_documentation_tags(class_doc, description);
+			const String clean_description = class_doc.get("description", String());
+			const int paragraph = clean_description.find("\n\n");
+			class_doc["brief_description"] = paragraph < 0 ? clean_description :
+					clean_description.substr(0, paragraph);
+		} else if (declaration.kind == gdscript::DeclarationKind::VARIABLE) {
+			Dictionary doc;
+			doc["name"] = name;
+			doc["type"] = declaration.declared_type.empty() ? String("Variant") :
+					String::utf8(declaration.declared_type.c_str(), declaration.declared_type.size());
+			apply_documentation_tags(doc, description);
+			property_docs.push_back(doc);
+		} else if (declaration.kind == gdscript::DeclarationKind::CONSTANT) {
+			Dictionary doc;
+			doc["name"] = name;
+			apply_documentation_tags(doc, description);
+			constant_docs.push_back(doc);
+		} else if (declaration.kind == gdscript::DeclarationKind::ENUM) {
+			Dictionary doc;
+			doc["name"] = name;
+			apply_documentation_tags(doc, description);
+			Array values;
+			for (const gdscript::SourceEnumMember &member : declaration.enum_members) {
+				Dictionary value;
+				value["name"] = String::utf8(member.name.c_str(), member.name.size());
+				value["value"] = member.value;
+				values.push_back(value);
+			}
+			doc["values"] = values;
+			enum_docs.push_back(doc);
+		} else if (declaration.kind == gdscript::DeclarationKind::NESTED_CLASS) {
+			Dictionary doc;
+			doc["name"] = name;
+			apply_documentation_tags(doc, description);
+			nested_class_docs.push_back(doc);
+		}
+	}
+	class_doc["properties"] = property_docs;
+	class_doc["constants"] = constant_docs;
+	class_doc["enums"] = enum_docs;
+	class_doc["classes"] = nested_class_docs;
 
 	TypedArray<Dictionary> documentation;
 	documentation.push_back(class_doc);
 	return documentation;
 }
 String SafeGDScript::_get_class_icon_path() const {
-	return String("res://addons/godot_sandbox/SafeGDScript.svg");
+	return class_icon_path;
 }
 const godot::MethodInfo *SafeGDScript::find_method_info(const StringName &p_method) const {
 	for (const godot::MethodInfo &method_info : methods_info) {
@@ -291,7 +388,21 @@ bool SafeGDScript::_has_method(const StringName &p_method) const {
 	return false;
 }
 bool SafeGDScript::_has_static_method(const StringName &p_method) const {
+	for (const gdscript::FunctionSignature &signature : signatures) {
+		if (String::utf8(signature.name.c_str(), signature.name.size()) == p_method &&
+				signature.is_static) {
+			return true;
+		}
+	}
 	return false;
+}
+Variant SafeGDScript::_get_script_method_argument_count(const StringName &p_method) const {
+	if (const godot::MethodInfo *method = find_method_info(p_method)) {
+		if ((method->flags & METHOD_FLAG_VARARG) == 0) {
+			return int64_t(method->arguments.size());
+		}
+	}
+	return Variant();
 }
 Dictionary SafeGDScript::_get_method_info(const StringName &p_method) const {
 	if (const godot::MethodInfo *method_info = find_method_info(p_method)) {
@@ -315,7 +426,7 @@ bool SafeGDScript::_is_valid() const {
 	return !elf_data.is_empty();
 }
 bool SafeGDScript::_is_abstract() const {
-	return false;
+	return abstract_script;
 }
 ScriptLanguage *SafeGDScript::_get_language() const {
 	return SafeGDScriptLanguage::get_singleton();
@@ -336,12 +447,21 @@ TypedArray<Dictionary> SafeGDScript::_get_script_signal_list() const {
 	return signals_array;
 }
 bool SafeGDScript::_has_property_default_value(const StringName &p_property) const {
-	return false;
+	return property_defaults.has(p_property);
 }
 Variant SafeGDScript::_get_property_default_value(const StringName &p_property) const {
-	return Variant();
+	Variant value;
+	property_default(p_property, value);
+	return value;
 }
-void SafeGDScript::_update_exports() {}
+void SafeGDScript::_update_exports() {
+	for (SafeGDScriptPlaceholderInstance *placeholder : placeholders) {
+		if (placeholder != nullptr) {
+			placeholder->properties_changed(previous_properties_for_update, properties);
+		}
+	}
+	previous_properties_for_update.clear();
+}
 TypedArray<Dictionary> SafeGDScript::_get_script_method_list() const {
 	TypedArray<Dictionary> functions_array;
 	for (const godot::MethodInfo &method_info : methods_info) {
@@ -350,20 +470,13 @@ TypedArray<Dictionary> SafeGDScript::_get_script_method_list() const {
 	return functions_array;
 }
 TypedArray<Dictionary> SafeGDScript::_get_script_property_list() const {
-	if (instances.is_empty()) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("SafeGDScript::_get_script_property_list: No instances available.");
+	TypedArray<Dictionary> result;
+	for (const gdscript::PropertySignature &signature : properties) {
+		if (signature.is_member) {
+			result.push_back(property_dict(property_info(signature)));
 		}
-		return {};
 	}
-	SafeGDScriptInstance *instance = *instances.begin();
-	if (instance == nullptr) {
-		if constexpr (VERBOSE_LOGGING) {
-			ERR_PRINT("SafeGDScript::_get_script_property_list: Instance is null.");
-		}
-		return {};
-	}
-	return {};
+	return result;
 }
 int32_t SafeGDScript::_get_member_line(const StringName &p_member) const {
 	// 1-based, as the editor counts lines. Not-found is -1, not 0: a caller opens
@@ -371,6 +484,14 @@ int32_t SafeGDScript::_get_member_line(const StringName &p_member) const {
 	// file instead of letting the caller look elsewhere.
 	if (const MethodDocumentation *documentation = methods_doc.getptr(p_member)) {
 		return documentation->line;
+	}
+	if (const gdscript::PropertySignature *property = find_property_signature(p_member)) {
+		return int32_t(property->declaration_line);
+	}
+	for (const gdscript::SourceDeclaration &declaration : source_model.declarations) {
+		if (String::utf8(declaration.name.c_str(), declaration.name.size()) == p_member) {
+			return int32_t(declaration.declaration.start_line);
+		}
 	}
 	return -1;
 }
@@ -382,11 +503,79 @@ Dictionary SafeGDScript::_get_constants() const {
 	return out;
 }
 TypedArray<StringName> SafeGDScript::_get_members() const {
-	return TypedArray<StringName>();
+	TypedArray<StringName> members;
+	for (const gdscript::PropertySignature &property : properties) {
+		if (property.is_member) {
+			members.push_back(StringName(String::utf8(property.name.c_str(), property.name.size())));
+		}
+	}
+	return members;
 }
 bool SafeGDScript::_is_placeholder_fallback_enabled() const {
+	return true;
+}
+
+const gdscript::PropertySignature *SafeGDScript::find_property_signature(
+		const StringName &p_name) const {
+	for (const gdscript::PropertySignature &property : properties) {
+		if (String::utf8(property.name.c_str(), property.name.size()) == p_name) {
+			return &property;
+		}
+	}
+	return nullptr;
+}
+
+PropertyInfo SafeGDScript::property_info(const gdscript::PropertySignature &p_signature) const {
+	PropertyInfo info;
+	info.name = String::utf8(p_signature.name.c_str(), p_signature.name.size());
+	info.type = p_signature.type < 0 ? Variant::NIL : Variant::Type(p_signature.type);
+	if (info.type == Variant::OBJECT && !p_signature.class_name.empty()) {
+		info.class_name = String::utf8(p_signature.class_name.c_str(), p_signature.class_name.size());
+	}
+	info.hint = PropertyHint(p_signature.hint);
+	info.hint_string = String::utf8(p_signature.hint_string.c_str(), p_signature.hint_string.size());
+	info.usage = p_signature.usage;
+	if (p_signature.type < 0) {
+		info.usage |= PROPERTY_USAGE_NIL_IS_VARIANT;
+	} else {
+		info.usage &= ~uint32_t(PROPERTY_USAGE_NIL_IS_VARIANT);
+	}
+	return info;
+}
+
+bool SafeGDScript::property_default(const StringName &p_name, Variant &r_value) const {
+	if (const Variant *value = property_defaults.getptr(p_name)) {
+		r_value = *value;
+		return true;
+	}
 	return false;
 }
+
+static Variant property_default_value(const gdscript::PropertySignature &p_property) {
+	using Kind = gdscript::PropertyDefaultKind;
+	switch (p_property.default_kind) {
+		case Kind::NIL:
+			return Variant();
+		case Kind::INT:
+			return std::get<int64_t>(p_property.default_value);
+		case Kind::FLOAT:
+			return std::get<double>(p_property.default_value);
+		case Kind::BOOL:
+			return std::get<bool>(p_property.default_value);
+		case Kind::STRING: {
+			const std::string &text = std::get<std::string>(p_property.default_value);
+			return String::utf8(text.c_str(), text.size());
+		}
+		case Kind::EMPTY_ARRAY:
+			return Array();
+		case Kind::EMPTY_DICTIONARY:
+			return Dictionary();
+		case Kind::NONE:
+			return Variant();
+	}
+	return Variant();
+}
+
 Variant SafeGDScript::_get_rpc_config() const {
 	const Sandbox *sandbox = sandbox_for_safegdscript(this);
 	// RPC is an external, remotely-triggered entry into the guest. Publishing it
@@ -416,6 +605,20 @@ SafeGDScript::~SafeGDScript() {
 	live_scripts.erase(this);
 }
 
+SafeGDScriptInstance *SafeGDScript::get_safegdscript_script_instance() const {
+	return instances.is_empty() ? nullptr : *instances.begin();
+}
+
+Object *SafeGDScript::owner_for_instance_base(uint64_t p_instance_base) const {
+	if (p_instance_base == 0) return nullptr;
+	for (SafeGDScriptInstance *instance : instances) {
+		if (instance != nullptr && instance->instance_base == p_instance_base) {
+			return instance->get_owner();
+		}
+	}
+	return nullptr;
+}
+
 void SafeGDScript::set_path(const String &p_path) {
 	if (p_path.is_empty()) {
 		WARN_PRINT("SafeGDScript::set_path: Empty resource path.");
@@ -429,7 +632,8 @@ void SafeGDScript::set_path(const String &p_path) {
 	this->compile_source_to_elf();
 }
 
-bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
+bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug,
+		ReloadPolicy p_reload_policy) {
 	// Refuse rebuild while stopped at a breakpoint in this program.
 	if (safegdscript_stopped_script() == this) {
 		return fail_compile(this->path + " is stopped at a breakpoint and cannot be "
@@ -443,6 +647,33 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 		return false;
 	}
 
+	struct InstanceSnapshot {
+		SafeGDScriptInstance *instance = nullptr;
+		HashMap<StringName, Variant> values;
+	};
+	std::vector<InstanceSnapshot> snapshots;
+	if (p_reload_policy == ReloadPolicy::KEEP_STATE) {
+		snapshots.reserve(instances.size());
+		for (SafeGDScriptInstance *instance : instances) {
+			if (instance == nullptr) {
+				continue;
+			}
+			InstanceSnapshot snapshot;
+			snapshot.instance = instance;
+			for (const gdscript::PropertySignature &property : properties) {
+				if (!property.is_member) {
+					continue;
+				}
+				const StringName name(String::utf8(property.name.c_str(), property.name.size()));
+				Variant value;
+				if (instance->get(name, value)) {
+					snapshot.values.insert(name, value);
+				}
+			}
+			snapshots.push_back(std::move(snapshot));
+		}
+	}
+
 	const bool restricted = this->class_access_restricted();
 	GDScriptCompilerBackend &compiler = gdscript_compiler::backend_for(restricted);
 	if (!compiler.available()) {
@@ -454,23 +685,19 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	if (p_profiling && !profiling) {
 		ERR_PRINT("SafeGDScript: the GDScript compiler ELF is too old to build a profiled program.");
 	}
-	// Merge editor breakpoints into this build (adds only, never removes).
-	for (const int32_t line : safegdscript_engine_breakpoints(*this)) {
-		const int64_t at = this->breakpoints.bsearch(line, true);
-		if (at >= this->breakpoints.size() || this->breakpoints[at] != line) {
-			this->breakpoints.insert(at, line);
-		}
-	}
+	// Ours plus the editor's, for this build only: the editor owns its lines and
+	// may clear them again, so they never enter the project-owned set.
+	const PackedInt32Array build_breakpoints = get_breakpoints();
 	// Non-empty breakpoints force a debug build.
-	const bool wants_debug = p_debug || !this->breakpoints.is_empty();
+	const bool wants_debug = p_debug || !build_breakpoints.is_empty();
 	// Profiling and debug are mutually exclusive instrumentations.
 	const bool debug = !profiling && wants_debug && compiler.can_build_debug();
 	if (wants_debug && !profiling && !debug) {
 		ERR_PRINT("SafeGDScript: the GDScript compiler ELF is too old to build a debuggable program.");
 	}
 
-	this->base_paths.clear();
-	this->base_stamps.clear();
+	PackedStringArray new_base_paths;
+	Vector<uint64_t> new_base_stamps;
 	PackedStringArray base_sources;
 	if (!restricted) {
 		String chain_error;
@@ -479,8 +706,8 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 			return fail_compile(chain_error);
 		}
 		for (int64_t i = 0; i + 1 < base_sources.size(); i += 3) {
-			this->base_paths.push_back(base_sources[i + 1]);
-			this->base_stamps.push_back(file_stamp(base_sources[i + 1]));
+			new_base_paths.push_back(base_sources[i + 1]);
+			new_base_stamps.push_back(file_stamp(base_sources[i + 1]));
 		}
 	}
 	gdscript_compiler::prepare(compiler, restricted, base_sources, this->path);
@@ -488,7 +715,7 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	GDScriptCompilerBackend::BuildOptions options;
 	options.profiling = profiling;
 	options.debug = debug;
-	options.breakpoints = this->breakpoints;
+	options.breakpoints = build_breakpoints;
 	PackedByteArray new_elf;
 	{
 		SGD_TIME_COMPILE();
@@ -497,8 +724,52 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	if (new_elf.is_empty()) {
 		return fail_compile(compiler.error_message());
 	}
+	// Fetch every new metadata table before touching the last working program.
+	// Sandboxed backends decode untrusted blobs here; older compiler ELFs simply
+	// return an empty property table.
+	std::vector<gdscript::PropertySignature> new_properties = compiler.property_signatures();
+	std::vector<gdscript::DebugVariableRecord> new_debug_variables = compiler.debug_variables();
+	// Force validation of every compiler-owned blob before committing the ELF.
+	// Older guests simply lack the optional exports and remain valid.
+	(void)compiler.function_signatures();
+	(void)compiler.signal_signatures();
+	(void)compiler.rpc_configs();
+	(void)compiler.class_signatures();
+	(void)compiler.script_constants();
+	(void)compiler.line_table();
+	gdscript::SourceModel new_source_model;
+	if (compiler.can_analyze()) {
+		GDScriptCompilerBackend::AnalysisRequest request;
+		request.source = source_code;
+		request.path = path;
+		request.flags = gdscript::ANALYZE_DECLARATIONS | gdscript::ANALYZE_DOCUMENTATION;
+		const PackedByteArray model_bytes = compiler.analyze(request);
+		if (!model_bytes.is_empty()) {
+			if (!gdscript::decode_source_model(model_bytes.ptr(), size_t(model_bytes.size()), new_source_model)) {
+				return fail_compile("the compiler returned a malformed source model");
+			}
+		}
+	}
+	if (!compiler.metadata_valid()) {
+		return fail_compile("the compiler returned malformed metadata");
+	}
+	HashMap<StringName, Variant> new_defaults;
+	for (const gdscript::PropertySignature &property : new_properties) {
+		if (property.default_kind == gdscript::PropertyDefaultKind::NONE) {
+			continue;
+		}
+		const StringName name(String::utf8(property.name.c_str(), property.name.size()));
+		new_defaults.insert(name, property_default_value(property));
+	}
 
+	this->previous_properties_for_update = this->properties;
 	this->elf_data = new_elf;
+	this->properties = std::move(new_properties);
+	this->debug_variables = std::move(new_debug_variables);
+	this->source_model = std::move(new_source_model);
+	this->property_defaults = std::move(new_defaults);
+	this->base_paths = std::move(new_base_paths);
+	this->base_stamps = std::move(new_base_stamps);
 	if (sgd_timing::enabled()) {
 		sgd_timing::totals().elf_bytes += new_elf.size();
 	}
@@ -518,14 +789,59 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 	}
 	this->base_script = Ref<Script>();
 	this->base_script_resolved = false;
+	this->abstract_script = false;
+	this->class_icon_path = "res://addons/godot_sandbox/SafeGDScript.svg";
+	const PackedStringArray metadata_lines = source_code.split("\n");
+	for (int64_t i = 0; i < metadata_lines.size(); i++) {
+		const String line = metadata_lines[i].strip_edges();
+		if (line.begins_with("@abstract")) {
+			this->abstract_script = true;
+		} else if (line.begins_with("@icon(")) {
+			const int quote = line.find("\"");
+			const int end = quote < 0 ? -1 : line.find("\"", quote + 1);
+			if (quote >= 0 && end > quote + 1) {
+				this->class_icon_path = line.substr(quote + 1, end - quote - 1);
+			}
+		}
+	}
 
 	this->update_methods_info(compiler);
+	this->_update_exports();
 
 	// One reload for the Sandbox they share: reloading per instance would replace
 	// the machine again under the instances that had already taken a record in
 	// it. Each takes a fresh one on its next call.
 	if (!instances.is_empty()) {
 		(*instances.begin())->reset_to(this->elf_data);
+	}
+	if (p_reload_policy == ReloadPolicy::KEEP_STATE) {
+		int skipped = 0;
+		for (InstanceSnapshot &snapshot : snapshots) {
+			if (snapshot.instance == nullptr || !instances.has(snapshot.instance)) {
+				continue;
+			}
+			for (const KeyValue<StringName, Variant> &entry : snapshot.values) {
+				const gdscript::PropertySignature *destination = find_property_signature(entry.key);
+				if (destination == nullptr || !destination->is_member) {
+					skipped++;
+					continue;
+				}
+				const Variant::Type to = destination->type < 0
+						? Variant::NIL : Variant::Type(destination->type);
+				if (destination->type >= 0 && entry.value.get_type() != to &&
+						!Variant::can_convert(entry.value.get_type(), to)) {
+					skipped++;
+					continue;
+				}
+				if (!snapshot.instance->set(entry.key, entry.value)) {
+					skipped++;
+				}
+			}
+		}
+		if constexpr (VERBOSE_LOGGING) if (skipped > 0) {
+			WARN_PRINT("SafeGDScript: skipped " + itos(skipped) +
+					" removed, incompatible, or read-only member value(s) while reloading " + path + ".");
+		}
 	}
 
 	if constexpr (VERBOSE_LOGGING) {
@@ -602,7 +918,34 @@ bool SafeGDScript::clear_breakpoints() {
 }
 
 PackedInt32Array SafeGDScript::get_breakpoints() const {
-	return this->breakpoints;
+	PackedInt32Array result = this->breakpoints;
+	const PackedInt32Array editor = safegdscript_engine_breakpoints(*this);
+	for (const int32_t line : editor) {
+		const int64_t at = result.bsearch(line, true);
+		if (at >= result.size() || result[at] != line) {
+			result.insert(at, line);
+		}
+	}
+	return result;
+}
+
+void SafeGDScript::update_runtime_breakpoints(const PackedInt32Array &p_lines) {
+	// A debug build polls at every executable line and a normal build polls
+	// nowhere, so a set appearing or disappearing changes the program, not just
+	// the host set. Rebuilding keeps state: this runs from the editor's poll.
+	const bool wants_debug = !p_lines.is_empty();
+	if (wants_debug != this->debug_build && safegdscript_stopped_script() != this) {
+		compile_source_to_elf(this->profiled_build, wants_debug, ReloadPolicy::KEEP_STATE);
+	}
+	PackedInt32Array live;
+	for (const int32_t line : p_lines) {
+		bool executable = false;
+		for (const gdscript::LineTableEntry &entry : line_table.entries) {
+			if (entry.line == uint32_t(line)) { executable = true; break; }
+		}
+		if (executable) live.push_back(line);
+	}
+	active_breakpoints = live;
 }
 
 PackedInt32Array SafeGDScript::get_active_breakpoints() const {
@@ -692,6 +1035,10 @@ bool SafeGDScript::fail_compile(const String &p_message) {
 
 void SafeGDScript::remove_instance(SafeGDScriptInstance *p_instance) {
 	instances.erase(p_instance);
+}
+
+void SafeGDScript::remove_placeholder(SafeGDScriptPlaceholderInstance *p_instance) {
+	placeholders.erase(p_instance);
 }
 
 static constexpr int MAX_BASE_CHAIN = 16;
@@ -850,6 +1197,10 @@ void SafeGDScript::poll_base_sources() {
 			script->rebuild_if_a_base_changed();
 		}
 	}
+}
+
+std::vector<SafeGDScript *> SafeGDScript::live_script_snapshot() {
+	return std::vector<SafeGDScript *>(live_scripts.begin(), live_scripts.end());
 }
 
 void SafeGDScript::rebuild_if_a_base_changed() {

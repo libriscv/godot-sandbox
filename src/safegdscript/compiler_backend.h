@@ -1,7 +1,10 @@
 #pragma once
 
 #include "../gdscript/compiler/function_signature.h"
+#include "../gdscript/compiler/debug_layout.h"
 #include "../gdscript/compiler/line_table.h"
+#include "../gdscript/compiler/property_signature.h"
+#include "../gdscript/compiler/source_model.h"
 #include <godot_cpp/variant/variant.hpp>
 #include <vector>
 
@@ -35,6 +38,16 @@ public:
 	};
 	virtual bool validate(const String &p_source, Validation &r_result) = 0;
 
+	struct AnalysisRequest {
+		String source;
+		String path;
+		int32_t caret_line = 0;
+		int32_t caret_column = 0;
+		uint32_t flags = gdscript::ANALYZE_ALL;
+	};
+	virtual bool can_analyze() = 0;
+	virtual PackedByteArray analyze(const AnalysisRequest &p_request) = 0;
+
 	virtual String error_message() = 0;
 	virtual std::vector<gdscript::FunctionSignature> function_signatures() = 0;
 	virtual std::vector<gdscript::FunctionSignature> signal_signatures() = 0;
@@ -44,7 +57,11 @@ public:
 	virtual std::vector<gdscript::ClassSignature> class_signatures() = 0;
 	// File-scope `const` and `enum`; empty from a compiler that predates them.
 	virtual std::vector<gdscript::ScriptConstant> script_constants() = 0;
+	// Variables and folded defaults. Empty from a compiler ELF predating P0.
+	virtual std::vector<gdscript::PropertySignature> property_signatures() = 0;
+	virtual std::vector<gdscript::DebugVariableRecord> debug_variables() = 0;
 	virtual gdscript::LineTable line_table() = 0;
+	virtual bool metadata_valid() const = 0;
 	virtual PackedInt32Array installed_breakpoints() = 0;
 	virtual bool is_tool() = 0;
 

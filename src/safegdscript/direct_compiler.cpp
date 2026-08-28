@@ -73,6 +73,7 @@ public:
 		options.profiling_clock = gdscript::ProfilingClock::TIME;
 		if (p_options.debug) {
 			options.debug_info = true;
+			options.debug_step_points = true;
 			for (int64_t i = 0; i < p_options.breakpoints.size(); i++) {
 				const int32_t line = p_options.breakpoints[i];
 				if (line > 0) {
@@ -118,6 +119,24 @@ public:
 		return true;
 	}
 
+	bool can_analyze() override { return true; }
+	PackedByteArray analyze(const AnalysisRequest &p_request) override {
+		gdscript::SourceModel model = gdscript::analyze_source(to_utf8(p_request.source),
+				to_utf8(p_request.path), p_request.flags, p_request.caret_line,
+				p_request.caret_column);
+		if ((p_request.flags & gdscript::ANALYZE_DECLARATIONS) != 0) {
+			gdscript::CompilerOptions options = m_options;
+			options.output_elf = false;
+			options.optimize = false;
+			gdscript::Compiler compiler;
+			compiler.compile(to_utf8(p_request.source), options);
+			if (!compiler.get_error_info().has_error) {
+				model.properties = compiler.get_property_signatures();
+			}
+		}
+		return to_packed(gdscript::encode_source_model(model));
+	}
+
 	String error_message() override {
 		return m_error.is_empty() ? String("compilation failed") : m_error;
 	}
@@ -127,7 +146,10 @@ public:
 	std::vector<gdscript::RPCConfig> rpc_configs() override { return m_rpc_configs; }
 	std::vector<gdscript::ClassSignature> class_signatures() override { return m_classes; }
 	std::vector<gdscript::ScriptConstant> script_constants() override { return m_constants; }
+	std::vector<gdscript::PropertySignature> property_signatures() override { return m_properties; }
+	std::vector<gdscript::DebugVariableRecord> debug_variables() override { return m_debug_variables; }
 	gdscript::LineTable line_table() override { return m_line_table; }
+	bool metadata_valid() const override { return true; }
 	PackedInt32Array installed_breakpoints() override { return m_breakpoints; }
 	bool is_tool() override { return m_is_tool; }
 	ScriptClass script_class() override { return m_script_class; }
@@ -140,6 +162,8 @@ private:
 		m_rpc_configs = p_compiler.get_rpc_configs();
 		m_classes = p_compiler.get_class_signatures();
 		m_constants = p_compiler.get_script_constants();
+		m_properties = p_compiler.get_property_signatures();
+		m_debug_variables = p_compiler.get_debug_variables();
 		m_line_table = p_compiler.get_line_table();
 		m_is_tool = p_compiler.is_tool();
 
@@ -164,6 +188,8 @@ private:
 	std::vector<gdscript::RPCConfig> m_rpc_configs;
 	std::vector<gdscript::ClassSignature> m_classes;
 	std::vector<gdscript::ScriptConstant> m_constants;
+	std::vector<gdscript::PropertySignature> m_properties;
+	std::vector<gdscript::DebugVariableRecord> m_debug_variables;
 	gdscript::LineTable m_line_table;
 	PackedInt32Array m_breakpoints;
 	bool m_is_tool = false;

@@ -3,6 +3,9 @@
 #include "../docker.h"
 #include "../gdscript/compiler/function_signature.h"
 #include "../gdscript/compiler/line_table.h"
+#include "../gdscript/compiler/debug_layout.h"
+#include "../gdscript/compiler/property_signature.h"
+#include "../gdscript/compiler/source_model.h"
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/ref.hpp>
 #include <godot_cpp/classes/script_language.hpp>
@@ -17,6 +20,7 @@ class Sandbox;
 class GDScriptCompilerBackend;
 class SafeGDScriptInstance;
 class SafeGDScriptClass;
+class SafeGDScriptPlaceholderInstance;
 class ELFScript;
 
 class SafeGDScript : public ScriptExtension {
@@ -35,6 +39,10 @@ protected:
 	String source_code;
 
 public:
+	enum class ReloadPolicy {
+		DISCARD_STATE,
+		KEEP_STATE,
+	};
 	virtual bool _editor_can_reload_from_file() override;
 	virtual void _placeholder_erased(void *p_placeholder) override;
 	virtual bool _can_instantiate() const override;
@@ -54,6 +62,7 @@ public:
 	virtual String _get_class_icon_path() const override;
 	virtual bool _has_method(const StringName &p_method) const override;
 	virtual bool _has_static_method(const StringName &p_method) const override;
+	virtual Variant _get_script_method_argument_count(const StringName &p_method) const override;
 	virtual Dictionary _get_method_info(const StringName &p_method) const override;
 	virtual bool _is_tool() const override;
 	virtual bool _is_valid() const override;
@@ -74,6 +83,7 @@ public:
 
 	void set_path(const String &p_path);
 	SafeGDScriptInstance *get_safegdscript_script_instance() const;
+	Object *owner_for_instance_base(uint64_t p_instance_base) const;
 	// The declared signature of one exported function, or null when the script
 	// does not export it.
 	const godot::MethodInfo *find_method_info(const StringName &p_method) const;
@@ -81,7 +91,13 @@ public:
 	// No standalone file: unsaved or scene sub-resource (path contains "::").
 	bool is_built_in() const { return path.is_empty() || path.contains("::"); }
 	const PackedByteArray &get_content() const { return elf_data; }
-	bool compile_source_to_elf(bool p_profiling = false, bool p_debug = false);
+	bool compile_source_to_elf(bool p_profiling = false, bool p_debug = false,
+			ReloadPolicy p_reload_policy = ReloadPolicy::DISCARD_STATE);
+	const std::vector<gdscript::PropertySignature> &get_property_signatures() const { return properties; }
+	const std::vector<gdscript::DebugVariableRecord> &get_debug_variables() const { return debug_variables; }
+	const gdscript::PropertySignature *find_property_signature(const StringName &p_name) const;
+	PropertyInfo property_info(const gdscript::PropertySignature &p_signature) const;
+	bool property_default(const StringName &p_name, Variant &r_value) const;
 	bool is_profiled_build() const { return profiled_build; }
 
 	// -= Breakpoints =-
@@ -90,8 +106,14 @@ public:
 	bool set_breakpoint(int32_t p_line, bool p_enabled);
 	bool set_breakpoints(const PackedInt32Array &p_lines);
 	bool clear_breakpoints();
-	// What was asked for, ascending.
+	// Editor-owned set for the running program: rebuilds when the build cannot
+	// honour it, then records what the line table says it could place.
+	void update_runtime_breakpoints(const PackedInt32Array &p_lines);
+	// Project-owned and currently editor-owned lines, ascending. Editor polling
+	// never writes its lines into the persistent project-owned set.
 	PackedInt32Array get_breakpoints() const;
+	// Ours alone, without asking the editor for its own.
+	const PackedInt32Array &get_project_breakpoints() const { return breakpoints; }
 	// Subset the last compile could place; dead lines have no instructions.
 	PackedInt32Array get_active_breakpoints() const;
 
@@ -112,6 +134,7 @@ public:
 	static PackedStringArray resolve_base_sources(const String &p_source,
 			const String &p_self_path = String(), String *r_error = nullptr);
 	static void poll_base_sources();
+	static std::vector<SafeGDScript *> live_script_snapshot();
 	// The nested class of that name, or null. One per class whose declared chain
 	// reaches an engine class; the rest stay plain Dictionaries in the guest.
 	Ref<SafeGDScriptClass> find_nested_class(const StringName &p_name) const;
@@ -120,6 +143,7 @@ public:
 	const String &get_script_native_base_class() const { return native_base_class; }
 	void class_restrictions_changed();
 	void remove_instance(SafeGDScriptInstance *p_instance);
+	void remove_placeholder(SafeGDScriptPlaceholderInstance *p_instance);
 	Variant new_instance(const Variant **p_args, GDExtensionInt p_argcount, GDExtensionCallError &r_error);
 	const Variant **pending_init_args = nullptr;
 	int pending_init_argcount = 0;
@@ -144,11 +168,14 @@ private:
 
 	String path;
 	mutable HashSet<SafeGDScriptInstance *> instances;
+	mutable HashSet<SafeGDScriptPlaceholderInstance *> placeholders;
 	PackedByteArray elf_data;
 	// Per-script copy; the compiler's own message belongs to the last caller.
 	String last_error;
 	bool profiled_build = false;
 	bool debug_build = false;
+	bool source_compile_pending_reload = false;
+	bool source_compile_succeeded = false;
 	String class_name;
 	String base_class;
 	bool base_is_path = false;
@@ -166,10 +193,17 @@ private:
 	// What the last compile placed, a subset of the above.
 	PackedInt32Array active_breakpoints;
 	bool tool_script = true;
+	bool abstract_script = false;
+	String class_icon_path = "res://addons/godot_sandbox/SafeGDScript.svg";
 	// IRProgram order; index i matches shadow-stack frame function_index.
 	std::vector<gdscript::FunctionSignature> signatures;
 	gdscript::LineTable line_table;
 	std::vector<godot::MethodInfo> methods_info;
+	std::vector<gdscript::PropertySignature> properties;
+	std::vector<gdscript::DebugVariableRecord> debug_variables;
+	gdscript::SourceModel source_model;
+	std::vector<gdscript::PropertySignature> previous_properties_for_update;
+	HashMap<StringName, Variant> property_defaults;
 	Dictionary rpc_config;
 	HashMap<StringName, Ref<SafeGDScriptClass>> nested_classes;
 	std::vector<godot::MethodInfo> signals_info;
@@ -184,4 +218,5 @@ private:
 	// is answered from here, the way GDScript answers out of Script::constants.
 	HashMap<StringName, Variant> constants;
 	friend class SafeGDScriptInstance;
+	friend class SafeGDScriptPlaceholderInstance;
 };

@@ -17,7 +17,10 @@ option(DOUBLE_PRECISION "Enable double precision real_t" OFF)
 # Compiler sources
 set(COMPILER_SOURCES
     compiler_exception.cpp
+	debug_layout.cpp
     function_signature.cpp
+	property_signature.cpp
+	source_model.cpp
     line_table.cpp
     gdsmeta.cpp
     token.cpp
@@ -144,6 +147,9 @@ if (BUILD_TESTING)
 	add_gdscript_test(test_syntax tests/test_syntax.cpp)
 	add_gdscript_test(test_inline_suites tests/test_inline_suites.cpp)
 	add_gdscript_test(test_signatures tests/test_signatures.cpp)
+	add_gdscript_test(test_property_signatures tests/test_property_signatures.cpp)
+	add_gdscript_test(test_source_model tests/test_source_model.cpp)
+	add_gdscript_test(test_debug_layout tests/test_debug_layout.cpp)
 	add_gdscript_test(test_properties tests/test_properties.cpp)
 	add_gdscript_test(test_export_hints tests/test_export_hints.cpp)
 	add_gdscript_test(test_classes tests/test_classes.cpp)

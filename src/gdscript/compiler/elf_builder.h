@@ -2,6 +2,7 @@
 #include "ir.h"
 #include "line_table.h"
 #include "instance_layout.h"
+#include "debug_layout.h"
 #include "profiling_layout.h"
 #include "variant_layout.h"
 #include <vector>
@@ -16,15 +17,18 @@ public:
 
 	std::vector<uint8_t> build(const IRProgram& program, const VariantLayout& layout = native_variant_layout(),
 		bool profiling = false, ProfilingClock profiling_clock = ProfilingClock::TIME,
-		bool debug_info = false, const std::vector<uint32_t>& breakpoint_lines = {});
+		bool debug_info = false, const std::vector<uint32_t>& breakpoint_lines = {},
+		bool debug_step_points = false);
 
 	// Addresses rebased to ELF virtual addresses. Valid after build().
 	const LineTable& get_line_table() const { return m_line_table; }
 	const std::vector<uint32_t>& get_installed_breakpoints() const { return m_installed_breakpoints; }
+	const std::vector<DebugVariableRecord>& get_debug_variables() const { return m_debug_variables; }
 
 private:
 	LineTable m_line_table;
 	std::vector<uint32_t> m_installed_breakpoints;
+	std::vector<DebugVariableRecord> m_debug_variables;
 
 	struct Elf64_Ehdr {
 		uint8_t e_ident[16];

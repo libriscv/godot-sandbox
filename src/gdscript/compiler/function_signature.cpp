@@ -88,6 +88,13 @@ std::vector<uint8_t> encode_function_signatures(const std::vector<FunctionSignat
 			}
 		}
 	}
+	// Optional extension section. Old hosts stop after the legacy records and
+	// ignore it; new hosts also accept old compiler ELFs with no section.
+	write_scalar<uint32_t>(out, 0x54415453u); // "STAT"
+	write_scalar<uint32_t>(out, uint32_t(signatures.size()));
+	for (const FunctionSignature &sig : signatures) {
+		write_scalar<uint8_t>(out, sig.is_static ? 1 : 0);
+	}
 	return out;
 }
 
@@ -159,6 +166,30 @@ bool decode_function_signatures(const uint8_t *data, size_t size,
 	}
 
 	if (!reader.ok) {
+		out.clear();
+		return false;
+	}
+	if (reader.offset == size) {
+		return true; // Old compiler blob.
+	}
+	if (reader.scalar<uint32_t>() != 0x54415453u) {
+		out.clear();
+		return false;
+	}
+	const uint32_t static_count = reader.scalar<uint32_t>();
+	if (!reader.ok || static_count != out.size()) {
+		out.clear();
+		return false;
+	}
+	for (FunctionSignature &signature : out) {
+		const uint8_t value = reader.scalar<uint8_t>();
+		if (value > 1) {
+			out.clear();
+			return false;
+		}
+		signature.is_static = value != 0;
+	}
+	if (!reader.ok || reader.offset != size) {
 		out.clear();
 		return false;
 	}

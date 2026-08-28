@@ -15,9 +15,9 @@ namespace gdscript {
 static constexpr int32_t USAGE_SCRIPT_VARIABLE = 4096;
 
 RISCVCodeGen::RISCVCodeGen(const VariantLayout& layout, bool profiling, ProfilingClock profiling_clock,
-		bool debug_info, const std::vector<uint32_t>& breakpoint_lines) :
+		bool debug_info, const std::vector<uint32_t>& breakpoint_lines, bool debug_step_points) :
 		m_layout(layout), m_profiling(profiling), m_profiling_clock(profiling_clock),
-		m_debug(debug_info),
+		m_debug(debug_info), m_debug_step_points(debug_step_points),
 		m_breakpoints(breakpoint_lines.begin(), breakpoint_lines.end()) {
 	// Line 0 = unstamped; a breakpoint on it would fire everywhere.
 	m_breakpoints.erase(0);
@@ -259,6 +259,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 
 	m_global_count = program.globals.size();
 	m_globals = program.globals;
+	m_global_address = 0;
 
 	m_global_slots.assign(m_global_count, 0);
 	m_data_global_count = 0;
@@ -278,6 +279,8 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_debug_index = -1;
 	m_line_table.entries.clear();
 	m_installed_breakpoints.clear();
+	m_debug_variables.clear();
+	m_pending_debug_variables.clear();
 
 	if (m_instance_count > 0) {
 		emit_la(REG_TP, INSTANCE_LABEL);
@@ -440,6 +443,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 		data_vaddr = (data_vaddr + 0xFFF) & ~0xFFF;
 
 		if (global_slots > 0) {
+			m_global_address = data_vaddr;
 			set_label(label_id(GLOBALS_LABEL), data_vaddr - 0x10000);
 			set_label(label_id(INSTANCE_LABEL), data_vaddr - 0x10000 + data_slots * variant_size());
 
@@ -518,10 +522,33 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 			put32(DebugLayout::FUNCTION_COUNT_OFF, uint32_t(program.functions.size()));
 			put32(DebugLayout::FRAME_SIZE_OFF, uint32_t(DebugLayout::FRAME_SIZE));
 			put32(DebugLayout::MAX_DEPTH_OFF, DebugLayout::MAX_DEPTH);
+
+			// Globals and members are live for the whole program. Offsets are
+			// relative to the exported global area or the frame's instance base.
+			for (size_t i = 0; i < m_globals.size(); i++) {
+				if (m_globals[i].is_const) continue;
+				DebugVariableRecord record;
+				record.function_index = UINT32_MAX;
+				record.name = m_globals[i].name;
+				record.type = m_globals[i].value_type == IRInstruction::TypeHint_NONE
+						? -1 : int32_t(m_globals[i].value_type);
+				record.storage = m_globals[i].is_member() ? DebugStorage::MEMBER : DebugStorage::GLOBAL;
+				record.offset = int32_t(m_global_slots[i] * variant_size());
+				record.pc_begin = 0x10000;
+				record.pc_end = data_vaddr;
+				m_debug_variables.push_back(std::move(record));
+			}
 		}
 	}
 
 	resolve_labels();
+	for (PendingDebugVariable &pending : m_pending_debug_variables) {
+		const size_t begin = m_label_offsets[label_id(pending.begin_label)];
+		const size_t end = m_label_offsets[label_id(pending.end_label)];
+		pending.record.pc_begin = 0x10000 + begin;
+		pending.record.pc_end = 0x10000 + std::max(begin, end);
+		m_debug_variables.push_back(std::move(pending.record));
+	}
 
 	return m_code;
 }
@@ -551,7 +578,7 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 	}
 	m_fn.forward_to_return = find_return_forwarding(func);
 	m_fn.live_params = find_live_parameters(func);
-	if (m_fn.is_coroutine) {
+	if (m_fn.is_coroutine || m_debug) {
 		// Parameters are caller pointers; force all live so they are in the frame before suspension.
 		m_fn.live_params.assign(func.parameters.size(), true);
 	}
@@ -2260,7 +2287,7 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 
 		// Source-requested stop; not added to the host's installed list.
 		case IROpcode::BREAKPOINT:
-			emit_breakpoint(instr.line, false);
+			emit_breakpoint(instr.line, false, true, true);
 			break;
 
 		case IROpcode::LOAD_IMM: {
@@ -2897,11 +2924,39 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 
 	plan_frame(func);
 	emit_prologue(func);
+	std::vector<std::pair<std::string, std::string>> debug_labels(func.debug_locals.size());
+	if (m_debug && m_debug_index >= 0) {
+		for (size_t i = 0; i < func.debug_locals.size(); i++) {
+			const IRFunction::DebugLocal &local = func.debug_locals[i];
+			if (local.name == "self" || local.register_num < 0) continue;
+			auto offset = m_fn.variant_offsets.find(local.register_num);
+			if (offset == m_fn.variant_offsets.end()) continue;
+			debug_labels[i] = {gen_local_label("debug_begin"), gen_local_label("debug_end")};
+			PendingDebugVariable pending;
+			pending.record.function_index = uint32_t(m_debug_index);
+			pending.record.name = local.name;
+			pending.record.type = local.type_hint == IRInstruction::TypeHint_NONE
+					? -1 : int32_t(local.type_hint);
+			pending.record.storage = DebugStorage::FRAME;
+			pending.record.offset = offset->second;
+			pending.begin_label = debug_labels[i].first;
+			pending.end_label = debug_labels[i].second;
+			m_pending_debug_variables.push_back(std::move(pending));
+		}
+	}
 
 	const bool elision_in_effect = std::find(m_fn.elided_scopes.begin(),
 		m_fn.elided_scopes.end(), true) != m_fn.elided_scopes.end();
 
 	for (size_t instr_idx = 0; instr_idx < func.instructions.size(); instr_idx++) {
+		for (size_t i = 0; i < func.debug_locals.size(); i++) {
+			if (!debug_labels[i].first.empty() && func.debug_locals[i].begin_instruction == instr_idx) {
+				set_label(label_id(debug_labels[i].first), m_code.size());
+			}
+			if (!debug_labels[i].second.empty() && func.debug_locals[i].end_instruction == instr_idx) {
+				set_label(label_id(debug_labels[i].second), m_code.size());
+			}
+		}
 		if (m_fn.unmaterialized_imm[instr_idx]) {
 			m_fn.current_instr_idx++;
 			continue;
@@ -2921,21 +2976,31 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 		// Break deferred past LABELs: above a label, a loop back-edge skips it.
 		if (instr.line > 0 && instr.line != m_break_line) {
 			m_break_line = instr.line;
-			m_break_pending = m_breakpoints.count(uint32_t(instr.line)) != 0;
+			m_break_pending = m_debug_step_points || m_breakpoints.count(uint32_t(instr.line)) != 0;
 		}
 		if (m_break_pending && instr.opcode != IROpcode::LABEL) {
 			m_break_pending = false;
 			if (instr.opcode == IROpcode::BREAKPOINT) {
 				// Coalesce: one stop, reported as installed.
-				emit_breakpoint(m_break_line, true);
+				const bool requested = m_breakpoints.count(uint32_t(m_break_line)) != 0;
+				emit_breakpoint(m_break_line, requested, true, true);
 				continue;
 			}
-			emit_breakpoint(m_break_line);
+			const bool user_stop = m_breakpoints.count(uint32_t(m_break_line)) != 0;
+			emit_breakpoint(m_break_line, user_stop, user_stop);
 		}
 
 		m_fn.ecall_refused = elision_in_effect && !instruction_may_ecall(instr);
 		gen_instruction(instr);
 		m_fn.ecall_refused = false;
+	}
+	for (size_t i = 0; i < func.debug_locals.size(); i++) {
+		if (!debug_labels[i].first.empty() && func.debug_locals[i].begin_instruction >= func.instructions.size()) {
+			set_label(label_id(debug_labels[i].first), m_code.size());
+		}
+		if (!debug_labels[i].second.empty() && func.debug_locals[i].end_instruction >= func.instructions.size()) {
+			set_label(label_id(debug_labels[i].second), m_code.size());
+		}
 	}
 
 	// Emitted after body; skipped if optimizer removed all awaits.

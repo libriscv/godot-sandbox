@@ -42,6 +42,7 @@ struct FunctionSignature {
 
 	// Coroutine; MethodInfo return type forced to Variant.
 	bool is_coroutine = false;
+	bool is_static = false;
 };
 
 // One method exposed through Godot's high-level multiplayer API. The numeric

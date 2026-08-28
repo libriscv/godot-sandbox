@@ -36,8 +36,10 @@ set(SOURCES
 	src/safegdscript/compiler_backend.cpp
 	src/safegdscript/debug_safegdscript.cpp
 	src/safegdscript/direct_compiler.cpp
+	src/safegdscript/editor_analysis_safegdscript.cpp
 	src/safegdscript/sandboxed_compiler.cpp
 	src/safegdscript/profiling_safegdscript.cpp
+	src/safegdscript/placeholder_instance_safegdscript.cpp
 	src/safegdscript/script_class_safegdscript.cpp
 	src/safegdscript/script_instance_safegdscript.cpp
 	src/safegdscript/script_language_safegdscript.cpp
@@ -75,7 +77,10 @@ set(SOURCES
 # instead, and these are part of it.
 set(COMPILER_HOST_SOURCES
 	src/gdscript/compiler/function_signature.cpp
+	src/gdscript/compiler/property_signature.cpp
+	src/gdscript/compiler/source_model.cpp
 	src/gdscript/compiler/line_table.cpp
+	src/gdscript/compiler/debug_layout.cpp
 	src/gdscript/compiler/gdsmeta.cpp
 	src/gdscript/compiler/globals.cpp
 	src/gdscript/compiler/compiler_exception.cpp

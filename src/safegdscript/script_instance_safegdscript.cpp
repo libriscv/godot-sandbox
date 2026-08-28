@@ -151,33 +151,23 @@ const GDExtensionPropertyInfo *SafeGDScriptInstance::get_property_list(uint32_t 
 	ScopedInstanceBase sib(sandbox, this->current_instance_base());
 	std::vector<PropertyInfo> prop_list = sandbox->create_sandbox_property_list();
 
-	// Sandboxed properties
-	const std::vector<SandboxProperty> &properties = sandbox->get_properties();
-
-	*r_count = properties.size() + prop_list.size();
+	// Script properties are compiler metadata. This keeps inspector shape
+	// identical to placeholders and avoids asking the running guest for facts.
+	const std::vector<gdscript::PropertySignature> &properties = script->properties;
+	uint32_t script_property_count = 0;
+	for (const gdscript::PropertySignature &property : properties) {
+		if (property.is_member) script_property_count++;
+	}
+	*r_count = uint32_t(script_property_count + prop_list.size());
 	GDExtensionPropertyInfo *list = memnew_arr(GDExtensionPropertyInfo, *r_count + 2);
 	const GDExtensionPropertyInfo *list_ptr = list;
 
-	for (const SandboxProperty &property : properties) {
-		if constexpr (VERBOSE_LOGGING) {
-			printf("SafeGDScriptInstance::get_property_list %s\n", String(property.name()).utf8().ptr());
-			fflush(stdout);
-		}
-		list->name = stringname_alloc(property.name());
-		list->class_name = stringname_alloc("Variant");
-		list->type = (GDExtensionVariantType)property.type();
-		list->hint = property.hint();
-		list->hint_string = string_alloc(property.hint_string());
-		// NIL_IS_VARIANT goes by type, not by annotation: without it NIL reads as void.
-		uint32_t usage = property.usage() != 0
-			? property.usage()
-			: uint32_t(PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_SCRIPT_VARIABLE);
-		if (property.type() == Variant::NIL) {
-			usage |= uint32_t(PROPERTY_USAGE_NIL_IS_VARIANT);
-		} else {
-			usage &= ~uint32_t(PROPERTY_USAGE_NIL_IS_VARIANT);
-		}
-		list->usage = usage;
+	for (const gdscript::PropertySignature &signature : properties) {
+		if (!signature.is_member) continue;
+		const PropertyInfo property = script->property_info(signature);
+		set_property_info(*list, property.name, property.class_name,
+				GDExtensionVariantType(property.type), property.hint,
+				property.hint_string, property.usage);
 		list++;
 	}
 	for (int i = 0; i < prop_list.size(); i++) {
@@ -210,16 +200,26 @@ Variant::Type SafeGDScriptInstance::get_property_type(const StringName &p_name, 
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("SafeGDScriptInstance::get_property_type " + p_name);
 	}
-	Sandbox *sandbox = current_sandbox;
-	if (const SandboxProperty *prop = sandbox->find_property_or_null(p_name)) {
+	if (const gdscript::PropertySignature *prop = script->find_property_signature(p_name)) {
 		*r_is_valid = true;
-		return prop->type();
+		return prop->type < 0 ? Variant::NIL : Variant::Type(prop->type);
 	}
 	*r_is_valid = false;
 	return Variant::NIL;
 }
 
 void SafeGDScriptInstance::get_property_state(GDExtensionScriptInstancePropertyStateAdd p_add_func, void *p_userdata) {
+	for (const gdscript::PropertySignature &property : script->properties) {
+		if (!property.is_member || (property.usage & PROPERTY_USAGE_STORAGE) == 0) {
+			continue;
+		}
+		const StringName name = String::utf8(property.name.c_str(), property.name.size());
+		Variant value;
+		if (get(name, value)) {
+			p_add_func(reinterpret_cast<GDExtensionConstStringNamePtr>(&name),
+					reinterpret_cast<GDExtensionConstVariantPtr>(&value), p_userdata);
+		}
+	}
 }
 
 bool SafeGDScriptInstance::validate_property(GDExtensionPropertyInfo &p_property) const {
@@ -266,15 +266,14 @@ bool SafeGDScriptInstance::property_can_revert(const StringName &p_name) const {
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("SafeGDScriptInstance::property_can_revert " + p_name);
 	}
-	return false;
+	return script->property_defaults.has(p_name);
 }
 
 bool SafeGDScriptInstance::property_get_revert(const StringName &p_name, Variant &r_ret) const {
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("SafeGDScriptInstance::property_get_revert " + p_name);
 	}
-	r_ret = Variant();
-	return false;
+	return script->property_default(p_name, r_ret);
 }
 
 void SafeGDScriptInstance::refcount_incremented() {

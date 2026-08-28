@@ -14,8 +14,8 @@ inline Dictionary property_dict(const godot::PropertyInfo &p_info) {
 	type["name"] = p_info.name;
 	type["class_name"] = p_info.class_name;
 	type["type"] = p_info.type;
-	type["hint"] = PropertyHint::PROPERTY_HINT_NONE;
-	type["hint_string"] = String();
+	type["hint"] = p_info.hint;
+	type["hint_string"] = p_info.hint_string;
 	type["usage"] = p_info.usage;
 	return type;
 }

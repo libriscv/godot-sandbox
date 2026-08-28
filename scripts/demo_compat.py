@@ -17,6 +17,7 @@ import datetime as dt
 import fnmatch
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -55,6 +56,8 @@ DIAGNOSTIC_MARKERS = (
     "ERROR:",
     "WARNING:",
 )
+DEFAULT_RUNTIME_SECONDS = 5.0
+SIMULATED_FPS = 60
 
 
 class HarnessError(RuntimeError):
@@ -488,7 +491,7 @@ def execute_projects(
     projects: Sequence[Path],
     root: Path,
     godot: Path,
-    frames: int,
+    runtime_arguments: Sequence[str],
     timeout: float,
     jobs: int,
     log_dir: Path,
@@ -505,7 +508,7 @@ def execute_projects(
             project,
             root,
             "run",
-            ("--quit-after", str(frames)),
+            runtime_arguments,
             timeout,
             log_dir,
         )
@@ -637,21 +640,51 @@ def build_parser() -> argparse.ArgumentParser:
     toggle.add_argument("mode", choices=("gd", "sgd"))
     toggle.add_argument("projects", nargs="*", help="relative path glob or substring")
 
+    def add_runtime_options(command: argparse.ArgumentParser) -> None:
+        duration = command.add_mutually_exclusive_group()
+        duration.add_argument(
+            "--frames",
+            type=int,
+            help="runtime frames before Godot quits",
+        )
+        duration.add_argument(
+            "--seconds",
+            type=float,
+            help=(
+                f"simulated runtime seconds at a fixed {SIMULATED_FPS} FPS "
+                f"(default: {DEFAULT_RUNTIME_SECONDS:g})"
+            ),
+        )
+        command.add_argument("--jobs", type=int, default=1, help="projects to run concurrently")
+
     test = subparsers.add_parser("test", help="import and briefly run projects in their current mode")
     test.add_argument("projects", nargs="*", help="relative path glob or substring")
-    test.add_argument("--frames", type=int, default=120, help="runtime frames before Godot quits")
-    test.add_argument("--jobs", type=int, default=1, help="projects to run concurrently")
+    add_runtime_options(test)
 
     matrix = subparsers.add_parser("matrix", help="compare GDScript and SafeGDScript, then restore GDScript")
     matrix.add_argument("projects", nargs="*", help="relative path glob or substring")
-    matrix.add_argument("--frames", type=int, default=120, help="runtime frames before Godot quits")
-    matrix.add_argument("--jobs", type=int, default=1, help="projects to run concurrently")
+    add_runtime_options(matrix)
     return parser
 
 
-def validate_run_options(frames: int, jobs: int) -> None:
-    if frames < 1:
+def runtime_arguments(frames: int | None, seconds: float | None) -> tuple[str, ...]:
+    if frames is not None and frames < 1:
         raise HarnessError("--frames must be at least 1")
+    if frames is not None:
+        return ("--quit-after", str(frames))
+    seconds = DEFAULT_RUNTIME_SECONDS if seconds is None else seconds
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise HarnessError("--seconds must be a finite number greater than 0")
+    simulated_frames = math.ceil(seconds * SIMULATED_FPS)
+    return (
+        "--fixed-fps",
+        str(SIMULATED_FPS),
+        "--quit-after",
+        str(simulated_frames),
+    )
+
+
+def validate_jobs(jobs: int) -> None:
     if jobs < 1:
         raise HarnessError("--jobs must be at least 1")
 
@@ -692,11 +725,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"logs: {log_dir}")
         return 1 if failures else 0
 
-    validate_run_options(args.frames, args.jobs)
+    validate_jobs(args.jobs)
+    run_arguments = runtime_arguments(args.frames, args.seconds)
     if args.command == "test":
         mode = mode_for(projects)
         log_dir = new_results_dir(args.results, mode)
-        results = execute_projects(projects, root, godot, args.frames, args.timeout, args.jobs, log_dir)
+        results = execute_projects(
+            projects, root, godot, run_arguments, args.timeout, args.jobs, log_dir
+        )
         write_summary(log_dir / "summary.json", mode, results)
         failures = sum(result_failed(result) for result in results)
         print(f"{failures}/{len(results)} phases reported diagnostics or failed; results: {log_dir}")
@@ -716,7 +752,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         for project in projects:
             to_gd_mode(project, root, godot, args.timeout, baseline_dir, reimport=False)
-        baseline = execute_projects(projects, root, godot, args.frames, args.timeout, args.jobs, baseline_dir)
+        baseline = execute_projects(
+            projects, root, godot, run_arguments, args.timeout, args.jobs, baseline_dir
+        )
         write_summary(baseline_dir / "summary.json", "gd", baseline)
         safe_imports: list[RunResult] = []
         for project in projects:
@@ -731,7 +769,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             projects,
             root,
             godot,
-            args.frames,
+            run_arguments,
             args.timeout,
             args.jobs,
             safe_dir,

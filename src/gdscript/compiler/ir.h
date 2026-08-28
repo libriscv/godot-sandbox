@@ -254,6 +254,12 @@ struct IRInstruction {
 	// 1-based source line; 0 for prologue/synthesised. Metadata only.
 	int32_t line = 0;
 
+	// 1-based position in the unoptimized body, stamped before the optimizer
+	// runs and carried through copies. Debug ranges are recorded as positions in
+	// that body, and passes insert and delete; this is how they are found again.
+	// 0 means an instruction a pass synthesised. Not part of equality.
+	uint32_t debug_order = 0;
+
 	// VCALL only: `super.method()` on a native base. The object carries the
 	// class's own script instance, which would answer the call and recurse back
 	// into the method that made it, so the host bypasses it for this one call.
@@ -282,9 +288,19 @@ struct IRInstruction {
 };
 
 struct IRFunction {
+	struct DebugLocal {
+		std::string name;
+		int register_num = -1;
+		IRInstruction::TypeHint type_hint = IRInstruction::TypeHint_NONE;
+		size_t begin_instruction = 0;
+		size_t end_instruction = SIZE_MAX; // exclusive
+		bool parameter = false;
+	};
+
 	std::string name;
 	std::vector<std::string> parameters;
 	std::vector<IRInstruction> instructions;
+	std::vector<DebugLocal> debug_locals;
 	int max_registers = 0;
 	// Has AWAIT; gets a resume entry, all parameters forced live.
 	bool is_coroutine = false;
@@ -299,8 +315,11 @@ struct IRFunction {
 
 struct IRGlobalVar {
 	std::string name;
+	std::string class_name;
+	uint32_t declaration_line = 0;
 	bool is_const = false;
 	bool is_property = false;
+	bool is_static = false;
 
 	enum class Storage : uint8_t {
 		Data,

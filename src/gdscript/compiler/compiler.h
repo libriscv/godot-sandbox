@@ -1,6 +1,8 @@
 #pragma once
 #include "compiler_exception.h"
 #include "function_signature.h"
+#include "property_signature.h"
+#include "debug_layout.h"
 #include "line_table.h"
 #include "profiling_layout.h"
 #include "variant_layout.h"
@@ -25,6 +27,9 @@ struct CompilerOptions {
 	ProfilingClock profiling_clock = ProfilingClock::TIME;
 	// Emits DebugLayout shadow stack (push/pop per call). Line table either way.
 	bool debug_info = false;
+	// Emits cooperative line polls for the editor step controls. This is
+	// separate from debug_info so metadata-only builds do not gain syscalls.
+	bool debug_step_points = false;
 	// 1-based lines to break on. Non-empty implies debug_info.
 	std::vector<uint32_t> breakpoint_lines;
 	bool restricted = false;
@@ -67,6 +72,8 @@ public:
 	const std::vector<RPCConfig> &get_rpc_configs() const { return m_rpc_configs; }
 	const std::vector<ClassSignature> &get_class_signatures() const { return m_class_signatures; }
 	const std::vector<ScriptConstant> &get_script_constants() const { return m_constants; }
+	const std::vector<PropertySignature> &get_property_signatures() const { return m_properties; }
+	const std::vector<DebugVariableRecord> &get_debug_variables() const { return m_debug_variables; }
 	const LineTable &get_line_table() const { return m_line_table; }
 	bool is_tool() const { return m_is_tool; }
 	const std::string &get_class_name() const { return m_class_name; }
@@ -85,6 +92,8 @@ private:
 	std::vector<RPCConfig> m_rpc_configs;
 	std::vector<ClassSignature> m_class_signatures;
 	std::vector<ScriptConstant> m_constants;
+	std::vector<PropertySignature> m_properties;
+	std::vector<DebugVariableRecord> m_debug_variables;
 	LineTable m_line_table;
 	bool m_is_tool = false;
 	std::string m_class_name;

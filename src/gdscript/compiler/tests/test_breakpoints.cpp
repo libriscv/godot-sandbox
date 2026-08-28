@@ -58,6 +58,7 @@ struct Program {
 	LineTable lines;
 	std::vector<FunctionSignature> signatures;
 	std::vector<uint32_t> installed;
+	std::vector<DebugVariableRecord> variables;
 };
 
 Program compile(const std::string& source, const std::vector<uint32_t>& breakpoints) {
@@ -74,6 +75,7 @@ Program compile(const std::string& source, const std::vector<uint32_t>& breakpoi
 	out.lines = compiler.get_line_table();
 	out.signatures = compiler.get_function_signatures();
 	out.installed = compiler.get_installed_breakpoints();
+	out.variables = compiler.get_debug_variables();
 	return out;
 }
 
@@ -83,6 +85,8 @@ struct Stop {
 	uint32_t pc_line = 0;
 	uint64_t depth = 0;
 	uint64_t innermost_function = 0;
+	uint64_t frame_sp = 0;
+	uint64_t pc = 0;
 };
 
 const LineTable* g_lines = nullptr;
@@ -96,6 +100,7 @@ void breakpoint_syscall(machine_t& machine) {
 	stop.reported_line = uint32_t(machine.cpu.reg(riscv::REG_ARG0));
 	stop.pc_line = g_lines != nullptr
 		? g_lines->line_for_address(uint32_t(machine.cpu.pc())) : 0;
+	stop.pc = machine.cpu.pc();
 
 	const uint64_t area = machine.address_of(DEBUG_SYMBOL);
 	if (area != 0) {
@@ -104,6 +109,8 @@ void breakpoint_syscall(machine_t& machine) {
 			const uint64_t frame = area + DebugLayout::frame_offset(uint32_t(stop.depth - 1));
 			machine.copy_from_guest(&stop.innermost_function,
 					frame + DebugLayout::FUNCTION_INDEX_OFF, sizeof(stop.innermost_function));
+			machine.copy_from_guest(&stop.frame_sp,
+					frame + DebugLayout::FRAME_SP_OFF, sizeof(stop.frame_sp));
 		}
 	}
 	if (g_capture_registers) {
@@ -496,6 +503,42 @@ void test_breakpoints_in_more_than_one_function() {
 	check_eq(g_stops[1].depth, uint64_t(2), "left() runs one frame below test()");
 }
 
+// The debugger reads a named value from the slot the program keeps it in. A
+// typed parameter is coerced into a register of its own on entry, and an
+// assignment to it lands there, not in the slot the caller filled.
+void test_a_typed_parameter_reads_back_after_assignment() {
+	const Program program = compile(
+		"func doubled(x: int) -> int:\n"
+		"\tx = x * 2\n"
+		"\treturn x + 1\n", {3});
+	if (program.elf.empty()) {
+		return;
+	}
+	auto machine = boot(program);
+	check_eq(run_with_arg(*machine, "doubled", 3), int64_t(7), "doubled(3) returns 7");
+	if (g_stops.size() != 1) {
+		check_eq(g_stops.size(), size_t(1), "one stop on the line after the assignment");
+		return;
+	}
+	const auto record = std::find_if(program.variables.begin(), program.variables.end(),
+		[](const DebugVariableRecord& candidate) {
+			return candidate.name == "x" && candidate.storage == DebugStorage::FRAME;
+		});
+	if (record == program.variables.end()) {
+		check(false, "the parameter has a frame record");
+		return;
+	}
+	const Stop& stop = g_stops[0];
+	check(record->pc_begin <= stop.pc && stop.pc < record->pc_end,
+		"the parameter is live where the program stopped");
+	int32_t type = 0;
+	int64_t value = 0;
+	machine->copy_from_guest(&type, stop.frame_sp + record->offset, sizeof(type));
+	machine->copy_from_guest(&value, stop.frame_sp + record->offset + 8, sizeof(value));
+	check_eq(type, int32_t(2), "the recorded slot holds an integer"); // Variant::INT
+	check_eq(value, int64_t(6), "the recorded slot holds the assigned value, not the argument");
+}
+
 } // namespace
 
 int main() {
@@ -511,6 +554,7 @@ int main() {
 	test_a_break_carries_a_call_stack();
 	test_the_breakpoint_statement();
 	test_breakpoints_in_more_than_one_function();
+	test_a_typed_parameter_reads_back_after_assignment();
 
 	if (failures != 0) {
 		std::cerr << failures << " breakpoint check(s) failed" << std::endl;

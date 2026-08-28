@@ -20,6 +20,7 @@ static constexpr bool VERBOSE_EXCEPTIONS = false;
 
 // False for non-.sgd programs; falls back to machine-level backtrace.
 bool safegdscript_print_backtrace(Sandbox &p_sandbox, gaddr_t p_pc);
+void safegdscript_report_runtime_error(Sandbox &p_sandbox, const String &p_message);
 
 static inline String to_hex(gaddr_t value) {
 	char str[20] = { 0 };
@@ -64,6 +65,7 @@ void Sandbox::handle_exception(gaddr_t address) {
 		throw; // re-throw
 	} catch (const riscv::MachineTimeoutException &e) {
 		this->handle_timeout(address);
+		safegdscript_report_runtime_error(*this, String("Guest timeout: ") + e.what());
 		return; // NOTE: might wanna stay
 	} catch (const riscv::MachineException &e) {
 		const String instr(machine().cpu.current_instruction_to_string().c_str());
@@ -74,9 +76,11 @@ void Sandbox::handle_exception(gaddr_t address) {
 				">>> ", instr, "\n",
 				">>> Machine registers:\n[PC\t", to_hex(machine().cpu.pc()),
 				"] ", regs, "\n");
+		safegdscript_report_runtime_error(*this, String("Guest fault: ") + e.what());
 	} catch (const std::exception &e) {
 		UtilityFunctions::print("\nMessage: ", e.what(), "\n\n");
 		ERR_PRINT(("Exception: " + std::string(e.what())).c_str());
+		safegdscript_report_runtime_error(*this, String("Guest error: ") + e.what());
 	}
 
 	String elfpath = "";

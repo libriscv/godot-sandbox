@@ -3,6 +3,7 @@
 
 #include <compiler.h>
 #include <compiler_exception.h>
+#include <source_model.h>
 #include <string>
 using namespace gdscript;
 
@@ -25,6 +26,8 @@ PUBLIC Variant compile(String code)
 	gdscript_remember_rpc_configs(compiler);
 	gdscript_remember_classes(compiler);
 	gdscript_remember_constants(compiler);
+	gdscript_remember_properties(compiler);
+	gdscript_remember_debug_variables(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
@@ -63,6 +66,8 @@ PUBLIC Variant compile_profiled(String code)
 	gdscript_remember_rpc_configs(compiler);
 	gdscript_remember_classes(compiler);
 	gdscript_remember_constants(compiler);
+	gdscript_remember_properties(compiler);
+	gdscript_remember_debug_variables(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
@@ -84,6 +89,7 @@ PUBLIC Variant compile_debug(String code, PackedInt32Array breakpoints)
 	CompilerOptions options;
 	options.output_elf = true;
 	options.debug_info = true;
+	options.debug_step_points = true;
 	for (int32_t line : breakpoints.fetch()) {
 		if (line > 0) {
 			options.breakpoint_lines.push_back(uint32_t(line));
@@ -99,6 +105,8 @@ PUBLIC Variant compile_debug(String code, PackedInt32Array breakpoints)
 	gdscript_remember_rpc_configs(compiler);
 	gdscript_remember_classes(compiler);
 	gdscript_remember_constants(compiler);
+	gdscript_remember_properties(compiler);
+	gdscript_remember_debug_variables(compiler);
 	gdscript_remember_line_table(compiler);
 	gdscript_remember_breakpoints(compiler);
 	gdscript_remember_is_tool(compiler);
@@ -138,6 +146,24 @@ PUBLIC Variant validate(String code)
 	return d;
 }
 
+PUBLIC Variant analyze(String code, int64_t caret_line, int64_t caret_column, int64_t flags)
+{
+	SourceModel model = analyze_source(code.utf8(), gdscript_source_path(),
+			uint32_t(flags), int32_t(caret_line), int32_t(caret_column));
+	if ((uint32_t(flags) & ANALYZE_DECLARATIONS) != 0) {
+		CompilerOptions options;
+		options.output_elf = false;
+		options.optimize = false;
+		gdscript_apply_restrictions(options);
+		Compiler compiler;
+		compiler.compile(code.utf8(), options);
+		if (!compiler.get_error_info().has_error) {
+			model.properties = compiler.get_property_signatures();
+		}
+	}
+	return PackedByteArray(encode_source_model(model));
+}
+
 PUBLIC Variant get_compiler_error()
 {
 	return last_error;
@@ -168,6 +194,16 @@ PUBLIC Variant get_class_signatures()
 PUBLIC Variant get_script_constants()
 {
 	return gdscript_constants_to_variant();
+}
+
+PUBLIC Variant get_property_signatures()
+{
+	return gdscript_properties_to_variant();
+}
+
+PUBLIC Variant get_debug_variables()
+{
+	return gdscript_debug_variables_to_variant();
 }
 
 PUBLIC Variant get_line_table()

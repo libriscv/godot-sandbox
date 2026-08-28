@@ -3,6 +3,8 @@
 #include <compiler.h>
 #include <function_signature.h>
 #include <line_table.h>
+#include <property_signature.h>
+#include <debug_layout.h>
 #include <string>
 #include <utility>
 #include <vector>
@@ -93,6 +95,32 @@ inline void gdscript_remember_constants(const gdscript::Compiler &compiler) {
 
 inline Variant gdscript_constants_to_variant() {
 	return PackedByteArray(gdscript::encode_script_constants(gdscript_last_constants()));
+}
+
+inline std::vector<gdscript::PropertySignature> &gdscript_last_properties() {
+	static std::vector<gdscript::PropertySignature> properties;
+	return properties;
+}
+
+inline void gdscript_remember_properties(const gdscript::Compiler &compiler) {
+	gdscript_last_properties() = compiler.get_property_signatures();
+}
+
+inline Variant gdscript_properties_to_variant() {
+	return PackedByteArray(gdscript::encode_property_signatures(gdscript_last_properties()));
+}
+
+inline std::vector<gdscript::DebugVariableRecord> &gdscript_last_debug_variables() {
+	static std::vector<gdscript::DebugVariableRecord> variables;
+	return variables;
+}
+
+inline void gdscript_remember_debug_variables(const gdscript::Compiler &compiler) {
+	gdscript_last_debug_variables() = compiler.get_debug_variables();
+}
+
+inline Variant gdscript_debug_variables_to_variant() {
+	return PackedByteArray(gdscript::encode_debug_variables(gdscript_last_debug_variables()));
 }
 
 // Address-to-line table. Metadata only; every compile produces one.

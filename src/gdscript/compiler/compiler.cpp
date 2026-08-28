@@ -9,6 +9,7 @@
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
+#include <algorithm>
 
 namespace gdscript {
 
@@ -45,6 +46,8 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 	m_rpc_configs.clear();
 	m_class_signatures.clear();
 	m_constants.clear();
+	m_properties.clear();
+	m_debug_variables.clear();
 	m_line_table.entries.clear();
 	m_installed_breakpoints.clear();
 	m_class_name.clear();
@@ -129,6 +132,58 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 		m_rpc_configs = ir_program.rpc_configs;
 		m_class_signatures = ir_program.class_signatures;
 		m_constants = ir_program.constants;
+		for (const IRGlobalVar &global : ir_program.globals) {
+			if (global.is_const) {
+				continue;
+			}
+			PropertySignature property;
+			property.name = global.name;
+			property.type = global.value_type == IRInstruction::TypeHint_NONE
+					? -1 : int32_t(global.value_type);
+			property.class_name = global.class_name;
+			property.hint = uint32_t(global.export_hint.hint);
+			property.hint_string = global.export_hint.hint_string;
+			property.declaration_line = global.declaration_line;
+			property.is_member = global.is_member();
+			property.is_static = global.is_static;
+			// Godot property usage bits: STORAGE=2, EDITOR=4, SCRIPT_VARIABLE=4096.
+			property.usage = global.export_hint.usage != 0
+					? uint32_t(global.export_hint.usage)
+					: (global.is_property ? 4102u : 4096u);
+			using InitType = IRGlobalVar::InitType;
+			switch (global.init_type) {
+				case InitType::NONE:
+				case InitType::RUNTIME:
+					property.default_kind = PropertyDefaultKind::NONE;
+					break;
+				case InitType::NULL_VAL:
+					property.default_kind = PropertyDefaultKind::NIL;
+					break;
+				case InitType::INT:
+					property.default_kind = PropertyDefaultKind::INT;
+					property.default_value = std::get<int64_t>(global.init_value);
+					break;
+				case InitType::FLOAT:
+					property.default_kind = PropertyDefaultKind::FLOAT;
+					property.default_value = std::get<double>(global.init_value);
+					break;
+				case InitType::BOOL:
+					property.default_kind = PropertyDefaultKind::BOOL;
+					property.default_value = std::get<bool>(global.init_value);
+					break;
+				case InitType::STRING:
+					property.default_kind = PropertyDefaultKind::STRING;
+					property.default_value = std::get<std::string>(global.init_value);
+					break;
+				case InitType::EMPTY_ARRAY:
+					property.default_kind = PropertyDefaultKind::EMPTY_ARRAY;
+					break;
+				case InitType::EMPTY_DICT:
+					property.default_kind = PropertyDefaultKind::EMPTY_DICTIONARY;
+					break;
+			}
+			m_properties.push_back(std::move(property));
+		}
 
 		if (options.dump_ir) {
 			std::cout << "=== IR (unoptimized) ===" << std::endl;
@@ -149,9 +204,39 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 			std::cout << std::endl;
 		}
 
+		// Stamp before optimizing: a debug local's live range is recorded as
+		// positions in the unoptimized body, and the stamps are what survive the
+		// passes that insert and delete around them.
+		for (IRFunction &function : ir_program.functions) {
+			for (size_t i = 0; i < function.instructions.size(); i++) {
+				function.instructions[i].debug_order = uint32_t(i + 1);
+			}
+		}
 		if (options.optimize) {
 			IROptimizer optimizer;
 			optimizer.optimize(ir_program);
+		}
+		for (IRFunction &function : ir_program.functions) {
+			function.debug_locals.erase(std::remove_if(function.debug_locals.begin(),
+					function.debug_locals.end(), [&](const IRFunction::DebugLocal &local) {
+						return local.register_num < 0 || local.register_num >= function.max_registers;
+					}), function.debug_locals.end());
+			// Running maximum, so an instruction a pass synthesised (stamp 0) belongs
+			// to the region it sits in rather than to the top of the function.
+			std::vector<uint32_t> order(function.instructions.size());
+			uint32_t running = 0;
+			for (size_t i = 0; i < function.instructions.size(); i++) {
+				running = std::max(running, function.instructions[i].debug_order);
+				order[i] = running;
+			}
+			const auto position = [&order](size_t recorded) {
+				const uint32_t stamp = recorded < UINT32_MAX ? uint32_t(recorded) + 1u : UINT32_MAX;
+				return size_t(std::lower_bound(order.begin(), order.end(), stamp) - order.begin());
+			};
+			for (IRFunction::DebugLocal &local : function.debug_locals) {
+				local.begin_instruction = position(local.begin_instruction);
+				local.end_instruction = position(local.end_instruction);
+			}
 		}
 
 		if (options.dump_ir) {
@@ -181,9 +266,11 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 			// Host breakpoints imply debug_info; the `breakpoint` statement does not.
 			const bool debug_info = options.debug_info || !options.breakpoint_lines.empty();
 			elf_data = elf_builder.build(ir_program, VariantLayout(options.double_precision),
-				options.profiling, options.profiling_clock, debug_info, options.breakpoint_lines);
+				options.profiling, options.profiling_clock, debug_info, options.breakpoint_lines,
+				options.debug_step_points);
 			m_line_table = elf_builder.get_line_table();
 			m_installed_breakpoints = elf_builder.get_installed_breakpoints();
+			m_debug_variables = elf_builder.get_debug_variables();
 		}
 
 		m_error.clear();

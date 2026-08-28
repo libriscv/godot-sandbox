@@ -256,8 +256,11 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		IRGlobalVar& ir_global = ir_program.globals[i];
 
 		ir_global.name = global.name;
+		ir_global.class_name = global.type_hint;
+		ir_global.declaration_line = global.line > 0 ? uint32_t(global.line) : 0;
 		ir_global.is_const = global.is_const;
 		ir_global.is_property = global.is_property;
+		ir_global.is_static = global.is_static;
 		ir_global.export_hint = global.export_hint;
 		ir_global.setter_function = m_global_setters[i];
 		ir_global.getter_function = m_global_getters[i];
@@ -505,7 +508,7 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const Stru
 	if (takes_self) {
 		func.ir.parameters.push_back("self");
 		int self_reg = alloc_register(func);
-		declare_variable(func, "self", self_reg);
+		declare_variable(func, "self", self_reg, false, nullptr, false, true);
 		set_register_type(func, self_reg, Variant::DICTIONARY);
 		set_register_struct(func, self_reg, owner);
 	}
@@ -514,7 +517,7 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const Stru
 		func.ir.parameters.push_back(param.name);
 
 		int reg = alloc_register(func);
-		declare_variable(func, param.name, reg);
+		declare_variable(func, param.name, reg, false, nullptr, false, true);
 
 		apply_declared_type(reg, param.type_hint, func);
 	}
@@ -2954,7 +2957,7 @@ IRFunction CodeGenerator::generate_lambda_function(const FunctionDecl& decl,
 	for (const auto& param : decl.parameters) {
 		func.ir.parameters.push_back(param.name);
 		int reg = alloc_register(func);
-		declare_variable(func, param.name, reg);
+		declare_variable(func, param.name, reg, false, nullptr, false, true);
 		apply_declared_type(reg, param.type_hint, func);
 	}
 	coerce_parameters(decl.parameters, func);
@@ -4875,6 +4878,7 @@ FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const
 	sig.line = decl.line;
 	sig.description = decl.doc_comment;
 	sig.is_coroutine = decl.is_coroutine;
+	sig.is_static = decl.is_static;
 	// Coroutine return type is Variant (may be Signal or declared type).
 	sig.return_type = decl.is_coroutine
 		? int32_t(FunctionParameter::ANY_TYPE)
@@ -4969,6 +4973,12 @@ void CodeGenerator::coerce_parameters(const std::vector<Parameter>& parameters,
 		IRInstruction coerce(IROpcode::COERCE, IRValue::reg(dst), IRValue::reg(src));
 		coerce.type_hint = declared;
 		func.ir.instructions.push_back(coerce);
+		// The parameter lives in the coerced register from here on, and that is
+		// where an assignment to it lands: the debugger has to read it there, and
+		// the declared type belongs to the same slot.
+		if (var->debug_index < func.ir.debug_locals.size()) {
+			func.ir.debug_locals[var->debug_index].register_num = dst;
+		}
 		set_register_type(func, dst, declared);
 		var->register_num = dst;
 	}
@@ -5629,6 +5639,12 @@ void CodeGenerator::pop_scope(FunctionContext& func) {
 	if (func.scopes.empty()) {
 		throw CompilerException(ErrorType::CODEGEN_ERROR, "Cannot pop scope: scope stack is empty");
 	}
+	for (const auto &entry : func.scopes.back().variables) {
+		const size_t index = entry.second.debug_index;
+		if (index < func.ir.debug_locals.size()) {
+			func.ir.debug_locals[index].end_instruction = func.ir.instructions.size();
+		}
+	}
 	func.scopes.pop_back();
 }
 
@@ -5669,7 +5685,7 @@ void CodeGenerator::reject_reclassification(const Variable& var, int value_reg,
 }
 
 void CodeGenerator::declare_variable(FunctionContext& func, const std::string& name, int register_num, bool is_const,
-	const Stmt* site, bool is_variant)
+	const Stmt* site, bool is_variant, bool is_parameter)
 {
 	if (func.scopes.empty()) {
 		throw CompilerException(ErrorType::CODEGEN_ERROR, "Cannot declare variable: no scope active");
@@ -5680,11 +5696,24 @@ void CodeGenerator::declare_variable(FunctionContext& func, const std::string& n
 		error_at("Variable '" + name + "' is already declared in this scope", site);
 	}
 
-	current_scope.variables[name] = {name, register_num, IRInstruction::TypeHint_NONE, is_const, is_variant};
+	IRFunction::DebugLocal debug;
+	debug.name = name;
+	debug.register_num = register_num;
+	debug.begin_instruction = func.ir.instructions.size();
+	debug.parameter = is_parameter;
+	const size_t debug_index = func.ir.debug_locals.size();
+	func.ir.debug_locals.push_back(std::move(debug));
+	current_scope.variables[name] = {name, register_num, IRInstruction::TypeHint_NONE,
+			is_const, is_variant, debug_index};
 }
 
 void CodeGenerator::set_register_type(FunctionContext& func, int reg, IRInstruction::TypeHint type) {
 	func.register_types[reg] = type;
+	for (IRFunction::DebugLocal &local : func.ir.debug_locals) {
+		if (local.register_num == reg && local.end_instruction == SIZE_MAX) {
+			local.type_hint = type;
+		}
+	}
 }
 
 IRInstruction::TypeHint CodeGenerator::get_register_type(const FunctionContext& func, int reg) const {

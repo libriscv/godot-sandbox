@@ -9,9 +9,19 @@ class SafeGDScriptLanguage : public ScriptLanguageExtension {
 	GDCLASS(SafeGDScriptLanguage, ScriptLanguageExtension);
 
 protected:
-	static void _bind_methods() {}
+	static void _bind_methods();
 
 public:
+	// Editor-only adapters used by the integration suite. They intentionally
+	// delegate to the ScriptLanguageExtension virtuals so tests cover the same
+	// marshalling that the editor consumes.
+	Dictionary editor_validate(const String &p_script, const String &p_path,
+			bool p_functions = true, bool p_errors = true, bool p_warnings = true,
+			bool p_safe_lines = true) const;
+	Dictionary editor_complete(const String &p_code, const String &p_path,
+			Object *p_owner = nullptr) const;
+	Dictionary editor_lookup(const String &p_code, const String &p_symbol,
+			const String &p_path, Object *p_owner = nullptr) const;
 	static void init();
 	static void deinit();
 	static SafeGDScriptLanguage *get_singleton();
@@ -61,6 +71,7 @@ public:
 	virtual String _debug_parse_stack_level_expression(int32_t p_level, const String &p_expression, int32_t p_max_subitems, int32_t p_max_depth) override;
 	virtual TypedArray<Dictionary> _debug_get_current_stack_info() override;
 	virtual void _reload_all_scripts() override;
+	virtual void _reload_scripts(const Array &p_scripts, bool p_soft_reload) override;
 	virtual void _reload_tool_script(const Ref<Script> &p_script, bool p_soft_reload) override;
 	virtual PackedStringArray _get_recognized_extensions() const override;
 	virtual TypedArray<Dictionary> _get_public_functions() const override;

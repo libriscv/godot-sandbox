@@ -1,5 +1,8 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace gdscript {
 
@@ -26,6 +29,7 @@ struct DebugLayout {
 	static constexpr int32_t FUNCTION_INDEX_OFF = 0;
 	static constexpr int32_t RETURN_ADDRESS_OFF = 8;
 	static constexpr int32_t FRAME_SP_OFF = 16;
+	static constexpr int32_t INSTANCE_BASE_OFF = 24;
 	static constexpr int32_t FRAME_SIZE = 32;
 	static constexpr int32_t FRAME_SHIFT = 5;
 
@@ -41,5 +45,22 @@ struct DebugLayout {
 };
 
 inline constexpr const char *DEBUG_SYMBOL = "__gdsc_debug";
+inline constexpr const char *DEBUG_GLOBALS_SYMBOL = "__gdsc_globals";
+
+enum class DebugStorage : uint8_t { FRAME, MEMBER, GLOBAL };
+
+struct DebugVariableRecord {
+	uint32_t function_index = 0;
+	std::string name;
+	int32_t type = -1;
+	DebugStorage storage = DebugStorage::FRAME;
+	int32_t offset = 0;
+	uint64_t pc_begin = 0;
+	uint64_t pc_end = UINT64_MAX;
+};
+
+std::vector<uint8_t> encode_debug_variables(const std::vector<DebugVariableRecord> &records);
+bool decode_debug_variables(const uint8_t *data, size_t size,
+		std::vector<DebugVariableRecord> &out);
 
 } // namespace gdscript

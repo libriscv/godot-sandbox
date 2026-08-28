@@ -3,13 +3,18 @@
 // block the host thread inside the syscall; continue = return from it.
 #include "../gdscript/compiler/debug_layout.h"
 #include "../sandbox.h"
+#include "../guest_datatypes.h"
+#include "script_instance_safegdscript.h"
 #include "script_language_safegdscript.h"
 #include "script_safegdscript.h"
 #include <godot_cpp/classes/engine_debugger.hpp>
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <functional>
+#include <algorithm>
 #include <map>
+#include <vector>
+#include <climits>
 
 // Defined in script_instance_safegdscript.cpp, which owns the map.
 SafeGDScript *safegdscript_for_sandbox(const Sandbox *p_sandbox);
@@ -40,6 +45,7 @@ struct Frame {
 	uint64_t function_index = 0;
 	uint64_t return_address = 0;
 	uint64_t frame_sp = 0;
+	uint64_t instance_base = 0;
 };
 
 // Empty when the program carries no shadow stack, which is every build that was
@@ -71,6 +77,7 @@ std::vector<Frame> read_shadow_stack(Sandbox &p_sandbox, gaddr_t &r_base) {
 		entry.function_index = read_guest<uint64_t>(p_sandbox, frame + gdscript::DebugLayout::FUNCTION_INDEX_OFF);
 		entry.return_address = read_guest<uint64_t>(p_sandbox, frame + gdscript::DebugLayout::RETURN_ADDRESS_OFF);
 		entry.frame_sp = read_guest<uint64_t>(p_sandbox, frame + gdscript::DebugLayout::FRAME_SP_OFF);
+		entry.instance_base = read_guest<uint64_t>(p_sandbox, frame + gdscript::DebugLayout::INSTANCE_BASE_OFF);
 		frames.push_back(entry);
 	}
 	return frames;
@@ -95,6 +102,10 @@ struct StackFrame {
 	String source;
 	String function;
 	uint32_t line = 0;
+	uint64_t function_index = 0;
+	uint64_t frame_sp = 0;
+	uint64_t instance_base = 0;
+	uint64_t pc = 0;
 };
 
 String location(const StackFrame &p_frame) {
@@ -120,7 +131,7 @@ std::vector<StackFrame> build_backtrace(SafeGDScript &p_script, Sandbox &p_sandb
 		const String name = callsite.name.empty()
 				? String("<unknown>")
 				: String::utf8(callsite.name.c_str(), callsite.name.size());
-		stack.push_back(StackFrame{ source, name, lines.line_for_address(uint32_t(p_pc)) });
+		stack.push_back(StackFrame{ source, name, lines.line_for_address(uint32_t(p_pc)), 0, 0, 0, uint64_t(p_pc) });
 		return stack;
 	}
 
@@ -129,7 +140,9 @@ std::vector<StackFrame> build_backtrace(SafeGDScript &p_script, Sandbox &p_sandb
 		const uint32_t line = (i + 1 < frames.size())
 				? lines.line_for_address(uint32_t(frames[i + 1].return_address - 4))
 				: lines.line_for_address(uint32_t(p_pc));
-		stack.push_back(StackFrame{ source, function_name(p_script, frames[i].function_index), line });
+		const uint64_t frame_pc = (i + 1 < frames.size()) ? frames[i + 1].return_address - 4 : p_pc;
+		stack.push_back(StackFrame{ source, function_name(p_script, frames[i].function_index), line,
+				frames[i].function_index, frames[i].frame_sp, frames[i].instance_base, frame_pc });
 	}
 	return stack;
 }
@@ -141,6 +154,19 @@ struct BreakState {
 	SafeGDScript *script = nullptr;
 	uint32_t line = 0;
 	std::vector<StackFrame> frames;
+	Sandbox *sandbox = nullptr;
+	String error;
+	// Godot expresses stepping as lines_left plus a relative call depth. Keep
+	// the last shadow-stack observation so calls and returns can update that
+	// depth exactly like the interpreted GDScript VM does.
+	bool step_active = false;
+	SafeGDScript *poll_script = nullptr;
+	int32_t poll_depth = 0;
+	std::vector<SafeGDScript *> step_scripts;
+	SafeGDScript *last_stop_script = nullptr;
+	uint32_t last_stop_function = UINT32_MAX;
+	uint32_t last_stop_line = 0;
+	int32_t last_stop_depth = 0;
 };
 
 // Function-local: engine Strings need the GDExtension interface, unavailable at static init.
@@ -158,6 +184,11 @@ bool safegdscript_print_backtrace(Sandbox &p_sandbox, gaddr_t p_pc) {
 	}
 	gaddr_t area = 0;
 	const std::vector<StackFrame> stack = build_backtrace(*script, p_sandbox, p_pc, area);
+	g_break().script = script;
+	g_break().sandbox = &p_sandbox;
+	g_break().frames = stack;
+	g_break().line = stack.empty() ? 0 : stack.front().line;
+	g_break().error = "Guest runtime fault";
 	for (const StackFrame &frame : stack) {
 		UtilityFunctions::print("-> ", location(frame));
 	}
@@ -174,9 +205,35 @@ bool safegdscript_print_backtrace(Sandbox &p_sandbox, gaddr_t p_pc) {
 	return true;
 }
 
+void safegdscript_report_runtime_error(Sandbox &p_sandbox, const String &p_message) {
+	if (g_break().sandbox != &p_sandbox || g_break().script == nullptr) {
+		return;
+	}
+	g_break().error = p_message;
+	if (engine_debugger_attached()) {
+		EngineDebugger::get_singleton()->script_debug(
+				SafeGDScriptLanguage::get_singleton(), false, true);
+	}
+	g_break().sandbox = nullptr;
+}
+
+String safegdscript_source_location(Sandbox &p_sandbox, gaddr_t p_pc) {
+	SafeGDScript *script = safegdscript_for_sandbox(&p_sandbox);
+	if (script == nullptr) {
+		return String();
+	}
+	const uint32_t line = script->get_line_table().line_for_address(uint32_t(p_pc));
+	const String path = script_source_path(*script);
+	if (line == 0 || path.is_empty()) {
+		return String();
+	}
+	return path + String(":") + itos(line) + String(": ");
+}
+
 // ECALL_BREAKPOINT handler. a0 = reported line; cross-checked against the line
 // table. Returning = continue; guest registers are preserved.
-void safegdscript_breakpoint(Sandbox &p_sandbox, uint32_t p_reported_line) {
+void safegdscript_breakpoint(Sandbox &p_sandbox, uint32_t p_reported_line, bool p_user_stop,
+		bool p_source_stop) {
 	SafeGDScript *script = safegdscript_for_sandbox(&p_sandbox);
 	if (script == nullptr) {
 		// Not a .sgd program; ignore.
@@ -186,17 +243,89 @@ void safegdscript_breakpoint(Sandbox &p_sandbox, uint32_t p_reported_line) {
 		// Nested break from the signal handler; skip to avoid deadlock.
 		return;
 	}
-
+	EngineDebugger *engine_debugger = EngineDebugger::get_singleton();
+	if (!p_source_stop) {
+		// Ours, plus whatever the editor holds for this line right now. Asking per
+		// line keeps a cleared breakpoint from stopping once more; asking for the
+		// whole set here would cost the engine one query per line of source.
+		p_user_stop = script->get_project_breakpoints().has(int32_t(p_reported_line));
+		if (!p_user_stop && engine_debugger != nullptr && engine_debugger->is_active()) {
+			const String path = script_source_path(*script);
+			p_user_stop = !path.is_empty() && engine_debugger->is_breakpoint(
+					int32_t(p_reported_line), StringName(path));
+		}
+	}
 	const gaddr_t pc = p_sandbox.machine().cpu.pc();
 	gaddr_t area = 0;
 	const std::vector<StackFrame> stack = build_backtrace(*script, p_sandbox, pc, area);
 	const uint32_t table_line = script->get_line_table().line_for_address(uint32_t(pc));
+	const int32_t current_depth = int32_t(stack.size());
+	const uint32_t current_function = stack.empty() ? UINT32_MAX : stack.front().function_index;
+	const uint32_t current_line = table_line != 0 ? table_line : p_reported_line;
+
+	if (!p_user_stop) {
+		if (engine_debugger == nullptr || !engine_debugger->is_active() ||
+				engine_debugger->get_lines_left() <= 0) {
+			g_break().step_active = false;
+			g_break().poll_script = script;
+			g_break().poll_depth = current_depth;
+			return;
+		}
+
+		if (!g_break().step_active) {
+			g_break().step_active = true;
+			g_break().step_scripts.clear();
+			if (g_break().poll_script != nullptr) {
+				g_break().step_scripts.push_back(g_break().poll_script);
+			}
+		}
+
+		int32_t depth_delta = 0;
+		if (g_break().poll_script == script) {
+			depth_delta = current_depth - g_break().poll_depth;
+		} else {
+			auto found = std::find(g_break().step_scripts.begin(),
+					g_break().step_scripts.end(), script);
+			if (found == g_break().step_scripts.end()) {
+				g_break().step_scripts.push_back(script);
+				depth_delta = 1;
+			} else {
+				depth_delta = -int32_t(g_break().step_scripts.end() - found - 1);
+				g_break().step_scripts.erase(found + 1, g_break().step_scripts.end());
+			}
+		}
+		g_break().poll_script = script;
+		g_break().poll_depth = current_depth;
+
+		if (engine_debugger->get_depth() >= 0 && depth_delta != 0) {
+			engine_debugger->set_depth(engine_debugger->get_depth() + depth_delta);
+		}
+		const bool same_target = g_break().last_stop_script == script &&
+				g_break().last_stop_function == current_function &&
+				g_break().last_stop_line == current_line &&
+				g_break().last_stop_depth == current_depth;
+		if (engine_debugger->get_depth() > 0 || same_target) {
+			return;
+		}
+		engine_debugger->set_lines_left(engine_debugger->get_lines_left() - 1);
+		if (engine_debugger->get_lines_left() > 0) {
+			return;
+		}
+	}
 
 	g_break().inside = true;
 	g_break().stopped = true;
 	g_break().script = script;
-	g_break().line = table_line != 0 ? table_line : p_reported_line;
+	g_break().line = current_line;
 	g_break().frames = stack;
+	g_break().sandbox = &p_sandbox;
+	g_break().error = String();
+	g_break().poll_script = script;
+	g_break().poll_depth = current_depth;
+	g_break().last_stop_script = script;
+	g_break().last_stop_function = current_function;
+	g_break().last_stop_line = current_line;
+	g_break().last_stop_depth = current_depth;
 
 	if (table_line != 0 && table_line != p_reported_line) {
 		ERR_PRINT("SafeGDScript: the line table and the program disagree about the "
@@ -214,7 +343,7 @@ void safegdscript_breakpoint(Sandbox &p_sandbox, uint32_t p_reported_line) {
 		}
 	} else if (engine_debugger_attached()) {
 		// script_debug() blocks until the editor continues.
-		if (!EngineDebugger::get_singleton()->is_skipping_breakpoints()) {
+		if (!p_user_stop || !EngineDebugger::get_singleton()->is_skipping_breakpoints()) {
 			EngineDebugger::get_singleton()->script_debug(
 					SafeGDScriptLanguage::get_singleton(), true, false);
 		}
@@ -230,6 +359,7 @@ void safegdscript_breakpoint(Sandbox &p_sandbox, uint32_t p_reported_line) {
 
 	g_break().inside = false;
 	g_break().script = nullptr;
+	g_break().sandbox = nullptr;
 }
 
 bool safegdscript_is_stopped() {
@@ -314,7 +444,8 @@ void safegdscript_sync_engine_breakpoints() {
 	countdown = SYNC_FRAME_INTERVAL;
 
 	std::map<const SafeGDScript *, PackedInt32Array> polled;
-	safegdscript_for_each_sandbox([&polled](SafeGDScript &script, Sandbox &) {
+	std::vector<SafeGDScript *> changed;
+	safegdscript_for_each_sandbox([&polled, &changed](SafeGDScript &script, Sandbox &) {
 		const PackedInt32Array now = editor_breakpoints(script);
 		polled[&script] = now;
 		const auto previous = synced_lines().find(&script);
@@ -322,31 +453,22 @@ void safegdscript_sync_engine_breakpoints() {
 		if (known && previous->second == now) {
 			return;
 		}
-		PackedInt32Array wanted = script.get_breakpoints();
-		if (known) {
-			// Remove lines the editor cleared; leave script-set lines alone.
-			for (int i = 0; i < previous->second.size(); i++) {
-				const int32_t line = previous->second[i];
-				const int64_t at = now.has(line) ? -1 : wanted.find(line);
-				if (at >= 0) {
-					wanted.remove_at(at);
-				}
-			}
-		}
-		for (int i = 0; i < now.size(); i++) {
-			if (!wanted.has(now[i])) {
-				wanted.push_back(now[i]);
-			}
-		}
-		script.set_breakpoints(wanted);
+		changed.push_back(&script);
 	});
 	synced_lines().swap(polled);
+	// Outside the walk: an update may rebuild the program, and a rebuild is free
+	// to add or drop the sandbox registrations the walk iterates.
+	for (SafeGDScript *script : changed) {
+		// Script-owned lines plus the editor's as they stand now; a line the
+		// editor cleared is already gone from it.
+		script->update_runtime_breakpoints(script->get_breakpoints());
+	}
 }
 
 // -= Editor debugger virtuals (innermost level first) =-
 
 String SafeGDScriptLanguage::_debug_get_error() const {
-	return String();
+	return g_break().error;
 }
 
 int32_t SafeGDScriptLanguage::_debug_get_stack_level_count() const {
@@ -389,23 +511,159 @@ TypedArray<Dictionary> SafeGDScriptLanguage::_debug_get_current_stack_info() {
 	return info;
 }
 
-// No variable table; values live in guest-stack Variants without name info.
+static bool debug_guest_variant(uint64_t p_address, Variant &r_value) {
+	if (g_break().sandbox == nullptr || p_address == 0) {
+		return false;
+	}
+	try {
+		const GuestVariant value = read_guest<GuestVariant>(*g_break().sandbox, p_address);
+		if (value.type >= Variant::VARIANT_MAX) {
+			return false;
+		}
+		r_value = value.toVariant(*g_break().sandbox);
+		return true;
+	} catch (const std::exception &) {
+		return false;
+	}
+}
+
+static Variant bounded_debug_value(const Variant &p_value, int32_t p_max_subitems,
+		int32_t p_max_depth, int32_t p_depth = 0) {
+	if (p_max_depth >= 0 && p_depth >= p_max_depth) {
+		return String("<max depth>");
+	}
+	const int32_t limit = p_max_subitems < 0 ? INT32_MAX : p_max_subitems;
+	if (p_value.get_type() == Variant::ARRAY) {
+		const Array source = p_value;
+		Array result;
+		for (int32_t i = 0; i < source.size() && i < limit; i++) {
+			result.push_back(bounded_debug_value(source[i], limit, p_max_depth, p_depth + 1));
+		}
+		return result;
+	}
+	if (p_value.get_type() == Variant::DICTIONARY) {
+		const Dictionary source = p_value;
+		Dictionary result;
+		const Array keys = source.keys();
+		for (int32_t i = 0; i < keys.size() && i < limit; i++) {
+			result[keys[i]] = bounded_debug_value(source[keys[i]], limit, p_max_depth, p_depth + 1);
+		}
+		return result;
+	}
+	return p_value;
+}
+
+static bool debug_record_live(const gdscript::DebugVariableRecord &p_record,
+		const StackFrame &p_frame) {
+	return (p_record.function_index == UINT32_MAX ||
+			p_record.function_index == p_frame.function_index) &&
+			p_frame.pc >= p_record.pc_begin && p_frame.pc <= p_record.pc_end;
+}
+
 Dictionary SafeGDScriptLanguage::_debug_get_stack_level_locals(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) {
-	return Dictionary();
+	Dictionary values;
+	if (p_level < 0 || size_t(p_level) >= g_break().frames.size() || g_break().script == nullptr) {
+		return values;
+	}
+	const StackFrame &frame = g_break().frames[size_t(p_level)];
+	if (frame.frame_sp == 0) {
+		return values;
+	}
+	for (const gdscript::DebugVariableRecord &record : g_break().script->get_debug_variables()) {
+		if (record.storage != gdscript::DebugStorage::FRAME || !debug_record_live(record, frame)) continue;
+		Variant value;
+		if (debug_guest_variant(frame.frame_sp + uint64_t(record.offset), value)) {
+			values[String::utf8(record.name.c_str(), record.name.size())] =
+					bounded_debug_value(value, p_max_subitems, p_max_depth);
+		}
+	}
+	if (g_break().script->get_debug_variables().empty()) {
+		const auto &signatures = g_break().script->get_signatures();
+		if (frame.function_index < signatures.size()) {
+			const auto &signature = signatures[size_t(frame.function_index)];
+			for (size_t i = 0; i < signature.parameters.size(); i++) {
+				Variant value;
+				if (debug_guest_variant(frame.frame_sp + 16 + i * sizeof(GuestVariant), value)) {
+					values[String::utf8(signature.parameters[i].name.c_str(), signature.parameters[i].name.size())] =
+							bounded_debug_value(value, p_max_subitems, p_max_depth);
+				}
+			}
+		}
+	}
+	return values;
 }
 
 Dictionary SafeGDScriptLanguage::_debug_get_stack_level_members(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) {
-	return Dictionary();
+	Dictionary values;
+	if (p_level < 0 || size_t(p_level) >= g_break().frames.size() || g_break().script == nullptr) {
+		return values;
+	}
+	const StackFrame &frame = g_break().frames[size_t(p_level)];
+	for (const gdscript::DebugVariableRecord &record : g_break().script->get_debug_variables()) {
+		if (record.storage != gdscript::DebugStorage::MEMBER || !debug_record_live(record, frame)) continue;
+		Variant value;
+		if (debug_guest_variant(frame.instance_base + uint64_t(record.offset), value)) {
+			values[String::utf8(record.name.c_str(), record.name.size())] =
+					bounded_debug_value(value, p_max_subitems, p_max_depth);
+		}
+	}
+	if (g_break().script->get_debug_variables().empty()) {
+		uint64_t member_index = 0;
+		for (const gdscript::PropertySignature &property : g_break().script->get_property_signatures()) {
+			if (!property.is_member) continue;
+			Variant value;
+			if (debug_guest_variant(frame.instance_base + member_index * sizeof(GuestVariant), value)) {
+				values[String::utf8(property.name.c_str(), property.name.size())] =
+						bounded_debug_value(value, p_max_subitems, p_max_depth);
+			}
+			member_index++;
+		}
+	}
+	return values;
 }
 
 void *SafeGDScriptLanguage::_debug_get_stack_level_instance(int32_t p_level) {
-	return nullptr;
+	if (g_break().script == nullptr) return nullptr;
+	if (p_level < 0 || size_t(p_level) >= g_break().frames.size()) return nullptr;
+	return g_break().script->owner_for_instance_base(g_break().frames[size_t(p_level)].instance_base);
 }
 
 Dictionary SafeGDScriptLanguage::_debug_get_globals(int32_t p_max_subitems, int32_t p_max_depth) {
-	return Dictionary();
+	Dictionary values;
+	if (g_break().script == nullptr || g_break().sandbox == nullptr || g_break().frames.empty()) return values;
+	const uint64_t base = g_break().sandbox->address_of(gdscript::DEBUG_GLOBALS_SYMBOL);
+	if (base == 0) return values;
+	const StackFrame &frame = g_break().frames.front();
+	for (const gdscript::DebugVariableRecord &record : g_break().script->get_debug_variables()) {
+		if (record.storage != gdscript::DebugStorage::GLOBAL || !debug_record_live(record, frame)) continue;
+		Variant value;
+		if (debug_guest_variant(base + uint64_t(record.offset), value)) {
+			values[String::utf8(record.name.c_str(), record.name.size())] =
+					bounded_debug_value(value, p_max_subitems, p_max_depth);
+		}
+	}
+	return values;
 }
 
 String SafeGDScriptLanguage::_debug_parse_stack_level_expression(int32_t p_level, const String &p_expression, int32_t p_max_subitems, int32_t p_max_depth) {
-	return String();
+	const String expression = p_expression.strip_edges();
+	if (expression.is_empty()) return "Unsupported empty expression";
+	Dictionary locals = _debug_get_stack_level_locals(p_level, p_max_subitems, p_max_depth);
+	Dictionary members = _debug_get_stack_level_members(p_level, p_max_subitems, p_max_depth);
+	Dictionary globals = _debug_get_globals(p_max_subitems, p_max_depth);
+	const String name = expression.get_slice(".", 0);
+	Variant value;
+	if (name == "self") {
+		value = static_cast<Object *>(_debug_get_stack_level_instance(p_level));
+	} else {
+		value = locals.get(name, members.get(name, globals.get(name, Variant())));
+	}
+	if (expression.contains(".")) {
+		const String member = expression.get_slice(".", 1);
+		if (value.get_type() == Variant::DICTIONARY) value = Dictionary(value).get(member, Variant());
+		else if (value.get_type() == Variant::OBJECT && value.operator Object *() != nullptr) value = value.operator Object *()->get(member);
+		else return "Unsupported member expression";
+	}
+	if (expression.get_slice_count(".") > 2) return "Unsupported expression";
+	return UtilityFunctions::var_to_str(value);
 }

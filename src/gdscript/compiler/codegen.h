@@ -40,6 +40,7 @@ private:
 		IRInstruction::TypeHint type_hint = IRInstruction::TypeHint_NONE;
 		bool is_const = false;
 		bool is_variant = false;
+		size_t debug_index = SIZE_MAX;
 	};
 
 	struct Scope {
@@ -194,7 +195,8 @@ private:
 	void pop_scope(FunctionContext& func);
 	Variable* find_variable(FunctionContext& func, const std::string& name);
 	void declare_variable(FunctionContext& func, const std::string& name, int register_num,
-		bool is_const = false, const Stmt* site = nullptr, bool is_variant = false);
+		bool is_const = false, const Stmt* site = nullptr, bool is_variant = false,
+		bool is_parameter = false);
 	void reject_reclassification(const Variable& var, int value_reg,
 		const FunctionContext& func, const Stmt* site);
 

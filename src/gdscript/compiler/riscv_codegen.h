@@ -17,7 +17,8 @@ class RISCVCodeGen {
 public:
 	explicit RISCVCodeGen(const VariantLayout& layout = native_variant_layout(),
 		bool profiling = false, ProfilingClock profiling_clock = ProfilingClock::TIME,
-		bool debug_info = false, const std::vector<uint32_t>& breakpoint_lines = {});
+		bool debug_info = false, const std::vector<uint32_t>& breakpoint_lines = {},
+		bool debug_step_points = false);
 
 	std::vector<uint8_t> generate(const IRProgram& program);
 
@@ -27,6 +28,8 @@ public:
 	const std::vector<int64_t>& get_constant_pool() const { return m_constant_pool; }
 	const std::vector<IRGlobalVar>& get_globals() const { return m_globals; }
 	size_t get_global_data_size() const { return m_global_data_size; }
+	uint64_t get_global_address() const { return m_global_address; }
+	size_t get_global_area_size() const { return m_data_global_count * variant_size(); }
 
 	uint64_t get_profiling_address() const { return m_profiling_address; }
 	size_t get_profiling_size() const { return m_profiling_size; }
@@ -41,6 +44,7 @@ public:
 
 	// Metadata; produced by every generate(), costs no instructions.
 	const LineTable& get_line_table() const { return m_line_table; }
+	const std::vector<DebugVariableRecord>& get_debug_variables() const { return m_debug_variables; }
 
 	// Subset of requested breakpoints that got emitted.
 	const std::vector<uint32_t>& get_installed_breakpoints() const { return m_installed_breakpoints; }
@@ -179,7 +183,8 @@ private:
 	void emit_debug_exit();
 
 	// Saves/restores the two regs it uses; safe between arbitrary IR instructions.
-	void emit_breakpoint(int32_t line, bool installed = true);
+	void emit_breakpoint(int32_t line, bool installed = true, bool user_stop = true,
+			bool source_stop = false);
 
 	// Coroutine resume entry: restores frame, dispatches on state index. No ELF symbol.
 	void emit_coroutine_resume_entry(const IRFunction& func);
@@ -556,6 +561,7 @@ private:
 	std::vector<IRGlobalVar> m_globals;
 	size_t m_global_count = 0;
 	size_t m_global_data_size = 0;
+	uint64_t m_global_address = 0;
 
 	std::vector<size_t> m_global_slots;
 	size_t m_data_global_count = 0;
@@ -577,6 +583,7 @@ private:
 	size_t m_debug_size = 0;
 	int m_debug_index = -1; // -1 outside instrumented function
 
+	bool m_debug_step_points = false;
 	std::set<uint32_t> m_breakpoints; // requested breakpoint lines
 	int32_t m_break_line = 0; // current line; reset per function
 	bool m_break_pending = false;
@@ -584,6 +591,13 @@ private:
 	std::vector<uint32_t> m_installed_breakpoints; // subset actually emitted
 
 	LineTable m_line_table;
+	std::vector<DebugVariableRecord> m_debug_variables;
+	struct PendingDebugVariable {
+		DebugVariableRecord record;
+		std::string begin_label;
+		std::string end_label;
+	};
+	std::vector<PendingDebugVariable> m_pending_debug_variables;
 
 	std::vector<std::pair<std::string, std::string>> m_rodata_strings;
 	std::unordered_map<std::string, std::string> m_rodata_string_labels;

@@ -24,7 +24,9 @@
 	}
 
 // Break state in debug_safegdscript.cpp. No-op for non-.sgd guests.
-void safegdscript_breakpoint(Sandbox &p_sandbox, uint32_t p_reported_line);
+void safegdscript_breakpoint(Sandbox &p_sandbox, uint32_t p_reported_line, bool p_user_stop,
+		bool p_source_stop);
+String safegdscript_source_location(Sandbox &p_sandbox, gaddr_t p_pc);
 
 // Nested-class script instances, in script_class_safegdscript.cpp. A Sandbox
 // with no SafeGDScript behind it owns no Script resources; both are no-ops there.
@@ -333,7 +335,8 @@ APICALL(api_call_guest) {
 
 // a0 = source line. Handler cross-checks against line table. No writeback.
 APICALL(api_breakpoint) {
-	safegdscript_breakpoint(riscv::emu(machine), uint32_t(machine.cpu.reg(riscv::REG_ARG0)));
+	safegdscript_breakpoint(riscv::emu(machine), uint32_t(machine.cpu.reg(riscv::REG_ARG0)),
+			machine.cpu.reg(riscv::REG_ARG1) != 0, machine.cpu.reg(riscv::REG_ARG2) != 0);
 }
 
 APICALL(api_print) {
@@ -398,7 +401,22 @@ APICALL(api_print_channel) {
 		else
 			args[i] = scratch.emplace(var.toVariant(emu));
 	}
-	emu.print(args, len, Print_Channel(channel));
+	const Print_Channel print_channel = Print_Channel(channel);
+	if (print_channel == Print_Channel::PUSH_ERROR ||
+			print_channel == Print_Channel::PUSH_WARNING) {
+		const String prefix = safegdscript_source_location(emu, machine.cpu.pc());
+		if (!prefix.is_empty()) {
+			Variant location(prefix);
+			const Variant *attributed[64];
+			attributed[0] = &location;
+			for (unsigned i = 0; i < len; i++) {
+				attributed[i + 1] = args[i];
+			}
+			emu.print(attributed, len + 1, print_channel);
+			return;
+		}
+	}
+	emu.print(args, len, print_channel);
 }
 
 // -= @GlobalScope's utility functions =-
