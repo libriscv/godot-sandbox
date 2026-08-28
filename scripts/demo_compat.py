@@ -531,6 +531,10 @@ def execute_projects(
 def normalized_diagnostics(result: RunResult) -> Counter[str]:
     normalized: list[str] = []
     for line in result.diagnostics:
+        # The harness stages only the extension, not the packaged editor icon.
+        # It has no execution effect and is absent from the final runtime.
+        if "res://addons/godot_sandbox/SafeGDScript.svg" in line:
+            continue
         # Keeping byte-identical .gd oracles beside .sgd peers can make the
         # editor's initial global-class scan diagnose the duplicate. The final
         # Safe-mode scan resolves the .sgd class, so this is harness noise.

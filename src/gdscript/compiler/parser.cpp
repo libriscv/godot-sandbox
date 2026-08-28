@@ -1250,6 +1250,23 @@ ExprPtr Parser::clone_lvalue(const Expr* expr) {
 		copy->column = expr->column;
 		return copy;
 	}
+	if (auto* call = dynamic_cast<const CallExpr*>(expr)) {
+		if (!call->is_node_path_sugar) {
+			return nullptr;
+		}
+		std::vector<ExprPtr> arguments;
+		arguments.reserve(call->arguments.size());
+		for (const auto& argument : call->arguments) {
+			ExprPtr copy = clone_lvalue(argument.get());
+			if (!copy) {
+				return nullptr;
+			}
+			arguments.push_back(std::move(copy));
+		}
+		auto copy = make_like<CallExpr>(*expr, call->function_name, std::move(arguments));
+		copy->is_node_path_sugar = true;
+		return copy;
+	}
 	if (auto* member = dynamic_cast<const MemberCallExpr*>(expr)) {
 		if (member->is_method_call) {
 			return nullptr;
@@ -1286,10 +1303,9 @@ ExprPtr Parser::parse_expression() {
 
 	// `as` is the loosest operator: casts the entire preceding expression.
 	while (match(TokenType::AS)) {
-		const Token& type_token = consume(TokenType::IDENTIFIER, "Expected a type name after 'as'");
-		skip_type_arguments();
+		const std::string type_name = parse_type_name();
 		const Expr& start = *expr;
-		expr = make_like<CastExpr>(start, std::move(expr), type_token.lexeme);
+		expr = make_like<CastExpr>(start, std::move(expr), type_name);
 	}
 
 	return expr;
@@ -1623,6 +1639,7 @@ ExprPtr Parser::parse_node_path() {
 	auto call = std::make_unique<CallExpr>("get_node", std::move(arguments));
 	call->line = marker.line;
 	call->column = marker.column;
+	call->is_node_path_sugar = true;
 	return call;
 }
 
@@ -1875,6 +1892,9 @@ void Parser::consume_statement_end(const std::string& message) {
 		return;
 	}
 	if (m_inline_suite_depth > 0 && at_inline_suite_end()) {
+		return;
+	}
+	if (check(TokenType::DEDENT)) {
 		return;
 	}
 	if (previous().type == TokenType::DEDENT) {

@@ -462,7 +462,7 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug) {
 			this->base_stamps.push_back(file_stamp(base_sources[i + 1]));
 		}
 	}
-	gdscript_compiler::prepare(compiler, restricted, base_sources);
+	gdscript_compiler::prepare(compiler, restricted, base_sources, this->path);
 
 	GDScriptCompilerBackend::BuildOptions options;
 	options.profiling = profiling;

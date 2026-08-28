@@ -29,6 +29,7 @@ private:
 	void push_bracket(char closer);
 	void pop_bracket(char closer);
 	static char opener_for(char closer);
+	bool lambda_layout_active() const;
 
 	char advance();
 	char peek() const;
@@ -66,6 +67,19 @@ private:
 		int column;
 	};
 	std::vector<OpenBracket> m_open_brackets;
+	// A multiline lambda can open an indented suite even while an enclosing
+	// call/Array/Dictionary keeps brackets open. Each entry is the indentation
+	// of the line containing `func()` and the enclosing bracket depth.
+	struct LambdaLayout {
+		int base_indent;
+		size_t bracket_depth;
+	};
+	std::vector<LambdaLayout> m_lambda_layouts;
+	bool m_lambda_signature = false;
+	bool m_lambda_parameters_closed = false;
+	bool m_lambda_suite_may_start = false;
+	size_t m_lambda_parameter_depth = 0;
+	int m_lambda_base_indent = 0;
 
 	static const std::unordered_map<std::string, TokenType> keywords;
 };

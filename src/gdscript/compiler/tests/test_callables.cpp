@@ -647,6 +647,20 @@ void test_shapes_of_lambda_syntax() {
 		"a lambda inline in an argument list");
 	check(compile_error("func f(a):\n\treturn a.map(func(x): return x, 1)\n").empty(),
 		"a lambda before a further argument");
+	check(compile_error(
+		"func f(receiver, value):\n"
+		"\treceiver.call(func():\n"
+		"\t\tvar first = value\n"
+		"\t\tfirst += 1\n"
+		"\t)\n").empty(),
+		"a multiline lambda inside an argument list");
+	check(compile_error(
+		"func f(receiver, value):\n"
+		"\treturn receiver.call(\n"
+		"\t\t\tfunc(v):\n"
+		"\t\t\t\tvalue = v, 0, 1\n"
+		"\t\t)\n").empty(),
+		"an outer argument after a multiline lambda body");
 	check(compile_error("func f():\n\tvar g = func(x): var y = x; return y\n\treturn g.call(1)\n").empty(),
 		"statements separated by ';' in a one-line body");
 	check(compile_error("func f():\n\tvar g = func(x):\n\t\treturn x\n\treturn g.call(1)\n").empty(),

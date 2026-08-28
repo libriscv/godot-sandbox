@@ -84,6 +84,11 @@ void Lexer::pop_bracket(char closer) {
 	}
 }
 
+bool Lexer::lambda_layout_active() const {
+	return !m_lambda_layouts.empty() &&
+		m_open_brackets.size() <= m_lambda_layouts.back().bracket_depth;
+}
+
 void Lexer::scan_token() {
 	if (m_at_line_start) {
 		handle_indent();
@@ -91,6 +96,12 @@ void Lexer::scan_token() {
 	}
 
 	char c = advance();
+	// A non-layout token after `func(...):` makes this an inline lambda. Only a
+	// physical newline immediately after the colon starts an indented suite.
+	if (m_lambda_suite_may_start && c != ' ' && c != '\r' && c != '\t' &&
+		c != '\n' && c != '#') {
+		m_lambda_suite_may_start = false;
+	}
 
 	switch (c) {
 		case ' ':
@@ -100,7 +111,11 @@ void Lexer::scan_token() {
 
 		case '\n':
 			// Inside brackets, newlines are layout, not statement ends.
-			if (m_open_brackets.empty()) {
+			if (m_lambda_suite_may_start) {
+				m_lambda_suite_may_start = false;
+				m_lambda_layouts.push_back({m_lambda_base_indent, m_open_brackets.size()});
+			}
+			if (m_open_brackets.empty() || lambda_layout_active()) {
 				add_token(TokenType::NEWLINE);
 				m_at_line_start = true;
 			}
@@ -141,15 +156,52 @@ void Lexer::scan_token() {
 			break;
 		}
 
-		case '(': push_bracket(')'); add_token(TokenType::LPAREN); break;
+		case '(':
+			push_bracket(')');
+			add_token(TokenType::LPAREN);
+			if (m_lambda_signature && m_lambda_parameter_depth == 0) {
+				m_lambda_parameter_depth = m_open_brackets.size();
+			}
+			break;
 		case '[': push_bracket(']'); add_token(TokenType::LBRACKET); break;
 		case '{': push_bracket('}'); add_token(TokenType::LBRACE); break;
 		// Stray closers passed through; the parser reports them.
-		case ')': pop_bracket(')'); add_token(TokenType::RPAREN); break;
+		case ')': {
+			const size_t closing_depth = m_open_brackets.size();
+			pop_bracket(')');
+			add_token(TokenType::RPAREN);
+			if (m_lambda_signature && closing_depth == m_lambda_parameter_depth) {
+				m_lambda_parameters_closed = true;
+			}
+			break;
+		}
 		case ']': pop_bracket(']'); add_token(TokenType::RBRACKET); break;
 		case '}': pop_bracket('}'); add_token(TokenType::RBRACE); break;
-		case ':': add_token(TokenType::COLON); break;
-		case ',': add_token(TokenType::COMMA); break;
+		case ':':
+			add_token(TokenType::COLON);
+			if (m_lambda_signature && m_lambda_parameters_closed) {
+				m_lambda_signature = false;
+				m_lambda_parameters_closed = false;
+				m_lambda_parameter_depth = 0;
+				m_lambda_suite_may_start = true;
+			}
+			break;
+		case ',':
+			// A block-bodied lambda can be followed by the enclosing call's next
+			// argument on the same physical line as its final statement. At the
+			// outer bracket depth this comma closes the suite; commas in calls or
+			// literals inside the body have a deeper bracket depth.
+			if (lambda_layout_active() &&
+				m_open_brackets.size() == m_lambda_layouts.back().bracket_depth) {
+				const int base_indent = m_lambda_layouts.back().base_indent;
+				while (m_indent_stack.size() > 1 && m_indent_stack.back() > base_indent) {
+					m_indent_stack.pop_back();
+					add_token(TokenType::DEDENT);
+				}
+				m_lambda_layouts.pop_back();
+			}
+			add_token(TokenType::COMMA);
+			break;
 		case ';': add_token(TokenType::SEMICOLON); break;
 		case '.':
 			if (is_digit(peek())) {
@@ -270,6 +322,8 @@ void Lexer::handle_indent() {
 	m_at_line_start = false;
 
 	int current_indent = m_indent_stack.back();
+	const bool leaving_lambda = !m_lambda_layouts.empty() &&
+		indent_level <= m_lambda_layouts.back().base_indent;
 
 	if (indent_level > current_indent) {
 		m_indent_stack.push_back(indent_level);
@@ -280,9 +334,16 @@ void Lexer::handle_indent() {
 			add_token(TokenType::DEDENT);
 		}
 
-		if (m_indent_stack.back() != indent_level) {
+		// A closing delimiter inside the outer call may use continuation
+		// indentation that is not a statement-block level. It still closes the
+		// lambda suite, but must not become an indentation level of its own.
+		if (m_indent_stack.back() != indent_level && !leaving_lambda) {
 			error("Inconsistent indentation");
 		}
+	}
+
+	while (!m_lambda_layouts.empty() && indent_level <= m_lambda_layouts.back().base_indent) {
+		m_lambda_layouts.pop_back();
 	}
 }
 
@@ -531,6 +592,28 @@ void Lexer::scan_identifier() {
 	TokenType type = (it != keywords.end()) ? it->second : TokenType::IDENTIFIER;
 
 	add_token(type);
+	if (type == TokenType::FUNC && !m_open_brackets.empty()) {
+		m_lambda_signature = true;
+		m_lambda_parameters_closed = false;
+		m_lambda_parameter_depth = 0;
+		m_lambda_base_indent = 0;
+		size_t line_start = 0;
+		if (m_start > 0) {
+			const size_t newline = m_source.rfind('\n', m_start - 1);
+			if (newline != std::string::npos) {
+				line_start = newline + 1;
+			}
+		}
+		for (size_t i = line_start; i < m_start; i++) {
+			if (m_source[i] == '\t') {
+				m_lambda_base_indent += 4;
+			} else if (m_source[i] == ' ') {
+				m_lambda_base_indent++;
+			} else {
+				break;
+			}
+		}
+	}
 }
 
 char Lexer::advance() {

@@ -177,6 +177,11 @@ inline bool &gdscript_restricted() {
 	return restricted;
 }
 
+inline std::string &gdscript_source_path() {
+	static std::string path;
+	return path;
+}
+
 inline std::vector<std::string> &gdscript_autoloads() {
 	static std::vector<std::string> autoloads;
 	return autoloads;
@@ -203,6 +208,7 @@ inline void gdscript_set_base_sources(const std::vector<std::string> &triples) {
 
 inline void gdscript_apply_restrictions(gdscript::CompilerOptions &options) {
 	options.restricted = gdscript_restricted();
+	options.source_path = gdscript_source_path();
 	options.autoloads = gdscript_autoloads();
 	options.global_script_classes = gdscript_global_classes();
 	options.base_sources = gdscript_base_sources();

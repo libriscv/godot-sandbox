@@ -584,6 +584,16 @@ static void test_compound_assignment_to_a_subscript() {
 	std::cout << "  ✓ 'a[i] += 1' reads and writes the element" << std::endl;
 }
 
+static void test_compound_assignment_through_node_path_sugar() {
+	const IRProgram ir = compile_to_ir(
+		"func f(defense):\n"
+		"\t$Health.armor += defense\n"
+		"\treturn $Health.armor\n", false);
+	assert(count_opcode(find_function(ir, "f"), IROpcode::ADD) == 1);
+
+	std::cout << "  ✓ '$Node.property += value' clones the node lookup" << std::endl;
+}
+
 // A target that evaluates a call would be evaluated twice, giving `a[f()] += 1`
 // two different elements, so it is rejected.
 static void test_compound_assignment_refuses_an_impure_target() {
@@ -801,6 +811,7 @@ int main() {
 	test_lua_style_dictionary_keys();
 
 	test_compound_assignment_to_a_subscript();
+	test_compound_assignment_through_node_path_sugar();
 	test_compound_assignment_refuses_an_impure_target();
 
 	test_enum_members_are_compile_time_integers();

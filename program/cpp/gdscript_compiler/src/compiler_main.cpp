@@ -192,6 +192,12 @@ PUBLIC Variant set_restricted(bool restricted)
 	return Nil;
 }
 
+PUBLIC Variant set_source_path(String path)
+{
+	gdscript_source_path() = path.utf8();
+	return Nil;
+}
+
 PUBLIC Variant set_autoloads(PackedStringArray names)
 {
 	gdscript_autoloads() = names.fetch();

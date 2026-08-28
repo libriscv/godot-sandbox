@@ -799,14 +799,16 @@ void add_virtual_methods(Array &r_options, const StringName &p_class, const Comp
 
 using ValidationResult = GDScriptCompilerBackend::Validation;
 
-bool validate_with_compiler(const String &p_source, ValidationResult &r_result) {
+bool validate_with_compiler(const String &p_source, const String &p_path,
+		ValidationResult &r_result) {
 	// The editor validates on every idle tick and asks about identical text
 	// more than once, so one remembered answer keeps the compiler from running
 	// again for nothing.
 	static String cached_source;
+	static String cached_path;
 	static ValidationResult cached_result;
 	static bool has_cached = false;
-	if (has_cached && cached_source == p_source) {
+	if (has_cached && cached_source == p_source && cached_path == p_path) {
 		r_result = cached_result;
 		return true;
 	}
@@ -816,7 +818,8 @@ bool validate_with_compiler(const String &p_source, ValidationResult &r_result) 
 		return false;
 	}
 	// prepare() resets sticky inputs so validation inherits nothing from a prior compile.
-	gdscript_compiler::prepare(compiler, false, SafeGDScript::resolve_base_sources(p_source));
+	gdscript_compiler::prepare(compiler, false,
+		SafeGDScript::resolve_base_sources(p_source, p_path), p_path);
 
 	ValidationResult result;
 	if (!compiler.validate(p_source, result)) {
@@ -824,6 +827,7 @@ bool validate_with_compiler(const String &p_source, ValidationResult &r_result) 
 	}
 
 	cached_source = p_source;
+	cached_path = p_path;
 	cached_result = result;
 	has_cached = true;
 	r_result = result;
@@ -1026,7 +1030,7 @@ Dictionary SafeGDScriptLanguage::_validate(const String &p_script, const String 
 	// The compiler sandbox is the only thing that can parse SafeGDScript, so a
 	// missing one means no errors rather than false ones.
 	ValidationResult validation;
-	result["valid"] = !validate_with_compiler(p_script, validation) || validation.valid;
+	result["valid"] = !validate_with_compiler(p_script, p_path, validation) || validation.valid;
 
 	if (p_validate_errors && !validation.valid) {
 		Dictionary error;

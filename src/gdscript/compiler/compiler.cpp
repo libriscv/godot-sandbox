@@ -98,6 +98,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 				links.push_back(std::move(link));
 			}
 			ChainLink leaf;
+			leaf.path = options.source_path;
 			leaf.program = std::move(program);
 			links.push_back(std::move(leaf));
 			program = merge_chain(std::move(links));
@@ -119,6 +120,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 
 		CodeGenerator codegen;
 		codegen.set_restricted(options.restricted);
+		codegen.set_source_path(options.source_path);
 		codegen.set_autoloads(options.autoloads);
 		codegen.set_global_script_classes(options.global_script_classes);
 		IRProgram ir_program = codegen.generate(program);

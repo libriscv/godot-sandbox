@@ -19,6 +19,7 @@ public:
 	IRProgram generate(const Program& program);
 
 	void set_restricted(bool restricted) { m_restricted = restricted; }
+	void set_source_path(std::string path) { m_source_path = std::move(path); }
 	void set_autoloads(const std::vector<std::string>& autoloads) {
 		m_autoloads.clear();
 		m_autoloads.insert(autoloads.begin(), autoloads.end());
@@ -113,6 +114,7 @@ private:
 	int gen_get_node(const std::string& path, FunctionContext& func);
 	const std::string* constant_string(const Expr* expr, FunctionContext& func);
 	int gen_load_resource(const std::string& path, FunctionContext& func);
+	std::string resolve_resource_path(const std::string& path) const;
 	int gen_range(const CallExpr* expr, FunctionContext& func);
 	int gen_color8(const CallExpr* expr, FunctionContext& func);
 	int gen_class_test(int value_reg, const std::string& class_name, FunctionContext& func);
@@ -343,6 +345,7 @@ private:
 	int m_current_chain_link = 0;
 	std::string m_current_chain_function;
 	bool m_restricted = false;
+	std::string m_source_path;
 	std::unordered_set<std::string> m_autoloads;
 	std::unordered_map<std::string, std::string> m_global_script_classes;
 	std::unordered_map<std::string, const EnumDecl*> m_enums;

@@ -352,6 +352,20 @@ static void test_engine_class_constant() {
 	std::cout << "  \u2713 an engine class constant is read from ClassDB" << std::endl;
 }
 
+static void test_engine_singleton_method_is_an_object_call() {
+	std::cout << "Testing engine singleton method calls..." << std::endl;
+
+	for (const char* singleton : { "RenderingServer", "TranslationServer" }) {
+		const IRProgram ir = compile_to_ir(std::string("func test():\n\treturn ") +
+			singleton + ".get_class()\n");
+		const IRFunction& test = find_function(ir, "test");
+		const IRInstruction& call = only(test, IROpcode::VCALL);
+		assert(ir.strings[call.operands[2].string_id] == "get_class");
+	}
+
+	std::cout << "  ✓ named engine singletons are loaded as objects" << std::endl;
+}
+
 // -= Declarations that used to take the whole file down =-
 
 static void test_declarations() {
@@ -477,6 +491,7 @@ static void test_qualified_type_names() {
 	compile_to_ir("var a : Node.Inner = null\nfunc test():\n\treturn a\n");
 	compile_to_ir("func test(a : Array[Node.Inner]):\n\treturn a\n");
 	compile_to_ir("func test(a : A.B.C):\n\treturn a\n");
+	compile_to_ir("func test(index):\n\treturn index as Viewport.MSAA\n");
 
 	// Dropped entirely, not misread as the first segment.
 	const IRProgram ir = compile_to_ir(
@@ -691,6 +706,7 @@ int main() {
 		test_autoload_resolves_to_a_named_object();
 		test_script_class_new_takes_arguments();
 		test_engine_class_constant();
+		test_engine_singleton_method_is_an_object_call();
 		test_declarations();
 		test_statement_annotations();
 		test_rpc_annotations();

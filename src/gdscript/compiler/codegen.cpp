@@ -2239,11 +2239,65 @@ const std::string* CodeGenerator::constant_string(const Expr* expr, FunctionCont
 // Compile-time path: characters embedded in the instruction, no String Variant.
 int CodeGenerator::gen_load_resource(const std::string& path, FunctionContext& func) {
 	int result_reg = alloc_register(func);
-	IRInstruction instr(IROpcode::LOAD_RESOURCE, IRValue::reg(result_reg), ir_str(path));
+	IRInstruction instr(IROpcode::LOAD_RESOURCE, IRValue::reg(result_reg),
+		ir_str(resolve_resource_path(path)));
 	instr.type_hint = Variant::OBJECT;
 	func.ir.instructions.push_back(instr);
 	set_register_type(func, result_reg, Variant::OBJECT);
 	return result_reg;
+}
+
+std::string CodeGenerator::resolve_resource_path(const std::string& path) const {
+	if (path.empty() || path.find("://") != std::string::npos || path.front() == '/') {
+		return path;
+	}
+
+	std::string source = m_source_path;
+	if (size_t(m_current_chain_link) < m_chain.paths.size() &&
+		!m_chain.paths[size_t(m_current_chain_link)].empty()) {
+		source = m_chain.paths[size_t(m_current_chain_link)];
+	}
+	const size_t subresource = source.find("::");
+	if (subresource != std::string::npos) {
+		source.erase(subresource);
+	}
+	const size_t slash = source.rfind('/');
+	if (slash == std::string::npos) {
+		return path;
+	}
+
+	const std::string joined = source.substr(0, slash + 1) + path;
+	const size_t scheme = joined.find("://");
+	const std::string prefix = scheme == std::string::npos
+		? std::string()
+		: joined.substr(0, scheme + 3);
+	const size_t start = scheme == std::string::npos ? 0 : scheme + 3;
+	std::vector<std::string> parts;
+	for (size_t at = start; at <= joined.size();) {
+		const size_t next = joined.find('/', at);
+		const std::string part = joined.substr(at,
+			next == std::string::npos ? std::string::npos : next - at);
+		if (part == "..") {
+			if (!parts.empty()) {
+				parts.pop_back();
+			}
+		} else if (!part.empty() && part != ".") {
+			parts.push_back(part);
+		}
+		if (next == std::string::npos) {
+			break;
+		}
+		at = next + 1;
+	}
+
+	std::string resolved = prefix;
+	for (size_t i = 0; i < parts.size(); i++) {
+		if (i > 0) {
+			resolved += '/';
+		}
+		resolved += parts[i];
+	}
+	return resolved;
 }
 
 int CodeGenerator::gen_int_immediate(int64_t value, FunctionContext& func) {
@@ -3439,7 +3493,9 @@ int CodeGenerator::gen_class_test(int value_reg, const std::string& class_name,
 }
 
 int CodeGenerator::gen_cast(const CastExpr* expr, FunctionContext& func) {
-	if (expr->type_name == "Variant") {
+	// The engine analyzer owns qualified types such as Viewport.MSAA. They are
+	// intentionally dropped by parse_type_name(), just as in declarations.
+	if (expr->type_name.empty() || expr->type_name == "Variant") {
 		return gen_expr(expr->value.get(), func);
 	}
 	const IRInstruction::TypeHint target = type_hint_from_string(expr->type_name);
@@ -6576,19 +6632,29 @@ std::unordered_set<std::string> CodeGenerator::get_global_classes() {
 		"EditorInterface",
 		"Engine",
 		"EngineDebugger",
+		"GDExtensionManager",
 		"Geometry2D",
 		"Geometry3D",
 		"Input",
 		"InputMap",
 		"IP",
+		"Marshalls",
+		"NativeMenu",
+		"NavigationMeshGenerator",
 		"OS",
 		"Performance",
+		"PhysicsServer2DManager",
+		"PhysicsServer3DManager",
 		"ProjectSettings",
+		"RenderingServer",
 		"ResourceLoader",
 		"ResourceSaver",
+		"ResourceUID",
 		"ThemeDB",
 		"Time",
+		"TranslationServer",
 		"WorkerThreadPool",
+		"XRServer",
 	};
 }
 

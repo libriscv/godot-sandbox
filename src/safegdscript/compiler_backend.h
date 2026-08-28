@@ -15,6 +15,7 @@ public:
 	virtual bool available() = 0;
 
 	virtual void set_restricted(bool p_restricted) = 0;
+	virtual void set_source_path(const String &p_path) = 0;
 	virtual void set_autoloads(const PackedStringArray &p_names) = 0;
 	virtual void set_global_classes(const PackedStringArray &p_pairs) = 0;
 	virtual void set_base_sources(const PackedStringArray &p_triples) = 0;
@@ -74,7 +75,7 @@ const char *policy_name();
 GDScriptCompilerBackend &backend_for(bool p_restricted);
 
 void prepare(GDScriptCompilerBackend &p_backend, bool p_restricted,
-		const PackedStringArray &p_base_sources);
+		const PackedStringArray &p_base_sources, const String &p_source_path = String());
 
 } // namespace gdscript_compiler
 

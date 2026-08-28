@@ -42,6 +42,7 @@ public:
 	bool available() override { return true; }
 
 	void set_restricted(bool p_restricted) override { m_options.restricted = p_restricted; }
+	void set_source_path(const String &p_path) override { m_options.source_path = to_utf8(p_path); }
 
 	void set_autoloads(const PackedStringArray &p_names) override {
 		m_options.autoloads = to_utf8_list(p_names);

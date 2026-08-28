@@ -274,6 +274,12 @@ PUBLIC Variant set_restricted(bool restricted)
 	return Nil;
 }
 
+PUBLIC Variant set_source_path(String path)
+{
+	gdscript_source_path() = path.utf8();
+	return Nil;
+}
+
 PUBLIC Variant get_script_class_name()
 {
 	return String(gdscript_last_class_name());

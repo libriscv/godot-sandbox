@@ -28,6 +28,9 @@ struct CompilerOptions {
 	// 1-based lines to break on. Non-empty implies debug_info.
 	std::vector<uint32_t> breakpoint_lines;
 	bool restricted = false;
+	// Resource path of the source being compiled. Used to resolve relative
+	// constant load()/preload() paths the same way GDScript does.
+	std::string source_path;
 	std::vector<std::string> autoloads;
 	std::vector<std::pair<std::string, std::string>> global_script_classes;
 

@@ -15,11 +15,13 @@
 using namespace gdscript;
 
 
-static IRProgram compile_to_ir(const std::string& source, bool optimize = false) {
+static IRProgram compile_to_ir(const std::string& source, bool optimize = false,
+	const std::string& source_path = {}) {
 	Lexer lexer(source);
 	Parser parser(lexer.tokenize());
 	Program program = parser.parse();
 	CodeGenerator codegen;
+	codegen.set_source_path(source_path);
 	IRProgram ir = codegen.generate(program);
 	if (optimize) {
 		IROptimizer optimizer;
@@ -64,6 +66,22 @@ static std::string embedded_path(const IRProgram& ir, const IRFunction& func) {
 		}
 	}
 	throw std::runtime_error("No LOAD_RESOURCE in " + func.name);
+}
+
+static void test_relative_constant_path_uses_the_script_directory() {
+	std::cout << "Testing relative constant resource paths..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"func test():\n\treturn preload(\"Bullet.tscn\")\n", false,
+		"res://player/bullet/bullet_spawner.gd");
+	assert(embedded_path(ir, find_function(ir, "test")) ==
+		"res://player/bullet/Bullet.tscn");
+
+	const IRProgram parent = compile_to_ir(
+		"func test():\n\treturn load(\"../shared/icon.svg\")\n", false,
+		"res://player/bullet/bullet_spawner.gd");
+	assert(embedded_path(parent, find_function(parent, "test")) ==
+		"res://player/shared/icon.svg");
 }
 
 static std::vector<uint8_t> machine_code(const std::string& source) {
@@ -232,6 +250,7 @@ int main() {
 
 	test_literal_path_is_embedded();
 	test_const_path_is_embedded();
+	test_relative_constant_path_uses_the_script_directory();
 	test_runtime_path_is_a_variant();
 	test_call_survives_the_optimizer();
 	test_emitted_syscall();

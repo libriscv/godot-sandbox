@@ -87,8 +87,9 @@ static PackedStringArray project_global_classes() {
 }
 
 void prepare(GDScriptCompilerBackend &p_backend, bool p_restricted,
-		const PackedStringArray &p_base_sources) {
+		const PackedStringArray &p_base_sources, const String &p_source_path) {
 	p_backend.set_restricted(p_restricted);
+	p_backend.set_source_path(p_source_path);
 	p_backend.set_autoloads(project_autoload_names());
 	p_backend.set_global_classes(project_global_classes());
 	p_backend.set_base_sources(p_base_sources);

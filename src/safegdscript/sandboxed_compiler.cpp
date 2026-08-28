@@ -21,6 +21,16 @@ public:
 		call_setter("set_restricted", args, 1, "restriction flag");
 	}
 
+	void set_source_path(const String &p_path) override {
+		Sandbox *compiler = sandbox();
+		if (compiler == nullptr || !compiler->has_function("set_source_path")) {
+			return;
+		}
+		Variant path = p_path;
+		const Variant *args[] = { &path };
+		call_setter("set_source_path", args, 1, "source path");
+	}
+
 	void set_autoloads(const PackedStringArray &p_names) override {
 		Variant names = p_names;
 		const Variant *args[] = { &names };

@@ -136,6 +136,9 @@ struct NamedArguments {
 struct CallExpr : Expr, NamedArguments {
 	std::string function_name;
 	std::vector<ExprPtr> arguments;
+	// Set only for `$Node` / `%Unique` sugar. Unlike an arbitrary call, this
+	// lookup may be duplicated when a compound-assignment target is cloned.
+	bool is_node_path_sugar = false;
 
 	CallExpr(std::string name, std::vector<ExprPtr> args)
 		: function_name(std::move(name)), arguments(std::move(args)) {}
