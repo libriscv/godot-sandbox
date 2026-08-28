@@ -1692,12 +1692,11 @@ func make_array_with_strings():
 	assert_eq(arr[1], "world", "Second string should be 'world'")
 	assert_eq(arr[2], "test", "Third string should be 'test'")
 
-	# Array() converts one container; multi-arg and single-container forms
-	# are compile errors.
+	# Array() converts one container; only the multi-argument form is invalid.
 	assert_true(ts.vmcall("compile_to_elf", "func f():\n\treturn Array(1, 2)\n").is_empty(),
 		"Array(1, 2) is refused")
-	assert_true(ts.vmcall("compile_to_elf", "func f():\n\treturn Array([1, 2])\n").is_empty(),
-		"Array([1, 2]) is refused")
+	assert_false(ts.vmcall("compile_to_elf", "func f():\n\treturn Array([1, 2])\n").is_empty(),
+		"Array([1, 2]) converts the existing container")
 
 	s.queue_free()
 	ts.queue_free()
@@ -3883,29 +3882,32 @@ func set_array(new_array):
 	s.queue_free()
 	ts.queue_free()
 
-func test_untyped_global_error():
-	# Test that untyped global variables without initializers produce a helpful error
+func test_untyped_uninitialized_member_defaults_to_null():
 	var gdscript_code = """
 var untyped_global
+
+func read():
+	return untyped_global
+
+func write(value):
+	untyped_global = value
+	return untyped_global
 
 func test():
 	untyped_global = 42
 	return untyped_global
 """
 
-	var ts : Sandbox = Sandbox.new()
-	ts.set_program(Sandbox_TestsTests)
-	ts.restrictions = true
-	var compiled_elf = ts.vmcall("compile_to_elf", gdscript_code)
+	var s = _compile_and_load(gdscript_code, 4000000)
+	if s == null:
+		return
+	add_child(s)
 
-	# Should fail to compile
-	assert_eq(compiled_elf.is_empty(), true, "Compilation should fail for untyped global without initializer")
-
-	var error_msg = ts.vmcall("get_compiler_error", "")
-	assert_true(error_msg.find("requires either a type hint or an initializer") != -1, \
-		"Error message should mention type hint or initializer requirement")
-
-	ts.queue_free()
+	assert_null(s.vmcallv("read"), "an untyped member starts as null")
+	assert_eq(s.vmcallv("write", 42), 42, "it accepts a scalar")
+	assert_eq(s.vmcallv("write", ["host", "array"]), ["host", "array"],
+		"and can change type while retaining a host container")
+	s.queue_free()
 
 
 func test_export_attribute():
@@ -12077,6 +12079,12 @@ func name_of(s):
 func narrow(v):
 	return Vector2(v)
 
+func array_copy(v):
+	return Array(v)
+
+func dictionary_copy(v):
+	return Dictionary(v)
+
 func bad_arity():
 	return Quaternion(1, 2)
 """
@@ -12097,6 +12105,10 @@ func bad_arity():
 	# A one-argument conversion on an inline type takes the same path.
 	assert_eq(s.vmcallv("narrow", Vector2i(1, 2)), Vector2(1, 2),
 		"Vector2(Vector2i) is a conversion, not a component list")
+	assert_eq(s.vmcallv("array_copy", PackedStringArray(["idle", "walk"])), ["idle", "walk"],
+		"Array(from) converts a host-returned container")
+	assert_eq(s.vmcallv("dictionary_copy", {"mob": 2}), {"mob": 2},
+		"Dictionary(from) converts a host-returned container")
 
 	# An arity no constructor accepts is the engine's to refuse, at run time.
 	var before := s.get_exceptions()

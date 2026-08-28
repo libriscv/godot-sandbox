@@ -239,11 +239,23 @@ static void test_container_constructors() {
 	// Element list not accepted; host expects one Array Variant in a2.
 	assert(refuses("func test():\n\treturn PackedInt32Array(1, 2)\n"));
 	assert(refuses("func test():\n\treturn Array(1, 2)\n"));
-	// Array(from) and Dictionary(from) need host conversion; not inlined.
-	assert(refuses("func test():\n\treturn Array([1, 2])\n"));
-	assert(refuses("func test():\n\treturn Dictionary({})\n"));
+	// Array(from) and Dictionary(from) use Godot's Variant constructor so they
+	// also work when the value came from a host method call.
+	const IRProgram converted = compile_to_ir(
+		"extends Node\n"
+		"var names = Array($AnimatedSprite2D.sprite_frames.get_animation_names())\n"
+		"func array_copy(value):\n\t\treturn Array(value)\n"
+		"func dictionary_copy(value):\n\t\treturn Dictionary(value)\n");
+	assert(count_opcode(converted.member_init, IROpcode::CONSTRUCT) == 1);
+	const IRInstruction& array_construct = only(
+		find_function(converted, "array_copy"), IROpcode::CONSTRUCT);
+	assert(array_construct.operands[1].immediate() == Variant::ARRAY);
+	const IRInstruction& dictionary_construct = only(
+		find_function(converted, "dictionary_copy"), IROpcode::CONSTRUCT);
+	assert(dictionary_construct.operands[1].immediate() == Variant::DICTIONARY);
+	assert(machine_code_builds("func test(value):\n\treturn Array(value)\n"));
 
-	std::cout << "  ✓ containers are built empty or from one Array" << std::endl;
+	std::cout << "  ✓ containers are built empty or converted by the host" << std::endl;
 }
 
 // -= Arity =-

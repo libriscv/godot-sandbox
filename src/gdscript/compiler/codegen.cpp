@@ -289,12 +289,13 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			continue;
 		}
 
-		// Without a type or initializer, stores cannot determine whether VASSIGN is needed.
+		// An untyped declaration is a Variant initialized to NIL.  Keeping
+		// value_type unknown makes later stores take the generic VSTORE path,
+		// which can retain containers and change the slot's run-time type.
 		if (global.type_hint.empty() && !global.initializer) {
-			error_at("Global variable '" + global.name + "' requires either a type hint or an initializer",
-				global.line, global.column,
-				"Add ': type' (e.g. ': Array') or an initializer (e.g. '= []'). Without one, "
-				"the compiler cannot tell whether stores into it need reference counting.");
+			ir_global.init_type = IRGlobalVar::InitType::NULL_VAL;
+			m_globals_lowered = i + 1;
+			continue;
 		}
 
 		if (!global.initializer) {
@@ -5994,7 +5995,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 	const int given = static_cast<int>(arg_regs.size());
 	int result_reg = alloc_register(func);
 
-	// Containers: empty or converted from one Array.
+	// Containers: empty inline, or converted by Godot's Variant constructor.
 	if (info->components == 0) {
 		if (given > 1) {
 			error_at(name + "() takes 0 or 1 arguments, got " + std::to_string(given), site,
@@ -6003,8 +6004,8 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 					: "Pass the elements as one Array: " + name + "([...])");
 		}
 		if (given == 1 && (name == "Array" || name == "Dictionary")) {
-			error_at(name + "(from) converts an existing container, which needs a host call", site,
-				"Write the elements as a literal instead");
+			free_register(func, result_reg);
+			return gen_host_constructor_typed(name, info->variant_type, arg_regs, func, site);
 		}
 
 		IRInstruction instr(info->opcode);

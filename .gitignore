@@ -1,5 +1,6 @@
 build/
 .build/
+.demo-compat-results/
 .build_*/
 .build-*/
 .zig/

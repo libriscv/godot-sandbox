@@ -60,6 +60,7 @@ void test_storage_classification() {
 		"const LIMIT = 10\n"
 		"static var shared = 0\n"
 		"var member = 0\n"
+		"var uninitialized\n"
 		"@export var exported = 1\n"
 		"var typed: Array\n"
 		"func test():\n\treturn member\n");
@@ -67,6 +68,11 @@ void test_storage_classification() {
 	check(!find_global(ir, "LIMIT").is_member(), "a const is not a member");
 	check(!find_global(ir, "shared").is_member(), "a static var is not a member");
 	check(find_global(ir, "member").is_member(), "a var is a member");
+	check(find_global(ir, "uninitialized").is_member(), "an uninitialized var is a member");
+	check(find_global(ir, "uninitialized").init_type == IRGlobalVar::InitType::NULL_VAL,
+		"an untyped, uninitialized member defaults to null");
+	check(find_global(ir, "uninitialized").value_type == IRInstruction::TypeHint_NONE,
+		"an untyped, uninitialized member remains a Variant");
 	check(find_global(ir, "exported").is_member(), "an @export var is a member");
 	check(find_global(ir, "typed").is_member(), "a type-hinted var is a member");
 

@@ -1286,14 +1286,13 @@ void test_const_assignment_prevention() {
 	std::cout << "  ✓ Const assignment prevention test passed" << std::endl;
 }
 
-void test_untyped_global_error() {
-	std::cout << "Testing untyped global variable error..." << std::endl;
+void test_untyped_global_defaults_to_null() {
+	std::cout << "Testing untyped global default..." << std::endl;
 
-	// Test that untyped global without initializer throws error
 	std::string source = R"(var bad_global
 
 func test():
-	return 42
+	return bad_global
 )";
 
 	Lexer lexer(source);
@@ -1301,21 +1300,11 @@ func test():
 	Program program = parser.parse();
 
 	CodeGenerator codegen;
-	bool caught_error = false;
-
-	try {
-		IRProgram ir = codegen.generate(program);
-	} catch (const CompilerException& e) {
-		caught_error = true;
-		std::string error_msg(e.what());
-		// Check that error message is helpful
-		assert(error_msg.find("bad_global") != std::string::npos);
-		assert(error_msg.find("type hint") != std::string::npos ||
-		       error_msg.find("initializer") != std::string::npos);
-	}
-
-	assert(caught_error);
-	std::cout << "  ✓ Untyped global error test passed" << std::endl;
+	IRProgram ir = codegen.generate(program);
+	assert(ir.globals.size() == 1);
+	assert(ir.globals[0].init_type == IRGlobalVar::InitType::NULL_VAL);
+	assert(ir.globals[0].value_type == IRInstruction::TypeHint_NONE);
+	std::cout << "  ✓ Untyped global defaults to null" << std::endl;
 }
 
 void test_valid_global_declarations() {
@@ -1497,7 +1486,7 @@ int main() {
 		test_const_assignment_prevention();
 
 		// Global variable tests
-		test_untyped_global_error();
+		test_untyped_global_defaults_to_null();
 		test_valid_global_declarations();
 
 		std::cout << "\n✅ All code generation tests passed!" << std::endl;
