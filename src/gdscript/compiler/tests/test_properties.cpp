@@ -406,6 +406,34 @@ static void test_a_one_line_accessor_body() {
 	std::cout << "  a one-line accessor is the same body" << std::endl;
 }
 
+static void test_a_named_setter_may_suspend() {
+	std::cout << "Testing a coroutine named setter..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"signal resume\n"
+		"var active = false: set = set_active\n"
+		"func set_active(value):\n"
+		"\tactive = value\n"
+		"\tawait resume\n"
+		"func enable():\n"
+		"\tactive = true\n");
+
+	const IRFunction& enable = find_function(ir, "enable");
+	assert(count_opcode(enable, IROpcode::CALL_HOSTED) == 1);
+	assert(count_opcode(enable, IROpcode::CALL) == 0);
+	assert(count_opcode(find_function(ir, "set_active"), IROpcode::STORE_GLOBAL) == 1);
+	compile_to_machine_code(
+		"signal resume\n"
+		"var active = false: set = set_active\n"
+		"func set_active(value):\n"
+		"\tactive = value\n"
+		"\tawait resume\n"
+		"func enable():\n"
+		"\tactive = true\n");
+
+	std::cout << "  a property assignment starts its setter coroutine" << std::endl;
+}
+
 static void test_refusals() {
 	std::cout << "Testing what is refused..." << std::endl;
 
@@ -427,6 +455,10 @@ static void test_refusals() {
 
 	// No await inside an accessor.
 	compile_failure("var x = 1:\n\tget:\n\t\treturn await something()\n");
+	compile_failure(
+		"var x = 1: get = read_x\n"
+		"func read_x():\n"
+		"\treturn await something()\n");
 
 	std::cout << "  refusals are refusals" << std::endl;
 }
@@ -464,6 +496,7 @@ int main() {
 		test_an_export_publishes_both_accessors();
 		test_accessors_reach_machine_code();
 		test_a_one_line_accessor_body();
+		test_a_named_setter_may_suspend();
 		test_refusals();
 		test_a_local_shadows_the_property();
 	} catch (const CompilerException& e) {

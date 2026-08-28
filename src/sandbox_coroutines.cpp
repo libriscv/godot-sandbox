@@ -33,6 +33,19 @@ Sandbox::Coroutine *Sandbox::find_coroutine(uint64_t id) noexcept {
 	return nullptr;
 }
 
+void Sandbox::disconnect_coroutine_signal(Coroutine &co) {
+	if (co.awaited_object_id == 0 || co.awaited_signal.is_empty() || co.state_object.is_null()) {
+		return;
+	}
+	Object *target = this->resolve_live_object(co.awaited_object_id);
+	const Callable callback(co.state_object.ptr(), "resume_from_signal");
+	if (target != nullptr && target->is_connected(co.awaited_signal, callback)) {
+		target->disconnect(co.awaited_signal, callback);
+	}
+	co.awaited_object_id = 0;
+	co.awaited_signal = StringName();
+}
+
 void Sandbox::retire_coroutine(uint64_t id, bool invalidate_state) {
 	for (size_t i = 0; i < m_coroutines.size(); i++) {
 		if (m_coroutines[i]->id != id) {
@@ -57,6 +70,7 @@ void Sandbox::retire_coroutine(uint64_t id, bool invalidate_state) {
 		}
 		// Emit completed(null) for waiting callers.
 		if (invalidate_state && co->state_object.is_valid()) {
+			this->disconnect_coroutine_signal(*co);
 			co->state_object->invalidate();
 			co->state_object->emit_signal("completed", Variant());
 		}
@@ -76,6 +90,7 @@ void Sandbox::reap_coroutines_internal(bool notify) {
 			this->release_permanent_variant(perm);
 		}
 		if (co->state_object.is_valid()) {
+			this->disconnect_coroutine_signal(*co);
 			co->state_object->invalidate();
 			// Suppressed from ~Sandbox() to avoid running user code during destruction.
 			if (notify) {
@@ -278,6 +293,8 @@ bool Sandbox::coroutine_suspend(gaddr_t operand_addr, gaddr_t frame_base, uint32
 		throw;
 	}
 
+	co->awaited_object_id = Sandbox::engine_object_id(target);
+	co->awaited_signal = signal.get_name();
 	const Error err = Error(signal.connect(
 			Callable(co->state_object.ptr(), "resume_from_signal"),
 			Object::CONNECT_ONE_SHOT));

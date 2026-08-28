@@ -468,6 +468,8 @@ public:
 		int32_t result_offset = -1;
 		Variant sent;
 		bool running = false; // Guards against self-resume.
+		uint64_t awaited_object_id = 0;
+		StringName awaited_signal;
 		Ref<SandboxFunctionState> state_object;
 	};
 
@@ -1070,6 +1072,7 @@ private:
 	void reserve_permanent_state(uint32_t max_refs);
 
 	void promote_frame_handles(Coroutine &co);
+	void disconnect_coroutine_signal(Coroutine &co);
 	void retire_coroutine(uint64_t id, bool invalidate_state);
 	// notify=false suppresses completed emission (used by ~Sandbox).
 	void reap_coroutines_internal(bool notify);

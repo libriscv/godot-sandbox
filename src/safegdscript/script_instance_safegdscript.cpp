@@ -472,9 +472,10 @@ SafeGDScriptInstance::~SafeGDScriptInstance() {
 	auto it = sandbox_instances.find(script.ptr());
 	if (it != sandbox_instances.end()) {
 		it->second.count--;
-		// Last one out takes the Sandbox with it, records and all; and a record
-		// from a machine that has since been replaced is already gone.
-		if (it->second.count > 0 && this->instance_base != 0 &&
+		// Retire frames tied to this record before the owner and its signals go
+		// away. The last instance used to skip this and leave a pending coroutine
+		// connected until the queued Sandbox deletion happened.
+		if (this->instance_base != 0 &&
 			this->instance_generation == it->second.sandbox->get_program_generation()) {
 			it->second.sandbox->destroy_instance_record(this->instance_base);
 		}

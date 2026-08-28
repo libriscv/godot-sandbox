@@ -50,6 +50,25 @@ static String script_class_path(const String &p_class_name) {
 	return String();
 }
 
+// Godot resolves a quoted script path from the file that contains the
+// declaration.  Keeping this on the host is important for byte-exact converted
+// projects: their .sgd peers intentionally still say `extends "base.gd"`.
+static String resolve_script_path(const String &p_reference, const String &p_source_path) {
+	if (p_reference.is_empty() || p_reference.begins_with("res://") ||
+			p_reference.begins_with("user://") || p_reference.is_absolute_path()) {
+		return p_reference;
+	}
+	if (p_source_path.is_empty()) {
+		return p_reference;
+	}
+	return p_source_path.get_base_dir().path_join(p_reference).simplify_path();
+}
+
+static bool looks_like_script_path(const String &p_reference) {
+	return p_reference.contains("/") || p_reference.begins_with(".") ||
+			p_reference.ends_with(".gd") || p_reference.ends_with(".sgd");
+}
+
 // mtime has 1s resolution; length catches same-second rewrites.
 static uint64_t file_stamp(const String &p_path) {
 	uint64_t length = 0;
@@ -68,7 +87,9 @@ Ref<Script> SafeGDScript::_get_base_script() const {
 	if (base_class.is_empty() || base_class == native_base_class) {
 		return base_script;
 	}
-	const String path = base_is_path ? base_class : script_class_path(base_class);
+	const String path = base_is_path
+			? resolve_script_path(base_class, this->path)
+			: script_class_path(base_class);
 	if (path.is_empty() || !FileAccess::file_exists(path)) {
 		return base_script;
 	}
@@ -776,6 +797,7 @@ PackedStringArray SafeGDScript::resolve_base_sources(const String &p_source,
 	if (!p_self_path.is_empty()) {
 		visited.insert(p_self_path);
 	}
+	String source_path = p_self_path;
 	String next = scan_extends(p_source);
 	while (!next.is_empty()) {
 		String path;
@@ -783,8 +805,10 @@ PackedStringArray SafeGDScript::resolve_base_sources(const String &p_source,
 			path = next;
 		} else if (HashMap<String, String>::Iterator it = classes.find(next); it != classes.end()) {
 			path = it->value;
+		} else if (looks_like_script_path(next)) {
+			path = resolve_script_path(next, source_path);
 		} else {
-			break;
+			break; // Native engine class.
 		}
 		if (visited.has(path)) {
 			if (r_error != nullptr) {
@@ -813,6 +837,7 @@ PackedStringArray SafeGDScript::resolve_base_sources(const String &p_source,
 			}
 			break;
 		}
+		source_path = path;
 		next = scan_extends(source);
 	}
 	return triples;

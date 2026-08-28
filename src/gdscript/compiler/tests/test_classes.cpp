@@ -1523,6 +1523,39 @@ void test_an_override_keeps_the_base_copy() {
 	std::cout << "  \u2713 Overrides displace, they do not erase" << std::endl;
 }
 
+void test_an_overridden_setter_keeps_direct_storage_access() {
+	std::cout << "Testing a named setter override across a script chain..." << std::endl;
+
+	const IRProgram ir = compile_chain_to_ir(
+		"extends Combatant\n"
+		"signal resume\n"
+		"func set_active(value):\n"
+		"\tsuper.set_active(value)\n"
+		"\tawait resume\n",
+		{ { "Combatant",
+			"extends Node\n"
+			"class_name Combatant\n"
+			"var active = false: set = set_active\n"
+			"func set_active(value):\n"
+			"\tactive = value\n" } });
+
+	const IRFunction* base_setter = find_function(ir, "@super0.set_active");
+	check(base_setter != nullptr, "the displaced base setter survives");
+	if (base_setter != nullptr) {
+		check(count_opcode(*base_setter, IROpcode::STORE_GLOBAL) == 1,
+			"the base setter writes its backing slot directly under its mangled name");
+		check(count_opcode(*base_setter, IROpcode::CALL) == 0 &&
+			count_opcode(*base_setter, IROpcode::CALL_HOSTED) == 0,
+			"the base setter does not recursively invoke the derived setter");
+	}
+
+	const IRFunction* derived_setter = find_function(ir, "set_active");
+	check(derived_setter != nullptr && derived_setter->is_coroutine,
+		"the derived setter remains a coroutine");
+
+	std::cout << "  setter storage semantics survive name mangling" << std::endl;
+}
+
 void test_super_of_the_enclosing_function() {
 	std::cout << "Testing super() in a merged chain..." << std::endl;
 
@@ -1654,6 +1687,7 @@ int main() {
 	test_a_method_that_returns_self_keeps_the_type();
 	test_a_chain_merges_into_one_program();
 	test_an_override_keeps_the_base_copy();
+	test_an_overridden_setter_keeps_direct_storage_access();
 	test_super_of_the_enclosing_function();
 	test_a_base_static_and_enum_are_reachable();
 	test_what_a_chain_refuses();

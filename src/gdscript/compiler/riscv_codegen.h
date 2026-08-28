@@ -448,6 +448,9 @@ private:
 
 		// False outside gen_function() (entry stub / export table have no frame).
 		bool in_function = false;
+		// Member initializers execute in a temporary host call state; complex
+		// results stored there must be promoted before that state is reset.
+		bool is_member_initializer = false;
 
 		// Set by plan_frame() before first instruction; ecall/CALL expansion asserts consistency.
 		bool saves_return_address = false;

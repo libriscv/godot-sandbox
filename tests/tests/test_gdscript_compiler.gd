@@ -9686,6 +9686,22 @@ func test_sgd_a_suspended_frame_dies_with_its_instance():
 
 	b.free()
 
+func test_sgd_the_last_instance_disconnects_its_suspended_frame():
+	var script = _instance_script("instance_await_last_free")
+	if script == null:
+		return
+	var node = _instance_node(script)
+	add_child(node)
+
+	var connections_before := sgd_ping.get_connections().size()
+	node.call("wait_then_step", sgd_ping)
+	assert_eq(sgd_ping.get_connections().size(), connections_before + 1,
+		"the suspended frame should be connected to its awaited signal")
+
+	node.free()
+	assert_eq(sgd_ping.get_connections().size(), connections_before,
+		"freeing the last script instance should cancel that connection")
+
 var _self_freeing_node : Node = null
 
 var _reused_instance : Node = null
@@ -12368,6 +12384,120 @@ func test_sgd_rebuilds_when_its_base_changes():
 
 	assert_eq(node.call("run"), 2, "editing the base should rebuild the dependent")
 	node.free()
+
+func test_sgd_resolves_relative_paths_through_an_extends_chain():
+	var base_path = "user://temp_relative_chain_base.gd"
+	var base = FileAccess.open(base_path, FileAccess.WRITE)
+	base.store_string("""
+extends Node
+signal finished
+var inherited_state := [7]
+func inherited_value():
+	return inherited_state[0]
+""")
+	base.close()
+
+	var middle_path = "user://temp_relative_chain_middle.gd"
+	var middle = FileAccess.open(middle_path, FileAccess.WRITE)
+	middle.store_string("""
+extends "temp_relative_chain_base.gd"
+func middle_value():
+	return inherited_value() + 1
+""")
+	middle.close()
+
+	var leaf_path = "user://temp_relative_chain_leaf.sgd"
+	var leaf = FileAccess.open(leaf_path, FileAccess.WRITE)
+	leaf.store_string("""
+extends "temp_relative_chain_middle.gd"
+func run():
+	return middle_value() + 1
+""")
+	leaf.close()
+
+	var script = load(leaf_path)
+	assert_not_null(script, "a leaf with relative base paths should load")
+	if script == null:
+		return
+	assert_eq(script.get_compile_error(), "", "the relative chain should compile")
+	assert_eq(script.get_base_script().resource_path, middle_path,
+		"script identity should resolve the relative declared base too")
+
+	var node = Node.new()
+	node.set_script(script)
+	assert_eq(node.call("run"), 9, "state and methods should arrive through both bases")
+	assert_true(node.has_signal("finished"), "an inherited signal should be published")
+	node.free()
+
+func test_sgd_a_coroutine_may_override_a_named_property_setter():
+	var base_path = "user://temp_coroutine_setter_base.gd"
+	var base = FileAccess.open(base_path, FileAccess.WRITE)
+	base.store_string("""
+extends Node
+var active := false: set = set_active
+func set_active(value):
+	active = value
+""")
+	base.close()
+
+	var leaf_path = "user://temp_coroutine_setter_leaf.sgd"
+	var leaf = FileAccess.open(leaf_path, FileAccess.WRITE)
+	leaf.store_string("""
+extends "user://temp_coroutine_setter_base.gd"
+signal setter_gate
+var completions := 0
+func set_active(value):
+	super.set_active(value)
+	if value:
+		await setter_gate
+		completions += 1
+func completion_count():
+	return completions
+""")
+	leaf.close()
+
+	var script = load(leaf_path)
+	assert_not_null(script, "a coroutine setter override should load")
+	if script == null:
+		return
+	assert_eq(script.get_compile_error(), "", "the inherited property should accept the override")
+
+	var node = Node.new()
+	node.set_script(script)
+	node.set("active", true)
+	assert_eq(node.get("active"), true, "the setter should update storage before suspending")
+	assert_eq(node.call("completion_count"), 0, "the setter should still be suspended")
+	node.emit_signal("setter_gate")
+	assert_eq(node.call("completion_count"), 1, "the host should resume the setter coroutine")
+	node.free()
+
+func test_sgd_instance_initializers_release_temporary_variants():
+	# This mirrors physics_tests' Array[Dictionary] member. Its default record
+	# consumes most of references_max while loading; initializing another instance
+	# must use a fresh scoped state and promote only the final Array.
+	var source = "extends Node\nvar entries = [\n"
+	for i in range(15):
+		source += "\t{\"id\": \"Functional Test %d\", \"path\": \"res://test_%d.tscn\"},\n" % [i, i]
+	source += "]\nfunc count():\n\treturn entries.size()\n"
+
+	var path = "user://temp_large_member_initializer.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(source)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the large member initializer should compile")
+	if script == null:
+		return
+
+	var first = Node.new()
+	first.set_script(script)
+	var second = Node.new()
+	second.set_script(script)
+	assert_eq(first.call("count"), 15, "the first instance should keep its Array")
+	assert_eq(second.call("count"), 15, "a second instance should get a fresh Array too")
+	assert_eq(first.get_exceptions(), 0, "initializing instances should not exhaust references")
+	second.free()
+	first.free()
 
 # -= Enums as values =-
 #

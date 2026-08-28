@@ -461,7 +461,17 @@ void Sandbox::read_instance_layout() {
 void Sandbox::run_instance_initializer(gaddr_t address, gaddr_t base) {
 	const bool reentrant = this->is_in_vmcall();
 	CurrentState *const previous_state = this->m_current_state;
-	this->m_current_state = &this->m_states[0];
+	CurrentState *const end_state = this->m_states.data() + this->m_states.size();
+	if (previous_state + 1 >= end_state) {
+		ERR_PRINT("Too many VM calls in progress while initializing an instance");
+		return;
+	}
+	// Initializer temporaries belong to this invocation, not to permanent state.
+	// STORE_GLOBAL promotes only the final member value.  Running directly in
+	// state zero made every key/string used to build a member permanent, so a
+	// second instance of a moderately large literal exhausted the reference cap.
+	this->m_current_state = previous_state + 1;
+	this->m_current_state->reset();
 
 	const gaddr_t previous_base = this->m_instance_base;
 	this->m_instance_base = base;
@@ -485,6 +495,19 @@ void Sandbox::run_instance_initializer(gaddr_t address, gaddr_t base) {
 			cpu.reg(riscv::REG_ARG0) = base;
 			cpu.reg(riscv::REG_TP) = base;
 			cpu.preempt_internal(regs, true, true, address, max_instr ? max_instr : ~0ULL);
+		}
+
+		// Folded complex defaults (notably [] and {}) are written directly by
+		// emit_instance_init(), without passing through VSTORE_GLOBAL. Promote
+		// those handles before the temporary initializer state is discarded.
+		const size_t slots = size_t(this->m_instance_record_size) / sizeof(GuestVariant);
+		for (size_t i = 0; i < slots; i++) {
+			GuestVariant *member = machine().memory.memarray<GuestVariant>(
+					base + gaddr_t(i * sizeof(GuestVariant)), 1);
+			if (!member->is_scoped_variant() || int32_t(member->v.i) < 0) {
+				continue;
+			}
+			member->v.i = int32_t(this->create_permanent_variant(unsigned(member->v.i)));
 		}
 	} catch (const std::exception &e) {
 		this->handle_exception(address);

@@ -1340,8 +1340,13 @@ void RISCVCodeGen::gen_store_global(const IRInstruction& instr) {
 
 	// Get the global's type information
 	const IRGlobalVar& global = m_globals[global_idx];
+	const bool needs_vassign = is_complex_variant_type(global.value_type);
 
-	if (global.value_type == IRInstruction::TypeHint_NONE) {
+	if (global.value_type == IRInstruction::TypeHint_NONE ||
+			(m_fn.is_member_initializer && global.is_member() && needs_vassign)) {
+		// A member initializer runs in a temporary call state. VSTORE_GLOBAL
+		// promotes its final value into permanent storage; VASSIGN's empty-slot
+		// fast path would copy the temporary positive index into the member.
 		spill_around_syscall({ REG_A0, REG_A1, REG_A7 });
 		emit_address_of_global(REG_A0, static_cast<size_t>(global_idx));
 		emit_load_stack_offset(REG_A1, src_offset);
@@ -1349,8 +1354,6 @@ void RISCVCodeGen::gen_store_global(const IRInstruction& instr) {
 		emit_ecall();
 		return;
 	}
-
-	const bool needs_vassign = is_complex_variant_type(global.value_type);
 
 	// Load address of global variable
 	emit_address_of_global(REG_T0, static_cast<size_t>(global_idx));
@@ -2886,6 +2889,7 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 
 void RISCVCodeGen::gen_function(const IRFunction& func) {
 	FunctionStateGuard function_state(*this);
+	m_fn.is_member_initializer = func.name == "__init_members";
 
 	// Reset per function; first body line always owes a break.
 	m_break_line = 0;

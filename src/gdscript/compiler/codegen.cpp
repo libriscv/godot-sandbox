@@ -479,7 +479,11 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const Stru
 	m_current_function = func.ir.name;
 	m_current_chain_link = decl.chain_link;
 	m_current_chain_function = decl.declared_name();
-	enter_accessor_scope(decl.name);
+	// An overridden base function is emitted under a mangled symbol, but retains
+	// its declared name in chain_name.  Accessor recursion rules are based on the
+	// declared name: assigning the property from either the base setter or its
+	// override must write storage directly.
+	enter_accessor_scope(decl.declared_name());
 
 	func.return_type = decl.return_type;
 	m_current_class = owner;
@@ -4390,7 +4394,8 @@ void CodeGenerator::collect_property_accessors(const Program& program) {
 			continue;
 		}
 
-		const auto require_named = [&](const std::string& fn, size_t arity, const char* role) {
+		const auto require_named = [&](const std::string& fn, size_t arity, const char* role,
+			bool may_suspend) {
 			auto sig = m_local_signatures.find(fn);
 			if (sig == m_local_signatures.end()) {
 				error_at("Property '" + global.name + "' names '" + fn + "' as its " + role +
@@ -4402,17 +4407,20 @@ void CodeGenerator::collect_property_accessors(const Program& program) {
 					                             : "no parameters"),
 					global.line, global.column);
 			}
-			if (sig->second->is_coroutine) {
+			if (sig->second->is_coroutine && !may_suspend) {
 				error_at("The " + std::string(role) + " '" + fn + "' of property '" + global.name +
 					"' contains an await, so it cannot run on a property access",
 					global.line, global.column);
 			}
 		};
 		if (!global.setter_name.empty()) {
-			require_named(global.setter_name, 1, "setter");
+			// A derived method may override a named base setter with a coroutine.
+			// Godot starts that coroutine and lets the property assignment return;
+			// CALL_HOSTED below provides the same fire-and-resume behavior.
+			require_named(global.setter_name, 1, "setter", true);
 		}
 		if (!global.getter_name.empty()) {
-			require_named(global.getter_name, 0, "getter");
+			require_named(global.getter_name, 0, "getter", false);
 		}
 
 		m_global_setters[i] = global.setter_body ? global.setter_body->name : global.setter_name;
@@ -4459,7 +4467,9 @@ int CodeGenerator::gen_property_get(size_t index, FunctionContext& func) {
 
 void CodeGenerator::gen_property_set(size_t index, int value_reg, FunctionContext& func) {
 	const int result_reg = alloc_register(func);
-	IRInstruction call(IROpcode::CALL);
+	auto sig = m_local_signatures.find(m_global_setters[index]);
+	const bool hosted = sig != m_local_signatures.end() && sig->second->is_coroutine;
+	IRInstruction call(hosted ? IROpcode::CALL_HOSTED : IROpcode::CALL);
 	call.operands.push_back(ir_str(m_global_setters[index]));
 	call.operands.push_back(IRValue::reg(result_reg));
 	call.operands.push_back(IRValue::imm(1));
