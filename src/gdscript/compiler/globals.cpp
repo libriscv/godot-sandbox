@@ -5,6 +5,7 @@
 #include <iterator>
 #include <limits>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace gdscript {
 
@@ -112,6 +113,10 @@ static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 	{ "rotate_toward", GlobalFn::ROTATE_TOWARD, GlobalKind::SYSCALL, 3, 3, GlobalResult::FLOAT, UTILITY_ROTATE_TOWARD, 3, NO_FORM, NO_FORM },
 	{ "pingpong", GlobalFn::PINGPONG, GlobalKind::SYSCALL, 2, 2, GlobalResult::FLOAT, UTILITY_PINGPONG, 2, NO_FORM, NO_FORM },
 	{ "cubic_interpolate", GlobalFn::CUBIC_INTERPOLATE, GlobalKind::SYSCALL, 5, 5, GlobalResult::FLOAT, UTILITY_CUBIC_INTERPOLATE, 5, NO_FORM, NO_FORM },
+	{ "cubic_interpolate_angle", GlobalFn::CUBIC_INTERPOLATE_ANGLE, GlobalKind::SYSCALL, 5, 5, GlobalResult::FLOAT, UTILITY_CUBIC_INTERPOLATE_ANGLE, 5, NO_FORM, NO_FORM },
+	// Eight arguments: fa0-fa7, the widest ECALL_UTILITY form.
+	{ "cubic_interpolate_in_time", GlobalFn::CUBIC_INTERPOLATE_IN_TIME, GlobalKind::SYSCALL, 8, 8, GlobalResult::FLOAT, UTILITY_CUBIC_INTERPOLATE_IN_TIME, 8, NO_FORM, NO_FORM },
+	{ "cubic_interpolate_angle_in_time", GlobalFn::CUBIC_INTERPOLATE_ANGLE_IN_TIME, GlobalKind::SYSCALL, 8, 8, GlobalResult::FLOAT, UTILITY_CUBIC_INTERPOLATE_ANGLE_IN_TIME, 8, NO_FORM, NO_FORM },
 	{ "bezier_interpolate", GlobalFn::BEZIER_INTERPOLATE, GlobalKind::SYSCALL, 5, 5, GlobalResult::FLOAT, UTILITY_BEZIER_INTERPOLATE, 5, NO_FORM, NO_FORM },
 	{ "bezier_derivative", GlobalFn::BEZIER_DERIVATIVE, GlobalKind::SYSCALL, 5, 5, GlobalResult::FLOAT, UTILITY_BEZIER_DERIVATIVE, 5, NO_FORM, NO_FORM },
 
@@ -146,6 +151,12 @@ static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 
 	{ "char", GlobalFn::CHAR, GlobalKind::HOST, 1, 1, GlobalResult::STRING, UTILITY_CHAR, 0, NO_FORM, NO_FORM },
 	{ "ord", GlobalFn::ORD, GlobalKind::HOST, 1, 1, GlobalResult::INT, UTILITY_ORD, 0, NO_FORM, NO_FORM },
+
+	// Seeded draw. Not in the random family below: it reads no shared state
+	// and writes none -- the seed goes in and the next one comes back in the
+	// PackedInt64Array beside the number -- so it may be folded and hoisted
+	// like any other pure call.
+	{ "rand_from_seed", GlobalFn::RAND_FROM_SEED, GlobalKind::HOST, 1, 1, GlobalResult::VARIANT, UTILITY_RAND_FROM_SEED, 0, NO_FORM, NO_FORM },
 
 	// Type constructors. Inline when argument is numeric/bool; host otherwise.
 	{ "int", GlobalFn::TO_INT, GlobalKind::CAST, 1, 1, GlobalResult::INT, UTILITY_TO_INT, 0, GlobalFn::INT_IDENTITY, NO_FORM },
@@ -224,6 +235,54 @@ static const BuiltinConstant BUILTIN_CONSTANTS[] = {
 #include "builtin_constants.def"
 };
 
+static const GlobalEnumValue GLOBAL_ENUM_VALUES[] = {
+#define GDSC_GLOBAL_ENUM_VALUE(enum_name, name, value) { enum_name, #name, (value) },
+#include "global_enums.def"
+};
+
+const GlobalEnumValue* find_global_enum_value(const std::string& enum_name, const std::string& name) {
+	// Keyed on "Enum.MEMBER": one map answers both the member lookup and, via
+	// the name set below, the question of whether the enum exists at all.
+	static const std::unordered_map<std::string, const GlobalEnumValue*> by_name = [] {
+		std::unordered_map<std::string, const GlobalEnumValue*> map;
+		for (const GlobalEnumValue& entry : GLOBAL_ENUM_VALUES) {
+			map[std::string(entry.enum_name) + "." + entry.name] = &entry;
+		}
+		return map;
+	}();
+
+	auto it = by_name.find(enum_name + "." + name);
+	return it == by_name.end() ? nullptr : it->second;
+}
+
+bool is_global_enum(const std::string& name) {
+	static const std::unordered_set<std::string> names = [] {
+		std::unordered_set<std::string> set;
+		for (const GlobalEnumValue& entry : GLOBAL_ENUM_VALUES) {
+			set.insert(entry.enum_name);
+		}
+		return set;
+	}();
+
+	return names.find(name) != names.end();
+}
+
+size_t global_enum_value_count() {
+	return std::size(GLOBAL_ENUM_VALUES);
+}
+
+const char* global_enum_value_enum(size_t index) {
+	return GLOBAL_ENUM_VALUES[index].enum_name;
+}
+
+const char* global_enum_value_name(size_t index) {
+	return GLOBAL_ENUM_VALUES[index].name;
+}
+
+int64_t global_enum_value(size_t index) {
+	return GLOBAL_ENUM_VALUES[index].value;
+}
+
 const BuiltinConstant* find_builtin_constant(const std::string& type, const std::string& name) {
 	for (const BuiltinConstant& entry : BUILTIN_CONSTANTS) {
 		if (type == entry.type && name == entry.name) {
@@ -257,17 +316,12 @@ static const struct { const char* name; const char* reason; } UNIMPLEMENTED_GLOB
 	{ "is_instance_id_valid", "objects are reached through the sandbox allowlist, not by instance id" },
 	{ "weakref", "no host syscall for weak references yet" },
 
-	{ "cubic_interpolate_in_time", "takes eight arguments; ECALL_UTILITY carries five" },
-	{ "cubic_interpolate_angle_in_time", "takes eight arguments; ECALL_UTILITY carries five" },
-	{ "cubic_interpolate_angle", "no ECALL_UTILITY op yet" },
-
 	{ "rid_allocate_id", "RIDs name engine resources the sandbox cannot reach" },
 	{ "rid_from_int64", "RIDs name engine resources the sandbox cannot reach" },
 
 	// Engine/project state: deliberately unreachable from sandbox.
 	{ "randomize", "mutates the project's shared RNG state" },
 	{ "seed", "mutates the project's shared RNG state" },
-	{ "rand_from_seed", "no ECALL_UTILITY op yet" },
 };
 
 size_t builtin_constant_count() {
@@ -380,6 +434,47 @@ static double eval_angle_difference(double from, double to) {
 	return std::fmod(2.0 * difference, MATH_TAU) - difference;
 }
 
+// Math::cubic_interpolate() and the three forms built on it. Transcribed
+// rather than derived: the host mirrors these in utility_math_op(), and the
+// differential test compares the two.
+static double eval_cubic_interpolate(double from, double to, double pre, double post, double weight) {
+	return 0.5 *
+		((from * 2.0) +
+			(-pre + to) * weight +
+			(2.0 * pre - 5.0 * from + 4.0 * to - post) * (weight * weight) +
+			(-pre + 3.0 * from - 3.0 * to + post) * (weight * weight * weight));
+}
+
+// Barry-Goldman: the four values sit at four times rather than at even spacing.
+static double eval_cubic_interpolate_in_time(double from, double to, double pre, double post,
+	double weight, double to_t, double pre_t, double post_t)
+{
+	const double t = eval_lerp(0.0, to_t, weight);
+	const double a1 = eval_lerp(pre, from, (pre_t == 0.0) ? 0.0 : (t - pre_t) / -pre_t);
+	const double a2 = eval_lerp(from, to, (to_t == 0.0) ? 0.5 : t / to_t);
+	const double a3 = eval_lerp(to, post, (post_t - to_t == 0.0) ? 1.0 : (t - to_t) / (post_t - to_t));
+	const double b1 = eval_lerp(a1, a2, (to_t - pre_t == 0.0) ? 0.0 : (t - pre_t) / (to_t - pre_t));
+	const double b2 = eval_lerp(a2, a3, (post_t == 0.0) ? 1.0 : t / post_t);
+	return eval_lerp(b1, b2, (to_t == 0.0) ? 0.5 : t / to_t);
+}
+
+// The angular forms first bring all four control values onto one branch of the
+// circle, then interpolate them as ordinary numbers.
+struct CubicAngles {
+	double from, to, pre, post;
+};
+
+static CubicAngles eval_cubic_angles(double from, double to, double pre, double post) {
+	const double from_rot = std::fmod(from, MATH_TAU);
+	const double pre_diff = std::fmod(pre - from_rot, MATH_TAU);
+	const double pre_rot = from_rot + std::fmod(2.0 * pre_diff, MATH_TAU) - pre_diff;
+	const double to_diff = std::fmod(to - from_rot, MATH_TAU);
+	const double to_rot = from_rot + std::fmod(2.0 * to_diff, MATH_TAU) - to_diff;
+	const double post_diff = std::fmod(post - to_rot, MATH_TAU);
+	const double post_rot = to_rot + std::fmod(2.0 * post_diff, MATH_TAU) - post_diff;
+	return { from_rot, to_rot, pre_rot, post_rot };
+}
+
 static double eval_snapped(double value, double step) {
 	if (step != 0) {
 		value = std::floor(value / step + 0.5) * step;
@@ -405,6 +500,9 @@ double eval_utility_op(int16_t utility_op, const double args[UTILITY_MAX_FLOAT_A
 	const double c = args[2];
 	const double d = args[3];
 	const double e = args[4];
+	const double f = args[5];
+	const double g = args[6];
+	const double h = args[7];
 
 	switch (utility_op) {
 		case UTILITY_FLOOR: return std::floor(a);
@@ -503,13 +601,17 @@ double eval_utility_op(int16_t utility_op, const double args[UTILITY_MAX_FLOAT_A
 
 		case UTILITY_REMAP:
 			return eval_lerp(d, e, eval_inverse_lerp(b, c, a));
-		case UTILITY_CUBIC_INTERPOLATE: {
-			const double from = a, to = b, pre = c, post = d, weight = e;
-			return 0.5 *
-				((from * 2.0) +
-					(-pre + to) * weight +
-					(2.0 * pre - 5.0 * from + 4.0 * to - post) * (weight * weight) +
-					(-pre + 3.0 * from - 3.0 * to + post) * (weight * weight * weight));
+		case UTILITY_CUBIC_INTERPOLATE:
+			return eval_cubic_interpolate(a, b, c, d, e);
+		case UTILITY_CUBIC_INTERPOLATE_ANGLE: {
+			const CubicAngles rot = eval_cubic_angles(a, b, c, d);
+			return eval_cubic_interpolate(rot.from, rot.to, rot.pre, rot.post, e);
+		}
+		case UTILITY_CUBIC_INTERPOLATE_IN_TIME:
+			return eval_cubic_interpolate_in_time(a, b, c, d, e, f, g, h);
+		case UTILITY_CUBIC_INTERPOLATE_ANGLE_IN_TIME: {
+			const CubicAngles rot = eval_cubic_angles(a, b, c, d);
+			return eval_cubic_interpolate_in_time(rot.from, rot.to, rot.pre, rot.post, e, f, g, h);
 		}
 		case UTILITY_BEZIER_INTERPOLATE: {
 			const double omt = 1.0 - e;
@@ -531,6 +633,7 @@ double eval_utility_op(int16_t utility_op, const double args[UTILITY_MAX_FLOAT_A
 		case UTILITY_TO_INT:
 		case UTILITY_TO_FLOAT:
 		case UTILITY_TO_BOOL:
+		case UTILITY_RAND_FROM_SEED:
 			throw CompilerException(ErrorType::CODEGEN_ERROR,
 				"str(), len() and the type constructors need the host's Variant API"
 				" and cannot be evaluated here");
@@ -621,7 +724,7 @@ double eval_global_float(GlobalFn fn, const double* args, size_t count) {
 	const GlobalFunction& info = global_function(fn);
 
 	if (info.kind == GlobalKind::SYSCALL) {
-		double packed[UTILITY_MAX_FLOAT_ARGS] = { 0, 0, 0, 0, 0 };
+		double packed[UTILITY_MAX_FLOAT_ARGS] = {};
 		for (size_t i = 0; i < count && i < UTILITY_MAX_FLOAT_ARGS; i++) {
 			packed[i] = args[i];
 		}

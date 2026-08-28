@@ -7287,6 +7287,126 @@ func po2(value : int) -> int:
 	s.queue_free()
 
 
+# The cubic interpolation family, against the engine. The angular and
+# in-time forms are transcribed twice -- once in the compiler's evaluator,
+# once in the host's syscall -- so what matters is that both agree with Godot.
+func test_cubic_interpolation_globals():
+	var gdscript_code = """
+func plain(from : float, to : float, pre : float, post : float, w : float) -> float:
+	return cubic_interpolate(from, to, pre, post, w)
+
+func angle(from : float, to : float, pre : float, post : float, w : float) -> float:
+	return cubic_interpolate_angle(from, to, pre, post, w)
+
+func in_time(c : Array) -> float:
+	return cubic_interpolate_in_time(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7])
+
+func angle_in_time(c : Array) -> float:
+	return cubic_interpolate_angle_in_time(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7])
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	# The last row's zero times take every degenerate branch of Barry-Goldman.
+	var cases = [
+		[1.0, 2.0, 0.0, 3.0, 0.5, 1.0, -0.5, 1.5],
+		[0.5, 3.0, 0.0, 4.0, 0.25, 1.0, -0.5, 1.5],
+		[-7.3, 12.9, 3.25, -1.5, 0.75, 2.0, -1.0, 3.0],
+		[1.0, 2.0, 0.0, 3.0, 0.5, 0.0, 0.0, 0.0],
+	]
+	for c in cases:
+		assert_almost_eq(s.vmcallv("plain", c[0], c[1], c[2], c[3], c[4]),
+			cubic_interpolate(c[0], c[1], c[2], c[3], c[4]), 1e-9,
+			"cubic_interpolate should match the engine")
+		assert_almost_eq(s.vmcallv("angle", c[0], c[1], c[2], c[3], c[4]),
+			cubic_interpolate_angle(c[0], c[1], c[2], c[3], c[4]), 1e-9,
+			"cubic_interpolate_angle should match the engine")
+		# Eight arguments: one past what a vmcall can carry, so they travel in
+		# an Array. The syscall itself still gets all eight, in fa0-fa7.
+		assert_almost_eq(s.vmcallv("in_time", c),
+			cubic_interpolate_in_time(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]), 1e-9,
+			"cubic_interpolate_in_time should match the engine")
+		assert_almost_eq(s.vmcallv("angle_in_time", c),
+			cubic_interpolate_angle_in_time(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]), 1e-9,
+			"cubic_interpolate_angle_in_time should match the engine")
+
+	s.queue_free()
+
+
+# rand_from_seed(): the one draw that reads and writes no shared state, so a
+# restricted program may make it and two runs answer the same thing.
+func test_rand_from_seed_is_deterministic():
+	var gdscript_code = """
+func draw(s : int):
+	return rand_from_seed(s)
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+	s.restrictions = true
+
+	for seed_value in [0, 1, 12345, -7]:
+		var expected = rand_from_seed(seed_value)
+		assert_eq(s.vmcallv("draw", seed_value), expected,
+			"rand_from_seed(%d) should match the engine" % seed_value)
+		assert_eq(s.vmcallv("draw", seed_value), expected,
+			"and answer the same thing the second time")
+
+	s.queue_free()
+
+
+# @GlobalScope enums (Side, Corner, Error, Key). A member is a compile-time
+# integer -- the enum itself never reaches the guest.
+func test_global_enumerations():
+	var gdscript_code = """
+func side() -> int:
+	return Side.SIDE_BOTTOM
+
+func corner() -> int:
+	return Corner.CORNER_BOTTOM_LEFT
+
+func orientation() -> int:
+	return Orientation.VERTICAL
+
+func clock() -> int:
+	return ClockDirection.COUNTERCLOCKWISE
+
+func err() -> int:
+	return Error.ERR_FILE_NOT_FOUND
+
+func key() -> int:
+	return Key.KEY_A + KeyModifierMask.KEY_MASK_SHIFT
+
+func alignment() -> int:
+	return HorizontalAlignment.HORIZONTAL_ALIGNMENT_RIGHT + InlineAlignment.INLINE_ALIGNMENT_CENTER
+
+func nested() -> int:
+	return Variant.Type.TYPE_INT + Variant.Operator.OP_ADD
+
+func typed(s : Side) -> int:
+	return s + 1
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+	# Restricted: none of these may reach the engine, so all of them still work.
+	s.restrictions = true
+
+	assert_eq(s.vmcallv("side"), SIDE_BOTTOM, "Side.SIDE_BOTTOM")
+	assert_eq(s.vmcallv("corner"), CORNER_BOTTOM_LEFT, "Corner.CORNER_BOTTOM_LEFT")
+	assert_eq(s.vmcallv("orientation"), VERTICAL, "Orientation.VERTICAL")
+	assert_eq(s.vmcallv("clock"), COUNTERCLOCKWISE, "ClockDirection.COUNTERCLOCKWISE")
+	assert_eq(s.vmcallv("err"), ERR_FILE_NOT_FOUND, "Error.ERR_FILE_NOT_FOUND")
+	assert_eq(s.vmcallv("key"), KEY_A + KEY_MASK_SHIFT, "Key and KeyModifierMask")
+	assert_eq(s.vmcallv("alignment"), HORIZONTAL_ALIGNMENT_RIGHT + INLINE_ALIGNMENT_CENTER,
+		"HorizontalAlignment and InlineAlignment")
+	assert_eq(s.vmcallv("nested"), TYPE_INT + 6, "Variant.Type and Variant.Operator")
+	assert_eq(s.vmcallv("typed", SIDE_TOP), SIDE_TOP + 1, "a Side-typed parameter is an int")
+
+	s.queue_free()
+
+
 # Output channels: push_error/push_warning reach Godot's error tracking.
 func test_output_channels():
 	var gdscript_code = """

@@ -286,7 +286,7 @@ enum class Lerp_Op {
 //
 // STR and LEN take a1 = the Variant to write the answer into, a2 = an array of
 // argument Variants, a3 = how many. Every other op takes its arguments as
-// doubles in fa0-fa4 and leaves a double in fa0; a predicate answers 0.0 or
+// doubles in fa0-fa7 and leaves a double in fa0; a predicate answers 0.0 or
 // 1.0. The compiler mirrors these numbers in src/gdscript/compiler/globals.h,
 // so an existing one may never change its meaning -- a new op goes on the end.
 enum class Utility_Op {
@@ -393,6 +393,23 @@ enum class Utility_Op {
 	ORD = 68,
 
 	IS_INSTANCE_VALID = 69,
+
+	// fa0-fa4. The angular form of CUBIC_INTERPOLATE.
+	CUBIC_INTERPOLATE_ANGLE = 70,
+
+	// Eight arguments: fa0-fa7. The Barry-Goldman forms take four extra
+	// times alongside the four values, which is what widened the float
+	// half of this call from fa0-fa4.
+	CUBIC_INTERPOLATE_IN_TIME = 71,
+	CUBIC_INTERPOLATE_ANGLE_IN_TIME = 72,
+
+	// Variant in, Variant out. Same shape as STR/LEN.
+	//
+	// rand_from_seed() is the one random draw that is not a draw: it takes
+	// the seed it uses and hands back the next one, leaving the project's
+	// shared generator alone. That makes it pure, and safe under
+	// restrictions, unlike randi() and friends.
+	RAND_FROM_SEED = 73,
 };
 
 // Output channel for ECALL_PRINT_CHANNEL.

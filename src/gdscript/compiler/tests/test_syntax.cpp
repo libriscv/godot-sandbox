@@ -311,7 +311,7 @@ static void test_autoload_resolves_to_a_named_object() {
 	const IRProgram unregistered = compile_to_ir("func test():\n\treturn Global.SPEED\n");
 	const IRFunction& plain = find_function(unregistered, "test");
 	const IRInstruction& lookup = only(plain, IROpcode::VCALL);
-	assert(std::get<std::string>(lookup.operands[2].value) == "class_get_integer_constant");
+	assert(unregistered.strings[lookup.operands[2].string_id] == "class_get_integer_constant");
 
 	std::cout << "  \u2713 an autoload resolves to the node the project registered" << std::endl;
 }
@@ -325,7 +325,7 @@ static void test_script_class_new_takes_arguments() {
 	const IRFunction& test = find_function(ir, "test");
 	assert(count_opcode(test, IROpcode::LOAD_RESOURCE) == 1);
 	const IRInstruction& call = only(test, IROpcode::VCALL);
-	assert(std::get<std::string>(call.operands[2].value) == "new");
+	assert(ir.strings[call.operands[2].string_id] == "new");
 	assert(call.operands[3].immediate() == 2);
 	for (const auto& instr : test.instructions) {
 		assert(instr.opcode != IROpcode::CALL_SYSCALL ||
@@ -344,7 +344,7 @@ static void test_engine_class_constant() {
 		"func test():\n\treturn ScrollContainer.SCROLL_MODE_DISABLED\n");
 	const IRFunction& test = find_function(ir, "test");
 	const IRInstruction& call = only(test, IROpcode::VCALL);
-	assert(std::get<std::string>(call.operands[2].value) == "class_get_integer_constant");
+	assert(ir.strings[call.operands[2].string_id] == "class_get_integer_constant");
 
 	const IRProgram folded = compile_to_ir("func test():\n\treturn Vector2.ZERO\n");
 	assert(count_opcode(find_function(folded, "test"), IROpcode::VCALL) == 0);
@@ -530,8 +530,8 @@ static void test_assert() {
 	assert(count_opcode(with_message_fn, IROpcode::VCALL) == 0);
 	for (const auto& instr : with_message_fn.instructions) {
 		if (instr.opcode == IROpcode::THROW) {
-			assert(std::get<std::string>(instr.operands[0].value) == "assert");
-			assert(std::get<std::string>(instr.operands[1].value) == "x must be positive");
+			assert(with_message.strings[instr.operands[0].string_id] == "assert");
+			assert(with_message.strings[instr.operands[1].string_id] == "x must be positive");
 		}
 	}
 

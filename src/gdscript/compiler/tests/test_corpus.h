@@ -917,6 +917,10 @@ func test():
 func test():
 	return lerp(1.0, 5.0, 0.25) + inverse_lerp(1.0, 5.0, 2.0) + smoothstep(0.0, 1.0, 0.3) 		+ remap(5.0, 0.0, 10.0, 100.0, 200.0) + move_toward(1.0, 5.0, 0.5) 		+ cubic_interpolate(1.0, 2.0, 0.0, 3.0, 0.5) + bezier_interpolate(0.0, 1.0, 2.0, 3.0, 0.25) 		+ bezier_derivative(0.0, 1.0, 2.0, 3.0, 0.25)
 )" },
+		{ "global_interpolation_in_time", R"(
+func test():
+	return cubic_interpolate_angle(0.5, 3.0, 0.0, 4.0, 0.25) 		+ cubic_interpolate_in_time(1.0, 2.0, 0.0, 3.0, 0.5, 1.0, -0.5, 1.5) 		+ cubic_interpolate_angle_in_time(0.5, 3.0, 0.0, 4.0, 0.25, 1.0, -0.5, 1.5) 		+ cubic_interpolate_in_time(1.0, 2.0, 0.0, 3.0, 0.5, 0.0, 0.0, 0.0)
+)" },
 		{ "global_angles", R"(
 func test():
 	return deg_to_rad(90.0) + rad_to_deg(1.0) + angle_difference(0.5, 3.0) + lerp_angle(0.5, 3.0, 0.25) 		+ rotate_toward(0.5, 3.0, 0.25) + pingpong(7.0, 3.0)

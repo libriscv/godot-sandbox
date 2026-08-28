@@ -434,7 +434,7 @@ static void test_dictionary_iteration_takes_the_keys() {
 		// Before the loop body, so one test per loop, not per iteration.
 		for (size_t j = 0; j < i; j++) {
 			assert(func.instructions[j].opcode != IROpcode::LABEL ||
-				std::get<std::string>(func.instructions[j].operands[0].value).find("for_loop") == std::string::npos);
+				untyped.strings[func.instructions[j].operands[0].string_id].find("for_loop") == std::string::npos);
 		}
 	}
 	assert(tested_dictionary);

@@ -369,6 +369,9 @@ private:
 		const MemberCallExpr* expr, FunctionContext& func);
 	int gen_engine_class_constant(const std::string& class_name,
 		const std::string& constant_name, FunctionContext& func);
+	// @GlobalScope enum member (Side.SIDE_LEFT): an immediate, no engine call.
+	int gen_global_enum_value(const std::string& enum_name,
+		const std::string& member_name, FunctionContext& func, const Expr* site);
 	int gen_script_class_new(const std::string& class_name, const std::string& path,
 		const MemberCallExpr* expr, FunctionContext& func);
 	int gen_engine_class_new(const std::string& class_name, const MemberCallExpr* expr,

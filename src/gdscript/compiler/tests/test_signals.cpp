@@ -68,7 +68,9 @@ static const IRFunction& find_function(const IRProgram& ir, const std::string& n
 static std::string function_text(const IRProgram& ir, const std::string& name) {
 	std::string text;
 	for (const auto& instr : find_function(ir, name).instructions) {
-		text += instr.to_string();
+		// With the table, a string operand prints its text rather than the
+		// interned id these assertions are written against.
+		text += instr.to_string(&ir.strings);
 		text += '\n';
 	}
 	return text;

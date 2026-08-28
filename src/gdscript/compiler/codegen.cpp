@@ -12,9 +12,15 @@ namespace gdscript {
 
 static IRInstruction::TypeHint type_hint_from_string(const std::string& type_str) {
 	const Variant::Type type = Variant::type_from_name(type_str);
-	return type == Variant::VARIANT_MAX
-		? IRInstruction::TypeHint_NONE
-		: static_cast<IRInstruction::TypeHint>(type);
+	if (type != Variant::VARIANT_MAX) {
+		return static_cast<IRInstruction::TypeHint>(type);
+	}
+	// `var s: Side` is an int, the same as a script's own enum. A declared enum
+	// of the same name shadows the global one, but it is an int either way.
+	if (is_global_enum(type_str)) {
+		return static_cast<IRInstruction::TypeHint>(Variant::INT);
+	}
+	return IRInstruction::TypeHint_NONE;
 }
 
 CodeGenerator::CodeGenerator() {}
@@ -2505,6 +2511,14 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 					"' through an instance ('" + expr->name + ".new()'), or extend it");
 	}
 
+	// GDScript refuses this too: a native enum is not a Dictionary, has no
+	// keys()/values(), and "cannot be used on its own". Without the check the
+	// name would fall through to VGET and answer null.
+	if (is_global_enum(expr->name)) {
+		error_at("Global enum '" + expr->name + "' cannot be used on its own", expr,
+			"Name one of its members: '" + expr->name + ".<MEMBER>'");
+	}
+
 	if (int base_reg = gen_implicit_base_load(func); base_reg >= 0) {
 		int result_reg = gen_vget(base_reg, expr->name, func);
 		if (origin != nullptr) {
@@ -3940,6 +3954,22 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		object_expr = &chain_object;
 	}
 	if (!expr->is_method_call && expr->arguments.empty()) {
+		// `Variant.Type.TYPE_INT`: a global enum whose name carries a dot. Read
+		// before the qualifier fold below, which would leave only `Variant`.
+		if (auto* qualified = dynamic_cast<const MemberCallExpr*>(object_expr)) {
+			if (auto* outer = dynamic_cast<const VariableExpr*>(qualified->object.get())) {
+				if (!qualified->is_method_call && qualified->arguments.empty() &&
+					find_variable(func, outer->name) == nullptr)
+				{
+					const std::string dotted = outer->name + "." + qualified->member_name;
+					if (is_global_enum(dotted) && !is_global_variable(outer->name) &&
+						!is_global_class(outer->name) && !is_autoload(outer->name))
+					{
+						return gen_global_enum_value(dotted, expr->member_name, func, expr);
+					}
+				}
+			}
+		}
 		if (const VariableExpr* owner = engine_enum_qualifier(object_expr, func)) {
 			object_expr = owner;
 		}
@@ -4040,6 +4070,16 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 							+ expr->member_name + "'", expr);
 					}
 					return gen_enum_member(*member, func);
+				}
+				// A project name of the same spelling wins: an autoload or a
+				// class_name is a value the script can actually reach, and the
+				// enum is only a name the engine happens to also use.
+				if (!is_global_variable(object->name) && is_global_enum(object->name) &&
+					!is_global_class(object->name) && !is_autoload(object->name) &&
+					global_script_class_path(object->name) == nullptr &&
+					find_struct(object->name) == nullptr)
+				{
+					return gen_global_enum_value(object->name, expr->member_name, func, expr);
 				}
 				if (!is_global_variable(object->name) && has_builtin_constants(object->name)) {
 					int reg = gen_builtin_constant(object->name, expr->member_name, func);
@@ -6552,7 +6592,7 @@ bool CodeGenerator::names_an_engine_type(const std::string& name, FunctionContex
 		return false;
 	}
 	return find_variable(func, name) == nullptr &&
-		m_enums.count(name) == 0 && !has_builtin_constants(name) &&
+		m_enums.count(name) == 0 && !is_global_enum(name) && !has_builtin_constants(name) &&
 		!is_global_variable(name) && !is_global_class(name) &&
 		!is_autoload(name) && !is_local_function(name) &&
 		find_struct(name) == nullptr &&
@@ -6981,6 +7021,17 @@ int CodeGenerator::gen_string_value(const std::string& text, FunctionContext& fu
 	func.ir.instructions.push_back(load);
 	set_register_type(func, reg, Variant::STRING);
 	return reg;
+}
+
+int CodeGenerator::gen_global_enum_value(const std::string& enum_name,
+	const std::string& member_name, FunctionContext& func, const Expr* site)
+{
+	const GlobalEnumValue* value = find_global_enum_value(enum_name, member_name);
+	if (value == nullptr) {
+		error_at("Global enum '" + enum_name + "' has no member named '" +
+			member_name + "'", site);
+	}
+	return gen_int_immediate(value->value, func);
 }
 
 int CodeGenerator::gen_engine_class_constant(const std::string& class_name,

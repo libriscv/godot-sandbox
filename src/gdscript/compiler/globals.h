@@ -5,7 +5,7 @@
 //   PRINT       ECALL_PRINT, side-effecting
 //   INT_OP      inline 64-bit integer arithmetic
 //   FLOAT_OP    inline double arithmetic (single IEEE-754 primitives only)
-//   SYSCALL     ECALL_UTILITY with doubles in fa0-fa4, result in fa0
+//   SYSCALL     ECALL_UTILITY with doubles in fa0-fa7, result in fa0
 //   SYSCALL_INT ECALL_UTILITY with int64s in a1-a3, result in a0
 //   NUMERIC     int_form or float_form chosen at run time by argument type
 //   CAST        inline when argument is numeric/bool, host otherwise
@@ -125,11 +125,23 @@ enum UtilityOp : int16_t {
 	UTILITY_CHAR = 67,
 	UTILITY_ORD = 68,
 
+	// fa0-fa4. Angular form of CUBIC_INTERPOLATE.
+	UTILITY_CUBIC_INTERPOLATE_ANGLE = 70,
+
+	// fa0-fa7: four values and the four times they sit at.
+	UTILITY_CUBIC_INTERPOLATE_IN_TIME = 71,
+	UTILITY_CUBIC_INTERPOLATE_ANGLE_IN_TIME = 72,
+
+	// Variant in, Variant out (same shape as STR/LEN). Deterministic: the
+	// seed comes in and the next one comes back, so the project's shared
+	// generator is untouched and the call is pure.
+	UTILITY_RAND_FROM_SEED = 73,
+
 	UTILITY_OP_COUNT,
 };
 
-// Max float args (fa0-fa4).
-static constexpr size_t UTILITY_MAX_FLOAT_ARGS = 5;
+// Max float args (fa0-fa7).
+static constexpr size_t UTILITY_MAX_FLOAT_ARGS = 8;
 
 // Max integer args (a1-a3; a0 holds the op number).
 static constexpr size_t UTILITY_MAX_INT_ARGS = 3;
@@ -223,6 +235,9 @@ enum class GlobalFn : int16_t {
 	ROTATE_TOWARD,
 	PINGPONG,
 	CUBIC_INTERPOLATE,
+	CUBIC_INTERPOLATE_ANGLE,
+	CUBIC_INTERPOLATE_IN_TIME,
+	CUBIC_INTERPOLATE_ANGLE_IN_TIME,
 	BEZIER_INTERPOLATE,
 	BEZIER_DERIVATIVE,
 	IS_NAN,
@@ -249,6 +264,8 @@ enum class GlobalFn : int16_t {
 	IS_INSTANCE_VALID,
 	CHAR,
 	ORD,
+	// Deterministic, hence a HOST form rather than a random one.
+	RAND_FROM_SEED,
 
 	// Randomness (SYSCALL / SYSCALL_INT). Impure: advances the project's shared RNG.
 	RANDF,
@@ -302,7 +319,7 @@ struct GlobalFunction {
 	uint8_t max_args;
 	GlobalResult result;
 	int16_t utility_op;  // SYSCALL: ECALL_UTILITY op number
-	uint8_t float_args;  // SYSCALL: count of fa0-fa4 args
+	uint8_t float_args;  // SYSCALL: count of fa0-fa7 args
 	// NUMERIC: forms for all-integer vs. mixed. CAST reuses int_form for
 	// numeric/bool inline path; float_form unused for CAST.
 	GlobalFn int_form;
@@ -333,6 +350,28 @@ const GlobalConstant* find_global_constant(const std::string& name);
 
 size_t global_constant_count();
 const char* global_constant_name(size_t index);
+
+// @GlobalScope enumeration member (Side.SIDE_LEFT, Error.ERR_BUSY). The enum
+// itself is compile-time only: GDScript's native enums are not Dictionaries and
+// have no keys()/values(), and naming one on its own is a parse error there --
+// so a member is an integer immediate and nothing else reaches IR.
+struct GlobalEnumValue {
+	const char* enum_name;
+	const char* name;
+	int64_t value;
+};
+
+// nullptr when `enum_name` has no such member (or is not a global enum).
+const GlobalEnumValue* find_global_enum_value(const std::string& enum_name, const std::string& name);
+
+// True if `name` is a @GlobalScope enum. Dotted names (Variant.Type) included.
+bool is_global_enum(const std::string& name);
+
+// Positional access for the editor, and for the table's own consistency test.
+size_t global_enum_value_count();
+const char* global_enum_value_enum(size_t index);
+const char* global_enum_value_name(size_t index);
+int64_t global_enum_value(size_t index);
 
 // Built-in type constant (Vector2.ZERO, Color.RED). Folded into MAKE_*.
 struct BuiltinConstant {

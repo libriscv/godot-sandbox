@@ -267,11 +267,16 @@ void test_int_only_code_stays_integer() {
 	const std::vector<uint8_t> single = compile_to_code(source, VariantLayout(false)).code;
 	const std::vector<uint8_t> dbl = compile_to_code(source, VariantLayout(true)).code;
 
+	// The only floating point here is the entry coercion of `n: int`, which
+	// converts a FLOAT the caller may have passed. Variant::FLOAT is always a
+	// double, at the same offset in both layouts, so that preamble is identical
+	// in the two builds -- and the arithmetic itself contributes nothing.
 	for (const auto* code : { &single, &dbl }) {
 		assert(count_by_opcode_funct3(*code, OP_LOAD_FP, FUNCT3_WORD) == 0);
-		assert(count_by_opcode_funct3(*code, OP_LOAD_FP, FUNCT3_DOUBLE) == 0);
 		assert(count_by_opcode_funct3(*code, OP_STORE_FP, FUNCT3_WORD) == 0);
 		assert(count_by_opcode_funct3(*code, OP_STORE_FP, FUNCT3_DOUBLE) == 0);
+		// One fld, for the one declared parameter.
+		assert(count_by_opcode_funct3(*code, OP_LOAD_FP, FUNCT3_DOUBLE) == 1);
 	}
 
 	// Wider Variants mean wider copies, never narrower ones

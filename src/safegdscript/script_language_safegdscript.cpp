@@ -34,6 +34,10 @@ const char *global_function_name(size_t index);
 size_t builtin_constant_count();
 const char *builtin_constant_type(size_t index);
 const char *builtin_constant_name(size_t index);
+size_t global_enum_value_count();
+const char *global_enum_value_enum(size_t index);
+const char *global_enum_value_name(size_t index);
+bool is_global_enum(const std::string &name);
 } // namespace gdscript
 static constexpr const char *icon_path = "res://addons/godot_sandbox/SafeGDScript.svg";
 
@@ -512,6 +516,37 @@ bool add_builtin_constants(Array &r_options, const String &p_type, const Complet
 		found = true;
 	}
 	return found;
+}
+
+// Members of a @GlobalScope enum (Side.SIDE_LEFT). Same shape as the built-in
+// type constants above: false when the receiver names no such enum, so the
+// caller can go on looking. Full scan; rows are grouped but not indexed.
+bool add_global_enum_members(Array &r_options, const String &p_enum, const CompletionColors &p_colors) {
+	bool found = false;
+	for (size_t i = 0; i < gdscript::global_enum_value_count(); i++) {
+		if (p_enum != gdscript::global_enum_value_enum(i)) {
+			continue;
+		}
+		const char *name = gdscript::global_enum_value_name(i);
+		add_option(r_options, ScriptLanguageExtension::CODE_COMPLETION_KIND_CONSTANT,
+				name, name, p_colors.text);
+		found = true;
+	}
+	return found;
+}
+
+// The enum names themselves, offered where a type or a qualifier can go.
+void add_global_enum_names(Array &r_options, const CompletionColors &p_colors) {
+	String previous;
+	for (size_t i = 0; i < gdscript::global_enum_value_count(); i++) {
+		const String name = gdscript::global_enum_value_enum(i);
+		if (name == previous) {
+			continue; // Rows are grouped by enum; one option per group.
+		}
+		previous = name;
+		add_option(r_options, ScriptLanguageExtension::CODE_COMPLETION_KIND_ENUM,
+				name, name, p_colors.type);
+	}
 }
 
 void add_global_functions(Array &r_options, const CompletionColors &p_colors) {
@@ -1108,6 +1143,7 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 			add_option(options, CODE_COMPLETION_KIND_FUNCTION, "new(", "new(", colors.function, LOCATION_LOCAL);
 		} else if (!add_type_members(options, declared_type_of(symbols, ctx.receiver), symbols, colors) &&
 				!add_builtin_constants(options, ctx.receiver, colors) &&
+				!add_global_enum_members(options, ctx.receiver, colors) &&
 				!add_type_members(options, ctx.receiver, symbols, colors)) {
 			// Neither a value whose type the source states nor a class name of
 			// its own, so it is a Variant of a type only the compiler knows.
@@ -1136,6 +1172,7 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 			add_option(options, CODE_COMPLETION_KIND_CLASS, String(*name) + String("("), String(*name) + String("("), colors.type);
 		}
 		add_global_constants(options, colors);
+		add_global_enum_names(options, colors);
 		add_global_functions(options, colors);
 
 		// A struct name is both a type hint and its own constructor.
@@ -1214,6 +1251,15 @@ Dictionary SafeGDScriptLanguage::_lookup_code(const String &p_code, const String
 	if (gdscript::find_global_function(symbol) != nullptr) {
 		result["result"] = Error::OK;
 		result["type"] = LOOKUP_RESULT_CLASS_METHOD;
+		result["class_name"] = "@GlobalScope";
+		result["class_member"] = p_symbol;
+		return result;
+	}
+	// A @GlobalScope enum (Side, Error, Key). Its members answer above, as the
+	// constants they also are; the enum name itself is the enum page.
+	if (gdscript::is_global_enum(symbol)) {
+		result["result"] = Error::OK;
+		result["type"] = LOOKUP_RESULT_CLASS_ENUM;
 		result["class_name"] = "@GlobalScope";
 		result["class_member"] = p_symbol;
 		return result;

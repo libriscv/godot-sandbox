@@ -76,6 +76,10 @@ function(add_gdscript_test test_name test_source)
 	add_executable(${test_name} ${test_source})
 	target_compile_options(${test_name} PUBLIC -fsanitize=address,undefined)
 	target_compile_options(${test_name} PRIVATE ${GDSC_WARNINGS})
+	# These tests check everything with assert(), so a Release configuration's
+	# -DNDEBUG would compile every check away and leave the suite passing
+	# vacuously -- assert(false) included.
+	target_compile_options(${test_name} PRIVATE -UNDEBUG)
 	target_link_libraries(${test_name} -fsanitize=address,undefined gdscript_compiler)
 	add_test(NAME ${test_name} COMMAND ${test_name})
 endfunction()

@@ -101,7 +101,7 @@ static void test_literal_path_is_embedded() {
 	const IRFunction& test = find_function(ir, "test");
 
 	assert(count_opcode(test, IROpcode::LOAD_RESOURCE) == 1);
-	assert(embedded_path(test) == "res://icon.svg");
+	assert(embedded_path(ir, test) == "res://icon.svg");
 
 	assert(count_opcode(test, IROpcode::LOAD_STRING) == 0);
 	assert(count_opcode(test, IROpcode::LOAD_RESOURCE_VAR) == 0);
@@ -125,7 +125,7 @@ static void test_const_path_is_embedded() {
 	const IRFunction& test = find_function(ir, "test");
 
 	assert(count_opcode(test, IROpcode::LOAD_RESOURCE) == 1);
-	assert(embedded_path(test) == "res://icon.svg");
+	assert(embedded_path(ir, test) == "res://icon.svg");
 	assert(count_opcode(test, IROpcode::LOAD_RESOURCE_VAR) == 0);
 
 	// Local shadows the const.

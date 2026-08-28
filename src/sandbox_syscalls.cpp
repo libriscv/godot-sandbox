@@ -453,12 +453,54 @@ static double utility_angle_difference(double from, double to) {
 	return std::fmod(2.0 * difference, UTILITY_TAU) - difference;
 }
 
-static double utility_math_op(Utility_Op op, const double args[5]) {
+// The cubic family. Mirrors globals.cpp's eval_cubic_* -- the compiler folds
+// with those and the guest calls these, so the two must agree bit for bit.
+static double utility_cubic_interpolate(double from, double to, double pre, double post, double weight) {
+	return 0.5 *
+			((from * 2.0) +
+					(-pre + to) * weight +
+					(2.0 * pre - 5.0 * from + 4.0 * to - post) * (weight * weight) +
+					(-pre + 3.0 * from - 3.0 * to + post) * (weight * weight * weight));
+}
+
+// Barry-Goldman: the four values sit at four times rather than at even spacing.
+static double utility_cubic_interpolate_in_time(double from, double to, double pre, double post,
+		double weight, double to_t, double pre_t, double post_t) {
+	const double t = utility_lerp(0.0, to_t, weight);
+	const double a1 = utility_lerp(pre, from, (pre_t == 0.0) ? 0.0 : (t - pre_t) / -pre_t);
+	const double a2 = utility_lerp(from, to, (to_t == 0.0) ? 0.5 : t / to_t);
+	const double a3 = utility_lerp(to, post, (post_t - to_t == 0.0) ? 1.0 : (t - to_t) / (post_t - to_t));
+	const double b1 = utility_lerp(a1, a2, (to_t - pre_t == 0.0) ? 0.0 : (t - pre_t) / (to_t - pre_t));
+	const double b2 = utility_lerp(a2, a3, (post_t == 0.0) ? 1.0 : t / post_t);
+	return utility_lerp(b1, b2, (to_t == 0.0) ? 0.5 : t / to_t);
+}
+
+// The angular forms bring all four control values onto one branch of the
+// circle first, then interpolate them as ordinary numbers.
+struct UtilityCubicAngles {
+	double from, to, pre, post;
+};
+
+static UtilityCubicAngles utility_cubic_angles(double from, double to, double pre, double post) {
+	const double from_rot = std::fmod(from, UTILITY_TAU);
+	const double pre_diff = std::fmod(pre - from_rot, UTILITY_TAU);
+	const double pre_rot = from_rot + std::fmod(2.0 * pre_diff, UTILITY_TAU) - pre_diff;
+	const double to_diff = std::fmod(to - from_rot, UTILITY_TAU);
+	const double to_rot = from_rot + std::fmod(2.0 * to_diff, UTILITY_TAU) - to_diff;
+	const double post_diff = std::fmod(post - to_rot, UTILITY_TAU);
+	const double post_rot = to_rot + std::fmod(2.0 * post_diff, UTILITY_TAU) - post_diff;
+	return { from_rot, to_rot, pre_rot, post_rot };
+}
+
+static double utility_math_op(Utility_Op op, const double args[8]) {
 	const double a = args[0];
 	const double b = args[1];
 	const double c = args[2];
 	const double d = args[3];
 	const double e = args[4];
+	const double f = args[5];
+	const double g = args[6];
+	const double h = args[7];
 
 	switch (op) {
 		case Utility_Op::FLOOR: return std::floor(a);
@@ -575,14 +617,19 @@ static double utility_math_op(Utility_Op op, const double args[5]) {
 
 		case Utility_Op::REMAP:
 			return utility_lerp(d, e, utility_inverse_lerp(b, c, a));
-		case Utility_Op::CUBIC_INTERPOLATE: {
+		case Utility_Op::CUBIC_INTERPOLATE:
 			// cubic_interpolate(from, to, pre, post, weight)
-			const double from = a, to = b, pre = c, post = d, weight = e;
-			return 0.5 *
-					((from * 2.0) +
-							(-pre + to) * weight +
-							(2.0 * pre - 5.0 * from + 4.0 * to - post) * (weight * weight) +
-							(-pre + 3.0 * from - 3.0 * to + post) * (weight * weight * weight));
+			return utility_cubic_interpolate(a, b, c, d, e);
+		case Utility_Op::CUBIC_INTERPOLATE_ANGLE: {
+			const UtilityCubicAngles rot = utility_cubic_angles(a, b, c, d);
+			return utility_cubic_interpolate(rot.from, rot.to, rot.pre, rot.post, e);
+		}
+		// cubic_interpolate_in_time(from, to, pre, post, weight, to_t, pre_t, post_t)
+		case Utility_Op::CUBIC_INTERPOLATE_IN_TIME:
+			return utility_cubic_interpolate_in_time(a, b, c, d, e, f, g, h);
+		case Utility_Op::CUBIC_INTERPOLATE_ANGLE_IN_TIME: {
+			const UtilityCubicAngles rot = utility_cubic_angles(a, b, c, d);
+			return utility_cubic_interpolate_in_time(rot.from, rot.to, rot.pre, rot.post, e, f, g, h);
 		}
 		case Utility_Op::BEZIER_INTERPOLATE: {
 			const double omt = 1.0 - e;
@@ -620,6 +667,8 @@ static double utility_math_op(Utility_Op op, const double args[5]) {
 		case Utility_Op::NEAREST_PO2:
 		case Utility_Op::CHAR:
 		case Utility_Op::ORD:
+		case Utility_Op::IS_INSTANCE_VALID:
+		case Utility_Op::RAND_FROM_SEED:
 			break;
 
 		// The random draws that *are* doubles. UtilityFunctions:: rather than
@@ -742,6 +791,7 @@ APICALL(api_utility) {
 		case Utility_Op::IS_SAME:
 		case Utility_Op::CHAR:
 		case Utility_Op::ORD:
+		case Utility_Op::RAND_FROM_SEED:
 		case Utility_Op::IS_INSTANCE_VALID: {
 			Sandbox &emu = riscv::emu(machine);
 			// str() takes up to 63 arguments and String() takes none at all;
@@ -854,6 +904,14 @@ APICALL(api_utility) {
 					PENALIZE(10'000);
 					vres->create(emu, Variant(String::chr(args[0].toVariant(emu).operator int64_t())));
 					break;
+				// The one seeded draw: no shared generator is read or written,
+				// so a restricted program may call it.
+				case Utility_Op::RAND_FROM_SEED:
+					PENALIZE(20'000);
+					vres->create(emu, UtilityFunctions::rand_from_seed(
+							args[0].toVariant(emu).operator int64_t()));
+					break;
+
 				case Utility_Op::ORD: {
 					PENALIZE(10'000);
 					// Godot refuses anything but a single character and answers 0.
@@ -896,10 +954,10 @@ APICALL(api_utility) {
 			break;
 	}
 
-	// Everything else is arithmetic on doubles in fa0-fa4, answering in fa0.
-	double args[5];
-	for (int i = 0; i < 5; i++) {
-		args[i] = machine.cpu.registers().getfl(10 + i).get<double>(); // fa0-fa4
+	// Everything else is arithmetic on doubles in fa0-fa7, answering in fa0.
+	double args[8];
+	for (int i = 0; i < 8; i++) {
+		args[i] = machine.cpu.registers().getfl(10 + i).get<double>(); // fa0-fa7
 	}
 	machine.set_result(utility_math_op(op, args));
 }

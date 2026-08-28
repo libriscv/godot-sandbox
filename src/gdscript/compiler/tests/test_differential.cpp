@@ -373,7 +373,7 @@ void syscall_veval(machine_t& machine) {
 // ECALL_UTILITY, the one host call a global function makes. The floating-point
 // ops are evaluated by globals.cpp -- the same code the IR interpreter runs --
 // so what this compares is the emitted code around the call: the conversions
-// into fa0-fa4, the op number, and what the answer is written back as. The real
+// into fa0-fa7, the op number, and what the answer is written back as. The real
 // host implements the same formulas against Godot's Math::.
 //
 // str() and len() are not here: they need Variants this harness cannot make.
@@ -381,7 +381,8 @@ void syscall_utility(machine_t& machine) {
 	RunState& state = *machine.get_userdata<RunState>();
 
 	const int op = static_cast<int>(machine.cpu.reg(riscv::REG_ARG0));
-	if (op == gdscript::UTILITY_STR || op == gdscript::UTILITY_LEN) {
+	if (op == gdscript::UTILITY_STR || op == gdscript::UTILITY_LEN ||
+	    op == gdscript::UTILITY_RAND_FROM_SEED) {
 		state.unsupported = "str() or len(), which need the host Variant API";
 		machine.stop();
 		return;

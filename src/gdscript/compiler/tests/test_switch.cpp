@@ -515,7 +515,7 @@ func test():
 
 	// The hole at 2 targets the wildcard's body, not an arm of its own.
 	const uint32_t hole = switch_target(sw, 2);
-	assert(!hole.empty());
+	assert(hole != IRStringTable::INVALID_ID);
 	assert(hole != switch_target(sw, 0));
 	assert(hole != switch_target(sw, 4));
 

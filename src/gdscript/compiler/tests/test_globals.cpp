@@ -159,11 +159,13 @@ static void test_the_table_is_consistent() {
 		"deg_to_rad", "rad_to_deg", "angle_difference", "linear_to_db", "db_to_linear",
 		"lerp", "lerpf", "lerp_angle", "inverse_lerp", "remap", "smoothstep",
 		"move_toward", "rotate_toward", "pingpong",
-		"cubic_interpolate", "bezier_interpolate", "bezier_derivative",
+		"cubic_interpolate", "cubic_interpolate_angle",
+		"cubic_interpolate_in_time", "cubic_interpolate_angle_in_time",
+		"bezier_interpolate", "bezier_derivative",
 		"is_nan", "is_inf", "is_finite", "is_zero_approx", "is_equal_approx",
 		"str", "len",
 		"hash", "var_to_str", "str_to_var", "var_to_bytes", "bytes_to_var",
-		"type_string", "type_convert", "error_string", "is_same",
+		"type_string", "type_convert", "error_string", "is_same", "rand_from_seed",
 		"ease", "step_decimals", "nearest_po2",
 		"int", "float", "bool", "String",
 		"randi", "randf", "randi_range", "randf_range", "randfn",
@@ -215,7 +217,10 @@ static void test_the_table_is_consistent() {
 		}
 		// The random draws are the only rows with a side effect, and print()
 		// is not in this table's impure column because it has its own opcode.
-		const bool is_random = std::string(info->name).rfind("rand", 0) == 0;
+		// rand_from_seed() shares the prefix but not the property: it draws
+		// from the seed it is handed, not from the project's generator.
+		const bool is_random = std::string(info->name).rfind("rand", 0) == 0 &&
+			std::string(info->name) != "rand_from_seed";
 		assert(info->impure == is_random);
 		if (info->kind == GlobalKind::NUMERIC) {
 			assert(info->result == GlobalResult::NUMERIC);
@@ -820,6 +825,9 @@ static void test_every_global_reaches_riscv() {
 		"\tt = t + smoothstep(0.0, 1.0, 0.5) + move_toward(1.0, 2.0, 0.5) + rotate_toward(1.0, 2.0, 0.5)\n"
 		"\tt = t + pingpong(1.0, 2.0)\n"
 		"\tt = t + cubic_interpolate(1.0, 2.0, 0.0, 3.0, 0.5)\n"
+		"\tt = t + cubic_interpolate_angle(1.0, 2.0, 0.0, 3.0, 0.5)\n"
+		"\tt = t + cubic_interpolate_in_time(1.0, 2.0, 0.0, 3.0, 0.5, 1.0, -0.5, 1.5)\n"
+		"\tt = t + cubic_interpolate_angle_in_time(1.0, 2.0, 0.0, 3.0, 0.5, 1.0, -0.5, 1.5)\n"
 		"\tt = t + bezier_interpolate(0.0, 1.0, 2.0, 3.0, 0.5) + bezier_derivative(0.0, 1.0, 2.0, 3.0, 0.5)\n"
 		"\tif is_nan(x) or is_inf(x) or is_finite(x) or is_zero_approx(x) or is_equal_approx(x, y):\n"
 		"\t\tt = t + 1.0\n"
@@ -835,6 +843,7 @@ static void test_every_global_reaches_riscv() {
 		"\t\tt = t + 1.0\n"
 		"\tt = t + int(type_convert(x, 2)) + len(str(str_to_var(\"1\")))\n"
 		"\tt = t + len(var_to_bytes(x)) + int(bytes_to_var(var_to_bytes(1)))\n"
+		"\tt = t + len(rand_from_seed(12345))\n"
 		"\tprints(x, y)\n"
 		"\tprintt(x, y)\n"
 		"\tprintraw(x)\n"
@@ -856,6 +865,114 @@ static void test_every_global_reaches_riscv() {
 	}
 
 	std::cout << "  ✓ every global compiles to RISC-V, in both Variant layouts" << std::endl;
+}
+
+// -= @GlobalScope enumerations =-
+
+static void test_a_global_enum_member_is_an_immediate() {
+	// Side.SIDE_LEFT is a compile-time integer, the same as the bare
+	// SIDE_LEFT constant beside it. Nothing reaches the engine.
+	const IRProgram ir = compile_to_ir(
+		"func test():\n"
+		"\treturn Side.SIDE_BOTTOM\n");
+	const IRFunction& func = find_function(ir, "test");
+	assert(count_opcode(func, IROpcode::VCALL) == 0);
+	assert(count_opcode(func, IROpcode::CALL_SYSCALL) == 0);
+	assert(run_int("func test():\n\treturn Side.SIDE_BOTTOM\n") == 3);
+	assert(run_int("func test():\n\treturn Corner.CORNER_BOTTOM_LEFT\n") == 3);
+	assert(run_int("func test():\n\treturn Orientation.VERTICAL\n") == 1);
+	assert(run_int("func test():\n\treturn ClockDirection.COUNTERCLOCKWISE\n") == 1);
+	assert(run_int("func test():\n\treturn Error.ERR_FILE_NOT_FOUND\n") == 7);
+	assert(run_int("func test():\n\treturn Key.KEY_A\n") == 65);
+	assert(run_int("func test():\n\treturn KeyModifierMask.KEY_MASK_SHIFT\n") == 33554432);
+	// Nested under Variant: the only two whose name carries a dot, and the
+	// only members with no bare @GlobalScope spelling.
+	assert(run_int("func test():\n\treturn Variant.Type.TYPE_INT\n") == 2);
+	assert(run_int("func test():\n\treturn Variant.Operator.OP_ADD\n") == 6);
+
+	std::cout << "  ✓ a global enum member folds to an integer immediate" << std::endl;
+}
+
+static void test_a_global_enum_agrees_with_the_bare_constant() {
+	// SIDE_LEFT and Side.SIDE_LEFT are two spellings of one value in GDScript,
+	// and here they come from two tables. Variant.Type and Variant.Operator
+	// are exempt: TYPE_* is a @GlobalScope constant, OP_* is not a name
+	// GDScript can reach at all without the qualifier.
+	size_t checked = 0;
+	for (size_t i = 0; i < global_enum_value_count(); i++) {
+		const GlobalConstant* bare = find_global_constant(global_enum_value_name(i));
+		if (bare == nullptr) {
+			assert(std::string(global_enum_value_enum(i)).rfind("Variant.", 0) == 0);
+			continue;
+		}
+		assert(!bare->is_float);
+		assert(bare->int_value == global_enum_value(i));
+		checked++;
+	}
+	// The two Variant enums aside, every member has a bare spelling.
+	assert(checked > 400);
+
+	std::cout << "  ✓ every enum member matches the @GlobalScope constant of the same name"
+		<< std::endl;
+}
+
+static void test_a_declared_enum_shadows_the_global_one() {
+	assert(run_int(
+		"enum Side { SIDE_LEFT = 99 }\n"
+		"func test():\n"
+		"\treturn Side.SIDE_LEFT\n") == 99);
+
+	std::cout << "  ✓ a script's own enum shadows the @GlobalScope one" << std::endl;
+}
+
+static void test_a_global_enum_is_an_int_type() {
+	// `var s: Side` is an int slot, so the arithmetic on it is typed INT --
+	// which is what lets the backend emit an add instead of the host's
+	// Variant evaluator.
+	const IRProgram ir = compile_to_ir(
+		"func test(n : int):\n"
+		"\tvar s: Side = n\n"
+		"\treturn s + 1\n");
+	const IRFunction& func = find_function(ir, "test");
+	bool typed_add = false;
+	for (const auto& instr : func.instructions) {
+		if (instr.opcode == IROpcode::ADD) {
+			typed_add = instr.type_hint == Variant::INT;
+		}
+	}
+	assert(typed_add);
+	assert(run_int(
+		"func test():\n"
+		"\tvar s: Side = SIDE_TOP\n"
+		"\treturn s + 1\n") == 2);
+
+	std::cout << "  ✓ a global enum names the int type" << std::endl;
+}
+
+static void test_a_global_enum_is_not_a_value() {
+	// GDScript's own words: a native enum is not a Dictionary and "cannot be
+	// used on its own". Without this it fell through to a property read on the
+	// owner node and answered null.
+	assert(mentions(compile_error(
+		"func test():\n"
+		"\treturn Side\n"), "cannot be used on its own"));
+	assert(mentions(compile_error(
+		"func test():\n"
+		"\treturn Side.keys()\n"), "cannot be used on its own"));
+	assert(mentions(compile_error(
+		"func test():\n"
+		"\treturn Side.SIDE_NOPE\n"), "no member named 'SIDE_NOPE'"));
+
+	std::cout << "  ✓ a global enum is a type, not a value" << std::endl;
+}
+
+static void test_a_local_name_wins_over_a_global_enum() {
+	assert(run_int(
+		"func test():\n"
+		"\tvar Side = 7\n"
+		"\treturn Side\n") == 7);
+
+	std::cout << "  ✓ a local of the same name shadows a global enum" << std::endl;
 }
 
 int main() {
@@ -884,6 +1001,12 @@ int main() {
 	test_predicates();
 	test_optimizing_does_not_change_the_answer();
 	test_every_global_reaches_riscv();
+	test_a_global_enum_member_is_an_immediate();
+	test_a_global_enum_agrees_with_the_bare_constant();
+	test_a_declared_enum_shadows_the_global_one();
+	test_a_global_enum_is_an_int_type();
+	test_a_global_enum_is_not_a_value();
+	test_a_local_name_wins_over_a_global_enum();
 
 	std::cout << std::endl << "All global function tests passed!" << std::endl;
 	return 0;

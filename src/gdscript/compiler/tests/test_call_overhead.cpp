@@ -356,9 +356,15 @@ void test_an_int_global_round_trips_in_a_register() {
 		"\tpc = pc + n\n");
 	const std::vector<uint32_t> words = function_words(compiled, "f");
 
-	// Frame: return pointer + parameter copy only.
+	// Frame: the return pointer, the parameter's own Variant, and the int
+	// Variant its declared type coerces that into -- a tag word and a payload.
+	// The global is not among them: it is loaded from and stored to the
+	// globals area, in registers, with no Variant built for it at all.
 	const size_t variant_words = size_t(VariantLayout(false).variant_words());
-	assert(count(words, is_store_to_frame) == 1 + variant_words);
+	const size_t coerced_parameter = 2;
+	// A global copied into the frame would show up as another variant_words
+	// worth of stores on top of these.
+	assert(count(words, is_store_to_frame) == 1 + variant_words + coerced_parameter);
 	assert(count(words, is_ecall) == 0);
 
 	std::cout << "  ✓ An int global round-trips in a register" << std::endl;
