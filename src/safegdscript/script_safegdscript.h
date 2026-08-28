@@ -192,7 +192,10 @@ private:
 	PackedInt32Array breakpoints;
 	// What the last compile placed, a subset of the above.
 	PackedInt32Array active_breakpoints;
-	bool tool_script = true;
+	// Until source metadata says otherwise, match GDScript's safe default: a
+	// script is not a tool script.  Treating a newly loaded resource as @tool
+	// lets the editor create a live instance before compilation finishes.
+	bool tool_script = false;
 	bool abstract_script = false;
 	String class_icon_path = "res://addons/godot_sandbox/SafeGDScript.svg";
 	// IRProgram order; index i matches shadow-stack frame function_index.

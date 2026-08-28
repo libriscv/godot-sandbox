@@ -10067,6 +10067,9 @@ func through_self():
 	s.queue_free()
 
 func test_sgd_tool_annotation_decides_is_tool():
+	var fresh = SafeGDScript.new()
+	assert_false(fresh.is_tool(), "an uncompiled script must not run in the editor")
+
 	var tool_script = SafeGDScript.new()
 	tool_script.set_source_code("@tool\nfunc answer():\n\treturn 1\n")
 	assert_true(tool_script.is_tool(), "@tool makes a tool script")
@@ -12917,6 +12920,15 @@ func moved(t: Transform2D, v: Vector2):
 func basis_x(b: Basis):
 	return b.x
 
+func basis_index(b: Basis, i: int):
+	return b[i]
+
+func untyped_basis_index(b, i):
+	return b[i]
+
+func untyped_index(value, key):
+	return value[key]
+
 func aabb_size(a: AABB):
 	return a.size
 
@@ -12949,6 +12961,15 @@ func test_a_builtin_member_does_not_need_an_object():
 	assert_eq(t.origin, Vector2(2, 3), "without touching the caller's Transform2D")
 
 	assert_eq(node.call("basis_x", Basis()), Basis().x, "Basis.x should read")
+	var basis := Basis(Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9))
+	assert_eq(node.call("basis_index", basis, 1), basis[1], "Basis[index] should read a row")
+	assert_eq(node.call("untyped_basis_index", basis, 2), basis[2],
+		"an untyped Basis[index] should use the same indexed operation")
+	assert_eq(node.call("untyped_index", Vector3(2, 5, 8), 1), 5.0,
+		"the shared Variant index path should cover other built-in types")
+	var keyed := {Vector2(1, 2): "vector key"}
+	assert_eq(node.call("untyped_index", keyed, Vector2(1, 2)), "vector key",
+		"the shared Variant index path must preserve arbitrary keys")
 	assert_eq(node.call("aabb_size", AABB(Vector3(), Vector3(1, 2, 3))), Vector3(1, 2, 3),
 		"AABB.size should read")
 	assert_eq(node.call("quat_w", Quaternion()), 1.0, "Quaternion.w should read")

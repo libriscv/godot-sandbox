@@ -127,7 +127,11 @@
 // lifted method that made the call.
 #define ECALL_VCALL_SUPER (GAME_API_BASE + 61)
 
-#define ECALL_LAST (GAME_API_BASE + 62)
+// get(subject, key, result): GDScript's `subject[key]`, delegated to Godot's
+// Variant indexed-get dispatcher. All three arguments are GuestVariant pointers.
+#define ECALL_VARIANT_GET (GAME_API_BASE + 62)
+
+#define ECALL_LAST (GAME_API_BASE + 63)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)

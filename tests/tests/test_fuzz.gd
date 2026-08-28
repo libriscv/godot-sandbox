@@ -15,7 +15,7 @@ const ITERATIONS := 50000
 
 # ECALL_LAST. Every handler below it is driven and checked; raising the syscall
 # range without raising this leaves the new one unchecked.
-const SYSCALL_LAST := 555
+const SYSCALL_LAST := 563
 
 # Restrictions are enabled for the duration of a run and every callback answers "no", so
 # these are the system calls that are supposed to be refused every single time. A handler
@@ -94,6 +94,10 @@ func test_fuzz_syscalls():
 	# That is a coin the fuzzer flips, not something a run can be asked to hit.
 	never_returns.append(545) # OBJ_PROP_GET
 	never_returns.append(546) # OBJ_PROP_SET
+	# CLASS_BIND is initialization-only, and VCALL_SUPER needs a legitimate object
+	# plus call-site metadata. Hostile registers cannot satisfy either contract.
+	never_returns.append(560) # CLASS_BIND
+	never_returns.append(561) # VCALL_SUPER
 	for syscall in range(500, SYSCALL_LAST):
 		if syscall in never_returns:
 			continue
@@ -116,6 +120,9 @@ func builtin_member():
 func read(n):
 	return n.name
 
+func read_indexed(n):
+	return n["name"]
+
 func write(n):
 	n.name = "Renamed"
 """
@@ -136,6 +143,8 @@ func write(n):
 
 	# Unrestricted first, so a refusal below is the restrictions and not the program.
 	assert_eq(s.vmcallv("read", target), "Target", "the property reads before restrictions")
+	assert_eq(s.vmcallv("read_indexed", target), "Target",
+		"the indexed property reads before restrictions")
 
 	s.restrictions = true
 	var before := s.get_exceptions()
@@ -149,6 +158,13 @@ func write(n):
 	assert_eq(s.get_exceptions(), before + 1, "the read raised")
 	assert_engine_error("Banned property accessed: name")
 	assert_engine_error("Exception: Banned property accessed: name")
+
+	before = s.get_exceptions()
+	assert_eq(s.vmcallv("read_indexed", target), null,
+		"indexed object access passes through the same property restriction")
+	assert_eq(s.get_exceptions(), before + 1, "the indexed read raised")
+	assert_engine_error("Banned property accessed through Variant index")
+	assert_engine_error("Exception: Banned property accessed through Variant index")
 
 	before = s.get_exceptions()
 	s.vmcallv("write", target)

@@ -3481,6 +3481,45 @@ APICALL(api_load) {
 	g_result->set_object(emu, obj);
 }
 
+// GDScript's subscript operator is a Variant operation. Godot decides whether
+// the key is indexed, keyed, or named; duplicating that type matrix here would
+// inevitably diverge as built-in types evolve.
+APICALL(api_variant_get) {
+	auto [g_subject, g_key, vret] =
+			machine.sysargs<const GuestVariant *, const GuestVariant *, GuestVariant *>();
+	Sandbox &emu = riscv::emu(machine);
+	PENALIZE(150'000);
+	SYS_TRACE("variant_get", g_subject, g_key, vret);
+
+	const BorrowedVariant subject(emu, *g_subject);
+	const BorrowedVariant key(emu, *g_key);
+
+	// Object subscripting is property access and must retain the same sandbox
+	// boundary as the named-property syscall.
+	if (UNLIKELY(subject->get_type() == Variant::OBJECT)) {
+		godot::Object *obj = subject->operator godot::Object *();
+		if (UNLIKELY(!emu.is_allowed_property(obj, *key, false))) {
+			ERR_PRINT("Banned property accessed through Variant index");
+			throw std::runtime_error("Banned property accessed through Variant index");
+		}
+	}
+
+	CallResult result;
+	GDExtensionBool valid = false;
+	internal::gdextension_interface_variant_get(
+			subject->_native_ptr(), key->_native_ptr(), &result.get(), &valid);
+	result.mark_constructed();
+	if (UNLIKELY(!valid)) {
+		const std::string subject_type = GuestVariant::type_name(subject->get_type());
+		const std::string key_type = GuestVariant::type_name(key->get_type());
+		ERR_PRINT(("Invalid indexed access on " + subject_type + " with key type " + key_type).c_str());
+		throw std::runtime_error(
+				"Invalid indexed access on " + subject_type + " with key type " + key_type);
+	}
+
+	vret->create(emu, std::move(result.get()));
+}
+
 APICALL(api_sandbox_add) {
 	// Add a new sandboxed property or public API method to the sandbox.
 	Sandbox &emu = riscv::emu(machine);
@@ -3761,6 +3800,7 @@ void Sandbox::initialize_syscalls() {
 
 			{ ECALL_OBJ_PROP_GET, api_obj_property_get },
 			{ ECALL_OBJ_PROP_SET, api_obj_property_set },
+			{ ECALL_VARIANT_GET, api_variant_get },
 
 			{ ECALL_SANDBOX_ADD, api_sandbox_add },
 

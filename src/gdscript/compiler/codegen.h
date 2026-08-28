@@ -259,7 +259,7 @@ private:
 		const Expr* site = nullptr);
 	void gen_string_at(int dest, int obj_reg, int idx_reg, FunctionContext& func,
 		const Expr* site);
-	void gen_vcall_get(int dest, int obj_reg, int idx_reg, FunctionContext& func);
+	void gen_variant_get(int dest, int obj_reg, int idx_reg, FunctionContext& func);
 
 	// Global functions: must not fall through to self-call (Godot drops the VCALL).
 	bool is_global_function(const std::string& name) const;

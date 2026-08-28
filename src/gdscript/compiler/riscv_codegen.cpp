@@ -918,6 +918,30 @@ void RISCVCodeGen::gen_syscall_string_at(const IRInstruction& instr, int result_
 	emit_syscall_result(result_vreg, REG_A0, result_offset, Variant::STRING);
 }
 
+// ECALL_VARIANT_GET: a0 = subject GuestVariant*, a1 = key GuestVariant*,
+// a2 = result GuestVariant*. The host delegates the complete `[]` decision to
+// Godot, preserving non-integer keys and built-in indexed semantics.
+void RISCVCodeGen::gen_syscall_variant_get(const IRInstruction& instr, int result_vreg) {
+	if (instr.operands.size() != 4) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+				"ECALL_VARIANT_GET requires 4 operands");
+	}
+
+	const int subject_vreg = instr.operands[2].reg_index();
+	const int key_vreg = instr.operands[3].reg_index();
+	const int result_offset = get_variant_stack_offset(result_vreg);
+	const int subject_offset = get_variant_stack_offset(subject_vreg);
+	const int key_offset = get_variant_stack_offset(key_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2});
+
+	emit_load_stack_offset(REG_A0, subject_offset);
+	emit_load_stack_offset(REG_A1, key_offset);
+	emit_load_stack_offset(REG_A2, result_offset);
+	emit_li(REG_A7, ECALL_VARIANT_GET);
+	emit_ecall();
+}
+
 // a0 = string, a1 = first character, a2 = how many at most (an immediate: the
 // batch size is fixed at the call site). The answer is one register, packing the
 // first scoped index and the count, so nothing is written through a pointer.
@@ -1104,6 +1128,8 @@ void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
 		gen_syscall_array_at(instr, result_vreg);
 	} else if (syscall_num == ECALL_STRING_AT) {
 		gen_syscall_string_at(instr, result_vreg);
+	} else if (syscall_num == ECALL_VARIANT_GET) {
+		gen_syscall_variant_get(instr, result_vreg);
 	} else if (syscall_num == ECALL_STRING_BATCH) {
 		gen_syscall_string_batch(instr, result_vreg);
 	} else if (syscall_num == ECALL_DICTIONARY_OPS) {

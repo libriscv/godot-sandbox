@@ -120,6 +120,7 @@ private:
 	void gen_syscall_string_size(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_array_at(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_string_at(const IRInstruction& instr, int result_vreg);
+	void gen_syscall_variant_get(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_string_batch(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg);
 	void gen_get_node(const IRInstruction& instr);

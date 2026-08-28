@@ -258,7 +258,7 @@ public:
 		return lines;
 	}
 
-	bool is_tool() override { return flag("is_tool", true); }
+	bool is_tool() override { return flag("is_tool", false); }
 
 	ScriptClass script_class() override {
 		ScriptClass declared;

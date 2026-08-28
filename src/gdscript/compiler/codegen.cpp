@@ -6551,14 +6551,13 @@ void CodeGenerator::gen_string_at(int dest, int obj_reg, int idx_reg, FunctionCo
 	}
 }
 
-void CodeGenerator::gen_vcall_get(int dest, int obj_reg, int idx_reg, FunctionContext& func) {
-	IRInstruction instr(IROpcode::VCALL);
-	instr.operands.push_back(IRValue::reg(dest));
-	instr.operands.push_back(IRValue::reg(obj_reg));
-	instr.operands.push_back(ir_str("get"));
-	instr.operands.push_back(IRValue::imm(1));
-	instr.operands.push_back(IRValue::reg(idx_reg));
-	func.ir.instructions.push_back(instr);
+void CodeGenerator::gen_variant_get(int dest, int obj_reg, int idx_reg, FunctionContext& func) {
+	IRInstruction get(IROpcode::CALL_SYSCALL);
+	get.operands.push_back(IRValue::reg(dest));
+	get.operands.push_back(IRValue::imm(ECALL_VARIANT_GET));
+	get.operands.push_back(IRValue::reg(obj_reg));
+	get.operands.push_back(IRValue::reg(idx_reg));
+	func.ir.instructions.push_back(get);
 }
 
 int CodeGenerator::gen_element_read(int obj_reg, int idx_reg, FunctionContext& func,
@@ -6584,33 +6583,12 @@ int CodeGenerator::gen_element_read(int obj_reg, int idx_reg, FunctionContext& f
 			IRInstruction::TypeHint_NONE, func);
 	}
 
-	// String has no get(), so branch on type tag to pick ECALL_STRING_AT vs VCALL.
-	if (get_register_type(func, obj_reg) == IRInstruction::TypeHint_NONE) {
-		const std::string generic_label = make_label("index_generic");
-		const std::string join_label = make_label("index_done");
-
-		int result_reg = alloc_register(func);
-		int is_string_reg = alloc_register(func);
-		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_string_reg),
-			IRValue::reg(obj_reg), IRValue::imm(static_cast<int64_t>(Variant::STRING)));
-		set_register_type(func, is_string_reg, Variant::BOOL);
-		emit_conditional_branch(IROpcode::BRANCH_ZERO, is_string_reg, generic_label, func);
-		free_register(func, is_string_reg);
-
-		gen_string_at(result_reg, obj_reg, idx_reg, func, site);
-		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(join_label));
-
-		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(generic_label));
-		gen_vcall_get(result_reg, obj_reg, idx_reg, func);
-
-		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(join_label));
-		set_register_type(func, result_reg, IRInstruction::TypeHint_NONE);
-		return result_reg;
-	}
-
-	// Fallback: obj[x] -> VCALL("get", x).
+	// `[]` is a Variant operation, not a call to a container's get() method.
+	// Preserve the key as a Variant and let Godot select the indexed, keyed, or
+	// named operation for every remaining statically known or unknown type.
 	int result_reg = alloc_register(func);
-	gen_vcall_get(result_reg, obj_reg, idx_reg, func);
+	gen_variant_get(result_reg, obj_reg, idx_reg, func);
+	set_register_type(func, result_reg, IRInstruction::TypeHint_NONE);
 	return result_reg;
 }
 
