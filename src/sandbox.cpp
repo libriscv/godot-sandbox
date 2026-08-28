@@ -2,6 +2,7 @@
 
 #include "fast_cast.hpp"
 #include "guest_datatypes.h"
+#include "gdscript/compiler/call_abi.h"
 #include "gdscript/compiler/instance_layout.h"
 #include "sandbox_project_settings.h"
 #include "scoped_tree_base.h"
@@ -1117,14 +1118,14 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 		return &v[0];
 	}
 
-	// We will support up to 16 arguments, with the first argument being the return value
-	if (argc > 16)
+	// The first seven pointers use a1-a7; the rest use the entry stack.
+	if (argc > int(gdscript::CallABI::MAX_ARGUMENTS))
 		throw std::runtime_error("Sandbox: Too many arguments for VM function call");
 
 	// The offset to where the first Variant is stored
 	// The first argument is the return value, so we start at 1
 	// The rest are overflow arguments, which are pushed onto the stack
-	const int overflow_args = argc > 7 ? argc - 7 : 0;
+	const int overflow_args = int(gdscript::CallABI::overflow_arguments(size_t(argc)));
 
 	sp -= sizeof(GuestVariant) * (argc + 1) + sizeof(gaddr_t) * overflow_args;
 	sp &= ~gaddr_t(0xF); // re-align stack pointer
@@ -1174,10 +1175,11 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 			default:
 				g_arg.set(*this, *args[i], true);
 		}
-		if (i < 7) {
+		if (i < gdscript::CallABI::REGISTER_ARGUMENTS) {
 			m_machine->cpu.reg(11 + i) = arrayDataPtr + (1 + i) * sizeof(GuestVariant);
 		} else {
-			overflow[i - 7] = arrayDataPtr + (1 + i) * sizeof(GuestVariant);
+			overflow[i - gdscript::CallABI::REGISTER_ARGUMENTS] =
+				arrayDataPtr + (1 + i) * sizeof(GuestVariant);
 		}
 	}
 	// A0 is the return value (Variant) of the function
@@ -1361,12 +1363,20 @@ Variant Sandbox::vmcallable(String function, Array args) {
 		ERR_PRINT("Function not found in the guest: " + function);
 		return Variant();
 	}
+	if (args.size() > int(gdscript::CallABI::MAX_ARGUMENTS)) {
+		ERR_PRINT("Too many bound arguments for VM function call");
+		return Variant();
+	}
 
 	RiscvCallable *call = memnew(RiscvCallable);
 	call->init(this, address, std::move(args), !this->get_unboxed_arguments());
 	return Callable(call);
 }
 Variant Sandbox::vmcallable_address(gaddr_t address, Array args) {
+	if (args.size() > int(gdscript::CallABI::MAX_ARGUMENTS)) {
+		ERR_PRINT("Too many bound arguments for VM function call");
+		return Variant();
+	}
 	RiscvCallable *call = memnew(RiscvCallable);
 	call->init(this, address, std::move(args), !this->get_unboxed_arguments());
 	return Callable(call);
@@ -1411,14 +1421,13 @@ void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r
 	}
 	const bool varargs = m_varargs_base_count > 0;
 	const int total_args = m_varargs_base_count + p_argcount;
+	if (total_args > int(gdscript::CallABI::MAX_ARGUMENTS)) {
+		ERR_PRINT("Too many arguments for VM function call");
+		r_call_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
+		r_call_error.argument = p_argcount;
+		return;
+	}
 	if (varargs) {
-		if (size_t(total_args) > m_varargs_ptrs.size()) {
-			ERR_PRINT("Too many arguments for VM function call");
-			r_call_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
-			r_call_error.argument = p_argcount;
-			return;
-		}
-
 		for (int i = 0; i < p_argcount; i++) {
 			m_varargs_ptrs[m_varargs_base_count + i] = p_arguments[i];
 		}

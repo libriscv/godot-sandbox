@@ -1,6 +1,7 @@
 // AWAIT lowering tests: frame handoff, state dispatch, barrier correctness.
 // Runs compiled coroutines on libriscv against a minimal host stub.
 // Handle promotion covered by test_await_host_* in tests/test_basic.gd.
+#include "../call_abi.h"
 #include "../compiler.h"
 #include "scope_stub.h"
 #include "../syscall_numbers.h"
@@ -156,11 +157,22 @@ void call_guest_syscall(machine_t& machine) {
 
 	sp -= 64;
 	const uint64_t retvar = sp;
-	sp -= 32;
+	const size_t overflow_count = CallABI::overflow_arguments(argc);
+	const uint64_t outgoing_space = overflow_count > 0
+		? (uint64_t(overflow_count * CallABI::STACK_SLOT_SIZE) + 15u) & ~15ull
+		: 32u;
+	sp -= outgoing_space;
 
 	cpu.reg(riscv::REG_ARG0) = retvar;
 	for (unsigned i = 0; i < argc; i++) {
-		cpu.reg(riscv::REG_ARG1 + i) = args_ptr + uint64_t(i) * uint64_t(LAYOUT.variant_size());
+		const uint64_t argument = args_ptr + uint64_t(i) * uint64_t(LAYOUT.variant_size());
+		if (i < CallABI::REGISTER_ARGUMENTS) {
+			cpu.reg(riscv::REG_ARG1 + i) = argument;
+		} else {
+			machine.copy_to_guest(
+				sp + uint64_t(i - CallABI::REGISTER_ARGUMENTS) * CallABI::STACK_SLOT_SIZE,
+				&argument, sizeof(argument));
+		}
 	}
 	cpu.reg(riscv::REG_RA) = machine.memory.exit_address();
 	cpu.preempt_internal(regs, true, true, address, 200'000'000ull);
@@ -218,13 +230,24 @@ Call run_at(machine_t& machine, uint64_t address, const std::vector<int64_t>& ar
 	sp = machine.memory.stack_initial();
 	sp -= 64 + 64 * int(args.size());
 	const uint64_t retvar = sp;
+	const size_t overflow_count = CallABI::overflow_arguments(args.size());
+	const uint64_t outgoing_space = overflow_count > 0
+		? (uint64_t(overflow_count * CallABI::STACK_SLOT_SIZE) + 15u) & ~15ull
+		: 0;
+	sp -= outgoing_space;
 
 	for (size_t i = 0; i < args.size(); i++) {
 		const uint64_t slot = retvar + 64 + 64 * i;
 		const int32_t type = int32_t(Variant::INT);
 		machine.copy_to_guest(slot + VariantLayout::TYPE_OFFSET, &type, sizeof(type));
 		machine.copy_to_guest(slot + VariantLayout::DATA_OFFSET, &args[i], sizeof(args[i]));
-		machine.cpu.reg(riscv::REG_ARG1 + i) = slot;
+		if (i < CallABI::REGISTER_ARGUMENTS) {
+			machine.cpu.reg(riscv::REG_ARG1 + i) = slot;
+		} else {
+			machine.copy_to_guest(
+				sp + uint64_t(i - CallABI::REGISTER_ARGUMENTS) * CallABI::STACK_SLOT_SIZE,
+				&slot, sizeof(slot));
+		}
 	}
 
 	machine.cpu.reg(riscv::REG_RA) = machine.memory.exit_address();
@@ -233,7 +256,7 @@ Call run_at(machine_t& machine, uint64_t address, const std::vector<int64_t>& ar
 	machine.simulate(200'000'000ull);
 
 	Call out;
-	out.stack_on_entry = retvar;
+	out.stack_on_entry = sp;
 	out.stack_on_exit = machine.cpu.reg(riscv::REG_SP);
 	machine.copy_from_guest(&out.type, retvar + VariantLayout::TYPE_OFFSET, sizeof(out.type));
 	machine.copy_from_guest(&out.value, retvar + VariantLayout::DATA_OFFSET, sizeof(out.value));
@@ -601,6 +624,38 @@ void test_awaiting_another_coroutine() {
 	std::cout << "  ✓ A coroutine can await another one in the same program" << std::endl;
 }
 
+void test_a_hosted_call_spills_arguments() {
+	std::cout << "Testing a wide call into a coroutine..." << std::endl;
+
+	const Program program = compile(
+		"func inner(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, sig):\n"
+		"\tvar got = await sig\n"
+		"\treturn h + i + o + got\n"
+		"func outer(sig):\n"
+		"\tvar value = await inner(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, sig)\n"
+		"\treturn value + 1\n");
+	if (program.elf.empty()) {
+		return;
+	}
+
+	auto machine = boot(program);
+	run(*machine, "outer", { 0 });
+	check_eq(g_host.guest_calls, 1, "the sixteen-argument call went through the host");
+	check_eq<size_t>(g_host.suspensions.size(), 2,
+		"the wide callee and its caller both suspended");
+	if (g_host.suspensions.size() < 2) {
+		return;
+	}
+
+	const int64_t inner_result = resume_suspension(*machine, 0, 100);
+	check_eq<int64_t>(inner_result, 132,
+		"the callee read arguments 8, 9 and 15 plus the stacked signal");
+	check_eq<int64_t>(resume_suspension(*machine, 1, inner_result), 133,
+		"the caller resumed with the wide callee's result");
+
+	std::cout << "  ✓ A hosted call carries all sixteen argument slots" << std::endl;
+}
+
 void test_calling_a_coroutine_without_awaiting_it() {
 	std::cout << "Testing a coroutine called without await..." << std::endl;
 
@@ -732,6 +787,7 @@ int main() {
 	test_awaiting_in_a_loop();
 	test_an_unused_await_is_kept();
 	test_awaiting_another_coroutine();
+	test_a_hosted_call_spills_arguments();
 	test_calling_a_coroutine_without_awaiting_it();
 	test_a_global_read_is_not_hoisted_across_a_hosted_call();
 	test_an_ordinary_call_stays_a_jal();

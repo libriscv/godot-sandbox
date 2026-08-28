@@ -648,12 +648,14 @@ void RISCVCodeGen::emit_prologue(const IRFunction& func) {
 		emit_zero_variant_slots();
 	}
 
-	// Parameters arrive in a1-a7 as pointers to Variants.
+	// Parameters arrive as pointers to Variants: first in a1-a7, then in
+	// pointer-sized slots at the caller's sp. The frame was allocated above, so
+	// a stacked pointer is reached past this function's whole frame.
 	if (m_fn.num_params > IRFunction::MAX_PARAMETERS) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 			"Function '" + func.name + "' has " + std::to_string(m_fn.num_params) +
-			" parameters, but only " + std::to_string(IRFunction::MAX_PARAMETERS) +
-			" arrive in registers");
+			" parameters, but the SafeGDScript ABI supports at most " +
+			std::to_string(IRFunction::MAX_PARAMETERS));
 	}
 	for (size_t i = 0; i < m_fn.num_params; i++) {
 		if (!m_fn.live_params[i]) {
@@ -661,8 +663,15 @@ void RISCVCodeGen::emit_prologue(const IRFunction& func) {
 		}
 		int param_vreg = static_cast<int>(i);
 		int dst_offset = get_variant_stack_offset(param_vreg);
-		uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
-		emit_variant_move(REG_SP, dst_offset, arg_reg, 0, REG_T0);
+		if (i < IRFunction::REGISTER_PARAMETERS) {
+			uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
+			emit_variant_move(REG_SP, dst_offset, arg_reg, 0, REG_T0);
+		} else {
+			const int32_t incoming_offset = m_fn.stack_frame_size + int32_t(
+				(i - IRFunction::REGISTER_PARAMETERS) * CallABI::STACK_SLOT_SIZE);
+			emit_ld(REG_T1, REG_SP, incoming_offset);
+			emit_variant_move(REG_SP, dst_offset, REG_T1, 0, REG_T0);
+		}
 	}
 }
 
@@ -2155,18 +2164,32 @@ void RISCVCodeGen::gen_call(const IRInstruction& instr) {
 	if (arg_count > static_cast<int>(IRFunction::MAX_PARAMETERS)) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
 			"Call passes " + std::to_string(arg_count) +
-			" arguments, but only " + std::to_string(IRFunction::MAX_PARAMETERS) +
-			" fit in registers");
+			" arguments, but the SafeGDScript ABI supports at most " +
+			std::to_string(IRFunction::MAX_PARAMETERS));
+	}
+	const int overflow_count = arg_count > static_cast<int>(IRFunction::REGISTER_PARAMETERS)
+		? arg_count - static_cast<int>(IRFunction::REGISTER_PARAMETERS)
+		: 0;
+	const int outgoing_space = overflow_count > 0
+		? ((overflow_count * int(CallABI::STACK_SLOT_SIZE)) + 15) & ~15
+		: 0;
+	if (outgoing_space > 0) {
+		emit_stack_adjust(-outgoing_space);
 	}
 	for (int i = 0; i < arg_count; i++) {
 		int arg_vreg = instr.operands[3 + i].reg_index();
-		int arg_offset = get_variant_stack_offset(arg_vreg);
-		uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
-
-		emit_add_offset(arg_reg, REG_SP, arg_offset);
+		int arg_offset = get_variant_stack_offset(arg_vreg) + outgoing_space;
+		if (i < static_cast<int>(IRFunction::REGISTER_PARAMETERS)) {
+			uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
+			emit_add_offset(arg_reg, REG_SP, arg_offset);
+		} else {
+			emit_add_offset(REG_WIDE_SCRATCH, REG_SP, arg_offset);
+			emit_sd(REG_WIDE_SCRATCH, REG_SP,
+				int32_t((i - IRFunction::REGISTER_PARAMETERS) * CallABI::STACK_SLOT_SIZE));
+		}
 	}
 
-	emit_add_offset(REG_A0, REG_SP, return_var_offset);
+	emit_add_offset(REG_A0, REG_SP, return_var_offset + outgoing_space);
 
 	if (!m_fn.saves_return_address) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
@@ -2174,6 +2197,7 @@ void RISCVCodeGen::gen_call(const IRInstruction& instr) {
 	}
 	mark_label_use(func_name, m_code.size());
 	emit_jal(REG_RA, 0);
+	emit_stack_adjust(outgoing_space);
 }
 
 void RISCVCodeGen::gen_call_hosted(const IRInstruction& instr) {

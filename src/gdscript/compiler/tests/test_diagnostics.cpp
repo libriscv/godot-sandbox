@@ -145,17 +145,16 @@ static void test_source_line_survives_crlf() {
 	std::cout << "  ✓ a CRLF source line is quoted without its carriage return" << std::endl;
 }
 
-// The ABI delivers a1-a7, so an eighth parameter has nowhere to arrive from.
-// The prologue used to copy in the first seven and leave the rest reading
-// whatever the frame held, which is a wrong answer rather than a failed compile.
+// The boxed ABI has sixteen total slots: seven pointers in a1-a7 and nine on
+// the entry stack. A seventeenth parameter must still fail at its declaration.
 static void test_too_many_parameters_is_refused() {
 	const CompilerError error = failing_compile(
-		"func f(a, b, c, d, e, g, h, i):\n\treturn i\n");
+		"func f(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q):\n\treturn q\n");
 	assert(error.type == ErrorType::CODEGEN_ERROR);
 	assert(error.line == 1);
-	assert(contains(error.message, "at most 7"));
+	assert(contains(error.message, "at most 16"));
 
-	std::cout << "  ✓ a function with more parameters than the ABI carries is refused" << std::endl;
+	std::cout << "  ✓ a function with more than sixteen parameters is refused" << std::endl;
 }
 
 // A project `class_name` script is not an engine singleton, so `Other.helper()`

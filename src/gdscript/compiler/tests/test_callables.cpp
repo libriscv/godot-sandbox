@@ -761,7 +761,7 @@ void test_what_is_refused() {
 	const std::string too_many = compile_error(
 		"func f():\n"
 		"\tvar n = 1\n"
-		"\tvar g = func(a, b, c, d, e, f, h): return a + n\n"
+		"\tvar g = func(a, b, c, d, e, f, g, h, i, j, k, l, m, o, p, q): return a + n\n"
 		"\treturn g\n");
 	check(too_many.find("parameter slots") != std::string::npos,
 		"a lambda that needs more slots than the ABI has is refused: " + too_many);

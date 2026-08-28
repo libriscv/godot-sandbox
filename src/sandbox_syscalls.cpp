@@ -1,4 +1,5 @@
 #include "guest_datatypes.h"
+#include "gdscript/compiler/call_abi.h"
 #include "syscalls.h"
 
 #include <algorithm>
@@ -152,9 +153,9 @@ private:
 	unsigned m_count = 0;
 };
 
-// Calls take at most 8 arguments; print() takes more, and says so where it
-// declares its own scratch.
-using VariantScratch = VariantScratchN<8>;
+// SafeGDScript calls use the shared boxed-call limit. print() takes more, and
+// says so where it declares its own scratch.
+using VariantScratch = VariantScratchN<gdscript::CallABI::MAX_ARGUMENTS>;
 
 // The counterpart to object_callp() for the built-in Variant types. Godot
 // placement-constructs the return value here too, so it goes straight into
@@ -190,8 +191,8 @@ static inline godot::Object *class_instance_base(Sandbox &emu, const Variant &v)
 static inline void object_call(Sandbox &emu, godot::Object *obj, const Variant &method, const GuestVariant *args, int argc, CallResult &result) {
 	SYS_TRACE("object_call", method, argc);
 	// Two slots per argument: a class instance is replaced by the object it extends.
-	VariantScratchN<16> scratch;
-	const Variant *vargs[9]; // 8 is the maximum number of arguments we will accept.
+	VariantScratchN<gdscript::CallABI::MAX_ARGUMENTS * 2> scratch;
+	const Variant *vargs[gdscript::CallABI::MAX_ARGUMENTS + 1];
 	vargs[0] = &method;
 	for (int i = 0; i < argc; i++) {
 		const Variant *arg = args[i].is_scoped_variant()
@@ -255,7 +256,7 @@ static inline void variant_or_object_call(Sandbox &emu, Variant *vcall,
 	}
 
 	VariantScratch scratch;
-	const Variant *argptrs[8];
+	const Variant *argptrs[gdscript::CallABI::MAX_ARGUMENTS];
 	for (int i = 0; i < argc; i++) {
 		if (args[i].is_scoped_variant()) {
 			argptrs[i] = args[i].toVariantPtr(emu);
@@ -293,7 +294,7 @@ APICALL(api_call_guest) {
 	Sandbox &emu = riscv::emu(machine);
 	SYS_TRACE("call_guest", address, argc);
 
-	if (argc > 8) {
+	if (argc > gdscript::CallABI::MAX_ARGUMENTS) {
 		ERR_PRINT("call_guest: too many arguments");
 		throw std::runtime_error("call_guest: too many arguments");
 	}
@@ -312,8 +313,8 @@ APICALL(api_call_guest) {
 		throw std::runtime_error("call_guest: address is not executable");
 	}
 
-	std::array<Variant, 8> values;
-	std::array<const Variant *, 8> argv;
+	std::array<Variant, gdscript::CallABI::MAX_ARGUMENTS> values;
+	std::array<const Variant *, gdscript::CallABI::MAX_ARGUMENTS> argv;
 	if (argc > 0) {
 		const GuestVariant *guest_args = machine.memory.memarray<GuestVariant>(args_addr, argc);
 		for (unsigned i = 0; i < argc; i++) {
@@ -986,7 +987,7 @@ static void vcall_impl(machine_t &machine, bool super) {
 	Sandbox &emu = riscv::emu(machine);
 	SYS_TRACE("vcall", method, mlen, args_ptr, args_size, vret_addr);
 
-	if (UNLIKELY(args_size > 8)) {
+	if (UNLIKELY(args_size > gdscript::CallABI::MAX_ARGUMENTS)) {
 		ERR_PRINT("Variant::call(): Too many arguments");
 		throw std::runtime_error("Variant::call(): Too many arguments");
 	}
@@ -2281,7 +2282,7 @@ APICALL(api_obj_callp) {
 	SYS_TRACE("obj_callp", addr, g_method, g_method_len, deferred, vret_ptr, args_addr, args_size);
 
 	auto *obj = get_object_from_address(emu, addr);
-	if (UNLIKELY(args_size > 8)) {
+	if (UNLIKELY(args_size > gdscript::CallABI::MAX_ARGUMENTS || (deferred && args_size > 8))) {
 		ERR_PRINT("Too many arguments to obj_callp");
 		throw std::runtime_error("Too many arguments to obj_callp");
 	}

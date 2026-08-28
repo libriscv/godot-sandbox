@@ -446,6 +446,24 @@ func middle_of_three(a, b, c):
 func last_of_seven(a, b, c, d, e, f, g):
 	return g
 
+func wide_edges(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p):
+	return [a, g, h, i, p]
+
+func call_wide_edges():
+	return wide_edges(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+
+func wide_defaults(a, b, c, d, e, f, g, h = 80, i = 90):
+	return [g, h, i]
+
+func call_wide_defaults():
+	return wide_defaults(1, 2, 3, 4, 5, 6, 7)
+
+func call_wide_captured_lambda():
+	var captured = 100
+	var cb = func(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o):
+		return [captured, g, h, i, o]
+	return cb.call(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
+
 func none_of_two(a, b):
 	return 7
 
@@ -475,6 +493,11 @@ func maybe_overwrites(b, n):
 	assert_eq(s.vmcallv("first_of_two", 11, 22), 11, "first_of_two(11, 22) should return 11")
 	assert_eq(s.vmcallv("middle_of_three", 1, 2, 3), 2, "middle_of_three(1, 2, 3) should return 2")
 	assert_eq(s.vmcallv("last_of_seven", 1, 2, 3, 4, 5, 6, 7), 7, "last_of_seven(..) should return the seventh")
+	assert_eq_deep(s.vmcallv("wide_edges", 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16),
+		[1, 7, 8, 9, 16])
+	assert_eq_deep(s.vmcallv("call_wide_edges"), [1, 7, 8, 9, 16])
+	assert_eq_deep(s.vmcallv("call_wide_defaults"), [7, 80, 90])
+	assert_eq_deep(s.vmcallv("call_wide_captured_lambda"), [100, 7, 8, 9, 15])
 	assert_eq(s.vmcallv("none_of_two", 1, 2), 7, "none_of_two(1, 2) should return 7")
 	assert_eq(s.vmcallv("overwrites_its_parameter", 3), 7, "overwrites_its_parameter(3) should return 7")
 	assert_eq(s.vmcallv("maybe_overwrites", 3, 0), 3, "maybe_overwrites(3, 0) should return the argument")

@@ -1,4 +1,5 @@
 #pragma once
+#include "gdscript/compiler/call_abi.h"
 #include <godot_cpp/variant/variant.hpp>
 using namespace godot;
 
@@ -94,7 +95,7 @@ private:
 	gaddr_t address = 0x0;
 	bool m_variant_arguments = false;
 
-	std::array<Variant, 8> m_varargs;
-	mutable std::array<const Variant *, 8> m_varargs_ptrs;
+	std::array<Variant, gdscript::CallABI::MAX_ARGUMENTS> m_varargs;
+	mutable std::array<const Variant *, gdscript::CallABI::MAX_ARGUMENTS> m_varargs_ptrs;
 	int m_varargs_base_count = 0;
 };

@@ -1,4 +1,5 @@
 #pragma once
+#include "call_abi.h"
 #include "export_hints.h"
 #include "small_vector.h"
 #include <vector>
@@ -291,8 +292,9 @@ struct IRFunction {
 	// Parameters in r0..N-1, return value in r0.
 	static constexpr int RETURN_REGISTER = 0;
 
-	// Sandbox ABI: a0=return, a1-a7=args.
-	static constexpr size_t MAX_PARAMETERS = 7;
+	// Sandbox ABI: a0=return, a1-a7=the first arguments, then pointers at 0(sp).
+	static constexpr size_t REGISTER_PARAMETERS = CallABI::REGISTER_ARGUMENTS;
+	static constexpr size_t MAX_PARAMETERS = CallABI::MAX_ARGUMENTS;
 };
 
 struct IRGlobalVar {

@@ -777,6 +777,19 @@ func double(n):
 func test():
 	return double(inc(double(inc(3))))
 )" },
+		{ "stacked_call_arguments", R"(
+# Arguments 8-16 are pointers in the caller's outgoing stack area. Calling
+# twice also pins that the caller restores sp after reclaiming that area.
+func edge(a : int, b : int, c : int, d : int, e : int, f : int, g : int,
+		h : int, i : int, j : int, k : int, l : int, m : int, n : int,
+		o : int, p : int) -> int:
+	return a + g * 10 + h * 100 + i * 1000 + p * 10000
+
+func test():
+	var forward = edge(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+	var reverse = edge(16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1)
+	return forward * 1000000 + reverse
+)" },
 		{ "default_arguments", R"(
 func add(a, b = 10):
 	return a + b

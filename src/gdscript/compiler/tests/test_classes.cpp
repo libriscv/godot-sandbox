@@ -385,11 +385,11 @@ void test_what_is_refused() {
 
 	const std::string slots = compile_error(
 		"class A:\n"
-		"\tfunc f(a, b, c, d, e, g, h):\n"
+		"\tfunc f(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p):\n"
 		"\t\treturn a\n"
 		"func test():\n\treturn 1\n");
-	check(slots.find("at most 6") != std::string::npos,
-		"a method needing eight slots is refused: " + slots);
+	check(slots.find("at most 15") != std::string::npos,
+		"a method needing seventeen slots is refused: " + slots);
 
 	const std::string body = compile_error(
 		"class A:\n"
