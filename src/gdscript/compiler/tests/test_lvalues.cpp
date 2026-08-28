@@ -375,8 +375,21 @@ static void test_globals_do_not_become_self_calls() {
 	assert(refuses("func test():\n\treturn print_debug(\"x\")\n"));
 	assert(refuses("func test(x):\n\treturn weakref(x)\n"));
 	assert(refuses("func test(p):\n\treturn preload(p)\n"));
-	// Excluded: mutates shared RNG state.
-	assert(refuses("func test():\n\trandomize()\n"));
+	// Available normally, but refused by the restricted compilation policy.
+	(void)compile_to_ir("func test():\n\trandomize()\n\tseed(1234)\n");
+	for (const char* call : { "randomize()", "seed(1234)" }) {
+		bool refused = false;
+		try {
+			Lexer lexer(std::string("func test():\n\t") + call + "\n");
+			Parser parser(lexer.tokenize());
+			CodeGenerator codegen;
+			codegen.set_restricted(true);
+			(void)codegen.generate(parser.parse());
+		} catch (const CompilerException&) {
+			refused = true;
+		}
+		assert(refused);
+	}
 
 	const IRProgram quat = compile_to_ir("func test():\n\treturn Quaternion(0, 0, 0, 1)\n");
 	const IRFunction& quat_fn = find_function(quat, "test");

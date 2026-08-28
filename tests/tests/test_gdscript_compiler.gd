@@ -7356,6 +7356,69 @@ func draw(s : int):
 	s.queue_free()
 
 
+# randomize() and seed() are the two @GlobalScope calls that deliberately
+# mutate the generator shared with the host. They are available only while the
+# Sandbox has no restrictions of any kind.
+func test_shared_rng_mutation_in_an_unrestricted_sandbox():
+	var gdscript_code = """
+func reseed(value : int):
+	return seed(value)
+
+func rerandomize():
+	return randomize()
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	var seed_value := 424242
+	seed(seed_value)
+	var expected_first := randi()
+	var expected_second := randi()
+	assert_eq(s.vmcallv("reseed", seed_value), null, "seed() should return nil")
+	assert_eq(randi(), expected_first, "the guest should reset the project's shared RNG")
+	assert_eq(randi(), expected_second, "host draws should continue the guest-seeded sequence")
+
+	seed(seed_value)
+	var unrandomized_first := randi()
+	seed(seed_value)
+	assert_eq(s.vmcallv("rerandomize"), null, "randomize() should return nil")
+	assert_ne(randi(), unrandomized_first, "randomize() should replace the shared deterministic state")
+
+	# Do not leave the rest of the suite on a deterministic generator state.
+	randomize()
+	s.queue_free()
+
+
+func test_shared_rng_mutation_is_refused_by_restrictions():
+	for call in ["randomize()", "seed(1234)"]:
+		var message := _restricted_compile_error("func run():\n\t%s\n" % call)
+		assert_true(message.contains("restricted Sandbox") && message.contains("shared RNG"),
+			"restricted compilation should refuse %s, got: %s" % [call, message])
+		assert_engine_error("SafeGDScript: : " + message)
+
+	# Compile while unrestricted, then close the runtime gate. This exercises
+	# the syscall check as a defence against stale or hand-written binaries.
+	var s = _compile_and_load("""
+func reseed():
+	seed(1234)
+
+func rerandomize():
+	randomize()
+""", 40000)
+	if s == null:
+		return
+	s.restrictions = true
+	var before := s.get_exceptions()
+	s.vmcallv("reseed")
+	assert_eq(s.get_exceptions(), before + 1, "restricted seed() should raise")
+	assert_engine_error("Exception: utility(): Shared RNG mutation is refused under restrictions")
+	s.vmcallv("rerandomize")
+	assert_eq(s.get_exceptions(), before + 2, "restricted randomize() should raise")
+	assert_engine_error("Exception: utility(): Shared RNG mutation is refused under restrictions")
+	s.queue_free()
+
+
 # @GlobalScope enums (Side, Corner, Error, Key). A member is a compile-time
 # integer -- the enum itself never reaches the guest.
 func test_global_enumerations():

@@ -15,8 +15,8 @@
 // Adding a function: one row here, one case in globals.cpp's evaluator,
 // and for SYSCALL one case in the host's api_utility().
 //
-// Only sandbox-safe functions: no scene tree, resources, or engine state.
-// randomize()/seed() excluded — they mutate the project's shared RNG.
+// Functions that mutate engine state may be marked unrestricted-only. The
+// compiler then refuses them when building for a restricted Sandbox.
 //
 // Random draws are impure (DCE must not delete them) and refused by the
 // IR interpreter — both the differential and optimizer-invariance tests
@@ -136,6 +136,11 @@ enum UtilityOp : int16_t {
 	// seed comes in and the next one comes back, so the project's shared
 	// generator is untouched and the call is pure.
 	UTILITY_RAND_FROM_SEED = 73,
+
+	// Shared project RNG mutation. Variant-shaped so void/NIL results and seed's
+	// full int64 argument use the ordinary host Variant ABI.
+	UTILITY_RANDOMIZE = 74,
+	UTILITY_SEED = 75,
 
 	UTILITY_OP_COUNT,
 };
@@ -266,6 +271,8 @@ enum class GlobalFn : int16_t {
 	ORD,
 	// Deterministic, hence a HOST form rather than a random one.
 	RAND_FROM_SEED,
+	RANDOMIZE,
+	SEED,
 
 	// Randomness (SYSCALL / SYSCALL_INT). Impure: advances the project's shared RNG.
 	RANDF,
@@ -326,6 +333,8 @@ struct GlobalFunction {
 	GlobalFn float_form;
 	// Random family: must not be DCE'd or deduplicated.
 	bool impure = false;
+	// Mutates host/project state and is therefore refused under restrictions.
+	bool unrestricted_only = false;
 };
 
 // nullptr when `name` is not a known global (caller falls through to self-call).

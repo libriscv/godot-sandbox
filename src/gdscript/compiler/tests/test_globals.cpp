@@ -168,7 +168,7 @@ static void test_the_table_is_consistent() {
 		"type_string", "type_convert", "error_string", "is_same", "rand_from_seed",
 		"ease", "step_decimals", "nearest_po2",
 		"int", "float", "bool", "String",
-		"randi", "randf", "randi_range", "randf_range", "randfn",
+		"randi", "randf", "randi_range", "randf_range", "randfn", "randomize", "seed",
 		"prints", "printt", "printraw", "print_rich", "printerr",
 		"print_verbose", "push_error", "push_warning",
 	};
@@ -219,8 +219,8 @@ static void test_the_table_is_consistent() {
 		// is not in this table's impure column because it has its own opcode.
 		// rand_from_seed() shares the prefix but not the property: it draws
 		// from the seed it is handed, not from the project's generator.
-		const bool is_random = std::string(info->name).rfind("rand", 0) == 0 &&
-			std::string(info->name) != "rand_from_seed";
+		const bool is_random = (std::string(info->name).rfind("rand", 0) == 0 &&
+			std::string(info->name) != "rand_from_seed") || std::string(info->name) == "seed";
 		assert(info->impure == is_random);
 		if (info->kind == GlobalKind::NUMERIC) {
 			assert(info->result == GlobalResult::NUMERIC);
@@ -249,10 +249,10 @@ static void test_the_table_is_consistent() {
 	// A name GDScript does not have is not a global, and neither is the
 	// internal form that has no GDScript name.
 	assert(find_global_function("no_such_global") == nullptr);
-	// randomize() and seed() set the seed of the generator the rest of the
-	// project draws from, which is the host's state and not the guest's.
-	assert(find_global_function("randomize") == nullptr);
-	assert(find_global_function("seed") == nullptr);
+	assert(find_global_function("randomize") != nullptr);
+	assert(find_global_function("seed") != nullptr);
+	assert(find_global_function("randomize")->unrestricted_only);
+	assert(find_global_function("seed")->unrestricted_only);
 	assert(find_global_function(".int_identity") != nullptr);
 	assert(find_global_function(".float_identity") != nullptr);
 	assert(find_global_function(".booleanize") != nullptr);

@@ -43,6 +43,8 @@ Godot Sandbox lets players run untrusted code safely. Write gameplay in SafeGDSc
 
 SafeGDScript (`.sgd`) is the default language for sandboxed code. It is a [safety-oriented GDScript-dialect](https://libriscv.no/docs/host_langs/godot_integration/godot_intro/safegdscript) with most of the same syntax, and some additions (like structs). Attach a `.sgd` file to any node the same way you would attach a `.gd` script:
 
+VS Code users can install the [SafeGDScript extension](https://marketplace.visualstudio.com/items?itemName=AlfAndrWalla.vscode-safegdscript) for syntax highlighting and basic editor support.
+
 ```gdscript
 struct Item:
 	var name : String = ""

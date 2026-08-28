@@ -410,6 +410,11 @@ enum class Utility_Op {
 	// shared generator alone. That makes it pure, and safe under
 	// restrictions, unlike randi() and friends.
 	RAND_FROM_SEED = 73,
+
+	// Variant in/out. These mutate the project's shared generator and are only
+	// emitted by SafeGDScript compiled for an unrestricted Sandbox.
+	RANDOMIZE = 74,
+	SEED = 75,
 };
 
 // Output channel for ECALL_PRINT_CHANNEL.

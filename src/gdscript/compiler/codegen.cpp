@@ -5784,6 +5784,10 @@ int CodeGenerator::gen_global_function(const CallExpr* expr, std::vector<int>& a
 		throw CompilerException(ErrorType::CODEGEN_ERROR,
 			"is_global_function() accepts '" + expr->function_name + "' but there is no table entry for it");
 	}
+	if (m_restricted && info->unrestricted_only) {
+		error_at("'" + expr->function_name + "' is not supported in a restricted Sandbox: "
+			"it mutates the project's shared RNG state", expr);
+	}
 
 	const size_t given = arg_regs.size();
 	if (given < info->min_args || given > info->max_args) {

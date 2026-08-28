@@ -164,12 +164,15 @@ static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 	{ "bool", GlobalFn::TO_BOOL, GlobalKind::CAST, 1, 1, GlobalResult::BOOL, UTILITY_TO_BOOL, 0, GlobalFn::BOOLEANIZE, NO_FORM },
 	{ "String", GlobalFn::TO_STRING, GlobalKind::HOST, 0, 1, GlobalResult::STRING, UTILITY_STR, 0, NO_FORM, NO_FORM },
 
-	// Randomness (impure). randomize()/seed() excluded — mutate project RNG.
+	// Randomness (impure). The mutation calls are available only when compiling
+	// for an unrestricted Sandbox.
 	{ "randf", GlobalFn::RANDF, GlobalKind::SYSCALL, 0, 0, GlobalResult::FLOAT, UTILITY_RANDF, 0, NO_FORM, NO_FORM, true },
 	{ "randf_range", GlobalFn::RANDF_RANGE, GlobalKind::SYSCALL, 2, 2, GlobalResult::FLOAT, UTILITY_RANDF_RANGE, 2, NO_FORM, NO_FORM, true },
 	{ "randfn", GlobalFn::RANDFN, GlobalKind::SYSCALL, 2, 2, GlobalResult::FLOAT, UTILITY_RANDFN, 2, NO_FORM, NO_FORM, true },
 	{ "randi", GlobalFn::RANDI, GlobalKind::SYSCALL_INT, 0, 0, GlobalResult::INT, UTILITY_RANDI, 0, NO_FORM, NO_FORM, true },
 	{ "randi_range", GlobalFn::RANDI_RANGE, GlobalKind::SYSCALL_INT, 2, 2, GlobalResult::INT, UTILITY_RANDI_RANGE, 0, NO_FORM, NO_FORM, true },
+	{ "randomize", GlobalFn::RANDOMIZE, GlobalKind::HOST, 0, 0, GlobalResult::NIL, UTILITY_RANDOMIZE, 0, NO_FORM, NO_FORM, true, true },
+	{ "seed", GlobalFn::SEED, GlobalKind::HOST, 1, 1, GlobalResult::NIL, UTILITY_SEED, 0, NO_FORM, NO_FORM, true, true },
 
 	// Internal forms (not callable by name, hence invalid-identifier names).
 	{ ".int_identity", GlobalFn::INT_IDENTITY, GlobalKind::INT_OP, 1, 1, GlobalResult::INT, NO_OP, 0, NO_FORM, NO_FORM },
@@ -319,9 +322,6 @@ static const struct { const char* name; const char* reason; } UNIMPLEMENTED_GLOB
 	{ "rid_allocate_id", "RIDs name engine resources the sandbox cannot reach" },
 	{ "rid_from_int64", "RIDs name engine resources the sandbox cannot reach" },
 
-	// Engine/project state: deliberately unreachable from sandbox.
-	{ "randomize", "mutates the project's shared RNG state" },
-	{ "seed", "mutates the project's shared RNG state" },
 };
 
 size_t builtin_constant_count() {

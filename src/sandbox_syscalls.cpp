@@ -669,6 +669,8 @@ static double utility_math_op(Utility_Op op, const double args[8]) {
 		case Utility_Op::ORD:
 		case Utility_Op::IS_INSTANCE_VALID:
 		case Utility_Op::RAND_FROM_SEED:
+		case Utility_Op::RANDOMIZE:
+		case Utility_Op::SEED:
 			break;
 
 		// The random draws that *are* doubles. UtilityFunctions:: rather than
@@ -792,13 +794,20 @@ APICALL(api_utility) {
 		case Utility_Op::CHAR:
 		case Utility_Op::ORD:
 		case Utility_Op::RAND_FROM_SEED:
+		case Utility_Op::RANDOMIZE:
+		case Utility_Op::SEED:
 		case Utility_Op::IS_INSTANCE_VALID: {
 			Sandbox &emu = riscv::emu(machine);
+			if (UNLIKELY((op == Utility_Op::RANDOMIZE || op == Utility_Op::SEED) &&
+					!emu.is_fully_unrestricted())) {
+				throw std::runtime_error("utility(): Shared RNG mutation is refused under restrictions");
+			}
 			// str() takes up to 63 arguments and String() takes none at all;
 			// Binary: type_convert(), is_same(). Unary: the rest.
 			const bool binary = (op == Utility_Op::TYPE_CONVERT || op == Utility_Op::IS_SAME);
-			const unsigned max_args = (op == Utility_Op::STR) ? 63 : (binary ? 2 : 1);
-			const unsigned min_args = (op == Utility_Op::STR) ? 0 : (binary ? 2 : 1);
+			const bool no_args = (op == Utility_Op::RANDOMIZE);
+			const unsigned max_args = (op == Utility_Op::STR) ? 63 : (no_args ? 0 : (binary ? 2 : 1));
+			const unsigned min_args = (op == Utility_Op::STR || no_args) ? 0 : (binary ? 2 : 1);
 			if (arg_count < min_args || arg_count > max_args) {
 				ERR_PRINT("utility(): Wrong number of arguments");
 				throw std::runtime_error("utility(): Wrong number of arguments: " + std::to_string(arg_count));
@@ -910,6 +919,16 @@ APICALL(api_utility) {
 					PENALIZE(20'000);
 					vres->create(emu, UtilityFunctions::rand_from_seed(
 							args[0].toVariant(emu).operator int64_t()));
+					break;
+				case Utility_Op::RANDOMIZE:
+					PENALIZE(10'000);
+					UtilityFunctions::randomize();
+					vres->create(emu, Variant());
+					break;
+				case Utility_Op::SEED:
+					PENALIZE(10'000);
+					UtilityFunctions::seed(args[0].toVariant(emu).operator int64_t());
+					vres->create(emu, Variant());
 					break;
 
 				case Utility_Op::ORD: {
