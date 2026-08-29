@@ -573,6 +573,13 @@ public:
 		return (handle & OBJECT_HANDLE_TAG) != 0 ? (handle & ~OBJECT_HANDLE_TAG) : 0u;
 	}
 
+	/// @brief Differentiate a 64-bit guest handle vs an object handle.
+	/// Variants are int32 values sign-extended to 64 bits, and permanent variants
+	/// are negative int32 values. Hence, the weird-looking check.
+	static constexpr bool is_variant_index_handle(uint64_t handle) noexcept {
+		return uint64_t(int64_t(int32_t(handle))) == handle;
+	}
+
 	/// @brief Scope an object for the duration of the current call, keeping it alive if
 	/// it is RefCounted.
 	/// @param obj The object to scope.

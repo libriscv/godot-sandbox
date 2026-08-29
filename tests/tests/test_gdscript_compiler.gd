@@ -4167,6 +4167,39 @@ func customized(value):
 	node.free()
 	await get_tree().process_frame
 
+# A member typed as a payload built-in (Transform3D, Basis, AABB, ...) keeps its
+# value in a permanent variant slot, and permanent indices are negative. The
+# property syscalls told an object handle from a variant index by width alone, so
+# a sign-extended negative index read as a handle and every field access on such a
+# member threw "Object no longer exists".
+func test_sgd_payload_typed_members_reach_their_fields():
+	var script := SafeGDScript.new()
+	script.set_source_code("""
+var orientation := Transform3D()
+var box := AABB()
+
+func poke() -> Vector3:
+	orientation = Transform3D(Basis(), Vector3(7, 8, 9))
+	return orientation.origin
+
+func poke_field() -> Array:
+	orientation.origin = Vector3(1, 2, 3)
+	box.size = Vector3(2, 2, 2)
+	return [orientation.origin, box.size]
+""")
+	assert_eq(script.get_compile_error(), "")
+
+	var node := Node.new()
+	node.set_script(script)
+	assert_eq(node.call("poke"), Vector3(7, 8, 9),
+		"a payload-typed member reads back the field it was just assigned")
+	assert_eq(node.call("poke_field"), [Vector3(1, 2, 3), Vector3(2, 2, 2)],
+		"a payload-typed member's own field is writable")
+	assert_eq(node.get("orientation"), Transform3D(Basis(), Vector3(1, 2, 3)),
+		"the host reads back the member the guest wrote")
+	node.free()
+	await get_tree().process_frame
+
 func test_bitwise_operators():
 	var gdscript_code = """
 func bit_and(a : int, b : int):

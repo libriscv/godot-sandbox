@@ -2343,11 +2343,11 @@ APICALL(api_obj_property_get) {
 	SYS_TRACE("obj_property_get", addr, method, vret);
 
 	godot::Object *obj = nullptr;
-	if ((uint16_t)addr != addr) {
+	if (!Sandbox::is_variant_index_handle(addr)) {
 		obj = get_object_from_address(emu, addr);
 	} else {
-		// It's likely a Variant index
-		const Variant &var = get_scoped_variant_or_throw(emu, uint32_t(addr), "Object::get_property");
+		// It's a Variant index, scoped or permanent
+		const Variant &var = get_scoped_variant_or_throw(emu, int32_t(addr), "Object::get_property");
 		const Variant::Type var_type = variant_type(var);
 		if (var_type != Variant::OBJECT) {
 			bool valid = false;
@@ -2385,14 +2385,14 @@ APICALL(api_obj_property_set) {
 	SYS_TRACE("obj_property_set", addr, method, value);
 
 	godot::Object *obj = nullptr;
-	if ((uint16_t)addr != addr) {
+	if (!Sandbox::is_variant_index_handle(addr)) {
 		obj = get_object_from_address(emu, addr);
 	} else {
-		// It's likely a Variant index
-		const Variant &var = get_scoped_variant_or_throw(emu, uint32_t(addr), "Object::set_property");
+		// It's a Variant index, scoped or permanent
+		const Variant &var = get_scoped_variant_or_throw(emu, int32_t(addr), "Object::set_property");
 		if (variant_type(var) != Variant::OBJECT) {
 			// Built-in member set: get_mutable copies a borrowed Variant first.
-			Variant &target = emu.get_mutable_scoped_variant(int32_t(uint32_t(addr)));
+			Variant &target = emu.get_mutable_scoped_variant(int32_t(addr));
 			bool valid = false;
 			Sandbox::CachedNameRef cached_member = emu.cached_guest_name(g_property, method, false);
 			const StringName &member = cached_member->sname;
