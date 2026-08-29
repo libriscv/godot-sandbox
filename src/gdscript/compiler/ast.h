@@ -17,6 +17,46 @@ struct FunctionDecl;
 using ExprPtr = std::unique_ptr<Expr>;
 using StmtPtr = std::unique_ptr<Stmt>;
 
+// A declaration type is either one ordinary name or a union of names and
+// `null`.  `names` deliberately excludes null: nullable is useful often enough
+// to deserve its own bit, and keeps existing single-name users simple.
+struct TypeExpr {
+	std::vector<std::string> names;
+	bool nullable = false;
+	// Diagnostics retain `T?` instead of normalizing it to `T | null`.
+	bool spelled_nullable = false;
+
+	bool empty() const { return names.empty() && !nullable; }
+	bool is_union() const { return names.size() + (nullable ? 1u : 0u) > 1; }
+	const std::string& single_name() const {
+		static const std::string none;
+		return names.size() == 1 && !nullable ? names.front() : none;
+	}
+	const std::string& sole_name() const {
+		static const std::string none;
+		return names.size() == 1 ? names.front() : none;
+	}
+	std::string to_string() const {
+		if (spelled_nullable && names.size() == 1) {
+			return names.front() + "?";
+		}
+		std::string result;
+		for (const std::string& name : names) {
+			if (!result.empty()) result += " | ";
+			result += name;
+		}
+		if (nullable) {
+			if (!result.empty()) result += " | ";
+			result += "null";
+		}
+		return result;
+	}
+	bool operator==(const std::string& name) const {
+		return name.empty() ? empty() : single_name() == name;
+	}
+	bool operator==(const char* name) const { return *this == std::string(name); }
+};
+
 struct Expr {
 	virtual ~Expr() = default;
 	int line = 0;
@@ -92,10 +132,10 @@ struct UnaryExpr : Expr {
 // Type kept as name; codegen resolves to Variant::Type or rejects class names.
 struct TypeTestExpr : Expr {
 	ExprPtr value;
-	std::string type_name;
+	TypeExpr type;
 
-	TypeTestExpr(ExprPtr v, std::string t)
-		: value(std::move(v)), type_name(std::move(t)) {}
+	TypeTestExpr(ExprPtr v, TypeExpr t)
+		: value(std::move(v)), type(std::move(t)) {}
 };
 
 struct CastExpr : Expr {
@@ -189,7 +229,7 @@ struct ExprStmt : Stmt {
 
 struct VarDeclStmt : Stmt {
 	std::string name;
-	std::string type_hint;
+	TypeExpr type_hint;
 	ExprPtr initializer;
 	bool is_const = false;
 	bool is_property = false;
@@ -333,7 +373,7 @@ struct MatchStmt : Stmt {
 
 struct Parameter {
 	std::string name;
-	std::string type_hint;
+	TypeExpr type_hint;
 	ExprPtr default_value;
 	int line = 0;
 	int column = 0;
@@ -342,7 +382,7 @@ struct Parameter {
 struct FunctionDecl {
 	std::string name;
 	std::vector<Parameter> parameters;
-	std::string return_type;
+	TypeExpr return_type;
 	std::vector<StmtPtr> body;
 	int line = 0;
 	int column = 0;
@@ -379,7 +419,7 @@ inline VarDeclStmt::~VarDeclStmt() = default;
 // Sugar for a Dictionary with a fixed key set; nothing survives into IR.
 struct StructField {
 	std::string name;
-	std::string type_hint;
+	TypeExpr type_hint;
 	ExprPtr default_value;
 	int line = 0;
 	int column = 0;

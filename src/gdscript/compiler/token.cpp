@@ -84,6 +84,7 @@ const char* token_type_name(TokenType type) {
 		case TokenType::DOT_DOT: return "DOT_DOT";
 		case TokenType::AT: return "AT";
 		case TokenType::DOLLAR: return "DOLLAR";
+		case TokenType::QUESTION: return "QUESTION";
 		case TokenType::NEWLINE: return "NEWLINE";
 		case TokenType::INDENT: return "INDENT";
 		case TokenType::DEDENT: return "DEDENT";

@@ -25,6 +25,92 @@ static IRInstruction::TypeHint type_hint_from_string(const std::string& type_str
 
 CodeGenerator::CodeGenerator() {}
 
+TypeSet CodeGenerator::type_set_from(const TypeExpr& expr, int line, int column) const {
+	if (expr.empty()) {
+		return {};
+	}
+	if (expr.names.empty()) {
+		error_at("'null' alone is not a type", line, column,
+			"Add another member, for example 'Object | null'");
+	}
+
+	const bool union_type = expr.is_union();
+	TypeSet result;
+	std::unordered_set<std::string> seen;
+	for (const std::string& name : expr.names) {
+		if (!seen.insert(name).second) {
+			error_at("Union type repeats member '" + name + "'", line, column);
+		}
+		if (name == "Variant") {
+			if (union_type) {
+				error_at("'Variant' cannot be a member of a union type", line, column,
+					"Variant already accepts every type; remove the other members");
+			}
+			return {};
+		}
+
+		Variant::Type resolved = Variant::type_from_name(name);
+		if (resolved == Variant::VARIANT_MAX && name == "Object") {
+			resolved = Variant::OBJECT;
+		}
+		if (resolved == Variant::VARIANT_MAX &&
+			(is_global_enum(name) || m_enums.find(name) != m_enums.end())) {
+			resolved = Variant::INT;
+		}
+		if (const StructDecl* structure = find_struct(name)) {
+			if (union_type && !(expr.names.size() == 1 && expr.nullable)) {
+				error_at("Script " + std::string(structure->is_class ? "class" : "struct") +
+					" '" + name + "' cannot be used in a union type yet", line, column);
+			}
+			resolved = Variant::DICTIONARY;
+		}
+		if (resolved == Variant::VARIANT_MAX) {
+			if (!name.empty() && name.front() >= 'A' && name.front() <= 'Z') {
+				resolved = Variant::OBJECT;
+			} else if (union_type) {
+				error_at("Unknown type '" + name + "' in union type", line, column);
+			} else {
+				return {};
+			}
+		}
+		result.mask |= uint64_t(1) << resolved;
+	}
+	if (expr.nullable) {
+		result.mask |= uint64_t(1) << Variant::NIL;
+	}
+	return result;
+}
+
+IRInstruction::TypeHint CodeGenerator::single_type_from(const TypeExpr& type) const {
+	if (type.empty() || type.single_name() == "Variant") {
+		return IRInstruction::TypeHint_NONE;
+	}
+	// Preserve the established single-hint behavior: engine/script class names
+	// stay untyped storage even though a union resolves them to the OBJECT mask.
+	// Only unions use TypeSet as their run-time constraint.
+	const IRInstruction::TypeHint legacy = type_hint_from_string(type.single_name());
+	if (legacy != IRInstruction::TypeHint_NONE) {
+		return legacy;
+	}
+	return m_enums.find(type.single_name()) != m_enums.end()
+		? static_cast<IRInstruction::TypeHint>(Variant::INT)
+		: IRInstruction::TypeHint_NONE;
+}
+
+int32_t CodeGenerator::published_type_from(const TypeExpr& type) const {
+	const TypeSet set = type_set_from(type);
+	if (set.is_nullable_single() && set.non_null().only() == Variant::OBJECT) {
+		return int32_t(Variant::OBJECT);
+	}
+	if (type.is_union()) {
+		return int32_t(FunctionParameter::ANY_TYPE);
+	}
+	if (find_struct(type.single_name()) != nullptr) {
+		return int32_t(Variant::DICTIONARY);
+	}
+	return int32_t(single_type_from(type));
+}
+
 namespace {
 
 // A folded const the host can answer with. Containers are deliberately absent:
@@ -157,6 +243,26 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		}
 	}
 
+	// Validate declaration-only type hints now that enums and script types are
+	// known. Some of these declarations never need executable lowering (signals,
+	// unused records), but malformed unions must still be diagnosed.
+	for (const SignalDecl& signal : program.signals) {
+		for (const Parameter& parameter : signal.parameters) {
+			type_set_from(parameter.type_hint, parameter.line, parameter.column);
+		}
+	}
+	for (const StructDecl& structure : program.structs) {
+		for (const StructField& field : structure.fields) {
+			type_set_from(field.type_hint, field.line, field.column);
+		}
+		for (const FunctionDecl& method : structure.methods) {
+			type_set_from(method.return_type, method.line, method.column);
+			for (const Parameter& parameter : method.parameters) {
+				type_set_from(parameter.type_hint, parameter.line, parameter.column);
+			}
+		}
+	}
+
 	// The host reads these off a script instance; the guest folds them and keeps
 	// no storage. An engine-constant initializer has no compile-time value
 	// (gen_enum_member re-evaluates it per use), so an enum holding one is left
@@ -203,6 +309,8 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	m_global_consts.clear();
 	m_global_const_values.clear();
 	m_global_types.clear();
+	m_global_sets.clear();
+	m_global_type_names.clear();
 	m_global_structs.clear();
 	m_global_is_member.clear();
 	m_global_holds_object.clear();
@@ -228,16 +336,22 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		m_global_is_member.push_back(!global.is_const && !global.is_static);
 
 		// Struct-typed global: DICTIONARY downstream, struct tracked for field checking.
-		const StructDecl* global_struct = find_struct(global.type_hint);
+		const StructDecl* global_struct = find_struct(global.type_hint.sole_name());
 		m_global_structs.push_back(global_struct);
+		const TypeSet declared = type_set_from(global.type_hint, global.line, global.column);
+		m_global_sets.push_back(global.type_hint.is_union() ? declared : TypeSet{});
+		m_global_type_names.push_back(global.type_hint.to_string());
+		if (global.type_hint.is_union() && !declared.is_nullable_single() && global.is_property) {
+			error_at("A union-typed variable cannot be exported", global.line, global.column,
+				"The inspector has no property hint for union types yet");
+		}
 		if (global_struct != nullptr) {
 			m_global_types.push_back(Variant::DICTIONARY);
 		} else {
-			m_global_types.push_back(global.type_hint.empty()
-				? IRInstruction::TypeHint_NONE
-				: type_hint_from_string(global.type_hint));
+			m_global_types.push_back(global.type_hint.is_union()
+				? IRInstruction::TypeHint_NONE : single_type_from(global.type_hint));
 		}
-		m_global_holds_object.push_back(type_hint_names_a_class(global.type_hint));
+		m_global_holds_object.push_back(declared.contains(Variant::OBJECT));
 	}
 
 	collect_property_accessors(program);
@@ -256,7 +370,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		IRGlobalVar& ir_global = ir_program.globals[i];
 
 		ir_global.name = global.name;
-		ir_global.class_name = global.type_hint;
+		ir_global.class_name = global.type_hint.sole_name();
 		ir_global.declaration_line = global.line > 0 ? uint32_t(global.line) : 0;
 		ir_global.is_const = global.is_const;
 		ir_global.is_property = global.is_property;
@@ -277,6 +391,9 @@ IRProgram CodeGenerator::generate(const Program& program) {
 
 		if (!global.type_hint.empty()) {
 			ir_global.type_hint = m_global_types[i];
+			if (global.type_hint.is_union()) {
+				ir_global.declared_set = m_global_sets[i].mask;
+			}
 		}
 
 		if (global.is_onready && global.type_hint.empty() && !global.initializer) {
@@ -302,6 +419,26 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		}
 
 		if (!global.initializer) {
+			if (global.type_hint.is_union()) {
+				if (global.type_hint.nullable) {
+					ir_global.init_type = IRGlobalVar::InitType::NULL_VAL;
+					ir_global.value_type = IRInstruction::TypeHint_NONE;
+				} else {
+					int reg = gen_default_value(global.type_hint, target);
+					if (reg < 0) {
+						error_at("Union type '" + global.type_hint.to_string() +
+							"' has no constructible default", global.line, global.column);
+					}
+					target.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
+						IRValue::imm(static_cast<int64_t>(i)), IRValue::reg(reg));
+					free_register(target, reg);
+					ir_global.init_type = IRGlobalVar::InitType::RUNTIME;
+					ir_global.value_type = IRInstruction::TypeHint_NONE;
+					target_has_init = true;
+				}
+				m_globals_lowered = i + 1;
+				continue;
+			}
 			// `var a: BankAccount` — a struct is a value, so the declaration is a
 			// fresh instance at startup. A class is an object and stays null, as
 			// it does in GDScript; constructing one here would also run its bind
@@ -327,12 +464,19 @@ IRProgram CodeGenerator::generate(const Program& program) {
 
 		{
 			if (fold_global_initializer(global.initializer.get(), ir_global)) {
-				coerce_folded_initializer(ir_global, global.line, global.column);
-				ir_global.value_type = derive_global_value_type(ir_global);
+				coerce_folded_initializer(ir_global, global.type_hint,
+					global.line, global.column);
+				ir_global.value_type = global.type_hint.is_union()
+					? IRInstruction::TypeHint_NONE : derive_global_value_type(ir_global);
 			} else {
 				// Not a compile-time constant: evaluate it at startup.
 				const size_t before = target.ir.instructions.size();
 				int reg = gen_expr(global.initializer.get(), target);
+				if (global.type_hint.is_union()) {
+					reg = coerce_to_declared_type(reg, m_global_sets[i], target,
+						"global '" + global.name + "'", global.line, global.column,
+						global.type_hint.to_string());
+				}
 				// ECALL_CALL_GUEST would reset SP/RA on the level-0 state.
 				for (size_t k = before; k < target.ir.instructions.size(); k++) {
 					if (target.ir.instructions[k].opcode == IROpcode::CALL_HOSTED) {
@@ -346,7 +490,9 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				target.ir.instructions.emplace_back(IROpcode::STORE_GLOBAL,
 					IRValue::imm(static_cast<int64_t>(i)), IRValue::reg(reg));
 				ir_global.init_type = IRGlobalVar::InitType::RUNTIME;
-				ir_global.value_type = ir_global.type_hint != IRInstruction::TypeHint_NONE
+				ir_global.value_type = ir_global.declared_set != 0
+					? IRInstruction::TypeHint_NONE
+					: ir_global.type_hint != IRInstruction::TypeHint_NONE
 					? ir_global.type_hint
 					: get_register_type(target, reg);
 				if (get_register_type(target, reg) == Variant::OBJECT) {
@@ -479,7 +625,10 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const Stru
 	FunctionContext func;
 	func.ir.name = owner != nullptr ? lifted_method_name(*owner, decl.name) : decl.name;
 	func.ir.is_coroutine = decl.is_coroutine;
-	func.ir.return_type_hint = type_hint_from_string(decl.return_type);
+	const TypeSet return_set = type_set_from(decl.return_type, decl.line, decl.column);
+	func.ir.return_type_hint = decl.return_type.is_union()
+		? IRInstruction::TypeHint_NONE : single_type_from(decl.return_type);
+	func.ir.return_set = decl.return_type.is_union() ? return_set.mask : 0;
 	m_current_function = func.ir.name;
 	m_current_chain_link = decl.chain_link;
 	m_current_chain_function = decl.declared_name();
@@ -521,6 +670,8 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const Stru
 		declare_variable(func, param.name, reg, false, nullptr, false, true);
 
 		apply_declared_type(reg, param.type_hint, func);
+		const TypeSet param_set = type_set_from(param.type_hint, param.line, param.column);
+		func.ir.param_sets.push_back(param.type_hint.is_union() ? param_set.mask : 0);
 	}
 	coerce_parameters(decl.parameters, func);
 
@@ -609,12 +760,14 @@ void CodeGenerator::gen_stmt_dispatch(const Stmt* stmt, FunctionContext& func) {
 }
 
 void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func) {
-	const StructDecl* declared_struct = find_struct(stmt->type_hint);
+	const StructDecl* declared_struct = find_struct(stmt->type_hint.sole_name());
+	const TypeSet declared_set = type_set_from(stmt->type_hint, stmt->line, stmt->column);
+	const bool nullable_single = declared_set.is_nullable_single();
 	int reg = -1;
 
 	if (stmt->initializer) {
 		reg = gen_expr(stmt->initializer.get(), func);
-	} else if (declared_struct != nullptr && !declared_struct->is_class) {
+	} else if (declared_struct != nullptr && !declared_struct->is_class && !nullable_single) {
 		// A struct is a value, so a declaration is an instance. A class is an
 		// object, and GDScript leaves 'var a: Inner' null.
 		reg = gen_struct_construct(*declared_struct, {}, NamedArguments{}, func, nullptr);
@@ -630,7 +783,7 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 		}
 	}
 
-	if (declared_struct != nullptr) {
+	if (declared_struct != nullptr && !nullable_single) {
 		const StructDecl* actual = get_register_struct(func, reg);
 		if (actual != nullptr && actual != declared_struct) {
 			error_at("Cannot assign a '" + actual->name + "' to variable '" + stmt->name +
@@ -650,7 +803,7 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 	const bool untyped_null = stmt->type_hint.empty() && stmt->initializer != nullptr &&
 		get_register_type(func, reg) == Variant::NIL;
 
-	const bool declared_variant = stmt->type_hint == "Variant" || untyped_null;
+	const bool declared_variant = stmt->type_hint.single_name() == "Variant" || untyped_null;
 	if (declared_variant) {
 		// Fresh register: clearing type on the initializer's would reach other uses.
 		int untyped_reg = alloc_register(func);
@@ -659,8 +812,14 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 		free_register(func, reg);
 		reg = untyped_reg;
 		set_register_type(func, reg, IRInstruction::TypeHint_NONE);
+	} else if (stmt->type_hint.is_union()) {
+		if (stmt->initializer) {
+			reg = coerce_to_declared_type(reg, declared_set, func,
+				"variable '" + stmt->name + "'", stmt, stmt->type_hint.to_string());
+		}
+		set_register_type(func, reg, IRInstruction::TypeHint_NONE);
 	} else if (!stmt->type_hint.empty()) {
-		IRInstruction::TypeHint type = type_hint_from_string(stmt->type_hint);
+		IRInstruction::TypeHint type = single_type_from(stmt->type_hint);
 		if (type != IRInstruction::TypeHint_NONE) {
 			// Coerce so the Variant payload matches the declared type.
 			reg = coerce_to_declared_type(reg, type, func, "variable '" + stmt->name + "'", stmt);
@@ -674,6 +833,12 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 	}
 
 	declare_variable(func, stmt->name, reg, stmt->is_const, stmt, declared_variant);
+	if (stmt->type_hint.is_union()) {
+		func.declared_sets[reg] = declared_set;
+		if (declared_struct != nullptr && nullable_single) {
+			func.declared_structs[reg] = declared_struct;
+		}
+	}
 	if (stmt->type_hint.empty() && stmt->initializer != nullptr && !declared_variant) {
 		func.reclassifiable_registers.insert(reg);
 	}
@@ -697,6 +862,13 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 	Variable* var = find_variable(func, name);
 	if (!var) {
 		if (int self_reg = class_field_self(name, func); self_reg >= 0) {
+			if (const StructField* field = find_struct_field(*m_current_class, name);
+				field != nullptr && field->type_hint.is_union()) {
+				value_reg = coerce_to_declared_type(value_reg,
+					type_set_from(field->type_hint, field->line, field->column), func,
+					"field '" + name + "' of class '" + m_current_class->name + "'", site,
+					field->type_hint.to_string());
+			}
 			gen_member_store(self_reg, name, value_reg, func);
 			free_register(func, value_reg);
 			return;
@@ -706,13 +878,18 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 				error_at("Cannot assign to const variable: " + name, site);
 			}
 			size_t global_idx = m_global_variables.at(name);
+			if (!m_global_sets[global_idx].any()) {
+				value_reg = coerce_to_declared_type(value_reg, m_global_sets[global_idx], func,
+					"global '" + name + "'", site, m_global_type_names[global_idx]);
+			} else {
+				value_reg = coerce_to_declared_type(value_reg, m_global_types[global_idx], func,
+					"global '" + name + "'", site);
+			}
 			if (!global_setter(global_idx).empty()) {
 				gen_property_set(global_idx, value_reg, func);
 				free_register(func, value_reg);
 				return;
 			}
-			value_reg = coerce_to_declared_type(value_reg, m_global_types[global_idx], func,
-				"global '" + name + "'", site);
 			if (get_register_type(func, value_reg) == Variant::OBJECT) {
 				mark_global_holds_object(static_cast<int64_t>(global_idx));
 			}
@@ -738,7 +915,25 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 		error_at("Cannot assign to const variable: " + name, site);
 	}
 
-	if (var->is_variant) {
+	const auto declared_set = func.declared_sets.find(var->register_num);
+	if (declared_set != func.declared_sets.end()) {
+		const StructDecl* assigned_struct = get_register_struct(func, value_reg);
+		value_reg = coerce_to_declared_type(value_reg, declared_set->second, func,
+			"variable '" + name + "'", site);
+		const IRInstruction::TypeHint assigned_type = get_register_type(func, value_reg);
+		if (var->register_num != value_reg) {
+			func.ir.instructions.emplace_back(IROpcode::MOVE,
+				IRValue::reg(var->register_num), IRValue::reg(value_reg));
+		}
+		set_register_type(func, var->register_num, assigned_type);
+		if (assigned_type == Variant::DICTIONARY && assigned_struct != nullptr) {
+			func.register_structs[var->register_num] = assigned_struct;
+		} else {
+			func.register_structs.erase(var->register_num);
+		}
+		free_register(func, value_reg);
+		return;
+	} else if (var->is_variant) {
 		set_register_type(func, var->register_num, IRInstruction::TypeHint_NONE);
 	} else {
 		reject_reclassification(*var, value_reg, func, site);
@@ -789,10 +984,17 @@ void CodeGenerator::gen_store_to(const Expr* target, int value_reg, FunctionCont
 		{
 			const StructField& field = require_struct_field(*decl, member_expr->member_name,
 				member_expr->line, member_expr->column);
-			if (!field.type_hint.empty()) {
-				value_reg = coerce_to_declared_type(value_reg,
-					type_hint_from_string(field.type_hint), func,
-					"field '" + field.name + "' of struct '" + decl->name + "'", site);
+			if (!field.type_hint.empty() && find_struct(field.type_hint.single_name()) == nullptr) {
+				if (field.type_hint.is_union()) {
+					value_reg = coerce_to_declared_type(value_reg,
+						type_set_from(field.type_hint, field.line, field.column), func,
+						"field '" + field.name + "' of struct '" + decl->name + "'", site,
+						field.type_hint.to_string());
+				} else {
+					value_reg = coerce_to_declared_type(value_reg,
+						single_type_from(field.type_hint), func,
+						"field '" + field.name + "' of struct '" + decl->name + "'", site);
+				}
 			}
 		}
 
@@ -891,6 +1093,13 @@ void CodeGenerator::store_lvalue(const LValue& target, int value_reg, FunctionCo
 
 		case LValue::Kind::GLOBAL: {
 			size_t global_idx = m_global_variables.at(target.name);
+			if (!m_global_sets[global_idx].any()) {
+				value_reg = coerce_to_declared_type(value_reg, m_global_sets[global_idx], func,
+					"global '" + target.name + "'", site, m_global_type_names[global_idx]);
+			} else {
+				value_reg = coerce_to_declared_type(value_reg, m_global_types[global_idx], func,
+					"global '" + target.name + "'", site);
+			}
 			if (!global_setter(global_idx).empty()) {
 				gen_property_set(global_idx, value_reg, func);
 				return;
@@ -937,13 +1146,22 @@ void CodeGenerator::gen_return(const ReturnStmt* stmt, FunctionContext& func) {
 	if (stmt->value) {
 		int reg = gen_expr(stmt->value.get(), func);
 		// Coerce to declared return type before moving to r0.
-		reg = coerce_to_declared_type(reg, type_hint_from_string(func.return_type), func,
-			"the return value of '" + m_current_function + "'", stmt);
+		if (func.return_type.is_union()) {
+			reg = coerce_to_declared_type(reg, type_set_from(func.return_type), func,
+				"the return value of '" + m_current_function + "'", stmt,
+				func.return_type.to_string());
+		} else {
+			reg = coerce_to_declared_type(reg, single_type_from(func.return_type), func,
+				"the return value of '" + m_current_function + "'", stmt);
+		}
 		if (reg != 0) {
 			func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(0), IRValue::reg(reg));
 		}
 		free_register(func, reg);
 	} else {
+		if (func.return_type.is_union() && !type_set_from(func.return_type).contains(Variant::NIL)) {
+			error_at("A bare return cannot satisfy return type " + func.return_type.to_string(), stmt);
+		}
 		// r0 aliases the first parameter; explicit null needed.
 		func.ir.instructions.emplace_back(IROpcode::LOAD_NIL, IRValue::reg(0));
 	}
@@ -960,7 +1178,362 @@ void CodeGenerator::emit_conditional_branch(IROpcode opcode, int cond_reg,
 	func.ir.instructions.push_back(branch);
 }
 
+CodeGenerator::NarrowingInfo CodeGenerator::condition_narrowing(
+	const Expr* condition, FunctionContext& func)
+{
+	if (auto* unary = dynamic_cast<const UnaryExpr*>(condition)) {
+		if (unary->op == UnaryExpr::Op::NOT) {
+			NarrowingInfo result = condition_narrowing(unary->operand.get(), func);
+			std::swap(result.then_set, result.else_set);
+			return result;
+		}
+	}
+	if (auto* logical = dynamic_cast<const BinaryExpr*>(condition)) {
+		if (logical->op == BinaryExpr::Op::AND) {
+			NarrowingInfo result = condition_narrowing(logical->left.get(), func);
+			if (result.valid()) {
+				// False may come from either operand, so only the true path narrows.
+				result.else_set = result.original;
+			}
+			return result;
+		}
+	}
+
+	const VariableExpr* subject = nullptr;
+	TypeSet tested;
+	bool inverse = false;
+	bool truthiness = false;
+	if (auto* type_test = dynamic_cast<const TypeTestExpr*>(condition)) {
+		subject = dynamic_cast<const VariableExpr*>(type_test->value.get());
+		if (subject != nullptr) {
+			tested = type_set_from(type_test->type, type_test->line, type_test->column);
+		}
+	} else if (auto* comparison = dynamic_cast<const BinaryExpr*>(condition)) {
+		if (comparison->op == BinaryExpr::Op::EQ || comparison->op == BinaryExpr::Op::NEQ) {
+			auto is_null = [](const Expr* expr) {
+				auto* literal = dynamic_cast<const LiteralExpr*>(expr);
+				return literal != nullptr && literal->lit_type == LiteralExpr::Type::NULL_VAL;
+			};
+			if (is_null(comparison->left.get())) {
+				subject = dynamic_cast<const VariableExpr*>(comparison->right.get());
+			} else if (is_null(comparison->right.get())) {
+				subject = dynamic_cast<const VariableExpr*>(comparison->left.get());
+			}
+			if (subject != nullptr) {
+				tested.mask = uint64_t(1) << Variant::NIL;
+				inverse = comparison->op == BinaryExpr::Op::NEQ;
+			}
+		}
+	} else {
+		subject = dynamic_cast<const VariableExpr*>(condition);
+		if (subject != nullptr) {
+			tested.mask = uint64_t(1) << Variant::NIL;
+			inverse = true; // truthy means non-null
+			truthiness = true;
+		}
+	}
+	if (subject == nullptr || tested.any()) {
+		return {};
+	}
+
+	Variable* variable = find_variable(func, subject->name);
+	if (variable == nullptr) {
+		if (!is_global_variable(subject->name)) {
+			return {};
+		}
+		const size_t global_idx = m_global_variables.at(subject->name);
+		if (global_idx >= m_global_sets.size() || m_global_sets[global_idx].any() ||
+			global_idx >= m_global_is_member.size() || !m_global_is_member[global_idx] ||
+			!global_getter(global_idx).empty()) {
+			return {};
+		}
+		NarrowingInfo result;
+		result.global_idx = global_idx;
+		result.original = m_global_sets[global_idx];
+		result.then_set = { result.original.mask & tested.mask };
+		result.else_set = { result.original.mask & ~tested.mask };
+		if (inverse) {
+			std::swap(result.then_set, result.else_set);
+		}
+		if (truthiness) {
+			result.else_set = result.original;
+		}
+		if (auto saved = func.narrowed_global_types.find(global_idx);
+			saved != func.narrowed_global_types.end()) {
+			result.had_saved_global = true;
+			result.saved_global = saved->second;
+		}
+		return result;
+	}
+	const auto declared = func.declared_sets.find(variable->register_num);
+	if (declared == func.declared_sets.end()) {
+		return {};
+	}
+	NarrowingInfo result;
+	result.reg = variable->register_num;
+	result.original = declared->second;
+	result.saved_type = get_register_type(func, result.reg);
+	result.saved_struct = get_register_struct(func, result.reg);
+	result.then_set = { result.original.mask & tested.mask };
+	result.else_set = { result.original.mask & ~tested.mask };
+	if (inverse) {
+		std::swap(result.then_set, result.else_set);
+	}
+	if (truthiness) {
+		// A falsy value need not be NIL (0, empty String, Vector2.ZERO, ...).
+		result.else_set = result.original;
+	}
+	return result;
+}
+
+void CodeGenerator::apply_narrowing(const NarrowingInfo& narrowing, bool then_branch,
+	FunctionContext& func)
+{
+	if (!narrowing.valid()) {
+		return;
+	}
+	const TypeSet set = then_branch ? narrowing.then_set : narrowing.else_set;
+	if (narrowing.is_member()) {
+		if (set.single()) {
+			func.narrowed_global_types[narrowing.global_idx] =
+				static_cast<IRInstruction::TypeHint>(set.only());
+		} else {
+			func.narrowed_global_types.erase(narrowing.global_idx);
+		}
+		return;
+	}
+	set_register_type(func, narrowing.reg, set.single()
+		? static_cast<IRInstruction::TypeHint>(set.only())
+		: IRInstruction::TypeHint_NONE);
+	if (set.single() && set.only() == Variant::DICTIONARY) {
+		const auto declared = func.declared_structs.find(narrowing.reg);
+		if (declared != func.declared_structs.end()) {
+			func.register_structs[narrowing.reg] = declared->second;
+		}
+	} else {
+		func.register_structs.erase(narrowing.reg);
+	}
+}
+
+void CodeGenerator::restore_narrowing(const NarrowingInfo& narrowing,
+	FunctionContext& func)
+{
+	if (!narrowing.valid()) {
+		return;
+	}
+	if (narrowing.is_member()) {
+		if (narrowing.had_saved_global) {
+			func.narrowed_global_types[narrowing.global_idx] = narrowing.saved_global;
+		} else {
+			func.narrowed_global_types.erase(narrowing.global_idx);
+		}
+		return;
+	}
+	set_register_type(func, narrowing.reg, narrowing.saved_type);
+	if (narrowing.saved_struct != nullptr) {
+		func.register_structs[narrowing.reg] = narrowing.saved_struct;
+	} else {
+		func.register_structs.erase(narrowing.reg);
+	}
+}
+
+bool CodeGenerator::branch_returns(const std::vector<StmtPtr>& body) {
+	if (body.empty()) {
+		return false;
+	}
+	const Stmt* last = body.back().get();
+	return dynamic_cast<const ReturnStmt*>(last) != nullptr ||
+		dynamic_cast<const BreakStmt*>(last) != nullptr ||
+		dynamic_cast<const ContinueStmt*>(last) != nullptr;
+}
+
+namespace {
+
+bool narrowing_expr_calls_out(const Expr* expr) {
+	if (expr == nullptr) return false;
+	if (dynamic_cast<const CallExpr*>(expr) != nullptr ||
+		dynamic_cast<const AwaitExpr*>(expr) != nullptr ||
+		dynamic_cast<const LambdaExpr*>(expr) != nullptr) {
+		return true;
+	}
+	if (auto* member = dynamic_cast<const MemberCallExpr*>(expr)) {
+		if (member->is_method_call || narrowing_expr_calls_out(member->object.get())) return true;
+		for (const auto& argument : member->arguments) {
+			if (narrowing_expr_calls_out(argument.get())) return true;
+		}
+		return false;
+	}
+	if (auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+		return narrowing_expr_calls_out(binary->left.get()) ||
+			narrowing_expr_calls_out(binary->right.get());
+	}
+	if (auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+		return narrowing_expr_calls_out(unary->operand.get());
+	}
+	if (auto* test = dynamic_cast<const TypeTestExpr*>(expr)) {
+		return narrowing_expr_calls_out(test->value.get());
+	}
+	if (auto* cast = dynamic_cast<const CastExpr*>(expr)) {
+		return narrowing_expr_calls_out(cast->value.get());
+	}
+	if (auto* ternary = dynamic_cast<const TernaryExpr*>(expr)) {
+		return narrowing_expr_calls_out(ternary->condition.get()) ||
+			narrowing_expr_calls_out(ternary->true_value.get()) ||
+			narrowing_expr_calls_out(ternary->false_value.get());
+	}
+	if (auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+		return narrowing_expr_calls_out(index->object.get()) ||
+			narrowing_expr_calls_out(index->index.get());
+	}
+	if (auto* array = dynamic_cast<const ArrayLiteralExpr*>(expr)) {
+		for (const auto& element : array->elements) {
+			if (narrowing_expr_calls_out(element.get())) return true;
+		}
+	}
+	if (auto* dictionary = dynamic_cast<const DictionaryLiteralExpr*>(expr)) {
+		for (const auto& [key, value] : dictionary->elements) {
+			if (narrowing_expr_calls_out(key.get()) || narrowing_expr_calls_out(value.get())) return true;
+		}
+	}
+	return false;
+}
+
+bool narrowing_expr_names(const Expr* expr, const std::string& name) {
+	if (expr == nullptr) return false;
+	if (auto* variable = dynamic_cast<const VariableExpr*>(expr)) return variable->name == name;
+	if (auto* call = dynamic_cast<const CallExpr*>(expr)) {
+		for (const auto& argument : call->arguments) {
+			if (narrowing_expr_names(argument.get(), name)) return true;
+		}
+		return false;
+	}
+	if (auto* member = dynamic_cast<const MemberCallExpr*>(expr)) {
+		if (narrowing_expr_names(member->object.get(), name)) return true;
+		for (const auto& argument : member->arguments) {
+			if (narrowing_expr_names(argument.get(), name)) return true;
+		}
+		return false;
+	}
+	if (auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+		return narrowing_expr_names(binary->left.get(), name) ||
+			narrowing_expr_names(binary->right.get(), name);
+	}
+	if (auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+		return narrowing_expr_names(unary->operand.get(), name);
+	}
+	if (auto* test = dynamic_cast<const TypeTestExpr*>(expr)) {
+		return narrowing_expr_names(test->value.get(), name);
+	}
+	if (auto* cast = dynamic_cast<const CastExpr*>(expr)) {
+		return narrowing_expr_names(cast->value.get(), name);
+	}
+	if (auto* await = dynamic_cast<const AwaitExpr*>(expr)) {
+		return narrowing_expr_names(await->operand.get(), name);
+	}
+	if (auto* ternary = dynamic_cast<const TernaryExpr*>(expr)) {
+		return narrowing_expr_names(ternary->condition.get(), name) ||
+			narrowing_expr_names(ternary->true_value.get(), name) ||
+			narrowing_expr_names(ternary->false_value.get(), name);
+	}
+	if (auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+		return narrowing_expr_names(index->object.get(), name) ||
+			narrowing_expr_names(index->index.get(), name);
+	}
+	if (auto* array = dynamic_cast<const ArrayLiteralExpr*>(expr)) {
+		for (const auto& element : array->elements) {
+			if (narrowing_expr_names(element.get(), name)) return true;
+		}
+	}
+	if (auto* dictionary = dynamic_cast<const DictionaryLiteralExpr*>(expr)) {
+		for (const auto& [key, value] : dictionary->elements) {
+			if (narrowing_expr_names(key.get(), name) || narrowing_expr_names(value.get(), name)) return true;
+		}
+	}
+	return false;
+}
+
+bool narrowing_body_is_safe(const std::vector<StmtPtr>& body, const std::string& member_name);
+
+bool narrowing_pattern_calls_out(const MatchPattern& pattern) {
+	if (narrowing_expr_calls_out(pattern.value.get())) return true;
+	for (const auto& element : pattern.elements) {
+		if (narrowing_pattern_calls_out(*element)) return true;
+	}
+	for (const auto& entry : pattern.entries) {
+		if (narrowing_expr_calls_out(entry.key.get()) ||
+			(entry.value && narrowing_pattern_calls_out(*entry.value))) return true;
+	}
+	return false;
+}
+
+bool narrowing_stmt_is_safe(const Stmt* stmt, const std::string& member_name) {
+	if (auto* expression = dynamic_cast<const ExprStmt*>(stmt)) {
+		return !narrowing_expr_calls_out(expression->expression.get());
+	}
+	if (auto* declaration = dynamic_cast<const VarDeclStmt*>(stmt)) {
+		return !narrowing_expr_calls_out(declaration->initializer.get());
+	}
+	if (auto* assignment = dynamic_cast<const AssignStmt*>(stmt)) {
+		const bool writes_member = assignment->name == member_name ||
+			narrowing_expr_names(assignment->target.get(), member_name);
+		return !writes_member && !narrowing_expr_calls_out(assignment->value.get()) &&
+			!narrowing_expr_calls_out(assignment->target.get());
+	}
+	if (auto* returned = dynamic_cast<const ReturnStmt*>(stmt)) {
+		return !narrowing_expr_calls_out(returned->value.get());
+	}
+	if (auto* branch = dynamic_cast<const IfStmt*>(stmt)) {
+		return !narrowing_expr_calls_out(branch->condition.get()) &&
+			narrowing_body_is_safe(branch->then_branch, member_name) &&
+			narrowing_body_is_safe(branch->else_branch, member_name);
+	}
+	if (auto* loop = dynamic_cast<const WhileStmt*>(stmt)) {
+		return !narrowing_expr_calls_out(loop->condition.get()) &&
+			narrowing_body_is_safe(loop->body, member_name);
+	}
+	if (auto* loop = dynamic_cast<const ForStmt*>(stmt)) {
+		return !narrowing_expr_calls_out(loop->iterable.get()) &&
+			narrowing_body_is_safe(loop->body, member_name);
+	}
+	if (auto* match = dynamic_cast<const MatchStmt*>(stmt)) {
+		if (narrowing_expr_calls_out(match->subject.get())) return false;
+		for (const auto& branch : match->branches) {
+			if (narrowing_expr_calls_out(branch.guard.get()) ||
+				!narrowing_body_is_safe(branch.body, member_name)) return false;
+			for (const auto& pattern : branch.patterns) {
+				if (narrowing_pattern_calls_out(*pattern)) return false;
+			}
+		}
+	}
+	return true;
+}
+
+bool narrowing_body_is_safe(const std::vector<StmtPtr>& body, const std::string& member_name) {
+	for (const auto& statement : body) {
+		if (!narrowing_stmt_is_safe(statement.get(), member_name)) return false;
+	}
+	return true;
+}
+
+} // namespace
+
 void CodeGenerator::gen_if(const IfStmt* stmt, FunctionContext& func) {
+	NarrowingInfo narrowing = condition_narrowing(stmt->condition.get(), func);
+	std::string narrowed_member;
+	if (narrowing.is_member()) {
+		for (const auto& [name, index] : m_global_variables) {
+			if (index == narrowing.global_idx) {
+				narrowed_member = name;
+				break;
+			}
+		}
+	}
+	const bool condition_safe = !narrowing.is_member() ||
+		!narrowing_expr_calls_out(stmt->condition.get());
+	const bool then_safe = !narrowing.is_member() || (condition_safe &&
+		narrowing_body_is_safe(stmt->then_branch, narrowed_member));
+	const bool else_safe = !narrowing.is_member() || (condition_safe &&
+		narrowing_body_is_safe(stmt->else_branch, narrowed_member));
 	std::string else_label = make_label("else");
 	std::string end_label = make_label("endif");
 	int cond_reg = gen_expr(stmt->condition.get(), func);
@@ -973,23 +1546,31 @@ void CodeGenerator::gen_if(const IfStmt* stmt, FunctionContext& func) {
 	free_register(func, cond_reg);
 
 	const int then_scope = push_block_scope(func);
+	if (then_safe) apply_narrowing(narrowing, true, func);
 	for (const auto& s : stmt->then_branch) {
 		gen_stmt(s.get(), func);
 	}
 	pop_block_scope(then_scope, func);
+	if (then_safe) restore_narrowing(narrowing, func);
 
 	if (!stmt->else_branch.empty()) {
 		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
 
 		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(else_label));
 		const int else_scope = push_block_scope(func);
+		if (else_safe) apply_narrowing(narrowing, false, func);
 		for (const auto& s : stmt->else_branch) {
 			gen_stmt(s.get(), func);
 		}
 		pop_block_scope(else_scope, func);
+		if (else_safe) restore_narrowing(narrowing, func);
 	}
 
 	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
+	if (narrowing.valid() && !narrowing.is_member() && stmt->else_branch.empty() &&
+		branch_returns(stmt->then_branch)) {
+		apply_narrowing(narrowing, false, func);
+	}
 }
 
 static constexpr size_t MIN_SWITCH_CASES = 4;
@@ -1126,6 +1707,91 @@ void CodeGenerator::gen_match(const MatchStmt* stmt, FunctionContext& func) {
 	const std::string end_label = make_label("endmatch");
 
 	const int subject_reg = gen_expr(stmt->subject.get(), func);
+	int narrowed_reg = -1;
+	size_t narrowed_global_idx = SIZE_MAX;
+	std::string narrowed_global_name;
+	TypeSet narrowed_declared;
+	IRInstruction::TypeHint narrowed_saved = IRInstruction::TypeHint_NONE;
+	const StructDecl* narrowed_saved_struct = nullptr;
+	bool narrowed_global_had_saved = false;
+	IRInstruction::TypeHint narrowed_global_saved = IRInstruction::TypeHint_NONE;
+	bool subject_is_typeof = false;
+	const VariableExpr* narrowed_subject = dynamic_cast<const VariableExpr*>(stmt->subject.get());
+	if (auto* call = dynamic_cast<const CallExpr*>(stmt->subject.get());
+		call != nullptr && call->function_name == "typeof" && call->arguments.size() == 1) {
+		narrowed_subject = dynamic_cast<const VariableExpr*>(call->arguments[0].get());
+		subject_is_typeof = narrowed_subject != nullptr;
+	}
+	if (narrowed_subject != nullptr) {
+		if (Variable* variable = find_variable(func, narrowed_subject->name)) {
+			const auto declared = func.declared_sets.find(variable->register_num);
+			if (declared != func.declared_sets.end()) {
+				narrowed_reg = variable->register_num;
+				narrowed_declared = declared->second;
+				narrowed_saved = get_register_type(func, narrowed_reg);
+				narrowed_saved_struct = get_register_struct(func, narrowed_reg);
+			}
+		} else if (is_global_variable(narrowed_subject->name)) {
+			const size_t global_idx = m_global_variables.at(narrowed_subject->name);
+			if (global_idx < m_global_sets.size() && !m_global_sets[global_idx].any() &&
+				global_idx < m_global_is_member.size() && m_global_is_member[global_idx] &&
+				global_getter(global_idx).empty()) {
+				narrowed_global_idx = global_idx;
+				narrowed_global_name = narrowed_subject->name;
+				narrowed_declared = m_global_sets[global_idx];
+				if (auto saved = func.narrowed_global_types.find(global_idx);
+					saved != func.narrowed_global_types.end()) {
+					narrowed_global_had_saved = true;
+					narrowed_global_saved = saved->second;
+				}
+			}
+		}
+	}
+	auto arm_narrowing = [&](const MatchStmt::Branch& branch) {
+		TypeSet accepted;
+		for (const auto& pattern : branch.patterns) {
+			if (pattern->kind != MatchPattern::Kind::VALUE) {
+				return TypeSet{};
+			}
+			Variant::Type type = Variant::VARIANT_MAX;
+			if (subject_is_typeof) {
+				IRGlobalVar folded;
+				if (fold_global_initializer(pattern->value.get(), folded) &&
+					folded.init_type == IRGlobalVar::InitType::INT) {
+					const int64_t tag = std::get<int64_t>(folded.init_value);
+					if (tag >= 0 && tag < Variant::VARIANT_MAX) {
+						type = static_cast<Variant::Type>(tag);
+					}
+				}
+				if (type == Variant::VARIANT_MAX) {
+					if (auto* name = dynamic_cast<const VariableExpr*>(pattern->value.get())) {
+						if (const GlobalConstant* constant = find_global_constant(name->name);
+							constant != nullptr && !constant->is_float &&
+							constant->int_value >= 0 && constant->int_value < Variant::VARIANT_MAX) {
+							type = static_cast<Variant::Type>(constant->int_value);
+						}
+					}
+				}
+			} else if (auto* literal = dynamic_cast<const LiteralExpr*>(pattern->value.get())) {
+				switch (literal->lit_type) {
+					case LiteralExpr::Type::INTEGER: type = Variant::INT; break;
+					case LiteralExpr::Type::FLOAT: type = Variant::FLOAT; break;
+					case LiteralExpr::Type::STRING:
+						type = literal->string_type == LiteralExpr::StringType::STRING_NAME
+							? Variant::STRING_NAME : literal->string_type == LiteralExpr::StringType::NODE_PATH
+							? Variant::NODE_PATH : Variant::STRING;
+						break;
+					case LiteralExpr::Type::BOOL: type = Variant::BOOL; break;
+					case LiteralExpr::Type::NULL_VAL: type = Variant::NIL; break;
+				}
+			}
+			if (type == Variant::VARIANT_MAX) {
+				return TypeSet{};
+			}
+			accepted.mask |= uint64_t(1) << type;
+		}
+		return TypeSet{accepted.mask & narrowed_declared.mask};
+	};
 
 	std::vector<std::string> test_labels;
 	std::vector<std::string> body_labels;
@@ -1171,6 +1837,7 @@ void CodeGenerator::gen_match(const MatchStmt* stmt, FunctionContext& func) {
 		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(default_label));
 	}
 
+	TypeSet remaining_narrowed = narrowed_declared;
 	for (size_t i = 0; i < stmt->branches.size(); i++) {
 		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(test_labels[i]));
 
@@ -1182,8 +1849,55 @@ void CodeGenerator::gen_match(const MatchStmt* stmt, FunctionContext& func) {
 		}
 
 		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(body_labels[i]));
+		if (narrowed_reg >= 0 || narrowed_global_idx != SIZE_MAX) {
+			TypeSet accepted = arm_narrowing(stmt->branches[i]);
+			if (stmt->branches[i].is_catch_all()) {
+				accepted = remaining_narrowed;
+			} else if (!accepted.any()) {
+				remaining_narrowed.mask &= ~accepted.mask;
+			}
+			if (narrowed_reg >= 0) {
+				set_register_type(func, narrowed_reg, accepted.single()
+					? static_cast<IRInstruction::TypeHint>(accepted.only())
+					: IRInstruction::TypeHint_NONE);
+				if (accepted.single() && accepted.only() == Variant::DICTIONARY) {
+					const auto structure = func.declared_structs.find(narrowed_reg);
+					if (structure != func.declared_structs.end()) {
+						func.register_structs[narrowed_reg] = structure->second;
+					}
+				} else {
+					func.register_structs.erase(narrowed_reg);
+				}
+			} else {
+				bool safe = !narrowing_expr_calls_out(stmt->branches[i].guard.get()) &&
+					narrowing_body_is_safe(stmt->branches[i].body, narrowed_global_name);
+				for (const auto& pattern : stmt->branches[i].patterns) {
+					safe = safe && !narrowing_pattern_calls_out(*pattern);
+				}
+				if (safe && accepted.single()) {
+					func.narrowed_global_types[narrowed_global_idx] =
+						static_cast<IRInstruction::TypeHint>(accepted.only());
+				} else {
+					func.narrowed_global_types.erase(narrowed_global_idx);
+				}
+			}
+		}
 		for (const auto& body_stmt : stmt->branches[i].body) {
 			gen_stmt(body_stmt.get(), func);
+		}
+		if (narrowed_reg >= 0) {
+			set_register_type(func, narrowed_reg, narrowed_saved);
+			if (narrowed_saved_struct != nullptr) {
+				func.register_structs[narrowed_reg] = narrowed_saved_struct;
+			} else {
+				func.register_structs.erase(narrowed_reg);
+			}
+		} else if (narrowed_global_idx != SIZE_MAX) {
+			if (narrowed_global_had_saved) {
+				func.narrowed_global_types[narrowed_global_idx] = narrowed_global_saved;
+			} else {
+				func.narrowed_global_types.erase(narrowed_global_idx);
+			}
 		}
 		pop_block_scope(arm_scope, func);
 		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
@@ -2549,10 +3263,15 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 		}
 		int result_reg = alloc_register(func);
 		func.ir.instructions.emplace_back(IROpcode::LOAD_GLOBAL, IRValue::reg(result_reg), IRValue::imm(global_idx));
-		set_register_struct(func, result_reg, m_global_structs[global_idx]);
+		if (m_global_sets[global_idx].any()) {
+			set_register_struct(func, result_reg, m_global_structs[global_idx]);
+		}
 		// Propagate declared type so member access skips the run-time tag test.
 		if (m_global_types[global_idx] != IRInstruction::TypeHint_NONE) {
 			set_register_type(func, result_reg, m_global_types[global_idx]);
+		} else if (auto narrowed = func.narrowed_global_types.find(global_idx);
+			narrowed != func.narrowed_global_types.end()) {
+			set_register_type(func, result_reg, narrowed->second);
 		}
 		return result_reg;
 	}
@@ -2949,7 +3668,10 @@ IRFunction CodeGenerator::generate_lambda_function(const FunctionDecl& decl,
 	FunctionContext func;
 	func.ir.name = decl.name.empty() ? std::string("lambda") : decl.name;
 	func.ir.is_coroutine = decl.is_coroutine;
-	func.ir.return_type_hint = type_hint_from_string(decl.return_type);
+	const TypeSet return_set = type_set_from(decl.return_type, decl.line, decl.column);
+	func.ir.return_type_hint = decl.return_type.is_union()
+		? IRInstruction::TypeHint_NONE : single_type_from(decl.return_type);
+	func.ir.return_set = decl.return_type.is_union() ? return_set.mask : 0;
 	func.return_type = decl.return_type;
 
 	push_scope(func);
@@ -2967,6 +3689,8 @@ IRFunction CodeGenerator::generate_lambda_function(const FunctionDecl& decl,
 		int reg = alloc_register(func);
 		declare_variable(func, param.name, reg, false, nullptr, false, true);
 		apply_declared_type(reg, param.type_hint, func);
+		const TypeSet param_set = type_set_from(param.type_hint, param.line, param.column);
+		func.ir.param_sets.push_back(param.type_hint.is_union() ? param_set.mask : 0);
 	}
 	coerce_parameters(decl.parameters, func);
 
@@ -3041,7 +3765,17 @@ int CodeGenerator::gen_logical(const BinaryExpr* expr, FunctionContext& func) {
 	func.ir.instructions.push_back(left_branch);
 	free_register(func, left_reg);
 
+	NarrowingInfo rhs_narrowing;
+	if (is_and) {
+		rhs_narrowing = condition_narrowing(expr->left.get(), func);
+		if (!rhs_narrowing.is_member() || !narrowing_expr_calls_out(expr->right.get())) {
+			apply_narrowing(rhs_narrowing, true, func);
+		} else {
+			rhs_narrowing = {};
+		}
+	}
 	int right_reg = gen_expr(expr->right.get(), func);
+	restore_narrowing(rhs_narrowing, func);
 	IRInstruction right_branch(short_circuit_branch, IRValue::reg(right_reg), ir_label(end_label));
 	right_branch.type_hint = get_register_type(func, right_reg);
 	func.ir.instructions.push_back(right_branch);
@@ -3204,6 +3938,35 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 
 	IRInstruction::TypeHint left_type = get_register_type(func, left_reg);
 	IRInstruction::TypeHint right_type = get_register_type(func, right_reg);
+
+	// Equality with null is a tag test. Besides avoiding a host Variant
+	// evaluation, this folds immediately in a narrowed branch.
+	if ((expr->op == BinaryExpr::Op::EQ || expr->op == BinaryExpr::Op::NEQ) &&
+		(left_type == Variant::NIL || right_type == Variant::NIL)) {
+		const int value_reg = left_type == Variant::NIL ? right_reg : left_reg;
+		const IRInstruction::TypeHint value_type = get_register_type(func, value_reg);
+		if (value_type != IRInstruction::TypeHint_NONE) {
+			const bool equal = value_type == Variant::NIL;
+			func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(result_reg),
+				IRValue::imm((expr->op == BinaryExpr::Op::EQ) == equal ? 1 : 0));
+		} else if (expr->op == BinaryExpr::Op::EQ) {
+			func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(result_reg),
+				IRValue::reg(value_reg), IRValue::imm(static_cast<int64_t>(Variant::NIL)));
+		} else {
+			const int is_nil = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_nil),
+				IRValue::reg(value_reg), IRValue::imm(static_cast<int64_t>(Variant::NIL)));
+			set_register_type(func, is_nil, Variant::BOOL);
+			IRInstruction negate(IROpcode::NOT, IRValue::reg(result_reg), IRValue::reg(is_nil));
+			negate.type_hint = Variant::BOOL;
+			func.ir.instructions.push_back(negate);
+			free_register(func, is_nil);
+		}
+		set_register_type(func, result_reg, Variant::BOOL);
+		free_register(func, left_reg);
+		free_register(func, right_reg);
+		return result_reg;
+	}
 
 	bool is_arithmetic = (expr->op == BinaryExpr::Op::ADD ||
 	                      expr->op == BinaryExpr::Op::SUB ||
@@ -3623,14 +4386,19 @@ int CodeGenerator::gen_class_cast(const CastExpr* expr, FunctionContext& func) {
 }
 
 int CodeGenerator::gen_type_test(const TypeTestExpr* expr, FunctionContext& func) {
-	const IRInstruction::TypeHint tested = type_hint_from_string(expr->type_name);
-	if (tested == IRInstruction::TypeHint_NONE) {
+	const std::string& single_name = expr->type.single_name();
+	const IRInstruction::TypeHint builtin = single_name.empty()
+		? IRInstruction::TypeHint_NONE : type_hint_from_string(single_name);
+	if (!single_name.empty() && builtin == IRInstruction::TypeHint_NONE &&
+		single_name != "Variant" &&
+		m_enums.find(single_name) == m_enums.end()) {
 		// Class name: requires engine-side inheritance check.
 		int value_reg = gen_expr(expr->value.get(), func);
-		int result_reg = gen_class_test(value_reg, expr->type_name, func);
+		int result_reg = gen_class_test(value_reg, single_name, func);
 		free_register(func, value_reg);
 		return result_reg;
 	}
+	const TypeSet tested_set = type_set_from(expr->type, expr->line, expr->column);
 
 	int value_reg = gen_expr(expr->value.get(), func);
 	int result_reg = alloc_register(func);
@@ -3639,10 +4407,12 @@ int CodeGenerator::gen_type_test(const TypeTestExpr* expr, FunctionContext& func
 	const IRInstruction::TypeHint known = get_register_type(func, value_reg);
 	if (known != IRInstruction::TypeHint_NONE) {
 		func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(result_reg),
-			IRValue::imm(known == tested ? 1 : 0));
+			IRValue::imm(tested_set.contains(static_cast<Variant::Type>(known)) ? 1 : 0));
 	} else {
-		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(result_reg),
-			IRValue::reg(value_reg), IRValue::imm(static_cast<int64_t>(tested)));
+		func.ir.instructions.emplace_back(expr->type.is_union() ? IROpcode::TYPE_TEST_MASK : IROpcode::TYPE_TEST,
+			IRValue::reg(result_reg), IRValue::reg(value_reg),
+			IRValue::imm(expr->type.is_union() ? static_cast<int64_t>(tested_set.mask)
+			                                : static_cast<int64_t>(tested_set.only())));
 	}
 	set_register_type(func, result_reg, Variant::BOOL);
 
@@ -3669,6 +4439,7 @@ int CodeGenerator::gen_assert(const CallExpr* expr, FunctionContext& func) {
 	}
 
 	const std::string passed_label = make_label("assert_passed");
+	const NarrowingInfo narrowing = condition_narrowing(expr->arguments[0].get(), func);
 
 	int cond_reg = gen_expr(expr->arguments[0].get(), func);
 	emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, cond_reg, passed_label, func);
@@ -3686,6 +4457,11 @@ int CodeGenerator::gen_assert(const CallExpr* expr, FunctionContext& func) {
 		func.ir.instructions.push_back(throw_instr);
 	}
 	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(passed_label));
+	// A member can change on any later call, so an assertion cannot safely
+	// narrow its re-reads for the rest of the function.
+	if (!narrowing.is_member()) {
+		apply_narrowing(narrowing, true, func);
+	}
 
 	// Parsed as a call: must leave a value. Returns NIL.
 	int result_reg = alloc_register(func);
@@ -3813,7 +4589,7 @@ int CodeGenerator::emit_local_call(const std::string& name, std::vector<int> arg
 		bool exact_typed_arguments = true;
 		const auto& params = sig->second->parameters;
 		for (size_t i = 0; i < params.size(); i++) {
-			const IRInstruction::TypeHint declared = type_hint_from_string(params[i].type_hint);
+			const IRInstruction::TypeHint declared = single_type_from(params[i].type_hint);
 			if (declared != Variant::INT && declared != Variant::FLOAT && declared != Variant::BOOL) {
 				continue;
 			}
@@ -3917,6 +4693,11 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 	if (expr->function_name == "typeof") {
 		if (arg_regs.size() != 1) {
 			error_at("typeof() takes exactly 1 argument", expr);
+		}
+		const IRInstruction::TypeHint known = get_register_type(func, arg_regs[0]);
+		if (known != IRInstruction::TypeHint_NONE) {
+			free_register(func, arg_regs[0]);
+			return gen_int_immediate(static_cast<int64_t>(known), func);
 		}
 		int result_reg = alloc_register(func);
 		IRInstruction instr(IROpcode::TYPE_OF);
@@ -4713,7 +5494,7 @@ void CodeGenerator::register_class_constants(const Program& program) {
 			folded.name = decl.name + "." + constant.name;
 			folded.is_const = true;
 			if (!constant.type_hint.empty()) {
-				folded.type_hint = type_hint_from_string(constant.type_hint);
+				folded.type_hint = single_type_from(constant.type_hint);
 			}
 			if (!fold_global_initializer(constant.default_value.get(), folded)
 				|| folded.init_type == IRGlobalVar::InitType::RUNTIME) {
@@ -4722,7 +5503,8 @@ void CodeGenerator::register_class_constants(const Program& program) {
 					"A class holds no storage of its own, so its constants have to fold. "
 					"Move it to a file-level 'const', or make it a field with a default");
 			}
-			coerce_folded_initializer(folded, constant.line, constant.column);
+			coerce_folded_initializer(folded, constant.type_hint,
+				constant.line, constant.column);
 			folded.value_type = derive_global_value_type(folded);
 			m_class_constants[folded.name] = std::move(folded);
 		}
@@ -4857,9 +5639,7 @@ FunctionSignature CodeGenerator::build_signal_signature(const SignalDecl& decl) 
 	for (const Parameter& param : decl.parameters) {
 		FunctionParameter out;
 		out.name = param.name;
-		out.type = find_struct(param.type_hint) != nullptr
-			? int32_t(Variant::DICTIONARY)
-			: int32_t(type_hint_from_string(param.type_hint));
+		out.type = published_type_from(param.type_hint);
 		sig.parameters.push_back(std::move(out));
 	}
 
@@ -4980,16 +5760,12 @@ FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const
 	// Coroutine return type is Variant (may be Signal or declared type).
 	sig.return_type = decl.is_coroutine
 		? int32_t(FunctionParameter::ANY_TYPE)
-		: (find_struct(decl.return_type) != nullptr
-			? int32_t(Variant::DICTIONARY)
-			: int32_t(type_hint_from_string(decl.return_type)));
+		: published_type_from(decl.return_type);
 
 	for (const Parameter& param : decl.parameters) {
 		FunctionParameter out;
 		out.name = param.name;
-		out.type = find_struct(param.type_hint) != nullptr
-			? int32_t(Variant::DICTIONARY)
-			: int32_t(type_hint_from_string(param.type_hint));
+		out.type = published_type_from(param.type_hint);
 
 		IRGlobalVar folded;
 		if (param.default_value && fold_global_initializer(param.default_value.get(), folded)) {
@@ -5029,9 +5805,7 @@ ClassSignature CodeGenerator::build_class_signature(const StructDecl& decl,
 	for (const StructField* field : struct_fields(decl)) {
 		ClassField published;
 		published.name = field->name;
-		published.type = find_struct(field->type_hint) != nullptr
-			? int32_t(Variant::DICTIONARY)
-			: int32_t(type_hint_from_string(field->type_hint));
+		published.type = published_type_from(field->type_hint);
 		out.fields.push_back(std::move(published));
 	}
 	for (const FunctionDecl& method : decl.methods) {
@@ -5040,15 +5814,24 @@ ClassSignature CodeGenerator::build_class_signature(const StructDecl& decl,
 	return out;
 }
 
-void CodeGenerator::apply_declared_type(int reg, const std::string& type_hint, FunctionContext& func) {
+void CodeGenerator::apply_declared_type(int reg, const TypeExpr& type_hint, FunctionContext& func) {
 	if (type_hint.empty()) {
 		return;
 	}
-	if (const StructDecl* decl = find_struct(type_hint)) {
+	if (type_hint.is_union()) {
+		func.declared_sets[reg] = type_set_from(type_hint);
+		if (const StructDecl* decl = find_struct(type_hint.sole_name())) {
+			func.declared_structs[reg] = decl;
+		}
+		set_register_type(func, reg, IRInstruction::TypeHint_NONE);
+		func.register_structs.erase(reg);
+		return;
+	}
+	if (const StructDecl* decl = find_struct(type_hint.single_name())) {
 		set_register_struct(func, reg, decl);
 		return;
 	}
-	const IRInstruction::TypeHint type = type_hint_from_string(type_hint);
+	const IRInstruction::TypeHint type = single_type_from(type_hint);
 	if (type != IRInstruction::TypeHint_NONE) {
 		set_register_type(func, reg, type);
 	}
@@ -5058,7 +5841,17 @@ void CodeGenerator::coerce_parameters(const std::vector<Parameter>& parameters,
 	FunctionContext& func)
 {
 	for (const auto& param : parameters) {
-		const IRInstruction::TypeHint declared = type_hint_from_string(param.type_hint);
+		if (param.type_hint.is_union()) {
+			Variable* var = find_variable(func, param.name);
+			if (var != nullptr) {
+				coerce_to_declared_type(var->register_num,
+					type_set_from(param.type_hint, param.line, param.column), func,
+					"parameter '" + param.name + "'", param.line, param.column,
+					param.type_hint.to_string());
+			}
+			continue;
+		}
+		const IRInstruction::TypeHint declared = single_type_from(param.type_hint);
 		if (declared != Variant::INT && declared != Variant::FLOAT && declared != Variant::BOOL) {
 			continue;
 		}
@@ -5142,8 +5935,31 @@ void CodeGenerator::gen_dict_set(int obj_reg, const std::string& key, int value_
 	free_register(func, key_reg);
 }
 
-int CodeGenerator::gen_default_value(const std::string& type_hint, FunctionContext& func) {
-	switch (type_hint_from_string(type_hint)) {
+int CodeGenerator::gen_default_value(const TypeExpr& type_hint, FunctionContext& func) {
+	if (type_hint.is_union()) {
+		if (type_hint.nullable) {
+			int reg = alloc_register(func);
+			IRInstruction nil(IROpcode::LOAD_NIL, IRValue::reg(reg));
+			nil.type_hint = Variant::NIL;
+			func.ir.instructions.push_back(nil);
+			set_register_type(func, reg, Variant::NIL);
+			return reg;
+		}
+		TypeExpr first;
+		first.names.push_back(type_hint.names.front());
+		int reg = gen_default_value(first, func);
+		if (reg >= 0 || type_set_from(first).only() != Variant::OBJECT) {
+			return reg;
+		}
+		reg = alloc_register(func);
+		IRInstruction nil(IROpcode::LOAD_NIL, IRValue::reg(reg));
+		nil.type_hint = Variant::NIL;
+		func.ir.instructions.push_back(nil);
+		set_register_type(func, reg, Variant::NIL);
+		return reg;
+	}
+	const std::string& name = type_hint.single_name();
+	switch (single_type_from(type_hint)) {
 		case Variant::INT: {
 			int reg = alloc_register(func);
 			IRInstruction load(IROpcode::LOAD_IMM, IRValue::reg(reg), IRValue::imm(0));
@@ -5182,11 +5998,11 @@ int CodeGenerator::gen_default_value(const std::string& type_hint, FunctionConte
 	}
 
 	// Guest-constructible: zero-argument form.
-	if (is_inline_primitive_constructor(type_hint)) {
-		return gen_inline_constructor(type_hint, {}, func, nullptr);
+	if (is_inline_primitive_constructor(name)) {
+		return gen_inline_constructor(name, {}, func, nullptr);
 	}
-	if (is_host_constructor(type_hint)) {
-		return gen_host_constructor(type_hint, {}, func, nullptr);
+	if (is_host_constructor(name)) {
+		return gen_host_constructor(name, {}, func, nullptr);
 	}
 
 	// No guest-constructible default.
@@ -5198,10 +6014,15 @@ int CodeGenerator::gen_field_default(const StructDecl& decl, const StructField& 
 {
 	if (field.default_value) {
 		int reg = gen_expr(field.default_value.get(), func);
-		if (!field.type_hint.empty()) {
-			reg = coerce_to_declared_type(reg, type_hint_from_string(field.type_hint), func,
-				"field '" + field.name + "' of struct '" + decl.name + "'",
-				field.line, field.column);
+		if (!field.type_hint.empty() && find_struct(field.type_hint.single_name()) == nullptr) {
+			reg = field.type_hint.is_union()
+				? coerce_to_declared_type(reg,
+					type_set_from(field.type_hint, field.line, field.column), func,
+					"field '" + field.name + "' of struct '" + decl.name + "'",
+					field.line, field.column, field.type_hint.to_string())
+				: coerce_to_declared_type(reg, single_type_from(field.type_hint), func,
+					"field '" + field.name + "' of struct '" + decl.name + "'",
+					field.line, field.column);
 		}
 		apply_declared_type(reg, field.type_hint, func);
 		return reg;
@@ -5209,7 +6030,7 @@ int CodeGenerator::gen_field_default(const StructDecl& decl, const StructField& 
 
 	// Nested struct: default to a fresh instance. A field declared with a class
 	// type holds an object, and GDScript leaves that null.
-	if (const StructDecl* nested = find_struct(field.type_hint); nested != nullptr && !nested->is_class) {
+	if (const StructDecl* nested = find_struct(field.type_hint.single_name()); nested != nullptr && !nested->is_class) {
 		for (const StructDecl* active : m_struct_default_stack) {
 			if (active != nested) {
 				continue;
@@ -5649,10 +6470,14 @@ int CodeGenerator::gen_struct_construct(const StructDecl& decl, const std::vecto
 	for (size_t i = 0; i < arguments.size(); i++) {
 		const StructField& field = *fields[field_of_argument[i]];
 		int reg = gen_expr(arguments[i].get(), func);
-		if (!field.type_hint.empty()) {
-			reg = coerce_to_declared_type(reg, type_hint_from_string(field.type_hint), func,
-				"field '" + field.name + "' of struct '" + decl.name + "'",
-				arguments[i]->line, arguments[i]->column);
+		if (!field.type_hint.empty() && find_struct(field.type_hint.single_name()) == nullptr) {
+			reg = field.type_hint.is_union()
+				? coerce_to_declared_type(reg, type_set_from(field.type_hint), func,
+					"field '" + field.name + "' of struct '" + decl.name + "'",
+					arguments[i]->line, arguments[i]->column, field.type_hint.to_string())
+				: coerce_to_declared_type(reg, single_type_from(field.type_hint), func,
+					"field '" + field.name + "' of struct '" + decl.name + "'",
+					arguments[i]->line, arguments[i]->column);
 		}
 		apply_declared_type(reg, field.type_hint, func);
 		value_regs[field_of_argument[i]] = reg;
@@ -6878,13 +7703,17 @@ int CodeGenerator::coerce_to_declared_type(int reg, IRInstruction::TypeHint decl
 }
 
 int CodeGenerator::coerce_to_declared_type(int reg, IRInstruction::TypeHint declared,
-	FunctionContext& func, const std::string& what, int line, int column)
+	FunctionContext& func, const std::string& what, int line, int column,
+	const std::string& display)
 {
 	if (declared == IRInstruction::TypeHint_NONE) {
 		return reg;
 	}
 	const IRInstruction::TypeHint actual = get_register_type(func, reg);
 	if (actual == IRInstruction::TypeHint_NONE || actual == declared) {
+		return reg;
+	}
+	if (actual == Variant::NIL && declared == Variant::OBJECT) {
 		return reg;
 	}
 
@@ -6910,14 +7739,95 @@ int CodeGenerator::coerce_to_declared_type(int reg, IRInstruction::TypeHint decl
 		}
 	}
 
+	const std::string expected = display.empty()
+		? std::string(variant_type_name(declared)) : display;
+	if (actual == Variant::NIL) {
+		error_at("Cannot assign null to " + what + " of type " + expected, line, column,
+			"Declare it as '" + expected + "?' to allow null");
+	}
 	error_at("Cannot assign a value of type " + std::string(variant_type_name(actual)) +
-		" to " + what + " of type " + std::string(variant_type_name(declared)), line, column);
+		" to " + what + " of type " + expected, line, column);
 }
 
-void CodeGenerator::coerce_folded_initializer(IRGlobalVar& global, int line, int column) const {
-	if (global.type_hint == IRInstruction::TypeHint_NONE ||
-	    global.init_type == IRGlobalVar::InitType::NULL_VAL) {
+int CodeGenerator::coerce_to_declared_type(int reg, TypeSet declared,
+	FunctionContext& func, const std::string& what, const Stmt* site,
+	const std::string& display)
+{
+	return coerce_to_declared_type(reg, declared, func, what,
+		site != nullptr ? site->line : 0, site != nullptr ? site->column : 0, display);
+}
+
+int CodeGenerator::coerce_to_declared_type(int reg, TypeSet declared,
+	FunctionContext& func, const std::string& what, int line, int column,
+	const std::string& display)
+{
+	if (declared.any()) {
+		return reg;
+	}
+	const std::string expected = display.empty() ? declared.to_string() : display;
+	const IRInstruction::TypeHint actual = get_register_type(func, reg);
+	if (actual != IRInstruction::TypeHint_NONE) {
+		if (declared.contains(static_cast<Variant::Type>(actual))) {
+			return reg;
+		}
+		if (declared.is_nullable_single() && actual != Variant::NIL) {
+			return coerce_to_declared_type(reg,
+				static_cast<IRInstruction::TypeHint>(declared.non_null().only()), func,
+				what, line, column, expected);
+		}
+		error_at("Cannot assign a value of type " + std::string(variant_type_name(actual)) +
+			" to " + what + " of type " + expected, line, column);
+	}
+
+	const int accepted = alloc_register(func);
+	IRInstruction test(IROpcode::TYPE_TEST_MASK, IRValue::reg(accepted), IRValue::reg(reg),
+		IRValue::imm(static_cast<int64_t>(declared.mask)));
+	test.type_hint = Variant::BOOL;
+	func.ir.instructions.push_back(test);
+	set_register_type(func, accepted, Variant::BOOL);
+	const std::string passed = make_label("union_type_ok");
+	emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, accepted, passed, func);
+	free_register(func, accepted);
+
+	IRInstruction fail(IROpcode::THROW, ir_str("TypeError"),
+		ir_str("Cannot assign a value to " + what + " of type " + expected));
+	fail.operands.push_back(IRValue::imm(0));
+	func.ir.instructions.push_back(fail);
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(passed));
+	return reg;
+}
+
+void CodeGenerator::coerce_folded_initializer(IRGlobalVar& global,
+	const TypeExpr& declared_expr, int line, int column) const {
+	if (global.declared_set != 0) {
+		IRGlobalVar probe = global;
+		probe.type_hint = IRInstruction::TypeHint_NONE;
+		const IRInstruction::TypeHint actual = derive_global_value_type(probe);
+		const TypeSet declared{global.declared_set};
+		if (declared.is_nullable_single() && actual == Variant::INT &&
+			declared.non_null().only() == Variant::FLOAT) {
+			global.init_type = IRGlobalVar::InitType::FLOAT;
+			global.init_value = static_cast<double>(std::get<int64_t>(global.init_value));
+			return;
+		}
+		if (actual != IRInstruction::TypeHint_NONE &&
+			!declared.contains(static_cast<Variant::Type>(actual))) {
+			error_at("Global variable '" + global.name + "' is declared as " +
+				declared_expr.to_string() + " but initialized with a value of type " +
+				std::string(variant_type_name(actual)), line, column);
+		}
 		return;
+	}
+	if (global.type_hint == IRInstruction::TypeHint_NONE) {
+		return;
+	}
+	if (global.init_type == IRGlobalVar::InitType::NULL_VAL) {
+		if (global.type_hint == Variant::OBJECT) {
+			return;
+		}
+		const std::string expected = declared_expr.to_string();
+		error_at("Cannot assign null to global '" + global.name + "' of type " + expected,
+			line, column, "Declare it as '" + expected + "?' to allow null");
 	}
 
 	// `var f: float = 0` folds INT to FLOAT.

@@ -267,7 +267,7 @@ func sum(a, b, c, d):
 func test():
 	var x = 10
 )";
-	execute_int(src_no_ret, "test"); // Should not crash
+	assert(std::holds_alternative<std::monostate>(execute(src_no_ret, "test")));
 
 	// Bare return
 	std::string src_bare_ret = R"(
@@ -275,7 +275,7 @@ func test():
 	var x = 10
 	return
 )";
-	execute_int(src_bare_ret, "test"); // Should not crash
+	assert(std::holds_alternative<std::monostate>(execute(src_bare_ret, "test")));
 
 	std::cout << "  ✓ Function features work" << std::endl;
 }
@@ -346,7 +346,7 @@ func test():
 func test():
 	pass
 )";
-	execute_int(src_empty, "test"); // Should not crash
+	assert(std::holds_alternative<std::monostate>(execute(src_empty, "test")));
 
 	std::cout << "  ✓ Edge cases handled" << std::endl;
 }

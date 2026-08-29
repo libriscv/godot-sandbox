@@ -207,12 +207,22 @@ void test_an_object_store_is_a_raw_move() {
 void test_an_untyped_slot_stores_through_the_host() {
 	std::cout << "Testing which stores go through ECALL_VSTORE_GLOBAL..." << std::endl;
 
-	check(syscalls_in(
+	const std::string object_member =
 			  "var player: Node\n"
 			  "func setup():\n"
-			  "\tplayer = get_node(\"Player\")\n",
-			  ECALL_VSTORE_GLOBAL) == 1,
+			  "\tplayer = get_node(\"Player\")\n";
+	check(syscalls_in(object_member, ECALL_VSTORE_GLOBAL) == 1,
 			"a class-typed slot is untyped as far as the Variant tag goes");
+
+	const std::string nullable_object_member =
+			  "var player: Node?\n"
+			  "func setup():\n"
+			  "\tplayer = get_node(\"Player\")\n";
+	check(syscalls_in(nullable_object_member, ECALL_VSTORE_GLOBAL) ==
+			syscalls_in(object_member, ECALL_VSTORE_GLOBAL),
+			"a nullable class slot uses the same host Variant store path");
+	check(retains_in(nullable_object_member) == retains_in(object_member),
+			"and nullable spelling does not add an object retain");
 
 	check(syscalls_in(
 			  "var anything = null\n"

@@ -161,6 +161,8 @@ if (BUILD_TESTING)
 	add_gdscript_test(test_encoders tests/test_encoders.cpp)
 	add_gdscript_test(test_gdsmeta tests/test_gdsmeta.cpp)
 	add_gdscript_test(test_fuzz tests/test_fuzz.cpp)
+	add_gdscript_test(test_union_types tests/test_union_types.cpp)
+	add_gdscript_test(test_nullable_types tests/test_nullable_types.cpp)
 
 	# Differential testing: the same programs through the IR interpreter and
 	# through a real RISC-V machine. libriscv is already a dependency of the

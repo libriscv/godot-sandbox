@@ -329,11 +329,33 @@ private:
 		// The declaration is in scope for everything after it, including the
 		// inner scopes an if or a while opens.
 		m_scopes.back().push_back({ name, type, /*assignable=*/true });
-		return indent(depth) + "var " + name + " = " + value + "\n";
+		std::string hint;
+		if (m_random.chance(15)) {
+			hint = type == GenType::BOOL ? ": bool | int"
+				: ": int | float";
+		}
+		return indent(depth) + "var " + name + hint + " = " + value + "\n";
+	}
+
+	std::string exercise_nullable(GenType type, int depth) {
+		const std::string name = "maybe" + std::to_string(m_next_variable++);
+		const char* type_name = type == GenType::BOOL ? "bool"
+			: type == GenType::FLOAT ? "float" : "int";
+		const std::string value = m_random.chance(40)
+			? "null" : generate_expression(type, m_options.max_expression_depth - 1);
+		std::string out = indent(depth) + "var " + name + ": " + type_name + "? = " + value + "\n";
+		out += indent(depth) + "if " + name + " != null:\n";
+		if (type == GenType::BOOL) {
+			out += indent(depth + 1) + name + " = not " + name + "\n";
+		} else {
+			out += indent(depth + 1) + name + " = " + name +
+				(type == GenType::FLOAT ? " + 1.0\n" : " + 1\n");
+		}
+		return out;
 	}
 
 	std::string generate_statement(int depth, int nesting) {
-		const uint32_t choice = m_random.below(10);
+		const uint32_t choice = m_random.below(12);
 
 		// A declaration that shadows an existing name, which is where locals
 		// beating globals and inner blocks beating outer ones is decided.
@@ -357,6 +379,10 @@ private:
 
 		if (choice < 8 && nesting < m_options.max_nesting) {
 			return generate_if(depth, nesting);
+		}
+
+		if (choice == 10) {
+			return exercise_nullable(pick_type(), depth);
 		}
 
 		if (m_options.allow_loops && nesting < m_options.max_nesting) {

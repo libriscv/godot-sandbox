@@ -423,7 +423,9 @@ struct Outcome {
 // The IR interpreter's answer, expressed the way the machine reports one.
 GuestValue interpreter_value(const IRInterpreter::Value& value) {
 	GuestValue result;
-	if (std::holds_alternative<bool>(value)) {
+	if (std::holds_alternative<std::monostate>(value)) {
+		result.type = Variant::NIL;
+	} else if (std::holds_alternative<bool>(value)) {
 		result.type = Variant::BOOL;
 		result.as_int = std::get<bool>(value) ? 1 : 0;
 	} else if (std::holds_alternative<int64_t>(value)) {

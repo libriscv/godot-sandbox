@@ -6111,6 +6111,207 @@ func test_sgd_narrows_a_property_to_the_declared_type():
 
 	node.free()
 
+# -= Union types =-
+
+const UNION_SOURCE = """
+var held: Node | Dictionary = {}
+
+func touch():
+	return 1
+
+func store(value: Node | Dictionary):
+	held = value
+	touch()
+	return held
+
+func guarded(value: int | String):
+	return value
+
+func describe(value: int | String) -> String:
+	if value is int:
+		return str(value + 1)
+	return value + "!"
+"""
+
+func _union_node() -> Node:
+	var path = "user://temp_union_types.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(UNION_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the union-typed script should load as a SafeGDScript resource")
+	if script == null:
+		return null
+	var node = Node.new()
+	node.set_script(script)
+	node.set_instructions_max(100000)
+	return node
+
+func _union_reference(value) -> String:
+	if value is int:
+		return str(value + 1)
+	return value + "!"
+
+func test_sgd_union_typed_member_survives_calls():
+	var node = _union_node()
+	if node == null:
+		return
+	var object_value = Node.new()
+	assert_eq(node.call("store", object_value), object_value,
+		"an Object member should survive a guest call")
+	var dictionary_value = {"answer": 42}
+	assert_eq(node.call("store", dictionary_value), dictionary_value,
+		"a Dictionary member should survive a guest call and replace the Object")
+	object_value.free()
+	node.free()
+
+func test_sgd_union_guard_throws():
+	var node = _union_node()
+	if node == null:
+		return
+	_refused_call(node, "guarded", [1.5])
+	assert_engine_error("Cannot assign a value to parameter 'value' of type int | String")
+	assert_engine_error("Exception: Sandbox exception in TypeError: Cannot assign a value to parameter 'value' of type int | String")
+	node.free()
+
+func test_sgd_union_reflects_as_variant():
+	var node = _union_node()
+	if node == null:
+		return
+	var method = _method_info(node, "guarded")
+	assert_eq(method.get("args", []).size(), 1, "the union parameter should be published")
+	assert_eq(method["args"][0]["type"], TYPE_NIL,
+		"Godot should see a union parameter as Variant")
+	assert_true((method["args"][0]["usage"] & PROPERTY_USAGE_NIL_IS_VARIANT) != 0,
+		"the reflected NIL should be marked as Variant rather than null")
+	node.free()
+
+func test_sgd_union_narrowing_matches_gdscript():
+	var node = _union_node()
+	if node == null:
+		return
+	for value in [4, "safe"]:
+		assert_eq(node.call("describe", value), _union_reference(value),
+			"the narrowed SafeGDScript branch should match ordinary GDScript")
+	node.free()
+
+# -= Nullable types =-
+
+const NULLABLE_SOURCE = """
+struct Point:
+	var x: int = 0
+	var y: int = 0
+
+var held: Vector2?
+var point: Point?
+@export var exported_value: Vector2?
+@export var texture: Texture2D?
+
+func remember(value: Vector2?):
+	held = value
+	return typeof(held)
+
+func recall():
+	return held
+
+func guarded(value: Vector2?):
+	return value
+
+func component(value: Vector2?) -> float?:
+	if value == null:
+		return null
+	return value.x
+
+func truthy(value: Vector2?):
+	if value:
+		return "truthy"
+	return "falsy"
+
+func point_default():
+	return point
+
+func point_round_trip():
+	point = Point(1, 2)
+	return point.x
+"""
+
+func _nullable_node() -> Node:
+	var path = "user://temp_nullable_types.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(NULLABLE_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the nullable-typed script should load as a SafeGDScript resource")
+	if script == null:
+		return null
+	var node = Node.new()
+	node.set_script(script)
+	node.set_instructions_max(100000)
+	return node
+
+func test_sgd_nullable_value_member_survives_calls():
+	var node = _nullable_node()
+	if node == null:
+		return
+	assert_eq(node.call("remember", Vector2(3, 4)), TYPE_VECTOR2)
+	assert_eq(node.call("recall"), Vector2(3, 4),
+		"a nullable value should survive the call that stored it")
+	assert_eq(node.call("remember", null), TYPE_NIL)
+	assert_null(node.call("recall"), "the same slot should accept null later")
+	node.free()
+
+func test_sgd_nullable_guard_throws():
+	var node = _nullable_node()
+	if node == null:
+		return
+	assert_eq(node.call("guarded", Vector2(1, 2)), Vector2(1, 2))
+	assert_null(node.call("guarded", null))
+	_refused_call(node, "guarded", ["wrong"])
+	assert_engine_error("Cannot assign a value to parameter 'value' of type Vector2?")
+	assert_engine_error("Exception: Sandbox exception in TypeError: Cannot assign a value to parameter 'value' of type Vector2?")
+	node.free()
+
+func test_sgd_nullable_export_reflects_as_variant():
+	var node = _nullable_node()
+	if node == null:
+		return
+	var properties := {}
+	for property in node.get_property_list():
+		properties[property["name"]] = property
+	assert_eq(properties["exported_value"]["type"], TYPE_NIL,
+		"a value-typed nullable export should publish as Variant")
+	assert_true((properties["exported_value"]["usage"] & PROPERTY_USAGE_NIL_IS_VARIANT) != 0)
+	assert_eq(properties["texture"]["type"], TYPE_OBJECT,
+		"an object-typed nullable export should stay object-typed")
+	assert_eq(str(properties["texture"]["class_name"]), "Texture2D")
+	node.free()
+
+func test_sgd_nullable_narrowing_matches_gdscript():
+	var node = _nullable_node()
+	if node == null:
+		return
+	assert_null(node.call("component", null))
+	assert_eq(node.call("component", Vector2(4, 5)), 4.0)
+	for value in [null, Vector2.ZERO, Vector2.ONE]:
+		var expected = "truthy" if value else "falsy"
+		assert_eq(node.call("truthy", value), expected,
+			"nullable truthiness should match ordinary GDScript")
+	node.free()
+
+func test_sgd_nullable_struct_is_null_by_default():
+	var node = _nullable_node()
+	if node == null:
+		return
+	assert_null(node.call("point_default"))
+	assert_eq(node.call("point_round_trip"), 1)
+	node.free()
+
+func test_sgd_null_into_non_nullable_member_is_a_compile_error():
+	var result = _validate("var pos: Vector2 = null\n")
+	assert_false(result["valid"])
+	assert_true(result["message"].contains("Cannot assign null"))
+	assert_true(result["hint"].contains("Vector2?"))
+
 # -= Built-in scripts =-
 #
 # Scene sub-resource, no file. duplicate() and the scene saver carry STORAGE

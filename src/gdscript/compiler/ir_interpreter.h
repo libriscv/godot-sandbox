@@ -9,7 +9,9 @@ namespace gdscript {
 
 class IRInterpreter {
 public:
-	using Value = std::variant<int64_t, double, std::string, bool>;
+	// Keep NIL distinct from integer zero. This matters for nullable type tests
+	// and mirrors the Variant tag observed by the machine backend.
+	using Value = std::variant<std::monostate, int64_t, double, std::string, bool>;
 
 	IRInterpreter(const IRProgram& program);
 

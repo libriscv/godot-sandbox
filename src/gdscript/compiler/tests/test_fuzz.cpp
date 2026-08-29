@@ -73,6 +73,11 @@ RunResult run(const std::string& source, size_t pass_limit) {
 // int and bool are the same answer: the interpreter produces either for a truth
 // value. int against float is a real difference.
 bool values_equal(const IRInterpreter::Value& a, const IRInterpreter::Value& b) {
+	const bool a_nil = std::holds_alternative<std::monostate>(a);
+	const bool b_nil = std::holds_alternative<std::monostate>(b);
+	if (a_nil || b_nil) {
+		return a_nil && b_nil;
+	}
 	const bool a_float = std::holds_alternative<double>(a);
 	const bool b_float = std::holds_alternative<double>(b);
 	if (a_float != b_float) {
@@ -94,6 +99,7 @@ bool values_equal(const IRInterpreter::Value& a, const IRInterpreter::Value& b) 
 }
 
 std::string describe(const IRInterpreter::Value& value) {
+	if (std::holds_alternative<std::monostate>(value)) return "null (nil)";
 	if (std::holds_alternative<int64_t>(value)) return std::to_string(std::get<int64_t>(value)) + " (int)";
 	if (std::holds_alternative<double>(value)) return std::to_string(std::get<double>(value)) + " (float)";
 	if (std::holds_alternative<bool>(value)) return std::string(std::get<bool>(value) ? "true" : "false") + " (bool)";

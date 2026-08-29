@@ -40,8 +40,9 @@ void IRInterpreter::initialize_globals() {
 			case IRGlobalVar::InitType::EMPTY_ARRAY:
 			case IRGlobalVar::InitType::EMPTY_DICT:
 			case IRGlobalVar::InitType::RUNTIME:
-				// No representation here; RUNTIME overwritten by global_init below.
-				m_globals.push_back(int64_t(0));
+				// RUNTIME is overwritten by global_init below. Unsupported container
+				// initializers remain NIL in the scalar-only interpreter.
+				m_globals.push_back(std::monostate{});
 				break;
 		}
 	}
@@ -76,7 +77,7 @@ IRInterpreter::Value IRInterpreter::call(const std::string& function_name, const
 		return ctx.return_value;
 	}
 
-	return int64_t(0);
+	return std::monostate{};
 }
 
 void IRInterpreter::execute_function(const IRFunction& func, ExecutionContext& ctx) {
@@ -117,7 +118,7 @@ void IRInterpreter::execute_function(const IRFunction& func, ExecutionContext& c
 
 IRInterpreter::Value IRInterpreter::get_register(ExecutionContext& ctx, int reg) {
 	if (ctx.registers.find(reg) == ctx.registers.end()) {
-		ctx.registers[reg] = int64_t(0);
+		ctx.registers[reg] = std::monostate{};
 	}
 	return ctx.registers[reg];
 }
@@ -145,9 +146,8 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 			break;
 
 		case IROpcode::LOAD_NIL: {
-			// Integer zero; interpreter's Value has no NIL.
 			int reg = instr.operands[0].reg_index();
-			ctx.registers[reg] = int64_t(0);
+			ctx.registers[reg] = std::monostate{};
 			break;
 		}
 
@@ -271,7 +271,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 				actual = Variant::INT;
 			} else if (std::holds_alternative<double>(value)) {
 				actual = Variant::FLOAT;
-			} else {
+			} else if (std::holds_alternative<std::string>(value)) {
 				actual = Variant::STRING;
 			}
 			ctx.registers[dst] = instr.opcode == IROpcode::TYPE_TEST
@@ -292,7 +292,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 				tag = Variant::INT;
 			} else if (std::holds_alternative<double>(value)) {
 				tag = Variant::FLOAT;
-			} else {
+			} else if (std::holds_alternative<std::string>(value)) {
 				tag = Variant::STRING;
 			}
 			ctx.registers[dst] = tag;
@@ -736,6 +736,14 @@ IRInterpreter::Value IRInterpreter::unary_op(const Value& operand, IROpcode op) 
 
 IRInterpreter::Value IRInterpreter::compare_op(const Value& left, const Value& right, IROpcode op) {
 	bool result = false;
+	const bool left_nil = std::holds_alternative<std::monostate>(left);
+	const bool right_nil = std::holds_alternative<std::monostate>(right);
+	if (left_nil || right_nil) {
+		if (op == IROpcode::CMP_EQ) return int64_t(left_nil && right_nil);
+		if (op == IROpcode::CMP_NEQ) return int64_t(!(left_nil && right_nil));
+		throw CompilerException(ErrorType::OPTIMIZER_ERROR,
+			"Ordered comparison involving null");
+	}
 
 	if (is_string(left) || is_string(right)) {
 		// String vs non-String: never equal, ordered comparison is invalid.

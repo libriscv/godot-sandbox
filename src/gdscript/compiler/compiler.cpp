@@ -138,7 +138,11 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 			}
 			PropertySignature property;
 			property.name = global.name;
-			property.type = global.value_type == IRInstruction::TypeHint_NONE
+			const TypeSet declared{global.declared_set};
+			property.type = declared.is_nullable_single() &&
+					declared.non_null().only() == Variant::OBJECT
+					? int32_t(Variant::OBJECT)
+					: global.value_type == IRInstruction::TypeHint_NONE
 					? -1 : int32_t(global.value_type);
 			property.class_name = global.class_name;
 			property.hint = uint32_t(global.export_hint.hint);

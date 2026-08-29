@@ -114,9 +114,10 @@ private:
 	void skip_newlines();
 	void consume_statement_end(const std::string& message);
 
-	std::string parse_type_hint();
+	TypeExpr parse_type_hint();
+	TypeExpr parse_type_expr();
 	std::string parse_type_name();
-	std::string parse_return_type();
+	TypeExpr parse_return_type();
 	void skip_type_arguments();
 	bool parse_attribute(ExportHint& hint, bool* is_onready = nullptr,
 		std::optional<RPCConfig>* rpc_config = nullptr);

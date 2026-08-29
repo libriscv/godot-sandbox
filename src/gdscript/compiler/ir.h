@@ -315,6 +315,8 @@ struct IRFunction {
 	std::vector<DebugLocal> debug_locals;
 	int max_registers = 0;
 	IRInstruction::TypeHint return_type_hint = IRInstruction::TypeHint_NONE;
+	std::vector<uint64_t> param_sets;
+	uint64_t return_set = 0;
 	// Has AWAIT; gets a resume entry, all parameters forced live.
 	bool is_coroutine = false;
 
@@ -344,6 +346,7 @@ struct IRGlobalVar {
 	bool publishes_to_host() const { return is_property || (is_member() && !is_const); }
 
 	IRInstruction::TypeHint type_hint = IRInstruction::TypeHint_NONE;
+	uint64_t declared_set = 0;
 
 	enum class InitType {
 		NONE,

@@ -4,6 +4,7 @@
 #include "builtin_methods.h"
 #include "globals.h"
 #include "ir.h"
+#include "type_set.h"
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -57,6 +58,11 @@ private:
 		IRFunction ir;
 		std::vector<Scope> scopes;
 		std::unordered_map<int, IRInstruction::TypeHint> register_types;
+		std::unordered_map<int, TypeSet> declared_sets;
+		// A safe `is` branch may re-read a union member with one known tag.
+		std::unordered_map<size_t, IRInstruction::TypeHint> narrowed_global_types;
+		// Nullable struct slots keep their shape separately from the current tag.
+		std::unordered_map<int, const StructDecl*> declared_structs;
 		// Untyped locals inferred from an initializer may legally change Variant
 		// type later; mixed numeric lowering must not bake their current tag into a
 		// loop-carried CONVERT.
@@ -64,7 +70,7 @@ private:
 		// Struct known for a register: always DICTIONARY-typed, used for field-name checks.
 		std::unordered_map<int, const StructDecl*> register_structs;
 		std::vector<LoopContext> loops;
-		std::string return_type;
+		TypeExpr return_type;
 		int next_register = 0;
 		int next_scope_id = 0;
 	};
@@ -81,6 +87,24 @@ private:
 	void gen_return(const ReturnStmt* stmt, FunctionContext& func);
 	void gen_if(const IfStmt* stmt, FunctionContext& func);
 	void gen_match(const MatchStmt* stmt, FunctionContext& func);
+	struct NarrowingInfo {
+		int reg = -1;
+		size_t global_idx = SIZE_MAX;
+		TypeSet original;
+		TypeSet then_set;
+		TypeSet else_set;
+		IRInstruction::TypeHint saved_type = IRInstruction::TypeHint_NONE;
+		const StructDecl* saved_struct = nullptr;
+		bool had_saved_global = false;
+		IRInstruction::TypeHint saved_global = IRInstruction::TypeHint_NONE;
+		bool valid() const { return reg >= 0 || global_idx != SIZE_MAX; }
+		bool is_member() const { return global_idx != SIZE_MAX; }
+	};
+	NarrowingInfo condition_narrowing(const Expr* condition, FunctionContext& func);
+	void apply_narrowing(const NarrowingInfo& narrowing, bool then_branch,
+		FunctionContext& func);
+	void restore_narrowing(const NarrowingInfo& narrowing, FunctionContext& func);
+	static bool branch_returns(const std::vector<StmtPtr>& body);
 	int open_scope(FunctionContext& func);
 	void emit_scope_release(int scope_id, FunctionContext& func);
 	int push_block_scope(FunctionContext& func);
@@ -316,12 +340,12 @@ private:
 
 	int gen_field_default(const StructDecl& decl, const StructField& field, FunctionContext& func);
 	// Returns -1 for types with no guest-constructible default.
-	int gen_default_value(const std::string& type_hint, FunctionContext& func);
+	int gen_default_value(const TypeExpr& type_hint, FunctionContext& func);
 
 	int gen_dict_get(int obj_reg, const std::string& key, FunctionContext& func);
 	void gen_dict_set(int obj_reg, const std::string& key, int value_reg, FunctionContext& func);
 
-	void apply_declared_type(int reg, const std::string& type_hint, FunctionContext& func);
+	void apply_declared_type(int reg, const TypeExpr& type_hint, FunctionContext& func);
 	void coerce_parameters(const std::vector<Parameter>& parameters, FunctionContext& func);
 	FunctionSignature build_signature(const FunctionDecl& decl) const;
 	ClassSignature build_class_signature(const StructDecl& decl,
@@ -460,10 +484,21 @@ private:
 	int coerce_to_declared_type(int reg, IRInstruction::TypeHint declared,
 		FunctionContext& func, const std::string& what, const Stmt* site);
 	int coerce_to_declared_type(int reg, IRInstruction::TypeHint declared,
-		FunctionContext& func, const std::string& what, int line, int column);
+		FunctionContext& func, const std::string& what, int line, int column,
+		const std::string& display = {});
+	int coerce_to_declared_type(int reg, TypeSet declared, FunctionContext& func,
+		const std::string& what, int line, int column, const std::string& display = {});
+	int coerce_to_declared_type(int reg, TypeSet declared, FunctionContext& func,
+		const std::string& what, const Stmt* site, const std::string& display = {});
+	TypeSet type_set_from(const TypeExpr& type, int line = 0, int column = 0) const;
+	IRInstruction::TypeHint single_type_from(const TypeExpr& type) const;
+	int32_t published_type_from(const TypeExpr& type) const;
 
-	void coerce_folded_initializer(IRGlobalVar& global, int line, int column) const;
+	void coerce_folded_initializer(IRGlobalVar& global, const TypeExpr& declared,
+		int line, int column) const;
 	std::vector<IRInstruction::TypeHint> m_global_types;
+	std::vector<TypeSet> m_global_sets;
+	std::vector<std::string> m_global_type_names;
 	// Struct per global, for field-name checking on load.
 	std::vector<const StructDecl*> m_global_structs;
 	std::vector<bool> m_global_holds_object;

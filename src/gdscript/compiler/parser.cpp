@@ -832,13 +832,13 @@ StmtPtr Parser::parse_var_decl(bool is_const) {
 	const Token& name = consume(TokenType::IDENTIFIER, "Expected variable name");
 
 	// ':' is ambiguous: type hint, accessor block, or bare `var x:`.
-	std::string type_hint;
+	TypeExpr type_hint;
 	bool accessors_follow = false;
 	if (match(TokenType::COLON)) {
 		if (at_property_accessor() || check(TokenType::NEWLINE)) {
 			accessors_follow = true;
-		} else if (check(TokenType::IDENTIFIER)) {
-			type_hint = parse_type_name();
+		} else if (check(TokenType::IDENTIFIER) || check(TokenType::NULL_VAL)) {
+			type_hint = parse_type_expr();
 		}
 	}
 
@@ -1304,6 +1304,9 @@ ExprPtr Parser::parse_expression() {
 	// `as` is the loosest operator: casts the entire preceding expression.
 	while (match(TokenType::AS)) {
 		const std::string type_name = parse_type_name();
+		if (check(TokenType::QUESTION)) {
+			error("'as' cannot take a nullable type; the result of 'as' is already nullable");
+		}
 		const Expr& start = *expr;
 		expr = make_like<CastExpr>(start, std::move(expr), type_name);
 	}
@@ -1542,9 +1545,9 @@ ExprPtr Parser::parse_type_test() {
 	while (check(TokenType::IS)) {
 		advance();
 		const bool negated = match(TokenType::NOT);
-		const Token& type_token = consume(TokenType::IDENTIFIER, "Expected a type name after 'is'");
+		TypeExpr type = parse_type_expr();
 		const Expr& start = *left;
-		left = make_like<TypeTestExpr>(start, std::move(left), type_token.lexeme);
+		left = make_like<TypeTestExpr>(start, std::move(left), std::move(type));
 		if (negated) {
 			const Expr& test = *left;
 			left = make_like<UnaryExpr>(test, UnaryExpr::Op::NOT, std::move(left));
@@ -1903,13 +1906,72 @@ void Parser::consume_statement_end(const std::string& message) {
 	consume(TokenType::NEWLINE, message);
 }
 
-std::string Parser::parse_type_hint() {
+TypeExpr Parser::parse_type_hint() {
 	if (match(TokenType::COLON)) {
-		if (check(TokenType::IDENTIFIER)) {
-			return parse_type_name();
+		if (check(TokenType::IDENTIFIER) || check(TokenType::NULL_VAL)) {
+			return parse_type_expr();
 		}
 	}
-	return "";
+	return {};
+}
+
+TypeExpr Parser::parse_type_expr() {
+	TypeExpr type;
+	Token type_end;
+	auto member = [&]() {
+		if (match(TokenType::NULL_VAL)) {
+			if (type.nullable) {
+				error("Union type repeats member 'null'");
+			}
+			type.nullable = true;
+			type_end = previous();
+			return;
+		}
+		type.names.push_back(parse_type_name());
+		type_end = previous();
+	};
+
+	member();
+	while (match(TokenType::BIT_OR)) {
+		if (!check(TokenType::IDENTIFIER) && !check(TokenType::NULL_VAL)) {
+			error("Expected a type name or 'null' after '|'");
+		}
+		member();
+	}
+
+	if (match(TokenType::QUESTION)) {
+		const Token& question = previous();
+		// Token columns point just past the token, so adjacent one-character '?'
+		// ends exactly one column after the type's final token.
+		if (type_end.line != question.line || type_end.column + 1 != question.column) {
+			error("'?' must directly follow the type name");
+		}
+		if (type.nullable) {
+			error("'?' on a type that already includes 'null'");
+		}
+		if (type.is_union()) {
+			error("'?' cannot follow a union member; write 'A | B | null'");
+		}
+		if (type.names.size() == 1 && type.names.front() == "Variant") {
+			error("'Variant' already includes 'null'");
+		}
+		type.nullable = true;
+		type.spelled_nullable = true;
+		if (check(TokenType::QUESTION)) {
+			error("Unexpected second '?'");
+		}
+		if (check(TokenType::BIT_OR)) {
+			error("'?' must come last in a type");
+		}
+	}
+
+	// Qualified engine types are deliberately untyped in this compiler. A suffix
+	// must not turn that compatibility fallback into the invalid type `null`.
+	if (type.names.size() == 1 && type.names.front().empty()) {
+		type.nullable = false;
+		type.spelled_nullable = false;
+	}
+	return type;
 }
 
 // Qualified names (A.B) are dropped; only the engine can resolve them.
@@ -1924,21 +1986,21 @@ std::string Parser::parse_type_name() {
 	return qualified ? std::string() : type_token.lexeme;
 }
 
-std::string Parser::parse_return_type() {
+TypeExpr Parser::parse_return_type() {
 	// `->` is MINUS + GREATER; no dedicated arrow token.
 	size_t saved_pos = m_current;
 
 	if (match(TokenType::MINUS)) {
 		if (match(TokenType::GREATER)) {
-			if (check(TokenType::IDENTIFIER)) {
-				return parse_type_name();
+			if (check(TokenType::IDENTIFIER) || check(TokenType::NULL_VAL)) {
+				return parse_type_expr();
 			}
-			return "";
+			return {};
 		}
 		m_current = saved_pos;
 	}
 
-	return "";
+	return {};
 }
 
 void Parser::skip_type_arguments() {

@@ -176,6 +176,43 @@ build. Backends are stateful — the answers about a build are read back one
 question at a time — so a compile and the questions after it must use the same
 one.
 
+### Union types
+
+SafeGDScript accepts union hints such as `int | String` and nullable unions
+such as `Node | null` on locals, members, parameters, returns, signals and
+record fields. A slot still holds one ordinary Variant: known assignments are
+checked while compiling and unknown values get one `TYPE_TEST_MASK` guard at
+run time. A union without an initializer uses null when allowed, otherwise the
+first member's normal default. Union parameters, returns and properties are
+published to Godot as Variant because the engine ABI has no union type.
+
+`is`, null/truthiness checks, `match` value types and `match typeof(x)` narrow
+union locals for typed lowering. Members narrow only in branches that contain
+no call and no assignment to that member, since either could invalidate a
+re-read. `x is int | String` is one mask test. Union casts, exported unions and
+multi-type unions containing script structs/classes are deliberately refused;
+engine class members currently guard only the shared Object Variant tag.
+
+### Nullable types
+
+`T?` is accepted anywhere a type hint is accepted and is exactly the
+single-member union `T | null`. Nullable locals, members, parameters and
+returns accept only `T` or NIL; known assignments are checked at compile time
+and unknown assignments use one `TYPE_TEST_MASK` guard. A nullable slot without
+an initializer starts NIL, including nullable structs. A nullable member always
+uses untyped Variant storage (`value_type == NONE`), even while it holds `T`:
+keeping a concrete slot type while storing NIL corrupts host-side reads.
+
+Known non-null assignments use the plain type's coercions, including `int` to
+`float` widening and `Array` to packed-array construction. Null checks, `is`,
+`assert` and the right side of `and` narrow a local to `T`, enabling the normal
+inline member, arithmetic and iteration lowering. `if value:` narrows only the
+true branch; its false branch is not NIL-only because values such as zero, an
+empty string and `Vector2.ZERO` are falsy. Plain object hints remain nullable
+for GDScript 4.x compatibility, so `Node?` is currently documentation-equivalent
+to `Node`; value-typed nullable exports publish as Variant while object-typed
+nullable exports retain their object class hint.
+
 ### @GlobalScope functions
 
 One row per global in `globals.h`: name, arity, return type, lowering (inline

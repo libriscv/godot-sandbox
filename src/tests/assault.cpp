@@ -111,6 +111,10 @@ static constexpr Shape SHAPES[] = {
 	{ ECALL_VCALL, { Arg::VPTR, Arg::NAME, Arg::NAMELEN, Arg::VPTR, Arg::NOARGS, Arg::OUT } },
 	{ ECALL_VEVAL, { Arg::OP, Arg::VPTR, Arg::VPTR, Arg::OUT } },
 	{ ECALL_VCREATE, { Arg::OUT, Arg::OP, Arg::OP, Arg::VPTR } },
+	// Every Variant type has a zero-argument construction path. Pin argc to zero
+	// so VCONSTRUCT reaches Godot's constructor dispatcher instead of relying on
+	// four independent random registers to describe a coherent argument array.
+	{ ECALL_VCONSTRUCT, { Arg::OUT, Arg::OP, Arg::NOARGS, Arg::NOARGS } },
 	{ ECALL_VFETCH, { Arg::IDX_ANY, Arg::OUT, Arg::OP } },
 	{ ECALL_VCLONE, { Arg::VPTR, Arg::OUT } },
 	{ ECALL_VSTORE, { Arg::OUT, Arg::OP, Arg::VPTR, Arg::SMALL } },

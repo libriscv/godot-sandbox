@@ -94,6 +94,7 @@ enum class TokenType {
 	DOT_DOT,     // .. (the rest of an array or dictionary pattern)
 	AT,          // @
 	DOLLAR,      // $ (node path sugar)
+	QUESTION,    // ? (nullable type suffix)
 	NEWLINE,
 	INDENT,
 	DEDENT,

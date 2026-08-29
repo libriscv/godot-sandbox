@@ -65,7 +65,9 @@ RunResult run(const std::string& source, size_t pass_limit) {
 
 std::string to_string(const IRInterpreter::Value& value) {
 	std::ostringstream oss;
-	if (std::holds_alternative<int64_t>(value)) {
+	if (std::holds_alternative<std::monostate>(value)) {
+		oss << "null (nil)";
+	} else if (std::holds_alternative<int64_t>(value)) {
 		oss << std::get<int64_t>(value) << " (int)";
 	} else if (std::holds_alternative<double>(value)) {
 		oss.precision(17);
@@ -82,9 +84,10 @@ std::string to_string(const IRInterpreter::Value& value) {
 // produce either for a truth value, and 'and' already yields an integer where
 // 'not' yields a bool. int against float is a real difference -- GDScript keeps
 // them apart -- and so is a string against anything else.
-enum class Category { INT, FLOAT, STRING };
+enum class Category { NIL, INT, FLOAT, STRING };
 
 Category category_of(const IRInterpreter::Value& value) {
+	if (std::holds_alternative<std::monostate>(value)) return Category::NIL;
 	if (std::holds_alternative<double>(value)) return Category::FLOAT;
 	if (std::holds_alternative<std::string>(value)) return Category::STRING;
 	return Category::INT;
@@ -95,6 +98,8 @@ bool values_equal(const IRInterpreter::Value& a, const IRInterpreter::Value& b) 
 		return false;
 	}
 	switch (category_of(a)) {
+		case Category::NIL:
+			return true;
 		case Category::STRING:
 			return std::get<std::string>(a) == std::get<std::string>(b);
 		case Category::FLOAT: {
