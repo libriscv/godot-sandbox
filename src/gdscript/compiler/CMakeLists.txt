@@ -26,6 +26,8 @@ set(COMPILER_SOURCES
     token.cpp
     lexer.cpp
     parser.cpp
+	ast_clone.cpp
+	traits.cpp
     chain.cpp
     ir.cpp
     ir_optimizer.cpp
@@ -59,7 +61,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
 	# on, which is how `gdscript_to_riscv --no-optimize` spent a while quietly
 	# optimizing. Warnings, not errors: the guest build uses a different
 	# compiler version and must not fail on one it words differently.
-	# Unused parameters are excluded -- several are there for an interface.
+	# Unused parameters are excluded -- several are part of a shared callback contract.
 	set(GDSC_WARNINGS -Wall -Wextra -Wno-unused-parameter)
 	target_compile_options(gdscript_compiler PRIVATE ${GDSC_WARNINGS})
 endif()
@@ -135,6 +137,7 @@ if (BUILD_TESTING)
 	add_gdscript_test(test_frames tests/test_frames.cpp)
 	add_gdscript_test(test_call_overhead tests/test_call_overhead.cpp)
 	add_gdscript_test(test_structs tests/test_structs.cpp)
+	add_gdscript_test(test_traits tests/test_traits.cpp)
 	add_gdscript_test(test_globals tests/test_globals.cpp)
 	add_gdscript_test(test_switch tests/test_switch.cpp)
 	add_gdscript_test(test_scope tests/test_scope.cpp)
@@ -233,12 +236,12 @@ if (BUILD_TESTING)
 	# Run all tests target
 	add_custom_target(run_tests
 		COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-		DEPENDS test_lexer test_parser test_codegen test_call_overhead test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_containers test_strings test_lvalues test_signatures test_properties
+		DEPENDS test_lexer test_parser test_codegen test_call_overhead test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_traits test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_containers test_strings test_lvalues test_signatures test_properties
 		COMMENT "Running all GDScript compiler tests"
 	)
 
 	# Install test targets (only when BUILD_TESTING is ON)
-	install(TARGETS test_lexer test_parser test_codegen test_call_overhead test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_containers test_strings test_lvalues test_signatures test_properties
+	install(TARGETS test_lexer test_parser test_codegen test_call_overhead test_integration test_primitives test_compilation test_constant_pool test_ir_optimizer test_double_precision test_regressions test_operators test_frames test_globals test_traits test_opt_invariance test_ir_verifier test_encoders test_fuzz test_match test_containers test_strings test_lvalues test_signatures test_properties
 	        RUNTIME DESTINATION bin)
 endif()
 

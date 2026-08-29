@@ -304,6 +304,26 @@ std::vector<uint8_t> encode_class_signatures(const std::vector<ClassSignature> &
 			write_string(out, field.description);
 		}
 	}
+	write_scalar<uint32_t>(out, 0x54415254u); // "TRAT"
+	write_scalar<uint32_t>(out, uint32_t(classes.size()));
+	for (const ClassSignature &cls : classes) {
+		write_scalar<uint8_t>(out, cls.is_trait ? 1 : 0);
+		write_scalar<uint32_t>(out, uint32_t(cls.uses.size()));
+		for (const std::string &name : cls.uses) write_string(out, name);
+		const std::vector<uint8_t> methods = encode_function_signatures(cls.trait_methods);
+		write_scalar<uint32_t>(out, uint32_t(methods.size()));
+		out.insert(out.end(), methods.begin(), methods.end());
+		write_scalar<uint32_t>(out, uint32_t(cls.trait_fields.size()));
+		for (const ClassField& field : cls.trait_fields) {
+			write_string(out, field.name);
+			write_scalar<int32_t>(out, field.type);
+			write_string(out, field.class_name);
+			write_string(out, field.description);
+		}
+		const std::vector<uint8_t> signals = encode_function_signatures(cls.trait_signals);
+		write_scalar<uint32_t>(out, uint32_t(signals.size()));
+		out.insert(out.end(), signals.begin(), signals.end());
+	}
 	return out;
 }
 
@@ -384,6 +404,59 @@ bool decode_class_signatures(const uint8_t *data, size_t size,
 			field.class_name = reader.string();
 			field.description = reader.string();
 		}
+	}
+	if (!reader.ok) {
+		out.clear();
+		return false;
+	}
+	if (reader.offset == size) return true;
+	if (reader.scalar<uint32_t>() != 0x54415254u) {
+		out.clear();
+		return false;
+	}
+	const uint32_t trait_count = reader.scalar<uint32_t>();
+	if (!reader.ok || trait_count != out.size()) {
+		out.clear();
+		return false;
+	}
+	for (ClassSignature &cls : out) {
+		const uint8_t kind = reader.scalar<uint8_t>();
+		const uint32_t uses_count = reader.scalar<uint32_t>();
+		if (!reader.ok || kind > 1 || uses_count > size) {
+			out.clear();
+			return false;
+		}
+		cls.is_trait = kind != 0;
+		for (uint32_t i = 0; i < uses_count; i++) cls.uses.push_back(reader.string());
+		const uint32_t methods_size = reader.scalar<uint32_t>();
+		if (!reader.ok || reader.offset + methods_size > size ||
+			!decode_function_signatures(reader.data + reader.offset, methods_size,
+				cls.trait_methods)) {
+			out.clear();
+			return false;
+		}
+		reader.offset += methods_size;
+		const uint32_t field_count = reader.scalar<uint32_t>();
+		if (!reader.ok || field_count > size) {
+			out.clear();
+			return false;
+		}
+		for (uint32_t i = 0; i < field_count; i++) {
+			ClassField field;
+			field.name = reader.string();
+			field.type = reader.scalar<int32_t>();
+			field.class_name = reader.string();
+			field.description = reader.string();
+			cls.trait_fields.push_back(std::move(field));
+		}
+		const uint32_t signals_size = reader.scalar<uint32_t>();
+		if (!reader.ok || reader.offset + signals_size > size ||
+			!decode_function_signatures(reader.data + reader.offset, signals_size,
+				cls.trait_signals)) {
+			out.clear();
+			return false;
+		}
+		reader.offset += signals_size;
 	}
 	if (!reader.ok || reader.offset != size) {
 		out.clear();

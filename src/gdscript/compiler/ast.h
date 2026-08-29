@@ -13,6 +13,7 @@ namespace gdscript {
 struct Expr;
 struct Stmt;
 struct FunctionDecl;
+struct EnumDecl;
 
 using ExprPtr = std::unique_ptr<Expr>;
 using StmtPtr = std::unique_ptr<Stmt>;
@@ -247,6 +248,8 @@ struct VarDeclStmt : Stmt {
 	bool is_property = false;
 	bool is_static = false;
 	bool is_onready = false;
+	std::string trait_origin;
+	std::string doc_comment;
 	int chain_link = 0;
 	ExportHint export_hint;
 
@@ -417,6 +420,8 @@ struct FunctionDecl {
 	bool is_coroutine = false;
 	// `static func` in a class body: lifted without the instance parameter.
 	bool is_static = false;
+	bool is_abstract = false;
+	std::string trait_origin;
 	std::optional<RPCConfig> rpc_config;
 	int chain_link = 0;
 	// Non-empty when an override displaced this copy onto a mangled symbol.
@@ -434,6 +439,7 @@ struct SignalDecl {
 	int line = 0;
 	int column = 0;
 	std::string doc_comment;
+	std::string trait_origin;
 };
 
 inline LambdaExpr::~LambdaExpr() = default;
@@ -449,6 +455,7 @@ struct StructField {
 	int line = 0;
 	int column = 0;
 	std::string doc_comment;
+	std::string trait_origin;
 };
 
 struct StructDecl {
@@ -460,6 +467,7 @@ struct StructDecl {
 
 	bool is_class = false;
 	std::string base_name;
+	std::vector<std::string> uses;
 	std::vector<FunctionDecl> methods;
 	// `const` in a class body: compile-time only, like the file's own consts.
 	std::vector<StructField> constants;
@@ -540,6 +548,38 @@ struct EnumDecl {
 	}
 };
 
+struct TraitDecl {
+	std::string name;
+	std::string base_name;
+	std::vector<std::string> uses;
+	std::vector<VarDeclStmt> vars;
+	std::vector<StructField> constants;
+	std::vector<EnumDecl> enums;
+	std::vector<SignalDecl> signals;
+	std::vector<FunctionDecl> methods;
+	int line = 0;
+	int column = 0;
+	std::string doc_comment;
+	bool is_file_level = false;
+
+	const FunctionDecl* find_method(const std::string& member) const {
+		for (const FunctionDecl& method : methods) if (method.name == member) return &method;
+		return nullptr;
+	}
+	const VarDeclStmt* find_var(const std::string& member) const {
+		for (const VarDeclStmt& var : vars) if (var.name == member) return &var;
+		return nullptr;
+	}
+	const StructField* find_constant(const std::string& member) const {
+		for (const StructField& value : constants) if (value.name == member) return &value;
+		return nullptr;
+	}
+	const SignalDecl* find_signal(const std::string& member) const {
+		for (const SignalDecl& signal : signals) if (signal.name == member) return &signal;
+		return nullptr;
+	}
+};
+
 struct ChainInfo {
 	std::vector<std::string> class_names; // root first
 	std::vector<std::string> paths;       // same order, diagnostics only
@@ -587,9 +627,14 @@ struct Program {
 	int base_class_column = 0;
 	std::string native_base_class;
 	bool native_base_is_path = false;
+	std::vector<std::string> uses;
+	std::string trait_name;
+	int trait_name_line = 0;
+	int trait_name_column = 0;
 	ChainInfo chain;
 	std::vector<VarDeclStmt> globals;
 	std::vector<StructDecl> structs;
+	std::vector<TraitDecl> traits;
 	std::vector<EnumDecl> enums;
 	std::vector<SignalDecl> signals;
 	std::vector<FunctionDecl> functions;

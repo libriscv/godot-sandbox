@@ -22,6 +22,7 @@ public:
 	static bool use_native_types();
 
 	static bool debug_info();
+	static bool trait_structural_fallback();
 
 	static Array get_global_defines();
 

@@ -398,6 +398,11 @@ struct IRProgram {
 
 	// One per nested class with an engine base; the host attaches a Script to each.
 	std::vector<ClassSignature> class_signatures;
+	// Compiler-only declarations are also published for editor completion and
+	// supply the method-name table used by TRAIT_TEST.
+	std::vector<ClassSignature> trait_signatures;
+	std::vector<std::string> script_uses;
+	bool trait_structural_fallback = true;
 
 	// File-scope `const` and `enum`. Compile-time only in the guest; published so
 	// the host can answer `Autoload.NAME` the way GDScript's Script::constants does.

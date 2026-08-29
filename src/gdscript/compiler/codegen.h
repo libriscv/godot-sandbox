@@ -24,6 +24,8 @@ public:
 		m_struct_checks = enabled;
 		m_struct_deep_checks = enabled && deep;
 	}
+	void set_trait_structural_fallback(bool enabled) { m_trait_structural_fallback = enabled; }
+	void set_engine_ancestry(const std::vector<std::pair<std::string, std::string>>& pairs);
 	void set_source_path(std::string path) { m_source_path = std::move(path); }
 	void set_autoloads(const std::vector<std::string>& autoloads) {
 		m_autoloads.clear();
@@ -73,9 +75,14 @@ private:
 		std::unordered_set<int> reclassifiable_registers;
 		// Struct known for a register: always DICTIONARY-typed, used for field-name checks.
 		std::unordered_map<int, const StructDecl*> register_structs;
+		std::unordered_map<int, std::unordered_set<const TraitDecl*>> register_traits;
+		std::unordered_map<int, std::unordered_set<const TraitDecl*>> declared_traits;
+		std::unordered_set<int> trait_only_registers;
 		// Compiler-only generic container promises.
 		std::unordered_map<int, const StructDecl*> array_element_structs;
 		std::unordered_map<int, const StructDecl*> dictionary_value_structs;
+		std::unordered_map<int, const TraitDecl*> array_element_traits;
+		std::unordered_map<int, const TraitDecl*> dictionary_value_traits;
 		std::vector<LoopContext> loops;
 		TypeExpr return_type;
 		int next_register = 0;
@@ -102,6 +109,10 @@ private:
 		TypeSet else_set;
 		IRInstruction::TypeHint saved_type = IRInstruction::TypeHint_NONE;
 		const StructDecl* saved_struct = nullptr;
+		const TraitDecl* narrowed_trait = nullptr;
+		bool trait_then = true;
+		std::unordered_set<const TraitDecl*> saved_traits;
+		bool saved_trait_only = false;
 		bool had_saved_global = false;
 		IRInstruction::TypeHint saved_global = IRInstruction::TypeHint_NONE;
 		bool valid() const { return reg >= 0 || global_idx != SIZE_MAX; }
@@ -144,6 +155,10 @@ private:
 	int gen_unary(const UnaryExpr* expr, FunctionContext& func);
 	int gen_await(const AwaitExpr* expr, FunctionContext& func);
 	int gen_type_test(const TypeTestExpr* expr, FunctionContext& func);
+	int gen_trait_test(int value_reg, const TraitDecl& iface, FunctionContext& func);
+	int require_trait_value(int value_reg, const TraitDecl& iface,
+		const std::string& what, FunctionContext& func, int line, int column,
+		bool nullable = false);
 	// Replace Dictionary with its keys Array for position-based iteration.
 	void gen_dictionary_keys_for_iteration(int iterable_reg, FunctionContext& func);
 
@@ -309,6 +324,18 @@ private:
 	// Structs: Dictionary with a fixed key set, field-checked at compile time.
 
 	const StructDecl* find_struct(const std::string& name) const;
+	const TraitDecl* find_trait(const std::string& name) const;
+	const FunctionDecl* find_trait_method(const TraitDecl& trait, const std::string& name) const;
+	const VarDeclStmt* find_trait_var(const TraitDecl& trait, const std::string& name) const;
+	const StructField* find_trait_constant(const TraitDecl& trait, const std::string& name) const;
+	const SignalDecl* find_trait_signal(const TraitDecl& trait, const std::string& name) const;
+	std::string trait_required_base(const TraitDecl& trait) const;
+	bool declaration_uses(const StructDecl& decl, const TraitDecl& iface) const;
+	std::vector<const TraitDecl*> used_traits(const StructDecl& decl) const;
+	void validate_uses(const Program& program) const;
+	void validate_trait_member(const std::string& kind, const std::string& name,
+		const std::vector<FunctionDecl>& methods, const StructDecl* decl,
+		const std::vector<std::string>& names, int line, int column) const;
 	const StructDecl* class_base(const StructDecl& decl) const;
 	const std::string* native_base(const StructDecl& decl) const;
 	int gen_native_base_load(int self_reg, FunctionContext& func);
@@ -359,9 +386,15 @@ private:
 	FunctionSignature build_signature(const FunctionDecl& decl) const;
 	ClassSignature build_class_signature(const StructDecl& decl,
 		const std::string& engine_base) const;
+	ClassSignature build_trait_signature(const TraitDecl& decl) const;
 
 	void set_register_struct(FunctionContext& func, int reg, const StructDecl* decl);
 	const StructDecl* get_register_struct(const FunctionContext& func, int reg) const;
+	void add_register_trait(FunctionContext& func, int reg, const TraitDecl* decl);
+	// 'proven_only' consults register_traits alone. A declaration is not proof:
+	// a nullable slot may hold null until a check narrows it.
+	const TraitDecl* get_register_trait(const FunctionContext& func, int reg,
+		const std::string& method = {}, bool proven_only = false) const;
 
 	void reject_named_arguments(const NamedArguments& names, const std::string& what,
 		const Expr* site) const;
@@ -377,6 +410,8 @@ private:
 		int line, int column) const;
 
 	std::unordered_map<std::string, const StructDecl*> m_structs;
+	std::unordered_map<std::string, const TraitDecl*> m_traits;
+	std::unordered_map<const TraitDecl*, size_t> m_trait_indices;
 	std::unordered_map<const StructDecl*, std::string> m_native_bases;
 	const StructDecl* m_current_class = nullptr;
 	std::string m_script_base_class;
@@ -386,9 +421,11 @@ private:
 	bool m_restricted = false;
 	bool m_struct_checks = true;
 	bool m_struct_deep_checks = false;
+	bool m_trait_structural_fallback = true;
 	std::string m_source_path;
 	std::unordered_set<std::string> m_autoloads;
 	std::unordered_map<std::string, std::string> m_global_script_classes;
+	std::unordered_map<std::string, std::unordered_set<std::string>> m_engine_ancestry;
 	std::unordered_map<std::string, const EnumDecl*> m_enums;
 	std::unordered_map<std::string, const EnumDecl::Member*> m_enum_members;
 	std::unordered_map<std::string, const SignalDecl*> m_signals;
@@ -517,8 +554,11 @@ private:
 	std::vector<std::string> m_global_type_names;
 	// Struct per global, for field-name checking on load.
 	std::vector<const StructDecl*> m_global_structs;
+	std::vector<const TraitDecl*> m_global_traits;
 	std::vector<const StructDecl*> m_global_array_element_structs;
 	std::vector<const StructDecl*> m_global_dictionary_value_structs;
+	std::vector<const TraitDecl*> m_global_array_element_traits;
+	std::vector<const TraitDecl*> m_global_dictionary_value_traits;
 	std::vector<bool> m_global_holds_object;
 
 	bool type_hint_names_a_class(const std::string& type_hint) const;

@@ -4,6 +4,7 @@
 #include "ir_optimizer.h"
 #include "riscv_codegen.h"
 #include "chain.h"
+#include "traits.h"
 #include <fstream>
 #include <iostream>
 #include <variant>
@@ -69,6 +70,7 @@ int main(int argc, char** argv)
 	std::vector<std::string> autoloads;
 	std::vector<std::pair<std::string, std::string>> global_classes;
 	std::vector<std::pair<std::string, std::string>> base_specs;
+	std::vector<std::pair<std::string, std::string>> trait_specs;
 
 	for (int i = 1; i < argc; i++) {
 		std::string arg = argv[i];
@@ -99,6 +101,16 @@ int main(int argc, char** argv)
 					return 1;
 				}
 				base_specs.emplace_back(pair.substr(0, eq), pair.substr(eq + 1));
+			}
+		} else if (arg == "--trait") {
+			if (i + 1 < argc) {
+				const std::string pair = argv[++i];
+				const size_t eq = pair.find('=');
+				if (eq == std::string::npos) {
+					std::cerr << "Error: --trait wants Name=path" << std::endl;
+					return 1;
+				}
+				trait_specs.emplace_back(pair.substr(0, eq), pair.substr(eq + 1));
 			}
 		} else if (arg == "--double-precision") {
 			double_precision = true;
@@ -131,6 +143,25 @@ int main(int argc, char** argv)
 		Parser parser(tokens);
 		parser.set_doc_comments(lexer.doc_comments());
 		Program program = parser.parse();
+		for (const auto& spec : trait_specs) {
+			std::ifstream in(spec.second);
+			if (!in) {
+				std::cerr << "Error: cannot read trait " << spec.second << std::endl;
+				return 1;
+			}
+			const std::string trait_source((std::istreambuf_iterator<char>(in)),
+				std::istreambuf_iterator<char>());
+			Lexer trait_lexer(trait_source);
+			Parser trait_parser(trait_lexer.tokenize());
+			trait_parser.set_doc_comments(trait_lexer.doc_comments());
+			Program host = trait_parser.parse();
+			for (TraitDecl& trait : host.traits) {
+				const size_t dot = spec.first.rfind('.');
+				if (dot != std::string::npos && trait.name == spec.first.substr(dot + 1))
+					trait.name = spec.first;
+				program.traits.push_back(std::move(trait));
+			}
+		}
 
 		if (!base_specs.empty()) {
 			std::vector<ChainLink> links;
@@ -155,6 +186,11 @@ int main(int argc, char** argv)
 			ChainLink leaf;
 			leaf.program = std::move(program);
 			links.push_back(std::move(leaf));
+			std::vector<const TraitDecl*> available_traits;
+			for (const ChainLink& link : links)
+				for (const TraitDecl& trait : link.program.traits)
+					available_traits.push_back(&trait);
+			for (ChainLink& link : links) apply_traits(link.program, available_traits);
 			program = merge_chain(std::move(links));
 		}
 
@@ -171,6 +207,7 @@ int main(int argc, char** argv)
 			}
 			std::cout << std::endl;
 		}
+		if (!program.chain.merged()) apply_traits(program);
 
 		CodeGenerator codegen;
 		codegen.set_autoloads(autoloads);

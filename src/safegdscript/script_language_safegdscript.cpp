@@ -1208,6 +1208,9 @@ PackedStringArray SafeGDScriptLanguage::_get_reserved_words() const {
 		"enum",
 		"extends",
 		"func",
+		"uses",
+		"trait",
+		"trait_name",
 		"signal",
 		"static",
 		"struct",
@@ -1503,6 +1506,34 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 	const bool semantic = analyze_with_compiler(semantic_source, p_path,
 			gdscript::ANALYZE_DECLARATIONS | gdscript::ANALYZE_CARET,
 			caret_line, 0, semantic_model);
+	auto add_trait_members = [&](const String &p_type) {
+		if (!semantic) return false;
+		String type = p_type.strip_edges();
+		if (type.ends_with("?")) type = type.trim_suffix("?");
+		for (size_t i = 0; i < semantic_model.declarations.size(); i++) {
+			const gdscript::SourceDeclaration &declaration = semantic_model.declarations[i];
+			if (declaration.kind != gdscript::DeclarationKind::TRAIT ||
+					String::utf8(declaration.name.c_str(), declaration.name.size()) != type) continue;
+			for (int32_t child : declaration.children) {
+				if (child < 0 || size_t(child) >= semantic_model.declarations.size()) continue;
+				const gdscript::SourceDeclaration &method = semantic_model.declarations[size_t(child)];
+				const String child_name = String::utf8(method.name.c_str(), method.name.size());
+				if (method.kind == gdscript::DeclarationKind::FUNCTION) {
+					const String name = child_name + String("(");
+					add_option(options, CODE_COMPLETION_KIND_FUNCTION, name, name,
+							colors.function, LOCATION_LOCAL);
+				} else if (method.kind == gdscript::DeclarationKind::VARIABLE) {
+					add_option(options, CODE_COMPLETION_KIND_MEMBER, child_name, child_name,
+							colors.member, LOCATION_LOCAL);
+				} else if (method.kind == gdscript::DeclarationKind::SIGNAL) {
+					add_option(options, CODE_COMPLETION_KIND_SIGNAL, child_name, child_name,
+							colors.function, LOCATION_LOCAL);
+				}
+			}
+			return true;
+		}
+		return false;
+	};
 
 	// Symbols declared by the script itself. The caret marker is dropped so the
 	// word being typed is not scanned as a declaration.
@@ -1551,7 +1582,8 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 		} else if (find_struct(symbols, ctx.receiver) != nullptr) {
 			// The struct itself: the only thing reachable through it is .new().
 			add_option(options, CODE_COMPLETION_KIND_FUNCTION, "new(", "new(", colors.function, LOCATION_LOCAL);
-		} else if (!add_type_members(options, declared_type_of(symbols, ctx.receiver), symbols, colors) &&
+		} else if (!add_trait_members(declared_type_of(symbols, ctx.receiver)) &&
+				!add_type_members(options, declared_type_of(symbols, ctx.receiver), symbols, colors) &&
 				!add_builtin_constants(options, ctx.receiver, colors) &&
 				!add_global_enum_members(options, ctx.receiver, colors) &&
 				!add_type_members(options, ctx.receiver, symbols, colors)) {
@@ -1583,6 +1615,13 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 		for (const SourceStruct &declaration : symbols.structs) {
 			add_option(options, CODE_COMPLETION_KIND_CLASS, declaration.name, declaration.name,
 					colors.type, LOCATION_LOCAL);
+		}
+		if (semantic) {
+			for (const gdscript::SourceDeclaration &declaration : semantic_model.declarations) {
+				if (declaration.kind != gdscript::DeclarationKind::TRAIT) continue;
+				const String name = String::utf8(declaration.name.c_str(), declaration.name.size());
+				add_option(options, CODE_COMPLETION_KIND_CLASS, name, name, colors.type, LOCATION_LOCAL);
+			}
 		}
 		result["force"] = true;
 	} else {
@@ -1630,6 +1669,8 @@ Dictionary SafeGDScriptLanguage::_complete_code(const String &p_code, const Stri
 					add_option(options, CODE_COMPLETION_KIND_VARIABLE, name, name, colors.member, LOCATION_LOCAL);
 				} else if (declaration->kind == gdscript::DeclarationKind::CONSTANT) {
 					add_option(options, CODE_COMPLETION_KIND_CONSTANT, name, name, colors.member, LOCATION_LOCAL);
+				} else if (declaration->kind == gdscript::DeclarationKind::TRAIT) {
+					add_option(options, CODE_COMPLETION_KIND_CLASS, name, name, colors.type, LOCATION_LOCAL);
 				}
 			}
 		} else {
@@ -1949,17 +1990,21 @@ Dictionary SafeGDScriptLanguage::_get_global_class_name(const String &p_path) co
 	// comes from a text scan, not from SafeGDScript::class_name.
 	String declared_name;
 	String declared_base;
+	bool is_trait = false;
 	if (FileAccess::file_exists(p_path)) {
 		SafeGDScript::scan_class_header(FileAccess::get_file_as_string(p_path),
-				&declared_name, &declared_base);
+				&declared_name, &declared_base, &is_trait);
 	}
 	dict["name"] = declared_name.is_empty() ? SafeGDScript::PathToGlobalName(p_path) : declared_name;
-	if (declared_base.is_empty() || declared_base.begins_with("res://") ||
+	if (is_trait && declared_base.is_empty()) {
+		dict["base_type"] = "RefCounted";
+	} else if (declared_base.is_empty() || declared_base.begins_with("res://") ||
 			declared_base.begins_with("user://")) {
 		dict["base_type"] = "Sandbox";
 	} else {
 		dict["base_type"] = declared_base;
 	}
 	dict["icon_path"] = String(icon_path);
+	if (is_trait) dict["is_abstract"] = true;
 	return dict;
 }

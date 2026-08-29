@@ -49,6 +49,30 @@ void test_basic_tokens() {
 	std::cout << "  ✓ Basic tokens test passed" << std::endl;
 }
 
+void test_contextual_uses_keyword() {
+	Lexer lexer(
+		"uses Damageable\n"
+		"class Enemy uses Damageable:\n\tpass\n"
+		"var uses = 3\n"
+		"func f():\n\tuses(1)\n");
+	const std::vector<Token> tokens = lexer.tokenize();
+	int keyword_count = 0;
+	int identifier_count = 0;
+	for (const Token& token : tokens) {
+		if (token.lexeme != "uses") continue;
+		if (token.type == TokenType::USES) keyword_count++;
+		if (token.type == TokenType::IDENTIFIER) identifier_count++;
+	}
+	assert(keyword_count == 2);
+	assert(identifier_count == 2);
+
+	Lexer old_words("var interface = 1\nvar implements = 2\n");
+	for (const Token& token : old_words.tokenize()) {
+		if (token.lexeme == "interface" || token.lexeme == "implements")
+			assert(token.type == TokenType::IDENTIFIER);
+	}
+}
+
 void test_indentation() {
 	std::cout << "Testing indentation..." << std::endl;
 
@@ -422,6 +446,7 @@ int main() {
 
 	try {
 		test_basic_tokens();
+		test_contextual_uses_keyword();
 		test_indentation();
 		test_operators();
 		test_comparison_operators();

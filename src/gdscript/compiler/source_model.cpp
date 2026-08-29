@@ -138,7 +138,7 @@ struct SourceScan {
 // file. Editor analysis is error-tolerant; the compiler proper still refuses.
 bool resumes_after_unclosed(const std::string &text) {
 	static const char *const keywords[] = {"func", "static", "var", "const",
-		"class", "class_name", "extends", "signal", "enum"};
+		"class", "class_name", "trait", "trait_name", "extends", "signal", "enum", "uses"};
 	for (const char *word : keywords) if (word_start(text, word)) return true;
 	return false;
 }
@@ -149,7 +149,7 @@ bool statement_keyword(const std::string &text) {
 	static const char *const keywords[] = {"return", "pass", "break", "continue",
 		"breakpoint", "await", "assert", "if", "elif", "else", "for", "while",
 		"match", "when", "super", "extends", "class_name", "static", "signal",
-		"var", "const", "func", "class", "enum"};
+		"var", "const", "func", "class", "enum", "trait", "trait_name", "uses"};
 	for (const char *word : keywords) if (word_start(text, word)) return true;
 	return false;
 }
@@ -367,11 +367,14 @@ SourceModel analyze_source(const std::string &source, const std::string &path,
 		}
 		if ((flags & ANALYZE_SAFE_LINES) != 0) model.safe_lines.push_back(line_no);
 		if ((flags & ANALYZE_DIAGNOSTICS) != 0) {
+			const bool inside_trait = !scopes.empty() &&
+				model.declarations[size_t(scopes.back().second)].kind == DeclarationKind::TRAIT;
 			int underflow = scan.lines[i].closing_underflow;
 			for (size_t j = i + 1; j < lines.size() && scan.lines[j].continuation; j++) underflow += scan.lines[j].closing_underflow;
 			if (underflow > 0) diagnostic(model, "UNEXPECTED_DELIMITER", "Unexpected closing delimiter", line_no, 1);
 			if (text.back() == '=' || text.back() == ',' || text.back() == '.') diagnostic(model, "EXPECTED_EXPRESSION", "Expected expression after operator", line_no, uint32_t(text.size()));
-			if (word_start(text, "func") && text.find(':') == std::string::npos) diagnostic(model, "EXPECTED_COLON", "Expected ':' after function declaration", line_no, uint32_t(text.size()));
+			if (word_start(text, "func") && text.find(':') == std::string::npos &&
+					!inside_trait) diagnostic(model, "EXPECTED_COLON", "Expected ':' after function declaration", line_no, uint32_t(text.size()));
 			if ((word_start(text, "var") || word_start(text, "const")) && text.back() == ':') diagnostic(model, "EXPECTED_TYPE", "Expected a type after ':'", line_no, uint32_t(text.size()));
 		}
 		if ((flags & ANALYZE_DECLARATIONS) == 0) continue;
@@ -383,6 +386,8 @@ SourceModel analyze_source(const std::string &source, const std::string &path,
 		else if (word_start(text, "signal")) { d.kind = DeclarationKind::SIGNAL; keyword = 6; found = true; }
 		else if (word_start(text, "class_name")) { d.kind = DeclarationKind::CLASS; keyword = 10; found = true; }
 		else if (word_start(text, "class")) { d.kind = DeclarationKind::NESTED_CLASS; keyword = 5; found = true; }
+		else if (word_start(text, "trait_name")) { d.kind = DeclarationKind::TRAIT; keyword = 10; found = true; }
+		else if (word_start(text, "trait")) { d.kind = DeclarationKind::TRAIT; keyword = 5; found = true; }
 		else if (word_start(text, "enum")) { d.kind = DeclarationKind::ENUM; keyword = 4; found = true; }
 		else if (!text.empty() && text[0] == '@') { d.kind = DeclarationKind::ANNOTATION; keyword = 1; found = true; }
 		if (!found) { pending_doc.clear(); continue; }
@@ -450,7 +455,8 @@ SourceModel analyze_source(const std::string &source, const std::string &path,
 				model.declarations[size_t(index)].children.push_back(parameter_index);
 			}
 			scopes.push_back({indent, index});
-		} else if (model.declarations.back().kind == DeclarationKind::NESTED_CLASS) {
+		} else if (model.declarations.back().kind == DeclarationKind::NESTED_CLASS ||
+			model.declarations.back().kind == DeclarationKind::TRAIT) {
 			scopes.push_back({indent, index});
 		}
 	}

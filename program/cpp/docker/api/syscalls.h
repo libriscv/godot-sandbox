@@ -131,7 +131,11 @@
 // Variant indexed-get dispatcher. All three arguments are GuestVariant pointers.
 #define ECALL_VARIANT_GET (GAME_API_BASE + 62)
 
-#define ECALL_LAST (GAME_API_BASE + 63)
+// a0 = object handle, a1/a2 = interface UTF-8, a3/a4 = NUL-separated methods.
+// Returns bool in a0. Append-only ABI.
+#define ECALL_OBJ_USES_TRAIT (GAME_API_BASE + 63)
+
+#define ECALL_LAST (GAME_API_BASE + 64)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)

@@ -61,6 +61,10 @@ IR_OPCODE(TYPE_TEST,       "TYPE_TEST",       SIG(DST, SRC, IMM),  IR_PURE)
 
 IR_OPCODE(TYPE_TEST_MASK,  "TYPE_TEST_MASK",  SIG(DST, SRC, IMM),  IR_PURE)
 
+// Dynamic OBJECT arm of `value is Trait`. Immediate indexes
+// IRProgram::trait_signatures. Backend expands the guest-side cache + ecall.
+IR_OPCODE(TRAIT_TEST, "TRAIT_TEST", SIG(DST, SRC, IMM),  IR_SIDE_EFFECTS)
+
 // Builds the Variant that refers to a host-side scoped variant: type tag from
 // the immediate (a Variant::Type), payload the index in `src`. The counterpart
 // of a syscall that answers with an index instead of writing a Variant, which

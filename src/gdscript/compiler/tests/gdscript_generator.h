@@ -74,6 +74,9 @@ struct GenOptions {
 	// Struct programs exercise shape tracking and the raw Dictionary opcodes.
 	// Disable for differential runs whose reference interpreter has no host.
 	bool allow_structs = true;
+	// When a generated struct is present, sometimes provide its fields and
+	// concrete method through a trait so splice output reaches the same fuzzers.
+	bool allow_traits = true;
 };
 
 // One generated program, and the pieces a shrinker can take apart.
@@ -129,6 +132,16 @@ public:
 				"func fuzz_point_round_trip(point: FuzzPoint) -> FuzzPoint:\n"
 				"\treturn point\n");
 		}
+		m_has_trait = m_options.allow_traits && (m_seed % 4 == 0);
+		if (m_has_trait) {
+			program.declarations.insert(program.declarations.begin(),
+				"uses FuzzAccumulator\n"
+				"trait FuzzAccumulator:\n"
+				"\tvar fuzz_trait_total: int = 0\n"
+				"\tfunc fuzz_trait_add(left: int, right: int) -> int:\n"
+				"\t\tfuzz_trait_total += left + right\n"
+				"\t\treturn fuzz_trait_total\n");
+		}
 
 		if (m_options.allow_functions && m_random.chance(50)) {
 			const int count = 1 + static_cast<int>(m_random.below(2));
@@ -139,6 +152,9 @@ public:
 
 		m_scopes.clear();
 		push_scope();
+		if (m_has_trait) {
+			program.statements.push_back("\tvar fuzz_trait_probe: int = fuzz_trait_add(1, 2)\n");
+		}
 
 		const int count = 1 + static_cast<int>(m_random.below(m_options.max_statements));
 		for (int i = 0; i < count; i++) {
@@ -172,6 +188,7 @@ private:
 	int m_next_loop = 0;
 	int m_next_struct = 0;
 	bool m_has_struct = false;
+	bool m_has_trait = false;
 
 	void push_scope() { m_scopes.emplace_back(); }
 	void pop_scope() { m_scopes.pop_back(); }

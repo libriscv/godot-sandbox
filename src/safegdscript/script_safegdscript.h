@@ -141,6 +141,7 @@ public:
 	const String &get_script_class_name() const { return class_name; }
 	const String &get_script_base_class() const { return base_class; }
 	const String &get_script_native_base_class() const { return native_base_class; }
+	bool uses_trait(const StringName &p_name) const;
 	void class_restrictions_changed();
 	void remove_instance(SafeGDScriptInstance *p_instance);
 	void remove_placeholder(SafeGDScriptPlaceholderInstance *p_instance);
@@ -148,7 +149,8 @@ public:
 	const Variant **pending_init_args = nullptr;
 	int pending_init_argcount = 0;
 
-	static void scan_class_header(const String &p_source, String *r_class_name, String *r_base);
+	static void scan_class_header(const String &p_source, String *r_class_name, String *r_base,
+			bool *r_is_trait = nullptr);
 
 	static String PathToGlobalName(const String &p_path) {
 		return "SafeGDScript_" + p_path.get_basename().replace("res://", "").replace("/", "_").replace("-", "_").capitalize().replace(" ", "");
@@ -209,6 +211,8 @@ private:
 	HashMap<StringName, Variant> property_defaults;
 	Dictionary rpc_config;
 	HashMap<StringName, Ref<SafeGDScriptClass>> nested_classes;
+	std::vector<gdscript::ClassSignature> trait_signatures;
+	HashSet<StringName> used_traits;
 	std::vector<godot::MethodInfo> signals_info;
 	// Declaration line and '##' description, keyed by member name.
 	struct MethodDocumentation {

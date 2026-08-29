@@ -25,6 +25,9 @@ const char* token_type_name(TokenType type) {
 		case TokenType::PASS: return "PASS";
 		case TokenType::EXTENDS: return "EXTENDS";
 		case TokenType::STRUCT: return "STRUCT";
+		case TokenType::TRAIT: return "TRAIT";
+		case TokenType::TRAIT_NAME: return "TRAIT_NAME";
+		case TokenType::USES: return "USES";
 		case TokenType::TRUE: return "TRUE";
 		case TokenType::FALSE: return "FALSE";
 		case TokenType::NULL_VAL: return "NULL";

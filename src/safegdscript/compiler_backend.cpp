@@ -1,5 +1,7 @@
 #include "compiler_backend.h"
+#include "../sandbox_project_settings.h"
 
+#include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
 #include <cstring>
 
@@ -86,6 +88,28 @@ static PackedStringArray project_global_classes() {
 	return pairs;
 }
 
+static PackedStringArray engine_ancestry() {
+	PackedStringArray pairs;
+	ClassDBSingleton *class_db = ClassDBSingleton::get_singleton();
+	if (class_db == nullptr) return pairs;
+	for (const String &name : class_db->get_class_list()) {
+		String ancestors;
+		String current = name;
+		for (int depth = 0; depth < 256; depth++) {
+			const String parent = class_db->get_parent_class(current);
+			if (parent.is_empty() || parent == current) break;
+			if (!ancestors.is_empty()) ancestors += ",";
+			ancestors += parent;
+			current = parent;
+		}
+		if (!ancestors.is_empty()) {
+			pairs.push_back(name);
+			pairs.push_back(ancestors);
+		}
+	}
+	return pairs;
+}
+
 void prepare(GDScriptCompilerBackend &p_backend, bool p_restricted,
 		const PackedStringArray &p_base_sources, const String &p_source_path) {
 	p_backend.set_restricted(p_restricted);
@@ -93,6 +117,8 @@ void prepare(GDScriptCompilerBackend &p_backend, bool p_restricted,
 	p_backend.set_autoloads(project_autoload_names());
 	p_backend.set_global_classes(project_global_classes());
 	p_backend.set_base_sources(p_base_sources);
+	p_backend.set_engine_ancestry(engine_ancestry());
+	p_backend.set_trait_structural_fallback(SandboxProjectSettings::trait_structural_fallback());
 }
 
 } // namespace gdscript_compiler

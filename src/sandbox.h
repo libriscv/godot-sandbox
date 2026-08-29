@@ -793,6 +793,9 @@ public:
 	/// @brief Set the program to run in the sandbox.
 	/// @param program The program to load and run.
 	void set_program(Ref<ELFScript> program);
+	/// Clear the generated `is Trait` object-result caches after changing scripts
+	/// on objects that a running program may test again.
+	void clear_trait_caches();
 	/// @brief Get the program loaded into the sandbox.
 	/// @return The program loaded into the sandbox.
 	Ref<ELFScript> get_program();

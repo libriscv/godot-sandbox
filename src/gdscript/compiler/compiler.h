@@ -41,16 +41,20 @@ struct CompilerOptions {
 	// Exact-key checks at host/untyped boundaries. Restricted compilation always
 	// enables at least SHAPE. DEEP additionally validates typed field values.
 	StructChecks struct_checks = StructChecks::SHAPE;
+	bool trait_structural_fallback = true;
 	// Resource path of the source being compiled. Used to resolve relative
 	// constant load()/preload() paths the same way GDScript does.
 	std::string source_path;
 	std::vector<std::string> autoloads;
 	std::vector<std::pair<std::string, std::string>> global_script_classes;
+	// EngineClass -> comma-separated ancestors, nearest first.
+	std::vector<std::pair<std::string, std::string>> engine_ancestry;
 
 	struct BaseSource {
 		std::string name;
 		std::string path;
 		std::string source;
+		bool trait_only = false;
 	};
 	std::vector<BaseSource> base_sources; // nearest base first
 };
@@ -79,6 +83,7 @@ public:
 	const std::vector<FunctionSignature> &get_signal_signatures() const { return m_signals; }
 	const std::vector<RPCConfig> &get_rpc_configs() const { return m_rpc_configs; }
 	const std::vector<ClassSignature> &get_class_signatures() const { return m_class_signatures; }
+	const std::vector<std::string> &get_script_uses() const { return m_script_uses; }
 	const std::vector<ScriptConstant> &get_script_constants() const { return m_constants; }
 	const std::vector<PropertySignature> &get_property_signatures() const { return m_properties; }
 	const std::vector<DebugVariableRecord> &get_debug_variables() const { return m_debug_variables; }
@@ -99,6 +104,7 @@ private:
 	std::vector<FunctionSignature> m_signals;
 	std::vector<RPCConfig> m_rpc_configs;
 	std::vector<ClassSignature> m_class_signatures;
+	std::vector<std::string> m_script_uses;
 	std::vector<ScriptConstant> m_constants;
 	std::vector<PropertySignature> m_properties;
 	std::vector<DebugVariableRecord> m_debug_variables;

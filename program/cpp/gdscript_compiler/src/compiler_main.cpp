@@ -25,6 +25,7 @@ PUBLIC Variant compile(String code)
 	gdscript_remember_signals(compiler);
 	gdscript_remember_rpc_configs(compiler);
 	gdscript_remember_classes(compiler);
+	gdscript_remember_script_uses(compiler);
 	gdscript_remember_constants(compiler);
 	gdscript_remember_properties(compiler);
 	gdscript_remember_debug_variables(compiler);
@@ -65,6 +66,7 @@ PUBLIC Variant compile_profiled(String code)
 	gdscript_remember_signals(compiler);
 	gdscript_remember_rpc_configs(compiler);
 	gdscript_remember_classes(compiler);
+	gdscript_remember_script_uses(compiler);
 	gdscript_remember_constants(compiler);
 	gdscript_remember_properties(compiler);
 	gdscript_remember_debug_variables(compiler);
@@ -104,6 +106,7 @@ PUBLIC Variant compile_debug(String code, PackedInt32Array breakpoints)
 	gdscript_remember_signals(compiler);
 	gdscript_remember_rpc_configs(compiler);
 	gdscript_remember_classes(compiler);
+	gdscript_remember_script_uses(compiler);
 	gdscript_remember_constants(compiler);
 	gdscript_remember_properties(compiler);
 	gdscript_remember_debug_variables(compiler);
@@ -189,6 +192,11 @@ PUBLIC Variant get_class_signatures()
 	return gdscript_classes_to_variant();
 }
 
+PUBLIC Variant get_script_uses()
+{
+	return gdscript_script_uses_to_variant();
+}
+
 // File-scope `const` and `enum` of the last compile. The host answers
 // `Autoload.NAME` out of these; the guest folded them and kept no storage.
 PUBLIC Variant get_script_constants()
@@ -228,6 +236,12 @@ PUBLIC Variant set_restricted(bool restricted)
 	return Nil;
 }
 
+PUBLIC Variant set_trait_structural_fallback(bool enabled)
+{
+	gdscript_trait_structural_fallback() = enabled;
+	return Nil;
+}
+
 PUBLIC Variant set_source_path(String path)
 {
 	gdscript_source_path() = path.utf8();
@@ -248,6 +262,17 @@ PUBLIC Variant set_global_classes(PackedStringArray pairs)
 		classes.emplace_back(entries[i], entries[i + 1]);
 	}
 	gdscript_global_classes() = std::move(classes);
+	return Nil;
+}
+
+PUBLIC Variant set_engine_ancestry(PackedStringArray pairs)
+{
+	std::vector<std::pair<std::string, std::string>> ancestry;
+	const std::vector<std::string> entries = pairs.fetch();
+	for (size_t i = 0; i + 1 < entries.size(); i += 2) {
+		ancestry.emplace_back(entries[i], entries[i + 1]);
+	}
+	gdscript_engine_ancestry() = std::move(ancestry);
 	return Nil;
 }
 

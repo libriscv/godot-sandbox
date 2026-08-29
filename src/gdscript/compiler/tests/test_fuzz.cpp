@@ -23,6 +23,7 @@
 #include "../ir_verifier.h"
 #include "../lexer.h"
 #include "../parser.h"
+#include "../traits.h"
 #include "gdscript_generator.h"
 #include <cmath>
 #include <cstdlib>
@@ -49,6 +50,7 @@ IRProgram build_ir(const std::string& source, size_t pass_limit) {
 	Lexer lexer(source);
 	Parser parser(lexer.tokenize());
 	Program program = parser.parse();
+	apply_traits(program);
 	CodeGenerator codegen;
 	IRProgram ir = codegen.generate(program);
 	ir_verify(ir, "codegen");

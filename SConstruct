@@ -35,6 +35,8 @@ compiler_sources = compiler_host_sources + [
     "src/gdscript/compiler/token.cpp",
     "src/gdscript/compiler/lexer.cpp",
     "src/gdscript/compiler/parser.cpp",
+    "src/gdscript/compiler/ast_clone.cpp",
+    "src/gdscript/compiler/traits.cpp",
     "src/gdscript/compiler/chain.cpp",
     "src/gdscript/compiler/ir.cpp",
     "src/gdscript/compiler/ir_optimizer.cpp",

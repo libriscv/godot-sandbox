@@ -4,6 +4,7 @@
 #include "guest_datatypes.h"
 #include "gdscript/compiler/call_abi.h"
 #include "gdscript/compiler/instance_layout.h"
+#include "gdscript/compiler/trait_cache_layout.h"
 #include "sandbox_project_settings.h"
 #include "scoped_tree_base.h"
 #include "variant_coerce.h"
@@ -211,6 +212,7 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_functions"), &Sandbox::get_functions);
 	ClassDB::bind_method(D_METHOD("get_public_api"), &Sandbox::get_public_api);
 	ClassDB::bind_method(D_METHOD("address_of", "symbol"), &Sandbox::address_of);
+	ClassDB::bind_method(D_METHOD("clear_trait_caches"), &Sandbox::clear_trait_caches);
 	ClassDB::bind_method(D_METHOD("lookup_address", "address"), &Sandbox::lookup_address);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("generate_api", "language", "header_extra", "use_argument_names"), &Sandbox::generate_api, DEFVAL("cpp"), DEFVAL(""), DEFVAL(false));
 	ClassDB::bind_static_method("Sandbox", D_METHOD("download_program", "program_name"), &Sandbox::download_program, DEFVAL("hello_world"));
@@ -707,6 +709,26 @@ void Sandbox::set_program(Ref<ELFScript> program) {
 		if (value) {
 			this->set_property(old_prop.name(), *value);
 		}
+	}
+}
+
+void Sandbox::clear_trait_caches() {
+	if (!has_program_loaded()) return;
+	if (is_in_vmcall()) {
+		ERR_PRINT("Cannot clear trait caches while a VM call is in progress.");
+		return;
+	}
+	static constexpr size_t CACHE_BYTES = gdscript::TraitCacheLayout::AREA_SIZE;
+	try {
+		for (size_t index = 0; index < 4096; index++) {
+			const gaddr_t address = this->address_of(
+					String(gdscript::TRAIT_CACHE_SYMBOL_PREFIX) + itos(index));
+			if (address == 0) break;
+			uint8_t *cache = machine().memory.memarray<uint8_t>(address, CACHE_BYTES);
+			std::fill_n(cache, CACHE_BYTES, uint8_t(0));
+		}
+	} catch (const std::exception &error) {
+		ERR_PRINT("Sandbox: failed to clear trait caches: " + String(error.what()));
 	}
 }
 void Sandbox::set_program_data_internal(Ref<ELFScript> program) {

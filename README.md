@@ -45,6 +45,28 @@ SafeGDScript (`.sgd`) is the default language for sandboxed code. It is a [safet
 
 VS Code users can install the [SafeGDScript extension](https://marketplace.visualstudio.com/items?itemName=AlfAndrWalla.vscode-safegdscript) for syntax highlighting and basic editor support.
 
+SafeGDScript supports reusable traits. A trait can contribute state, constants,
+enums, signals and concrete/static methods, while abstract methods state what
+the using class must provide:
+
+```gdscript
+uses Damageable
+
+trait Damageable:
+	var health: int = 100
+	func take_damage(amount: int) -> void:
+		health -= amount
+	@abstract func on_death() -> void
+
+func on_death() -> void:
+	queue_free()
+```
+
+Traits are nominal for SafeGDScript classes (`value is Damageable`) and may be
+used as type hints. Foreign Godot objects can satisfy a trait structurally by
+providing every instance method declared by it. Disable that compatibility path
+with `safe_gdscript/traits/structural_fallback` for strictly nominal matching.
+
 ```gdscript
 struct Item:
 	var name: String

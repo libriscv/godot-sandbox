@@ -83,6 +83,19 @@ inline Variant gdscript_classes_to_variant() {
 	return PackedByteArray(gdscript::encode_class_signatures(gdscript_last_classes()));
 }
 
+inline std::vector<std::string> &gdscript_last_script_uses() {
+	static std::vector<std::string> names;
+	return names;
+}
+
+inline void gdscript_remember_script_uses(const gdscript::Compiler &compiler) {
+	gdscript_last_script_uses() = compiler.get_script_uses();
+}
+
+inline Variant gdscript_script_uses_to_variant() {
+	return PackedStringArray(gdscript_last_script_uses());
+}
+
 // File-scope `const` and `enum`. Own blob, own entry point, same reason as above.
 inline std::vector<gdscript::ScriptConstant> &gdscript_last_constants() {
 	static std::vector<gdscript::ScriptConstant> constants;
@@ -205,6 +218,11 @@ inline bool &gdscript_restricted() {
 	return restricted;
 }
 
+inline bool &gdscript_trait_structural_fallback() {
+	static bool enabled = true;
+	return enabled;
+}
+
 inline std::string &gdscript_source_path() {
 	static std::string path;
 	return path;
@@ -220,6 +238,11 @@ inline std::vector<std::pair<std::string, std::string>> &gdscript_global_classes
 	return classes;
 }
 
+inline std::vector<std::pair<std::string, std::string>> &gdscript_engine_ancestry() {
+	static std::vector<std::pair<std::string, std::string>> ancestry;
+	return ancestry;
+}
+
 inline std::vector<gdscript::CompilerOptions::BaseSource> &gdscript_base_sources() {
 	static std::vector<gdscript::CompilerOptions::BaseSource> sources;
 	return sources;
@@ -228,16 +251,22 @@ inline std::vector<gdscript::CompilerOptions::BaseSource> &gdscript_base_sources
 inline void gdscript_set_base_sources(const std::vector<std::string> &triples) {
 	std::vector<gdscript::CompilerOptions::BaseSource> sources;
 	for (size_t i = 0; i + 2 < triples.size(); i += 3) {
+		std::string name = triples[i];
+		const std::string prefix = "trait:";
+		const bool trait_only = name.rfind(prefix, 0) == 0;
+		if (trait_only) name.erase(0, prefix.size());
 		sources.push_back(gdscript::CompilerOptions::BaseSource{
-				triples[i], triples[i + 1], triples[i + 2] });
+			std::move(name), triples[i + 1], triples[i + 2], trait_only });
 	}
 	gdscript_base_sources() = std::move(sources);
 }
 
 inline void gdscript_apply_restrictions(gdscript::CompilerOptions &options) {
 	options.restricted = gdscript_restricted();
+	options.trait_structural_fallback = gdscript_trait_structural_fallback();
 	options.source_path = gdscript_source_path();
 	options.autoloads = gdscript_autoloads();
 	options.global_script_classes = gdscript_global_classes();
+	options.engine_ancestry = gdscript_engine_ancestry();
 	options.base_sources = gdscript_base_sources();
 }

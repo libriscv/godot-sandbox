@@ -58,9 +58,24 @@ public:
 	void set_base_sources(const PackedStringArray &p_triples) override {
 		m_options.base_sources.clear();
 		for (int64_t i = 0; i + 2 < p_triples.size(); i += 3) {
+			std::string name = to_utf8(p_triples[i]);
+			const std::string prefix = "trait:";
+			const bool trait_only = name.rfind(prefix, 0) == 0;
+			if (trait_only) name.erase(0, prefix.size());
 			m_options.base_sources.push_back(gdscript::CompilerOptions::BaseSource{
-					to_utf8(p_triples[i]), to_utf8(p_triples[i + 1]), to_utf8(p_triples[i + 2]) });
+					std::move(name), to_utf8(p_triples[i + 1]), to_utf8(p_triples[i + 2]),
+					trait_only });
 		}
+	}
+
+	void set_engine_ancestry(const PackedStringArray &p_pairs) override {
+		m_options.engine_ancestry.clear();
+		for (int64_t i = 0; i + 1 < p_pairs.size(); i += 2) {
+			m_options.engine_ancestry.emplace_back(to_utf8(p_pairs[i]), to_utf8(p_pairs[i + 1]));
+		}
+	}
+	void set_trait_structural_fallback(bool p_enabled) override {
+		m_options.trait_structural_fallback = p_enabled;
 	}
 
 	bool can_build_profiled() override { return true; }
@@ -145,6 +160,7 @@ public:
 	std::vector<gdscript::FunctionSignature> signal_signatures() override { return m_signals; }
 	std::vector<gdscript::RPCConfig> rpc_configs() override { return m_rpc_configs; }
 	std::vector<gdscript::ClassSignature> class_signatures() override { return m_classes; }
+	std::vector<std::string> script_uses() override { return m_script_uses; }
 	std::vector<gdscript::ScriptConstant> script_constants() override { return m_constants; }
 	std::vector<gdscript::PropertySignature> property_signatures() override { return m_properties; }
 	std::vector<gdscript::DebugVariableRecord> debug_variables() override { return m_debug_variables; }
@@ -161,6 +177,7 @@ private:
 		m_signals = p_compiler.get_signal_signatures();
 		m_rpc_configs = p_compiler.get_rpc_configs();
 		m_classes = p_compiler.get_class_signatures();
+		m_script_uses = p_compiler.get_script_uses();
 		m_constants = p_compiler.get_script_constants();
 		m_properties = p_compiler.get_property_signatures();
 		m_debug_variables = p_compiler.get_debug_variables();
@@ -187,6 +204,7 @@ private:
 	std::vector<gdscript::FunctionSignature> m_signals;
 	std::vector<gdscript::RPCConfig> m_rpc_configs;
 	std::vector<gdscript::ClassSignature> m_classes;
+	std::vector<std::string> m_script_uses;
 	std::vector<gdscript::ScriptConstant> m_constants;
 	std::vector<gdscript::PropertySignature> m_properties;
 	std::vector<gdscript::DebugVariableRecord> m_debug_variables;

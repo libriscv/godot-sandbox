@@ -4100,6 +4100,30 @@ func _compile_and_load(gdscript_code: String, instructions_max: int = 4000) -> S
 	s.set_instructions_max(instructions_max)
 	return s
 
+func test_sgd_a_trait_splices_state_methods_and_enums():
+	var source = """
+uses Counter
+
+trait Counter:
+	var count: int = 1
+	enum State { READY = 3, DONE = 7 }
+	func bump(amount: int = 1) -> int:
+		count += amount
+		return count
+
+func bump(amount: int = 1) -> int:
+	return Counter.bump(amount) + 10
+
+func run():
+	return [bump(), bump(2), Counter.State.DONE]
+"""
+	var s = _compile_and_load(source, 100000)
+	if s == null:
+		return
+	assert_eq(s.vmcallv("run"), [12, 14, 7],
+		"a class override should reach the displaced trait body and its state")
+	s.queue_free()
+
 func test_sgd_rpc_is_published_only_while_unrestricted():
 	var script := SafeGDScript.new()
 	script.set_source_code("""

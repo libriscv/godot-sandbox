@@ -37,6 +37,10 @@ void SafeGDScriptClass::configure(SafeGDScript *p_outer,
 	line = p_signature.line;
 	is_struct = p_signature.is_struct;
 	description = utf8_of(p_signature.description);
+	used_traits.clear();
+	for (const std::string &name : p_signature.uses) {
+		used_traits.insert(StringName(utf8_of(name)));
+	}
 	base = Ref<SafeGDScriptClass>();
 	methods_info.clear();
 	method_lines.clear();
@@ -71,8 +75,32 @@ void SafeGDScriptClass::invalidate() {
 	methods_info.clear();
 	method_lines.clear();
 	fields.clear();
+	used_traits.clear();
 	base = Ref<SafeGDScriptClass>();
 	valid = false;
+}
+
+bool SafeGDScriptClass::uses_trait(const StringName &p_name) const {
+	if (used_traits.has(p_name)) return true;
+	return base.is_valid() && base->uses_trait(p_name);
+}
+
+bool safegdscript_nominal_uses(Object *p_object, const StringName &p_trait,
+		bool &r_recognized) {
+	r_recognized = false;
+	if (p_object == nullptr) return false;
+	const Variant script_value = p_object->get_script();
+	if (script_value.get_type() != Variant::OBJECT) return false;
+	Object *script_object = script_value;
+	if (SafeGDScript *safe = fast_cast_to<SafeGDScript>(script_object)) {
+		r_recognized = true;
+		return safe->uses_trait(p_trait);
+	}
+	if (SafeGDScriptClass *safe = fast_cast_to<SafeGDScriptClass>(script_object)) {
+		r_recognized = true;
+		return safe->uses_trait(p_trait);
+	}
+	return false;
 }
 
 SafeGDScript *SafeGDScriptClass::get_outer_script() const {

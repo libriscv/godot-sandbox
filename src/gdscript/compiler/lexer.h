@@ -60,6 +60,10 @@ private:
 	int m_line = 1;
 	int m_column = 1;
 	bool m_at_line_start = true;
+	// `uses` is contextual: it is a keyword at the start of a statement or in
+	// a class/struct head, and an ordinary identifier everywhere else.
+	bool m_statement_start = true;
+	bool m_type_header = false;
 	// Unclosed brackets; while non-empty, newlines are swallowed.
 	struct OpenBracket {
 		char closer;

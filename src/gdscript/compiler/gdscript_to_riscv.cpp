@@ -74,16 +74,17 @@ int main(int argc, char** argv)
 					global_classes.emplace_back(pair.substr(0, eq), pair.substr(eq + 1));
 				}
 			}
-		} else if (arg == "--base") {
+		} else if (arg == "--base" || arg == "--trait") {
 			if (i + 1 < argc) {
 				const std::string pair = argv[++i];
 				const size_t eq = pair.find('=');
 				if (eq == std::string::npos) {
-					std::cerr << "Error: --base wants Name=path" << std::endl;
+					std::cerr << "Error: " << arg << " wants Name=path" << std::endl;
 					return 1;
 				}
 				CompilerOptions::BaseSource base;
 				base.name = pair.substr(0, eq);
+				base.trait_only = arg == "--trait";
 				base.path = pair.substr(eq + 1);
 				std::ifstream in(base.path);
 				if (!in) {

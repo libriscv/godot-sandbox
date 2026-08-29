@@ -35,6 +35,8 @@ String safegdscript_source_location(Sandbox &p_sandbox, gaddr_t p_pc);
 void safegdscript_bind_nested_class(Sandbox &p_sandbox, godot::Object *p_base,
 		const godot::Dictionary &p_instance, const godot::String &p_class_name);
 void safegdscript_bypass_super(godot::Object *p_object, const godot::StringName &p_method);
+bool safegdscript_nominal_uses(godot::Object *p_object,
+		const godot::StringName &p_trait, bool &r_recognized);
 
 namespace riscv {
 extern std::unordered_map<std::string, std::function<uint64_t()>> global_singleton_list;
@@ -1175,6 +1177,42 @@ APICALL(api_class_bind) {
 	}
 	safegdscript_bind_nested_class(emu, base, Dictionary(instance),
 			String::utf8(name.c_str(), int64_t(name.size())));
+}
+
+APICALL(api_obj_uses_trait) {
+	auto [handle, trait_utf8, methods] =
+		machine.sysargs<uint64_t, std::string, std::string>();
+	Sandbox &emu = riscv::emu(machine);
+	PENALIZE(50'000);
+	godot::Object *object = get_object_from_address(emu, handle);
+	const StringName trait_name(String::utf8(trait_utf8.c_str(),
+		int64_t(trait_utf8.size())));
+	bool recognized = false;
+	const bool nominal = safegdscript_nominal_uses(object, trait_name, recognized);
+	if (recognized) {
+		machine.set_result(nominal ? 1 : 0);
+		return;
+	}
+	if (methods.empty()) {
+		machine.set_result(0);
+		return;
+	}
+
+	size_t begin = 0;
+	while (begin < methods.size()) {
+		size_t end = methods.find('\0', begin);
+		if (end == std::string::npos) end = methods.size();
+		if (end > begin) {
+			const StringName method(String::utf8(methods.data() + begin,
+				int64_t(end - begin)));
+			if (!object->has_method(method)) {
+				machine.set_result(0);
+				return;
+			}
+		}
+		begin = end + 1;
+	}
+	machine.set_result(1);
 }
 
 APICALL(api_veval) {
@@ -3972,6 +4010,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_OBJ_RETAIN, api_obj_retain },
 
 			{ ECALL_CLASS_BIND, api_class_bind },
+			{ ECALL_OBJ_USES_TRAIT, api_obj_uses_trait },
 			{ ECALL_VCALL_SUPER, api_vcall_super },
 
 			{ ECALL_PACKED_ARRAY_OPS, api_packed_array_ops },

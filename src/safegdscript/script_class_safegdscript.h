@@ -71,6 +71,7 @@ public:
 	const std::vector<MethodInfo> &get_methods_info() const { return methods_info; }
 	const SafeGDScriptClass *get_base_class() const { return base.ptr(); }
 	bool get_is_struct() const { return is_struct; }
+	bool uses_trait(const StringName &p_name) const;
 	const String &get_description() const { return description; }
 	// Own methods first, then the declared chain's.
 	const MethodInfo *find_method_info(const StringName &p_method) const;
@@ -90,6 +91,7 @@ private:
 	Ref<SafeGDScriptClass> base;
 	std::vector<MethodInfo> methods_info;
 	std::vector<gdscript::ClassField> fields;
+	HashSet<StringName> used_traits;
 	int32_t line = 0;
 	bool is_struct = false;
 	String description;
@@ -156,3 +158,8 @@ void safegdscript_bind_nested_class(Sandbox &p_sandbox, Object *p_base,
 
 // Arms the super bypass on p_object's instance, when it has one of ours.
 void safegdscript_bypass_super(Object *p_object, const StringName &p_method);
+
+// Returns the nominal answer for one of our scripts. false in r_recognized
+// means the caller should perform structural matching instead.
+bool safegdscript_nominal_uses(Object *p_object, const StringName &p_trait,
+		bool &r_recognized);

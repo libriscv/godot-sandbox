@@ -283,6 +283,11 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_rodata_string_labels.clear();
 	m_string_constants = &program.string_constants;
 	m_strings = &program.strings;
+	m_trait_signatures = &program.trait_signatures;
+	m_trait_structural_fallback = program.trait_structural_fallback;
+	m_trait_cache_count = program.trait_signatures.size();
+	m_trait_cache_size = m_trait_cache_count * TraitCacheLayout::AREA_SIZE;
+	m_trait_cache_address = 0;
 	plan_program_call_properties(program);
 
 	m_global_count = program.globals.size();
@@ -457,7 +462,8 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_instance_blob_size = m_instance_count > 0 ? size_t(InstanceLayout::BLOB_SIZE) : 0;
 	m_profiling_size = m_profiling ? size_t(ProfilingLayout::area_size(uint32_t(m_profiling_count))) : 0;
 	m_debug_size = m_debug ? size_t(DebugLayout::area_size()) : 0;
-	m_global_data_size = globals_bytes + m_instance_blob_size + m_profiling_size + m_debug_size;
+	m_global_data_size = globals_bytes + m_instance_blob_size + m_profiling_size +
+		m_debug_size + m_trait_cache_size;
 
 	if (m_global_data_size > 0) {
 		while (m_code.size() % 8 != 0) {
@@ -566,6 +572,17 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 				record.pc_end = data_vaddr;
 				m_debug_variables.push_back(std::move(record));
 			}
+		}
+
+		if (m_trait_cache_size > 0) {
+			const size_t caches_address = data_vaddr + globals_bytes + m_instance_blob_size +
+				m_profiling_size + m_debug_size;
+			m_trait_cache_address = caches_address;
+			for (size_t i = 0; i < program.trait_signatures.size(); i++) {
+				set_label(label_id(".trait_cache_" + std::to_string(i)),
+					caches_address - 0x10000 + i * TraitCacheLayout::AREA_SIZE);
+			}
+			m_code.resize(m_code.size() + m_trait_cache_size, 0);
 		}
 	}
 
@@ -1292,6 +1309,66 @@ void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
 	} else {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unknown syscall number: " + std::to_string(syscall_num));
 	}
+}
+
+void RISCVCodeGen::gen_trait_test(const IRInstruction& instr) {
+	if (instr.operands.size() != 3 || m_trait_signatures == nullptr) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"TRAIT_TEST requires destination, object and trait index");
+	}
+	const int result_vreg = instr.operands[0].reg_index();
+	const int object_vreg = instr.operands[1].reg_index();
+	const size_t index = size_t(instr.operands[2].immediate());
+	if (index >= m_trait_signatures->size()) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"TRAIT_TEST trait index is out of range");
+	}
+	const ClassSignature& iface = (*m_trait_signatures)[index];
+	std::string methods;
+	for (const FunctionSignature& method : iface.trait_methods) {
+		if (!m_trait_structural_fallback || method.is_static) continue;
+		methods += method.name;
+		methods.push_back('\0');
+	}
+	const std::string name_label = rodata_string(iface.name);
+	const std::string methods_label = rodata_string(methods);
+	const std::string cache_label = ".trait_cache_" + std::to_string(index);
+	const std::string miss = gen_local_label(".trait_miss");
+	const std::string done = gen_local_label(".trait_done");
+	const int result_offset = get_variant_stack_offset(result_vreg);
+	const int object_offset = get_variant_stack_offset(object_vreg);
+
+	spill_around_syscall({ REG_A0, REG_A1, REG_A2, REG_A3, REG_A4 });
+	emit_ld(REG_T0, REG_SP, object_offset + VARIANT_DATA_OFFSET);
+	emit_la(REG_T1, cache_label);
+	emit_li(REG_T2, 3);
+	emit_srl(REG_T2, REG_T0, REG_T2);
+	emit_andi(REG_T2, REG_T2, int32_t(TRAIT_CACHE_ENTRIES - 1));
+	emit_slli(REG_T2, REG_T2, 4);
+	emit_add(REG_T2, REG_T1, REG_T2);
+	emit_ld(REG_T3, REG_T2, 0);
+	mark_label_use(miss, m_code.size());
+	emit_bne(REG_T3, REG_T0, 0);
+	emit_ld(REG_T4, REG_T2, 8);
+	mark_label_use(done, m_code.size());
+	emit_jal(REG_ZERO, 0);
+
+	define_label(miss);
+	emit_mv(REG_A0, REG_T0);
+	emit_la(REG_A1, name_label);
+	emit_li(REG_A2, int64_t(iface.name.size()));
+	emit_la(REG_A3, methods_label);
+	emit_li(REG_A4, int64_t(methods.size()));
+	emit_li(REG_A7, ECALL_OBJ_USES_TRAIT);
+	emit_ecall();
+	emit_mv(REG_T4, REG_A0);
+	emit_sd(REG_T0, REG_T2, 0);
+	emit_sd(REG_T4, REG_T2, 8);
+
+	define_label(done);
+	emit_li(REG_T5, Variant::BOOL);
+	emit_sw(REG_T5, REG_SP, result_offset + VARIANT_TYPE_OFFSET);
+	emit_store_variant_bool(REG_T4, REG_SP, result_offset);
 }
 
 void RISCVCodeGen::gen_construct(const IRInstruction& instr) {
@@ -2642,6 +2719,10 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			break;
 		}
 
+		case IROpcode::TRAIT_TEST:
+			gen_trait_test(instr);
+			break;
+
 		case IROpcode::TYPE_TEST: {
 			// TYPE_TEST dst, src, variant_type
 			//
@@ -3348,7 +3429,8 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::LOAD_FLOAT_IMM: note_known_tag(dst, Variant::FLOAT); break;
 			case IROpcode::LOAD_BOOL:
 			case IROpcode::TYPE_TEST:
-			case IROpcode::TYPE_TEST_MASK: note_known_tag(dst, Variant::BOOL); break;
+		case IROpcode::TYPE_TEST_MASK: note_known_tag(dst, Variant::BOOL); break;
+			case IROpcode::TRAIT_TEST: note_known_tag(dst, Variant::BOOL); break;
 			case IROpcode::LOAD_NIL: note_known_tag(dst, Variant::NIL); break;
 			case IROpcode::TYPE_OF: note_known_tag(dst, Variant::INT); break;
 			case IROpcode::CONVERT:
@@ -3626,6 +3708,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::CALL:
 		case IROpcode::CALL_HOSTED:
 		case IROpcode::CALL_SYSCALL:
+		case IROpcode::TRAIT_TEST:
 		case IROpcode::GET_NODE:
 		case IROpcode::LOAD_RESOURCE:
 		case IROpcode::LOAD_RESOURCE_VAR:

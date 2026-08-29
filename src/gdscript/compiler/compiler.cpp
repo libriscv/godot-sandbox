@@ -1,5 +1,6 @@
 #include "compiler.h"
 #include "chain.h"
+#include "traits.h"
 #include "compiler_exception.h"
 #include "lexer.h"
 #include "parser.h"
@@ -45,6 +46,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 	m_signals.clear();
 	m_rpc_configs.clear();
 	m_class_signatures.clear();
+	m_script_uses.clear();
 	m_constants.clear();
 	m_properties.clear();
 	m_debug_variables.clear();
@@ -56,7 +58,11 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 	m_native_base_class.clear();
 	m_native_base_is_path = false;
 	try {
-		if (!options.base_sources.empty() && options.restricted) {
+		const bool has_executable_base = std::any_of(options.base_sources.begin(),
+			options.base_sources.end(), [](const CompilerOptions::BaseSource &base) {
+				return !base.trait_only;
+			});
+		if (has_executable_base && options.restricted) {
 			throw CompilerException(ErrorType::SEMANTIC_ERROR,
 				"A restricted Sandbox refuses 'extends', so no base script is compiled in",
 				0, 0, "", "", "",
@@ -98,14 +104,32 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 					e.set_file(base.path);
 					throw;
 				}
-				links.push_back(std::move(link));
+				if (base.trait_only) {
+					for (TraitDecl &decl : link.program.traits) {
+						const size_t dot = base.name.rfind('.');
+						if (dot != std::string::npos && decl.name == base.name.substr(dot + 1))
+							decl.name = base.name;
+						program.traits.push_back(std::move(decl));
+					}
+				} else {
+					links.push_back(std::move(link));
+				}
 			}
-			ChainLink leaf;
-			leaf.path = options.source_path;
-			leaf.program = std::move(program);
-			links.push_back(std::move(leaf));
-			program = merge_chain(std::move(links));
+			if (!links.empty()) {
+				ChainLink leaf;
+				leaf.path = options.source_path;
+				leaf.program = std::move(program);
+				links.push_back(std::move(leaf));
+				std::vector<const TraitDecl*> available_traits;
+				for (const ChainLink& link : links)
+					for (const TraitDecl& trait : link.program.traits)
+						available_traits.push_back(&trait);
+				for (ChainLink& link : links) apply_traits(link.program, available_traits);
+				program = merge_chain(std::move(links));
+			}
 		}
+
+		if (!program.chain.merged()) apply_traits(program);
 
 		if (options.dump_ast) {
 			std::cout << "=== AST ===" << std::endl;
@@ -126,14 +150,19 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 		codegen.set_struct_checks(options.restricted ||
 			options.struct_checks != CompilerOptions::StructChecks::OFF,
 			options.struct_checks == CompilerOptions::StructChecks::DEEP);
+		codegen.set_trait_structural_fallback(options.trait_structural_fallback);
 		codegen.set_source_path(options.source_path);
 		codegen.set_autoloads(options.autoloads);
 		codegen.set_global_script_classes(options.global_script_classes);
+		codegen.set_engine_ancestry(options.engine_ancestry);
 		IRProgram ir_program = codegen.generate(program);
 		m_signatures = ir_program.signatures;
 		m_signals = ir_program.signals;
 		m_rpc_configs = ir_program.rpc_configs;
 		m_class_signatures = ir_program.class_signatures;
+		m_class_signatures.insert(m_class_signatures.end(),
+			ir_program.trait_signatures.begin(), ir_program.trait_signatures.end());
+		m_script_uses = ir_program.script_uses;
 		m_constants = ir_program.constants;
 		for (const IRGlobalVar &global : ir_program.globals) {
 			if (global.is_const) {

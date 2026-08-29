@@ -10,6 +10,22 @@
 
 namespace gdscript {
 
+void CodeGenerator::set_engine_ancestry(
+	const std::vector<std::pair<std::string, std::string>>& pairs) {
+	m_engine_ancestry.clear();
+	for (const auto& pair : pairs) {
+		size_t begin = 0;
+		while (begin <= pair.second.size()) {
+			const size_t end = pair.second.find(',', begin);
+			const std::string name = pair.second.substr(begin,
+				end == std::string::npos ? std::string::npos : end - begin);
+			if (!name.empty()) m_engine_ancestry[pair.first].insert(name);
+			if (end == std::string::npos) break;
+			begin = end + 1;
+		}
+	}
+}
+
 static IRInstruction::TypeHint type_hint_from_string(const std::string& type_str) {
 	const Variant::Type type = Variant::type_from_name(type_str);
 	if (type != Variant::VARIANT_MAX) {
@@ -64,6 +80,11 @@ TypeSet CodeGenerator::type_set_from(const TypeExpr& expr, int line, int column)
 			}
 			resolved = Variant::DICTIONARY;
 		}
+		if (find_trait(name) != nullptr) {
+			result.mask |= uint64_t(1) << Variant::OBJECT;
+			result.mask |= uint64_t(1) << Variant::DICTIONARY;
+			continue;
+		}
 		if (resolved == Variant::VARIANT_MAX) {
 			if (!name.empty() && name.front() >= 'A' && name.front() <= 'Z') {
 				resolved = Variant::OBJECT;
@@ -98,6 +119,10 @@ IRInstruction::TypeHint CodeGenerator::single_type_from(const TypeExpr& type) co
 }
 
 int32_t CodeGenerator::published_type_from(const TypeExpr& type) const {
+	if (const TraitDecl* trait = find_trait(type.sole_name())) {
+		return trait_required_base(*trait).empty() ? int32_t(FunctionParameter::ANY_TYPE)
+			: int32_t(Variant::OBJECT);
+	}
 	const TypeSet set = type_set_from(type);
 	if (set.is_nullable_single() && set.non_null().only() == Variant::OBJECT) {
 		return int32_t(Variant::OBJECT);
@@ -149,6 +174,7 @@ void publish_constant(IRProgram& ir_program, const std::string& name,
 
 IRProgram CodeGenerator::generate(const Program& program) {
 	IRProgram ir_program;
+	ir_program.trait_structural_fallback = m_trait_structural_fallback;
 	ir_program.is_tool = program.is_tool;
 
 	if (!program.class_name.empty() && m_restricted) {
@@ -193,6 +219,21 @@ IRProgram CodeGenerator::generate(const Program& program) {
 
 	// Collected before lowering so declaration order does not matter.
 	m_saw_breakpoint_statement = false;
+	m_traits.clear();
+	m_trait_indices.clear();
+	for (const TraitDecl& decl : program.traits) {
+		if (m_traits.count(decl.name)) {
+			error_at("Trait '" + decl.name + "' is declared more than once",
+				decl.line, decl.column);
+		}
+		if (is_global_class(decl.name) || m_local_functions.count(decl.name)) {
+			error_at("Trait '" + decl.name + "' has a name that is already taken",
+				decl.line, decl.column);
+		}
+		reject_signal_collision("Trait", decl.name, decl.line, decl.column);
+		m_trait_indices[&decl] = m_trait_indices.size();
+		m_traits[decl.name] = &decl;
+	}
 	m_structs.clear();
 	m_struct_default_stack.clear();
 	for (const auto& decl : program.structs) {
@@ -200,6 +241,10 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		if (m_structs.count(decl.name)) {
 			error_at(std::string(kind) + " '" + decl.name + "' is declared more than once",
 				decl.line, decl.column);
+		}
+		if (m_traits.count(decl.name)) {
+			error_at(std::string(kind) + " '" + decl.name +
+				"' has the name of a trait", decl.line, decl.column);
 		}
 		if (is_global_class(decl.name)) {
 			error_at(std::string(kind) + " '" + decl.name + "' has the name of a Godot singleton",
@@ -218,9 +263,20 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	// Enums resolve to integers here; nothing reaches the IR.
 	m_enums.clear();
 	m_enum_members.clear();
+	for (const TraitDecl& trait : program.traits) {
+		for (const EnumDecl& decl : trait.enums) {
+			if (decl.name.empty()) continue;
+			const std::string qualified = trait.name + "." + decl.name;
+			if (!m_enums.emplace(qualified, &decl).second) {
+				error_at("Trait enum '" + qualified + "' is declared more than once",
+					decl.line, decl.column);
+			}
+		}
+	}
 	for (const auto& decl : program.enums) {
 		if (!decl.name.empty()) {
-			if (m_enums.count(decl.name) || m_structs.count(decl.name)) {
+			if (m_enums.count(decl.name) || m_structs.count(decl.name) ||
+				m_traits.count(decl.name)) {
 				error_at("Enum '" + decl.name + "' has a name that is already taken",
 					decl.line, decl.column);
 			}
@@ -241,6 +297,12 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				m_enum_members[member.name] = &member;
 			}
 		}
+	}
+
+	validate_uses(program);
+	ir_program.script_uses = program.uses;
+	for (const TraitDecl& decl : program.traits) {
+		ir_program.trait_signatures.push_back(build_trait_signature(decl));
 	}
 
 	// Validate declaration-only type hints now that enums and script types are
@@ -312,8 +374,11 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	m_global_sets.clear();
 	m_global_type_names.clear();
 	m_global_structs.clear();
+	m_global_traits.clear();
 	m_global_array_element_structs.clear();
 	m_global_dictionary_value_structs.clear();
+	m_global_array_element_traits.clear();
+	m_global_dictionary_value_traits.clear();
 	m_global_is_member.clear();
 	m_global_holds_object.clear();
 	ir_program.globals.resize(program.globals.size());
@@ -330,6 +395,10 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				global.line, global.column,
 				"'" + global.name + "' would no longer name the struct in this script");
 		}
+		if (find_trait(global.name) != nullptr) {
+			error_at("Global variable '" + global.name + "' has the name of a trait",
+				global.line, global.column);
+		}
 		reject_signal_collision("Variable", global.name, global.line, global.column);
 		m_global_variables[global.name] = i;
 		if (global.is_const) {
@@ -340,16 +409,24 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		// Struct-typed global: DICTIONARY downstream, struct tracked for field checking.
 		const StructDecl* global_struct = find_struct(global.type_hint.sole_name());
 		m_global_structs.push_back(global_struct);
+		const TraitDecl* global_trait = find_trait(global.type_hint.sole_name());
+		m_global_traits.push_back(global_trait);
 		const StructDecl* array_element = nullptr;
 		const StructDecl* dictionary_value = nullptr;
+		const TraitDecl* array_element_trait = nullptr;
+		const TraitDecl* dictionary_value_trait = nullptr;
 		if (global.type_hint.single_name() == "Array" && global.type_hint.arguments.size() == 1) {
 			array_element = find_struct(global.type_hint.arguments[0].single_name());
+			array_element_trait = find_trait(global.type_hint.arguments[0].sole_name());
 		} else if (global.type_hint.single_name() == "Dictionary" &&
 			global.type_hint.arguments.size() == 2) {
 			dictionary_value = find_struct(global.type_hint.arguments[1].single_name());
+			dictionary_value_trait = find_trait(global.type_hint.arguments[1].sole_name());
 		}
 		m_global_array_element_structs.push_back(array_element);
 		m_global_dictionary_value_structs.push_back(dictionary_value);
+		m_global_array_element_traits.push_back(array_element_trait);
+		m_global_dictionary_value_traits.push_back(dictionary_value_trait);
 		const TypeSet declared = type_set_from(global.type_hint, global.line, global.column);
 		m_global_sets.push_back(global.type_hint.is_union() ? declared : TypeSet{});
 		m_global_type_names.push_back(global.type_hint.to_string());
@@ -382,7 +459,11 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		IRGlobalVar& ir_global = ir_program.globals[i];
 
 		ir_global.name = global.name;
-		ir_global.class_name = global.type_hint.sole_name();
+		if (const TraitDecl* trait = find_trait(global.type_hint.sole_name()); trait != nullptr) {
+			ir_global.class_name = trait_required_base(*trait);
+		} else {
+			ir_global.class_name = global.type_hint.sole_name();
+		}
 		ir_global.declaration_line = global.line > 0 ? uint32_t(global.line) : 0;
 		ir_global.is_const = global.is_const;
 		ir_global.is_property = global.is_property;
@@ -476,6 +557,13 @@ IRProgram CodeGenerator::generate(const Program& program) {
 
 		{
 			if (fold_global_initializer(global.initializer.get(), ir_global)) {
+				if (m_global_traits[i] != nullptr &&
+					!(global.type_hint.nullable &&
+						ir_global.init_type == IRGlobalVar::InitType::NULL_VAL)) {
+					error_at("The initializer of global '" + global.name +
+						"' does not implement '" + m_global_traits[i]->name + "'",
+						global.line, global.column);
+				}
 				if (m_global_structs[i] != nullptr && !m_global_structs[i]->is_class) {
 					if (ir_global.init_type != IRGlobalVar::InitType::EMPTY_DICT ||
 						!struct_fields(*m_global_structs[i]).empty()) {
@@ -492,6 +580,11 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				// Not a compile-time constant: evaluate it at startup.
 				const size_t before = target.ir.instructions.size();
 				int reg = gen_expr(global.initializer.get(), target);
+				if (m_global_traits[i] != nullptr) {
+					reg = require_trait_value(reg, *m_global_traits[i],
+						"global '" + global.name + "'", target, global.line, global.column,
+						global.type_hint.nullable);
+				}
 				if (m_global_structs[i] != nullptr && !m_global_structs[i]->is_class) {
 					reg = require_struct_value(reg, *m_global_structs[i],
 						"global '" + global.name + "'", target, global.line, global.column);
@@ -787,6 +880,7 @@ void CodeGenerator::gen_stmt_dispatch(const Stmt* stmt, FunctionContext& func) {
 
 void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func) {
 	const StructDecl* declared_struct = find_struct(stmt->type_hint.sole_name());
+	const TraitDecl* declared_trait = find_trait(stmt->type_hint.sole_name());
 	const TypeSet declared_set = type_set_from(stmt->type_hint, stmt->line, stmt->column);
 	const bool nullable_single = declared_set.is_nullable_single();
 	int reg = -1;
@@ -814,6 +908,24 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 			func, stmt->line, stmt->column);
 		declare_variable(func, stmt->name, reg, stmt->is_const, stmt);
 		func.declared_structs[reg] = declared_struct;
+		return;
+	}
+	if (declared_trait != nullptr) {
+		if (stmt->initializer && m_struct_checks) {
+			reg = require_trait_value(reg, *declared_trait,
+				"variable '" + stmt->name + "'", func, stmt->line, stmt->column,
+				stmt->type_hint.nullable);
+		}
+		declare_variable(func, stmt->name, reg, stmt->is_const, stmt);
+		func.declared_traits[reg].insert(declared_trait);
+		func.trait_only_registers.insert(reg);
+		// Only a value proves the trait. Without an initializer the slot is null,
+		// exactly as GDScript leaves it, so 'is' must not fold true.
+		if (stmt->initializer && !stmt->type_hint.nullable) {
+			add_register_trait(func, reg, declared_trait);
+		}
+		if (stmt->type_hint.is_union()) func.declared_sets[reg] = declared_set;
+		set_register_type(func, reg, IRInstruction::TypeHint_NONE);
 		return;
 	}
 
@@ -883,7 +995,12 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 	if (!var) {
 		if (int self_reg = class_field_self(name, func); self_reg >= 0) {
 			if (const StructField* field = find_struct_field(*m_current_class, name)) {
-				if (const StructDecl* field_struct = find_struct(field->type_hint.single_name());
+				if (const TraitDecl* field_iface = find_trait(field->type_hint.sole_name())) {
+					value_reg = require_trait_value(value_reg, *field_iface,
+						"field '" + name + "' of '" + m_current_class->name + "'", func,
+						site ? site->line : 0, site ? site->column : 0,
+						field->type_hint.nullable);
+				} else if (const StructDecl* field_struct = find_struct(field->type_hint.single_name());
 					field_struct != nullptr && !field_struct->is_class) {
 					value_reg = require_struct_value(value_reg, *field_struct,
 						"field '" + name + "' of '" + m_current_class->name + "'", func,
@@ -909,6 +1026,12 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 				value_reg = require_struct_value(value_reg, *m_global_structs[global_idx],
 					"global '" + name + "'", func, site ? site->line : 0,
 					site ? site->column : 0);
+			}
+			if (m_global_traits[global_idx] != nullptr) {
+				value_reg = require_trait_value(value_reg, *m_global_traits[global_idx],
+					"global '" + name + "'", func, site ? site->line : 0,
+					site ? site->column : 0,
+					m_global_sets[global_idx].contains(Variant::NIL));
 			}
 			if (!m_global_sets[global_idx].any()) {
 				value_reg = coerce_to_declared_type(value_reg, m_global_sets[global_idx], func,
@@ -952,6 +1075,33 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 		value_reg = require_struct_value(value_reg, *declared_struct->second,
 			"variable '" + name + "'", func, site ? site->line : 0,
 			site ? site->column : 0);
+	}
+	if (auto declared = func.declared_traits.find(var->register_num);
+		declared != func.declared_traits.end()) {
+		const bool nullable = func.declared_sets.count(var->register_num) != 0 &&
+			func.declared_sets.at(var->register_num).contains(Variant::NIL);
+		for (const TraitDecl* iface : declared->second) {
+			value_reg = require_trait_value(value_reg, *iface,
+				"variable '" + name + "'", func, site ? site->line : 0,
+				site ? site->column : 0, nullable);
+		}
+		std::unordered_set<const TraitDecl*> assigned_traits;
+		if (auto proved = func.register_traits.find(value_reg);
+			proved != func.register_traits.end()) assigned_traits = proved->second;
+		if (var->register_num != value_reg) {
+			func.ir.instructions.emplace_back(IROpcode::MOVE,
+				IRValue::reg(var->register_num), IRValue::reg(value_reg));
+		}
+		func.register_traits.erase(var->register_num);
+		func.trait_only_registers.insert(var->register_num);
+		if (!nullable) {
+			func.register_traits[var->register_num] = declared->second;
+		} else if (!assigned_traits.empty()) {
+			func.register_traits[var->register_num] = std::move(assigned_traits);
+		}
+		set_register_type(func, var->register_num, IRInstruction::TypeHint_NONE);
+		free_register(func, value_reg);
+		return;
 	}
 
 	const auto declared_set = func.declared_sets.find(var->register_num);
@@ -1013,6 +1163,17 @@ void CodeGenerator::gen_store_to(const Expr* target, int value_reg, FunctionCont
 				"a value of Dictionary[..., " + it->second->name + "]", func,
 				site ? site->line : 0, site ? site->column : 0);
 		}
+		if (auto it = func.array_element_traits.find(base.reg);
+			it != func.array_element_traits.end()) {
+			value_reg = require_trait_value(value_reg, *it->second,
+				"an element of Array[" + it->second->name + "]", func,
+				site ? site->line : 0, site ? site->column : 0);
+		} else if (auto it = func.dictionary_value_traits.find(base.reg);
+			it != func.dictionary_value_traits.end()) {
+			value_reg = require_trait_value(value_reg, *it->second,
+				"a value of Dictionary[..., " + it->second->name + "]", func,
+				site ? site->line : 0, site ? site->column : 0);
+		}
 		gen_element_store(base.reg, idx_reg, value_reg, func);
 		free_register(func, idx_reg);
 		free_register(func, value_reg);
@@ -1027,6 +1188,50 @@ void CodeGenerator::gen_store_to(const Expr* target, int value_reg, FunctionCont
 
 		LValue base = resolve_lvalue(member_expr->object.get(), func);
 
+		// A trait-typed receiver exposes only declared trait variables. Apply the
+		// declaration's coercion before the ordinary OBJECT/DICTIONARY store.
+		const TraitDecl* member_trait = nullptr;
+		const VarDeclStmt* trait_var = nullptr;
+		if (auto known = func.register_traits.find(base.reg); known != func.register_traits.end()) {
+			for (const TraitDecl* trait : known->second) {
+				if ((trait_var = find_trait_var(*trait, member_expr->member_name))) {
+					member_trait = trait;
+					break;
+				}
+			}
+		}
+		if (trait_var == nullptr) {
+			if (auto declared = func.declared_traits.find(base.reg); declared != func.declared_traits.end()) {
+				for (const TraitDecl* trait : declared->second) {
+					if ((trait_var = find_trait_var(*trait, member_expr->member_name))) {
+						member_trait = trait;
+						break;
+					}
+				}
+			}
+		}
+		if (trait_var != nullptr) {
+			if (const TraitDecl* value_trait = find_trait(trait_var->type_hint.sole_name())) {
+				value_reg = require_trait_value(value_reg, *value_trait,
+					"variable '" + trait_var->name + "' of trait '" + member_trait->name + "'",
+					func, member_expr->line, member_expr->column, trait_var->type_hint.nullable);
+			} else if (trait_var->type_hint.is_union()) {
+				value_reg = coerce_to_declared_type(value_reg, type_set_from(trait_var->type_hint),
+					func, "variable '" + trait_var->name + "' of trait '" + member_trait->name + "'",
+					site, trait_var->type_hint.to_string());
+			} else if (!trait_var->type_hint.empty()) {
+				value_reg = coerce_to_declared_type(value_reg, single_type_from(trait_var->type_hint),
+					func, "variable '" + trait_var->name + "' of trait '" + member_trait->name + "'", site);
+			}
+		} else if (func.trait_only_registers.count(base.reg)) {
+			// A register can be trait-only with no trait left to name it (a match
+			// binding, an unnarrowed nullable): the ordinary store handles it.
+			if (const TraitDecl* trait = get_register_trait(func, base.reg)) {
+				error_at("'" + trait->name + "' has no variable '" +
+					member_expr->member_name + "'", site);
+			}
+		}
+
 		// Struct field: coerce to declared type.
 		if (const StructDecl* decl = get_register_struct(func, base.reg);
 			decl != nullptr && !(find_struct_field(*decl, member_expr->member_name) == nullptr &&
@@ -1034,7 +1239,11 @@ void CodeGenerator::gen_store_to(const Expr* target, int value_reg, FunctionCont
 		{
 			const StructField& field = require_struct_field(*decl, member_expr->member_name,
 				member_expr->line, member_expr->column);
-			if (const StructDecl* field_struct = find_struct(field.type_hint.single_name());
+			if (const TraitDecl* field_iface = find_trait(field.type_hint.sole_name())) {
+				value_reg = require_trait_value(value_reg, *field_iface,
+					"field '" + field.name + "' of struct '" + decl->name + "'", func,
+					member_expr->line, member_expr->column, field.type_hint.nullable);
+			} else if (const StructDecl* field_struct = find_struct(field.type_hint.single_name());
 				field_struct != nullptr && !field_struct->is_class) {
 				value_reg = require_struct_value(value_reg, *field_struct,
 					"field '" + field.name + "' of struct '" + decl->name + "'", func,
@@ -1154,6 +1363,12 @@ void CodeGenerator::store_lvalue(const LValue& target, int value_reg, FunctionCo
 					"global '" + target.name + "'", func, site ? site->line : 0,
 					site ? site->column : 0);
 			}
+			if (m_global_traits[global_idx] != nullptr) {
+				value_reg = require_trait_value(value_reg, *m_global_traits[global_idx],
+					"global '" + target.name + "'", func, site ? site->line : 0,
+					site ? site->column : 0,
+					m_global_sets[global_idx].contains(Variant::NIL));
+			}
 			if (!m_global_sets[global_idx].any()) {
 				value_reg = coerce_to_declared_type(value_reg, m_global_sets[global_idx], func,
 					"global '" + target.name + "'", site, m_global_type_names[global_idx]);
@@ -1213,7 +1428,11 @@ void CodeGenerator::gen_return(const ReturnStmt* stmt, FunctionContext& func) {
 				stmt->line, stmt->column);
 		}
 		// Coerce to declared return type before moving to r0.
-		if (func.return_type.is_union()) {
+		if (const TraitDecl* iface = find_trait(func.return_type.sole_name())) {
+			reg = require_trait_value(reg, *iface,
+				"the return value of '" + m_current_function + "'", func,
+				stmt->line, stmt->column, func.return_type.nullable);
+		} else if (func.return_type.is_union()) {
 			reg = coerce_to_declared_type(reg, type_set_from(func.return_type), func,
 				"the return value of '" + m_current_function + "'", stmt,
 				func.return_type.to_string());
@@ -1252,8 +1471,26 @@ CodeGenerator::NarrowingInfo CodeGenerator::condition_narrowing(
 		if (unary->op == UnaryExpr::Op::NOT) {
 			NarrowingInfo result = condition_narrowing(unary->operand.get(), func);
 			std::swap(result.then_set, result.else_set);
+			result.trait_then = !result.trait_then;
 			return result;
 		}
+	}
+	if (auto* test = dynamic_cast<const TypeTestExpr*>(condition);
+		test != nullptr && find_trait(test->type.single_name()) != nullptr) {
+		const VariableExpr* subject = dynamic_cast<const VariableExpr*>(test->value.get());
+		const TraitDecl* iface = find_trait(test->type.single_name());
+		if (subject == nullptr || iface == nullptr) return {};
+		Variable* variable = find_variable(func, subject->name);
+		if (variable == nullptr) return {};
+		NarrowingInfo result;
+		result.reg = variable->register_num;
+		result.saved_type = get_register_type(func, result.reg);
+		result.saved_struct = get_register_struct(func, result.reg);
+		result.narrowed_trait = iface;
+		if (auto it = func.register_traits.find(result.reg);
+			it != func.register_traits.end()) result.saved_traits = it->second;
+		result.saved_trait_only = func.trait_only_registers.count(result.reg) != 0;
+		return result;
 	}
 	if (auto* logical = dynamic_cast<const BinaryExpr*>(condition)) {
 		if (logical->op == BinaryExpr::Op::AND) {
@@ -1341,6 +1578,9 @@ CodeGenerator::NarrowingInfo CodeGenerator::condition_narrowing(
 	result.original = declared->second;
 	result.saved_type = get_register_type(func, result.reg);
 	result.saved_struct = get_register_struct(func, result.reg);
+	if (auto saved = func.register_traits.find(result.reg);
+		saved != func.register_traits.end()) result.saved_traits = saved->second;
+	result.saved_trait_only = func.trait_only_registers.count(result.reg) != 0;
 	result.then_set = { result.original.mask & tested.mask };
 	result.else_set = { result.original.mask & ~tested.mask };
 	if (inverse) {
@@ -1357,6 +1597,12 @@ void CodeGenerator::apply_narrowing(const NarrowingInfo& narrowing, bool then_br
 	FunctionContext& func)
 {
 	if (!narrowing.valid()) {
+		return;
+	}
+	if (narrowing.narrowed_trait != nullptr) {
+		if (then_branch == narrowing.trait_then) {
+			add_register_trait(func, narrowing.reg, narrowing.narrowed_trait);
+		}
 		return;
 	}
 	const TypeSet set = then_branch ? narrowing.then_set : narrowing.else_set;
@@ -1380,12 +1626,31 @@ void CodeGenerator::apply_narrowing(const NarrowingInfo& narrowing, bool then_br
 	} else {
 		func.register_structs.erase(narrowing.reg);
 	}
+	if (!set.contains(Variant::NIL)) {
+		if (auto declared = func.declared_traits.find(narrowing.reg);
+			declared != func.declared_traits.end()) {
+			for (const TraitDecl* iface : declared->second) {
+				add_register_trait(func, narrowing.reg, iface);
+			}
+			func.trait_only_registers.insert(narrowing.reg);
+		}
+	} else if (func.declared_traits.count(narrowing.reg) != 0) {
+		func.register_traits.erase(narrowing.reg);
+	}
 }
 
 void CodeGenerator::restore_narrowing(const NarrowingInfo& narrowing,
 	FunctionContext& func)
 {
 	if (!narrowing.valid()) {
+		return;
+	}
+	if (narrowing.narrowed_trait != nullptr) {
+		if (narrowing.saved_traits.empty()) {
+			func.register_traits.erase(narrowing.reg);
+		} else {
+			func.register_traits[narrowing.reg] = narrowing.saved_traits;
+		}
 		return;
 	}
 	if (narrowing.is_member()) {
@@ -1401,6 +1666,18 @@ void CodeGenerator::restore_narrowing(const NarrowingInfo& narrowing,
 		func.register_structs[narrowing.reg] = narrowing.saved_struct;
 	} else {
 		func.register_structs.erase(narrowing.reg);
+	}
+	if (narrowing.saved_traits.empty()) {
+		func.register_traits.erase(narrowing.reg);
+	} else {
+		func.register_traits[narrowing.reg] = narrowing.saved_traits;
+	}
+	// Restore what the register had: 'as T', a match binding and a typed
+	// container element make a register trait-only with no declaration.
+	if (narrowing.saved_trait_only) {
+		func.trait_only_registers.insert(narrowing.reg);
+	} else {
+		func.trait_only_registers.erase(narrowing.reg);
 	}
 }
 
@@ -2025,6 +2302,21 @@ void CodeGenerator::gen_pattern_test(const MatchPattern& pattern, int subject_re
 				it != func.dictionary_value_structs.end()) {
 				func.dictionary_value_structs[bound_reg] = it->second;
 			}
+			if (auto it = func.register_traits.find(subject_reg);
+				it != func.register_traits.end()) func.register_traits[bound_reg] = it->second;
+			if (auto it = func.declared_traits.find(subject_reg);
+				it != func.declared_traits.end()) func.declared_traits[bound_reg] = it->second;
+			if (func.trait_only_registers.count(subject_reg)) {
+				func.trait_only_registers.insert(bound_reg);
+			}
+			if (auto it = func.array_element_traits.find(subject_reg);
+				it != func.array_element_traits.end()) {
+				func.array_element_traits[bound_reg] = it->second;
+			}
+			if (auto it = func.dictionary_value_traits.find(subject_reg);
+				it != func.dictionary_value_traits.end()) {
+				func.dictionary_value_traits[bound_reg] = it->second;
+			}
 			declare_variable(func, pattern.name, bound_reg);
 			return;
 		}
@@ -2403,9 +2695,14 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		// Evaluate iterable first: an integer bound takes the numeric loop.
 		int array_reg = gen_expr(stmt->iterable.get(), func);
 		const StructDecl* iterable_element = nullptr;
+		const TraitDecl* iterable_trait = nullptr;
 		if (auto it = func.array_element_structs.find(array_reg);
 			it != func.array_element_structs.end()) {
 			iterable_element = it->second;
+		}
+		if (auto it = func.array_element_traits.find(array_reg);
+			it != func.array_element_traits.end()) {
+			iterable_trait = it->second;
 		}
 
 		if (get_register_type(func, array_reg) == Variant::INT) {
@@ -2655,6 +2952,14 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		if (iterable_element != nullptr) {
 			set_register_struct(func, elem_reg, iterable_element);
 			func.declared_structs[elem_reg] = iterable_element;
+		}
+		if (iterable_trait != nullptr) {
+			require_trait_value(elem_reg, *iterable_trait,
+				"an element of Array[" + iterable_trait->name + "]", func,
+				stmt->line, stmt->column);
+			func.declared_traits[elem_reg].insert(iterable_trait);
+			add_register_trait(func, elem_reg, iterable_trait);
+			func.trait_only_registers.insert(elem_reg);
 		}
 		push_scope(func);
 		for (const auto& s : stmt->body) {
@@ -3408,6 +3713,17 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 		}
 		// Dictionary handle: copy refers to the same fields, so propagate struct.
 		set_register_struct(func, new_reg, get_register_struct(func, local->register_num));
+		if (auto it = func.register_traits.find(local->register_num);
+			it != func.register_traits.end()) {
+			func.register_traits[new_reg] = it->second;
+		}
+		if (auto it = func.declared_traits.find(local->register_num);
+			it != func.declared_traits.end()) {
+			func.declared_traits[new_reg] = it->second;
+		}
+		if (func.trait_only_registers.count(local->register_num)) {
+			func.trait_only_registers.insert(new_reg);
+		}
 		if (auto it = func.array_element_structs.find(local->register_num);
 			it != func.array_element_structs.end()) {
 			func.array_element_structs[new_reg] = it->second;
@@ -3416,6 +3732,10 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 			it != func.dictionary_value_structs.end()) {
 			func.dictionary_value_structs[new_reg] = it->second;
 		}
+		if (auto it = func.array_element_traits.find(local->register_num);
+			it != func.array_element_traits.end()) func.array_element_traits[new_reg] = it->second;
+		if (auto it = func.dictionary_value_traits.find(local->register_num);
+			it != func.dictionary_value_traits.end()) func.dictionary_value_traits[new_reg] = it->second;
 		return new_reg;
 	}
 
@@ -3510,12 +3830,25 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 		if (m_global_structs[global_idx] != nullptr) {
 			set_register_struct(func, result_reg, m_global_structs[global_idx]);
 		}
+		if (m_global_traits[global_idx] != nullptr &&
+			!m_global_sets[global_idx].contains(Variant::NIL)) {
+			add_register_trait(func, result_reg, m_global_traits[global_idx]);
+			func.trait_only_registers.insert(result_reg);
+		}
 		if (m_global_array_element_structs[global_idx] != nullptr) {
 			func.array_element_structs[result_reg] = m_global_array_element_structs[global_idx];
 		}
 		if (m_global_dictionary_value_structs[global_idx] != nullptr) {
 			func.dictionary_value_structs[result_reg] =
 				m_global_dictionary_value_structs[global_idx];
+		}
+		if (m_global_array_element_traits[global_idx] != nullptr) {
+			func.array_element_traits[result_reg] =
+				m_global_array_element_traits[global_idx];
+		}
+		if (m_global_dictionary_value_traits[global_idx] != nullptr) {
+			func.dictionary_value_traits[result_reg] =
+				m_global_dictionary_value_traits[global_idx];
 		}
 		// Propagate declared type so member access skips the run-time tag test.
 		if (m_global_types[global_idx] != IRInstruction::TypeHint_NONE) {
@@ -3530,6 +3863,10 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 	if (const StructDecl* decl = find_struct(expr->name)) {
 		error_at("Struct '" + decl->name + "' is a type, not a value", expr,
 			"Create an instance with '" + decl->name + ".new()'");
+	}
+	if (const TraitDecl* iface = find_trait(expr->name)) {
+		error_at("Trait '" + iface->name + "' is a type, not a value", expr,
+			"Traits cannot be constructed");
 	}
 
 	// @GlobalScope constant: compile-time immediate. Checked last (local shadows).
@@ -4730,7 +5067,10 @@ int CodeGenerator::gen_class_cast(const CastExpr* expr, FunctionContext& func) {
 	int result_reg = alloc_register(func);
 	func.ir.instructions.emplace_back(IROpcode::LOAD_NIL, IRValue::reg(result_reg));
 
-	int test_reg = gen_class_test(value_reg, expr->type_name, func);
+	const TraitDecl* iface = find_trait(expr->type_name);
+	int test_reg = iface != nullptr
+		? gen_trait_test(value_reg, *iface, func)
+		: gen_class_test(value_reg, expr->type_name, func);
 	const std::string end_label = make_label("as_class_end");
 	emit_conditional_branch(IROpcode::BRANCH_ZERO, test_reg, end_label, func);
 	free_register(func, test_reg);
@@ -4744,6 +5084,10 @@ int CodeGenerator::gen_class_cast(const CastExpr* expr, FunctionContext& func) {
 	} else {
 		set_register_struct(func, result_reg, get_register_struct(func, value_reg));
 	}
+	if (iface != nullptr) {
+		add_register_trait(func, result_reg, iface);
+		func.trait_only_registers.insert(result_reg);
+	}
 	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 
 	free_register(func, value_reg);
@@ -4753,6 +5097,12 @@ int CodeGenerator::gen_class_cast(const CastExpr* expr, FunctionContext& func) {
 
 int CodeGenerator::gen_type_test(const TypeTestExpr* expr, FunctionContext& func) {
 	const std::string& single_name = expr->type.single_name();
+	if (const TraitDecl* trait = find_trait(single_name)) {
+		int value_reg = gen_expr(expr->value.get(), func);
+		int result_reg = gen_trait_test(value_reg, *trait, func);
+		free_register(func, value_reg);
+		return result_reg;
+	}
 	const IRInstruction::TypeHint builtin = single_name.empty()
 		? IRInstruction::TypeHint_NONE : type_hint_from_string(single_name);
 	if (!single_name.empty() && builtin == IRInstruction::TypeHint_NONE &&
@@ -4784,6 +5134,132 @@ int CodeGenerator::gen_type_test(const TypeTestExpr* expr, FunctionContext& func
 
 	free_register(func, value_reg);
 	return result_reg;
+}
+
+int CodeGenerator::gen_trait_test(int value_reg, const TraitDecl& iface,
+	FunctionContext& func)
+{
+	if (const StructDecl* actual = get_register_struct(func, value_reg)) {
+		int result = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(result),
+			IRValue::imm(declaration_uses(*actual, iface) ? 1 : 0));
+		set_register_type(func, result, Variant::BOOL);
+		return result;
+	}
+	if (auto known_ifaces = func.register_traits.find(value_reg);
+		known_ifaces != func.register_traits.end() && known_ifaces->second.count(&iface)) {
+		int result = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(result), IRValue::imm(1));
+		set_register_type(func, result, Variant::BOOL);
+		return result;
+	}
+
+	const IRInstruction::TypeHint known = get_register_type(func, value_reg);
+	int result = alloc_register(func);
+	func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(result), IRValue::imm(0));
+	set_register_type(func, result, Variant::BOOL);
+	if (known != IRInstruction::TypeHint_NONE && known != Variant::OBJECT &&
+		known != Variant::DICTIONARY) return result;
+
+	std::vector<std::string> class_names;
+	for (const auto& [name, decl] : m_structs) {
+		if (decl->is_class && declaration_uses(*decl, iface)) class_names.push_back(name);
+	}
+	std::sort(class_names.begin(), class_names.end());
+	const std::string object_arm = make_label("uses_object");
+	const std::string end = make_label("uses_end");
+
+	if (known == IRInstruction::TypeHint_NONE) {
+		int is_dict = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_dict),
+			IRValue::reg(value_reg), IRValue::imm(int64_t(Variant::DICTIONARY)));
+		set_register_type(func, is_dict, Variant::BOOL);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, is_dict, object_arm, func);
+		free_register(func, is_dict);
+	}
+	if (known != Variant::OBJECT) {
+		if (!class_names.empty()) {
+			int tag = gen_dict_get(value_reg, CLASS_NAME_KEY, func);
+			for (const std::string& name : class_names) {
+				int expected = gen_string_value(name, func);
+				func.ir.instructions.emplace_back(IROpcode::CMP_EQ, IRValue::reg(result),
+					IRValue::reg(tag), IRValue::reg(expected));
+				free_register(func, expected);
+				emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, result, end, func);
+			}
+			free_register(func, tag);
+		}
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end));
+	}
+
+	if (known == IRInstruction::TypeHint_NONE) {
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(object_arm));
+		int is_object = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_object),
+			IRValue::reg(value_reg), IRValue::imm(int64_t(Variant::OBJECT)));
+		set_register_type(func, is_object, Variant::BOOL);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, is_object, end, func);
+		free_register(func, is_object);
+	}
+	IRInstruction dynamic(IROpcode::TRAIT_TEST, IRValue::reg(result),
+		IRValue::reg(value_reg), IRValue::imm(int64_t(m_trait_indices.at(&iface))));
+	dynamic.type_hint = Variant::BOOL;
+	func.ir.instructions.push_back(std::move(dynamic));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end));
+	return result;
+}
+
+int CodeGenerator::require_trait_value(int value_reg, const TraitDecl& iface,
+	const std::string& what, FunctionContext& func, int line, int column, bool nullable)
+{
+	const IRInstruction::TypeHint initial_type = get_register_type(func, value_reg);
+	if (nullable && initial_type == Variant::NIL) {
+		return value_reg;
+	}
+	if (const StructDecl* actual = get_register_struct(func, value_reg)) {
+		if (!declaration_uses(*actual, iface)) {
+			error_at("Cannot assign '" + actual->name + "' to " + what +
+				" of trait type '" + iface.name + "'", line, column,
+				"Declare 'uses " + iface.name + "' on '" + actual->name + "'");
+		}
+		add_register_trait(func, value_reg, &iface);
+		return value_reg;
+	}
+	if (auto known_ifaces = func.register_traits.find(value_reg);
+		known_ifaces != func.register_traits.end() && known_ifaces->second.count(&iface)) return value_reg;
+	const IRInstruction::TypeHint known = get_register_type(func, value_reg);
+	if (known != IRInstruction::TypeHint_NONE && known != Variant::OBJECT &&
+		known != Variant::DICTIONARY) {
+		error_at("Cannot assign a value of type " + std::string(variant_type_name(known)) +
+			" to " + what + " of trait type '" + iface.name + "'", line, column);
+	}
+	if (m_struct_checks || m_restricted) {
+		const std::string accepted = nullable ? make_label("nullable_trait_ok") : std::string{};
+		if (nullable && known == IRInstruction::TypeHint_NONE) {
+			int is_nil = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_nil),
+				IRValue::reg(value_reg), IRValue::imm(int64_t(Variant::NIL)));
+			set_register_type(func, is_nil, Variant::BOOL);
+			emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, is_nil, accepted, func);
+			free_register(func, is_nil);
+		}
+		int test = gen_trait_test(value_reg, iface, func);
+		const std::string passed = make_label("uses_guard_ok");
+		emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, test, passed, func);
+		free_register(func, test);
+		IRInstruction fail(IROpcode::THROW, ir_str("TypeError"),
+			ir_str(what + " does not implement '" + iface.name + "'"));
+		fail.operands.push_back(IRValue::imm(0));
+		func.ir.instructions.push_back(std::move(fail));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(passed));
+		if (nullable && known == IRInstruction::TypeHint_NONE) {
+			func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(accepted));
+		}
+	}
+	// A nullable value needs a null check before trait methods are legal.
+	// The declaration is retained separately so narrowing can restore the proof.
+	if (!nullable) add_register_trait(func, value_reg, &iface);
+	return value_reg;
 }
 
 // assert(condition, "message"): branch over ECALL_THROW.
@@ -5268,6 +5744,71 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		object_expr = &chain_object;
 	}
 	if (!expr->is_method_call && expr->arguments.empty()) {
+		// Trait.Enum.MEMBER is a compile-time namespace, including a qualified
+		// cross-file trait name such as Traits.Damageable.State.DEAD.
+		std::function<bool(const Expr*, std::string&)> qualified_name =
+			[&](const Expr* value, std::string& out) {
+				if (auto* variable = dynamic_cast<const VariableExpr*>(value)) {
+					if (find_variable(func, variable->name) != nullptr) return false;
+					out = variable->name;
+					return true;
+				}
+				auto* member = dynamic_cast<const MemberCallExpr*>(value);
+				if (member == nullptr || member->is_method_call || !member->arguments.empty() ||
+					!qualified_name(member->object.get(), out)) return false;
+				out += "." + member->member_name;
+				return true;
+			};
+		std::string enum_name;
+		if (qualified_name(object_expr, enum_name)) {
+			if (auto found = m_enums.find(enum_name); found != m_enums.end()) {
+				const EnumDecl::Member* member = found->second->find_member(expr->member_name);
+				if (member == nullptr) error_at("Enum '" + enum_name +
+					"' has no member named '" + expr->member_name + "'", expr);
+				return gen_enum_member(*member, func);
+			}
+		}
+
+		// A trait-typed value also exposes its enum namespace (`value.State.DEAD`).
+		if (auto* qualified = dynamic_cast<const MemberCallExpr*>(object_expr)) {
+			if (auto* owner = dynamic_cast<const VariableExpr*>(qualified->object.get());
+				owner != nullptr && !qualified->is_method_call && qualified->arguments.empty()) {
+				std::vector<const TraitDecl*> candidates;
+				if (Variable* local = find_variable(func, owner->name)) {
+					if (auto found = func.register_traits.find(local->register_num);
+						found != func.register_traits.end())
+						candidates.insert(candidates.end(), found->second.begin(), found->second.end());
+					if (auto found = func.declared_traits.find(local->register_num);
+						found != func.declared_traits.end())
+						candidates.insert(candidates.end(), found->second.begin(), found->second.end());
+				} else if (auto global = m_global_variables.find(owner->name);
+					global != m_global_variables.end() && global->second < m_global_traits.size() &&
+					m_global_traits[global->second] != nullptr) {
+					candidates.push_back(m_global_traits[global->second]);
+				}
+				const EnumDecl* resolved = nullptr;
+				std::unordered_set<const TraitDecl*> seen;
+				std::function<void(const TraitDecl*)> find_enum = [&](const TraitDecl* trait) {
+					if (trait == nullptr || !seen.insert(trait).second) return;
+					for (const EnumDecl& decl : trait->enums) {
+						if (decl.name != qualified->member_name) continue;
+						if (resolved != nullptr && resolved != &decl)
+							error_at("Trait enum '" + qualified->member_name +
+								"' is ambiguous for '" + owner->name + "'", expr);
+						resolved = &decl;
+					}
+					for (const std::string& dependency : trait->uses) find_enum(find_trait(dependency));
+				};
+				for (const TraitDecl* trait : candidates) find_enum(trait);
+				if (resolved != nullptr) {
+					const EnumDecl::Member* member = resolved->find_member(expr->member_name);
+					if (member == nullptr) error_at("Enum '" + resolved->name +
+						"' has no member named '" + expr->member_name + "'", expr);
+					return gen_enum_member(*member, func);
+				}
+			}
+		}
+
 		// `Variant.Type.TYPE_INT`: a global enum whose name carries a dot. Read
 		// before the qualifier fold below, which would leave only `Variant`.
 		if (auto* qualified = dynamic_cast<const MemberCallExpr*>(object_expr)) {
@@ -5292,6 +5833,10 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 	// Struct.new(): resolved before object is lowered (struct is a type, not a value).
 	if (expr->is_method_call && expr->member_name == "new") {
 		if (auto* object = dynamic_cast<const VariableExpr*>(object_expr)) {
+			if (const TraitDecl* iface = find_trait(object->name);
+				iface != nullptr && find_variable(func, object->name) == nullptr) {
+				error_at("Trait '" + iface->name + "' cannot be constructed", expr);
+			}
 			if (const StructDecl* decl = find_struct(object->name)) {
 				return gen_struct_construct(*decl, expr->arguments, *expr, func, expr);
 			}
@@ -5310,6 +5855,55 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 	}
 
 	if (auto* object = dynamic_cast<const VariableExpr*>(object_expr)) {
+		if (const TraitDecl* trait = find_trait(object->name);
+			trait != nullptr && find_variable(func, object->name) == nullptr) {
+			if (expr->is_method_call) {
+				const FunctionDecl* method = find_trait_method(*trait, expr->member_name);
+				if (method == nullptr) error_at("Trait '" + trait->name + "' has no method '" +
+					expr->member_name + "'", expr);
+				const std::string origin = method->trait_origin.empty() ? trait->name : method->trait_origin;
+				const std::string displaced = "@trait." + origin + "." + method->name;
+				if (m_current_class != nullptr) {
+					const StructDecl* owner = nullptr;
+					const FunctionDecl* copy = find_class_method(*m_current_class, displaced, &owner);
+					if (copy == nullptr) copy = find_class_method(*m_current_class, method->name, &owner);
+					if (copy == nullptr || copy->trait_origin != origin)
+						error_at("Trait method '" + trait->name + "." + method->name +
+							"' is not available in class '" + m_current_class->name + "'", expr);
+					int self_reg = -1;
+					if (!copy->is_static) {
+						Variable* self = find_variable(func, "self");
+						if (self == nullptr) error_at("An instance trait method needs 'self'", expr);
+						self_reg = self->register_num;
+					}
+					return gen_class_method_call(*m_current_class, *copy, *owner, self_reg,
+						expr->arguments, *expr, func, expr);
+				}
+				std::string target = is_local_function(displaced) ? displaced : method->name;
+				if (!is_local_function(displaced)) {
+					for (const auto& entry : m_local_signatures) {
+						const FunctionDecl* candidate = entry.second;
+						if (candidate->trait_origin == origin &&
+							(candidate->name == method->name || candidate->chain_name == method->name)) {
+							target = entry.first;
+							break;
+						}
+					}
+				}
+				if (!is_local_function(target))
+					error_at("Trait method '" + trait->name + "." + method->name +
+						"' is not available in this class", expr);
+				std::vector<int> args;
+				for (const ExprPtr& argument : expr->arguments) args.push_back(gen_expr(argument.get(), func));
+				return emit_local_call(target, std::move(args), func, expr);
+			}
+			if (expr->arguments.empty()) {
+				if (const StructField* constant = find_trait_constant(*trait, expr->member_name))
+					return gen_expr(constant->default_value.get(), func);
+				error_at("Trait '" + trait->name + "' has no constant '" +
+					expr->member_name + "'", expr);
+			}
+		}
 		if (names_a_chain_class(object->name, func)) {
 			if (expr->is_method_call) {
 				if (!is_local_function(expr->member_name)) {
@@ -5505,13 +6099,118 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		}
 	}
 
+	if (expr->is_method_call) {
+		const TraitDecl* iface = get_register_trait(func, obj_reg, expr->member_name,
+			/*proven_only=*/true);
+		if (iface != nullptr) {
+			const FunctionDecl* method = find_trait_method(*iface, expr->member_name);
+			if (method->is_static) {
+				error_at("Static trait method '" + iface->name + "." + method->name +
+					"()' cannot be called through an instance", expr);
+			}
+			std::vector<int> trait_args;
+			if (expr->arguments.size() > method->parameters.size()) {
+				error_at("'" + iface->name + "." + method->name + "()' takes " +
+					std::to_string(method->parameters.size()) + " arguments, got " +
+					std::to_string(expr->arguments.size()), expr);
+			}
+			for (size_t i = 0; i < method->parameters.size(); i++) {
+				int arg = -1;
+				if (i < expr->arguments.size()) {
+					arg = gen_expr(expr->arguments[i].get(), func);
+				} else if (method->parameters[i].default_value) {
+					arg = gen_expr(method->parameters[i].default_value.get(), func);
+				} else {
+					error_at("Missing argument '" + method->parameters[i].name +
+						"' in call to '" + iface->name + "." + method->name + "()'", expr);
+				}
+				if (const TraitDecl* expected =
+					find_trait(method->parameters[i].type_hint.sole_name())) {
+					arg = require_trait_value(arg, *expected,
+						"argument '" + method->parameters[i].name + "'", func,
+						expr->line, expr->column,
+						method->parameters[i].type_hint.nullable);
+				} else if (method->parameters[i].type_hint.is_union()) {
+					arg = coerce_to_declared_type(arg,
+						type_set_from(method->parameters[i].type_hint), func,
+						"argument '" + method->parameters[i].name + "'", expr->line,
+						expr->column, method->parameters[i].type_hint.to_string());
+				} else if (!method->parameters[i].type_hint.empty()) {
+					arg = coerce_to_declared_type(arg,
+						single_type_from(method->parameters[i].type_hint), func,
+						"argument '" + method->parameters[i].name + "'", expr->line,
+						expr->column);
+				}
+				trait_args.push_back(arg);
+			}
+			int result_reg = alloc_register(func);
+			IRInstruction call(IROpcode::VCALL);
+			call.operands = { IRValue::reg(result_reg), IRValue::reg(obj_reg),
+				ir_str(method->name), IRValue::imm(int64_t(trait_args.size())) };
+			for (int arg : trait_args) call.operands.push_back(IRValue::reg(arg));
+			func.ir.instructions.push_back(std::move(call));
+			apply_declared_type(result_reg, method->return_type, func);
+			free_register(func, obj_reg);
+			for (int arg : trait_args) free_register(func, arg);
+			return result_reg;
+		}
+		if (func.trait_only_registers.count(obj_reg)) {
+			// Declared but unproven: the slot is nullable, or never assigned.
+			if (const TraitDecl* declared =
+					get_register_trait(func, obj_reg, expr->member_name)) {
+				error_at("Cannot call '" + declared->name + "." + expr->member_name +
+					"()' on a value that may be null", expr,
+					"Check it against null (or with 'is " + declared->name +
+					"') before calling");
+			}
+			if (const TraitDecl* declared = get_register_trait(func, obj_reg)) {
+				error_at("'" + declared->name + "' has no method '" +
+					expr->member_name + "'", expr);
+			}
+		}
+	}
+
 	std::vector<int> arg_regs;
 	for (const auto& arg : expr->arguments) {
 		arg_regs.push_back(gen_expr(arg.get(), func));
 	}
 
 	if (!expr->is_method_call && arg_regs.empty()) {
+		const TraitDecl* member_trait = nullptr;
+		const VarDeclStmt* trait_var = nullptr;
+		const SignalDecl* trait_signal = nullptr;
+		auto inspect = [&](const auto& set) {
+			for (const TraitDecl* trait : set) {
+				if ((trait_var = find_trait_var(*trait, expr->member_name)) != nullptr ||
+					(trait_signal = find_trait_signal(*trait, expr->member_name)) != nullptr ||
+					find_trait_constant(*trait, expr->member_name) != nullptr) {
+					member_trait = trait;
+					return true;
+				}
+			}
+			return false;
+		};
+		if (auto known = func.register_traits.find(obj_reg); known != func.register_traits.end())
+			inspect(known->second);
+		if (member_trait == nullptr) {
+			if (auto declared = func.declared_traits.find(obj_reg); declared != func.declared_traits.end())
+				inspect(declared->second);
+		}
+		if (member_trait != nullptr) {
+			if (const StructField* constant = find_trait_constant(*member_trait, expr->member_name)) {
+				free_register(func, obj_reg);
+				return gen_expr(constant->default_value.get(), func);
+			}
+		}
 		int result = gen_member_read(obj_reg, expr->member_name, func, expr);
+		if (trait_var != nullptr) apply_declared_type(result, trait_var->type_hint, func);
+		if (trait_signal != nullptr) set_register_type(func, result, Variant::SIGNAL);
+		if (member_trait == nullptr && func.trait_only_registers.count(obj_reg)) {
+			if (const TraitDecl* trait = get_register_trait(func, obj_reg)) {
+				error_at("'" + trait->name + "' has no member '" +
+					expr->member_name + "'", expr);
+			}
+		}
 		free_register(func, obj_reg);
 		return result;
 	}
@@ -5531,10 +6230,25 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 					set_register_struct(func, result_reg, it->second);
 				}
 			}
+			if (auto it = func.array_element_traits.find(obj_reg);
+				it != func.array_element_traits.end()) {
+				const std::string& called = expr->member_name;
+				if (called == "front" || called == "back" || called == "pop_back" ||
+					called == "pop_front" || called == "pick_random") {
+					require_trait_value(result_reg, *it->second,
+						"an element of Array[" + it->second->name + "]", func,
+						expr->line, expr->column);
+					func.trait_only_registers.insert(result_reg);
+				}
+			}
 			if (expr->member_name == "values") {
 				if (auto it = func.dictionary_value_structs.find(obj_reg);
 					it != func.dictionary_value_structs.end()) {
 					func.array_element_structs[result_reg] = it->second;
+				}
+				if (auto it = func.dictionary_value_traits.find(obj_reg);
+					it != func.dictionary_value_traits.end()) {
+					func.array_element_traits[result_reg] = it->second;
 				}
 			}
 			free_register(func, obj_reg);
@@ -5553,6 +6267,12 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		if (auto it = func.array_element_structs.find(obj_reg);
 			it != func.array_element_structs.end()) {
 			arg_regs[0] = require_struct_value(arg_regs[0], *it->second,
+				"an element of Array[" + it->second->name + "]", func,
+					expr->line, expr->column);
+		}
+		if (auto it = func.array_element_traits.find(obj_reg);
+			it != func.array_element_traits.end()) {
+			arg_regs[0] = require_trait_value(arg_regs[0], *it->second,
 				"an element of Array[" + it->second->name + "]", func,
 				expr->line, expr->column);
 		}
@@ -5574,6 +6294,22 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 			}
 			if (value_index >= 0) {
 				arg_regs[size_t(value_index)] = require_struct_value(
+					arg_regs[size_t(value_index)], *it->second,
+					"an element of Array[" + it->second->name + "]", func,
+					expr->line, expr->column);
+			}
+		}
+		if (auto it = func.array_element_traits.find(obj_reg);
+			it != func.array_element_traits.end()) {
+			int value_index = -1;
+			if ((expr->member_name == "push_front" || expr->member_name == "append" ||
+				expr->member_name == "push_back") && arg_regs.size() == 1) {
+				value_index = 0;
+			} else if (expr->member_name == "insert" && arg_regs.size() == 2) {
+				value_index = 1;
+			}
+			if (value_index >= 0) {
+				arg_regs[size_t(value_index)] = require_trait_value(
 					arg_regs[size_t(value_index)], *it->second,
 					"an element of Array[" + it->second->name + "]", func,
 					expr->line, expr->column);
@@ -5608,6 +6344,7 @@ bool CodeGenerator::is_array_element_access(int obj_reg, int idx_reg, FunctionCo
 int CodeGenerator::gen_index(const IndexExpr* expr, FunctionContext& func) {
 	int obj_reg = gen_expr(expr->object.get(), func);
 	const StructDecl* element_struct = nullptr;
+	const TraitDecl* element_trait = nullptr;
 	if (auto it = func.array_element_structs.find(obj_reg);
 		it != func.array_element_structs.end()) {
 		element_struct = it->second;
@@ -5615,12 +6352,21 @@ int CodeGenerator::gen_index(const IndexExpr* expr, FunctionContext& func) {
 		it != func.dictionary_value_structs.end()) {
 		element_struct = it->second;
 	}
+	if (auto it = func.array_element_traits.find(obj_reg);
+		it != func.array_element_traits.end()) element_trait = it->second;
+	else if (auto it = func.dictionary_value_traits.find(obj_reg);
+		it != func.dictionary_value_traits.end()) element_trait = it->second;
 	check_struct_subscript(obj_reg, expr->index.get(), func);
 	int idx_reg = gen_expr(expr->index.get(), func);
 
 	int result_reg = gen_element_read(obj_reg, idx_reg, func, expr);
 	if (element_struct != nullptr) {
 		set_register_struct(func, result_reg, element_struct);
+	}
+	if (element_trait != nullptr) {
+		result_reg = require_trait_value(result_reg, *element_trait,
+			"an element of a typed container", func, expr->line, expr->column);
+		func.trait_only_registers.insert(result_reg);
 	}
 
 	free_register(func, obj_reg);
@@ -5830,7 +6576,8 @@ bool CodeGenerator::type_hint_names_a_class(const std::string& type_hint) const 
 	if (type_hint_from_string(type_hint) != IRInstruction::TypeHint_NONE) {
 		return false;
 	}
-	return find_struct(type_hint) == nullptr && m_enums.find(type_hint) == m_enums.end();
+	return find_struct(type_hint) == nullptr && find_trait(type_hint) == nullptr &&
+		m_enums.find(type_hint) == m_enums.end();
 }
 
 void CodeGenerator::mark_global_holds_object(int64_t global_idx) {
@@ -5842,6 +6589,229 @@ void CodeGenerator::mark_global_holds_object(int64_t global_idx) {
 const StructDecl* CodeGenerator::find_struct(const std::string& name) const {
 	auto it = m_structs.find(name);
 	return it == m_structs.end() ? nullptr : it->second;
+}
+
+const TraitDecl* CodeGenerator::find_trait(const std::string& name) const {
+	auto it = m_traits.find(name);
+	return it == m_traits.end() ? nullptr : it->second;
+}
+
+const FunctionDecl* CodeGenerator::find_trait_method(const TraitDecl& trait,
+	const std::string& name) const {
+	std::unordered_set<const TraitDecl*> seen;
+	std::function<const FunctionDecl*(const TraitDecl&)> find = [&](const TraitDecl& at) {
+		if (!seen.insert(&at).second) return static_cast<const FunctionDecl*>(nullptr);
+		if (const FunctionDecl* own = at.find_method(name)) return own;
+		for (const std::string& dependency : at.uses)
+			if (const TraitDecl* next = find_trait(dependency))
+				if (const FunctionDecl* found = find(*next)) return found;
+		return static_cast<const FunctionDecl*>(nullptr);
+	};
+	return find(trait);
+}
+
+const VarDeclStmt* CodeGenerator::find_trait_var(const TraitDecl& trait,
+	const std::string& name) const {
+	std::unordered_set<const TraitDecl*> seen;
+	std::function<const VarDeclStmt*(const TraitDecl&)> find = [&](const TraitDecl& at) {
+		if (!seen.insert(&at).second) return static_cast<const VarDeclStmt*>(nullptr);
+		if (const VarDeclStmt* own = at.find_var(name)) return own;
+		for (const std::string& dependency : at.uses)
+			if (const TraitDecl* next = find_trait(dependency))
+				if (const VarDeclStmt* found = find(*next)) return found;
+		return static_cast<const VarDeclStmt*>(nullptr);
+	};
+	return find(trait);
+}
+
+const StructField* CodeGenerator::find_trait_constant(const TraitDecl& trait,
+	const std::string& name) const {
+	std::unordered_set<const TraitDecl*> seen;
+	std::function<const StructField*(const TraitDecl&)> find = [&](const TraitDecl& at) {
+		if (!seen.insert(&at).second) return static_cast<const StructField*>(nullptr);
+		if (const StructField* own = at.find_constant(name)) return own;
+		for (const std::string& dependency : at.uses)
+			if (const TraitDecl* next = find_trait(dependency))
+				if (const StructField* found = find(*next)) return found;
+		return static_cast<const StructField*>(nullptr);
+	};
+	return find(trait);
+}
+
+const SignalDecl* CodeGenerator::find_trait_signal(const TraitDecl& trait,
+	const std::string& name) const {
+	std::unordered_set<const TraitDecl*> seen;
+	std::function<const SignalDecl*(const TraitDecl&)> find = [&](const TraitDecl& at) {
+		if (!seen.insert(&at).second) return static_cast<const SignalDecl*>(nullptr);
+		if (const SignalDecl* own = at.find_signal(name)) return own;
+		for (const std::string& dependency : at.uses)
+			if (const TraitDecl* next = find_trait(dependency))
+				if (const SignalDecl* found = find(*next)) return found;
+		return static_cast<const SignalDecl*>(nullptr);
+	};
+	return find(trait);
+}
+
+std::string CodeGenerator::trait_required_base(const TraitDecl& trait) const {
+	const auto satisfies = [&](const std::string& actual, const std::string& required) {
+		if (actual == required) return true;
+		auto found = m_engine_ancestry.find(actual);
+		return found != m_engine_ancestry.end() && found->second.count(required) != 0;
+	};
+	std::string required;
+	std::unordered_set<const TraitDecl*> seen;
+	std::function<void(const TraitDecl&)> collect = [&](const TraitDecl& part) {
+		if (!seen.insert(&part).second) return;
+		if (!part.base_name.empty()) {
+			if (required.empty() || satisfies(part.base_name, required)) {
+				required = part.base_name;
+			} else if (!satisfies(required, part.base_name)) {
+				error_at("Trait '" + trait.name + "' requires unrelated base classes '" +
+					required + "' and '" + part.base_name + "' through its composition",
+					trait.line, trait.column,
+					"Compile with engine ancestry metadata to accept a subclass relationship");
+			}
+		}
+		for (const std::string& dependency : part.uses) {
+			if (const TraitDecl* next = find_trait(dependency)) collect(*next);
+		}
+	};
+	collect(trait);
+	return required;
+}
+
+std::vector<const TraitDecl*> CodeGenerator::used_traits(
+	const StructDecl& decl) const
+{
+	std::vector<const TraitDecl*> result;
+	std::unordered_set<const TraitDecl*> seen;
+	for (const StructDecl* at = &decl; at != nullptr; at = class_base(*at)) {
+		for (const std::string& name : at->uses) {
+			if (const TraitDecl* iface = find_trait(name); iface != nullptr && seen.insert(iface).second) {
+				result.push_back(iface);
+			}
+		}
+	}
+	return result;
+}
+
+bool CodeGenerator::declaration_uses(const StructDecl& decl,
+	const TraitDecl& iface) const
+{
+	const std::vector<const TraitDecl*> all = used_traits(decl);
+	return std::find(all.begin(), all.end(), &iface) != all.end();
+}
+
+void CodeGenerator::validate_trait_member(const std::string& kind,
+	const std::string& name, const std::vector<FunctionDecl>& methods,
+	const StructDecl* decl, const std::vector<std::string>& names,
+	int line, int column) const
+{
+	auto accepts = [&](const TypeExpr& wider, const TypeExpr& narrower) {
+		if (wider.empty() || wider.single_name() == "Variant") return true;
+		if (narrower.empty() || narrower.single_name() == "Variant") return false;
+		if (wider.to_string() == narrower.to_string()) return true;
+		// Nominal names do not become compatible merely because both are OBJECT.
+		const bool wider_nominal = find_struct(wider.sole_name()) || find_trait(wider.sole_name());
+		const bool narrower_nominal = find_struct(narrower.sole_name()) || find_trait(narrower.sole_name());
+		if ((wider_nominal || narrower_nominal) && wider.sole_name() != "Object") return false;
+		const TypeSet w = type_set_from(wider, line, column);
+		const TypeSet n = type_set_from(narrower, line, column);
+		return !w.any() && !n.any() && (n.mask & ~w.mask) == 0;
+	};
+
+	for (const std::string& trait_name : names) {
+		const TraitDecl* iface = find_trait(trait_name);
+		if (iface == nullptr) {
+			error_at("Trait '" + trait_name + "' is not declared in this compilation",
+				line, column);
+		}
+		for (const FunctionDecl& required : iface->methods) {
+			const FunctionDecl* actual = nullptr;
+			if (decl != nullptr) {
+				actual = find_class_method(*decl, required.name);
+			} else {
+				for (const FunctionDecl& candidate : methods) {
+					if (candidate.name == required.name) { actual = &candidate; break; }
+				}
+			}
+			const std::string prefix = kind + " '" + name + "' uses '" +
+				iface->name + "' but '" + required.name;
+			if (actual == nullptr) {
+				if (required.is_abstract) {
+					error_at(kind + " '" + name + "' uses '" + iface->name +
+						"' but does not implement abstract method '" + required.name + "()'",
+						line, column);
+				}
+				error_at(prefix + "' is not available", line, column);
+			}
+			if (actual->is_static != required.is_static) {
+				error_at(prefix + (actual->is_static ? "' is static; the trait declares an instance method"
+					: "' is an instance method; the trait declares it static"),
+					line, column);
+			}
+			if (actual->parameters.size() != required.parameters.size()) {
+				error_at(prefix + "' takes " + std::to_string(actual->parameters.size()) +
+					" parameters, trait declares " +
+					std::to_string(required.parameters.size()), line, column);
+			}
+			for (size_t i = 0; i < required.parameters.size(); i++) {
+				if (!accepts(actual->parameters[i].type_hint, required.parameters[i].type_hint)) {
+					error_at(prefix + "' parameter '" + required.parameters[i].name +
+						"' has incompatible type '" + actual->parameters[i].type_hint.to_string() +
+						"'; trait declares '" + required.parameters[i].type_hint.to_string() +
+						"'", line, column);
+				}
+			}
+			if (!required.return_type.empty() && actual->return_type.empty()) {
+				error_at(prefix + "' has an untyped return; trait declares '" +
+					required.return_type.to_string() + "'", line, column);
+			}
+			if (!actual->return_type.empty() && !required.return_type.empty() &&
+				!accepts(required.return_type, actual->return_type)) {
+				error_at(prefix + "' returns '" + actual->return_type.to_string() +
+					"'; trait declares '" + required.return_type.to_string() + "'",
+					line, column);
+			}
+		}
+	}
+}
+
+void CodeGenerator::validate_uses(const Program& program) const {
+	const auto satisfies_base = [&](const std::string& actual, const std::string& required) {
+		if (actual == required) return true;
+		auto found = m_engine_ancestry.find(actual);
+		return found != m_engine_ancestry.end() && found->second.count(required) != 0;
+	};
+	for (const TraitDecl& trait : program.traits) {
+		(void)trait_required_base(trait);
+	}
+	for (const StructDecl& decl : program.structs) {
+		for (const std::string& name : decl.uses) {
+			const TraitDecl* trait = find_trait(name);
+			if (trait == nullptr || trait->base_name.empty()) continue;
+			const std::string* base = native_base(decl);
+			if (base == nullptr || !satisfies_base(*base, trait->base_name)) {
+				error_at("Class '" + decl.name + "' cannot use trait '" + trait->name +
+					"': it requires base '" + trait->base_name + "'",
+					decl.line, decl.column);
+			}
+		}
+		validate_trait_member(decl.is_class ? "Class" : "Struct", decl.name,
+			decl.methods, &decl, decl.uses, decl.line, decl.column);
+	}
+	for (const std::string& name : program.uses) {
+		const TraitDecl* trait = find_trait(name);
+		if (trait == nullptr || trait->base_name.empty()) continue;
+		if (!satisfies_base(program.native_base_class, trait->base_name)) {
+			error_at("Class '" + (program.class_name.empty() ? std::string("this script") : program.class_name) +
+				"' cannot use trait '" + trait->name + "': it requires base '" +
+				trait->base_name + "'", program.class_name_line, program.class_name_column);
+		}
+	}
+	validate_trait_member("Class", program.class_name.empty() ? "this script" : program.class_name,
+		program.functions, nullptr, program.uses,
+		program.class_name_line, program.class_name_column);
 }
 
 const StructDecl* CodeGenerator::class_base(const StructDecl& decl) const {
@@ -6063,12 +7033,43 @@ void CodeGenerator::set_register_struct(FunctionContext& func, int reg, const St
 		return;
 	}
 	func.register_structs[reg] = decl;
+	func.trait_only_registers.erase(reg);
+	for (const TraitDecl* iface : used_traits(*decl)) {
+		add_register_trait(func, reg, iface);
+	}
 	set_register_type(func, reg, Variant::DICTIONARY);
 }
 
 const StructDecl* CodeGenerator::get_register_struct(const FunctionContext& func, int reg) const {
 	auto it = func.register_structs.find(reg);
 	return it == func.register_structs.end() ? nullptr : it->second;
+}
+
+void CodeGenerator::add_register_trait(FunctionContext& func, int reg,
+	const TraitDecl* decl)
+{
+	if (decl != nullptr) func.register_traits[reg].insert(decl);
+}
+
+const TraitDecl* CodeGenerator::get_register_trait(const FunctionContext& func,
+	int reg, const std::string& method, bool proven_only) const
+{
+	auto it = func.register_traits.find(reg);
+	if (it != func.register_traits.end()) {
+		for (const TraitDecl* iface : it->second) {
+			if (method.empty() || find_trait_method(*iface, method) != nullptr) return iface;
+		}
+	}
+	if (proven_only) {
+		return nullptr;
+	}
+	auto declared = func.declared_traits.find(reg);
+	if (declared != func.declared_traits.end()) {
+		for (const TraitDecl* iface : declared->second) {
+			if (method.empty() || find_trait_method(*iface, method) != nullptr) return iface;
+		}
+	}
+	return nullptr;
 }
 
 const SignalDecl* CodeGenerator::find_signal(const std::string& name) const {
@@ -6221,6 +7222,9 @@ FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const
 		: published_type_from(decl.return_type);
 	if (!decl.is_coroutine && find_struct(decl.return_type.single_name()) != nullptr) {
 		sig.return_class_name = decl.return_type.single_name();
+	} else if (!decl.is_coroutine) {
+		if (const TraitDecl* trait = find_trait(decl.return_type.sole_name()); trait != nullptr)
+			sig.return_class_name = trait_required_base(*trait);
 	}
 
 	for (const Parameter& param : decl.parameters) {
@@ -6229,6 +7233,8 @@ FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const
 		out.type = published_type_from(param.type_hint);
 		if (find_struct(param.type_hint.single_name()) != nullptr) {
 			out.class_name = param.type_hint.single_name();
+		} else if (const TraitDecl* trait = find_trait(param.type_hint.sole_name()); trait != nullptr) {
+			out.class_name = trait_required_base(*trait);
 		}
 
 		IRGlobalVar folded;
@@ -6268,12 +7274,17 @@ ClassSignature CodeGenerator::build_class_signature(const StructDecl& decl,
 	out.line = decl.line;
 	out.is_struct = !decl.is_class;
 	out.description = decl.doc_comment;
+	for (const TraitDecl* iface : used_traits(decl)) {
+		out.uses.push_back(iface->name);
+	}
 	for (const StructField* field : struct_fields(decl)) {
 		ClassField published;
 		published.name = field->name;
 		published.type = published_type_from(field->type_hint);
 		if (find_struct(field->type_hint.single_name()) != nullptr) {
 			published.class_name = field->type_hint.single_name();
+		} else if (const TraitDecl* trait = find_trait(field->type_hint.sole_name()); trait != nullptr) {
+			published.class_name = trait_required_base(*trait);
 		}
 		published.description = field->doc_comment;
 		out.fields.push_back(std::move(published));
@@ -6284,17 +7295,79 @@ ClassSignature CodeGenerator::build_class_signature(const StructDecl& decl,
 	return out;
 }
 
+ClassSignature CodeGenerator::build_trait_signature(const TraitDecl& decl) const {
+	ClassSignature out;
+	out.name = decl.name;
+	out.line = decl.line;
+	out.description = decl.doc_comment;
+	out.is_trait = true;
+	out.native_base = trait_required_base(decl);
+	std::unordered_set<const TraitDecl*> seen;
+	std::vector<const TraitDecl*> composition;
+	std::function<void(const TraitDecl&)> collect = [&](const TraitDecl& trait) {
+		for (const std::string& name : trait.uses) {
+			const TraitDecl* dependency = find_trait(name);
+			if (dependency != nullptr && seen.insert(dependency).second) {
+				collect(*dependency);
+				out.uses.push_back(dependency->name);
+				composition.push_back(dependency);
+			}
+		}
+	};
+	collect(decl);
+	composition.push_back(&decl);
+	std::unordered_set<std::string> methods;
+	std::unordered_set<std::string> fields;
+	std::unordered_set<std::string> signals;
+	for (const TraitDecl* part : composition) {
+		for (const FunctionDecl& method : part->methods) {
+			if (!methods.insert(method.name).second) continue;
+			out.methods.push_back(ClassMethod{ method.name, method.is_static });
+			out.trait_methods.push_back(build_signature(method));
+		}
+		for (const VarDeclStmt& variable : part->vars) {
+			if (!fields.insert(variable.name).second) continue;
+			ClassField field;
+			field.name = variable.name;
+			field.type = published_type_from(variable.type_hint);
+			if (const TraitDecl* trait = find_trait(variable.type_hint.sole_name()); trait != nullptr)
+				field.class_name = trait_required_base(*trait);
+			field.description = variable.doc_comment;
+			out.trait_fields.push_back(std::move(field));
+		}
+		for (const SignalDecl& signal : part->signals) {
+			if (signals.insert(signal.name).second)
+				out.trait_signals.push_back(build_signal_signature(signal));
+		}
+	}
+	return out;
+}
+
 void CodeGenerator::apply_declared_type(int reg, const TypeExpr& type_hint, FunctionContext& func) {
 	if (type_hint.empty()) {
 		return;
 	}
 	if (type_hint.is_union()) {
 		func.declared_sets[reg] = type_set_from(type_hint);
+		if (const TraitDecl* iface = find_trait(type_hint.sole_name())) {
+			func.declared_traits[reg].insert(iface);
+			func.trait_only_registers.insert(reg);
+			if (!type_hint.nullable) {
+				add_register_trait(func, reg, iface);
+			}
+		}
 		if (const StructDecl* decl = find_struct(type_hint.sole_name())) {
 			func.declared_structs[reg] = decl;
 		}
 		set_register_type(func, reg, IRInstruction::TypeHint_NONE);
 		func.register_structs.erase(reg);
+		return;
+	}
+	if (const TraitDecl* iface = find_trait(type_hint.single_name())) {
+		func.declared_traits[reg].insert(iface);
+		add_register_trait(func, reg, iface);
+		func.trait_only_registers.insert(reg);
+		set_register_type(func, reg, IRInstruction::TypeHint_NONE);
 		return;
 	}
 	if (const StructDecl* decl = find_struct(type_hint.single_name())) {
@@ -6309,9 +7382,15 @@ void CodeGenerator::apply_declared_type(int reg, const TypeExpr& type_hint, Func
 		if (const StructDecl* element = find_struct(type_hint.arguments[0].single_name())) {
 			func.array_element_structs[reg] = element;
 		}
+		if (const TraitDecl* element = find_trait(type_hint.arguments[0].sole_name())) {
+			func.array_element_traits[reg] = element;
+		}
 	} else if (type_hint.single_name() == "Dictionary" && type_hint.arguments.size() == 2) {
 		if (const StructDecl* value = find_struct(type_hint.arguments[1].single_name())) {
 			func.dictionary_value_structs[reg] = value;
+		}
+		if (const TraitDecl* value = find_trait(type_hint.arguments[1].sole_name())) {
+			func.dictionary_value_traits[reg] = value;
 		}
 	}
 }
@@ -6320,6 +7399,22 @@ void CodeGenerator::coerce_parameters(const std::vector<Parameter>& parameters,
 	FunctionContext& func)
 {
 	for (const auto& param : parameters) {
+		if (const TraitDecl* iface = find_trait(param.type_hint.sole_name())) {
+			Variable* var = find_variable(func, param.name);
+			if (var != nullptr && m_struct_checks) {
+				func.register_traits.erase(var->register_num);
+				func.trait_only_registers.erase(var->register_num);
+				require_trait_value(var->register_num, *iface,
+					"parameter '" + param.name + "'", func, param.line, param.column,
+					param.type_hint.nullable);
+			}
+			if (var != nullptr) {
+				func.declared_traits[var->register_num].insert(iface);
+				if (!param.type_hint.nullable) add_register_trait(func, var->register_num, iface);
+				func.trait_only_registers.insert(var->register_num);
+			}
+			continue;
+		}
 		if (const StructDecl* structure = find_struct(param.type_hint.single_name());
 			structure != nullptr && !structure->is_class) {
 			Variable* var = find_variable(func, param.name);
@@ -6484,7 +7579,11 @@ int CodeGenerator::gen_field_default(const StructDecl& decl, const StructField& 
 {
 	if (field.default_value) {
 		int reg = gen_expr(field.default_value.get(), func);
-		if (!field.type_hint.empty() && find_struct(field.type_hint.single_name()) == nullptr) {
+		if (const TraitDecl* iface = find_trait(field.type_hint.sole_name())) {
+			reg = require_trait_value(reg, *iface,
+				"field '" + field.name + "' of struct '" + decl.name + "'", func,
+				field.line, field.column, field.type_hint.nullable);
+		} else if (!field.type_hint.empty() && find_struct(field.type_hint.single_name()) == nullptr) {
 			reg = field.type_hint.is_union()
 				? coerce_to_declared_type(reg,
 					type_set_from(field.type_hint, field.line, field.column), func,
@@ -6968,7 +8067,11 @@ int CodeGenerator::gen_struct_construct(const StructDecl& decl, const std::vecto
 		const StructField& field = *fields[field_of_argument[i]];
 		int reg = i == 0 && copy_probe_reg >= 0
 			? copy_probe_reg : gen_expr(arguments[i].get(), func);
-		if (!field.type_hint.empty() && find_struct(field.type_hint.single_name()) == nullptr) {
+		if (const TraitDecl* iface = find_trait(field.type_hint.sole_name())) {
+			reg = require_trait_value(reg, *iface,
+				"field '" + field.name + "' of struct '" + decl.name + "'", func,
+				arguments[i]->line, arguments[i]->column, field.type_hint.nullable);
+		} else if (!field.type_hint.empty() && find_struct(field.type_hint.single_name()) == nullptr) {
 			reg = field.type_hint.is_union()
 				? coerce_to_declared_type(reg, type_set_from(field.type_hint), func,
 					"field '" + field.name + "' of struct '" + decl.name + "'",

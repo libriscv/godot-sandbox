@@ -22,6 +22,8 @@ public:
 	virtual void set_autoloads(const PackedStringArray &p_names) = 0;
 	virtual void set_global_classes(const PackedStringArray &p_pairs) = 0;
 	virtual void set_base_sources(const PackedStringArray &p_triples) = 0;
+	virtual void set_engine_ancestry(const PackedStringArray &p_pairs) = 0;
+	virtual void set_trait_structural_fallback(bool p_enabled) = 0;
 
 	struct BuildOptions {
 		bool profiling = false;
@@ -55,6 +57,7 @@ public:
 	virtual std::vector<gdscript::RPCConfig> rpc_configs() = 0;
 	// Nested classes with an engine base; empty from a compiler that predates them.
 	virtual std::vector<gdscript::ClassSignature> class_signatures() = 0;
+	virtual std::vector<std::string> script_uses() = 0;
 	// File-scope `const` and `enum`; empty from a compiler that predates them.
 	virtual std::vector<gdscript::ScriptConstant> script_constants() = 0;
 	// Variables and folded defaults. Empty from a compiler ELF predating P0.

@@ -19,7 +19,7 @@ struct SourceRange {
 enum class DiagnosticSeverity : uint8_t { ERROR, WARNING, INFO };
 enum class DeclarationKind : uint8_t {
 	CLASS, FUNCTION, PARAMETER, VARIABLE, CONSTANT, SIGNAL, ENUM, ENUM_VALUE,
-	NESTED_CLASS, ANNOTATION,
+	NESTED_CLASS, ANNOTATION, TRAIT,
 };
 enum class CaretKind : uint8_t {
 	NONE, IDENTIFIER, MEMBER, TYPE, CALL_ARGUMENT, ANNOTATION, RESOURCE_PATH,

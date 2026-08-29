@@ -26,6 +26,9 @@ static constexpr char DEBUG_INFO[] = "editor/script/debug_info";
 static constexpr char DEBUG_INFO_HINT[] = "Enable debug information when building ELF files";
 static constexpr char GLOBAL_DEFINES[] = "editor/script/global_defines";
 static constexpr char GLOBAL_DEFINES_HINT[] = "Global defines used when compiling Sandbox programs";
+static constexpr char TRAIT_STRUCTURAL_FALLBACK[] = "safe_gdscript/traits/structural_fallback";
+static constexpr char TRAIT_STRUCTURAL_FALLBACK_HINT[] =
+		"Allow `is Trait` to match non-SafeGDScript objects structurally by method names";
 
 static constexpr char GENERATE_RUNTIME_API[] = "editor/script/generate_runtime_api";
 static constexpr char GENERATE_RUNTIME_API_HINT[] = "Generate the run-time API for the Sandbox";
@@ -91,6 +94,7 @@ void SandboxProjectSettings::register_settings() {
 	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
 	register_setting_plain(DEBUG_INFO, false, DEBUG_INFO_HINT, false);
 	register_setting_plain(GLOBAL_DEFINES, Array(), GLOBAL_DEFINES_HINT, false);
+	register_setting_plain(TRAIT_STRUCTURAL_FALLBACK, true, TRAIT_STRUCTURAL_FALLBACK_HINT, false);
 	register_setting_plain(GENERATE_RUNTIME_API, true, GENERATE_RUNTIME_API_HINT, false);
 	register_setting_plain(METHOD_ARGUMENTS, false, METHOD_ARGUMENTS_HINT, true);
 	Array skipped_classes;
@@ -158,6 +162,10 @@ bool SandboxProjectSettings::use_native_types() {
 
 bool SandboxProjectSettings::debug_info() {
 	return get_setting<bool>(DEBUG_INFO);
+}
+
+bool SandboxProjectSettings::trait_structural_fallback() {
+	return get_setting<bool>(TRAIT_STRUCTURAL_FALLBACK);
 }
 
 Array SandboxProjectSettings::get_global_defines() {

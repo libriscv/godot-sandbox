@@ -86,5 +86,16 @@ int main() {
 	assert(has_code(unclosed, "EXPECTED_CLOSING_DELIMITER"));
 	assert(unclosed.diagnostics[0].range.start_line == 1);
 
+	const SourceModel traits = analyze_source(
+		"## Can be damaged\ntrait Damageable:\n\tfunc damage(amount: int) -> bool\n",
+		"res://traits.sgd");
+	assert(errors(traits) == 0);
+	assert(traits.declarations.size() >= 3); // trait, method, parameter
+	assert(traits.declarations[0].kind == DeclarationKind::TRAIT);
+	assert(traits.declarations[0].name == "Damageable");
+	assert(traits.declarations[0].documentation == "Can be damaged");
+	assert(traits.declarations[1].kind == DeclarationKind::FUNCTION);
+	assert(traits.declarations[1].parent == 0);
+
 	std::cout << "source model passed\n";
 }

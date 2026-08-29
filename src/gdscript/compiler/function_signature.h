@@ -89,6 +89,13 @@ struct ClassSignature {
 	int32_t line = 0;
 	bool is_struct = false;
 	std::string description;
+	// Append-only trait metadata. Trait declarations use is_trait;
+	// ordinary classes/structs publish their nominal declaration list.
+	bool is_trait = false;
+	std::vector<std::string> uses;
+	std::vector<FunctionSignature> trait_methods;
+	std::vector<ClassField> trait_fields;
+	std::vector<FunctionSignature> trait_signals;
 };
 
 // Encoded as a single blob (one scoped variant) rather than Array of Dictionaries

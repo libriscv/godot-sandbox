@@ -18,6 +18,7 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 #include "../gdscript/compiler/function_signature.h"
 #include "../sandbox.h"
+#include "../fast_cast.hpp"
 #include <unordered_set>
 static constexpr bool VERBOSE_LOGGING = false;
 
@@ -38,6 +39,9 @@ void SafeGDScript::_placeholder_erased(void *p_placeholder) {
 	placeholders.erase(static_cast<SafeGDScriptPlaceholderInstance *>(p_placeholder));
 }
 bool SafeGDScript::_can_instantiate() const {
+	bool is_trait = false;
+	scan_class_header(source_code, nullptr, nullptr, &is_trait);
+	if (is_trait) return false;
 	return !_is_abstract() && _is_valid();
 }
 static String script_class_path(const String &p_class_name) {
@@ -138,6 +142,14 @@ StringName SafeGDScript::_get_instance_base_type() const {
 	return StringName("Sandbox");
 }
 void *SafeGDScript::_instance_create(Object *p_for_object) const {
+	bool is_trait = false;
+	String declared_name;
+	scan_class_header(source_code, &declared_name, nullptr, &is_trait);
+	if (is_trait) {
+		ERR_PRINT("SafeGDScript: '" + (declared_name.is_empty() ? path : declared_name) +
+				"' is a trait and cannot be attached to an object.");
+		return nullptr;
+	}
 	// Wrong owner type → every unresolved bare name silently answers null.
 	if (p_for_object != nullptr && !this->native_base_class.is_empty() && !this->native_base_is_path) {
 		const StringName base(this->native_base_class);
@@ -232,6 +244,16 @@ static String doc_type_name(const godot::PropertyInfo &p_info) {
 		return (p_info.usage & PROPERTY_USAGE_NIL_IS_VARIANT) ? String("Variant") : String("void");
 	}
 	return Variant::get_type_name(p_info.type);
+}
+
+static String signature_doc_type(int32_t p_type, const std::string &p_class_name,
+		bool p_return = false) {
+	if (!p_class_name.empty()) {
+		return String::utf8(p_class_name.c_str(), p_class_name.size());
+	}
+	if (p_type == gdscript::FunctionParameter::ANY_TYPE) return "Variant";
+	if (p_return && p_type == int32_t(Variant::NIL)) return "void";
+	return Variant::get_type_name(variant_type_or_nil(p_type));
 }
 
 static void apply_documentation_tags(Dictionary &r_doc, const String &p_description) {
@@ -384,6 +406,52 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 		}
 		struct_doc["properties"] = properties;
 		documentation.push_back(struct_doc);
+	}
+	for (const gdscript::ClassSignature &signature : trait_signatures) {
+		Dictionary trait_doc;
+		trait_doc["name"] = String(_get_doc_class_name()) + "." +
+				String::utf8(signature.name.c_str(), signature.name.size());
+		trait_doc["is_script_doc"] = true;
+		trait_doc["script_path"] = path;
+		apply_documentation_tags(trait_doc,
+				String::utf8(signature.description.c_str(), signature.description.size()));
+		Array methods;
+		for (const gdscript::FunctionSignature &method : signature.trait_methods) {
+			Dictionary method_doc;
+			method_doc["name"] = String::utf8(method.name.c_str(), method.name.size());
+			method_doc["return_type"] = signature_doc_type(method.return_type,
+					method.return_class_name, true);
+			Array arguments;
+			for (const gdscript::FunctionParameter &parameter : method.parameters) {
+				Dictionary argument;
+				argument["name"] = String::utf8(parameter.name.c_str(), parameter.name.size());
+				argument["type"] = signature_doc_type(parameter.type, parameter.class_name);
+				arguments.push_back(argument);
+			}
+			method_doc["arguments"] = arguments;
+			apply_documentation_tags(method_doc,
+					String::utf8(method.description.c_str(), method.description.size()));
+			methods.push_back(method_doc);
+		}
+		trait_doc["methods"] = methods;
+		Array properties;
+		for (const gdscript::ClassField &field : signature.trait_fields) {
+			Dictionary property;
+			property["name"] = String::utf8(field.name.c_str(), field.name.size());
+			property["type"] = signature_doc_type(field.type, field.class_name);
+			apply_documentation_tags(property,
+					String::utf8(field.description.c_str(), field.description.size()));
+			properties.push_back(property);
+		}
+		trait_doc["properties"] = properties;
+		Array signals;
+		for (const gdscript::FunctionSignature &signal : signature.trait_signals) {
+			Dictionary signal_doc;
+			signal_doc["name"] = String::utf8(signal.name.c_str(), signal.name.size());
+			signals.push_back(signal_doc);
+		}
+		trait_doc["signals"] = signals;
+		documentation.push_back(trait_doc);
 	}
 	return documentation;
 }
@@ -806,6 +874,10 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug,
 	this->base_is_path = declared.base_is_path;
 	this->native_base_class = declared.native_base_class;
 	this->native_base_is_path = declared.native_base_is_path;
+	this->used_traits.clear();
+	for (const std::string &name : compiler.script_uses()) {
+		this->used_traits.insert(StringName(String::utf8(name.c_str(), name.size())));
+	}
 	if (this->native_base_class.is_empty()) {
 		this->native_base_class = this->base_class;
 		this->native_base_is_path = this->base_is_path;
@@ -1000,6 +1072,7 @@ void SafeGDScript::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_debug_build"), &SafeGDScript::is_debug_build);
 
 	ClassDB::bind_method(D_METHOD("get_compile_error"), &SafeGDScript::get_compile_error);
+	ClassDB::bind_method(D_METHOD("uses_trait", "name"), &SafeGDScript::uses_trait);
 
 	ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "new", &SafeGDScript::new_instance,
 			MethodInfo("new"));
@@ -1019,6 +1092,15 @@ void SafeGDScript::_bind_methods() {
 
 Variant SafeGDScript::new_instance(const Variant **p_args, GDExtensionInt p_argcount, GDExtensionCallError &r_error) {
 	r_error.error = GDEXTENSION_CALL_OK;
+	bool is_trait = false;
+	String declared_name;
+	scan_class_header(source_code, &declared_name, nullptr, &is_trait);
+	if (is_trait) {
+		ERR_PRINT("SafeGDScript: '" + (declared_name.is_empty() ? path : declared_name) +
+				"' is a trait.");
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+		return Variant();
+	}
 
 	// Declared base, not RefCounted -- guest reaches self through get_tree_base().
 	const StringName base_type = _get_instance_base_type();
@@ -1109,13 +1191,14 @@ static String scan_extends(const String &p_source) {
 
 // Compiler unavailable when Godot builds the global class list.
 void SafeGDScript::scan_class_header(const String &p_source, String *r_class_name,
-		String *r_base) {
+		String *r_base, bool *r_is_trait) {
 	if (r_class_name != nullptr) {
 		*r_class_name = String();
 	}
 	if (r_base != nullptr) {
 		*r_base = String();
 	}
+	if (r_is_trait != nullptr) *r_is_trait = false;
 	const PackedStringArray lines = p_source.split("\n");
 	for (int i = 0; i < lines.size(); i++) {
 		const String line = lines[i].strip_edges();
@@ -1135,14 +1218,67 @@ void SafeGDScript::scan_class_header(const String &p_source, String *r_class_nam
 			}
 			continue;
 		}
+		if (header_keyword(line, "trait_name")) {
+			if (r_is_trait != nullptr) *r_is_trait = true;
+			if (r_class_name != nullptr) {
+				String rest = line.substr(strlen("trait_name")).strip_edges();
+				for (const char *stop : { "#", " ", "\t", ":" }) {
+					const int at = rest.find(stop);
+					if (at >= 0) rest = rest.substr(0, at);
+				}
+				*r_class_name = rest;
+			}
+			continue;
+		}
 		if (header_keyword(line, "extends")) {
 			if (r_base != nullptr) {
 				*r_base = scan_extends(p_source);
 			}
 			continue;
 		}
+		if (header_keyword(line, "uses")) continue;
 		break;
 	}
+}
+
+static void append_uses(PackedStringArray &r_names, const String &p_rest) {
+	String rest = p_rest;
+	const int comment = rest.find("#");
+	if (comment >= 0) rest = rest.substr(0, comment);
+	// 'class X uses A, B:' ends the list with the declaration's colon.
+	const int colon = rest.find(":");
+	if (colon >= 0) rest = rest.substr(0, colon);
+	const PackedStringArray listed = rest.split(",", false);
+	for (const String &entry : listed) {
+		const String name = entry.strip_edges();
+		if (!name.is_empty()) r_names.push_back(name);
+	}
+}
+
+// 'uses' heads the file, trails a 'class'/'trait' declaration line, or opens
+// either body, so every line is scanned: a header-only scan misses the nested
+// forms and the compile then fails on an undeclared trait.
+static PackedStringArray scan_trait_uses(const String &p_source) {
+	PackedStringArray names;
+	const PackedStringArray lines = p_source.split("\n");
+	for (int i = 0; i < lines.size(); i++) {
+		const String line = lines[i].strip_edges();
+		if (line.is_empty() || line.begins_with("#")) continue;
+		if (header_keyword(line, "uses")) {
+			append_uses(names, line.substr(strlen("uses")));
+			continue;
+		}
+		if (!header_keyword(line, "class") && !header_keyword(line, "trait")) continue;
+		for (int at = line.find(" uses"); at >= 0; at = line.find(" uses", at + 1)) {
+			const int after = at + 5;
+			if (after >= line.length()) break;
+			const char32_t next = line[after];
+			if (next != ' ' && next != '\t') continue;
+			append_uses(names, line.substr(after));
+			break;
+		}
+	}
+	return names;
 }
 
 PackedStringArray SafeGDScript::resolve_base_sources(const String &p_source,
@@ -1169,6 +1305,8 @@ PackedStringArray SafeGDScript::resolve_base_sources(const String &p_source,
 	}
 	String source_path = p_self_path;
 	String next = scan_extends(p_source);
+	Vector<Pair<String, String>> scanned_sources;
+	scanned_sources.push_back(Pair<String, String>(p_source, p_self_path));
 	while (!next.is_empty()) {
 		String path;
 		if (next.begins_with("res://") || next.begins_with("user://")) {
@@ -1196,6 +1334,7 @@ PackedStringArray SafeGDScript::resolve_base_sources(const String &p_source,
 		}
 		visited.insert(path);
 		const String source = FileAccess::get_file_as_string(path);
+		scanned_sources.push_back(Pair<String, String>(source, path));
 		triples.push_back(next);
 		triples.push_back(path);
 		triples.push_back(source);
@@ -1209,6 +1348,30 @@ PackedStringArray SafeGDScript::resolve_base_sources(const String &p_source,
 		}
 		source_path = path;
 		next = scan_extends(source);
+	}
+
+	for (int source_index = 0; source_index < scanned_sources.size(); source_index++) {
+		const String &source = scanned_sources[source_index].first;
+		for (const String &used_name : scan_trait_uses(source)) {
+			String host_name = used_name;
+			const int dot = host_name.find(".");
+			if (dot >= 0) host_name = host_name.substr(0, dot);
+			HashMap<String, String>::Iterator found = classes.find(host_name);
+			if (found == classes.end()) continue;
+			const String trait_path = found->value;
+			if (visited.has(trait_path)) continue;
+			if (!FileAccess::file_exists(trait_path)) {
+				if (r_error != nullptr) *r_error = "Trait '" + used_name +
+					"' resolves to missing file '" + trait_path + "'.";
+				continue;
+			}
+			visited.insert(trait_path);
+			const String trait_source = FileAccess::get_file_as_string(trait_path);
+			triples.push_back("trait:" + used_name);
+			triples.push_back(trait_path);
+			triples.push_back(trait_source);
+			scanned_sources.push_back(Pair<String, String>(trait_source, trait_path));
+		}
 	}
 	return triples;
 }
@@ -1385,9 +1548,14 @@ void SafeGDScript::update_constants(GDScriptCompilerBackend &p_compiler) {
 // class and get_script() has to answer the same object across a reload.
 void SafeGDScript::rebuild_nested_classes(GDScriptCompilerBackend &p_compiler) {
 	const std::vector<gdscript::ClassSignature> declared = p_compiler.class_signatures();
+	trait_signatures.clear();
+	for (const gdscript::ClassSignature &signature : declared) {
+		if (signature.is_trait) trait_signatures.push_back(signature);
+	}
 
 	HashMap<StringName, Ref<SafeGDScriptClass>> rebuilt;
 	for (const gdscript::ClassSignature &signature : declared) {
+		if (signature.is_trait) continue;
 		const StringName name(String::utf8(signature.name.c_str(), signature.name.size()));
 		Ref<SafeGDScriptClass> nested;
 		if (Ref<SafeGDScriptClass> *existing = nested_classes.getptr(name)) {
@@ -1400,6 +1568,7 @@ void SafeGDScript::rebuild_nested_classes(GDScriptCompilerBackend &p_compiler) {
 	}
 	// After every class exists: a base may be declared below its derived class.
 	for (const gdscript::ClassSignature &signature : declared) {
+		if (signature.is_trait) continue;
 		if (signature.base_name.empty()) {
 			continue;
 		}
@@ -1424,4 +1593,16 @@ Ref<SafeGDScriptClass> SafeGDScript::find_nested_class(const StringName &p_name)
 		return *found;
 	}
 	return Ref<SafeGDScriptClass>();
+}
+
+bool SafeGDScript::uses_trait(const StringName &p_name) const {
+	if (used_traits.has(p_name)) return true;
+	Ref<Script> base = _get_base_script();
+	while (base.is_valid()) {
+		if (SafeGDScript *safe = fast_cast_to<SafeGDScript>(base.ptr())) {
+			if (safe->used_traits.has(p_name)) return true;
+		}
+		base = base->get_base_script();
+	}
+	return false;
 }

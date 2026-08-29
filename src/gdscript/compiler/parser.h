@@ -25,6 +25,11 @@ private:
 
 	StructDecl parse_struct();
 	StructDecl parse_class();
+	TraitDecl parse_trait();
+	TraitDecl parse_file_trait(const Token& token, std::string name);
+	FunctionDecl parse_trait_method(const TraitDecl& owner, bool is_static,
+		bool annotated_abstract, std::optional<RPCConfig> rpc_config = std::nullopt);
+	std::vector<std::string> parse_uses_list();
 	EnumDecl parse_enum();
 
 	MatchPatternPtr parse_match_pattern();
@@ -121,7 +126,7 @@ private:
 	TypeExpr parse_return_type();
 	void skip_type_arguments();
 	bool parse_attribute(ExportHint& hint, bool* is_onready = nullptr,
-		std::optional<RPCConfig>* rpc_config = nullptr);
+		std::optional<RPCConfig>* rpc_config = nullptr, bool* is_abstract = nullptr);
 	bool m_saw_tool = false;
 	void hoist_onready_initializers(Program& program);
 	std::vector<ExportArgument> parse_attribute_arguments();

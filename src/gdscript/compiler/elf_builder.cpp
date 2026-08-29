@@ -34,6 +34,9 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 	const uint64_t instance_blob_address = codegen.get_instance_blob_address();
 	const uint64_t instance_blob_size = codegen.get_instance_blob_size();
 	const uint64_t instance_init_offset = codegen.get_instance_init_offset();
+	const uint64_t trait_cache_address = codegen.get_trait_cache_address();
+	const size_t trait_cache_count = codegen.get_trait_cache_count();
+	const size_t trait_cache_stride = RISCVCodeGen::trait_cache_bytes();
 
 	std::vector<uint8_t> elf_data;
 
@@ -143,6 +146,17 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 		strtab.push_back(0);
 	}
 
+	// One symbol per trait cache: without them the host cannot find the caches
+	// to clear, and a stale 'is Trait' answer outlives the script change.
+	std::vector<size_t> trait_cache_name_offsets;
+	trait_cache_name_offsets.reserve(trait_cache_count);
+	for (size_t i = 0; i < trait_cache_count; i++) {
+		const std::string name = std::string(TRAIT_CACHE_SYMBOL_PREFIX) + std::to_string(i);
+		trait_cache_name_offsets.push_back(strtab.size());
+		strtab.insert(strtab.end(), name.begin(), name.end());
+		strtab.push_back(0);
+	}
+
 	// Defined locally to avoid alignment/packing issues.
 	struct alignas(8) Elf64_Sym {
 		uint32_t st_name;
@@ -237,6 +251,18 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 		init.st_value = BASE_ADDR + instance_init_offset;
 		init.st_size = 0;
 		symtab.push_back(init);
+	}
+
+	for (size_t i = 0; i < trait_cache_count; i++) {
+		Elf64_Sym sym = {};
+		memset(&sym, 0, sizeof(sym));
+		sym.st_name = static_cast<uint32_t>(trait_cache_name_offsets[i]);
+		sym.st_info = (1 << 4) | 1; // STB_GLOBAL | STT_OBJECT
+		sym.st_other = 0;
+		sym.st_shndx = 2; // .data
+		sym.st_value = trait_cache_address + i * trait_cache_stride;
+		sym.st_size = trait_cache_stride;
+		symtab.push_back(sym);
 	}
 
 	size_t symtab_size = symtab.size() * sizeof(Elf64_Sym);

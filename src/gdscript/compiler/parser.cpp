@@ -78,6 +78,15 @@ Program Parser::parse() {
 				}
 			}
 			skip_newlines();
+		} else if (check(TokenType::USES)) {
+			const Token& uses_token = advance();
+			heads_the_file("uses", uses_token);
+			if (!program.uses.empty()) {
+				error("A script declares one uses list", uses_token.line,
+					uses_token.column);
+			}
+			program.uses = parse_uses_list();
+			consume_statement_end("Expected newline after 'uses'");
 		} else if (check(TokenType::SIGNAL)) {
 			program.signals.push_back(parse_signal());
 			saw_declaration = true;
@@ -157,6 +166,9 @@ Program Parser::parse() {
 		} else if (check(TokenType::STRUCT)) {
 			program.structs.push_back(parse_struct());
 			saw_declaration = true;
+		} else if (check(TokenType::TRAIT)) {
+			program.traits.push_back(parse_trait());
+			saw_declaration = true;
 		} else if (check(TokenType::CLASS)) {
 			program.structs.push_back(parse_class());
 			saw_declaration = true;
@@ -175,6 +187,21 @@ Program Parser::parse() {
 			program.class_name = consume(TokenType::IDENTIFIER,
 				"Expected a class name after 'class_name'").lexeme;
 			skip_newlines();
+		} else if (check(TokenType::TRAIT_NAME)) {
+			const Token& trait_name_token = advance();
+			heads_the_file("trait_name", trait_name_token);
+			if (!program.trait_name.empty() || !program.class_name.empty()) {
+				error("A script declares either one trait_name or one class_name",
+					trait_name_token.line, trait_name_token.column);
+			}
+			program.trait_name_line = trait_name_token.line;
+			program.trait_name_column = trait_name_token.column;
+			program.trait_name = consume(TokenType::IDENTIFIER,
+				"Expected a trait name after 'trait_name'").lexeme;
+			consume_statement_end("Expected newline after 'trait_name'");
+			program.traits.push_back(parse_file_trait(trait_name_token,
+				program.trait_name));
+			saw_declaration = true;
 		} else if (check(TokenType::FUNC)) {
 			program.functions.push_back(parse_function());
 			saw_declaration = true;
@@ -441,6 +468,9 @@ StructDecl Parser::parse_struct() {
 
 	const Token& name = consume(TokenType::IDENTIFIER, "Expected struct name");
 	decl.name = name.lexeme;
+	if (match(TokenType::USES)) {
+		decl.uses = parse_uses_list();
+	}
 
 	consume(TokenType::COLON, "Expected ':' after struct name");
 	consume(TokenType::NEWLINE, "Expected newline after struct declaration");
@@ -559,6 +589,9 @@ StructDecl Parser::parse_class() {
 	if (match(TokenType::EXTENDS)) {
 		parse_extends();
 	}
+	if (match(TokenType::USES)) {
+		decl.uses = parse_uses_list();
+	}
 
 	consume(TokenType::COLON, "Expected ':' after the class name");
 	consume(TokenType::NEWLINE, "Expected newline after the class declaration");
@@ -575,6 +608,16 @@ StructDecl Parser::parse_class() {
 		}
 		parse_extends();
 		consume_statement_end("Expected newline after 'extends'");
+	}
+	skip_newlines();
+	if (check(TokenType::USES)) {
+		const Token& token = advance();
+		if (!decl.uses.empty()) {
+			error("Class '" + decl.name + "' already declares an uses list",
+				token.line, token.column);
+		}
+		decl.uses = parse_uses_list();
+		consume_statement_end("Expected newline after 'uses'");
 	}
 
 	while (!check(TokenType::DEDENT) && !is_at_end()) {
@@ -661,6 +704,267 @@ StructDecl Parser::parse_class() {
 	}
 
 	consume(TokenType::DEDENT, "Expected dedent after the class body");
+	return decl;
+}
+
+std::vector<std::string> Parser::parse_uses_list() {
+	std::vector<std::string> names;
+	do {
+		const Token& name = consume(TokenType::IDENTIFIER,
+			"Expected a trait name after 'uses'");
+		std::string qualified = name.lexeme;
+		while (match(TokenType::DOT)) {
+			qualified += ".";
+			qualified += consume(TokenType::IDENTIFIER,
+				"Expected a trait name after '.'").lexeme;
+		}
+		for (const std::string& existing : names) {
+			if (existing == qualified) {
+				error("Trait '" + qualified + "' is listed more than once",
+					name.line, name.column);
+			}
+		}
+		names.push_back(std::move(qualified));
+	} while (match(TokenType::COMMA));
+	return names;
+}
+
+FunctionDecl Parser::parse_trait_method(const TraitDecl& owner, bool is_static,
+	bool annotated_abstract, std::optional<RPCConfig> rpc_config) {
+	FunctionDecl func;
+	const Token& func_token = consume(TokenType::FUNC, "Expected 'func'");
+	func.line = func_token.line;
+	func.column = func_token.column;
+	func.doc_comment = doc_comment_above(func_token.line);
+	func.name = consume(TokenType::IDENTIFIER, "Expected function name").lexeme;
+	if (func.name == "_init") {
+		error("A trait cannot declare '_init'", func.line, func.column);
+	}
+	func.is_static = is_static;
+	func.is_abstract = annotated_abstract;
+	consume(TokenType::LPAREN, "Expected '(' after function name");
+	func.parameters = parse_parameters();
+	consume(TokenType::RPAREN, "Expected ')' after parameters");
+	func.return_type = parse_return_type();
+
+	if (match(TokenType::COLON)) {
+		func.body = parse_suite();
+		if (annotated_abstract) {
+			error("@abstract method '" + func.name + "' cannot have a body",
+				func.line, func.column);
+		}
+	} else {
+		if (is_static) {
+			error("A static trait method must have a body", func.line, func.column);
+		}
+		func.is_abstract = true;
+		consume_statement_end("Expected newline after trait method signature");
+	}
+	if (owner.find_method(func.name) != nullptr) {
+		error("Trait '" + owner.name + "' declares '" + func.name +
+			"()' more than once", func.line, func.column);
+	}
+	if (rpc_config.has_value()) {
+		rpc_config->name = func.name;
+		func.rpc_config = std::move(rpc_config);
+	}
+	return func;
+}
+
+TraitDecl Parser::parse_trait() {
+	TraitDecl decl;
+	const Token& token = consume(TokenType::TRAIT, "Expected 'trait'");
+	decl.line = token.line;
+	decl.column = token.column;
+	decl.doc_comment = doc_comment_above(token.line);
+	decl.name = consume(TokenType::IDENTIFIER, "Expected trait name").lexeme;
+	if (match(TokenType::EXTENDS)) {
+		decl.base_name = consume(TokenType::IDENTIFIER,
+			"Expected a base class after 'extends'").lexeme;
+	}
+	if (match(TokenType::USES)) decl.uses = parse_uses_list();
+	consume(TokenType::COLON, "Expected ':' after trait name");
+	consume(TokenType::NEWLINE, "Expected newline after trait declaration");
+	skip_newlines();
+	consume(TokenType::INDENT, "Expected indented block after 'trait " + decl.name + ":'");
+
+	while (!check(TokenType::DEDENT) && !is_at_end()) {
+		skip_newlines();
+		if (check(TokenType::DEDENT) || is_at_end()) break;
+		if (match(TokenType::PASS)) {
+			consume_statement_end("Expected newline after 'pass'");
+			continue;
+		}
+		if (match(TokenType::EXTENDS)) {
+			if (!decl.base_name.empty()) error("Trait '" + decl.name + "' already declares a base requirement");
+			decl.base_name = consume(TokenType::IDENTIFIER,
+				"Expected a base class after 'extends'").lexeme;
+			consume_statement_end("Expected newline after trait 'extends'");
+			continue;
+		}
+		if (match(TokenType::USES)) {
+			if (!decl.uses.empty()) error("Trait '" + decl.name + "' already declares a uses list");
+			decl.uses = parse_uses_list();
+			consume_statement_end("Expected newline after trait 'uses'");
+			continue;
+		}
+
+		bool is_export = false;
+		bool is_onready = false;
+		bool is_abstract = false;
+		std::optional<RPCConfig> rpc_config;
+		ExportHint export_hint;
+		while (check(TokenType::AT)) {
+			is_export = parse_attribute(export_hint, &is_onready, &rpc_config,
+				&is_abstract) || is_export;
+			skip_newlines();
+		}
+		const bool is_static = match(TokenType::STATIC);
+		if (check(TokenType::CLASS) || check(TokenType::STRUCT) || check(TokenType::TRAIT)) {
+			error("A trait cannot declare an inner class");
+		}
+		if (check(TokenType::FUNC)) {
+			if (is_export || is_onready) error("Variable annotations cannot be applied to a trait method");
+			decl.methods.push_back(parse_trait_method(decl, is_static, is_abstract,
+				std::move(rpc_config)));
+			decl.methods.back().trait_origin = decl.name;
+			continue;
+		}
+		if (is_abstract) error("@abstract can only be applied to a trait method");
+		if (rpc_config.has_value()) error("@rpc can only be applied to a function");
+		if (check(TokenType::SIGNAL)) {
+			if (is_static || is_export || is_onready) error("A trait signal cannot use variable annotations");
+			decl.signals.push_back(parse_signal());
+			decl.signals.back().trait_origin = decl.name;
+			continue;
+		}
+		if (check(TokenType::ENUM)) {
+			if (is_static || is_export || is_onready) error("A trait enum cannot use variable annotations");
+			decl.enums.push_back(parse_enum());
+			continue;
+		}
+		if (check(TokenType::VAR) || check(TokenType::CONST)) {
+			const bool is_const = check(TokenType::CONST);
+			advance();
+			if (is_onready && (is_const || is_static)) error("@onready requires an instance variable");
+			auto statement = parse_var_decl(is_const);
+			auto* var = dynamic_cast<VarDeclStmt*>(statement.get());
+			var->is_property = is_export;
+			var->is_onready = is_onready;
+			var->is_static = is_static;
+			var->export_hint = export_hint;
+			var->trait_origin = decl.name;
+			if (is_const) {
+				StructField value;
+				value.name = var->name;
+				value.type_hint = std::move(var->type_hint);
+				value.default_value = std::move(var->initializer);
+				value.line = var->line;
+				value.column = var->column;
+				value.trait_origin = decl.name;
+				decl.constants.push_back(std::move(value));
+			} else {
+				decl.vars.push_back(std::move(*var));
+			}
+			continue;
+		}
+		error("A trait body accepts variables, constants, enums, signals and functions");
+	}
+	consume(TokenType::DEDENT, "Expected dedent after trait body");
+	return decl;
+}
+
+TraitDecl Parser::parse_file_trait(const Token& token, std::string name) {
+	TraitDecl decl;
+	decl.name = std::move(name);
+	decl.line = token.line;
+	decl.column = token.column;
+	decl.doc_comment = doc_comment_above(token.line);
+	decl.is_file_level = true;
+
+	while (!is_at_end()) {
+		skip_newlines();
+		if (is_at_end()) break;
+		if (match(TokenType::PASS)) {
+			consume_statement_end("Expected newline after 'pass'");
+			continue;
+		}
+		if (match(TokenType::EXTENDS)) {
+			if (!decl.base_name.empty()) error("Trait '" + decl.name + "' already declares a base requirement");
+			decl.base_name = consume(TokenType::IDENTIFIER,
+				"Expected a base class after 'extends'").lexeme;
+			consume_statement_end("Expected newline after trait 'extends'");
+			continue;
+		}
+		if (match(TokenType::USES)) {
+			if (!decl.uses.empty()) error("Trait '" + decl.name + "' already declares a uses list");
+			decl.uses = parse_uses_list();
+			consume_statement_end("Expected newline after trait 'uses'");
+			continue;
+		}
+
+		bool is_export = false;
+		bool is_onready = false;
+		bool is_abstract = false;
+		std::optional<RPCConfig> rpc_config;
+		ExportHint export_hint;
+		while (check(TokenType::AT)) {
+			is_export = parse_attribute(export_hint, &is_onready, &rpc_config,
+				&is_abstract) || is_export;
+			skip_newlines();
+		}
+		const bool is_static = match(TokenType::STATIC);
+		if (check(TokenType::CLASS) || check(TokenType::STRUCT) || check(TokenType::TRAIT) ||
+			check(TokenType::CLASS_NAME) || check(TokenType::TRAIT_NAME)) {
+			error("A trait cannot declare an inner class");
+		}
+		if (check(TokenType::FUNC)) {
+			if (is_export || is_onready) error("Variable annotations cannot be applied to a trait method");
+			decl.methods.push_back(parse_trait_method(decl, is_static, is_abstract,
+				std::move(rpc_config)));
+			decl.methods.back().trait_origin = decl.name;
+			continue;
+		}
+		if (is_abstract) error("@abstract can only be applied to a trait method");
+		if (rpc_config.has_value()) error("@rpc can only be applied to a function");
+		if (check(TokenType::SIGNAL)) {
+			if (is_static || is_export || is_onready) error("A trait signal cannot use variable annotations");
+			decl.signals.push_back(parse_signal());
+			decl.signals.back().trait_origin = decl.name;
+			continue;
+		}
+		if (check(TokenType::ENUM)) {
+			if (is_static || is_export || is_onready) error("A trait enum cannot use variable annotations");
+			decl.enums.push_back(parse_enum());
+			continue;
+		}
+		if (check(TokenType::VAR) || check(TokenType::CONST)) {
+			const bool is_const = check(TokenType::CONST);
+			advance();
+			if (is_onready && (is_const || is_static)) error("@onready requires an instance variable");
+			auto statement = parse_var_decl(is_const);
+			auto* var = dynamic_cast<VarDeclStmt*>(statement.get());
+			var->is_property = is_export;
+			var->is_onready = is_onready;
+			var->is_static = is_static;
+			var->export_hint = export_hint;
+			var->trait_origin = decl.name;
+			if (is_const) {
+				StructField value;
+				value.name = var->name;
+				value.type_hint = std::move(var->type_hint);
+				value.default_value = std::move(var->initializer);
+				value.line = var->line;
+				value.column = var->column;
+				value.trait_origin = decl.name;
+				decl.constants.push_back(std::move(value));
+			} else {
+				decl.vars.push_back(std::move(*var));
+			}
+			continue;
+		}
+		error("A trait body accepts variables, constants, enums, signals and functions");
+	}
 	return decl;
 }
 
@@ -814,6 +1118,9 @@ StmtPtr Parser::parse_statement_impl() {
 	if (check(TokenType::CLASS)) {
 		error("A class can only be declared at the top level of the file");
 	}
+	if (check(TokenType::TRAIT)) {
+		error("A trait can only be declared at the top level of the file");
+	}
 	if (match(TokenType::IF)) {
 		return parse_if_stmt();
 	}
@@ -899,6 +1206,7 @@ StmtPtr Parser::parse_var_decl(bool is_const) {
 
 	auto stmt = make_at<VarDeclStmt>(name, name.lexeme, std::move(initializer), is_const);
 	stmt->type_hint = type_hint;
+	stmt->doc_comment = doc_comment_above(name.line);
 
 	if (accessors_follow) {
 		if (is_const) {
@@ -1622,7 +1930,6 @@ ExprPtr Parser::parse_power() {
 ExprPtr Parser::parse_type_test() {
 	ExprPtr left = parse_power();
 
-	// `is` / `is not`: type name read directly, not as an expression.
 	while (check(TokenType::IS)) {
 		advance();
 		const bool negated = match(TokenType::NOT);
@@ -2117,7 +2424,7 @@ void Parser::skip_type_arguments() {
 }
 
 bool Parser::parse_attribute(ExportHint& hint, bool* is_onready,
-	std::optional<RPCConfig>* rpc_config) {
+	std::optional<RPCConfig>* rpc_config, bool* is_abstract) {
 	consume(TokenType::AT, "Expected '@' for attribute");
 
 	const Token& name = consume(TokenType::IDENTIFIER, "Expected an attribute name after '@'");
@@ -2152,6 +2459,13 @@ bool Parser::parse_attribute(ExportHint& hint, bool* is_onready,
 	}
 	if (name.lexeme == "tool") {
 		m_saw_tool = true;
+		return false;
+	}
+	if (name.lexeme == "abstract") {
+		if (is_abstract == nullptr) {
+			error("@abstract is only supported on a trait method", name.line, name.column);
+		}
+		*is_abstract = true;
 		return false;
 	}
 	if (name.lexeme == "rpc") {
@@ -2226,7 +2540,7 @@ bool Parser::parse_attribute(ExportHint& hint, bool* is_onready,
 	if (name.lexeme == "icon" ||
 		name.lexeme == "warning_ignore" || name.lexeme == "warning_ignore_start" ||
 		name.lexeme == "warning_ignore_restore" || name.lexeme == "static_unload" ||
-		name.lexeme == "abstract")
+		false)
 	{
 		return false;
 	}

@@ -22,6 +22,8 @@ const std::unordered_map<std::string, TokenType> Lexer::keywords = {
 	{"pass", TokenType::PASS},
 	{"extends", TokenType::EXTENDS},
 	{"struct", TokenType::STRUCT},
+	{"trait", TokenType::TRAIT},
+	{"trait_name", TokenType::TRAIT_NAME},
 	{"true", TokenType::TRUE},
 	{"false", TokenType::FALSE},
 	{"null", TokenType::NULL_VAL},
@@ -591,8 +593,21 @@ void Lexer::scan_identifier() {
 
 	auto it = keywords.find(text);
 	TokenType type = (it != keywords.end()) ? it->second : TokenType::IDENTIFIER;
+	if (text == "uses") {
+		size_t next = m_current;
+		while (next < m_source.size() &&
+			(m_source[next] == ' ' || m_source[next] == '\t')) next++;
+		if ((m_statement_start || m_type_header) && next < m_source.size() &&
+			is_alpha(m_source[next])) {
+			type = TokenType::USES;
+		}
+	}
 
 	add_token(type);
+	if (type == TokenType::CLASS || type == TokenType::STRUCT || type == TokenType::TRAIT)
+		m_type_header = true;
+	if (type != TokenType::INDENT && type != TokenType::DEDENT &&
+		type != TokenType::NEWLINE) m_statement_start = false;
 	if (type == TokenType::FUNC && !m_open_brackets.empty()) {
 		m_lambda_signature = true;
 		m_lambda_parameters_closed = false;
@@ -671,6 +686,12 @@ bool Lexer::is_alphanumeric(char c) const {
 void Lexer::add_token(TokenType type) {
 	std::string text = m_source.substr(m_start, m_current - m_start);
 	m_tokens.emplace_back(type, text, m_line, m_column);
+	if (type == TokenType::NEWLINE) {
+		m_statement_start = true;
+		m_type_header = false;
+	} else if (type == TokenType::COLON && m_type_header) {
+		m_type_header = false;
+	}
 }
 
 void Lexer::add_token(TokenType type, int64_t value) {

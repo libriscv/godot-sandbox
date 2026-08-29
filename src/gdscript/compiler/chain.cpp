@@ -97,6 +97,14 @@ Program merge_chain(std::vector<ChainLink> links) {
 
 	merged.native_base_class = links.front().program.base_class;
 	merged.native_base_is_path = links.front().program.base_is_path;
+	{
+		std::unordered_set<std::string> inherited_uses;
+		for (const ChainLink& link : links) {
+			for (const std::string& trait : link.program.uses) {
+				if (inherited_uses.insert(trait).second) merged.uses.push_back(trait);
+			}
+		}
+	}
 
 	for (const ChainLink& link : links) {
 		merged.chain.class_names.push_back(link.program.class_name.empty()
@@ -133,6 +141,11 @@ Program merge_chain(std::vector<ChainLink> links) {
 				method.chain_link = link;
 			}
 			merged.structs.push_back(std::move(decl));
+		}
+		for (TraitDecl& decl : source.traits) {
+			reject_redeclaration(types, links, "Trait", decl.name,
+				link, decl.line, decl.column);
+			merged.traits.push_back(std::move(decl));
 		}
 		for (EnumDecl& decl : source.enums) {
 			if (!decl.name.empty()) {

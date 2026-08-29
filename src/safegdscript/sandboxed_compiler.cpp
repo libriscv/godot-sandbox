@@ -57,6 +57,22 @@ public:
 		call_setter("set_base_sources", args, 1, "base sources");
 	}
 
+	void set_engine_ancestry(const PackedStringArray &p_pairs) override {
+		Sandbox *compiler = sandbox();
+		if (compiler == nullptr || !compiler->has_function("set_engine_ancestry")) return;
+		Variant pairs = p_pairs;
+		const Variant *args[] = { &pairs };
+		call_setter("set_engine_ancestry", args, 1, "engine ancestry");
+	}
+
+	void set_trait_structural_fallback(bool p_enabled) override {
+		Sandbox *compiler = sandbox();
+		if (compiler == nullptr || !compiler->has_function("set_trait_structural_fallback")) return;
+		Variant enabled = p_enabled;
+		const Variant *args[] = { &enabled };
+		call_setter("set_trait_structural_fallback", args, 1, "trait structural fallback");
+	}
+
 	bool can_build_profiled() override { return has("compile_profiled"); }
 	bool can_build_debug() override { return has("compile_debug"); }
 
@@ -187,6 +203,22 @@ public:
 			ERR_PRINT("SafeGDScript: the compiler returned a malformed class table.");
 		}
 		return classes;
+	}
+
+	std::vector<std::string> script_uses() override {
+		std::vector<std::string> result;
+		if (!has("get_script_uses")) return result;
+		GDExtensionCallError error;
+		const Variant value = vmcall("get_script_uses", nullptr, 0, error);
+		if (error.error != GDEXTENSION_CALL_OK || value.get_type() != Variant::PACKED_STRING_ARRAY) {
+			m_metadata_valid = false;
+			return result;
+		}
+		for (const String& name : PackedStringArray(value)) {
+			const CharString utf8 = name.utf8();
+			result.emplace_back(utf8.get_data(), size_t(utf8.length()));
+		}
+		return result;
 	}
 
 	std::vector<gdscript::ScriptConstant> script_constants() override {

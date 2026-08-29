@@ -5,6 +5,7 @@
 #include "line_table.h"
 #include "profiling_layout.h"
 #include "register_allocator.h"
+#include "trait_cache_layout.h"
 #include "variant_layout.h"
 #include <array>
 #include <set>
@@ -23,6 +24,8 @@ public:
 
 	std::vector<uint8_t> generate(const IRProgram& program);
 
+	static constexpr size_t TRAIT_CACHE_ENTRIES = TraitCacheLayout::ENTRIES;
+
 	const VariantLayout& get_layout() const { return m_layout; }
 	const std::unordered_map<std::string, size_t>& get_function_offsets() const { return m_functions; }
 	const RegisterAllocator& get_allocator() const { return m_allocator; }
@@ -37,6 +40,12 @@ public:
 
 	uint64_t get_debug_address() const { return m_debug_address; }
 	size_t get_debug_size() const { return m_debug_size; }
+
+	// One cache per trait, published so the host can invalidate them after a
+	// script change makes an object's answer stale.
+	uint64_t get_trait_cache_address() const { return m_trait_cache_address; }
+	size_t get_trait_cache_count() const { return m_trait_cache_count; }
+	static constexpr size_t trait_cache_bytes() { return TraitCacheLayout::AREA_SIZE; }
 
 	uint64_t get_instance_blob_address() const { return m_instance_blob_address; }
 	size_t get_instance_blob_size() const { return m_instance_blob_size; }
@@ -114,6 +123,7 @@ private:
 	void gen_vcall(const IRInstruction& instr);
 	void gen_construct(const IRInstruction& instr);
 	void gen_call_syscall(const IRInstruction& instr);
+	void gen_trait_test(const IRInstruction& instr);
 	// Per-syscall expansions; each has its own calling convention.
 	void gen_syscall_get_obj(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_node_create(const IRInstruction& instr, int result_vreg);
@@ -588,6 +598,11 @@ private:
 
 	const std::vector<std::string>* m_string_constants = nullptr;
 	const IRStringTable* m_strings = nullptr;
+	const std::vector<ClassSignature>* m_trait_signatures = nullptr;
+	bool m_trait_structural_fallback = true;
+	size_t m_trait_cache_size = 0;
+	size_t m_trait_cache_count = 0;
+	uint64_t m_trait_cache_address = 0;
 	// Resolves an operand's interned name.
 	const std::string& text(const IRValue& value) const;
 
