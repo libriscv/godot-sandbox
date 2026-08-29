@@ -96,6 +96,19 @@ int main() {
 	assert(traits.declarations[0].documentation == "Can be damaged");
 	assert(traits.declarations[1].kind == DeclarationKind::FUNCTION);
 	assert(traits.declarations[1].parent == 0);
+	const std::vector<uint8_t> trait_bytes = encode_source_model(traits);
+	SourceModel decoded_traits;
+	assert(decode_source_model(trait_bytes.data(), trait_bytes.size(), decoded_traits));
+	assert(decoded_traits.declarations[0].kind == DeclarationKind::TRAIT);
+
+	SourceModel invalid_kind;
+	invalid_kind.declarations.push_back(SourceDeclaration{});
+	invalid_kind.declarations[0].kind = static_cast<DeclarationKind>(255);
+	const std::vector<uint8_t> invalid_kind_bytes = encode_source_model(invalid_kind);
+	std::string decode_error;
+	assert(!decode_source_model(invalid_kind_bytes.data(), invalid_kind_bytes.size(),
+			decoded_traits, decode_error));
+	assert(decode_error == "declaration 0 has unsupported kind 255");
 
 	std::cout << "source model passed\n";
 }

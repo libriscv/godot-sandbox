@@ -19,7 +19,7 @@ struct SourceRange {
 enum class DiagnosticSeverity : uint8_t { ERROR, WARNING, INFO };
 enum class DeclarationKind : uint8_t {
 	CLASS, FUNCTION, PARAMETER, VARIABLE, CONSTANT, SIGNAL, ENUM, ENUM_VALUE,
-	NESTED_CLASS, ANNOTATION, TRAIT,
+	NESTED_CLASS, ANNOTATION, TRAIT, COUNT,
 };
 enum class CaretKind : uint8_t {
 	NONE, IDENTIFIER, MEMBER, TYPE, CALL_ARGUMENT, ANNOTATION, RESOURCE_PATH,
@@ -93,6 +93,8 @@ enum AnalysisFlags : uint32_t {
 
 std::vector<uint8_t> encode_source_model(const SourceModel &model);
 bool decode_source_model(const uint8_t *data, size_t size, SourceModel &out);
+bool decode_source_model(const uint8_t *data, size_t size, SourceModel &out,
+		std::string &error);
 
 // Error-tolerant, non-codegen editor analysis. Normal Compiler::compile remains
 // fail-fast and is never called in a recovery mode.

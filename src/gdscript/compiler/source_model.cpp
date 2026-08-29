@@ -253,68 +253,112 @@ std::vector<uint8_t> encode_source_model(const SourceModel &model) {
 }
 
 bool decode_source_model(const uint8_t *data, size_t size, SourceModel &out) {
+	std::string ignored;
+	return decode_source_model(data, size, out, ignored);
+}
+
+bool decode_source_model(const uint8_t *data, size_t size, SourceModel &out,
+		std::string &error) {
 	out = SourceModel{};
-	if (data == nullptr || size > MAX_BLOB) return false;
+	error.clear();
+	auto reject = [&error](std::string reason) {
+		error = std::move(reason);
+		return false;
+	};
+	if (data == nullptr) return reject("source model data is null");
+	if (size > MAX_BLOB) return reject("source model exceeds the 32 MiB size limit");
 	Reader reader{data, size};
-	if (reader.scalar<uint32_t>() != MAGIC || reader.scalar<uint16_t>() != MAJOR) return false;
+	const uint32_t magic = reader.scalar<uint32_t>();
+	const uint16_t major = reader.scalar<uint16_t>();
+	if (!reader.ok) return reject("source model header is truncated");
+	if (magic != MAGIC) return reject("source model has an invalid magic value");
+	if (major != MAJOR) return reject("source model uses unsupported major version " +
+			std::to_string(major));
 	reader.scalar<uint16_t>();
 	const uint32_t section_count = reader.scalar<uint32_t>();
-	if (!reader.ok || section_count > 256) return false;
+	if (!reader.ok) return reject("source model header is truncated");
+	if (section_count > 256) return reject("source model contains too many sections");
 	SourceModel staged;
 	for (uint32_t s = 0; s < section_count; s++) {
 		const uint32_t id = reader.scalar<uint32_t>(); const uint32_t length = reader.scalar<uint32_t>();
-		if (!reader.ok || reader.at > size || length > size - reader.at) return false;
+		if (!reader.ok) return reject("source model section header " + std::to_string(s) +
+				" is truncated");
+		if (reader.at > size || length > size - reader.at) return reject(
+				"source model section " + std::to_string(id) + " is truncated");
 		Reader part{reader.data + reader.at, length}; reader.at += length;
 		if (id == META) {
 			staged.path = part.string();
 		}
 		else if (id == DIAGNOSTICS) {
 			const uint32_t count = part.scalar<uint32_t>();
-			if (count > MAX_RECORDS) return false;
+			if (count > MAX_RECORDS) return reject("source model contains too many diagnostics");
 			for (uint32_t i = 0; i < count; i++) {
 				SourceDiagnostic d; const uint8_t severity = part.scalar<uint8_t>();
-				if (severity > uint8_t(DiagnosticSeverity::INFO)) return false;
+				if (severity > uint8_t(DiagnosticSeverity::INFO)) return reject("diagnostic " +
+						std::to_string(i) + " has unsupported severity " +
+						std::to_string(severity));
 				d.severity = DiagnosticSeverity(severity); d.code = part.string(); d.message = part.string(); d.path = part.string(); d.range = part.range();
-				if (!valid_range(d.range)) return false;
+				if (!part.ok) return reject("diagnostic " + std::to_string(i) + " is truncated");
+				if (!valid_range(d.range)) return reject("diagnostic " + std::to_string(i) +
+						" has an invalid source range");
 				staged.diagnostics.push_back(std::move(d));
 			}
 		} else if (id == DECLARATIONS) {
 			const uint32_t count = part.scalar<uint32_t>();
-			if (count > MAX_RECORDS) return false;
+			if (count > MAX_RECORDS) return reject("source model contains too many declarations");
 			for (uint32_t i = 0; i < count; i++) {
-				SourceDeclaration d; const uint8_t kind = part.scalar<uint8_t>(); if (kind > uint8_t(DeclarationKind::ANNOTATION)) return false;
+				SourceDeclaration d; const uint8_t kind = part.scalar<uint8_t>();
+				if (kind >= uint8_t(DeclarationKind::COUNT)) return reject("declaration " +
+						std::to_string(i) + " has unsupported kind " + std::to_string(kind));
 				d.kind = DeclarationKind(kind); d.name = part.string(); d.declared_type = part.string(); d.resolved_type = part.string(); d.declaration = part.range(); d.lexical_scope = part.range(); d.parent = part.scalar<int32_t>(); d.flags = part.scalar<uint32_t>(); d.documentation = part.string();
-				uint32_t n = part.scalar<uint32_t>(); if (n > MAX_RECORDS) return false; for (uint32_t j = 0; j < n; j++) d.children.push_back(part.scalar<int32_t>());
-				n = part.scalar<uint32_t>(); if (n > MAX_RECORDS) return false; for (uint32_t j = 0; j < n; j++) { SourceParameter p; p.name = part.string(); p.declared_type = part.string(); p.default_text = part.string(); p.declaration = part.range(); d.parameters.push_back(std::move(p)); }
-				d.return_type = part.string(); n = part.scalar<uint32_t>(); if (n > MAX_RECORDS) return false;
+				uint32_t n = part.scalar<uint32_t>(); if (n > MAX_RECORDS) return reject("declaration " + std::to_string(i) + " has too many children"); for (uint32_t j = 0; j < n; j++) d.children.push_back(part.scalar<int32_t>());
+				n = part.scalar<uint32_t>(); if (n > MAX_RECORDS) return reject("declaration " + std::to_string(i) + " has too many parameters"); for (uint32_t j = 0; j < n; j++) { SourceParameter p; p.name = part.string(); p.declared_type = part.string(); p.default_text = part.string(); p.declaration = part.range(); d.parameters.push_back(std::move(p)); }
+				d.return_type = part.string(); n = part.scalar<uint32_t>(); if (n > MAX_RECORDS) return reject("declaration " + std::to_string(i) + " has too many enum members");
 				for (uint32_t j = 0; j < n; j++) { SourceEnumMember e; e.name = part.string(); e.value = part.scalar<int64_t>(); e.declaration = part.range(); d.enum_members.push_back(std::move(e)); }
-				n = part.scalar<uint32_t>(); if (n > MAX_RECORDS) return false; for (uint32_t j = 0; j < n; j++) d.annotation_arguments.push_back(part.string());
-				if (!valid_range(d.declaration) || !valid_range(d.lexical_scope)) return false;
+				n = part.scalar<uint32_t>(); if (n > MAX_RECORDS) return reject("declaration " + std::to_string(i) + " has too many annotation arguments"); for (uint32_t j = 0; j < n; j++) d.annotation_arguments.push_back(part.string());
+				if (!part.ok) return reject("declaration " + std::to_string(i) + " is truncated");
+				if (!valid_range(d.declaration) || !valid_range(d.lexical_scope)) return reject(
+						"declaration " + std::to_string(i) + " has an invalid source range");
 				staged.declarations.push_back(std::move(d));
 			}
 		} else if (id == PROPERTIES) {
-			if (!decode_property_signatures(part.data, part.size, staged.properties)) return false;
+			if (!decode_property_signatures(part.data, part.size, staged.properties)) return reject(
+					"source model contains an invalid property signature table");
 			part.at = part.size;
 		} else if (id == CARET) {
-			const uint8_t kind = part.scalar<uint8_t>(); if (kind > uint8_t(CaretKind::STRING_NAME)) return false;
+			const uint8_t kind = part.scalar<uint8_t>(); if (kind > uint8_t(CaretKind::STRING_NAME)) return reject(
+					"caret context has unsupported kind " + std::to_string(kind));
 			staged.caret.kind = CaretKind(kind); staged.caret.declaration = part.scalar<int32_t>(); staged.caret.receiver_text = part.string(); staged.caret.receiver_type = part.string(); staged.caret.callee = part.string(); staged.caret.argument_index = part.scalar<int32_t>();
 		} else if (id == SAFE_LINES) {
 			const uint32_t count = part.scalar<uint32_t>();
-			if (count > MAX_RECORDS) return false;
+			if (count > MAX_RECORDS) return reject("source model contains too many safe lines");
 			for (uint32_t i = 0; i < count; i++) staged.safe_lines.push_back(part.scalar<uint32_t>());
 		} else { part.at = part.size; }
-		if (!part.ok || part.at != part.size) return false;
+		if (!part.ok) return reject("source model section " + std::to_string(id) + " is truncated");
+		if (part.at != part.size) return reject("source model section " + std::to_string(id) +
+				" contains trailing data");
 	}
-	if (!reader.ok || reader.at != size) return false;
+	if (!reader.ok) return reject("source model is truncated");
+	if (reader.at != size) return reject("source model contains trailing data");
 	for (size_t i = 0; i < staged.declarations.size(); i++) {
 		const auto &d = staged.declarations[i];
-		if (d.parent >= int32_t(staged.declarations.size())) return false;
+		if (d.parent < -1 || d.parent >= int32_t(staged.declarations.size())) return reject("declaration " +
+				std::to_string(i) + " refers to missing parent " + std::to_string(d.parent));
+		for (int32_t child : d.children) if (child < 0 || child >= int32_t(staged.declarations.size())) return reject(
+				"declaration " + std::to_string(i) + " refers to missing child " +
+				std::to_string(child));
+	}
+	for (size_t i = 0; i < staged.declarations.size(); i++) {
+		const auto &d = staged.declarations[i];
 		int depth = 0; int32_t parent = d.parent;
 		while (parent >= 0 && depth++ <= 64) { parent = staged.declarations[size_t(parent)].parent; }
-		if (depth > 64) return false;
-		for (int32_t child : d.children) if (child < 0 || child >= int32_t(staged.declarations.size())) return false;
+		if (depth > 64) return reject("declaration " + std::to_string(i) +
+				" has an invalid parent cycle or nesting depth");
 	}
-	if (staged.caret.declaration >= int32_t(staged.declarations.size())) return false;
+	if (staged.caret.declaration < -1 ||
+			staged.caret.declaration >= int32_t(staged.declarations.size())) return reject(
+			"caret context refers to missing declaration " +
+			std::to_string(staged.caret.declaration));
 	out = std::move(staged); return true;
 }
 

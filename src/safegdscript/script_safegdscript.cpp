@@ -836,8 +836,11 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug,
 		request.flags = gdscript::ANALYZE_DECLARATIONS | gdscript::ANALYZE_DOCUMENTATION;
 		const PackedByteArray model_bytes = compiler.analyze(request);
 		if (!model_bytes.is_empty()) {
-			if (!gdscript::decode_source_model(model_bytes.ptr(), size_t(model_bytes.size()), new_source_model)) {
-				return fail_compile("the compiler returned a malformed source model");
+			std::string model_error;
+			if (!gdscript::decode_source_model(model_bytes.ptr(), size_t(model_bytes.size()),
+					new_source_model, model_error)) {
+				return fail_compile("the compiler returned an invalid source model: " +
+						String::utf8(model_error.c_str(), model_error.size()));
 			}
 		}
 	}

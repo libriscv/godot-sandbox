@@ -1127,7 +1127,13 @@ bool analyze_with_compiler(const String &p_source, const String &p_path, uint32_
 	request.caret_line = p_caret_line;
 	request.caret_column = p_caret_column;
 	const PackedByteArray bytes = compiler.analyze(request);
-	if (bytes.is_empty() || !gdscript::decode_source_model(bytes.ptr(), size_t(bytes.size()), r_model)) {
+	if (bytes.is_empty()) {
+		return false;
+	}
+	std::string model_error;
+	if (!gdscript::decode_source_model(bytes.ptr(), size_t(bytes.size()), r_model, model_error)) {
+		ERR_PRINT("SafeGDScript: compiler analysis returned an invalid source model: " +
+				String::utf8(model_error.c_str(), model_error.size()));
 		return false;
 	}
 	if (cache.size() >= 64) {

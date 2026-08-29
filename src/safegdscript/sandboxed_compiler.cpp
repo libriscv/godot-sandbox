@@ -146,14 +146,9 @@ public:
 		if (error.error != GDEXTENSION_CALL_OK || answer.get_type() != Variant::PACKED_BYTE_ARRAY) {
 			return PackedByteArray();
 		}
-		const PackedByteArray bytes = answer;
-		gdscript::SourceModel decoded;
-		if (!gdscript::decode_source_model(bytes.ptr(), size_t(bytes.size()), decoded)) {
-			m_metadata_valid = false;
-			ERR_PRINT("SafeGDScript: the compiler returned a malformed source model.");
-			return PackedByteArray();
-		}
-		return bytes;
+		// The caller decodes the blob. Keeping validation there preserves the
+		// decoder's precise failure reason for compile errors.
+		return answer;
 	}
 
 	String error_message() override {
