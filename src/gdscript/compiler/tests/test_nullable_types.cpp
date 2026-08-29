@@ -203,6 +203,90 @@ static void test_reflection() {
 	std::cout << "  ✓ nullable value and object types publish compatible reflection\n";
 }
 
+// The mask a `T?` parameter is guarded with, or 0 when it is not guarded.
+static uint64_t guard_mask(const IRFunction& func) {
+	for (const IRInstruction& instruction : func.instructions) {
+		if (instruction.opcode == IROpcode::TYPE_TEST_MASK) {
+			return uint64_t(instruction.operands.at(2).immediate());
+		}
+	}
+	return 0;
+}
+
+// A nullable slot is one Variant that holds either T or NIL, so the boundary
+// guard is a two-tag mask -- and once a null check has ruled NIL out, the value
+// lowers exactly like the plain type it was declared with.
+static void test_nullable_containers_and_structs() {
+	const IRProgram ir = compile_to_ir(
+		"struct Point:\n\tvar x = 0\n"
+		"func arrays(a: Array[int]?):\n"
+		"\tif a == null:\n\t\treturn 0\n"
+		"\tvar total = 0\n\tfor v in a:\n\t\ttotal += v\n\treturn total\n"
+		"func dictionaries(d: Dictionary?):\n"
+		"\tif d == null:\n\t\treturn 0\n\treturn d.size()\n"
+		"func structs(p: Point?):\n"
+		"\tif p == null:\n\t\treturn 0\n\treturn p.x\n");
+
+	const uint64_t nil = uint64_t(1) << Variant::NIL;
+	assert(guard_mask(function(ir, "arrays")) == (nil | (uint64_t(1) << Variant::ARRAY)));
+	assert(guard_mask(function(ir, "dictionaries")) == (nil | (uint64_t(1) << Variant::DICTIONARY)));
+	// A struct is a Dictionary, so that is the tag its nullable form admits.
+	assert(guard_mask(function(ir, "structs")) == (nil | (uint64_t(1) << Variant::DICTIONARY)));
+
+	// After the null check each one is the plain lowering: a counted Array walk,
+	// a Dictionary operation, a direct field read.
+	assert(count(function(ir, "arrays"), IROpcode::CALL_SYSCALL) >= 2);
+	assert(count(function(ir, "dictionaries"), IROpcode::CALL_SYSCALL) == 1);
+	assert(count(function(ir, "structs"), IROpcode::DICT_GET_CONST) == 1);
+	// NOTE: the tag mask is the whole boundary check for a nullable struct --
+	// the exact-shape guard a plain `p: Point` parameter carries is not emitted
+	// here, so any Dictionary satisfies `Point?`.
+	assert(count(function(ir, "structs"), IROpcode::STRUCT_CHECK) == 0);
+
+	// A nullable struct without an initializer is NIL rather than a fresh
+	// instance: the slot's value is the declaration, not the struct.
+	const IRProgram declared = compile_to_ir(
+		"struct Point:\n\tvar x = 0\n"
+		"func f():\n\tvar plain: Point\n\tvar maybe: Point?\n\treturn maybe\n");
+	assert(count(function(declared, "f"), IROpcode::MAKE_DICTIONARY_KEYED) == 1);
+	assert(count(function(declared, "f"), IROpcode::LOAD_NIL) == 1);
+	std::cout << "  ✓ nullable containers and structs guard one mask and lower plainly\n";
+}
+
+// Narrowing is a fact about a value, so it travels with the value: a local
+// copied out of a narrowed one is narrowed too. A member is different -- it can
+// change under any call -- which is why its storage stays untyped.
+static void test_nullable_narrowing_travels() {
+	const IRProgram ir = compile_to_ir(
+		"func copied(x: int?):\n"
+		"\tif x == null:\n\t\treturn 0\n"
+		"\tvar y = x\n\treturn y + 1\n"
+		"func through_assert(x: Vector2?):\n"
+		"\tassert(x is Vector2)\n"
+		"\tvar y = x\n\treturn y.x\n"
+		"func early_return(x: int?):\n"
+		"\tif x == null:\n\t\treturn 0\n"
+		"\treturn x + 1\n");
+	assert(typed_count(function(ir, "copied"), IROpcode::ADD, Variant::INT) == 1);
+	assert(count(function(ir, "through_assert"), IROpcode::VGET_INLINE) == 1);
+	assert(typed_count(function(ir, "early_return"), IROpcode::ADD, Variant::INT) == 1);
+
+	// A nullable member keeps untyped storage even where it demonstrably holds
+	// T: a concrete slot type plus a stored NIL is what corrupts host reads.
+	const IRProgram member = compile_to_ir(
+		"var maybe: int?\n"
+		"var plain: int = 0\n"
+		"func f():\n\tmaybe = 5\n\treturn maybe + 1\n"
+		"func g():\n\tplain = 5\n\treturn plain + 1\n");
+	assert(global(member, "maybe").value_type == IRInstruction::TypeHint_NONE);
+	assert(global(member, "maybe").init_type == IRGlobalVar::InitType::NULL_VAL);
+	assert(typed_count(function(member, "f"), IROpcode::ADD, Variant::INT) == 0);
+	// The same member without the '?' keeps its declared type through the store.
+	assert(global(member, "plain").value_type == Variant::INT);
+	assert(typed_count(function(member, "g"), IROpcode::ADD, Variant::INT) == 1);
+	std::cout << "  ✓ narrowing travels with a value, and a nullable member stays untyped\n";
+}
+
 int main() {
 	std::cout << "=== Nullable Type Tests ===\n";
 	test_parser_and_spelling();
@@ -210,6 +294,8 @@ int main() {
 	test_coercion_defaults_and_storage();
 	test_narrowing();
 	test_reflection();
+	test_nullable_containers_and_structs();
+	test_nullable_narrowing_travels();
 	std::cout << "All nullable type tests passed.\n";
 	return 0;
 }

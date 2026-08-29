@@ -6725,6 +6725,12 @@ int CodeGenerator::gen_class_method_call(const StructDecl& decl, const FunctionD
 			site);
 	}
 
+	// A static method has no receiver, so reaching it through an instance
+	// (`S.new().unit()`) must not shift every argument by one.
+	if (method.is_static) {
+		self_reg = -1;
+	}
+
 	std::vector<int> arg_regs;
 	if (self_reg >= 0) {
 		arg_regs.push_back(self_reg);

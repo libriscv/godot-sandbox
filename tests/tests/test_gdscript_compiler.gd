@@ -4801,6 +4801,79 @@ func surfaces(value):
 	s.queue_free()
 
 
+func test_struct_methods():
+	# A struct method is lifted to a plain function that takes the instance as
+	# its first argument -- except a static one, which takes no instance at all,
+	# whichever side of the dot it is reached from.
+	var gdscript_code = """
+struct Vec:
+	const ORIGIN_X = 3
+	var x = 0
+	var y = 0
+
+	func length_squared():
+		return self.x * self.x + self.y * self.y
+
+	func scaled(by, then = 1) -> Vec:
+		self.x *= by * then
+		self.y *= by * then
+		return self
+
+	static func origin(x = Vec.ORIGIN_X):
+		return Vec(x, 0)
+
+	static func added(a: Vec, b: Vec) -> Vec:
+		return Vec(a.x + b.x, a.y + b.y)
+
+func instance_method():
+	return Vec(3, 4).length_squared()
+
+func chained():
+	return Vec(1, 2).scaled(2).scaled(3, 2).x
+
+func static_through_the_type():
+	return Vec.origin()
+
+func static_through_an_instance():
+	# The receiver must not be passed along as the first argument, which would
+	# leave 'x' holding the Dictionary instead of its default.
+	return Vec(9, 9).origin()
+
+func static_with_arguments():
+	return Vec.added(Vec(1, 2), Vec(3, 4))
+
+func through_a_parameter(v: Vec):
+	return v.length_squared()
+
+func default_of_a_constant():
+	return Vec.ORIGIN_X
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("instance_method"), 25, "An instance method reads its own fields")
+	assert_eq(s.vmcallv("chained"), 12, "A method answering self chains")
+	assert_eq(s.vmcallv("static_through_the_type"), {"x": 3, "y": 0},
+		"A static method builds an instance without one")
+	assert_eq(s.vmcallv("static_through_an_instance"), {"x": 3, "y": 0},
+		"Reaching a static method through an instance passes it no receiver")
+	assert_eq(s.vmcallv("static_with_arguments"), {"x": 4, "y": 6},
+		"A static method takes struct arguments by position")
+	assert_eq(s.vmcallv("through_a_parameter", {"x": 3, "y": 4}), 25,
+		"A method reached through a declared parameter")
+	assert_eq(s.vmcallv("default_of_a_constant"), 3, "A struct constant folds to its value")
+
+	# The receiver is checked like any other struct-typed parameter.
+	var before := s.get_exceptions()
+	s.vmcallv("through_a_parameter", {"x": 1})
+	assert_eq(s.get_exceptions(), before + 1, "a missing struct key should throw")
+	assert_engine_error("Argument 'v' is not a Vec")
+	assert_engine_error("Exception: Sandbox exception in TypeError: Argument 'v' is not a Vec")
+
+	s.queue_free()
+
+
 func test_struct_globals_and_nesting():
 	# A struct-typed global is built by the global initializer, and a field
 	# declared as another struct defaults to an instance of it.

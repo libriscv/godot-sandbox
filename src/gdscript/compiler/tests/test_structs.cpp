@@ -9,6 +9,7 @@
 #include "../parser.h"
 #include "../codegen.h"
 #include "../compiler.h"
+#include "../function_signature.h"
 #include "../ir_optimizer.h"
 #include "../riscv_codegen.h"
 #include "../compiler_exception.h"
@@ -38,6 +39,17 @@ static IRProgram compile_to_ir(const std::string& source, bool optimize = false)
 		optimizer.optimize(ir);
 	}
 	return ir;
+}
+
+// Comments are not tokens: Compiler::compile() hands them to the parser
+// separately, and without that every doc comment is empty.
+static IRProgram compile_with_doc_comments(const std::string& source) {
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	parser.set_doc_comments(lexer.doc_comments());
+	Program program = parser.parse();
+	CodeGenerator codegen;
+	return codegen.generate(program);
 }
 
 static const IRFunction& find_function(const IRProgram& ir, const std::string& name) {
@@ -190,6 +202,33 @@ static bool rejects(const std::string& source) {
 	} catch (const CompilerException&) {
 		return true;
 	}
+}
+
+
+// Every CALL in a function, as (target name, argument count). A struct method
+// is lifted to a plain function named `@Struct.method`.
+static std::vector<std::pair<std::string, int64_t>> calls(const IRProgram& ir,
+	const IRFunction& func)
+{
+	std::vector<std::pair<std::string, int64_t>> found;
+	for (const auto& instr : func.instructions) {
+		if (instr.opcode != IROpcode::CALL && instr.opcode != IROpcode::CALL_HOSTED) {
+			continue;
+		}
+		found.emplace_back(ir.strings[instr.operands.at(0).string_id],
+			instr.operands.at(2).immediate());
+	}
+	return found;
+}
+
+// The message of the compile error the source produces, or "" when it compiles.
+static std::string rejection(const std::string& source) {
+	try {
+		compile_to_ir(source);
+	} catch (const CompilerException& error) {
+		return error.what();
+	}
+	return {};
 }
 
 // The declaration every test below builds on.
@@ -911,6 +950,320 @@ static void test_non_escaping_struct_is_scalar_replaced() {
 	std::cout << "  ✓ non-escaping struct scalar replacement" << std::endl;
 }
 
+static void test_struct_method_dispatch() {
+	std::cout << "Testing how a struct method is reached..." << std::endl;
+
+	const std::string source =
+		"struct S:\n"
+		"\tvar x = 1\n"
+		"\tfunc get_x():\n\t\treturn self.x\n"
+		"\tfunc plus(a, b = 10):\n\t\treturn self.x + a + b\n"
+		"\tstatic func unit(a = 7):\n\t\treturn a\n"
+		"\tfunc size():\n\t\treturn 99\n"
+		"\n";
+
+	const IRProgram ir = compile_to_ir(source +
+		"func test():\n"
+		"\tvar s = S()\n"
+		"\treturn [s.get_x(), s.plus(1), S.unit(), s.unit(), s.size(), s.keys()]\n");
+	const IRFunction& test = find_function(ir, "test");
+	const auto found = calls(ir, test);
+	// The receiver is the first argument, and a defaulted parameter is
+	// materialized at the call site rather than travelling as an arity.
+	assert((found == std::vector<std::pair<std::string, int64_t>>{
+		{ "@S.get_x", 1 }, { "@S.plus", 3 },
+		// A `static func` has no receiver, whichever side of the dot it is
+		// reached from: passing one would shift every argument along.
+		{ "@S.unit", 1 }, { "@S.unit", 1 },
+		// A declared method wins over the Dictionary method of the same name.
+		{ "@S.size", 1 } }));
+	// `keys()` is not declared, so it stays the Dictionary's own operation.
+	assert(count_dict_ops(test, 4) == 1);
+
+	// The lifted function carries the synthetic receiver; a static one does not.
+	assert((find_function(ir, "@S.get_x").parameters == std::vector<std::string>{ "self" }));
+	assert((find_function(ir, "@S.plus").parameters ==
+		std::vector<std::string>{ "self", "a", "b" }));
+	assert((find_function(ir, "@S.unit").parameters == std::vector<std::string>{ "a" }));
+
+	// A method declared to answer `self` keeps the instance tracked, so a chain
+	// stays a pair of direct calls and the field read needs no shape check.
+	const IRProgram chained = compile_to_ir(
+		"struct S:\n"
+		"\tvar x = 1\n"
+		"\tfunc bump() -> S:\n\t\tself.x += 1\n\t\treturn self\n"
+		"\nfunc test():\n\treturn S().bump().bump().x\n");
+	const IRFunction& chain = find_function(chained, "test");
+	assert((calls(chained, chain) == std::vector<std::pair<std::string, int64_t>>{
+		{ "@S.bump", 1 }, { "@S.bump", 1 } }));
+	assert(count_opcode(chain, IROpcode::STRUCT_CHECK) == 0);
+	assert(count_dict_gets(chain) == 1);
+
+	// A method reached through a declared parameter or member is the same call.
+	const IRProgram declared = compile_to_ir(source +
+		"var member: S\n"
+		"func through_member():\n\treturn member.get_x()\n"
+		"func through_parameter(s: S):\n\treturn s.get_x()\n");
+	assert(calls(declared, find_function(declared, "through_member")).size() == 1);
+	assert(calls(declared, find_function(declared, "through_parameter")).size() == 1);
+
+	// Arity and receiver mistakes are compile errors, not run-time surprises.
+	assert(rejection(source + "func test():\n\treturn S.get_x()\n")
+		.find("one per instance") != std::string::npos);
+	assert(rejection(source + "func test():\n\treturn S().plus()\n")
+		.find("Missing argument 'a'") != std::string::npos);
+	assert(rejection(source + "func test():\n\treturn S().plus(1, 2, 3)\n")
+		.find("Too many arguments") != std::string::npos);
+	assert(rejection(source + "func test():\n\treturn S().plus(a = 1)\n")
+		.find("only supported when constructing a struct") != std::string::npos);
+	assert(rejection("struct S:\n\tvar x = 1\n\tfunc a():\n\t\treturn 1\n\tfunc a():\n\t\treturn 2\n")
+		.find("more than once") != std::string::npos);
+
+	// A `static func` runs without an instance, so neither `self` nor a bare
+	// field name is available inside it.
+	assert(rejection("struct S:\n\tvar x = 1\n\tstatic func bad():\n\t\treturn self.x\n")
+		.find("static") != std::string::npos);
+	assert(rejection("struct S:\n\tvar x = 1\n\tstatic func bad():\n\t\treturn x\n")
+		.find("static") != std::string::npos);
+	// A field is one per instance; `static var` would have nowhere to live.
+	assert(!rejection("struct S:\n\tstatic var x = 1\n").empty());
+
+	std::cout << "  ✓ struct method dispatch" << std::endl;
+}
+
+static void test_struct_constants() {
+	std::cout << "Testing struct constants..." << std::endl;
+
+	// A struct holds no storage of its own, so a constant folds at the use
+	// site -- from a method, a field default, and from outside the struct.
+	const IRProgram ir = compile_to_ir(
+		"struct S:\n"
+		"\tconst STEP = 3\n"
+		"\tconst NAME = \"s\"\n"
+		"\tvar x = S.STEP\n"
+		"\tfunc advance():\n\t\tself.x += S.STEP\n\t\treturn self.x\n"
+		"\nfunc test():\n\treturn S.STEP + S().x\n");
+	const IRFunction& test = find_function(ir, "test");
+	assert(count_dict_gets(test) == 1);
+	assert((dictionary_int_values(test) == std::vector<int64_t>{ 3 }));
+	// Folded: nothing loads the constant from anywhere at run time.
+	assert(count_opcode(test, IROpcode::LOAD_GLOBAL) == 0);
+	assert(count_opcode(find_function(ir, "@S.advance"), IROpcode::LOAD_GLOBAL) == 0);
+
+	assert(rejection("struct S:\n\tconst STEP = 1\n\nfunc test():\n\treturn S.NOPE\n")
+		.find("no constant named 'NOPE'") != std::string::npos);
+	// A container constant has no compile-time value to fold to.
+	assert(rejection("struct S:\n\tconst NAMES = [\"a\"]\n\tvar x = 1\n"
+		"\nfunc test():\n\treturn S.NAMES\n")
+		.find("not a compile-time value") != std::string::npos);
+	assert(!rejection("struct S:\n\tconst X = 1\n\tvar X = 2\n").empty());
+	assert(!rejection("struct S:\n\tconst X = 1\n\tconst X = 2\n").empty());
+	// Every struct member is shared, so `static` says nothing new about a const.
+	assert(!rejection("struct S:\n\tstatic const X = 1\n").empty());
+	assert(!rejection("struct S:\n\tconst X\n").empty());
+
+	std::cout << "  ✓ struct constants" << std::endl;
+}
+
+// The shape check at a host boundary is a build setting: benchmarks turn it
+// off, a restricted build cannot.
+static void test_struct_check_levels() {
+	std::cout << "Testing the struct check levels..." << std::endl;
+
+	const std::string source =
+		"struct Point:\n"
+		"\tvar x: int = 0\n"
+		"\tvar name: String = \"\"\n"
+		"\nfunc use(point: Point):\n\treturn point.x\n";
+
+	auto generate = [&](bool enabled, bool deep) {
+		CodeGenerator codegen;
+		codegen.set_struct_checks(enabled, deep);
+		Program parsed = parse(source);
+		return codegen.generate(parsed);
+	};
+
+	const IRProgram off = generate(false, false);
+	const IRFunction& unchecked = find_function(off, "use");
+	assert(count_opcode(unchecked, IROpcode::STRUCT_CHECK) == 0);
+	assert(count_opcode(unchecked, IROpcode::TYPE_TEST) == 0);
+	assert(count_opcode(unchecked, IROpcode::THROW) == 0);
+	// The declaration is still a promise: the field read is a direct one.
+	assert(count_dict_gets(unchecked) == 1);
+
+	const IRProgram shape = generate(true, false);
+	const IRFunction& shaped = find_function(shape, "use");
+	assert(count_opcode(shaped, IROpcode::STRUCT_CHECK) == 1);
+	assert(count_opcode(shaped, IROpcode::TYPE_TEST) == 1);
+	// The keys are checked, but nothing coerces the values behind them.
+	assert(count_opcode(shaped, IROpcode::CONVERT) == 0);
+	assert(count_dict_sets(shaped) == 0);
+
+	// DEEP keeps the shape check and additionally walks the declared scalar
+	// fields, reading each one and writing the coerced value back.
+	const IRProgram deep = generate(true, true);
+	const IRFunction& deeply = find_function(deep, "use");
+	assert(count_opcode(deeply, IROpcode::STRUCT_CHECK) == 1);
+	assert(count_opcode(deeply, IROpcode::TYPE_TEST) == 1);
+	assert(count_dict_sets(deeply) == 2);
+	assert(count_dict_gets(deeply) == 2 + 1); // the two fields, then the read
+	// NOTE: the coercion itself only fires for a value whose type the compiler
+	// already knows, and a Dictionary handed over by the host carries none. A
+	// deep check that validates host-supplied field values would add a guard
+	// here; this pins what is emitted today so that change is visible.
+	assert(count_opcode(deeply, IROpcode::CONVERT) == 0);
+
+	// Restricted source is a mod, not the project's: the host boundary keeps
+	// its check whatever the build asked for.
+	auto compiled = [&](bool restricted) {
+		Compiler compiler;
+		CompilerOptions options;
+		options.restricted = restricted;
+		options.struct_checks = CompilerOptions::StructChecks::OFF;
+		const std::vector<uint8_t> elf = compiler.compile(source, options);
+		assert(!compiler.get_error_info().has_error);
+		const std::string bytes(elf.begin(), elf.end());
+		return bytes.find("is not a Point") != std::string::npos;
+	};
+	assert(!compiled(false));
+	assert(compiled(true));
+
+	std::cout << "  ✓ the struct check levels" << std::endl;
+}
+
+static void test_typed_dictionary_values() {
+	std::cout << "Testing struct tracking through a typed Dictionary..." << std::endl;
+
+	const std::string point = "struct Point:\n\tvar x = 0\n\n";
+	// A Dictionary[K, Struct] promises the value type, so a lookup is tracked
+	// the same way a typed Array element is.
+	const IRProgram parameter = compile_to_ir(point +
+		"func first(points: Dictionary[String, Point]):\n\treturn points[\"a\"].x\n");
+	// A tracked field read is one Dictionary get. An untracked one is the
+	// four-way dispatch, which also contains a get -- so the guards it does not
+	// need are what says the value tracked.
+	auto tracked = [](const IRFunction& func) {
+		return count_opcode(func, IROpcode::DICT_GET_CONST) == 1 &&
+			count_opcode(func, IROpcode::TYPE_TEST) == 0 &&
+			count_opcode(func, IROpcode::TYPE_TEST_MASK) == 0 &&
+			count_opcode(func, IROpcode::VGET_INLINE) == 0;
+	};
+
+	const IRFunction& first = find_function(parameter, "first");
+	assert(tracked(first));
+	assert(count_opcode(first, IROpcode::STRUCT_CHECK) == 0);
+
+	const IRProgram local = compile_to_ir(point +
+		"func first():\n"
+		"\tvar points: Dictionary[String, Point] = {}\n"
+		"\treturn points[\"a\"].x\n");
+	assert(tracked(find_function(local, "first")));
+
+	const IRProgram global_var = compile_to_ir(point +
+		"var points: Dictionary[String, Point] = {}\n\n"
+		"func first():\n\treturn points[\"a\"].x\n");
+	assert(tracked(find_function(global_var, "first")));
+
+	const IRProgram cast = compile_to_ir(point +
+		"func first(value):\n"
+		"\tvar points = value as Dictionary[String, Point]\n"
+		"\treturn points[\"a\"].x\n");
+	assert(tracked(find_function(cast, "first")));
+
+	// Every one of them checks field names, because the promise is the type.
+	assert(rejects(point +
+		"func first(points: Dictionary[String, Point]):\n\treturn points[\"a\"].missing\n"));
+	assert(rejects(point +
+		"func first(value):\n"
+		"\tvar points = value as Dictionary[String, Point]\n"
+		"\treturn points[\"a\"].missing\n"));
+	// The key type is not the value type: only the second argument tracks, so a
+	// struct in the key position leaves the looked-up value untracked.
+	const IRProgram keyed = compile_to_ir(point +
+		"func first(points: Dictionary[Point, String]):\n\treturn points[\"a\"].x\n");
+	assert(!tracked(find_function(keyed, "first")));
+	// An Array element of the wrong struct is caught where it is appended.
+	assert(rejects(point +
+		"func fill():\n\tvar points: Array[Point] = []\n\tpoints.append(1)\n"));
+
+	std::cout << "  ✓ struct tracking through a typed Dictionary" << std::endl;
+}
+
+// The host builds documentation and completion from the published tables, so
+// what the source documents has to survive both codegen and the wire format.
+static void test_struct_documentation_round_trip() {
+	std::cout << "Testing published struct documentation..." << std::endl;
+
+	const IRProgram ir = compile_with_doc_comments(
+		"struct Tag:\n\tvar name: String = \"\"\n"
+		"## A point on the grid.\n"
+		"struct Point:\n"
+		"\t## How far along.\n"
+		"\tvar x: int = 0\n"
+		"\tvar nested: Tag\n"
+		"\tfunc moved(dx: int) -> Point:\n\t\treturn Point(self.x + dx)\n"
+		"\tstatic func origin() -> Point:\n\t\treturn Point()\n");
+	assert(ir.class_signatures.size() == 2);
+	const ClassSignature& cls = ir.class_signatures.back();
+	assert(cls.is_struct);
+	assert(cls.description == "A point on the grid.");
+	assert(cls.fields[0].description == "How far along.");
+	assert(cls.fields.size() == 2);
+
+	assert(cls.fields[0].class_name.empty());
+	assert(cls.fields[1].description.empty());
+	// A struct-typed field names its struct; the Variant type is still a
+	// Dictionary, which is what the instance is.
+	assert(cls.fields[1].class_name == "Tag");
+	assert(cls.fields[1].type == int32_t(Variant::DICTIONARY));
+	assert(cls.methods.size() == 2);
+	assert(cls.methods[0].name == "moved" && !cls.methods[0].is_static);
+	assert(cls.methods[1].name == "origin" && cls.methods[1].is_static);
+
+	const std::vector<uint8_t> blob = encode_class_signatures(ir.class_signatures);
+	std::vector<ClassSignature> decoded;
+	assert(decode_class_signatures(blob.data(), blob.size(), decoded));
+	assert(decoded.size() == 2);
+	assert(decoded[1].is_struct == cls.is_struct);
+	assert(decoded[1].description == cls.description);
+	assert(decoded[1].fields.size() == cls.fields.size());
+	assert(decoded[1].fields[0].description == cls.fields[0].description);
+	assert(decoded[1].fields[1].class_name == cls.fields[1].class_name);
+	assert(decoded[1].methods.size() == cls.methods.size());
+	assert(decoded[1].methods[1].is_static);
+
+	// The blob comes from a guest program: a truncated one has to fail the
+	// decode rather than be read past its end.
+	std::vector<ClassSignature> truncated;
+	assert(!decode_class_signatures(blob.data(), blob.size() / 2, truncated));
+	assert(truncated.empty());
+
+	// The lifted method travels in the function table, named for its struct and
+	// without the synthetic receiver, and struct-typed parameters name the
+	// struct alongside the Dictionary they are.
+	const IRProgram used = compile_to_ir(
+		"struct Point:\n\tvar x: int = 0\n"
+		"\tfunc moved(dx: int) -> Point:\n\t\treturn Point(self.x + dx)\n"
+		"\nfunc use(point: Point) -> Point:\n\treturn point\n");
+	const auto method = std::find_if(used.signatures.begin(), used.signatures.end(),
+		[](const FunctionSignature& sig) { return sig.name == "@Point.moved"; });
+	assert(method != used.signatures.end());
+	assert(method->parameters.size() == 1 && method->parameters[0].name == "dx");
+	assert(method->return_class_name == "Point");
+
+	const std::vector<uint8_t> functions = encode_function_signatures(used.signatures);
+	std::vector<FunctionSignature> decoded_functions;
+	assert(decode_function_signatures(functions.data(), functions.size(), decoded_functions));
+	const auto use = std::find_if(decoded_functions.begin(), decoded_functions.end(),
+		[](const FunctionSignature& sig) { return sig.name == "use"; });
+	assert(use != decoded_functions.end());
+	assert(use->return_class_name == "Point");
+	assert(use->parameters.size() == 1 && use->parameters[0].class_name == "Point");
+	assert(use->parameters[0].type == int32_t(Variant::DICTIONARY));
+
+	std::cout << "  ✓ published struct documentation" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Struct Tests ===" << std::endl << std::endl;
 
@@ -935,6 +1288,11 @@ int main() {
 	test_struct_match_patterns();
 	test_typed_struct_containers();
 	test_struct_signatures();
+	test_struct_method_dispatch();
+	test_struct_constants();
+	test_struct_check_levels();
+	test_typed_dictionary_values();
+	test_struct_documentation_round_trip();
 	test_non_escaping_struct_is_scalar_replaced();
 	test_struct_program_reaches_riscv();
 

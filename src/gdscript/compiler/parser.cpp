@@ -516,7 +516,7 @@ StructDecl Parser::parse_struct() {
 		}
 		consume(TokenType::NEWLINE, "Expected newline after field declaration");
 
-		if (decl.find_field(field.name) != nullptr) {
+		if (decl.find_field(field.name) != nullptr || decl.find_constant(field.name) != nullptr) {
 			throw CompilerException::parser_error(
 				"Struct '" + decl.name + "' declares field '" + field.name + "' more than once",
 				field.line, field.column);

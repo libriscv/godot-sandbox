@@ -205,6 +205,77 @@ static void test_union_is_and_narrowing() {
 	std::cout << "  ✓ is, null, match, early-exit, and safe member narrowing work\n";
 }
 
+// A union is one Variant slot with a set of allowed tags, so every value whose
+// tag the compiler does not already know needs exactly one guard -- and a value
+// whose tag it does know needs none.
+static void test_union_call_boundaries() {
+	const IRProgram ir = compile_to_ir(
+		"func takes(v: int | String):\n\treturn v\n"
+		"func answers() -> int | String:\n\treturn 1\n"
+		"func forwards(value) -> int | String:\n\treturn value\n"
+		"func known():\n\treturn takes(1)\n"
+		"func unknown(value):\n\treturn takes(value)\n"
+		"func consumed():\n\tvar x = answers()\n\treturn x\n");
+	// The callee guards its own parameter once, on entry.
+	assert(count(function(ir, "takes"), IROpcode::TYPE_TEST_MASK) == 1);
+	// The caller does not guard again -- neither for a value it can prove nor
+	// for one it cannot, because the entry guard covers both.
+	assert(count(function(ir, "known"), IROpcode::TYPE_TEST_MASK) == 0);
+	assert(count(function(ir, "unknown"), IROpcode::TYPE_TEST_MASK) == 0);
+	// A union-returning call is guarded where it returns, not where it lands --
+	// and a return the compiler can already prove is not guarded at all.
+	assert(count(function(ir, "answers"), IROpcode::TYPE_TEST_MASK) == 0);
+	assert(count(function(ir, "forwards"), IROpcode::TYPE_TEST_MASK) == 1);
+	assert(count(function(ir, "consumed"), IROpcode::TYPE_TEST_MASK) == 0);
+
+	// A ternary is two known arms and one unknown result, so the assignment to
+	// the declared union carries the single guard.
+	const IRProgram ternary = compile_to_ir(
+		"func f(c):\n\tvar x: int | String = 1 if c else \"s\"\n\treturn x\n");
+	assert(count(function(ternary, "f"), IROpcode::TYPE_TEST_MASK) == 1);
+	assert(count(function(ternary, "f"), IROpcode::THROW) == 1);
+
+	// Union to union: the guard is kept even when the source set would satisfy
+	// the destination, so nothing unchecked reaches the narrower slot.
+	const IRProgram same = compile_to_ir(
+		"func f(a: int | String):\n\tvar b: int | String = a\n\treturn b\n");
+	assert(count(function(same, "f"), IROpcode::TYPE_TEST_MASK) == 2);
+	std::cout << "  ✓ one guard per union boundary, and none where the tag is known\n";
+}
+
+// Without an initializer a union slot takes the first member's normal default,
+// or null when the union admits it. The members themselves are checked with
+// the plain type's rules minus its conversions: a union states which tags the
+// slot may hold, so silently storing another one would defeat the point.
+static void test_union_defaults_and_conversions() {
+	const IRProgram defaults = compile_to_ir(
+		"func strings():\n\tvar x: String | int\n\treturn x\n"
+		"func arrays():\n\tvar x: Array | int\n\treturn x\n"
+		"func dictionaries():\n\tvar x: Dictionary | int\n\treturn x\n"
+		"func leading_null():\n\tvar x: null | int\n\treturn x\n"
+		"func objects():\n\tvar x: Node | null\n\treturn x\n");
+	assert(count(function(defaults, "strings"), IROpcode::LOAD_STRING) == 1);
+	assert(count(function(defaults, "arrays"), IROpcode::MAKE_ARRAY) == 1);
+	assert(count(function(defaults, "dictionaries"), IROpcode::MAKE_DICTIONARY) == 1);
+	assert(count(function(defaults, "leading_null"), IROpcode::LOAD_NIL) == 1);
+	assert(count(function(defaults, "objects"), IROpcode::LOAD_NIL) == 1);
+
+	// int -> float widening and Array -> packed construction are conversions a
+	// plain declaration performs; a union declaration refuses them, because the
+	// value it was handed is not one of the tags it lists.
+	assert(rejection("func f():\n\tvar x: float | String = 1\n").find("INT") != std::string::npos);
+	assert(rejection("func f():\n\tvar x: PackedInt32Array | int = [1, 2]\n")
+		.find("ARRAY") != std::string::npos);
+	// The same two assignments through the nullable spelling do convert, since
+	// there the plain type is the only non-null member.
+	assert(typed_count(function(compile_to_ir("func f():\n\tvar x: float? = 1\n\treturn x\n"), "f"),
+		IROpcode::CONVERT, Variant::FLOAT) == 1);
+	assert(count(function(
+		compile_to_ir("func f():\n\tvar x: PackedInt32Array? = [1, 2]\n\treturn x\n"), "f"),
+		IROpcode::MAKE_PACKED_INT32_ARRAY) == 1);
+	std::cout << "  ✓ union defaults follow the first member, conversions do not apply\n";
+}
+
 int main() {
 	std::cout << "=== Union Type Tests ===\n";
 	test_parser_shape();
@@ -212,6 +283,8 @@ int main() {
 	test_assignment_guards();
 	test_defaults_and_reflection();
 	test_union_is_and_narrowing();
+	test_union_call_boundaries();
+	test_union_defaults_and_conversions();
 	std::cout << "All union type tests passed.\n";
 	return 0;
 }
