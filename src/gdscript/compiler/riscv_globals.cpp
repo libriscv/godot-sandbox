@@ -36,11 +36,15 @@ void RISCVCodeGen::emit_global_call(const IRInstruction& instr) {
 			std::string(info.name) + " reached the backend with " + std::to_string(arg_count) + " arguments");
 	}
 
-	// Must run before the NUMERIC branch — clobber moves apply on every path.
-	const std::vector<uint8_t> clobbered_regs = { REG_A0, REG_A1, REG_A2, REG_A3 };
-	const auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs, m_fn.current_instr_idx);
-	for (const auto& move : moves) {
-		emit_mv(move.second, move.first);
+	// Inline integer/float forms never touch ABI argument registers.  Evict them
+	// only when one of the possible forms can actually enter the host.
+	if (global_call_may_ecall(fn)) {
+		const std::vector<uint8_t> clobbered_regs = { REG_A0, REG_A1, REG_A2, REG_A3 };
+		const auto moves = m_allocator.handle_syscall_clobbering(clobbered_regs,
+			m_fn.current_instr_idx);
+		for (const auto& move : moves) {
+			emit_mv(move.second, move.first);
+		}
 	}
 
 	if (info.kind != GlobalKind::NUMERIC) {

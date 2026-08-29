@@ -314,19 +314,16 @@ void test_subscript_operations() {
 	CodeGenerator codegen_read;
 	IRProgram ir_read = codegen_read.generate(program_read);
 
-	// Should have VCALL for arr.get(idx)
-	bool has_get_vcall = false;
+	// An untyped subscript is a Variant get, not a call to a method named "get".
+	bool has_variant_get = false;
 	for (const auto& instr : ir_read.functions[0].instructions) {
-		if (instr.opcode == IROpcode::VCALL) {
-			if (instr.operands.size() >= 3 && instr.operands[2].type == IRValue::Type::STRING) {
-				if (ir_read.strings[instr.operands[2].string_id] == "get") {
-					has_get_vcall = true;
-					break;
-				}
-			}
+		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 2 &&
+			instr.operands[1].immediate() == ECALL_VARIANT_GET) {
+			has_variant_get = true;
+			break;
 		}
 	}
-	assert(has_get_vcall);
+	assert(has_variant_get);
 
 	// Test array/dict indexing for writing
 	std::string source_write = R"(func set_item(arr, idx, value):

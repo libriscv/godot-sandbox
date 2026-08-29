@@ -175,9 +175,8 @@ void test_global_getter_returns_in_place() {
 	assert(count(words, is_stack_adjust) == 0);
 	assert(count(words, touches_frame) == 0);
 
-	// One load and one store per Variant word, and nothing storing it twice.
-	const size_t variant_words = size_t(VariantLayout(false).variant_words());
-	assert(count(words, is_store_through_return_pointer) == variant_words);
+	// A known scalar occupies only its type/header word and payload word.
+	assert(count(words, is_store_through_return_pointer) == 2);
 
 	std::cout << "  ✓ Global getter writes through a0" << std::endl;
 }

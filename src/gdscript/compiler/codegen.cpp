@@ -6069,7 +6069,32 @@ int CodeGenerator::gen_global_call(const GlobalFunction& info, const std::vector
 		chosen = &global_function(resolve_cast_form(info, hint));
 	}
 
-	// Implicit INT->FLOAT widening emitted as CONVERT here, foldable by optimizer.
+	// A resolved numeric cast is only a payload conversion.  Do not lower it to
+	// an identity GLOBAL_CALL: that would load the converted value into the
+	// global-call register bank and immediately store it again.  Keeping the
+	// conversion in IR also lets constant folding erase casts of literals.
+	if (arg_regs.size() == 1 &&
+		(chosen->fn == GlobalFn::INT_IDENTITY || chosen->fn == GlobalFn::FLOAT_IDENTITY))
+	{
+		const int source = arg_regs[0];
+		const IRInstruction::TypeHint from = get_register_type(func, source);
+		const IRInstruction::TypeHint to = chosen->fn == GlobalFn::INT_IDENTITY
+			? Variant::INT : Variant::FLOAT;
+		if (from == to) {
+			return source;
+		}
+		if (from == Variant::BOOL || from == Variant::INT || from == Variant::FLOAT) {
+			const int converted = alloc_register(func);
+			IRInstruction convert(IROpcode::CONVERT, IRValue::reg(converted),
+				IRValue::reg(source), IRValue::imm(from));
+			convert.type_hint = to;
+			func.ir.instructions.push_back(convert);
+			set_register_type(func, converted, to);
+			return converted;
+		}
+	}
+
+	// Implicit numeric widening emitted as CONVERT here, foldable by optimizer.
 	std::vector<int> call_args = arg_regs;
 	std::vector<int> converted;
 	IRInstruction::TypeHint wanted = IRInstruction::TypeHint_NONE;
@@ -6096,13 +6121,14 @@ int CodeGenerator::gen_global_call(const GlobalFunction& info, const std::vector
 			if (hint == wanted) {
 				continue;
 			}
-			if (wanted == Variant::FLOAT && hint == Variant::INT) {
+			if ((wanted == Variant::FLOAT && (hint == Variant::INT || hint == Variant::BOOL)) ||
+				(wanted == Variant::INT && (hint == Variant::FLOAT || hint == Variant::BOOL))) {
 				const int widened = alloc_register(func);
 				IRInstruction convert(IROpcode::CONVERT, IRValue::reg(widened), IRValue::reg(reg),
-					IRValue::imm(Variant::INT));
-				convert.type_hint = Variant::FLOAT;
+					IRValue::imm(hint));
+				convert.type_hint = wanted;
 				func.ir.instructions.push_back(convert);
-				set_register_type(func, widened, Variant::FLOAT);
+				set_register_type(func, widened, wanted);
 				converted.push_back(widened);
 				reg = widened;
 				continue;

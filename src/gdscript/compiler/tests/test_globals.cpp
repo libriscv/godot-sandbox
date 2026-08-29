@@ -508,19 +508,17 @@ static void test_random_calls_survive_the_optimizer() {
 // -= The type constructors =-
 
 static void test_type_constructors_lower_inline_when_the_type_is_known() {
-	// int(x) of something already known to be a number is a load, not a call
-	// into the host. The inline forms are what the table's int_form column
-	// names.
+	// int(x)/float(x) of a known numeric value is a CONVERT, not an identity
+	// GLOBAL_CALL. bool(x) still uses the inline BOOLEANIZE global form.
 	IRProgram ir = compile_to_ir(
 		"func test():\n"
 		"\tvar i: int = 2\n"
 		"\tvar f: float = 2.5\n"
 		"\treturn int(f) + float(i) + bool(i)\n");
 	const std::vector<GlobalFn> called = called_globals(find_function(ir, "test"));
-	assert(called.size() == 3);
-	assert(called[0] == GlobalFn::INT_IDENTITY);
-	assert(called[1] == GlobalFn::FLOAT_IDENTITY);
-	assert(called[2] == GlobalFn::BOOLEANIZE);
+	assert(called.size() == 1);
+	assert(called[0] == GlobalFn::BOOLEANIZE);
+	assert(count_opcode(find_function(ir, "test"), IROpcode::CONVERT) >= 2);
 
 	// An argument whose type is not known could be a String, and only Godot
 	// knows that int("42") is 42, so the call stays a CAST for the host.
@@ -549,6 +547,23 @@ static void test_type_constructors_lower_inline_when_the_type_is_known() {
 	assert(count_opcode(find_function(untyped, "convert"), IROpcode::VCALL) == 0);
 
 	std::cout << "  ✓ the type constructors lower inline when the type is known" << std::endl;
+}
+
+static void test_constants_fold_through_casts_and_inline_globals() {
+	IRProgram ir = compile_to_ir(
+		"func test():\n"
+		"\treturn abs(-7) + int(2.9)\n", true);
+	const IRFunction func = find_function(ir, "test");
+	assert(count_opcode(func, IROpcode::GLOBAL_CALL) == 0);
+	assert(count_opcode(func, IROpcode::CONVERT) == 0);
+	assert(count_opcode(func, IROpcode::ADD) == 0);
+	bool found_nine = false;
+	for (const IRInstruction& instr : func.instructions) {
+		found_nine = found_nine || (instr.opcode == IROpcode::LOAD_IMM &&
+			instr.operands[1].immediate() == 9);
+	}
+	assert(found_nine);
+	std::cout << "  ✓ constants fold through casts and inline globals" << std::endl;
 }
 
 static void test_type_constructors_compute() {
@@ -990,6 +1005,7 @@ int main() {
 	test_only_print_and_the_random_draws_have_side_effects();
 	test_random_calls_survive_the_optimizer();
 	test_type_constructors_lower_inline_when_the_type_is_known();
+	test_constants_fold_through_casts_and_inline_globals();
 	test_type_constructors_compute();
 	test_random_is_not_evaluated_by_the_interpreter();
 	test_arity_is_checked_by_name();

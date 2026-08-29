@@ -218,6 +218,7 @@ private:
 	void emit_srl(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_sra(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_slt(uint8_t rd, uint8_t rs1, uint8_t rs2);
+	void emit_slti(uint8_t rd, uint8_t rs, int32_t imm);
 	void emit_seqz(uint8_t rd, uint8_t rs);   // sltiu rd, rs, 1
 	void emit_snez(uint8_t rd, uint8_t rs);   // sltu rd, x0, rs
 	void emit_beq(uint8_t rs1, uint8_t rs2, int32_t offset);
@@ -323,6 +324,8 @@ private:
 
 	// Both endpoints must be 8-byte aligned.
 	void emit_variant_move(uint8_t dst_base, int32_t dst_offset, uint8_t src_base, int32_t src_offset, uint8_t tmp_reg);
+	void emit_scalar_variant_move(uint8_t dst_base, int32_t dst_offset, uint8_t src_base,
+		int32_t src_offset, uint8_t tmp_reg);
 	// handle_clobbering=false when caller already spilled a0-a3 (required on branch paths).
 	void emit_variant_eval(int result_offset, int lhs_offset, int rhs_offset, int op,
 	                       bool handle_clobbering = true);
@@ -348,10 +351,14 @@ private:
 	// Integer-typed BRANCH_EQ..BRANCH_GTE on int64 payloads.
 	void emit_int_fused_branch(IROpcode op, int lhs_vreg, int lhs_offset,
 		int rhs_vreg, int rhs_offset, const std::string& label);
+	void emit_int_fused_branch_imm(IROpcode op, int value_vreg, int value_offset,
+		int64_t imm, bool constant_on_left, const std::string& label);
 
-	// ECALL_ARRAY_AT; index_nonnegative elides the negative-index wrap.
+	// ECALL_ARRAY_AT; index_nonnegative elides the negative-index wrap, while a
+	// negative constant read is tagged for the host to wrap in the same syscall.
 	void emit_array_element_access(bool is_set, int array_offset, int index_offset, int value_offset,
-		bool index_nonnegative = false, int array_vreg = -1, int index_vreg = -1);
+		bool index_nonnegative = false, bool negative_constant_get = false,
+		int array_vreg = -1, int index_vreg = -1);
 
 	// Caller sets up data_ptr_reg (or REG_ZERO for nullptr) before calling.
 	void emit_vcreate_syscall(int variant_type, int method, uint8_t data_ptr_reg, int result_offset);
@@ -364,6 +371,8 @@ private:
 		int lhs_vreg = -1, int rhs_vreg = -1);
 	void emit_typed_int_comparison(int result_vreg, int result_offset, int lhs_vreg,
 		int lhs_offset, int rhs_vreg, int rhs_offset, IROpcode cmp_op);
+	void emit_typed_int_comparison_imm(int result_vreg, int result_offset, int value_vreg,
+		int value_offset, int64_t imm, bool constant_on_left, IROpcode cmp_op);
 	void emit_typed_float_binary_op(int result_vreg, int result_offset, int lhs_vreg,
 		int lhs_offset, int rhs_vreg, int rhs_offset, IROpcode op);
 	void emit_typed_vector_binary_op(int result_vreg, int result_offset, int lhs_offset, int rhs_offset, IROpcode op, IRInstruction::TypeHint type_hint);
@@ -405,6 +414,10 @@ private:
 	bool folds_to_immediate(const IRInstruction& instr, size_t operand_index) const;
 	static bool int_op_takes_immediate(IROpcode op, int64_t value);
 	static bool int_op_is_commutative(IROpcode op);
+	static bool int_compare_takes_immediate(IROpcode op, int64_t value,
+		bool constant_on_left);
+	void emit_int_compare_imm(uint8_t result, uint8_t value, int64_t imm,
+		IROpcode op, bool constant_on_left);
 	void emit_typed_int_binary_op_imm(int result_vreg, int result_offset, int lhs_offset, int64_t imm, IROpcode op,
 		int lhs_vreg = -1);
 	void plan_int_chaining(const IRFunction& func);

@@ -55,7 +55,7 @@ private:
 	bool try_remove_branch_to_next(const IRFunction& func, size_t& i, std::vector<IRInstruction>& new_instructions);
 	bool copy_propagation(IRFunction& func);
 	bool eliminate_redundant_stores(IRFunction& func);
-	void reduce_register_pressure(IRFunction& func);
+	bool reduce_register_pressure(IRFunction& func);
 	bool loop_invariant_code_motion(IRFunction& func);
 	bool enhanced_copy_propagation(IRFunction& func);
 

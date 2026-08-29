@@ -754,6 +754,27 @@ func test(op):
 	std::cout << "  \u2713 Branch to the next instruction removed" << std::endl;
 }
 
+void test_move_after_call_folds_into_call_destination() {
+	std::cout << "Testing MOVE-after-CALL folding..." << std::endl;
+	IRFunction func = compile_to_ir(
+		"func source():\n"
+		"\treturn 4\n"
+		"func test():\n"
+		"\tvar value = source()\n"
+		"\treturn value\n");
+	IROptimizer optimizer;
+	optimizer.optimize_function(func);
+
+	assert(count_instructions(func, IROpcode::CALL) == 1);
+	assert(count_instructions(func, IROpcode::MOVE) == 0);
+	for (const IRInstruction& instr : func.instructions) {
+		if (instr.opcode == IROpcode::CALL) {
+			assert(ir_destination_register(instr) == IRFunction::RETURN_REGISTER);
+		}
+	}
+	std::cout << "  ✓ CALL writes directly to the moved destination" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== IR Optimizer Peephole Pattern Tests ===\n" << std::endl;
 
@@ -771,6 +792,9 @@ int main() {
 		std::cout << std::endl;
 
 		test_pattern_d_move_after_op();
+		std::cout << std::endl;
+
+		test_move_after_call_folds_into_call_destination();
 		std::cout << std::endl;
 
 		test_pattern_e_increment();

@@ -14,6 +14,31 @@ namespace gdscript {
 
 static constexpr int32_t USAGE_SCRIPT_VARIABLE = 4096;
 
+static bool is_scalar_variant_type(int type) {
+	return type == Variant::NIL || type == Variant::BOOL ||
+		type == Variant::INT || type == Variant::FLOAT;
+}
+
+static bool consecutive_vreg_operands(const IRInstruction& instr, size_t first,
+	size_t count, int forbidden_vreg)
+{
+	if (count == 0 || first + count > instr.operands.size() ||
+		instr.operands[first].type != IRValue::Type::REGISTER)
+	{
+		return false;
+	}
+	const int base = instr.operands[first].reg_index();
+	for (size_t i = 0; i < count; i++) {
+		if (instr.operands[first + i].type != IRValue::Type::REGISTER ||
+			instr.operands[first + i].reg_index() != base + int(i) ||
+			instr.operands[first + i].reg_index() == forbidden_vreg)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 RISCVCodeGen::RISCVCodeGen(const VariantLayout& layout, bool profiling, ProfilingClock profiling_clock,
 		bool debug_info, const std::vector<uint32_t>& breakpoint_lines, bool debug_step_points) :
 		m_layout(layout), m_profiling(profiling), m_profiling_clock(profiling_clock),
@@ -699,15 +724,31 @@ void RISCVCodeGen::emit_prologue(const IRFunction& func,
 			? parameter_destinations->at(i)
 			: static_cast<int>(i);
 		int dst_offset = get_variant_stack_offset(param_vreg);
+		int parameter_type = IRInstruction::TypeHint_NONE;
+		for (const IRFunction::DebugLocal& local : func.debug_locals) {
+			if (local.parameter && local.name == func.parameters[i]) {
+				parameter_type = local.type_hint;
+				break;
+			}
+		}
 		if (i < IRFunction::REGISTER_PARAMETERS) {
 			uint8_t arg_reg = REG_A1 + static_cast<uint8_t>(i);
-			emit_variant_move(REG_SP, dst_offset, arg_reg, 0, REG_T0);
+			if (is_scalar_variant_type(parameter_type)) {
+				emit_scalar_variant_move(REG_SP, dst_offset, arg_reg, 0, REG_T0);
+			} else {
+				emit_variant_move(REG_SP, dst_offset, arg_reg, 0, REG_T0);
+			}
 		} else {
 			const int32_t incoming_offset = m_fn.stack_frame_size + int32_t(
 				(i - IRFunction::REGISTER_PARAMETERS) * CallABI::STACK_SLOT_SIZE);
 			emit_ld(REG_T1, REG_SP, incoming_offset);
-			emit_variant_move(REG_SP, dst_offset, REG_T1, 0, REG_T0);
+			if (is_scalar_variant_type(parameter_type)) {
+				emit_scalar_variant_move(REG_SP, dst_offset, REG_T1, 0, REG_T0);
+			} else {
+				emit_variant_move(REG_SP, dst_offset, REG_T1, 0, REG_T0);
+			}
 		}
+		if (is_scalar_variant_type(parameter_type)) note_known_tag(param_vreg, parameter_type);
 	}
 }
 
@@ -1211,25 +1252,24 @@ void RISCVCodeGen::gen_vcall(const IRInstruction& instr) {
 
 	// If we have arguments, allocate stack space for argument array.
 	// Everything addressed off sp below this point is shifted by it.
-	const int additional_space = arg_count > 0
+	const bool direct_args = arg_count > 0 && consecutive_vreg_operands(
+		instr, 4, size_t(arg_count), result_vreg);
+	const int additional_space = arg_count > 0 && !direct_args
 		? ((arg_count * variant_size()) + 15) & ~15 // Align to 16 bytes
 		: 0;
 	if (arg_count > 0) {
-		// Adjust stack pointer
-		emit_stack_adjust(-additional_space);
-
-		// Copy argument Variants to the new stack space
-		for (int i = 0; i < arg_count; i++) {
-			int arg_vreg = instr.operands[4 + i].reg_index();
-			int arg_src_offset = get_variant_stack_offset(arg_vreg) + additional_space; // Adjust for moved stack
-			int arg_dst_offset = i * variant_size();
-
-			// Copy the whole Variant from src to dst
-			emit_variant_move(REG_SP, arg_dst_offset, REG_SP, arg_src_offset, REG_T0);
+		if (direct_args) {
+			emit_add_offset(REG_A3, REG_SP,
+				get_variant_stack_offset(instr.operands[4].reg_index()));
+		} else {
+			emit_stack_adjust(-additional_space);
+			for (int i = 0; i < arg_count; i++) {
+				int arg_vreg = instr.operands[4 + i].reg_index();
+				int arg_src_offset = get_variant_stack_offset(arg_vreg) + additional_space;
+				emit_variant_move(REG_SP, i * variant_size(), REG_SP, arg_src_offset, REG_T0);
+			}
+			emit_mv(REG_A3, REG_SP);
 		}
-
-		// a3 = pointer to arguments array (sp + 0)
-		emit_mv(REG_A3, REG_SP);
 	} else {
 		// No arguments, a3 = 0
 		emit_mv(REG_A3, REG_ZERO);
@@ -1348,25 +1388,19 @@ void RISCVCodeGen::gen_make_array(const IRInstruction& instr) {
 		emit_variant_create_empty_array(result_offset);
 	} else {
 		// Array with elements: sys_vcreate(&v, ARRAY, size, data_pointer)
-		// We need to copy the full Variant structures to stack
-		int args_space = element_count * variant_size();
+		const bool direct_elements = consecutive_vreg_operands(
+			instr, 2, size_t(element_count), result_vreg);
+		int args_space = direct_elements ? 0 : element_count * variant_size();
 		args_space = (args_space + 15) & ~15; // Align to 16 bytes
 
-		// Adjust stack pointer
-		emit_add_offset(REG_SP, REG_SP, -args_space);
-
-		// Copy full GuestVariant structures to stack
-		for (int i = 0; i < element_count; i++) {
-			int elem_vreg = instr.operands[2 + i].reg_index();
-			int elem_offset = get_variant_stack_offset(elem_vreg);
-
-			// Destination address for this element
-			int dst_offset = i * variant_size();
-
-			// The element Variant is at elem_offset from the ORIGINAL stack frame
-			// After SP -= args_space, it's now at elem_offset + args_space from NEW SP
-			// So we load from (elem_offset + args_space) and store to dst_offset
-			emit_variant_move(REG_SP, dst_offset, REG_SP, elem_offset + args_space, REG_T0);
+		if (!direct_elements) {
+			emit_stack_adjust(-args_space);
+			for (int i = 0; i < element_count; i++) {
+				int elem_vreg = instr.operands[2 + i].reg_index();
+				int elem_offset = get_variant_stack_offset(elem_vreg);
+				emit_variant_move(REG_SP, i * variant_size(), REG_SP,
+					elem_offset + args_space, REG_T0);
+			}
 		}
 
 		// a0 = pointer to destination Variant
@@ -1381,15 +1415,19 @@ void RISCVCodeGen::gen_make_array(const IRInstruction& instr) {
 		// a2 = size (element_count)
 		emit_li(REG_A2, element_count);
 
-		// a3 = pointer to element array (sp + 0)
-		emit_mv(REG_A3, REG_SP);
+		if (direct_elements) {
+			emit_add_offset(REG_A3, REG_SP,
+				get_variant_stack_offset(instr.operands[2].reg_index()));
+		} else {
+			emit_mv(REG_A3, REG_SP);
+		}
 
 		// a7 = ECALL_VCREATE (517)
 		emit_li(REG_A7, ECALL_VCREATE);
 		emit_ecall();
 
 		// Restore stack pointer
-		emit_add_offset(REG_SP, REG_SP, args_space);
+		emit_stack_adjust(args_space);
 	}
 }
 
@@ -1454,7 +1492,11 @@ void RISCVCodeGen::gen_store_global(const IRInstruction& instr) {
 		// VASSIGN returns the new index in A0
 		emit_sd(REG_A0, REG_T0, 8);
 	} else {
-		emit_variant_move(REG_T0, 0, REG_T1, 0, REG_T2);
+		if (is_scalar_variant_type(global.value_type)) {
+			emit_scalar_variant_move(REG_T0, 0, REG_T1, 0, REG_T2);
+		} else {
+			emit_variant_move(REG_T0, 0, REG_T1, 0, REG_T2);
+		}
 	}
 
 	if (global.holds_object) {
@@ -2085,6 +2127,17 @@ void RISCVCodeGen::gen_comparison(const IRInstruction& instr) {
 		int rhs_vreg = instr.operands[2].reg_index();
 		int lhs_offset = get_variant_stack_offset(lhs_vreg);
 		int rhs_offset = get_variant_stack_offset(rhs_vreg);
+		int64_t imm;
+		if (folds_to_immediate(instr, 2) && constant_int(rhs_vreg, imm)) {
+			emit_typed_int_comparison_imm(dst_vreg, dst_offset, lhs_vreg, lhs_offset,
+				imm, false, instr.opcode);
+			return;
+		}
+		if (folds_to_immediate(instr, 1) && constant_int(lhs_vreg, imm)) {
+			emit_typed_int_comparison_imm(dst_vreg, dst_offset, rhs_vreg, rhs_offset,
+				imm, true, instr.opcode);
+			return;
+		}
 
 		emit_typed_int_comparison(dst_vreg, dst_offset, lhs_vreg, lhs_offset,
 			rhs_vreg, rhs_offset, instr.opcode);
@@ -2178,6 +2231,15 @@ void RISCVCodeGen::gen_fused_branch(const IRInstruction& instr) {
 	int rhs_offset = get_variant_stack_offset(rhs_vreg);
 
 	if (instr.type_hint == Variant::INT) {
+		int64_t imm;
+		if (folds_to_immediate(instr, 1) && constant_int(rhs_vreg, imm)) {
+			emit_int_fused_branch_imm(instr.opcode, lhs_vreg, lhs_offset, imm, false, label);
+			return;
+		}
+		if (folds_to_immediate(instr, 0) && constant_int(lhs_vreg, imm)) {
+			emit_int_fused_branch_imm(instr.opcode, rhs_vreg, rhs_offset, imm, true, label);
+			return;
+		}
 		emit_int_fused_branch(instr.opcode, lhs_vreg, lhs_offset, rhs_vreg, rhs_offset, label);
 		return;
 	}
@@ -2330,17 +2392,24 @@ void RISCVCodeGen::gen_call_hosted(const IRInstruction& instr) {
 
 	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3, REG_A7});
 
-	const int additional_space = arg_count > 0
+	const bool direct_args = arg_count > 0 && consecutive_vreg_operands(
+		instr, 3, size_t(arg_count), result_vreg);
+	const int additional_space = arg_count > 0 && !direct_args
 		? ((arg_count * variant_size()) + 15) & ~15
 		: 0;
 	if (arg_count > 0) {
-		emit_stack_adjust(-additional_space);
-		for (int i = 0; i < arg_count; i++) {
-			const int arg_vreg = instr.operands[3 + i].reg_index();
-			const int arg_src_offset = get_variant_stack_offset(arg_vreg) + additional_space;
-			emit_variant_move(REG_SP, i * variant_size(), REG_SP, arg_src_offset, REG_T0);
+		if (direct_args) {
+			emit_add_offset(REG_A1, REG_SP,
+				get_variant_stack_offset(instr.operands[3].reg_index()));
+		} else {
+			emit_stack_adjust(-additional_space);
+			for (int i = 0; i < arg_count; i++) {
+				const int arg_vreg = instr.operands[3 + i].reg_index();
+				const int arg_src_offset = get_variant_stack_offset(arg_vreg) + additional_space;
+				emit_variant_move(REG_SP, i * variant_size(), REG_SP, arg_src_offset, REG_T0);
+			}
+			emit_mv(REG_A1, REG_SP);
 		}
-		emit_mv(REG_A1, REG_SP);
 	} else {
 		emit_mv(REG_A1, REG_ZERO);
 	}
@@ -2440,7 +2509,13 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			}
 
 			auto [base, offset] = value_destination(dst_vreg);
-			emit_variant_move(base, offset, REG_SP, src_offset, REG_T0);
+			const int known = src_vreg >= 0 && size_t(src_vreg) < m_fn.known_tags.size()
+				? m_fn.known_tags[size_t(src_vreg)] : IRInstruction::TypeHint_NONE;
+			if (is_scalar_variant_type(known)) {
+				emit_scalar_variant_move(base, offset, REG_SP, src_offset, REG_T0);
+			} else {
+				emit_variant_move(base, offset, REG_SP, src_offset, REG_T0);
+			}
 			break;
 		}
 
@@ -2595,7 +2670,11 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			// rather than through a second pointer register, which is one
 			// instruction the stores were already able to do themselves.
 			auto [base, offset] = value_destination(dst_vreg);
-			emit_variant_move(base, offset, REG_T0, 0, REG_T1);
+			if (is_scalar_variant_type(m_globals[size_t(global_idx)].value_type)) {
+				emit_scalar_variant_move(base, offset, REG_T0, 0, REG_T1);
+			} else {
+				emit_variant_move(base, offset, REG_T0, 0, REG_T1);
+			}
 			break;
 		}
 
@@ -2839,8 +2918,12 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			spill_around_syscall({REG_A0, REG_A1, REG_A2});
 
 			const int index_vreg = instr.operands[index_operand].reg_index();
+			int64_t constant_index = 0;
+			const bool negative_constant_get = !is_set &&
+				constant_int(index_vreg, constant_index) && constant_index < 0;
 			emit_array_element_access(is_set, array_offset, index_offset, value_offset,
 				m_fn.nonnegative.count(index_vreg) != 0,
+				negative_constant_get,
 				instr.operands[array_operand].reg_index(), index_vreg);
 			break;
 		}
@@ -3152,6 +3235,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 			case IROpcode::TYPE_OF: note_known_tag(dst, Variant::INT); break;
 			case IROpcode::CONVERT:
 			case IROpcode::COERCE: note_known_tag(dst, instr.type_hint); break;
+			case IROpcode::LOAD_GLOBAL:
+				if (instr.operands.size() >= 2) {
+					note_known_tag(dst, m_globals[size_t(instr.operands[1].immediate())].value_type);
+				}
+				break;
 			case IROpcode::MOVE:
 				if (moved_tag != IRInstruction::TypeHint_NONE) note_known_tag(dst, moved_tag);
 				break;
@@ -3542,6 +3630,7 @@ std::vector<bool> RISCVCodeGen::find_live_parameters(const IRFunction& func) {
 bool RISCVCodeGen::int_op_is_commutative(IROpcode op) {
 	switch (op) {
 		case IROpcode::ADD:
+		case IROpcode::MUL:
 		case IROpcode::BIT_AND:
 		case IROpcode::BIT_OR:
 		case IROpcode::BIT_XOR:
@@ -3564,6 +3653,39 @@ bool RISCVCodeGen::int_op_takes_immediate(IROpcode op, int64_t value) {
 		case IROpcode::SHL:
 		case IROpcode::SHR:
 			return value >= 0 && value < 64;
+		case IROpcode::MUL:
+			return value > 0 && (uint64_t(value) & (uint64_t(value) - 1)) == 0;
+		default:
+			return false;
+	}
+}
+
+bool RISCVCodeGen::int_compare_takes_immediate(IROpcode op, int64_t value,
+	bool constant_on_left)
+{
+	if (constant_on_left) {
+		switch (op) {
+			case IROpcode::CMP_LT: op = IROpcode::CMP_GT; break;
+			case IROpcode::CMP_LTE: op = IROpcode::CMP_GTE; break;
+			case IROpcode::CMP_GT: op = IROpcode::CMP_LT; break;
+			case IROpcode::CMP_GTE: op = IROpcode::CMP_LTE; break;
+			case IROpcode::BRANCH_LT: op = IROpcode::BRANCH_GT; break;
+			case IROpcode::BRANCH_LTE: op = IROpcode::BRANCH_GTE; break;
+			case IROpcode::BRANCH_GT: op = IROpcode::BRANCH_LT; break;
+			case IROpcode::BRANCH_GTE: op = IROpcode::BRANCH_LTE; break;
+			default: break;
+		}
+	}
+	switch (op) {
+		case IROpcode::CMP_EQ: case IROpcode::CMP_NEQ:
+		case IROpcode::BRANCH_EQ: case IROpcode::BRANCH_NEQ:
+			return value >= -2047 && value <= 2048;
+		case IROpcode::CMP_LT: case IROpcode::CMP_GTE:
+		case IROpcode::BRANCH_LT: case IROpcode::BRANCH_GTE:
+			return fits_in_signed(value, I_TYPE_IMM_BITS);
+		case IROpcode::CMP_LTE: case IROpcode::CMP_GT:
+		case IROpcode::BRANCH_LTE: case IROpcode::BRANCH_GT:
+			return value != INT64_MAX && fits_in_signed(value + 1, I_TYPE_IMM_BITS);
 		default:
 			return false;
 	}
@@ -3583,20 +3705,35 @@ bool RISCVCodeGen::folds_to_immediate(const IRInstruction& instr, size_t operand
 	if (instr.type_hint != Variant::INT) {
 		return false;
 	}
-	if (operand_index != 1 && operand_index != 2) {
-		return false;
-	}
 	if (instr.operands.size() < 3) {
 		return false;
 	}
-	for (size_t i = 0; i < 3; i++) {
-		if (instr.operands[i].type != IRValue::Type::REGISTER) {
-			return false;
-		}
+	const bool fused = ir_has_effect(instr.opcode, IR_FUSED_BRANCH);
+	const size_t lhs_index = fused ? 0 : 1;
+	const size_t rhs_index = fused ? 1 : 2;
+	if (operand_index != lhs_index && operand_index != rhs_index) {
+		return false;
+	}
+	if (instr.operands[lhs_index].type != IRValue::Type::REGISTER ||
+		instr.operands[rhs_index].type != IRValue::Type::REGISTER)
+	{
+		return false;
+	}
+	const bool comparison = ir_has_effect(instr.opcode, IR_COMPARISON) || fused;
+	if (!comparison && instr.operands[0].type != IRValue::Type::REGISTER) {
+		return false;
 	}
 	switch (instr.opcode) {
+		case IROpcode::CMP_EQ: case IROpcode::CMP_NEQ:
+		case IROpcode::CMP_LT: case IROpcode::CMP_LTE:
+		case IROpcode::CMP_GT: case IROpcode::CMP_GTE:
+		case IROpcode::BRANCH_EQ: case IROpcode::BRANCH_NEQ:
+		case IROpcode::BRANCH_LT: case IROpcode::BRANCH_LTE:
+		case IROpcode::BRANCH_GT: case IROpcode::BRANCH_GTE:
+			break;
 		case IROpcode::ADD:
 		case IROpcode::SUB:
+		case IROpcode::MUL:
 		case IROpcode::BIT_AND:
 		case IROpcode::BIT_OR:
 		case IROpcode::BIT_XOR:
@@ -3606,26 +3743,31 @@ bool RISCVCodeGen::folds_to_immediate(const IRInstruction& instr, size_t operand
 		default:
 			return false;
 	}
-	// Left operand folds only for commutative ops.
-	if (operand_index == 1 && !int_op_is_commutative(instr.opcode)) {
-		return false;
-	}
 	int64_t value;
 	if (!constant_int(instr.operands[operand_index].reg_index(), value)) {
 		return false;
 	}
-	// Same vreg on both sides: the slot is still read by the other operand.
-	const int other = instr.operands[operand_index == 1 ? 2 : 1].reg_index();
+	const size_t other_index = operand_index == lhs_index ? rhs_index : lhs_index;
+	const int other = instr.operands[other_index].reg_index();
 	if (other == instr.operands[operand_index].reg_index()) {
 		return false;
 	}
-	if (!int_op_takes_immediate(instr.opcode, value)) {
+	const bool constant_on_left = operand_index == lhs_index;
+	if (comparison) {
+		if (!int_compare_takes_immediate(instr.opcode, value, constant_on_left)) {
+			return false;
+		}
+	} else if (constant_on_left && !int_op_is_commutative(instr.opcode)) {
+		return false;
+	} else if (!comparison && !int_op_takes_immediate(instr.opcode, value)) {
 		return false;
 	}
 	// RHS wins when both operands fold; LHS stays in its frame slot.
-	if (operand_index == 1) {
+	if (constant_on_left) {
 		int64_t rhs_value;
-		if (constant_int(other, rhs_value) && int_op_takes_immediate(instr.opcode, rhs_value)) {
+		if (constant_int(other, rhs_value) &&
+			(comparison ? int_compare_takes_immediate(instr.opcode, rhs_value, false)
+				: int_op_takes_immediate(instr.opcode, rhs_value))) {
 			return false;
 		}
 	}
@@ -4048,6 +4190,20 @@ std::vector<bool> RISCVCodeGen::find_return_forwarding(const IRFunction& func) {
 			case IROpcode::LOAD_GLOBAL:
 			case IROpcode::MOVE:
 				break;
+			case IROpcode::ADD:
+			case IROpcode::SUB:
+			case IROpcode::MUL:
+			case IROpcode::DIV:
+			case IROpcode::MOD:
+			case IROpcode::BIT_AND:
+			case IROpcode::BIT_OR:
+			case IROpcode::BIT_XOR:
+			case IROpcode::SHL:
+			case IROpcode::SHR:
+				if (instr.type_hint != Variant::INT && instr.type_hint != Variant::FLOAT) {
+					continue;
+				}
+				break;
 			default:
 				continue;
 		}
@@ -4182,6 +4338,10 @@ void RISCVCodeGen::emit_sra(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 
 void RISCVCodeGen::emit_slt(uint8_t rd, uint8_t rs1, uint8_t rs2) {
 	emit_r_type(0x33, rd, 2, rs1, rs2, 0);
+}
+
+void RISCVCodeGen::emit_slti(uint8_t rd, uint8_t rs, int32_t imm) {
+	emit_i_type(0x13, rd, 2, rs, imm);
 }
 
 void RISCVCodeGen::emit_xori(uint8_t rd, uint8_t rs, int32_t imm) {
@@ -4593,6 +4753,15 @@ void RISCVCodeGen::emit_variant_move(uint8_t dst_base, int32_t dst_offset, uint8
 	}
 }
 
+void RISCVCodeGen::emit_scalar_variant_move(uint8_t dst_base, int32_t dst_offset,
+	uint8_t src_base, int32_t src_offset, uint8_t tmp_reg)
+{
+	for (int i = 0; i < 2; i++) {
+		emit_ld(tmp_reg, src_base, src_offset + i * 8);
+		emit_sd(tmp_reg, dst_base, dst_offset + i * 8);
+	}
+}
+
 void RISCVCodeGen::emit_variant_eval_unary(int result_offset, int operand_offset, int op) {
 	emit_variant_eval_unary(result_offset, REG_SP, operand_offset, op);
 }
@@ -4851,16 +5020,78 @@ void RISCVCodeGen::emit_int_fused_branch(IROpcode op, int lhs_vreg, int lhs_offs
 	}
 }
 
+void RISCVCodeGen::emit_int_compare_imm(uint8_t result, uint8_t value, int64_t imm,
+	IROpcode op, bool constant_on_left)
+{
+	if (constant_on_left) {
+		switch (op) {
+			case IROpcode::CMP_LT: op = IROpcode::CMP_GT; break;
+			case IROpcode::CMP_LTE: op = IROpcode::CMP_GTE; break;
+			case IROpcode::CMP_GT: op = IROpcode::CMP_LT; break;
+			case IROpcode::CMP_GTE: op = IROpcode::CMP_LTE; break;
+			case IROpcode::BRANCH_LT: op = IROpcode::BRANCH_GT; break;
+			case IROpcode::BRANCH_LTE: op = IROpcode::BRANCH_GTE; break;
+			case IROpcode::BRANCH_GT: op = IROpcode::BRANCH_LT; break;
+			case IROpcode::BRANCH_GTE: op = IROpcode::BRANCH_LTE; break;
+			default: break;
+		}
+	}
+	switch (op) {
+		case IROpcode::CMP_EQ: case IROpcode::BRANCH_EQ:
+			emit_addi(result, value, int32_t(-imm));
+			emit_seqz(result, result);
+			break;
+		case IROpcode::CMP_NEQ: case IROpcode::BRANCH_NEQ:
+			emit_addi(result, value, int32_t(-imm));
+			emit_snez(result, result);
+			break;
+		case IROpcode::CMP_LT: case IROpcode::BRANCH_LT:
+			emit_slti(result, value, int32_t(imm));
+			break;
+		case IROpcode::CMP_GTE: case IROpcode::BRANCH_GTE:
+			emit_slti(result, value, int32_t(imm));
+			emit_xori(result, result, 1);
+			break;
+		case IROpcode::CMP_LTE: case IROpcode::BRANCH_LTE:
+			emit_slti(result, value, int32_t(imm + 1));
+			break;
+		case IROpcode::CMP_GT: case IROpcode::BRANCH_GT:
+			emit_slti(result, value, int32_t(imm + 1));
+			emit_xori(result, result, 1);
+			break;
+		default:
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+				"Unknown integer comparison with immediate");
+	}
+}
+
+void RISCVCodeGen::emit_int_fused_branch_imm(IROpcode op, int value_vreg, int value_offset,
+	int64_t imm, bool constant_on_left, const std::string& label)
+{
+	const uint8_t value = emit_int_operand(REG_T0, value_vreg, value_offset);
+	// Zero equality maps directly to the ISA's register/zero branch form.
+	if (imm == 0 && (op == IROpcode::BRANCH_EQ || op == IROpcode::BRANCH_NEQ)) {
+		mark_label_use(label, m_code.size());
+		if (op == IROpcode::BRANCH_EQ) emit_beq(value, REG_ZERO, 0);
+		else emit_bne(value, REG_ZERO, 0);
+		return;
+	}
+	emit_int_compare_imm(REG_T2, value, imm, op, constant_on_left);
+	mark_label_use(label, m_code.size());
+	emit_bne(REG_T2, REG_ZERO, 0);
+}
+
 void RISCVCodeGen::emit_array_element_access(bool is_set, int array_offset, int index_offset, int value_offset,
-	bool index_nonnegative, int array_vreg, int index_vreg) {
-	// ECALL_ARRAY_AT: negative a1 = set (-index-1), non-negative = get
+	bool index_nonnegative, bool negative_constant_get, int array_vreg, int index_vreg) {
+	// ECALL_ARRAY_AT: negative a1 = set (-index-1), unless a2's alignment bit
+	// marks a negative constant get; non-negative a1 is always a get.
 	emit_container_handle(REG_A0, array_vreg, array_offset);
 	{
 		auto [base, off] = variant_source(index_vreg, index_offset, REG_T0);
 		emit_load_variant_int(REG_A1, base, off);
 	}
 
-	if (!index_nonnegative) {
+	if (!index_nonnegative && !negative_constant_get) {
 		// Negative index: wrap from end via ECALL_ARRAY_SIZE
 		const std::string in_range = gen_local_label(".array_index");
 		mark_label_use(in_range, m_code.size());
@@ -4880,6 +5111,11 @@ void RISCVCodeGen::emit_array_element_access(bool is_set, int array_offset, int 
 		emit_xori(REG_A1, REG_A1, -1); // -index - 1
 	}
 	emit_add_offset(REG_A2, REG_SP, value_offset);
+	if (negative_constant_get) {
+		// GuestVariant slots are aligned, so bit zero can select a signed-index read
+		// without changing the syscall number or the legacy write convention.
+		emit_ori(REG_A2, REG_A2, 1);
+	}
 	emit_li(REG_A7, ECALL_ARRAY_AT);
 	emit_ecall();
 }
@@ -5010,6 +5246,13 @@ uint8_t RISCVCodeGen::emit_float_operand(uint8_t fd, int vreg, int offset) {
 }
 
 void RISCVCodeGen::emit_typed_int_result(int result_vreg, int result_offset) {
+	if (m_fn.forward_return) {
+		auto [base, offset] = value_destination(result_vreg);
+		emit_li(REG_T0, Variant::INT);
+		emit_store_variant_type(REG_T0, base, offset);
+		emit_store_variant_int(REG_T2, base, offset);
+		return;
+	}
 	emit_known_variant_type(result_vreg, result_offset, Variant::INT);
 	emit_store_variant_int(REG_T2, REG_SP, result_offset);
 	cache_int_result(result_vreg, REG_T2);
@@ -5027,6 +5270,12 @@ void RISCVCodeGen::emit_typed_int_binary_op_imm(int result_vreg, int result_offs
 		case IROpcode::SUB:
 			emit_addi(REG_T2, lhs, static_cast<int32_t>(-imm));
 			break;
+		case IROpcode::MUL: {
+			uint8_t shift = 0;
+			for (uint64_t value = uint64_t(imm); value > 1; value >>= 1) shift++;
+			emit_slli(REG_T2, lhs, shift);
+			break;
+		}
 		case IROpcode::BIT_AND:
 			emit_andi(REG_T2, lhs, static_cast<int32_t>(imm));
 			break;
@@ -5154,6 +5403,15 @@ void RISCVCodeGen::emit_typed_int_comparison(int result_vreg, int result_offset,
 	emit_store_variant_bool(REG_T2, REG_SP, result_offset);
 }
 
+void RISCVCodeGen::emit_typed_int_comparison_imm(int result_vreg, int result_offset,
+	int value_vreg, int value_offset, int64_t imm, bool constant_on_left, IROpcode cmp_op)
+{
+	const uint8_t value = emit_int_operand(REG_T0, value_vreg, value_offset);
+	emit_int_compare_imm(REG_T2, value, imm, cmp_op, constant_on_left);
+	emit_known_variant_type(result_vreg, result_offset, Variant::BOOL);
+	emit_store_variant_bool(REG_T2, REG_SP, result_offset);
+}
+
 void RISCVCodeGen::emit_typed_float_binary_op(int result_vreg, int result_offset,
 	int lhs_vreg, int lhs_offset, int rhs_vreg, int rhs_offset, IROpcode op) {
 	// Optimized path for type-hinted float (double) arithmetic
@@ -5190,11 +5448,15 @@ void RISCVCodeGen::emit_typed_float_binary_op(int result_vreg, int result_offset
 			throw CompilerException(ErrorType::RISCV_codegen_ERROR, "Unsupported typed float binary op");
 	}
 
-	// Store result as FLOAT Variant
-	// Set type to FLOAT (3)
+	// Store result as FLOAT Variant, directly through a0 for an arithmetic leaf.
+	if (m_fn.forward_return) {
+		auto [base, offset] = value_destination(result_vreg);
+		emit_li(REG_T0, Variant::FLOAT);
+		emit_store_variant_type(REG_T0, base, offset);
+		emit_fsd(REG_FA2, base, offset + VARIANT_DATA_OFFSET);
+		return;
+	}
 	emit_known_variant_type(result_vreg, result_offset, Variant::FLOAT);
-
-	// Store computed double value to v.f field
 	emit_fsd(REG_FA2, REG_SP, result_offset + VARIANT_DATA_OFFSET);
 	cache_float_result(result_vreg, REG_FA2);
 }

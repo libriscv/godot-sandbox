@@ -90,6 +90,10 @@ bool is_ori(uint32_t w)  { return is_op_imm(w, 6); }
 bool is_xori(uint32_t w) { return is_op_imm(w, 4); }
 bool is_srai(uint32_t w) { return is_op_imm(w, 5) && (w >> 30) == 1; }
 bool is_slli(uint32_t w) { return is_op_imm(w, 1); }
+bool is_slti(uint32_t w) { return is_op_imm(w, 2); }
+bool is_mul(uint32_t w) {
+	return opcode_of(w) == 0x33 && funct3_of(w) == 0 && (w >> 25) == 1;
+}
 
 bool is_stack_adjust(uint32_t w) {
 	return is_op_imm(w, 0) && rd_of(w) == REG_SP && rs1_of(w) == REG_SP;
@@ -248,6 +252,26 @@ void test_a_constant_too_wide_stays_in_a_register() {
 	std::cout << "  ✓ A wide constant is not folded" << std::endl;
 }
 
+void test_immediate_comparisons_and_power_of_two_multiply() {
+	std::cout << "Testing immediate comparisons and multiply strength reduction..." << std::endl;
+
+	const Compiled compiled = compile(
+		"func less(i : int) -> bool:\n"
+		"\treturn i < 10\n"
+		"func scale(i : int) -> int:\n"
+		"\treturn i * 8\n");
+	const std::vector<uint32_t> less = function_words(compiled, "less");
+	const std::vector<uint32_t> scale = function_words(compiled, "scale");
+
+	assert(has_immediate(less, is_slti, 10));
+	assert(has_shift(scale, is_slli, 3));
+	assert(count(scale, is_mul) == 0);
+	// The arithmetic leaf writes its tag and payload through the return pointer.
+	assert(count(scale, is_store_through_return_pointer) == 2);
+
+	std::cout << "  ✓ Comparisons use immediates and ×8 is a shift" << std::endl;
+}
+
 void test_chained_operators_stay_in_a_register() {
 	std::cout << "Testing that a decode chain stays in a register..." << std::endl;
 
@@ -307,9 +331,9 @@ void test_a_constant_index_skips_the_wrap() {
 	const Compiled compiled = compile("func f(regs : Array):\n\treturn regs[2]\n");
 	assert(count_syscall(function_words(compiled, "f"), ECALL_ARRAY_SIZE) == 0);
 
-	// Negative constant must still wrap.
+	// Godot wraps a negative constant inside the ARRAY_AT call itself.
 	const Compiled from_end = compile("func f(regs : Array):\n\treturn regs[-1]\n");
-	assert(count_syscall(function_words(from_end, "f"), ECALL_ARRAY_SIZE) == 1);
+	assert(count_syscall(function_words(from_end, "f"), ECALL_ARRAY_SIZE) == 0);
 
 	std::cout << "  ✓ A constant index wraps only where it must" << std::endl;
 }
@@ -369,13 +393,13 @@ void test_an_int_global_round_trips_in_a_register() {
 	// the arithmetic result. The global itself is still not copied here.
 	// The global is not among them: it is loaded from and stored to the
 	// globals area, in registers, with no Variant built for it at all.
-	const size_t variant_words = size_t(VariantLayout(false).variant_words());
+	const size_t scalar_parameter = 2;
 	const size_t coerced_parameter = 2;
 	const size_t canonical_result = 2;
 	// A global copied into the frame would show up as another variant_words
 	// worth of stores on top of these.
 	assert(count(words, is_store_to_frame) ==
-		1 + variant_words + coerced_parameter + canonical_result);
+		1 + scalar_parameter + coerced_parameter + canonical_result);
 	assert(count(words, is_ecall) == 0);
 
 	std::cout << "  ✓ An int global round-trips in a register" << std::endl;
@@ -392,6 +416,7 @@ int main() {
 
 	test_constant_operand_becomes_an_immediate();
 	test_a_constant_too_wide_stays_in_a_register();
+	test_immediate_comparisons_and_power_of_two_multiply();
 	test_chained_operators_stay_in_a_register();
 
 	test_a_masked_index_skips_the_wrap();

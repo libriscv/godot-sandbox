@@ -4,7 +4,9 @@
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/core/binder_common.hpp>
 #include <libriscv/machine.hpp>
+#include <memory>
 #include <optional>
+#include <typeinfo>
 #include <unordered_set>
 
 using namespace godot;
@@ -128,6 +130,16 @@ public:
 	struct CachedName {
 		StringName sname;
 		Variant variant; // Holds sname
+
+		// Native object calls are overwhelmingly made from a fixed call site to one
+		// runtime class. Keep the resolved MethodBind beside that call site's name.
+		static constexpr unsigned METHOD_CACHE_SIZE = 4; // Must be a power of two
+		struct MethodEntry {
+			const std::type_info *object_type = nullptr;
+			GDExtensionMethodBindPtr bind = nullptr;
+			bool resolved = false;
+		};
+		MethodEntry methods[METHOD_CACHE_SIZE];
 	};
 	// Direct-mapped cache of guest method and property names, see cached_guest_name().
 	struct GuestNameCache {
@@ -137,6 +149,7 @@ public:
 			bool terminated = false;
 			std::string text;
 			CachedName name;
+			unsigned pins = 0;
 		};
 		Entry entries[SIZE];
 
@@ -144,6 +157,42 @@ public:
 			for (Entry &entry : entries)
 				entry = Entry{};
 		}
+	};
+
+	/// @brief A pinned view of a cached guest name.
+	///
+	/// Object calls and property access can re-enter this Sandbox. Pinning prevents a
+	/// colliding nested lookup from replacing the StringName while Godot still uses it;
+	/// only that rare collision allocates a temporary uncached name.
+	class CachedNameRef {
+	public:
+		explicit CachedNameRef(GuestNameCache::Entry &entry) noexcept :
+				m_name(&entry.name), m_entry(&entry) {
+			entry.pins++;
+		}
+		explicit CachedNameRef(std::unique_ptr<CachedName> owned) noexcept :
+				m_name(owned.get()), m_owned(std::move(owned)) {}
+		CachedNameRef(const CachedNameRef &) = delete;
+		CachedNameRef &operator=(const CachedNameRef &) = delete;
+		CachedNameRef(CachedNameRef &&other) noexcept :
+				m_name(other.m_name), m_entry(other.m_entry), m_owned(std::move(other.m_owned)) {
+			other.m_name = nullptr;
+			other.m_entry = nullptr;
+		}
+		~CachedNameRef() {
+			if (m_entry != nullptr)
+				m_entry->pins--;
+		}
+
+		const CachedName &get() const noexcept { return *m_name; }
+		CachedName &get() noexcept { return *m_name; }
+		const CachedName *operator->() const noexcept { return m_name; }
+		CachedName *operator->() noexcept { return m_name; }
+
+	private:
+		CachedName *m_name = nullptr;
+		GuestNameCache::Entry *m_entry = nullptr;
+		std::unique_ptr<CachedName> m_owned;
 	};
 	struct ObjectBindingCache {
 		static constexpr unsigned SIZE = 32; // Must be a power of two
@@ -354,7 +403,7 @@ public:
 	/// object call. Guests overwhelmingly pass a pointer to a string literal, so the
 	/// address is a stable key, and the text is stored alongside it and re-compared to
 	/// stay correct for guests that build names at run-time in a reused buffer.
-	const CachedName &cached_guest_name(gaddr_t address, std::string_view name, bool terminated) const;
+	CachedNameRef cached_guest_name(gaddr_t address, std::string_view name, bool terminated) const;
 
 	// -= Call State Management =-
 

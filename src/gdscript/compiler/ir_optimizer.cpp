@@ -1,8 +1,10 @@
 #include "ir_optimizer.h"
 #include "syscall_numbers.h"
+#include "globals.h"
 #include "compiler_exception.h"
 #include "ir_verifier.h"
 #include <algorithm>
+#include <array>
 #include <climits>
 #include <cmath>
 #include <cstdint>
@@ -82,6 +84,7 @@ const std::vector<IRPass>& IROptimizer::pipeline() {
 		{ "redundant-stores", &IROptimizer::eliminate_redundant_stores },
 		{ "peephole", &IROptimizer::peephole_optimization },
 		{ "dead-code", &IROptimizer::eliminate_dead_code },
+		{ "compact-registers", &IROptimizer::reduce_register_pressure },
 		{ "scope-marks", &IROptimizer::tighten_scope_marks },
 	};
 	return passes;
@@ -137,7 +140,6 @@ void IROptimizer::optimize(IRProgram& program) {
 
 void IROptimizer::optimize_function(IRFunction& func) {
 	invalidate_analysis();
-	// reduce_register_pressure() excluded: it renumbers r0-r6, breaking the ABI.
 	const auto& passes = pipeline();
 	const size_t limit = std::min(m_pass_limit, passes.size());
 	const bool verify = ir_verification_enabled();
@@ -465,6 +467,58 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 			break;
 		}
 
+		case IROpcode::CONVERT: {
+			const int dst = instr.operands[0].reg_index();
+			const int src = instr.operands[1].reg_index();
+			auto found = m_constants.find(src);
+			if (found != m_constants.end()) {
+				ConstantValue result;
+				const ConstantValue& value = found->second;
+				if (instr.type_hint == Variant::FLOAT) {
+					if (value.type == ConstantValue::Type::INT) {
+						result.type = ConstantValue::Type::FLOAT;
+						result.float_value = static_cast<double>(value.int_value);
+					} else if (value.type == ConstantValue::Type::BOOL) {
+						result.type = ConstantValue::Type::FLOAT;
+						result.float_value = value.bool_value ? 1.0 : 0.0;
+					}
+				} else if (instr.type_hint == Variant::INT) {
+					if (value.type == ConstantValue::Type::BOOL) {
+						result.type = ConstantValue::Type::INT;
+						result.int_value = value.bool_value ? 1 : 0;
+					} else if (value.type == ConstantValue::Type::FLOAT &&
+						std::isfinite(value.float_value) &&
+						value.float_value >= static_cast<double>(INT64_MIN) &&
+						value.float_value < -static_cast<double>(INT64_MIN))
+					{
+						result.type = ConstantValue::Type::INT;
+						result.int_value = static_cast<int64_t>(value.float_value);
+					}
+				}
+
+				if (result.type == ConstantValue::Type::FLOAT) {
+					IRInstruction load(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(dst),
+						IRValue::fimm(result.float_value));
+					load.type_hint = Variant::FLOAT;
+					emit(load);
+					set_register_constant(dst, result);
+					folded = true;
+				} else if (result.type == ConstantValue::Type::INT) {
+					IRInstruction load(IROpcode::LOAD_IMM, IRValue::reg(dst),
+						IRValue::imm(result.int_value));
+					load.type_hint = Variant::INT;
+					emit(load);
+					set_register_constant(dst, result);
+					folded = true;
+				}
+			}
+			if (!folded) {
+				invalidate_register(dst);
+				emit(instr);
+			}
+			break;
+		}
+
 		case IROpcode::ADD:
 		case IROpcode::SUB:
 		case IROpcode::MUL:
@@ -686,6 +740,87 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 			emit(instr);
 			break;
 
+		case IROpcode::GLOBAL_CALL: {
+			const int dst = ir_destination_register(instr);
+			if (dst >= 0 && instr.operands.size() >= 4 &&
+				instr.operands[1].type == IRValue::Type::IMMEDIATE)
+			{
+				const GlobalFunction& info = global_function(
+					static_cast<GlobalFn>(instr.operands[1].immediate()));
+				const size_t count = size_t(instr.operands[3].immediate());
+				if (!info.impure && count <= 3 && instr.operands.size() == 4 + count &&
+					(info.kind == GlobalKind::INT_OP || info.kind == GlobalKind::FLOAT_OP))
+				{
+					bool known = true;
+					std::array<int64_t, 3> ints {};
+					std::array<double, 3> floats {};
+					for (size_t i = 0; i < count; i++) {
+						const int reg = instr.operands[4 + i].reg_index();
+						auto value = m_constants.find(reg);
+						if (value == m_constants.end()) {
+							known = false;
+							break;
+						}
+						const ConstantValue& cv = value->second;
+						if (info.kind == GlobalKind::INT_OP) {
+							if (cv.type == ConstantValue::Type::INT) ints[i] = cv.int_value;
+							else if (cv.type == ConstantValue::Type::BOOL) ints[i] = cv.bool_value ? 1 : 0;
+							else { known = false; break; }
+						} else {
+							if (cv.type == ConstantValue::Type::FLOAT) floats[i] = cv.float_value;
+							else if (cv.type == ConstantValue::Type::INT) floats[i] = double(cv.int_value);
+							else if (cv.type == ConstantValue::Type::BOOL) floats[i] = cv.bool_value ? 1.0 : 0.0;
+							else { known = false; break; }
+						}
+					}
+					if (known && info.kind == GlobalKind::INT_OP) {
+						const int64_t value = eval_global_int(info.fn, ints.data(), count);
+						ConstantValue result;
+						if (info.result == GlobalResult::BOOL) {
+							result.type = ConstantValue::Type::BOOL;
+							result.bool_value = value != 0;
+							emit(IRInstruction(IROpcode::LOAD_BOOL, IRValue::reg(dst),
+								IRValue::imm(result.bool_value ? 1 : 0)));
+						} else if (info.result == GlobalResult::INT) {
+							result.type = ConstantValue::Type::INT;
+							result.int_value = value;
+							IRInstruction load(IROpcode::LOAD_IMM, IRValue::reg(dst), IRValue::imm(value));
+							load.type_hint = Variant::INT;
+							emit(load);
+						}
+						if (result.is_constant()) {
+							set_register_constant(dst, result);
+							folded = true;
+						}
+					} else if (known && info.kind == GlobalKind::FLOAT_OP) {
+						const double value = eval_global_float(info.fn, floats.data(), count);
+						ConstantValue result;
+						if (info.result == GlobalResult::BOOL) {
+							result.type = ConstantValue::Type::BOOL;
+							result.bool_value = value != 0.0;
+							emit(IRInstruction(IROpcode::LOAD_BOOL, IRValue::reg(dst),
+								IRValue::imm(result.bool_value ? 1 : 0)));
+						} else if (info.result == GlobalResult::FLOAT) {
+							result.type = ConstantValue::Type::FLOAT;
+							result.float_value = value;
+							IRInstruction load(IROpcode::LOAD_FLOAT_IMM, IRValue::reg(dst), IRValue::fimm(value));
+							load.type_hint = Variant::FLOAT;
+							emit(load);
+						}
+						if (result.is_constant()) {
+							set_register_constant(dst, result);
+							folded = true;
+						}
+					}
+				}
+			}
+			if (!folded) {
+				invalidate_register(dst);
+				emit(instr);
+			}
+			break;
+		}
+
 		// Element writes: operand 0 is the container (not a destination), keep its constant.
 		case IROpcode::ARRAY_SET:
 		case IROpcode::DICT_SET:
@@ -696,7 +831,6 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::ARRAY_APPEND:
 		case IROpcode::ARRAY_GET:
 		case IROpcode::PRINT:
-		case IROpcode::GLOBAL_CALL:
 		case IROpcode::VCALL:
 		case IROpcode::VGET:
 		case IROpcode::VSET:
@@ -718,7 +852,6 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 
 		// No default: new opcodes must be listed explicitly (compile error otherwise).
 		case IROpcode::BIT_NOT:
-		case IROpcode::CONVERT:
 		case IROpcode::COERCE:
 		case IROpcode::JUMP:
 		case IROpcode::LOAD_NIL:
@@ -758,11 +891,11 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::SWITCH:
 		case IROpcode::VGET_INLINE:
 		case IROpcode::VSET_INLINE:
-			for (const auto& op : instr.operands) {
-				if (op.type == IRValue::Type::REGISTER) {
-					int reg = op.reg_index();
-					invalidate_register(reg);
-				}
+			// Only the destination changes.  Invalidating every register operand
+			// used to discard constants merely read by MAKE_VECTOR*, VGET_INLINE,
+			// STORE_GLOBAL and the other catch-all instructions.
+			if (const int dst = ir_destination_register(instr); dst >= 0) {
+				invalidate_register(dst);
 			}
 			emit(instr);
 			break;
@@ -1305,22 +1438,31 @@ bool IROptimizer::try_fold_move_after_op(const IRFunction& func, size_t& i, std:
 	if (!(i + 1 < func.instructions.size())) {
 		return false;
 	}
-	if (ir_has_effect(func.instructions[i].opcode, IR_ARITHMETIC) &&
-	    func.instructions[i + 1].opcode == IROpcode::MOVE) {
+	const int first_dst_index = ir_destination_operand_index(func.instructions[i].opcode);
+	if (first_dst_index >= 0 &&
+		!ir_reads_operand(func.instructions[i], size_t(first_dst_index)) &&
+		func.instructions[i + 1].opcode == IROpcode::MOVE) {
 
 		const auto& op = func.instructions[i];
 		const auto& move = func.instructions[i + 1];
 
-		if (op.operands.size() >= 1 && move.operands.size() >= 2) {
-			int op_dst = op.operands[0].reg_index();
+		const int dst_index = ir_destination_operand_index(op.opcode);
+		if (dst_index >= 0 && static_cast<size_t>(dst_index) < op.operands.size() &&
+			op.operands[size_t(dst_index)].type == IRValue::Type::REGISTER &&
+			move.operands.size() >= 2) {
+			int op_dst = op.operands[size_t(dst_index)].reg_index();
 			int move_dst = move.operands[0].reg_index();
 			int move_src = move.operands[1].reg_index();
+			std::vector<int> op_reads;
+			ir_collect_read_registers(op, op_reads);
+			const bool destination_is_input =
+				std::find(op_reads.begin(), op_reads.end(), move_dst) != op_reads.end();
 
-			if (move_src == op_dst &&
+			if (!destination_is_input && move_src == op_dst &&
 			    !is_reg_read_outside(func, op_dst, i, i + 1)) {
 
 				IRInstruction new_op = op;
-				new_op.operands[0] = IRValue::reg(move_dst);
+				new_op.operands[size_t(dst_index)] = IRValue::reg(move_dst);
 				new_instructions.push_back(new_op);
 
 				i += 2;
@@ -1542,9 +1684,16 @@ bool IROptimizer::is_register_used_after(const IRFunction& func, int reg, size_t
 	return false;
 }
 
-void IROptimizer::reduce_register_pressure(IRFunction& func) {
+bool IROptimizer::reduce_register_pressure(IRFunction& func) {
 	std::unordered_map<int, int> reg_map;
-	int next_reg = 0;
+	// r0 is the return slot, and parameters occupy r0..rN-1 by ABI.  Pin all of
+	// them; only compiler temporaries may be renumbered into holes above that
+	// prefix.
+	reg_map[IRFunction::RETURN_REGISTER] = IRFunction::RETURN_REGISTER;
+	for (size_t i = 0; i < func.parameters.size(); i++) {
+		reg_map[int(i)] = int(i);
+	}
+	int next_reg = std::max(1, int(func.parameters.size()));
 
 	for (const auto& instr : func.instructions) {
 		for (const auto& op : instr.operands) {
@@ -1556,15 +1705,26 @@ void IROptimizer::reduce_register_pressure(IRFunction& func) {
 			}
 		}
 	}
+	bool changed = false;
 
 	for (auto& instr : func.instructions) {
 		for (auto& op : instr.operands) {
 			if (op.type == IRValue::Type::REGISTER) {
 				int old_reg = op.reg_index();
+				changed = changed || reg_map[old_reg] != old_reg;
 				op.reg_value = reg_map[old_reg];
 			}
 		}
 	}
+	for (IRFunction::DebugLocal& local : func.debug_locals) {
+		auto mapped = reg_map.find(local.register_num);
+		if (mapped != reg_map.end()) {
+			changed = changed || local.register_num != mapped->second;
+			local.register_num = mapped->second;
+		}
+	}
+	if (changed) invalidate_analysis();
+	return changed;
 }
 
 void IROptimizer::set_register_constant(int reg, const ConstantValue& value) {
@@ -1884,10 +2044,6 @@ bool IROptimizer::is_loop_invariant(const IRInstruction& instr, const LoopInfo& 
 		return true;
 	}
 
-	if (!ir_has_effect(instr.opcode, IR_SIMPLE_LOAD)) {
-		return false;
-	}
-
 	if (instr.opcode == IROpcode::LOAD_IMM ||
 	    instr.opcode == IROpcode::LOAD_FLOAT_IMM ||
 	    instr.opcode == IROpcode::LOAD_BOOL ||
@@ -1895,10 +2051,45 @@ bool IROptimizer::is_loop_invariant(const IRInstruction& instr, const LoopInfo& 
 		return true;
 	}
 
+	if (instr.opcode == IROpcode::LOAD_GLOBAL && instr.operands.size() >= 2 &&
+		instr.operands[1].type == IRValue::Type::IMMEDIATE)
+	{
+		const int64_t global = instr.operands[1].immediate();
+		for (size_t i = loop.header_idx; i < loop.end_idx && i < func.instructions.size(); i++) {
+			const IRInstruction& body = func.instructions[i];
+			if (ir_has_effect(body.opcode, IR_CALL)) {
+				return false;
+			}
+			if (body.opcode == IROpcode::STORE_GLOBAL && body.operands.size() >= 1 &&
+				body.operands[0].type == IRValue::Type::IMMEDIATE &&
+				body.operands[0].immediate() == global)
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
 	if (instr.opcode == IROpcode::MOVE && instr.operands.size() >= 2 &&
 	    instr.operands[1].type == IRValue::Type::REGISTER) {
 		int src_reg = instr.operands[1].reg_index();
 		return invariant_regs.count(src_reg) > 0;
+	}
+
+	const bool builds_from_inputs = instr.opcode == IROpcode::VGET_INLINE ||
+		instr.opcode == IROpcode::MAKE_VECTOR2 || instr.opcode == IROpcode::MAKE_VECTOR3 ||
+		instr.opcode == IROpcode::MAKE_VECTOR4 || instr.opcode == IROpcode::MAKE_VECTOR2I ||
+		instr.opcode == IROpcode::MAKE_VECTOR3I || instr.opcode == IROpcode::MAKE_VECTOR4I;
+	if (builds_from_inputs) {
+		for (size_t i = 0; i < instr.operands.size(); i++) {
+			if (!ir_reads_operand(instr, i)) {
+				continue;
+			}
+			if (invariant_regs.count(instr.operands[i].reg_index()) == 0) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	return false;
@@ -1996,63 +2187,66 @@ bool IROptimizer::loop_invariant_code_motion(IRFunction& func) {
 		return false;
 	}
 
-	// Skip LICM entirely for nested loops.
 	for (const auto& loop : loops) {
+		// The inner loop has its own preheader and control flow.  Leave that loop
+		// alone, but do not disable LICM for every other loop in the function.
+		bool nested = false;
 		for (const auto& other : loops) {
-			if (&loop == &other) continue;
-			if (loop.header_idx > other.header_idx && loop.header_idx < other.end_idx) {
-				return false;
+			if (&loop != &other && loop.header_idx > other.header_idx &&
+				loop.header_idx < other.end_idx)
+			{
+				nested = true;
+				break;
 			}
 		}
-	}
+		if (nested) {
+			continue;
+		}
+		const bool loop_reads_only = loop_only_reads_host(loop, func);
 
-	for (const auto& loop : loops) {
-			const bool loop_reads_only = loop_only_reads_host(loop, func);
+		// Seed with registers defined before the loop. Parameters arrive in
+		// r0..rN-1 with no instruction defining them, so they are seeded too;
+		// one reassigned inside the loop is caught by can_safely_hoist().
+		std::unordered_set<int> invariant_regs;
+		for (size_t i = 0; i < func.parameters.size(); i++) {
+			invariant_regs.insert(int(i));
+		}
 
-			// Seed with registers defined before the loop. Parameters arrive in
-			// r0..rN-1 with no instruction defining them, so they are seeded too;
-			// one reassigned inside the loop is caught by can_safely_hoist().
-			std::unordered_set<int> invariant_regs;
-			for (size_t i = 0; i < func.parameters.size(); i++) {
-				invariant_regs.insert(int(i));
+		for (size_t i = 0; i < loop.header_idx; i++) {
+			const int dst = ir_destination_register(func.instructions[i]);
+			if (dst >= 0) {
+				invariant_regs.insert(dst);
 			}
+		}
 
-			for (size_t i = 0; i < loop.header_idx; i++) {
+		std::unordered_set<size_t> invariant_instrs;
+		bool loop_changed = true;
+
+		while (loop_changed) {
+			loop_changed = false;
+
+			for (size_t i = loop.header_idx + 1; i < loop.end_idx && i < func.instructions.size(); i++) {
+				if (invariant_instrs.count(i)) {
+					continue;
+				}
+
 				const auto& instr = func.instructions[i];
-				if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-					invariant_regs.insert(instr.operands[0].reg_index());
+
+				if (ir_is_control_flow(instr.opcode)) {
+					continue;
+				}
+
+				if (is_loop_invariant(instr, loop, func, invariant_regs, loop_reads_only) &&
+				    can_safely_hoist(instr, i, loop, func)) {
+					invariant_instrs.insert(i);
+
+					const int dst = ir_destination_register(instr);
+					if (dst >= 0) invariant_regs.insert(dst);
+
+					loop_changed = true;
 				}
 			}
-
-			std::unordered_set<size_t> invariant_instrs;
-			bool loop_changed = true;
-
-			while (loop_changed) {
-				loop_changed = false;
-
-				for (size_t i = loop.header_idx + 1; i < loop.end_idx && i < func.instructions.size(); i++) {
-					if (invariant_instrs.count(i)) {
-						continue;
-					}
-
-					const auto& instr = func.instructions[i];
-
-					if (ir_is_control_flow(instr.opcode)) {
-						continue;
-					}
-
-					if (is_loop_invariant(instr, loop, func, invariant_regs, loop_reads_only) &&
-					    can_safely_hoist(instr, i, loop, func)) {
-						invariant_instrs.insert(i);
-
-						if (!instr.operands.empty() && instr.operands[0].type == IRValue::Type::REGISTER) {
-							invariant_regs.insert(instr.operands[0].reg_index());
-						}
-
-						loop_changed = true;
-					}
-				}
-			}
+		}
 
 		if (!invariant_instrs.empty()) {
 			std::vector<IRInstruction> hoisted;

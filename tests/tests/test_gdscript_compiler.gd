@@ -6481,7 +6481,8 @@ func test_sgd_breakpoint_line_must_be_one_based() :
 
 func test_array_element_access():
 	# `a[i]` on a known Array is ECALL_ARRAY_AT rather than Variant::call("get"),
-	# and a negative index is normalised in the guest before the call. Array.get(),
+	# and a dynamic negative index is normalised in the guest before the call;
+	# a negative constant is wrapped by the host in that same call. Array.get(),
 	# which the VCALL path reached, does not wrap -- so every answer here is
 	# checked against the engine's own.
 	var gdscript_code = """

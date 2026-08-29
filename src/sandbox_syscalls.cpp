@@ -4,6 +4,7 @@
 
 #include <algorithm>
 
+#include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/node2d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
@@ -14,6 +15,7 @@
 #include <godot_cpp/classes/timer.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/variant.hpp>
+#include <godot_cpp/templates/hashfuncs.hpp>
 //#define ENABLE_SYSCALL_TRACE 1
 #include "syscalls_helpers.hpp"
 #include <libriscv/rv32i_instr.hpp>
@@ -159,6 +161,27 @@ private:
 // says so where it declares its own scratch.
 using VariantScratch = VariantScratchN<gdscript::CallABI::MAX_ARGUMENTS>;
 
+// Scratch space for read-only guest arguments. Unlike VariantScratchN, an inline
+// scalar/vector is exposed in place and a scoped value is referenced directly, so
+// neither path pays a godot::Variant construction and destruction pair.
+template <unsigned CAPACITY>
+struct BorrowedVariantScratchN {
+	const Variant *emplace(const Sandbox &emu, const GuestVariant &value) {
+		BorrowedVariant *borrowed = new (&storage[m_count++]) BorrowedVariant(emu, value);
+		return &**borrowed;
+	}
+	~BorrowedVariantScratchN() {
+		for (unsigned i = 0; i < m_count; i++)
+			std::launder(reinterpret_cast<BorrowedVariant *>(&storage[i]))->~BorrowedVariant();
+	}
+
+private:
+	std::aligned_storage_t<sizeof(BorrowedVariant), alignof(BorrowedVariant)> storage[CAPACITY];
+	unsigned m_count = 0;
+};
+
+using BorrowedVariantScratch = BorrowedVariantScratchN<gdscript::CallABI::MAX_ARGUMENTS>;
+
 // The counterpart to object_callp() for the built-in Variant types. Godot
 // placement-constructs the return value here too, so it goes straight into
 // uninitialized storage instead of overwriting a freshly made nil.
@@ -174,7 +197,7 @@ static inline void variant_callp(Variant *self, const StringName &method, const 
 static constexpr const char *CLASS_INSTANCE_BASE_KEY = "@base";
 
 static inline godot::Object *class_instance_base(Sandbox &emu, const Variant &v) {
-	if (LIKELY(v.get_type() != Variant::DICTIONARY)) {
+	if (LIKELY(variant_type(v) != Variant::DICTIONARY)) {
 		return nullptr;
 	}
 	const Dictionary dict = v;
@@ -182,7 +205,7 @@ static inline godot::Object *class_instance_base(Sandbox &emu, const Variant &v)
 		return nullptr;
 	}
 	const Variant base = dict[CLASS_INSTANCE_BASE_KEY];
-	if (base.get_type() != Variant::OBJECT) {
+	if (variant_type(base) != Variant::OBJECT) {
 		return nullptr;
 	}
 	// Resolved the way an OBJECT argument is, so a restricted Sandbox still decides.
@@ -190,54 +213,138 @@ static inline godot::Object *class_instance_base(Sandbox &emu, const Variant &v)
 			Sandbox::object_handle_from_id(Sandbox::engine_object_id(base.operator godot::Object *())));
 }
 
-static inline void object_call(Sandbox &emu, godot::Object *obj, const Variant &method, const GuestVariant *args, int argc, CallResult &result) {
-	SYS_TRACE("object_call", method, argc);
-	// Two slots per argument: a class instance is replaced by the object it extends.
-	VariantScratchN<gdscript::CallABI::MAX_ARGUMENTS * 2> scratch;
-	const Variant *vargs[gdscript::CallABI::MAX_ARGUMENTS + 1];
-	vargs[0] = &method;
+static uint32_t method_compatibility_hash(const MethodInfo &method) {
+	const bool has_return = method.return_val.type != Variant::NIL ||
+			(method.return_val.usage & PROPERTY_USAGE_NIL_IS_VARIANT);
+	uint32_t hash = hash_murmur3_one_32(has_return);
+	hash = hash_murmur3_one_32(uint32_t(method.arguments.size()), hash);
+	if (has_return) {
+		hash = hash_murmur3_one_32(method.return_val.type, hash);
+		if (method.return_val.class_name != StringName())
+			hash = hash_murmur3_one_32(method.return_val.class_name.hash(), hash);
+	}
+	for (const PropertyInfo &arg : method.arguments) {
+		hash = hash_murmur3_one_32(arg.type, hash);
+		if (arg.class_name != StringName())
+			hash = hash_murmur3_one_32(arg.class_name.hash(), hash);
+	}
+	hash = hash_murmur3_one_32(uint32_t(method.default_arguments.size()), hash);
+	for (const Variant &value : method.default_arguments)
+		hash = hash_murmur3_one_32(value.hash(), hash);
+	hash = hash_murmur3_one_32(method.flags & GDEXTENSION_METHOD_FLAG_CONST ? 1 : 0, hash);
+	hash = hash_murmur3_one_32(method.flags & GDEXTENSION_METHOD_FLAG_VARARG ? 1 : 0, hash);
+	return hash_fmix32(hash);
+}
+
+static GDExtensionMethodBindPtr cached_method_bind(godot::Object *obj,
+		Sandbox::CachedName &method) {
+	const std::type_info *object_type = &typeid(*obj);
+	const unsigned index = object_type->hash_code() & (Sandbox::CachedName::METHOD_CACHE_SIZE - 1);
+	Sandbox::CachedName::MethodEntry &entry = method.methods[index];
+	if (entry.object_type == object_type && entry.resolved)
+		return entry.bind;
+
+	entry = {};
+	entry.object_type = object_type;
+	entry.resolved = true;
+
+	StringName class_name;
+	if (!internal::gdextension_interface_object_get_class_name(obj->_owner, internal::library,
+			class_name._native_ptr())) {
+		return nullptr;
+	}
+
+	const TypedArray<Dictionary> methods = ClassDBSingleton::get_singleton()->class_get_method_list(class_name);
+	for (int i = 0; i < methods.size(); i++) {
+		const Dictionary info_dict = methods[i];
+		if (StringName(info_dict["name"]) != method.sname)
+			continue;
+		// Script-facing pseudo-methods such as Object.free() have no MethodBind.
+		// ClassDB reports those with ID zero; leave them on Object::call().
+		if (int64_t(info_dict["id"]) == 0)
+			break;
+		const MethodInfo info = MethodInfo::from_dict(info_dict);
+		entry.bind = internal::gdextension_interface_classdb_get_method_bind(
+				class_name._native_ptr(), method.sname._native_ptr(), method_compatibility_hash(info));
+		break;
+	}
+	return entry.bind;
+}
+
+static inline void object_call(Sandbox &emu, godot::Object *obj,
+		Sandbox::CachedName &method, std::string_view method_name,
+		const GuestVariant *args, int argc, CallResult &result, bool native_only = false) {
+	SYS_TRACE("object_call", method.sname, argc);
+	BorrowedVariantScratch borrowed;
+	VariantScratch replacements;
+	const Variant *vargs[gdscript::CallABI::MAX_ARGUMENTS];
 	for (int i = 0; i < argc; i++) {
-		const Variant *arg = args[i].is_scoped_variant()
-				? args[i].toVariantPtr(emu)
-				: scratch.emplace(args[i].toVariant(emu));
+		const Variant *arg = borrowed.emplace(emu, args[i]);
 		// The guest's own tag gates this: it costs nothing to read, and a wrong one
 		// only means an instance is passed along whole, which class_instance_base()
 		// re-checks against the resolved Variant anyway.
 		if (UNLIKELY(args[i].type == Variant::DICTIONARY)) {
 			if (godot::Object *base = class_instance_base(emu, *arg)) {
-				arg = scratch.emplace(Variant(base));
+				arg = replacements.emplace(Variant(base));
 			}
 		}
-		vargs[i + 1] = arg;
+		vargs[i] = arg;
 	}
-	// Constructed last: the result's destructor assumes the call below has run.
-	object_callp(obj, vargs, argc + 1, result);
+
+	GDExtensionCallError error;
+	if (!native_only && internal::gdextension_interface_object_has_script_method(
+			obj->_owner, method.sname._native_ptr())) {
+		internal::gdextension_interface_object_call_script_method(obj->_owner,
+				method.sname._native_ptr(), reinterpret_cast<GDExtensionConstVariantPtr *>(vargs),
+				argc, &result.get(), &error);
+		result.mark_constructed();
+	// Object.call() is itself a variadic dispatcher. Keep it on the fallback so
+	// the dispatched method name remains the first user argument; besides
+	// preserving script dispatch, object_callp() uses that shape to report
+	// failures as "name (via call)" instead of a failure to call "call".
+	} else if (GDExtensionMethodBindPtr bind = method_name != "call"
+			? cached_method_bind(obj, method) : nullptr) {
+		internal::gdextension_interface_object_method_bind_call(bind, obj->_owner,
+				reinterpret_cast<GDExtensionConstVariantPtr *>(vargs), argc, &result.get(), &error);
+		result.mark_constructed();
+	} else {
+		// Dynamic extension methods are not necessarily present in ClassDB. Preserve
+		// Object::call() as the cold fallback for those and for its normal diagnostics.
+		if (native_only)
+			safegdscript_bypass_super(obj, method.sname);
+		const Variant *fallback_args[gdscript::CallABI::MAX_ARGUMENTS + 1];
+		fallback_args[0] = &method.variant;
+		for (int i = 0; i < argc; i++)
+			fallback_args[i + 1] = vargs[i];
+		object_callp(obj, fallback_args, argc + 1, result);
+		return;
+	}
+
+	if (UNLIKELY(error.error != GDEXTENSION_CALL_OK)) {
+		throw_on_call_error(error, method_name, obj->get_class(), vargs, argc);
+	}
 }
 
 /// @brief Call a method on an Object, after checking that the sandbox allows it.
 static inline void object_call_checked(Sandbox &emu, godot::Object *obj,
-		const Sandbox::CachedName &cached_method, std::string_view method_name,
-		const GuestVariant *args, int argc, CallResult &result) {
-	// Held by value, as the call below can re-enter the sandbox and evict the cache entry
-	// while Godot is still reading the name.
-	const Variant method_v = cached_method.variant;
-
-	if (UNLIKELY(!emu.is_allowed_method(obj, method_v))) {
-		ERR_PRINT("Variant::call(): Method not allowed: " + method_v.operator String());
+		Sandbox::CachedNameRef &cached_method, std::string_view method_name,
+		const GuestVariant *args, int argc, CallResult &result, bool native_only = false) {
+	if (UNLIKELY(!emu.is_allowed_method(obj, cached_method->variant))) {
+		ERR_PRINT("Variant::call(): Method not allowed: " + cached_method->variant.operator String());
 		throw std::runtime_error("Variant::call(): Method not allowed: " + std::string(method_name));
 	}
-	object_call(emu, obj, method_v, args, argc, result);
+	object_call(emu, obj, cached_method.get(), method_name, args, argc, result, native_only);
 }
 
 /// @brief Call a method on a resolved Variant, whatever the guest labelled it as.
 static inline void variant_or_object_call(Sandbox &emu, Variant *vcall,
-		const Sandbox::CachedName &cached_method, std::string_view method_name,
+		Sandbox::CachedNameRef &cached_method, std::string_view method_name,
 		const GuestVariant *args, int argc, CallResult &result) {
 	// The guest owns the type tag, but not the Variant its index refers to, and the two
 	// need not agree. An Object reached through a non-OBJECT tag still has to take the
 	// object path: calling it as a built-in Variant would reach every method on it
 	// without ever asking is_allowed_method().
-	const Variant::Type vtype = vcall->get_type();
+	const Variant::Type vtype = variant_type(*vcall);
 	if (UNLIKELY(vtype == Variant::OBJECT)) {
 		godot::Object *obj = get_object_from_address(emu,
 				Sandbox::object_handle_from_id(Sandbox::engine_object_id(vcall->operator godot::Object *())));
@@ -245,7 +352,7 @@ static inline void variant_or_object_call(Sandbox &emu, Variant *vcall,
 		return;
 	}
 
-	const StringName method_sn = cached_method.sname; // Held by value, see above.
+	const StringName &method_sn = cached_method->sname; // The cache entry is pinned.
 
 	// A class instance is a Dictionary. Dictionary's own methods answer first, the
 	// way a class answers before its base does in GDScript; everything else belongs
@@ -257,19 +364,15 @@ static inline void variant_or_object_call(Sandbox &emu, Variant *vcall,
 		}
 	}
 
-	VariantScratch scratch;
+	BorrowedVariantScratch scratch;
 	const Variant *argptrs[gdscript::CallABI::MAX_ARGUMENTS];
 	for (int i = 0; i < argc; i++) {
-		if (args[i].is_scoped_variant()) {
-			argptrs[i] = args[i].toVariantPtr(emu);
-		} else {
-			argptrs[i] = scratch.emplace(args[i].toVariant(emu));
-		}
+		argptrs[i] = scratch.emplace(emu, args[i]);
 	}
 
 	GDExtensionCallError error;
 	variant_callp(vcall, method_sn, argptrs, argc, result, error);
-	throw_on_call_error(error, method_name, GuestVariant::type_name(vcall->get_type()), argptrs, argc);
+	throw_on_call_error(error, method_name, GuestVariant::type_name(vtype), argptrs, argc);
 }
 
 // a0 = awaited GuestVariant, a1 = frame base, a2 = frame size, a3 = state index,
@@ -361,14 +464,10 @@ APICALL(api_print) {
 	// Only the resolution happens here. Turning the arguments into text is left
 	// to Sandbox::print(), because stringify() can re-enter the guest and has to
 	// run under the same latch as the output. See the comment there.
-	VariantScratchN<64> scratch;
+	BorrowedVariantScratchN<64> scratch;
 	const Variant *args[64];
 	for (unsigned i = 0; i < len; i++) {
-		const GuestVariant &var = array_ptr[i];
-		if (var.is_scoped_variant())
-			args[i] = var.toVariantPtr(emu);
-		else
-			args[i] = scratch.emplace(var.toVariant(emu));
+		args[i] = scratch.emplace(emu, array_ptr[i]);
 	}
 	// A zero-argument print() still prints an empty line, as it does in GDScript.
 	emu.print(args, len);
@@ -392,14 +491,10 @@ APICALL(api_print_channel) {
 
 	PENALIZE(10'000 + 10'000 * len);
 
-	VariantScratchN<64> scratch;
+	BorrowedVariantScratchN<64> scratch;
 	const Variant *args[64];
 	for (unsigned i = 0; i < len; i++) {
-		const GuestVariant &var = array_ptr[i];
-		if (var.is_scoped_variant())
-			args[i] = var.toVariantPtr(emu);
-		else
-			args[i] = scratch.emplace(var.toVariant(emu));
+		args[i] = scratch.emplace(emu, array_ptr[i]);
 	}
 	const Print_Channel print_channel = Print_Channel(channel);
 	if (print_channel == Print_Channel::PUSH_ERROR ||
@@ -706,7 +801,8 @@ static double utility_math_op(Utility_Op op, const double args[8]) {
 
 // Godot's len(): the number of elements, for the Variants that have one.
 static int64_t utility_len(const Variant &value) {
-	switch (value.get_type()) {
+	const Variant::Type type = variant_type(value);
+	switch (type) {
 		case Variant::STRING:
 		case Variant::STRING_NAME:
 		case Variant::NODE_PATH:
@@ -739,7 +835,7 @@ static int64_t utility_len(const Variant &value) {
 			break;
 	}
 	ERR_PRINT("len(): Value of this type can't provide a length");
-	throw std::runtime_error(std::string("len(): A ") + GuestVariant::type_name(value.get_type()) +
+	throw std::runtime_error(std::string("len(): A ") + GuestVariant::type_name(type) +
 			" can't provide a length");
 }
 
@@ -754,7 +850,7 @@ static int64_t utility_len(const Variant &value) {
 // number or a bool, so what arrives here is the case where it could be
 // anything.
 static int64_t utility_to_int(const Variant &value) {
-	switch (value.get_type()) {
+	switch (variant_type(value)) {
 		case Variant::BOOL:
 		case Variant::INT:
 		case Variant::FLOAT:
@@ -768,7 +864,7 @@ static int64_t utility_to_int(const Variant &value) {
 }
 
 static double utility_to_float(const Variant &value) {
-	switch (value.get_type()) {
+	switch (variant_type(value)) {
 		case Variant::BOOL:
 		case Variant::INT:
 		case Variant::FLOAT:
@@ -781,11 +877,8 @@ static double utility_to_float(const Variant &value) {
 	}
 }
 
-// Stringify one argument, avoiding the copy when it is already a scoped variant.
 static inline String utility_stringify(const Sandbox &emu, const GuestVariant &gv) {
-	if (gv.is_scoped_variant())
-		return gv.toVariantPtr(emu)->operator String();
-	return gv.toVariant(emu).operator String();
+	return BorrowedVariant(emu, gv)->operator String();
 }
 
 APICALL(api_utility) {
@@ -835,6 +928,9 @@ APICALL(api_utility) {
 			const GuestVariant *args = arg_count
 					? machine.memory.memarray<GuestVariant>(args_addr, arg_count)
 					: nullptr;
+			auto arg = [&](unsigned index) -> BorrowedVariant {
+				return BorrowedVariant(emu, args[index]);
+			};
 
 			switch (op) {
 				case Utility_Op::STR: {
@@ -856,7 +952,7 @@ APICALL(api_utility) {
 				}
 				case Utility_Op::LEN:
 					PENALIZE(10'000);
-					vres->create(emu, Variant(utility_len(args[0].toVariant(emu))));
+					vres->create(emu, Variant(utility_len(*arg(0))));
 					break;
 				case Utility_Op::IS_INSTANCE_VALID: {
 					PENALIZE(10'000);
@@ -879,65 +975,65 @@ APICALL(api_utility) {
 				}
 				case Utility_Op::TO_INT:
 					PENALIZE(10'000);
-					vres->create(emu, Variant(utility_to_int(args[0].toVariant(emu))));
+					vres->create(emu, Variant(utility_to_int(*arg(0))));
 					break;
 				case Utility_Op::TO_FLOAT:
 					PENALIZE(10'000);
-					vres->create(emu, Variant(utility_to_float(args[0].toVariant(emu))));
+					vres->create(emu, Variant(utility_to_float(*arg(0))));
 					break;
 
 				// Serialization and identity. Host-only: engine Variant encoding.
 				case Utility_Op::HASH:
 					PENALIZE(20'000);
-					vres->create(emu, UtilityFunctions::hash(args[0].toVariant(emu)));
+					vres->create(emu, UtilityFunctions::hash(*arg(0)));
 					break;
 				case Utility_Op::VAR_TO_STR:
 					PENALIZE(50'000);
-					vres->create(emu, UtilityFunctions::var_to_str(args[0].toVariant(emu)));
+					vres->create(emu, UtilityFunctions::var_to_str(*arg(0)));
 					break;
 				case Utility_Op::STR_TO_VAR:
 					PENALIZE(50'000);
-					vres->create(emu, UtilityFunctions::str_to_var(args[0].toVariant(emu)));
+					vres->create(emu, UtilityFunctions::str_to_var(*arg(0)));
 					break;
 				case Utility_Op::VAR_TO_BYTES:
 					PENALIZE(50'000);
-					vres->create(emu, UtilityFunctions::var_to_bytes(args[0].toVariant(emu)));
+					vres->create(emu, UtilityFunctions::var_to_bytes(*arg(0)));
 					break;
 				case Utility_Op::BYTES_TO_VAR:
 					PENALIZE(50'000);
-					vres->create(emu, UtilityFunctions::bytes_to_var(args[0].toVariant(emu)));
+					vres->create(emu, UtilityFunctions::bytes_to_var(*arg(0)));
 					break;
 				case Utility_Op::TYPE_STRING:
 					PENALIZE(10'000);
-					vres->create(emu, UtilityFunctions::type_string(args[0].toVariant(emu)));
+					vres->create(emu, UtilityFunctions::type_string(*arg(0)));
 					break;
 				case Utility_Op::TYPE_CONVERT:
 					PENALIZE(20'000);
 					vres->create(emu, UtilityFunctions::type_convert(
-							args[0].toVariant(emu), args[1].toVariant(emu)));
+							*arg(0), *arg(1)));
 					break;
 				case Utility_Op::ERROR_STRING:
 					PENALIZE(10'000);
-					vres->create(emu, UtilityFunctions::error_string(args[0].toVariant(emu)));
+					vres->create(emu, UtilityFunctions::error_string(*arg(0)));
 					break;
 				case Utility_Op::IS_SAME:
 					PENALIZE(10'000);
 					vres->create(emu, UtilityFunctions::is_same(
-							args[0].toVariant(emu), args[1].toVariant(emu)));
+							*arg(0), *arg(1)));
 					break;
 
 				// char() and ord(). godot-cpp binds neither -- `char` is a C++
 				// keyword -- so these are the String operations they are made of.
 				case Utility_Op::CHAR:
 					PENALIZE(10'000);
-					vres->create(emu, Variant(String::chr(args[0].toVariant(emu).operator int64_t())));
+					vres->create(emu, Variant(String::chr(arg(0)->operator int64_t())));
 					break;
 				// The one seeded draw: no shared generator is read or written,
 				// so a restricted program may call it.
 				case Utility_Op::RAND_FROM_SEED:
 					PENALIZE(20'000);
 					vres->create(emu, UtilityFunctions::rand_from_seed(
-							args[0].toVariant(emu).operator int64_t()));
+							arg(0)->operator int64_t()));
 					break;
 				case Utility_Op::RANDOMIZE:
 					PENALIZE(10'000);
@@ -946,14 +1042,14 @@ APICALL(api_utility) {
 					break;
 				case Utility_Op::SEED:
 					PENALIZE(10'000);
-					UtilityFunctions::seed(args[0].toVariant(emu).operator int64_t());
+					UtilityFunctions::seed(arg(0)->operator int64_t());
 					vres->create(emu, Variant());
 					break;
 
 				case Utility_Op::ORD: {
 					PENALIZE(10'000);
 					// Godot refuses anything but a single character and answers 0.
-					const String text = args[0].toVariant(emu).operator String();
+					const String text = arg(0)->operator String();
 					if (text.length() != 1) {
 						ERR_PRINT("ord(): Expected a string of length 1 (a character)");
 						vres->create(emu, Variant(int64_t(0)));
@@ -965,7 +1061,7 @@ APICALL(api_utility) {
 
 				default:
 					PENALIZE(10'000);
-					vres->create(emu, Variant(args[0].toVariant(emu).booleanize()));
+					vres->create(emu, Variant(arg(0)->booleanize()));
 					break;
 			}
 			return;
@@ -1016,7 +1112,7 @@ static void vcall_impl(machine_t &machine, bool super) {
 	// Reuse the name built for this call site. Only the form the branch below actually
 	// needs is copied out: the two forms are not interchangeable without Godot building
 	// one from the other, which is the cost the cache exists to avoid.
-	const Sandbox::CachedName &cached_method = emu.cached_guest_name(method, method_sv.substr(0, mlen), method_sv.back() == '\0');
+	Sandbox::CachedNameRef cached_method = emu.cached_guest_name(method, method_sv.substr(0, mlen), method_sv.back() == '\0');
 
 	// Both call paths have Godot construct the return value directly in this storage.
 	CallResult result;
@@ -1024,19 +1120,13 @@ static void vcall_impl(machine_t &machine, bool super) {
 
 	if (vp->type == Variant::OBJECT) {
 		godot::Object *obj = get_object_from_address(emu, vp->v.i);
-		// `super.method()` on a native base. The object carries the class's own
-		// script instance, which answers before the engine does and would
-		// re-enter the very method that made this call.
-		if (UNLIKELY(super)) {
-			safegdscript_bypass_super(obj, cached_method.sname);
-		}
-		object_call_checked(emu, obj, cached_method, method_name, args, args_size, result);
+		object_call_checked(emu, obj, cached_method, method_name, args, args_size, result, super);
 	} else if (vp->is_scoped_variant()) {
 		Variant *vcall = const_cast<Variant *>(vp->toVariantPtr(emu));
 		// Godot's read-only enforcement only prints and no-ops; throw so the guest unwinds.
 		// Keyed on the resolved Variant: vp->type is the guest's, and every scoped type
 		// reaches this one branch.
-		const Variant::Type vtype = vcall->get_type();
+		const Variant::Type vtype = variant_type(*vcall);
 		if (UNLIKELY(vtype == Variant::ARRAY || vtype == Variant::DICTIONARY)) {
 			if (is_container_mutator(method_name)) {
 				throw_if_read_only(*vcall, "Variant::call");
@@ -1044,8 +1134,9 @@ static void vcall_impl(machine_t &machine, bool super) {
 		}
 		variant_or_object_call(emu, vcall, cached_method, method_name, args, args_size, result);
 	} else {
-		Variant vcall = vp->toVariant(emu);
-		variant_or_object_call(emu, &vcall, cached_method, method_name, args, args_size, result);
+		BorrowedVariant vcall(emu, *vp);
+		variant_or_object_call(emu, const_cast<Variant *>(&*vcall), cached_method,
+				method_name, args, args_size, result);
 	}
 	// Create a new Variant with the result, if any.
 	if (vret_addr != 0) {
@@ -1117,10 +1208,8 @@ APICALL(api_veval) {
 		return;
 	}
 
-	// Scoped variants are already Variants; skip the copy for evaluate()'s read-only operands.
-	VariantScratchN<2> scratch;
-	const Variant *a = ap->is_scoped_variant() ? ap->toVariantPtr(emu) : scratch.emplace(ap->toVariant(emu));
-	const Variant *b = bp->is_scoped_variant() ? bp->toVariantPtr(emu) : scratch.emplace(bp->toVariant(emu));
+	const BorrowedVariant a(emu, *ap);
+	const BorrowedVariant b(emu, *bp);
 
 	// Shifting two integers. Variant::evaluate() refuses a negative operand,
 	// but it is not the path GDScript runs: with the types known the engine
@@ -1128,7 +1217,7 @@ APICALL(api_veval) {
 	// masked to six bits, and `-16 >> 2` is -4 there. Match that, which is
 	// also what the compiler emits when it knows both operands are integers.
 	if ((op == Variant::OP_SHIFT_LEFT || op == Variant::OP_SHIFT_RIGHT) &&
-			a->get_type() == Variant::INT && b->get_type() == Variant::INT) {
+			ap->type == Variant::INT && bp->type == Variant::INT) {
 		const int64_t lhs = a->operator int64_t();
 		const int shift = int(b->operator int64_t() & 63);
 		const int64_t answer = (op == Variant::OP_SHIFT_LEFT)
@@ -1171,16 +1260,12 @@ APICALL(api_vconstruct) {
 		throw std::runtime_error("vconstruct: Invalid argument count " + std::to_string(argc));
 	}
 
-	VariantScratch scratch;
+	BorrowedVariantScratch scratch;
 	const Variant *argptrs[VariantScratch::MAX];
 	if (argc > 0) {
 		const GuestVariant *args = machine.memory.memarray<const GuestVariant>(gargs, argc);
 		for (int i = 0; i < argc; i++) {
-			if (args[i].is_scoped_variant()) {
-				argptrs[i] = args[i].toVariantPtr(emu);
-			} else {
-				argptrs[i] = scratch.emplace(args[i].toVariant(emu));
-			}
+			argptrs[i] = scratch.emplace(emu, args[i]);
 		}
 	}
 
@@ -1988,9 +2073,11 @@ APICALL(api_vassign) {
 	const Variant &va = get_scoped_variant_or_throw(emu, a_idx, "Variant::assign (destination)");
 	const Variant &vb = get_scoped_variant_or_throw(emu, b_idx, "Variant::assign (source)");
 	// XXX: This might be too strict. Assigning arbitrarily between different types is allowed in GDScript.
-	if (va.get_type() != Variant::NIL && va.get_type() != vb.get_type()) {
+	const Variant::Type a_type = variant_type(va);
+	const Variant::Type b_type = variant_type(vb);
+	if (a_type != Variant::NIL && a_type != b_type) {
 		ERR_PRINT("vassign: Variant types do not match");
-		throw std::runtime_error("vassign: Variant types do not match: " + std::string(GuestVariant::type_name(va.get_type())) + " != " + std::string(GuestVariant::type_name(vb.get_type())));
+		throw std::runtime_error("vassign: Variant types do not match: " + std::string(GuestVariant::type_name(a_type)) + " != " + std::string(GuestVariant::type_name(b_type)));
 	}
 
 	// Try assigning the value of b to a.
@@ -2223,15 +2310,17 @@ APICALL(api_obj_property_get) {
 	} else {
 		// It's likely a Variant index
 		const Variant &var = get_scoped_variant_or_throw(emu, uint32_t(addr), "Object::get_property");
-		if (var.get_type() != Variant::OBJECT) {
+		const Variant::Type var_type = variant_type(var);
+		if (var_type != Variant::OBJECT) {
 			bool valid = false;
-			const StringName member = emu.cached_guest_name(g_property, method, false).sname;
+			Sandbox::CachedNameRef cached_member = emu.cached_guest_name(g_property, method, false);
+			const StringName &member = cached_member->sname;
 			Variant value = var.get_named(member, valid);
 			if (!valid) {
-				ERR_PRINT("api_obj_property_get: " + String(GuestVariant::type_name(var.get_type())) +
+				ERR_PRINT("api_obj_property_get: " + String(GuestVariant::type_name(var_type)) +
 						" has no member " + member);
 				throw std::runtime_error("api_obj_property_get: " +
-						std::string(GuestVariant::type_name(var.get_type())) + " has no member " +
+						std::string(GuestVariant::type_name(var_type)) + " has no member " +
 						std::string(method));
 			}
 			vret->create(emu, std::move(value));
@@ -2239,9 +2328,8 @@ APICALL(api_obj_property_get) {
 		}
 		obj = var.operator godot::Object *();
 	}
-	// Reuse the StringName built for this call site. Held by value, as the allowed-property
-	// callback below may re-enter the sandbox and evict the cache entry.
-	const StringName prop_name = emu.cached_guest_name(g_property, method, false).sname;
+	Sandbox::CachedNameRef cached_property = emu.cached_guest_name(g_property, method, false);
+	const StringName &prop_name = cached_property->sname;
 
 	if (UNLIKELY(!emu.is_allowed_property(obj, prop_name, false))) {
 		ERR_PRINT("Banned property accessed: " + prop_name);
@@ -2264,33 +2352,35 @@ APICALL(api_obj_property_set) {
 	} else {
 		// It's likely a Variant index
 		const Variant &var = get_scoped_variant_or_throw(emu, uint32_t(addr), "Object::set_property");
-		if (var.get_type() != Variant::OBJECT) {
+		if (variant_type(var) != Variant::OBJECT) {
 			// Built-in member set: get_mutable copies a borrowed Variant first.
 			Variant &target = emu.get_mutable_scoped_variant(int32_t(uint32_t(addr)));
 			bool valid = false;
-			const StringName member = emu.cached_guest_name(g_property, method, false).sname;
-			target.set_named(member, g_value->toVariant(emu), valid);
+			Sandbox::CachedNameRef cached_member = emu.cached_guest_name(g_property, method, false);
+			const StringName &member = cached_member->sname;
+			const BorrowedVariant value(emu, *g_value);
+			target.set_named(member, *value, valid);
 			if (!valid) {
-				ERR_PRINT("api_obj_property_set: " + String(GuestVariant::type_name(target.get_type())) +
+				const Variant::Type target_type = variant_type(target);
+				ERR_PRINT("api_obj_property_set: " + String(GuestVariant::type_name(target_type)) +
 						" has no member " + member);
 				throw std::runtime_error("api_obj_property_set: " +
-						std::string(GuestVariant::type_name(target.get_type())) + " has no member " +
+						std::string(GuestVariant::type_name(target_type)) + " has no member " +
 						std::string(method));
 			}
 			return;
 		}
 		obj = var.operator godot::Object *();
 	}
-	// Reuse the StringName built for this call site. Held by value, as the allowed-property
-	// callback below may re-enter the sandbox and evict the cache entry.
-	const StringName prop_name = emu.cached_guest_name(g_property, method, false).sname;
+	Sandbox::CachedNameRef cached_property = emu.cached_guest_name(g_property, method, false);
+	const StringName &prop_name = cached_property->sname;
 
 	if (UNLIKELY(!emu.is_allowed_property(obj, prop_name, true))) {
 		ERR_PRINT("Banned property set: " + prop_name);
 		throw std::runtime_error("Banned property set: " + std::string(method));
 	}
 
-	obj->set(prop_name, g_value->toVariant(emu));
+	obj->set(prop_name, *BorrowedVariant(emu, *g_value));
 }
 
 APICALL(api_obj_callp) {
@@ -2308,20 +2398,19 @@ APICALL(api_obj_callp) {
 	const GuestVariant *g_args = args_size ? machine.memory.memarray<GuestVariant>(args_addr, args_size) : nullptr;
 
 	const std::string_view method_view = memview_with_terminator(machine, g_method, g_method_len).substr(0, size_t(g_method_len) + 1);
-	// Reuse the StringName built for this call site, keyed on the guest address it came from.
-	// Held by value: the allowed-method callback below may re-enter the sandbox and evict the
-	// cache entry, and the method we vet must be the method we go on to call.
-	const Variant method = emu.cached_guest_name(g_method, method_view.substr(0, g_method_len), method_view.back() == '\0').variant;
+	Sandbox::CachedNameRef method = emu.cached_guest_name(g_method,
+			method_view.substr(0, g_method_len), method_view.back() == '\0');
 
 	// Check for banned methods.
-	if (UNLIKELY(!emu.is_allowed_method(obj, method))) {
-		ERR_PRINT("Banned method called: " + method.operator String());
+	if (UNLIKELY(!emu.is_allowed_method(obj, method->variant))) {
+		ERR_PRINT("Banned method called: " + method->variant.operator String());
 		throw std::runtime_error("Banned method called: " + std::string(method_view.substr(0, g_method_len)));
 	}
 
 	if (!deferred) {
 		CallResult result;
-		object_call(emu, obj, method, g_args, args_size, result);
+		object_call(emu, obj, method.get(), method_view.substr(0, g_method_len),
+				g_args, args_size, result);
 		if (vret_ptr != 0) {
 			GuestVariant *vret = machine.memory.memarray<GuestVariant>(vret_ptr, 1);
 			vret->create(emu, std::move(result.get()));
@@ -2329,30 +2418,30 @@ APICALL(api_obj_callp) {
 	} else {
 		// The call itself runs after this syscall returns, with no frame left to throw
 		// from; a missing method is still decidable here.
-		if (UNLIKELY(!obj->has_method(method))) {
-			ERR_PRINT("Nonexistent method deferred: " + method.operator String());
+		if (UNLIKELY(!obj->has_method(method->sname))) {
+			ERR_PRINT("Nonexistent method deferred: " + method->variant.operator String());
 			throw std::runtime_error("Nonexistent method deferred: " + std::string(method_view.substr(0, g_method_len)));
 		}
 		// Call deferred unfortunately takes a parameter pack, so we have to manually
 		// check the number of arguments, and call the correct function.
 		if (args_size == 0) {
-			obj->call_deferred(method);
+			obj->call_deferred(method->sname);
 		} else if (args_size == 1) {
-			obj->call_deferred(method, g_args[0].toVariant(emu));
+			obj->call_deferred(method->sname, g_args[0].toVariant(emu));
 		} else if (args_size == 2) {
-			obj->call_deferred(method, g_args[0].toVariant(emu), g_args[1].toVariant(emu));
+			obj->call_deferred(method->sname, g_args[0].toVariant(emu), g_args[1].toVariant(emu));
 		} else if (args_size == 3) {
-			obj->call_deferred(method, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu));
+			obj->call_deferred(method->sname, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu));
 		} else if (args_size == 4) {
-			obj->call_deferred(method, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu));
+			obj->call_deferred(method->sname, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu));
 		} else if (args_size == 5) {
-			obj->call_deferred(method, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu));
+			obj->call_deferred(method->sname, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu));
 		} else if (args_size == 6) {
-			obj->call_deferred(method, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu));
+			obj->call_deferred(method->sname, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu));
 		} else if (args_size == 7) {
-			obj->call_deferred(method, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu), g_args[6].toVariant(emu));
+			obj->call_deferred(method->sname, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu), g_args[6].toVariant(emu));
 		} else if (args_size == 8) {
-			obj->call_deferred(method, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu), g_args[6].toVariant(emu), g_args[7].toVariant(emu));
+			obj->call_deferred(method->sname, g_args[0].toVariant(emu), g_args[1].toVariant(emu), g_args[2].toVariant(emu), g_args[3].toVariant(emu), g_args[4].toVariant(emu), g_args[5].toVariant(emu), g_args[6].toVariant(emu), g_args[7].toVariant(emu));
 		}
 	}
 }
@@ -2979,10 +3068,16 @@ APICALL(api_array_ops) {
 }
 
 APICALL(api_array_at) {
-	auto [arr_idx, idx, vret] = machine.sysargs<unsigned, int, GuestVariant *>();
+	auto [arr_idx, idx, encoded_vret] = machine.sysargs<unsigned, int64_t, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
 	PENALIZE(10'000); // Costly Array operations.
-	SYS_TRACE("array_at", arr_idx, idx, vret);
+	SYS_TRACE("array_at", arr_idx, idx, encoded_vret);
+
+	// GuestVariant addresses are naturally aligned. A set keeps the legacy
+	// negative-index encoding; a negative constant get tags the otherwise-unused
+	// low pointer bit so Godot can wrap the signed index in this same syscall.
+	const bool negative_get = (encoded_vret & 1u) != 0;
+	GuestVariant *vret = machine.memory.memarray<GuestVariant>(encoded_vret & ~gaddr_t(1), 1);
 
 	const Variant &var_array = get_scoped_variant_or_throw(emu, arr_idx, "Array::at");
 	if (variant_type(var_array) != Variant::ARRAY) {
@@ -2990,7 +3085,7 @@ APICALL(api_array_at) {
 		throw std::runtime_error("Invalid Array object, idx = " + std::to_string(arr_idx) + " type = " + GuestVariant::type_name(var_array.get_type()));
 	}
 
-	const bool set_mode = idx < 0;
+	const bool set_mode = idx < 0 && !negative_get;
 	const int64_t index = set_mode ? -int64_t(idx) - 1 : idx;
 	GDExtensionBool valid = false;
 	GDExtensionBool oob = false;
@@ -3179,7 +3274,7 @@ APICALL(api_string_ops) {
 	SYS_TRACE("string_ops", int(op), str_idx, index, vaddr);
 
 	const Variant &var_str = get_scoped_variant_or_throw(emu, str_idx, "String::operation");
-	const Variant::Type type = var_str.get_type();
+	const Variant::Type type = variant_type(var_str);
 	if (type != Variant::STRING && type != Variant::STRING_NAME && type != Variant::NODE_PATH) {
 		ERR_PRINT("Invalid String object type: " + String(GuestVariant::type_name(type)));
 		throw std::runtime_error("Invalid String object type: " + std::string(GuestVariant::type_name(type)));
@@ -3246,9 +3341,10 @@ APICALL(api_string_at) {
 	SYS_TRACE("string_at", str_idx, index);
 
 	const Variant &var_str = get_scoped_variant_or_throw(emu, str_idx, "String::at");
-	if (var_str.get_type() != Variant::STRING) {
-		ERR_PRINT("Invalid String object, type = " + String(GuestVariant::type_name(var_str.get_type())));
-		throw std::runtime_error("Invalid String object, idx = " + std::to_string(str_idx) + " type = " + GuestVariant::type_name(var_str.get_type()));
+	const Variant::Type type = variant_type(var_str);
+	if (type != Variant::STRING) {
+		ERR_PRINT("Invalid String object, type = " + String(GuestVariant::type_name(type)));
+		throw std::runtime_error("Invalid String object, idx = " + std::to_string(str_idx) + " type = " + GuestVariant::type_name(type));
 	}
 
 	// Indexing the Variant hands back the one-character String already boxed,
@@ -3278,9 +3374,10 @@ APICALL(api_string_batch) {
 	SYS_TRACE("string_batch", str_idx, start, max_count);
 
 	const Variant &var_str = get_scoped_variant_or_throw(emu, str_idx, "String::batch");
-	if (var_str.get_type() != Variant::STRING) {
-		ERR_PRINT("Invalid String object, type = " + String(GuestVariant::type_name(var_str.get_type())));
-		throw std::runtime_error("Invalid String object, idx = " + std::to_string(str_idx) + " type = " + GuestVariant::type_name(var_str.get_type()));
+	const Variant::Type type = variant_type(var_str);
+	if (type != Variant::STRING) {
+		ERR_PRINT("Invalid String object, type = " + String(GuestVariant::type_name(type)));
+		throw std::runtime_error("Invalid String object, idx = " + std::to_string(str_idx) + " type = " + GuestVariant::type_name(type));
 	}
 
 	const int64_t length = var_str.operator String().length();
@@ -3333,7 +3430,7 @@ APICALL(api_string_size) {
 
 	const Variant &var_str = get_scoped_variant_or_throw(emu, str_idx, "String::size");
 	// String, StringName and NodePath all answer length().
-	const Variant::Type type = var_str.get_type();
+	const Variant::Type type = variant_type(var_str);
 	if (type != Variant::STRING && type != Variant::STRING_NAME && type != Variant::NODE_PATH) {
 		ERR_PRINT("Invalid String object, type = " + String(GuestVariant::type_name(type)));
 		throw std::runtime_error("Invalid String object, idx = " + std::to_string(str_idx) + " type = " + GuestVariant::type_name(type));
@@ -3350,7 +3447,7 @@ APICALL(api_string_append) {
 
 	Variant &var = emu.get_mutable_scoped_variant(str_idx);
 
-	const Variant::Type type = var.get_type();
+	const Variant::Type type = variant_type(var);
 	godot::String str = var.operator String();
 	str += String::utf8(strview.data(), strview.size());
 	var = string_variant_of_type(type, std::move(str));
@@ -3496,7 +3593,7 @@ APICALL(api_variant_get) {
 
 	// Object subscripting is property access and must retain the same sandbox
 	// boundary as the named-property syscall.
-	if (UNLIKELY(subject->get_type() == Variant::OBJECT)) {
+	if (UNLIKELY(variant_type(*subject) == Variant::OBJECT)) {
 		godot::Object *obj = subject->operator godot::Object *();
 		if (UNLIKELY(!emu.is_allowed_property(obj, *key, false))) {
 			ERR_PRINT("Banned property accessed through Variant index");
@@ -3510,8 +3607,8 @@ APICALL(api_variant_get) {
 			subject->_native_ptr(), key->_native_ptr(), &result.get(), &valid);
 	result.mark_constructed();
 	if (UNLIKELY(!valid)) {
-		const std::string subject_type = GuestVariant::type_name(subject->get_type());
-		const std::string key_type = GuestVariant::type_name(key->get_type());
+		const std::string subject_type = GuestVariant::type_name(variant_type(*subject));
+		const std::string key_type = GuestVariant::type_name(variant_type(*key));
 		ERR_PRINT(("Invalid indexed access on " + subject_type + " with key type " + key_type).c_str());
 		throw std::runtime_error(
 				"Invalid indexed access on " + subject_type + " with key type " + key_type);

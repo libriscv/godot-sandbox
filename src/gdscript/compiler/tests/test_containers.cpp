@@ -8,12 +8,13 @@
 //
 // What "known" means is the subject of half of this file: the backend reads the
 // container's scoped index and the element index straight out of the Variants,
-// with no type check, so anything less certain has to keep the VCALL.
+// with no type check, so anything less certain has to use the generic Variant
+// get syscall.
 //
-// A negative index -- `a[-1]` is the last element -- is normalised in the guest,
-// since ECALL_ARRAY_AT reads a negative index as a write. That part is machine
-// code rather than IR, so it is covered in tests/tests/test_gdscript_compiler.gd
-// against the engine's own answer for the same subscript.
+// A dynamic negative index -- `a[i]` where i may be -1 -- is normalised in the
+// guest. A negative literal is marked for the host to wrap in ECALL_ARRAY_AT.
+// That part is machine code rather than IR, so it is covered in
+// tests/tests/test_gdscript_compiler.gd against the engine's own answer.
 #include "../lexer.h"
 #include "../parser.h"
 #include "../codegen.h"
@@ -21,6 +22,7 @@
 #include "../ir_verifier.h"
 #include "../riscv_codegen.h"
 #include "../compiler_exception.h"
+#include "../syscall_numbers.h"
 #include <cassert>
 #include <iostream>
 #include <string>
@@ -151,8 +153,8 @@ static void test_array_element_access() {
 	std::cout << "  ✓ a known Array indexes without a VCALL" << std::endl;
 }
 
-static void test_unknown_container_keeps_the_vcall() {
-	std::cout << "Testing that an unknown container keeps the VCALL..." << std::endl;
+static void test_unknown_container_uses_variant_get() {
+	std::cout << "Testing that an unknown container uses Variant get..." << std::endl;
 
 	// The backend reads the container's scoped index out of the Variant without
 	// checking the type tag, so a container of unknown type may not take that
@@ -160,19 +162,22 @@ static void test_unknown_container_keeps_the_vcall() {
 	const IRProgram untyped_object = compile_to_ir(
 		"func test(a, i : int):\n\treturn a[i]\n");
 	assert(count_opcode(find_function(untyped_object, "test"), IROpcode::ARRAY_GET) == 0);
-	assert(count_vcalls(untyped_object, find_function(untyped_object, "test"), "get") == 1);
+	assert(count_syscalls(find_function(untyped_object, "test"), ECALL_VARIANT_GET) == 1);
+	assert(count_vcalls(untyped_object, find_function(untyped_object, "test"), "get") == 0);
 
 	// Same for the index, which is read as an int64 out of its payload.
 	const IRProgram untyped_index = compile_to_ir(
 		"func test(a : Array, i):\n\treturn a[i]\n");
 	assert(count_opcode(find_function(untyped_index, "test"), IROpcode::ARRAY_GET) == 0);
-	assert(count_vcalls(untyped_index, find_function(untyped_index, "test"), "get") == 1);
+	assert(count_syscalls(find_function(untyped_index, "test"), ECALL_VARIANT_GET) == 1);
+	assert(count_vcalls(untyped_index, find_function(untyped_index, "test"), "get") == 0);
 
-	// Packed array: has get(), falls through to VCALL.
+	// Packed array: uses the same generic indexed Variant operation.
 	const IRProgram packed_index = compile_to_ir(
 		"func test(p : PackedInt32Array, i : int):\n\treturn p[i]\n");
 	assert(count_opcode(find_function(packed_index, "test"), IROpcode::ARRAY_GET) == 0);
-	assert(count_vcalls(packed_index, find_function(packed_index, "test"), "get") == 1);
+	assert(count_syscalls(find_function(packed_index, "test"), ECALL_VARIANT_GET) == 1);
+	assert(count_vcalls(packed_index, find_function(packed_index, "test"), "get") == 0);
 
 	// String: own syscall, no get(). See test_strings.cpp.
 	const IRProgram string_index = compile_to_ir(
@@ -185,7 +190,7 @@ static void test_unknown_container_keeps_the_vcall() {
 	assert(count_opcode(find_function(untyped_write, "test"), IROpcode::ARRAY_SET) == 0);
 	assert(count_vcalls(untyped_write, find_function(untyped_write, "test"), "set") == 1);
 
-	std::cout << "  ✓ an unknown container keeps the VCALL" << std::endl;
+	std::cout << "  ✓ an unknown container uses Variant get" << std::endl;
 }
 
 static void test_array_append() {
@@ -433,7 +438,7 @@ int main() {
 
 	try {
 		test_array_element_access();
-		test_unknown_container_keeps_the_vcall();
+		test_unknown_container_uses_variant_get();
 		test_array_append();
 		test_dictionary_element_access();
 		test_dictionary_literal_keys();

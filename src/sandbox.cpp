@@ -1584,28 +1584,42 @@ void Sandbox::add_cached_address(const String &name, gaddr_t address) const {
 	m_name_addresses.clear();
 }
 
-const Sandbox::CachedName &Sandbox::cached_guest_name(gaddr_t address, std::string_view name, bool terminated) const {
+Sandbox::CachedNameRef Sandbox::cached_guest_name(gaddr_t address, std::string_view name, bool terminated) const {
 	// Guest names sit at byte-aligned addresses in .rodata, so neighbouring literals would
 	// all land in adjacent slots. Mix the address before folding it into an index.
 	const unsigned index = ((address * 2654435761u) >> 8) & (GuestNameCache::SIZE - 1);
 	GuestNameCache::Entry &entry = m_guest_names.entries[index];
 
 	if (entry.address == address && entry.terminated == terminated && entry.text.size() == name.size() && guest_memcmp(entry.text.data(), name.data(), name.size()) == 0) {
-		return entry.name;
+		return CachedNameRef(entry);
+	}
+
+	const auto build_name = [&](CachedName &cached, std::string_view text) {
+		if (terminated) {
+			std::string terminated_text(text);
+			cached.sname = StringName(terminated_text.c_str(), false);
+		} else {
+			cached.sname = StringName(String::utf8(text.data(), text.size()));
+		}
+		cached.variant = cached.sname;
+	};
+
+	// A nested call that hashes to this slot must not invalidate the name an outer
+	// Godot call is still reading. Such collisions are rare and recursion is bounded.
+	if (UNLIKELY(entry.pins != 0)) {
+		auto uncached = std::make_unique<CachedName>();
+		build_name(*uncached, name);
+		return CachedNameRef(std::move(uncached));
 	}
 
 	// Miss: build the name once and keep it. The two branches mirror how guests pass names:
 	// a pointer to a NUL-terminated literal, or a view into a longer string.
+	entry = GuestNameCache::Entry{};
 	entry.address = address;
 	entry.terminated = terminated;
 	entry.text.assign(name.data(), name.size());
-	if (terminated) {
-		entry.name.sname = StringName(entry.text.c_str(), false);
-	} else {
-		entry.name.sname = StringName(String::utf8(entry.text.data(), entry.text.size()));
-	}
-	entry.name.variant = entry.name.sname;
-	return entry.name;
+	build_name(entry.name, entry.text);
+	return CachedNameRef(entry);
 }
 
 //-- Scoped objects and variants --//

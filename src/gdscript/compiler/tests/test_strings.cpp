@@ -333,23 +333,17 @@ static void test_a_non_integer_subscript_goes_through_int() {
 	std::cout << "  ✓ a non-integer subscript is converted first" << std::endl;
 }
 
-static void test_an_unknown_subscript_tests_the_tag() {
-	std::cout << "Testing that an untyped subscript tests for a String..." << std::endl;
+static void test_an_unknown_subscript_uses_variant_get() {
+	std::cout << "Testing that an untyped subscript uses Variant get..." << std::endl;
 
-	// One TYPE_TEST dispatches between ECALL_STRING_AT and the VCALL path.
+	// The generic Variant operation preserves the runtime distinction between a
+	// String character lookup and every other indexed/keyed lookup.
 	const IRProgram ir = compile_to_ir("func f(x, i : int):\n\treturn x[i]\n");
 	const IRFunction& func = find_function(ir, "f");
-	assert(count_syscalls(func, ECALL_STRING_AT) == 1);
-	assert(count_vcalls(ir, func, "get") == 1);
-
-	int string_tests = 0;
-	for (const auto& instr : func.instructions) {
-		if (instr.opcode == IROpcode::TYPE_TEST &&
-			instr.operands.at(2).immediate() == Variant::STRING) {
-			string_tests++;
-		}
-	}
-	assert(string_tests == 1);
+	assert(count_syscalls(func, ECALL_VARIANT_GET) == 1);
+	assert(count_syscalls(func, ECALL_STRING_AT) == 0);
+	assert(count_vcalls(ir, func, "get") == 0);
+	assert(count_opcode(func, IROpcode::TYPE_TEST) == 0);
 
 	// Known Array/Dictionary: no tag test.
 	for (const char* hint : { "Array", "Dictionary" }) {
@@ -361,7 +355,7 @@ static void test_an_unknown_subscript_tests_the_tag() {
 
 	compile_to_machine_code("func f(x, i : int):\n\treturn x[i]\n");
 
-	std::cout << "  ✓ an untyped subscript tests for a String" << std::endl;
+	std::cout << "  ✓ an untyped subscript uses Variant get" << std::endl;
 }
 
 static void test_walking_a_string() {
@@ -558,7 +552,7 @@ int main() {
 		test_unknown_receiver_keeps_the_vcall();
 		test_subscript_is_a_syscall();
 		test_a_non_integer_subscript_goes_through_int();
-		test_an_unknown_subscript_tests_the_tag();
+		test_an_unknown_subscript_uses_variant_get();
 		test_walking_a_string();
 		test_iterating_a_float();
 		test_writing_a_character_is_refused();
