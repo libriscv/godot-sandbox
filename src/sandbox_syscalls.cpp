@@ -1310,6 +1310,12 @@ APICALL(api_vconstruct) {
 		ERR_PRINT("vconstruct: Invalid argument count " + itos(argc));
 		throw std::runtime_error("vconstruct: Invalid argument count " + std::to_string(argc));
 	}
+	// Callable(Object, method) is unsafe and implies unrestricted access to the wider engine
+	if (UNLIKELY(type == Variant::CALLABLE && argc == 2 && !emu.is_fully_unrestricted())) {
+		ERR_PRINT("Callable(Object, method) is only available to a fully unrestricted Sandbox");
+		throw std::runtime_error(
+			"vconstruct: Callable(Object, method) refused under restrictions");
+	}
 
 	BorrowedVariantScratch scratch;
 	const Variant *argptrs[VariantScratch::MAX];

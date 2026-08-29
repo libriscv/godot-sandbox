@@ -10167,6 +10167,9 @@ func test_sgd_an_instance_made_during_a_call():
 func _cc_named(x):
 	return x * 2
 
+func _cc_named_string(x):
+	return "host:" + str(x)
+
 func test_sgd_callable_constructor():
 	# The engine looks the method name up when the Callable is built. Here the
 	# name has to name a function the program declares, so the constructor is the
@@ -10191,6 +10194,10 @@ func is_null():
 
 func handed_out():
 	return Callable(self, "doubled")
+
+func from_host_object(host, n):
+	var method = "_cc_named_string"
+	return Callable(host, method).call(n)
 """
 	var s = _compile_and_load(gdscript_code, 400000)
 	if s == null:
@@ -10210,6 +10217,19 @@ func handed_out():
 	# One handed to Godot works from this side too.
 	var c : Callable = s.vmcallv("handed_out")
 	assert_eq(c.call(4), 8, "a Callable the guest built should be callable from Godot")
+	assert_eq(s.vmcallv("from_host_object", self, 9), "host:9",
+		"an unrestricted guest should call a method named at run time on another Object")
+
+	# A native Callable invokes its target from inside Godot, beyond the usual
+	# object-call policy hook. Refuse to forge one when any restriction is active.
+	s.set_method_allowed_callback(func(_sandbox, _object, _method): return true)
+	var exceptions = s.get_exceptions()
+	s.vmcallv("from_host_object", self, 10)
+	assert_engine_error("Callable(Object, method) is only available to a fully unrestricted Sandbox")
+	assert_engine_error("vconstruct: Callable(Object, method) refused under restrictions")
+	assert_gt(s.get_exceptions(), exceptions,
+		"a partially restricted guest must not forge an Object method Callable")
+	s.set_method_allowed_callback(Callable())
 
 	s.queue_free()
 

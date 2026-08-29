@@ -64,6 +64,16 @@ std::string compile_error(const std::string& source) {
 	return compiler.get_error();
 }
 
+std::string restricted_compile_error(const std::string& source) {
+	Compiler compiler;
+	CompilerOptions options;
+	options.restricted = true;
+	if (!compiler.compile(source, options).empty()) {
+		return "";
+	}
+	return compiler.get_error();
+}
+
 // -= Host stub =-
 //
 // Variants the guest cannot inline live here and are named by index, the way
@@ -699,8 +709,16 @@ void test_the_callable_constructor() {
 		"func f(n):\n"
 		"\tvar c = double\n"
 		"\treturn c.call(n)\n");
+	const std::vector<uint8_t> copied = compile(
+		"func double(x):\n"
+		"\treturn x * 2\n"
+		"func f(n):\n"
+		"\tvar c = Callable(double)\n"
+		"\treturn c.call(n)\n");
 	check(!constructed.empty() && constructed == bare_name,
 		"Callable(self, \"f\") and f compile alike");
+	check(!copied.empty() && copied == bare_name,
+		"Callable(f) and f compile alike");
 
 	if (!constructed.empty()) {
 		auto machine = boot(constructed);
@@ -726,11 +744,17 @@ void test_the_callable_constructor() {
 	check(missing.find("no function named") != std::string::npos,
 		"an undeclared method name is refused: " + missing);
 
-	const std::string not_self = compile_error(
+	const std::vector<uint8_t> another_object = compile(
 		"func f(n):\n"
 		"\treturn Callable(n, \"f\")\n");
-	check(not_self.find("must be 'self'") != std::string::npos,
-		"a Callable over another object is refused: " + not_self);
+	check(!another_object.empty(),
+		"an unrestricted program may make a Callable over another object");
+
+	const std::string restricted_object = restricted_compile_error(
+		"func f(n):\n"
+		"\treturn Callable(n, \"f\")\n");
+	check(restricted_object.find("restricted Sandbox") != std::string::npos,
+		"a restricted Callable over another object is refused: " + restricted_object);
 
 	const std::string computed = compile_error(
 		"func f(n):\n"
@@ -741,8 +765,8 @@ void test_the_callable_constructor() {
 	const std::string arity = compile_error(
 		"func f():\n"
 		"\treturn Callable(self)\n");
-	check(arity.find("0 or 2 arguments") != std::string::npos,
-		"Callable(self) is refused: " + arity);
+	check(arity.find("needs a Callable argument") != std::string::npos,
+		"Callable(self) is refused because self is an Object: " + arity);
 
 	check(compile_error(
 		"func Callable(a, b):\n"

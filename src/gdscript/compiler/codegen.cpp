@@ -4184,27 +4184,67 @@ int CodeGenerator::gen_callable_constructor(const CallExpr* expr, FunctionContex
 	if (expr->arguments.empty()) {
 		return gen_make_callable("", -1, func);
 	}
+	if (expr->arguments.size() == 1) {
+		int value_reg = gen_expr(expr->arguments[0].get(), func);
+		const IRInstruction::TypeHint value_type = get_register_type(func, value_reg);
+		if (value_type == Variant::CALLABLE) {
+			return value_reg;
+		}
+		if (value_type != IRInstruction::TypeHint_NONE) {
+			free_register(func, value_reg);
+			error_at("Callable(value) needs a Callable argument", expr);
+		}
+		int result = gen_host_constructor_typed("Callable", Variant::CALLABLE,
+			{ value_reg }, func, expr);
+		free_register(func, value_reg);
+		return result;
+	}
 	if (expr->arguments.size() != 2) {
-		error_at("Callable() takes 0 or 2 arguments, got " +
+		error_at("Callable() takes 0, 1 or 2 arguments, got " +
 			std::to_string(expr->arguments.size()), expr);
 	}
 
 	auto* object = dynamic_cast<const VariableExpr*>(expr->arguments[0].get());
-	if (object == nullptr || object->name != "self" || find_variable(func, object->name) != nullptr) {
-		error_at("The object of a Callable() must be 'self'", expr,
-			"A sandboxed program can only make a Callable over its own functions");
+	const bool names_script_self = object != nullptr && object->name == "self" &&
+		find_variable(func, object->name) == nullptr;
+	if (names_script_self) {
+		const std::string* name = constant_string(expr->arguments[1].get(), func);
+		if (name == nullptr) {
+			error_at("The method of Callable(self, method) must be a compile-time string", expr,
+				"The guest resolves its own function address while it compiles");
+		}
+		if (!is_local_function(*name)) {
+			error_at("This program declares no function named '" + *name + "'", expr,
+				"Callable(self, \"" + *name + "\") would never be valid");
+		}
+		return gen_make_callable(*name, -1, func);
 	}
 
-	const std::string* name = constant_string(expr->arguments[1].get(), func);
-	if (name == nullptr) {
-		error_at("The method of a Callable() must be a compile-time string", expr,
-			"The guest resolves the name while it compiles, not while it runs");
+	if (m_restricted) {
+		error_at("Callable(object, method) is not supported in a restricted Sandbox", expr,
+			"Only an unrestricted script may keep and invoke a method on another Object");
 	}
-	if (!is_local_function(*name)) {
-		error_at("This program declares no function named '" + *name + "'", expr,
-			"Callable(self, \"" + *name + "\") would never be valid");
+
+	std::vector<int> arg_regs;
+	arg_regs.reserve(2);
+	for (const auto& argument : expr->arguments) {
+		arg_regs.push_back(gen_expr(argument.get(), func));
 	}
-	return gen_make_callable(*name, -1, func);
+
+	const IRInstruction::TypeHint object_type = get_register_type(func, arg_regs[0]);
+	if (object_type != IRInstruction::TypeHint_NONE && object_type != Variant::OBJECT) {
+		for (int reg : arg_regs) {
+			free_register(func, reg);
+		}
+		error_at("Callable() needs an Object as its first argument", expr);
+	}
+
+	int result = gen_host_constructor_typed("Callable", Variant::CALLABLE,
+		arg_regs, func, expr);
+	for (int reg : arg_regs) {
+		free_register(func, reg);
+	}
+	return result;
 }
 
 int CodeGenerator::gen_lambda(const LambdaExpr* expr, FunctionContext& func) {
