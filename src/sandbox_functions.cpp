@@ -1577,11 +1577,13 @@ Sandbox::BinaryInfo Sandbox::get_program_info_from_binary(const PackedByteArray 
 
 		result.functions = Sandbox::get_public_functions(machine);
 
+#ifndef SAFEGDSCRIPT_DISABLED
 		const std::string_view meta = elf_section_bytes(binary_view, gdscript::GDSMETA_SECTION);
 		if (!meta.empty()) {
 			result.has_script_metadata = gdscript::decode_script_metadata(
 				reinterpret_cast<const uint8_t *>(meta.data()), meta.size(), result.script_metadata);
 		}
+#endif
 
 	} catch (const std::exception &e) {
 		ERR_PRINT("Failed to get functions from binary. " + String(e.what()));

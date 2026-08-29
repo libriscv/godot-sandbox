@@ -2,7 +2,11 @@
 
 #include "fast_cast.hpp"
 
+#ifndef SAFEGDSCRIPT_DISABLED
 void safegdscript_class_restrictions_changed(const Sandbox &p_sandbox);
+#else
+static void safegdscript_class_restrictions_changed(const Sandbox &) {}
+#endif
 
 void Sandbox::set_restrictions(bool enable) {
 	if (this->is_in_vmcall()) {

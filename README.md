@@ -168,6 +168,14 @@ cd modules/sandbox
 git submodule update --init --recursive
 ```
 
+## SafeGDScript and LLM usage
+
+The SafeGDScript language has been created and is maintained using LLMs. It can be turned off by building with the `ENABLE_SAFEGDSCRIPT` option disabled in CMake like so:
+
+```sh
+cmake -S . -B .build -DENABLE_SAFEGDSCRIPT=OFF
+```
+
 ## Contributing
 
 Requirements:

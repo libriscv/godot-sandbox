@@ -26,6 +26,7 @@
 	}
 
 // Break state in debug_safegdscript.cpp. No-op for non-.sgd guests.
+#ifndef SAFEGDSCRIPT_DISABLED
 void safegdscript_breakpoint(Sandbox &p_sandbox, uint32_t p_reported_line, bool p_user_stop,
 		bool p_source_stop);
 String safegdscript_source_location(Sandbox &p_sandbox, gaddr_t p_pc);
@@ -37,6 +38,18 @@ void safegdscript_bind_nested_class(Sandbox &p_sandbox, godot::Object *p_base,
 void safegdscript_bypass_super(godot::Object *p_object, const godot::StringName &p_method);
 bool safegdscript_nominal_uses(godot::Object *p_object,
 		const godot::StringName &p_trait, bool &r_recognized);
+#else
+static void safegdscript_breakpoint(Sandbox &, uint32_t, bool, bool) {}
+static String safegdscript_source_location(Sandbox &, gaddr_t) { return {}; }
+static void safegdscript_bind_nested_class(Sandbox &, godot::Object *,
+		const godot::Dictionary &, const godot::String &) {}
+static void safegdscript_bypass_super(godot::Object *, const godot::StringName &) {}
+static bool safegdscript_nominal_uses(godot::Object *,
+		const godot::StringName &, bool &r_recognized) {
+	r_recognized = false;
+	return false;
+}
+#endif
 
 namespace riscv {
 extern std::unordered_map<std::string, std::function<uint64_t()>> global_singleton_list;

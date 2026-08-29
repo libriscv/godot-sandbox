@@ -1,15 +1,7 @@
 cmake_minimum_required(VERSION 3.9.4)
 project(riscv CXX)
 
-# Where SafeGDScript compiles:
-#   sandboxed   gdscript.elf in a Sandbox, for every script
-#   restricted  in process, except for a restricted Sandbox's scripts (default)
-#   direct      in process, for every script -- gdb sees the compiler's frames
-# See src/safegdscript/compiler_backend.h.
-set(SAFEGDSCRIPT_COMPILER "restricted" CACHE STRING
-	"Where the SafeGDScript compiler runs: sandboxed, restricted or direct")
-set_property(CACHE SAFEGDSCRIPT_COMPILER PROPERTY STRINGS sandboxed restricted direct)
-
+option(ENABLE_SAFEGDSCRIPT "Build the SafeGDScript compiler and script language" ON)
 option(SANITIZE    "Enable the undefined-behaviour sanitizer" OFF)
 option(ASAN        "Enable the address sanitizer" OFF)
 option(STATIC_BUILD "Build statically" OFF)
@@ -33,19 +25,6 @@ set(SOURCES
 	src/zig/resource_saver_zig.cpp
 	src/zig/script_zig.cpp
 	src/zig/script_language_zig.cpp
-	src/safegdscript/compiler_backend.cpp
-	src/safegdscript/debug_safegdscript.cpp
-	src/safegdscript/direct_compiler.cpp
-	src/safegdscript/editor_analysis_safegdscript.cpp
-	src/safegdscript/sandboxed_compiler.cpp
-	src/safegdscript/profiling_safegdscript.cpp
-	src/safegdscript/placeholder_instance_safegdscript.cpp
-	src/safegdscript/script_class_safegdscript.cpp
-	src/safegdscript/script_instance_safegdscript.cpp
-	src/safegdscript/script_language_safegdscript.cpp
-	src/safegdscript/script_safegdscript.cpp
-	src/safegdscript/resource_loader_safegdscript.cpp
-	src/safegdscript/resource_saver_safegdscript.cpp
 	src/docker.cpp
 	src/godot/script_instance.cpp
 	src/guest_variant.cpp
@@ -70,34 +49,62 @@ set(SOURCES
 	src/tests/assault.cpp
 )
 
-# Pieces of the compiler the host needs whatever the policy is: the definition
-# of the formats the compiler publishes beside the ELF (the guest side of both
-# lives inside gdscript.elf), and the symbol tables editor completion and lookup
-# resolve from. A build with an in-process compiler links the whole library
-# instead, and these are part of it.
-set(COMPILER_HOST_SOURCES
+# Published metadata formats the SafeGDScript host needs without an in-process
+# compiler. An in-process build gets these sources from the full compiler library.
+set(ELF_METADATA_SOURCES
 	src/gdscript/compiler/function_signature.cpp
-	src/gdscript/compiler/property_signature.cpp
-	src/gdscript/compiler/source_model.cpp
 	src/gdscript/compiler/line_table.cpp
-	src/gdscript/compiler/debug_layout.cpp
 	src/gdscript/compiler/gdsmeta.cpp
-	src/gdscript/compiler/globals.cpp
-	src/gdscript/compiler/compiler_exception.cpp
 )
 
-if (SAFEGDSCRIPT_COMPILER STREQUAL "sandboxed")
-	set(SAFEGDSCRIPT_COMPILER_POLICY 0)
-elseif (SAFEGDSCRIPT_COMPILER STREQUAL "restricted")
-	set(SAFEGDSCRIPT_COMPILER_POLICY 1)
-elseif (SAFEGDSCRIPT_COMPILER STREQUAL "direct")
-	set(SAFEGDSCRIPT_COMPILER_POLICY 2)
-else()
-	message(FATAL_ERROR "SAFEGDSCRIPT_COMPILER must be sandboxed, restricted or direct")
-endif()
+if (ENABLE_SAFEGDSCRIPT)
+	list(APPEND SOURCES
+		src/safegdscript/compiler_backend.cpp
+		src/safegdscript/debug_safegdscript.cpp
+		src/safegdscript/direct_compiler.cpp
+		src/safegdscript/editor_analysis_safegdscript.cpp
+		src/safegdscript/sandboxed_compiler.cpp
+		src/safegdscript/profiling_safegdscript.cpp
+		src/safegdscript/placeholder_instance_safegdscript.cpp
+		src/safegdscript/script_class_safegdscript.cpp
+		src/safegdscript/script_instance_safegdscript.cpp
+		src/safegdscript/script_language_safegdscript.cpp
+		src/safegdscript/script_safegdscript.cpp
+		src/safegdscript/resource_loader_safegdscript.cpp
+		src/safegdscript/resource_saver_safegdscript.cpp
+	)
 
-if (SAFEGDSCRIPT_COMPILER_POLICY EQUAL 0)
-	list(APPEND SOURCES ${COMPILER_HOST_SOURCES})
+	# Where SafeGDScript compiles:
+	#   sandboxed   gdscript.elf in a Sandbox, for every script
+	#   restricted  in process, except for a restricted Sandbox's scripts (default)
+	#   direct      in process, for all scripts (not recommended, except for debugging)
+	# See src/safegdscript/compiler_backend.h.
+	set(SAFEGDSCRIPT_COMPILER "restricted" CACHE STRING
+		"Where the SafeGDScript compiler runs: sandboxed, restricted or direct")
+	set_property(CACHE SAFEGDSCRIPT_COMPILER PROPERTY STRINGS sandboxed restricted direct)
+
+	if (SAFEGDSCRIPT_COMPILER STREQUAL "sandboxed")
+		set(SAFEGDSCRIPT_COMPILER_POLICY 0)
+	elseif (SAFEGDSCRIPT_COMPILER STREQUAL "restricted")
+		set(SAFEGDSCRIPT_COMPILER_POLICY 1)
+	elseif (SAFEGDSCRIPT_COMPILER STREQUAL "direct")
+		set(SAFEGDSCRIPT_COMPILER_POLICY 2)
+	else()
+		message(FATAL_ERROR "SAFEGDSCRIPT_COMPILER must be sandboxed, restricted or direct")
+	endif()
+
+	if (SAFEGDSCRIPT_COMPILER_POLICY EQUAL 0)
+		# A sandboxed compiler still needs the published formats and editor symbol
+		# tables on the host. In-process policies get these from the full library.
+		list(APPEND SOURCES
+			${ELF_METADATA_SOURCES}
+			src/gdscript/compiler/property_signature.cpp
+			src/gdscript/compiler/source_model.cpp
+			src/gdscript/compiler/debug_layout.cpp
+			src/gdscript/compiler/globals.cpp
+			src/gdscript/compiler/compiler_exception.cpp
+		)
+	endif()
 endif()
 
 # Add bintr sources
@@ -117,17 +124,19 @@ add_subdirectory(ext)
 
 add_library(godot-riscv SHARED ${SOURCES})
 target_link_libraries(godot-riscv PUBLIC riscv godot-cpp)
-target_compile_definitions(godot-riscv PRIVATE
-	SAFEGDSCRIPT_COMPILER_POLICY=${SAFEGDSCRIPT_COMPILER_POLICY})
 
-if (NOT SAFEGDSCRIPT_COMPILER_POLICY EQUAL 0)
-	# The compiler in this process. EXCLUDE_FROM_ALL: the library is what is
-	# wanted here, not dump_ir and the other tools that live beside it.
-	# gdscript_compiler carries DOUBLE_PRECISION_REAL_T when godot-cpp does, so
-	# the Variant layout it emits for and the one this build uses stay the same.
-	add_subdirectory(src/gdscript/compiler gdscript_compiler EXCLUDE_FROM_ALL)
-	target_link_libraries(godot-riscv PUBLIC gdscript_compiler)
-	target_compile_definitions(godot-riscv PRIVATE SAFEGDSCRIPT_DIRECT_COMPILER)
+if (ENABLE_SAFEGDSCRIPT)
+	target_compile_definitions(godot-riscv PRIVATE
+		SAFEGDSCRIPT_COMPILER_POLICY=${SAFEGDSCRIPT_COMPILER_POLICY})
+
+	if (NOT SAFEGDSCRIPT_COMPILER_POLICY EQUAL 0)
+		# EXCLUDE_FROM_ALL: don't build automatically
+		add_subdirectory(src/gdscript/compiler gdscript_compiler EXCLUDE_FROM_ALL)
+		target_link_libraries(godot-riscv PUBLIC gdscript_compiler)
+		target_compile_definitions(godot-riscv PRIVATE SAFEGDSCRIPT_DIRECT_COMPILER)
+	endif()
+else()
+	target_compile_definitions(godot-riscv PRIVATE SAFEGDSCRIPT_DISABLED)
 endif()
 
 # Don't re-export the statically linked libstdc++ (godot-cpp passes

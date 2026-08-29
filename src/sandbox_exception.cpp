@@ -19,8 +19,13 @@ static const char *getenv_with_default(const char *str, const char *defval) {
 static constexpr bool VERBOSE_EXCEPTIONS = false;
 
 // False for non-.sgd programs; falls back to machine-level backtrace.
+#ifndef SAFEGDSCRIPT_DISABLED
 bool safegdscript_print_backtrace(Sandbox &p_sandbox, gaddr_t p_pc);
 void safegdscript_report_runtime_error(Sandbox &p_sandbox, const String &p_message);
+#else
+static bool safegdscript_print_backtrace(Sandbox &, gaddr_t) { return false; }
+static void safegdscript_report_runtime_error(Sandbox &, const String &) {}
+#endif
 
 static inline String to_hex(gaddr_t value) {
 	char str[20] = { 0 };
