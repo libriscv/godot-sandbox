@@ -57,6 +57,10 @@ private:
 		IRFunction ir;
 		std::vector<Scope> scopes;
 		std::unordered_map<int, IRInstruction::TypeHint> register_types;
+		// Untyped locals inferred from an initializer may legally change Variant
+		// type later; mixed numeric lowering must not bake their current tag into a
+		// loop-carried CONVERT.
+		std::unordered_set<int> reclassifiable_registers;
 		// Struct known for a register: always DICTIONARY-typed, used for field-name checks.
 		std::unordered_map<int, const StructDecl*> register_structs;
 		std::vector<LoopContext> loops;

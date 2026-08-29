@@ -479,6 +479,7 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const Stru
 	FunctionContext func;
 	func.ir.name = owner != nullptr ? lifted_method_name(*owner, decl.name) : decl.name;
 	func.ir.is_coroutine = decl.is_coroutine;
+	func.ir.return_type_hint = type_hint_from_string(decl.return_type);
 	m_current_function = func.ir.name;
 	m_current_chain_link = decl.chain_link;
 	m_current_chain_function = decl.declared_name();
@@ -673,6 +674,9 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 	}
 
 	declare_variable(func, stmt->name, reg, stmt->is_const, stmt, declared_variant);
+	if (stmt->type_hint.empty() && stmt->initializer != nullptr && !declared_variant) {
+		func.reclassifiable_registers.insert(reg);
+	}
 }
 
 void CodeGenerator::gen_assign(const AssignStmt* stmt, FunctionContext& func) {
@@ -2449,6 +2453,9 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 		if (type != IRInstruction::TypeHint_NONE) {
 			set_register_type(func, new_reg, type);
 		}
+		if (func.reclassifiable_registers.count(local->register_num) != 0) {
+			func.reclassifiable_registers.insert(new_reg);
+		}
 		// Dictionary handle: copy refers to the same fields, so propagate struct.
 		set_register_struct(func, new_reg, get_register_struct(func, local->register_num));
 		return new_reg;
@@ -2942,6 +2949,7 @@ IRFunction CodeGenerator::generate_lambda_function(const FunctionDecl& decl,
 	FunctionContext func;
 	func.ir.name = decl.name.empty() ? std::string("lambda") : decl.name;
 	func.ir.is_coroutine = decl.is_coroutine;
+	func.ir.return_type_hint = type_hint_from_string(decl.return_type);
 	func.return_type = decl.return_type;
 
 	push_scope(func);
@@ -3214,7 +3222,47 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 	                      expr->op == BinaryExpr::Op::GT ||
 	                      expr->op == BinaryExpr::Op::GTE);
 
+	// Godot promotes a mixed numeric pair to FLOAT. Make that conversion
+	// explicit so the backend receives a homogeneous, fully typed operation.
+	if (((is_arithmetic && expr->op != BinaryExpr::Op::MOD) || is_comparison) &&
+		func.reclassifiable_registers.count(left_reg) == 0 &&
+		func.reclassifiable_registers.count(right_reg) == 0 &&
+		((left_type == Variant::INT && right_type == Variant::FLOAT) ||
+		 (left_type == Variant::FLOAT && right_type == Variant::INT)))
+	{
+		if (left_type == Variant::INT) {
+			left_reg = coerce_to_declared_type(left_reg, Variant::FLOAT, func,
+				"the left numeric operand", expr->line, expr->column);
+			left_type = Variant::FLOAT;
+		} else {
+			right_reg = coerce_to_declared_type(right_reg, Variant::FLOAT, func,
+				"the right numeric operand", expr->line, expr->column);
+			right_type = Variant::FLOAT;
+		}
+	}
+
+	// Float vectors and Color accept either FLOAT or INT scalars. Normalize an
+	// integer scalar once, then let the backend broadcast it component-wise.
+	const bool mul_or_div = expr->op == BinaryExpr::Op::MUL || expr->op == BinaryExpr::Op::DIV;
+	if (mul_or_div && TypeHintUtils::is_float_vector(left_type) && right_type == Variant::INT) {
+		right_reg = coerce_to_declared_type(right_reg, Variant::FLOAT, func,
+			"the vector scalar", expr->line, expr->column);
+		right_type = Variant::FLOAT;
+	} else if (expr->op == BinaryExpr::Op::MUL && left_type == Variant::INT &&
+		TypeHintUtils::is_float_vector(right_type))
+	{
+		left_reg = coerce_to_declared_type(left_reg, Variant::FLOAT, func,
+			"the vector scalar", expr->line, expr->column);
+		left_type = Variant::FLOAT;
+	}
+
 	// Same-type operands enable native codegen; mixed types fall back to VEVAL.
+	const auto scalar_matches_vector = [](IRInstruction::TypeHint vector_type,
+	                                      IRInstruction::TypeHint scalar_type) {
+		return (TypeHintUtils::is_float_vector(vector_type) &&
+			(scalar_type == Variant::INT || scalar_type == Variant::FLOAT)) ||
+			(TypeHintUtils::is_int_vector(vector_type) && scalar_type == Variant::INT);
+	};
 	IRInstruction::TypeHint result_type = IRInstruction::TypeHint_NONE;
 	if (is_bitwise) {
 		// Bitwise is integer-only; unknown types fall back to VEVAL for runtime error.
@@ -3231,6 +3279,14 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 		           left_type == right_type &&
 		           TypeHintUtils::is_vector(left_type)) {
 			result_type = left_type;
+		} else if (expr->op == BinaryExpr::Op::ADD &&
+			left_type == Variant::STRING && right_type == Variant::STRING) {
+			result_type = Variant::STRING;
+		} else if (mul_or_div && scalar_matches_vector(left_type, right_type)) {
+			result_type = left_type;
+		} else if (expr->op == BinaryExpr::Op::MUL &&
+			scalar_matches_vector(right_type, left_type)) {
+			result_type = right_type;
 		}
 	}
 
@@ -3262,7 +3318,14 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 
 	IRInstruction instr(op, IRValue::reg(result_reg), IRValue::reg(left_reg), IRValue::reg(right_reg));
 	instr.type_hint = result_type;
+	instr.lhs_type_hint = left_type;
+	instr.rhs_type_hint = right_type;
 	func.ir.instructions.push_back(instr);
+	if (func.reclassifiable_registers.count(left_reg) != 0 ||
+		func.reclassifiable_registers.count(right_reg) != 0)
+	{
+		func.reclassifiable_registers.insert(result_reg);
+	}
 
 	if (expr->op == BinaryExpr::Op::IN) {
 		set_register_type(func, result_reg, Variant::BOOL);
@@ -3745,6 +3808,23 @@ int CodeGenerator::emit_local_call(const std::string& name, std::vector<int> arg
 	for (int arg_reg : arg_regs) {
 		call_instr.operands.push_back(IRValue::reg(arg_reg));
 	}
+	if (!hosted && sig != m_local_signatures.end()) {
+		bool has_typed_parameter = false;
+		bool exact_typed_arguments = true;
+		const auto& params = sig->second->parameters;
+		for (size_t i = 0; i < params.size(); i++) {
+			const IRInstruction::TypeHint declared = type_hint_from_string(params[i].type_hint);
+			if (declared != Variant::INT && declared != Variant::FLOAT && declared != Variant::BOOL) {
+				continue;
+			}
+			has_typed_parameter = true;
+			if (i >= arg_regs.size() || get_register_type(func, arg_regs[i]) != declared) {
+				exact_typed_arguments = false;
+				break;
+			}
+		}
+		call_instr.trusted_internal_call = has_typed_parameter && exact_typed_arguments;
+	}
 	func.ir.instructions.push_back(call_instr);
 
 	for (int reg : arg_regs) {
@@ -4165,6 +4245,24 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		if (auto* object = dynamic_cast<const VariableExpr*>(object_expr)) {
 			if (object->name == "self" && find_variable(func, "self") == nullptr) {
 				return gen_make_callable(expr->member_name, -1, func);
+			}
+		}
+	}
+
+	// At script scope, `self.f()` names the same guest function as bare `f()`.
+	// Nested-class methods have an actual instance receiver and stay on their
+	// class-method path below.
+	if (expr->is_method_call && m_current_class == nullptr &&
+		is_local_function(expr->member_name))
+	{
+		if (auto* object = dynamic_cast<const VariableExpr*>(object_expr)) {
+			if (object->name == "self" && find_variable(func, "self") == nullptr) {
+				reject_named_arguments(*expr, "'" + expr->member_name + "'", expr);
+				std::vector<int> arg_regs;
+				for (const auto& argument : expr->arguments) {
+					arg_regs.push_back(gen_expr(argument.get(), func));
+				}
+				return emit_local_call(expr->member_name, std::move(arg_regs), func, expr);
 			}
 		}
 	}

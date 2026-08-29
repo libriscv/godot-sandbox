@@ -257,14 +257,22 @@ void test_chained_operators_stay_in_a_register() {
 	assert(has_shift(words, is_srai, 8));
 	assert(has_immediate(words, is_andi, 255));
 
-	// srai then andi, adjacent: no intermediate Variant.
-	bool adjacent = false;
+	// The slot remains canonical, but the consumer must not reload it: B1 may
+	// place a store/cache move between the two ALU instructions.
+	bool cached_chain = false;
 	for (size_t i = 0; i + 1 < words.size(); i++) {
-		if (is_srai(words[i]) && is_andi(words[i + 1])) {
-			adjacent = true;
+		if (!is_srai(words[i])) {
+			continue;
+		}
+		for (size_t j = i + 1; j < words.size() && j <= i + 6; j++) {
+			if (is_andi(words[j])) {
+				cached_chain = true;
+				break;
+			}
+			assert(!(opcode_of(words[j]) == 0x03 && rs1_of(words[j]) == REG_SP));
 		}
 	}
-	assert(adjacent);
+	assert(cached_chain);
 
 	std::cout << "  ✓ A decode chain stays in a register" << std::endl;
 }
@@ -356,15 +364,18 @@ void test_an_int_global_round_trips_in_a_register() {
 		"\tpc = pc + n\n");
 	const std::vector<uint32_t> words = function_words(compiled, "f");
 
-	// Frame: the return pointer, the parameter's own Variant, and the int
-	// Variant its declared type coerces that into -- a tag word and a payload.
+	// Frame: the return pointer, the parameter's own Variant, the int Variant its
+	// declared type coerces that into, and B1's canonical tag/payload store for
+	// the arithmetic result. The global itself is still not copied here.
 	// The global is not among them: it is loaded from and stored to the
 	// globals area, in registers, with no Variant built for it at all.
 	const size_t variant_words = size_t(VariantLayout(false).variant_words());
 	const size_t coerced_parameter = 2;
+	const size_t canonical_result = 2;
 	// A global copied into the frame would show up as another variant_words
 	// worth of stores on top of these.
-	assert(count(words, is_store_to_frame) == 1 + variant_words + coerced_parameter);
+	assert(count(words, is_store_to_frame) ==
+		1 + variant_words + coerced_parameter + canonical_result);
 	assert(count(words, is_ecall) == 0);
 
 	std::cout << "  ✓ An int global round-trips in a register" << std::endl;

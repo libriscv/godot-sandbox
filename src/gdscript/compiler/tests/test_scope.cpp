@@ -502,6 +502,32 @@ static void test_elided_blocks_emit_nothing() {
 	check(!contains_word(loopless, sw_zero_sp(16)), "and the frame is not zeroed for one");
 }
 
+static void test_numeric_guest_calls_do_not_keep_a_loop_scope() {
+	const std::vector<uint8_t> typed = compile_to_elf(
+		"func step(x : int) -> int:\n"
+		"\treturn x + 1\n"
+		"func test(n : int) -> int:\n"
+		"\tvar acc : int = 0\n"
+		"\tfor i in n:\n"
+		"\t\tacc = step(acc)\n"
+		"\treturn acc\n");
+	check(!contains_word(typed, li_a7_vscope()),
+		"a numeric-returning guest call leaves no scoped Variant in its caller");
+
+	const std::vector<uint8_t> recursive = compile_to_elf(
+		"func recurse(x : int) -> int:\n"
+		"\tif x <= 0:\n"
+		"\t\treturn 0\n"
+		"\treturn recurse(x - 1)\n"
+		"func test(n : int) -> int:\n"
+		"\tvar acc : int = 0\n"
+		"\tfor i in n:\n"
+		"\t\tacc = recurse(acc)\n"
+		"\treturn acc\n");
+	check(contains_word(recursive, li_a7_vscope()),
+		"a recursive callee stays conservative");
+}
+
 int main() {
 	try {
 		test_every_loop_form_takes_a_scope();
@@ -519,6 +545,7 @@ int main() {
 		test_the_block_ir_verifies();
 		test_a_host_free_block_is_not_scoped();
 		test_elided_blocks_emit_nothing();
+		test_numeric_guest_calls_do_not_keep_a_loop_scope();
 	} catch (const CompilerException& e) {
 		std::cerr << "FAILED: compiler exception: " << e.what() << std::endl;
 		failures++;

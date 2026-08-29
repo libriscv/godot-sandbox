@@ -478,21 +478,34 @@ private:
 			return;
 		}
 
-		std::vector<int> reads;
-		ir_collect_read_registers(instr, reads);
-		for (int reg : reads) {
+		size_t read_index = 0;
+		for (size_t operand_index = 0; operand_index < instr.operands.size(); operand_index++) {
+			if (!ir_reads_operand(instr, operand_index) ||
+				instr.operands[operand_index].type != IRValue::Type::REGISTER)
+			{
+				continue;
+			}
+			const int reg = instr.operands[operand_index].reg_index();
 			if (reg < 0 || static_cast<size_t>(reg) >= state.type.size()) {
 				continue;
 			}
 			const IRInstruction::TypeHint known = state.type[reg];
 			if (known == TYPE_UNKNOWN) {
+				read_index++;
 				continue;
 			}
-			if (known != instr.type_hint) {
+			IRInstruction::TypeHint expected = instr.type_hint;
+			if (read_index == 0 && instr.lhs_type_hint != IRInstruction::TypeHint_NONE) {
+				expected = instr.lhs_type_hint;
+			} else if (read_index == 1 && instr.rhs_type_hint != IRInstruction::TypeHint_NONE) {
+				expected = instr.rhs_type_hint;
+			}
+			if (known != expected) {
 				fail(std::string(ir_opcode_name(instr.opcode)) + " is hinted " +
-					variant_type_name(instr.type_hint) + " but r" + std::to_string(reg) +
+					variant_type_name(expected) + " but r" + std::to_string(reg) +
 					" holds " + variant_type_name(known), instr_idx);
 			}
+			read_index++;
 		}
 	}
 

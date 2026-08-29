@@ -6,6 +6,7 @@
 #include "profiling_layout.h"
 #include "register_allocator.h"
 #include "variant_layout.h"
+#include <array>
 #include <set>
 #include <string>
 #include <unordered_set>
@@ -75,7 +76,7 @@ private:
 
 	// Three phases sharing state through m_fn: frame layout, prologue, per-instruction.
 	void plan_frame(const IRFunction& func);
-	void emit_prologue(const IRFunction& func);
+	void emit_prologue(const IRFunction& func, const std::vector<int>* parameter_destinations = nullptr);
 	// Zero all slot type tags; promote_frame_handles reads the whole array.
 	void emit_zero_variant_slots();
 	void gen_scope_mark(const IRInstruction& instr);
@@ -83,6 +84,7 @@ private:
 	int scope_slot_offset(int scope_id) const;
 	bool scope_is_elided(int scope_id) const;
 	void plan_scopes(const IRFunction& func);
+	void plan_program_call_properties(const IRProgram& program);
 	// Frame slots holding nothing anyone will read again at each SCOPE_RELEASE.
 	void plan_release_clears(const IRFunction& func);
 	bool scope_body_may_allocate(const IRFunction& func, size_t mark_index) const;
@@ -337,10 +339,15 @@ private:
 	void emit_float_pair_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op);
 	void emit_float_pair_comparison(int result_offset, int lhs_offset, int rhs_offset, IROpcode cmp_op);
 	void emit_float_pair_fused_branch(IROpcode op, int lhs_offset, int rhs_offset, const std::string& label);
+	void emit_typed_float_comparison(int result_vreg, int result_offset,
+		int lhs_vreg, int lhs_offset, int rhs_vreg, int rhs_offset, IROpcode cmp_op);
+	void emit_typed_float_fused_branch(IROpcode op, int lhs_vreg, int lhs_offset,
+		int rhs_vreg, int rhs_offset, const std::string& label);
 	void emit_double_compare(uint8_t rd, IROpcode cmp_op);
 
 	// Integer-typed BRANCH_EQ..BRANCH_GTE on int64 payloads.
-	void emit_int_fused_branch(IROpcode op, int lhs_offset, int rhs_offset, const std::string& label);
+	void emit_int_fused_branch(IROpcode op, int lhs_vreg, int lhs_offset,
+		int rhs_vreg, int rhs_offset, const std::string& label);
 
 	// ECALL_ARRAY_AT; index_nonnegative elides the negative-index wrap.
 	void emit_array_element_access(bool is_set, int array_offset, int index_offset, int value_offset,
@@ -353,11 +360,16 @@ private:
 	void emit_variant_create_empty_dictionary(int stack_offset);
 
 	// Native int arithmetic; vreg != -1 may resolve to REG_T2 via chaining.
-	void emit_typed_int_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op,
+	void emit_typed_int_binary_op(int result_vreg, int result_offset, int lhs_offset, int rhs_offset, IROpcode op,
 		int lhs_vreg = -1, int rhs_vreg = -1);
-	void emit_typed_int_comparison(int result_offset, int lhs_offset, int rhs_offset, IROpcode cmp_op);
-	void emit_typed_float_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op);
-	void emit_typed_vector_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op, IRInstruction::TypeHint type_hint);
+	void emit_typed_int_comparison(int result_vreg, int result_offset, int lhs_vreg,
+		int lhs_offset, int rhs_vreg, int rhs_offset, IROpcode cmp_op);
+	void emit_typed_float_binary_op(int result_vreg, int result_offset, int lhs_vreg,
+		int lhs_offset, int rhs_vreg, int rhs_offset, IROpcode op);
+	void emit_typed_vector_binary_op(int result_vreg, int result_offset, int lhs_offset, int rhs_offset, IROpcode op, IRInstruction::TypeHint type_hint);
+	void emit_typed_vector_scalar_op(int result_vreg, int result_offset, int vector_offset, int scalar_offset,
+		bool scalar_on_left, IROpcode op, IRInstruction::TypeHint vector_type,
+		IRInstruction::TypeHint scalar_type);
 
 	// GLOBAL_CALL emission (riscv_globals.cpp); table in globals.h.
 	void emit_global_call(const IRInstruction& instr);
@@ -393,7 +405,7 @@ private:
 	bool folds_to_immediate(const IRInstruction& instr, size_t operand_index) const;
 	static bool int_op_takes_immediate(IROpcode op, int64_t value);
 	static bool int_op_is_commutative(IROpcode op);
-	void emit_typed_int_binary_op_imm(int result_offset, int lhs_offset, int64_t imm, IROpcode op,
+	void emit_typed_int_binary_op_imm(int result_vreg, int result_offset, int lhs_offset, int64_t imm, IROpcode op,
 		int lhs_vreg = -1);
 	void plan_int_chaining(const IRFunction& func);
 	void plan_nonnegative(const IRFunction& func);
@@ -403,10 +415,17 @@ private:
 	void emit_container_handle(uint8_t rd, int vreg, int offset);
 	std::pair<uint8_t, int> variant_source(int vreg, int offset, uint8_t scratch);
 	static bool is_typed_int_binary(const IRInstruction& instr);
-	// Int payload into rd; REG_T2 when chained.
+	// Typed payload cache. Slots remain canonical; these caller-saved registers
+	// merely avoid reloading values inside one basic block.
+	void clear_block_value_state();
+	void invalidate_cached_vreg(int vreg);
+	void note_known_tag(int vreg, int tag);
+	void emit_known_variant_type(int vreg, int offset, int tag);
+	void cache_int_result(int vreg, uint8_t source);
+	void cache_float_result(int vreg, uint8_t source);
 	uint8_t emit_int_operand(uint8_t rd, int vreg, int offset);
-	// Materialise INT Variant unless chaining keeps the value in REG_T2.
-	void emit_typed_int_result(int result_offset);
+	uint8_t emit_float_operand(uint8_t fd, int vreg, int offset);
+	void emit_typed_int_result(int result_vreg, int result_offset);
 
 	// Per-instruction temporaries; do not survive past the emitting instruction.
 	int get_scratch_variant_offset(int index = 0);
@@ -437,6 +456,8 @@ private:
 	};
 	std::vector<LabelUse> m_label_uses;
 	std::unordered_map<std::string, size_t> m_functions;
+	std::unordered_set<std::string> m_scoped_clean_functions;
+	std::unordered_set<std::string> m_trusted_internal_entries;
 
 	RegisterAllocator m_allocator;
 
@@ -512,6 +533,14 @@ private:
 		// Per-suspension labels, state-ordered; resume dispatches on the index.
 		std::vector<std::string> await_states;
 		std::string resume_label;
+
+		std::vector<int> known_tags;
+		std::vector<int8_t> int_cache_slots;
+		std::vector<int8_t> float_cache_slots;
+		std::array<int, 3> int_cache_owners {{ -1, -1, -1 }};
+		std::array<int, 3> float_cache_owners {{ -1, -1, -1 }};
+		uint8_t next_int_cache = 0;
+		uint8_t next_float_cache = 0;
 	};
 
 	FunctionState m_fn;

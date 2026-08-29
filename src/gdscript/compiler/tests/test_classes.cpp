@@ -300,6 +300,34 @@ void test_super_at_script_level() {
 	std::cout << "  ✓ super at script level is the self-call it stands for" << std::endl;
 }
 
+void test_self_local_call_is_direct_and_typed() {
+	std::cout << "Testing self.local() direct dispatch..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"func increment(x : int) -> int:\n"
+		"\treturn x + 1\n"
+		"func test(x : int) -> int:\n"
+		"\treturn self.increment(x)\n");
+	const IRFunction* test = find_function(ir, "test");
+	const IRFunction* increment = find_function(ir, "increment");
+	check(test != nullptr && count_opcode(*test, IROpcode::CALL) == 1,
+		"self.increment() is a guest CALL");
+	check(test != nullptr && count_opcode(*test, IROpcode::GET_NODE) == 0 &&
+		count_opcode(*test, IROpcode::VCALL) == 0,
+		"self.increment() needs neither GET_NODE nor VCALL");
+	bool trusted = false;
+	if (test != nullptr) {
+		for (const IRInstruction& instr : test->instructions) {
+			trusted = trusted || (instr.opcode == IROpcode::CALL && instr.trusted_internal_call);
+		}
+	}
+	check(trusted, "an exactly typed local call uses the trusted entry");
+	check(increment != nullptr && count_opcode(*increment, IROpcode::COERCE) == 1,
+		"the public entry retains host-side coercion");
+
+	std::cout << "  ✓ self.local() is a trusted guest call" << std::endl;
+}
+
 void test_what_is_refused() {
 	std::cout << "Testing the refusals..." << std::endl;
 
@@ -1664,6 +1692,7 @@ int main() {
 	test_a_method_call_is_a_direct_call();
 	test_a_field_is_the_instance_dictionary();
 	test_super_at_script_level();
+	test_self_local_call_is_direct_and_typed();
 	test_what_is_refused();
 	test_a_class_type_travels();
 	test_a_lambda_in_a_method_sees_the_class();

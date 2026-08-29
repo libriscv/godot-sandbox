@@ -13,6 +13,7 @@
 #include "../compiler.h"
 #include "../instance_layout.h"
 #include "../variant_layout.h"
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <unordered_map>
@@ -49,6 +50,24 @@ static Compiled compile_to_code(const std::string& source, const VariantLayout& 
 static uint32_t word_at(const std::vector<uint8_t>& code, size_t off) {
 	return uint32_t(code[off]) | (uint32_t(code[off + 1]) << 8) |
 			(uint32_t(code[off + 2]) << 16) | (uint32_t(code[off + 3]) << 24);
+}
+
+static std::vector<uint32_t> function_words(const Compiled& compiled, const std::string& name) {
+	const auto it = compiled.functions.find(name);
+	assert(it != compiled.functions.end());
+	std::vector<uint32_t> words;
+	for (size_t off = it->second; off + 4 <= compiled.code.size(); off += 4) {
+		const uint32_t word = word_at(compiled.code, off);
+		words.push_back(word);
+		if (word == 0x00008067) {
+			break;
+		}
+	}
+	return words;
+}
+
+static bool is_ecall(uint32_t word) {
+	return word == 0x00000073;
 }
 
 // Counts instructions matching (opcode, funct3). Used to tell flw/fsw apart from
@@ -368,6 +387,45 @@ void test_compiler_option_selects_layout() {
 	std::cout << "  ✓ CompilerOptions layout selection test passed" << std::endl;
 }
 
+void test_float_comparisons_and_vector_scalars_are_native() {
+	std::cout << "Testing native float comparisons and vector/scalar math..." << std::endl;
+
+	const Compiled compared = compile_to_code(
+		"func test(a : float, b : float) -> bool:\n"
+		"\treturn a < b\n", VariantLayout(false));
+	const std::vector<uint32_t> compare_words = function_words(compared, "test");
+	assert(std::none_of(compare_words.begin(), compare_words.end(), is_ecall));
+	assert(std::any_of(compare_words.begin(), compare_words.end(), [](uint32_t word) {
+		return (word & 0x7f) == 0x53 && (word >> 25) == 0b1010001;
+	}));
+	const Compiled branched = compile_to_code(
+		"func test(a : float, b : float) -> int:\n"
+		"\tvar result : int = 2\n"
+		"\tif a < b:\n"
+		"\t\tresult = 1\n"
+		"\treturn result\n", VariantLayout(false));
+	const std::vector<uint32_t> branch_words = function_words(branched, "test");
+	assert(std::none_of(branch_words.begin(), branch_words.end(), is_ecall));
+	assert(std::any_of(branch_words.begin(), branch_words.end(), [](uint32_t word) {
+		return (word & 0x7f) == 0x53 && (word >> 25) == 0b1010001;
+	}));
+
+	const std::string vector_source =
+		"func test(v : Vector2, scale : float) -> Vector2:\n"
+		"\treturn v * scale\n";
+	for (const VariantLayout layout : { VariantLayout(false), VariantLayout(true) }) {
+		const Compiled vectors = compile_to_code(vector_source, layout);
+		const std::vector<uint32_t> words = function_words(vectors, "test");
+		assert(std::none_of(words.begin(), words.end(), is_ecall));
+		const uint32_t fmul_funct7 = layout.double_precision ? 0b0001001 : 0b0001000;
+		assert(std::count_if(words.begin(), words.end(), [fmul_funct7](uint32_t word) {
+			return (word & 0x7f) == 0x53 && (word >> 25) == fmul_funct7;
+		}) == 2);
+	}
+
+	std::cout << "  ✓ Float comparisons and vector/scalar math stay in guest code" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Double Precision (real_t = double) Tests ===" << std::endl << std::endl;
 
@@ -381,6 +439,7 @@ int main() {
 	test_globals_area_scales();
 	test_large_frames_survive_wider_variants();
 	test_compiler_option_selects_layout();
+	test_float_comparisons_and_vector_scalars_are_native();
 
 	std::cout << std::endl << "=== All double precision tests passed! ===" << std::endl;
 	return 0;

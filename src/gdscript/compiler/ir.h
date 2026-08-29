@@ -250,6 +250,11 @@ struct IRInstruction {
 	// 3 operands or fewer covers 92% of instructions; those allocate nothing.
 	SmallVector<IRValue, 3> operands;
 	TypeHint type_hint = TypeHint_NONE;
+	// Source types for mixed typed binary operations. Most instructions leave
+	// these unset; vector/scalar lowering uses them to select the broadcast side
+	// without a run-time tag test.
+	TypeHint lhs_type_hint = TypeHint_NONE;
+	TypeHint rhs_type_hint = TypeHint_NONE;
 
 	// 1-based source line; 0 for prologue/synthesised. Metadata only.
 	int32_t line = 0;
@@ -265,6 +270,10 @@ struct IRInstruction {
 	// into the method that made it, so the host bypasses it for this one call.
 	bool super_call = false;
 
+	// CALL only: every typed argument already has the callee's declared type, so
+	// the backend may use the callee's trusted entry past parameter coercion.
+	bool trusted_internal_call = false;
+
 	IRInstruction(IROpcode op) : opcode(op) {}
 	IRInstruction(IROpcode op, IRValue a) : opcode(op), operands{a} {}
 	IRInstruction(IROpcode op, IRValue a, IRValue b) : opcode(op), operands{a, b} {}
@@ -274,8 +283,11 @@ struct IRInstruction {
 	std::string to_string(const IRStringTable* strings = nullptr) const;
 
 	bool operator==(const IRInstruction& other) const {
-		if (opcode != other.opcode || type_hint != other.type_hint || line != other.line ||
-			super_call != other.super_call || operands.size() != other.operands.size()) {
+		if (opcode != other.opcode || type_hint != other.type_hint ||
+			lhs_type_hint != other.lhs_type_hint || rhs_type_hint != other.rhs_type_hint ||
+			line != other.line || super_call != other.super_call ||
+			trusted_internal_call != other.trusted_internal_call ||
+			operands.size() != other.operands.size()) {
 			return false;
 		}
 		for (size_t i = 0; i < operands.size(); i++) {
@@ -302,6 +314,7 @@ struct IRFunction {
 	std::vector<IRInstruction> instructions;
 	std::vector<DebugLocal> debug_locals;
 	int max_registers = 0;
+	IRInstruction::TypeHint return_type_hint = IRInstruction::TypeHint_NONE;
 	// Has AWAIT; gets a resume entry, all parameters forced live.
 	bool is_coroutine = false;
 
@@ -495,6 +508,7 @@ namespace TypeHintUtils {
 		return hint == Variant::VECTOR2 ||
 		       hint == Variant::VECTOR3 ||
 		       hint == Variant::VECTOR4 ||
+		       hint == Variant::COLOR ||
 		       hint == Variant::VECTOR2I ||
 		       hint == Variant::VECTOR3I ||
 		       hint == Variant::VECTOR4I;
@@ -509,7 +523,8 @@ namespace TypeHintUtils {
 	inline bool is_float_vector(IRInstruction::TypeHint hint) {
 		return hint == Variant::VECTOR2 ||
 		       hint == Variant::VECTOR3 ||
-		       hint == Variant::VECTOR4;
+		       hint == Variant::VECTOR4 ||
+		       hint == Variant::COLOR;
 	}
 } // namespace TypeHintUtils
 

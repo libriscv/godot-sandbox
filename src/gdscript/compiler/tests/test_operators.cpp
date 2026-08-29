@@ -752,6 +752,28 @@ static void test_enum_rejects_an_unknown_member() {
 	std::cout << "  ✓ an unknown or repeated enum member is rejected" << std::endl;
 }
 
+static void test_mixed_arithmetic_keeps_its_types() {
+	const IRProgram ir = compile_to_ir(
+		"func numeric(i : int, f : float) -> float:\n"
+		"\treturn i + f\n"
+		"func vector(v : Vector2, scale : float) -> Vector2:\n"
+		"\treturn v * scale\n"
+		"func strings(a : String, b : String) -> String:\n"
+		"\treturn a + b\n");
+
+	const IRFunction& numeric = find_function(ir, "numeric");
+	assert(count_opcode(numeric, IROpcode::CONVERT) == 1);
+	assert(only(numeric, IROpcode::ADD).type_hint == Variant::FLOAT);
+
+	const IRInstruction& vector = only(find_function(ir, "vector"), IROpcode::MUL);
+	assert(vector.type_hint == Variant::VECTOR2);
+	assert(vector.lhs_type_hint == Variant::VECTOR2);
+	assert(vector.rhs_type_hint == Variant::FLOAT);
+
+	const IRInstruction& strings = only(find_function(ir, "strings"), IROpcode::ADD);
+	assert(strings.type_hint == Variant::STRING);
+}
+
 // A local of the same name shadows the enum, as GDScript resolves.
 static void test_a_local_shadows_an_enum() {
 	assert(run_int(
@@ -821,6 +843,7 @@ int main() {
 	test_enum_member_is_a_typed_integer();
 	test_enum_shadows_a_builtin_type_name();
 	test_enum_as_a_dictionary_value();
+	test_mixed_arithmetic_keeps_its_types();
 	test_enum_rejects_an_unknown_member();
 	test_a_local_shadows_an_enum();
 
