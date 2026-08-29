@@ -47,9 +47,11 @@ jobs:
         working-directory: ${{github.workspace}}/tests
         run: |
           # Download and install Zig
-          wget https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz
-          tar -xf zig-linux-x86_64-0.14.0.tar.xz
-          export PATH=$PWD/zig-linux-x86_64-0.14.0:$PATH
+          wget -q https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz \
+            -O "$RUNNER_TEMP/zig.tar.xz"
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar -xf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP/zig" --strip-components=1
+          export PATH=$RUNNER_TEMP/zig:$PATH
 
           # Run the tests with Zig
           CI=1 GODOT=./Godot_v4.6.3-stable_linux.x86_64 ./zig_unittests.sh
