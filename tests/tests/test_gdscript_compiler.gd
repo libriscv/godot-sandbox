@@ -4124,6 +4124,31 @@ func run():
 		"a class override should reach the displaced trait body and its state")
 	s.queue_free()
 
+func test_sgd_an_abstract_trait_method_does_not_make_the_script_abstract():
+	var script := SafeGDScript.new()
+	script.set_source_code("""
+uses Damageable
+
+trait Damageable:
+	var health: int = 100
+	@abstract func on_death() -> void
+
+func on_death() -> void:
+	pass
+
+func read_health() -> int:
+	return health
+""")
+	assert_eq(script.get_compile_error(), "", "the trait implementation should compile")
+
+	var node := Node.new()
+	node.set_script(script)
+	assert_eq(node.get_script(), script,
+		"an abstract method inside a used trait must not make its owner script abstract")
+	assert_eq(node.call("read_health"), 100, "the attached script should be runnable")
+	node.set_script(null)
+	node.free()
+
 func test_sgd_rpc_is_published_only_while_unrestricted():
 	var script := SafeGDScript.new()
 	script.set_source_code("""

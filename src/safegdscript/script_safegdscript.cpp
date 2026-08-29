@@ -887,14 +887,14 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug,
 	}
 	this->base_script = Ref<Script>();
 	this->base_script_resolved = false;
-	this->abstract_script = false;
+	bool is_file_trait = false;
+	scan_class_header(source_code, nullptr, nullptr, &is_file_trait);
+	this->abstract_script = is_file_trait;
 	this->class_icon_path = "res://addons/godot_sandbox/SafeGDScript.svg";
 	const PackedStringArray metadata_lines = source_code.split("\n");
 	for (int64_t i = 0; i < metadata_lines.size(); i++) {
 		const String line = metadata_lines[i].strip_edges();
-		if (line.begins_with("@abstract")) {
-			this->abstract_script = true;
-		} else if (line.begins_with("@icon(")) {
+		if (line.begins_with("@icon(")) {
 			const int quote = line.find("\"");
 			const int end = quote < 0 ? -1 : line.find("\"", quote + 1);
 			if (quote >= 0 && end > quote + 1) {
