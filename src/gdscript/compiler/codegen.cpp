@@ -12,18 +12,25 @@ namespace gdscript {
 
 void CodeGenerator::set_engine_ancestry(
 	const std::vector<std::pair<std::string, std::string>>& pairs) {
-	m_engine_ancestry.clear();
-	for (const auto& pair : pairs) {
+	m_engine_ancestry = pairs;
+}
+
+bool CodeGenerator::engine_class_derives_from(const std::string& actual,
+	const std::string& required) const {
+	if (actual.empty() || required.empty()) return false;
+	for (const auto& pair : m_engine_ancestry) {
+		if (pair.first != actual) continue;
 		size_t begin = 0;
 		while (begin <= pair.second.size()) {
 			const size_t end = pair.second.find(',', begin);
-			const std::string name = pair.second.substr(begin,
-				end == std::string::npos ? std::string::npos : end - begin);
-			if (!name.empty()) m_engine_ancestry[pair.first].insert(name);
+			const size_t length = (end == std::string::npos ? pair.second.size() : end) - begin;
+			if (pair.second.compare(begin, length, required) == 0) return true;
 			if (end == std::string::npos) break;
 			begin = end + 1;
 		}
+		return false;
 	}
+	return false;
 }
 
 static IRInstruction::TypeHint type_hint_from_string(const std::string& type_str) {
@@ -6655,8 +6662,7 @@ const SignalDecl* CodeGenerator::find_trait_signal(const TraitDecl& trait,
 std::string CodeGenerator::trait_required_base(const TraitDecl& trait) const {
 	const auto satisfies = [&](const std::string& actual, const std::string& required) {
 		if (actual == required) return true;
-		auto found = m_engine_ancestry.find(actual);
-		return found != m_engine_ancestry.end() && found->second.count(required) != 0;
+		return engine_class_derives_from(actual, required);
 	};
 	std::string required;
 	std::unordered_set<const TraitDecl*> seen;
@@ -6780,8 +6786,7 @@ void CodeGenerator::validate_trait_member(const std::string& kind,
 void CodeGenerator::validate_uses(const Program& program) const {
 	const auto satisfies_base = [&](const std::string& actual, const std::string& required) {
 		if (actual == required) return true;
-		auto found = m_engine_ancestry.find(actual);
-		return found != m_engine_ancestry.end() && found->second.count(required) != 0;
+		return engine_class_derives_from(actual, required);
 	};
 	for (const TraitDecl& trait : program.traits) {
 		(void)trait_required_base(trait);

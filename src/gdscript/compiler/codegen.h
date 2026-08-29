@@ -330,6 +330,10 @@ private:
 	const StructField* find_trait_constant(const TraitDecl& trait, const std::string& name) const;
 	const SignalDecl* find_trait_signal(const TraitDecl& trait, const std::string& name) const;
 	std::string trait_required_base(const TraitDecl& trait) const;
+	// True when engine class 'actual' has 'required' somewhere in its
+	// ancestor chain, per the host-supplied ancestry.
+	bool engine_class_derives_from(const std::string& actual,
+		const std::string& required) const;
 	bool declaration_uses(const StructDecl& decl, const TraitDecl& iface) const;
 	std::vector<const TraitDecl*> used_traits(const StructDecl& decl) const;
 	void validate_uses(const Program& program) const;
@@ -425,7 +429,10 @@ private:
 	std::string m_source_path;
 	std::unordered_set<std::string> m_autoloads;
 	std::unordered_map<std::string, std::string> m_global_script_classes;
-	std::unordered_map<std::string, std::unordered_set<std::string>> m_engine_ancestry;
+	// Class name -> comma-separated ancestor chain, exactly as the host sends
+	// it. Kept unparsed: over a thousand entries arrive with every compile,
+	// and only trait base-class checks ever read one.
+	std::vector<std::pair<std::string, std::string>> m_engine_ancestry;
 	std::unordered_map<std::string, const EnumDecl*> m_enums;
 	std::unordered_map<std::string, const EnumDecl::Member*> m_enum_members;
 	std::unordered_map<std::string, const SignalDecl*> m_signals;
