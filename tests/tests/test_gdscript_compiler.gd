@@ -4714,6 +4714,11 @@ func test_structs():
 struct BankAccount:
 	var balance = 0
 	var loan = 0
+	const CURRENCY = "NOK"
+	func net():
+		return self.balance - self.loan
+	func _to_string():
+		return "account:%s" % self.balance
 
 func make_default():
 	return BankAccount.new()
@@ -4748,6 +4753,16 @@ func repay(account: BankAccount, amount):
 
 func is_a_dictionary():
 	return BankAccount.new().size()
+
+func surfaces(value):
+	var account = BankAccount(100, 50)
+	var copied = account.copy()
+	var matched = 0
+	match account:
+		BankAccount(var balance, _):
+			matched = balance
+	return [account.net(), str(account), "%s" % account, copied == account,
+		value is BankAccount, value as BankAccount, matched, BankAccount.CURRENCY]
 """
 	var s = _compile_and_load(gdscript_code)
 	if s == null:
@@ -4764,7 +4779,24 @@ func is_a_dictionary():
 	assert_eq(s.vmcallv("deposit", 5), 105, "Compound assignment to a field")
 	# An instance passed in from Godot is an ordinary Dictionary.
 	assert_eq(s.vmcallv("repay", {"balance": 100, "loan": 50}, 20), 30, "A struct parameter")
+	assert_eq(s.vmcallv("repay", {&"balance": 100, &"loan": 50}, 20), 30,
+		"StringName keys satisfy the same struct shape")
 	assert_eq(s.vmcallv("is_a_dictionary"), 2, "An instance is a Dictionary")
+	assert_eq(s.vmcallv("surfaces", {"balance": 1, "loan": 2}),
+		[50, "account:100", "account:100", true, true,
+			{"balance": 1, "loan": 2}, 100, "NOK"],
+		"Methods, strings, copy, equality, is/as, patterns and constants")
+
+	var before := s.get_exceptions()
+	s.vmcallv("repay", {"balance": 1}, 1)
+	assert_eq(s.get_exceptions(), before + 1, "a missing struct key should throw")
+	assert_engine_error("Argument 'account' is not a BankAccount")
+	assert_engine_error("Exception: Sandbox exception in TypeError: Argument 'account' is not a BankAccount")
+	before = s.get_exceptions()
+	s.vmcallv("repay", {"balance": 1, "loan": 2, "extra": 3}, 1)
+	assert_eq(s.get_exceptions(), before + 1, "an extra struct key should throw")
+	assert_engine_error("Argument 'account' is not a BankAccount")
+	assert_engine_error("Exception: Sandbox exception in TypeError: Argument 'account' is not a BankAccount")
 
 	s.queue_free()
 

@@ -48,7 +48,8 @@ static Dictionary elf_arg_to_dict(const gdscript::FunctionParameter &p_param) {
 	arg["name"] = String::utf8(p_param.name.c_str(), p_param.name.size());
 	const Variant::Type type = elf_variant_type_or_nil(p_param.type);
 	arg["type"] = type;
-	arg["class_name"] = StringName();
+	arg["class_name"] = p_param.class_name.empty() ? StringName() :
+		StringName(String::utf8(p_param.class_name.c_str(), p_param.class_name.size()));
 	arg["hint"] = PropertyHint::PROPERTY_HINT_NONE;
 	arg["hint_string"] = String();
 	arg["usage"] = type == Variant::Type::NIL
@@ -78,7 +79,8 @@ static Dictionary elf_signature_to_method_dict(const gdscript::FunctionSignature
 	const Variant::Type ret_type = elf_variant_type_or_nil(p_sig.return_type);
 	ret["name"] = String();
 	ret["type"] = ret_type;
-	ret["class_name"] = StringName();
+	ret["class_name"] = p_sig.return_class_name.empty() ? StringName() :
+		StringName(String::utf8(p_sig.return_class_name.c_str(), p_sig.return_class_name.size()));
 	ret["hint"] = PropertyHint::PROPERTY_HINT_NONE;
 	ret["hint_string"] = String();
 	ret["usage"] = ret_type == Variant::Type::NIL

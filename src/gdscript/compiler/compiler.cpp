@@ -123,6 +123,9 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 
 		CodeGenerator codegen;
 		codegen.set_restricted(options.restricted);
+		codegen.set_struct_checks(options.restricted ||
+			options.struct_checks != CompilerOptions::StructChecks::OFF,
+			options.struct_checks == CompilerOptions::StructChecks::DEEP);
 		codegen.set_source_path(options.source_path);
 		codegen.set_autoloads(options.autoloads);
 		codegen.set_global_script_classes(options.global_script_classes);
@@ -147,6 +150,10 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 			property.class_name = global.class_name;
 			property.hint = uint32_t(global.export_hint.hint);
 			property.hint_string = global.export_hint.hint_string;
+			if (global.value_type == Variant::DICTIONARY && !global.class_name.empty() &&
+				property.hint_string.empty()) {
+				property.hint_string = global.class_name;
+			}
 			property.declaration_line = global.declaration_line;
 			property.is_member = global.is_member();
 			property.is_static = global.is_static;

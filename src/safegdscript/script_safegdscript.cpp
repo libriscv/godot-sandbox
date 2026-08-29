@@ -363,6 +363,28 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 
 	TypedArray<Dictionary> documentation;
 	documentation.push_back(class_doc);
+	for (const KeyValue<StringName, Ref<SafeGDScriptClass>> &entry : nested_classes) {
+		const SafeGDScriptClass *nested = entry.value.ptr();
+		if (nested == nullptr || !nested->get_is_struct()) continue;
+		Dictionary struct_doc;
+		struct_doc["name"] = String(_get_doc_class_name()) + "." + String(entry.key);
+		struct_doc["is_script_doc"] = true;
+		struct_doc["script_path"] = path;
+		apply_documentation_tags(struct_doc, nested->get_description());
+		Array properties;
+		for (const gdscript::ClassField &field : nested->get_fields()) {
+			Dictionary property;
+			property["name"] = String::utf8(field.name.c_str(), field.name.size());
+			property["type"] = field.class_name.empty()
+				? Variant::get_type_name(variant_type_or_nil(field.type))
+				: String::utf8(field.class_name.c_str(), field.class_name.size());
+			apply_documentation_tags(property,
+				String::utf8(field.description.c_str(), field.description.size()));
+			properties.push_back(property);
+		}
+		struct_doc["properties"] = properties;
+		documentation.push_back(struct_doc);
+	}
 	return documentation;
 }
 String SafeGDScript::_get_class_icon_path() const {
@@ -529,7 +551,8 @@ PropertyInfo SafeGDScript::property_info(const gdscript::PropertySignature &p_si
 	PropertyInfo info;
 	info.name = String::utf8(p_signature.name.c_str(), p_signature.name.size());
 	info.type = p_signature.type < 0 ? Variant::NIL : Variant::Type(p_signature.type);
-	if (info.type == Variant::OBJECT && !p_signature.class_name.empty()) {
+	if ((info.type == Variant::OBJECT || info.type == Variant::DICTIONARY) &&
+			!p_signature.class_name.empty()) {
 		info.class_name = String::utf8(p_signature.class_name.c_str(), p_signature.class_name.size());
 	}
 	info.hint = PropertyHint(p_signature.hint);

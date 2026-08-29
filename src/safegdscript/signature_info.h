@@ -48,10 +48,20 @@ inline MethodInfo method_info_from_signature(const gdscript::FunctionSignature &
 	method.flags = p_signature.is_static ? METHOD_FLAG_STATIC : METHOD_FLAG_NORMAL;
 	method.return_val.usage = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NIL_IS_VARIANT;
 	method.return_val.type = variant_type_or_nil(p_signature.return_type);
+	if (!p_signature.return_class_name.empty()) {
+		method.return_val.class_name = StringName(String::utf8(
+			p_signature.return_class_name.c_str(), p_signature.return_class_name.size()));
+		method.return_val.hint_string = String::utf8(
+			p_signature.return_class_name.c_str(), p_signature.return_class_name.size());
+	}
 	for (const gdscript::FunctionParameter &param : p_signature.parameters) {
 		PropertyInfo argument;
 		argument.name = String::utf8(param.name.c_str(), param.name.size());
 		argument.type = variant_type_or_nil(param.type);
+		if (!param.class_name.empty()) {
+			argument.class_name = StringName(String::utf8(param.class_name.c_str(), param.class_name.size()));
+			argument.hint_string = String::utf8(param.class_name.c_str(), param.class_name.size());
+		}
 		argument.usage = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NIL_IS_VARIANT;
 		method.arguments.push_back(std::move(argument));
 	}

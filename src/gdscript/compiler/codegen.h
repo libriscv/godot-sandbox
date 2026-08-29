@@ -20,6 +20,10 @@ public:
 	IRProgram generate(const Program& program);
 
 	void set_restricted(bool restricted) { m_restricted = restricted; }
+	void set_struct_checks(bool enabled, bool deep = false) {
+		m_struct_checks = enabled;
+		m_struct_deep_checks = enabled && deep;
+	}
 	void set_source_path(std::string path) { m_source_path = std::move(path); }
 	void set_autoloads(const std::vector<std::string>& autoloads) {
 		m_autoloads.clear();
@@ -69,6 +73,9 @@ private:
 		std::unordered_set<int> reclassifiable_registers;
 		// Struct known for a register: always DICTIONARY-typed, used for field-name checks.
 		std::unordered_map<int, const StructDecl*> register_structs;
+		// Compiler-only generic container promises.
+		std::unordered_map<int, const StructDecl*> array_element_structs;
+		std::unordered_map<int, const StructDecl*> dictionary_value_structs;
 		std::vector<LoopContext> loops;
 		TypeExpr return_type;
 		int next_register = 0;
@@ -129,6 +136,8 @@ private:
 	int gen_binary(const BinaryExpr* expr, FunctionContext& func);
 	bool absorb_str_call(FunctionContext& func, int reg, size_t since, std::vector<int>& args);
 	int gen_str_call(const std::vector<int>& args, FunctionContext& func);
+	int gen_struct_string(int value_reg, const StructDecl& decl, FunctionContext& func,
+		const Expr* site = nullptr);
 	int gen_string_concat(const BinaryExpr* expr, FunctionContext& func,
 		int& left_reg, int& right_reg);
 	int gen_logical(const BinaryExpr* expr, FunctionContext& func);
@@ -375,6 +384,8 @@ private:
 	int m_current_chain_link = 0;
 	std::string m_current_chain_function;
 	bool m_restricted = false;
+	bool m_struct_checks = true;
+	bool m_struct_deep_checks = false;
 	std::string m_source_path;
 	std::unordered_set<std::string> m_autoloads;
 	std::unordered_map<std::string, std::string> m_global_script_classes;
@@ -452,6 +463,8 @@ private:
 	                            const std::string& fail_label, FunctionContext& func);
 	void gen_dictionary_pattern_test(const MatchPattern& pattern, int subject_reg,
 	                                 const std::string& fail_label, FunctionContext& func);
+	void gen_struct_pattern_test(const MatchPattern& pattern, int subject_reg,
+	                            const std::string& fail_label, FunctionContext& func);
 
 	// Branch to fail_label on type mismatch; returns false if statically impossible.
 	bool emit_type_guard(int value_reg, IRInstruction::TypeHint type,
@@ -462,6 +475,9 @@ private:
 	// key_reg -1 for keyless operations.
 	int gen_dictionary_op(int64_t op, int dict_reg, int key_reg,
 	                      IRInstruction::TypeHint result_type, FunctionContext& func);
+	int gen_struct_shape_test(int value_reg, const StructDecl& decl, FunctionContext& func);
+	int require_struct_value(int value_reg, const StructDecl& decl, const std::string& what,
+		FunctionContext& func, int line, int column);
 	int gen_compare(IROpcode opcode, int left_reg, int right_reg, FunctionContext& func);
 	// TypeHint_NONE forces Variant::evaluate() fallback.
 	static IRInstruction::TypeHint fused_compare_type(IRInstruction::TypeHint left,
@@ -501,6 +517,8 @@ private:
 	std::vector<std::string> m_global_type_names;
 	// Struct per global, for field-name checking on load.
 	std::vector<const StructDecl*> m_global_structs;
+	std::vector<const StructDecl*> m_global_array_element_structs;
+	std::vector<const StructDecl*> m_global_dictionary_value_structs;
 	std::vector<bool> m_global_holds_object;
 
 	bool type_hint_names_a_class(const std::string& type_hint) const;

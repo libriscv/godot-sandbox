@@ -113,6 +113,53 @@ func container_size(n : int) -> int:
 	return acc
 """
 
+# `struct` is a SafeGDScript extension, so this pair is intentionally equivalent
+# rather than byte-identical: the engine side uses the Dictionary representation
+# that crosses the sandbox boundary.
+const STRUCT_SOURCE := """
+struct Point:
+	var x: int = 1
+	var y: int = 2
+
+func struct_read(n: int) -> int:
+	var point = Point()
+	var acc: int = 0
+	var i: int = 0
+	while i < n:
+		acc += point.x + point.y
+		i += 1
+	return acc
+
+func struct_construct(n: int) -> int:
+	var acc: int = 0
+	var i: int = 0
+	while i < n:
+		var point = Point(i, i + 1)
+		acc += point.x
+		i += 1
+	return acc
+"""
+
+const STRUCT_GDSCRIPT_SOURCE := """
+func struct_read(n: int) -> int:
+	var point = {"x": 1, "y": 2}
+	var acc: int = 0
+	var i: int = 0
+	while i < n:
+		acc += point.x + point.y
+		i += 1
+	return acc
+
+func struct_construct(n: int) -> int:
+	var acc: int = 0
+	var i: int = 0
+	while i < n:
+		var point = {"x": i, "y": i + 1}
+		acc += point.x
+		i += 1
+	return acc
+"""
+
 # One row per kernel: the work unit is what `n` counts, except for fib, whose
 # unit is a call and whose count is the size of the recursion tree. How many
 # times a kernel is called per sample is the harness's business -- it repeats
@@ -135,9 +182,11 @@ const KERNELS := [
 ]
 
 var _elf : PackedByteArray = PackedByteArray()
+var _struct_elf : PackedByteArray = PackedByteArray()
 
 func before_all():
 	_elf = _compile(SOURCE)
+	_struct_elf = _compile(STRUCT_SOURCE)
 
 # fib(n) calls itself once per node of its recursion tree: 2 * F(n + 1) - 1.
 func _fib_calls(n: int) -> int:
@@ -176,6 +225,28 @@ func test_bench_micro_kernels():
 		_mode(sandbox)
 		_note(group, "n", n)
 		_report(group)
+
+	var struct_sandbox := _load_elf(_struct_elf)
+	var struct_gds := _as_gdscript(STRUCT_GDSCRIPT_SOURCE)
+	if struct_gds != null:
+		for kernel in [
+			{"group": "struct field read", "fn": "struct_read", "n": 20000, "unit": "iteration"},
+			{"group": "struct construction", "fn": "struct_construct", "n": 10000, "unit": "instance"},
+		]:
+			var name: String = kernel["fn"]
+			var n: int = kernel["n"]
+			var group: String = kernel["group"]
+			assert_eq(struct_sandbox.vmcallv(name, n), struct_gds.call(name, n),
+				"%s should return the same value in both" % name)
+			_case(group, "SafeGDScript (sandbox)", n,
+				func(): struct_sandbox.vmcallv(name, n), kernel["unit"])
+			_case(group, "GDScript (engine)", n,
+				func(): struct_gds.call(name, n), kernel["unit"])
+			_measure(group)
+			_mode(struct_sandbox)
+			_note(group, "n", n)
+			_report(group)
+	struct_sandbox.free()
 
 	sandbox.free()
 

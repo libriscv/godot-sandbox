@@ -252,8 +252,8 @@ static void test_dictionary_element_access() {
 
 	// `d.key` means `d["key"]` in GDScript, and takes the same path.
 	const IRFunction& by_name = find_function(ir, "by_name");
-	assert(count_dict_ops(by_name, DICT_OP_GET) == 1);
-	assert(count_opcode(by_name, IROpcode::DICT_SET) == 1);
+	assert(count_opcode(by_name, IROpcode::DICT_GET_CONST) == 1);
+	assert(count_opcode(by_name, IROpcode::DICT_SET_CONST) == 1);
 	assert(count_opcode(by_name, IROpcode::VGET) == 0);
 	assert(count_opcode(by_name, IROpcode::VSET) == 0);
 

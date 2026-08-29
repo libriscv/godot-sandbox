@@ -679,7 +679,9 @@ int main(int argc, char** argv) {
 
 		for (uint64_t i = 0; i < count; i++) {
 			const uint64_t current = seed + i;
-			gdscript_test::Generator generator(current);
+			gdscript_test::GenOptions generator_options;
+			generator_options.allow_structs = false;
+			gdscript_test::Generator generator(current, generator_options);
 			const gdscript_test::GeneratedProgram program = generator.generate();
 			const std::string name = "seed " + std::to_string(current);
 

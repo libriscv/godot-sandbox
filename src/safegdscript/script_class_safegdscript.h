@@ -31,7 +31,7 @@ public:
 	// can be instantiated, so this has to be true for the bind to take. Attaching
 	// one by hand is refused in _instance_create() instead, where the guest's
 	// Dictionary is either parked or missing.
-	virtual bool _can_instantiate() const override { return true; }
+	virtual bool _can_instantiate() const override { return !is_struct; }
 	virtual Ref<Script> _get_base_script() const override;
 	virtual StringName _get_global_name() const override { return StringName(); }
 	virtual bool _inherits_script(const Ref<Script> &p_script) const override;
@@ -70,6 +70,8 @@ public:
 	const std::vector<gdscript::ClassField> &get_fields() const { return fields; }
 	const std::vector<MethodInfo> &get_methods_info() const { return methods_info; }
 	const SafeGDScriptClass *get_base_class() const { return base.ptr(); }
+	bool get_is_struct() const { return is_struct; }
+	const String &get_description() const { return description; }
 	// Own methods first, then the declared chain's.
 	const MethodInfo *find_method_info(const StringName &p_method) const;
 	// '@Class.method' for the class that declares it, or empty when nothing does.
@@ -89,6 +91,8 @@ private:
 	std::vector<MethodInfo> methods_info;
 	std::vector<gdscript::ClassField> fields;
 	int32_t line = 0;
+	bool is_struct = false;
+	String description;
 	// Declaration line per method, for the editor's go-to-definition.
 	HashMap<StringName, int32_t> method_lines;
 	bool valid = false;

@@ -30,6 +30,7 @@ private:
 	MatchPatternPtr parse_match_pattern();
 	MatchPatternPtr parse_match_array_pattern();
 	MatchPatternPtr parse_match_dictionary_pattern();
+	MatchPatternPtr parse_match_struct_pattern();
 	bool parse_pattern_rest(const char* what);
 	void parse_argument_list(std::vector<ExprPtr>& arguments, std::vector<std::string>& names);
 
@@ -116,7 +117,7 @@ private:
 
 	TypeExpr parse_type_hint();
 	TypeExpr parse_type_expr();
-	std::string parse_type_name();
+	std::string parse_type_name(std::vector<TypeExpr>* arguments = nullptr);
 	TypeExpr parse_return_type();
 	void skip_type_arguments();
 	bool parse_attribute(ExportHint& hint, bool* is_onready = nullptr,

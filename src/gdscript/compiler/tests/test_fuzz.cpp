@@ -16,6 +16,7 @@
 // failure prints the seed and the shrunk program, and re-running with that seed
 // reproduces it exactly.
 #include "../codegen.h"
+#include "../compiler.h"
 #include "../compiler_exception.h"
 #include "../ir_interpreter.h"
 #include "../ir_optimizer.h"
@@ -118,6 +119,29 @@ struct Failure {
 };
 
 Failure check(const std::string& source) {
+	// Structs deliberately lower through the host Dictionary ABI, which the
+	// scalar reference interpreter does not emulate. They still traverse code
+	// generation, verification, and every optimizer prefix; only the result
+	// comparison is skipped for this host-dependent subset.
+	if (source.find("struct FuzzPoint:") != std::string::npos) {
+		try {
+			build_ir(source, 0);
+			const auto& passes = IROptimizer::pipeline();
+			for (size_t n = 1; n <= passes.size(); n++) {
+				build_ir(source, n);
+			}
+			Compiler compiler;
+			if (compiler.compile(source).empty()) {
+				return { "struct ELF generation failed", compiler.get_error_info().message };
+			}
+			return {};
+		} catch (const CompilerException& e) {
+			return { std::string("rejected (") + e.error_type_string() + ")", e.what() };
+		} catch (const std::exception& e) {
+			return { "struct compiler run failed", e.what() };
+		}
+	}
+
 	RunResult unoptimized;
 	try {
 		unoptimized = run(source, 0);

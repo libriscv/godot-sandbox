@@ -442,6 +442,10 @@ private:
 			case IROpcode::MAKE_COLOR: return Variant::COLOR;
 			case IROpcode::MAKE_ARRAY: return Variant::ARRAY;
 			case IROpcode::MAKE_DICTIONARY: return Variant::DICTIONARY;
+			case IROpcode::MAKE_DICTIONARY_KEYED: return Variant::DICTIONARY;
+			case IROpcode::DICT_HAS_CONST:
+			case IROpcode::STRUCT_CHECK:
+				return Variant::BOOL;
 			default:
 				break;
 		}

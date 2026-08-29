@@ -35,6 +35,8 @@ void SafeGDScriptClass::configure(SafeGDScript *p_outer,
 	native_base = StringName(utf8_of(p_signature.native_base));
 	fields = p_signature.fields;
 	line = p_signature.line;
+	is_struct = p_signature.is_struct;
+	description = utf8_of(p_signature.description);
 	base = Ref<SafeGDScriptClass>();
 	methods_info.clear();
 	method_lines.clear();
@@ -158,7 +160,11 @@ TypedArray<Dictionary> SafeGDScriptClass::_get_script_property_list() const {
 		PropertyInfo info;
 		info.name = utf8_of(field.name);
 		info.type = variant_type_or_nil(field.type);
-		info.class_name = StringName("Variant");
+		info.class_name = field.class_name.empty()
+			? StringName("Variant") : StringName(utf8_of(field.class_name));
+		if (!field.class_name.empty()) {
+			info.hint_string = utf8_of(field.class_name);
+		}
 		info.usage = PROPERTY_USAGE_SCRIPT_VARIABLE |
 				(info.type == Variant::NIL ? PROPERTY_USAGE_NIL_IS_VARIANT : 0);
 		list.push_back(property_dict(info));
@@ -195,6 +201,10 @@ bool SafeGDScriptClass::_instance_has(Object *p_object) const {
 }
 
 void *SafeGDScriptClass::_instance_create(Object *p_for_object) const {
+	if (is_struct) {
+		ERR_PRINT("SafeGDScript: a struct is a Dictionary value and cannot be attached as a Script instance.");
+		return nullptr;
+	}
 	// The guest builds the instance; the bind syscall parks its Dictionary here
 	// around set_script(). Nothing parked means someone attached this Script by
 	// hand, and there is no instance behind it to attach to.

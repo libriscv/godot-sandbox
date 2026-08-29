@@ -125,6 +125,9 @@ private:
 	void gen_syscall_variant_get(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_string_batch(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg);
+	void gen_dict_const(const IRInstruction& instr);
+	void gen_struct_check(const IRInstruction& instr);
+	void gen_make_dictionary_keyed(const IRInstruction& instr);
 	void gen_get_node(const IRInstruction& instr);
 	void gen_load_resource(const IRInstruction& instr);
 	void gen_make_callable(const IRInstruction& instr);

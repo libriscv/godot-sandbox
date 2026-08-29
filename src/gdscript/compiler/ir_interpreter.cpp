@@ -559,6 +559,10 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::ARRAY_GET:
 		case IROpcode::ARRAY_SET:
 		case IROpcode::DICT_SET:
+		case IROpcode::DICT_GET_CONST:
+		case IROpcode::DICT_SET_CONST:
+		case IROpcode::DICT_HAS_CONST:
+		case IROpcode::STRUCT_CHECK:
 		case IROpcode::CALL_SYSCALL:
 		case IROpcode::MAKE_SCOPED:
 		case IROpcode::GET_NODE:
@@ -586,6 +590,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::MAKE_PLANE:
 		case IROpcode::MAKE_ARRAY:
 		case IROpcode::MAKE_DICTIONARY:
+		case IROpcode::MAKE_DICTIONARY_KEYED:
 		case IROpcode::MAKE_PACKED_BYTE_ARRAY:
 		case IROpcode::MAKE_PACKED_INT32_ARRAY:
 		case IROpcode::MAKE_PACKED_INT64_ARRAY:

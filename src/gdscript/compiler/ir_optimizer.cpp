@@ -78,6 +78,7 @@ const std::vector<IRPass>& IROptimizer::pipeline() {
 		{ "unreachable-code", &IROptimizer::eliminate_unreachable_code },
 		{ "copy-propagation", &IROptimizer::copy_propagation },
 		{ "enhanced-copy-propagation", &IROptimizer::enhanced_copy_propagation },
+		{ "scalar-replacement", &IROptimizer::scalar_replace_structs },
 		{ "licm", &IROptimizer::loop_invariant_code_motion },
 		{ "peephole", &IROptimizer::peephole_optimization },
 		{ "peephole", &IROptimizer::peephole_optimization },
@@ -824,12 +825,16 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		// Element writes: operand 0 is the container (not a destination), keep its constant.
 		case IROpcode::ARRAY_SET:
 		case IROpcode::DICT_SET:
+		case IROpcode::DICT_SET_CONST:
 			emit(instr);
 			break;
 
 		// Invalidate destination only; input constants survive.
 		case IROpcode::ARRAY_APPEND:
 		case IROpcode::ARRAY_GET:
+		case IROpcode::DICT_GET_CONST:
+		case IROpcode::DICT_HAS_CONST:
+		case IROpcode::STRUCT_CHECK:
 		case IROpcode::PRINT:
 		case IROpcode::VCALL:
 		case IROpcode::VGET:
@@ -860,6 +865,7 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::MAKE_ARRAY:
 		case IROpcode::MAKE_COLOR:
 		case IROpcode::MAKE_DICTIONARY:
+		case IROpcode::MAKE_DICTIONARY_KEYED:
 		case IROpcode::MAKE_PACKED_BYTE_ARRAY:
 		case IROpcode::MAKE_PACKED_COLOR_ARRAY:
 		case IROpcode::MAKE_PACKED_FLOAT32_ARRAY:
@@ -1812,6 +1818,119 @@ static bool reads_pending_store(const IRInstruction& instr,
 		}
 	}
 	return false;
+}
+
+// Replace a straight-line, non-escaping struct Dictionary with its field
+// registers. This deliberately declines at control flow: joining two versions
+// of a mutable field needs SSA phi nodes, and guessing there would turn a
+// performance pass into a semantic risk.
+bool IROptimizer::scalar_replace_structs(IRFunction& func) {
+	bool changed = false;
+	for (;;) {
+		bool replaced_one = false;
+		for (size_t make_at = 0; make_at < func.instructions.size(); make_at++) {
+			const IRInstruction& make = func.instructions[make_at];
+			if (make.opcode != IROpcode::MAKE_DICTIONARY_KEYED || make.operands.size() < 2) {
+				continue;
+			}
+			const int64_t count = make.operands[1].immediate();
+			if (count < 0 || make.operands.size() != size_t(2 + count * 2)) {
+				continue;
+			}
+			const int root = make.operands[0].reg_index();
+			if (root == 0) {
+				continue; // r0 is the implicit return value.
+			}
+
+			std::unordered_map<int64_t, int> initial_fields;
+			for (int64_t i = 0; i < count; i++) {
+				initial_fields[make.operands[size_t(2 + i * 2)].immediate()] =
+					make.operands[size_t(3 + i * 2)].reg_index();
+			}
+			std::unordered_set<int> aliases{root};
+			bool safe = true;
+			for (size_t i = make_at + 1; i < func.instructions.size() && safe; i++) {
+				const IRInstruction& instr = func.instructions[i];
+				if (ir_is_control_flow(instr.opcode)) {
+					if (instr.opcode == IROpcode::RETURN && aliases.count(0) == 0) {
+						continue;
+					}
+					safe = false;
+					break;
+				}
+
+				if (instr.opcode == IROpcode::MOVE &&
+					aliases.count(instr.operands[1].reg_index()) != 0) {
+					const int alias = instr.operands[0].reg_index();
+					if (alias == 0) {
+						safe = false;
+					} else {
+						aliases.insert(alias);
+					}
+					continue;
+				}
+				if (instr.opcode == IROpcode::DICT_GET_CONST &&
+					aliases.count(instr.operands[1].reg_index()) != 0 &&
+					initial_fields.count(instr.operands[2].immediate()) != 0) {
+					continue;
+				}
+				if (instr.opcode == IROpcode::DICT_SET_CONST &&
+					aliases.count(instr.operands[0].reg_index()) != 0 &&
+					initial_fields.count(instr.operands[1].immediate()) != 0) {
+					continue;
+				}
+
+				std::vector<int> reads;
+				ir_collect_read_registers(instr, reads);
+				for (int reg : reads) {
+					if (aliases.count(reg) != 0) {
+						safe = false;
+						break;
+					}
+				}
+			}
+			if (!safe) {
+				continue;
+			}
+
+			std::vector<IRInstruction> fresh;
+			fresh.reserve(func.instructions.size());
+			fresh.insert(fresh.end(), func.instructions.begin(),
+				func.instructions.begin() + static_cast<std::ptrdiff_t>(make_at));
+			std::unordered_map<int64_t, int> fields = initial_fields;
+			aliases = {root};
+			for (size_t i = make_at + 1; i < func.instructions.size(); i++) {
+				const IRInstruction& instr = func.instructions[i];
+				if (instr.opcode == IROpcode::MOVE &&
+					aliases.count(instr.operands[1].reg_index()) != 0) {
+					aliases.insert(instr.operands[0].reg_index());
+					continue;
+				}
+				if (instr.opcode == IROpcode::DICT_GET_CONST &&
+					aliases.count(instr.operands[1].reg_index()) != 0) {
+					IRInstruction move(IROpcode::MOVE, instr.operands[0],
+						IRValue::reg(fields.at(instr.operands[2].immediate())));
+					move.type_hint = instr.type_hint;
+					move.line = instr.line;
+					fresh.push_back(std::move(move));
+					continue;
+				}
+				if (instr.opcode == IROpcode::DICT_SET_CONST &&
+					aliases.count(instr.operands[0].reg_index()) != 0) {
+					fields[instr.operands[1].immediate()] = instr.operands[2].reg_index();
+					continue;
+				}
+				fresh.push_back(instr);
+			}
+			replace_instructions(func, std::move(fresh));
+			changed = replaced_one = true;
+			break;
+		}
+		if (!replaced_one) {
+			break;
+		}
+	}
+	return changed;
 }
 
 bool IROptimizer::eliminate_redundant_stores(IRFunction& func) {

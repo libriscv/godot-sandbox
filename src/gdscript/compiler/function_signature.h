@@ -13,6 +13,8 @@ struct FunctionParameter {
 
 	std::string name;
 	int32_t type = ANY_TYPE;
+	// Compiler-only type name for Dictionary-backed structs (or Object classes).
+	std::string class_name;
 
 	// NONE: no default or default does not fold to a constant (parameter stays required).
 	enum class DefaultKind : uint8_t {
@@ -35,6 +37,7 @@ struct FunctionSignature {
 	std::string name;
 	std::vector<FunctionParameter> parameters;
 	int32_t return_type = FunctionParameter::ANY_TYPE;
+	std::string return_class_name;
 	size_t required_arguments = 0;
 
 	int32_t line = 0; // 1-based line of 'func' token; 0 when unknown
@@ -62,6 +65,8 @@ struct RPCConfig {
 struct ClassField {
 	std::string name;
 	int32_t type = FunctionParameter::ANY_TYPE;
+	std::string class_name;
+	std::string description;
 };
 
 // A lifted method of the class. Its parameters live in the FunctionSignature
@@ -82,6 +87,8 @@ struct ClassSignature {
 	// Declared here only; inherited ones are reached through base_name.
 	std::vector<ClassMethod> methods;
 	int32_t line = 0;
+	bool is_struct = false;
+	std::string description;
 };
 
 // Encoded as a single blob (one scoped variant) rather than Array of Dictionaries

@@ -58,7 +58,7 @@ static int count_tag_tests(const IRFunction& func) {
 }
 
 static int count_dict_gets(const IRFunction& func) {
-	int count = 0;
+	int count = count_opcode(func, IROpcode::DICT_GET_CONST);
 	for (const auto& instr : func.instructions) {
 		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 3 &&
 			instr.operands[1].immediate() == ECALL_DICTIONARY_OPS &&
@@ -67,6 +67,11 @@ static int count_dict_gets(const IRFunction& func) {
 		}
 	}
 	return count;
+}
+
+static int count_dict_sets(const IRFunction& func) {
+	return count_opcode(func, IROpcode::DICT_SET) +
+		count_opcode(func, IROpcode::DICT_SET_CONST);
 }
 
 static int count_vcalls(const IRProgram& ir, const IRFunction& func, const std::string& method) {
@@ -234,7 +239,7 @@ static void test_unknown_member_write_tests_the_tag() {
 	assert(count_opcode(f, IROpcode::VGET) == 1);
 	// Dictionary arms: one element read, two element writes.
 	assert(count_dict_gets(f) == 1);
-	assert(count_opcode(f, IROpcode::DICT_SET) == 2);
+	assert(count_dict_sets(f) == 2);
 
 	// Read path: VGET_INLINE branches, same issue (VGET throws on Vector2).
 	const IRProgram read = compile_to_ir("func test(n):\n\treturn n.position.x\n");
@@ -249,7 +254,7 @@ static void test_unknown_member_write_tests_the_tag() {
 	const IRProgram plain_ir = compile_to_ir("func test(n):\n\tn.visible = true\n");
 	const IRFunction& plain = find_function(plain_ir, "test");
 	assert(count_tag_tests(plain) == 1);
-	assert(count_opcode(plain, IROpcode::DICT_SET) == 1);
+	assert(count_dict_sets(plain) == 1);
 	assert(count_opcode(plain, IROpcode::VSET) == 1);
 	assert(count_opcode(plain, IROpcode::VSET_INLINE) == 0);
 
@@ -271,7 +276,7 @@ static void test_the_copy_travels_back() {
 	// Dictionary value: DICT_SET for the element store + DICT_SET for the write-back.
 	const IRProgram entry = compile_to_ir(
 		"func test():\n\tvar d : Dictionary = {}\n\td[\"p\"].x = 1.0\n");
-	assert(count_opcode(find_function(entry, "test"), IROpcode::DICT_SET) == 2);
+	assert(count_dict_sets(find_function(entry, "test")) == 2);
 
 	// Global inline type: write-back via STORE_GLOBAL.
 	const IRProgram global = compile_to_ir(
@@ -311,7 +316,7 @@ static void test_a_base_property_travels_back() {
 		"func test():\n\tFoo.new().bump()\n");
 	const IRFunction& b = find_function(field, "@Foo.bump");
 	assert(count_opcode(b, IROpcode::VSET_INLINE) == 1);
-	assert(count_opcode(b, IROpcode::DICT_SET) == 1);
+	assert(count_dict_sets(b) == 1);
 
 	std::cout << "  ✓ a mutated base property is written back" << std::endl;
 }

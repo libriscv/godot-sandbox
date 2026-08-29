@@ -231,12 +231,12 @@ void test_a_field_is_the_instance_dictionary() {
 		check(count_opcode(*bump, IROpcode::VGET) == 0 &&
 			count_opcode(*bump, IROpcode::VSET) == 0,
 			"a field is not reached through the property syscalls");
-		check(count_opcode(*bump, IROpcode::DICT_SET) == 1, "n += k writes the Dictionary");
+		check(count_opcode(*bump, IROpcode::DICT_SET_CONST) == 1, "n += k writes the Dictionary");
 	}
 
 	const IRFunction* test = find_function(ir, "test");
 	if (test != nullptr) {
-		check(count_opcode(*test, IROpcode::DICT_SET) == 1, "c.n = 3 writes the Dictionary");
+		check(count_opcode(*test, IROpcode::DICT_SET_CONST) == 1, "c.n = 3 writes the Dictionary");
 		check(count_opcode(*test, IROpcode::VSET) == 0, "and not the property syscall");
 	}
 
@@ -255,7 +255,7 @@ void test_a_field_is_the_instance_dictionary() {
 		check(count_opcode(*over_global, IROpcode::LOAD_GLOBAL) == 0 &&
 			count_opcode(*over_global, IROpcode::STORE_GLOBAL) == 0,
 			"a field does not reach the script's global of the same name");
-		check(count_opcode(*over_global, IROpcode::DICT_SET) == 1,
+		check(count_opcode(*over_global, IROpcode::DICT_SET_CONST) == 1,
 			"the write lands on the instance");
 	}
 
@@ -715,7 +715,7 @@ void test_a_class_typed_declaration_constructs_nothing() {
 	}
 	check(count_syscall(*test, ECALL_NODE_CREATE) == 0,
 		"a class-typed local constructs nothing either");
-	check(count_opcode(*test, IROpcode::MAKE_DICTIONARY) == 1,
+	check(count_opcode(*test, IROpcode::MAKE_DICTIONARY_KEYED) == 1,
 		"the struct-typed local is still an instance");
 
 	std::cout << "  \u2713 A class-typed declaration is null; a struct-typed one is an instance"
@@ -828,7 +828,7 @@ void test_what_the_class_does_not_declare_reaches_the_base() {
 		return;
 	}
 
-	check(count_opcode(*hurt, IROpcode::DICT_SET) == 1,
+	check(count_opcode(*hurt, IROpcode::DICT_SET_CONST) == 1,
 		"'hp' is the instance Dictionary, not a property of the base");
 
 	check(count_opcode(*hurt, IROpcode::VSET) == 1,
@@ -1083,7 +1083,7 @@ void test_an_instance_answers_is_and_as() {
 	const IRFunction* base_test = find_function(base, "test");
 	check(base_test != nullptr && vcalls(base, *base_test, "is_class"),
 		"what the engine knows is asked of the engine");
-	check(base_test != nullptr && count_syscall(*base_test, ECALL_DICTIONARY_OPS) >= 1,
+	check(base_test != nullptr && count_opcode(*base_test, IROpcode::DICT_GET_CONST) >= 1,
 		"and it is asked of the object the instance holds, not of the Dictionary");
 
 	const IRProgram inherited = compile_to_ir(
@@ -1251,7 +1251,7 @@ void test_an_untracked_instance_answers_is() {
 	if (take != nullptr) {
 		check(!vcalls(ir, *take, "is_class") && !vcalls(ir, *take, "get_script"),
 			"the file declares the chain, so the engine is not asked");
-		check(count_syscall(*take, ECALL_DICTIONARY_OPS) == 1,
+		check(count_opcode(*take, IROpcode::DICT_GET_CONST) == 1,
 			"one get answers it, whatever the chain's length");
 		check(count_opcode(*take, IROpcode::CMP_EQ) == 2,
 			"Base and Derived answer true, Other is not compared against");

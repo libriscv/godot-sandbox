@@ -3131,6 +3131,32 @@ APICALL(api_dict_ops) {
 	PENALIZE(50'000); // Costly Dictionary operations.
 	SYS_TRACE("dict_ops", int(op), dict_idx, vkey, vaddr);
 
+	struct RawKey {
+		gaddr_t pointer;
+		gaddr_t length;
+	};
+	const auto raw_key = [&](gaddr_t pointer, gaddr_t length) {
+		const std::string_view text = machine.memory.memview(pointer, length);
+		return emu.cached_guest_name(pointer, text, false);
+	};
+
+	// MAKE_KEYED creates the Dictionary, so a1 is a destination GuestVariant
+	// pointer instead of an existing scoped Dictionary handle.  The key table is
+	// an array of guest { pointer, length } pairs and a4 points at the values.
+	if (op == Dictionary_Op::MAKE_KEYED) {
+		const size_t count = size_t(vaddr);
+		const RawKey *keys = machine.memory.memarray<RawKey>(vkey, count);
+		const gaddr_t values_addr = machine.cpu.reg(14); // A4
+		const GuestVariant *values = machine.memory.memarray<GuestVariant>(values_addr, count);
+		GuestVariant *destination = machine.memory.memarray<GuestVariant>(gaddr_t(dict_idx), 1);
+		Dictionary dict;
+		for (size_t i = 0; i < count; i++) {
+			auto key = raw_key(keys[i].pointer, keys[i].length);
+			dict[key->sname] = values[i].toVariant(emu);
+		}
+		destination->create(emu, std::move(dict));
+		return;
+	}
 	const Variant &var_dict = get_scoped_variant_or_throw(emu, dict_idx, "Dictionary::operation");
 	if (variant_type(var_dict) != Variant::DICTIONARY) {
 		ERR_PRINT("Invalid Dictionary object, type = " + String(GuestVariant::type_name(var_dict.get_type())));
@@ -3139,6 +3165,7 @@ APICALL(api_dict_ops) {
 
 	switch (op) {
 		case Dictionary_Op::SET:
+		case Dictionary_Op::SET_RAW:
 		case Dictionary_Op::ERASE:
 		case Dictionary_Op::CLEAR:
 		case Dictionary_Op::MERGE:
@@ -3147,6 +3174,38 @@ APICALL(api_dict_ops) {
 			break;
 		default:
 			break;
+	}
+
+	if (op == Dictionary_Op::GET_RAW || op == Dictionary_Op::SET_RAW ||
+			op == Dictionary_Op::HAS_RAW) {
+		auto key = raw_key(vkey, vaddr);
+		godot::Dictionary &dict = variant_container<Dictionary>(var_dict);
+		if (op == Dictionary_Op::HAS_RAW) {
+			machine.set_result(dict.has(key->sname));
+			return;
+		}
+		const gaddr_t value_addr = machine.cpu.reg(14); // A4
+		GuestVariant *value = machine.memory.memarray<GuestVariant>(value_addr, 1);
+		if (op == Dictionary_Op::GET_RAW) {
+			Variant answer = dict.get(key->sname, Variant());
+			value->create(emu, std::move(answer));
+		} else {
+			dict[key->sname] = value->toVariant(emu);
+		}
+		return;
+	}
+
+	if (op == Dictionary_Op::HAS_EXACT_KEYS) {
+		const size_t count = size_t(vaddr);
+		const RawKey *keys = machine.memory.memarray<RawKey>(vkey, count);
+		const godot::Dictionary &dict = variant_container<Dictionary>(var_dict);
+		bool exact = size_t(dict.size()) == count;
+		for (size_t i = 0; exact && i < count; i++) {
+			auto key = raw_key(keys[i].pointer, keys[i].length);
+			exact = dict.has(key->sname);
+		}
+		machine.set_result(exact);
+		return;
 	}
 
 	switch (op) {
@@ -3238,6 +3297,12 @@ APICALL(api_dict_ops) {
 			vp->create(emu, Variant(v));
 			break;
 		}
+		case Dictionary_Op::HAS_EXACT_KEYS:
+		case Dictionary_Op::GET_RAW:
+		case Dictionary_Op::SET_RAW:
+		case Dictionary_Op::HAS_RAW:
+		case Dictionary_Op::MAKE_KEYED:
+			break; // Handled before this switch.
 		default:
 			ERR_PRINT("Invalid Dictionary operation");
 			throw std::runtime_error("Invalid Dictionary operation");

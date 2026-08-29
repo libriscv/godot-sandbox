@@ -22,6 +22,8 @@ using StmtPtr = std::unique_ptr<Stmt>;
 // to deserve its own bit, and keeps existing single-name users simple.
 struct TypeExpr {
 	std::vector<std::string> names;
+	// Generic arguments for a sole container name (Array[T], Dictionary[K,V]).
+	std::vector<TypeExpr> arguments;
 	bool nullable = false;
 	// Diagnostics retain `T?` instead of normalizing it to `T | null`.
 	bool spelled_nullable = false;
@@ -44,6 +46,14 @@ struct TypeExpr {
 		for (const std::string& name : names) {
 			if (!result.empty()) result += " | ";
 			result += name;
+			if (names.size() == 1 && !arguments.empty()) {
+				result += "[";
+				for (size_t i = 0; i < arguments.size(); i++) {
+					if (i != 0) result += ", ";
+					result += arguments[i].to_string();
+				}
+				result += "]";
+			}
 		}
 		if (nullable) {
 			if (!result.empty()) result += " | ";
@@ -141,9 +151,11 @@ struct TypeTestExpr : Expr {
 struct CastExpr : Expr {
 	ExprPtr value;
 	std::string type_name;
+	std::vector<TypeExpr> type_arguments;
 
-	CastExpr(ExprPtr v, std::string t)
-		: value(std::move(v)), type_name(std::move(t)) {}
+	CastExpr(ExprPtr v, std::string t, std::vector<TypeExpr> arguments = {})
+		: value(std::move(v)), type_name(std::move(t)),
+		  type_arguments(std::move(arguments)) {}
 };
 
 struct TernaryExpr : Expr {
@@ -314,6 +326,7 @@ struct MatchPattern {
 		BIND,       // var name -- matches anything, and names it
 		ARRAY,      // [p, p, ..] -- an Array of that length, elementwise
 		DICTIONARY, // {"k": p, "k2", ..} -- a Dictionary with those keys
+		STRUCT,     // Point(x = p, y = p) / Point(p, p)
 	};
 
 	Kind kind = Kind::VALUE;
@@ -326,6 +339,13 @@ struct MatchPattern {
 		MatchPatternPtr value;
 	};
 	std::vector<Entry> entries;
+	struct StructEntry {
+		// Empty for a positional field pattern.
+		std::string name;
+		MatchPatternPtr value;
+	};
+	std::string struct_name;
+	std::vector<StructEntry> struct_entries;
 	bool open = false; // trailing `..`
 	int line = 0;
 	int column = 0;
@@ -341,6 +361,11 @@ struct MatchPattern {
 			}
 		}
 		for (const auto& entry : entries) {
+			if (entry.value && entry.value->binds()) {
+				return true;
+			}
+		}
+		for (const auto& entry : struct_entries) {
 			if (entry.value && entry.value->binds()) {
 				return true;
 			}
@@ -423,6 +448,7 @@ struct StructField {
 	ExprPtr default_value;
 	int line = 0;
 	int column = 0;
+	std::string doc_comment;
 };
 
 struct StructDecl {
@@ -430,6 +456,7 @@ struct StructDecl {
 	std::vector<StructField> fields;
 	int line = 0;
 	int column = 0;
+	std::string doc_comment;
 
 	bool is_class = false;
 	std::string base_name;

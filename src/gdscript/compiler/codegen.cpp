@@ -312,6 +312,8 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	m_global_sets.clear();
 	m_global_type_names.clear();
 	m_global_structs.clear();
+	m_global_array_element_structs.clear();
+	m_global_dictionary_value_structs.clear();
 	m_global_is_member.clear();
 	m_global_holds_object.clear();
 	ir_program.globals.resize(program.globals.size());
@@ -338,6 +340,16 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		// Struct-typed global: DICTIONARY downstream, struct tracked for field checking.
 		const StructDecl* global_struct = find_struct(global.type_hint.sole_name());
 		m_global_structs.push_back(global_struct);
+		const StructDecl* array_element = nullptr;
+		const StructDecl* dictionary_value = nullptr;
+		if (global.type_hint.single_name() == "Array" && global.type_hint.arguments.size() == 1) {
+			array_element = find_struct(global.type_hint.arguments[0].single_name());
+		} else if (global.type_hint.single_name() == "Dictionary" &&
+			global.type_hint.arguments.size() == 2) {
+			dictionary_value = find_struct(global.type_hint.arguments[1].single_name());
+		}
+		m_global_array_element_structs.push_back(array_element);
+		m_global_dictionary_value_structs.push_back(dictionary_value);
 		const TypeSet declared = type_set_from(global.type_hint, global.line, global.column);
 		m_global_sets.push_back(global.type_hint.is_union() ? declared : TypeSet{});
 		m_global_type_names.push_back(global.type_hint.to_string());
@@ -464,6 +476,14 @@ IRProgram CodeGenerator::generate(const Program& program) {
 
 		{
 			if (fold_global_initializer(global.initializer.get(), ir_global)) {
+				if (m_global_structs[i] != nullptr && !m_global_structs[i]->is_class) {
+					if (ir_global.init_type != IRGlobalVar::InitType::EMPTY_DICT ||
+						!struct_fields(*m_global_structs[i]).empty()) {
+						error_at("The initializer of global '" + global.name +
+							"' is not a '" + m_global_structs[i]->name + "'", global.line,
+							global.column);
+					}
+				}
 				coerce_folded_initializer(ir_global, global.type_hint,
 					global.line, global.column);
 				ir_global.value_type = global.type_hint.is_union()
@@ -472,6 +492,10 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				// Not a compile-time constant: evaluate it at startup.
 				const size_t before = target.ir.instructions.size();
 				int reg = gen_expr(global.initializer.get(), target);
+				if (m_global_structs[i] != nullptr && !m_global_structs[i]->is_class) {
+					reg = require_struct_value(reg, *m_global_structs[i],
+						"global '" + global.name + "'", target, global.line, global.column);
+				}
 				if (global.type_hint.is_union()) {
 					reg = coerce_to_declared_type(reg, m_global_sets[i], target,
 						"global '" + global.name + "'", global.line, global.column,
@@ -573,9 +597,6 @@ IRProgram CodeGenerator::generate(const Program& program) {
 	emit_missing_export_accessors(ir_program);
 
 	for (const StructDecl& decl : program.structs) {
-		if (!decl.is_class) {
-			continue;
-		}
 		for (const FunctionDecl& method : decl.methods) {
 			// The synthetic self slot is not part of the declaration, so the
 			// signature the host checks arity against never mentions it.
@@ -584,8 +605,13 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			ir_program.signatures.push_back(std::move(signature));
 			ir_program.functions.push_back(generate_function(method, &decl));
 		}
-		if (const std::string* engine_base = native_base(decl)) {
-			ir_program.class_signatures.push_back(build_class_signature(decl, *engine_base));
+		const std::string* engine_base = native_base(decl);
+		// Plain nested classes are guest-only and have no Script resource for the
+		// host to attach. Structs are the exception: their signature is editor
+		// metadata even though their runtime value remains a Dictionary.
+		if (!decl.is_class || engine_base != nullptr) {
+			ir_program.class_signatures.push_back(build_class_signature(decl,
+				engine_base != nullptr ? *engine_base : std::string()));
 		}
 	}
 
@@ -784,19 +810,10 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 	}
 
 	if (declared_struct != nullptr && !nullable_single) {
-		const StructDecl* actual = get_register_struct(func, reg);
-		if (actual != nullptr && actual != declared_struct) {
-			error_at("Cannot assign a '" + actual->name + "' to variable '" + stmt->name +
-				"' of type '" + declared_struct->name + "'", stmt);
-		}
-		const IRInstruction::TypeHint actual_type = get_register_type(func, reg);
-		if (actual == nullptr && actual_type != IRInstruction::TypeHint_NONE &&
-		    actual_type != Variant::DICTIONARY) {
-			error_at("Cannot assign a value of type " + std::string(variant_type_name(actual_type)) +
-				" to variable '" + stmt->name + "' of type '" + declared_struct->name + "'", stmt);
-		}
-		set_register_struct(func, reg, declared_struct);
+		reg = require_struct_value(reg, *declared_struct, "variable '" + stmt->name + "'",
+			func, stmt->line, stmt->column);
 		declare_variable(func, stmt->name, reg, stmt->is_const, stmt);
+		func.declared_structs[reg] = declared_struct;
 		return;
 	}
 
@@ -833,6 +850,9 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 	}
 
 	declare_variable(func, stmt->name, reg, stmt->is_const, stmt, declared_variant);
+	if (!stmt->type_hint.arguments.empty()) {
+		apply_declared_type(reg, stmt->type_hint, func);
+	}
 	if (stmt->type_hint.is_union()) {
 		func.declared_sets[reg] = declared_set;
 		if (declared_struct != nullptr && nullable_single) {
@@ -862,12 +882,18 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 	Variable* var = find_variable(func, name);
 	if (!var) {
 		if (int self_reg = class_field_self(name, func); self_reg >= 0) {
-			if (const StructField* field = find_struct_field(*m_current_class, name);
-				field != nullptr && field->type_hint.is_union()) {
-				value_reg = coerce_to_declared_type(value_reg,
-					type_set_from(field->type_hint, field->line, field->column), func,
-					"field '" + name + "' of class '" + m_current_class->name + "'", site,
-					field->type_hint.to_string());
+			if (const StructField* field = find_struct_field(*m_current_class, name)) {
+				if (const StructDecl* field_struct = find_struct(field->type_hint.single_name());
+					field_struct != nullptr && !field_struct->is_class) {
+					value_reg = require_struct_value(value_reg, *field_struct,
+						"field '" + name + "' of '" + m_current_class->name + "'", func,
+						site ? site->line : 0, site ? site->column : 0);
+				} else if (field->type_hint.is_union()) {
+					value_reg = coerce_to_declared_type(value_reg,
+						type_set_from(field->type_hint, field->line, field->column), func,
+						"field '" + name + "' of class '" + m_current_class->name + "'", site,
+						field->type_hint.to_string());
+				}
 			}
 			gen_member_store(self_reg, name, value_reg, func);
 			free_register(func, value_reg);
@@ -878,6 +904,12 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 				error_at("Cannot assign to const variable: " + name, site);
 			}
 			size_t global_idx = m_global_variables.at(name);
+			if (m_global_structs[global_idx] != nullptr &&
+				!m_global_structs[global_idx]->is_class) {
+				value_reg = require_struct_value(value_reg, *m_global_structs[global_idx],
+					"global '" + name + "'", func, site ? site->line : 0,
+					site ? site->column : 0);
+			}
 			if (!m_global_sets[global_idx].any()) {
 				value_reg = coerce_to_declared_type(value_reg, m_global_sets[global_idx], func,
 					"global '" + name + "'", site, m_global_type_names[global_idx]);
@@ -913,6 +945,13 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 
 	if (var->is_const) {
 		error_at("Cannot assign to const variable: " + name, site);
+	}
+	if (auto declared_struct = func.declared_structs.find(var->register_num);
+		declared_struct != func.declared_structs.end() &&
+		!declared_struct->second->is_class) {
+		value_reg = require_struct_value(value_reg, *declared_struct->second,
+			"variable '" + name + "'", func, site ? site->line : 0,
+			site ? site->column : 0);
 	}
 
 	const auto declared_set = func.declared_sets.find(var->register_num);
@@ -963,6 +1002,17 @@ void CodeGenerator::gen_store_to(const Expr* target, int value_reg, FunctionCont
 		LValue base = resolve_lvalue(index_expr->object.get(), func);
 		check_struct_subscript(base.reg, index_expr->index.get(), func);
 		int idx_reg = gen_expr(index_expr->index.get(), func);
+		if (auto it = func.array_element_structs.find(base.reg);
+			it != func.array_element_structs.end()) {
+			value_reg = require_struct_value(value_reg, *it->second,
+				"an element of Array[" + it->second->name + "]", func,
+				site ? site->line : 0, site ? site->column : 0);
+		} else if (auto it = func.dictionary_value_structs.find(base.reg);
+			it != func.dictionary_value_structs.end()) {
+			value_reg = require_struct_value(value_reg, *it->second,
+				"a value of Dictionary[..., " + it->second->name + "]", func,
+				site ? site->line : 0, site ? site->column : 0);
+		}
 		gen_element_store(base.reg, idx_reg, value_reg, func);
 		free_register(func, idx_reg);
 		free_register(func, value_reg);
@@ -984,7 +1034,12 @@ void CodeGenerator::gen_store_to(const Expr* target, int value_reg, FunctionCont
 		{
 			const StructField& field = require_struct_field(*decl, member_expr->member_name,
 				member_expr->line, member_expr->column);
-			if (!field.type_hint.empty() && find_struct(field.type_hint.single_name()) == nullptr) {
+			if (const StructDecl* field_struct = find_struct(field.type_hint.single_name());
+				field_struct != nullptr && !field_struct->is_class) {
+				value_reg = require_struct_value(value_reg, *field_struct,
+					"field '" + field.name + "' of struct '" + decl->name + "'", func,
+					member_expr->line, member_expr->column);
+			} else if (!field.type_hint.empty() && field_struct == nullptr) {
 				if (field.type_hint.is_union()) {
 					value_reg = coerce_to_declared_type(value_reg,
 						type_set_from(field.type_hint, field.line, field.column), func,
@@ -1093,6 +1148,12 @@ void CodeGenerator::store_lvalue(const LValue& target, int value_reg, FunctionCo
 
 		case LValue::Kind::GLOBAL: {
 			size_t global_idx = m_global_variables.at(target.name);
+			if (m_global_structs[global_idx] != nullptr &&
+				!m_global_structs[global_idx]->is_class) {
+				value_reg = require_struct_value(value_reg, *m_global_structs[global_idx],
+					"global '" + target.name + "'", func, site ? site->line : 0,
+					site ? site->column : 0);
+			}
 			if (!m_global_sets[global_idx].any()) {
 				value_reg = coerce_to_declared_type(value_reg, m_global_sets[global_idx], func,
 					"global '" + target.name + "'", site, m_global_type_names[global_idx]);
@@ -1145,6 +1206,12 @@ void CodeGenerator::free_lvalue(const LValue& lvalue, FunctionContext& func) {
 void CodeGenerator::gen_return(const ReturnStmt* stmt, FunctionContext& func) {
 	if (stmt->value) {
 		int reg = gen_expr(stmt->value.get(), func);
+		if (const StructDecl* returned = find_struct(func.return_type.single_name());
+			returned != nullptr && !returned->is_class) {
+			reg = require_struct_value(reg, *returned,
+				"the return value of '" + m_current_function + "'", func,
+				stmt->line, stmt->column);
+		}
 		// Coerce to declared return type before moving to r0.
 		if (func.return_type.is_union()) {
 			reg = coerce_to_declared_type(reg, type_set_from(func.return_type), func,
@@ -1584,6 +1651,7 @@ static const char* pattern_kind_noun(MatchPattern::Kind kind) {
 		case MatchPattern::Kind::BIND:        return "a binding";
 		case MatchPattern::Kind::ARRAY:       return "an array pattern";
 		case MatchPattern::Kind::DICTIONARY:  return "a dictionary pattern";
+		case MatchPattern::Kind::STRUCT:      return "a struct pattern";
 		case MatchPattern::Kind::VALUE:       return "a value pattern";
 	}
 	return "a pattern";
@@ -1946,6 +2014,17 @@ void CodeGenerator::gen_pattern_test(const MatchPattern& pattern, int subject_re
 			func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(bound_reg),
 				IRValue::reg(subject_reg));
 			set_register_type(func, bound_reg, get_register_type(func, subject_reg));
+			if (const StructDecl* structure = get_register_struct(func, subject_reg)) {
+				set_register_struct(func, bound_reg, structure);
+			}
+			if (auto it = func.array_element_structs.find(subject_reg);
+				it != func.array_element_structs.end()) {
+				func.array_element_structs[bound_reg] = it->second;
+			}
+			if (auto it = func.dictionary_value_structs.find(subject_reg);
+				it != func.dictionary_value_structs.end()) {
+				func.dictionary_value_structs[bound_reg] = it->second;
+			}
 			declare_variable(func, pattern.name, bound_reg);
 			return;
 		}
@@ -1970,6 +2049,77 @@ void CodeGenerator::gen_pattern_test(const MatchPattern& pattern, int subject_re
 		case MatchPattern::Kind::DICTIONARY:
 			gen_dictionary_pattern_test(pattern, subject_reg, fail_label, func);
 			return;
+
+		case MatchPattern::Kind::STRUCT:
+			gen_struct_pattern_test(pattern, subject_reg, fail_label, func);
+			return;
+	}
+}
+
+void CodeGenerator::gen_struct_pattern_test(const MatchPattern& pattern, int subject_reg,
+		const std::string& fail_label, FunctionContext& func) {
+	const StructDecl* decl = find_struct(pattern.struct_name);
+	if (decl == nullptr || decl->is_class) {
+		error_at("Unknown struct '" + pattern.struct_name + "' in match pattern",
+			pattern.line, pattern.column);
+	}
+
+	std::vector<const MatchPattern*> field_patterns(decl->fields.size(), nullptr);
+	std::unordered_set<std::string> named_fields;
+	size_t positional = 0;
+	for (const auto& entry : pattern.struct_entries) {
+		size_t field_index = 0;
+		if (entry.name.empty()) {
+			if (positional >= decl->fields.size()) {
+				error_at("Too many positional fields in '" + decl->name + "' pattern",
+					pattern.line, pattern.column);
+			}
+			field_index = positional++;
+		} else {
+			if (!named_fields.insert(entry.name).second) {
+				error_at("Field '" + entry.name + "' is repeated in '" + decl->name + "' pattern",
+					pattern.line, pattern.column);
+			}
+			auto it = std::find_if(decl->fields.begin(), decl->fields.end(),
+				[&](const StructField& field) { return field.name == entry.name; });
+			if (it == decl->fields.end()) {
+				error_at("Struct '" + decl->name + "' has no field named '" + entry.name + "'",
+					pattern.line, pattern.column);
+			}
+			field_index = static_cast<size_t>(std::distance(decl->fields.begin(), it));
+		}
+		if (field_patterns[field_index] != nullptr) {
+			error_at("Field '" + decl->fields[field_index].name + "' is repeated in '" +
+				decl->name + "' pattern", pattern.line, pattern.column);
+		}
+		field_patterns[field_index] = entry.value.get();
+	}
+	for (size_t i = 0; i < field_patterns.size(); i++) {
+		if (field_patterns[i] == nullptr) {
+			error_at("Struct pattern '" + decl->name + "' must include field '" +
+				decl->fields[i].name + "' (use '_' to ignore it)", pattern.line, pattern.column);
+		}
+	}
+
+	if (const StructDecl* actual = get_register_struct(func, subject_reg)) {
+		if (actual != decl) {
+			func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(fail_label));
+			return;
+		}
+	} else {
+		if (!emit_type_guard(subject_reg, Variant::DICTIONARY, fail_label, func)) {
+			return;
+		}
+		int exact = gen_struct_shape_test(subject_reg, *decl, func);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, exact, fail_label, func);
+		free_register(func, exact);
+	}
+
+	for (size_t i = 0; i < decl->fields.size(); i++) {
+		int field_reg = gen_dict_get(subject_reg, decl->fields[i].name, func);
+		apply_declared_type(field_reg, decl->fields[i].type_hint, func);
+		gen_pattern_test(*field_patterns[i], field_reg, fail_label, func);
+		free_register(func, field_reg);
 	}
 }
 
@@ -2097,6 +2247,83 @@ int CodeGenerator::gen_dictionary_op(int64_t op, int dict_reg, int key_reg,
 	return result_reg;
 }
 
+int CodeGenerator::gen_struct_shape_test(int value_reg, const StructDecl& decl,
+	FunctionContext& func)
+{
+	int result_reg = alloc_register(func);
+	IRInstruction check(IROpcode::STRUCT_CHECK);
+	check.operands.push_back(IRValue::reg(result_reg));
+	check.operands.push_back(IRValue::reg(value_reg));
+	const std::vector<const StructField*> fields = struct_fields(decl);
+	check.operands.push_back(IRValue::imm(int64_t(fields.size())));
+	for (const StructField* field : fields) {
+		check.operands.push_back(IRValue::imm(add_string_constant(field->name)));
+	}
+	check.type_hint = Variant::BOOL;
+	func.ir.instructions.push_back(std::move(check));
+	set_register_type(func, result_reg, Variant::BOOL);
+	return result_reg;
+}
+
+int CodeGenerator::require_struct_value(int value_reg, const StructDecl& decl,
+	const std::string& what, FunctionContext& func, int line, int column)
+{
+	if (const StructDecl* actual = get_register_struct(func, value_reg)) {
+		if (actual != &decl) {
+			error_at("Cannot assign a '" + actual->name + "' to " + what +
+				" of type '" + decl.name + "'", line, column);
+		}
+		return value_reg;
+	}
+
+	const IRInstruction::TypeHint known = get_register_type(func, value_reg);
+	if (known != IRInstruction::TypeHint_NONE && known != Variant::DICTIONARY) {
+		error_at("Cannot assign a value of type " + std::string(variant_type_name(known)) +
+			" to " + what + " of type '" + decl.name + "'", line, column);
+	}
+	if (!m_struct_checks) {
+		set_register_struct(func, value_reg, &decl);
+		return value_reg;
+	}
+
+	const std::string failed = make_label("struct_shape_failed");
+	const std::string passed = make_label("struct_shape_ok");
+	if (known != Variant::DICTIONARY) {
+		int is_dictionary = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_dictionary),
+			IRValue::reg(value_reg), IRValue::imm(int64_t(Variant::DICTIONARY)));
+		set_register_type(func, is_dictionary, Variant::BOOL);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, is_dictionary, failed, func);
+		free_register(func, is_dictionary);
+	}
+	int exact = gen_struct_shape_test(value_reg, decl, func);
+	if (m_struct_deep_checks) {
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, exact, failed, func);
+		for (const StructField* field : struct_fields(decl)) {
+			if (find_struct(field->type_hint.single_name()) != nullptr) continue;
+			const IRInstruction::TypeHint field_type = single_type_from(field->type_hint);
+			if (field_type == IRInstruction::TypeHint_NONE) continue;
+			int field_reg = gen_dict_get(value_reg, field->name, func);
+			field_reg = coerce_to_declared_type(field_reg, field_type, func,
+				"field '" + field->name + "' of " + what, line, column);
+			gen_dict_set(value_reg, field->name, field_reg, func);
+			free_register(func, field_reg);
+		}
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(passed));
+	} else {
+		emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, exact, passed, func);
+	}
+	free_register(func, exact);
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(failed));
+	IRInstruction fail(IROpcode::THROW, ir_str("TypeError"),
+		ir_str(what + " is not a " + decl.name));
+	fail.operands.push_back(IRValue::imm(0));
+	func.ir.instructions.push_back(std::move(fail));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(passed));
+	set_register_struct(func, value_reg, &decl);
+	return value_reg;
+}
+
 int CodeGenerator::gen_compare(IROpcode opcode, int left_reg, int right_reg, FunctionContext& func) {
 	int result_reg = alloc_register(func);
 	IRInstruction cmp(opcode, IRValue::reg(result_reg), IRValue::reg(left_reg),
@@ -2175,6 +2402,11 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 	if (!is_range) {
 		// Evaluate iterable first: an integer bound takes the numeric loop.
 		int array_reg = gen_expr(stmt->iterable.get(), func);
+		const StructDecl* iterable_element = nullptr;
+		if (auto it = func.array_element_structs.find(array_reg);
+			it != func.array_element_structs.end()) {
+			iterable_element = it->second;
+		}
 
 		if (get_register_type(func, array_reg) == Variant::INT) {
 			int start_reg = gen_int_immediate(0, func);
@@ -2420,6 +2652,10 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 		}
 
 		declare_variable(func, stmt->variable, elem_reg, false, stmt);
+		if (iterable_element != nullptr) {
+			set_register_struct(func, elem_reg, iterable_element);
+			func.declared_structs[elem_reg] = iterable_element;
+		}
 		push_scope(func);
 		for (const auto& s : stmt->body) {
 			gen_stmt(s.get(), func);
@@ -3172,6 +3408,14 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 		}
 		// Dictionary handle: copy refers to the same fields, so propagate struct.
 		set_register_struct(func, new_reg, get_register_struct(func, local->register_num));
+		if (auto it = func.array_element_structs.find(local->register_num);
+			it != func.array_element_structs.end()) {
+			func.array_element_structs[new_reg] = it->second;
+		}
+		if (auto it = func.dictionary_value_structs.find(local->register_num);
+			it != func.dictionary_value_structs.end()) {
+			func.dictionary_value_structs[new_reg] = it->second;
+		}
 		return new_reg;
 	}
 
@@ -3263,8 +3507,15 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 		}
 		int result_reg = alloc_register(func);
 		func.ir.instructions.emplace_back(IROpcode::LOAD_GLOBAL, IRValue::reg(result_reg), IRValue::imm(global_idx));
-		if (m_global_sets[global_idx].any()) {
+		if (m_global_structs[global_idx] != nullptr) {
 			set_register_struct(func, result_reg, m_global_structs[global_idx]);
+		}
+		if (m_global_array_element_structs[global_idx] != nullptr) {
+			func.array_element_structs[result_reg] = m_global_array_element_structs[global_idx];
+		}
+		if (m_global_dictionary_value_structs[global_idx] != nullptr) {
+			func.dictionary_value_structs[result_reg] =
+				m_global_dictionary_value_structs[global_idx];
 		}
 		// Propagate declared type so member access skips the run-time tag test.
 		if (m_global_types[global_idx] != IRInstruction::TypeHint_NONE) {
@@ -3790,6 +4041,12 @@ int CodeGenerator::gen_logical(const BinaryExpr* expr, FunctionContext& func) {
 
 // Emit GLOBAL_CALL to str() over `args`.
 int CodeGenerator::gen_str_call(const std::vector<int>& args, FunctionContext& func) {
+	if (args.size() == 1) {
+		if (const StructDecl* structure = get_register_struct(func, args[0]);
+			structure != nullptr && !structure->is_class) {
+			return gen_struct_string(args[0], *structure, func);
+		}
+	}
 	const int result_reg = alloc_register(func);
 	IRInstruction instr(IROpcode::GLOBAL_CALL);
 	instr.operands.push_back(IRValue::reg(result_reg));
@@ -3803,6 +4060,47 @@ int CodeGenerator::gen_str_call(const std::vector<int>& args, FunctionContext& f
 	func.ir.instructions.push_back(instr);
 	set_register_type(func, result_reg, Variant::STRING);
 	return result_reg;
+}
+
+int CodeGenerator::gen_struct_string(int value_reg, const StructDecl& decl,
+	FunctionContext& func, const Expr* site)
+{
+	if (const StructDecl* owner = nullptr;
+		const FunctionDecl* method = find_class_method(decl, "_to_string", &owner)) {
+		return gen_class_method_call(decl, *method, *owner, value_reg, {}, NamedArguments{},
+			func, site);
+	}
+
+	std::vector<int> parts;
+	const auto literal = [&](const std::string& text) {
+		int reg = alloc_register(func);
+		IRInstruction load(IROpcode::LOAD_STRING, IRValue::reg(reg),
+			IRValue::imm(add_string_constant(text)));
+		load.type_hint = Variant::STRING;
+		func.ir.instructions.push_back(std::move(load));
+		set_register_type(func, reg, Variant::STRING);
+		return reg;
+	};
+	parts.push_back(literal(decl.name + "("));
+	const std::vector<const StructField*> fields = struct_fields(decl);
+	for (size_t i = 0; i < fields.size(); i++) {
+		parts.push_back(literal((i == 0 ? "" : ", ") + fields[i]->name + ": "));
+		parts.push_back(gen_dict_get(value_reg, fields[i]->name, func));
+	}
+	parts.push_back(literal(")"));
+
+	const int result = alloc_register(func);
+	IRInstruction call(IROpcode::GLOBAL_CALL);
+	call.operands.push_back(IRValue::reg(result));
+	call.operands.push_back(IRValue::imm(static_cast<int64_t>(GlobalFn::STR)));
+	call.operands.push_back(IRValue::imm(0));
+	call.operands.push_back(IRValue::imm(static_cast<int64_t>(parts.size())));
+	for (int reg : parts) call.operands.push_back(IRValue::reg(reg));
+	call.type_hint = Variant::STRING;
+	func.ir.instructions.push_back(std::move(call));
+	set_register_type(func, result, Variant::STRING);
+	for (int reg : parts) free_register(func, reg);
+	return result;
 }
 
 // Erase the str() that produced `reg` and collect its argument registers into `args`.
@@ -3934,10 +4232,29 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 	if (right_reg < 0) {
 		right_reg = gen_expr(expr->right.get(), func);
 	}
+	// Godot's `%s` formatting stringifies its right operand. Preserve the
+	// declared struct surface instead of exposing the backing Dictionary.
+	if (expr->op == BinaryExpr::Op::MOD) {
+		if (const StructDecl* structure = get_register_struct(func, right_reg);
+			structure != nullptr && !structure->is_class) {
+			right_reg = gen_struct_string(right_reg, *structure, func, expr->right.get());
+		}
+	}
 	int result_reg = alloc_register(func);
 
 	IRInstruction::TypeHint left_type = get_register_type(func, left_reg);
 	IRInstruction::TypeHint right_type = get_register_type(func, right_reg);
+	if (expr->op == BinaryExpr::Op::EQ || expr->op == BinaryExpr::Op::NEQ) {
+		const StructDecl* left_struct = get_register_struct(func, left_reg);
+		const StructDecl* right_struct = get_register_struct(func, right_reg);
+		if (left_struct != nullptr && right_struct != nullptr) {
+			if (left_struct != right_struct) {
+				error_at("Cannot compare struct '" + left_struct->name + "' with struct '" +
+					right_struct->name + "'", expr);
+			}
+			left_type = right_type = Variant::DICTIONARY;
+		}
+	}
 
 	// Equality with null is a tag test. Besides avoiding a host Variant
 	// evaluation, this folds immediately in a narrowed branch.
@@ -4189,6 +4506,43 @@ int CodeGenerator::gen_instance_class_test(int value_reg, const std::string& cla
 int CodeGenerator::gen_class_test(int value_reg, const std::string& class_name,
 	FunctionContext& func)
 {
+	if (const StructDecl* target = find_struct(class_name);
+		target != nullptr && !target->is_class) {
+		if (const StructDecl* actual = get_register_struct(func, value_reg)) {
+			int folded = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(folded),
+				IRValue::imm(actual == target ? 1 : 0));
+			set_register_type(func, folded, Variant::BOOL);
+			return folded;
+		}
+		const IRInstruction::TypeHint known = get_register_type(func, value_reg);
+		int result = alloc_register(func);
+		if (known != IRInstruction::TypeHint_NONE && known != Variant::DICTIONARY) {
+			func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(result),
+				IRValue::imm(0));
+			set_register_type(func, result, Variant::BOOL);
+			return result;
+		}
+		const std::string end = make_label("is_struct_end");
+		if (known != Variant::DICTIONARY) {
+			func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(result),
+				IRValue::imm(0));
+			int is_dict = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::TYPE_TEST, IRValue::reg(is_dict),
+				IRValue::reg(value_reg), IRValue::imm(int64_t(Variant::DICTIONARY)));
+			set_register_type(func, is_dict, Variant::BOOL);
+			emit_conditional_branch(IROpcode::BRANCH_ZERO, is_dict, end, func);
+			free_register(func, is_dict);
+		}
+		int exact = gen_struct_shape_test(value_reg, *target, func);
+		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result),
+			IRValue::reg(exact));
+		free_register(func, exact);
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end));
+		set_register_type(func, result, Variant::BOOL);
+		return result;
+	}
+
 	// A class instance is a Dictionary, so the tag test below would answer false
 	// for its own name and for everything it extends. The declaration settles the
 	// script side of the chain; the engine side is the same run-time walk, run on
@@ -4333,7 +4687,14 @@ int CodeGenerator::gen_cast(const CastExpr* expr, FunctionContext& func) {
 	}
 	const IRInstruction::TypeHint target = type_hint_from_string(expr->type_name);
 	if (target != IRInstruction::TypeHint_NONE) {
-		return gen_builtin_cast(expr, target, func);
+		int result = gen_builtin_cast(expr, target, func);
+		if (!expr->type_arguments.empty()) {
+			TypeExpr declared;
+			declared.names.push_back(expr->type_name);
+			declared.arguments = expr->type_arguments;
+			apply_declared_type(result, declared, func);
+		}
+		return result;
 	}
 	return gen_class_cast(expr, func);
 }
@@ -4377,7 +4738,12 @@ int CodeGenerator::gen_class_cast(const CastExpr* expr, FunctionContext& func) {
 	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg),
 		IRValue::reg(value_reg));
 	// The cast answers the same instance, so it stays as usable as the original.
-	set_register_struct(func, result_reg, get_register_struct(func, value_reg));
+	if (const StructDecl* target = find_struct(expr->type_name);
+		target != nullptr && !target->is_class) {
+		set_register_struct(func, result_reg, target);
+	} else {
+		set_register_struct(func, result_reg, get_register_struct(func, value_reg));
+	}
 	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 
 	free_register(func, value_reg);
@@ -4532,6 +4898,11 @@ int CodeGenerator::gen_ternary(const TernaryExpr* expr, FunctionContext& func) {
 	int true_reg = gen_expr(expr->true_value.get(), func);
 	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg), IRValue::reg(true_reg));
 	IRInstruction::TypeHint true_type = get_register_type(func, true_reg);
+	const StructDecl* true_struct = get_register_struct(func, true_reg);
+	const StructDecl* true_element = nullptr;
+	if (auto it = func.array_element_structs.find(true_reg); it != func.array_element_structs.end()) {
+		true_element = it->second;
+	}
 	free_register(func, true_reg);
 	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
 
@@ -4539,12 +4910,23 @@ int CodeGenerator::gen_ternary(const TernaryExpr* expr, FunctionContext& func) {
 	int false_reg = gen_expr(expr->false_value.get(), func);
 	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg), IRValue::reg(false_reg));
 	IRInstruction::TypeHint false_type = get_register_type(func, false_reg);
+	const StructDecl* false_struct = get_register_struct(func, false_reg);
+	const StructDecl* false_element = nullptr;
+	if (auto it = func.array_element_structs.find(false_reg); it != func.array_element_structs.end()) {
+		false_element = it->second;
+	}
 	free_register(func, false_reg);
 
 	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 
 	if (true_type != IRInstruction::TypeHint_NONE && true_type == false_type) {
 		set_register_type(func, result_reg, true_type);
+	}
+	if (true_struct != nullptr && true_struct == false_struct) {
+		set_register_struct(func, result_reg, true_struct);
+	}
+	if (true_element != nullptr && true_element == false_element) {
+		func.array_element_structs[result_reg] = true_element;
 	}
 
 	return result_reg;
@@ -4874,6 +5256,8 @@ void CodeGenerator::gen_builtin_method(const BuiltinMethod& method, int result_r
 	}
 }
 
+static constexpr const char* NATIVE_BASE_KEY = "@base";
+
 int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& func) {
 	VariableExpr chain_object("");
 	const Expr* object_expr = expr->object.get();
@@ -4956,7 +5340,7 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 	// neither reaches gen_expr. A static method has no receiver to pass.
 	if (auto* object = dynamic_cast<const VariableExpr*>(object_expr)) {
 		const StructDecl* decl = find_struct(object->name);
-		if (decl != nullptr && decl->is_class && find_variable(func, object->name) == nullptr) {
+		if (decl != nullptr && find_variable(func, object->name) == nullptr) {
 			if (expr->is_method_call) {
 				const StructDecl* owner = nullptr;
 				if (const FunctionDecl* method =
@@ -4975,7 +5359,8 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 				if (int reg = gen_class_constant(*decl, expr->member_name, func); reg >= 0) {
 					return reg;
 				}
-				error_at("Class '" + decl->name + "' declares no constant named '" +
+				error_at(std::string(decl->is_class ? "Class '" : "Struct '") + decl->name +
+					"' declares no constant named '" +
 					expr->member_name + "'", expr);
 			}
 		}
@@ -5074,8 +5459,27 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		? gen_get_node(".", func)
 		: gen_expr(object_expr, func);
 
+	if (expr->is_method_call && expr->member_name == "copy" && expr->arguments.empty()) {
+		if (const StructDecl* structure = get_register_struct(func, obj_reg);
+			structure != nullptr && !structure->is_class) {
+			const int result_reg = alloc_register(func);
+			const int false_reg = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(false_reg),
+				IRValue::imm(0));
+			set_register_type(func, false_reg, Variant::BOOL);
+			IRInstruction duplicate(IROpcode::VCALL);
+			duplicate.operands = { IRValue::reg(result_reg), IRValue::reg(obj_reg),
+				ir_str("duplicate"), IRValue::imm(1), IRValue::reg(false_reg) };
+			func.ir.instructions.push_back(std::move(duplicate));
+			set_register_struct(func, result_reg, structure);
+			free_register(func, false_reg);
+			free_register(func, obj_reg);
+			return result_reg;
+		}
+	}
+
 	if (expr->is_method_call) {
-		if (const StructDecl* decl = get_register_struct(func, obj_reg); decl != nullptr && decl->is_class) {
+		if (const StructDecl* decl = get_register_struct(func, obj_reg); decl != nullptr) {
 			const StructDecl* owner = nullptr;
 			if (const FunctionDecl* method = find_class_method(*decl, expr->member_name, &owner)) {
 				int result = gen_class_method_call(*decl, *method, *owner, obj_reg,
@@ -5087,6 +5491,16 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 				int base_reg = gen_native_base_load(obj_reg, func);
 				free_register(func, obj_reg);
 				obj_reg = base_reg;
+			}
+		} else if (get_register_type(func, obj_reg) == IRInstruction::TypeHint_NONE ||
+			get_register_type(func, obj_reg) == Variant::DICTIONARY) {
+			for (const auto& [name, structure] : m_structs) {
+				(void)name;
+				if (!structure->is_class && structure->find_method(expr->member_name) != nullptr) {
+					error_at("Cannot call struct method '" + structure->name + "." +
+						expr->member_name + "()' on an untyped value", expr,
+						"Declare the receiver as '" + structure->name + "'");
+				}
 			}
 		}
 	}
@@ -5109,6 +5523,20 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 			get_register_type(func, obj_reg), expr->member_name, arg_regs.size());
 		if (method.valid()) {
 			gen_builtin_method(method, result_reg, obj_reg, arg_regs, func);
+			if (auto it = func.array_element_structs.find(obj_reg);
+				it != func.array_element_structs.end()) {
+				const std::string& called = expr->member_name;
+				if (called == "front" || called == "back" || called == "pop_back" ||
+					called == "pop_front" || called == "pick_random") {
+					set_register_struct(func, result_reg, it->second);
+				}
+			}
+			if (expr->member_name == "values") {
+				if (auto it = func.dictionary_value_structs.find(obj_reg);
+					it != func.dictionary_value_structs.end()) {
+					func.array_element_structs[result_reg] = it->second;
+				}
+			}
 			free_register(func, obj_reg);
 			for (int reg : arg_regs) {
 				free_register(func, reg);
@@ -5122,11 +5550,35 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		(expr->member_name == "append" || expr->member_name == "push_back") &&
 		get_register_type(func, obj_reg) == Variant::ARRAY)
 	{
+		if (auto it = func.array_element_structs.find(obj_reg);
+			it != func.array_element_structs.end()) {
+			arg_regs[0] = require_struct_value(arg_regs[0], *it->second,
+				"an element of Array[" + it->second->name + "]", func,
+				expr->line, expr->column);
+		}
 		func.ir.instructions.emplace_back(IROpcode::ARRAY_APPEND, IRValue::reg(result_reg),
 			IRValue::reg(obj_reg), IRValue::reg(arg_regs[0]));
 		free_register(func, obj_reg);
 		free_register(func, arg_regs[0]);
 		return result_reg;
+	}
+	if (expr->is_method_call) {
+		if (auto it = func.array_element_structs.find(obj_reg);
+			it != func.array_element_structs.end()) {
+			int value_index = -1;
+			if ((expr->member_name == "push_front" || expr->member_name == "append" ||
+				expr->member_name == "push_back") && arg_regs.size() == 1) {
+				value_index = 0;
+			} else if (expr->member_name == "insert" && arg_regs.size() == 2) {
+				value_index = 1;
+			}
+			if (value_index >= 0) {
+				arg_regs[size_t(value_index)] = require_struct_value(
+					arg_regs[size_t(value_index)], *it->second,
+					"an element of Array[" + it->second->name + "]", func,
+					expr->line, expr->column);
+			}
+		}
 	}
 
 	IRInstruction vcall_instr(IROpcode::VCALL);
@@ -5137,7 +5589,7 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 	for (int arg_reg : arg_regs) {
 		vcall_instr.operands.push_back(IRValue::reg(arg_reg));
 	}
-	func.ir.instructions.push_back(vcall_instr);
+	func.ir.instructions.push_back(std::move(vcall_instr));
 
 	free_register(func, obj_reg);
 	for (int reg : arg_regs) {
@@ -5155,10 +5607,21 @@ bool CodeGenerator::is_array_element_access(int obj_reg, int idx_reg, FunctionCo
 
 int CodeGenerator::gen_index(const IndexExpr* expr, FunctionContext& func) {
 	int obj_reg = gen_expr(expr->object.get(), func);
+	const StructDecl* element_struct = nullptr;
+	if (auto it = func.array_element_structs.find(obj_reg);
+		it != func.array_element_structs.end()) {
+		element_struct = it->second;
+	} else if (auto it = func.dictionary_value_structs.find(obj_reg);
+		it != func.dictionary_value_structs.end()) {
+		element_struct = it->second;
+	}
 	check_struct_subscript(obj_reg, expr->index.get(), func);
 	int idx_reg = gen_expr(expr->index.get(), func);
 
 	int result_reg = gen_element_read(obj_reg, idx_reg, func, expr);
+	if (element_struct != nullptr) {
+		set_register_struct(func, result_reg, element_struct);
+	}
 
 	free_register(func, obj_reg);
 	free_register(func, idx_reg);
@@ -5397,8 +5860,6 @@ const std::string* CodeGenerator::native_base(const StructDecl& decl) const {
 	return nullptr;
 }
 
-static constexpr const char* NATIVE_BASE_KEY = "@base";
-
 int CodeGenerator::gen_native_base_load(int self_reg, FunctionContext& func) {
 	int base_reg = gen_dict_get(self_reg, NATIVE_BASE_KEY, func);
 	set_register_type(func, base_reg, Variant::OBJECT);
@@ -5486,9 +5947,6 @@ const FunctionDecl* CodeGenerator::find_class_method(const StructDecl& decl,
 // no source-level name can spell.
 void CodeGenerator::register_class_constants(const Program& program) {
 	for (const StructDecl& decl : program.structs) {
-		if (!decl.is_class) {
-			continue;
-		}
 		for (const StructField& constant : decl.constants) {
 			IRGlobalVar folded;
 			folded.name = decl.name + "." + constant.name;
@@ -5500,7 +5958,7 @@ void CodeGenerator::register_class_constants(const Program& program) {
 				|| folded.init_type == IRGlobalVar::InitType::RUNTIME) {
 				error_at("The constant '" + decl.name + "." + constant.name +
 					"' is not a compile-time value", constant.line, constant.column,
-					"A class holds no storage of its own, so its constants have to fold. "
+					"A struct or class holds no storage of its own, so its constants have to fold. "
 					"Move it to a file-level 'const', or make it a field with a default");
 			}
 			coerce_folded_initializer(folded, constant.type_hint,
@@ -5761,11 +6219,17 @@ FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const
 	sig.return_type = decl.is_coroutine
 		? int32_t(FunctionParameter::ANY_TYPE)
 		: published_type_from(decl.return_type);
+	if (!decl.is_coroutine && find_struct(decl.return_type.single_name()) != nullptr) {
+		sig.return_class_name = decl.return_type.single_name();
+	}
 
 	for (const Parameter& param : decl.parameters) {
 		FunctionParameter out;
 		out.name = param.name;
 		out.type = published_type_from(param.type_hint);
+		if (find_struct(param.type_hint.single_name()) != nullptr) {
+			out.class_name = param.type_hint.single_name();
+		}
 
 		IRGlobalVar folded;
 		if (param.default_value && fold_global_initializer(param.default_value.get(), folded)) {
@@ -5802,10 +6266,16 @@ ClassSignature CodeGenerator::build_class_signature(const StructDecl& decl,
 	out.base_name = class_base(decl) != nullptr ? decl.base_name : std::string();
 	out.native_base = engine_base;
 	out.line = decl.line;
+	out.is_struct = !decl.is_class;
+	out.description = decl.doc_comment;
 	for (const StructField* field : struct_fields(decl)) {
 		ClassField published;
 		published.name = field->name;
 		published.type = published_type_from(field->type_hint);
+		if (find_struct(field->type_hint.single_name()) != nullptr) {
+			published.class_name = field->type_hint.single_name();
+		}
+		published.description = field->doc_comment;
 		out.fields.push_back(std::move(published));
 	}
 	for (const FunctionDecl& method : decl.methods) {
@@ -5835,12 +6305,35 @@ void CodeGenerator::apply_declared_type(int reg, const TypeExpr& type_hint, Func
 	if (type != IRInstruction::TypeHint_NONE) {
 		set_register_type(func, reg, type);
 	}
+	if (type_hint.single_name() == "Array" && type_hint.arguments.size() == 1) {
+		if (const StructDecl* element = find_struct(type_hint.arguments[0].single_name())) {
+			func.array_element_structs[reg] = element;
+		}
+	} else if (type_hint.single_name() == "Dictionary" && type_hint.arguments.size() == 2) {
+		if (const StructDecl* value = find_struct(type_hint.arguments[1].single_name())) {
+			func.dictionary_value_structs[reg] = value;
+		}
+	}
 }
 
 void CodeGenerator::coerce_parameters(const std::vector<Parameter>& parameters,
 	FunctionContext& func)
 {
 	for (const auto& param : parameters) {
+		if (const StructDecl* structure = find_struct(param.type_hint.single_name());
+			structure != nullptr && !structure->is_class) {
+			Variable* var = find_variable(func, param.name);
+			if (var != nullptr && m_struct_checks) {
+				// The annotation established tracking for code generation, but a host
+				// caller has not proved the Dictionary shape yet.
+				func.register_structs.erase(var->register_num);
+				func.register_types.erase(var->register_num);
+				require_struct_value(var->register_num, *structure,
+					"Argument '" + param.name + "'", func, param.line, param.column);
+			}
+			if (var != nullptr) func.declared_structs[var->register_num] = structure;
+			continue;
+		}
 		if (param.type_hint.is_union()) {
 			Variable* var = find_variable(func, param.name);
 			if (var != nullptr) {
@@ -5889,50 +6382,27 @@ void CodeGenerator::reject_named_arguments(const NamedArguments& names, const st
 }
 
 int CodeGenerator::gen_dict_get(int obj_reg, const std::string& key, FunctionContext& func) {
-	int key_reg = alloc_register(func);
-	IRInstruction load_key(IROpcode::LOAD_STRING, IRValue::reg(key_reg),
-		IRValue::imm(add_string_constant(key)));
-	load_key.type_hint = Variant::STRING;
-	func.ir.instructions.push_back(load_key);
-	set_register_type(func, key_reg, Variant::STRING);
-
-	constexpr int64_t DICT_OP_GET = 0;
-	int result_reg = gen_dictionary_op(DICT_OP_GET, obj_reg, key_reg,
-		IRInstruction::TypeHint_NONE, func);
-
-	free_register(func, key_reg);
+	int result_reg = alloc_register(func);
+	func.ir.instructions.emplace_back(IROpcode::DICT_GET_CONST, IRValue::reg(result_reg),
+		IRValue::reg(obj_reg), IRValue::imm(add_string_constant(key)));
 	return result_reg;
 }
 
 int CodeGenerator::gen_dict_has(int obj_reg, const std::string& key, FunctionContext& func) {
-	int key_reg = alloc_register(func);
-	IRInstruction load_key(IROpcode::LOAD_STRING, IRValue::reg(key_reg),
-		IRValue::imm(add_string_constant(key)));
-	load_key.type_hint = Variant::STRING;
-	func.ir.instructions.push_back(load_key);
-	set_register_type(func, key_reg, Variant::STRING);
-
-	constexpr int64_t DICT_OP_HAS = 3;
-	int result_reg = gen_dictionary_op(DICT_OP_HAS, obj_reg, key_reg, Variant::BOOL, func);
-
-	free_register(func, key_reg);
+	int result_reg = alloc_register(func);
+	IRInstruction has(IROpcode::DICT_HAS_CONST, IRValue::reg(result_reg),
+		IRValue::reg(obj_reg), IRValue::imm(add_string_constant(key)));
+	has.type_hint = Variant::BOOL;
+	func.ir.instructions.push_back(std::move(has));
+	set_register_type(func, result_reg, Variant::BOOL);
 	return result_reg;
 }
 
 void CodeGenerator::gen_dict_set(int obj_reg, const std::string& key, int value_reg,
 	FunctionContext& func)
 {
-	int key_reg = alloc_register(func);
-	IRInstruction load_key(IROpcode::LOAD_STRING, IRValue::reg(key_reg),
-		IRValue::imm(add_string_constant(key)));
-	load_key.type_hint = Variant::STRING;
-	func.ir.instructions.push_back(load_key);
-	set_register_type(func, key_reg, Variant::STRING);
-
-	func.ir.instructions.emplace_back(IROpcode::DICT_SET, IRValue::reg(obj_reg),
-		IRValue::reg(key_reg), IRValue::reg(value_reg));
-
-	free_register(func, key_reg);
+	func.ir.instructions.emplace_back(IROpcode::DICT_SET_CONST, IRValue::reg(obj_reg),
+		IRValue::imm(add_string_constant(key)), IRValue::reg(value_reg));
 }
 
 int CodeGenerator::gen_default_value(const TypeExpr& type_hint, FunctionContext& func) {
@@ -6432,6 +6902,27 @@ int CodeGenerator::gen_struct_construct(const StructDecl& decl, const std::vecto
 	if (decl.is_class) {
 		return gen_class_construct(decl, arguments, names, func, site);
 	}
+	int copy_probe_reg = -1;
+	if (arguments.size() == 1 && names.argument_name(0).empty()) {
+		int source_reg = gen_expr(arguments[0].get(), func);
+		if (get_register_struct(func, source_reg) == &decl) {
+			const int result_reg = alloc_register(func);
+			const int false_reg = alloc_register(func);
+			func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL, IRValue::reg(false_reg),
+				IRValue::imm(0));
+			set_register_type(func, false_reg, Variant::BOOL);
+			IRInstruction duplicate(IROpcode::VCALL);
+			duplicate.operands = { IRValue::reg(result_reg), IRValue::reg(source_reg),
+				ir_str("duplicate"), IRValue::imm(1), IRValue::reg(false_reg) };
+			func.ir.instructions.push_back(std::move(duplicate));
+			set_register_struct(func, result_reg, &decl);
+			free_register(func, false_reg);
+			free_register(func, source_reg);
+			return result_reg;
+		}
+		// Retain the already evaluated value for the ordinary one-field form.
+		copy_probe_reg = source_reg;
+	}
 
 	const std::vector<const StructField*> fields = struct_fields(decl);
 
@@ -6469,7 +6960,8 @@ int CodeGenerator::gen_struct_construct(const StructDecl& decl, const std::vecto
 	std::vector<int> value_regs(fields.size(), -1);
 	for (size_t i = 0; i < arguments.size(); i++) {
 		const StructField& field = *fields[field_of_argument[i]];
-		int reg = gen_expr(arguments[i].get(), func);
+		int reg = i == 0 && copy_probe_reg >= 0
+			? copy_probe_reg : gen_expr(arguments[i].get(), func);
 		if (!field.type_hint.empty() && find_struct(field.type_hint.single_name()) == nullptr) {
 			reg = field.type_hint.is_union()
 				? coerce_to_declared_type(reg, type_set_from(field.type_hint), func,
@@ -6493,21 +6985,11 @@ int CodeGenerator::gen_struct_construct(const StructDecl& decl, const std::vecto
 	m_struct_default_stack.pop_back();
 
 	int result_reg = alloc_register(func);
-	IRInstruction make(IROpcode::MAKE_DICTIONARY);
+	IRInstruction make(IROpcode::MAKE_DICTIONARY_KEYED);
 	make.operands.push_back(IRValue::reg(result_reg));
 	make.operands.push_back(IRValue::imm(static_cast<int>(fields.size())));
-
-	std::vector<int> key_regs;
 	for (size_t i = 0; i < fields.size(); i++) {
-		int key_reg = alloc_register(func);
-		IRInstruction load_key(IROpcode::LOAD_STRING, IRValue::reg(key_reg),
-			IRValue::imm(add_string_constant(fields[i]->name)));
-		load_key.type_hint = Variant::STRING;
-		func.ir.instructions.push_back(load_key);
-		set_register_type(func, key_reg, Variant::STRING);
-		key_regs.push_back(key_reg);
-
-		make.operands.push_back(IRValue::reg(key_reg));
+		make.operands.push_back(IRValue::imm(add_string_constant(fields[i]->name)));
 		make.operands.push_back(IRValue::reg(value_regs[i]));
 	}
 
@@ -6515,9 +6997,6 @@ int CodeGenerator::gen_struct_construct(const StructDecl& decl, const std::vecto
 	func.ir.instructions.push_back(make);
 	set_register_struct(func, result_reg, &decl);
 
-	for (int reg : key_regs) {
-		free_register(func, reg);
-	}
 	for (int reg : value_regs) {
 		free_register(func, reg);
 	}
@@ -6827,8 +7306,17 @@ int CodeGenerator::gen_global_function(const CallExpr* expr, std::vector<int>& a
 			(info->min_args == 1 && info->max_args == 1 ? "" : "s") + ", got " +
 			std::to_string(given), expr);
 	}
+	if (info->fn == GlobalFn::STR) {
+		return gen_str_call(arg_regs, func);
+	}
 
 	if (info->kind == GlobalKind::PRINT) {
+		for (int& arg_reg : arg_regs) {
+			if (const StructDecl* structure = get_register_struct(func, arg_reg);
+				structure != nullptr && !structure->is_class) {
+				arg_reg = gen_struct_string(arg_reg, *structure, func, expr);
+			}
+		}
 		int result_reg = alloc_register(func);
 
 		IRInstruction instr(IROpcode::PRINT);

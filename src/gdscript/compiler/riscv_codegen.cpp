@@ -1064,6 +1064,111 @@ void RISCVCodeGen::gen_syscall_dictionary_ops(const IRInstruction& instr, int re
 	}
 }
 
+// Raw-key Dictionary operations.  Unlike the ordinary keyed syscall, the key
+// is a UTF-8 view in rodata and a4 carries the value/result GuestVariant.
+void RISCVCodeGen::gen_dict_const(const IRInstruction& instr) {
+	const bool is_get = instr.opcode == IROpcode::DICT_GET_CONST;
+	const bool is_set = instr.opcode == IROpcode::DICT_SET_CONST;
+	const bool has_result = !is_set;
+	const int dict_operand = has_result ? 1 : 0;
+	const int key_operand = has_result ? 2 : 1;
+	const int value_operand = is_set ? 2 : 0;
+	const int dict_vreg = instr.operands[dict_operand].reg_index();
+	const int string_idx = int(instr.operands[key_operand].immediate());
+	if (string_idx < 0 || size_t(string_idx) >= m_string_constants->size()) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"Dictionary constant key index out of range");
+	}
+	const std::string &key = (*m_string_constants)[size_t(string_idx)];
+	const int dict_offset = get_variant_stack_offset(dict_vreg);
+	const int value_offset = get_variant_stack_offset(instr.operands[value_operand].reg_index());
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3, REG_A4});
+	emit_li(REG_A0, dictionary_op(is_get ? Dictionary_Op::GET_RAW
+		: is_set ? Dictionary_Op::SET_RAW : Dictionary_Op::HAS_RAW));
+	emit_container_handle(REG_A1, dict_vreg, dict_offset);
+	emit_la(REG_A2, rodata_string(key));
+	emit_li(REG_A3, int64_t(key.size()));
+	if (is_get || is_set) {
+		emit_add_offset(REG_A4, REG_SP, value_offset);
+	}
+	emit_li(REG_A7, ECALL_DICTIONARY_OPS);
+	emit_ecall();
+
+	if (!is_set && !is_get) {
+		emit_syscall_result(instr.operands[0].reg_index(), REG_A0, value_offset, Variant::BOOL);
+	}
+}
+
+void RISCVCodeGen::gen_struct_check(const IRInstruction& instr) {
+	const int result_vreg = instr.operands[0].reg_index();
+	const int dict_vreg = instr.operands[1].reg_index();
+	const int count = int(instr.operands[2].immediate());
+	const int table_space = (count * 16 + 15) & ~15;
+	const int result_offset = get_variant_stack_offset(result_vreg);
+	const int dict_offset = get_variant_stack_offset(dict_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
+	emit_stack_adjust(-table_space);
+	for (int i = 0; i < count; i++) {
+		const int string_idx = int(instr.operands[size_t(3 + i)].immediate());
+		if (string_idx < 0 || size_t(string_idx) >= m_string_constants->size()) {
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+				"Struct key index out of range");
+		}
+		const std::string &key = (*m_string_constants)[size_t(string_idx)];
+		emit_la(REG_T0, rodata_string(key));
+		emit_sd(REG_T0, REG_SP, i * 16);
+		emit_li(REG_T0, int64_t(key.size()));
+		emit_sd(REG_T0, REG_SP, i * 16 + 8);
+	}
+	emit_li(REG_A0, dictionary_op(Dictionary_Op::HAS_EXACT_KEYS));
+	emit_container_handle(REG_A1, dict_vreg, dict_offset + table_space);
+	emit_mv(REG_A2, REG_SP);
+	emit_li(REG_A3, count);
+	emit_li(REG_A7, ECALL_DICTIONARY_OPS);
+	emit_ecall();
+	emit_syscall_result(result_vreg, REG_A0, result_offset + table_space, Variant::BOOL);
+	emit_stack_adjust(table_space);
+}
+
+void RISCVCodeGen::gen_make_dictionary_keyed(const IRInstruction& instr) {
+	const int result_vreg = instr.operands[0].reg_index();
+	const int count = int(instr.operands[1].immediate());
+	const int key_space = count * 16;
+	const int values_space = count * variant_size();
+	const int total_space = (key_space + values_space + 15) & ~15;
+	const int result_offset = get_variant_stack_offset(result_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3, REG_A4});
+	emit_stack_adjust(-total_space);
+	for (int i = 0; i < count; i++) {
+		const int string_idx = int(instr.operands[size_t(2 + i * 2)].immediate());
+		if (string_idx < 0 || size_t(string_idx) >= m_string_constants->size()) {
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+				"Keyed Dictionary key index out of range");
+		}
+		const std::string &key = (*m_string_constants)[size_t(string_idx)];
+		emit_la(REG_T0, rodata_string(key));
+		emit_sd(REG_T0, REG_SP, i * 16);
+		emit_li(REG_T0, int64_t(key.size()));
+		emit_sd(REG_T0, REG_SP, i * 16 + 8);
+
+		const int value_vreg = instr.operands[size_t(3 + i * 2)].reg_index();
+		const int source_offset = get_variant_stack_offset(value_vreg) + total_space;
+		emit_variant_move(REG_SP, key_space + i * variant_size(),
+			REG_SP, source_offset, REG_T0);
+	}
+	emit_li(REG_A0, dictionary_op(Dictionary_Op::MAKE_KEYED));
+	emit_add_offset(REG_A1, REG_SP, result_offset + total_space);
+	emit_mv(REG_A2, REG_SP);
+	emit_li(REG_A3, count);
+	emit_add_offset(REG_A4, REG_SP, key_space);
+	emit_li(REG_A7, ECALL_DICTIONARY_OPS);
+	emit_ecall();
+	emit_stack_adjust(total_space);
+}
+
 // No path argument defaults to ".".
 // ECALL_GET_NODE(base, path_ptr, path_len). Path copied to stack for memview;
 // base zero = attached node.
@@ -2904,6 +3009,16 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			break;
 		}
 
+		case IROpcode::DICT_GET_CONST:
+		case IROpcode::DICT_SET_CONST:
+		case IROpcode::DICT_HAS_CONST:
+			gen_dict_const(instr);
+			break;
+
+		case IROpcode::STRUCT_CHECK:
+			gen_struct_check(instr);
+			break;
+
 		case IROpcode::ARRAY_GET:
 		case IROpcode::ARRAY_SET: {
 			const bool is_set = instr.opcode == IROpcode::ARRAY_SET;
@@ -3040,6 +3155,9 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			break;
 		case IROpcode::MAKE_DICTIONARY:
 			gen_make_dictionary(instr);
+			break;
+		case IROpcode::MAKE_DICTIONARY_KEYED:
+			gen_make_dictionary_keyed(instr);
 			break;
 		case IROpcode::MAKE_PACKED_BYTE_ARRAY:
 		case IROpcode::MAKE_PACKED_INT32_ARRAY:
@@ -3500,6 +3618,10 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::ARRAY_GET:
 		case IROpcode::ARRAY_SET:
 		case IROpcode::DICT_SET:
+		case IROpcode::DICT_GET_CONST:
+		case IROpcode::DICT_SET_CONST:
+		case IROpcode::DICT_HAS_CONST:
+		case IROpcode::STRUCT_CHECK:
 		case IROpcode::AWAIT:
 		case IROpcode::CALL:
 		case IROpcode::CALL_HOSTED:
@@ -3527,6 +3649,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::MAKE_PLANE:
 		case IROpcode::MAKE_ARRAY:
 		case IROpcode::MAKE_DICTIONARY:
+		case IROpcode::MAKE_DICTIONARY_KEYED:
 		case IROpcode::MAKE_PACKED_BYTE_ARRAY:
 		case IROpcode::MAKE_PACKED_INT32_ARRAY:
 		case IROpcode::MAKE_PACKED_INT64_ARRAY:

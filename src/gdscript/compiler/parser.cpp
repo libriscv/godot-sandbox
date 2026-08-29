@@ -437,6 +437,7 @@ StructDecl Parser::parse_struct() {
 	const Token& struct_token = consume(TokenType::STRUCT, "Expected 'struct'");
 	decl.line = struct_token.line;
 	decl.column = struct_token.column;
+	decl.doc_comment = doc_comment_above(struct_token.line);
 
 	const Token& name = consume(TokenType::IDENTIFIER, "Expected struct name");
 	decl.name = name.lexeme;
@@ -458,13 +459,53 @@ StructDecl Parser::parse_struct() {
 			continue;
 		}
 
-		// Only fields; anything else would silently not be part of the Dictionary.
+		const bool is_static = match(TokenType::STATIC);
+		if (check(TokenType::FUNC)) {
+			FunctionDecl method = parse_function();
+			method.is_static = is_static;
+			if (decl.find_method(method.name) != nullptr) {
+				throw CompilerException::parser_error(
+					"Struct '" + decl.name + "' declares '" + method.name + "()' more than once",
+					method.line, method.column);
+			}
+			decl.methods.push_back(std::move(method));
+			continue;
+		}
+
+		if (check(TokenType::CONST)) {
+			const Token& const_token = advance();
+			if (is_static) {
+				error("'static' is redundant on a struct const", const_token.line, const_token.column);
+			}
+			StructField constant;
+			constant.line = const_token.line;
+			constant.column = const_token.column;
+			constant.doc_comment = doc_comment_above(const_token.line);
+			constant.name = consume(TokenType::IDENTIFIER, "Expected a name after 'const'").lexeme;
+			constant.type_hint = parse_type_hint();
+			consume(TokenType::ASSIGN, "A struct const needs a value");
+			constant.default_value = parse_expression();
+			consume_statement_end("Expected newline after the constant declaration");
+			if (decl.find_constant(constant.name) != nullptr || decl.find_field(constant.name) != nullptr) {
+				throw CompilerException::parser_error(
+					"Struct '" + decl.name + "' declares '" + constant.name + "' more than once",
+					constant.line, constant.column);
+			}
+			decl.constants.push_back(std::move(constant));
+			continue;
+		}
+
 		const Token& var_token = consume(TokenType::VAR,
-			"A struct body holds only field declarations");
+			"A struct body holds constant, field and function declarations");
+		if (is_static) {
+			error("A struct field is one per instance, so it cannot be 'static'",
+				var_token.line, var_token.column);
+		}
 
 		StructField field;
 		field.line = var_token.line;
 		field.column = var_token.column;
+		field.doc_comment = doc_comment_above(var_token.line);
 
 		const Token& field_name = consume(TokenType::IDENTIFIER, "Expected field name");
 		field.name = field_name.lexeme;
@@ -493,6 +534,7 @@ StructDecl Parser::parse_class() {
 	const Token& class_token = consume(TokenType::CLASS, "Expected 'class'");
 	decl.line = class_token.line;
 	decl.column = class_token.column;
+	decl.doc_comment = doc_comment_above(class_token.line);
 
 	const Token& name = consume(TokenType::IDENTIFIER, "Expected a class name after 'class'");
 	decl.name = name.lexeme;
@@ -569,6 +611,7 @@ StructDecl Parser::parse_class() {
 			StructField constant;
 			constant.line = const_token.line;
 			constant.column = const_token.column;
+			constant.doc_comment = doc_comment_above(const_token.line);
 			constant.name = consume(TokenType::IDENTIFIER,
 				"Expected a name after 'const'").lexeme;
 			constant.type_hint = parse_type_hint();
@@ -598,6 +641,7 @@ StructDecl Parser::parse_class() {
 		StructField field;
 		field.line = var_token.line;
 		field.column = var_token.column;
+		field.doc_comment = doc_comment_above(var_token.line);
 
 		const Token& field_name = consume(TokenType::IDENTIFIER, "Expected a field name");
 		field.name = field_name.lexeme;
@@ -1086,12 +1130,47 @@ MatchPatternPtr Parser::parse_match_pattern() {
 	if (check(TokenType::LBRACE)) {
 		return parse_match_dictionary_pattern();
 	}
+	if (check(TokenType::IDENTIFIER) && peek_ahead(1).type == TokenType::LPAREN) {
+		return parse_match_struct_pattern();
+	}
 
 	// Value pattern: compared against the subject by equality.
 	pattern->kind = MatchPattern::Kind::VALUE;
 	pattern->value = parse_expression();
 	pattern->line = pattern->value->line;
 	pattern->column = pattern->value->column;
+	return pattern;
+}
+
+MatchPatternPtr Parser::parse_match_struct_pattern() {
+	auto pattern = std::make_unique<MatchPattern>();
+	const Token& name = consume(TokenType::IDENTIFIER, "Expected a struct name in the pattern");
+	pattern->kind = MatchPattern::Kind::STRUCT;
+	pattern->struct_name = name.lexeme;
+	pattern->line = name.line;
+	pattern->column = name.column;
+	consume(TokenType::LPAREN, "Expected '(' after the struct name in the pattern");
+
+	bool saw_named = false;
+	while (!check(TokenType::RPAREN) && !is_at_end()) {
+		MatchPattern::StructEntry entry;
+		if (check(TokenType::IDENTIFIER) && peek_ahead(1).type == TokenType::ASSIGN) {
+			entry.name = advance().lexeme;
+			advance(); // '='
+			saw_named = true;
+		} else if (saw_named) {
+			const Token& at = peek();
+			throw CompilerException::parser_error(
+				"A positional struct pattern cannot follow a named field pattern",
+				at.line, at.column);
+		}
+		entry.value = parse_match_pattern();
+		pattern->struct_entries.push_back(std::move(entry));
+		if (!match(TokenType::COMMA)) {
+			break;
+		}
+	}
+	consume(TokenType::RPAREN, "Expected ')' after the struct pattern");
 	return pattern;
 }
 
@@ -1303,12 +1382,14 @@ ExprPtr Parser::parse_expression() {
 
 	// `as` is the loosest operator: casts the entire preceding expression.
 	while (match(TokenType::AS)) {
-		const std::string type_name = parse_type_name();
+		std::vector<TypeExpr> type_arguments;
+		const std::string type_name = parse_type_name(&type_arguments);
 		if (check(TokenType::QUESTION)) {
 			error("'as' cannot take a nullable type; the result of 'as' is already nullable");
 		}
 		const Expr& start = *expr;
-		expr = make_like<CastExpr>(start, std::move(expr), type_name);
+		expr = make_like<CastExpr>(start, std::move(expr), type_name,
+			std::move(type_arguments));
 	}
 
 	return expr;
@@ -1927,7 +2008,7 @@ TypeExpr Parser::parse_type_expr() {
 			type_end = previous();
 			return;
 		}
-		type.names.push_back(parse_type_name());
+		type.names.push_back(parse_type_name(type.names.empty() ? &type.arguments : nullptr));
 		type_end = previous();
 	};
 
@@ -1975,14 +2056,26 @@ TypeExpr Parser::parse_type_expr() {
 }
 
 // Qualified names (A.B) are dropped; only the engine can resolve them.
-std::string Parser::parse_type_name() {
+std::string Parser::parse_type_name(std::vector<TypeExpr>* arguments) {
 	const Token& type_token = consume(TokenType::IDENTIFIER, "Expected type name");
 	bool qualified = false;
 	while (match(TokenType::DOT)) {
 		consume(TokenType::IDENTIFIER, "Expected a type name after '.'");
 		qualified = true;
 	}
-	skip_type_arguments();
+	if (arguments != nullptr && match(TokenType::LBRACKET)) {
+		if (!check(TokenType::RBRACKET)) {
+			do {
+				if (!check(TokenType::IDENTIFIER) && !check(TokenType::NULL_VAL)) {
+					error("Expected a type argument");
+				}
+				arguments->push_back(parse_type_expr());
+			} while (match(TokenType::COMMA));
+		}
+		consume(TokenType::RBRACKET, "Expected ']' to close the element type");
+	} else {
+		skip_type_arguments();
+	}
 	return qualified ? std::string() : type_token.lexeme;
 }
 

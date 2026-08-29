@@ -280,10 +280,22 @@ IR_OPCODE(ARRAY_APPEND,    "ARRAY_APPEND",    SIG(DST, SRC, SRC), IR_SIDE_EFFECT
 // is the Dictionary it writes into, read rather than defined.
 IR_OPCODE(DICT_SET,        "DICT_SET",        SIG(SRC, SRC, SRC), IR_SIDE_EFFECTS)
 
+// Constant-key forms avoid constructing a scoped String Variant.  The
+// immediate is an index into IRProgram::string_constants.
+IR_OPCODE(DICT_GET_CONST,  "DICT_GET_CONST",  SIG(DST, SRC, IMM), IR_SIDE_EFFECTS)
+IR_OPCODE(DICT_SET_CONST,  "DICT_SET_CONST",  SIG(SRC, IMM, SRC), IR_SIDE_EFFECTS)
+IR_OPCODE(DICT_HAS_CONST,  "DICT_HAS_CONST",  SIG(DST, SRC, IMM), IR_SIDE_EFFECTS)
+
+// Exact struct shape test.  The trailing immediates are string-constant
+// indices; the backend materializes one table of UTF-8 views for the syscall.
+IR_OPCODE(STRUCT_CHECK,    "STRUCT_CHECK",    SIG(DST, SRC, CNT, ARG_LIST), IR_SIDE_EFFECTS)
+
 // -= Array and Dictionary construction (via the VCREATE syscall) =-
 
 IR_OPCODE(MAKE_ARRAY,      "MAKE_ARRAY",      SIG(DST, CNT, SRC_LIST),  IR_PURE)
 IR_OPCODE(MAKE_DICTIONARY, "MAKE_DICTIONARY", SIG(DST, CNT2, SRC_LIST), IR_PURE)
+// Trailing pairs are (string-constant index, value register).
+IR_OPCODE(MAKE_DICTIONARY_KEYED, "MAKE_DICTIONARY_KEYED", SIG(DST, CNT2, ARG_LIST), IR_SIDE_EFFECTS)
 
 // -= Packed array construction (via the VCREATE syscall) =-
 

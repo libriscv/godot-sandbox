@@ -71,6 +71,9 @@ struct GenOptions {
 	bool allow_functions = true;
 	// Emit while loops.
 	bool allow_loops = true;
+	// Struct programs exercise shape tracking and the raw Dictionary opcodes.
+	// Disable for differential runs whose reference interpreter has no host.
+	bool allow_structs = true;
 };
 
 // One generated program, and the pieces a shrinker can take apart.
@@ -83,11 +86,16 @@ struct GeneratedProgram {
 	// Helper functions, whole. The shrinker deletes these too, last, and only
 	// when nothing calls them.
 	std::vector<std::string> functions;
+	std::vector<std::string> declarations;
 	// The expression test() returns.
 	std::string result_expression;
 
 	std::string source() const {
 		std::string out;
+		for (const auto& declaration : declarations) {
+			out += declaration;
+			out += "\n";
+		}
 		for (const auto& function : functions) {
 			out += function;
 			out += "\n";
@@ -109,6 +117,18 @@ public:
 	GeneratedProgram generate() {
 		GeneratedProgram program;
 		program.seed = m_seed;
+		m_has_struct = m_options.allow_structs && m_random.chance(50);
+		if (m_has_struct) {
+			program.declarations.push_back(
+				"struct FuzzPoint:\n"
+				"\tvar x: int = 0\n"
+				"\tvar y: int = 0\n"
+				"\tfunc total() -> int:\n"
+				"\t\treturn self.x + self.y\n"
+				"\n"
+				"func fuzz_point_round_trip(point: FuzzPoint) -> FuzzPoint:\n"
+				"\treturn point\n");
+		}
 
 		if (m_options.allow_functions && m_random.chance(50)) {
 			const int count = 1 + static_cast<int>(m_random.below(2));
@@ -150,6 +170,8 @@ private:
 	std::vector<std::string> m_function_names;
 	int m_next_variable = 0;
 	int m_next_loop = 0;
+	int m_next_struct = 0;
+	bool m_has_struct = false;
 
 	void push_scope() { m_scopes.emplace_back(); }
 	void pop_scope() { m_scopes.pop_back(); }
@@ -356,6 +378,9 @@ private:
 
 	std::string generate_statement(int depth, int nesting) {
 		const uint32_t choice = m_random.below(12);
+		if (choice == 11 && m_has_struct) {
+			return exercise_struct(depth);
+		}
 
 		// A declaration that shadows an existing name, which is where locals
 		// beating globals and inner blocks beating outer ones is decided.
@@ -390,6 +415,24 @@ private:
 		}
 
 		return declare(pick_type(), depth);
+	}
+
+	std::string exercise_struct(int depth) {
+		const std::string suffix = std::to_string(m_next_struct++);
+		const std::string point = "point" + suffix;
+		const std::string copy = "point_copy" + suffix;
+		const std::string x = generate_expression(GenType::INT,
+			m_options.max_expression_depth - 1);
+		const std::string y = generate_expression(GenType::INT,
+			m_options.max_expression_depth - 1);
+		std::string out = indent(depth) + "var " + point + ": FuzzPoint = FuzzPoint(" +
+			x + ", " + y + ")\n";
+		out += indent(depth) + point + ".x += " + nonzero_int_literal() + "\n";
+		out += indent(depth) + "var " + copy + " = fuzz_point_round_trip(" +
+			point + ".copy())\n";
+		out += indent(depth) + "if " + copy + " is FuzzPoint:\n";
+		out += indent(depth + 1) + point + ".y = " + copy + ".total()\n";
+		return out;
 	}
 
 	std::string generate_if(int depth, int nesting) {

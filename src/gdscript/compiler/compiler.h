@@ -14,6 +14,11 @@
 namespace gdscript {
 
 struct CompilerOptions {
+	enum class StructChecks : uint8_t {
+		OFF,
+		SHAPE,
+		DEEP,
+	};
 	bool dump_tokens = false;
 	bool dump_ast = false;
 	bool dump_ir = false;
@@ -33,6 +38,9 @@ struct CompilerOptions {
 	// 1-based lines to break on. Non-empty implies debug_info.
 	std::vector<uint32_t> breakpoint_lines;
 	bool restricted = false;
+	// Exact-key checks at host/untyped boundaries. Restricted compilation always
+	// enables at least SHAPE. DEEP additionally validates typed field values.
+	StructChecks struct_checks = StructChecks::SHAPE;
 	// Resource path of the source being compiled. Used to resolve relative
 	// constant load()/preload() paths the same way GDScript does.
 	std::string source_path;

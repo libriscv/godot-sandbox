@@ -17,30 +17,39 @@ func _compile_and_load(gdscript_code: String, instructions_max: int = 4000) -> S
 	return s
 
 
-# README.md — SafeGDScript inventory example with struct, match and dict patterns
+# README.md — typed SafeGDScript inventory example
 func test_readme_inventory_example():
 	var gdscript_code = """
 struct Item:
-	var name : String = ""
-	var value : int = 0
-	var stackable : bool = true
+	var name: String
+	var value: int
+	var dropped_at: Vector2?
 
-var inventory : Array = []
+	func try_stack(other: Item) -> bool:
+		if self.name != other.name:
+			return false
+		self.value += other.value
+		return true
 
-func add_item(item_name : String, item_value : int) -> bool:
-	for item in inventory:
-		match item:
-			{"name": var n, "stackable": true, ..} when n == item_name:
-				item.value += item_value
-				return true
-	inventory.append(Item.new(item_name, item_value))
+	func drop(at: int | Vector2) -> void:
+		if at is int:
+			self.dropped_at = Vector2(at, 0)
+		else:
+			self.dropped_at = at
+
+var inventory: Array[Item] = []
+
+func add_item(item_name: String, item_value: int) -> bool:
+	var item := Item(item_name, item_value)
+	for stored in inventory:
+		if stored.try_stack(item):
+			return true
+	inventory.append(item)
 	return false
 
-func get_total_value() -> int:
-	var total = 0
-	for item in inventory:
-		total += item.value
-	return total
+func drop_first(at: int | Vector2) -> Vector2?:
+	inventory[0].drop(at)
+	return inventory[0].dropped_at
 """
 	var s = _compile_and_load(gdscript_code, 400000)
 	if s == null:
@@ -49,7 +58,9 @@ func get_total_value() -> int:
 	assert_eq(s.vmcallv("add_item", "coin", 1), false, "first coin is new")
 	assert_eq(s.vmcallv("add_item", "gem", 5), false, "first gem is new")
 	assert_eq(s.vmcallv("add_item", "coin", 1), true, "second coin stacks")
-	assert_eq(s.vmcallv("get_total_value"), 7, "total value should be 2 + 5")
+	assert_eq(s.vmcallv("drop_first", 3), Vector2(3, 0), "an int selects a drop column")
+	assert_eq(s.vmcallv("drop_first", Vector2(4, 5)), Vector2(4, 5),
+		"a Vector2 is used directly")
 
 	s.queue_free()
 

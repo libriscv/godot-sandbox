@@ -8,10 +8,12 @@
 #include "../lexer.h"
 #include "../parser.h"
 #include "../codegen.h"
+#include "../compiler.h"
 #include "../ir_optimizer.h"
 #include "../riscv_codegen.h"
 #include "../compiler_exception.h"
 #include "../variant_layout.h"
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <string>
@@ -93,7 +95,12 @@ static int count_dict_ops(const IRFunction& func, int64_t op) {
 }
 
 static int count_dict_gets(const IRFunction& func) {
-	return count_dict_ops(func, 0);
+	return count_dict_ops(func, 0) + count_opcode(func, IROpcode::DICT_GET_CONST);
+}
+
+static int count_dict_sets(const IRFunction& func) {
+	return count_opcode(func, IROpcode::DICT_SET) +
+		count_opcode(func, IROpcode::DICT_SET_CONST);
 }
 
 // The string a register was last loaded with before instruction `before`.
@@ -118,6 +125,15 @@ static std::string string_in_register(const IRProgram& ir, const IRFunction& fun
 static std::vector<std::string> dictionary_keys(const IRProgram& ir, const IRFunction& func) {
 	for (size_t i = 0; i < func.instructions.size(); i++) {
 		const auto& instr = func.instructions[i];
+		if (instr.opcode == IROpcode::MAKE_DICTIONARY_KEYED) {
+			const int64_t pairs = instr.operands.at(1).immediate();
+			std::vector<std::string> keys;
+			for (int64_t pair = 0; pair < pairs; pair++) {
+				keys.push_back(ir.string_constants.at(
+					instr.operands.at(2 + pair * 2).immediate()));
+			}
+			return keys;
+		}
 		if (instr.opcode != IROpcode::MAKE_DICTIONARY) {
 			continue;
 		}
@@ -151,7 +167,8 @@ static int64_t int_in_register(const IRFunction& func, size_t before, int reg) {
 static std::vector<int64_t> dictionary_int_values(const IRFunction& func) {
 	for (size_t i = 0; i < func.instructions.size(); i++) {
 		const auto& instr = func.instructions[i];
-		if (instr.opcode != IROpcode::MAKE_DICTIONARY) {
+		if (instr.opcode != IROpcode::MAKE_DICTIONARY &&
+			instr.opcode != IROpcode::MAKE_DICTIONARY_KEYED) {
 			continue;
 		}
 		const int64_t pairs = instr.operands.at(1).immediate();
@@ -232,16 +249,26 @@ static void test_struct_declaration_parses() {
 	std::cout << "  ✓ struct declarations parse" << std::endl;
 }
 
-static void test_struct_body_holds_only_fields() {
-	std::cout << "Testing that a struct body holds only fields..." << std::endl;
+static void test_struct_body_members() {
+	std::cout << "Testing struct methods and constants..." << std::endl;
 
-	// A method in a struct body would silently not be part of the Dictionary
-	// the struct lowers to, so it is rejected rather than skipped.
-	assert(rejects("struct S:\n\tfunc method():\n\t\treturn 1\n"));
+	const IRProgram ir = compile_to_ir(
+		"struct S:\n"
+		"\tconst STEP = 2\n"
+		"\tvar x = 1\n"
+		"\tfunc advance():\n\t\tself.x += S.STEP\n\t\treturn self.x\n"
+		"\tstatic func unit():\n\t\treturn S(1)\n"
+		"\nfunc test():\n\tvar s: S\n\treturn s.advance() + S.unit().x\n");
+	assert(find_function(ir, "@S.advance").name == "@S.advance");
+	assert(find_function(ir, "@S.unit").name == "@S.unit");
+	assert(count_opcode(find_function(ir, "@S.advance"), IROpcode::DICT_GET_CONST) >= 1);
+	assert(rejects(
+		"struct S:\n\tvar x = 1\n\tfunc value():\n\t\treturn x\n"
+		"\nfunc test(v):\n\treturn v.value()\n"));
 	// The same field twice is a mistake, not a redefinition.
 	assert(rejects("struct S:\n\tvar x = 1\n\tvar x = 2\n"));
 
-	std::cout << "  ✓ a struct body holds only fields" << std::endl;
+	std::cout << "  ✓ struct methods and constants" << std::endl;
 }
 
 static void test_construction_builds_a_dictionary() {
@@ -254,7 +281,7 @@ static void test_construction_builds_a_dictionary() {
 
 	// One Dictionary, holding every declared field in declaration order, with
 	// the declared defaults.
-	assert(count_opcode(test, IROpcode::MAKE_DICTIONARY) == 1);
+	assert(count_opcode(test, IROpcode::MAKE_DICTIONARY_KEYED) == 1);
 	const std::vector<std::string> keys = dictionary_keys(ir, test);
 	assert((keys == std::vector<std::string>{ "balance", "loan" }));
 	assert((dictionary_int_values(test) == std::vector<int64_t>{ 0, 0 }));
@@ -346,7 +373,7 @@ static void test_field_access_is_dictionary_access() {
 	// struct field has to take the element path or it throws at run time.
 	assert(count_opcode(test, IROpcode::VGET) == 0);
 	assert(count_opcode(test, IROpcode::VSET) == 0);
-	assert(count_opcode(test, IROpcode::DICT_SET) == 1);
+	assert(count_dict_sets(test) == 1);
 	assert(count_dict_gets(test) == 1);
 
 	// A field of a struct held in a parameter is known too, from the type hint.
@@ -419,7 +446,7 @@ static void test_subscript_answers_for_the_name() {
 
 	const IRProgram computed = compile_to_ir(BANK_ACCOUNT +
 		"func test(k):\n\tvar a = BankAccount.new()\n\ta[k] = 1\n\treturn a\n");
-	assert(count_opcode(find_function(computed, "test"), IROpcode::DICT_SET) == 1);
+	assert(count_dict_sets(find_function(computed, "test")) == 1);
 
 	const IRProgram plain = compile_to_ir(
 		"func test():\n\tvar d = {}\n\td[\"anything\"] = 1\n\treturn d[\"anything\"]\n");
@@ -505,7 +532,7 @@ static void test_nested_structs() {
 
 	// A field declared as another struct defaults to an instance of it, so both
 	// Dictionaries are built.
-	assert(count_opcode(test, IROpcode::MAKE_DICTIONARY) == 2);
+	assert(count_opcode(test, IROpcode::MAKE_DICTIONARY_KEYED) == 2);
 	// Reading through the nesting stays on the element path the whole way.
 	assert(count_opcode(test, IROpcode::VGET) == 0);
 	assert(count_dict_gets(test) == 2);
@@ -536,7 +563,7 @@ static void test_struct_type_hints() {
 	const IRProgram bare = compile_to_ir(BANK_ACCOUNT +
 		"func test():\n\tvar account: BankAccount\n\treturn account.balance\n");
 	const IRFunction& test = find_function(bare, "test");
-	assert(count_opcode(test, IROpcode::MAKE_DICTIONARY) == 1);
+	assert(count_opcode(test, IROpcode::MAKE_DICTIONARY_KEYED) == 1);
 	assert((dictionary_keys(bare, test) == std::vector<std::string>{ "balance", "loan" }));
 
 	// The annotation is checked against what the initializer actually is.
@@ -564,14 +591,14 @@ static void test_struct_globals() {
 		"func test():\n\taccount.balance = 1\n\treturn account.balance\n");
 	// A plain `var` is a member, so its initializer runs per instance.
 	assert(typed.has_member_init);
-	assert(count_opcode(typed.member_init, IROpcode::MAKE_DICTIONARY) == 1);
+	assert(count_opcode(typed.member_init, IROpcode::MAKE_DICTIONARY_KEYED) == 1);
 	assert(typed.globals.at(0).type_hint == Variant::DICTIONARY);
 
 	const IRFunction& test = find_function(typed, "test");
 	assert(count_opcode(test, IROpcode::VGET) == 0);
 	assert(count_opcode(test, IROpcode::VSET) == 0);
 	assert(count_dict_gets(test) == 1);
-	assert(count_opcode(test, IROpcode::DICT_SET) == 1);
+	assert(count_dict_sets(test) == 1);
 
 	// Which struct a global holds is also taken from its initializer, which is
 	// how a global is usually written.
@@ -600,7 +627,7 @@ static void test_compound_assignment_to_a_field() {
 		"\taccount.balance += 5\n"
 		"\treturn account.balance\n");
 	const IRFunction& test = find_function(ir, "test");
-	assert(count_opcode(test, IROpcode::DICT_SET) == 1);
+	assert(count_dict_sets(test) == 1);
 	assert(count_dict_gets(test) == 2);
 	assert(count_opcode(test, IROpcode::ADD) == 1);
 
@@ -632,7 +659,7 @@ static void test_dictionary_member_access() {
 	assert(count_opcode(test, IROpcode::VGET) == 0);
 	assert(count_opcode(test, IROpcode::VSET) == 0);
 	assert(count_dict_gets(test) == 1);
-	assert(count_opcode(test, IROpcode::DICT_SET) == 1);
+	assert(count_dict_sets(test) == 1);
 
 	// A Dictionary has no declared keys, so any name is allowed on one.
 	compile_to_ir("func test():\n\tvar d = {}\n\td.anything = 1\n\treturn d.anything\n");
@@ -663,7 +690,7 @@ static void test_an_untracked_instance_still_reaches_its_fields() {
 		"\taccount.balance = 5\n");
 	const IRFunction& w = find_function(write, "test");
 	assert(count_opcode(w, IROpcode::TYPE_TEST) == 1);
-	assert(count_opcode(w, IROpcode::DICT_SET) == 1);
+	assert(count_dict_sets(w) == 1);
 	assert(count_opcode(w, IROpcode::VSET) == 1);
 
 	// Out of an Array, which carries no element type.
@@ -681,6 +708,163 @@ static void test_an_untracked_instance_still_reaches_its_fields() {
 	compile_to_ir(BANK_ACCOUNT + "func test(account):\n\treturn account.blance\n");
 
 	std::cout << "  ✓ member access on a value of unknown type" << std::endl;
+}
+
+static void test_struct_shape_guards() {
+	std::cout << "Testing exact-shape guards at typed boundaries..." << std::endl;
+
+	const IRProgram parameter = compile_to_ir(BANK_ACCOUNT +
+		"func balance_of(account: BankAccount):\n\treturn account.balance\n");
+	const IRFunction& guarded = find_function(parameter, "balance_of");
+	assert(count_opcode(guarded, IROpcode::STRUCT_CHECK) == 1);
+	assert(count_opcode(guarded, IROpcode::TYPE_TEST) == 1);
+	assert(count_opcode(guarded, IROpcode::THROW) >= 1);
+
+	const IRProgram proven = compile_to_ir(BANK_ACCOUNT +
+		"func test():\n\tvar account: BankAccount = BankAccount()\n\treturn account.balance\n");
+	assert(count_opcode(find_function(proven, "test"), IROpcode::STRUCT_CHECK) == 0);
+
+	const IRProgram returned = compile_to_ir(BANK_ACCOUNT +
+		"func accept(value) -> BankAccount:\n\treturn value\n");
+	assert(count_opcode(find_function(returned, "accept"), IROpcode::STRUCT_CHECK) == 1);
+
+	CodeGenerator unchecked_codegen;
+	unchecked_codegen.set_struct_checks(false);
+	Program parsed = parse(BANK_ACCOUNT +
+		"func balance_of(account: BankAccount):\n\treturn account.balance\n");
+	const IRProgram unchecked = unchecked_codegen.generate(parsed);
+	assert(count_opcode(find_function(unchecked, "balance_of"), IROpcode::STRUCT_CHECK) == 0);
+
+	std::cout << "  ✓ exact-shape guards at typed boundaries" << std::endl;
+}
+
+static void test_struct_identity_copy_and_strings() {
+	std::cout << "Testing struct identity, copy and string surfaces..." << std::endl;
+
+	const IRProgram identity = compile_to_ir(BANK_ACCOUNT +
+		"func test(value):\n"
+		"\tvar account = BankAccount()\n"
+		"\tvar copied = account.copy()\n"
+		"\treturn [account == copied, value is BankAccount, value as BankAccount]\n");
+	const IRFunction& test = find_function(identity, "test");
+	assert(count_vcalls(identity, test, "duplicate") == 1);
+	assert(count_opcode(test, IROpcode::STRUCT_CHECK) >= 2);
+	assert(count_opcode(test, IROpcode::CMP_EQ) >= 1);
+	assert(rejects(BANK_ACCOUNT +
+		"struct Other:\n\tvar x = 1\n"
+		"\nfunc test():\n\treturn BankAccount() == Other()\n"));
+
+	const IRProgram copy_ctor = compile_to_ir(BANK_ACCOUNT +
+		"func test():\n\tvar account = BankAccount()\n\treturn BankAccount(account)\n");
+	assert(count_vcalls(copy_ctor, find_function(copy_ctor, "test"), "duplicate") == 1);
+
+	const IRProgram rendered = compile_to_ir(BANK_ACCOUNT +
+		"func test():\n\tvar account = BankAccount(1, 2)\n\treturn [str(account), \"%s\" % account]\n");
+	assert(count_dict_gets(find_function(rendered, "test")) == 4);
+
+	const IRProgram custom = compile_to_ir(
+		"struct Point:\n"
+		"\tvar x = 0\n"
+		"\tfunc _to_string():\n\t\treturn \"point\"\n"
+		"\nfunc test():\n\treturn str(Point())\n");
+	assert(count_opcode(find_function(custom, "test"), IROpcode::CALL) == 1);
+
+	std::cout << "  ✓ struct identity, copy and string surfaces" << std::endl;
+}
+
+static void test_struct_match_patterns() {
+	std::cout << "Testing named and positional struct patterns..." << std::endl;
+
+	const std::string point =
+		"struct Point:\n\tvar x: int = 0\n\tvar y: int = 0\n\n";
+	const IRProgram named = compile_to_ir(point +
+		"func test(value):\n"
+		"\tmatch value:\n"
+		"\t\tPoint(x = var a, y = 0):\n\t\t\treturn a\n"
+		"\t\t_:\n\t\t\treturn -1\n");
+	const IRFunction& named_test = find_function(named, "test");
+	assert(count_opcode(named_test, IROpcode::STRUCT_CHECK) == 1);
+	assert(count_opcode(named_test, IROpcode::DICT_GET_CONST) == 2);
+
+	compile_to_ir(point +
+		"func test(value):\n"
+		"\tmatch value:\n"
+		"\t\tPoint(var a, _):\n\t\t\treturn a\n"
+		"\t\t_:\n\t\t\treturn -1\n");
+	assert(rejects(point +
+		"func test(value):\n\tmatch value:\n\t\tPoint(z = _, y = _):\n\t\t\tpass\n"));
+	assert(rejects(point +
+		"func test(value):\n\tmatch value:\n\t\tPoint(x = _):\n\t\t\tpass\n"));
+
+	std::cout << "  ✓ named and positional struct patterns" << std::endl;
+}
+
+static void test_typed_struct_containers() {
+	std::cout << "Testing struct tracking through typed containers..." << std::endl;
+
+	const std::string point = "struct Point:\n\tvar x = 0\n\n";
+	const IRProgram ir = compile_to_ir(point +
+		"func total(points: Array[Point]):\n"
+		"\tvar answer = 0\n"
+		"\tfor point in points:\n\t\tanswer += point.x\n"
+		"\treturn answer\n");
+	const IRFunction& total = find_function(ir, "total");
+	// The Array itself is checked as an Array, but each loop value is proven Point.
+	assert(count_opcode(total, IROpcode::STRUCT_CHECK) == 0);
+	assert(count_opcode(total, IROpcode::DICT_GET_CONST) == 1);
+	assert(rejects(point +
+		"func total(points: Array[Point]):\n"
+		"\tfor point in points:\n\t\treturn point.missing\n"
+		"\treturn 0\n"));
+	assert(rejects(point +
+		"struct Sprite:\n\tvar x = 0\n\n"
+		"func add(points: Array[Point]):\n\tpoints.append(Sprite())\n"));
+	const IRProgram cast = compile_to_ir(point +
+		"func first(value):\n\tvar points = value as Array[Point]\n\treturn points[0].x\n");
+	assert(count_opcode(find_function(cast, "first"), IROpcode::DICT_GET_CONST) == 1);
+	assert(rejects(point +
+		"func first(value):\n\tvar points = value as Array[Point]\n\treturn points[0].missing\n"));
+	const IRProgram global = compile_to_ir(point +
+		"var points: Array[Point] = []\n\n"
+		"func first():\n\tpoints.append(Point())\n\treturn points[0].x\n");
+	assert(count_opcode(find_function(global, "first"), IROpcode::DICT_GET_CONST) == 1);
+
+	std::cout << "  ✓ struct tracking through typed containers" << std::endl;
+}
+
+static void test_struct_signatures() {
+	std::cout << "Testing published struct signatures..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"struct Point:\n"
+		"\tvar x: int = 0\n"
+		"\tfunc moved(dx: int) -> Point:\n\t\treturn Point(self.x + dx)\n"
+		"\nfunc use(point: Point) -> Point:\n\treturn point\n");
+	assert(ir.class_signatures.size() == 1);
+	const ClassSignature& cls = ir.class_signatures.front();
+	assert(cls.name == "Point" && cls.is_struct && cls.native_base.empty());
+	assert(cls.fields.size() == 1 && cls.fields.front().name == "x");
+	assert(cls.methods.size() == 1 && cls.methods.front().name == "moved");
+	const auto signature = std::find_if(ir.signatures.begin(), ir.signatures.end(),
+		[](const FunctionSignature& sig) { return sig.name == "use"; });
+	assert(signature != ir.signatures.end());
+	assert(signature->parameters.front().class_name == "Point");
+	assert(signature->return_class_name == "Point");
+
+	Compiler compiler;
+	CompilerOptions options;
+	options.output_elf = false;
+	compiler.compile(
+		"struct Point:\n\tvar x: int = 0\n\n"
+		"@export var point: Point\n", options);
+	assert(!compiler.get_error_info().has_error);
+	const auto& properties = compiler.get_property_signatures();
+	assert(properties.size() == 1);
+	assert(properties.front().name == "point");
+	assert(properties.front().class_name == "Point");
+	assert(properties.front().hint_string == "Point");
+
+	std::cout << "  ✓ published struct signatures" << std::endl;
 }
 
 static void test_struct_program_reaches_riscv() {
@@ -710,11 +894,28 @@ static void test_struct_program_reaches_riscv() {
 	std::cout << "  ✓ a struct program compiles to RISC-V" << std::endl;
 }
 
+static void test_non_escaping_struct_is_scalar_replaced() {
+	std::cout << "Testing scalar replacement of a non-escaping struct..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"struct Point:\n\tvar x = 0\n\tvar y = 0\n\n"
+		"func test():\n"
+		"\tvar point = Point(1, 2)\n"
+		"\tpoint.x = 7\n"
+		"\treturn point.x + point.y\n", true);
+	const IRFunction& test = find_function(ir, "test");
+	assert(count_opcode(test, IROpcode::MAKE_DICTIONARY_KEYED) == 0);
+	assert(count_opcode(test, IROpcode::DICT_GET_CONST) == 0);
+	assert(count_opcode(test, IROpcode::DICT_SET_CONST) == 0);
+
+	std::cout << "  ✓ non-escaping struct scalar replacement" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Struct Tests ===" << std::endl << std::endl;
 
 	test_struct_declaration_parses();
-	test_struct_body_holds_only_fields();
+	test_struct_body_members();
 	test_construction_builds_a_dictionary();
 	test_both_constructor_forms();
 	test_named_arguments();
@@ -729,6 +930,12 @@ int main() {
 	test_compound_assignment_to_a_field();
 	test_dictionary_member_access();
 	test_an_untracked_instance_still_reaches_its_fields();
+	test_struct_shape_guards();
+	test_struct_identity_copy_and_strings();
+	test_struct_match_patterns();
+	test_typed_struct_containers();
+	test_struct_signatures();
+	test_non_escaping_struct_is_scalar_replaced();
 	test_struct_program_reaches_riscv();
 
 	std::cout << std::endl << "All struct tests passed!" << std::endl;

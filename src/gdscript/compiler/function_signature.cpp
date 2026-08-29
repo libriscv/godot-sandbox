@@ -95,6 +95,15 @@ std::vector<uint8_t> encode_function_signatures(const std::vector<FunctionSignat
 	for (const FunctionSignature &sig : signatures) {
 		write_scalar<uint8_t>(out, sig.is_static ? 1 : 0);
 	}
+	write_scalar<uint32_t>(out, 0x50595453u); // "STYP"
+	write_scalar<uint32_t>(out, uint32_t(signatures.size()));
+	for (const FunctionSignature &sig : signatures) {
+		write_string(out, sig.return_class_name);
+		write_scalar<uint32_t>(out, uint32_t(sig.parameters.size()));
+		for (const FunctionParameter &param : sig.parameters) {
+			write_string(out, param.class_name);
+		}
+	}
 	return out;
 }
 
@@ -189,6 +198,33 @@ bool decode_function_signatures(const uint8_t *data, size_t size,
 		}
 		signature.is_static = value != 0;
 	}
+	if (!reader.ok) {
+		out.clear();
+		return false;
+	}
+	if (reader.offset == size) {
+		return true;
+	}
+	if (reader.scalar<uint32_t>() != 0x50595453u) {
+		out.clear();
+		return false;
+	}
+	const uint32_t typed_count = reader.scalar<uint32_t>();
+	if (!reader.ok || typed_count != out.size()) {
+		out.clear();
+		return false;
+	}
+	for (FunctionSignature &signature : out) {
+		signature.return_class_name = reader.string();
+		const uint32_t parameter_count = reader.scalar<uint32_t>();
+		if (!reader.ok || parameter_count != signature.parameters.size()) {
+			out.clear();
+			return false;
+		}
+		for (FunctionParameter &parameter : signature.parameters) {
+			parameter.class_name = reader.string();
+		}
+	}
 	if (!reader.ok || reader.offset != size) {
 		out.clear();
 		return false;
@@ -257,6 +293,17 @@ std::vector<uint8_t> encode_class_signatures(const std::vector<ClassSignature> &
 			write_scalar<uint8_t>(out, method.is_static ? 1 : 0);
 		}
 	}
+	write_scalar<uint32_t>(out, 0x434F4453u); // "SDOC"
+	write_scalar<uint32_t>(out, uint32_t(classes.size()));
+	for (const ClassSignature &cls : classes) {
+		write_scalar<uint8_t>(out, cls.is_struct ? 1 : 0);
+		write_string(out, cls.description);
+		write_scalar<uint32_t>(out, uint32_t(cls.fields.size()));
+		for (const ClassField &field : cls.fields) {
+			write_string(out, field.class_name);
+			write_string(out, field.description);
+		}
+	}
 	return out;
 }
 
@@ -305,6 +352,40 @@ bool decode_class_signatures(const uint8_t *data, size_t size,
 	}
 
 	if (!reader.ok) {
+		out.clear();
+		return false;
+	}
+	if (reader.offset == size) {
+		return true;
+	}
+	if (reader.scalar<uint32_t>() != 0x434F4453u) {
+		out.clear();
+		return false;
+	}
+	const uint32_t doc_count = reader.scalar<uint32_t>();
+	if (!reader.ok || doc_count != out.size()) {
+		out.clear();
+		return false;
+	}
+	for (ClassSignature &cls : out) {
+		const uint8_t kind = reader.scalar<uint8_t>();
+		if (kind > 1) {
+			out.clear();
+			return false;
+		}
+		cls.is_struct = kind != 0;
+		cls.description = reader.string();
+		const uint32_t field_count = reader.scalar<uint32_t>();
+		if (!reader.ok || field_count != cls.fields.size()) {
+			out.clear();
+			return false;
+		}
+		for (ClassField &field : cls.fields) {
+			field.class_name = reader.string();
+			field.description = reader.string();
+		}
+	}
+	if (!reader.ok || reader.offset != size) {
 		out.clear();
 		return false;
 	}

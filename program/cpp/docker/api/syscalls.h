@@ -250,6 +250,13 @@ enum class Dictionary_Op {
 	CLEAR,
 	MERGE,
 	GET_OR_ADD,
+	// Append-only ABI extensions used by SafeGDScript structs. Raw keys are
+	// guest UTF-8 views instead of scoped String Variants.
+	HAS_EXACT_KEYS,
+	GET_RAW,
+	SET_RAW,
+	HAS_RAW,
+	MAKE_KEYED,
 };
 
 enum class String_Op {

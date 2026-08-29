@@ -47,31 +47,37 @@ VS Code users can install the [SafeGDScript extension](https://marketplace.visua
 
 ```gdscript
 struct Item:
-	var name : String = ""
-	var value : int = 0
-	var stackable : bool = true
+	var name: String
+	var value: int
+	var dropped_at: Vector2?
 
-var inventory : Array = []
+	func try_stack(other: Item) -> bool:
+		if self.name != other.name:
+			return false
+		self.value += other.value
+		return true
 
-func add_item(item_name : String, item_value : int) -> bool:
-	for item in inventory:
-		match item:
-			{"name": var n, "stackable": true, ..} when n == item_name:
-				item.value += item_value
-				return true
-	inventory.append(Item.new(item_name, item_value))
+	func drop(at: int | Vector2) -> void:
+		if at is int:
+			self.dropped_at = Vector2(at, 0)
+		else:
+			self.dropped_at = at
+
+var inventory: Array[Item] = []
+
+func add_item(item_name: String, item_value: int) -> bool:
+	var item := Item(item_name, item_value)
+	for stored in inventory:
+		if stored.try_stack(item):
+			return true
+	inventory.append(item)
 	return false
-
-func get_total_value() -> int:
-	var total = 0
-	for item in inventory:
-		total += item.value
-	return total
 
 func _ready():
 	add_item("coin", 1)
 	add_item("gem", 5)
 	add_item("coin", 1)
+	inventory[0].drop(Vector2(64, 32))
 ```
 
 SafeGDScript also supports `await`:
