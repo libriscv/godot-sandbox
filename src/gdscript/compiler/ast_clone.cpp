@@ -124,9 +124,15 @@ StmtPtr clone_stmt(const Stmt* stmt) {
 	}
 	if (const auto* value = dynamic_cast<const ReturnStmt*>(stmt))
 		return positioned(std::make_unique<ReturnStmt>(clone_expr(value->value.get())), stmt);
-	if (const auto* value = dynamic_cast<const IfStmt*>(stmt))
+	if (const auto* value = dynamic_cast<const IfStmt*>(stmt)) {
+		if (value->binding) {
+			auto binding = std::make_unique<VarDeclStmt>(clone_var(*value->binding));
+			return positioned(std::make_unique<IfStmt>(std::move(binding),
+				clone_stmts(value->then_branch), clone_stmts(value->else_branch)), stmt);
+		}
 		return positioned(std::make_unique<IfStmt>(clone_expr(value->condition.get()),
 			clone_stmts(value->then_branch), clone_stmts(value->else_branch)), stmt);
+	}
 	if (const auto* value = dynamic_cast<const WhileStmt*>(stmt))
 		return positioned(std::make_unique<WhileStmt>(clone_expr(value->condition.get()),
 			clone_stmts(value->body)), stmt);

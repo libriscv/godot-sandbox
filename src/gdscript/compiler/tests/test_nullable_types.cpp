@@ -2,6 +2,7 @@
 #include "../compiler.h"
 #include "../compiler_exception.h"
 #include "../ir_verifier.h"
+#include "../ir_interpreter.h"
 #include "../lexer.h"
 #include "../parser.h"
 #include <cassert>
@@ -287,6 +288,64 @@ static void test_nullable_narrowing_travels() {
 	std::cout << "  ✓ narrowing travels with a value, and a nullable member stays untyped\n";
 }
 
+static void test_if_var_null_only_binding() {
+	const IRProgram ir = compile_to_ir(
+		"func enters(x):\n"
+		"\tif var value := x:\n"
+		"\t\treturn 1\n"
+		"\treturn 0\n"
+		"func typed(x):\n"
+		"\tif var value: int = x:\n"
+		"\t\treturn value + 1\n"
+		"\telse:\n"
+		"\t\treturn -1\n");
+
+	IRInterpreter interpreter(ir);
+	assert(std::get<int64_t>(interpreter.call("enters", {std::monostate{}})) == 0);
+	assert(std::get<int64_t>(interpreter.call("enters", {int64_t(0)})) == 1);
+	assert(std::get<int64_t>(interpreter.call("enters", {false})) == 1);
+	assert(std::get<int64_t>(interpreter.call("enters", {std::string()})) == 1);
+	assert(std::get<int64_t>(interpreter.call("typed", {std::monostate{}})) == -1);
+	assert(std::get<int64_t>(interpreter.call("typed", {int64_t(4)})) == 5);
+	assert(typed_count(function(ir, "typed"), IROpcode::ADD, Variant::INT) == 1);
+	const uint64_t nil_or_int = (uint64_t(1) << Variant::NIL) |
+		(uint64_t(1) << Variant::INT);
+	assert(guard_mask(function(ir, "typed")) == nil_or_int);
+
+	const std::string escaped = rejection(
+		"func f(x):\n"
+		"\tif var value = x:\n"
+		"\t\tpass\n"
+		"\treturn value\n");
+	assert(escaped.find("Undefined variable: value") != std::string::npos);
+
+	const std::string redeclared = rejection(
+		"func f(x):\n"
+		"\tif var value = x:\n"
+		"\t\tvar value = 1\n");
+	assert(redeclared.find("already declared in this scope") != std::string::npos);
+
+	// The initializer is outside the binding scope. This common shadow-unwrapping
+	// form must therefore capture the outer value when used in a lambda.
+	compile_to_ir(
+		"func make(value: int?):\n"
+		"\treturn func():\n"
+		"\t\tif var value := value:\n"
+		"\t\t\treturn value + 1\n"
+		"\t\treturn 0\n");
+
+	Compiler compiler;
+	CompilerOptions options;
+	options.output_elf = false;
+	compiler.compile(
+		"func f(x):\n"
+		"\tif var value: int = x:\n"
+		"\t\treturn value + 1\n"
+		"\treturn 0\n", options);
+	assert(!compiler.get_error_info().has_error);
+	std::cout << "  ✓ if-var binds only non-null values in its successful branch\n";
+}
+
 int main() {
 	std::cout << "=== Nullable Type Tests ===\n";
 	test_parser_and_spelling();
@@ -296,6 +355,7 @@ int main() {
 	test_reflection();
 	test_nullable_containers_and_structs();
 	test_nullable_narrowing_travels();
+	test_if_var_null_only_binding();
 	std::cout << "All nullable type tests passed.\n";
 	return 0;
 }

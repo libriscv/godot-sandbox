@@ -291,11 +291,19 @@ struct ReturnStmt : Stmt {
 
 struct IfStmt : Stmt {
 	ExprPtr condition;
+	// SafeGDScript extension: `if var value = expression:` evaluates the
+	// initializer once and enters only when it is not NIL.  The declaration is
+	// visible in the then branch, not in `else` or after the statement.
+	std::unique_ptr<VarDeclStmt> binding;
 	std::vector<StmtPtr> then_branch;
 	std::vector<StmtPtr> else_branch;
 
 	IfStmt(ExprPtr cond, std::vector<StmtPtr> then_b, std::vector<StmtPtr> else_b = {})
 		: condition(std::move(cond)), then_branch(std::move(then_b)), else_branch(std::move(else_b)) {}
+	IfStmt(std::unique_ptr<VarDeclStmt> bind, std::vector<StmtPtr> then_b,
+		std::vector<StmtPtr> else_b = {})
+		: binding(std::move(bind)), then_branch(std::move(then_b)),
+		  else_branch(std::move(else_b)) {}
 };
 
 struct WhileStmt : Stmt {

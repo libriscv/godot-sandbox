@@ -6414,6 +6414,16 @@ func truthy(value: Vector2?):
 		return "truthy"
 	return "falsy"
 
+func compact_binding(value):
+	if var result := value:
+		return [true, result]
+	return [false, null]
+
+func typed_compact_binding(value):
+	if var result: int = value:
+		return result + 1
+	return -1
+
 func point_default():
 	return point
 
@@ -6483,6 +6493,19 @@ func test_sgd_nullable_narrowing_matches_gdscript():
 		var expected = "truthy" if value else "falsy"
 		assert_eq(node.call("truthy", value), expected,
 			"nullable truthiness should match ordinary GDScript")
+	node.free()
+
+func test_sgd_if_var_is_a_null_only_binding():
+	var node = _nullable_node()
+	if node == null:
+		return
+	assert_eq(node.call("compact_binding", null), [false, null])
+	for value in [0, false, "", Vector2.ZERO]:
+		assert_eq(node.call("compact_binding", value), [true, value],
+			"if var should bind falsy values; only null skips its branch")
+	assert_eq(node.call("typed_compact_binding", null), -1,
+		"null should be the no-binding case even with a plain int annotation")
+	assert_eq(node.call("typed_compact_binding", 0), 1)
 	node.free()
 
 func test_sgd_nullable_struct_is_null_by_default():

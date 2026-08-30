@@ -1311,7 +1311,13 @@ void Parser::parse_one_property_accessor(VarDeclStmt& decl) {
 }
 
 StmtPtr Parser::parse_if_stmt() {
-	ExprPtr condition = parse_expression();
+	ExprPtr condition;
+	std::unique_ptr<VarDeclStmt> binding;
+	if (match(TokenType::VAR)) {
+		binding = parse_if_var_binding();
+	} else {
+		condition = parse_expression();
+	}
 	consume(TokenType::COLON, "Expected ':' after if condition");
 
 	std::vector<StmtPtr> then_branch = parse_suite();
@@ -1327,7 +1333,45 @@ StmtPtr Parser::parse_if_stmt() {
 		else_branch = parse_suite();
 	}
 
-	return std::make_unique<IfStmt>(std::move(condition), std::move(then_branch), std::move(else_branch));
+	if (binding) {
+		return std::make_unique<IfStmt>(std::move(binding), std::move(then_branch),
+			std::move(else_branch));
+	}
+	return std::make_unique<IfStmt>(std::move(condition), std::move(then_branch),
+		std::move(else_branch));
+}
+
+std::unique_ptr<VarDeclStmt> Parser::parse_if_var_binding() {
+	const Token& name = consume(TokenType::IDENTIFIER,
+		"Expected variable name after 'if var'");
+
+	TypeExpr type_hint;
+	bool has_initializer = false;
+	if (match(TokenType::COLON)) {
+		// `:=` is lexed as COLON, ASSIGN.  A type name after ':' is the
+		// ordinary annotated declaration form.
+		if (match(TokenType::ASSIGN)) {
+			has_initializer = true;
+		} else if (check(TokenType::IDENTIFIER) || check(TokenType::NULL_VAL)) {
+			type_hint = parse_type_expr();
+			consume(TokenType::ASSIGN,
+				"An 'if var' binding needs an initializer after its type");
+			has_initializer = true;
+		} else {
+			error("An 'if var' binding needs an initializer with '=' or ':='");
+		}
+	} else if (match(TokenType::ASSIGN)) {
+		has_initializer = true;
+	}
+
+	if (!has_initializer) {
+		error("An 'if var' binding needs an initializer with '=' or ':='");
+	}
+
+	ExprPtr initializer = parse_expression();
+	auto binding = make_at<VarDeclStmt>(name, name.lexeme, std::move(initializer), false);
+	binding->type_hint = std::move(type_hint);
+	return binding;
 }
 
 StmtPtr Parser::parse_while_stmt() {

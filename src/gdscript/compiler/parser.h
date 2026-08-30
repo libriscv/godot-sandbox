@@ -42,6 +42,7 @@ private:
 	StmtPtr parse_statement();
 	StmtPtr parse_statement_impl();
 	StmtPtr parse_var_decl(bool is_const);
+	std::unique_ptr<VarDeclStmt> parse_if_var_binding();
 	bool at_property_accessor() const;
 	void parse_property_accessors(VarDeclStmt& decl);
 	void parse_one_property_accessor(VarDeclStmt& decl);

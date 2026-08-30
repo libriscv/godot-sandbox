@@ -885,10 +885,19 @@ void CodeGenerator::gen_stmt_dispatch(const Stmt* stmt, FunctionContext& func) {
 	}
 }
 
-void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func) {
-	const StructDecl* declared_struct = find_struct(stmt->type_hint.sole_name());
-	const TraitDecl* declared_trait = find_trait(stmt->type_hint.sole_name());
-	const TypeSet declared_set = type_set_from(stmt->type_hint, stmt->line, stmt->column);
+void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func,
+	bool conditional_binding) {
+	TypeExpr accepted_type = stmt->type_hint;
+	// Here T describes the value bound in the successful branch. NIL is the
+	// no-binding case, so let it reach the tag test instead of rejecting it at
+	// the declaration guard. Variant already admits NIL implicitly.
+	if (conditional_binding && !accepted_type.empty() &&
+		accepted_type.single_name() != "Variant") {
+		accepted_type.nullable = true;
+	}
+	const StructDecl* declared_struct = find_struct(accepted_type.sole_name());
+	const TraitDecl* declared_trait = find_trait(accepted_type.sole_name());
+	const TypeSet declared_set = type_set_from(accepted_type, stmt->line, stmt->column);
 	const bool nullable_single = declared_set.is_nullable_single();
 	int reg = -1;
 
@@ -900,7 +909,7 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 		reg = gen_struct_construct(*declared_struct, {}, NamedArguments{}, func, nullptr);
 	} else {
 		// No initializer: emit the declared type's default value.
-		reg = stmt->type_hint.empty() ? -1 : gen_default_value(stmt->type_hint, func);
+		reg = accepted_type.empty() ? -1 : gen_default_value(accepted_type, func);
 		if (reg < 0) {
 			// Untyped or host-only type: default to NIL.
 			reg = alloc_register(func);
@@ -921,25 +930,25 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 		if (stmt->initializer && m_struct_checks) {
 			reg = require_trait_value(reg, *declared_trait,
 				"variable '" + stmt->name + "'", func, stmt->line, stmt->column,
-				stmt->type_hint.nullable);
+				accepted_type.nullable);
 		}
 		declare_variable(func, stmt->name, reg, stmt->is_const, stmt);
 		func.declared_traits[reg].insert(declared_trait);
 		func.trait_only_registers.insert(reg);
 		// Only a value proves the trait. Without an initializer the slot is null,
 		// exactly as GDScript leaves it, so 'is' must not fold true.
-		if (stmt->initializer && !stmt->type_hint.nullable) {
+		if (stmt->initializer && !accepted_type.nullable) {
 			add_register_trait(func, reg, declared_trait);
 		}
-		if (stmt->type_hint.is_union()) func.declared_sets[reg] = declared_set;
+		if (accepted_type.is_union()) func.declared_sets[reg] = declared_set;
 		set_register_type(func, reg, IRInstruction::TypeHint_NONE);
 		return;
 	}
 
-	const bool untyped_null = stmt->type_hint.empty() && stmt->initializer != nullptr &&
+	const bool untyped_null = accepted_type.empty() && stmt->initializer != nullptr &&
 		get_register_type(func, reg) == Variant::NIL;
 
-	const bool declared_variant = stmt->type_hint.single_name() == "Variant" || untyped_null;
+	const bool declared_variant = accepted_type.single_name() == "Variant" || untyped_null;
 	if (declared_variant) {
 		// Fresh register: clearing type on the initializer's would reach other uses.
 		int untyped_reg = alloc_register(func);
@@ -948,14 +957,14 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 		free_register(func, reg);
 		reg = untyped_reg;
 		set_register_type(func, reg, IRInstruction::TypeHint_NONE);
-	} else if (stmt->type_hint.is_union()) {
+	} else if (accepted_type.is_union()) {
 		if (stmt->initializer) {
 			reg = coerce_to_declared_type(reg, declared_set, func,
-				"variable '" + stmt->name + "'", stmt, stmt->type_hint.to_string());
+				"variable '" + stmt->name + "'", stmt, accepted_type.to_string());
 		}
 		set_register_type(func, reg, IRInstruction::TypeHint_NONE);
-	} else if (!stmt->type_hint.empty()) {
-		IRInstruction::TypeHint type = single_type_from(stmt->type_hint);
+	} else if (!accepted_type.empty()) {
+		IRInstruction::TypeHint type = single_type_from(accepted_type);
 		if (type != IRInstruction::TypeHint_NONE) {
 			// Coerce so the Variant payload matches the declared type.
 			reg = coerce_to_declared_type(reg, type, func, "variable '" + stmt->name + "'", stmt);
@@ -969,16 +978,16 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func)
 	}
 
 	declare_variable(func, stmt->name, reg, stmt->is_const, stmt, declared_variant);
-	if (!stmt->type_hint.arguments.empty()) {
-		apply_declared_type(reg, stmt->type_hint, func);
+	if (!accepted_type.arguments.empty()) {
+		apply_declared_type(reg, accepted_type, func);
 	}
-	if (stmt->type_hint.is_union()) {
+	if (accepted_type.is_union()) {
 		func.declared_sets[reg] = declared_set;
 		if (declared_struct != nullptr && nullable_single) {
 			func.declared_structs[reg] = declared_struct;
 		}
 	}
-	if (stmt->type_hint.empty() && stmt->initializer != nullptr && !declared_variant) {
+	if (accepted_type.empty() && stmt->initializer != nullptr && !declared_variant) {
 		func.reclassifiable_registers.insert(reg);
 	}
 }
@@ -1834,7 +1843,9 @@ bool narrowing_stmt_is_safe(const Stmt* stmt, const std::string& member_name) {
 		return !narrowing_expr_calls_out(returned->value.get());
 	}
 	if (auto* branch = dynamic_cast<const IfStmt*>(stmt)) {
-		return !narrowing_expr_calls_out(branch->condition.get()) &&
+		const Expr* condition = branch->binding
+			? branch->binding->initializer.get() : branch->condition.get();
+		return !narrowing_expr_calls_out(condition) &&
 			narrowing_body_is_safe(branch->then_branch, member_name) &&
 			narrowing_body_is_safe(branch->else_branch, member_name);
 	}
@@ -1869,6 +1880,11 @@ bool narrowing_body_is_safe(const std::vector<StmtPtr>& body, const std::string&
 } // namespace
 
 void CodeGenerator::gen_if(const IfStmt* stmt, FunctionContext& func) {
+	if (stmt->binding) {
+		gen_if_binding(stmt, func);
+		return;
+	}
+
 	NarrowingInfo narrowing = condition_narrowing(stmt->condition.get(), func);
 	std::string narrowed_member;
 	if (narrowing.is_member()) {
@@ -1922,6 +1938,76 @@ void CodeGenerator::gen_if(const IfStmt* stmt, FunctionContext& func) {
 		branch_returns(stmt->then_branch)) {
 		apply_narrowing(narrowing, false, func);
 	}
+}
+
+void CodeGenerator::gen_if_binding(const IfStmt* stmt, FunctionContext& func) {
+	const std::string null_label = make_label("if_var_null");
+	const std::string end_label = make_label("endif");
+
+	// The binding owns the initializer and is the then branch's lexical scope.
+	// Opening its run-time scope before evaluation also releases temporary
+	// Variants on both the success and NIL paths.
+	const int binding_scope = open_scope(func);
+	push_scope(func);
+	gen_var_decl(stmt->binding.get(), func, true);
+
+	Variable* binding = find_variable(func, stmt->binding->name);
+	if (binding == nullptr) {
+		error_at("Failed to declare 'if var' binding '" + stmt->binding->name + "'", stmt);
+	}
+	const int value_reg = binding->register_num;
+
+	// This is deliberately a NIL tag test rather than a truthiness branch.  Zero,
+	// false, empty strings and zero-valued vectors all enter the body.
+	const int is_nil_reg = alloc_register(func);
+	IRInstruction is_nil(IROpcode::TYPE_TEST, IRValue::reg(is_nil_reg),
+		IRValue::reg(value_reg), IRValue::imm(static_cast<int64_t>(Variant::NIL)));
+	is_nil.type_hint = Variant::BOOL;
+	func.ir.instructions.push_back(is_nil);
+	set_register_type(func, is_nil_reg, Variant::BOOL);
+	emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, is_nil_reg, null_label, func);
+	free_register(func, is_nil_reg);
+
+	// A typed nullable binding is plain T in the successful branch.  Reuse the
+	// same narrowing machinery as `value != null` so structs and traits retain
+	// their compiler-only shape information too.
+	NarrowingInfo narrowing;
+	if (auto declared = func.declared_sets.find(value_reg);
+		declared != func.declared_sets.end()) {
+		narrowing.reg = value_reg;
+		narrowing.original = declared->second;
+		narrowing.then_set = declared->second.non_null();
+		narrowing.else_set = declared->second.intersect(
+			TypeSet{uint64_t(1) << Variant::NIL});
+		narrowing.saved_type = get_register_type(func, value_reg);
+		narrowing.saved_struct = get_register_struct(func, value_reg);
+		if (auto traits = func.register_traits.find(value_reg);
+			traits != func.register_traits.end()) {
+			narrowing.saved_traits = traits->second;
+		}
+		narrowing.saved_trait_only = func.trait_only_registers.count(value_reg) != 0;
+		apply_narrowing(narrowing, true, func);
+	}
+
+	for (const auto& body_stmt : stmt->then_branch) {
+		gen_stmt(body_stmt.get(), func);
+	}
+	pop_scope(func);
+	emit_scope_release(binding_scope, func);
+	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
+
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(null_label));
+	emit_scope_release(binding_scope, func);
+	if (!stmt->else_branch.empty()) {
+		const int else_scope = push_block_scope(func);
+		for (const auto& body_stmt : stmt->else_branch) {
+			gen_stmt(body_stmt.get(), func);
+		}
+		pop_block_scope(else_scope, func);
+	}
+
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
+	free_register(func, value_reg);
 }
 
 static constexpr size_t MIN_SWITCH_CASES = 4;
@@ -4026,8 +4112,18 @@ private:
 		} else if (auto* ret = dynamic_cast<const ReturnStmt*>(stmt)) {
 			visit(ret->value.get());
 		} else if (auto* if_stmt = dynamic_cast<const IfStmt*>(stmt)) {
-			visit(if_stmt->condition.get());
-			for (const auto& s : if_stmt->then_branch) visit(s.get());
+			if (if_stmt->binding) {
+				// The initializer is outside the new binding's scope, which matters
+				// for the useful shadowing form `if var value = value:` in a lambda.
+				visit(if_stmt->binding->initializer.get());
+				auto& scope = m_scopes.back();
+				const bool inserted = scope.insert(if_stmt->binding->name).second;
+				for (const auto& s : if_stmt->then_branch) visit(s.get());
+				if (inserted) scope.erase(if_stmt->binding->name);
+			} else {
+				visit(if_stmt->condition.get());
+				for (const auto& s : if_stmt->then_branch) visit(s.get());
+			}
 			for (const auto& s : if_stmt->else_branch) visit(s.get());
 		} else if (auto* while_stmt = dynamic_cast<const WhileStmt*>(stmt)) {
 			visit(while_stmt->condition.get());

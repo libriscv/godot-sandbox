@@ -83,6 +83,48 @@ void test_if_statement() {
 	std::cout << "  ✓ If statement test passed" << std::endl;
 }
 
+void test_if_var_binding() {
+	std::cout << "Testing if-var binding..." << std::endl;
+
+	Lexer lexer(
+		"func inferred(x):\n"
+		"\tif var value := x:\n"
+		"\t\treturn value\n"
+		"func typed(x):\n"
+		"\tif var value: int? = x:\n"
+		"\t\treturn value\n"
+		"\telse:\n"
+		"\t\treturn 0\n");
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+
+	assert(program.functions.size() == 2);
+	auto* inferred = dynamic_cast<IfStmt*>(program.functions[0].body[0].get());
+	assert(inferred != nullptr);
+	assert(inferred->condition == nullptr);
+	assert(inferred->binding != nullptr);
+	assert(inferred->binding->name == "value");
+	assert(inferred->binding->type_hint.empty());
+	assert(inferred->binding->initializer != nullptr);
+
+	auto* typed = dynamic_cast<IfStmt*>(program.functions[1].body[0].get());
+	assert(typed != nullptr && typed->binding != nullptr);
+	assert(typed->binding->type_hint.to_string() == "int?");
+	assert(typed->else_branch.size() == 1);
+
+	bool missing_initializer = false;
+	try {
+		Lexer bad_lexer("func f():\n\tif var value:\n\t\tpass\n");
+		Parser bad_parser(bad_lexer.tokenize());
+		bad_parser.parse();
+	} catch (const std::exception&) {
+		missing_initializer = true;
+	}
+	assert(missing_initializer && "if-var must require an initializer");
+
+	std::cout << "  ✓ If-var binding test passed" << std::endl;
+}
+
 void test_while_loop() {
 	std::cout << "Testing while loop..." << std::endl;
 
@@ -457,6 +499,7 @@ int main() {
 		test_simple_function();
 		test_variable_declaration();
 		test_if_statement();
+		test_if_var_binding();
 		test_while_loop();
 		test_expressions();
 		test_function_call();

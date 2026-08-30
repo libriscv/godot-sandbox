@@ -96,10 +96,12 @@ private:
 	// Stamps IRInstruction::line over everything the dispatch emits.
 	void gen_stmt(const Stmt* stmt, FunctionContext& func);
 	void gen_stmt_dispatch(const Stmt* stmt, FunctionContext& func);
-	void gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func);
+	void gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func,
+		bool conditional_binding = false);
 	void gen_assign(const AssignStmt* stmt, FunctionContext& func);
 	void gen_return(const ReturnStmt* stmt, FunctionContext& func);
 	void gen_if(const IfStmt* stmt, FunctionContext& func);
+	void gen_if_binding(const IfStmt* stmt, FunctionContext& func);
 	void gen_match(const MatchStmt* stmt, FunctionContext& func);
 	struct NarrowingInfo {
 		int reg = -1;
