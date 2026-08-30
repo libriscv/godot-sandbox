@@ -1,4 +1,5 @@
 #include "../compiler.h"
+#include "../ir_interpreter.h"
 #include "../ir_optimizer.h"
 #include "../lexer.h"
 #include "../parser.h"
@@ -28,6 +29,19 @@ IRFunction compile_to_ir(const std::string& source, const std::string& function_
 	}
 
 	throw std::runtime_error("Function not found: " + function_name);
+}
+
+IRProgram compile_program(const std::string& source, bool optimize) {
+	Lexer lexer(source);
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+	CodeGenerator codegen;
+	IRProgram ir = codegen.generate(program);
+	if (optimize) {
+		IROptimizer optimizer;
+		optimizer.optimize(ir);
+	}
+	return ir;
 }
 
 // Helper to count instruction types
@@ -775,6 +789,59 @@ void test_move_after_call_folds_into_call_destination() {
 	std::cout << "  ✓ CALL writes directly to the moved destination" << std::endl;
 }
 
+void test_struct_scalar_replacement_snapshots_fields() {
+	std::cout << "Testing scalar-replaced struct fields are snapshots..." << std::endl;
+	IRProgram ir = compile_program(
+		"struct Point:\n"
+		"\tvar x = 0\n"
+		"\tvar y = 0\n\n"
+		"func test():\n"
+		"\tvar i = 4\n"
+		"\tvar p = Point(i, 0)\n"
+		"\ti += 1\n"
+		"\treturn p.x\n\n"
+		"func test_set():\n"
+		"\tvar i = 4\n"
+		"\tvar p = Point(0, 0)\n"
+		"\tp.x = i\n"
+		"\ti += 1\n"
+		"\treturn p.x\n", true);
+	const IRFunction& func = ir.functions.front();
+	assert(count_instructions(func, IROpcode::MAKE_DICTIONARY_KEYED) == 0);
+	assert(count_instructions(func, IROpcode::DICT_GET_CONST) == 0);
+	const IRFunction& set_func = ir.functions.back();
+	assert(count_instructions(set_func, IROpcode::MAKE_DICTIONARY_KEYED) == 0);
+	assert(count_instructions(set_func, IROpcode::DICT_SET_CONST) == 0);
+	IRInterpreter interpreter(ir);
+	assert(std::get<int64_t>(interpreter.call("test")) == 4 &&
+		"a constructed field must retain its source value");
+	assert(std::get<int64_t>(interpreter.call("test_set")) == 4 &&
+		"an assigned field must retain its source value");
+	std::cout << "  ✓ scalar replacement snapshots source registers" << std::endl;
+}
+
+void test_immutable_struct_scalar_replacement_crosses_a_loop() {
+	std::cout << "Testing immutable struct scalar replacement in a loop..." << std::endl;
+	IRProgram ir = compile_program(
+		"struct Point:\n"
+		"\tvar x = 0\n"
+		"\tvar y = 0\n\n"
+		"func test(n):\n"
+		"\tvar i = 0\n"
+		"\tvar acc = 0\n"
+		"\twhile i < n:\n"
+		"\t\tvar p = Point(i, i + 1)\n"
+		"\t\ti += 1\n"
+		"\t\tacc += p.x\n"
+		"\treturn acc\n", true);
+	const IRFunction& func = ir.functions.front();
+	assert(count_instructions(func, IROpcode::MAKE_DICTIONARY_KEYED) == 0);
+	assert(count_instructions(func, IROpcode::DICT_GET_CONST) == 0);
+	IRInterpreter interpreter(ir);
+	assert(std::get<int64_t>(interpreter.call("test", {int64_t(5)})) == 10);
+	std::cout << "  ✓ immutable loop-local struct is scalar-replaced" << std::endl;
+}
+
 int main() {
 	std::cout << "\n=== IR Optimizer Peephole Pattern Tests ===\n" << std::endl;
 
@@ -795,6 +862,12 @@ int main() {
 		std::cout << std::endl;
 
 		test_move_after_call_folds_into_call_destination();
+		std::cout << std::endl;
+
+		test_struct_scalar_replacement_snapshots_fields();
+		std::cout << std::endl;
+
+		test_immutable_struct_scalar_replacement_crosses_a_loop();
 		std::cout << std::endl;
 
 		test_pattern_e_increment();

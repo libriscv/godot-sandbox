@@ -3209,7 +3209,10 @@ APICALL(api_dict_ops) {
 		Dictionary dict;
 		for (size_t i = 0; i < count; i++) {
 			auto key = raw_key(keys[i].pointer, keys[i].length);
-			dict[key->sname] = values[i].toVariant(emu);
+			Variant *slot = reinterpret_cast<Variant *>(
+					internal::gdextension_interface_dictionary_operator_index(
+						dict._native_ptr(), key->variant._native_ptr()));
+			store_guest_variant(*slot, values[i], emu);
 		}
 		destination->create(emu, std::move(dict));
 		return;
@@ -3244,10 +3247,22 @@ APICALL(api_dict_ops) {
 		const gaddr_t value_addr = machine.cpu.reg(14); // A4
 		GuestVariant *value = machine.memory.memarray<GuestVariant>(value_addr, 1);
 		if (op == Dictionary_Op::GET_RAW) {
-			Variant answer = dict.get(key->sname, Variant());
-			value->create(emu, std::move(answer));
+			CallResult answer;
+			GDExtensionBool valid = false;
+			internal::gdextension_interface_variant_get_keyed(
+					var_dict._native_ptr(), key->variant._native_ptr(), &answer.get(), &valid);
+			answer.mark_constructed();
+			if (LIKELY(valid)) {
+				value->create(emu, std::move(answer.get()));
+			} else {
+				value->type = Variant::NIL;
+				value->v.i = 0;
+			}
 		} else {
-			dict[key->sname] = value->toVariant(emu);
+			Variant *slot = reinterpret_cast<Variant *>(
+					internal::gdextension_interface_dictionary_operator_index(
+						dict._native_ptr(), key->variant._native_ptr()));
+			store_guest_variant(*slot, *value, emu);
 		}
 		return;
 	}

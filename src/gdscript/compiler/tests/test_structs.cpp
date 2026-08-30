@@ -950,6 +950,38 @@ static void test_non_escaping_struct_is_scalar_replaced() {
 	std::cout << "  ✓ non-escaping struct scalar replacement" << std::endl;
 }
 
+static void test_struct_scalar_replacement_kernel_shapes() {
+	std::cout << "Testing scalar replacement across loop control flow..." << std::endl;
+
+	const IRProgram ir = compile_to_ir(
+		"struct Point:\n\tvar x: int = 1\n\tvar y: int = 2\n\n"
+		"func read(n: int) -> int:\n"
+		"\tvar p = Point()\n\tvar acc = 0\n\tvar i = 0\n"
+		"\twhile i < n:\n\t\tacc += p.x + p.y\n\t\ti += 1\n"
+		"\treturn acc\n\n"
+		"func construct(n: int) -> int:\n"
+		"\tvar acc = 0\n\tvar i = 0\n"
+		"\twhile i < n:\n\t\tvar p = Point(i, i + 1)\n"
+		"\t\tacc += p.x\n\t\ti += 1\n\treturn acc\n\n"
+		"func escaped(n: int) -> int:\n"
+		"\tvar points: Array[Point] = [Point()]\n"
+		"\tvar p = points[0]\n\tvar acc = 0\n\tvar i = 0\n"
+		"\twhile i < n:\n\t\tacc += p.x + p.y\n\t\ti += 1\n"
+		"\treturn acc\n", true);
+
+	for (const char* name : {"read", "construct"}) {
+		const IRFunction& func = find_function(ir, name);
+		assert(count_opcode(func, IROpcode::MAKE_DICTIONARY_KEYED) == 0);
+		assert(count_opcode(func, IROpcode::DICT_GET_CONST) == 0);
+	}
+	const IRFunction& escaped = find_function(ir, "escaped");
+	assert(count_opcode(escaped, IROpcode::MAKE_DICTIONARY_KEYED) == 1);
+	assert(count_opcode(escaped, IROpcode::DICT_GET_CONST) == 2);
+
+	std::cout << "  ✓ immutable loop structs are replaced and escaped structs stay materialized"
+		<< std::endl;
+}
+
 static void test_struct_method_dispatch() {
 	std::cout << "Testing how a struct method is reached..." << std::endl;
 
@@ -1294,6 +1326,7 @@ int main() {
 	test_typed_dictionary_values();
 	test_struct_documentation_round_trip();
 	test_non_escaping_struct_is_scalar_replaced();
+	test_struct_scalar_replacement_kernel_shapes();
 	test_struct_program_reaches_riscv();
 
 	std::cout << std::endl << "All struct tests passed!" << std::endl;

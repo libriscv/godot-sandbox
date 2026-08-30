@@ -138,6 +138,16 @@ func struct_construct(n: int) -> int:
 		acc += point.x
 		i += 1
 	return acc
+
+func struct_read_escaped(n: int) -> int:
+	var points: Array[Point] = [Point()]
+	var point = points[0]
+	var acc: int = 0
+	var i: int = 0
+	while i < n:
+		acc += point.x + point.y
+		i += 1
+	return acc
 """
 
 const STRUCT_GDSCRIPT_SOURCE := """
@@ -156,6 +166,16 @@ func struct_construct(n: int) -> int:
 	while i < n:
 		var point = {"x": i, "y": i + 1}
 		acc += point.x
+		i += 1
+	return acc
+
+func struct_read_escaped(n: int) -> int:
+	var points: Array = [{"x": 1, "y": 2}]
+	var point = points[0]
+	var acc: int = 0
+	var i: int = 0
+	while i < n:
+		acc += point.x + point.y
 		i += 1
 	return acc
 """
@@ -231,6 +251,7 @@ func test_bench_micro_kernels():
 	if struct_gds != null:
 		for kernel in [
 			{"group": "struct field read", "fn": "struct_read", "n": 20000, "unit": "iteration"},
+			{"group": "struct field read (escaped)", "fn": "struct_read_escaped", "n": 20000, "unit": "iteration"},
 			{"group": "struct construction", "fn": "struct_construct", "n": 10000, "unit": "instance"},
 		]:
 			var name: String = kernel["fn"]

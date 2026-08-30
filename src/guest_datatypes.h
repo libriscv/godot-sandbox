@@ -326,6 +326,29 @@ private:
 	alignas(8) uint8_t m_storage[sizeof(Variant)];
 };
 
+// Store a guest value in an existing engine Variant. Replacing one inline value
+// with another. Pointer-backed values still go through Variant assignment so the
+// old value is released and the new one is retained correctly.
+static inline void store_guest_variant(
+	Variant &slot, const GuestVariant &gv, const Sandbox &emu) {
+	// Only for single-precision builds atm.
+	if constexpr (sizeof(real_t) == sizeof(float)) {
+		const int bytes = variant_inline_payload_bytes(gv.type);
+		GDNativeVariant *inner = reinterpret_cast<GDNativeVariant *>(slot._native_ptr());
+		if (LIKELY(bytes >= 0 && variant_inline_payload_bytes(inner->type) >= 0)) {
+			inner->type = uint8_t(gv.type);
+			std::memset(&inner->value, 0, sizeof(inner->value));
+			if (UNLIKELY(gv.type == Variant::BOOL)) {
+				inner->value = (gv.v.b_bits != 0);
+			} else {
+				guest_memcpy(&inner->value, &gv.v, bytes);
+			}
+			return;
+		}
+	}
+	slot = gv.toVariant(emu);
+}
+
 static inline void hash_combine(gaddr_t &seed, gaddr_t hash) {
 	hash += 0x9e3779b9 + (seed << 6) + (seed >> 2);
 	seed ^= hash;

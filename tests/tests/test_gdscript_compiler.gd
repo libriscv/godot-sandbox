@@ -4845,6 +4845,23 @@ func surfaces(value):
 			matched = balance
 	return [account.net(), str(account), "%s" % account, copied == account,
 		value is BankAccount, value as BankAccount, matched, BankAccount.CURRENCY]
+
+func absent(d: Dictionary):
+	return d.absent
+
+struct MutableValue:
+	var value = 1
+
+func replace_inline_and_scoped(p: MutableValue):
+	p.value = "temporary"
+	p.value = 9
+	return p.value
+
+struct ArrayField:
+	var values: Array = []
+
+func make_array_field():
+	return ArrayField([1, 2, 3])
 """
 	var s = _compile_and_load(gdscript_code)
 	if s == null:
@@ -4868,6 +4885,14 @@ func surfaces(value):
 		[50, "account:100", "account:100", true, true,
 			{"balance": 1, "loan": 2}, 100, "NOK"],
 		"Methods, strings, copy, equality, is/as, patterns and constants")
+	assert_eq(s.vmcallv("absent", {}), null,
+		"A missing raw Dictionary key returns null without an engine error")
+	var mutable := {"value": 1}
+	assert_eq(s.vmcallv("replace_inline_and_scoped", mutable), 9,
+		"SET_RAW replaces an int by a String and the String by an int")
+	assert_eq(mutable, {"value": 9}, "SET_RAW updates the shared Dictionary")
+	assert_eq(s.vmcallv("make_array_field"), {"values": [1, 2, 3]},
+		"MAKE_KEYED stores pointer-backed fields")
 
 	var before := s.get_exceptions()
 	s.vmcallv("repay", {"balance": 1}, 1)
