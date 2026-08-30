@@ -334,6 +334,33 @@ static void test_if_var_null_only_binding() {
 		"\t\t\treturn value + 1\n"
 		"\t\treturn 0\n");
 
+	compile_to_ir(
+		"func f(v):\n"
+		"\treturn func():\n"
+		"\t\tif var value := v:\n"
+		"\t\t\tvar g = func(): return value\n"
+		"\t\t\treturn g.call()\n"
+		"\t\treturn 0\n");
+
+	const std::string mistyped = rejection(
+		"func f():\n"
+		"\tvar s := \"hi\"\n"
+		"\tif var value: int = s:\n"
+		"\t\tpass\n");
+	assert(mistyped.find("variable 'value' of type int") != std::string::npos);
+	assert(mistyped.find("int | null") == std::string::npos);
+
+	const IRProgram thrower = compile_to_ir(
+		"func f(x):\n"
+		"\tif var value: int? = x:\n"
+		"\t\treturn value\n"
+		"\treturn 0\n");
+	for (const IRInstruction& instr : function(thrower, "f").instructions) {
+		if (instr.opcode != IROpcode::THROW) continue;
+		assert(thrower.strings[instr.operands[1].string_id].find("of type int?") !=
+			std::string::npos);
+	}
+
 	Compiler compiler;
 	CompilerOptions options;
 	options.output_elf = false;

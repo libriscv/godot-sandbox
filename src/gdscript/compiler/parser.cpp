@@ -2382,7 +2382,7 @@ TypeExpr Parser::parse_type_expr() {
 			error("'?' on a type that already includes 'null'");
 		}
 		if (type.is_union()) {
-			error("'?' cannot follow a union member; write 'A | B | null'");
+			error("'?' cannot follow a union member. Write 'A | B | null'");
 		}
 		if (type.names.size() == 1 && type.names.front() == "Variant") {
 			error("'Variant' already includes 'null'");

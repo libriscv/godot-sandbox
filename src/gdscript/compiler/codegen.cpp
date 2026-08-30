@@ -959,8 +959,10 @@ void CodeGenerator::gen_var_decl(const VarDeclStmt* stmt, FunctionContext& func,
 		set_register_type(func, reg, IRInstruction::TypeHint_NONE);
 	} else if (accepted_type.is_union()) {
 		if (stmt->initializer) {
+			const std::string display = stmt->type_hint.empty()
+				? accepted_type.to_string() : stmt->type_hint.to_string();
 			reg = coerce_to_declared_type(reg, declared_set, func,
-				"variable '" + stmt->name + "'", stmt, accepted_type.to_string());
+				"variable '" + stmt->name + "'", stmt, display);
 		}
 		set_register_type(func, reg, IRInstruction::TypeHint_NONE);
 	} else if (!accepted_type.empty()) {
@@ -4116,10 +4118,9 @@ private:
 				// The initializer is outside the new binding's scope, which matters
 				// for the useful shadowing form `if var value = value:` in a lambda.
 				visit(if_stmt->binding->initializer.get());
-				auto& scope = m_scopes.back();
-				const bool inserted = scope.insert(if_stmt->binding->name).second;
+				const bool inserted = m_scopes.back().insert(if_stmt->binding->name).second;
 				for (const auto& s : if_stmt->then_branch) visit(s.get());
-				if (inserted) scope.erase(if_stmt->binding->name);
+				if (inserted) m_scopes.back().erase(if_stmt->binding->name);
 			} else {
 				visit(if_stmt->condition.get());
 				for (const auto& s : if_stmt->then_branch) visit(s.get());
@@ -9317,7 +9318,7 @@ std::string CodeGenerator::script_level_super_hint() const {
 	if (!m_script_base_class.empty() && global_script_class_path(m_script_base_class) != nullptr) {
 		return "'" + m_script_base_class + "' is a script in another file, and none of its "
 			"body is compiled into this program. Only a class declared in this file has a "
-			"super(); call into '" + m_script_base_class + "' through an instance of it instead";
+			"super(). Call into '" + m_script_base_class + "' through an instance of it instead";
 	}
 	return "Only a class declared in this file has one";
 }
