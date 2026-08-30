@@ -21,6 +21,25 @@ func test_editor_validation_returns_partial_functions_and_requested_channels():
 	assert_true(found_later)
 	language.free()
 
+func test_editor_warnings_include_the_range_based_godot_47_fields():
+	if not Engine.is_editor_hint():
+		pass_test("requires an editor-hint test process")
+		return
+	var language := _language()
+	var answer := language.editor_validate(
+			"func example():\n\tvar unused = 1\n",
+			"res://warning.sgd", false, true, true, false)
+	assert_gt(answer.warnings.size(), 0)
+	if answer.warnings.size() > 0:
+		var warning: Dictionary = answer.warnings[0]
+		assert_true(warning.has("start_line"))
+		assert_true(warning.has("end_line"))
+		assert_true(warning.has("string_code"))
+		assert_true(warning.has("message"))
+		assert_eq(warning.start_line, 2)
+		assert_eq(warning.end_line, 2)
+	language.free()
+
 func test_editor_completion_and_lookup_share_lexical_scope():
 	if not Engine.is_editor_hint():
 		pass_test("requires an editor-hint test process")

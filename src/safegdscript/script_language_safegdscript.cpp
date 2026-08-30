@@ -1413,7 +1413,16 @@ Dictionary SafeGDScriptLanguage::_validate(const String &p_script, const String 
 				continue;
 			}
 			Dictionary warning;
-			warning["line"] = int64_t(std::max(diagnostic.range.start_line, 1u));
+			const int64_t start_line = int64_t(std::max(diagnostic.range.start_line, 1u));
+			const int64_t end_line = int64_t(std::max(diagnostic.range.end_line,
+					std::max(diagnostic.range.start_line, 1u)));
+			// Godot 4.7 consumes the range-based names. Keep the older aliases as
+			// well because the extension's declared compatibility starts at 4.3.
+			warning["start_line"] = start_line;
+			warning["end_line"] = end_line;
+			warning["string_code"] = code;
+			warning["message"] = message;
+			warning["line"] = start_line;
 			warning["code"] = code;
 			warning["string"] = message;
 			warnings.push_back(warning);
