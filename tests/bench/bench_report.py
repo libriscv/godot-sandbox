@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-"""Build the benchmark suite's final tables from the results of both modes.
+"""Build the benchmark suite's final tables from every available guest mode.
 
 The guest's execution mode is a property of a whole process -- libriscv caches a
-translated execute segment per binary, so a program once loaded with the JIT off
-stays interpreted for the rest of the run -- which means JIT and interpreter
-numbers can only come from separate runs of the suite. This script reads every
-run of both and joins them, so that the comparison the suite exists to make is
-in one table:
+translated execute segment per binary, so Full, JIT and interpreter numbers can
+only come from separate runs of the suite. Full is also baked in its own process.
+This script reads every run and joins them into one table:
 
-    GDScript, SafeGDScript with the JIT, SafeGDScript interpreted.
+    GDScript, SafeGDScript Full, with the JIT, and interpreted.
 
-The third column is the one that matters for the web export, where Godot has no
-JIT to offer and the interpreter is what a mod actually runs on.
+The interpreter column matters for the web export, where Godot has no JIT to
+offer and the interpreter is what a mod runs without an embedded translation.
 
 Samples are pooled across the runs of a mode rather than taken from one of them.
 Sampling inside a process is stable to about a percent; where the loader and the
@@ -32,7 +30,9 @@ import sys
 REFERENCE_DEFAULT = "GDScript (engine)"
 GUEST = "SafeGDScript (sandbox)"
 
-MODES = (("jit", "JIT", "latest.json"), ("nojit", "no JIT", "latest-nojit.json"))
+MODES = (("full", "Full", "latest-full.json"),
+         ("jit", "JIT", "latest.json"),
+         ("nojit", "Intrp", "latest-nojit.json"))
 
 # A row whose P90 sits this far above its P50 is reported but flagged rather
 # than quoted.
@@ -97,7 +97,8 @@ def load_mode(results_dir, mode, fallback_name):
 class Mode:
     """One execution mode's runs, pooled."""
 
-    def __init__(self, name, runs):
+    def __init__(self, key, name, runs):
+        self.key = key
         self.name = name
         self.runs = runs
         self.pooled = {}
@@ -239,6 +240,22 @@ def meta(modes, group, key, default=None):
     return default
 
 
+def present_modes(modes):
+    return [mode for mode in modes if mode]
+
+
+def modes_by_key(modes):
+    return {mode.key: mode for mode in modes}
+
+
+def first_stat(modes, group, label):
+    for mode in present_modes(modes):
+        value = mode.stat(group, label)
+        if value is not None:
+            return value
+    return None
+
+
 def ascii_table(rows, header, align=None):
     """+--+ borders rather than the Markdown pipes above: this one is quoted into
     a terminal, a commit message or a chat window as often as into the docs."""
@@ -292,38 +309,49 @@ def overview_section(modes, names):
     grouped, with a geometric mean per group. Held under OVERVIEW_MAX_CHARS by
     dropping the per-benchmark rows -- the group lines are the summary, and the
     Markdown tables above are where the detail already lives."""
-    jit, nojit = modes
+    by_key = modes_by_key(modes)
+    full = by_key["full"]
+    jit = by_key["jit"]
 
     def speedups(group):
-        return (ratio_value(jit.stat(group, meta(modes, group, "reference", REFERENCE_DEFAULT)),
-                            jit.stat(group, GUEST)),
-                ratio_value(nojit.stat(group, meta(modes, group, "reference", REFERENCE_DEFAULT)),
-                            nojit.stat(group, GUEST)))
+        reference = meta(modes, group, "reference", REFERENCE_DEFAULT)
+        return {
+            mode.key: ratio_value(mode.stat(group, reference), mode.stat(group, GUEST))
+            for mode in modes
+        }
+
+    def full_vs_jit(group):
+        return ratio_value(jit.stat(group, GUEST), full.stat(group, GUEST))
 
     def render(detail):
         # Without the per-benchmark rows there is nothing left to put in the ns
         # columns: a group spans units, and 34 ns/iteration next to 646 ns per
         # emulated instruction is not a number anyone should average.
-        header = ["benchmark"] + (["GDScript", "JIT", "no JIT"] if detail else [])
-        header += ["JIT x", "no JIT x"]
+        header = ["benchmark"]
+        if detail:
+            header += ["GDScript"] + [mode.name for mode in modes]
+        header += [mode.name + " x" for mode in modes] + ["Full vs JIT"]
         rows = []
         for title, members in categorise(names):
-            pairs = [speedups(g) for g in members]
-            rows.append([title] + ([""] * 3 if detail else []) +
-                        [fmt_ratio(geomean([p[0] for p in pairs])),
-                         fmt_ratio(geomean([p[1] for p in pairs]))])
+            group_speedups = [speedups(g) for g in members]
+            rows.append(
+                [title]
+                + ([""] * (len(modes) + 1) if detail else [])
+                + [fmt_ratio(geomean([values[mode.key] for values in group_speedups]))
+                   for mode in modes]
+                + [fmt_ratio(geomean([full_vs_jit(group) for group in members]))]
+            )
             if not detail:
                 continue
             for group in members:
                 reference = meta(modes, group, "reference", REFERENCE_DEFAULT)
-                j, n = speedups(group)
+                values = speedups(group)
                 rows.append([
                     "  " + group,
-                    ns(jit.stat(group, reference) or nojit.stat(group, reference)),
-                    ns(jit.stat(group, GUEST)),
-                    ns(nojit.stat(group, GUEST)),
-                    fmt_ratio(j), fmt_ratio(n),
-                ])
+                    ns(first_stat(modes, group, reference)),
+                ] + [ns(mode.stat(group, GUEST)) for mode in modes]
+                  + [fmt_ratio(values[mode.key]) for mode in modes]
+                  + [fmt_ratio(full_vs_jit(group))])
         return ascii_table(rows, header, ["left"] + ["right"] * (len(header) - 1))
 
     def section(detail):
@@ -341,13 +369,12 @@ def overview_section(modes, names):
 
 
 def summary_section(modes, names):
-    jit, nojit = modes
     out = [
         "## Summary",
         "",
         "Median nanoseconds per work unit, pooled over every run of a mode. Each",
         "speedup divides two numbers measured in the same process, which is what makes",
-        "the two columns comparable: a process's layout shifts its absolute numbers by",
+        "the speedup columns comparable: a process's layout shifts its absolute numbers by",
         "a few percent either way, and dividing within a run cancels it. Below 1.00x is",
         "slower than GDScript.",
         "",
@@ -358,26 +385,25 @@ def summary_section(modes, names):
         unit = meta(modes, group, "unit", "op")
         rows.append([
             group, unit,
-            ns(jit.stat(group, reference) or nojit.stat(group, reference)),
-            ns(jit.stat(group, GUEST)),
-            ns(nojit.stat(group, GUEST)),
-            ratio(jit.stat(group, reference), jit.stat(group, GUEST)),
-            ratio(nojit.stat(group, reference), nojit.stat(group, GUEST)),
-        ])
+            ns(first_stat(modes, group, reference)),
+        ] + [ns(mode.stat(group, GUEST)) for mode in modes]
+          + [ratio(mode.stat(group, reference), mode.stat(group, GUEST)) for mode in modes])
     out.append(table(
         rows,
-        ["benchmark", "unit", "GDScript", "JIT", "no JIT", "JIT vs GDScript", "no JIT vs GDScript"],
-        ["left", "left", "right", "right", "right", "right", "right"]))
+        ["benchmark", "unit", "GDScript"]
+        + [mode.name for mode in modes]
+        + [mode.name + " vs GDScript" for mode in modes],
+        ["left", "left"] + ["right"] * (1 + len(modes) * 2)))
     out.append("")
-    out.append("The `GDScript` column is the JIT runs' measurement of the engine; the")
-    out.append("interpreter runs measure it again, and how far apart the two land is under")
-    out.append("measurement quality below.")
+    out.append("The `GDScript` column comes from the first available mode. Every other mode")
+    out.append("measures the engine again; their pairwise gaps are under measurement quality.")
     out.append("")
     return out
 
 
 def detail_sections(modes, names):
     out = ["## Per-benchmark detail", ""]
+    active = present_modes(modes)
     for group in names:
         unit = meta(modes, group, "unit", "op")
         reference = meta(modes, group, "reference", REFERENCE_DEFAULT)
@@ -390,7 +416,7 @@ def detail_sections(modes, names):
         rows = []
         for label in case_order(modes, group):
             row = [label]
-            for mode in modes:
+            for mode in active:
                 row += [
                     ns(mode.stat(group, label, "min")),
                     ns(mode.stat(group, label)),
@@ -398,12 +424,11 @@ def detail_sections(modes, names):
                     ratio(mode.stat(group, reference), mode.stat(group, label)),
                 ]
             rows.append(row)
-        out.append(table(
-            rows,
-            ["case",
-             "JIT min", "JIT P50", "JIT P90", "JIT vs ref",
-             "no JIT min", "no JIT P50", "no JIT P90", "no JIT vs ref"],
-            ["left"] + ["right"] * 8))
+        headers = ["case"]
+        for mode in active:
+            headers += [mode.name + " min", mode.name + " P50",
+                        mode.name + " P90", mode.name + " vs ref"]
+        out.append(table(rows, headers, ["left"] + ["right"] * (len(headers) - 1)))
         out.append("")
         out.append("ns/%s. `vs ref` compares against `%s` measured in the same runs."
                    % (unit, reference))
@@ -413,8 +438,8 @@ def detail_sections(modes, names):
 
 def quality_section(modes, names):
     """What the tables above are worth: how far apart the runs of one mode put
-    the same case, and whether the two modes agree about GDScript."""
-    jit, nojit = modes
+    the same case, and whether the modes agree about GDScript."""
+    active = present_modes(modes)
     out = ["## Measurement quality", ""]
 
     runs = " and ".join("%d %s run%s" % (len(m.runs), m.name, "" if len(m.runs) == 1 else "s")
@@ -432,7 +457,7 @@ def quality_section(modes, names):
     spreads = []
     for group in names:
         for label in case_order(modes, group):
-            for mode in modes:
+            for mode in active:
                 value = mode.stat(group, label, "run_spread")
                 if value is not None:
                     spreads.append((value, group, label, mode.name))
@@ -455,25 +480,31 @@ def quality_section(modes, names):
             out.append("")
 
     deltas = []
-    for group in names:
-        reference = meta(modes, group, "reference", REFERENCE_DEFAULT)
-        a, b = jit.stat(group, reference), nojit.stat(group, reference)
-        if a and b:
-            deltas.append((abs(a - b) / a, group))
+    if active:
+        base = active[0]
+        for group in names:
+            reference = meta(modes, group, "reference", REFERENCE_DEFAULT)
+            a = base.stat(group, reference)
+            if not a:
+                continue
+            for mode in active[1:]:
+                b = mode.stat(group, reference)
+                if b:
+                    deltas.append((abs(a - b) / a, group, base.name, mode.name))
     if deltas:
         deltas.sort(reverse=True)
-        out.append("Across modes: GDScript is measured by both and cannot be affected by the")
-        out.append("sandbox's execution mode, so the two should agree. Median gap **%s**, worst"
+        out.append("Across modes: GDScript cannot be affected by the sandbox's execution mode,")
+        out.append("so every mode is checked against the first present one. Median gap **%s**, worst"
                    % pct(deltas[len(deltas) // 2][0]))
-        out.append("**%s** on `%s`. No speedup above divides across this boundary; it bounds"
-                   % (pct(deltas[0][0]), deltas[0][1]))
-        out.append("how precisely a JIT `ns` figure and a no-JIT one may be compared directly.")
+        out.append("**%s** on `%s` (%s against %s). No GDScript speedup above divides across"
+                   % (pct(deltas[0][0]), deltas[0][1], deltas[0][2], deltas[0][3]))
+        out.append("this boundary; it bounds how precisely absolute figures may be compared.")
         out.append("")
 
     noisy = []
     for group in names:
         for label in case_order(modes, group):
-            for mode in modes:
+            for mode in active:
                 spread = mode.stat(group, label, "spread")
                 if spread is not None and spread > SPREAD_WARN:
                     noisy.append([group, label, mode.name, pct(spread)])
@@ -489,18 +520,20 @@ def quality_section(modes, names):
     return out
 
 
-def environment_section(modes):
-    jit, nojit = modes
+def environment_section(modes, manifest):
     out = ["## Environment", ""]
-    env_mode = jit if jit else nojit
+    active = present_modes(modes)
+    env_mode = active[0]
     rows = [
         ("CPU", env_mode.env("cpu", "?")),
         ("Godot", env_mode.env("godot", "?")),
         ("Cores", env_mode.env("cpus") or "not pinned"),
         ("Rounds per case per run", env_mode.env("samples", "?")),
         ("Minimum sample", "%d ms" % (env_mode.env("min_sample_usec", 0) / 1000)),
+        ("Baked hashes", len(manifest)),
     ]
-    for mode, expected in ((jit, "JIT"), (nojit, "interpreter")):
+    expected_modes = {"full": "binary translated", "jit": "JIT", "nojit": "interpreter"}
+    for mode in modes:
         if not mode:
             rows.append((mode.name + " runs", "missing"))
             continue
@@ -512,9 +545,10 @@ def environment_section(modes):
 
     # The runs must have measured what they claim to, or the tables compare a
     # mode against itself.
-    for mode, expected in ((jit, "JIT"), (nojit, "interpreter")):
+    for mode in modes:
         if not mode:
             continue
+        expected = expected_modes[mode.key]
         wrong = sorted({m.get("_environment", {}).get("mode", "?") for m in mode.runs}
                        - {expected})
         if wrong:
@@ -531,21 +565,24 @@ def environment_section(modes):
 
 
 def build(modes):
-    jit, nojit = modes
+    return build_with_manifest(modes, {})
+
+
+def build_with_manifest(modes, manifest):
     names = ordered_groups(modes)
     out = ["# SafeGDScript benchmarks", ""]
-    if not jit:
-        out.append("> No JIT run; run `./run_benchmarks.sh`.\n")
-    if not nojit:
-        out.append("> No interpreter run; run `./run_benchmarks.sh --no-jit`. Without it there")
-        out.append("> is nothing to say about the web export, which has no JIT.\n")
+    commands = {"full": "--full", "jit": "--jit", "nojit": "--no-jit"}
+    for mode in modes:
+        if not mode:
+            out.append("> No %s run; run `./run_benchmarks.sh %s`.\n"
+                       % (mode.name, commands[mode.key]))
     if not names:
         out.append("No results.")
         return "\n".join(out) + "\n"
     out += summary_section(modes, names)
     out += detail_sections(modes, names)
     out += quality_section(modes, names)
-    out += environment_section(modes)
+    out += environment_section(modes, manifest)
     out += overview_section(modes, names)
     return "\n".join(out).rstrip() + "\n"
 
@@ -559,14 +596,15 @@ def main():
     ap.add_argument("--quiet", action="store_true", help="write the file without printing it")
     args = ap.parse_args()
 
-    modes = tuple(Mode(label, load_mode(args.results_dir, mode, fallback))
+    modes = tuple(Mode(mode, label, load_mode(args.results_dir, mode, fallback))
                   for mode, label, fallback in MODES)
     if not any(modes):
         sys.stderr.write("bench_report: no results in %s -- run ./run_benchmarks.sh first\n"
                          % args.results_dir)
         return 1
 
-    report = build(modes)
+    manifest = load(os.path.join(args.results_dir, "bintr", "manifest.json")) or {}
+    report = build_with_manifest(modes, manifest)
     out_path = args.out or os.path.join(args.results_dir, "report.md")
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     with open(out_path, "w") as f:

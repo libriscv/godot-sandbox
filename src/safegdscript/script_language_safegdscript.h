@@ -22,6 +22,7 @@ public:
 			Object *p_owner = nullptr) const;
 	Dictionary editor_lookup(const String &p_code, const String &p_symbol,
 			const String &p_path, Object *p_owner = nullptr) const;
+	Dictionary bake_all_translations();
 	static void init();
 	static void deinit();
 	static SafeGDScriptLanguage *get_singleton();

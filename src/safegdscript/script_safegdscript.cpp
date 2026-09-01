@@ -10,6 +10,8 @@
 #include "signature_info.h"
 #include "script_language_safegdscript.h"
 #include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
@@ -18,6 +20,7 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 #include "../gdscript/compiler/function_signature.h"
 #include "../sandbox.h"
+#include "../sandbox_project_settings.h"
 #include "../fast_cast.hpp"
 #include <unordered_set>
 static constexpr bool VERBOSE_LOGGING = false;
@@ -724,7 +727,7 @@ void SafeGDScript::set_path(const String &p_path) {
 }
 
 bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug,
-		ReloadPolicy p_reload_policy) {
+		ReloadPolicy p_reload_policy, bool p_shipping) {
 	// Refuse rebuild while stopped at a breakpoint in this program.
 	if (safegdscript_stopped_script() == this) {
 		return fail_compile(this->path + " is stopped at a breakpoint and cannot be "
@@ -772,13 +775,13 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug,
 				" GDScript compiler");
 	}
 
-	const bool profiling = p_profiling && compiler.can_build_profiled();
+	const bool profiling = !p_shipping && p_profiling && compiler.can_build_profiled();
 	if (p_profiling && !profiling) {
 		ERR_PRINT("SafeGDScript: the GDScript compiler ELF is too old to build a profiled program.");
 	}
 	// Ours plus the editor's, for this build only: the editor owns its lines and
 	// may clear them again, so they never enter the project-owned set.
-	const PackedInt32Array build_breakpoints = get_breakpoints();
+	const PackedInt32Array build_breakpoints = p_shipping ? PackedInt32Array() : get_breakpoints();
 	// Non-empty breakpoints force a debug build.
 	const bool wants_debug = p_debug || !build_breakpoints.is_empty();
 	// Profiling and debug are mutually exclusive instrumentations.
@@ -905,6 +908,12 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug,
 
 	this->update_methods_info(compiler);
 	this->_update_exports();
+
+	if (!p_shipping && Engine::get_singleton()->is_editor_hint() && OS::get_singleton()->has_feature("editor") &&
+			SandboxProjectSettings::binary_translation_auto_bake() && !restricted &&
+			!profiling && !debug && Sandbox::has_feature_binary_translation()) {
+		Sandbox::queue_binary_translation_bake(this->elf_data, 32);
+	}
 
 	// One reload for the Sandbox they share: reloading per instance would replace
 	// the machine again under the instances that had already taken a record in
@@ -1073,6 +1082,10 @@ void SafeGDScript::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_breakpoints"), &SafeGDScript::get_breakpoints);
 	ClassDB::bind_method(D_METHOD("get_active_breakpoints"), &SafeGDScript::get_active_breakpoints);
 	ClassDB::bind_method(D_METHOD("is_debug_build"), &SafeGDScript::is_debug_build);
+	ClassDB::bind_method(D_METHOD("bake_translation"), &SafeGDScript::bake_translation);
+	ClassDB::bind_method(D_METHOD("is_translation_baked"), &SafeGDScript::is_translation_baked);
+	ClassDB::bind_method(D_METHOD("get_translation_hash"), &SafeGDScript::get_translation_hash);
+	ClassDB::bind_method(D_METHOD("get_content"), &SafeGDScript::get_content);
 
 	ClassDB::bind_method(D_METHOD("get_compile_error"), &SafeGDScript::get_compile_error);
 	ClassDB::bind_method(D_METHOD("uses_trait", "name"), &SafeGDScript::uses_trait);
@@ -1091,6 +1104,21 @@ void SafeGDScript::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("breakpoint_hit",
 			PropertyInfo(Variant::OBJECT, "script", PROPERTY_HINT_RESOURCE_TYPE, "SafeGDScript"),
 			PropertyInfo(Variant::INT, "line")));
+}
+
+String SafeGDScript::bake_translation() {
+	Sandbox *sandbox = sandbox_for_safegdscript(this);
+	return sandbox == nullptr ? String() : sandbox->bake_binary_translation();
+}
+
+bool SafeGDScript::is_translation_baked() const {
+	const Sandbox *sandbox = sandbox_for_safegdscript(this);
+	return sandbox != nullptr && sandbox->is_translation_baked();
+}
+
+int64_t SafeGDScript::get_translation_hash() const {
+	const Sandbox *sandbox = sandbox_for_safegdscript(this);
+	return sandbox == nullptr ? 0 : sandbox->get_translation_hash();
 }
 
 Variant SafeGDScript::new_instance(const Variant **p_args, GDExtensionInt p_argcount, GDExtensionCallError &r_error) {

@@ -5,6 +5,7 @@
 	</brief_description>
 	<description>
 		The Sandbox class is designed to run ELFScript resources or byte arrays from unknown sources, encapsulating them in a controlled environment. It provides a way to execute code with restricted access to the Godot engine's API and resources.
+		Shared objects are automatically loaded from the exported game's [code]bintr/[/code] directory or [code]sandbox/binary_translation/cache_dir[/code]. A missing or stale object silently falls back to asmjit or the interpreter. Set the [code]BINTR_CACHE=0[/code] env var to disable this.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -88,7 +89,20 @@
 				resulting shared library will allow the sandboxed program to run closer to native performance.
 				If `ignore_instruction_limit` is true, the instruction limit will not be enforced, improving performance. Having an execution limit is only really recommended while building programs, as the worst case scenario is that the program or game appears to hang, which is not a security issue in most cases.
 				If `automatic_nbit_address_space` is true, the translation will automatically use an n-bit (masked) address space, which can greatly improve performance for certain programs. It is however, somewhat experimental and may not work with all programs.
-				Only the C99 binary translator can emit source. A JIT build compiles to machine code in-process and has nothing to hand out, so this returns an empty string there. Check [code]has_feature_binary_translation()[/code] before relying on it.
+				This returns the self-registering embeddable variant used by [method load_binary_translation] or by compiling the source directly into the addon. It is intentionally different from the hash-cache shared-library variant produced by [method bake_binary_translation]. The two object formats must not be passed to the other loader.
+			</description>
+		</method>
+		<method name="bake_binary_translation" qualifiers="const">
+			<return type="String" />
+			<param index="0" name="out_dir" type="String" default="&quot;&quot;" />
+			<description>
+				Emits and compiles a cache-loadable native translation using the live machine's hash-affecting options. The result is atomically published as [code]bintr-&lt;hash&gt;.so[/code], [code].dll[/code], or [code].dylib[/code]. An empty directory uses [code]sandbox/binary_translation/cache_dir[/code]. Returns the absolute path, or an empty String on failure.
+			</description>
+		</method>
+		<method name="get_translation_hash" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the CRC32-C join key for the execute segment and all ABI-affecting translation options, or zero when no program is loaded.
 			</description>
 		</method>
 		<method name="generate_api" qualifiers="static">
@@ -100,6 +114,18 @@
 				Generates an API header file for the sandboxed program in the specified language.
 				This header file contains function declarations and type definitions for the sandboxed program's API.
 				It can be used to interact with the entire/full Godot API from the sandboxed program.
+			</description>
+		</method>
+		<method name="has_feature_binary_translation" qualifiers="static">
+			<return type="bool" />
+			<description>
+				Returns true when the external-compiler C99 emitter and hash-cache loader are compiled in. Desktop builds can return true for this and [method has_feature_jit] simultaneously.
+			</description>
+		</method>
+		<method name="has_feature_jit" qualifiers="static">
+			<return type="bool" />
+			<description>
+				Returns true when an in-process JIT backend is compiled in.
 			</description>
 		</method>
 		<method name="get">
@@ -237,13 +263,19 @@
 				This means that the program has been compiled into a shared library for execution, allowing it to run closer to native performance.
 			</description>
 		</method>
+		<method name="is_translation_baked" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns true when the configured cache contains the hash-named object for the current machine.
+			</description>
+		</method>
 		<method name="load_binary_translation" qualifiers="static">
 			<return type="bool" />
 			<param index="0" name="shared_library_path" type="String" />
 			<description>
 				Loads a binary translation of the sandboxed program from a shared library.
 				This allows the sandboxed program to run closer to native performance by executing pre-compiled code.
-				A JIT build has no C99 binary translator to register the library with, so this returns false there. Check [code]has_feature_binary_translation()[/code] first.
+				This accepts only the legacy self-registering object produced from [method emit_binary_translation]. Hash-cache objects produced by [method bake_binary_translation] are refused and are loaded automatically during machine construction instead.
 			</description>
 		</method>
 		<method name="load_buffer">
@@ -359,6 +391,13 @@
 				This allows you to capture and process output generated by the program, such as print statements.
 			</description>
 		</method>
+		<method name="set_jit_enabled" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="enable" type="bool" />
+			<description>
+				Enables or disables in-process JIT compilation for subsequently loaded machines. Disabling JIT does not disable lookup or execution of a baked AOT translation; this is the intended desktop shipping configuration.
+			</description>
+		</method>
 		<method name="set_resource_allowed_callback">
 			<return type="void" />
 			<param index="0" name="instance" type="Callable" />
@@ -375,8 +414,7 @@
 			<param index="3" name="ignore_instruction_limit" type="bool" default="false" />
 			<param index="4" name="automatic_nbit_as" type="bool" default="false" />
 			<description>
-				Attempts to generate and then compile a binary translation of the sandboxed program into a shared library. This allows the sandboxed program to run closer to native performance by executing pre-compiled code. If the compilation is successful, the shared library will be loaded automatically on platforms that support loading shared libraries.
-				A JIT build has nothing to emit and no external compiler to invoke, so this returns false there. Check [code]has_feature_binary_translation()[/code] first.
+				Attempts to generate and compile the legacy self-registering translation to a caller-chosen [code]res://[/code] path. It is not loaded automatically. Prefer [method bake_binary_translation] for the unbounded hash cache.
 			</description>
 		</method>
 		<method name="vmcall" qualifiers="const vararg">

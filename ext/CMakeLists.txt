@@ -22,25 +22,13 @@ if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|X86_64|AMD64|amd64|aarch64|arm64|AR
 endif()
 option(RISCV_ASMJIT "" ${ASMJIT_HOST_SUPPORTED})
 
-# asmjit compiles straight to machine code in-process, which leaves the C99
-# binary translator with nothing to do: only one back-end can own the patched
-# decoder cache, and carrying the other one costs an embedded TCC plus the
-# emit/compile/dlopen path in every build. So a JIT build drops it, which
-# no-ops emit_binary_translation(), try_compile_binary_translation() and
-# load_binary_translation() -- see doc_classes/Sandbox.xml. Pass
-# -DRISCV_BINARY_TRANSLATION=ON to build both for A/B comparison.
-if (RISCV_ASMJIT)
-	option(RISCV_BINARY_TRANSLATION "" OFF)
-else()
-	option(RISCV_BINARY_TRANSLATION "" ON)
-endif()
-if (NOT RISCV_BINARY_TRANSLATION)
-	# libtcc is a binary-translation back-end, so without the translator there
-	# is nothing for it to compile. Forced rather than defaulted: an inherited
-	# -DRISCV_LIBTCC=ON would otherwise reach libriscv_settings.h and have
-	# libtcc_enabled claim a TCC that was never built in.
-	set(RISCV_LIBTCC OFF CACHE BOOL "" FORCE)
-endif()
+# The C99 translator and asmjit coexist: a cached AOT object claims decoder
+# entries first and asmjit fills whatever remains. Desktop builds keep asmjit
+# for immediate iteration and the C99 emitter/loader for baked shipping code.
+option(RISCV_BINARY_TRANSLATION "" ON)
+# Baking intentionally uses an external system compiler. Never embed TCC: its
+# background compiler would suppress asmjit and would compile during play.
+set(RISCV_LIBTCC OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(libriscv/lib libriscv)
 target_compile_definitions(riscv PUBLIC

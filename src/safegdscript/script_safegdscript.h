@@ -92,7 +92,11 @@ public:
 	bool is_built_in() const { return path.is_empty() || path.contains("::"); }
 	const PackedByteArray &get_content() const { return elf_data; }
 	bool compile_source_to_elf(bool p_profiling = false, bool p_debug = false,
-			ReloadPolicy p_reload_policy = ReloadPolicy::DISCARD_STATE);
+			ReloadPolicy p_reload_policy = ReloadPolicy::DISCARD_STATE,
+			bool p_shipping = false);
+	String bake_translation();
+	bool is_translation_baked() const;
+	int64_t get_translation_hash() const;
 	const std::vector<gdscript::PropertySignature> &get_property_signatures() const { return properties; }
 	const std::vector<gdscript::DebugVariableRecord> &get_debug_variables() const { return debug_variables; }
 	const gdscript::PropertySignature *find_property_signature(const StringName &p_name) const;

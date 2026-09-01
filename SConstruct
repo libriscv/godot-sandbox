@@ -13,6 +13,9 @@ if ARGUMENTS.get("precision", "single") == "double" and "custom_api_file" not in
 env = SConscript("ext/godot-cpp/SConstruct")
 
 env.Append(CPPDEFINES = ['RISCV_SYSCALLS_MAX=600', 'RISCV_BRK_MEMORY_SIZE=0x100000'])
+# The external-compiler translator is always present. It performs cache lookup
+# only during play; it never embeds TCC or invokes a compiler at run time.
+env.Append(CPPDEFINES = ['RISCV_BINARY_TRANSLATION'])
 env.Prepend(CPPPATH=["ext/libriscv/lib"])
 env.Append(CPPPATH=["src/", "."])
 
@@ -150,6 +153,8 @@ elif env["platform"] == "macos":
 elif env["platform"] == "linux" or env["platform"] == "android":
     env.Prepend(CPPPATH=["ext/libriscv/lib/libriscv/lib/linux"])
     add_godot_cpp_doc_data(env, sources)
+    if env["platform"] == "linux":
+        env.Append(LIBS=["dl"])
 
 if "static_build" not in ARGUMENTS or ARGUMENTS["static_build"]!="yes":
     if env["platform"] == "macos" or env["platform"] == "ios":

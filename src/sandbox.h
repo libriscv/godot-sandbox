@@ -901,6 +901,22 @@ public:
 	/// @warning Do *NOT* enable automatic_nbit_as unless you are sure the program is compatible with it.
 	String emit_binary_translation(bool ignore_instruction_limit = false, bool automatic_nbit_as = false) const;
 
+	/// @brief Hash of the current execute segment and every ABI-affecting translator option.
+	/// @return Zero when no program/translator is available.
+	int64_t get_translation_hash() const;
+
+	/// @brief Build the cache-loadable shared-library variant for this machine.
+	/// @param out_dir Destination directory, or empty for the configured cache.
+	/// @return Absolute hash-named library path, or an empty String on failure.
+	String bake_binary_translation(const String &out_dir = "") const;
+
+	/// @brief Whether the configured cache contains this machine's translation.
+	bool is_translation_baked() const;
+
+	/// @brief Queue a release SafeGDScript ELF for background baking.
+	/// @note C++ integration helper; the copy is independent of any live machine.
+	static void queue_binary_translation_bake(PackedByteArray binary, uint32_t memory_max);
+
 	/// @brief Open a shared library, which should self-register its functions.
 	/// @param shared_library_path The path to the shared library.
 	/// @param allow_insecure If true, allow loading shared libraries after other Sandbox instances have been created.
@@ -1037,6 +1053,21 @@ public:
 	static PackedByteArray download_program(String program_name);
 
 private:
+	struct BakeOptions {
+		bool ignore_limit = false;
+		bool nbit_as = false;
+		bool unchecked = false;
+	};
+	BakeOptions current_bake_options() const;
+	String emit_binary_translation(const BakeOptions &options, bool shared_library,
+			uint32_t *r_hash = nullptr) const;
+	static String bake_binary_translation_from_buffer(const PackedByteArray &binary,
+			uint32_t memory_max, const BakeOptions &options, const String &out_dir,
+			const String &compiler, const String &extra_cflags, bool quiet);
+	static String binary_translation_cache_dir(bool create);
+	static String binary_translation_path(uint32_t hash, const String &out_dir = "");
+	static bool bintr_lookup_enabled();
+	static void start_background_translation(std::function<void()> &&step);
 	static void generate_runtime_cpp_api(bool use_argument_names = false);
 
 	void read_instance_layout();

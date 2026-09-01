@@ -246,7 +246,7 @@ func test_bench_micro_kernels():
 		_note(group, "n", n)
 		_report(group)
 
-	var struct_sandbox := _load_elf(_struct_elf)
+	var struct_sandbox := _load_elf(_struct_elf, "struct Sandbox ELF")
 	var struct_gds := _as_gdscript(STRUCT_GDSCRIPT_SOURCE)
 	if struct_gds != null:
 		for kernel in [

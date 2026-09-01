@@ -4,6 +4,7 @@
 #include "../script_language_common.h"
 #include "script_safegdscript.h"
 #include "../sandbox.h"
+#include "../sandbox_project_settings.h"
 
 void safegdscript_sandbox_profiling_toggled(Sandbox &p_sandbox, bool p_enabled);
 void safegdscript_sync_engine_breakpoints();
@@ -57,6 +58,8 @@ void SafeGDScriptLanguage::_bind_methods() {
 			&SafeGDScriptLanguage::editor_complete, DEFVAL(nullptr));
 	ClassDB::bind_method(D_METHOD("editor_lookup", "code", "symbol", "path", "owner"),
 			&SafeGDScriptLanguage::editor_lookup, DEFVAL(nullptr));
+	ClassDB::bind_method(D_METHOD("bake_all_translations"),
+			&SafeGDScriptLanguage::bake_all_translations);
 }
 
 Dictionary SafeGDScriptLanguage::editor_validate(const String &p_script, const String &p_path,
@@ -1176,6 +1179,83 @@ void SafeGDScriptLanguage::deinit() {
 
 SafeGDScriptLanguage *SafeGDScriptLanguage::get_singleton() {
 	return safegdscript_language;
+}
+
+namespace {
+void collect_sgd_paths(const String &directory, PackedStringArray &paths) {
+	for (const String &file : DirAccess::get_files_at(directory)) {
+		if (file.ends_with(".sgd"))
+			paths.push_back(directory.path_join(file));
+	}
+	for (const String &child : DirAccess::get_directories_at(directory)) {
+		if (!child.begins_with("."))
+			collect_sgd_paths(directory.path_join(child), paths);
+	}
+}
+}
+
+Dictionary SafeGDScriptLanguage::bake_all_translations() {
+	Dictionary result;
+	Array baked;
+	PackedStringArray failed;
+	PackedStringArray paths;
+	collect_sgd_paths("res://", paths);
+	std::unordered_set<std::string> live_files;
+	String cache_directory;
+
+	for (const String &path : paths) {
+		Ref<Resource> resource = ResourceLoader::get_singleton()->load(path, "SafeGDScript",
+				ResourceLoader::CACHE_MODE_REUSE);
+		Ref<SafeGDScript> script = resource;
+		if (script.is_null() || !script->compile_source_to_elf(false, false,
+				SafeGDScript::ReloadPolicy::DISCARD_STATE, true)) {
+			failed.push_back(path + String(": ") + (script.is_valid() ? script->get_compile_error() :
+					"could not load as SafeGDScript"));
+			continue;
+		}
+
+		Sandbox *sandbox = memnew(Sandbox);
+		sandbox->set_unboxed_arguments(false);
+		sandbox->set_memory_max(32);
+		sandbox->set_binary_translation_bg_compilation(false);
+		sandbox->load_buffer(script->get_content());
+		const int64_t hash = sandbox->get_translation_hash();
+		const String output = hash == 0 ? String() : sandbox->bake_binary_translation();
+		memdelete(sandbox);
+		if (output.is_empty()) {
+			failed.push_back(path + String(": translation bake failed"));
+			continue;
+		}
+
+		Dictionary entry;
+		entry["script"] = path;
+		entry["hash"] = hash;
+		entry["path"] = output;
+		entry["size"] = FileAccess::get_file_as_bytes(output).size();
+		baked.push_back(entry);
+		live_files.insert(std::string(output.get_file().utf8().get_data()));
+		cache_directory = output.get_base_dir();
+		UtilityFunctions::print(path, ": ", vformat("%08X", uint32_t(hash)),
+				" -> ", output, " (", entry["size"], " bytes)");
+	}
+
+	// A partial bake must not delete the last working object for a script that
+	// currently fails to compile. Garbage collection is safe once every source
+	// contributed its current hash.
+	if (failed.is_empty() && !cache_directory.is_empty()) {
+		for (const String &file : DirAccess::get_files_at(cache_directory)) {
+			const std::string filename(file.utf8().get_data());
+			if (file.begins_with("bintr-") && live_files.count(filename) == 0 &&
+					(file.ends_with(".so") || file.ends_with(".dll") || file.ends_with(".dylib"))) {
+				DirAccess::remove_absolute(cache_directory.path_join(file));
+			}
+		}
+	}
+
+	result["baked"] = baked;
+	result["failed"] = failed;
+	result["ok"] = failed.is_empty();
+	return result;
 }
 
 String SafeGDScriptLanguage::_get_name() const {

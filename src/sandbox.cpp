@@ -75,7 +75,7 @@ std::mutex background_translations_mutex;
 std::vector<BackgroundTranslation> background_translations;
 } // namespace
 
-static void start_background_translation(std::function<void()> &&step)
+void Sandbox::start_background_translation(std::function<void()> &&step)
 {
 	auto done = std::make_shared<std::atomic<bool>>(false);
 	std::thread thread([step = std::move(step), done]() mutable {
@@ -102,6 +102,32 @@ static void start_background_translation(std::function<void()> &&step)
 		}
 	}
 	background_translations.push_back({ std::move(thread), std::move(done) });
+}
+
+void Sandbox::queue_binary_translation_bake(PackedByteArray binary, uint32_t memory_max)
+{
+#ifdef RISCV_BINARY_TRANSLATION
+	if (binary.is_empty())
+		return;
+	const BakeOptions options {
+		.ignore_limit = false,
+		.nbit_as = true,
+		.unchecked = true,
+	};
+	const String output_dir = binary_translation_cache_dir(true);
+	const String compiler = SandboxProjectSettings::binary_translation_compiler();
+	const String extra_cflags = SandboxProjectSettings::binary_translation_extra_cflags();
+	if (output_dir.is_empty() || compiler.is_empty())
+		return;
+	start_background_translation([binary = std::move(binary), memory_max, options,
+			output_dir, compiler, extra_cflags] {
+		bake_binary_translation_from_buffer(binary, memory_max, options, output_dir,
+				compiler, extra_cflags, true);
+	});
+#else
+	(void)binary;
+	(void)memory_max;
+#endif
 }
 
 void Sandbox::Deinitialize()
@@ -222,7 +248,12 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_static_method("Sandbox", D_METHOD("clear_hotspots"), &Sandbox::clear_hotspots);
 
 	// Binary translation.
-	ClassDB::bind_method(D_METHOD("emit_binary_translation", "ignore_instruction_limit", "automatic_nbit_address_space"), &Sandbox::emit_binary_translation, DEFVAL(false), DEFVAL(false));
+	ClassDB::bind_method(D_METHOD("emit_binary_translation", "ignore_instruction_limit", "automatic_nbit_address_space"),
+			static_cast<String (Sandbox::*)(bool, bool) const>(&Sandbox::emit_binary_translation),
+			DEFVAL(false), DEFVAL(false));
+	ClassDB::bind_method(D_METHOD("get_translation_hash"), &Sandbox::get_translation_hash);
+	ClassDB::bind_method(D_METHOD("bake_binary_translation", "out_dir"), &Sandbox::bake_binary_translation, DEFVAL(""));
+	ClassDB::bind_method(D_METHOD("is_translation_baked"), &Sandbox::is_translation_baked);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("load_binary_translation", "shared_library_path", "allow_insecure"), &Sandbox::load_binary_translation, DEFVAL("res://bintr.so"), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("try_compile_binary_translation", "shared_library_path", "compiler", "extra_cflags", "ignore_instruction_limit", "automatic_nbit_as"), &Sandbox::try_compile_binary_translation, DEFVAL("res://bintr"), DEFVAL("cc"), DEFVAL(""), DEFVAL(false), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("is_binary_translated"), &Sandbox::is_binary_translated);
@@ -813,10 +844,15 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				.stack_size = GUEST_STACK_SIZE,
 				//.verbose_loader = true,
 #ifdef RISCV_BINARY_TRANSLATION
-				.translate_enabled = riscv::libtcc_enabled && m_bintr_jit,
+				// The execute segment stores its translation hash. Sharing it between
+				// machines with different checked/n-bit/limit options would reuse the
+				// first machine's hash and could activate the wrong native object.
+				.use_shared_execute_segments = false,
+				.translate_enabled = riscv::libtcc_enabled ? m_bintr_jit : bintr_lookup_enabled(),
 				.translate_enable_embedded = true,
 				.translate_future_segments = false,
 				.translate_invoke_compiler = riscv::libtcc_enabled && m_bintr_jit,
+				.translation_cache = true,
 				//.translate_trace = true,
 				//.translate_timing = true,
 #endif // RISCV_BINARY_TRANSLATION
@@ -831,6 +867,14 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 #  ifdef RISCV_LIBTCC
 				.translate_live_patching = false, // Don't meddle with instruction stream
 #  endif // RISCV_LIBTCC
+				.translation_prefix = binary_translation_cache_dir(false).path_join("bintr-").utf8().get_data(),
+#  if defined(__linux__)
+				.translation_suffix = ".so",
+#  elif defined(_WIN32)
+				.translation_suffix = ".dll",
+#  elif defined(__APPLE__) && defined(__MACH__)
+				.translation_suffix = ".dylib",
+#  endif
 #endif
 #ifdef RISCV_ASMJIT
 				.asmjit_enabled = m_bintr_jit,
@@ -850,7 +894,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				// long-running compilation tasks that should not block the main
 				// thread. The thread is tracked so that it can be joined before
 				// the extension is unloaded, see Sandbox::Deinitialize().
-				start_background_translation(std::move(callback));
+				Sandbox::start_background_translation(std::move(callback));
 			};
 #  if defined(RISCV_BINARY_TRANSLATION) && defined(RISCV_LIBTCC)
 			options->translate_background_callback = background_callback;

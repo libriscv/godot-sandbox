@@ -126,8 +126,24 @@ func test_binary_translation():
 	s.set_program(Sandbox_TestsTests)
 
 	if Sandbox.has_feature_binary_translation():
-		str = s.emit_binary_translation()
+		# Public flags are deliberately explicit: their historical defaults are
+		# false, while a live Sandbox defaults to automatic n-bit addressing.
+		s.set_instructions_max(0)
+		s.reset()
+		str = s.emit_binary_translation(true, true)
 		assert_false(str.is_empty(), "Binary translation is not empty")
+		var marker := "libriscv_register_translation8("
+		var at := str.rfind(marker)
+		assert_gte(at, 0, "embeddable output contains its registration hash")
+		var end := str.find(",", at + marker.length())
+		var emitted_hash := str.substr(at + marker.length(), end - at - marker.length()).to_int()
+		assert_eq(emitted_hash, s.get_translation_hash(), "live bake flags reproduce the machine hash")
+
+		var defaults := s.emit_binary_translation()
+		at = defaults.rfind(marker)
+		end = defaults.find(",", at + marker.length())
+		var default_hash := defaults.substr(at + marker.length(), end - at - marker.length()).to_int()
+		assert_ne(default_hash, s.get_translation_hash(), "legacy false/false defaults document the mismatch foot-gun")
 		#print(str)
 	else:
 		# Only the binary translator can emit C99, so a build without it is

@@ -1,6 +1,7 @@
 #include "sandbox_project_settings.h"
 
 #include <godot_cpp/classes/project_settings.hpp>
+#include <godot_cpp/classes/os.hpp>
 
 using namespace godot;
 
@@ -20,6 +21,16 @@ static constexpr char SCONS_PATH_HINT[] = "Path to the SConstruct executable";
 
 static constexpr char ASYNC_COMPILATION[] = "editor/script/async_compilation";
 static constexpr char ASYNC_COMPILATION_HINT[] = "Compile scripts asynchronously";
+static constexpr char BINTR_ENABLED[] = "sandbox/binary_translation/enabled";
+static constexpr char BINTR_ENABLED_HINT[] = "Load matching hash-named native translations when available";
+static constexpr char BINTR_AUTO_BAKE[] = "sandbox/binary_translation/auto_bake";
+static constexpr char BINTR_AUTO_BAKE_HINT[] = "Bake release SafeGDScript translations in the background while editing";
+static constexpr char BINTR_COMPILER[] = "sandbox/binary_translation/compiler";
+static constexpr char BINTR_COMPILER_HINT[] = "System C compiler used for native translations";
+static constexpr char BINTR_EXTRA_CFLAGS[] = "sandbox/binary_translation/extra_cflags";
+static constexpr char BINTR_EXTRA_CFLAGS_HINT[] = "Additional space-separated flags for the native translation compiler";
+static constexpr char BINTR_CACHE_DIR[] = "sandbox/binary_translation/cache_dir";
+static constexpr char BINTR_CACHE_DIR_HINT[] = "Writable directory containing bintr-<hash> native translations";
 static constexpr char NATIVE_TYPES[] = "editor/script/unboxed_types_for_sandbox_arguments";
 static constexpr char NATIVE_TYPES_HINT[] = "Use native types and classes instead of Variants in Sandbox functions where possible";
 static constexpr char DEBUG_INFO[] = "editor/script/debug_info";
@@ -91,6 +102,26 @@ void SandboxProjectSettings::register_settings() {
 	register_setting_plain(SCONS_PATH, "scons", SCONS_PATH_HINT, true);
 	register_setting_plain(CMAKE_PATH, "cmake", CMAKE_PATH_HINT, true);
 	register_setting_plain(ASYNC_COMPILATION, true, ASYNC_COMPILATION_HINT, false);
+	register_setting_plain(BINTR_ENABLED, true, BINTR_ENABLED_HINT, true);
+	register_setting_plain(BINTR_AUTO_BAKE, true, BINTR_AUTO_BAKE_HINT, false);
+	String bintr_compiler = "cc";
+#if defined(_MSC_VER) && !defined(__MINGW32__) && !defined(__MINGW64__)
+	bintr_compiler = "cl";
+#else
+	// Prefer Zig when the configured executable is actually available. It gives
+	// every supported desktop platform the same C-driver command shape.
+	String zig_path = get_zig_path();
+	if (zig_path.begins_with("res://") || zig_path.begins_with("user://"))
+		zig_path = ProjectSettings::get_singleton()->globalize_path(zig_path);
+	Array zig_output;
+	if (OS::get_singleton() != nullptr &&
+			OS::get_singleton()->execute(zig_path, Array::make("version"), zig_output, true) == 0) {
+		bintr_compiler = zig_path;
+	}
+#endif
+	register_setting_plain(BINTR_COMPILER, bintr_compiler, BINTR_COMPILER_HINT, true);
+	register_setting_plain(BINTR_EXTRA_CFLAGS, String(), BINTR_EXTRA_CFLAGS_HINT, false);
+	register_setting_plain(BINTR_CACHE_DIR, "user://sandbox_bintr/", BINTR_CACHE_DIR_HINT, true);
 	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
 	register_setting_plain(DEBUG_INFO, false, DEBUG_INFO_HINT, false);
 	register_setting_plain(GLOBAL_DEFINES, Array(), GLOBAL_DEFINES_HINT, false);
@@ -156,6 +187,26 @@ String SandboxProjectSettings::get_zig_path() {
 
 bool SandboxProjectSettings::async_compilation() {
 	return get_setting<bool>(ASYNC_COMPILATION);
+}
+
+bool SandboxProjectSettings::binary_translation_enabled() {
+	return get_setting<bool>(BINTR_ENABLED);
+}
+
+bool SandboxProjectSettings::binary_translation_auto_bake() {
+	return get_setting<bool>(BINTR_AUTO_BAKE);
+}
+
+String SandboxProjectSettings::binary_translation_compiler() {
+	return get_setting<String>(BINTR_COMPILER);
+}
+
+String SandboxProjectSettings::binary_translation_extra_cflags() {
+	return get_setting<String>(BINTR_EXTRA_CFLAGS);
+}
+
+String SandboxProjectSettings::binary_translation_cache_dir() {
+	return get_setting<String>(BINTR_CACHE_DIR);
 }
 
 bool SandboxProjectSettings::use_native_types() {
