@@ -22,3 +22,13 @@ script/docker_enabled=false
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/gut/plugin.cfg")
+
+[sandbox]
+
+; The AOT translation cache is opt-in for the suite as a whole. Opting in gives
+; every Sandbox its own execute segment, so each load_buffer() re-decodes and
+; re-JITs the unit-test ELF instead of sharing one segment: ~19s per test in a
+; Debug CI build, hours over the suite. test_bintr.gd turns it on around its own
+; tests and puts it back.
+binary_translation/enabled=false
+binary_translation/auto_bake=false

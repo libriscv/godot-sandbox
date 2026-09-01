@@ -9,6 +9,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # A healthy run is ~15 minutes. Anything far past that is a hung guest or a
+    # Sandbox that lost its shared execute segment, not slow tests: fail instead
+    # of burning hours on the runner.
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: ${{github.workspace}}

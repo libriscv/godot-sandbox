@@ -22,8 +22,17 @@ func before_all():
 	_old_lookup = ProjectSettings.get_setting("sandbox/binary_translation/enabled")
 	ProjectSettings.set_setting("sandbox/binary_translation/cache_dir", "user://test_sandbox_bintr/")
 	ProjectSettings.set_setting("sandbox/binary_translation/auto_bake", false)
-	ProjectSettings.set_setting("sandbox/binary_translation/enabled", true)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://test_sandbox_bintr/"))
+
+# Opting into the AOT cache is per test, not per script: a machine that may take
+# part in the cache gets its own execute segment, so every load_buffer() while it
+# is on re-decodes and re-JITs the program. A script-wide window would leak that
+# cost into the rest of the suite if this script ever died before after_all().
+func before_each():
+	ProjectSettings.set_setting("sandbox/binary_translation/enabled", true)
+
+func after_each():
+	ProjectSettings.set_setting("sandbox/binary_translation/enabled", _old_lookup)
 
 func after_all():
 	for path in _baked_paths:
@@ -34,6 +43,16 @@ func after_all():
 	ProjectSettings.set_setting("sandbox/binary_translation/cache_dir", _old_cache_dir)
 	ProjectSettings.set_setting("sandbox/binary_translation/auto_bake", _old_auto_bake)
 	ProjectSettings.set_setting("sandbox/binary_translation/enabled", _old_lookup)
+
+# The suite runs hundreds of load_buffer() calls on the unit-test ELF. They share
+# one execute segment only while the AOT cache is off, so a default (or a
+# project.godot) that turns it on costs ~19s per test in a Debug CI build. Fail
+# here rather than in a three-hour CI run.
+func test_the_suite_baseline_keeps_the_aot_cache_off():
+	assert_false(_old_lookup,
+			"sandbox/binary_translation/enabled must stay off outside this script")
+	assert_false(bool(_old_auto_bake),
+			"sandbox/binary_translation/auto_bake must stay off outside this script")
 
 func _compiler_available() -> bool:
 	var compiler: String = ProjectSettings.get_setting("sandbox/binary_translation/compiler")
