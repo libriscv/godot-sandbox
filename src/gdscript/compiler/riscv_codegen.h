@@ -96,6 +96,23 @@ private:
 	void plan_program_call_properties(const IRProgram& program);
 	// Frame slots holding nothing anyone will read again at each SCOPE_RELEASE.
 	void plan_release_clears(const IRFunction& func);
+	// Fixed-type scalar values use a stable callee-saved register for the whole
+	// function. Their Variant slots are shadows, materialized only at host/ABI
+	// visibility points. Move-only temporaries may share the destination's slot.
+	void plan_scalar_residency(const IRFunction& func);
+	// Untyped numeric loop sites cache a successful runtime FLOAT/FLOAT guard in
+	// one callee-saved register. The generic path remains for every other type.
+	void plan_numeric_loop_modes(const IRFunction& func);
+	void emit_save_resident_registers();
+	void emit_restore_resident_registers();
+	void emit_initialize_resident_values();
+	void sync_resident_value(int vreg);
+	void sync_all_resident_values();
+	void sync_instruction_resident_reads(const IRInstruction& instr);
+	void reload_resident_value(int vreg);
+	bool instruction_reads_residents_directly(const IRInstruction& instr) const;
+	int resident_int_register(int vreg) const;
+	int resident_float_register(int vreg) const;
 	bool scope_body_may_allocate(const IRFunction& func, size_t mark_index) const;
 	bool instruction_may_ecall(const IRInstruction& instr) const;
 	// Narrower: an ecall whose answer is a register value leaves no scoped
@@ -134,6 +151,7 @@ private:
 	void gen_syscall_string_at(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_variant_get(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_string_batch(const IRInstruction& instr, int result_vreg);
+	void gen_syscall_array_batch(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg);
 	void gen_dict_const(const IRInstruction& instr);
 	void gen_struct_check(const IRInstruction& instr);
@@ -209,7 +227,7 @@ private:
 	// Zba jump table indexed by index_reg; falls to past_label on out-of-range.
 	void emit_dense_jump_table(uint8_t index_reg, const std::vector<std::string>& labels,
 		const std::string& past_label);
-	// Invalidate all vreg→preg mappings. Frame slots are authoritative.
+	// Materialize resident scalars, then invalidate legacy allocator mappings.
 	void spill_all_registers();
 
 	// Appends a line-table row. `force` emits line 0 (function entry only).
@@ -359,7 +377,7 @@ private:
 		int lhs_vreg, int lhs_offset, int rhs_vreg, int rhs_offset, IROpcode cmp_op);
 	void emit_typed_float_fused_branch(IROpcode op, int lhs_vreg, int lhs_offset,
 		int rhs_vreg, int rhs_offset, const std::string& label);
-	void emit_double_compare(uint8_t rd, IROpcode cmp_op);
+	void emit_double_compare(uint8_t rd, IROpcode cmp_op, uint8_t lhs, uint8_t rhs);
 
 	// Integer-typed BRANCH_EQ..BRANCH_GTE on int64 payloads.
 	void emit_int_fused_branch(IROpcode op, int lhs_vreg, int lhs_offset,
@@ -451,7 +469,7 @@ private:
 	void cache_float_result(int vreg, uint8_t source);
 	uint8_t emit_int_operand(uint8_t rd, int vreg, int offset);
 	uint8_t emit_float_operand(uint8_t fd, int vreg, int offset);
-	void emit_typed_int_result(int result_vreg, int result_offset);
+	void emit_typed_int_result(int result_vreg, int result_offset, uint8_t source);
 
 	// Per-instruction temporaries; do not survive past the emitting instruction.
 	int get_scratch_variant_offset(int index = 0);
@@ -544,7 +562,10 @@ private:
 		std::unordered_map<int, size_t> global_handles;
 
 		bool is_coroutine = false;
-		// Frame size in bytes from SAVED_REG_SPACE; checked at resume.
+		bool has_backedge = false;
+		// Bytes occupied by ra/a0 and the callee-saved scalar registers.
+		int saved_reg_space = SAVED_FIXED_SPACE;
+		// Frame size in bytes from saved_reg_space; checked at resume.
 		int variant_space = 0;
 
 		// Above Variant slots so release never reads a mark as a handle.
@@ -561,8 +582,32 @@ private:
 		std::string resume_label;
 
 		std::vector<int> known_tags;
+		// Static scalar type and stable physical register, indexed by vreg.
+		std::vector<int> fixed_scalar_types;
+		std::vector<int8_t> resident_int_regs;
+		std::vector<int8_t> resident_float_regs;
+		// MOVE-coalesced vreg representative. Representatives share a slot and preg.
+		std::vector<int> scalar_aliases;
+		std::vector<uint8_t> used_int_resident_regs;
+		std::vector<uint8_t> used_float_resident_regs;
+		struct NumericLoopMode {
+			uint8_t preg = 0;
+			int carried_vreg = -1;
+			size_t move_index = SIZE_MAX;
+		};
+		std::unordered_map<size_t, NumericLoopMode> numeric_loop_modes;
+		std::unordered_map<size_t, uint8_t> numeric_loop_moves;
+		std::unordered_map<size_t, uint8_t> numeric_loop_releases;
+		// Set by a direct resident definition; otherwise the post-instruction hook
+		// reloads the result written to its shadow slot.
+		bool resident_result_written = false;
 		std::vector<int8_t> int_cache_slots;
 		std::vector<int8_t> float_cache_slots;
+		// Opaque IR batch token -> first of sixteen dedicated Variant slots.
+		// These cannot be ordinary vregs: register compaction is allowed to
+		// renumber and discard the otherwise-unreferenced consecutive slots.
+		std::unordered_map<int64_t, int> array_batch_offsets;
+		std::unordered_map<size_t, std::vector<int64_t>> array_batch_releases;
 		std::array<int, 3> int_cache_owners {{ -1, -1, -1 }};
 		std::array<int, 3> float_cache_owners {{ -1, -1, -1 }};
 		uint8_t next_int_cache = 0;
@@ -591,10 +636,10 @@ private:
 	int real_offset(int index) const { return m_layout.real_offset(index); }
 	static constexpr int int_offset(int index) { return VariantLayout::int_offset(index); }
 
-	// No fp saved: all accesses are sp-relative and frame size is fixed after prologue.
+	// All accesses are sp-relative and frame size is fixed after planning.
 	static constexpr int SAVED_RA_OFFSET = 0;
 	static constexpr int SAVED_A0_OFFSET = 8;
-	static constexpr int SAVED_REG_SPACE = 16;
+	static constexpr int SAVED_FIXED_SPACE = 16;
 
 	const std::vector<std::string>* m_string_constants = nullptr;
 	const IRStringTable* m_strings = nullptr;

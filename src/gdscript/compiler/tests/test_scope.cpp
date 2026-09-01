@@ -69,21 +69,23 @@ static void test_every_loop_form_takes_a_scope() {
 		const char* what;
 		const char* source;
 		int scopes;
+		int releases;
 	};
 	const Case cases[] = {
-		{ "for over range", "func test():\n\tfor i in range(4):\n\t\tvar d = {\"a\": i}\n\treturn 1\n", 1 },
-		{ "for over an array", "func test():\n\tfor v in [1, 2, 3]:\n\t\tvar d = {\"a\": v}\n\treturn 1\n", 1 },
+		{ "for over range", "func test():\n\tfor i in range(4):\n\t\tvar d = {\"a\": i}\n\treturn 1\n", 1, 2 },
+		// An Array walk takes one scope for the batch and one for each body pass.
+		{ "for over an array", "func test():\n\tfor v in [1, 2, 3]:\n\t\tvar d = {\"a\": v}\n\treturn 1\n", 2, 4 },
 		// A string walk takes two: one holding the batch of characters, one
 		// holding what the body makes from each of them.
-		{ "for over a string", "func test():\n\tfor c in \"abc\":\n\t\tvar s = c + \"!\"\n\treturn 1\n", 2 },
-		{ "while", "func test():\n\tvar i = 0\n\twhile i < 4:\n\t\tvar d = {\"a\": i}\n\t\ti += 1\n\treturn 1\n", 1 },
+		{ "for over a string", "func test():\n\tfor c in \"abc\":\n\t\tvar s = c + \"!\"\n\treturn 1\n", 2, 4 },
+		{ "while", "func test():\n\tvar i = 0\n\twhile i < 4:\n\t\tvar d = {\"a\": i}\n\t\ti += 1\n\treturn 1\n", 1, 2 },
 	};
 	for (const Case& c : cases) {
 		const IRProgram ir = compile_to_ir(c.source, /*optimize=*/true);
 		const IRFunction& func = find_function(ir, "test");
 		check(count_opcode(func, IROpcode::SCOPE_MARK) == c.scopes,
 			std::string(c.what) + ": marks");
-		check(count_opcode(func, IROpcode::SCOPE_RELEASE) == c.scopes,
+		check(count_opcode(func, IROpcode::SCOPE_RELEASE) == c.releases,
 			std::string(c.what) + ": releases");
 	}
 }
@@ -167,7 +169,7 @@ static void test_nested_loops_take_distinct_ids() {
 		}
 	}
 	check(ids.size() == 2, "two loops, two mark slots");
-	check(count_opcode(func, IROpcode::SCOPE_RELEASE) == 2, "two releases");
+	check(count_opcode(func, IROpcode::SCOPE_RELEASE) == 4, "two releases per loop");
 }
 
 static void test_a_coroutine_takes_no_scope() {
@@ -254,10 +256,15 @@ static uint32_t li_a7_vscope() {
 	return (uint32_t(ECALL_VSCOPE) << 20) | (0u << 15) | (0u << 12) | (17u << 7) | 0x13u;
 }
 
-static uint32_t sw_zero_sp(int offset) {
-	const uint32_t imm11_5 = (uint32_t(offset) >> 5) & 0x7f;
-	const uint32_t imm4_0 = uint32_t(offset) & 0x1f;
-	return (imm11_5 << 25) | (0u << 20) | (2u << 15) | (2u << 12) | (imm4_0 << 7) | 0x23u;
+static bool contains_sw_zero_sp(const std::vector<uint8_t>& elf) {
+	for (size_t i = 0; i + 4 <= elf.size(); i++) {
+		const uint32_t word = uint32_t(elf[i]) | (uint32_t(elf[i + 1]) << 8) |
+			(uint32_t(elf[i + 2]) << 16) | (uint32_t(elf[i + 3]) << 24);
+		const bool store_word = (word & 0x7fu) == 0x23u && ((word >> 12) & 7u) == 2u;
+		const bool zero_to_sp = ((word >> 20) & 31u) == 0u && ((word >> 15) & 31u) == 2u;
+		if (store_word && zero_to_sp) return true;
+	}
+	return false;
 }
 
 static void test_the_backend_emits_the_syscall_and_zeroes_the_frame() {
@@ -269,14 +276,14 @@ static void test_the_backend_emits_the_syscall_and_zeroes_the_frame() {
 		"\t\tn.append({\"a\": i})\n"
 		"\treturn n\n");
 	check(contains_word(elf, li_a7_vscope()), "the loop reaches ECALL_VSCOPE");
-	check(contains_word(elf, sw_zero_sp(16)),
+	check(contains_sw_zero_sp(elf),
 		"the frame is zeroed, so an untouched slot cannot read as a handle");
 
 	const std::vector<uint8_t> loopless = compile_to_elf(
 		"func test():\n\tvar d = {\"a\": 1}\n\treturn d\n");
 	check(!contains_word(loopless, li_a7_vscope()),
 		"a function with no loop makes no scope syscall");
-	check(!contains_word(loopless, sw_zero_sp(16)),
+	check(!contains_sw_zero_sp(loopless),
 		"a function with no loop is not zeroed for one");
 }
 
@@ -290,7 +297,7 @@ static void test_a_host_free_loop_is_not_scoped() {
 		"\t\ti += 1\n"
 		"\treturn acc\n");
 	check(!contains_word(ints, li_a7_vscope()), "a typed int loop makes no scope syscall");
-	check(!contains_word(ints, sw_zero_sp(16)), "a typed int loop is not zeroed for one");
+	check(!contains_sw_zero_sp(ints), "a typed int loop is not zeroed for one");
 
 	const std::vector<uint8_t> floats = compile_to_elf(
 		"func test(n : int) -> float:\n"
@@ -348,26 +355,27 @@ static void test_a_block_takes_a_scope() {
 		const char* what;
 		const char* source;
 		int scopes;
+		int releases;
 	};
 	const Case cases[] = {
 		{ "an if body",
-		  "func test(c):\n\tvar out = []\n\tif c:\n\t\tout.append(str({\"a\": 1}))\n\treturn out\n", 1 },
+		  "func test(c):\n\tvar out = []\n\tif c:\n\t\tout.append(str({\"a\": 1}))\n\treturn out\n", 1, 1 },
 		{ "if and else",
 		  "func test(c):\n\tvar out = []\n\tif c:\n\t\tout.append(str({\"a\": 1}))\n"
-		  "\telse:\n\t\tout.append(str({\"b\": 2}))\n\treturn out\n", 2 },
+		  "\telse:\n\t\tout.append(str({\"b\": 2}))\n\treturn out\n", 2, 2 },
 		{ "a match arm",
 		  "func test(c):\n\tvar out = []\n\tmatch c:\n\t\t1:\n\t\t\tout.append(str({\"a\": 1}))\n"
-		  "\t\t_:\n\t\t\tout.append(str({\"b\": 2}))\n\treturn out\n", 2 },
+		  "\t\t_:\n\t\t\tout.append(str({\"b\": 2}))\n\treturn out\n", 2, 2 },
 		{ "a block inside a loop",
 		  "func test(n : int):\n\tvar out = []\n\tfor i in range(n):\n\t\tif i > 1:\n"
-		  "\t\t\tout.append(str({\"a\": i}))\n\treturn out\n", 2 },
+		  "\t\t\tout.append(str({\"a\": i}))\n\treturn out\n", 2, 3 },
 	};
 	for (const Case& c : cases) {
 		const IRProgram ir = compile_to_ir(c.source, /*optimize=*/true);
 		const IRFunction& func = find_function(ir, "test");
 		check(count_opcode(func, IROpcode::SCOPE_MARK) == c.scopes,
 			std::string(c.what) + ": marks");
-		check(count_opcode(func, IROpcode::SCOPE_RELEASE) == c.scopes,
+		check(count_opcode(func, IROpcode::SCOPE_RELEASE) == c.releases,
 			std::string(c.what) + ": releases");
 		std::set<int64_t> ids;
 		for (const auto& instr : func.instructions) {
@@ -456,7 +464,7 @@ static void test_a_host_free_block_is_not_scoped() {
 		"\t\tacc -= n\n"
 		"\treturn acc\n");
 	check(!contains_word(ints, li_a7_vscope()), "a typed int block makes no scope syscall");
-	check(!contains_word(ints, sw_zero_sp(16)), "a typed int block is not zeroed for one");
+	check(!contains_sw_zero_sp(ints), "a typed int block is not zeroed for one");
 
 	const std::vector<uint8_t> stores = compile_to_elf(
 		"func test(n : int) -> Dictionary:\n"
@@ -492,14 +500,15 @@ static void test_elided_blocks_emit_nothing() {
 	}
 	const std::vector<uint8_t> bare = compile_to_elf(prefix + loop);
 	const std::vector<uint8_t> padded = compile_to_elf(prefix + blocks + loop);
-	check(count_word(bare, li_a7_vscope()) == 2, "the loop makes a mark and a release");
+	check(count_word(bare, li_a7_vscope()) == 3,
+		"the loop makes a mark and releases on its back and exit edges");
 	check(count_word(padded, li_a7_vscope()) == count_word(bare, li_a7_vscope()),
 		"eight non-allocating blocks add no scope syscall");
 
 	// Nothing survives, so the function reserves no mark slot and is not zeroed.
 	const std::vector<uint8_t> loopless = compile_to_elf(prefix + blocks + "\treturn out\n");
 	check(count_word(loopless, li_a7_vscope()) == 0, "blocks alone make no scope syscall");
-	check(!contains_word(loopless, sw_zero_sp(16)), "and the frame is not zeroed for one");
+	check(!contains_sw_zero_sp(loopless), "and the frame is not zeroed for one");
 }
 
 static void test_numeric_guest_calls_do_not_keep_a_loop_scope() {
@@ -528,6 +537,30 @@ static void test_numeric_guest_calls_do_not_keep_a_loop_scope() {
 		"a recursive callee stays conservative");
 }
 
+// The callee's own release hands a freshly built complex return to the caller's
+// scope on the way out, so owning a scope does not make such a call clean.
+static void test_a_complex_return_keeps_the_callers_loop_scope() {
+	const std::string caller =
+		"func test(n : int) -> int:\n"
+		"\tvar acc : int = 0\n"
+		"\tfor i in n:\n"
+		"\t\tmake(i)\n"
+		"\t\tacc += 1\n"
+		"\treturn acc\n";
+	// The callee owns a scope either way: only its return type differs.
+	const std::string body =
+		"\tvar a : Array = []\n"
+		"\tfor i in range(x):\n"
+		"\t\ta.append(str(i))\n";
+	const std::vector<uint8_t> complex_return = compile_to_elf(
+		"func make(x : int) -> Array:\n" + body + "\treturn a\n" + caller);
+	const std::vector<uint8_t> scalar_return = compile_to_elf(
+		"func make(x : int) -> int:\n" + body + "\treturn a.size()\n" + caller);
+	check(count_word(complex_return, li_a7_vscope()) >
+		count_word(scalar_return, li_a7_vscope()),
+		"a call whose result is rescued into the caller keeps that loop's scope");
+}
+
 int main() {
 	try {
 		test_every_loop_form_takes_a_scope();
@@ -545,6 +578,7 @@ int main() {
 		test_the_block_ir_verifies();
 		test_a_host_free_block_is_not_scoped();
 		test_elided_blocks_emit_nothing();
+		test_a_complex_return_keeps_the_callers_loop_scope();
 		test_numeric_guest_calls_do_not_keep_a_loop_scope();
 	} catch (const CompilerException& e) {
 		std::cerr << "FAILED: compiler exception: " << e.what() << std::endl;

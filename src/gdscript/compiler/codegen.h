@@ -83,10 +83,14 @@ private:
 		std::unordered_map<int, const StructDecl*> dictionary_value_structs;
 		std::unordered_map<int, const TraitDecl*> array_element_traits;
 		std::unordered_map<int, const TraitDecl*> dictionary_value_traits;
+		// A String walk produces one Unicode code point per element. Godot stores
+		// Strings as UTF-32, so length()/size() on that loop value is always one.
+		std::unordered_set<int> string_character_registers;
 		std::vector<LoopContext> loops;
 		TypeExpr return_type;
 		int next_register = 0;
 		int next_scope_id = 0;
+		int next_array_batch_id = 0;
 	};
 
 	IRFunction generate_function(const FunctionDecl& func, const StructDecl* owner = nullptr);
@@ -181,8 +185,15 @@ private:
 	int gen_int_immediate(int64_t value, FunctionContext& func);
 	int gen_enum_member(const EnumDecl::Member& member, FunctionContext& func);
 	int gen_enum_dictionary(const EnumDecl& decl, FunctionContext& func);
+	// A loop body invalidates the single-character property of everything it
+	// assigns, for the whole loop rather than from the assignment onwards.
+	void invalidate_loop_character_registers(const std::vector<StmtPtr>& body,
+		FunctionContext& func);
 	// `for c in <String>`: batched character walk, see codegen.cpp.
 	void gen_string_walk(const ForStmt* stmt, int string_reg, FunctionContext& func);
+	// `for v in <Array>`: ECALL_ARRAY_BATCH fills sixteen guest Variant slots.
+	void gen_array_walk(const ForStmt* stmt, int array_reg, FunctionContext& func,
+		const StructDecl* element_struct, const TraitDecl* element_trait);
 	void gen_numeric_for(const ForStmt* stmt, int start_reg, int end_reg, int step_reg,
 		FunctionContext& func);
 	int gen_float_immediate(double value, FunctionContext& func);

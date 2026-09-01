@@ -566,6 +566,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::TRAIT_TEST:
 		case IROpcode::CALL_SYSCALL:
 		case IROpcode::MAKE_SCOPED:
+		case IROpcode::BATCH_GET:
 		case IROpcode::GET_NODE:
 		case IROpcode::LOAD_RESOURCE:
 		case IROpcode::LOAD_RESOURCE_VAR:

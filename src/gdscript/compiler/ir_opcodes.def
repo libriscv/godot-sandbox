@@ -71,6 +71,10 @@ IR_OPCODE(TRAIT_TEST, "TRAIT_TEST", SIG(DST, SRC, IMM),  IR_SIDE_EFFECTS)
 // is how ECALL_STRING_BATCH hands back a run of characters at once.
 IR_OPCODE(MAKE_SCOPED,     "MAKE_SCOPED",     SIG(DST, SRC, IMM),  IR_PURE)
 
+// Copy one Variant out of the consecutive guest-slot buffer filled by
+// ECALL_ARRAY_BATCH. IMM is the first vreg/slot; SRC is a zero-based index.
+IR_OPCODE(BATCH_GET,       "BATCH_GET",       SIG(DST, IMM, SRC),  IR_PURE)
+
 // Immediate is a scope id (frame slot index), not a register.
 IR_OPCODE(SCOPE_MARK,      "SCOPE_MARK",      SIG(IMM),            IR_SIDE_EFFECTS)
 IR_OPCODE(SCOPE_RELEASE,   "SCOPE_RELEASE",   SIG(IMM),            IR_SIDE_EFFECTS)

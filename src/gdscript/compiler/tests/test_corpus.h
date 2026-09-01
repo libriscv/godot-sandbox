@@ -1192,6 +1192,89 @@ func test():
 		i = i + 1
 	return total
 )" },
+		// Two loops around one untyped carry: the cached numeric mode has to
+		// belong to the whole nest, not to each back edge on its own.
+		{ "nested_loop_untyped_float_carry", R"(
+func _number(pick : int):
+	if pick == 0:
+		return 1.5
+	return 3.0
+
+func test():
+	var a = _number(0)
+	var b = _number(0)
+	var i = 0
+	while i < 3:
+		var j = 0
+		while j < 3:
+			a = a + b
+			j = j + 1
+		i = i + 1
+	return a
+)" },
+		// The carried value is not the only reader of the sum, so a cached pass
+		// that writes the carry alone would leave `out` a pass behind.
+		{ "untyped_float_carry_read_twice", R"(
+func _number(pick : int):
+	if pick == 0:
+		return 1.5
+	return 3.0
+
+func test():
+	var a = _number(0)
+	var b = _number(0)
+	var out = 0.0
+	var i = 0
+	while i < 3:
+		var t = a + b
+		out = t
+		a = t
+		i = i + 1
+	return out
+)" },
+		// The inner comparison never redefines its operands, but the outer loop
+		// retypes one of them between entries.
+		{ "untyped_compare_retyped_by_an_outer_loop", R"(
+func _number(pick : int):
+	if pick == 0:
+		return 1.5
+	if pick == 2:
+		return 2.0
+	return 3
+
+func test():
+	var x = _number(0)
+	var y = _number(2)
+	var z = _number(1)
+	var acc = 0
+	var i = 0
+	while i < 2:
+		var j = 0
+		while j < 3:
+			if x < y:
+				acc = acc + 1
+			j = j + 1
+		x = z
+		i = i + 1
+	return acc
+)" },
+		// `continue` skips the copy, so the temporary may not share the slot of
+		// the variable it is copied into: instruction order is not execution
+		// order once a branch sits between the definition and the copy.
+		{ "loop_temporary_copied_past_a_continue", R"(
+func test():
+	var x : int = 5
+	var total : int = 0
+	var i : int = 0
+	while i < 4:
+		total = total + x
+		var t : int = i * 10 + 1
+		i = i + 1
+		if i < 3:
+			continue
+		x = t
+	return total
+)" },
 	};
 	return programs;
 }

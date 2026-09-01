@@ -38,6 +38,7 @@
 #include "../parser.h"
 #include "../variant_layout.h"
 #include "gdscript_generator.h"
+#include "scope_stub.h"
 #include "test_corpus.h"
 #include <cmath>
 #include <cstdlib>
@@ -521,6 +522,7 @@ Outcome run_source(const std::string& source) {
 
 		machine_t::install_syscall_handler(502, syscall_veval);
 		machine_t::install_syscall_handler(549, syscall_utility);
+		install_scope_stub<machine_t>();
 		machine_t::install_syscall_handler(500, syscall_unsupported<500>);
 		machine_t::install_syscall_handler(501, syscall_unsupported<501>);
 		machine_t::install_syscall_handler(503, syscall_unsupported<503>);

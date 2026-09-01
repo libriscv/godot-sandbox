@@ -15,7 +15,7 @@ const ITERATIONS := 50000
 
 # ECALL_LAST. Every handler below it is driven and checked; raising the syscall
 # range without raising this leaves the new one unchecked.
-const SYSCALL_LAST := 563
+const SYSCALL_LAST := 565
 
 # Restrictions are enabled for the duration of a run and every callback answers "no", so
 # these are the system calls that are supposed to be refused every single time. A handler
@@ -98,6 +98,9 @@ func test_fuzz_syscalls():
 	# plus call-site metadata. Hostile registers cannot satisfy either contract.
 	never_returns.append(560) # CLASS_BIND
 	never_returns.append(561) # VCALL_SUPER
+	# ARRAY_BATCH needs a valid scoped Array and a writable sixteen-Variant guest
+	# buffer at once; hostile independent registers cannot satisfy that contract.
+	never_returns.append(564) # ARRAY_BATCH
 	for syscall in range(500, SYSCALL_LAST):
 		if syscall in never_returns:
 			continue

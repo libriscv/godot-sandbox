@@ -224,6 +224,38 @@ static void test_array_append() {
 	std::cout << "  ✓ append on a known Array is one system call" << std::endl;
 }
 
+static void test_array_iteration_is_batched() {
+	std::cout << "Testing that a known Array is iterated in batches..." << std::endl;
+
+	const std::string source =
+		"func sum(a : Array):\n"
+		"\tvar total = 0\n"
+		"\tfor value in a:\n"
+		"\t\ttotal += value\n"
+		"\treturn total\n";
+	const IRProgram ir = compile_to_ir(source, true);
+	const IRFunction& sum = find_function(ir, "sum");
+	assert(count_syscalls(sum, ECALL_ARRAY_BATCH) == 1);
+	assert(count_syscalls(sum, ECALL_ARRAY_SIZE) == 0);
+	assert(count_syscalls(sum, ECALL_ARRAY_AT) == 0);
+	assert(count_opcode(sum, IROpcode::BATCH_GET) == 1);
+	// The scope whose release must drop the batch's sixteen slots is named on
+	// the function, not inferred from what sits next to the syscall.
+	assert(sum.array_batch_scopes.size() == 1);
+	bool batch_scope_released = false;
+	for (const auto& instr : sum.instructions) {
+		if (instr.opcode == IROpcode::SCOPE_RELEASE &&
+			int(instr.operands.at(0).immediate()) == sum.array_batch_scopes[0].first)
+		{
+			batch_scope_released = true;
+		}
+	}
+	assert(batch_scope_released);
+	compile_to_machine_code(source);
+
+	std::cout << "  ✓ a known Array is iterated in batches" << std::endl;
+}
+
 static void test_dictionary_element_access() {
 	std::cout << "Testing that a known Dictionary keys without a VCALL..." << std::endl;
 
@@ -440,6 +472,7 @@ int main() {
 		test_array_element_access();
 		test_unknown_container_uses_variant_get();
 		test_array_append();
+		test_array_iteration_is_batched();
 		test_dictionary_element_access();
 		test_dictionary_literal_keys();
 		test_element_access_survives_the_optimizer();

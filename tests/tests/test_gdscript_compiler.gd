@@ -12157,6 +12157,13 @@ func walk(text : String):
 		var piece = c + "!" + str(n)
 		n += piece.length()
 	return n
+
+func reassigned(text : String):
+	var n = 0
+	for c in text:
+		c = "two"
+		n += c.length()
+	return n
 """
 	var s = _compile_and_load(source, 40000000)
 	if s == null:
@@ -12169,8 +12176,97 @@ func walk(text : String):
 	var before := s.get_exceptions()
 	assert_eq(s.vmcallv("walk", text), _si_walk(text),
 		"a walk longer than the reference cap should answer what the engine answers")
+	assert_eq(s.vmcallv("reassigned", text), text.length() * 3,
+		"assigning the loop variable invalidates the one-character length fold")
 	assert_eq(s.get_exceptions(), before, "and should not run out of references")
 
+	s.queue_free()
+
+func test_sgd_walking_an_array_longer_than_references_max():
+	var source := """
+func walk(values : Array):
+	var answer = []
+	for value in values:
+		answer.append(value)
+	return answer
+"""
+	var s = _compile_and_load(source, 40000000)
+	if s == null:
+		return
+
+	# Cross both the sixteen-element batch boundary and the scoped-reference cap.
+	# Mixed inline and complex values exercise both GuestVariant representations.
+	var values := []
+	for i in range(180):
+		values.append(i if i % 3 == 0 else ("value-%d" % i if i % 3 == 1 else [i, i + 1]))
+	assert_true(values.size() > s.references_max,
+		"the test only means something above the cap")
+
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("walk", values), values,
+		"a batched Array walk should preserve every Variant in order")
+	assert_eq(s.get_exceptions(), before, "and should not run out of references")
+	s.queue_free()
+
+func test_sgd_a_loop_carrying_a_float_and_a_string_keeps_its_release():
+	# The float carry proves a native numeric path and skips the loop's release
+	# on later passes. The String carry beside it allocates every pass, so that
+	# skip may not cover the whole loop.
+	var source := """
+func _pick(k : int):
+	if k == 0:
+		return 1.5
+	return "x"
+
+func carry(n : int):
+	var a = _pick(0)
+	var b = _pick(0)
+	var s = _pick(1)
+	var t = _pick(1)
+	var i = 0
+	while i < n:
+		a = a + b
+		s = s + t
+		i = i + 1
+	return a
+"""
+	var s = _compile_and_load(source, 40000000)
+	if s == null:
+		return
+
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("carry", 200), 1.5 + 1.5 * 200.0,
+		"the numeric carry should accumulate across every pass")
+	assert_eq(s.get_exceptions(), before, "and should not run out of references")
+	s.queue_free()
+
+func test_sgd_a_call_returning_an_array_keeps_the_callers_loop_scope():
+	# make() releases its own scope, but the rescue walk hands the Array it built
+	# to the caller: the caller's loop scope is what frees them.
+	var source := """
+func make(x : int):
+	var a = []
+	for i in range(2):
+		a.append(str(x + i))
+	return a
+
+func run(n : int):
+	var total = 0
+	for i in range(n):
+		var made = make(i)
+		total += i
+	return total
+"""
+	var s = _compile_and_load(source, 40000000)
+	if s == null:
+		return
+
+	# The body allocates nothing else, so this loop's scope is the only thing
+	# freeing the two hundred Arrays the calls hand back.
+	var before := s.get_exceptions()
+	assert_eq(s.vmcallv("run", 200), 19900,
+		"the loop should run every pass")
+	assert_eq(s.get_exceptions(), before, "and should not run out of references")
 	s.queue_free()
 
 func _si_walk(text : String):

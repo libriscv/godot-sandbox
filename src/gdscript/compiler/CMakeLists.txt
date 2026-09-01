@@ -188,6 +188,12 @@ if (BUILD_TESTING)
 		target_link_libraries(test_differential gdscript_compiler riscv)
 		add_test(NAME test_differential COMMAND test_differential)
 
+		# Codegen performance is pinned by deterministic interpreted instruction
+		# counts rather than wall-clock timing.
+		add_executable(test_instruction_budget tests/test_instruction_budget.cpp)
+		target_link_libraries(test_instruction_budget gdscript_compiler riscv)
+		add_test(NAME test_instruction_budget COMMAND test_instruction_budget)
+
 		# Same reason for no sanitizers, and the same need for a real machine:
 		# the profiling accounting is only checkable by running the program.
 		add_executable(test_profiling tests/test_profiling.cpp)

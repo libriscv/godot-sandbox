@@ -1087,6 +1087,12 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 	if (var->is_const) {
 		error_at("Cannot assign to const variable: " + name, site);
 	}
+	const bool assigned_character =
+		func.string_character_registers.count(value_reg) != 0;
+	func.string_character_registers.erase(var->register_num);
+	if (assigned_character) {
+		func.string_character_registers.insert(var->register_num);
+	}
 	if (auto declared_struct = func.declared_structs.find(var->register_num);
 		declared_struct != func.declared_structs.end() &&
 		!declared_struct->second->is_class) {
@@ -2750,7 +2756,52 @@ void CodeGenerator::pop_block_scope(int scope_id, FunctionContext& func) {
 	emit_scope_release(scope_id, func);
 }
 
+namespace {
+// Every name a statement list assigns to, nested statements included.
+void collect_assigned_names(const Stmt* stmt, std::unordered_set<std::string>& names);
+
+void collect_assigned_names(const std::vector<StmtPtr>& body,
+	std::unordered_set<std::string>& names)
+{
+	for (const auto& stmt : body) collect_assigned_names(stmt.get(), names);
+}
+
+void collect_assigned_names(const Stmt* stmt, std::unordered_set<std::string>& names) {
+	if (stmt == nullptr) return;
+	if (auto* assign = dynamic_cast<const AssignStmt*>(stmt)) {
+		if (!assign->name.empty()) names.insert(assign->name);
+	} else if (auto* if_stmt = dynamic_cast<const IfStmt*>(stmt)) {
+		collect_assigned_names(if_stmt->then_branch, names);
+		collect_assigned_names(if_stmt->else_branch, names);
+	} else if (auto* while_stmt = dynamic_cast<const WhileStmt*>(stmt)) {
+		collect_assigned_names(while_stmt->body, names);
+	} else if (auto* for_stmt = dynamic_cast<const ForStmt*>(stmt)) {
+		collect_assigned_names(for_stmt->body, names);
+	} else if (auto* match_stmt = dynamic_cast<const MatchStmt*>(stmt)) {
+		for (const auto& branch : match_stmt->branches)
+			collect_assigned_names(branch.body, names);
+	}
+}
+} // namespace
+
+// A body runs many times, so an assignment below a use still precedes that use
+// on the next pass: linear order only settles the character property for
+// straight-line code. Drop it for everything the loop assigns, before the loop
+// emits anything that could fold a character's length() to 1.
+void CodeGenerator::invalidate_loop_character_registers(const std::vector<StmtPtr>& body,
+	FunctionContext& func)
+{
+	if (func.string_character_registers.empty()) return;
+	std::unordered_set<std::string> assigned;
+	collect_assigned_names(body, assigned);
+	for (const std::string& name : assigned) {
+		if (Variable* local = find_variable(func, name))
+			func.string_character_registers.erase(local->register_num);
+	}
+}
+
 void CodeGenerator::gen_while(const WhileStmt* stmt, FunctionContext& func) {
+	invalidate_loop_character_registers(stmt->body, func);
 	std::string loop_label = make_label("loop");
 	std::string end_label = make_label("endloop");
 
@@ -2769,11 +2820,13 @@ void CodeGenerator::gen_while(const WhileStmt* stmt, FunctionContext& func) {
 	pop_scope(func);
 	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(loop_label));
 	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
+	emit_scope_release(scope_id, func);
 
 	func.loops.pop_back();
 }
 
 void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
+	invalidate_loop_character_registers(stmt->body, func);
 	auto* call_expr = dynamic_cast<const CallExpr*>(stmt->iterable.get());
 	bool is_range = call_expr && call_expr->function_name == "range";
 
@@ -2837,6 +2890,10 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 				IRValue::reg(array_reg));
 			set_register_type(func, snapshot_reg, Variant::STRING);
 			gen_string_walk(stmt, snapshot_reg, func);
+			return;
+		}
+		if (get_register_type(func, array_reg) == Variant::ARRAY) {
+			gen_array_walk(stmt, array_reg, func, iterable_element, iterable_trait);
 			return;
 		}
 
@@ -3073,6 +3130,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 
 		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(loop_label));
 		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
+		emit_scope_release(scope_id, func);
 		pop_scope(func);
 		func.loops.pop_back();
 		if (unknown_iterable) {
@@ -3105,6 +3163,98 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 	}
 
 	gen_numeric_for(stmt, start_reg, end_reg, step_reg, func);
+}
+
+void CodeGenerator::gen_array_walk(const ForStmt* stmt, int array_reg, FunctionContext& func,
+	const StructDecl* element_struct, const TraitDecl* element_trait)
+{
+	constexpr int64_t BATCH_SIZE = 16;
+	const std::string refill_label = make_label("array_refill");
+	const std::string have_label = make_label("array_have");
+	const std::string continue_label = make_label("array_continue");
+	const std::string end_label = make_label("array_end");
+	func.loops.push_back({ end_label, continue_label });
+	push_scope(func);
+
+	auto int_const = [&](int64_t value) {
+		const int reg = alloc_register(func);
+		auto& load = func.ir.instructions.emplace_back(IROpcode::LOAD_IMM,
+			IRValue::reg(reg), IRValue::imm(value));
+		load.type_hint = Variant::INT;
+		set_register_type(func, reg, Variant::INT);
+		return reg;
+	};
+	auto int_binop = [&](IROpcode op, int dest, int lhs, int rhs) {
+		auto& instr = func.ir.instructions.emplace_back(op, IRValue::reg(dest),
+			IRValue::reg(lhs), IRValue::reg(rhs));
+		instr.type_hint = Variant::INT;
+		set_register_type(func, dest, Variant::INT);
+	};
+
+	const int index_reg = int_const(0);
+	const int batch_index_reg = int_const(0);
+	const int one_reg = int_const(1);
+	const int buffer_base = func.next_array_batch_id++;
+	const int left_reg = alloc_register(func);
+	set_register_type(func, left_reg, Variant::INT);
+
+	const int batch_scope = open_scope(func);
+	func.ir.array_batch_scopes.emplace_back(batch_scope, int64_t(buffer_base));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(refill_label));
+	emit_scope_release(batch_scope, func);
+	IRInstruction refill(IROpcode::CALL_SYSCALL);
+	refill.operands.push_back(IRValue::reg(left_reg));
+	refill.operands.push_back(IRValue::imm(ECALL_ARRAY_BATCH));
+	refill.operands.push_back(IRValue::reg(array_reg));
+	refill.operands.push_back(IRValue::reg(index_reg));
+	refill.operands.push_back(IRValue::imm(BATCH_SIZE));
+	refill.operands.push_back(IRValue::imm(buffer_base));
+	func.ir.instructions.push_back(refill);
+	emit_conditional_branch(IROpcode::BRANCH_ZERO, left_reg, end_label, func);
+
+	const int body_scope = open_scope(func);
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(have_label));
+	emit_scope_release(body_scope, func);
+	const int elem_reg = alloc_register(func);
+	func.ir.instructions.emplace_back(IROpcode::BATCH_GET, IRValue::reg(elem_reg),
+		IRValue::imm(buffer_base), IRValue::reg(batch_index_reg));
+	declare_variable(func, stmt->variable, elem_reg, false, stmt);
+	if (element_struct != nullptr) {
+		set_register_struct(func, elem_reg, element_struct);
+		func.declared_structs[elem_reg] = element_struct;
+	}
+	if (element_trait != nullptr) {
+		require_trait_value(elem_reg, *element_trait,
+			"an element of Array[" + element_trait->name + "]", func,
+			stmt->line, stmt->column);
+		func.declared_traits[elem_reg].insert(element_trait);
+		add_register_trait(func, elem_reg, element_trait);
+		func.trait_only_registers.insert(elem_reg);
+	}
+	push_scope(func);
+	for (const auto& body_stmt : stmt->body) gen_stmt(body_stmt.get(), func);
+	pop_scope(func);
+
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(continue_label));
+	int_binop(IROpcode::ADD, index_reg, index_reg, one_reg);
+	int_binop(IROpcode::ADD, batch_index_reg, batch_index_reg, one_reg);
+	int_binop(IROpcode::SUB, left_reg, left_reg, one_reg);
+	emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, left_reg, have_label, func);
+	// The next refill starts at the absolute index and resets the buffer index.
+	func.ir.instructions.emplace_back(IROpcode::LOAD_IMM, IRValue::reg(batch_index_reg),
+		IRValue::imm(0)).type_hint = Variant::INT;
+	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(refill_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
+	emit_scope_release(body_scope, func);
+	emit_scope_release(batch_scope, func);
+
+	pop_scope(func);
+	func.loops.pop_back();
+	free_register(func, elem_reg);
+	free_register(func, left_reg);
+	free_register(func, one_reg);
+	free_register(func, batch_index_reg);
+	free_register(func, index_reg);
 }
 
 // `for c in <String>`: the characters come in batches, so the walk costs one
@@ -3189,6 +3339,9 @@ void CodeGenerator::gen_string_walk(const ForStmt* stmt, int string_reg, Functio
 	func.ir.instructions.emplace_back(IROpcode::MAKE_SCOPED, IRValue::reg(elem_reg),
 		IRValue::reg(handle_reg), IRValue::imm(static_cast<int64_t>(Variant::STRING)));
 	set_register_type(func, elem_reg, Variant::STRING);
+	std::unordered_set<std::string> assigned;
+	collect_assigned_names(stmt->body, assigned);
+	if (assigned.count(stmt->variable) == 0) func.string_character_registers.insert(elem_reg);
 
 	declare_variable(func, stmt->variable, elem_reg, false, stmt);
 	push_scope(func);
@@ -3204,6 +3357,8 @@ void CodeGenerator::gen_string_walk(const ForStmt* stmt, int string_reg, Functio
 	emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, left_reg, have_label, func);
 	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(refill_label));
 	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
+	emit_scope_release(body_scope, func);
+	emit_scope_release(batch_scope, func);
 
 	pop_scope(func);
 	func.loops.pop_back();
@@ -3321,6 +3476,7 @@ void CodeGenerator::gen_numeric_for(const ForStmt* stmt, int start_reg, int end_
 
 	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(loop_label));
 	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
+	emit_scope_release(scope_id, func);
 
 	pop_scope(func);
 	func.loops.pop_back();
@@ -3805,6 +3961,9 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 		}
 		if (func.reclassifiable_registers.count(local->register_num) != 0) {
 			func.reclassifiable_registers.insert(new_reg);
+		}
+		if (func.string_character_registers.count(local->register_num) != 0) {
+			func.string_character_registers.insert(new_reg);
 		}
 		// Dictionary handle: copy refers to the same fields, so propagate struct.
 		set_register_struct(func, new_reg, get_register_struct(func, local->register_num));
@@ -5832,12 +5991,20 @@ void CodeGenerator::gen_builtin_method(const BuiltinMethod& method, int result_r
 	switch (method.lowering) {
 		case MethodLowering::ARRAY_SIZE:
 		case MethodLowering::STRING_SIZE: {
-			IRInstruction call(IROpcode::CALL_SYSCALL);
-			call.operands.push_back(IRValue::reg(size_reg));
-			call.operands.push_back(IRValue::imm(
-				method.lowering == MethodLowering::ARRAY_SIZE ? ECALL_ARRAY_SIZE : ECALL_STRING_SIZE));
-			call.operands.push_back(IRValue::reg(obj_reg));
-			func.ir.instructions.push_back(call);
+			if (method.lowering == MethodLowering::STRING_SIZE &&
+				func.string_character_registers.count(obj_reg) != 0)
+			{
+				auto& one = func.ir.instructions.emplace_back(IROpcode::LOAD_IMM,
+					IRValue::reg(size_reg), IRValue::imm(1));
+				one.type_hint = Variant::INT;
+			} else {
+				IRInstruction call(IROpcode::CALL_SYSCALL);
+				call.operands.push_back(IRValue::reg(size_reg));
+				call.operands.push_back(IRValue::imm(
+					method.lowering == MethodLowering::ARRAY_SIZE ? ECALL_ARRAY_SIZE : ECALL_STRING_SIZE));
+				call.operands.push_back(IRValue::reg(obj_reg));
+				func.ir.instructions.push_back(call);
+			}
 			break;
 		}
 		case MethodLowering::DICT_OP: {

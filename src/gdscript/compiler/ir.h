@@ -317,6 +317,11 @@ struct IRFunction {
 	IRInstruction::TypeHint return_type_hint = IRInstruction::TypeHint_NONE;
 	std::vector<uint64_t> param_sets;
 	uint64_t return_set = 0;
+	// `for v in <Array>`: scope id paired with the batch buffer whose sixteen
+	// slots that scope's release must drop. Named here because reading it off
+	// the instruction next to the ECALL_ARRAY_BATCH breaks silently the first
+	// time a pass moves either one.
+	std::vector<std::pair<int, int64_t>> array_batch_scopes;
 	// Has AWAIT; gets a resume entry, all parameters forced live.
 	bool is_coroutine = false;
 

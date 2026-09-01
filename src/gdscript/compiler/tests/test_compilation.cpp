@@ -435,6 +435,17 @@ func overlapping():
 	std::cout << "  ✓ Overlapping live ranges handled correctly" << std::endl;
 }
 
+void test_fixed_register_reservation() {
+	IRFunction func;
+	RegisterAllocator allocator;
+	allocator.init(func);
+	allocator.reserve_register(9); // s1
+	assert(!allocator.is_register_available(9));
+	for (int vreg = 0; vreg < 17; vreg++) {
+		assert(allocator.allocate_register(vreg, 0) != 9);
+	}
+}
+
 
 int main() {
 	std::cout << "\n=== Running Compilation Tests ===" << std::endl;
@@ -452,6 +463,7 @@ int main() {
 		test_edge_case_only_parameters();
 		test_edge_case_many_variables_stress();
 		test_edge_case_overlapping_live_ranges();
+		test_fixed_register_reservation();
 		
 		test_arithmetic_operations_compilation();
 		test_nested_expressions_compilation();
@@ -466,4 +478,3 @@ int main() {
 		return 1;
 	}
 }
-

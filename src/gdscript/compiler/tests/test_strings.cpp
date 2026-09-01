@@ -365,14 +365,40 @@ static void test_walking_a_string() {
 		"func f(s : String):\n"
 		"\tvar n = 0\n"
 		"\tfor c in s:\n"
-		"\t\tn += 1\n"
+		"\t\tn += c.length()\n"
 		"\treturn n\n");
 	const IRFunction& f = find_function(known, "f");
-	// One refill in the loop and nothing per character: the batch drives the
+	// One refill in the loop and nothing per character: length() on the one
+	// UTF-32 code point yielded by the walk folds to 1, and the batch drives the
 	// walk, so neither its length nor its characters are asked for one at a time.
 	assert(count_syscalls(f, ECALL_STRING_BATCH) == 1);
 	assert(count_syscalls(f, ECALL_STRING_SIZE) == 0);
 	assert(count_syscalls(f, ECALL_STRING_AT) == 0);
+
+	const IRProgram reassigned = compile_to_ir(
+		"func f(s : String):\n"
+		"\tvar n = 0\n"
+		"\tfor c in s:\n"
+		"\t\tc = \"two\"\n"
+		"\t\tn += c.length()\n"
+		"\treturn n\n");
+	assert(count_syscalls(find_function(reassigned, "f"), ECALL_STRING_SIZE) == 1);
+
+	// A body runs many times: the assignment below the use still precedes it on
+	// the next pass, so the fold has to go for the whole loop, not from the
+	// assignment onwards.
+	const IRProgram reassigned_in_a_loop = compile_to_ir(
+		"func f(s : String, k : int):\n"
+		"\tvar n = 0\n"
+		"\tfor c in s:\n"
+		"\t\tvar d = c\n"
+		"\t\tvar i = 0\n"
+		"\t\twhile i < k:\n"
+		"\t\t\tn += d.length()\n"
+		"\t\t\td = d + \"x\"\n"
+		"\t\t\ti += 1\n"
+		"\treturn n\n");
+	assert(count_syscalls(find_function(reassigned_in_a_loop, "f"), ECALL_STRING_SIZE) == 1);
 	assert(count_opcode(f, IROpcode::MAKE_SCOPED) == 1);
 	assert(count_syscalls(f, ECALL_ARRAY_SIZE) == 0);
 	assert(count_syscalls(f, ECALL_ARRAY_AT) == 0);

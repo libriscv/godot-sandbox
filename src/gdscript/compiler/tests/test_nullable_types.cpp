@@ -234,9 +234,10 @@ static void test_nullable_containers_and_structs() {
 	// A struct is a Dictionary, so that is the tag its nullable form admits.
 	assert(guard_mask(function(ir, "structs")) == (nil | (uint64_t(1) << Variant::DICTIONARY)));
 
-	// After the null check each one is the plain lowering: a counted Array walk,
+	// After the null check each one is the plain lowering: a batched Array walk,
 	// a Dictionary operation, a direct field read.
-	assert(count(function(ir, "arrays"), IROpcode::CALL_SYSCALL) >= 2);
+	assert(count(function(ir, "arrays"), IROpcode::CALL_SYSCALL) == 1);
+	assert(count(function(ir, "arrays"), IROpcode::BATCH_GET) == 1);
 	assert(count(function(ir, "dictionaries"), IROpcode::CALL_SYSCALL) == 1);
 	assert(count(function(ir, "structs"), IROpcode::DICT_GET_CONST) == 1);
 	// NOTE: the tag mask is the whole boundary check for a nullable struct --

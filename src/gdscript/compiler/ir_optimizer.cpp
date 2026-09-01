@@ -895,6 +895,7 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::TRAIT_TEST:
 		case IROpcode::TYPE_OF:
 		case IROpcode::MAKE_SCOPED:
+		case IROpcode::BATCH_GET:
 		case IROpcode::SWITCH:
 		case IROpcode::VGET_INLINE:
 		case IROpcode::VSET_INLINE:

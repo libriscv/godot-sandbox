@@ -54,6 +54,10 @@ public:
 	// Whether preg is in the free pool.
 	bool is_register_available(uint8_t preg) const;
 
+	// Remove a physical register from the allocation pool. Must be called after
+	// init() and before the first allocation; fixed scalar residency owns these.
+	void reserve_register(uint8_t preg);
+
 	const std::vector<uint8_t>& get_available_registers() const { return m_free_registers; }
 
 	// First use of vreg strictly after current_instr_idx, or -1 (dead).

@@ -3182,6 +3182,43 @@ APICALL(api_array_size) {
 	machine.set_result(variant_container<Array>(var_array).size());
 }
 
+APICALL(api_array_batch) {
+	auto [arr_idx, start, max_count, output_addr] =
+		machine.sysargs<unsigned, int64_t, unsigned, gaddr_t>();
+	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("array_batch", arr_idx, start, max_count, output_addr);
+
+	const Variant &var_array = get_scoped_variant_or_throw(emu, arr_idx, "Array::batch");
+	if (variant_type(var_array) != Variant::ARRAY) {
+		throw std::runtime_error("Invalid Array object for batched iteration");
+	}
+	const Array array = variant_container<Array>(var_array);
+	if (start < 0 || start >= array.size() || max_count == 0) {
+		machine.set_result(0);
+		return;
+	}
+	int64_t count = std::min<int64_t>(max_count, int64_t(array.size()) - start);
+	const Sandbox::CurrentState &st = emu.state();
+	const int64_t headroom = int64_t(st.variants.capacity()) - int64_t(st.scoped_variants.size());
+	count = std::min(count, std::max<int64_t>(1, headroom / 4));
+	if (!emu.is_in_vmcall()) count = 1;
+
+	GuestVariant *output = machine.memory.memarray<GuestVariant>(output_addr, size_t(count));
+	for (int64_t i = 0; i < count; i++) {
+		CallResult result;
+		GDExtensionBool valid = false;
+		GDExtensionBool oob = false;
+		internal::gdextension_interface_variant_get_indexed(
+			var_array._native_ptr(), start + i, &result.get(), &valid, &oob);
+		result.mark_constructed();
+		if (UNLIKELY(!valid || oob)) {
+			throw std::runtime_error("Array index out of bounds during batched iteration");
+		}
+		output[i].create(emu, std::move(result.get()));
+	}
+	machine.set_result(count);
+}
+
 APICALL(api_dict_ops) {
 	auto [op, dict_idx, vkey, vaddr] = machine.sysargs<Dictionary_Op, unsigned, gaddr_t, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
@@ -4013,6 +4050,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_ARRAY_OPS, api_array_ops },
 			{ ECALL_ARRAY_AT, api_array_at },
 			{ ECALL_ARRAY_SIZE, api_array_size },
+			{ ECALL_ARRAY_BATCH, api_array_batch },
 
 			{ ECALL_DICTIONARY_OPS, api_dict_ops },
 

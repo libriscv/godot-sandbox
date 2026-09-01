@@ -192,6 +192,13 @@ bool RegisterAllocator::is_register_available(uint8_t preg) const {
 	return std::find(m_free_registers.begin(), m_free_registers.end(), preg) != m_free_registers.end();
 }
 
+void RegisterAllocator::reserve_register(uint8_t preg) {
+	auto it = std::find(m_free_registers.begin(), m_free_registers.end(), preg);
+	if (it != m_free_registers.end()) {
+		m_free_registers.erase(it);
+	}
+}
+
 int RegisterAllocator::get_next_use(int vreg, int current_instr_idx) const {
 	std::unordered_map<int, std::vector<int>>::const_iterator uses_it = m_vreg_all_uses.find(vreg);
 	if (uses_it == m_vreg_all_uses.end()) {

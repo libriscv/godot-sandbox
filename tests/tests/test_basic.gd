@@ -126,6 +126,10 @@ func test_binary_translation():
 	s.set_program(Sandbox_TestsTests)
 
 	if Sandbox.has_feature_binary_translation():
+		# A machine only carries its own translation hash when the AOT cache is
+		# opted into; sharing an execute segment hands it the first machine's.
+		var old_lookup: bool = ProjectSettings.get_setting("sandbox/binary_translation/enabled")
+		ProjectSettings.set_setting("sandbox/binary_translation/enabled", true)
 		# Public flags are deliberately explicit: their historical defaults are
 		# false, while a live Sandbox defaults to automatic n-bit addressing.
 		s.set_instructions_max(0)
@@ -144,6 +148,7 @@ func test_binary_translation():
 		end = defaults.find(",", at + marker.length())
 		var default_hash := defaults.substr(at + marker.length(), end - at - marker.length()).to_int()
 		assert_ne(default_hash, s.get_translation_hash(), "legacy false/false defaults document the mismatch foot-gun")
+		ProjectSettings.set_setting("sandbox/binary_translation/enabled", old_lookup)
 		#print(str)
 	else:
 		# Only the binary translator can emit C99, so a build without it is

@@ -384,8 +384,8 @@ static void test_container_loop_emits_valid_ir() {
 	std::cout << "  ✓ iterating a container emits well-formed IR" << std::endl;
 }
 
-// Loop counter and length are both integers, so the compare fuses into a native
-// branch instead of a host call.
+// The batched walk's remaining-count register is an integer, so both its empty
+// and next-element checks are native branches instead of host calls.
 static void test_container_loop_counter_is_typed() {
 	const IRProgram ir = compile_to_ir(
 		"func f():\n"
@@ -395,13 +395,13 @@ static void test_container_loop_counter_is_typed() {
 		"\treturn s\n");
 
 	const IRFunction& func = find_function(ir, "f");
-	bool found_typed_branch = false;
+	int typed_branches = 0;
 	for (const auto& instr : func.instructions) {
-		if (ir_has_effect(instr.opcode, IR_FUSED_BRANCH) && instr.type_hint == Variant::INT) {
-			found_typed_branch = true;
-		}
+		if ((instr.opcode == IROpcode::BRANCH_ZERO ||
+			instr.opcode == IROpcode::BRANCH_NOT_ZERO) && instr.type_hint == Variant::INT)
+			typed_branches++;
 	}
-	assert(found_typed_branch && "the loop bound compare went through VEVAL");
+	assert(typed_branches == 2 && "the batch count checks went through VEVAL");
 
 	std::cout << "  ✓ a container loop's bound check is a native integer branch" << std::endl;
 }
