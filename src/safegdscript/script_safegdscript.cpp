@@ -1330,9 +1330,9 @@ PackedStringArray SafeGDScript::resolve_base_sources(const String &p_source,
 		}
 	}
 
-	HashSet<String> visited;
+	HashSet<String> chain_paths;
 	if (!p_self_path.is_empty()) {
-		visited.insert(p_self_path);
+		chain_paths.insert(p_self_path);
 	}
 	String source_path = p_self_path;
 	String next = scan_extends(p_source);
@@ -1349,7 +1349,7 @@ PackedStringArray SafeGDScript::resolve_base_sources(const String &p_source,
 		} else {
 			break; // Native engine class.
 		}
-		if (visited.has(path)) {
+		if (chain_paths.has(path)) {
 			if (r_error != nullptr) {
 				*r_error = "'" + path + "' appears twice in the 'extends' chain: a script "
 						"cannot extend itself, directly or through a base.";
@@ -1363,7 +1363,7 @@ PackedStringArray SafeGDScript::resolve_base_sources(const String &p_source,
 			}
 			break;
 		}
-		visited.insert(path);
+		chain_paths.insert(path);
 		const String source = FileAccess::get_file_as_string(path);
 		scanned_sources.push_back(Pair<String, String>(source, path));
 		triples.push_back(next);
@@ -1381,27 +1381,36 @@ PackedStringArray SafeGDScript::resolve_base_sources(const String &p_source,
 		next = scan_extends(source);
 	}
 
+	HashSet<String> requested_traits;
+	HashSet<String> trait_paths;
 	for (int source_index = 0; source_index < scanned_sources.size(); source_index++) {
 		const String &source = scanned_sources[source_index].first;
 		for (const String &used_name : scan_trait_uses(source)) {
+			if (requested_traits.has(used_name)) continue;
+			requested_traits.insert(used_name);
 			String host_name = used_name;
 			const int dot = host_name.find(".");
 			if (dot >= 0) host_name = host_name.substr(0, dot);
 			HashMap<String, String>::Iterator found = classes.find(host_name);
 			if (found == classes.end()) continue;
 			const String trait_path = found->value;
-			if (visited.has(trait_path)) continue;
+			// A trait declared by an executable link is already present when the
+			// chain is merged. A trait-only provider, however, may be requested
+			// more than once as Library.First and Library.Second.
+			if (chain_paths.has(trait_path)) continue;
 			if (!FileAccess::file_exists(trait_path)) {
 				if (r_error != nullptr) *r_error = "Trait '" + used_name +
 					"' resolves to missing file '" + trait_path + "'.";
 				continue;
 			}
-			visited.insert(trait_path);
 			const String trait_source = FileAccess::get_file_as_string(trait_path);
 			triples.push_back("trait:" + used_name);
 			triples.push_back(trait_path);
 			triples.push_back(trait_source);
-			scanned_sources.push_back(Pair<String, String>(trait_source, trait_path));
+			if (!trait_paths.has(trait_path)) {
+				trait_paths.insert(trait_path);
+				scanned_sources.push_back(Pair<String, String>(trait_source, trait_path));
+			}
 		}
 	}
 	return triples;

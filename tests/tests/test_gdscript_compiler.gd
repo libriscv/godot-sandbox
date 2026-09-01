@@ -4100,6 +4100,38 @@ func _compile_and_load(gdscript_code: String, instructions_max: int = 4000) -> S
 	s.set_instructions_max(instructions_max)
 	return s
 
+class _TraitSyscallComplete extends Node:
+	func trait_syscall_first():
+		pass
+
+	func trait_syscall_second():
+		pass
+
+class _TraitSyscallIncomplete extends Node:
+	func trait_syscall_first():
+		pass
+
+func test_sgd_trait_test_syscall_decodes_bounded_strings():
+	var s := _compile_and_load("""
+trait Pair:
+	func trait_syscall_first() -> void
+	func trait_syscall_second() -> void
+
+func recognizes(value) -> bool:
+	return value is Pair
+""", 100000)
+	if s == null:
+		return
+	var complete := _TraitSyscallComplete.new()
+	var incomplete := _TraitSyscallIncomplete.new()
+	assert_true(s.vmcallv("recognizes", complete),
+		"the syscall should decode every NUL-separated structural method")
+	assert_false(s.vmcallv("recognizes", incomplete),
+		"the syscall should reject an object missing the second method")
+	incomplete.free()
+	complete.free()
+	s.queue_free()
+
 func test_sgd_a_trait_splices_state_methods_and_enums():
 	var source = """
 uses Counter
@@ -4147,6 +4179,71 @@ func read_health() -> int:
 		"an abstract method inside a used trait must not make its owner script abstract")
 	assert_eq(node.call("read_health"), 100, "the attached script should be runnable")
 	node.set_script(null)
+	node.free()
+
+func _load_cross_file_trait_consumer(path: String, source: String) -> SafeGDScript:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(source)
+	file.close()
+	var script := ResourceLoader.load(path, "SafeGDScript",
+		ResourceLoader.CACHE_MODE_REPLACE) as SafeGDScript
+	assert_not_null(script, "the cross-file trait consumer should load")
+	if script != null:
+		assert_eq(script.get_compile_error(), "", "the external traits should resolve")
+	return script
+
+func test_sgd_file_traits_compose_transitively_across_compilations():
+	var actor_script := _load_cross_file_trait_consumer(
+		"user://temp_cross_file_trait_actor.sgd", """
+extends Node
+uses SgdCrossFilePowered
+
+func run() -> int:
+	return powered_move(4)
+""")
+	var observer_script := _load_cross_file_trait_consumer(
+		"user://temp_cross_file_trait_observer.sgd", """
+extends Node
+uses SgdCrossFilePowered
+
+func recognizes(value) -> bool:
+	return value is SgdCrossFilePowered
+""")
+	if actor_script == null or observer_script == null:
+		return
+
+	var actor := Node.new()
+	actor.set_script(actor_script)
+	assert_eq(actor.call("run"), 14,
+		"a file trait should receive the state and method of its external dependency")
+	assert_true(actor_script.uses_trait(&"SgdCrossFilePowered"),
+		"the first compilation should publish the file trait's nominal name")
+	assert_true(observer_script.uses_trait(&"SgdCrossFilePowered"),
+		"a separate compilation should publish the same nominal name")
+	assert_true(observer_script.uses_trait(&"SgdCrossFileMovable"),
+		"transitive external traits should be published too")
+	var observer := Node.new()
+	observer.set_script(observer_script)
+	assert_true(observer.call("recognizes", actor),
+		"separately compiled instances should pass a nominal trait test")
+	observer.free()
+	actor.free()
+
+func test_sgd_loads_two_qualified_traits_from_one_provider_file():
+	var script := _load_cross_file_trait_consumer(
+		"user://temp_qualified_trait_consumer.sgd", """
+extends Node
+uses SgdTraitLibrary.Alpha, SgdTraitLibrary.Beta
+
+func run() -> int:
+	return alpha() + beta()
+""")
+	if script == null:
+		return
+	var node := Node.new()
+	node.set_script(script)
+	assert_eq(node.call("run"), 30,
+		"each qualified trait in the shared provider should be imported exactly once")
 	node.free()
 
 func test_sgd_rpc_is_published_only_while_unrestricted():

@@ -1,0 +1,15 @@
+class_name SgdTraitLibrary
+
+trait Alpha:
+	func alpha() -> int:
+		return 10
+
+trait Beta:
+	func beta() -> int:
+		return 20
+
+# Deliberately not requested by the consumer. Loading the provider once for
+# Alpha and once for Beta must not publish this declaration twice.
+trait Unused:
+	func unused() -> int:
+		return 30

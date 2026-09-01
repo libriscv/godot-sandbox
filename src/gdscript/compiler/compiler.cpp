@@ -11,6 +11,8 @@
 #include <fstream>
 #include <stdexcept>
 #include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace gdscript {
 
@@ -87,6 +89,11 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 		if (!options.base_sources.empty()) {
 			std::vector<ChainLink> links;
 			links.reserve(options.base_sources.size() + 1);
+			struct ImportedProviderTraits {
+				std::unordered_set<std::string> local_names;
+				std::unordered_set<std::string> qualified_names;
+			};
+			std::unordered_map<std::string, ImportedProviderTraits> imported_provider_traits;
 			for (size_t i = options.base_sources.size(); i-- > 0;) {
 				const CompilerOptions::BaseSource& base = options.base_sources[i];
 				Lexer base_lexer(base.source);
@@ -105,10 +112,19 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 					throw;
 				}
 				if (base.trait_only) {
+					const size_t dot = base.name.rfind('.');
+					std::string provider = base.path;
+					if (provider.empty()) {
+						provider = dot == std::string::npos ? base.name : base.name.substr(0, dot);
+					}
+					ImportedProviderTraits& imported = imported_provider_traits[provider];
 					for (TraitDecl &decl : link.program.traits) {
-						const size_t dot = base.name.rfind('.');
-						if (dot != std::string::npos && decl.name == base.name.substr(dot + 1))
+						if (dot != std::string::npos && decl.name == base.name.substr(dot + 1)) {
+							if (!imported.qualified_names.insert(base.name).second) continue;
 							decl.name = base.name;
+						} else if (!imported.local_names.insert(decl.name).second) {
+							continue;
+						}
 						program.traits.push_back(std::move(decl));
 					}
 				} else {

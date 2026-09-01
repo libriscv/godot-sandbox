@@ -1,0 +1,5 @@
+trait_name SgdCrossFilePowered
+uses SgdCrossFileMovable
+
+func powered_move(amount: int) -> int:
+	return move_by(amount) * 2

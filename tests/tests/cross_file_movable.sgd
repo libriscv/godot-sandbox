@@ -1,0 +1,7 @@
+trait_name SgdCrossFileMovable
+
+var travelled: int = 3
+
+func move_by(amount: int) -> int:
+	travelled += amount
+	return travelled

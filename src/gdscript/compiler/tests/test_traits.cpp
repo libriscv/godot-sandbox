@@ -2,6 +2,7 @@
 // trait-typed values all lower without changing Variant representation.
 #include "../codegen.h"
 #include "../chain.h"
+#include "../compiler.h"
 #include "../elf_builder.h"
 #include "../compiler_exception.h"
 #include "../function_signature.h"
@@ -445,6 +446,83 @@ static void test_a_nullable_trait_needs_a_null_check() {
 	assert(bound.find("may be null") != std::string::npos);
 }
 
+static const ClassSignature& find_published_class(const Compiler& compiler,
+	const std::string& name) {
+	for (const ClassSignature& signature : compiler.get_class_signatures()) {
+		if (signature.name == name) return signature;
+	}
+	throw std::runtime_error("Published class not found: " + name);
+}
+
+static void test_file_level_trait_sources() {
+	CompilerOptions options;
+	options.base_sources.push_back(CompilerOptions::BaseSource{
+		"Movable", "movable.sgd",
+		"trait_name Movable\n"
+		"var distance: int = 4\n"
+		"func move() -> int: return distance\n",
+		true});
+
+	Compiler compiler;
+	const std::vector<uint8_t> elf = compiler.compile(
+		"uses Movable\n"
+		"func run() -> int: return move()\n", options);
+	assert(!elf.empty());
+	assert(compiler.get_error().empty());
+	assert(compiler.get_script_uses() == std::vector<std::string>{"Movable"});
+	assert(find_published_class(compiler, "Movable").is_trait);
+}
+
+static void test_transitive_file_level_trait_sources() {
+	CompilerOptions options;
+	options.base_sources.push_back(CompilerOptions::BaseSource{
+		"Powered", "powered.sgd",
+		"trait_name Powered\n"
+		"uses Movable\n"
+		"func power() -> int: return move() * 2\n",
+		true});
+	options.base_sources.push_back(CompilerOptions::BaseSource{
+		"Movable", "movable.sgd",
+		"trait_name Movable\n"
+		"func move() -> int: return 6\n",
+		true});
+
+	Compiler compiler;
+	const std::vector<uint8_t> elf = compiler.compile(
+		"uses Powered\n"
+		"func run() -> int: return power()\n", options);
+	assert(!elf.empty());
+	assert(compiler.get_error().empty());
+	assert(compiler.get_script_uses() == std::vector<std::string>({"Movable", "Powered"}));
+	assert(find_published_class(compiler, "Movable").is_trait);
+	assert(find_published_class(compiler, "Powered").is_trait);
+}
+
+static void test_two_qualified_traits_from_one_provider() {
+	const std::string provider =
+		"class_name TraitLibrary\n"
+		"trait Alpha:\n\tfunc alpha() -> int: return 10\n"
+		"trait Beta:\n\tfunc beta() -> int: return 20\n"
+		"trait Unused:\n\tfunc unused() -> int: return 30\n";
+	CompilerOptions options;
+	// The host emits one trait-only source request per qualified name. Repeating
+	// the provider must expose both names without declaring Unused twice.
+	options.base_sources.push_back(CompilerOptions::BaseSource{
+		"TraitLibrary.Alpha", "trait_library.sgd", provider, true});
+	options.base_sources.push_back(CompilerOptions::BaseSource{
+		"TraitLibrary.Beta", "trait_library.sgd", provider, true});
+
+	Compiler compiler;
+	const std::vector<uint8_t> elf = compiler.compile(
+		"uses TraitLibrary.Alpha, TraitLibrary.Beta\n"
+		"func run() -> int: return alpha() + beta()\n", options);
+	assert(!elf.empty());
+	assert(compiler.get_error().empty());
+	assert(find_published_class(compiler, "TraitLibrary.Alpha").is_trait);
+	assert(find_published_class(compiler, "TraitLibrary.Beta").is_trait);
+	assert(find_published_class(compiler, "Unused").is_trait);
+}
+
 int main() {
 	std::cout << "=== Trait Tests ===" << std::endl;
 	test_declaration_and_operator_parse();
@@ -460,6 +538,9 @@ int main() {
 	test_trait_caches_are_exported_symbols();
 	test_an_unassigned_trait_local_is_not_proven();
 	test_a_nullable_trait_needs_a_null_check();
+	test_file_level_trait_sources();
+	test_transitive_file_level_trait_sources();
+	test_two_qualified_traits_from_one_provider();
 	std::cout << "All trait tests passed!" << std::endl;
 	return 0;
 }

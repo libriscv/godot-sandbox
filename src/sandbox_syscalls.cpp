@@ -1194,11 +1194,11 @@ APICALL(api_class_bind) {
 
 APICALL(api_obj_uses_trait) {
 	auto [handle, trait_utf8, methods] =
-		machine.sysargs<uint64_t, std::string, std::string>();
+		machine.sysargs<uint64_t, std::string_view, std::string_view>();
 	Sandbox &emu = riscv::emu(machine);
 	PENALIZE(50'000);
 	godot::Object *object = get_object_from_address(emu, handle);
-	const StringName trait_name(String::utf8(trait_utf8.c_str(),
+	const StringName trait_name(String::utf8(trait_utf8.data(),
 		int64_t(trait_utf8.size())));
 	bool recognized = false;
 	const bool nominal = safegdscript_nominal_uses(object, trait_name, recognized);
