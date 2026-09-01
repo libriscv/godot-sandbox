@@ -145,7 +145,7 @@ void SandboxProjectSettings::register_settings() {
 	migrate_setting("editor/script/unboxed_types_for_sandbox_arguments", NATIVE_TYPES);
 	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
 
-	register_setting_plain(BINTR_ENABLED, true, BINTR_ENABLED_HINT, true);
+	register_setting_plain(BINTR_ENABLED, false, BINTR_ENABLED_HINT, true);
 	register_setting_plain(BINTR_AUTO_BAKE, false, BINTR_AUTO_BAKE_HINT, false);
 	String bintr_compiler = "cc";
 #if defined(_MSC_VER) && !defined(__MINGW32__) && !defined(__MINGW64__)

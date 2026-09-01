@@ -890,6 +890,11 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 	// Get t0 for the startup time
 	const uint64_t startup_t0 = Time::get_singleton()->get_ticks_usec();
 
+#ifdef RISCV_BINARY_TRANSLATION
+	const bool bintr_cache = bintr_cache_opted_in();
+	const bool bintr_lookup = bintr_cache && bintr_lookup_enabled();
+#endif // RISCV_BINARY_TRANSLATION
+
 	/** We can't handle exceptions until the Machine is fully constructed. Two steps.  */
 	try {
 		// Reset the machine
@@ -904,12 +909,12 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				// The execute segment stores its translation hash. Sharing it between
 				// machines with different checked/n-bit/limit options would reuse the
 				// first machine's hash and could activate the wrong native object.
-				.use_shared_execute_segments = false,
-				.translate_enabled = riscv::libtcc_enabled ? m_bintr_jit : bintr_lookup_enabled(),
+				.use_shared_execute_segments = !bintr_cache,
+				.translate_enabled = riscv::libtcc_enabled ? m_bintr_jit : bintr_lookup,
 				.translate_enable_embedded = true,
 				.translate_future_segments = false,
 				.translate_invoke_compiler = riscv::libtcc_enabled && m_bintr_jit,
-				.translation_cache = true,
+				.translation_cache = bintr_lookup,
 				//.translate_trace = true,
 				//.translate_timing = true,
 #endif // RISCV_BINARY_TRANSLATION

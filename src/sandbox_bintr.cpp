@@ -262,6 +262,15 @@ int64_t Sandbox::get_translation_hash() const {
 #endif
 }
 
+String Sandbox::shipped_translation_dir() {
+#ifdef RISCV_BINARY_TRANSLATION
+	const String shipped = OS::get_singleton()->get_executable_path().get_base_dir().path_join("bintr");
+	if (DirAccess::dir_exists_absolute(shipped))
+		return shipped;
+#endif
+	return String();
+}
+
 String Sandbox::binary_translation_cache_dir(bool create) {
 #ifdef RISCV_BINARY_TRANSLATION
 	static std::mutex cache_mutex;
@@ -269,8 +278,8 @@ String Sandbox::binary_translation_cache_dir(bool create) {
 	std::lock_guard<std::mutex> lock(cache_mutex);
 	if (!cached.is_empty() && DirAccess::dir_exists_absolute(cached))
 		return cached;
-	const String shipped = OS::get_singleton()->get_executable_path().get_base_dir().path_join("bintr");
-	if (DirAccess::dir_exists_absolute(shipped)) {
+	const String shipped = shipped_translation_dir();
+	if (!shipped.is_empty()) {
 		cached = shipped;
 		return cached;
 	}
@@ -296,10 +305,22 @@ String Sandbox::binary_translation_path(uint32_t hash, const String &out_dir) {
 	return directory.path_join("bintr-" + hash_string(hash) + BINTR_SUFFIX);
 }
 
+bool Sandbox::bintr_cache_opted_in() {
+#ifdef RISCV_BINARY_TRANSLATION
+	// Every machine that may take part in the AOT cache needs its own execute
+	// segment: It's a deficiency in the execute segment key. To be fixed.
+	// Auto-baking implies it's enabled
+	return SandboxProjectSettings::binary_translation_enabled() ||
+			SandboxProjectSettings::binary_translation_auto_bake() ||
+			!shipped_translation_dir().is_empty();
+#else
+	return false;
+#endif
+}
+
 bool Sandbox::bintr_lookup_enabled() {
 #ifdef RISCV_BINARY_TRANSLATION
-	return SandboxProjectSettings::binary_translation_enabled() &&
-			!binary_translation_cache_dir(false).is_empty();
+	return bintr_cache_opted_in() && !binary_translation_cache_dir(false).is_empty();
 #else
 	return false;
 #endif

@@ -13,21 +13,27 @@ func compute(n: int):
 
 var _old_cache_dir: String
 var _old_auto_bake: bool
+var _old_lookup: bool
 var _baked_paths: PackedStringArray
 
 func before_all():
 	_old_cache_dir = ProjectSettings.get_setting("sandbox/binary_translation/cache_dir")
 	_old_auto_bake = ProjectSettings.get_setting("sandbox/binary_translation/auto_bake")
+	_old_lookup = ProjectSettings.get_setting("sandbox/binary_translation/enabled")
 	ProjectSettings.set_setting("sandbox/binary_translation/cache_dir", "user://test_sandbox_bintr/")
 	ProjectSettings.set_setting("sandbox/binary_translation/auto_bake", false)
+	ProjectSettings.set_setting("sandbox/binary_translation/enabled", true)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://test_sandbox_bintr/"))
 
 func after_all():
 	for path in _baked_paths:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(path)
+	# The resolved cache directory is remembered until it stops existing
+	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://test_sandbox_bintr/"))
 	ProjectSettings.set_setting("sandbox/binary_translation/cache_dir", _old_cache_dir)
 	ProjectSettings.set_setting("sandbox/binary_translation/auto_bake", _old_auto_bake)
+	ProjectSettings.set_setting("sandbox/binary_translation/enabled", _old_lookup)
 
 func _compiler_available() -> bool:
 	var compiler: String = ProjectSettings.get_setting("sandbox/binary_translation/compiler")

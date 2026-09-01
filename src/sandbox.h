@@ -1068,8 +1068,10 @@ private:
 			const String &compiler, const String &extra_cflags, bool quiet,
 			bool *out_new_file = nullptr);
 	static String binary_translation_cache_dir(bool create);
+	static String shipped_translation_dir();
 	static String binary_translation_path(uint32_t hash, const String &out_dir = "");
 	static bool bintr_lookup_enabled();
+	static bool bintr_cache_opted_in();
 	static void start_background_translation(std::function<void()> &&step);
 	static void generate_runtime_cpp_api(bool use_argument_names = false);
 
