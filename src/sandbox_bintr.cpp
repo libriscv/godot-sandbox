@@ -82,7 +82,10 @@ struct BakeGuard {
 };
 
 String compile_shared_translation(const std::string &source, uint32_t hash,
-		const String &output_dir, const String &cc, const String &extra_cflags, bool quiet) {
+		const String &output_dir, const String &cc, const String &extra_cflags, bool quiet,
+		bool *out_new_file = nullptr) {
+	if (out_new_file != nullptr)
+		*out_new_file = false;
 #if defined(__ANDROID__) || defined(__wasm__) || defined(__SWITCH__) || defined(__EMSCRIPTEN__)
 	(void)source; (void)hash; (void)output_dir; (void)cc; (void)extra_cflags; (void)quiet;
 	return String();
@@ -164,6 +167,8 @@ String compile_shared_translation(const std::string &source, uint32_t hash,
 		if (!quiet) ERR_PRINT("Sandbox: Failed to publish binary translation: " + final_path);
 		return String();
 	}
+	if (out_new_file != nullptr)
+		*out_new_file = true;
 	if (!quiet)
 		UtilityFunctions::print("Baked binary translation ", hash_string(hash), " -> ", final_path,
 				" (", FileAccess::get_file_as_bytes(final_path).size(), " bytes)");
@@ -341,7 +346,9 @@ bool Sandbox::is_translation_baked() const {
 
 String Sandbox::bake_binary_translation_from_buffer(const PackedByteArray &binary,
 		uint32_t memory_max, const BakeOptions &bake_options, const String &out_dir,
-		const String &compiler, const String &extra_cflags, bool quiet) {
+		const String &compiler, const String &extra_cflags, bool quiet, bool *out_new_file) {
+	if (out_new_file != nullptr)
+		*out_new_file = false;
 #ifdef RISCV_BINARY_TRANSLATION
 	if (binary.is_empty())
 		return String();
@@ -373,7 +380,7 @@ String Sandbox::bake_binary_translation_from_buffer(const PackedByteArray &binar
 		main_segment->wait_for_compilation_complete();
 	const uint32_t hash = main_segment->translation_hash();
 	return compile_shared_translation(source, hash, globalize_directory(out_dir), compiler,
-			extra_cflags, quiet);
+			extra_cflags, quiet, out_new_file);
 #else
 	(void)binary; (void)memory_max; (void)bake_options; (void)out_dir;
 	(void)compiler; (void)extra_cflags; (void)quiet;

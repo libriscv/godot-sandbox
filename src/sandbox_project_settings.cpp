@@ -5,51 +5,58 @@
 
 using namespace godot;
 
-static constexpr char USE_GLOBAL_NAMES[] = "editor/script/use_global_sandbox_names";
+static constexpr char USE_GLOBAL_NAMES[] = "sandbox/general/use_global_sandbox_names";
 static constexpr char USE_GLOBAL_NAMES_HINT[] = "Use customized global names for Sandbox programs";
+static constexpr char PROGRAM_LIBRARIES[] = "sandbox/general/program_libraries";
+static constexpr char PROGRAM_LIBRARIES_HINT[] = "Custom libraries for downloadable Sandbox programs";
 
-static constexpr char DOCKER_ENABLED[] = "editor/script/docker_enabled";
+static constexpr char DOCKER_ENABLED[] = "sandbox/toolchain/docker_enabled";
 static constexpr char DOCKER_ENABLED_HINT[] = "Enable Docker for compilation";
-static constexpr char DOCKER_PATH[] = "editor/script/docker";
+static constexpr char DOCKER_PATH[] = "sandbox/toolchain/docker";
 static constexpr char DOCKER_PATH_HINT[] = "Path to the Docker executable";
-static constexpr char ZIG_PATH[] = "editor/script/zig";
+static constexpr char ZIG_PATH[] = "sandbox/toolchain/zig";
 static constexpr char ZIG_PATH_HINT[] = "Path to the Zig executable";
-static constexpr char CMAKE_PATH[] = "editor/script/cmake";
+static constexpr char CMAKE_PATH[] = "sandbox/toolchain/cmake";
 static constexpr char CMAKE_PATH_HINT[] = "Path to the CMake executable";
-static constexpr char SCONS_PATH[] = "editor/script/sconstruct";
+static constexpr char SCONS_PATH[] = "sandbox/toolchain/sconstruct";
 static constexpr char SCONS_PATH_HINT[] = "Path to the SConstruct executable";
+static constexpr char MAKE_PATH[] = "sandbox/toolchain/make";
+static constexpr char MAKE_PATH_HINT[] = "Path to the Make or Ninja executable";
+static constexpr char GIT_PATH[] = "sandbox/toolchain/git";
+static constexpr char GIT_PATH_HINT[] = "Path to the Git executable";
+static constexpr char SKIP_DEPENDENCY_CHECK[] = "sandbox/toolchain/skip_dependency_check";
+static constexpr char SKIP_DEPENDENCY_CHECK_HINT[] = "Skip the Sandbox dependency check";
 
-static constexpr char ASYNC_COMPILATION[] = "editor/script/async_compilation";
+static constexpr char ASYNC_COMPILATION[] = "sandbox/compilation/async";
 static constexpr char ASYNC_COMPILATION_HINT[] = "Compile scripts asynchronously";
+static constexpr char DEBUG_INFO[] = "sandbox/compilation/debug_info";
+static constexpr char DEBUG_INFO_HINT[] = "Enable debug information when building ELF files";
+static constexpr char GLOBAL_DEFINES[] = "sandbox/compilation/global_defines";
+static constexpr char GLOBAL_DEFINES_HINT[] = "Global defines used when compiling Sandbox programs";
+static constexpr char NATIVE_TYPES[] = "sandbox/compilation/unboxed_arguments";
+static constexpr char NATIVE_TYPES_HINT[] = "Use native types and classes instead of Variants in Sandbox functions where possible";
+
 static constexpr char BINTR_ENABLED[] = "sandbox/binary_translation/enabled";
 static constexpr char BINTR_ENABLED_HINT[] = "Load matching hash-named native translations when available";
 static constexpr char BINTR_AUTO_BAKE[] = "sandbox/binary_translation/auto_bake";
-static constexpr char BINTR_AUTO_BAKE_HINT[] = "Bake release SafeGDScript translations in the background while editing";
+static constexpr char BINTR_AUTO_BAKE_HINT[] = "Experimental background baking of release SafeGDScript translations while editing";
 static constexpr char BINTR_COMPILER[] = "sandbox/binary_translation/compiler";
 static constexpr char BINTR_COMPILER_HINT[] = "System C compiler used for native translations";
 static constexpr char BINTR_EXTRA_CFLAGS[] = "sandbox/binary_translation/extra_cflags";
 static constexpr char BINTR_EXTRA_CFLAGS_HINT[] = "Additional space-separated flags for the native translation compiler";
 static constexpr char BINTR_CACHE_DIR[] = "sandbox/binary_translation/cache_dir";
 static constexpr char BINTR_CACHE_DIR_HINT[] = "Writable directory containing bintr-<hash> native translations";
-static constexpr char NATIVE_TYPES[] = "editor/script/unboxed_types_for_sandbox_arguments";
-static constexpr char NATIVE_TYPES_HINT[] = "Use native types and classes instead of Variants in Sandbox functions where possible";
-static constexpr char DEBUG_INFO[] = "editor/script/debug_info";
-static constexpr char DEBUG_INFO_HINT[] = "Enable debug information when building ELF files";
-static constexpr char GLOBAL_DEFINES[] = "editor/script/global_defines";
-static constexpr char GLOBAL_DEFINES_HINT[] = "Global defines used when compiling Sandbox programs";
-static constexpr char TRAIT_STRUCTURAL_FALLBACK[] = "safe_gdscript/traits/structural_fallback";
-static constexpr char TRAIT_STRUCTURAL_FALLBACK_HINT[] =
-		"Allow `is Trait` to match non-SafeGDScript objects structurally by method names";
 
-static constexpr char GENERATE_RUNTIME_API[] = "editor/script/generate_runtime_api";
+static constexpr char GENERATE_RUNTIME_API[] = "sandbox/runtime_api/generate";
 static constexpr char GENERATE_RUNTIME_API_HINT[] = "Generate the run-time API for the Sandbox";
-static constexpr char METHOD_ARGUMENTS[] = "editor/script/runtime_api_method_arguments";
+static constexpr char METHOD_ARGUMENTS[] = "sandbox/runtime_api/method_arguments";
 static constexpr char METHOD_ARGUMENTS_HINT[] = "Generate method arguments for the run-time API";
-static constexpr char GENAPI_SKIPPED_CLASSES[] = "editor/script/generated_api_skipped_classes";
+static constexpr char GENAPI_SKIPPED_CLASSES[] = "sandbox/runtime_api/skipped_classes";
 static constexpr char GENAPI_SKIPPED_CLASSES_HINT[] = "Matching classes to skip when generating the run-time API";
 
-static constexpr char PROGRAM_LIBRARIES[] = "editor/script/program_libraries";
-static constexpr char PROGRAM_LIBRARIES_HINT[] = "Custom libraries for downloadable Sandbox programs";
+static constexpr char TRAIT_STRUCTURAL_FALLBACK[] = "sandbox/safe_gdscript/trait_structural_fallback";
+static constexpr char TRAIT_STRUCTURAL_FALLBACK_HINT[] =
+		"Allow `is Trait` to match non-SafeGDScript objects structurally by method names";
 
 static void register_setting(
 		const String &p_name,
@@ -73,10 +80,8 @@ static void register_setting(
 	project_settings->set_initial_value(p_name, p_value);
 	project_settings->set_restart_if_changed(p_name, p_needs_restart);
 
-	// HACK(mihe): We want our settings to appear in the order we register them in, but if we start
-	// the order at 0 we end up moving the entire `physics/` group to the top of the tree view, so
-	// instead we give it a hefty starting order and increment from there, which seems to give us
-	// the desired effect.
+	// Keep the settings in registration order within the Sandbox sections without
+	// disturbing the engine categories that use lower order values.
 	static int32_t order = 1000000;
 
 	project_settings->set_order(p_name, order++);
@@ -90,20 +95,58 @@ void register_setting_plain(
 	register_setting(p_name, p_value, p_needs_restart, PROPERTY_HINT_NONE, p_hint_string);
 }
 
+static void migrate_setting(const String &p_old_name, const String &p_new_name) {
+	ProjectSettings *project_settings = ProjectSettings::get_singleton();
+	if (project_settings->has_setting(p_old_name) && !project_settings->has_setting(p_new_name)) {
+		project_settings->set(p_new_name, project_settings->get_setting(p_old_name));
+		project_settings->set(p_old_name, Variant());
+	}
+}
+
 void SandboxProjectSettings::register_settings() {
+	migrate_setting("editor/script/use_global_sandbox_names", USE_GLOBAL_NAMES);
 	register_setting_plain(USE_GLOBAL_NAMES, true, USE_GLOBAL_NAMES_HINT, true);
+	migrate_setting("editor/script/program_libraries", PROGRAM_LIBRARIES);
+	Dictionary libraries;
+	libraries["godot-sandbox-programs"] = "libriscv/godot-sandbox-programs";
+	register_setting_plain(PROGRAM_LIBRARIES, libraries, PROGRAM_LIBRARIES_HINT, false);
+
+	migrate_setting("editor/script/docker_enabled", DOCKER_ENABLED);
 	register_setting_plain(DOCKER_ENABLED, true, DOCKER_ENABLED_HINT, true);
+	migrate_setting("editor/script/docker", DOCKER_PATH);
 #ifdef WIN32
 	register_setting_plain(DOCKER_PATH, "C:\\Program Files\\Docker\\Docker\\bin\\", DOCKER_PATH_HINT, true);
 #else
 	register_setting_plain(DOCKER_PATH, "docker", DOCKER_PATH_HINT, true);
 #endif
+	migrate_setting("editor/script/zig", ZIG_PATH);
 	register_setting_plain(ZIG_PATH, "zig", ZIG_PATH_HINT, true);
-	register_setting_plain(SCONS_PATH, "scons", SCONS_PATH_HINT, true);
+	migrate_setting("editor/script/cmake", CMAKE_PATH);
 	register_setting_plain(CMAKE_PATH, "cmake", CMAKE_PATH_HINT, true);
+	migrate_setting("editor/script/sconstruct", SCONS_PATH);
+	register_setting_plain(SCONS_PATH, "scons", SCONS_PATH_HINT, true);
+	migrate_setting("editor/script/make", MAKE_PATH);
+#ifdef WIN32
+	register_setting_plain(MAKE_PATH, "ninja", MAKE_PATH_HINT, false);
+#else
+	register_setting_plain(MAKE_PATH, "make", MAKE_PATH_HINT, false);
+#endif
+	migrate_setting("editor/script/git", GIT_PATH);
+	register_setting_plain(GIT_PATH, "git", GIT_PATH_HINT, false);
+	migrate_setting("editor/script/skip", SKIP_DEPENDENCY_CHECK);
+	register_setting_plain(SKIP_DEPENDENCY_CHECK, false, SKIP_DEPENDENCY_CHECK_HINT, false);
+
+	migrate_setting("editor/script/async_compilation", ASYNC_COMPILATION);
 	register_setting_plain(ASYNC_COMPILATION, true, ASYNC_COMPILATION_HINT, false);
+	migrate_setting("editor/script/debug_info", DEBUG_INFO);
+	register_setting_plain(DEBUG_INFO, false, DEBUG_INFO_HINT, false);
+	migrate_setting("editor/script/global_defines", GLOBAL_DEFINES);
+	register_setting_plain(GLOBAL_DEFINES, Array(), GLOBAL_DEFINES_HINT, false);
+	migrate_setting("editor/script/unboxed_types_for_sandbox_arguments", NATIVE_TYPES);
+	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
+
 	register_setting_plain(BINTR_ENABLED, true, BINTR_ENABLED_HINT, true);
-	register_setting_plain(BINTR_AUTO_BAKE, true, BINTR_AUTO_BAKE_HINT, false);
+	register_setting_plain(BINTR_AUTO_BAKE, false, BINTR_AUTO_BAKE_HINT, false);
 	String bintr_compiler = "cc";
 #if defined(_MSC_VER) && !defined(__MINGW32__) && !defined(__MINGW64__)
 	bintr_compiler = "cl";
@@ -122,14 +165,12 @@ void SandboxProjectSettings::register_settings() {
 	register_setting_plain(BINTR_COMPILER, bintr_compiler, BINTR_COMPILER_HINT, true);
 	register_setting_plain(BINTR_EXTRA_CFLAGS, String(), BINTR_EXTRA_CFLAGS_HINT, false);
 	register_setting_plain(BINTR_CACHE_DIR, "user://sandbox_bintr/", BINTR_CACHE_DIR_HINT, true);
-	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
-	register_setting_plain(DEBUG_INFO, false, DEBUG_INFO_HINT, false);
-	register_setting_plain(GLOBAL_DEFINES, Array(), GLOBAL_DEFINES_HINT, false);
-#ifndef SAFEGDSCRIPT_DISABLED
-	register_setting_plain(TRAIT_STRUCTURAL_FALLBACK, true, TRAIT_STRUCTURAL_FALLBACK_HINT, false);
-#endif
+
+	migrate_setting("editor/script/generate_runtime_api", GENERATE_RUNTIME_API);
 	register_setting_plain(GENERATE_RUNTIME_API, true, GENERATE_RUNTIME_API_HINT, false);
+	migrate_setting("editor/script/runtime_api_method_arguments", METHOD_ARGUMENTS);
 	register_setting_plain(METHOD_ARGUMENTS, false, METHOD_ARGUMENTS_HINT, true);
+	migrate_setting("editor/script/generated_api_skipped_classes", GENAPI_SKIPPED_CLASSES);
 	Array skipped_classes;
 	skipped_classes.push_back("Editor");
 	skipped_classes.push_back("Multiplayer");
@@ -140,9 +181,10 @@ void SandboxProjectSettings::register_settings() {
 	skipped_classes.push_back("OS");
 	register_setting_plain(GENAPI_SKIPPED_CLASSES, skipped_classes, GENAPI_SKIPPED_CLASSES_HINT, false);
 
-	Dictionary libraries;
-	libraries["godot-sandbox-programs"] = "libriscv/godot-sandbox-programs";
-	register_setting_plain(PROGRAM_LIBRARIES, libraries, PROGRAM_LIBRARIES_HINT, false);
+#ifndef SAFEGDSCRIPT_DISABLED
+	migrate_setting("safe_gdscript/traits/structural_fallback", TRAIT_STRUCTURAL_FALLBACK);
+	register_setting_plain(TRAIT_STRUCTURAL_FALLBACK, true, TRAIT_STRUCTURAL_FALLBACK_HINT, false);
+#endif
 }
 
 template <typename TType>

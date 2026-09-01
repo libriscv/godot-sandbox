@@ -916,6 +916,8 @@ public:
 	/// @brief Queue a release SafeGDScript ELF for background baking.
 	/// @note C++ integration helper; the copy is independent of any live machine.
 	static void queue_binary_translation_bake(PackedByteArray binary, uint32_t memory_max);
+	/// @brief Return background auto-bake counters for editor integration tests.
+	static Dictionary _get_auto_bake_stats();
 
 	/// @brief Open a shared library, which should self-register its functions.
 	/// @param shared_library_path The path to the shared library.
@@ -1063,7 +1065,8 @@ private:
 			uint32_t *r_hash = nullptr) const;
 	static String bake_binary_translation_from_buffer(const PackedByteArray &binary,
 			uint32_t memory_max, const BakeOptions &options, const String &out_dir,
-			const String &compiler, const String &extra_cflags, bool quiet);
+			const String &compiler, const String &extra_cflags, bool quiet,
+			bool *out_new_file = nullptr);
 	static String binary_translation_cache_dir(bool create);
 	static String binary_translation_path(uint32_t hash, const String &out_dir = "");
 	static bool bintr_lookup_enabled();

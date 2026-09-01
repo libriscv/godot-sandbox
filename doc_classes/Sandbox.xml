@@ -5,7 +5,7 @@
 	</brief_description>
 	<description>
 		The Sandbox class is designed to run ELFScript resources or byte arrays from unknown sources, encapsulating them in a controlled environment. It provides a way to execute code with restricted access to the Godot engine's API and resources.
-		Shared objects are automatically loaded from the exported game's [code]bintr/[/code] directory or [code]sandbox/binary_translation/cache_dir[/code]. A missing or stale object silently falls back to asmjit or the interpreter. Set the [code]BINTR_CACHE=0[/code] env var to disable this.
+		Shared objects are automatically loaded from the exported game's [code]bintr/[/code] directory or [code]sandbox/binary_translation/cache_dir[/code]. A missing or stale object silently falls back to asmjit or the interpreter. Set the [code]BINTR_CACHE=0[/code] env var to disable this. The experimental [code]sandbox/binary_translation/auto_bake[/code] editor feature is disabled by default and may be enabled to compile release SafeGDScript translations in the background.
 	</description>
 	<tutorials>
 	</tutorials>

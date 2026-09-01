@@ -17,6 +17,11 @@ var status = {
 	"installing": "[color=yellow]Installing[/color]"
 }
 
+func _toolchain_setting(name: String, old_name: String, default: Variant) -> Variant:
+	return ProjectSettings.get_setting(
+		"sandbox/toolchain/%s" % name,
+		ProjectSettings.get_setting("editor/script/%s" % old_name, default))
+
 func _ready():
 	match OS.get_name():
 		"Windows":
@@ -41,12 +46,12 @@ func _ready():
 	_update_status()
 
 func _update_status():
-	if ProjectSettings.get_setting("editor/script/skip", false):
+	if _toolchain_setting("skip_dependency_check", "skip", false):
 		hide()
 		return
 	# CMake
 	var output := []
-	var exit_code := OS.execute(ProjectSettings.get_setting("editor/script/cmake", "cmake"), ["--version"], output, true)
+	var exit_code := OS.execute(_toolchain_setting("cmake", "cmake", "cmake"), ["--version"], output, true)
 	
 	if exit_code == 0:
 		cmake_status.text = "CMake: " + status["installed"]
@@ -57,7 +62,7 @@ func _update_status():
 	output = []
 	# Make (Linux/macOS) or Ninja (Windows)
 	if OS.get_name() == "Windows":
-		exit_code = OS.execute(ProjectSettings.get_setting("editor/script/make", "ninja"), ["--version"], output, true)
+		exit_code = OS.execute(_toolchain_setting("make", "make", "ninja"), ["--version"], output, true)
 		if exit_code == 0:
 			make_status.text = "Ninja: " + status["installed"]
 		else:
@@ -65,7 +70,7 @@ func _update_status():
 			make_status.text = "Ninja: " + status["not_installed"]
 			show()
 	else:
-		exit_code = OS.execute(ProjectSettings.get_setting("editor/script/make", "make"), ["--version"], output, true)
+		exit_code = OS.execute(_toolchain_setting("make", "make", "make"), ["--version"], output, true)
 		if exit_code == 0:
 			make_status.text = "Make: " + status["installed"]
 		else:
@@ -75,7 +80,7 @@ func _update_status():
 
 	output = []
 	# Git
-	exit_code = OS.execute(ProjectSettings.get_setting("editor/script/git", "git"), ["--version"], output, true)
+	exit_code = OS.execute(_toolchain_setting("git", "git", "git"), ["--version"], output, true)
 	
 	if exit_code == 0:
 		git_status.text = "Git: " + status["installed"]
@@ -85,7 +90,7 @@ func _update_status():
 		show()
 	output = []
 	# Zig
-	exit_code = OS.execute(ProjectSettings.get_setting("editor/script/zig", "zig"), ["--help"], output, true)
+	exit_code = OS.execute(_toolchain_setting("zig", "zig", "zig"), ["--help"], output, true)
 	
 	if exit_code == 0:
 		zig_status.text = "Zig: " + status["installed"]
@@ -195,7 +200,8 @@ func _on_download_complete(result, response_code, headers, body, downloaded_name
 		"macOS":
 			if downloaded_name == "cmake":
 				binary_name = "CMake.app/Contents/bin/cmake"
-	ProjectSettings.set("editor/script/%s" % downloaded_name, ProjectSettings.globalize_path("user://godot-sandbox/%s" % downloaded_name).path_join(binary_name))
+	var setting_name := "make" if downloaded_name == "ninja" else downloaded_name
+	ProjectSettings.set_setting("sandbox/toolchain/%s" % setting_name, ProjectSettings.globalize_path("user://godot-sandbox/%s" % downloaded_name).path_join(binary_name))
 	ProjectSettings.save()
 	_update_status()
 
@@ -239,6 +245,6 @@ func _on_button_pressed() -> void:
 
 
 func _on_skip_pressed() -> void:
-	ProjectSettings.set_setting("editor/script/skip", true)
+	ProjectSettings.set_setting("sandbox/toolchain/skip_dependency_check", true)
 	ProjectSettings.save()
 	hide()

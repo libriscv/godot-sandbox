@@ -35,11 +35,17 @@ func _compiler_available() -> bool:
 	return OS.execute(compiler, args, [], true) == 0
 
 func _compiled_content() -> PackedByteArray:
+	return _compiled_content_from(SOURCE)
+
+func _compiled_content_from(source: String) -> PackedByteArray:
 	var script := SafeGDScript.new()
-	script.set_source_code(SOURCE)
+	script.set_source_code(source)
 	assert_eq(script.get_compile_error(), "")
 	assert_eq(script.get_translation_hash(), 0, "a script without an instance has no live machine")
 	return script.get_content()
+
+func _cache_files() -> PackedStringArray:
+	return DirAccess.get_files_at("user://test_sandbox_bintr/")
 
 func _sandbox(content: PackedByteArray, nbit_as := true) -> Sandbox:
 	var sandbox := Sandbox.new()
@@ -48,6 +54,39 @@ func _sandbox(content: PackedByteArray, nbit_as := true) -> Sandbox:
 	sandbox.binary_translation_nbit_as = nbit_as
 	sandbox.load_buffer(content)
 	return sandbox
+
+func test_auto_bake_batch_stats():
+	if not Sandbox.has_feature_binary_translation():
+		pending("the extension was built without the C99 binary translator")
+		return
+	if not OS.has_feature("editor"):
+		pending("the auto-bake test hooks are editor-only")
+		return
+	if not _compiler_available():
+		pending("the configured binary-translation C compiler is unavailable")
+		return
+
+	var unique := Time.get_ticks_usec()
+	var content := _compiled_content_from("func auto_bake_%d():\n\treturn %d\n" % [unique, unique])
+	var files_before := _cache_files()
+	Sandbox._queue_binary_translation_bake(content, 32)
+	Sandbox._queue_binary_translation_bake(content, 32)
+
+	var deadline := Time.get_ticks_msec() + 30000
+	var stats: Dictionary = Sandbox._get_auto_bake_stats()
+	while stats.pending > 0 and Time.get_ticks_msec() < deadline:
+		await get_tree().create_timer(0.05).timeout
+		stats = Sandbox._get_auto_bake_stats()
+	assert_eq(stats.pending, 0, "the auto-bake batch should finish before the timeout")
+	assert_eq(stats.new, 1, "deduplicated bakes should publish one new translation")
+
+	var new_files: PackedStringArray
+	for file in _cache_files():
+		if file not in files_before:
+			new_files.push_back(file)
+	assert_eq(new_files.size(), 1, "the batch should add one cache file")
+	for file in new_files:
+		_baked_paths.push_back(ProjectSettings.globalize_path("user://test_sandbox_bintr/" + file))
 
 func test_hash_named_binary_translation():
 	if not Sandbox.has_feature_binary_translation():

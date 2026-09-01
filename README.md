@@ -65,7 +65,7 @@ func on_death() -> void:
 Traits are nominal for SafeGDScript classes (`value is Damageable`) and may be
 used as type hints. Foreign Godot objects can satisfy a trait structurally by
 providing every instance method declared by it. Disable that compatibility path
-with `safe_gdscript/traits/structural_fallback` for strictly nominal matching.
+with `sandbox/safe_gdscript/trait_structural_fallback` for strictly nominal matching.
 
 ```gdscript
 struct Item:
