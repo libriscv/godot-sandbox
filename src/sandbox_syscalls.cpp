@@ -1142,6 +1142,35 @@ static void vcall_impl(machine_t &machine, bool super) {
 	// Both call paths have Godot construct the return value directly in this storage.
 	CallResult result;
 	const std::string_view method_name = method_sv.substr(0, mlen);
+	static constexpr std::string_view static_prefix = "__safegdscript_static__:";
+	if (vp->type == Variant::STRING) {
+		BorrowedVariant receiver(emu, *vp);
+		const CharString utf8 = receiver->operator String().utf8();
+		const std::string_view receiver_name(utf8.get_data(), utf8.length());
+		if (receiver_name.starts_with(static_prefix)) {
+			const std::string type_name(receiver_name.substr(static_prefix.size()));
+			const int type_number = std::stoi(type_name);
+			if (type_number < Variant::NIL || type_number >= Variant::VARIANT_MAX) {
+				throw std::runtime_error("Invalid built-in static Variant type: " + type_name);
+			}
+			const Variant::Type type = static_cast<Variant::Type>(type_number);
+			BorrowedVariantScratch scratch;
+			const Variant *argptrs[gdscript::CallABI::MAX_ARGUMENTS];
+			for (int i = 0; i < args_size; i++) argptrs[i] = scratch.emplace(emu, args[i]);
+			GDExtensionCallError error;
+			internal::gdextension_interface_variant_call_static(
+				static_cast<GDExtensionVariantType>(type), cached_method->sname._native_ptr(),
+				reinterpret_cast<GDExtensionConstVariantPtr *>(argptrs), args_size,
+				&result.get(), &error);
+			result.mark_constructed();
+			throw_on_call_error(error, method_name, type_name.c_str(), argptrs, args_size);
+			if (vret_addr != 0) {
+				GuestVariant *vret = machine.memory.memarray<GuestVariant>(vret_addr, 1);
+				vret->create(emu, std::move(result.get()));
+			}
+			return;
+		}
+	}
 
 	if (vp->type == Variant::OBJECT) {
 		godot::Object *obj = get_object_from_address(emu, vp->v.i);
@@ -2403,6 +2432,16 @@ APICALL(api_obj_property_get) {
 		throw std::runtime_error("Banned property accessed: " + std::string(method));
 	}
 
+	// Object::get() skips methods, so `object.method` must return a Callable explicitly.
+	if (obj->has_method(prop_name)) {
+		if (UNLIKELY(!emu.is_allowed_method(obj, cached_property->variant))) {
+			ERR_PRINT("Method reference not allowed: " + prop_name);
+			throw std::runtime_error("Method reference not allowed: " + std::string(method));
+		}
+		vret->create(emu, Variant(Callable(obj, prop_name)));
+		return;
+	}
+
 	vret->create(emu, obj->get(prop_name));
 }
 
@@ -2524,6 +2563,12 @@ APICALL(api_get_node) {
 
 	if (addr == 0) {
 		auto *owner_node = emu.get_tree_base();
+		if (c_name == "." && owner_node == nullptr) {
+			if (godot::Object *owner = emu.get_script_instance_owner()) {
+				machine.set_result(emu.add_scoped_object(owner));
+				return;
+			}
+		}
 		if (owner_node == nullptr) {
 			ERR_PRINT("Sandbox has no parent Node");
 			machine.set_result(0);

@@ -325,8 +325,9 @@ void Lexer::handle_indent() {
 	m_at_line_start = false;
 
 	int current_indent = m_indent_stack.back();
+	// Continuation indent between lambda body and enclosing call still closes the suite.
 	const bool leaving_lambda = !m_lambda_layouts.empty() &&
-		indent_level <= m_lambda_layouts.back().base_indent;
+		indent_level < current_indent;
 
 	if (indent_level > current_indent) {
 		m_indent_stack.push_back(indent_level);
@@ -345,7 +346,8 @@ void Lexer::handle_indent() {
 		}
 	}
 
-	while (!m_lambda_layouts.empty() && indent_level <= m_lambda_layouts.back().base_indent) {
+	while (!m_lambda_layouts.empty() &&
+		(indent_level <= m_lambda_layouts.back().base_indent || leaving_lambda)) {
 		m_lambda_layouts.pop_back();
 	}
 }

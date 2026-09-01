@@ -8443,6 +8443,8 @@ func test_sgd_await_resume_after_the_named_owner_is_freed():
 	assert_true(completed[0], "the resumed frame finished rather than taking the process down")
 	assert_eq(second.call("get_coroutine_count"), 0, "and it was retired")
 
+	# get_name() on the freed owner: the errors the resumed frame is expected to
+	# report, claimed here so the run stays clean.
 	assert_engine_error("Sandbox has no parent Node")
 	assert_engine_error("Object is Null")
 	assert_engine_error("Object is Null")
@@ -12762,6 +12764,34 @@ func exists(path):
 		"and answers the engine's own result")
 	s.queue_free()
 
+func test_sgd_a_static_method_on_a_builtin_type():
+	var source := """
+func hex(value):
+	return String.num_int64(value, 16)
+
+func hsv():
+	return Color.from_hsv(0.0, 1.0, 1.0)
+
+func angle():
+	return Vector2.from_angle(0.0)
+
+func euler():
+	return Basis.from_euler(Vector3(0.0, PI * 0.5, 0.0))
+"""
+	var s = _compile_and_load(source, 4000000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("hex", 255), "ff",
+		"a static method on a built-in type is called on the type, not through ClassDB")
+	assert_true(s.vmcallv("hsv").is_equal_approx(Color(1, 0, 0)),
+		"Color.from_hsv answers the engine's own result")
+	assert_true(s.vmcallv("angle").is_equal_approx(Vector2(1, 0)),
+		"Vector2.from_angle answers the engine's own result")
+	assert_almost_eq(s.vmcallv("euler").x.z, -1.0, 0.0001,
+		"Basis.from_euler answers the engine's own result")
+	s.free()
+
 func test_sgd_a_method_reference_through_self_is_a_callable():
 	var source := """
 var seen = 0
@@ -13135,9 +13165,9 @@ func test_sgd_instance_belongs_in_a_container_typed_by_its_script():
 
 	node.free()
 
-func test_sgd_refuses_a_script_class_it_does_not_contain():
-	# A project class_name script is not an engine singleton, so this used to
-	# lower to a property read on the owner Node and answer null at run time.
+func test_sgd_reaches_a_script_class_it_does_not_contain():
+	# A project class_name script is neither an engine singleton nor merged into
+	# this ELF. Its statics now cross the boundary through a short-lived instance.
 	var path = "user://temp_chain_outsider.sgd"
 	var file = FileAccess.open(path, FileAccess.WRITE)
 	file.store_string("""
@@ -13148,12 +13178,12 @@ func f():
 	var script = SafeGDScript.new()
 	script.take_over_path(path)
 	script.source_code = FileAccess.get_file_as_string(path)
-	assert_ne(script.get_compile_error(), "",
-		"reaching into a script class outside the chain should be a compile error")
-	assert_true(script.get_compile_error().contains("none of its body is compiled"),
-		"and should say why: " + script.get_compile_error())
-	assert_engine_error("none of its body is compiled into this program",
-		"the failed compile is reported, not swallowed")
+	assert_eq(script.get_compile_error(), "",
+		"a static method on another script class should compile")
+	var node = Node.new()
+	node.set_script(script)
+	assert_eq(node.call("f"), 4, "the cross-file static call should run")
+	node.free()
 
 
 func test_sgd_rebuilds_when_its_base_changes():

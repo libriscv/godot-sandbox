@@ -25,8 +25,7 @@ bool SafeGDScriptInstance::set(const StringName &p_name, const Variant &p_value)
 	}
 
 	Sandbox *sandbox = current_sandbox;
-	ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
-	ScopedInstanceBase sib(sandbox, this->current_instance_base());
+	ScopedCallContext ctx(sandbox, this->owner, this->current_instance_base());
 	if (sandbox->set_property(p_name, p_value)) {
 		return true;
 	}
@@ -40,8 +39,7 @@ bool SafeGDScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 		return true;
 	}
 	Sandbox *sandbox = current_sandbox;
-	ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
-	ScopedInstanceBase sib(sandbox, this->current_instance_base());
+	ScopedCallContext ctx(sandbox, this->owner, this->current_instance_base());
 	if (sandbox->get_property(p_name, r_ret)) {
 		return true;
 	}
@@ -97,8 +95,7 @@ Variant SafeGDScriptInstance::callp(
 			args.push_back(*p_args[i]);
 		}
 		r_error.error = GDEXTENSION_CALL_OK;
-		ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
-		ScopedInstanceBase sib(sandbox, this->current_instance_base());
+		ScopedCallContext ctx(sandbox, this->owner, this->current_instance_base());
 		return sandbox->callv(p_method, args);
 	}
 
@@ -108,8 +105,7 @@ Variant SafeGDScriptInstance::callp(
 	}
 
 	//WARN_PRINT("SafeGDScriptInstance::callp: Calling method " + p_method + " at address " + itos(address) + " with " + itos(p_argument_count) + " arguments.");
-	ScopedTreeBase stb(sandbox, fast_cast_to<Node>(this->owner));
-	ScopedInstanceBase sib(sandbox, this->current_instance_base());
+	ScopedCallContext ctx(sandbox, this->owner, this->current_instance_base());
 	return sandbox->vmcall_address(address, completed.args(), completed.argcount(), r_error);
 }
 
@@ -435,6 +431,9 @@ SafeGDScriptInstance::SafeGDScriptInstance(Object *p_owner, const Ref<SafeGDScri
 {
 	this->current_sandbox = create_sandbox(p_owner, p_script);
 	this->current_sandbox->set_tree_base(fast_cast_to<godot::Node>(owner));
+	if (fast_cast_to<Node>(owner) == nullptr) {
+		this->current_sandbox->set_script_instance_owner(owner);
+	}
 	// A script-level `var` is a member: this instance gets its own, initialized
 	// the way the program initialized its own at startup.
 	this->instance_base = this->current_sandbox->create_instance_record();

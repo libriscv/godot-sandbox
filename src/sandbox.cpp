@@ -515,6 +515,10 @@ godot::Node *Sandbox::get_tree_base() const {
 	}
 	return Object::cast_to<Node>(ObjectDB::get_instance(this->m_tree_base));
 }
+godot::Object *Sandbox::get_script_instance_owner() const {
+	return this->m_script_instance_owner.is_null() ? nullptr
+		: ObjectDB::get_instance(this->m_script_instance_owner);
+}
 
 void Sandbox::read_instance_layout() {
 	this->m_instance_base = 0;

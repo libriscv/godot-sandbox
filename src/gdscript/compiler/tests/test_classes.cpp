@@ -1670,16 +1670,21 @@ void test_what_a_chain_refuses() {
 	check(restricted_compiler.get_error().find("restricted") != std::string::npos,
 		"and says so: " + restricted_compiler.get_error());
 
-	// The chain is what makes a script class reachable; anything else is not.
-	const std::string outside = chain_error(
+	check(!compile_chain(
 		"extends Base\n"
 		"func f():\n"
 		"\treturn Elsewhere.helper()\n",
+		{ { "Base", "extends Node\nclass_name Base\n" } }).empty(),
+		"a script class outside the chain is reached through an instance");
+	const std::string bare = chain_error(
+		"extends Base\n"
+		"func f():\n"
+		"\treturn Elsewhere\n",
 		{ { "Base", "extends Node\nclass_name Base\n" } });
-	check(outside.find("none of its body is compiled into this program") != std::string::npos,
-		"a script class outside the chain is a compile error: " + outside);
+	check(bare.find("none of its body is compiled into this program") != std::string::npos,
+		"a script class is not a value on its own: " + bare);
 
-	std::cout << "  \u2713 Collisions, cycles and outsiders are refused" << std::endl;
+	std::cout << "  \u2713 Collisions and cycles are refused" << std::endl;
 }
 
 } // namespace

@@ -419,6 +419,12 @@ public:
 	/// try to access the node path ".", they will be accessing this node, and navigating relative to it.
 	void set_tree_base(godot::Node *tree_base);
 	godot::Node *get_tree_base() const;
+	void set_script_instance_owner(godot::Object *owner) noexcept {
+		m_script_instance_owner = owner != nullptr ? owner->get_instance_id() : godot::ObjectID();
+	}
+	void set_script_instance_owner_id(godot::ObjectID owner) noexcept { m_script_instance_owner = owner; }
+	godot::ObjectID get_script_instance_owner_id() const noexcept { return m_script_instance_owner; }
+	godot::Object *get_script_instance_owner() const;
 
 	godot::ObjectID get_tree_base_id() const noexcept { return this->m_tree_base; }
 	void set_tree_base_id(godot::ObjectID tree_base) noexcept { this->m_tree_base = tree_base; }
@@ -1116,6 +1122,7 @@ private:
 
 	machine_t *m_machine = nullptr;
 	godot::ObjectID m_tree_base;
+	godot::ObjectID m_script_instance_owner;
 	godot::ObjectID m_script_owner;
 	uint32_t m_max_refs = MAX_REFS;
 	uint32_t m_memory_max = MAX_VMEM;

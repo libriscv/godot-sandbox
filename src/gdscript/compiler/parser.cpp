@@ -489,7 +489,23 @@ StructDecl Parser::parse_struct() {
 			continue;
 		}
 
-		const bool is_static = match(TokenType::STATIC);
+		bool is_static = match(TokenType::STATIC);
+
+		if (check(TokenType::AT)) {
+			bool ignored_export = false;
+			bool ignored_onready = false;
+			std::optional<RPCConfig> ignored_rpc;
+			ExportHint ignored_hint;
+			while (check(TokenType::AT)) {
+				ignored_export = parse_attribute(ignored_hint, &ignored_onready, &ignored_rpc) || ignored_export;
+				skip_newlines();
+			}
+			(void)ignored_export;
+			is_static = match(TokenType::STATIC) || is_static;
+			if (!check(TokenType::FUNC)) {
+				error("A class annotation can only be applied to a function");
+			}
+		}
 		if (check(TokenType::FUNC)) {
 			FunctionDecl method = parse_function();
 			method.is_static = is_static;
@@ -631,7 +647,23 @@ StructDecl Parser::parse_class() {
 			continue;
 		}
 
-		const bool is_static = match(TokenType::STATIC);
+		bool is_static = match(TokenType::STATIC);
+
+		if (check(TokenType::AT)) {
+			bool ignored_export = false;
+			bool ignored_onready = false;
+			std::optional<RPCConfig> ignored_rpc;
+			ExportHint ignored_hint;
+			while (check(TokenType::AT)) {
+				ignored_export = parse_attribute(ignored_hint, &ignored_onready, &ignored_rpc) || ignored_export;
+				skip_newlines();
+			}
+			(void)ignored_export;
+			is_static = match(TokenType::STATIC) || is_static;
+			if (!check(TokenType::FUNC)) {
+				error("A class annotation can only be applied to a function");
+			}
+		}
 
 		if (check(TokenType::FUNC)) {
 			FunctionDecl method = parse_function();

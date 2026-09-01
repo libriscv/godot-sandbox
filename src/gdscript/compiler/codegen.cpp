@@ -435,13 +435,18 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		m_global_array_element_traits.push_back(array_element_trait);
 		m_global_dictionary_value_traits.push_back(dictionary_value_trait);
 		const TypeSet declared = type_set_from(global.type_hint, global.line, global.column);
-		m_global_sets.push_back(global.type_hint.is_union() ? declared : TypeSet{});
+		// A class hint accepts null without needing `?`, like an engine object hint.
+		const bool nullable_script_class = global_struct != nullptr && global_struct->is_class;
+		TypeSet global_set = declared;
+		if (nullable_script_class) global_set.mask |= uint64_t(1) << Variant::NIL;
+		m_global_sets.push_back((global.type_hint.is_union() || nullable_script_class)
+			? global_set : TypeSet{});
 		m_global_type_names.push_back(global.type_hint.to_string());
 		if (global.type_hint.is_union() && !declared.is_nullable_single() && global.is_property) {
 			error_at("A union-typed variable cannot be exported", global.line, global.column,
 				"The inspector has no property hint for union types yet");
 		}
-		if (global_struct != nullptr) {
+		if (global_struct != nullptr && !nullable_script_class) {
 			m_global_types.push_back(Variant::DICTIONARY);
 		} else {
 			m_global_types.push_back(global.type_hint.is_union()
@@ -488,10 +493,12 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			? ir_program.has_member_init
 			: ir_program.has_global_init;
 		m_members_in_scope = ir_global.is_member();
+		const bool nullable_script_class = m_global_structs[i] != nullptr &&
+			m_global_structs[i]->is_class;
 
 		if (!global.type_hint.empty()) {
 			ir_global.type_hint = m_global_types[i];
-			if (global.type_hint.is_union()) {
+			if (global.type_hint.is_union() || nullable_script_class) {
 				ir_global.declared_set = m_global_sets[i].mask;
 			}
 		}
@@ -519,8 +526,8 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		}
 
 		if (!global.initializer) {
-			if (global.type_hint.is_union()) {
-				if (global.type_hint.nullable) {
+			if (global.type_hint.is_union() || nullable_script_class) {
+				if (global.type_hint.nullable || nullable_script_class) {
 					ir_global.init_type = IRGlobalVar::InitType::NULL_VAL;
 					ir_global.value_type = IRInstruction::TypeHint_NONE;
 				} else {
@@ -581,7 +588,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 				}
 				coerce_folded_initializer(ir_global, global.type_hint,
 					global.line, global.column);
-				ir_global.value_type = global.type_hint.is_union()
+				ir_global.value_type = ir_global.declared_set != 0
 					? IRInstruction::TypeHint_NONE : derive_global_value_type(ir_global);
 			} else {
 				// Not a compile-time constant: evaluate it at startup.
@@ -596,7 +603,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 					reg = require_struct_value(reg, *m_global_structs[i],
 						"global '" + global.name + "'", target, global.line, global.column);
 				}
-				if (global.type_hint.is_union()) {
+				if (global.type_hint.is_union() || nullable_script_class) {
 					reg = coerce_to_declared_type(reg, m_global_sets[i], target,
 						"global '" + global.name + "'", global.line, global.column,
 						global.type_hint.to_string());
@@ -802,7 +809,13 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const Stru
 	coerce_parameters(decl.parameters, func);
 
 	for (const auto& stmt : decl.body) {
+		const auto* expr_stmt = dynamic_cast<const ExprStmt*>(stmt.get());
+		const auto* call = expr_stmt != nullptr
+			? dynamic_cast<const CallExpr*>(expr_stmt->expression.get()) : nullptr;
+		const int scope_id = call != nullptr && is_local_function(call->function_name)
+			? open_scope(func) : -1;
 		gen_stmt(stmt.get(), func);
+		emit_scope_release(scope_id, func);
 	}
 
 	if (func.ir.instructions.empty() ||
@@ -6538,7 +6551,54 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		}
 	}
 
+	// Cross-file script class: instantiate to reach its constants and statics.
 	if (auto* object = dynamic_cast<const VariableExpr*>(object_expr)) {
+		if (find_variable(func, object->name) == nullptr) {
+			if (const std::string* path = global_script_class_path(object->name)) {
+				MemberCallExpr constructor(std::make_unique<VariableExpr>(object->name), "new",
+					{}, true);
+				const int instance = gen_script_class_new(object->name, *path, &constructor, func);
+				if (!expr->is_method_call) {
+					const int result = gen_member_read(instance, expr->member_name, func, expr);
+					free_register(func, instance);
+					return result;
+				}
+				reject_named_arguments(*expr, "'" + expr->member_name + "'", expr);
+				std::vector<int> args;
+				for (const auto& argument : expr->arguments) args.push_back(gen_expr(argument.get(), func));
+				const int result = alloc_register(func);
+				IRInstruction call(IROpcode::VCALL);
+				call.operands = { IRValue::reg(result), IRValue::reg(instance),
+					ir_str(expr->member_name), IRValue::imm(int64_t(args.size())) };
+				for (int arg : args) call.operands.push_back(IRValue::reg(arg));
+				func.ir.instructions.push_back(std::move(call));
+				free_register(func, instance);
+				for (int arg : args) free_register(func, arg);
+				return result;
+			}
+		}
+	}
+
+	if (auto* object = dynamic_cast<const VariableExpr*>(object_expr)) {
+		// Built-in Variant statics (Color.from_hsv, etc.) bypass ClassDB.
+		if (expr->is_method_call) {
+			const Variant::Type type = names_a_builtin_type(object->name, func);
+			if (type != Variant::VARIANT_MAX) {
+				std::vector<int> args;
+				for (const auto& argument : expr->arguments) args.push_back(gen_expr(argument.get(), func));
+				const int receiver = gen_string_value("__safegdscript_static__:" +
+					std::to_string(static_cast<int>(type)), func);
+				const int result = alloc_register(func);
+				IRInstruction call(IROpcode::VCALL);
+				call.operands = { IRValue::reg(result), IRValue::reg(receiver),
+					ir_str(expr->member_name), IRValue::imm(int64_t(args.size())) };
+				for (int arg : args) call.operands.push_back(IRValue::reg(arg));
+				func.ir.instructions.push_back(std::move(call));
+				free_register(func, receiver);
+				for (int arg : args) free_register(func, arg);
+				return result;
+			}
+		}
 		if (names_an_engine_type(object->name, func)) {
 			if (!expr->is_method_call) {
 				return gen_engine_class_constant(object->name, expr->member_name, func);
@@ -9756,6 +9816,21 @@ bool CodeGenerator::names_an_engine_type(const std::string& name, FunctionContex
 		global_script_class_path(name) == nullptr &&
 		!is_inline_primitive_constructor(name) &&
 		!is_host_constructor(name) && find_signal(name) == nullptr;
+}
+
+Variant::Type CodeGenerator::names_a_builtin_type(const std::string& name, FunctionContext& func) {
+	if (name.empty() || name[0] < 'A' || name[0] > 'Z') {
+		return Variant::VARIANT_MAX;
+	}
+	const bool shadowed = find_variable(func, name) != nullptr ||
+		m_enums.count(name) != 0 || is_global_variable(name) ||
+		is_autoload(name) || is_local_function(name) ||
+		find_struct(name) != nullptr || find_signal(name) != nullptr ||
+		global_script_class_path(name) != nullptr;
+	if (shadowed) {
+		return Variant::VARIANT_MAX;
+	}
+	return Variant::type_from_name(name);
 }
 
 bool CodeGenerator::is_autoload(const std::string& name) const {

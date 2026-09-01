@@ -157,31 +157,28 @@ static void test_too_many_parameters_is_refused() {
 	std::cout << "  ✓ a function with more than sixteen parameters is refused" << std::endl;
 }
 
-// A project `class_name` script is not an engine singleton, so `Other.helper()`
-// used to lower to a property read on the owner Node and answer null at run
-// time. The file compiled clean; the breakage was entirely at run time, which is
-// the failure mode a compiler exists to remove.
-static void test_a_script_class_outside_the_program_is_refused() {
+// Cross-file script class: members reached through an instance, bare name refused.
+static void test_a_script_class_outside_the_program() {
 	Compiler compiler;
 	CompilerOptions options;
 	options.global_script_classes.emplace_back("Other", "res://other.gd");
 
-	assert(compiler.compile("func f():\n\treturn Other.helper()\n", options).empty());
-	const CompilerError &call = compiler.get_error_info();
-	assert(call.has_error);
-	assert(call.type == ErrorType::CODEGEN_ERROR);
-	assert(call.line == 2);
-	assert(contains(call.message, "none of its body is compiled into this program"));
-	assert(contains(call.hint, "Other.new()"));
-
-	// Constants and nested enums miscompiled the same way, one VGET per dot.
-	assert(compiler.compile("func f():\n\treturn Other.Shape.BOX\n", options).empty());
-	assert(contains(compiler.get_error_info().message, "'Other'"));
-
-	// Instantiating one is still how a script reaches another script's body.
+	assert(!compiler.compile("func f():\n\treturn Other.helper()\n", options).empty());
+	assert(!compiler.compile("func f():\n\treturn Other.SCALE\n", options).empty());
+	assert(!compiler.compile("func f():\n\treturn Other.Shape.BOX\n", options).empty());
 	assert(!compiler.compile("func f():\n\treturn Other.new()\n", options).empty());
 
-	std::cout << "  \u2713 reaching into a script class this program does not contain is refused"
+	// The bare name is not a value: without this it falls through to VGET on the
+	// owner and answers null at run time.
+	assert(compiler.compile("func f():\n\treturn Other\n", options).empty());
+	const CompilerError &bare = compiler.get_error_info();
+	assert(bare.has_error);
+	assert(bare.type == ErrorType::CODEGEN_ERROR);
+	assert(bare.line == 2);
+	assert(contains(bare.message, "none of its body is compiled into this program"));
+	assert(contains(bare.hint, "Other.new()"));
+
+	std::cout << "  \u2713 a script class in another file is reached through an instance"
 			  << std::endl;
 }
 
@@ -198,7 +195,7 @@ int main() {
 	test_formatted_message_quotes_the_source_line();
 	test_source_line_survives_crlf();
 	test_too_many_parameters_is_refused();
-	test_a_script_class_outside_the_program_is_refused();
+	test_a_script_class_outside_the_program();
 
 	std::cout << std::endl << "All diagnostics tests passed!" << std::endl;
 	return 0;

@@ -468,6 +468,7 @@ private:
 	int emit_local_call(const std::string& name, std::vector<int> arg_regs,
 		FunctionContext& func, const Expr* site);
 	bool names_an_engine_type(const std::string& name, FunctionContext& func);
+	Variant::Type names_a_builtin_type(const std::string& name, FunctionContext& func);
 	std::string script_level_super_hint() const;
 	const std::string* global_script_class_path(const std::string& name) const;
 	int gen_global_class_get(const std::string& class_name, FunctionContext& func);
