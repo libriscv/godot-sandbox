@@ -9,7 +9,7 @@
 #   ./run_benchmarks.sh --jit              the JIT run only
 #   ./run_benchmarks.sh --no-jit           the interpreter run only
 #   ./run_benchmarks.sh --report           re-print the tables from saved results
-#   ./run_benchmarks.sh --repeat 5         runs of the suite per mode (default 3)
+#   ./run_benchmarks.sh --repeat 5         runs of the suite per mode (default 2)
 #   ./run_benchmarks.sh --verbose          stream each run instead of logging it
 #   ./run_benchmarks.sh --samples 20       rounds per case (default 12)
 #   ./run_benchmarks.sh --cpu 0-7          which cores to run on
@@ -36,7 +36,7 @@ fi
 # code -- where the loader and the allocator put things moves some kernels by
 # more than ten percent, and no number of samples inside that process can see it
 # -- so each mode is run more than once and bench_report.py pools the samples.
-REPEAT=3
+REPEAT=2
 
 VERBOSE=0
 SAVE_BASELINE=0

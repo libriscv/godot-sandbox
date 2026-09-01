@@ -322,6 +322,9 @@ struct IRFunction {
 	// the instruction next to the ECALL_ARRAY_BATCH breaks silently the first
 	// time a pass moves either one.
 	std::vector<std::pair<int, int64_t>> array_batch_scopes;
+	// UTF-32 buffer used when every use of c is code-point-only. Tokens are
+	// opaque like array_batch_scopes: renumbering must not touch them.
+	std::vector<int64_t> codepoint_batch_buffers;
 	// Has AWAIT; gets a resume entry, all parameters forced live.
 	bool is_coroutine = false;
 

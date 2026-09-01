@@ -893,6 +893,16 @@ static double utility_to_float(const Variant &value) {
 }
 
 static inline String utility_stringify(const Sandbox &emu, const GuestVariant &gv) {
+	// Scalars are already in guest memory. Format int/float directly instead of
+	// round-tripping through a temporary Variant. Uses the engine formatter.
+	switch (gv.type) {
+		case Variant::INT:
+			return String::num_int64(gv.v.i);
+		case Variant::FLOAT:
+			return String::num(gv.v.f);
+		default:
+			break;
+	}
 	return BorrowedVariant(emu, gv)->operator String();
 }
 
@@ -3539,9 +3549,6 @@ APICALL(api_string_at) {
 	machine.set_result(emu.create_scoped_variant(std::move(result.get())));
 }
 
-// The per-character cost of `for c in text`. One call fills a run of scoped
-// slots, so the walk's ecall count is its length divided by the batch size
-// rather than its length.
 APICALL(api_string_batch) {
 	auto [str_idx, start, max_count] = machine.sysargs<unsigned, int64_t, unsigned>();
 	Sandbox &emu = riscv::emu(machine);
@@ -3554,7 +3561,10 @@ APICALL(api_string_batch) {
 		throw std::runtime_error("Invalid String object, idx = " + std::to_string(str_idx) + " type = " + GuestVariant::type_name(type));
 	}
 
-	const int64_t length = var_str.operator String().length();
+	// Borrow the String from the Variant payload directly, avoiding a refcount
+	// bump. The scoped Variant stays alive for this syscall.
+	const String &str = variant_container<String>(var_str);
+	const int64_t length = str.length();
 	if (start < 0 || start >= length || max_count == 0) {
 		machine.set_result(0);
 		return;
@@ -3574,18 +3584,12 @@ APICALL(api_string_batch) {
 	}
 
 	int32_t base = 0;
+	const char32_t *characters = str.ptr();
 	for (int64_t i = 0; i < count; i++) {
-		CallResult result;
-		GDExtensionBool valid = false;
-		GDExtensionBool oob = false;
-		internal::gdextension_interface_variant_get_indexed(
-				var_str._native_ptr(), start + i, &result.get(), &valid, &oob);
-		result.mark_constructed();
-		if (UNLIKELY(!valid || oob)) {
-			ERR_PRINT("String index out of bounds: " + itos(start + i));
-			throw std::runtime_error("String index out of bounds");
-		}
-		const int32_t idx = int32_t(emu.create_scoped_variant(std::move(result.get())));
+		// Godot Strings are UTF-32. Build each one-character String directly
+		// from the code point instead of going through indexed-get.
+		const int32_t idx = int32_t(emu.create_scoped_variant(
+				Variant(String::chr(characters[start + i]))));
 		if (i == 0) {
 			base = idx;
 		} else if (idx != base + int32_t(i)) {
@@ -3595,6 +3599,33 @@ APICALL(api_string_batch) {
 		}
 	}
 	machine.set_result((uint64_t(uint32_t(base)) << 32) | uint64_t(uint32_t(count)));
+}
+
+APICALL(api_string_codepoint_batch) {
+	auto [str_idx, start, max_count, output_addr] =
+		machine.sysargs<unsigned, int64_t, unsigned, gaddr_t>();
+	Sandbox &emu = riscv::emu(machine);
+	SYS_TRACE("string_codepoint_batch", str_idx, start, max_count, output_addr);
+
+	constexpr unsigned MAX_BATCH = 256;
+	if (UNLIKELY(max_count > MAX_BATCH)) {
+		throw std::runtime_error("String::codepoint_batch: batch exceeds maximum");
+	}
+	const Variant &var_str = get_scoped_variant_or_throw(emu, str_idx,
+		"String::codepoint_batch");
+	if (UNLIKELY(variant_type(var_str) != Variant::STRING)) {
+		throw std::runtime_error("Invalid String object for code-point batch");
+	}
+	const String &str = variant_container<String>(var_str);
+	const int64_t length = str.length();
+	if (start < 0 || start >= length || max_count == 0) {
+		machine.set_result(0);
+		return;
+	}
+	const unsigned count = unsigned(std::min<int64_t>(max_count, length - start));
+	char32_t *output = machine.memory.memarray<char32_t>(output_addr, count);
+	guest_memcpy(output, str.ptr() + start, size_t(count) * sizeof(char32_t));
+	machine.set_result(count);
 }
 
 APICALL(api_string_size) {
@@ -3609,8 +3640,20 @@ APICALL(api_string_size) {
 		ERR_PRINT("Invalid String object, type = " + String(GuestVariant::type_name(type)));
 		throw std::runtime_error("Invalid String object, idx = " + std::to_string(str_idx) + " type = " + GuestVariant::type_name(type));
 	}
-	godot::String str = var_str.operator String();
-	machine.set_result(str.length());
+	switch (type) {
+		case Variant::STRING:
+			machine.set_result(variant_container<String>(var_str).length());
+			break;
+		case Variant::STRING_NAME:
+			machine.set_result(variant_container<StringName>(var_str).length());
+			break;
+		case Variant::NODE_PATH:
+			machine.set_result(String(variant_container<NodePath>(var_str)).length());
+			break;
+		default:
+			// Unreachable; default guards against future type additions.
+			throw std::runtime_error("Invalid String object");
+	}
 }
 
 APICALL(api_string_append) {
@@ -4059,6 +4102,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_STRING_AT, api_string_at },
 			{ ECALL_STRING_SIZE, api_string_size },
 			{ ECALL_STRING_BATCH, api_string_batch },
+			{ ECALL_STRING_CODEPOINT_BATCH, api_string_codepoint_batch },
 			{ ECALL_STRING_APPEND, api_string_append },
 
 			{ ECALL_TIMER_PERIODIC, api_timer_periodic },

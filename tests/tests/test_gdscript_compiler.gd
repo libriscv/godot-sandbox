@@ -8273,6 +8273,28 @@ func outer_wait(sig, base):
 func call_without_awaiting(sig):
 	var handle = inner_wait(sig, 0)
 	return typeof(handle)
+
+func walk_raw(sig, text : String):
+	var n = 0
+	for c in text:
+		n += ord(c)
+		await sig
+	return n
+
+func walk_boxed(sig, text : String, mark : String):
+	var n = 0
+	for c in text:
+		if c == mark:
+			n += 1000
+		n += ord(c)
+		await sig
+	return n
+
+func walk_without_suspending(text : String):
+	var n = 0
+	for c in text:
+		n += ord(c)
+	return n
 """
 
 signal sgd_ping(value)
@@ -8348,6 +8370,36 @@ func test_sgd_call_a_coroutine_without_awaiting_it():
 		"a call with no await answers something the caller can await later")
 
 	node.free()
+
+func _await_string_walk(fn : String, arguments : Array, expected : int):
+	# A String walk hands characters out in batches. Neither batch survives a
+	# suspension -- the boxed one names them by scoped index, which the next call
+	# reuses, and the raw one writes code points to a frame buffer outside the
+	# Variant slots the host saves -- so a coroutine has to walk one character at
+	# a time. The walk between resumes lays its own frame over the same stack.
+	var script = _await_script("await_walk")
+	if script == null:
+		return
+	var node = _await_node(script)
+
+	var awaitable = node.callv(fn, [sgd_ping] + arguments)
+	assert_eq(typeof(awaitable), TYPE_SIGNAL, "the walk suspended on its first character")
+	var completed := [null]
+	(awaitable as Signal).connect(func(value): completed[0] = value)
+
+	for i in range(3):
+		assert_eq(node.call("walk_without_suspending", "ZZZZZZZZ"), 8 * 90,
+			"a walk between resumes computes its own answer")
+		sgd_ping.emit(0)
+
+	assert_eq(completed[0], expected, "the suspended walk saw its own characters")
+	node.free()
+
+func test_sgd_await_inside_a_raw_string_walk():
+	_await_string_walk("walk_raw", ["abc"], 97 + 98 + 99)
+
+func test_sgd_await_inside_a_boxed_string_walk():
+	_await_string_walk("walk_boxed", ["abc", "b"], 97 + 98 + 99 + 1000)
 
 func test_sgd_await_resume_runs_as_the_node_that_suspended():
 	var script = _await_script("await_owner")
@@ -9214,6 +9266,63 @@ func read_doubled():
 
 	s.queue_free()
 
+const STARTUP_MEMBER_SOURCE := """
+var boxed = _boxed("abcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcq")
+var raw = _raw("abcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcqabcq")
+var text = "hello" + " " + "world"
+var list = [1, 2, 3]
+var built = _build()
+
+func _boxed(t : String) -> int:
+	var n = 0
+	for c in t:
+		if c == "q":
+			n += 1000
+		n += 1
+	return n
+
+func _raw(t : String) -> int:
+	var n = 0
+	for c in t:
+		n += ord(c)
+	return n
+
+func _build() -> Array:
+	var out = []
+	for i in range(40):
+		out.append("item" + str(i))
+	return out
+"""
+
+func test_sgd_a_loop_in_a_member_initializer_reclaims_its_temporaries():
+	# The entry point runs the global and member initializers itself, and a scope
+	# release is a no-op in the state the host is in outside a call: every
+	# temporary a loop made there took a permanent slot nothing gave back, so an
+	# initializer that walked more than references_max characters failed the load.
+	# Startup runs one state up now, and what has to outlive it is promoted.
+	var path = "user://temp_startup_members.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(STARTUP_MEMBER_SOURCE)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the startup script should load as a SafeGDScript resource")
+	if script == null:
+		return
+	var node = Node.new()
+	node.set_script(script)
+
+	# 26 * "abcq": one character each, and a thousand for every q.
+	assert_eq(node.get("boxed"), 104 + 26 * 1000, "the boxed walk ran to the end")
+	assert_eq(node.get("raw"), 26 * (97 + 98 + 99 + 113), "and so did the raw one")
+
+	# Values the initializers left behind still read back after startup.
+	assert_eq(node.get("text"), "hello world", "a String member survived startup")
+	assert_eq(node.get("list"), [1, 2, 3], "an Array member survived startup")
+	assert_eq(node.get("built").size(), 40, "a member a loop built survived startup")
+	assert_eq(node.get("built")[39], "item39", "with the contents it was built with")
+
+	node.free()
+
 func test_sgd_string_indexing_and_iteration():
 	# A String is the one indexable value in Godot with no get(), so the VCALL
 	# every other container falls back to cannot serve it: `s[i]` and `for c in s`
@@ -9265,6 +9374,20 @@ func widths(s: String):
 	for c in s:
 		out.append(c.length())
 	return out
+
+func codepoint_sum(s: String):
+	var total = 0
+	for c in s:
+		total += ord(c)
+	return total
+
+func marked_codepoint_sum(s: String, mark: String):
+	var total = 0
+	for c in s:
+		if c == mark:
+			total += 1000
+		total += ord(c)
+	return total
 
 func nested(s: String):
 	var out = []
@@ -9358,6 +9481,17 @@ func reassigned(s: String):
 
 	# Each character is a String in its own right.
 	assert_eq(s.vmcallv("widths", "aéb"), _si_widths("aéb"), "Every character has length 1")
+	assert_eq(s.vmcallv("codepoint_sum", "a😀é"), _si_codepoint_sum("a😀é"),
+		"A raw walk should preserve UTF-32 code points for ord()")
+	# Comparing the character is a use the raw code-point batch cannot serve, so
+	# this walk yields boxed one-character Strings -- and ord() then has to read
+	# the character, not the handle the batch identified it by.
+	assert_eq(s.vmcallv("marked_codepoint_sum", "abcq", "q"),
+		_si_marked_codepoint_sum("abcq", "q"),
+		"ord() should read the character even when the walk boxes it")
+	assert_eq(s.vmcallv("marked_codepoint_sum", "abcdefghijklmnopqrstuvwxyz0123456789", "q"),
+		_si_marked_codepoint_sum("abcdefghijklmnopqrstuvwxyz0123456789", "q"),
+		"and across every refill of the boxed batch")
 	assert_eq(s.vmcallv("nested", "ab"), _si_nested("ab"), "Two String walks may nest")
 
 	# Characters arrive in batches, so a walk longer than one batch has to hand
@@ -9365,6 +9499,8 @@ func reassigned(s: String):
 	# from the middle of a batch.
 	assert_eq(s.vmcallv("long_walk", "abcde", 100), _si_long_walk("abcde", 100),
 		"A walk should not stop at a batch boundary")
+	assert_eq(s.vmcallv("long_walk", "a😀é", 100), _si_long_walk("a😀é", 100),
+		"The raw code-point batch should preserve BMP and astral characters")
 	assert_eq(s.vmcallv("long_walk", "x", 1), 1, "Nor should a one-character walk")
 	assert_eq(s.vmcallv("stopped", "abcdefghijklmnopqrstuvwxyz", "u"),
 		_si_stopped("abcdefghijklmnopqrstuvwxyz", "u"), "break should leave mid-batch")
@@ -9424,6 +9560,20 @@ func _si_widths(s: String):
 	for c in s:
 		out.append(c.length())
 	return out
+
+func _si_codepoint_sum(s: String):
+	var total = 0
+	for c in s:
+		total += ord(c)
+	return total
+
+func _si_marked_codepoint_sum(s: String, mark: String):
+	var total = 0
+	for c in s:
+		if c == mark:
+			total += 1000
+		total += ord(c)
+	return total
 
 func _si_nested(s: String):
 	var out = []

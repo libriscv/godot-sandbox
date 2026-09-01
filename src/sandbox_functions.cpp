@@ -1455,7 +1455,7 @@ PackedStringArray Sandbox::get_public_functions(const machine_t &machine) {
 	return result;
 }
 
-static std::string_view elf_section_bytes(std::string_view elf, const char *name) {
+std::string_view Sandbox::elf_section_bytes(std::string_view elf, const char *name) {
 	auto read = [&](size_t off, size_t len) -> const uint8_t * {
 		if (off + len < off || off + len > elf.size()) {
 			return nullptr;
@@ -1578,7 +1578,7 @@ Sandbox::BinaryInfo Sandbox::get_program_info_from_binary(const PackedByteArray 
 		result.functions = Sandbox::get_public_functions(machine);
 
 #ifndef SAFEGDSCRIPT_DISABLED
-		const std::string_view meta = elf_section_bytes(binary_view, gdscript::GDSMETA_SECTION);
+		const std::string_view meta = Sandbox::elf_section_bytes(binary_view, gdscript::GDSMETA_SECTION);
 		if (!meta.empty()) {
 			result.has_script_metadata = gdscript::decode_script_metadata(
 				reinterpret_cast<const uint8_t *>(meta.data()), meta.size(), result.script_metadata);

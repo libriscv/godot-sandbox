@@ -637,6 +637,7 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 
 	// Leaf functions keep ra; functions with no syscall keep the return pointer in a0.
 	bool has_array_batch = false;
+	bool has_codepoint_batch = false;
 	for (const auto& instr : func.instructions) {
 		if (opcode_clobbers_abi_registers(instr.opcode)) {
 			m_fn.spills_return_pointer = true;
@@ -648,6 +649,10 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 			instr.operands[1].type == IRValue::Type::IMMEDIATE &&
 			instr.operands[1].immediate() == ECALL_ARRAY_BATCH)
 			has_array_batch = true;
+		if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() >= 2 &&
+			instr.operands[1].type == IRValue::Type::IMMEDIATE &&
+			instr.operands[1].immediate() == ECALL_STRING_CODEPOINT_BATCH)
+			has_codepoint_batch = true;
 	}
 	m_fn.is_coroutine = func.is_coroutine;
 	if (m_fn.is_coroutine) {
@@ -729,7 +734,9 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 	int max_variants = func.max_registers;
 	m_fn.array_batch_offsets.clear();
 	m_fn.array_batch_releases.clear();
+	m_fn.codepoint_batch_offsets.clear();
 	std::vector<int64_t> array_batch_tokens;
+	std::vector<int64_t> codepoint_batch_tokens;
 	std::unordered_map<int64_t, std::vector<int64_t>> array_batch_scopes;
 	if (has_array_batch) {
 		for (size_t instr_idx = 0; instr_idx < func.instructions.size(); instr_idx++) {
@@ -754,6 +761,19 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 				array_batch_scopes[int64_t(scope_id)].push_back(token);
 		}
 	}
+	if (has_codepoint_batch) {
+		for (const IRInstruction& instr : func.instructions) {
+			if (instr.opcode == IROpcode::CALL_SYSCALL && instr.operands.size() == 6 &&
+				instr.operands[1].type == IRValue::Type::IMMEDIATE &&
+				instr.operands[1].immediate() == ECALL_STRING_CODEPOINT_BATCH &&
+				instr.operands[5].type == IRValue::Type::IMMEDIATE)
+			{
+				const int64_t token = instr.operands[5].immediate();
+				if (std::find(codepoint_batch_tokens.begin(), codepoint_batch_tokens.end(), token) ==
+					codepoint_batch_tokens.end()) codepoint_batch_tokens.push_back(token);
+			}
+		}
+	}
 	if (!array_batch_tokens.empty()) {
 		for (size_t instr_idx = 0; instr_idx < func.instructions.size(); instr_idx++) {
 			const IRInstruction& instr = func.instructions[instr_idx];
@@ -768,6 +788,9 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 	constexpr int ARRAY_BATCH_SIZE = 16;
 	const int batch_slots = int(array_batch_tokens.size()) * ARRAY_BATCH_SIZE;
 	int variant_space = (max_variants + SCRATCH_VARIANT_SLOTS + batch_slots) * variant_size();
+	constexpr int CODEPOINT_BATCH_SIZE = 256;
+	const int codepoint_batch_space = int(codepoint_batch_tokens.size()) *
+		CODEPOINT_BATCH_SIZE * int(sizeof(char32_t));
 
 	for (int vreg = 0; vreg < max_variants; vreg++) {
 		const int slot = vreg < int(m_fn.scalar_aliases.size())
@@ -781,14 +804,18 @@ void RISCVCodeGen::plan_frame(const IRFunction& func) {
 		m_fn.array_batch_offsets[array_batch_tokens[i]] = saved_reg_space +
 			(batch_slot_base + int(i) * ARRAY_BATCH_SIZE) * variant_size();
 	}
+	for (size_t i = 0; i < codepoint_batch_tokens.size(); i++) {
+		m_fn.codepoint_batch_offsets[codepoint_batch_tokens[i]] = saved_reg_space + variant_space +
+			int(i) * CODEPOINT_BATCH_SIZE * int(sizeof(char32_t));
+	}
 	m_fn.next_variant_slot = max_variants + SCRATCH_VARIANT_SLOTS + batch_slots;
 	m_fn.variant_space = variant_space;
 
-	m_fn.scope_slot_base = saved_reg_space + variant_space;
+	m_fn.scope_slot_base = saved_reg_space + variant_space + codepoint_batch_space;
 
 	m_fn.stack_frame_size = m_fn.omits_frame
 		? 0
-		: saved_reg_space + variant_space + m_fn.scope_slot_count * 8;
+		: saved_reg_space + variant_space + codepoint_batch_space + m_fn.scope_slot_count * 8;
 
 	m_fn.stack_frame_size = (m_fn.stack_frame_size + 15) & ~15; // RISC-V ABI: 16-byte aligned
 
@@ -1365,6 +1392,7 @@ bool RISCVCodeGen::instruction_reads_residents_directly(const IRInstruction& ins
 		case IROpcode::JUMP:
 		case IROpcode::RETURN:
 		case IROpcode::BATCH_GET:
+		case IROpcode::CODEPOINT_GET:
 		case IROpcode::CONVERT:
 			return true;
 		case IROpcode::MOVE: {
@@ -1670,6 +1698,39 @@ void RISCVCodeGen::gen_syscall_string_batch(const IRInstruction& instr, int resu
 	emit_syscall_result(result_vreg, REG_A0, result_offset, Variant::INT);
 }
 
+// UTF-32 into a guest buffer. No scoped Variants, so no scope or ref-budget
+// clamp unlike ECALL_STRING_BATCH.
+void RISCVCodeGen::gen_syscall_string_codepoint_batch(const IRInstruction& instr,
+	int result_vreg) {
+	if (instr.operands.size() != 6) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"ECALL_STRING_CODEPOINT_BATCH requires 6 operands");
+	}
+	const int string_vreg = instr.operands[2].reg_index();
+	const int index_vreg = instr.operands[3].reg_index();
+	const int64_t max_count = instr.operands[4].immediate();
+	const int64_t token = instr.operands[5].immediate();
+	if (max_count != 256) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"ECALL_STRING_CODEPOINT_BATCH must use its checked 256-code-point buffer");
+	}
+	const auto buffer = m_fn.codepoint_batch_offsets.find(token);
+	if (buffer == m_fn.codepoint_batch_offsets.end()) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+			"ECALL_STRING_CODEPOINT_BATCH refers to an unknown code-point buffer");
+	}
+	const int result_offset = get_variant_stack_offset(result_vreg);
+
+	spill_around_syscall({ REG_A0, REG_A1, REG_A2, REG_A3 });
+	emit_container_handle(REG_A0, string_vreg, get_variant_stack_offset(string_vreg));
+	emit_ld(REG_A1, REG_SP, get_variant_stack_offset(index_vreg) + VARIANT_DATA_OFFSET);
+	emit_li(REG_A2, max_count);
+	emit_add_offset(REG_A3, REG_SP, buffer->second);
+	emit_li(REG_A7, ECALL_STRING_CODEPOINT_BATCH);
+	emit_ecall();
+	emit_syscall_result(result_vreg, REG_A0, result_offset, Variant::INT);
+}
+
 void RISCVCodeGen::gen_syscall_array_batch(const IRInstruction& instr, int result_vreg) {
 	if (instr.operands.size() != 6) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
@@ -1964,6 +2025,8 @@ void RISCVCodeGen::gen_call_syscall(const IRInstruction& instr) {
 		gen_syscall_variant_get(instr, result_vreg);
 	} else if (syscall_num == ECALL_STRING_BATCH) {
 		gen_syscall_string_batch(instr, result_vreg);
+	} else if (syscall_num == ECALL_STRING_CODEPOINT_BATCH) {
+		gen_syscall_string_codepoint_batch(instr, result_vreg);
 	} else if (syscall_num == ECALL_ARRAY_BATCH) {
 		gen_syscall_array_batch(instr, result_vreg);
 	} else if (syscall_num == ECALL_DICTIONARY_OPS) {
@@ -3582,6 +3645,28 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			break;
 		}
 
+		case IROpcode::CODEPOINT_GET: {
+			const int dst_vreg = instr.operands[0].reg_index();
+			const int64_t token = instr.operands[1].immediate();
+			const auto buffer = m_fn.codepoint_batch_offsets.find(token);
+			if (buffer == m_fn.codepoint_batch_offsets.end()) {
+				throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+					"CODEPOINT_GET refers to an unknown code-point buffer");
+			}
+			const int index_vreg = instr.operands[2].reg_index();
+			const uint8_t index = emit_int_operand(REG_T2, index_vreg,
+				get_variant_stack_offset(index_vreg));
+			emit_slli(REG_T0, index, 2);
+			emit_add(REG_T0, REG_SP, REG_T0);
+			emit_add_offset(REG_T0, REG_T0, buffer->second);
+			emit_lwu(REG_T0, REG_T0, 0);
+			auto [base, offset] = value_destination(dst_vreg);
+			emit_sd(REG_T0, base, offset + VARIANT_DATA_OFFSET);
+			emit_li(REG_T1, Variant::INT);
+			emit_store_variant_type(REG_T1, base, offset);
+			break;
+		}
+
 		case IROpcode::TYPE_OF: {
 			// typeof(): load tag (first 4 bytes), box as INT.
 			int dst_vreg = instr.operands[0].reg_index();
@@ -4496,6 +4581,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::TYPE_OF:
 		case IROpcode::MAKE_SCOPED:
 		case IROpcode::BATCH_GET:
+		case IROpcode::CODEPOINT_GET:
 		case IROpcode::LABEL:
 		case IROpcode::SWITCH:
 		case IROpcode::JUMP:

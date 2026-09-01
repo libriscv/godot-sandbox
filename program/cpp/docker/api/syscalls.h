@@ -140,7 +140,12 @@
 // that many consecutive guest slots and returns the count actually written.
 #define ECALL_ARRAY_BATCH (GAME_API_BASE + 64)
 
-#define ECALL_LAST (GAME_API_BASE + 65)
+// UTF-32 code points without boxing. a0 = String scoped index, a1 = first
+// char, a2 = max count, a3 = guest char32_t buffer. Returns count in a0.
+// Host bounds-checks the buffer. No scoped Variant slots created.
+#define ECALL_STRING_CODEPOINT_BATCH (GAME_API_BASE + 65)
+
+#define ECALL_LAST (GAME_API_BASE + 66)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)

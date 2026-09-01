@@ -161,6 +161,7 @@ private:
 	void gen_syscall_string_at(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_variant_get(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_string_batch(const IRInstruction& instr, int result_vreg);
+	void gen_syscall_string_codepoint_batch(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_array_batch(const IRInstruction& instr, int result_vreg);
 	void gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg);
 	void gen_dict_const(const IRInstruction& instr);
@@ -618,6 +619,7 @@ private:
 		// renumber and discard the otherwise-unreferenced consecutive slots.
 		std::unordered_map<int64_t, int> array_batch_offsets;
 		std::unordered_map<size_t, std::vector<int64_t>> array_batch_releases;
+		std::unordered_map<int64_t, int> codepoint_batch_offsets;
 		std::array<int, 3> int_cache_owners {{ -1, -1, -1 }};
 		std::array<int, 3> float_cache_owners {{ -1, -1, -1 }};
 		uint8_t next_int_cache = 0;

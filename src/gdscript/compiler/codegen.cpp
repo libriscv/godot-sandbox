@@ -1089,9 +1089,15 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 	}
 	const bool assigned_character =
 		func.string_character_registers.count(value_reg) != 0;
+	const bool assigned_codepoint =
+		func.codepoint_value_registers.count(value_reg) != 0;
 	func.string_character_registers.erase(var->register_num);
+	func.codepoint_value_registers.erase(var->register_num);
 	if (assigned_character) {
 		func.string_character_registers.insert(var->register_num);
+	}
+	if (assigned_codepoint) {
+		func.codepoint_value_registers.insert(var->register_num);
 	}
 	if (auto declared_struct = func.declared_structs.find(var->register_num);
 		declared_struct != func.declared_structs.end() &&
@@ -2791,12 +2797,14 @@ void collect_assigned_names(const Stmt* stmt, std::unordered_set<std::string>& n
 void CodeGenerator::invalidate_loop_character_registers(const std::vector<StmtPtr>& body,
 	FunctionContext& func)
 {
-	if (func.string_character_registers.empty()) return;
+	if (func.string_character_registers.empty() && func.codepoint_value_registers.empty()) return;
 	std::unordered_set<std::string> assigned;
 	collect_assigned_names(body, assigned);
 	for (const std::string& name : assigned) {
-		if (Variable* local = find_variable(func, name))
+		if (Variable* local = find_variable(func, name)) {
 			func.string_character_registers.erase(local->register_num);
+			func.codepoint_value_registers.erase(local->register_num);
+		}
 	}
 }
 
@@ -2889,8 +2897,13 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(snapshot_reg),
 				IRValue::reg(array_reg));
 			set_register_type(func, snapshot_reg, Variant::STRING);
-			gen_string_walk(stmt, snapshot_reg, func);
-			return;
+			if (!func.ir.is_coroutine) {
+				gen_string_walk(stmt, snapshot_reg, func);
+				return;
+			}
+			// Neither batch survives a suspension. Fall back to one character
+			// at a time; the index and String are frame slots, so they restore.
+			array_reg = snapshot_reg;
 		}
 		if (get_register_type(func, array_reg) == Variant::ARRAY) {
 			gen_array_walk(stmt, array_reg, func, iterable_element, iterable_trait);
@@ -3056,6 +3069,8 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 				emit_array_size, emit_string_size, emit_vcall_size);
 		} else if (packed_walk) {
 			emit_vcall_size(size_reg);
+		} else if (string_walk) {
+			emit_string_size(size_reg);
 		} else {
 			emit_array_size(size_reg);
 		}
@@ -3096,6 +3111,14 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			set_register_type(func, elem_reg, IRInstruction::TypeHint_NONE);
 		} else if (packed_walk) {
 			emit_vcall_get(elem_reg);
+		} else if (string_walk) {
+			emit_string_at(elem_reg);
+			set_register_type(func, elem_reg, Variant::STRING);
+			std::unordered_set<std::string> assigned_in_body;
+			collect_assigned_names(stmt->body, assigned_in_body);
+			if (assigned_in_body.count(stmt->variable) == 0) {
+				func.string_character_registers.insert(elem_reg);
+			}
 		} else {
 			emit_array_at(elem_reg);
 		}
@@ -3269,7 +3292,181 @@ void CodeGenerator::gen_array_walk(const ForStmt* stmt, int array_reg, FunctionC
 // exactly the loop, the backend elides it outright when the body makes nothing,
 // which leaves a walk like `for c in text: n += c.length()` with one syscall per
 // character rather than three.
+//
+// When the body only uses code points, the host writes UTF-32 to a guest
+// buffer instead. Kept narrow: any escape (call, store, comparison, match)
+// would need a boxing fallback. The scoped String batch handles those.
+bool CodeGenerator::string_walk_uses_only_codepoints(const ForStmt* stmt) const {
+	const std::string &name = stmt->variable;
+	std::function<bool(const Expr*)> expression = [&](const Expr* expr) -> bool {
+		if (expr == nullptr) return true;
+		if (const auto* variable = dynamic_cast<const VariableExpr*>(expr)) {
+			return variable->name != name;
+		}
+		if (const auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+			return expression(binary->left.get()) && expression(binary->right.get());
+		}
+		if (const auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
+			return expression(unary->operand.get());
+		}
+		if (const auto* await_expr = dynamic_cast<const AwaitExpr*>(expr)) {
+			return expression(await_expr->operand.get());
+		}
+		if (const auto* type_test = dynamic_cast<const TypeTestExpr*>(expr)) {
+			return expression(type_test->value.get());
+		}
+		if (const auto* cast = dynamic_cast<const CastExpr*>(expr)) {
+			return expression(cast->value.get());
+		}
+		if (const auto* ternary = dynamic_cast<const TernaryExpr*>(expr)) {
+			return expression(ternary->condition.get()) && expression(ternary->true_value.get()) &&
+				expression(ternary->false_value.get());
+		}
+		if (const auto* call = dynamic_cast<const CallExpr*>(expr)) {
+			if (call->function_name == "ord" && call->arguments.size() == 1) {
+				if (const auto* argument = dynamic_cast<const VariableExpr*>(call->arguments[0].get());
+					argument != nullptr && argument->name == name) return true;
+			}
+			for (const auto& arg : call->arguments) if (!expression(arg.get())) return false;
+			return true;
+		}
+		if (const auto* member = dynamic_cast<const MemberCallExpr*>(expr)) {
+			if (const auto* object = dynamic_cast<const VariableExpr*>(member->object.get());
+				object != nullptr && object->name == name)
+			{
+				return member->is_method_call && member->arguments.empty() &&
+					(member->member_name == "length" || member->member_name == "size");
+			}
+			if (!expression(member->object.get())) return false;
+			for (const auto& arg : member->arguments) if (!expression(arg.get())) return false;
+			return true;
+		}
+		if (const auto* index = dynamic_cast<const IndexExpr*>(expr)) {
+			return expression(index->object.get()) && expression(index->index.get());
+		}
+		if (const auto* array = dynamic_cast<const ArrayLiteralExpr*>(expr)) {
+			for (const auto& element : array->elements) if (!expression(element.get())) return false;
+			return true;
+		}
+		if (const auto* dictionary = dynamic_cast<const DictionaryLiteralExpr*>(expr)) {
+			for (const auto& [key, value] : dictionary->elements) {
+				if (!expression(key.get()) || !expression(value.get())) return false;
+			}
+			return true;
+		}
+		// Lambda capture is an escape; the buffer may be refilled before it runs.
+		if (dynamic_cast<const LambdaExpr*>(expr) != nullptr) return false;
+		return true; // literal
+	};
+
+	std::function<bool(const std::vector<StmtPtr>&)> statements;
+	std::function<bool(const Stmt*)> statement = [&](const Stmt* body_stmt) -> bool {
+		if (const auto* expr_stmt = dynamic_cast<const ExprStmt*>(body_stmt))
+			return expression(expr_stmt->expression.get());
+		if (const auto* declaration = dynamic_cast<const VarDeclStmt*>(body_stmt))
+			return declaration->name != name && expression(declaration->initializer.get());
+		if (const auto* assignment = dynamic_cast<const AssignStmt*>(body_stmt))
+			return assignment->name != name && expression(assignment->target.get()) &&
+				expression(assignment->value.get());
+		if (const auto* returned = dynamic_cast<const ReturnStmt*>(body_stmt))
+			return expression(returned->value.get());
+		if (const auto* branch = dynamic_cast<const IfStmt*>(body_stmt))
+			return expression(branch->condition.get()) &&
+				(!branch->binding || (branch->binding->name != name &&
+					expression(branch->binding->initializer.get()))) &&
+				statements(branch->then_branch) && statements(branch->else_branch);
+		if (const auto* loop = dynamic_cast<const WhileStmt*>(body_stmt))
+			return expression(loop->condition.get()) && statements(loop->body);
+		if (const auto* loop = dynamic_cast<const ForStmt*>(body_stmt))
+			return loop->variable != name && expression(loop->iterable.get()) && statements(loop->body);
+		// Match patterns may bind or compare the value, requiring a String.
+		if (dynamic_cast<const MatchStmt*>(body_stmt) != nullptr) return false;
+		return dynamic_cast<const BreakStmt*>(body_stmt) != nullptr ||
+			dynamic_cast<const ContinueStmt*>(body_stmt) != nullptr ||
+			dynamic_cast<const PassStmt*>(body_stmt) != nullptr ||
+			dynamic_cast<const BreakpointStmt*>(body_stmt) != nullptr;
+	};
+	statements = [&](const std::vector<StmtPtr>& body) {
+		for (const auto& body_stmt : body) if (!statement(body_stmt.get())) return false;
+		return true;
+	};
+	return statements(stmt->body);
+}
+
 void CodeGenerator::gen_string_walk(const ForStmt* stmt, int string_reg, FunctionContext& func) {
+	if (string_walk_uses_only_codepoints(stmt)) {
+		constexpr int64_t BATCH_SIZE = 256;
+		const int64_t buffer_token = func.next_codepoint_batch_id++;
+		func.ir.codepoint_batch_buffers.push_back(buffer_token);
+		const std::string refill_label = make_label("for_codepoint_refill");
+		const std::string have_label = make_label("for_codepoint_have");
+		const std::string continue_label = make_label("for_codepoint_continue");
+		const std::string end_label = make_label("for_codepoint_end");
+
+		func.loops.push_back({ end_label, continue_label });
+		push_scope(func);
+		auto int_const = [&](int64_t value) {
+			int reg = alloc_register(func);
+			auto& load = func.ir.instructions.emplace_back(IROpcode::LOAD_IMM,
+				IRValue::reg(reg), IRValue::imm(value));
+			load.type_hint = Variant::INT;
+			set_register_type(func, reg, Variant::INT);
+			return reg;
+		};
+		auto int_binop = [&](IROpcode op, int dest, int lhs, int rhs) {
+			auto& instr = func.ir.instructions.emplace_back(op, IRValue::reg(dest),
+				IRValue::reg(lhs), IRValue::reg(rhs));
+			instr.type_hint = Variant::INT;
+			set_register_type(func, dest, Variant::INT);
+		};
+
+		const int index_reg = int_const(0);
+		const int one_reg = int_const(1);
+		const int left_reg = alloc_register(func);
+		set_register_type(func, left_reg, Variant::INT);
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(refill_label));
+		IRInstruction refill(IROpcode::CALL_SYSCALL);
+		refill.operands.push_back(IRValue::reg(left_reg));
+		refill.operands.push_back(IRValue::imm(ECALL_STRING_CODEPOINT_BATCH));
+		refill.operands.push_back(IRValue::reg(string_reg));
+		refill.operands.push_back(IRValue::reg(index_reg));
+		refill.operands.push_back(IRValue::imm(BATCH_SIZE));
+		refill.operands.push_back(IRValue::imm(buffer_token));
+		func.ir.instructions.push_back(refill);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, left_reg, end_label, func);
+
+		int batch_index_reg = int_const(0);
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(have_label));
+		const int elem_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::CODEPOINT_GET, IRValue::reg(elem_reg),
+			IRValue::imm(buffer_token), IRValue::reg(batch_index_reg));
+		// Backend stores an INT code point; this marker lets length/size fold to 1.
+		set_register_type(func, elem_reg, Variant::STRING);
+		func.string_character_registers.insert(elem_reg);
+		func.codepoint_value_registers.insert(elem_reg);
+		declare_variable(func, stmt->variable, elem_reg, false, stmt);
+		push_scope(func);
+		for (const auto& s : stmt->body) gen_stmt(s.get(), func);
+		pop_scope(func);
+
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(continue_label));
+		int_binop(IROpcode::ADD, index_reg, index_reg, one_reg);
+		int_binop(IROpcode::ADD, batch_index_reg, batch_index_reg, one_reg);
+		int_binop(IROpcode::SUB, left_reg, left_reg, one_reg);
+		emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, left_reg, have_label, func);
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(refill_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
+
+		pop_scope(func);
+		func.loops.pop_back();
+		free_register(func, elem_reg);
+		free_register(func, batch_index_reg);
+		free_register(func, left_reg);
+		free_register(func, one_reg);
+		free_register(func, index_reg);
+		return;
+	}
+
 	// Big enough that the refill disappears into the loop, small enough to leave
 	// a restricted sandbox's reference budget room for the body. The host clamps
 	// it further against what is actually left.
@@ -3964,6 +4161,9 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 		}
 		if (func.string_character_registers.count(local->register_num) != 0) {
 			func.string_character_registers.insert(new_reg);
+		}
+		if (func.codepoint_value_registers.count(local->register_num) != 0) {
+			func.codepoint_value_registers.insert(new_reg);
 		}
 		// Dictionary handle: copy refers to the same fields, so propagate struct.
 		set_register_struct(func, new_reg, get_register_struct(func, local->register_num));
@@ -8798,6 +8998,15 @@ int CodeGenerator::gen_global_call(const GlobalFunction& info, const std::vector
 			? IRInstruction::TypeHint_NONE
 			: get_register_type(func, arg_regs[0]);
 		chosen = &global_function(resolve_cast_form(info, hint));
+	}
+
+	// The walk element is already the UTF-32 value ord() returns. Only safe
+	// for the marker the walk installs; other Strings go through Godot.
+	if (info.fn == GlobalFn::ORD && arg_regs.size() == 1 &&
+		func.codepoint_value_registers.count(arg_regs[0]) != 0)
+	{
+		set_register_type(func, arg_regs[0], Variant::INT);
+		return arg_regs[0];
 	}
 
 	// A resolved numeric cast is only a payload conversion.  Do not lower it to

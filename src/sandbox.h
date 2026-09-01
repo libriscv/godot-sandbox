@@ -1075,8 +1075,26 @@ private:
 	static void start_background_translation(std::function<void()> &&step);
 	static void generate_runtime_cpp_api(bool use_argument_names = false);
 
+	/// @brief Bytes of a named ELF section, or empty when absent.
+	static std::string_view elf_section_bytes(std::string_view elf, const char *name);
+	/// @brief Single .symtab pass collecting all symbols startup needs.
+	void scan_startup_symbols();
+	/// @brief True when @p bytes at @p base is a valid Variant array in guest
+	/// memory: whole slots, within pool reach. Guest ELF data is untrusted.
+	bool variant_area_is_sane(gaddr_t base, gaddr_t bytes, const char *what);
+	/// @brief Clamp reservation to what the 16-bit slot encoding can address.
+	static constexpr uint32_t clamped_perm_slots(size_t wanted) noexcept {
+		return wanted > size_t(PERM_MAX_SLOTS) ? PERM_MAX_SLOTS : uint32_t(wanted);
+	}
 	void read_instance_layout();
 	void run_instance_initializer(gaddr_t address, gaddr_t base);
+	/// @brief True when the entry point runs compiled-GDScript initializers.
+	bool has_gdscript_startup() const noexcept {
+		return m_gdsc_globals_base != 0 || m_gdsc_instance_blob != 0;
+	}
+	/// @brief Promote startup handles from globals and instance record into
+	/// permanent slots.
+	void promote_startup_handles();
 	void release_instance_record(gaddr_t base);
 	void drain_deferred_instance_records();
 	void constructor_initialize();
@@ -1105,6 +1123,12 @@ private:
 	gaddr_t m_default_instance_base = 0;
 	gaddr_t m_instance_record_size = 0;
 	gaddr_t m_instance_init_address = 0;
+	// Set by scan_startup_symbols().
+	gaddr_t m_properties_address = 0;
+	gaddr_t m_gdsc_globals_base = 0;
+	gaddr_t m_gdsc_globals_size = 0;
+	gaddr_t m_gdsc_instance_blob = 0;
+	gaddr_t m_gdsc_instance_init = 0;
 	std::unordered_set<gaddr_t> m_live_instance_records;
 	std::vector<gaddr_t> m_deferred_instance_records;
 	int64_t m_insn_max = MAX_INSTRUCTIONS;

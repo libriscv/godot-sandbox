@@ -3,6 +3,7 @@
 #include "fast_cast.hpp"
 #include "guest_datatypes.h"
 #include "gdscript/compiler/call_abi.h"
+#include "gdscript/compiler/debug_layout.h"
 #include "gdscript/compiler/instance_layout.h"
 #include "gdscript/compiler/trait_cache_layout.h"
 #include "sandbox_project_settings.h"
@@ -521,19 +522,21 @@ void Sandbox::read_instance_layout() {
 	this->m_instance_record_size = 0;
 	this->m_instance_init_address = 0;
 
-	const gaddr_t blob = this->address_of(String(gdscript::INSTANCE_SYMBOL));
+	const gaddr_t blob = this->m_gdsc_instance_blob;
 	if (blob == 0) {
 		return;
 	}
 	uint32_t magic = 0;
 	uint32_t version = 0;
 	uint32_t record_size = 0;
+	uint32_t member_count = 0;
 	uint64_t default_base = 0;
 	try {
 		machine().copy_from_guest(&magic, blob + gdscript::InstanceLayout::MAGIC_OFF, sizeof(magic));
 		machine().copy_from_guest(&version, blob + gdscript::InstanceLayout::VERSION_OFF, sizeof(version));
 		machine().copy_from_guest(&default_base, blob + gdscript::InstanceLayout::DEFAULT_BASE_OFF, sizeof(default_base));
 		machine().copy_from_guest(&record_size, blob + gdscript::InstanceLayout::RECORD_SIZE_OFF, sizeof(record_size));
+		machine().copy_from_guest(&member_count, blob + gdscript::InstanceLayout::MEMBER_COUNT_OFF, sizeof(member_count));
 	} catch (const std::exception &e) {
 		ERR_PRINT("Sandbox: unreadable instance layout: " + String(e.what()));
 		return;
@@ -542,10 +545,144 @@ void Sandbox::read_instance_layout() {
 		ERR_PRINT("Sandbox: the program's instance layout is not one this build knows.");
 		return;
 	}
+	// Member count must match record size (also catches wrong real_t width).
+	// The record must be a valid Variant array in guest memory.
+	if (record_size == 0 && member_count == 0) {
+		return; // No members.
+	}
+	if (uint64_t(record_size) != uint64_t(member_count) * sizeof(GuestVariant)) {
+		ERR_PRINT("Sandbox: the program's instance record size disagrees with its member count.");
+		return;
+	}
+	if (!this->variant_area_is_sane(gaddr_t(default_base), gaddr_t(record_size), "instance record")) {
+		return;
+	}
 	this->m_default_instance_base = gaddr_t(default_base);
 	this->m_instance_record_size = gaddr_t(record_size);
 	this->m_instance_base = gaddr_t(default_base);
-	this->m_instance_init_address = this->address_of(String(gdscript::INSTANCE_INIT_SYMBOL));
+	this->m_instance_init_address = this->m_gdsc_instance_init;
+}
+
+bool Sandbox::variant_area_is_sane(gaddr_t base, gaddr_t bytes, const char *what) {
+	// Guest ELF is untrusted. Refuse areas that are not whole-slot aligned,
+	// exceed the permanent pool, or lie outside guest writable memory.
+	const String area = String(what);
+	if (base == 0 || bytes == 0) {
+		ERR_PRINT("Sandbox: the program's " + area + " is empty or unplaced.");
+		return false;
+	}
+	if (bytes % sizeof(GuestVariant) != 0) {
+		ERR_PRINT("Sandbox: the program's " + area + " is not a whole number of Variants."
+				" Was it built for a different real_t width?");
+		return false;
+	}
+	const uint64_t slots = uint64_t(bytes) / sizeof(GuestVariant);
+	if (slots > PERM_MAX_SLOTS) {
+		ERR_PRINT("Sandbox: the program's " + area + " claims more slots than the sandbox can hold.");
+		return false;
+	}
+	try {
+		// memarray validates the whole span in one call.
+		machine().memory.memarray<GuestVariant>(base, size_t(slots));
+	} catch (const std::exception &e) {
+		ERR_PRINT("Sandbox: the program's " + area + " is not in guest memory: " + String(e.what()));
+		return false;
+	}
+	return true;
+}
+
+void Sandbox::scan_startup_symbols() {
+	this->m_properties_address = 0;
+	this->m_gdsc_globals_base = 0;
+	this->m_gdsc_globals_size = 0;
+	this->m_gdsc_instance_blob = 0;
+	this->m_gdsc_instance_init = 0;
+
+	// .symtab is linear and C++/Rust guests export thousands of symbols.
+	// One pass finds everything. GDScript names checked only when .gdsmeta
+	// is present (few section headers).
+	const bool is_gdscript = !Sandbox::elf_section_bytes(
+			machine().memory.binary(), gdscript::GDSMETA_SECTION).empty();
+
+	try {
+		machine().memory.for_each_symbol([&](const riscv::Elf<RISCV_ARCH>::Sym &sym, const char *name) {
+			if (name == nullptr) {
+				return;
+			}
+			const std::string_view symbol(name);
+			if (symbol == "properties") {
+				if (this->m_properties_address == 0) {
+					this->m_properties_address = gaddr_t(sym.st_value);
+				}
+				return;
+			}
+			if (!is_gdscript) {
+				return;
+			}
+			if (symbol == gdscript::DEBUG_GLOBALS_SYMBOL) {
+				if (this->m_gdsc_globals_base == 0) {
+					// Globals have no header; length comes from the symbol only.
+					this->m_gdsc_globals_base = gaddr_t(sym.st_value);
+					this->m_gdsc_globals_size = gaddr_t(sym.st_size);
+				}
+			} else if (symbol == gdscript::INSTANCE_SYMBOL) {
+				if (this->m_gdsc_instance_blob == 0) {
+					this->m_gdsc_instance_blob = gaddr_t(sym.st_value);
+				}
+			} else if (symbol == gdscript::INSTANCE_INIT_SYMBOL) {
+				if (this->m_gdsc_instance_init == 0) {
+					this->m_gdsc_instance_init = gaddr_t(sym.st_value);
+				}
+			}
+		});
+	} catch (const std::exception &e) {
+		ERR_PRINT("Sandbox: unreadable symbol table: " + String(e.what()));
+	}
+
+	// Only validation point for the globals area (length from symbol alone).
+	// Dropping a bogus one also skips the elevated startup that reads it.
+	if (this->m_gdsc_globals_base != 0 &&
+		!this->variant_area_is_sane(this->m_gdsc_globals_base, this->m_gdsc_globals_size, "globals area")) {
+		this->m_gdsc_globals_base = 0;
+		this->m_gdsc_globals_size = 0;
+	}
+}
+
+void Sandbox::promote_startup_handles() {
+	// Both areas already validated (whole Variants, in guest memory, within pool).
+	const gaddr_t globals_base = this->m_gdsc_globals_base;
+	const size_t globals_bytes = size_t(this->m_gdsc_globals_size);
+	const size_t record_bytes = size_t(this->m_instance_record_size);
+	const size_t slots = (globals_bytes + record_bytes) / sizeof(GuestVariant);
+	// Reserve before promoting; a full pool leaves handles in discarded state.
+	this->reserve_permanent_state(clamped_perm_slots(size_t(this->m_max_refs) + slots));
+
+	const auto promote_area = [this](gaddr_t base, size_t bytes) {
+		if (base == 0) {
+			return;
+		}
+		const size_t count = bytes / sizeof(GuestVariant);
+		for (size_t i = 0; i < count; i++) {
+			GuestVariant *slot = machine().memory.memarray<GuestVariant>(
+					base + gaddr_t(i * sizeof(GuestVariant)), 1);
+			// Negative = permanent slot or VASSIGN's empty sentinel.
+			if (!slot->is_scoped_variant() || int32_t(slot->v.i) < 0) {
+				continue;
+			}
+			try {
+				slot->v.i = int32_t(this->create_permanent_variant(unsigned(slot->v.i)));
+			} catch (const std::exception &e) {
+				// Bogus index must not block the rest of the area.
+				ERR_PRINT("Sandbox: could not promote a startup value: " + String(e.what()));
+			}
+		}
+	};
+	try {
+		promote_area(globals_base, globals_bytes);
+		promote_area(this->m_default_instance_base, record_bytes);
+	} catch (const std::exception &e) {
+		ERR_PRINT("Sandbox: could not read a startup area: " + String(e.what()));
+	}
 }
 
 void Sandbox::run_instance_initializer(gaddr_t address, gaddr_t base) {
@@ -634,7 +771,7 @@ gaddr_t Sandbox::create_instance_record() {
 
 	if (this->m_instance_init_address != 0) {
 		const size_t live = this->m_live_instance_records.size();
-		this->reserve_permanent_state(uint32_t(this->m_max_refs + live * slots));
+		this->reserve_permanent_state(clamped_perm_slots(size_t(this->m_max_refs) + live * slots));
 		this->run_instance_initializer(this->m_instance_init_address, base);
 	}
 	return base;
@@ -976,6 +1113,11 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 	}
 
 	/** Now we can process symbols, backtraces etc. */
+	// Run GDScript initializers one state up so temporaries are reclaimable.
+	// State zero never releases scoped slots, so loops hit the ref cap.
+	// Promote surviving handles afterward.
+	CurrentState *const startup_state = this->m_current_state;
+	bool elevated_startup = false;
 	try {
 		this->m_is_initialization = true;
 		machine_t &m = machine();
@@ -987,6 +1129,9 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		});
 
 		this->initialize_syscalls_runtime();
+
+		// Single .symtab pass; startup lookups below read its results.
+		this->scan_startup_symbols();
 
 		const gaddr_t heap_size = gaddr_t(machine().memory.memory_arena_size() * 0.8) & ~0xFFFLL;
 		const gaddr_t heap_area = machine().memory.mmap_allocate(heap_size);
@@ -1002,6 +1147,12 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 
 		// Run the program through to its main() function
 		if (!this->m_resumable_mode) {
+			if (this->has_gdscript_startup() &&
+				startup_state + 1 < this->m_states.data() + this->m_states.size()) {
+				elevated_startup = true;
+				this->m_current_state = startup_state + 1;
+				this->m_current_state->reset();
+			}
 			if (!this->get_precise_simulation()) {
 				if (get_instructions_max() <= 0) {
 					m.cpu.simulate_inaccurate(m.cpu.pc());
@@ -1028,6 +1179,12 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 	}
 
 	this->read_instance_layout();
+
+	// Promote before restoring state; runs on the failing path too.
+	if (elevated_startup) {
+		this->promote_startup_handles();
+		this->m_current_state = startup_state;
+	}
 
 	// Read the program's custom properties, if any
 	this->read_program_properties(true);
@@ -2142,15 +2299,10 @@ uint64_t Sandbox::add_scoped_object(godot::Object *obj) {
 //-- Properties --//
 
 void Sandbox::read_program_properties(bool editor) const {
-	gaddr_t prop_addr = 0x0;
-	try {
-		// Properties is an array named properties, that ends with an invalid property
-		prop_addr = machine().address_of("properties");
-		if (prop_addr == 0x0)
-			return;
-	} catch (...) {
+	// Array named "properties", terminated by an invalid property.
+	const gaddr_t prop_addr = this->m_properties_address;
+	if (prop_addr == 0x0)
 		return;
-	}
 	try {
 		struct GuestProperty {
 			gaddr_t g_name;
@@ -2512,6 +2664,10 @@ void Sandbox::set_max_refs(uint32_t max) {
 }
 
 void Sandbox::reserve_permanent_state(uint32_t max_refs) {
+	// 16-bit slot indices; clamp to PERM_MAX_SLOTS.
+	if (max_refs > PERM_MAX_SLOTS) {
+		max_refs = PERM_MAX_SLOTS;
+	}
 	CurrentState &perm = this->m_states[0];
 	if (max_refs <= perm.variants.capacity()) {
 		return;

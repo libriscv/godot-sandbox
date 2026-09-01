@@ -86,11 +86,16 @@ private:
 		// A String walk produces one Unicode code point per element. Godot stores
 		// Strings as UTF-32, so length()/size() on that loop value is always one.
 		std::unordered_set<int> string_character_registers;
+		// Subset of the above holding the raw UTF-32 value, not a one-character
+		// String. Only the code-point walk produces these; only these skip Godot
+		// for ord().
+		std::unordered_set<int> codepoint_value_registers;
 		std::vector<LoopContext> loops;
 		TypeExpr return_type;
 		int next_register = 0;
 		int next_scope_id = 0;
 		int next_array_batch_id = 0;
+		int next_codepoint_batch_id = 0;
 	};
 
 	IRFunction generate_function(const FunctionDecl& func, const StructDecl* owner = nullptr);
@@ -191,6 +196,7 @@ private:
 		FunctionContext& func);
 	// `for c in <String>`: batched character walk, see codegen.cpp.
 	void gen_string_walk(const ForStmt* stmt, int string_reg, FunctionContext& func);
+	bool string_walk_uses_only_codepoints(const ForStmt* stmt) const;
 	// `for v in <Array>`: ECALL_ARRAY_BATCH fills sixteen guest Variant slots.
 	void gen_array_walk(const ForStmt* stmt, int array_reg, FunctionContext& func,
 		const StructDecl* element_struct, const TraitDecl* element_trait);

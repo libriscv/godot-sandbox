@@ -75,6 +75,12 @@ IR_OPCODE(MAKE_SCOPED,     "MAKE_SCOPED",     SIG(DST, SRC, IMM),  IR_PURE)
 // ECALL_ARRAY_BATCH. IMM is the first vreg/slot; SRC is a zero-based index.
 IR_OPCODE(BATCH_GET,       "BATCH_GET",       SIG(DST, IMM, SRC),  IR_PURE)
 
+// Load one raw UTF-32 code point from the guest buffer filled by
+// ECALL_STRING_CODEPOINT_BATCH and box it as an INT Variant.  The compiler
+// uses this only when the loop body's uses are proven not to observe String
+// identity, so it never consumes a scoped Variant slot.
+IR_OPCODE(CODEPOINT_GET,   "CODEPOINT_GET",   SIG(DST, IMM, SRC),  IR_PURE)
+
 // Immediate is a scope id (frame slot index), not a register.
 IR_OPCODE(SCOPE_MARK,      "SCOPE_MARK",      SIG(IMM),            IR_SIDE_EFFECTS)
 IR_OPCODE(SCOPE_RELEASE,   "SCOPE_RELEASE",   SIG(IMM),            IR_SIDE_EFFECTS)

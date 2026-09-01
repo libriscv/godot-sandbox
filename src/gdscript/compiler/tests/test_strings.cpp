@@ -368,12 +368,13 @@ static void test_walking_a_string() {
 		"\t\tn += c.length()\n"
 		"\treturn n\n");
 	const IRFunction& f = find_function(known, "f");
-	// One refill in the loop and nothing per character: length() on the one
-	// UTF-32 code point yielded by the walk folds to 1, and the batch drives the
-	// walk, so neither its length nor its characters are asked for one at a time.
-	assert(count_syscalls(f, ECALL_STRING_BATCH) == 1);
+	// length() on the walk's UTF-32 code point folds to 1. Code-point-only
+	// body uses the raw guest buffer: no scoped Strings, no release per refill.
+	assert(count_syscalls(f, ECALL_STRING_CODEPOINT_BATCH) == 1);
+	assert(count_syscalls(f, ECALL_STRING_BATCH) == 0);
 	assert(count_syscalls(f, ECALL_STRING_SIZE) == 0);
 	assert(count_syscalls(f, ECALL_STRING_AT) == 0);
+	assert(count_opcode(f, IROpcode::CODEPOINT_GET) == 1);
 
 	const IRProgram reassigned = compile_to_ir(
 		"func f(s : String):\n"
@@ -382,7 +383,10 @@ static void test_walking_a_string() {
 		"\t\tc = \"two\"\n"
 		"\t\tn += c.length()\n"
 		"\treturn n\n");
-	assert(count_syscalls(find_function(reassigned, "f"), ECALL_STRING_SIZE) == 1);
+	const IRFunction& reassigned_function = find_function(reassigned, "f");
+	assert(count_syscalls(reassigned_function, ECALL_STRING_SIZE) == 1);
+	assert(count_syscalls(reassigned_function, ECALL_STRING_BATCH) == 1);
+	assert(count_syscalls(reassigned_function, ECALL_STRING_CODEPOINT_BATCH) == 0);
 
 	// A body runs many times: the assignment below the use still precedes it on
 	// the next pass, so the fold has to go for the whole loop, not from the
@@ -399,19 +403,41 @@ static void test_walking_a_string() {
 		"\t\t\ti += 1\n"
 		"\treturn n\n");
 	assert(count_syscalls(find_function(reassigned_in_a_loop, "f"), ECALL_STRING_SIZE) == 1);
-	assert(count_opcode(f, IROpcode::MAKE_SCOPED) == 1);
+	assert(count_opcode(f, IROpcode::MAKE_SCOPED) == 0);
 	assert(count_syscalls(f, ECALL_ARRAY_SIZE) == 0);
 	assert(count_syscalls(f, ECALL_ARRAY_AT) == 0);
 	assert(count_vcalls(known, f, "size") == 0);
 	assert(count_vcalls(known, f, "get") == 0);
 	assert(count_opcode(f, IROpcode::TYPE_TEST) == 0);
+	// Also verify the frame layout and RISC-V load, not just the IR.
+	compile_to_machine_code(
+		"func f(s : String):\n"
+		"\tvar n = 0\n"
+		"\tfor c in s:\n"
+		"\t\tn += c.length()\n"
+		"\treturn n\n");
+	const IRProgram ordinal = compile_to_ir(
+		"func f(s : String):\n"
+		"\tvar n = 0\n"
+		"\tfor c in s:\n"
+		"\t\tn += ord(c)\n"
+		"\treturn n\n");
+	const IRFunction& ordinal_function = find_function(ordinal, "f");
+	assert(count_syscalls(ordinal_function, ECALL_STRING_CODEPOINT_BATCH) == 1);
+	assert(count_opcode(ordinal_function, IROpcode::GLOBAL_CALL) == 0);
+	compile_to_machine_code(
+		"func f(s : String):\n"
+		"\tvar n = 0\n"
+		"\tfor c in s:\n"
+		"\t\tn += ord(c)\n"
+		"\treturn n\n");
 
-	// A literal is a known String too.
+	// Literal String also qualifies. Unused walk variable needs no boxing.
 	const IRProgram literal = compile_to_ir(
 		"func f():\n"
 		"\tfor c in \"hello\":\n"
 		"\t\tpass\n");
-	assert(count_syscalls(find_function(literal, "f"), ECALL_STRING_BATCH) == 1);
+	assert(count_syscalls(find_function(literal, "f"), ECALL_STRING_CODEPOINT_BATCH) == 1);
 
 	// Untyped: all four arms present (int, Array, String, VCALL).
 	const IRProgram untyped = compile_to_ir(

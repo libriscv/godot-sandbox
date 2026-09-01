@@ -185,3 +185,44 @@ func test_fuzz_syscalls_respect_restrictions():
 		var counts: Array = coverage.get(syscall, [0, 0])
 		assert_eq(counts[1], 0,
 			"%s reached Godot %d times with all restrictions enabled" % [ALWAYS_REFUSED[syscall], counts[1]])
+
+# The startup scan reads the program's own account of itself: a symbol's size, a
+# blob's record size. Those are file bytes, so a corrupt one has to be refused
+# before it sizes a walk or an allocation -- the process staying up, and the
+# program loading without its members, is the pass condition.
+func test_a_corrupt_instance_layout_is_refused():
+	var source := """
+var value := 42
+
+func get_value() -> int:
+	return value
+"""
+	var compiler := _make_sandbox()
+	var elf: PackedByteArray = compiler.vmcall("compile_to_elf", source)
+	assert_false(elf.is_empty(), "the probe program should compile")
+	if elf.is_empty():
+		return
+
+	# The instance blob is 8-byte aligned, so a 4-byte stride finds it: magic
+	# 'GDSI' followed by layout version 1.
+	const INSTANCE_MAGIC := 0x49534447
+	var blob := -1
+	var offset := 0
+	while offset + 8 <= elf.size():
+		if elf.decode_u32(offset) == INSTANCE_MAGIC and elf.decode_u32(offset + 4) == 1:
+			blob = offset
+			break
+		offset += 4
+	assert_gt(blob, 0, "the compiled program should carry an instance blob")
+	if blob < 0:
+		return
+
+	# Record size, which the host would otherwise believe: two gigabytes of
+	# members that the member count next to it does not account for.
+	elf.encode_u32(blob + 16, 0x80000000)
+
+	var s := Sandbox.new()
+	s.load_buffer(elf)
+	add_child_autofree(s)
+	assert_engine_error("Sandbox: the program's instance record size disagrees with its member count.")
+	assert_true(s.has_function("get_value"), "the program still loads, without its members")
