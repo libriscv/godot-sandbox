@@ -15,6 +15,16 @@
 
 namespace gdscript {
 
+// Every vmcall returns to the address the host resolved from this symbol. The
+// image opens with it so that return lands in the program's own execute segment
+// - a native return under bintr/asmjit - instead of libriscv's injected
+// trampoline page, which costs a dispatch and a segment switch. Same two
+// instructions as that trampoline: STOP, then a jump back onto it, so resuming
+// a stopped machine stops again instead of falling into the entry code that
+// follows. The program entry begins after both.
+inline constexpr const char *FAST_EXIT_SYMBOL = "fast_exit";
+inline constexpr size_t FAST_EXIT_SIZE = 8;
+
 class RISCVCodeGen {
 public:
 	explicit RISCVCodeGen(const VariantLayout& layout = native_variant_layout(),

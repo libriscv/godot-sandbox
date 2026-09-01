@@ -944,6 +944,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		});
 		this->m_unchecked_memory_active = this->unchecked_memory_wanted();
 		options->translate_unsafe_remove_checks = this->m_unchecked_memory_active;
+		options->default_exit_function = "fast_exit";
 #if defined(RISCV_BINARY_TRANSLATION) || defined(RISCV_ASMJIT)
 		// Background compilation, if enabled, will run the compilation in a separate thread
 		// and live-patch the results into the decoder cache after the compilation is done.
@@ -952,10 +953,6 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 			// goal is to run the callback in a separate thread, to avoid blocking
 			// the main thread while the compilation step is running.
 			auto background_callback = [](std::function<void()>& callback) {
-				// Run the callback in a separate thread. This is useful for
-				// long-running compilation tasks that should not block the main
-				// thread. The thread is tracked so that it can be joined before
-				// the extension is unloaded, see Sandbox::Deinitialize().
 				Sandbox::start_background_translation(std::move(callback));
 			};
 #  if defined(RISCV_BINARY_TRANSLATION) && defined(RISCV_LIBTCC)

@@ -51,6 +51,7 @@ comptime {
         \\.type fast_exit, @function;
         \\fast_exit:
         \\  .insn i SYSTEM, 0, x0, x0, 0x7ff
+        \\  j fast_exit
         \\.pushsection .comment
         \\.string "Godot Zig API v1"
         \\.popsection

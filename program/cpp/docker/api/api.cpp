@@ -16,9 +16,12 @@ __attribute__((weak)) int main() {
 	halt(); // Prevent closing pipes, calling global destructors etc.
 }
 
-/* fast_exit */
+/* fast_exit: where every vmcall returns to. The jump back onto the STOP mirrors
+   libriscv's own exit trampoline - resuming a stopped machine stops again,
+   instead of running into whatever the linker put after this function. */
 extern "C" __attribute__((used, retain, noreturn)) void fast_exit() {
-	asm(".insn i SYSTEM, 0, x0, x0, 0x7ff");
+	asm("1: .insn i SYSTEM, 0, x0, x0, 0x7ff\n"
+		"j 1b");
 	__builtin_unreachable();
 }
 

@@ -96,6 +96,12 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 	std::vector<uint8_t> strtab;
 	strtab.push_back(0);
 
+	// fast_exit sits at BASE_ADDR, ahead of every function; the host resolves it
+	// as the exit address every vmcall returns to.
+	const size_t fast_exit_name_offset = strtab.size();
+	strtab.insert(strtab.end(), FAST_EXIT_SYMBOL, FAST_EXIT_SYMBOL + strlen(FAST_EXIT_SYMBOL));
+	strtab.push_back(0);
+
 	std::vector<std::string> symbol_names;
 	symbol_names.reserve(program.functions.size());
 	std::vector<size_t> symbol_name_offsets;
@@ -175,6 +181,16 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 	Elf64_Sym null_sym = {};
 	memset(&null_sym, 0, sizeof(null_sym));
 	symtab.push_back(null_sym);
+
+	Elf64_Sym fast_exit_sym = {};
+	memset(&fast_exit_sym, 0, sizeof(fast_exit_sym));
+	fast_exit_sym.st_name = static_cast<uint32_t>(fast_exit_name_offset);
+	fast_exit_sym.st_info = (1 << 4) | 2; // STB_GLOBAL | STT_FUNC
+	fast_exit_sym.st_shndx = 1; // .text
+	fast_exit_sym.st_value = BASE_ADDR;
+	fast_exit_sym.st_size = FAST_EXIT_SIZE;
+	symtab.push_back(fast_exit_sym);
+
 	for (size_t i = 0; i < program.functions.size(); i++) {
 		const auto& func = program.functions[i];
 		size_t func_offset = func_offsets.at(func.name);
@@ -317,7 +333,7 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 	ehdr.e_type = ET_EXEC;
 	ehdr.e_machine = EM_RISCV;
 	ehdr.e_version = EV_CURRENT;
-	ehdr.e_entry = BASE_ADDR;
+	ehdr.e_entry = BASE_ADDR + FAST_EXIT_SIZE; // Past fast_exit
 	ehdr.e_phoff = phdr_offset;
 	ehdr.e_shoff = shdr_offset;
 	ehdr.e_flags = 0x5;

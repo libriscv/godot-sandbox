@@ -157,8 +157,8 @@ pub fn __wrap_strncmp(s1: *const u8, s2: *const u8, n: usize) -> i32
 #[no_mangle]
 pub fn fast_exit() -> ! {
 	unsafe {
-		asm!("ecall",
-			in("a7") 93,
+		asm!("1: .insn i SYSTEM, 0, x0, x0, 0x7ff",
+			"j 1b",
 			options(noreturn)
 		);
 	}

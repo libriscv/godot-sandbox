@@ -335,6 +335,14 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_debug_variables.clear();
 	m_pending_debug_variables.clear();
 
+	// fast_exit at BASE_ADDR: a vmcall return never leaves this execute segment.
+	// The jump back onto the STOP is what libriscv's own trampoline does - without
+	// it, resuming a stopped machine would fall straight into the entry code that
+	// follows and re-run global init. The entry point in the ELF header skips both.
+	emit_i_type(0x73, 0, 0, 0, 0x7ff); // STOP
+	emit_jal(REG_ZERO, -4); // j fast_exit
+	static_assert(FAST_EXIT_SIZE == 8, "fast_exit is STOP + jump back onto it");
+
 	if (m_instance_count > 0) {
 		emit_la(REG_TP, INSTANCE_LABEL);
 	}
