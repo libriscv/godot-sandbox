@@ -2132,9 +2132,10 @@ std::vector<IROptimizer::LoopInfo> IROptimizer::identify_loops(const IRFunction&
 	for (size_t i = 0; i < func.instructions.size(); i++) {
 		const auto& instr = func.instructions[i];
 
-		if (instr.opcode == IROpcode::JUMP && !instr.operands.empty() &&
-		    instr.operands[0].type == IRValue::Type::LABEL) {
-			const uint32_t target_label = instr.operands[0].string_id;
+		if (!ir_is_control_flow(instr.opcode)) continue;
+		for (size_t operand = 0; operand < instr.operands.size(); operand++) {
+			if (instr.operands[operand].type != IRValue::Type::LABEL) continue;
+			const uint32_t target_label = instr.operands[operand].string_id;
 
 			auto it = label_positions.find(target_label);
 			if (it != label_positions.end() && it->second <= i) {
@@ -2529,7 +2530,12 @@ bool IROptimizer::enhanced_copy_propagation(IRFunction& func) {
 
 		// Deferred clear: reads happen before the effect, so propagate into this
 		// instruction's operands first. Otherwise branches never see copies.
-		const bool clear_after = !ir_instruction_is_pure(instr);
+		// A host call cannot mutate an IR vreg other than its explicit
+		// destination.  Keep copies across syscalls and ordinary side effects;
+		// only operations with implicit writes (or a host re-entry) invalidate
+		// the local value relation.
+		const bool clear_after = instr.opcode == IROpcode::CALL ||
+			instr.opcode == IROpcode::AWAIT || instr.opcode == IROpcode::SCOPE_RELEASE;
 
 		// ir_reads_operand handles branches (read at 0) and CALL (write at 1).
 		for (size_t j = 0; j < instr.operands.size(); j++) {

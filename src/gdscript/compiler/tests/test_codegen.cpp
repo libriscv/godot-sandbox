@@ -123,17 +123,17 @@ void test_loop_generation() {
 	CodeGenerator codegen;
 	IRProgram ir = codegen.generate(program);
 
-	// Should have loop label and jump back
-	bool has_jump = false;
+	// Rotated loops use a conditional branch for the back edge.
+	bool has_back_branch = false;
 	int label_count = 0;
 
 	for (const auto& instr : ir.functions[0].instructions) {
-		if (instr.opcode == IROpcode::JUMP) has_jump = true;
+		if (instr.opcode == IROpcode::BRANCH_NOT_ZERO) has_back_branch = true;
 		if (instr.opcode == IROpcode::LABEL) label_count++;
 	}
 
-	assert(has_jump);
-	assert(label_count >= 2); // loop start and end labels
+	assert(has_back_branch);
+	assert(label_count >= 3); // body, continue and end labels
 
 	std::cout << "  ✓ Loop generation test passed" << std::endl;
 }

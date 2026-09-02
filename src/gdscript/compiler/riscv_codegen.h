@@ -313,6 +313,7 @@ private:
 	void emit_fmul_d(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_fdiv_d(uint8_t rd, uint8_t rs1, uint8_t rs2);
 	void emit_fmv_d(uint8_t rd, uint8_t rs);
+	void emit_fmv_d_x(uint8_t rd, uint8_t rs);
 	void emit_fsqrt_d(uint8_t rd, uint8_t rs1);
 	void emit_fabs_d(uint8_t rd, uint8_t rs1);              // fsgnjx.d rd, rs, rs
 	void emit_flt_d(uint8_t rd, uint8_t rs1, uint8_t rs2);
@@ -584,6 +585,10 @@ private:
 		int scope_slot_count = 0;
 		std::vector<bool> elided_scopes;
 		std::vector<int> scope_slots;
+		// A loop scope whose only allocations returned inline values can skip its
+		// expensive host-side release.  One saved register tracks that fact.
+		std::vector<int8_t> scope_dirty_regs;
+		std::unordered_map<size_t, std::vector<uint8_t>> scope_dirty_updates;
 		// Instruction index of a SCOPE_RELEASE -> frame slots that are dead there.
 		std::unordered_map<int, std::vector<int>> release_clears;
 		// emit_ecall() asserts false; catches predicate drift.

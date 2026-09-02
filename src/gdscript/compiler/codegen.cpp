@@ -2625,6 +2625,7 @@ int CodeGenerator::gen_array_size(int array_reg, FunctionContext& func) {
 	call.operands.push_back(IRValue::reg(size_reg));
 	call.operands.push_back(IRValue::imm(ECALL_ARRAY_SIZE));
 	call.operands.push_back(IRValue::reg(array_reg));
+	call.type_hint = Variant::INT;
 	func.ir.instructions.push_back(call);
 	set_register_type(func, size_reg, Variant::INT);
 	return size_reg;
@@ -2652,6 +2653,7 @@ int CodeGenerator::gen_dictionary_op(int64_t op, int dict_reg, int key_reg,
 	if (key_reg >= 0) {
 		call.operands.push_back(IRValue::reg(key_reg));
 	}
+	call.type_hint = result_type;
 	func.ir.instructions.push_back(call);
 	if (result_type != IRInstruction::TypeHint_NONE) {
 		set_register_type(func, result_reg, result_type);
@@ -2823,23 +2825,31 @@ void CodeGenerator::invalidate_loop_character_registers(const std::vector<StmtPt
 
 void CodeGenerator::gen_while(const WhileStmt* stmt, FunctionContext& func) {
 	invalidate_loop_character_registers(stmt->body, func);
-	std::string loop_label = make_label("loop");
+	std::string body_label = make_label("loop");
+	std::string continue_label = make_label("loop_continue");
 	std::string end_label = make_label("endloop");
 
-	func.loops.push_back({end_label, loop_label});
+	func.loops.push_back({end_label, continue_label});
 	const int scope_id = open_scope(func);
-	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(loop_label));
-	emit_scope_release(scope_id, func);
+	// Rotate the loop.  The first test enters the body, while later passes use
+	// the bottom test as the back edge so an interpreter does not pay a second
+	// taken jump on every iteration.  The condition is deliberately generated
+	// twice: it observes body-side changes before each later pass.
 	int cond_reg = gen_expr(stmt->condition.get(), func);
 	emit_conditional_branch(IROpcode::BRANCH_ZERO, cond_reg, end_label, func);
 	free_register(func, cond_reg);
 
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(body_label));
 	push_scope(func);
 	for (const auto& s : stmt->body) {
 		gen_stmt(s.get(), func);
 	}
 	pop_scope(func);
-	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(loop_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(continue_label));
+	emit_scope_release(scope_id, func);
+	cond_reg = gen_expr(stmt->condition.get(), func);
+	emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, cond_reg, body_label, func);
+	free_register(func, cond_reg);
 	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
 	emit_scope_release(scope_id, func);
 
@@ -2995,6 +3005,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			size_syscall.operands.push_back(IRValue::reg(dest));
 			size_syscall.operands.push_back(IRValue::imm(ECALL_ARRAY_SIZE));
 			size_syscall.operands.push_back(IRValue::reg(array_reg));
+			size_syscall.type_hint = Variant::INT;
 			func.ir.instructions.push_back(size_syscall);
 		};
 		auto emit_vcall_size = [&](int dest) {
@@ -3027,6 +3038,7 @@ void CodeGenerator::gen_for(const ForStmt* stmt, FunctionContext& func) {
 			size_syscall.operands.push_back(IRValue::reg(dest));
 			size_syscall.operands.push_back(IRValue::imm(ECALL_STRING_SIZE));
 			size_syscall.operands.push_back(IRValue::reg(array_reg));
+			size_syscall.type_hint = Variant::INT;
 			func.ir.instructions.push_back(size_syscall);
 		};
 		auto emit_string_at = [&](int dest) {
@@ -3245,6 +3257,7 @@ void CodeGenerator::gen_array_walk(const ForStmt* stmt, int array_reg, FunctionC
 	refill.operands.push_back(IRValue::reg(index_reg));
 	refill.operands.push_back(IRValue::imm(BATCH_SIZE));
 	refill.operands.push_back(IRValue::imm(buffer_base));
+	refill.type_hint = Variant::INT;
 	func.ir.instructions.push_back(refill);
 	emit_conditional_branch(IROpcode::BRANCH_ZERO, left_reg, end_label, func);
 
@@ -3445,6 +3458,7 @@ void CodeGenerator::gen_string_walk(const ForStmt* stmt, int string_reg, Functio
 		refill.operands.push_back(IRValue::reg(index_reg));
 		refill.operands.push_back(IRValue::imm(BATCH_SIZE));
 		refill.operands.push_back(IRValue::imm(buffer_token));
+		refill.type_hint = Variant::INT;
 		func.ir.instructions.push_back(refill);
 		emit_conditional_branch(IROpcode::BRANCH_ZERO, left_reg, end_label, func);
 
@@ -3530,6 +3544,7 @@ void CodeGenerator::gen_string_walk(const ForStmt* stmt, int string_reg, Functio
 	refill.operands.push_back(IRValue::reg(string_reg));
 	refill.operands.push_back(IRValue::reg(index_reg));
 	refill.operands.push_back(IRValue::imm(BATCH_SIZE));
+	refill.type_hint = Variant::INT;
 	func.ir.instructions.push_back(refill);
 	set_register_type(func, packed_reg, Variant::INT);
 
@@ -3762,6 +3777,7 @@ void CodeGenerator::gen_dictionary_keys_for_iteration(int iterable_reg, Function
 		keys.operands.push_back(IRValue::imm(ECALL_DICTIONARY_OPS));
 		keys.operands.push_back(IRValue::imm(DICT_OP_GET_KEYS));
 		keys.operands.push_back(IRValue::reg(iterable_reg));
+		keys.type_hint = Variant::ARRAY;
 		func.ir.instructions.push_back(keys);
 		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(iterable_reg),
 			IRValue::reg(keys_reg));
@@ -6223,6 +6239,7 @@ void CodeGenerator::gen_builtin_method(const BuiltinMethod& method, int result_r
 				call.operands.push_back(IRValue::imm(
 					method.lowering == MethodLowering::ARRAY_SIZE ? ECALL_ARRAY_SIZE : ECALL_STRING_SIZE));
 				call.operands.push_back(IRValue::reg(obj_reg));
+				call.type_hint = Variant::INT;
 				func.ir.instructions.push_back(call);
 			}
 			break;
@@ -6236,6 +6253,7 @@ void CodeGenerator::gen_builtin_method(const BuiltinMethod& method, int result_r
 			for (int reg : arg_regs) {
 				call.operands.push_back(IRValue::reg(reg));
 			}
+			call.type_hint = method.empty_test ? Variant::INT : method.result_type;
 			func.ir.instructions.push_back(call);
 			break;
 		}

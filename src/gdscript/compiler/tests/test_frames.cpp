@@ -32,7 +32,7 @@ constexpr uint8_t REG_ZERO = 0;
 constexpr uint8_t REG_RA = 1;
 constexpr uint8_t REG_SP = 2;
 constexpr uint8_t REG_A0 = 10;
-constexpr uint8_t REG_A1 = 11;
+constexpr uint8_t REG_A2 = 12;
 
 constexpr uint32_t RET = 0x00008067; // jalr zero, 0(ra)
 
@@ -366,23 +366,23 @@ void test_loop_carried_parameter_is_copied() {
 	std::cout << "Testing that a loop-carried parameter is copied in..." << std::endl;
 
 	const Compiled compiled = compile(
-		"func loopy(b):\n"
+		"func loopy(c, b):\n"
 		"\tvar t = 0\n"
-		"\twhile t < 2:\n"
+		"\twhile t < c:\n"
 		"\t\tt += 1\n"
 		"\t\tb = t\n"
 		"\treturn b\n");
 	const std::vector<uint32_t> words = function_words(compiled, "loopy");
 
-	// The copy is the first thing after the prologue: three loads through a1,
-	// which is where the parameter's Variant is.
-	size_t loads_from_a1 = 0;
+	// b is the second ABI argument.  The loop may take zero passes, so its
+	// incoming Variant still has to be available for the return.
+	size_t loads_from_b = 0;
 	for (uint32_t w : words) {
-		if (opcode_of(w) == 0x03 && rs1_of(w) == REG_A1) {
-			loads_from_a1++;
+		if (opcode_of(w) == 0x03 && rs1_of(w) == REG_A2) {
+			loads_from_b++;
 		}
 	}
-	assert(loads_from_a1 == size_t(VariantLayout(false).variant_words()));
+	assert(loads_from_b == size_t(VariantLayout(false).variant_words()));
 
 	std::cout << "  ✓ A loop-carried parameter is copied in" << std::endl;
 }

@@ -837,10 +837,14 @@ void RISCVCodeGen::plan_numeric_loop_modes(const IRFunction& func) {
 	std::vector<LoopRange> loops;
 	for (size_t jump = 0; jump < func.instructions.size(); jump++) {
 		const IRInstruction& back = func.instructions[jump];
-		if (back.opcode != IROpcode::JUMP || back.operands.empty()) continue;
-		const auto found = labels.find(back.operands[0].string_id);
-		if (found == labels.end() || found->second >= jump) continue;
-		loops.push_back({ found->second + 1, jump });
+		const IROperandSignature& sig = ir_opcode_info(back.opcode).signature;
+		for (size_t operand = 0; operand < back.operands.size(); operand++) {
+			if (sig.kind_at(operand) != IROperandKind::LBL ||
+				back.operands[operand].type != IRValue::Type::LABEL) continue;
+			const auto found = labels.find(back.operands[operand].string_id);
+			if (found == labels.end() || found->second >= jump) continue;
+			loops.push_back({ found->second + 1, jump });
+		}
 	}
 	if (loops.empty()) return;
 
@@ -990,12 +994,16 @@ void RISCVCodeGen::plan_scalar_residency(const IRFunction& func) {
 	std::vector<int> loop_delta(func.instructions.size() + 1, 0);
 	for (size_t i = 0; i < func.instructions.size(); i++) {
 		const IRInstruction &instr = func.instructions[i];
-		if (instr.opcode != IROpcode::JUMP || instr.operands.empty()) continue;
-		const auto target = label_positions.find(instr.operands[0].string_id);
-		if (target == label_positions.end() || target->second >= i) continue;
-		loop_delta[target->second]++;
-		loop_delta[i + 1]--;
-		m_fn.has_backedge = true;
+		const IROperandSignature& sig = ir_opcode_info(instr.opcode).signature;
+		for (size_t operand = 0; operand < instr.operands.size(); operand++) {
+			if (sig.kind_at(operand) != IROperandKind::LBL ||
+				instr.operands[operand].type != IRValue::Type::LABEL) continue;
+			const auto target = label_positions.find(instr.operands[operand].string_id);
+			if (target == label_positions.end() || target->second >= i) continue;
+			loop_delta[target->second]++;
+			loop_delta[i + 1]--;
+			m_fn.has_backedge = true;
+		}
 	}
 	if (!m_fn.has_backedge) return;
 	m_fn.fixed_scalar_types.assign(size_t(nregs), IRInstruction::TypeHint_NONE);
@@ -1033,14 +1041,10 @@ void RISCVCodeGen::plan_scalar_residency(const IRFunction& func) {
 
 	for (const IRFunction::DebugLocal& local : func.debug_locals) {
 		if (local.register_num < 0 || local.register_num >= nregs) continue;
-		if (local.parameter) {
-			// Raw ABI parameters occupy r0.. before COERCE, and r0 is reused as
-			// the function return. Their incoming tag is owned by the caller, so
-			// no whole-function tag contract may overwrite it in the prologue.
-			unknown_definition[size_t(local.register_num)] = true;
-		} else {
-			merge_type(local.register_num, local.type_hint);
-		}
+		// The raw ABI parameter registers above remain unknown.  A typed
+		// parameter is rebound to the destination of its COERCE before this
+		// pass, though, and that destination has a compiler-owned tag.
+		merge_type(local.register_num, local.type_hint);
 	}
 	std::vector<std::vector<int>> move_successors { size_t(nregs) };
 	std::vector<int> def_at(size_t(nregs), -1);
@@ -1123,8 +1127,11 @@ void RISCVCodeGen::plan_scalar_residency(const IRFunction& func) {
 		if (dst < 0 || src < 0 || dst >= nregs || src >= nregs || dst == src) continue;
 		if (m_fn.fixed_scalar_types[size_t(dst)] == IRInstruction::TypeHint_NONE ||
 			m_fn.fixed_scalar_types[size_t(dst)] != m_fn.fixed_scalar_types[size_t(src)] ||
-			def_count[size_t(src)] != 1 || reads[size_t(src)].size() != 1 ||
-			reads[size_t(src)][0] != int(i) || def_at[size_t(src)] < 0 || def_at[size_t(src)] >= int(i)) continue;
+			def_count[size_t(src)] != 1 || def_at[size_t(src)] < 0 || def_at[size_t(src)] >= int(i)) continue;
+		// Reads of the temporary after the MOVE are fine: the two vregs share
+		// the value from that point on.  Only a read before its sole definition
+		// could observe the destination's old value after coalescing.
+		if (!reads[size_t(src)].empty() && reads[size_t(src)].front() < def_at[size_t(src)]) continue;
 		const auto first_later = std::upper_bound(reads[size_t(dst)].begin(),
 			reads[size_t(dst)].end(), def_at[size_t(src)]);
 		const bool destination_read = first_later != reads[size_t(dst)].end() &&
@@ -1177,6 +1184,16 @@ void RISCVCodeGen::plan_scalar_residency(const IRFunction& func) {
 	size_t next_int = 0;
 	size_t next_float = 0;
 	for (int root : groups) {
+		// Constants that plan_constants() rematerializes never need a saved
+		// register.  Keeping one merely adds a save/restore pair; the LOAD_IMM
+		// itself is not emitted.
+		if (def_at[size_t(root)] >= 0 &&
+			func.instructions[size_t(def_at[size_t(root)])].opcode == IROpcode::LOAD_IMM &&
+			m_fn.unmaterialized_imm[size_t(def_at[size_t(root)])]) {
+			for (int r : group_members[size_t(root)])
+				m_fn.fixed_scalar_types[size_t(r)] = IRInstruction::TypeHint_NONE;
+			continue;
+		}
 		// Residency repays its save/restore and prologue tag in a loop. Cold
 		// straight-line groups retain the smaller legacy slot path.
 		if (!group_loop_hot[size_t(root)]) {
@@ -1231,6 +1248,9 @@ void RISCVCodeGen::emit_prologue(const IRFunction& func,
 	for (const auto& [index, mode] : m_fn.numeric_loop_modes) {
 		(void)index;
 		emit_mv(mode.preg, REG_ZERO);
+	}
+	for (int8_t dirty : m_fn.scope_dirty_regs) {
+		if (dirty >= 0) emit_mv(uint8_t(dirty), REG_ZERO);
 	}
 
 	if (m_fn.is_coroutine || m_fn.scope_slot_count > 0) {
@@ -3460,6 +3480,15 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::LOAD_FLOAT_IMM: {
 			int vreg = instr.operands[0].reg_index();
 			double value = instr.operands[1].float_number();
+			const int resident = resident_float_register(vreg);
+			if (!m_fn.forward_return && resident >= 0) {
+				int64_t bits;
+				std::memcpy(&bits, &value, sizeof(bits));
+				emit_li(REG_T0, bits);
+				emit_fmv_d_x(uint8_t(resident), REG_T0);
+				m_fn.resident_result_written = true;
+				break;
+			}
 			auto [base, offset] = value_destination(vreg);
 			emit_variant_create_float(offset, value, base);
 			break;
@@ -3955,7 +3984,12 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 			} else if (m_fn.variant_offsets.find(IRFunction::RETURN_REGISTER) != m_fn.variant_offsets.end()) {
 				int src_offset = get_variant_stack_offset(IRFunction::RETURN_REGISTER);
 				emit_load_return_pointer();
-				emit_variant_move(REG_A0, 0, REG_SP, src_offset, REG_T0);
+				const int type = size_t(IRFunction::RETURN_REGISTER) < m_fn.fixed_scalar_types.size()
+					? m_fn.fixed_scalar_types[size_t(IRFunction::RETURN_REGISTER)]
+					: IRInstruction::TypeHint_NONE;
+				if (is_scalar_variant_type(type))
+					emit_scalar_variant_move(REG_A0, 0, REG_SP, src_offset, REG_T0);
+				else emit_variant_move(REG_A0, 0, REG_SP, src_offset, REG_T0);
 			}
 
 			// After retval written; t0-t5 free.
@@ -4354,6 +4388,20 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 		m_fn.ecall_refused = elision_in_effect && !instruction_may_ecall(instr);
 		gen_instruction(instr);
 		m_fn.ecall_refused = false;
+		// Calls that write a Variant into a loop scope classify the returned tag
+		// while it is still in the frame.  Tags below STRING are scalar; treating
+		// the remaining inline tags conservatively as dirty is harmless, while
+		// numeric Array elements avoid the release ecall entirely.
+		if (instruction_dst >= 0) {
+			auto dirty = m_fn.scope_dirty_updates.find(instr_idx);
+			if (dirty != m_fn.scope_dirty_updates.end()) {
+				emit_lw(REG_T0, REG_SP, get_variant_stack_offset(instruction_dst) +
+					VARIANT_TYPE_OFFSET);
+				emit_i_type(0x13, REG_T0, 3, REG_T0, Variant::STRING); // sltiu
+				emit_xori(REG_T0, REG_T0, 1);
+				for (uint8_t preg : dirty->second) emit_or(preg, preg, REG_T0);
+			}
+		}
 		if (has_resident_values && instruction_dst >= 0 && !m_fn.resident_result_written) {
 			reload_resident_value(instruction_dst);
 		}
@@ -6218,16 +6266,29 @@ void RISCVCodeGen::emit_int_fused_branch_imm(IROpcode op, int value_vreg, int va
 	int64_t imm, bool constant_on_left, const std::string& label)
 {
 	const uint8_t value = emit_int_operand(REG_T0, value_vreg, value_offset);
-	// Zero equality maps directly to the ISA's register/zero branch form.
-	if (imm == 0 && (op == IROpcode::BRANCH_EQ || op == IROpcode::BRANCH_NEQ)) {
-		mark_label_use(label, m_code.size());
-		if (op == IROpcode::BRANCH_EQ) emit_beq(value, REG_ZERO, 0);
-		else emit_bne(value, REG_ZERO, 0);
-		return;
+	if (constant_on_left) {
+		switch (op) {
+			case IROpcode::BRANCH_LT: op = IROpcode::BRANCH_GT; break;
+			case IROpcode::BRANCH_LTE: op = IROpcode::BRANCH_GTE; break;
+			case IROpcode::BRANCH_GT: op = IROpcode::BRANCH_LT; break;
+			case IROpcode::BRANCH_GTE: op = IROpcode::BRANCH_LTE; break;
+			default: break;
+		}
 	}
-	emit_int_compare_imm(REG_T2, value, imm, op, constant_on_left);
+	const uint8_t rhs = imm == 0 ? REG_ZERO : REG_T1;
+	if (imm != 0) emit_li(rhs, imm);
 	mark_label_use(label, m_code.size());
-	emit_bne(REG_T2, REG_ZERO, 0);
+	switch (op) {
+		case IROpcode::BRANCH_EQ: emit_beq(value, rhs, 0); break;
+		case IROpcode::BRANCH_NEQ: emit_bne(value, rhs, 0); break;
+		case IROpcode::BRANCH_LT: emit_blt(value, rhs, 0); break;
+		case IROpcode::BRANCH_LTE: emit_bge(rhs, value, 0); break;
+		case IROpcode::BRANCH_GT: emit_blt(rhs, value, 0); break;
+		case IROpcode::BRANCH_GTE: emit_bge(value, rhs, 0); break;
+		default:
+			throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+				"Unknown fused integer branch with immediate");
+	}
 }
 
 void RISCVCodeGen::emit_array_element_access(bool is_set, int array_offset, int index_offset, int value_offset,
@@ -6994,6 +7055,11 @@ void RISCVCodeGen::emit_fmv_d(uint8_t rd, uint8_t rs) {
 	emit_r4_type(0x53, rd, 0x0, rs, rs, 0b00100, 1);
 }
 
+void RISCVCodeGen::emit_fmv_d_x(uint8_t rd, uint8_t rs) {
+	// FMV.D.X: move the raw 64-bit IEEE payload into an FP register.
+	emit_r_type(0x53, rd, 0, rs, 0, 0b1111001);
+}
+
 void RISCVCodeGen::emit_fsqrt_d(uint8_t rd, uint8_t rs1) {
 	emit_r_type(0x53, rd, 0, rs1, 0, 0b0101101);
 }
@@ -7520,6 +7586,8 @@ void RISCVCodeGen::plan_release_clears(const IRFunction& func) {
 void RISCVCodeGen::plan_scopes(const IRFunction& func) {
 	m_fn.elided_scopes.clear();
 	m_fn.scope_slots.clear();
+	m_fn.scope_dirty_regs.clear();
+	m_fn.scope_dirty_updates.clear();
 	m_fn.scope_slot_count = 0;
 
 	int max_scope_id = -1;
@@ -7544,11 +7612,55 @@ void RISCVCodeGen::plan_scopes(const IRFunction& func) {
 	}
 
 	m_fn.scope_slots.assign(size_t(max_scope_id) + 1, -1);
+	m_fn.scope_dirty_regs.assign(size_t(max_scope_id) + 1, -1);
 	for (int scope_id = 0; scope_id <= max_scope_id; scope_id++) {
 		if (!m_fn.elided_scopes[size_t(scope_id)]) {
 			m_fn.scope_slots[size_t(scope_id)] = m_fn.scope_slot_count++;
 		}
 	}
+
+	// Only scopes released more than once are loop scopes.  Give these a dirty
+	// bit if an integer callee-saved register remains; ordinary one-shot scopes
+	// do not repay the extra save/restore.
+	static constexpr std::array<uint8_t, 11> INT_REGS {{ 9, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27 }};
+	std::vector<size_t> marks(size_t(max_scope_id) + 1, SIZE_MAX);
+	std::vector<size_t> last_releases(size_t(max_scope_id) + 1, SIZE_MAX);
+	std::vector<int> release_counts(size_t(max_scope_id) + 1, 0);
+	for (size_t i = 0; i < func.instructions.size(); i++) {
+		const IRInstruction& instr = func.instructions[i];
+		if (instr.opcode != IROpcode::SCOPE_MARK && instr.opcode != IROpcode::SCOPE_RELEASE) continue;
+		const int id = int(instr.operands[0].immediate());
+		if (instr.opcode == IROpcode::SCOPE_MARK) marks[size_t(id)] = i;
+		else {
+			last_releases[size_t(id)] = i;
+			release_counts[size_t(id)]++;
+		}
+	}
+	for (int id = 0; id <= max_scope_id; id++) {
+		if (m_fn.elided_scopes[size_t(id)] || release_counts[size_t(id)] < 2 ||
+			marks[size_t(id)] == SIZE_MAX || last_releases[size_t(id)] == SIZE_MAX) continue;
+		uint8_t preg = 0;
+		bool found = false;
+		for (uint8_t candidate : INT_REGS) {
+			if (std::find(m_fn.used_int_resident_regs.begin(), m_fn.used_int_resident_regs.end(), candidate) ==
+				m_fn.used_int_resident_regs.end()) {
+				preg = candidate;
+				found = true;
+				break;
+			}
+		}
+		if (!found) continue;
+		m_fn.scope_dirty_regs[size_t(id)] = int8_t(preg);
+		m_fn.used_int_resident_regs.push_back(preg);
+		m_allocator.reserve_register(preg);
+		for (size_t i = marks[size_t(id)] + 1; i < last_releases[size_t(id)]; i++) {
+			if (!instruction_may_allocate_scoped(func.instructions[i])) continue;
+			if (ir_destination_register(func.instructions[i]) < 0) continue;
+			m_fn.scope_dirty_updates[i].push_back(preg);
+		}
+	}
+	m_fn.saved_reg_space = SAVED_FIXED_SPACE +
+		int(m_fn.used_int_resident_regs.size() + m_fn.used_float_resident_regs.size()) * 8;
 }
 
 bool RISCVCodeGen::scope_is_elided(int scope_id) const {
@@ -7585,9 +7697,15 @@ void RISCVCodeGen::gen_scope_release(const IRInstruction& instr) {
 	if (scope_is_elided(scope_id)) {
 		return;
 	}
+	const int dirty = scope_id >= 0 && size_t(scope_id) < m_fn.scope_dirty_regs.size()
+		? m_fn.scope_dirty_regs[size_t(scope_id)] : -1;
 	const auto cached = m_fn.numeric_loop_releases.find(m_fn.current_instr_idx - 1);
-	const std::string skip = cached != m_fn.numeric_loop_releases.end()
+	const std::string skip = cached != m_fn.numeric_loop_releases.end() || dirty >= 0
 		? gen_local_label(".numeric_release_done") : "";
+	if (dirty >= 0) {
+		mark_label_use(skip, m_code.size());
+		emit_beq(uint8_t(dirty), REG_ZERO, 0);
+	}
 	if (cached != m_fn.numeric_loop_releases.end()) {
 		mark_label_use(skip, m_code.size());
 		emit_bne(cached->second, REG_ZERO, 0);
@@ -7639,7 +7757,8 @@ void RISCVCodeGen::gen_scope_release(const IRInstruction& instr) {
 	emit_li(REG_A0, int64_t(Scope_Op::RELEASE));
 	emit_li(REG_A7, ECALL_VSCOPE);
 	emit_ecall();
-	if (cached != m_fn.numeric_loop_releases.end()) define_label(skip);
+	if (dirty >= 0) emit_mv(uint8_t(dirty), REG_ZERO);
+	if (cached != m_fn.numeric_loop_releases.end() || dirty >= 0) define_label(skip);
 }
 
 void RISCVCodeGen::spill_around_syscall(const std::vector<uint8_t>& clobbered_regs) {
@@ -7649,6 +7768,12 @@ void RISCVCodeGen::spill_around_syscall(const std::vector<uint8_t>& clobbered_re
 }
 
 void RISCVCodeGen::emit_syscall_result(int result_vreg, uint8_t result_reg, int result_offset, int variant_type) {
+	const int resident = resident_int_register(result_vreg);
+	if (resident >= 0) {
+		if (uint8_t(resident) != result_reg) emit_mv(uint8_t(resident), result_reg);
+		m_fn.resident_result_written = true;
+		return;
+	}
 	emit_li(REG_T0, variant_type);
 	emit_sw(REG_T0, REG_SP, result_offset);
 	emit_sd(result_reg, REG_SP, result_offset + 8);
