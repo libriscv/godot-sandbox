@@ -19,7 +19,14 @@ struct SourceRange {
 enum class DiagnosticSeverity : uint8_t { ERROR, WARNING, INFO };
 enum class DeclarationKind : uint8_t {
 	CLASS, FUNCTION, PARAMETER, VARIABLE, CONSTANT, SIGNAL, ENUM, ENUM_VALUE,
-	NESTED_CLASS, ANNOTATION, TRAIT, COUNT,
+	NESTED_CLASS, ANNOTATION, TRAIT, STRUCT, COUNT,
+};
+
+enum DeclarationFlags : uint32_t {
+	DECLARATION_STATIC = 1u << 0,
+	DECLARATION_EXPORT = 1u << 1,
+	DECLARATION_ONREADY = 1u << 2,
+	DECLARATION_ABSTRACT = 1u << 3,
 };
 enum class CaretKind : uint8_t {
 	NONE, IDENTIFIER, MEMBER, TYPE, CALL_ARGUMENT, ANNOTATION, RESOURCE_PATH,
@@ -62,6 +69,12 @@ struct SourceDeclaration {
 	std::string return_type;
 	std::vector<SourceEnumMember> enum_members;
 	std::vector<std::string> annotation_arguments;
+	// For file-level CLASS, the file's own extends.
+	std::string base_type;
+	std::string initializer_text;
+	// Inline accessor bodies carry a synthesized name.
+	std::string setter;
+	std::string getter;
 };
 
 struct CaretContext {

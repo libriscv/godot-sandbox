@@ -31,14 +31,16 @@ compiler_host_sources = [
     "src/gdscript/compiler/globals.cpp",
     "src/gdscript/compiler/compiler_exception.cpp",
 	"src/gdscript/compiler/debug_layout.cpp",
-]
-
-# The rest of the compiler, linked in when SafeGDScript compiles in process.
-compiler_sources = compiler_host_sources + [
+    # analyze_source() parses; editor analysis is host-side whatever the policy.
     "src/gdscript/compiler/token.cpp",
     "src/gdscript/compiler/lexer.cpp",
     "src/gdscript/compiler/parser.cpp",
     "src/gdscript/compiler/ast_clone.cpp",
+    "src/gdscript/compiler/export_hints.cpp",
+]
+
+# The rest of the compiler, linked in when SafeGDScript compiles in process.
+compiler_sources = compiler_host_sources + [
     "src/gdscript/compiler/traits.cpp",
     "src/gdscript/compiler/chain.cpp",
     "src/gdscript/compiler/ir.cpp",
@@ -51,7 +53,6 @@ compiler_sources = compiler_host_sources + [
     "src/gdscript/compiler/riscv_debug.cpp",
     "src/gdscript/compiler/register_allocator.cpp",
     "src/gdscript/compiler/elf_builder.cpp",
-    "src/gdscript/compiler/export_hints.cpp",
     "src/gdscript/compiler/compiler.cpp",
 ]
 

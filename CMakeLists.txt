@@ -59,6 +59,7 @@ set(ELF_METADATA_SOURCES
 
 if (ENABLE_SAFEGDSCRIPT)
 	list(APPEND SOURCES
+		src/safegdscript/builtin_api_safegdscript.cpp
 		src/safegdscript/compiler_backend.cpp
 		src/safegdscript/convert_safegdscript.cpp
 		src/safegdscript/debug_safegdscript.cpp
@@ -72,6 +73,7 @@ if (ENABLE_SAFEGDSCRIPT)
 		src/safegdscript/script_instance_safegdscript.cpp
 		src/safegdscript/script_language_safegdscript.cpp
 		src/safegdscript/script_safegdscript.cpp
+		src/safegdscript/syntax_highlighter_safegdscript.cpp
 		src/safegdscript/resource_loader_safegdscript.cpp
 		src/safegdscript/resource_saver_safegdscript.cpp
 	)
@@ -105,6 +107,12 @@ if (ENABLE_SAFEGDSCRIPT)
 			src/gdscript/compiler/debug_layout.cpp
 			src/gdscript/compiler/globals.cpp
 			src/gdscript/compiler/compiler_exception.cpp
+			# analyze_source() parses; editor analysis is host-side whatever the policy.
+			src/gdscript/compiler/token.cpp
+			src/gdscript/compiler/lexer.cpp
+			src/gdscript/compiler/parser.cpp
+			src/gdscript/compiler/ast_clone.cpp
+			src/gdscript/compiler/export_hints.cpp
 		)
 	endif()
 endif()

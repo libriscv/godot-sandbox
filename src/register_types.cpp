@@ -26,6 +26,7 @@
 #include "safegdscript/editor_plugin_safegdscript.h"
 #include "safegdscript/resource_loader_safegdscript.h"
 #include "safegdscript/resource_saver_safegdscript.h"
+#include "safegdscript/syntax_highlighter_safegdscript.h"
 #endif
 #ifdef PLATFORM_HAS_EDITOR
 #include "rust/resource_loader_rust.h"
@@ -75,6 +76,7 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ClassDB::register_class<SafeGDScriptLanguage>();
 	ClassDB::register_class<ResourceFormatLoaderSafeGDScript>();
 	ClassDB::register_class<ResourceFormatSaverSafeGDScript>();
+	ClassDB::register_class<SafeGDScriptCodeHighlighter>();
 #endif
 #ifdef PLATFORM_HAS_EDITOR
 	ClassDB::register_class<RustScript>();

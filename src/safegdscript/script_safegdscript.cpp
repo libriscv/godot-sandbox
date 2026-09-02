@@ -1,6 +1,7 @@
 #include "script_safegdscript.h"
 
 #include "compiler_backend.h"
+#include "editor_analysis_safegdscript.h"
 #include "sgd_timing.h"
 #include "../elf/script_instance.h"
 #include "script_class_safegdscript.h"
@@ -286,7 +287,15 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 	// silently, yielding an empty page.
 	Dictionary class_doc;
 	class_doc["name"] = String(_get_doc_class_name());
-	class_doc["inherits"] = String(_get_instance_base_type());
+	String inherits = String(_get_instance_base_type());
+	{
+		const Ref<Script> base = _get_base_script();
+		const String base_doc = EditorSymbolResolver::doc_name_of_script(base);
+		if (!base_doc.is_empty()) {
+			inherits = base_doc;
+		}
+	}
+	class_doc["inherits"] = inherits;
 	class_doc["is_script_doc"] = true;
 	class_doc["script_path"] = path;
 
@@ -340,11 +349,20 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 	}
 	class_doc["signals"] = signal_docs;
 
+	// Own enum types document as int.
+	HashSet<String> own_enums;
+	for (const gdscript::SourceDeclaration &declaration : source_model.declarations) {
+		if (declaration.parent < 0 && declaration.kind == gdscript::DeclarationKind::ENUM) {
+			own_enums.insert(String::utf8(declaration.name.c_str(), declaration.name.size()));
+		}
+	}
+
 	Array property_docs;
 	Array constant_docs;
-	Array enum_docs;
-	Array nested_class_docs;
+	Dictionary enum_docs;
+	std::vector<const gdscript::SourceDeclaration *> nested_declarations;
 	for (const gdscript::SourceDeclaration &declaration : source_model.declarations) {
+		if (declaration.parent >= 0) continue;
 		const String name = String::utf8(declaration.name.c_str(), declaration.name.size());
 		const String description = String::utf8(declaration.documentation.c_str(), declaration.documentation.size());
 		if (declaration.kind == gdscript::DeclarationKind::CLASS) {
@@ -356,42 +374,134 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 		} else if (declaration.kind == gdscript::DeclarationKind::VARIABLE) {
 			Dictionary doc;
 			doc["name"] = name;
-			doc["type"] = declaration.declared_type.empty() ? String("Variant") :
-					String::utf8(declaration.declared_type.c_str(), declaration.declared_type.size());
+			const String declared = String::utf8(declaration.declared_type.c_str(),
+					declaration.declared_type.size());
+			if (own_enums.has(declared)) {
+				doc["type"] = "int";
+				doc["enumeration"] = declared;
+			} else if (!declared.is_empty()) {
+				doc["type"] = declared;
+			} else {
+				const String resolved = String::utf8(declaration.resolved_type.c_str(),
+						declaration.resolved_type.size());
+				doc["type"] = resolved.is_empty() ? String("Variant") : resolved;
+			}
+			if (!declaration.setter.empty()) {
+				doc["setter"] = String::utf8(declaration.setter.c_str(), declaration.setter.size());
+			}
+			if (!declaration.getter.empty()) {
+				doc["getter"] = String::utf8(declaration.getter.c_str(), declaration.getter.size());
+			}
+			Variant default_value;
+			if (property_default(StringName(name), default_value)) {
+				doc["default_value"] = UtilityFunctions::var_to_str(default_value);
+			} else if (!declaration.initializer_text.empty()) {
+				doc["default_value"] = String::utf8(declaration.initializer_text.c_str(),
+						declaration.initializer_text.size());
+			}
 			apply_documentation_tags(doc, description);
 			property_docs.push_back(doc);
 		} else if (declaration.kind == gdscript::DeclarationKind::CONSTANT) {
 			Dictionary doc;
 			doc["name"] = name;
+			if (const Variant *value = constants.getptr(StringName(name))) {
+				doc["value"] = UtilityFunctions::var_to_str(*value);
+				doc["is_value_valid"] = true;
+			} else if (!declaration.initializer_text.empty()) {
+				doc["value"] = String::utf8(declaration.initializer_text.c_str(),
+						declaration.initializer_text.size());
+				doc["is_value_valid"] = true;
+			}
 			apply_documentation_tags(doc, description);
 			constant_docs.push_back(doc);
 		} else if (declaration.kind == gdscript::DeclarationKind::ENUM) {
+			// Help viewer groups members by their parent enum.
 			Dictionary doc;
-			doc["name"] = name;
 			apply_documentation_tags(doc, description);
-			Array values;
+			enum_docs[name] = doc;
 			for (const gdscript::SourceEnumMember &member : declaration.enum_members) {
 				Dictionary value;
 				value["name"] = String::utf8(member.name.c_str(), member.name.size());
-				value["value"] = member.value;
-				values.push_back(value);
+				value["value"] = itos(member.value);
+				value["is_value_valid"] = true;
+				value["type"] = "int";
+				value["enumeration"] = name;
+				constant_docs.push_back(value);
 			}
-			doc["values"] = values;
-			enum_docs.push_back(doc);
 		} else if (declaration.kind == gdscript::DeclarationKind::NESTED_CLASS) {
-			Dictionary doc;
-			doc["name"] = name;
-			apply_documentation_tags(doc, description);
-			nested_class_docs.push_back(doc);
+			nested_declarations.push_back(&declaration);
 		}
 	}
 	class_doc["properties"] = property_docs;
 	class_doc["constants"] = constant_docs;
 	class_doc["enums"] = enum_docs;
-	class_doc["classes"] = nested_class_docs;
 
 	TypedArray<Dictionary> documentation;
 	documentation.push_back(class_doc);
+	for (const gdscript::SourceDeclaration *declaration : nested_declarations) {
+		Dictionary nested_doc;
+		nested_doc["name"] = String(_get_doc_class_name()) + "." +
+				String::utf8(declaration->name.c_str(), declaration->name.size());
+		nested_doc["inherits"] = declaration->base_type.empty() ? String("RefCounted") :
+				String::utf8(declaration->base_type.c_str(), declaration->base_type.size());
+		nested_doc["is_script_doc"] = true;
+		nested_doc["script_path"] = path;
+		apply_documentation_tags(nested_doc,
+				String::utf8(declaration->documentation.c_str(), declaration->documentation.size()));
+		Array methods;
+		Array properties;
+		Array signals;
+		for (int32_t child : declaration->children) {
+			if (child < 0 || size_t(child) >= source_model.declarations.size()) continue;
+			const gdscript::SourceDeclaration &member = source_model.declarations[size_t(child)];
+			Dictionary member_doc;
+			member_doc["name"] = String::utf8(member.name.c_str(), member.name.size());
+			apply_documentation_tags(member_doc,
+					String::utf8(member.documentation.c_str(), member.documentation.size()));
+			switch (member.kind) {
+				case gdscript::DeclarationKind::FUNCTION: {
+					member_doc["return_type"] = member.return_type.empty() ? String("Variant") :
+							String::utf8(member.return_type.c_str(), member.return_type.size());
+					Array arguments;
+					for (const gdscript::SourceParameter &parameter : member.parameters) {
+						Dictionary argument;
+						argument["name"] = String::utf8(parameter.name.c_str(), parameter.name.size());
+						argument["type"] = parameter.declared_type.empty() ? String("Variant") :
+								String::utf8(parameter.declared_type.c_str(), parameter.declared_type.size());
+						if (!parameter.default_text.empty()) {
+							argument["default_value"] = String::utf8(parameter.default_text.c_str(),
+									parameter.default_text.size());
+						}
+						arguments.push_back(argument);
+					}
+					member_doc["arguments"] = arguments;
+					methods.push_back(member_doc);
+					break;
+				}
+				case gdscript::DeclarationKind::VARIABLE: {
+					const String declared = member.declared_type.empty() ?
+							String::utf8(member.resolved_type.c_str(), member.resolved_type.size()) :
+							String::utf8(member.declared_type.c_str(), member.declared_type.size());
+					member_doc["type"] = declared.is_empty() ? String("Variant") : declared;
+					if (!member.initializer_text.empty()) {
+						member_doc["default_value"] = String::utf8(member.initializer_text.c_str(),
+								member.initializer_text.size());
+					}
+					properties.push_back(member_doc);
+					break;
+				}
+				case gdscript::DeclarationKind::SIGNAL:
+					signals.push_back(member_doc);
+					break;
+				default:
+					break;
+			}
+		}
+		nested_doc["methods"] = methods;
+		nested_doc["properties"] = properties;
+		nested_doc["signals"] = signals;
+		documentation.push_back(nested_doc);
+	}
 	for (const KeyValue<StringName, Ref<SafeGDScriptClass>> &entry : nested_classes) {
 		const SafeGDScriptClass *nested = entry.value.ptr();
 		if (nested == nullptr || !nested->get_is_struct()) continue;
@@ -405,7 +515,7 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 			Dictionary property;
 			property["name"] = String::utf8(field.name.c_str(), field.name.size());
 			property["type"] = field.class_name.empty()
-				? Variant::get_type_name(variant_type_or_nil(field.type))
+				? signature_doc_type(field.type, field.class_name)
 				: String::utf8(field.class_name.c_str(), field.class_name.size());
 			apply_documentation_tags(property,
 				String::utf8(field.description.c_str(), field.description.size()));
@@ -1093,6 +1203,9 @@ void SafeGDScript::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("get_compile_error"), &SafeGDScript::get_compile_error);
 	ClassDB::bind_method(D_METHOD("uses_trait", "name"), &SafeGDScript::uses_trait);
+	// Engine-internal; bound for tests.
+	ClassDB::bind_method(D_METHOD("editor_documentation"), &SafeGDScript::editor_documentation);
+	ClassDB::bind_method(D_METHOD("editor_member_line", "member"), &SafeGDScript::editor_member_line);
 
 	ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "new", &SafeGDScript::new_instance,
 			MethodInfo("new"));

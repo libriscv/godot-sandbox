@@ -1,0 +1,8 @@
+extends Node
+
+enum Mode { IDLE, RUN = 5, STOP }
+
+var mode: int = Mode.IDLE
+
+func names() -> Array:
+	return Mode.keys()

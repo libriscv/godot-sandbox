@@ -98,6 +98,8 @@ struct VariableExpr : Expr {
 	explicit VariableExpr(std::string n) : name(std::move(n)) {}
 };
 
+struct ErrorExpr : Expr {};
+
 struct BinaryExpr : Expr {
 	enum class Op {
 		ADD, SUB, MUL, DIV, MOD, POW,

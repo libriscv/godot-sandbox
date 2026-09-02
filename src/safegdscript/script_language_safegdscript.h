@@ -22,6 +22,12 @@ public:
 			Object *p_owner = nullptr) const;
 	Dictionary editor_lookup(const String &p_code, const String &p_symbol,
 			const String &p_path, Object *p_owner = nullptr) const;
+	Ref<Script> editor_make_template(const String &p_template, const String &p_class_name,
+			const String &p_base_class_name) const;
+	TypedArray<Dictionary> editor_built_in_templates(const StringName &p_object) const;
+	TypedArray<Dictionary> editor_public_functions() const;
+	Dictionary editor_public_constants() const;
+	TypedArray<Dictionary> editor_public_annotations() const;
 	Dictionary bake_all_translations();
 	// .gd <-> .sgd: rename the file and its UID sidecar, rewrite text scenes
 	// naming it, retarget autoloads (convert_safegdscript.cpp).

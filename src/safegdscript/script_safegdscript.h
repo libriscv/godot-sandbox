@@ -81,6 +81,9 @@ public:
 	virtual bool _is_placeholder_fallback_enabled() const override;
 	virtual Variant _get_rpc_config() const override;
 
+	TypedArray<Dictionary> editor_documentation() const { return _get_documentation(); }
+	int32_t editor_member_line(const StringName &p_member) const { return _get_member_line(p_member); }
+
 	void set_path(const String &p_path);
 	SafeGDScriptInstance *get_safegdscript_script_instance() const;
 	Object *owner_for_instance_base(uint64_t p_instance_base) const;

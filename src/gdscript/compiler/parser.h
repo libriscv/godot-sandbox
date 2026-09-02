@@ -1,4 +1,5 @@
 #pragma once
+#include "parse_diagnostics.h"
 #include "token.h"
 #include "ast.h"
 #include "export_hints.h"
@@ -17,9 +18,15 @@ public:
 	// Optional; without doc comments every description is empty.
 	void set_doc_comments(std::vector<std::pair<int, std::string>> comments);
 
+	void set_diagnostics(DiagnosticSink* sink) { m_diagnostics = sink; }
+
 	Program parse();
 
 private:
+	struct Recovery {};
+	bool tolerant() const { return m_diagnostics != nullptr; }
+	void recover_to_statement_end();
+
 	FunctionDecl parse_function();
 	std::vector<Parameter> parse_parameters();
 
@@ -59,6 +66,7 @@ private:
 
 	// Precedence climbing, loosest to tightest.
 	ExprPtr parse_expression();
+	ExprPtr parse_expression_impl();
 	ExprPtr parse_ternary();
 	ExprPtr parse_or_expression();
 	ExprPtr parse_and_expression();
@@ -136,6 +144,7 @@ private:
 	static bool holds_engine_constant(const Expr* expr);
 	std::string doc_comment_above(int p_line) const;
 
+	DiagnosticSink* m_diagnostics = nullptr;
 	std::vector<Token> m_tokens;
 	std::unordered_map<int, std::string> m_doc_comments; // line -> ## text
 	size_t m_current = 0;

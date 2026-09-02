@@ -1,0 +1,11 @@
+extends Node
+
+class Marker extends Node2D:
+	var weight: int = 2
+
+	func heavier(by: int) -> int:
+		weight += by
+		return weight
+
+func make_marker() -> Marker:
+	return Marker.new()

@@ -1,0 +1,11 @@
+extends Node
+
+signal progressed(amount: int)
+
+var speed: int = 7
+
+## Advance by [param amount] steps and report the new total.
+func advance(amount: int, factor: float = 1.0) -> int:
+	speed += int(amount * factor)
+	progressed.emit(amount)
+	return speed

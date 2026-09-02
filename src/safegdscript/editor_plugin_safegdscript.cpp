@@ -204,6 +204,10 @@ void SafeGDScriptEditorPlugin::_enter_tree() {
 		menus[i]->set_slot(slots[i]);
 		add_context_menu_plugin(slots[i], menus[i]);
 	}
+	if (ScriptEditor *editor = EditorInterface::get_singleton()->get_script_editor()) {
+		highlighter.instantiate();
+		editor->register_syntax_highlighter(highlighter);
+	}
 }
 
 void SafeGDScriptEditorPlugin::_exit_tree() {
@@ -213,9 +217,16 @@ void SafeGDScriptEditorPlugin::_exit_tree() {
 			menus[i].unref();
 		}
 	}
+	if (highlighter.is_valid()) {
+		if (ScriptEditor *editor = EditorInterface::get_singleton()->get_script_editor()) {
+			editor->unregister_syntax_highlighter(highlighter);
+		}
+		highlighter.unref();
+	}
 }
 
 void SafeGDScriptEditorPlugin::register_types() {
+	ClassDB::register_class<SafeGDScriptSyntaxHighlighter>();
 	ClassDB::register_internal_class<SafeGDScriptConvertMenu>();
 	ClassDB::register_internal_class<SafeGDScriptEditorPlugin>();
 	EditorPlugins::add_by_type<SafeGDScriptEditorPlugin>();

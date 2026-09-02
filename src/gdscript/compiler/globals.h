@@ -345,6 +345,8 @@ const GlobalFunction* find_global_function(const std::string& name);
 size_t global_function_count();
 // nullptr for internal lowering forms (leading '.'); skip when enumerating.
 const char* global_function_name(size_t index);
+uint8_t global_function_min_args(size_t index);
+uint8_t global_function_max_args(size_t index);
 
 // @GlobalScope constant. Folds to immediate; no syscall.
 struct GlobalConstant {
@@ -359,6 +361,9 @@ const GlobalConstant* find_global_constant(const std::string& name);
 
 size_t global_constant_count();
 const char* global_constant_name(size_t index);
+bool global_constant_is_float(size_t index);
+int64_t global_constant_int_value(size_t index);
+double global_constant_float_value(size_t index);
 
 // @GlobalScope enumeration member (Side.SIDE_LEFT, Error.ERR_BUSY). The enum
 // itself is compile-time only: GDScript's native enums are not Dictionaries and

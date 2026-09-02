@@ -1,0 +1,7 @@
+extends Node
+
+var counter: int = 0
+
+func bump(step: int) -> int:
+	counter += step
+	return counter

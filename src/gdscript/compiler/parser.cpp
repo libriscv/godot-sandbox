@@ -54,6 +54,8 @@ Program Parser::parse() {
 	skip_newlines();
 
 	while (!is_at_end()) {
+		const size_t statement_start = m_current;
+		try {
 		bool is_static = match(TokenType::STATIC);
 
 		if (check(TokenType::EXTENDS)) {
@@ -208,6 +210,21 @@ Program Parser::parse() {
 		} else {
 			error("Expected function or variable declaration");
 			synchronize();
+		}
+		} catch (const Recovery&) {
+			if (m_current == statement_start && !is_at_end()) {
+				advance();
+			}
+			recover_to_statement_end();
+			while (!is_at_end() && !check(TokenType::FUNC) && !check(TokenType::VAR) &&
+				!check(TokenType::CONST) && !check(TokenType::STATIC) &&
+				!check(TokenType::CLASS) && !check(TokenType::CLASS_NAME) &&
+				!check(TokenType::STRUCT) && !check(TokenType::TRAIT) &&
+				!check(TokenType::TRAIT_NAME) && !check(TokenType::ENUM) &&
+				!check(TokenType::SIGNAL) && !check(TokenType::EXTENDS) &&
+				!check(TokenType::AT)) {
+				advance();
+			}
 		}
 		skip_newlines();
 	}
@@ -1121,11 +1138,26 @@ bool Parser::at_inline_suite_end() const {
 
 StmtPtr Parser::parse_statement() {
 	// Central source-position assignment; adding a statement kind cannot forget.
-	const Token& start = peek();
-	StmtPtr stmt = parse_statement_impl();
+	const int line = peek().line;
+	const int column = peek().column;
+	const size_t entry = m_current;
+	StmtPtr stmt;
+	if (tolerant()) {
+		try {
+			stmt = parse_statement_impl();
+		} catch (const Recovery&) {
+			recover_to_statement_end();
+			if (m_current == entry && !is_at_end() && !check(TokenType::DEDENT)) {
+				advance();
+			}
+			stmt = std::make_unique<PassStmt>();
+		}
+	} else {
+		stmt = parse_statement_impl();
+	}
 	if (stmt && stmt->line == 0) {
-		stmt->line = start.line;
-		stmt->column = start.column;
+		stmt->line = line;
+		stmt->column = column;
 	}
 	return stmt;
 }
@@ -1762,6 +1794,35 @@ ExprPtr Parser::make_binary(ExprPtr left, BinaryExpr::Op op, ExprPtr right) {
 }
 
 ExprPtr Parser::parse_expression() {
+	if (!tolerant()) {
+		return parse_expression_impl();
+	}
+	const int line = peek().line;
+	const int column = peek().column;
+	try {
+		return parse_expression_impl();
+	} catch (const Recovery&) {
+		// Skip to the next statement boundary.
+		while (!is_at_end()) {
+			switch (peek().type) {
+				case TokenType::NEWLINE: case TokenType::SEMICOLON: case TokenType::COLON:
+				case TokenType::INDENT: case TokenType::DEDENT: case TokenType::COMMA:
+				case TokenType::RPAREN: case TokenType::RBRACKET: case TokenType::RBRACE:
+					break;
+				default:
+					advance();
+					continue;
+			}
+			break;
+		}
+		auto node = std::make_unique<ErrorExpr>();
+		node->line = line;
+		node->column = column;
+		return node;
+	}
+}
+
+ExprPtr Parser::parse_expression_impl() {
 	ExprPtr expr = parse_ternary();
 
 	// `as` is the loosest operator: casts the entire preceding expression.
@@ -2339,13 +2400,49 @@ void Parser::synchronize() {
 	}
 }
 
+namespace {
+const char* diagnostic_code(const std::string& message) {
+	if (message.compare(0, 19, "Expected expression") == 0) return "EXPECTED_EXPRESSION";
+	if (message.find("Expected ':'") != std::string::npos) return "EXPECTED_COLON";
+	if (message.find("Expected a type") != std::string::npos) return "EXPECTED_TYPE";
+	if (message.find("Expected newline") != std::string::npos) return "EXPECTED_NEWLINE";
+	return "PARSE_ERROR";
+}
+} // namespace
+
 void Parser::error(const std::string& message) {
 	const Token& token = peek();
+	if (tolerant()) {
+		const int width = int(token.lexeme.size());
+		const int start = token.column - width;
+		m_diagnostics->add(diagnostic_code(message), message, token.line,
+			start > 0 ? start : token.column, token.line,
+			start > 0 ? token.column : token.column + 1);
+		throw Recovery{};
+	}
 	throw CompilerException(ErrorType::PARSER_ERROR, message, token.line, token.column);
 }
 
 void Parser::error(const std::string& message, int line, int column) {
+	if (tolerant()) {
+		m_diagnostics->add(diagnostic_code(message), message, line, column, line, column + 1);
+		throw Recovery{};
+	}
 	throw CompilerException(ErrorType::PARSER_ERROR, message, line, column);
+}
+
+// Leaves layout tokens intact so DEDENT still closes its suite.
+void Parser::recover_to_statement_end() {
+	while (!is_at_end()) {
+		const TokenType type = peek().type;
+		if (type == TokenType::DEDENT || type == TokenType::INDENT) {
+			return;
+		}
+		advance();
+		if (type == TokenType::NEWLINE || type == TokenType::SEMICOLON) {
+			return;
+		}
+	}
 }
 
 void Parser::skip_newlines() {

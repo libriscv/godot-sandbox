@@ -1,7 +1,14 @@
 #include "source_model.h"
 
+#include "ast.h"
+#include "globals.h"
+#include "lexer.h"
+#include "parser.h"
+#include "variant_types.h"
+
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <sstream>
@@ -20,8 +27,10 @@ constexpr uint32_t MAX_RECORDS = 100000;
 constexpr uint32_t MAX_STRING = 1024u * 1024u;
 constexpr uint32_t MAX_DIAGNOSTICS = 100;
 
+// Append only; older decoders skip unknown sections.
 enum Section : uint32_t { META = 1, DIAGNOSTICS = 2, DECLARATIONS = 3,
-	PROPERTIES = 4, CARET = 5, SAFE_LINES = 6 };
+	PROPERTIES = 4, CARET = 5, SAFE_LINES = 6, DECLARATION_TYPES = 7,
+	DECLARATION_VALUES = 8 };
 
 template <typename T> void scalar(std::vector<uint8_t> &out, T value) {
 	static_assert(std::is_trivially_copyable<T>::value, "raw bytes only");
@@ -69,17 +78,6 @@ std::string trim(const std::string &s) {
 	while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) b--;
 	return s.substr(a, b - a);
 }
-bool word_start(const std::string &s, const char *word) {
-	const size_t n = std::strlen(word);
-	return s.compare(0, n, word) == 0 && (s.size() == n || std::isspace(
-			static_cast<unsigned char>(s[n])) || s[n] == '(');
-}
-std::string identifier(const std::string &s, size_t at) {
-	while (at < s.size() && std::isspace(static_cast<unsigned char>(s[at]))) at++;
-	const size_t begin = at;
-	while (at < s.size() && (std::isalnum(static_cast<unsigned char>(s[at])) || s[at] == '_')) at++;
-	return s.substr(begin, at - begin);
-}
 uint32_t indentation(const std::string &s) {
 	uint32_t n = 0;
 	for (char c : s) { if (c == ' ') n++; else if (c == '\t') n += 4; else break; }
@@ -92,126 +90,1082 @@ std::vector<std::string> split_lines(const std::string &source) {
 	if (source.empty() || (!source.empty() && source.back() == '\n')) lines.push_back({});
 	return lines;
 }
-void diagnostic(SourceModel &model, const std::string &code, const std::string &message,
-		uint32_t line, uint32_t column) {
-	if (model.diagnostics.size() >= MAX_DIAGNOSTICS) return;
-	model.diagnostics.push_back({DiagnosticSeverity::ERROR, code, message, model.path,
-		{line, column, line, column + 1}});
-}
-
-void warning(SourceModel &model, const std::string &code, const std::string &message,
-		uint32_t line, uint32_t column) {
-	if (model.diagnostics.size() >= MAX_DIAGNOSTICS) return;
-	model.diagnostics.push_back({DiagnosticSeverity::WARNING, code, message, model.path,
-		{line, column, line, column + 1}});
-}
-
-size_t word_occurrences(const std::string &source, const std::string &word) {
-	size_t count = 0;
-	for (size_t at = source.find(word); at != std::string::npos; at = source.find(word, at + word.size())) {
-		const bool left = at == 0 || !(std::isalnum(static_cast<unsigned char>(source[at - 1])) || source[at - 1] == '_');
-		const size_t end = at + word.size();
-		const bool right = end == source.size() || !(std::isalnum(static_cast<unsigned char>(source[end])) || source[end] == '_');
-		if (left && right) count++;
+size_t expression_start(const std::string &s, size_t p_end) {
+	size_t at = p_end;
+	bool consumed = false;
+	while (at > 0) {
+		const char c = s[at - 1];
+		bool group = false;
+		if (std::isalnum(static_cast<unsigned char>(c)) || c == '_') {
+			while (at > 0 && (std::isalnum(static_cast<unsigned char>(s[at - 1])) || s[at - 1] == '_')) at--;
+		} else if (c == ')' || c == ']') {
+			int depth = 0;
+			size_t scan = at;
+			bool matched = false;
+			while (scan > 0) {
+				const char d = s[scan - 1];
+				if (d == '"' || d == '\'') {
+					size_t quote = scan - 1;
+					while (quote > 0 && s[quote - 1] != d) quote--;
+					scan = quote > 0 ? quote - 1 : 0;
+					continue;
+				}
+				scan--;
+				if (d == ')' || d == ']') depth++;
+				else if (d == '(' || d == '[') { depth--; if (depth == 0) { matched = true; break; } }
+			}
+			if (!matched) return p_end;
+			at = scan;
+			group = true;
+		} else if (c == '"' || c == '\'') {
+			size_t quote = at - 1;
+			while (quote > 0 && s[quote - 1] != c) quote--;
+			if (quote == 0) return p_end;
+			at = quote - 1;
+			group = true;
+		} else {
+			break;
+		}
+		consumed = true;
+		if (at > 0 && (s[at - 1] == '.' || s[at - 1] == '/')) { at--; continue; }
+		// The group follows the name it calls or indexes.
+		if (group && at > 0 && (std::isalnum(static_cast<unsigned char>(s[at - 1])) || s[at - 1] == '_')) continue;
+		break;
 	}
-	return count;
+	if (!consumed) return p_end;
+	if (at > 0 && (s[at - 1] == '$' || s[at - 1] == '%')) at--;
+	return at;
 }
 
-// One physical line with its comments removed, plus whether the lines above it
-// left a delimiter or a backslash open. Diagnostics are per statement, not per
-// line: a newline inside (), [] or {} continues the statement above it.
-struct LineScan {
-	std::string code;
-	bool continuation = false;
-	bool unterminated = false;
-	int closing_underflow = 0;
+bool tail_is(const std::string &s, const char *suffix) {
+	const size_t n = std::strlen(suffix);
+	return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
+}
+
+void analyze_caret(const std::string &before, CaretContext &caret) {
+	struct Open { size_t at; int argument; bool call; };
+	std::vector<Open> open;
+	bool in_string = false;
+	char quote = 0;
+	for (size_t i = 0; i < before.size(); i++) {
+		const char c = before[i];
+		if (in_string) {
+			if (c == '\\') i++;
+			else if (c == quote) in_string = false;
+			continue;
+		}
+		if (c == '"' || c == '\'') { in_string = true; quote = c; }
+		else if (c == '(') {
+			const char previous = i > 0 ? before[i - 1] : ' ';
+			open.push_back({i, 0, std::isalnum(static_cast<unsigned char>(previous)) != 0 ||
+					previous == '_' || previous == ')' || previous == ']'});
+		} else if (c == '[' || c == '{') open.push_back({i, 0, false});
+		else if (c == ')' || c == ']' || c == '}') { if (!open.empty()) open.pop_back(); }
+		else if (c == ',' && !open.empty()) open.back().argument++;
+	}
+	// Find the innermost open call for signature display.
+	for (size_t i = open.size(); i-- > 0;) {
+		if (!open[i].call) continue;
+		const size_t start = expression_start(before, open[i].at);
+		if (start < open[i].at) {
+			caret.callee = before.substr(start, open[i].at - start);
+			caret.argument_index = open[i].argument;
+		}
+		break;
+	}
+	if (in_string) return;
+
+	size_t prefix = before.size();
+	while (prefix > 0 && (std::isalnum(static_cast<unsigned char>(before[prefix - 1])) || before[prefix - 1] == '_')) prefix--;
+	if (prefix > 0 && before[prefix - 1] == '@') { caret.kind = CaretKind::ANNOTATION; return; }
+	if (prefix > 0 && before[prefix - 1] == '.') {
+		const size_t start = expression_start(before, prefix - 1);
+		if (start < prefix - 1) {
+			caret.kind = CaretKind::MEMBER;
+			caret.receiver_text = before.substr(start, prefix - 1 - start);
+			return;
+		}
+	}
+	const std::string head = trim(before.substr(0, prefix));
+	if (tail_is(head, ":") || tail_is(head, "->") || tail_is(head, " is") || tail_is(head, " as") ||
+			head == "extends") {
+		caret.kind = CaretKind::TYPE;
+		return;
+	}
+	caret.kind = caret.argument_index >= 0 ? CaretKind::CALL_ARGUMENT : CaretKind::IDENTIFIER;
+}
+
+std::string type_name_of(const TypeExpr &type) {
+	const std::string &single = type.single_name();
+	if (!single.empty()) return single;
+	return {};
+}
+
+bool is_builtin_type_name(const std::string &name) {
+	return !name.empty() && Variant::type_from_name(name) != Variant::VARIANT_MAX;
+}
+
+std::string global_result_type(const GlobalFunction &info) {
+	switch (info.result) {
+		case GlobalResult::BOOL: return "bool";
+		case GlobalResult::INT: return "int";
+		case GlobalResult::FLOAT: return "float";
+		case GlobalResult::STRING: return "String";
+		case GlobalResult::NIL:
+		case GlobalResult::NUMERIC:
+		case GlobalResult::VARIANT: break;
+	}
+	return {};
+}
+
+bool is_numeric_type(const std::string &type) { return type == "int" || type == "float"; }
+
+// Render a default value for signatures; ambiguous forms return empty.
+std::string default_value_text(const Expr *expr) {
+	if (expr == nullptr) return {};
+	if (const auto *literal = dynamic_cast<const LiteralExpr *>(expr)) {
+		switch (literal->lit_type) {
+			case LiteralExpr::Type::INTEGER: return std::to_string(std::get<int64_t>(literal->value));
+			case LiteralExpr::Type::BOOL: return std::get<bool>(literal->value) ? "true" : "false";
+			case LiteralExpr::Type::NULL_VAL: return "null";
+			case LiteralExpr::Type::STRING: return "\"" + std::get<std::string>(literal->value) + "\"";
+			case LiteralExpr::Type::FLOAT: {
+				char text[32];
+				std::snprintf(text, sizeof(text), "%g", std::get<double>(literal->value));
+				return text;
+			}
+		}
+		return {};
+	}
+	if (const auto *variable = dynamic_cast<const VariableExpr *>(expr)) return variable->name;
+	if (const auto *unary = dynamic_cast<const UnaryExpr *>(expr)) {
+		const std::string inner = default_value_text(unary->operand.get());
+		if (inner.empty()) return {};
+		switch (unary->op) {
+			case UnaryExpr::Op::NEG: return "-" + inner;
+			case UnaryExpr::Op::NOT: return "not " + inner;
+			case UnaryExpr::Op::BIT_NOT: return "~" + inner;
+		}
+		return {};
+	}
+	if (const auto *member = dynamic_cast<const MemberCallExpr *>(expr)) {
+		if (member->is_method_call || !member->arguments.empty()) return {};
+		const std::string object = default_value_text(member->object.get());
+		return object.empty() ? std::string() : object + "." + member->member_name;
+	}
+	if (const auto *call = dynamic_cast<const CallExpr *>(expr)) {
+		return call->arguments.empty() && !call->is_node_path_sugar ?
+				call->function_name + "()" : std::string();
+	}
+	if (const auto *array = dynamic_cast<const ArrayLiteralExpr *>(expr)) {
+		return array->elements.empty() ? "[]" : std::string();
+	}
+	if (const auto *dictionary = dynamic_cast<const DictionaryLiteralExpr *>(expr)) {
+		return dictionary->elements.empty() ? "{}" : std::string();
+	}
+	return {};
+}
+
+struct ModelBuilder {
+	SourceModel &model;
+	const Program &program;
+	const std::vector<std::string> &lines;
+	bool warnings_wanted = true;
+
+	std::vector<std::vector<int32_t>> scopes;
+	std::vector<uint8_t> used;
+	std::unordered_set<std::string> unresolved;
+	std::unordered_set<std::string> literal_strings;
+	std::vector<std::pair<int32_t, const FunctionDecl *>> pending_bodies;
+	int32_t current_function = -1;
+
+	ModelBuilder(SourceModel &p_model, const Program &p_program,
+			const std::vector<std::string> &p_lines) :
+			model(p_model), program(p_program), lines(p_lines) {}
+
+	// Whitespace-only lines are not blank; their indent matters.
+	bool blank_or_comment(size_t index) const {
+		const std::string &raw = lines[index];
+		if (raw.empty()) return true;
+		const std::string text = trim(raw);
+		return text.empty() ? false : text[0] == '#';
+	}
+
+	uint32_t block_end_line(uint32_t header_line) const {
+		if (lines.empty()) return 1;
+		if (header_line == 0 || header_line > lines.size()) return uint32_t(lines.size());
+		const uint32_t indent = indentation(lines[header_line - 1]);
+		for (size_t i = header_line; i < lines.size(); i++) {
+			if (blank_or_comment(i)) continue;
+			if (indentation(lines[i]) <= indent) return uint32_t(i);
+		}
+		return uint32_t(lines.size());
+	}
+
+	std::string doc_above(uint32_t line) const {
+		std::vector<std::string> collected;
+		for (uint32_t at = line; at > 1; at--) {
+			const std::string text = trim(lines[at - 2]);
+			if (text.rfind("##", 0) != 0) break;
+			collected.push_back(trim(text.substr(2)));
+		}
+		std::string doc;
+		for (size_t i = collected.size(); i-- > 0;) {
+			if (!doc.empty()) doc += '\n';
+			doc += collected[i];
+		}
+		return doc;
+	}
+
+	uint32_t column_of(uint32_t line, const std::string &name) const {
+		if (line == 0 || line > lines.size() || name.empty()) return 1;
+		const std::string &text = lines[line - 1];
+		for (size_t at = 0; (at = text.find(name, at)) != std::string::npos; at += name.size()) {
+			const bool left = at == 0 || !(std::isalnum(static_cast<unsigned char>(text[at - 1])) ||
+					text[at - 1] == '_');
+			const size_t end = at + name.size();
+			const bool right = end == text.size() ||
+					!(std::isalnum(static_cast<unsigned char>(text[end])) || text[end] == '_');
+			if (left && right) return uint32_t(at + 1);
+		}
+		return 1;
+	}
+
+	void warn(const char *code, const std::string &message, int line, int column, size_t width = 1) {
+		if (!warnings_wanted) return;
+		if (model.diagnostics.size() >= MAX_DIAGNOSTICS) return;
+		const uint32_t start = uint32_t(std::max(column, 1));
+		model.diagnostics.push_back({DiagnosticSeverity::WARNING, code, message, model.path,
+			{uint32_t(std::max(line, 1)), start, uint32_t(std::max(line, 1)),
+			 start + uint32_t(width < 1 ? 1 : width)}});
+	}
+
+	void fail(const std::string &code, const std::string &message, int line, int column,
+			size_t width = 1) {
+		if (model.diagnostics.size() >= MAX_DIAGNOSTICS) return;
+		const uint32_t start = uint32_t(std::max(column, 1));
+		model.diagnostics.push_back({DiagnosticSeverity::ERROR, code, message, model.path,
+			{uint32_t(std::max(line, 1)), start, uint32_t(std::max(line, 1)),
+			 start + uint32_t(width < 1 ? 1 : width)}});
+	}
+
+	int32_t add(DeclarationKind kind, const std::string &name, uint32_t line, int32_t parent,
+			uint32_t scope_start, uint32_t scope_end) {
+		SourceDeclaration declaration;
+		declaration.kind = kind;
+		declaration.name = name;
+		const uint32_t column = column_of(line, name);
+		declaration.declaration = {line, column, line, column + uint32_t(name.size())};
+		declaration.lexical_scope = {scope_start, 1, scope_end < scope_start ? scope_start : scope_end,
+			uint32_t(lines.empty() ? 1 : lines.back().size() + 1)};
+		declaration.parent = parent;
+		const int32_t index = int32_t(model.declarations.size());
+		model.declarations.push_back(std::move(declaration));
+		used.push_back(0);
+		if (parent >= 0) model.declarations[size_t(parent)].children.push_back(index);
+		else declare_in_scope(index);
+		return index;
+	}
+
+	void declare_in_scope(int32_t index) {
+		if (!scopes.empty()) scopes.back().push_back(index);
+	}
+
+	int32_t lookup(const std::string &name) const {
+		for (size_t depth = scopes.size(); depth-- > 0;) {
+			const std::vector<int32_t> &scope = scopes[depth];
+			for (size_t i = scope.size(); i-- > 0;) {
+				if (model.declarations[size_t(scope[i])].name == name) return scope[i];
+			}
+		}
+		return -1;
+	}
+
+	void use(const std::string &name) {
+		const int32_t index = lookup(name);
+		if (index >= 0) {
+			used[size_t(index)] = 1;
+			return;
+		}
+		unresolved.insert(name);
+	}
+
+	const StructDecl *find_struct(const std::string &name) const {
+		for (const StructDecl &declaration : program.structs) {
+			if (declaration.name == name) return &declaration;
+		}
+		return nullptr;
+	}
+	const EnumDecl *find_enum(const std::string &name) const {
+		for (const EnumDecl &declaration : program.enums) {
+			if (!declaration.name.empty() && declaration.name == name) return &declaration;
+		}
+		return nullptr;
+	}
+	const TraitDecl *find_trait(const std::string &name) const {
+		for (const TraitDecl &declaration : program.traits) {
+			if (declaration.name == name) return &declaration;
+		}
+		return nullptr;
+	}
+	const FunctionDecl *find_function(const std::string &name) const {
+		for (const FunctionDecl &declaration : program.functions) {
+			if (declaration.name == name) return &declaration;
+		}
+		return nullptr;
+	}
+	bool names_a_type(const std::string &name) const {
+		return is_builtin_type_name(name) || find_struct(name) != nullptr ||
+				find_enum(name) != nullptr || find_trait(name) != nullptr;
+	}
+
+	std::string declared_type_of_name(const std::string &name) const {
+		const int32_t index = lookup(name);
+		if (index < 0) return {};
+		const SourceDeclaration &declaration = model.declarations[size_t(index)];
+		return declaration.resolved_type.empty() ? declaration.declared_type :
+				declaration.resolved_type;
+	}
+
+	std::string type_of(const Expr *expr) const {
+		if (expr == nullptr) return {};
+		if (const auto *literal = dynamic_cast<const LiteralExpr *>(expr)) {
+			switch (literal->lit_type) {
+				case LiteralExpr::Type::INTEGER: return "int";
+				case LiteralExpr::Type::FLOAT: return "float";
+				case LiteralExpr::Type::BOOL: return "bool";
+				case LiteralExpr::Type::STRING:
+					if (literal->string_type == LiteralExpr::StringType::STRING_NAME) return "StringName";
+					if (literal->string_type == LiteralExpr::StringType::NODE_PATH) return "NodePath";
+					return "String";
+				case LiteralExpr::Type::NULL_VAL: return {};
+			}
+			return {};
+		}
+		if (const auto *variable = dynamic_cast<const VariableExpr *>(expr)) {
+			const std::string declared = declared_type_of_name(variable->name);
+			if (!declared.empty()) return declared;
+			if (names_a_type(variable->name)) return variable->name;
+			return {};
+		}
+		if (const auto *cast = dynamic_cast<const CastExpr *>(expr)) {
+			return cast->type_name;
+		}
+		if (dynamic_cast<const TypeTestExpr *>(expr) != nullptr) return "bool";
+		if (dynamic_cast<const LambdaExpr *>(expr) != nullptr) return "Callable";
+		if (dynamic_cast<const ArrayLiteralExpr *>(expr) != nullptr) return "Array";
+		if (dynamic_cast<const DictionaryLiteralExpr *>(expr) != nullptr) return "Dictionary";
+		if (const auto *unary = dynamic_cast<const UnaryExpr *>(expr)) {
+			if (unary->op == UnaryExpr::Op::NOT) return "bool";
+			return type_of(unary->operand.get());
+		}
+		if (const auto *ternary = dynamic_cast<const TernaryExpr *>(expr)) {
+			const std::string left = type_of(ternary->true_value.get());
+			return left == type_of(ternary->false_value.get()) ? left : std::string();
+		}
+		if (const auto *binary = dynamic_cast<const BinaryExpr *>(expr)) {
+			switch (binary->op) {
+				case BinaryExpr::Op::EQ: case BinaryExpr::Op::NEQ: case BinaryExpr::Op::LT:
+				case BinaryExpr::Op::LTE: case BinaryExpr::Op::GT: case BinaryExpr::Op::GTE:
+				case BinaryExpr::Op::AND: case BinaryExpr::Op::OR: case BinaryExpr::Op::IN:
+					return "bool";
+				default: break;
+			}
+			const std::string left = type_of(binary->left.get());
+			const std::string right = type_of(binary->right.get());
+			if (!is_numeric_type(left) || !is_numeric_type(right)) return {};
+			if (binary->op == BinaryExpr::Op::POW) return "float";
+			return left == "float" || right == "float" ? "float" : "int";
+		}
+		if (const auto *call = dynamic_cast<const CallExpr *>(expr)) {
+			if (call->is_node_path_sugar) return {};
+			const std::string &name = call->function_name;
+			if (names_a_type(name)) return name;
+			if (const FunctionDecl *function = find_function(name)) {
+				return type_name_of(function->return_type);
+			}
+			if (const GlobalFunction *global = find_global_function(name)) {
+				return global_result_type(*global);
+			}
+			return {};
+		}
+		if (const auto *member = dynamic_cast<const MemberCallExpr *>(expr)) {
+			const std::string receiver = type_of(member->object.get());
+			if (receiver.empty()) return {};
+			if (member->member_name == "new") return receiver;
+			if (find_enum(receiver) != nullptr) return "int";
+			if (const StructDecl *declaration = find_struct(receiver)) {
+				if (const StructField *field = declaration->find_field(member->member_name)) {
+					return type_name_of(field->type_hint);
+				}
+				if (const FunctionDecl *method = declaration->find_method(member->member_name)) {
+					return type_name_of(method->return_type);
+				}
+			}
+			return {};
+		}
+		return {};
+	}
+
+	void build() {
+		used.clear();
+		scopes.emplace_back();
+		if (!program.class_name.empty() || !program.base_class.empty()) {
+			const uint32_t line = uint32_t(std::max(program.class_name.empty() ?
+					program.base_class_line : program.class_name_line, 1));
+			const int32_t index = add(DeclarationKind::CLASS, program.class_name, line, -1, 1,
+					uint32_t(lines.size()));
+			model.declarations[size_t(index)].base_type = program.base_class;
+			model.declarations[size_t(index)].documentation = doc_above(line);
+			used[size_t(index)] = 1;
+		}
+		emit_file_members();
+		for (const auto &entry : pending_bodies) {
+			walk_function_body(entry.first, *entry.second);
+		}
+		report_unused();
+	}
+
+	// Source order, not per-kind order.
+	void emit_file_members() {
+		struct Item { int line; int order; int kind; const void *node; };
+		std::vector<Item> items;
+		int order = 0;
+		for (const VarDeclStmt &node : program.globals) items.push_back({node.line, order++, 0, &node});
+		for (const StructDecl &node : program.structs) items.push_back({node.line, order++, 1, &node});
+		for (const TraitDecl &node : program.traits) items.push_back({node.line, order++, 2, &node});
+		for (const EnumDecl &node : program.enums) items.push_back({node.line, order++, 3, &node});
+		for (const SignalDecl &node : program.signals) items.push_back({node.line, order++, 4, &node});
+		for (const FunctionDecl &node : program.functions) items.push_back({node.line, order++, 5, &node});
+		std::stable_sort(items.begin(), items.end(), [](const Item &a, const Item &b) {
+			return a.line != b.line ? a.line < b.line : a.order < b.order;
+		});
+		for (const Item &item : items) {
+			switch (item.kind) {
+				case 0: emit_var(*static_cast<const VarDeclStmt *>(item.node), -1, 1,
+						uint32_t(lines.size()), true); break;
+				case 1: emit_struct(*static_cast<const StructDecl *>(item.node)); break;
+				case 2: emit_trait(*static_cast<const TraitDecl *>(item.node)); break;
+				case 3: emit_enum(*static_cast<const EnumDecl *>(item.node), -1); break;
+				case 4: emit_signal(*static_cast<const SignalDecl *>(item.node), -1); break;
+				case 5: emit_function(*static_cast<const FunctionDecl *>(item.node), -1); break;
+				default: break;
+			}
+		}
+	}
+
+	int32_t emit_var(const VarDeclStmt &node, int32_t parent, uint32_t scope_start,
+			uint32_t scope_end, bool file_level) {
+		const uint32_t line = uint32_t(std::max(node.line, 1));
+		const int32_t index = add(node.is_const ? DeclarationKind::CONSTANT : DeclarationKind::VARIABLE,
+				node.name, line, parent, scope_start, scope_end);
+		SourceDeclaration &declaration = model.declarations[size_t(index)];
+		declaration.declared_type = node.type_hint.empty() ? std::string() : node.type_hint.to_string();
+		declaration.resolved_type = type_name_of(node.type_hint);
+		if (declaration.resolved_type.empty()) {
+			declaration.resolved_type = type_of(node.initializer.get());
+		}
+		declaration.documentation = node.doc_comment;
+		declaration.initializer_text = default_value_text(node.initializer.get());
+		declaration.setter = node.setter_name.empty() && node.setter_body ?
+				node.setter_body->name : node.setter_name;
+		declaration.getter = node.getter_name.empty() && node.getter_body ?
+				node.getter_body->name : node.getter_name;
+		if (node.is_static) declaration.flags |= DECLARATION_STATIC;
+		if (node.is_property) declaration.flags |= DECLARATION_EXPORT;
+		if (node.is_onready) declaration.flags |= DECLARATION_ONREADY;
+		if (node.is_property) declaration.annotation_arguments.push_back("@export");
+		if (node.is_onready) declaration.annotation_arguments.push_back("@onready");
+		if (file_level) used[size_t(index)] = 1;
+		return index;
+	}
+
+	void emit_struct(const StructDecl &node) {
+		const uint32_t line = uint32_t(std::max(node.line, 1));
+		const uint32_t end = block_end_line(line);
+		const int32_t index = add(node.is_class ? DeclarationKind::NESTED_CLASS :
+				DeclarationKind::STRUCT, node.name, line, -1, line, end);
+		model.declarations[size_t(index)].base_type = node.base_name;
+		model.declarations[size_t(index)].documentation = node.doc_comment;
+		used[size_t(index)] = 1;
+		for (const StructField &field : node.fields) {
+			const uint32_t field_line = uint32_t(std::max(field.line, int(line)));
+			const int32_t child = add(DeclarationKind::VARIABLE, field.name, field_line, index,
+					field_line, end);
+			model.declarations[size_t(child)].declared_type = field.type_hint.empty() ?
+					std::string() : field.type_hint.to_string();
+			model.declarations[size_t(child)].resolved_type = type_name_of(field.type_hint);
+			model.declarations[size_t(child)].documentation = field.doc_comment;
+			used[size_t(child)] = 1;
+		}
+		for (const StructField &constant : node.constants) {
+			const uint32_t constant_line = uint32_t(std::max(constant.line, int(line)));
+			const int32_t child = add(DeclarationKind::CONSTANT, constant.name, constant_line, index,
+					constant_line, end);
+			used[size_t(child)] = 1;
+		}
+		for (const FunctionDecl &method : node.methods) {
+			emit_function(method, index);
+		}
+	}
+
+	void emit_trait(const TraitDecl &node) {
+		const uint32_t line = uint32_t(std::max(node.line, 1));
+		const uint32_t end = node.is_file_level ? uint32_t(lines.size()) : block_end_line(line);
+		const int32_t index = add(DeclarationKind::TRAIT, node.name, line, -1, line, end);
+		model.declarations[size_t(index)].base_type = node.base_name;
+		model.declarations[size_t(index)].documentation = node.doc_comment;
+		used[size_t(index)] = 1;
+		for (const VarDeclStmt &var : node.vars) {
+			used[size_t(emit_var(var, index, uint32_t(std::max(var.line, int(line))), end, true))] = 1;
+		}
+		for (const StructField &constant : node.constants) {
+			const uint32_t constant_line = uint32_t(std::max(constant.line, int(line)));
+			used[size_t(add(DeclarationKind::CONSTANT, constant.name, constant_line, index,
+					constant_line, end))] = 1;
+		}
+		for (const EnumDecl &declaration : node.enums) emit_enum(declaration, index);
+		for (const SignalDecl &signal : node.signals) emit_signal(signal, index);
+		for (const FunctionDecl &method : node.methods) emit_function(method, index);
+	}
+
+	void emit_enum(const EnumDecl &node, int32_t parent) {
+		const uint32_t line = uint32_t(std::max(node.line, 1));
+		const int32_t index = add(DeclarationKind::ENUM, node.name, line, parent, line,
+				block_end_line(line));
+		model.declarations[size_t(index)].documentation = doc_above(line);
+		used[size_t(index)] = 1;
+		for (const EnumDecl::Member &member : node.members) {
+			const uint32_t member_line = uint32_t(std::max(member.line, int(line)));
+			const uint32_t column = column_of(member_line, member.name);
+			model.declarations[size_t(index)].enum_members.push_back({member.name, member.value,
+				{member_line, column, member_line, column + uint32_t(member.name.size())}});
+		}
+	}
+
+	void emit_signal(const SignalDecl &node, int32_t parent) {
+		const uint32_t line = uint32_t(std::max(node.line, 1));
+		const int32_t index = add(DeclarationKind::SIGNAL, node.name, line, parent, line, line);
+		model.declarations[size_t(index)].documentation = node.doc_comment;
+		for (const Parameter &parameter : node.parameters) {
+			SourceParameter published;
+			published.name = parameter.name;
+			published.declared_type = parameter.type_hint.empty() ? std::string() :
+					parameter.type_hint.to_string();
+			published.declaration = model.declarations[size_t(index)].declaration;
+			model.declarations[size_t(index)].parameters.push_back(std::move(published));
+		}
+	}
+
+	void emit_function(const FunctionDecl &node, int32_t parent) {
+		const uint32_t line = uint32_t(std::max(node.line, 1));
+		const uint32_t end = block_end_line(line);
+		const int32_t index = add(DeclarationKind::FUNCTION, node.name, line, parent, line, end);
+		SourceDeclaration &declaration = model.declarations[size_t(index)];
+		declaration.return_type = type_name_of(node.return_type);
+		declaration.documentation = node.doc_comment;
+		if (node.is_static) declaration.flags |= DECLARATION_STATIC;
+		if (node.is_abstract) declaration.flags |= DECLARATION_ABSTRACT;
+		used[size_t(index)] = 1;
+		for (const Parameter &parameter : node.parameters) {
+			SourceParameter published;
+			published.name = parameter.name;
+			published.declared_type = parameter.type_hint.empty() ? std::string() :
+					parameter.type_hint.to_string();
+			published.default_text = default_value_text(parameter.default_value.get());
+			const uint32_t parameter_line = uint32_t(std::max(parameter.line, int(line)));
+			const uint32_t column = column_of(parameter_line, parameter.name);
+			published.declaration = {parameter_line, column, parameter_line,
+				column + uint32_t(parameter.name.size())};
+			model.declarations[size_t(index)].parameters.push_back(std::move(published));
+		}
+		for (const Parameter &parameter : node.parameters) {
+			const uint32_t parameter_line = uint32_t(std::max(parameter.line, int(line)));
+			const int32_t child = add(DeclarationKind::PARAMETER, parameter.name, parameter_line,
+					index, line, end);
+			model.declarations[size_t(child)].declared_type = parameter.type_hint.empty() ?
+					std::string() : parameter.type_hint.to_string();
+			model.declarations[size_t(child)].resolved_type = type_name_of(parameter.type_hint);
+		}
+		pending_bodies.push_back({index, &node});
+	}
+
+	void walk_function_body(int32_t index, const FunctionDecl &node) {
+		const int32_t previous_function = current_function;
+		current_function = index;
+		scopes.emplace_back();
+		for (int32_t child : model.declarations[size_t(index)].children) {
+			if (model.declarations[size_t(child)].kind == DeclarationKind::PARAMETER) {
+				declare_in_scope(child);
+			}
+		}
+		walk_block(node.body, model.declarations[size_t(index)].lexical_scope.end_line);
+		scopes.pop_back();
+		current_function = previous_function;
+	}
+
+	static bool terminates(const Stmt *stmt) {
+		return dynamic_cast<const ReturnStmt *>(stmt) != nullptr ||
+				dynamic_cast<const BreakStmt *>(stmt) != nullptr ||
+				dynamic_cast<const ContinueStmt *>(stmt) != nullptr;
+	}
+
+	void walk_block(const std::vector<StmtPtr> &body, uint32_t scope_end) {
+		scopes.emplace_back();
+		bool terminated = false;
+		bool reported = false;
+		for (const StmtPtr &stmt : body) {
+			if (!stmt) continue;
+			if (terminated && !reported) {
+				warn("UNREACHABLE_CODE", "Statement is unreachable", stmt->line, 1);
+				reported = true;
+			}
+			walk_stmt(stmt.get(), scope_end);
+			terminated = terminated || terminates(stmt.get());
+		}
+		scopes.pop_back();
+	}
+
+	void check_shadowing(const std::string &name, int line) {
+		if (name.empty() || name == "_") return;
+		if (lookup(name) >= 0) {
+			warn("SHADOWED_VARIABLE", "'" + name + "' shadows an earlier declaration", line,
+					int(column_of(uint32_t(std::max(line, 1)), name)), name.size());
+		}
+	}
+
+	void check_narrowing(const std::string &target_type, const Expr *value, int line, int column) {
+		if (target_type != "int" || value == nullptr) return;
+		if (type_of(value) == "float") {
+			warn("NARROWING_CONVERSION", "Assignment may narrow a fractional value to int",
+					line, column);
+		}
+	}
+
+	void walk_stmt(const Stmt *stmt, uint32_t scope_end) {
+		if (const auto *node = dynamic_cast<const VarDeclStmt *>(stmt)) {
+			walk_expr(node->initializer.get());
+			check_shadowing(node->name, node->line);
+			const int32_t index = emit_var(*node, current_function, uint32_t(std::max(node->line, 1)),
+					scope_end, false);
+			declare_in_scope(index);
+			if (!node->initializer && node->type_hint.empty() && !node->has_accessors() &&
+					!node->is_const) {
+				warn("UNASSIGNED_VARIABLE", "Variable is declared without an initial value",
+						node->line, int(column_of(uint32_t(std::max(node->line, 1)), node->name)),
+						node->name.size());
+			}
+			check_narrowing(type_name_of(node->type_hint), node->initializer.get(), node->line,
+					node->column);
+			if (node->setter_body) walk_accessor(*node->setter_body, scope_end);
+			if (node->getter_body) walk_accessor(*node->getter_body, scope_end);
+			return;
+		}
+		if (const auto *node = dynamic_cast<const AssignStmt *>(stmt)) {
+			walk_expr(node->value.get());
+			if (node->target) {
+				walk_expr(node->target.get());
+				check_narrowing(type_of(node->target.get()), node->value.get(), node->line,
+						node->column);
+			} else {
+				use(node->name);
+				check_narrowing(declared_type_of_name(node->name), node->value.get(), node->line,
+						node->column);
+			}
+			return;
+		}
+		if (const auto *node = dynamic_cast<const ReturnStmt *>(stmt)) {
+			walk_expr(node->value.get());
+			return;
+		}
+		if (const auto *node = dynamic_cast<const IfStmt *>(stmt)) {
+			const uint32_t end = block_end_line(uint32_t(std::max(node->line, 1)));
+			walk_expr(node->condition.get());
+			scopes.emplace_back();
+			if (node->binding) {
+				walk_expr(node->binding->initializer.get());
+				declare_in_scope(emit_var(*node->binding, current_function,
+						uint32_t(std::max(node->binding->line, 1)), end, false));
+			}
+			walk_block(node->then_branch, end);
+			scopes.pop_back();
+			walk_block(node->else_branch, scope_end);
+			return;
+		}
+		if (const auto *node = dynamic_cast<const WhileStmt *>(stmt)) {
+			walk_expr(node->condition.get());
+			walk_block(node->body, block_end_line(uint32_t(std::max(node->line, 1))));
+			return;
+		}
+		if (const auto *node = dynamic_cast<const ForStmt *>(stmt)) {
+			walk_expr(node->iterable.get());
+			const uint32_t line = uint32_t(std::max(node->line, 1));
+			const uint32_t end = block_end_line(line);
+			scopes.emplace_back();
+			const int32_t index = add(DeclarationKind::VARIABLE, node->variable, line,
+					current_function, line, end);
+			model.declarations[size_t(index)].resolved_type.clear();
+			used[size_t(index)] = 1;
+			declare_in_scope(index);
+			walk_block(node->body, end);
+			scopes.pop_back();
+			return;
+		}
+		if (const auto *node = dynamic_cast<const MatchStmt *>(stmt)) {
+			walk_expr(node->subject.get());
+			for (const MatchStmt::Branch &branch : node->branches) {
+				const uint32_t line = branch.patterns.empty() ? uint32_t(std::max(node->line, 1)) :
+						uint32_t(std::max(branch.patterns.front()->line, 1));
+				const uint32_t end = block_end_line(line);
+				scopes.emplace_back();
+				for (const MatchPatternPtr &pattern : branch.patterns) {
+					walk_pattern(pattern.get(), end);
+				}
+				walk_expr(branch.guard.get());
+				walk_block(branch.body, end);
+				scopes.pop_back();
+			}
+			return;
+		}
+		if (const auto *node = dynamic_cast<const ExprStmt *>(stmt)) {
+			check_statement_expression(node);
+			walk_expr(node->expression.get());
+			return;
+		}
+	}
+
+	void walk_accessor(const FunctionDecl &node, uint32_t scope_end) {
+		scopes.emplace_back();
+		for (const Parameter &parameter : node.parameters) {
+			const uint32_t line = uint32_t(std::max(parameter.line, std::max(node.line, 1)));
+			const int32_t index = add(DeclarationKind::PARAMETER, parameter.name, line,
+					current_function, line, block_end_line(uint32_t(std::max(node.line, 1))));
+			used[size_t(index)] = 1;
+			declare_in_scope(index);
+		}
+		walk_block(node.body, scope_end);
+		scopes.pop_back();
+	}
+
+	void walk_pattern(const MatchPattern *pattern, uint32_t scope_end) {
+		if (pattern == nullptr) return;
+		if (pattern->kind == MatchPattern::Kind::BIND) {
+			const uint32_t line = uint32_t(std::max(pattern->line, 1));
+			const int32_t index = add(DeclarationKind::VARIABLE, pattern->name, line,
+					current_function, line, scope_end);
+			used[size_t(index)] = 1;
+			declare_in_scope(index);
+			return;
+		}
+		walk_expr(pattern->value.get());
+		for (const MatchPatternPtr &element : pattern->elements) walk_pattern(element.get(), scope_end);
+		for (const MatchPattern::Entry &entry : pattern->entries) {
+			walk_expr(entry.key.get());
+			walk_pattern(entry.value.get(), scope_end);
+		}
+		for (const MatchPattern::StructEntry &entry : pattern->struct_entries) {
+			walk_pattern(entry.value.get(), scope_end);
+		}
+	}
+
+	void check_statement_expression(const ExprStmt *stmt) {
+		const Expr *expr = stmt->expression.get();
+		if (expr == nullptr || dynamic_cast<const ErrorExpr *>(expr) != nullptr) return;
+		if (const auto *call = dynamic_cast<const CallExpr *>(expr)) {
+			if (const FunctionDecl *function = find_function(call->function_name)) {
+				const std::string returns = type_name_of(function->return_type);
+				if (!returns.empty() && returns != "void") {
+					warn("DISCARDED_RETURN_VALUE",
+							"Return value of '" + call->function_name + "' is discarded",
+							expr->line, int(column_of(uint32_t(std::max(expr->line, 1)),
+							call->function_name)), call->function_name.size());
+				}
+			}
+			return;
+		}
+		if (const auto *member = dynamic_cast<const MemberCallExpr *>(expr)) {
+			if (member->is_method_call) return;
+		}
+		if (dynamic_cast<const AwaitExpr *>(expr) != nullptr) return;
+		warn("STANDALONE_EXPRESSION", "Standalone expression has no effect", stmt->line, 1);
+	}
+
+	void check_call_arity(const CallExpr *call) {
+		const FunctionDecl *function = find_function(call->function_name);
+		if (function == nullptr || call->has_named_arguments()) return;
+		const size_t given = call->arguments.size();
+		const size_t declared = function->parameters.size();
+		if (given > declared) {
+			fail("TOO_MANY_ARGUMENTS", "Too many arguments to '" + call->function_name +
+					"': expected at most " + std::to_string(declared) + ", got " +
+					std::to_string(given), call->line,
+					int(column_of(uint32_t(std::max(call->line, 1)), call->function_name)),
+					call->function_name.size());
+			return;
+		}
+		for (size_t i = given; i < declared; i++) {
+			if (function->parameters[i].default_value) continue;
+			fail("MISSING_ARGUMENT", "Missing argument '" + function->parameters[i].name +
+					"' in call to '" + call->function_name + "'", call->line,
+					int(column_of(uint32_t(std::max(call->line, 1)), call->function_name)),
+					call->function_name.size());
+			return;
+		}
+	}
+
+	void check_member_access(const MemberCallExpr *member) {
+		const std::string receiver = type_of(member->object.get());
+		if (const EnumDecl *declaration = find_enum(receiver)) {
+			if (declaration->find_member(member->member_name) == nullptr) {
+				fail("UNDECLARED_ENUM_MEMBER", "Enum '" + receiver + "' has no member named '" +
+						member->member_name + "'", member->line,
+						int(column_of(uint32_t(std::max(member->line, 1)), member->member_name)),
+						member->member_name.size());
+			}
+			return;
+		}
+		const StructDecl *declaration = find_struct(receiver);
+		if (declaration != nullptr && !declaration->is_class) {
+			if (declaration->find_field(member->member_name) == nullptr &&
+					declaration->find_method(member->member_name) == nullptr &&
+					declaration->find_constant(member->member_name) == nullptr &&
+					member->member_name != "new") {
+				fail("UNKNOWN_STRUCT_FIELD", "Struct '" + declaration->name + "' has no field '" +
+						member->member_name + "'", member->line,
+						int(column_of(uint32_t(std::max(member->line, 1)), member->member_name)),
+						member->member_name.size());
+			}
+			return;
+		}
+		const auto *object = dynamic_cast<const VariableExpr *>(member->object.get());
+		if (object == nullptr || !receiver.empty()) return;
+		const int32_t index = lookup(object->name);
+		if (index < 0) return;
+		const SourceDeclaration &value = model.declarations[size_t(index)];
+		if (!value.declared_type.empty() || !value.resolved_type.empty()) return;
+		const int column = int(column_of(uint32_t(std::max(member->line, 1)), object->name));
+		if (member->is_method_call) {
+			warn("UNSAFE_METHOD_ACCESS",
+					"Method access on untyped value '" + object->name + "' is unsafe",
+					member->line, column, object->name.size());
+		} else {
+			warn("UNSAFE_PROPERTY_ACCESS",
+					"Property access on untyped value '" + object->name + "' is unsafe",
+					member->line, column, object->name.size());
+		}
+	}
+
+	void walk_expr(const Expr *expr) {
+		if (expr == nullptr) return;
+		if (const auto *node = dynamic_cast<const VariableExpr *>(expr)) {
+			use(node->name);
+			return;
+		}
+		if (const auto *node = dynamic_cast<const LiteralExpr *>(expr)) {
+			if (node->lit_type == LiteralExpr::Type::STRING) {
+				literal_strings.insert(std::get<std::string>(node->value));
+			}
+			return;
+		}
+		if (const auto *node = dynamic_cast<const CallExpr *>(expr)) {
+			if (!node->is_node_path_sugar) {
+				use(node->function_name);
+				check_call_arity(node);
+				if (node->function_name == "assert" && !node->arguments.empty()) {
+					const auto *condition = dynamic_cast<const LiteralExpr *>(node->arguments[0].get());
+					if (condition != nullptr && condition->lit_type == LiteralExpr::Type::BOOL) {
+						warn("CONSTANT_ASSERT", "Assertion condition is constant", expr->line, 1);
+					}
+				}
+			}
+			for (const ExprPtr &argument : node->arguments) walk_expr(argument.get());
+			return;
+		}
+		if (const auto *node = dynamic_cast<const MemberCallExpr *>(expr)) {
+			check_member_access(node);
+			walk_expr(node->object.get());
+			for (const ExprPtr &argument : node->arguments) walk_expr(argument.get());
+			return;
+		}
+		if (const auto *node = dynamic_cast<const BinaryExpr *>(expr)) {
+			if (node->op == BinaryExpr::Op::DIV && type_of(node->left.get()) == "int" &&
+					type_of(node->right.get()) == "int") {
+				warn("INTEGER_DIVISION", "Integer division discards the fractional part",
+						expr->line, expr->column);
+			}
+			walk_expr(node->left.get());
+			walk_expr(node->right.get());
+			return;
+		}
+		if (const auto *node = dynamic_cast<const UnaryExpr *>(expr)) {
+			walk_expr(node->operand.get());
+			return;
+		}
+		if (const auto *node = dynamic_cast<const AwaitExpr *>(expr)) {
+			const Expr *operand = node->operand.get();
+			if (dynamic_cast<const AwaitExpr *>(operand) != nullptr ||
+					dynamic_cast<const LiteralExpr *>(operand) != nullptr) {
+				warn("REDUNDANT_AWAIT", "Redundant await", expr->line, 1);
+			}
+			walk_expr(operand);
+			return;
+		}
+		if (const auto *node = dynamic_cast<const TernaryExpr *>(expr)) {
+			walk_expr(node->condition.get());
+			walk_expr(node->true_value.get());
+			walk_expr(node->false_value.get());
+			return;
+		}
+		if (const auto *node = dynamic_cast<const IndexExpr *>(expr)) {
+			walk_expr(node->object.get());
+			walk_expr(node->index.get());
+			return;
+		}
+		if (const auto *node = dynamic_cast<const CastExpr *>(expr)) {
+			walk_expr(node->value.get());
+			return;
+		}
+		if (const auto *node = dynamic_cast<const TypeTestExpr *>(expr)) {
+			walk_expr(node->value.get());
+			return;
+		}
+		if (const auto *node = dynamic_cast<const ArrayLiteralExpr *>(expr)) {
+			for (const ExprPtr &element : node->elements) walk_expr(element.get());
+			return;
+		}
+		if (const auto *node = dynamic_cast<const DictionaryLiteralExpr *>(expr)) {
+			for (const auto &entry : node->elements) {
+				walk_expr(entry.first.get());
+				walk_expr(entry.second.get());
+			}
+			return;
+		}
+		if (const auto *node = dynamic_cast<const LambdaExpr *>(expr)) {
+			if (!node->decl) return;
+			const uint32_t line = uint32_t(std::max(node->decl->line, 1));
+			const uint32_t end = block_end_line(line);
+			scopes.emplace_back();
+			for (const Parameter &parameter : node->decl->parameters) {
+				const int32_t index = add(DeclarationKind::PARAMETER, parameter.name, line,
+						current_function, line, end);
+				model.declarations[size_t(index)].declared_type = parameter.type_hint.empty() ?
+						std::string() : parameter.type_hint.to_string();
+				model.declarations[size_t(index)].resolved_type = type_name_of(parameter.type_hint);
+				declare_in_scope(index);
+			}
+			walk_block(node->decl->body, end);
+			scopes.pop_back();
+			return;
+		}
+	}
+
+	void report_unused() {
+		for (size_t i = 0; i < model.declarations.size(); i++) {
+			const SourceDeclaration &declaration = model.declarations[i];
+			const bool local = declaration.parent >= 0 &&
+					model.declarations[size_t(declaration.parent)].kind == DeclarationKind::FUNCTION;
+			if (!used[i] && !local && unresolved.count(declaration.name) != 0) {
+				used[i] = 1;
+			}
+		}
+		for (size_t i = 0; i < model.declarations.size(); i++) {
+			const SourceDeclaration &declaration = model.declarations[i];
+			if (used[i] || declaration.name.empty() || declaration.name[0] == '_') continue;
+			const int line = int(declaration.declaration.start_line);
+			const int column = int(declaration.declaration.start_column);
+			const size_t width = declaration.name.size();
+			switch (declaration.kind) {
+				case DeclarationKind::PARAMETER:
+					warn("UNUSED_PARAMETER", "Parameter '" + declaration.name + "' is never used",
+							line, column, width);
+					break;
+				case DeclarationKind::VARIABLE:
+					warn("UNUSED_VARIABLE", "Variable '" + declaration.name + "' is never used",
+							line, column, width);
+					break;
+				case DeclarationKind::CONSTANT:
+					warn("UNUSED_LOCAL_CONSTANT", "Local constant '" + declaration.name +
+							"' is never used", line, column, width);
+					break;
+				default:
+					break;
+			}
+		}
+		for (size_t i = 0; i < model.declarations.size(); i++) {
+			const SourceDeclaration &declaration = model.declarations[i];
+			if (declaration.kind != DeclarationKind::SIGNAL || declaration.name.empty()) continue;
+			if (unresolved.count(declaration.name) != 0 || used[i] != 0) continue;
+			if (literal_strings.count(declaration.name) != 0) continue;
+			warn("UNUSED_SIGNAL", "Signal '" + declaration.name + "' is never used",
+					int(declaration.declaration.start_line),
+					int(declaration.declaration.start_column), declaration.name.size());
+		}
+	}
 };
 
-struct SourceScan {
-	std::vector<LineScan> lines;
-	std::vector<uint32_t> unclosed_lines;
-	uint32_t unterminated_block_string = 0;
-};
-
-// A declaration keyword cannot appear inside brackets, so one at the start of a
-// line ends an unclosed delimiter instead of letting it swallow the rest of the
-// file. Editor analysis is error-tolerant; the compiler proper still refuses.
-bool resumes_after_unclosed(const std::string &text) {
-	static const char *const keywords[] = {"func", "static", "var", "const",
-		"class", "class_name", "trait", "trait_name", "extends", "signal", "enum", "uses"};
-	for (const char *word : keywords) if (word_start(text, word)) return true;
-	return false;
-}
-
-// A line opening with a statement keyword has an effect even when it carries no
-// assignment and no call, so it is never a standalone expression.
-bool statement_keyword(const std::string &text) {
-	static const char *const keywords[] = {"return", "pass", "break", "continue",
-		"breakpoint", "await", "assert", "if", "elif", "else", "for", "while",
-		"match", "when", "super", "extends", "class_name", "static", "signal",
-		"var", "const", "func", "class", "enum", "trait", "trait_name", "uses"};
-	for (const char *word : keywords) if (word_start(text, word)) return true;
-	return false;
-}
-
-SourceScan scan_lines(const std::vector<std::string> &lines) {
-	SourceScan scan;
-	scan.lines.resize(lines.size());
-	std::vector<std::pair<char, uint32_t>> open; // delimiter kind and its line
-	char block_quote = 0;
-	uint32_t block_line = 0;
-	bool backslash = false;
-	for (size_t i = 0; i < lines.size(); i++) {
-		LineScan &out = scan.lines[i];
-		const std::string &raw = lines[i];
-		if (!open.empty() && block_quote == 0 && resumes_after_unclosed(trim(raw))) {
-			scan.unclosed_lines.push_back(open.front().second);
-			open.clear();
-		}
-		out.continuation = backslash || !open.empty() || block_quote != 0;
-		backslash = false;
-		std::string code;
-		for (size_t at = 0; at < raw.size(); at++) {
-			const char c = raw[at];
-			if (block_quote != 0) {
-				if (c == block_quote && at + 2 < raw.size() && raw[at + 1] == block_quote &&
-						raw[at + 2] == block_quote) { block_quote = 0; at += 2; }
-				continue;
-			}
-			if (c == '#') break;
-			if (c == '"' || c == '\'') {
-				if (at + 2 < raw.size() && raw[at + 1] == c && raw[at + 2] == c) {
-					// A block string stands in for its own contents, so the statement
-					// holding it still reads as complete.
-					block_quote = c; block_line = uint32_t(i + 1); at += 2;
-					code += c; code += c; continue;
-				}
-				code += c;
-				bool closed = false;
-				for (at++; at < raw.size(); at++) {
-					code += raw[at];
-					if (raw[at] == '\\') { if (at + 1 < raw.size()) code += raw[++at]; continue; }
-					if (raw[at] == c) { closed = true; break; }
-				}
-				if (!closed) out.unterminated = true;
-				continue;
-			}
-			if (c == '(' || c == '[' || c == '{') {
-				open.push_back({c, uint32_t(i + 1)});
-			} else if (c == ')' || c == ']' || c == '}') {
-				const char match = c == ')' ? '(' : (c == ']' ? '[' : '{');
-				if (open.empty() || open.back().first != match) out.closing_underflow++;
-				else open.pop_back();
-			}
-			code += c;
-		}
-		code = trim(code);
-		if (!code.empty() && code.back() == '\\') { code.pop_back(); code = trim(code); backslash = true; }
-		out.code = std::move(code);
+// Type the chain head; the host resolves the rest via ClassDB.
+std::string caret_head_type(const SourceModel &model, const Program &program,
+		const std::string &head, uint32_t line) {
+	std::string text = trim(head);
+	if (text.empty() || text[0] == '$' || text[0] == '%') return {};
+	const size_t open = text.find('(');
+	const bool is_call = open != std::string::npos;
+	const std::string name = trim(is_call ? text.substr(0, open) : text);
+	if (name.empty()) return {};
+	for (char c : name) {
+		if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_')) return {};
 	}
-	if (!open.empty()) scan.unclosed_lines.push_back(open.front().second);
-	if (block_quote != 0) scan.unterminated_block_string = block_line;
-	return scan;
+	auto names_a_type = [&](const std::string &wanted) {
+		if (is_builtin_type_name(wanted)) return true;
+		for (const StructDecl &declaration : program.structs) if (declaration.name == wanted) return true;
+		for (const EnumDecl &declaration : program.enums) if (declaration.name == wanted) return true;
+		for (const TraitDecl &declaration : program.traits) if (declaration.name == wanted) return true;
+		return false;
+	};
+	if (!is_call) {
+		const SourceDeclaration *best = nullptr;
+		for (const SourceDeclaration &declaration : model.declarations) {
+			if (declaration.name != name) continue;
+			if (declaration.kind != DeclarationKind::VARIABLE &&
+					declaration.kind != DeclarationKind::CONSTANT &&
+					declaration.kind != DeclarationKind::PARAMETER) continue;
+			if (declaration.parent >= 0 && (declaration.declaration.start_line > line ||
+					line > declaration.lexical_scope.end_line)) continue;
+			if (best == nullptr || declaration.declaration.start_line >= best->declaration.start_line) {
+				best = &declaration;
+			}
+		}
+		if (best != nullptr) {
+			return best->resolved_type.empty() ? best->declared_type : best->resolved_type;
+		}
+		return names_a_type(name) ? name : std::string();
+	}
+	if (names_a_type(name)) return name;
+	for (const FunctionDecl &declaration : program.functions) {
+		if (declaration.name == name) return type_name_of(declaration.return_type);
+	}
+	if (const GlobalFunction *global = find_global_function(name)) {
+		return global_result_type(*global);
+	}
+	return {};
+}
+
+std::string receiver_head(const std::string &chain) {
+	int depth = 0;
+	char quote = 0;
+	for (size_t i = 0; i < chain.size(); i++) {
+		const char c = chain[i];
+		if (quote != 0) {
+			if (c == '\\') i++;
+			else if (c == quote) quote = 0;
+			continue;
+		}
+		if (c == '"' || c == '\'') quote = c;
+		else if (c == '(' || c == '[') depth++;
+		else if (c == ')' || c == ']') depth--;
+		else if (c == '.' && depth == 0) return chain.substr(0, i);
+	}
+	return chain;
 }
 
 } // namespace
@@ -219,7 +1173,7 @@ SourceScan scan_lines(const std::vector<std::string> &lines) {
 std::vector<uint8_t> encode_source_model(const SourceModel &model) {
 	std::vector<uint8_t> out;
 	scalar<uint32_t>(out, MAGIC); scalar<uint16_t>(out, MAJOR); scalar<uint16_t>(out, MINOR);
-	scalar<uint32_t>(out, 6);
+	scalar<uint32_t>(out, 8);
 	std::vector<uint8_t> body;
 	string(body, model.path); section(out, META, body); body.clear();
 	scalar<uint32_t>(body, uint32_t(model.diagnostics.size()));
@@ -248,7 +1202,15 @@ std::vector<uint8_t> encode_source_model(const SourceModel &model) {
 	string(body, model.caret.receiver_text); string(body, model.caret.receiver_type); string(body, model.caret.callee);
 	scalar<int32_t>(body, model.caret.argument_index); section(out, CARET, body); body.clear();
 	scalar<uint32_t>(body, uint32_t(model.safe_lines.size())); for (uint32_t line : model.safe_lines) scalar<uint32_t>(body, line);
-	section(out, SAFE_LINES, body);
+	section(out, SAFE_LINES, body); body.clear();
+	scalar<uint32_t>(body, uint32_t(model.declarations.size()));
+	for (const auto &d : model.declarations) string(body, d.base_type);
+	section(out, DECLARATION_TYPES, body); body.clear();
+	scalar<uint32_t>(body, uint32_t(model.declarations.size()));
+	for (const auto &d : model.declarations) {
+		string(body, d.initializer_text); string(body, d.setter); string(body, d.getter);
+	}
+	section(out, DECLARATION_VALUES, body);
 	return out;
 }
 
@@ -329,6 +1291,22 @@ bool decode_source_model(const uint8_t *data, size_t size, SourceModel &out,
 			const uint8_t kind = part.scalar<uint8_t>(); if (kind > uint8_t(CaretKind::STRING_NAME)) return reject(
 					"caret context has unsupported kind " + std::to_string(kind));
 			staged.caret.kind = CaretKind(kind); staged.caret.declaration = part.scalar<int32_t>(); staged.caret.receiver_text = part.string(); staged.caret.receiver_type = part.string(); staged.caret.callee = part.string(); staged.caret.argument_index = part.scalar<int32_t>();
+		} else if (id == DECLARATION_TYPES) {
+			const uint32_t count = part.scalar<uint32_t>();
+			if (count > MAX_RECORDS) return reject("source model contains too many declaration types");
+			if (count != staged.declarations.size()) return reject(
+					"source model declaration type table does not match its declarations");
+			for (uint32_t i = 0; i < count; i++) staged.declarations[i].base_type = part.string();
+		} else if (id == DECLARATION_VALUES) {
+			const uint32_t count = part.scalar<uint32_t>();
+			if (count > MAX_RECORDS) return reject("source model contains too many declaration values");
+			if (count != staged.declarations.size()) return reject(
+					"source model declaration value table does not match its declarations");
+			for (uint32_t i = 0; i < count; i++) {
+				staged.declarations[i].initializer_text = part.string();
+				staged.declarations[i].setter = part.string();
+				staged.declarations[i].getter = part.string();
+			}
 		} else if (id == SAFE_LINES) {
 			const uint32_t count = part.scalar<uint32_t>();
 			if (count > MAX_RECORDS) return reject("source model contains too many safe lines");
@@ -366,288 +1344,56 @@ SourceModel analyze_source(const std::string &source, const std::string &path,
 		uint32_t flags, int32_t caret_line, int32_t caret_column) {
 	SourceModel model; model.path = path;
 	const std::vector<std::string> lines = split_lines(source);
-	const SourceScan scan = scan_lines(lines);
-	// One entry per physical line, non-empty only where a statement begins; the
-	// continuation lines it swallowed are joined into it.
-	std::vector<std::string> statements(lines.size());
-	for (size_t i = 0; i < lines.size(); i++) {
-		if (scan.lines[i].continuation || scan.lines[i].code.empty()) continue;
-		std::string text = scan.lines[i].code;
-		for (size_t j = i + 1; j < lines.size() && scan.lines[j].continuation; j++) {
-			if (scan.lines[j].code.empty()) continue;
-			text += ' '; text += scan.lines[j].code;
+
+	DiagnosticSink sink;
+	sink.limit = MAX_DIAGNOSTICS;
+	std::vector<Token> tokens;
+	Lexer lexer(source);
+	lexer.set_diagnostics(&sink);
+	try {
+		tokens = lexer.tokenize();
+	} catch (...) {
+		tokens.clear();
+	}
+	Program program;
+	std::vector<std::pair<int, std::string>> doc_comments = lexer.doc_comments();
+	if (!tokens.empty()) {
+		Parser parser(tokens);
+		parser.set_doc_comments(std::move(doc_comments));
+		parser.set_diagnostics(&sink);
+		try {
+			program = parser.parse();
+		} catch (...) {
 		}
-		statements[i] = std::move(text);
 	}
 	if ((flags & ANALYZE_DIAGNOSTICS) != 0) {
-		for (size_t i = 0; i < lines.size(); i++) {
-			if (scan.lines[i].unterminated) diagnostic(model, "UNTERMINATED_STRING",
-					"Unterminated string literal", uint32_t(i + 1), uint32_t(trim(lines[i]).size()));
-		}
-		if (scan.unterminated_block_string != 0) diagnostic(model, "UNTERMINATED_STRING",
-				"Unterminated string literal", scan.unterminated_block_string, 1);
-		for (const uint32_t line : scan.unclosed_lines) diagnostic(model, "EXPECTED_CLOSING_DELIMITER",
-				"Expected a closing delimiter", line, uint32_t(trim(lines[size_t(line - 1)]).size()));
-	}
-	std::vector<std::pair<uint32_t, int32_t>> scopes;
-	std::string pending_doc;
-	for (size_t i = 0; i < lines.size(); i++) {
-		const uint32_t line_no = uint32_t(i + 1); const std::string &raw = lines[i];
-		const uint32_t indent = indentation(raw); const std::string raw_text = trim(raw);
-		if (raw_text.rfind("##", 0) == 0) { if (!pending_doc.empty()) pending_doc += '\n'; pending_doc += trim(raw_text.substr(2)); continue; }
-		if (scan.lines[i].continuation) {
-			// Part of the statement above it: same gutter marker, but no scope,
-			// declaration or diagnostic of its own.
-			if ((flags & ANALYZE_SAFE_LINES) != 0 && !scan.lines[i].code.empty()) {
-				model.safe_lines.push_back(line_no);
-			}
-			continue;
-		}
-		const std::string &text = statements[i];
-		if (text.empty()) continue;
-		while (!scopes.empty() && indent <= scopes.back().first) {
-			model.declarations[size_t(scopes.back().second)].lexical_scope.end_line = line_no - 1;
-			scopes.pop_back();
-		}
-		if ((flags & ANALYZE_SAFE_LINES) != 0) model.safe_lines.push_back(line_no);
-		if ((flags & ANALYZE_DIAGNOSTICS) != 0) {
-			const bool inside_trait = !scopes.empty() &&
-				model.declarations[size_t(scopes.back().second)].kind == DeclarationKind::TRAIT;
-			int underflow = scan.lines[i].closing_underflow;
-			for (size_t j = i + 1; j < lines.size() && scan.lines[j].continuation; j++) underflow += scan.lines[j].closing_underflow;
-			if (underflow > 0) diagnostic(model, "UNEXPECTED_DELIMITER", "Unexpected closing delimiter", line_no, 1);
-			if (text.back() == '=' || text.back() == ',' || text.back() == '.') diagnostic(model, "EXPECTED_EXPRESSION", "Expected expression after operator", line_no, uint32_t(text.size()));
-			if (word_start(text, "func") && text.find(':') == std::string::npos &&
-					!inside_trait) diagnostic(model, "EXPECTED_COLON", "Expected ':' after function declaration", line_no, uint32_t(text.size()));
-			if ((word_start(text, "var") || word_start(text, "const")) && text.back() == ':') diagnostic(model, "EXPECTED_TYPE", "Expected a type after ':'", line_no, uint32_t(text.size()));
-		}
-		if ((flags & ANALYZE_DECLARATIONS) == 0) continue;
-		SourceDeclaration d; bool found = false; size_t keyword = 0;
-		if (word_start(text, "static func")) { d.kind = DeclarationKind::FUNCTION; keyword = 11; d.flags |= 1u; found = true; }
-		else if (word_start(text, "func")) { d.kind = DeclarationKind::FUNCTION; keyword = 4; found = true; }
-		else if (word_start(text, "var")) { d.kind = DeclarationKind::VARIABLE; keyword = 3; found = true; }
-		else if (word_start(text, "const")) { d.kind = DeclarationKind::CONSTANT; keyword = 5; found = true; }
-		else if (word_start(text, "signal")) { d.kind = DeclarationKind::SIGNAL; keyword = 6; found = true; }
-		else if (word_start(text, "class_name")) { d.kind = DeclarationKind::CLASS; keyword = 10; found = true; }
-		else if (word_start(text, "class")) { d.kind = DeclarationKind::NESTED_CLASS; keyword = 5; found = true; }
-		else if (word_start(text, "trait_name")) { d.kind = DeclarationKind::TRAIT; keyword = 10; found = true; }
-		else if (word_start(text, "trait")) { d.kind = DeclarationKind::TRAIT; keyword = 5; found = true; }
-		else if (word_start(text, "enum")) { d.kind = DeclarationKind::ENUM; keyword = 4; found = true; }
-		else if (!text.empty() && text[0] == '@') { d.kind = DeclarationKind::ANNOTATION; keyword = 1; found = true; }
-		if (!found) { pending_doc.clear(); continue; }
-		d.name = identifier(text, keyword); if (d.name.empty()) { pending_doc.clear(); continue; }
-		const size_t name_at = text.find(d.name, keyword); d.declaration = {line_no, uint32_t(name_at + 1), line_no, uint32_t(name_at + d.name.size() + 1)};
-		d.lexical_scope = {line_no, 1, uint32_t(lines.size()), uint32_t(lines.empty() ? 1 : lines.back().size() + 1)};
-		d.documentation = pending_doc; pending_doc.clear(); d.parent = scopes.empty() ? -1 : scopes.back().second;
-		const size_t colon = text.find(':', name_at + d.name.size());
-		const size_t equals = text.find('=', name_at + d.name.size());
-		if ((d.kind == DeclarationKind::VARIABLE || d.kind == DeclarationKind::CONSTANT) && colon != std::string::npos && (equals == std::string::npos || colon < equals)) d.declared_type = trim(text.substr(colon + 1, (equals == std::string::npos ? text.size() : equals) - colon - 1));
-		if (d.kind == DeclarationKind::FUNCTION || d.kind == DeclarationKind::SIGNAL) {
-			const size_t open = text.find('(', name_at); const size_t close = text.rfind(')');
-			if (open != std::string::npos && close != std::string::npos && close > open) {
-				std::stringstream params(text.substr(open + 1, close - open - 1)); std::string param;
-				while (std::getline(params, param, ',')) { param = trim(param); if (param.empty()) continue; SourceParameter p; const size_t pc = param.find(':'); const size_t pe = param.find('='); p.name = trim(param.substr(0, std::min(pc, pe))); if (pc != std::string::npos) p.declared_type = trim(param.substr(pc + 1, (pe == std::string::npos ? param.size() : pe) - pc - 1)); if (pe != std::string::npos) p.default_text = trim(param.substr(pe + 1)); p.declaration = d.declaration; d.parameters.push_back(std::move(p)); }
-			}
-			const size_t arrow = text.find("->", close); if (arrow != std::string::npos) { const size_t end = text.find(':', arrow); d.return_type = trim(text.substr(arrow + 2, end - arrow - 2)); }
-		}
-		if (d.kind == DeclarationKind::ENUM) {
-			const size_t open = text.find('{');
-			const size_t close = text.rfind('}');
-			if (open != std::string::npos && close > open) {
-				std::stringstream members(text.substr(open + 1, close - open - 1));
-				std::string member;
-				int64_t next_value = 0;
-				while (std::getline(members, member, ',')) {
-					member = trim(member);
-					if (member.empty()) continue;
-					SourceEnumMember value;
-					const size_t equal = member.find('=');
-					value.name = trim(member.substr(0, equal));
-					if (equal != std::string::npos) {
-						try { next_value = std::stoll(trim(member.substr(equal + 1))); } catch (...) {}
-					}
-					value.value = next_value++;
-					value.declaration = d.declaration;
-					d.enum_members.push_back(std::move(value));
-				}
-			}
-		}
-		if (d.kind == DeclarationKind::ANNOTATION) {
-			const size_t open = text.find('(');
-			const size_t close = text.rfind(')');
-			if (open != std::string::npos && close > open) {
-				std::stringstream arguments(text.substr(open + 1, close - open - 1));
-				std::string argument;
-				while (std::getline(arguments, argument, ',')) d.annotation_arguments.push_back(trim(argument));
-			}
-		}
-		const int32_t index = int32_t(model.declarations.size()); model.declarations.push_back(std::move(d));
-		if (model.declarations.back().parent >= 0) model.declarations[size_t(model.declarations.back().parent)].children.push_back(index);
-		if (model.declarations.back().kind == DeclarationKind::FUNCTION) {
-			const std::vector<SourceParameter> params = model.declarations.back().parameters;
-			for (const SourceParameter &parameter : params) {
-				SourceDeclaration declared;
-				declared.kind = DeclarationKind::PARAMETER;
-				declared.name = parameter.name;
-				declared.declared_type = parameter.declared_type;
-				declared.resolved_type = parameter.declared_type;
-				declared.declaration = parameter.declaration;
-				declared.lexical_scope = model.declarations[size_t(index)].lexical_scope;
-				declared.parent = index;
-				const int32_t parameter_index = int32_t(model.declarations.size());
-				model.declarations.push_back(std::move(declared));
-				model.declarations[size_t(index)].children.push_back(parameter_index);
-			}
-			scopes.push_back({indent, index});
-		} else if (model.declarations.back().kind == DeclarationKind::NESTED_CLASS ||
-			model.declarations.back().kind == DeclarationKind::TRAIT) {
-			scopes.push_back({indent, index});
+		for (const ParseDiagnostic &entry : sink.diagnostics) {
+			if (model.diagnostics.size() >= MAX_DIAGNOSTICS) break;
+			model.diagnostics.push_back({DiagnosticSeverity::ERROR, entry.code, entry.message,
+				path, {uint32_t(entry.line), uint32_t(entry.column), uint32_t(entry.end_line),
+				uint32_t(entry.end_column)}});
 		}
 	}
-	for (const auto &scope : scopes) {
-		model.declarations[size_t(scope.second)].lexical_scope.end_line = uint32_t(lines.size());
-	}
-	for (SourceDeclaration &declaration : model.declarations) {
-		if (declaration.parent >= 0 &&
-				(declaration.kind == DeclarationKind::VARIABLE || declaration.kind == DeclarationKind::CONSTANT ||
-				 declaration.kind == DeclarationKind::PARAMETER)) {
-			declaration.lexical_scope = model.declarations[size_t(declaration.parent)].lexical_scope;
+	if ((flags & ANALYZE_SAFE_LINES) != 0) {
+		uint32_t previous = 0;
+		for (const Token &token : tokens) {
+			if (token.type == TokenType::NEWLINE || token.type == TokenType::INDENT ||
+					token.type == TokenType::DEDENT || token.type == TokenType::EOF_TOKEN) continue;
+			if (uint32_t(token.line) == previous) continue;
+			previous = uint32_t(token.line);
+			model.safe_lines.push_back(previous);
 		}
 	}
-	if ((flags & ANALYZE_DIAGNOSTICS) != 0 && (flags & ANALYZE_DECLARATIONS) != 0) {
-		std::unordered_map<std::string, std::string> declared_types;
-		std::unordered_map<std::string, std::string> function_returns;
-		for (const SourceDeclaration &declaration : model.declarations) {
-			if (declaration.kind == DeclarationKind::VARIABLE ||
-					declaration.kind == DeclarationKind::PARAMETER) {
-				declared_types[declaration.name] = declaration.declared_type;
-			} else if (declaration.kind == DeclarationKind::FUNCTION) {
-				function_returns[declaration.name] = declaration.return_type;
-			}
-		}
-		for (const SourceDeclaration &declaration : model.declarations) {
-			const size_t occurrences = word_occurrences(source, declaration.name);
-			if (declaration.kind == DeclarationKind::PARAMETER && occurrences <= 1) {
-				warning(model, "UNUSED_PARAMETER", "Parameter '" + declaration.name + "' is never used",
-						declaration.declaration.start_line, declaration.declaration.start_column);
-			} else if (declaration.kind == DeclarationKind::VARIABLE && declaration.parent >= 0 && occurrences <= 1) {
-				warning(model, "UNUSED_VARIABLE", "Variable '" + declaration.name + "' is never used",
-						declaration.declaration.start_line, declaration.declaration.start_column);
-			} else if (declaration.kind == DeclarationKind::CONSTANT && declaration.parent >= 0 && occurrences <= 1) {
-				warning(model, "UNUSED_LOCAL_CONSTANT", "Local constant '" + declaration.name + "' is never used",
-						declaration.declaration.start_line, declaration.declaration.start_column);
-			} else if (declaration.kind == DeclarationKind::SIGNAL && occurrences <= 1) {
-				warning(model, "UNUSED_SIGNAL", "Signal '" + declaration.name + "' is never used",
-						declaration.declaration.start_line, declaration.declaration.start_column);
-			}
-			if ((declaration.kind == DeclarationKind::VARIABLE || declaration.kind == DeclarationKind::PARAMETER) && declaration.parent >= 0) {
-				for (const SourceDeclaration &other : model.declarations) {
-					if (&other == &declaration || other.name != declaration.name ||
-							other.declaration.start_line >= declaration.declaration.start_line) continue;
-					if (other.parent == -1 || other.parent == declaration.parent) {
-						warning(model, "SHADOWED_VARIABLE", "'" + declaration.name + "' shadows an earlier declaration",
-								declaration.declaration.start_line, declaration.declaration.start_column);
-						break;
-					}
-				}
-			}
-		}
-		for (size_t i = 0; i < lines.size(); i++) {
-			const std::string &text = statements[i];
-			if (text.empty()) continue;
-			size_t next = i + 1;
-			while (next < lines.size() && statements[next].empty()) next++;
-			if (next < lines.size() && word_start(text, "return") &&
-					indentation(lines[next]) == indentation(lines[i])) {
-				warning(model, "UNREACHABLE_CODE", "Statement is unreachable", uint32_t(next + 1), 1);
-			}
-			if (text.find("await await") != std::string::npos) {
-				warning(model, "REDUNDANT_AWAIT", "Redundant await", uint32_t(i + 1), 1);
-			}
-			if (text.find("assert(true") != std::string::npos || text.find("assert(false") != std::string::npos) {
-				warning(model, "CONSTANT_ASSERT", "Assertion condition is constant", uint32_t(i + 1), 1);
-			}
-			if (word_start(text, "var") && text.find('=') == std::string::npos && text.find(':') == std::string::npos) {
-				warning(model, "UNASSIGNED_VARIABLE", "Variable is declared without an initial value", uint32_t(i + 1), 1);
-			}
-			if (text.find("/ ") != std::string::npos || text.find(" / ") != std::string::npos) {
-				const size_t slash = text.find('/');
-				if (slash != std::string::npos && slash > 0 && slash + 1 < text.size() &&
-						std::isdigit(static_cast<unsigned char>(text[slash - 1])) &&
-						std::isdigit(static_cast<unsigned char>(text[slash + 1]))) {
-					warning(model, "INTEGER_DIVISION", "Integer division discards the fractional part", uint32_t(i + 1), uint32_t(slash + 1));
-				}
-			}
-			if (text.rfind("await ", 0) == 0 && text.find('(') == std::string::npos) {
-				warning(model, "REDUNDANT_AWAIT", "Await has no asynchronous expression", uint32_t(i + 1), 1);
-			}
-			// Declarations and every other statement keyword: `return n`, `pass`,
-			// `break` and friends are statements, not discarded expressions.
-			const bool statement = statement_keyword(text);
-			if (!statement && text.find('=') == std::string::npos && text.back() != ':' &&
-					text.find('(') == std::string::npos &&
-					(std::isalpha(static_cast<unsigned char>(text[0])) || std::isdigit(static_cast<unsigned char>(text[0])))) {
-				warning(model, "STANDALONE_EXPRESSION", "Standalone expression has no effect", uint32_t(i + 1), 1);
-			}
-
-			// A source-declared non-void function used as a statement discards its
-			// result. Restrict this warning to signatures we know, avoiding guesses
-			// about engine or dynamically dispatched methods.
-			if (!statement && text.back() == ')' && text.find('=') == std::string::npos &&
-					text.rfind("await ", 0) != 0) {
-				const size_t open = text.find('(');
-				if (open != std::string::npos) {
-					const std::string callee = trim(text.substr(0, open));
-					const auto returns = function_returns.find(callee);
-					if (returns != function_returns.end() && !returns->second.empty() &&
-							returns->second != "void") {
-						warning(model, "DISCARDED_RETURN_VALUE", "Return value of '" + callee + "' is discarded",
-								uint32_t(i + 1), 1);
-					}
-				}
-			}
-
-			// Typed int destinations cannot retain a fractional value.
-			const size_t equal = text.find('=');
-			if (equal != std::string::npos) {
-				std::string lhs = trim(text.substr(0, equal));
-				if (word_start(lhs, "var")) lhs = trim(lhs.substr(3));
-				const size_t colon = lhs.find(':');
-				std::string name = trim(lhs.substr(0, colon));
-				std::string type = colon == std::string::npos ? declared_types[name] : trim(lhs.substr(colon + 1));
-				const std::string rhs = trim(text.substr(equal + 1));
-				bool fractional = rhs.find('/') != std::string::npos;
-				for (size_t at = 1; !fractional && at + 1 < rhs.size(); at++) {
-					fractional = rhs[at] == '.' && std::isdigit(static_cast<unsigned char>(rhs[at - 1])) &&
-							std::isdigit(static_cast<unsigned char>(rhs[at + 1]));
-				}
-				if (type == "int" && fractional) {
-					warning(model, "NARROWING_CONVERSION", "Assignment may narrow a fractional value to int",
-							uint32_t(i + 1), uint32_t(equal + 2));
-				}
-			}
-
-			// Access through a source-declared but untyped value is intentionally
-			// dynamic; surface the same unsafe-access warnings as GDScript.
-			for (const auto &[name, type] : declared_types) {
-				if (!type.empty()) continue;
-				const std::string needle = name + ".";
-				const size_t dot = text.find(needle);
-				if (dot == std::string::npos) continue;
-				const size_t member_start = dot + needle.size();
-				const size_t call = text.find('(', member_start);
-				const size_t boundary = text.find_first_of(" \t=,+-*/", member_start);
-				if (call != std::string::npos && (boundary == std::string::npos || call < boundary)) {
-					warning(model, "UNSAFE_METHOD_ACCESS", "Method access on untyped value '" + name + "' is unsafe",
-							uint32_t(i + 1), uint32_t(dot + 1));
-				} else {
-					warning(model, "UNSAFE_PROPERTY_ACCESS", "Property access on untyped value '" + name + "' is unsafe",
-							uint32_t(i + 1), uint32_t(dot + 1));
-				}
-				break;
-			}
-		}
+	if ((flags & ANALYZE_DECLARATIONS) != 0) {
+		ModelBuilder builder(model, program, lines);
+		builder.warnings_wanted = (flags & ANALYZE_DIAGNOSTICS) != 0;
+		builder.build();
 	}
+	std::stable_sort(model.diagnostics.begin(), model.diagnostics.end(),
+			[](const SourceDiagnostic &a, const SourceDiagnostic &b) {
+				if (a.range.start_line != b.range.start_line) return a.range.start_line < b.range.start_line;
+				return a.range.start_column < b.range.start_column;
+			});
 	// Apply warning annotations as lexical state after warnings have been
 	// collected. Codes are compared case-insensitively with GDScript's setting
 	// names (for example UNUSED_VARIABLE vs "unused_variable").
@@ -685,29 +1431,48 @@ SourceModel analyze_source(const std::string &source, const std::string &path,
 	if ((flags & ANALYZE_DIAGNOSTICS) != 0 && model.diagnostics.size() >= MAX_DIAGNOSTICS) {
 		model.diagnostics.resize(MAX_DIAGNOSTICS - 1);
 		model.diagnostics.push_back({DiagnosticSeverity::ERROR, "TOO_MANY_ERRORS", "Too many errors",
-				model.path, {uint32_t(lines.size()), 1, uint32_t(lines.size()), 2}});
+			model.path, {uint32_t(lines.size()), 1, uint32_t(lines.size()), 2}});
 	}
 	if ((flags & ANALYZE_CARET) != 0 && caret_line > 0 && size_t(caret_line) <= lines.size()) {
-		const std::string before = lines[size_t(caret_line - 1)].substr(0, std::min<size_t>(size_t(std::max(caret_column, 0)), lines[size_t(caret_line - 1)].size()));
-		const size_t dot = before.rfind('.');
-		const size_t open = before.rfind('(');
-		if (open != std::string::npos && before.find(')', open) == std::string::npos) {
-			model.caret.kind = CaretKind::CALL_ARGUMENT;
-			size_t end = open;
-			while (end > 0 && std::isspace(static_cast<unsigned char>(before[end - 1]))) end--;
-			size_t begin = end;
-			while (begin > 0 && (std::isalnum(static_cast<unsigned char>(before[begin - 1])) || before[begin - 1] == '_')) begin--;
-			model.caret.callee = before.substr(begin, end - begin);
-			model.caret.argument_index = int32_t(std::count(before.begin() + open + 1, before.end(), ','));
-		} else if (dot != std::string::npos) {
-			model.caret.kind = CaretKind::MEMBER;
-			size_t end = dot, begin = end;
-			while (begin > 0 && (std::isalnum(static_cast<unsigned char>(before[begin - 1])) || before[begin - 1] == '_')) begin--;
-			model.caret.receiver_text = before.substr(begin, end - begin);
-		} else if (before.find('@') != std::string::npos) model.caret.kind = CaretKind::ANNOTATION;
-		else if (before.find("->") != std::string::npos || before.rfind(':') != std::string::npos ||
-				before.rfind(" is ") != std::string::npos || before.rfind(" as ") != std::string::npos) model.caret.kind = CaretKind::TYPE;
-		else model.caret.kind = CaretKind::IDENTIFIER;
+		std::vector<bool> continuation(lines.size(), false);
+		{
+			int depth = 0;
+			for (size_t i = 0; i < lines.size(); i++) {
+				continuation[i] = depth > 0;
+				bool in_string = false;
+				char quote = 0;
+				const std::string &raw = lines[i];
+				for (size_t at = 0; at < raw.size(); at++) {
+					const char c = raw[at];
+					if (in_string) {
+						if (c == '\\') at++;
+						else if (c == quote) in_string = false;
+						continue;
+					}
+					if (c == '#') break;
+					if (c == '"' || c == '\'') { in_string = true; quote = c; }
+					else if (c == '(' || c == '[' || c == '{') depth++;
+					else if ((c == ')' || c == ']' || c == '}') && depth > 0) depth--;
+				}
+			}
+		}
+		size_t first = size_t(caret_line - 1);
+		while (first > 0 && continuation[first]) first--;
+		std::string before;
+		for (size_t i = first; i + 1 < size_t(caret_line); i++) {
+			std::string code = lines[i];
+			const size_t comment = code.find('#');
+			if (comment != std::string::npos) code = code.substr(0, comment);
+			before += trim(code);
+			before += ' ';
+		}
+		const std::string &caret_text = lines[size_t(caret_line - 1)];
+		before += caret_text.substr(0, std::min<size_t>(size_t(std::max(caret_column, 0)), caret_text.size()));
+		analyze_caret(before, model.caret);
+		if (!model.caret.receiver_text.empty() && (flags & ANALYZE_DECLARATIONS) != 0) {
+			model.caret.receiver_type = caret_head_type(model, program,
+					receiver_head(model.caret.receiver_text), uint32_t(caret_line));
+		}
 	}
 	return model;
 }

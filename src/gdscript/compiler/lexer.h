@@ -1,4 +1,5 @@
 #pragma once
+#include "parse_diagnostics.h"
 #include "token.h"
 #include <vector>
 #include <string>
@@ -11,6 +12,8 @@ namespace gdscript {
 class Lexer {
 public:
 	explicit Lexer(std::string source);
+
+	void set_diagnostics(DiagnosticSink* sink) { m_diagnostics = sink; }
 
 	std::vector<Token> tokenize();
 
@@ -48,9 +51,13 @@ private:
 	void add_token(TokenType type, double value);
 	void add_token(TokenType type, const std::string& value);
 
-	[[noreturn]] void error(const std::string& message);
-	[[noreturn]] void error_at(const std::string& message, int line, int column);
+	void error(const std::string& message, const char* code = "LEXER_ERROR");
+	void error_at(const std::string& message, int line, int column,
+		const char* code = "LEXER_ERROR", int width = 1);
+	bool tolerant() const { return m_diagnostics != nullptr; }
+	bool resumes_after_unclosed() const;
 
+	DiagnosticSink* m_diagnostics = nullptr;
 	std::string m_source;
 	std::vector<Token> m_tokens;
 	std::vector<int> m_indent_stack;
@@ -70,7 +77,9 @@ private:
 		char closer;
 		int line;
 		int column;
+		int line_indent;
 	};
+	int m_line_indent = 0;
 	std::vector<OpenBracket> m_open_brackets;
 	// A multiline lambda can open an indented suite even while an enclosing
 	// call/Array/Dictionary keeps brackets open. Each entry is the indentation

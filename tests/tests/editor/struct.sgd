@@ -1,0 +1,10 @@
+extends Node
+
+struct Point:
+	var x = 0
+	var y = 0
+	func length_squared():
+		return self.x * self.x + self.y * self.y
+
+func origin() -> int:
+	return Point.new(3, 4).length_squared()

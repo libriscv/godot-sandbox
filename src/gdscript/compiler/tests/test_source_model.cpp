@@ -110,5 +110,111 @@ int main() {
 			decoded_traits, decode_error));
 	assert(decode_error == "declaration 0 has unsupported kind 255");
 
+	auto declaration_named = [](const SourceModel &model, const char *name)
+			-> const SourceDeclaration * {
+		for (const auto &d : model.declarations) if (d.name == name) return &d;
+		return nullptr;
+	};
+	auto warnings_with = [](const SourceModel &model, const char *code) {
+		size_t count = 0;
+		for (const auto &d : model.diagnostics) {
+			count += d.severity == DiagnosticSeverity::WARNING && d.code == code;
+		}
+		return count;
+	};
+
+	const SourceModel recovered = analyze_source(
+		"func first():\n\tvar a = *\n\treturn a\n\nfunc second(value):\n\treturn value\n",
+		"res://recovered.sgd");
+	assert(errors(recovered) >= 1);
+	assert(declaration_named(recovered, "second") != nullptr);
+	assert(declaration_named(recovered, "value") != nullptr);
+
+	const SourceModel missing = analyze_source("var x = \n", "res://missing.sgd");
+	assert(has_code(missing, "EXPECTED_EXPRESSION"));
+	for (const auto &d : missing.diagnostics) {
+		if (d.code != "EXPECTED_EXPRESSION") continue;
+		assert(d.range.start_line == 1);
+		assert(d.range.start_column == 9);
+		assert(d.range.end_column > d.range.start_column);
+	}
+
+	const SourceModel loop = analyze_source(
+		"func go():\n\tfor index in 3:\n\t\tprint(index)\n\tprint(0)\n", "res://loop.sgd");
+	const SourceDeclaration *index = declaration_named(loop, "index");
+	assert(index != nullptr);
+	assert(index->lexical_scope.start_line == 2 && index->lexical_scope.end_line == 3);
+
+	const SourceModel bound = analyze_source(
+		"func go(value):\n\tmatch value:\n\t\tvar captured:\n\t\t\tprint(captured)\n\tprint(1)\n",
+		"res://match.sgd");
+	const SourceDeclaration *captured = declaration_named(bound, "captured");
+	assert(captured != nullptr);
+	assert(captured->lexical_scope.end_line == 4);
+
+	const SourceModel lambda = analyze_source(
+		"func go():\n\tvar f = func(inner):\n\t\treturn inner\n\treturn f\n", "res://lambda.sgd");
+	const SourceDeclaration *inner = declaration_named(lambda, "inner");
+	assert(inner != nullptr);
+	assert(inner->kind == DeclarationKind::PARAMETER);
+	assert(inner->lexical_scope.end_line == 3);
+
+	const SourceModel structs = analyze_source(
+		"struct Point:\n\tvar x: int = 0\n\tvar y: int = 0\n\nfunc go():\n\tvar p := Point.new(1, 2)\n\treturn p.x\n",
+		"res://struct.sgd");
+	assert(errors(structs) == 0);
+	const SourceDeclaration *point = declaration_named(structs, "Point");
+	assert(point != nullptr);
+	assert(point->kind == DeclarationKind::STRUCT);
+	assert(point->children.size() == 2);
+	assert(structs.declarations[size_t(point->children[0])].name == "x");
+	const SourceDeclaration *p = declaration_named(structs, "p");
+	assert(p != nullptr && p->resolved_type == "Point");
+
+	const SourceModel unknown_field = analyze_source(
+		"struct Point:\n\tvar x = 0\n\nfunc go():\n\tvar p = Point.new()\n\treturn p.z\n",
+		"res://field.sgd");
+	assert(has_code(unknown_field, "UNKNOWN_STRUCT_FIELD"));
+
+	const SourceModel enums = analyze_source(
+		"enum Mode { IDLE, RUN = 5, STOP }\nfunc go():\n\treturn Mode.WALK\n", "res://enum.sgd");
+	assert(has_code(enums, "UNDECLARED_ENUM_MEMBER"));
+	const SourceDeclaration *mode = declaration_named(enums, "Mode");
+	assert(mode != nullptr && mode->enum_members.size() == 3);
+	assert(mode->enum_members[1].value == 5 && mode->enum_members[2].value == 6);
+
+	const SourceModel arity = analyze_source(
+		"func takes(a, b):\n\treturn a\nfunc go():\n\treturn takes(1)\n", "res://arity.sgd");
+	assert(has_code(arity, "MISSING_ARGUMENT"));
+
+	const SourceModel inferred = analyze_source("func go():\n\tvar v := Vector2()\n\treturn v\n",
+		"res://inferred.sgd");
+	const SourceDeclaration *v = declaration_named(inferred, "v");
+	assert(v != nullptr && v->resolved_type == "Vector2");
+
+	const SourceModel extended = analyze_source("extends Node2D\nfunc go():\n\tpass\n",
+		"res://extends.sgd");
+	assert(extended.declarations[0].kind == DeclarationKind::CLASS);
+	assert(extended.declarations[0].base_type == "Node2D");
+	const std::vector<uint8_t> extended_bytes = encode_source_model(extended);
+	SourceModel decoded_extended;
+	assert(decode_source_model(extended_bytes.data(), extended_bytes.size(), decoded_extended));
+	assert(decoded_extended.declarations[0].base_type == "Node2D");
+
+	const SourceModel precise = analyze_source(
+		"func go():\n\tvar x2 = 1\n\tvar text = \"a / b\"\n\tif x2:\n\t\treturn text\n\tprint(x2)\n",
+		"res://precise.sgd");
+	assert(warnings_with(precise, "INTEGER_DIVISION") == 0);
+	assert(warnings_with(precise, "UNREACHABLE_CODE") == 0);
+	assert(warnings_with(precise, "UNUSED_VARIABLE") == 0);
+
+	const SourceModel divided = analyze_source("func go():\n\tvar a := 7\n\treturn a / 2\n",
+		"res://divided.sgd");
+	assert(warnings_with(divided, "INTEGER_DIVISION") == 1);
+
+	const SourceModel unreachable = analyze_source(
+		"func go():\n\treturn 1\n\tprint(2)\n", "res://unreachable.sgd");
+	assert(warnings_with(unreachable, "UNREACHABLE_CODE") == 1);
+
 	std::cout << "source model passed\n";
 }

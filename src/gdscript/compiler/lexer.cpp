@@ -54,9 +54,14 @@ std::vector<Token> Lexer::tokenize() {
 
 	// Report unclosed bracket at the opener, not at EOF.
 	if (!m_open_brackets.empty()) {
-		const OpenBracket& open = m_open_brackets.back();
+		const OpenBracket& open = tolerant() ? m_open_brackets.front() : m_open_brackets.back();
 		error_at(std::string("Unclosed '") + opener_for(open.closer) + "', expected '" +
-			open.closer + "' before the end of the file", open.line, open.column);
+			open.closer + "' before the end of the file", open.line, open.column,
+			"EXPECTED_CLOSING_DELIMITER");
+		m_open_brackets.clear();
+		if (!m_tokens.empty() && m_tokens.back().type != TokenType::NEWLINE) {
+			add_token(TokenType::NEWLINE);
+		}
 	}
 
 	while (m_indent_stack.size() > 1) {
@@ -77,7 +82,35 @@ char Lexer::opener_for(char closer) {
 }
 
 void Lexer::push_bracket(char closer) {
-	m_open_brackets.push_back({closer, m_line, m_column - 1});
+	m_open_brackets.push_back({closer, m_line, m_column - 1, m_line_indent});
+}
+
+// A declaration keyword ends an unclosed bracket.
+bool Lexer::resumes_after_unclosed() const {
+	static const char* const keywords[] = {"func", "static", "var", "const",
+		"class", "class_name", "trait", "trait_name", "extends", "signal", "enum",
+		"struct", "uses"};
+	size_t at = m_current;
+	int indent = 0;
+	while (at < m_source.size() && (m_source[at] == ' ' || m_source[at] == '\t')) {
+		indent += m_source[at] == '\t' ? 4 : 1;
+		at++;
+	}
+	if (indent > m_open_brackets.front().line_indent) {
+		return false;
+	}
+	size_t end = at;
+	while (end < m_source.size() && (std::isalnum(static_cast<unsigned char>(m_source[end])) ||
+		m_source[end] == '_')) {
+		end++;
+	}
+	const std::string word = m_source.substr(at, end - at);
+	for (const char* keyword : keywords) {
+		if (word == keyword) {
+			return true;
+		}
+	}
+	return false;
 }
 
 void Lexer::pop_bracket(char closer) {
@@ -129,6 +162,14 @@ void Lexer::scan_token() {
 				m_lambda_suite_may_start = false;
 				m_lambda_layouts.push_back({m_lambda_base_indent, m_open_brackets.size()});
 			}
+			if (tolerant() && !m_open_brackets.empty() && resumes_after_unclosed()) {
+				const OpenBracket& open = m_open_brackets.front();
+				error_at(std::string("Unclosed '") + opener_for(open.closer) + "', expected '" +
+					open.closer + "' before the end of the statement", open.line, open.column,
+					"EXPECTED_CLOSING_DELIMITER");
+				m_open_brackets.clear();
+				m_lambda_layouts.clear();
+			}
 			if (m_open_brackets.empty() || lambda_layout_active()) {
 				add_token(TokenType::NEWLINE);
 				m_at_line_start = true;
@@ -141,6 +182,7 @@ void Lexer::scan_token() {
 			while (peek() == ' ' || peek() == '\r' || peek() == '\t') advance();
 			if (peek() != '\n') {
 				error("Expected end of line after '\\' line continuation");
+				break;
 			}
 			advance();
 			m_line++;
@@ -304,7 +346,7 @@ void Lexer::scan_token() {
 			} else if (is_alpha(c)) {
 				scan_identifier();
 			} else {
-				error("Unexpected character");
+				error("Unexpected character", "UNEXPECTED_CHARACTER");
 			}
 			break;
 	}
@@ -328,6 +370,7 @@ void Lexer::handle_indent() {
 	}
 
 	m_at_line_start = false;
+	m_line_indent = indent_level;
 
 	int current_indent = m_indent_stack.back();
 	// Continuation indent between lambda body and enclosing call still closes the suite.
@@ -347,7 +390,8 @@ void Lexer::handle_indent() {
 		// indentation that is not a statement-block level. It still closes the
 		// lambda suite, but must not become an indentation level of its own.
 		if (m_indent_stack.back() != indent_level && !leaving_lambda) {
-			error("Inconsistent indentation");
+			error("Inconsistent indentation", "INCONSISTENT_INDENTATION");
+			m_indent_stack.back() = indent_level;
 		}
 	}
 
@@ -380,11 +424,13 @@ uint32_t Lexer::scan_hex_escape(int hex_len) {
 	uint32_t value = 0;
 	for (int i = 0; i < hex_len; i++) {
 		if (is_at_end()) {
-			error("Unterminated string");
+			error("Unterminated string", "UNTERMINATED_STRING");
+			return value;
 		}
 		const char c = peek();
 		if (!is_hex_digit(c)) {
 			error("Invalid hexadecimal digit in unicode escape sequence");
+			return value;
 		}
 		advance();
 		const uint32_t digit = (c >= '0' && c <= '9')   ? uint32_t(c - '0')
@@ -449,6 +495,9 @@ void Lexer::scan_string(TokenType type, bool raw) {
 				break;
 			}
 		} else if (c == '\n') {
+			if (tolerant() && !triple) {
+				break;
+			}
 			m_line++;
 			m_column = 0;
 		} else if (c == '\\') {
@@ -499,7 +548,9 @@ void Lexer::scan_string(TokenType type, bool raw) {
 	}
 
 	if (!terminated) {
-		error_at("Unterminated string", open_line, open_column);
+		error_at("Unterminated string", open_line, open_column, "UNTERMINATED_STRING");
+		add_token(type, value);
+		return;
 	}
 
 	advance();
@@ -722,11 +773,18 @@ void Lexer::add_token(TokenType type, const std::string& value) {
 	m_tokens.push_back(token);
 }
 
-void Lexer::error(const std::string& message) {
-	error_at(message, m_line, m_column);
+void Lexer::error(const std::string& message, const char* code) {
+	const int width = int(m_current - m_start);
+	error_at(message, m_line, m_column - (width > 0 ? width : 0), code,
+		width > 0 ? width : 1);
 }
 
-void Lexer::error_at(const std::string& message, int line, int column) {
+void Lexer::error_at(const std::string& message, int line, int column,
+	const char* code, int width) {
+	if (m_diagnostics != nullptr) {
+		m_diagnostics->add(code, message, line, column, line, column + width);
+		return;
+	}
 	throw CompilerException(ErrorType::LEXER_ERROR, message, line, column);
 }
 

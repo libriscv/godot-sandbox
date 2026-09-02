@@ -206,6 +206,14 @@ const char* global_function_name(size_t index) {
 	return name[0] == '.' ? nullptr : name;
 }
 
+uint8_t global_function_min_args(size_t index) {
+	return GLOBAL_FUNCTIONS[index].min_args;
+}
+
+uint8_t global_function_max_args(size_t index) {
+	return GLOBAL_FUNCTIONS[index].max_args;
+}
+
 static const GlobalConstant GLOBAL_CONSTANTS[] = {
 #define GDSC_INT_CONSTANT(name, value) { #name, false, static_cast<int64_t>(value), 0.0 },
 #define GDSC_FLOAT_CONSTANT(name, value) { #name, true, 0, (value) },
@@ -231,6 +239,18 @@ size_t global_constant_count() {
 
 const char* global_constant_name(size_t index) {
 	return GLOBAL_CONSTANTS[index].name;
+}
+
+bool global_constant_is_float(size_t index) {
+	return GLOBAL_CONSTANTS[index].is_float;
+}
+
+int64_t global_constant_int_value(size_t index) {
+	return GLOBAL_CONSTANTS[index].int_value;
+}
+
+double global_constant_float_value(size_t index) {
+	return GLOBAL_CONSTANTS[index].float_value;
 }
 
 static const BuiltinConstant BUILTIN_CONSTANTS[] = {

@@ -1,0 +1,7 @@
+trait_name EditorFixtureTrait
+
+var charges: int = 5
+
+func spend(amount: int) -> int:
+	charges -= amount
+	return charges

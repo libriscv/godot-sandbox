@@ -1,5 +1,7 @@
 #pragma once
 
+#include "syntax_highlighter_safegdscript.h"
+
 #include <godot_cpp/classes/editor_context_menu_plugin.hpp>
 #include <godot_cpp/classes/editor_plugin.hpp>
 
@@ -33,6 +35,7 @@ class SafeGDScriptEditorPlugin : public EditorPlugin {
 	GDCLASS(SafeGDScriptEditorPlugin, EditorPlugin);
 
 	Ref<SafeGDScriptConvertMenu> menus[3];
+	Ref<SafeGDScriptSyntaxHighlighter> highlighter;
 
 protected:
 	static void _bind_methods() {}

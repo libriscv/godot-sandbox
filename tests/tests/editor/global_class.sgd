@@ -1,0 +1,7 @@
+class_name EditorFixtureClass
+extends Node
+
+var label: String = "fixture"
+
+func describe(prefix: String) -> String:
+	return prefix + label
