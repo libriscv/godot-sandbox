@@ -415,13 +415,15 @@ static void test_known_container_methods_lower_to_syscalls() {
 		"\tif d.has(1):\n"
 		"\t\treturn d.get(1)\n"
 		"\tvar n = d.keys().size() + d.values().size()\n"
+		"\tvar fallback = d.get(2, 0)\n"
 		"\td.clear()\n"
-		"\treturn n\n";
+		"\treturn n + fallback\n";
 	const IRProgram query_ir = compile_to_ir(dict_source);
 	const IRFunction& query = find_function(query_ir, "query");
 	assert(count_opcode(query, IROpcode::VCALL) == 0);
 	assert(count_dict_ops(query, dictionary_op(Dictionary_Op::HAS)) == 1);
 	assert(count_dict_ops(query, dictionary_op(Dictionary_Op::GET)) == 1);
+	assert(count_dict_ops(query, dictionary_op(Dictionary_Op::GET_OR_DEFAULT)) == 1);
 	assert(count_dict_ops(query, dictionary_op(Dictionary_Op::GET_KEYS)) == 1);
 	assert(count_dict_ops(query, dictionary_op(Dictionary_Op::GET_VALUES)) == 1);
 	assert(count_dict_ops(query, dictionary_op(Dictionary_Op::CLEAR)) == 1);
@@ -453,10 +455,12 @@ static void test_unknown_receiver_keeps_the_vcall() {
 	assert(count_vcalls(untyped_ir, untyped, "size") == 1);
 	assert(count_syscalls(untyped, ECALL_ARRAY_SIZE) == 0);
 
-	const IRProgram defaulted_ir = compile_to_ir("func get_or(d : Dictionary):\n\treturn d.get(1, 0)\n");
+	// Untyped receiver keeps the VCALL.
+	const IRProgram defaulted_ir = compile_to_ir("func get_or(d):\n\treturn d.get(1, 0)\n");
 	const IRFunction& defaulted = find_function(defaulted_ir, "get_or");
 	assert(count_vcalls(defaulted_ir, defaulted, "get") == 1);
 	assert(count_dict_ops(defaulted, dictionary_op(Dictionary_Op::GET)) == 0);
+	assert(count_dict_ops(defaulted, dictionary_op(Dictionary_Op::GET_OR_DEFAULT)) == 0);
 
 	const IRProgram popped_ir = compile_to_ir("func pop(a : Array):\n\treturn a.pop_back()\n");
 	const IRFunction& popped = find_function(popped_ir, "pop");

@@ -55,6 +55,41 @@ func dict_ops(n : int) -> int:
 		j += 1
 	return acc
 
+func dict_get(n : int) -> int:
+	var d : Dictionary = {}
+	var i : int = 0
+	while i < 64:
+		d[i] = i
+		i += 1
+	var acc : int = 0
+	var j : int = 0
+	while j < n:
+		acc += d[j & 63]
+		j += 1
+	return acc
+
+func dict_string_keys(n : int) -> int:
+	var d : Dictionary = {"hp": 0, "mp": 0}
+	var i : int = 0
+	while i < n:
+		d["hp"] += 1
+		d["mp"] -= 1
+		i += 1
+	return d["hp"] + d["mp"]
+
+func dict_get_default(n : int) -> int:
+	var d : Dictionary = {}
+	var i : int = 0
+	while i < 64:
+		d[i] = i
+		i += 1
+	var acc : int = 0
+	var j : int = 0
+	while j < n:
+		acc += d.get(j & 127, 0)
+		j += 1
+	return acc
+
 func string_ops(n : int) -> int:
 	var acc : int = 0
 	var i : int = 0
@@ -193,7 +228,10 @@ const KERNELS := [
 	{"group": "float loop", "fn": "loop_float", "n": 100000, "unit": "iteration"},
 	{"group": "recursion", "fn": "fib", "n": 20, "unit": "call"},
 	{"group": "array append + index", "fn": "array_sum", "n": 20000, "unit": "element"},
-	{"group": "dictionary set + get", "fn": "dict_ops", "n": 20000, "unit": "op"},
+	{"group": "dictionary set + get", "fn": "dict_ops", "n": 20000, "unit": "op", "cpp": "bench_dict_ops"},
+	{"group": "dictionary get", "fn": "dict_get", "n": 20000, "unit": "op", "cpp": "bench_dict_get"},
+	{"group": "dictionary string keys", "fn": "dict_string_keys", "n": 20000, "unit": "iteration", "cpp": "bench_dict_string_keys"},
+	{"group": "dictionary get default", "fn": "dict_get_default", "n": 20000, "unit": "op", "cpp": "bench_dict_get_default"},
 	{"group": "string build", "fn": "string_ops", "n": 2000, "unit": "string"},
 	{"group": "string iterate", "fn": "string_iterate", "n": 8000, "unit": "character"},
 	{"group": "untyped float math", "fn": "untyped_float", "n": 100000, "unit": "operation"},
@@ -201,12 +239,18 @@ const KERNELS := [
 	{"group": "container size", "fn": "container_size", "n": 100000, "unit": "size call pair"},
 ]
 
+const PLATEAU_PATH := "res://tests/dict_plateau.elf"
+
 var _elf : PackedByteArray = PackedByteArray()
 var _struct_elf : PackedByteArray = PackedByteArray()
+var _plateau_elf : PackedByteArray = PackedByteArray()
 
 func before_all():
 	_elf = _compile(SOURCE)
 	_struct_elf = _compile(STRUCT_SOURCE)
+	_plateau_elf = FileAccess.get_file_as_bytes(PLATEAU_PATH)
+	assert_false(_plateau_elf.is_empty(),
+		"%s should be built; run tests/run_benchmarks.sh, which builds it" % PLATEAU_PATH)
 
 # fib(n) calls itself once per node of its recursion tree: 2 * F(n + 1) - 1.
 func _fib_calls(n: int) -> int:
@@ -226,6 +270,9 @@ func test_bench_micro_kernels():
 	if gds == null:
 		sandbox.free()
 		return
+	var plateau : Sandbox = null
+	if not _plateau_elf.is_empty():
+		plateau = _load_elf(_plateau_elf, "Dictionary plateau ELF")
 
 	for kernel in KERNELS:
 		var name : String = kernel["fn"]
@@ -241,6 +288,12 @@ func test_bench_micro_kernels():
 		var in_engine := func(): gds.call(name, n)
 		_case(group, "SafeGDScript (sandbox)", ops, in_sandbox, kernel["unit"])
 		_case(group, "GDScript (engine)", ops, in_engine, kernel["unit"])
+		if plateau != null and kernel.has("cpp"):
+			var cpp : String = kernel["cpp"]
+			assert_eq(plateau.vmcallv(cpp, n), engine,
+				"%s should return the same value as the engine" % cpp)
+			var in_cpp := func(): plateau.vmcallv(cpp, n)
+			_case(group, "C++ (guest API)", ops, in_cpp, kernel["unit"])
 		_measure(group)
 		_mode(sandbox)
 		_note(group, "n", n)
@@ -269,6 +322,8 @@ func test_bench_micro_kernels():
 			_report(group)
 	struct_sandbox.free()
 
+	if plateau != null:
+		plateau.free()
 	sandbox.free()
 
 func after_all():

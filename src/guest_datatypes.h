@@ -217,6 +217,12 @@ struct GuestVariant {
 	void create(Sandbox &emu, Variant &&value);
 
 	/**
+	 * @brief Like the rvalue form, but copies instead of moving.
+	 * Inline values are copied directly; pointer-backed types are scoped.
+	 **/
+	void create(Sandbox &emu, const Variant &value);
+
+	/**
 	 * @brief Copies a Variant that is stored inline (scalars, vectors, colors, planes)
 	 * straight out of its payload, bypassing godot-cpp's out-of-line accessors.
 	 *
@@ -294,11 +300,13 @@ public:
 	BorrowedVariant(const Sandbox &emu, const GuestVariant &gv) {
 		const int bytes = variant_inline_payload_bytes(gv.type);
 		if (LIKELY(bytes >= 0)) {
-			std::memset(m_storage, 0, sizeof(m_storage));
 			GDNativeVariant *inner = (GDNativeVariant *)m_storage;
+			std::memset(m_storage, 0, sizeof(uint64_t));
 			inner->type = uint8_t(gv.type);
-			if (UNLIKELY(gv.type == Variant::BOOL)) {
-				inner->value = (gv.v.b_bits != 0);
+			if (LIKELY(bytes <= int(sizeof(uint64_t)))) {
+				inner->value = UNLIKELY(gv.type == Variant::BOOL)
+					? uint64_t(gv.v.b_bits != 0)
+					: uint64_t(gv.v.i);
 			} else {
 				guest_memcpy(&inner->value, &gv.v, bytes);
 			}
@@ -323,6 +331,25 @@ private:
 
 	const Variant *m_ptr = nullptr;
 	bool m_constructed = false;
+	alignas(8) uint8_t m_storage[sizeof(Variant)];
+};
+
+// A stack-only INT Variant for one syscall. Not owned, not destroyed.
+class InlineIntVariant {
+public:
+	explicit InlineIntVariant(int64_t value) {
+		std::memset(m_storage, 0, sizeof(uint64_t));
+		GDNativeVariant *inner = (GDNativeVariant *)m_storage;
+		inner->type = uint8_t(Variant::INT);
+		inner->value = uint64_t(value);
+	}
+	InlineIntVariant(const InlineIntVariant &) = delete;
+	InlineIntVariant &operator=(const InlineIntVariant &) = delete;
+
+	const Variant &operator*() const noexcept { return *(const Variant *)m_storage; }
+	const Variant *operator->() const noexcept { return (const Variant *)m_storage; }
+
+private:
 	alignas(8) uint8_t m_storage[sizeof(Variant)];
 };
 

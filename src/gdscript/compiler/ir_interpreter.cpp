@@ -561,6 +561,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::DICT_SET:
 		case IROpcode::DICT_GET_CONST:
 		case IROpcode::DICT_SET_CONST:
+		case IROpcode::DICT_SET_CONST_STR:
 		case IROpcode::DICT_HAS_CONST:
 		case IROpcode::STRUCT_CHECK:
 		case IROpcode::TRAIT_TEST:

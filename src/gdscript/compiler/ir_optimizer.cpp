@@ -826,6 +826,7 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::ARRAY_SET:
 		case IROpcode::DICT_SET:
 		case IROpcode::DICT_SET_CONST:
+		case IROpcode::DICT_SET_CONST_STR:
 			emit(instr);
 			break;
 

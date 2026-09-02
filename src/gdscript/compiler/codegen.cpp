@@ -1237,7 +1237,9 @@ void CodeGenerator::gen_store_to(const Expr* target, int value_reg, FunctionCont
 		// Handles need no write-back, but the container may be a copy: resolve as lvalue.
 		LValue base = resolve_lvalue(index_expr->object.get(), func);
 		check_struct_subscript(base.reg, index_expr->index.get(), func);
-		int idx_reg = gen_expr(index_expr->index.get(), func);
+		const bool constant_key =
+			constant_dictionary_key(base.reg, index_expr->index.get(), func) != nullptr;
+		int idx_reg = constant_key ? -1 : gen_expr(index_expr->index.get(), func);
 		if (auto it = func.array_element_structs.find(base.reg);
 			it != func.array_element_structs.end()) {
 			value_reg = require_struct_value(value_reg, *it->second,
@@ -1260,8 +1262,10 @@ void CodeGenerator::gen_store_to(const Expr* target, int value_reg, FunctionCont
 				"a value of Dictionary[..., " + it->second->name + "]", func,
 				site ? site->line : 0, site ? site->column : 0);
 		}
-		gen_element_store(base.reg, idx_reg, value_reg, func);
-		free_register(func, idx_reg);
+		if (!gen_constant_key_store(base.reg, index_expr->index.get(), value_reg, func)) {
+			gen_element_store(base.reg, idx_reg, value_reg, func);
+			free_register(func, idx_reg);
+		}
 		free_register(func, value_reg);
 		free_lvalue(base, func);
 		return;
@@ -1418,8 +1422,11 @@ CodeGenerator::LValue CodeGenerator::resolve_lvalue(const Expr* expr, FunctionCo
 		auto container = std::make_shared<LValue>(resolve_lvalue(index_expr->object.get(), func));
 		check_struct_subscript(container->reg, index_expr->index.get(), func);
 		lvalue.kind = LValue::Kind::INDEX;
-		lvalue.index_reg = gen_expr(index_expr->index.get(), func);
-		lvalue.reg = gen_element_read(container->reg, lvalue.index_reg, func);
+		lvalue.index_expr = index_expr->index.get();
+		if (!gen_constant_key_read(container->reg, lvalue.index_expr, func, lvalue.reg)) {
+			lvalue.index_reg = gen_expr(index_expr->index.get(), func);
+			lvalue.reg = gen_element_read(container->reg, lvalue.index_reg, func);
+		}
 		lvalue.container = std::move(container);
 		return lvalue;
 	}
@@ -1483,7 +1490,9 @@ void CodeGenerator::store_lvalue(const LValue& target, int value_reg, FunctionCo
 		}
 
 		case LValue::Kind::INDEX:
-			gen_element_store(target.container->reg, target.index_reg, value_reg, func);
+			if (!gen_constant_key_store(target.container->reg, target.index_expr, value_reg, func)) {
+				gen_element_store(target.container->reg, target.index_reg, value_reg, func);
+			}
 			return;
 
 		case LValue::Kind::VALUE:
@@ -6996,9 +7005,12 @@ int CodeGenerator::gen_index(const IndexExpr* expr, FunctionContext& func) {
 	else if (auto it = func.dictionary_value_traits.find(obj_reg);
 		it != func.dictionary_value_traits.end()) element_trait = it->second;
 	check_struct_subscript(obj_reg, expr->index.get(), func);
-	int idx_reg = gen_expr(expr->index.get(), func);
-
-	int result_reg = gen_element_read(obj_reg, idx_reg, func, expr);
+	int idx_reg = -1;
+	int result_reg = -1;
+	if (!gen_constant_key_read(obj_reg, expr->index.get(), func, result_reg)) {
+		idx_reg = gen_expr(expr->index.get(), func);
+		result_reg = gen_element_read(obj_reg, idx_reg, func, expr);
+	}
 	if (element_struct != nullptr) {
 		set_register_struct(func, result_reg, element_struct);
 	}
@@ -7009,7 +7021,9 @@ int CodeGenerator::gen_index(const IndexExpr* expr, FunctionContext& func) {
 	}
 
 	free_register(func, obj_reg);
-	free_register(func, idx_reg);
+	if (idx_reg >= 0) {
+		free_register(func, idx_reg);
+	}
 
 	return result_reg;
 }
@@ -8135,6 +8149,45 @@ void CodeGenerator::gen_dict_set(int obj_reg, const std::string& key, int value_
 {
 	func.ir.instructions.emplace_back(IROpcode::DICT_SET_CONST, IRValue::reg(obj_reg),
 		IRValue::imm(add_string_constant(key)), IRValue::reg(value_reg));
+}
+
+const std::string* CodeGenerator::constant_dictionary_key(int obj_reg, const Expr* index,
+	FunctionContext& func) const
+{
+	if (index == nullptr || get_register_type(func, obj_reg) != Variant::DICTIONARY) {
+		return nullptr;
+	}
+	// &"x" / ^"x" are StringName / NodePath, not String.
+	const auto* literal = dynamic_cast<const LiteralExpr*>(index);
+	if (literal == nullptr || literal->lit_type != LiteralExpr::Type::STRING ||
+		literal->string_type != LiteralExpr::StringType::PLAIN) {
+		return nullptr;
+	}
+	return &std::get<std::string>(literal->value);
+}
+
+bool CodeGenerator::gen_constant_key_read(int obj_reg, const Expr* index, FunctionContext& func,
+	int& result_reg)
+{
+	const std::string* key = constant_dictionary_key(obj_reg, index, func);
+	if (key == nullptr) {
+		return false;
+	}
+	result_reg = gen_dict_get(obj_reg, *key, func);
+	return true;
+}
+
+bool CodeGenerator::gen_constant_key_store(int obj_reg, const Expr* index, int value_reg,
+	FunctionContext& func)
+{
+	const std::string* key = constant_dictionary_key(obj_reg, index, func);
+	if (key == nullptr) {
+		return false;
+	}
+	// String key (not StringName) to match what GDScript would store.
+	func.ir.instructions.emplace_back(IROpcode::DICT_SET_CONST_STR, IRValue::reg(obj_reg),
+		IRValue::imm(add_string_constant(*key)), IRValue::reg(value_reg));
+	return true;
 }
 
 int CodeGenerator::gen_default_value(const TypeExpr& type_hint, FunctionContext& func) {
@@ -9971,8 +10024,22 @@ int CodeGenerator::coerce_to_declared_type(int reg, IRInstruction::TypeHint decl
 		return reg;
 	}
 	const IRInstruction::TypeHint actual = get_register_type(func, reg);
-	if (actual == IRInstruction::TypeHint_NONE || actual == declared) {
+	if (actual == declared) {
 		return reg;
+	}
+	if (actual == IRInstruction::TypeHint_NONE) {
+		// Match GDScript's OPCODE_ASSIGN_TYPED_BUILTIN for declared scalars.
+		if (declared != Variant::INT && declared != Variant::FLOAT &&
+			declared != Variant::BOOL) {
+			return reg;
+		}
+		const int converted = alloc_register(func);
+		IRInstruction coerce(IROpcode::COERCE, IRValue::reg(converted), IRValue::reg(reg));
+		coerce.type_hint = declared;
+		func.ir.instructions.push_back(coerce);
+		set_register_type(func, converted, declared);
+		free_register(func, reg);
+		return converted;
 	}
 	if (actual == Variant::NIL && declared == Variant::OBJECT) {
 		return reg;

@@ -3222,6 +3222,9 @@ APICALL(api_array_at) {
 		ERR_PRINT("Array index out of bounds: " + itos(index));
 		throw std::runtime_error("Array index out of bounds: " + std::to_string(index));
 	}
+	if (!set_mode) {
+		machine.set_result(vret->type);
+	}
 }
 
 APICALL(api_array_size) {
@@ -3277,7 +3280,6 @@ APICALL(api_array_batch) {
 APICALL(api_dict_ops) {
 	auto [op, dict_idx, vkey, vaddr] = machine.sysargs<Dictionary_Op, unsigned, gaddr_t, gaddr_t>();
 	Sandbox &emu = riscv::emu(machine);
-	PENALIZE(50'000); // Costly Dictionary operations.
 	SYS_TRACE("dict_ops", int(op), dict_idx, vkey, vaddr);
 
 	struct RawKey {
@@ -3292,7 +3294,8 @@ APICALL(api_dict_ops) {
 	// MAKE_KEYED creates the Dictionary, so a1 is a destination GuestVariant
 	// pointer instead of an existing scoped Dictionary handle.  The key table is
 	// an array of guest { pointer, length } pairs and a4 points at the values.
-	if (op == Dictionary_Op::MAKE_KEYED) {
+	if (UNLIKELY(op == Dictionary_Op::MAKE_KEYED)) {
+		PENALIZE(50'000);
 		const size_t count = size_t(vaddr);
 		const RawKey *keys = machine.memory.memarray<RawKey>(vkey, count);
 		const gaddr_t values_addr = machine.cpu.reg(14); // A4
@@ -3310,144 +3313,145 @@ APICALL(api_dict_ops) {
 		return;
 	}
 	const Variant &var_dict = get_scoped_variant_or_throw(emu, dict_idx, "Dictionary::operation");
-	if (variant_type(var_dict) != Variant::DICTIONARY) {
+	if (UNLIKELY(variant_type(var_dict) != Variant::DICTIONARY)) {
 		ERR_PRINT("Invalid Dictionary object, type = " + String(GuestVariant::type_name(var_dict.get_type())));
 		throw std::runtime_error("Invalid Dictionary object, idx = " + std::to_string(dict_idx) + " type = " + GuestVariant::type_name(var_dict.get_type()));
 	}
+	godot::Dictionary &dict = variant_container<Dictionary>(var_dict);
 
-	switch (op) {
-		case Dictionary_Op::SET:
-		case Dictionary_Op::SET_RAW:
-		case Dictionary_Op::ERASE:
-		case Dictionary_Op::CLEAR:
-		case Dictionary_Op::MERGE:
-		case Dictionary_Op::GET_OR_ADD:
-			throw_if_read_only(var_dict, "Dictionary::operation");
-			break;
-		default:
-			break;
-	}
-
-	if (op == Dictionary_Op::GET_RAW || op == Dictionary_Op::SET_RAW ||
-			op == Dictionary_Op::HAS_RAW) {
-		auto key = raw_key(vkey, vaddr);
-		godot::Dictionary &dict = variant_container<Dictionary>(var_dict);
-		if (op == Dictionary_Op::HAS_RAW) {
-			machine.set_result(dict.has(key->sname));
-			return;
-		}
-		const gaddr_t value_addr = machine.cpu.reg(14); // A4
-		GuestVariant *value = machine.memory.memarray<GuestVariant>(value_addr, 1);
-		if (op == Dictionary_Op::GET_RAW) {
-			CallResult answer;
-			GDExtensionBool valid = false;
-			internal::gdextension_interface_variant_get_keyed(
-					var_dict._native_ptr(), key->variant._native_ptr(), &answer.get(), &valid);
-			answer.mark_constructed();
-			if (LIKELY(valid)) {
-				value->create(emu, std::move(answer.get()));
-			} else {
-				value->type = Variant::NIL;
-				value->v.i = 0;
-			}
+	// Uses keyed getter (not const operator[]) to avoid ERR_FAIL on missing keys.
+	const auto read_key = [&](const Variant &key, GuestVariant &destination) {
+		CallResult answer;
+		GDExtensionBool valid = false;
+		internal::gdextension_interface_variant_get_keyed(
+				var_dict._native_ptr(), key._native_ptr(), &answer.get(), &valid);
+		answer.mark_constructed();
+		if (LIKELY(valid)) {
+			destination.create(emu, std::move(answer.get()));
 		} else {
-			Variant *slot = reinterpret_cast<Variant *>(
-					internal::gdextension_interface_dictionary_operator_index(
-						dict._native_ptr(), key->variant._native_ptr()));
-			store_guest_variant(*slot, *value, emu);
+			destination.type = Variant::NIL;
+			destination.v.i = 0;
 		}
-		return;
-	}
-
-	if (op == Dictionary_Op::HAS_EXACT_KEYS) {
-		const size_t count = size_t(vaddr);
-		const RawKey *keys = machine.memory.memarray<RawKey>(vkey, count);
-		const godot::Dictionary &dict = variant_container<Dictionary>(var_dict);
-		bool exact = size_t(dict.size()) == count;
-		for (size_t i = 0; exact && i < count; i++) {
-			auto key = raw_key(keys[i].pointer, keys[i].length);
-			exact = dict.has(key->sname);
-		}
-		machine.set_result(exact);
-		return;
-	}
+		machine.set_result(destination.type);
+		return bool(valid);
+	};
 
 	switch (op) {
 		case Dictionary_Op::GET: {
-			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
+			PENALIZE(10'000);
+			const GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
 			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vaddr, 1);
-			const BorrowedVariant key_variant(emu, *key);
-			CallResult value;
-			GDExtensionBool valid = false;
-			internal::gdextension_interface_variant_get_keyed(
-					var_dict._native_ptr(), key_variant->_native_ptr(), &value.get(), &valid);
-			value.mark_constructed();
-			if (LIKELY(valid)) {
-				vp->create(emu, std::move(value.get()));
-			} else {
-				vp->type = Variant::NIL;
-				vp->v.i = 0;
-			}
+			read_key(*BorrowedVariant(emu, *key), *vp);
 			return;
 		}
 		case Dictionary_Op::SET: {
-			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
-			GuestVariant *value = machine.memory.memarray<GuestVariant>(vaddr, 1);
+			PENALIZE(10'000);
+			const GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
+			const GuestVariant *value = machine.memory.memarray<GuestVariant>(vaddr, 1);
 			const BorrowedVariant key_variant(emu, *key);
 			const BorrowedVariant value_variant(emu, *value);
 			GDExtensionBool valid = false;
+			// The setter refuses read-only via `valid`; no separate check needed.
 			internal::gdextension_interface_variant_set_keyed(
 					const_cast<Variant &>(var_dict)._native_ptr(), key_variant->_native_ptr(),
 					value_variant->_native_ptr(), &valid);
 			if (UNLIKELY(!valid)) {
+				throw_if_read_only(var_dict, "Dictionary::operation");
 				ERR_PRINT("Dictionary::set(): the key could not be assigned");
 				throw std::runtime_error("Dictionary::set(): the key could not be assigned");
 			}
 			return;
 		}
-		default:
-			break;
-	}
-
-	godot::Dictionary &dict = variant_container<Dictionary>(var_dict);
-
-	switch (op) {
-		case Dictionary_Op::GET:
-		case Dictionary_Op::SET:
-			break; // Handled above
-		case Dictionary_Op::ERASE: {
-			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
-			dict.erase(*BorrowedVariant(emu, *key));
-			break;
+		case Dictionary_Op::GET_INT_KEY: {
+			PENALIZE(10'000);
+			const InlineIntVariant key{ int64_t(vkey) };
+			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vaddr, 1);
+			read_key(*key, *vp);
+			return;
+		}
+		case Dictionary_Op::SET_INT_KEY: {
+			PENALIZE(10'000);
+			const InlineIntVariant key{ int64_t(vkey) };
+			const GuestVariant *value = machine.memory.memarray<GuestVariant>(vaddr, 1);
+			const BorrowedVariant value_variant(emu, *value);
+			GDExtensionBool valid = false;
+			internal::gdextension_interface_variant_set_keyed(
+					const_cast<Variant &>(var_dict)._native_ptr(), key->_native_ptr(),
+					value_variant->_native_ptr(), &valid);
+			if (UNLIKELY(!valid)) {
+				throw_if_read_only(var_dict, "Dictionary::operation");
+				ERR_PRINT("Dictionary::set(): the key could not be assigned");
+				throw std::runtime_error("Dictionary::set(): the key could not be assigned");
+			}
+			return;
+		}
+		case Dictionary_Op::HAS_INT_KEY: {
+			PENALIZE(10'000);
+			const InlineIntVariant key{ int64_t(vkey) };
+			machine.set_result(dict.has(*key));
+			return;
+		}
+		case Dictionary_Op::GET_RAW:
+		case Dictionary_Op::SET_RAW:
+		case Dictionary_Op::SET_RAW_STR:
+		case Dictionary_Op::HAS_RAW: {
+			PENALIZE(10'000);
+			auto key = raw_key(vkey, vaddr);
+			if (op == Dictionary_Op::HAS_RAW) {
+				machine.set_result(dict.has(key->sname));
+				return;
+			}
+			const gaddr_t value_addr = machine.cpu.reg(14); // A4
+			GuestVariant *value = machine.memory.memarray<GuestVariant>(value_addr, 1);
+			if (op == Dictionary_Op::GET_RAW) {
+				read_key(key->variant, *value);
+			} else {
+				throw_if_read_only(var_dict, "Dictionary::operation");
+				const Variant &key_variant = op == Dictionary_Op::SET_RAW_STR
+					? key.get().as_string() : key->variant;
+				Variant *slot = reinterpret_cast<Variant *>(
+						internal::gdextension_interface_dictionary_operator_index(
+							dict._native_ptr(), key_variant._native_ptr()));
+				store_guest_variant(*slot, *value, emu);
+			}
+			return;
+		}
+		case Dictionary_Op::GET_OR_DEFAULT: {
+			PENALIZE(10'000);
+			const GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
+			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vaddr, 1);
+			const BorrowedVariant key_variant(emu, *key);
+			if (LIKELY(read_key(*key_variant, *vp))) {
+				return;
+			}
+			// Absent: answer the default without inserting it.
+			const gaddr_t vdefaddr = machine.cpu.reg(14); // A4
+			const GuestVariant *vdef = machine.memory.memarray<GuestVariant>(vdefaddr, 1);
+			*vp = *vdef;
+			machine.set_result(vp->type);
+			return;
 		}
 		case Dictionary_Op::HAS: {
-			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
+			PENALIZE(10'000);
+			const GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
 			machine.set_result(dict.has(*BorrowedVariant(emu, *key)));
-			break;
-		}
-		case Dictionary_Op::GET_KEYS: {
-			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vkey, 1);
-			vp->create(emu, dict.keys());
-			break;
-		}
-		case Dictionary_Op::GET_VALUES: {
-			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vkey, 1);
-			vp->create(emu, dict.values());
-			break;
+			return;
 		}
 		case Dictionary_Op::GET_SIZE:
+			PENALIZE(10'000);
 			machine.set_result(dict.size());
-			break;
-		case Dictionary_Op::CLEAR:
-			dict.clear();
-			break;
-		case Dictionary_Op::MERGE: {
-			GuestVariant *other_dict = machine.memory.memarray<GuestVariant>(vkey, 1);
-			dict.merge(other_dict->toVariant(emu).operator Dictionary());
-			break;
+			return;
+		case Dictionary_Op::ERASE: {
+			PENALIZE(10'000);
+			throw_if_read_only(var_dict, "Dictionary::operation");
+			const GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
+			dict.erase(*BorrowedVariant(emu, *key));
+			return;
 		}
 		case Dictionary_Op::GET_OR_ADD: {
-			GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
+			PENALIZE(10'000);
+			throw_if_read_only(var_dict, "Dictionary::operation");
+			const GuestVariant *key = machine.memory.memarray<GuestVariant>(vkey, 1);
 			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vaddr, 1);
 			Variant &v = dict[*BorrowedVariant(emu, *key)];
 			if (v.get_type() == Variant::NIL) {
@@ -3459,18 +3463,50 @@ APICALL(api_dict_ops) {
 			// Dictionary's own storage, and scoping that pointer would leave the guest holding
 			// a dangling index the moment it erases the key or clears the Dictionary.
 			vp->create(emu, Variant(v));
-			break;
+			machine.set_result(vp->type);
+			return;
 		}
-		case Dictionary_Op::HAS_EXACT_KEYS:
-		case Dictionary_Op::GET_RAW:
-		case Dictionary_Op::SET_RAW:
-		case Dictionary_Op::HAS_RAW:
+		case Dictionary_Op::HAS_EXACT_KEYS: {
+			PENALIZE(50'000);
+			const size_t count = size_t(vaddr);
+			const RawKey *keys = machine.memory.memarray<RawKey>(vkey, count);
+			bool exact = size_t(dict.size()) == count;
+			for (size_t i = 0; exact && i < count; i++) {
+				auto key = raw_key(keys[i].pointer, keys[i].length);
+				exact = dict.has(key->sname);
+			}
+			machine.set_result(exact);
+			return;
+		}
+		case Dictionary_Op::GET_KEYS: {
+			PENALIZE(50'000);
+			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vkey, 1);
+			vp->create(emu, dict.keys());
+			return;
+		}
+		case Dictionary_Op::GET_VALUES: {
+			PENALIZE(50'000);
+			GuestVariant *vp = machine.memory.memarray<GuestVariant>(vkey, 1);
+			vp->create(emu, dict.values());
+			return;
+		}
+		case Dictionary_Op::CLEAR:
+			PENALIZE(50'000);
+			throw_if_read_only(var_dict, "Dictionary::operation");
+			dict.clear();
+			return;
+		case Dictionary_Op::MERGE: {
+			PENALIZE(50'000);
+			throw_if_read_only(var_dict, "Dictionary::operation");
+			const GuestVariant *other_dict = machine.memory.memarray<GuestVariant>(vkey, 1);
+			dict.merge(other_dict->toVariant(emu).operator Dictionary());
+			return;
+		}
 		case Dictionary_Op::MAKE_KEYED:
-			break; // Handled before this switch.
-		default:
-			ERR_PRINT("Invalid Dictionary operation");
-			throw std::runtime_error("Invalid Dictionary operation");
+			break; // Handled before the switch.
 	}
+	ERR_PRINT("Invalid Dictionary operation");
+	throw std::runtime_error("Invalid Dictionary operation");
 }
 
 APICALL(api_string_create) {
@@ -3877,6 +3913,7 @@ APICALL(api_variant_get) {
 	}
 
 	vret->create(emu, std::move(result.get()));
+	machine.set_result(vret->type);
 }
 
 APICALL(api_sandbox_add) {

@@ -25,6 +25,7 @@ popd
 
 # Create a symbolic link to the unit test ELF file
 ln -fs ../.build/unittests tests/tests.elf
+ln -fs ../.build/dict_plateau tests/dict_plateau.elf
 ln -fs ../.build/trivial_properties tests/trivial_properties.elf
 
 # Import again for CI

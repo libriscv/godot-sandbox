@@ -130,6 +130,17 @@ public:
 	struct CachedName {
 		StringName sname;
 		Variant variant; // Holds sname
+		// Lazily built String form (plain Dictionaries need String keys).
+		Variant string_variant;
+		bool has_string_variant = false;
+
+		const Variant &as_string() {
+			if (!has_string_variant) {
+				string_variant = String(sname);
+				has_string_variant = true;
+			}
+			return string_variant;
+		}
 
 		// Native object calls are overwhelmingly made from a fixed call site to one
 		// runtime class. Keep the resolved MethodBind beside that call site's name.

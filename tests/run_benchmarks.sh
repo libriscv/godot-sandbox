@@ -133,6 +133,7 @@ cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=../toolchain.cmake -D
 make -j4
 popd
 ln -fs ../.build/unittests tests/tests.elf
+ln -fs ../.build/dict_plateau tests/dict_plateau.elf
 
 # Ask the loaded addon, rather than the build files, whether Full can run. The
 # probe also executes the configured compiler's version command, matching the

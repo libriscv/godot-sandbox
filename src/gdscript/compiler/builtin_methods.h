@@ -47,6 +47,8 @@ inline BuiltinMethod find_builtin_method(uint32_t recv_type, const std::string& 
 				return dict(Dictionary_Op::HAS, Variant::BOOL);
 			if (argc == 1 && name == "get")
 				return dict(Dictionary_Op::GET, Variant::NIL);
+			if (argc == 2 && name == "get")
+				return dict(Dictionary_Op::GET_OR_DEFAULT, Variant::NIL);
 			if (argc == 0 && name == "keys")
 				return dict(Dictionary_Op::GET_KEYS, Variant::ARRAY);
 			if (argc == 0 && name == "values")

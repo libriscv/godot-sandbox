@@ -312,6 +312,7 @@ private:
 		std::shared_ptr<LValue> container; // MEMBER/INDEX: source of `reg`
 		std::string name;                  // LOCAL/GLOBAL/MEMBER
 		int index_reg = -1;                // INDEX
+		const Expr* index_expr = nullptr;  // INDEX: for constant-key write-back
 		bool borrowed = false;             // LOCAL: `reg` owns the variable, skip free
 	};
 
@@ -324,6 +325,12 @@ private:
 		const Expr* site = nullptr);
 	int gen_element_read(int obj_reg, int idx_reg, FunctionContext& func,
 		const Expr* site = nullptr);
+	const std::string* constant_dictionary_key(int obj_reg, const Expr* index,
+		FunctionContext& func) const;
+	bool gen_constant_key_read(int obj_reg, const Expr* index, FunctionContext& func,
+		int& result_reg);
+	bool gen_constant_key_store(int obj_reg, const Expr* index, int value_reg,
+		FunctionContext& func);
 	// Returns true when the store mutated a value-type copy (caller must write back).
 	bool gen_member_store(int obj_reg, const std::string& member, int value_reg, FunctionContext& func);
 	void gen_element_store(int obj_reg, int idx_reg, int value_reg, FunctionContext& func,

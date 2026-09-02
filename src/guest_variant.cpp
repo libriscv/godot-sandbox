@@ -261,6 +261,12 @@ void GuestVariant::create(Sandbox &emu, Variant &&value) {
 	}
 }
 
+void GuestVariant::create(Sandbox &emu, const Variant &value) {
+	if (LIKELY(this->set_inlined(value)))
+		return;
+	this->create(emu, Variant(value));
+}
+
 void GuestVariant::free(Sandbox &emu) {
 	throw std::runtime_error("GuestVariant::free(): Not implemented");
 }

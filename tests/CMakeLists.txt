@@ -20,3 +20,7 @@ target_include_directories(unittests PRIVATE ../program/cpp/gdscript_compiler/sr
 add_sandbox_program(trivial_properties
 	"tests/test_trivial_properties.cpp"
 )
+
+add_sandbox_program(dict_plateau
+	"tests/test_dict_plateau.cpp"
+)

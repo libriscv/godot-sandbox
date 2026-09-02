@@ -121,6 +121,9 @@ private:
 	void sync_instruction_resident_reads(const IRInstruction& instr);
 	void reload_resident_value(int vreg);
 	bool instruction_reads_residents_directly(const IRInstruction& instr) const;
+	bool key_is_fixed_int(int vreg) const;
+	bool operand_is_read_from_register(const IRInstruction& instr, size_t index) const;
+	void emit_int_key(int key_vreg, int key_offset);
 	int resident_int_register(int vreg) const;
 	int resident_float_register(int vreg) const;
 	bool scope_body_may_allocate(const IRFunction& func, size_t mark_index) const;

@@ -71,7 +71,8 @@ static int count_dict_gets(const IRFunction& func) {
 
 static int count_dict_sets(const IRFunction& func) {
 	return count_opcode(func, IROpcode::DICT_SET) +
-		count_opcode(func, IROpcode::DICT_SET_CONST);
+		count_opcode(func, IROpcode::DICT_SET_CONST) +
+		count_opcode(func, IROpcode::DICT_SET_CONST_STR);
 }
 
 static int count_vcalls(const IRProgram& ir, const IRFunction& func, const std::string& method) {

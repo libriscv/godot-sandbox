@@ -298,6 +298,8 @@ IR_OPCODE(DICT_SET,        "DICT_SET",        SIG(SRC, SRC, SRC), IR_SIDE_EFFECT
 // immediate is an index into IRProgram::string_constants.
 IR_OPCODE(DICT_GET_CONST,  "DICT_GET_CONST",  SIG(DST, SRC, IMM), IR_SIDE_EFFECTS)
 IR_OPCODE(DICT_SET_CONST,  "DICT_SET_CONST",  SIG(SRC, IMM, SRC), IR_SIDE_EFFECTS)
+// Like DICT_SET_CONST but stores a String key (plain Dictionaries need String).
+IR_OPCODE(DICT_SET_CONST_STR, "DICT_SET_CONST_STR", SIG(SRC, IMM, SRC), IR_SIDE_EFFECTS)
 IR_OPCODE(DICT_HAS_CONST,  "DICT_HAS_CONST",  SIG(DST, SRC, IMM), IR_SIDE_EFFECTS)
 
 // Exact struct shape test.  The trailing immediates are string-constant

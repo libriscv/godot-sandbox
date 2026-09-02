@@ -14,6 +14,8 @@ namespace gdscript {
 
 static constexpr int32_t USAGE_SCRIPT_VARIABLE = 4096;
 
+static bool answers_result_tag_in_a0(const IRInstruction& instr);
+
 static bool is_scalar_variant_type(int type) {
 	return type == Variant::NIL || type == Variant::BOOL ||
 		type == Variant::INT || type == Variant::FLOAT;
@@ -1304,6 +1306,40 @@ void RISCVCodeGen::emit_prologue(const IRFunction& func,
 	emit_initialize_resident_values();
 }
 
+// An int key is read from the register, not from its Variant slot.
+bool RISCVCodeGen::operand_is_read_from_register(const IRInstruction& instr, size_t index) const {
+	switch (instr.opcode) {
+		case IROpcode::DICT_SET:
+			return index == 1 && instr.operands.size() == 3 &&
+				key_is_fixed_int(instr.operands[1].reg_index());
+		case IROpcode::CALL_SYSCALL:
+			return index == 4 && instr.operands.size() == 5 &&
+				instr.operands[1].type == IRValue::Type::IMMEDIATE &&
+				instr.operands[1].immediate() == ECALL_DICTIONARY_OPS &&
+				instr.operands[2].type == IRValue::Type::IMMEDIATE &&
+				(instr.operands[2].immediate() == dictionary_op(Dictionary_Op::GET) ||
+					instr.operands[2].immediate() == dictionary_op(Dictionary_Op::HAS)) &&
+				key_is_fixed_int(instr.operands[4].reg_index());
+		default:
+			return false;
+	}
+}
+
+// FLOAT/BOOL stay boxed: Godot hashes them differently from int.
+bool RISCVCodeGen::key_is_fixed_int(int vreg) const {
+	return vreg >= 0 && size_t(vreg) < m_fn.fixed_scalar_types.size() &&
+		m_fn.fixed_scalar_types[size_t(vreg)] == Variant::INT;
+}
+
+void RISCVCodeGen::emit_int_key(int key_vreg, int key_offset) {
+	const int resident = resident_int_register(key_vreg);
+	if (resident >= 0) {
+		emit_mv(REG_A2, uint8_t(resident));
+	} else {
+		emit_ld(REG_A2, REG_SP, key_offset + VARIANT_DATA_OFFSET);
+	}
+}
+
 int RISCVCodeGen::resident_int_register(int vreg) const {
 	if (vreg < 0 || size_t(vreg) >= m_fn.resident_int_regs.size()) return -1;
 	return m_fn.resident_int_regs[size_t(vreg)];
@@ -1379,6 +1415,7 @@ void RISCVCodeGen::sync_instruction_resident_reads(const IRInstruction& instr) {
 	size_t synced_count = 0;
 	for (size_t i = 0; i < instr.operands.size(); i++) {
 		if (!ir_reads_operand(instr, i)) continue;
+		if (operand_is_read_from_register(instr, i)) continue;
 		const int vreg = instr.operands[i].reg_index();
 		if (vreg < 0 || size_t(vreg) >= m_fn.scalar_aliases.size()) continue;
 		if (resident_int_register(vreg) < 0 && resident_float_register(vreg) < 0) continue;
@@ -1780,8 +1817,8 @@ void RISCVCodeGen::gen_syscall_array_batch(const IRInstruction& instr, int resul
 // Keyed ops pass key in a2, result in a3; keyless (GET_KEYS, GET_VALUES) take result in a2.
 // HAS and GET_SIZE return in a0 instead of through a pointer.
 void RISCVCodeGen::gen_syscall_dictionary_ops(const IRInstruction& instr, int result_vreg) {
-	if (instr.operands.size() != 4 && instr.operands.size() != 5) {
-		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_DICTIONARY_OPS requires 4 or 5 operands");
+	if (instr.operands.size() < 4 || instr.operands.size() > 6) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "ECALL_DICTIONARY_OPS requires 4 to 6 operands");
 	}
 
 	constexpr int64_t DICT_OP_HAS = 3;
@@ -1789,28 +1826,48 @@ void RISCVCodeGen::gen_syscall_dictionary_ops(const IRInstruction& instr, int re
 
 	const int64_t dict_op = instr.operands[2].immediate();
 	int dict_vreg = static_cast<int>(instr.operands[3].reg_index());
-	const bool has_key = instr.operands.size() == 5;
+	const bool has_key = instr.operands.size() >= 5;
+	const bool has_default = instr.operands.size() == 6;
 	const bool returns_in_register = dict_op == DICT_OP_HAS || dict_op == DICT_OP_GET_SIZE;
+
+	const int key_vreg = has_key ? int(instr.operands[4].reg_index()) : -1;
+	const int64_t emitted_op = !has_default && key_is_fixed_int(key_vreg)
+		? (dict_op == dictionary_op(Dictionary_Op::GET) ? dictionary_op(Dictionary_Op::GET_INT_KEY)
+			: dict_op == DICT_OP_HAS ? dictionary_op(Dictionary_Op::HAS_INT_KEY) : dict_op)
+		: dict_op;
+	const bool int_key = emitted_op != dict_op;
 
 	int result_offset = get_variant_stack_offset(result_vreg);
 	int dict_offset = get_variant_stack_offset(dict_vreg);
-	int key_offset = has_key
-		? get_variant_stack_offset(static_cast<int>(instr.operands[4].reg_index()))
+	int key_offset = has_key ? get_variant_stack_offset(key_vreg) : 0;
+	int default_offset = has_default
+		? get_variant_stack_offset(static_cast<int>(instr.operands[5].reg_index()))
 		: 0;
 
 	std::vector<uint8_t> clobbered_regs = {REG_A0, REG_A1, REG_A2};
 	if (has_key) {
 		clobbered_regs.push_back(REG_A3);
 	}
+	if (has_default) {
+		clobbered_regs.push_back(REG_A4);
+	}
 	spill_around_syscall(clobbered_regs);
 
-	emit_li(REG_A0, dict_op);
+	emit_li(REG_A0, emitted_op);
 	emit_container_handle(REG_A1, dict_vreg, dict_offset); // scoped index
-	if (has_key) {
+	if (int_key) {
+		emit_int_key(key_vreg, key_offset);
+		if (!returns_in_register) {
+			emit_load_stack_offset(REG_A3, result_offset);
+		}
+	} else if (has_key) {
 		emit_load_stack_offset(REG_A2, key_offset);
 		emit_load_stack_offset(REG_A3, result_offset);
 	} else {
 		emit_load_stack_offset(REG_A2, result_offset);
+	}
+	if (has_default) {
+		emit_load_stack_offset(REG_A4, default_offset);
 	}
 
 	emit_li(REG_A7, ECALL_DICTIONARY_OPS);
@@ -1826,7 +1883,8 @@ void RISCVCodeGen::gen_syscall_dictionary_ops(const IRInstruction& instr, int re
 // is a UTF-8 view in rodata and a4 carries the value/result GuestVariant.
 void RISCVCodeGen::gen_dict_const(const IRInstruction& instr) {
 	const bool is_get = instr.opcode == IROpcode::DICT_GET_CONST;
-	const bool is_set = instr.opcode == IROpcode::DICT_SET_CONST;
+	const bool is_set = instr.opcode == IROpcode::DICT_SET_CONST ||
+		instr.opcode == IROpcode::DICT_SET_CONST_STR;
 	const bool has_result = !is_set;
 	const int dict_operand = has_result ? 1 : 0;
 	const int key_operand = has_result ? 2 : 1;
@@ -1843,6 +1901,7 @@ void RISCVCodeGen::gen_dict_const(const IRInstruction& instr) {
 
 	spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3, REG_A4});
 	emit_li(REG_A0, dictionary_op(is_get ? Dictionary_Op::GET_RAW
+		: instr.opcode == IROpcode::DICT_SET_CONST_STR ? Dictionary_Op::SET_RAW_STR
 		: is_set ? Dictionary_Op::SET_RAW : Dictionary_Op::HAS_RAW));
 	emit_container_handle(REG_A1, dict_vreg, dict_offset);
 	emit_la(REG_A2, rodata_string(key));
@@ -4034,15 +4093,22 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		}
 
 		case IROpcode::DICT_SET: {
+			const int key_vreg = instr.operands[1].reg_index();
 			const int dict_offset = get_variant_stack_offset(instr.operands[0].reg_index());
-			const int key_offset = get_variant_stack_offset(instr.operands[1].reg_index());
+			const int key_offset = get_variant_stack_offset(key_vreg);
 			const int value_offset = get_variant_stack_offset(instr.operands[2].reg_index());
+			const bool int_key = key_is_fixed_int(key_vreg);
 
 			spill_around_syscall({REG_A0, REG_A1, REG_A2, REG_A3});
 
-			emit_li(REG_A0, dictionary_op(Dictionary_Op::SET));
+			emit_li(REG_A0, dictionary_op(int_key ? Dictionary_Op::SET_INT_KEY
+				: Dictionary_Op::SET));
 			emit_container_handle(REG_A1, instr.operands[0].reg_index(), dict_offset);
-			emit_add_offset(REG_A2, REG_SP, key_offset);
+			if (int_key) {
+				emit_int_key(key_vreg, key_offset);
+			} else {
+				emit_add_offset(REG_A2, REG_SP, key_offset);
+			}
 			emit_add_offset(REG_A3, REG_SP, value_offset);
 			emit_li(REG_A7, ECALL_DICTIONARY_OPS);
 			emit_ecall();
@@ -4051,6 +4117,7 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 
 		case IROpcode::DICT_GET_CONST:
 		case IROpcode::DICT_SET_CONST:
+		case IROpcode::DICT_SET_CONST_STR:
 		case IROpcode::DICT_HAS_CONST:
 			gen_dict_const(instr);
 			break;
@@ -4399,9 +4466,13 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 		if (instruction_dst >= 0) {
 			auto dirty = m_fn.scope_dirty_updates.find(instr_idx);
 			if (dirty != m_fn.scope_dirty_updates.end()) {
-				emit_lw(REG_T0, REG_SP, get_variant_stack_offset(instruction_dst) +
-					VARIANT_TYPE_OFFSET);
-				emit_i_type(0x13, REG_T0, 3, REG_T0, Variant::STRING); // sltiu
+				uint8_t tag = REG_A0;
+				if (!answers_result_tag_in_a0(instr)) {
+					tag = REG_T0;
+					emit_lw(REG_T0, REG_SP, get_variant_stack_offset(instruction_dst) +
+						VARIANT_TYPE_OFFSET);
+				}
+				emit_i_type(0x13, REG_T0, 3, tag, Variant::STRING); // sltiu
 				emit_xori(REG_T0, REG_T0, 1);
 				for (uint8_t preg : dirty->second) emit_or(preg, preg, REG_T0);
 			}
@@ -4697,6 +4768,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::DICT_SET:
 		case IROpcode::DICT_GET_CONST:
 		case IROpcode::DICT_SET_CONST:
+		case IROpcode::DICT_SET_CONST_STR:
 		case IROpcode::DICT_HAS_CONST:
 		case IROpcode::STRUCT_CHECK:
 		case IROpcode::AWAIT:
@@ -7318,12 +7390,49 @@ static bool syscall_answers_in_register(const IRInstruction& instr) {
 	}
 }
 
+// Element reads leave the Variant type in a0 (avoids reloading the tag).
+static bool answers_result_tag_in_a0(const IRInstruction& instr) {
+	switch (instr.opcode) {
+		case IROpcode::ARRAY_GET:
+		case IROpcode::DICT_GET_CONST:
+			return true;
+		case IROpcode::CALL_SYSCALL:
+			break;
+		default:
+			return false;
+	}
+	if (instr.operands.size() < 2 || instr.operands[1].type != IRValue::Type::IMMEDIATE) {
+		return false;
+	}
+	switch (instr.operands[1].immediate()) {
+		case ECALL_VARIANT_GET:
+			return true;
+		case ECALL_ARRAY_AT: // four operands = read; writes go via ARRAY_SET
+			return instr.operands.size() == 4;
+		case ECALL_DICTIONARY_OPS: {
+			if (instr.operands.size() < 3 || instr.operands[2].type != IRValue::Type::IMMEDIATE) {
+				return false;
+			}
+			const int64_t op = instr.operands[2].immediate();
+			return op == dictionary_op(Dictionary_Op::GET) ||
+				op == dictionary_op(Dictionary_Op::GET_RAW) ||
+				op == dictionary_op(Dictionary_Op::GET_OR_ADD) ||
+				op == dictionary_op(Dictionary_Op::GET_OR_DEFAULT);
+		}
+		default:
+			return false;
+	}
+}
+
+// True when the only scoped allocation the instruction can make is its result.
+// Calls can scope arbitrary temporaries, but element reads cannot.
 static bool scoped_allocation_is_the_destination(const IRInstruction& instr) {
 	switch (instr.opcode) {
 		case IROpcode::CALL:
 		case IROpcode::CALL_HOSTED:
-		case IROpcode::CALL_SYSCALL:
 			return false;
+		case IROpcode::CALL_SYSCALL:
+			return answers_result_tag_in_a0(instr);
 		default:
 			return true;
 	}

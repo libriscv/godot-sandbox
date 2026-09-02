@@ -11219,6 +11219,93 @@ func present():
 
 	s.queue_free()
 
+func test_sgd_dictionary_keys_are_strings():
+	# Constant keys must be stored as Strings (what GDScript would write).
+	var gdscript_code = """
+func build() -> Dictionary:
+	var d : Dictionary = {}
+	d["hp"] = 3
+	return d
+
+func bump(d : Dictionary) -> void:
+	d["hp"] += 1
+
+func read(d : Dictionary):
+	return d["hp"]
+
+func present(d : Dictionary) -> bool:
+	return d.has("hp")
+
+func fallback(d : Dictionary):
+	return d.get("mp", -1)
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	var built : Dictionary = s.vmcallv("build")
+	assert_eq(built.size(), 1, "one key was written")
+	assert_eq(typeof(built.keys()[0]), TYPE_STRING,
+		"a guest's constant key is a String, as GDScript would have written it")
+	assert_eq(built["hp"], 3)
+
+	var from_godot := {"hp": 10}
+	assert_eq(s.vmcallv("read", from_godot), 10, "a String key reads back")
+	assert_eq(s.vmcallv("present", from_godot), true, "has() finds a String key")
+	s.vmcallv("bump", from_godot)
+	assert_eq(from_godot["hp"], 11, "a compound assignment writes through")
+	assert_eq(from_godot.size(), 1, "the write did not add a second key")
+	assert_eq(typeof(from_godot.keys()[0]), TYPE_STRING, "the key kept its type")
+
+	assert_eq(s.vmcallv("fallback", from_godot), -1, "a missing key answers the default")
+	assert_eq(from_godot.size(), 1, "the default was not inserted")
+
+	s.queue_free()
+
+func test_sgd_dictionary_integer_keys_stay_integers():
+	var gdscript_code = """
+func fill(n : int) -> Dictionary:
+	var d : Dictionary = {}
+	var i : int = 0
+	while i < n:
+		d[i] = i * 2
+		i += 1
+	return d
+
+func total(d : Dictionary, n : int) -> int:
+	var acc : int = 0
+	var i : int = 0
+	while i < n:
+		acc += d[i]
+		i += 1
+	return acc
+
+func count_present(d : Dictionary, n : int) -> int:
+	var found : int = 0
+	var i : int = 0
+	while i < n:
+		if d.has(i):
+			found += 1
+		i += 1
+	return found
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	var filled : Dictionary = s.vmcallv("fill", 4)
+	assert_eq(filled.size(), 4)
+	assert_eq(typeof(filled.keys()[0]), TYPE_INT, "an integer key stays an integer")
+	assert_eq(filled, {0: 0, 1: 2, 2: 4, 3: 6}, "and it is the integer it was")
+	assert_eq(s.vmcallv("total", filled, 4), 12, "the same keys read back")
+	assert_eq(s.vmcallv("count_present", filled, 6), 4, "has() answers per key")
+
+	# Godot hashes 1.0 and 1 into the same bucket but keeps them apart.
+	var mixed := {1: "int", 1.5: "float"}
+	assert_eq(s.vmcallv("count_present", mixed, 2), 1, "only the integer key matched")
+
+	s.queue_free()
+
 func test_sgd_read_only_containers_are_read_only_in_the_guest():
 	var gdscript_code = """
 var api : Dictionary = {}
@@ -11231,6 +11318,10 @@ func write_new_key():
 
 func overwrite_key():
 	api["cycles"] = 999
+
+func write_computed_key():
+	var key = "smuggled"
+	api[key] = 1
 
 func erase_key():
 	api.erase("cycles")
@@ -11284,9 +11375,12 @@ func size_of():
 
 	s.vmcallv("take", api)
 
+	# A runtime-keyed write is refused by the engine's setter itself.
+	var engine_refusal := "Condition \"_p->read_only\" is true"
 	var denied := [
 		["write_new_key", "Dictionary::operation: the container is read-only"],
 		["overwrite_key", "Dictionary::operation: the container is read-only"],
+		["write_computed_key", "Dictionary::operation: the container is read-only", engine_refusal],
 		["erase_key", "Variant::call: the container is read-only"],
 		["clear_all", "Dictionary::operation: the container is read-only"],
 		["merge_in", "Variant::call: the container is read-only"],
@@ -11298,6 +11392,8 @@ func size_of():
 	for entry in denied:
 		var before := s.get_exceptions()
 		s.vmcallv(entry[0])
+		if entry.size() > 2:
+			assert_engine_error(entry[2])
 		assert_engine_error("Exception: " + entry[1])
 		assert_eq(s.get_exceptions(), before + 1,
 			"%s must raise in the guest, not silently do nothing" % entry[0])

@@ -253,6 +253,8 @@ enum class Array_Op {
 	HAS,
 };
 
+// Element reads (GET, GET_RAW, GET_OR_ADD, ARRAY_AT get, VARIANT_GET)
+// also return the value's Variant type in a0.
 enum class Dictionary_Op {
 	GET = 0,
 	SET,
@@ -271,6 +273,14 @@ enum class Dictionary_Op {
 	SET_RAW,
 	HAS_RAW,
 	MAKE_KEYED,
+	// d.get(key, default): a3 result, a4 default. Answers, never inserts.
+	GET_OR_DEFAULT,
+	// SET_RAW with a String key (plain Dictionaries need String, not StringName).
+	SET_RAW_STR,
+	// Key is a bare int64 in a2. FLOAT/BOOL stay boxed (different hash).
+	GET_INT_KEY,
+	SET_INT_KEY,
+	HAS_INT_KEY,
 };
 
 enum class String_Op {

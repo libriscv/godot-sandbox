@@ -1171,11 +1171,9 @@ static void test_typed_dictionary_values() {
 	// the same way a typed Array element is.
 	const IRProgram parameter = compile_to_ir(point +
 		"func first(points: Dictionary[String, Point]):\n\treturn points[\"a\"].x\n");
-	// A tracked field read is one Dictionary get. An untracked one is the
-	// four-way dispatch, which also contains a get -- so the guards it does not
-	// need are what says the value tracked.
+	// Two DICT_GET_CONST (key lookup + field) and no TYPE_TEST = tracked.
 	auto tracked = [](const IRFunction& func) {
-		return count_opcode(func, IROpcode::DICT_GET_CONST) == 1 &&
+		return count_opcode(func, IROpcode::DICT_GET_CONST) == 2 &&
 			count_opcode(func, IROpcode::TYPE_TEST) == 0 &&
 			count_opcode(func, IROpcode::TYPE_TEST_MASK) == 0 &&
 			count_opcode(func, IROpcode::VGET_INLINE) == 0;
