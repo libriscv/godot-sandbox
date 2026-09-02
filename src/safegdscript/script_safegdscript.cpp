@@ -241,7 +241,14 @@ bool SafeGDScript::_set(const StringName &p_name, const Variant &p_value) {
 }
 StringName SafeGDScript::_get_doc_class_name() const {
 	// Help-page key; must match the global name the editor indexes.
-	return _get_global_name();
+	const StringName global = _get_global_name();
+	if (!String(global).is_empty()) {
+		return global;
+	}
+	// Built-in scripts have no global name; GDScript keys their pages by the
+	// quoted path, and DocTools::add_doc() refuses an empty name.
+	const String resource_path = this->path.is_empty() ? get_path() : this->path;
+	return StringName("\"" + resource_path.trim_prefix("res://") + "\"");
 }
 
 // Documentation types are names, not Variant::Type: untyped is "Variant", and
@@ -285,8 +292,9 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 	// One page listing the exported functions. Keys are what
 	// DocData::ClassDoc::from_dict() reads back; an unrecognised key is dropped
 	// silently, yielding an empty page.
+	String doc_name = String(_get_doc_class_name());
 	Dictionary class_doc;
-	class_doc["name"] = String(_get_doc_class_name());
+	class_doc["name"] = doc_name;
 	String inherits = String(_get_instance_base_type());
 	{
 		const Ref<Script> base = _get_base_script();
@@ -440,7 +448,7 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 	documentation.push_back(class_doc);
 	for (const gdscript::SourceDeclaration *declaration : nested_declarations) {
 		Dictionary nested_doc;
-		nested_doc["name"] = String(_get_doc_class_name()) + "." +
+		nested_doc["name"] = doc_name + "." +
 				String::utf8(declaration->name.c_str(), declaration->name.size());
 		nested_doc["inherits"] = declaration->base_type.empty() ? String("RefCounted") :
 				String::utf8(declaration->base_type.c_str(), declaration->base_type.size());
@@ -506,7 +514,7 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 		const SafeGDScriptClass *nested = entry.value.ptr();
 		if (nested == nullptr || !nested->get_is_struct()) continue;
 		Dictionary struct_doc;
-		struct_doc["name"] = String(_get_doc_class_name()) + "." + String(entry.key);
+		struct_doc["name"] = doc_name + "." + String(entry.key);
 		struct_doc["is_script_doc"] = true;
 		struct_doc["script_path"] = path;
 		apply_documentation_tags(struct_doc, nested->get_description());
@@ -526,7 +534,7 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 	}
 	for (const gdscript::ClassSignature &signature : trait_signatures) {
 		Dictionary trait_doc;
-		trait_doc["name"] = String(_get_doc_class_name()) + "." +
+		trait_doc["name"] = doc_name + "." +
 				String::utf8(signature.name.c_str(), signature.name.size());
 		trait_doc["is_script_doc"] = true;
 		trait_doc["script_path"] = path;

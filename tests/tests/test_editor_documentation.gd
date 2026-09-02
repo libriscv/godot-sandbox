@@ -92,3 +92,11 @@ func test_a_file_doc_comment_becomes_the_brief_description():
 	var page: Dictionary = script.editor_documentation()[0]
 	assert_eq(String(page.brief_description), "A fixture script.")
 	assert_true(String(page.description).begins_with("A fixture script."))
+
+func test_a_script_without_a_global_name_still_names_its_page():
+	# DocTools::add_doc() refuses a page with an empty name, and the editor adds
+	# a page for every script it scans, built-in ones included.
+	var script := _compiled("extends Node\nfunc go():\n\tpass\n")
+	var page: Dictionary = script.editor_documentation()[0]
+	assert_eq(String(script.get_global_name()), "")
+	assert_false(String(page.name).is_empty())

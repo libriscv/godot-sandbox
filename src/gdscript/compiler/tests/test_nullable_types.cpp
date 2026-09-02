@@ -116,6 +116,18 @@ static void test_coercion_defaults_and_storage() {
 	assert(count(f, IROpcode::THROW) == 1);
 	assert(rejection("func f():\n\tvar x: Vector2? = \"bad\"\n").find("Vector2?") != std::string::npos);
 
+	// A nullable source proves itself: widening it into a union that lists both
+	// of its tags, directly or through a local or a call, guards only the entry.
+	const IRProgram widened = compile_to_ir(
+		"func find_by(key: String) -> Node?:\n\treturn null\n"
+		"func widen(found: Node?) -> Node | String | null:\n\treturn found\n"
+		"func via_local(key: String) -> Node | String | null:\n"
+		"\tvar found: Node? = find_by(key)\n\treturn found\n"
+		"func via_call(key: String) -> Node | String | null:\n\treturn find_by(key)\n");
+	assert(count(function(widened, "widen"), IROpcode::TYPE_TEST_MASK) == 1);
+	assert(count(function(widened, "via_local"), IROpcode::TYPE_TEST_MASK) == 0);
+	assert(count(function(widened, "via_call"), IROpcode::TYPE_TEST_MASK) == 0);
+
 	const IRProgram defaults = compile_to_ir(
 		"struct Point:\n\tvar x: int = 0\n"
 		"var vector: Vector2?\n"

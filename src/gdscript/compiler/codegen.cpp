@@ -4271,6 +4271,11 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 			it != func.array_element_traits.end()) func.array_element_traits[new_reg] = it->second;
 		if (auto it = func.dictionary_value_traits.find(local->register_num);
 			it != func.dictionary_value_traits.end()) func.dictionary_value_traits[new_reg] = it->second;
+		// The copy holds a value the variable's declared union already vouched for.
+		if (auto it = func.declared_sets.find(local->register_num);
+			it != func.declared_sets.end()) {
+			func.declared_sets[new_reg] = it->second;
+		}
 		return new_reg;
 	}
 
@@ -8083,10 +8088,15 @@ void CodeGenerator::coerce_parameters(const std::vector<Parameter>& parameters,
 		if (param.type_hint.is_union()) {
 			Variable* var = find_variable(func, param.name);
 			if (var != nullptr) {
-				coerce_to_declared_type(var->register_num,
-					type_set_from(param.type_hint, param.line, param.column), func,
+				const TypeSet declared =
+					type_set_from(param.type_hint, param.line, param.column);
+				// The annotation established the register's declared set, but a host
+				// caller has not proved it yet, so this guard must not elide itself.
+				func.declared_sets.erase(var->register_num);
+				coerce_to_declared_type(var->register_num, declared, func,
 					"parameter '" + param.name + "'", param.line, param.column,
 					param.type_hint.to_string());
+				func.declared_sets[var->register_num] = declared;
 			}
 			continue;
 		}
@@ -8907,6 +8917,9 @@ void CodeGenerator::declare_variable(FunctionContext& func, const std::string& n
 	debug.parameter = is_parameter;
 	const size_t debug_index = func.ir.debug_locals.size();
 	func.ir.debug_locals.push_back(std::move(debug));
+	// A register inherits the declared union of the value copied into it, but a
+	// slot that outlives one value does not: the declaration re-adds its own.
+	func.declared_sets.erase(register_num);
 	current_scope.variables[name] = {name, register_num, IRInstruction::TypeHint_NONE,
 			is_const, is_variant, debug_index};
 }
@@ -10112,6 +10125,14 @@ int CodeGenerator::coerce_to_declared_type(int reg, TypeSet declared,
 		}
 		error_at("Cannot assign a value of type " + std::string(variant_type_name(actual)) +
 			" to " + what + " of type " + expected, line, column);
+	}
+
+	// A source with a declared union of its own already passed a guard for that
+	// set, so a destination listing every one of its tags needs no second test.
+	if (const auto proved = func.declared_sets.find(reg);
+		proved != func.declared_sets.end() && !proved->second.any() &&
+		(proved->second.mask & ~declared.mask) == 0) {
+		return reg;
 	}
 
 	const int accepted = alloc_register(func);

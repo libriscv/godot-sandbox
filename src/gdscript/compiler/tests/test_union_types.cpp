@@ -235,11 +235,27 @@ static void test_union_call_boundaries() {
 	assert(count(function(ternary, "f"), IROpcode::TYPE_TEST_MASK) == 1);
 	assert(count(function(ternary, "f"), IROpcode::THROW) == 1);
 
-	// Union to union: the guard is kept even when the source set would satisfy
-	// the destination, so nothing unchecked reaches the narrower slot.
+	// Union to union: the source's own declared set is the proof, so a
+	// destination that lists every one of its tags guards nothing again.
 	const IRProgram same = compile_to_ir(
 		"func f(a: int | String):\n\tvar b: int | String = a\n\treturn b\n");
-	assert(count(function(same, "f"), IROpcode::TYPE_TEST_MASK) == 2);
+	assert(count(function(same, "f"), IROpcode::TYPE_TEST_MASK) == 1);
+	const IRProgram widened = compile_to_ir(
+		"func by_param(a: int | String) -> int | String | null:\n\treturn a\n"
+		"func by_local(a: int | String) -> int | String | null:\n"
+		"\tvar b: int | String = a\n\treturn b\n"
+		"func narrows(a: int | String | null) -> int | String:\n\treturn a\n");
+	assert(count(function(widened, "by_param"), IROpcode::TYPE_TEST_MASK) == 1);
+	assert(count(function(widened, "by_local"), IROpcode::TYPE_TEST_MASK) == 1);
+	// A destination that drops a tag the source allows is not proved by it.
+	assert(count(function(widened, "narrows"), IROpcode::TYPE_TEST_MASK) == 2);
+
+	// A slot outlives one value, so an untyped variable does not keep the union
+	// its initializer was proved against.
+	const IRProgram reassigned = compile_to_ir(
+		"func f(a: int | String):\n\tvar b = a\n\tb = 1.5\n"
+		"\tvar c: int | String = b\n\treturn c\n");
+	assert(count(function(reassigned, "f"), IROpcode::TYPE_TEST_MASK) == 2);
 	std::cout << "  ✓ one guard per union boundary, and none where the tag is known\n";
 }
 
