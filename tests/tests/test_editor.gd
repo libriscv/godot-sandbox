@@ -200,6 +200,11 @@ func test_editor_templates_substitute_and_every_built_in_compiles():
 	assert_eq(empty.get_compile_error(), "")
 
 	assert_eq(language.editor_built_in_templates("Sprite2D").size(), 0)
+	var node_names := []
+	for entry in language.editor_built_in_templates("Node"):
+		node_names.push_back(String(entry.name))
+	for expected in ["Default", "GDScript Tour", "Typed Struct", "Nullable and Union Types", "If Var", "Traits"]:
+		assert_true(node_names.has(expected), expected)
 	for base in ["Node", "Object", "CharacterBody2D", "CharacterBody3D"]:
 		var templates: Array = language.editor_built_in_templates(base)
 		assert_gt(templates.size(), 0, base)
