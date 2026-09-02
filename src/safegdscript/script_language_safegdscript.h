@@ -23,6 +23,13 @@ public:
 	Dictionary editor_lookup(const String &p_code, const String &p_symbol,
 			const String &p_path, Object *p_owner = nullptr) const;
 	Dictionary bake_all_translations();
+	// .gd <-> .sgd: rename the file and its UID sidecar, rewrite text scenes
+	// naming it, retarget autoloads (convert_safegdscript.cpp).
+	static String converted_script_path(const String &p_path);
+	static Dictionary convert_script_path(const String &p_path);
+	// The same, from inside the editor: open tab, dependent open scenes
+	// (editor_plugin_safegdscript.cpp).
+	static void editor_convert_scripts(const PackedStringArray &p_paths, bool p_to_safe);
 	static void init();
 	static void deinit();
 	static SafeGDScriptLanguage *get_singleton();

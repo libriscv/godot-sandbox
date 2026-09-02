@@ -23,6 +23,7 @@
 #include "safegdscript/script_class_safegdscript.h"
 #include "safegdscript/script_safegdscript.h"
 #include "safegdscript/script_language_safegdscript.h"
+#include "safegdscript/editor_plugin_safegdscript.h"
 #include "safegdscript/resource_loader_safegdscript.h"
 #include "safegdscript/resource_saver_safegdscript.h"
 #endif
@@ -49,6 +50,12 @@ ScriptLanguage *get_elf_language() {
 }
 
 static void initialize_riscv_module(ModuleInitializationLevel p_level) {
+#ifndef SAFEGDSCRIPT_DISABLED
+	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
+		SafeGDScriptEditorPlugin::register_types();
+		return;
+	}
+#endif
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
@@ -107,6 +114,12 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 }
 
 static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
+#ifndef SAFEGDSCRIPT_DISABLED
+	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
+		SafeGDScriptEditorPlugin::unregister_types();
+		return;
+	}
+#endif
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}

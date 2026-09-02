@@ -60,6 +60,12 @@ void SafeGDScriptLanguage::_bind_methods() {
 			&SafeGDScriptLanguage::editor_lookup, DEFVAL(nullptr));
 	ClassDB::bind_method(D_METHOD("bake_all_translations"),
 			&SafeGDScriptLanguage::bake_all_translations);
+	ClassDB::bind_static_method("SafeGDScriptLanguage", D_METHOD("converted_script_path", "path"),
+			&SafeGDScriptLanguage::converted_script_path);
+	ClassDB::bind_static_method("SafeGDScriptLanguage", D_METHOD("convert_script_path", "path"),
+			&SafeGDScriptLanguage::convert_script_path);
+	ClassDB::bind_static_method("SafeGDScriptLanguage", D_METHOD("editor_convert_scripts", "paths", "to_safe"),
+			&SafeGDScriptLanguage::editor_convert_scripts);
 }
 
 Dictionary SafeGDScriptLanguage::editor_validate(const String &p_script, const String &p_path,

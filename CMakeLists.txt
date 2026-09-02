@@ -60,7 +60,9 @@ set(ELF_METADATA_SOURCES
 if (ENABLE_SAFEGDSCRIPT)
 	list(APPEND SOURCES
 		src/safegdscript/compiler_backend.cpp
+		src/safegdscript/convert_safegdscript.cpp
 		src/safegdscript/debug_safegdscript.cpp
+		src/safegdscript/editor_plugin_safegdscript.cpp
 		src/safegdscript/direct_compiler.cpp
 		src/safegdscript/editor_analysis_safegdscript.cpp
 		src/safegdscript/sandboxed_compiler.cpp
