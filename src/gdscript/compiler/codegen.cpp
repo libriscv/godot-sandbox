@@ -4294,8 +4294,18 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 		}
 		int result_reg = alloc_register(func);
 		func.ir.instructions.emplace_back(IROpcode::LOAD_GLOBAL, IRValue::reg(result_reg), IRValue::imm(global_idx));
-		if (m_global_structs[global_idx] != nullptr) {
-			set_register_struct(func, result_reg, m_global_structs[global_idx]);
+		IRInstruction::TypeHint global_type = m_global_types[global_idx];
+		if (global_type == IRInstruction::TypeHint_NONE) {
+			if (auto narrowed = func.narrowed_global_types.find(global_idx);
+				narrowed != func.narrowed_global_types.end()) {
+				global_type = narrowed->second;
+			}
+		}
+		if (const StructDecl* structure = m_global_structs[global_idx]; structure != nullptr) {
+			set_register_struct(func, result_reg, structure);
+			if (structure->is_class && global_type != Variant::DICTIONARY) {
+				set_register_type(func, result_reg, IRInstruction::TypeHint_NONE);
+			}
 		}
 		if (m_global_traits[global_idx] != nullptr &&
 			!m_global_sets[global_idx].contains(Variant::NIL)) {
@@ -4318,11 +4328,8 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 				m_global_dictionary_value_traits[global_idx];
 		}
 		// Propagate declared type so member access skips the run-time tag test.
-		if (m_global_types[global_idx] != IRInstruction::TypeHint_NONE) {
-			set_register_type(func, result_reg, m_global_types[global_idx]);
-		} else if (auto narrowed = func.narrowed_global_types.find(global_idx);
-			narrowed != func.narrowed_global_types.end()) {
-			set_register_type(func, result_reg, narrowed->second);
+		if (global_type != IRInstruction::TypeHint_NONE) {
+			set_register_type(func, result_reg, global_type);
 		}
 		return result_reg;
 	}

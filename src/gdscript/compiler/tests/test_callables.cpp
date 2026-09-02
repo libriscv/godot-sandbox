@@ -671,6 +671,63 @@ void test_shapes_of_lambda_syntax() {
 		"\t\t\t\tvalue = v, 0, 1\n"
 		"\t\t)\n").empty(),
 		"an outer argument after a multiline lambda body");
+	check(compile_error(
+		"func f(receiver, value):\n"
+		"\treceiver.call(\n"
+		"\t\t\tfunc(v):\n"
+		"\t\t\t\tvalue = v\n"
+		"\t\t\t\t)\n").empty(),
+		"a closing paren on its own line, indented past the body");
+	check(compile_error(
+		"func f(receiver, value):\n"
+		"\treceiver.call(\n"
+		"\t\t\tfunc(v):\n"
+		"\t\t\t\tvalue = v\n"
+		"\t\t\t)\n").empty(),
+		"a closing paren on its own line, aligned with the lambda");
+	check(compile_error(
+		"func f(receiver, value):\n"
+		"\treceiver.call(\n"
+		"\t\t\tfunc(v):\n"
+		"\t\t\t\tvalue = v\n"
+		"\t\t\t\t, 0, 1)\n").empty(),
+		"an outer argument after a dedented-paren body");
+	check(compile_error(
+		"func f():\n"
+		"\tvar a = [\n"
+		"\t\t\tfunc():\n"
+		"\t\t\t\tvar x = 1\n"
+		"\t\t\t\treturn x\n"
+		"\t\t\t\t]\n"
+		"\treturn a[0].call()\n").empty(),
+		"a closing bracket on its own line closes the suite");
+	check(compile_error(
+		"func f():\n"
+		"\tvar d = {\n"
+		"\t\t\t\"k\": func():\n"
+		"\t\t\t\t\tvar x = 1\n"
+		"\t\t\t\t\treturn x\n"
+		"\t\t\t\t\t}\n"
+		"\treturn d[\"k\"].call()\n").empty(),
+		"a closing brace on its own line closes the suite");
+
+	// A paren inside the body sits one bracket deeper, so it must not be
+	// mistaken for the enclosing call's closer.
+	const std::vector<uint8_t> dedented = compile(
+		"func g(x):\n"
+		"\treturn x + 1\n"
+		"func apply(c):\n"
+		"\treturn c.call(20)\n"
+		"func f():\n"
+		"\treturn apply(\n"
+		"\t\t\tfunc(v):\n"
+		"\t\t\t\treturn g(v)\n"
+		"\t\t\t\t)\n");
+	if (!dedented.empty()) {
+		auto machine = boot(dedented);
+		check_eq<int64_t>(run(*machine, "f").value, 21,
+			"the whole body of a dedented-paren lambda ran");
+	}
 	check(compile_error("func f():\n\tvar g = func(x): var y = x; return y\n\treturn g.call(1)\n").empty(),
 		"statements separated by ';' in a one-line body");
 	check(compile_error("func f():\n\tvar g = func(x):\n\t\treturn x\n\treturn g.call(1)\n").empty(),

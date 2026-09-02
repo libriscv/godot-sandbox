@@ -722,6 +722,75 @@ void test_a_class_typed_declaration_constructs_nothing() {
 		<< std::endl;
 }
 
+void test_a_class_typed_member_holds_null() {
+	std::cout << "Testing a class-typed member initialised to null..." << std::endl;
+
+	const std::string source =
+		"class TestData:\n"
+		"\tvar id = \"\"\n"
+		"\tfunc name():\n"
+		"\t\treturn id\n"
+		"var plain : TestData = null\n"
+		"var marked : TestData? = null\n"
+		"var bare : TestData\n"
+		"func starts_null():\n"
+		"\treturn [plain == null, marked == null, bare == null]\n"
+		"func assigned():\n"
+		"\tplain = TestData.new()\n"
+		"\tplain.id = \"one\"\n"
+		"\treturn plain.name()\n"
+		"func cleared():\n"
+		"\tplain = null\n"
+		"\treturn plain != null\n";
+
+	check(compile_error(source).empty(), "both spellings of a nullable class member compile");
+
+	const IRProgram ir = compile_to_ir(source);
+	check(ir.globals.size() == 3, "the three members are declared");
+	for (const IRGlobalVar& global : ir.globals) {
+		check(global.init_type == IRGlobalVar::InitType::NULL_VAL,
+			"member '" + global.name + "' starts null");
+	}
+
+	const IRFunction* starts = find_function(ir, "starts_null");
+	check(starts != nullptr, "starts_null() is lowered");
+	if (starts != nullptr) {
+		check(count_opcode(*starts, IROpcode::TYPE_TEST) == 3,
+			"every spelling tests the tag at run time");
+		check(count_opcode(*starts, IROpcode::LOAD_BOOL) == 0,
+			"and none of them folds to a constant answer");
+	}
+
+	const IRFunction* cleared = find_function(ir, "cleared");
+	check(cleared != nullptr, "cleared() is lowered");
+	if (cleared != nullptr) {
+		check(count_opcode(*cleared, IROpcode::TYPE_TEST) == 1,
+			"a member assigned null answers the tag test");
+		check(count_opcode(*cleared, IROpcode::LOAD_BOOL) == 0,
+			"assigning null does not prove the slot holds an instance");
+	}
+
+	const IRFunction* assigned = find_function(ir, "assigned");
+	check(assigned != nullptr, "assigned() is lowered");
+	if (assigned != nullptr) {
+		check(count_opcode(*assigned, IROpcode::DICT_SET_CONST) == 1,
+			"a field on a class-typed member is still a direct Dictionary store");
+		const std::vector<std::string> names = called_names(ir, *assigned);
+		check(std::find(names.begin(), names.end(), "@TestData.name") != names.end(),
+			"and its method is still a direct call");
+		check(!vcalls(ir, *assigned, "name"), "not a dynamic dispatch on the Dictionary");
+	}
+
+	// A struct is a value, so its member is an instance and NIL is refused.
+	check(!compile_error(
+		"struct Point:\n"
+		"\tvar x = 0\n"
+		"var p : Point = null\n").empty(),
+		"a struct-typed member still refuses null");
+
+	std::cout << "  \u2713 A class-typed member holds null, as it does in GDScript" << std::endl;
+}
+
 void test_class_signatures_are_published() {
 	std::cout << "Testing the published class table..." << std::endl;
 
@@ -1706,6 +1775,7 @@ int main() {
 	test_the_bind_syscall_is_emitted_for_an_engine_base();
 	test_class_signatures_are_published();
 	test_a_class_typed_declaration_constructs_nothing();
+	test_a_class_typed_member_holds_null();
 	test_super_on_a_native_base_is_marked();
 	test_what_the_class_does_not_declare_reaches_the_base();
 	test_the_script_still_wins_over_the_base();

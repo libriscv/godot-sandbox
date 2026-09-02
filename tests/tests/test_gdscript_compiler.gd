@@ -13809,3 +13809,67 @@ func test_a_builtin_member_does_not_need_an_object():
 		"an untyped receiver should reach the same member")
 
 	node.free()
+
+func test_sgd_a_class_typed_member_holds_null():
+	var source = """
+class TestData:
+	var id = ""
+
+var current: TestData = null
+var marked: TestData? = null
+
+func run():
+	if current != null:
+		return -1
+	if marked != null:
+		return -2
+	current = TestData.new()
+	current.id = "one"
+	if current.id != "one":
+		return -3
+	current = null
+	if current != null:
+		return -4
+	return 1
+"""
+	var path = "user://temp_class_typed_null.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(source)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the script should load")
+	if script == null:
+		return
+	var node = Node.new()
+	node.set_script(script)
+	node.set_instructions_max(1000000)
+	assert_eq(node.call("run"), 1, "a class-typed member should hold null both ways")
+	node.free()
+
+func test_sgd_a_multiline_lambda_ends_at_a_dedented_paren():
+	var source = """
+signal play_stats_updated(value)
+
+var seen = 0
+
+func run():
+	play_stats_updated.connect(
+			func(value):
+				seen = value
+				)
+	play_stats_updated.emit(42)
+	return seen
+"""
+	var path = "user://temp_dedented_lambda.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(source)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the script should load")
+	if script == null:
+		return
+	var node = Node.new()
+	node.set_script(script)
+	node.set_instructions_max(1000000)
+	assert_eq(node.call("run"), 42, "the lambda body should run past its dedented paren")
+	node.free()

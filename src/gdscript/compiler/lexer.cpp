@@ -91,6 +91,18 @@ bool Lexer::lambda_layout_active() const {
 		m_open_brackets.size() <= m_lambda_layouts.back().bracket_depth;
 }
 
+void Lexer::close_lambda_layout() {
+	while (lambda_layout_active() &&
+		m_open_brackets.size() == m_lambda_layouts.back().bracket_depth) {
+		const int base_indent = m_lambda_layouts.back().base_indent;
+		while (m_indent_stack.size() > 1 && m_indent_stack.back() > base_indent) {
+			m_indent_stack.pop_back();
+			add_token(TokenType::DEDENT);
+		}
+		m_lambda_layouts.pop_back();
+	}
+}
+
 void Lexer::scan_token() {
 	if (m_at_line_start) {
 		handle_indent();
@@ -170,6 +182,7 @@ void Lexer::scan_token() {
 		// Stray closers passed through; the parser reports them.
 		case ')': {
 			const size_t closing_depth = m_open_brackets.size();
+			close_lambda_layout();
 			pop_bracket(')');
 			add_token(TokenType::RPAREN);
 			if (m_lambda_signature && closing_depth == m_lambda_parameter_depth) {
@@ -177,8 +190,8 @@ void Lexer::scan_token() {
 			}
 			break;
 		}
-		case ']': pop_bracket(']'); add_token(TokenType::RBRACKET); break;
-		case '}': pop_bracket('}'); add_token(TokenType::RBRACE); break;
+		case ']': close_lambda_layout(); pop_bracket(']'); add_token(TokenType::RBRACKET); break;
+		case '}': close_lambda_layout(); pop_bracket('}'); add_token(TokenType::RBRACE); break;
 		case ':':
 			add_token(TokenType::COLON);
 			if (m_lambda_signature && m_lambda_parameters_closed) {
@@ -193,15 +206,7 @@ void Lexer::scan_token() {
 			// argument on the same physical line as its final statement. At the
 			// outer bracket depth this comma closes the suite; commas in calls or
 			// literals inside the body have a deeper bracket depth.
-			if (lambda_layout_active() &&
-				m_open_brackets.size() == m_lambda_layouts.back().bracket_depth) {
-				const int base_indent = m_lambda_layouts.back().base_indent;
-				while (m_indent_stack.size() > 1 && m_indent_stack.back() > base_indent) {
-					m_indent_stack.pop_back();
-					add_token(TokenType::DEDENT);
-				}
-				m_lambda_layouts.pop_back();
-			}
+			close_lambda_layout();
 			add_token(TokenType::COMMA);
 			break;
 		case ';': add_token(TokenType::SEMICOLON); break;

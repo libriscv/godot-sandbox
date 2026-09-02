@@ -30,6 +30,7 @@ private:
 	void pop_bracket(char closer);
 	static char opener_for(char closer);
 	bool lambda_layout_active() const;
+	void close_lambda_layout();
 
 	char advance();
 	char peek() const;
