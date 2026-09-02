@@ -4251,7 +4251,6 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	m_break_pending = false;
 
 	plan_frame(func);
-	emit_prologue(func);
 
 	const bool emits_trusted_entry = m_trusted_internal_entries.count(func.name) != 0;
 	std::vector<int> trusted_parameter_destinations(m_fn.num_params);
@@ -4276,6 +4275,11 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 	const bool has_trusted_entry = emits_trusted_entry && coerce_prefix > 0;
 	const std::string trusted_label = ".typed$" + func.name;
 	const std::string body_label = ".typed_body$" + func.name;
+	if (emits_trusted_entry && !has_trusted_entry) {
+		define_label(trusted_label);
+	}
+
+	emit_prologue(func);
 	std::vector<std::pair<std::string, std::string>> debug_labels(func.debug_locals.size());
 	if (m_debug && m_debug_index >= 0) {
 		for (size_t i = 0; i < func.debug_locals.size(); i++) {
@@ -4400,6 +4404,12 @@ void RISCVCodeGen::gen_function(const IRFunction& func) {
 				emit_i_type(0x13, REG_T0, 3, REG_T0, Variant::STRING); // sltiu
 				emit_xori(REG_T0, REG_T0, 1);
 				for (uint8_t preg : dirty->second) emit_or(preg, preg, REG_T0);
+			}
+		}
+		{
+			auto forced = m_fn.scope_dirty_sets.find(instr_idx);
+			if (forced != m_fn.scope_dirty_sets.end()) {
+				for (uint8_t preg : forced->second) emit_li(preg, 1);
 			}
 		}
 		if (has_resident_values && instruction_dst >= 0 && !m_fn.resident_result_written) {
@@ -7308,6 +7318,17 @@ static bool syscall_answers_in_register(const IRInstruction& instr) {
 	}
 }
 
+static bool scoped_allocation_is_the_destination(const IRInstruction& instr) {
+	switch (instr.opcode) {
+		case IROpcode::CALL:
+		case IROpcode::CALL_HOSTED:
+		case IROpcode::CALL_SYSCALL:
+			return false;
+		default:
+			return true;
+	}
+}
+
 static bool leaves_nothing_scoped(const IRInstruction& instr) {
 	switch (instr.opcode) {
 		case IROpcode::ARRAY_SET:
@@ -7588,6 +7609,7 @@ void RISCVCodeGen::plan_scopes(const IRFunction& func) {
 	m_fn.scope_slots.clear();
 	m_fn.scope_dirty_regs.clear();
 	m_fn.scope_dirty_updates.clear();
+	m_fn.scope_dirty_sets.clear();
 	m_fn.scope_slot_count = 0;
 
 	int max_scope_id = -1;
@@ -7655,6 +7677,10 @@ void RISCVCodeGen::plan_scopes(const IRFunction& func) {
 		m_allocator.reserve_register(preg);
 		for (size_t i = marks[size_t(id)] + 1; i < last_releases[size_t(id)]; i++) {
 			if (!instruction_may_allocate_scoped(func.instructions[i])) continue;
+			if (!scoped_allocation_is_the_destination(func.instructions[i])) {
+				m_fn.scope_dirty_sets[i].push_back(preg);
+				continue;
+			}
 			if (ir_destination_register(func.instructions[i]) < 0) continue;
 			m_fn.scope_dirty_updates[i].push_back(preg);
 		}

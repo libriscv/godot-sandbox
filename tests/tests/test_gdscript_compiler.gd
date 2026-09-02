@@ -13873,3 +13873,85 @@ func run():
 	node.set_instructions_max(1000000)
 	assert_eq(node.call("run"), 42, "the lambda body should run past its dedented paren")
 	node.free()
+
+func test_sgd_an_unused_typed_parameter_keeps_the_typed_entry():
+	var source = """
+func helper(_d: float) -> int:
+	return 7
+
+func mixed(a: float, _b: float) -> float:
+	return a
+
+func run():
+	if helper(1.0) != 7:
+		return -1
+	if mixed(2.5, 3.5) != 2.5:
+		return -2
+	return 1
+"""
+	var path = "user://temp_unused_typed_parameter.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(source)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the script should load")
+	if script == null:
+		return
+	var node = Node.new()
+	node.set_script(script)
+	node.set_instructions_max(1000000)
+	assert_eq(node.call("run"), 1, "a function whose typed parameter is unused should still be callable")
+	node.free()
+
+func test_sgd_a_vector_widens_between_int_and_float_forms():
+	var source = """
+func make_int_vector() -> Vector2i:
+	return Vector2i(1, 2)
+
+func run():
+	var from: Vector2 = make_int_vector()
+	if typeof(from) != TYPE_VECTOR2:
+		return -1
+	if from != Vector2(1, 2):
+		return -2
+	var back: Vector2i = Vector2(3.7, 4.2)
+	if typeof(back) != TYPE_VECTOR2I:
+		return -3
+	if back != Vector2i(3, 4):
+		return -4
+	var area: Rect2 = Rect2i(1, 2, 3, 4)
+	if typeof(area) != TYPE_RECT2:
+		return -5
+	if area != Rect2(1, 2, 3, 4):
+		return -6
+	var text: String = make_name()
+	if typeof(text) != TYPE_STRING:
+		return -7
+	if text != "walk":
+		return -8
+	var loose: Array = make_packed()
+	if typeof(loose) != TYPE_ARRAY:
+		return -9
+	if loose != [1, 2, 3]:
+		return -10
+	return 1
+
+func make_name() -> StringName:
+	return &"walk"
+
+func make_packed() -> PackedInt32Array:
+	return PackedInt32Array([1, 2, 3])
+"""
+	var path = "user://temp_vector_widening.sgd"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(source)
+	file.close()
+	var script = load(path)
+	assert_not_null(script, "the script should load")
+	if script == null:
+		return
+	var node = Node.new()
+	node.set_script(script)
+	node.set_instructions_max(1000000)
+	assert_eq(node.call("run"), 1, "the int and float forms of a vector should convert on assignment")
+	node.free()

@@ -740,6 +740,140 @@ func test():
 	std::cout << "  ✓ LICM leaves conditional definitions alone" << std::endl;
 }
 
+static void test_typed_entry_survives_unused_parameters() {
+	std::cout << "Testing typed entry points with unused parameters..." << std::endl;
+
+	const std::string unused =
+		"func test():\n"
+		"\thelper(1.0)\n"
+		"func helper(_d: float):\n"
+		"\tprint(1)\n";
+
+	const IRProgram ir = compile_to_ir(unused);
+	const IRFunction& caller = find_function(ir, "test");
+	bool trusted = false;
+	for (const auto& instr : caller.instructions) {
+		if (instr.opcode == IROpcode::CALL && instr.trusted_internal_call) {
+			trusted = true;
+		}
+	}
+	assert(trusted);
+	assert(count_opcode(find_function(ir, "helper"), IROpcode::COERCE) == 0);
+	assert(!compile_to_code(unused).empty());
+
+	assert(!compile_to_code(
+		"func test():\n"
+		"\thelper(1.0, 2.0)\n"
+		"func helper(_a: float, b: float):\n"
+		"\tprint(b)\n").empty());
+
+	assert(!compile_to_code(
+		"func test():\n"
+		"\thelper(1.0, 2.0)\n"
+		"func helper(a: float, _b: float):\n"
+		"\tprint(a)\n").empty());
+
+	assert(!compile_to_code(
+		"func test():\n"
+		"\thelper(1, 2.0, true)\n"
+		"func helper(_a: int, _b: float, _c: bool):\n"
+		"\tprint(1)\n").empty());
+
+	std::cout << "  \u2713 Typed entry points survive unused parameters" << std::endl;
+}
+
+static void test_vector_int_float_conversion() {
+	std::cout << "Testing implicit vector int/float conversion..." << std::endl;
+
+	const struct {
+		const char* value;
+		const char* declared;
+		IRInstruction::TypeHint type;
+	} cases[] = {
+		{ "Vector2i(1, 2)",                 "Vector2",  Variant::VECTOR2 },
+		{ "Vector2(1.5, 2.5)",              "Vector2i", Variant::VECTOR2I },
+		{ "Vector3i(1, 2, 3)",              "Vector3",  Variant::VECTOR3 },
+		{ "Vector3(1.5, 2.5, 3.5)",         "Vector3i", Variant::VECTOR3I },
+		{ "Vector4i(1, 2, 3, 4)",           "Vector4",  Variant::VECTOR4 },
+		{ "Vector4(1.5, 2.5, 3.5, 4.5)",    "Vector4i", Variant::VECTOR4I },
+		{ "Rect2i(1, 2, 3, 4)",             "Rect2",    Variant::RECT2 },
+		{ "Rect2(1.5, 2.5, 3.5, 4.5)",      "Rect2i",   Variant::RECT2I },
+	};
+
+	for (const auto& item : cases) {
+		const std::string source = std::string("func test():\n\tvar v: ") + item.declared +
+			" = " + item.value + "\n\treturn v\n";
+		const IRProgram ir = compile_to_ir(source, false);
+		const IRFunction& test = find_function(ir, "test");
+		bool converted = false;
+		for (const auto& instr : test.instructions) {
+			if (instr.opcode == IROpcode::CONSTRUCT && instr.type_hint == item.type) {
+				converted = true;
+			}
+		}
+		assert(converted);
+
+		const std::string returned = std::string("func test() -> ") + item.declared +
+			":\n\treturn " + item.value + "\n";
+		assert(!rejects(returned));
+
+		const std::string reassigned = std::string("func test():\n\tvar v: ") + item.declared +
+			" = " + item.declared + "()\n\tv = " + item.value + "\n\treturn v\n";
+		assert(!rejects(reassigned));
+	}
+
+	assert(!rejects(
+		"func helper(v: Vector2) -> Vector2i:\n"
+		"\treturn Vector2i(v)\n"
+		"func test():\n"
+		"\tvar from: Vector2 = helper(Vector2(1, 2))\n"
+		"\treturn from\n"));
+
+	const struct { const char* from; const char* to; } engine_pairs[] = {
+		{ "StringName", "String" }, { "NodePath", "String" },
+		{ "String", "StringName" }, { "NodePath", "StringName" },
+		{ "String", "NodePath" }, { "StringName", "NodePath" },
+		{ "String", "Color" },
+		{ "Quaternion", "Basis" }, { "Basis", "Quaternion" },
+		{ "Transform3D", "Transform2D" }, { "Transform2D", "Transform3D" },
+		{ "Quaternion", "Transform3D" }, { "Basis", "Transform3D" },
+		{ "Projection", "Transform3D" }, { "Transform3D", "Projection" },
+		{ "PackedInt32Array", "Array" }, { "PackedStringArray", "Array" },
+		{ "Array", "PackedInt32Array" }, { "Array", "PackedStringArray" },
+	};
+	for (const auto& pair : engine_pairs) {
+		const std::string source = std::string("func take(value: ") + pair.from + ") -> " +
+			pair.to + ":\n\treturn value\n";
+		assert(!rejects(source));
+	}
+
+	{
+		const IRProgram ir = compile_to_ir(
+			"var member: Vector2 = Vector2i(1, 2)\nfunc test():\n\treturn member\n", false);
+		bool converted = false;
+		for (const auto& instr : ir.member_init.instructions) {
+			if (instr.opcode == IROpcode::CONSTRUCT && instr.type_hint == Variant::VECTOR2) {
+				converted = true;
+			}
+		}
+		assert(converted);
+		assert(find_global(ir, "member").value_type == Variant::VECTOR2);
+	}
+	assert(rejects("var member: Vector2 = Color(1, 1, 1)\nfunc test():\n\treturn member\n"));
+	{
+		const IRProgram ir = compile_to_ir(
+			"var member: Vector2 = Vector2(0, 0)\n"
+			"func test():\n\tmember = Vector2i(1, 2)\n\treturn member\n", false);
+		assert(count_opcode(find_function(ir, "test"), IROpcode::CONSTRUCT) == 1);
+	}
+
+	assert(rejects("func test():\n\tvar v: Vector2 = Color(1, 1, 1)\n\treturn v\n"));
+	assert(rejects("func test():\n\tvar v: Vector2 = Vector3(1, 2, 3)\n\treturn v\n"));
+	assert(rejects("func test():\n\tvar v: Rect2 = Vector2i(1, 2)\n\treturn v\n"));
+
+	std::cout << "  \u2713 Vector and rect int/float conversion" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Compiler Regression Tests ===" << std::endl << std::endl;
 
@@ -758,6 +892,8 @@ int main() {
 	test_bitwise_and_shifts();
 	test_globals_start_empty();
 	test_licm_leaves_conditional_definitions_alone();
+	test_typed_entry_survives_unused_parameters();
+	test_vector_int_float_conversion();
 
 	std::cout << std::endl << "All regression tests passed!" << std::endl;
 	return 0;

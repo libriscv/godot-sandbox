@@ -177,6 +177,46 @@ void publish_constant(IRProgram& ir_program, const std::string& name,
 	ir_program.constants.push_back(std::move(constant));
 }
 
+bool constructs_implicitly_from(IRInstruction::TypeHint from, IRInstruction::TypeHint to) {
+	switch (to) {
+		case Variant::VECTOR2:  return from == Variant::VECTOR2I;
+		case Variant::VECTOR2I: return from == Variant::VECTOR2;
+		case Variant::VECTOR3:  return from == Variant::VECTOR3I;
+		case Variant::VECTOR3I: return from == Variant::VECTOR3;
+		case Variant::VECTOR4:  return from == Variant::VECTOR4I;
+		case Variant::VECTOR4I: return from == Variant::VECTOR4;
+		case Variant::RECT2:    return from == Variant::RECT2I;
+		case Variant::RECT2I:   return from == Variant::RECT2;
+		case Variant::STRING:      return from == Variant::STRING_NAME || from == Variant::NODE_PATH;
+		case Variant::STRING_NAME: return from == Variant::STRING || from == Variant::NODE_PATH;
+		case Variant::NODE_PATH:   return from == Variant::STRING || from == Variant::STRING_NAME;
+		case Variant::COLOR:       return from == Variant::STRING;
+		case Variant::BASIS:       return from == Variant::QUATERNION;
+		case Variant::QUATERNION:  return from == Variant::BASIS;
+		case Variant::TRANSFORM2D: return from == Variant::TRANSFORM3D;
+		case Variant::TRANSFORM3D:
+			return from == Variant::TRANSFORM2D || from == Variant::QUATERNION ||
+				from == Variant::BASIS || from == Variant::PROJECTION;
+		case Variant::PROJECTION:  return from == Variant::TRANSFORM3D;
+		case Variant::ARRAY:
+			switch (from) {
+				case Variant::PACKED_BYTE_ARRAY:
+				case Variant::PACKED_INT32_ARRAY:
+				case Variant::PACKED_INT64_ARRAY:
+				case Variant::PACKED_FLOAT32_ARRAY:
+				case Variant::PACKED_FLOAT64_ARRAY:
+				case Variant::PACKED_STRING_ARRAY:
+				case Variant::PACKED_VECTOR2_ARRAY:
+				case Variant::PACKED_VECTOR3_ARRAY:
+				case Variant::PACKED_VECTOR4_ARRAY:
+				case Variant::PACKED_COLOR_ARRAY:
+					return true;
+				default: return false;
+			}
+		default: return false;
+	}
+}
+
 } // namespace
 
 IRProgram CodeGenerator::generate(const Program& program) {
@@ -607,6 +647,9 @@ IRProgram CodeGenerator::generate(const Program& program) {
 					reg = coerce_to_declared_type(reg, m_global_sets[i], target,
 						"global '" + global.name + "'", global.line, global.column,
 						global.type_hint.to_string());
+				} else if (m_global_structs[i] == nullptr && m_global_traits[i] == nullptr) {
+					reg = coerce_to_declared_type(reg, m_global_types[i], target,
+						"global '" + global.name + "'", global.line, global.column);
 				}
 				// ECALL_CALL_GUEST would reset SP/RA on the level-0 state.
 				for (size_t k = before; k < target.ir.instructions.size(); k++) {
@@ -8779,6 +8822,9 @@ void CodeGenerator::reject_reclassification(const Variable& var, int value_reg,
 	{
 		return;
 	}
+	if (constructs_implicitly_from(incoming, held)) {
+		return;
+	}
 	error_at("Variable '" + var.name + "' has type " + std::string(variant_type_name(held)) +
 		" and is being assigned a value of type " + std::string(variant_type_name(incoming)) +
 		". Reclassification is disabled in SafeGDScript", site,
@@ -9952,6 +9998,13 @@ int CodeGenerator::coerce_to_declared_type(int reg, IRInstruction::TypeHint decl
 			free_register(func, reg);
 			return converted;
 		}
+	}
+
+	if (constructs_implicitly_from(actual, declared)) {
+		const int converted = gen_host_constructor_typed(variant_type_name(declared),
+			declared, { reg }, func, nullptr);
+		free_register(func, reg);
+		return converted;
 	}
 
 	const std::string expected = display.empty()

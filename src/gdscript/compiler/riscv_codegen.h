@@ -589,6 +589,7 @@ private:
 		// expensive host-side release.  One saved register tracks that fact.
 		std::vector<int8_t> scope_dirty_regs;
 		std::unordered_map<size_t, std::vector<uint8_t>> scope_dirty_updates;
+		std::unordered_map<size_t, std::vector<uint8_t>> scope_dirty_sets;
 		// Instruction index of a SCOPE_RELEASE -> frame slots that are dead there.
 		std::unordered_map<int, std::vector<int>> release_clears;
 		// emit_ecall() asserts false; catches predicate drift.

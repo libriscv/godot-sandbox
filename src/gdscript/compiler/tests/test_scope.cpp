@@ -557,6 +557,57 @@ static void test_a_complex_return_keeps_the_callers_loop_scope() {
 		"a call whose result is rescued into the caller keeps that loop's scope");
 }
 
+static uint32_t li_a7(int syscall) {
+	return (uint32_t(syscall) << 20) | (0u << 15) | (0u << 12) | (17u << 7) | 0x13u;
+}
+
+static bool sets_a_saved_register(const std::vector<uint8_t>& elf, int syscall, size_t window) {
+	const uint32_t marker = li_a7(syscall);
+	for (size_t i = 0; i + 4 <= elf.size(); i++) {
+		const uint32_t word = uint32_t(elf[i]) | (uint32_t(elf[i + 1]) << 8) |
+			(uint32_t(elf[i + 2]) << 16) | (uint32_t(elf[i + 3]) << 24);
+		if (word != marker) {
+			continue;
+		}
+		for (size_t k = 1; k <= window && i + 4 * (k + 1) <= elf.size(); k++) {
+			const size_t at = i + 4 * k;
+			const uint32_t next = uint32_t(elf[at]) | (uint32_t(elf[at + 1]) << 8) |
+				(uint32_t(elf[at + 2]) << 16) | (uint32_t(elf[at + 3]) << 24);
+			const bool addi = (next & 0x7fu) == 0x13u && ((next >> 12) & 7u) == 0u;
+			const uint32_t rd = (next >> 7) & 31u;
+			const bool saved = rd == 9u || (rd >= 18u && rd <= 27u);
+			if (addi && ((next >> 15) & 31u) == 0u && (next >> 20) == 1u && saved) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+static void test_a_batched_walk_always_dirties_its_loop_scope() {
+	const std::vector<uint8_t> array_walk = compile_to_elf(
+		"func test(values : Array):\n"
+		"\tvar answer = []\n"
+		"\tfor value in values:\n"
+		"\t\tanswer.append(value)\n"
+		"\treturn answer\n");
+	check(contains_word(array_walk, li_a7_vscope()),
+		"a batched Array walk keeps its loop scope");
+	check(sets_a_saved_register(array_walk, ECALL_ARRAY_BATCH, 8),
+		"the Array batch call marks the loop scope dirty whatever tag it answers with");
+
+	const std::vector<uint8_t> string_walk = compile_to_elf(
+		"func test(text : String):\n"
+		"\tvar answer = []\n"
+		"\tfor letter in text:\n"
+		"\t\tanswer.append(letter)\n"
+		"\treturn answer\n");
+	check(contains_word(string_walk, li_a7_vscope()),
+		"a batched String walk keeps its loop scope");
+	check(sets_a_saved_register(string_walk, ECALL_STRING_BATCH, 8),
+		"the String batch call marks the loop scope dirty whatever tag it answers with");
+}
+
 int main() {
 	try {
 		test_every_loop_form_takes_a_scope();
@@ -576,6 +627,7 @@ int main() {
 		test_elided_blocks_emit_nothing();
 		test_a_complex_return_keeps_the_callers_loop_scope();
 		test_numeric_guest_calls_do_not_keep_a_loop_scope();
+		test_a_batched_walk_always_dirties_its_loop_scope();
 	} catch (const CompilerException& e) {
 		std::cerr << "FAILED: compiler exception: " << e.what() << std::endl;
 		failures++;
