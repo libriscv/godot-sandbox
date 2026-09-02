@@ -1,0 +1,69 @@
+name: Cache Cleanup
+
+# hendrikmuhs/ccache-action stores a new timestamped cache every run and never
+# removes the previous one, and the SCons caches now roll per run too. Left
+# alone the repository sits above GitHub's 10 GB Actions cache quota, which
+# evicts by least-recently-used - and the entry a build is about to reuse is
+# exactly the one that gets thrown away. Keep the newest few per key family.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+  workflow_run:
+    workflows: [Builds]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune superseded caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          KEEP: '2'
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+
+          repo = os.environ["REPO"]
+          keep = int(os.environ["KEEP"])
+
+          def gh(*args):
+              return subprocess.run(["gh", *args], check=True,
+                                    capture_output=True, text=True).stdout
+
+          caches = json.loads(gh("cache", "list", "--repo", repo,
+                                 "--limit", "1000", "--order", "desc",
+                                 "--sort", "created_at",
+                                 "--json", "id,key,createdAt,sizeInBytes"))
+
+          # Key families whose entries supersede each other. Anything not
+          # matched here (msys2 packages, docker layers) is left alone.
+          families = [
+              re.compile(r"^(ccache-.+?)-\d{4}-\d{2}-\d{2}T.*$"),
+              re.compile(r"^(.+_cache)_\d{4}-W\d{2}_\d+$"),
+          ]
+
+          groups = {}
+          for c in caches:
+              for pattern in families:
+                  m = pattern.match(c["key"])
+                  if m:
+                      groups.setdefault(m.group(1), []).append(c)
+                      break
+
+          total = freed = 0
+          for name, entries in sorted(groups.items()):
+              entries.sort(key=lambda c: c["createdAt"], reverse=True)
+              for c in entries[keep:]:
+                  print(f"delete {c['key']} ({c['sizeInBytes'] / 1e6:.0f} MB)")
+                  gh("cache", "delete", str(c["id"]), "--repo", repo)
+                  total += 1
+                  freed += c["sizeInBytes"]
+          print(f"deleted {total} caches, freed {freed / 1e9:.2f} GB")
+          PY

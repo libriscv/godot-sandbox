@@ -20,7 +20,7 @@ jobs:
           fetch-depth: 1
 
       - name: 🔗 GDExtension Build
-        uses: godotengine/godot-cpp-template/.github/actions/build@f9564a9c8115139b9624692d39e358291f6d76ce
+        uses: ./.github/actions/gdextension-build
         with:
           platform: macos
           arch: ${{ matrix.arch }}

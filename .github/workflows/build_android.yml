@@ -55,11 +55,19 @@ jobs:
       - name: Install SCons
         run: pip install scons==4.4.0
 
+      # See .github/actions/gdextension-build: a fixed key is never written
+      # back, so it must roll per run, and the week stamp bounds growth.
+      - name: Cache epoch
+        id: cache-epoch
+        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
       - name: Cache SCons
         uses: actions/cache@v4
         with:
           path: ${{ env.SCONS_CACHE }}
-          key: android_${{ matrix.arch }}_${{ matrix.precision }}_template_release_cache
+          key: android_${{ matrix.arch }}_${{ matrix.precision }}_template_release_cache_${{ steps.cache-epoch.outputs.week }}_${{ github.run_id }}
+          restore-keys: |
+            android_${{ matrix.arch }}_${{ matrix.precision }}_template_release_cache_${{ steps.cache-epoch.outputs.week }}_
 
       - name: Build
         run: scons target=template_release platform=android arch=${{ matrix.arch }} precision=${{ matrix.precision }}

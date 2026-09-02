@@ -43,6 +43,7 @@ jobs:
       uses: hendrikmuhs/ccache-action@v1.2
       with:
         key: windows-jit
+        max-size: 300M
 
     - name: Configure addon
       env:
