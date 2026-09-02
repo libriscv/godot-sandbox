@@ -45,6 +45,10 @@ bool SafeGDScript::_can_instantiate() const {
 	bool is_trait = false;
 	scan_class_header(source_code, nullptr, nullptr, &is_trait);
 	if (is_trait) return false;
+	// GDScript: in the editor only a @tool script gets a live instance; the
+	// rest get a placeholder (Object::set_script). is_editor_hint() stands in
+	// for ScriptServer::is_scripting_enabled(), which GDExtension cannot read.
+	if (!tool_script && Engine::get_singleton()->is_editor_hint()) return false;
 	return !_is_abstract() && _is_valid();
 }
 static String script_class_path(const String &p_class_name) {

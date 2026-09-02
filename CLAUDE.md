@@ -541,6 +541,29 @@ stop. `-d` flag required.
 API: `set_breakpoint()`, `set_breakpoints()`, `clear_breakpoints()`, signal
 `breakpoint_hit(script, line)` on `SafeGDScript`.
 
+## Converting .gd <-> .sgd
+
+The two languages share source text, so a conversion is a rename.
+`SafeGDScriptLanguage.convert_script_path(path)` (static,
+`convert_safegdscript.cpp`) renames the file and its `.uid` sidecar, rewrites
+`path="..."` in every `.tscn`/`.tres` under `res://`, retargets `autoload/`
+entries, and tells `EditorFileSystem` (removal first: it drops the UID the new
+file re-registers). Scenes resolve `ext_resource` by UID before path, so binary
+scenes keep loading. Scripts naming the path in a string (`preload`) are only
+warned about, as with Godot's own rename. Refuses to overwrite.
+
+`SafeGDScriptEditorPlugin` (`editor_plugin_safegdscript.cpp`, registered at
+`MODULE_INITIALIZATION_LEVEL_EDITOR`, no plugin.cfg needed) adds "Convert to
+SafeGDScript"/"Convert to GDScript" to the Scene dock, FileSystem dock and
+script-list context menus via `EditorContextMenuPlugin`. The editor flow
+(`editor_convert_scripts(paths, to_safe)`) also carries the visible tab's
+unsaved text, refreshes a stale cached resource at the destination path,
+closes the old tab by emitting FileSystemDock's `file_removed` (the only signal
+`ScriptEditor` closes on), reopens the new script, and
+`reload_scene_from_path`s open scenes that referenced it — the same
+reload-from-disk Godot does after a rename, so unsaved scene edits are lost
+the same way. Tests: `tests/tests/test_convert.gd`.
+
 ## Build and test
 
 ### Debugging tools (in compiler build folder)

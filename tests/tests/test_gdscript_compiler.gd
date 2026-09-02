@@ -10784,6 +10784,29 @@ func test_sgd_tool_annotation_decides_is_tool():
 	plain.set_source_code("func answer():\n\treturn 1\n")
 	assert_false(plain.is_tool(), "a script that did not ask is not one")
 
+func test_sgd_only_a_tool_script_instantiates_in_the_editor():
+	# Engine.set_editor_hint is not scriptable: the editor half runs only under
+	# `godot -e --headless -s addons/gut/gut_cmdln.gd`, as test_editor.gd does.
+	var tool_script = SafeGDScript.new()
+	tool_script.set_source_code("@tool\nvar ran := false\nfunc _init():\n\tran = true\n")
+	var plain = SafeGDScript.new()
+	plain.set_source_code("var ran := false\nfunc _init():\n\tran = true\n")
+	var tool_node = Node.new()
+	tool_node.set_script(tool_script)
+	var plain_node = Node.new()
+	plain_node.set_script(plain)
+
+	assert_true(tool_script.can_instantiate(), "@tool instantiates everywhere")
+	assert_true(tool_node.get("ran"), "the @tool instance ran _init")
+	if Engine.is_editor_hint():
+		assert_false(plain.can_instantiate(), "a script without @tool gets a placeholder in the editor")
+		assert_false(plain_node.get("ran"), "the placeholder never ran _init")
+	else:
+		assert_true(plain.can_instantiate(), "outside the editor every valid script instantiates")
+		assert_true(plain_node.get("ran"), "the game instance ran _init")
+	tool_node.free()
+	plain_node.free()
+
 func test_sgd_onready_assigns_when_the_node_is_ready():
 	var node = Node.new()
 	var script = SafeGDScript.new()
