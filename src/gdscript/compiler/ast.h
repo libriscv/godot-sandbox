@@ -106,7 +106,9 @@ struct BinaryExpr : Expr {
 		EQ, NEQ, LT, LTE, GT, GTE,
 		AND, OR,
 		BIT_AND, BIT_OR, BIT_XOR, SHL, SHR,
-		IN
+		IN,
+		// `a ?? b`: b is evaluated only when a is null.
+		COALESCE
 	};
 
 	ExprPtr left;
@@ -204,6 +206,11 @@ struct MemberCallExpr : Expr, NamedArguments {
 	std::string member_name;
 	std::vector<ExprPtr> arguments;
 	bool is_method_call = false;
+	// `a?.b` / `a?.b()`: a null object skips the rest of the postfix chain.
+	bool safe = false;
+	// Outermost link of a chain holding a safe link. It owns the null result,
+	// so `a?.b.c` is null rather than an access on null.
+	bool safe_chain_root = false;
 
 	MemberCallExpr(ExprPtr obj, std::string name, std::vector<ExprPtr> args = {}, bool is_method = false)
 		: object(std::move(obj)), member_name(std::move(name)), arguments(std::move(args)), is_method_call(is_method) {}
@@ -212,6 +219,7 @@ struct MemberCallExpr : Expr, NamedArguments {
 struct IndexExpr : Expr {
 	ExprPtr object;
 	ExprPtr index;
+	bool safe_chain_root = false;
 
 	IndexExpr(ExprPtr obj, ExprPtr idx)
 		: object(std::move(obj)), index(std::move(idx)) {}

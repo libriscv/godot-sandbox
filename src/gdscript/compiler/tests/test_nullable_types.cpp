@@ -386,6 +386,179 @@ static void test_if_var_null_only_binding() {
 	std::cout << "  ✓ if-var binds only non-null values in its successful branch\n";
 }
 
+// `?.` and `??` write out the null check that `if x != null:` spells, and lower
+// to the same NIL tag test. GDScript has neither.
+// A member read on an untyped value tests for DICTIONARY on its own, so only a
+// test against the NIL tag is a null guard.
+static int nil_tests(const IRFunction& func) {
+	int result = 0;
+	for (const IRInstruction& instruction : func.instructions) {
+		result += instruction.opcode == IROpcode::TYPE_TEST &&
+			instruction.operands.size() > 2 &&
+			instruction.operands[2].type == IRValue::Type::IMMEDIATE &&
+			instruction.operands[2].imm_value == static_cast<int64_t>(Variant::NIL);
+	}
+	return result;
+}
+
+static size_t index_of(const IRFunction& func, IROpcode opcode) {
+	for (size_t i = 0; i < func.instructions.size(); i++) {
+		if (func.instructions[i].opcode == opcode) return i;
+	}
+	return SIZE_MAX;
+}
+
+static size_t global_index(const IRProgram& ir, const std::string& name) {
+	for (size_t i = 0; i < ir.globals.size(); i++) {
+		if (ir.globals[i].name == name) return i;
+	}
+	throw std::runtime_error("missing global " + name);
+}
+
+static void test_safe_navigation() {
+	// One guard for the whole postfix chain: `n?.a.b` is null rather than a
+	// member access on null.
+	const IRProgram chain = compile_to_ir(
+		"func f(n):\n"
+		"\treturn n?.transform.origin\n");
+	assert(nil_tests(function(chain, "f")) == 1);
+	assert(count(function(chain, "f"), IROpcode::LOAD_NIL) == 1);
+
+	// An index at the end of the chain is skipped by the same branch.
+	const IRProgram indexed = compile_to_ir(
+		"func f(n):\n"
+		"\treturn n?.items[0]\n");
+	assert(nil_tests(function(indexed, "f")) == 1);
+	assert(count(function(indexed, "f"), IROpcode::LOAD_NIL) == 1);
+
+	// Two links, two tests: the second one guards what the first returned.
+	const IRProgram twice = compile_to_ir(
+		"func f(n):\n"
+		"\treturn n?.parent?.name\n");
+	assert(nil_tests(function(twice, "f")) == 2);
+	assert(count(function(twice, "f"), IROpcode::LOAD_NIL) == 1);
+
+	// A null receiver evaluates no arguments, so the guard precedes the call
+	// that produces them.
+	const IRProgram guarded = compile_to_ir(
+		"func side() -> int:\n"
+		"\treturn 1\n"
+		"func f(n):\n"
+		"\treturn n?.push(side())\n");
+	assert(index_of(function(guarded, "f"), IROpcode::TYPE_TEST) <
+		index_of(function(guarded, "f"), IROpcode::CALL));
+
+	// A receiver that cannot be null costs nothing: no test, no join.
+	const IRProgram proven = compile_to_ir(
+		"func f() -> String:\n"
+		"\tvar s := \"hi\"\n"
+		"\treturn s?.to_upper()\n");
+	assert(nil_tests(function(proven, "f")) == 0);
+	assert(count(function(proven, "f"), IROpcode::LOAD_NIL) == 0);
+	assert(count(function(proven, "f"), IROpcode::VCALL) == 1);
+
+	// A nullable declaration narrows past the guard the way `if x != null:`
+	// does, so the member read lowers as a plain Dictionary field.
+	const IRProgram narrowed = compile_to_ir(
+		"struct Point:\n"
+		"\tvar x: int\n"
+		"func f(p: Point?):\n"
+		"\treturn p?.x\n");
+	assert(count(function(narrowed, "f"), IROpcode::DICT_GET_CONST) == 1);
+	assert(count(function(narrowed, "f"), IROpcode::VGET) == 0);
+
+	// There is no place to write through a null receiver.
+	assert(rejection("func f(n):\n\tn?.x = 1\n").find("'?.'") != std::string::npos);
+	assert(rejection("func f(n):\n\tn?.x += 1\n").find("compound assignment") !=
+		std::string::npos);
+	assert(rejection("func f(n):\n\tn?.items[0] = 1\n").find("'?.'") != std::string::npos);
+
+	// An enum or engine type on the left is a name, not a value that can be null.
+	assert(rejection("func f():\n\treturn Vector2?.ZERO\n").find("is a name") !=
+		std::string::npos);
+
+	// Null short-circuits without reaching the host.
+	const IRProgram reads = compile_to_ir("func f(n):\n\treturn n?.name\n");
+	IRInterpreter interpreter(reads);
+	assert(std::holds_alternative<std::monostate>(
+		interpreter.call("f", {std::monostate{}})));
+	std::cout << "  \u2713 '?.' guards a whole chain with one NIL test and no host call\n";
+}
+
+static void test_null_coalescing() {
+	// The fallback is evaluated only when the left side is null.
+	const IRProgram basic = compile_to_ir("func f(x):\n\treturn x ?? 5\n");
+	assert(nil_tests(function(basic, "f")) == 1);
+	IRInterpreter values(basic);
+	assert(std::get<int64_t>(values.call("f", {std::monostate{}})) == 5);
+	assert(std::get<int64_t>(values.call("f", {int64_t(3)})) == 3);
+	// Unlike `or`, a falsy value is still a value.
+	assert(std::get<bool>(values.call("f", {false})) == false);
+	assert(std::get<int64_t>(values.call("f", {int64_t(0)})) == 0);
+
+	const IRProgram effects = compile_to_ir(
+		"var calls := 0\n"
+		"func bump() -> int:\n"
+		"\tcalls += 1\n"
+		"\treturn 9\n"
+		"func f(x):\n"
+		"\treturn x ?? bump()\n");
+	const size_t calls = global_index(effects, "calls");
+	IRInterpreter side_effects(effects);
+	assert(std::get<int64_t>(side_effects.call("f", {int64_t(3)})) == 3);
+	assert(std::get<int64_t>(side_effects.global(calls)) == 0);
+	assert(std::get<int64_t>(side_effects.call("f", {std::monostate{}})) == 9);
+	assert(std::get<int64_t>(side_effects.global(calls)) == 1);
+
+	// A left side that cannot be null leaves the fallback unlowered entirely.
+	const IRProgram folded = compile_to_ir(
+		"func side() -> int:\n"
+		"\treturn 1\n"
+		"func f() -> int:\n"
+		"\tvar a := 5\n"
+		"\treturn a ?? side()\n");
+	assert(nil_tests(function(folded, "f")) == 0);
+	assert(count(function(folded, "f"), IROpcode::CALL) == 0);
+
+	// One declared non-null type on the left and the same type on the right make
+	// the result typed, so the addition stays an integer add.
+	const IRProgram typed = compile_to_ir(
+		"func f(x: int?) -> int:\n"
+		"\treturn (x ?? 7) + 1\n");
+	assert(typed_count(function(typed, "f"), IROpcode::ADD, Variant::INT) == 1);
+
+	// A chain of fallbacks reads left to right.
+	const IRProgram chain = compile_to_ir("func f(a, b):\n\treturn a ?? b ?? 3\n");
+	IRInterpreter chained(chain);
+	assert(std::get<int64_t>(chained.call("f", {std::monostate{}, std::monostate{}})) == 3);
+	assert(std::get<int64_t>(chained.call("f", {std::monostate{}, int64_t(2)})) == 2);
+	assert(std::get<int64_t>(chained.call("f", {int64_t(1), int64_t(2)})) == 1);
+
+	// `??` binds tighter than the conditional expression, so the fallback is
+	// part of the branch's value and not the whole conditional.
+	const IRProgram conditional = compile_to_ir("func f(x, c):\n\treturn x ?? 0 if c else 9\n");
+	IRInterpreter ternary(conditional);
+	assert(std::get<int64_t>(ternary.call("f", {std::monostate{}, true})) == 0);
+	assert(std::get<int64_t>(ternary.call("f", {int64_t(5), false})) == 9);
+
+	// `as` is looser than every operator here, and a cast still takes a fallback.
+	assert(rejection("func f(x):\n\treturn x as Node ?? 0\n").empty());
+
+	// `?.` produces the value `??` is there to replace.
+	const IRProgram together = compile_to_ir(
+		"func f(n) -> String:\n"
+		"\treturn n?.name ?? \"none\"\n");
+	assert(nil_tests(function(together, "f")) == 2);
+	IRInterpreter fallback(together);
+	assert(std::get<std::string>(fallback.call("f", {std::monostate{}})) == "none");
+
+	// The operator needs a space after a type name, which is otherwise the
+	// repeated nullable suffix.
+	assert(rejection("func f():\n\tvar x: int??\n").find("second") != std::string::npos);
+	assert(rejection("func f(x):\n\treturn x is int ?? false\n").empty());
+	std::cout << "  \u2713 '??' answers with its left side unless that side is null\n";
+}
+
 int main() {
 	std::cout << "=== Nullable Type Tests ===\n";
 	test_parser_and_spelling();
@@ -396,6 +569,8 @@ int main() {
 	test_nullable_containers_and_structs();
 	test_nullable_narrowing_travels();
 	test_if_var_null_only_binding();
+	test_safe_navigation();
+	test_null_coalescing();
 	std::cout << "All nullable type tests passed.\n";
 	return 0;
 }

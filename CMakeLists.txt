@@ -135,6 +135,14 @@ add_subdirectory(ext)
 add_library(godot-riscv SHARED ${SOURCES})
 target_link_libraries(godot-riscv PUBLIC riscv godot-cpp)
 
+file(GLOB DOC_XML_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/doc_classes/*.xml")
+if (DOC_XML_FILES)
+	find_package(Python3 3.4 REQUIRED)
+	generate_doc_source("${CMAKE_CURRENT_BINARY_DIR}/gen/doc_source.cpp" "${DOC_XML_FILES}")
+	target_sources(godot-riscv PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/gen/doc_source.cpp")
+	add_dependencies(godot-riscv generate_doc_source)
+endif()
+
 if (ENABLE_SAFEGDSCRIPT)
 	target_compile_definitions(godot-riscv PRIVATE
 		SAFEGDSCRIPT_COMPILER_POLICY=${SAFEGDSCRIPT_COMPILER_POLICY})

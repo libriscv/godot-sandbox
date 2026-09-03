@@ -249,7 +249,7 @@ std::string default_value_text(const Expr *expr) {
 		return {};
 	}
 	if (const auto *member = dynamic_cast<const MemberCallExpr *>(expr)) {
-		if (member->is_method_call || !member->arguments.empty()) return {};
+		if (member->is_method_call || member->safe || !member->arguments.empty()) return {};
 		const std::string object = default_value_text(member->object.get());
 		return object.empty() ? std::string() : object + "." + member->member_name;
 	}
@@ -473,6 +473,8 @@ struct ModelBuilder {
 			}
 			const std::string left = type_of(binary->left.get());
 			const std::string right = type_of(binary->right.get());
+			// `a ?? b` answers with one of its operands, not a computed value.
+			if (binary->op == BinaryExpr::Op::COALESCE) return left == right ? left : std::string();
 			if (!is_numeric_type(left) || !is_numeric_type(right)) return {};
 			if (binary->op == BinaryExpr::Op::POW) return "float";
 			return left == "float" || right == "float" ? "float" : "int";
@@ -490,6 +492,8 @@ struct ModelBuilder {
 			return {};
 		}
 		if (const auto *member = dynamic_cast<const MemberCallExpr *>(expr)) {
+			// `a?.b` may answer null, so it has no type of its own.
+			if (member->safe) return {};
 			const std::string receiver = type_of(member->object.get());
 			if (receiver.empty()) {
 				if (member->member_name == "new") {

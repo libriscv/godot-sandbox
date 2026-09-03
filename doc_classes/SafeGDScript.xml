@@ -1,0 +1,364 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SafeGDScript" inherits="ScriptExtension" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/godotengine/godot/master/doc/class.xsd">
+	<brief_description>
+		A script written in GDScript, compiled to RISC-V and executed inside a [Sandbox].
+	</brief_description>
+	<description>
+		A script written in GDScript and saved with the [code].sgd[/code] extension. The script is compiled to a RISC-V program and executed inside a [Sandbox]. It extends the functionality of the objects that instantiate it in the same way a [GDScript] does: exported properties, signals, [method Node._ready] and the other engine callbacks all work the same. The difference is that the code can only access what the sandbox allows.
+		Ordinary GDScript compiles unchanged, so the rest of this description only covers what SafeGDScript adds. Each addition also comes with a script template. Choose SafeGDScript in the [b]Create Script[/b] dialog and pick [i]GDScript Tour[/i], [i]Typed Struct[/i], [i]Nullable and Union Types[/i], [i]If Var[/i], or [i]Traits[/i].
+		[b]Structs[/b]
+		A [code]struct[/code] is a [Dictionary] with a fixed set of fields. Godot and GDScript see an ordinary [Dictionary], but the compiler knows the fields: accessing a field that the struct does not declare is a compile error instead of a new key, and field access compiles to a direct lookup. Fields can be typed and given default values. A struct can also declare constants and functions.
+		[codeblock]
+		struct Particle:
+			var position: Vector2 = Vector2.ZERO
+			var velocity: Vector2 = Vector2.ZERO
+			var lifetime: float = 1.0
+
+			func advance(delta: float) -&gt; bool:
+				self.position += self.velocity * delta
+				self.lifetime -= delta
+				return self.lifetime &gt; 0.0
+
+		func spawn() -&gt; void:
+			var a := Particle.new() # Every field has its default value.
+			var b := Particle(Vector2.ZERO, Vector2(50, -80)) # Positional, in declaration order.
+			var c := Particle(lifetime = 2.5, velocity = Vector2(-30, -60)) # Named. Skipped fields keep their defaults.
+		[/codeblock]
+		A struct is a value, so a variable or field declared with a struct type starts as a new instance instead of [code]null[/code]. A [code]match[/code] pattern can destructure a struct by position or by name. Every field must appear in the pattern.
+		[codeblock]
+		match point:
+			Point(x = var a, y = 0):
+				return a # Points on the X axis.
+			Point(var a, _):
+				return a
+		[/codeblock]
+		[b]Traits[/b]
+		A [code]trait[/code] holds state and behavior that scripts, inner classes, and structs can share. A script uses traits with a [code]uses[/code] statement at the top of the file, and an inner class puts [code]uses[/code] in its header. The trait's variables, functions, constants, and enums become part of everything that uses it.
+		A trait function without a body is abstract. Anything that uses the trait must implement it, otherwise compilation fails. If a user declares a function with the same name as a trait function, the trait's version remains available as [code]TraitName.method()[/code].
+		[codeblock]
+		uses Damageable
+
+		trait Damageable:
+			var health: int = 100
+
+			func take_damage(amount: int) -&gt; void:
+				health -= amount
+				if health &lt;= 0:
+					on_death()
+
+			func on_death() -&gt; void # Abstract, since it has no body.
+
+		func on_death() -&gt; void:
+			queue_free()
+
+		class Crate uses Damageable:
+			func on_death() -&gt; void:
+				print("Crate splinters")
+
+		func hit_all(targets: Array, amount: int) -&gt; void:
+			for target in targets:
+				if target is Damageable:
+					target.take_damage(amount)
+		[/codeblock]
+		A trait is also a type. [code]value is Damageable[/code] is [code]true[/code] for anything that uses the trait, and for any object that has every function the trait declares, so an engine object or a GDScript instance can satisfy a trait at run time. See also [method uses_trait].
+		A trait can use other traits. A trait can be placed in its own file starting with [code]trait_name MyTrait[/code], which other scripts then refer to as [code]uses MyTrait[/code]. If a file with a [code]class_name[/code] declares several traits, they are used one at a time: [code]uses Library.Alpha, Library.Beta[/code].
+		[b]switch[/b]
+		[code]switch[/code] is a [code]match[/code] that is guaranteed to compile to a jump table, so selecting a branch takes the same time no matter how many branches there are. The value must be a known [int] and every pattern must be a constant integer, except for the [code]_[/code] wildcard. A duplicate pattern, a value of unknown type, a pattern that is not an integer constant, a [code]when[/code] guard, or values too far apart for a table are compile errors. The error message names the rule that was broken.
+		[codeblock]
+		switch state:
+			State.IDLE:
+				wait()
+			State.RUNNING:
+				step()
+			_:
+				push_error("Unhandled state")
+		[/codeblock]
+		[b]Note:[/b] A [code]match[/code] with the same shape also compiles to a jump table, and falls back to a chain of comparisons if it cannot.
+		[b]when[/b]
+		Any [code]match[/code] branch can have a [code]when[/code] guard, which is evaluated after the pattern matches. If the guard is [code]false[/code], matching continues with the next branch instead of leaving the [code]match[/code] statement. Because of this, a guarded [code]_[/code] does not catch everything.
+		[codeblock]
+		match event:
+			{"kind": "hit", "amount": var amount, ..} when amount &gt; 0:
+				take_damage(amount)
+			{"kind": "hit", ..}:
+				pass # A hit for nothing.
+			_:
+				push_warning("Unknown event")
+		[/codeblock]
+		[b]Union types[/b]
+		A union type [code]A | B[/code] accepts a value of any of the listed types. Unions can be used on local variables, member variables, parameters, return types, signals, and struct fields. The variable still holds a single [Variant]. Assignments the compiler can see are checked at compile time, and any other assignment is checked once at run time. Using [code]is[/code], comparing with [code]null[/code], testing truthiness, matching on values, or matching on [code]typeof(x)[/code] narrows the union, so the code in that branch is compiled for the narrowed type. [code]x is int | String[/code] is a single test.
+		[codeblock]
+		func describe(key: int | String) -&gt; String:
+			if key is int:
+				return "id #%d" % key # key is an int here.
+			return "named '%s'" % key # key is a String here.
+
+		func find_by(key: int | String) -&gt; Node?:
+			match typeof(key):
+				TYPE_INT:
+					return get_child(key) if key &lt; get_child_count() else null
+				TYPE_STRING:
+					return get_node_or_null(key)
+			return null
+		[/codeblock]
+		[b]Note:[/b] The engine has no union type, so union parameters, return values, and properties appear as [Variant] to Godot.
+		[b]Nullable types[/b]
+		[code]T?[/code] can be used wherever a type hint can, and means [code]T | null[/code]. A nullable variable without an initial value starts as [code]null[/code]. Comparing with [code]null[/code], [code]is[/code], [code]assert[/code], and the right side of [code]and[/code] narrow the variable to [code]T[/code] for the rest of that branch.
+		[code]a?.b[/code] and [code]a?.method()[/code] evaluate to [code]null[/code] if [code]a[/code] is [code]null[/code], without performing the access. [code]a ?? b[/code] evaluates to [code]a[/code] unless it is [code]null[/code], in which case [code]b[/code] is evaluated and returned.
+		[codeblock]
+		var target: Node? = null
+
+		func _process(_delta: float) -&gt; void:
+			if target != null and not target.is_inside_tree():
+				target = null # target is known to be a Node in the condition above.
+
+		func label() -&gt; String:
+			return target?.name ?? "(nothing)"
+		[/codeblock]
+		[b]Note:[/b] [code]if value:[/code] only narrows the [code]true[/code] branch. Values such as [code]0[/code], an empty [String], and [constant Vector2.ZERO] are falsy without being [code]null[/code].
+		[b]if var[/b]
+		[code]if var name = expression:[/code] evaluates the expression once and enters the block only if the result is not [code]null[/code]. Inside the block, the variable is known to be non-null. The variable is only visible in the [code]if[/code] block, not in [code]else[/code] and not after the statement. Both [code]:=[/code] and an explicit type hint work. With a type hint, a non-null value must be of that type.
+		[codeblock]
+		func _ready() -&gt; void:
+			if var player := get_node_or_null("Player"):
+				print("Found ", player.name)
+			else:
+				print("No Player yet")
+
+			if var volume: float = settings.get("volume"):
+				print("Volume is %.1f" % volume)
+
+		func first_visible(nodes: Array) -&gt; CanvasItem?:
+			for candidate in nodes:
+				if var item := candidate as CanvasItem:
+					if item.visible:
+						return item
+			return null
+		[/codeblock]
+		[b]Lua-style dictionaries[/b]
+		A [Dictionary] literal can use bare names as keys, and a dictionary key can be read with a dot as well as with brackets.
+		[codeblock]
+		var player := {name = "Bob", age = 30} # Same as {"name": "Bob", "age": 30}.
+		print(player.name, " is ", player["age"]) # Prints "Bob is 30"
+		[/codeblock]
+		[b]@test[/b]
+		The [code]@test[/code] annotation marks a function without parameters as a test. The function remains an ordinary method, and is additionally published as a test. Each test runs on a new instance of the script, so member variables have their default values and [method Object._init] runs again. The instance is never added to the scene tree, so [method Node._ready], [method Node._enter_tree], and [method Node._process] are not called and [code]$Child[/code] is [code]null[/code]. A test passes if it returns normally. A failed [code]assert[/code], a sandbox exception, or a loop that exceeds the instruction limit fails the test.
+		[codeblock]
+		@test
+		func a_particle_expires_after_its_lifetime():
+			var p := Particle(Vector2.ZERO, Vector2(10, 0), 0.5)
+			assert(p.advance(0.25), "Still alive halfway through")
+			assert(not p.advance(0.25), "Gone once the lifetime runs out")
+			assert(p.position.x == 5.0)
+		[/codeblock]
+		To run the tests of a script, right-click a [code].sgd[/code] file in the FileSystem dock, a node in the Scene dock, or the script in the script editor. You can also call [method run_tests] from a tool script, or [method SafeGDScriptLanguage.run_tests] to run several scripts at once. To run tests from the command line, for example in CI, use the headless runner:
+		[codeblock lang=text]
+		godot --headless --path . -s addons/godot_sandbox/run_sgd_tests.gd
+		[/codeblock]
+		[b]Note:[/b] Tests are not included in exported projects. See [method compile_shipping].
+	</description>
+	<tutorials>
+		<link title="SafeGDScript documentation">https://libriscv.no/docs/host_langs/godot_integration/godot_intro/safegdscript</link>
+	</tutorials>
+	<methods>
+		<method name="bake_translation">
+			<return type="String" />
+			<description>
+				Compiles a native translation of this script's program into the translation cache. Returns the absolute path the translation was written to, or an empty [String] on failure. Equivalent to calling [method Sandbox.bake_binary_translation] on the sandbox running this script.
+			</description>
+		</method>
+		<method name="clear_breakpoints">
+			<return type="bool" />
+			<description>
+				Removes all breakpoints and recompiles the script. Returns [code]false[/code] if the recompilation failed.
+			</description>
+		</method>
+		<method name="compile_shipping">
+			<return type="bool" />
+			<description>
+				Recompiles the script the way an exported project does: without profiling, debug information, or [code]@test[/code] functions. Returns [code]false[/code] on a compile error, which [method get_compile_error] then describes.
+			</description>
+		</method>
+		<method name="debug_continue" qualifiers="static">
+			<return type="void" />
+			<description>
+				Resumes the script that is stopped at a breakpoint. Does nothing if no script is stopped.
+			</description>
+		</method>
+		<method name="editor_documentation" qualifiers="const">
+			<return type="Dictionary[]" />
+			<description>
+				Returns the documentation pages this script publishes to the editor's help, one for each class, struct, and trait it declares.
+				[b]Note:[/b] This method is used internally by the engine and is exposed for testing.
+			</description>
+		</method>
+		<method name="editor_member_line" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="member" type="StringName" />
+			<description>
+				Returns the line [param member] is declared on, starting from [code]1[/code], or [code]-1[/code] if the script does not declare it.
+				[b]Note:[/b] This method is used internally by the engine and is exposed for testing.
+			</description>
+		</method>
+		<method name="get_active_breakpoints" qualifiers="const">
+			<return type="PackedInt32Array" />
+			<description>
+				Returns the lines the current build placed a breakpoint on, in ascending order. A line without code of its own gets no breakpoint.
+			</description>
+		</method>
+		<method name="get_breakpoints" qualifiers="const">
+			<return type="PackedInt32Array" />
+			<description>
+				Returns the requested breakpoint lines in ascending order, whether or not the build could place them. See also [method get_active_breakpoints].
+			</description>
+		</method>
+		<method name="get_compile_error" qualifiers="const">
+			<return type="String" />
+			<description>
+				Returns the error message of the last failed compilation, or an empty [String] if the script compiled successfully.
+			</description>
+		</method>
+		<method name="get_content" qualifiers="const">
+			<return type="PackedByteArray" />
+			<description>
+				Returns the compiled RISC-V ELF program.
+			</description>
+		</method>
+		<method name="get_stopped_backtrace" qualifiers="static">
+			<return type="PackedStringArray" />
+			<description>
+				Returns the call stack of the script that is stopped at a breakpoint, innermost frame first. Returns an empty array if no script is stopped.
+			</description>
+		</method>
+		<method name="get_stopped_line" qualifiers="static">
+			<return type="int" />
+			<description>
+				Returns the line the stopped script is waiting on, or [code]-1[/code] if no script is stopped.
+			</description>
+		</method>
+		<method name="get_test_functions" qualifiers="const">
+			<return type="PackedStringArray" />
+			<description>
+				Returns the names of the functions marked with [code]@test[/code], in declaration order.
+			</description>
+		</method>
+		<method name="get_test_lines" qualifiers="const">
+			<return type="PackedInt32Array" />
+			<description>
+				Returns the declaration line of each function in [method get_test_functions], starting from [code]1[/code], in the same order.
+			</description>
+		</method>
+		<method name="get_translation_hash" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the hash identifying this script's program and its translation options, or [code]0[/code] if no program is loaded. See also [method Sandbox.get_translation_hash].
+			</description>
+		</method>
+		<method name="is_debug_build" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] if the current build contains debug information, that is, a line table and a shadow stack. Breakpoints and backtraces require debug information.
+			</description>
+		</method>
+		<method name="is_profiled_build" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] if the current build was compiled with profiling enabled. See also [method set_profiling].
+			</description>
+		</method>
+		<method name="is_stopped" qualifiers="static">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] while a SafeGDScript is stopped at a breakpoint. Only one script can be stopped at a time.
+			</description>
+		</method>
+		<method name="is_translation_baked" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] if the translation cache already contains a native translation of this script's current program.
+			</description>
+		</method>
+		<method name="new" qualifiers="const vararg">
+			<return type="Variant" />
+			<description>
+				Returns a new instance of the script. The arguments are passed to its [method Object._init].
+				[codeblock]
+				var MyClass = load("my_class.sgd")
+				var instance = MyClass.new()
+				print(instance.get_script() == MyClass) # Prints true
+				[/codeblock]
+				[b]Note:[/b] A script that declares a trait cannot be instantiated.
+			</description>
+		</method>
+		<method name="poll_base_sources" qualifiers="static">
+			<return type="void" />
+			<description>
+				Recompiles every loaded script whose base script changed on disk. The editor calls this periodically. A running game does not need to.
+			</description>
+		</method>
+		<method name="run_tests">
+			<return type="Dictionary" />
+			<param index="0" name="only" type="PackedStringArray" default="PackedStringArray()" />
+			<param index="1" name="quiet" type="bool" default="false" />
+			<description>
+				Runs the script's [code]@test[/code] functions, each on a new instance, and returns the results:
+				[codeblock lang=text]
+				{
+					"path": "res://player.sgd",
+					"passed": 3, "failed": 1, "errors": 0,
+					"elapsed_usec": 812,
+					"tests": [
+						{ "name": "health_is_clamped", "line": 7,
+						  "status": "passed", "message": "", "elapsed_usec": 210 },
+						{ "name": "members_start_at_defaults", "line": 12,
+						  "status": "failed", "message": "Sandbox exception in AssertionError: ...",
+						  "location": "res://player.sgd:14", "elapsed_usec": 190 },
+					]
+				}
+				[/codeblock]
+				[code]status[/code] is [code]"passed"[/code], [code]"failed"[/code] if the test raised an error, or [code]"error"[/code] if the test could not run at all because of a compile error, a refused instance, or an invalid call.
+				If [param only] is not empty, only the named tests run. An unknown name is reported as an [code]"error"[/code] row. If [param quiet] is [code]true[/code], failures are not printed and only the returned [Dictionary] reports them.
+			</description>
+		</method>
+		<method name="set_breakpoint">
+			<return type="bool" />
+			<param index="0" name="line" type="int" />
+			<param index="1" name="enabled" type="bool" />
+			<description>
+				Adds or removes a breakpoint on [param line], starting from [code]1[/code], and recompiles the script. Breakpoints are compiled into the program and cost nothing when unset. Returns [code]false[/code] if the recompilation failed. The requested breakpoints are kept either way.
+				[b]Note:[/b] A script that is stopped at a breakpoint cannot be recompiled.
+			</description>
+		</method>
+		<method name="set_breakpoints">
+			<return type="bool" />
+			<param index="0" name="lines" type="PackedInt32Array" />
+			<description>
+				Replaces all breakpoints with [param lines] and recompiles the script once. Returns [code]false[/code] if the recompilation failed.
+			</description>
+		</method>
+		<method name="set_profiling">
+			<return type="bool" />
+			<param index="0" name="enabled" type="bool" />
+			<description>
+				Enables or disables profiling and recompiles the script. Returns [code]false[/code] if the recompilation failed.
+			</description>
+		</method>
+		<method name="uses_trait" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="name" type="StringName" />
+			<description>
+				Returns [code]true[/code] if this script, or a script it extends, uses the trait called [param name].
+				[b]Note:[/b] Unlike [code]is TraitName[/code] inside SafeGDScript, this method does not consider an object that merely has all of the trait's functions.
+			</description>
+		</method>
+	</methods>
+	<signals>
+		<signal name="breakpoint_hit">
+			<param index="0" name="script" type="SafeGDScript" />
+			<param index="1" name="line" type="int" />
+			<description>
+				Emitted when execution reaches a breakpoint. A connected listener takes priority over the editor's own stop, and is responsible for resuming the script with [method debug_continue].
+			</description>
+		</signal>
+	</signals>
+</class>

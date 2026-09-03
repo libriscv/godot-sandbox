@@ -6554,6 +6554,33 @@ func point_default():
 func point_round_trip():
 	point = Point(1, 2)
 	return point.x
+
+var fallback_calls: int = 0
+
+func bump() -> int:
+	fallback_calls += 1
+	return 99
+
+func fallback_count():
+	return fallback_calls
+
+func coalesce(value):
+	return value ?? bump()
+
+func safe_component(value):
+	return value?.x
+
+func safe_chain(value):
+	return value?.position.x
+
+func safe_call(value):
+	return value?.get_class()
+
+func safe_index(value):
+	return value?.items[1]
+
+func safe_then_fallback(value):
+	return value?.x ?? -1.0
 """
 
 func _nullable_node() -> Node:
@@ -6639,6 +6666,80 @@ func test_sgd_nullable_struct_is_null_by_default():
 	assert_null(node.call("point_default"))
 	assert_eq(node.call("point_round_trip"), 1)
 	node.free()
+
+# -= Safe navigation and null coalescing =-
+#
+# `?.` and `??` are the two shapes an `if x != null:` check is written in, and
+# both lower to that same NIL tag test. GDScript has neither.
+
+func test_sgd_safe_navigation_answers_null_for_a_null_receiver():
+	var node = _nullable_node()
+	if node == null:
+		return
+	assert_null(node.call("safe_component", null), "'?.' on null should be null")
+	assert_eq(node.call("safe_component", Vector2(3, 4)), 3.0,
+		"'?.' on a value should read the member")
+
+	var target = Node2D.new()
+	target.name = "Target"
+	target.position = Vector2(7, 8)
+	assert_eq(node.call("safe_call", target), "Node2D",
+		"'?.' should call a method on a live object")
+	assert_null(node.call("safe_call", null), "and skip the call entirely for null")
+	target.free()
+	node.free()
+
+func test_sgd_safe_navigation_short_circuits_the_whole_chain():
+	var node = _nullable_node()
+	if node == null:
+		return
+	var parent = Node2D.new()
+	var child = Node2D.new()
+	child.position = Vector2(5, 6)
+	parent.add_child(child)
+	assert_eq(node.call("safe_chain", child), 5.0,
+		"the links after '?.' should run for a live object")
+	assert_null(node.call("safe_chain", null),
+		"a null receiver should skip the rest of the chain, not access null")
+
+	assert_eq(node.call("safe_index", {"items": [10, 20, 30]}), 20,
+		"an index at the end of a safe chain should read normally")
+	assert_null(node.call("safe_index", null), "and be skipped along with the chain")
+	parent.free()
+	node.free()
+
+func test_sgd_null_coalescing_keeps_falsy_values():
+	var node = _nullable_node()
+	if node == null:
+		return
+	assert_eq(node.call("coalesce", 5), 5)
+	assert_eq(node.call("fallback_count"), 0,
+		"a value on the left should leave the fallback unevaluated")
+	for value in [0, false, "", Vector2.ZERO]:
+		assert_eq(node.call("coalesce", value), value,
+			"unlike 'or', '??' only replaces null")
+	assert_eq(node.call("fallback_count"), 0)
+
+	assert_eq(node.call("coalesce", null), 99, "null should take the fallback")
+	assert_eq(node.call("fallback_count"), 1, "which is evaluated exactly once")
+	node.free()
+
+func test_sgd_safe_navigation_feeds_null_coalescing():
+	var node = _nullable_node()
+	if node == null:
+		return
+	assert_eq(node.call("safe_then_fallback", Vector2(2, 3)), 2.0)
+	assert_eq(node.call("safe_then_fallback", null), -1.0,
+		"the null a safe chain answers with is what '??' replaces")
+	node.free()
+
+func test_sgd_safe_navigation_is_not_an_assignment_target():
+	var result = _validate("func f(n):\n\tn?.x = 1\n")
+	assert_false(result["valid"])
+	assert_true(result["message"].contains("'?.'"))
+
+	var compound = _validate("func f(n):\n\tn?.x += 1\n")
+	assert_false(compound["valid"])
 
 func test_sgd_null_into_non_nullable_member_is_a_compile_error():
 	var result = _validate("var pos: Vector2 = null\n")

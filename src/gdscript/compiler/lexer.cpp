@@ -261,7 +261,15 @@ void Lexer::scan_token() {
 			break;
 		case '@': add_token(TokenType::AT); break;
 		case '$': add_token(TokenType::DOLLAR); break;
-		case '?': add_token(TokenType::QUESTION); break;
+		case '?':
+			if (match('?')) {
+				add_token(TokenType::QUESTION_QUESTION);
+			} else if (match('.')) {
+				add_token(TokenType::QUESTION_DOT);
+			} else {
+				add_token(TokenType::QUESTION);
+			}
+			break;
 		case '+': add_token(match('=') ? TokenType::PLUS_ASSIGN : TokenType::PLUS); break;
 		case '-': add_token(match('=') ? TokenType::MINUS_ASSIGN : TokenType::MINUS); break;
 		case '*':

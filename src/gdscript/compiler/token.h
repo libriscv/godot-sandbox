@@ -98,6 +98,8 @@ enum class TokenType {
 	AT,          // @
 	DOLLAR,      // $ (node path sugar)
 	QUESTION,    // ? (nullable type suffix)
+	QUESTION_QUESTION, // ?? (null-coalescing)
+	QUESTION_DOT,      // ?. (safe navigation)
 	NEWLINE,
 	INDENT,
 	DEDENT,

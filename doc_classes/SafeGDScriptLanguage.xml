@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SafeGDScriptLanguage" inherits="ScriptLanguageExtension" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/godotengine/godot/master/doc/class.xsd">
+	<brief_description>
+		The scripting language behind [SafeGDScript].
+	</brief_description>
+	<description>
+		Registers the [code].sgd[/code] extension with the engine and drives the compiler, the editor integration, and the test runner. The language itself is documented in [SafeGDScript].
+		The static methods convert scripts between GDScript and SafeGDScript and run [code]@test[/code] functions, which is what a tool script or a CI job needs. The [code]editor_*[/code] methods are used internally by the editor and are exposed for testing.
+		[codeblock]
+		# Convert a script and everything that references it.
+		SafeGDScriptLanguage.convert_script_path("res://player.gd")
+
+		# Run the tests of two scripts and fail the build if any test failed.
+		var report = SafeGDScriptLanguage.run_tests(["res://player.sgd", "res://enemy.sgd"])
+		if report["failed"] &gt; 0 or report["errors"] &gt; 0:
+			get_tree().quit(1)
+		[/codeblock]
+	</description>
+	<tutorials>
+		<link title="SafeGDScript documentation">https://libriscv.no/docs/host_langs/godot_integration/godot_intro/safegdscript</link>
+	</tutorials>
+	<methods>
+		<method name="bake_all_translations">
+			<return type="Dictionary" />
+			<description>
+				Bakes a native translation of every loaded [SafeGDScript] into the translation cache. Returns a [Dictionary] with the successful scripts under [code]"baked"[/code], the scripts that could not be baked under [code]"failed"[/code], and [code]"ok"[/code] set to [code]true[/code] if none failed. Each [code]"baked"[/code] entry holds the script path, the translation hash, the output path, and its size in bytes. See also [method SafeGDScript.bake_translation].
+			</description>
+		</method>
+		<method name="convert_script_path" qualifiers="static">
+			<return type="Dictionary" />
+			<param index="0" name="path" type="String" />
+			<description>
+				Converts the script at [param path] between GDScript and SafeGDScript. Since both languages share the same source code, the conversion is a rename: the file and its [code].uid[/code] file are moved, every scene and resource under [code]res://[/code] that refers to the old path is rewritten, and autoload entries are updated. Returns a [Dictionary] with the new path under [code]"path"[/code], the rewritten scenes under [code]"scenes"[/code], and whether an autoload was updated under [code]"autoload"[/code]. Scripts that refer to the old path in a string, for example with [code]preload()[/code], are listed under [code]"scripts"[/code] and reported as warnings, but not rewritten. Fails if [param path] is not a script or if the destination already exists.
+				[codeblock]
+				var result = SafeGDScriptLanguage.convert_script_path("res://player.gd")
+				print(result["path"]) # Prints "res://player.sgd"
+				[/codeblock]
+			</description>
+		</method>
+		<method name="converted_script_path" qualifiers="static">
+			<return type="String" />
+			<param index="0" name="path" type="String" />
+			<description>
+				Returns the path [method convert_script_path] would move [param path] to, or an empty [String] if [param path] is not a GDScript or SafeGDScript file. Does not modify anything.
+				[codeblock]
+				print(SafeGDScriptLanguage.converted_script_path("res://player.gd")) # Prints "res://player.sgd"
+				print(SafeGDScriptLanguage.converted_script_path("res://player.sgd")) # Prints "res://player.gd"
+				[/codeblock]
+			</description>
+		</method>
+		<method name="editor_built_in_templates" qualifiers="const">
+			<return type="Dictionary[]" />
+			<param index="0" name="base" type="StringName" />
+			<description>
+				Returns the script templates offered in the [b]Create Script[/b] dialog for the base class [param base], including the templates that demonstrate the language additions.
+				[b]Note:[/b] This method is used internally by the engine and is exposed for testing.
+			</description>
+		</method>
+		<method name="editor_complete" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="code" type="String" />
+			<param index="1" name="path" type="String" />
+			<param index="2" name="owner" type="Object" default="null" />
+			<description>
+				Returns the code completion options for [param code]. The caret position is marked in [param code] with the character [code]U+FFFF[/code].
+				[b]Note:[/b] This method is used internally by the engine and is exposed for testing.
+			</description>
+		</method>
+		<method name="editor_convert_scripts" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="paths" type="PackedStringArray" />
+			<param index="1" name="to_safe" type="bool" />
+			<description>
+				Converts every script in [param paths] with [method convert_script_path], to SafeGDScript if [param to_safe] is [code]true[/code] and to GDScript otherwise. Unlike [method convert_script_path], this also carries over the unsaved text of an open script, reopens the converted script in the script editor, and reloads open scenes that referenced it. This is what the [b]Convert to SafeGDScript[/b] and [b]Convert to GDScript[/b] context menu items call.
+				[b]Note:[/b] Only available in the editor.
+			</description>
+		</method>
+		<method name="editor_lookup" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="code" type="String" />
+			<param index="1" name="symbol" type="String" />
+			<param index="2" name="path" type="String" />
+			<param index="3" name="owner" type="Object" default="null" />
+			<description>
+				Resolves [param symbol] in [param code] to the location the script editor's [b]Look Up Symbol[/b] action should open.
+				[b]Note:[/b] This method is used internally by the engine and is exposed for testing.
+			</description>
+		</method>
+		<method name="editor_make_template" qualifiers="const">
+			<return type="Script" />
+			<param index="0" name="template" type="String" />
+			<param index="1" name="class_name" type="String" />
+			<param index="2" name="base_class_name" type="String" />
+			<description>
+				Returns a new script created from [param template], with [param class_name] and [param base_class_name] substituted and the editor's indentation applied.
+				[b]Note:[/b] This method is used internally by the engine and is exposed for testing.
+			</description>
+		</method>
+		<method name="editor_public_annotations" qualifiers="const">
+			<return type="Dictionary[]" />
+			<description>
+				Returns the annotations the language accepts, such as [code]@export[/code], [code]@onready[/code], [code]@rpc[/code], and [code]@test[/code].
+				[b]Note:[/b] This method is used internally by the engine and is exposed for testing.
+			</description>
+		</method>
+		<method name="editor_public_constants" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Returns the global constants the language provides, such as [constant @GDScript.PI] and the [code]TYPE_*[/code] constants.
+				[b]Note:[/b] This method is used internally by the engine and is exposed for testing.
+			</description>
+		</method>
+		<method name="editor_public_functions" qualifiers="const">
+			<return type="Dictionary[]" />
+			<description>
+				Returns the [@GlobalScope] functions the compiler implements, as method descriptions.
+				[b]Note:[/b] This method is used internally by the engine and is exposed for testing.
+			</description>
+		</method>
+		<method name="editor_validate" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="script" type="String" />
+			<param index="1" name="path" type="String" />
+			<param index="2" name="functions" type="bool" default="true" />
+			<param index="3" name="errors" type="bool" default="true" />
+			<param index="4" name="warnings" type="bool" default="true" />
+			<param index="5" name="safe_lines" type="bool" default="true" />
+			<description>
+				Compiles [param script] without running it. Returns whether the script is valid, along with the errors, warnings, and the function list the script editor displays. The remaining parameters select which of these are included.
+				[b]Note:[/b] This method is used internally by the engine and is exposed for testing.
+			</description>
+		</method>
+		<method name="menu_items_for" qualifiers="static">
+			<return type="PackedStringArray" />
+			<param index="0" name="paths" type="PackedStringArray" />
+			<param index="1" name="caret_line" type="int" default="0" />
+			<description>
+				Returns the context menu items SafeGDScript offers for the files in [param paths], such as [code]"Run Tests"[/code], [code]"Convert to SafeGDScript"[/code], and [code]"Convert to GDScript"[/code]. If [param caret_line] is inside a [code]@test[/code] function, [code]"Run Test at Cursor"[/code] is included as well. The editor uses this to decide which items to show.
+			</description>
+		</method>
+		<method name="run_tests" qualifiers="static">
+			<return type="Dictionary" />
+			<param index="0" name="paths" type="PackedStringArray" />
+			<param index="1" name="only" type="PackedStringArray" default="PackedStringArray()" />
+			<param index="2" name="quiet" type="bool" default="false" />
+			<description>
+				Runs the [code]@test[/code] functions of every script in [param paths] and returns the results:
+				[codeblock lang=text]
+				{
+					"scripts": [ ... ],
+					"passed": 5, "failed": 1, "errors": 0
+				}
+				[/codeblock]
+				Each entry of [code]"scripts"[/code] is one [method SafeGDScript.run_tests] result. A path that cannot be loaded is reported as a script with a single [code]"error"[/code] row. If [param only] is not empty, only the named tests run. If [param quiet] is [code]true[/code], failures are not printed.
+				This is what the [b]Run Tests[/b] context menu item and the headless runner call:
+				[codeblock lang=text]
+				godot --headless --path . -s addons/godot_sandbox/run_sgd_tests.gd
+				[/codeblock]
+			</description>
+		</method>
+		<method name="test_at_line" qualifiers="static">
+			<return type="String" />
+			<param index="0" name="source" type="String" />
+			<param index="1" name="line" type="int" />
+			<description>
+				Returns the name of the [code]@test[/code] function that contains [param line] in [param source], or an empty [String] if that line is not inside a test.
+			</description>
+		</method>
+	</methods>
+</class>

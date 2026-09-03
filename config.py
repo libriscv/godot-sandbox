@@ -23,6 +23,8 @@ def get_doc_classes():
         "ELFScriptLanguage",
         "CPPScript",
         "CPPScriptLanguage",
+        "SafeGDScript",
+        "SafeGDScriptLanguage",
         "RustScript",
         "RustScriptLanguage",
         "ZigScript",

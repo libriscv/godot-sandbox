@@ -73,11 +73,16 @@ ExprPtr clone_expr(const Expr* expr) {
 		auto out = std::make_unique<MemberCallExpr>(clone_expr(value->object.get()), value->member_name,
 			clone_exprs(value->arguments), value->is_method_call);
 		out->argument_names = value->argument_names;
+		out->safe = value->safe;
+		out->safe_chain_root = value->safe_chain_root;
 		return positioned(std::move(out), expr);
 	}
-	if (const auto* value = dynamic_cast<const IndexExpr*>(expr))
-		return positioned(std::make_unique<IndexExpr>(clone_expr(value->object.get()),
-			clone_expr(value->index.get())), expr);
+	if (const auto* value = dynamic_cast<const IndexExpr*>(expr)) {
+		auto out = std::make_unique<IndexExpr>(clone_expr(value->object.get()),
+			clone_expr(value->index.get()));
+		out->safe_chain_root = value->safe_chain_root;
+		return positioned(std::move(out), expr);
+	}
 	if (const auto* value = dynamic_cast<const ArrayLiteralExpr*>(expr))
 		return positioned(std::make_unique<ArrayLiteralExpr>(clone_exprs(value->elements)), expr);
 	if (const auto* value = dynamic_cast<const DictionaryLiteralExpr*>(expr)) {

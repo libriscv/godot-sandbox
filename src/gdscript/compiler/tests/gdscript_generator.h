@@ -177,6 +177,10 @@ private:
 		// terminate because the counter counts down, and a generated assignment
 		// to it turns the program into one that never ends.
 		bool assignable = true;
+		// Declared as a union, so its Variant type is only known at run time.
+		// Narrowing one into a typed slot needs a host THROW guard, which the
+		// reference interpreter has no answer for.
+		bool union_hint = false;
 	};
 
 	Random m_random;
@@ -189,6 +193,8 @@ private:
 	int m_next_struct = 0;
 	bool m_has_struct = false;
 	bool m_has_trait = false;
+	// Set while generating a value that has to land in a typed slot.
+	bool m_proven_types_only = false;
 
 	void push_scope() { m_scopes.emplace_back(); }
 	void pop_scope() { m_scopes.pop_back(); }
@@ -212,6 +218,9 @@ private:
 					continue;
 				}
 				if (assignable_only && !variable.assignable) {
+					continue;
+				}
+				if (m_proven_types_only && variable.union_hint) {
 					continue;
 				}
 				found.push_back(variable.name);
@@ -372,6 +381,7 @@ private:
 		if (m_random.chance(15)) {
 			hint = type == GenType::BOOL ? ": bool | int"
 				: ": int | float";
+			m_scopes.back().back().union_hint = true;
 		}
 		return indent(depth) + "var " + name + hint + " = " + value + "\n";
 	}
@@ -380,9 +390,24 @@ private:
 		const std::string name = "maybe" + std::to_string(m_next_variable++);
 		const char* type_name = type == GenType::BOOL ? "bool"
 			: type == GenType::FLOAT ? "float" : "int";
+		// Both the value and the fallback land in slots declared `T?` and `T`.
+		const bool enclosing_proven = m_proven_types_only;
+		m_proven_types_only = true;
 		const std::string value = m_random.chance(40)
 			? "null" : generate_expression(type, m_options.max_expression_depth - 1);
 		std::string out = indent(depth) + "var " + name + ": " + type_name + "? = " + value + "\n";
+		if (m_random.chance(40)) {
+			// `??` is that same null check written as a value, so the fallback
+			// runs exactly when the branch below would not be entered.
+			const std::string fallback =
+				generate_expression(type, m_options.max_expression_depth - 1);
+			m_proven_types_only = enclosing_proven;
+			const std::string sink = "v" + std::to_string(m_next_variable++);
+			m_scopes.back().push_back({ sink, type, /*assignable=*/true });
+			return out + indent(depth) + "var " + sink + ": " + type_name + " = " +
+				name + " ?? (" + fallback + ")\n";
+		}
+		m_proven_types_only = enclosing_proven;
 		out += indent(depth) + "if " + name + " != null:\n";
 		if (type == GenType::BOOL) {
 			out += indent(depth + 1) + name + " = not " + name + "\n";

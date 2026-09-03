@@ -70,6 +70,7 @@ private:
 	ExprPtr parse_expression();
 	ExprPtr parse_expression_impl();
 	ExprPtr parse_ternary();
+	ExprPtr parse_coalesce();
 	ExprPtr parse_or_expression();
 	ExprPtr parse_and_expression();
 	ExprPtr parse_not();

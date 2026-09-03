@@ -444,6 +444,12 @@ static void test_a_nullable_trait_needs_a_null_check() {
 		"\t\tvar bound:\n"
 		"\t\t\tbound.die()\n");
 	assert(bound.find("may be null") != std::string::npos);
+
+	// `?.` proves the same thing the check would, so the call needs no branch
+	// written out and still lowers to one VCALL.
+	const IRProgram guarded = compile_to_ir(KILLABLE +
+		"func safe(value: Killable?):\n\treturn value?.die()\n");
+	assert(count_opcode(find_function(guarded, "safe"), IROpcode::VCALL) == 1);
 }
 
 static const ClassSignature& find_published_class(const Compiler& compiler,

@@ -438,6 +438,7 @@ bool Parser::try_fold_int(const Expr* expr, const EnumDecl* decl, int64_t& out,
 			case BinaryExpr::Op::GTE: out = left >= right; return true;
 			case BinaryExpr::Op::AND: out = (left != 0 && right != 0) ? 1 : 0; return true;
 			case BinaryExpr::Op::OR: out = (left != 0 || right != 0) ? 1 : 0; return true;
+			case BinaryExpr::Op::COALESCE: out = left; return true;
 			case BinaryExpr::Op::IN: break;
 		}
 		return fail("this operator is not an integer operator");
@@ -1776,11 +1777,21 @@ StmtPtr Parser::parse_expr_or_assign_stmt() {
 
 		if (auto* var_expr = dynamic_cast<VariableExpr*>(lhs.get())) {
 			return std::make_unique<AssignStmt>(var_expr->name, std::move(value));
-		} else if (dynamic_cast<IndexExpr*>(lhs.get())) {
+		} else if (auto* index_expr = dynamic_cast<IndexExpr*>(lhs.get())) {
+			if (index_expr->safe_chain_root) {
+				throw CompilerException::parser_error(
+					"Cannot assign through '?.'; write the null check out",
+					lhs->line, lhs->column);
+			}
 			return std::make_unique<AssignStmt>(std::move(lhs), std::move(value));
 		} else if (auto* member_expr = dynamic_cast<MemberCallExpr*>(lhs.get())) {
 			if (member_expr->is_method_call) {
 				throw CompilerException::parser_error("Cannot assign to method call", lhs->line, lhs->column);
+			}
+			if (member_expr->safe) {
+				throw CompilerException::parser_error(
+					"Cannot assign through '?.'; write the null check out",
+					lhs->line, lhs->column);
 			}
 			return std::make_unique<AssignStmt>(std::move(lhs), std::move(value));
 		} else {
@@ -1857,7 +1868,7 @@ ExprPtr Parser::clone_lvalue(const Expr* expr) {
 		return copy;
 	}
 	if (auto* member = dynamic_cast<const MemberCallExpr*>(expr)) {
-		if (member->is_method_call) {
+		if (member->is_method_call || member->safe) {
 			return nullptr;
 		}
 		ExprPtr object = clone_lvalue(member->object.get());
@@ -1920,32 +1931,54 @@ ExprPtr Parser::parse_expression_impl() {
 	ExprPtr expr = parse_ternary();
 
 	// `as` is the loosest operator: casts the entire preceding expression.
-	while (match(TokenType::AS)) {
-		std::vector<TypeExpr> type_arguments;
-		const std::string type_name = parse_type_name(&type_arguments);
-		if (check(TokenType::QUESTION)) {
-			error("'as' cannot take a nullable type; the result of 'as' is already nullable");
+	while (true) {
+		if (match(TokenType::AS)) {
+			std::vector<TypeExpr> type_arguments;
+			const std::string type_name = parse_type_name(&type_arguments);
+			if (check(TokenType::QUESTION)) {
+				error("'as' cannot take a nullable type; the result of 'as' is already nullable");
+			}
+			const Expr& start = *expr;
+			expr = make_like<CastExpr>(start, std::move(expr), type_name,
+				std::move(type_arguments));
+			continue;
 		}
-		const Expr& start = *expr;
-		expr = make_like<CastExpr>(start, std::move(expr), type_name,
-			std::move(type_arguments));
+		// A cast is the only expression `??` can meet here: everything else was
+		// already taken by parse_coalesce, which binds tighter than `as`.
+		if (match(TokenType::QUESTION_QUESTION)) {
+			ExprPtr fallback = parse_expression_impl();
+			expr = make_binary(std::move(expr), BinaryExpr::Op::COALESCE, std::move(fallback));
+			continue;
+		}
+		break;
 	}
 
 	return expr;
 }
 
 ExprPtr Parser::parse_ternary() {
-	ExprPtr true_value = parse_or_expression();
+	ExprPtr true_value = parse_coalesce();
 
 	if (!match(TokenType::IF)) {
 		return true_value;
 	}
 
-	ExprPtr condition = parse_or_expression();
+	ExprPtr condition = parse_coalesce();
 	consume(TokenType::ELSE, "Expected 'else' in conditional expression");
 	ExprPtr false_value = parse_ternary(); // right-associative
 	const Expr& start = *true_value;
 	return make_like<TernaryExpr>(start, std::move(condition), std::move(true_value), std::move(false_value));
+}
+
+// `a ?? b`: right-associative, so a chain of fallbacks reads left to right.
+ExprPtr Parser::parse_coalesce() {
+	ExprPtr left = parse_or_expression();
+
+	if (!match(TokenType::QUESTION_QUESTION)) {
+		return left;
+	}
+	ExprPtr right = parse_coalesce();
+	return make_binary(std::move(left), BinaryExpr::Op::COALESCE, std::move(right));
 }
 
 ExprPtr Parser::parse_or_expression() {
@@ -2178,8 +2211,28 @@ ExprPtr Parser::parse_type_test() {
 
 ExprPtr Parser::parse_call() {
 	ExprPtr expr = parse_primary();
+	// A postfix chain short-circuits as a whole, so the chain -- not the link
+	// that tested -- owns the null result.
+	bool safe_link = false;
 
 	while (true) {
+		if (match(TokenType::QUESTION_DOT)) {
+			const Token& member = consume(TokenType::IDENTIFIER,
+				"Expected property or method name after '?.'");
+			std::vector<ExprPtr> arguments;
+			std::vector<std::string> names;
+			const bool is_method = match(TokenType::LPAREN);
+			if (is_method) {
+				parse_argument_list(arguments, names);
+			}
+			auto call = make_like<MemberCallExpr>(*expr, std::move(expr), member.lexeme,
+				std::move(arguments), is_method);
+			call->argument_names = std::move(names);
+			call->safe = true;
+			expr = std::move(call);
+			safe_link = true;
+			continue;
+		}
 		if (match(TokenType::LPAREN)) {
 			std::vector<ExprPtr> arguments;
 			std::vector<std::string> names;
@@ -2221,6 +2274,14 @@ ExprPtr Parser::parse_call() {
 			expr = make_like<IndexExpr>(*expr, std::move(expr), std::move(index));
 		} else {
 			break;
+		}
+	}
+
+	if (safe_link) {
+		if (auto* member = dynamic_cast<MemberCallExpr*>(expr.get())) {
+			member->safe_chain_root = true;
+		} else if (auto* index = dynamic_cast<IndexExpr*>(expr.get())) {
+			index->safe_chain_root = true;
 		}
 	}
 
@@ -2604,6 +2665,13 @@ TypeExpr Parser::parse_type_expr() {
 			error("Expected a type name or 'null' after '|'");
 		}
 		member();
+	}
+
+	// `T??` is the doubled suffix, not a type followed by the `??` operator: the
+	// operator form needs a space, the same way `?` must touch the type name.
+	if (check(TokenType::QUESTION_QUESTION) && type_end.line == peek().line &&
+		type_end.column + 2 == peek().column) {
+		error("Unexpected second '?'");
 	}
 
 	if (match(TokenType::QUESTION)) {

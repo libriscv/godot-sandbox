@@ -94,6 +94,12 @@ private:
 		// for ord().
 		std::unordered_set<int> codepoint_value_registers;
 		std::vector<LoopContext> loops;
+		// Innermost enclosing `?.` chain, whose root owns the null result.
+		struct SafeChain {
+			std::string null_label;
+			bool tested = false;
+		};
+		std::vector<SafeChain> safe_chains;
 		TypeExpr return_type;
 		int next_register = 0;
 		int next_scope_id = 0;
@@ -150,6 +156,10 @@ private:
 	void emit_conditional_branch(IROpcode opcode, int cond_reg, const std::string& label, FunctionContext& func);
 
 	int gen_expr(const Expr* expr, FunctionContext& func);
+	int gen_expr_dispatch(const Expr* expr, FunctionContext& func);
+	// A postfix chain holding a `?.`: one null result for the whole chain.
+	int gen_safe_chain(const Expr* expr, FunctionContext& func);
+	void emit_safe_guard(int obj_reg, FunctionContext& func, const Expr* site);
 	int gen_literal(const LiteralExpr* expr, FunctionContext& func);
 	// Lvalue writeback: the read yields a copy; the caller needs the container.
 	struct VariableOrigin {
@@ -166,6 +176,7 @@ private:
 	int gen_string_concat(const BinaryExpr* expr, FunctionContext& func,
 		int& left_reg, int& right_reg);
 	int gen_logical(const BinaryExpr* expr, FunctionContext& func);
+	int gen_coalesce(const BinaryExpr* expr, FunctionContext& func);
 	int gen_unary(const UnaryExpr* expr, FunctionContext& func);
 	int gen_await(const AwaitExpr* expr, FunctionContext& func);
 	int gen_type_test(const TypeTestExpr* expr, FunctionContext& func);

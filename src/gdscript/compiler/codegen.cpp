@@ -3798,6 +3798,83 @@ void CodeGenerator::gen_expr_stmt(const ExprStmt* stmt, FunctionContext& func) {
 }
 
 int CodeGenerator::gen_expr(const Expr* expr, FunctionContext& func) {
+	// The chain a `?.` belongs to answers null as a whole, so the outermost link
+	// owns the result register and the one label every safe link branches to.
+	if (auto* member = dynamic_cast<const MemberCallExpr*>(expr);
+		member != nullptr && member->safe_chain_root) {
+		return gen_safe_chain(expr, func);
+	}
+	if (auto* index = dynamic_cast<const IndexExpr*>(expr);
+		index != nullptr && index->safe_chain_root) {
+		return gen_safe_chain(expr, func);
+	}
+	return gen_expr_dispatch(expr, func);
+}
+
+int CodeGenerator::gen_safe_chain(const Expr* expr, FunctionContext& func) {
+	const std::string null_label = make_label("safe_null");
+	func.safe_chains.push_back({null_label, false});
+
+	const int value_reg = gen_expr_dispatch(expr, func);
+	const bool tested = func.safe_chains.back().tested;
+	func.safe_chains.pop_back();
+
+	if (!tested) {
+		// Every link proved non-null while compiling: no branch, no join, and the
+		// chain keeps whatever the ordinary lowering knew about its result.
+		return value_reg;
+	}
+
+	const std::string end_label = make_label("safe_end");
+	const int result_reg = alloc_register(func);
+	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg),
+		IRValue::reg(value_reg));
+	free_register(func, value_reg);
+	func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(null_label));
+	func.ir.instructions.emplace_back(IROpcode::LOAD_NIL, IRValue::reg(result_reg));
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
+	// Null arrives on one path, so the result carries no type of its own.
+	return result_reg;
+}
+
+// The NIL tag test `?.` shares with `if x != null:`, branching out of the chain.
+void CodeGenerator::emit_safe_guard(int obj_reg, FunctionContext& func, const Expr* site) {
+	if (func.safe_chains.empty()) {
+		error_at("'?.' is only valid inside an expression", site);
+	}
+	const IRInstruction::TypeHint known = get_register_type(func, obj_reg);
+	if (known != IRInstruction::TypeHint_NONE && known != Variant::NIL) {
+		return; // Proven to hold a value: '?.' costs nothing.
+	}
+
+	FunctionContext::SafeChain& chain = func.safe_chains.back();
+	chain.tested = true;
+	const int is_nil_reg = alloc_register(func);
+	IRInstruction is_nil(IROpcode::TYPE_TEST, IRValue::reg(is_nil_reg),
+		IRValue::reg(obj_reg), IRValue::imm(static_cast<int64_t>(Variant::NIL)));
+	is_nil.type_hint = Variant::BOOL;
+	func.ir.instructions.push_back(is_nil);
+	set_register_type(func, is_nil_reg, Variant::BOOL);
+	emit_conditional_branch(IROpcode::BRANCH_NOT_ZERO, is_nil_reg, chain.null_label, func);
+	free_register(func, is_nil_reg);
+
+	// Past the branch the object is not null, which is what `if x != null:` gives
+	// a narrowed local. The register is a copy, so nothing needs restoring.
+	if (auto declared = func.declared_sets.find(obj_reg);
+		declared != func.declared_sets.end()) {
+		NarrowingInfo narrowing;
+		narrowing.reg = obj_reg;
+		narrowing.original = declared->second;
+		narrowing.then_set = declared->second.non_null();
+		narrowing.else_set = declared->second.intersect(TypeSet{uint64_t(1) << Variant::NIL});
+		narrowing.saved_type = known;
+		narrowing.saved_struct = get_register_struct(func, obj_reg);
+		apply_narrowing(narrowing, true, func);
+	}
+}
+
+int CodeGenerator::gen_expr_dispatch(const Expr* expr, FunctionContext& func) {
 	if (auto* lit = dynamic_cast<const LiteralExpr*>(expr)) {
 		return gen_literal(lit, func);
 	} else if (auto* var = dynamic_cast<const VariableExpr*>(expr)) {
@@ -4988,6 +5065,64 @@ int CodeGenerator::gen_logical(const BinaryExpr* expr, FunctionContext& func) {
 	return result_reg;
 }
 
+// `a ?? b`: b is evaluated only when a turns out to be null. The test is the
+// NIL tag test `if a != null:` narrows on, so a nullable local keeps its type.
+int CodeGenerator::gen_coalesce(const BinaryExpr* expr, FunctionContext& func) {
+	const int left_reg = gen_expr(expr->left.get(), func);
+	const IRInstruction::TypeHint left_type = get_register_type(func, left_reg);
+	if (left_type != IRInstruction::TypeHint_NONE && left_type != Variant::NIL) {
+		// The left side cannot be null, so the fallback is unreachable and stays
+		// unevaluated -- the same short circuit the run-time test would give.
+		return left_reg;
+	}
+
+	const std::string end_label = make_label("coalesce_end");
+	const int result_reg = alloc_register(func);
+	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg),
+		IRValue::reg(left_reg));
+
+	const int is_nil_reg = alloc_register(func);
+	IRInstruction is_nil(IROpcode::TYPE_TEST, IRValue::reg(is_nil_reg),
+		IRValue::reg(left_reg), IRValue::imm(static_cast<int64_t>(Variant::NIL)));
+	is_nil.type_hint = Variant::BOOL;
+	func.ir.instructions.push_back(is_nil);
+	set_register_type(func, is_nil_reg, Variant::BOOL);
+	emit_conditional_branch(IROpcode::BRANCH_ZERO, is_nil_reg, end_label, func);
+	free_register(func, is_nil_reg);
+
+	const int right_reg = gen_expr(expr->right.get(), func);
+	func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg),
+		IRValue::reg(right_reg));
+	const IRInstruction::TypeHint right_type = get_register_type(func, right_reg);
+	const StructDecl* right_struct = get_register_struct(func, right_reg);
+	free_register(func, right_reg);
+
+	func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(end_label));
+
+	// Both paths agree only when the left side declares one non-null type.
+	TypeSet left_declared;
+	if (auto declared = func.declared_sets.find(left_reg);
+		declared != func.declared_sets.end()) {
+		left_declared = declared->second.non_null();
+	}
+	const StructDecl* left_struct = get_register_struct(func, left_reg);
+	if (left_struct == nullptr) {
+		if (auto declared = func.declared_structs.find(left_reg);
+			declared != func.declared_structs.end()) {
+			left_struct = declared->second;
+		}
+	}
+	free_register(func, left_reg);
+	if (left_declared.single() &&
+		right_type == static_cast<IRInstruction::TypeHint>(left_declared.only())) {
+		set_register_type(func, result_reg, right_type);
+		if (left_struct != nullptr && left_struct == right_struct) {
+			set_register_struct(func, result_reg, left_struct);
+		}
+	}
+	return result_reg;
+}
+
 // Emit GLOBAL_CALL to str() over `args`.
 int CodeGenerator::gen_str_call(const std::vector<int>& args, FunctionContext& func) {
 	if (args.size() == 1) {
@@ -5166,6 +5301,9 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 	if (expr->op == BinaryExpr::Op::AND || expr->op == BinaryExpr::Op::OR) {
 		return gen_logical(expr, func);
 	}
+	if (expr->op == BinaryExpr::Op::COALESCE) {
+		return gen_coalesce(expr, func);
+	}
 
 	int left_reg = -1;
 	int right_reg = -1;
@@ -5341,6 +5479,7 @@ int CodeGenerator::gen_binary(const BinaryExpr* expr, FunctionContext& func) {
 		case BinaryExpr::Op::SHR: op = IROpcode::SHR; break;
 		case BinaryExpr::Op::POW: op = IROpcode::POW; break;
 		case BinaryExpr::Op::IN: op = IROpcode::IN; break;
+		case BinaryExpr::Op::COALESCE: // Short-circuits; handled above.
 		default:
 			error_at("Unknown binary operator", expr);
 	}
@@ -6360,6 +6499,17 @@ static constexpr const char* NATIVE_BASE_KEY = "@base";
 int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& func) {
 	VariableExpr chain_object("");
 	const Expr* object_expr = expr->object.get();
+	if (expr->safe) {
+		// Enums, classes and engine types are names, not values: they resolve
+		// below without ever producing a register to test.
+		if (auto* object = dynamic_cast<const VariableExpr*>(object_expr)) {
+			if (object->name != "self" && find_variable(func, object->name) == nullptr &&
+				!is_global_variable(object->name) && !is_autoload(object->name)) {
+				error_at("'?.' needs a value on its left, and '" + object->name +
+					"' is a name", expr);
+			}
+		}
+	}
 	if (const std::string* member = chain_qualified_member(object_expr, func)) {
 		chain_object.name = *member;
 		chain_object.line = object_expr->line;
@@ -6722,6 +6872,9 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 	int obj_reg = is_super(object_expr, func)
 		? gen_get_node(".", func)
 		: gen_expr(object_expr, func);
+	if (expr->safe) {
+		emit_safe_guard(obj_reg, func, expr);
+	}
 
 	if (expr->is_method_call && expr->member_name == "copy" && expr->arguments.empty()) {
 		if (const StructDecl* structure = get_register_struct(func, obj_reg);
@@ -10376,6 +10529,18 @@ static bool fold_constant_binary(BinaryExpr::Op op, const IRGlobalVar& lhs,
 		return true;
 	};
 
+	// A constant that folded at all is a value, so `??` answers with the left
+	// side unless that value is null.
+	if (op == Op::COALESCE) {
+		const IRGlobalVar& chosen = lhs.init_type == InitType::NULL_VAL ? rhs : lhs;
+		if (chosen.init_type == InitType::NONE || chosen.init_type == InitType::RUNTIME) {
+			return false;
+		}
+		out.init_type = chosen.init_type;
+		out.init_value = chosen.init_value;
+		return true;
+	}
+
 	if (lhs.init_type == InitType::STRING && rhs.init_type == InitType::STRING) {
 		const std::string& left = std::get<std::string>(lhs.init_value);
 		const std::string& right = std::get<std::string>(rhs.init_value);
@@ -10477,6 +10642,7 @@ static bool fold_constant_binary(BinaryExpr::Op op, const IRGlobalVar& lhs,
 		case Op::GTE: return set_bool(left >= right);
 		case Op::AND:
 		case Op::OR:
+		case Op::COALESCE: // Answered above, before either side is inspected.
 		case Op::IN: return false;
 	}
 	return false;
