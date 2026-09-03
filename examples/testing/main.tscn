@@ -1,0 +1,27 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://main.gd" id="1_main"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="Summary" type="Label" parent="."]
+offset_left = 24.0
+offset_top = 24.0
+offset_right = 616.0
+offset_bottom = 48.0
+text = "running tests..."
+
+[node name="Report" type="RichTextLabel" parent="."]
+bbcode_enabled = true
+offset_left = 24.0
+offset_top = 56.0
+offset_right = 616.0
+offset_bottom = 288.0
+
+[node name="Rerun" type="Button" parent="."]
+offset_left = 24.0
+offset_top = 296.0
+offset_right = 120.0
+offset_bottom = 328.0
+text = "Rerun"

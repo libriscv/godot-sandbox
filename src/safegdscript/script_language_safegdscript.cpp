@@ -85,8 +85,8 @@ void SafeGDScriptLanguage::_bind_methods() {
 			&SafeGDScriptLanguage::convert_script_path);
 	ClassDB::bind_static_method("SafeGDScriptLanguage", D_METHOD("editor_convert_scripts", "paths", "to_safe"),
 			&SafeGDScriptLanguage::editor_convert_scripts);
-	ClassDB::bind_static_method("SafeGDScriptLanguage", D_METHOD("run_tests", "paths", "only"),
-			&SafeGDScriptLanguage::run_tests, DEFVAL(PackedStringArray()));
+	ClassDB::bind_static_method("SafeGDScriptLanguage", D_METHOD("run_tests", "paths", "only", "quiet"),
+			&SafeGDScriptLanguage::run_tests, DEFVAL(PackedStringArray()), DEFVAL(false));
 	ClassDB::bind_static_method("SafeGDScriptLanguage", D_METHOD("menu_items_for", "paths", "caret_line"),
 			&SafeGDScriptLanguage::menu_items_for, DEFVAL(0));
 	ClassDB::bind_static_method("SafeGDScriptLanguage", D_METHOD("test_at_line", "source", "line"),
@@ -2688,6 +2688,20 @@ static bool is_safegdscript_test_path(const String &p_path) {
 			FileAccess::get_file_as_string(p_path).contains("@test");
 }
 
+static bool is_profiled_safegdscript_path(const String &p_path) {
+	const String ext = p_path.get_extension().to_lower();
+	if (ext != "sgd" && ext != "safegd") {
+		return false;
+	}
+	ResourceLoader *loader = ResourceLoader::get_singleton();
+	if (loader == nullptr || !loader->has_cached(p_path)) {
+		return false;
+	}
+	Ref<SafeGDScript> script = loader->load(p_path, "SafeGDScript",
+			ResourceLoader::CACHE_MODE_REUSE);
+	return script.is_valid() && script->is_profiled_build();
+}
+
 // A file-level declaration starts here: anything indented belongs to the one
 // above it, so these lines are where one region ends and the next begins.
 static bool starts_a_declaration(const String &p_line) {
@@ -2793,6 +2807,7 @@ PackedStringArray SafeGDScriptLanguage::menu_items_for(const PackedStringArray &
 	bool to_safe = false;
 	bool to_gd = false;
 	bool has_tests = false;
+	bool profiled = false;
 	for (int64_t i = 0; i < p_paths.size(); i++) {
 		const String path = p_paths[i];
 		if (path.contains("::")) {
@@ -2802,12 +2817,16 @@ PackedStringArray SafeGDScriptLanguage::menu_items_for(const PackedStringArray &
 		to_safe = to_safe || ext == "gd";
 		to_gd = to_gd || ext == "sgd" || ext == "safegd";
 		has_tests = has_tests || is_safegdscript_test_path(path);
+		profiled = profiled || is_profiled_safegdscript_path(path);
 	}
 	if (to_safe) {
 		items.push_back("Convert to SafeGDScript");
 	}
 	if (to_gd) {
 		items.push_back("Convert to GDScript");
+	}
+	if (to_gd) {
+		items.push_back(profiled ? "Stop Profiling" : "Profile Script");
 	}
 	if (!has_tests) {
 		return items;
@@ -2822,7 +2841,7 @@ PackedStringArray SafeGDScriptLanguage::menu_items_for(const PackedStringArray &
 }
 
 Dictionary SafeGDScriptLanguage::run_tests(const PackedStringArray &p_paths,
-		const PackedStringArray &p_only) {
+		const PackedStringArray &p_only, bool p_quiet) {
 	Array scripts;
 	int64_t passed = 0;
 	int64_t failed = 0;
@@ -2867,7 +2886,7 @@ Dictionary SafeGDScriptLanguage::run_tests(const PackedStringArray &p_paths,
 			continue;
 		}
 
-		const Dictionary report = script->run_tests(p_only);
+		const Dictionary report = script->run_tests(p_only, p_quiet);
 		passed += int64_t(report.get("passed", int64_t(0)));
 		failed += int64_t(report.get("failed", int64_t(0)));
 		errors += int64_t(report.get("errors", int64_t(0)));

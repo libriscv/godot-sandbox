@@ -91,9 +91,17 @@ public:
 	// The declared signature of one exported function, or null when the script
 	// does not export it.
 	const godot::MethodInfo *find_method_info(const StringName &p_method) const;
-	const String &get_path() const { return path; }
+	const String &get_path() const {
+		if (path.is_empty()) {
+			const String taken_over = Resource::get_path();
+			if (!taken_over.is_empty()) {
+				const_cast<SafeGDScript *>(this)->path = taken_over;
+			}
+		}
+		return path;
+	}
 	// No standalone file: unsaved or scene sub-resource (path contains "::").
-	bool is_built_in() const { return path.is_empty() || path.contains("::"); }
+	bool is_built_in() const { return get_path().is_empty() || get_path().contains("::"); }
 	const PackedByteArray &get_content() const { return elf_data; }
 	bool compile_source_to_elf(bool p_profiling = false, bool p_debug = false,
 			ReloadPolicy p_reload_policy = ReloadPolicy::DISCARD_STATE,
@@ -110,8 +118,10 @@ public:
 	const std::vector<gdscript::DebugVariableRecord> &get_debug_variables() const { return debug_variables; }
 	const gdscript::PropertySignature *find_property_signature(const StringName &p_name) const;
 	PropertyInfo property_info(const gdscript::PropertySignature &p_signature) const;
+	std::vector<PropertyInfo> member_property_infos() const;
 	bool property_default(const StringName &p_name, Variant &r_value) const;
 	bool is_profiled_build() const { return profiled_build; }
+	bool set_profiling(bool p_enabled);
 
 	// -= Breakpoints =-
 	// Compile-time: setting/clearing recompiles. Returns false on failed
@@ -146,7 +156,8 @@ public:
 	// Runs each test on a fresh instance of the declared base type, in
 	// declaration order. Empty filter = every test. See the plan in
 	// docs/test_annotation_plan.md for the result shape.
-	Dictionary run_tests(const PackedStringArray &p_only = PackedStringArray());
+	Dictionary run_tests(const PackedStringArray &p_only = PackedStringArray(),
+			bool p_quiet = false);
 	// True while run_tests() needs a live instance where the editor would
 	// otherwise hand out a placeholder.
 	static bool is_instantiating_for_tests();

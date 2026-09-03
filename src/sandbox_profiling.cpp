@@ -3,6 +3,7 @@
 #include "gdscript/compiler/profiling_layout.h"
 
 #include <algorithm>
+#include <chrono>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 static constexpr bool USE_ADDR2LINE = false;
@@ -20,6 +21,17 @@ void Sandbox::set_profiling(bool enable) {
 
 bool Sandbox::has_self_instrumentation() const {
 	return this->address_of(gdscript::PROFILING_SYMBOL) != 0;
+}
+
+static uint64_t nanosecond_rdtime(const riscv::Machine<RISCV_ARCH> &) {
+	const auto now = std::chrono::steady_clock::now().time_since_epoch();
+	return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+}
+
+void Sandbox::install_self_instrumentation_clock() {
+	if (this->has_self_instrumentation()) {
+		this->machine().set_rdtime(nanosecond_rdtime);
+	}
 }
 
 void Sandbox::update_profiling_sampler(uint32_t interval) {

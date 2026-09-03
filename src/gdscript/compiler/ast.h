@@ -254,6 +254,7 @@ struct VarDeclStmt : Stmt {
 	std::string doc_comment;
 	int chain_link = 0;
 	ExportHint export_hint;
+	ExportSection export_section;
 
 	std::unique_ptr<FunctionDecl> setter_body;
 	std::unique_ptr<FunctionDecl> getter_body;

@@ -1,0 +1,39 @@
+class_name Inventory
+extends Node
+
+var counts: Dictionary = {}
+
+func add(item_name: String, count: int = 1) -> bool:
+	var stacked: bool = counts.has(item_name)
+	counts[item_name] = total(item_name) + count
+	return stacked
+
+func total(item_name: String) -> int:
+	return counts.get(item_name, 0)
+
+func remove(item_name: String, count: int) -> int:
+	var taken: int = mini(count, total(item_name))
+	if taken > 0:
+		counts[item_name] = total(item_name) - taken
+	return taken
+
+@test func test_a_new_item_does_not_stack() -> void:
+	assert(add("coin") == false)
+	assert(total("coin") == 1)
+
+@test func test_an_equal_item_stacks() -> void:
+	assert(add("coin") == false)
+	assert(add("coin", 4) == true, "the second coin stacks")
+	assert(total("coin") == 5)
+
+@test func test_removing_more_than_is_held_takes_what_is_there() -> void:
+	assert(add("gem", 2) == false)
+	assert(remove("gem", 10) == 2)
+	assert(total("gem") == 0)
+
+@test func test_an_unknown_item_holds_nothing() -> void:
+	assert(total("sword") == 0)
+	assert(remove("sword", 1) == 0)
+
+@test func test_each_test_starts_from_a_fresh_instance() -> void:
+	assert(counts.is_empty(), "a member set by another test would leak into this one")

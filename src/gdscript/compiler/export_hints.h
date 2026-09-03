@@ -13,6 +13,18 @@ struct ExportHint {
 	bool is_default() const { return hint == 0 && hint_string.empty() && usage == 0; }
 };
 
+struct ExportSection {
+	std::string category;
+	std::string group;
+	std::string group_prefix;
+	std::string subgroup;
+	std::string subgroup_prefix;
+
+	bool is_default() const {
+		return category.empty() && group.empty() && subgroup.empty();
+	}
+};
+
 struct ExportArgument {
 	enum class Kind : uint8_t {
 		NUMBER,

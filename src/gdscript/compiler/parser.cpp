@@ -128,6 +128,7 @@ Program Parser::parse() {
 					decl->is_static = is_static;
 					decl->is_onready = is_onready;
 					decl->export_hint = export_hint;
+					decl->export_section = m_export_section;
 					record_const_value(*decl);
 					program.globals.push_back(std::move(*decl));
 				}
@@ -993,6 +994,7 @@ TraitDecl Parser::parse_trait() {
 			var->is_onready = is_onready;
 			var->is_static = is_static;
 			var->export_hint = export_hint;
+			var->export_section = m_export_section;
 			var->trait_origin = decl.name;
 			if (is_const) {
 				StructField value;
@@ -1088,6 +1090,7 @@ TraitDecl Parser::parse_file_trait(const Token& token, std::string name) {
 			var->is_onready = is_onready;
 			var->is_static = is_static;
 			var->export_hint = export_hint;
+			var->export_section = m_export_section;
 			var->trait_origin = decl.name;
 			if (is_const) {
 				StructField value;
@@ -2522,6 +2525,18 @@ void Parser::error(const std::string& message, int line, int column) {
 	throw CompilerException(ErrorType::PARSER_ERROR, message, line, column);
 }
 
+void Parser::warn(std::string code, std::string message, int line, int column, int width) {
+	static constexpr size_t MAX_WARNINGS = 100;
+	if (m_warnings.size() >= MAX_WARNINGS) {
+		return;
+	}
+	if (line < 1) line = 1;
+	if (column < 1) column = 1;
+	if (width < 1) width = 1;
+	m_warnings.push_back({std::move(code), std::move(message), line, column, line,
+		column + width});
+}
+
 // Leaves layout tokens intact so DEDENT still closes its suite.
 void Parser::recover_to_statement_end() {
 	while (!is_at_end()) {
@@ -2629,10 +2644,14 @@ TypeExpr Parser::parse_type_expr() {
 // Qualified names (A.B) are dropped; only the engine can resolve them.
 std::string Parser::parse_type_name(std::vector<TypeExpr>* arguments) {
 	const Token& type_token = consume(TokenType::IDENTIFIER, "Expected type name");
-	bool qualified = false;
+	std::string qualified;
 	while (match(TokenType::DOT)) {
-		consume(TokenType::IDENTIFIER, "Expected a type name after '.'");
-		qualified = true;
+		const Token& part = consume(TokenType::IDENTIFIER, "Expected a type name after '.'");
+		if (qualified.empty()) {
+			qualified = type_token.lexeme;
+		}
+		qualified += '.';
+		qualified += part.lexeme;
 	}
 	if (arguments != nullptr && match(TokenType::LBRACKET)) {
 		if (!check(TokenType::RBRACKET)) {
@@ -2647,7 +2666,14 @@ std::string Parser::parse_type_name(std::vector<TypeExpr>* arguments) {
 	} else {
 		skip_type_arguments();
 	}
-	return qualified ? std::string() : type_token.lexeme;
+	if (!qualified.empty()) {
+		warn("UNRESOLVED_TYPE_HINT", "Qualified type '" + qualified +
+			"' is not resolved yet; the declaration stays untyped",
+			type_token.line, type_token.column - int(type_token.lexeme.size()),
+			int(qualified.size()));
+		return std::string();
+	}
+	return type_token.lexeme;
 }
 
 TypeExpr Parser::parse_return_type() {
@@ -2698,6 +2724,31 @@ bool Parser::parse_attribute(ExportHint& hint, bool* is_onready,
 	if (name.lexeme == "export_group" || name.lexeme == "export_subgroup" ||
 		name.lexeme == "export_category")
 	{
+		const size_t max_args = name.lexeme == "export_category" ? 1 : 2;
+		if (arguments.empty() || arguments.size() > max_args) {
+			error("@" + name.lexeme + " takes a name" +
+				(max_args == 2 ? " and an optional prefix" : ""), name.line, name.column);
+			return false;
+		}
+		for (const ExportArgument& argument : arguments) {
+			if (argument.kind != ExportArgument::Kind::STRING) {
+				error("@" + name.lexeme + " takes strings; this argument is not one",
+					argument.line, argument.column);
+				return false;
+			}
+		}
+		const std::string prefix = arguments.size() > 1 ? arguments[1].text : std::string();
+		if (name.lexeme == "export_category") {
+			m_export_section = ExportSection{arguments[0].text, "", "", "", ""};
+		} else if (name.lexeme == "export_group") {
+			m_export_section.group = arguments[0].text;
+			m_export_section.group_prefix = prefix;
+			m_export_section.subgroup.clear();
+			m_export_section.subgroup_prefix.clear();
+		} else {
+			m_export_section.subgroup = arguments[0].text;
+			m_export_section.subgroup_prefix = prefix;
+		}
 		return false;
 	}
 	if (name.lexeme.rfind("export", 0) == 0) {
@@ -2709,6 +2760,11 @@ bool Parser::parse_attribute(ExportHint& hint, bool* is_onready,
 			} else if (!parsed.is_default()) {
 				hint = parsed;
 			}
+		} else {
+			warn("UNSUPPORTED_ANNOTATION", "@" + name.lexeme +
+				" is not implemented yet; it acts as a plain @export",
+				name.line, name.column - int(name.lexeme.size()) - 1,
+				int(name.lexeme.size()) + 1);
 		}
 		return true;
 	}

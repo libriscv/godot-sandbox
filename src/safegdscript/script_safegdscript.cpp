@@ -708,10 +708,8 @@ TypedArray<Dictionary> SafeGDScript::_get_script_method_list() const {
 }
 TypedArray<Dictionary> SafeGDScript::_get_script_property_list() const {
 	TypedArray<Dictionary> result;
-	for (const gdscript::PropertySignature &signature : properties) {
-		if (signature.is_member) {
-			result.push_back(property_dict(property_info(signature)));
-		}
+	for (const PropertyInfo &info : member_property_infos()) {
+		result.push_back(property_dict(info));
 	}
 	return result;
 }
@@ -790,6 +788,56 @@ PropertyInfo SafeGDScript::property_info(const gdscript::PropertySignature &p_si
 		info.usage &= ~uint32_t(PROPERTY_USAGE_NIL_IS_VARIANT);
 	}
 	return info;
+}
+
+static PropertyInfo section_row(const std::string &p_name, const std::string &p_prefix,
+		uint32_t p_usage) {
+	PropertyInfo info;
+	info.name = String::utf8(p_name.c_str(), p_name.size());
+	info.type = Variant::NIL;
+	info.hint = PROPERTY_HINT_NONE;
+	info.hint_string = String::utf8(p_prefix.c_str(), p_prefix.size());
+	info.usage = p_usage;
+	return info;
+}
+
+std::vector<PropertyInfo> SafeGDScript::member_property_infos() const {
+	std::vector<PropertyInfo> list;
+	gdscript::ExportSection current;
+	for (const gdscript::PropertySignature &signature : properties) {
+		if (!signature.is_member) {
+			continue;
+		}
+		const PropertyInfo info = property_info(signature);
+		if ((info.usage & PROPERTY_USAGE_EDITOR) != 0) {
+			const gdscript::ExportSection &section = signature.section;
+			if (section.category != current.category) {
+				if (!section.category.empty()) {
+					list.push_back(section_row(section.category, std::string(),
+							PROPERTY_USAGE_CATEGORY));
+				}
+				current = gdscript::ExportSection{section.category, "", "", "", ""};
+			}
+			if (section.group != current.group ||
+					section.group_prefix != current.group_prefix) {
+				list.push_back(section_row(section.group, section.group_prefix,
+						PROPERTY_USAGE_GROUP));
+				current.group = section.group;
+				current.group_prefix = section.group_prefix;
+				current.subgroup.clear();
+				current.subgroup_prefix.clear();
+			}
+			if (section.subgroup != current.subgroup ||
+					section.subgroup_prefix != current.subgroup_prefix) {
+				list.push_back(section_row(section.subgroup, section.subgroup_prefix,
+						PROPERTY_USAGE_SUBGROUP));
+				current.subgroup = section.subgroup;
+				current.subgroup_prefix = section.subgroup_prefix;
+			}
+		}
+		list.push_back(info);
+	}
+	return list;
 }
 
 bool SafeGDScript::property_default(const StringName &p_name, Variant &r_value) const {
@@ -1242,6 +1290,8 @@ void SafeGDScript::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_breakpoints"), &SafeGDScript::get_breakpoints);
 	ClassDB::bind_method(D_METHOD("get_active_breakpoints"), &SafeGDScript::get_active_breakpoints);
 	ClassDB::bind_method(D_METHOD("is_debug_build"), &SafeGDScript::is_debug_build);
+	ClassDB::bind_method(D_METHOD("is_profiled_build"), &SafeGDScript::is_profiled_build);
+	ClassDB::bind_method(D_METHOD("set_profiling", "enabled"), &SafeGDScript::set_profiling);
 	ClassDB::bind_method(D_METHOD("bake_translation"), &SafeGDScript::bake_translation);
 	ClassDB::bind_method(D_METHOD("is_translation_baked"), &SafeGDScript::is_translation_baked);
 	ClassDB::bind_method(D_METHOD("get_translation_hash"), &SafeGDScript::get_translation_hash);
@@ -1251,8 +1301,8 @@ void SafeGDScript::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("compile_shipping"), &SafeGDScript::compile_shipping);
 	ClassDB::bind_method(D_METHOD("get_test_functions"), &SafeGDScript::get_test_functions);
 	ClassDB::bind_method(D_METHOD("get_test_lines"), &SafeGDScript::get_test_lines);
-	ClassDB::bind_method(D_METHOD("run_tests", "only"), &SafeGDScript::run_tests,
-			DEFVAL(PackedStringArray()));
+	ClassDB::bind_method(D_METHOD("run_tests", "only", "quiet"), &SafeGDScript::run_tests,
+			DEFVAL(PackedStringArray()), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("uses_trait", "name"), &SafeGDScript::uses_trait);
 	// Engine-internal; bound for tests.
 	ClassDB::bind_method(D_METHOD("editor_documentation"), &SafeGDScript::editor_documentation);
@@ -1272,6 +1322,12 @@ void SafeGDScript::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("breakpoint_hit",
 			PropertyInfo(Variant::OBJECT, "script", PROPERTY_HINT_RESOURCE_TYPE, "SafeGDScript"),
 			PropertyInfo(Variant::INT, "line")));
+}
+
+bool safegdscript_set_script_profiling(SafeGDScript &p_script, bool p_enabled);
+
+bool SafeGDScript::set_profiling(bool p_enabled) {
+	return safegdscript_set_script_profiling(*this, p_enabled);
 }
 
 String SafeGDScript::bake_translation() {
@@ -1420,7 +1476,7 @@ static void print_test_report(const Dictionary &p_report) {
 			String::num(ms, 1) + " ms");
 }
 
-Dictionary SafeGDScript::run_tests(const PackedStringArray &p_only) {
+Dictionary SafeGDScript::run_tests(const PackedStringArray &p_only, bool p_quiet) {
 	const uint64_t run_start = Time::get_singleton()->get_ticks_usec();
 	Array rows;
 
@@ -1428,7 +1484,9 @@ Dictionary SafeGDScript::run_tests(const PackedStringArray &p_only) {
 		rows.push_back(test_row("(compile)", 0, "error", this->last_error, this->path, 0));
 		const Dictionary report = test_report(this->path, rows,
 				Time::get_singleton()->get_ticks_usec() - run_start);
-		print_test_report(report);
+		if (!p_quiet) {
+			print_test_report(report);
+		}
 		return report;
 	}
 
@@ -1440,7 +1498,9 @@ Dictionary SafeGDScript::run_tests(const PackedStringArray &p_only) {
 				"run_tests() cannot run from inside a guest call", this->path, 0));
 		const Dictionary report = test_report(this->path, rows,
 				Time::get_singleton()->get_ticks_usec() - run_start);
-		print_test_report(report);
+		if (!p_quiet) {
+			print_test_report(report);
+		}
 		return report;
 	}
 
@@ -1476,7 +1536,9 @@ Dictionary SafeGDScript::run_tests(const PackedStringArray &p_only) {
 		safegdscript_release_sandbox(this, nullptr);
 		const Dictionary report = test_report(this->path, rows,
 				Time::get_singleton()->get_ticks_usec() - run_start);
-		print_test_report(report);
+		if (!p_quiet) {
+			print_test_report(report);
+		}
 		return report;
 	}
 	const int64_t previous_budget = machine != nullptr ? machine->get_instructions_max() : 0;
@@ -1568,7 +1630,9 @@ Dictionary SafeGDScript::run_tests(const PackedStringArray &p_only) {
 
 	const Dictionary report = test_report(this->path, rows,
 			Time::get_singleton()->get_ticks_usec() - run_start);
-	print_test_report(report);
+	if (!p_quiet) {
+		print_test_report(report);
+	}
 	return report;
 }
 

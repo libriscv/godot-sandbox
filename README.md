@@ -114,6 +114,23 @@ func cutscene(player_knocked : Signal) -> String:
 
 The host receives a Signal and awaits it like any other coroutine: `var result = await $Director.cutscene(knocked)`. See [examples/async](examples/async) for a complete example.
 
+### Testing
+
+A function decorated with `@test` becomes a test case:
+
+```gdscript
+@test func test_stacking_merges_equal_items() -> void:
+	assert(add_item("coin", 1) == false)
+	assert(add_item("coin", 1) == true, "the second coin stacks")
+```
+
+Right-click a node/script in the editor for **Run Tests** or **Run Test at Cursor**,
+or run all tests headlessly:
+
+```
+godot --headless --path . -s addons/godot_sandbox/run_sgd_tests.gd
+```
+
 ### Modding and user-generated content
 
 A restricted sandbox denies all host access by default: methods, properties, classes and resource loading. Gamedevs decide what a mod can reach by passing an explicit API:

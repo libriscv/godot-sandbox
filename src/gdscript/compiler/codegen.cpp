@@ -525,6 +525,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		ir_global.is_property = global.is_property;
 		ir_global.is_static = global.is_static;
 		ir_global.export_hint = global.export_hint;
+		ir_global.export_section = global.export_section;
 		ir_global.setter_function = m_global_setters[i];
 		ir_global.getter_function = m_global_getters[i];
 		ir_global.storage = (global.is_const || global.is_static)

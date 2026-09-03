@@ -1,5 +1,6 @@
 #pragma once
 #include "compiler_exception.h"
+#include "parse_diagnostics.h"
 #include "function_signature.h"
 #include "property_signature.h"
 #include "debug_layout.h"
@@ -80,6 +81,7 @@ public:
 	std::vector<uint8_t> compile(const std::string& source, const CompilerOptions& options = {});
 	bool compile_to_file(const std::string& source, const std::string& output_path, const CompilerOptions& options = {});
 	std::string get_error() const { return m_error; }
+	const std::vector<ParseDiagnostic> &get_warnings() const { return m_warnings; }
 	const CompilerError &get_error_info() const { return m_error_info; }
 	// Populated by every compile that reaches codegen, including output_elf=false.
 	const std::vector<FunctionSignature> &get_function_signatures() const { return m_signatures; }
@@ -105,6 +107,7 @@ public:
 private:
 	std::string m_error;
 	CompilerError m_error_info;
+	std::vector<ParseDiagnostic> m_warnings;
 	std::vector<FunctionSignature> m_signatures;
 	std::vector<FunctionSignature> m_signals;
 	std::vector<RPCConfig> m_rpc_configs;

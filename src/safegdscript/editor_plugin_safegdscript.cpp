@@ -1,5 +1,6 @@
 #include "editor_plugin_safegdscript.h"
 #include "script_language_safegdscript.h"
+#include "script_safegdscript.h"
 
 #include <godot_cpp/classes/editor_file_system.hpp>
 #include <godot_cpp/classes/editor_toaster.hpp>
@@ -102,6 +103,11 @@ void SafeGDScriptContextMenu::_popup_menu(const PackedStringArray &p_paths) {
 			add_context_menu_item(item,
 					callable_mp(this, &SafeGDScriptContextMenu::on_run_tests).bind(false),
 					theme->get_icon("Play", "EditorIcons"));
+		} else if (item == "Profile Script" || item == "Stop Profiling") {
+			add_context_menu_item(item,
+					callable_mp(this, &SafeGDScriptContextMenu::on_profile)
+							.bind(item == "Profile Script"),
+					theme->get_icon("Time", "EditorIcons"));
 		}
 	}
 }
@@ -138,6 +144,10 @@ void SafeGDScriptContextMenu::on_run_tests(const Variant &p_selection, bool p_at
 		}
 	}
 	run(paths, only);
+}
+
+void SafeGDScriptContextMenu::on_profile(const Variant &p_selection, bool p_enable) {
+	profile(slot_paths(p_selection), p_enable);
 }
 
 // The text of the visible tab. Script::source_code lags behind it for @tool
@@ -322,6 +332,42 @@ void SafeGDScriptContextMenu::run(const PackedStringArray &p_paths,
 			editor->edit_script(script, jump_line > 0 ? jump_line : -1);
 		}
 	}
+}
+
+void SafeGDScriptContextMenu::profile(const PackedStringArray &p_paths, bool p_enable) {
+	EditorInterface *editor = EditorInterface::get_singleton();
+	ResourceLoader *loader = ResourceLoader::get_singleton();
+	PackedStringArray done;
+	PackedStringArray refused;
+	for (int64_t i = 0; i < p_paths.size(); i++) {
+		const String path = p_paths[i];
+		const String ext = path.get_extension().to_lower();
+		if (path.contains("::") || done.has(path) || (ext != "sgd" && ext != "safegd")) {
+			continue;
+		}
+		done.push_back(path);
+		Ref<SafeGDScript> script = loader->load(path, "SafeGDScript");
+		if (script.is_null() || !script->set_profiling(p_enable)) {
+			refused.push_back(path.get_file());
+		}
+	}
+	if (done.is_empty()) {
+		return;
+	}
+	EditorToaster *toaster = editor != nullptr ? editor->get_editor_toaster() : nullptr;
+	if (toaster == nullptr) {
+		return;
+	}
+	if (!refused.is_empty()) {
+		toaster->push_toast("Could not build " + String(", ").join(refused) +
+				" with profiling.", EditorToaster::SEVERITY_ERROR);
+		return;
+	}
+	const String what = done.size() == 1 ? done[0].get_file() : itos(done.size()) + " scripts";
+	toaster->push_toast(what + (p_enable ? String(": profiling on") : String(": profiling off")),
+			EditorToaster::SEVERITY_INFO,
+			p_enable ? String("Open Debugger > Profiler and press Start to collect.")
+					: String());
 }
 
 void SafeGDScriptLanguage::editor_convert_scripts(const PackedStringArray &p_paths, bool p_to_safe) {

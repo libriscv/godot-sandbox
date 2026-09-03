@@ -84,9 +84,8 @@ api["log"].call("hello")
 var log = api["log"]
 ```
 
-`_init()` is not supported. Use `mod_init()` for mod setup. The loader calls
-`mod_init()` before adding the node to the scene tree. `_enter_tree()` and
-`_ready()` can use the API.
+`_init()` runs when the loader creates the instance, but it runs before the loader
+has created/passed an API. Use `mod_init()` for mod setup instead.
 
 The loader enables each declared frame or input callback with the matching Node
 method:
@@ -100,7 +99,7 @@ method:
 | `_unhandled_input(event)` | `set_process_unhandled_input()` |
 | `_unhandled_key_input(event)` | `set_process_unhandled_key_input()` |
 
-`_notification()` is not supported by SafeGDScript.
+`_notification(what)` is dispatched to the mod like any other callback.
 
 A mod may define `mod_deinit()` with no arguments. The loader calls it before
 removing the mod:

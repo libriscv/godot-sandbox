@@ -151,18 +151,12 @@ const GDExtensionPropertyInfo *SafeGDScriptInstance::get_property_list(uint32_t 
 
 	// Script properties are compiler metadata. This keeps inspector shape
 	// identical to placeholders and avoids asking the running guest for facts.
-	const std::vector<gdscript::PropertySignature> &properties = script->properties;
-	uint32_t script_property_count = 0;
-	for (const gdscript::PropertySignature &property : properties) {
-		if (property.is_member) script_property_count++;
-	}
-	*r_count = uint32_t(script_property_count + prop_list.size());
+	const std::vector<PropertyInfo> script_properties = script->member_property_infos();
+	*r_count = uint32_t(script_properties.size() + prop_list.size());
 	GDExtensionPropertyInfo *list = memnew_arr(GDExtensionPropertyInfo, *r_count + 2);
 	const GDExtensionPropertyInfo *list_ptr = list;
 
-	for (const gdscript::PropertySignature &signature : properties) {
-		if (!signature.is_member) continue;
-		const PropertyInfo property = script->property_info(signature);
+	for (const PropertyInfo &property : script_properties) {
 		set_property_info(*list, property.name, property.class_name,
 				GDExtensionVariantType(property.type), property.hint,
 				property.hint_string, property.usage);

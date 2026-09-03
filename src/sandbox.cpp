@@ -1138,6 +1138,8 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		// Single .symtab pass; startup lookups below read its results.
 		this->scan_startup_symbols();
 
+		this->install_self_instrumentation_clock();
+
 		const gaddr_t heap_size = gaddr_t(machine().memory.memory_arena_size() * 0.8) & ~0xFFFLL;
 		const gaddr_t heap_area = machine().memory.mmap_allocate(heap_size);
 

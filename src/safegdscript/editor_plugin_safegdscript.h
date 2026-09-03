@@ -19,6 +19,7 @@ class SafeGDScriptContextMenu : public EditorContextMenuPlugin {
 	void on_selected(const Variant &p_selection, bool p_to_safe);
 	// p_at_cursor runs only the @test the caret sits in.
 	void on_run_tests(const Variant &p_selection, bool p_at_cursor);
+	void on_profile(const Variant &p_selection, bool p_enable);
 
 protected:
 	static void _bind_methods() {}
@@ -36,6 +37,7 @@ public:
 	// Runs the tests of each path and reports through the Output dock and a
 	// toast, jumping to the first failure.
 	static void run(const PackedStringArray &p_paths, const PackedStringArray &p_only);
+	static void profile(const PackedStringArray &p_paths, bool p_enable);
 	// The caret line in the visible code editor, or 0.
 	static int32_t caret_line();
 };

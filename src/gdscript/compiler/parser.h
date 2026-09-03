@@ -22,6 +22,8 @@ public:
 
 	Program parse();
 
+	const std::vector<ParseDiagnostic>& warnings() const { return m_warnings; }
+
 private:
 	struct Recovery {};
 	bool tolerant() const { return m_diagnostics != nullptr; }
@@ -126,6 +128,7 @@ private:
 	void error(const std::string& message);
 	// Reports at a position already consumed, rather than at peek().
 	void error(const std::string& message, int line, int column);
+	void warn(std::string code, std::string message, int line, int column, int width = 1);
 	void skip_newlines();
 	void consume_statement_end(const std::string& message);
 
@@ -138,6 +141,7 @@ private:
 		std::optional<RPCConfig>* rpc_config = nullptr, bool* is_abstract = nullptr,
 		bool* is_test = nullptr);
 	bool m_saw_tool = false;
+	ExportSection m_export_section;
 	void hoist_onready_initializers(Program& program);
 	std::vector<ExportArgument> parse_attribute_arguments();
 	SignalDecl parse_signal();
@@ -149,6 +153,7 @@ private:
 	std::string doc_comment_above(int p_line) const;
 
 	DiagnosticSink* m_diagnostics = nullptr;
+	std::vector<ParseDiagnostic> m_warnings;
 	std::vector<Token> m_tokens;
 	std::unordered_map<int, std::string> m_doc_comments; // line -> ## text
 	size_t m_current = 0;

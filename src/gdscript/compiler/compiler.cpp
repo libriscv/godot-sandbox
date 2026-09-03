@@ -55,6 +55,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 	m_debug_variables.clear();
 	m_line_table.entries.clear();
 	m_installed_breakpoints.clear();
+	m_warnings.clear();
 	m_class_name.clear();
 	m_base_class.clear();
 	m_base_is_path = false;
@@ -86,6 +87,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 		Parser parser(tokens);
 		parser.set_doc_comments(lexer.doc_comments());
 		Program program = parser.parse();
+		m_warnings = parser.warnings();
 
 		if (!options.base_sources.empty()) {
 			std::vector<ChainLink> links;
@@ -218,6 +220,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 				property.hint_string = global.class_name;
 			}
 			property.declaration_line = global.declaration_line;
+			property.section = global.export_section;
 			property.is_member = global.is_member();
 			property.is_static = global.is_static;
 			// Godot property usage bits: STORAGE=2, EDITOR=4, SCRIPT_VARIABLE=4096.

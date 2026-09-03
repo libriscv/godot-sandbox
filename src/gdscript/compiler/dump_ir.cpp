@@ -5,6 +5,7 @@
 #include "riscv_codegen.h"
 #include "chain.h"
 #include "traits.h"
+#include "tool_check.h"
 #include <fstream>
 #include <iostream>
 #include <variant>
@@ -60,12 +61,36 @@ std::string format_operand_detailed(const IRValue& op, const IRStringTable& stri
 	return oss.str();
 }
 
+static void print_usage(const char* program) {
+	std::cout <<
+		"Usage: " << program << " [options] [file]\n"
+		"\n"
+		"Prints the IR the SafeGDScript compiler produces. Reads the script from\n"
+		"[file], or from standard input when no file is given.\n"
+		"\n"
+		"Options:\n"
+		"  -v, --verbose          Tokens, AST summary and detailed operands\n"
+		"  -c, --codegen          Show register allocation next to each operand\n"
+		"      --no-optimize      Skip the optimizer (alias: --no-opt)\n"
+		"      --check            Diagnostics only; exit 1 when the script has errors\n"
+		"      --autoload NAME    Declare a project autoload. Repeatable\n"
+		"      --global-class N=P Declare a class_name script at res:// path P. Repeatable\n"
+		"      --base Name=path   Prepend a base script to the chain. Repeatable\n"
+		"      --trait Name=path  Make a trait from `path` available. Repeatable\n"
+		"      --double-precision Compile for a real_t = double host\n"
+		"      --single-precision Compile for a real_t = float host\n"
+		"  -h, --help             Show this text\n"
+		"\n"
+		"GDSC_PASSES=<names> selects optimizer passes; GDSC_PASSES=none disables them.\n";
+}
+
 int main(int argc, char** argv)
 {
 	std::string source;
 	bool verbose = false;
 	bool no_optimize = false;
 	bool show_codegen = false;
+	bool check_only = false;
 	bool double_precision = native_variant_layout().double_precision;
 	std::vector<std::string> autoloads;
 	std::vector<std::pair<std::string, std::string>> global_classes;
@@ -80,6 +105,11 @@ int main(int argc, char** argv)
 			no_optimize = true;
 		} else if (arg == "--codegen" || arg == "-c") {
 			show_codegen = true;
+		} else if (arg == "--check") {
+			check_only = true;
+		} else if (arg == "--help" || arg == "-h") {
+			print_usage(argv[0]);
+			return 0;
 		} else if (arg == "--autoload") {
 			if (i + 1 < argc) {
 				autoloads.push_back(argv[++i]);
@@ -121,11 +151,28 @@ int main(int argc, char** argv)
 		}
 	}
 
+	std::string source_path;
+	if (!source.empty()) {
+		std::ifstream in(source);
+		if (in) {
+			source_path = source;
+			source.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+		}
+	}
 	if (source.empty()) {
 		std::string line;
 		while (std::getline(std::cin, line)) {
 			source += line + "\n";
 		}
+	}
+
+	if (check_only) {
+		CompilerOptions options;
+		options.optimize = !no_optimize;
+		options.double_precision = double_precision;
+		options.autoloads = autoloads;
+		options.global_script_classes = global_classes;
+		return check_source(source, source_path, options);
 	}
 
 	try {

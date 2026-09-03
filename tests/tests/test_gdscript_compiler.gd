@@ -14495,11 +14495,11 @@ func after() -> void:
 	file.close()
 
 	assert_eq(SafeGDScriptLanguage.menu_items_for(PackedStringArray([with_tests])),
-		PackedStringArray(["Convert to GDScript", "Run Tests"]),
+		PackedStringArray(["Convert to GDScript", "Profile Script", "Run Tests"]),
 		"a .sgd with tests offers both")
 	assert_eq(SafeGDScriptLanguage.menu_items_for(PackedStringArray([without_tests])),
-		PackedStringArray(["Convert to GDScript"]),
-		"a .sgd without tests offers only the conversion")
+		PackedStringArray(["Convert to GDScript", "Profile Script"]),
+		"a .sgd without tests still offers the profiling toggle")
 	assert_eq(SafeGDScriptLanguage.menu_items_for(PackedStringArray(["res://x.gd"])),
 		PackedStringArray(["Convert to SafeGDScript"]),
 		"a .gd offers the other direction and no test run")
@@ -14508,14 +14508,74 @@ func after() -> void:
 
 	# Inside the test's body the caret adds the single-test item.
 	assert_eq(SafeGDScriptLanguage.menu_items_for(PackedStringArray([with_tests]), 8),
-		PackedStringArray(["Convert to GDScript", "Run Test at Cursor", "Run Tests"]),
+		PackedStringArray(["Convert to GDScript", "Profile Script", "Run Test at Cursor",
+			"Run Tests"]),
 		"a caret inside a @test offers to run just that one")
 	assert_eq(SafeGDScriptLanguage.menu_items_for(PackedStringArray([with_tests]), 4),
-		PackedStringArray(["Convert to GDScript", "Run Tests"]),
+		PackedStringArray(["Convert to GDScript", "Profile Script", "Run Tests"]),
 		"a caret in an ordinary function does not")
 
 	DirAccess.remove_absolute(with_tests)
 	DirAccess.remove_absolute(without_tests)
+
+func test_sgd_export_groups_reach_the_property_list():
+	var script := SafeGDScript.new()
+	script.set_source_code("""
+extends Node
+
+@export var plain := 1
+
+@export_category("Movement")
+@export_group("Speed", "speed_")
+@export var speed_walk := 1.0
+@export_subgroup("Limits")
+@export var speed_max := 10.0
+@export_group("Jump")
+@export var jump_height := 2.0
+
+var not_exported := 5
+""")
+	assert_eq(script.get_compile_error(), "", "the section annotations should compile")
+
+	var rows := []
+	for property in script.get_script_property_list():
+		var kind := "prop"
+		if property.usage & PROPERTY_USAGE_CATEGORY:
+			kind = "category"
+		elif property.usage & PROPERTY_USAGE_GROUP:
+			kind = "group"
+		elif property.usage & PROPERTY_USAGE_SUBGROUP:
+			kind = "subgroup"
+		rows.append("%s:%s:%s" % [kind, property.name, property.hint_string])
+
+	assert_eq(rows, [
+		"prop:plain:",
+		"category:Movement:",
+		"group:Speed:speed_",
+		"prop:speed_walk:",
+		"subgroup:Limits:",
+		"prop:speed_max:",
+		"group:Jump:",
+		"prop:jump_height:",
+		"prop:not_exported:",
+	], "each section row should head the properties declared under it")
+
+func test_sgd_a_script_can_be_rebuilt_with_profiling():
+	var script := SafeGDScript.new()
+	script.set_source_code("func work() -> int:\n\treturn 7\n")
+	assert_eq(script.get_compile_error(), "", "the script should compile")
+	assert_false(script.is_profiled_build(), "a plain build carries no instrumentation")
+
+	assert_true(script.set_profiling(true), "the profiled rebuild should succeed")
+	assert_true(script.is_profiled_build(), "the script should now be instrumented")
+	var node := Node.new()
+	node.set_script(script)
+	assert_eq(node.call("work"), 7, "an instrumented script still runs")
+	node.set_script(null)
+	node.free()
+
+	assert_true(script.set_profiling(false), "turning it off should succeed")
+	assert_false(script.is_profiled_build(), "the instrumentation should be gone")
 
 func test_sgd_the_test_under_the_caret_is_found_by_line():
 	var source := """extends Node

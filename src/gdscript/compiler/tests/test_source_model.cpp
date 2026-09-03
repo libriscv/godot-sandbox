@@ -192,6 +192,16 @@ int main() {
 	const SourceDeclaration *v = declaration_named(inferred, "v");
 	assert(v != nullptr && v->resolved_type == "Vector2");
 
+	const SourceModel engine_new = analyze_source(
+		"func go():\n\tvar cfg := ConfigFile.new()\n\treturn cfg\n", "res://engine_new.sgd");
+	const SourceDeclaration *cfg = declaration_named(engine_new, "cfg");
+	assert(cfg != nullptr && cfg->resolved_type == "ConfigFile");
+	assert(!has_code(engine_new, "UNSAFE_METHOD_ACCESS"));
+	const SourceModel local_new = analyze_source(
+		"func go(Maker):\n\tvar made := Maker.new()\n\treturn made\n", "res://local_new.sgd");
+	const SourceDeclaration *made = declaration_named(local_new, "made");
+	assert(made != nullptr && made->resolved_type.empty());
+
 	const SourceModel extended = analyze_source("extends Node2D\nfunc go():\n\tpass\n",
 		"res://extends.sgd");
 	assert(extended.declarations[0].kind == DeclarationKind::CLASS);
@@ -215,6 +225,22 @@ int main() {
 	const SourceModel unreachable = analyze_source(
 		"func go():\n\treturn 1\n\tprint(2)\n", "res://unreachable.sgd");
 	assert(warnings_with(unreachable, "UNREACHABLE_CODE") == 1);
+
+	const SourceModel qualified = analyze_source(
+		"var mode: Node.ProcessMode\nfunc go():\n\treturn mode\n", "res://qualified.sgd");
+	assert(warnings_with(qualified, "UNRESOLVED_TYPE_HINT") == 1);
+
+	const SourceModel unknown_export = analyze_source(
+		"@export_nonsense(\"a\") var x := 1\n", "res://export.sgd");
+	assert(warnings_with(unknown_export, "UNSUPPORTED_ANNOTATION") == 1);
+
+	const SourceModel known_export = analyze_source(
+		"@export_range(0, 10) var x := 1\n", "res://known.sgd");
+	assert(warnings_with(known_export, "UNSUPPORTED_ANNOTATION") == 0);
+	const SourceModel silenced = analyze_source(
+		"@warning_ignore(\"unresolved_type_hint\")\nvar mode: Node.ProcessMode\n",
+		"res://silenced.sgd");
+	assert(warnings_with(silenced, "UNRESOLVED_TYPE_HINT") == 0);
 
 	std::cout << "source model passed\n";
 }

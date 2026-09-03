@@ -9,7 +9,7 @@ namespace {
 
 constexpr uint32_t MAGIC = 0x50524753u; // "SGRP" in little endian.
 constexpr uint16_t VERSION_MAJOR = 1;
-constexpr uint16_t VERSION_MINOR = 0;
+constexpr uint16_t VERSION_MINOR = 1;
 constexpr size_t MAX_BLOB_SIZE = 16u * 1024u * 1024u;
 constexpr uint32_t MAX_RECORDS = 100000u;
 constexpr uint32_t MAX_STRING_SIZE = 1024u * 1024u;
@@ -73,6 +73,11 @@ std::vector<uint8_t> encode_property_signatures(const std::vector<PropertySignat
 		write_string(out, property.hint_string);
 		write_scalar<uint32_t>(out, property.usage);
 		write_scalar<uint32_t>(out, property.declaration_line);
+		write_string(out, property.section.category);
+		write_string(out, property.section.group);
+		write_string(out, property.section.group_prefix);
+		write_string(out, property.section.subgroup);
+		write_string(out, property.section.subgroup_prefix);
 		write_scalar<uint8_t>(out, property.is_member ? 1 : 0);
 		write_scalar<uint8_t>(out, property.is_static ? 1 : 0);
 		write_scalar<uint8_t>(out, uint8_t(property.default_kind));
@@ -111,7 +116,7 @@ bool decode_property_signatures(const uint8_t *data, size_t size,
 		return false;
 	}
 	const uint16_t minor = reader.scalar<uint16_t>();
-	if (!reader.ok || minor != VERSION_MINOR) {
+	if (!reader.ok || minor > VERSION_MINOR) {
 		return false;
 	}
 	const uint32_t count = reader.scalar<uint32_t>();
@@ -130,6 +135,13 @@ bool decode_property_signatures(const uint8_t *data, size_t size,
 		property.hint_string = reader.string();
 		property.usage = reader.scalar<uint32_t>();
 		property.declaration_line = reader.scalar<uint32_t>();
+		if (minor >= 1) {
+			property.section.category = reader.string();
+			property.section.group = reader.string();
+			property.section.group_prefix = reader.string();
+			property.section.subgroup = reader.string();
+			property.section.subgroup_prefix = reader.string();
+		}
 		const uint8_t member = reader.scalar<uint8_t>();
 		const uint8_t is_static = reader.scalar<uint8_t>();
 		const uint8_t kind = reader.scalar<uint8_t>();

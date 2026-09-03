@@ -39,12 +39,11 @@ bool SafeGDScriptPlaceholderInstance::get(const StringName &p_name, Variant &r_r
 }
 
 const GDExtensionPropertyInfo *SafeGDScriptPlaceholderInstance::get_property_list(uint32_t *r_count) const {
-	*r_count = 0;
-	for (const gdscript::PropertySignature &property : script->properties) if (property.is_member) (*r_count)++;
+	const std::vector<PropertyInfo> infos = script->member_property_infos();
+	*r_count = uint32_t(infos.size());
 	GDExtensionPropertyInfo *list = memnew_arr(GDExtensionPropertyInfo, *r_count);
-	uint32_t at = 0;
-	for (const gdscript::PropertySignature &property : script->properties) {
-		if (property.is_member) fill_property_info(list[at++], script->property_info(property));
+	for (uint32_t at = 0; at < *r_count; at++) {
+		fill_property_info(list[at], infos[at]);
 	}
 	return list;
 }

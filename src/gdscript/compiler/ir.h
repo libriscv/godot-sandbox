@@ -379,6 +379,7 @@ struct IRGlobalVar {
 	std::string getter_function;
 
 	ExportHint export_hint;
+	ExportSection export_section;
 };
 
 struct IRProgram {

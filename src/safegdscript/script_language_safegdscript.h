@@ -40,7 +40,7 @@ public:
 	// Runs every @test of each script, or only the named ones. The context
 	// menu, a tool script and the headless runner all come through here.
 	static Dictionary run_tests(const PackedStringArray &p_paths,
-			const PackedStringArray &p_only = PackedStringArray());
+			const PackedStringArray &p_only = PackedStringArray(), bool p_quiet = false);
 	// Which items a right-click on these paths offers, given the caret line in
 	// the code area (0 elsewhere). Static and editor-free so the decision can be
 	// tested without an editor; the toast and jump half cannot be.

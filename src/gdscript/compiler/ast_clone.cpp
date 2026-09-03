@@ -197,6 +197,7 @@ VarDeclStmt clone_var(const VarDeclStmt& value) {
 	out.doc_comment = value.doc_comment;
 	out.chain_link = value.chain_link;
 	out.export_hint = value.export_hint;
+	out.export_section = value.export_section;
 	if (value.setter_body) out.setter_body = std::make_unique<FunctionDecl>(clone_function(*value.setter_body));
 	if (value.getter_body) out.getter_body = std::make_unique<FunctionDecl>(clone_function(*value.getter_body));
 	out.setter_name = value.setter_name;

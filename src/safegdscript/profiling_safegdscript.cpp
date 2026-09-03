@@ -6,21 +6,16 @@
 #include "../sandbox.h"
 #include "script_instance_safegdscript.h"
 #include "script_safegdscript.h"
-#include <chrono>
 #include <functional>
 #include <unordered_map>
 #include <vector>
 
 // Defined in script_instance_safegdscript.cpp, which owns the map.
 SafeGDScript *safegdscript_for_sandbox(const Sandbox *p_sandbox);
+Sandbox *sandbox_for_safegdscript(const SafeGDScript *p_script);
 void safegdscript_for_each_sandbox(const std::function<void(SafeGDScript &, Sandbox &)> &p_callback);
 
 namespace {
-
-uint64_t nanosecond_rdtime(const riscv::Machine<RISCV_ARCH> &) {
-	const auto now = std::chrono::steady_clock::now().time_since_epoch();
-	return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
-}
 
 struct Counters {
 	uint64_t call_count = 0;
@@ -144,17 +139,36 @@ void safegdscript_sandbox_profiling_toggled(Sandbox &p_sandbox, bool p_enabled) 
 	if (script == nullptr || script->is_profiled_build() == p_enabled) {
 		return;
 	}
-	// Clock installed after rebuild; baseline below excludes init work.
+	// Rebuild installs the clock; baseline erasure below excludes init work.
 	script->compile_source_to_elf(p_enabled);
 	g_previous.erase(script);
 	g_baseline.erase(script);
 	if (!p_enabled) {
 		return;
 	}
-	p_sandbox.machine().set_rdtime(nanosecond_rdtime);
 	const std::vector<Counters> started_at = read_records(*script, p_sandbox);
 	g_previous[script] = started_at;
 	g_baseline[script] = started_at;
+}
+
+bool safegdscript_set_script_profiling(SafeGDScript &p_script, bool p_enabled) {
+	if (p_script.is_profiled_build() == p_enabled) {
+		return true;
+	}
+	p_script.compile_source_to_elf(p_enabled);
+	g_previous.erase(&p_script);
+	g_baseline.erase(&p_script);
+	if (p_script.is_profiled_build() != p_enabled) {
+		return false;
+	}
+	Sandbox *sandbox = sandbox_for_safegdscript(&p_script);
+	if (!p_enabled || sandbox == nullptr) {
+		return true;
+	}
+	const std::vector<Counters> started_at = read_records(p_script, *sandbox);
+	g_previous[&p_script] = started_at;
+	g_baseline[&p_script] = started_at;
+	return true;
 }
 
 void SafeGDScriptLanguage::_profiling_start() {

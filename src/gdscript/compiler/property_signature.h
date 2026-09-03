@@ -1,5 +1,7 @@
 #pragma once
 
+#include "export_hints.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -29,6 +31,7 @@ struct PropertySignature {
 	std::string hint_string;
 	uint32_t usage = 0;
 	uint32_t declaration_line = 0;
+	ExportSection section;
 	bool is_member = false;
 	bool is_static = false;
 	PropertyDefaultKind default_kind = PropertyDefaultKind::NONE;

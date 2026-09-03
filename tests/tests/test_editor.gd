@@ -241,6 +241,17 @@ func test_editor_completion_types_a_builtin_receiver():
 	assert_true(displays.has("length("), str(displays.size()))
 	assert_true(displays.has("x"))
 
+func test_editor_completion_types_an_engine_class_from_new():
+	var source := "func go():\n\tvar script := SafeGDScript.new()\n\tscript." + CARET
+	var displays := _displays(_complete_at(source, "res://engine_new.sgd").options)
+	assert_true(displays.has("set_profiling("), str(displays.size()))
+	assert_true(displays.has("source_code"))
+
+	var sandbox := "func go():\n\tvar sb := Sandbox.new()\n\tsb." + CARET
+	var sandbox_displays := _displays(_complete_at(sandbox, "res://engine_new.sgd").options)
+	assert_true(sandbox_displays.has("set_restrictions("), str(sandbox_displays.size()))
+	assert_true(sandbox_displays.has("restrictions"))
+
 func test_editor_completion_resolves_a_scene_path_receiver():
 	var root := Node2D.new()
 	var sprite := Sprite2D.new()

@@ -871,6 +871,8 @@ public:
 	// True when the loaded program exports its own profiling data area.
 	bool has_self_instrumentation() const;
 
+	void install_self_instrumentation_clock();
+
 	// -= Self-testing, inspection and internal functions =-
 
 	/// @brief Get the current Callable set for redirecting stdout.

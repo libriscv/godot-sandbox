@@ -1,4 +1,5 @@
 #include "compiler.h"
+#include "tool_check.h"
 #include <iostream>
 #include <iomanip>
 #include <cstdlib>
@@ -29,6 +30,34 @@ std::string run_command(const char* cmd) {
 	return result;
 }
 
+static void print_usage(const char* program) {
+	std::cout <<
+		"Usage: " << program << " [options] [file]\n"
+		"\n"
+		"Compiles SafeGDScript to a RISC-V ELF and disassembles it. Reads the script\n"
+		"from [file], or from standard input when no file is given. Disassembly needs\n"
+		"riscv64-linux-gnu-objdump on PATH.\n"
+		"\n"
+		"Options:\n"
+		"  -f, --function NAME    Disassemble only this function\n"
+		"  -o, --output PATH      Write the ELF to PATH instead of disassembling\n"
+		"  -l, --program-headers  Show `readelf -l` instead of the disassembly\n"
+		"      --no-optimize      Skip the optimizer (alias: --no-opt)\n"
+		"      --check            Diagnostics only; exit 1 when the script has errors\n"
+		"      --strip-tests      Leave @test functions out, as a shipping build does\n"
+		"      --profiling        Emit self-instrumentation (wall clock)\n"
+		"      --profiling-instructions  The same, counting instructions\n"
+		"      --autoload NAME    Declare a project autoload. Repeatable\n"
+		"      --global-class N=P Declare a class_name script at res:// path P. Repeatable\n"
+		"      --base Name=path   Prepend a base script to the chain. Repeatable\n"
+		"      --trait Name=path  Make a trait from `path` available. Repeatable\n"
+		"      --double-precision Compile for a real_t = double host\n"
+		"      --single-precision Compile for a real_t = float host\n"
+		"  -h, --help             Show this text\n"
+		"\n"
+		"GDSC_PASSES=<names> selects optimizer passes; GDSC_PASSES=none disables them.\n";
+}
+
 int main(int argc, char** argv)
 {
 	std::string source;
@@ -40,6 +69,7 @@ int main(int argc, char** argv)
 	bool double_precision = native_variant_layout().double_precision;
 	bool profiling = false;
 	bool strip_tests = false;
+	bool check_only = false;
 	ProfilingClock profiling_clock = ProfilingClock::TIME;
 	std::vector<std::string> autoloads;
 	std::vector<std::pair<std::string, std::string>> global_classes;
@@ -98,6 +128,11 @@ int main(int argc, char** argv)
 			}
 		} else if (arg == "--strip-tests") {
 			strip_tests = true;
+		} else if (arg == "--check") {
+			check_only = true;
+		} else if (arg == "--help" || arg == "-h") {
+			print_usage(argv[0]);
+			return 0;
 		} else if (arg == "--profiling") {
 			profiling = true;
 		} else if (arg == "--profiling-instructions") {
@@ -108,11 +143,30 @@ int main(int argc, char** argv)
 		}
 	}
 
+	std::string source_path;
+	if (!source.empty()) {
+		std::ifstream in(source);
+		if (in) {
+			source_path = source;
+			source.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+		}
+	}
 	if (source.empty()) {
 		std::string line;
 		while (std::getline(std::cin, line)) {
 			source += line + "\n";
 		}
+	}
+
+	if (check_only) {
+		CompilerOptions options;
+		options.optimize = !no_optimize;
+		options.double_precision = double_precision;
+		options.emit_tests = !strip_tests;
+		options.autoloads = autoloads;
+		options.global_script_classes = global_classes;
+		options.base_sources = base_sources;
+		return check_source(source, source_path, options);
 	}
 
 	try {

@@ -491,7 +491,17 @@ struct ModelBuilder {
 		}
 		if (const auto *member = dynamic_cast<const MemberCallExpr *>(expr)) {
 			const std::string receiver = type_of(member->object.get());
-			if (receiver.empty()) return {};
+			if (receiver.empty()) {
+				if (member->member_name == "new") {
+					const auto *object = dynamic_cast<const VariableExpr *>(member->object.get());
+					if (object != nullptr && lookup(object->name) < 0 &&
+							!object->name.empty() && object->name[0] >= 'A' &&
+							object->name[0] <= 'Z') {
+						return object->name;
+					}
+				}
+				return {};
+			}
 			if (member->member_name == "new") return receiver;
 			if (find_enum(receiver) != nullptr) return "int";
 			if (const StructDecl *declaration = find_struct(receiver)) {
@@ -1360,6 +1370,7 @@ SourceModel analyze_source(const std::string &source, const std::string &path,
 		tokens.clear();
 	}
 	Program program;
+	std::vector<ParseDiagnostic> parser_warnings;
 	std::vector<std::pair<int, std::string>> doc_comments = lexer.doc_comments();
 	if (!tokens.empty()) {
 		Parser parser(tokens);
@@ -1369,11 +1380,18 @@ SourceModel analyze_source(const std::string &source, const std::string &path,
 			program = parser.parse();
 		} catch (...) {
 		}
+		parser_warnings = parser.warnings();
 	}
 	if ((flags & ANALYZE_DIAGNOSTICS) != 0) {
 		for (const ParseDiagnostic &entry : sink.diagnostics) {
 			if (model.diagnostics.size() >= MAX_DIAGNOSTICS) break;
 			model.diagnostics.push_back({DiagnosticSeverity::ERROR, entry.code, entry.message,
+				path, {uint32_t(entry.line), uint32_t(entry.column), uint32_t(entry.end_line),
+				uint32_t(entry.end_column)}});
+		}
+		for (const ParseDiagnostic &entry : parser_warnings) {
+			if (model.diagnostics.size() >= MAX_DIAGNOSTICS) break;
+			model.diagnostics.push_back({DiagnosticSeverity::WARNING, entry.code, entry.message,
 				path, {uint32_t(entry.line), uint32_t(entry.column), uint32_t(entry.end_line),
 				uint32_t(entry.end_column)}});
 		}
