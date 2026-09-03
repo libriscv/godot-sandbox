@@ -1250,6 +1250,12 @@ APICALL(api_obj_uses_trait) {
 		return;
 	}
 
+	constexpr size_t MAX_TRAIT_METHOD_BYTES = 64 * 1024;
+	if (UNLIKELY(methods.size() > MAX_TRAIT_METHOD_BYTES)) {
+		ERR_PRINT("Sandbox: trait method list is too long.");
+		throw std::runtime_error("obj_uses_trait: trait method list is too long");
+	}
+
 	size_t begin = 0;
 	while (begin < methods.size()) {
 		size_t end = methods.find('\0', begin);
