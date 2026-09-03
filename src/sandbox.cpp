@@ -1504,7 +1504,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 		}
 	} deferred_records{ *this };
 
-	// Cleared per call; nested calls must not inherit the resumed frame.
+	// Cleared per call. Nested calls must not inherit a resumed frame.
 	const uint64_t entering_coroutine = this->m_resume_entry_id;
 	this->m_resume_entry_id = 0;
 	struct ResumeScope {

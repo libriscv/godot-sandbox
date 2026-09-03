@@ -2,6 +2,7 @@
 #include "script_language_safegdscript.h"
 
 #include <godot_cpp/classes/editor_file_system.hpp>
+#include <godot_cpp/classes/editor_toaster.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
 #include <godot_cpp/classes/editor_plugin_registration.hpp>
 #include <godot_cpp/classes/editor_selection.hpp>
@@ -25,7 +26,7 @@ static bool is_safegdscript_path(const String &p_path) {
 	return ext == "sgd" || ext == "safegd";
 }
 
-PackedStringArray SafeGDScriptConvertMenu::script_paths_of(const Variant &p_selection) {
+PackedStringArray SafeGDScriptContextMenu::script_paths_of(const Variant &p_selection) {
 	PackedStringArray paths;
 	switch (p_selection.get_type()) {
 		case Variant::PACKED_STRING_ARRAY:
@@ -54,40 +55,89 @@ PackedStringArray SafeGDScriptConvertMenu::script_paths_of(const Variant &p_sele
 	return paths;
 }
 
-void SafeGDScriptConvertMenu::_popup_menu(const PackedStringArray &p_paths) {
-	PackedStringArray paths = p_paths;
-	if (slot == CONTEXT_SLOT_SCENE_TREE) {
-		// p_paths are node paths; the selection itself is cheaper to read.
-		paths = script_paths_of(EditorInterface::get_singleton()->get_selection()->get_selected_nodes());
+// The caret in the visible script editor. The code-area slot right-clicks
+// inside the text, so "the test under the cursor" is a line number away.
+int32_t SafeGDScriptContextMenu::caret_line() {
+	EditorInterface *editor = EditorInterface::get_singleton();
+	ScriptEditor *script_editor = editor ? editor->get_script_editor() : nullptr;
+	if (script_editor == nullptr) {
+		return 0;
 	}
-	bool to_safe = false;
-	bool to_gd = false;
-	for (int64_t i = 0; i < paths.size(); i++) {
-		// A built-in script ("res://s.tscn::GDScript_x") has no file to rename.
-		if (paths[i].contains("::")) {
-			continue;
+	const TypedArray<ScriptEditorBase> editors = script_editor->get_open_script_editors();
+	for (int64_t i = 0; i < editors.size(); i++) {
+		ScriptEditorBase *base = Object::cast_to<ScriptEditorBase>(editors[i]);
+		TextEdit *text = base ? Object::cast_to<TextEdit>(base->get_base_editor()) : nullptr;
+		if (text != nullptr && base->is_visible()) {
+			return text->get_caret_line() + 1;
 		}
-		to_safe = to_safe || is_gdscript_path(paths[i]);
-		to_gd = to_gd || is_safegdscript_path(paths[i]);
 	}
-	if (!to_safe && !to_gd) {
+	return 0;
+}
+
+void SafeGDScriptContextMenu::_popup_menu(const PackedStringArray &p_paths) {
+	PackedStringArray paths = slot_paths(p_paths);
+	// The code area right-clicks inside one open script; every other slot acts
+	// on a selection, where a caret means nothing.
+	const int32_t caret = slot == CONTEXT_SLOT_SCRIPT_EDITOR_CODE ? caret_line() : 0;
+	const PackedStringArray items = SafeGDScriptLanguage::menu_items_for(paths, caret);
+	if (items.is_empty()) {
 		return;
 	}
 	Ref<Theme> theme = EditorInterface::get_singleton()->get_editor_theme();
-	if (to_safe) {
-		add_context_menu_item("Convert to SafeGDScript",
-				callable_mp(this, &SafeGDScriptConvertMenu::on_selected).bind(true),
-				theme->get_icon("SafeGDScript", "EditorIcons"));
-	}
-	if (to_gd) {
-		add_context_menu_item("Convert to GDScript",
-				callable_mp(this, &SafeGDScriptConvertMenu::on_selected).bind(false),
-				theme->get_icon("GDScript", "EditorIcons"));
+	for (int64_t i = 0; i < items.size(); i++) {
+		const String item = items[i];
+		if (item == "Convert to SafeGDScript") {
+			add_context_menu_item(item,
+					callable_mp(this, &SafeGDScriptContextMenu::on_selected).bind(true),
+					theme->get_icon("SafeGDScript", "EditorIcons"));
+		} else if (item == "Convert to GDScript") {
+			add_context_menu_item(item,
+					callable_mp(this, &SafeGDScriptContextMenu::on_selected).bind(false),
+					theme->get_icon("GDScript", "EditorIcons"));
+		} else if (item == "Run Test at Cursor") {
+			add_context_menu_item(item,
+					callable_mp(this, &SafeGDScriptContextMenu::on_run_tests).bind(true),
+					theme->get_icon("Play", "EditorIcons"));
+		} else if (item == "Run Tests") {
+			add_context_menu_item(item,
+					callable_mp(this, &SafeGDScriptContextMenu::on_run_tests).bind(false),
+					theme->get_icon("Play", "EditorIcons"));
+		}
 	}
 }
 
-void SafeGDScriptConvertMenu::on_selected(const Variant &p_selection, bool p_to_safe) {
-	convert(script_paths_of(p_selection), p_to_safe);
+PackedStringArray SafeGDScriptContextMenu::slot_paths(const Variant &p_selection) const {
+	EditorInterface *editor = EditorInterface::get_singleton();
+	if (slot == CONTEXT_SLOT_SCRIPT_EDITOR_CODE) {
+		PackedStringArray paths;
+		ScriptEditor *script_editor = editor ? editor->get_script_editor() : nullptr;
+		Ref<Script> current = script_editor ? script_editor->get_current_script() : Ref<Script>();
+		if (current.is_valid() && !current->get_path().is_empty()) {
+			paths.push_back(current->get_path());
+		}
+		return paths;
+	}
+	if (slot == CONTEXT_SLOT_SCENE_TREE) {
+		return script_paths_of(editor->get_selection()->get_selected_nodes());
+	}
+	return script_paths_of(p_selection);
+}
+
+void SafeGDScriptContextMenu::on_selected(const Variant &p_selection, bool p_to_safe) {
+	convert(slot_paths(p_selection), p_to_safe);
+}
+
+void SafeGDScriptContextMenu::on_run_tests(const Variant &p_selection, bool p_at_cursor) {
+	const PackedStringArray paths = slot_paths(p_selection);
+	PackedStringArray only;
+	if (p_at_cursor && paths.size() == 1) {
+		const String name = SafeGDScriptLanguage::test_at_line(
+				FileAccess::get_file_as_string(paths[0]), caret_line());
+		if (!name.is_empty()) {
+			only.push_back(name);
+		}
+	}
+	run(paths, only);
 }
 
 // The text of the visible tab. Script::source_code lags behind it for @tool
@@ -106,7 +156,7 @@ static String live_source(ScriptEditor *p_editor, const Ref<Script> &p_script) {
 	return p_script->get_source_code();
 }
 
-void SafeGDScriptConvertMenu::convert(const PackedStringArray &p_paths, bool p_to_safe) {
+void SafeGDScriptContextMenu::convert(const PackedStringArray &p_paths, bool p_to_safe) {
 	EditorInterface *editor = EditorInterface::get_singleton();
 	ScriptEditor *script_editor = editor->get_script_editor();
 	ResourceLoader *loader = ResourceLoader::get_singleton();
@@ -188,18 +238,106 @@ void SafeGDScriptConvertMenu::convert(const PackedStringArray &p_paths, bool p_t
 	}
 }
 
+// Runs the tests and brings the editor along: the Output dock already has the
+// per-test lines from the runner's own summary, so what is added here is a
+// toast and a jump to the first failure.
+void SafeGDScriptContextMenu::run(const PackedStringArray &p_paths,
+		const PackedStringArray &p_only) {
+	EditorInterface *editor = EditorInterface::get_singleton();
+	ScriptEditor *script_editor = editor ? editor->get_script_editor() : nullptr;
+	ResourceLoader *loader = ResourceLoader::get_singleton();
+
+	PackedStringArray paths;
+	for (int64_t i = 0; i < p_paths.size(); i++) {
+		const String path = p_paths[i];
+		if (path.contains("::") || paths.has(path)) {
+			continue;
+		}
+		const String ext = path.get_extension().to_lower();
+		if (ext != "sgd" && ext != "safegd") {
+			continue;
+		}
+		paths.push_back(path);
+
+		// Tests run against what the user sees, not what is on disk.
+		if (script_editor != nullptr && loader->has_cached(path)) {
+			Ref<Script> open = loader->load(path);
+			if (open.is_valid() && script_editor->get_open_scripts().has(open)) {
+				const String live = live_source(script_editor, open);
+				if (live != open->get_source_code()) {
+					open->set_source_code(live);
+					open->reload(true);
+				}
+			}
+		}
+	}
+	if (paths.is_empty()) {
+		return;
+	}
+
+	const Dictionary total = SafeGDScriptLanguage::run_tests(paths, p_only);
+	const int64_t passed = total.get("passed", int64_t(0));
+	const int64_t failed = total.get("failed", int64_t(0));
+	const int64_t errors = total.get("errors", int64_t(0));
+
+	// The first failing row decides where the editor lands.
+	String first_message;
+	String jump_path;
+	int32_t jump_line = -1;
+	const Array scripts = total.get("scripts", Array());
+	for (int64_t i = 0; i < scripts.size() && jump_path.is_empty(); i++) {
+		const Dictionary report = scripts[i];
+		const Array rows = report.get("tests", Array());
+		for (int64_t j = 0; j < rows.size(); j++) {
+			const Dictionary row = rows[j];
+			const String status = row.get("status", String());
+			if (status == "passed") {
+				continue;
+			}
+			first_message = row.get("message", String());
+			jump_path = report.get("path", String());
+			// "res://player.sgd:14" when the line table knew; otherwise the
+			// test's own declaration line.
+			const String location = row.get("location", String());
+			const int colon = location.rfind(":");
+			const String suffix = colon > 0 ? location.substr(colon + 1) : String();
+			jump_line = suffix.is_valid_int() ? suffix.to_int() : int32_t(row.get("line", 0));
+			break;
+		}
+	}
+
+	const String summary = (paths.size() == 1 ? paths[0].get_file() : itos(paths.size()) +
+			String(" scripts")) + ": " + itos(passed) + " passed, " + itos(failed) +
+			" failed" + (errors > 0 ? String(", ") + itos(errors) + " errors" : String());
+	EditorToaster *toaster = editor != nullptr ? editor->get_editor_toaster() : nullptr;
+	if (toaster != nullptr) {
+		toaster->push_toast(summary, failed > 0 || errors > 0
+				? EditorToaster::SEVERITY_ERROR : EditorToaster::SEVERITY_INFO,
+				first_message);
+	}
+
+	if (!jump_path.is_empty() && editor != nullptr) {
+		Ref<Script> script = loader->load(jump_path, "SafeGDScript");
+		if (script.is_valid()) {
+			editor->edit_script(script, jump_line > 0 ? jump_line : -1);
+		}
+	}
+}
+
 void SafeGDScriptLanguage::editor_convert_scripts(const PackedStringArray &p_paths, bool p_to_safe) {
 	ERR_FAIL_NULL_MSG(EditorInterface::get_singleton(), "editor_convert_scripts() needs the editor.");
-	SafeGDScriptConvertMenu::convert(p_paths, p_to_safe);
+	SafeGDScriptContextMenu::convert(p_paths, p_to_safe);
 }
 
 void SafeGDScriptEditorPlugin::_enter_tree() {
-	static constexpr EditorContextMenuPlugin::ContextMenuSlot slots[3] = {
+	static constexpr EditorContextMenuPlugin::ContextMenuSlot slots[4] = {
 		EditorContextMenuPlugin::CONTEXT_SLOT_SCENE_TREE,
 		EditorContextMenuPlugin::CONTEXT_SLOT_FILESYSTEM,
 		EditorContextMenuPlugin::CONTEXT_SLOT_SCRIPT_EDITOR,
+		// Right-click inside the code: one path, and a caret to read.
+		EditorContextMenuPlugin::CONTEXT_SLOT_SCRIPT_EDITOR_CODE,
 	};
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < 4; i++) {
 		menus[i].instantiate();
 		menus[i]->set_slot(slots[i]);
 		add_context_menu_plugin(slots[i], menus[i]);
@@ -211,7 +349,7 @@ void SafeGDScriptEditorPlugin::_enter_tree() {
 }
 
 void SafeGDScriptEditorPlugin::_exit_tree() {
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < 4; i++) {
 		if (menus[i].is_valid()) {
 			remove_context_menu_plugin(menus[i]);
 			menus[i].unref();
@@ -227,7 +365,7 @@ void SafeGDScriptEditorPlugin::_exit_tree() {
 
 void SafeGDScriptEditorPlugin::register_types() {
 	ClassDB::register_class<SafeGDScriptSyntaxHighlighter>();
-	ClassDB::register_internal_class<SafeGDScriptConvertMenu>();
+	ClassDB::register_internal_class<SafeGDScriptContextMenu>();
 	ClassDB::register_internal_class<SafeGDScriptEditorPlugin>();
 	EditorPlugins::add_by_type<SafeGDScriptEditorPlugin>();
 }

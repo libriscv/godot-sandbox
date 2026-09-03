@@ -14154,3 +14154,456 @@ func test_sgd_a_static_call_follows_a_recompile():
 	script.set_source_code("static func answer():\n\treturn 2\n")
 	assert_eq(script.get_compile_error(), "", "the second version should compile")
 	assert_eq(script.call("answer"), 2, "and the recompiled program should answer after it")
+
+# -= @test =-
+#
+# A `.sgd` marks an argless top-level func with @test; the compiler publishes it
+# as a test case and SafeGDScript.run_tests() calls each one on a fresh instance.
+# A test fails the way any guest code fails: assert() throws, the Sandbox counts
+# the exception, and the runner reads the counter.
+
+func _sgd_declares(script: SafeGDScript, name: String) -> bool:
+	# has_method() on a Script resource asks the resource's own ClassDB methods;
+	# the script's declared functions are in its method list.
+	for method in script.get_script_method_list():
+		if method["name"] == name:
+			return true
+	return false
+
+func _sgd_with_tests(source: String) -> SafeGDScript:
+	var script := SafeGDScript.new()
+	script.set_source_code(source)
+	assert_eq(script.get_compile_error(), "", "the test script should compile")
+	return script
+
+func test_sgd_test_functions_are_published():
+	var script := _sgd_with_tests("""
+func helper() -> int:
+	return 7
+
+@test
+func helper_answers_seven():
+	assert(helper() == 7)
+
+@test
+## Documented case.
+func documented_case():
+	pass
+""")
+	assert_eq(script.get_test_functions(),
+		PackedStringArray(["helper_answers_seven", "documented_case"]),
+		"the tests are published in declaration order")
+	assert_eq(script.get_test_lines(), PackedInt32Array([6, 11]),
+		"each test carries the line of its 'func' token")
+	assert_true(_sgd_declares(script, "helper_answers_seven"),
+		"a @test function is still an ordinary method")
+	assert_true(_sgd_declares(script, "helper"), "the helper is untouched")
+
+func test_sgd_run_tests_reports_pass_fail_and_error():
+	var script := _sgd_with_tests("""
+@test
+func passes():
+	assert(1 + 1 == 2)
+
+@test
+func fails():
+	assert(false, "two is not three")
+
+@test
+func reads_past_the_end():
+	var values := []
+	assert(values[3] == 1)
+""")
+	var report := script.run_tests()
+	assert_eq(report["passed"], 1, "one test passes")
+	assert_eq(report["failed"], 2, "the assertion and the guest error both fail")
+	assert_eq(report["errors"], 0, "the runner could run all three")
+	assert_eq(report["path"], script.resource_path, "the report names the script")
+
+	var rows: Array = report["tests"]
+	assert_eq(rows.size(), 3, "one row per test")
+	assert_eq(rows[0]["name"], "passes")
+	assert_eq(rows[0]["status"], "passed")
+	assert_eq(rows[0]["message"], "", "a passing test reports no message")
+
+	assert_eq(rows[1]["name"], "fails")
+	assert_eq(rows[1]["status"], "failed")
+	assert_true(rows[1]["message"].contains("two is not three"),
+		"the assertion message reaches the report: " + str(rows[1]["message"]))
+	assert_eq(rows[2]["status"], "failed", "a guest error fails the same way")
+	assert_true(rows[2]["message"].contains("Array index out of bounds"),
+		"and carries the guest's own message: " + str(rows[2]["message"]))
+
+	# GUT 9.6 fails a test on any engine error nobody claimed.
+	assert_engine_error("Sandbox exception in assert: two is not three")
+	assert_engine_error("Exception: Sandbox exception in assert: two is not three")
+	assert_engine_error("Array index out of bounds: 3")
+	assert_engine_error("Exception: Array index out of bounds: 3")
+
+func test_sgd_run_tests_uses_a_fresh_instance_per_test():
+	var script := _sgd_with_tests("""
+var counter: int = 0
+
+@test
+func a_mutates_the_member():
+	counter += 41
+	assert(counter == 41)
+
+@test
+func b_sees_the_declared_default():
+	assert(counter == 0)
+""")
+	var report := script.run_tests()
+	assert_eq(report["failed"], 0,
+		"each test runs on its own instance record, so the member starts at its default")
+	assert_eq(report["passed"], 2)
+
+func test_sgd_run_tests_runs_init_but_not_ready():
+	var script := _sgd_with_tests("""
+extends Node
+
+var from_init: int = 0
+var from_ready: int = 0
+
+func _init():
+	from_init = 1
+
+func _ready():
+	from_ready = 1
+
+@test
+func init_ran_and_ready_did_not():
+	assert(from_init == 1, "_init runs for every test instance")
+	assert(from_ready == 0, "the owner is never added to a tree")
+""")
+	var report := script.run_tests()
+	assert_eq(report["failed"], 0, "the runner runs _init() but no tree notifications")
+	assert_eq(report["passed"], 1)
+
+func test_sgd_run_tests_filters_by_name():
+	var script := _sgd_with_tests("""
+@test
+func wanted():
+	pass
+
+@test
+func unwanted():
+	assert(false, "this one must not run")
+""")
+	var report := script.run_tests(PackedStringArray(["wanted"]))
+	assert_eq(report["passed"], 1, "only the named test runs")
+	assert_eq(report["failed"], 0, "the other one is not called")
+	assert_eq(report["tests"].size(), 1, "and gets no row")
+
+func test_sgd_run_tests_reports_an_unknown_name_as_an_error():
+	var script := _sgd_with_tests("@test\nfunc known():\n\tpass\n")
+	var report := script.run_tests(PackedStringArray(["typo"]))
+	assert_eq(report["errors"], 1, "an unknown name is reported, not silently skipped")
+	assert_eq(report["passed"], 0, "and no test runs")
+	assert_eq(report["tests"][0]["status"], "error")
+	assert_eq(report["tests"][0]["name"], "typo")
+
+func test_sgd_run_tests_times_out_a_runaway_test():
+	var script := _sgd_with_tests("""
+@test
+func loops_forever():
+	while true:
+		pass
+""")
+	# The budget belongs to the shared machine; a bootstrap owner is the only
+	# way to reach it before the runner makes its own owners.
+	var owner := Sandbox.new()
+	owner.set_script(script)
+	owner.set("execution_timeout", 10)
+
+	var report := script.run_tests()
+	assert_eq(report["failed"], 1, "a runaway test ends as a failure, not a hang")
+	assert_true(report["tests"][0]["message"].contains("Guest timeout"),
+		"and says so: " + str(report["tests"][0]["message"]))
+
+	owner.set_script(null)
+	owner.free()
+
+func test_sgd_run_tests_reports_a_compile_error_as_one_row():
+	var script := SafeGDScript.new()
+	script.set_source_code("@test\nfunc broken():\n\treturn ??\n")
+	assert_ne(script.get_compile_error(), "", "the source should not compile")
+	var report := script.run_tests()
+	assert_eq(report["errors"], 1, "a script that did not compile reports one error row")
+	assert_eq(report["tests"][0]["name"], "(compile)")
+	assert_ne(report["tests"][0]["message"], "", "carrying the compiler's message")
+	assert_engine_error("[Parser Error] Expected expression")
+
+func test_sgd_restricted_script_tests_run_restricted():
+	# A restricted script's tests see the allowlists the script itself sees:
+	# they run on the same restricted machine.
+	var script := SafeGDScript.new()
+	script.set_source_code("func __bootstrap():\n\tpass\n")
+	var owner := Node.new()
+	owner.set_script(script)
+	owner.set("restrictions", true)
+	script.set_source_code("""
+@test
+func creating_a_node_is_refused():
+	var n = Node.new()
+	assert(n != null)
+""")
+	assert_eq(script.get_compile_error(), "", "the restricted script should compile")
+
+	var report := script.run_tests()
+	assert_eq(report["failed"], 1, "Node.new() is refused under restrictions")
+	owner.set_script(null)
+	owner.free()
+	assert_engine_error("Class name is not allowed")
+	assert_engine_error("Exception: Class name is not allowed")
+
+	# Without restrictions the same test passes.
+	var free_script := _sgd_with_tests("""
+@test
+func creating_a_node_is_allowed():
+	var n = Node.new()
+	assert(n != null)
+""")
+	assert_eq(free_script.run_tests()["passed"], 1,
+		"the same test passes on an unrestricted script")
+
+func test_sgd_a_restricted_script_builds_its_test_machine_restricted():
+	var script := SafeGDScript.new()
+	script.set_source_code("func __bootstrap():\n\tpass\n")
+	var owner := Node.new()
+	owner.set_script(script)
+	owner.set("restrictions", true)
+	script.set_source_code("""
+@test
+func creating_a_node_is_refused():
+	var n = Node.new()
+	assert(n != null)
+""")
+	assert_eq(script.get_compile_error(), "", "the restricted script should compile")
+	owner.set_script(null)
+	owner.free()
+
+	var report := script.run_tests()
+	assert_eq(report["failed"], 1, "the machine the run built is restricted too")
+	assert_engine_error("Class name is not allowed")
+	assert_engine_error("Exception: Class name is not allowed")
+
+func test_sgd_run_tests_leaves_instantiation_as_it_found_it():
+	var script := _sgd_with_tests("@test\nfunc trivial():\n\tpass\n")
+	var before := script.can_instantiate()
+	assert_eq(script.run_tests()["passed"], 1)
+	assert_eq(script.can_instantiate(), before,
+		"the runner's live-instance guard is scoped to the run")
+	# And an ordinary attach still works afterwards.
+	var node := Node.new()
+	node.set_script(script)
+	assert_eq(node.get_script(), script, "the script still attaches normally")
+	node.set_script(null)
+	node.free()
+
+func test_sgd_a_static_test_runs():
+	var script := _sgd_with_tests("""
+@test
+static func math_is_math():
+	assert(2 * 3 == 6)
+""")
+	assert_eq(script.run_tests()["passed"], 1, "a static @test runs on the per-test instance")
+
+func test_sgd_a_test_on_a_named_class_runs():
+	var script := _sgd_with_tests("""
+class_name SgdTestedActor
+extends Node
+
+var health: int = 100
+
+@test
+func health_starts_full():
+	assert(health == 100)
+""")
+	var report := script.run_tests()
+	assert_eq(report["passed"], 1, "class_name/extends do not change how a test runs")
+	assert_eq(report["failed"], 0)
+
+func test_sgd_shipping_build_strips_tests():
+	var script := _sgd_with_tests("""
+func helper() -> int:
+	return 7
+
+@test
+func helper_answers_seven():
+	assert(helper() == 7)
+""")
+	assert_eq(script.get_test_functions().size(), 1, "the normal build publishes the test")
+	assert_true(script.compile_shipping(), "the shipping build should compile")
+	assert_eq(script.get_test_functions(), PackedStringArray(),
+		"a shipping build publishes no tests")
+	assert_false(_sgd_declares(script, "helper_answers_seven"),
+		"and the test function is not in the ELF at all")
+	assert_true(_sgd_declares(script, "helper"), "while the rest of the script is unchanged")
+	assert_eq(script.run_tests()["tests"].size(), 0, "so there is nothing to run")
+
+func test_sgd_the_compiler_publishes_the_test_table():
+	# The guest entry point the host probes with has_function(). An older
+	# gdscript.elf simply lacks it and the host reports no tests.
+	var ts: Sandbox = Sandbox.new()
+	ts.set_program(Sandbox_TestsTests)
+	assert_true(ts.has_function("get_test_signatures"),
+		"the compiler ELF exports the test table")
+	assert_true(ts.has_function("set_emit_tests"),
+		"and the switch a shipping build turns off")
+
+	# An empty table still encodes a header, so a script with no @test is the
+	# baseline an empty table is compared against.
+	ts.vmcall("compile", "func helper():\n\treturn 1\n")
+	var empty_table: int = ts.vmcall("get_test_signatures").size()
+
+	var source := "func helper():\n\treturn 1\n@test\nfunc checks():\n\tassert(helper() == 1)\n"
+	var elf: PackedByteArray = ts.vmcall("compile", source)
+	assert_gt(elf.size(), 0, "the script should compile")
+	assert_gt(ts.vmcall("get_test_signatures").size(), empty_table,
+		"and publish a test table")
+
+	ts.vmcall("set_emit_tests", false)
+	var stripped: PackedByteArray = ts.vmcall("compile", source)
+	assert_gt(stripped.size(), 0, "the shipping build should compile too")
+	assert_eq(ts.vmcall("get_test_signatures").size(), empty_table, "with no test table")
+	assert_lt(stripped.size(), elf.size(), "and a smaller program")
+	ts.vmcall("set_emit_tests", true)
+	ts.queue_free()
+
+func test_sgd_the_context_menu_offers_run_tests():
+	# The editor half (toast, jump, live text) needs an editor; the decision of
+	# which items a right-click offers does not, and is what this pins down.
+	var with_tests := "user://temp_menu_with_tests.sgd"
+	var without_tests := "user://temp_menu_without_tests.sgd"
+	var file := FileAccess.open(with_tests, FileAccess.WRITE)
+	file.store_string("""extends Node
+
+func helper() -> int:
+	return 1
+
+@test
+func checks_helper():
+	assert(helper() == 1)
+
+func after() -> void:
+	pass
+""")
+	file.close()
+	file = FileAccess.open(without_tests, FileAccess.WRITE)
+	file.store_string("func plain():\n\tpass\n")
+	file.close()
+
+	assert_eq(SafeGDScriptLanguage.menu_items_for(PackedStringArray([with_tests])),
+		PackedStringArray(["Convert to GDScript", "Run Tests"]),
+		"a .sgd with tests offers both")
+	assert_eq(SafeGDScriptLanguage.menu_items_for(PackedStringArray([without_tests])),
+		PackedStringArray(["Convert to GDScript"]),
+		"a .sgd without tests offers only the conversion")
+	assert_eq(SafeGDScriptLanguage.menu_items_for(PackedStringArray(["res://x.gd"])),
+		PackedStringArray(["Convert to SafeGDScript"]),
+		"a .gd offers the other direction and no test run")
+	assert_eq(SafeGDScriptLanguage.menu_items_for(PackedStringArray(["res://s.tscn::SafeGDScript_x"])),
+		PackedStringArray(), "a built-in script has no file to act on")
+
+	# Inside the test's body the caret adds the single-test item.
+	assert_eq(SafeGDScriptLanguage.menu_items_for(PackedStringArray([with_tests]), 8),
+		PackedStringArray(["Convert to GDScript", "Run Test at Cursor", "Run Tests"]),
+		"a caret inside a @test offers to run just that one")
+	assert_eq(SafeGDScriptLanguage.menu_items_for(PackedStringArray([with_tests]), 4),
+		PackedStringArray(["Convert to GDScript", "Run Tests"]),
+		"a caret in an ordinary function does not")
+
+	DirAccess.remove_absolute(with_tests)
+	DirAccess.remove_absolute(without_tests)
+
+func test_sgd_the_test_under_the_caret_is_found_by_line():
+	var source := """extends Node
+
+func helper() -> int:
+	return 1
+
+@test
+## Doc comment above the func.
+func first_case():
+	assert(helper() == 1)
+
+@test
+static func second_case():
+	assert(true)
+
+func trailing() -> void:
+	pass
+"""
+	assert_eq(SafeGDScriptLanguage.test_at_line(source, 1), "",
+		"above every test there is none")
+	assert_eq(SafeGDScriptLanguage.test_at_line(source, 4), "",
+		"an ordinary function is not a test")
+	assert_eq(SafeGDScriptLanguage.test_at_line(source, 6), "first_case",
+		"the annotation line belongs to the test it annotates")
+	assert_eq(SafeGDScriptLanguage.test_at_line(source, 9), "first_case",
+		"and so does the body")
+	assert_eq(SafeGDScriptLanguage.test_at_line(source, 13), "second_case",
+		"a static test is found the same way")
+	assert_eq(SafeGDScriptLanguage.test_at_line(source, 16), "",
+		"the function after the last test is outside every region")
+
+	var stacked := """extends Node
+
+@test func on_one_line():
+	assert(true)
+
+@warning_ignore("unused_variable") @test func after_another():
+	assert(true)
+
+func trailing() -> void:
+	pass
+"""
+	assert_eq(SafeGDScriptLanguage.test_at_line(stacked, 3), "on_one_line",
+		"an annotation sharing the func's line still names the test")
+	assert_eq(SafeGDScriptLanguage.test_at_line(stacked, 4), "on_one_line",
+		"and its body belongs to it")
+	assert_eq(SafeGDScriptLanguage.test_at_line(stacked, 6), "after_another",
+		"a test annotation behind another one is still found")
+	assert_eq(SafeGDScriptLanguage.test_at_line(stacked, 10), "",
+		"a plain function after it is outside every region")
+
+func test_sgd_language_run_tests_aggregates_across_scripts():
+	var passing := "user://temp_agg_passing.sgd"
+	var failing := "user://temp_agg_failing.sgd"
+	var file := FileAccess.open(passing, FileAccess.WRITE)
+	file.store_string("@test\nfunc ok():\n\tassert(1 == 1)\n")
+	file.close()
+	file = FileAccess.open(failing, FileAccess.WRITE)
+	file.store_string("@test\nfunc bad():\n\tassert(false, \"aggregate failure\")\n")
+	file.close()
+
+	var total := SafeGDScriptLanguage.run_tests(PackedStringArray([passing, failing]))
+	assert_eq(total["passed"], 1, "the passing script contributes one pass")
+	assert_eq(total["failed"], 1, "the failing one contributes one failure")
+	assert_eq(total["errors"], 0)
+	assert_eq(total["scripts"].size(), 2, "one report per script, in order")
+	assert_eq(total["scripts"][0]["path"], passing)
+	assert_eq(total["scripts"][1]["tests"][0]["location"], failing + ":3",
+		"the failing line comes from the line table")
+
+	var missing := SafeGDScriptLanguage.run_tests(PackedStringArray(["user://not_here.sgd"]))
+	assert_eq(missing["errors"], 1, "a path that will not load is one error row")
+
+	DirAccess.remove_absolute(passing)
+	DirAccess.remove_absolute(failing)
+	assert_engine_error("Sandbox exception in assert: aggregate failure")
+	assert_engine_error("Exception: Sandbox exception in assert: aggregate failure")
+
+func test_sgd_the_headless_runner_reports_through_its_exit_code():
+	# The documented CI path, run the way CI runs it.
+	var godot := OS.get_executable_path()
+	var project := ProjectSettings.globalize_path("res://")
+	var output := []
+	var code := OS.execute(godot, [
+		"--headless", "--path", project,
+		"-s", "addons/godot_sandbox/run_sgd_tests.gd",
+		"--", "tests/sgd_tests_sample.sgd"], output, true)
+	assert_eq(code, 0, "the sample script's tests pass:\n" + "\n".join(output))
+	assert_true("\n".join(output).contains("2 passed, 0 failed, 0 errors"),
+		"and the runner says so on one line")

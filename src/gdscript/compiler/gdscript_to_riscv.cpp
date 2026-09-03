@@ -39,6 +39,7 @@ int main(int argc, char** argv)
 	std::string output_elf_path;
 	bool double_precision = native_variant_layout().double_precision;
 	bool profiling = false;
+	bool strip_tests = false;
 	ProfilingClock profiling_clock = ProfilingClock::TIME;
 	std::vector<std::string> autoloads;
 	std::vector<std::pair<std::string, std::string>> global_classes;
@@ -95,6 +96,8 @@ int main(int argc, char** argv)
 					std::istreambuf_iterator<char>());
 				base_sources.push_back(std::move(base));
 			}
+		} else if (arg == "--strip-tests") {
+			strip_tests = true;
 		} else if (arg == "--profiling") {
 			profiling = true;
 		} else if (arg == "--profiling-instructions") {
@@ -121,6 +124,8 @@ int main(int argc, char** argv)
 		options.optimize = !no_optimize;
 		options.double_precision = double_precision;
 		options.profiling = profiling;
+		// What a shipping build produces: no @test function reaches codegen.
+		options.emit_tests = !strip_tests;
 		options.profiling_clock = profiling_clock;
 		options.autoloads = autoloads;
 		options.global_script_classes = global_classes;

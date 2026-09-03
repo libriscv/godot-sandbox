@@ -38,6 +38,9 @@ struct CompilerOptions {
 	// 1-based lines to break on. Non-empty implies debug_info.
 	std::vector<uint32_t> breakpoint_lines;
 	bool restricted = false;
+	// `@test` functions are compiled in and published. A shipping build turns
+	// this off: the tests leave the ELF entirely.
+	bool emit_tests = true;
 	// Exact-key checks at host/untyped boundaries. Restricted compilation always
 	// enables at least SHAPE. DEEP additionally validates typed field values.
 	StructChecks struct_checks = StructChecks::SHAPE;
@@ -82,6 +85,8 @@ public:
 	const std::vector<FunctionSignature> &get_function_signatures() const { return m_signatures; }
 	const std::vector<FunctionSignature> &get_signal_signatures() const { return m_signals; }
 	const std::vector<RPCConfig> &get_rpc_configs() const { return m_rpc_configs; }
+	// Argless top-level @test functions. Empty when emit_tests was off.
+	const std::vector<FunctionSignature> &get_test_signatures() const { return m_tests; }
 	const std::vector<ClassSignature> &get_class_signatures() const { return m_class_signatures; }
 	const std::vector<std::string> &get_script_uses() const { return m_script_uses; }
 	const std::vector<ScriptConstant> &get_script_constants() const { return m_constants; }
@@ -103,6 +108,7 @@ private:
 	std::vector<FunctionSignature> m_signatures;
 	std::vector<FunctionSignature> m_signals;
 	std::vector<RPCConfig> m_rpc_configs;
+	std::vector<FunctionSignature> m_tests;
 	std::vector<ClassSignature> m_class_signatures;
 	std::vector<std::string> m_script_uses;
 	std::vector<ScriptConstant> m_constants;

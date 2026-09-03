@@ -1,0 +1,17 @@
+extends Node
+## Sample script for the headless @test runner.
+
+var health: int = 100
+
+func clamp_health(value: int) -> int:
+	return clampi(value, 0, 100)
+
+@test
+func health_is_clamped_from_both_sides():
+	assert(clamp_health(-5) == 0, "negative health floors at 0")
+	assert(clamp_health(500) == 100)
+
+@test
+## Members are re-initialised for every test, so this sees the declared default.
+func members_start_at_declared_defaults():
+	assert(health == 100)

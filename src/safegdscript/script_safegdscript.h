@@ -98,6 +98,11 @@ public:
 	bool compile_source_to_elf(bool p_profiling = false, bool p_debug = false,
 			ReloadPolicy p_reload_policy = ReloadPolicy::DISCARD_STATE,
 			bool p_shipping = false);
+	// The exported-build compile: no profiling, no debug info, no @test
+	// functions. Bound so a project (and the test suite) can ask for one.
+	bool compile_shipping() {
+		return compile_source_to_elf(false, false, ReloadPolicy::DISCARD_STATE, true);
+	}
 	String bake_translation();
 	bool is_translation_baked() const;
 	int64_t get_translation_hash() const;
@@ -132,6 +137,19 @@ public:
 	static PackedStringArray get_stopped_backtrace();
 	// Safe to call from the breakpoint_hit handler (same thread).
 	static void debug_continue();
+
+	// -= @test =-
+	// Names of the argless @test functions, in declaration order, and the line
+	// each is declared on. Empty for a shipping build, which drops them.
+	PackedStringArray get_test_functions() const { return test_functions; }
+	PackedInt32Array get_test_lines() const { return test_lines; }
+	// Runs each test on a fresh instance of the declared base type, in
+	// declaration order. Empty filter = every test. See the plan in
+	// docs/test_annotation_plan.md for the result shape.
+	Dictionary run_tests(const PackedStringArray &p_only = PackedStringArray());
+	// True while run_tests() needs a live instance where the editor would
+	// otherwise hand out a placeholder.
+	static bool is_instantiating_for_tests();
 
 	// Shadow stack emitted; faults get a call stack. Compile-time, not a switch.
 	bool is_debug_build() const { return debug_build; }
@@ -223,6 +241,8 @@ private:
 	std::vector<gdscript::ClassSignature> trait_signatures;
 	HashSet<StringName> used_traits;
 	std::vector<godot::MethodInfo> signals_info;
+	PackedStringArray test_functions;
+	PackedInt32Array test_lines;
 	// Declaration line and '##' description, keyed by member name.
 	struct MethodDocumentation {
 		int32_t line = 0;
@@ -237,4 +257,5 @@ private:
 	friend class SafeGDScriptInstance;
 	friend class SafeGDScriptPlaceholderInstance;
 	friend class SafeGDScriptStaticInstance;
+	friend class SafeGDScriptClassInstance;
 };

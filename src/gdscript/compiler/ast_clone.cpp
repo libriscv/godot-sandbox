@@ -179,6 +179,7 @@ FunctionDecl clone_function(const FunctionDecl& value) {
 	out.is_coroutine = value.is_coroutine;
 	out.is_static = value.is_static;
 	out.is_abstract = value.is_abstract;
+	out.is_test = value.is_test;
 	out.trait_origin = value.trait_origin;
 	out.rpc_config = value.rpc_config;
 	out.chain_link = value.chain_link;

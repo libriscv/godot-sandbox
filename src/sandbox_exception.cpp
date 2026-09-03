@@ -22,9 +22,11 @@ static constexpr bool VERBOSE_EXCEPTIONS = false;
 #ifndef SAFEGDSCRIPT_DISABLED
 bool safegdscript_print_backtrace(Sandbox &p_sandbox, gaddr_t p_pc);
 void safegdscript_report_runtime_error(Sandbox &p_sandbox, const String &p_message);
+String safegdscript_source_location(Sandbox &p_sandbox, gaddr_t p_pc);
 #else
 static bool safegdscript_print_backtrace(Sandbox &, gaddr_t) { return false; }
 static void safegdscript_report_runtime_error(Sandbox &, const String &) {}
+static String safegdscript_source_location(Sandbox &, gaddr_t) { return {}; }
 #endif
 
 static inline String to_hex(gaddr_t value) {
@@ -66,10 +68,19 @@ void Sandbox::handle_exception(gaddr_t address) {
 		this->print_backtrace(address);
 	}
 
+	// The PC is only meaningful inside the callsite. The callsite's offset is the actual faulting instruction.
+	// safegdscript_source_location() ends in ": " for use as a message prefix;
+	// a report wants the bare "path:line".
+	String exception_location = safegdscript_source_location(*this, machine().cpu.pc());
+	if (exception_location.ends_with(": ")) {
+		exception_location = exception_location.substr(0, exception_location.length() - 2);
+	}
+
 	try {
 		throw; // re-throw
 	} catch (const riscv::MachineTimeoutException &e) {
 		this->handle_timeout(address);
+		this->set_last_exception(String("Guest timeout: ") + e.what(), exception_location);
 		safegdscript_report_runtime_error(*this, String("Guest timeout: ") + e.what());
 		return; // NOTE: might wanna stay
 	} catch (const riscv::MachineException &e) {
@@ -81,10 +92,13 @@ void Sandbox::handle_exception(gaddr_t address) {
 				">>> ", instr, "\n",
 				">>> Machine registers:\n[PC\t", to_hex(machine().cpu.pc()),
 				"] ", regs, "\n");
+		this->set_last_exception(String("Guest fault: ") + e.what(), exception_location);
 		safegdscript_report_runtime_error(*this, String("Guest fault: ") + e.what());
 	} catch (const std::exception &e) {
 		UtilityFunctions::print("\nMessage: ", e.what(), "\n\n");
 		ERR_PRINT(("Exception: " + std::string(e.what())).c_str());
+		// api_throw's text already reads as a report line
+		this->set_last_exception(String::utf8(e.what()), exception_location);
 		safegdscript_report_runtime_error(*this, String("Guest error: ") + e.what());
 	}
 

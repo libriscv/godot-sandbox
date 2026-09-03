@@ -73,6 +73,14 @@ public:
 		call_setter("set_trait_structural_fallback", args, 1, "trait structural fallback");
 	}
 
+	void set_emit_tests(bool p_enabled) override {
+		Sandbox *compiler = sandbox();
+		if (compiler == nullptr || !compiler->has_function("set_emit_tests")) return;
+		Variant enabled = p_enabled;
+		const Variant *args[] = { &enabled };
+		call_setter("set_emit_tests", args, 1, "test emission");
+	}
+
 	bool can_build_profiled() override { return has("compile_profiled"); }
 	bool can_build_debug() override { return has("compile_debug"); }
 
@@ -172,6 +180,13 @@ public:
 
 	std::vector<gdscript::FunctionSignature> signal_signatures() override {
 		return decode_signatures("get_signal_signatures", "signal table");
+	}
+
+	std::vector<gdscript::FunctionSignature> test_signatures() override {
+		if (!has("get_test_signatures")) {
+			return {};
+		}
+		return decode_signatures("get_test_signatures", "test table");
 	}
 
 	std::vector<gdscript::RPCConfig> rpc_configs() override {

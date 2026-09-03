@@ -111,7 +111,8 @@ static PackedStringArray engine_ancestry() {
 }
 
 void prepare(GDScriptCompilerBackend &p_backend, bool p_restricted,
-		const PackedStringArray &p_base_sources, const String &p_source_path) {
+		const PackedStringArray &p_base_sources, const String &p_source_path,
+		bool p_emit_tests) {
 	p_backend.set_restricted(p_restricted);
 	p_backend.set_source_path(p_source_path);
 	p_backend.set_autoloads(project_autoload_names());
@@ -119,6 +120,7 @@ void prepare(GDScriptCompilerBackend &p_backend, bool p_restricted,
 	p_backend.set_base_sources(p_base_sources);
 	p_backend.set_engine_ancestry(engine_ancestry());
 	p_backend.set_trait_structural_fallback(SandboxProjectSettings::trait_structural_fallback());
+	p_backend.set_emit_tests(p_emit_tests);
 }
 
 } // namespace gdscript_compiler

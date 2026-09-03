@@ -24,6 +24,8 @@ public:
 	virtual void set_base_sources(const PackedStringArray &p_triples) = 0;
 	virtual void set_engine_ancestry(const PackedStringArray &p_pairs) = 0;
 	virtual void set_trait_structural_fallback(bool p_enabled) = 0;
+	// Off for a shipping build: the @test functions leave the ELF entirely.
+	virtual void set_emit_tests(bool p_enabled) = 0;
 
 	struct BuildOptions {
 		bool profiling = false;
@@ -55,6 +57,8 @@ public:
 	virtual std::vector<gdscript::FunctionSignature> signal_signatures() = 0;
 	// Top-level @rpc methods; empty from a compiler that predates RPC metadata.
 	virtual std::vector<gdscript::RPCConfig> rpc_configs() = 0;
+	// Argless top-level @test methods; empty from a compiler that predates them.
+	virtual std::vector<gdscript::FunctionSignature> test_signatures() = 0;
 	// Nested classes with an engine base; empty from a compiler that predates them.
 	virtual std::vector<gdscript::ClassSignature> class_signatures() = 0;
 	virtual std::vector<std::string> script_uses() = 0;
@@ -95,7 +99,8 @@ const char *policy_name();
 GDScriptCompilerBackend &backend_for(bool p_restricted);
 
 void prepare(GDScriptCompilerBackend &p_backend, bool p_restricted,
-		const PackedStringArray &p_base_sources, const String &p_source_path = String());
+		const PackedStringArray &p_base_sources, const String &p_source_path = String(),
+		bool p_emit_tests = true);
 
 } // namespace gdscript_compiler
 

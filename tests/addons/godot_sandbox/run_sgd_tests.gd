@@ -1,0 +1,1 @@
+../../../bin/addons/godot_sandbox/run_sgd_tests.gd

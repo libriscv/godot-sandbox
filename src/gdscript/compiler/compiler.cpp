@@ -47,6 +47,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 	m_signatures.clear();
 	m_signals.clear();
 	m_rpc_configs.clear();
+	m_tests.clear();
 	m_class_signatures.clear();
 	m_script_uses.clear();
 	m_constants.clear();
@@ -161,7 +162,23 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 			std::cout << std::endl;
 		}
 
+		// A shipping build carries no tests: they are dropped before codegen, so
+		// no test body reaches the ELF. Tests call helpers, never the reverse.
+		std::vector<std::string> dropped_tests;
+		if (!options.emit_tests) {
+			for (const FunctionDecl& decl : program.functions) {
+				if (decl.is_test) {
+					dropped_tests.push_back(decl.name);
+				}
+			}
+			program.functions.erase(std::remove_if(program.functions.begin(),
+				program.functions.end(), [](const FunctionDecl& decl) {
+					return decl.is_test;
+				}), program.functions.end());
+		}
+
 		CodeGenerator codegen;
+		codegen.set_dropped_tests(dropped_tests);
 		codegen.set_restricted(options.restricted);
 		codegen.set_struct_checks(options.restricted ||
 			options.struct_checks != CompilerOptions::StructChecks::OFF,
@@ -175,6 +192,7 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 		m_signatures = ir_program.signatures;
 		m_signals = ir_program.signals;
 		m_rpc_configs = ir_program.rpc_configs;
+		m_tests = ir_program.tests;
 		m_class_signatures = ir_program.class_signatures;
 		m_class_signatures.insert(m_class_signatures.end(),
 			ir_program.trait_signatures.begin(), ir_program.trait_signatures.end());

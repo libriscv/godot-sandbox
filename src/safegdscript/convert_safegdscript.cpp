@@ -117,6 +117,14 @@ Dictionary SafeGDScriptLanguage::convert_script_path(const String &p_path) {
 	ERR_FAIL_COND_V_MSG(!FileAccess::file_exists(p_path), result, "No such script: " + p_path);
 	ERR_FAIL_COND_V_MSG(FileAccess::file_exists(to), result, "Refusing to overwrite " + to);
 
+	// @test is not a GDScript annotation; its parser errors on an unknown one.
+	// Warned about, not refused, the same as a preload() naming the old path.
+	if (to.get_extension().to_lower() == "gd" &&
+			FileAccess::get_file_as_string(p_path).contains("@test")) {
+		WARN_PRINT(p_path + String(" uses @test, which GDScript does not have; remove it from ") +
+				to + String(" by hand."));
+	}
+
 	const Error err = DirAccess::rename_absolute(p_path, to);
 	ERR_FAIL_COND_V_MSG(err != OK, result, "Cannot rename " + p_path + " to " + to);
 

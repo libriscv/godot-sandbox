@@ -135,7 +135,8 @@ private:
 	TypeExpr parse_return_type();
 	void skip_type_arguments();
 	bool parse_attribute(ExportHint& hint, bool* is_onready = nullptr,
-		std::optional<RPCConfig>* rpc_config = nullptr, bool* is_abstract = nullptr);
+		std::optional<RPCConfig>* rpc_config = nullptr, bool* is_abstract = nullptr,
+		bool* is_test = nullptr);
 	bool m_saw_tool = false;
 	void hoist_onready_initializers(Program& program);
 	std::vector<ExportArgument> parse_attribute_arguments();

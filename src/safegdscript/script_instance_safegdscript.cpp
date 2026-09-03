@@ -380,7 +380,8 @@ void safegdscript_for_each_sandbox(const std::function<void(SafeGDScript &, Sand
 	}
 }
 
-static Sandbox *create_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_script) {
+static Sandbox *create_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_script,
+		bool p_restricted) {
 	auto it = sandbox_instances.find(p_script.ptr());
 	if (it != sandbox_instances.end()) {
 		it->second.count++;
@@ -391,6 +392,9 @@ static Sandbox *create_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_scrip
 	sandbox_ptr->set_tree_base(fast_cast_to<Node>(p_owner));
 	sandbox_ptr->set_unboxed_arguments(false);
 	sandbox_ptr->set_memory_max(SGD_MEMORY_MAX);
+	if (p_restricted) {
+		sandbox_ptr->set_restrictions(true);
+	}
 	// Set before the program runs: a nested class binds during a guest call, and
 	// the bind syscall reaches its Script resources through this.
 	sandbox_ptr->set_script_owner_id(godot::ObjectID(p_script->get_instance_id()));
@@ -408,8 +412,9 @@ static Sandbox *create_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_scrip
 
 // A nested class's instance keeps the same shared machine alive as an outer one:
 // it counts here, and the last instance out -- nested or outer -- frees it.
-Sandbox *safegdscript_acquire_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_script) {
-	return create_sandbox(p_owner, p_script);
+Sandbox *safegdscript_acquire_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_script,
+		bool p_restricted) {
+	return create_sandbox(p_owner, p_script, p_restricted);
 }
 
 void safegdscript_release_sandbox(SafeGDScript *p_script, Object *p_owner) {
@@ -436,7 +441,7 @@ void safegdscript_release_sandbox(SafeGDScript *p_script, Object *p_owner) {
 SafeGDScriptInstance::SafeGDScriptInstance(Object *p_owner, const Ref<SafeGDScript> p_script) :
 		owner(p_owner), script(p_script)
 {
-	this->current_sandbox = create_sandbox(p_owner, p_script);
+	this->current_sandbox = create_sandbox(p_owner, p_script, p_script->compiled_restricted);
 	this->current_sandbox->set_tree_base(fast_cast_to<godot::Node>(owner));
 	if (fast_cast_to<Node>(owner) == nullptr) {
 		this->current_sandbox->set_script_instance_owner(owner);
@@ -509,7 +514,8 @@ Sandbox *SafeGDScriptStaticInstance::acquire() {
 		if (this->script->compiled_restricted && sandbox_for_safegdscript(this->script) == nullptr) {
 			return nullptr;
 		}
-		this->sandbox = create_sandbox(nullptr, Ref<SafeGDScript>(this->script));
+		this->sandbox = create_sandbox(nullptr, Ref<SafeGDScript>(this->script),
+				this->script->compiled_restricted);
 	}
 	return this->sandbox;
 }

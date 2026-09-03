@@ -346,6 +346,15 @@ public:
 	void set_calls_made(unsigned calls) {} // Do nothing (it's a read-only property)
 	unsigned get_calls_made() const { return m_calls_made; }
 
+	bool has_last_exception() const { return m_exceptions != 0 && m_last_exception_id == m_exceptions; }
+	String get_last_exception() const { return has_last_exception() ? m_last_exception : String(); }
+	String get_last_exception_location() const { return has_last_exception() ? m_last_exception_location : String(); }
+	void set_last_exception(const String &p_message, const String &p_location) {
+		m_last_exception = p_message;
+		m_last_exception_location = p_location;
+		m_last_exception_id = m_exceptions;
+	}
+
 	static uint64_t get_global_timeouts() { return m_global_timeouts; }
 	static uint64_t get_global_exceptions() { return m_global_exceptions; }
 	static uint64_t get_global_calls_made() { return m_global_calls_made; }
@@ -1266,6 +1275,9 @@ private:
 	unsigned m_timeouts = 0;
 	unsigned m_exceptions = 0;
 	unsigned m_calls_made = 0;
+	String m_last_exception;
+	String m_last_exception_location;
+	unsigned m_last_exception_id = 0;
 
 	struct ProfilingData {
 		// ELF path -> Address -> Count

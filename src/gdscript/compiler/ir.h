@@ -404,6 +404,10 @@ struct IRProgram {
 	// only the method visible on the final script can be remotely invoked.
 	std::vector<RPCConfig> rpc_configs;
 
+	// Top-level argless methods marked @test, in declaration order. A displaced
+	// base implementation is not a test of the final script.
+	std::vector<FunctionSignature> tests;
+
 	// One per nested class with an engine base; the host attaches a Script to each.
 	std::vector<ClassSignature> class_signatures;
 	// Compiler-only declarations are also published for editor completion and

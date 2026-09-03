@@ -666,6 +666,10 @@ struct ModelBuilder {
 		declaration.documentation = node.doc_comment;
 		if (node.is_static) declaration.flags |= DECLARATION_STATIC;
 		if (node.is_abstract) declaration.flags |= DECLARATION_ABSTRACT;
+		if (node.is_test) {
+			declaration.flags |= DECLARATION_TEST;
+			declaration.annotation_arguments.push_back("@test");
+		}
 		used[size_t(index)] = 1;
 		for (const Parameter &parameter : node.parameters) {
 			SourceParameter published;

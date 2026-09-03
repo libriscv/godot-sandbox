@@ -287,6 +287,14 @@ int main(int argc, char** argv)
 			std::cout << std::endl;
 		}
 
+		if (!ir.tests.empty()) {
+			std::cout << "=== TESTS ===" << std::endl;
+			for (const FunctionSignature& test : ir.tests) {
+				std::cout << "  " << test.name << "() line " << test.line << std::endl;
+			}
+			std::cout << std::endl;
+		}
+
 		if (!ir.string_constants.empty()) {
 			std::cout << "=== STRING CONSTANTS ===" << std::endl;
 			for (size_t i = 0; i < ir.string_constants.size(); i++) {

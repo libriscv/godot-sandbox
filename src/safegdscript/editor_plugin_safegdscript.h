@@ -7,15 +7,18 @@
 
 using namespace godot;
 
-// "Convert to SafeGDScript" / "Convert to GDScript" in the right-click menus
-// of the Scene dock, the FileSystem dock and the script list. One instance per
-// slot; the engine binds a plugin to a single slot.
-class SafeGDScriptConvertMenu : public EditorContextMenuPlugin {
-	GDCLASS(SafeGDScriptConvertMenu, EditorContextMenuPlugin);
+// "Convert to SafeGDScript" / "Convert to GDScript" and "Run Tests" in the
+// right-click menus of the Scene dock, the FileSystem dock, the script list and
+// the code area. One instance per slot; the engine binds a plugin to a single
+// slot.
+class SafeGDScriptContextMenu : public EditorContextMenuPlugin {
+	GDCLASS(SafeGDScriptContextMenu, EditorContextMenuPlugin);
 
 	ContextMenuSlot slot = CONTEXT_SLOT_FILESYSTEM;
 
 	void on_selected(const Variant &p_selection, bool p_to_safe);
+	// p_at_cursor runs only the @test the caret sits in.
+	void on_run_tests(const Variant &p_selection, bool p_at_cursor);
 
 protected:
 	static void _bind_methods() {}
@@ -26,15 +29,21 @@ public:
 
 	// Script paths behind a selection: file paths, nodes, or one Script.
 	static PackedStringArray script_paths_of(const Variant &p_selection);
+	PackedStringArray slot_paths(const Variant &p_selection) const;
 	// Converts each path whose direction matches, then brings the editor
 	// along: open tab, autoloads, dependent open scenes.
 	static void convert(const PackedStringArray &p_paths, bool p_to_safe);
+	// Runs the tests of each path and reports through the Output dock and a
+	// toast, jumping to the first failure.
+	static void run(const PackedStringArray &p_paths, const PackedStringArray &p_only);
+	// The caret line in the visible code editor, or 0.
+	static int32_t caret_line();
 };
 
 class SafeGDScriptEditorPlugin : public EditorPlugin {
 	GDCLASS(SafeGDScriptEditorPlugin, EditorPlugin);
 
-	Ref<SafeGDScriptConvertMenu> menus[3];
+	Ref<SafeGDScriptContextMenu> menus[4];
 	Ref<SafeGDScriptSyntaxHighlighter> highlighter;
 
 protected:

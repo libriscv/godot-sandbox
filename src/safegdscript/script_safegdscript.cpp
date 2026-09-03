@@ -15,6 +15,7 @@
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -33,6 +34,9 @@ PackedStringArray safegdscript_stopped_backtrace();
 void safegdscript_debug_continue();
 PackedInt32Array safegdscript_engine_breakpoints(const SafeGDScript &p_script);
 Sandbox *sandbox_for_safegdscript(const SafeGDScript *p_script);
+Sandbox *safegdscript_acquire_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_script,
+		bool p_restricted);
+void safegdscript_release_sandbox(SafeGDScript *p_script, Object *p_owner);
 
 bool SafeGDScript::_editor_can_reload_from_file() {
 	return true;
@@ -42,6 +46,15 @@ void SafeGDScript::_placeholder_erased(void *p_placeholder) {
 	// free callback. This hook only removes stale bookkeeping if it arrives first.
 	placeholders.erase(static_cast<SafeGDScriptPlaceholderInstance *>(p_placeholder));
 }
+// Scoped by run_tests(): a test needs the live instance the editor would
+// otherwise refuse a non-@tool script. Thread-local, RAII-scoped, and the only
+// place the script answers set_script() differently than it normally would.
+static thread_local bool instantiating_for_tests = false;
+
+bool SafeGDScript::is_instantiating_for_tests() {
+	return instantiating_for_tests;
+}
+
 bool SafeGDScript::_can_instantiate() const {
 	bool is_trait = false;
 	scan_class_header(source_code, nullptr, nullptr, &is_trait);
@@ -49,7 +62,9 @@ bool SafeGDScript::_can_instantiate() const {
 	// GDScript: in the editor only a @tool script gets a live instance; the
 	// rest get a placeholder (Object::set_script). is_editor_hint() stands in
 	// for ScriptServer::is_scripting_enabled(), which GDExtension cannot read.
-	if (!tool_script && Engine::get_singleton()->is_editor_hint()) return false;
+	if (!tool_script && !instantiating_for_tests && Engine::get_singleton()->is_editor_hint()) {
+		return false;
+	}
 	return !_is_abstract() && _is_valid();
 }
 static String script_class_path(const String &p_class_name) {
@@ -926,7 +941,8 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug,
 			new_base_stamps.push_back(file_stamp(base_sources[i + 1]));
 		}
 	}
-	gdscript_compiler::prepare(compiler, restricted, base_sources, this->path);
+	// A shipping build carries no test cases: they never reach codegen.
+	gdscript_compiler::prepare(compiler, restricted, base_sources, this->path, !p_shipping);
 
 	GDScriptCompilerBackend::BuildOptions options;
 	options.profiling = profiling;
@@ -950,6 +966,7 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug,
 	(void)compiler.function_signatures();
 	(void)compiler.signal_signatures();
 	(void)compiler.rpc_configs();
+	(void)compiler.test_signatures();
 	(void)compiler.class_signatures();
 	(void)compiler.script_constants();
 	(void)compiler.line_table();
@@ -1213,6 +1230,11 @@ void SafeGDScript::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_content"), &SafeGDScript::get_content);
 
 	ClassDB::bind_method(D_METHOD("get_compile_error"), &SafeGDScript::get_compile_error);
+	ClassDB::bind_method(D_METHOD("compile_shipping"), &SafeGDScript::compile_shipping);
+	ClassDB::bind_method(D_METHOD("get_test_functions"), &SafeGDScript::get_test_functions);
+	ClassDB::bind_method(D_METHOD("get_test_lines"), &SafeGDScript::get_test_lines);
+	ClassDB::bind_method(D_METHOD("run_tests", "only"), &SafeGDScript::run_tests,
+			DEFVAL(PackedStringArray()));
 	ClassDB::bind_method(D_METHOD("uses_trait", "name"), &SafeGDScript::uses_trait);
 	// Engine-internal; bound for tests.
 	ClassDB::bind_method(D_METHOD("editor_documentation"), &SafeGDScript::editor_documentation);
@@ -1295,6 +1317,241 @@ bool SafeGDScript::fail_compile(const String &p_message) {
 	this->last_error = p_message;
 	ERR_PRINT("SafeGDScript: " + this->path + ": " + p_message);
 	return false;
+}
+
+
+// -= @test runner =-
+//
+// A test fails the way any SafeGDScript code fails: assert() throws, the
+// Sandbox counts the exception, and the runner reads the counter. Nothing is
+// parsed out of the output, and the guest gains no run-time surface.
+//
+// Each test gets its own script instance, so create_instance_record() lays the
+// member defaults down and _init() runs again. Instances of one script share a
+// machine, so that costs a record, not a program load. The owner is never added
+// to a tree: _ready, _enter_tree and _process do not run, and $Child answers
+// null. A test that needs a tree is an integration test and belongs in GUT.
+static constexpr int64_t TEST_INSTRUCTION_CAP = 4000; // Millions
+
+static Dictionary test_row(const String &p_name, int32_t p_line, const char *p_status,
+		const String &p_message, const String &p_location, uint64_t p_usec) {
+	Dictionary row;
+	row["name"] = p_name;
+	row["line"] = p_line;
+	row["status"] = String(p_status);
+	row["message"] = p_message;
+	row["location"] = p_location;
+	row["elapsed_usec"] = int64_t(p_usec);
+	return row;
+}
+
+static Dictionary test_report(const String &p_path, const Array &p_rows, uint64_t p_usec) {
+	int64_t passed = 0;
+	int64_t failed = 0;
+	int64_t errors = 0;
+	for (int64_t i = 0; i < p_rows.size(); i++) {
+		const String status = Dictionary(p_rows[i]).get("status", String());
+		if (status == "passed") {
+			passed++;
+		} else if (status == "failed") {
+			failed++;
+		} else {
+			errors++;
+		}
+	}
+	Dictionary report;
+	report["path"] = p_path;
+	report["passed"] = passed;
+	report["failed"] = failed;
+	report["errors"] = errors;
+	report["elapsed_usec"] = int64_t(p_usec);
+	report["tests"] = p_rows;
+	return report;
+}
+
+// One line per test, then a summary, so a headless run reads without every
+// caller formatting the Dictionary itself.
+static void print_test_report(const Dictionary &p_report) {
+	const Array rows = p_report.get("tests", Array());
+	UtilityFunctions::print_rich(String("[b]") + String(p_report.get("path", String())) + "[/b]");
+	for (int64_t i = 0; i < rows.size(); i++) {
+		const Dictionary row = rows[i];
+		const String status = row.get("status", String());
+		const String name = row.get("name", String());
+		const String message = row.get("message", String());
+		const String location = row.get("location", String());
+		if (status == "passed") {
+			UtilityFunctions::print_rich(String::utf8("  [color=green]\u2713[/color] ") + name);
+			continue;
+		}
+		const String colour = status == "failed" ? String("red") : String("yellow");
+		String line = "  [color=" + colour + String::utf8("]\u2717[/color] ") + name +
+				" (" + status + ")";
+		if (!location.is_empty()) {
+			line += " at " + location;
+		}
+		UtilityFunctions::print_rich(line);
+		if (!message.is_empty()) {
+			UtilityFunctions::print_rich("      " + message);
+		}
+	}
+	const double ms = double(int64_t(p_report.get("elapsed_usec", int64_t(0)))) / 1000.0;
+	UtilityFunctions::print_rich(String("  ") + itos(int64_t(p_report.get("passed", int64_t(0)))) +
+			" passed, " + itos(int64_t(p_report.get("failed", int64_t(0)))) + " failed, " +
+			itos(int64_t(p_report.get("errors", int64_t(0)))) + " errors in " +
+			String::num(ms, 1) + " ms");
+}
+
+Dictionary SafeGDScript::run_tests(const PackedStringArray &p_only) {
+	const uint64_t run_start = Time::get_singleton()->get_ticks_usec();
+	Array rows;
+
+	if (!this->last_error.is_empty()) {
+		rows.push_back(test_row("(compile)", 0, "error", this->last_error, this->path, 0));
+		const Dictionary report = test_report(this->path, rows,
+				Time::get_singleton()->get_ticks_usec() - run_start);
+		print_test_report(report);
+		return report;
+	}
+
+	// The exception counter is per machine, so an inner run would attribute its
+	// own failures to whichever test is on the stack.
+	Sandbox *shared = sandbox_for_safegdscript(this);
+	if (shared != nullptr && shared->is_in_vmcall()) {
+		rows.push_back(test_row("(runner)", 0, "error",
+				"run_tests() cannot run from inside a guest call", this->path, 0));
+		const Dictionary report = test_report(this->path, rows,
+				Time::get_singleton()->get_ticks_usec() - run_start);
+		print_test_report(report);
+		return report;
+	}
+
+	// Names the caller asked for that this script does not declare are reported,
+	// not skipped: a renamed test would otherwise pass by disappearing.
+	PackedStringArray selected;
+	for (int64_t i = 0; i < this->test_functions.size(); i++) {
+		if (p_only.is_empty() || p_only.has(this->test_functions[i])) {
+			selected.push_back(this->test_functions[i]);
+		}
+	}
+	for (int64_t i = 0; i < p_only.size(); i++) {
+		if (!this->test_functions.has(p_only[i])) {
+			rows.push_back(test_row(p_only[i], 0, "error",
+					this->path + " declares no @test function named '" + p_only[i] + "'",
+					String(), 0));
+		}
+	}
+
+	// Holds the shared machine for the whole run: restrictions belong on it
+	// before the first instance's _init(), and it must not be rebuilt between
+	// tests. A restricted script's base is always Sandbox (structural gate).
+	const bool sandbox_existed = shared != nullptr;
+	Sandbox *machine = safegdscript_acquire_sandbox(nullptr, Ref<SafeGDScript>(this),
+			this->compiled_restricted && !sandbox_existed);
+	if (machine != nullptr && !sandbox_existed && machine->get_exceptions() > 0) {
+		String message = machine->get_last_exception();
+		if (message.is_empty()) {
+			message = "the program raised an exception while starting";
+		}
+		rows.push_back(test_row("(startup)", 0, "error", message,
+				machine->get_last_exception_location(), 0));
+		safegdscript_release_sandbox(this, nullptr);
+		const Dictionary report = test_report(this->path, rows,
+				Time::get_singleton()->get_ticks_usec() - run_start);
+		print_test_report(report);
+		return report;
+	}
+	const int64_t previous_budget = machine != nullptr ? machine->get_instructions_max() : 0;
+	if (machine != nullptr && previous_budget <= 0) {
+		// A runaway loop ends as a timeout the runner reports, not as a hung editor.
+		machine->set_instructions_max(TEST_INSTRUCTION_CAP);
+	}
+
+	const StringName base_type = _get_instance_base_type();
+	for (int64_t i = 0; i < selected.size(); i++) {
+		const String name = selected[i];
+		int32_t line = 0;
+		for (int64_t j = 0; j < this->test_functions.size(); j++) {
+			if (this->test_functions[j] == name) {
+				line = this->test_lines[j];
+				break;
+			}
+		}
+
+		Variant owner_value = ClassDBSingleton::get_singleton()->instantiate(base_type);
+		Object *owner = owner_value;
+		if (owner == nullptr) {
+			rows.push_back(test_row(name, line, "error",
+					"could not instantiate '" + String(base_type) + "'", String(), 0));
+			continue;
+		}
+		const bool owner_is_refcounted = Object::cast_to<RefCounted>(owner) != nullptr;
+
+		Sandbox *sandbox = sandbox_for_safegdscript(this);
+		const unsigned exceptions_before = sandbox != nullptr ? sandbox->get_exceptions() : 0;
+
+		// The editor hands a non-@tool script a placeholder; a test needs the
+		// real thing. Scoped to the attach, and restored before the call.
+		{
+			instantiating_for_tests = true;
+			owner->set_script(Variant(Ref<SafeGDScript>(this)));
+			instantiating_for_tests = false;
+		}
+		SafeGDScriptInstance *instance = nullptr;
+		for (SafeGDScriptInstance *candidate : instances) {
+			if (candidate != nullptr && candidate->get_owner() == owner) {
+				instance = candidate;
+				break;
+			}
+		}
+		if (instance == nullptr) {
+			rows.push_back(test_row(name, line, "error",
+					"the script refused an instance on '" + String(base_type) + "'", String(), 0));
+			owner->set_script(Variant());
+			if (!owner_is_refcounted) {
+				memdelete(owner);
+			}
+			continue;
+		}
+
+		GDExtensionCallError error;
+		error.error = GDEXTENSION_CALL_OK;
+		const uint64_t started = Time::get_singleton()->get_ticks_usec();
+		// The script instance directly: Object has no callp in godot-cpp, and a
+		// test is always a script method.
+		instance->callp(StringName(name), nullptr, 0, error);
+		const uint64_t elapsed = Time::get_singleton()->get_ticks_usec() - started;
+		const unsigned exceptions_after = sandbox != nullptr ? sandbox->get_exceptions() : 0;
+
+		if (exceptions_after > exceptions_before) {
+			String message = sandbox != nullptr ? sandbox->get_last_exception() : String();
+			if (message.is_empty()) {
+				message = "the test raised an exception";
+			}
+			rows.push_back(test_row(name, line, "failed", message,
+					sandbox != nullptr ? sandbox->get_last_exception_location() : String(), elapsed));
+		} else if (error.error != GDEXTENSION_CALL_OK) {
+			rows.push_back(test_row(name, line, "error",
+					"call error " + itos(int(error.error)), String(), elapsed));
+		} else {
+			rows.push_back(test_row(name, line, "passed", String(), String(), elapsed));
+		}
+
+		owner->set_script(Variant());
+		if (!owner_is_refcounted) {
+			memdelete(owner);
+		}
+	}
+
+	if (machine != nullptr && previous_budget <= 0) {
+		machine->set_instructions_max(previous_budget);
+	}
+	safegdscript_release_sandbox(this, nullptr);
+
+	const Dictionary report = test_report(this->path, rows,
+			Time::get_singleton()->get_ticks_usec() - run_start);
+	print_test_report(report);
+	return report;
 }
 
 void SafeGDScript::remove_instance(SafeGDScriptInstance *p_instance) {
@@ -1628,6 +1885,13 @@ void SafeGDScript::update_methods_info(GDScriptCompilerBackend &p_compiler) {
 	}
 
 	this->tool_script = p_compiler.is_tool();
+
+	this->test_functions.clear();
+	this->test_lines.clear();
+	for (const gdscript::FunctionSignature &declared : p_compiler.test_signatures()) {
+		this->test_functions.push_back(String::utf8(declared.name.c_str(), declared.name.size()));
+		this->test_lines.push_back(declared.line);
+	}
 
 	// Profiling records are indexed by position in this table.
 	this->signatures = p_compiler.function_signatures();

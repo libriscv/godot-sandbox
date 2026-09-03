@@ -263,6 +263,9 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		reject_signal_collision("Function", func.name, func.line, func.column);
 		m_local_functions.insert(func.name);
 		m_local_signatures[func.name] = &func;
+		if (func.is_test) {
+			m_test_functions.insert(func.name);
+		}
 	}
 
 	// Collected before lowering so declaration order does not matter.
@@ -729,6 +732,9 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			config.name = decl.name;
 			ir_program.rpc_configs.push_back(std::move(config));
 		}
+		if (decl.is_test && decl.chain_name.empty()) {
+			ir_program.tests.push_back(ir_program.signatures.back());
+		}
 	}
 
 	// Inline accessor bodies (`@x_setter`/`@x_getter`, hidden from method list).
@@ -820,6 +826,7 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const Stru
 	func.return_type = decl.return_type;
 	m_current_class = owner;
 	m_in_static_function = decl.is_static;
+	m_in_test_function = decl.is_test;
 
 	push_scope(func);
 
@@ -4431,7 +4438,8 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 	}
 
 	// Script function used as a Callable value (e.g. `pressed.connect(f)`).
-	if (is_local_function(expr->name)) {
+	if (is_local_function(expr->name) || m_test_functions.count(expr->name)) {
+		reject_test_reference(expr->name, expr);
 		return gen_make_callable(expr->name, -1, func);
 	}
 
@@ -6201,6 +6209,7 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 		return gen_get_node(".", func);
 	}
 
+	reject_test_reference(expr->function_name, expr);
 	if (is_local_function(expr->function_name)) {
 		return emit_local_call(expr->function_name, std::move(arg_regs), func, expr);
 	}
@@ -10043,6 +10052,14 @@ const std::string* CodeGenerator::chain_qualified_member(const Expr* expr, Funct
 const std::string* CodeGenerator::global_script_class_path(const std::string& name) const {
 	const auto it = m_global_script_classes.find(name);
 	return it != m_global_script_classes.end() ? &it->second : nullptr;
+}
+
+void CodeGenerator::reject_test_reference(const std::string& name, const Expr* site) {
+	if (m_in_test_function || m_test_functions.find(name) == m_test_functions.end()) {
+		return;
+	}
+	error_at("'" + name + "' is a @test function, and only another @test may reach it", site,
+		"A shipping build drops every @test, so this call would have nothing to reach");
 }
 
 bool CodeGenerator::is_local_function(const std::string& name) const {

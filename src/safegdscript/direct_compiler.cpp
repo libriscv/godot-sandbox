@@ -42,6 +42,7 @@ public:
 	bool available() override { return true; }
 
 	void set_restricted(bool p_restricted) override { m_options.restricted = p_restricted; }
+	void set_emit_tests(bool p_enabled) override { m_options.emit_tests = p_enabled; }
 	void set_source_path(const String &p_path) override { m_options.source_path = to_utf8(p_path); }
 
 	void set_autoloads(const PackedStringArray &p_names) override {
@@ -159,6 +160,7 @@ public:
 	std::vector<gdscript::FunctionSignature> function_signatures() override { return m_signatures; }
 	std::vector<gdscript::FunctionSignature> signal_signatures() override { return m_signals; }
 	std::vector<gdscript::RPCConfig> rpc_configs() override { return m_rpc_configs; }
+	std::vector<gdscript::FunctionSignature> test_signatures() override { return m_tests; }
 	std::vector<gdscript::ClassSignature> class_signatures() override { return m_classes; }
 	std::vector<std::string> script_uses() override { return m_script_uses; }
 	std::vector<gdscript::ScriptConstant> script_constants() override { return m_constants; }
@@ -176,6 +178,7 @@ private:
 		m_signatures = p_compiler.get_function_signatures();
 		m_signals = p_compiler.get_signal_signatures();
 		m_rpc_configs = p_compiler.get_rpc_configs();
+		m_tests = p_compiler.get_test_signatures();
 		m_classes = p_compiler.get_class_signatures();
 		m_script_uses = p_compiler.get_script_uses();
 		m_constants = p_compiler.get_script_constants();
@@ -203,6 +206,7 @@ private:
 	std::vector<gdscript::FunctionSignature> m_signatures;
 	std::vector<gdscript::FunctionSignature> m_signals;
 	std::vector<gdscript::RPCConfig> m_rpc_configs;
+	std::vector<gdscript::FunctionSignature> m_tests;
 	std::vector<gdscript::ClassSignature> m_classes;
 	std::vector<std::string> m_script_uses;
 	std::vector<gdscript::ScriptConstant> m_constants;

@@ -35,6 +35,9 @@ public:
 		m_global_script_classes.clear();
 		m_global_script_classes.insert(classes.begin(), classes.end());
 	}
+	void set_dropped_tests(const std::vector<std::string>& names) {
+		m_test_functions.insert(names.begin(), names.end());
+	}
 
 private:
 	// Per-function state. Value type: lives on the stack for one function's
@@ -494,8 +497,11 @@ private:
 		FunctionContext& func);
 
 	bool is_local_function(const std::string& name) const;
+	void reject_test_reference(const std::string& name, const Expr* site);
 	static std::unordered_set<std::string> get_global_classes();
 	std::unordered_set<std::string> m_local_functions;
+	std::unordered_set<std::string> m_test_functions;
+	bool m_in_test_function = false;
 	std::unordered_map<std::string, const FunctionDecl*> m_local_signatures;
 	std::unordered_map<std::string, size_t> m_global_variables;
 	std::unordered_set<std::string> m_global_consts;

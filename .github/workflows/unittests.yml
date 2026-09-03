@@ -47,6 +47,13 @@ jobs:
           # Run the tests
           CI=1 GODOT=./Godot_v4.6.3-stable_linux.x86_64 ./run_unittests.sh
 
+      - name: Run the headless .sgd test runner
+        working-directory: ${{github.workspace}}/tests
+        run: |
+          # The documented CI path for @test: the same runner a project ships.
+          ./Godot_v4.6.3-stable_linux.x86_64 --headless --path . \
+            -s addons/godot_sandbox/run_sgd_tests.gd -- tests/sgd_tests_sample.sgd
+
       - name: Run Gut tests (Zig)
         working-directory: ${{github.workspace}}/tests
         run: |

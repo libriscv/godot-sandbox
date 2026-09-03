@@ -27,6 +27,7 @@ enum DeclarationFlags : uint32_t {
 	DECLARATION_EXPORT = 1u << 1,
 	DECLARATION_ONREADY = 1u << 2,
 	DECLARATION_ABSTRACT = 1u << 3,
+	DECLARATION_TEST = 1u << 4,
 };
 enum class CaretKind : uint8_t {
 	NONE, IDENTIFIER, MEMBER, TYPE, CALL_ARGUMENT, ANNOTATION, RESOURCE_PATH,

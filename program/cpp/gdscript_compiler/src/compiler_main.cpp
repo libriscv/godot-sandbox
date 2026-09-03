@@ -24,6 +24,7 @@ PUBLIC Variant compile(String code)
 	gdscript_remember_signatures(compiler);
 	gdscript_remember_signals(compiler);
 	gdscript_remember_rpc_configs(compiler);
+	gdscript_remember_tests(compiler);
 	gdscript_remember_classes(compiler);
 	gdscript_remember_script_uses(compiler);
 	gdscript_remember_constants(compiler);
@@ -65,6 +66,7 @@ PUBLIC Variant compile_profiled(String code)
 	gdscript_remember_signatures(compiler);
 	gdscript_remember_signals(compiler);
 	gdscript_remember_rpc_configs(compiler);
+	gdscript_remember_tests(compiler);
 	gdscript_remember_classes(compiler);
 	gdscript_remember_script_uses(compiler);
 	gdscript_remember_constants(compiler);
@@ -105,6 +107,7 @@ PUBLIC Variant compile_debug(String code, PackedInt32Array breakpoints)
 	gdscript_remember_signatures(compiler);
 	gdscript_remember_signals(compiler);
 	gdscript_remember_rpc_configs(compiler);
+	gdscript_remember_tests(compiler);
 	gdscript_remember_classes(compiler);
 	gdscript_remember_script_uses(compiler);
 	gdscript_remember_constants(compiler);
@@ -187,6 +190,13 @@ PUBLIC Variant get_rpc_configs()
 	return gdscript_rpc_configs_to_variant();
 }
 
+// Argless top-level @test functions of the last compile. Own entry point: a
+// host built against an older gdscript.elf finds no symbol and reports no tests.
+PUBLIC Variant get_test_signatures()
+{
+	return gdscript_tests_to_variant();
+}
+
 PUBLIC Variant get_class_signatures()
 {
 	return gdscript_classes_to_variant();
@@ -228,6 +238,13 @@ PUBLIC Variant get_breakpoint_lines()
 PUBLIC Variant is_tool()
 {
 	return gdscript_last_is_tool();
+}
+
+// Off for a shipping build; the @test functions never reach codegen.
+PUBLIC Variant set_emit_tests(bool enabled)
+{
+	gdscript_emit_tests() = enabled;
+	return Nil;
 }
 
 PUBLIC Variant set_restricted(bool restricted)

@@ -36,6 +36,19 @@ public:
 	// The same, from inside the editor: open tab, dependent open scenes
 	// (editor_plugin_safegdscript.cpp).
 	static void editor_convert_scripts(const PackedStringArray &p_paths, bool p_to_safe);
+	// -= @test =-
+	// Runs every @test of each script, or only the named ones. The context
+	// menu, a tool script and the headless runner all come through here.
+	static Dictionary run_tests(const PackedStringArray &p_paths,
+			const PackedStringArray &p_only = PackedStringArray());
+	// Which items a right-click on these paths offers, given the caret line in
+	// the code area (0 elsewhere). Static and editor-free so the decision can be
+	// tested without an editor; the toast and jump half cannot be.
+	static PackedStringArray menu_items_for(const PackedStringArray &p_paths,
+			int32_t p_caret_line = 0);
+	// The @test function the caret sits in, or "". Text-only: a right-click
+	// must not compile anything.
+	static String test_at_line(const String &p_source, int32_t p_line);
 	static void init();
 	static void deinit();
 	static SafeGDScriptLanguage *get_singleton();

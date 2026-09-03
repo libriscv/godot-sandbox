@@ -98,16 +98,21 @@ Program Parser::parse() {
 			// Stacked attributes: `@export_range(0, 10) @tool var x`.
 			bool is_export = false;
 			bool is_onready = false;
+			bool is_test = false;
 			std::optional<RPCConfig> rpc_config;
 			ExportHint export_hint;
 			while (check(TokenType::AT)) {
-				is_export = parse_attribute(export_hint, &is_onready, &rpc_config) || is_export;
+				is_export = parse_attribute(export_hint, &is_onready, &rpc_config, nullptr,
+					&is_test) || is_export;
 				skip_newlines();
 			}
 			is_static = match(TokenType::STATIC) || is_static;
 			if (check(TokenType::VAR) || check(TokenType::CONST)) {
 				if (rpc_config.has_value()) {
 					error("@rpc can only be applied to a function");
+				}
+				if (is_test) {
+					error("@test can only be applied to a function");
 				}
 				const bool is_const = check(TokenType::CONST);
 				advance();
@@ -138,8 +143,25 @@ Program Parser::parse() {
 				if (rpc_config.has_value() && is_static) {
 					error("@rpc cannot be applied to a static function");
 				}
+				if (is_test && rpc_config.has_value()) {
+					error("@test cannot be combined with @rpc");
+				}
 				FunctionDecl function = parse_function();
 				function.is_static = is_static;
+				if (is_test) {
+					// The runner invents no argument values, and a suspended
+					// coroutine would return before its assertions ran.
+					if (!function.parameters.empty()) {
+						error("@test function '" + function.name + "' takes no parameters",
+							function.parameters.front().line,
+							function.parameters.front().column);
+					}
+					if (function.is_coroutine) {
+						error("@test function '" + function.name + "' cannot be a coroutine",
+							function.line, function.column);
+					}
+					function.is_test = true;
+				}
 				if (rpc_config.has_value()) {
 					rpc_config->name = function.name;
 					function.rpc_config = std::move(rpc_config);
@@ -151,6 +173,9 @@ Program Parser::parse() {
 				synchronize();
 			} else if (rpc_config.has_value()) {
 				error("@rpc can only be applied to a function");
+				synchronize();
+			} else if (is_test) {
+				error("@test can only be applied to a function");
 				synchronize();
 			}
 			// File-level annotation (@tool etc.) — no declaration follows.
@@ -2663,7 +2688,7 @@ void Parser::skip_type_arguments() {
 }
 
 bool Parser::parse_attribute(ExportHint& hint, bool* is_onready,
-	std::optional<RPCConfig>* rpc_config, bool* is_abstract) {
+	std::optional<RPCConfig>* rpc_config, bool* is_abstract, bool* is_test) {
 	consume(TokenType::AT, "Expected '@' for attribute");
 
 	const Token& name = consume(TokenType::IDENTIFIER, "Expected an attribute name after '@'");
@@ -2705,6 +2730,22 @@ bool Parser::parse_attribute(ExportHint& hint, bool* is_onready,
 			error("@abstract is only supported on a trait method", name.line, name.column);
 		}
 		*is_abstract = true;
+		return false;
+	}
+	if (name.lexeme == "test") {
+		if (is_test == nullptr) {
+			error("@test is for a file-level function", name.line, name.column);
+			return false;
+		}
+		if (*is_test) {
+			error("@test can only be used once per function", name.line, name.column);
+			return false;
+		}
+		if (!arguments.empty()) {
+			error("@test takes no arguments", name.line, name.column);
+			return false;
+		}
+		*is_test = true;
 		return false;
 	}
 	if (name.lexeme == "rpc") {

@@ -85,6 +85,12 @@ void SafeGDScriptLanguage::_bind_methods() {
 			&SafeGDScriptLanguage::convert_script_path);
 	ClassDB::bind_static_method("SafeGDScriptLanguage", D_METHOD("editor_convert_scripts", "paths", "to_safe"),
 			&SafeGDScriptLanguage::editor_convert_scripts);
+	ClassDB::bind_static_method("SafeGDScriptLanguage", D_METHOD("run_tests", "paths", "only"),
+			&SafeGDScriptLanguage::run_tests, DEFVAL(PackedStringArray()));
+	ClassDB::bind_static_method("SafeGDScriptLanguage", D_METHOD("menu_items_for", "paths", "caret_line"),
+			&SafeGDScriptLanguage::menu_items_for, DEFVAL(0));
+	ClassDB::bind_static_method("SafeGDScriptLanguage", D_METHOD("test_at_line", "source", "line"),
+			&SafeGDScriptLanguage::test_at_line);
 }
 
 Dictionary SafeGDScriptLanguage::editor_validate(const String &p_script, const String &p_path,
@@ -430,7 +436,7 @@ const char *const annotation_names[] = {
 	"export_flags_avoidance", "export_file", "export_dir", "export_global_file",
 	"export_global_dir", "export_multiline", "export_placeholder", "export_color_no_alpha",
 	"export_node_path", "export_storage", "export_custom", "export_group", "export_subgroup",
-	"export_category", "onready", "tool", "rpc", "icon", "warning_ignore",
+	"export_category", "onready", "tool", "rpc", "test", "icon", "warning_ignore",
 	"warning_ignore_start", "warning_ignore_restore", "static_unload", "abstract",
 	nullptr
 };
@@ -1717,7 +1723,18 @@ const BuiltInTemplate built_in_templates[] = {
 			"_TS_var total := 0.0\n"
 			"_TS_for p in particles:\n"
 			"_TS__TS_total += p.lifetime\n"
-			"_TS_return total\n" },
+			"_TS_return total\n"
+			"\n"
+			"\n"
+			"# `@test` marks an argless function as a test case. Each one runs on its own\n"
+			"# instance. When the test runs, members have default values and `_init()` runs again.\n"
+			"# The test fails when any `assert()` fails. Right-click an instance to run all tests.\n"
+			"@test\n"
+			"func a_particle_expires_after_its_lifetime():\n"
+			"_TS_var p := Particle(Vector2.ZERO, Vector2(10, 0), 0.5)\n"
+			"_TS_assert(p.advance(0.25), \"still alive halfway through\")\n"
+			"_TS_assert(not p.advance(0.25), \"and gone once the lifetime runs out\")\n"
+			"_TS_assert(p.position.x == 5.0)\n" },
 	{ "Node", "Nullable and Union Types", "T? and A | B type hints, checked at compile time and narrowed by null checks and 'is'",
 			"extends _BASE_\n"
 			"\n"
@@ -2650,4 +2667,217 @@ Dictionary SafeGDScriptLanguage::_get_global_class_name(const String &p_path) co
 	dict["icon_path"] = String(icon_path);
 	if (is_trait) dict["is_abstract"] = true;
 	return dict;
+}
+
+// -= @test entry points =-
+//
+// The context menu, a tool script and the headless runner all come through
+// here, so the report shape is the one SafeGDScript::run_tests() produces with
+// a wrapper around it. Nothing in this section touches the editor: the toast
+// and the jump to a failing line live in editor_plugin_safegdscript.cpp.
+
+static bool is_safegdscript_test_path(const String &p_path) {
+	const String ext = p_path.get_extension().to_lower();
+	// A built-in script ("res://s.tscn::SafeGDScript_x") has no file to read.
+	if (p_path.contains("::") || (ext != "sgd" && ext != "safegd")) {
+		return false;
+	}
+	// A right-click must not compile anything, so the check is textual. A false
+	// positive (the word in a comment) costs one "no tests found" report.
+	return FileAccess::file_exists(p_path) &&
+			FileAccess::get_file_as_string(p_path).contains("@test");
+}
+
+// A file-level declaration starts here: anything indented belongs to the one
+// above it, so these lines are where one region ends and the next begins.
+static bool starts_a_declaration(const String &p_line) {
+	static const char *const openers[] = {
+		"@", "func ", "static ", "var ", "const ", "signal ", "class ", "class_name",
+		"enum ", "struct ", "trait ", "extends ", "uses ", nullptr,
+	};
+	for (int i = 0; openers[i] != nullptr; i++) {
+		if (p_line.begins_with(openers[i])) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool identifier_char(char32_t p_c) {
+	return (p_c >= 'a' && p_c <= 'z') || (p_c >= 'A' && p_c <= 'Z') ||
+			(p_c >= '0' && p_c <= '9') || p_c == '_';
+}
+
+static String past_annotations(const String &p_line, bool &r_saw_test) {
+	String rest = p_line;
+	while (rest.begins_with("@")) {
+		int32_t i = 1;
+		while (i < rest.length() && identifier_char(rest[i])) {
+			i++;
+		}
+		if (rest.substr(0, i) == "@test") {
+			r_saw_test = true;
+		}
+		if (i < rest.length() && rest[i] == '(') {
+			int32_t depth = 0;
+			for (; i < rest.length(); i++) {
+				depth += rest[i] == '(' ? 1 : (rest[i] == ')' ? -1 : 0);
+				if (depth == 0) {
+					i++;
+					break;
+				}
+			}
+		}
+		rest = rest.substr(i).strip_edges(true, false);
+	}
+	return rest;
+}
+
+String SafeGDScriptLanguage::test_at_line(const String &p_source, int32_t p_line) {
+	if (p_line <= 0) {
+		return String();
+	}
+	const PackedStringArray lines = p_source.split("\n");
+	// The open region: from the '@test' line to the line before the next
+	// file-level declaration. Its func line is where the name comes from.
+	String name;
+	int32_t region_start = 0;
+	int32_t func_line = 0;
+	int32_t pending_start = 0;
+
+	for (int64_t i = 0; i < lines.size(); i++) {
+		const String line = lines[i];
+		if (line.is_empty() || line.begins_with("\t") || line.begins_with(" ") ||
+				!starts_a_declaration(line)) {
+			continue;
+		}
+		const int32_t line_number = int32_t(i) + 1;
+		if (func_line != 0 && line_number > func_line) {
+			// The region ends here. If the caret was inside it, that is the answer.
+			if (p_line >= region_start && p_line < line_number) {
+				return name;
+			}
+			name = String();
+			region_start = 0;
+			func_line = 0;
+		}
+		bool saw_test = false;
+		const String rest = past_annotations(line, saw_test);
+		if (saw_test && pending_start == 0) {
+			pending_start = line_number;
+		}
+		if (rest.begins_with("func ") || rest.begins_with("static func ")) {
+			if (pending_start != 0) {
+				const String after = rest.substr(rest.find("func ") + 5);
+				const int paren = after.find("(");
+				if (paren > 0) {
+					name = after.substr(0, paren).strip_edges();
+					region_start = pending_start;
+					func_line = line_number;
+				}
+			}
+			pending_start = 0;
+			continue;
+		}
+		// Any other declaration cancels a stacked-annotation run.
+		if (!rest.is_empty()) {
+			pending_start = 0;
+		}
+	}
+	return func_line != 0 && p_line >= region_start ? name : String();
+}
+
+PackedStringArray SafeGDScriptLanguage::menu_items_for(const PackedStringArray &p_paths,
+		int32_t p_caret_line) {
+	PackedStringArray items;
+	bool to_safe = false;
+	bool to_gd = false;
+	bool has_tests = false;
+	for (int64_t i = 0; i < p_paths.size(); i++) {
+		const String path = p_paths[i];
+		if (path.contains("::")) {
+			continue;
+		}
+		const String ext = path.get_extension().to_lower();
+		to_safe = to_safe || ext == "gd";
+		to_gd = to_gd || ext == "sgd" || ext == "safegd";
+		has_tests = has_tests || is_safegdscript_test_path(path);
+	}
+	if (to_safe) {
+		items.push_back("Convert to SafeGDScript");
+	}
+	if (to_gd) {
+		items.push_back("Convert to GDScript");
+	}
+	if (!has_tests) {
+		return items;
+	}
+	// "at cursor" only makes sense for one open script with a caret in it.
+	if (p_caret_line > 0 && p_paths.size() == 1 &&
+			!test_at_line(FileAccess::get_file_as_string(p_paths[0]), p_caret_line).is_empty()) {
+		items.push_back("Run Test at Cursor");
+	}
+	items.push_back("Run Tests");
+	return items;
+}
+
+Dictionary SafeGDScriptLanguage::run_tests(const PackedStringArray &p_paths,
+		const PackedStringArray &p_only) {
+	Array scripts;
+	int64_t passed = 0;
+	int64_t failed = 0;
+	int64_t errors = 0;
+	PackedStringArray done;
+
+	for (int64_t i = 0; i < p_paths.size(); i++) {
+		const String path = p_paths[i];
+		if (done.has(path)) {
+			continue;
+		}
+		done.push_back(path);
+
+		// A missing file loads as an empty script rather than failing, and an
+		// empty script has nothing to say about why it ran no tests.
+		Ref<SafeGDScript> script;
+		if (FileAccess::file_exists(path)) {
+			script = ResourceLoader::get_singleton()->load(path, "SafeGDScript",
+					ResourceLoader::CACHE_MODE_REUSE);
+		}
+		if (script.is_null()) {
+			Dictionary report;
+			report["path"] = path;
+			report["passed"] = int64_t(0);
+			report["failed"] = int64_t(0);
+			report["errors"] = int64_t(1);
+			report["elapsed_usec"] = int64_t(0);
+			Array rows;
+			Dictionary row;
+			row["name"] = "(load)";
+			row["line"] = 0;
+			row["status"] = "error";
+			row["message"] = FileAccess::file_exists(path)
+					? "could not load " + path + " as a SafeGDScript"
+					: "no such script: " + path;
+			row["location"] = path;
+			row["elapsed_usec"] = int64_t(0);
+			rows.push_back(row);
+			report["tests"] = rows;
+			scripts.push_back(report);
+			errors++;
+			continue;
+		}
+
+		const Dictionary report = script->run_tests(p_only);
+		passed += int64_t(report.get("passed", int64_t(0)));
+		failed += int64_t(report.get("failed", int64_t(0)));
+		errors += int64_t(report.get("errors", int64_t(0)));
+		scripts.push_back(report);
+	}
+
+	Dictionary total;
+	total["scripts"] = scripts;
+	total["passed"] = passed;
+	total["failed"] = failed;
+	total["errors"] = errors;
+	return total;
 }

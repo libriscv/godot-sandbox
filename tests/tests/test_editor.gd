@@ -184,9 +184,10 @@ func test_editor_public_tables_cover_the_compiler_globals():
 	var annotation_names := []
 	for entry in annotations:
 		annotation_names.push_back(String(entry.name))
-	assert_eq(annotations.size(), 34)
+	assert_eq(annotations.size(), 35)
 	assert_true(annotation_names.has("@export"))
 	assert_true(annotation_names.has("@onready"))
+	assert_true(annotation_names.has("@test"))
 
 func test_editor_templates_substitute_and_every_built_in_compiles():
 	var language := _language()

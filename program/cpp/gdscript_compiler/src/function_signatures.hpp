@@ -52,6 +52,28 @@ inline Variant gdscript_signals_to_variant() {
 	return PackedByteArray(gdscript::encode_function_signatures(gdscript_last_signals()));
 }
 
+// @test functions. Own blob, own entry point: a byte appended to the function
+// signature record would fail to decode against every older gdscript.elf, while
+// a separate entry the host probes with has_function() degrades to "no tests".
+inline std::vector<gdscript::FunctionSignature> &gdscript_last_tests() {
+	static std::vector<gdscript::FunctionSignature> tests;
+	return tests;
+}
+
+inline void gdscript_remember_tests(const gdscript::Compiler &compiler) {
+	gdscript_last_tests() = compiler.get_test_signatures();
+}
+
+inline Variant gdscript_tests_to_variant() {
+	return PackedByteArray(gdscript::encode_function_signatures(gdscript_last_tests()));
+}
+
+// Off for a shipping build: the @test functions leave the ELF entirely.
+inline bool &gdscript_emit_tests() {
+	static bool emit = true;
+	return emit;
+}
+
 // @rpc methods. Kept in an independent blob so old hosts and compiler ELFs
 // remain compatible in both directions.
 inline std::vector<gdscript::RPCConfig> &gdscript_last_rpc_configs() {
@@ -263,6 +285,7 @@ inline void gdscript_set_base_sources(const std::vector<std::string> &triples) {
 
 inline void gdscript_apply_restrictions(gdscript::CompilerOptions &options) {
 	options.restricted = gdscript_restricted();
+	options.emit_tests = gdscript_emit_tests();
 	options.trait_structural_fallback = gdscript_trait_structural_fallback();
 	options.source_path = gdscript_source_path();
 	options.autoloads = gdscript_autoloads();

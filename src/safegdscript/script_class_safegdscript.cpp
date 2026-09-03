@@ -15,7 +15,8 @@
 #include <stdexcept>
 #include <unordered_map>
 
-Sandbox *safegdscript_acquire_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_script);
+Sandbox *safegdscript_acquire_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_script,
+		bool p_restricted);
 void safegdscript_release_sandbox(SafeGDScript *p_script, Object *p_owner);
 
 static String utf8_of(const std::string &p_text) {
@@ -258,7 +259,7 @@ SafeGDScriptClassInstance::SafeGDScriptClassInstance(Object *p_owner,
 	// instance set; a call sets its own for the duration.
 	outer = Ref<SafeGDScript>(p_script->get_outer_script());
 	if (outer.is_valid()) {
-		sandbox = safegdscript_acquire_sandbox(p_owner, outer);
+		sandbox = safegdscript_acquire_sandbox(p_owner, outer, outer->compiled_restricted);
 	}
 	if (p_owner != nullptr) {
 		bound_instances.insert_or_assign(uint64_t(p_owner->get_instance_id()), this);
