@@ -1,5 +1,7 @@
 extends GutTest
 
+const SgdStaticUtils = preload("res://tests/static_utils.sgd")
+
 var Sandbox_TestsTests = load("res://tests/tests.elf")
 var holder = Sandbox.new()
 
@@ -11121,6 +11123,47 @@ func from_global():
 		assert_eq(elf.is_empty(), true, "should not compile: " + source)
 	ts.queue_free()
 
+func test_sgd_constant_expressions_fold():
+	var gdscript_code = """
+const SHIFT = 3
+const MASK = 1 << SHIFT
+const NAME = "on" + "off"
+const HALF = 7 / 2
+const SCALE = MASK * 0.5
+const LIMIT = 100 if MASK else 10
+const HALF_PI = PI / 2
+const ESCAPE = KEY_ESCAPE
+
+enum Codes { A = MASK, B }
+
+class Bits:
+	const WIDTH = MASK * 2
+
+func values():
+	return [MASK, NAME, HALF, SCALE, LIMIT, ESCAPE]
+
+func half_pi():
+	return HALF_PI
+
+func codes():
+	return [Codes.A, Codes.B]
+
+func width():
+	return Bits.WIDTH
+"""
+	var s = _compile_and_load(gdscript_code, 400000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("values"), [8, "onoff", 3, 4.0, 100, KEY_ESCAPE],
+		"an expression over constants is a constant")
+	assert_almost_eq(s.vmcallv("half_pi"), PI / 2, 0.0000001,
+		"a @GlobalScope float constant folds")
+	assert_eq(s.vmcallv("codes"), [8, 9], "an enum member may be written from a constant")
+	assert_eq(s.vmcallv("width"), 16, "a class constant may be an expression")
+
+	s.queue_free()
+
 func test_sgd_char_and_ord():
 	# char() and ord() are @GlobalScope functions, so a call must never fall
 	# through to the owner node: Godot drops the resulting VCALL and answers null.
@@ -14074,3 +14117,40 @@ func make_packed() -> PackedInt32Array:
 	node.set_instructions_max(1000000)
 	assert_eq(node.call("run"), 1, "the int and float forms of a vector should convert on assignment")
 	node.free()
+
+func test_sgd_a_static_function_is_published_as_static():
+	var flags = {}
+	for method in (SgdStaticUtils as Script).get_script_method_list():
+		flags[method["name"]] = int(method["flags"])
+	assert_true(flags.has("doubled"), "a 'static func' should be in the method list")
+	assert_ne(flags.get("doubled", 0) & METHOD_FLAG_STATIC, 0,
+		"a 'static func' should be published with METHOD_FLAG_STATIC")
+	assert_eq(flags.get("instance_only", 0) & METHOD_FLAG_STATIC, 0,
+		"a plain 'func' should not be")
+	assert_true((SgdStaticUtils as Script).has_method("doubled"),
+		"has_method() asks the script for its statics")
+
+func test_sgd_a_static_function_is_callable_on_the_class():
+	# GDScript refuses a non-static call on a class while parsing, so this file
+	# only loads at all when the flag reaches the analyzer.
+	assert_eq(SgdStaticUtils.doubled(21), 42, "a static function should run without an instance")
+	assert_eq(SgdStaticUtils.scaled(3), 9, "a folded default should be filled in")
+	assert_eq(SgdStaticUtils.scaled(3, 4), 12, "and a passed argument should win over it")
+
+func test_sgd_a_static_call_shares_the_machine_with_the_instances():
+	var node = Node.new()
+	node.set_script(SgdStaticUtils)
+	node.call("remember", 5)
+	assert_eq(SgdStaticUtils.remembered(), 5,
+		"a 'static var' is one per program, and the static call runs in that program")
+	node.set_script(null)
+	node.free()
+
+func test_sgd_a_static_call_follows_a_recompile():
+	var script = SafeGDScript.new()
+	script.set_source_code("static func answer():\n\treturn 1\n")
+	assert_eq(script.get_compile_error(), "", "the script should compile")
+	assert_eq(script.call("answer"), 1, "a static function answers on the script itself")
+	script.set_source_code("static func answer():\n\treturn 2\n")
+	assert_eq(script.get_compile_error(), "", "the second version should compile")
+	assert_eq(script.call("answer"), 2, "and the recompiled program should answer after it")

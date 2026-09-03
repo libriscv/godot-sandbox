@@ -12,6 +12,7 @@
 // constant is handed to the host to pass; one that does not leaves the
 // parameter required for a host call, which is refused rather than guessed at.
 #include "../compiler.h"
+#include "../compiler_exception.h"
 #include "../codegen.h"
 #include "../function_signature.h"
 #include "../lexer.h"
@@ -31,6 +32,15 @@ static IRProgram compile_to_ir(const std::string& source) {
 	Program program = parser.parse();
 	CodeGenerator codegen;
 	return codegen.generate(program);
+}
+
+static std::string compile_error(const std::string& source) {
+	try {
+		compile_to_ir(source);
+	} catch (const CompilerException& e) {
+		return e.what();
+	}
+	return "";
 }
 
 static const FunctionSignature& find_signature(const IRProgram& ir, const std::string& name) {
@@ -315,6 +325,58 @@ static void test_rpc_wire_format_round_trip() {
 	std::cout << "  ✓ the RPC table survives the wire format intact" << std::endl;
 }
 
+static void test_static_is_published() {
+	const IRProgram ir = compile_to_ir(
+		"static func shared(x):\n"
+		"\treturn x\n"
+		"@rpc\n"
+		"func mine():\n"
+		"\treturn 1\n"
+		"@warning_ignore(\"unused\")\n"
+		"static func annotated():\n"
+		"\treturn 2\n");
+
+	assert(find_signature(ir, "shared").is_static);
+	assert(find_signature(ir, "annotated").is_static);
+	assert(!find_signature(ir, "mine").is_static);
+
+	const std::vector<uint8_t> blob = encode_function_signatures(ir.signatures);
+	std::vector<FunctionSignature> decoded;
+	assert(decode_function_signatures(blob.data(), blob.size(), decoded));
+	bool seen = false;
+	for (const FunctionSignature& sig : decoded) {
+		if (sig.name == "shared") {
+			seen = sig.is_static;
+		}
+		if (sig.name == "mine") {
+			assert(!sig.is_static);
+		}
+	}
+	assert(seen);
+
+	std::cout << "  \u2713 a file-scope 'static func' is published as static" << std::endl;
+}
+
+static void test_a_static_function_has_no_instance() {
+	assert(compile_error("var v = 1\nstatic func f():\n\treturn v\n")
+		.find("one per instance") != std::string::npos);
+	assert(compile_error("var v = 1\nstatic func f():\n\tv = 2\n")
+		.find("one per instance") != std::string::npos);
+	assert(compile_error("var v = 1\nstatic func f():\n\tv += 2\n")
+		.find("one per instance") != std::string::npos);
+	assert(compile_error("static func f():\n\treturn self\n")
+		.find("runs without one") != std::string::npos);
+	assert(compile_error("var v = 1\nstatic func f():\n\tvar g = func(): return v\n\treturn g\n")
+		.find("one per instance") != std::string::npos);
+	assert(compile_error("extends Node\nstatic func f():\n\treturn position\n")
+		.find("Undefined variable") != std::string::npos);
+
+	assert(compile_error("static var v = 1\nconst K = 2\nstatic func f():\n\tv += K\n\treturn v\n").empty());
+	assert(compile_error("var v = 1\nfunc f():\n\treturn v\n").empty());
+
+	std::cout << "  \u2713 a 'static func' reaches neither a member nor self" << std::endl;
+}
+
 int main() {
 	std::cout << "=== Function Signature Tests ===" << std::endl << std::endl;
 
@@ -327,6 +389,8 @@ int main() {
 	test_struct_parameter_is_a_dictionary();
 	test_return_type();
 	test_compiler_publishes_signatures();
+	test_static_is_published();
+	test_a_static_function_has_no_instance();
 	test_declaration_line();
 	test_doc_comment();
 	test_wire_format_round_trip();

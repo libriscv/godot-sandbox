@@ -12,6 +12,8 @@
 #include "call_arguments.h"
 #include "script_safegdscript.h"
 #include "script_language_safegdscript.h"
+#include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/templates/local_vector.hpp>
 #include <godot_cpp/variant/signal.hpp>
@@ -417,8 +419,13 @@ void safegdscript_release_sandbox(SafeGDScript *p_script, Object *p_owner) {
 	}
 	it->second.count--;
 	if (it->second.count == 0) {
-		it->second.sandbox->queue_free();
+		Sandbox *sandbox = it->second.sandbox;
 		sandbox_instances.erase(it);
+		if (Object::cast_to<SceneTree>(Engine::get_singleton()->get_main_loop()) != nullptr) {
+			sandbox->queue_free();
+		} else {
+			memdelete(sandbox);
+		}
 	} else if (Node *owner_node = fast_cast_to<Node>(p_owner)) {
 		if (it->second.sandbox->get_tree_base_id() == godot::ObjectID(owner_node->get_instance_id())) {
 			it->second.sandbox->set_tree_base(nullptr);
@@ -488,4 +495,176 @@ SafeGDScriptInstance::~SafeGDScriptInstance() {
 	}
 	this->current_sandbox = nullptr;
 	script->remove_instance(this);
+}
+
+SafeGDScriptStaticInstance::SafeGDScriptStaticInstance(SafeGDScript *p_script) :
+		script(p_script) {}
+
+SafeGDScriptStaticInstance::~SafeGDScriptStaticInstance() {
+	release_sandbox();
+}
+
+Sandbox *SafeGDScriptStaticInstance::acquire() {
+	if (this->sandbox == nullptr) {
+		if (this->script->compiled_restricted && sandbox_for_safegdscript(this->script) == nullptr) {
+			return nullptr;
+		}
+		this->sandbox = create_sandbox(nullptr, Ref<SafeGDScript>(this->script));
+	}
+	return this->sandbox;
+}
+
+void SafeGDScriptStaticInstance::release_sandbox() {
+	if (this->sandbox != nullptr) {
+		this->sandbox = nullptr;
+		safegdscript_release_sandbox(this->script, nullptr);
+	}
+}
+
+bool SafeGDScriptStaticInstance::set(const StringName &p_name, const Variant &p_value) {
+	return false;
+}
+
+bool SafeGDScriptStaticInstance::get(const StringName &p_name, Variant &r_ret) const {
+	return false;
+}
+
+const GDExtensionPropertyInfo *SafeGDScriptStaticInstance::get_property_list(uint32_t *r_count) const {
+	*r_count = 0;
+	return nullptr;
+}
+
+void SafeGDScriptStaticInstance::free_property_list(const GDExtensionPropertyInfo *p_list, uint32_t p_count) const {
+}
+
+Variant::Type SafeGDScriptStaticInstance::get_property_type(const StringName &p_name, bool *r_is_valid) const {
+	*r_is_valid = false;
+	return Variant::NIL;
+}
+
+bool SafeGDScriptStaticInstance::validate_property(GDExtensionPropertyInfo &p_property) const {
+	return false;
+}
+
+bool SafeGDScriptStaticInstance::get_class_category(GDExtensionPropertyInfo &r_class_category) const {
+	return false;
+}
+
+bool SafeGDScriptStaticInstance::property_can_revert(const StringName &p_name) const {
+	return false;
+}
+
+bool SafeGDScriptStaticInstance::property_get_revert(const StringName &p_name, Variant &r_ret) const {
+	return false;
+}
+
+Object *SafeGDScriptStaticInstance::get_owner() {
+	return this->script;
+}
+
+void SafeGDScriptStaticInstance::get_property_state(GDExtensionScriptInstancePropertyStateAdd p_add_func, void *p_userdata) {
+}
+
+const GDExtensionMethodInfo *SafeGDScriptStaticInstance::get_method_list(uint32_t *r_count) const {
+	std::vector<const godot::MethodInfo *> statics;
+	for (const godot::MethodInfo &method_info : script->methods_info) {
+		if (method_info.flags & METHOD_FLAG_STATIC) {
+			statics.push_back(&method_info);
+		}
+	}
+	GDExtensionMethodInfo *list = memnew_arr(GDExtensionMethodInfo, statics.size());
+	for (size_t i = 0; i < statics.size(); i++) {
+		list[i] = create_method_info(*statics[i]);
+	}
+	*r_count = uint32_t(statics.size());
+	return list;
+}
+
+void SafeGDScriptStaticInstance::free_method_list(const GDExtensionMethodInfo *p_list, uint32_t p_count) const {
+	if (p_list) {
+		for (uint32_t i = 0; i < p_count; i++) {
+			free_method_info(p_list[i]);
+		}
+		memdelete_arr(p_list);
+	}
+}
+
+bool SafeGDScriptStaticInstance::has_method(const StringName &p_method) const {
+	return script->_has_static_method(p_method);
+}
+
+GDExtensionInt SafeGDScriptStaticInstance::get_method_argument_count(const StringName &p_method, bool &r_valid) const {
+	const godot::MethodInfo *method = script->find_method_info(p_method);
+	if (method == nullptr || !(method->flags & METHOD_FLAG_STATIC)) {
+		r_valid = false;
+		return 0;
+	}
+	r_valid = true;
+	return GDExtensionInt(method->arguments.size());
+}
+
+Variant SafeGDScriptStaticInstance::callp(
+		const StringName &p_method,
+		const Variant **p_args, const int p_argument_count,
+		GDExtensionCallError &r_error)
+{
+	if (!script->_has_static_method(p_method)) {
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+		return Variant();
+	}
+	Sandbox *sandbox = acquire();
+	if (sandbox == nullptr) {
+		ERR_PRINT("SafeGDScript: " + script->get_path() + ": a restricted script's static "
+				"function needs a live instance, which owns the machine it runs in.");
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+		return Variant();
+	}
+	const auto address = sandbox->cached_address_of(p_method.hash(), p_method);
+	if (address == 0) {
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+		return Variant();
+	}
+	CompletedArguments completed;
+	if (!completed.complete(script->find_method_info(p_method), p_args, p_argument_count, r_error)) {
+		return Variant();
+	}
+	r_error.error = GDEXTENSION_CALL_OK;
+	ScopedCallContext ctx(sandbox, nullptr, sandbox->get_default_instance_base());
+	return sandbox->vmcall_address(address, completed.args(), completed.argcount(), r_error);
+}
+
+void SafeGDScriptStaticInstance::notification(int p_notification, bool p_reversed) {
+}
+
+String SafeGDScriptStaticInstance::to_string(bool *r_valid) {
+	*r_valid = false;
+	return String();
+}
+
+void SafeGDScriptStaticInstance::refcount_incremented() {
+}
+
+bool SafeGDScriptStaticInstance::refcount_decremented() {
+	return true;
+}
+
+Ref<Script> SafeGDScriptStaticInstance::get_script() const {
+	return Ref<Script>(this->script);
+}
+
+bool SafeGDScriptStaticInstance::is_placeholder() const {
+	return false;
+}
+
+void SafeGDScriptStaticInstance::property_set_fallback(const StringName &p_name, const Variant &p_value, bool *r_valid) {
+	*r_valid = false;
+}
+
+Variant SafeGDScriptStaticInstance::property_get_fallback(const StringName &p_name, bool *r_valid) {
+	*r_valid = false;
+	return Variant();
+}
+
+ScriptLanguage *SafeGDScriptStaticInstance::_get_language() {
+	return SafeGDScriptLanguage::get_singleton();
 }

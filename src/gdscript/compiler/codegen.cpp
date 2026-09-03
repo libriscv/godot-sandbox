@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <sstream>
 #include <cstring>
+#include <cmath>
 
 namespace gdscript {
 
@@ -778,7 +779,9 @@ IRProgram CodeGenerator::generate(const Program& program) {
 		m_current_class = pending.owner;
 		m_current_chain_link = pending.chain_link;
 		m_current_chain_function = pending.chain_function;
+		m_in_static_function = pending.in_static_function;
 		IRFunction lifted = generate_lambda_function(*pending.decl, pending.captures);
+		m_in_static_function = false;
 		m_current_class = nullptr;
 		m_current_chain_link = 0;
 		m_current_chain_function.clear();
@@ -816,6 +819,7 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const Stru
 
 	func.return_type = decl.return_type;
 	m_current_class = owner;
+	m_in_static_function = decl.is_static;
 
 	push_scope(func);
 
@@ -872,6 +876,7 @@ IRFunction CodeGenerator::generate_function(const FunctionDecl& decl, const Stru
 	func.ir.max_registers = std::max(func.next_register, 1);
 	pop_scope(func);
 	m_current_class = nullptr;
+	m_in_static_function = false;
 
 	return std::move(func.ir);
 }
@@ -1094,6 +1099,7 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 			if (is_global_const(name)) {
 				error_at("Cannot assign to const variable: " + name, site);
 			}
+			reject_static_member_access(name, site ? site->line : 0, site ? site->column : 0);
 			size_t global_idx = m_global_variables.at(name);
 			if (m_global_structs[global_idx] != nullptr &&
 				!m_global_structs[global_idx]->is_class) {
@@ -2152,7 +2158,7 @@ bool CodeGenerator::gen_match_jump_table(const MatchStmt* stmt, int subject_reg,
 					pattern->line, pattern->column);
 			}
 			IRGlobalVar folded;
-			if (!fold_global_initializer(pattern->value.get(), folded)) {
+			if (!fold_global_initializer(pattern->value.get(), folded, &func)) {
 				return decline("A 'switch' pattern has to be an integer constant the compiler can fold",
 					"Only literals, 'const' values and enum members can index a jump table. "
 					"Use 'match' to compare against a run-time value.",
@@ -2273,7 +2279,7 @@ void CodeGenerator::gen_match(const MatchStmt* stmt, FunctionContext& func) {
 			Variant::Type type = Variant::VARIANT_MAX;
 			if (subject_is_typeof) {
 				IRGlobalVar folded;
-				if (fold_global_initializer(pattern->value.get(), folded) &&
+				if (fold_global_initializer(pattern->value.get(), folded, &func) &&
 					folded.init_type == IRGlobalVar::InitType::INT) {
 					const int64_t tag = std::get<int64_t>(folded.init_value);
 					if (tag >= 0 && tag < Variant::VARIANT_MAX) {
@@ -4335,7 +4341,7 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 		// In a class method `self` is a parameter, declared above. Reaching here
 		// from inside one means the method is static, and there is no instance;
 		// answering the owner node instead would be a different object entirely.
-		if (m_current_class != nullptr) {
+		if (m_current_class != nullptr || m_in_static_function) {
 			error_at("'self' is the instance, and a 'static func' runs without one", expr);
 		}
 		return gen_get_node(".", func);
@@ -4362,6 +4368,7 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 				"initializer runs. Make '" + expr->name + "' a 'static var', or move the "
 				"expression into a function");
 		}
+		reject_static_member_access(expr->name, expr->line, expr->column);
 		if (!global_getter(global_idx).empty()) {
 			return gen_property_get(global_idx, func);
 		}
@@ -4836,7 +4843,7 @@ int CodeGenerator::gen_lambda(const LambdaExpr* expr, FunctionContext& func) {
 	}
 
 	m_pending_lambdas.push_back({ &decl, lifted_name, captures, m_current_class,
-		m_current_chain_link, m_current_chain_function });
+		m_current_chain_link, m_current_chain_function, m_in_static_function });
 
 	int result_reg = gen_make_callable(lifted_name, bound_reg, func);
 	if (bound_reg >= 0) {
@@ -7492,12 +7499,32 @@ int CodeGenerator::gen_native_base_load(int self_reg, FunctionContext& func) {
 	return base_reg;
 }
 
+void CodeGenerator::reject_static_member_access(const std::string& name,
+	int line, int column) const
+{
+	if (!m_in_static_function) {
+		return;
+	}
+	auto it = m_global_variables.find(name);
+	if (it == m_global_variables.end() || it->second >= m_global_is_member.size() ||
+		!m_global_is_member[it->second]) {
+		return;
+	}
+	error_at("Cannot use the member variable '" + name + "' from a 'static func'",
+		line, column,
+		"'" + name + "' is one per instance, and a static function runs without one. "
+		"Declare it 'static var', or make this an instance function");
+}
+
 // A bare name that resolves to nothing in the script is a property of whatever
 // the script extends, as it is in GDScript. Inside a lifted class method that
 // is the class's `@base`; in a top-level function it is the owner, which the
 // script's own `extends` names. Without an `extends` there is nothing to reach
 // and the caller reports the name as undefined.
 int CodeGenerator::gen_implicit_base_load(FunctionContext& func) {
+	if (m_in_static_function) {
+		return -1;
+	}
 	if (m_current_class != nullptr) {
 		if (native_base(*m_current_class) == nullptr) {
 			return -1;
@@ -7580,7 +7607,7 @@ void CodeGenerator::register_class_constants(const Program& program) {
 			if (!constant.type_hint.empty()) {
 				folded.type_hint = single_type_from(constant.type_hint);
 			}
-			if (!fold_global_initializer(constant.default_value.get(), folded)
+			if (!fold_global_initializer(constant.default_value.get(), folded, nullptr, &decl)
 				|| folded.init_type == IRGlobalVar::InitType::RUNTIME) {
 				error_at("The constant '" + decl.name + "." + constant.name +
 					"' is not a compile-time value", constant.line, constant.column,
@@ -10293,8 +10320,171 @@ IROpcode CodeGenerator::packed_array_opcode(IRInstruction::TypeHint type) {
 	}
 }
 
-bool CodeGenerator::fold_global_initializer(const Expr* expr, IRGlobalVar& out) const {
+static bool folded_truth(const IRGlobalVar& value, bool& out) {
 	using InitType = IRGlobalVar::InitType;
+	switch (value.init_type) {
+		case InitType::BOOL: out = std::get<bool>(value.init_value); return true;
+		case InitType::INT: out = std::get<int64_t>(value.init_value) != 0; return true;
+		case InitType::FLOAT: out = std::get<double>(value.init_value) != 0.0; return true;
+		case InitType::STRING: out = !std::get<std::string>(value.init_value).empty(); return true;
+		case InitType::NULL_VAL:
+		case InitType::EMPTY_ARRAY:
+		case InitType::EMPTY_DICT: out = false; return true;
+		case InitType::NONE:
+		case InitType::RUNTIME: return false;
+	}
+	return false;
+}
+
+static bool fold_constant_binary(BinaryExpr::Op op, const IRGlobalVar& lhs,
+	const IRGlobalVar& rhs, IRGlobalVar& out)
+{
+	using InitType = IRGlobalVar::InitType;
+	using Op = BinaryExpr::Op;
+
+	const auto set_int = [&](int64_t value) {
+		out.init_type = InitType::INT;
+		out.init_value = value;
+		return true;
+	};
+	const auto set_float = [&](double value) {
+		out.init_type = InitType::FLOAT;
+		out.init_value = value;
+		return true;
+	};
+	const auto set_bool = [&](bool value) {
+		out.init_type = InitType::BOOL;
+		out.init_value = value;
+		return true;
+	};
+
+	if (lhs.init_type == InitType::STRING && rhs.init_type == InitType::STRING) {
+		const std::string& left = std::get<std::string>(lhs.init_value);
+		const std::string& right = std::get<std::string>(rhs.init_value);
+		switch (op) {
+			case Op::ADD:
+				out.init_type = InitType::STRING;
+				out.init_value = left + right;
+				return true;
+			case Op::EQ: return set_bool(left == right);
+			case Op::NEQ: return set_bool(left != right);
+			default: return false;
+		}
+	}
+
+	if (lhs.init_type == InitType::BOOL && rhs.init_type == InitType::BOOL) {
+		const bool left = std::get<bool>(lhs.init_value);
+		const bool right = std::get<bool>(rhs.init_value);
+		switch (op) {
+			case Op::AND: return set_bool(left && right);
+			case Op::OR: return set_bool(left || right);
+			case Op::EQ: return set_bool(left == right);
+			case Op::NEQ: return set_bool(left != right);
+			default: return false;
+		}
+	}
+
+	const auto is_number = [](const IRGlobalVar& value) {
+		return value.init_type == InitType::INT || value.init_type == InitType::FLOAT;
+	};
+	if (!is_number(lhs) || !is_number(rhs)) {
+		return false;
+	}
+
+	if (lhs.init_type == InitType::FLOAT || rhs.init_type == InitType::FLOAT) {
+		const auto as_double = [](const IRGlobalVar& value) {
+			return value.init_type == InitType::FLOAT
+				? std::get<double>(value.init_value)
+				: static_cast<double>(std::get<int64_t>(value.init_value));
+		};
+		const double left = as_double(lhs);
+		const double right = as_double(rhs);
+		switch (op) {
+			case Op::ADD: return set_float(left + right);
+			case Op::SUB: return set_float(left - right);
+			case Op::MUL: return set_float(left * right);
+			case Op::DIV:
+				if (right == 0.0) return false;
+				return set_float(left / right);
+			case Op::MOD:
+				if (right == 0.0) return false;
+				return set_float(std::fmod(left, right));
+			case Op::POW: return set_float(std::pow(left, right));
+			case Op::EQ: return set_bool(left == right);
+			case Op::NEQ: return set_bool(left != right);
+			case Op::LT: return set_bool(left < right);
+			case Op::LTE: return set_bool(left <= right);
+			case Op::GT: return set_bool(left > right);
+			case Op::GTE: return set_bool(left >= right);
+			default: return false;
+		}
+	}
+
+	const int64_t left = std::get<int64_t>(lhs.init_value);
+	const int64_t right = std::get<int64_t>(rhs.init_value);
+	const uint64_t uleft = static_cast<uint64_t>(left);
+	const uint64_t uright = static_cast<uint64_t>(right);
+	switch (op) {
+		case Op::ADD: return set_int(static_cast<int64_t>(uleft + uright));
+		case Op::SUB: return set_int(static_cast<int64_t>(uleft - uright));
+		case Op::MUL: return set_int(static_cast<int64_t>(uleft * uright));
+		case Op::DIV:
+			if (right == 0 || (right == -1 && left == INT64_MIN)) return false;
+			return set_int(left / right);
+		case Op::MOD:
+			if (right == 0 || (right == -1 && left == INT64_MIN)) return false;
+			return set_int(left % right);
+		case Op::POW: {
+			const double result = std::pow(static_cast<double>(left), static_cast<double>(right));
+			if (!std::isfinite(result) || result < static_cast<double>(INT64_MIN) ||
+				result >= -static_cast<double>(INT64_MIN)) {
+				return false;
+			}
+			return set_int(static_cast<int64_t>(result));
+		}
+		case Op::BIT_AND: return set_int(left & right);
+		case Op::BIT_OR: return set_int(left | right);
+		case Op::BIT_XOR: return set_int(left ^ right);
+		case Op::SHL:
+			if (right < 0) return false;
+			return set_int(static_cast<int64_t>(uleft << (uright & 63)));
+		case Op::SHR:
+			if (right < 0) return false;
+			return set_int(left >> (uright & 63));
+		case Op::EQ: return set_bool(left == right);
+		case Op::NEQ: return set_bool(left != right);
+		case Op::LT: return set_bool(left < right);
+		case Op::LTE: return set_bool(left <= right);
+		case Op::GT: return set_bool(left > right);
+		case Op::GTE: return set_bool(left >= right);
+		case Op::AND:
+		case Op::OR:
+		case Op::IN: return false;
+	}
+	return false;
+}
+
+bool CodeGenerator::fold_global_initializer(const Expr* expr, IRGlobalVar& out,
+	const FunctionContext* func, const StructDecl* owner) const
+{
+	using InitType = IRGlobalVar::InitType;
+
+	const auto shadowed = [&](const std::string& name) {
+		if (func == nullptr) {
+			return false;
+		}
+		for (const Scope& scope : func->scopes) {
+			if (scope.variables.count(name) != 0) {
+				return true;
+			}
+		}
+		return false;
+	};
+	const auto take = [&](const IRGlobalVar& value) {
+		out.init_type = value.init_type;
+		out.init_value = value.init_value;
+		return true;
+	};
 
 	if (auto* lit = dynamic_cast<const LiteralExpr*>(expr)) {
 		switch (lit->lit_type) {
@@ -10328,7 +10518,7 @@ bool CodeGenerator::fold_global_initializer(const Expr* expr, IRGlobalVar& out) 
 	// '-5' parses as NEG(5); fold here so it remains a constant.
 	if (auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
 		IRGlobalVar inner;
-		if (!fold_global_initializer(unary->operand.get(), inner)) {
+		if (!fold_global_initializer(unary->operand.get(), inner, func, owner)) {
 			return false;
 		}
 		switch (unary->op) {
@@ -10367,15 +10557,94 @@ bool CodeGenerator::fold_global_initializer(const Expr* expr, IRGlobalVar& out) 
 		return false;
 	}
 
-	// Folded global const.
-	if (auto* var = dynamic_cast<const VariableExpr*>(expr)) {
-		auto it = m_global_const_values.find(var->name);
-		if (it == m_global_const_values.end()) {
+	if (auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
+		IRGlobalVar lhs;
+		IRGlobalVar rhs;
+		if (!fold_global_initializer(binary->left.get(), lhs, func, owner) ||
+			!fold_global_initializer(binary->right.get(), rhs, func, owner)) {
 			return false;
 		}
-		out.init_type = it->second.init_type;
-		out.init_value = it->second.init_value;
-		return true;
+		return fold_constant_binary(binary->op, lhs, rhs, out);
+	}
+
+	if (auto* ternary = dynamic_cast<const TernaryExpr*>(expr)) {
+		IRGlobalVar condition;
+		IRGlobalVar when_true;
+		IRGlobalVar when_false;
+		bool truth = false;
+		if (!fold_global_initializer(ternary->condition.get(), condition, func, owner) ||
+			!fold_global_initializer(ternary->true_value.get(), when_true, func, owner) ||
+			!fold_global_initializer(ternary->false_value.get(), when_false, func, owner) ||
+			!folded_truth(condition, truth)) {
+			return false;
+		}
+		return take(truth ? when_true : when_false);
+	}
+
+	if (auto* var = dynamic_cast<const VariableExpr*>(expr)) {
+		if (shadowed(var->name)) {
+			return false;
+		}
+		for (const StructDecl* at = owner; at != nullptr; at = class_base(*at)) {
+			auto it = m_class_constants.find(at->name + "." + var->name);
+			if (it != m_class_constants.end()) {
+				return take(it->second);
+			}
+		}
+		if (auto it = m_global_const_values.find(var->name); it != m_global_const_values.end()) {
+			return take(it->second);
+		}
+		if (auto it = m_enum_members.find(var->name); it != m_enum_members.end()) {
+			if (it->second->value_expr != nullptr) {
+				return false;
+			}
+			out.init_type = InitType::INT;
+			out.init_value = it->second->value;
+			return true;
+		}
+		if (const GlobalConstant* constant = find_global_constant(var->name)) {
+			out.init_type = constant->is_float ? InitType::FLOAT : InitType::INT;
+			if (constant->is_float) {
+				out.init_value = constant->float_value;
+			} else {
+				out.init_value = constant->int_value;
+			}
+			return true;
+		}
+		return false;
+	}
+
+	if (auto* member = dynamic_cast<const MemberCallExpr*>(expr);
+		member != nullptr && !member->is_method_call && member->arguments.empty()) {
+		auto* object = dynamic_cast<const VariableExpr*>(member->object.get());
+		if (object == nullptr || shadowed(object->name)) {
+			return false;
+		}
+		if (const StructDecl* decl = find_struct(object->name)) {
+			for (const StructDecl* at = decl; at != nullptr; at = class_base(*at)) {
+				auto it = m_class_constants.find(at->name + "." + member->member_name);
+				if (it != m_class_constants.end()) {
+					return take(it->second);
+				}
+			}
+			return false;
+		}
+		if (auto it = m_enums.find(object->name); it != m_enums.end()) {
+			const EnumDecl::Member* value = it->second->find_member(member->member_name);
+			if (value == nullptr || value->value_expr != nullptr) {
+				return false;
+			}
+			out.init_type = InitType::INT;
+			out.init_value = value->value;
+			return true;
+		}
+		if (const GlobalEnumValue* value =
+			find_global_enum_value(object->name, member->member_name)) {
+			out.init_type = InitType::INT;
+			out.init_value = value->value;
+			return true;
+		}
+		return false;
 	}
 
 	// Empty containers fold to InitType; backend writes directly.

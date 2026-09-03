@@ -3,6 +3,8 @@
 #include "globals.h"
 #include <stdexcept>
 #include <sstream>
+#include <cmath>
+#include <cstdint>
 
 namespace gdscript {
 
@@ -121,6 +123,7 @@ Program Parser::parse() {
 					decl->is_static = is_static;
 					decl->is_onready = is_onready;
 					decl->export_hint = export_hint;
+					record_const_value(*decl);
 					program.globals.push_back(std::move(*decl));
 				}
 				saw_declaration = true;
@@ -136,6 +139,7 @@ Program Parser::parse() {
 					error("@rpc cannot be applied to a static function");
 				}
 				FunctionDecl function = parse_function();
+				function.is_static = is_static;
 				if (rpc_config.has_value()) {
 					rpc_config->name = function.name;
 					function.rpc_config = std::move(rpc_config);
@@ -162,6 +166,7 @@ Program Parser::parse() {
 			advance();
 			auto const_decl = parse_var_decl(true);
 			if (auto* decl = dynamic_cast<VarDeclStmt*>(const_decl.get())) {
+				record_const_value(*decl);
 				program.globals.push_back(std::move(*decl));
 			}
 			saw_declaration = true;
@@ -205,7 +210,9 @@ Program Parser::parse() {
 				program.trait_name));
 			saw_declaration = true;
 		} else if (check(TokenType::FUNC)) {
-			program.functions.push_back(parse_function());
+			FunctionDecl function = parse_function();
+			function.is_static = is_static;
+			program.functions.push_back(std::move(function));
 			saw_declaration = true;
 		} else {
 			error("Expected function or variable declaration");
@@ -326,97 +333,156 @@ bool Parser::holds_engine_constant(const Expr* expr) {
 	return false;
 }
 
-int64_t Parser::fold_enum_value(const Expr* expr, const EnumDecl& decl, const Token& start) {
-	const auto refuse = [&](const std::string& what) -> int64_t {
-		const int line = expr->line ? expr->line : start.line;
-		const int column = expr->line ? expr->column : start.column;
-		error("An enum member's value has to be an integer constant expression; " + what,
-			line, column);
-		return 0;
+bool Parser::try_fold_int(const Expr* expr, const EnumDecl* decl, int64_t& out,
+	std::string& why, const Expr*& at) const
+{
+	const auto fail = [&](const std::string& what) {
+		if (why.empty()) {
+			why = what;
+			at = expr;
+		}
+		return false;
 	};
 
 	if (auto* literal = dynamic_cast<const LiteralExpr*>(expr)) {
 		switch (literal->lit_type) {
-			case LiteralExpr::Type::INTEGER: return std::get<int64_t>(literal->value);
-			case LiteralExpr::Type::BOOL: return std::get<bool>(literal->value) ? 1 : 0;
-			default: return refuse("this literal is not an integer");
+			case LiteralExpr::Type::INTEGER: out = std::get<int64_t>(literal->value); return true;
+			case LiteralExpr::Type::BOOL: out = std::get<bool>(literal->value) ? 1 : 0; return true;
+			default: return fail("this literal is not an integer");
 		}
 	}
 
 	if (auto* unary = dynamic_cast<const UnaryExpr*>(expr)) {
-		const int64_t operand = fold_enum_value(unary->operand.get(), decl, start);
-		switch (unary->op) {
-			case UnaryExpr::Op::NEG: return int64_t(0u - uint64_t(operand));
-			case UnaryExpr::Op::BIT_NOT: return ~operand;
-			case UnaryExpr::Op::NOT: return operand == 0 ? 1 : 0;
+		int64_t operand = 0;
+		if (!try_fold_int(unary->operand.get(), decl, operand, why, at)) {
+			return false;
 		}
-		return refuse("this operator is not an integer operator");
+		switch (unary->op) {
+			case UnaryExpr::Op::NEG: out = int64_t(0u - uint64_t(operand)); return true;
+			case UnaryExpr::Op::BIT_NOT: out = ~operand; return true;
+			case UnaryExpr::Op::NOT: out = operand == 0 ? 1 : 0; return true;
+		}
+		return fail("this operator is not an integer operator");
 	}
 
 	if (auto* binary = dynamic_cast<const BinaryExpr*>(expr)) {
-		const int64_t left = fold_enum_value(binary->left.get(), decl, start);
-		const int64_t right = fold_enum_value(binary->right.get(), decl, start);
+		int64_t left = 0;
+		int64_t right = 0;
+		if (!try_fold_int(binary->left.get(), decl, left, why, at) ||
+			!try_fold_int(binary->right.get(), decl, right, why, at)) {
+			return false;
+		}
 		const uint64_t ul = uint64_t(left);
 		const uint64_t ur = uint64_t(right);
 		switch (binary->op) {
-			case BinaryExpr::Op::ADD: return int64_t(ul + ur);
-			case BinaryExpr::Op::SUB: return int64_t(ul - ur);
-			case BinaryExpr::Op::MUL: return int64_t(ul * ur);
+			case BinaryExpr::Op::ADD: out = int64_t(ul + ur); return true;
+			case BinaryExpr::Op::SUB: out = int64_t(ul - ur); return true;
+			case BinaryExpr::Op::MUL: out = int64_t(ul * ur); return true;
 			case BinaryExpr::Op::DIV:
 				if (right == 0) {
-					return refuse("it divides by zero");
+					return fail("it divides by zero");
 				}
-				return (left == INT64_MIN && right == -1) ? INT64_MIN : left / right;
+				out = (left == INT64_MIN && right == -1) ? INT64_MIN : left / right;
+				return true;
 			case BinaryExpr::Op::MOD:
 				if (right == 0) {
-					return refuse("it divides by zero");
+					return fail("it divides by zero");
 				}
-				return (left == INT64_MIN && right == -1) ? 0 : left % right;
+				out = (left == INT64_MIN && right == -1) ? 0 : left % right;
+				return true;
 			case BinaryExpr::Op::POW: {
-				if (right < 0) {
-					return refuse("a negative exponent is not an integer");
+				const double result = std::pow(double(left), double(right));
+				if (!std::isfinite(result) || result < double(INT64_MIN) ||
+					result >= -double(INT64_MIN)) {
+					return fail("this power is outside the range of an integer");
 				}
-				int64_t result = 1;
-				for (int64_t i = 0; i < right; i++) {
-					result = int64_t(uint64_t(result) * ul);
-				}
-				return result;
+				out = int64_t(result);
+				return true;
 			}
-			case BinaryExpr::Op::SHL: return int64_t(ul << (ur & 63));
-			case BinaryExpr::Op::SHR: return left >> (ur & 63);
-			case BinaryExpr::Op::BIT_AND: return left & right;
-			case BinaryExpr::Op::BIT_OR: return left | right;
-			case BinaryExpr::Op::BIT_XOR: return left ^ right;
-			case BinaryExpr::Op::EQ: return left == right;
-			case BinaryExpr::Op::NEQ: return left != right;
-			case BinaryExpr::Op::LT: return left < right;
-			case BinaryExpr::Op::LTE: return left <= right;
-			case BinaryExpr::Op::GT: return left > right;
-			case BinaryExpr::Op::GTE: return left >= right;
-			case BinaryExpr::Op::AND: return (left != 0 && right != 0) ? 1 : 0;
-			case BinaryExpr::Op::OR: return (left != 0 || right != 0) ? 1 : 0;
+			case BinaryExpr::Op::SHL: out = int64_t(ul << (ur & 63)); return true;
+			case BinaryExpr::Op::SHR: out = left >> (ur & 63); return true;
+			case BinaryExpr::Op::BIT_AND: out = left & right; return true;
+			case BinaryExpr::Op::BIT_OR: out = left | right; return true;
+			case BinaryExpr::Op::BIT_XOR: out = left ^ right; return true;
+			case BinaryExpr::Op::EQ: out = left == right; return true;
+			case BinaryExpr::Op::NEQ: out = left != right; return true;
+			case BinaryExpr::Op::LT: out = left < right; return true;
+			case BinaryExpr::Op::LTE: out = left <= right; return true;
+			case BinaryExpr::Op::GT: out = left > right; return true;
+			case BinaryExpr::Op::GTE: out = left >= right; return true;
+			case BinaryExpr::Op::AND: out = (left != 0 && right != 0) ? 1 : 0; return true;
+			case BinaryExpr::Op::OR: out = (left != 0 || right != 0) ? 1 : 0; return true;
 			case BinaryExpr::Op::IN: break;
 		}
-		return refuse("this operator is not an integer operator");
+		return fail("this operator is not an integer operator");
+	}
+
+	if (auto* ternary = dynamic_cast<const TernaryExpr*>(expr)) {
+		int64_t condition = 0;
+		int64_t when_true = 0;
+		int64_t when_false = 0;
+		if (!try_fold_int(ternary->condition.get(), decl, condition, why, at) ||
+			!try_fold_int(ternary->true_value.get(), decl, when_true, why, at) ||
+			!try_fold_int(ternary->false_value.get(), decl, when_false, why, at)) {
+			return false;
+		}
+		out = condition != 0 ? when_true : when_false;
+		return true;
 	}
 
 	if (auto* variable = dynamic_cast<const VariableExpr*>(expr)) {
-		if (const EnumDecl::Member* member = decl.find_member(variable->name)) {
-			if (member->value_expr != nullptr) {
-				return refuse("'" + variable->name + "' is an engine constant, "
-					"which has no value until the program runs");
+		if (decl != nullptr) {
+			if (const EnumDecl::Member* member = decl->find_member(variable->name)) {
+				if (member->value_expr != nullptr) {
+					return fail("'" + variable->name + "' is an engine constant, "
+						"which has no value until the program runs");
+				}
+				out = member->value;
+				return true;
 			}
-			return member->value;
+		}
+		if (auto it = m_const_ints.find(variable->name); it != m_const_ints.end()) {
+			out = it->second;
+			return true;
 		}
 		if (const GlobalConstant* constant = find_global_constant(variable->name)) {
 			if (!constant->is_float) {
-				return constant->int_value;
+				out = constant->int_value;
+				return true;
 			}
 		}
-		return refuse("'" + variable->name + "' is not one of this enum's earlier members");
+		return fail("'" + variable->name + "' is not one of this enum's earlier members "
+			"and not an integer 'const'");
 	}
 
-	return refuse("only literals, operators over them and earlier members are");
+	return fail("only literals, operators over them, earlier members and integer "
+		"'const' values are");
+}
+
+void Parser::record_const_value(const VarDeclStmt& decl) {
+	if (!decl.is_const || decl.initializer == nullptr) {
+		return;
+	}
+	int64_t value = 0;
+	std::string why;
+	const Expr* at = decl.initializer.get();
+	if (try_fold_int(decl.initializer.get(), nullptr, value, why, at)) {
+		m_const_ints[decl.name] = value;
+	}
+}
+
+int64_t Parser::fold_enum_value(const Expr* expr, const EnumDecl& decl, const Token& start) {
+	int64_t value = 0;
+	std::string why;
+	const Expr* at = expr;
+	if (!try_fold_int(expr, &decl, value, why, at)) {
+		const int line = at->line ? at->line : start.line;
+		const int column = at->line ? at->column : start.column;
+		error("An enum member's value has to be an integer constant expression; " + why,
+			line, column);
+		return 0;
+	}
+	return value;
 }
 
 EnumDecl Parser::parse_enum() {

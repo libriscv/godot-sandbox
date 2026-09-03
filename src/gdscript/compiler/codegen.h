@@ -239,6 +239,7 @@ private:
 		const StructDecl* owner = nullptr;
 		int chain_link = 0;
 		std::string chain_function;
+		bool in_static_function = false;
 	};
 	std::vector<PendingLambda> m_pending_lambdas;
 	int m_next_lambda = 0;
@@ -507,9 +508,12 @@ private:
 	// Forward references read NIL; rejected at this boundary.
 	size_t m_globals_lowered = 0;
 	bool m_members_in_scope = true;
+	bool m_in_static_function = false;
 	std::vector<bool> m_global_is_member;
+	void reject_static_member_access(const std::string& name, int line, int column) const;
 
-	bool fold_global_initializer(const Expr* expr, IRGlobalVar& out) const;
+	bool fold_global_initializer(const Expr* expr, IRGlobalVar& out,
+		const FunctionContext* func = nullptr, const StructDecl* owner = nullptr) const;
 
 	// Decline reason; match ignores it, switch promotes it to a compile error.
 	struct JumpTableReject {

@@ -21,6 +21,7 @@ class GDScriptCompilerBackend;
 class SafeGDScriptInstance;
 class SafeGDScriptClass;
 class SafeGDScriptPlaceholderInstance;
+class SafeGDScriptStaticInstance;
 class ELFScript;
 
 class SafeGDScript : public ScriptExtension {
@@ -168,6 +169,7 @@ public:
 
 private:
 	void update_methods_info(GDScriptCompilerBackend &p_compiler);
+	void update_static_dispatch();
 	void update_constants(GDScriptCompilerBackend &p_compiler);
 	void rebuild_nested_classes(GDScriptCompilerBackend &p_compiler);
 	void rebuild_if_a_base_changed();
@@ -231,6 +233,8 @@ private:
 	// storage for them, so a reader outside the script -- `Autoload.SOME_ENUM` --
 	// is answered from here, the way GDScript answers out of Script::constants.
 	HashMap<StringName, Variant> constants;
+	SafeGDScriptStaticInstance *static_instance = nullptr;
 	friend class SafeGDScriptInstance;
 	friend class SafeGDScriptPlaceholderInstance;
+	friend class SafeGDScriptStaticInstance;
 };

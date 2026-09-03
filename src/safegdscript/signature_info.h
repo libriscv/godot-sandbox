@@ -45,7 +45,7 @@ inline Variant default_argument_value(const gdscript::FunctionParameter &p_param
 inline MethodInfo method_info_from_signature(const gdscript::FunctionSignature &p_signature,
 		const String &p_name) {
 	MethodInfo method(p_name);
-	method.flags = p_signature.is_static ? METHOD_FLAG_STATIC : METHOD_FLAG_NORMAL;
+	method.flags = METHOD_FLAG_NORMAL | (p_signature.is_static ? METHOD_FLAG_STATIC : 0);
 	method.return_val.usage = PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NIL_IS_VARIANT;
 	method.return_val.type = variant_type_or_nil(p_signature.return_type);
 	if (!p_signature.return_class_name.empty()) {

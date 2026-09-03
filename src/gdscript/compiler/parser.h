@@ -141,6 +141,9 @@ private:
 	std::vector<ExportArgument> parse_attribute_arguments();
 	SignalDecl parse_signal();
 	int64_t fold_enum_value(const Expr* expr, const EnumDecl& decl, const Token& start);
+	bool try_fold_int(const Expr* expr, const EnumDecl* decl, int64_t& out,
+		std::string& why, const Expr*& at) const;
+	void record_const_value(const VarDeclStmt& decl);
 	static bool holds_engine_constant(const Expr* expr);
 	std::string doc_comment_above(int p_line) const;
 
@@ -151,6 +154,7 @@ private:
 	// Tracks `await` in the current function body.
 	bool m_saw_await = false;
 	int m_inline_suite_depth = 0;
+	std::unordered_map<std::string, int64_t> m_const_ints;
 };
 
 } // namespace gdscript

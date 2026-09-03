@@ -1,0 +1,18 @@
+extends Node
+
+static var last_value: int = 0
+
+static func doubled(value: int) -> int:
+	return value * 2
+
+static func scaled(value: int, factor: int = 3) -> int:
+	return value * factor
+
+static func remembered() -> int:
+	return last_value
+
+func remember(value: int) -> void:
+	last_value = value
+
+func instance_only() -> int:
+	return 7

@@ -1040,6 +1040,9 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug,
 	// One reload for the Sandbox they share: reloading per instance would replace
 	// the machine again under the instances that had already taken a record in
 	// it. Each takes a fresh one on its next call.
+	if (this->static_instance != nullptr) {
+		this->static_instance->release_sandbox();
+	}
 	if (!instances.is_empty()) {
 		(*instances.begin())->reset_to(this->elf_data);
 	}
@@ -1667,10 +1670,32 @@ void SafeGDScript::update_methods_info(GDScriptCompilerBackend &p_compiler) {
 	}
 
 	update_constants(p_compiler);
+	update_static_dispatch();
 	rebuild_nested_classes(p_compiler);
 
 	if constexpr (VERBOSE_LOGGING) {
 		ERR_PRINT("SafeGDScript::update_methods_info: Updated methods info with " + itos(methods_info.size()) + " methods.");
+	}
+}
+
+void SafeGDScript::update_static_dispatch() {
+	bool has_static = false;
+	for (const gdscript::FunctionSignature &signature : this->signatures) {
+		if (signature.is_static) {
+			has_static = true;
+			break;
+		}
+	}
+	if (has_static == (this->static_instance != nullptr)) {
+		return;
+	}
+	if (has_static) {
+		this->static_instance = memnew(SafeGDScriptStaticInstance(this));
+		internal::gdextension_interface_object_set_script_instance(this->_owner,
+				ScriptInstanceExtension::create_native_instance(this->static_instance));
+	} else {
+		this->static_instance = nullptr;
+		internal::gdextension_interface_object_set_script_instance(this->_owner, nullptr);
 	}
 }
 
