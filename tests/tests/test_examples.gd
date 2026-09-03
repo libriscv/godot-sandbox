@@ -452,3 +452,66 @@ func test_modding_failed_rebuild_is_not_reported_as_success():
 
 	script.set_source_code("func mod_init(a):\n\treturn 2\n")
 	assert_eq(script.get_compile_error(), "", "a build that works clears the error again")
+
+# README.md — safe navigation (?.) and null coalescing (??)
+func test_readme_safe_navigation_example():
+	var script := SafeGDScript.new()
+	script.set_source_code("""
+extends Node2D
+
+var health: int = 42
+
+func update_hud() -> String:
+	var hp_label = get_node_or_null("HUD/HP")
+	hp_label?.set_text("HP: " + str(health))
+	return hp_label?.get_text() ?? "(no label)"
+
+func aim_at(target) -> Vector2:
+	return target?.global_position ?? global_position
+
+@test
+## Each test runs on a fresh Node2D owner, so there is no HUD and no target.
+func the_hud_is_optional():
+	assert(update_hud() == "(no label)", "'?.' skips the call when the node is missing")
+
+@test
+func aim_falls_back_to_our_own_position():
+	assert(aim_at(null) == global_position)
+""")
+	assert_eq(script.get_compile_error(), "", "the example should compile")
+
+	var owner := Node2D.new()
+	owner.position = Vector2(1, 2)
+	owner.set_script(script)
+
+	assert_eq(owner.call("update_hud"), "(no label)",
+		"'?.' answers null for a missing node, and '??' supplies the fallback")
+
+	var hud := Node.new()
+	hud.name = "HUD"
+	var label := Label.new()
+	label.name = "HP"
+	hud.add_child(label)
+	owner.add_child(hud)
+
+	assert_eq(owner.call("update_hud"), "HP: 42",
+		"with the label present every link in the chain runs")
+	assert_eq(label.text, "HP: 42", "and the call through '?.' actually happened")
+
+	var target := Node2D.new()
+	target.position = Vector2(7, 8)
+	assert_eq(owner.call("aim_at", target), Vector2(7, 8),
+		"a live target is read through '?.'")
+	assert_eq(owner.call("aim_at", null), Vector2(1, 2),
+		"'??' only replaces null, so a null target falls back to our own position")
+
+	target.free()
+	owner.free()
+
+	assert_eq(script.get_test_functions(),
+		PackedStringArray(["the_hud_is_optional", "aim_falls_back_to_our_own_position"]),
+		"both @test functions are published, in declaration order")
+	var report := script.run_tests(PackedStringArray(), true)
+	assert_eq(report["passed"], 2, "@test runs each case on its own fresh instance")
+	assert_eq(report["failed"], 0)
+	assert_eq(report["errors"], 0)
