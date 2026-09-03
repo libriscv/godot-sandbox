@@ -201,39 +201,39 @@ private:
 	PackedByteArray elf_data;
 	// Per-script copy; the compiler's own message belongs to the last caller.
 	String last_error;
-	bool profiled_build = false;
-	bool debug_build = false;
-	bool source_compile_pending_reload = false;
-	bool source_compile_succeeded = false;
 	String class_name;
 	String base_class;
-	bool base_is_path = false;
 	String native_base_class;
-	bool native_base_is_path = false;
 	// Loaded on demand: compile-time load would recurse through the resource loader.
 	mutable Ref<Script> base_script;
-	mutable bool base_script_resolved = false;
 	PackedStringArray base_paths;
 	Vector<uint64_t> base_stamps;
-	bool compiled_restricted = false;
 	bool class_access_restricted() const;
 	// Ascending, no repeats. Non-empty enables shadow stack + stops.
 	PackedInt32Array breakpoints;
 	// What the last compile placed, a subset of the above.
 	PackedInt32Array active_breakpoints;
+	String class_icon_path;
+	bool profiled_build : 1 = false;
+	bool debug_build : 1 = false;
+	bool source_compile_pending_reload : 1 = false;
+	bool source_compile_succeeded : 1 = false;
+	bool base_is_path : 1 = false;
+	bool native_base_is_path : 1 = false;
+	mutable bool base_script_resolved : 1 = false;
+	bool compiled_restricted : 1 = false;
 	// Until source metadata says otherwise, match GDScript's safe default: a
 	// script is not a tool script.  Treating a newly loaded resource as @tool
 	// lets the editor create a live instance before compilation finishes.
-	bool tool_script = false;
-	bool abstract_script = false;
-	String class_icon_path = "res://addons/godot_sandbox/SafeGDScript.svg";
+	bool tool_script : 1 = false;
+	bool abstract_script : 1 = false;
 	// IRProgram order; index i matches shadow-stack frame function_index.
 	std::vector<gdscript::FunctionSignature> signatures;
 	gdscript::LineTable line_table;
 	std::vector<godot::MethodInfo> methods_info;
 	std::vector<gdscript::PropertySignature> properties;
 	std::vector<gdscript::DebugVariableRecord> debug_variables;
-	gdscript::SourceModel source_model;
+	std::vector<gdscript::SourceDeclaration> declarations;
 	std::vector<gdscript::PropertySignature> previous_properties_for_update;
 	HashMap<StringName, Variant> property_defaults;
 	Dictionary rpc_config;
@@ -241,14 +241,10 @@ private:
 	std::vector<gdscript::ClassSignature> trait_signatures;
 	HashSet<StringName> used_traits;
 	std::vector<godot::MethodInfo> signals_info;
+	std::vector<gdscript::FunctionSignature> signal_signatures;
 	PackedStringArray test_functions;
 	PackedInt32Array test_lines;
-	// Declaration line and '##' description, keyed by member name.
-	struct MethodDocumentation {
-		int32_t line = 0;
-		String description;
-	};
-	HashMap<StringName, MethodDocumentation> methods_doc;
+	const gdscript::FunctionSignature *find_signature(const StringName &p_name) const;
 	// File-scope `const` and `enum`, folded at compile time. The guest keeps no
 	// storage for them, so a reader outside the script -- `Autoload.SOME_ENUM` --
 	// is answered from here, the way GDScript answers out of Script::constants.

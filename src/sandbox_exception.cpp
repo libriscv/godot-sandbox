@@ -35,6 +35,14 @@ static inline String to_hex(gaddr_t value) {
 	return String::utf8(str, int64_t(end - str));
 }
 
+void Sandbox::set_last_exception(const String &p_message, const String &p_location) {
+	if (m_last_exception == nullptr)
+		m_last_exception = std::make_unique<LastException>();
+	m_last_exception->message = p_message;
+	m_last_exception->location = p_location;
+	m_last_exception->id = m_exceptions;
+}
+
 void Sandbox::handle_exception(gaddr_t address) {
 	riscv::Memory<RISCV_ARCH>::Callsite callsite = machine().memory.lookup(address);
 	// If the callsite is not found, try to use the cache to find the address

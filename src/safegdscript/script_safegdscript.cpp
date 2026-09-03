@@ -322,6 +322,10 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 	class_doc["is_script_doc"] = true;
 	class_doc["script_path"] = path;
 
+	HashMap<String, const gdscript::FunctionSignature *> declared;
+	for (const gdscript::FunctionSignature &signature : signatures) {
+		declared.insert(String::utf8(signature.name.c_str(), signature.name.size()), &signature);
+	}
 	Array method_docs;
 	for (const godot::MethodInfo &method_info : methods_info) {
 		Dictionary method_doc;
@@ -346,15 +350,17 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 		}
 		method_doc["arguments"] = argument_docs;
 
-		if (const MethodDocumentation *documentation = methods_doc.getptr(method_info.name)) {
-			apply_documentation_tags(method_doc, documentation->description);
+		if (const gdscript::FunctionSignature *const *signature = declared.getptr(method_info.name)) {
+			apply_documentation_tags(method_doc,
+					String::utf8((*signature)->description.c_str(), (*signature)->description.size()));
 		}
 		method_docs.push_back(method_doc);
 	}
 	class_doc["methods"] = method_docs;
 
 	Array signal_docs;
-	for (const godot::MethodInfo &signal_info : signals_info) {
+	for (size_t i = 0; i < signals_info.size(); i++) {
+		const godot::MethodInfo &signal_info = signals_info[i];
 		Dictionary signal_doc;
 		signal_doc["name"] = signal_info.name;
 		Array argument_docs;
@@ -365,8 +371,9 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 			argument_docs.push_back(argument_doc);
 		}
 		signal_doc["arguments"] = argument_docs;
-		if (const MethodDocumentation *documentation = methods_doc.getptr(signal_info.name)) {
-			apply_documentation_tags(signal_doc, documentation->description);
+		if (i < signal_signatures.size()) {
+			const std::string &description = signal_signatures[i].description;
+			apply_documentation_tags(signal_doc, String::utf8(description.c_str(), description.size()));
 		}
 		signal_docs.push_back(signal_doc);
 	}
@@ -374,7 +381,7 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 
 	// Own enum types document as int.
 	HashSet<String> own_enums;
-	for (const gdscript::SourceDeclaration &declaration : source_model.declarations) {
+	for (const gdscript::SourceDeclaration &declaration : declarations) {
 		if (declaration.parent < 0 && declaration.kind == gdscript::DeclarationKind::ENUM) {
 			own_enums.insert(String::utf8(declaration.name.c_str(), declaration.name.size()));
 		}
@@ -384,7 +391,7 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 	Array constant_docs;
 	Dictionary enum_docs;
 	std::vector<const gdscript::SourceDeclaration *> nested_declarations;
-	for (const gdscript::SourceDeclaration &declaration : source_model.declarations) {
+	for (const gdscript::SourceDeclaration &declaration : declarations) {
 		if (declaration.parent >= 0) continue;
 		const String name = String::utf8(declaration.name.c_str(), declaration.name.size());
 		const String description = String::utf8(declaration.documentation.c_str(), declaration.documentation.size());
@@ -475,8 +482,8 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 		Array properties;
 		Array signals;
 		for (int32_t child : declaration->children) {
-			if (child < 0 || size_t(child) >= source_model.declarations.size()) continue;
-			const gdscript::SourceDeclaration &member = source_model.declarations[size_t(child)];
+			if (child < 0 || size_t(child) >= declarations.size()) continue;
+			const gdscript::SourceDeclaration &member = declarations[size_t(child)];
 			Dictionary member_doc;
 			member_doc["name"] = String::utf8(member.name.c_str(), member.name.size());
 			apply_documentation_tags(member_doc,
@@ -596,7 +603,7 @@ TypedArray<Dictionary> SafeGDScript::_get_documentation() const {
 	return documentation;
 }
 String SafeGDScript::_get_class_icon_path() const {
-	return class_icon_path;
+	return class_icon_path.is_empty() ? String("res://addons/godot_sandbox/SafeGDScript.svg") : class_icon_path;
 }
 const godot::MethodInfo *SafeGDScript::find_method_info(const StringName &p_method) const {
 	for (const godot::MethodInfo &method_info : methods_info) {
@@ -708,17 +715,28 @@ TypedArray<Dictionary> SafeGDScript::_get_script_property_list() const {
 	}
 	return result;
 }
+const gdscript::FunctionSignature *SafeGDScript::find_signature(const StringName &p_name) const {
+	const String name(p_name);
+	for (const std::vector<gdscript::FunctionSignature> *list : { &signatures, &signal_signatures }) {
+		for (const gdscript::FunctionSignature &signature : *list) {
+			if (String::utf8(signature.name.c_str(), signature.name.size()) == name) {
+				return &signature;
+			}
+		}
+	}
+	return nullptr;
+}
 int32_t SafeGDScript::_get_member_line(const StringName &p_member) const {
 	// 1-based, as the editor counts lines. Not-found is -1, not 0: a caller opens
 	// the script at the returned line, so 0 would jump to the top of the wrong
 	// file instead of letting the caller look elsewhere.
-	if (const MethodDocumentation *documentation = methods_doc.getptr(p_member)) {
-		return documentation->line;
+	if (const gdscript::FunctionSignature *signature = find_signature(p_member)) {
+		return signature->line;
 	}
 	if (const gdscript::PropertySignature *property = find_property_signature(p_member)) {
 		return int32_t(property->declaration_line);
 	}
-	for (const gdscript::SourceDeclaration &declaration : source_model.declarations) {
+	for (const gdscript::SourceDeclaration &declaration : declarations) {
 		if (String::utf8(declaration.name.c_str(), declaration.name.size()) == p_member) {
 			return int32_t(declaration.declaration.start_line);
 		}
@@ -1002,7 +1020,7 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug,
 	this->elf_data = new_elf;
 	this->properties = std::move(new_properties);
 	this->debug_variables = std::move(new_debug_variables);
-	this->source_model = std::move(new_source_model);
+	this->declarations = std::move(new_source_model.declarations);
 	this->property_defaults = std::move(new_defaults);
 	this->base_paths = std::move(new_base_paths);
 	this->base_stamps = std::move(new_base_stamps);
@@ -1032,7 +1050,7 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug,
 	bool is_file_trait = false;
 	scan_class_header(source_code, nullptr, nullptr, &is_file_trait);
 	this->abstract_script = is_file_trait;
-	this->class_icon_path = "res://addons/godot_sandbox/SafeGDScript.svg";
+	this->class_icon_path = String();
 	const PackedStringArray metadata_lines = source_code.split("\n");
 	for (int64_t i = 0; i < metadata_lines.size(); i++) {
 		const String line = metadata_lines[i].strip_edges();
@@ -1850,8 +1868,8 @@ void SafeGDScript::class_restrictions_changed() {
 void SafeGDScript::update_methods_info(GDScriptCompilerBackend &p_compiler) {
 	Sandbox::BinaryInfo info = Sandbox::get_program_info_from_binary(this->elf_data);
 	this->methods_info.clear();
-	this->methods_doc.clear();
 	this->signals_info.clear();
+	this->signal_signatures.clear();
 	this->rpc_config.clear();
 	for (const gdscript::RPCConfig &declared : p_compiler.rpc_configs()) {
 		Dictionary method;
@@ -1876,11 +1894,7 @@ void SafeGDScript::update_methods_info(GDScriptCompilerBackend &p_compiler) {
 					: PROPERTY_USAGE_NONE;
 			signal_info.arguments.push_back(std::move(argument));
 		}
-		MethodDocumentation documentation;
-		documentation.line = declared.line;
-		documentation.description = String::utf8(declared.description.c_str(), declared.description.size());
-		methods_doc.insert(signal_info.name, std::move(documentation));
-
+		signal_signatures.push_back(declared);
 		signals_info.push_back(std::move(signal_info));
 	}
 
@@ -1922,13 +1936,6 @@ void SafeGDScript::update_methods_info(GDScriptCompilerBackend &p_compiler) {
 
 		const gdscript::FunctionSignature &signature = *it->value;
 		method = method_info_from_signature(signature, func_name);
-
-		// Editor metadata, keyed by name. Only declared functions get an entry:
-		// a symbol without a signature has no source line here to point at.
-		MethodDocumentation documentation;
-		documentation.line = signature.line;
-		documentation.description = String::utf8(signature.description.c_str(), signature.description.size());
-		methods_doc.insert(method.name, std::move(documentation));
 
 		methods_info.push_back(std::move(method));
 	}

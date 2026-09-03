@@ -107,23 +107,22 @@ public:
 		String name;
 		gaddr_t address;
 	};
-	/// @brief A restriction callback, paired with a cached copy of its validity.
-	/// @note Callable::is_valid() crosses into Godot and looks the target up in the object
-	/// database, which is far more work than a check guarding every single API call can
-	/// afford. These callables are only ever replaced through their setters, so the flag
-	/// is simply refreshed there.
-	struct RestrictionCallback {
-		Callable callable;
-		bool valid = false;
-
-		RestrictionCallback &operator=(const Callable &p_callable) {
-			callable = p_callable;
-			valid = callable.is_valid();
-			return *this;
-		}
-		bool is_valid() const noexcept { return valid; }
-		template <typename... Args>
-		Variant call(Args &&...args) const { return callable.call(std::forward<Args>(args)...); }
+	enum RestrictionBit : uint8_t {
+		RESTRICT_OBJECTS = 1,
+		RESTRICT_CLASSES = 2,
+		RESTRICT_RESOURCES = 4,
+		RESTRICT_METHODS = 8,
+		RESTRICT_PROPERTIES = 16,
+		RESTRICT_ALLOWED_OBJECTS = 32,
+	};
+	struct Restrictions {
+		Callable objects;
+		Callable classes;
+		Callable resources;
+		Callable methods;
+		Callable properties;
+		std::unordered_set<uint64_t> allowed_objects;
+		std::unordered_map<uint64_t, Ref<RefCounted>> allowed_object_refs;
 	};
 
 	/// @brief A method or property name from guest memory, in both forms the API needs.
@@ -132,7 +131,6 @@ public:
 		Variant variant; // Holds sname
 		// Lazily built String form (plain Dictionaries need String keys).
 		Variant string_variant;
-		bool has_string_variant = false;
 
 		const Variant &as_string() {
 			if (!has_string_variant) {
@@ -148,19 +146,19 @@ public:
 		struct MethodEntry {
 			const std::type_info *object_type = nullptr;
 			GDExtensionMethodBindPtr bind = nullptr;
-			bool resolved = false;
 		};
 		MethodEntry methods[METHOD_CACHE_SIZE];
+		bool has_string_variant = false;
 	};
 	// Direct-mapped cache of guest method and property names, see cached_guest_name().
 	struct GuestNameCache {
 		static constexpr unsigned SIZE = 32; // Must be a power of two
 		struct Entry {
-			gaddr_t address = 0;
-			bool terminated = false;
-			std::string text;
 			CachedName name;
+			std::string text;
+			gaddr_t address = 0;
 			unsigned pins = 0;
+			bool terminated = false;
 		};
 		Entry entries[SIZE];
 
@@ -231,7 +229,6 @@ public:
 			// handed the address this entry is keyed by.
 			String name;
 			gaddr_t address = 0;
-			bool valid = false;
 		};
 		Entry entries[SIZE];
 
@@ -346,14 +343,10 @@ public:
 	void set_calls_made(unsigned calls) {} // Do nothing (it's a read-only property)
 	unsigned get_calls_made() const { return m_calls_made; }
 
-	bool has_last_exception() const { return m_exceptions != 0 && m_last_exception_id == m_exceptions; }
-	String get_last_exception() const { return has_last_exception() ? m_last_exception : String(); }
-	String get_last_exception_location() const { return has_last_exception() ? m_last_exception_location : String(); }
-	void set_last_exception(const String &p_message, const String &p_location) {
-		m_last_exception = p_message;
-		m_last_exception_location = p_location;
-		m_last_exception_id = m_exceptions;
-	}
+	bool has_last_exception() const { return m_last_exception != nullptr && m_last_exception->id == m_exceptions; }
+	String get_last_exception() const { return has_last_exception() ? m_last_exception->message : String(); }
+	String get_last_exception_location() const { return has_last_exception() ? m_last_exception->location : String(); }
+	void set_last_exception(const String &p_message, const String &p_location);
 
 	static uint64_t get_global_timeouts() { return m_global_timeouts; }
 	static uint64_t get_global_exceptions() { return m_global_exceptions; }
@@ -674,19 +667,15 @@ public:
 	bool is_allowed_object(godot::Object *obj) const;
 
 	bool is_object_access_unrestricted() const noexcept {
-		return m_allowed_objects.empty() && !m_just_in_time_allowed_objects.is_valid();
+		return (m_restriction_flags & (RESTRICT_OBJECTS | RESTRICT_ALLOWED_OBJECTS)) == 0;
 	}
 
-	bool is_fully_unrestricted() const noexcept {
-		return !m_just_in_time_allowed_classes.is_valid()
-				&& !m_just_in_time_allowed_methods.is_valid()
-				&& !m_just_in_time_allowed_properties.is_valid()
-				&& !m_just_in_time_allowed_resources.is_valid()
-				&& is_object_access_unrestricted();
-	}
+	bool is_fully_unrestricted() const noexcept { return m_restriction_flags == 0; }
 
 	/// @brief Check if an ObjectID is on the allowed-objects list.
-	bool is_allowed_object_id(uint64_t object_id) const noexcept { return m_allowed_objects.find(object_id) != m_allowed_objects.end(); }
+	bool is_allowed_object_id(uint64_t object_id) const noexcept {
+		return (m_restriction_flags & RESTRICT_ALLOWED_OBJECTS) != 0 && m_restrictions->allowed_objects.contains(object_id);
+	}
 
 	bool is_explicitly_allowed_object(godot::Object *obj) const;
 	godot::Object *get_explicitly_allowed_object(uint64_t object_id) const;
@@ -718,10 +707,9 @@ public:
 	/// @note Inline, and kept down to a single load in the common case: this guards
 	/// every object call the guest makes.
 	bool is_allowed_method(godot::Object *obj, const Variant &method) const {
-		// If the callable is not set, all methods are allowed
-		if (LIKELY(!m_just_in_time_allowed_methods.is_valid()))
+		if (LIKELY((m_restriction_flags & RESTRICT_METHODS) == 0))
 			return true;
-		return m_just_in_time_allowed_methods.call(this, obj, method);
+		return m_restrictions->methods.call(this, obj, method);
 	}
 
 	/// @brief Overload for the API call sites that name a method with a string literal.
@@ -730,9 +718,9 @@ public:
 	/// which is the overwhelmingly common case. Deferring construction keeps the guard
 	/// down to the same single load as the Variant overload.
 	bool is_allowed_method(godot::Object *obj, const char *method) const {
-		if (LIKELY(!m_just_in_time_allowed_methods.is_valid()))
+		if (LIKELY((m_restriction_flags & RESTRICT_METHODS) == 0))
 			return true;
-		return m_just_in_time_allowed_methods.call(this, obj, String(method));
+		return m_restrictions->methods.call(this, obj, String(method));
 	}
 
 	/// @brief Set a callback to check if a method is allowed in the sandbox.
@@ -745,18 +733,17 @@ public:
 	/// @return True if the property is allowed, false otherwise.
 	/// @note Inline for the same reason as is_allowed_method().
 	bool is_allowed_property(godot::Object *obj, const Variant &property, bool is_set) const {
-		// If the callable is not set, all properties are allowed
-		if (LIKELY(!m_just_in_time_allowed_properties.is_valid()))
+		if (LIKELY((m_restriction_flags & RESTRICT_PROPERTIES) == 0))
 			return true;
-		return m_just_in_time_allowed_properties.call(this, obj, property, is_set);
+		return m_restrictions->properties.call(this, obj, property, is_set);
 	}
 
 	/// @brief Overload for the API call sites that name a property with a string literal.
 	/// @note Inline for the same reason as the is_allowed_method() overload above.
 	bool is_allowed_property(godot::Object *obj, const char *property, bool is_set) const {
-		if (LIKELY(!m_just_in_time_allowed_properties.is_valid()))
+		if (LIKELY((m_restriction_flags & RESTRICT_PROPERTIES) == 0))
 			return true;
-		return m_just_in_time_allowed_properties.call(this, obj, String(property), is_set);
+		return m_restrictions->properties.call(this, obj, String(property), is_set);
 	}
 
 	/// @brief Set a callback to check if a property is allowed in the sandbox.
@@ -1179,6 +1166,7 @@ private:
 	bool m_bintr_bg_compilation = true; // Perform binary translation in the background
 	bool m_unchecked_memory = true; // Only ever reached while fully unrestricted
 	bool m_unchecked_memory_active = false;
+	uint8_t m_restriction_flags = 0;
 
 	bool add_scoped_entry(uint64_t object_id, uintptr_t engine_object, godot::Object *binding);
 	bool hold_unrestricted_object(uint64_t object_id, godot::Object *obj);
@@ -1216,6 +1204,10 @@ private:
 	bool permanent_index_valid(int32_t idx) const noexcept;
 	int32_t track_permanent_slot(int32_t variant_index);
 	void reserve_permanent_state(uint32_t max_refs);
+	void reserve_call_state(CurrentState &state) {
+		if (UNLIKELY(state.variants.capacity() < m_max_refs))
+			state.variants.reserve(m_max_refs);
+	}
 
 	void promote_frame_handles(Coroutine &co);
 	void disconnect_coroutine_signal(Coroutine &co);
@@ -1244,25 +1236,12 @@ private:
 	std::unordered_map<gaddr_t, Ref<RefCounted>> m_retained_objects;
 
 	// Restrictions
-	std::unordered_set<uint64_t> m_allowed_objects;
-	// A RefCounted on the allowed list is held here for as long as it is on the list.
-	// Nothing else keeps it alive, and once freed its address is free to be reused.
-	std::unordered_map<uint64_t, Ref<RefCounted>> m_allowed_object_refs;
-	// If an object is not in the allowed list, and a callable is set for the
-	// just-in-time allowed objects, it will be called to check if the object is allowed.
-	RestrictionCallback m_just_in_time_allowed_objects;
-	// If a class is not in the allowed list, and a callable is set for the
-	// just-in-time allowed classes, it will be called to check if the class is allowed.
-	RestrictionCallback m_just_in_time_allowed_classes;
-	// If a callable is set for the just-in-time allowed resources,
-	// it will be called to check if access to a resource is allowed.
-	RestrictionCallback m_just_in_time_allowed_resources;
-	// If a callable is set for allowed methods, it will be called when an object method
-	// call is attemped, to check if the method is allowed.
-	RestrictionCallback m_just_in_time_allowed_methods;
-	// If a callable is set for allowed properties, it will be called when an object property
-	// access is attemped, to check if the property is allowed.
-	RestrictionCallback m_just_in_time_allowed_properties;
+	std::unique_ptr<Restrictions> m_restrictions;
+	Restrictions &restrictions();
+	void set_restriction_callback(Callable Restrictions::*p_slot, RestrictionBit p_bit, const Callable &p_callable);
+	void set_restriction_flag(RestrictionBit p_bit, bool p_set) noexcept {
+		m_restriction_flags = p_set ? (m_restriction_flags | p_bit) : (m_restriction_flags & ~p_bit);
+	}
 
 	// Redirections
 	Callable m_redirect_stdout;
@@ -1275,9 +1254,12 @@ private:
 	unsigned m_timeouts = 0;
 	unsigned m_exceptions = 0;
 	unsigned m_calls_made = 0;
-	String m_last_exception;
-	String m_last_exception_location;
-	unsigned m_last_exception_id = 0;
+	struct LastException {
+		String message;
+		String location;
+		unsigned id = 0;
+	};
+	std::unique_ptr<LastException> m_last_exception;
 
 	struct ProfilingData {
 		// ELF path -> Address -> Count
@@ -1328,8 +1310,8 @@ inline bool Sandbox::is_explicitly_allowed_object(godot::Object *obj) const {
 		return true;
 
 	// If the object-allowed callable is set, call it
-	if (m_just_in_time_allowed_objects.is_valid())
-		return m_just_in_time_allowed_objects.call(this, obj);
+	if ((m_restriction_flags & RESTRICT_OBJECTS) != 0)
+		return m_restrictions->objects.call(this, obj);
 	return false;
 }
 

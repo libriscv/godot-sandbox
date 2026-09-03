@@ -703,6 +703,7 @@ void Sandbox::run_instance_initializer(gaddr_t address, gaddr_t base) {
 	// second instance of a moderately large literal exhausted the reference cap.
 	this->m_current_state = previous_state + 1;
 	this->m_current_state->reset();
+	this->reserve_call_state(*this->m_current_state);
 
 	const gaddr_t previous_base = this->m_instance_base;
 	this->m_instance_base = base;
@@ -1156,6 +1157,7 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 				elevated_startup = true;
 				this->m_current_state = startup_state + 1;
 				this->m_current_state->reset();
+				this->reserve_call_state(*this->m_current_state);
 			}
 			if (!this->get_precise_simulation()) {
 				if (get_instructions_max() <= 0) {
@@ -1608,6 +1610,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 				m_machine->simulate_with(get_instructions_max() << 20, 0u, address);
 			}
 		} else {
+			this->reserve_call_state(state);
 			riscv::Registers<RISCV_ARCH> regs;
 			regs = cpu.registers();
 			// we are in a recursive call, so wait before setting exit address
@@ -1803,14 +1806,13 @@ gaddr_t Sandbox::cached_address_of_variant(const Variant &name) const {
 	const String &str = *(const String *)&inner->value;
 	const uintptr_t id = string_cache_key(str);
 	NameAddressCache::Entry &entry = m_name_addresses.entries[(id * 0x9E3779B97F4A7C15ull >> 32) & (NameAddressCache::SIZE - 1)];
-	if (entry.valid && string_cache_hit(entry.name, str)) {
+	if (string_cache_hit(entry.name, str)) {
 		return entry.address;
 	}
 
 	const gaddr_t address = cached_address_of(str.hash(), str);
 	entry.name = str;
 	entry.address = address;
-	entry.valid = true;
 	return address;
 }
 
@@ -2637,8 +2639,8 @@ Variant SandboxProperty::get(const Sandbox &sandbox) const {
 }
 
 void Sandbox::CurrentState::reinitialize(unsigned level, unsigned max_refs) {
-	(void)level;
-	this->variants.reserve(max_refs);
+	if (level <= 1)
+		this->variants.reserve(max_refs);
 	this->variants.clear();
 	this->scoped_objects.clear();
 	this->scoped_variants.clear();

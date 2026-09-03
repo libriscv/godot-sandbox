@@ -8,46 +8,46 @@ void safegdscript_class_restrictions_changed(const Sandbox &p_sandbox);
 static void safegdscript_class_restrictions_changed(const Sandbox &) {}
 #endif
 
+Sandbox::Restrictions &Sandbox::restrictions() {
+	if (m_restrictions == nullptr)
+		m_restrictions = std::make_unique<Restrictions>();
+	return *m_restrictions;
+}
+
+void Sandbox::set_restriction_callback(Callable Restrictions::*p_slot, RestrictionBit p_bit, const Callable &p_callable) {
+	const bool valid = p_callable.is_valid();
+	if (m_restrictions != nullptr || valid)
+		restrictions().*p_slot = p_callable;
+	set_restriction_flag(p_bit, valid);
+}
+
 void Sandbox::set_restrictions(bool enable) {
 	if (this->is_in_vmcall()) {
 		ERR_PRINT("Cannot change restrictions during a VM call.");
 		return;
 	}
-	if (enable) {
-		if (!m_just_in_time_allowed_classes.is_valid()) {
-			m_just_in_time_allowed_classes = Callable(this, "restrictive_callback_function");
+	static constexpr std::pair<Callable Restrictions::*, RestrictionBit> slots[] = {
+		{ &Restrictions::classes, RESTRICT_CLASSES },
+		{ &Restrictions::objects, RESTRICT_OBJECTS },
+		{ &Restrictions::methods, RESTRICT_METHODS },
+		{ &Restrictions::properties, RESTRICT_PROPERTIES },
+		{ &Restrictions::resources, RESTRICT_RESOURCES },
+	};
+	for (const auto &[slot, bit] : slots) {
+		if (enable) {
+			if ((m_restriction_flags & bit) == 0)
+				set_restriction_callback(slot, bit, Callable(this, "restrictive_callback_function"));
+		} else {
+			set_restriction_callback(slot, bit, Callable());
 		}
-		if (!m_just_in_time_allowed_objects.is_valid()) {
-			m_just_in_time_allowed_objects = Callable(this, "restrictive_callback_function");
-		}
-		if (!m_just_in_time_allowed_methods.is_valid()) {
-			m_just_in_time_allowed_methods = Callable(this, "restrictive_callback_function");
-		}
-		if (!m_just_in_time_allowed_properties.is_valid()) {
-			m_just_in_time_allowed_properties = Callable(this, "restrictive_callback_function");
-		}
-		if (!m_just_in_time_allowed_resources.is_valid()) {
-			m_just_in_time_allowed_resources = Callable(this, "restrictive_callback_function");
-		}
-	} else {
-		m_just_in_time_allowed_classes = Callable();
-		m_just_in_time_allowed_objects = Callable();
-		m_just_in_time_allowed_methods = Callable();
-		m_just_in_time_allowed_properties = Callable();
-		m_just_in_time_allowed_resources = Callable();
 	}
 	safegdscript_class_restrictions_changed(*this);
 }
 
-// clang-format off
 bool Sandbox::get_restrictions() const {
-	return m_just_in_time_allowed_classes.is_valid()
-		&& m_just_in_time_allowed_objects.is_valid()
-		&& m_just_in_time_allowed_methods.is_valid()
-		&& m_just_in_time_allowed_properties.is_valid()
-		&& m_just_in_time_allowed_resources.is_valid();
+	static constexpr uint8_t all = RESTRICT_CLASSES | RESTRICT_OBJECTS | RESTRICT_METHODS | RESTRICT_PROPERTIES | RESTRICT_RESOURCES;
+	return (m_restriction_flags & all) == all;
 }
-// clang-format on
 
 // Permitted mid-vmcall: monotone, host-only, no iterator held across re-entrance.
 void Sandbox::add_allowed_object(godot::Object *obj) {
@@ -65,19 +65,22 @@ void Sandbox::add_allowed_object(godot::Object *obj) {
 		ERR_PRINT("Cannot begin restricting objects during a VM call: allow the first object before the call.");
 		return;
 	}
-	m_allowed_objects.insert(id);
+	Restrictions &r = restrictions();
+	r.allowed_objects.insert(id);
 	if (RefCounted *ref = fast_cast_to<RefCounted>(obj))
-		m_allowed_object_refs.insert_or_assign(id, Ref<RefCounted>(ref));
+		r.allowed_object_refs.insert_or_assign(id, Ref<RefCounted>(ref));
+	set_restriction_flag(RESTRICT_ALLOWED_OBJECTS, true);
 	safegdscript_class_restrictions_changed(*this);
 }
 
 // Permitted mid-vmcall; scoped handles remain valid for the rest of the call.
 void Sandbox::remove_allowed_object(godot::Object *obj) {
 	const uint64_t id = engine_object_id(obj);
-	if (id == 0)
+	if (id == 0 || m_restrictions == nullptr)
 		return;
-	m_allowed_objects.erase(id);
-	m_allowed_object_refs.erase(id);
+	m_restrictions->allowed_objects.erase(id);
+	m_restrictions->allowed_object_refs.erase(id);
+	set_restriction_flag(RESTRICT_ALLOWED_OBJECTS, !m_restrictions->allowed_objects.empty());
 	safegdscript_class_restrictions_changed(*this);
 }
 
@@ -86,8 +89,11 @@ void Sandbox::clear_allowed_objects() {
 		ERR_PRINT("Cannot clear allowed objects during a VM call.");
 		return;
 	}
-	m_allowed_objects.clear();
-	m_allowed_object_refs.clear();
+	if (m_restrictions != nullptr) {
+		m_restrictions->allowed_objects.clear();
+		m_restrictions->allowed_object_refs.clear();
+	}
+	set_restriction_flag(RESTRICT_ALLOWED_OBJECTS, false);
 	safegdscript_class_restrictions_changed(*this);
 }
 
@@ -102,7 +108,7 @@ void Sandbox::set_object_allowed_callback(const Callable &callback) {
 		ERR_PRINT("Cannot set object allowed callback during a VM call.");
 		return;
 	}
-	m_just_in_time_allowed_objects = callback;
+	set_restriction_callback(&Restrictions::objects, RESTRICT_OBJECTS, callback);
 	safegdscript_class_restrictions_changed(*this);
 }
 
@@ -111,22 +117,20 @@ void Sandbox::set_class_allowed_callback(const Callable &callback) {
 		ERR_PRINT("Cannot set class allowed callback during a VM call.");
 		return;
 	}
-	m_just_in_time_allowed_classes = callback;
+	set_restriction_callback(&Restrictions::classes, RESTRICT_CLASSES, callback);
 	safegdscript_class_restrictions_changed(*this);
 }
 
 bool Sandbox::is_allowed_class(const String &name) const {
-	// If the callable is valid, call it to allow the user to decide
-	if (m_just_in_time_allowed_classes.is_valid()) {
-		return m_just_in_time_allowed_classes.call(this, name);
+	if ((m_restriction_flags & RESTRICT_CLASSES) != 0) {
+		return m_restrictions->classes.call(this, name);
 	}
-	// If the callable is not valid, allow all classes
 	return true;
 }
 
 bool Sandbox::is_class_access_restricted() const {
-	return m_just_in_time_allowed_classes.callable ==
-			Callable(const_cast<Sandbox *>(this), "restrictive_callback_function");
+	return (m_restriction_flags & RESTRICT_CLASSES) != 0 &&
+			m_restrictions->classes == Callable(const_cast<Sandbox *>(this), "restrictive_callback_function");
 }
 
 void Sandbox::set_resource_allowed_callback(const Callable &callback) {
@@ -134,16 +138,14 @@ void Sandbox::set_resource_allowed_callback(const Callable &callback) {
 		ERR_PRINT("Cannot set resource allowed callback during a VM call.");
 		return;
 	}
-	this->m_just_in_time_allowed_resources = callback;
+	set_restriction_callback(&Restrictions::resources, RESTRICT_RESOURCES, callback);
 	safegdscript_class_restrictions_changed(*this);
 }
 
 bool Sandbox::is_allowed_resource(const String &path) const {
-	// If the callable is valid, call it to allow the user to decide
-	if (this->m_just_in_time_allowed_resources.is_valid()) {
-		return this->m_just_in_time_allowed_resources.call(this, path);
+	if ((m_restriction_flags & RESTRICT_RESOURCES) != 0) {
+		return m_restrictions->resources.call(this, path);
 	}
-	// If the callable is not valid, allow all resources
 	return true;
 }
 
@@ -152,7 +154,7 @@ void Sandbox::set_method_allowed_callback(const Callable &callback) {
 		ERR_PRINT("Cannot set method allowed callback during a VM call.");
 		return;
 	}
-	m_just_in_time_allowed_methods = callback;
+	set_restriction_callback(&Restrictions::methods, RESTRICT_METHODS, callback);
 	safegdscript_class_restrictions_changed(*this);
 }
 
@@ -161,6 +163,6 @@ void Sandbox::set_property_allowed_callback(const Callable &callback) {
 		ERR_PRINT("Cannot set property allowed callback during a VM call.");
 		return;
 	}
-	m_just_in_time_allowed_properties = callback;
+	set_restriction_callback(&Restrictions::properties, RESTRICT_PROPERTIES, callback);
 	safegdscript_class_restrictions_changed(*this);
 }

@@ -256,12 +256,11 @@ static GDExtensionMethodBindPtr cached_method_bind(godot::Object *obj,
 	const std::type_info *object_type = &typeid(*obj);
 	const unsigned index = object_type->hash_code() & (Sandbox::CachedName::METHOD_CACHE_SIZE - 1);
 	Sandbox::CachedName::MethodEntry &entry = method.methods[index];
-	if (entry.object_type == object_type && entry.resolved)
+	if (entry.object_type == object_type)
 		return entry.bind;
 
 	entry = {};
 	entry.object_type = object_type;
-	entry.resolved = true;
 
 	StringName class_name;
 	if (!internal::gdextension_interface_object_get_class_name(obj->_owner, internal::library,
