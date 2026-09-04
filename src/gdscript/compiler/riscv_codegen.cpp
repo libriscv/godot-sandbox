@@ -4669,14 +4669,20 @@ void RISCVCodeGen::emit_li(uint8_t rd, int64_t imm) {
 	if (fits_in_signed(imm, I_TYPE_IMM_BITS)) {
 		emit_i_type(0x13, rd, 0, REG_ZERO, static_cast<int32_t>(imm));
 	} else if (imm >= INT32_MIN && imm <= INT32_MAX) {
-		int32_t imm32 = static_cast<int32_t>(imm);
-		int32_t upper = (imm32 + 0x800) >> 12;
-		emit_u_type(0x37, rd, upper << 12);
+		const int32_t imm32 = static_cast<int32_t>(imm);
+		// Unsigned: the round-to-nearest-4K carry overflows int32 above 0x7FFFF7FF.
+		const uint32_t upper = (static_cast<uint32_t>(imm32) + 0x800u) & 0xFFFFF000u;
+		emit_u_type(0x37, rd, upper);
 
 		// Sign-extend the low 12 bits for a valid I-type immediate
-		int32_t lower = ((imm32 & 0xFFF) ^ 0x800) - 0x800;
+		const int32_t lower = ((imm32 & 0xFFF) ^ 0x800) - 0x800;
 		if (lower != 0 || upper == 0) {
-			emit_i_type(0x13, rd, 0, rd, lower);
+			// At imm32 >= 0x7FFFF800 the carry makes the upper half 0x80000000, which
+			// LUI sign-extends to a 64-bit negative: only ADDIW, truncating the sum
+			// back to 32 signed bits, lands on the value. Every other split stays on
+			// ADDI, whose sum is already correct in 64 bits.
+			const uint8_t opcode = (upper == 0x80000000u) ? 0x1b : 0x13;
+			emit_i_type(opcode, rd, 0, rd, lower);
 		}
 	} else {
 		// 64-bit: auipc+ld from constant pool

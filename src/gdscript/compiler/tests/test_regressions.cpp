@@ -13,6 +13,7 @@
 #include "../instance_layout.h"
 #include "../variant_layout.h"
 #include "../syscall_numbers.h"
+#include <algorithm>
 #include <cassert>
 #include <climits>
 #include <unordered_map>
@@ -353,6 +354,67 @@ static void test_large_global_offsets() {
 	assert(riscv.get_global_data_size() >= size_t(global_count) * 24);
 
 	std::cout << "  ✓ Global addressing past the 12-bit immediate range" << std::endl;
+}
+
+// An int constant is materialized by LUI + a 12-bit add. Rounding the split to
+// the nearest 4K carries into bit 31 for anything above 0x7FFFF7FF, which
+// overflowed the int32 the carry was computed in: the upper half became
+// 0x80000000, LUI sign-extended it to a 64-bit negative, and a plain ADDI left
+// the value 2^32 too small. `return 0x7FFFFFFF` handed back -2147483649.
+static void test_int32_immediates_at_the_lui_carry_boundary() {
+	std::cout << "Testing integer constants at the LUI carry boundary..." << std::endl;
+
+	// The 64-bit value an LUI, alone or followed by ADDI/ADDIW on the same
+	// register, leaves in that register — RV64 semantics, sign extension and all.
+	const auto materialized_values = [](const std::vector<uint8_t>& code) {
+		std::vector<int64_t> values;
+		for (size_t off = 0; off + 4 <= code.size(); off += 4) {
+			const uint32_t lui = word_at(code, off);
+			if ((lui & 0x7F) != 0x37) {
+				continue;
+			}
+			const uint8_t rd = (lui >> 7) & 0x1F;
+			// LUI's immediate is bits 31:12 of a sign-extended 32-bit value.
+			int64_t value = int64_t(int32_t(lui & 0xFFFFF000));
+			if (off + 8 <= code.size()) {
+				const uint32_t next = word_at(code, off + 4);
+				const uint8_t opcode = next & 0x7F;
+				const bool addi = opcode == 0x13 || opcode == 0x1B;
+				if (addi && ((next >> 12) & 7) == 0 &&
+					((next >> 15) & 0x1F) == rd && ((next >> 7) & 0x1F) == rd) {
+					value += int64_t(int32_t(next) >> 20);
+					if (opcode == 0x1B) { // ADDIW truncates to 32 signed bits
+						value = int64_t(int32_t(uint32_t(value)));
+					}
+				}
+			}
+			values.push_back(value);
+		}
+		return values;
+	};
+
+	// 0x7FFFF7FF is the last value the carry does not overflow; 0x80000000 is
+	// past int32 and travels in the constant pool instead. Everything between
+	// was wrong by 2^32.
+	const int64_t constants[] = {
+		2147481599, // 0x7FFFF7FF
+		2147481600, // 0x7FFFF800, first value that carries into bit 31
+		2147483646,
+		2147483647, // INT32_MAX
+		-2147481600,
+		-2147483648, // INT32_MIN
+		131072, // an ordinary LUI-only value, no low half
+		1048577, // ordinary LUI + positive low half
+		-1048577, // ordinary LUI + negative low half
+	};
+	for (const int64_t constant : constants) {
+		const std::vector<uint8_t> code =
+			compile_to_code("func test():\n\treturn " + std::to_string(constant) + "\n");
+		const std::vector<int64_t> values = materialized_values(code);
+		assert(std::find(values.begin(), values.end(), constant) != values.end());
+	}
+
+	std::cout << "  ✓ Integer constants at the LUI carry boundary" << std::endl;
 }
 
 // Global initializers that are not compile-time constants. Every one of these
@@ -883,6 +945,7 @@ int main() {
 	test_call_result_kills_constant();
 	test_register_types_do_not_leak_between_functions();
 	test_large_global_offsets();
+	test_int32_immediates_at_the_lui_carry_boundary();
 	test_global_initializer_forms();
 	test_global_init_runs_before_property_registration();
 	test_logical_short_circuit();
