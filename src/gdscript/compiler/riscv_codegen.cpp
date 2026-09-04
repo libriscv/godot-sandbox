@@ -2969,7 +2969,13 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 		int lhs_offset = get_variant_stack_offset(lhs_vreg_local);
 		int rhs_offset = get_variant_stack_offset(rhs_vreg_local);
 
-		const bool int_path = !host_only && has_int_fast_path(instr.opcode);
+		// A side with a known tag needs no guard of its own: `acc + a[j]` with
+		// acc typed int tests only the element's tag, and a known FLOAT rules
+		// the int pair out before it is tested.
+		const int lhs_known = numeric_known_tag(lhs_vreg_local);
+		const int rhs_known = numeric_known_tag(rhs_vreg_local);
+		const bool int_path = !host_only && has_int_fast_path(instr.opcode) &&
+			lhs_known != Variant::FLOAT && rhs_known != Variant::FLOAT;
 		const bool float_path = !host_only && has_float_fast_path(instr.opcode);
 		if (int_path || float_path) {
 			// Spill before branch: allocator state must hold on both paths
@@ -2981,7 +2987,9 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 			const std::string floats = float_path ? gen_local_label(".veval_float") : host;
 			const auto mode_it = m_fn.numeric_loop_modes.find(m_fn.current_instr_idx - 1);
 			const bool cached_float = mode_it != m_fn.numeric_loop_modes.end() && float_path &&
-				mode_it->second.carried_vreg >= 0;
+				mode_it->second.carried_vreg >= 0 &&
+				lhs_known == IRInstruction::TypeHint_NONE &&
+				rhs_known == IRInstruction::TypeHint_NONE;
 			const std::string cached = cached_float ? gen_local_label(".veval_cached_float") : "";
 			if (cached_float) {
 				mark_label_use(cached, m_code.size());
@@ -2989,8 +2997,10 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 			}
 
 			if (int_path) {
-				emit_branch_unless_both_int(lhs_offset, rhs_offset, floats, shift);
-				emit_typed_int_binary_op(dst_vreg, dst_offset, lhs_offset, rhs_offset, instr.opcode);
+				emit_branch_unless_both_int(lhs_offset, rhs_offset, floats, shift,
+					lhs_known, rhs_known);
+				emit_typed_int_binary_op(dst_vreg, dst_offset, lhs_offset, rhs_offset, instr.opcode,
+					lhs_vreg_local, rhs_vreg_local);
 				mark_label_use(done, m_code.size());
 				emit_jal(REG_ZERO, 0);
 			}
@@ -2998,7 +3008,8 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 				if (int_path) {
 					define_label(floats);
 				}
-				emit_branch_unless_float_pair(lhs_offset, rhs_offset, host);
+				emit_branch_unless_float_pair(lhs_offset, rhs_offset, host,
+					lhs_known, rhs_known);
 				if (cached_float) {
 					const std::string no_cache = gen_local_label(".veval_no_cache");
 					emit_addi(REG_T2, REG_T0, -Variant::FLOAT);
@@ -3012,7 +3023,10 @@ void RISCVCodeGen::gen_binary_op(const IRInstruction& instr) {
 					emit_li(mode_it->second.preg, -1);
 					define_label(no_cache);
 				}
-				emit_float_pair_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode);
+				// A known INT side leaves the guard having proved the other FLOAT.
+				emit_float_pair_binary_op(dst_offset, lhs_offset, rhs_offset, instr.opcode,
+					rhs_known == Variant::INT ? int(Variant::FLOAT) : lhs_known,
+					lhs_known == Variant::INT ? int(Variant::FLOAT) : rhs_known);
 				mark_label_use(done, m_code.size());
 				emit_jal(REG_ZERO, 0);
 			}
@@ -6090,15 +6104,25 @@ bool RISCVCodeGen::has_int_fast_path(IROpcode op) {
 }
 
 void RISCVCodeGen::emit_branch_unless_both_int(int lhs_offset, int rhs_offset,
-	const std::string& slow_label, bool require_non_negative)
+	const std::string& slow_label, bool require_non_negative, int lhs_known, int rhs_known)
 {
-	emit_lwu(REG_T0, REG_SP, lhs_offset + VARIANT_TYPE_OFFSET);
-	emit_lwu(REG_T1, REG_SP, rhs_offset + VARIANT_TYPE_OFFSET);
-	emit_xori(REG_T0, REG_T0, Variant::INT);
-	emit_xori(REG_T1, REG_T1, Variant::INT);
-	emit_or(REG_T0, REG_T0, REG_T1);
-	mark_label_use(slow_label, m_code.size());
-	emit_bne(REG_T0, REG_ZERO, 0);
+	if (lhs_known == Variant::INT && rhs_known == Variant::INT) {
+		// Nothing to test.
+	} else if (lhs_known == Variant::INT || rhs_known == Variant::INT) {
+		const int unknown_offset = lhs_known == Variant::INT ? rhs_offset : lhs_offset;
+		emit_lwu(REG_T0, REG_SP, unknown_offset + VARIANT_TYPE_OFFSET);
+		emit_xori(REG_T0, REG_T0, Variant::INT);
+		mark_label_use(slow_label, m_code.size());
+		emit_bne(REG_T0, REG_ZERO, 0);
+	} else {
+		emit_lwu(REG_T0, REG_SP, lhs_offset + VARIANT_TYPE_OFFSET);
+		emit_lwu(REG_T1, REG_SP, rhs_offset + VARIANT_TYPE_OFFSET);
+		emit_xori(REG_T0, REG_T0, Variant::INT);
+		emit_xori(REG_T1, REG_T1, Variant::INT);
+		emit_or(REG_T0, REG_T0, REG_T1);
+		mark_label_use(slow_label, m_code.size());
+		emit_bne(REG_T0, REG_ZERO, 0);
+	}
 
 	if (require_non_negative) {
 		// Negative shift: only the host can raise Godot's error
@@ -6124,8 +6148,35 @@ bool RISCVCodeGen::has_float_fast_path(IROpcode op) {
 }
 
 void RISCVCodeGen::emit_branch_unless_float_pair(int lhs_offset, int rhs_offset,
-	const std::string& slow_label)
+	const std::string& slow_label, int lhs_known, int rhs_known)
 {
+	// Falls through for a numeric pair that is not int/int.
+	if (lhs_known != IRInstruction::TypeHint_NONE && rhs_known != IRInstruction::TypeHint_NONE) {
+		if (lhs_known == Variant::INT && rhs_known == Variant::INT) {
+			mark_label_use(slow_label, m_code.size());
+			emit_jal(REG_ZERO, 0);
+		}
+		return;
+	}
+	if (lhs_known != IRInstruction::TypeHint_NONE || rhs_known != IRInstruction::TypeHint_NONE) {
+		const int known = lhs_known != IRInstruction::TypeHint_NONE ? lhs_known : rhs_known;
+		const int unknown_offset = lhs_known != IRInstruction::TypeHint_NONE ? rhs_offset : lhs_offset;
+		emit_lwu(REG_T1, REG_SP, unknown_offset + VARIANT_TYPE_OFFSET);
+		if (known == Variant::INT) {
+			// The other side has to be FLOAT.
+			emit_addi(REG_T2, REG_T1, -Variant::FLOAT);
+			mark_label_use(slow_label, m_code.size());
+			emit_bne(REG_T2, REG_ZERO, 0);
+		} else {
+			// The other side has to be INT or FLOAT.
+			emit_addi(REG_T2, REG_T1, -Variant::INT);
+			emit_i_type(0x13, REG_T2, 0x3, REG_T2, 2); // sltiu t2, t2, 2
+			mark_label_use(slow_label, m_code.size());
+			emit_beq(REG_T2, REG_ZERO, 0);
+		}
+		return;
+	}
+
 	emit_lwu(REG_T0, REG_SP, lhs_offset + VARIANT_TYPE_OFFSET);
 	emit_lwu(REG_T1, REG_SP, rhs_offset + VARIANT_TYPE_OFFSET);
 
@@ -6146,7 +6197,16 @@ void RISCVCodeGen::emit_branch_unless_float_pair(int lhs_offset, int rhs_offset,
 	emit_beq(REG_T2, REG_ZERO, 0);
 }
 
-void RISCVCodeGen::emit_numeric_to_double(uint8_t fd, int variant_offset) {
+void RISCVCodeGen::emit_numeric_to_double(uint8_t fd, int variant_offset, int known) {
+	if (known == Variant::FLOAT) {
+		emit_fld(fd, REG_SP, variant_offset + VARIANT_DATA_OFFSET);
+		return;
+	}
+	if (known == Variant::INT) {
+		emit_load_variant_int(REG_T0, REG_SP, variant_offset);
+		emit_fcvt_d_l(fd, REG_T0);
+		return;
+	}
 	const std::string is_float = gen_local_label(".num_float");
 	const std::string done = gen_local_label(".num_done");
 
@@ -6166,10 +6226,10 @@ void RISCVCodeGen::emit_numeric_to_double(uint8_t fd, int variant_offset) {
 }
 
 void RISCVCodeGen::emit_float_pair_binary_op(int result_offset, int lhs_offset, int rhs_offset,
-	IROpcode op)
+	IROpcode op, int lhs_known, int rhs_known)
 {
-	emit_numeric_to_double(REG_FA0, lhs_offset);
-	emit_numeric_to_double(REG_FA1, rhs_offset);
+	emit_numeric_to_double(REG_FA0, lhs_offset, lhs_known);
+	emit_numeric_to_double(REG_FA1, rhs_offset, rhs_known);
 
 	switch (op) {
 		case IROpcode::ADD: emit_fadd_d(REG_FA2, REG_FA0, REG_FA1); break;
@@ -6456,6 +6516,14 @@ void RISCVCodeGen::invalidate_cached_vreg(int vreg) {
 		m_fn.float_cache_owners[size_t(float_slot)] = -1;
 		m_fn.float_cache_slots[size_t(vreg)] = -1;
 	}
+}
+
+int RISCVCodeGen::numeric_known_tag(int vreg) const {
+	if (vreg < 0 || size_t(vreg) >= m_fn.known_tags.size()) {
+		return IRInstruction::TypeHint_NONE;
+	}
+	const int tag = m_fn.known_tags[size_t(vreg)];
+	return (tag == Variant::INT || tag == Variant::FLOAT) ? tag : IRInstruction::TypeHint_NONE;
 }
 
 void RISCVCodeGen::note_known_tag(int vreg, int tag) {

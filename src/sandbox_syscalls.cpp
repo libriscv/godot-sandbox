@@ -3214,21 +3214,27 @@ APICALL(api_array_at) {
 				const_cast<Variant &>(var_array)._native_ptr(), index,
 				value->_native_ptr(), &valid, &oob);
 	} else {
-		CallResult result;
-		internal::gdextension_interface_variant_get_indexed(
-				var_array._native_ptr(), index, &result.get(), &valid, &oob);
-		result.mark_constructed();
-		if (LIKELY(valid && !oob)) {
-			vret->create(emu, std::move(result.get()));
+		// A bounds-checked pointer into the Array: no Variant copy to make and
+		// none to destroy, and an inline element never leaves this function.
+		const Array &array = variant_container<Array>(var_array);
+		int64_t wrapped = index;
+		if (UNLIKELY(negative_get && index < 0)) {
+			wrapped += array.size();
 		}
+		const Variant *element = reinterpret_cast<const Variant *>(
+				internal::gdextension_interface_array_operator_index_const(
+						array._native_ptr(), wrapped));
+		if (LIKELY(element != nullptr)) {
+			vret->create(emu, *element);
+			machine.set_result(vret->type);
+			return;
+		}
+		valid = false;
 	}
 
 	if (UNLIKELY(!valid || oob)) {
 		ERR_PRINT("Array index out of bounds: " + itos(index));
 		throw std::runtime_error("Array index out of bounds: " + std::to_string(index));
-	}
-	if (!set_mode) {
-		machine.set_result(vret->type);
 	}
 }
 
@@ -3268,16 +3274,13 @@ APICALL(api_array_batch) {
 
 	GuestVariant *output = machine.memory.memarray<GuestVariant>(output_addr, size_t(count));
 	for (int64_t i = 0; i < count; i++) {
-		CallResult result;
-		GDExtensionBool valid = false;
-		GDExtensionBool oob = false;
-		internal::gdextension_interface_variant_get_indexed(
-			var_array._native_ptr(), start + i, &result.get(), &valid, &oob);
-		result.mark_constructed();
-		if (UNLIKELY(!valid || oob)) {
+		const Variant *element = reinterpret_cast<const Variant *>(
+				internal::gdextension_interface_array_operator_index_const(
+						array._native_ptr(), start + i));
+		if (UNLIKELY(element == nullptr)) {
 			throw std::runtime_error("Array index out of bounds during batched iteration");
 		}
-		output[i].create(emu, std::move(result.get()));
+		output[i].create(emu, *element);
 	}
 	machine.set_result(count);
 }

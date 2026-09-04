@@ -377,15 +377,25 @@ private:
 	                       bool handle_clobbering = true);
 
 	// Branches to slow_label unless both type tags are INT (and >= 0 when require_non_negative).
+	// A side whose tag is already known (INT or FLOAT) is not tested again.
 	void emit_branch_unless_both_int(int lhs_offset, int rhs_offset, const std::string& slow_label,
-	                                 bool require_non_negative);
+	                                 bool require_non_negative,
+	                                 int lhs_known = IRInstruction::TypeHint_NONE,
+	                                 int rhs_known = IRInstruction::TypeHint_NONE);
 
 	static bool has_int_fast_path(IROpcode op);
 
 	static bool has_float_fast_path(IROpcode op);
-	void emit_branch_unless_float_pair(int lhs_offset, int rhs_offset, const std::string& slow_label);
-	void emit_numeric_to_double(uint8_t fd, int variant_offset);
-	void emit_float_pair_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op);
+	void emit_branch_unless_float_pair(int lhs_offset, int rhs_offset, const std::string& slow_label,
+	                                   int lhs_known = IRInstruction::TypeHint_NONE,
+	                                   int rhs_known = IRInstruction::TypeHint_NONE);
+	void emit_numeric_to_double(uint8_t fd, int variant_offset,
+	                            int known = IRInstruction::TypeHint_NONE);
+	void emit_float_pair_binary_op(int result_offset, int lhs_offset, int rhs_offset, IROpcode op,
+	                               int lhs_known = IRInstruction::TypeHint_NONE,
+	                               int rhs_known = IRInstruction::TypeHint_NONE);
+	// INT or FLOAT when the block already proved the vreg's tag, else TypeHint_NONE.
+	int numeric_known_tag(int vreg) const;
 	void emit_float_pair_comparison(int result_offset, int lhs_offset, int rhs_offset, IROpcode cmp_op);
 	void emit_float_pair_fused_branch(IROpcode op, int lhs_offset, int rhs_offset, const std::string& label);
 	void emit_typed_float_comparison(int result_vreg, int result_offset,
