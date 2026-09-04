@@ -131,7 +131,7 @@ static void gdextension_script_instance_call(GDExtensionScriptInstanceDataPtr p_
 	const Variant **args = reinterpret_cast<const Variant **>(const_cast<const void **>(p_args));
 	Variant *ret = reinterpret_cast<Variant *>(r_return);
 
-	*ret = instance->callp(*method, args, p_argument_count, *r_error);
+	instance->callp(*method, args, p_argument_count, *ret, *r_error);
 }
 
 static void gdextension_script_instance_notification(GDExtensionScriptInstanceDataPtr p_instance, int32_t p_what, GDExtensionBool p_reversed) {

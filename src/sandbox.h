@@ -44,6 +44,11 @@ protected:
 	String _to_string() const;
 
 public:
+	enum class ArgumentABI : uint8_t {
+		CONFIGURED,
+		BOXED,
+		UNBOXED,
+	};
 	static constexpr unsigned MAX_INSTRUCTIONS = 8000; // Millions
 	static constexpr unsigned MAX_HEAP = 20ul; // MBs
 	// Power of two: the binary translator can only use the AND-masked arena on a
@@ -63,6 +68,7 @@ public:
 	static constexpr unsigned MAX_PUBLIC_FUNCTIONS = 128; // Maximum number of public functions
 
 	struct CurrentState {
+		bool dirty = false;
 		std::vector<Variant> variants;
 		std::vector<const Variant *> scoped_variants;
 		/// @brief An object the guest may refer to during this call, and the godot-cpp
@@ -89,6 +95,7 @@ public:
 			if (slot == object_id)
 				return false;
 			slot = object_id;
+			dirty = true;
 			return true;
 		}
 		void clear_referenced() noexcept {
@@ -275,6 +282,8 @@ public:
 	/// @param arg_count The number of arguments.
 	/// @return The return value of the function call.
 	Variant vmcall_fn(const StringName &function, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
+	void vmcall_fn(const StringName &function, const Variant **args, GDExtensionInt arg_count,
+			Variant &r_out, GDExtensionCallError &error);
 	/// @brief Make a function call to a function in the guest by its guest address.
 	/// @param address The address of the function to call.
 	/// @param args The arguments to pass to the function.
@@ -282,6 +291,8 @@ public:
 	/// @param error The error code, if any.
 	/// @return The return value of the function call.
 	Variant vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error);
+	void vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count,
+			Variant &r_out, GDExtensionCallError &error);
 
 	/// @brief Make a function call to a function in the guest by its name.
 	/// @param function The name of the function to call.
@@ -1035,7 +1046,10 @@ public:
 	/// were refused by throwing.
 	/// @warning Leaves guest memory and the Variant state arbitrary. Reset afterwards.
 	Dictionary assault(const String &test, int64_t iterations);
-	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc);
+	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc,
+			ArgumentABI p_abi = ArgumentABI::CONFIGURED);
+	void vmcall_internal(gaddr_t address, const Variant **args, int argc, Variant &r_out,
+			ArgumentABI p_abi = ArgumentABI::CONFIGURED);
 	// False on level-0 state: vmcall_internal there would reset SP/RA under the initializer.
 	bool is_in_vmcall() const noexcept { return m_current_state != &m_states[0]; }
 	machine_t &machine() { return *m_machine; }
@@ -1126,7 +1140,7 @@ private:
 	static void initialize_syscalls();
 	static void initialize_syscalls_2d();
 	static void initialize_syscalls_3d();
-	GuestVariant *setup_arguments(gaddr_t &sp, const Variant **args, int argc);
+	GuestVariant *setup_arguments(gaddr_t &sp, const Variant **args, int argc, ArgumentABI p_abi);
 	void setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, const Variant **args, int argc);
 
 	machine_t *m_machine = nullptr;
@@ -1152,6 +1166,7 @@ private:
 
 	uint8_t m_throttled = 0;
 	bool m_use_unboxed_arguments = false;
+	ArgumentABI m_program_abi = ArgumentABI::CONFIGURED;
 	bool m_resumable_mode = false; // If enabled, allow running startup in small increments
 	bool m_precise_simulation = false; // Run simulation in the slower, precise mode
 	bool m_is_initialization = false; // If true, the program is in the initialization phase
@@ -1292,16 +1307,20 @@ private:
 };
 
 inline void Sandbox::CurrentState::append(Variant &&value) {
+	dirty = true;
 	variants.push_back(std::move(value));
 	scoped_variants.push_back(&variants.back());
 }
 
 inline void Sandbox::CurrentState::reset() {
+	if (!dirty)
+		return;
 	variants.clear();
 	scoped_variants.clear();
 	scoped_objects.clear();
 	scoped_refs.clear();
 	clear_referenced();
+	dirty = false;
 }
 
 inline bool Sandbox::is_explicitly_allowed_object(godot::Object *obj) const {

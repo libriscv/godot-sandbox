@@ -171,6 +171,7 @@ struct GuestVariant {
 	 * @return Variant The new godot Variant.
 	 **/
 	Variant toVariant(const Sandbox &emu) const;
+	void toVariant(const Sandbox &emu, Variant &r_out) const;
 
 	/**
 	 * @brief Returns a pointer to a Variant that comes from a sandbox. This Variant must be

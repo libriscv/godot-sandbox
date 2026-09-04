@@ -19,6 +19,13 @@ func _bench(name : String, callable : Callable) -> float:
 	print("%-28s %8.1f ns/call" % [name, ns])
 	return ns
 
+func _callp_source(padding: int) -> String:
+	var source := "extends Node\n"
+	for i in padding:
+		source += "func pad%d(value: int) -> int:\n\treturn value + %d\n" % [i, i]
+	source += "func f0():\n\tpass\nfunc f1i(value: int) -> int:\n\treturn value\n"
+	return source
+
 func test_bench_obj_callp():
 	var node = Node.new()
 	var s = Sandbox.new()
@@ -76,6 +83,32 @@ func test_bench_obj_callp():
 	_bench("gdscript equivalent", func(n):
 		for i in range(n):
 			_gds_get_name(node))
+
+	# ScriptInstance::callp itself. Keep a padded script alongside the small one
+	# so a linear method lookup is immediately visible in this benchmark.
+	var short_script := SafeGDScript.new()
+	short_script.set_source_code(_callp_source(0))
+	var short_node := Node.new()
+	short_node.set_script(short_script)
+	var padded_script := SafeGDScript.new()
+	padded_script.set_source_code(_callp_source(30))
+	var padded_node := Node.new()
+	padded_node.set_script(padded_script)
+	for warmup in range(10000):
+		short_node.f0()
+		short_node.f1i(3)
+		padded_node.f1i(3)
+	_bench(".sgd callp 0 args", func(n):
+		for i in range(n):
+			short_node.f0())
+	_bench(".sgd callp 1 int", func(n):
+		for i in range(n):
+			short_node.f1i(3))
+	_bench(".sgd callp 30 ahead", func(n):
+		for i in range(n):
+			padded_node.f1i(3))
+	short_node.free()
+	padded_node.free()
 
 	assert_true(true)
 	s.queue_free()

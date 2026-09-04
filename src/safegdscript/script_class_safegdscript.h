@@ -3,6 +3,7 @@
 #include "../gdscript/compiler/function_signature.h"
 #include "../godot/script_instance.h"
 #include "script_safegdscript.h"
+#include "../stringname_id.hpp"
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/templates/hash_map.hpp>
 #include <godot_cpp/templates/hash_set.hpp>
@@ -75,6 +76,10 @@ public:
 	const String &get_description() const { return description; }
 	// Own methods first, then the declared chain's.
 	const MethodInfo *find_method_info(const StringName &p_method) const;
+	const MethodInfo *find_method_info(const StringName &p_method,
+			const StringName **r_lifted) const;
+	const MethodInfo *find_method_info(const StringName &p_method,
+			const StringName **r_lifted, Sandbox *p_sandbox, uint64_t *r_address) const;
 	// '@Class.method' for the class that declares it, or empty when nothing does.
 	StringName lifted_symbol(const StringName &p_method) const;
 
@@ -85,11 +90,17 @@ public:
 	Dictionary pending_self;
 
 private:
+	struct MethodLookup {
+		uint32_t index = 0;
+		StringName lifted;
+		mutable uint64_t address = 0;
+	};
 	ObjectID outer_id;
 	StringName class_name;
 	StringName native_base;
 	Ref<SafeGDScriptClass> base;
 	std::vector<MethodInfo> methods_info;
+	StringNameMap<MethodLookup> method_index;
 	std::vector<gdscript::ClassField> fields;
 	HashSet<StringName> used_traits;
 	int32_t line = 0;
@@ -111,8 +122,13 @@ class SafeGDScriptClassInstance : public ScriptInstanceExtension {
 	// Shared storage with the guest, not a copy: Godot's Dictionary is a handle.
 	Dictionary self;
 	Sandbox *sandbox = nullptr;
+	ObjectID tree_base_id;
+	ObjectID script_instance_owner_id;
 	// Armed by a `super.method()` on the native base for exactly one call.
 	StringName bypass;
+	void call_method(const MethodInfo *p_method, uint64_t p_address,
+			const Variant **p_args, int p_argcount, Variant &r_return,
+			GDExtensionCallError &r_error);
 
 public:
 	bool set(const StringName &p_name, const Variant &p_value) override;
@@ -130,7 +146,8 @@ public:
 	void free_method_list(const GDExtensionMethodInfo *p_list, uint32_t p_count) const override;
 	bool has_method(const StringName &p_method) const override;
 	GDExtensionInt get_method_argument_count(const StringName &p_method, bool &r_valid) const override;
-	Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) override;
+	void callp(const StringName &p_method, const Variant **p_args, int p_argcount,
+			Variant &r_return, GDExtensionCallError &r_error) override;
 	void notification(int p_notification, bool p_reversed) override;
 	String to_string(bool *r_valid) override;
 	void refcount_incremented() override {}

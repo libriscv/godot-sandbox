@@ -44,6 +44,7 @@ void SafeGDScriptClass::configure(SafeGDScript *p_outer,
 	}
 	base = Ref<SafeGDScriptClass>();
 	methods_info.clear();
+	method_index.clear();
 	method_lines.clear();
 
 	// The lifted method's parameters live in the function table under
@@ -69,11 +70,17 @@ void SafeGDScriptClass::configure(SafeGDScript *p_outer,
 		}
 		methods_info.push_back(std::move(method));
 	}
+	method_index.reserve(methods_info.size());
+	for (uint32_t i = 0; i < methods_info.size(); i++) {
+		method_index.emplace(methods_info[i].name, MethodLookup{
+				i, StringName(prefix + String(methods_info[i].name)), 0 });
+	}
 	valid = true;
 }
 
 void SafeGDScriptClass::invalidate() {
 	methods_info.clear();
+	method_index.clear();
 	method_lines.clear();
 	fields.clear();
 	used_traits.clear();
@@ -136,25 +143,36 @@ ScriptLanguage *SafeGDScriptClass::_get_language() const {
 }
 
 const MethodInfo *SafeGDScriptClass::find_method_info(const StringName &p_method) const {
+	return find_method_info(p_method, nullptr);
+}
+
+const MethodInfo *SafeGDScriptClass::find_method_info(const StringName &p_method,
+		const StringName **r_lifted) const {
+	return find_method_info(p_method, r_lifted, nullptr, nullptr);
+}
+
+const MethodInfo *SafeGDScriptClass::find_method_info(const StringName &p_method,
+		const StringName **r_lifted, Sandbox *p_sandbox, uint64_t *r_address) const {
 	for (const SafeGDScriptClass *at = this; at != nullptr; at = at->base.ptr()) {
-		for (const MethodInfo &method : at->methods_info) {
-			if (method.name == p_method) {
-				return &method;
+		const auto it = at->method_index.find(p_method);
+		if (it != at->method_index.end()) {
+			if (r_lifted != nullptr) *r_lifted = &it->second.lifted;
+			if (r_address != nullptr && p_sandbox != nullptr) {
+				if (it->second.address == 0) {
+					it->second.address = p_sandbox->cached_address_of(it->second.lifted);
+				}
+				*r_address = it->second.address;
 			}
+			return &at->methods_info[it->second.index];
 		}
 	}
 	return nullptr;
 }
 
 StringName SafeGDScriptClass::lifted_symbol(const StringName &p_method) const {
-	for (const SafeGDScriptClass *at = this; at != nullptr; at = at->base.ptr()) {
-		for (const MethodInfo &method : at->methods_info) {
-			if (method.name == p_method) {
-				return StringName("@" + String(at->class_name) + "." + String(p_method));
-			}
-		}
-	}
-	return StringName();
+	const StringName *lifted = nullptr;
+	find_method_info(p_method, &lifted);
+	return lifted == nullptr ? StringName() : *lifted;
 }
 
 bool SafeGDScriptClass::_has_method(const StringName &p_method) const {
@@ -254,6 +272,10 @@ SafeGDScriptClassInstance::SafeGDScriptClassInstance(Object *p_owner,
 		const Ref<SafeGDScriptClass> &p_script, const Dictionary &p_self) :
 		owner(p_owner), script(p_script), self(p_self)
 {
+	Node *const owner_node = fast_cast_to<Node>(p_owner);
+	tree_base_id = owner_node != nullptr ? ObjectID(owner_node->get_instance_id()) : ObjectID();
+	script_instance_owner_id = owner_node == nullptr && p_owner != nullptr
+			? ObjectID(p_owner->get_instance_id()) : ObjectID();
 	// Counts in the shared machine exactly like an outer instance, so it cannot
 	// go away underneath this one. The tree base stays whatever the outer
 	// instance set; a call sets its own for the duration.
@@ -287,32 +309,41 @@ ScriptLanguage *SafeGDScriptClassInstance::_get_language() {
 	return SafeGDScriptLanguage::get_singleton();
 }
 
-Variant SafeGDScriptClassInstance::callp(const StringName &p_method, const Variant **p_args,
-		int p_argcount, GDExtensionCallError &r_error)
+void SafeGDScriptClassInstance::callp(const StringName &p_method, const Variant **p_args,
+		int p_argcount, Variant &r_return, GDExtensionCallError &r_error)
 {
 	// `super.method()` on the native base: refuse once so Object::callp falls
 	// through to the engine's MethodBind instead of re-entering the caller.
 	if (!bypass.is_empty() && bypass == p_method) {
 		bypass = StringName();
 		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-		return Variant();
+		r_return = Variant();
+		return;
 	}
 
-	const StringName symbol = script->lifted_symbol(p_method);
-	if (sandbox == nullptr || symbol.is_empty()) {
+	const StringName *symbol = nullptr;
+	uint64_t address = 0;
+	const MethodInfo *method = script->find_method_info(p_method, &symbol, sandbox, &address);
+	if (sandbox == nullptr || symbol == nullptr) {
 		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-		return Variant();
+		r_return = Variant();
+		return;
 	}
-	const gaddr_t address = sandbox->cached_address_of(symbol);
 	if (address == 0) {
 		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-		return Variant();
+		r_return = Variant();
+		return;
 	}
+	call_method(method, address, p_args, p_argcount, r_return, r_error);
+}
 
-	const MethodInfo *method = script->find_method_info(p_method);
+void SafeGDScriptClassInstance::call_method(const MethodInfo *method, uint64_t address,
+		const Variant **p_args, int p_argcount, Variant &r_return,
+		GDExtensionCallError &r_error) {
 	CompletedArguments completed;
 	if (!completed.complete(method, p_args, p_argcount, r_error)) {
-		return Variant();
+		r_return = Variant();
+		return;
 	}
 
 	// self first: the compiler lifts a method to a free function taking the
@@ -331,9 +362,9 @@ Variant SafeGDScriptClassInstance::callp(const StringName &p_method, const Varia
 	// $Node and get_node() inside the class resolve against the object itself.
 	// An inner class cannot see the outer instance's members in GDScript, so the
 	// default record is right and this instance allocates none of its own.
-	ScopedTreeBase stb(sandbox, fast_cast_to<Node>(owner));
-	ScopedInstanceBase sib(sandbox, sandbox->get_default_instance_base());
-	return sandbox->vmcall_address(address, forwarded.ptr(), int(forwarded.size()), r_error);
+	ScopedCallContext ctx(sandbox, tree_base_id, script_instance_owner_id,
+			sandbox->get_default_instance_base());
+	sandbox->vmcall_address(address, forwarded.ptr(), int(forwarded.size()), r_return, r_error);
 }
 
 bool SafeGDScriptClassInstance::has_method(const StringName &p_method) const {
@@ -441,20 +472,25 @@ void SafeGDScriptClassInstance::free_property_list(const GDExtensionPropertyInfo
 
 void SafeGDScriptClassInstance::notification(int p_notification, bool p_reversed) {
 	static const StringName s_notification("_notification");
-	if (script->find_method_info(s_notification) == nullptr) {
+	const StringName *symbol = nullptr;
+	uint64_t address = 0;
+	const MethodInfo *method = script->find_method_info(s_notification, &symbol, sandbox, &address);
+	if (method == nullptr || symbol == nullptr) {
 		return;
 	}
 	Variant what = int64_t(p_notification);
 	const Variant *args[] = { &what };
+	Variant result;
 	GDExtensionCallError error;
-	this->callp(s_notification, args, 1, error);
+	this->call_method(method, address, args, 1, result, error);
 }
 
 String SafeGDScriptClassInstance::to_string(bool *r_valid) {
 	static const StringName s_to_string("_to_string");
 	if (script->find_method_info(s_to_string) != nullptr) {
 		GDExtensionCallError error;
-		const Variant answer = this->callp(s_to_string, nullptr, 0, error);
+		Variant answer;
+		this->callp(s_to_string, nullptr, 0, answer, error);
 		if (error.error == GDEXTENSION_CALL_OK) {
 			*r_valid = true;
 			return answer.operator String();

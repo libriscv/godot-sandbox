@@ -27,7 +27,7 @@ bool SafeGDScriptInstance::set(const StringName &p_name, const Variant &p_value)
 	}
 
 	Sandbox *sandbox = current_sandbox;
-	ScopedCallContext ctx(sandbox, this->owner, this->current_instance_base());
+	ScopedCallContext ctx(sandbox, tree_base_id, script_instance_owner_id, this->current_instance_base());
 	if (sandbox->set_property(p_name, p_value)) {
 		return true;
 	}
@@ -41,7 +41,7 @@ bool SafeGDScriptInstance::get(const StringName &p_name, Variant &r_ret) const {
 		return true;
 	}
 	Sandbox *sandbox = current_sandbox;
-	ScopedCallContext ctx(sandbox, this->owner, this->current_instance_base());
+	ScopedCallContext ctx(sandbox, tree_base_id, script_instance_owner_id, this->current_instance_base());
 	if (sandbox->get_property(p_name, r_ret)) {
 		return true;
 	}
@@ -70,45 +70,60 @@ void SafeGDScriptInstance::notification(int32_t p_what, bool p_reversed) {
 	static const StringName s_notification("_notification");
 	// Called for every NOTIFICATION_*, so the script that declares none pays a
 	// name comparison per notification and nothing else.
-	if (script->find_method_info(s_notification) == nullptr) {
+	uint64_t address = 0;
+	const MethodInfo *method = script->find_method_info(s_notification, current_sandbox, &address);
+	if (method == nullptr) {
 		return;
 	}
 	Variant what = int64_t(p_what);
 	const Variant *args[] = { &what };
+	Variant result;
 	GDExtensionCallError error;
-	this->callp(s_notification, args, 1, error);
+	this->call_method(method, address, args, 1, result, error);
 }
 
-Variant SafeGDScriptInstance::callp(
+void SafeGDScriptInstance::callp(
 		const StringName &p_method,
 		const Variant **p_args, const int p_argument_count,
-		GDExtensionCallError &r_error)
+		Variant &r_return, GDExtensionCallError &r_error)
 {
 	Sandbox *sandbox = current_sandbox;
-	const auto address = sandbox->cached_address_of(p_method.hash(), p_method);
+	uint64_t address = 0;
+	const MethodInfo *method = script->find_method_info(p_method, sandbox, &address);
+	if (method == nullptr) address = sandbox->cached_address_of(p_method);
 	if (address == 0) {
 		const bool found = sandbox->is_sandbox_function(p_method);
 		if (!found) {
 			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-			return Variant();
+			r_return = Variant();
+			return;
 		}
 		Array args;
 		for (int i = 0; i < p_argument_count; i++) {
 			args.push_back(*p_args[i]);
 		}
 		r_error.error = GDEXTENSION_CALL_OK;
-		ScopedCallContext ctx(sandbox, this->owner, this->current_instance_base());
-		return sandbox->callv(p_method, args);
+		ScopedCallContext ctx(sandbox, tree_base_id, script_instance_owner_id, this->current_instance_base());
+		r_return = sandbox->callv(p_method, args);
+		return;
 	}
 
+	this->call_method(method, address,
+			p_args, p_argument_count, r_return, r_error);
+}
+
+void SafeGDScriptInstance::call_method(const MethodInfo *p_method, uint64_t p_address,
+		const Variant **p_args, int p_argcount, Variant &r_return,
+		GDExtensionCallError &r_error) {
+	Sandbox *const sandbox = current_sandbox;
 	CompletedArguments completed;
-	if (!completed.complete(script->find_method_info(p_method), p_args, p_argument_count, r_error)) {
-		return Variant();
+	if (!completed.complete(p_method, p_args, p_argcount, r_error)) {
+		r_return = Variant();
+		return;
 	}
 
-	//WARN_PRINT("SafeGDScriptInstance::callp: Calling method " + p_method + " at address " + itos(address) + " with " + itos(p_argument_count) + " arguments.");
-	ScopedCallContext ctx(sandbox, this->owner, this->current_instance_base());
-	return sandbox->vmcall_address(address, completed.args(), completed.argcount(), r_error);
+	ScopedCallContext ctx(sandbox, tree_base_id, script_instance_owner_id, this->current_instance_base());
+	sandbox->vmcall_address(p_address, completed.args(), completed.argcount(), r_return, r_error);
 }
 
 const GDExtensionMethodInfo *SafeGDScriptInstance::get_method_list(uint32_t *r_count) const {
@@ -435,11 +450,13 @@ void safegdscript_release_sandbox(SafeGDScript *p_script, Object *p_owner) {
 SafeGDScriptInstance::SafeGDScriptInstance(Object *p_owner, const Ref<SafeGDScript> p_script) :
 		owner(p_owner), script(p_script)
 {
+	Node *const owner_node = fast_cast_to<Node>(owner);
+	tree_base_id = owner_node != nullptr ? ObjectID(owner_node->get_instance_id()) : ObjectID();
+	script_instance_owner_id = owner_node == nullptr && owner != nullptr
+			? ObjectID(owner->get_instance_id()) : ObjectID();
 	this->current_sandbox = create_sandbox(p_owner, p_script, p_script->compiled_restricted);
-	this->current_sandbox->set_tree_base(fast_cast_to<godot::Node>(owner));
-	if (fast_cast_to<Node>(owner) == nullptr) {
-		this->current_sandbox->set_script_instance_owner(owner);
-	}
+	this->current_sandbox->set_tree_base_id(tree_base_id);
+	this->current_sandbox->set_script_instance_owner_id(script_instance_owner_id);
 	// A script-level `var` is a member: this instance gets its own, initialized
 	// the way the program initialized its own at startup.
 	this->instance_base = this->current_sandbox->create_instance_record();
@@ -450,13 +467,16 @@ SafeGDScriptInstance::SafeGDScriptInstance(Object *p_owner, const Ref<SafeGDScri
 void SafeGDScriptInstance::call_init() {
 	static const StringName init_name("_init");
 	Sandbox *sandbox = this->current_sandbox;
-	if (sandbox == nullptr || sandbox->cached_address_of(init_name.hash(), init_name) == 0) {
+	if (sandbox == nullptr) {
 		return;
 	}
+	uint64_t address = 0;
+	const MethodInfo *method = script->find_method_info(init_name, sandbox, &address);
+	if (address == 0) return;
 	const Variant **args = script->pending_init_args;
 	const int argcount = script->pending_init_argcount;
 	if (args == nullptr) {
-		if (const MethodInfo *method = script->find_method_info(init_name)) {
+		if (method != nullptr) {
 			if (method->arguments.size() != method->default_arguments.size()) {
 				ERR_PRINT("SafeGDScript: " + script->get_path() + ": _init() takes arguments, so it "
 						"cannot run for a script attached to a node.");
@@ -464,8 +484,9 @@ void SafeGDScriptInstance::call_init() {
 			}
 		}
 	}
+	Variant result;
 	GDExtensionCallError error;
-	this->callp(init_name, args, argcount, error);
+	this->call_method(method, address, args, argcount, result, error);
 	if (error.error != GDEXTENSION_CALL_OK) {
 		ERR_PRINT("SafeGDScript: " + script->get_path() + ": _init() failed with call error " +
 				itos(int(error.error)));
@@ -594,7 +615,8 @@ bool SafeGDScriptStaticInstance::has_method(const StringName &p_method) const {
 }
 
 GDExtensionInt SafeGDScriptStaticInstance::get_method_argument_count(const StringName &p_method, bool &r_valid) const {
-	const godot::MethodInfo *method = script->find_method_info(p_method);
+	uint64_t address = 0;
+	const godot::MethodInfo *method = script->find_method_info(p_method, sandbox, &address);
 	if (method == nullptr || !(method->flags & METHOD_FLAG_STATIC)) {
 		r_valid = false;
 		return 0;
@@ -603,34 +625,39 @@ GDExtensionInt SafeGDScriptStaticInstance::get_method_argument_count(const Strin
 	return GDExtensionInt(method->arguments.size());
 }
 
-Variant SafeGDScriptStaticInstance::callp(
+void SafeGDScriptStaticInstance::callp(
 		const StringName &p_method,
 		const Variant **p_args, const int p_argument_count,
-		GDExtensionCallError &r_error)
+		Variant &r_return, GDExtensionCallError &r_error)
 {
-	if (!script->_has_static_method(p_method)) {
-		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-		return Variant();
-	}
 	Sandbox *sandbox = acquire();
 	if (sandbox == nullptr) {
 		ERR_PRINT("SafeGDScript: " + script->get_path() + ": a restricted script's static "
 				"function needs a live instance, which owns the machine it runs in.");
 		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-		return Variant();
+		r_return = Variant();
+		return;
 	}
-	const auto address = sandbox->cached_address_of(p_method.hash(), p_method);
+	uint64_t address = 0;
+	const godot::MethodInfo *method = script->find_method_info(p_method, sandbox, &address);
+	if (method == nullptr || !(method->flags & METHOD_FLAG_STATIC)) {
+		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
+		r_return = Variant();
+		return;
+	}
 	if (address == 0) {
 		r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-		return Variant();
+		r_return = Variant();
+		return;
 	}
 	CompletedArguments completed;
-	if (!completed.complete(script->find_method_info(p_method), p_args, p_argument_count, r_error)) {
-		return Variant();
+	if (!completed.complete(method, p_args, p_argument_count, r_error)) {
+		r_return = Variant();
+		return;
 	}
 	r_error.error = GDEXTENSION_CALL_OK;
 	ScopedCallContext ctx(sandbox, nullptr, sandbox->get_default_instance_base());
-	return sandbox->vmcall_address(address, completed.args(), completed.argcount(), r_error);
+	sandbox->vmcall_address(address, completed.args(), completed.argcount(), r_return, r_error);
 }
 
 void SafeGDScriptStaticInstance::notification(int p_notification, bool p_reversed) {

@@ -77,6 +77,19 @@ struct ScopedCallContext {
 		}
 	}
 
+	ScopedCallContext(Sandbox *sandbox, godot::ObjectID tree_base,
+			godot::ObjectID owner, gaddr_t instance_base) :
+			sandbox(sandbox),
+			previous_tree_base(sandbox->get_tree_base_id()),
+			previous_owner(sandbox->get_script_instance_owner_id()),
+			previous_instance_base(sandbox->get_instance_base()) {
+		sandbox->set_tree_base_id(tree_base);
+		sandbox->set_script_instance_owner_id(owner);
+		if (instance_base != 0) {
+			sandbox->set_instance_base(instance_base);
+		}
+	}
+
 	~ScopedCallContext() {
 		sandbox->set_instance_base(previous_instance_base);
 		sandbox->set_script_instance_owner_id(previous_owner);

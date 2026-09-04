@@ -46,7 +46,8 @@ public:
 	void free_method_list(const GDExtensionMethodInfo *p_list, uint32_t p_count) const override;
 	bool has_method(const StringName &p_method) const override;
 	GDExtensionInt get_method_argument_count(const StringName &p_method, bool &r_valid) const override;
-	Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) override;
+	void callp(const StringName &p_method, const Variant **p_args, int p_argcount,
+			Variant &r_return, GDExtensionCallError &r_error) override;
 	void notification(int p_notification, bool p_reversed) override;
 	String to_string(bool *r_valid) override;
 	void refcount_incremented() override;

@@ -58,7 +58,8 @@ public:
 	virtual bool has_method(const StringName &p_method) const = 0;
 	virtual GDExtensionInt get_method_argument_count(const StringName &p_method, bool &r_valid) const = 0;
 	// @todo Should godot-cpp have a Callable::CallError?
-	virtual Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) = 0;
+	virtual void callp(const StringName &p_method, const Variant **p_args, int p_argcount,
+			Variant &r_return, GDExtensionCallError &r_error) = 0;
 	virtual void notification(int p_notification, bool p_reversed) = 0;
 	virtual String to_string(bool *r_valid) = 0;
 	virtual void refcount_incremented() = 0;

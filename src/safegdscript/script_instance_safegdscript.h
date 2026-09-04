@@ -23,6 +23,8 @@ class SafeGDScriptInstance : public ScriptInstanceExtension {
 	Object *owner;
 	Ref<SafeGDScript> script;
 	Sandbox *current_sandbox = nullptr;
+	ObjectID tree_base_id;
+	ObjectID script_instance_owner_id;
 	// This instance's members, in the shared Sandbox's guest memory. Zero when
 	// the program keeps none. A guest address (gaddr_t), spelled uint64_t here
 	// because this header only forward-declares Sandbox.
@@ -33,6 +35,9 @@ class SafeGDScriptInstance : public ScriptInstanceExtension {
 	// Which machine the record above lives in. A reload replaces the machine and
 	// with it the record, so the base is renewed rather than reused.
 	mutable uint64_t instance_generation = 0;
+	void call_method(const MethodInfo *p_method, uint64_t p_address,
+			const Variant **p_args, int p_argcount, Variant &r_return,
+			GDExtensionCallError &r_error);
 
 	friend class SafeGDScript;
 
@@ -51,7 +56,8 @@ public:
 	void free_method_list(const GDExtensionMethodInfo *p_list, uint32_t p_count) const override;
 	bool has_method(const StringName &p_method) const override;
 	GDExtensionInt get_method_argument_count(const StringName &p_method, bool &r_valid) const override;
-	Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount, GDExtensionCallError &r_error) override;
+	void callp(const StringName &p_method, const Variant **p_args, int p_argcount,
+			Variant &r_return, GDExtensionCallError &r_error) override;
 	void call_init();
 	void notification(int p_notification, bool p_reversed) override;
 	String to_string(bool *r_valid) override;
@@ -93,8 +99,8 @@ public:
 	void free_method_list(const GDExtensionMethodInfo *p_list, uint32_t p_count) const override;
 	bool has_method(const StringName &p_method) const override;
 	GDExtensionInt get_method_argument_count(const StringName &p_method, bool &r_valid) const override;
-	Variant callp(const StringName &p_method, const Variant **p_args, int p_argcount,
-			GDExtensionCallError &r_error) override;
+	void callp(const StringName &p_method, const Variant **p_args, int p_argcount,
+			Variant &r_return, GDExtensionCallError &r_error) override;
 	void notification(int p_notification, bool p_reversed) override;
 	String to_string(bool *r_valid) override;
 	void refcount_incremented() override;

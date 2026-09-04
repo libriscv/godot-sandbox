@@ -6,6 +6,7 @@
 #include "../gdscript/compiler/debug_layout.h"
 #include "../gdscript/compiler/property_signature.h"
 #include "../gdscript/compiler/source_model.h"
+#include "../stringname_id.hpp"
 #include <godot_cpp/classes/script_extension.hpp>
 #include <godot_cpp/classes/ref.hpp>
 #include <godot_cpp/classes/script_language.hpp>
@@ -91,6 +92,8 @@ public:
 	// The declared signature of one exported function, or null when the script
 	// does not export it.
 	const godot::MethodInfo *find_method_info(const StringName &p_method) const;
+	const godot::MethodInfo *find_method_info(const StringName &p_method,
+			Sandbox *p_sandbox, uint64_t *r_address) const;
 	const String &get_path() const {
 		if (path.is_empty()) {
 			const String taken_over = Resource::get_path();
@@ -242,6 +245,9 @@ private:
 	std::vector<gdscript::FunctionSignature> signatures;
 	gdscript::LineTable line_table;
 	std::vector<godot::MethodInfo> methods_info;
+	StringNameMap<uint32_t> method_index;
+	std::vector<uint8_t> method_is_static;
+	mutable std::vector<uint64_t> method_addresses;
 	std::vector<gdscript::PropertySignature> properties;
 	std::vector<gdscript::DebugVariableRecord> debug_variables;
 	std::vector<gdscript::SourceDeclaration> declarations;

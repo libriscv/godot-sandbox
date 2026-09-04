@@ -32,6 +32,25 @@ func test_compiler_variant_layout():
 
 	ts.queue_free()
 
+func test_compiled_elf_forces_boxed_arguments_in_a_plain_sandbox():
+	var compiler := Sandbox.new()
+	compiler.set_program(Sandbox_TestsTests)
+	compiler.restrictions = true
+	var elf: PackedByteArray = compiler.vmcall("compile_to_elf",
+			"func f1i(value: int) -> int:\n\treturn value\n")
+	assert_false(elf.is_empty(), "the test program should compile")
+
+	var sandbox := Sandbox.new()
+	sandbox.load_buffer(elf)
+	# Deliberately request the native ABI. The .gdsmeta section is authoritative:
+	# compiler-produced entrypoints receive Variant pointers regardless of this setting.
+	sandbox.set_unboxed_arguments(true)
+	assert_eq(sandbox.vmcall("f1i", 3), 3,
+			"a compiler ELF loaded directly into Sandbox should still use its boxed ABI")
+
+	sandbox.queue_free()
+	compiler.queue_free()
+
 func test_compile_and_run():
 	var gdscript_code = """
 func truthy():

@@ -8,46 +8,68 @@ extern godot::Object *get_object_from_address(const Sandbox &emu, uint64_t addr)
 } //namespace riscv
 
 Variant GuestVariant::toVariant(const Sandbox &emu) const {
+	Variant result;
+	toVariant(emu, result);
+	return result;
+}
+
+void GuestVariant::toVariant(const Sandbox &emu, Variant &r_out) const {
 	switch (type) {
 		case Variant::NIL:
-			return Variant();
+			r_out = Variant();
+			return;
 		case Variant::BOOL:
-			return v.b_bits != 0;
+			r_out = v.b_bits != 0;
+			return;
 		case Variant::INT:
-			return v.i;
+			r_out = v.i;
+			return;
 		case Variant::FLOAT:
-			return v.f;
+			r_out = v.f;
+			return;
 
 		case Variant::VECTOR2:
-			return Variant{ godot::Vector2(v.v2f[0], v.v2f[1]) };
+			r_out = godot::Vector2(v.v2f[0], v.v2f[1]);
+			return;
 		case Variant::VECTOR2I:
-			return Variant{ godot::Vector2i(v.v2i[0], v.v2i[1]) };
+			r_out = godot::Vector2i(v.v2i[0], v.v2i[1]);
+			return;
 		case Variant::RECT2:
-			return Variant{ godot::Rect2(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]) };
+			r_out = godot::Rect2(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]);
+			return;
 		case Variant::RECT2I:
-			return Variant{ godot::Rect2i(v.v4i[0], v.v4i[1], v.v4i[2], v.v4i[3]) };
+			r_out = godot::Rect2i(v.v4i[0], v.v4i[1], v.v4i[2], v.v4i[3]);
+			return;
 		case Variant::VECTOR3:
-			return Variant{ godot::Vector3(v.v3f[0], v.v3f[1], v.v3f[2]) };
+			r_out = godot::Vector3(v.v3f[0], v.v3f[1], v.v3f[2]);
+			return;
 		case Variant::VECTOR3I:
-			return Variant{ godot::Vector3i(v.v3i[0], v.v3i[1], v.v3i[2]) };
+			r_out = godot::Vector3i(v.v3i[0], v.v3i[1], v.v3i[2]);
+			return;
 		case Variant::VECTOR4:
-			return Variant{ godot::Vector4(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]) };
+			r_out = godot::Vector4(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]);
+			return;
 		case Variant::VECTOR4I:
-			return Variant{ godot::Vector4i(v.v4i[0], v.v4i[1], v.v4i[2], v.v4i[3]) };
+			r_out = godot::Vector4i(v.v4i[0], v.v4i[1], v.v4i[2], v.v4i[3]);
+			return;
 		case Variant::COLOR:
-			return Variant{ godot::Color(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]) };
+			r_out = godot::Color(v.v4f[0], v.v4f[1], v.v4f[2], v.v4f[3]);
+			return;
 		case Variant::PLANE:
-			return Variant{ godot::Plane(godot::Vector3(v.v4f[0], v.v4f[1], v.v4f[2]), v.v4f[3]) };
+			r_out = godot::Plane(godot::Vector3(v.v4f[0], v.v4f[1], v.v4f[2]), v.v4f[3]);
+			return;
 
 		case Variant::OBJECT: {
 			godot::Object *obj = riscv::get_object_from_address(emu, v.i);
-			return Variant{ obj };
+			r_out = obj;
+			return;
 		}
 
 		default:
 			if (std::optional<const Variant *> v = emu.get_scoped_variant(this->v.i)) {
 				const Variant *var = *v;
-				return *var;
+				r_out = *var;
+				return;
 			} else {
 				char buffer[128];
 				snprintf(buffer, sizeof(buffer), "GuestVariant::toVariant(): %u (%s) idx=%d is not known/scoped",

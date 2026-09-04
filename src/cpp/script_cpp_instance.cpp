@@ -109,36 +109,41 @@ godot::String CPPScriptInstance::to_string(bool *r_is_valid) {
 void CPPScriptInstance::notification(int32_t p_what, bool p_reversed) {
 }
 
-Variant CPPScriptInstance::callp(
+void CPPScriptInstance::callp(
 		const StringName &p_method,
 		const Variant **p_args, const int p_argument_count,
-		GDExtensionCallError &r_error)
+		Variant &r_return, GDExtensionCallError &r_error)
 {
 	static const StringName s_get_associated_script("get_associated_script");
 	static const StringName s_set_associated_script("set_associated_script");
 
 	if (stringname_equals(p_method, s_get_associated_script)) {
 		r_error.error = GDEXTENSION_CALL_OK;
-		return this->script->get_elf_script();
+		r_return = this->script->get_elf_script();
+		return;
 	} else if (stringname_equals(p_method, s_set_associated_script)) {
 		if (p_argument_count != 1) {
 			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
-			return Variant();
+			r_return = Variant();
+			return;
 		}
 		Object *object = p_args[0]->operator Object *();
 		if (object == nullptr) { // Unset the script
 			this->set_new_elf_script(nullptr);
         	r_error.error = GDEXTENSION_CALL_OK;
-        	return Variant();
+			r_return = Variant();
+			return;
 		}
 		ELFScript *new_elf_script = fast_cast_to<ELFScript>(object);
 		if (new_elf_script != nullptr) {
 			this->set_new_elf_script(new_elf_script);
 			r_error.error = GDEXTENSION_CALL_OK;
-			return Variant();
+			r_return = Variant();
+			return;
 		} else {
 			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
-			return Variant();
+			r_return = Variant();
+			return;
 		}
 	}
 
@@ -148,18 +153,20 @@ Variant CPPScriptInstance::callp(
 		const bool found = sandbox->is_sandbox_function(p_method);
 		if (!found) {
 			r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-			return Variant();
+			r_return = Variant();
+			return;
 		}
 		Array args;
 		for (int i = 0; i < p_argument_count; i++) {
 			args.push_back(*p_args[i]);
 		}
 		r_error.error = GDEXTENSION_CALL_OK;
-		return sandbox->callv(p_method, args);
+		r_return = sandbox->callv(p_method, args);
+		return;
 	}
 
 	ScopedTreeBase stb(sandbox, this->owner_node);
-	return sandbox->vmcall_address(address, p_args, p_argument_count, r_error);
+	sandbox->vmcall_address(address, p_args, p_argument_count, r_return, r_error);
 }
 
 const GDExtensionMethodInfo *CPPScriptInstance::get_method_list(uint32_t *r_count) const {

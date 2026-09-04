@@ -606,32 +606,29 @@ String SafeGDScript::_get_class_icon_path() const {
 	return class_icon_path.is_empty() ? String("res://addons/godot_sandbox/SafeGDScript.svg") : class_icon_path;
 }
 const godot::MethodInfo *SafeGDScript::find_method_info(const StringName &p_method) const {
-	for (const godot::MethodInfo &method_info : methods_info) {
-		if (method_info.name == p_method) {
-			return &method_info;
-		}
+	return find_method_info(p_method, nullptr, nullptr);
+}
+const godot::MethodInfo *SafeGDScript::find_method_info(const StringName &p_method,
+		Sandbox *p_sandbox, uint64_t *r_address) const {
+	const auto it = method_index.find(p_method);
+	if (it == method_index.end()) return nullptr;
+	const uint32_t index = it->second;
+	if (r_address != nullptr && p_sandbox != nullptr) {
+		uint64_t &address = method_addresses[index];
+		if (address == 0) address = p_sandbox->cached_address_of(methods_info[index].name);
+		*r_address = address;
 	}
-	return nullptr;
+	return &methods_info[index];
 }
 bool SafeGDScript::_has_method(const StringName &p_method) const {
-	if (p_method == StringName("_init"))
+	static const StringName s_init("_init");
+	if (stringname_equals(p_method, s_init))
 		return true;
-	for (const godot::MethodInfo &method_info : methods_info) {
-		if (method_info.name == p_method) {
-			//WARN_PRINT("SafeGDScript::_has_method: found method " + p_method);
-			return true;
-		}
-	}
-	return false;
+	return method_index.find(p_method) != method_index.end();
 }
 bool SafeGDScript::_has_static_method(const StringName &p_method) const {
-	for (const gdscript::FunctionSignature &signature : signatures) {
-		if (String::utf8(signature.name.c_str(), signature.name.size()) == p_method &&
-				signature.is_static) {
-			return true;
-		}
-	}
-	return false;
+	const auto it = method_index.find(p_method);
+	return it != method_index.end() && method_is_static[it->second] != 0;
 }
 Variant SafeGDScript::_get_script_method_argument_count(const StringName &p_method) const {
 	if (const godot::MethodInfo *method = find_method_info(p_method)) {
@@ -1599,7 +1596,8 @@ Dictionary SafeGDScript::run_tests(const PackedStringArray &p_only, bool p_quiet
 		const uint64_t started = Time::get_singleton()->get_ticks_usec();
 		// The script instance directly: Object has no callp in godot-cpp, and a
 		// test is always a script method.
-		instance->callp(StringName(name), nullptr, 0, error);
+		Variant result;
+		instance->callp(StringName(name), nullptr, 0, result, error);
 		const uint64_t elapsed = Time::get_singleton()->get_ticks_usec() - started;
 		const unsigned exceptions_after = sandbox != nullptr ? sandbox->get_exceptions() : 0;
 
@@ -1932,6 +1930,9 @@ void SafeGDScript::class_restrictions_changed() {
 void SafeGDScript::update_methods_info(GDScriptCompilerBackend &p_compiler) {
 	Sandbox::BinaryInfo info = Sandbox::get_program_info_from_binary(this->elf_data);
 	this->methods_info.clear();
+	this->method_index.clear();
+	this->method_is_static.clear();
+	this->method_addresses.clear();
 	this->signals_info.clear();
 	this->signal_signatures.clear();
 	this->rpc_config.clear();
@@ -2002,6 +2003,15 @@ void SafeGDScript::update_methods_info(GDScriptCompilerBackend &p_compiler) {
 		method = method_info_from_signature(signature, func_name);
 
 		methods_info.push_back(std::move(method));
+	}
+
+	method_index.reserve(methods_info.size());
+	method_is_static.reserve(methods_info.size());
+	method_addresses.reserve(methods_info.size());
+	for (uint32_t i = 0; i < methods_info.size(); i++) {
+		method_index.emplace(methods_info[i].name, i);
+		method_is_static.push_back((methods_info[i].flags & METHOD_FLAG_STATIC) != 0);
+		method_addresses.push_back(0);
 	}
 
 	update_constants(p_compiler);

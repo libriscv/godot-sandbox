@@ -100,10 +100,10 @@ GDExtensionInt SafeGDScriptPlaceholderInstance::get_method_argument_count(const 
 	r_valid = false;
 	return 0;
 }
-Variant SafeGDScriptPlaceholderInstance::callp(const StringName &, const Variant **, int,
-		GDExtensionCallError &r_error) {
+void SafeGDScriptPlaceholderInstance::callp(const StringName &, const Variant **, int,
+		Variant &r_return, GDExtensionCallError &r_error) {
 	r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-	return Variant();
+	r_return = Variant();
 }
 void SafeGDScriptPlaceholderInstance::notification(int, bool) {}
 String SafeGDScriptPlaceholderInstance::to_string(bool *r_valid) {

@@ -478,6 +478,7 @@ void Sandbox::reset_machine() {
 	this->m_default_instance_base = 0;
 	this->m_instance_record_size = 0;
 	this->m_instance_init_address = 0;
+	this->m_program_abi = ArgumentABI::CONFIGURED;
 	this->m_live_instance_records.clear();
 	// The heap they would be returned to goes with the machine.
 	this->m_deferred_instance_records.clear();
@@ -607,6 +608,7 @@ void Sandbox::scan_startup_symbols() {
 	// is present (few section headers).
 	const bool is_gdscript = !Sandbox::elf_section_bytes(
 			machine().memory.binary(), gdscript::GDSMETA_SECTION).empty();
+	this->m_program_abi = is_gdscript ? ArgumentABI::BOXED : ArgumentABI::CONFIGURED;
 
 	try {
 		machine().memory.for_each_symbol([&](const riscv::Elf<RISCV_ARCH>::Sym &sym, const char *name) {
@@ -1223,8 +1225,14 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 }
 
 Variant Sandbox::vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
+	Variant result;
+	this->vmcall_address(address, args, arg_count, result, error);
+	return result;
+}
+void Sandbox::vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count,
+		Variant &r_out, GDExtensionCallError &error) {
 	error.error = GDEXTENSION_CALL_OK;
-	return this->vmcall_internal(address, args, arg_count);
+	this->vmcall_internal(address, args, arg_count, r_out);
 }
 Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
 	if (arg_count < 1) {
@@ -1265,42 +1273,38 @@ Variant Sandbox::vmcallv(const Variant **args, GDExtensionInt arg_count, GDExten
 		return Variant();
 	}
 
-	// Force Variant arguments for the duration of the call, restoring the setting after,
-	// including when the call throws.
-	struct ScopedBoxedArguments {
-		Sandbox &sandbox;
-		const bool previous;
-		ScopedBoxedArguments(Sandbox &s) :
-				sandbox(s), previous(s.get_unboxed_arguments()) {
-			sandbox.set_unboxed_arguments(false);
-		}
-		~ScopedBoxedArguments() { sandbox.set_unboxed_arguments(previous); }
-	} boxed(*this);
-
 	error.error = GDEXTENSION_CALL_OK;
-	return this->vmcall_internal(address, args, arg_count);
+	return this->vmcall_internal(address, args, arg_count, ArgumentABI::BOXED);
 }
 Variant Sandbox::vmcall_fn(const StringName &function_name, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
+	Variant result;
+	this->vmcall_fn(function_name, args, arg_count, result, error);
+	return result;
+}
+void Sandbox::vmcall_fn(const StringName &function_name, const Variant **args,
+		GDExtensionInt arg_count, Variant &r_out, GDExtensionCallError &error) {
 	if (this->m_throttled > 0) {
 		this->m_throttled--;
-		return Variant();
+		r_out = Variant();
+		return;
 	}
 	// Sandbox.call() is a special case that allows calling functions by name
 	static const StringName s_call("call");
 	if (UNLIKELY(stringname_equals(function_name, s_call))) {
 		// Redirect to vmcall() with the first argument as the function name
-		return this->vmcall(args, arg_count, error);
+		r_out = this->vmcall(args, arg_count, error);
+		return;
 	}
 	const gaddr_t address = cached_address_of(function_name);
 	if (address == 0) {
 		ERR_PRINT("Function not found: " + function_name + " (Added to the public API?)");
 		error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-		return Variant();
+		r_out = Variant();
+		return;
 	}
 
-	Variant result = this->vmcall_internal(address, args, arg_count);
+	this->vmcall_internal(address, args, arg_count, r_out);
 	error.error = GDEXTENSION_CALL_OK;
-	return result;
 }
 void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, const Variant **args, int argc) {
 	// In this mode we will try to use registers when possible
@@ -1315,7 +1319,7 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 
 		// Incoming arguments are implicitly trusted, as they are provided by the host
 		// They also have have the guaranteed lifetime of the function call
-		switch (arg.get_type()) {
+		switch (Variant::Type(inner->type)) {
 			case Variant::Type::BOOL:
 				machine.cpu.reg(index++) = inner->value;
 				break;
@@ -1412,8 +1416,11 @@ void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, cons
 		throw std::runtime_error("Sandbox: Too many arguments for VM function call (register overflow)");
 	}
 }
-GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int argc) {
-	if (this->get_unboxed_arguments()) {
+GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int argc, ArgumentABI p_abi) {
+	const bool unboxed = m_program_abi != ArgumentABI::BOXED &&
+			(p_abi == ArgumentABI::UNBOXED ||
+					(p_abi == ArgumentABI::CONFIGURED && this->get_unboxed_arguments()));
+	if (unboxed) {
 		sp -= sizeof(GuestVariant) * (argc + 1);
 		sp &= ~gaddr_t(0xF); // re-align stack pointer
 		const gaddr_t arrayDataPtr = sp;
@@ -1460,7 +1467,7 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 		GDNativeVariant *inner = (GDNativeVariant *)arg._native_ptr();
 		// Incoming arguments are implicitly trusted, as they are provided by the host
 		// They also have have the guaranteed lifetime of the function call
-		switch (arg.get_type()) {
+		switch (Variant::Type(inner->type)) {
 			case Variant::Type::NIL:
 				g_arg.type = Variant::Type::NIL;
 				break;
@@ -1498,7 +1505,14 @@ GuestVariant *Sandbox::setup_arguments(gaddr_t &sp, const Variant **args, int ar
 	// A0 is the return value (Variant) of the function
 	return &v[overflow_args];
 }
-Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc) {
+Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc, ArgumentABI p_abi) {
+	Variant result;
+	this->vmcall_internal(address, args, argc, result, p_abi);
+	return result;
+}
+
+void Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc,
+		Variant &r_out, ArgumentABI p_abi) {
 	struct DeferredRecords {
 		Sandbox &self;
 		~DeferredRecords() {
@@ -1526,7 +1540,8 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 		this->m_exceptions++;
 		this->m_global_exceptions++;
 		this->m_current_state -= 1;
-		return Variant();
+		r_out = Variant();
+		return;
 	}
 
 	CurrentState &state = *this->m_current_state;
@@ -1551,7 +1566,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			// reset the stack pointer to its initial location
 			sp = m_machine->memory.stack_initial();
 			// set up each argument, and return value
-			retvar = this->setup_arguments(sp, args, argc);
+			retvar = this->setup_arguments(sp, args, argc, p_abi);
 			// execute!
 			if (UNLIKELY(this->m_precise_simulation)) {
 				m_machine->set_instruction_counter(0);
@@ -1623,7 +1638,7 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			// Nested calls share one guest stack; preempt restores the outer SP.
 			sp -= 16u;
 			// set up each argument, and return value
-			retvar = this->setup_arguments(sp, args, argc);
+			retvar = this->setup_arguments(sp, args, argc, p_abi);
 			// execute preemption! (precise simulation not supported)
 			uint64_t max_instr = get_instructions_max() << 20;
 			cpu.preempt_internal(regs, true, true, address, max_instr ? max_instr : ~0ULL);
@@ -1635,23 +1650,26 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			this->m_current_state -= 1;
 			// Leave the flag for coroutine_resume() to distinguish re-suspension from return.
 			if (this->m_resuming_coroutine_id == suspended) {
-				return Variant();
+				r_out = Variant();
+				return;
 			}
 			this->m_pending_suspend = 0;
 			Coroutine *co = this->find_coroutine(suspended);
 			if (co == nullptr || co->state_object.is_null()) {
-				return Variant();
+				r_out = Variant();
+				return;
 			}
 			// Signal(state, "completed"): VM rejects GDExtension objects in place of
 			// GDScriptFunctionState, but accepts a Signal on one natively.
-			return Signal(co->state_object.ptr(), "completed");
+			r_out = Signal(co->state_object.ptr(), "completed");
+			return;
 		}
 
 		// Treat return value as pointer to Variant
-		Variant result = retvar->toVariant(*this);
+		retvar->toVariant(*this, r_out);
 		// Restore the previous state
 		this->m_current_state -= 1;
-		return result;
+		return;
 
 	} catch (const std::exception &e) {
 		if (Engine::get_singleton()->is_editor_hint()) {
@@ -1668,7 +1686,8 @@ Variant Sandbox::vmcall_internal(gaddr_t address, const Variant **args, int argc
 			this->retire_coroutine(suspended, true);
 		}
 		this->m_current_state -= 1;
-		return Variant();
+		r_out = Variant();
+		return;
 	}
 }
 Variant Sandbox::vmcallable(String function, Array args) {
@@ -1718,7 +1737,7 @@ Sandbox *RiscvCallable::sandbox() const {
 	if (sandbox_id.is_null()) {
 		return nullptr;
 	}
-	return Object::cast_to<Sandbox>(ObjectDB::get_instance(sandbox_id));
+	return fast_cast_to<Sandbox>(ObjectDB::get_instance(sandbox_id));
 }
 
 void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r_return_value, GDExtensionCallError &r_call_error) const {
@@ -1747,20 +1766,17 @@ void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r
 		}
 	}
 
-	const bool previous_unboxed = self->get_unboxed_arguments();
-	self->set_unboxed_arguments(!m_variant_arguments);
-
 	{
 		ScopedTreeBase stb(self, this->tree_base_id.is_valid() ? this->tree_base_id : self->get_tree_base_id());
 		ScopedInstanceBase sib(self, this->instance_base);
 		if (varargs) {
-			r_return_value = self->vmcall_internal(address, m_varargs_ptrs.data(), total_args);
+			self->vmcall_internal(address, m_varargs_ptrs.data(), total_args, r_return_value,
+					m_variant_arguments ? Sandbox::ArgumentABI::BOXED : Sandbox::ArgumentABI::UNBOXED);
 		} else {
-			r_return_value = self->vmcall_internal(address, p_arguments, p_argcount);
+			self->vmcall_internal(address, p_arguments, p_argcount, r_return_value,
+					m_variant_arguments ? Sandbox::ArgumentABI::BOXED : Sandbox::ArgumentABI::UNBOXED);
 		}
 	}
-
-	self->set_unboxed_arguments(previous_unboxed);
 	r_call_error.error = GDEXTENSION_CALL_OK;
 }
 
@@ -1955,6 +1971,7 @@ unsigned Sandbox::add_scoped_variant(const Variant *value) const {
 		ERR_PRINT("Maximum number of scoped variants reached.");
 		throw std::runtime_error("Maximum number of scoped variants reached.");
 	}
+	st.dirty = true;
 	st.scoped_variants.push_back(value);
 	if (&st != &this->m_states[0])
 		return int32_t(st.scoped_variants.size()) - 1;
@@ -2195,6 +2212,7 @@ bool Sandbox::add_scoped_entry(uint64_t object_id, uintptr_t engine_object, godo
 		ERR_PRINT("Maximum number of scoped objects reached.");
 		throw std::runtime_error("Maximum number of scoped objects reached.");
 	}
+	state().dirty = true;
 	state().scoped_objects.push_back(CurrentState::ScopedObject{ object_id, engine_object, binding });
 	return true;
 }
@@ -2648,6 +2666,7 @@ void Sandbox::CurrentState::reinitialize(unsigned level, unsigned max_refs) {
 	this->scoped_variants.clear();
 	this->scoped_refs.clear();
 	this->clear_referenced();
+	this->dirty = false;
 }
 bool Sandbox::CurrentState::is_mutable_variant(const Variant &var) const {
 	// Check if the address of the variant is within the range of the current state std::vector.

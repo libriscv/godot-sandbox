@@ -104,16 +104,17 @@ godot::String ELFScriptInstance::to_string(bool *r_is_valid) {
 void ELFScriptInstance::notification(int32_t p_what, bool p_reversed) {
 }
 
-Variant ELFScriptInstance::callp(
+void ELFScriptInstance::callp(
 		const StringName &p_method,
 		const Variant **p_args, const int p_argument_count,
-		GDExtensionCallError &r_error) {
+		Variant &r_return, GDExtensionCallError &r_error) {
 	if (script.is_null()) {
 		if constexpr (VERBOSE_LOGGING) {
 			ERR_PRINT("callp: script is null");
 		}
 		r_error.error = GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;
-		return Variant();
+		r_return = Variant();
+		return;
 	}
 
 retry_callp:
@@ -122,7 +123,8 @@ retry_callp:
 			// Set the Sandbox instance tree base to the owner node
 			ScopedTreeBase stb(current_sandbox, this->owner_node);
 			// Perform the vmcall
-			return current_sandbox->vmcall_fn(p_method, p_args, p_argument_count, r_error);
+			current_sandbox->vmcall_fn(p_method, p_args, p_argument_count, r_return, r_error);
+			return;
 		}
 	}
 
@@ -134,13 +136,16 @@ retry_callp:
 	static const StringName s_config_warnings("_get_configuration_warnings");
 	if (stringname_equals(p_method, s_get_editor_name)) {
 		r_error.error = GDEXTENSION_CALL_OK;
-		return Variant("ELFScriptInstance");
+		r_return = "ELFScriptInstance";
+		return;
 	} else if (stringname_equals(p_method, s_hide_from_inspector)) {
 		r_error.error = GDEXTENSION_CALL_OK;
-		return false;
+		r_return = false;
+		return;
 	} else if (stringname_equals(p_method, s_is_read_only)) {
 		r_error.error = GDEXTENSION_CALL_OK;
-		return false;
+		r_return = false;
+		return;
 	} else if (stringname_equals(p_method, s_config_warnings)) {
 		// Returns an array of strings with warnings about the script configuration
 		Array warnings;
@@ -152,7 +157,8 @@ retry_callp:
 		}
 		handle_language_warnings(warnings, script);
 		r_error.error = GDEXTENSION_CALL_OK;
-		return warnings;
+		r_return = warnings;
+		return;
 	}
 #endif
 
@@ -201,10 +207,11 @@ retry_callp:
 			args.push_back(*p_args[i]);
 		}
 		r_error.error = GDEXTENSION_CALL_OK;
-		return current_sandbox->callv(p_method, args);
+		r_return = current_sandbox->callv(p_method, args);
+		return;
 	}
 	r_error.error = GDEXTENSION_CALL_ERROR_INVALID_METHOD;
-	return Variant();
+	r_return = Variant();
 }
 
 void ELFScriptInstance::update_methods() const {

@@ -43,25 +43,36 @@ public:
 			return false;
 		}
 
+		// Variant's first native byte is its type tag. Reading it directly avoids
+		// one engine call for every argument on the common exact-type path.
+		auto native_type = [](const Variant &p_value) {
+			return Variant::Type(*static_cast<const uint8_t *>(p_value._native_ptr()));
+		};
+		bool all_types_match = p_argcount == expected;
 		for (int i = 0; i < p_argcount; i++) {
 			const Variant::Type declared = p_method->arguments[i].type;
-			if (declared == Variant::NIL || p_args[i]->get_type() == declared) {
+			if (declared == Variant::NIL || native_type(*p_args[i]) == declared) {
 				continue;
 			}
+			all_types_match = false;
 			if (m_completed.is_empty()) {
-				m_narrowed.resize(p_argcount);
+				m_narrowed.reserve(p_argcount);
 				m_completed.reserve(expected);
 				for (int j = 0; j < p_argcount; j++) {
-					m_narrowed[j] = *p_args[j];
-					m_completed.push_back(&m_narrowed[j]);
+					m_completed.push_back(p_args[j]);
 				}
 			}
-			if (!coerce_variant_to(m_narrowed[i], declared)) {
+			m_narrowed.push_back(*p_args[i]);
+			m_completed[i] = &m_narrowed[m_narrowed.size() - 1];
+			if (!coerce_variant_to(m_narrowed[m_narrowed.size() - 1], declared)) {
 				r_error.error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
 				r_error.argument = i;
 				r_error.expected = declared;
 				return false;
 			}
+		}
+		if (all_types_match) {
+			return true;
 		}
 
 		if (p_argcount < expected) {
