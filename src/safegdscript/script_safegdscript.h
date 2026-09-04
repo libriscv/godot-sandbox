@@ -114,8 +114,6 @@ public:
 	bool compile_shipping() {
 		return compile_source_to_elf(false, false, ReloadPolicy::DISCARD_STATE, true);
 	}
-	String bake_translation();
-	bool is_translation_baked() const;
 	int64_t get_translation_hash() const;
 	const std::vector<gdscript::PropertySignature> &get_property_signatures() const { return properties; }
 	const std::vector<gdscript::DebugVariableRecord> &get_debug_variables() const { return debug_variables; }

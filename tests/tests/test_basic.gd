@@ -114,49 +114,40 @@ func test_environment():
 	s.queue_free()
 
 
-func test_binary_translation():
-	# Create a new sandbox
+func test_translation_hash():
+	# The hash names the bintr-<HASH> object the loader looks for. Producing that
+	# object is not part of this runtime; naming it is.
 	var s = Sandbox.new()
+	assert_eq(s.get_translation_hash(), 0, "a machine with no program has no hash")
 
-	var str : String = s.emit_binary_translation()
-	assert_true(str.is_empty(), "Binary translation is empty")
-	assert_engine_error("No binary loaded")
-
-	# Set the test program
 	s.set_program(Sandbox_TestsTests)
 
-	if Sandbox.has_feature_binary_translation():
-		# A machine only carries its own translation hash when the AOT cache is
-		# opted into; sharing an execute segment hands it the first machine's.
-		var old_lookup: bool = ProjectSettings.get_setting("sandbox/binary_translation/enabled")
-		ProjectSettings.set_setting("sandbox/binary_translation/enabled", true)
-		# Public flags are deliberately explicit: their historical defaults are
-		# false, while a live Sandbox defaults to automatic n-bit addressing.
-		s.set_instructions_max(0)
-		s.reset()
-		str = s.emit_binary_translation(true, true)
-		assert_false(str.is_empty(), "Binary translation is not empty")
-		var marker := "libriscv_register_translation8("
-		var at := str.rfind(marker)
-		assert_gte(at, 0, "embeddable output contains its registration hash")
-		var end := str.find(",", at + marker.length())
-		var emitted_hash := str.substr(at + marker.length(), end - at - marker.length()).to_int()
-		assert_eq(emitted_hash, s.get_translation_hash(), "live bake flags reproduce the machine hash")
+	if not Sandbox.has_feature_binary_translation():
+		# Without the C99 translator there is no hash-cache format to name.
+		assert_eq(s.get_translation_hash(), 0, "no translator, no hash")
+		s.queue_free()
+		return
 
-		var defaults := s.emit_binary_translation()
-		at = defaults.rfind(marker)
-		end = defaults.find(",", at + marker.length())
-		var default_hash := defaults.substr(at + marker.length(), end - at - marker.length()).to_int()
-		assert_ne(default_hash, s.get_translation_hash(), "legacy false/false defaults document the mismatch foot-gun")
-		ProjectSettings.set_setting("sandbox/binary_translation/enabled", old_lookup)
-		#print(str)
-	else:
-		# Only the binary translator can emit C99, so a build without it is
-		# expected to refuse. The JIT backends have nothing to emit.
-		str = s.emit_binary_translation()
-		assert_true(str.is_empty(), "Binary translation is empty")
-		assert_engine_error("Binary translation is not enabled")
+	# A machine only carries its own translation hash when the AOT cache is
+	# opted into; sharing an execute segment hands it the first machine's.
+	var old_lookup: bool = ProjectSettings.get_setting("sandbox/binary_translation/enabled")
+	ProjectSettings.set_setting("sandbox/binary_translation/enabled", true)
 
+	s.set_instructions_max(0)
+	s.reset()
+	var hash := s.get_translation_hash()
+	assert_ne(hash, 0, "a loaded program names an object")
+
+	# The hash covers every ABI-affecting translator option, not just the
+	# execute segment: an object baked for one option set must miss for another.
+	var masked = Sandbox.new()
+	masked.set_instructions_max(0)
+	masked.binary_translation_nbit_as = not s.binary_translation_nbit_as
+	masked.set_program(Sandbox_TestsTests)
+	assert_ne(masked.get_translation_hash(), hash, "the masked arena is part of the hash")
+	masked.queue_free()
+
+	ProjectSettings.set_setting("sandbox/binary_translation/enabled", old_lookup)
 	s.queue_free()
 
 

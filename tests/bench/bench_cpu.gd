@@ -80,7 +80,6 @@ func before_all():
 	_source = _load_source()
 	if _source != "":
 		_elf = _compile(_source)
-		_bake_script(CPU_SOURCE_PATH)
 
 func _load_source() -> String:
 	var file := FileAccess.open(CPU_SOURCE_PATH, FileAccess.READ)
@@ -129,7 +128,6 @@ func test_bench_cpu_dispatch():
 	var node := Node.new()
 	node.set_script(load(CPU_SOURCE_PATH))
 	node.set_instructions_max(0)
-	_assert_script_full(node)
 	assert_eq(node.call("run", program, fuel), expected,
 		"the .sgd loader should reach the same guest")
 	var in_script := func(): node.call("run", program, fuel)

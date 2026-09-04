@@ -161,12 +161,6 @@
 		<link title="SafeGDScript documentation">https://libriscv.no/docs/host_langs/godot_integration/godot_intro/safegdscript</link>
 	</tutorials>
 	<methods>
-		<method name="bake_translation">
-			<return type="String" />
-			<description>
-				Compiles a native translation of this script's program into the translation cache. Returns the absolute path the translation was written to, or an empty [String] on failure. Equivalent to calling [method Sandbox.bake_binary_translation] on the sandbox running this script.
-			</description>
-		</method>
 		<method name="clear_breakpoints">
 			<return type="bool" />
 			<description>
@@ -270,12 +264,6 @@
 			<return type="bool" />
 			<description>
 				Returns [code]true[/code] while a SafeGDScript is stopped at a breakpoint. Only one script can be stopped at a time.
-			</description>
-		</method>
-		<method name="is_translation_baked" qualifiers="const">
-			<return type="bool" />
-			<description>
-				Returns [code]true[/code] if the translation cache already contains a native translation of this script's current program.
 			</description>
 		</method>
 		<method name="new" qualifiers="const vararg">

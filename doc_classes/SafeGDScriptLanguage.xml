@@ -20,12 +20,6 @@
 		<link title="SafeGDScript documentation">https://libriscv.no/docs/host_langs/godot_integration/godot_intro/safegdscript</link>
 	</tutorials>
 	<methods>
-		<method name="bake_all_translations">
-			<return type="Dictionary" />
-			<description>
-				Bakes a native translation of every loaded [SafeGDScript] into the translation cache. Returns a [Dictionary] with the successful scripts under [code]"baked"[/code], the scripts that could not be baked under [code]"failed"[/code], and [code]"ok"[/code] set to [code]true[/code] if none failed. Each [code]"baked"[/code] entry holds the script path, the translation hash, the output path, and its size in bytes. See also [method SafeGDScript.bake_translation].
-			</description>
-		</method>
 		<method name="convert_script_path" qualifiers="static">
 			<return type="Dictionary" />
 			<param index="0" name="path" type="String" />

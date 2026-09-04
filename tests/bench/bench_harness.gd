@@ -26,8 +26,6 @@
 extends GutTest
 
 const RESULTS_DIR := "res://bench/results"
-const BINTR_CACHE_DIR := RESULTS_DIR + "/bintr/"
-const BINTR_MANIFEST_PATH := BINTR_CACHE_DIR + "manifest.json"
 
 # The case every group is compared against, unless _report() is told otherwise.
 const REFERENCE := "GDScript (engine)"
@@ -35,16 +33,14 @@ const REFERENCE := "GDScript (engine)"
 # An execute segment that libriscv has already translated is cached and handed to
 # the next load of the same binary, so one process measures one execution mode:
 # a guest loaded with the JIT off makes every later load of that ELF interpreted
-# too. Full, JIT and interpreter are therefore whole runs of the suite, selected
-# by environment variables that run_benchmarks.sh sets for separate processes.
+# too. JIT and interpreter are therefore whole runs of the suite, selected by an
+# environment variable that run_benchmarks.sh sets for separate processes.
+#
+# A third mode -- a native translation baked ahead of time -- is not measured
+# here. Nothing in this addon produces one; the loader half is tested by
+# test_bintr.gd against a fixture, and the tool that bakes is a separate
+# product.
 var _no_jit := OS.get_environment("GDSC_BENCH_NO_JIT") == "1"
-var _bake := OS.get_environment("GDSC_BENCH_BAKE") == "1"
-var _full := OS.get_environment("GDSC_BENCH_FULL") == "1"
-
-# Project settings are process-global. Every bench file gets its own harness
-# instance, so setup is idempotent and each instance restores the values it saw.
-var _bintr_setup := false
-var _old_bintr_settings := {}
 
 # Set by the runner when it is going to run the suite more than once: the
 # per-group table below is the view for someone watching a single run, and
@@ -79,53 +75,10 @@ func _env_int(name: String, fallback: int) -> int:
 	return int(raw) if raw.is_valid_int() else fallback
 
 func _results_path() -> String:
-	if _full:
-		return RESULTS_DIR + "/latest-full.json"
 	return RESULTS_DIR + ("/latest-nojit.json" if _no_jit else "/latest.json")
 
 func _baseline_path() -> String:
-	if _full:
-		return "res://bench/baseline-full.json"
 	return "res://bench/" + ("baseline-nojit.json" if _no_jit else "baseline.json")
-
-func _setup_bintr() -> void:
-	if _bintr_setup:
-		return
-	_bintr_setup = true
-	for setting in [
-		"sandbox/binary_translation/cache_dir",
-		"sandbox/binary_translation/enabled",
-	]:
-		_old_bintr_settings[setting] = ProjectSettings.get_setting(setting)
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(BINTR_CACHE_DIR))
-	ProjectSettings.set_setting("sandbox/binary_translation/cache_dir", BINTR_CACHE_DIR)
-	ProjectSettings.set_setting("sandbox/binary_translation/enabled", _bake or _full)
-
-func _restore_bintr() -> void:
-	if not _bintr_setup:
-		return
-	for setting in _old_bintr_settings:
-		ProjectSettings.set_setting(setting, _old_bintr_settings[setting])
-	_bintr_setup = false
-	_old_bintr_settings.clear()
-
-func _hash_key(hash: int) -> String:
-	return "%08X" % (hash & 0xFFFFFFFF)
-
-func _record_bake(hash: int, label: String) -> void:
-	var manifest := _load_json(BINTR_MANIFEST_PATH)
-	manifest[_hash_key(hash)] = {
-		"bench": get_script().resource_path,
-		"label": label,
-	}
-	var file := FileAccess.open(BINTR_MANIFEST_PATH, FileAccess.WRITE)
-	assert_not_null(file, "the binary translation manifest should be writable")
-	if file != null:
-		file.store_string(JSON.stringify(manifest, "\t", true))
-		file.close()
-
-func _manifest_has(hash: int) -> bool:
-	return _load_json(BINTR_MANIFEST_PATH).has(_hash_key(hash))
 
 # Register one implementation. `fn` performs `ops` units of work per call; the
 # harness decides how many times to call it per sample.
@@ -139,9 +92,6 @@ func _case(group: String, label: String, ops: int, fn: Callable, unit: String = 
 # Time every registered case of a group.
 func _measure(group: String) -> void:
 	if not _pending.has(group) or _pending[group].is_empty():
-		return
-	if _bake:
-		_pending[group] = []
 		return
 	var cases : Array = _pending[group]
 	_pending[group] = []
@@ -246,8 +196,7 @@ func _environment() -> Dictionary:
 		"mode": _run_mode if _run_mode != "" else ("interpreter" if _no_jit else "JIT"),
 		"jit_available": Sandbox.has_feature_jit(),
 		"jit_enabled": Sandbox.is_jit_enabled(),
-		"jit_requested": not _no_jit and not _full,
-		"full_requested": _full,
+		"jit_requested": not _no_jit,
 		"binary_translation_available": Sandbox.has_feature_binary_translation(),
 		"samples": _samples,
 		"min_sample_usec": _min_sample_usec,
@@ -315,11 +264,7 @@ func _base_p50(entry) -> float:
 # and every group carries the time it was measured -- a results file may hold
 # groups from more than one run.
 func _persist() -> void:
-	if _bake:
-		_restore_bintr()
-		return
 	if _groups.is_empty():
-		_restore_bintr()
 		return
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(RESULTS_DIR))
 	var all := _load_json(_results_path())
@@ -334,11 +279,9 @@ func _persist() -> void:
 	var file := FileAccess.open(_results_path(), FileAccess.WRITE)
 	if file == null:
 		print("bench: could not write %s" % _results_path())
-		_restore_bintr()
 		return
 	file.store_string(JSON.stringify(all, "\t", true))
 	file.close()
-	_restore_bintr()
 
 func _load_json(path: String) -> Dictionary:
 	if not FileAccess.file_exists(path):
@@ -357,7 +300,6 @@ func _load_json(path: String) -> Dictionary:
 # running the compiler ELF. Once per bench file, not once per case -- compiling
 # per case would measure the compiler as much as the guest.
 func _compile(source: String) -> PackedByteArray:
-	_setup_bintr()
 	var compiler : Sandbox = Sandbox.new()
 	compiler.set_binary_translation_bg_compilation(false)
 	compiler.set_program(load("res://tests/tests.elf"))
@@ -367,8 +309,9 @@ func _compile(source: String) -> PackedByteArray:
 	assert_false(elf.is_empty(), "compilation should succeed")
 	return elf
 
-func _load_elf(elf: PackedByteArray, label := "Sandbox ELF") -> Sandbox:
-	_setup_bintr()
+# The label is what a bake-driven suite names a program by; nothing in this
+# addon bakes, so it is kept only so callers read the same either side.
+func _load_elf(elf: PackedByteArray, _label := "Sandbox ELF") -> Sandbox:
 	if _no_jit:
 		Sandbox.set_jit_enabled(false)
 	var s := Sandbox.new()
@@ -384,53 +327,12 @@ func _load_elf(elf: PackedByteArray, label := "Sandbox ELF") -> Sandbox:
 	# runs. Set before load_buffer(), which is what translates.
 	s.set_instructions_max(0)
 	s.load_buffer(elf)
-	var hash := s.get_translation_hash()
-	if _bake:
-		var path := s.bake_binary_translation()
-		assert_false(path.is_empty(), "binary translation bake should succeed for hash %s" % _hash_key(hash))
-		if not path.is_empty():
-			_record_bake(hash, label)
-	elif _full:
-		assert_true(s.is_binary_translated() and not s.is_jit(),
-			"no baked translation for hash %s" % _hash_key(hash))
 	# The compiler emits the Variant ABI: every argument arrives as a pointer to
 	# a Variant, and a guest handed an unboxed integer faults reading it. vmcallv()
 	# forces this per call; vmcallable() and a Callable bound from it do not, so
 	# the sandbox itself is put in that mode.
 	s.set_unboxed_arguments(false)
 	return s
-
-# SafeGDScript compiles through a different path from _compile(), so its ELF has
-# a different hash and needs its own bake. Keeping the instance alive until the
-# bake completes gives the Script resource access to its shared Sandbox.
-func _bake_script(path: String) -> void:
-	if not _bake:
-		return
-	_setup_bintr()
-	var script := load(path) as SafeGDScript
-	assert_not_null(script, "%s should load as SafeGDScript" % path)
-	if script == null:
-		return
-	var node := Node.new()
-	node.set_script(script)
-	var hash := script.get_translation_hash()
-	var baked_path := script.bake_translation()
-	assert_false(baked_path.is_empty(), "SafeGDScript translation bake should succeed for hash %s" % _hash_key(hash))
-	if not baked_path.is_empty():
-		_record_bake(hash, "SafeGDScript (.sgd script)")
-	node.free()
-
-func _assert_script_full(node: Node) -> void:
-	if not _full:
-		return
-	var script := node.get_script() as SafeGDScript
-	assert_not_null(script, "the benchmark node should have a SafeGDScript resource")
-	if script == null:
-		return
-	var hash := script.get_translation_hash()
-	assert_ne(hash, 0, "the SafeGDScript instance should have a translation hash")
-	assert_true(_manifest_has(hash), "no baked SafeGDScript translation for hash %s" % _hash_key(hash))
-	assert_true(script.is_translation_baked(), "the baked SafeGDScript object should still exist for hash %s" % _hash_key(hash))
 
 # The same source as a GDScript object, compiled by the engine at run time. Both
 # sides of every comparison in this suite come from one source string, so a

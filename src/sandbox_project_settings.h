@@ -20,8 +20,6 @@ public:
 	static bool async_compilation();
 
 	static bool binary_translation_enabled();
-	static String binary_translation_compiler();
-	static String binary_translation_extra_cflags();
 	static String binary_translation_cache_dir();
 
 	static bool use_native_types();

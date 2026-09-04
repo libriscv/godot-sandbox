@@ -28,7 +28,6 @@ public:
 	TypedArray<Dictionary> editor_public_functions() const;
 	Dictionary editor_public_constants() const;
 	TypedArray<Dictionary> editor_public_annotations() const;
-	Dictionary bake_all_translations();
 	// .gd <-> .sgd: rename the file and its UID sidecar, rewrite text scenes
 	// naming it, retarget autoloads (convert_safegdscript.cpp).
 	static String converted_script_path(const String &p_path);

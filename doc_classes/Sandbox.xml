@@ -79,26 +79,6 @@
 				Downloads a program from a GitHub release page and returns its binary content as a PackedByteArray. This is a blocking operation that will wait until the download is complete.
 			</description>
 		</method>
-		<method name="emit_binary_translation" qualifiers="const">
-			<return type="String" />
-			<param index="0" name="ignore_instruction_limit" type="bool" default="false" />
-			<param index="1" name="automatic_nbit_address_space" type="bool" default="false" />
-			<description>
-				Generates a binary translation of the sandboxed program as textual C code.
-				This C source file can then be compiled into a shared library for execution. Loading the
-				resulting shared library will allow the sandboxed program to run closer to native performance.
-				If `ignore_instruction_limit` is true, the instruction limit will not be enforced, improving performance. Having an execution limit is only really recommended while building programs, as the worst case scenario is that the program or game appears to hang, which is not a security issue in most cases.
-				If `automatic_nbit_address_space` is true, the translation will automatically use an n-bit (masked) address space, which can greatly improve performance for certain programs. It is however, somewhat experimental and may not work with all programs.
-				This returns the self-registering embeddable variant used by [method load_binary_translation] or by compiling the source directly into the addon. It is intentionally different from the hash-cache shared-library variant produced by [method bake_binary_translation]. The two object formats must not be passed to the other loader.
-			</description>
-		</method>
-		<method name="bake_binary_translation" qualifiers="const">
-			<return type="String" />
-			<param index="0" name="out_dir" type="String" default="&quot;&quot;" />
-			<description>
-				Emits and compiles a cache-loadable native translation using the live machine's hash-affecting options. The result is atomically published as [code]bintr-&lt;hash&gt;.so[/code], [code].dll[/code], or [code].dylib[/code]. An empty directory uses [code]sandbox/binary_translation/cache_dir[/code]. Returns the absolute path, or an empty String on failure.
-			</description>
-		</method>
 		<method name="get_translation_hash" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -263,19 +243,13 @@
 				This means that the program has been compiled into a shared library for execution, allowing it to run closer to native performance.
 			</description>
 		</method>
-		<method name="is_translation_baked" qualifiers="const">
-			<return type="bool" />
-			<description>
-				Returns true when the configured cache contains the hash-named object for the current machine.
-			</description>
-		</method>
 		<method name="load_binary_translation" qualifiers="static">
 			<return type="bool" />
 			<param index="0" name="shared_library_path" type="String" />
 			<description>
 				Loads a binary translation of the sandboxed program from a shared library.
 				This allows the sandboxed program to run closer to native performance by executing pre-compiled code.
-				This accepts only the legacy self-registering object produced from [method emit_binary_translation]. Hash-cache objects produced by [method bake_binary_translation] are refused and are loaded automatically during machine construction instead.
+				This accepts only the legacy self-registering object format. Hash-cache [code]bintr-&lt;hash&gt;[/code] objects are refused here; they are found by [method get_translation_hash] and loaded automatically during machine construction instead.
 			</description>
 		</method>
 		<method name="load_buffer">
@@ -404,17 +378,6 @@
 			<description>
 				Sets a callback that determines whether a resource is allowed in the Sandbox.
 				This can be used to restrict access to certain resources for security reasons.
-			</description>
-		</method>
-		<method name="try_compile_binary_translation">
-			<return type="bool" />
-			<param index="0" name="shared_library_path" type="String" default="&quot;res://bintr&quot;" />
-			<param index="1" name="compiler" type="String" default="&quot;cc&quot;" />
-			<param index="2" name="extra_cflags" type="String" default="&quot;&quot;" />
-			<param index="3" name="ignore_instruction_limit" type="bool" default="false" />
-			<param index="4" name="automatic_nbit_as" type="bool" default="false" />
-			<description>
-				Attempts to generate and compile the legacy self-registering translation to a caller-chosen [code]res://[/code] path. It is not loaded automatically. Prefer [method bake_binary_translation] for the unbounded hash cache.
 			</description>
 		</method>
 		<method name="vmcall" qualifiers="const vararg">

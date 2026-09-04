@@ -102,20 +102,15 @@ Two backends; only one built per target:
 
 - **asmjit** (`RISCV_ASMJIT`) — in-process JIT to x86-64/AArch64. Default ON
   where asmjit has a ujit codegen; `ext/CMakeLists.txt` then defaults
-  `RISCV_BINARY_TRANSLATION` (and libtcc) OFF, no-oping
-  `emit_binary_translation()`, `try_compile_binary_translation()`,
-  `load_binary_translation()`. Gate on `has_feature_binary_translation()`.
+  `RISCV_BINARY_TRANSLATION` (and libtcc) OFF, zeroing `get_translation_hash()`
+  and no-oping `load_binary_translation()`. Gate on
+  `has_feature_binary_translation()`.
 - **C99 binary translator** (`RISCV_BINARY_TRANSLATION`) — emits C, compiles
   out-of-process. SCons addon path; only option for iOS/Web/Switch. Default
   where asmjit has no codegen (x86-32, 32-bit ARM).
 
 `has_feature_jit()` covers either backend. `is_jit()` is true for segments
 still being compiled; poll `is_binary_translated()` to confirm code landed.
-
-Windows cross-build: `mingw_toolchain.cmake`. `CMAKE_SYSTEM_NAME` is load-bearing
-— without it CMake still targets Linux host, `CMAKE_SIZEOF_VOID_P` is empty
-(godot-cpp bit-width `math(EXPR)` fails configure), and asmjit selects
-mmap/shm_open instead of PE-appropriate backend.
 
 ## Guest memory checks
 

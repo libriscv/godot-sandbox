@@ -224,14 +224,8 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_static_method("Sandbox", D_METHOD("clear_hotspots"), &Sandbox::clear_hotspots);
 
 	// Binary translation.
-	ClassDB::bind_method(D_METHOD("emit_binary_translation", "ignore_instruction_limit", "automatic_nbit_address_space"),
-			static_cast<String (Sandbox::*)(bool, bool) const>(&Sandbox::emit_binary_translation),
-			DEFVAL(false), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("get_translation_hash"), &Sandbox::get_translation_hash);
-	ClassDB::bind_method(D_METHOD("bake_binary_translation", "out_dir"), &Sandbox::bake_binary_translation, DEFVAL(""));
-	ClassDB::bind_method(D_METHOD("is_translation_baked"), &Sandbox::is_translation_baked);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("load_binary_translation", "shared_library_path", "allow_insecure"), &Sandbox::load_binary_translation, DEFVAL("res://bintr.so"), DEFVAL(false));
-	ClassDB::bind_method(D_METHOD("try_compile_binary_translation", "shared_library_path", "compiler", "extra_cflags", "ignore_instruction_limit", "automatic_nbit_as"), &Sandbox::try_compile_binary_translation, DEFVAL("res://bintr"), DEFVAL("cc"), DEFVAL(""), DEFVAL(false), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("is_binary_translated"), &Sandbox::is_binary_translated);
 	ClassDB::bind_method(D_METHOD("is_jit"), &Sandbox::is_jit);
 	ClassDB::bind_static_method("Sandbox", D_METHOD("set_jit_enabled", "enable"), &Sandbox::set_jit_enabled);

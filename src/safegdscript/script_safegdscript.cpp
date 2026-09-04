@@ -1295,8 +1295,6 @@ void SafeGDScript::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_debug_build"), &SafeGDScript::is_debug_build);
 	ClassDB::bind_method(D_METHOD("is_profiled_build"), &SafeGDScript::is_profiled_build);
 	ClassDB::bind_method(D_METHOD("set_profiling", "enabled"), &SafeGDScript::set_profiling);
-	ClassDB::bind_method(D_METHOD("bake_translation"), &SafeGDScript::bake_translation);
-	ClassDB::bind_method(D_METHOD("is_translation_baked"), &SafeGDScript::is_translation_baked);
 	ClassDB::bind_method(D_METHOD("get_translation_hash"), &SafeGDScript::get_translation_hash);
 	ClassDB::bind_method(D_METHOD("get_content"), &SafeGDScript::get_content);
 
@@ -1331,16 +1329,6 @@ bool safegdscript_set_script_profiling(SafeGDScript &p_script, bool p_enabled);
 
 bool SafeGDScript::set_profiling(bool p_enabled) {
 	return safegdscript_set_script_profiling(*this, p_enabled);
-}
-
-String SafeGDScript::bake_translation() {
-	Sandbox *sandbox = sandbox_for_safegdscript(this);
-	return sandbox == nullptr ? String() : sandbox->bake_binary_translation();
-}
-
-bool SafeGDScript::is_translation_baked() const {
-	const Sandbox *sandbox = sandbox_for_safegdscript(this);
-	return sandbox != nullptr && sandbox->is_translation_baked();
 }
 
 int64_t SafeGDScript::get_translation_hash() const {

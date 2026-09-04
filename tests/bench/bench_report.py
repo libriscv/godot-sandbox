@@ -2,11 +2,11 @@
 """Build the benchmark suite's final tables from every available guest mode.
 
 The guest's execution mode is a property of a whole process -- libriscv caches a
-translated execute segment per binary, so Full, JIT and interpreter numbers can
-only come from separate runs of the suite. Full is also baked in its own process.
-This script reads every run and joins them into one table:
+translated execute segment per binary, so JIT and interpreter numbers can only
+come from separate runs of the suite. This script reads every run and joins them
+into one table:
 
-    GDScript, SafeGDScript Full, with the JIT, and interpreted.
+    GDScript, SafeGDScript with the JIT, and interpreted.
 
 The interpreter column matters for the web export, where Godot has no JIT to
 offer and the interpreter is what a mod runs without an embedded translation.
@@ -30,8 +30,7 @@ import sys
 REFERENCE_DEFAULT = "GDScript (engine)"
 GUEST = "SafeGDScript (sandbox)"
 
-MODES = (("full", "Full", "latest-full.json"),
-         ("jit", "JIT", "latest.json"),
+MODES = (("jit", "JIT", "latest.json"),
          ("nojit", "Intrp", "latest-nojit.json"))
 
 # A row whose P90 sits this far above its P50 is reported but flagged rather
@@ -244,10 +243,6 @@ def present_modes(modes):
     return [mode for mode in modes if mode]
 
 
-def modes_by_key(modes):
-    return {mode.key: mode for mode in modes}
-
-
 def first_stat(modes, group, label):
     for mode in present_modes(modes):
         value = mode.stat(group, label)
@@ -309,19 +304,12 @@ def overview_section(modes, names):
     grouped, with a geometric mean per group. Held under OVERVIEW_MAX_CHARS by
     dropping the per-benchmark rows -- the group lines are the summary, and the
     Markdown tables above are where the detail already lives."""
-    by_key = modes_by_key(modes)
-    full = by_key["full"]
-    jit = by_key["jit"]
-
     def speedups(group):
         reference = meta(modes, group, "reference", REFERENCE_DEFAULT)
         return {
             mode.key: ratio_value(mode.stat(group, reference), mode.stat(group, GUEST))
             for mode in modes
         }
-
-    def full_vs_jit(group):
-        return ratio_value(jit.stat(group, GUEST), full.stat(group, GUEST))
 
     def render(detail):
         # Without the per-benchmark rows there is nothing left to put in the ns
@@ -330,7 +318,7 @@ def overview_section(modes, names):
         header = ["benchmark"]
         if detail:
             header += ["GDScript"] + [mode.name for mode in modes]
-        header += [mode.name + " x" for mode in modes] + ["Full vs JIT"]
+        header += [mode.name + " x" for mode in modes]
         rows = []
         for title, members in categorise(names):
             group_speedups = [speedups(g) for g in members]
@@ -339,7 +327,6 @@ def overview_section(modes, names):
                 + ([""] * (len(modes) + 1) if detail else [])
                 + [fmt_ratio(geomean([values[mode.key] for values in group_speedups]))
                    for mode in modes]
-                + [fmt_ratio(geomean([full_vs_jit(group) for group in members]))]
             )
             if not detail:
                 continue
@@ -350,8 +337,7 @@ def overview_section(modes, names):
                     "  " + group,
                     ns(first_stat(modes, group, reference)),
                 ] + [ns(mode.stat(group, GUEST)) for mode in modes]
-                  + [fmt_ratio(values[mode.key]) for mode in modes]
-                  + [fmt_ratio(full_vs_jit(group))])
+                  + [fmt_ratio(values[mode.key]) for mode in modes])
         return ascii_table(rows, header, ["left"] + ["right"] * (len(header) - 1))
 
     def section(detail):
@@ -520,7 +506,7 @@ def quality_section(modes, names):
     return out
 
 
-def environment_section(modes, manifest):
+def environment_section(modes):
     out = ["## Environment", ""]
     active = present_modes(modes)
     env_mode = active[0]
@@ -530,9 +516,8 @@ def environment_section(modes, manifest):
         ("Cores", env_mode.env("cpus") or "not pinned"),
         ("Rounds per case per run", env_mode.env("samples", "?")),
         ("Minimum sample", "%d ms" % (env_mode.env("min_sample_usec", 0) / 1000)),
-        ("Baked hashes", len(manifest)),
     ]
-    expected_modes = {"full": "binary translated", "jit": "JIT", "nojit": "interpreter"}
+    expected_modes = {"jit": "JIT", "nojit": "interpreter"}
     for mode in modes:
         if not mode:
             rows.append((mode.name + " runs", "missing"))
@@ -565,13 +550,9 @@ def environment_section(modes, manifest):
 
 
 def build(modes):
-    return build_with_manifest(modes, {})
-
-
-def build_with_manifest(modes, manifest):
     names = ordered_groups(modes)
     out = ["# SafeGDScript benchmarks", ""]
-    commands = {"full": "--full", "jit": "--jit", "nojit": "--no-jit"}
+    commands = {"jit": "--jit", "nojit": "--no-jit"}
     for mode in modes:
         if not mode:
             out.append("> No %s run; run `./run_benchmarks.sh %s`.\n"
@@ -582,7 +563,7 @@ def build_with_manifest(modes, manifest):
     out += summary_section(modes, names)
     out += detail_sections(modes, names)
     out += quality_section(modes, names)
-    out += environment_section(modes, manifest)
+    out += environment_section(modes)
     out += overview_section(modes, names)
     return "\n".join(out).rstrip() + "\n"
 
@@ -603,8 +584,7 @@ def main():
                          % args.results_dir)
         return 1
 
-    manifest = load(os.path.join(args.results_dir, "bintr", "manifest.json")) or {}
-    report = build_with_manifest(modes, manifest)
+    report = build(modes)
     out_path = args.out or os.path.join(args.results_dir, "report.md")
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     with open(out_path, "w") as f:

@@ -919,25 +919,9 @@ public:
 	/// @brief Resume execution of the program. Loses the current call state.
 	bool resume(uint64_t max_instructions);
 
-	/// @brief Binary translate the program and produce embeddable code
-	/// @param ignore_instruction_limit If true, ignore the instruction limit. Infinite loops are possible.
-	/// @param automatic_nbit_as If true, use and-masking on all memory accesses based on the rounded-down Po2 arena size.
-	/// @return The binary translation code.
-	/// @note This is only available if the RISCV_BINARY_TRANSLATION flag is set.
-	/// @warning Do *NOT* enable automatic_nbit_as unless you are sure the program is compatible with it.
-	String emit_binary_translation(bool ignore_instruction_limit = false, bool automatic_nbit_as = false) const;
-
 	/// @brief Hash of the current execute segment and every ABI-affecting translator option.
-	/// @return Zero when no program/translator is available.
+	/// @return Zero when program/translator is unavailable.
 	int64_t get_translation_hash() const;
-
-	/// @brief Build the cache-loadable shared-library variant for this machine.
-	/// @param out_dir Destination directory, or empty for the configured cache.
-	/// @return Absolute hash-named library path, or an empty String on failure.
-	String bake_binary_translation(const String &out_dir = "") const;
-
-	/// @brief Whether the configured cache contains this machine's translation.
-	bool is_translation_baked() const;
 
 	/// @brief Open a shared library, which should self-register its functions.
 	/// @param shared_library_path The path to the shared library.
@@ -945,12 +929,6 @@ public:
 	/// @note This is not a general-purpose function for loading shared libraries. It is only a
 	/// convenience helper function for loading shared libraries that self-register their functions.
 	static bool load_binary_translation(const String &shared_library_path, bool allow_insecure = false);
-
-	/// @brief Try to emit the binary translation code, and then compile it. Does not load the binary translation.
-	/// @note For security reasons, the binary translation is not loaded automatically. A game restart is required,
-	/// as binary translations can only be loaded before any Sandbox instances are created.
-	/// @return True if the binary translation was emitted and compiled successfully, false otherwise.
-	bool try_compile_binary_translation(String shared_library_path = "res://bintr", const String &cc = "cc", const String &extra_cflags = "", bool ignore_instruction_limit = false, bool automatic_nbit_as = false);
 
 	/// @brief  Check if the program has found and loaded binary translation.
 	/// @return True if binary translation is loaded, false otherwise.
@@ -1078,17 +1056,8 @@ public:
 	static PackedByteArray download_program(String program_name);
 
 private:
-	struct BakeOptions {
-		bool ignore_limit = false;
-		bool nbit_as = false;
-		bool unchecked = false;
-	};
-	BakeOptions current_bake_options() const;
-	String emit_binary_translation(const BakeOptions &options, bool shared_library,
-			uint32_t *r_hash = nullptr) const;
 	static String binary_translation_cache_dir(bool create);
 	static String shipped_translation_dir();
-	static String binary_translation_path(uint32_t hash, const String &out_dir = "");
 	static bool bintr_lookup_enabled();
 	static bool bintr_cache_opted_in();
 	static void start_background_translation(std::function<void()> &&step);

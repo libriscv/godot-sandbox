@@ -38,10 +38,6 @@ static constexpr char NATIVE_TYPES_HINT[] = "Use native types and classes instea
 
 static constexpr char BINTR_ENABLED[] = "sandbox/binary_translation/enabled";
 static constexpr char BINTR_ENABLED_HINT[] = "Load matching hash-named native translations when available";
-static constexpr char BINTR_COMPILER[] = "sandbox/binary_translation/compiler";
-static constexpr char BINTR_COMPILER_HINT[] = "System C compiler used for native translations";
-static constexpr char BINTR_EXTRA_CFLAGS[] = "sandbox/binary_translation/extra_cflags";
-static constexpr char BINTR_EXTRA_CFLAGS_HINT[] = "Additional space-separated flags for the native translation compiler";
 static constexpr char BINTR_CACHE_DIR[] = "sandbox/binary_translation/cache_dir";
 static constexpr char BINTR_CACHE_DIR_HINT[] = "Writable directory containing bintr-<hash> native translations";
 
@@ -144,23 +140,6 @@ void SandboxProjectSettings::register_settings() {
 	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
 
 	register_setting_plain(BINTR_ENABLED, false, BINTR_ENABLED_HINT, true);
-	String bintr_compiler = "cc";
-#if defined(_MSC_VER) && !defined(__MINGW32__) && !defined(__MINGW64__)
-	bintr_compiler = "cl";
-#else
-	// Prefer Zig when the configured executable is actually available. It gives
-	// every supported desktop platform the same C-driver command shape.
-	String zig_path = get_zig_path();
-	if (zig_path.begins_with("res://") || zig_path.begins_with("user://"))
-		zig_path = ProjectSettings::get_singleton()->globalize_path(zig_path);
-	Array zig_output;
-	if (OS::get_singleton() != nullptr &&
-			OS::get_singleton()->execute(zig_path, Array::make("version"), zig_output, true) == 0) {
-		bintr_compiler = zig_path;
-	}
-#endif
-	register_setting_plain(BINTR_COMPILER, bintr_compiler, BINTR_COMPILER_HINT, true);
-	register_setting_plain(BINTR_EXTRA_CFLAGS, String(), BINTR_EXTRA_CFLAGS_HINT, false);
 	register_setting_plain(BINTR_CACHE_DIR, "user://sandbox_bintr/", BINTR_CACHE_DIR_HINT, true);
 
 	migrate_setting("editor/script/generate_runtime_api", GENERATE_RUNTIME_API);
@@ -230,14 +209,6 @@ bool SandboxProjectSettings::async_compilation() {
 
 bool SandboxProjectSettings::binary_translation_enabled() {
 	return get_setting<bool>(BINTR_ENABLED);
-}
-
-String SandboxProjectSettings::binary_translation_compiler() {
-	return get_setting<String>(BINTR_COMPILER);
-}
-
-String SandboxProjectSettings::binary_translation_extra_cflags() {
-	return get_setting<String>(BINTR_EXTRA_CFLAGS);
 }
 
 String SandboxProjectSettings::binary_translation_cache_dir() {
