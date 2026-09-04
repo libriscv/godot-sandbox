@@ -1,0 +1,32 @@
+// Built-in constants whose values need Godot's Variant constructor.
+// Generated from extension_api.json, Godot 4.5.0; do not edit.
+// Values are the flattened constructor components, padded to sixteen.
+// Requires GDSC_HOST_CONSTANT defined before inclusion.
+
+#ifndef GDSC_HOST_CONSTANT
+#define GDSC_HOST_CONSTANT(type, name, count, c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15)
+#endif
+
+// Basis
+GDSC_HOST_CONSTANT(Basis, FLIP_X, 9, -1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0)
+GDSC_HOST_CONSTANT(Basis, FLIP_Y, 9, 1, 0, 0, 0, -1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0)
+GDSC_HOST_CONSTANT(Basis, FLIP_Z, 9, 1, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0)
+GDSC_HOST_CONSTANT(Basis, IDENTITY, 9, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0)
+
+// Projection
+GDSC_HOST_CONSTANT(Projection, IDENTITY, 16, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+GDSC_HOST_CONSTANT(Projection, ZERO, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+
+// Quaternion
+GDSC_HOST_CONSTANT(Quaternion, IDENTITY, 4, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+
+// Transform2D
+GDSC_HOST_CONSTANT(Transform2D, FLIP_X, 6, -1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+GDSC_HOST_CONSTANT(Transform2D, FLIP_Y, 6, 1, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+GDSC_HOST_CONSTANT(Transform2D, IDENTITY, 6, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+
+// Transform3D
+GDSC_HOST_CONSTANT(Transform3D, FLIP_X, 12, -1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0)
+GDSC_HOST_CONSTANT(Transform3D, FLIP_Y, 12, 1, 0, 0, 0, -1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0)
+GDSC_HOST_CONSTANT(Transform3D, FLIP_Z, 12, 1, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0)
+GDSC_HOST_CONSTANT(Transform3D, IDENTITY, 12, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0)

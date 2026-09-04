@@ -148,6 +148,7 @@ static const GlobalFunction GLOBAL_FUNCTIONS[] = {
 	{ "error_string", GlobalFn::ERROR_STRING, GlobalKind::HOST, 1, 1, GlobalResult::STRING, UTILITY_ERROR_STRING, 0, NO_FORM, NO_FORM },
 	{ "is_same", GlobalFn::IS_SAME, GlobalKind::HOST, 2, 2, GlobalResult::BOOL, UTILITY_IS_SAME, 0, NO_FORM, NO_FORM },
 	{ "is_instance_valid", GlobalFn::IS_INSTANCE_VALID, GlobalKind::HOST, 1, 1, GlobalResult::BOOL, UTILITY_IS_INSTANCE_VALID, 0, NO_FORM, NO_FORM },
+	{ "is_instance_of", GlobalFn::IS_INSTANCE_OF, GlobalKind::HOST, 2, 2, GlobalResult::BOOL, UTILITY_IS_INSTANCE_OF, 0, NO_FORM, NO_FORM },
 
 	{ "char", GlobalFn::CHAR, GlobalKind::HOST, 1, 1, GlobalResult::STRING, UTILITY_CHAR, 0, NO_FORM, NO_FORM },
 	{ "ord", GlobalFn::ORD, GlobalKind::HOST, 1, 1, GlobalResult::INT, UTILITY_ORD, 0, NO_FORM, NO_FORM },
@@ -257,6 +258,20 @@ static const BuiltinConstant BUILTIN_CONSTANTS[] = {
 #define GDSC_BUILTIN_CONSTANT(type, name, c0, c1, c2, c3) { #type, #name, { c0, c1, c2, c3 } },
 #include "builtin_constants.def"
 };
+#undef GDSC_BUILTIN_CONSTANT
+
+static const HostConstant HOST_CONSTANTS[] = {
+#define GDSC_HOST_CONSTANT(type, name, count, c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15) \
+	{ #type, #name, count, { c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15 } },
+#include "host_constants.def"
+};
+#undef GDSC_HOST_CONSTANT
+
+static const struct { const char* class_name; const char* enum_name; } CLASS_ENUMS[] = {
+#define GDSC_CLASS_ENUM(class_name, enum_name) { #class_name, #enum_name },
+#include "class_enums.def"
+};
+#undef GDSC_CLASS_ENUM
 
 static const GlobalEnumValue GLOBAL_ENUM_VALUES[] = {
 #define GDSC_GLOBAL_ENUM_VALUE(enum_name, name, value) { enum_name, #name, (value) },
@@ -315,13 +330,38 @@ const BuiltinConstant* find_builtin_constant(const std::string& type, const std:
 	return nullptr;
 }
 
+const HostConstant* find_host_constant(const std::string& type, const std::string& name) {
+	for (const HostConstant& entry : HOST_CONSTANTS) {
+		if (type == entry.type && name == entry.name) {
+			return &entry;
+		}
+	}
+	return nullptr;
+}
+
 bool has_builtin_constants(const std::string& type) {
 	for (const BuiltinConstant& entry : BUILTIN_CONSTANTS) {
 		if (type == entry.type) {
 			return true;
 		}
 	}
+	for (const HostConstant& entry : HOST_CONSTANTS) {
+		if (type == entry.type) {
+			return true;
+		}
+	}
 	return false;
+}
+
+bool engine_class_declares_enum(const std::string& class_name, const std::string& enum_name) {
+	static const std::unordered_set<std::string> names = [] {
+		std::unordered_set<std::string> set;
+		for (const auto& entry : CLASS_ENUMS) {
+			set.insert(std::string(entry.class_name) + "." + entry.enum_name);
+		}
+		return set;
+	}();
+	return names.find(class_name + "." + enum_name) != names.end();
 }
 
 // @GlobalScope names not yet lowered. Refused at compile time; the self-call

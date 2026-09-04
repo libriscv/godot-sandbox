@@ -486,6 +486,7 @@ private:
 	bool is_autoload(const std::string& name) const;
 	bool names_a_chain_class(const std::string& name, FunctionContext& func);
 	const VariableExpr* engine_enum_qualifier(const Expr* expr, FunctionContext& func);
+	std::string inherited_engine_enum_owner(const std::string& enum_name) const;
 	const std::string* chain_qualified_member(const Expr* expr, FunctionContext& func);
 	int emit_local_call(const std::string& name, std::vector<int> arg_regs,
 		FunctionContext& func, const Expr* site);

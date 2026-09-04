@@ -165,7 +165,8 @@ static void test_the_table_is_consistent() {
 		"is_nan", "is_inf", "is_finite", "is_zero_approx", "is_equal_approx",
 		"str", "len",
 		"hash", "var_to_str", "str_to_var", "var_to_bytes", "bytes_to_var",
-		"type_string", "type_convert", "error_string", "is_same", "rand_from_seed",
+		"type_string", "type_convert", "error_string", "is_same", "is_instance_valid",
+		"is_instance_of", "rand_from_seed",
 		"ease", "step_decimals", "nearest_po2",
 		"int", "float", "bool", "String",
 		"randi", "randf", "randi_range", "randf_range", "randfn", "randomize", "seed",
@@ -856,6 +857,8 @@ static void test_every_global_reaches_riscv() {
 		"\tt = t + hash(x) + len(var_to_str(x)) + len(type_string(1)) + len(error_string(1))\n"
 		"\tif is_same(x, y):\n"
 		"\t\tt = t + 1.0\n"
+		"\tif is_instance_valid(x) or is_instance_of(x, TYPE_INT):\n"
+		"\t\tt = t + 1.0\n"
 		"\tt = t + int(type_convert(x, 2)) + len(str(str_to_var(\"1\")))\n"
 		"\tt = t + len(var_to_bytes(x)) + int(bytes_to_var(var_to_bytes(1)))\n"
 		"\tt = t + len(rand_from_seed(12345))\n"
@@ -990,6 +993,70 @@ static void test_a_local_name_wins_over_a_global_enum() {
 	std::cout << "  ✓ a local of the same name shadows a global enum" << std::endl;
 }
 
+static void test_is_instance_of_has_static_and_dynamic_paths() {
+	const GlobalFunction *row = find_global_function("is_instance_of");
+	assert(row != nullptr);
+	assert(row->kind == GlobalKind::HOST);
+	assert(row->min_args == 2 && row->max_args == 2);
+	assert(row->result == GlobalResult::BOOL);
+	assert(row->utility_op == UTILITY_IS_INSTANCE_OF);
+
+	// A bare class name is compile-time type syntax, identical to `value is
+	// Node`; no ECALL_UTILITY GLOBAL_CALL survives.
+	const IRProgram native = compile_to_ir(
+		"extends Node\n"
+		"func test(value):\n"
+		"\treturn is_instance_of(value, Node)\n");
+	assert(count_opcode(find_function(native, "test"), IROpcode::GLOBAL_CALL) == 0);
+
+	// TYPE_* is a run-time integer descriptor and therefore takes the host path.
+	const IRProgram tag = compile_to_ir(
+		"func test(value):\n"
+		"\treturn is_instance_of(value, TYPE_INT)\n");
+	const std::vector<GlobalFn> called = called_globals(find_function(tag, "test"));
+	assert(called.size() == 1 && called[0] == GlobalFn::IS_INSTANCE_OF);
+
+	// Compiler-only structs use their normal shape test rather than becoming a
+	// host call with a type value the host could not know.
+	const IRProgram structure = compile_to_ir(
+		"struct Point:\n"
+		"\tvar x = 0\n"
+		"func test(value):\n"
+		"\treturn is_instance_of(value, Point)\n");
+	assert(count_opcode(find_function(structure, "test"), IROpcode::GLOBAL_CALL) == 0);
+
+	std::cout << "  ✓ is_instance_of chooses the static type test or host descriptor path"
+		<< std::endl;
+}
+
+static void test_inherited_engine_enum_names_resolve_to_the_declaring_class() {
+	assert(engine_class_declares_enum("Object", "ConnectFlags"));
+	assert(engine_class_declares_enum("Window", "Mode"));
+	assert(engine_class_declares_enum("Node", "ProcessMode"));
+	assert(!engine_class_declares_enum("Node", "ConnectFlags"));
+
+	Lexer lexer(
+		"extends Node\n"
+		"func test():\n"
+		"\treturn ConnectFlags.CONNECT_DEFERRED\n");
+	Parser parser(lexer.tokenize());
+	Program program = parser.parse();
+	CodeGenerator codegen;
+	codegen.set_engine_ancestry({ { "Node", "Object" } });
+	const IRProgram ir = codegen.generate(program);
+	const IRFunction& test = find_function(ir, "test");
+	assert(count_opcode(test, IROpcode::VCALL) == 1);
+	bool has_object = false;
+	bool has_constant = false;
+	for (const std::string& text : ir.string_constants) {
+		has_object = has_object || text == "Object";
+		has_constant = has_constant || text == "CONNECT_DEFERRED";
+	}
+	assert(has_object && has_constant);
+	std::cout << "  ✓ inherited engine enum namespaces use their nearest declaring class"
+		<< std::endl;
+}
+
 int main() {
 	std::cout << "=== Global Function Tests ===" << std::endl << std::endl;
 
@@ -1023,6 +1090,8 @@ int main() {
 	test_a_global_enum_is_an_int_type();
 	test_a_global_enum_is_not_a_value();
 	test_a_local_name_wins_over_a_global_enum();
+	test_is_instance_of_has_static_and_dynamic_paths();
+	test_inherited_engine_enum_names_resolve_to_the_declaring_class();
 
 	std::cout << std::endl << "All global function tests passed!" << std::endl;
 	return 0;

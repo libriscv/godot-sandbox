@@ -337,6 +337,36 @@ static void test_script_class_new_takes_arguments() {
 	std::cout << "  \u2713 a script class constructs through its own script" << std::endl;
 }
 
+static void test_script_class_value_is_the_script_resource() {
+	std::cout << "Testing a global script class as a value..." << std::endl;
+
+	const std::vector<std::pair<std::string, std::string>> classes = {
+		{ "Runner", "res://runner.gd" }
+	};
+	const IRProgram bare = compile_with_project(
+		"func test():\n\treturn Runner\n", {}, classes);
+	const IRFunction& bare_fn = find_function(bare, "test");
+	assert(count_opcode(bare_fn, IROpcode::LOAD_RESOURCE) == 1);
+	assert(count_opcode(bare_fn, IROpcode::VCALL) == 0);
+
+	const IRProgram static_call = compile_with_project(
+		"func test():\n\treturn Runner.helper(1)\n", {}, classes);
+	const IRFunction& static_fn = find_function(static_call, "test");
+	assert(count_opcode(static_fn, IROpcode::LOAD_RESOURCE) == 1);
+	const IRInstruction& helper = only(static_fn, IROpcode::VCALL);
+	assert(static_call.strings[helper.operands[2].string_id] == "helper");
+	assert(static_call.strings[helper.operands[2].string_id] != "new");
+
+	const IRProgram constant = compile_with_project(
+		"func test():\n\treturn Runner.SPEED\n", {}, classes);
+	const IRFunction& constant_fn = find_function(constant, "test");
+	assert(count_opcode(constant_fn, IROpcode::LOAD_RESOURCE) == 1);
+	assert(count_opcode(constant_fn, IROpcode::VGET) == 1);
+
+	std::cout << "  \u2713 bare classes, constants and statics use the Script resource"
+		<< std::endl;
+}
+
 static void test_engine_class_constant() {
 	std::cout << "Testing Class.CONSTANT on a non-singleton..." << std::endl;
 
@@ -705,6 +735,7 @@ int main() {
 		test_array_literal_becomes_a_packed_array();
 		test_autoload_resolves_to_a_named_object();
 		test_script_class_new_takes_arguments();
+		test_script_class_value_is_the_script_resource();
 		test_engine_class_constant();
 		test_engine_singleton_method_is_an_object_call();
 		test_declarations();

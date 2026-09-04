@@ -141,6 +141,7 @@ enum UtilityOp : int16_t {
 	// full int64 argument use the ordinary host Variant ABI.
 	UTILITY_RANDOMIZE = 74,
 	UTILITY_SEED = 75,
+	UTILITY_IS_INSTANCE_OF = 76,
 
 	UTILITY_OP_COUNT,
 };
@@ -267,6 +268,7 @@ enum class GlobalFn : int16_t {
 	ERROR_STRING,
 	IS_SAME,
 	IS_INSTANCE_VALID,
+	IS_INSTANCE_OF,
 	CHAR,
 	ORD,
 	// Deterministic, hence a HOST form rather than a random one.
@@ -394,8 +396,21 @@ struct BuiltinConstant {
 	double components[4];
 };
 
+// Built-in type constant too large for the guest's inline Variant payload.
+// Components are the flattened constructor arguments from extension_api.json;
+// codegen groups them into vectors before asking Godot to construct the value.
+struct HostConstant {
+	const char* type;
+	const char* name;
+	uint8_t component_count;
+	double components[16];
+};
+
 // nullptr if no such constant exists for `type`.
 const BuiltinConstant* find_builtin_constant(const std::string& type, const std::string& name);
+
+// nullptr if no host-constructed constant has this qualified name.
+const HostConstant* find_host_constant(const std::string& type, const std::string& name);
 
 // True if `type` has any built-in constants (distinguishes typo from unknown type).
 bool has_builtin_constants(const std::string& type);
@@ -404,6 +419,10 @@ bool has_builtin_constants(const std::string& type);
 size_t builtin_constant_count();
 const char* builtin_constant_type(size_t index);
 const char* builtin_constant_name(size_t index);
+
+// True when an engine class itself declares an enum with this name. Values
+// remain ClassDB constants; this table only resolves the declaring namespace.
+bool engine_class_declares_enum(const std::string& class_name, const std::string& enum_name);
 
 // Unimplemented @GlobalScope name -> reason string, or nullptr if not a global.
 const char* unimplemented_global_reason(const std::string& name);

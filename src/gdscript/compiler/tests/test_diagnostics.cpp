@@ -157,7 +157,7 @@ static void test_too_many_parameters_is_refused() {
 	std::cout << "  ✓ a function with more than sixteen parameters is refused" << std::endl;
 }
 
-// Cross-file script class: members reached through an instance, bare name refused.
+// Cross-file script class: its bare value is the Script resource.
 static void test_a_script_class_outside_the_program() {
 	Compiler compiler;
 	CompilerOptions options;
@@ -168,17 +168,17 @@ static void test_a_script_class_outside_the_program() {
 	assert(!compiler.compile("func f():\n\treturn Other.Shape.BOX\n", options).empty());
 	assert(!compiler.compile("func f():\n\treturn Other.new()\n", options).empty());
 
-	// The bare name is not a value: without this it falls through to VGET on the
-	// owner and answers null at run time.
-	assert(compiler.compile("func f():\n\treturn Other\n", options).empty());
-	const CompilerError &bare = compiler.get_error_info();
-	assert(bare.has_error);
-	assert(bare.type == ErrorType::CODEGEN_ERROR);
-	assert(bare.line == 2);
-	assert(contains(bare.message, "none of its body is compiled into this program"));
-	assert(contains(bare.hint, "Other.new()"));
+	assert(!compiler.compile("func f():\n\treturn Other\n", options).empty());
 
-	std::cout << "  \u2713 a script class in another file is reached through an instance"
+	// Constants and statics are read-only through the class resource.
+	assert(compiler.compile("func f():\n\tOther.SCALE = 2\n", options).empty());
+	const CompilerError &assignment = compiler.get_error_info();
+	assert(assignment.has_error);
+	assert(assignment.type == ErrorType::CODEGEN_ERROR);
+	assert(assignment.line == 2);
+	assert(contains(assignment.message, "Cannot assign"));
+
+	std::cout << "  \u2713 a script class in another file is its Script resource"
 			  << std::endl;
 }
 

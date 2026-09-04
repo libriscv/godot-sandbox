@@ -331,8 +331,44 @@ static void test_builtin_constants() {
 		compile_to_ir("func test():\n\treturn Plane.PLANE_XY\n"), "test"),
 		IROpcode::MAKE_PLANE) == 1);
 
+	// Payloads wider than the inline Variant area are assembled from generated
+	// extension_api.json components, then handed to Godot's constructor table.
+	const IRProgram transform2d = compile_to_ir(
+		"func test():\n\treturn Transform2D.IDENTITY\n");
+	const IRFunction& transform2d_fn = find_function(transform2d, "test");
+	assert(count_opcode(transform2d_fn, IROpcode::MAKE_VECTOR2) == 3);
+	const IRInstruction& make_transform2d = only(transform2d_fn, IROpcode::CONSTRUCT);
+	assert(make_transform2d.operands[1].immediate() == Variant::TRANSFORM2D);
+	assert(make_transform2d.operands[2].immediate() == 3);
+
+	const IRProgram basis = compile_to_ir("func test():\n\treturn Basis.FLIP_Y\n");
+	assert(count_opcode(find_function(basis, "test"), IROpcode::MAKE_VECTOR3) == 3);
+	const IRInstruction& make_basis = only(find_function(basis, "test"), IROpcode::CONSTRUCT);
+	assert(make_basis.operands[1].immediate() == Variant::BASIS);
+
+	const IRProgram quaternion = compile_to_ir(
+		"func test():\n\treturn Quaternion.IDENTITY\n");
+	const IRInstruction& make_quaternion = only(find_function(quaternion, "test"), IROpcode::CONSTRUCT);
+	assert(make_quaternion.operands[1].immediate() == Variant::QUATERNION);
+	assert(make_quaternion.operands[2].immediate() == 4);
+
+	const IRProgram projection = compile_to_ir("func test():\n\treturn Projection.ZERO\n");
+	assert(count_opcode(find_function(projection, "test"), IROpcode::MAKE_VECTOR4) == 4);
+	const IRInstruction& make_projection = only(find_function(projection, "test"), IROpcode::CONSTRUCT);
+	assert(make_projection.operands[1].immediate() == Variant::PROJECTION);
+
+	const IRProgram transform3d = compile_to_ir(
+		"func test():\n\treturn Transform3D.FLIP_Z\n");
+	assert(count_opcode(find_function(transform3d, "test"), IROpcode::CONSTRUCT) == 2);
+	assert(machine_code_builds("func test():\n\treturn Transform2D.IDENTITY\n"));
+	assert(machine_code_builds("func test():\n\treturn Transform3D.FLIP_X\n"));
+	assert(machine_code_builds("func test():\n\treturn Basis.FLIP_Z\n"));
+	assert(machine_code_builds("func test():\n\treturn Quaternion.IDENTITY\n"));
+	assert(machine_code_builds("func test():\n\treturn Projection.ZERO\n"));
+
 	// Unknown constant name -> compile error.
 	assert(refuses("func test():\n\treturn Vector2.BOGUS\n"));
+	assert(refuses("func test():\n\treturn Transform2D.BOGUS\n"));
 
 	// Local shadows the type name.
 	const IRProgram shadowed = compile_to_ir(

@@ -1289,6 +1289,13 @@ void CodeGenerator::gen_store_to(const Expr* target, int value_reg, FunctionCont
 		if (member_expr->is_method_call) {
 			error_at("Cannot assign to method call", site);
 		}
+		if (auto* object = dynamic_cast<const VariableExpr*>(member_expr->object.get());
+			object != nullptr && find_variable(func, object->name) == nullptr &&
+			!is_global_variable(object->name) && !is_autoload(object->name) &&
+			global_script_class_path(object->name) != nullptr) {
+			error_at("Cannot assign to a constant or static member of script class '" +
+				object->name + "'", site);
+		}
 
 		LValue base = resolve_lvalue(member_expr->object.get(), func);
 
@@ -4521,15 +4528,11 @@ int CodeGenerator::gen_variable(const VariableExpr* expr, FunctionContext& func,
 		return gen_make_callable(expr->name, -1, func);
 	}
 
-	// Without this, an unknown script class falls through to VGET and silently answers null.
-	if (global_script_class_path(expr->name) != nullptr) {
-		error_at("'" + expr->name + "' is a script in another file, and none of its body is "
-			"compiled into this program", expr,
-			m_chain.merged()
-				? "Only the scripts this one extends are merged in. Reach '" + expr->name +
-					"' through an instance: '" + expr->name + ".new()'"
-				: "A sandboxed program is one binary built from one file. Reach '" + expr->name +
-					"' through an instance ('" + expr->name + ".new()'), or extend it");
+	// A global class name is its Script resource.  Static methods and constants
+	// are properties of that resource; constructing an instance here would run
+	// _init() and, for a .sgd target, start an unnecessary Sandbox.
+	if (const std::string* path = global_script_class_path(expr->name)) {
+		return gen_load_resource(*path, func);
 	}
 
 	// GDScript refuses this too: a native enum is not a Dictionary, has no
@@ -6275,6 +6278,49 @@ int CodeGenerator::gen_call(const CallExpr* expr, FunctionContext& func) {
 	if (is_preload && expr->arguments.size() != 1) {
 		error_at("preload() takes exactly 1 argument", expr);
 	}
+	// GDScript's common is_instance_of(value, TypeName) spelling carries a
+	// compile-time type, not a run-time Variant. Lower it exactly like `value is
+	// TypeName`; dynamic TYPE_* and Script-resource arguments use the host row.
+	if (expr->function_name == "is_instance_of" && !is_local_function("is_instance_of") &&
+		expr->arguments.size() == 2) {
+		if (auto* type = dynamic_cast<const VariableExpr*>(expr->arguments[1].get());
+			type != nullptr && find_variable(func, type->name) == nullptr &&
+			!is_global_variable(type->name) && !is_autoload(type->name) &&
+			!is_local_function(type->name) && find_global_constant(type->name) == nullptr) {
+			if (const TraitDecl* trait = find_trait(type->name)) {
+				int value = gen_expr(expr->arguments[0].get(), func);
+				int result = gen_trait_test(value, *trait, func);
+				free_register(func, value);
+				return result;
+			}
+			const Variant::Type builtin = Variant::type_from_name(type->name);
+			const bool class_type = find_struct(type->name) != nullptr ||
+				global_script_class_path(type->name) != nullptr ||
+				names_an_engine_type(type->name, func);
+			if (builtin != Variant::VARIANT_MAX || class_type) {
+				int value = gen_expr(expr->arguments[0].get(), func);
+				int result = -1;
+				if (builtin != Variant::VARIANT_MAX) {
+					result = alloc_register(func);
+					const IRInstruction::TypeHint known = get_register_type(func, value);
+					if (known != IRInstruction::TypeHint_NONE) {
+						func.ir.instructions.emplace_back(IROpcode::LOAD_BOOL,
+							IRValue::reg(result), IRValue::imm(
+								known == static_cast<IRInstruction::TypeHint>(builtin) ? 1 : 0));
+					} else {
+						func.ir.instructions.emplace_back(IROpcode::TYPE_TEST,
+							IRValue::reg(result), IRValue::reg(value),
+							IRValue::imm(static_cast<int64_t>(builtin)));
+					}
+					set_register_type(func, result, Variant::BOOL);
+				} else {
+					result = gen_class_test(value, type->name, func);
+				}
+				free_register(func, value);
+				return result;
+			}
+		}
+	}
 	reject_named_arguments(*expr, "'" + expr->function_name + "'", expr);
 
 	std::vector<int> arg_regs;
@@ -6800,16 +6846,15 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 		}
 	}
 
-	// Cross-file script class: instantiate to reach its constants and statics.
+	// Cross-file script class: the class name is its Script resource.  Only
+	// Class.new() above constructs an instance.
 	if (auto* object = dynamic_cast<const VariableExpr*>(object_expr)) {
-		if (find_variable(func, object->name) == nullptr) {
+		if (find_variable(func, object->name) == nullptr && !is_autoload(object->name)) {
 			if (const std::string* path = global_script_class_path(object->name)) {
-				MemberCallExpr constructor(std::make_unique<VariableExpr>(object->name), "new",
-					{}, true);
-				const int instance = gen_script_class_new(object->name, *path, &constructor, func);
+				const int script = gen_load_resource(*path, func);
 				if (!expr->is_method_call) {
-					const int result = gen_member_read(instance, expr->member_name, func, expr);
-					free_register(func, instance);
+					const int result = gen_member_read(script, expr->member_name, func, expr);
+					free_register(func, script);
 					return result;
 				}
 				reject_named_arguments(*expr, "'" + expr->member_name + "'", expr);
@@ -6817,11 +6862,11 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 				for (const auto& argument : expr->arguments) args.push_back(gen_expr(argument.get(), func));
 				const int result = alloc_register(func);
 				IRInstruction call(IROpcode::VCALL);
-				call.operands = { IRValue::reg(result), IRValue::reg(instance),
+				call.operands = { IRValue::reg(result), IRValue::reg(script),
 					ir_str(expr->member_name), IRValue::imm(int64_t(args.size())) };
 				for (int arg : args) call.operands.push_back(IRValue::reg(arg));
 				func.ir.instructions.push_back(std::move(call));
-				free_register(func, instance);
+				free_register(func, script);
 				for (int arg : args) free_register(func, arg);
 				return result;
 			}
@@ -6846,6 +6891,15 @@ int CodeGenerator::gen_member_call(const MemberCallExpr* expr, FunctionContext& 
 				free_register(func, receiver);
 				for (int arg : args) free_register(func, arg);
 				return result;
+			}
+		}
+		if (!expr->is_method_call && expr->arguments.empty() &&
+			find_variable(func, object->name) == nullptr &&
+			!is_global_variable(object->name) && !is_autoload(object->name) &&
+			!is_local_function(object->name) && find_struct(object->name) == nullptr) {
+			const std::string owner = inherited_engine_enum_owner(object->name);
+			if (!owner.empty()) {
+				return gen_engine_class_constant(owner, expr->member_name, func);
 			}
 		}
 		if (names_an_engine_type(object->name, func)) {
@@ -9511,22 +9565,72 @@ int CodeGenerator::gen_builtin_constant(const std::string& type, const std::stri
 {
 	const InlineConstructor* info = find_inline_constructor(type);
 	const BuiltinConstant* constant = find_builtin_constant(type, name);
-	if (info == nullptr || constant == nullptr) {
+	if (info != nullptr && constant != nullptr) {
+		std::vector<int> components;
+		for (int i = 0; i < info->components; i++) {
+			components.push_back(info->integer
+				? gen_int_immediate(static_cast<int64_t>(constant->components[i]), func)
+				: gen_float_immediate(constant->components[i], func));
+		}
+
+		int result_reg = gen_inline_constructor(type, components, func, nullptr);
+		for (int reg : components) {
+			free_register(func, reg);
+		}
+		return result_reg;
+	}
+
+	const HostConstant* host = find_host_constant(type, name);
+	if (host == nullptr) {
 		return -1;
 	}
 
-	std::vector<int> components;
-	for (int i = 0; i < info->components; i++) {
-		components.push_back(info->integer
-			? gen_int_immediate(static_cast<int64_t>(constant->components[i]), func)
-			: gen_float_immediate(constant->components[i], func));
+	std::vector<int> scalars;
+	for (uint8_t i = 0; i < host->component_count; i++) {
+		scalars.push_back(gen_float_immediate(host->components[i], func));
 	}
-
-	int result_reg = gen_inline_constructor(type, components, func, nullptr);
-	for (int reg : components) {
-		free_register(func, reg);
+	const auto vector = [&](const char* vector_type, size_t first, size_t count) {
+		return gen_inline_constructor(vector_type,
+			std::vector<int>(scalars.begin() + first, scalars.begin() + first + count),
+			func, nullptr);
+	};
+	const auto basis_column = [&](size_t index) {
+		return gen_inline_constructor("Vector3",
+			{ scalars[index], scalars[index + 3], scalars[index + 6] }, func, nullptr);
+	};
+	std::vector<int> arguments;
+	int result = -1;
+	if (type == "Quaternion") {
+		arguments = scalars;
+		result = gen_host_constructor(type, arguments, func, nullptr);
+	} else if (type == "Transform2D") {
+		for (size_t i = 0; i < 3; i++) arguments.push_back(vector("Vector2", i * 2, 2));
+		result = gen_host_constructor(type, arguments, func, nullptr);
+	} else if (type == "Basis") {
+		for (size_t i = 0; i < 3; i++) arguments.push_back(basis_column(i));
+		result = gen_host_constructor(type, arguments, func, nullptr);
+	} else if (type == "Transform3D") {
+		std::vector<int> basis_columns;
+		for (size_t i = 0; i < 3; i++) basis_columns.push_back(basis_column(i));
+		const int basis = gen_host_constructor("Basis", basis_columns, func, nullptr);
+		for (int reg : basis_columns) free_register(func, reg);
+		const int origin = vector("Vector3", 9, 3);
+		arguments = { basis, origin };
+		result = gen_host_constructor(type, arguments, func, nullptr);
+	} else if (type == "Projection") {
+		for (size_t i = 0; i < 4; i++) arguments.push_back(vector("Vector4", i * 4, 4));
+		result = gen_host_constructor(type, arguments, func, nullptr);
+	} else {
+		throw CompilerException(ErrorType::CODEGEN_ERROR,
+			"No construction recipe for host constant " + type + "." + name);
 	}
-	return result_reg;
+	for (int reg : arguments) {
+		// Quaternion passes the scalar registers directly; they are released by
+		// the common scalar loop below.
+		if (type != "Quaternion") free_register(func, reg);
+	}
+	for (int reg : scalars) free_register(func, reg);
+	return result;
 }
 
 int CodeGenerator::gen_inline_constructor(const std::string& name, const std::vector<int>& arg_regs,
@@ -10178,9 +10282,6 @@ const VariableExpr* CodeGenerator::engine_enum_qualifier(const Expr* expr, Funct
 	if (enum_name.empty() || enum_name[0] < 'A' || enum_name[0] > 'Z') {
 		return nullptr;
 	}
-	if (enum_name.find_first_of("abcdefghijklmnopqrstuvwxyz") == std::string::npos) {
-		return nullptr;
-	}
 	auto* owner = dynamic_cast<const VariableExpr*>(member->object.get());
 	if (owner == nullptr || find_variable(func, owner->name) != nullptr) {
 		return nullptr;
@@ -10188,7 +10289,37 @@ const VariableExpr* CodeGenerator::engine_enum_qualifier(const Expr* expr, Funct
 	if (!is_global_class(owner->name) && !names_an_engine_type(owner->name, func)) {
 		return nullptr;
 	}
+	// Generated ClassDB knowledge is authoritative. Keep the spelling heuristic
+	// for extension classes absent from extension_api.json.
+	if (!engine_class_declares_enum(owner->name, enum_name) &&
+		enum_name.find_first_of("abcdefghijklmnopqrstuvwxyz") == std::string::npos) {
+		return nullptr;
+	}
 	return owner;
+}
+
+std::string CodeGenerator::inherited_engine_enum_owner(const std::string& enum_name) const {
+	std::string actual = "RefCounted";
+	if (m_current_class != nullptr) {
+		if (const std::string* base = native_base(*m_current_class)) actual = *base;
+	} else if (!m_script_base_class.empty()) {
+		actual = m_script_base_class;
+	}
+	if (engine_class_declares_enum(actual, enum_name)) return actual;
+	for (const auto& pair : m_engine_ancestry) {
+		if (pair.first != actual) continue;
+		size_t begin = 0;
+		while (begin <= pair.second.size()) {
+			const size_t end = pair.second.find(',', begin);
+			const size_t length = (end == std::string::npos ? pair.second.size() : end) - begin;
+			const std::string ancestor = pair.second.substr(begin, length);
+			if (engine_class_declares_enum(ancestor, enum_name)) return ancestor;
+			if (end == std::string::npos) break;
+			begin = end + 1;
+		}
+		break;
+	}
+	return {};
 }
 
 const std::string* CodeGenerator::chain_qualified_member(const Expr* expr, FunctionContext& func) {

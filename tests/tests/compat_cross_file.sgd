@@ -1,0 +1,17 @@
+extends Node
+
+func run():
+	var sgd_before := SgdCompatTarget.construction_count()
+	var gd_before := GdCompatTarget.construction_count()
+	var sgd_callable := Callable(SgdCompatTarget, &"add")
+	var gd_callable := Callable(GdCompatTarget, &"add")
+	return [
+		sgd_callable.call(1, 2),
+		gd_callable.call(2, 3),
+		SgdCompatTarget.ANSWER,
+		SgdCompatTarget.Kind.B,
+		GdCompatTarget.ANSWER,
+		GdCompatTarget.Kind.B,
+		SgdCompatTarget.construction_count() - sgd_before,
+		GdCompatTarget.construction_count() - gd_before,
+	]

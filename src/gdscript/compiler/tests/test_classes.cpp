@@ -1745,13 +1745,14 @@ void test_what_a_chain_refuses() {
 		"\treturn Elsewhere.helper()\n",
 		{ { "Base", "extends Node\nclass_name Base\n" } }).empty(),
 		"a script class outside the chain is reached through an instance");
-	const std::string bare = chain_error(
+	const IRProgram bare = compile_chain_to_ir(
 		"extends Base\n"
 		"func f():\n"
 		"\treturn Elsewhere\n",
 		{ { "Base", "extends Node\nclass_name Base\n" } });
-	check(bare.find("none of its body is compiled into this program") != std::string::npos,
-		"a script class is not a value on its own: " + bare);
+	const IRFunction* bare_f = find_function(bare, "f");
+	check(bare_f != nullptr && count_opcode(*bare_f, IROpcode::LOAD_RESOURCE) == 1,
+		"a script class used as a value loads its Script resource");
 
 	std::cout << "  \u2713 Collisions and cycles are refused" << std::endl;
 }

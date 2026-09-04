@@ -450,6 +450,9 @@ enum class Utility_Op {
 	// emitted by SafeGDScript compiled for an unrestricted Sandbox.
 	RANDOMIZE = 74,
 	SEED = 75,
+
+	// Variant value + Variant type descriptor, Variant bool out.
+	IS_INSTANCE_OF = 76,
 };
 
 // Output channel for ECALL_PRINT_CHANNEL.

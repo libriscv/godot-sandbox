@@ -185,7 +185,17 @@ void *SafeGDScript::_instance_create(Object *p_for_object) const {
 	}
 	SafeGDScriptInstance *instance = memnew(SafeGDScriptInstance(p_for_object, Ref<SafeGDScript>(this)));
 	instances.insert(instance);
-	return ScriptInstanceExtension::create_native_instance(instance);
+	void *native = ScriptInstanceExtension::create_native_instance(instance);
+	// Object::set_script() cannot install the returned ScriptInstance until this
+	// function returns.  _init() is already running by then in GDScript, though,
+	// and Object helpers such as connect(), has_method() and get_script() consult
+	// this pointer.  Install the same native instance early; set_script() sees the
+	// equal pointer afterwards and leaves ownership unchanged.
+	if (p_for_object != nullptr) {
+		internal::gdextension_interface_object_set_script_instance(p_for_object->_owner, native);
+	}
+	instance->call_init();
+	return native;
 }
 void *SafeGDScript::_placeholder_instance_create(Object *p_for_object) const {
 	SafeGDScriptPlaceholderInstance *placeholder = memnew(
@@ -243,6 +253,10 @@ void SafeGDScript::_get_property_list(List<PropertyInfo> *p_list) const {
 bool SafeGDScript::_get(const StringName &p_name, Variant &r_ret) const {
 	if (p_name == script_source_property()) {
 		r_ret = this->source_code;
+		return true;
+	}
+	if (const Variant *constant = constants.getptr(p_name)) {
+		r_ret = *constant;
 		return true;
 	}
 	return false;

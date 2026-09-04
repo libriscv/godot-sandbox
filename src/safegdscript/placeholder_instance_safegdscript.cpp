@@ -90,15 +90,42 @@ void SafeGDScriptPlaceholderInstance::get_property_state(
 }
 
 const GDExtensionMethodInfo *SafeGDScriptPlaceholderInstance::get_method_list(uint32_t *r_count) const {
-	*r_count = 0;
-	return nullptr;
+	if (!script->last_error.is_empty()) {
+		*r_count = 0;
+		return nullptr;
+	}
+	GDExtensionMethodInfo *list = memnew_arr(GDExtensionMethodInfo, script->methods_info.size());
+	for (size_t i = 0; i < script->methods_info.size(); i++) {
+		list[i] = create_method_info(script->methods_info[i]);
+	}
+	*r_count = uint32_t(script->methods_info.size());
+	return list;
 }
-void SafeGDScriptPlaceholderInstance::free_method_list(const GDExtensionMethodInfo *, uint32_t) const {}
-bool SafeGDScriptPlaceholderInstance::has_method(const StringName &) const { return false; }
-GDExtensionInt SafeGDScriptPlaceholderInstance::get_method_argument_count(const StringName &,
+void SafeGDScriptPlaceholderInstance::free_method_list(const GDExtensionMethodInfo *p_list,
+		uint32_t p_count) const {
+	if (p_list != nullptr) {
+		for (uint32_t i = 0; i < p_count; i++) {
+			free_method_info(p_list[i]);
+		}
+		memdelete_arr(p_list);
+	}
+}
+bool SafeGDScriptPlaceholderInstance::has_method(const StringName &p_method) const {
+	return script->last_error.is_empty() && script->_has_method(p_method);
+}
+GDExtensionInt SafeGDScriptPlaceholderInstance::get_method_argument_count(const StringName &p_method,
 		bool &r_valid) const {
-	r_valid = false;
-	return 0;
+	if (!script->last_error.is_empty()) {
+		r_valid = false;
+		return 0;
+	}
+	const MethodInfo *method = script->find_method_info(p_method);
+	if (method == nullptr || (method->flags & METHOD_FLAG_VARARG)) {
+		r_valid = false;
+		return 0;
+	}
+	r_valid = true;
+	return GDExtensionInt(method->arguments.size());
 }
 void SafeGDScriptPlaceholderInstance::callp(const StringName &, const Variant **, int,
 		Variant &r_return, GDExtensionCallError &r_error) {

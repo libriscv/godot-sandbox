@@ -461,7 +461,6 @@ SafeGDScriptInstance::SafeGDScriptInstance(Object *p_owner, const Ref<SafeGDScri
 	// the way the program initialized its own at startup.
 	this->instance_base = this->current_sandbox->create_instance_record();
 	this->instance_generation = this->current_sandbox->get_program_generation();
-	this->call_init();
 }
 
 void SafeGDScriptInstance::call_init() {

@@ -11,6 +11,7 @@
 #include <godot_cpp/classes/packed_scene.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
+#include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/classes/window.hpp>
 #include <godot_cpp/classes/timer.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -799,6 +800,7 @@ static double utility_math_op(Utility_Op op, const double args[8]) {
 		case Utility_Op::RAND_FROM_SEED:
 		case Utility_Op::RANDOMIZE:
 		case Utility_Op::SEED:
+		case Utility_Op::IS_INSTANCE_OF:
 			break;
 
 		// The random draws that *are* doubles. UtilityFunctions:: rather than
@@ -932,7 +934,8 @@ APICALL(api_utility) {
 		case Utility_Op::RAND_FROM_SEED:
 		case Utility_Op::RANDOMIZE:
 		case Utility_Op::SEED:
-		case Utility_Op::IS_INSTANCE_VALID: {
+		case Utility_Op::IS_INSTANCE_VALID:
+		case Utility_Op::IS_INSTANCE_OF: {
 			Sandbox &emu = riscv::emu(machine);
 			if (UNLIKELY((op == Utility_Op::RANDOMIZE || op == Utility_Op::SEED) &&
 					!emu.is_fully_unrestricted())) {
@@ -940,7 +943,8 @@ APICALL(api_utility) {
 			}
 			// str() takes up to 63 arguments and String() takes none at all;
 			// Binary: type_convert(), is_same(). Unary: the rest.
-			const bool binary = (op == Utility_Op::TYPE_CONVERT || op == Utility_Op::IS_SAME);
+			const bool binary = (op == Utility_Op::TYPE_CONVERT || op == Utility_Op::IS_SAME ||
+					op == Utility_Op::IS_INSTANCE_OF);
 			const bool no_args = (op == Utility_Op::RANDOMIZE);
 			const unsigned max_args = (op == Utility_Op::STR) ? 63 : (no_args ? 0 : (binary ? 2 : 1));
 			const unsigned min_args = (op == Utility_Op::STR || no_args) ? 0 : (binary ? 2 : 1);
@@ -1045,6 +1049,50 @@ APICALL(api_utility) {
 					vres->create(emu, UtilityFunctions::is_same(
 							*arg(0), *arg(1)));
 					break;
+					case Utility_Op::IS_INSTANCE_OF: {
+						PENALIZE(20'000);
+						BorrowedVariant borrowed_value = arg(0);
+						BorrowedVariant borrowed_type = arg(1);
+						const Variant &value = *borrowed_value;
+						const Variant &type = *borrowed_type;
+						bool matches = false;
+						if (type.get_type() == Variant::INT) {
+							const int64_t tag = type.operator int64_t();
+							if (tag >= 0 && tag < Variant::VARIANT_MAX) {
+								matches = value.get_type() == Variant::Type(tag);
+							} else {
+								ERR_PRINT("is_instance_of(): Invalid type argument");
+							}
+						} else if (type.get_type() == Variant::OBJECT) {
+							Object *type_object = type.operator Object *();
+							if (Script *required = Object::cast_to<Script>(type_object)) {
+								if (value.get_type() == Variant::OBJECT) {
+									Object *instance = value.operator Object *();
+									Object *actual_object = instance != nullptr
+											? instance->get_script().operator Object *() : nullptr;
+									Script *actual = Object::cast_to<Script>(actual_object);
+									for (int depth = 0; actual != nullptr && depth < 64; depth++) {
+										if (actual == required) {
+											matches = true;
+											break;
+										}
+										Ref<Script> base = actual->get_base_script();
+										actual = base.ptr();
+									}
+								}
+							} else if (type_object != nullptr &&
+									type_object->get_class() == StringName("GDScriptNativeClass")) {
+								ERR_PRINT("is_instance_of(): a native class object does not expose "
+										"its class name; write `value is ClassName` instead");
+							} else {
+								ERR_PRINT("is_instance_of(): Invalid type argument");
+							}
+						} else {
+							ERR_PRINT("is_instance_of(): Invalid type argument");
+						}
+						vres->create(emu, Variant(matches));
+						break;
+				}
 
 				// char() and ord(). godot-cpp binds neither -- `char` is a C++
 				// keyword -- so these are the String operations they are made of.

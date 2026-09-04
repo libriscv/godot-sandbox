@@ -59,6 +59,42 @@ DIAGNOSTIC_MARKERS = (
 DEFAULT_RUNTIME_SECONDS = 5.0
 SIMULATED_FPS = 60
 
+# Demos that this environment cannot judge: they fail the same way with plain
+# GDScript, so comparing the two modes says nothing about SafeGDScript.  Pass
+# --no-default-excludes to run them anyway.
+ENVIRONMENT_EXCLUSIONS = {
+    "xr/*": "needs an XR runtime and a headset",
+    "mono/*": "C# scripts need a .NET-enabled Godot; no script loads in either mode",
+    "audio/midi_piano": "aborts under --headless in either mode",
+    "audio/text_to_speech": "the display server exposes no voices; null call in either mode",
+    "compute/texture": "RenderingDevice is null under --headless; fails in either mode",
+    "networking/webrtc_minimal": "no WebRTC extension is configured; fails in either mode",
+    "mobile/android_iap": "the Google Play Billing addon is not part of the checkout",
+}
+
+# Leaks are reported as a count inside the message, so an unrelated drift of a
+# few objects reads as a brand new diagnostic.  Compare the counts instead.
+COUNTED_DIAGNOSTIC = re.compile(
+    r"^(?:WARNING|ERROR): (\d+) (?=.*(?:RIDs? of type|RID allocations|"
+    r"instances were leaked|resources? still in use))"
+)
+COUNT_TOLERANCE = 1.25
+COUNT_SLACK = 2
+
+# GDScript and SafeGDScript word a call on a null base differently.  Both mean
+# the same thing, so give them one spelling and let the comparison cancel them.
+NULL_CALL_FORMS = (
+    re.compile(r"^SCRIPT ERROR: Cannot call method '([^']+)' on a null value\.$"),
+    re.compile(
+        r"^SCRIPT ERROR: Attempt to call function '([^']+)' in base "
+        r"'null instance' on a null instance\.$"
+    ),
+    re.compile(
+        r"^ERROR: (?:Exception: )?Variant::call\(\): Invalid call\. "
+        r"Nonexistent function '([^']+)' in base 'Nil'\.$"
+    ),
+)
+
 
 class HarnessError(RuntimeError):
     pass
@@ -112,25 +148,39 @@ def save_state(project: Path, state: dict[str, object]) -> None:
     atomic_write(state_path(project), payload)
 
 
-def discover_projects(root: Path, patterns: Sequence[str]) -> list[Path]:
+def matches(relative: str, pattern: str) -> bool:
+    return fnmatch.fnmatch(relative, pattern) or fnmatch.fnmatch(relative, f"*{pattern}*")
+
+
+def discover_projects(
+    root: Path, patterns: Sequence[str], excludes: Sequence[str] = ()
+) -> list[Path]:
     if not root.is_dir():
         raise HarnessError(f"demo root does not exist: {root}")
     projects = sorted(path.parent for path in root.rglob("project.godot"))
     if patterns:
-        selected: list[Path] = []
-        for project in projects:
-            relative = project.relative_to(root).as_posix()
-            if any(
-                fnmatch.fnmatch(relative, pattern)
-                or fnmatch.fnmatch(relative, f"*{pattern}*")
-                for pattern in patterns
-            ):
-                selected.append(project)
-        projects = selected
+        projects = [
+            project
+            for project in projects
+            if any(matches(project.relative_to(root).as_posix(), pattern) for pattern in patterns)
+        ]
+    if excludes:
+        projects = [
+            project
+            for project in projects
+            if not any(matches(project.relative_to(root).as_posix(), pattern) for pattern in excludes)
+        ]
     if not projects:
         detail = f" matching {', '.join(patterns)}" if patterns else ""
         raise HarnessError(f"no projects found under {root}{detail}")
     return projects
+
+
+def selected_excludes(args: argparse.Namespace) -> list[str]:
+    excludes = list(getattr(args, "exclude", None) or [])
+    if not getattr(args, "no_default_excludes", False):
+        excludes.extend(ENVIRONMENT_EXCLUSIONS)
+    return excludes
 
 
 def project_name(project: Path, root: Path) -> str:
@@ -549,8 +599,47 @@ def normalized_diagnostics(result: RunResult) -> Counter[str]:
             continue
         line = line.replace(".sgd", ".gd")
         line = re.sub(r"\b0x[0-9a-fA-F]+\b", "0xADDR", line)
+        for form in NULL_CALL_FORMS:
+            match = form.match(line)
+            if match:
+                line = f"NULL CALL: '{match.group(1)}'"
+                break
         normalized.append(line)
     return Counter(normalized)
+
+
+def diagnostic_shapes(result: RunResult) -> tuple[Counter[str], Counter[str]]:
+    """Split diagnostics into message shapes and the object counts they report."""
+    shapes: Counter[str] = Counter()
+    counts: Counter[str] = Counter()
+    for line, repeats in normalized_diagnostics(result).items():
+        match = COUNTED_DIAGNOSTIC.match(line)
+        if not match:
+            shapes[line] += repeats
+            continue
+        shape = line[: match.start(1)] + "<N>" + line[match.end(1) :]
+        shape = re.sub(r"\bRIDs\b", "RID", shape)
+        shape = re.sub(r"\b(instance|resource|allocation)s\b", r"\1", shape)
+        shape = re.sub(r"\bwere\b", "was", shape)
+        shapes[shape] += repeats
+        counts[shape] += int(match.group(1)) * repeats
+    return shapes, counts
+
+
+def new_diagnostics_for(baseline: RunResult | None, safe: RunResult) -> Counter[str]:
+    """Diagnostics Safe mode adds, ignoring leak counts that barely moved."""
+    safe_shapes, safe_counts = diagnostic_shapes(safe)
+    if baseline is None:
+        return safe_shapes
+    base_shapes, base_counts = diagnostic_shapes(baseline)
+    added = safe_shapes - base_shapes
+    for shape, count in safe_counts.items():
+        if shape in added or shape not in base_counts:
+            continue
+        before = base_counts[shape]
+        if count > before * COUNT_TOLERANCE + COUNT_SLACK:
+            added[shape.replace("<N>", f"{before} -> {count}")] += 1
+    return added
 
 
 def write_summary(path: Path, mode: str, results: Sequence[RunResult]) -> None:
@@ -579,9 +668,7 @@ def compare_results(
     for result in safe:
         key = (result.project, result.phase)
         before = baseline_by_key.get(key)
-        new_diagnostics = normalized_diagnostics(result)
-        if before:
-            new_diagnostics -= normalized_diagnostics(before)
+        new_diagnostics = new_diagnostics_for(before, result)
         regressed = bool(new_diagnostics) or result.timed_out or result.returncode != 0
         if before and before.timed_out == result.timed_out and before.returncode == result.returncode:
             regressed = bool(new_diagnostics)
@@ -633,12 +720,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    def add_selection_options(command: argparse.ArgumentParser) -> None:
+        command.add_argument(
+            "--exclude",
+            action="append",
+            metavar="PATTERN",
+            help="skip projects matching this glob or substring (repeatable)",
+        )
+        command.add_argument(
+            "--no-default-excludes",
+            action="store_true",
+            help="also run the demos this environment cannot judge",
+        )
+
     listing = subparsers.add_parser("list", help="list selected demo projects")
     listing.add_argument("projects", nargs="*", help="relative path glob or substring")
+    add_selection_options(listing)
 
     toggle = subparsers.add_parser("toggle", help="switch selected projects and re-import")
     toggle.add_argument("mode", choices=("gd", "sgd"))
     toggle.add_argument("projects", nargs="*", help="relative path glob or substring")
+    add_selection_options(toggle)
 
     def add_runtime_options(command: argparse.ArgumentParser) -> None:
         duration = command.add_mutually_exclusive_group()
@@ -660,10 +762,12 @@ def build_parser() -> argparse.ArgumentParser:
     test = subparsers.add_parser("test", help="import and briefly run projects in their current mode")
     test.add_argument("projects", nargs="*", help="relative path glob or substring")
     add_runtime_options(test)
+    add_selection_options(test)
 
     matrix = subparsers.add_parser("matrix", help="compare GDScript and SafeGDScript, then restore GDScript")
     matrix.add_argument("projects", nargs="*", help="relative path glob or substring")
     add_runtime_options(matrix)
+    add_selection_options(matrix)
     return parser
 
 
@@ -692,7 +796,8 @@ def validate_jobs(jobs: int) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     root = args.root.expanduser().resolve()
-    projects = discover_projects(root, args.projects)
+    excludes = selected_excludes(args)
+    projects = discover_projects(root, args.projects, excludes)
     if args.command == "list":
         for project in projects:
             mode = "sgd" if load_state(project) else "gd"

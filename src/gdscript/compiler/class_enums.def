@@ -1,0 +1,1265 @@
+// Engine class enumeration names.
+// Generated from extension_api.json, Godot 4.5.0; do not edit.
+// Requires GDSC_CLASS_ENUM defined before inclusion.
+
+#ifndef GDSC_CLASS_ENUM
+#define GDSC_CLASS_ENUM(class_name, enum_name)
+#endif
+
+// AESContext
+GDSC_CLASS_ENUM(AESContext, Mode)
+
+// AStarGrid2D
+GDSC_CLASS_ENUM(AStarGrid2D, CellShape)
+GDSC_CLASS_ENUM(AStarGrid2D, DiagonalMode)
+GDSC_CLASS_ENUM(AStarGrid2D, Heuristic)
+
+// Animation
+GDSC_CLASS_ENUM(Animation, FindMode)
+GDSC_CLASS_ENUM(Animation, InterpolationType)
+GDSC_CLASS_ENUM(Animation, LoopMode)
+GDSC_CLASS_ENUM(Animation, LoopedFlag)
+GDSC_CLASS_ENUM(Animation, TrackType)
+GDSC_CLASS_ENUM(Animation, UpdateMode)
+
+// AnimationMixer
+GDSC_CLASS_ENUM(AnimationMixer, AnimationCallbackModeDiscrete)
+GDSC_CLASS_ENUM(AnimationMixer, AnimationCallbackModeMethod)
+GDSC_CLASS_ENUM(AnimationMixer, AnimationCallbackModeProcess)
+
+// AnimationNode
+GDSC_CLASS_ENUM(AnimationNode, FilterAction)
+
+// AnimationNodeAnimation
+GDSC_CLASS_ENUM(AnimationNodeAnimation, PlayMode)
+
+// AnimationNodeBlendSpace1D
+GDSC_CLASS_ENUM(AnimationNodeBlendSpace1D, BlendMode)
+
+// AnimationNodeBlendSpace2D
+GDSC_CLASS_ENUM(AnimationNodeBlendSpace2D, BlendMode)
+
+// AnimationNodeOneShot
+GDSC_CLASS_ENUM(AnimationNodeOneShot, MixMode)
+GDSC_CLASS_ENUM(AnimationNodeOneShot, OneShotRequest)
+
+// AnimationNodeStateMachine
+GDSC_CLASS_ENUM(AnimationNodeStateMachine, StateMachineType)
+
+// AnimationNodeStateMachineTransition
+GDSC_CLASS_ENUM(AnimationNodeStateMachineTransition, AdvanceMode)
+GDSC_CLASS_ENUM(AnimationNodeStateMachineTransition, SwitchMode)
+
+// AnimationPlayer
+GDSC_CLASS_ENUM(AnimationPlayer, AnimationMethodCallMode)
+GDSC_CLASS_ENUM(AnimationPlayer, AnimationProcessCallback)
+
+// AnimationTree
+GDSC_CLASS_ENUM(AnimationTree, AnimationProcessCallback)
+
+// Area2D
+GDSC_CLASS_ENUM(Area2D, SpaceOverride)
+
+// Area3D
+GDSC_CLASS_ENUM(Area3D, SpaceOverride)
+
+// AspectRatioContainer
+GDSC_CLASS_ENUM(AspectRatioContainer, AlignmentMode)
+GDSC_CLASS_ENUM(AspectRatioContainer, StretchMode)
+
+// AudioEffectDistortion
+GDSC_CLASS_ENUM(AudioEffectDistortion, Mode)
+
+// AudioEffectFilter
+GDSC_CLASS_ENUM(AudioEffectFilter, FilterDB)
+
+// AudioEffectPitchShift
+GDSC_CLASS_ENUM(AudioEffectPitchShift, FFTSize)
+
+// AudioEffectSpectrumAnalyzer
+GDSC_CLASS_ENUM(AudioEffectSpectrumAnalyzer, FFTSize)
+
+// AudioEffectSpectrumAnalyzerInstance
+GDSC_CLASS_ENUM(AudioEffectSpectrumAnalyzerInstance, MagnitudeMode)
+
+// AudioListener3D
+GDSC_CLASS_ENUM(AudioListener3D, DopplerTracking)
+
+// AudioServer
+GDSC_CLASS_ENUM(AudioServer, PlaybackType)
+GDSC_CLASS_ENUM(AudioServer, SpeakerMode)
+
+// AudioStreamGenerator
+GDSC_CLASS_ENUM(AudioStreamGenerator, AudioStreamGeneratorMixRate)
+
+// AudioStreamInteractive
+GDSC_CLASS_ENUM(AudioStreamInteractive, AutoAdvanceMode)
+GDSC_CLASS_ENUM(AudioStreamInteractive, FadeMode)
+GDSC_CLASS_ENUM(AudioStreamInteractive, TransitionFromTime)
+GDSC_CLASS_ENUM(AudioStreamInteractive, TransitionToTime)
+
+// AudioStreamPlayer
+GDSC_CLASS_ENUM(AudioStreamPlayer, MixTarget)
+
+// AudioStreamPlayer3D
+GDSC_CLASS_ENUM(AudioStreamPlayer3D, AttenuationModel)
+GDSC_CLASS_ENUM(AudioStreamPlayer3D, DopplerTracking)
+
+// AudioStreamRandomizer
+GDSC_CLASS_ENUM(AudioStreamRandomizer, PlaybackMode)
+
+// AudioStreamWAV
+GDSC_CLASS_ENUM(AudioStreamWAV, Format)
+GDSC_CLASS_ENUM(AudioStreamWAV, LoopMode)
+
+// BackBufferCopy
+GDSC_CLASS_ENUM(BackBufferCopy, CopyMode)
+
+// BaseButton
+GDSC_CLASS_ENUM(BaseButton, ActionMode)
+GDSC_CLASS_ENUM(BaseButton, DrawMode)
+
+// BaseMaterial3D
+GDSC_CLASS_ENUM(BaseMaterial3D, AlphaAntiAliasing)
+GDSC_CLASS_ENUM(BaseMaterial3D, BillboardMode)
+GDSC_CLASS_ENUM(BaseMaterial3D, BlendMode)
+GDSC_CLASS_ENUM(BaseMaterial3D, CullMode)
+GDSC_CLASS_ENUM(BaseMaterial3D, DepthDrawMode)
+GDSC_CLASS_ENUM(BaseMaterial3D, DepthTest)
+GDSC_CLASS_ENUM(BaseMaterial3D, DetailUV)
+GDSC_CLASS_ENUM(BaseMaterial3D, DiffuseMode)
+GDSC_CLASS_ENUM(BaseMaterial3D, DistanceFadeMode)
+GDSC_CLASS_ENUM(BaseMaterial3D, EmissionOperator)
+GDSC_CLASS_ENUM(BaseMaterial3D, Feature)
+GDSC_CLASS_ENUM(BaseMaterial3D, Flags)
+GDSC_CLASS_ENUM(BaseMaterial3D, ShadingMode)
+GDSC_CLASS_ENUM(BaseMaterial3D, SpecularMode)
+GDSC_CLASS_ENUM(BaseMaterial3D, StencilCompare)
+GDSC_CLASS_ENUM(BaseMaterial3D, StencilFlags)
+GDSC_CLASS_ENUM(BaseMaterial3D, StencilMode)
+GDSC_CLASS_ENUM(BaseMaterial3D, TextureChannel)
+GDSC_CLASS_ENUM(BaseMaterial3D, TextureFilter)
+GDSC_CLASS_ENUM(BaseMaterial3D, TextureParam)
+GDSC_CLASS_ENUM(BaseMaterial3D, Transparency)
+
+// BoxContainer
+GDSC_CLASS_ENUM(BoxContainer, AlignmentMode)
+
+// CPUParticles2D
+GDSC_CLASS_ENUM(CPUParticles2D, DrawOrder)
+GDSC_CLASS_ENUM(CPUParticles2D, EmissionShape)
+GDSC_CLASS_ENUM(CPUParticles2D, Parameter)
+GDSC_CLASS_ENUM(CPUParticles2D, ParticleFlags)
+
+// CPUParticles3D
+GDSC_CLASS_ENUM(CPUParticles3D, DrawOrder)
+GDSC_CLASS_ENUM(CPUParticles3D, EmissionShape)
+GDSC_CLASS_ENUM(CPUParticles3D, Parameter)
+GDSC_CLASS_ENUM(CPUParticles3D, ParticleFlags)
+
+// CSGPolygon3D
+GDSC_CLASS_ENUM(CSGPolygon3D, Mode)
+GDSC_CLASS_ENUM(CSGPolygon3D, PathIntervalType)
+GDSC_CLASS_ENUM(CSGPolygon3D, PathRotation)
+
+// CSGShape3D
+GDSC_CLASS_ENUM(CSGShape3D, Operation)
+
+// Camera2D
+GDSC_CLASS_ENUM(Camera2D, AnchorMode)
+GDSC_CLASS_ENUM(Camera2D, Camera2DProcessCallback)
+
+// Camera3D
+GDSC_CLASS_ENUM(Camera3D, DopplerTracking)
+GDSC_CLASS_ENUM(Camera3D, KeepAspect)
+GDSC_CLASS_ENUM(Camera3D, ProjectionType)
+
+// CameraFeed
+GDSC_CLASS_ENUM(CameraFeed, FeedDataType)
+GDSC_CLASS_ENUM(CameraFeed, FeedPosition)
+
+// CameraServer
+GDSC_CLASS_ENUM(CameraServer, FeedImage)
+
+// CanvasItem
+GDSC_CLASS_ENUM(CanvasItem, ClipChildrenMode)
+GDSC_CLASS_ENUM(CanvasItem, TextureFilter)
+GDSC_CLASS_ENUM(CanvasItem, TextureRepeat)
+
+// CanvasItemMaterial
+GDSC_CLASS_ENUM(CanvasItemMaterial, BlendMode)
+GDSC_CLASS_ENUM(CanvasItemMaterial, LightMode)
+
+// CharacterBody2D
+GDSC_CLASS_ENUM(CharacterBody2D, MotionMode)
+GDSC_CLASS_ENUM(CharacterBody2D, PlatformOnLeave)
+
+// CharacterBody3D
+GDSC_CLASS_ENUM(CharacterBody3D, MotionMode)
+GDSC_CLASS_ENUM(CharacterBody3D, PlatformOnLeave)
+
+// ClassDB
+GDSC_CLASS_ENUM(ClassDB, APIType)
+
+// CodeEdit
+GDSC_CLASS_ENUM(CodeEdit, CodeCompletionKind)
+GDSC_CLASS_ENUM(CodeEdit, CodeCompletionLocation)
+
+// CollisionObject2D
+GDSC_CLASS_ENUM(CollisionObject2D, DisableMode)
+
+// CollisionObject3D
+GDSC_CLASS_ENUM(CollisionObject3D, DisableMode)
+
+// CollisionPolygon2D
+GDSC_CLASS_ENUM(CollisionPolygon2D, BuildMode)
+
+// ColorPicker
+GDSC_CLASS_ENUM(ColorPicker, ColorModeType)
+GDSC_CLASS_ENUM(ColorPicker, PickerShapeType)
+
+// CompositorEffect
+GDSC_CLASS_ENUM(CompositorEffect, EffectCallbackType)
+
+// ConeTwistJoint3D
+GDSC_CLASS_ENUM(ConeTwistJoint3D, Param)
+
+// Control
+GDSC_CLASS_ENUM(Control, Anchor)
+GDSC_CLASS_ENUM(Control, CursorShape)
+GDSC_CLASS_ENUM(Control, FocusBehaviorRecursive)
+GDSC_CLASS_ENUM(Control, FocusMode)
+GDSC_CLASS_ENUM(Control, GrowDirection)
+GDSC_CLASS_ENUM(Control, LayoutDirection)
+GDSC_CLASS_ENUM(Control, LayoutPreset)
+GDSC_CLASS_ENUM(Control, LayoutPresetMode)
+GDSC_CLASS_ENUM(Control, MouseBehaviorRecursive)
+GDSC_CLASS_ENUM(Control, MouseFilter)
+GDSC_CLASS_ENUM(Control, SizeFlags)
+GDSC_CLASS_ENUM(Control, TextDirection)
+
+// ConvertTransformModifier3D
+GDSC_CLASS_ENUM(ConvertTransformModifier3D, TransformMode)
+
+// CopyTransformModifier3D
+GDSC_CLASS_ENUM(CopyTransformModifier3D, AxisFlag)
+GDSC_CLASS_ENUM(CopyTransformModifier3D, TransformFlag)
+
+// Curve
+GDSC_CLASS_ENUM(Curve, TangentMode)
+
+// CurveTexture
+GDSC_CLASS_ENUM(CurveTexture, TextureMode)
+
+// Decal
+GDSC_CLASS_ENUM(Decal, DecalTexture)
+
+// DirectionalLight3D
+GDSC_CLASS_ENUM(DirectionalLight3D, ShadowMode)
+GDSC_CLASS_ENUM(DirectionalLight3D, SkyMode)
+
+// DisplayServer
+GDSC_CLASS_ENUM(DisplayServer, AccessibilityAction)
+GDSC_CLASS_ENUM(DisplayServer, AccessibilityFlags)
+GDSC_CLASS_ENUM(DisplayServer, AccessibilityLiveMode)
+GDSC_CLASS_ENUM(DisplayServer, AccessibilityPopupType)
+GDSC_CLASS_ENUM(DisplayServer, AccessibilityRole)
+GDSC_CLASS_ENUM(DisplayServer, AccessibilityScrollHint)
+GDSC_CLASS_ENUM(DisplayServer, AccessibilityScrollUnit)
+GDSC_CLASS_ENUM(DisplayServer, CursorShape)
+GDSC_CLASS_ENUM(DisplayServer, Feature)
+GDSC_CLASS_ENUM(DisplayServer, FileDialogMode)
+GDSC_CLASS_ENUM(DisplayServer, HandleType)
+GDSC_CLASS_ENUM(DisplayServer, MouseMode)
+GDSC_CLASS_ENUM(DisplayServer, ScreenOrientation)
+GDSC_CLASS_ENUM(DisplayServer, TTSUtteranceEvent)
+GDSC_CLASS_ENUM(DisplayServer, VSyncMode)
+GDSC_CLASS_ENUM(DisplayServer, VirtualKeyboardType)
+GDSC_CLASS_ENUM(DisplayServer, WindowEvent)
+GDSC_CLASS_ENUM(DisplayServer, WindowFlags)
+GDSC_CLASS_ENUM(DisplayServer, WindowMode)
+GDSC_CLASS_ENUM(DisplayServer, WindowResizeEdge)
+
+// ENetConnection
+GDSC_CLASS_ENUM(ENetConnection, CompressionMode)
+GDSC_CLASS_ENUM(ENetConnection, EventType)
+GDSC_CLASS_ENUM(ENetConnection, HostStatistic)
+
+// ENetPacketPeer
+GDSC_CLASS_ENUM(ENetPacketPeer, PeerState)
+GDSC_CLASS_ENUM(ENetPacketPeer, PeerStatistic)
+
+// EditorContextMenuPlugin
+GDSC_CLASS_ENUM(EditorContextMenuPlugin, ContextMenuSlot)
+
+// EditorExportPlatform
+GDSC_CLASS_ENUM(EditorExportPlatform, DebugFlags)
+GDSC_CLASS_ENUM(EditorExportPlatform, ExportMessageType)
+
+// EditorExportPreset
+GDSC_CLASS_ENUM(EditorExportPreset, ExportFilter)
+GDSC_CLASS_ENUM(EditorExportPreset, FileExportMode)
+GDSC_CLASS_ENUM(EditorExportPreset, ScriptExportMode)
+
+// EditorFeatureProfile
+GDSC_CLASS_ENUM(EditorFeatureProfile, Feature)
+
+// EditorFileDialog
+GDSC_CLASS_ENUM(EditorFileDialog, Access)
+GDSC_CLASS_ENUM(EditorFileDialog, DisplayMode)
+GDSC_CLASS_ENUM(EditorFileDialog, FileMode)
+
+// EditorPlugin
+GDSC_CLASS_ENUM(EditorPlugin, AfterGUIInput)
+GDSC_CLASS_ENUM(EditorPlugin, CustomControlContainer)
+GDSC_CLASS_ENUM(EditorPlugin, DockSlot)
+
+// EditorScenePostImportPlugin
+GDSC_CLASS_ENUM(EditorScenePostImportPlugin, InternalImportCategory)
+
+// EditorToaster
+GDSC_CLASS_ENUM(EditorToaster, Severity)
+
+// EditorUndoRedoManager
+GDSC_CLASS_ENUM(EditorUndoRedoManager, SpecialHistory)
+
+// EditorVCSInterface
+GDSC_CLASS_ENUM(EditorVCSInterface, ChangeType)
+GDSC_CLASS_ENUM(EditorVCSInterface, TreeArea)
+
+// Environment
+GDSC_CLASS_ENUM(Environment, AmbientSource)
+GDSC_CLASS_ENUM(Environment, BGMode)
+GDSC_CLASS_ENUM(Environment, FogMode)
+GDSC_CLASS_ENUM(Environment, GlowBlendMode)
+GDSC_CLASS_ENUM(Environment, ReflectionSource)
+GDSC_CLASS_ENUM(Environment, SDFGIYScale)
+GDSC_CLASS_ENUM(Environment, ToneMapper)
+
+// FastNoiseLite
+GDSC_CLASS_ENUM(FastNoiseLite, CellularDistanceFunction)
+GDSC_CLASS_ENUM(FastNoiseLite, CellularReturnType)
+GDSC_CLASS_ENUM(FastNoiseLite, DomainWarpFractalType)
+GDSC_CLASS_ENUM(FastNoiseLite, DomainWarpType)
+GDSC_CLASS_ENUM(FastNoiseLite, FractalType)
+GDSC_CLASS_ENUM(FastNoiseLite, NoiseType)
+
+// FileAccess
+GDSC_CLASS_ENUM(FileAccess, CompressionMode)
+GDSC_CLASS_ENUM(FileAccess, ModeFlags)
+GDSC_CLASS_ENUM(FileAccess, UnixPermissionFlags)
+
+// FileDialog
+GDSC_CLASS_ENUM(FileDialog, Access)
+GDSC_CLASS_ENUM(FileDialog, Customization)
+GDSC_CLASS_ENUM(FileDialog, DisplayMode)
+GDSC_CLASS_ENUM(FileDialog, FileMode)
+
+// FlowContainer
+GDSC_CLASS_ENUM(FlowContainer, AlignmentMode)
+GDSC_CLASS_ENUM(FlowContainer, LastWrapAlignmentMode)
+
+// FoldableContainer
+GDSC_CLASS_ENUM(FoldableContainer, TitlePosition)
+
+// GDExtension
+GDSC_CLASS_ENUM(GDExtension, InitializationLevel)
+
+// GDExtensionManager
+GDSC_CLASS_ENUM(GDExtensionManager, LoadStatus)
+
+// GLTFAccessor
+GDSC_CLASS_ENUM(GLTFAccessor, GLTFAccessorType)
+GDSC_CLASS_ENUM(GLTFAccessor, GLTFComponentType)
+
+// GLTFDocument
+GDSC_CLASS_ENUM(GLTFDocument, RootNodeMode)
+GDSC_CLASS_ENUM(GLTFDocument, VisibilityMode)
+
+// GLTFObjectModelProperty
+GDSC_CLASS_ENUM(GLTFObjectModelProperty, GLTFObjectModelType)
+
+// GPUParticles2D
+GDSC_CLASS_ENUM(GPUParticles2D, DrawOrder)
+GDSC_CLASS_ENUM(GPUParticles2D, EmitFlags)
+
+// GPUParticles3D
+GDSC_CLASS_ENUM(GPUParticles3D, DrawOrder)
+GDSC_CLASS_ENUM(GPUParticles3D, EmitFlags)
+GDSC_CLASS_ENUM(GPUParticles3D, TransformAlign)
+
+// GPUParticlesCollisionHeightField3D
+GDSC_CLASS_ENUM(GPUParticlesCollisionHeightField3D, Resolution)
+GDSC_CLASS_ENUM(GPUParticlesCollisionHeightField3D, UpdateMode)
+
+// GPUParticlesCollisionSDF3D
+GDSC_CLASS_ENUM(GPUParticlesCollisionSDF3D, Resolution)
+
+// Generic6DOFJoint3D
+GDSC_CLASS_ENUM(Generic6DOFJoint3D, Flag)
+GDSC_CLASS_ENUM(Generic6DOFJoint3D, Param)
+
+// Geometry2D
+GDSC_CLASS_ENUM(Geometry2D, PolyBooleanOperation)
+GDSC_CLASS_ENUM(Geometry2D, PolyEndType)
+GDSC_CLASS_ENUM(Geometry2D, PolyJoinType)
+
+// GeometryInstance3D
+GDSC_CLASS_ENUM(GeometryInstance3D, GIMode)
+GDSC_CLASS_ENUM(GeometryInstance3D, LightmapScale)
+GDSC_CLASS_ENUM(GeometryInstance3D, ShadowCastingSetting)
+GDSC_CLASS_ENUM(GeometryInstance3D, VisibilityRangeFadeMode)
+
+// Gradient
+GDSC_CLASS_ENUM(Gradient, ColorSpace)
+GDSC_CLASS_ENUM(Gradient, InterpolationMode)
+
+// GradientTexture2D
+GDSC_CLASS_ENUM(GradientTexture2D, Fill)
+GDSC_CLASS_ENUM(GradientTexture2D, Repeat)
+
+// GraphEdit
+GDSC_CLASS_ENUM(GraphEdit, GridPattern)
+GDSC_CLASS_ENUM(GraphEdit, PanningScheme)
+
+// HTTPClient
+GDSC_CLASS_ENUM(HTTPClient, Method)
+GDSC_CLASS_ENUM(HTTPClient, ResponseCode)
+GDSC_CLASS_ENUM(HTTPClient, Status)
+
+// HTTPRequest
+GDSC_CLASS_ENUM(HTTPRequest, Result)
+
+// HashingContext
+GDSC_CLASS_ENUM(HashingContext, HashType)
+
+// HingeJoint3D
+GDSC_CLASS_ENUM(HingeJoint3D, Flag)
+GDSC_CLASS_ENUM(HingeJoint3D, Param)
+
+// IP
+GDSC_CLASS_ENUM(IP, ResolverStatus)
+GDSC_CLASS_ENUM(IP, Type)
+
+// Image
+GDSC_CLASS_ENUM(Image, ASTCFormat)
+GDSC_CLASS_ENUM(Image, AlphaMode)
+GDSC_CLASS_ENUM(Image, CompressMode)
+GDSC_CLASS_ENUM(Image, CompressSource)
+GDSC_CLASS_ENUM(Image, Format)
+GDSC_CLASS_ENUM(Image, Interpolation)
+GDSC_CLASS_ENUM(Image, UsedChannels)
+
+// ImageFormatLoader
+GDSC_CLASS_ENUM(ImageFormatLoader, LoaderFlags)
+
+// Input
+GDSC_CLASS_ENUM(Input, CursorShape)
+GDSC_CLASS_ENUM(Input, MouseMode)
+
+// ItemList
+GDSC_CLASS_ENUM(ItemList, IconMode)
+GDSC_CLASS_ENUM(ItemList, SelectMode)
+
+// JSONRPC
+GDSC_CLASS_ENUM(JSONRPC, ErrorCode)
+
+// Label3D
+GDSC_CLASS_ENUM(Label3D, AlphaCutMode)
+GDSC_CLASS_ENUM(Label3D, DrawFlags)
+
+// Light2D
+GDSC_CLASS_ENUM(Light2D, BlendMode)
+GDSC_CLASS_ENUM(Light2D, ShadowFilter)
+
+// Light3D
+GDSC_CLASS_ENUM(Light3D, BakeMode)
+GDSC_CLASS_ENUM(Light3D, Param)
+
+// LightmapGI
+GDSC_CLASS_ENUM(LightmapGI, BakeError)
+GDSC_CLASS_ENUM(LightmapGI, BakeQuality)
+GDSC_CLASS_ENUM(LightmapGI, EnvironmentMode)
+GDSC_CLASS_ENUM(LightmapGI, GenerateProbes)
+
+// LightmapGIData
+GDSC_CLASS_ENUM(LightmapGIData, ShadowmaskMode)
+
+// Line2D
+GDSC_CLASS_ENUM(Line2D, LineCapMode)
+GDSC_CLASS_ENUM(Line2D, LineJointMode)
+GDSC_CLASS_ENUM(Line2D, LineTextureMode)
+
+// LineEdit
+GDSC_CLASS_ENUM(LineEdit, MenuItems)
+GDSC_CLASS_ENUM(LineEdit, VirtualKeyboardType)
+
+// LinkButton
+GDSC_CLASS_ENUM(LinkButton, UnderlineMode)
+
+// Logger
+GDSC_CLASS_ENUM(Logger, ErrorType)
+
+// LookAtModifier3D
+GDSC_CLASS_ENUM(LookAtModifier3D, OriginFrom)
+
+// Mesh
+GDSC_CLASS_ENUM(Mesh, ArrayCustomFormat)
+GDSC_CLASS_ENUM(Mesh, ArrayFormat)
+GDSC_CLASS_ENUM(Mesh, ArrayType)
+GDSC_CLASS_ENUM(Mesh, BlendShapeMode)
+GDSC_CLASS_ENUM(Mesh, PrimitiveType)
+
+// MeshConvexDecompositionSettings
+GDSC_CLASS_ENUM(MeshConvexDecompositionSettings, Mode)
+
+// MultiMesh
+GDSC_CLASS_ENUM(MultiMesh, PhysicsInterpolationQuality)
+GDSC_CLASS_ENUM(MultiMesh, TransformFormat)
+
+// MultiplayerAPI
+GDSC_CLASS_ENUM(MultiplayerAPI, RPCMode)
+
+// MultiplayerPeer
+GDSC_CLASS_ENUM(MultiplayerPeer, ConnectionStatus)
+GDSC_CLASS_ENUM(MultiplayerPeer, TransferMode)
+
+// MultiplayerSynchronizer
+GDSC_CLASS_ENUM(MultiplayerSynchronizer, VisibilityUpdateMode)
+
+// NativeMenu
+GDSC_CLASS_ENUM(NativeMenu, Feature)
+GDSC_CLASS_ENUM(NativeMenu, SystemMenus)
+
+// NavigationMesh
+GDSC_CLASS_ENUM(NavigationMesh, ParsedGeometryType)
+GDSC_CLASS_ENUM(NavigationMesh, SamplePartitionType)
+GDSC_CLASS_ENUM(NavigationMesh, SourceGeometryMode)
+
+// NavigationPathQueryParameters2D
+GDSC_CLASS_ENUM(NavigationPathQueryParameters2D, PathMetadataFlags)
+GDSC_CLASS_ENUM(NavigationPathQueryParameters2D, PathPostProcessing)
+GDSC_CLASS_ENUM(NavigationPathQueryParameters2D, PathfindingAlgorithm)
+
+// NavigationPathQueryParameters3D
+GDSC_CLASS_ENUM(NavigationPathQueryParameters3D, PathMetadataFlags)
+GDSC_CLASS_ENUM(NavigationPathQueryParameters3D, PathPostProcessing)
+GDSC_CLASS_ENUM(NavigationPathQueryParameters3D, PathfindingAlgorithm)
+
+// NavigationPathQueryResult2D
+GDSC_CLASS_ENUM(NavigationPathQueryResult2D, PathSegmentType)
+
+// NavigationPathQueryResult3D
+GDSC_CLASS_ENUM(NavigationPathQueryResult3D, PathSegmentType)
+
+// NavigationPolygon
+GDSC_CLASS_ENUM(NavigationPolygon, ParsedGeometryType)
+GDSC_CLASS_ENUM(NavigationPolygon, SamplePartitionType)
+GDSC_CLASS_ENUM(NavigationPolygon, SourceGeometryMode)
+
+// NavigationServer2D
+GDSC_CLASS_ENUM(NavigationServer2D, ProcessInfo)
+
+// NavigationServer3D
+GDSC_CLASS_ENUM(NavigationServer3D, ProcessInfo)
+
+// NinePatchRect
+GDSC_CLASS_ENUM(NinePatchRect, AxisStretchMode)
+
+// Node
+GDSC_CLASS_ENUM(Node, AutoTranslateMode)
+GDSC_CLASS_ENUM(Node, DuplicateFlags)
+GDSC_CLASS_ENUM(Node, InternalMode)
+GDSC_CLASS_ENUM(Node, PhysicsInterpolationMode)
+GDSC_CLASS_ENUM(Node, ProcessMode)
+GDSC_CLASS_ENUM(Node, ProcessThreadGroup)
+GDSC_CLASS_ENUM(Node, ProcessThreadMessages)
+
+// Node3D
+GDSC_CLASS_ENUM(Node3D, RotationEditMode)
+
+// OS
+GDSC_CLASS_ENUM(OS, RenderingDriver)
+GDSC_CLASS_ENUM(OS, StdHandleType)
+GDSC_CLASS_ENUM(OS, SystemDir)
+
+// Object
+GDSC_CLASS_ENUM(Object, ConnectFlags)
+
+// OccluderPolygon2D
+GDSC_CLASS_ENUM(OccluderPolygon2D, CullMode)
+
+// OmniLight3D
+GDSC_CLASS_ENUM(OmniLight3D, ShadowMode)
+
+// OpenXRAPIExtension
+GDSC_CLASS_ENUM(OpenXRAPIExtension, OpenXRAlphaBlendModeSupport)
+
+// OpenXRAction
+GDSC_CLASS_ENUM(OpenXRAction, ActionType)
+
+// OpenXRCompositionLayer
+GDSC_CLASS_ENUM(OpenXRCompositionLayer, Filter)
+GDSC_CLASS_ENUM(OpenXRCompositionLayer, MipmapMode)
+GDSC_CLASS_ENUM(OpenXRCompositionLayer, Swizzle)
+GDSC_CLASS_ENUM(OpenXRCompositionLayer, Wrap)
+
+// OpenXRFutureResult
+GDSC_CLASS_ENUM(OpenXRFutureResult, ResultStatus)
+
+// OpenXRHand
+GDSC_CLASS_ENUM(OpenXRHand, BoneUpdate)
+GDSC_CLASS_ENUM(OpenXRHand, Hands)
+GDSC_CLASS_ENUM(OpenXRHand, MotionRange)
+GDSC_CLASS_ENUM(OpenXRHand, SkeletonRig)
+
+// OpenXRInterface
+GDSC_CLASS_ENUM(OpenXRInterface, Hand)
+GDSC_CLASS_ENUM(OpenXRInterface, HandJointFlags)
+GDSC_CLASS_ENUM(OpenXRInterface, HandJoints)
+GDSC_CLASS_ENUM(OpenXRInterface, HandMotionRange)
+GDSC_CLASS_ENUM(OpenXRInterface, HandTrackedSource)
+GDSC_CLASS_ENUM(OpenXRInterface, PerfSettingsLevel)
+GDSC_CLASS_ENUM(OpenXRInterface, PerfSettingsNotificationLevel)
+GDSC_CLASS_ENUM(OpenXRInterface, PerfSettingsSubDomain)
+GDSC_CLASS_ENUM(OpenXRInterface, SessionState)
+
+// OpenXRRenderModelManager
+GDSC_CLASS_ENUM(OpenXRRenderModelManager, RenderModelTracker)
+
+// PackedScene
+GDSC_CLASS_ENUM(PackedScene, GenEditState)
+
+// PacketPeerDTLS
+GDSC_CLASS_ENUM(PacketPeerDTLS, Status)
+
+// ParticleProcessMaterial
+GDSC_CLASS_ENUM(ParticleProcessMaterial, CollisionMode)
+GDSC_CLASS_ENUM(ParticleProcessMaterial, EmissionShape)
+GDSC_CLASS_ENUM(ParticleProcessMaterial, Parameter)
+GDSC_CLASS_ENUM(ParticleProcessMaterial, ParticleFlags)
+GDSC_CLASS_ENUM(ParticleProcessMaterial, SubEmitterMode)
+
+// PathFollow3D
+GDSC_CLASS_ENUM(PathFollow3D, RotationMode)
+
+// Performance
+GDSC_CLASS_ENUM(Performance, Monitor)
+
+// PhysicalBone3D
+GDSC_CLASS_ENUM(PhysicalBone3D, DampMode)
+GDSC_CLASS_ENUM(PhysicalBone3D, JointType)
+
+// PhysicsServer2D
+GDSC_CLASS_ENUM(PhysicsServer2D, AreaBodyStatus)
+GDSC_CLASS_ENUM(PhysicsServer2D, AreaParameter)
+GDSC_CLASS_ENUM(PhysicsServer2D, AreaSpaceOverrideMode)
+GDSC_CLASS_ENUM(PhysicsServer2D, BodyDampMode)
+GDSC_CLASS_ENUM(PhysicsServer2D, BodyMode)
+GDSC_CLASS_ENUM(PhysicsServer2D, BodyParameter)
+GDSC_CLASS_ENUM(PhysicsServer2D, BodyState)
+GDSC_CLASS_ENUM(PhysicsServer2D, CCDMode)
+GDSC_CLASS_ENUM(PhysicsServer2D, DampedSpringParam)
+GDSC_CLASS_ENUM(PhysicsServer2D, JointParam)
+GDSC_CLASS_ENUM(PhysicsServer2D, JointType)
+GDSC_CLASS_ENUM(PhysicsServer2D, PinJointFlag)
+GDSC_CLASS_ENUM(PhysicsServer2D, PinJointParam)
+GDSC_CLASS_ENUM(PhysicsServer2D, ProcessInfo)
+GDSC_CLASS_ENUM(PhysicsServer2D, ShapeType)
+GDSC_CLASS_ENUM(PhysicsServer2D, SpaceParameter)
+
+// PhysicsServer3D
+GDSC_CLASS_ENUM(PhysicsServer3D, AreaBodyStatus)
+GDSC_CLASS_ENUM(PhysicsServer3D, AreaParameter)
+GDSC_CLASS_ENUM(PhysicsServer3D, AreaSpaceOverrideMode)
+GDSC_CLASS_ENUM(PhysicsServer3D, BodyAxis)
+GDSC_CLASS_ENUM(PhysicsServer3D, BodyDampMode)
+GDSC_CLASS_ENUM(PhysicsServer3D, BodyMode)
+GDSC_CLASS_ENUM(PhysicsServer3D, BodyParameter)
+GDSC_CLASS_ENUM(PhysicsServer3D, BodyState)
+GDSC_CLASS_ENUM(PhysicsServer3D, ConeTwistJointParam)
+GDSC_CLASS_ENUM(PhysicsServer3D, G6DOFJointAxisFlag)
+GDSC_CLASS_ENUM(PhysicsServer3D, G6DOFJointAxisParam)
+GDSC_CLASS_ENUM(PhysicsServer3D, HingeJointFlag)
+GDSC_CLASS_ENUM(PhysicsServer3D, HingeJointParam)
+GDSC_CLASS_ENUM(PhysicsServer3D, JointType)
+GDSC_CLASS_ENUM(PhysicsServer3D, PinJointParam)
+GDSC_CLASS_ENUM(PhysicsServer3D, ProcessInfo)
+GDSC_CLASS_ENUM(PhysicsServer3D, ShapeType)
+GDSC_CLASS_ENUM(PhysicsServer3D, SliderJointParam)
+GDSC_CLASS_ENUM(PhysicsServer3D, SpaceParameter)
+
+// PinJoint3D
+GDSC_CLASS_ENUM(PinJoint3D, Param)
+
+// PlaneMesh
+GDSC_CLASS_ENUM(PlaneMesh, Orientation)
+
+// PortableCompressedTexture2D
+GDSC_CLASS_ENUM(PortableCompressedTexture2D, CompressionMode)
+
+// ProgressBar
+GDSC_CLASS_ENUM(ProgressBar, FillMode)
+
+// ReflectionProbe
+GDSC_CLASS_ENUM(ReflectionProbe, AmbientMode)
+GDSC_CLASS_ENUM(ReflectionProbe, UpdateMode)
+
+// RenderingDevice
+GDSC_CLASS_ENUM(RenderingDevice, BarrierMask)
+GDSC_CLASS_ENUM(RenderingDevice, BlendFactor)
+GDSC_CLASS_ENUM(RenderingDevice, BlendOperation)
+GDSC_CLASS_ENUM(RenderingDevice, BreadcrumbMarker)
+GDSC_CLASS_ENUM(RenderingDevice, BufferCreationBits)
+GDSC_CLASS_ENUM(RenderingDevice, CompareOperator)
+GDSC_CLASS_ENUM(RenderingDevice, DataFormat)
+GDSC_CLASS_ENUM(RenderingDevice, DeviceType)
+GDSC_CLASS_ENUM(RenderingDevice, DrawFlags)
+GDSC_CLASS_ENUM(RenderingDevice, DriverResource)
+GDSC_CLASS_ENUM(RenderingDevice, Features)
+GDSC_CLASS_ENUM(RenderingDevice, FinalAction)
+GDSC_CLASS_ENUM(RenderingDevice, IndexBufferFormat)
+GDSC_CLASS_ENUM(RenderingDevice, InitialAction)
+GDSC_CLASS_ENUM(RenderingDevice, Limit)
+GDSC_CLASS_ENUM(RenderingDevice, LogicOperation)
+GDSC_CLASS_ENUM(RenderingDevice, MemoryType)
+GDSC_CLASS_ENUM(RenderingDevice, PipelineDynamicStateFlags)
+GDSC_CLASS_ENUM(RenderingDevice, PipelineSpecializationConstantType)
+GDSC_CLASS_ENUM(RenderingDevice, PolygonCullMode)
+GDSC_CLASS_ENUM(RenderingDevice, PolygonFrontFace)
+GDSC_CLASS_ENUM(RenderingDevice, RenderPrimitive)
+GDSC_CLASS_ENUM(RenderingDevice, SamplerBorderColor)
+GDSC_CLASS_ENUM(RenderingDevice, SamplerFilter)
+GDSC_CLASS_ENUM(RenderingDevice, SamplerRepeatMode)
+GDSC_CLASS_ENUM(RenderingDevice, ShaderLanguage)
+GDSC_CLASS_ENUM(RenderingDevice, ShaderStage)
+GDSC_CLASS_ENUM(RenderingDevice, StencilOperation)
+GDSC_CLASS_ENUM(RenderingDevice, StorageBufferUsage)
+GDSC_CLASS_ENUM(RenderingDevice, TextureSamples)
+GDSC_CLASS_ENUM(RenderingDevice, TextureSliceType)
+GDSC_CLASS_ENUM(RenderingDevice, TextureSwizzle)
+GDSC_CLASS_ENUM(RenderingDevice, TextureType)
+GDSC_CLASS_ENUM(RenderingDevice, TextureUsageBits)
+GDSC_CLASS_ENUM(RenderingDevice, UniformType)
+GDSC_CLASS_ENUM(RenderingDevice, VertexFrequency)
+
+// RenderingServer
+GDSC_CLASS_ENUM(RenderingServer, ArrayCustomFormat)
+GDSC_CLASS_ENUM(RenderingServer, ArrayFormat)
+GDSC_CLASS_ENUM(RenderingServer, ArrayType)
+GDSC_CLASS_ENUM(RenderingServer, BakeChannels)
+GDSC_CLASS_ENUM(RenderingServer, BlendShapeMode)
+GDSC_CLASS_ENUM(RenderingServer, CanvasGroupMode)
+GDSC_CLASS_ENUM(RenderingServer, CanvasItemTextureFilter)
+GDSC_CLASS_ENUM(RenderingServer, CanvasItemTextureRepeat)
+GDSC_CLASS_ENUM(RenderingServer, CanvasLightBlendMode)
+GDSC_CLASS_ENUM(RenderingServer, CanvasLightMode)
+GDSC_CLASS_ENUM(RenderingServer, CanvasLightShadowFilter)
+GDSC_CLASS_ENUM(RenderingServer, CanvasOccluderPolygonCullMode)
+GDSC_CLASS_ENUM(RenderingServer, CanvasTextureChannel)
+GDSC_CLASS_ENUM(RenderingServer, CompositorEffectCallbackType)
+GDSC_CLASS_ENUM(RenderingServer, CompositorEffectFlags)
+GDSC_CLASS_ENUM(RenderingServer, CubeMapLayer)
+GDSC_CLASS_ENUM(RenderingServer, DOFBlurQuality)
+GDSC_CLASS_ENUM(RenderingServer, DOFBokehShape)
+GDSC_CLASS_ENUM(RenderingServer, DecalFilter)
+GDSC_CLASS_ENUM(RenderingServer, DecalTexture)
+GDSC_CLASS_ENUM(RenderingServer, EnvironmentAmbientSource)
+GDSC_CLASS_ENUM(RenderingServer, EnvironmentBG)
+GDSC_CLASS_ENUM(RenderingServer, EnvironmentFogMode)
+GDSC_CLASS_ENUM(RenderingServer, EnvironmentGlowBlendMode)
+GDSC_CLASS_ENUM(RenderingServer, EnvironmentReflectionSource)
+GDSC_CLASS_ENUM(RenderingServer, EnvironmentSDFGIFramesToConverge)
+GDSC_CLASS_ENUM(RenderingServer, EnvironmentSDFGIFramesToUpdateLight)
+GDSC_CLASS_ENUM(RenderingServer, EnvironmentSDFGIRayCount)
+GDSC_CLASS_ENUM(RenderingServer, EnvironmentSDFGIYScale)
+GDSC_CLASS_ENUM(RenderingServer, EnvironmentSSAOQuality)
+GDSC_CLASS_ENUM(RenderingServer, EnvironmentSSILQuality)
+GDSC_CLASS_ENUM(RenderingServer, EnvironmentSSRRoughnessQuality)
+GDSC_CLASS_ENUM(RenderingServer, EnvironmentToneMapper)
+GDSC_CLASS_ENUM(RenderingServer, Features)
+GDSC_CLASS_ENUM(RenderingServer, FogVolumeShape)
+GDSC_CLASS_ENUM(RenderingServer, GlobalShaderParameterType)
+GDSC_CLASS_ENUM(RenderingServer, InstanceFlags)
+GDSC_CLASS_ENUM(RenderingServer, InstanceType)
+GDSC_CLASS_ENUM(RenderingServer, LightBakeMode)
+GDSC_CLASS_ENUM(RenderingServer, LightDirectionalShadowMode)
+GDSC_CLASS_ENUM(RenderingServer, LightDirectionalSkyMode)
+GDSC_CLASS_ENUM(RenderingServer, LightOmniShadowMode)
+GDSC_CLASS_ENUM(RenderingServer, LightParam)
+GDSC_CLASS_ENUM(RenderingServer, LightProjectorFilter)
+GDSC_CLASS_ENUM(RenderingServer, LightType)
+GDSC_CLASS_ENUM(RenderingServer, MultimeshPhysicsInterpolationQuality)
+GDSC_CLASS_ENUM(RenderingServer, MultimeshTransformFormat)
+GDSC_CLASS_ENUM(RenderingServer, NinePatchAxisMode)
+GDSC_CLASS_ENUM(RenderingServer, ParticlesCollisionHeightfieldResolution)
+GDSC_CLASS_ENUM(RenderingServer, ParticlesCollisionType)
+GDSC_CLASS_ENUM(RenderingServer, ParticlesDrawOrder)
+GDSC_CLASS_ENUM(RenderingServer, ParticlesMode)
+GDSC_CLASS_ENUM(RenderingServer, ParticlesTransformAlign)
+GDSC_CLASS_ENUM(RenderingServer, PipelineSource)
+GDSC_CLASS_ENUM(RenderingServer, PrimitiveType)
+GDSC_CLASS_ENUM(RenderingServer, ReflectionProbeAmbientMode)
+GDSC_CLASS_ENUM(RenderingServer, ReflectionProbeUpdateMode)
+GDSC_CLASS_ENUM(RenderingServer, RenderingInfo)
+GDSC_CLASS_ENUM(RenderingServer, ShaderMode)
+GDSC_CLASS_ENUM(RenderingServer, ShadowCastingSetting)
+GDSC_CLASS_ENUM(RenderingServer, ShadowQuality)
+GDSC_CLASS_ENUM(RenderingServer, SkyMode)
+GDSC_CLASS_ENUM(RenderingServer, SubSurfaceScatteringQuality)
+GDSC_CLASS_ENUM(RenderingServer, TextureLayeredType)
+GDSC_CLASS_ENUM(RenderingServer, TextureType)
+GDSC_CLASS_ENUM(RenderingServer, ViewportAnisotropicFiltering)
+GDSC_CLASS_ENUM(RenderingServer, ViewportClearMode)
+GDSC_CLASS_ENUM(RenderingServer, ViewportDebugDraw)
+GDSC_CLASS_ENUM(RenderingServer, ViewportEnvironmentMode)
+GDSC_CLASS_ENUM(RenderingServer, ViewportMSAA)
+GDSC_CLASS_ENUM(RenderingServer, ViewportOcclusionCullingBuildQuality)
+GDSC_CLASS_ENUM(RenderingServer, ViewportRenderInfo)
+GDSC_CLASS_ENUM(RenderingServer, ViewportRenderInfoType)
+GDSC_CLASS_ENUM(RenderingServer, ViewportSDFOversize)
+GDSC_CLASS_ENUM(RenderingServer, ViewportSDFScale)
+GDSC_CLASS_ENUM(RenderingServer, ViewportScaling3DMode)
+GDSC_CLASS_ENUM(RenderingServer, ViewportScreenSpaceAA)
+GDSC_CLASS_ENUM(RenderingServer, ViewportUpdateMode)
+GDSC_CLASS_ENUM(RenderingServer, ViewportVRSMode)
+GDSC_CLASS_ENUM(RenderingServer, ViewportVRSUpdateMode)
+GDSC_CLASS_ENUM(RenderingServer, VisibilityRangeFadeMode)
+GDSC_CLASS_ENUM(RenderingServer, VoxelGIQuality)
+
+// Resource
+GDSC_CLASS_ENUM(Resource, DeepDuplicateMode)
+
+// ResourceFormatLoader
+GDSC_CLASS_ENUM(ResourceFormatLoader, CacheMode)
+
+// ResourceImporter
+GDSC_CLASS_ENUM(ResourceImporter, ImportOrder)
+
+// ResourceLoader
+GDSC_CLASS_ENUM(ResourceLoader, CacheMode)
+GDSC_CLASS_ENUM(ResourceLoader, ThreadLoadStatus)
+
+// ResourceSaver
+GDSC_CLASS_ENUM(ResourceSaver, SaverFlags)
+
+// RetargetModifier3D
+GDSC_CLASS_ENUM(RetargetModifier3D, TransformFlag)
+
+// RibbonTrailMesh
+GDSC_CLASS_ENUM(RibbonTrailMesh, Shape)
+
+// RichTextLabel
+GDSC_CLASS_ENUM(RichTextLabel, ImageUpdateMask)
+GDSC_CLASS_ENUM(RichTextLabel, ListType)
+GDSC_CLASS_ENUM(RichTextLabel, MenuItems)
+GDSC_CLASS_ENUM(RichTextLabel, MetaUnderline)
+
+// RigidBody2D
+GDSC_CLASS_ENUM(RigidBody2D, CCDMode)
+GDSC_CLASS_ENUM(RigidBody2D, CenterOfMassMode)
+GDSC_CLASS_ENUM(RigidBody2D, DampMode)
+GDSC_CLASS_ENUM(RigidBody2D, FreezeMode)
+
+// RigidBody3D
+GDSC_CLASS_ENUM(RigidBody3D, CenterOfMassMode)
+GDSC_CLASS_ENUM(RigidBody3D, DampMode)
+GDSC_CLASS_ENUM(RigidBody3D, FreezeMode)
+
+// SceneReplicationConfig
+GDSC_CLASS_ENUM(SceneReplicationConfig, ReplicationMode)
+
+// SceneState
+GDSC_CLASS_ENUM(SceneState, GenEditState)
+
+// SceneTree
+GDSC_CLASS_ENUM(SceneTree, GroupCallFlags)
+
+// ScriptLanguage
+GDSC_CLASS_ENUM(ScriptLanguage, ScriptNameCasing)
+
+// ScriptLanguageExtension
+GDSC_CLASS_ENUM(ScriptLanguageExtension, CodeCompletionKind)
+GDSC_CLASS_ENUM(ScriptLanguageExtension, CodeCompletionLocation)
+GDSC_CLASS_ENUM(ScriptLanguageExtension, LookupResultType)
+
+// ScrollContainer
+GDSC_CLASS_ENUM(ScrollContainer, ScrollMode)
+
+// Shader
+GDSC_CLASS_ENUM(Shader, Mode)
+
+// Skeleton3D
+GDSC_CLASS_ENUM(Skeleton3D, ModifierCallbackModeProcess)
+
+// SkeletonModifier3D
+GDSC_CLASS_ENUM(SkeletonModifier3D, BoneAxis)
+
+// SkeletonProfile
+GDSC_CLASS_ENUM(SkeletonProfile, TailDirection)
+
+// Sky
+GDSC_CLASS_ENUM(Sky, ProcessMode)
+GDSC_CLASS_ENUM(Sky, RadianceSize)
+
+// Slider
+GDSC_CLASS_ENUM(Slider, TickPosition)
+
+// SliderJoint3D
+GDSC_CLASS_ENUM(SliderJoint3D, Param)
+
+// SoftBody3D
+GDSC_CLASS_ENUM(SoftBody3D, DisableMode)
+
+// SplitContainer
+GDSC_CLASS_ENUM(SplitContainer, DraggerVisibility)
+
+// SpringBoneSimulator3D
+GDSC_CLASS_ENUM(SpringBoneSimulator3D, BoneDirection)
+GDSC_CLASS_ENUM(SpringBoneSimulator3D, CenterFrom)
+GDSC_CLASS_ENUM(SpringBoneSimulator3D, RotationAxis)
+
+// SpriteBase3D
+GDSC_CLASS_ENUM(SpriteBase3D, AlphaCutMode)
+GDSC_CLASS_ENUM(SpriteBase3D, DrawFlags)
+
+// StreamPeerTCP
+GDSC_CLASS_ENUM(StreamPeerTCP, Status)
+
+// StreamPeerTLS
+GDSC_CLASS_ENUM(StreamPeerTLS, Status)
+
+// StyleBoxTexture
+GDSC_CLASS_ENUM(StyleBoxTexture, AxisStretchMode)
+
+// SubViewport
+GDSC_CLASS_ENUM(SubViewport, ClearMode)
+GDSC_CLASS_ENUM(SubViewport, UpdateMode)
+
+// SurfaceTool
+GDSC_CLASS_ENUM(SurfaceTool, CustomFormat)
+GDSC_CLASS_ENUM(SurfaceTool, SkinWeightCount)
+
+// TabBar
+GDSC_CLASS_ENUM(TabBar, AlignmentMode)
+GDSC_CLASS_ENUM(TabBar, CloseButtonDisplayPolicy)
+
+// TabContainer
+GDSC_CLASS_ENUM(TabContainer, TabPosition)
+
+// TextEdit
+GDSC_CLASS_ENUM(TextEdit, CaretType)
+GDSC_CLASS_ENUM(TextEdit, EditAction)
+GDSC_CLASS_ENUM(TextEdit, GutterType)
+GDSC_CLASS_ENUM(TextEdit, LineWrappingMode)
+GDSC_CLASS_ENUM(TextEdit, MenuItems)
+GDSC_CLASS_ENUM(TextEdit, SearchFlags)
+GDSC_CLASS_ENUM(TextEdit, SelectionMode)
+
+// TextServer
+GDSC_CLASS_ENUM(TextServer, AutowrapMode)
+GDSC_CLASS_ENUM(TextServer, ContourPointTag)
+GDSC_CLASS_ENUM(TextServer, Direction)
+GDSC_CLASS_ENUM(TextServer, Feature)
+GDSC_CLASS_ENUM(TextServer, FixedSizeScaleMode)
+GDSC_CLASS_ENUM(TextServer, FontAntialiasing)
+GDSC_CLASS_ENUM(TextServer, FontLCDSubpixelLayout)
+GDSC_CLASS_ENUM(TextServer, FontStyle)
+GDSC_CLASS_ENUM(TextServer, GraphemeFlag)
+GDSC_CLASS_ENUM(TextServer, Hinting)
+GDSC_CLASS_ENUM(TextServer, JustificationFlag)
+GDSC_CLASS_ENUM(TextServer, LineBreakFlag)
+GDSC_CLASS_ENUM(TextServer, Orientation)
+GDSC_CLASS_ENUM(TextServer, OverrunBehavior)
+GDSC_CLASS_ENUM(TextServer, SpacingType)
+GDSC_CLASS_ENUM(TextServer, StructuredTextParser)
+GDSC_CLASS_ENUM(TextServer, SubpixelPositioning)
+GDSC_CLASS_ENUM(TextServer, TextOverrunFlag)
+GDSC_CLASS_ENUM(TextServer, VisibleCharactersBehavior)
+
+// TextureButton
+GDSC_CLASS_ENUM(TextureButton, StretchMode)
+
+// TextureLayered
+GDSC_CLASS_ENUM(TextureLayered, LayeredType)
+
+// TextureProgressBar
+GDSC_CLASS_ENUM(TextureProgressBar, FillMode)
+
+// TextureRect
+GDSC_CLASS_ENUM(TextureRect, ExpandMode)
+GDSC_CLASS_ENUM(TextureRect, StretchMode)
+
+// Theme
+GDSC_CLASS_ENUM(Theme, DataType)
+
+// Thread
+GDSC_CLASS_ENUM(Thread, Priority)
+
+// TileMap
+GDSC_CLASS_ENUM(TileMap, VisibilityMode)
+
+// TileMapLayer
+GDSC_CLASS_ENUM(TileMapLayer, DebugVisibilityMode)
+
+// TileSet
+GDSC_CLASS_ENUM(TileSet, CellNeighbor)
+GDSC_CLASS_ENUM(TileSet, TerrainMode)
+GDSC_CLASS_ENUM(TileSet, TileLayout)
+GDSC_CLASS_ENUM(TileSet, TileOffsetAxis)
+GDSC_CLASS_ENUM(TileSet, TileShape)
+
+// TileSetAtlasSource
+GDSC_CLASS_ENUM(TileSetAtlasSource, TileAnimationMode)
+
+// Time
+GDSC_CLASS_ENUM(Time, Month)
+GDSC_CLASS_ENUM(Time, Weekday)
+
+// Timer
+GDSC_CLASS_ENUM(Timer, TimerProcessCallback)
+
+// TouchScreenButton
+GDSC_CLASS_ENUM(TouchScreenButton, VisibilityMode)
+
+// Tree
+GDSC_CLASS_ENUM(Tree, DropModeFlags)
+GDSC_CLASS_ENUM(Tree, SelectMode)
+
+// TreeItem
+GDSC_CLASS_ENUM(TreeItem, TreeCellMode)
+
+// Tween
+GDSC_CLASS_ENUM(Tween, EaseType)
+GDSC_CLASS_ENUM(Tween, TransitionType)
+GDSC_CLASS_ENUM(Tween, TweenPauseMode)
+GDSC_CLASS_ENUM(Tween, TweenProcessMode)
+
+// UPNP
+GDSC_CLASS_ENUM(UPNP, UPNPResult)
+
+// UPNPDevice
+GDSC_CLASS_ENUM(UPNPDevice, IGDStatus)
+
+// UndoRedo
+GDSC_CLASS_ENUM(UndoRedo, MergeMode)
+
+// Viewport
+GDSC_CLASS_ENUM(Viewport, AnisotropicFiltering)
+GDSC_CLASS_ENUM(Viewport, DebugDraw)
+GDSC_CLASS_ENUM(Viewport, DefaultCanvasItemTextureFilter)
+GDSC_CLASS_ENUM(Viewport, DefaultCanvasItemTextureRepeat)
+GDSC_CLASS_ENUM(Viewport, MSAA)
+GDSC_CLASS_ENUM(Viewport, PositionalShadowAtlasQuadrantSubdiv)
+GDSC_CLASS_ENUM(Viewport, RenderInfo)
+GDSC_CLASS_ENUM(Viewport, RenderInfoType)
+GDSC_CLASS_ENUM(Viewport, SDFOversize)
+GDSC_CLASS_ENUM(Viewport, SDFScale)
+GDSC_CLASS_ENUM(Viewport, Scaling3DMode)
+GDSC_CLASS_ENUM(Viewport, ScreenSpaceAA)
+GDSC_CLASS_ENUM(Viewport, VRSMode)
+GDSC_CLASS_ENUM(Viewport, VRSUpdateMode)
+
+// VisibleOnScreenEnabler2D
+GDSC_CLASS_ENUM(VisibleOnScreenEnabler2D, EnableMode)
+
+// VisibleOnScreenEnabler3D
+GDSC_CLASS_ENUM(VisibleOnScreenEnabler3D, EnableMode)
+
+// VisualShader
+GDSC_CLASS_ENUM(VisualShader, Type)
+GDSC_CLASS_ENUM(VisualShader, VaryingMode)
+GDSC_CLASS_ENUM(VisualShader, VaryingType)
+
+// VisualShaderNode
+GDSC_CLASS_ENUM(VisualShaderNode, PortType)
+
+// VisualShaderNodeBillboard
+GDSC_CLASS_ENUM(VisualShaderNodeBillboard, BillboardType)
+
+// VisualShaderNodeClamp
+GDSC_CLASS_ENUM(VisualShaderNodeClamp, OpType)
+
+// VisualShaderNodeColorFunc
+GDSC_CLASS_ENUM(VisualShaderNodeColorFunc, Function)
+
+// VisualShaderNodeColorOp
+GDSC_CLASS_ENUM(VisualShaderNodeColorOp, Operator)
+
+// VisualShaderNodeCompare
+GDSC_CLASS_ENUM(VisualShaderNodeCompare, ComparisonType)
+GDSC_CLASS_ENUM(VisualShaderNodeCompare, Condition)
+GDSC_CLASS_ENUM(VisualShaderNodeCompare, Function)
+
+// VisualShaderNodeCubemap
+GDSC_CLASS_ENUM(VisualShaderNodeCubemap, Source)
+GDSC_CLASS_ENUM(VisualShaderNodeCubemap, TextureType)
+
+// VisualShaderNodeDerivativeFunc
+GDSC_CLASS_ENUM(VisualShaderNodeDerivativeFunc, Function)
+GDSC_CLASS_ENUM(VisualShaderNodeDerivativeFunc, OpType)
+GDSC_CLASS_ENUM(VisualShaderNodeDerivativeFunc, Precision)
+
+// VisualShaderNodeFloatFunc
+GDSC_CLASS_ENUM(VisualShaderNodeFloatFunc, Function)
+
+// VisualShaderNodeFloatOp
+GDSC_CLASS_ENUM(VisualShaderNodeFloatOp, Operator)
+
+// VisualShaderNodeFloatParameter
+GDSC_CLASS_ENUM(VisualShaderNodeFloatParameter, Hint)
+
+// VisualShaderNodeIntFunc
+GDSC_CLASS_ENUM(VisualShaderNodeIntFunc, Function)
+
+// VisualShaderNodeIntOp
+GDSC_CLASS_ENUM(VisualShaderNodeIntOp, Operator)
+
+// VisualShaderNodeIntParameter
+GDSC_CLASS_ENUM(VisualShaderNodeIntParameter, Hint)
+
+// VisualShaderNodeIs
+GDSC_CLASS_ENUM(VisualShaderNodeIs, Function)
+
+// VisualShaderNodeMix
+GDSC_CLASS_ENUM(VisualShaderNodeMix, OpType)
+
+// VisualShaderNodeMultiplyAdd
+GDSC_CLASS_ENUM(VisualShaderNodeMultiplyAdd, OpType)
+
+// VisualShaderNodeParameter
+GDSC_CLASS_ENUM(VisualShaderNodeParameter, Qualifier)
+
+// VisualShaderNodeParticleAccelerator
+GDSC_CLASS_ENUM(VisualShaderNodeParticleAccelerator, Mode)
+
+// VisualShaderNodeParticleEmit
+GDSC_CLASS_ENUM(VisualShaderNodeParticleEmit, EmitFlags)
+
+// VisualShaderNodeParticleRandomness
+GDSC_CLASS_ENUM(VisualShaderNodeParticleRandomness, OpType)
+
+// VisualShaderNodeRemap
+GDSC_CLASS_ENUM(VisualShaderNodeRemap, OpType)
+
+// VisualShaderNodeSample3D
+GDSC_CLASS_ENUM(VisualShaderNodeSample3D, Source)
+
+// VisualShaderNodeSmoothStep
+GDSC_CLASS_ENUM(VisualShaderNodeSmoothStep, OpType)
+
+// VisualShaderNodeStep
+GDSC_CLASS_ENUM(VisualShaderNodeStep, OpType)
+
+// VisualShaderNodeSwitch
+GDSC_CLASS_ENUM(VisualShaderNodeSwitch, OpType)
+
+// VisualShaderNodeTexture
+GDSC_CLASS_ENUM(VisualShaderNodeTexture, Source)
+GDSC_CLASS_ENUM(VisualShaderNodeTexture, TextureType)
+
+// VisualShaderNodeTextureParameter
+GDSC_CLASS_ENUM(VisualShaderNodeTextureParameter, ColorDefault)
+GDSC_CLASS_ENUM(VisualShaderNodeTextureParameter, TextureFilter)
+GDSC_CLASS_ENUM(VisualShaderNodeTextureParameter, TextureRepeat)
+GDSC_CLASS_ENUM(VisualShaderNodeTextureParameter, TextureSource)
+GDSC_CLASS_ENUM(VisualShaderNodeTextureParameter, TextureType)
+
+// VisualShaderNodeTransformFunc
+GDSC_CLASS_ENUM(VisualShaderNodeTransformFunc, Function)
+
+// VisualShaderNodeTransformOp
+GDSC_CLASS_ENUM(VisualShaderNodeTransformOp, Operator)
+
+// VisualShaderNodeTransformVecMult
+GDSC_CLASS_ENUM(VisualShaderNodeTransformVecMult, Operator)
+
+// VisualShaderNodeUIntFunc
+GDSC_CLASS_ENUM(VisualShaderNodeUIntFunc, Function)
+
+// VisualShaderNodeUIntOp
+GDSC_CLASS_ENUM(VisualShaderNodeUIntOp, Operator)
+
+// VisualShaderNodeUVFunc
+GDSC_CLASS_ENUM(VisualShaderNodeUVFunc, Function)
+
+// VisualShaderNodeVectorBase
+GDSC_CLASS_ENUM(VisualShaderNodeVectorBase, OpType)
+
+// VisualShaderNodeVectorFunc
+GDSC_CLASS_ENUM(VisualShaderNodeVectorFunc, Function)
+
+// VisualShaderNodeVectorOp
+GDSC_CLASS_ENUM(VisualShaderNodeVectorOp, Operator)
+
+// VoxelGI
+GDSC_CLASS_ENUM(VoxelGI, Subdiv)
+
+// WebRTCDataChannel
+GDSC_CLASS_ENUM(WebRTCDataChannel, ChannelState)
+GDSC_CLASS_ENUM(WebRTCDataChannel, WriteMode)
+
+// WebRTCPeerConnection
+GDSC_CLASS_ENUM(WebRTCPeerConnection, ConnectionState)
+GDSC_CLASS_ENUM(WebRTCPeerConnection, GatheringState)
+GDSC_CLASS_ENUM(WebRTCPeerConnection, SignalingState)
+
+// WebSocketPeer
+GDSC_CLASS_ENUM(WebSocketPeer, State)
+GDSC_CLASS_ENUM(WebSocketPeer, WriteMode)
+
+// WebXRInterface
+GDSC_CLASS_ENUM(WebXRInterface, TargetRayMode)
+
+// Window
+GDSC_CLASS_ENUM(Window, ContentScaleAspect)
+GDSC_CLASS_ENUM(Window, ContentScaleMode)
+GDSC_CLASS_ENUM(Window, ContentScaleStretch)
+GDSC_CLASS_ENUM(Window, Flags)
+GDSC_CLASS_ENUM(Window, LayoutDirection)
+GDSC_CLASS_ENUM(Window, Mode)
+GDSC_CLASS_ENUM(Window, WindowInitialPosition)
+
+// XMLParser
+GDSC_CLASS_ENUM(XMLParser, NodeType)
+
+// XRBodyModifier3D
+GDSC_CLASS_ENUM(XRBodyModifier3D, BodyUpdate)
+GDSC_CLASS_ENUM(XRBodyModifier3D, BoneUpdate)
+
+// XRBodyTracker
+GDSC_CLASS_ENUM(XRBodyTracker, BodyFlags)
+GDSC_CLASS_ENUM(XRBodyTracker, Joint)
+GDSC_CLASS_ENUM(XRBodyTracker, JointFlags)
+
+// XRFaceTracker
+GDSC_CLASS_ENUM(XRFaceTracker, BlendShapeEntry)
+
+// XRHandModifier3D
+GDSC_CLASS_ENUM(XRHandModifier3D, BoneUpdate)
+
+// XRHandTracker
+GDSC_CLASS_ENUM(XRHandTracker, HandJoint)
+GDSC_CLASS_ENUM(XRHandTracker, HandJointFlags)
+GDSC_CLASS_ENUM(XRHandTracker, HandTrackingSource)
+
+// XRInterface
+GDSC_CLASS_ENUM(XRInterface, Capabilities)
+GDSC_CLASS_ENUM(XRInterface, EnvironmentBlendMode)
+GDSC_CLASS_ENUM(XRInterface, PlayAreaMode)
+GDSC_CLASS_ENUM(XRInterface, TrackingStatus)
+GDSC_CLASS_ENUM(XRInterface, VRSTextureFormat)
+
+// XRPose
+GDSC_CLASS_ENUM(XRPose, TrackingConfidence)
+
+// XRPositionalTracker
+GDSC_CLASS_ENUM(XRPositionalTracker, TrackerHand)
+
+// XRServer
+GDSC_CLASS_ENUM(XRServer, RotationMode)
+GDSC_CLASS_ENUM(XRServer, TrackerType)
+
+// ZIPPacker
+GDSC_CLASS_ENUM(ZIPPacker, CompressionLevel)
+GDSC_CLASS_ENUM(ZIPPacker, ZipAppend)

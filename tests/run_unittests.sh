@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 set -e
 GODOT_VERSION=4.6.3
 

@@ -13544,6 +13544,65 @@ func run():
 	assert_true(node.has_signal("finished"), "an inherited signal should be published")
 	node.free()
 
+func test_sgd_init_sees_its_own_script_instance():
+	var script := SafeGDScript.new()
+	script.set_source_code("""
+extends Node
+signal own
+var observations := []
+var handled := false
+func _init():
+	observations = [has_signal("own"), has_method("_on_own"), get_script() != null]
+	own.connect(_on_own)
+func _on_own():
+	handled = true
+func _ready():
+	own.emit()
+func result():
+	return [observations, handled]
+""")
+	assert_eq(script.get_compile_error(), "")
+	var node := Node.new()
+	node.set_script(script)
+	add_child(node)
+	assert_eq(node.call("result"), [[true, true, true], true],
+		"_init should see methods, signals and the ScriptInstance already installed")
+	node.queue_free()
+
+func test_sgd_init_sees_an_inherited_signal():
+	var base_path := "user://temp_init_signal_base.gd"
+	var base := FileAccess.open(base_path, FileAccess.WRITE)
+	base.store_string("extends Node\nsignal inherited\n")
+	base.close()
+	var leaf_path := "user://temp_init_signal_leaf.sgd"
+	var leaf := FileAccess.open(leaf_path, FileAccess.WRITE)
+	leaf.store_string("""
+extends "user://temp_init_signal_base.gd"
+var saw_signal := false
+var handled := false
+func _init():
+	saw_signal = has_signal("inherited")
+	inherited.connect(_on_inherited)
+func _on_inherited():
+	handled = true
+func _ready():
+	inherited.emit()
+func result():
+	return [saw_signal, handled]
+""")
+	leaf.close()
+	var script = load(leaf_path)
+	assert_not_null(script)
+	if script == null:
+		return
+	assert_eq(script.get_compile_error(), "")
+	var node := Node.new()
+	node.set_script(script)
+	add_child(node)
+	assert_eq(node.call("result"), [true, true],
+		"a base signal should be visible and connectable during _init")
+	node.queue_free()
+
 func test_sgd_a_coroutine_may_override_a_named_property_setter():
 	var base_path = "user://temp_coroutine_setter_base.gd"
 	var base = FileAccess.open(base_path, FileAccess.WRITE)
@@ -14274,6 +14333,90 @@ func test_sgd_a_static_call_follows_a_recompile():
 	script.set_source_code("static func answer():\n\treturn 2\n")
 	assert_eq(script.get_compile_error(), "", "the second version should compile")
 	assert_eq(script.call("answer"), 2, "and the recompiled program should answer after it")
+
+func test_sgd_is_instance_of_matches_gdscript_type_descriptors():
+	var checker := SafeGDScript.new()
+	checker.set_source_code("""
+func run(sgd_value, gd_value):
+	return [
+		is_instance_of(3, TYPE_INT),
+		is_instance_of(3.0, TYPE_INT),
+		is_instance_of(sgd_value, RefCounted),
+		is_instance_of(null, RefCounted),
+		is_instance_of(sgd_value, preload("res://tests/compat_target.sgd")),
+		is_instance_of(gd_value, preload("res://tests/compat_target.gd")),
+	]
+""")
+	assert_eq(checker.get_compile_error(), "")
+	var node := Node.new()
+	node.set_script(checker)
+	var sgd_value: RefCounted = SgdCompatTarget.new()
+	var gd_value: RefCounted = GdCompatTarget.new()
+	assert_eq(node.call("run", sgd_value, gd_value),
+		[true, false, true, false, true, true])
+	node.free()
+
+func test_sgd_host_constructed_builtin_constants_match_godot():
+	var script := SafeGDScript.new()
+	script.set_source_code("""
+func run():
+	var changed := Transform2D.IDENTITY
+	changed.x *= 2.0
+	return [changed, Transform3D.FLIP_Z, Basis.FLIP_Y,
+		Quaternion.IDENTITY, Projection.ZERO]
+""")
+	assert_eq(script.get_compile_error(), "")
+	var node := Node.new()
+	node.set_script(script)
+	var values: Array = node.call("run")
+	assert_eq(values[0], Transform2D(Vector2(2, 0), Vector2(0, 1), Vector2.ZERO))
+	assert_eq(values[1], Transform3D.FLIP_Z)
+	assert_eq(values[2], Basis.FLIP_Y)
+	assert_eq(values[3], Quaternion.IDENTITY)
+	assert_eq(values[4], Projection.ZERO)
+	node.free()
+
+	var broken := SafeGDScript.new()
+	broken.set_source_code("func run():\n\treturn Transform2D.NOPE\n")
+	assert_ne(broken.get_compile_error(), "", "a misspelled built-in constant is a compile error")
+	assert_engine_error("SafeGDScript: : " + broken.get_compile_error())
+
+func test_sgd_inherited_engine_enum_namespaces():
+	var node_script := SafeGDScript.new()
+	node_script.set_source_code("extends Node\nfunc run():\n\treturn ConnectFlags.CONNECT_DEFERRED\n")
+	assert_eq(node_script.get_compile_error(), "")
+	var node := Node.new()
+	node.set_script(node_script)
+	assert_eq(node.call("run"), Object.CONNECT_DEFERRED)
+	node.free()
+
+	var window_script := SafeGDScript.new()
+	window_script.set_source_code("extends Window\nfunc run():\n\treturn Mode.MODE_MINIMIZED\n")
+	assert_eq(window_script.get_compile_error(), "")
+	var window := Window.new()
+	window.set_script(window_script)
+	assert_eq(window.call("run"), Window.MODE_MINIMIZED)
+	window.free()
+
+	var qualified := SafeGDScript.new()
+	qualified.set_source_code("func run():\n\treturn Window.Mode.MODE_MINIMIZED\n")
+	assert_eq(qualified.get_compile_error(), "")
+	var holder := Node.new()
+	holder.set_script(qualified)
+	assert_eq(holder.call("run"), Window.MODE_MINIMIZED)
+	holder.free()
+
+func test_sgd_cross_file_class_names_are_script_resources():
+	var script: SafeGDScript = load("res://tests/compat_cross_file.sgd")
+	assert_not_null(script)
+	if script == null:
+		return
+	assert_eq(script.get_compile_error(), "")
+	var node := Node.new()
+	node.set_script(script)
+	assert_eq(node.call("run"), [3, 5, 40, 7, 41, 8, 0, 0],
+		"class values, constants and static calls must not instantiate either class")
+	node.free()
 
 # -= @test =-
 #

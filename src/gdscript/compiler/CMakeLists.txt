@@ -123,6 +123,15 @@ endif()
 if (BUILD_TESTING)
 	enable_testing()
 
+	if (NOT CMAKE_CROSSCOMPILING)
+		find_program(GDSC_PYTHON_EXECUTABLE NAMES python3)
+		if (GDSC_PYTHON_EXECUTABLE)
+			add_test(NAME test_api_tables
+				COMMAND ${GDSC_PYTHON_EXECUTABLE}
+					${CMAKE_CURRENT_SOURCE_DIR}/../../../scripts/generate_api_tables.py --check)
+		endif()
+	endif()
+
 	add_gdscript_test(test_lexer tests/test_lexer.cpp)
 	add_gdscript_test(test_parser tests/test_parser.cpp)
 	add_gdscript_test(test_codegen tests/test_codegen.cpp)
