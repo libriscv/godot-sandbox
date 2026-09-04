@@ -75,32 +75,6 @@ struct BackgroundTranslation {
 };
 std::mutex background_translations_mutex;
 std::vector<BackgroundTranslation> background_translations;
-uint32_t auto_bake_pending = 0;
-uint32_t auto_bake_new = 0;
-uint64_t auto_bake_batch_start = 0;
-
-void finish_auto_bake(bool new_file) {
-	std::lock_guard<std::mutex> lock(background_translations_mutex);
-	if (auto_bake_pending == 0)
-		return;
-	if (new_file)
-		auto_bake_new++;
-	auto_bake_pending--;
-	if (auto_bake_pending == 0) {
-		if (auto_bake_new > 0) {
-			const double elapsed_seconds =
-					double(Time::get_singleton()->get_ticks_usec() - auto_bake_batch_start) / 1'000'000.0;
-			UtilityFunctions::print(vformat("SafeGDScript auto-bake: %d translations baked in %.1fs",
-					auto_bake_new, elapsed_seconds));
-		}
-		auto_bake_batch_start = 0;
-	}
-}
-
-struct AutoBakeCompletion {
-	bool &new_file;
-	~AutoBakeCompletion() { finish_auto_bake(new_file); }
-};
 } // namespace
 
 void Sandbox::start_background_translation(std::function<void()> &&step)
@@ -132,42 +106,6 @@ void Sandbox::start_background_translation(std::function<void()> &&step)
 	background_translations.push_back({ std::move(thread), std::move(done) });
 }
 
-void Sandbox::queue_binary_translation_bake(PackedByteArray binary, uint32_t memory_max)
-{
-#ifdef RISCV_BINARY_TRANSLATION
-	if (binary.is_empty())
-		return;
-	const BakeOptions options {
-		.ignore_limit = false,
-		.nbit_as = true,
-		.unchecked = true,
-	};
-	const String output_dir = binary_translation_cache_dir(true);
-	const String compiler = SandboxProjectSettings::binary_translation_compiler();
-	const String extra_cflags = SandboxProjectSettings::binary_translation_extra_cflags();
-	if (output_dir.is_empty() || compiler.is_empty())
-		return;
-	{
-		std::lock_guard<std::mutex> lock(background_translations_mutex);
-		if (auto_bake_pending == 0) {
-			auto_bake_new = 0;
-			auto_bake_batch_start = Time::get_singleton()->get_ticks_usec();
-		}
-		auto_bake_pending++;
-	}
-	start_background_translation([binary = std::move(binary), memory_max, options,
-			output_dir, compiler, extra_cflags] {
-		bool new_file = false;
-		AutoBakeCompletion completion { new_file };
-		bake_binary_translation_from_buffer(binary, memory_max, options, output_dir,
-				compiler, extra_cflags, true, &new_file);
-	});
-#else
-	(void)binary;
-	(void)memory_max;
-#endif
-}
-
 void Sandbox::Deinitialize()
 {
 	std::vector<BackgroundTranslation> pending;
@@ -180,23 +118,8 @@ void Sandbox::Deinitialize()
 			bt.thread.join();
 	}
 }
-
-Dictionary Sandbox::_get_auto_bake_stats() {
-	Dictionary stats;
-	std::lock_guard<std::mutex> lock(background_translations_mutex);
-	stats["pending"] = auto_bake_pending;
-	stats["new"] = auto_bake_new;
-	return stats;
-}
 #else
 void Sandbox::Deinitialize() {}
-
-Dictionary Sandbox::_get_auto_bake_stats() {
-	Dictionary stats;
-	stats["pending"] = 0;
-	stats["new"] = 0;
-	return stats;
-}
 #endif
 
 void Sandbox::Initialize()
@@ -307,11 +230,6 @@ void Sandbox::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_translation_hash"), &Sandbox::get_translation_hash);
 	ClassDB::bind_method(D_METHOD("bake_binary_translation", "out_dir"), &Sandbox::bake_binary_translation, DEFVAL(""));
 	ClassDB::bind_method(D_METHOD("is_translation_baked"), &Sandbox::is_translation_baked);
-	if (OS::get_singleton()->has_feature("editor")) {
-		ClassDB::bind_static_method("Sandbox", D_METHOD("_queue_binary_translation_bake", "binary", "memory_max"),
-				&Sandbox::queue_binary_translation_bake);
-		ClassDB::bind_static_method("Sandbox", D_METHOD("_get_auto_bake_stats"), &Sandbox::_get_auto_bake_stats);
-	}
 	ClassDB::bind_static_method("Sandbox", D_METHOD("load_binary_translation", "shared_library_path", "allow_insecure"), &Sandbox::load_binary_translation, DEFVAL("res://bintr.so"), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("try_compile_binary_translation", "shared_library_path", "compiler", "extra_cflags", "ignore_instruction_limit", "automatic_nbit_as"), &Sandbox::try_compile_binary_translation, DEFVAL("res://bintr"), DEFVAL("cc"), DEFVAL(""), DEFVAL(false), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("is_binary_translated"), &Sandbox::is_binary_translated);

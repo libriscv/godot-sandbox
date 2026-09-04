@@ -95,13 +95,11 @@ func _setup_bintr() -> void:
 	for setting in [
 		"sandbox/binary_translation/cache_dir",
 		"sandbox/binary_translation/enabled",
-		"sandbox/binary_translation/auto_bake",
 	]:
 		_old_bintr_settings[setting] = ProjectSettings.get_setting(setting)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(BINTR_CACHE_DIR))
 	ProjectSettings.set_setting("sandbox/binary_translation/cache_dir", BINTR_CACHE_DIR)
 	ProjectSettings.set_setting("sandbox/binary_translation/enabled", _bake or _full)
-	ProjectSettings.set_setting("sandbox/binary_translation/auto_bake", false)
 
 func _restore_bintr() -> void:
 	if not _bintr_setup:

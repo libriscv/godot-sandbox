@@ -31,4 +31,3 @@ enabled=PackedStringArray("res://addons/gut/plugin.cfg")
 ; Debug CI build, hours over the suite. test_bintr.gd turns it on around its own
 ; tests and puts it back.
 binary_translation/enabled=false
-binary_translation/auto_bake=false

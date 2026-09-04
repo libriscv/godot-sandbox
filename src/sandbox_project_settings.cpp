@@ -38,8 +38,6 @@ static constexpr char NATIVE_TYPES_HINT[] = "Use native types and classes instea
 
 static constexpr char BINTR_ENABLED[] = "sandbox/binary_translation/enabled";
 static constexpr char BINTR_ENABLED_HINT[] = "Load matching hash-named native translations when available";
-static constexpr char BINTR_AUTO_BAKE[] = "sandbox/binary_translation/auto_bake";
-static constexpr char BINTR_AUTO_BAKE_HINT[] = "Experimental background baking of release SafeGDScript translations while editing";
 static constexpr char BINTR_COMPILER[] = "sandbox/binary_translation/compiler";
 static constexpr char BINTR_COMPILER_HINT[] = "System C compiler used for native translations";
 static constexpr char BINTR_EXTRA_CFLAGS[] = "sandbox/binary_translation/extra_cflags";
@@ -146,7 +144,6 @@ void SandboxProjectSettings::register_settings() {
 	register_setting_plain(NATIVE_TYPES, true, NATIVE_TYPES_HINT, false);
 
 	register_setting_plain(BINTR_ENABLED, false, BINTR_ENABLED_HINT, true);
-	register_setting_plain(BINTR_AUTO_BAKE, false, BINTR_AUTO_BAKE_HINT, false);
 	String bintr_compiler = "cc";
 #if defined(_MSC_VER) && !defined(__MINGW32__) && !defined(__MINGW64__)
 	bintr_compiler = "cl";
@@ -233,10 +230,6 @@ bool SandboxProjectSettings::async_compilation() {
 
 bool SandboxProjectSettings::binary_translation_enabled() {
 	return get_setting<bool>(BINTR_ENABLED);
-}
-
-bool SandboxProjectSettings::binary_translation_auto_bake() {
-	return get_setting<bool>(BINTR_AUTO_BAKE);
 }
 
 String SandboxProjectSettings::binary_translation_compiler() {

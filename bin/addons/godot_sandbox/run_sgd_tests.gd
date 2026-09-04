@@ -29,10 +29,6 @@ var as_json := false
 var fail_fast := false
 
 func _init() -> void:
-	# A one-shot headless process exits while a background translation is still
-	# compiling, and the teardown crash reads as a failure of the tests.
-	ProjectSettings.set_setting("sandbox/binary_translation/auto_bake", false)
-
 	var paths := PackedStringArray()
 	if not _parse_arguments(paths):
 		quit(2)

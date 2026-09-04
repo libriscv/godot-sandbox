@@ -7,7 +7,6 @@
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include "sandbox_project_settings.h"
-#include <atomic>
 #include <mutex>
 #include <unordered_set>
 
@@ -48,7 +47,6 @@ static constexpr const char *BINTR_SUFFIX = "";
 std::mutex bake_mutex;
 std::mutex bake_compiler_mutex;
 std::unordered_set<uint32_t> bakes_in_progress;
-std::atomic<bool> auto_bake_compiler_failed { false };
 
 String hash_string(uint32_t hash) {
 	// String::pad_zeros() treats a leading A-F like a sign and inserts the zero
@@ -82,24 +80,19 @@ struct BakeGuard {
 };
 
 String compile_shared_translation(const std::string &source, uint32_t hash,
-		const String &output_dir, const String &cc, const String &extra_cflags, bool quiet,
-		bool *out_new_file = nullptr) {
-	if (out_new_file != nullptr)
-		*out_new_file = false;
+		const String &output_dir, const String &cc, const String &extra_cflags) {
 #if defined(__ANDROID__) || defined(__wasm__) || defined(__SWITCH__) || defined(__EMSCRIPTEN__)
-	(void)source; (void)hash; (void)output_dir; (void)cc; (void)extra_cflags; (void)quiet;
+	(void)source; (void)hash; (void)output_dir; (void)cc; (void)extra_cflags;
 	return String();
 #elif defined(__APPLE__) && !defined(__MACH__)
-	(void)source; (void)hash; (void)output_dir; (void)cc; (void)extra_cflags; (void)quiet;
+	(void)source; (void)hash; (void)output_dir; (void)cc; (void)extra_cflags;
 	return String();
 #else
 	if (source.empty() || output_dir.is_empty() || cc.is_empty() || BINTR_SUFFIX[0] == '\0')
 		return String();
-	if (quiet && auto_bake_compiler_failed.load())
-		return String();
 	if (DirAccess::make_dir_recursive_absolute(output_dir) != OK &&
 			!DirAccess::dir_exists_absolute(output_dir)) {
-		if (!quiet) ERR_PRINT("Sandbox: Failed to create binary translation directory: " + output_dir);
+		ERR_PRINT("Sandbox: Failed to create binary translation directory: " + output_dir);
 		return String();
 	}
 	const String final_path = output_dir.path_join("bintr-" + hash_string(hash) + BINTR_SUFFIX);
@@ -120,7 +113,7 @@ String compile_shared_translation(const std::string &source, uint32_t hash,
 	const String output_path = temp_base + String(BINTR_SUFFIX);
 	Ref<FileAccess> source_file = FileAccess::open(c99_path, FileAccess::ModeFlags::WRITE);
 	if (source_file.is_null() || !source_file->is_open()) {
-		if (!quiet) ERR_PRINT("Sandbox: Failed to write generated translation: " + c99_path);
+		ERR_PRINT("Sandbox: Failed to write generated translation: " + c99_path);
 		return String();
 	}
 	source_file->store_buffer(reinterpret_cast<const uint8_t *>(source.data()), source.size());
@@ -149,13 +142,8 @@ String compile_shared_translation(const std::string &source, uint32_t hash,
 	DirAccess::remove_absolute(c99_path);
 	if (ret != 0 || !FileAccess::file_exists(output_path)) {
 		DirAccess::remove_absolute(output_path);
-		if (quiet) {
-			auto_bake_compiler_failed.store(true);
-			WARN_PRINT_ONCE("SafeGDScript auto-bake is disabled because the configured C compiler failed. Check sandbox/binary_translation/compiler.");
-		} else {
-			ERR_PRINT("Sandbox: Failed to compile binary translation with " + cc + ".");
-			UtilityFunctions::print(output);
-		}
+		ERR_PRINT("Sandbox: Failed to compile binary translation with " + cc + ".");
+		UtilityFunctions::print(output);
 		return String();
 	}
 	if (FileAccess::file_exists(final_path)) {
@@ -164,14 +152,11 @@ String compile_shared_translation(const std::string &source, uint32_t hash,
 	}
 	if (DirAccess::rename_absolute(output_path, final_path) != OK) {
 		DirAccess::remove_absolute(output_path);
-		if (!quiet) ERR_PRINT("Sandbox: Failed to publish binary translation: " + final_path);
+		ERR_PRINT("Sandbox: Failed to publish binary translation: " + final_path);
 		return String();
 	}
-	if (out_new_file != nullptr)
-		*out_new_file = true;
-	if (!quiet)
-		UtilityFunctions::print("Baked binary translation ", hash_string(hash), " -> ", final_path,
-				" (", FileAccess::get_file_as_bytes(final_path).size(), " bytes)");
+	UtilityFunctions::print("Baked binary translation ", hash_string(hash), " -> ", final_path,
+			" (", FileAccess::get_file_as_bytes(final_path).size(), " bytes)");
 	return final_path;
 #endif
 }
@@ -309,9 +294,7 @@ bool Sandbox::bintr_cache_opted_in() {
 #ifdef RISCV_BINARY_TRANSLATION
 	// Every machine that may take part in the AOT cache needs its own execute
 	// segment: It's a deficiency in the execute segment key. To be fixed.
-	// Auto-baking implies it's enabled
 	return SandboxProjectSettings::binary_translation_enabled() ||
-			SandboxProjectSettings::binary_translation_auto_bake() ||
 			!shipped_translation_dir().is_empty();
 #else
 	return false;
@@ -352,7 +335,7 @@ String Sandbox::bake_binary_translation(const String &out_dir) const {
 	const CharString source_utf8 = source.utf8();
 	return compile_shared_translation(std::string(source_utf8.get_data(), source_utf8.length()),
 			live_hash, directory, SandboxProjectSettings::binary_translation_compiler(),
-			SandboxProjectSettings::binary_translation_extra_cflags(), false);
+			SandboxProjectSettings::binary_translation_extra_cflags());
 #else
 	(void)out_dir;
 	WARN_PRINT_ONCE("Sandbox: Binary translation is not enabled.");
@@ -363,50 +346,6 @@ String Sandbox::bake_binary_translation(const String &out_dir) const {
 bool Sandbox::is_translation_baked() const {
 	const String path = binary_translation_path(uint32_t(get_translation_hash()));
 	return !path.is_empty() && FileAccess::file_exists(path);
-}
-
-String Sandbox::bake_binary_translation_from_buffer(const PackedByteArray &binary,
-		uint32_t memory_max, const BakeOptions &bake_options, const String &out_dir,
-		const String &compiler, const String &extra_cflags, bool quiet, bool *out_new_file) {
-	if (out_new_file != nullptr)
-		*out_new_file = false;
-#ifdef RISCV_BINARY_TRANSLATION
-	if (binary.is_empty())
-		return String();
-	std::string source;
-	auto options = riscv::MachineOptions<RISCV_ARCH>{};
-	options.memory_max = uint64_t(memory_max) << 20;
-	options.stack_size = GUEST_STACK_SIZE;
-	options.use_shared_execute_segments = false;
-	options.translate_enabled = false;
-	options.translate_enable_embedded = false;
-	options.translate_invoke_compiler = false;
-	options.translate_ignore_instruction_limit = bake_options.ignore_limit;
-	options.translate_automatic_nbit_address_space = bake_options.nbit_as;
-	options.translate_unsafe_remove_checks = bake_options.unchecked;
-	options.translate_use_register_caching = false;
-	options.translate_background_callback = nullptr;
-#ifdef RISCV_ASMJIT
-	options.asmjit_enabled = false;
-	options.asmjit_background_callback = nullptr;
-#endif
-	options.translate_instr_max = 75'000u;
-	options.cross_compile.emplace_back(riscv::MachineTranslationEmbeddableCodeOptions{
-		.result_shared_c99 = &source,
-	});
-	const std::string_view bytes(reinterpret_cast<const char *>(binary.ptr()), binary.size());
-	machine_t emitter(bytes, options);
-	const auto &main_segment = emitter.memory.exec_segment_for(emitter.memory.start_address());
-	if constexpr (riscv::libtcc_enabled)
-		main_segment->wait_for_compilation_complete();
-	const uint32_t hash = main_segment->translation_hash();
-	return compile_shared_translation(source, hash, globalize_directory(out_dir), compiler,
-			extra_cflags, quiet, out_new_file);
-#else
-	(void)binary; (void)memory_max; (void)bake_options; (void)out_dir;
-	(void)compiler; (void)extra_cflags; (void)quiet;
-	return String();
-#endif
 }
 
 bool Sandbox::load_binary_translation(const String &shared_library_path, bool allow_insecure) {

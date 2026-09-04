@@ -12,7 +12,6 @@
 #include "script_language_safegdscript.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/engine.hpp>
-#include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/time.hpp>
@@ -22,7 +21,6 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 #include "../gdscript/compiler/function_signature.h"
 #include "../sandbox.h"
-#include "../sandbox_project_settings.h"
 #include "../fast_cast.hpp"
 #include <unordered_set>
 static constexpr bool VERBOSE_LOGGING = false;
@@ -1124,12 +1122,6 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug,
 
 	this->update_methods_info(compiler);
 	this->_update_exports();
-
-	if (!p_shipping && Engine::get_singleton()->is_editor_hint() && OS::get_singleton()->has_feature("editor") &&
-			SandboxProjectSettings::binary_translation_auto_bake() && !restricted &&
-			!profiling && !debug && Sandbox::has_feature_binary_translation()) {
-		Sandbox::queue_binary_translation_bake(this->elf_data, 32);
-	}
 
 	// One reload for the Sandbox they share: reloading per instance would replace
 	// the machine again under the instances that had already taken a record in
