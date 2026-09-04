@@ -1,5 +1,9 @@
 #include "sandbox.h"
 
+#ifndef SAFEGDSCRIPT_DISABLED
+#include "safegdscript/signature_info.h"
+#endif
+
 #include "fast_cast.hpp"
 #include "guest_datatypes.h"
 #include "gdscript/compiler/call_abi.h"
@@ -391,6 +395,7 @@ void Sandbox::reset_machine() {
 	this->m_instance_record_size = 0;
 	this->m_instance_init_address = 0;
 	this->m_program_abi = ArgumentABI::CONFIGURED;
+	this->m_gdscript_defaults.clear();
 	this->m_live_instance_records.clear();
 	// The heap they would be returned to goes with the machine.
 	this->m_deferred_instance_records.clear();
@@ -1128,12 +1133,84 @@ bool Sandbox::load(const PackedByteArray *buffer, const std::vector<std::string>
 		}
 	}
 
+	this->read_guest_defaults();
+
 	// Accumulate startup time
 	const uint64_t startup_t1 = Time::get_singleton()->get_ticks_usec();
 	double startup_time = (startup_t1 - startup_t0) / 1e6;
 	m_accumulated_startup_time += startup_time;
 	//fprintf(stderr, "Sandbox startup time: %.3f seconds\n", startup_time);
 	return true;
+}
+
+#ifndef SAFEGDSCRIPT_DISABLED
+void Sandbox::read_guest_defaults() {
+	const std::string_view metadata = Sandbox::elf_section_bytes(
+			machine().memory.binary(), gdscript::GDSMETA_SECTION);
+	if (metadata.empty()) {
+		return;
+	}
+	gdscript::ScriptMetadata decoded;
+	if (!gdscript::decode_script_metadata(
+				reinterpret_cast<const uint8_t *>(metadata.data()), metadata.size(), decoded)) {
+		return;
+	}
+
+	for (const gdscript::FunctionSignature &signature : decoded.functions) {
+		const size_t expected = signature.parameters.size();
+		const size_t required = signature.required_arguments;
+		if (required >= expected || expected > size_t(gdscript::CallABI::MAX_ARGUMENTS)) {
+			continue;
+		}
+		const String name = String::utf8(signature.name.c_str(), signature.name.size());
+		const gaddr_t address = this->cached_address_of(name.hash(), name);
+		if (address == 0x0) {
+			continue;
+		}
+		GuestDefaults entry;
+		entry.required = uint8_t(required);
+		entry.expected = uint8_t(expected);
+		entry.values.reserve(expected - required);
+		for (size_t i = required; i < expected; i++) {
+			entry.values.push_back(default_argument_value(signature.parameters[i]));
+		}
+		this->m_gdscript_defaults.insert_or_assign(address, std::move(entry));
+	}
+}
+#else
+void Sandbox::read_guest_defaults() {}
+#endif
+
+const Sandbox::GuestDefaults *Sandbox::guest_defaults_for(gaddr_t address) const {
+	const auto it = this->m_gdscript_defaults.find(address);
+	return it != this->m_gdscript_defaults.end() ? &it->second : nullptr;
+}
+
+void Sandbox::vmcall_defaulted(gaddr_t address, const Variant **args, int argc,
+		Variant &r_out, ArgumentABI p_abi) {
+	const GuestDefaults *entry = this->guest_defaults_for(address);
+	if (entry == nullptr || argc >= int(entry->expected) || argc < int(entry->required)) {
+		this->vmcall_internal(address, args, argc, r_out, p_abi);
+		return;
+	}
+
+	const int missing = int(entry->expected) - argc;
+	const Variant *completed[gdscript::CallABI::MAX_ARGUMENTS];
+	for (int i = 0; i < argc; i++) {
+		completed[i] = args[i];
+	}
+	const int first = int(entry->values.size()) - missing;
+	for (int i = 0; i < missing; i++) {
+		completed[argc + i] = &entry->values[first + i];
+	}
+	this->vmcall_internal(address, completed, int(entry->expected), r_out, p_abi);
+}
+
+Variant Sandbox::vmcall_defaulted(gaddr_t address, const Variant **args, int argc,
+		ArgumentABI p_abi) {
+	Variant result;
+	this->vmcall_defaulted(address, args, argc, result, p_abi);
+	return result;
 }
 
 Variant Sandbox::vmcall_address(gaddr_t address, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
@@ -1165,6 +1242,9 @@ Variant Sandbox::vmcall(const Variant **args, GDExtensionInt arg_count, GDExtens
 	}
 
 	error.error = GDEXTENSION_CALL_OK;
+	if (UNLIKELY(this->has_guest_defaults())) {
+		return this->vmcall_defaulted(address, args, arg_count, ArgumentABI::CONFIGURED);
+	}
 	return this->vmcall_internal(address, args, arg_count);
 }
 Variant Sandbox::vmcallv(const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
@@ -1186,6 +1266,9 @@ Variant Sandbox::vmcallv(const Variant **args, GDExtensionInt arg_count, GDExten
 	}
 
 	error.error = GDEXTENSION_CALL_OK;
+	if (UNLIKELY(this->has_guest_defaults())) {
+		return this->vmcall_defaulted(address, args, arg_count, ArgumentABI::BOXED);
+	}
 	return this->vmcall_internal(address, args, arg_count, ArgumentABI::BOXED);
 }
 Variant Sandbox::vmcall_fn(const StringName &function_name, const Variant **args, GDExtensionInt arg_count, GDExtensionCallError &error) {
@@ -1215,7 +1298,11 @@ void Sandbox::vmcall_fn(const StringName &function_name, const Variant **args,
 		return;
 	}
 
-	this->vmcall_internal(address, args, arg_count, r_out);
+	if (UNLIKELY(this->has_guest_defaults())) {
+		this->vmcall_defaulted(address, args, arg_count, r_out, ArgumentABI::CONFIGURED);
+	} else {
+		this->vmcall_internal(address, args, arg_count, r_out);
+	}
 	error.error = GDEXTENSION_CALL_OK;
 }
 void Sandbox::setup_arguments_native(gaddr_t arrayDataPtr, GuestVariant *v, const Variant **args, int argc) {
@@ -1681,12 +1768,14 @@ void RiscvCallable::call(const Variant **p_arguments, int p_argcount, Variant &r
 	{
 		ScopedTreeBase stb(self, this->tree_base_id.is_valid() ? this->tree_base_id : self->get_tree_base_id());
 		ScopedInstanceBase sib(self, this->instance_base);
-		if (varargs) {
-			self->vmcall_internal(address, m_varargs_ptrs.data(), total_args, r_return_value,
-					m_variant_arguments ? Sandbox::ArgumentABI::BOXED : Sandbox::ArgumentABI::UNBOXED);
+		const Sandbox::ArgumentABI abi =
+				m_variant_arguments ? Sandbox::ArgumentABI::BOXED : Sandbox::ArgumentABI::UNBOXED;
+		const Variant **call_args = varargs ? m_varargs_ptrs.data() : p_arguments;
+		const int call_count = varargs ? total_args : p_argcount;
+		if (UNLIKELY(self->has_guest_defaults())) {
+			self->vmcall_defaulted(address, call_args, call_count, r_return_value, abi);
 		} else {
-			self->vmcall_internal(address, p_arguments, p_argcount, r_return_value,
-					m_variant_arguments ? Sandbox::ArgumentABI::BOXED : Sandbox::ArgumentABI::UNBOXED);
+			self->vmcall_internal(address, call_args, call_count, r_return_value, abi);
 		}
 	}
 	r_call_error.error = GDEXTENSION_CALL_OK;

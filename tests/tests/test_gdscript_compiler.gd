@@ -4522,6 +4522,47 @@ func all_given():
 
 	s.queue_free()
 
+func test_default_arguments_through_raw_vmcallv():
+	# Calls made inside the guest materialize defaults at the call site. Raw
+	# vmcallv() enters an exported function directly, so the host must append
+	# defaults from the ELF metadata before setting up the guest argument ABI.
+	var gdscript_code = """
+func defaulted(a = 2, b = 3):
+	return a + b
+
+func named_default(a, b = 4):
+	return a * b
+
+func named_call(a, b = 4):
+	return a + b
+
+func default_kinds(a = null, b = true, c = 2.5, d = "text", e = [], f = {}):
+	return [a, b, c, d, e, f]
+"""
+	var s = _compile_and_load(gdscript_code)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("defaulted"), 5, "vmcallv should supply both trailing defaults")
+	assert_eq(s.vmcallv("defaulted", 5), 8, "vmcallv should supply the last trailing default")
+	assert_eq(s.vmcallv("named_default", 3), 12, "vmcallv should preserve a multiplicative default")
+	assert_eq(s.vmcallv("named_call", 3), 7, "vmcallv should preserve an additive default")
+	assert_eq(s.vmcallv("default_kinds"), [null, true, 2.5, "text", [], {}],
+		"vmcallv should materialize every default kind carried by metadata")
+
+	assert_eq(s.vmcall("defaulted"), 5, "vmcall should supply both trailing defaults")
+	assert_eq(s.vmcall("defaulted", 5), 8, "vmcall should supply the last trailing default")
+	assert_eq(s.vmcall("named_default", 3), 12, "vmcall should preserve a multiplicative default")
+
+	var bound: Callable = s.vmcallable("defaulted")
+	assert_eq(bound.call(), 5, "a Callable should supply both trailing defaults")
+	assert_eq(bound.call(5), 8, "a Callable should supply the last trailing default")
+
+	assert_eq(s.vmcallv("defaulted", 5, 6), 11, "given arguments should still win")
+	assert_eq(s.vmcallv("named_default", 3, 5), 15, "given arguments should still win")
+
+	s.queue_free()
+
 func test_global_stores_survive_optimization():
 	# Regression test: the liveness analysis behind dead code elimination did
 	# not treat STORE_GLOBAL as reading its value register, so the instruction
@@ -5770,6 +5811,29 @@ func matches_a_string(s):
 	# The same cases asked of the engine, the authority on what `match` answers.
 	assert_eq(s.vmcallv("classify", -3), _engine_classify(-3), "The engine and the guest should agree")
 	assert_eq(s.vmcallv("classify", 50), _engine_classify(50), "The engine and the guest should agree")
+
+	s.queue_free()
+
+func test_match_guard_invalid_operands_abort_the_call():
+	var s := _compile_and_load("""
+func match_num(v):
+	match v:
+		1:
+			return "one"
+		var x when x < 0:
+			return "neg"
+		_:
+			return "other"
+""", 40000)
+	if s == null:
+		return
+
+	var exceptions_before := s.get_exceptions()
+	assert_null(s.vmcallv("match_num", "x"),
+		"an invalid comparison in a match guard should abort the guest call")
+	assert_eq(s.get_exceptions(), exceptions_before + 1,
+		"the invalid guard comparison should be reported as a sandbox exception")
+	assert_engine_error("Exception: Invalid operands 'String' and 'int' in operator")
 
 	s.queue_free()
 

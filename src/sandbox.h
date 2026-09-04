@@ -1018,6 +1018,16 @@ public:
 	/// were refused by throwing.
 	/// @warning Leaves guest memory and the Variant state arbitrary. Reset afterwards.
 	Dictionary assault(const String &test, int64_t iterations);
+	struct GuestDefaults {
+		uint8_t required = 0;
+		uint8_t expected = 0;
+		std::vector<Variant> values;
+	};
+	bool has_guest_defaults() const noexcept { return !m_gdscript_defaults.empty(); }
+	Variant vmcall_defaulted(gaddr_t address, const Variant **args, int argc,
+			ArgumentABI p_abi);
+	void vmcall_defaulted(gaddr_t address, const Variant **args, int argc, Variant &r_out,
+			ArgumentABI p_abi);
 	Variant vmcall_internal(gaddr_t address, const Variant **args, int argc,
 			ArgumentABI p_abi = ArgumentABI::CONFIGURED);
 	void vmcall_internal(gaddr_t address, const Variant **args, int argc, Variant &r_out,
@@ -1067,6 +1077,8 @@ private:
 	static std::string_view elf_section_bytes(std::string_view elf, const char *name);
 	/// @brief Single .symtab pass collecting all symbols startup needs.
 	void scan_startup_symbols();
+	void read_guest_defaults();
+	const GuestDefaults *guest_defaults_for(gaddr_t address) const;
 	/// @brief True when @p bytes at @p base is a valid Variant array in guest
 	/// memory: whole slots, within pool reach. Guest ELF data is untrusted.
 	bool variant_area_is_sane(gaddr_t base, gaddr_t bytes, const char *what);
@@ -1210,6 +1222,7 @@ private:
 	mutable GuestNameCache m_guest_names;
 	mutable ObjectBindingCache m_object_bindings;
 	std::unordered_map<gaddr_t, Ref<RefCounted>> m_retained_objects;
+	std::unordered_map<gaddr_t, GuestDefaults> m_gdscript_defaults;
 
 	// Restrictions
 	std::unique_ptr<Restrictions> m_restrictions;

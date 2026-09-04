@@ -1320,6 +1320,23 @@ APICALL(api_obj_uses_trait) {
 	machine.set_result(1);
 }
 
+static const char *variant_operator_name(int p_operator) {
+	static constexpr const char *NAMES[] = {
+		"==", "!=", "<", "<=", ">", ">=", "+", "-", "*", "/", "-", "+", "%",
+		"**", "<<", ">>", "&", "|", "^", "~", "and", "or", "xor", "not", "in",
+	};
+	return unsigned(p_operator) < std::size(NAMES) ? NAMES[p_operator] : "?";
+}
+
+static std::runtime_error invalid_variant_operands(int p_operator, int p_left_type,
+		int p_right_type) {
+	const String left = Variant::get_type_name(Variant::Type(p_left_type));
+	const String right = Variant::get_type_name(Variant::Type(p_right_type));
+	return std::runtime_error("Invalid operands '" + std::string(left.utf8().get_data()) +
+			"' and '" + std::string(right.utf8().get_data()) + "' in operator '" +
+			variant_operator_name(p_operator) + "'");
+}
+
 APICALL(api_veval) {
 	auto [op, ap, bp, retp] = machine.sysargs<int, GuestVariant *, GuestVariant *, GuestVariant *>();
 	auto &emu = riscv::emu(machine);
@@ -1347,6 +1364,9 @@ APICALL(api_veval) {
 		Variant::evaluate(static_cast<Variant::Operator>(op), a, b, ret, valid);
 
 		machine.set_result(valid);
+		if (UNLIKELY(!valid)) {
+			throw invalid_variant_operands(op, ap->type, bp->type);
+		}
 		retp->set(emu, ret, false);
 		return;
 	}
@@ -1384,6 +1404,9 @@ APICALL(api_veval) {
 		// Different types are never equal (matches engine Variant comparison).
 		retp->set(emu, Variant(op == Variant::OP_NOT_EQUAL));
 		return;
+	}
+	if (UNLIKELY(!valid)) {
+		throw invalid_variant_operands(op, a->get_type(), b->get_type());
 	}
 	retp->create(emu, std::move(result.get()));
 }
