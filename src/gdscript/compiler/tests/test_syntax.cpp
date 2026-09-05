@@ -385,12 +385,27 @@ static void test_engine_class_constant() {
 static void test_engine_singleton_method_is_an_object_call() {
 	std::cout << "Testing engine singleton method calls..." << std::endl;
 
-	for (const char* singleton : { "RenderingServer", "TranslationServer" }) {
+	// Platform-specific singletons can be checked without running that platform:
+	// they must load the named object, never dispatch a static call via ClassDB.
+	for (const char* singleton : {
+		"RenderingServer", "TranslationServer", "CameraServer",
+		"JavaScriptBridge", "JavaClassWrapper", "AccessibilityServer",
+		"NavigationServer2DManager", "NavigationServer3DManager",
+		"GDScriptLanguageProtocol", "OpenXRFutureExtension",
+		"OpenXRRenderModelExtension", "OpenXRSpatialEntityExtension",
+		"OpenXRSpatialAnchorCapability", "OpenXRSpatialPlaneTrackingCapability",
+		"OpenXRSpatialMarkerTrackingCapability", "OpenXRFrameSynthesisExtension",
+		"OpenXRAndroidThreadSettingsExtension",
+	}) {
 		const IRProgram ir = compile_to_ir(std::string("func test():\n\treturn ") +
 			singleton + ".get_class()\n");
 		const IRFunction& test = find_function(ir, "test");
 		const IRInstruction& call = only(test, IROpcode::VCALL);
 		assert(ir.strings[call.operands[2].string_id] == "get_class");
+		const IRInstruction& lookup = only(test, IROpcode::CALL_SYSCALL);
+		assert(lookup.operands[1].immediate() == ECALL_GET_OBJ);
+		assert(ir.string_constants[lookup.operands[2].immediate()] == singleton);
+		assert(call.operands[1].reg_value == lookup.operands[0].reg_value);
 	}
 
 	std::cout << "  ✓ named engine singletons are loaded as objects" << std::endl;

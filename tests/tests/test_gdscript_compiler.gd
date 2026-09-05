@@ -13095,6 +13095,32 @@ func shape():
 		"a constant on a singleton still reads off the singleton")
 	s.queue_free()
 
+func test_sgd_engine_singletons_resolve_to_objects():
+	# CameraServer was missing from the runtime lookup table. The others were
+	# also missing from the compiler; availability depends on the engine build.
+	for singleton in ["CameraServer", "AccessibilityServer",
+			"NavigationServer2DManager", "NavigationServer3DManager",
+			"JavaScriptBridge", "JavaClassWrapper"]:
+		if not Engine.has_singleton(singleton):
+			continue
+		var source := "func object():\n\treturn %s\nfunc class_name_of_object():\n\treturn %s.get_class()\n" % [singleton, singleton]
+		var s := _compile_and_load(source, 4000000)
+		if s == null:
+			return
+		add_child(s)
+		var expected := Engine.get_singleton(singleton)
+		assert_eq(s.vmcallv("object"), expected, singleton + " resolves to the engine's object")
+		assert_eq(s.vmcallv("class_name_of_object"), expected.get_class(),
+			singleton + ".get_class() calls the singleton instance")
+
+		# The registry fallback must still honor the named-class restriction.
+		s.set_class_allowed_callback(func(_sandbox, _name): return false)
+		assert_eq(s.vmcallv("object"), null, "a forbidden singleton stays inaccessible")
+		assert_engine_error("Class is not allowed")
+		assert_engine_error("Object is Null")
+		assert_engine_error("Exception: Object is Null")
+		s.queue_free()
+
 func test_sgd_a_static_method_on_an_engine_class():
 	var source := """
 func exists(path):

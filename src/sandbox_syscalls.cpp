@@ -2329,6 +2329,12 @@ APICALL(api_get_obj) {
 		machine.set_result(emu.add_scoped_object(obj));
 		return;
 	}
+	const StringName singleton_name(String::utf8(name.c_str(), name.size()));
+	if (Engine::get_singleton()->has_singleton(singleton_name)) {
+		godot::Object *obj = Engine::get_singleton()->get_singleton(singleton_name);
+		machine.set_result(emu.add_scoped_object(obj));
+		return;
+	}
 	// Special case for SceneTree.
 	if (name == "SceneTree") {
 		// Get the current SceneTree.
