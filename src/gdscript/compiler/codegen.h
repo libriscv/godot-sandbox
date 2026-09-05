@@ -296,6 +296,9 @@ private:
 		const std::vector<int>& arg_regs, FunctionContext& func, const Expr* site);
 	static constexpr size_t MAX_HOST_CONSTRUCTOR_ARGS = 8;
 	bool is_inline_member_access(IRInstruction::TypeHint type, const std::string& member) const;
+	// Whether a value of this type can fill the member's components.
+	bool inline_member_accepts(IRInstruction::TypeHint obj_type, const std::string& member,
+		IRInstruction::TypeHint value_type) const;
 	int gen_inline_constructor(const std::string& name, const std::vector<int>& arg_regs,
 		FunctionContext& func, const Expr* site);
 	int gen_inline_member_get(int obj_reg, IRInstruction::TypeHint obj_type, const std::string& member, FunctionContext& func);
@@ -347,7 +350,8 @@ private:
 	bool gen_constant_key_store(int obj_reg, const Expr* index, int value_reg,
 		FunctionContext& func);
 	// Returns true when the store mutated a value-type copy (caller must write back).
-	bool gen_member_store(int obj_reg, const std::string& member, int value_reg, FunctionContext& func);
+	bool gen_member_store(int obj_reg, const std::string& member, int value_reg, FunctionContext& func,
+		const Stmt* site = nullptr);
 	void gen_element_store(int obj_reg, int idx_reg, int value_reg, FunctionContext& func,
 		const Expr* site = nullptr);
 	void gen_string_at(int dest, int obj_reg, int idx_reg, FunctionContext& func,

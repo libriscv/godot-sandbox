@@ -222,6 +222,35 @@ static void test_rect_and_plane_members() {
 	std::cout << "  ✓ Rect2 and Plane members stay in the payload" << std::endl;
 }
 
+// A member of more than one component (Rect2.size is a Vector2) is filled by
+// copying the value's own components out of its Variant, and a numeric scalar
+// has none. GDScript rejects that assignment; so must the IR, because a backend
+// that keeps scalars in machine registers has no Variant to copy from.
+static void test_a_scalar_cannot_fill_a_multi_component_member() {
+	std::cout << "Testing that a scalar cannot fill a multi-component member..." << std::endl;
+
+	bool rejected = false;
+	try {
+		compile_to_ir("func test(v: float):\n\tvar r : Rect2 = Rect2(1, 2, 3, 4)\n\tr.size = v\n");
+	} catch (const CompilerException&) {
+		rejected = true;
+	}
+	assert(rejected && "a float written to Rect2.size is not a program");
+
+	// An unknown tag: no arm can take the float, so none is emitted and the
+	// write goes to the host, which reports it the way Godot does.
+	const IRProgram dynamic = compile_to_ir("func test(o, v: float):\n\to.size = v\n");
+	const IRFunction& d = find_function(dynamic, "test");
+	assert(count_opcode(d, IROpcode::VSET_INLINE) == 0);
+	assert(count_opcode(d, IROpcode::VSET) >= 1);
+
+	// The arms are still there for a value that can fill them.
+	const IRProgram vector = compile_to_ir("func test(o, v: Vector2):\n\to.size = v\n");
+	assert(count_opcode(find_function(vector, "test"), IROpcode::VSET_INLINE) > 0);
+
+	std::cout << "  ✓ a scalar cannot fill a multi-component member" << std::endl;
+}
+
 // -= An unknown type =-
 
 static void test_unknown_member_write_tests_the_tag() {
@@ -457,6 +486,7 @@ int main() {
 	try {
 		test_known_inline_member_write();
 		test_rect_and_plane_members();
+		test_a_scalar_cannot_fill_a_multi_component_member();
 		test_unknown_member_write_tests_the_tag();
 		test_the_copy_travels_back();
 		test_a_base_property_travels_back();

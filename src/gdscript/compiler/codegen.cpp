@@ -1099,7 +1099,7 @@ void CodeGenerator::gen_store_to_variable(const std::string& name, int value_reg
 						field->type_hint.to_string());
 				}
 			}
-			gen_member_store(self_reg, name, value_reg, func);
+			gen_member_store(self_reg, name, value_reg, func, site);
 			free_register(func, value_reg);
 			return;
 		}
@@ -1373,7 +1373,7 @@ void CodeGenerator::gen_store_to(const Expr* target, int value_reg, FunctionCont
 			}
 		}
 
-		const bool mutated_copy = gen_member_store(base.reg, member_expr->member_name, value_reg, func);
+		const bool mutated_copy = gen_member_store(base.reg, member_expr->member_name, value_reg, func, site);
 		free_register(func, value_reg);
 
 		// Value type: write the mutated copy back.
@@ -1503,7 +1503,7 @@ void CodeGenerator::store_lvalue(const LValue& target, int value_reg, FunctionCo
 		}
 
 		case LValue::Kind::MEMBER: {
-			const bool mutated_copy = gen_member_store(target.container->reg, target.name, value_reg, func);
+			const bool mutated_copy = gen_member_store(target.container->reg, target.name, value_reg, func, site);
 			if (mutated_copy) {
 				store_lvalue(*target.container, target.container->reg, func, site);
 			}
@@ -9560,6 +9560,22 @@ bool CodeGenerator::is_inline_member_access(IRInstruction::TypeHint type, const 
 	return find_builtin_member(static_cast<uint32_t>(type), member).valid();
 }
 
+// A member of more than one component (Rect2.size, AABB.position) is filled by
+// copying the value's own components out of its Variant, which a numeric scalar
+// does not have: GDScript rejects the assignment, and VSET_INLINE must not
+// carry it either -- a backend that keeps scalars in machine registers has no
+// Variant to copy from. An unknown value type is accepted; only the host can
+// decide that one.
+bool CodeGenerator::inline_member_accepts(IRInstruction::TypeHint obj_type,
+	const std::string& member, IRInstruction::TypeHint value_type) const
+{
+	const BuiltinMember layout = find_builtin_member(static_cast<uint32_t>(obj_type), member);
+	if (!layout.valid() || layout.count == 1) {
+		return true;
+	}
+	return !is_numeric_scalar(value_type);
+}
+
 int CodeGenerator::gen_builtin_constant(const std::string& type, const std::string& name,
 	FunctionContext& func)
 {
@@ -9996,7 +10012,14 @@ void CodeGenerator::gen_dynamic_member_set(int obj_reg, const std::string& membe
 		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(next_label));
 	}
 
+	const IRInstruction::TypeHint value_type = get_register_type(func, value_reg);
 	for (const InlineMemberGroup& group : groups) {
+		// Every type in a group shares one layout, so one test covers the group.
+		// A group the value cannot fill falls through to the host, which reports
+		// the assignment the way Godot does.
+		if (!inline_member_accepts(group.types.front(), member, value_type)) {
+			continue;
+		}
 		const std::string next_label = make_label("member_set_next");
 		emit_group_type_test(obj_reg, group, next_label, func);
 
@@ -10048,7 +10071,7 @@ int CodeGenerator::gen_member_read(int obj_reg, const std::string& member, Funct
 }
 
 bool CodeGenerator::gen_member_store(int obj_reg, const std::string& member, int value_reg,
-	FunctionContext& func)
+	FunctionContext& func, const Stmt* site)
 {
 	// Struct/Dictionary: element write, no write-back needed.
 	if (const StructDecl* decl = get_register_struct(func, obj_reg)) {
@@ -10069,6 +10092,13 @@ bool CodeGenerator::gen_member_store(int obj_reg, const std::string& member, int
 	const IRInstruction::TypeHint obj_type = get_register_type(func, obj_reg);
 
 	if (is_inline_member_access(obj_type, member)) {
+		const IRInstruction::TypeHint value_type = get_register_type(func, value_reg);
+		if (!inline_member_accepts(obj_type, member, value_type)) {
+			const BuiltinMember layout = find_builtin_member(static_cast<uint32_t>(obj_type), member);
+			error_at("Cannot assign a value of type " + std::string(variant_type_name(value_type)) +
+				" to " + variant_type_name(obj_type) + "." + member + ", which is a " +
+				variant_type_name(static_cast<IRInstruction::TypeHint>(layout.result_type)), site);
+		}
 		gen_inline_member_set(obj_reg, obj_type, member, value_reg, func);
 		return true;
 	}
