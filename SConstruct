@@ -157,23 +157,16 @@ elif env["platform"] == "linux" or env["platform"] == "android":
     if env["platform"] == "linux":
         env.Append(LIBS=["dl"])
 
-if "static_build" not in ARGUMENTS or ARGUMENTS["static_build"]!="yes":
-    if env["platform"] == "macos" or env["platform"] == "ios":
-        library = env.SharedLibrary(
-            "bin/addons/godot_sandbox/bin/libgodot_riscv{}.framework/libgodot_riscv{}".format(
-                env["suffix"], env["suffix"]
-            ),
-            source=sources,
-        )
-    else:
-        library = env.SharedLibrary(
-            "bin/addons/godot_sandbox/bin/libgodot_riscv{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
-            source=sources,
-        )
-    Default(library)
-else:
-    library = env.StaticLibrary(
-        "bin/libsandbox{}{}".format(env["suffix"], env["LIBSUFFIX"]),
+if env["platform"] == "macos" or env["platform"] == "ios":
+    library = env.SharedLibrary(
+        "bin/addons/godot_sandbox/bin/libgodot_riscv{}.framework/libgodot_riscv{}".format(
+            env["suffix"], env["suffix"]
+        ),
         source=sources,
     )
-    Default(library)
+else:
+    library = env.SharedLibrary(
+        "bin/addons/godot_sandbox/bin/libgodot_riscv{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+        source=sources,
+    )
+Default(library)

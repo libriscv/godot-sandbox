@@ -41,7 +41,7 @@ Godot Sandbox lets players run untrusted code safely. Write gameplay in SafeGDSc
 
 ## SafeGDScript
 
-SafeGDScript (`.sgd`) is the default language for sandboxed code. It is a [safety-oriented GDScript-dialect](https://libriscv.no/docs/host_langs/godot_integration/godot_intro/safegdscript) with most of the same syntax, and some additions (like structs). Attach a `.sgd` file to any node the same way you would attach a `.gd` script:
+SafeGDScript (`.sgd`) is the default language for sandboxed code. It is compatible with and can replace GDScript in your projects. It is a [GDScript-dialect](https://libriscv.no/docs/host_langs/godot_integration/godot_intro/safegdscript) with the same syntax, and some additions (like structs). It is generally much faster than GDScript: Bintr/JIT 5.0x, Interpreter 1.6x.
 
 VS Code users can install the [SafeGDScript extension](https://marketplace.visualstudio.com/items?itemName=AlfAndrWalla.vscode-safegdscript) for syntax highlighting and basic editor support.
 
@@ -174,16 +174,6 @@ In the modding example that implements a virtual CPU, we gained 5x over GDScript
 - [Assign an ELF script resource directly to a node](https://libriscv.no/docs/host_langs/godot_integration/godot_intro/sandbox#using-programs-directly-as-scripts). Constructs a shared sandbox among all instances with that script, maximum scalability, call functions and attach signals like GDScript
 
 - Or, [create a Sandbox node and assign the ELF resource to it](https://libriscv.no/docs/host_langs/godot_integration/godot_intro/sandbox#creating-a-sandbox). One sandbox per node, with auto-completion from other GDScripts using @export
-
-## Module Build
-
-In order to build as a module, add it to a godot repo:
-
-```
-git submodule add https://github.com/libriscv/godot-sandbox modules/sandbox
-cd modules/sandbox
-git submodule update --init --recursive
-```
 
 ## SafeGDScript and LLM assistance
 
