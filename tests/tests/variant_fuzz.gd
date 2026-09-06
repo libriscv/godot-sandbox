@@ -7,6 +7,19 @@ const UNSUPPORTED_PATH := "../src/gdscript/compiler/tests/variant_api_unsupporte
 # GDScript refuses non-constant integer indexing on these.
 const NO_INTEGER_INDEX := ["Quaternion"]
 
+# How many components `[]` reaches; the table carries the element type, not the count.
+const INDEX_COUNT := {
+	"Vector2": 2, "Vector2i": 2, "Vector3": 3, "Vector3i": 3,
+	"Vector4": 4, "Vector4i": 4, "Quaternion": 4, "Color": 4,
+	"Basis": 3, "Transform2D": 3, "Projection": 4,
+}
+
+# `target op= value` for the scalars, which have no rows in the type table.
+const SCALAR_COMPOUND := {
+	"int": [["+", "int"], ["-", "int"], ["*", "int"], ["/", "int"], ["%", "int"]],
+	"float": [["+", "float"], ["-", "float"], ["*", "float"], ["/", "float"]],
+}
+
 class Options:
 	extends RefCounted
 	var functions := 4
@@ -16,6 +29,9 @@ class Options:
 	var leaf_chance := 20
 	var typed_declaration_chance := 40
 	var typed_return_chance := 40
+	var lvalue_depth := 2
+	var compound_chance := 35
+	var opaque_chance := 25
 
 var _state: int
 var _seed: int
@@ -218,7 +234,8 @@ func _render(recipe: Dictionary, depth: int) -> String:
 		"member":
 			return "(%s).%s" % [_expression(recipe["owner"], depth - 1), recipe["name"]]
 		"index":
-			return "(%s)[%d]" % [_expression(recipe["owner"], depth - 1), _below(2)]
+			return "(%s)[%d]" % [_expression(recipe["owner"], depth - 1),
+				_below(INDEX_COUNT.get(recipe["owner"], 2))]
 		"op":
 			var left := _expression(recipe["owner"], depth - 1)
 			var op: String = recipe["op"]
@@ -235,10 +252,18 @@ func _render(recipe: Dictionary, depth: int) -> String:
 	return "null"
 
 
+# An Array element is a Variant, so the value keeps its type while the compiler
+# loses it: the same statements then lower through the run-time dispatch arms.
+func _opaque(value: String) -> String:
+	return "([%s])[0]" % value
+
+
 func _declare(type: String, depth: int) -> String:
 	var name := "v%d" % _local_count
 	_local_count += 1
 	var value := _expression(type, depth)
+	if _chance(_options.opaque_chance):
+		value = _opaque(value)
 	var line: String
 	if _chance(_options.typed_declaration_chance):
 		line = "\tvar %s: %s = %s" % [name, type, value]
@@ -248,24 +273,67 @@ func _declare(type: String, depth: int) -> String:
 	return line
 
 
-func _statement(depth: int) -> String:
-	var writable := []
-	for local in _locals:
-		if not _types.has(local["type"]):
+# Every write target reachable from `text`, one assignable step at a time.
+func _extend_lvalues(text: String, type: String, remaining: int, into: Array) -> void:
+	if remaining <= 0 or not _types.has(type):
+		return
+	var rows: Dictionary = _types[type]
+	for member in rows["members"]:
+		if _unsupported.has("%s member= %s" % [type, member[0]]):
 			continue
-		for member in _types[local["type"]]["members"]:
-			if not _unsupported.has("%s member= %s" % [local["type"], member[0]]):
-				writable.append({"local": local, "member": member})
-				break
-	var kind := _below(10)
-	if kind < 6 or _locals.is_empty():
+		var reached := "%s.%s" % [text, member[0]]
+		into.append({"text": reached, "type": member[1]})
+		_extend_lvalues(reached, member[1], remaining - 1, into)
+	if rows["index"] == null or NO_INTEGER_INDEX.has(type):
+		return
+	if _unsupported.has("%s index=" % type):
+		return
+	var reached := "%s[%d]" % [text, _below(INDEX_COUNT.get(type, 2))]
+	into.append({"text": reached, "type": rows["index"]})
+	_extend_lvalues(reached, rows["index"], remaining - 1, into)
+
+
+func _lvalues() -> Array:
+	var targets := []
+	for local in _locals:
+		targets.append({"text": local["name"], "type": local["type"]})
+		_extend_lvalues(local["name"], local["type"], _options.lvalue_depth, targets)
+	return targets
+
+
+# `op` such that `type op right` is again a `type`, so `target op= right` type-checks.
+func _compound_operators(type: String) -> Array:
+	if SCALAR_COMPOUND.has(type):
+		return SCALAR_COMPOUND[type]
+	if not _types.has(type):
+		return []
+	var rows := []
+	for row in _types[type]["operators"]:
+		if row[2] == type and (row[0] == "+" or row[0] == "-" or row[0] == "*"
+			or row[0] == "/" or row[0] == "%"):
+			rows.append([row[0], row[1]])
+	return rows
+
+
+func _assignment(target: Dictionary, depth: int) -> String:
+	var type: String = target["type"]
+	var operators := _compound_operators(type)
+	if not operators.is_empty() and _chance(_options.compound_chance):
+		var chosen: Array = _pick(operators)
+		var op: String = chosen[0]
+		var right := (_divisor(chosen[1], depth) if op == "/" or op == "%"
+			else _expression(chosen[1], depth - 1))
+		return "\t%s %s= %s" % [target["text"], op, right]
+	return "\t%s = %s" % [target["text"], _expression(type, depth - 1)]
+
+
+func _statement(depth: int) -> String:
+	if _locals.is_empty() or _below(10) < 6:
 		return _declare(_pick(_all_types), depth)
-	if kind < 8 and not writable.is_empty():
-		var target: Dictionary = _pick(writable)
-		var member: Array = target["member"]
-		return "\t%s.%s = %s" % [target["local"]["name"], member[0], _expression(member[1], depth - 1)]
-	var target: Dictionary = _pick(_locals)
-	return "\t%s = %s" % [target["name"], _expression(target["type"], depth)]
+	var targets := _lvalues()
+	if targets.is_empty():
+		return _declare(_pick(_all_types), depth)
+	return _assignment(_pick(targets), depth)
 
 
 func _function(index: int) -> Dictionary:
@@ -381,6 +449,36 @@ static func difference(expected, actual) -> String:
 			var position := difference(expected.position, actual.position)
 			return position if position != "" else difference(expected.size, actual.size)
 	return "" if expected == actual else "%s vs %s" % [expected, actual]
+
+
+# Godot's own answer at an infinity is not reproducible: the same
+# `Projection.create_orthogonal_aspect(0.0, ...)` call comes back +inf or -inf
+# depending on the statement before it, with no compiler involved. A result
+# holding one says nothing about the compiler, so it is not compared.
+static func has_infinity(value) -> bool:
+	match typeof(value):
+		TYPE_FLOAT:
+			return is_inf(value)
+		TYPE_VECTOR2, TYPE_VECTOR3, TYPE_VECTOR4, TYPE_QUATERNION, TYPE_COLOR:
+			return _any_component_infinite(value, _axis_count(value))
+		TYPE_PLANE:
+			return has_infinity(value.normal) or has_infinity(value.d)
+		TYPE_BASIS, TYPE_TRANSFORM2D:
+			return _any_component_infinite(value, 3)
+		TYPE_PROJECTION:
+			return _any_component_infinite(value, 4)
+		TYPE_TRANSFORM3D:
+			return has_infinity(value.basis) or has_infinity(value.origin)
+		TYPE_RECT2, TYPE_AABB:
+			return has_infinity(value.position) or has_infinity(value.size)
+	return false
+
+
+static func _any_component_infinite(value, count: int) -> bool:
+	for axis in count:
+		if has_infinity(value[axis]):
+			return true
+	return false
 
 
 static func _axis_count(value) -> int:

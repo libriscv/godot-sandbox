@@ -286,6 +286,51 @@ static void test_a_computed_member_write_goes_to_the_host() {
 	std::cout << "  ✓ a computed member write carries the whole value" << std::endl;
 }
 
+static void test_an_element_write_is_a_variant_operation() {
+	std::cout << "Testing that an element write goes through the Variant operation..." << std::endl;
+
+	// The mirror of an element read: only Object and the packed arrays have a set()
+	// method, so a VCALL left every other built-in with "Nonexistent function 'set'".
+	const IRProgram vector = compile_to_ir(
+		"func test():\n\tvar v : Vector3 = Vector3()\n\tv[1] = 9.0\n\treturn v\n");
+	const IRFunction& f = find_function(vector, "test");
+	assert(count_opcode(f, IROpcode::VARIANT_SET) == 1);
+	assert(count_vcalls(vector, f, "set") == 0);
+
+	// The containers keep their own opcodes.
+	const IRProgram array = compile_to_ir(
+		"func test():\n\tvar a : Array = [1, 2]\n\ta[0] = 3\n\treturn a\n");
+	const IRFunction& a = find_function(array, "test");
+	assert(count_opcode(a, IROpcode::ARRAY_SET) == 1);
+	assert(count_opcode(a, IROpcode::VARIANT_SET) == 0);
+	const IRProgram dict = compile_to_ir(
+		"func test(k):\n\tvar d : Dictionary = {}\n\td[k] = 3\n\treturn d\n");
+	assert(count_opcode(find_function(dict, "test"), IROpcode::VARIANT_SET) == 0);
+
+	// A value read out of a chain is a copy, so the element write travels back the
+	// same way a member write does. Without it the assignment was simply lost.
+	const IRProgram nested = compile_to_ir(
+		"func test():\n\tvar t : Transform3D = Transform3D()\n"
+		"\tt.basis[0] = Vector3(1, 2, 3)\n\treturn t\n");
+	const IRFunction& n = find_function(nested, "test");
+	assert(count_opcode(n, IROpcode::VARIANT_SET) == 1);
+	assert(count_opcode(n, IROpcode::VSET) == 1);
+
+	// Compound assignment resolves the same chain and writes back too.
+	const IRProgram compound = compile_to_ir(
+		"func test():\n\tvar t : Transform3D = Transform3D()\n"
+		"\tt.basis[0] += Vector3(1, 2, 3)\n\treturn t\n");
+	const IRFunction& c = find_function(compound, "test");
+	assert(count_opcode(c, IROpcode::VARIANT_SET) == 1);
+	assert(count_opcode(c, IROpcode::VSET) == 1);
+
+	assert(!compile_to_riscv(
+		"func test():\n\tvar b : Basis = Basis()\n\tb[0] = Vector3(1, 2, 3)\n"
+		"\treturn b[0].x\n").empty());
+
+	std::cout << "  ✓ an element write goes through the Variant operation" << std::endl;
+}
+
 // -= An unknown type =-
 
 static void test_unknown_member_write_tests_the_tag() {
@@ -525,6 +570,7 @@ int main() {
 		test_rect_and_plane_members();
 		test_a_scalar_cannot_fill_a_multi_component_member();
 		test_a_computed_member_write_goes_to_the_host();
+		test_an_element_write_is_a_variant_operation();
 		test_unknown_member_write_tests_the_tag();
 		test_the_copy_travels_back();
 		test_a_base_property_travels_back();

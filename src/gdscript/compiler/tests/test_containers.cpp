@@ -184,11 +184,13 @@ static void test_unknown_container_uses_variant_get() {
 		"func test(s : String, i : int):\n\treturn s[i]\n");
 	assert(count_vcalls(string_index, find_function(string_index, "test"), "get") == 0);
 
-	// And a write to an unknown container.
+	// And a write to an unknown container: the mirror of the read, since only Object
+	// and the packed arrays answer a set() call.
 	const IRProgram untyped_write = compile_to_ir(
 		"func test(a, i : int, v):\n\ta[i] = v\n");
 	assert(count_opcode(find_function(untyped_write, "test"), IROpcode::ARRAY_SET) == 0);
-	assert(count_vcalls(untyped_write, find_function(untyped_write, "test"), "set") == 1);
+	assert(count_opcode(find_function(untyped_write, "test"), IROpcode::VARIANT_SET) == 1);
+	assert(count_vcalls(untyped_write, find_function(untyped_write, "test"), "set") == 0);
 
 	std::cout << "  ✓ an unknown container uses Variant get" << std::endl;
 }

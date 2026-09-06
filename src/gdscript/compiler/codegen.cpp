@@ -1277,7 +1277,9 @@ void CodeGenerator::gen_store_to(const Expr* target, int value_reg, FunctionCont
 				site ? site->line : 0, site ? site->column : 0);
 		}
 		if (!gen_constant_key_store(base.reg, index_expr->index.get(), value_reg, func)) {
-			gen_element_store(base.reg, idx_reg, value_reg, func);
+			if (gen_element_store(base.reg, idx_reg, value_reg, func)) {
+				store_lvalue(base, base.reg, func, site);
+			}
 			free_register(func, idx_reg);
 		}
 		free_register(func, value_reg);
@@ -1512,7 +1514,9 @@ void CodeGenerator::store_lvalue(const LValue& target, int value_reg, FunctionCo
 
 		case LValue::Kind::INDEX:
 			if (!gen_constant_key_store(target.container->reg, target.index_expr, value_reg, func)) {
-				gen_element_store(target.container->reg, target.index_reg, value_reg, func);
+				if (gen_element_store(target.container->reg, target.index_reg, value_reg, func)) {
+					store_lvalue(*target.container, target.container->reg, func, site);
+				}
 			}
 			return;
 
@@ -10262,7 +10266,7 @@ int CodeGenerator::gen_element_read(int obj_reg, int idx_reg, FunctionContext& f
 	return result_reg;
 }
 
-void CodeGenerator::gen_element_store(int obj_reg, int idx_reg, int value_reg, FunctionContext& func,
+bool CodeGenerator::gen_element_store(int obj_reg, int idx_reg, int value_reg, FunctionContext& func,
 	const Expr* site)
 {
 	// Guest Strings are shared handles; character mutation would alias.
@@ -10275,25 +10279,29 @@ void CodeGenerator::gen_element_store(int obj_reg, int idx_reg, int value_reg, F
 	if (is_array_element_access(obj_reg, idx_reg, func)) {
 		func.ir.instructions.emplace_back(IROpcode::ARRAY_SET, IRValue::reg(obj_reg),
 			IRValue::reg(idx_reg), IRValue::reg(value_reg));
-		return;
+		return false;
 	}
 
 	if (get_register_type(func, obj_reg) == Variant::DICTIONARY) {
 		func.ir.instructions.emplace_back(IROpcode::DICT_SET, IRValue::reg(obj_reg),
 			IRValue::reg(idx_reg), IRValue::reg(value_reg));
-		return;
+		return false;
 	}
 
-	int result_reg = alloc_register(func);
-	IRInstruction instr(IROpcode::VCALL);
-	instr.operands.push_back(IRValue::reg(result_reg));
-	instr.operands.push_back(IRValue::reg(obj_reg));
-	instr.operands.push_back(ir_str("set"));
-	instr.operands.push_back(IRValue::imm(2));
-	instr.operands.push_back(IRValue::reg(idx_reg));
-	instr.operands.push_back(IRValue::reg(value_reg));
-	func.ir.instructions.push_back(instr);
-	free_register(func, result_reg);
+	// The mirror of gen_element_read: `[] =` is a Variant operation, not a call to a
+	// container's set() method. Only Object and the packed arrays have one, so every
+	// other built-in threw "Nonexistent function 'set'" at run time.
+	func.ir.instructions.emplace_back(IROpcode::VARIANT_SET, IRValue::reg(obj_reg),
+		IRValue::reg(idx_reg), IRValue::reg(value_reg));
+	// Objects and the containers mutate through a handle; a value type mutated a copy.
+	switch (get_register_type(func, obj_reg)) {
+		case Variant::OBJECT:
+		case Variant::ARRAY:
+		case Variant::DICTIONARY:
+			return false;
+		default:
+			return true;
+	}
 }
 
 std::string CodeGenerator::script_level_super_hint() const {

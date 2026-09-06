@@ -141,6 +141,11 @@ std::vector<Row> collect_rows() {
 		}
 		add(std::string(row.type) + " index",
 			"\tvar v = " + sample_of(row.type) + "\n\treturn v[0]\n");
+		// Element write is a separate lowering from element read.
+		add(std::string(row.type) + " index=",
+			"\tvar v = " + sample_of(row.type) + "\n"
+			"\tv[0] = " + sample_of(row.index_type) + "\n"
+			"\treturn v\n");
 	}
 	for (const CtorRow& row : api().ctors) {
 		std::string id = std::string(row.type) + " ctor(";

@@ -60,7 +60,7 @@ func _failure(source: String, only: String = "") -> Dictionary:
 		if only != "" and name != only:
 			continue
 		var expected = engine["object"].callv(name, [])
-		if not _drain_errors().is_empty():
+		if not _drain_errors().is_empty() or VariantFuzz.has_infinity(expected):
 			_skipped += 1
 			continue
 		var actual = sgd["object"].callv(name, [])

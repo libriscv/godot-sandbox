@@ -7917,6 +7917,96 @@ func member_r8():
 	s.queue_free()
 
 
+func test_builtin_element_writes():
+	var gdscript_code = """
+var placement := Transform3D()
+
+func vector_element():
+	var v := Vector3(1.5, -2.25, 0.5)
+	v[1] = 9.0
+	return v
+
+func basis_row():
+	var b := Basis(Vector3(0, 1, 0), 0.75)
+	b[0] = Vector3(1, 2, 3)
+	return b
+
+func transform_column():
+	var t := Transform2D(0.5, Vector2(1, 2))
+	t[2] = Vector2(7, 8)
+	return t
+
+func nested_row():
+	var t := Transform3D(Basis(Vector3(0, 1, 0), 0.75), Vector3(1, 2, 3))
+	t.basis[0] = Vector3(1, 2, 3)
+	return t
+
+func nested_compound():
+	var t := Transform3D(Basis(Vector3(0, 1, 0), 0.75), Vector3(1, 2, 3))
+	t.basis[0] += Vector3(1, 1, 1)
+	return t
+
+func untyped_element(v):
+	v[1] = 9.0
+	return v
+
+func array_element():
+	var a := [1, 2, 3]
+	a[1] = 9
+	return a
+
+func packed_element():
+	var p := PackedFloat32Array([1.0, 2.0, 3.0])
+	p[1] = 9.0
+	return p
+
+func member_row():
+	placement.basis[0] = Vector3(1, 2, 3)
+	return placement
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	# Only Object and the packed arrays answer a set() call, so every other
+	# built-in needs the indexed Variant operation instead.
+	var vector := Vector3(1.5, -2.25, 0.5)
+	vector[1] = 9.0
+	assert_eq(s.vmcallv("vector_element"), vector, "writing Vector3[1] should match the engine")
+
+	var basis := Basis(Vector3(0, 1, 0), 0.75)
+	basis[0] = Vector3(1, 2, 3)
+	assert_eq(s.vmcallv("basis_row"), basis, "writing Basis[0] should match the engine")
+
+	var transform := Transform2D(0.5, Vector2(1, 2))
+	transform[2] = Vector2(7, 8)
+	assert_eq(s.vmcallv("transform_column"), transform,
+		"writing Transform2D[2] should match the engine")
+
+	# A value read out of a chain is a copy: without a write-back the assignment
+	# lands in the temporary and is lost.
+	var nested := Transform3D(Basis(Vector3(0, 1, 0), 0.75), Vector3(1, 2, 3))
+	nested.basis[0] = Vector3(1, 2, 3)
+	assert_eq(s.vmcallv("nested_row"), nested, "writing Transform3D.basis[0] should travel back")
+
+	var compound := Transform3D(Basis(Vector3(0, 1, 0), 0.75), Vector3(1, 2, 3))
+	compound.basis[0] += Vector3(1, 1, 1)
+	assert_eq(s.vmcallv("nested_compound"), compound,
+		"a compound element write should travel back too")
+
+	assert_eq(s.vmcallv("untyped_element", Vector3(1.5, -2.25, 0.5)), vector,
+		"an untyped element write should match the engine")
+
+	assert_eq(s.vmcallv("array_element"), [1, 9, 3], "an Array keeps its own element store")
+	assert_eq(s.vmcallv("packed_element"), PackedFloat32Array([1.0, 9.0, 3.0]),
+		"a packed array keeps its element store")
+
+	assert_eq(s.vmcallv("member_row"), nested, "writing a member's row should match")
+	assert_eq(s.get("placement"), nested, "and the member should keep the written value")
+
+	s.queue_free()
+
+
 # @GlobalScope and built-in type constants, folded to immediates.
 func test_global_constants():
 	var gdscript_code = """

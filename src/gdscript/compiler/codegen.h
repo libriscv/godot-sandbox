@@ -355,7 +355,8 @@ private:
 	// Returns true when the store mutated a value-type copy (caller must write back).
 	bool gen_member_store(int obj_reg, const std::string& member, int value_reg, FunctionContext& func,
 		const Stmt* site = nullptr);
-	void gen_element_store(int obj_reg, int idx_reg, int value_reg, FunctionContext& func,
+	// Returns true when the store mutated a value-type copy (caller must write back).
+	bool gen_element_store(int obj_reg, int idx_reg, int value_reg, FunctionContext& func,
 		const Expr* site = nullptr);
 	void gen_string_at(int dest, int obj_reg, int idx_reg, FunctionContext& func,
 		const Expr* site);

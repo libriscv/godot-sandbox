@@ -338,19 +338,16 @@ void test_subscript_operations() {
 	CodeGenerator codegen_write;
 	IRProgram ir_write = codegen_write.generate(program_write);
 
-	// Should have VCALL for arr.set(idx, value)
-	bool has_set_vcall = false;
+	// An unknown container writes with the indexed Variant operation, the mirror of
+	// the read above: only Object and the packed arrays have a set() method.
+	bool has_variant_set = false;
 	for (const auto& instr : ir_write.functions[0].instructions) {
-		if (instr.opcode == IROpcode::VCALL) {
-			if (instr.operands.size() >= 3 && instr.operands[2].type == IRValue::Type::STRING) {
-				if (ir_write.strings[instr.operands[2].string_id] == "set") {
-					has_set_vcall = true;
-					break;
-				}
-			}
+		if (instr.opcode == IROpcode::VARIANT_SET) {
+			has_variant_set = true;
+			break;
 		}
 	}
-	assert(has_set_vcall);
+	assert(has_variant_set);
 
 	std::cout << "  ✓ Subscript operations test passed" << std::endl;
 }
