@@ -525,6 +525,11 @@ private:
 		int32_t addend;
 	};
 	std::vector<LabelUse> m_label_uses;
+	struct DenseJumpTable {
+		size_t first_use;
+		size_t count;
+	};
+	std::vector<DenseJumpTable> m_dense_jump_tables;
 	std::unordered_map<std::string, size_t> m_functions;
 	std::unordered_set<std::string> m_scoped_clean_functions;
 	std::unordered_set<std::string> m_trusted_internal_entries;

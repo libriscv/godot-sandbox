@@ -295,6 +295,7 @@ std::vector<uint8_t> RISCVCodeGen::generate(const IRProgram& program) {
 	m_label_names = program.strings;
 	m_label_offsets.assign(m_label_names.size(), NO_LABEL);
 	m_label_uses.clear();
+	m_dense_jump_tables.clear();
 	m_functions.clear();
 	m_scoped_clean_functions.clear();
 	m_trusted_internal_entries.clear();
@@ -2673,6 +2674,7 @@ void RISCVCodeGen::emit_dense_jump_table(uint8_t index_reg, const std::vector<st
 	emit_sh2add(REG_T0, index_reg, REG_T1); // t1 + index*4
 	emit_jalr(REG_ZERO, REG_T0, 12);        // jump into table
 
+	m_dense_jump_tables.push_back({m_label_uses.size(), labels.size()});
 	for (const std::string& label : labels) {
 		mark_label_use(label, m_code.size());
 		emit_jal(REG_ZERO, 0);
@@ -5769,82 +5771,81 @@ void RISCVCodeGen::mark_label_use(const IRValue& label, size_t code_offset, int3
 }
 
 void RISCVCodeGen::relax_branches() {
-	// Invert B-type condition by flipping funct3 low bit
-	auto invert_condition = [](uint8_t funct3) -> uint8_t { return funct3 ^ 1; };
-
-	// One scan collects every out-of-range branch, one rebuild applies them all.
-	// An inserted jal only lengthens spans, so out-of-range is monotone in the
-	// relaxed set: the batch converges on the same least fixed point the
-	// restart-per-insert loop did. Encodings depend on that set, not on
-	// discovery order. The outer loop covers neighbours pushed out of range by
-	// an insertion -- two rounds in practice.
-	std::vector<size_t> relaxed_uses;
-	std::vector<size_t> insert_points;
-
 	while (true) {
-		relaxed_uses.clear();
-		insert_points.clear();
-
-		for (size_t use_index = 0; use_index < m_label_uses.size(); use_index++) {
-			const LabelUse& use = m_label_uses[use_index];
-			if (use.code_offset + 4 > m_code.size()) {
+		std::vector<bool> relax(m_label_uses.size(), false);
+		for (size_t i = 0; i < m_label_uses.size(); i++) {
+			const LabelUse& use = m_label_uses[i];
+			if (use.code_offset + 4 > m_code.size() || use.label >= m_label_offsets.size() ||
+				m_label_offsets[use.label] == NO_LABEL) {
 				continue;
 			}
-
-			uint32_t instr = 0;
+			uint32_t instr;
 			std::memcpy(&instr, &m_code[use.code_offset], 4);
-			if ((instr & 0x7F) != 0x63) {
+			const uint8_t opcode = instr & 0x7F;
+			if (opcode != 0x63 && opcode != 0x6F) {
 				continue;
 			}
-
-			if (use.label >= m_label_offsets.size() || m_label_offsets[use.label] == NO_LABEL) {
-				continue;
-			}
-			const int64_t displacement =
-				static_cast<int64_t>(m_label_offsets[use.label]) - static_cast<int64_t>(use.code_offset) + use.addend;
-			if (fits_in_signed(displacement, B_TYPE_IMM_BITS)) {
-				continue;
-			}
-			relaxed_uses.push_back(use_index);
+			const int64_t displacement = static_cast<int64_t>(m_label_offsets[use.label]) -
+				static_cast<int64_t>(use.code_offset) + use.addend;
+			relax[i] = !fits_in_signed(displacement, opcode == 0x63 ? B_TYPE_IMM_BITS : J_TYPE_IMM_BITS);
 		}
 
-		if (relaxed_uses.empty()) {
+		for (const auto& table : m_dense_jump_tables) {
+			const auto first = relax.begin() + table.first_use;
+			const auto last = first + table.count;
+			if (std::find(first, last, true) == last) {
+				continue;
+			}
+			std::fill(first, last, true);
+			const size_t dispatch = m_label_uses[table.first_use].code_offset - 8;
+			uint32_t instr;
+			std::memcpy(&instr, &m_code[dispatch], 4);
+			instr = (instr & ~(7u << 12)) | (6u << 12);
+			std::memcpy(&m_code[dispatch], &instr, 4);
+		}
+
+		std::vector<std::pair<size_t, uint32_t>> insertions;
+		std::vector<size_t> relaxed_branches;
+		for (size_t i = 0; i < relax.size(); i++) {
+			if (!relax[i]) {
+				continue;
+			}
+			const size_t code_offset = m_label_uses[i].code_offset;
+			uint32_t instr;
+			std::memcpy(&instr, &m_code[code_offset], 4);
+			uint32_t next;
+			if ((instr & 0x7F) == 0x63) {
+				instr = (instr & 0x01FFF07F) ^ (1u << 12);
+				const std::string skip = ".relax_skip" + std::to_string(i);
+				set_label(label_id(skip), code_offset + 4);
+				mark_label_use(skip, code_offset);
+				relaxed_branches.push_back(i);
+				next = 0x6F;
+			} else {
+				const uint8_t rd = (instr >> 7) & 0x1F;
+				instr = 0x17 | (REG_WIDE_SCRATCH << 7);
+				next = 0x67 | (rd << 7) | (REG_WIDE_SCRATCH << 15);
+			}
+			std::memcpy(&m_code[code_offset], &instr, 4);
+			insertions.push_back({code_offset + 4, next});
+		}
+		if (insertions.empty()) {
 			return;
 		}
-
-		// Rewrite as inverted branch over an inserted jal
-		for (size_t use_index : relaxed_uses) {
-			const size_t code_offset = m_label_uses[use_index].code_offset;
-			uint32_t instr = 0;
-			std::memcpy(&instr, &m_code[code_offset], 4);
-			const uint8_t funct3 = (instr >> 12) & 0x7;
-			const uint8_t rs1 = (instr >> 15) & 0x1F;
-			const uint8_t rs2 = (instr >> 20) & 0x1F;
-
-			const int32_t skip = 8; // over the jal that follows
-			const uint32_t imm11 = (skip >> 11) & 1;
-			const uint32_t imm4_1 = (skip >> 1) & 0xF;
-			const uint32_t imm10_5 = (skip >> 5) & 0x3F;
-			const uint32_t imm12 = (skip >> 12) & 1;
-			const uint32_t inverted = 0x63 | (imm11 << 7) | (imm4_1 << 8) |
-				(invert_condition(funct3) << 12) | (rs1 << 15) | (rs2 << 20) |
-				(imm10_5 << 25) | (imm12 << 31);
-			std::memcpy(&m_code[code_offset], &inverted, 4);
-
-			insert_points.push_back(code_offset + 4);
-		}
-		std::sort(insert_points.begin(), insert_points.end());
+		std::sort(insertions.begin(), insertions.end());
 
 		std::vector<uint8_t> rebuilt;
-		rebuilt.reserve(m_code.size() + insert_points.size() * 4);
+		rebuilt.reserve(m_code.size() + insertions.size() * 4);
 		size_t copied = 0;
-		for (size_t point : insert_points) {
+		std::vector<size_t> insert_points;
+		insert_points.reserve(insertions.size());
+		for (const auto& [point, word] : insertions) {
 			rebuilt.insert(rebuilt.end(), m_code.begin() + static_cast<long>(copied),
 				m_code.begin() + static_cast<long>(point));
-			const uint32_t jal = 0x6F;
 			uint8_t bytes[4];
-			std::memcpy(bytes, &jal, 4);
+			std::memcpy(bytes, &word, 4);
 			rebuilt.insert(rebuilt.end(), bytes, bytes + 4);
+			insert_points.push_back(point);
 			copied = point;
 		}
 		rebuilt.insert(rebuilt.end(), m_code.begin() + static_cast<long>(copied), m_code.end());
@@ -5864,15 +5865,17 @@ void RISCVCodeGen::relax_branches() {
 		for (auto& entry : m_functions) {
 			entry.second = shift(entry.second);
 		}
+		if (m_instance_init_offset != 0) {
+			m_instance_init_offset = shift(m_instance_init_offset);
+		}
 		for (auto& entry : m_line_table.entries) {
 			entry.address = uint32_t(shift(entry.address));
 		}
 		for (auto& use : m_label_uses) {
 			use.code_offset = shift(use.code_offset);
 		}
-		// The relaxed use now names the jal, one instruction on.
-		for (size_t use_index : relaxed_uses) {
-			m_label_uses[use_index].code_offset += 4;
+		for (size_t i : relaxed_branches) {
+			m_label_uses[i].code_offset += 4;
 		}
 	}
 }
@@ -5888,7 +5891,7 @@ void RISCVCodeGen::resolve_labels() {
 
 		const std::string& label = m_label_names[use.label];
 		size_t target_offset = m_label_offsets[use.label];
-		int32_t offset = static_cast<int32_t>(target_offset - use_offset) + use.addend;
+		const int64_t offset = static_cast<int64_t>(target_offset) - static_cast<int64_t>(use_offset) + use.addend;
 
 		uint32_t instr;
 		memcpy(&instr, &m_code[use_offset], 4);
@@ -5924,7 +5927,14 @@ void RISCVCodeGen::resolve_labels() {
 			memcpy(&next_instr, &m_code[use_offset + 4], 4);
 			uint8_t next_opcode = next_instr & 0x7F;
 
-			if (next_opcode == 0x03) {
+			if (next_opcode == 0x67) {
+				check_displacement("AUIPC/JALR to '" + label + "'", offset, 32);
+				const int64_t upper = (offset + 0x800) >> 12;
+				check_immediate("AUIPC to '" + label + "'", upper, 20);
+				instr = opcode | (rd << 7) | ((uint32_t(upper) & 0xFFFFF) << 12);
+				next_instr = (next_instr & 0x000FFFFF) | ((uint32_t(offset) & 0xFFF) << 20);
+				memcpy(&m_code[use_offset + 4], &next_instr, 4);
+			} else if (next_opcode == 0x03) {
 				int32_t upper = (offset + 0x800) >> 12;
 				int32_t lower = offset & 0xFFF;
 

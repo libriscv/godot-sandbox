@@ -205,6 +205,11 @@ if (BUILD_TESTING)
 		target_link_libraries(test_differential gdscript_compiler riscv)
 		add_test(NAME test_differential COMMAND test_differential)
 
+		add_executable(test_long_jumps tests/test_long_jumps.cpp)
+		target_compile_options(test_long_jumps PRIVATE ${GDSC_WARNINGS} -UNDEBUG)
+		target_link_libraries(test_long_jumps gdscript_compiler riscv)
+		add_test(NAME test_long_jumps COMMAND test_long_jumps)
+
 		# Codegen performance is pinned by deterministic interpreted instruction
 		# counts rather than wall-clock timing.
 		add_executable(test_instruction_budget tests/test_instruction_budget.cpp)
