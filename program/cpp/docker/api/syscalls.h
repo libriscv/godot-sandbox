@@ -145,7 +145,9 @@
 // Host bounds-checks the buffer. No scoped Variant slots created.
 #define ECALL_STRING_CODEPOINT_BATCH (GAME_API_BASE + 65)
 
-#define ECALL_LAST (GAME_API_BASE + 66)
+#define ECALL_VARIANT_SET (GAME_API_BASE + 66)
+
+#define ECALL_LAST (GAME_API_BASE + 67)
 
 #define STRINGIFY_HELPER(x) #x
 #define STRINGIFY(x) STRINGIFY_HELPER(x)

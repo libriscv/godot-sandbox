@@ -123,6 +123,7 @@ static constexpr Shape SHAPES[] = {
 	{ ECALL_OBJ_PROP_GET, { Arg::ADDR, Arg::NAME, Arg::NAMELEN, Arg::OUT } },
 	{ ECALL_OBJ_PROP_SET, { Arg::ADDR, Arg::NAME, Arg::NAMELEN, Arg::VPTR } },
 	{ ECALL_VARIANT_GET, { Arg::VPTR, Arg::VPTR, Arg::OUT } },
+	{ ECALL_VARIANT_SET, { Arg::VPTR, Arg::VPTR, Arg::VPTR } },
 	{ ECALL_OBJ_CALLP, { Arg::ADDR, Arg::NAME, Arg::NAMELEN, Arg::OP, Arg::OUT, Arg::VPTR, Arg::SMALL } },
 	{ ECALL_OBJ_USES_TRAIT, { Arg::ADDR, Arg::NAME, Arg::NAMELEN, Arg::NAME, Arg::NAMELEN } },
 	{ ECALL_GET_NODE, { Arg::ADDR, Arg::NAME, Arg::NAMELEN } },

@@ -207,6 +207,7 @@ IR_OPCODE(RETURN,          "RETURN",          SIG(),                        IR_S
 IR_OPCODE(VCALL,           "VCALL",           SIG(DST, SRC, STR, CNT, SRC_LIST), IR_SIDE_EFFECTS | IR_CALL)
 IR_OPCODE(VGET,            "VGET",            SIG(DST, SRC, IMM, IMM),           IR_SIDE_EFFECTS)
 IR_OPCODE(VSET,            "VSET",            SIG(SRC, IMM, IMM, SRC),           IR_SIDE_EFFECTS)
+IR_OPCODE(VARIANT_SET,     "VARIANT_SET",     SIG(INOUT, SRC, SRC),              IR_SIDE_EFFECTS)
 
 // -= Global functions =-
 //

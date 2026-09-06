@@ -257,6 +257,35 @@ static void test_a_scalar_cannot_fill_a_multi_component_member() {
 	std::cout << "  ✓ a scalar cannot fill a multi-component member" << std::endl;
 }
 
+static void test_a_computed_member_write_goes_to_the_host() {
+	std::cout << "Testing that a computed member write carries the whole value..." << std::endl;
+
+	const IRProgram color = compile_to_ir(
+		"func test():\n\tvar c : Color = Color()\n\tc.r8 = 128\n\treturn c\n");
+	const IRFunction& f = find_function(color, "test");
+	assert(count_opcode(f, IROpcode::VARIANT_SET) == 1);
+	assert(count_opcode(f, IROpcode::VSET) == 0);
+	assert(count_opcode(f, IROpcode::VSET_INLINE) == 0);
+
+	// Pointer-backed: the subject really is a handle, so the named syscall stays.
+	const IRProgram aabb = compile_to_ir(
+		"func test():\n\tvar a : AABB = AABB()\n\ta.end = Vector3(1, 2, 3)\n\treturn a\n");
+	const IRFunction& b = find_function(aabb, "test");
+	assert(count_opcode(b, IROpcode::VSET) == 1);
+	assert(count_opcode(b, IROpcode::VARIANT_SET) == 0);
+
+	// Unknown tag: the inline arm is chosen at run time, the rest still goes to VSET.
+	const IRProgram dynamic = compile_to_ir("func test(o, v):\n\to.r8 = v\n");
+	const IRFunction& d = find_function(dynamic, "test");
+	assert(count_opcode(d, IROpcode::VARIANT_SET) == 1);
+	assert(count_opcode(d, IROpcode::VSET) == 1);
+
+	assert(!compile_to_riscv(
+		"func test():\n\tvar c : Color = Color()\n\tc.r8 = 128\n\treturn c.r8\n").empty());
+
+	std::cout << "  ✓ a computed member write carries the whole value" << std::endl;
+}
+
 // -= An unknown type =-
 
 static void test_unknown_member_write_tests_the_tag() {
@@ -268,7 +297,9 @@ static void test_unknown_member_write_tests_the_tag() {
 
 	const int arms = count_opcode(f, IROpcode::VSET_INLINE) + count_opcode(f, IROpcode::VGET_INLINE);
 	assert(count_opcode(f, IROpcode::VSET_INLINE) > 0);
-	assert(count_tag_tests(f) == arms + 4);
+	// Per store and load: a Dictionary test, and a mask that catches every inline
+	// payload before the handle-taking VSET/VGET.
+	assert(count_tag_tests(f) == arms + 6);
 	// One VSET for the Object fallback, one to write `position` back.
 	assert(count_opcode(f, IROpcode::VSET) == 2);
 	// Chain evaluated once: one VGET for `position`.
@@ -289,7 +320,7 @@ static void test_unknown_member_write_tests_the_tag() {
 	// Non-inline member: Dictionary arm + VSET fallback only.
 	const IRProgram plain_ir = compile_to_ir("func test(n):\n\tn.visible = true\n");
 	const IRFunction& plain = find_function(plain_ir, "test");
-	assert(count_tag_tests(plain) == 1);
+	assert(count_tag_tests(plain) == 2);
 	assert(count_dict_sets(plain) == 1);
 	assert(count_opcode(plain, IROpcode::VSET) == 1);
 	assert(count_opcode(plain, IROpcode::VSET_INLINE) == 0);
@@ -493,6 +524,7 @@ int main() {
 		test_known_inline_member_write();
 		test_rect_and_plane_members();
 		test_a_scalar_cannot_fill_a_multi_component_member();
+		test_a_computed_member_write_goes_to_the_host();
 		test_unknown_member_write_tests_the_tag();
 		test_the_copy_travels_back();
 		test_a_base_property_travels_back();

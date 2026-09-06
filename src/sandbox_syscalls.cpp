@@ -4001,6 +4001,50 @@ APICALL(api_variant_get) {
 	machine.set_result(vret->type);
 }
 
+APICALL(api_variant_set) {
+	auto [g_subject, g_key, g_value] =
+			machine.sysargs<GuestVariant *, const GuestVariant *, const GuestVariant *>();
+	Sandbox &emu = riscv::emu(machine);
+	PENALIZE(150'000);
+	SYS_TRACE("variant_set", g_subject, g_key, g_value);
+
+	const BorrowedVariant key(emu, *g_key);
+	const BorrowedVariant value(emu, *g_value);
+
+	const auto assign = [&](Variant &target) {
+		GDExtensionBool valid = false;
+		internal::gdextension_interface_variant_set(
+				target._native_ptr(), key->_native_ptr(), value->_native_ptr(), &valid);
+		if (UNLIKELY(!valid)) {
+			const std::string target_type = GuestVariant::type_name(variant_type(target));
+			const std::string key_type = GuestVariant::type_name(variant_type(*key));
+			ERR_PRINT(("Invalid indexed assignment on " + target_type + " with key type " + key_type).c_str());
+			throw std::runtime_error(
+					"Invalid indexed assignment on " + target_type + " with key type " + key_type);
+		}
+	};
+
+	if (g_subject->type == Variant::OBJECT) {
+		godot::Object *obj = get_object_from_address(emu, g_subject->v.i);
+		if (UNLIKELY(!emu.is_allowed_property(obj, *key, true))) {
+			ERR_PRINT("Banned property set through Variant index");
+			throw std::runtime_error("Banned property set through Variant index");
+		}
+		Variant subject(obj);
+		assign(subject);
+		return;
+	}
+
+	if (g_subject->is_scoped_variant()) {
+		assign(emu.get_mutable_scoped_variant(int32_t(g_subject->v.i)));
+		return;
+	}
+
+	Variant subject = g_subject->toVariant(emu);
+	assign(subject);
+	g_subject->set(emu, subject);
+}
+
 APICALL(api_sandbox_add) {
 	// Add a new sandboxed property or public API method to the sandbox.
 	Sandbox &emu = riscv::emu(machine);
@@ -4284,6 +4328,7 @@ void Sandbox::initialize_syscalls() {
 			{ ECALL_OBJ_PROP_GET, api_obj_property_get },
 			{ ECALL_OBJ_PROP_SET, api_obj_property_set },
 			{ ECALL_VARIANT_GET, api_variant_get },
+			{ ECALL_VARIANT_SET, api_variant_set },
 
 			{ ECALL_SANDBOX_ADD, api_sandbox_add },
 

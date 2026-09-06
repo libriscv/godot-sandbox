@@ -840,6 +840,7 @@ void IROptimizer::fold_instruction(const IRInstruction& instr, std::vector<IRIns
 		case IROpcode::VCALL:
 		case IROpcode::VGET:
 		case IROpcode::VSET:
+		case IROpcode::VARIANT_SET:
 		case IROpcode::CALL_SYSCALL:
 		case IROpcode::GET_NODE:
 		case IROpcode::LOAD_RESOURCE:

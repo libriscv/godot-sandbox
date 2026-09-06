@@ -580,6 +580,7 @@ void IRInterpreter::execute_instruction(const IRFunction& func, const IRInstruct
 		case IROpcode::VCALL:
 		case IROpcode::VGET:
 		case IROpcode::VSET:
+		case IROpcode::VARIANT_SET:
 		case IROpcode::VGET_INLINE:
 		case IROpcode::VSET_INLINE:
 		case IROpcode::MAKE_VECTOR2:

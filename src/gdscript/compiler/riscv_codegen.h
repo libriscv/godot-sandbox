@@ -136,6 +136,7 @@ private:
 	void gen_call(const IRInstruction& instr);
 	void gen_call_hosted(const IRInstruction& instr);
 	void gen_vset(const IRInstruction& instr);
+	void gen_variant_set(const IRInstruction& instr);
 	void gen_fused_branch(const IRInstruction& instr);
 	void gen_comparison(const IRInstruction& instr);
 	void gen_make_packed_array(const IRInstruction& instr);

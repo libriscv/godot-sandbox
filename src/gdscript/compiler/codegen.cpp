@@ -9881,6 +9881,16 @@ void CodeGenerator::emit_group_type_test(int obj_reg, const InlineMemberGroup& g
 	free_register(func, test_reg);
 }
 
+static int64_t inline_payload_mask() {
+	int64_t mask = 0;
+	for (uint32_t type = 0; type < Variant::VARIANT_MAX; type++) {
+		if (has_inline_variant_payload(type)) {
+			mask |= int64_t(1) << type;
+		}
+	}
+	return mask;
+}
+
 int CodeGenerator::gen_vget(int obj_reg, const std::string& member, FunctionContext& func) {
 	int result_reg = alloc_register(func);
 	int str_idx = add_string_constant(member);
@@ -9903,6 +9913,15 @@ int CodeGenerator::gen_named_variant_get(int obj_reg, const std::string& member,
 	gen_variant_get(result_reg, obj_reg, key_reg, func);
 	free_register(func, key_reg);
 	return result_reg;
+}
+
+void CodeGenerator::gen_named_variant_set(int obj_reg, const std::string& member, int value_reg,
+	FunctionContext& func)
+{
+	const int key_reg = gen_string_value(member, func);
+	func.ir.instructions.emplace_back(IROpcode::VARIANT_SET, IRValue::reg(obj_reg),
+		IRValue::reg(key_reg), IRValue::reg(value_reg));
+	free_register(func, key_reg);
 }
 
 void CodeGenerator::gen_vset(int obj_reg, const std::string& member, int value_reg, FunctionContext& func) {
@@ -9985,15 +10004,9 @@ int CodeGenerator::gen_dynamic_member_get(int obj_reg, const std::string& member
 
 	{
 		const std::string next_label = make_label("member_get_next");
-		int64_t mask = 0;
-		for (uint32_t type = 0; type < Variant::VARIANT_MAX; type++) {
-			if (has_inline_variant_payload(type)) {
-				mask |= int64_t(1) << type;
-			}
-		}
 		const int test_reg = alloc_register(func);
 		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST_MASK, IRValue::reg(test_reg),
-			IRValue::reg(obj_reg), IRValue::imm(mask));
+			IRValue::reg(obj_reg), IRValue::imm(inline_payload_mask()));
 		set_register_type(func, test_reg, Variant::BOOL);
 		emit_conditional_branch(IROpcode::BRANCH_ZERO, test_reg, next_label, func);
 		free_register(func, test_reg);
@@ -10073,6 +10086,20 @@ void CodeGenerator::gen_dynamic_member_set(int obj_reg, const std::string& membe
 
 		gen_inline_member_set(obj_reg, group.types.front(), member, value_reg, func,
 			group.types.size() == 1);
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(next_label));
+	}
+
+	{
+		const std::string next_label = make_label("member_set_next");
+		const int test_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST_MASK, IRValue::reg(test_reg),
+			IRValue::reg(obj_reg), IRValue::imm(inline_payload_mask()));
+		set_register_type(func, test_reg, Variant::BOOL);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, test_reg, next_label, func);
+		free_register(func, test_reg);
+
+		gen_named_variant_set(obj_reg, member, value_reg, func);
 		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
 		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(next_label));
 	}
@@ -10158,6 +10185,12 @@ bool CodeGenerator::gen_member_store(int obj_reg, const std::string& member, int
 	// Unknown tag: decide at run time. A Dictionary reaching VSET throws.
 	if (obj_type == IRInstruction::TypeHint_NONE) {
 		gen_dynamic_member_set(obj_reg, member, value_reg, func);
+		return true;
+	}
+
+	// Computed member of an inline value: VSET would pass the payload as a handle.
+	if (has_inline_variant_payload(static_cast<uint32_t>(obj_type))) {
+		gen_named_variant_set(obj_reg, member, value_reg, func);
 		return true;
 	}
 

@@ -15,7 +15,7 @@ const ITERATIONS := 50000
 
 # ECALL_LAST. Every handler below it is driven and checked; raising the syscall
 # range without raising this leaves the new one unchecked.
-const SYSCALL_LAST := 566
+const SYSCALL_LAST := 567
 
 # Restrictions are enabled for the duration of a run and every callback answers "no", so
 # these are the system calls that are supposed to be refused every single time. A handler

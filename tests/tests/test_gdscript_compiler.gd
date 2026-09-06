@@ -7829,6 +7829,94 @@ func stored_member():
 	s.queue_free()
 
 
+func test_computed_builtin_member_writes():
+	var gdscript_code = """
+var tint := Color(0.0, 0.0, 0.0)
+
+func color_r8():
+	var c := Color(0.0, 0.0, 0.0)
+	c.r8 = 128
+	return c
+
+func color_hue():
+	var c := Color(0.25, 0.5, 0.75)
+	c.h = 0.5
+	return c
+
+func recti_end():
+	var r := Rect2i(-2, -1, 5, 2)
+	r.end = Vector2i(10, 10)
+	return r
+
+func rect_end():
+	var r := Rect2(1.0, 2.0, 3.0, 4.0)
+	r.end = Vector2(9.0, 9.0)
+	return r
+
+func aabb_end():
+	var b := AABB(Vector3(1, 2, 3), Vector3(4, 5, 6))
+	b.end = Vector3(9, 9, 9)
+	return b
+
+func untyped_r8(v):
+	v.r8 = 128
+	return v
+
+func untyped_end(v):
+	v.end = Vector2i(10, 10)
+	return v
+
+func stored_component():
+	var c := Color(0.0, 0.0, 0.0)
+	c.r = 0.5
+	return c
+
+func member_r8():
+	tint.r8 = 128
+	return tint
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	var color := Color(0.0, 0.0, 0.0)
+	color.r8 = 128
+	assert_eq(s.vmcallv("color_r8"), color, "writing Color.r8 should match the engine")
+
+	var hued := Color(0.25, 0.5, 0.75)
+	hued.h = 0.5
+	assert_eq(s.vmcallv("color_hue"), hued, "writing Color.h should match the engine")
+
+	var recti := Rect2i(-2, -1, 5, 2)
+	recti.end = Vector2i(10, 10)
+	assert_eq(s.vmcallv("recti_end"), recti, "writing Rect2i.end should match the engine")
+
+	var rect := Rect2(1.0, 2.0, 3.0, 4.0)
+	rect.end = Vector2(9.0, 9.0)
+	assert_eq(s.vmcallv("rect_end"), rect, "writing Rect2.end should match the engine")
+
+	# AABB is pointer-backed, so its write keeps going through the named-property
+	# system call. The two halves have to agree.
+	var box := AABB(Vector3(1, 2, 3), Vector3(4, 5, 6))
+	box.end = Vector3(9, 9, 9)
+	assert_eq(s.vmcallv("aabb_end"), box, "writing AABB.end should match the engine")
+
+	assert_eq(s.vmcallv("untyped_r8", Color(0.0, 0.0, 0.0)), color,
+		"an untyped Color.r8 write should match the engine")
+	assert_eq(s.vmcallv("untyped_end", Rect2i(-2, -1, 5, 2)), recti,
+		"an untyped Rect2i.end write should match the engine")
+
+	var stored := Color(0.0, 0.0, 0.0)
+	stored.r = 0.5
+	assert_eq(s.vmcallv("stored_component"), stored,
+		"a stored component should still be written into the payload")
+
+	assert_eq(s.vmcallv("member_r8"), color, "writing a member's computed member should match")
+	assert_eq(s.get("tint"), color, "and the member should keep the written value")
+
+	s.queue_free()
+
+
 # @GlobalScope and built-in type constants, folded to immediates.
 func test_global_constants():
 	var gdscript_code = """

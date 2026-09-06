@@ -3408,6 +3408,29 @@ void RISCVCodeGen::gen_vset(const IRInstruction& instr) {
 	emit_ecall();
 }
 
+void RISCVCodeGen::gen_variant_set(const IRInstruction& instr) {
+	if (instr.operands.size() != 3) {
+		throw CompilerException(ErrorType::RISCV_codegen_ERROR,
+				"VARIANT_SET requires 3 operands (subject_reg, key_reg, value_reg)");
+	}
+
+	const int subject_vreg = instr.operands[0].reg_index();
+	const int key_vreg = instr.operands[1].reg_index();
+	const int value_vreg = instr.operands[2].reg_index();
+
+	const int subject_offset = get_variant_stack_offset(subject_vreg);
+	const int key_offset = get_variant_stack_offset(key_vreg);
+	const int value_offset = get_variant_stack_offset(value_vreg);
+
+	spill_around_syscall({REG_A0, REG_A1, REG_A2});
+
+	emit_load_stack_offset(REG_A0, subject_offset);
+	emit_load_stack_offset(REG_A1, key_offset);
+	emit_load_stack_offset(REG_A2, value_offset);
+	emit_li(REG_A7, ECALL_VARIANT_SET);
+	emit_ecall();
+}
+
 void RISCVCodeGen::gen_call(const IRInstruction& instr) {
 	if (instr.operands.size() < 3) {
 		throw CompilerException(ErrorType::RISCV_codegen_ERROR, "CALL requires at least 3 operands");
@@ -4301,6 +4324,9 @@ void RISCVCodeGen::gen_instruction(const IRInstruction& instr) {
 		case IROpcode::VSET:
 			gen_vset(instr);
 			break;
+		case IROpcode::VARIANT_SET:
+			gen_variant_set(instr);
+			break;
 		case IROpcode::VSET_INLINE:
 			gen_vset_inline(instr);
 			break;
@@ -4804,6 +4830,7 @@ bool RISCVCodeGen::opcode_clobbers_abi_registers(IROpcode op) {
 		case IROpcode::VCALL:
 		case IROpcode::VGET:
 		case IROpcode::VSET:
+		case IROpcode::VARIANT_SET:
 		case IROpcode::PRINT:
 		case IROpcode::THROW:
 		case IROpcode::GLOBAL_CALL:
@@ -7517,6 +7544,8 @@ static bool leaves_nothing_scoped(const IRInstruction& instr) {
 		case IROpcode::ARRAY_SET:
 		case IROpcode::ARRAY_APPEND:
 		case IROpcode::DICT_SET:
+		// The mutated value goes back into the guest's own slot.
+		case IROpcode::VARIANT_SET:
 			return true;
 		default:
 			return syscall_answers_in_register(instr);
