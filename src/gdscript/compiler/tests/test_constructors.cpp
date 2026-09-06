@@ -214,6 +214,30 @@ static void test_rect_and_plane() {
 	const IRInstruction& make_plane = only(plane_fn, IROpcode::MAKE_PLANE);
 	assert(float_immediate(plane_fn, make_plane.operands[4].reg_index()) == 0.0);
 
+	static const char* host_forms[] = {
+		"Plane(Vector3(0, 1, 0), Vector3(2, 1, 3))",
+		"Plane(Vector3(0, 1, 0), Vector3(2, 1, 3), Vector3(1, 1, 1))",
+	};
+	for (const char* form : host_forms) {
+		const IRProgram program = compile_to_ir(
+			std::string("func test():\n\treturn ") + form + "\n");
+		const IRFunction& fn = find_function(program, "test");
+		assert(count_opcode(fn, IROpcode::MAKE_PLANE) == 0);
+		assert(count_opcode(fn, IROpcode::CONSTRUCT) == 1);
+	}
+
+	const IRProgram plane_copy = compile_to_ir(
+		"func test():\n\treturn Plane(Plane(0, 1, 0, 5))\n");
+	const IRFunction& plane_copy_fn = find_function(plane_copy, "test");
+	assert(count_opcode(plane_copy_fn, IROpcode::MAKE_PLANE) == 1);
+	assert(count_opcode(plane_copy_fn, IROpcode::CONSTRUCT) == 1);
+
+	const IRProgram untyped = compile_to_ir(
+		"func test(n, d):\n\treturn Plane(n, d)\n");
+	const IRFunction& untyped_fn = find_function(untyped, "test");
+	assert(count_opcode(untyped_fn, IROpcode::MAKE_PLANE) == 0);
+	assert(count_opcode(untyped_fn, IROpcode::CONSTRUCT) == 1);
+
 	std::cout << "  ✓ Rect2, Rect2i and Plane construct inline" << std::endl;
 }
 

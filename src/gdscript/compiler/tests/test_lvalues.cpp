@@ -206,8 +206,14 @@ static void test_rect_and_plane_members() {
 	assert(count_opcode(find_function(spelled, "test"), IROpcode::VSET) == 0);
 	assert(count_opcode(find_function(spelled, "test"), IROpcode::VGET) == 0);
 
+	const IRProgram computed_program = compile_to_ir(
+		"func test():\n\tvar r : Rect2 = Rect2(1, 2, 3, 4)\n\treturn r.end\n");
+	const IRFunction& computed = find_function(computed_program, "test");
+	assert(count_opcode(computed, IROpcode::VGET) == 0);
+	assert(count_opcode(computed, IROpcode::CALL_SYSCALL) == 1);
+
 	assert(count_opcode(find_function(compile_to_ir(
-		"func test():\n\tvar r : Rect2 = Rect2(1, 2, 3, 4)\n\treturn r.end\n"), "test"),
+		"func test():\n\tvar a : AABB = AABB()\n\treturn a.end\n"), "test"),
 		IROpcode::VGET) == 1);
 
 	assert(!compile_to_riscv(
@@ -262,7 +268,7 @@ static void test_unknown_member_write_tests_the_tag() {
 
 	const int arms = count_opcode(f, IROpcode::VSET_INLINE) + count_opcode(f, IROpcode::VGET_INLINE);
 	assert(count_opcode(f, IROpcode::VSET_INLINE) > 0);
-	assert(count_tag_tests(f) == arms + 3);
+	assert(count_tag_tests(f) == arms + 4);
 	// One VSET for the Object fallback, one to write `position` back.
 	assert(count_opcode(f, IROpcode::VSET) == 2);
 	// Chain evaluated once: one VGET for `position`.
@@ -275,7 +281,7 @@ static void test_unknown_member_write_tests_the_tag() {
 	const IRProgram read = compile_to_ir("func test(n):\n\treturn n.position.x\n");
 	const IRFunction& r = find_function(read, "test");
 	assert(count_opcode(r, IROpcode::VGET_INLINE) > 0);
-	assert(count_tag_tests(r) == count_opcode(r, IROpcode::VGET_INLINE) + 2);
+	assert(count_tag_tests(r) == count_opcode(r, IROpcode::VGET_INLINE) + 4);
 	// VGET fallback for Objects that carry `.x` as a property.
 	assert(count_opcode(r, IROpcode::VGET) == 2);
 	assert(count_dict_gets(r) == 2);

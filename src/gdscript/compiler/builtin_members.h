@@ -13,6 +13,28 @@ struct BuiltinMember {
 	bool valid() const { return count != 0; }
 };
 
+inline bool has_inline_variant_payload(uint32_t type) {
+	switch (type) {
+		case Variant::NIL:
+		case Variant::BOOL:
+		case Variant::INT:
+		case Variant::FLOAT:
+		case Variant::VECTOR2:
+		case Variant::VECTOR2I:
+		case Variant::RECT2:
+		case Variant::RECT2I:
+		case Variant::VECTOR3:
+		case Variant::VECTOR3I:
+		case Variant::VECTOR4:
+		case Variant::VECTOR4I:
+		case Variant::PLANE:
+		case Variant::COLOR:
+			return true;
+		default:
+			return false;
+	}
+}
+
 inline BuiltinMember find_builtin_member(uint32_t type, const std::string& member) {
 	const auto scalar = [](int index, bool integer) {
 		return BuiltinMember{ index, 1, integer ? Variant::INT : Variant::FLOAT, integer };

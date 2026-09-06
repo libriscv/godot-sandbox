@@ -9714,6 +9714,13 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 		return reg;
 	};
 
+	const auto arg_type = [&](size_t index) {
+		return index < arg_regs.size()
+			? get_register_type(func, arg_regs[index]) : IRInstruction::TypeHint_NONE;
+	};
+	const bool plane_component_form = name == "Plane" && (given == 1 || given == 2) &&
+		arg_type(0) == Variant::VECTOR3 && (given == 1 || is_numeric_scalar(arg_type(1)));
+
 	if (given == 0) {
 		for (int i = 0; i < info->components; i++) {
 			components.push_back(load_default(i));
@@ -9722,7 +9729,7 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 		components.assign(arg_regs.begin(), arg_regs.end());
 	} else if (name == "Color" && given == 3) {
 		components = { arg_regs[0], arg_regs[1], arg_regs[2], load_default(3) };
-	} else if (name == "Color" && given == 2) {
+	} else if (name == "Color" && given == 2 && arg_type(0) == Variant::COLOR) {
 		// Color(from, alpha)
 		components = { read_member(arg_regs[0], "r"), read_member(arg_regs[0], "g"),
 			read_member(arg_regs[0], "b"), arg_regs[1] };
@@ -9730,10 +9737,18 @@ int CodeGenerator::gen_inline_constructor(const std::string& name, const std::ve
 		// Rect2(position, size), both Vector2
 		components = { read_member(arg_regs[0], "x"), read_member(arg_regs[0], "y"),
 			read_member(arg_regs[1], "x"), read_member(arg_regs[1], "y") };
-	} else if (name == "Plane" && (given == 1 || given == 2)) {
+	} else if (plane_component_form) {
 		// Plane(normal) / Plane(normal, d)
 		components = { read_member(arg_regs[0], "x"), read_member(arg_regs[0], "y"),
 			read_member(arg_regs[0], "z"), given == 2 ? arg_regs[1] : load_default(3) };
+	} else if ((name == "Plane" || name == "Color") && given >= 1 && given <= 3 &&
+		!is_numeric_scalar(arg_type(0)))
+	{
+		for (int reg : owned) {
+			free_register(func, reg);
+		}
+		free_register(func, result_reg);
+		return gen_host_constructor_typed(name, info->variant_type, arg_regs, func, site);
 	} else if (given == 1 && !is_numeric_scalar(get_register_type(func, arg_regs[0]))) {
 		for (int reg : owned) {
 			free_register(func, reg);
@@ -9880,6 +9895,16 @@ int CodeGenerator::gen_vget(int obj_reg, const std::string& member, FunctionCont
 	return result_reg;
 }
 
+int CodeGenerator::gen_named_variant_get(int obj_reg, const std::string& member,
+	FunctionContext& func)
+{
+	const int key_reg = gen_string_value(member, func);
+	const int result_reg = alloc_register(func);
+	gen_variant_get(result_reg, obj_reg, key_reg, func);
+	free_register(func, key_reg);
+	return result_reg;
+}
+
 void CodeGenerator::gen_vset(int obj_reg, const std::string& member, int value_reg, FunctionContext& func) {
 	int str_idx = add_string_constant(member);
 
@@ -9954,6 +9979,29 @@ int CodeGenerator::gen_dynamic_member_get(int obj_reg, const std::string& member
 		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg),
 			IRValue::reg(inline_reg));
 		free_register(func, inline_reg);
+		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
+		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(next_label));
+	}
+
+	{
+		const std::string next_label = make_label("member_get_next");
+		int64_t mask = 0;
+		for (uint32_t type = 0; type < Variant::VARIANT_MAX; type++) {
+			if (has_inline_variant_payload(type)) {
+				mask |= int64_t(1) << type;
+			}
+		}
+		const int test_reg = alloc_register(func);
+		func.ir.instructions.emplace_back(IROpcode::TYPE_TEST_MASK, IRValue::reg(test_reg),
+			IRValue::reg(obj_reg), IRValue::imm(mask));
+		set_register_type(func, test_reg, Variant::BOOL);
+		emit_conditional_branch(IROpcode::BRANCH_ZERO, test_reg, next_label, func);
+		free_register(func, test_reg);
+
+		int named_reg = gen_named_variant_get(obj_reg, member, func);
+		func.ir.instructions.emplace_back(IROpcode::MOVE, IRValue::reg(result_reg),
+			IRValue::reg(named_reg));
+		free_register(func, named_reg);
 		func.ir.instructions.emplace_back(IROpcode::JUMP, ir_label(end_label));
 		func.ir.instructions.emplace_back(IROpcode::LABEL, ir_label(next_label));
 	}
@@ -10065,6 +10113,10 @@ int CodeGenerator::gen_member_read(int obj_reg, const std::string& member, Funct
 	// Unknown tag: decide at run time. A Dictionary reaching VGET throws.
 	if (obj_type == IRInstruction::TypeHint_NONE) {
 		return gen_dynamic_member_get(obj_reg, member, func);
+	}
+
+	if (has_inline_variant_payload(static_cast<uint32_t>(obj_type))) {
+		return gen_named_variant_get(obj_reg, member, func);
 	}
 
 	return gen_vget(obj_reg, member, func);

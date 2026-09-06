@@ -316,6 +316,7 @@ private:
 	// Has own size()/get(); ECALL_ARRAY_SIZE/AT throw on these.
 	static bool is_packed_array_type(IRInstruction::TypeHint type);
 	int gen_vget(int obj_reg, const std::string& member, FunctionContext& func);
+	int gen_named_variant_get(int obj_reg, const std::string& member, FunctionContext& func);
 	void gen_vset(int obj_reg, const std::string& member, int value_reg, FunctionContext& func);
 	// Untyped: branch on tag at run time.
 	int gen_dynamic_member_get(int obj_reg, const std::string& member, FunctionContext& func);

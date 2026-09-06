@@ -7740,6 +7740,95 @@ func rescaled_color_alpha():
 	s.queue_free()
 
 
+func test_plane_constructor_overloads():
+	var gdscript_code = """
+func plane_from_normal_only():
+	return Plane(Vector3(0, 1, 0))
+
+func plane_from_normal_and_point():
+	return Plane(Vector3(0, 1, 0), Vector3(2, 1, 3))
+
+func plane_from_three_points():
+	return Plane(Vector3(0, 1, 0), Vector3(2, 1, 3), Vector3(1, 1, 1))
+
+func plane_copy():
+	return Plane(Plane(Vector3(0, 1, 0), 5.0))
+
+func plane_untyped(n, d):
+	return Plane(n, d)
+
+func color_from_name():
+	return Color("red", 0.25)
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("plane_from_normal_only"), Plane(Vector3(0, 1, 0)),
+		"Plane(normal) should match the engine")
+	assert_eq(s.vmcallv("plane_from_normal_and_point"), Plane(Vector3(0, 1, 0), Vector3(2, 1, 3)),
+		"Plane(normal, point) should match the engine")
+	assert_eq(s.vmcallv("plane_from_three_points"),
+		Plane(Vector3(0, 1, 0), Vector3(2, 1, 3), Vector3(1, 1, 1)),
+		"Plane(p1, p2, p3) should match the engine")
+	assert_eq(s.vmcallv("plane_copy"), Plane(Vector3(0, 1, 0), 5.0),
+		"Plane(Plane) should keep d")
+	assert_eq(s.vmcallv("plane_untyped", Vector3(0, 1, 0), 5.0), Plane(Vector3(0, 1, 0), 5.0),
+		"Plane(normal, d) should match the engine with untyped arguments")
+	assert_eq(s.vmcallv("plane_untyped", Vector3(0, 1, 0), Vector3(2, 1, 3)),
+		Plane(Vector3(0, 1, 0), Vector3(2, 1, 3)),
+		"Plane(normal, point) should match the engine with untyped arguments")
+	assert_eq(s.vmcallv("color_from_name"), Color("red", 0.25),
+		"Color(name, alpha) should match the engine")
+
+	s.queue_free()
+
+
+func test_computed_builtin_members():
+	var gdscript_code = """
+func color_r8():
+	return Color.DARK_VIOLET.r8
+
+func color_hue():
+	return Color(0.25, 0.5, 0.75).h
+
+func recti_end():
+	return Rect2i(-2, -1, 5, 2).end
+
+func rect_end():
+	return Rect2(1.0, 2.0, 3.0, 4.0).end
+
+func aabb_end():
+	return AABB(Vector3(1, 2, 3), Vector3(4, 5, 6)).end
+
+func untyped_end(v):
+	return v.end
+
+func stored_member():
+	return Color.DARK_VIOLET.r
+"""
+	var s = _compile_and_load(gdscript_code, 40000)
+	if s == null:
+		return
+
+	assert_eq(s.vmcallv("color_r8"), Color.DARK_VIOLET.r8, "Color.r8 should match the engine")
+	assert_almost_eq(s.vmcallv("color_hue"), Color(0.25, 0.5, 0.75).h, 0.0001,
+		"Color.h should match the engine")
+	assert_eq(s.vmcallv("recti_end"), Rect2i(-2, -1, 5, 2).end, "Rect2i.end should match the engine")
+	assert_eq(s.vmcallv("rect_end"), Rect2(1.0, 2.0, 3.0, 4.0).end, "Rect2.end should match the engine")
+	assert_eq(s.vmcallv("aabb_end"), AABB(Vector3(1, 2, 3), Vector3(4, 5, 6)).end,
+		"AABB.end should match the engine")
+	assert_eq(s.vmcallv("untyped_end", Rect2i(-2, -1, 5, 2)), Rect2i(-2, -1, 5, 2).end,
+		"an untyped Rect2i.end should match the engine")
+	assert_eq(s.vmcallv("untyped_end", AABB(Vector3(1, 2, 3), Vector3(4, 5, 6))),
+		AABB(Vector3(1, 2, 3), Vector3(4, 5, 6)).end,
+		"an untyped AABB.end should match the engine")
+	assert_almost_eq(s.vmcallv("stored_member"), Color.DARK_VIOLET.r, 0.0001,
+		"a stored component should still be read from the payload")
+
+	s.queue_free()
+
+
 # @GlobalScope and built-in type constants, folded to immediates.
 func test_global_constants():
 	var gdscript_code = """
