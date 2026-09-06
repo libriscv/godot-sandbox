@@ -1,6 +1,9 @@
 #include "resource_loader_elf.h"
 #include "../sandbox.h"
 #include "script_elf.h"
+#ifndef SAFEGDSCRIPT_DISABLED
+#include "../safegdscript/script_safegdscript.h"
+#endif
 #include <godot_cpp/classes/file_access.hpp>
 static constexpr bool VERBOSE_LOADER = false;
 
@@ -24,6 +27,17 @@ Variant ResourceFormatLoaderELF::_load(const String &p_path, const String &origi
 		}
 	} else if constexpr (VERBOSE_LOADER) {
 		WARN_PRINT("Binary translation library not found: " + dllpath);
+	}
+#endif
+#ifndef SAFEGDSCRIPT_DISABLED
+	// Native SafeGDScript exports retain their Script interface when remapped
+	// to ELF. Generic C++/.gd ELFs keep the extension's existing ELFScript API.
+	const String source_extension = p_path.get_basename().get_extension();
+	if (source_extension == "sgd" || source_extension == "safegd") {
+		Ref<SafeGDScript> script; script.instantiate();
+		if (!script->load_binary(FileAccess::get_file_as_bytes(p_path))) return ERR_FILE_CORRUPT;
+		script->set_mod_source_path(original_path);
+		return script;
 	}
 #endif
 	Ref<ELFScript> elf_model = memnew(ELFScript);

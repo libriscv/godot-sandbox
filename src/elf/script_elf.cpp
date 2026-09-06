@@ -1,3 +1,4 @@
+#include "../gdscript/compiler/trait_conformance.h"
 #include "script_elf.h"
 
 #include "../cpp/script_cpp.h"
@@ -105,6 +106,7 @@ const gdscript::FunctionSignature *ELFScript::find_signature(const StringName &p
 }
 
 void ELFScript::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("uses_trait", "name"), &ELFScript::uses_trait);
 	ClassDB::bind_method(D_METHOD("get_sandbox_for", "for_object"), &ELFScript::get_sandbox_for);
 	ClassDB::bind_method(D_METHOD("get_sandbox_objects"), &ELFScript::get_sandbox_objects);
 	ClassDB::bind_method(D_METHOD("get_content"), &ELFScript::get_content);
@@ -371,7 +373,26 @@ int32_t ELFScript::_get_member_line(const StringName &p_member) const {
 	return 0;
 }
 Dictionary ELFScript::_get_constants() const {
-	return Dictionary();
+	Dictionary constants;
+	for (const auto &c : script_metadata.constants) {
+		Variant value;
+		switch (c.kind) {
+			case gdscript::ScriptConstant::Kind::INT: value = std::get<int64_t>(c.value); break;
+			case gdscript::ScriptConstant::Kind::FLOAT: value = std::get<double>(c.value); break;
+			case gdscript::ScriptConstant::Kind::BOOL: value = std::get<bool>(c.value); break;
+			case gdscript::ScriptConstant::Kind::STRING: value = String::utf8(std::get<std::string>(c.value).c_str()); break;
+			case gdscript::ScriptConstant::Kind::ENUM: {
+				Dictionary members;
+				for (const auto &member : c.members) members[String::utf8(member.name.c_str())] = member.value;
+				value = members;
+			} break;
+		}
+		constants[String::utf8(c.name.c_str())] = value;
+	}
+	return constants;
+}
+bool ELFScript::uses_trait(const StringName &name) const {
+	return gdscript::metadata_uses(script_metadata.uses, script_metadata.classes, String(name).utf8().get_data());
 }
 TypedArray<StringName> ELFScript::_get_members() const {
 	return TypedArray<StringName>();

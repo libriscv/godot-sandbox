@@ -78,8 +78,14 @@ std::vector<uint8_t> ElfBuilder::build(const IRProgram& program, const VariantLa
 	meta.base_is_path = program.base_is_path;
 	meta.class_name = program.class_name;
 	meta.base_class = program.base_class;
+	meta.constants = program.constants;
+	meta.uses = program.script_uses;
+	meta.classes = program.class_signatures;
+	meta.classes.insert(meta.classes.end(), program.trait_signatures.begin(), program.trait_signatures.end());
 	meta.functions = program.signatures;
 	meta.signals = program.signals;
+	meta.properties = program.properties;
+	meta.rpc_configs = program.rpc_configs;
 	meta.line_table = m_line_table;
 	const std::vector<uint8_t> gdsmeta_bytes = encode_script_metadata(meta);
 	std::vector<uint8_t> shstrtab;

@@ -1,3 +1,4 @@
+#include "../gdscript/compiler/trait_conformance.h"
 #include "script_safegdscript.h"
 
 #include "compiler_backend.h"
@@ -156,6 +157,7 @@ bool SafeGDScript::_inherits_script(const Ref<Script> &p_script) const {
 	return false;
 }
 StringName SafeGDScript::_get_instance_base_type() const {
+	if (mod_restricted) return StringName("Node");
 	if (!this->native_base_class.is_empty() && !this->native_base_is_path &&
 			ClassDB::class_exists(StringName(this->native_base_class))) {
 		return StringName(this->native_base_class);
@@ -215,7 +217,7 @@ bool SafeGDScript::_instance_has(Object *p_object) const {
 	return false;
 }
 bool SafeGDScript::_has_source_code() const {
-	return true;
+	return !source_code.is_empty();
 }
 String SafeGDScript::_get_source_code() const {
 	return source_code;
@@ -1075,6 +1077,7 @@ bool SafeGDScript::compile_source_to_elf(bool p_profiling, bool p_debug,
 
 	this->previous_properties_for_update = this->properties;
 	this->elf_data = new_elf;
+	this->artifact_metadata = Sandbox::get_program_info_from_binary(new_elf).script_metadata;
 	this->properties = std::move(new_properties);
 	this->debug_variables = std::move(new_debug_variables);
 	this->declarations = std::move(new_source_model.declarations);
@@ -1304,6 +1307,8 @@ void SafeGDScript::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_test_lines"), &SafeGDScript::get_test_lines);
 	ClassDB::bind_method(D_METHOD("run_tests", "only", "quiet"), &SafeGDScript::run_tests,
 			DEFVAL(PackedStringArray()), DEFVAL(false));
+	ClassDB::bind_method(D_METHOD("conforms_to", "trait"), &SafeGDScript::conforms_to);
+	ClassDB::bind_method(D_METHOD("get_sandbox_for", "owner"), &SafeGDScript::get_sandbox_for);
 	ClassDB::bind_method(D_METHOD("uses_trait", "name"), &SafeGDScript::uses_trait);
 	// Engine-internal; bound for tests.
 	ClassDB::bind_method(D_METHOD("editor_documentation"), &SafeGDScript::editor_documentation);
@@ -1872,6 +1877,25 @@ PackedStringArray SafeGDScript::resolve_base_sources(const String &p_source,
 			}
 		}
 	}
+	// Public SDK traits also occur only in parameter/return hints. Import both
+	// configured declarations so completion and compilation see the same SDK
+	// as the mod loader, including before the first editor filesystem scan.
+	for (const char *key : {"sandbox/mods/obligations_trait", "sandbox/mods/api_trait"}) {
+		if (!settings->has_setting(key)) continue;
+		const String sdk_path = settings->get_setting(key);
+		if (sdk_path.is_empty() || sdk_path == p_self_path || sdk_path.get_extension() == "elf") continue;
+		bool present = false;
+		for (int i = 1; i < triples.size(); i += 3) if (triples[i] == sdk_path) present = true;
+		if (present) continue;
+		const String sdk_source = FileAccess::get_file_as_string(sdk_path);
+		String name, self_name; bool is_trait = false;
+		scan_class_header(sdk_source, &name, nullptr, &is_trait);
+		scan_class_header(p_source, &self_name, nullptr);
+		if (is_trait && !name.is_empty() && name != self_name) {
+			triples.push_back("trait:" + name); triples.push_back(sdk_path); triples.push_back(sdk_source);
+		}
+	}
+
 	return triples;
 }
 
@@ -2125,6 +2149,7 @@ Ref<SafeGDScriptClass> SafeGDScript::find_nested_class(const StringName &p_name)
 }
 
 bool SafeGDScript::uses_trait(const StringName &p_name) const {
+	if (gdscript::metadata_uses(artifact_metadata.uses, artifact_metadata.classes, String(p_name).utf8().get_data())) return true;
 	if (used_traits.has(p_name)) return true;
 	Ref<Script> base = _get_base_script();
 	while (base.is_valid()) {
@@ -2134,4 +2159,84 @@ bool SafeGDScript::uses_trait(const StringName &p_name) const {
 		base = base->get_base_script();
 	}
 	return false;
+}
+
+Sandbox *SafeGDScript::get_sandbox_for(Object *owner) const {
+	return owner && _instance_has(owner) ? sandbox_for_safegdscript(this) : nullptr;
+}
+bool SafeGDScript::load_binary(const PackedByteArray &bytes) noexcept try {
+	if (!instances.is_empty() || sandbox_for_safegdscript(this)) return false;
+	const auto info = Sandbox::get_program_info_from_binary(bytes);
+	if (!info.has_script_metadata || info.script_metadata.double_precision != (sizeof(real_t) == 8)) return false;
+	artifact_metadata = info.script_metadata;
+	// Binary resources must never recompile the constructor's example source.
+	source_code = String();
+	source_compile_pending_reload = false;
+	source_compile_succeeded = false;
+	constants.clear();
+	for (const auto &c : artifact_metadata.constants) {
+		Variant value;
+		switch (c.kind) {
+			case gdscript::ScriptConstant::Kind::INT: value = std::get<int64_t>(c.value); break;
+			case gdscript::ScriptConstant::Kind::FLOAT: value = std::get<double>(c.value); break;
+			case gdscript::ScriptConstant::Kind::BOOL: value = std::get<bool>(c.value); break;
+			case gdscript::ScriptConstant::Kind::STRING: value = String::utf8(std::get<std::string>(c.value).c_str()); break;
+			case gdscript::ScriptConstant::Kind::ENUM: {
+				Dictionary members;
+				for (const auto &member : c.members) members[String::utf8(member.name.c_str())] = member.value;
+				value = members;
+			} break;
+		}
+		constants.insert(String::utf8(c.name.c_str()), value);
+	}
+	elf_data = bytes;
+	class_name = String::utf8(artifact_metadata.class_name.c_str());
+	base_class = String::utf8(artifact_metadata.base_class.c_str());
+	native_base_class = base_class;
+	base_is_path = artifact_metadata.base_is_path;
+	native_base_is_path = base_is_path;
+	tool_script = artifact_metadata.is_tool;
+	properties = artifact_metadata.properties;
+	rpc_config.clear();
+	for (const auto &declared : artifact_metadata.rpc_configs) {
+		Dictionary method;
+		method["rpc_mode"] = declared.rpc_mode;
+		method["transfer_mode"] = declared.transfer_mode;
+		method["call_local"] = declared.call_local;
+		method["channel"] = declared.channel;
+		rpc_config[StringName(String::utf8(declared.name.c_str()))] = method;
+	}
+	signal_signatures = artifact_metadata.signals;
+	signals_info.clear();
+	for (const auto &sig : signal_signatures) {
+		signals_info.push_back(method_info_from_signature(sig, String::utf8(sig.name.c_str())));
+	}
+	signatures = artifact_metadata.functions;
+	line_table = artifact_metadata.line_table;
+	methods_info.clear(); method_index.clear(); method_addresses.clear(); method_is_static.clear();
+	for (const auto &sig : signatures) {
+		if (sig.name.empty() || sig.name[0] == '@') continue;
+		String name = String::utf8(sig.name.c_str());
+		method_index.emplace(StringName(name), methods_info.size());
+		methods_info.push_back(method_info_from_signature(sig, name));
+		method_addresses.push_back(0); method_is_static.push_back(sig.is_static);
+	}
+	used_traits.clear(); trait_signatures.clear();
+	for (const auto &name : artifact_metadata.uses) used_traits.insert(StringName(String::utf8(name.c_str())));
+	for (const auto &c : artifact_metadata.classes) if (c.is_trait) trait_signatures.push_back(c);
+	last_error = String();
+	return true;
+} catch (...) { return false; }
+Dictionary SafeGDScript::conforms_to(const Ref<SafeGDScript> &trait) const {
+	Dictionary result;
+	Array errors;
+	bool found = false;
+	if (trait.is_valid()) for (const auto &c : trait->artifact_metadata.classes) {
+		if (!c.is_trait || c.name != trait->artifact_metadata.class_name) continue;
+		found = true;
+		for (const auto &error : gdscript::trait_conformance(artifact_metadata.functions, c)) errors.push_back(String::utf8(error.c_str()));
+	}
+	if (!found) errors.push_back("Expected a compiled trait resource");
+	result["ok"] = errors.is_empty(); result["errors"] = errors;
+	return result;
 }

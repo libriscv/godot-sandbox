@@ -8,7 +8,15 @@ namespace gdscript {
 
 // Published beside the ELF; the ELF symbol table carries no arity or defaults.
 // Free of compiler-internal headers so guest programs can include it.
+// Lossless declaration for conformance (Godot's MethodInfo erases unions and traits).
+struct DeclaredType {
+	std::string name;
+	uint64_t mask = 0;
+	bool nominal = false;
+};
+
 struct FunctionParameter {
+	DeclaredType declared_type;
 	static constexpr int32_t ANY_TYPE = -1;
 
 	std::string name;
@@ -34,6 +42,9 @@ struct FunctionParameter {
 };
 
 struct FunctionSignature {
+	DeclaredType declared_return;
+	bool has_declaration = false;
+	bool is_abstract = false;
 	std::string name;
 	std::vector<FunctionParameter> parameters;
 	int32_t return_type = FunctionParameter::ANY_TYPE;

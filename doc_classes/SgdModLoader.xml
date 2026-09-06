@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SgdModLoader" inherits="Node" version="4.6">
+	<brief_description>Loads isolated SafeGDScript mods against two public trait contracts.</brief_description>
+	<description>Configure sandbox/mods/obligations_trait and sandbox/mods/api_trait. Each load creates a fresh restricted Sandbox before any initializer runs. The mod can call its own owner. Calls on the granted API object are limited to declared trait methods. Leaving the tree suspends callbacks, reentering resumes healthy mods. Faulting mods are detached and quarantined until unload. Manifest limits can only lower project ceilings.</description>
+	<methods>
+		<method name="scan" qualifiers="const">
+			<return type="Dictionary[]" />
+			<param index="0" name="dirs" type="PackedStringArray" default="PackedStringArray()" />
+			<description>Scans immediate subfolders for mod.cfg and sorts by order then id. An empty argument uses sandbox/mods/directories.</description>
+		</method>
+		<method name="load">
+			<return type="Node" />
+			<param index="0" name="mod" type="Dictionary" />
+			<param index="1" name="api" type="Object" />
+			<param index="2" name="parent" type="Node" />
+			<description>Validates the API and mod signatures, installs restrictions and limits, calls mod_init(api), then attaches the mod. Returns null on failure or quarantine. Auto mode accepts ELF entries on both hosts. Source requires a runtime compiler.</description>
+		</method>
+		<method name="unload">
+			<return type="void" />
+			<param index="0" name="id" type="String" />
+			<description>Calls optional mod_deinit on a healthy mod, then frees its node and Sandbox. Quarantined mods are freed without another guest call.</description>
+		</method>
+		<method name="poll_faults">
+			<return type="void" />
+			<description>Quarantines mods with exceptions or exhausted instruction budgets. Called automatically each frame. Invoke after a direct gameplay call for immediate notification.</description>
+		</method>
+		<method name="clear_contract_cache">
+			<return type="void" />
+			<description>Invalidates cached SDK signatures and source. The next load reads and compiles the SDK again. Paths, modification times and the concrete-method setting invalidate automatically. Call this after edits within the same filesystem timestamp tick.</description>
+		</method>
+		<method name="get_mod" qualifiers="const">
+			<return type="Node" />
+			<param index="0" name="id" type="String" />
+			<description>Returns the owned node, including a detached quarantined node, or null.</description>
+		</method>
+		<method name="is_quarantined" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="id" type="String" />
+			<description>Returns whether the mod has been quarantined.</description>
+		</method>
+		<method name="get_refusals" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="id" type="String" />
+			<description>Returns the number of method-policy denials for this mod.</description>
+		</method>
+		<method name="get_last_error" qualifiers="const">
+			<return type="String" />
+			<description>Returns the last load error or quarantine reason.</description>
+		</method>
+		<method name="get_error_line" qualifiers="const">
+			<return type="int" />
+			<description>Returns the source compiler error line, or zero when unavailable.</description>
+		</method>
+		<method name="get_error_column" qualifiers="const">
+			<return type="int" />
+			<description>Returns the source compiler error column, or zero when unavailable.</description>
+		</method>
+		<method name="runtime_compiler_marker" qualifiers="static">
+			<return type="String" />
+			<description>Reports whether this build includes runtime compilation. Used by the module exporter to validate source-mod templates.</description>
+		</method>
+	</methods>
+	<signals>
+		<signal name="mod_loaded">
+			<param index="0" name="id" type="String" />
+			<description>Emitted after a healthy mod is attached.</description>
+		</signal>
+		<signal name="mod_failed">
+			<param index="0" name="id" type="String" />
+			<param index="1" name="reason" type="String" />
+			<description>Emitted when loading fails.</description>
+		</signal>
+		<signal name="mod_faulted">
+			<param index="0" name="id" type="String" />
+			<param index="1" name="reason" type="String" />
+			<param index="2" name="location" type="String" />
+			<description>Emitted once when a fault or timeout quarantines a mod. Location is the guest source location when debug metadata is present.</description>
+		</signal>
+		<signal name="mod_refused">
+			<param index="0" name="id" type="String" />
+			<param index="1" name="method" type="String" />
+			<description>Deferred notification that the method policy denied a call.</description>
+		</signal>
+	</signals>
+</class>

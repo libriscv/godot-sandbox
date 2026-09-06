@@ -22,6 +22,7 @@
 #ifndef SAFEGDSCRIPT_DISABLED
 #include "safegdscript/script_class_safegdscript.h"
 #include "safegdscript/script_safegdscript.h"
+#include "safegdscript/mod_loader.h"
 #include "safegdscript/script_language_safegdscript.h"
 #include "safegdscript/editor_plugin_safegdscript.h"
 #include "safegdscript/resource_loader_safegdscript.h"
@@ -72,6 +73,8 @@ static void initialize_riscv_module(ModuleInitializationLevel p_level) {
 	ClassDB::register_class<ResourceFormatSaverCPP>();
 #ifndef SAFEGDSCRIPT_DISABLED
 	ClassDB::register_class<SafeGDScript>();
+	ClassDB::register_class<SgdModLoader>();
+	SgdModLoader::register_settings();
 	ClassDB::register_internal_class<SafeGDScriptClass>();
 	ClassDB::register_class<SafeGDScriptLanguage>();
 	ClassDB::register_class<ResourceFormatLoaderSafeGDScript>();
@@ -127,6 +130,10 @@ static void uninitialize_riscv_module(ModuleInitializationLevel p_level) {
 	}
 	// Background translations execute code from this extension, so they must all
 	// be finished before Godot is allowed to unload it.
+#ifndef SAFEGDSCRIPT_DISABLED
+	extern void sandboxed_compiler_backend_shutdown();
+	sandboxed_compiler_backend_shutdown();
+#endif
 	Sandbox::Deinitialize();
 
 	Engine *engine = Engine::get_singleton();

@@ -72,6 +72,7 @@ if (ENABLE_SAFEGDSCRIPT)
 		src/safegdscript/script_class_safegdscript.cpp
 		src/safegdscript/script_instance_safegdscript.cpp
 		src/safegdscript/script_language_safegdscript.cpp
+		src/safegdscript/mod_loader.cpp
 		src/safegdscript/script_safegdscript.cpp
 		src/safegdscript/syntax_highlighter_safegdscript.cpp
 		src/safegdscript/resource_loader_safegdscript.cpp

@@ -1,0 +1,17 @@
+extends Node
+func _ready() -> void:
+	var api = load("res://api.sgd").new()
+	add_child(api)
+	var loader := SgdModLoader.new()
+	add_child(loader)
+	var found := loader.scan(PackedStringArray(["res://mods"]))
+	var node: Node = loader.load(found[0], api, self)
+	if node == null:
+		print("CHECK typed_export=false")
+		print(loader.get_last_error())
+		get_tree().quit(1)
+		return
+	var result: Vector2 = node.call("think", 0.5)
+	print("CHECK typed_export=" + str(result == Vector2(7, 0.5)))
+	loader.unload("good")
+	get_tree().quit(0 if result == Vector2(7, 0.5) else 1)

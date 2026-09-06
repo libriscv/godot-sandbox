@@ -339,7 +339,13 @@
 				[b]Note:[/b] Unlike [code]is TraitName[/code] inside SafeGDScript, this method does not consider an object that merely has all of the trait's functions.
 			</description>
 		</method>
-	</methods>
+
+        <method name="conforms_to" qualifiers="const">
+            <return type="Dictionary" />
+            <param index="0" name="trait" type="SafeGDScript" />
+            <description>Checks the primary trait declared by the supplied compiled resource against this script's ELF function metadata. Returns {ok, errors}. Checks names, static flags, arity, contravariant parameters and covariant returns without executing the script.</description>
+        </method>
+</methods>
 	<signals>
 		<signal name="breakpoint_hit">
 			<param index="0" name="script" type="SafeGDScript" />

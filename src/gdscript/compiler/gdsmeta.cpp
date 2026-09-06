@@ -6,7 +6,7 @@ namespace gdscript {
 namespace {
 
 constexpr uint32_t GDSMETA_MAGIC = 0x4D534447;
-constexpr uint16_t GDSMETA_VERSION = 1;
+constexpr uint16_t GDSMETA_VERSION = 2;
 
 constexpr uint16_t FLAG_DOUBLE_PRECISION = 1 << 0;
 constexpr uint16_t FLAG_IS_TOOL = 1 << 1;
@@ -105,11 +105,21 @@ std::vector<uint8_t> encode_script_metadata(const ScriptMetadata &meta) {
 	write_blob(out, encode_function_signatures(meta.signals));
 	write_blob(out, encode_line_table(meta.line_table));
 
+	write_scalar<uint32_t>(out, 0x54534e43u); // CNST
+	write_blob(out, encode_script_constants(meta.constants));
+	write_scalar<uint32_t>(out, 0x54415254u); // TRAT
+	write_scalar<uint32_t>(out, uint32_t(meta.uses.size()));
+	for (const auto &name : meta.uses) write_string(out, name);
+	write_blob(out, encode_class_signatures(meta.classes));
+	write_scalar<uint32_t>(out, 0x43505250u); // PRPC
+	write_blob(out, encode_property_signatures(meta.properties));
+	write_blob(out, encode_rpc_configs(meta.rpc_configs));
 	return out;
 }
 
-bool decode_script_metadata(const uint8_t *data, size_t size, ScriptMetadata &out) {
-	out = ScriptMetadata{};
+bool decode_script_metadata(const uint8_t *data, size_t size, ScriptMetadata &result) {
+	result = ScriptMetadata{};
+	ScriptMetadata out;
 
 	Reader reader{ data, size };
 	const uint32_t magic = reader.scalar<uint32_t>();
@@ -141,6 +151,27 @@ bool decode_script_metadata(const uint8_t *data, size_t size, ScriptMetadata &ou
 		return false;
 	}
 
+	// Version 2 requires the complete declaration metadata.
+	if (reader.scalar<uint32_t>() != 0x54534e43u) return false;
+	const auto constants = reader.blob();
+	if (!reader.ok || !decode_script_constants(constants.first, constants.second, out.constants)) return false;
+	if (reader.scalar<uint32_t>() != 0x54415254u) return false;
+	const auto count = reader.scalar<uint32_t>();
+	if (!reader.ok || count > size - reader.offset) return false;
+	for (uint32_t i = 0; i < count; ++i) out.uses.push_back(reader.string());
+	const auto classes = reader.blob();
+	if (!reader.ok ||
+			!decode_class_signatures(classes.first, classes.second, out.classes)) return false;
+	out.has_trait_metadata = true;
+	{
+		if (reader.scalar<uint32_t>() != 0x43505250u) return false;
+		const auto properties = reader.blob();
+		const auto rpc = reader.blob();
+		if (!reader.ok || !decode_property_signatures(properties.first, properties.second, out.properties) ||
+				!decode_rpc_configs(rpc.first, rpc.second, out.rpc_configs)) return false;
+	}
+	if (reader.offset != size) return false;
+	result = std::move(out);
 	return true;
 }
 

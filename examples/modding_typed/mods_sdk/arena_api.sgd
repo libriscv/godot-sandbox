@@ -1,0 +1,6 @@
+trait_name ArenaAPI
+
+## Return the game clock.
+@abstract func time() -> float
+## Write one line to the game log.
+@abstract func log(text: String) -> void

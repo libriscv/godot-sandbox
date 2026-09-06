@@ -404,6 +404,19 @@ static Sandbox *create_sandbox(Object *p_owner, const Ref<SafeGDScript> &p_scrip
 	if (p_restricted) {
 		sandbox_ptr->set_restrictions(true);
 	}
+	if (p_script->mod_restricted) {
+		const Dictionary &limits = p_script->mod_limits;
+		sandbox_ptr->set_binary_translation_automatic_nbit_as(bool(limits.get("binary_translation_nbit_as", true)));
+		sandbox_ptr->set_restrictions(true);
+		sandbox_ptr->set_memory_max(int64_t(limits.get("memory_max", 32)));
+		sandbox_ptr->set_instructions_max(int64_t(limits.get("execution_timeout", 1)));
+		sandbox_ptr->set_allocations_max(int64_t(limits.get("allocations_max", 8000)));
+		sandbox_ptr->set_max_refs(int64_t(limits.get("references_max", 100)));
+		sandbox_ptr->set_max_coroutines(int64_t(limits.get("coroutines_max", 32)));
+		sandbox_ptr->add_allowed_object(p_owner);
+		if (Object *api = ObjectDB::get_instance(p_script->mod_api)) sandbox_ptr->add_allowed_object(api);
+		sandbox_ptr->set_method_allowed_callback(p_script->mod_policy);
+	}
 	// Set before the program runs: a nested class binds during a guest call, and
 	// the bind syscall reaches its Script resources through this.
 	sandbox_ptr->set_script_owner_id(godot::ObjectID(p_script->get_instance_id()));

@@ -43,6 +43,8 @@ protected:
 	void rebuild_function_name_set();
 
 public:
+	const gdscript::ScriptMetadata &get_metadata() const { return script_metadata; }
+	bool uses_trait(const StringName &name) const;
 	Array functions;
 	PackedStringArray function_names;
 

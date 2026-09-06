@@ -104,6 +104,20 @@ std::vector<uint8_t> encode_function_signatures(const std::vector<FunctionSignat
 			write_string(out, param.class_name);
 		}
 	}
+	write_scalar<uint32_t>(out, 0x4c434544u); // DECL, lossless trait conformance
+	write_scalar<uint32_t>(out, uint32_t(signatures.size()));
+	auto type = [&](const DeclaredType &t) {
+		write_string(out, t.name);
+		write_scalar<uint64_t>(out, t.mask);
+		write_scalar<uint8_t>(out, t.nominal);
+	};
+	for (const auto &sig : signatures) {
+		write_scalar<uint8_t>(out, sig.has_declaration);
+		write_scalar<uint8_t>(out, sig.is_abstract);
+		type(sig.declared_return);
+		for (const auto &param : sig.parameters) type(param.declared_type);
+	}
+
 	return out;
 }
 
@@ -223,6 +237,24 @@ bool decode_function_signatures(const uint8_t *data, size_t size,
 		}
 		for (FunctionParameter &parameter : signature.parameters) {
 			parameter.class_name = reader.string();
+		}
+	}
+	if (reader.ok && reader.offset != size) {
+		if (reader.scalar<uint32_t>() != 0x4c434544u || reader.scalar<uint32_t>() != out.size()) {
+			out.clear();
+			return false;
+		}
+		auto flag = [&]() { const auto v = reader.scalar<uint8_t>(); if (v > 1) reader.ok = false; return v != 0; };
+		auto type = [&](DeclaredType &t) {
+			t.name = reader.string();
+			t.mask = reader.scalar<uint64_t>();
+			t.nominal = flag();
+		};
+		for (auto &sig : out) {
+			sig.has_declaration = flag();
+			sig.is_abstract = flag();
+			type(sig.declared_return);
+			for (auto &param : sig.parameters) type(param.declared_type);
 		}
 	}
 	if (!reader.ok || reader.offset != size) {

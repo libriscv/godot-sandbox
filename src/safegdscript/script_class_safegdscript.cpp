@@ -1,3 +1,4 @@
+#include "../elf/script_elf.h"
 #include "script_class_safegdscript.h"
 
 #include "../elf/script_instance_helper.h"
@@ -100,6 +101,10 @@ bool safegdscript_nominal_uses(Object *p_object, const StringName &p_trait,
 	const Variant script_value = p_object->get_script();
 	if (script_value.get_type() != Variant::OBJECT) return false;
 	Object *script_object = script_value;
+	if (ELFScript *elf = fast_cast_to<ELFScript>(script_object)) {
+		r_recognized = elf->get_metadata().has_trait_metadata;
+		return r_recognized && elf->uses_trait(p_trait);
+	}
 	if (SafeGDScript *safe = fast_cast_to<SafeGDScript>(script_object)) {
 		r_recognized = true;
 		return safe->uses_trait(p_trait);

@@ -12,6 +12,7 @@ constexpr uint32_t COMPILER_ALLOCATIONS_MAX = 64000;
 
 class SandboxedCompilerBackend final : public GDScriptCompilerBackend {
 public:
+	~SandboxedCompilerBackend() override { if (m_sandbox) memdelete(m_sandbox); }
 	const char *name() const override { return "sandboxed"; }
 	bool available() override { return sandbox() != nullptr; }
 
@@ -426,7 +427,12 @@ private:
 
 } // namespace
 
+static SandboxedCompilerBackend *shared_backend = nullptr;
 GDScriptCompilerBackend &sandboxed_compiler_backend() {
-	static SandboxedCompilerBackend *backend = new SandboxedCompilerBackend();
-	return *backend;
+	if (!shared_backend) shared_backend = new SandboxedCompilerBackend();
+	return *shared_backend;
+}
+void sandboxed_compiler_backend_shutdown() {
+	delete shared_backend;
+	shared_backend = nullptr;
 }

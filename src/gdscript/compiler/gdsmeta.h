@@ -1,5 +1,6 @@
 #pragma once
 #include "function_signature.h"
+#include "property_signature.h"
 #include "line_table.h"
 #include <cstdint>
 #include <string>
@@ -18,6 +19,13 @@ struct ScriptMetadata {
 	std::vector<FunctionSignature> functions;
 	std::vector<FunctionSignature> signals;
 	LineTable line_table;
+	std::vector<PropertySignature> properties;
+	std::vector<RPCConfig> rpc_configs;
+	// Version 2 declaration metadata.
+	bool has_trait_metadata = false;
+	std::vector<ScriptConstant> constants;
+	std::vector<std::string> uses;
+	std::vector<ClassSignature> classes;
 };
 
 constexpr const char *GDSMETA_SECTION = ".gdsmeta";

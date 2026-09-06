@@ -3,6 +3,9 @@
 This example loads untrusted SafeGDScript mods with restrictions enabled. Mods
 can only access the API and objects provided by the game.
 
+For a typed Object API with compiler-checked traits and the native loader, see
+[the typed example](../modding_typed/README.md), available in the module and extension.
+
 ## Mod folders
 
 Each mod has a manifest and one entry script:

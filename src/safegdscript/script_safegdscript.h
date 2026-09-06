@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../docker.h"
+#include "../gdscript/compiler/gdsmeta.h"
 #include "../gdscript/compiler/function_signature.h"
 #include "../gdscript/compiler/line_table.h"
 #include "../gdscript/compiler/debug_layout.h"
@@ -105,6 +106,19 @@ public:
 	}
 	// No standalone file: unsaved or scene sub-resource (path contains "::").
 	bool is_built_in() const { return get_path().is_empty() || get_path().contains("::"); }
+	gdscript::ScriptMetadata artifact_metadata;
+	Dictionary mod_limits;
+	Callable mod_policy;
+	ObjectID mod_api;
+	bool mod_restricted = false;
+	void configure_mod(const Dictionary &limits, Object *api, const Callable &policy) {
+		mod_restricted = true; compiled_restricted = true; mod_limits = limits; mod_api = api->get_instance_id(); mod_policy = policy;
+	}
+	void set_mod_source_path(const String &source_path) { path = source_path; }
+	bool load_binary(const PackedByteArray &bytes) noexcept;
+	const gdscript::ScriptMetadata &get_metadata() const { return artifact_metadata; }
+	Sandbox *get_sandbox_for(Object *owner) const;
+	Dictionary conforms_to(const Ref<SafeGDScript> &trait) const;
 	const PackedByteArray &get_content() const { return elf_data; }
 	bool compile_source_to_elf(bool p_profiling = false, bool p_debug = false,
 			ReloadPolicy p_reload_policy = ReloadPolicy::DISCARD_STATE,

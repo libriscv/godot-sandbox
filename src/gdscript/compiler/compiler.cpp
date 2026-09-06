@@ -262,6 +262,8 @@ std::vector<uint8_t> Compiler::compile(const std::string& source, const Compiler
 			m_properties.push_back(std::move(property));
 		}
 
+		ir_program.properties = m_properties;
+
 		if (options.dump_ir) {
 			std::cout << "=== IR (unoptimized) ===" << std::endl;
 			for (const auto& func : ir_program.functions) {

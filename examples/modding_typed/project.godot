@@ -1,0 +1,8 @@
+config_version=5
+[application]
+run/main_scene="res://main.tscn"
+config/name="Typed mod API contract"
+[sandbox]
+mods/obligations_trait="res://mods_sdk/mod_brain.sgd"
+mods/api_trait="res://mods_sdk/arena_api.sgd"
+mods/entry_form="source"

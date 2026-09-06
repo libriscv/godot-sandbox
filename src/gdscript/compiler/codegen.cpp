@@ -1,5 +1,6 @@
 #include <algorithm>
 #include "codegen.h"
+#include "trait_conformance.h"
 #include "syscall_numbers.h"
 #include "compiler_exception.h"
 #include <functional>
@@ -237,7 +238,7 @@ IRProgram CodeGenerator::generate(const Program& program) {
 			"A restricted Sandbox refuses every class, so the base could never be instantiated. "
 			"A script with no 'extends' runs under any owner.");
 	}
-	ir_program.class_name = program.class_name;
+	ir_program.class_name = program.trait_name.empty() ? program.class_name : program.trait_name;
 	ir_program.base_class = program.base_class;
 	ir_program.base_is_path = program.base_is_path;
 	ir_program.native_base_class = program.native_base_class;
@@ -7592,18 +7593,6 @@ void CodeGenerator::validate_trait_member(const std::string& kind,
 	const StructDecl* decl, const std::vector<std::string>& names,
 	int line, int column) const
 {
-	auto accepts = [&](const TypeExpr& wider, const TypeExpr& narrower) {
-		if (wider.empty() || wider.single_name() == "Variant") return true;
-		if (narrower.empty() || narrower.single_name() == "Variant") return false;
-		if (wider.to_string() == narrower.to_string()) return true;
-		// Nominal names do not become compatible merely because both are OBJECT.
-		const bool wider_nominal = find_struct(wider.sole_name()) || find_trait(wider.sole_name());
-		const bool narrower_nominal = find_struct(narrower.sole_name()) || find_trait(narrower.sole_name());
-		if ((wider_nominal || narrower_nominal) && wider.sole_name() != "Object") return false;
-		const TypeSet w = type_set_from(wider, line, column);
-		const TypeSet n = type_set_from(narrower, line, column);
-		return !w.any() && !n.any() && (n.mask & ~w.mask) == 0;
-	};
 
 	for (const std::string& trait_name : names) {
 		const TraitDecl* iface = find_trait(trait_name);
@@ -7620,44 +7609,13 @@ void CodeGenerator::validate_trait_member(const std::string& kind,
 					if (candidate.name == required.name) { actual = &candidate; break; }
 				}
 			}
-			const std::string prefix = kind + " '" + name + "' uses '" +
-				iface->name + "' but '" + required.name;
-			if (actual == nullptr) {
-				if (required.is_abstract) {
-					error_at(kind + " '" + name + "' uses '" + iface->name +
-						"' but does not implement abstract method '" + required.name + "()'",
-						line, column);
-				}
-				error_at(prefix + "' is not available", line, column);
-			}
-			if (actual->is_static != required.is_static) {
-				error_at(prefix + (actual->is_static ? "' is static; the trait declares an instance method"
-					: "' is an instance method; the trait declares it static"),
-					line, column);
-			}
-			if (actual->parameters.size() != required.parameters.size()) {
-				error_at(prefix + "' takes " + std::to_string(actual->parameters.size()) +
-					" parameters, trait declares " +
-					std::to_string(required.parameters.size()), line, column);
-			}
-			for (size_t i = 0; i < required.parameters.size(); i++) {
-				if (!accepts(actual->parameters[i].type_hint, required.parameters[i].type_hint)) {
-					error_at(prefix + "' parameter '" + required.parameters[i].name +
-						"' has incompatible type '" + actual->parameters[i].type_hint.to_string() +
-						"'; trait declares '" + required.parameters[i].type_hint.to_string() +
-						"'", line, column);
-				}
-			}
-			if (!required.return_type.empty() && actual->return_type.empty()) {
-				error_at(prefix + "' has an untyped return; trait declares '" +
-					required.return_type.to_string() + "'", line, column);
-			}
-			if (!actual->return_type.empty() && !required.return_type.empty() &&
-				!accepts(required.return_type, actual->return_type)) {
-				error_at(prefix + "' returns '" + actual->return_type.to_string() +
-					"'; trait declares '" + required.return_type.to_string() + "'",
-					line, column);
-			}
+			const auto signature = build_signature(required);
+			FunctionSignature implementation;
+			if (actual) implementation = build_signature(*actual);
+			const auto failure = validate_trait_signature(actual ? &implementation : nullptr, signature);
+			if (!failure.empty()) error_at(kind + " '" + name + "' uses '" + iface->name +
+				"' but '" + required.name + "' " + failure + " (" +
+				trait_method_signature(iface->name, signature) + ")", actual ? actual->line : std::max(1, line), actual ? actual->column : std::max(1, column));
 		}
 	}
 }
@@ -8115,6 +8073,16 @@ int CodeGenerator::gen_signal_owner_call(const std::string& signal_name,
 
 FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const {
 	FunctionSignature sig;
+	auto declared = [&](const TypeExpr &type) {
+		DeclaredType out;
+		out.name = type.to_string();
+		out.nominal = find_struct(type.sole_name()) || find_trait(type.sole_name());
+		if (!type.empty() && type.single_name() != "Variant") out.mask = type_set_from(type, decl.line, decl.column).mask;
+		return out;
+	};
+	sig.has_declaration = true;
+	sig.is_abstract = decl.is_abstract;
+	sig.declared_return = declared(decl.return_type);
 	sig.name = decl.name;
 	sig.line = decl.line;
 	sig.description = decl.doc_comment;
@@ -8133,6 +8101,7 @@ FunctionSignature CodeGenerator::build_signature(const FunctionDecl& decl) const
 
 	for (const Parameter& param : decl.parameters) {
 		FunctionParameter out;
+		out.declared_type = declared(param.type_hint);
 		out.name = param.name;
 		out.type = published_type_from(param.type_hint);
 		if (find_struct(param.type_hint.single_name()) != nullptr) {

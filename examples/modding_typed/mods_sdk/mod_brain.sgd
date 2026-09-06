@@ -1,0 +1,6 @@
+trait_name ModBrain
+
+## Called once with the only object this mod may reach.
+@abstract func mod_init(api: ArenaAPI) -> void
+## Compute the desired velocity.
+@abstract func think(delta: float) -> Vector2

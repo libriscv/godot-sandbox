@@ -1,5 +1,6 @@
 #include "../compiler.h"
 #include "../gdsmeta.h"
+#include "../trait_conformance.h"
 #include <cassert>
 #include <cstring>
 #include <iostream>
@@ -64,6 +65,10 @@ void test_codec_round_trip() {
 	FunctionSignature sig;
 	sig.name = "hit";
 	meta.signals.push_back(sig);
+	PropertySignature property; property.name = "speed"; property.type = 3; property.is_member = true;
+	meta.properties.push_back(property);
+	RPCConfig rpc; rpc.name = "scaled"; rpc.channel = 2;
+	meta.rpc_configs.push_back(rpc);
 
 	meta.line_table.entries = { { 0, 8 }, { 16, 9 }, { 32, 11 } };
 
@@ -84,6 +89,8 @@ void test_codec_round_trip() {
 	assert(out.functions[0].parameters[0].name == "mult");
 	assert(out.functions[0].parameters[0].default_kind == FunctionParameter::DefaultKind::INT);
 	assert(out.signals.size() == 1 && out.signals[0].name == "hit");
+	assert(out.properties.size() == 1 && out.properties[0].name == "speed" && out.properties[0].is_member);
+	assert(out.rpc_configs.size() == 1 && out.rpc_configs[0].name == "scaled" && out.rpc_configs[0].channel == 2);
 	assert(out.line_table.entries.size() == 3);
 	assert(out.line_table.entries[1].address == 16 && out.line_table.entries[1].line == 9);
 
@@ -103,9 +110,20 @@ void test_rejects_bad_input() {
 	meta.base_class = "RefCounted";
 	const std::vector<uint8_t> blob = encode_script_metadata(meta);
 	for (size_t n = 0; n < blob.size(); n++) {
+		out = meta;
 		assert(!decode_script_metadata(blob.data(), n, out) && "truncated blob accepted");
+		assert(encode_script_metadata(out) == encode_script_metadata(ScriptMetadata{}) && "failure retained partial metadata");
 	}
 	assert(decode_script_metadata(blob.data(), blob.size(), out));
+	auto old = blob; old[4] = 1;
+	assert(!decode_script_metadata(old.data(), old.size(), out));
+	for (size_t n = 8; n + 4 <= blob.size(); ++n) {
+		if (std::memcmp(blob.data() + n, "CNST", 4) && std::memcmp(blob.data() + n, "TRAT", 4) && std::memcmp(blob.data() + n, "PRPC", 4)) continue;
+		auto corrupt = blob; corrupt[n] ^= 0xff;
+		out = meta;
+		assert(!decode_script_metadata(corrupt.data(), corrupt.size(), out));
+		assert(encode_script_metadata(out) == encode_script_metadata(ScriptMetadata{}));
+	}
 
 	std::cout << "  Rejection OK" << std::endl;
 }
@@ -143,6 +161,7 @@ void test_compiled_elf_carries_metadata() {
 	ScriptMetadata meta;
 	assert(decode_script_metadata(blob.data(), blob.size(), meta) && ".gdsmeta failed to decode");
 
+	assert(meta.properties.size() == 1 && meta.properties[0].name == "speed");
 	assert(meta.class_name == compiler.get_class_name());
 	assert(meta.base_class == compiler.get_base_class());
 	assert(meta.base_is_path == compiler.base_is_path());
@@ -173,12 +192,51 @@ void test_compiled_elf_carries_metadata() {
 			  << blob.size() << " bytes, " << meta.functions.size() << " functions)" << std::endl;
 }
 
+void test_typed_contract() {
+	Compiler compiler;
+	CompilerOptions options;
+	options.base_sources.push_back({"API", "api.sgd", "trait_name API\n@abstract func time() -> float\n", true});
+	options.base_sources.push_back({"Brain", "brain.sgd", "trait_name Brain\n@abstract func mod_init(api: API) -> void\n@abstract func think(delta: float) -> Vector2\n", true});
+	const std::string source = "uses Brain\nconst COUNT = 42\nenum State { IDLE, RUN }\nfunc mod_init(api: API) -> void: pass\nfunc think(delta: float) -> Vector2: return Vector2.ZERO\n";
+	auto elf = compiler.compile(source, options);
+	assert(!elf.empty());
+	auto blob = section_bytes(elf, ".gdsmeta");
+	ScriptMetadata meta;
+	assert(decode_script_metadata(blob.data(), blob.size(), meta));
+	assert(meta.has_trait_metadata && metadata_uses(meta.uses, meta.classes, "Brain"));
+	assert(meta.constants.size() == 2);
+	assert(std::any_of(meta.constants.begin(), meta.constants.end(), [](const auto &c) { return c.kind == ScriptConstant::Kind::ENUM && c.members.size() == 2; }));
+	const auto it = std::find_if(meta.classes.begin(), meta.classes.end(), [](const auto &c) { return c.name == "Brain"; });
+	assert(it != meta.classes.end());
+	assert(trait_conformance(meta.functions, *it).empty());
+	auto functions = meta.functions;
+	functions.erase(std::remove_if(functions.begin(), functions.end(), [](const auto &f) { return f.name == "think"; }), functions.end());
+	auto errors = trait_conformance(functions, *it);
+	assert(errors.size() == 1 && errors[0] == "Brain.think(delta: float) -> Vector2: does not implement abstract method 'think()'");
+	functions = meta.functions;
+	auto method = std::find_if(functions.begin(), functions.end(), [](const auto &f) { return f.name == "think"; });
+	method->is_static = true;
+	assert(trait_conformance(functions, *it)[0].find("is static; the trait declares an instance method") != std::string::npos);
+	method->is_static = false;
+	method->parameters[0].declared_type = {"String", uint64_t(1) << 4, false};
+	assert(trait_conformance(functions, *it)[0].find("parameter 'delta' has incompatible type 'String'") != std::string::npos);
+	method->parameters[0].declared_type = {"Variant", 0, false};
+	assert(trait_conformance(functions, *it).empty());
+	method->declared_return = {};
+	assert(trait_conformance(functions, *it)[0].find("untyped return") != std::string::npos);
+	// The nominal spellings survive the published OBJECT type.
+	const auto init = std::find_if(meta.functions.begin(), meta.functions.end(), [](const auto &f) { return f.name == "mod_init"; });
+	assert(init->parameters[0].declared_type.name == "API" && init->parameters[0].declared_type.nominal);
+	for (size_t n = 0; n < blob.size(); ++n) assert(!decode_script_metadata(blob.data(), n, meta));
+}
+
 } // namespace
 
 int main() {
 	std::cout << "=== Self-describing ELF metadata ===" << std::endl;
 
 	test_codec_round_trip();
+	test_typed_contract();
 	test_rejects_bad_input();
 	test_compiled_elf_carries_metadata();
 

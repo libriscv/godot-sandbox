@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <memory>
 #include "function_signature.h"
+#include "property_signature.h"
 #include "variant_types.h"
 
 namespace gdscript {
@@ -404,6 +405,7 @@ struct IRProgram {
 	// Top-level methods marked @rpc. Displaced base implementations are omitted;
 	// only the method visible on the final script can be remotely invoked.
 	std::vector<RPCConfig> rpc_configs;
+	std::vector<PropertySignature> properties;
 
 	// Top-level argless methods marked @test, in declaration order. A displaced
 	// base implementation is not a test of the final script.

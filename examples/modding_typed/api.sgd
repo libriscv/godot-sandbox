@@ -1,0 +1,6 @@
+extends Node
+uses ArenaAPI
+func time() -> float:
+	return 7.0
+func log(text: String) -> void:
+	print(text)
