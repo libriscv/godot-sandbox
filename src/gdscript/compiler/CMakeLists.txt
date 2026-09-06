@@ -178,6 +178,10 @@ if (BUILD_TESTING)
 	add_gdscript_test(test_fast_exit tests/test_fast_exit.cpp)
 	add_gdscript_test(test_fuzz tests/test_fuzz.cpp)
 	add_gdscript_test(test_union_types tests/test_union_types.cpp)
+
+	add_gdscript_test(test_variant_api tests/test_variant_api.cpp)
+	target_compile_definitions(test_variant_api PRIVATE
+		GDSC_VARIANT_BASELINE="${CMAKE_CURRENT_SOURCE_DIR}/tests/variant_api_unsupported.txt")
 	add_gdscript_test(test_nullable_types tests/test_nullable_types.cpp)
 
 	# Differential testing: the same programs through the IR interpreter and
