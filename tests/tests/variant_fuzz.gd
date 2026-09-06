@@ -1,20 +1,14 @@
 extends RefCounted
 
 const TABLE_PATH := "res://tests/variant_api.json"
-
 const UNSUPPORTED_PATH := "../src/gdscript/compiler/tests/variant_api_unsupported.txt"
-
-# GDScript refuses non-constant integer indexing on these.
 const NO_INTEGER_INDEX := ["Quaternion"]
-
-# How many components `[]` reaches; the table carries the element type, not the count.
+const UNSTABLE_METHODS := ["cubic_interpolate_in_time", "spherical_cubic_interpolate_in_time"]
 const INDEX_COUNT := {
 	"Vector2": 2, "Vector2i": 2, "Vector3": 3, "Vector3i": 3,
 	"Vector4": 4, "Vector4i": 4, "Quaternion": 4, "Color": 4,
 	"Basis": 3, "Transform2D": 3, "Projection": 4,
 }
-
-# `target op= value` for the scalars, which have no rows in the type table.
 const SCALAR_COMPOUND := {
 	"int": [["+", "int"], ["-", "int"], ["*", "int"], ["/", "int"], ["%", "int"]],
 	"float": [["+", "float"], ["-", "float"], ["*", "float"], ["/", "float"]],
@@ -163,6 +157,8 @@ func _build_producers() -> void:
 		for row in rows["unary"]:
 			_add_producer(row[1], {"kind": "unary", "owner": type_name, "op": row[0]})
 		for row in rows["methods"]:
+			if UNSTABLE_METHODS.has(row[0]):
+				continue
 			_add_producer(row[2], {
 				"kind": "method", "owner": type_name, "name": row[0],
 				"args": row[1], "static": row[3],

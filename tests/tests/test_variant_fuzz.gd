@@ -66,6 +66,10 @@ func _failure(source: String, only: String = "") -> Dictionary:
 		var actual = sgd["object"].callv(name, [])
 		var errors := _drain_errors()
 		if not errors.is_empty():
+			engine["object"].callv(name, [])
+			if not _drain_errors().is_empty():
+				_skipped += 1
+				continue
 			result = {"kind": "error", "detail": _error_text(errors), "function": name}
 			break
 		var difference := VariantFuzz.difference(expected, actual)

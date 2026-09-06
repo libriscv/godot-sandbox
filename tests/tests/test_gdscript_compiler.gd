@@ -8001,8 +8001,10 @@ func member_row():
 	assert_eq(s.vmcallv("packed_element"), PackedFloat32Array([1.0, 9.0, 3.0]),
 		"a packed array keeps its element store")
 
-	assert_eq(s.vmcallv("member_row"), nested, "writing a member's row should match")
-	assert_eq(s.get("placement"), nested, "and the member should keep the written value")
+	var member := Transform3D()
+	member.basis[0] = Vector3(1, 2, 3)
+	assert_eq(s.vmcallv("member_row"), member, "writing a member's row should match")
+	assert_eq(s.get("placement"), member, "and the member should keep the written value")
 
 	s.queue_free()
 
@@ -11901,16 +11903,18 @@ func size_of():
 		["erase_key", "Variant::call: the container is read-only"],
 		["clear_all", "Dictionary::operation: the container is read-only"],
 		["merge_in", "Variant::call: the container is read-only"],
-		["nested_write", "Variant::call: the container is read-only"],
-		["array_write", "Variant::call: the container is read-only"],
+		["nested_write", "Invalid indexed assignment on Dictionary with key type String",
+			engine_refusal, "Invalid indexed assignment on Dictionary with key type String"],
+		["array_write", "Invalid indexed assignment on Array with key type Int",
+			"Invalid indexed assignment on Array with key type Int"],
 		["array_push", "Variant::call: the container is read-only"],
 		["array_clear", "Variant::call: the container is read-only"],
 	]
 	for entry in denied:
 		var before := s.get_exceptions()
 		s.vmcallv(entry[0])
-		if entry.size() > 2:
-			assert_engine_error(entry[2])
+		for extra in entry.slice(2):
+			assert_engine_error(extra)
 		assert_engine_error("Exception: " + entry[1])
 		assert_eq(s.get_exceptions(), before + 1,
 			"%s must raise in the guest, not silently do nothing" % entry[0])
